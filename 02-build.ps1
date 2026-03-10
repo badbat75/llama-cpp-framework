@@ -2,6 +2,17 @@
 
 . "$PSScriptRoot\common.ps1"  # loads $cfg, activates VS Dev Shell + ROCm
 
+# Clone llama.cpp if missing, otherwise pull latest
+if (-not (Test-Path "$($cfg.LlamaCppDir)\CMakeLists.txt")) {
+    Write-Host "llama.cpp not found at $($cfg.LlamaCppDir), cloning..." -ForegroundColor Yellow
+    git clone https://github.com/ggerganov/llama.cpp $cfg.LlamaCppDir
+    if ($LASTEXITCODE -ne 0) { throw "git clone failed" }
+} else {
+    Write-Host "Pulling latest llama.cpp..." -ForegroundColor Cyan
+    git -C $cfg.LlamaCppDir pull
+    if ($LASTEXITCODE -ne 0) { throw "git pull failed" }
+}
+
 Push-Location $cfg.LlamaCppDir
 
 $opensslPath = $cfg.OpenSSLDir -replace '\\', '/'

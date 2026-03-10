@@ -2,7 +2,7 @@
 
 ## Project overview
 
-PowerShell scripts to install prerequisites, configure, build, and run [llama.cpp](https://github.com/ggerganov/llama.cpp) on Windows with CUDA, Vulkan, and ROCm (HIP) support.
+Windows-only PowerShell scripts to install prerequisites, configure, build, and run [llama.cpp](https://github.com/ggerganov/llama.cpp) with CUDA, Vulkan, and ROCm (HIP) support. Not compatible with Linux or macOS.
 
 ## Structure
 

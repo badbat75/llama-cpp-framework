@@ -1,5 +1,7 @@
 # llama.cpp-framework
 
+> **Windows only** — all scripts are PowerShell (.ps1) and target Windows 10/11 exclusively.
+
 PowerShell scripts to build and run [llama.cpp](https://github.com/ggerganov/llama.cpp) on Windows with multi-GPU backend support (CUDA, Vulkan, ROCm/HIP).
 
 ## Prerequisites
