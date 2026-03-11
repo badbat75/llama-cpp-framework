@@ -2,7 +2,7 @@
 
 > **Windows only** — all scripts are PowerShell (.ps1) and target Windows 10/11 exclusively.
 
-PowerShell scripts to build and run [llama.cpp](https://github.com/ggerganov/llama.cpp) on Windows with multi-GPU backend support (CUDA, Vulkan, ROCm/HIP).
+PowerShell scripts to build and run [llama.cpp](https://github.com/ggerganov/llama.cpp) on Windows with multi-GPU backend support (CUDA, Vulkan, ROCm/HIP), optional [Open WebUI](https://github.com/open-webui/open-webui) frontend, and NSIS installer packaging.
 
 ## Prerequisites
 
@@ -10,11 +10,14 @@ PowerShell scripts to build and run [llama.cpp](https://github.com/ggerganov/lla
 - [Visual Studio](https://visualstudio.microsoft.com/) with C++ workload
 - [Git](https://git-scm.com/)
 
-Optional (installed automatically by `00-install-prerequisites.ps1`):
+Optional (installed automatically by scripts as needed):
 - [OpenSSL](https://slproweb.com/products/Win32OpenSSL.html)
 - [CUDA Toolkit](https://developer.nvidia.com/cuda-toolkit)
 - [Vulkan SDK](https://vulkan.lunarg.com/)
 - [AMD HIP SDK (ROCm)](https://rocm.docs.amd.com/)
+- Python 3.11 or 3.12 (for Open WebUI, installed via winget if missing)
+- Node.js 18-22 (for Open WebUI frontend build, managed via fnm if system version is incompatible)
+- [NSIS](https://nsis.sourceforge.io/) (for installer packaging, installed via winget if missing)
 
 ## Quick start
 
@@ -31,10 +34,10 @@ Optional (installed automatically by `00-install-prerequisites.ps1`):
 # 3. Build llama.cpp
 .\02-build.ps1
 
-# 3b. (Optional) Build Open WebUI frontend
+# 3b. (Optional) Build Open WebUI from source
 .\02-build-webui.ps1
 
-# 4. Package into an NSIS installer (removes build dir after)
+# 4. Package into an NSIS installer
 .\03-package.ps1
 
 # 5. Install the generated exe from dist\, then run
@@ -59,19 +62,31 @@ See `config.psd1.sample` for an example.
 |--------|-------------|
 | `00-install-prerequisites.ps1` | Installs OpenSSL, CUDA, Vulkan SDK, AMD HIP via winget (UAC self-elevation) |
 | `01-configure.ps1` | Detects environment, verifies tools, generates `config.psd1` |
-| `02-build.ps1` | Configures and builds llama.cpp with CMake + Ninja (uses sccache if available) |
-| `02-build-webui.ps1` | Clones Open WebUI from GitHub, builds frontend, installs from source into Python venv |
-| `03-package.ps1` | Creates NSIS installer from build output + webui venv, removes build directory |
-| `04-run.ps1` | Launches `llama-server` from the installed distribution |
+| `02-build.ps1` | Configures and builds llama.cpp with CMake + Ninja (auto-clones repo, uses sccache if available) |
+| `02-build-webui.ps1` | Clones Open WebUI from GitHub, builds Svelte frontend with Node.js, installs from source into Python venv |
+| `03-package.ps1` | Creates NSIS installer from build output + Open WebUI venv |
+| `04-run.ps1` | Launches `llama-server` from the installed distribution, auto-starts Open WebUI if installed |
 | `common.ps1` | Shared bootstrap (loads config, activates VS Dev Shell, sets up ROCm) |
+
+## Open WebUI
+
+`02-build-webui.ps1` builds [Open WebUI](https://github.com/open-webui/open-webui) from source:
+
+1. Clones/pulls the repo (path from `OpenWebUIDir` in config, default `.\open-webui`)
+2. Ensures compatible Node.js 18-22 (uses [fnm](https://github.com/Schniz/fnm) to install if system version is incompatible)
+3. Builds the Svelte frontend (`npm install` + `npm run build`), skips if already built for current commit
+4. Creates a Python 3.11/3.12 venv and installs Open WebUI from source
+5. Automatically recreates the venv when the repo is updated
+
+`04-run.ps1` auto-starts Open WebUI on port 3000 alongside llama-server if it was installed. A Windows Job Object ensures all child processes are terminated on exit.
 
 ## Packaging
 
-`03-package.ps1` creates a Windows installer (`dist\llama-cpp-<version>-win64-setup.exe`) using NSIS. The installer:
+`03-package.ps1` creates a Windows installer (`dist\llama_cpp-<version>-webui-<version>-win64-setup.exe`) using NSIS. The installer:
 
-- Installs binaries to `C:\Program Files\llama.cpp`
+- Installs llama.cpp binaries to `C:\Program Files\llama.cpp`
+- Optionally installs Open WebUI to `C:\Program Files\Open WebUI` (self-contained Python venv)
 - Optionally adds `bin\` to the system PATH
-- Optionally includes Open WebUI (self-contained Python venv)
 - Creates Start Menu shortcuts for `llama-server`, `llama-cli`, and Open WebUI
 - Supports upgrades (detects and uninstalls the previous version)
 - Includes a full uninstaller (accessible from Add/Remove Programs)
