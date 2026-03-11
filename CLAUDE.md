@@ -11,12 +11,17 @@ Windows-only PowerShell scripts to install prerequisites, configure, build, and 
 - `common.ps1` — shared bootstrap: loads config, activates VS Dev Shell, sets up ROCm PATH.
 - `00-install-prerequisites.ps1` — installs OpenSSL, CUDA, Vulkan SDK, AMD HIP via winget. Self-elevates via UAC.
 - `01-configure.ps1` — auto-detects paths, verifies tools, writes `config.psd1`. Accepts `-LlamaCppDir` param (defaults to `.\build`).
-- `02-build.ps1` — CMake configure + build with Ninja.
-- `03-run.ps1` — launches `llama-server` with settings from config.
+- `02-build.ps1` — CMake configure + build with Ninja. Uses sccache if available. Build output in `.\build\` (gitignored).
+- `02-build-webui.ps1` — clones Open WebUI from GitHub, builds frontend (Node.js), installs from source into Python venv (`webui-venv/`, gitignored). Repo path from `config.psd1` (`OpenWebUIDir`).
+- `03-package.ps1` — creates NSIS installer from build output + webui venv, then removes the build directory.
+- `04-run.ps1` — launches `llama-server` from the installed distribution (reads install path from registry).
+- `llama-cpp.nsi.template` — NSIS installer template with placeholders replaced by `03-package.ps1`.
 
 ## Key conventions
 
-- All scripts dot-source `common.ps1` (except `00-install-prerequisites.ps1` and `01-configure.ps1`).
+- All scripts dot-source `common.ps1` (except `00-install-prerequisites.ps1`, `01-configure.ps1`, and `02-build-webui.ps1` which loads config directly).
 - `common.ps1` activates VS Dev Shell and restores the working directory after.
 - Config values use single-quoted strings in `.psd1` (no backslash escaping needed).
-- Build output goes to `.\build\` (gitignored).
+- Build output goes to `.\build\` (gitignored), removed after packaging.
+- The installer registers in `HKLM\Software\llama.cpp` and supports upgrades (uninstalls previous version first).
+- sccache is auto-detected; cache stored in `.sccache/` (gitignored).

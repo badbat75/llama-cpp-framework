@@ -5,6 +5,7 @@
     HipPath      = "C:\Program Files\AMD\ROCm\7.1"
     VsDevShell   = "C:\Program Files\Microsoft Visual Studio\18\Community\Common7\Tools\Launch-VsDevShell.ps1"
     CacheDir     = "E:\llama.cpp\models"
+    OpenWebUIDir = ".\open-webui"
 
     # Build settings
     GpuTargets   = "gfx900;gfx906;gfx908;gfx90a;gfx942;gfx950;gfx1030;gfx1100;gfx1101;gfx1102;gfx1200;gfx1201"

@@ -1,0 +1,162 @@
+; llama.cpp NSIS Installer Template
+; Placeholders replaced by 03-package.ps1:
+;   @VERSION@, @STAGING_DIR@, @WEBUI_DIR@, @OUTPUT_FILE@
+
+!include "MUI2.nsh"
+!include "WinMessages.nsh"
+
+; ── Installer metadata ──────────────────────────────────────────────
+Name "llama.cpp @VERSION@"
+OutFile "@OUTPUT_FILE@"
+InstallDir "$PROGRAMFILES64\llama.cpp"
+InstallDirRegKey HKLM "Software\llama.cpp" "InstallDir"
+RequestExecutionLevel admin
+SetCompressor zlib
+
+; ── MUI pages ───────────────────────────────────────────────────────
+!define MUI_ICON "${NSISDIR}\Contrib\Graphics\Icons\modern-install.ico"
+!define MUI_UNICON "${NSISDIR}\Contrib\Graphics\Icons\modern-uninstall.ico"
+
+!insertmacro MUI_PAGE_WELCOME
+Page custom CheckPreviousInstall
+!insertmacro MUI_PAGE_DIRECTORY
+!insertmacro MUI_PAGE_COMPONENTS
+!insertmacro MUI_PAGE_INSTFILES
+!insertmacro MUI_PAGE_FINISH
+
+!insertmacro MUI_UNPAGE_CONFIRM
+!insertmacro MUI_UNPAGE_INSTFILES
+
+!insertmacro MUI_LANGUAGE "English"
+
+; ── Upgrade: remove previous installation silently ──────────────────
+Function CheckPreviousInstall
+    ReadRegStr $0 HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\llama.cpp" "UninstallString"
+    StrCmp $0 "" done
+
+    ReadRegStr $1 HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\llama.cpp" "DisplayVersion"
+    MessageBox MB_YESNO|MB_ICONQUESTION \
+        "llama.cpp $1 is already installed.$\n$\nUninstall the previous version before continuing?" \
+        IDYES uninstall
+
+    ; User chose No — abort
+    Abort
+
+    uninstall:
+        ; Strip quotes from UninstallString
+        StrCpy $2 $0 "" 1   ; remove first char (quote)
+        StrLen $3 $2
+        IntOp $3 $3 - 1
+        StrCpy $2 $2 $3     ; remove last char (quote)
+        ExecWait '"$2" /S _?=$INSTDIR'
+        Delete "$INSTDIR\uninstall.exe"
+        RMDir "$INSTDIR"
+    done:
+FunctionEnd
+
+; ── Main section: binaries ──────────────────────────────────────────
+Section "llama.cpp binaries (required)" SecMain
+    SectionIn RO
+
+    SetOutPath "$INSTDIR\bin"
+    File /r "@STAGING_DIR@\bin\*.*"
+
+    SetOutPath "$INSTDIR\lib"
+    File /nonfatal /r "@STAGING_DIR@\lib\*.*"
+
+    ; Uninstaller
+    WriteUninstaller "$INSTDIR\uninstall.exe"
+
+    ; Registry — Add/Remove Programs
+    WriteRegStr HKLM "Software\llama.cpp" "InstallDir" "$INSTDIR"
+    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\llama.cpp" \
+        "DisplayName" "llama.cpp @VERSION@"
+    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\llama.cpp" \
+        "UninstallString" "$\"$INSTDIR\uninstall.exe$\""
+    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\llama.cpp" \
+        "DisplayVersion" "@VERSION@"
+    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\llama.cpp" \
+        "Publisher" "llama.cpp"
+    WriteRegDWORD HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\llama.cpp" \
+        "NoModify" 1
+    WriteRegDWORD HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\llama.cpp" \
+        "NoRepair" 1
+SectionEnd
+
+; ── Optional: Add to PATH ──────────────────────────────────────────
+Section "Add to system PATH" SecPath
+    ; Use PowerShell to safely append to PATH (idempotent)
+    nsExec::ExecToLog 'powershell -NoProfile -Command "\
+        $$regKey = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey(\
+            \"SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment\", $$true);\
+        $$path = $$regKey.GetValue(\"Path\", \"\", \"DoNotExpandEnvironmentNames\");\
+        $$dir = \"$INSTDIR\\bin\";\
+        if ($$path -notlike \"*$$dir*\") {\
+            $$regKey.SetValue(\"Path\", \"$$path;$$dir\", \"ExpandString\");\
+        };\
+        $$regKey.Close()"'
+    ; Broadcast WM_SETTINGCHANGE so new shells pick up the change
+    SendMessage ${HWND_BROADCAST} ${WM_SETTINGCHANGE} 0 "STR:Environment" /TIMEOUT=5000
+SectionEnd
+
+; ── Optional: Open WebUI ───────────────────────────────────────────
+Section "Open WebUI" SecWebUI
+    SetOutPath "$PROGRAMFILES64\Open WebUI"
+    File /nonfatal /r "@WEBUI_DIR@\*.*"
+    WriteRegStr HKLM "Software\llama.cpp" "WebUIDir" "$PROGRAMFILES64\Open WebUI"
+SectionEnd
+
+; ── Optional: Start Menu shortcuts ─────────────────────────────────
+Section "Start Menu shortcuts" SecShortcuts
+    CreateDirectory "$SMPROGRAMS\llama.cpp"
+    CreateShortCut "$SMPROGRAMS\llama.cpp\llama-server.lnk" "$INSTDIR\bin\llama-server.exe"
+    CreateShortCut "$SMPROGRAMS\llama.cpp\llama-cli.lnk" "$INSTDIR\bin\llama-cli.exe"
+    ; Open WebUI shortcut (only if webui was installed)
+    IfFileExists "$PROGRAMFILES64\Open WebUI\Scripts\open-webui.exe" 0 +2
+        CreateShortCut "$SMPROGRAMS\llama.cpp\Open WebUI.lnk" \
+            "$PROGRAMFILES64\Open WebUI\Scripts\open-webui.exe" "serve --port 3000"
+    CreateShortCut "$SMPROGRAMS\llama.cpp\Uninstall.lnk" "$INSTDIR\uninstall.exe"
+    ; Notify shell that Start Menu changed
+    System::Call 'shell32::SHChangeNotify(i 0x08000000, i 0x1000, p 0, p 0)'
+SectionEnd
+
+; ── Section descriptions ────────────────────────────────────────────
+!insertmacro MUI_FUNCTION_DESCRIPTION_BEGIN
+    !insertmacro MUI_DESCRIPTION_TEXT ${SecMain} "Core llama.cpp executables and libraries."
+    !insertmacro MUI_DESCRIPTION_TEXT ${SecPath} "Add llama.cpp bin directory to system PATH."
+    !insertmacro MUI_DESCRIPTION_TEXT ${SecWebUI} "Open WebUI — web frontend for llama.cpp (Python venv, ~1 GB)."
+    !insertmacro MUI_DESCRIPTION_TEXT ${SecShortcuts} "Create Start Menu shortcuts."
+!insertmacro MUI_FUNCTION_DESCRIPTION_END
+
+; ── Uninstaller ─────────────────────────────────────────────────────
+Section "Uninstall"
+    ; Remove from PATH
+    nsExec::ExecToLog 'powershell -NoProfile -Command "\
+        $$regKey = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey(\
+            \"SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment\", $$true);\
+        $$path = $$regKey.GetValue(\"Path\", \"\", \"DoNotExpandEnvironmentNames\");\
+        $$dir = \"$INSTDIR\\bin\";\
+        $$newPath = ($$path -split \";\" | Where-Object { $$_ -ne $$dir }) -join \";\";\
+        $$regKey.SetValue(\"Path\", $$newPath, \"ExpandString\");\
+        $$regKey.Close()"'
+    SendMessage ${HWND_BROADCAST} ${WM_SETTINGCHANGE} 0 "STR:Environment" /TIMEOUT=5000
+
+    ; Files
+    RMDir /r "$INSTDIR\bin"
+    RMDir /r "$INSTDIR\lib"
+    Delete "$INSTDIR\uninstall.exe"
+    RMDir "$INSTDIR"
+
+    ; Open WebUI (separate directory)
+    ReadRegStr $0 HKLM "Software\llama.cpp" "WebUIDir"
+    StrCmp $0 "" +2
+        RMDir /r $0
+
+    ; Start Menu
+    Delete "$SMPROGRAMS\llama.cpp\*.lnk"
+    RMDir "$SMPROGRAMS\llama.cpp"
+
+    ; Registry
+    DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\llama.cpp"
+    DeleteRegKey HKLM "Software\llama.cpp"
+SectionEnd

@@ -149,6 +149,12 @@ $detected.CacheDir = $val
 if ($val) { Write-Host "  [OK] CacheDir       : $val" -ForegroundColor Green }
 else      { Write-Host "  [--] CacheDir       : not found (will use default LLAMA_CACHE)" -ForegroundColor Yellow }
 
+# OpenWebUIDir: default to .\open-webui
+$openWebUIDir = "$PSScriptRoot\open-webui"
+$val = (Resolve-Path $openWebUIDir -ErrorAction SilentlyContinue)?.Path ?? $openWebUIDir
+$detected.OpenWebUIDir = $val
+Write-Host "  [OK] OpenWebUIDir   : $val" -ForegroundColor Green
+
 Write-Host ""
 
 # --- Tools (detected AFTER VS Dev Shell activation) ---
@@ -211,6 +217,7 @@ $paths = [ordered]@{
     HipPath     = @{ Val = $detected.HipPath;     Placeholder = 'TODO: path to ROCm' }
     VsDevShell  = @{ Val = $detected.VsDevShell;  Placeholder = 'TODO: path to Launch-VsDevShell.ps1' }
     CacheDir    = @{ Val = $detected.CacheDir;    Placeholder = 'TODO: path to model cache' }
+    OpenWebUIDir = @{ Val = $detected.OpenWebUIDir; Placeholder = 'TODO: path to Open WebUI source' }
 }
 
 $lines.Add('    # Paths')
