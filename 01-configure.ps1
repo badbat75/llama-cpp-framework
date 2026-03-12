@@ -206,6 +206,7 @@ $lines.Add('@{')
 function Fmt($val) {
     if ($val -is [bool])   { if ($val) { return '$true' } else { return '$false' } }
     if ($val -is [int])    { return "$val" }
+    if ($val -is [double])  { return "$val" }
     if ($val -is [string]) { return "'$($val -replace "'", "''" )'" }
     return "'$val'"
 }
@@ -243,6 +244,11 @@ $settings = [ordered]@{
     CacheTypeV  = "q8_0"
     FlashAttn   = $true
     Jinja       = $true
+    Temp        = 0.7
+    TopK        = [int]20
+    TopP        = 0.95
+    PresencePenalty = 1.5
+    ChatTemplateKwargs = '{"enable_thinking":true}'
 }
 
 # Preserve existing non-path settings if config already exists
@@ -267,7 +273,7 @@ foreach ($key in @('GpuTargets','BuildType','CCompiler','CxxCompiler','MarchFlag
 
 $lines.Add('')
 $lines.Add('    # Runtime settings')
-foreach ($key in @('Model','Port','CtxSize','GpuLayers','Parallel','CacheTypeK','CacheTypeV','FlashAttn','Jinja')) {
+foreach ($key in @('Model','Port','CtxSize','GpuLayers','Parallel','CacheTypeK','CacheTypeV','FlashAttn','Jinja','Temp','TopK','TopP','PresencePenalty','ChatTemplateKwargs')) {
     $lines.Add("    $($key.PadRight(12)) = $(Fmt $settings[$key])")
 }
 

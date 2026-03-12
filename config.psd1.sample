@@ -25,4 +25,9 @@
     CacheTypeV   = "q8_0"
     FlashAttn    = $true
     Jinja        = $true
+    Temp         = 0.7
+    TopK         = 20
+    TopP         = 0.95
+    PresencePenalty = 1.5
+    ChatTemplateKwargs = '{"enable_thinking":true}'
 }

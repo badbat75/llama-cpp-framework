@@ -30,6 +30,13 @@ $serverArgs = @(
 if ($cfg.FlashAttn) { $serverArgs += "-fa", "on" }
 if ($cfg.Jinja)     { $serverArgs += "--jinja" }
 
+# Sampling parameters (only passed when explicitly set in config)
+if ($null -ne $cfg.Temp)            { $serverArgs += "--temp", $cfg.Temp }
+if ($null -ne $cfg.TopK)            { $serverArgs += "--top-k", $cfg.TopK }
+if ($null -ne $cfg.TopP)            { $serverArgs += "--top-p", $cfg.TopP }
+if ($null -ne $cfg.PresencePenalty) { $serverArgs += "--presence-penalty", $cfg.PresencePenalty }
+if ($null -ne $cfg.ChatTemplateKwargs) { $serverArgs += "--chat-template-kwargs", $cfg.ChatTemplateKwargs }
+
 # CPU threads for offloaded layers: all cores -2 if >8 cores, otherwise all -1
 $cpuCores = [Environment]::ProcessorCount
 $threads = if ($cpuCores -gt 8) { $cpuCores - 2 } else { $cpuCores - 1 }
