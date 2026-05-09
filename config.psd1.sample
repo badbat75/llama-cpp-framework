@@ -16,10 +16,17 @@
     BuildJobs    = 0  # 0 = all cores
 
     # Runtime settings
+    # Model: HF spec ("user/repo[:tag]") or local file path. 04-run.ps1 picks
+    #        -hf vs -m automatically based on whether the value is a local file.
     Model        = "unsloth/Qwen3.5-35B-A3B-GGUF:UD-Q4_K_XL"
     Port         = 8080
     CtxSize      = 65536
     GpuLayers    = 99
+    # NCpuMoe: optional, MoE models only — keep N expert layers on CPU instead
+    #          of offloading to GPU. Useful when GPU VRAM is tight.
+    # NCpuMoe    = 28
+    # Threads:   optional override of auto-detection (cores-2 if >8, else cores-1).
+    # Threads    = 12
     Parallel     = 1
     CacheTypeK   = "q8_0"
     CacheTypeV   = "q8_0"
@@ -28,6 +35,8 @@
     Temp         = 0.7
     TopK         = 20
     TopP         = 0.95
+    # RepeatPenalty: optional, defaults to llama.cpp's built-in (1.0 = off).
+    # RepeatPenalty = 1.05
     PresencePenalty = 1.5
     ChatTemplateKwargs = '{"enable_thinking":true}'
 }

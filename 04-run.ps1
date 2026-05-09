@@ -17,8 +17,14 @@ if (-not (Test-Path $serverExe)) {
     throw "llama-server.exe not found at $serverExe. Install llama.cpp first (run 04-package.ps1 then install)."
 }
 
-$serverArgs = @(
-    "-hf", $cfg.Model
+# Auto-detect whether Model is a local file path or a HF repo spec
+$modelArgs = if (Test-Path -LiteralPath $cfg.Model) {
+    @("-m", $cfg.Model)
+} else {
+    @("-hf", $cfg.Model)
+}
+
+$serverArgs = $modelArgs + @(
     "--cache-type-k", $cfg.CacheTypeK
     "--cache-type-v", $cfg.CacheTypeV
     "-np", $cfg.Parallel
@@ -30,16 +36,24 @@ $serverArgs = @(
 if ($cfg.FlashAttn) { $serverArgs += "-fa", "on" }
 if ($cfg.Jinja)     { $serverArgs += "--jinja" }
 
+# Optional: MoE-specific — keep N expert layers on CPU instead of GPU
+if ($null -ne $cfg.NCpuMoe) { $serverArgs += "--n-cpu-moe", $cfg.NCpuMoe }
+
 # Sampling parameters (only passed when explicitly set in config)
 if ($null -ne $cfg.Temp)            { $serverArgs += "--temp", $cfg.Temp }
 if ($null -ne $cfg.TopK)            { $serverArgs += "--top-k", $cfg.TopK }
 if ($null -ne $cfg.TopP)            { $serverArgs += "--top-p", $cfg.TopP }
+if ($null -ne $cfg.RepeatPenalty)   { $serverArgs += "--repeat-penalty", $cfg.RepeatPenalty }
 if ($null -ne $cfg.PresencePenalty) { $serverArgs += "--presence-penalty", $cfg.PresencePenalty }
 if ($null -ne $cfg.ChatTemplateKwargs) { $serverArgs += "--chat-template-kwargs", $cfg.ChatTemplateKwargs }
 
-# CPU threads for offloaded layers: all cores -2 if >8 cores, otherwise all -1
-$cpuCores = [Environment]::ProcessorCount
-$threads = if ($cpuCores -gt 8) { $cpuCores - 2 } else { $cpuCores - 1 }
+# CPU threads: explicit Threads overrides auto-detection (cores-2 if >8, else cores-1)
+$threads = if ($null -ne $cfg.Threads) {
+    $cfg.Threads
+} else {
+    $cpuCores = [Environment]::ProcessorCount
+    if ($cpuCores -gt 8) { $cpuCores - 2 } else { $cpuCores - 1 }
+}
 $serverArgs += "-t", $threads
 
 # ── Start Open WebUI if installed ────────────────────────────────────
