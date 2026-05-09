@@ -145,6 +145,11 @@ if ($lastBuildCommit -eq $currentCommit.Trim()) {
     npm install --legacy-peer-deps
     if ($LASTEXITCODE -ne 0) { throw "npm install failed" }
 
+    # bits-ui declares @internationalized/date as a peer dep; --legacy-peer-deps skips it,
+    # causing Rollup to fail with "could not resolve @internationalized/date".
+    npm install --no-save --legacy-peer-deps "@internationalized/date@^3.8.1"
+    if ($LASTEXITCODE -ne 0) { throw "npm install of @internationalized/date failed" }
+
     Write-Host "Building frontend..." -ForegroundColor Cyan
     npm run build
     if ($LASTEXITCODE -ne 0) { throw "npm run build failed" }
