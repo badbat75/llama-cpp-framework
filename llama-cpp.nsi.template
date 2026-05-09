@@ -12,6 +12,9 @@ InstallDir "$PROGRAMFILES64\llama.cpp"
 InstallDirRegKey HKLM "Software\llama.cpp" "InstallDir"
 RequestExecutionLevel admin
 SetCompressor zlib
+; Write to the native 64-bit registry view, not Wow6432Node — otherwise
+; PowerShell reading HKLM:\Software\llama.cpp can't find our keys.
+SetRegView 64
 
 ; ── MUI pages ───────────────────────────────────────────────────────
 !define MUI_ICON "${NSISDIR}\Contrib\Graphics\Icons\modern-install.ico"
@@ -109,12 +112,19 @@ SectionEnd
 ; ── Optional: Start Menu shortcuts ─────────────────────────────────
 Section "Start Menu shortcuts" SecShortcuts
     CreateDirectory "$SMPROGRAMS\llama.cpp"
+    SetOutPath "$INSTDIR\bin"
     CreateShortCut "$SMPROGRAMS\llama.cpp\llama-server.lnk" "$INSTDIR\bin\llama-server.exe"
     CreateShortCut "$SMPROGRAMS\llama.cpp\llama-cli.lnk" "$INSTDIR\bin\llama-cli.exe"
-    ; Open WebUI shortcut (only if webui was installed)
-    IfFileExists "$PROGRAMFILES64\Open WebUI\Scripts\open-webui.exe" 0 +2
-        CreateShortCut "$SMPROGRAMS\llama.cpp\Open WebUI.lnk" \
-            "$PROGRAMFILES64\Open WebUI\Scripts\open-webui.exe" "serve --port 3000"
+    ; Open WebUI shortcut (only if webui was installed).
+    ; SetOutPath also becomes the shortcut's WorkingDirectory — point it at a
+    ; writable per-user data dir so first-run files (.webui_secret_key, db) don't
+    ; land in System32. Single-line CreateShortCut: the \-continuation form gets
+    ; the link path but no target, leaving a blank .lnk.
+    IfFileExists "$PROGRAMFILES64\Open WebUI\Scripts\open-webui.exe" 0 SkipWebUIShortcut
+        SetOutPath "$LOCALAPPDATA\Open WebUI"
+        CreateShortCut "$SMPROGRAMS\llama.cpp\Open WebUI.lnk" "$PROGRAMFILES64\Open WebUI\Scripts\open-webui.exe" "serve --port 3000"
+    SkipWebUIShortcut:
+    SetOutPath "$INSTDIR"
     CreateShortCut "$SMPROGRAMS\llama.cpp\Uninstall.lnk" "$INSTDIR\uninstall.exe"
     ; Notify shell that Start Menu changed
     System::Call 'shell32::SHChangeNotify(i 0x08000000, i 0x1000, p 0, p 0)'
