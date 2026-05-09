@@ -12,9 +12,16 @@ InstallDir "$PROGRAMFILES64\llama.cpp"
 InstallDirRegKey HKLM "Software\llama.cpp" "InstallDir"
 RequestExecutionLevel admin
 SetCompressor zlib
+
 ; Write to the native 64-bit registry view, not Wow6432Node — otherwise
-; PowerShell reading HKLM:\Software\llama.cpp can't find our keys.
-SetRegView 64
+; PowerShell reading HKLM:\Software\llama.cpp can't find our keys. Must be
+; called from within a Function (not at top-level), so apply it in onInit.
+Function .onInit
+    SetRegView 64
+FunctionEnd
+Function un.onInit
+    SetRegView 64
+FunctionEnd
 
 ; ── MUI pages ───────────────────────────────────────────────────────
 !define MUI_ICON "${NSISDIR}\Contrib\Graphics\Icons\modern-install.ico"
