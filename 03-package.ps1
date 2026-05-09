@@ -54,6 +54,11 @@ if (Test-Path "$webuiVenv\Scripts\open-webui.exe") {
     $venvPython = Join-Path $webuiVenv "Scripts\python.exe"
     $webuiVersion = & $venvPython -c "import importlib.metadata; print(importlib.metadata.version('open-webui'))" 2>$null
     Write-Host "Open WebUI: $webuiVersion ($webuiVenv)" -ForegroundColor Cyan
+
+    # Bundle the relocate script alongside the venv so the installer can patch
+    # Scripts\*.exe shebangs to the install path after copying. Re-copied each
+    # time because 02-build-webui.ps1 wipes the venv on upstream updates.
+    Copy-Item "$PSScriptRoot\relocate-venv.py" -Destination "$webuiVenv\relocate-venv.py" -Force
 } else {
     $webuiVenv = ""
     Write-Host "Open WebUI venv not found — skipping (run 02-build-webui.ps1 first)" -ForegroundColor DarkGray

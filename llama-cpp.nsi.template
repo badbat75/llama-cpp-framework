@@ -107,6 +107,11 @@ Section "Open WebUI" SecWebUI
     SetOutPath "$PROGRAMFILES64\Open WebUI"
     File /nonfatal /r "@WEBUI_DIR@\*.*"
     WriteRegStr HKLM "Software\llama.cpp" "WebUIDir" "$PROGRAMFILES64\Open WebUI"
+    ; Patch Scripts\*.exe launcher shebangs and pyvenv.cfg from the build path
+    ; ($PSScriptRoot\webui-venv) to the install path. Without this, launchers
+    ; reference a path that won't exist on the target machine.
+    DetailPrint "Relocating Open WebUI venv..."
+    nsExec::ExecToLog '"$PROGRAMFILES64\Open WebUI\Scripts\python.exe" "$PROGRAMFILES64\Open WebUI\relocate-venv.py"'
 SectionEnd
 
 ; ── Optional: Start Menu shortcuts ─────────────────────────────────
