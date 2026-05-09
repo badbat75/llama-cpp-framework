@@ -1,4 +1,9 @@
-# Run llama-server from the installed distribution
+# Run llama-server from the installed distribution.
+# By default starts llama-server only; pass -WithWebUI to also launch Open WebUI.
+[CmdletBinding()]
+param(
+    [switch]$WithWebUI
+)
 
 . "$PSScriptRoot\common.ps1"  # loads $cfg, activates VS Dev Shell + ROCm
 
@@ -56,16 +61,19 @@ $threads = if ($null -ne $cfg.Threads) {
 }
 $serverArgs += "-t", $threads
 
-# ── Start Open WebUI if installed ────────────────────────────────────
-# Look for Open WebUI in its dedicated install directory
-$webuiDir = $null
-if (Test-Path $regPath) {
-    $webuiDir = (Get-ItemProperty $regPath).WebUIDir
-}
-if (-not $webuiDir) { $webuiDir = "${env:ProgramFiles}\Open WebUI" }
-$webuiExe = Join-Path $webuiDir "Scripts\open-webui.exe"
+# ── Start Open WebUI if requested and installed ──────────────────────
 $webuiJobObj = $null
-if (Test-Path $webuiExe) {
+if ($WithWebUI) {
+    # Look for Open WebUI in its dedicated install directory
+    $webuiDir = $null
+    if (Test-Path $regPath) {
+        $webuiDir = (Get-ItemProperty $regPath).WebUIDir
+    }
+    if (-not $webuiDir) { $webuiDir = "${env:ProgramFiles}\Open WebUI" }
+    $webuiExe = Join-Path $webuiDir "Scripts\open-webui.exe"
+    if (-not (Test-Path $webuiExe)) {
+        Write-Host "Open WebUI not found at $webuiExe — skipping (install via 03-package.ps1)" -ForegroundColor Yellow
+    } else {
     Write-Host "Starting Open WebUI on port 3000..." -ForegroundColor Cyan
     $env:OPENAI_API_BASE_URL = "http://localhost:$($cfg.Port)/v1"
 
@@ -110,11 +118,12 @@ public class JobObject : IDisposable {
 }
 "@ -ErrorAction SilentlyContinue
 
-    $webuiJobObj = New-Object JobObject
-    $webuiProc = Start-Process -FilePath $webuiExe -ArgumentList "serve","--port","3000" `
-        -PassThru -WindowStyle Minimized
-    $webuiJobObj.AddProcess($webuiProc.Handle)
-    Write-Host "Open WebUI: http://localhost:3000" -ForegroundColor Green
+        $webuiJobObj = New-Object JobObject
+        $webuiProc = Start-Process -FilePath $webuiExe -ArgumentList "serve","--port","3000" `
+            -PassThru -WindowStyle Minimized
+        $webuiJobObj.AddProcess($webuiProc.Handle)
+        Write-Host "Open WebUI: http://localhost:3000" -ForegroundColor Green
+    }
 }
 
 # ── Cleanup function ────────────────────────────────────────────────
