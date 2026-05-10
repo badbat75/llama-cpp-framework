@@ -20,6 +20,7 @@
     #        -hf vs -m automatically based on whether the value is a local file.
     Model        = "unsloth/Qwen3.5-35B-A3B-GGUF:UD-Q4_K_XL"
     Port         = 8080
+    Hostname     = "localhost"
     CtxSize      = 65536
     GpuLayers    = 99
     # NCpuMoe: optional, MoE models only — keep N expert layers on CPU instead
@@ -38,5 +39,8 @@
     # RepeatPenalty: optional, defaults to llama.cpp's built-in (1.0 = off).
     # RepeatPenalty = 1.05
     PresencePenalty = 1.5
+    # Mlock: optional, locks model in RAM to prevent paging. Recommended on
+    #        workstations with enough RAM to hold the full model.
+    # Mlock      = $true
     ChatTemplateKwargs = '{"enable_thinking":true}'
 }

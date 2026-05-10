@@ -1,15 +1,42 @@
-# Run llama-server from the installed distribution.
+# Run llama-server from the installed distribution (dev launcher).
 # By default starts llama-server only; pass -WithWebUI to also launch Open WebUI.
 [CmdletBinding()]
 param(
     [switch]$WithWebUI
 )
 
-. "$PSScriptRoot\common.ps1"  # loads $cfg, activates VS Dev Shell + ROCm
+. "$PSScriptRoot\common.ps1"  # activates VS Dev Shell + ROCm; loads dev $cfg from repo
 
-$env:LLAMA_CACHE = $cfg.CacheDir
+$resourcesDir = Join-Path $PSScriptRoot "resources"
+$configDir    = Join-Path $env:LOCALAPPDATA "llama.cpp\config"
+$serverPath   = Join-Path $configDir "server.psd1"
+$modelsRoot   = Join-Path $configDir "models"
+$webuiPath    = Join-Path $configDir "webui.psd1"
 
-# Look for llama-server in the installed location (Program Files)
+# ── server.psd1 + active model ──────────────────────────────────────
+if (-not (Test-Path $serverPath)) {
+    & (Join-Path $resourcesDir "config-server.ps1")
+    if (-not (Test-Path $serverPath)) { throw "server.psd1 was not created. Aborting." }
+}
+$srv = Import-PowerShellDataFile -Path $serverPath
+
+if (-not $srv.ActiveModel) {
+    & (Join-Path $resourcesDir "config-model.ps1")
+    $srv = Import-PowerShellDataFile -Path $serverPath
+    if (-not $srv.ActiveModel) { throw "No active model configured. Aborting." }
+}
+$modelCfgPath = Join-Path $modelsRoot "$($srv.ActiveModel).psd1"
+if (-not (Test-Path $modelCfgPath)) {
+    & (Join-Path $resourcesDir "config-model.ps1")
+    $srv = Import-PowerShellDataFile -Path $serverPath
+    $modelCfgPath = Join-Path $modelsRoot "$($srv.ActiveModel).psd1"
+    if (-not (Test-Path $modelCfgPath)) { throw "Model config still missing. Aborting." }
+}
+$mdl = Import-PowerShellDataFile -Path $modelCfgPath
+
+if ($srv.ModelsDir) { $env:LLAMA_CACHE = $srv.ModelsDir }
+
+# ── Locate llama-server (installed distribution preferred) ──────────
 $installDir = $null
 $regPath = "HKLM:\Software\llama.cpp"
 if (Test-Path $regPath) {
@@ -19,42 +46,47 @@ if (-not $installDir) { $installDir = "${env:ProgramFiles}\llama.cpp" }
 
 $serverExe = Join-Path $installDir "bin\llama-server.exe"
 if (-not (Test-Path $serverExe)) {
-    throw "llama-server.exe not found at $serverExe. Install llama.cpp first (run 04-package.ps1 then install)."
+    # Fall back to the local build dir (dev mode pre-install)
+    $serverExe = Join-Path $PSScriptRoot "build\bin\llama-server.exe"
+    if (-not (Test-Path $serverExe)) {
+        throw "llama-server.exe not found. Build with 02-build.ps1 or install via 03-package.ps1."
+    }
 }
 
-# Auto-detect whether Model is a local file path or a HF repo spec
-$modelArgs = if (Test-Path -LiteralPath $cfg.Model) {
-    @("-m", $cfg.Model)
+# ── Build server arguments ──────────────────────────────────────────
+$modelArgs = if (Test-Path -LiteralPath $mdl.Model) {
+    @("-m", $mdl.Model)
 } else {
-    @("-hf", $cfg.Model)
+    @("-hf", $mdl.Model)
 }
+
+$hostname = if ($null -ne $srv.Hostname) { $srv.Hostname } else { "localhost" }
 
 $serverArgs = $modelArgs + @(
-    "--cache-type-k", $cfg.CacheTypeK
-    "--cache-type-v", $cfg.CacheTypeV
-    "-np", $cfg.Parallel
-    "-ngl", $cfg.GpuLayers
-    "--ctx-size", $cfg.CtxSize
-    "--port", $cfg.Port
+    "--cache-type-k", $mdl.CacheTypeK
+    "--cache-type-v", $mdl.CacheTypeV
+    "-np", $mdl.Parallel
+    "-ngl", $mdl.GpuLayers
+    "--ctx-size", $mdl.CtxSize
+    "--port", $srv.Port
+    "--host", $hostname
 )
 
-if ($cfg.FlashAttn) { $serverArgs += "-fa", "on" }
-if ($cfg.Jinja)     { $serverArgs += "--jinja" }
+if ($mdl.FlashAttn) { $serverArgs += "-fa", "on" }
+if ($mdl.Jinja)     { $serverArgs += "--jinja" }
+if ($srv.Mlock)     { $serverArgs += "--mlock" }
 
-# Optional: MoE-specific — keep N expert layers on CPU instead of GPU
-if ($null -ne $cfg.NCpuMoe) { $serverArgs += "--n-cpu-moe", $cfg.NCpuMoe }
+if ($null -ne $mdl.NCpuMoe) { $serverArgs += "--n-cpu-moe", $mdl.NCpuMoe }
 
-# Sampling parameters (only passed when explicitly set in config)
-if ($null -ne $cfg.Temp)            { $serverArgs += "--temp", $cfg.Temp }
-if ($null -ne $cfg.TopK)            { $serverArgs += "--top-k", $cfg.TopK }
-if ($null -ne $cfg.TopP)            { $serverArgs += "--top-p", $cfg.TopP }
-if ($null -ne $cfg.RepeatPenalty)   { $serverArgs += "--repeat-penalty", $cfg.RepeatPenalty }
-if ($null -ne $cfg.PresencePenalty) { $serverArgs += "--presence-penalty", $cfg.PresencePenalty }
-if ($null -ne $cfg.ChatTemplateKwargs) { $serverArgs += "--chat-template-kwargs", $cfg.ChatTemplateKwargs }
+if ($null -ne $mdl.Temp)               { $serverArgs += "--temp", $mdl.Temp }
+if ($null -ne $mdl.TopK)               { $serverArgs += "--top-k", $mdl.TopK }
+if ($null -ne $mdl.TopP)               { $serverArgs += "--top-p", $mdl.TopP }
+if ($null -ne $mdl.RepeatPenalty)      { $serverArgs += "--repeat-penalty", $mdl.RepeatPenalty }
+if ($null -ne $mdl.PresencePenalty)    { $serverArgs += "--presence-penalty", $mdl.PresencePenalty }
+if ($null -ne $mdl.ChatTemplateKwargs) { $serverArgs += "--chat-template-kwargs", $mdl.ChatTemplateKwargs }
 
-# CPU threads: explicit Threads overrides auto-detection (cores-2 if >8, else cores-1)
-$threads = if ($null -ne $cfg.Threads) {
-    $cfg.Threads
+$threads = if ($null -ne $srv.Threads) {
+    $srv.Threads
 } else {
     $cpuCores = [Environment]::ProcessorCount
     if ($cpuCores -gt 8) { $cpuCores - 2 } else { $cpuCores - 1 }
@@ -64,7 +96,6 @@ $serverArgs += "-t", $threads
 # ── Start Open WebUI if requested and installed ──────────────────────
 $webuiJobObj = $null
 if ($WithWebUI) {
-    # Look for Open WebUI in its dedicated install directory
     $webuiDir = $null
     if (Test-Path $regPath) {
         $webuiDir = (Get-ItemProperty $regPath).WebUIDir
@@ -74,11 +105,30 @@ if ($WithWebUI) {
     if (-not (Test-Path $webuiExe)) {
         Write-Host "Open WebUI not found at $webuiExe — skipping (install via 03-package.ps1)" -ForegroundColor Yellow
     } else {
-    Write-Host "Starting Open WebUI on port 3000..." -ForegroundColor Cyan
-    $env:OPENAI_API_BASE_URL = "http://localhost:$($cfg.Port)/v1"
+        if (-not (Test-Path $webuiPath)) {
+            & (Join-Path $resourcesDir "config-webui.ps1")
+        }
+        $wui = if (Test-Path $webuiPath) { Import-PowerShellDataFile -Path $webuiPath } else { @{} }
+        $wuiHost = if ($null -ne $wui.Hostname) { $wui.Hostname } else { 'localhost' }
+        $wuiPort = if ($null -ne $wui.Port)     { $wui.Port }     else { 3000 }
 
-    # Use a Windows Job Object to group all child processes so we can kill them all
-    Add-Type -TypeDefinition @"
+        Write-Host "Starting Open WebUI on ${wuiHost}:${wuiPort}..." -ForegroundColor Cyan
+        # First-run preconfig — seeds the DB; UI edits in Admin Settings persist
+        # there and override these on subsequent runs.
+        $env:OPENAI_API_BASE_URL = "http://localhost:$($srv.Port)/v1"
+        $env:OPENAI_API_KEY      = "none"
+        $env:HOST                = $wuiHost
+        $env:PYTHONUNBUFFERED    = '1'
+        $env:PYTHONIOENCODING    = 'utf-8'
+        # Force WebUI data (webui.db, vector_db/, uploads/) to a writable
+        # per-user dir. Otherwise Open WebUI falls back inside Program Files
+        # and ChromaDB crashes on the read-only install location.
+        $webuiDataDir = Join-Path $env:LOCALAPPDATA "llama.cpp\data"
+        New-Item -ItemType Directory -Path $webuiDataDir -Force | Out-Null
+        $env:DATA_DIR = $webuiDataDir
+
+        # Use a Windows Job Object to group all child processes so we can kill them all
+        Add-Type -TypeDefinition @"
 using System;
 using System.Runtime.InteropServices;
 public class JobObject : IDisposable {
@@ -119,10 +169,11 @@ public class JobObject : IDisposable {
 "@ -ErrorAction SilentlyContinue
 
         $webuiJobObj = New-Object JobObject
-        $webuiProc = Start-Process -FilePath $webuiExe -ArgumentList "serve","--port","3000" `
+        $webuiProc = Start-Process -FilePath $webuiExe -ArgumentList "serve","--port",$wuiPort `
             -PassThru -WindowStyle Minimized
         $webuiJobObj.AddProcess($webuiProc.Handle)
-        Write-Host "Open WebUI: http://localhost:3000" -ForegroundColor Green
+        $displayHost = if ($wuiHost -eq '0.0.0.0') { 'localhost' } else { $wuiHost }
+        Write-Host "Open WebUI: http://${displayHost}:${wuiPort}" -ForegroundColor Green
     }
 }
 
@@ -139,7 +190,8 @@ function Stop-WebUI {
 Register-EngineEvent PowerShell.Exiting -Action { Stop-WebUI } | Out-Null
 
 # ── Start llama-server (foreground, blocks until exit) ──────────────
-Write-Host "Starting llama-server on port $($cfg.Port)..." -ForegroundColor Cyan
+Write-Host "Active model: $($srv.ActiveModel)" -ForegroundColor DarkGray
+Write-Host "Starting llama-server on ${hostname}:$($srv.Port)..." -ForegroundColor Cyan
 try {
     & $serverExe @serverArgs
 } finally {

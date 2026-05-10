@@ -4,6 +4,8 @@
 
 !include "MUI2.nsh"
 !include "WinMessages.nsh"
+!include "LogicLib.nsh"
+!include "nsDialogs.nsh"
 
 ; ── Installer metadata ──────────────────────────────────────────────
 Name "llama.cpp @VERSION@"
@@ -13,25 +15,61 @@ InstallDirRegKey HKLM "Software\llama.cpp" "InstallDir"
 RequestExecutionLevel admin
 SetCompressor zlib
 
+; ── Variables for the install-time config pages ─────────────────────
+; Only machine-wide knobs are configured at install time. Model-dependent
+; params (CtxSize / GpuLayers / Parallel / CacheTypeK/V / FlashAttn) live in
+; per-model %LOCALAPPDATA%\llama.cpp\config\models\<id>.psd1 files and are
+; written by config-model.ps1 lazily on first run.
+Var ServerPort
+Var ServerHostname     ; "localhost" or "0.0.0.0"
+Var WebuiPort
+Var WebuiHostname
+Var WebuiUrlHost       ; "0.0.0.0" rewritten to "localhost" for the finish-page link
+
+; nsDialogs control handles (re-used per page)
+Var Dialog
+Var Hwnd
+Var ServerPortBox
+Var ServerLocalhostRadio
+Var ServerAllRadio
+Var WebuiPortBox
+Var WebuiLocalhostRadio
+Var WebuiAllRadio
+
 ; Write to the native 64-bit registry view, not Wow6432Node — otherwise
 ; PowerShell reading HKLM:\Software\llama.cpp can't find our keys. Must be
 ; called from within a Function (not at top-level), so apply it in onInit.
 Function .onInit
     SetRegView 64
+    ; Page defaults
+    StrCpy $ServerPort     "8080"
+    StrCpy $ServerHostname "localhost"
+    StrCpy $WebuiPort      "3000"
+    StrCpy $WebuiHostname  "localhost"
+    StrCpy $WebuiUrlHost   "localhost"
 FunctionEnd
 Function un.onInit
     SetRegView 64
 FunctionEnd
 
 ; ── MUI pages ───────────────────────────────────────────────────────
-!define MUI_ICON "${NSISDIR}\Contrib\Graphics\Icons\modern-install.ico"
-!define MUI_UNICON "${NSISDIR}\Contrib\Graphics\Icons\modern-uninstall.ico"
+!define MUI_ICON "@STAGING_DIR@\llama.ico"
+!define MUI_UNICON "@STAGING_DIR@\llama.ico"
 
 !insertmacro MUI_PAGE_WELCOME
 Page custom CheckPreviousInstall
 !insertmacro MUI_PAGE_DIRECTORY
 !insertmacro MUI_PAGE_COMPONENTS
+Page custom ServerConfigPage ServerConfigPageLeave
+Page custom WebuiConfigPage WebuiConfigPageLeave
 !insertmacro MUI_PAGE_INSTFILES
+
+; Clickable link on the finish page → opens Open WebUI in the default browser
+; with the hostname/port chosen on the install-time page. Hidden after install
+; if Open WebUI wasn't selected (see FinishPageShow below).
+!define MUI_FINISHPAGE_LINK "Open Open WebUI: http://$WebuiUrlHost:$WebuiPort"
+!define MUI_FINISHPAGE_LINK_LOCATION "http://$WebuiUrlHost:$WebuiPort"
+!define MUI_PAGE_CUSTOMFUNCTION_SHOW FinishPageShow
 !insertmacro MUI_PAGE_FINISH
 
 !insertmacro MUI_UNPAGE_CONFIRM
@@ -73,6 +111,24 @@ Section "llama.cpp binaries (required)" SecMain
 
     SetOutPath "$INSTDIR\lib"
     File /nonfatal /r "@STAGING_DIR@\lib\*.*"
+
+    ; Runtime + init scripts. server.psd1 / webui.psd1 are written below from
+    ; the values collected on the install-time pages; per-model configs land
+    ; in %LOCALAPPDATA%\llama.cpp\config\models\<id>.psd1 lazily on first run
+    ; of run-model.ps1 (which invokes config-model.ps1 if ActiveModel is empty).
+    SetOutPath "$INSTDIR"
+    File "@STAGING_DIR@\run-model.ps1"
+    File "@STAGING_DIR@\start-webui.ps1"
+    File "@STAGING_DIR@\config-model.ps1"
+    File "@STAGING_DIR@\config-server.ps1"
+    File "@STAGING_DIR@\config-webui.ps1"
+    File "@STAGING_DIR@\llama.ico"
+
+    ; Write user-scope server.psd1 from the install-time page values.
+    ; config-server.ps1 -NonInteractive preserves any existing ActiveModel /
+    ; ModelsDir set by a previous install + config-model.ps1 run.
+    DetailPrint "Writing server config..."
+    nsExec::ExecToLog 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$INSTDIR\config-server.ps1" -NonInteractive -Port $ServerPort -Hostname "$ServerHostname"'
 
     ; Uninstaller
     WriteUninstaller "$INSTDIR\uninstall.exe"
@@ -119,35 +175,132 @@ Section "Open WebUI" SecWebUI
     ; reference a path that won't exist on the target machine.
     DetailPrint "Relocating Open WebUI venv..."
     nsExec::ExecToLog '"$PROGRAMFILES64\Open WebUI\Scripts\python.exe" "$PROGRAMFILES64\Open WebUI\relocate-venv.py"'
+
+    ; Write user-scope webui.psd1 from install-time page values
+    DetailPrint "Writing Open WebUI config..."
+    nsExec::ExecToLog 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$INSTDIR\config-webui.ps1" -NonInteractive -Port $WebuiPort -Hostname "$WebuiHostname"'
 SectionEnd
 
 ; ── Optional: Start Menu shortcuts ─────────────────────────────────
 Section "Start Menu shortcuts" SecShortcuts
     CreateDirectory "$SMPROGRAMS\llama.cpp"
-    SetOutPath "$INSTDIR\bin"
-    CreateShortCut "$SMPROGRAMS\llama.cpp\llama-server.lnk" "$INSTDIR\bin\llama-server.exe"
-    CreateShortCut "$SMPROGRAMS\llama.cpp\llama-cli.lnk" "$INSTDIR\bin\llama-cli.exe"
-    ; Open WebUI shortcut (only if webui was installed).
+    ; Shortcuts target pwsh.exe (PowerShell 7+) — Windows PowerShell 5.1 is not
+    ; supported by these scripts. pwsh.exe is resolved via PATH at click time.
     ; SetOutPath also becomes the shortcut's WorkingDirectory — point it at a
-    ; writable per-user data dir so first-run files (.webui_secret_key, db) don't
-    ; land in System32. Single-line CreateShortCut: the \-continuation form gets
-    ; the link path but no target, leaving a blank .lnk.
-    IfFileExists "$PROGRAMFILES64\Open WebUI\Scripts\open-webui.exe" 0 SkipWebUIShortcut
-        SetOutPath "$LOCALAPPDATA\Open WebUI"
-        CreateShortCut "$SMPROGRAMS\llama.cpp\Open WebUI.lnk" "$PROGRAMFILES64\Open WebUI\Scripts\open-webui.exe" "serve --port 3000"
-    SkipWebUIShortcut:
+    ; writable per-user data dir so first-run files (.webui_secret_key,
+    ; webui.db) don't land in Program Files.
+    SetOutPath "$LOCALAPPDATA\llama.cpp"
+    CreateShortCut "$SMPROGRAMS\llama.cpp\llama.cpp.lnk" "pwsh.exe" "-NoProfile -NoExit -ExecutionPolicy Bypass -File $\"$INSTDIR\run-model.ps1$\"" "$INSTDIR\llama.ico"
+    CreateShortCut "$SMPROGRAMS\llama.cpp\Configure model.lnk" "pwsh.exe" "-NoProfile -NoExit -ExecutionPolicy Bypass -File $\"$INSTDIR\config-model.ps1$\"" "$INSTDIR\llama.ico"
+    CreateShortCut "$SMPROGRAMS\llama.cpp\Configure llama-server.lnk" "pwsh.exe" "-NoProfile -NoExit -ExecutionPolicy Bypass -File $\"$INSTDIR\config-server.ps1$\"" "$INSTDIR\llama.ico"
+    ; Open WebUI shortcuts — only meaningful when Open WebUI was installed.
+    ${If} ${SectionIsSelected} ${SecWebUI}
+        CreateShortCut "$SMPROGRAMS\llama.cpp\Start Open WebUI.lnk" "pwsh.exe" "-NoProfile -NoExit -ExecutionPolicy Bypass -File $\"$INSTDIR\start-webui.ps1$\"" "$INSTDIR\llama.ico"
+        CreateShortCut "$SMPROGRAMS\llama.cpp\Configure Open WebUI.lnk" "pwsh.exe" "-NoProfile -NoExit -ExecutionPolicy Bypass -File $\"$INSTDIR\config-webui.ps1$\"" "$INSTDIR\llama.ico"
+    ${EndIf}
     SetOutPath "$INSTDIR"
     CreateShortCut "$SMPROGRAMS\llama.cpp\Uninstall.lnk" "$INSTDIR\uninstall.exe"
     ; Notify shell that Start Menu changed
     System::Call 'shell32::SHChangeNotify(i 0x08000000, i 0x1000, p 0, p 0)'
 SectionEnd
 
+; ── Custom page functions (defined after sections so SecWebUI is bound) ──
+Function ServerConfigPage
+    !insertmacro MUI_HEADER_TEXT "llama-server Configuration" "Set the bind address and port for llama-server. Per-model parameters (ctx size, GPU layers, etc.) are configured on first launch."
+    nsDialogs::Create 1018
+    Pop $Dialog
+    ${If} $Dialog == error
+        Abort
+    ${EndIf}
+
+    ${NSD_CreateLabel} 0 0u 100% 12u "Port:"
+    Pop $Hwnd
+    ${NSD_CreateNumber} 0 14u 100% 12u "$ServerPort"
+    Pop $ServerPortBox
+
+    ${NSD_CreateLabel} 0 32u 100% 12u "Network exposure:"
+    Pop $Hwnd
+    ${NSD_CreateRadioButton} 0 46u 100% 12u "localhost only (recommended)"
+    Pop $ServerLocalhostRadio
+    ${NSD_CreateRadioButton} 0 60u 100% 12u "All interfaces (LAN-reachable)"
+    Pop $ServerAllRadio
+    ${If} $ServerHostname == "0.0.0.0"
+        ${NSD_SetState} $ServerAllRadio ${BST_CHECKED}
+    ${Else}
+        ${NSD_SetState} $ServerLocalhostRadio ${BST_CHECKED}
+    ${EndIf}
+
+    nsDialogs::Show
+FunctionEnd
+
+Function ServerConfigPageLeave
+    ${NSD_GetText} $ServerPortBox $ServerPort
+    ${NSD_GetState} $ServerAllRadio $0
+    ${If} $0 = ${BST_CHECKED}
+        StrCpy $ServerHostname "0.0.0.0"
+    ${Else}
+        StrCpy $ServerHostname "localhost"
+    ${EndIf}
+FunctionEnd
+
+Function WebuiConfigPage
+    ${IfNot} ${SectionIsSelected} ${SecWebUI}
+        Abort  ; skip page entirely
+    ${EndIf}
+
+    !insertmacro MUI_HEADER_TEXT "Open WebUI Configuration" "Set the bind address and port for Open WebUI."
+    nsDialogs::Create 1018
+    Pop $Dialog
+    ${If} $Dialog == error
+        Abort
+    ${EndIf}
+
+    ${NSD_CreateLabel} 0 0u 100% 12u "Port:"
+    Pop $Hwnd
+    ${NSD_CreateNumber} 0 14u 100% 12u "$WebuiPort"
+    Pop $WebuiPortBox
+
+    ${NSD_CreateLabel} 0 32u 100% 12u "Network exposure:"
+    Pop $Hwnd
+    ${NSD_CreateRadioButton} 0 46u 100% 12u "localhost only"
+    Pop $WebuiLocalhostRadio
+    ${NSD_CreateRadioButton} 0 60u 100% 12u "All interfaces (LAN)"
+    Pop $WebuiAllRadio
+    ${If} $WebuiHostname == "0.0.0.0"
+        ${NSD_SetState} $WebuiAllRadio ${BST_CHECKED}
+    ${Else}
+        ${NSD_SetState} $WebuiLocalhostRadio ${BST_CHECKED}
+    ${EndIf}
+
+    nsDialogs::Show
+FunctionEnd
+
+Function WebuiConfigPageLeave
+    ${NSD_GetText} $WebuiPortBox $WebuiPort
+    ${NSD_GetState} $WebuiAllRadio $0
+    ${If} $0 = ${BST_CHECKED}
+        StrCpy $WebuiHostname "0.0.0.0"
+        StrCpy $WebuiUrlHost  "localhost"  ; 0.0.0.0 isn't a useful URL host
+    ${Else}
+        StrCpy $WebuiHostname "localhost"
+        StrCpy $WebuiUrlHost  "localhost"
+    ${EndIf}
+FunctionEnd
+
+; Hide the "Open WebUI" link on the finish page if SecWebUI wasn't installed.
+; $mui.FinishPage.Link is the MUI-internal control handle.
+Function FinishPageShow
+    ${IfNot} ${SectionIsSelected} ${SecWebUI}
+        ShowWindow $mui.FinishPage.Link 0  ; SW_HIDE
+    ${EndIf}
+FunctionEnd
+
 ; ── Section descriptions ────────────────────────────────────────────
 !insertmacro MUI_FUNCTION_DESCRIPTION_BEGIN
     !insertmacro MUI_DESCRIPTION_TEXT ${SecMain} "Core llama.cpp executables and libraries."
     !insertmacro MUI_DESCRIPTION_TEXT ${SecPath} "Add llama.cpp bin directory to system PATH."
     !insertmacro MUI_DESCRIPTION_TEXT ${SecWebUI} "Open WebUI — web frontend for llama.cpp (Python venv, ~1 GB)."
-    !insertmacro MUI_DESCRIPTION_TEXT ${SecShortcuts} "Create Start Menu shortcuts."
+    !insertmacro MUI_DESCRIPTION_TEXT ${SecShortcuts} "Start Menu shortcuts: llama.cpp, Configure model / llama-server / Open WebUI, Start Open WebUI."
 !insertmacro MUI_FUNCTION_DESCRIPTION_END
 
 ; ── Uninstaller ─────────────────────────────────────────────────────
@@ -166,6 +319,12 @@ Section "Uninstall"
     ; Files
     RMDir /r "$INSTDIR\bin"
     RMDir /r "$INSTDIR\lib"
+    Delete "$INSTDIR\run-model.ps1"
+    Delete "$INSTDIR\start-webui.ps1"
+    Delete "$INSTDIR\config-model.ps1"
+    Delete "$INSTDIR\config-server.ps1"
+    Delete "$INSTDIR\config-webui.ps1"
+    Delete "$INSTDIR\llama.ico"
     Delete "$INSTDIR\uninstall.exe"
     RMDir "$INSTDIR"
 
@@ -181,4 +340,18 @@ Section "Uninstall"
     ; Registry
     DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\llama.cpp"
     DeleteRegKey HKLM "Software\llama.cpp"
+
+    ; User runtime config + WebUI data + per-model configs + logs.
+    ; Defaults to keeping them (survives upgrade/reinstall), but ask explicitly
+    ; so the user can do a clean uninstall when they want.
+    ; Note: uninstaller runs elevated, so $LOCALAPPDATA resolves to the
+    ; elevating admin's LOCALAPPDATA — works for single-user boxes where
+    ; installer and runtime user are the same account.
+    StrCpy $0 "$LOCALAPPDATA\llama.cpp"
+    IfFileExists "$0\config\server.psd1" 0 skip_user_data
+    MessageBox MB_YESNO|MB_ICONQUESTION|MB_DEFBUTTON2 \
+        "Delete user configuration, per-model configs, WebUI data, and logs at $0?$\n$\nThis includes runtime settings, chat history, uploaded files, and llama-server / Open WebUI logs. Choose No to keep them for a future reinstall." \
+        IDNO skip_user_data
+    RMDir /r "$0"
+    skip_user_data:
 SectionEnd

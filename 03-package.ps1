@@ -47,6 +47,16 @@ Write-Host "Staging files..." -ForegroundColor Cyan
 cmake --install $buildDir --prefix $stageDir
 if ($LASTEXITCODE -ne 0) { throw "cmake --install failed" }
 
+# Stage the runtime scripts and sample config alongside the binaries so the
+# NSIS template can pull them via @STAGING_DIR@ (placeholders are substituted
+# below; the .nsi has no @PSScriptRoot@ available).
+Copy-Item "$PSScriptRoot\resources\run-model.ps1"   -Destination $stageDir -Force
+Copy-Item "$PSScriptRoot\resources\start-webui.ps1" -Destination $stageDir -Force
+Copy-Item "$PSScriptRoot\resources\config-model.ps1"  -Destination $stageDir -Force
+Copy-Item "$PSScriptRoot\resources\config-server.ps1" -Destination $stageDir -Force
+Copy-Item "$PSScriptRoot\resources\config-webui.ps1"  -Destination $stageDir -Force
+Copy-Item "$PSScriptRoot\resources\llama.ico"       -Destination $stageDir -Force
+
 # Check Open WebUI venv and get version
 $webuiVenv = Join-Path $PSScriptRoot "webui-venv"
 $webuiVersion = ""

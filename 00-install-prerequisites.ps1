@@ -15,6 +15,15 @@ Write-Host ""
 
 $toInstall = @()
 
+# PowerShell 7+ (pwsh) — required by Start Menu shortcuts; Windows PowerShell 5.1
+# is not supported by the runtime scripts.
+if (Get-Command pwsh -ErrorAction SilentlyContinue) {
+    Write-Host "  [OK] PowerShell 7+ (pwsh) already installed" -ForegroundColor Green
+} else {
+    Write-Host "  [..] PowerShell 7+ (pwsh) not found" -ForegroundColor Yellow
+    $toInstall += "PowerShell"
+}
+
 # OpenSSL
 $opensslDir = "${env:ProgramFiles}\OpenSSL-Win64"
 if (Test-Path "$opensslDir\include\openssl\ssl.h") {
@@ -50,10 +59,21 @@ if (Test-Path "${env:ProgramFiles}\AMD\ROCm\*\bin\hipcc.exe") {
 
 Write-Host ""
 
-# ── Install OpenSSL via winget (elevated) ────────────────────────────
+# ── Install winget packages in a single elevated session ────────────
 
-if ($toInstall -contains "OpenSSL") {
-    $script = @'
+$installPwsh    = $toInstall -contains "PowerShell"
+$installOpenSSL = $toInstall -contains "OpenSSL"
+
+if ($installPwsh -or $installOpenSSL) {
+    $blocks = @()
+    if ($installPwsh) {
+        $blocks += @'
+Write-Host "Installing PowerShell 7+..." -ForegroundColor Cyan
+winget install --id Microsoft.PowerShell --accept-source-agreements --accept-package-agreements
+'@
+    }
+    if ($installOpenSSL) {
+        $blocks += @'
 Write-Host "Installing OpenSSL..." -ForegroundColor Cyan
 winget install --id ShiningLight.OpenSSL.Dev --accept-source-agreements --accept-package-agreements
 $d = "${env:ProgramFiles}\OpenSSL-Win64"
@@ -67,6 +87,10 @@ if (Test-Path "$d\lib\VC\x64\MD\libcrypto.lib") {
         Write-Host "  Created symlink: libssl.lib" -ForegroundColor DarkGray
     }
 }
+'@
+    }
+    $script = ($blocks -join "`n") + @'
+
 Write-Host "Done." -ForegroundColor Green
 Read-Host "Press Enter to close"
 '@
@@ -86,10 +110,21 @@ Read-Host "Press Enter to close"
 
     # Verify
     Write-Host ""
-    if (Test-Path "$opensslDir\include\openssl\ssl.h") {
-        Write-Host "  [OK] OpenSSL installed" -ForegroundColor Green
-    } else {
-        Write-Host "  [!!] OpenSSL — may need to restart shell" -ForegroundColor Red
+    if ($installPwsh) {
+        # New PATH entries from winget aren't in this shell's $env:PATH yet — re-check
+        # the canonical install location directly.
+        if ((Get-Command pwsh -ErrorAction SilentlyContinue) -or (Test-Path "${env:ProgramFiles}\PowerShell\7\pwsh.exe")) {
+            Write-Host "  [OK] PowerShell 7+ installed" -ForegroundColor Green
+        } else {
+            Write-Host "  [!!] PowerShell 7+ — may need to restart shell" -ForegroundColor Red
+        }
+    }
+    if ($installOpenSSL) {
+        if (Test-Path "$opensslDir\include\openssl\ssl.h") {
+            Write-Host "  [OK] OpenSSL installed" -ForegroundColor Green
+        } else {
+            Write-Host "  [!!] OpenSSL — may need to restart shell" -ForegroundColor Red
+        }
     }
 }
 
