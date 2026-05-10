@@ -165,8 +165,8 @@ Section "Add to system PATH" SecPath
     SendMessage ${HWND_BROADCAST} ${WM_SETTINGCHANGE} 0 "STR:Environment" /TIMEOUT=5000
 SectionEnd
 
-; ── Optional: Open WebUI ───────────────────────────────────────────
-Section "Open WebUI" SecWebUI
+; ── Optional: Open WebUI (unselected by default — /o flag) ─────────
+Section /o "Open WebUI" SecWebUI
     SetOutPath "$PROGRAMFILES64\Open WebUI"
     File /nonfatal /r "@WEBUI_DIR@\*.*"
     WriteRegStr HKLM "Software\llama.cpp" "WebUIDir" "$PROGRAMFILES64\Open WebUI"
@@ -349,9 +349,12 @@ Section "Uninstall"
     ; installer and runtime user are the same account.
     StrCpy $0 "$LOCALAPPDATA\llama.cpp"
     IfFileExists "$0\config\server.psd1" 0 skip_user_data
+    ; /SD IDNO: during silent uninstall (upgrade flow runs the previous
+    ; uninstaller with /S) auto-default to "No" so user data is preserved
+    ; without prompting. Interactive uninstalls still see the dialog.
     MessageBox MB_YESNO|MB_ICONQUESTION|MB_DEFBUTTON2 \
         "Delete user configuration, per-model configs, WebUI data, and logs at $0?$\n$\nThis includes runtime settings, chat history, uploaded files, and llama-server / Open WebUI logs. Choose No to keep them for a future reinstall." \
-        IDNO skip_user_data
+        /SD IDNO IDNO skip_user_data
     RMDir /r "$0"
     skip_user_data:
 SectionEnd
