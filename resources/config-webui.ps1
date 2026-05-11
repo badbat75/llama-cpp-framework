@@ -62,7 +62,7 @@ $content = @"
 }
 "@
 
-Set-Content -Path $webuiPath -Value $content -Encoding UTF8
+Set-Content -Path $webuiPath -Value $content -Encoding utf8NoBOM
 
 if (-not $NonInteractive) {
     Write-Host ""

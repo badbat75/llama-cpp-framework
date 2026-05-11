@@ -80,6 +80,9 @@ $serverArgs = $modelArgs + @(
     "--host", $hostname
 )
 
+if ($null -ne $mdl.BatchSize) { $serverArgs += "--batch-size", $mdl.BatchSize }
+if ($null -ne $mdl.UbatchSize) { $serverArgs += "--ubatch-size", $mdl.UbatchSize }
+
 if ($mdl.FlashAttn) { $serverArgs += "-fa", "on" }
 if ($mdl.Jinja)     { $serverArgs += "--jinja" }
 if ($srv.Mlock)     { $serverArgs += "--mlock" }

@@ -118,7 +118,7 @@ $threadsLine
 }
 "@
 
-Set-Content -Path $serverPath -Value $content -Encoding UTF8
+Set-Content -Path $serverPath -Value $content -Encoding utf8NoBOM
 
 if (-not $NonInteractive) {
     Write-Host ""

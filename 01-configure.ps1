@@ -280,7 +280,7 @@ foreach ($key in @('Model','Port','CtxSize','GpuLayers','Parallel','CacheTypeK',
 $lines.Add('}')
 
 $content = $lines -join "`r`n"
-Set-Content -Path $configPath -Value $content -Encoding UTF8
+Set-Content -Path $configPath -Value $content -Encoding utf8NoBOM
 Write-Host "  config.psd1 written to: $configPath" -ForegroundColor Green
 
 # Show any TODO placeholders

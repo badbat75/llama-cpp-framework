@@ -114,7 +114,7 @@ function Set-PsdField {
     } else {
         $content = $content -replace "(?ms)\}\s*$", "$newLine`r`n}"
     }
-    Set-Content -Path $Path -Value $content -Encoding UTF8
+    Set-Content -Path $Path -Value $content -Encoding utf8NoBOM
 }
 
 Write-Host ""
@@ -184,7 +184,8 @@ Write-Host ""
 $ctxSize           = Read-IntDefault    "Context size (tokens, --ctx-size)" $(if ($cur.CtxSize) { $cur.CtxSize } else { 32768 }) -Min 512 -Max 8388608
 $gpuLayers         = Read-IntDefault    "GPU layers (99 = all, --n-gpu-layers)" $(if ($null -ne $cur.GpuLayers) { $cur.GpuLayers } else { 99 }) -Min 0 -Max 999
 $parallel          = Read-IntDefault    "Parallel decoding seqs (-np)" $(if ($cur.Parallel) { $cur.Parallel } else { 4 }) -Min 1 -Max 64
-$cacheTypeK        = Read-EnumDefault   "K-cache quantization (--cache-type-k)" $(if ($cur.CacheTypeK) { $cur.CacheTypeK } else { 'q4_0' }) @('f32','f16','q8_0','q5_0','q4_0','q4_1')
+$batchSize          = Read-IntDefault    "Batch size (--batch-size)" $(if ($cur.BatchSize) { $cur.BatchSize } else { 512 }) -Min 1 -Max 8192
+$ubatchSize         = Read-IntDefault    "Ubatch size (--ubatch-size)" $(if ($cur.UbatchSize) { $cur.UbatchSize } else { 512 }) -Min 1 -Max 8192
 $cacheTypeV        = Read-EnumDefault   "V-cache quantization (--cache-type-v)" $(if ($cur.CacheTypeV) { $cur.CacheTypeV } else { 'q4_0' }) @('f32','f16','q8_0','q5_0','q4_0','q4_1')
 $flashAttn         = Read-BoolDefault   "Flash Attention (-fa)" $(if ($null -ne $cur.FlashAttn) { $cur.FlashAttn } else { $true })
 $jinja             = Read-BoolDefault   "Use embedded chat template (--jinja)" $(if ($null -ne $cur.Jinja) { $cur.Jinja } else { $true })
@@ -225,6 +226,9 @@ $body += '    # ── Resource / context (model-dependent: ctx max, VRAM cost) 
 $body += "    CtxSize            = $ctxSize"
 $body += "    GpuLayers          = $gpuLayers"
 $body += "    Parallel           = $parallel"
+$body += (Format-Field 'BatchSize'          $batchSize          '512')
+$body += (Format-Field 'UbatchSize'         $ubatchSize         '512')
+$body += ''
 $body += "    CacheTypeK         = '$cacheKEsc'"
 $body += "    CacheTypeV         = '$cacheVEsc'"
 $body += "    FlashAttn          = $flashLit"
@@ -246,7 +250,7 @@ $body += '    # ── Chat template kwargs (e.g. enable_thinking for Qwen3) ─
 $body += (Format-Field 'ChatTemplateKwargs' $ctkLit "'{`"enable_thinking`":true}'")
 
 $content = "@{`r`n" + ($body -join "`r`n") + "`r`n}`r`n"
-Set-Content -Path $modelCfgPath -Value $content -Encoding UTF8
+Set-Content -Path $modelCfgPath -Value $content -Encoding utf8NoBOM
 
 # 7) Update server.psd1 pointers
 $ggufDirEsc = $ggufDir -replace "'", "''"
