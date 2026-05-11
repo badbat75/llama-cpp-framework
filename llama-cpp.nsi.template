@@ -71,6 +71,55 @@ Function .onInit
     ${If} $ServerThreadsBatch < 1
         StrCpy $ServerThreadsBatch "1"
     ${EndIf}
+
+    ; If the user already has %LOCALAPPDATA%\llama.cpp\config\*.psd1 from a
+    ; previous install, surface those values as the install-page defaults so
+    ; the user sees their previous choices and can review/edit them. The
+    ; config-*.ps1 scripts in -DumpIni mode each append a section to a UTF-16
+    ; INI under $PLUGINSDIR that ReadINIStr (GetPrivateProfileStringW) parses.
+    InitPluginsDir
+    File /oname=$PLUGINSDIR\config-server.ps1 "@STAGING_DIR@\config-server.ps1"
+    File /oname=$PLUGINSDIR\config-webui.ps1  "@STAGING_DIR@\config-webui.ps1"
+    Delete "$PLUGINSDIR\existing.ini"
+    nsExec::Exec 'pwsh.exe -NoProfile -ExecutionPolicy Bypass -File "$PLUGINSDIR\config-server.ps1" -DumpIni "$PLUGINSDIR\existing.ini"'
+    Pop $0
+    nsExec::Exec 'pwsh.exe -NoProfile -ExecutionPolicy Bypass -File "$PLUGINSDIR\config-webui.ps1"  -DumpIni "$PLUGINSDIR\existing.ini"'
+    Pop $0
+    ${If} ${FileExists} "$PLUGINSDIR\existing.ini"
+        ReadINIStr $0 "$PLUGINSDIR\existing.ini" "Server" "Port"
+        ${If} $0 != ""
+            StrCpy $ServerPort $0
+        ${EndIf}
+        ReadINIStr $0 "$PLUGINSDIR\existing.ini" "Server" "Hostname"
+        ${If} $0 != ""
+            StrCpy $ServerHostname $0
+        ${EndIf}
+        ReadINIStr $0 "$PLUGINSDIR\existing.ini" "Server" "Threads"
+        ${If} $0 != ""
+            StrCpy $ServerThreads $0
+        ${EndIf}
+        ReadINIStr $0 "$PLUGINSDIR\existing.ini" "Server" "ThreadsBatch"
+        ${If} $0 != ""
+            StrCpy $ServerThreadsBatch $0
+        ${EndIf}
+        ReadINIStr $0 "$PLUGINSDIR\existing.ini" "Server" "ModelsDir"
+        ${If} $0 != ""
+            StrCpy $ServerModelsDir $0
+        ${EndIf}
+        ReadINIStr $0 "$PLUGINSDIR\existing.ini" "WebUI" "Port"
+        ${If} $0 != ""
+            StrCpy $WebuiPort $0
+        ${EndIf}
+        ReadINIStr $0 "$PLUGINSDIR\existing.ini" "WebUI" "Hostname"
+        ${If} $0 != ""
+            StrCpy $WebuiHostname $0
+            ${If} $0 == "0.0.0.0"
+                StrCpy $WebuiUrlHost "localhost"
+            ${Else}
+                StrCpy $WebuiUrlHost $0
+            ${EndIf}
+        ${EndIf}
+    ${EndIf}
 FunctionEnd
 Function un.onInit
     SetRegView 64

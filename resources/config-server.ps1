@@ -19,7 +19,12 @@ param(
     [Nullable[int]]$CacheReuse,
     [Nullable[int]]$ThreadsBatch,
     [string]$ModelsDir,
-    [switch]$NonInteractive
+    [switch]$NonInteractive,
+    # When set, dump the existing server.psd1 fields as a [Server] INI section
+    # appended to this file (UTF-16 LE so NSIS Unicode's ReadINIStr can parse
+    # it) and exit without writing anything else. Used by the installer's
+    # .onInit to surface the user's previous values as install-page defaults.
+    [string]$DumpIni
 )
 
 $ErrorActionPreference = 'Stop'
@@ -27,9 +32,27 @@ $ErrorActionPreference = 'Stop'
 $configDir  = Join-Path $env:LOCALAPPDATA "llama.cpp\config"
 $serverPath = Join-Path $configDir "server.psd1"
 
-New-Item -ItemType Directory -Path $configDir -Force | Out-Null
+$cur = @{}
+if (Test-Path $serverPath) {
+    try { $cur = Import-PowerShellDataFile -Path $serverPath } catch { }
+}
 
-$cur = if (Test-Path $serverPath) { Import-PowerShellDataFile -Path $serverPath } else { @{} }
+if ($DumpIni) {
+    if ($cur.Count -gt 0) {
+        $lines = @(
+            '[Server]'
+            "Port=$($cur.Port)"
+            "Hostname=$($cur.Hostname)"
+            "Threads=$($cur.Threads)"
+            "ThreadsBatch=$($cur.ThreadsBatch)"
+            "ModelsDir=$($cur.ModelsDir)"
+        )
+        Add-Content -LiteralPath $DumpIni -Value $lines -Encoding Unicode
+    }
+    return
+}
+
+New-Item -ItemType Directory -Path $configDir -Force | Out-Null
 
 # ── Helpers ──────────────────────────────────────────────────────────
 

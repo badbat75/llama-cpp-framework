@@ -8,7 +8,9 @@
 param(
     [int]$Port,
     [string]$Hostname,
-    [switch]$NonInteractive
+    [switch]$NonInteractive,
+    # See config-server.ps1 -DumpIni for the full rationale.
+    [string]$DumpIni
 )
 
 $ErrorActionPreference = 'Stop'
@@ -16,9 +18,24 @@ $ErrorActionPreference = 'Stop'
 $configDir = Join-Path $env:LOCALAPPDATA "llama.cpp\config"
 $webuiPath = Join-Path $configDir "webui.psd1"
 
-New-Item -ItemType Directory -Path $configDir -Force | Out-Null
+$cur = @{}
+if (Test-Path $webuiPath) {
+    try { $cur = Import-PowerShellDataFile -Path $webuiPath } catch { }
+}
 
-$cur = if (Test-Path $webuiPath) { Import-PowerShellDataFile -Path $webuiPath } else { @{} }
+if ($DumpIni) {
+    if ($cur.Count -gt 0) {
+        $lines = @(
+            '[WebUI]'
+            "Port=$($cur.Port)"
+            "Hostname=$($cur.Hostname)"
+        )
+        Add-Content -LiteralPath $DumpIni -Value $lines -Encoding Unicode
+    }
+    return
+}
+
+New-Item -ItemType Directory -Path $configDir -Force | Out-Null
 
 function Read-IntDefault {
     param([string]$Prompt, $Default, [int]$Min = 1, [int]$Max = 65535)
