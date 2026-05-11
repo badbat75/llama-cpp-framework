@@ -38,14 +38,34 @@ if (Test-Path $serverPath) {
 }
 
 if ($DumpIni) {
-    if ($cur.Count -gt 0) {
+    # Fall back: derive ModelsDir from the parent dir of Model in the most
+    # recently written models\<id>.psd1 when server.psd1 is missing it (or
+    # missing entirely). Lets the installer prefill the Models folder when
+    # only per-model configs survived a partial uninstall / manual cleanup.
+    $modelsDirOut = $cur.ModelsDir
+    if (-not $modelsDirOut) {
+        $modelsCfgDir = Join-Path $configDir "models"
+        if (Test-Path $modelsCfgDir) {
+            $latest = Get-ChildItem -Path $modelsCfgDir -Filter '*.psd1' -File -ErrorAction SilentlyContinue |
+                      Sort-Object LastWriteTime -Descending | Select-Object -First 1
+            if ($latest) {
+                try {
+                    $m = Import-PowerShellDataFile -Path $latest.FullName
+                    if ($m.Model -and (Test-Path -LiteralPath $m.Model -PathType Leaf)) {
+                        $modelsDirOut = Split-Path -Parent $m.Model
+                    }
+                } catch { }
+            }
+        }
+    }
+    if ($cur.Count -gt 0 -or $modelsDirOut) {
         $lines = @(
             '[Server]'
             "Port=$($cur.Port)"
             "Hostname=$($cur.Hostname)"
             "Threads=$($cur.Threads)"
             "ThreadsBatch=$($cur.ThreadsBatch)"
-            "ModelsDir=$($cur.ModelsDir)"
+            "ModelsDir=$modelsDirOut"
         )
         Add-Content -LiteralPath $DumpIni -Value $lines -Encoding Unicode
     }
