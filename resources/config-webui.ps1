@@ -2,8 +2,8 @@
 #
 # Writes %LOCALAPPDATA%\llama.cpp\config\webui.psd1. Prompts for Port and
 # Hostname (Enter accepts the default). NSIS calls this with -NonInteractive
-# plus values from the install-time custom page.
-
+# plus the values collected on the install-time custom page.
+#
 [CmdletBinding()]
 param(
     [int]$Port,

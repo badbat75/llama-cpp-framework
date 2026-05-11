@@ -190,12 +190,12 @@ Section "Start Menu shortcuts" SecShortcuts
     ; writable per-user data dir so first-run files (.webui_secret_key,
     ; webui.db) don't land in Program Files.
     SetOutPath "$LOCALAPPDATA\llama.cpp"
-    CreateShortCut "$SMPROGRAMS\llama.cpp\llama.cpp.lnk" "pwsh.exe" "-NoProfile -NoExit -ExecutionPolicy Bypass -File $\"$INSTDIR\run-model.ps1$\"" "$INSTDIR\llama.ico"
+    CreateShortCut "$SMPROGRAMS\llama.cpp\llama.cpp.lnk" "pwsh.exe" "-NoProfile -ExecutionPolicy Bypass -File $\"$INSTDIR\run-model.ps1$\"" "$INSTDIR\llama.ico"
     CreateShortCut "$SMPROGRAMS\llama.cpp\Configure model.lnk" "pwsh.exe" "-NoProfile -NoExit -ExecutionPolicy Bypass -File $\"$INSTDIR\config-model.ps1$\"" "$INSTDIR\llama.ico"
     CreateShortCut "$SMPROGRAMS\llama.cpp\Configure llama-server.lnk" "pwsh.exe" "-NoProfile -NoExit -ExecutionPolicy Bypass -File $\"$INSTDIR\config-server.ps1$\"" "$INSTDIR\llama.ico"
     ; Open WebUI shortcuts — only meaningful when Open WebUI was installed.
     ${If} ${SectionIsSelected} ${SecWebUI}
-        CreateShortCut "$SMPROGRAMS\llama.cpp\Start Open WebUI.lnk" "pwsh.exe" "-NoProfile -NoExit -ExecutionPolicy Bypass -File $\"$INSTDIR\start-webui.ps1$\"" "$INSTDIR\llama.ico"
+        CreateShortCut "$SMPROGRAMS\llama.cpp\Start Open WebUI.lnk" "pwsh.exe" "-NoProfile -ExecutionPolicy Bypass -File $\"$INSTDIR\start-webui.ps1$\"" "$INSTDIR\llama.ico"
         CreateShortCut "$SMPROGRAMS\llama.cpp\Configure Open WebUI.lnk" "pwsh.exe" "-NoProfile -NoExit -ExecutionPolicy Bypass -File $\"$INSTDIR\config-webui.ps1$\"" "$INSTDIR\llama.ico"
     ${EndIf}
     SetOutPath "$INSTDIR"

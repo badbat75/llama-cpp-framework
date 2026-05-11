@@ -9,7 +9,7 @@
 # install-time custom page (Port, Hostname); other params fall back to
 # existing values or hardcoded defaults. Model-dependent params (CtxSize,
 # GpuLayers, Parallel, CacheTypeK/V, FlashAttn) live in models\<id>.psd1.
-
+#
 [CmdletBinding()]
 param(
     [int]$Port,
@@ -61,8 +61,8 @@ function Read-BoolDefault {
 
 $portVal       = if ($PSBoundParameters.ContainsKey('Port')       -and $Port -gt 0) { $Port }       elseif ($cur.Port)       { $cur.Port }       else { 8080 }
 $hostVal       = if ($PSBoundParameters.ContainsKey('Hostname')   -and $Hostname)   { $Hostname }   elseif ($cur.Hostname)   { $cur.Hostname }   else { 'localhost' }
-$mlockVal      = if ($PSBoundParameters.ContainsKey('Mlock')     -and $null -ne $Mlock)     { [bool]$Mlock }     elseif ($null -ne $cur.Mlock)     { [bool]$cur.Mlock }     else { $false }
-$threadsVal    = if ($PSBoundParameters.ContainsKey('Threads')   -and $null -ne $Threads)   { [int]$Threads }    elseif ($null -ne $cur.Threads)   { $cur.Threads }   else { $null }
+$mlockVal      = if ($PSBoundParameters.ContainsKey('Mlock')     -and $null -ne $Mlock)     { [bool]$Mlock }     elseif ($null -ne $cur.Mlock)     { [bool]$cur.Mlock }     else { $true }
+$threadsVal    = if ($PSBoundParameters.ContainsKey('Threads')   -and $null -ne $Threads)   { [int]$Threads }    elseif ($null -ne $cur.Threads)   { [int]$cur.Threads }   else { [Math]::Max(1, [int]($env:NUMBER_OF_PROCESSORS / 2)) }
 
 # ── Interactive prompts ──────────────────────────────────────────────
 
