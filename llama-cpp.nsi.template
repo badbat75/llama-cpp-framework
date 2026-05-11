@@ -54,7 +54,7 @@ Function .onInit
     StrCpy $WebuiPort      "8180"
     StrCpy $WebuiHostname  "localhost"
     StrCpy $WebuiUrlHost   "localhost"
-    StrCpy $ServerModelsDir "$DOCUMENTS\llama.cpp\Models"
+    StrCpy $ServerModelsDir "$PROFILE\.llama.cpp\models"
 
     ; Thread defaults — keep in sync with config-server.ps1 / run-model.ps1.
     ; Threads = floor(cores * 0.5), ThreadsBatch = floor(cores * 0.75); floor 1.

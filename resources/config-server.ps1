@@ -38,34 +38,14 @@ if (Test-Path $serverPath) {
 }
 
 if ($DumpIni) {
-    # Fall back: derive ModelsDir from the parent dir of Model in the most
-    # recently written models\<id>.psd1 when server.psd1 is missing it (or
-    # missing entirely). Lets the installer prefill the Models folder when
-    # only per-model configs survived a partial uninstall / manual cleanup.
-    $modelsDirOut = $cur.ModelsDir
-    if (-not $modelsDirOut) {
-        $modelsCfgDir = Join-Path $configDir "models"
-        if (Test-Path $modelsCfgDir) {
-            $latest = Get-ChildItem -Path $modelsCfgDir -Filter '*.psd1' -File -ErrorAction SilentlyContinue |
-                      Sort-Object LastWriteTime -Descending | Select-Object -First 1
-            if ($latest) {
-                try {
-                    $m = Import-PowerShellDataFile -Path $latest.FullName
-                    if ($m.Model -and (Test-Path -LiteralPath $m.Model -PathType Leaf)) {
-                        $modelsDirOut = Split-Path -Parent $m.Model
-                    }
-                } catch { }
-            }
-        }
-    }
-    if ($cur.Count -gt 0 -or $modelsDirOut) {
+    if ($cur.Count -gt 0) {
         $lines = @(
             '[Server]'
             "Port=$($cur.Port)"
             "Hostname=$($cur.Hostname)"
             "Threads=$($cur.Threads)"
             "ThreadsBatch=$($cur.ThreadsBatch)"
-            "ModelsDir=$modelsDirOut"
+            "ModelsDir=$($cur.ModelsDir)"
         )
         Add-Content -LiteralPath $DumpIni -Value $lines -Encoding Unicode
     }
@@ -117,6 +97,10 @@ $mlockVal      = if ($PSBoundParameters.ContainsKey('Mlock')     -and $null -ne 
 $threadsVal    = if ($PSBoundParameters.ContainsKey('Threads')   -and $null -ne $Threads)   { [int]$Threads }    elseif ($null -ne $cur.Threads)   { [int]$cur.Threads }   else { $defaultThreads }
 $cacheReuseVal = if ($PSBoundParameters.ContainsKey('CacheReuse') -and $null -ne $CacheReuse) { [int]$CacheReuse } elseif ($null -ne $cur.CacheReuse) { [int]$cur.CacheReuse } else { 256 }
 $threadsBatchVal = if ($PSBoundParameters.ContainsKey('ThreadsBatch') -and $null -ne $ThreadsBatch) { [int]$ThreadsBatch } elseif ($null -ne $cur.ThreadsBatch) { [int]$cur.ThreadsBatch } else { $defaultThreadsBatch }
+# ModelsDir falls back: -ModelsDir param → server.psd1 → %USERPROFILE%\.llama.cpp\models (matches NSIS default).
+$modelsDirVal  = if ($PSBoundParameters.ContainsKey('ModelsDir') -and $ModelsDir) { $ModelsDir } `
+                 elseif ($cur.ModelsDir) { $cur.ModelsDir } `
+                 else { Join-Path $env:USERPROFILE ".llama.cpp\models" }
 
 # ── Interactive prompts ──────────────────────────────────────────────
 
@@ -140,22 +124,22 @@ if (-not $NonInteractive) {
     $threadsVal   = Read-IntDefault  "CPU threads (auto-detected if unset)" $threadsVal -Min 1 -Max 256 -AllowUnset
     $cacheReuseVal = Read-IntDefault  "Cache reuse (min chunk size, --cache-reuse)" $cacheReuseVal -Min 0 -AllowUnset
     $threadsBatchVal = Read-IntDefault "Batch threads (--threads-batch)" $threadsBatchVal -Min 1 -AllowUnset
+
+    $reply = Read-Host "Models folder (where your .gguf files are stored) [$modelsDirVal]"
+    if ($reply) { $modelsDirVal = $reply }
 }
 
 # ── Render ───────────────────────────────────────────────────────────
 
 $activeModel = if ($cur.ActiveModel) { $cur.ActiveModel } else { '' }
-$modelsDir   = if ($PSBoundParameters.ContainsKey('ModelsDir') -and $ModelsDir) { $ModelsDir } `
-               elseif ($cur.ModelsDir) { $cur.ModelsDir } `
-               else { '' }
-if ($modelsDir -and -not (Test-Path -LiteralPath $modelsDir)) {
-    New-Item -ItemType Directory -Path $modelsDir -Force | Out-Null
+if ($modelsDirVal -and -not (Test-Path -LiteralPath $modelsDirVal)) {
+    New-Item -ItemType Directory -Path $modelsDirVal -Force | Out-Null
 }
 
-$mlockLit    = if ($mlockVal)     { '$true' } else { '$false' }
-$hostEsc     = $hostVal     -replace "'", "''"
-$activeEsc   = $activeModel -replace "'", "''"
-$modelsEsc   = $modelsDir   -replace "'", "''"
+$mlockLit    = if ($mlockVal)      { '$true' } else { '$false' }
+$hostEsc     = $hostVal      -replace "'", "''"
+$activeEsc   = $activeModel  -replace "'", "''"
+$modelsEsc   = $modelsDirVal -replace "'", "''"
 
 $threadsLine = if ($null -ne $threadsVal) {
     "    Threads        = $threadsVal"
