@@ -18,6 +18,7 @@ param(
     [Nullable[bool]]$Mlock,
     [Nullable[int]]$CacheReuse,
     [Nullable[int]]$ThreadsBatch,
+    [string]$ModelsDir,
     [switch]$NonInteractive
 )
 
@@ -61,17 +62,18 @@ function Read-BoolDefault {
 
 # ── Resolve initial values ───────────────────────────────────────────
 
-# Default Threads matches the runtime fallback in resources\run-model.ps1:
-# cores-2 when >8, otherwise cores-1 (floor 1).
+# Defaults match the runtime fallback in resources\run-model.ps1:
+# Threads = floor(cores * 0.5), ThreadsBatch = floor(cores * 0.75); both floored to 1.
 $cores = [Environment]::ProcessorCount
-$defaultThreads = if ($cores -gt 8) { $cores - 2 } else { [Math]::Max(1, $cores - 1) }
+$defaultThreads      = [Math]::Max(1, [Math]::Floor($cores * 0.5))
+$defaultThreadsBatch = [Math]::Max(1, [Math]::Floor($cores * 0.75))
 
 $portVal       = if ($PSBoundParameters.ContainsKey('Port')       -and $Port -gt 0) { $Port }       elseif ($cur.Port)       { $cur.Port }       else { 8080 }
 $hostVal       = if ($PSBoundParameters.ContainsKey('Hostname')   -and $Hostname)   { $Hostname }   elseif ($cur.Hostname)   { $cur.Hostname }   else { 'localhost' }
 $mlockVal      = if ($PSBoundParameters.ContainsKey('Mlock')     -and $null -ne $Mlock)     { [bool]$Mlock }     elseif ($null -ne $cur.Mlock)     { [bool]$cur.Mlock }     else { $true }
 $threadsVal    = if ($PSBoundParameters.ContainsKey('Threads')   -and $null -ne $Threads)   { [int]$Threads }    elseif ($null -ne $cur.Threads)   { [int]$cur.Threads }   else { $defaultThreads }
 $cacheReuseVal = if ($PSBoundParameters.ContainsKey('CacheReuse') -and $null -ne $CacheReuse) { [int]$CacheReuse } elseif ($null -ne $cur.CacheReuse) { [int]$cur.CacheReuse } else { 256 }
-$threadsBatchVal = if ($PSBoundParameters.ContainsKey('ThreadsBatch') -and $null -ne $ThreadsBatch) { [int]$ThreadsBatch } elseif ($null -ne $cur.ThreadsBatch) { [int]$cur.ThreadsBatch } else { $null }
+$threadsBatchVal = if ($PSBoundParameters.ContainsKey('ThreadsBatch') -and $null -ne $ThreadsBatch) { [int]$ThreadsBatch } elseif ($null -ne $cur.ThreadsBatch) { [int]$cur.ThreadsBatch } else { $defaultThreadsBatch }
 
 # ── Interactive prompts ──────────────────────────────────────────────
 
@@ -100,7 +102,12 @@ if (-not $NonInteractive) {
 # ── Render ───────────────────────────────────────────────────────────
 
 $activeModel = if ($cur.ActiveModel) { $cur.ActiveModel } else { '' }
-$modelsDir   = if ($cur.ModelsDir)   { $cur.ModelsDir }   else { '' }
+$modelsDir   = if ($PSBoundParameters.ContainsKey('ModelsDir') -and $ModelsDir) { $ModelsDir } `
+               elseif ($cur.ModelsDir) { $cur.ModelsDir } `
+               else { '' }
+if ($modelsDir -and -not (Test-Path -LiteralPath $modelsDir)) {
+    New-Item -ItemType Directory -Path $modelsDir -Force | Out-Null
+}
 
 $mlockLit    = if ($mlockVal)     { '$true' } else { '$false' }
 $hostEsc     = $hostVal     -replace "'", "''"

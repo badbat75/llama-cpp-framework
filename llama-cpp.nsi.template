@@ -22,6 +22,9 @@ SetCompressor zlib
 ; written by config-model.ps1 lazily on first run.
 Var ServerPort
 Var ServerHostname     ; "localhost" or "0.0.0.0"
+Var ServerThreads      ; default = floor(cores * 0.5)
+Var ServerThreadsBatch ; default = floor(cores * 0.75)
+Var ServerModelsDir    ; folder containing .gguf files
 Var WebuiPort
 Var WebuiHostname
 Var WebuiUrlHost       ; "0.0.0.0" rewritten to "localhost" for the finish-page link
@@ -30,8 +33,12 @@ Var WebuiUrlHost       ; "0.0.0.0" rewritten to "localhost" for the finish-page 
 Var Dialog
 Var Hwnd
 Var ServerPortBox
+Var ServerThreadsBox
+Var ServerThreadsBatchBox
 Var ServerLocalhostRadio
 Var ServerAllRadio
+Var ServerModelsDirBox
+Var ServerModelsDirBrowseBtn
 Var WebuiPortBox
 Var WebuiLocalhostRadio
 Var WebuiAllRadio
@@ -44,9 +51,26 @@ Function .onInit
     ; Page defaults
     StrCpy $ServerPort     "8080"
     StrCpy $ServerHostname "localhost"
-    StrCpy $WebuiPort      "3000"
+    StrCpy $WebuiPort      "8180"
     StrCpy $WebuiHostname  "localhost"
     StrCpy $WebuiUrlHost   "localhost"
+    StrCpy $ServerModelsDir "$DOCUMENTS\llama.cpp\Models"
+
+    ; Thread defaults — keep in sync with config-server.ps1 / run-model.ps1.
+    ; Threads = floor(cores * 0.5), ThreadsBatch = floor(cores * 0.75); floor 1.
+    ReadEnvStr $0 "NUMBER_OF_PROCESSORS"
+    ${If} $0 == ""
+        StrCpy $0 "4"
+    ${EndIf}
+    IntOp $ServerThreads $0 / 2
+    IntOp $1 $0 * 3
+    IntOp $ServerThreadsBatch $1 / 4
+    ${If} $ServerThreads < 1
+        StrCpy $ServerThreads "1"
+    ${EndIf}
+    ${If} $ServerThreadsBatch < 1
+        StrCpy $ServerThreadsBatch "1"
+    ${EndIf}
 FunctionEnd
 Function un.onInit
     SetRegView 64
@@ -128,7 +152,7 @@ Section "llama.cpp binaries (required)" SecMain
     ; config-server.ps1 -NonInteractive preserves any existing ActiveModel /
     ; ModelsDir set by a previous install + config-model.ps1 run.
     DetailPrint "Writing server config..."
-    nsExec::ExecToLog 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$INSTDIR\config-server.ps1" -NonInteractive -Port $ServerPort -Hostname "$ServerHostname"'
+    nsExec::ExecToLog 'pwsh.exe -NoProfile -ExecutionPolicy Bypass -File "$INSTDIR\config-server.ps1" -NonInteractive -Port $ServerPort -Hostname "$ServerHostname" -Threads $ServerThreads -ThreadsBatch $ServerThreadsBatch -ModelsDir "$ServerModelsDir"'
 
     ; Uninstaller
     WriteUninstaller "$INSTDIR\uninstall.exe"
@@ -178,7 +202,7 @@ Section /o "Open WebUI" SecWebUI
 
     ; Write user-scope webui.psd1 from install-time page values
     DetailPrint "Writing Open WebUI config..."
-    nsExec::ExecToLog 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$INSTDIR\config-webui.ps1" -NonInteractive -Port $WebuiPort -Hostname "$WebuiHostname"'
+    nsExec::ExecToLog 'pwsh.exe -NoProfile -ExecutionPolicy Bypass -File "$INSTDIR\config-webui.ps1" -NonInteractive -Port $WebuiPort -Hostname "$WebuiHostname"'
 SectionEnd
 
 ; ── Optional: Start Menu shortcuts ─────────────────────────────────
@@ -206,23 +230,35 @@ SectionEnd
 
 ; ── Custom page functions (defined after sections so SecWebUI is bound) ──
 Function ServerConfigPage
-    !insertmacro MUI_HEADER_TEXT "llama-server Configuration" "Set the bind address and port for llama-server. Per-model parameters (ctx size, GPU layers, etc.) are configured on first launch."
+    !insertmacro MUI_HEADER_TEXT "llama-server Configuration" "Set the bind address, port, CPU thread counts, and models folder. Per-model parameters (ctx size, GPU layers, etc.) are configured on first launch."
     nsDialogs::Create 1018
     Pop $Dialog
     ${If} $Dialog == error
         Abort
     ${EndIf}
 
-    ${NSD_CreateLabel} 0 0u 100% 12u "Port:"
+    ; Row 1: Port (left), CPU threads (middle), Batch threads (right)
+    ${NSD_CreateLabel} 0 0u 32% 12u "Port:"
     Pop $Hwnd
-    ${NSD_CreateNumber} 0 14u 100% 12u "$ServerPort"
+    ${NSD_CreateNumber} 0 14u 32% 12u "$ServerPort"
     Pop $ServerPortBox
 
-    ${NSD_CreateLabel} 0 32u 100% 12u "Network exposure:"
+    ${NSD_CreateLabel} 34% 0u 32% 12u "CPU threads:"
     Pop $Hwnd
-    ${NSD_CreateRadioButton} 0 46u 100% 12u "localhost only (recommended)"
+    ${NSD_CreateNumber} 34% 14u 32% 12u "$ServerThreads"
+    Pop $ServerThreadsBox
+
+    ${NSD_CreateLabel} 68% 0u 32% 12u "Batch threads:"
+    Pop $Hwnd
+    ${NSD_CreateNumber} 68% 14u 32% 12u "$ServerThreadsBatch"
+    Pop $ServerThreadsBatchBox
+
+    ; Row 2: Network exposure
+    ${NSD_CreateLabel} 0 36u 100% 12u "Network exposure:"
+    Pop $Hwnd
+    ${NSD_CreateRadioButton} 0 50u 100% 12u "localhost only (recommended)"
     Pop $ServerLocalhostRadio
-    ${NSD_CreateRadioButton} 0 60u 100% 12u "All interfaces (LAN-reachable)"
+    ${NSD_CreateRadioButton} 0 64u 100% 12u "All interfaces (LAN-reachable)"
     Pop $ServerAllRadio
     ${If} $ServerHostname == "0.0.0.0"
         ${NSD_SetState} $ServerAllRadio ${BST_CHECKED}
@@ -230,11 +266,32 @@ Function ServerConfigPage
         ${NSD_SetState} $ServerLocalhostRadio ${BST_CHECKED}
     ${EndIf}
 
+    ; Row 3: Models directory (text + Browse)
+    ${NSD_CreateLabel} 0 84u 100% 12u "Models folder (where your .gguf files are stored):"
+    Pop $Hwnd
+    ${NSD_CreateText} 0 98u 78% 12u "$ServerModelsDir"
+    Pop $ServerModelsDirBox
+    ${NSD_CreateBrowseButton} 80% 98u 20% 12u "Browse..."
+    Pop $ServerModelsDirBrowseBtn
+    ${NSD_OnClick} $ServerModelsDirBrowseBtn OnBrowseModelsDir
+
     nsDialogs::Show
 FunctionEnd
 
+Function OnBrowseModelsDir
+    ${NSD_GetText} $ServerModelsDirBox $0
+    nsDialogs::SelectFolderDialog "Select the folder where your .gguf model files are stored" "$0"
+    Pop $0
+    ${If} $0 != error
+        ${NSD_SetText} $ServerModelsDirBox "$0"
+    ${EndIf}
+FunctionEnd
+
 Function ServerConfigPageLeave
-    ${NSD_GetText} $ServerPortBox $ServerPort
+    ${NSD_GetText} $ServerPortBox        $ServerPort
+    ${NSD_GetText} $ServerThreadsBox     $ServerThreads
+    ${NSD_GetText} $ServerThreadsBatchBox $ServerThreadsBatch
+    ${NSD_GetText} $ServerModelsDirBox   $ServerModelsDir
     ${NSD_GetState} $ServerAllRadio $0
     ${If} $0 = ${BST_CHECKED}
         StrCpy $ServerHostname "0.0.0.0"

@@ -39,7 +39,7 @@ Optional (installed automatically by scripts as needed):
 
 # 4. Run from the dev build (no install needed)
 .\04-run.ps1                # llama-server only
-.\04-run.ps1 -WithWebUI     # llama-server + Open WebUI on http://localhost:3000
+.\04-run.ps1 -WithWebUI     # llama-server + Open WebUI on http://localhost:8180
 
 # 5. (Optional) Produce a Windows installer in dist\
 .\03-package.ps1

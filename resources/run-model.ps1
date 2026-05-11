@@ -103,10 +103,8 @@ if ($null -ne $mdl.ChatTemplateKwargs) { $serverArgs += "--chat-template-kwargs"
 $cpuCores = [Environment]::ProcessorCount
 $threads = if ($null -ne $srv.Threads) {
     $srv.Threads
-} elseif ($cpuCores -gt 8) {
-    $cpuCores - 2
 } else {
-    [Math]::Max(1, $cpuCores - 1)
+    [Math]::Max(1, [Math]::Floor($cpuCores * 0.5))
 }
 $threadsBatch = if ($null -ne $srv.ThreadsBatch) {
     $srv.ThreadsBatch

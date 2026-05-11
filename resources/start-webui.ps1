@@ -25,7 +25,7 @@ if (-not (Test-Path $webuiPath)) {
 }
 $wui = Import-PowerShellDataFile -Path $webuiPath
 $wuiHost = if ($null -ne $wui.Hostname) { $wui.Hostname } else { 'localhost' }
-$wuiPort = if ($null -ne $wui.Port)     { $wui.Port }     else { 3000 }
+$wuiPort = if ($null -ne $wui.Port)     { $wui.Port }     else { 8180 }
 
 # ── server.psd1 (only used to discover the llama-server endpoint) ────
 $srv = if (Test-Path $serverPath) { Import-PowerShellDataFile -Path $serverPath } else { @{} }

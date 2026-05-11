@@ -33,7 +33,7 @@ function Read-IntDefault {
     }
 }
 
-$portVal = if ($PSBoundParameters.ContainsKey('Port')     -and $Port -gt 0) { $Port }     elseif ($cur.Port)     { $cur.Port }     else { 3000 }
+$portVal = if ($PSBoundParameters.ContainsKey('Port')     -and $Port -gt 0) { $Port }     elseif ($cur.Port)     { $cur.Port }     else { 8180 }
 $hostVal = if ($PSBoundParameters.ContainsKey('Hostname') -and $Hostname)   { $Hostname } elseif ($cur.Hostname) { $cur.Hostname } else { 'localhost' }
 
 if (-not $NonInteractive) {
