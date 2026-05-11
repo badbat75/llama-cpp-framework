@@ -84,7 +84,7 @@ Settings are split between build-time and runtime so the same scripts work both 
 | Paths | `LlamaCppDir`, `OpenWebUIDir`, `OpenSSLDir`, `HipPath`, `VsDevShell`, `CacheDir` |
 | Build | `GpuTargets`, `BuildType`, `CCompiler`, `CxxCompiler`, `MarchFlags`, `BuildJobs` |
 
-Runtime configs are written on first launch (or by the NSIS install-time pages). They can be regenerated at any time via the Start Menu shortcuts (*Configure llama-server*, *Configure model*, *Configure Open WebUI*) shipped with the installer.
+Runtime configs are written on first launch (or by the NSIS install-time pages). They can be regenerated at any time via the Start Menu shortcuts (*Configure llama-server*, *Configure model*, *Configure Open WebUI*) shipped with the installer — each shortcut runs the interactive writer once and the window closes when you're done.
 
 ## Scripts
 
