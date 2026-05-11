@@ -8,9 +8,13 @@
 #
 # server.psd1 is written by NSIS at install. ActiveModel is empty until the
 # user runs config-model.ps1 (lazily invoked here on first launch).
+#
+# -ServerExe lets the dev-mode launcher (04-run.ps1) point at the in-tree build.
 
 [CmdletBinding()]
-param()
+param(
+    [string]$ServerExe = (Join-Path $PSScriptRoot "bin\llama-server.exe")
+)
 
 $ErrorActionPreference = 'Stop'
 $installDir = $PSScriptRoot
@@ -45,9 +49,8 @@ $mdl = Import-PowerShellDataFile -Path $modelCfgPath
 if ($srv.ModelsDir) { $env:LLAMA_CACHE = $srv.ModelsDir }
 
 # ── Locate llama-server ─────────────────────────────────────────────
-$serverExe = Join-Path $installDir "bin\llama-server.exe"
-if (-not (Test-Path $serverExe)) {
-    throw "llama-server.exe not found at $serverExe."
+if (-not (Test-Path $ServerExe)) {
+    throw "llama-server.exe not found at $ServerExe."
 }
 
 # ── CWD to writable per-user dir ────────────────────────────────────
@@ -86,6 +89,7 @@ if ($null -ne $mdl.UbatchSize) { $serverArgs += "--ubatch-size", $mdl.UbatchSize
 if ($mdl.FlashAttn) { $serverArgs += "-fa", "on" }
 if ($mdl.Jinja)     { $serverArgs += "--jinja" }
 if ($srv.Mlock)     { $serverArgs += "--mlock" }
+if ($null -ne $srv.CacheReuse) { $serverArgs += "--cache-reuse", $srv.CacheReuse }
 
 if ($null -ne $mdl.NCpuMoe) { $serverArgs += "--n-cpu-moe", $mdl.NCpuMoe }
 
@@ -96,15 +100,23 @@ if ($null -ne $mdl.RepeatPenalty)      { $serverArgs += "--repeat-penalty", $mdl
 if ($null -ne $mdl.PresencePenalty)    { $serverArgs += "--presence-penalty", $mdl.PresencePenalty }
 if ($null -ne $mdl.ChatTemplateKwargs) { $serverArgs += "--chat-template-kwargs", $mdl.ChatTemplateKwargs }
 
+$cpuCores = [Environment]::ProcessorCount
 $threads = if ($null -ne $srv.Threads) {
     $srv.Threads
+} elseif ($cpuCores -gt 8) {
+    $cpuCores - 2
 } else {
-    $cpuCores = [Environment]::ProcessorCount
-    if ($cpuCores -gt 8) { $cpuCores - 2 } else { $cpuCores - 1 }
+    [Math]::Max(1, $cpuCores - 1)
+}
+$threadsBatch = if ($null -ne $srv.ThreadsBatch) {
+    $srv.ThreadsBatch
+} else {
+    [Math]::Max(1, [Math]::Floor($cpuCores * 0.75))
 }
 $serverArgs += "-t", $threads
+$serverArgs += "--threads-batch", $threadsBatch
 
 Write-Host "Active model: $($srv.ActiveModel)" -ForegroundColor DarkGray
 Write-Host "Starting llama-server on ${hostname}:$($srv.Port)..." -ForegroundColor Cyan
 Write-Host "Log: $logPath" -ForegroundColor DarkGray
-& $serverExe @serverArgs *>> $logPath
+& $ServerExe @serverArgs *>> $logPath

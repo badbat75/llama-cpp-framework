@@ -3,10 +3,11 @@
 
 $ErrorActionPreference = 'Stop'
 
-$cfg = Import-PowerShellDataFile "$PSScriptRoot\config.psd1"
+. "$PSScriptRoot\common.ps1"  # loads $cfg from config-build.psd1; no VS shell needed
 
-$repoDir = if ($cfg.OpenWebUIDir) { $cfg.OpenWebUIDir } else { Join-Path $PSScriptRoot "open-webui" }
-$venvDir = Join-Path $PSScriptRoot "webui-venv"
+$repoDir = if ($cfg.OpenWebUIDir) { $cfg.OpenWebUIDir } else { Join-Path $PSScriptRoot "build\open-webui" }
+$venvDir = Join-Path $PSScriptRoot "build\webui-venv"
+New-Item -ItemType Directory -Path (Split-Path $repoDir -Parent) -Force | Out-Null
 
 # ── Find compatible Python (3.11 or 3.12) ──────────────────────────
 $pythonExe = $null
@@ -194,11 +195,14 @@ Write-Host "Installing open-webui from source..." -ForegroundColor Cyan
 $reqFile = Join-Path $repoDir "backend\requirements.txt"
 if (Test-Path $reqFile) {
     Write-Host "Installing backend dependencies..." -ForegroundColor Cyan
-    $relaxedReq = Join-Path $PSScriptRoot "webui-requirements-relaxed.txt"
-    (Get-Content $reqFile) -replace '==', '>=' | Set-Content $relaxedReq -Encoding UTF8
-    & $venvPython -m pip install -r $relaxedReq
-    Remove-Item $relaxedReq -Force -ErrorAction SilentlyContinue
-    if ($LASTEXITCODE -ne 0) { Write-Host "Some dependencies failed — continuing..." -ForegroundColor Yellow }
+    $relaxedReq = [System.IO.Path]::GetTempFileName()
+    try {
+        (Get-Content $reqFile) -replace '==', '>=' | Set-Content $relaxedReq -Encoding UTF8
+        & $venvPython -m pip install -r $relaxedReq
+        if ($LASTEXITCODE -ne 0) { Write-Host "Some dependencies failed — continuing..." -ForegroundColor Yellow }
+    } finally {
+        Remove-Item $relaxedReq -Force -ErrorAction SilentlyContinue
+    }
 }
 
 # Install package without re-resolving deps

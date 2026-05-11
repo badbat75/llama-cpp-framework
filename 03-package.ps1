@@ -1,7 +1,8 @@
 # Package llama.cpp binaries into an NSIS installer
 # Requires: a successful build (02-build.ps1) and NSIS
 
-. "$PSScriptRoot\common.ps1"  # loads $cfg, activates VS Dev Shell + ROCm
+. "$PSScriptRoot\common.ps1"  # loads $cfg, adds ROCm to PATH
+Enable-VsDevShell             # cmake --install needs the VS env
 
 $ErrorActionPreference = 'Stop'
 
@@ -35,8 +36,8 @@ if (-not $nsisExe) {
 Write-Host "NSIS: $nsisExe" -ForegroundColor Cyan
 
 # ── Stage files with cmake --install ────────────────────────────────
-$buildDir  = Join-Path $PSScriptRoot "build"
-$stageDir  = Join-Path $PSScriptRoot "staging"
+$buildDir  = Join-Path $PSScriptRoot "build\llama.cpp-cmake"
+$stageDir  = Join-Path $PSScriptRoot "build\staging"
 $outputDir = Join-Path $PSScriptRoot "dist"
 
 if (Test-Path $stageDir) { Remove-Item $stageDir -Recurse -Force }
@@ -50,15 +51,18 @@ if ($LASTEXITCODE -ne 0) { throw "cmake --install failed" }
 # Stage the runtime scripts and sample config alongside the binaries so the
 # NSIS template can pull them via @STAGING_DIR@ (placeholders are substituted
 # below; the .nsi has no @PSScriptRoot@ available).
-Copy-Item "$PSScriptRoot\resources\run-model.ps1"   -Destination $stageDir -Force
-Copy-Item "$PSScriptRoot\resources\start-webui.ps1" -Destination $stageDir -Force
+# All resources are staged flat in $stageDir — the NSIS template installs them
+# into $INSTDIR side-by-side, and resources\run-model.ps1 invokes the config
+# writers via $installDir\config-*.ps1 (flat lookup, no subdir).
+Copy-Item "$PSScriptRoot\resources\run-model.ps1"     -Destination $stageDir -Force
+Copy-Item "$PSScriptRoot\resources\start-webui.ps1"   -Destination $stageDir -Force
 Copy-Item "$PSScriptRoot\resources\config-model.ps1"  -Destination $stageDir -Force
 Copy-Item "$PSScriptRoot\resources\config-server.ps1" -Destination $stageDir -Force
 Copy-Item "$PSScriptRoot\resources\config-webui.ps1"  -Destination $stageDir -Force
-Copy-Item "$PSScriptRoot\resources\llama.ico"       -Destination $stageDir -Force
+Copy-Item "$PSScriptRoot\resources\llama.ico"         -Destination $stageDir -Force
 
 # Check Open WebUI venv and get version
-$webuiVenv = Join-Path $PSScriptRoot "webui-venv"
+$webuiVenv = Join-Path $PSScriptRoot "build\webui-venv"
 $webuiVersion = ""
 if (Test-Path "$webuiVenv\Scripts\open-webui.exe") {
     $venvPython = Join-Path $webuiVenv "Scripts\python.exe"

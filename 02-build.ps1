@@ -1,6 +1,7 @@
 # Build llama.cpp with CUDA + Vulkan + HIP (ROCm) support
 
-. "$PSScriptRoot\common.ps1"  # loads $cfg, activates VS Dev Shell + ROCm
+. "$PSScriptRoot\common.ps1"  # loads $cfg, adds ROCm to PATH
+Enable-VsDevShell
 
 # Clone llama.cpp if missing, otherwise pull latest
 if (-not (Test-Path "$($cfg.LlamaCppDir)\CMakeLists.txt")) {
@@ -13,7 +14,8 @@ if (-not (Test-Path "$($cfg.LlamaCppDir)\CMakeLists.txt")) {
     if ($LASTEXITCODE -ne 0) { throw "git pull failed" }
 }
 
-$buildDir = Join-Path $PSScriptRoot "build"
+$buildDir = Join-Path $PSScriptRoot "build\llama.cpp-cmake"
+New-Item -ItemType Directory -Path $buildDir -Force | Out-Null
 $opensslPath = $cfg.OpenSSLDir -replace '\\', '/'
 
 # ── sccache: use local cache if available ─────────────────────────
@@ -35,6 +37,8 @@ $cmakeArgs = @(
     "-B", $buildDir
     "-G", "Ninja"
     "-DGGML_NATIVE=OFF"
+    "-DGGML_BACKEND_DL=ON"
+    "-DGGML_CPU_ALL_VARIANTS=ON"
     "-DGGML_CUDA=ON"
     "-DGGML_VULKAN=ON"
     "-DGGML_HIP=ON"

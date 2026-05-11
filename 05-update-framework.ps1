@@ -17,7 +17,7 @@ param()
 
 $ErrorActionPreference = 'Stop'
 
-$cfg = Import-PowerShellDataFile "$PSScriptRoot\config.psd1"
+. "$PSScriptRoot\common.ps1"  # loads $cfg from config-build.psd1
 
 # ── Helpers ──────────────────────────────────────────────────────────
 
@@ -71,10 +71,10 @@ Write-Host ""
 Write-Host "Updating winget packages..." -ForegroundColor Cyan
 foreach ($id in $wingetIds) {
     if (-not $beforeWinget[$id]) {
-        Write-Host "  $id: not installed (skipping)" -ForegroundColor DarkGray
+        Write-Host "  ${id}: not installed (skipping)" -ForegroundColor DarkGray
         continue
     }
-    Write-Host "  $id..." -ForegroundColor DarkGray
+    Write-Host "  ${id}..." -ForegroundColor DarkGray
     winget upgrade --id $id --exact --silent `
         --accept-source-agreements --accept-package-agreements 2>&1 |
         Where-Object { $_ -notmatch '^\s*[\\|/-]\s*$' -and $_ -notmatch '^\s*$' } |

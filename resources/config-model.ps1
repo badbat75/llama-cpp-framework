@@ -186,8 +186,9 @@ $gpuLayers         = Read-IntDefault    "GPU layers (99 = all, --n-gpu-layers)" 
 $parallel          = Read-IntDefault    "Parallel decoding seqs (-np)" $(if ($cur.Parallel) { $cur.Parallel } else { 4 }) -Min 1 -Max 64
 $batchSize          = Read-IntDefault    "Batch size (--batch-size)" $(if ($cur.BatchSize) { $cur.BatchSize } else { 512 }) -Min 1 -Max 8192
 $ubatchSize         = Read-IntDefault    "Ubatch size (--ubatch-size)" $(if ($cur.UbatchSize) { $cur.UbatchSize } else { 512 }) -Min 1 -Max 8192
-$cacheTypeV        = Read-EnumDefault   "V-cache quantization (--cache-type-v)" $(if ($cur.CacheTypeV) { $cur.CacheTypeV } else { 'q4_0' }) @('f32','f16','q8_0','q5_0','q4_0','q4_1')
-$flashAttn         = Read-BoolDefault   "Flash Attention (-fa)" $(if ($null -ne $cur.FlashAttn) { $cur.FlashAttn } else { $true })
+$cacheTypeK         = Read-EnumDefault   "K-cache quantization (--cache-type-k)" $(if ($cur.CacheTypeK) { $cur.CacheTypeK } else { 'q8_0' }) @('f32','f16','q8_0','q5_0','q4_0','q4_1')
+$cacheTypeV         = Read-EnumDefault   "V-cache quantization (--cache-type-v)" $(if ($cur.CacheTypeV) { $cur.CacheTypeV } else { 'q8_0' }) @('f32','f16','q8_0','q5_0','q4_0','q4_1')
+$flashAttn          = Read-BoolDefault   "Flash Attention (-fa)" $(if ($null -ne $cur.FlashAttn) { $cur.FlashAttn } else { $true })
 $jinja             = Read-BoolDefault   "Use embedded chat template (--jinja)" $(if ($null -ne $cur.Jinja) { $cur.Jinja } else { $true })
 $nCpuMoe           = Read-IntDefault    "Expert layers on CPU (MoE only, --n-cpu-moe)" $cur.NCpuMoe -Min 0 -Max 999 -AllowUnset
 $temp              = Read-FloatDefault  "Sampling temperature (--temp)" $cur.Temp -AllowUnset

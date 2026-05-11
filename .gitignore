@@ -1,9 +1,6 @@
 build/
-config.psd1
+config-build.psd1
 .sccache/
-webui-venv/
-open-webui/
-staging/
 dist/
 llama-cpp.nsi
 .webui_secret_key

@@ -1,11 +1,14 @@
-# Auto-detect paths and generate/update config.psd1
+# Auto-detect paths and generate/update config-build.psd1.
 # Run this first to verify your environment is ready.
+#
+# config-build.psd1 holds build-time settings only (paths, GPU targets, compiler
+# flags). Runtime / per-model settings live under %LOCALAPPDATA%\llama.cpp\config\
+# and are written by resources\config-server.ps1 and resources\config-model.ps1
+# on first launch (or via the NSIS install-time pages).
 
 param(
     [string]$LlamaCppDir  # path to llama.cpp source. If omitted, defaults to .\build
 )
-
-$configPath = "$PSScriptRoot\config.psd1"
 
 # ── Detection functions ──────────────────────────────────────────────
 
@@ -136,9 +139,9 @@ $detected.HipPath = $val
 if ($val) { Write-Host "  [OK] HipPath        : $val" -ForegroundColor Green }
 else      { Write-Host "  [--] HipPath        : not found (optional, needed for HIP/ROCm)" -ForegroundColor Yellow }
 
-# LlamaCppDir: CLI param → default .\build
+# LlamaCppDir (source clone): CLI param → default .\build\llama.cpp
 if (-not $LlamaCppDir) {
-    $LlamaCppDir = "$PSScriptRoot\build"
+    $LlamaCppDir = "$PSScriptRoot\build\llama.cpp"
 }
 $val = (Resolve-Path $LlamaCppDir -ErrorAction SilentlyContinue)?.Path ?? $LlamaCppDir
 $detected.LlamaCppDir = $val
@@ -149,8 +152,8 @@ $detected.CacheDir = $val
 if ($val) { Write-Host "  [OK] CacheDir       : $val" -ForegroundColor Green }
 else      { Write-Host "  [--] CacheDir       : not found (will use default LLAMA_CACHE)" -ForegroundColor Yellow }
 
-# OpenWebUIDir: default to .\open-webui
-$openWebUIDir = "$PSScriptRoot\open-webui"
+# OpenWebUIDir: default to .\build\open-webui
+$openWebUIDir = "$PSScriptRoot\build\open-webui"
 $val = (Resolve-Path $openWebUIDir -ErrorAction SilentlyContinue)?.Path ?? $openWebUIDir
 $detected.OpenWebUIDir = $val
 Write-Host "  [OK] OpenWebUIDir   : $val" -ForegroundColor Green
@@ -196,101 +199,36 @@ else {
     Write-Host ""
 }
 
-# ── Write config.psd1 ────────────────────────────────────────────────
+# ── Write config-build.psd1 ──────────────────────────────────────────
 
-# Build config as an ordered list of lines (avoids interpolation/escaping issues)
-$lines = [System.Collections.Generic.List[string]]::new()
-$lines.Add('@{')
-
-# Helper: format a value for .psd1
 function Fmt($val) {
     if ($val -is [bool])   { if ($val) { return '$true' } else { return '$false' } }
     if ($val -is [int])    { return "$val" }
-    if ($val -is [double])  { return "$val" }
+    if ($val -is [double]) { return "$val" }
     if ($val -is [string]) { return "'$($val -replace "'", "''" )'" }
     return "'$val'"
 }
 
-# Paths: use detected values, fall back to placeholder
-$paths = [ordered]@{
-    LlamaCppDir = @{ Val = $detected.LlamaCppDir; Placeholder = 'TODO: path to llama.cpp' }
-    OpenSSLDir  = @{ Val = $detected.OpenSSLDir;  Placeholder = 'TODO: path to OpenSSL-Win64' }
-    HipPath     = @{ Val = $detected.HipPath;     Placeholder = 'TODO: path to ROCm' }
-    VsDevShell  = @{ Val = $detected.VsDevShell;  Placeholder = 'TODO: path to Launch-VsDevShell.ps1' }
-    CacheDir    = @{ Val = $detected.CacheDir;    Placeholder = 'TODO: path to model cache' }
-    OpenWebUIDir = @{ Val = $detected.OpenWebUIDir; Placeholder = 'TODO: path to Open WebUI source' }
-}
+$buildLines = [System.Collections.Generic.List[string]]::new()
+$buildLines.Add('@{')
+$buildLines.Add('    # Paths')
+$buildLines.Add("    LlamaCppDir  = $(Fmt $detected.LlamaCppDir)")
+$buildLines.Add("    OpenSSLDir   = $(Fmt $detected.OpenSSLDir)")
+$buildLines.Add("    HipPath      = $(Fmt $detected.HipPath)")
+$buildLines.Add("    VsDevShell   = $(Fmt $detected.VsDevShell)")
+$buildLines.Add("    CacheDir     = $(Fmt $detected.CacheDir)")
+$buildLines.Add("    OpenWebUIDir = $(Fmt $detected.OpenWebUIDir)")
+$buildLines.Add('')
+$buildLines.Add('    # Build settings')
+$buildLines.Add("    GpuTargets  = 'gfx900;gfx906;gfx908;gfx90a;gfx942;gfx950;gfx1030;gfx1100;gfx1101;gfx1102;gfx1200;gfx1201'")
+$buildLines.Add("    BuildType   = 'Release'")
+$buildLines.Add("    CCompiler   = 'clang'")
+$buildLines.Add("    CxxCompiler = 'clang'")
+$buildLines.Add("    MarchFlags  = '-march=x86-64-v3'")
+$buildLines.Add("    BuildJobs   = [int]0")
+$buildLines.Add('}')
+$buildLines | Set-Content -Path "$PSScriptRoot\config-build.psd1" -Encoding utf8NoBOM
 
-$lines.Add('    # Paths')
-foreach ($key in $paths.Keys) {
-    $v = if ($paths[$key].Val) { $paths[$key].Val } else { $paths[$key].Placeholder }
-    $lines.Add("    $($key.PadRight(12)) = $(Fmt $v)")
-}
-
-# Non-path settings with defaults
-$settings = [ordered]@{
-    GpuTargets  = "gfx900;gfx906;gfx908;gfx90a;gfx942;gfx950;gfx1030;gfx1100;gfx1101;gfx1102;gfx1200;gfx1201"
-    BuildType   = "Release"
-    CCompiler   = "clang"
-    CxxCompiler = "clang"
-    MarchFlags  = "-march=x86-64-v3"
-    BuildJobs   = [int]0
-    Model       = "unsloth/Qwen3.5-35B-A3B-GGUF:UD-Q4_K_XL"
-    Port        = [int]8080
-    CtxSize     = [int]65536
-    GpuLayers   = [int]99
-    Parallel    = [int]1
-    CacheTypeK  = "q8_0"
-    CacheTypeV  = "q8_0"
-    FlashAttn   = $true
-    Jinja       = $true
-    Temp        = 0.7
-    TopK        = [int]20
-    TopP        = 0.95
-    PresencePenalty = 1.5
-    ChatTemplateKwargs = '{"enable_thinking":true}'
-}
-
-# Preserve existing non-path settings if config already exists
-if (Test-Path $configPath) {
-    try {
-        $existing = Import-PowerShellDataFile $configPath
-        foreach ($key in @($settings.Keys)) {
-            if ($existing.ContainsKey($key)) {
-                $settings[$key] = $existing[$key]
-            }
-        }
-    } catch {
-        Write-Host "  [--] Could not read existing config, using defaults" -ForegroundColor Yellow
-    }
-}
-
-$lines.Add('')
-$lines.Add('    # Build settings')
-foreach ($key in @('GpuTargets','BuildType','CCompiler','CxxCompiler','MarchFlags','BuildJobs')) {
-    $lines.Add("    $($key.PadRight(12)) = $(Fmt $settings[$key])")
-}
-
-$lines.Add('')
-$lines.Add('    # Runtime settings')
-foreach ($key in @('Model','Port','CtxSize','GpuLayers','Parallel','CacheTypeK','CacheTypeV','FlashAttn','Jinja','Temp','TopK','TopP','PresencePenalty','ChatTemplateKwargs')) {
-    $lines.Add("    $($key.PadRight(12)) = $(Fmt $settings[$key])")
-}
-
-$lines.Add('}')
-
-$content = $lines -join "`r`n"
-Set-Content -Path $configPath -Value $content -Encoding utf8NoBOM
-Write-Host "  config.psd1 written to: $configPath" -ForegroundColor Green
-
-# Show any TODO placeholders
-$todos = (Select-String -Path $configPath -Pattern "TODO:" -SimpleMatch)
-if ($todos) {
-    Write-Host ""
-    Write-Host "  Fill in these placeholders in config.psd1:" -ForegroundColor Yellow
-    foreach ($t in $todos) {
-        Write-Host "    $($t.Line.Trim())" -ForegroundColor Yellow
-    }
-}
-
+Write-Host "  config-build.psd1 written." -ForegroundColor Green
+Write-Host "  Runtime / per-model settings are written on first launch (or by the installer)." -ForegroundColor DarkGray
 Write-Host ""

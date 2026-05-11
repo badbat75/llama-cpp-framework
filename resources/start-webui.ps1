@@ -3,9 +3,13 @@
 # endpoint to point at (probes whether llama-server is already running). If
 # llama-server isn't up, Open WebUI still starts (the user can launch it
 # separately or pick a different OpenAI-compatible backend in Admin Settings).
+#
+# -WebUIExe lets the dev launcher point at the in-tree webui-venv.
 
 [CmdletBinding()]
-param()
+param(
+    [string]$WebUIExe
+)
 
 $ErrorActionPreference = 'Stop'
 $installDir = $PSScriptRoot
@@ -29,15 +33,17 @@ $srvHost = if ($null -ne $srv.Hostname) { $srv.Hostname } else { 'localhost' }
 $srvPort = if ($null -ne $srv.Port)     { $srv.Port }     else { 8080 }
 
 # ── Locate Open WebUI ───────────────────────────────────────────────
-$webuiDir = $null
-$regPath  = "HKLM:\Software\llama.cpp"
-if (Test-Path $regPath) {
-    $webuiDir = (Get-ItemProperty $regPath).WebUIDir
+if (-not $WebUIExe) {
+    $webuiDir = $null
+    $regPath  = "HKLM:\Software\llama.cpp"
+    if (Test-Path $regPath) {
+        $webuiDir = (Get-ItemProperty $regPath).WebUIDir
+    }
+    if (-not $webuiDir) { $webuiDir = "${env:ProgramFiles}\Open WebUI" }
+    $WebUIExe = Join-Path $webuiDir "Scripts\open-webui.exe"
 }
-if (-not $webuiDir) { $webuiDir = "${env:ProgramFiles}\Open WebUI" }
-$webuiExe = Join-Path $webuiDir "Scripts\open-webui.exe"
-if (-not (Test-Path $webuiExe)) {
-    throw "Open WebUI not installed at $webuiExe. Re-run the installer and select the 'Open WebUI' component."
+if (-not (Test-Path $WebUIExe)) {
+    throw "Open WebUI not installed at $WebUIExe. Re-run the installer and select the 'Open WebUI' component."
 }
 
 # ── CWD + DATA_DIR for writable per-user data ───────────────────────
@@ -97,4 +103,4 @@ $displayHost = if ($wuiHost -eq '0.0.0.0') { 'localhost' } else { $wuiHost }
 Write-Host "Starting Open WebUI on ${wuiHost}:${wuiPort}..." -ForegroundColor Cyan
 Write-Host "Open WebUI: http://${displayHost}:${wuiPort}" -ForegroundColor Green
 Write-Host "Log: $logPath" -ForegroundColor DarkGray
-& $webuiExe serve --port $wuiPort *>> $logPath
+& $WebUIExe serve --port $wuiPort *>> $logPath

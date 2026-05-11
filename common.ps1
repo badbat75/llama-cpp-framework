@@ -1,20 +1,31 @@
-# Common bootstrap: load config and activate VS Developer Shell
-# Dot-source this at the top of every script: . "$PSScriptRoot\common.ps1"
+# Shared bootstrap for build/runtime scripts.
+# Dot-source at the top of every script: . "$PSScriptRoot\common.ps1"
+#
+# - Loads $cfg from config-build.psd1 (build-time paths, GPU targets, compiler).
+# - Adds ROCm/HIP\bin to PATH so HIP DLLs are loadable at both build and run time.
+# - Exposes Enable-VsDevShell as a function; build scripts call it, runtime scripts don't.
 
-$cfg = Import-PowerShellDataFile "$PSScriptRoot\config.psd1"
-
-# Activate VS Developer Shell (required for cmake, clang, ninja, etc.)
-if (-not (Test-Path $cfg.VsDevShell)) {
-    throw "VsDevShell not found at '$($cfg.VsDevShell)'. Run 00-configure.ps1 to fix paths."
+$cfgPath = Join-Path $PSScriptRoot 'config-build.psd1'
+if (-not (Test-Path $cfgPath)) {
+    throw "config-build.psd1 not found. Run 01-configure.ps1 first."
 }
-$prevDir = Get-Location
-& $cfg.VsDevShell -Arch amd64
-Set-Location $prevDir
+$cfg = Import-PowerShellDataFile $cfgPath
 
-# Set up ROCm / HIP if configured (also provides clang, cmake if not already in PATH)
 if ($cfg.HipPath -and (Test-Path $cfg.HipPath)) {
     $env:HIP_PATH = $cfg.HipPath
     if ($env:PATH -notlike "*$($env:HIP_PATH)\bin*") {
         $env:PATH = "$env:HIP_PATH\bin;$env:PATH"
     }
+}
+
+function Enable-VsDevShell {
+    if (-not $cfg.VsDevShell) {
+        throw "VsDevShell not configured. Install Visual Studio with the C++ workload and re-run 01-configure.ps1."
+    }
+    if (-not (Test-Path $cfg.VsDevShell)) {
+        throw "VsDevShell not found at '$($cfg.VsDevShell)'. Re-run 01-configure.ps1 to fix the path."
+    }
+    $prev = Get-Location
+    & $cfg.VsDevShell -Arch amd64
+    Set-Location $prev
 }
