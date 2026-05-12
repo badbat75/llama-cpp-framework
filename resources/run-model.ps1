@@ -87,10 +87,11 @@ $port      = if ($null -ne $srv.Port)        { $srv.Port }      else { 8080 }
 $modelsMax = if ($null -ne $srv.ModelsMax)   { $srv.ModelsMax } else { 1 }
 
 $serverArgs = @(
-    '--models-preset', $presetsPath
-    '--models-max',    $modelsMax
-    '--port',          $port
-    '--host',          $hostname
+    '--models-preset',   $presetsPath
+    '--models-max',      $modelsMax
+    '--port',            $port
+    '--host',            $hostname
+    '--webui-mcp-proxy'
 )
 
 if ($srv.Mlock)                { $serverArgs += '--mlock' }
