@@ -209,6 +209,7 @@ function ConvertTo-FloatOrNull { param($v) if ($v) { $p=[double]0; if ([double]:
 function ConvertTo-BoolOrNull  { param($v) if ($v -eq 'true') { $true } elseif ($v -eq 'false') { $false } else { $null } }
 function ConvertTo-FlashOrNull { param($v) if ($v -eq 'true') { $true } elseif ($v -eq 'false') { $false } else { $null } }
 
+$curMmproj      = if ($cur.ContainsKey('mmproj')) { $cur['mmproj'] } else { $null }
 $curCtx          = ConvertTo-IntOrNull   $cur['ctx-size']
 $curGpuLayers    = ConvertTo-IntOrNull   $cur['n-gpu-layers']
 $curParallel     = ConvertTo-IntOrNull   $cur['parallel']
@@ -235,6 +236,7 @@ Write-Host "Preset id (sent as `"model`" in API requests): $modelId" -Foreground
 Write-Host "Press Enter to accept the default; type '-' to unset an optional field." -ForegroundColor DarkGray
 Write-Host ""
 
+$mmproj         = Read-StringDefault "MMProj path (--mmproj)" $curMmproj -AllowUnset
 $ctxSize           = Read-IntDefault    "Context size (tokens, --ctx-size)" $(if ($curCtx) { $curCtx } else { 32768 }) -Min 512 -Max 8388608
 $gpuLayers         = Read-IntDefault    "GPU layers (99 = all, --n-gpu-layers)" $(if ($null -ne $curGpuLayers) { $curGpuLayers } else { 99 }) -Min 0 -Max 999
 $parallel          = Read-IntDefault    "Parallel decoding seqs (-np)" $(if ($curParallel) { $curParallel } else { 4 }) -Min 1 -Max 64
@@ -282,7 +284,8 @@ $sb = [System.Text.StringBuilder]::new()
 [void]$sb.AppendLine("model = $($selected.FullName)")
 [void]$sb.AppendLine('')
 [void]$sb.AppendLine('; Resource / context (model-dependent: ctx max, VRAM cost)')
-Emit-Setting $sb 'ctx-size'     $ctxSize
+Emit-Setting $sb 'mmproj'          $mmproj
+Emit-Setting $sb 'ctx-size'      $ctxSize
 Emit-Setting $sb 'n-gpu-layers' $gpuLayers
 Emit-Setting $sb 'parallel'     $parallel
 Emit-Setting $sb 'batch-size'   $batchSize
