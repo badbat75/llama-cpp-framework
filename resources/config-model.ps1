@@ -1,33 +1,36 @@
-# Per-model configuration for llama.cpp.
+# Per-model preset builder for llama.cpp router mode.
 #
-# Lists .gguf files in the configured ModelsDir, marks already-configured
-# models with `*`, lets the user pick one, prompts for every per-model
-# parameter (defaulting to the current value or a sane hardcoded default —
-# Enter accepts the default, `-` explicitly unsets an optional field), and
-# writes %LOCALAPPDATA%\llama.cpp\config\models\<id>.psd1. ActiveModel and
-# ModelsDir are then updated in server.psd1 so the runtime knows which to load.
+# Operates directly on %LOCALAPPDATA%\llama.cpp\config\presets.ini — the file
+# consumed by `llama-server --models-preset`. Each [section] in the INI is one
+# preset; the section name is the id clients pass as the OpenAI "model" field.
 #
-# Re-runnable: pick a different model to switch active, or pick the same one
-# to refresh its parameters. Configured models are marked with `*` in the list.
+# This script edits exactly one section at a time. Other sections in the file —
+# including any custom keys you've hand-added, comments, and ordering — are
+# preserved byte-for-byte. The section being edited is rewritten in full from
+# the wizard's answers, so any custom keys IN THAT SECTION will be lost; if you
+# want exotic flags on a model, set them up via the wizard first, then add the
+# exotic keys by hand and don't re-run the wizard for that model.
 
 [CmdletBinding()]
 param()
 
 $ErrorActionPreference = 'Stop'
 
+. (Join-Path $PSScriptRoot "common-functions.ps1")
+
 $configDir   = Join-Path $env:LOCALAPPDATA "llama.cpp\config"
-$serverPath  = Join-Path $configDir "server.psd1"
-$modelsDir   = Join-Path $configDir "models"
+$serverPath  = Join-Path $configDir "server.ini"
+$presetsPath = Join-Path $configDir "presets.ini"
 
 if (-not (Test-Path $serverPath)) {
     Write-Host ""
-    Write-Host "  No server.psd1 at $serverPath" -ForegroundColor Yellow
+    Write-Host "  No server.ini at $serverPath" -ForegroundColor Yellow
     Write-Host "  Run config-server.ps1 first to set up llama-server." -ForegroundColor Yellow
     Write-Host ""
     return
 }
-New-Item -ItemType Directory -Path $modelsDir -Force | Out-Null
-$serverCfg = Import-PowerShellDataFile -Path $serverPath
+New-Item -ItemType Directory -Path $configDir -Force | Out-Null
+$serverCfg = Read-ServerIni -Path $serverPath
 
 # ── Prompt helpers (Enter = default; `-` = unset for optional fields) ──
 
@@ -102,27 +105,49 @@ function Get-ModelId {
     return ($base -replace '[^a-zA-Z0-9._-]+', '_')
 }
 
-# Targeted PSD1 field replace (preserves comments and other fields). Inserts
-# before the closing `}` if the field is missing.
-function Set-PsdField {
-    param([string]$Path, [string]$Field, [string]$Literal)
-    $content = Get-Content -Path $Path -Raw -Encoding UTF8
-    $pattern = "(?m)^(\s*)$([regex]::Escape($Field))\s*=.*$"
-    $newLine = "    $Field = $Literal"
-    if ($content -match $pattern) {
-        $content = [regex]::Replace($content, $pattern, $newLine)
-    } else {
-        $content = $content -replace "(?ms)\}\s*$", "$newLine`r`n}"
+# ── INI section parsing ──────────────────────────────────────────────
+# Returns each section as { Id; Text } where Text is the verbatim slice from
+# `[id]` up to (but not including) the next section header. Used both to
+# detect which models are already configured (for the `*` marker) and to
+# pre-fill prompt defaults from the active section.
+
+function Get-IniSections {
+    param([string]$Path)
+    if (-not (Test-Path $Path)) { return @() }
+    $text = Get-Content -Path $Path -Raw -Encoding UTF8
+    if (-not $text) { return @() }
+    $sections = @()
+    foreach ($m in [regex]::Matches($text, '(?m)^\[(?<id>[^\]\r\n]+)\][\s\S]*?(?=^\[|\z)')) {
+        $sections += [pscustomobject]@{
+            Id    = $m.Groups['id'].Value.Trim()
+            Text  = $m.Value
+            Index = $m.Index
+            Length = $m.Length
+        }
     }
-    Set-Content -Path $Path -Value $content -Encoding utf8NoBOM
+    return $sections
+}
+
+function Get-IniSectionKeys {
+    param([pscustomobject]$Section)
+    $result = @{}
+    if (-not $Section) { return $result }
+    foreach ($line in ($Section.Text -split "(?:\r\n|\n)")) {
+        $t = $line.Trim()
+        if ($t -eq '' -or $t.StartsWith(';') -or $t.StartsWith('#') -or $t.StartsWith('[')) { continue }
+        if ($t -match '^([^=]+?)\s*=\s*(.*)$') {
+            $result[$Matches[1].Trim()] = $Matches[2].Trim()
+        }
+    }
+    return $result
 }
 
 Write-Host ""
-Write-Host "── llama.cpp model configuration ──" -ForegroundColor Cyan
+Write-Host "── llama.cpp model preset ──" -ForegroundColor Cyan
 Write-Host ""
 
 # 1) Models directory
-$defaultModelsDir = if ($serverCfg.ModelsDir) { $serverCfg.ModelsDir } else { Join-Path $env:USERPROFILE ".cache\llama.cpp" }
+$defaultModelsDir = if ($serverCfg['ModelsDir']) { $serverCfg['ModelsDir'] } else { Join-Path $env:USERPROFILE ".cache\llama.cpp" }
 $ggufDir = $null
 while (-not $ggufDir) {
     $reply = Read-Host "Models directory [$defaultModelsDir]"
@@ -146,18 +171,21 @@ if ($models.Count -eq 0) {
     throw "No .gguf files found under $ggufDir."
 }
 
-# 3) Display list with `*` for already-configured models
+# 3) Read existing presets so already-configured models get a `*` marker
+$sections = @(Get-IniSections -Path $presetsPath)
+$configuredIds = @($sections | ForEach-Object { $_.Id })
+
 Write-Host ""
 Write-Host "Available models:" -ForegroundColor Cyan
 for ($i = 0; $i -lt $models.Count; $i++) {
     $sizeGb  = [math]::Round($models[$i].Length / 1GB, 2)
     $relPath = $models[$i].FullName.Substring($ggufDir.Length).TrimStart('\', '/')
     $id      = Get-ModelId $models[$i].FullName
-    $marker  = if (Test-Path (Join-Path $modelsDir "$id.psd1")) { '*' } else { ' ' }
+    $marker  = if ($configuredIds -contains $id) { '*' } else { ' ' }
     Write-Host ("  [{0,2}]{1} {2}  ({3} GB)" -f ($i + 1), $marker, $relPath, $sizeGb)
 }
 Write-Host ""
-Write-Host "  (* = already configured)" -ForegroundColor DarkGray
+Write-Host "  (* = already a preset section in presets.ini)" -ForegroundColor DarkGray
 
 # 4) Selection
 $selected = $null
@@ -171,102 +199,154 @@ while (-not $selected) {
     }
 }
 
-$modelId      = Get-ModelId $selected.FullName
-$modelCfgPath = Join-Path $modelsDir "$modelId.psd1"
-$cur = if (Test-Path $modelCfgPath) { Import-PowerShellDataFile -Path $modelCfgPath } else { @{} }
+$modelId = Get-ModelId $selected.FullName
+$existingSection = $sections | Where-Object { $_.Id -eq $modelId } | Select-Object -First 1
+$cur = Get-IniSectionKeys -Section $existingSection
 
-# 5) Prompt for all per-model parameters (Enter = default, `-` = unset)
+# Convert string defaults read from INI into typed values for the prompts.
+function ConvertTo-IntOrNull   { param($v) if ($v) { $p=0; if ([int]::TryParse($v, [ref]$p))    { return $p } } return $null }
+function ConvertTo-FloatOrNull { param($v) if ($v) { $p=[double]0; if ([double]::TryParse($v, [System.Globalization.NumberStyles]::Float, [System.Globalization.CultureInfo]::InvariantCulture, [ref]$p)) { return $p } } return $null }
+function ConvertTo-BoolOrNull  { param($v) if ($v -eq 'true') { $true } elseif ($v -eq 'false') { $false } else { $null } }
+function ConvertTo-FlashOrNull { param($v) if ($v -eq 'on') { $true } elseif ($v -eq 'off') { $false } else { $null } }
+
+$curCtx          = ConvertTo-IntOrNull   $cur['ctx-size']
+$curGpuLayers    = ConvertTo-IntOrNull   $cur['n-gpu-layers']
+$curParallel     = ConvertTo-IntOrNull   $cur['parallel']
+$curBatchSize    = ConvertTo-IntOrNull   $cur['batch-size']
+$curUbatchSize   = ConvertTo-IntOrNull   $cur['ubatch-size']
+$curCacheK       = if ($cur.ContainsKey('cache-type-k')) { $cur['cache-type-k'] } else { $null }
+$curCacheV       = if ($cur.ContainsKey('cache-type-v')) { $cur['cache-type-v'] } else { $null }
+$curFlash        = ConvertTo-FlashOrNull $cur['flash-attn']
+$curJinja        = ConvertTo-BoolOrNull  $cur['jinja']
+$curReasoning    = if ($cur.ContainsKey('reasoning-format')) { $cur['reasoning-format'] } else { $null }
+$curNCpuMoe      = ConvertTo-IntOrNull   $cur['n-cpu-moe']
+$curTemp         = ConvertTo-FloatOrNull $cur['temp']
+$curTopK         = ConvertTo-IntOrNull   $cur['top-k']
+$curTopP         = ConvertTo-FloatOrNull $cur['top-p']
+$curMinP         = ConvertTo-FloatOrNull $cur['min-p']
+$curRepeatPen    = ConvertTo-FloatOrNull $cur['repeat-penalty']
+$curPresencePen  = ConvertTo-FloatOrNull $cur['presence-penalty']
+$curChatKwargs   = if ($cur.ContainsKey('chat-template-kwargs')) { $cur['chat-template-kwargs'] } else { $null }
+
+# 5) Prompt for all per-model parameters
 Write-Host ""
 Write-Host "Selected: $($selected.FullName)" -ForegroundColor Green
+Write-Host "Preset id (sent as `"model`" in API requests): $modelId" -ForegroundColor Green
 Write-Host "Press Enter to accept the default; type '-' to unset an optional field." -ForegroundColor DarkGray
 Write-Host ""
 
-$ctxSize           = Read-IntDefault    "Context size (tokens, --ctx-size)" $(if ($cur.CtxSize) { $cur.CtxSize } else { 32768 }) -Min 512 -Max 8388608
-$gpuLayers         = Read-IntDefault    "GPU layers (99 = all, --n-gpu-layers)" $(if ($null -ne $cur.GpuLayers) { $cur.GpuLayers } else { 99 }) -Min 0 -Max 999
-$parallel          = Read-IntDefault    "Parallel decoding seqs (-np)" $(if ($cur.Parallel) { $cur.Parallel } else { 4 }) -Min 1 -Max 64
-$batchSize          = Read-IntDefault    "Batch size (--batch-size)" $(if ($cur.BatchSize) { $cur.BatchSize } else { 512 }) -Min 1 -Max 8192
-$ubatchSize         = Read-IntDefault    "Ubatch size (--ubatch-size)" $(if ($cur.UbatchSize) { $cur.UbatchSize } else { 512 }) -Min 1 -Max 8192
-$cacheTypeK         = Read-EnumDefault   "K-cache quantization (--cache-type-k)" $(if ($cur.CacheTypeK) { $cur.CacheTypeK } else { 'q8_0' }) @('f32','f16','q8_0','q5_0','q4_0','q4_1')
-$cacheTypeV         = Read-EnumDefault   "V-cache quantization (--cache-type-v)" $(if ($cur.CacheTypeV) { $cur.CacheTypeV } else { 'q8_0' }) @('f32','f16','q8_0','q5_0','q4_0','q4_1')
-$flashAttn          = Read-BoolDefault   "Flash Attention (-fa)" $(if ($null -ne $cur.FlashAttn) { $cur.FlashAttn } else { $true })
-$jinja             = Read-BoolDefault   "Use embedded chat template (--jinja)" $(if ($null -ne $cur.Jinja) { $cur.Jinja } else { $true })
-$reasoningFormat   = Read-EnumDefault   "Reasoning format (--reasoning-format)" $(if ($cur.ReasoningFormat) { $cur.ReasoningFormat } else { 'auto' }) @('auto','none','deepseek')
-$nCpuMoe           = Read-IntDefault    "Expert layers on CPU (MoE only, --n-cpu-moe)" $cur.NCpuMoe -Min 0 -Max 999 -AllowUnset
-$temp              = Read-FloatDefault  "Sampling temperature (--temp)" $cur.Temp -AllowUnset
-$topK              = Read-IntDefault    "Top-K (--top-k)" $cur.TopK -Min 0 -Max 1000 -AllowUnset
-$topP              = Read-FloatDefault  "Top-P (--top-p)" $cur.TopP -AllowUnset
-$minP              = Read-FloatDefault  "Min-P (--min-p, Qwen wants 0.0; llama.cpp default is 0.05)" $cur.MinP -AllowUnset
-$repeatPenalty     = Read-FloatDefault  "Repeat penalty (--repeat-penalty)" $cur.RepeatPenalty -AllowUnset
-$presencePenalty   = Read-FloatDefault  "Presence penalty (--presence-penalty)" $cur.PresencePenalty -AllowUnset
-$chatTemplateKwargs= Read-StringDefault "Chat template kwargs (JSON, --chat-template-kwargs)" $cur.ChatTemplateKwargs -AllowUnset
+$ctxSize           = Read-IntDefault    "Context size (tokens, --ctx-size)" $(if ($curCtx) { $curCtx } else { 32768 }) -Min 512 -Max 8388608
+$gpuLayers         = Read-IntDefault    "GPU layers (99 = all, --n-gpu-layers)" $(if ($null -ne $curGpuLayers) { $curGpuLayers } else { 99 }) -Min 0 -Max 999
+$parallel          = Read-IntDefault    "Parallel decoding seqs (-np)" $(if ($curParallel) { $curParallel } else { 4 }) -Min 1 -Max 64
+$batchSize         = Read-IntDefault    "Batch size (--batch-size)" $(if ($curBatchSize) { $curBatchSize } else { 512 }) -Min 1 -Max 8192
+$ubatchSize        = Read-IntDefault    "Ubatch size (--ubatch-size)" $(if ($curUbatchSize) { $curUbatchSize } else { 512 }) -Min 1 -Max 8192
+$cacheTypeK        = Read-EnumDefault   "K-cache quantization (--cache-type-k)" $(if ($curCacheK) { $curCacheK } else { 'q8_0' }) @('f32','f16','q8_0','q5_0','q4_0','q4_1')
+$cacheTypeV        = Read-EnumDefault   "V-cache quantization (--cache-type-v)" $(if ($curCacheV) { $curCacheV } else { 'q8_0' }) @('f32','f16','q8_0','q5_0','q4_0','q4_1')
+$flashAttn         = Read-BoolDefault   "Flash Attention (-fa)" $(if ($null -ne $curFlash) { $curFlash } else { $true })
+$jinja             = Read-BoolDefault   "Use embedded chat template (--jinja)" $(if ($null -ne $curJinja) { $curJinja } else { $true })
+$reasoningFormat   = Read-EnumDefault   "Reasoning format (--reasoning-format)" $(if ($curReasoning) { $curReasoning } else { 'auto' }) @('auto','none','deepseek')
+$nCpuMoe           = Read-IntDefault    "Expert layers on CPU (MoE only, --n-cpu-moe)" $curNCpuMoe -Min 0 -Max 999 -AllowUnset
+$temp              = Read-FloatDefault  "Sampling temperature (--temp)" $curTemp -AllowUnset
+$topK              = Read-IntDefault    "Top-K (--top-k)" $curTopK -Min 0 -Max 1000 -AllowUnset
+$topP              = Read-FloatDefault  "Top-P (--top-p)" $curTopP -AllowUnset
+$minP              = Read-FloatDefault  "Min-P (--min-p, Qwen wants 0.0; llama.cpp default is 0.05)" $curMinP -AllowUnset
+$repeatPenalty     = Read-FloatDefault  "Repeat penalty (--repeat-penalty)" $curRepeatPen -AllowUnset
+$presencePenalty   = Read-FloatDefault  "Presence penalty (--presence-penalty)" $curPresencePen -AllowUnset
+$chatTemplateKwargs= Read-StringDefault "Chat template kwargs (JSON, --chat-template-kwargs)" $curChatKwargs -AllowUnset
 
-# 6) Render psd1 — set fields are emitted as live; unset optional fields are
-#    emitted as commented examples so the user can spot them later.
-function Format-Field {
-    param([string]$Name, $Value, [string]$Default, [int]$NamePad = 18)
-    $padded = $Name.PadRight($NamePad)
-    if ($null -eq $Value) {
-        return "    # $padded = $Default"
+# 6) Build the new section text. Set values are emitted as live keys; unset
+#    optional values are emitted as commented placeholders so the user can
+#    discover them later.
+function Emit-Setting {
+    param([System.Text.StringBuilder]$Sb, [string]$Key, $Value, [string]$Example = $null)
+    if ($null -eq $Value -or ($Value -is [string] -and $Value -eq '')) {
+        if ($Example) { [void]$Sb.AppendLine("; $Key = $Example") }
+        return
     }
-    return "    $padded = $Value"
+    [void]$Sb.AppendLine("$Key = $Value")
+}
+function Emit-Bool {
+    param([System.Text.StringBuilder]$Sb, [string]$Key, $Value)
+    if ($null -eq $Value) { return }
+    [void]$Sb.AppendLine("$Key = $(if ($Value) { 'true' } else { 'false' })")
 }
 
-$modelPathEsc = $selected.FullName -replace "'", "''"
-$jinjaLit     = if ($jinja)     { '$true' } else { '$false' }
-$flashLit     = if ($flashAttn) { '$true' } else { '$false' }
-$cacheKEsc    = $cacheTypeK -replace "'", "''"
-$cacheVEsc    = $cacheTypeV -replace "'", "''"
-$ctkEsc       = if ($chatTemplateKwargs) { ($chatTemplateKwargs -replace "'", "''") } else { $null }
-$ctkLit       = if ($ctkEsc) { "'$ctkEsc'" } else { $null }
-$reasoningEsc = $reasoningFormat -replace "'", "''"
+$sb = [System.Text.StringBuilder]::new()
+[void]$sb.AppendLine("[$modelId]")
+[void]$sb.AppendLine("; Generated by config-model.ps1 on $(Get-Date -Format 'yyyy-MM-dd HH:mm').")
+[void]$sb.AppendLine('; Re-running the wizard rewrites this section; hand-edits to OTHER sections')
+[void]$sb.AppendLine('; in this file are preserved. To add exotic llama.cpp flags, edit by hand and')
+[void]$sb.AppendLine('; do not re-run the wizard for this model.')
+[void]$sb.AppendLine('')
+[void]$sb.AppendLine('; Model: local path (-m). For Hugging Face downloads use `hf-repo = user/repo[:tag]` instead.')
+[void]$sb.AppendLine("model = $($selected.FullName)")
+[void]$sb.AppendLine('')
+[void]$sb.AppendLine('; Resource / context (model-dependent: ctx max, VRAM cost)')
+Emit-Setting $sb 'ctx-size'     $ctxSize
+Emit-Setting $sb 'n-gpu-layers' $gpuLayers
+Emit-Setting $sb 'parallel'     $parallel
+Emit-Setting $sb 'batch-size'   $batchSize
+Emit-Setting $sb 'ubatch-size'  $ubatchSize
+[void]$sb.AppendLine('')
+[void]$sb.AppendLine('; KV cache')
+Emit-Setting $sb 'cache-type-k' $cacheTypeK
+Emit-Setting $sb 'cache-type-v' $cacheTypeV
+[void]$sb.AppendLine("flash-attn = $(if ($flashAttn) { 'on' } else { 'off' })")
+[void]$sb.AppendLine('')
+[void]$sb.AppendLine('; Chat template embedded in the GGUF')
+Emit-Bool $sb 'jinja' $jinja
+[void]$sb.AppendLine('')
+[void]$sb.AppendLine('; Reasoning format: auto | none | deepseek')
+Emit-Setting $sb 'reasoning-format' $reasoningFormat
+[void]$sb.AppendLine('')
+[void]$sb.AppendLine('; MoE-only: expert layers kept on CPU')
+Emit-Setting $sb 'n-cpu-moe' $nCpuMoe '0'
+[void]$sb.AppendLine('')
+[void]$sb.AppendLine('; Sampling overrides')
+Emit-Setting $sb 'temp'             $temp           '0.7'
+Emit-Setting $sb 'top-k'            $topK           '20'
+Emit-Setting $sb 'top-p'            $topP           '0.95'
+Emit-Setting $sb 'min-p'            $minP           '0.0'
+Emit-Setting $sb 'repeat-penalty'   $repeatPenalty  '1.05'
+Emit-Setting $sb 'presence-penalty' $presencePenalty '1.5'
+[void]$sb.AppendLine('')
+[void]$sb.AppendLine('; Chat template kwargs (e.g. enable_thinking for Qwen3)')
+Emit-Setting $sb 'chat-template-kwargs' $chatTemplateKwargs '{"enable_thinking":true}'
 
-$body = @()
-$body += "    # Generated by config-model.ps1 on $(Get-Date -Format 'yyyy-MM-dd HH:mm')"
-$body += ''
-$body += "    # Model: local path (-m) or HF spec ('user/repo[:tag]', triggers -hf)"
-$body += "    Model              = '$modelPathEsc'"
-$body += ''
-$body += '    # ── Resource / context (model-dependent: ctx max, VRAM cost) ───────'
-$body += "    CtxSize            = $ctxSize"
-$body += "    GpuLayers          = $gpuLayers"
-$body += "    Parallel           = $parallel"
-$body += (Format-Field 'BatchSize'          $batchSize          '512')
-$body += (Format-Field 'UbatchSize'         $ubatchSize         '512')
-$body += ''
-$body += "    CacheTypeK         = '$cacheKEsc'"
-$body += "    CacheTypeV         = '$cacheVEsc'"
-$body += "    FlashAttn          = $flashLit"
-$body += ''
-$body += "    # Use the chat template embedded in the GGUF"
-$body += "    Jinja              = $jinjaLit"
-$body += ''
-$body += '    # ── Reasoning format: auto | none | deepseek (--reasoning-format) ──'
-$body += "    ReasoningFormat    = '$reasoningEsc'"
-$body += ''
-$body += '    # ── MoE-only: expert layers kept on CPU (--n-cpu-moe) ──────────────'
-$body += (Format-Field 'NCpuMoe' $nCpuMoe '0')
-$body += ''
-$body += '    # ── Sampling overrides ─────────────────────────────────────────────'
-$body += (Format-Field 'Temp'            $temp            '0.7')
-$body += (Format-Field 'TopK'            $topK            '20')
-$body += (Format-Field 'TopP'            $topP            '0.95')
-$body += (Format-Field 'MinP'            $minP            '0.0')
-$body += (Format-Field 'RepeatPenalty'   $repeatPenalty   '1.05')
-$body += (Format-Field 'PresencePenalty' $presencePenalty '1.5')
-$body += ''
-$body += '    # ── Chat template kwargs (e.g. enable_thinking for Qwen3) ──────────'
-$body += (Format-Field 'ChatTemplateKwargs' $ctkLit "'{`"enable_thinking`":true}'")
+$newSection = $sb.ToString().TrimEnd("`r", "`n") + "`r`n"
 
-$content = "@{`r`n" + ($body -join "`r`n") + "`r`n}`r`n"
-Set-Content -Path $modelCfgPath -Value $content -Encoding utf8NoBOM
+# 7) Section-preserving write: replace existing [modelId] section, or append
+#    a new one, leaving the rest of the file untouched.
+$existingText = if (Test-Path $presetsPath) { Get-Content -Path $presetsPath -Raw -Encoding UTF8 } else { '' }
+if (-not $existingText) { $existingText = '' }
 
-# 7) Update server.psd1 pointers
-$ggufDirEsc = $ggufDir -replace "'", "''"
-Set-PsdField $serverPath 'ModelsDir'   "'$ggufDirEsc'"
-Set-PsdField $serverPath 'ActiveModel' "'$modelId'"
+$escapedId = [regex]::Escape($modelId)
+$existingMatch = [regex]::Match($existingText, "(?m)^\[$escapedId\][\s\S]*?(?=^\[|\z)")
+if ($existingMatch.Success) {
+    $before = $existingText.Substring(0, $existingMatch.Index)
+    $after  = $existingText.Substring($existingMatch.Index + $existingMatch.Length)
+    # If another section follows, insert a blank-line separator before it.
+    $sep    = if ($after -ne '') { "`r`n" } else { '' }
+    $newText = $before + $newSection + $sep + $after
+} else {
+    if ($existingText.Length -gt 0) {
+        $existingText = $existingText.TrimEnd("`r", "`n") + "`r`n`r`n"
+    }
+    $newText = $existingText + $newSection
+}
+
+[System.IO.File]::WriteAllText($presetsPath, $newText, [System.Text.UTF8Encoding]::new($false))
+
+# 8) Update server.ini's ModelsDir pointer
+Set-ServerIniField -Path $serverPath -Key 'ModelsDir' -Value $ggufDir
 
 Write-Host ""
-Write-Host "Active model: $modelId" -ForegroundColor Green
-Write-Host "  Config: $modelCfgPath"
-Write-Host "  Edit it directly to tweak values without re-running this script."
+if ($existingMatch.Success) {
+    Write-Host "Updated preset: $modelId" -ForegroundColor Green
+} else {
+    Write-Host "Added preset: $modelId" -ForegroundColor Green
+}
+Write-Host "  File: $presetsPath"
+Write-Host "  Edit it directly to tweak values, add exotic flags, or remove a preset."
+Write-Host "  Clients select this preset by passing  '`"model`": `"$modelId`"'  in API requests."
 Write-Host ""

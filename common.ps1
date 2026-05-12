@@ -1,13 +1,13 @@
 # Shared bootstrap for build/runtime scripts.
 # Dot-source at the top of every script: . "$PSScriptRoot\common.ps1"
 #
-# - Loads $cfg from config-build.psd1 (build-time paths, GPU targets, compiler).
+# - Loads $cfg from build\config-build.psd1 (build-time paths, GPU targets, compiler).
 # - Adds ROCm/HIP\bin to PATH so HIP DLLs are loadable at both build and run time.
 # - Exposes Enable-VsDevShell as a function; build scripts call it, runtime scripts don't.
 
-$cfgPath = Join-Path $PSScriptRoot 'config-build.psd1'
+$cfgPath = Join-Path $PSScriptRoot 'build\config-build.psd1'
 if (-not (Test-Path $cfgPath)) {
-    throw "config-build.psd1 not found. Run 01-configure.ps1 first."
+    throw "build\config-build.psd1 not found. Run 01-configure.ps1 first."
 }
 $cfg = Import-PowerShellDataFile $cfgPath
 

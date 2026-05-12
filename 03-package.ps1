@@ -54,47 +54,24 @@ if ($LASTEXITCODE -ne 0) { throw "cmake --install failed" }
 # All resources are staged flat in $stageDir — the NSIS template installs them
 # into $INSTDIR side-by-side, and resources\run-model.ps1 invokes the config
 # writers via $installDir\config-*.ps1 (flat lookup, no subdir).
-Copy-Item "$PSScriptRoot\resources\run-model.ps1"     -Destination $stageDir -Force
-Copy-Item "$PSScriptRoot\resources\start-webui.ps1"   -Destination $stageDir -Force
-Copy-Item "$PSScriptRoot\resources\config-model.ps1"  -Destination $stageDir -Force
-Copy-Item "$PSScriptRoot\resources\config-server.ps1" -Destination $stageDir -Force
-Copy-Item "$PSScriptRoot\resources\config-webui.ps1"  -Destination $stageDir -Force
-Copy-Item "$PSScriptRoot\resources\llama.ico"         -Destination $stageDir -Force
-
-# Check Open WebUI venv and get version
-$webuiVenv = Join-Path $PSScriptRoot "build\webui-venv"
-$webuiVersion = ""
-if (Test-Path "$webuiVenv\Scripts\open-webui.exe") {
-    $venvPython = Join-Path $webuiVenv "Scripts\python.exe"
-    $webuiVersion = & $venvPython -c "import importlib.metadata; print(importlib.metadata.version('open-webui'))" 2>$null
-    Write-Host "Open WebUI: $webuiVersion ($webuiVenv)" -ForegroundColor Cyan
-
-    # Bundle the relocate script alongside the venv so the installer can patch
-    # Scripts\*.exe shebangs to the install path after copying. Re-copied each
-    # time because 02-build-webui.ps1 wipes the venv on upstream updates.
-    Copy-Item "$PSScriptRoot\relocate-venv.py" -Destination "$webuiVenv\relocate-venv.py" -Force
-} else {
-    $webuiVenv = ""
-    Write-Host "Open WebUI venv not found — skipping (run 02-build-webui.ps1 first)" -ForegroundColor DarkGray
-}
+Copy-Item "$PSScriptRoot\resources\run-model.ps1"        -Destination $stageDir -Force
+Copy-Item "$PSScriptRoot\resources\config-model.ps1"     -Destination $stageDir -Force
+Copy-Item "$PSScriptRoot\resources\config-server.ps1"    -Destination $stageDir -Force
+Copy-Item "$PSScriptRoot\resources\common-functions.ps1" -Destination $stageDir -Force
+Copy-Item "$PSScriptRoot\resources\llama.ico"            -Destination $stageDir -Force
 
 # ── Generate .nsi from template ─────────────────────────────────────
 $templatePath = Join-Path $PSScriptRoot "llama-cpp.nsi.template"
-$nsiPath      = Join-Path $PSScriptRoot "llama-cpp.nsi"
-$installerName = "llama_cpp-$version"
-if ($webuiVersion) { $installerName += "-webui-$webuiVersion" }
-$installerName += "-win64-setup.exe"
+$nsiPath      = Join-Path $PSScriptRoot "build\llama-cpp.nsi"
+$installerName = "llama_cpp-$version-win64-setup.exe"
 $outputFile   = Join-Path $outputDir $installerName
 
 $stageDirNsis = $stageDir -replace '/', '\'
 $outputFileNsis = $outputFile -replace '/', '\'
 
-$webuiDirNsis = if ($webuiVenv) { ($webuiVenv -replace '/', '\') } else { "" }
-
 $nsiContent = (Get-Content $templatePath -Raw) `
     -replace '@VERSION@',     $version `
     -replace '@STAGING_DIR@', $stageDirNsis `
-    -replace '@WEBUI_DIR@',   $webuiDirNsis `
     -replace '@OUTPUT_FILE@', $outputFileNsis
 
 Set-Content -Path $nsiPath -Value $nsiContent -Encoding UTF8

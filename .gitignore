@@ -1,8 +1,4 @@
 build/
-config-build.psd1
-.sccache/
 dist/
-llama-cpp.nsi
-.webui_secret_key
 
 .claude/

@@ -21,7 +21,7 @@ $opensslPath = $cfg.OpenSSLDir -replace '\\', '/'
 # ── sccache: use local cache if available ─────────────────────────
 $sccachePath = Get-Command sccache -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source
 if ($sccachePath) {
-    $sccacheDir = Join-Path $PSScriptRoot ".sccache"
+    $sccacheDir = Join-Path $PSScriptRoot "build\.sccache"
     New-Item -ItemType Directory -Path $sccacheDir -Force | Out-Null
     $env:SCCACHE_DIR = $sccacheDir
     $env:SCCACHE_CACHE_SIZE = "10G"

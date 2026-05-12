@@ -1,15 +1,16 @@
-# Runtime entry point for the installed llama.cpp distribution.
-# Launched by the "llama.cpp" Start Menu shortcut. Starts llama-server only —
-# Open WebUI has its own dedicated shortcut ("Start Open WebUI").
+# Runtime entry point for the installed llama.cpp distribution. Launched by the
+# "llama.cpp" Start Menu shortcut. Starts llama-server in *router mode* against
+# a user-owned %LOCALAPPDATA%\llama.cpp\config\presets.ini.
 #
-# Reads two split configs:
-#   %LOCALAPPDATA%\llama.cpp\config\server.psd1            — runtime params
-#   %LOCALAPPDATA%\llama.cpp\config\models\<active>.psd1   — model + sampling
+# Reads:
+#   %LOCALAPPDATA%\llama.cpp\config\server.ini    — router-wide params
+#   %LOCALAPPDATA%\llama.cpp\config\presets.ini   — per-model presets (one [section] each)
 #
-# server.psd1 is written by NSIS at install. ActiveModel is empty until the
-# user runs config-model.ps1 (lazily invoked here on first launch).
+# presets.ini is the source of truth — hand-edit it freely; config-model.ps1
+# updates one section at a time while preserving the rest of the file.
 #
-# -ServerExe lets the dev-mode launcher (04-run.ps1) point at the in-tree build.
+# -ServerExe is an override for pointing at an alternate llama-server build
+# (e.g. .\build\llama.cpp-cmake\bin\llama-server.exe from an in-tree build).
 
 [CmdletBinding()]
 param(
@@ -19,33 +20,47 @@ param(
 $ErrorActionPreference = 'Stop'
 $installDir = $PSScriptRoot
 
-$configDir  = Join-Path $env:LOCALAPPDATA "llama.cpp\config"
-$serverPath = Join-Path $configDir "server.psd1"
-$modelsRoot = Join-Path $configDir "models"
+. (Join-Path $installDir "common-functions.ps1")
 
-# ── server.psd1 ──────────────────────────────────────────────────────
+$configDir   = Join-Path $env:LOCALAPPDATA "llama.cpp\config"
+$serverPath  = Join-Path $configDir "server.ini"
+$presetsPath = Join-Path $configDir "presets.ini"
+
+# ── server.ini ───────────────────────────────────────────────────────
 if (-not (Test-Path $serverPath)) {
     & (Join-Path $installDir "config-server.ps1")
-    if (-not (Test-Path $serverPath)) { throw "server.psd1 was not created. Aborting." }
+    if (-not (Test-Path $serverPath)) { throw "server.ini was not created. Aborting." }
 }
-$srv = Import-PowerShellDataFile -Path $serverPath
+$srvRaw = Read-ServerIni -Path $serverPath
 
-# ── Active model — prompt via config-model.ps1 if unset / missing ──────
-if (-not $srv.ActiveModel) {
-    & (Join-Path $installDir "config-model.ps1")
-    $srv = Import-PowerShellDataFile -Path $serverPath
-    if (-not $srv.ActiveModel) { throw "No active model configured. Aborting." }
-}
-$modelCfgPath = Join-Path $modelsRoot "$($srv.ActiveModel).psd1"
-if (-not (Test-Path $modelCfgPath)) {
-    Write-Host "Active model '$($srv.ActiveModel)' has no config at $modelCfgPath" -ForegroundColor Yellow
-    & (Join-Path $installDir "config-model.ps1")
-    $srv = Import-PowerShellDataFile -Path $serverPath
-    $modelCfgPath = Join-Path $modelsRoot "$($srv.ActiveModel).psd1"
-    if (-not (Test-Path $modelCfgPath)) { throw "Model config still missing. Aborting." }
-}
-$mdl = Import-PowerShellDataFile -Path $modelCfgPath
+# Coerce strings → typed values.
+function ConvertTo-IntOrNull  { param($v) if ([string]::IsNullOrWhiteSpace("$v")) { return $null }; $p=0; if ([int]::TryParse("$v", [ref]$p)) { return $p } else { return $null } }
+function ConvertTo-BoolOrNull { param($v) $s = "$v".Trim().ToLowerInvariant(); if ($s -in @('true','yes','on','1','$true'))  { return $true }; if ($s -in @('false','no','off','0','$false')) { return $false }; return $null }
 
+$srv = @{
+    Port         = ConvertTo-IntOrNull  $srvRaw['Port']
+    Hostname     = $srvRaw['Hostname']
+    Mlock        = ConvertTo-BoolOrNull $srvRaw['Mlock']
+    Threads      = ConvertTo-IntOrNull  $srvRaw['Threads']
+    ThreadsBatch = ConvertTo-IntOrNull  $srvRaw['ThreadsBatch']
+    CacheReuse   = ConvertTo-IntOrNull  $srvRaw['CacheReuse']
+    ModelsMax    = ConvertTo-IntOrNull  $srvRaw['ModelsMax']
+    ModelsDir    = $srvRaw['ModelsDir']
+}
+
+# ── Need at least one configured preset ──────────────────────────────
+$hasPresets = (Test-Path $presetsPath) -and `
+              ([regex]::IsMatch((Get-Content -Path $presetsPath -Raw -Encoding UTF8), '(?m)^\['))
+if (-not $hasPresets) {
+    Write-Host "No model presets found — launching config-model.ps1..." -ForegroundColor Cyan
+    & (Join-Path $installDir "config-model.ps1")
+    $hasPresets = (Test-Path $presetsPath) -and `
+                  ([regex]::IsMatch((Get-Content -Path $presetsPath -Raw -Encoding UTF8), '(?m)^\['))
+    if (-not $hasPresets) { throw "No model presets configured. Aborting." }
+}
+
+# LLAMA_CACHE points -hf downloads at the user's ModelsDir so they land alongside
+# the user's other .gguf files instead of in the default %USERPROFILE%\.cache.
 if ($srv.ModelsDir) { $env:LLAMA_CACHE = $srv.ModelsDir }
 
 # ── Locate llama-server ─────────────────────────────────────────────
@@ -64,60 +79,30 @@ New-Item -ItemType Directory -Path $logsDir -Force | Out-Null
 $logPath = Join-Path $logsDir "llama-server.log"
 "=== Started $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') ===" | Out-File -FilePath $logPath -Append -Encoding UTF8
 
-# ── Build server arguments ──────────────────────────────────────────
-$modelArgs = if (Test-Path -LiteralPath $mdl.Model) {
-    @("-m", $mdl.Model)
-} else {
-    @("-hf", $mdl.Model)
-}
+# ── Router CLI args ──────────────────────────────────────────────────
+# host/port/threads/mlock/cache-reuse stay as CLI flags on the router; model
+# instances inherit them when the router spawns them.
+$hostname  = if ($srv.Hostname)              { $srv.Hostname }  else { 'localhost' }
+$port      = if ($null -ne $srv.Port)        { $srv.Port }      else { 8080 }
+$modelsMax = if ($null -ne $srv.ModelsMax)   { $srv.ModelsMax } else { 1 }
 
-$hostname = if ($null -ne $srv.Hostname) { $srv.Hostname } else { "localhost" }
-
-$serverArgs = $modelArgs + @(
-    "--cache-type-k", $mdl.CacheTypeK
-    "--cache-type-v", $mdl.CacheTypeV
-    "-np", $mdl.Parallel
-    "-ngl", $mdl.GpuLayers
-    "--ctx-size", $mdl.CtxSize
-    "--port", $srv.Port
-    "--host", $hostname
+$serverArgs = @(
+    '--models-preset', $presetsPath
+    '--models-max',    $modelsMax
+    '--port',          $port
+    '--host',          $hostname
 )
 
-if ($null -ne $mdl.BatchSize) { $serverArgs += "--batch-size", $mdl.BatchSize }
-if ($null -ne $mdl.UbatchSize) { $serverArgs += "--ubatch-size", $mdl.UbatchSize }
+if ($srv.Mlock)                { $serverArgs += '--mlock' }
+if ($null -ne $srv.CacheReuse) { $serverArgs += '--cache-reuse', $srv.CacheReuse }
 
-if ($mdl.FlashAttn) { $serverArgs += "-fa", "on" }
-if ($mdl.Jinja)     { $serverArgs += "--jinja" }
-if ($srv.Mlock)     { $serverArgs += "--mlock" }
-if ($null -ne $srv.CacheReuse) { $serverArgs += "--cache-reuse", $srv.CacheReuse }
+$cpuCores     = [Environment]::ProcessorCount
+$threads      = if ($null -ne $srv.Threads)      { $srv.Threads }      else { [Math]::Max(1, [Math]::Floor($cpuCores * 0.5)) }
+$threadsBatch = if ($null -ne $srv.ThreadsBatch) { $srv.ThreadsBatch } else { [Math]::Max(1, [Math]::Floor($cpuCores * 0.75)) }
+$serverArgs += '-t', $threads
+$serverArgs += '--threads-batch', $threadsBatch
 
-if ($mdl.ReasoningFormat) { $serverArgs += "--reasoning-format", $mdl.ReasoningFormat }
-
-if ($null -ne $mdl.NCpuMoe) { $serverArgs += "--n-cpu-moe", $mdl.NCpuMoe }
-
-if ($null -ne $mdl.Temp)               { $serverArgs += "--temp", $mdl.Temp }
-if ($null -ne $mdl.TopK)               { $serverArgs += "--top-k", $mdl.TopK }
-if ($null -ne $mdl.TopP)               { $serverArgs += "--top-p", $mdl.TopP }
-if ($null -ne $mdl.MinP)               { $serverArgs += "--min-p", $mdl.MinP }
-if ($null -ne $mdl.RepeatPenalty)      { $serverArgs += "--repeat-penalty", $mdl.RepeatPenalty }
-if ($null -ne $mdl.PresencePenalty)    { $serverArgs += "--presence-penalty", $mdl.PresencePenalty }
-if ($null -ne $mdl.ChatTemplateKwargs) { $serverArgs += "--chat-template-kwargs", $mdl.ChatTemplateKwargs }
-
-$cpuCores = [Environment]::ProcessorCount
-$threads = if ($null -ne $srv.Threads) {
-    $srv.Threads
-} else {
-    [Math]::Max(1, [Math]::Floor($cpuCores * 0.5))
-}
-$threadsBatch = if ($null -ne $srv.ThreadsBatch) {
-    $srv.ThreadsBatch
-} else {
-    [Math]::Max(1, [Math]::Floor($cpuCores * 0.75))
-}
-$serverArgs += "-t", $threads
-$serverArgs += "--threads-batch", $threadsBatch
-
-Write-Host "Active model: $($srv.ActiveModel)" -ForegroundColor DarkGray
-Write-Host "Starting llama-server on ${hostname}:$($srv.Port)..." -ForegroundColor Cyan
-Write-Host "Log: $logPath" -ForegroundColor DarkGray
+Write-Host "Presets file:       $presetsPath  (max simultaneous: $modelsMax)" -ForegroundColor DarkGray
+Write-Host "Starting llama-server (router) on ${hostname}:$port..." -ForegroundColor Cyan
+Write-Host "Log:                $logPath" -ForegroundColor DarkGray
 & $ServerExe @serverArgs *>> $logPath

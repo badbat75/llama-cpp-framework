@@ -152,12 +152,6 @@ $detected.CacheDir = $val
 if ($val) { Write-Host "  [OK] CacheDir       : $val" -ForegroundColor Green }
 else      { Write-Host "  [--] CacheDir       : not found (will use default LLAMA_CACHE)" -ForegroundColor Yellow }
 
-# OpenWebUIDir: default to .\build\open-webui
-$openWebUIDir = "$PSScriptRoot\build\open-webui"
-$val = (Resolve-Path $openWebUIDir -ErrorAction SilentlyContinue)?.Path ?? $openWebUIDir
-$detected.OpenWebUIDir = $val
-Write-Host "  [OK] OpenWebUIDir   : $val" -ForegroundColor Green
-
 Write-Host ""
 
 # --- Tools (detected AFTER VS Dev Shell activation) ---
@@ -217,7 +211,6 @@ $buildLines.Add("    OpenSSLDir   = $(Fmt $detected.OpenSSLDir)")
 $buildLines.Add("    HipPath      = $(Fmt $detected.HipPath)")
 $buildLines.Add("    VsDevShell   = $(Fmt $detected.VsDevShell)")
 $buildLines.Add("    CacheDir     = $(Fmt $detected.CacheDir)")
-$buildLines.Add("    OpenWebUIDir = $(Fmt $detected.OpenWebUIDir)")
 $buildLines.Add('')
 $buildLines.Add('    # Build settings')
 $buildLines.Add("    GpuTargets  = 'gfx900;gfx906;gfx908;gfx90a;gfx942;gfx950;gfx1030;gfx1100;gfx1101;gfx1102;gfx1200;gfx1201'")
@@ -227,8 +220,10 @@ $buildLines.Add("    CxxCompiler = 'clang'")
 $buildLines.Add("    MarchFlags  = '-march=x86-64-v3'")
 $buildLines.Add("    BuildJobs   = [int]0")
 $buildLines.Add('}')
-$buildLines | Set-Content -Path "$PSScriptRoot\config-build.psd1" -Encoding utf8NoBOM
+$buildDir = Join-Path $PSScriptRoot 'build'
+New-Item -ItemType Directory -Path $buildDir -Force | Out-Null
+$buildLines | Set-Content -Path (Join-Path $buildDir 'config-build.psd1') -Encoding utf8NoBOM
 
-Write-Host "  config-build.psd1 written." -ForegroundColor Green
+Write-Host "  build\config-build.psd1 written." -ForegroundColor Green
 Write-Host "  Runtime / per-model settings are written on first launch (or by the installer)." -ForegroundColor DarkGray
 Write-Host ""
