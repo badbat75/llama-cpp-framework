@@ -172,7 +172,9 @@ Write-Host ("╚" + ("═" * ($BANNER_W - 2)) + "╝") -ForegroundColor DarkGray
 # ── Launch info ──────────────────────────────────────────────────────
 Write-Host ""
 Write-Host "[*] Starting llama-server (router)..."             -ForegroundColor Cyan
-Write-Host ("    url:                  http://{0}:{1}" -f $hostname, $port) -ForegroundColor Gray
+$urlHost = if ($hostname -eq '0.0.0.0') { [System.Net.Dns]::GetHostName() } else { $hostname }
+Write-Host ("    url:                  http://{0}:{1}" -f $urlHost, $port) -ForegroundColor Gray
+Write-Host ("    command:              & `"$ServerExe`" $($serverArgs -join ' ')") -ForegroundColor Gray
 Write-Host ("    threads:              {0}" -f $threads) -ForegroundColor Gray
 Write-Host ("    batch:                {0}" -f $threadsBatch) -ForegroundColor Gray
 Write-Host ("    max-models:           {0}" -f $modelsMax) -ForegroundColor Gray
