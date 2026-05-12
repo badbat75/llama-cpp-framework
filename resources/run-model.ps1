@@ -91,11 +91,14 @@ if ($mdl.Jinja)     { $serverArgs += "--jinja" }
 if ($srv.Mlock)     { $serverArgs += "--mlock" }
 if ($null -ne $srv.CacheReuse) { $serverArgs += "--cache-reuse", $srv.CacheReuse }
 
+if ($mdl.ReasoningFormat) { $serverArgs += "--reasoning-format", $mdl.ReasoningFormat }
+
 if ($null -ne $mdl.NCpuMoe) { $serverArgs += "--n-cpu-moe", $mdl.NCpuMoe }
 
 if ($null -ne $mdl.Temp)               { $serverArgs += "--temp", $mdl.Temp }
 if ($null -ne $mdl.TopK)               { $serverArgs += "--top-k", $mdl.TopK }
 if ($null -ne $mdl.TopP)               { $serverArgs += "--top-p", $mdl.TopP }
+if ($null -ne $mdl.MinP)               { $serverArgs += "--min-p", $mdl.MinP }
 if ($null -ne $mdl.RepeatPenalty)      { $serverArgs += "--repeat-penalty", $mdl.RepeatPenalty }
 if ($null -ne $mdl.PresencePenalty)    { $serverArgs += "--presence-penalty", $mdl.PresencePenalty }
 if ($null -ne $mdl.ChatTemplateKwargs) { $serverArgs += "--chat-template-kwargs", $mdl.ChatTemplateKwargs }
