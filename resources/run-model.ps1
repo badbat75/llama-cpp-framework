@@ -18,6 +18,13 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+trap {
+    Write-Host "`n[✕] ERROR: $($_.Exception.Message)" -ForegroundColor Red
+    Write-Host "`nPress any key to close..." -ForegroundColor DarkYellow
+    $null = [System.Console]::ReadKey($true)
+    break
+}
+
 $installDir = $PSScriptRoot
 
 . (Join-Path $installDir "common-functions.ps1")
@@ -79,9 +86,40 @@ New-Item -ItemType Directory -Path $logsDir -Force | Out-Null
 $logPath = Join-Path $logsDir "llama-server.log"
 "=== Started $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') ===" | Out-File -FilePath $logPath -Append -Encoding UTF8
 
+# ── GPU info (OS-level — llama-server also prints this on startup) ───
+$gpuName  = ''
+$gpuVRAM  = ''
+try {
+    $nvidiaSmi = Get-Command nvidia-smi -ErrorAction SilentlyContinue
+    if ($nvidiaSmi) {
+        $smiOut = & $nvidiaSmi.Source --query-gpu=name,memory.total --format=csv,noheader,nounits 2>$null
+        if ($smiOut) {
+            $parts = $smiOut.Trim().Split(',')
+            $gpuName = $parts[0].Trim()
+            $gpuVRAM = "{0} MiB" -f $parts[1].Trim()
+        }
+    }
+    if (-not $gpuName) {
+        $card = Get-CimInstance Win32_VideoController | Sort-Object AdapterRAM -Descending | Select-Object -First 1
+        if ($card) { $gpuName = $card.Name.Trim() }
+    }
+    if ($gpuName -and -not $gpuVRAM) {
+        $regKey = Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}\0*' -ErrorAction SilentlyContinue |
+            Where-Object { $_.DriverDesc -and $gpuName -match [regex]::Escape($_.DriverDesc) } |
+            Select-Object -First 1
+        if ($regKey -and $regKey.HardwareInformation.qwMemorySize) {
+            $gpuVRAM = "{0} MiB" -f [Math]::Round([long]$regKey.HardwareInformation.qwMemorySize / 1MB)
+        }
+    }
+    if ($gpuName -and -not $gpuVRAM) {
+        $card = Get-CimInstance Win32_VideoController | Where-Object { $_.Name -eq $gpuName } | Select-Object -First 1
+        if ($card -and $card.AdapterRAM) {
+            $gpuVRAM = "{0} MiB" -f [Math]::Round($card.AdapterRAM / 1MB)
+        }
+    }
+} catch {}
+
 # ── Router CLI args ──────────────────────────────────────────────────
-# host/port/threads/mlock/cache-reuse stay as CLI flags on the router; model
-# instances inherit them when the router spawns them.
 $hostname  = if ($srv.Hostname)              { $srv.Hostname }  else { 'localhost' }
 $port      = if ($null -ne $srv.Port)        { $srv.Port }      else { 8080 }
 $modelsMax = if ($null -ne $srv.ModelsMax)   { $srv.ModelsMax } else { 1 }
@@ -103,12 +141,58 @@ $threadsBatch = if ($null -ne $srv.ThreadsBatch) { $srv.ThreadsBatch } else { [M
 $serverArgs += '-t', $threads
 $serverArgs += '--threads-batch', $threadsBatch
 
-$verRaw = & $ServerExe --version 2>&1 | Select-String -Pattern 'version:\s+(\S+)'
-$llamaVer = if ($verRaw) { ($verRaw -split '\s+', 2)[1].TrimEnd(':') } else { 'unknown' }
+# ── Banner ───────────────────────────────────────────────────────────
+$m = (& $ServerExe --version 2>&1) -join "`n" | Select-String 'version:\s+(\S+)'
+$verRaw = if ($m) { $m.Matches[0].Groups[1].Value } else { 'unknown' }
+Write-Host ""
 
-Write-Host "llama.cpp version: $llamaVer" -ForegroundColor DarkGray
-Write-Host "Presets:           $presetsPath" -ForegroundColor DarkGray
-Write-Host "Log:               $logPath" -ForegroundColor DarkGray
-Write-Host "`nStarting llama-server (router) on ${hostname}:$port..." -ForegroundColor Cyan
-Write-Host "Server started" -ForegroundColor Green
-try { & $ServerExe @serverArgs *>> $logPath } finally { Write-Host "Server stopped" -ForegroundColor Yellow }
+$BANNER_W = 80
+$bannerRows = [System.Collections.ArrayList]@(
+    ,@('llama.cpp', "v$verRaw")
+    ,@('Presets', $presetsPath)
+    ,@('Log',     $logPath)
+)
+if ($gpuName) { $bannerRows.Insert(0, @('GPU', "$gpuName  ($gpuVRAM)")) }
+
+foreach ($r in $bannerRows) {
+    $needed = 4 + 14 + $r[1].Length
+    if ($needed -gt $BANNER_W) { $BANNER_W = $needed }
+}
+
+function Write-BannerRow { param([string]$Label, [string]$Value)
+    $rowText  = ("{0,-14}" -f $Label) + $Value
+    $padding  = " " * ($BANNER_W - 4 - $rowText.Length)
+    Write-Host ("║ $($rowText)$padding ║") -ForegroundColor DarkGray
+}
+
+Write-Host ("╔" + ("═" * ($BANNER_W - 2)) + "╗") -ForegroundColor DarkGray
+foreach ($r in $bannerRows) { Write-BannerRow $r[0] $r[1] }
+Write-Host ("╚" + ("═" * ($BANNER_W - 2)) + "╝") -ForegroundColor DarkGray
+
+# ── Launch info ──────────────────────────────────────────────────────
+Write-Host ""
+Write-Host "[*] Starting llama-server (router)..."             -ForegroundColor Cyan
+Write-Host ("    url:                  http://{0}:{1}" -f $hostname, $port) -ForegroundColor Gray
+Write-Host ("    threads:              {0}" -f $threads) -ForegroundColor Gray
+Write-Host ("    batch:                {0}" -f $threadsBatch) -ForegroundColor Gray
+Write-Host ("    max-models:           {0}" -f $modelsMax) -ForegroundColor Gray
+
+$presetSections = [regex]::Matches((Get-Content -Path $presetsPath -Raw -Encoding UTF8), '(?m)^\[([^\]]+)\]') | ForEach-Object { $_.Groups[1].Value }
+if ($presetSections) {
+    Write-Host "    models:" -ForegroundColor Gray
+    foreach ($m in $presetSections) {
+        Write-Host "      - $m" -ForegroundColor DarkGray
+    }
+}
+
+# ── Launch server (foreground, Ctrl+C to stop) ──────────────────────
+Write-Host ""
+Write-Host "[*] Ctrl+C to stop" -ForegroundColor DarkYellow
+Write-Host ""
+
+try {
+    & $ServerExe @serverArgs *>> $logPath
+} finally {
+    Write-Host ""
+    Write-Host "[✓] Server stopped." -ForegroundColor Green
+}
