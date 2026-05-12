@@ -207,7 +207,7 @@ $cur = Get-IniSectionKeys -Section $existingSection
 function ConvertTo-IntOrNull   { param($v) if ($v) { $p=0; if ([int]::TryParse($v, [ref]$p))    { return $p } } return $null }
 function ConvertTo-FloatOrNull { param($v) if ($v) { $p=[double]0; if ([double]::TryParse($v, [System.Globalization.NumberStyles]::Float, [System.Globalization.CultureInfo]::InvariantCulture, [ref]$p)) { return $p } } return $null }
 function ConvertTo-BoolOrNull  { param($v) if ($v -eq 'true') { $true } elseif ($v -eq 'false') { $false } else { $null } }
-function ConvertTo-FlashOrNull { param($v) if ($v -eq 'on') { $true } elseif ($v -eq 'off') { $false } else { $null } }
+function ConvertTo-FlashOrNull { param($v) if ($v -eq 'true') { $true } elseif ($v -eq 'false') { $false } else { $null } }
 
 $curCtx          = ConvertTo-IntOrNull   $cur['ctx-size']
 $curGpuLayers    = ConvertTo-IntOrNull   $cur['n-gpu-layers']
@@ -291,7 +291,7 @@ Emit-Setting $sb 'ubatch-size'  $ubatchSize
 [void]$sb.AppendLine('; KV cache')
 Emit-Setting $sb 'cache-type-k' $cacheTypeK
 Emit-Setting $sb 'cache-type-v' $cacheTypeV
-[void]$sb.AppendLine("flash-attn = $(if ($flashAttn) { 'on' } else { 'off' })")
+Emit-Bool $sb 'flash-attn' $flashAttn
 [void]$sb.AppendLine('')
 [void]$sb.AppendLine('; Chat template embedded in the GGUF')
 Emit-Bool $sb 'jinja' $jinja

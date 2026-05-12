@@ -103,7 +103,12 @@ $threadsBatch = if ($null -ne $srv.ThreadsBatch) { $srv.ThreadsBatch } else { [M
 $serverArgs += '-t', $threads
 $serverArgs += '--threads-batch', $threadsBatch
 
-Write-Host "Presets file:       $presetsPath  (max simultaneous: $modelsMax)" -ForegroundColor DarkGray
-Write-Host "Starting llama-server (router) on ${hostname}:$port..." -ForegroundColor Cyan
-Write-Host "Log:                $logPath" -ForegroundColor DarkGray
-& $ServerExe @serverArgs *>> $logPath
+$verRaw = & $ServerExe --version 2>&1 | Select-String -Pattern 'version:\s+(\S+)'
+$llamaVer = if ($verRaw) { ($verRaw -split '\s+', 2)[1].TrimEnd(':') } else { 'unknown' }
+
+Write-Host "llama.cpp version: $llamaVer" -ForegroundColor DarkGray
+Write-Host "Presets:           $presetsPath" -ForegroundColor DarkGray
+Write-Host "Log:               $logPath" -ForegroundColor DarkGray
+Write-Host "`nStarting llama-server (router) on ${hostname}:$port..." -ForegroundColor Cyan
+Write-Host "Server started" -ForegroundColor Green
+try { & $ServerExe @serverArgs *>> $logPath } finally { Write-Host "Server stopped" -ForegroundColor Yellow }
