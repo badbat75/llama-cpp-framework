@@ -21,13 +21,16 @@ function Test-IsAdmin {
 
 function Get-WingetVersion {
     param([string]$Id)
-    # winget's table output is locale-dependent; matching the row by Id prefix
-    # sidesteps that.
+    # winget's table output is locale-dependent and the column order puts Name
+    # first (e.g. "PowerShell 7-x64  Microsoft.PowerShell  7.4.6.0  winget"),
+    # so match the Id token anywhere on the line and return the next
+    # whitespace-separated token as the version.
     $output = winget list --id $Id --exact --accept-source-agreements 2>&1 | Out-String
     foreach ($line in ($output -split "`r?`n")) {
-        if ($line.StartsWith($Id)) {
-            $cols = $line -split '\s{2,}'
-            if ($cols.Count -ge 3) { return $cols[2].Trim() }
+        if (-not $line.Contains($Id)) { continue }
+        $cols = $line -split '\s+' | Where-Object { $_ }
+        for ($i = 0; $i -lt $cols.Count - 1; $i++) {
+            if ($cols[$i] -eq $Id) { return $cols[$i + 1].Trim() }
         }
     }
     return $null
@@ -124,12 +127,6 @@ $script = $blocks -join "`n"
 if (Test-IsAdmin) {
     & ([scriptblock]::Create($script))
 } else {
-    $script += @'
-
-Write-Host ""
-Write-Host "Done." -ForegroundColor Green
-Read-Host "Press Enter to close"
-'@
     Write-Host "Requesting administrator privileges for winget..." -ForegroundColor Yellow
     $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($script))
     $proc = Start-Process powershell -Verb RunAs -Wait -PassThru `
