@@ -55,7 +55,10 @@ $cmakeArgs = @(
 if ($sccachePath) {
     $cmakeArgs += "-DCMAKE_C_COMPILER_LAUNCHER=$sccachePath"
     $cmakeArgs += "-DCMAKE_CXX_COMPILER_LAUNCHER=$sccachePath"
-    $cmakeArgs += "-DCMAKE_CUDA_COMPILER_LAUNCHER=$sccachePath"
+    # nvcc is intentionally NOT wrapped with sccache: sccache's nvcc support
+    # mishandles multi-arch fatbin generation on CUDA 13.x, so fatbinary fails
+    # with "Could not open input file '<tu>.compute_75.ptx'" on every .cu.obj.
+    # Host C/CXX (clang) caching is unaffected and kept.
 }
 
 Write-Host "Configuring..." -ForegroundColor Cyan
