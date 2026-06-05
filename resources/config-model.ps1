@@ -215,11 +215,12 @@ $curGpuLayers    = ConvertTo-IntOrNull   $cur['n-gpu-layers']
 $curParallel     = ConvertTo-IntOrNull   $cur['parallel']
 $curBatchSize    = ConvertTo-IntOrNull   $cur['batch-size']
 $curUbatchSize   = ConvertTo-IntOrNull   $cur['ubatch-size']
+$curCacheRam     = ConvertTo-IntOrNull   $cur['cache-ram']
 $curCacheK       = if ($cur.ContainsKey('cache-type-k')) { $cur['cache-type-k'] } else { $null }
 $curCacheV       = if ($cur.ContainsKey('cache-type-v')) { $cur['cache-type-v'] } else { $null }
 $curFlash        = ConvertTo-FlashOrNull $cur['flash-attn']
 $curJinja        = ConvertTo-BoolOrNull  $cur['jinja']
-$curReasoning    = if ($cur.ContainsKey('reasoning-format')) { $cur['reasoning-format'] } else { $null }
+$curReasoningFormat = if ($cur.ContainsKey('reasoning-format')) { $cur['reasoning-format'] } else { $null }
 $curNCpuMoe      = ConvertTo-IntOrNull   $cur['n-cpu-moe']
 $curTemp         = ConvertTo-FloatOrNull $cur['temp']
 $curTopK         = ConvertTo-IntOrNull   $cur['top-k']
@@ -228,6 +229,21 @@ $curMinP         = ConvertTo-FloatOrNull $cur['min-p']
 $curRepeatPen    = ConvertTo-FloatOrNull $cur['repeat-penalty']
 $curPresencePen  = ConvertTo-FloatOrNull $cur['presence-penalty']
 $curChatKwargs   = if ($cur.ContainsKey('chat-template-kwargs')) { $cur['chat-template-kwargs'] } else { $null }
+
+# `enable_thinking` via chat-template-kwargs is deprecated by llama-server in favour
+# of --reasoning on/off/auto. Honour an explicit `reasoning` key first; otherwise
+# migrate a legacy enable_thinking kwarg into the new field and strip it from the
+# kwargs default so re-running the wizard never re-emits the deprecated form.
+$curReasoning = if ($cur.ContainsKey('reasoning'))              { $cur['reasoning'] }
+                elseif ($curChatKwargs -match '"enable_thinking"\s*:\s*true')  { 'on' }
+                elseif ($curChatKwargs -match '"enable_thinking"\s*:\s*false') { 'off' }
+                else { $null }
+if ($curChatKwargs) {
+    $stripped = $curChatKwargs -replace '"enable_thinking"\s*:\s*(?:true|false)\s*,?\s*', ''
+    $stripped = $stripped -replace ',\s*}', '}'
+    if ($stripped -match '^\s*\{\s*\}\s*$') { $stripped = $null }
+    $curChatKwargs = $stripped
+}
 
 # 5) Prompt for all per-model parameters
 Write-Host ""
@@ -245,8 +261,10 @@ $ubatchSize        = Read-IntDefault    "Ubatch size (--ubatch-size)" $(if ($cur
 $cacheTypeK        = Read-EnumDefault   "K-cache quantization (--cache-type-k)" $(if ($curCacheK) { $curCacheK } else { 'q8_0' }) @('f32','f16','q8_0','q5_0','q4_0','q4_1')
 $cacheTypeV        = Read-EnumDefault   "V-cache quantization (--cache-type-v)" $(if ($curCacheV) { $curCacheV } else { 'q8_0' }) @('f32','f16','q8_0','q5_0','q4_0','q4_1')
 $flashAttn         = Read-BoolDefault   "Flash Attention (-fa)" $(if ($null -ne $curFlash) { $curFlash } else { $true })
+$cacheRam          = Read-IntDefault    "Prompt cache RAM limit (MiB, --cache-ram; -1 = no limit, 0 = disable)" $curCacheRam -Min -1 -Max 1048576 -AllowUnset
 $jinja             = Read-BoolDefault   "Use embedded chat template (--jinja)" $(if ($null -ne $curJinja) { $curJinja } else { $true })
-$reasoningFormat   = Read-EnumDefault   "Reasoning format (--reasoning-format)" $(if ($curReasoning) { $curReasoning } else { 'auto' }) @('auto','none','deepseek')
+$reasoning         = Read-EnumDefault   "Thinking on/off (--reasoning)" $(if ($curReasoning) { $curReasoning } else { 'auto' }) @('auto','on','off')
+$reasoningFormat   = Read-EnumDefault   "Reasoning format (--reasoning-format)" $(if ($curReasoningFormat) { $curReasoningFormat } else { 'auto' }) @('auto','none','deepseek')
 $nCpuMoe           = Read-IntDefault    "Expert layers on CPU (MoE only, --n-cpu-moe)" $curNCpuMoe -Min 0 -Max 999 -AllowUnset
 $temp              = Read-FloatDefault  "Sampling temperature (--temp)" $curTemp -AllowUnset
 $topK              = Read-IntDefault    "Top-K (--top-k)" $curTopK -Min 0 -Max 1000 -AllowUnset
@@ -296,8 +314,14 @@ Emit-Setting $sb 'cache-type-k' $cacheTypeK
 Emit-Setting $sb 'cache-type-v' $cacheTypeV
 Emit-Bool $sb 'flash-attn' $flashAttn
 [void]$sb.AppendLine('')
+[void]$sb.AppendLine('; Prompt cache RAM limit in MiB (--cache-ram): default 8192, -1 = no limit, 0 = disable')
+Emit-Setting $sb 'cache-ram' $cacheRam '8192'
+[void]$sb.AppendLine('')
 [void]$sb.AppendLine('; Chat template embedded in the GGUF')
 Emit-Bool $sb 'jinja' $jinja
+[void]$sb.AppendLine('')
+[void]$sb.AppendLine('; Thinking on/off: on | off | auto (replaces the deprecated enable_thinking kwarg)')
+Emit-Setting $sb 'reasoning' $reasoning
 [void]$sb.AppendLine('')
 [void]$sb.AppendLine('; Reasoning format: auto | none | deepseek')
 Emit-Setting $sb 'reasoning-format' $reasoningFormat
@@ -313,8 +337,8 @@ Emit-Setting $sb 'min-p'            $minP           '0.0'
 Emit-Setting $sb 'repeat-penalty'   $repeatPenalty  '1.05'
 Emit-Setting $sb 'presence-penalty' $presencePenalty '1.5'
 [void]$sb.AppendLine('')
-[void]$sb.AppendLine('; Chat template kwargs (e.g. enable_thinking for Qwen3)')
-Emit-Setting $sb 'chat-template-kwargs' $chatTemplateKwargs '{"enable_thinking":true}'
+[void]$sb.AppendLine('; Chat template kwargs (JSON; for non-thinking kwargs — use `reasoning` above for enable_thinking)')
+Emit-Setting $sb 'chat-template-kwargs' $chatTemplateKwargs '{}'
 
 $newSection = $sb.ToString().TrimEnd("`r", "`n") + "`r`n"
 
