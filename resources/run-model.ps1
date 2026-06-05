@@ -130,7 +130,7 @@ $serverArgs = @(
     '--port',            $port
     '--host',            $hostname
     '--webui-mcp-proxy'
-    '-fit', 'off'
+    '--log-level', '4'
 )
 
 if ($srv.Mlock)                { $serverArgs += '--mlock' }
