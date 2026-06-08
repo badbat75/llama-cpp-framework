@@ -3,8 +3,7 @@
 #
 # config-build.psd1 holds build-time settings only (paths, GPU targets, compiler
 # flags). Runtime / per-model settings live under %LOCALAPPDATA%\llama.cpp\config\
-# and are written by resources\config-server.ps1 and resources\config-model.ps1
-# on first launch (or via the NSIS install-time pages).
+# and are written by llama-cpp-config on first launch.
 
 param(
     [string]$LlamaCppDir  # path to llama.cpp source. If omitted, defaults to .\build

@@ -1,4 +1,4 @@
-# Package llama.cpp binaries into an NSIS installer
+# Package llama.cpp binaries + llama-cpp-config into an NSIS installer
 # Requires: a successful build (02-build.ps1) and NSIS
 
 . "$PSScriptRoot\common.ps1"  # loads $cfg, adds ROCm to PATH
@@ -27,7 +27,6 @@ if (-not $nsisExe) {
     Write-Host "NSIS not found. Installing via winget..." -ForegroundColor Yellow
     winget install --id NSIS.NSIS --accept-source-agreements --accept-package-agreements
     if ($LASTEXITCODE -ne 0) { throw "Failed to install NSIS" }
-    # Refresh search
     foreach ($p in $nsisSearchPaths) {
         if (Test-Path $p) { $nsisExe = $p; break }
     }
@@ -35,7 +34,7 @@ if (-not $nsisExe) {
 }
 Write-Host "NSIS: $nsisExe" -ForegroundColor Cyan
 
-# ── Stage files with cmake --install ────────────────────────────────
+# ── Stage llama.cpp binaries with cmake --install ───────────────────
 $buildDir  = Join-Path $PSScriptRoot "build\llama.cpp-cmake"
 $stageDir  = Join-Path $PSScriptRoot "build\staging"
 $outputDir = Join-Path $PSScriptRoot "dist"
@@ -44,21 +43,26 @@ if (Test-Path $stageDir) { Remove-Item $stageDir -Recurse -Force }
 New-Item -ItemType Directory -Path $stageDir -Force | Out-Null
 New-Item -ItemType Directory -Path $outputDir -Force | Out-Null
 
-Write-Host "Staging files..." -ForegroundColor Cyan
+Write-Host "Staging llama.cpp binaries..." -ForegroundColor Cyan
 cmake --install $buildDir --prefix $stageDir
 if ($LASTEXITCODE -ne 0) { throw "cmake --install failed" }
 
-# Stage the runtime scripts and sample config alongside the binaries so the
-# NSIS template can pull them via @STAGING_DIR@ (placeholders are substituted
-# below; the .nsi has no @PSScriptRoot@ available).
-# All resources are staged flat in $stageDir — the NSIS template installs them
-# into $INSTDIR side-by-side, and resources\run-model.ps1 invokes the config
-# writers via $installDir\config-*.ps1 (flat lookup, no subdir).
-Copy-Item "$PSScriptRoot\resources\run-model.ps1"        -Destination $stageDir -Force
-Copy-Item "$PSScriptRoot\resources\config-model.ps1"     -Destination $stageDir -Force
-Copy-Item "$PSScriptRoot\resources\config-server.ps1"    -Destination $stageDir -Force
-Copy-Item "$PSScriptRoot\resources\common-functions.ps1" -Destination $stageDir -Force
-Copy-Item "$PSScriptRoot\resources\llama.ico"            -Destination $stageDir -Force
+# ── Stage llama-cpp-config (Rust binary) ────────────────────────────
+$configExe = Join-Path $PSScriptRoot "build\llama-cpp-config\llama-cpp-config.exe"
+$configProdExe = Join-Path $PSScriptRoot "llama-cpp-config\target\release\llama-cpp-config.exe"
+if (-not (Test-Path $configExe)) {
+    if (Test-Path $configProdExe) {
+        $configExe = $configProdExe
+    }
+    else {
+        throw "llama-cpp-config.exe not found. Run 02-build.ps1 first."
+    }
+}
+Copy-Item $configExe -Destination $stageDir -Force
+Write-Host "Staged llama-cpp-config.exe" -ForegroundColor DarkGray
+
+# Copy the icon for the installer
+Copy-Item "$PSScriptRoot\resources\llama.ico" -Destination $stageDir -Force
 
 # ── Generate .nsi from template ─────────────────────────────────────
 $templatePath = Join-Path $PSScriptRoot "llama-cpp.nsi.template"

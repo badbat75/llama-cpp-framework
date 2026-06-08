@@ -1,7 +1,13 @@
-# Build llama.cpp with CUDA + Vulkan + HIP (ROCm) support
+# Build llama.cpp with CUDA + Vulkan + HIP (ROCm) support,
+# then build llama-cpp-config (Rust GUI + CLI configurator).
 
 . "$PSScriptRoot\common.ps1"  # loads $cfg, adds ROCm to PATH
 Enable-VsDevShell
+
+$ErrorActionPreference = 'Stop'
+
+Write-Host ""
+Write-Host "  === llama.cpp (CMake) ===" -ForegroundColor Yellow
 
 # Clone llama.cpp if missing, otherwise pull latest
 if (-not (Test-Path "$($cfg.LlamaCppDir)\CMakeLists.txt")) {
@@ -47,10 +53,24 @@ $cmakeArgs = @(
     "-DCMAKE_C_COMPILER=$($cfg.CCompiler)"
     "-DCMAKE_CXX_COMPILER=$($cfg.CxxCompiler)"
     "-DCMAKE_C_FLAGS=$($cfg.MarchFlags) -w"
-    "-DCMAKE_CXX_FLAGS=$($cfg.MarchFlags) -w"
     "-DOPENSSL_ROOT_DIR:PATH=$opensslPath"
     "-DCMAKE_CUDA_FLAGS=-w"
 )
+
+# ── HIP workaround for ROCm 7.1 + MSVC 14.51 (VS 18) ─────────────
+# The stock __clang_hip_runtime_wrapper.h includes <cmath> before the HIP
+# device math headers, causing MSVC's _CLANG_BUILTIN2 constexpr overloads
+# (implicitly __host__ __device__) to conflict with __device__ declarations
+# in __clang_cuda_math_forward_declares.h and __clang_hip_cmath.h.
+# A patched wrapper (patches\__clang_hip_runtime_wrapper.h) reverses the include order.
+# We suppress the stock wrapper via -D__CLANG_HIP_RUNTIME_WRAPPER_H__ and
+# force-include the patched copy.  We pass the flags through both
+# CMAKE_CXX_FLAGS and CMAKE_HIP_FLAGS because CMake on Windows treats
+# HIP sources as CXX when enable_language(HIP) is not called.
+$hipPatchedInc = (Join-Path $PSScriptRoot "patches\__clang_hip_runtime_wrapper.h") -replace '\\', '/'
+$hipWorkaroundFlags = "-D__CLANG_HIP_RUNTIME_WRAPPER_H__ -include `"$hipPatchedInc`""
+$cmakeArgs += "-DCMAKE_CXX_FLAGS=$($cfg.MarchFlags) -w $hipWorkaroundFlags"
+$cmakeArgs += "-DCMAKE_HIP_FLAGS=$hipWorkaroundFlags"
 
 if ($sccachePath) {
     $cmakeArgs += "-DCMAKE_C_COMPILER_LAUNCHER=$sccachePath"
@@ -65,11 +85,11 @@ Write-Host "Configuring..." -ForegroundColor Cyan
 cmake @cmakeArgs
 if ($LASTEXITCODE -ne 0) { throw "CMake configure failed" }
 
-$buildArgs = @("--build", $buildDir)
-if ($cfg.BuildJobs -gt 0) { $buildArgs += "-j", $cfg.BuildJobs } else { $buildArgs += "-j" }
+$cmakeBuildArgs = @("--build", $buildDir)
+if ($cfg.BuildJobs -gt 0) { $cmakeBuildArgs += "-j", $cfg.BuildJobs } else { $cmakeBuildArgs += "-j" }
 
 Write-Host "Building..." -ForegroundColor Cyan
-cmake @buildArgs
+cmake @cmakeBuildArgs
 if ($LASTEXITCODE -ne 0) { throw "CMake build failed" }
 
 if ($sccachePath) {
@@ -79,4 +99,36 @@ if ($sccachePath) {
     sccache --stop-server 2>$null | Out-Null
 }
 
-Write-Host "Build complete: $buildDir\bin\" -ForegroundColor Green
+Write-Host "llama.cpp build complete: $buildDir\bin\" -ForegroundColor Green
+
+# ── llama-cpp-config (Rust) ───────────────────────────────────────
+Write-Host ""
+Write-Host "  === llama-cpp-config (Rust) ===" -ForegroundColor Yellow
+
+$cargo = Get-Command cargo -ErrorAction SilentlyContinue
+if (-not $cargo) {
+    throw "cargo not found. Install Rust: https://rustup.rs"
+}
+Write-Host "cargo: $($cargo.Source)" -ForegroundColor DarkGray
+
+$rustProjectDir = Join-Path $PSScriptRoot "llama-cpp-config"
+$rustBuildDir   = Join-Path $PSScriptRoot "build\llama-cpp-config"
+
+Push-Location $rustProjectDir
+try {
+    cargo build --release
+    if ($LASTEXITCODE -ne 0) { throw "cargo build failed" }
+
+    New-Item -ItemType Directory -Path $rustBuildDir -Force | Out-Null
+    $exe = Join-Path $rustProjectDir "target\release\llama-cpp-config.exe"
+    if (Test-Path $exe) {
+        Copy-Item $exe -Destination $rustBuildDir -Force
+        Write-Host "  Copied to $rustBuildDir\" -ForegroundColor DarkGray
+    }
+}
+finally {
+    Pop-Location
+}
+
+Write-Host "llama-cpp-config build complete: $rustBuildDir\llama-cpp-config.exe" -ForegroundColor Green
+Write-Host ""

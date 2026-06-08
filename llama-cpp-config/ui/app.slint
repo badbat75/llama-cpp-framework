@@ -1,0 +1,1123 @@
+// llama.cpp-framework configurator — Slint UI.
+//
+// Left navigation rail (Server / Models / Integrations) and a content area that swaps
+// pages via `current_tab`. Live server status is shown in the footer.
+
+import { LineEdit, ComboBox, CheckBox, Button, ListView, ScrollView, Palette } from "std-widgets.slint";
+
+
+export struct PresetSummary {
+    id: string,
+    model: string,
+}
+
+export struct PresetForm {
+    id: string,
+    model: string,
+    mmproj: string,
+    ctx_size: int,
+    n_gpu_layers: int,
+    parallel: int,
+    batch_size: int,
+    ubatch_size: int,
+    cache_type_k: string,
+    cache_type_v: string,
+    flash_attn: bool,
+    cache_ram: int,
+    jinja: bool,
+    reasoning: string,
+    reasoning_format: string,
+    n_cpu_moe: string,
+    temp: string,
+    top_k: string,
+    top_p: string,
+    min_p: string,
+    repeat_penalty: string,
+    presence_penalty: string,
+    chat_template_kwargs: string,
+}
+
+export struct IntegrationModel {
+    id: string,
+    label: string,
+    enabled: bool,
+}
+
+// ── Reusable visual pieces ───────────────────────────────────────────────
+
+component NavItem inherits Rectangle {
+    in property <string> label;
+    in property <string> glyph;
+    in property <bool> selected;
+    callback clicked;
+
+    height: 40px;
+    border-radius: 6px;
+    background: selected
+        ? Palette.accent-background.transparentize(0.82)
+        : (touch.has-hover ? Palette.alternate-background : transparent);
+
+    if selected : Rectangle {
+        x: 0; y: 8px; width: 3px; height: parent.height - 16px;
+        border-radius: 1.5px;
+        background: Palette.accent-background;
+    }
+
+    HorizontalLayout {
+        padding-left: 16px;
+        padding-right: 12px;
+        spacing: 12px;
+        alignment: start;
+
+        Text {
+            text: root.glyph;
+            font-family: "Segoe Fluent Icons";
+            font-size: 16px;
+            color: root.selected ? Palette.accent-background : Palette.foreground;
+            vertical-alignment: center;
+            width: 22px;
+        }
+        Text {
+            text: root.label;
+            font-size: 13px;
+            font-weight: root.selected ? 600 : 400;
+            color: Palette.foreground;
+            vertical-alignment: center;
+        }
+    }
+
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+component SectionCard {
+    in property <string> heading;
+    in property <length> content_spacing: 10px;
+    in property <length> content_padding: 16px;
+
+    VerticalLayout {
+        spacing: 8px;
+
+        if root.heading != "" : Text {
+            text: root.heading;
+            font-size: 13px;
+            font-weight: 600;
+            color: Palette.foreground;
+        }
+
+        Rectangle {
+            border-radius: 8px;
+            border-width: 1px;
+            border-color: Palette.border;
+            background: Palette.alternate-background;
+
+            VerticalLayout {
+                padding: root.content_padding;
+                spacing: root.content_spacing;
+                @children
+            }
+        }
+    }
+}
+
+component LabeledField inherits HorizontalLayout {
+    in property <string> label;
+    in property <length> label_width: 130px;
+    spacing: 8px;
+    alignment: stretch;
+    Text {
+        text: root.label;
+        vertical-alignment: center;
+        width: root.label_width;
+        font-size: 13px;
+    }
+    @children
+}
+
+export component AppWindow inherits Window {
+    title: "llama.cpp-framework configurator";
+    icon: @image-url("llama.png");
+    min-width: 1000px;
+    min-height: 626px;
+    preferred-width: 1180px;
+    preferred-height: 726px;
+    background: Palette.background;
+
+    // ── Navigation ───────────────────────────────────────────────────
+    // 0 = Server, 1 = Models, 2 = Integrations.
+    in-out property <int> current_tab: 0;
+
+    // ── Live status ──────────────────────────────────────────────────
+    in property <bool> server_running: false;
+    in-out property <bool> server_status_is_error: false;
+    in property <string> server_version: "";
+    in property <string> server_command_line: "";
+
+    // ── Server tab state ─────────────────────────────────────────────
+    in-out property <string> server_port: "8080";
+    in-out property <string> server_hostname: "localhost";
+    in-out property <[string]> bind_labels;
+    in-out property <[string]> bind_values;
+    in-out property <int> bind_index: 0;
+    in-out property <bool> server_mlock: true;
+    in-out property <string> server_threads: "";
+    in-out property <string> server_cache_reuse: "";
+    in-out property <string> server_threads_batch: "";
+    in-out property <string> server_models_max: "";
+    in-out property <string> server_models_dir: "";
+
+    // ── Models tab state ─────────────────────────────────────────────
+    in-out property <[PresetSummary]> presets;
+    in-out property <int> selected_preset_index: -1;
+    in-out property <PresetForm> form;
+    in-out property <string> presets_path: "";
+
+    // File-field dropdowns for model and mmproj
+    in-out property <[string]> model_labels;
+    in-out property <[string]> model_values;
+    in-out property <int> model_index: -1;
+    in-out property <[string]> mmproj_labels;
+    in-out property <[string]> mmproj_values;
+    in-out property <int> mmproj_index: -1;
+
+    // ── New-preset dialog state ─────────────────────────────────────
+    in-out property <bool> show_new_kind_picker: false;
+    in-out property <string> new_dialog_source_id: "";
+    in-out property <[string]> dialog_model_labels;
+    in-out property <[string]> dialog_model_values;
+    in-out property <int> dialog_model_index: -1;
+
+    // ── Rename-preset dialog state ──────────────────────────────────
+    in-out property <bool> show_rename_dialog: false;
+    in-out property <string> rename_old_id: "";
+    in-out property <string> rename_new_id: "";
+
+    // ── Integrations tab state ─────────────────────────────────────
+    in-out property <string> integration_base_url: "";
+    in-out property <[IntegrationModel]> integration_models;
+    in-out property <bool> integration_provider_active: false;
+    in-out property <string> integration_claude_env: "";
+
+    // ── Status / toast ───────────────────────────────────────────────
+    in-out property <string> status_text: "";
+    in-out property <bool> status_is_error: false;
+
+    // ── Callbacks ────────────────────────────────────────────────────
+    callback save_server();
+    callback revert_server();
+    callback browse_models_dir(string) -> string;
+
+    callback select_preset(int);
+    callback save_preset();
+    callback revert_preset();
+    callback delete_preset(string);
+    callback new_preset();
+    callback pick_new_empty();
+    callback pick_new_clone();
+    callback rename_preset(string, string);
+
+    callback refresh_status();
+    callback start_server();
+    callback stop_server();
+
+    callback toggle_integration_model(int);
+    callback save_integrations();
+    callback revert_integrations();
+
+    VerticalLayout {
+        spacing: 0px;
+
+        // ─── Overlay modals ────────────────────────────────────────────
+        if root.show_new_kind_picker: Rectangle {
+            z: 1;
+            width: 100%;
+            height: 100%;
+            background: #000000.transparentize(0.45);
+            TouchArea {
+                clicked => { root.show_new_kind_picker = false; }
+            }
+            Rectangle {
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2;
+                width: 520px;
+                height: 480px;
+                background: Palette.background;
+                border-radius: 10px;
+                border-width: 1px;
+                border-color: Palette.border;
+                TouchArea { }
+                VerticalLayout {
+                    padding: 22px;
+                    spacing: 12px;
+                    Text {
+                        text: "New preset";
+                        font-size: 16px;
+                        font-weight: 700;
+                        color: Palette.foreground;
+                    }
+                    Text {
+                        text: root.new_dialog_source_id == ""
+                            ? "Pick a model from your ModelsDir. The new preset will be created with default parameters."
+                            : "Pick a model from your ModelsDir. \"Empty\" creates a preset with default parameters; \"Clone\" copies every parameter of [" + root.new_dialog_source_id + "] onto the picked model.";
+                        wrap: word-wrap;
+                        font-size: 12px;
+                        color: Palette.foreground.transparentize(0.25);
+                    }
+                    Rectangle {
+                        border-width: 1px;
+                        border-color: Palette.border;
+                        border-radius: 8px;
+                        background: Palette.alternate-background;
+                        vertical-stretch: 1;
+                        if root.dialog_model_labels.length == 0 : Text {
+                            x: 16px;
+                            y: 16px;
+                            width: parent.width - 32px;
+                            text: "No .gguf files found under ModelsDir. Drop files there and reopen this dialog.";
+                            wrap: word-wrap;
+                            font-size: 12px;
+                            color: Palette.foreground.transparentize(0.4);
+                        }
+                        ListView {
+                            for label[i] in root.dialog_model_labels : Rectangle {
+                                height: 32px;
+                                background: i == root.dialog_model_index
+                                    ? Palette.accent-background.transparentize(0.82)
+                                    : (touch.has-hover ? Palette.background : transparent);
+                                if i == root.dialog_model_index : Rectangle {
+                                    x: 0; y: 4px; width: 3px; height: parent.height - 8px;
+                                    border-radius: 1.5px;
+                                    background: Palette.accent-background;
+                                }
+                                HorizontalLayout {
+                                    padding-left: 12px;
+                                    padding-right: 12px;
+                                    Text {
+                                        text: label;
+                                        font-size: 12px;
+                                        color: Palette.foreground;
+                                        vertical-alignment: center;
+                                        overflow: elide;
+                                    }
+                                }
+                                touch := TouchArea {
+                                    mouse-cursor: pointer;
+                                    clicked => { root.dialog_model_index = i; }
+                                }
+                            }
+                        }
+                    }
+                    HorizontalLayout {
+                        spacing: 8px;
+                        alignment: end;
+                        Button {
+                            text: "Cancel";
+                            clicked => { root.show_new_kind_picker = false; }
+                        }
+                        Button {
+                            text: root.new_dialog_source_id == "" ? "Create" : "Empty";
+                            enabled: root.dialog_model_index >= 0;
+                            clicked => {
+                                root.show_new_kind_picker = false;
+                                root.pick_new_empty();
+                            }
+                        }
+                        if root.new_dialog_source_id != "" : Button {
+                            text: "Clone…";
+                            enabled: root.dialog_model_index >= 0;
+                            clicked => {
+                                root.show_new_kind_picker = false;
+                                root.pick_new_clone();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if root.show_rename_dialog: Rectangle {
+            z: 1;
+            width: 100%;
+            height: 100%;
+            background: #000000.transparentize(0.45);
+            TouchArea {
+                clicked => { root.show_rename_dialog = false; }
+            }
+            Rectangle {
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2;
+                width: 440px;
+                height: 220px;
+                background: Palette.background;
+                border-radius: 10px;
+                border-width: 1px;
+                border-color: Palette.border;
+                TouchArea { }
+                VerticalLayout {
+                    padding: 22px;
+                    spacing: 12px;
+                    Text {
+                        text: "Rename preset";
+                        font-size: 16px;
+                        font-weight: 700;
+                        color: Palette.foreground;
+                    }
+                    Text {
+                        text: "Renaming [" + root.rename_old_id + "]. This only changes the section header in presets.ini; every parameter inside is preserved.";
+                        wrap: word-wrap;
+                        font-size: 12px;
+                        color: Palette.foreground.transparentize(0.25);
+                    }
+                    LineEdit {
+                        text: root.rename_new_id;
+                        placeholder-text: "New id";
+                        edited(t) => { root.rename_new_id = t; }
+                        accepted(t) => {
+                            root.rename_new_id = t;
+                            if (t != "" && t != root.rename_old_id) {
+                                root.show_rename_dialog = false;
+                                root.rename_preset(root.rename_old_id, t);
+                            }
+                        }
+                    }
+                    Rectangle { vertical-stretch: 1; }
+                    HorizontalLayout {
+                        spacing: 8px;
+                        alignment: end;
+                        Button {
+                            text: "Cancel";
+                            clicked => { root.show_rename_dialog = false; }
+                        }
+                        Button {
+                            text: "Rename";
+                            primary: true;
+                            enabled: root.rename_new_id != "" && root.rename_new_id != root.rename_old_id;
+                            clicked => {
+                                root.show_rename_dialog = false;
+                                root.rename_preset(root.rename_old_id, root.rename_new_id);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // ─── Body: nav rail | content ─────────────────────────────
+        HorizontalLayout {
+            spacing: 0px;
+            vertical-stretch: 1;
+
+            // Nav rail
+            Rectangle {
+                width: 200px;
+                background: Palette.background;
+                Rectangle {
+                    x: parent.width - 1px;
+                    width: 1px;
+                    background: Palette.border;
+                }
+                VerticalLayout {
+                    padding: 12px;
+                    spacing: 4px;
+                    alignment: start;
+
+                    NavItem {
+                        glyph: "\u{E713}";
+                        label: "Server";
+                        selected: root.current_tab == 0;
+                        clicked => { root.current_tab = 0; }
+                    }
+                    NavItem {
+                        glyph: "\u{EB9F}";
+                        label: "Models";
+                        selected: root.current_tab == 1;
+                        clicked => { root.current_tab = 1; }
+                    }
+                    NavItem {
+                        glyph: "\u{E943}";
+                        label: "Integrations";
+                        selected: root.current_tab == 2;
+                        clicked => { root.current_tab = 2; }
+                    }
+                    }
+                }
+
+            // Content area
+            Rectangle {
+                horizontal-stretch: 1;
+                background: Palette.background;
+
+                VerticalLayout {
+
+                // ─────────────── Page 0: Server ───────────────
+                if root.current_tab == 0 : ScrollView {
+                    VerticalLayout {
+                        padding: 24px;
+                        spacing: 16px;
+                        alignment: start;
+
+                        Text {
+                            text: "Server";
+                            font-size: 22px;
+                            font-weight: 600;
+                            color: Palette.foreground;
+                        }
+                        Text {
+                            text: "Machine-wide llama-server settings (server.ini). Per-model knobs live under Models.";
+                            color: Palette.foreground.transparentize(0.4);
+                            font-size: 12px;
+                            wrap: word-wrap;
+                        }
+
+                        SectionCard {
+                            heading: "Network";
+                            LabeledField {
+                                label: "Port";
+                                LineEdit {
+                                    text: root.server_port;
+                                    input-type: number;
+                                    placeholder-text: "8080";
+                                    edited(t) => { root.server_port = t; }
+                                }
+                            }
+                            LabeledField {
+                                label: "Bind to";
+                                ComboBox {
+                                    model: root.bind_labels;
+                                    current-index: root.bind_index;
+                                    selected(value) => {
+                                        root.bind_index = self.current-index;
+                                        if (self.current-index >= 0 && self.current-index < root.bind_values.length) {
+                                            root.server_hostname = root.bind_values[self.current-index];
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        SectionCard {
+                            heading: "Resources";
+                            LabeledField {
+                                label: "Mlock (lock RAM)";
+                                CheckBox {
+                                    text: "lock model in physical RAM";
+                                    checked: root.server_mlock;
+                                    toggled => { root.server_mlock = self.checked; }
+                                }
+                            }
+                            LabeledField {
+                                label: "CPU threads";
+                                LineEdit {
+                                    text: root.server_threads;
+                                    input-type: number;
+                                    placeholder-text: "blank = half the physical-core count";
+                                    edited(t) => { root.server_threads = t; }
+                                }
+                            }
+                            LabeledField {
+                                label: "Cache reuse";
+                                LineEdit {
+                                    text: root.server_cache_reuse;
+                                    input-type: number;
+                                    placeholder-text: "256";
+                                    edited(t) => { root.server_cache_reuse = t; }
+                                }
+                            }
+                            LabeledField {
+                                label: "Batch threads";
+                                LineEdit {
+                                    text: root.server_threads_batch;
+                                    input-type: number;
+                                    placeholder-text: "blank = 75% of cores";
+                                    edited(t) => { root.server_threads_batch = t; }
+                                }
+                            }
+                            LabeledField {
+                                label: "Max models";
+                                LineEdit {
+                                    text: root.server_models_max;
+                                    input-type: number;
+                                    placeholder-text: "1 (one at a time)";
+                                    edited(t) => { root.server_models_max = t; }
+                                }
+                            }
+                            LabeledField {
+                                label: "Models folder";
+                                LineEdit {
+                                    text: root.server_models_dir;
+                                    placeholder-text: "root dir (models\\ and mmprojs\\ underneath)";
+                                    edited(t) => { root.server_models_dir = t; }
+                                }
+                                Button {
+                                    text: "Browse…";
+                                    clicked => {
+                                        root.server_models_dir = root.browse_models_dir(root.server_models_dir);
+                                    }
+                                }
+                            }
+                        }
+
+                        SectionCard {
+                            heading: "Control";
+                            content_padding: 12px;
+                            HorizontalLayout {
+                                spacing: 8px;
+                                Rectangle {
+                                    width: 130px;
+                                    height: 34px;
+                                    Text {
+                                        x: 0;
+                                        y: 0;
+                                        height: 100%;
+                                        vertical-alignment: center;
+                                        text: root.server_running ? "Server is running" : "Server is stopped";
+                                        font-size: 13px;
+                                        color: root.server_running ? #2e7d32 : Palette.foreground.transparentize(0.45);
+                                    }
+                                }
+                                HorizontalLayout {
+                                    spacing: 12px;
+                                    horizontal-stretch: 1;
+                                    if root.server_running : Button {
+                                        text: "Stop";
+                                        primary: false;
+                                        clicked => { root.stop_server(); }
+                                    }
+                                    if !root.server_running : Button {
+                                        text: "Start";
+                                        primary: true;
+                                        clicked => { root.start_server(); }
+                                    }
+                                    LineEdit {
+                                        text: root.server_command_line;
+                                        read-only: true;
+                                        horizontal-stretch: 1;
+                                    }
+                                }
+                            }
+                        }
+
+                        HorizontalLayout {
+                            alignment: end;
+                            spacing: 8px;
+                            Button {
+                                text: "Revert";
+                                clicked => { root.revert_server(); }
+                            }
+                            Button {
+                                text: "Save changes";
+                                primary: true;
+                                clicked => { root.save_server(); }
+                            }
+                        }
+                    }
+                }
+
+                // ─────────────── Page 1: Models ───────────────
+                if root.current_tab == 1 : HorizontalLayout {
+                    padding: 20px;
+                    spacing: 16px;
+
+                    // Left column: preset list
+                    VerticalLayout {
+                        width: 240px;
+                        spacing: 10px;
+
+                        Text {
+                            text: "Presets";
+                            font-size: 14px;
+                            font-weight: 600;
+                            color: Palette.foreground;
+                        }
+
+                        Rectangle {
+                            border-width: 1px;
+                            border-color: Palette.border;
+                            border-radius: 8px;
+                            background: Palette.alternate-background;
+                            min-height: 280px;
+                            vertical-stretch: 1;
+
+                            ListView {
+                                for p[i] in root.presets : Rectangle {
+                                    height: 36px;
+                                    background: i == root.selected_preset_index
+                                        ? Palette.accent-background.transparentize(0.82)
+                                        : (item-touch.has-hover ? Palette.background : transparent);
+
+                                    if i == root.selected_preset_index : Rectangle {
+                                        x: 0; y: 6px; width: 3px; height: parent.height - 12px;
+                                        border-radius: 1.5px;
+                                        background: Palette.accent-background;
+                                    }
+
+                                    HorizontalLayout {
+                                        padding-left: 12px;
+                                        padding-right: 12px;
+                                        Text {
+                                            text: p.id;
+                                            font-size: 12px;
+                                            color: Palette.foreground;
+                                            vertical-alignment: center;
+                                            overflow: elide;
+                                        }
+                                    }
+                                    item-touch := TouchArea {
+                                        mouse-cursor: pointer;
+                                        clicked => { root.select_preset(i); }
+                                    }
+                                }
+                            }
+                        }
+
+                        HorizontalLayout {
+                            spacing: 6px;
+                            Button {
+                                text: "New…";
+                                clicked => { root.new_preset(); }
+                            }
+                            Button {
+                                text: "Rename…";
+                                enabled: root.selected_preset_index >= 0;
+                                clicked => {
+                                    root.rename_old_id = root.form.id;
+                                    root.rename_new_id = root.form.id;
+                                    root.show_rename_dialog = true;
+                                }
+                            }
+                            Button {
+                                text: "Delete";
+                                enabled: root.selected_preset_index >= 0;
+                                clicked => { root.delete_preset(root.form.id); }
+                            }
+                        }
+
+                        Text {
+                            text: root.presets_path;
+                            font-size: 10px;
+                            color: Palette.foreground.transparentize(0.5);
+                            wrap: word-wrap;
+                        }
+                    }
+
+                    // Right column: editor
+                    ScrollView {
+                        horizontal-stretch: 1;
+                        VerticalLayout {
+                            padding-left: 4px;
+                            padding-right: 4px;
+                            spacing: 14px;
+
+                            Text {
+                                text: root.selected_preset_index >= 0
+                                    ? "Preset id: " + root.form.id
+                                    : "Select a preset on the left, or click New…";
+                                font-size: 14px;
+                                font-weight: 600;
+                                color: Palette.foreground;
+                            }
+
+                            SectionCard {
+                                heading: "Model";
+                                LabeledField {
+                                    label: "Model file";
+                                    ComboBox {
+                                        model: root.model_labels;
+                                        current-index <=> root.model_index;
+                                        selected(value) => {
+                                            if (self.current-index >= 0 && self.current-index < root.model_values.length) {
+                                                root.form.model = root.model_values[self.current-index];
+                                            }
+                                        }
+                                    }
+                                }
+                                LabeledField {
+                                    label: "MMProj";
+                                    ComboBox {
+                                        model: root.mmproj_labels;
+                                        current-index <=> root.mmproj_index;
+                                        selected(value) => {
+                                            if (self.current-index >= 0 && self.current-index < root.mmproj_values.length) {
+                                                root.form.mmproj = root.mmproj_values[self.current-index];
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            SectionCard {
+                                heading: "Resource / context";
+                                LabeledField {
+                                    label: "Context size";
+                                    LineEdit {
+                                        text: "\{root.form.ctx_size}";
+                                        input-type: number;
+                                        edited(t) => { root.form.ctx_size = t.to-float(); }
+                                    }
+                                }
+                                LabeledField {
+                                    label: "GPU layers";
+                                    LineEdit {
+                                        text: "\{root.form.n_gpu_layers}";
+                                        input-type: number;
+                                        placeholder-text: "99 = all";
+                                        edited(t) => { root.form.n_gpu_layers = t.to-float(); }
+                                    }
+                                }
+                                LabeledField {
+                                    label: "Parallel seqs";
+                                    LineEdit {
+                                        text: "\{root.form.parallel}";
+                                        input-type: number;
+                                        edited(t) => { root.form.parallel = t.to-float(); }
+                                    }
+                                }
+                                LabeledField {
+                                    label: "Batch size";
+                                    LineEdit {
+                                        text: "\{root.form.batch_size}";
+                                        input-type: number;
+                                        edited(t) => { root.form.batch_size = t.to-float(); }
+                                    }
+                                }
+                                LabeledField {
+                                    label: "U-Batch size";
+                                    LineEdit {
+                                        text: "\{root.form.ubatch_size}";
+                                        input-type: number;
+                                        edited(t) => { root.form.ubatch_size = t.to-float(); }
+                                    }
+                                }
+                            }
+
+                            SectionCard {
+                                heading: "KV cache";
+                                LabeledField {
+                                    label: "K-cache type";
+                                    ComboBox {
+                                        model: ["f32", "f16", "q8_0", "q5_0", "q4_0", "q4_1"];
+                                        current-value: root.form.cache_type_k == "" ? "q8_0" : root.form.cache_type_k;
+                                        selected(value) => { root.form.cache_type_k = value; }
+                                    }
+                                }
+                                LabeledField {
+                                    label: "V-cache type";
+                                    ComboBox {
+                                        model: ["f32", "f16", "q8_0", "q5_0", "q4_0", "q4_1"];
+                                        current-value: root.form.cache_type_v == "" ? "q8_0" : root.form.cache_type_v;
+                                        selected(value) => { root.form.cache_type_v = value; }
+                                    }
+                                }
+                                LabeledField {
+                                    label: "Flash Attention";
+                                    CheckBox {
+                                        text: "enable flash attention (-fa)";
+                                        checked: root.form.flash_attn;
+                                        toggled => { root.form.flash_attn = self.checked; }
+                                    }
+                                }
+                                LabeledField {
+                                    label: "Cache RAM (MiB)";
+                                    LineEdit {
+                                        text: "\{root.form.cache_ram}";
+                                        input-type: number;
+                                        placeholder-text: "8192";
+                                        edited(t) => { root.form.cache_ram = t.to-float(); }
+                                    }
+                                }
+                            }
+
+                            SectionCard {
+                                heading: "Chat / reasoning";
+                                LabeledField {
+                                    label: "Chat template";
+                                    CheckBox {
+                                        text: "use embedded chat template (--jinja)";
+                                        checked: root.form.jinja;
+                                        toggled => { root.form.jinja = self.checked; }
+                                    }
+                                }
+                                LabeledField {
+                                    label: "Reasoning";
+                                    ComboBox {
+                                        model: ["auto", "on", "off"];
+                                        current-value: root.form.reasoning == "" ? "auto" : root.form.reasoning;
+                                        selected(value) => { root.form.reasoning = value; }
+                                    }
+                                }
+                                LabeledField {
+                                    label: "Reason format";
+                                    ComboBox {
+                                        model: ["auto", "none", "deepseek"];
+                                        current-value: root.form.reasoning_format == "" ? "auto" : root.form.reasoning_format;
+                                        selected(value) => { root.form.reasoning_format = value; }
+                                    }
+                                }
+                                LabeledField {
+                                    label: "MoE CPU layers";
+                                    LineEdit {
+                                        text: root.form.n_cpu_moe;
+                                        input-type: number;
+                                        placeholder-text: "blank = auto";
+                                        edited(t) => { root.form.n_cpu_moe = t; }
+                                    }
+                                }
+                            }
+
+                            SectionCard {
+                                heading: "Sampling overrides (blank = unset)";
+                                LabeledField {
+                                    label: "Temperature";
+                                    LineEdit {
+                                        text: root.form.temp;
+                                        placeholder-text: "default";
+                                        edited(t) => { root.form.temp = t; }
+                                    }
+                                }
+                                LabeledField {
+                                    label: "Top-K";
+                                    LineEdit {
+                                        text: root.form.top_k;
+                                        input-type: number;
+                                        placeholder-text: "default";
+                                        edited(t) => { root.form.top_k = t; }
+                                    }
+                                }
+                                LabeledField {
+                                    label: "Top-P";
+                                    LineEdit {
+                                        text: root.form.top_p;
+                                        placeholder-text: "default";
+                                        edited(t) => { root.form.top_p = t; }
+                                    }
+                                }
+                                LabeledField {
+                                    label: "Min-P";
+                                    LineEdit {
+                                        text: root.form.min_p;
+                                        placeholder-text: "default";
+                                        edited(t) => { root.form.min_p = t; }
+                                    }
+                                }
+                                LabeledField {
+                                    label: "Repeat penalty";
+                                    LineEdit {
+                                        text: root.form.repeat_penalty;
+                                        placeholder-text: "default";
+                                        edited(t) => { root.form.repeat_penalty = t; }
+                                    }
+                                }
+                                LabeledField {
+                                    label: "Presence penalty";
+                                    LineEdit {
+                                        text: root.form.presence_penalty;
+                                        placeholder-text: "default";
+                                        edited(t) => { root.form.presence_penalty = t; }
+                                    }
+                                }
+                            }
+
+                            SectionCard {
+                                heading: "Advanced";
+                                LabeledField {
+                                    label: "Chat kwargs";
+                                    label_width: 130px;
+                                    LineEdit {
+                                        text: root.form.chat_template_kwargs;
+                                        placeholder-text: "e.g. {\"temperature\":0.7}";
+                                        edited(t) => { root.form.chat_template_kwargs = t; }
+                                    }
+                                }
+                            }
+
+                            HorizontalLayout {
+                                alignment: end;
+                                spacing: 8px;
+                                Button {
+                                    text: "Revert";
+                                    enabled: root.selected_preset_index >= 0;
+                                    clicked => { root.revert_preset(); }
+                                }
+                                Button {
+                                    text: "Save preset";
+                                    primary: true;
+                                    enabled: root.selected_preset_index >= 0 && root.form.id != "";
+                                    clicked => { root.save_preset(); }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // ─────────────── Page 2: Integrations ───────────────
+                if root.current_tab == 2 : ScrollView {
+                    VerticalLayout {
+                        padding: 24px;
+                        spacing: 16px;
+                        alignment: start;
+
+                        Text {
+                            text: "Integrations";
+                            font-size: 22px;
+                            font-weight: 600;
+                            color: Palette.foreground;
+                        }
+                        Text {
+                            text: "Expose presets as models in your AI coding tools. OpenCode is configured directly; Claude Code needs environment variables.";
+                            color: Palette.foreground.transparentize(0.4);
+                            font-size: 12px;
+                            wrap: word-wrap;
+                        }
+
+                        SectionCard {
+                            heading: "Provider";
+                            LabeledField {
+                                label: "Status";
+                                Text {
+                                    text: root.integration_provider_active
+                                        ? "llama-server provider active in opencode.json"
+                                        : "No llama-server provider in opencode.json";
+                                    color: root.integration_provider_active ? #2e7d32 : Palette.foreground.transparentize(0.45);
+                                    font-size: 13px;
+                                    vertical-alignment: center;
+                                }
+                            }
+                            LabeledField {
+                                label: "baseURL";
+                                LineEdit {
+                                    text: root.integration_base_url;
+                                    read-only: true;
+                                    horizontal-stretch: 1;
+                                }
+                            }
+                        }
+
+                        SectionCard {
+                            heading: "Models (toggle presets to expose)";
+                            content_padding: 8px;
+
+                            if root.integration_models.length == 0 : Text {
+                                text: "No presets found. Create presets under the Models tab first.";
+                                font-size: 12px;
+                                color: Palette.foreground.transparentize(0.45);
+                                wrap: word-wrap;
+                            }
+
+                            for item[i] in root.integration_models : Rectangle {
+                                height: 36px;
+                                background: Math.mod(i, 2) == 0 ? transparent : Palette.alternate-background.transparentize(0.3);
+
+                                HorizontalLayout {
+                                    padding-left: 12px;
+                                    padding-right: 12px;
+                                    spacing: 8px;
+                                    CheckBox {
+                                        text: "";
+                                        checked: item.enabled;
+                                        toggled => { root.toggle_integration_model(i); }
+                                    }
+                                    Text {
+                                        text: item.id;
+                                        font-size: 13px;
+                                        font-weight: 600;
+                                        color: Palette.foreground;
+                                        vertical-alignment: center;
+                                    }
+                                    Text {
+                                        text: item.label;
+                                        font-size: 11px;
+                                        color: Palette.foreground.transparentize(0.4);
+                                        vertical-alignment: center;
+                                        overflow: elide;
+                                    }
+                                }
+                            }
+                        }
+
+                        SectionCard {
+                            heading: "Claude Code";
+                            content_padding: 12px;
+                            Text {
+                                text: "Claude Code uses environment variables to connect to a custom endpoint. Copy the snippet below and run it in PowerShell before launching Claude Code, or add it to your PROFILE.";
+                                wrap: word-wrap;
+                                font-size: 12px;
+                                color: Palette.foreground.transparentize(0.4);
+                            }
+                            LineEdit {
+                                text: root.integration_claude_env;
+                                read-only: true;
+                                font-size: 11px;
+                                horizontal-stretch: 1;
+                            }
+                        }
+
+                        HorizontalLayout {
+                            alignment: end;
+                            spacing: 8px;
+                            Button {
+                                text: "Revert";
+                                clicked => { root.revert_integrations(); }
+                            }
+                            Button {
+                                text: "Save to opencode.json";
+                                primary: true;
+                                clicked => { root.save_integrations(); }
+                            }
+                        }
+                    }
+                }
+
+                } // /VerticalLayout (content swap)
+            }
+        }
+
+        // ─── Footer status bar ──────────────────────────────────────
+        Rectangle {
+            height: 32px;
+            horizontal-stretch: 1;
+            background: Palette.alternate-background;
+            Rectangle {
+                y: 0;
+                height: 1px;
+                horizontal-stretch: 1;
+                background: Palette.border;
+            }
+            // ─── Messages (left) ──────────────────────────────────
+            if root.status_text != "" : Text {
+                x: 16px;
+                y: 0;
+                height: 100%;
+                text: root.status_text;
+                color: root.status_is_error ? #c62828 : Palette.foreground;
+                font-size: 12px;
+                vertical-alignment: center;
+            }
+
+            // ─── Server status (right) ────────────────────────────
+            Text {
+                x: parent.width - 140px;
+                y: 0;
+                height: 100%;
+                width: 108px;
+                text: root.server_status_is_error ? "Error"
+                    : (root.server_running ? "Running" : "Stopped");
+                font-size: 12px;
+                vertical-alignment: center;
+                horizontal-alignment: right;
+                color: Palette.foreground.transparentize(0.45);
+            }
+            Rectangle {
+                x: parent.width - 24px;
+                y: 12px;
+                width: 8px;
+                height: 8px;
+                border-radius: 4px;
+                background: root.server_status_is_error ? #c62828
+                    : (root.server_running ? #2e7d32 : #666666);
+            }
+        }
+
+    } // /main VerticalLayout
+} // End of file
