@@ -174,17 +174,10 @@ pub fn make_id(model_path: &str) -> String {
 }
 
 fn strip_shard_suffix(stem: &str) -> String {
-    if let Some((head, tail)) = stem.rsplit_once("-of-") {
-        if tail.len() == 5 && tail.chars().all(|c| c.is_ascii_digit()) {
-            if let Some(idx) = head.rfind('-') {
-                let counter = &head[idx + 1..];
-                if counter.len() == 5 && counter.chars().all(|c| c.is_ascii_digit()) {
-                    return head[..idx].to_string();
-                }
-            }
-        }
+    match crate::model_scan::split_shard_suffix(stem) {
+        Some((base, _)) => base.to_string(),
+        None => stem.to_string(),
     }
-    stem.to_string()
 }
 
 fn infer_models_dir(model_path: &str) -> Option<String> {

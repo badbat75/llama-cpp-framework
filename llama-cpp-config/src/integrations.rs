@@ -6,12 +6,12 @@
 
 use std::collections::BTreeMap;
 use std::fs;
-use std::io;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use serde_json::{json, Value};
 
+use crate::ini;
 use crate::paths;
 use crate::presets;
 
@@ -61,7 +61,7 @@ pub fn save_opencode_models(checked_ids: &[String], base_url: &str) -> Result<()
     }
 
     let serialized = serde_json::to_string_pretty(&v)?;
-    atomic_write(&path, &(serialized + "\n"))
+    ini::atomic_write(&path, &(serialized + "\n"))
         .with_context(|| format!("write {}", path.display()))?;
     Ok(())
 }
@@ -78,12 +78,16 @@ pub fn detect_opencode_provider() -> bool {
 /// Claude Code to use llama-server as a custom model provider.
 pub fn claude_code_env_script(base_url: &str) -> String {
     let base = base_url.trim_end_matches("/v1");
+    let example = presets::load_all()
+        .first()
+        .map(|p| p.id.clone())
+        .unwrap_or_else(|| "<preset-id>".to_string());
     format!(
         "# Run this in PowerShell before launching Claude Code to use your local llama-server.\r\n\
          $env:ANTHROPIC_BASE_URL = \"{base}\"\r\n\
          $env:ANTHROPIC_API_KEY = \"not-needed\"\r\n\
          # Pick a preset id from your presets.ini as the model name, e.g.:\r\n\
-         # $env:ANTHROPIC_DEFAULT_SONNET_MODEL = \"Qwopus3.5-9B-Coder-MTP-Q8_0\"\r\n\
+         # $env:ANTHROPIC_DEFAULT_SONNET_MODEL = \"{example}\"\r\n\
          # Then launch: claude\r\n",
     )
 }
@@ -184,11 +188,14 @@ fn preset_to_opencode_model(p: &presets::Preset) -> Value {
     entry
 }
 
-fn friendly_model_name(_id: &str, model_path: &str) -> String {
+/// Human-readable title-cased label derived from the model filename,
+/// falling back to the preset id. Shared by the Integrations tab and
+/// the opencode model entries.
+pub(crate) fn friendly_model_name(id: &str, model_path: &str) -> String {
     let stem = PathBuf::from(model_path)
         .file_stem()
         .map(|s| s.to_string_lossy().to_string())
-        .unwrap_or_default();
+        .unwrap_or_else(|| id.to_string());
 
     let readable = stem.replace(['-', '_'], " ");
 
@@ -212,12 +219,3 @@ fn friendly_model_name(_id: &str, model_path: &str) -> String {
     title
 }
 
-fn atomic_write(path: &Path, contents: &str) -> io::Result<()> {
-    let tmp = path.with_extension(
-        path.extension()
-            .map(|e| format!("{}.tmp", e.to_string_lossy()))
-            .unwrap_or_else(|| "tmp".to_string()),
-    );
-    fs::write(&tmp, contents)?;
-    fs::rename(&tmp, path)
-}

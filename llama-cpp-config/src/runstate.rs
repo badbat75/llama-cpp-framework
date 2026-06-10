@@ -60,6 +60,56 @@ fn cpu_cores() -> u32 {
         .unwrap_or(4)
 }
 
+/// The full llama-server argument list derived from server.ini.
+/// Single source of truth for both `start()` and `command_line()`.
+fn server_args(cfg: &crate::server_cfg::ServerConfig, presets_path: &std::path::Path) -> Vec<String> {
+    let hostname = cfg.hostname.clone().unwrap_or_else(|| "localhost".into());
+    let port = cfg.port.unwrap_or(8080);
+    let models_max = cfg.models_max.unwrap_or(1);
+    let mlock = cfg.mlock.unwrap_or(true);
+
+    let cores = cpu_cores();
+    let threads = cfg
+        .threads
+        .filter(|&n| n > 0)
+        .unwrap_or((cores as f64 * 0.5) as i32);
+    let threads_batch = cfg
+        .threads_batch
+        .filter(|&n| n > 0)
+        .unwrap_or((cores as f64 * 0.75) as i32);
+
+    let mut args: Vec<String> = vec![
+        "--models-preset".into(),
+        presets_path.to_string_lossy().into_owned(),
+        "--models-max".into(),
+        models_max.to_string(),
+        "--port".into(),
+        port.to_string(),
+        "--host".into(),
+        hostname,
+        "--webui-mcp-proxy".into(),
+        "-fit".into(),
+        "off".into(),
+        "-lv".into(),
+        "4".into(),
+        "-t".into(),
+        threads.to_string(),
+        "--threads-batch".into(),
+        threads_batch.to_string(),
+    ];
+
+    if mlock {
+        args.push("--mlock".into());
+    }
+    if let Some(cr) = cfg.cache_reuse {
+        if cr > 0 {
+            args.push("--cache-reuse".into());
+            args.push(cr.to_string());
+        }
+    }
+    args
+}
+
 /// Launch llama-server.exe with args from server.ini + presets.ini.
 pub fn start() -> io::Result<()> {
     if load().is_some() {
@@ -83,25 +133,11 @@ pub fn start() -> io::Result<()> {
     let cfg = crate::server_cfg::load();
     let presets_path = crate::paths::presets_ini();
 
-    let hostname = cfg.hostname.unwrap_or_else(|| "localhost".into());
-    let port = cfg.port.unwrap_or(8080);
-    let models_max = cfg.models_max.unwrap_or(1);
-    let mlock = cfg.mlock.unwrap_or(true);
     let models_dir = cfg
         .models_dir
         .clone()
         .filter(|s| !s.is_empty())
         .unwrap_or_else(crate::server_cfg::default_models_dir);
-
-    let cores = cpu_cores();
-    let threads = cfg
-        .threads
-        .filter(|&n| n > 0)
-        .unwrap_or((cores as f64 * 0.5) as i32);
-    let threads_batch = cfg
-        .threads_batch
-        .filter(|&n| n > 0)
-        .unwrap_or((cores as f64 * 0.75) as i32);
 
     let data_root = crate::paths::data_root();
     let log_dir = data_root.join("logs");
@@ -114,32 +150,7 @@ pub fn start() -> io::Result<()> {
         .open(&log_path)?;
 
     let mut cmd = std::process::Command::new(&exe);
-    cmd.arg("--models-preset")
-        .arg(presets_path.to_string_lossy().as_ref())
-        .arg("--models-max")
-        .arg(models_max.to_string())
-        .arg("--port")
-        .arg(port.to_string())
-        .arg("--host")
-        .arg(&hostname)
-        .arg("--webui-mcp-proxy")
-        .arg("-fit")
-        .arg("off")
-        .arg("-lv")
-        .arg("4")
-        .arg("-t")
-        .arg(threads.to_string())
-        .arg("--threads-batch")
-        .arg(threads_batch.to_string());
-
-    if mlock {
-        cmd.arg("--mlock");
-    }
-    if let Some(cr) = cfg.cache_reuse {
-        if cr > 0 {
-            cmd.arg("--cache-reuse").arg(cr.to_string());
-        }
-    }
+    cmd.args(server_args(&cfg, &presets_path));
 
     cmd.current_dir(&data_root);
     cmd.env("LLAMA_CACHE", &models_dir);
@@ -162,7 +173,8 @@ pub fn start() -> io::Result<()> {
     Ok(())
 }
 
-/// Kill all llama-server.exe processes (graceful Ctrl+C-like on Windows).
+/// Force-kill all llama-server.exe processes (taskkill /f — llama-server has
+/// no graceful shutdown channel when running detached without a console).
 pub fn stop() -> io::Result<()> {
     #[cfg(windows)]
     {
@@ -183,49 +195,26 @@ pub fn stop() -> io::Result<()> {
     Ok(())
 }
 
-/// Returns the command line of the running llama-server process, reconstructed
-/// from server.ini (the same deterministic args `start()` uses).
+/// Returns the command line `start()` would launch, reconstructed from
+/// server.ini (the same deterministic args).
 pub fn command_line() -> Option<String> {
     let cfg = crate::server_cfg::load();
     let exe = crate::paths::llama_server_exe()?;
     let presets_path = crate::paths::presets_ini();
 
-    let hostname = cfg.hostname.unwrap_or_else(|| "localhost".into());
-    let port = cfg.port.unwrap_or(8080);
-    let models_max = cfg.models_max.unwrap_or(1);
-    let mlock = cfg.mlock.unwrap_or(true);
-
-    let cores = cpu_cores();
-    let threads = cfg
-        .threads
-        .filter(|&n| n > 0)
-        .unwrap_or((cores as f64 * 0.5) as i32);
-    let threads_batch = cfg
-        .threads_batch
-        .filter(|&n| n > 0)
-        .unwrap_or((cores as f64 * 0.75) as i32);
-
-    let mut parts: Vec<String> = vec![
-        format!("\"{}\"", exe.display()),
-        format!("--models-preset \"{}\"", presets_path.display()),
-        format!("--models-max {models_max}"),
-        format!("--port {port}"),
-        format!("--host {hostname}"),
-        "--webui-mcp-proxy".into(),
-        "-fit off".into(),
-        "-lv 4".into(),
-        format!("-t {threads}"),
-        format!("--threads-batch {threads_batch}"),
-    ];
-
-    if mlock {
-        parts.push("--mlock".into());
-    }
-    if let Some(cr) = cfg.cache_reuse {
-        if cr > 0 {
-            parts.push(format!("--cache-reuse {cr}"));
-        }
-    }
-
+    let mut parts = vec![quote_arg(&exe.to_string_lossy())];
+    parts.extend(
+        server_args(&cfg, &presets_path)
+            .iter()
+            .map(|a| quote_arg(a)),
+    );
     Some(parts.join(" "))
+}
+
+fn quote_arg(s: &str) -> String {
+    if s.contains(char::is_whitespace) {
+        format!("\"{s}\"")
+    } else {
+        s.to_string()
+    }
 }

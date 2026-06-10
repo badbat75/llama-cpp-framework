@@ -92,26 +92,28 @@ pub fn list(root_dir: &str, subdir: &str) -> Vec<FileOption> {
     out
 }
 
+/// Split a `-NNNNN-of-NNNNN` multi-shard suffix off a file stem.
+/// Returns `(base, shard_counter)`, e.g. `("model", "00002")`.
+pub(crate) fn split_shard_suffix(stem: &str) -> Option<(&str, &str)> {
+    let (head, total) = stem.rsplit_once("-of-")?;
+    if total.len() != 5 || !total.chars().all(|c| c.is_ascii_digit()) {
+        return None;
+    }
+    let idx = head.rfind('-')?;
+    let counter = &head[idx + 1..];
+    if counter.len() != 5 || !counter.chars().all(|c| c.is_ascii_digit()) {
+        return None;
+    }
+    Some((&head[..idx], counter))
+}
+
 fn is_multi_shard_trailer(name: &str) -> bool {
     // Match -NNNNN-of-NNNNN.gguf where the first number isn't 00001
     let stem = name
         .strip_suffix(".gguf")
         .or_else(|| name.strip_suffix(".GGUF"))
         .unwrap_or(name);
-    if let Some((head, tail)) = stem.rsplit_once("-of-") {
-        if tail.len() == 5 && tail.chars().all(|c| c.is_ascii_digit()) {
-            if let Some(idx) = head.rfind('-') {
-                let counter = &head[idx + 1..];
-                if counter.len() == 5
-                    && counter.chars().all(|c| c.is_ascii_digit())
-                    && counter != "00001"
-                {
-                    return true;
-                }
-            }
-        }
-    }
-    false
+    matches!(split_shard_suffix(stem), Some((_, counter)) if counter != "00001")
 }
 
 fn normalize(p: &Path) -> PathBuf {

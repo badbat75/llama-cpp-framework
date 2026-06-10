@@ -2,23 +2,9 @@
 
 use std::fs;
 use std::io;
-use std::path::PathBuf;
 
 use crate::ini;
 use crate::paths;
-
-fn home_dir() -> PathBuf {
-    #[cfg(windows)]
-    {
-        std::path::PathBuf::from(
-            std::env::var_os("USERPROFILE").expect("USERPROFILE not set"),
-        )
-    }
-    #[cfg(not(windows))]
-    {
-        std::path::PathBuf::from(std::env::var_os("HOME").expect("HOME not set"))
-    }
-}
 
 #[derive(Debug, Clone, Default)]
 pub struct ServerConfig {
@@ -33,7 +19,7 @@ pub struct ServerConfig {
 }
 
 pub fn default_models_dir() -> String {
-    home_dir()
+    paths::home_dir()
         .join(".llama.cpp")
         .join("models")
         .to_string_lossy()

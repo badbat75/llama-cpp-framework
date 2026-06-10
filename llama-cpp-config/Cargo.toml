@@ -19,6 +19,9 @@ anyhow = "1"
 rfd = { version = "0.14", default-features = false }
 if-addrs = "0.13"
 
+[dev-dependencies]
+tempfile = "3"
+
 [build-dependencies]
 slint-build = "1.10"
 ico = "0.4"

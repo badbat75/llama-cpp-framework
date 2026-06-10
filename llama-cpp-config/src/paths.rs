@@ -9,7 +9,7 @@ fn env_path(var: &str) -> Option<PathBuf> {
     std::env::var_os(var).map(PathBuf::from)
 }
 
-fn home_dir() -> PathBuf {
+pub(crate) fn home_dir() -> PathBuf {
     #[cfg(windows)]
     {
         env_path("USERPROFILE").expect("USERPROFILE not set")

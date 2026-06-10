@@ -6,7 +6,7 @@ use std::rc::Rc;
 
 use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel};
 
-use crate::{integrations, model_scan, net_ifaces, paths, presets, runstate, server_cfg, server_version};
+use crate::{ini, integrations, model_scan, net_ifaces, paths, presets, runstate, server_cfg, server_version};
 
 slint::include_modules!();
 
@@ -21,7 +21,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     load_server_into_ui(&app);
     refresh_presets(&app, &state);
-    refresh_run_status(&app);
+    refresh_run_status(app.as_weak());
     refresh_file_options(&app);
     spawn_version_probe(app.as_weak());
 
@@ -32,10 +32,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     {
         let app_weak = app.as_weak();
         app.on_refresh_status(move || {
-            let Some(app) = app_weak.upgrade() else {
-                return;
-            };
-            refresh_run_status(&app);
+            refresh_run_status(app_weak.clone());
         });
     }
 
@@ -46,10 +43,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
             slint::TimerMode::Repeated,
             std::time::Duration::from_secs(5),
             move || {
-                let Some(app) = app_weak.upgrade() else {
-                    return;
-                };
-                refresh_run_status(&app);
+                refresh_run_status(app_weak.clone());
             },
         );
     }
@@ -118,7 +112,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
             match runstate::start() {
                 Ok(()) => {
                     set_status(&app, "llama-server started.".into(), false);
-                    refresh_run_status(&app);
+                    refresh_run_status(app.as_weak());
                 }
                 Err(e) => {
                     set_status(&app, format!("Failed to start: {e}"), true);
@@ -136,7 +130,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
             match runstate::stop() {
                 Ok(()) => {
                     set_status(&app, "llama-server stopped.".into(), false);
-                    refresh_run_status(&app);
+                    refresh_run_status(app.as_weak());
                 }
                 Err(e) => {
                     set_status(&app, format!("Failed to stop: {e}"), true);
@@ -466,13 +460,13 @@ fn populate_bind_options(app: &AppWindow, current: &str) {
 
 fn read_server_from_ui(app: &AppWindow) -> server_cfg::ServerConfig {
     server_cfg::ServerConfig {
-        port: parse_int(app.get_server_port().as_str()),
+        port: ini::parse_int(app.get_server_port().as_str()),
         hostname: Some(app.get_server_hostname().to_string()),
         mlock: Some(app.get_server_mlock()),
-        threads: parse_int(app.get_server_threads().as_str()),
-        cache_reuse: parse_int(app.get_server_cache_reuse().as_str()),
-        threads_batch: parse_int(app.get_server_threads_batch().as_str()),
-        models_max: parse_int(app.get_server_models_max().as_str()),
+        threads: ini::parse_int(app.get_server_threads().as_str()),
+        cache_reuse: ini::parse_int(app.get_server_cache_reuse().as_str()),
+        threads_batch: ini::parse_int(app.get_server_threads_batch().as_str()),
+        models_max: ini::parse_int(app.get_server_models_max().as_str()),
         models_dir: Some(app.get_server_models_dir().to_string()),
     }
 }
@@ -676,17 +670,21 @@ fn spawn_version_probe(app_weak: slint::Weak<AppWindow>) {
     });
 }
 
-fn refresh_run_status(app: &AppWindow) {
-    match runstate::load() {
-        Some(_s) => {
-            app.set_server_running(true);
+/// Probe the llama-server process off the UI thread (`tasklist` can take
+/// hundreds of ms) and apply the result via the event loop, mirroring
+/// `spawn_version_probe`.
+fn refresh_run_status(app_weak: slint::Weak<AppWindow>) {
+    std::thread::spawn(move || {
+        let running = runstate::load().is_some();
+        slint::invoke_from_event_loop(move || {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            app.set_server_running(running);
             app.set_server_status_is_error(false);
-        }
-        None => {
-            app.set_server_running(false);
-            app.set_server_status_is_error(false);
-        }
-    }
+        })
+        .ok();
+    });
 }
 
 
@@ -756,45 +754,18 @@ fn form_to_preset(f: &PresetForm) -> presets::Preset {
         cache_type_k: f.cache_type_k.to_string(),
         cache_type_v: f.cache_type_v.to_string(),
         flash_attn: Some(f.flash_attn),
-        cache_ram: Some(f.cache_ram).filter(|v| *v != 8192),
+        cache_ram: Some(f.cache_ram).filter(|v| *v > 0),
         jinja: Some(f.jinja),
         reasoning: f.reasoning.to_string(),
         reasoning_format: f.reasoning_format.to_string(),
-        n_cpu_moe: parse_int_opt(f.n_cpu_moe.as_str()),
-        temp: parse_float_opt(f.temp.as_str()),
-        top_k: parse_int_opt(f.top_k.as_str()),
-        top_p: parse_float_opt(f.top_p.as_str()),
-        min_p: parse_float_opt(f.min_p.as_str()),
-        repeat_penalty: parse_float_opt(f.repeat_penalty.as_str()),
-        presence_penalty: parse_float_opt(f.presence_penalty.as_str()),
+        n_cpu_moe: ini::parse_int(f.n_cpu_moe.as_str()),
+        temp: ini::parse_float(f.temp.as_str()),
+        top_k: ini::parse_int(f.top_k.as_str()),
+        top_p: ini::parse_float(f.top_p.as_str()),
+        min_p: ini::parse_float(f.min_p.as_str()),
+        repeat_penalty: ini::parse_float(f.repeat_penalty.as_str()),
+        presence_penalty: ini::parse_float(f.presence_penalty.as_str()),
         chat_template_kwargs: f.chat_template_kwargs.to_string(),
-    }
-}
-
-fn parse_int(s: &str) -> Option<i32> {
-    let s = s.trim();
-    if s.is_empty() {
-        None
-    } else {
-        s.parse().ok()
-    }
-}
-
-fn parse_int_opt(s: &str) -> Option<i32> {
-    let s = s.trim();
-    if s.is_empty() {
-        None
-    } else {
-        s.parse().ok()
-    }
-}
-
-fn parse_float_opt(s: &str) -> Option<f64> {
-    let s = s.trim();
-    if s.is_empty() {
-        None
-    } else {
-        s.parse().ok()
     }
 }
 
@@ -818,7 +789,7 @@ fn refresh_integrations(app: &AppWindow) {
 
     let mut items: Vec<IntegrationModel> = Vec::new();
     for p in &all_presets {
-        let label = friendly_slug_label(&p.id, &p.model);
+        let label = integrations::friendly_model_name(&p.id, &p.model);
         items.push(IntegrationModel {
             id: SharedString::from(p.id.clone()),
             label: SharedString::from(label),
@@ -827,32 +798,4 @@ fn refresh_integrations(app: &AppWindow) {
     }
     let rc = Rc::new(VecModel::from(items));
     app.set_integration_models(ModelRc::from(rc));
-}
-
-fn friendly_slug_label(id: &str, model_path: &str) -> String {
-    let stem = std::path::Path::new(model_path)
-        .file_stem()
-        .map(|s| s.to_string_lossy().to_string())
-        .unwrap_or_else(|| id.to_string());
-
-    let readable = stem.replace(['-', '_'], " ");
-
-    let words: Vec<&str> = readable.split_whitespace().collect();
-    let truncated: Vec<&str> = if words.len() > 6 {
-        words[..6].to_vec()
-    } else {
-        words
-    };
-
-    truncated
-        .iter()
-        .map(|w| {
-            let mut c = w.chars();
-            match c.next() {
-                None => String::new(),
-                Some(first) => first.to_uppercase().chain(c).collect(),
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(" ")
 }
