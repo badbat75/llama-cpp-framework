@@ -28,7 +28,7 @@ A status footer at the bottom shows the llama-server state (running / not runnin
 | `server.ini` | `%LOCALAPPDATA%\llama.cpp\config\` | INI, `[Server]` section |
 | `presets.ini` | `%LOCALAPPDATA%\llama.cpp\config\` | INI, one `[model-id]` section per model |
 
-On Linux / macOS, `%LOCALAPPDATA%` maps to `$XDG_DATA_HOME` / `$HOME/.local/share`.
+On Linux / macOS, `%LOCALAPPDATA%\llama.cpp` maps to `$HOME/.local/share/llama.cpp`.
 
 ## Build
 

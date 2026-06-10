@@ -1,6 +1,7 @@
 // Paths for the llama.cpp-framework configuration tool.
 //
-// Mirrors the layout run-model.ps1 / config-server.ps1 / config-model.ps1 expect.
+// User runtime state lives under %LOCALAPPDATA%\llama.cpp\ on Windows
+// (config\server.ini, config\presets.ini, logs\llama-server.log).
 
 use std::path::PathBuf;
 

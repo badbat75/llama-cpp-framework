@@ -1,6 +1,4 @@
 // Minimal INI parser / writer that preserves comments and section order.
-//
-// Same dialect as resources/common-functions.ps1.
 
 use std::borrow::Cow;
 use std::collections::BTreeMap;
