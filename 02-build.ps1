@@ -1,4 +1,4 @@
-# Build llama.cpp with CUDA + Vulkan + HIP (ROCm) support,
+﻿# Build llama.cpp with CUDA + Vulkan + HIP (ROCm) support,
 # then build llama-cpp-config (Rust GUI + CLI configurator).
 
 . "$PSScriptRoot\common.ps1"  # loads $cfg, adds ROCm to PATH
@@ -16,7 +16,7 @@ if (-not (Test-Path "$($cfg.LlamaCppDir)\CMakeLists.txt")) {
     if ($LASTEXITCODE -ne 0) { throw "git clone failed" }
 } else {
     Write-Host "Pulling latest llama.cpp..." -ForegroundColor Cyan
-    git -C $cfg.LlamaCppDir pull
+    git -C $cfg.LlamaCppDir pull --ff-only
     if ($LASTEXITCODE -ne 0) { throw "git pull failed" }
 }
 

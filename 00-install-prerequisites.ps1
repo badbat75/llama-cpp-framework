@@ -1,4 +1,4 @@
-# Install & update the llama.cpp build toolchain in one shot.
+﻿# Install & update the llama.cpp build toolchain in one shot.
 #
 # winget packages (PowerShell 7+, OpenSSL, NSIS) are installed if missing and
 # upgraded if present, in a single self-elevated session. Manual SDKs (CUDA,

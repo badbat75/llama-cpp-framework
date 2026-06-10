@@ -1,4 +1,4 @@
-# Package llama.cpp binaries + llama-cpp-config into an NSIS installer
+﻿# Package llama.cpp binaries + llama-cpp-config into an NSIS installer
 # Requires: a successful build (02-build.ps1) and NSIS
 
 . "$PSScriptRoot\common.ps1"  # loads $cfg, adds ROCm to PATH
@@ -73,10 +73,12 @@ $outputFile   = Join-Path $outputDir $installerName
 $stageDirNsis = $stageDir -replace '/', '\'
 $outputFileNsis = $outputFile -replace '/', '\'
 
-$nsiContent = (Get-Content $templatePath -Raw) `
-    -replace '@VERSION@',     $version `
-    -replace '@STAGING_DIR@', $stageDirNsis `
-    -replace '@OUTPUT_FILE@', $outputFileNsis
+# .Replace() — literal substitution; -replace would treat the pattern as a
+# regex and expand $ sequences in the replacement (paths, versions).
+$nsiContent = (Get-Content $templatePath -Raw).
+    Replace('@VERSION@',     [string]$version).
+    Replace('@STAGING_DIR@', [string]$stageDirNsis).
+    Replace('@OUTPUT_FILE@', [string]$outputFileNsis)
 
 Set-Content -Path $nsiPath -Value $nsiContent -Encoding UTF8
 Write-Host "Generated: $nsiPath" -ForegroundColor Cyan

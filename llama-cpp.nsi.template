@@ -12,7 +12,7 @@ OutFile "@OUTPUT_FILE@"
 InstallDir "$PROGRAMFILES64\llama.cpp"
 InstallDirRegKey HKLM "Software\llama.cpp" "InstallDir"
 RequestExecutionLevel admin
-SetCompressor zlib
+SetCompressor /SOLID lzma
 
 ; Write to the native 64-bit registry view, not Wow6432Node — otherwise
 ; PowerShell reading HKLM:\Software\llama.cpp can't find our keys. Must be
@@ -114,7 +114,7 @@ Section "Add to system PATH" SecPath
             \"SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment\", $$true);\
         $$path = $$regKey.GetValue(\"Path\", \"\", \"DoNotExpandEnvironmentNames\");\
         $$dir = \"$INSTDIR\\bin\";\
-        if ($$path -notlike \"*$$dir*\") {\
+        if (($$path -split \";\") -notcontains $$dir) {\
             $$regKey.SetValue(\"Path\", \"$$path;$$dir\", \"ExpandString\");\
         };\
         $$regKey.Close()"'

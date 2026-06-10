@@ -1,3 +1,4 @@
+﻿#requires -Version 7
 # Auto-detect paths and generate/update config-build.psd1.
 # Run this first to verify your environment is ready.
 #
@@ -226,3 +227,7 @@ $buildLines | Set-Content -Path (Join-Path $buildDir 'config-build.psd1') -Encod
 Write-Host "  build\config-build.psd1 written." -ForegroundColor Green
 Write-Host "  Runtime / per-model settings are written on first launch (or by the installer)." -ForegroundColor DarkGray
 Write-Host ""
+
+# Non-zero exit when required tools are missing, so callers can script on it.
+# The config file is still written above to ease fixing the gaps incrementally.
+if ($gaps.Count -gt 0) { exit 1 }
