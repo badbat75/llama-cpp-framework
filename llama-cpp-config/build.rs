@@ -1,14 +1,31 @@
 use std::path::Path;
 
 fn main() {
-    // Convert llama.ico to PNG so Slint's @image-url can embed it.
+    // Convert llama.ico to PNG so Slint's @image-url can embed it. Emit two
+    // variants: the plain icon, and one with a green "running" status dot in the
+    // bottom-right corner. The tray binds its icon to whichever matches state.
     let ico_path = "../resources/llama.ico";
     println!("cargo:rerun-if-changed={ico_path}");
-    let png_bytes = ico_to_png(ico_path);
+
     let out_dir = std::env::var("OUT_DIR").expect("OUT_DIR not set");
+
+    let img = decode_largest_frame(ico_path);
+    let (w, h) = (img.width(), img.height());
+
+    let mut png_bytes = Vec::new();
+    img.write_png(&mut png_bytes).expect("Failed to encode PNG");
     let png_path = Path::new(&out_dir).join("llama.png");
     std::fs::write(&png_path, &png_bytes).expect("Failed to write PNG");
     println!("cargo:rustc-env=LLCONFIG_ICON_PNG={}", png_path.display());
+
+    // Same frame + green status dot -> llama-on.png.
+    let mut rgba = img.into_rgba_data();
+    draw_status_dot(&mut rgba, w, h);
+    let on_img = ico::IconImage::from_rgba_data(w, h, rgba);
+    let mut on_bytes = Vec::new();
+    on_img.write_png(&mut on_bytes).expect("Failed to encode running PNG");
+    std::fs::write(Path::new(&out_dir).join("llama-on.png"), &on_bytes)
+        .expect("Failed to write running PNG");
 
     let config = slint_build::CompilerConfiguration::new()
         .with_style("fluent".into())
@@ -20,19 +37,47 @@ fn main() {
     embed_windows_resources();
 }
 
-fn ico_to_png(path: &str) -> Vec<u8> {
+fn decode_largest_frame(path: &str) -> ico::IconImage {
     let ico_bytes = std::fs::read(path).expect("Failed to read ICO");
-    let dir = ico::IconDir::read(std::io::Cursor::new(&ico_bytes))
-        .expect("Failed to parse ICO");
+    let dir = ico::IconDir::read(std::io::Cursor::new(&ico_bytes)).expect("Failed to parse ICO");
     let entry = dir
         .entries()
         .iter()
         .max_by_key(|e| e.width())
         .expect("ICO has no entries");
-    let img = entry.decode().expect("Failed to decode ICO frame");
-    let mut png_bytes = Vec::new();
-    img.write_png(&mut png_bytes).expect("Failed to encode PNG");
-    png_bytes
+    entry.decode().expect("Failed to decode ICO frame")
+}
+
+/// Paint a filled green circle with a white ring in the bottom-right quadrant of
+/// the RGBA buffer — a "server running" status badge. Pixels are fully opaque so
+/// the dot reads clearly once the platform scales the icon down for the tray.
+fn draw_status_dot(rgba: &mut [u8], w: u32, h: u32) {
+    let wf = w as f32;
+    let hf = h as f32;
+    let r = wf * 0.27;
+    let margin = wf * 0.05;
+    let cx = wf - r - margin;
+    let cy = hf - r - margin;
+    let ring = (wf * 0.06).max(1.0); // white border thickness for contrast
+    for y in 0..h {
+        for x in 0..w {
+            let dx = x as f32 + 0.5 - cx;
+            let dy = y as f32 + 0.5 - cy;
+            let d = (dx * dx + dy * dy).sqrt();
+            if d <= r {
+                let idx = ((y * w + x) * 4) as usize;
+                let (cr, cg, cb) = if d >= r - ring {
+                    (255u8, 255u8, 255u8) // white ring
+                } else {
+                    (34u8, 197u8, 94u8) // green fill (#22C55E)
+                };
+                rgba[idx] = cr;
+                rgba[idx + 1] = cg;
+                rgba[idx + 2] = cb;
+                rgba[idx + 3] = 255;
+            }
+        }
+    }
 }
 
 #[cfg(windows)]

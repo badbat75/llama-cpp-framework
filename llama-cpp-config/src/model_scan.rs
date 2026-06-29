@@ -14,11 +14,13 @@ pub enum Category {
     Mmproj,
     /// Draft / Multi-Token Prediction head GGUFs (scanned from `mtps\`).
     Mtp,
+    /// DFlash block-diffusion drafter GGUFs (scanned from `dflashs\`).
+    Dflash,
 }
 
 impl Category {
     pub fn is_optional(self) -> bool {
-        matches!(self, Category::Mmproj | Category::Mtp)
+        matches!(self, Category::Mmproj | Category::Mtp | Category::Dflash)
     }
 
     pub fn subdir(self) -> &'static str {
@@ -26,6 +28,7 @@ impl Category {
             Category::Model => "models",
             Category::Mmproj => "mmprojs",
             Category::Mtp => "mtps",
+            Category::Dflash => "dflashs",
         }
     }
 }
@@ -173,6 +176,57 @@ pub fn build_options(
     (labels, values, insert_at as i32)
 }
 
+/// Build the unified draft-model dropdown that merges MTP heads (`mtps\`) and
+/// DFlash drafters (`dflashs\`) into one picker. Both feed `--model-draft`, so
+/// they share one combobox; the parallel `specs` vector carries the `--spec-type`
+/// to apply when each row is picked ("none" for the empty row, "draft-mtp" /
+/// "draft-dflash" for scanned entries). Returns `(labels, values, specs, index)`.
+///
+/// A `current` path that matches no scanned file is preserved as a `(custom)`
+/// row keeping its existing `current_spec`, mirroring [`build_options`].
+pub fn build_draft_options(
+    mtp: Vec<FileOption>,
+    dflash: Vec<FileOption>,
+    current: &str,
+    current_spec: &str,
+) -> (Vec<String>, Vec<String>, Vec<String>, i32) {
+    let mut labels: Vec<String> = vec!["(none)".into()];
+    let mut values: Vec<String> = vec![String::new()];
+    let mut specs: Vec<String> = vec!["none".into()];
+
+    for opt in mtp {
+        labels.push(format!("MTP: {}", opt.label));
+        values.push(opt.path);
+        specs.push("draft-mtp".into());
+    }
+    for opt in dflash {
+        labels.push(format!("DFlash: {}", opt.label));
+        values.push(opt.path);
+        specs.push("draft-dflash".into());
+    }
+
+    let current_trim = current.trim();
+    if current_trim.is_empty() {
+        return (labels, values, specs, 0);
+    }
+    if let Some(i) = values.iter().position(|v| paths_eq(v, current_trim)) {
+        return (labels, values, specs, i as i32);
+    }
+
+    let basename = Path::new(current_trim)
+        .file_name()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| current_trim.to_string());
+    let spec = match current_spec.trim() {
+        "" => "none",
+        other => other,
+    };
+    labels.insert(1, format!("(custom) {basename}"));
+    values.insert(1, current_trim.to_string());
+    specs.insert(1, spec.to_string());
+    (labels, values, specs, 1)
+}
+
 fn paths_eq(a: &str, b: &str) -> bool {
     fn norm(s: &str) -> String {
         s.trim()
@@ -180,4 +234,45 @@ fn paths_eq(a: &str, b: &str) -> bool {
             .to_ascii_lowercase()
     }
     norm(a) == norm(b)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn opt(label: &str, path: &str) -> FileOption {
+        FileOption { label: label.into(), path: path.into() }
+    }
+
+    #[test]
+    fn draft_options_merge_mtp_and_dflash_with_specs() {
+        let mtp = vec![opt("a-mtp.gguf", r"C:\mtps\a-mtp.gguf")];
+        let dflash = vec![opt("b-dflash.gguf", r"C:\dflash\b-dflash.gguf")];
+        let (labels, values, specs, idx) = build_draft_options(mtp, dflash, "", "");
+        assert_eq!(labels, vec!["(none)", "MTP: a-mtp.gguf", "DFlash: b-dflash.gguf"]);
+        assert_eq!(values[0], "");
+        assert_eq!(specs, vec!["none", "draft-mtp", "draft-dflash"]);
+        assert_eq!(idx, 0);
+    }
+
+    #[test]
+    fn draft_options_select_current_dflash_entry() {
+        let mtp = vec![opt("a-mtp.gguf", r"C:\mtps\a-mtp.gguf")];
+        let dflash = vec![opt("b-dflash.gguf", r"C:\dflash\b-dflash.gguf")];
+        let (_, _, specs, idx) =
+            build_draft_options(mtp, dflash, r"C:/dflash/b-dflash.gguf", "draft-dflash");
+        // Path matches the DFlash row (index 2) despite the slash-style difference.
+        assert_eq!(idx, 2);
+        assert_eq!(specs[idx as usize], "draft-dflash");
+    }
+
+    #[test]
+    fn draft_options_preserve_custom_path_and_spec() {
+        let (labels, values, specs, idx) =
+            build_draft_options(vec![], vec![], r"D:\stray\draft.gguf", "draft-dflash");
+        assert_eq!(idx, 1);
+        assert_eq!(labels[1], "(custom) draft.gguf");
+        assert_eq!(values[1], r"D:\stray\draft.gguf");
+        assert_eq!(specs[1], "draft-dflash");
+    }
 }

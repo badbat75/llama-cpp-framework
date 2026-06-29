@@ -3,12 +3,16 @@
 // Left navigation rail (Server / Models / Integrations) and a content area that swaps
 // pages via `current_tab`. Live server status is shown in the footer.
 
-import { LineEdit, ComboBox, CheckBox, Button, ListView, ScrollView, Palette } from "std-widgets.slint";
+import { LineEdit, ComboBox, CheckBox, Button, ListView, ScrollView, Palette, RadioGroup } from "std-widgets.slint";
 
 
 export struct PresetSummary {
     id: string,
     model: string,
+    // Set by the Rust-side preset filter; `false` rows are hidden in the list
+    // while keeping the row index stable (so select_preset(i) still maps to the
+    // full presets vector).
+    visible: bool,
 }
 
 export struct PresetForm {
@@ -17,6 +21,7 @@ export struct PresetForm {
     mmproj: string,
     model_draft: string,
     spec_type: string,
+    spec_draft_n_max: string,
     n_gpu_layers_draft: string,
     device_draft: string,
     device: string,
@@ -117,6 +122,10 @@ component SectionCard {
             border-width: 1px;
             border-color: Palette.border;
             background: Palette.alternate-background;
+            // Subtle elevation (Skia renderer only).
+            drop-shadow-color: #00000022;
+            drop-shadow-blur: 10px;
+            drop-shadow-offset-y: 2px;
 
             VerticalLayout {
                 padding: root.content_padding;
@@ -129,14 +138,50 @@ component SectionCard {
 
 component LabeledField inherits HorizontalLayout {
     in property <string> label;
+    // Optional hover help. When set, an ⓘ glyph is shown after the label and
+    // carries a Tooltip — keeps long explanations out of the input placeholders.
+    in property <string> hint;
     in property <length> label_width: 130px;
     spacing: 8px;
     alignment: stretch;
-    Text {
-        text: root.label;
-        vertical-alignment: center;
+    HorizontalLayout {
         width: root.label_width;
-        font-size: 13px;
+        spacing: 4px;
+        alignment: start;
+        Text {
+            text: root.label;
+            vertical-alignment: center;
+            font-size: 13px;
+            // Elide instead of overflowing onto the field when the label is long;
+            // horizontal-stretch lets the ⓘ keep its own cell on the right.
+            overflow: elide;
+            horizontal-stretch: 1;
+        }
+        if root.hint != "" : Text {
+            text: "\u{E946}";
+            font-family: "Segoe Fluent Icons";
+            font-size: 13px;
+            // Fixed-width cell so the glyph is always visible and gives the
+            // Tooltip a reliable hover target — inside a 130px label row a
+            // stretched/0-width cell would collapse and never trigger hover.
+            width: 16px;
+            horizontal-stretch: 0;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            color: Palette.foreground.transparentize(0.45);
+            // Custom content (a plain Text) avoids the styled-text/@markdown
+            // conversion that Tooltip.text would require for a string property.
+            // It MUST be wrapped in a layout: ToolTipImpl is a plain Rectangle
+            // and does not lay out a bare fixed-width child, so the popup stays
+            // ~padding-wide and the text spills off its right edge. A layout
+            // propagates the 300px width up so the Rectangle sizes to it.
+            Tooltip {
+                VerticalLayout {
+                    padding: 10px;
+                    Text { text: root.hint; wrap: word-wrap; width: 300px; font-size: 14px; }
+                }
+            }
+        }
     }
     @children
 }
@@ -145,10 +190,13 @@ export component AppWindow inherits Window {
     title: "llama.cpp-framework configurator";
     icon: @image-url("llama.png");
     min-width: 1000px;
-    min-height: 626px;
+    min-height: 700px;
     preferred-width: 1180px;
-    preferred-height: 726px;
+    preferred-height: 880px;
     background: Palette.background;
+    // Give the shortcut FocusScope focus on startup so KeyBindings fire before
+    // the user clicks into any widget.
+    forward-focus: shortcuts;
 
     // ── Navigation ───────────────────────────────────────────────────
     // 0 = Server, 1 = Models, 2 = Integrations.
@@ -174,6 +222,28 @@ export component AppWindow inherits Window {
     in-out property <string> server_models_dir: "";
     in-out property <string> server_device: "";
 
+    // Baseline snapshot of the loaded server config (set by Rust on load/save).
+    // `server_dirty` is true while any field differs — drives Save/Revert enabled.
+    in-out property <string> server_port_base;
+    in-out property <string> server_hostname_base;
+    in-out property <bool> server_mlock_base;
+    in-out property <string> server_threads_base;
+    in-out property <string> server_cache_reuse_base;
+    in-out property <string> server_threads_batch_base;
+    in-out property <string> server_models_max_base;
+    in-out property <string> server_models_dir_base;
+    in-out property <string> server_device_base;
+    out property <bool> server_dirty:
+        root.server_port != root.server_port_base
+        || root.server_hostname != root.server_hostname_base
+        || root.server_mlock != root.server_mlock_base
+        || root.server_threads != root.server_threads_base
+        || root.server_cache_reuse != root.server_cache_reuse_base
+        || root.server_threads_batch != root.server_threads_batch_base
+        || root.server_models_max != root.server_models_max_base
+        || root.server_models_dir != root.server_models_dir_base
+        || root.server_device != root.server_device_base;
+
     // GPU device enumeration (parsed from `llama-server --list-devices`).
     // `all_device_*` is the cached raw list filled by the async probe; the
     // per-combobox *_labels/_values/_index triples are derived from it.
@@ -193,7 +263,12 @@ export component AppWindow inherits Window {
     in-out property <[PresetSummary]> presets;
     in-out property <int> selected_preset_index: -1;
     in-out property <PresetForm> form;
+    // Baseline snapshot of the loaded preset (set by Rust whenever the form is
+    // (re)loaded or saved). Struct inequality drives Save/Revert enabled.
+    in-out property <PresetForm> form_base;
+    out property <bool> preset_dirty: root.form != root.form_base;
     in-out property <string> presets_path: "";
+    in-out property <string> presets_filter: "";
 
     // File-field dropdowns for model and mmproj
     in-out property <[string]> model_labels;
@@ -202,9 +277,12 @@ export component AppWindow inherits Window {
     in-out property <[string]> mmproj_labels;
     in-out property <[string]> mmproj_values;
     in-out property <int> mmproj_index: -1;
-    in-out property <[string]> mtp_labels;
-    in-out property <[string]> mtp_values;
-    in-out property <int> mtp_index: -1;
+    // Unified draft-model picker (MTP heads from mtps\ + DFlash drafters from
+    // dflashs\). `draft_specs[i]` is the --spec-type to apply when row i is picked.
+    in-out property <[string]> draft_labels;
+    in-out property <[string]> draft_values;
+    in-out property <[string]> draft_specs;
+    in-out property <int> draft_index: -1;
 
     // ── New-preset dialog state ─────────────────────────────────────
     in-out property <bool> show_new_kind_picker: false;
@@ -212,6 +290,7 @@ export component AppWindow inherits Window {
     in-out property <[string]> dialog_model_labels;
     in-out property <[string]> dialog_model_values;
     in-out property <int> dialog_model_index: -1;
+    in-out property <string> dialog_filter: "";
 
     // ── Rename-preset dialog state ──────────────────────────────────
     in-out property <bool> show_rename_dialog: false;
@@ -241,6 +320,8 @@ export component AppWindow inherits Window {
     callback pick_new_empty();
     callback pick_new_clone();
     callback rename_preset(string, string);
+    callback filter_presets(string);
+    callback filter_dialog_models(string);
 
     callback refresh_status();
     callback start_server();
@@ -253,7 +334,28 @@ export component AppWindow inherits Window {
     callback save_integrations();
     callback revert_integrations();
 
+    shortcuts := FocusScope {
+        width: 100%;
+        height: 100%;
+
+        // ─── Keyboard shortcuts (app-wide; events bubble up to this scope) ──
+        KeyBinding {
+            keys: @keys(Control + S);
+            activated => {
+                if (root.current_tab == 0) { root.save_server(); }
+                else if (root.current_tab == 1 && root.selected_preset_index >= 0 && root.form.id != "") { root.save_preset(); }
+                else if (root.current_tab == 2) { root.save_integrations(); }
+            }
+        }
+        KeyBinding { keys: @keys(Control + "1"); activated => { root.current_tab = 0; } }
+        KeyBinding { keys: @keys(Control + "2"); activated => { root.current_tab = 1; } }
+        KeyBinding { keys: @keys(Control + "3"); activated => { root.current_tab = 2; } }
+        KeyBinding { keys: @keys(F5); activated => { root.refresh_status(); } }
+        KeyBinding { keys: @keys(Control + N); activated => { root.new_preset(); } }
+
     VerticalLayout {
+        width: 100%;
+        height: 100%;
         spacing: 0px;
 
         // ─── Overlay modals ────────────────────────────────────────────
@@ -274,6 +376,9 @@ export component AppWindow inherits Window {
                 border-radius: 10px;
                 border-width: 1px;
                 border-color: Palette.border;
+                drop-shadow-color: #00000066;
+                drop-shadow-blur: 24px;
+                drop-shadow-offset-y: 6px;
                 TouchArea { }
                 VerticalLayout {
                     padding: 22px;
@@ -291,6 +396,12 @@ export component AppWindow inherits Window {
                         wrap: word-wrap;
                         font-size: 12px;
                         color: Palette.foreground.transparentize(0.25);
+                    }
+                    LineEdit {
+                        placeholder-text: "Filter models…";
+                        input-type: search;
+                        text: root.dialog_filter;
+                        edited(t) => { root.dialog_filter = t; root.filter_dialog_models(t); }
                     }
                     Rectangle {
                         border-width: 1px;
@@ -381,6 +492,9 @@ export component AppWindow inherits Window {
                 border-radius: 10px;
                 border-width: 1px;
                 border-color: Palette.border;
+                drop-shadow-color: #00000066;
+                drop-shadow-blur: 24px;
+                drop-shadow-offset-y: 6px;
                 TouchArea { }
                 VerticalLayout {
                     padding: 22px;
@@ -502,6 +616,7 @@ export component AppWindow inherits Window {
                             heading: "Network";
                             LabeledField {
                                 label: "Port";
+                                hint: "TCP port llama-server listens on (--port). Default 8080 — the chat UI and integrations connect here.";
                                 LineEdit {
                                     text: root.server_port;
                                     input-type: number;
@@ -511,13 +626,15 @@ export component AppWindow inherits Window {
                             }
                             LabeledField {
                                 label: "Bind to";
+                                hint: "Interface to bind (--host). localhost = this PC only; 0.0.0.0 = all interfaces, reachable from the LAN.";
                                 ComboBox {
                                     model: root.bind_labels;
                                     current-index: root.bind_index;
                                     selected(value) => {
-                                        root.bind_index = self.current-index;
-                                        if (self.current-index >= 0 && self.current-index < root.bind_values.length) {
-                                            root.server_hostname = root.bind_values[self.current-index];
+                                        let i = self.current-index;
+                                        root.bind_index = i;
+                                        if (i >= 0 && i < root.bind_values.length) {
+                                            root.server_hostname = root.bind_values[i];
                                         }
                                     }
                                 }
@@ -528,6 +645,7 @@ export component AppWindow inherits Window {
                             heading: "Resources";
                             LabeledField {
                                 label: "Mlock (lock RAM)";
+                                hint: "Locks model weights into physical RAM (--mlock) so the OS can't page them out. Keeps latency stable; needs enough free RAM for the whole model.";
                                 CheckBox {
                                     text: "lock model in physical RAM";
                                     checked: root.server_mlock;
@@ -536,6 +654,7 @@ export component AppWindow inherits Window {
                             }
                             LabeledField {
                                 label: "CPU threads";
+                                hint: "--threads: CPU threads for generation. Blank = half the physical-core count; more won't help once GPU-bound.";
                                 LineEdit {
                                     text: root.server_threads;
                                     input-type: number;
@@ -545,6 +664,7 @@ export component AppWindow inherits Window {
                             }
                             LabeledField {
                                 label: "Cache reuse";
+                                hint: "--cache-reuse: minimum prefix length (tokens) the server reuses from the KV cache across requests, skipping re-prefill. Higher saves compute on shared prefixes.";
                                 LineEdit {
                                     text: root.server_cache_reuse;
                                     input-type: number;
@@ -554,6 +674,7 @@ export component AppWindow inherits Window {
                             }
                             LabeledField {
                                 label: "Batch threads";
+                                hint: "--threads-batch: CPU threads for prompt processing (prefill). Blank = ~75% of cores.";
                                 LineEdit {
                                     text: root.server_threads_batch;
                                     input-type: number;
@@ -563,6 +684,7 @@ export component AppWindow inherits Window {
                             }
                             LabeledField {
                                 label: "Max models";
+                                hint: "--models-max: how many preset models llama-server keeps resident at once. 1 = load one at a time (lowest VRAM); higher lets it hot-swap without reloading.";
                                 LineEdit {
                                     text: root.server_models_max;
                                     input-type: number;
@@ -572,6 +694,7 @@ export component AppWindow inherits Window {
                             }
                             LabeledField {
                                 label: "Models folder";
+                                hint: "Root folder scanned for GGUFs. Pickers read its subfolders: models\\, mmprojs\\, mtps\\, dflashs\\.";
                                 LineEdit {
                                     text: root.server_models_dir;
                                     placeholder-text: "root dir (models\\ and mmprojs\\ underneath)";
@@ -586,12 +709,14 @@ export component AppWindow inherits Window {
                             }
                             LabeledField {
                                 label: "GPU device";
+                                hint: "Default GPU for all presets (--device, e.g. CUDA0). A per-preset GPU device overrides it. Blank = all detected devices.";
                                 ComboBox {
                                     model: root.server_dev_labels;
                                     current-index <=> root.server_dev_index;
                                     selected(value) => {
-                                        if (self.current-index >= 0 && self.current-index < root.server_dev_values.length) {
-                                            root.server_device = root.server_dev_values[self.current-index];
+                                        let i = self.current-index;
+                                        if (i >= 0 && i < root.server_dev_values.length) {
+                                            root.server_device = root.server_dev_values[i];
                                         }
                                     }
                                 }
@@ -629,6 +754,11 @@ export component AppWindow inherits Window {
                                         primary: true;
                                         clicked => { root.start_server(); }
                                     }
+                                    Button {
+                                        text: "Open chat UI";
+                                        enabled: root.server_running;
+                                        clicked => { Platform.open-url("http://localhost:" + root.server_port); }
+                                    }
                                     LineEdit {
                                         text: root.server_command_line;
                                         read-only: true;
@@ -643,11 +773,13 @@ export component AppWindow inherits Window {
                             spacing: 8px;
                             Button {
                                 text: "Revert";
+                                enabled: root.server_dirty;
                                 clicked => { root.revert_server(); }
                             }
                             Button {
                                 text: "Save changes";
                                 primary: true;
+                                enabled: root.server_dirty;
                                 clicked => { root.save_server(); }
                             }
                         }
@@ -671,6 +803,13 @@ export component AppWindow inherits Window {
                             color: Palette.foreground;
                         }
 
+                        LineEdit {
+                            placeholder-text: "Filter presets…";
+                            input-type: search;
+                            text: root.presets_filter;
+                            edited(t) => { root.presets_filter = t; root.filter_presets(t); }
+                        }
+
                         Rectangle {
                             border-width: 1px;
                             border-color: Palette.border;
@@ -681,7 +820,10 @@ export component AppWindow inherits Window {
 
                             ListView {
                                 for p[i] in root.presets : Rectangle {
-                                    height: 36px;
+                                    // Filtered-out rows collapse to zero height; the index `i` stays
+                                    // aligned with the full presets vector for select_preset(i).
+                                    visible: p.visible;
+                                    height: p.visible ? 36px : 0px;
                                     background: i == root.selected_preset_index
                                         ? Palette.accent-background.transparentize(0.82)
                                         : (item-touch.has-hover ? Palette.background : transparent);
@@ -762,24 +904,28 @@ export component AppWindow inherits Window {
                                 heading: "Model";
                                 LabeledField {
                                     label: "Model file";
+                                    hint: "Main model weights for this preset (--model / -m). Pick a .gguf from models\\.";
                                     ComboBox {
                                         model: root.model_labels;
                                         current-index <=> root.model_index;
                                         selected(value) => {
-                                            if (self.current-index >= 0 && self.current-index < root.model_values.length) {
-                                                root.form.model = root.model_values[self.current-index];
+                                            let i = self.current-index;
+                                            if (i >= 0 && i < root.model_values.length) {
+                                                root.form.model = root.model_values[i];
                                             }
                                         }
                                     }
                                 }
                                 LabeledField {
                                     label: "MMProj";
+                                    hint: "Multimodal projector (--mmproj) for vision models, so the server can read images. Blank for text-only models.";
                                     ComboBox {
                                         model: root.mmproj_labels;
                                         current-index <=> root.mmproj_index;
                                         selected(value) => {
-                                            if (self.current-index >= 0 && self.current-index < root.mmproj_values.length) {
-                                                root.form.mmproj = root.mmproj_values[self.current-index];
+                                            let i = self.current-index;
+                                            if (i >= 0 && i < root.mmproj_values.length) {
+                                                root.form.mmproj = root.mmproj_values[i];
                                             }
                                         }
                                     }
@@ -787,18 +933,21 @@ export component AppWindow inherits Window {
                             }
 
                             SectionCard {
-                                heading: "Speculative decoding / MTP";
+                                heading: "Speculative decoding (MTP / DFlash)";
                                 LabeledField {
-                                    label: "MTP / draft model";
+                                    label: "Draft model";
+                                    hint: "Optional speculator (feeds --model-draft). MTP heads (from mtps\\) set --spec-type draft-mtp; DFlash drafters (from dflashs\\) set draft-dflash. Picking one auto-pins the draft to the server GPU, or CPU if none. (none) = no speculation.";
                                     ComboBox {
-                                        model: root.mtp_labels;
-                                        current-index <=> root.mtp_index;
+                                        model: root.draft_labels;
+                                        current-index <=> root.draft_index;
                                         selected(value) => {
-                                            if (self.current-index >= 0 && self.current-index < root.mtp_values.length) {
-                                                root.form.model_draft = root.mtp_values[self.current-index];
-                                                // Picking an MTP head implies MTP speculation.
-                                                if (root.form.model_draft != "" && (root.form.spec_type == "" || root.form.spec_type == "none")) {
-                                                    root.form.spec_type = "draft-mtp";
+                                            let i = self.current-index;
+                                            if (i >= 0 && i < root.draft_values.length) {
+                                                root.form.model_draft = root.draft_values[i];
+                                                // Picking a draft model selects its speculator: MTP heads ->
+                                                // draft-mtp, DFlash drafters -> draft-dflash, (none) -> none.
+                                                root.form.spec_type = root.draft_specs[i];
+                                                if (root.form.model_draft != "") {
                                                     // Run the draft on GPU by pinning it to one device (the multi-device
                                                     // auto split crashes gemma4 MTP heads). Reuse the server's GPU device
                                                     // if set; otherwise fall back to CPU, which always works.
@@ -811,9 +960,6 @@ export component AppWindow inherits Window {
                                                         }
                                                     }
                                                 }
-                                                if (root.form.model_draft == "") {
-                                                    root.form.spec_type = "none";
-                                                }
                                                 // The draft-device dropdown was just changed programmatically.
                                                 root.sync_device_dropdowns();
                                             }
@@ -822,29 +968,43 @@ export component AppWindow inherits Window {
                                 }
                                 LabeledField {
                                     label: "Spec type";
+                                    hint: "Speculative decoding mode (--spec-type). Auto-set when you pick a draft model above: MTP heads → draft-mtp, DFlash drafters → draft-dflash. Override only if you know what you need.";
                                     ComboBox {
-                                        model: ["none", "draft-mtp", "draft-simple", "ngram-mod"];
+                                        model: ["none", "draft-mtp", "draft-dflash", "draft-simple", "ngram-mod"];
                                         current-value: root.form.spec_type == "" ? "none" : root.form.spec_type;
                                         selected(value) => { root.form.spec_type = value; }
                                     }
                                 }
                                 LabeledField {
+                                    label: "Draft n-max";
+                                    hint: "Max draft tokens proposed per step. DFlash clamps this to the GGUF's trained block_size-1 (e.g. 15). Blank = model default.";
+                                    LineEdit {
+                                        text: root.form.spec_draft_n_max;
+                                        input-type: number;
+                                        placeholder-text: "blank = default";
+                                        edited(t) => { root.form.spec_draft_n_max = t; }
+                                    }
+                                }
+                                LabeledField {
                                     label: "Draft GPU layers";
+                                    hint: "99 = run the whole draft model on GPU (pin a device below — multi-GPU auto-split crashes MTP heads). 0 = CPU draft (always works). Blank = auto.";
                                     LineEdit {
                                         text: root.form.n_gpu_layers_draft;
                                         input-type: number;
-                                        placeholder-text: "99 = all on GPU (pin a device below); 0 = CPU; blank = auto";
+                                        placeholder-text: "99 = GPU, 0 = CPU, blank = auto";
                                         edited(t) => { root.form.n_gpu_layers_draft = t; }
                                     }
                                 }
                                 LabeledField {
                                     label: "Draft device";
+                                    hint: "GPU for the draft model (--device-draft). Pin to ONE device — multi-GPU auto-split crashes MTP heads. Blank = auto / same as model.";
                                     ComboBox {
                                         model: root.pdraft_labels;
                                         current-index <=> root.pdraft_index;
                                         selected(value) => {
-                                            if (self.current-index >= 0 && self.current-index < root.pdraft_values.length) {
-                                                root.form.device_draft = root.pdraft_values[self.current-index];
+                                            let i = self.current-index;
+                                            if (i >= 0 && i < root.pdraft_values.length) {
+                                                root.form.device_draft = root.pdraft_values[i];
                                             }
                                         }
                                     }
@@ -855,6 +1015,7 @@ export component AppWindow inherits Window {
                                 heading: "Resource / context";
                                 LabeledField {
                                     label: "Context size";
+                                    hint: "Context window in tokens (--ctx-size). Bigger = longer history but more KV-cache VRAM; split across parallel slots.";
                                     LineEdit {
                                         text: "\{root.form.ctx_size}";
                                         input-type: number;
@@ -863,6 +1024,7 @@ export component AppWindow inherits Window {
                                 }
                                 LabeledField {
                                     label: "GPU layers";
+                                    hint: "--n-gpu-layers: model layers offloaded to GPU. 99 = all on GPU; lower keeps some on CPU to save VRAM.";
                                     LineEdit {
                                         text: "\{root.form.n_gpu_layers}";
                                         input-type: number;
@@ -872,18 +1034,21 @@ export component AppWindow inherits Window {
                                 }
                                 LabeledField {
                                     label: "GPU device";
+                                    hint: "GPU this model runs on (--device, e.g. CUDA0). Overrides the server default. Blank = use server default.";
                                     ComboBox {
                                         model: root.pdev_labels;
                                         current-index <=> root.pdev_index;
                                         selected(value) => {
-                                            if (self.current-index >= 0 && self.current-index < root.pdev_values.length) {
-                                                root.form.device = root.pdev_values[self.current-index];
+                                            let i = self.current-index;
+                                            if (i >= 0 && i < root.pdev_values.length) {
+                                                root.form.device = root.pdev_values[i];
                                             }
                                         }
                                     }
                                 }
                                 LabeledField {
                                     label: "Parallel seqs";
+                                    hint: "--parallel: concurrent request slots. Context is divided among them, so N=4 gives each slot ctx-size / 4 tokens.";
                                     LineEdit {
                                         text: "\{root.form.parallel}";
                                         input-type: number;
@@ -892,6 +1057,7 @@ export component AppWindow inherits Window {
                                 }
                                 LabeledField {
                                     label: "Batch size";
+                                    hint: "--batch-size: logical batch (tokens prefilled per step). Higher speeds prefill, uses more VRAM.";
                                     LineEdit {
                                         text: "\{root.form.batch_size}";
                                         input-type: number;
@@ -900,6 +1066,7 @@ export component AppWindow inherits Window {
                                 }
                                 LabeledField {
                                     label: "U-Batch size";
+                                    hint: "--ubatch-size: physical micro-batch computed at once. Must be ≤ batch size.";
                                     LineEdit {
                                         text: "\{root.form.ubatch_size}";
                                         input-type: number;
@@ -912,6 +1079,7 @@ export component AppWindow inherits Window {
                                 heading: "KV cache";
                                 LabeledField {
                                     label: "K-cache type";
+                                    hint: "KV cache quantization. Lower = less VRAM but lower quality. Note: Qwen3-Coder needs q8_0 for reliable tool calling — q4_0 makes it drop the <tool_call> wrapper.";
                                     ComboBox {
                                         model: ["f32", "f16", "q8_0", "q5_0", "q4_0", "q4_1"];
                                         current-value: root.form.cache_type_k == "" ? "q8_0" : root.form.cache_type_k;
@@ -920,6 +1088,7 @@ export component AppWindow inherits Window {
                                 }
                                 LabeledField {
                                     label: "V-cache type";
+                                    hint: "KV cache quantization for V (--cache-type-v). Lower = less VRAM, lower quality; usually matched to K. Needs flash attention.";
                                     ComboBox {
                                         model: ["f32", "f16", "q8_0", "q5_0", "q4_0", "q4_1"];
                                         current-value: root.form.cache_type_v == "" ? "q8_0" : root.form.cache_type_v;
@@ -928,6 +1097,7 @@ export component AppWindow inherits Window {
                                 }
                                 LabeledField {
                                     label: "Flash Attention";
+                                    hint: "Enables the fused flash-attention kernel (-fa): faster prefill and lower KV memory. Recommended on; required for quantized KV cache to help on most backends.";
                                     CheckBox {
                                         text: "enable flash attention (-fa)";
                                         checked: root.form.flash_attn;
@@ -936,6 +1106,7 @@ export component AppWindow inherits Window {
                                 }
                                 LabeledField {
                                     label: "Cache RAM (MiB)";
+                                    hint: "--cache-ram: RAM limit (MiB) for the prompt cache (past-prompt KV kept for reuse). Blank = default; 0 disables.";
                                     LineEdit {
                                         text: "\{root.form.cache_ram}";
                                         input-type: number;
@@ -949,6 +1120,7 @@ export component AppWindow inherits Window {
                                 heading: "Chat / reasoning";
                                 LabeledField {
                                     label: "Chat template";
+                                    hint: "--jinja: use the model's embedded Jinja chat template instead of built-in heuristics. Recommended on for correct tool-call / role formatting.";
                                     CheckBox {
                                         text: "use embedded chat template (--jinja)";
                                         checked: root.form.jinja;
@@ -957,22 +1129,51 @@ export component AppWindow inherits Window {
                                 }
                                 LabeledField {
                                     label: "Reasoning";
-                                    ComboBox {
-                                        model: ["auto", "on", "off"];
-                                        current-value: root.form.reasoning == "" ? "auto" : root.form.reasoning;
+                                    hint: "auto: model decides (for Gemma auto≡on). on: force thinking. off: disable. Note reasoning=on can invalidate the KV cache mid-conversation; prefer auto.";
+                                    // RadioGroup is driven from form.reasoning via each button's
+                                    // `checked` binding; `selected` writes the pick back. Safe here
+                                    // because the value is always exactly one of auto/on/off (never
+                                    // empty/disabled), so the group never deselects-all.
+                                    RadioGroup {
+                                        orientation: horizontal;
                                         selected(value) => { root.form.reasoning = value; }
+                                        RadioButton {
+                                            text: "auto";
+                                            checked: root.form.reasoning == "auto" || root.form.reasoning == "";
+                                        }
+                                        RadioButton {
+                                            text: "on";
+                                            checked: root.form.reasoning == "on";
+                                        }
+                                        RadioButton {
+                                            text: "off";
+                                            checked: root.form.reasoning == "off";
+                                        }
                                     }
                                 }
                                 LabeledField {
                                     label: "Reason format";
-                                    ComboBox {
-                                        model: ["auto", "none", "deepseek"];
-                                        current-value: root.form.reasoning_format == "" ? "auto" : root.form.reasoning_format;
+                                    hint: "--reasoning-format: how thinking output is delivered. auto = let the template decide; deepseek = parse <think> blocks into a separate reasoning channel; none = inline.";
+                                    RadioGroup {
+                                        orientation: horizontal;
                                         selected(value) => { root.form.reasoning_format = value; }
+                                        RadioButton {
+                                            text: "auto";
+                                            checked: root.form.reasoning_format == "auto" || root.form.reasoning_format == "";
+                                        }
+                                        RadioButton {
+                                            text: "none";
+                                            checked: root.form.reasoning_format == "none";
+                                        }
+                                        RadioButton {
+                                            text: "deepseek";
+                                            checked: root.form.reasoning_format == "deepseek";
+                                        }
                                     }
                                 }
                                 LabeledField {
                                     label: "MoE CPU layers";
+                                    hint: "Number of Mixture-of-Experts layers to keep on CPU (--n-cpu-moe) to save VRAM. Only applies to MoE models; N/A for dense models like Gemma. Blank = auto.";
                                     LineEdit {
                                         text: root.form.n_cpu_moe;
                                         input-type: number;
@@ -986,6 +1187,7 @@ export component AppWindow inherits Window {
                                 heading: "Sampling overrides (blank = unset)";
                                 LabeledField {
                                     label: "Temperature";
+                                    hint: "--temp: sampling temperature. Lower = more deterministic, higher = more creative. Blank = default.";
                                     LineEdit {
                                         text: root.form.temp;
                                         placeholder-text: "default";
@@ -994,6 +1196,7 @@ export component AppWindow inherits Window {
                                 }
                                 LabeledField {
                                     label: "Top-K";
+                                    hint: "--top-k: keep only the K most-likely tokens before sampling. 0 / blank = disabled.";
                                     LineEdit {
                                         text: root.form.top_k;
                                         input-type: number;
@@ -1003,6 +1206,7 @@ export component AppWindow inherits Window {
                                 }
                                 LabeledField {
                                     label: "Top-P";
+                                    hint: "--top-p: nucleus sampling — smallest token set whose probabilities sum to P (e.g. 0.95). Blank = default.";
                                     LineEdit {
                                         text: root.form.top_p;
                                         placeholder-text: "default";
@@ -1011,6 +1215,7 @@ export component AppWindow inherits Window {
                                 }
                                 LabeledField {
                                     label: "Min-P";
+                                    hint: "--min-p: drop tokens below this fraction of the top token's probability. Blank = default.";
                                     LineEdit {
                                         text: root.form.min_p;
                                         placeholder-text: "default";
@@ -1019,6 +1224,7 @@ export component AppWindow inherits Window {
                                 }
                                 LabeledField {
                                     label: "Repeat penalty";
+                                    hint: "--repeat-penalty: >1 discourages repeating recent tokens (e.g. 1.1). Blank = default.";
                                     LineEdit {
                                         text: root.form.repeat_penalty;
                                         placeholder-text: "default";
@@ -1027,6 +1233,7 @@ export component AppWindow inherits Window {
                                 }
                                 LabeledField {
                                     label: "Presence penalty";
+                                    hint: "--presence-penalty: positive values discourage reusing any seen token, pushing new topics. Blank = default.";
                                     LineEdit {
                                         text: root.form.presence_penalty;
                                         placeholder-text: "default";
@@ -1040,6 +1247,7 @@ export component AppWindow inherits Window {
                                 LabeledField {
                                     label: "Chat kwargs";
                                     label_width: 130px;
+                                    hint: "--chat-template-kwargs: JSON merged into the chat template, e.g. {\"enable_thinking\":true}. Advanced — leave blank unless the model documents kwargs.";
                                     LineEdit {
                                         text: root.form.chat_template_kwargs;
                                         placeholder-text: "e.g. {\"temperature\":0.7}";
@@ -1053,13 +1261,13 @@ export component AppWindow inherits Window {
                                 spacing: 8px;
                                 Button {
                                     text: "Revert";
-                                    enabled: root.selected_preset_index >= 0;
+                                    enabled: root.selected_preset_index >= 0 && root.preset_dirty;
                                     clicked => { root.revert_preset(); }
                                 }
                                 Button {
                                     text: "Save preset";
                                     primary: true;
-                                    enabled: root.selected_preset_index >= 0 && root.form.id != "";
+                                    enabled: root.selected_preset_index >= 0 && root.form.id != "" && root.preset_dirty;
                                     clicked => { root.save_preset(); }
                                 }
                             }
@@ -1102,6 +1310,7 @@ export component AppWindow inherits Window {
                             }
                             LabeledField {
                                 label: "baseURL";
+                                hint: "OpenAI-compatible endpoint exposed by llama-server (host:port + /v1). Point OpenCode / Claude Code at this URL.";
                                 LineEdit {
                                     text: root.integration_base_url;
                                     read-only: true;
@@ -1236,4 +1445,33 @@ export component AppWindow inherits Window {
         }
 
     } // /main VerticalLayout
-} // End of file
+    } // /shortcuts FocusScope
+} // End of AppWindow
+
+// ── System tray ──────────────────────────────────────────────────────
+// Separate root component (instantiated alongside AppWindow in gui.rs). Left-click
+// reopens the window; right-click (Windows) opens the menu. `server_running` is kept
+// in sync from Rust so the hover tooltip reflects live status.
+export component AppTray inherits SystemTrayIcon {
+    in property <bool> server_running;
+    // Swap to the green-dotted icon while the server is up (both PNGs are
+    // generated by build.rs). The icon property is change-tracked, so this
+    // updates the tray live as the status flips.
+    icon: root.server_running ? @image-url("llama-on.png") : @image-url("llama.png");
+    tooltip: root.server_running ? "llama.cpp — server running" : "llama.cpp — server stopped";
+    callback open_window();
+    callback start_server();
+    callback stop_server();
+    callback quit_app();
+    clicked => { root.open_window(); }
+    Menu {
+        MenuItem { title: "Open configurator"; activated => { root.open_window(); } }
+        MenuSeparator { }
+        // Start only when stopped; Stop only when running. The menu tree is
+        // reactive, so it rebuilds when server_running changes.
+        if !root.server_running : MenuItem { title: "Start server"; activated => { root.start_server(); } }
+        if root.server_running : MenuItem { title: "Stop server"; activated => { root.stop_server(); } }
+        MenuSeparator { }
+        MenuItem { title: "Quit"; activated => { root.quit_app(); } }
+    }
+}

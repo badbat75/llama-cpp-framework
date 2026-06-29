@@ -16,15 +16,19 @@ slint::include_modules!();
 #[derive(Default)]
 struct State {
     presets: Vec<presets::Preset>,
+    // Full (unfiltered) model scan backing the new-preset dialog, so the search
+    // box can filter without re-hitting disk on every keystroke.
+    dialog_models_all: Vec<model_scan::FileOption>,
 }
 
 pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     let app = AppWindow::new()?;
+    let tray = AppTray::new()?;
     let state = Rc::new(RefCell::new(State::default()));
 
     load_server_into_ui(&app);
     refresh_presets(&app, &state);
-    refresh_run_status(app.as_weak());
+    refresh_run_status(app.as_weak(), tray.as_weak());
     refresh_file_options(&app);
     spawn_version_probe(app.as_weak());
     spawn_device_probe(app.as_weak());
@@ -44,19 +48,21 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     {
         let app_weak = app.as_weak();
+        let tray_weak = tray.as_weak();
         app.on_refresh_status(move || {
-            refresh_run_status(app_weak.clone());
+            refresh_run_status(app_weak.clone(), tray_weak.clone());
         });
     }
 
     let status_timer = slint::Timer::default();
     {
         let app_weak = app.as_weak();
+        let tray_weak = tray.as_weak();
         status_timer.start(
             slint::TimerMode::Repeated,
             std::time::Duration::from_secs(5),
             move || {
-                refresh_run_status(app_weak.clone());
+                refresh_run_status(app_weak.clone(), tray_weak.clone());
             },
         );
     }
@@ -80,6 +86,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
                     app.set_server_command_line(SharedString::from(cmdline));
                     refresh_file_options(&app);
                     refresh_integrations(&app);
+                    snapshot_server_base(&app);
                 }
                 Err(e) => set_status(&app, format!("Save failed: {e}"), true),
             }
@@ -118,6 +125,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     {
         let app_weak = app.as_weak();
+        let tray_weak = tray.as_weak();
         app.on_start_server(move || {
             let Some(app) = app_weak.upgrade() else {
                 return;
@@ -125,7 +133,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
             match runstate::start() {
                 Ok(()) => {
                     set_status(&app, "llama-server started.".into(), false);
-                    refresh_run_status(app.as_weak());
+                    refresh_run_status(app.as_weak(), tray_weak.clone());
                 }
                 Err(e) => {
                     set_status(&app, format!("Failed to start: {e}"), true);
@@ -136,6 +144,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
     {
         let app_weak = app.as_weak();
+        let tray_weak = tray.as_weak();
         app.on_stop_server(move || {
             let Some(app) = app_weak.upgrade() else {
                 return;
@@ -143,7 +152,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
             match runstate::stop() {
                 Ok(()) => {
                     set_status(&app, "llama-server stopped.".into(), false);
-                    refresh_run_status(app.as_weak());
+                    refresh_run_status(app.as_weak(), tray_weak.clone());
                 }
                 Err(e) => {
                     set_status(&app, format!("Failed to stop: {e}"), true);
@@ -167,7 +176,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
                 .and_then(|i| st.presets.get(i))
             {
                 app.set_selected_preset_index(index);
-                app.set_form(preset_to_form(p));
+                apply_form(&app, preset_to_form(p));
                 drop(st);
                 refresh_file_options(&app);
             }
@@ -199,6 +208,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     drop(st);
                     refresh_file_options(&app);
+                    refresh_integrations(&app);
                 }
                 Err(e) => set_status(&app, format!("Save failed: {e}"), true),
             }
@@ -219,7 +229,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
                 .and_then(|i| st.presets.get(i))
             {
                 let label = p.id.clone();
-                app.set_form(preset_to_form(p));
+                apply_form(&app, preset_to_form(p));
                 drop(st);
                 refresh_file_options(&app);
                 set_status(&app, format!("Reloaded [{label}] from presets.ini"), false);
@@ -241,8 +251,9 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
                     set_status(&app, format!("Deleted [{id}]"), false);
                     refresh_presets(&app, &state);
                     app.set_selected_preset_index(-1);
-                    app.set_form(blank_form());
+                    apply_form(&app, blank_form());
                     refresh_file_options(&app);
+                    refresh_integrations(&app);
                 }
                 Err(e) => set_status(&app, format!("Delete failed: {e}"), true),
             }
@@ -266,7 +277,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
                     .and_then(|i| st.presets.get(i))
                     .cloned()
             };
-            populate_dialog_models(&app);
+            populate_dialog_models(&app, &state);
             match selected {
                 None => {
                     *pending_clone_base.borrow_mut() = None;
@@ -329,13 +340,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
                         false,
                     );
                     let all = presets::load_all();
-                    let summaries: Vec<PresetSummary> = all
-                        .iter()
-                        .map(|q| PresetSummary {
-                            id: q.id.clone().into(),
-                            model: q.model.clone().into(),
-                        })
-                        .collect();
+                    let summaries = preset_summaries(&all, app.get_presets_filter().as_str());
                     app.set_presets(ModelRc::from(Rc::new(VecModel::from(summaries))));
                     let new_idx = all
                         .iter()
@@ -346,12 +351,36 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
                     state.borrow_mut().presets = all;
                     app.set_selected_preset_index(new_idx);
                     if let Some(p) = renamed {
-                        app.set_form(preset_to_form(&p));
+                        apply_form(&app, preset_to_form(&p));
                     }
                     refresh_file_options(&app);
+                    refresh_integrations(&app);
                 }
                 Err(e) => set_status(&app, format!("Rename failed: {e}"), true),
             }
+        });
+    }
+    {
+        let app_weak = app.as_weak();
+        let state = state.clone();
+        app.on_filter_presets(move |q| {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let st = state.borrow();
+            let summaries = preset_summaries(&st.presets, q.as_str());
+            app.set_presets(ModelRc::from(Rc::new(VecModel::from(summaries))));
+        });
+    }
+    {
+        let app_weak = app.as_weak();
+        let state = state.clone();
+        app.on_filter_dialog_models(move |q| {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let st = state.borrow();
+            apply_dialog_models(&app, &st.dialog_models_all, q.as_str());
         });
     }
 
@@ -408,7 +437,55 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         });
     }
 
-    app.run()?;
+    // ── System-tray callbacks ─────────────────────────────────────────
+    {
+        let app_weak = app.as_weak();
+        tray.on_open_window(move || {
+            if let Some(app) = app_weak.upgrade() {
+                app.show().ok();
+            }
+        });
+    }
+    {
+        let app_weak = app.as_weak();
+        let tray_weak = tray.as_weak();
+        tray.on_start_server(move || {
+            let (is_err, msg) = match runstate::start() {
+                Ok(()) => (false, "llama-server started.".to_string()),
+                Err(e) => (true, format!("Failed to start: {e}")),
+            };
+            if let Some(app) = app_weak.upgrade() {
+                set_status(&app, msg, is_err);
+            }
+            refresh_run_status(app_weak.clone(), tray_weak.clone());
+        });
+    }
+    {
+        let app_weak = app.as_weak();
+        let tray_weak = tray.as_weak();
+        tray.on_stop_server(move || {
+            let (is_err, msg) = match runstate::stop() {
+                Ok(()) => (false, "llama-server stopped.".to_string()),
+                Err(e) => (true, format!("Failed to stop: {e}")),
+            };
+            if let Some(app) = app_weak.upgrade() {
+                set_status(&app, msg, is_err);
+            }
+            refresh_run_status(app_weak.clone(), tray_weak.clone());
+        });
+    }
+    tray.on_quit_app(|| {
+        slint::quit_event_loop().ok();
+    });
+
+    // Closing the window hides it to the tray instead of quitting; the visible
+    // tray icon keeps the event loop alive. Use the tray's "Quit" to exit.
+    app.window()
+        .on_close_requested(|| slint::CloseRequestResponse::HideWindow);
+
+    app.show()?;
+    tray.show()?;
+    slint::run_event_loop()?;
     Ok(())
 }
 
@@ -450,6 +527,7 @@ fn load_server_into_ui(app: &AppWindow) {
     app.set_server_device(SharedString::from(cfg.device.unwrap_or_default()));
     let cmdline = runstate::command_line().unwrap_or_default();
     app.set_server_command_line(SharedString::from(cmdline));
+    snapshot_server_base(app);
 }
 
 fn populate_bind_options(app: &AppWindow, current: &str) {
@@ -489,17 +567,48 @@ fn read_server_from_ui(app: &AppWindow) -> server_cfg::ServerConfig {
     }
 }
 
+/// Copy the current server fields into their `*_base` baselines so the UI's
+/// `server_dirty` reads false until the user edits something again.
+fn snapshot_server_base(app: &AppWindow) {
+    app.set_server_port_base(app.get_server_port());
+    app.set_server_hostname_base(app.get_server_hostname());
+    app.set_server_mlock_base(app.get_server_mlock());
+    app.set_server_threads_base(app.get_server_threads());
+    app.set_server_cache_reuse_base(app.get_server_cache_reuse());
+    app.set_server_threads_batch_base(app.get_server_threads_batch());
+    app.set_server_models_max_base(app.get_server_models_max());
+    app.set_server_models_dir_base(app.get_server_models_dir());
+    app.set_server_device_base(app.get_server_device());
+}
+
 // ── Preset helpers ───────────────────────────────────────────────────
 
-fn refresh_presets(app: &AppWindow, state: &Rc<RefCell<State>>) {
-    let presets = presets::load_all();
-    let summaries: Vec<PresetSummary> = presets
+/// `true` if the preset matches the (case-insensitive) filter on id or model.
+fn preset_matches(p: &presets::Preset, filter: &str) -> bool {
+    if filter.is_empty() {
+        return true;
+    }
+    let q = filter.to_lowercase();
+    p.id.to_lowercase().contains(&q) || p.model.to_lowercase().contains(&q)
+}
+
+/// Build the `[PresetSummary]` model, marking each row visible per the filter.
+/// Hiding (rather than removing) rows keeps indices aligned with `state.presets`
+/// so `select_preset(i)` stays correct while a filter is active.
+fn preset_summaries(presets: &[presets::Preset], filter: &str) -> Vec<PresetSummary> {
+    presets
         .iter()
         .map(|p| PresetSummary {
             id: p.id.clone().into(),
             model: p.model.clone().into(),
+            visible: preset_matches(p, filter),
         })
-        .collect();
+        .collect()
+}
+
+fn refresh_presets(app: &AppWindow, state: &Rc<RefCell<State>>) {
+    let presets = presets::load_all();
+    let summaries = preset_summaries(&presets, app.get_presets_filter().as_str());
 
     let model = ModelRc::from(Rc::new(VecModel::from(summaries)));
     app.set_presets(model);
@@ -511,16 +620,16 @@ fn refresh_presets(app: &AppWindow, state: &Rc<RefCell<State>>) {
     let len = st.presets.len() as i32;
     if prev_sel >= 0 && prev_sel < len {
         if let Some(p) = st.presets.get(prev_sel as usize) {
-            app.set_form(preset_to_form(p));
+            apply_form(app, preset_to_form(p));
         }
     } else if len > 0 {
         app.set_selected_preset_index(0);
         if let Some(p) = st.presets.first() {
-            app.set_form(preset_to_form(p));
+            apply_form(app, preset_to_form(p));
         }
     } else {
         app.set_selected_preset_index(-1);
-        app.set_form(blank_form());
+        apply_form(app, blank_form());
     }
 }
 
@@ -531,6 +640,7 @@ fn refresh_file_options(app: &AppWindow) {
     let model_scan_result = model_scan::list(&models_dir, model_scan::Category::Model.subdir());
     let mmproj_scan_result = model_scan::list(&models_dir, model_scan::Category::Mmproj.subdir());
     let mtp_scan_result = model_scan::list(&models_dir, model_scan::Category::Mtp.subdir());
+    let dflash_scan_result = model_scan::list(&models_dir, model_scan::Category::Dflash.subdir());
 
     apply_scanned(
         app,
@@ -554,17 +664,19 @@ fn refresh_file_options(app: &AppWindow) {
             app.set_mmproj_index(idx);
         },
     );
-    apply_scanned(
-        app,
-        model_scan::Category::Mtp,
+    // Draft picker: MTP heads (mtps\) and DFlash drafters (dflashs\) share one
+    // dropdown (both feed --model-draft); `draft_specs` carries the matching
+    // --spec-type the UI applies when a row is picked.
+    let (draft_labels, draft_values, draft_specs, draft_idx) = model_scan::build_draft_options(
         mtp_scan_result,
+        dflash_scan_result,
         form.model_draft.as_str(),
-        |app, lbl, val, idx| {
-            app.set_mtp_labels(lbl);
-            app.set_mtp_values(val);
-            app.set_mtp_index(idx);
-        },
+        form.spec_type.as_str(),
     );
+    app.set_draft_labels(string_model(draft_labels));
+    app.set_draft_values(string_model(draft_values));
+    app.set_draft_specs(string_model(draft_specs));
+    app.set_draft_index(draft_idx);
 
     refresh_device_options(app);
 }
@@ -627,6 +739,14 @@ fn cached_devices(app: &AppWindow) -> Vec<devices::DeviceOption> {
         .collect()
 }
 
+/// Wrap a `Vec<String>` as a Slint string model (the `[string]` properties the
+/// dropdowns bind to).
+fn string_model(items: Vec<String>) -> ModelRc<SharedString> {
+    ModelRc::from(Rc::new(VecModel::from(
+        items.into_iter().map(SharedString::from).collect::<Vec<_>>(),
+    )))
+}
+
 fn apply_device(
     app: &AppWindow,
     devs: &[devices::DeviceOption],
@@ -635,13 +755,7 @@ fn apply_device(
     apply: impl FnOnce(&AppWindow, ModelRc<SharedString>, ModelRc<SharedString>, i32),
 ) {
     let (labels, values, idx) = devices::build_options(devs, current, empty_label);
-    let labels_model = ModelRc::from(Rc::new(VecModel::from(
-        labels.into_iter().map(SharedString::from).collect::<Vec<_>>(),
-    )));
-    let values_model = ModelRc::from(Rc::new(VecModel::from(
-        values.into_iter().map(SharedString::from).collect::<Vec<_>>(),
-    )));
-    apply(app, labels_model, values_model, idx);
+    apply(app, string_model(labels), string_model(values), idx);
 }
 
 fn apply_scanned(
@@ -652,28 +766,35 @@ fn apply_scanned(
     apply: impl FnOnce(&AppWindow, ModelRc<SharedString>, ModelRc<SharedString>, i32),
 ) {
     let (labels, values, idx) = model_scan::build_options(category, scanned, current);
-    let labels_model = ModelRc::from(Rc::new(VecModel::from(
-        labels
-            .into_iter()
-            .map(SharedString::from)
-            .collect::<Vec<_>>(),
-    )));
-    let values_model = ModelRc::from(Rc::new(VecModel::from(
-        values
-            .into_iter()
-            .map(SharedString::from)
-            .collect::<Vec<_>>(),
-    )));
-    apply(app, labels_model, values_model, idx);
+    apply(app, string_model(labels), string_model(values), idx);
 }
 
 // ── Dialog helpers ───────────────────────────────────────────────────
 
-fn populate_dialog_models(app: &AppWindow) {
+fn populate_dialog_models(app: &AppWindow, state: &Rc<RefCell<State>>) {
     let models_dir = app.get_server_models_dir().to_string();
     let scanned = model_scan::list(&models_dir, model_scan::Category::Model.subdir());
-    let labels: Vec<SharedString> = scanned.iter().map(|f| SharedString::from(f.label.clone())).collect();
-    let values: Vec<SharedString> = scanned.iter().map(|f| SharedString::from(f.path.clone())).collect();
+    state.borrow_mut().dialog_models_all = scanned;
+    app.set_dialog_filter(SharedString::from(""));
+    let st = state.borrow();
+    apply_dialog_models(app, &st.dialog_models_all, "");
+}
+
+/// Filter the cached dialog model scan by a case-insensitive substring on the
+/// label and publish the result. Filtering both arrays together keeps
+/// `dialog_model_index` consistent with `dialog_model_values`.
+fn apply_dialog_models(app: &AppWindow, all: &[model_scan::FileOption], filter: &str) {
+    let q = filter.to_lowercase();
+    let labels: Vec<SharedString> = all
+        .iter()
+        .filter(|f| q.is_empty() || f.label.to_lowercase().contains(&q))
+        .map(|f| SharedString::from(f.label.clone()))
+        .collect();
+    let values: Vec<SharedString> = all
+        .iter()
+        .filter(|f| q.is_empty() || f.label.to_lowercase().contains(&q))
+        .map(|f| SharedString::from(f.path.clone()))
+        .collect();
     app.set_dialog_model_labels(ModelRc::from(Rc::new(VecModel::from(labels))));
     app.set_dialog_model_values(ModelRc::from(Rc::new(VecModel::from(values))));
     app.set_dialog_model_index(-1);
@@ -734,13 +855,7 @@ fn commit_new_preset(
     match presets::save(&p) {
         Ok(()) => {
             let all = presets::load_all();
-            let summaries: Vec<PresetSummary> = all
-                .iter()
-                .map(|q| PresetSummary {
-                    id: q.id.clone().into(),
-                    model: q.model.clone().into(),
-                })
-                .collect();
+            let summaries = preset_summaries(&all, app.get_presets_filter().as_str());
             app.set_presets(ModelRc::from(Rc::new(VecModel::from(summaries))));
             let new_idx = all
                 .iter()
@@ -749,8 +864,9 @@ fn commit_new_preset(
                 .unwrap_or(-1);
             state.borrow_mut().presets = all;
             app.set_selected_preset_index(new_idx);
-            app.set_form(preset_to_form(&p));
+            apply_form(app, preset_to_form(&p));
             refresh_file_options(app);
+            refresh_integrations(app);
             set_status(app, success_status, false);
         }
         Err(e) => set_status(app, format!("Save failed: {e}"), true),
@@ -801,15 +917,17 @@ fn spawn_device_probe(app_weak: slint::Weak<AppWindow>) {
 /// Probe the llama-server process off the UI thread (`tasklist` can take
 /// hundreds of ms) and apply the result via the event loop, mirroring
 /// `spawn_version_probe`.
-fn refresh_run_status(app_weak: slint::Weak<AppWindow>) {
+fn refresh_run_status(app_weak: slint::Weak<AppWindow>, tray_weak: slint::Weak<AppTray>) {
     std::thread::spawn(move || {
         let running = runstate::load().is_some();
         slint::invoke_from_event_loop(move || {
-            let Some(app) = app_weak.upgrade() else {
-                return;
-            };
-            app.set_server_running(running);
-            app.set_server_status_is_error(false);
+            if let Some(app) = app_weak.upgrade() {
+                app.set_server_running(running);
+                app.set_server_status_is_error(false);
+            }
+            if let Some(tray) = tray_weak.upgrade() {
+                tray.set_server_running(running);
+            }
         })
         .ok();
     });
@@ -820,6 +938,14 @@ fn refresh_run_status(app_weak: slint::Weak<AppWindow>) {
 
 fn blank_form() -> PresetForm {
     PresetForm::default()
+}
+
+/// Set the editable form AND its baseline together, so the UI's `preset_dirty`
+/// (`form != form_base`) reads false right after a (re)load or save and only
+/// turns true once the user actually edits a field.
+fn apply_form(app: &AppWindow, form: PresetForm) {
+    app.set_form_base(form.clone());
+    app.set_form(form);
 }
 
 fn preset_to_form(p: &presets::Preset) -> PresetForm {
@@ -833,6 +959,11 @@ fn preset_to_form(p: &presets::Preset) -> PresetForm {
         } else {
             p.spec_type.clone().into()
         },
+        spec_draft_n_max: p
+            .spec_draft_n_max
+            .map(|v| v.to_string())
+            .unwrap_or_default()
+            .into(),
         n_gpu_layers_draft: p
             .n_gpu_layers_draft
             .map(|v| v.to_string())
@@ -892,6 +1023,7 @@ fn form_to_preset(f: &PresetForm) -> presets::Preset {
             "" | "none" => String::new(),
             other => other.to_string(),
         },
+        spec_draft_n_max: ini::parse_int(f.spec_draft_n_max.as_str()),
         n_gpu_layers_draft: ini::parse_int(f.n_gpu_layers_draft.as_str()),
         device_draft: f.device_draft.to_string(),
         device: f.device.to_string(),
