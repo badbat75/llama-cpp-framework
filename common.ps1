@@ -25,6 +25,16 @@ function Enable-VsDevShell {
     if (-not (Test-Path $cfg.VsDevShell)) {
         throw "VsDevShell not found at '$($cfg.VsDevShell)'. Re-run 01-configure.ps1 to fix the path."
     }
+    # vswhere.exe lives in the VS Installer dir, which isn't on PATH by default.
+    # The VsDevCmd batch that Launch-VsDevShell.ps1 spawns calls vswhere by bare
+    # name, so without this it prints "'vswhere.exe' is not recognized" (cosmetic,
+    # but noisy). Prepend the Installer dir so that bare call resolves.
+    $pf86 = ${env:ProgramFiles(x86)}
+    if (-not $pf86) { $pf86 = 'C:\Program Files (x86)' }
+    $vsInstaller = Join-Path $pf86 'Microsoft Visual Studio\Installer'
+    if ((Test-Path (Join-Path $vsInstaller 'vswhere.exe')) -and ($env:PATH -notlike "*$vsInstaller*")) {
+        $env:PATH = "$vsInstaller;$env:PATH"
+    }
     $prev = Get-Location
     & $cfg.VsDevShell -Arch amd64
     Set-Location $prev
