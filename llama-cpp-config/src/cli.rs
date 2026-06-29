@@ -54,6 +54,9 @@ pub struct ServerSet {
     pub models_max: Option<i32>,
     #[arg(long)]
     pub models_dir: Option<String>,
+    /// GPU device for the main model, e.g. "CUDA0" (empty string = all devices).
+    #[arg(long)]
+    pub device: Option<String>,
 }
 
 #[derive(Subcommand, Debug)]
@@ -120,6 +123,10 @@ fn run_server(c: ServerCmd) -> Result<()> {
                 "  ModelsDir:    {}",
                 cfg.models_dir.unwrap_or_else(|| "-".into())
             );
+            println!(
+                "  Device:       {}",
+                cfg.device.unwrap_or_else(|| "auto (all)".into())
+            );
             Ok(())
         }
         ServerCmd::Set(s) => {
@@ -147,6 +154,9 @@ fn run_server(c: ServerCmd) -> Result<()> {
             }
             if let Some(d) = s.models_dir {
                 cfg.models_dir = Some(d);
+            }
+            if let Some(dev) = s.device {
+                cfg.device = if dev.trim().is_empty() { None } else { Some(dev) };
             }
             server_cfg::save(&cfg).context("save server.ini")?;
             println!("Wrote {}", paths::server_ini().display());

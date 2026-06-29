@@ -107,6 +107,12 @@ fn server_args(cfg: &crate::server_cfg::ServerConfig, presets_path: &std::path::
             args.push(cr.to_string());
         }
     }
+    if let Some(dev) = cfg.device.as_deref().map(str::trim) {
+        if !dev.is_empty() {
+            args.push("--device".into());
+            args.push(dev.to_string());
+        }
+    }
     args
 }
 

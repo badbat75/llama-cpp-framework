@@ -16,6 +16,10 @@ pub struct ServerConfig {
     pub threads_batch: Option<i32>,
     pub models_max: Option<i32>,
     pub models_dir: Option<String>,
+    /// GPU device(s) for the main model, e.g. "CUDA0" (--device). Empty/None =
+    /// let llama.cpp use all detected devices. Pinning to one device avoids
+    /// splitting across an iGPU or a duplicate Vulkan view of the same GPU.
+    pub device: Option<String>,
 }
 
 pub fn default_models_dir() -> String {
@@ -38,6 +42,7 @@ pub fn load() -> ServerConfig {
         threads_batch: keys.get("ThreadsBatch").and_then(|v| ini::parse_int(v)),
         models_max: keys.get("ModelsMax").and_then(|v| ini::parse_int(v)),
         models_dir: keys.get("ModelsDir").cloned(),
+        device: keys.get("Device").cloned().filter(|s| !s.trim().is_empty()),
     }
 }
 
@@ -75,6 +80,12 @@ pub fn save(cfg: &ServerConfig) -> io::Result<()> {
         _ => "; ModelsMax = 2  ; uncomment to allow N models resident at once (0 = unlimited; runtime default if unset: 1)".to_string(),
     };
 
+    let device_line = match cfg.device.as_deref().map(str::trim) {
+        Some(d) if !d.is_empty() => format!("Device = {d}"),
+        _ => "; Device = CUDA0  ; pin the main model to one GPU (--device); blank = all detected devices"
+            .to_string(),
+    };
+
     let mlock_lit = if mlock { "true" } else { "false" };
 
     let body = format!(
@@ -91,9 +102,10 @@ Mlock = {mlock_lit}
 {cache_reuse_line}
 {threads_batch_line}
 {models_max_line}
+{device_line}
 
 ; ModelsDir: root directory. Models are scanned from ModelsDir/models/,
-; mmproj projection files are scanned from ModelsDir/mmprojs/.
+; mmproj projection files from ModelsDir/mmprojs/, MTP/draft heads from ModelsDir/mtps/.
 ModelsDir = {models_dir}
 "
     );

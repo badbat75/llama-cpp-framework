@@ -13,6 +13,21 @@ pub struct Preset {
     pub id: String,
     pub model: String,
     pub mmproj: String,
+    // Speculative decoding / Multi-Token Prediction (MTP).
+    // `model_draft` is the draft/MTP head GGUF (--model-draft); `spec_type`
+    // selects the speculator (--spec-type, e.g. "draft-mtp"). Empty = unset.
+    // `n_gpu_layers_draft` (--n-gpu-layers-draft) controls draft offload;
+    // `device_draft` (--device-draft) pins the draft to one GPU (e.g. "CUDA0").
+    // gemma4-assistant MTP heads (n_layer=0) crash under the multi-device
+    // "auto" split, so pin to a single device to run the draft on GPU.
+    pub model_draft: String,
+    pub spec_type: String,
+    pub n_gpu_layers_draft: Option<i32>,
+    pub device_draft: String,
+    /// GPU device(s) for THIS model (--device), e.g. "CUDA0". Per-preset
+    /// override of server.ini Device. Pinning a small model to one GPU lets it
+    /// fit fully (no multi-device memory fitting), which is required for GPU MTP.
+    pub device: String,
     pub ctx_size: Option<i32>,
     pub n_gpu_layers: Option<i32>,
     pub parallel: Option<i32>,
@@ -41,6 +56,11 @@ impl Default for Preset {
             id: String::new(),
             model: String::new(),
             mmproj: String::new(),
+            model_draft: String::new(),
+            spec_type: String::new(),
+            n_gpu_layers_draft: None,
+            device_draft: String::new(),
+            device: String::new(),
             ctx_size: Some(32768),
             n_gpu_layers: Some(99),
             parallel: Some(4),
@@ -81,6 +101,11 @@ impl Preset {
             id: id.to_string(),
             model: get("model"),
             mmproj: get("mmproj"),
+            model_draft: get("model-draft"),
+            spec_type: get("spec-type"),
+            n_gpu_layers_draft: k.get("n-gpu-layers-draft").and_then(|v| ini::parse_int(v)),
+            device_draft: get("device-draft"),
+            device: get("device"),
             ctx_size: k.get("ctx-size").and_then(|v| ini::parse_int(v)),
             n_gpu_layers: k.get("n-gpu-layers").and_then(|v| ini::parse_int(v)),
             parallel: k.get("parallel").and_then(|v| ini::parse_int(v)),
@@ -209,10 +234,23 @@ pub fn render_section(p: &Preset) -> String {
     out.push_str(&format!("model = {}\r\n", p.model));
     out.push_str("\r\n; Sub-model paths\r\n");
     emit_str(&mut out, "mmproj", &p.mmproj);
+    emit_str(&mut out, "model-draft", &p.model_draft);
+
+    out.push_str("\r\n; Speculative decoding / Multi-Token Prediction\r\n");
+    out.push_str("; spec-type = draft-mtp pairs with an MTP head in model-draft.\r\n");
+    emit_str(&mut out, "spec-type", &p.spec_type);
+    out.push_str("; Run the draft on GPU by pinning it to ONE device (device-draft, e.g.\r\n");
+    out.push_str("; CUDA0) with n-gpu-layers-draft = 99. gemma4-assistant MTP heads\r\n");
+    out.push_str("; (n_layer=0) crash under the multi-device auto split; pinning avoids it.\r\n");
+    out.push_str("; Use n-gpu-layers-draft = 0 to fall back to CPU.\r\n");
+    emit_i32(&mut out, "n-gpu-layers-draft", p.n_gpu_layers_draft);
+    emit_str(&mut out, "device-draft", &p.device_draft);
 
     out.push_str("\r\n; Resource / context\r\n");
     emit_i32(&mut out, "ctx-size", p.ctx_size);
     emit_i32(&mut out, "n-gpu-layers", p.n_gpu_layers);
+    out.push_str("; device = CUDA0 pins this model to one GPU (overrides server.ini Device).\r\n");
+    emit_str(&mut out, "device", &p.device);
     emit_i32(&mut out, "parallel", p.parallel);
     emit_i32(&mut out, "batch-size", p.batch_size);
     emit_i32(&mut out, "ubatch-size", p.ubatch_size);
@@ -273,5 +311,91 @@ fn emit_f64(out: &mut String, key: &str, val: Option<f64>) {
 fn emit_i32(out: &mut String, key: &str, val: Option<i32>) {
     if let Some(v) = val {
         out.push_str(&format!("{key} = {v}\r\n"));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn render_emits_mtp_keys_when_set() {
+        let p = Preset {
+            id: "m".into(),
+            model: r"C:\models\m.gguf".into(),
+            model_draft: r"C:\mtps\m-mtp.gguf".into(),
+            spec_type: "draft-mtp".into(),
+            n_gpu_layers_draft: Some(99),
+            device_draft: "CUDA0".into(),
+            device: "CUDA0".into(),
+            ..Default::default()
+        };
+        let ini = render_section(&p);
+        assert!(ini.contains("model-draft = C:\\mtps\\m-mtp.gguf\r\n"));
+        assert!(ini.contains("spec-type = draft-mtp\r\n"));
+        assert!(ini.contains("n-gpu-layers-draft = 99\r\n"));
+        assert!(ini.contains("device-draft = CUDA0\r\n"));
+        assert!(ini.contains("device = CUDA0\r\n"));
+    }
+
+    #[test]
+    fn render_omits_mtp_keys_when_empty() {
+        let p = Preset {
+            id: "m".into(),
+            model: r"C:\models\m.gguf".into(),
+            ..Default::default()
+        };
+        let ini = render_section(&p);
+        // Only value lines count — the section carries a `; spec-type = …` help
+        // comment that must not be mistaken for an emitted key.
+        let value_lines: Vec<&str> = ini
+            .lines()
+            .filter(|l| !l.trim_start().starts_with(';'))
+            .collect();
+        assert!(!value_lines.iter().any(|l| l.starts_with("model-draft =")));
+        assert!(!value_lines.iter().any(|l| l.starts_with("spec-type =")));
+    }
+
+    #[test]
+    fn from_keys_parses_mtp_keys() {
+        let mut k: BTreeMap<String, String> = BTreeMap::new();
+        k.insert("model".into(), r"C:\models\m.gguf".into());
+        k.insert("model-draft".into(), r"C:\mtps\m-mtp.gguf".into());
+        k.insert("spec-type".into(), "draft-mtp".into());
+        let p = Preset::from_keys("m", &k);
+        assert_eq!(p.model_draft, r"C:\mtps\m-mtp.gguf");
+        assert_eq!(p.spec_type, "draft-mtp");
+    }
+
+    #[test]
+    fn mtp_round_trips_through_render_and_parse() {
+        let original = Preset {
+            id: "round".into(),
+            model: r"E:\m\model.gguf".into(),
+            model_draft: r"E:\mtps\model-mtp.gguf".into(),
+            spec_type: "draft-mtp".into(),
+            n_gpu_layers_draft: Some(99),
+            device_draft: "CUDA0".into(),
+            device: "CUDA0".into(),
+            ..Default::default()
+        };
+        let ini = render_section(&original);
+        // Re-parse the key=value lines the way ini::read_all would feed from_keys.
+        let mut k: BTreeMap<String, String> = BTreeMap::new();
+        for line in ini.lines() {
+            if line.starts_with(';') || line.starts_with('[') {
+                continue;
+            }
+            if let Some((key, val)) = line.split_once('=') {
+                k.insert(key.trim().to_string(), val.trim().to_string());
+            }
+        }
+        let parsed = Preset::from_keys(&original.id, &k);
+        assert_eq!(parsed.model_draft, original.model_draft);
+        assert_eq!(parsed.spec_type, original.spec_type);
+        assert_eq!(parsed.n_gpu_layers_draft, original.n_gpu_layers_draft);
+        assert_eq!(parsed.device_draft, original.device_draft);
+        assert_eq!(parsed.device, original.device);
     }
 }

@@ -15,6 +15,11 @@ export struct PresetForm {
     id: string,
     model: string,
     mmproj: string,
+    model_draft: string,
+    spec_type: string,
+    n_gpu_layers_draft: string,
+    device_draft: string,
+    device: string,
     ctx_size: int,
     n_gpu_layers: int,
     parallel: int,
@@ -167,6 +172,22 @@ export component AppWindow inherits Window {
     in-out property <string> server_threads_batch: "";
     in-out property <string> server_models_max: "";
     in-out property <string> server_models_dir: "";
+    in-out property <string> server_device: "";
+
+    // GPU device enumeration (parsed from `llama-server --list-devices`).
+    // `all_device_*` is the cached raw list filled by the async probe; the
+    // per-combobox *_labels/_values/_index triples are derived from it.
+    in-out property <[string]> all_device_ids;
+    in-out property <[string]> all_device_labels;
+    in-out property <[string]> server_dev_labels;
+    in-out property <[string]> server_dev_values;
+    in-out property <int> server_dev_index: 0;
+    in-out property <[string]> pdev_labels;
+    in-out property <[string]> pdev_values;
+    in-out property <int> pdev_index: 0;
+    in-out property <[string]> pdraft_labels;
+    in-out property <[string]> pdraft_values;
+    in-out property <int> pdraft_index: 0;
 
     // ── Models tab state ─────────────────────────────────────────────
     in-out property <[PresetSummary]> presets;
@@ -181,6 +202,9 @@ export component AppWindow inherits Window {
     in-out property <[string]> mmproj_labels;
     in-out property <[string]> mmproj_values;
     in-out property <int> mmproj_index: -1;
+    in-out property <[string]> mtp_labels;
+    in-out property <[string]> mtp_values;
+    in-out property <int> mtp_index: -1;
 
     // ── New-preset dialog state ─────────────────────────────────────
     in-out property <bool> show_new_kind_picker: false;
@@ -221,6 +245,9 @@ export component AppWindow inherits Window {
     callback refresh_status();
     callback start_server();
     callback stop_server();
+    // Recompute the device dropdown indices after the form is mutated in-UI
+    // (e.g. the MTP picker auto-filling the draft device).
+    callback sync_device_dropdowns();
 
     callback toggle_integration_model(int);
     callback save_integrations();
@@ -557,6 +584,18 @@ export component AppWindow inherits Window {
                                     }
                                 }
                             }
+                            LabeledField {
+                                label: "GPU device";
+                                ComboBox {
+                                    model: root.server_dev_labels;
+                                    current-index <=> root.server_dev_index;
+                                    selected(value) => {
+                                        if (self.current-index >= 0 && self.current-index < root.server_dev_values.length) {
+                                            root.server_device = root.server_dev_values[self.current-index];
+                                        }
+                                    }
+                                }
+                            }
                         }
 
                         SectionCard {
@@ -748,6 +787,71 @@ export component AppWindow inherits Window {
                             }
 
                             SectionCard {
+                                heading: "Speculative decoding / MTP";
+                                LabeledField {
+                                    label: "MTP / draft model";
+                                    ComboBox {
+                                        model: root.mtp_labels;
+                                        current-index <=> root.mtp_index;
+                                        selected(value) => {
+                                            if (self.current-index >= 0 && self.current-index < root.mtp_values.length) {
+                                                root.form.model_draft = root.mtp_values[self.current-index];
+                                                // Picking an MTP head implies MTP speculation.
+                                                if (root.form.model_draft != "" && (root.form.spec_type == "" || root.form.spec_type == "none")) {
+                                                    root.form.spec_type = "draft-mtp";
+                                                    // Run the draft on GPU by pinning it to one device (the multi-device
+                                                    // auto split crashes gemma4 MTP heads). Reuse the server's GPU device
+                                                    // if set; otherwise fall back to CPU, which always works.
+                                                    if (root.form.n_gpu_layers_draft == "" && root.form.device_draft == "") {
+                                                        if (root.server_device != "") {
+                                                            root.form.device_draft = root.server_device;
+                                                            root.form.n_gpu_layers_draft = "99";
+                                                        } else {
+                                                            root.form.n_gpu_layers_draft = "0";
+                                                        }
+                                                    }
+                                                }
+                                                if (root.form.model_draft == "") {
+                                                    root.form.spec_type = "none";
+                                                }
+                                                // The draft-device dropdown was just changed programmatically.
+                                                root.sync_device_dropdowns();
+                                            }
+                                        }
+                                    }
+                                }
+                                LabeledField {
+                                    label: "Spec type";
+                                    ComboBox {
+                                        model: ["none", "draft-mtp", "draft-simple", "ngram-mod"];
+                                        current-value: root.form.spec_type == "" ? "none" : root.form.spec_type;
+                                        selected(value) => { root.form.spec_type = value; }
+                                    }
+                                }
+                                LabeledField {
+                                    label: "Draft GPU layers";
+                                    LineEdit {
+                                        text: root.form.n_gpu_layers_draft;
+                                        input-type: number;
+                                        placeholder-text: "99 = all on GPU (pin a device below); 0 = CPU; blank = auto";
+                                        edited(t) => { root.form.n_gpu_layers_draft = t; }
+                                    }
+                                }
+                                LabeledField {
+                                    label: "Draft device";
+                                    ComboBox {
+                                        model: root.pdraft_labels;
+                                        current-index <=> root.pdraft_index;
+                                        selected(value) => {
+                                            if (self.current-index >= 0 && self.current-index < root.pdraft_values.length) {
+                                                root.form.device_draft = root.pdraft_values[self.current-index];
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            SectionCard {
                                 heading: "Resource / context";
                                 LabeledField {
                                     label: "Context size";
@@ -764,6 +868,18 @@ export component AppWindow inherits Window {
                                         input-type: number;
                                         placeholder-text: "99 = all";
                                         edited(t) => { root.form.n_gpu_layers = t.to-float(); }
+                                    }
+                                }
+                                LabeledField {
+                                    label: "GPU device";
+                                    ComboBox {
+                                        model: root.pdev_labels;
+                                        current-index <=> root.pdev_index;
+                                        selected(value) => {
+                                            if (self.current-index >= 0 && self.current-index < root.pdev_values.length) {
+                                                root.form.device = root.pdev_values[self.current-index];
+                                            }
+                                        }
                                     }
                                 }
                                 LabeledField {

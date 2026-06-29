@@ -6,7 +6,10 @@ use std::rc::Rc;
 
 use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel};
 
-use crate::{ini, integrations, model_scan, net_ifaces, paths, presets, runstate, server_cfg, server_version};
+use crate::{
+    devices, ini, integrations, model_scan, net_ifaces, paths, presets, runstate, server_cfg,
+    server_version,
+};
 
 slint::include_modules!();
 
@@ -24,6 +27,16 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     refresh_run_status(app.as_weak());
     refresh_file_options(&app);
     spawn_version_probe(app.as_weak());
+    spawn_device_probe(app.as_weak());
+
+    {
+        let app_weak = app.as_weak();
+        app.on_sync_device_dropdowns(move || {
+            if let Some(app) = app_weak.upgrade() {
+                refresh_device_options(&app);
+            }
+        });
+    }
 
     app.set_presets_path(SharedString::from(
         paths::presets_ini().to_string_lossy().into_owned(),
@@ -434,6 +447,7 @@ fn load_server_into_ui(app: &AppWindow) {
     app.set_server_models_dir(SharedString::from(
         cfg.models_dir.unwrap_or_else(server_cfg::default_models_dir),
     ));
+    app.set_server_device(SharedString::from(cfg.device.unwrap_or_default()));
     let cmdline = runstate::command_line().unwrap_or_default();
     app.set_server_command_line(SharedString::from(cmdline));
 }
@@ -468,6 +482,10 @@ fn read_server_from_ui(app: &AppWindow) -> server_cfg::ServerConfig {
         threads_batch: ini::parse_int(app.get_server_threads_batch().as_str()),
         models_max: ini::parse_int(app.get_server_models_max().as_str()),
         models_dir: Some(app.get_server_models_dir().to_string()),
+        device: {
+            let d = app.get_server_device().to_string();
+            if d.trim().is_empty() { None } else { Some(d) }
+        },
     }
 }
 
@@ -512,6 +530,7 @@ fn refresh_file_options(app: &AppWindow) {
 
     let model_scan_result = model_scan::list(&models_dir, model_scan::Category::Model.subdir());
     let mmproj_scan_result = model_scan::list(&models_dir, model_scan::Category::Mmproj.subdir());
+    let mtp_scan_result = model_scan::list(&models_dir, model_scan::Category::Mtp.subdir());
 
     apply_scanned(
         app,
@@ -535,6 +554,94 @@ fn refresh_file_options(app: &AppWindow) {
             app.set_mmproj_index(idx);
         },
     );
+    apply_scanned(
+        app,
+        model_scan::Category::Mtp,
+        mtp_scan_result,
+        form.model_draft.as_str(),
+        |app, lbl, val, idx| {
+            app.set_mtp_labels(lbl);
+            app.set_mtp_values(val);
+            app.set_mtp_index(idx);
+        },
+    );
+
+    refresh_device_options(app);
+}
+
+/// Rebuild the three GPU-device dropdowns (server-wide, per-preset main,
+/// per-preset draft) from the cached `--list-devices` result, recomputing each
+/// selected index against the current server.ini / form values.
+fn refresh_device_options(app: &AppWindow) {
+    let devs = cached_devices(app);
+    let form = app.get_form();
+
+    apply_device(
+        app,
+        &devs,
+        app.get_server_device().as_str(),
+        "(all detected devices)",
+        |app, lbl, val, idx| {
+            app.set_server_dev_labels(lbl);
+            app.set_server_dev_values(val);
+            app.set_server_dev_index(idx);
+        },
+    );
+    apply_device(
+        app,
+        &devs,
+        form.device.as_str(),
+        "(server default)",
+        |app, lbl, val, idx| {
+            app.set_pdev_labels(lbl);
+            app.set_pdev_values(val);
+            app.set_pdev_index(idx);
+        },
+    );
+    apply_device(
+        app,
+        &devs,
+        form.device_draft.as_str(),
+        "(auto / same as model)",
+        |app, lbl, val, idx| {
+            app.set_pdraft_labels(lbl);
+            app.set_pdraft_values(val);
+            app.set_pdraft_index(idx);
+        },
+    );
+}
+
+/// Reconstruct the cached device list from the two parallel Slint arrays the
+/// async probe fills in (`all_device_ids` / `all_device_labels`).
+fn cached_devices(app: &AppWindow) -> Vec<devices::DeviceOption> {
+    let ids = app.get_all_device_ids();
+    let labels = app.get_all_device_labels();
+    let n = ids.row_count().min(labels.row_count());
+    (0..n)
+        .filter_map(|i| {
+            Some(devices::DeviceOption {
+                id: ids.row_data(i)?.to_string(),
+                label: labels.row_data(i)?.to_string(),
+            })
+        })
+        .collect()
+}
+
+fn apply_device(
+    app: &AppWindow,
+    devs: &[devices::DeviceOption],
+    current: &str,
+    empty_label: &str,
+    apply: impl FnOnce(&AppWindow, ModelRc<SharedString>, ModelRc<SharedString>, i32),
+) {
+    let (labels, values, idx) = devices::build_options(devs, current, empty_label);
+    let labels_model = ModelRc::from(Rc::new(VecModel::from(
+        labels.into_iter().map(SharedString::from).collect::<Vec<_>>(),
+    )));
+    let values_model = ModelRc::from(Rc::new(VecModel::from(
+        values.into_iter().map(SharedString::from).collect::<Vec<_>>(),
+    )));
+    apply(app, labels_model, values_model, idx);
 }
 
 fn apply_scanned(
@@ -670,6 +777,27 @@ fn spawn_version_probe(app_weak: slint::Weak<AppWindow>) {
     });
 }
 
+/// Enumerate GPU devices off the UI thread (`--list-devices` spawns llama-server
+/// and can take a few hundred ms — including a CUDA init), then publish the
+/// result and rebuild the device dropdowns via the event loop.
+fn spawn_device_probe(app_weak: slint::Weak<AppWindow>) {
+    std::thread::spawn(move || {
+        let list = devices::list();
+        let ids: Vec<SharedString> = list.iter().map(|d| d.id.clone().into()).collect();
+        let labels: Vec<SharedString> = list.iter().map(|d| d.label.clone().into()).collect();
+        slint::invoke_from_event_loop(move || {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            app.set_all_device_ids(ModelRc::from(Rc::new(VecModel::from(ids))));
+            app.set_all_device_labels(ModelRc::from(Rc::new(VecModel::from(labels))));
+            // Recompute the dropdown indices now that the device list exists.
+            refresh_device_options(&app);
+        })
+        .ok();
+    });
+}
+
 /// Probe the llama-server process off the UI thread (`tasklist` can take
 /// hundreds of ms) and apply the result via the event loop, mirroring
 /// `spawn_version_probe`.
@@ -699,6 +827,19 @@ fn preset_to_form(p: &presets::Preset) -> PresetForm {
         id: p.id.clone().into(),
         model: p.model.clone().into(),
         mmproj: p.mmproj.clone().into(),
+        model_draft: p.model_draft.clone().into(),
+        spec_type: if p.spec_type.is_empty() {
+            "none".into()
+        } else {
+            p.spec_type.clone().into()
+        },
+        n_gpu_layers_draft: p
+            .n_gpu_layers_draft
+            .map(|v| v.to_string())
+            .unwrap_or_default()
+            .into(),
+        device_draft: p.device_draft.clone().into(),
+        device: p.device.clone().into(),
         ctx_size: p.ctx_size.unwrap_or(32768),
         n_gpu_layers: p.n_gpu_layers.unwrap_or(99),
         parallel: p.parallel.unwrap_or(4),
@@ -746,6 +887,14 @@ fn form_to_preset(f: &PresetForm) -> presets::Preset {
         id: f.id.to_string(),
         model: f.model.to_string(),
         mmproj: f.mmproj.to_string(),
+        model_draft: f.model_draft.to_string(),
+        spec_type: match f.spec_type.as_str() {
+            "" | "none" => String::new(),
+            other => other.to_string(),
+        },
+        n_gpu_layers_draft: ini::parse_int(f.n_gpu_layers_draft.as_str()),
+        device_draft: f.device_draft.to_string(),
+        device: f.device.to_string(),
         ctx_size: Some(f.ctx_size).filter(|v| *v > 0),
         n_gpu_layers: Some(f.n_gpu_layers).filter(|v| *v > 0),
         parallel: Some(f.parallel).filter(|v| *v > 0),

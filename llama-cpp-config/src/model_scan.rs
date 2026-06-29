@@ -12,17 +12,20 @@ pub struct FileOption {
 pub enum Category {
     Model,
     Mmproj,
+    /// Draft / Multi-Token Prediction head GGUFs (scanned from `mtps\`).
+    Mtp,
 }
 
 impl Category {
     pub fn is_optional(self) -> bool {
-        matches!(self, Category::Mmproj)
+        matches!(self, Category::Mmproj | Category::Mtp)
     }
 
     pub fn subdir(self) -> &'static str {
         match self {
             Category::Model => "models",
             Category::Mmproj => "mmprojs",
+            Category::Mtp => "mtps",
         }
     }
 }
