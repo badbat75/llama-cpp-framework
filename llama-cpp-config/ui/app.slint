@@ -9,10 +9,10 @@ import { LineEdit, ComboBox, CheckBox, Button, ListView, ScrollView, Palette, Ra
 export struct PresetSummary {
     id: string,
     model: string,
-    // Set by the Rust-side preset filter; `false` rows are hidden in the list
-    // while keeping the row index stable (so select_preset(i) still maps to the
-    // full presets vector).
-    visible: bool,
+    // Index into the full (unfiltered) presets vector on the Rust side. The list
+    // model only holds rows that pass the filter, so the `for` index is NOT a
+    // stable handle — `orig_index` is what select_preset()/highlighting use.
+    orig_index: int,
 }
 
 export struct PresetForm {
@@ -187,12 +187,20 @@ component LabeledField inherits HorizontalLayout {
 }
 
 export component AppWindow inherits Window {
-    title: "llama.cpp-framework configurator";
+    // Crate version (CARGO_PKG_VERSION), pushed in from Rust at startup so the
+    // title bar always reflects the built version.
+    in property <string> app_version;
+    title: root.app_version == ""
+        ? "llama.cpp-framework configurator"
+        : "llama.cpp-framework configurator v" + root.app_version;
     icon: @image-url("llama.png");
-    min-width: 1000px;
-    min-height: 700px;
-    preferred-width: 1180px;
-    preferred-height: 880px;
+    // Keep the floor low enough that the whole window — including the Save/Revert
+    // row at the bottom of each scrolling page — fits on a 1366×768 laptop after
+    // the title bar and taskbar. The preferred size stays roomy on big screens.
+    min-width: 820px;
+    min-height: 520px;
+    preferred-width: 1080px;
+    preferred-height: 760px;
     background: Palette.background;
     // Give the shortcut FocusScope focus on startup so KeyBindings fire before
     // the user clicks into any widget.
@@ -317,6 +325,7 @@ export component AppWindow inherits Window {
     callback revert_preset();
     callback delete_preset(string);
     callback new_preset();
+    callback clone_preset();
     callback pick_new_empty();
     callback pick_new_clone();
     callback rename_preset(string, string);
@@ -384,15 +393,15 @@ export component AppWindow inherits Window {
                     padding: 22px;
                     spacing: 12px;
                     Text {
-                        text: "New preset";
+                        text: root.new_dialog_source_id == "" ? "New preset" : "Clone preset";
                         font-size: 16px;
                         font-weight: 700;
                         color: Palette.foreground;
                     }
                     Text {
                         text: root.new_dialog_source_id == ""
-                            ? "Pick a model from your ModelsDir. The new preset will be created with default parameters."
-                            : "Pick a model from your ModelsDir. \"Empty\" creates a preset with default parameters; \"Clone\" copies every parameter of [" + root.new_dialog_source_id + "] onto the picked model.";
+                            ? "Pick the model for the new preset from your ModelsDir. It is created with default parameters."
+                            : "Cloning [" + root.new_dialog_source_id + "] → pick the target model from your ModelsDir. The new preset copies every parameter from [" + root.new_dialog_source_id + "] onto the model you pick.";
                         wrap: word-wrap;
                         font-size: 12px;
                         color: Palette.foreground.transparentize(0.25);
@@ -455,19 +464,16 @@ export component AppWindow inherits Window {
                             clicked => { root.show_new_kind_picker = false; }
                         }
                         Button {
-                            text: root.new_dialog_source_id == "" ? "Create" : "Empty";
+                            text: root.new_dialog_source_id == "" ? "Create" : "Clone";
+                            primary: true;
                             enabled: root.dialog_model_index >= 0;
                             clicked => {
                                 root.show_new_kind_picker = false;
-                                root.pick_new_empty();
-                            }
-                        }
-                        if root.new_dialog_source_id != "" : Button {
-                            text: "Clone…";
-                            enabled: root.dialog_model_index >= 0;
-                            clicked => {
-                                root.show_new_kind_picker = false;
-                                root.pick_new_clone();
+                                if (root.new_dialog_source_id == "") {
+                                    root.pick_new_empty();
+                                } else {
+                                    root.pick_new_clone();
+                                }
                             }
                         }
                     }
@@ -815,20 +821,23 @@ export component AppWindow inherits Window {
                             border-color: Palette.border;
                             border-radius: 8px;
                             background: Palette.alternate-background;
-                            min-height: 280px;
+                            // Keep the floor modest so the Models tab still fits a
+                            // small screen; vertical-stretch grows it on big ones.
+                            min-height: 160px;
                             vertical-stretch: 1;
 
                             ListView {
-                                for p[i] in root.presets : Rectangle {
-                                    // Filtered-out rows collapse to zero height; the index `i` stays
-                                    // aligned with the full presets vector for select_preset(i).
-                                    visible: p.visible;
-                                    height: p.visible ? 36px : 0px;
-                                    background: i == root.selected_preset_index
+                                // The Rust side already filtered out non-matching rows, so every
+                                // delegate is a fixed 36px tall — a data-dependent height confuses
+                                // ListView's running-sum layout and the rows render on top of each
+                                // other. `p.orig_index` maps back to the full presets vector.
+                                for p in root.presets : Rectangle {
+                                    height: 36px;
+                                    background: p.orig_index == root.selected_preset_index
                                         ? Palette.accent-background.transparentize(0.82)
                                         : (item-touch.has-hover ? Palette.background : transparent);
 
-                                    if i == root.selected_preset_index : Rectangle {
+                                    if p.orig_index == root.selected_preset_index : Rectangle {
                                         x: 0; y: 6px; width: 3px; height: parent.height - 12px;
                                         border-radius: 1.5px;
                                         background: Palette.accent-background;
@@ -847,31 +856,42 @@ export component AppWindow inherits Window {
                                     }
                                     item-touch := TouchArea {
                                         mouse-cursor: pointer;
-                                        clicked => { root.select_preset(i); }
+                                        clicked => { root.select_preset(p.orig_index); }
                                     }
                                 }
                             }
                         }
 
-                        HorizontalLayout {
+                        VerticalLayout {
                             spacing: 6px;
-                            Button {
-                                text: "New…";
-                                clicked => { root.new_preset(); }
-                            }
-                            Button {
-                                text: "Rename…";
-                                enabled: root.selected_preset_index >= 0;
-                                clicked => {
-                                    root.rename_old_id = root.form.id;
-                                    root.rename_new_id = root.form.id;
-                                    root.show_rename_dialog = true;
+                            HorizontalLayout {
+                                spacing: 6px;
+                                Button {
+                                    text: "New…";
+                                    clicked => { root.new_preset(); }
+                                }
+                                Button {
+                                    text: "Clone…";
+                                    enabled: root.selected_preset_index >= 0;
+                                    clicked => { root.clone_preset(); }
                                 }
                             }
-                            Button {
-                                text: "Delete";
-                                enabled: root.selected_preset_index >= 0;
-                                clicked => { root.delete_preset(root.form.id); }
+                            HorizontalLayout {
+                                spacing: 6px;
+                                Button {
+                                    text: "Rename…";
+                                    enabled: root.selected_preset_index >= 0;
+                                    clicked => {
+                                        root.rename_old_id = root.form.id;
+                                        root.rename_new_id = root.form.id;
+                                        root.show_rename_dialog = true;
+                                    }
+                                }
+                                Button {
+                                    text: "Delete";
+                                    enabled: root.selected_preset_index >= 0;
+                                    clicked => { root.delete_preset(root.form.id); }
+                                }
                             }
                         }
 

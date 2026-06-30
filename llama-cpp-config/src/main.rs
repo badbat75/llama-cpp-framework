@@ -17,6 +17,8 @@ mod presets;
 mod runstate;
 mod server_cfg;
 mod server_version;
+#[cfg(windows)]
+mod single_instance;
 
 use clap::Parser;
 

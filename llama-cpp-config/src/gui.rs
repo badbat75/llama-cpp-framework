@@ -22,9 +22,27 @@ struct State {
 }
 
 pub fn run() -> Result<(), Box<dyn std::error::Error>> {
+    // Single-instance: if the configurator is already running, hand off to it
+    // (it surfaces its window) and exit instead of opening a second window.
+    #[cfg(windows)]
+    let _instance = match crate::single_instance::acquire() {
+        crate::single_instance::Acquire::Secondary => return Ok(()),
+        crate::single_instance::Acquire::Primary(guard) => guard,
+    };
+
     let app = AppWindow::new()?;
+    app.set_app_version(SharedString::from(env!("CARGO_PKG_VERSION")));
     let tray = AppTray::new()?;
     let state = Rc::new(RefCell::new(State::default()));
+
+    // Surface the live window when another launch pokes the activation event.
+    #[cfg(windows)]
+    {
+        let app_weak = app.as_weak();
+        _instance.spawn_listener(move || {
+            let _ = app_weak.upgrade_in_event_loop(activate_window);
+        });
+    }
 
     load_server_into_ui(&app);
     refresh_presets(&app, &state);
@@ -260,6 +278,9 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         });
     }
 
+    // Holds the preset a Clone is based on, between opening the picker and the
+    // user confirming a target model. `new_dialog_source_id == ""` means the
+    // picker is in plain "New" (empty-preset) mode; non-empty means Clone.
     let pending_clone_base: Rc<RefCell<Option<presets::Preset>>> = Rc::new(RefCell::new(None));
     {
         let app_weak = app.as_weak();
@@ -269,6 +290,25 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
+            // "New…" is always create-from-scratch — independent of any current
+            // selection, so it can never silently turn into a clone.
+            *pending_clone_base.borrow_mut() = None;
+            populate_dialog_models(&app, &state);
+            app.set_new_dialog_source_id(SharedString::from(""));
+            app.set_show_new_kind_picker(true);
+        });
+    }
+    {
+        let app_weak = app.as_weak();
+        let state = state.clone();
+        let pending_clone_base = pending_clone_base.clone();
+        app.on_clone_preset(move || {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            // Clone source is always the selected preset (the button is disabled
+            // otherwise). Stash it and surface its id in the dialog so it's clear
+            // what is being copied.
             let selected = {
                 let st = state.borrow();
                 let idx = app.get_selected_preset_index();
@@ -277,17 +317,13 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
                     .and_then(|i| st.presets.get(i))
                     .cloned()
             };
+            let Some(p) = selected else {
+                set_status(&app, "Select a preset to clone first.".into(), true);
+                return;
+            };
             populate_dialog_models(&app, &state);
-            match selected {
-                None => {
-                    *pending_clone_base.borrow_mut() = None;
-                    app.set_new_dialog_source_id(SharedString::from(""));
-                }
-                Some(p) => {
-                    app.set_new_dialog_source_id(SharedString::from(p.id.clone()));
-                    *pending_clone_base.borrow_mut() = Some(p);
-                }
-            }
+            app.set_new_dialog_source_id(SharedString::from(p.id.clone()));
+            *pending_clone_base.borrow_mut() = Some(p);
             app.set_show_new_kind_picker(true);
         });
     }
@@ -491,6 +527,20 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
+/// Bring the running instance's window to the front: re-show it if it was hidden
+/// to the tray, un-minimize, and take focus. Called when a second launch pokes
+/// the single-instance activation event.
+#[cfg(windows)]
+fn activate_window(app: AppWindow) {
+    use slint::winit_030::WinitWindowAccessor;
+    app.show().ok();
+    app.window().with_winit_window(|w| {
+        w.set_visible(true);
+        w.set_minimized(false);
+        w.focus_window();
+    });
+}
+
 fn pick_dir(start: &std::path::Path) -> Option<PathBuf> {
     rfd::FileDialog::new()
         .set_title("Pick a folder")
@@ -592,16 +642,19 @@ fn preset_matches(p: &presets::Preset, filter: &str) -> bool {
     p.id.to_lowercase().contains(&q) || p.model.to_lowercase().contains(&q)
 }
 
-/// Build the `[PresetSummary]` model, marking each row visible per the filter.
-/// Hiding (rather than removing) rows keeps indices aligned with `state.presets`
-/// so `select_preset(i)` stays correct while a filter is active.
+/// Build the `[PresetSummary]` list model, dropping rows that don't match the
+/// filter. Each surviving row carries its `orig_index` into `state.presets` so
+/// `select_preset()` and the selection highlight stay correct under a filter
+/// (the list `for` index is NOT stable once rows are removed).
 fn preset_summaries(presets: &[presets::Preset], filter: &str) -> Vec<PresetSummary> {
     presets
         .iter()
-        .map(|p| PresetSummary {
+        .enumerate()
+        .filter(|(_, p)| preset_matches(p, filter))
+        .map(|(i, p)| PresetSummary {
             id: p.id.clone().into(),
             model: p.model.clone().into(),
-            visible: preset_matches(p, filter),
+            orig_index: i as i32,
         })
         .collect()
 }
@@ -832,7 +885,12 @@ fn run_new_clone(
     path: PathBuf,
 ) {
     let path_str = path.to_string_lossy().into_owned();
-    let id = presets::make_id(&path_str);
+    let base_id = presets::make_id(&path_str);
+    // The id is derived from the picked model, so cloning onto the same model
+    // (or one that already has a preset) would otherwise overwrite it. Pick the
+    // first free "<id>", "<id>-2", … instead of clobbering.
+    let existing: Vec<String> = presets::load_all().into_iter().map(|p| p.id).collect();
+    let id = unique_id(&base_id, &existing);
     let cloned = presets::Preset {
         id: id.clone(),
         model: path_str,
@@ -842,8 +900,19 @@ fn run_new_clone(
         app,
         state,
         cloned,
-        format!("Cloned [{}] -> [{id}] (new model, same parameters) — saved.", base.id),
+        format!("Cloned [{}] -> [{id}] (same parameters) — saved.", base.id),
     );
+}
+
+/// First of `base`, `base-2`, `base-3`, … that isn't already in `existing`.
+fn unique_id(base: &str, existing: &[String]) -> String {
+    if !existing.iter().any(|e| e == base) {
+        return base.to_string();
+    }
+    (2..)
+        .map(|n| format!("{base}-{n}"))
+        .find(|cand| !existing.iter().any(|e| e == cand))
+        .unwrap_or_else(|| base.to_string())
 }
 
 fn commit_new_preset(

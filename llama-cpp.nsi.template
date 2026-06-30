@@ -1,13 +1,14 @@
 ; llama.cpp NSIS Installer Template
 ; Placeholders replaced by 03-package.ps1:
-;   @VERSION@, @STAGING_DIR@, @OUTPUT_FILE@
+;   @VERSION@ (framework / configurator version), @LLAMA_BUILD@ (bundled
+;   llama.cpp build, e.g. b3456), @STAGING_DIR@, @OUTPUT_FILE@
 
 !include "MUI2.nsh"
 !include "WinMessages.nsh"
 !include "LogicLib.nsh"
 
 ; ── Installer metadata ──────────────────────────────────────────────
-Name "llama.cpp @VERSION@"
+Name "llama.cpp-framework v@VERSION@ (llama @LLAMA_BUILD@)"
 OutFile "@OUTPUT_FILE@"
 InstallDir "$PROGRAMFILES64\llama.cpp"
 InstallDirRegKey HKLM "Software\llama.cpp" "InstallDir"
@@ -47,7 +48,7 @@ Function CheckPreviousInstall
 
     ReadRegStr $1 HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\llama.cpp" "DisplayVersion"
     MessageBox MB_YESNO|MB_ICONQUESTION \
-        "llama.cpp $1 is already installed.$\n$\nUninstall the previous version before continuing?" \
+        "llama.cpp-framework v$1 is already installed.$\n$\nUninstall the previous version before continuing?" \
         IDYES uninstall
 
     ; User chose No — abort
@@ -85,8 +86,9 @@ Section "llama.cpp binaries (required)" SecMain
 
     ; Registry — Add/Remove Programs
     WriteRegStr HKLM "Software\llama.cpp" "InstallDir" "$INSTDIR"
+    WriteRegStr HKLM "Software\llama.cpp" "LlamaBuild" "@LLAMA_BUILD@"
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\llama.cpp" \
-        "DisplayName" "llama.cpp @VERSION@"
+        "DisplayName" "llama.cpp-framework v@VERSION@ (llama @LLAMA_BUILD@)"
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\llama.cpp" \
         "UninstallString" "$\"$INSTDIR\uninstall.exe$\""
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\llama.cpp" \

@@ -6,12 +6,34 @@ Enable-VsDevShell             # cmake --install needs the VS env
 
 $ErrorActionPreference = 'Stop'
 
-# ── Resolve version from git ────────────────────────────────────────
+# ── Resolve versions ────────────────────────────────────────────────
+# Framework version = the llama-cpp-config crate version. The configurator and
+# the framework as a whole are versioned together (starting at 1.0.0); this is
+# the headline version shown in the installer and the package name.
+$cargoTomlPath = Join-Path $PSScriptRoot 'llama-cpp-config\Cargo.toml'
+$cargoToml = Get-Content $cargoTomlPath -Raw
+if ($cargoToml -match '(?ms)^\[package\].*?^\s*version\s*=\s*"([^"]+)"') {
+    $frameworkVersion = $Matches[1]
+}
+else {
+    throw "Could not read [package] version from $cargoTomlPath"
+}
+
+# llama build = git describe of the bundled llama.cpp checkout (e.g. b3456).
 Push-Location $cfg.LlamaCppDir
-$version = (git describe --tags 2>$null) -replace '^v', ''
-if (-not $version) { $version = "0.0.0-$(git rev-parse --short HEAD)" }
+$llamaBuild = (git describe --tags 2>$null) -replace '^v', ''
+if (-not $llamaBuild) { $llamaBuild = "b0-$(git rev-parse --short HEAD)" }
 Pop-Location
-Write-Host "Version: $version" -ForegroundColor Cyan
+
+# Architecture token for the package name (native 64-bit build).
+$arch = switch ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture) {
+    'Arm64' { 'arm64' }
+    default { 'x64' }
+}
+
+Write-Host "Framework version: $frameworkVersion" -ForegroundColor Cyan
+Write-Host "llama build:       $llamaBuild" -ForegroundColor Cyan
+Write-Host "Architecture:      $arch" -ForegroundColor Cyan
 
 # ── Ensure NSIS is installed ────────────────────────────────────────
 $nsisExe = $null
@@ -67,7 +89,8 @@ Copy-Item "$PSScriptRoot\resources\llama.ico" -Destination $stageDir -Force
 # ── Generate .nsi from template ─────────────────────────────────────
 $templatePath = Join-Path $PSScriptRoot "llama-cpp.nsi.template"
 $nsiPath      = Join-Path $PSScriptRoot "build\llama-cpp.nsi"
-$installerName = "llama_cpp-$version-win64-setup.exe"
+# e.g. llama-cpp-framework-v1.0.0-b3456-x64-setup.exe
+$installerName = "llama-cpp-framework-v$frameworkVersion-$llamaBuild-$arch-setup.exe"
 $outputFile   = Join-Path $outputDir $installerName
 
 $stageDirNsis = $stageDir -replace '/', '\'
@@ -76,7 +99,8 @@ $outputFileNsis = $outputFile -replace '/', '\'
 # .Replace() — literal substitution; -replace would treat the pattern as a
 # regex and expand $ sequences in the replacement (paths, versions).
 $nsiContent = (Get-Content $templatePath -Raw).
-    Replace('@VERSION@',     [string]$version).
+    Replace('@VERSION@',     [string]$frameworkVersion).
+    Replace('@LLAMA_BUILD@', [string]$llamaBuild).
     Replace('@STAGING_DIR@', [string]$stageDirNsis).
     Replace('@OUTPUT_FILE@', [string]$outputFileNsis)
 
