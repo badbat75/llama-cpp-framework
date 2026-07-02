@@ -70,10 +70,7 @@ mod tests {
 
     #[test]
     fn parses_version_no_hash() {
-        assert_eq!(
-            parse("version: 9999\n").as_deref(),
-            Some("9999"),
-        );
+        assert_eq!(parse("version: 9999\n").as_deref(), Some("9999"),);
     }
 
     #[test]

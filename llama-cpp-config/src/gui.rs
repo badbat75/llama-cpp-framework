@@ -7,7 +7,7 @@ use std::rc::Rc;
 use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel};
 
 use crate::{
-    devices, ini, integrations, model_scan, net_ifaces, paths, presets, runstate, server_cfg,
+    devices, gguf, ini, integrations, model_scan, net_ifaces, paths, presets, runstate, server_cfg,
     server_version,
 };
 
@@ -60,6 +60,15 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         });
     }
 
+    {
+        let app_weak = app.as_weak();
+        app.on_model_changed(move || {
+            if let Some(app) = app_weak.upgrade() {
+                update_model_info(&app);
+            }
+        });
+    }
+
     app.set_presets_path(SharedString::from(
         paths::presets_ini().to_string_lossy().into_owned(),
     ));
@@ -69,6 +78,26 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         let tray_weak = tray.as_weak();
         app.on_refresh_status(move || {
             refresh_run_status(app_weak.clone(), tray_weak.clone());
+        });
+    }
+
+    // Reload everything from disk: server.ini, presets.ini, the models-dir
+    // scan, and the integration state. Lets the user pick up files added to
+    // the models directory or config files edited by hand, without a restart.
+    {
+        let app_weak = app.as_weak();
+        let tray_weak = tray.as_weak();
+        let state = state.clone();
+        app.on_reload_all(move || {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            load_server_into_ui(&app);
+            refresh_presets(&app, &state);
+            refresh_file_options(&app);
+            refresh_integrations(&app);
+            refresh_run_status(app.as_weak(), tray_weak.clone());
+            set_status(&app, "Reloaded configuration from disk.".into(), false);
         });
     }
 
@@ -116,9 +145,9 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
-                load_server_into_ui(&app);
-                refresh_file_options(&app);
-                refresh_integrations(&app);
+            load_server_into_ui(&app);
+            refresh_file_options(&app);
+            refresh_integrations(&app);
             set_status(
                 &app,
                 format!("Reloaded {}", paths::server_ini().display()),
@@ -164,19 +193,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         let app_weak = app.as_weak();
         let tray_weak = tray.as_weak();
         app.on_stop_server(move || {
-            let Some(app) = app_weak.upgrade() else {
-                return;
-            };
-            match runstate::stop() {
-                Ok(()) => {
-                    set_status(&app, "llama-server stopped.".into(), false);
-                    refresh_run_status(app.as_weak(), tray_weak.clone());
-                }
-                Err(e) => {
-                    set_status(&app, format!("Failed to stop: {e}"), true);
-                    app.set_server_status_is_error(true);
-                }
-            }
+            stop_server_async(app_weak.clone(), tray_weak.clone());
         });
     }
 
@@ -189,10 +206,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
                 return;
             };
             let st = state.borrow();
-            if let Some(p) = usize::try_from(index)
-                .ok()
-                .and_then(|i| st.presets.get(i))
-            {
+            if let Some(p) = usize::try_from(index).ok().and_then(|i| st.presets.get(i)) {
                 app.set_selected_preset_index(index);
                 apply_form(&app, preset_to_form(p));
                 drop(st);
@@ -242,10 +256,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
             refresh_presets(&app, &state);
             let idx = app.get_selected_preset_index();
             let st = state.borrow();
-            if let Some(p) = usize::try_from(idx)
-                .ok()
-                .and_then(|i| st.presets.get(i))
-            {
+            if let Some(p) = usize::try_from(idx).ok().and_then(|i| st.presets.get(i)) {
                 let label = p.id.clone();
                 apply_form(&app, preset_to_form(p));
                 drop(st);
@@ -370,11 +381,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
             };
             match presets::rename(old_id.as_str(), new_id.as_str()) {
                 Ok(()) => {
-                    set_status(
-                        &app,
-                        format!("Renamed [{old_id}] -> [{new_id}]"),
-                        false,
-                    );
+                    set_status(&app, format!("Renamed [{old_id}] -> [{new_id}]"), false);
                     let all = presets::load_all();
                     let summaries = preset_summaries(&all, app.get_presets_filter().as_str());
                     app.set_presets(ModelRc::from(Rc::new(VecModel::from(summaries))));
@@ -500,14 +507,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         let app_weak = app.as_weak();
         let tray_weak = tray.as_weak();
         tray.on_stop_server(move || {
-            let (is_err, msg) = match runstate::stop() {
-                Ok(()) => (false, "llama-server stopped.".to_string()),
-                Err(e) => (true, format!("Failed to stop: {e}")),
-            };
-            if let Some(app) = app_weak.upgrade() {
-                set_status(&app, msg, is_err);
-            }
-            refresh_run_status(app_weak.clone(), tray_weak.clone());
+            stop_server_async(app_weak.clone(), tray_weak.clone());
         });
     }
     tray.on_quit_app(|| {
@@ -553,7 +553,9 @@ fn pick_dir(start: &std::path::Path) -> Option<PathBuf> {
 fn load_server_into_ui(app: &AppWindow) {
     let cfg = server_cfg::load();
     app.set_server_port(SharedString::from(
-        cfg.port.map(|v| v.to_string()).unwrap_or_else(|| "8080".into()),
+        cfg.port
+            .map(|v| v.to_string())
+            .unwrap_or_else(|| "8080".into()),
     ));
     let hostname = cfg.hostname.unwrap_or_else(|| "localhost".into());
     populate_bind_options(app, &hostname);
@@ -572,9 +574,12 @@ fn load_server_into_ui(app: &AppWindow) {
         cfg.models_max.map(|v| v.to_string()).unwrap_or_default(),
     ));
     app.set_server_models_dir(SharedString::from(
-        cfg.models_dir.unwrap_or_else(server_cfg::default_models_dir),
+        cfg.models_dir
+            .unwrap_or_else(server_cfg::default_models_dir),
     ));
     app.set_server_device(SharedString::from(cfg.device.unwrap_or_default()));
+    app.set_server_split_mode(SharedString::from(cfg.split_mode.unwrap_or_default()));
+    app.set_server_tensor_split(SharedString::from(cfg.tensor_split.unwrap_or_default()));
     let cmdline = runstate::command_line().unwrap_or_default();
     app.set_server_command_line(SharedString::from(cmdline));
     snapshot_server_base(app);
@@ -612,7 +617,27 @@ fn read_server_from_ui(app: &AppWindow) -> server_cfg::ServerConfig {
         models_dir: Some(app.get_server_models_dir().to_string()),
         device: {
             let d = app.get_server_device().to_string();
-            if d.trim().is_empty() { None } else { Some(d) }
+            if d.trim().is_empty() {
+                None
+            } else {
+                Some(d)
+            }
+        },
+        split_mode: {
+            let s = app.get_server_split_mode().to_string();
+            if s.trim().is_empty() {
+                None
+            } else {
+                Some(s)
+            }
+        },
+        tensor_split: {
+            let s = app.get_server_tensor_split().to_string();
+            if s.trim().is_empty() {
+                None
+            } else {
+                Some(s)
+            }
         },
     }
 }
@@ -629,6 +654,8 @@ fn snapshot_server_base(app: &AppWindow) {
     app.set_server_models_max_base(app.get_server_models_max());
     app.set_server_models_dir_base(app.get_server_models_dir());
     app.set_server_device_base(app.get_server_device());
+    app.set_server_split_mode_base(app.get_server_split_mode());
+    app.set_server_tensor_split_base(app.get_server_tensor_split());
 }
 
 // ── Preset helpers ───────────────────────────────────────────────────
@@ -732,6 +759,74 @@ fn refresh_file_options(app: &AppWindow) {
     app.set_draft_index(draft_idx);
 
     refresh_device_options(app);
+    update_model_info(app);
+}
+
+/// Fill the read-only "Model info" box from the selected model's GGUF header
+/// (read via `ggml-base.dll`), enriched with the selected mmproj and draft
+/// headers plus a cross-reference of the framework's MTP/DFlash drafters. Called
+/// whenever the model/mmproj/draft field changes (combo pick, preset load).
+fn update_model_info(app: &AppWindow) {
+    let form = app.get_form();
+    let model = form.model.to_string();
+
+    // Reset the optional rows; the success path re-enables the ones that apply.
+    app.set_model_info_has_moe(false);
+    app.set_model_info_has_mmproj(false);
+    app.set_model_info_has_draft_file(false);
+    app.set_model_info_embeds_mtp(false);
+    // Reset the slider maxima; 0 = unknown → the UI falls back to a 0..99 range.
+    app.set_model_info_n_layer(0);
+    app.set_model_info_draft_n_layer(0);
+
+    if model.trim().is_empty() {
+        app.set_model_info_ready(false);
+        app.set_model_info_note(SharedString::from("Select a model to see its details."));
+        return;
+    }
+
+    let Some(info) = gguf::read_model_info(std::path::Path::new(&model)) else {
+        app.set_model_info_ready(false);
+        app.set_model_info_note(SharedString::from(
+            "Metadata unavailable — is ggml-base.dll beside the app, and the file a valid GGUF?",
+        ));
+        return;
+    };
+
+    let models_dir = app.get_server_models_dir().to_string();
+    let ext = gguf::external_drafters(&models_dir, &model);
+    app.set_model_info_kind(SharedString::from(info.kind_line()));
+    app.set_model_info_n_layer(info.n_layer as i32);
+    app.set_model_info_has_moe(info.is_moe);
+    app.set_model_info_moe(SharedString::from(info.moe_offload_line()));
+    app.set_model_info_arch_quant(SharedString::from(info.arch_quant_line()));
+    app.set_model_info_layers_ctx(SharedString::from(info.layers_ctx_line()));
+    app.set_model_info_attn(SharedString::from(info.attn_line()));
+    app.set_model_info_draft(SharedString::from(gguf::draft_line(&info, &ext)));
+    // Enables the speculative-decoding controls even before an external draft is
+    // picked, when the model itself embeds MTP/nextn heads.
+    app.set_model_info_embeds_mtp(info.nextn_predict_layers > 0);
+
+    // Optional: the selected mmproj's clip header.
+    let mmproj = form.mmproj.to_string();
+    if !mmproj.trim().is_empty() {
+        if let Some(mp) = gguf::read_mmproj_info(std::path::Path::new(&mmproj)) {
+            app.set_model_info_mmproj(SharedString::from(mp.mmproj_line()));
+            app.set_model_info_has_mmproj(true);
+        }
+    }
+
+    // Optional: the selected draft/MTP/DFlash file's own header.
+    let draft = form.model_draft.to_string();
+    if !draft.trim().is_empty() {
+        if let Some(d) = gguf::read_model_info(std::path::Path::new(&draft)) {
+            app.set_model_info_draft_file(SharedString::from(d.draft_file_line()));
+            app.set_model_info_draft_n_layer(d.n_layer as i32);
+            app.set_model_info_has_draft_file(true);
+        }
+    }
+
+    app.set_model_info_ready(true);
 }
 
 /// Rebuild the three GPU-device dropdowns (server-wide, per-preset main,
@@ -796,7 +891,10 @@ fn cached_devices(app: &AppWindow) -> Vec<devices::DeviceOption> {
 /// dropdowns bind to).
 fn string_model(items: Vec<String>) -> ModelRc<SharedString> {
     ModelRc::from(Rc::new(VecModel::from(
-        items.into_iter().map(SharedString::from).collect::<Vec<_>>(),
+        items
+            .into_iter()
+            .map(SharedString::from)
+            .collect::<Vec<_>>(),
     )))
 }
 
@@ -986,6 +1084,60 @@ fn spawn_device_probe(app_weak: slint::Weak<AppWindow>) {
 /// Probe the llama-server process off the UI thread (`tasklist` can take
 /// hundreds of ms) and apply the result via the event loop, mirroring
 /// `spawn_version_probe`.
+/// Trigger a stop and drive the transitional "Stopping…" state.
+///
+/// The forced `taskkill` returns quickly, but the process can linger in
+/// `tasklist` for a second or two while its GPU context unwinds — so the kill
+/// and the wait-for-exit run off the UI thread and `server_stopping` stays true
+/// until the process actually disappears. The wait is capped so a wedged
+/// process can't pin the UI in "Stopping…" forever.
+fn stop_server_async(app_weak: slint::Weak<AppWindow>, tray_weak: slint::Weak<AppTray>) {
+    if let Some(app) = app_weak.upgrade() {
+        app.set_server_stopping(true);
+        set_status(&app, "Stopping llama-server…".into(), false);
+    }
+    std::thread::spawn(move || {
+        let result = runstate::stop();
+        let mut running = runstate::load().is_some();
+        let step = std::time::Duration::from_millis(300);
+        let cap = std::time::Duration::from_secs(15);
+        let mut waited = std::time::Duration::ZERO;
+        while running && waited < cap {
+            std::thread::sleep(step);
+            waited += step;
+            running = runstate::load().is_some();
+        }
+        slint::invoke_from_event_loop(move || {
+            if let Some(app) = app_weak.upgrade() {
+                app.set_server_stopping(false);
+                app.set_server_running(running);
+                match result {
+                    Ok(()) if !running => {
+                        app.set_server_status_is_error(false);
+                        set_status(&app, "llama-server stopped.".into(), false);
+                    }
+                    Ok(()) => {
+                        app.set_server_status_is_error(true);
+                        set_status(
+                            &app,
+                            "Stop timed out — llama-server is still running.".into(),
+                            true,
+                        );
+                    }
+                    Err(e) => {
+                        app.set_server_status_is_error(true);
+                        set_status(&app, format!("Failed to stop: {e}"), true);
+                    }
+                }
+            }
+            if let Some(tray) = tray_weak.upgrade() {
+                tray.set_server_running(running);
+            }
+        })
+        .ok();
+    });
+}
+
 fn refresh_run_status(app_weak: slint::Weak<AppWindow>, tray_weak: slint::Weak<AppTray>) {
     std::thread::spawn(move || {
         let running = runstate::load().is_some();
@@ -1001,7 +1153,6 @@ fn refresh_run_status(app_weak: slint::Weak<AppWindow>, tray_weak: slint::Weak<A
         .ok();
     });
 }
-
 
 // ── Form <-> Preset conversion ───────────────────────────────────────
 
@@ -1033,15 +1184,19 @@ fn preset_to_form(p: &presets::Preset) -> PresetForm {
             .map(|v| v.to_string())
             .unwrap_or_default()
             .into(),
-        n_gpu_layers_draft: p
-            .n_gpu_layers_draft
-            .map(|v| v.to_string())
-            .unwrap_or_default()
-            .into(),
+        n_gpu_layers_draft: p.n_gpu_layers_draft.unwrap_or(99),
+        n_gpu_layers_draft_auto: p.n_gpu_layers_draft.is_none(),
         device_draft: p.device_draft.clone().into(),
         device: p.device.clone().into(),
+        split_mode: if p.split_mode.is_empty() {
+            "default".into()
+        } else {
+            p.split_mode.clone().into()
+        },
+        tensor_split: p.tensor_split.clone().into(),
         ctx_size: p.ctx_size.unwrap_or(32768),
         n_gpu_layers: p.n_gpu_layers.unwrap_or(99),
+        n_gpu_layers_auto: p.n_gpu_layers.is_none(),
         parallel: p.parallel.unwrap_or(4),
         batch_size: p.batch_size.unwrap_or(512),
         ubatch_size: p.ubatch_size.unwrap_or(512),
@@ -1068,13 +1223,19 @@ fn preset_to_form(p: &presets::Preset) -> PresetForm {
         } else {
             p.reasoning_format.clone().into()
         },
-        n_cpu_moe: p.n_cpu_moe.map(|v| v.to_string()).unwrap_or_default().into(),
+        n_cpu_moe: p.n_cpu_moe.unwrap_or(0),
+        n_cpu_moe_auto: p.n_cpu_moe.is_none(),
         temp: p.temp.map(|v| v.to_string()).unwrap_or_default().into(),
         top_k: p.top_k.map(|v| v.to_string()).unwrap_or_default().into(),
         top_p: p.top_p.map(|v| v.to_string()).unwrap_or_default().into(),
         min_p: p.min_p.map(|v| v.to_string()).unwrap_or_default().into(),
-        repeat_penalty: p.repeat_penalty.map(|v| v.to_string()).unwrap_or_default().into(),
-        presence_penalty: p.presence_penalty
+        repeat_penalty: p
+            .repeat_penalty
+            .map(|v| v.to_string())
+            .unwrap_or_default()
+            .into(),
+        presence_penalty: p
+            .presence_penalty
             .map(|v| v.to_string())
             .unwrap_or_default()
             .into(),
@@ -1093,11 +1254,24 @@ fn form_to_preset(f: &PresetForm) -> presets::Preset {
             other => other.to_string(),
         },
         spec_draft_n_max: ini::parse_int(f.spec_draft_n_max.as_str()),
-        n_gpu_layers_draft: ini::parse_int(f.n_gpu_layers_draft.as_str()),
+        n_gpu_layers_draft: if f.n_gpu_layers_draft_auto {
+            None
+        } else {
+            Some(f.n_gpu_layers_draft)
+        },
         device_draft: f.device_draft.to_string(),
         device: f.device.to_string(),
+        split_mode: match f.split_mode.as_str() {
+            "" | "default" => String::new(),
+            other => other.to_string(),
+        },
+        tensor_split: f.tensor_split.to_string(),
         ctx_size: Some(f.ctx_size).filter(|v| *v > 0),
-        n_gpu_layers: Some(f.n_gpu_layers).filter(|v| *v > 0),
+        n_gpu_layers: if f.n_gpu_layers_auto {
+            None
+        } else {
+            Some(f.n_gpu_layers)
+        },
         parallel: Some(f.parallel).filter(|v| *v > 0),
         batch_size: Some(f.batch_size).filter(|v| *v > 0),
         ubatch_size: Some(f.ubatch_size).filter(|v| *v > 0),
@@ -1108,7 +1282,11 @@ fn form_to_preset(f: &PresetForm) -> presets::Preset {
         jinja: Some(f.jinja),
         reasoning: f.reasoning.to_string(),
         reasoning_format: f.reasoning_format.to_string(),
-        n_cpu_moe: ini::parse_int(f.n_cpu_moe.as_str()),
+        n_cpu_moe: if f.n_cpu_moe_auto {
+            None
+        } else {
+            Some(f.n_cpu_moe)
+        },
         temp: ini::parse_float(f.temp.as_str()),
         top_k: ini::parse_int(f.top_k.as_str()),
         top_p: ini::parse_float(f.top_p.as_str()),

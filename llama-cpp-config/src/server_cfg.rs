@@ -20,6 +20,12 @@ pub struct ServerConfig {
     /// let llama.cpp use all detected devices. Pinning to one device avoids
     /// splitting across an iGPU or a duplicate Vulkan view of the same GPU.
     pub device: Option<String>,
+    /// Multi-GPU split strategy (--split-mode / -sm): "none" | "layer" | "row".
+    /// Empty/None = llama.cpp default ("layer"). Identical on CUDA and HIP.
+    pub split_mode: Option<String>,
+    /// Per-GPU weight proportions (--tensor-split / -ts), e.g. "3,1" for 75/25.
+    /// Empty/None = even split across the visible GPUs.
+    pub tensor_split: Option<String>,
 }
 
 pub fn default_models_dir() -> String {
@@ -43,6 +49,14 @@ pub fn load() -> ServerConfig {
         models_max: keys.get("ModelsMax").and_then(|v| ini::parse_int(v)),
         models_dir: keys.get("ModelsDir").cloned(),
         device: keys.get("Device").cloned().filter(|s| !s.trim().is_empty()),
+        split_mode: keys
+            .get("SplitMode")
+            .cloned()
+            .filter(|s| !s.trim().is_empty()),
+        tensor_split: keys
+            .get("TensorSplit")
+            .cloned()
+            .filter(|s| !s.trim().is_empty()),
     }
 }
 
@@ -59,8 +73,7 @@ pub fn save(cfg: &ServerConfig) -> io::Result<()> {
 
     let threads_line = match cfg.threads {
         Some(n) if n > 0 => format!("Threads = {n}"),
-        _ => "; Threads = 12  ; optional override; auto-detected if commented"
-            .to_string(),
+        _ => "; Threads = 12  ; optional override; auto-detected if commented".to_string(),
     };
 
     let cache_reuse_line = match cfg.cache_reuse {
@@ -71,8 +84,7 @@ pub fn save(cfg: &ServerConfig) -> io::Result<()> {
 
     let threads_batch_line = match cfg.threads_batch {
         Some(n) if n > 0 => format!("ThreadsBatch = {n}"),
-        _ => "; ThreadsBatch = 12  ; optional override; auto-detected if commented"
-            .to_string(),
+        _ => "; ThreadsBatch = 12  ; optional override; auto-detected if commented".to_string(),
     };
 
     let models_max_line = match cfg.models_max {
@@ -83,6 +95,18 @@ pub fn save(cfg: &ServerConfig) -> io::Result<()> {
     let device_line = match cfg.device.as_deref().map(str::trim) {
         Some(d) if !d.is_empty() => format!("Device = {d}"),
         _ => "; Device = CUDA0  ; pin the main model to one GPU (--device); blank = all detected devices"
+            .to_string(),
+    };
+
+    let split_mode_line = match cfg.split_mode.as_deref().map(str::trim) {
+        Some(s) if !s.is_empty() => format!("SplitMode = {s}"),
+        _ => "; SplitMode = layer  ; multi-GPU split (--split-mode): none|layer|row; blank = layer (default)"
+            .to_string(),
+    };
+
+    let tensor_split_line = match cfg.tensor_split.as_deref().map(str::trim) {
+        Some(s) if !s.is_empty() => format!("TensorSplit = {s}"),
+        _ => "; TensorSplit = 3,1  ; per-GPU weight proportions (--tensor-split); blank = even split"
             .to_string(),
     };
 
@@ -103,6 +127,8 @@ Mlock = {mlock_lit}
 {threads_batch_line}
 {models_max_line}
 {device_line}
+{split_mode_line}
+{tensor_split_line}
 
 ; ModelsDir: root directory. Models are scanned from ModelsDir/models/,
 ; mmproj projection files from ModelsDir/mmprojs/, MTP/draft heads from ModelsDir/mtps/.

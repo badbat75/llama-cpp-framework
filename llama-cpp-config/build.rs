@@ -23,15 +23,16 @@ fn main() {
     draw_status_dot(&mut rgba, w, h);
     let on_img = ico::IconImage::from_rgba_data(w, h, rgba);
     let mut on_bytes = Vec::new();
-    on_img.write_png(&mut on_bytes).expect("Failed to encode running PNG");
+    on_img
+        .write_png(&mut on_bytes)
+        .expect("Failed to encode running PNG");
     std::fs::write(Path::new(&out_dir).join("llama-on.png"), &on_bytes)
         .expect("Failed to write running PNG");
 
     let config = slint_build::CompilerConfiguration::new()
         .with_style("fluent".into())
         .with_include_paths(vec![std::path::PathBuf::from(out_dir)]);
-    slint_build::compile_with_config("ui/app.slint", config)
-        .expect("Slint build failed");
+    slint_build::compile_with_config("ui/app.slint", config).expect("Slint build failed");
 
     #[cfg(windows)]
     embed_windows_resources();

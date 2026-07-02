@@ -3,7 +3,7 @@
 // Left navigation rail (Server / Models / Integrations) and a content area that swaps
 // pages via `current_tab`. Live server status is shown in the footer.
 
-import { LineEdit, ComboBox, CheckBox, Button, ListView, ScrollView, Palette, RadioGroup } from "std-widgets.slint";
+import { LineEdit, TextEdit, ComboBox, CheckBox, Button, ListView, ScrollView, Palette, RadioGroup, Slider, Switch } from "std-widgets.slint";
 
 
 export struct PresetSummary {
@@ -22,11 +22,15 @@ export struct PresetForm {
     model_draft: string,
     spec_type: string,
     spec_draft_n_max: string,
-    n_gpu_layers_draft: string,
+    n_gpu_layers_draft: int,
+    n_gpu_layers_draft_auto: bool,
     device_draft: string,
     device: string,
+    split_mode: string,
+    tensor_split: string,
     ctx_size: int,
     n_gpu_layers: int,
+    n_gpu_layers_auto: bool,
     parallel: int,
     batch_size: int,
     ubatch_size: int,
@@ -37,7 +41,8 @@ export struct PresetForm {
     jinja: bool,
     reasoning: string,
     reasoning_format: string,
-    n_cpu_moe: string,
+    n_cpu_moe: int,
+    n_cpu_moe_auto: bool,
     temp: string,
     top_k: string,
     top_p: string,
@@ -212,6 +217,10 @@ export component AppWindow inherits Window {
 
     // ── Live status ──────────────────────────────────────────────────
     in property <bool> server_running: false;
+    // Transitional flag: Stop has been triggered but the process is still
+    // running (a forced kill lingers a moment while the GPU context unwinds).
+    // Held true by Rust until `tasklist` confirms the process is gone.
+    in property <bool> server_stopping: false;
     in-out property <bool> server_status_is_error: false;
     in property <string> server_version: "";
     in property <string> server_command_line: "";
@@ -229,6 +238,8 @@ export component AppWindow inherits Window {
     in-out property <string> server_models_max: "";
     in-out property <string> server_models_dir: "";
     in-out property <string> server_device: "";
+    in-out property <string> server_split_mode: "";
+    in-out property <string> server_tensor_split: "";
 
     // Baseline snapshot of the loaded server config (set by Rust on load/save).
     // `server_dirty` is true while any field differs — drives Save/Revert enabled.
@@ -241,6 +252,8 @@ export component AppWindow inherits Window {
     in-out property <string> server_models_max_base;
     in-out property <string> server_models_dir_base;
     in-out property <string> server_device_base;
+    in-out property <string> server_split_mode_base;
+    in-out property <string> server_tensor_split_base;
     out property <bool> server_dirty:
         root.server_port != root.server_port_base
         || root.server_hostname != root.server_hostname_base
@@ -250,7 +263,9 @@ export component AppWindow inherits Window {
         || root.server_threads_batch != root.server_threads_batch_base
         || root.server_models_max != root.server_models_max_base
         || root.server_models_dir != root.server_models_dir_base
-        || root.server_device != root.server_device_base;
+        || root.server_device != root.server_device_base
+        || root.server_split_mode != root.server_split_mode_base
+        || root.server_tensor_split != root.server_tensor_split_base;
 
     // GPU device enumeration (parsed from `llama-server --list-devices`).
     // `all_device_*` is the cached raw list filled by the async probe; the
@@ -292,6 +307,39 @@ export component AppWindow inherits Window {
     in-out property <[string]> draft_specs;
     in-out property <int> draft_index: -1;
 
+    // Read-only "Model info" box, filled by Rust (model_changed) from the
+    // selected model's GGUF header. `model_info_ready` gates between the info
+    // rows and a muted placeholder/error note (`model_info_note`).
+    in-out property <bool> model_info_ready: false;
+    in-out property <string> model_info_note;
+    in-out property <string> model_info_kind;
+    // MoE-only: how many layers hold experts + the --n-cpu-moe range. Hidden for
+    // dense models (`model_info_has_moe`).
+    in-out property <bool> model_info_has_moe: false;
+    in-out property <string> model_info_moe;
+    in-out property <string> model_info_arch_quant;
+    in-out property <string> model_info_layers_ctx;
+    in-out property <string> model_info_attn;
+    in-out property <string> model_info_draft;
+    // Optional rows, shown only when a mmproj / draft file is selected.
+    in-out property <bool> model_info_has_mmproj: false;
+    in-out property <string> model_info_mmproj;
+    in-out property <bool> model_info_has_draft_file: false;
+    in-out property <string> model_info_draft_file;
+    // True when the main model embeds MTP/nextn heads (`<arch>.nextn_predict_layers` > 0):
+    // speculative decoding is possible even before an external draft file is picked.
+    in-out property <bool> model_info_embeds_mtp: false;
+    // Layer counts (block_count) of the selected model and draft, driving the
+    // GPU-layers / MoE-CPU-layers / draft-GPU-layers slider maxima. 0 = unknown
+    // (metadata unavailable), in which case the sliders fall back to a 0..99 range.
+    in-out property <int> model_info_n_layer: 0;
+    in-out property <int> model_info_draft_n_layer: 0;
+    out property <int> gpu_layers_max: root.model_info_n_layer > 0 ? root.model_info_n_layer : 99;
+    out property <int> draft_layers_max: root.model_info_draft_n_layer > 0 ? root.model_info_draft_n_layer : 99;
+    // Speculative-decoding controls are active when a draft model is selected OR
+    // the main model embeds MTP heads — otherwise there is nothing to draft with.
+    out property <bool> draft_active: root.form.model_draft != "" || root.model_info_embeds_mtp;
+
     // ── New-preset dialog state ─────────────────────────────────────
     in-out property <bool> show_new_kind_picker: false;
     in-out property <string> new_dialog_source_id: "";
@@ -331,10 +379,16 @@ export component AppWindow inherits Window {
     callback rename_preset(string, string);
     callback filter_presets(string);
     callback filter_dialog_models(string);
+    // Recompute the "Model info" box from the currently selected model file.
+    callback model_changed();
 
     callback refresh_status();
     callback start_server();
     callback stop_server();
+    // Re-read server.ini / presets.ini and re-scan the models directory.
+    // Picks up files added on disk or config files edited by hand outside
+    // the GUI, without restarting the app.
+    callback reload_all();
     // Recompute the device dropdown indices after the form is mutated in-UI
     // (e.g. the MTP picker auto-filling the draft device).
     callback sync_device_dropdowns();
@@ -568,7 +622,6 @@ export component AppWindow inherits Window {
                 VerticalLayout {
                     padding: 12px;
                     spacing: 4px;
-                    alignment: start;
 
                     NavItem {
                         glyph: "\u{E713}";
@@ -587,6 +640,45 @@ export component AppWindow inherits Window {
                         label: "Integrations";
                         selected: root.current_tab == 2;
                         clicked => { root.current_tab = 2; }
+                    }
+
+                    // Spacer pushes the server controls to the bottom of the rail.
+                    Rectangle { vertical-stretch: 1; }
+
+                    // ── Server controls ──────────────────────────────
+                    // Moved here from the Server tab's old "Control" card:
+                    // Start/Stop stacked over Open chat UI. Live status drives
+                    // which of Start/Stop shows; Open chat UI is enabled only
+                    // while the server is running.
+                    VerticalLayout {
+                        spacing: 8px;
+                        // Transitional state: Stop was triggered but the process
+                        // (and its GPU context) is still tearing down.
+                        if root.server_stopping : Button {
+                            text: "Stopping…";
+                            enabled: false;
+                        }
+                        if !root.server_stopping && root.server_running : Button {
+                            text: "Stop";
+                            clicked => { root.stop_server(); }
+                        }
+                        if !root.server_stopping && !root.server_running : Button {
+                            text: "Start";
+                            primary: true;
+                            clicked => { root.start_server(); }
+                        }
+                        Button {
+                            text: "Open chat UI";
+                            enabled: root.server_running && !root.server_stopping;
+                            clicked => { Platform.open-url("http://localhost:" + root.server_port); }
+                        }
+                        // Re-read the config files and re-scan the models
+                        // directory. Always available — use it after adding a
+                        // model file or hand-editing server.ini / presets.ini.
+                        Button {
+                            text: "Refresh";
+                            clicked => { root.reload_all(); }
+                        }
                     }
                     }
                 }
@@ -622,7 +714,7 @@ export component AppWindow inherits Window {
                             heading: "Network";
                             LabeledField {
                                 label: "Port";
-                                hint: "TCP port llama-server listens on (--port). Default 8080 — the chat UI and integrations connect here.";
+                                hint: "TCP port llama-server listens on (--port).\nDefault 8080 — the chat UI and integrations connect here.";
                                 LineEdit {
                                     text: root.server_port;
                                     input-type: number;
@@ -632,7 +724,7 @@ export component AppWindow inherits Window {
                             }
                             LabeledField {
                                 label: "Bind to";
-                                hint: "Interface to bind (--host). localhost = this PC only; 0.0.0.0 = all interfaces, reachable from the LAN.";
+                                hint: "Interface to bind (--host).\nlocalhost = this PC only; 0.0.0.0 = all interfaces, reachable from the LAN.";
                                 ComboBox {
                                     model: root.bind_labels;
                                     current-index: root.bind_index;
@@ -651,7 +743,7 @@ export component AppWindow inherits Window {
                             heading: "Resources";
                             LabeledField {
                                 label: "Mlock (lock RAM)";
-                                hint: "Locks model weights into physical RAM (--mlock) so the OS can't page them out. Keeps latency stable; needs enough free RAM for the whole model.";
+                                hint: "Locks model weights into physical RAM (--mlock) so the OS can't page them out.\nKeeps latency stable; needs enough free RAM for the whole model.";
                                 CheckBox {
                                     text: "lock model in physical RAM";
                                     checked: root.server_mlock;
@@ -660,7 +752,7 @@ export component AppWindow inherits Window {
                             }
                             LabeledField {
                                 label: "CPU threads";
-                                hint: "--threads: CPU threads for generation. Blank = half the physical-core count; more won't help once GPU-bound.";
+                                hint: "--threads: CPU threads for generation.\nBlank = half the physical-core count; more won't help once GPU-bound.";
                                 LineEdit {
                                     text: root.server_threads;
                                     input-type: number;
@@ -670,7 +762,7 @@ export component AppWindow inherits Window {
                             }
                             LabeledField {
                                 label: "Cache reuse";
-                                hint: "--cache-reuse: minimum prefix length (tokens) the server reuses from the KV cache across requests, skipping re-prefill. Higher saves compute on shared prefixes.";
+                                hint: "--cache-reuse: minimum prefix length (tokens) the server reuses from the KV cache across requests, skipping re-prefill.\nHigher saves compute on shared prefixes.";
                                 LineEdit {
                                     text: root.server_cache_reuse;
                                     input-type: number;
@@ -680,7 +772,7 @@ export component AppWindow inherits Window {
                             }
                             LabeledField {
                                 label: "Batch threads";
-                                hint: "--threads-batch: CPU threads for prompt processing (prefill). Blank = ~75% of cores.";
+                                hint: "--threads-batch: CPU threads for prompt processing (prefill).\nBlank = ~75% of cores.";
                                 LineEdit {
                                     text: root.server_threads_batch;
                                     input-type: number;
@@ -690,7 +782,7 @@ export component AppWindow inherits Window {
                             }
                             LabeledField {
                                 label: "Max models";
-                                hint: "--models-max: how many preset models llama-server keeps resident at once. 1 = load one at a time (lowest VRAM); higher lets it hot-swap without reloading.";
+                                hint: "--models-max: how many preset models llama-server keeps resident at once.\n1 = load one at a time (lowest VRAM); higher lets it hot-swap without reloading.";
                                 LineEdit {
                                     text: root.server_models_max;
                                     input-type: number;
@@ -700,7 +792,7 @@ export component AppWindow inherits Window {
                             }
                             LabeledField {
                                 label: "Models folder";
-                                hint: "Root folder scanned for GGUFs. Pickers read its subfolders: models\\, mmprojs\\, mtps\\, dflashs\\.";
+                                hint: "Root folder scanned for GGUFs.\nPickers read its subfolders: models\\, mmprojs\\, mtps\\, dflashs\\.";
                                 LineEdit {
                                     text: root.server_models_dir;
                                     placeholder-text: "root dir (models\\ and mmprojs\\ underneath)";
@@ -715,7 +807,7 @@ export component AppWindow inherits Window {
                             }
                             LabeledField {
                                 label: "GPU device";
-                                hint: "Default GPU for all presets (--device, e.g. CUDA0). A per-preset GPU device overrides it. Blank = all detected devices.";
+                                hint: "Default GPU for all presets (--device, e.g. CUDA0).\nA per-preset GPU device overrides it.\nBlank = all detected devices.";
                                 ComboBox {
                                     model: root.server_dev_labels;
                                     current-index <=> root.server_dev_index;
@@ -727,50 +819,47 @@ export component AppWindow inherits Window {
                                     }
                                 }
                             }
+                            LabeledField {
+                                label: "GPU split mode";
+                                hint: "Multi-GPU split strategy (--split-mode), same on CUDA and HIP.\nlayer (default) splits layers + KV across GPUs; row splits per-row (tensor-parallel, more PCIe traffic); none = single GPU.\nIgnored when GPU device pins one device.";
+                                ComboBox {
+                                    // A pinned GPU device runs on one device, so there is
+                                    // nothing to split — disable it.
+                                    enabled: root.server_device == "";
+                                    model: ["default", "none", "layer", "row"];
+                                    current-value: root.server_split_mode == "" ? "default" : root.server_split_mode;
+                                    selected(value) => {
+                                        root.server_split_mode = value == "default" ? "" : value;
+                                    }
+                                }
+                            }
+                            LabeledField {
+                                label: "Tensor split";
+                                hint: "Per-GPU weight proportions (--tensor-split), e.g. 3,1 to put 75% on the first GPU and 25% on the second (useful when GPUs differ in VRAM).\nBlank = even split.";
+                                LineEdit {
+                                    // Per-GPU proportions only apply across multiple GPUs;
+                                    // a pinned device makes them moot — disable it.
+                                    enabled: root.server_device == "";
+                                    text: root.server_tensor_split;
+                                    placeholder-text: "e.g. 3,1  (blank = even)";
+                                    edited(t) => { root.server_tensor_split = t; }
+                                }
+                            }
                         }
 
                         SectionCard {
-                            heading: "Control";
+                            heading: "Command Line";
                             content_padding: 12px;
-                            HorizontalLayout {
-                                spacing: 8px;
-                                Rectangle {
-                                    width: 130px;
-                                    height: 34px;
-                                    Text {
-                                        x: 0;
-                                        y: 0;
-                                        height: 100%;
-                                        vertical-alignment: center;
-                                        text: root.server_running ? "Server is running" : "Server is stopped";
-                                        font-size: 13px;
-                                        color: root.server_running ? #2e7d32 : Palette.foreground.transparentize(0.45);
-                                    }
-                                }
-                                HorizontalLayout {
-                                    spacing: 12px;
-                                    horizontal-stretch: 1;
-                                    if root.server_running : Button {
-                                        text: "Stop";
-                                        primary: false;
-                                        clicked => { root.stop_server(); }
-                                    }
-                                    if !root.server_running : Button {
-                                        text: "Start";
-                                        primary: true;
-                                        clicked => { root.start_server(); }
-                                    }
-                                    Button {
-                                        text: "Open chat UI";
-                                        enabled: root.server_running;
-                                        clicked => { Platform.open-url("http://localhost:" + root.server_port); }
-                                    }
-                                    LineEdit {
-                                        text: root.server_command_line;
-                                        read-only: true;
-                                        horizontal-stretch: 1;
-                                    }
-                                }
+                            // Read-only, multi-line view of the exact llama-server
+                            // invocation `Start` would run. Rust formats it one
+                            // `--flag value` per line, joined with the shell's
+                            // line-continuation char (`` ` `` on Windows, `\` on
+                            // POSIX), so it pastes straight into a terminal.
+                            TextEdit {
+                                text: root.server_command_line;
+                                read-only: true;
+                                wrap: word-wrap;
+                                min-height: 160px;
                             }
                         }
 
@@ -921,10 +1010,10 @@ export component AppWindow inherits Window {
                             }
 
                             SectionCard {
-                                heading: "Model";
+                                heading: "Assets";
                                 LabeledField {
                                     label: "Model file";
-                                    hint: "Main model weights for this preset (--model / -m). Pick a .gguf from models\\.";
+                                    hint: "Main model weights for this preset (--model / -m).\nPick a .gguf from models\\.";
                                     ComboBox {
                                         model: root.model_labels;
                                         current-index <=> root.model_index;
@@ -932,13 +1021,14 @@ export component AppWindow inherits Window {
                                             let i = self.current-index;
                                             if (i >= 0 && i < root.model_values.length) {
                                                 root.form.model = root.model_values[i];
+                                                root.model_changed();
                                             }
                                         }
                                     }
                                 }
                                 LabeledField {
                                     label: "MMProj";
-                                    hint: "Multimodal projector (--mmproj) for vision models, so the server can read images. Blank for text-only models.";
+                                    hint: "Multimodal projector (--mmproj) for vision models, so the server can read images.\nBlank for text-only models.";
                                     ComboBox {
                                         model: root.mmproj_labels;
                                         current-index <=> root.mmproj_index;
@@ -946,17 +1036,14 @@ export component AppWindow inherits Window {
                                             let i = self.current-index;
                                             if (i >= 0 && i < root.mmproj_values.length) {
                                                 root.form.mmproj = root.mmproj_values[i];
+                                                root.model_changed();
                                             }
                                         }
                                     }
                                 }
-                            }
-
-                            SectionCard {
-                                heading: "Speculative decoding (MTP / DFlash)";
                                 LabeledField {
                                     label: "Draft model";
-                                    hint: "Optional speculator (feeds --model-draft). MTP heads (from mtps\\) set --spec-type draft-mtp; DFlash drafters (from dflashs\\) set draft-dflash. Picking one auto-pins the draft to the server GPU, or CPU if none. (none) = no speculation.";
+                                    hint: "Optional speculator (feeds --model-draft).\nMTP heads (from mtps\\) set --spec-type draft-mtp; DFlash drafters (from dflashs\\) set draft-dflash.\nPicking one auto-pins the draft to the server GPU, or CPU if none.\n(none) = no speculation.";
                                     ComboBox {
                                         model: root.draft_labels;
                                         current-index <=> root.draft_index;
@@ -971,90 +1058,151 @@ export component AppWindow inherits Window {
                                                     // Run the draft on GPU by pinning it to one device (the multi-device
                                                     // auto split crashes gemma4 MTP heads). Reuse the server's GPU device
                                                     // if set; otherwise fall back to CPU, which always works.
-                                                    if (root.form.n_gpu_layers_draft == "" && root.form.device_draft == "") {
+                                                    if (root.form.n_gpu_layers_draft_auto && root.form.device_draft == "") {
+                                                        root.form.n_gpu_layers_draft_auto = false;
                                                         if (root.server_device != "") {
                                                             root.form.device_draft = root.server_device;
-                                                            root.form.n_gpu_layers_draft = "99";
+                                                            root.form.n_gpu_layers_draft = 99;
                                                         } else {
-                                                            root.form.n_gpu_layers_draft = "0";
+                                                            root.form.n_gpu_layers_draft = 0;
                                                         }
                                                     }
                                                 }
                                                 // The draft-device dropdown was just changed programmatically.
                                                 root.sync_device_dropdowns();
+                                                root.model_changed();
                                             }
                                         }
                                     }
                                 }
                                 LabeledField {
                                     label: "Spec type";
-                                    hint: "Speculative decoding mode (--spec-type). Auto-set when you pick a draft model above: MTP heads → draft-mtp, DFlash drafters → draft-dflash. Override only if you know what you need.";
+                                    hint: "Speculative decoding mode (--spec-type).\nAuto-set when you pick a draft model above: MTP heads → draft-mtp, DFlash drafters → draft-dflash.\nOverride only if you know what you need.";
                                     ComboBox {
+                                        // Active only when a draft is available (selected or embedded MTP).
+                                        enabled: root.draft_active;
                                         model: ["none", "draft-mtp", "draft-dflash", "draft-simple", "ngram-mod"];
                                         current-value: root.form.spec_type == "" ? "none" : root.form.spec_type;
                                         selected(value) => { root.form.spec_type = value; }
                                     }
                                 }
-                                LabeledField {
-                                    label: "Draft n-max";
-                                    hint: "Max draft tokens proposed per step. DFlash clamps this to the GGUF's trained block_size-1 (e.g. 15). Blank = model default.";
-                                    LineEdit {
-                                        text: root.form.spec_draft_n_max;
-                                        input-type: number;
-                                        placeholder-text: "blank = default";
-                                        edited(t) => { root.form.spec_draft_n_max = t; }
-                                    }
-                                }
-                                LabeledField {
-                                    label: "Draft GPU layers";
-                                    hint: "99 = run the whole draft model on GPU (pin a device below — multi-GPU auto-split crashes MTP heads). 0 = CPU draft (always works). Blank = auto.";
-                                    LineEdit {
-                                        text: root.form.n_gpu_layers_draft;
-                                        input-type: number;
-                                        placeholder-text: "99 = GPU, 0 = CPU, blank = auto";
-                                        edited(t) => { root.form.n_gpu_layers_draft = t; }
-                                    }
-                                }
-                                LabeledField {
-                                    label: "Draft device";
-                                    hint: "GPU for the draft model (--device-draft). Pin to ONE device — multi-GPU auto-split crashes MTP heads. Blank = auto / same as model.";
-                                    ComboBox {
-                                        model: root.pdraft_labels;
-                                        current-index <=> root.pdraft_index;
-                                        selected(value) => {
-                                            let i = self.current-index;
-                                            if (i >= 0 && i < root.pdraft_values.length) {
-                                                root.form.device_draft = root.pdraft_values[i];
-                                            }
+                            }
+
+                            SectionCard {
+                                heading: "Model info";
+                                if root.model_info_ready : VerticalLayout {
+                                    spacing: 8px;
+                                    LabeledField {
+                                        label: "Type";
+                                        hint: "Dense runs every weight each token; MoE activates only a few experts, so VRAM ≈ all weights but compute ≈ active experts.\nMoE is what makes the 'MoE CPU layers' lever below useful.";
+                                        Text {
+                                            text: root.model_info_kind;
+                                            vertical-alignment: center;
+                                            font-size: 13px;
+                                            wrap: word-wrap;
+                                            horizontal-stretch: 1;
+                                            color: Palette.foreground;
                                         }
                                     }
+                                    if root.model_info_has_moe : LabeledField {
+                                        label: "MoE layers";
+                                        hint: "How many layers carry expert (FFN) weights — the range for the 'MoE CPU layers' lever (--n-cpu-moe) below.\nRaise it to move more expert layers to CPU: less VRAM, slower generation.";
+                                        Text {
+                                            text: root.model_info_moe;
+                                            vertical-alignment: center;
+                                            font-size: 13px;
+                                            wrap: word-wrap;
+                                            horizontal-stretch: 1;
+                                            color: Palette.foreground;
+                                        }
+                                    }
+                                    LabeledField {
+                                        label: "Arch / quant";
+                                        Text {
+                                            text: root.model_info_arch_quant;
+                                            vertical-alignment: center;
+                                            font-size: 13px;
+                                            wrap: word-wrap;
+                                            horizontal-stretch: 1;
+                                            color: Palette.foreground;
+                                        }
+                                    }
+                                    LabeledField {
+                                        label: "Layers / ctx";
+                                        hint: "block_count guides --n-gpu-layers; the trained context is the sane upper bound for --ctx-size (going higher needs RoPE scaling).";
+                                        Text {
+                                            text: root.model_info_layers_ctx;
+                                            vertical-alignment: center;
+                                            font-size: 13px;
+                                            wrap: word-wrap;
+                                            horizontal-stretch: 1;
+                                            color: Palette.foreground;
+                                        }
+                                    }
+                                    LabeledField {
+                                        label: "Attention";
+                                        hint: "Head counts.\nFewer KV heads (GQA) shrink the KV cache, so a higher --ctx-size fits in the same VRAM.";
+                                        Text {
+                                            text: root.model_info_attn;
+                                            vertical-alignment: center;
+                                            font-size: 13px;
+                                            wrap: word-wrap;
+                                            horizontal-stretch: 1;
+                                            color: Palette.foreground;
+                                        }
+                                    }
+                                    if root.model_info_has_mmproj : LabeledField {
+                                        label: "MMProj";
+                                        hint: "The selected multimodal projector: projector type, modality (vision/audio), encoder depth, and native image / patch size.";
+                                        Text {
+                                            text: root.model_info_mmproj;
+                                            vertical-alignment: center;
+                                            font-size: 13px;
+                                            wrap: word-wrap;
+                                            horizontal-stretch: 1;
+                                            color: Palette.foreground;
+                                        }
+                                    }
+                                    LabeledField {
+                                        label: "Draft";
+                                        hint: "Whether the model embeds MTP (next-n) layers, and whether a matching MTP/DFlash drafter sits in your mtps\\ / dflashs\\ folders — pick it as the Draft model in the Assets card above.";
+                                        Text {
+                                            text: root.model_info_draft;
+                                            vertical-alignment: center;
+                                            font-size: 13px;
+                                            wrap: word-wrap;
+                                            horizontal-stretch: 1;
+                                            color: Palette.foreground;
+                                        }
+                                    }
+                                    if root.model_info_has_draft_file : LabeledField {
+                                        label: "Draft file";
+                                        hint: "The selected draft/MTP/DFlash file's own header: arch, quant, layers, and (DFlash) trained block_size with the implied --spec-draft-n-max ceiling.";
+                                        Text {
+                                            text: root.model_info_draft_file;
+                                            vertical-alignment: center;
+                                            font-size: 13px;
+                                            wrap: word-wrap;
+                                            horizontal-stretch: 1;
+                                            color: Palette.foreground;
+                                        }
+                                    }
+                                }
+                                if !root.model_info_ready : Text {
+                                    text: root.model_info_note == ""
+                                        ? "Select a model to see its GGUF details."
+                                        : root.model_info_note;
+                                    font-size: 13px;
+                                    wrap: word-wrap;
+                                    color: Palette.foreground.transparentize(0.35);
                                 }
                             }
 
                             SectionCard {
-                                heading: "Resource / context";
-                                LabeledField {
-                                    label: "Context size";
-                                    hint: "Context window in tokens (--ctx-size). Bigger = longer history but more KV-cache VRAM; split across parallel slots.";
-                                    LineEdit {
-                                        text: "\{root.form.ctx_size}";
-                                        input-type: number;
-                                        edited(t) => { root.form.ctx_size = t.to-float(); }
-                                    }
-                                }
-                                LabeledField {
-                                    label: "GPU layers";
-                                    hint: "--n-gpu-layers: model layers offloaded to GPU. 99 = all on GPU; lower keeps some on CPU to save VRAM.";
-                                    LineEdit {
-                                        text: "\{root.form.n_gpu_layers}";
-                                        input-type: number;
-                                        placeholder-text: "99 = all";
-                                        edited(t) => { root.form.n_gpu_layers = t.to-float(); }
-                                    }
-                                }
+                                heading: "Hardware Config";
                                 LabeledField {
                                     label: "GPU device";
-                                    hint: "GPU this model runs on (--device, e.g. CUDA0). Overrides the server default. Blank = use server default.";
+                                    hint: "GPU this model runs on (--device, e.g. CUDA0).\nOverrides the server default.\nBlank = use server default.";
                                     ComboBox {
                                         model: root.pdev_labels;
                                         current-index <=> root.pdev_index;
@@ -1067,8 +1215,146 @@ export component AppWindow inherits Window {
                                     }
                                 }
                                 LabeledField {
+                                    label: "GPU split mode";
+                                    hint: "Multi-GPU split for this model (--split-mode), overrides the server default; same on CUDA and HIP.\nlayer splits layers + KV; row is tensor-parallel; none = single GPU.\ndefault = inherit server.\nIgnored when a GPU device pins one device.";
+                                    ComboBox {
+                                        // A pinned GPU device runs on one device, so the split
+                                        // strategy has nothing to split — disable it.
+                                        enabled: root.form.device == "";
+                                        model: ["default", "none", "layer", "row"];
+                                        current-value: root.form.split_mode == "" ? "default" : root.form.split_mode;
+                                        selected(value) => { root.form.split_mode = value; }
+                                    }
+                                }
+                                LabeledField {
+                                    label: "Tensor split";
+                                    hint: "Per-GPU weight proportions for this model (--tensor-split), e.g. 3,1 (75%/25%).\nOverrides the server default.\nBlank = inherit server / even split.";
+                                    LineEdit {
+                                        // Per-GPU proportions only apply across multiple GPUs;
+                                        // a pinned device makes them moot — disable it.
+                                        enabled: root.form.device == "";
+                                        text: root.form.tensor_split;
+                                        placeholder-text: "e.g. 3,1  (blank = server default)";
+                                        edited(t) => { root.form.tensor_split = t; }
+                                    }
+                                }
+                                LabeledField {
+                                    label: "GPU layers";
+                                    hint: "--n-gpu-layers: model layers offloaded to GPU.\nSlider max = the model's layer count (all on GPU); lower keeps layers on CPU to save VRAM.\nauto = omit the flag → llama.cpp offloads ALL layers to GPU (the framework runs with -fit off, so there is no auto-fit to VRAM — a model too big to fit will fail to load).";
+                                    CheckBox {
+                                        text: "auto";
+                                        checked: root.form.n_gpu_layers_auto;
+                                        toggled => { root.form.n_gpu_layers_auto = self.checked; }
+                                    }
+                                    Slider {
+                                        horizontal-stretch: 1;
+                                        enabled: !root.form.n_gpu_layers_auto;
+                                        minimum: 0;
+                                        maximum: root.gpu_layers_max;
+                                        value: Math.min(root.form.n_gpu_layers, root.gpu_layers_max);
+                                        changed(v) => { root.form.n_gpu_layers = Math.round(v); }
+                                    }
+                                    Text {
+                                        width: 44px;
+                                        horizontal-alignment: right;
+                                        vertical-alignment: center;
+                                        text: root.form.n_gpu_layers_auto ? "auto" : "\{Math.min(root.form.n_gpu_layers, root.gpu_layers_max)}";
+                                    }
+                                }
+                                LabeledField {
+                                    label: "MoE CPU layers";
+                                    hint: "Number of Mixture-of-Experts layers whose expert (FFN) weights stay on CPU (--n-cpu-moe) to save VRAM.\nOnly affects MoE models; N/A for dense models like Gemma.\nSlider max = the model's layer count.\nauto = omit the flag → equivalent to 0: no expert weights are kept on CPU, so every expert stays on GPU with its layer.";
+                                    CheckBox {
+                                        text: "auto";
+                                        // --n-cpu-moe only affects MoE models.
+                                        enabled: root.model_info_has_moe;
+                                        checked: root.form.n_cpu_moe_auto;
+                                        toggled => { root.form.n_cpu_moe_auto = self.checked; }
+                                    }
+                                    Slider {
+                                        horizontal-stretch: 1;
+                                        enabled: !root.form.n_cpu_moe_auto && root.model_info_has_moe;
+                                        minimum: 0;
+                                        maximum: root.gpu_layers_max;
+                                        value: Math.min(root.form.n_cpu_moe, root.gpu_layers_max);
+                                        changed(v) => { root.form.n_cpu_moe = Math.round(v); }
+                                    }
+                                    Text {
+                                        width: 44px;
+                                        horizontal-alignment: right;
+                                        vertical-alignment: center;
+                                        text: root.form.n_cpu_moe_auto ? "auto" : "\{Math.min(root.form.n_cpu_moe, root.gpu_layers_max)}";
+                                    }
+                                }
+                                LabeledField {
+                                    label: "Draft device";
+                                    hint: "GPU for the draft model (--device-draft).\nPin to ONE device — multi-GPU auto-split crashes MTP heads.\nBlank = auto / same as model.";
+                                    ComboBox {
+                                        // Active only when a draft is available (selected or embedded MTP).
+                                        enabled: root.draft_active;
+                                        model: root.pdraft_labels;
+                                        current-index <=> root.pdraft_index;
+                                        selected(value) => {
+                                            let i = self.current-index;
+                                            if (i >= 0 && i < root.pdraft_values.length) {
+                                                root.form.device_draft = root.pdraft_values[i];
+                                            }
+                                        }
+                                    }
+                                }
+                                LabeledField {
+                                    label: "Draft GPU layers";
+                                    hint: "Draft-model layers offloaded to GPU (--n-gpu-layers-draft).\nA drafter with real layers (e.g. DFlash) gets a 0..layer-count slider.\nAn MTP/nextn head has no transformer layers (block_count 0), so it becomes a plain CPU/GPU switch.\nPin a device above — multi-GPU auto-split crashes MTP heads.\nauto = omit the flag → llama.cpp offloads ALL draft layers to GPU.";
+                                    CheckBox {
+                                        text: "auto";
+                                        // Active only when a draft is available (selected or embedded MTP).
+                                        enabled: root.draft_active;
+                                        checked: root.form.n_gpu_layers_draft_auto;
+                                        toggled => { root.form.n_gpu_layers_draft_auto = self.checked; }
+                                    }
+                                    // Real drafter (block_count > 0): 0..layer-count slider + numeric readout.
+                                    if root.model_info_draft_n_layer > 0 : Slider {
+                                        horizontal-stretch: 1;
+                                        enabled: !root.form.n_gpu_layers_draft_auto && root.draft_active;
+                                        minimum: 0;
+                                        maximum: root.draft_layers_max;
+                                        value: Math.min(root.form.n_gpu_layers_draft, root.draft_layers_max);
+                                        changed(v) => { root.form.n_gpu_layers_draft = Math.round(v); }
+                                    }
+                                    if root.model_info_draft_n_layer > 0 : Text {
+                                        width: 44px;
+                                        horizontal-alignment: right;
+                                        vertical-alignment: center;
+                                        text: root.form.n_gpu_layers_draft_auto ? "auto" : "\{Math.min(root.form.n_gpu_layers_draft, root.draft_layers_max)}";
+                                    }
+                                    // MTP/nextn head (0 layers) or no header: a binary CPU/GPU switch.
+                                    // on = all on GPU (99), off = CPU (0).
+                                    if root.model_info_draft_n_layer == 0 : Switch {
+                                        horizontal-stretch: 1;
+                                        enabled: !root.form.n_gpu_layers_draft_auto && root.draft_active;
+                                        checked: root.form.n_gpu_layers_draft >= 1;
+                                        text: root.form.n_gpu_layers_draft_auto
+                                            ? "auto (all on GPU)"
+                                            : (root.form.n_gpu_layers_draft >= 1 ? "on GPU (all)" : "on CPU");
+                                        toggled => { root.form.n_gpu_layers_draft = self.checked ? 99 : 0; }
+                                    }
+                                }
+                            }
+
+                            SectionCard {
+                                heading: "Resource / context";
+                                LabeledField {
+                                    label: "Context size";
+                                    hint: "Context window in tokens (--ctx-size).\nBigger = longer history but more KV-cache VRAM; split across parallel slots.";
+                                    LineEdit {
+                                        text: "\{root.form.ctx_size}";
+                                        input-type: number;
+                                        edited(t) => { root.form.ctx_size = t.to-float(); }
+                                    }
+                                }
+                                LabeledField {
                                     label: "Parallel seqs";
-                                    hint: "--parallel: concurrent request slots. Context is divided among them, so N=4 gives each slot ctx-size / 4 tokens.";
+                                    hint: "--parallel: concurrent request slots.\nContext is divided among them, so N=4 gives each slot ctx-size / 4 tokens.";
                                     LineEdit {
                                         text: "\{root.form.parallel}";
                                         input-type: number;
@@ -1077,7 +1363,7 @@ export component AppWindow inherits Window {
                                 }
                                 LabeledField {
                                     label: "Batch size";
-                                    hint: "--batch-size: logical batch (tokens prefilled per step). Higher speeds prefill, uses more VRAM.";
+                                    hint: "--batch-size: logical batch (tokens prefilled per step).\nHigher speeds prefill, uses more VRAM.";
                                     LineEdit {
                                         text: "\{root.form.batch_size}";
                                         input-type: number;
@@ -1086,7 +1372,7 @@ export component AppWindow inherits Window {
                                 }
                                 LabeledField {
                                     label: "U-Batch size";
-                                    hint: "--ubatch-size: physical micro-batch computed at once. Must be ≤ batch size.";
+                                    hint: "--ubatch-size: physical micro-batch computed at once.\nMust be ≤ batch size.";
                                     LineEdit {
                                         text: "\{root.form.ubatch_size}";
                                         input-type: number;
@@ -1099,7 +1385,7 @@ export component AppWindow inherits Window {
                                 heading: "KV cache";
                                 LabeledField {
                                     label: "K-cache type";
-                                    hint: "KV cache quantization. Lower = less VRAM but lower quality. Note: Qwen3-Coder needs q8_0 for reliable tool calling — q4_0 makes it drop the <tool_call> wrapper.";
+                                    hint: "KV cache quantization.\nLower = less VRAM but lower quality.\nNote: Qwen3-Coder needs q8_0 for reliable tool calling — q4_0 makes it drop the <tool_call> wrapper.";
                                     ComboBox {
                                         model: ["f32", "f16", "q8_0", "q5_0", "q4_0", "q4_1"];
                                         current-value: root.form.cache_type_k == "" ? "q8_0" : root.form.cache_type_k;
@@ -1108,7 +1394,7 @@ export component AppWindow inherits Window {
                                 }
                                 LabeledField {
                                     label: "V-cache type";
-                                    hint: "KV cache quantization for V (--cache-type-v). Lower = less VRAM, lower quality; usually matched to K. Needs flash attention.";
+                                    hint: "KV cache quantization for V (--cache-type-v).\nLower = less VRAM, lower quality; usually matched to K.\nNeeds flash attention.";
                                     ComboBox {
                                         model: ["f32", "f16", "q8_0", "q5_0", "q4_0", "q4_1"];
                                         current-value: root.form.cache_type_v == "" ? "q8_0" : root.form.cache_type_v;
@@ -1117,7 +1403,7 @@ export component AppWindow inherits Window {
                                 }
                                 LabeledField {
                                     label: "Flash Attention";
-                                    hint: "Enables the fused flash-attention kernel (-fa): faster prefill and lower KV memory. Recommended on; required for quantized KV cache to help on most backends.";
+                                    hint: "Enables the fused flash-attention kernel (-fa): faster prefill and lower KV memory.\nRecommended on; required for quantized KV cache to help on most backends.";
                                     CheckBox {
                                         text: "enable flash attention (-fa)";
                                         checked: root.form.flash_attn;
@@ -1126,7 +1412,7 @@ export component AppWindow inherits Window {
                                 }
                                 LabeledField {
                                     label: "Cache RAM (MiB)";
-                                    hint: "--cache-ram: RAM limit (MiB) for the prompt cache (past-prompt KV kept for reuse). Blank = default; 0 disables.";
+                                    hint: "--cache-ram: RAM limit (MiB) for the prompt cache (past-prompt KV kept for reuse).\nBlank = default; 0 disables.";
                                     LineEdit {
                                         text: "\{root.form.cache_ram}";
                                         input-type: number;
@@ -1140,7 +1426,7 @@ export component AppWindow inherits Window {
                                 heading: "Chat / reasoning";
                                 LabeledField {
                                     label: "Chat template";
-                                    hint: "--jinja: use the model's embedded Jinja chat template instead of built-in heuristics. Recommended on for correct tool-call / role formatting.";
+                                    hint: "--jinja: use the model's embedded Jinja chat template instead of built-in heuristics.\nRecommended on for correct tool-call / role formatting.";
                                     CheckBox {
                                         text: "use embedded chat template (--jinja)";
                                         checked: root.form.jinja;
@@ -1149,7 +1435,7 @@ export component AppWindow inherits Window {
                                 }
                                 LabeledField {
                                     label: "Reasoning";
-                                    hint: "auto: model decides (for Gemma auto≡on). on: force thinking. off: disable. Note reasoning=on can invalidate the KV cache mid-conversation; prefer auto.";
+                                    hint: "auto: model decides (for Gemma auto≡on).\non: force thinking.\noff: disable.\nNote reasoning=on can invalidate the KV cache mid-conversation; prefer auto.";
                                     // RadioGroup is driven from form.reasoning via each button's
                                     // `checked` binding; `selected` writes the pick back. Safe here
                                     // because the value is always exactly one of auto/on/off (never
@@ -1173,7 +1459,7 @@ export component AppWindow inherits Window {
                                 }
                                 LabeledField {
                                     label: "Reason format";
-                                    hint: "--reasoning-format: how thinking output is delivered. auto = let the template decide; deepseek = parse <think> blocks into a separate reasoning channel; none = inline.";
+                                    hint: "--reasoning-format: how thinking output is delivered.\nauto = let the template decide; deepseek = parse <think> blocks into a separate reasoning channel; none = inline.";
                                     RadioGroup {
                                         orientation: horizontal;
                                         selected(value) => { root.form.reasoning_format = value; }
@@ -1191,23 +1477,13 @@ export component AppWindow inherits Window {
                                         }
                                     }
                                 }
-                                LabeledField {
-                                    label: "MoE CPU layers";
-                                    hint: "Number of Mixture-of-Experts layers to keep on CPU (--n-cpu-moe) to save VRAM. Only applies to MoE models; N/A for dense models like Gemma. Blank = auto.";
-                                    LineEdit {
-                                        text: root.form.n_cpu_moe;
-                                        input-type: number;
-                                        placeholder-text: "blank = auto";
-                                        edited(t) => { root.form.n_cpu_moe = t; }
-                                    }
-                                }
                             }
 
                             SectionCard {
                                 heading: "Sampling overrides (blank = unset)";
                                 LabeledField {
                                     label: "Temperature";
-                                    hint: "--temp: sampling temperature. Lower = more deterministic, higher = more creative. Blank = default.";
+                                    hint: "--temp: sampling temperature.\nLower = more deterministic, higher = more creative.\nBlank = default.";
                                     LineEdit {
                                         text: root.form.temp;
                                         placeholder-text: "default";
@@ -1216,7 +1492,7 @@ export component AppWindow inherits Window {
                                 }
                                 LabeledField {
                                     label: "Top-K";
-                                    hint: "--top-k: keep only the K most-likely tokens before sampling. 0 / blank = disabled.";
+                                    hint: "--top-k: keep only the K most-likely tokens before sampling.\n0 / blank = disabled.";
                                     LineEdit {
                                         text: root.form.top_k;
                                         input-type: number;
@@ -1226,7 +1502,7 @@ export component AppWindow inherits Window {
                                 }
                                 LabeledField {
                                     label: "Top-P";
-                                    hint: "--top-p: nucleus sampling — smallest token set whose probabilities sum to P (e.g. 0.95). Blank = default.";
+                                    hint: "--top-p: nucleus sampling — smallest token set whose probabilities sum to P (e.g. 0.95).\nBlank = default.";
                                     LineEdit {
                                         text: root.form.top_p;
                                         placeholder-text: "default";
@@ -1235,7 +1511,7 @@ export component AppWindow inherits Window {
                                 }
                                 LabeledField {
                                     label: "Min-P";
-                                    hint: "--min-p: drop tokens below this fraction of the top token's probability. Blank = default.";
+                                    hint: "--min-p: drop tokens below this fraction of the top token's probability.\nBlank = default.";
                                     LineEdit {
                                         text: root.form.min_p;
                                         placeholder-text: "default";
@@ -1244,7 +1520,7 @@ export component AppWindow inherits Window {
                                 }
                                 LabeledField {
                                     label: "Repeat penalty";
-                                    hint: "--repeat-penalty: >1 discourages repeating recent tokens (e.g. 1.1). Blank = default.";
+                                    hint: "--repeat-penalty: >1 discourages repeating recent tokens (e.g. 1.1).\nBlank = default.";
                                     LineEdit {
                                         text: root.form.repeat_penalty;
                                         placeholder-text: "default";
@@ -1253,7 +1529,7 @@ export component AppWindow inherits Window {
                                 }
                                 LabeledField {
                                     label: "Presence penalty";
-                                    hint: "--presence-penalty: positive values discourage reusing any seen token, pushing new topics. Blank = default.";
+                                    hint: "--presence-penalty: positive values discourage reusing any seen token, pushing new topics.\nBlank = default.";
                                     LineEdit {
                                         text: root.form.presence_penalty;
                                         placeholder-text: "default";
@@ -1267,11 +1543,27 @@ export component AppWindow inherits Window {
                                 LabeledField {
                                     label: "Chat kwargs";
                                     label_width: 130px;
-                                    hint: "--chat-template-kwargs: JSON merged into the chat template, e.g. {\"enable_thinking\":true}. Advanced — leave blank unless the model documents kwargs.";
+                                    hint: "--chat-template-kwargs: JSON merged into the chat template, e.g. {\"enable_thinking\":true}.\nAdvanced — leave blank unless the model documents kwargs.";
                                     LineEdit {
                                         text: root.form.chat_template_kwargs;
                                         placeholder-text: "e.g. {\"temperature\":0.7}";
                                         edited(t) => { root.form.chat_template_kwargs = t; }
+                                    }
+                                }
+                            }
+
+                            SectionCard {
+                                heading: "Speculative decoding (MTP / DFlash)";
+                                LabeledField {
+                                    label: "Draft n-max";
+                                    hint: "Max draft tokens proposed per step.\nDFlash clamps this to the GGUF's trained block_size-1 (e.g. 15).\nBlank = model default.";
+                                    LineEdit {
+                                        // Active only when a draft is available (selected or embedded MTP).
+                                        enabled: root.draft_active;
+                                        text: root.form.spec_draft_n_max;
+                                        input-type: number;
+                                        placeholder-text: "blank = default";
+                                        edited(t) => { root.form.spec_draft_n_max = t; }
                                     }
                                 }
                             }
@@ -1330,7 +1622,7 @@ export component AppWindow inherits Window {
                             }
                             LabeledField {
                                 label: "baseURL";
-                                hint: "OpenAI-compatible endpoint exposed by llama-server (host:port + /v1). Point OpenCode / Claude Code at this URL.";
+                                hint: "OpenAI-compatible endpoint exposed by llama-server (host:port + /v1).\nPoint OpenCode / Claude Code at this URL.";
                                 LineEdit {
                                     text: root.integration_base_url;
                                     read-only: true;

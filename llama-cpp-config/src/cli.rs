@@ -57,6 +57,12 @@ pub struct ServerSet {
     /// GPU device for the main model, e.g. "CUDA0" (empty string = all devices).
     #[arg(long)]
     pub device: Option<String>,
+    /// Multi-GPU split mode (--split-mode): none|layer|row (empty = default/layer).
+    #[arg(long)]
+    pub split_mode: Option<String>,
+    /// Per-GPU weight proportions (--tensor-split), e.g. "3,1" (empty = even).
+    #[arg(long)]
+    pub tensor_split: Option<String>,
 }
 
 #[derive(Subcommand, Debug)]
@@ -96,10 +102,7 @@ fn run_server(c: ServerCmd) -> Result<()> {
             );
             println!(
                 "  Threads:      {}",
-                cfg.threads.map_or_else(
-                    || "auto".into(),
-                    |v| v.to_string()
-                ),
+                cfg.threads.map_or_else(|| "auto".into(), |v| v.to_string()),
             );
             println!(
                 "  CacheReuse:   {}",
@@ -107,17 +110,13 @@ fn run_server(c: ServerCmd) -> Result<()> {
             );
             println!(
                 "  ThreadsBatch: {}",
-                cfg.threads_batch.map_or_else(
-                    || "auto".into(),
-                    |v| v.to_string()
-                ),
+                cfg.threads_batch
+                    .map_or_else(|| "auto".into(), |v| v.to_string()),
             );
             println!(
                 "  ModelsMax:    {}",
-                cfg.models_max.map_or_else(
-                    || "auto (default: 1)".into(),
-                    |v| v.to_string()
-                ),
+                cfg.models_max
+                    .map_or_else(|| "auto (default: 1)".into(), |v| v.to_string()),
             );
             println!(
                 "  ModelsDir:    {}",
@@ -126,6 +125,14 @@ fn run_server(c: ServerCmd) -> Result<()> {
             println!(
                 "  Device:       {}",
                 cfg.device.unwrap_or_else(|| "auto (all)".into())
+            );
+            println!(
+                "  SplitMode:    {}",
+                cfg.split_mode.unwrap_or_else(|| "layer (default)".into())
+            );
+            println!(
+                "  TensorSplit:  {}",
+                cfg.tensor_split.unwrap_or_else(|| "even".into())
             );
             Ok(())
         }
@@ -156,7 +163,25 @@ fn run_server(c: ServerCmd) -> Result<()> {
                 cfg.models_dir = Some(d);
             }
             if let Some(dev) = s.device {
-                cfg.device = if dev.trim().is_empty() { None } else { Some(dev) };
+                cfg.device = if dev.trim().is_empty() {
+                    None
+                } else {
+                    Some(dev)
+                };
+            }
+            if let Some(sm) = s.split_mode {
+                cfg.split_mode = if sm.trim().is_empty() {
+                    None
+                } else {
+                    Some(sm)
+                };
+            }
+            if let Some(ts) = s.tensor_split {
+                cfg.tensor_split = if ts.trim().is_empty() {
+                    None
+                } else {
+                    Some(ts)
+                };
             }
             server_cfg::save(&cfg).context("save server.ini")?;
             println!("Wrote {}", paths::server_ini().display());
@@ -188,10 +213,7 @@ fn run_preset(c: PresetCmd) -> Result<()> {
         }
         PresetCmd::Delete { id } => {
             presets::delete(&id).context("delete preset")?;
-            println!(
-                "Removed [{id}] from {}",
-                paths::presets_ini().display()
-            );
+            println!("Removed [{id}] from {}", paths::presets_ini().display());
             Ok(())
         }
     }

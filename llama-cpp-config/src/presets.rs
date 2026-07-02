@@ -32,6 +32,11 @@ pub struct Preset {
     /// override of server.ini Device. Pinning a small model to one GPU lets it
     /// fit fully (no multi-device memory fitting), which is required for GPU MTP.
     pub device: String,
+    /// Multi-GPU split for THIS model. `split_mode` (--split-mode): none|layer|row;
+    /// `tensor_split` (--tensor-split): per-GPU weight proportions like "3,1".
+    /// Empty = inherit the server.ini default. Identical on CUDA and HIP.
+    pub split_mode: String,
+    pub tensor_split: String,
     pub ctx_size: Option<i32>,
     pub n_gpu_layers: Option<i32>,
     pub parallel: Option<i32>,
@@ -66,8 +71,13 @@ impl Default for Preset {
             n_gpu_layers_draft: None,
             device_draft: String::new(),
             device: String::new(),
+            split_mode: String::new(),
+            tensor_split: String::new(),
             ctx_size: Some(32768),
-            n_gpu_layers: Some(99),
+            // Default to "auto" (omit --n-gpu-layers) like n-cpu-moe and the draft
+            // layers: the GUI shows all three sliders with their "auto" box checked
+            // for a new preset. n_cpu_moe / n_gpu_layers_draft are already None.
+            n_gpu_layers: None,
             parallel: Some(4),
             batch_size: Some(512),
             ubatch_size: Some(512),
@@ -112,6 +122,8 @@ impl Preset {
             n_gpu_layers_draft: k.get("n-gpu-layers-draft").and_then(|v| ini::parse_int(v)),
             device_draft: get("device-draft"),
             device: get("device"),
+            split_mode: get("split-mode"),
+            tensor_split: get("tensor-split"),
             ctx_size: k.get("ctx-size").and_then(|v| ini::parse_int(v)),
             n_gpu_layers: k.get("n-gpu-layers").and_then(|v| ini::parse_int(v)),
             parallel: k.get("parallel").and_then(|v| ini::parse_int(v)),
@@ -247,7 +259,9 @@ pub fn render_section(p: &Preset) -> String {
     out.push_str("; draft-dflash (DFlash block-diffusion drafter), or draft-simple.\r\n");
     emit_str(&mut out, "spec-type", &p.spec_type);
     out.push_str("; spec-draft-n-max = max drafted tokens per step. DFlash clamps this to the\r\n");
-    out.push_str("; model's trained block_size - 1 (e.g. 15); also applies to draft-mtp/simple.\r\n");
+    out.push_str(
+        "; model's trained block_size - 1 (e.g. 15); also applies to draft-mtp/simple.\r\n",
+    );
     emit_i32(&mut out, "spec-draft-n-max", p.spec_draft_n_max);
     out.push_str("; Run the draft on GPU by pinning it to ONE device (device-draft, e.g.\r\n");
     out.push_str("; CUDA0) with n-gpu-layers-draft = 99. gemma4-assistant MTP heads\r\n");
@@ -261,6 +275,11 @@ pub fn render_section(p: &Preset) -> String {
     emit_i32(&mut out, "n-gpu-layers", p.n_gpu_layers);
     out.push_str("; device = CUDA0 pins this model to one GPU (overrides server.ini Device).\r\n");
     emit_str(&mut out, "device", &p.device);
+    out.push_str("; Multi-GPU distribution for this model (overrides server.ini; same on\r\n");
+    out.push_str("; CUDA and HIP): split-mode = none|layer|row, tensor-split = per-GPU\r\n");
+    out.push_str("; weight proportions (e.g. 3,1). Blank = server default.\r\n");
+    emit_str(&mut out, "split-mode", &p.split_mode);
+    emit_str(&mut out, "tensor-split", &p.tensor_split);
     emit_i32(&mut out, "parallel", p.parallel);
     emit_i32(&mut out, "batch-size", p.batch_size);
     emit_i32(&mut out, "ubatch-size", p.ubatch_size);
@@ -305,10 +324,7 @@ fn emit_str(out: &mut String, key: &str, val: &str) {
 
 fn emit_bool(out: &mut String, key: &str, val: Option<bool>) {
     if let Some(v) = val {
-        out.push_str(&format!(
-            "{key} = {}\r\n",
-            if v { "true" } else { "false" }
-        ));
+        out.push_str(&format!("{key} = {}\r\n", if v { "true" } else { "false" }));
     }
 }
 
@@ -367,7 +383,52 @@ mod tests {
             .collect();
         assert!(!value_lines.iter().any(|l| l.starts_with("model-draft =")));
         assert!(!value_lines.iter().any(|l| l.starts_with("spec-type =")));
-        assert!(!value_lines.iter().any(|l| l.starts_with("spec-draft-n-max =")));
+        assert!(!value_lines
+            .iter()
+            .any(|l| l.starts_with("spec-draft-n-max =")));
+    }
+
+    #[test]
+    fn split_keys_round_trip_through_render_and_parse() {
+        let original = Preset {
+            id: "split".into(),
+            model: r"E:\m\model.gguf".into(),
+            split_mode: "row".into(),
+            tensor_split: "3,1".into(),
+            ..Default::default()
+        };
+        let ini = render_section(&original);
+        assert!(ini.contains("split-mode = row\r\n"));
+        assert!(ini.contains("tensor-split = 3,1\r\n"));
+
+        let mut k: BTreeMap<String, String> = BTreeMap::new();
+        for line in ini.lines() {
+            if line.starts_with(';') || line.starts_with('[') {
+                continue;
+            }
+            if let Some((key, val)) = line.split_once('=') {
+                k.insert(key.trim().to_string(), val.trim().to_string());
+            }
+        }
+        let parsed = Preset::from_keys(&original.id, &k);
+        assert_eq!(parsed.split_mode, "row");
+        assert_eq!(parsed.tensor_split, "3,1");
+    }
+
+    #[test]
+    fn render_omits_split_keys_when_empty() {
+        let p = Preset {
+            id: "m".into(),
+            model: r"C:\models\m.gguf".into(),
+            ..Default::default()
+        };
+        let ini = render_section(&p);
+        let value_lines: Vec<&str> = ini
+            .lines()
+            .filter(|l| !l.trim_start().starts_with(';'))
+            .collect();
+        assert!(!value_lines.iter().any(|l| l.starts_with("split-mode =")));
+        assert!(!value_lines.iter().any(|l| l.starts_with("tensor-split =")));
     }
 
     #[test]

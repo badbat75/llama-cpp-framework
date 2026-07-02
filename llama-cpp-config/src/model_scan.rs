@@ -85,7 +85,10 @@ pub fn list(root_dir: &str, subdir: &str) -> Vec<FileOption> {
                     .ok()
                     .map(|r| r.to_string_lossy().to_string())
                     .unwrap_or(name);
-                out.push(FileOption { label, path: path_str });
+                out.push(FileOption {
+                    label,
+                    path: path_str,
+                });
             }
         }
     }
@@ -155,11 +158,7 @@ pub fn build_options(
 
     let current_trim = current.trim();
     if current_trim.is_empty() {
-        return (
-            labels,
-            values,
-            if category.is_optional() { 0 } else { -1 },
-        );
+        return (labels, values, if category.is_optional() { 0 } else { -1 });
     }
 
     if let Some(i) = values.iter().position(|v| paths_eq(v, current_trim)) {
@@ -229,9 +228,7 @@ pub fn build_draft_options(
 
 fn paths_eq(a: &str, b: &str) -> bool {
     fn norm(s: &str) -> String {
-        s.trim()
-            .replace('\\', "/")
-            .to_ascii_lowercase()
+        s.trim().replace('\\', "/").to_ascii_lowercase()
     }
     norm(a) == norm(b)
 }
@@ -241,7 +238,10 @@ mod tests {
     use super::*;
 
     fn opt(label: &str, path: &str) -> FileOption {
-        FileOption { label: label.into(), path: path.into() }
+        FileOption {
+            label: label.into(),
+            path: path.into(),
+        }
     }
 
     #[test]
@@ -249,7 +249,10 @@ mod tests {
         let mtp = vec![opt("a-mtp.gguf", r"C:\mtps\a-mtp.gguf")];
         let dflash = vec![opt("b-dflash.gguf", r"C:\dflash\b-dflash.gguf")];
         let (labels, values, specs, idx) = build_draft_options(mtp, dflash, "", "");
-        assert_eq!(labels, vec!["(none)", "MTP: a-mtp.gguf", "DFlash: b-dflash.gguf"]);
+        assert_eq!(
+            labels,
+            vec!["(none)", "MTP: a-mtp.gguf", "DFlash: b-dflash.gguf"]
+        );
         assert_eq!(values[0], "");
         assert_eq!(specs, vec!["none", "draft-mtp", "draft-dflash"]);
         assert_eq!(idx, 0);

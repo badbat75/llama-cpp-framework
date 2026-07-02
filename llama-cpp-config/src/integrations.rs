@@ -145,14 +145,8 @@ fn ensure_provider_section(v: &mut Value, base_url: &str) -> Result<()> {
         .as_object_mut()
         .ok_or_else(|| anyhow::anyhow!("provider.llama.cpp is not an object"))?;
 
-    lp_obj.insert(
-        "npm".to_string(),
-        json!(PROVIDER_NPM),
-    );
-    lp_obj.insert(
-        "name".to_string(),
-        json!(PROVIDER_NAME),
-    );
+    lp_obj.insert("npm".to_string(), json!(PROVIDER_NPM));
+    lp_obj.insert("name".to_string(), json!(PROVIDER_NAME));
 
     let opts = lp_obj
         .entry("options".to_string())
@@ -218,4 +212,3 @@ pub(crate) fn friendly_model_name(id: &str, model_path: &str) -> String {
 
     title
 }
-

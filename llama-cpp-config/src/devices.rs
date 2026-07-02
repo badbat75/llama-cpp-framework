@@ -137,7 +137,9 @@ mod tests {
         assert_eq!(devs[0].id, "CUDA0");
         assert_eq!(devs[1].id, "Vulkan0");
         assert_eq!(devs[2].id, "Vulkan1");
-        assert!(devs[0].label.starts_with("CUDA0 — NVIDIA GeForce RTX 4070 SUPER"));
+        assert!(devs[0]
+            .label
+            .starts_with("CUDA0 — NVIDIA GeForce RTX 4070 SUPER"));
     }
 
     #[test]

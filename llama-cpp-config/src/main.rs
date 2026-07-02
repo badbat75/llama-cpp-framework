@@ -3,10 +3,14 @@
 //   llama-cpp-config                  → GUI
 //   llama-cpp-config <subcommand> ... → headless CLI (clap-defined in cli.rs)
 
-#![cfg_attr(all(not(debug_assertions), target_os = "windows"), windows_subsystem = "windows")]
+#![cfg_attr(
+    all(not(debug_assertions), target_os = "windows"),
+    windows_subsystem = "windows"
+)]
 
 mod cli;
 mod devices;
+mod gguf;
 mod gui;
 mod ini;
 mod integrations;

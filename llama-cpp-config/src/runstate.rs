@@ -62,7 +62,10 @@ fn cpu_cores() -> u32 {
 
 /// The full llama-server argument list derived from server.ini.
 /// Single source of truth for both `start()` and `command_line()`.
-fn server_args(cfg: &crate::server_cfg::ServerConfig, presets_path: &std::path::Path) -> Vec<String> {
+fn server_args(
+    cfg: &crate::server_cfg::ServerConfig,
+    presets_path: &std::path::Path,
+) -> Vec<String> {
     let hostname = cfg.hostname.clone().unwrap_or_else(|| "localhost".into());
     let port = cfg.port.unwrap_or(8080);
     let models_max = cfg.models_max.unwrap_or(1);
@@ -111,6 +114,18 @@ fn server_args(cfg: &crate::server_cfg::ServerConfig, presets_path: &std::path::
         if !dev.is_empty() {
             args.push("--device".into());
             args.push(dev.to_string());
+        }
+    }
+    if let Some(sm) = cfg.split_mode.as_deref().map(str::trim) {
+        if !sm.is_empty() {
+            args.push("--split-mode".into());
+            args.push(sm.to_string());
+        }
+    }
+    if let Some(ts) = cfg.tensor_split.as_deref().map(str::trim) {
+        if !ts.is_empty() {
+            args.push("--tensor-split".into());
+            args.push(ts.to_string());
         }
     }
     args
@@ -201,20 +216,39 @@ pub fn stop() -> io::Result<()> {
     Ok(())
 }
 
+/// Shell line-continuation character: PowerShell uses a backtick, POSIX shells
+/// use a backslash. Only used to pretty-print `command_line()` for the UI.
+#[cfg(windows)]
+const LINE_CONTINUATION: char = '`';
+#[cfg(not(windows))]
+const LINE_CONTINUATION: char = '\\';
+
 /// Returns the command line `start()` would launch, reconstructed from
-/// server.ini (the same deterministic args).
+/// server.ini (the same deterministic args). Formatted for readability: the
+/// executable and each `--flag [value]` group sit on their own line, joined
+/// with the shell's line-continuation character (`` ` `` on Windows, `\` on
+/// POSIX) so the whole block can be pasted straight into a terminal.
 pub fn command_line() -> Option<String> {
     let cfg = crate::server_cfg::load();
     let exe = crate::paths::llama_server_exe()?;
     let presets_path = crate::paths::presets_ini();
 
-    let mut parts = vec![quote_arg(&exe.to_string_lossy())];
-    parts.extend(
-        server_args(&cfg, &presets_path)
-            .iter()
-            .map(|a| quote_arg(a)),
-    );
-    Some(parts.join(" "))
+    // Group the flat arg list into `--flag [value...]` lines: a token that
+    // starts with '-' opens a new line; following non-flag tokens (values)
+    // attach to the current line.
+    let mut lines: Vec<String> = vec![quote_arg(&exe.to_string_lossy())];
+    for arg in server_args(&cfg, &presets_path) {
+        let q = quote_arg(&arg);
+        if arg.starts_with('-') {
+            lines.push(q);
+        } else if let Some(last) = lines.last_mut() {
+            last.push(' ');
+            last.push_str(&q);
+        }
+    }
+
+    let joiner = format!(" {LINE_CONTINUATION}\n  ");
+    Some(lines.join(&joiner))
 }
 
 fn quote_arg(s: &str) -> String {
