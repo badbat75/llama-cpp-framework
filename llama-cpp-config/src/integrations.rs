@@ -199,13 +199,9 @@ pub(crate) fn friendly_model_name(id: &str, model_path: &str) -> String {
 
     let readable = stem.replace(['-', '_'], " ");
 
-    let mut words: Vec<&str> = readable.split_whitespace().collect();
-    if words.len() > 6 {
-        words.truncate(6);
-    }
-
-    let title: String = words
-        .iter()
+    readable
+        .split_whitespace()
+        .take(6)
         .map(|w| {
             let mut c = w.chars();
             match c.next() {
@@ -214,7 +210,96 @@ pub(crate) fn friendly_model_name(id: &str, model_path: &str) -> String {
             }
         })
         .collect::<Vec<_>>()
-        .join(" ");
+        .join(" ")
+}
 
-    title
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // The merge invariant that keeps hand-edited opencode.json safe: syncing the
+    // provider section must not touch unrelated top-level keys or other providers.
+    // (save_opencode_models itself reads global paths, so the merge logic is
+    // tested here at the ensure_provider_section seam.)
+    #[test]
+    fn ensure_provider_section_preserves_unrelated_config() {
+        let mut v = json!({
+            "theme": "dark",
+            "provider": {
+                "other": { "npm": "@other/sdk", "models": { "x": {} } }
+            }
+        });
+        ensure_provider_section(&mut v, "http://localhost:8080/v1").unwrap();
+        assert_eq!(v["theme"], "dark");
+        assert_eq!(v["provider"]["other"]["npm"], "@other/sdk");
+        assert_eq!(v["provider"]["other"]["models"]["x"], json!({}));
+        assert_eq!(v["provider"][PROVIDER_KEY]["npm"], PROVIDER_NPM);
+        assert_eq!(
+            v["provider"][PROVIDER_KEY]["options"]["baseURL"],
+            "http://localhost:8080/v1"
+        );
+        assert!(v["provider"][PROVIDER_KEY]["models"].is_object());
+    }
+
+    #[test]
+    fn ensure_provider_section_updates_base_url_in_place() {
+        let mut v = json!({});
+        ensure_provider_section(&mut v, "http://localhost:8080/v1").unwrap();
+        ensure_provider_section(&mut v, "http://0.0.0.0:9090/v1").unwrap();
+        assert_eq!(
+            v["provider"][PROVIDER_KEY]["options"]["baseURL"],
+            "http://0.0.0.0:9090/v1"
+        );
+    }
+
+    #[test]
+    fn opencode_model_reasoning_emitted_only_when_not_auto() {
+        let mut p = presets::Preset {
+            id: "m".into(),
+            model: r"C:\models\m.gguf".into(),
+            ..Default::default()
+        };
+        p.reasoning = "auto".into();
+        assert!(preset_to_opencode_model(&p).get("reasoning").is_none());
+        p.reasoning = "on".into();
+        assert_eq!(preset_to_opencode_model(&p)["reasoning"], json!(true));
+        p.reasoning = "off".into();
+        assert_eq!(preset_to_opencode_model(&p)["reasoning"], json!(false));
+    }
+
+    #[test]
+    fn opencode_model_limit_math() {
+        let mut p = presets::Preset {
+            id: "m".into(),
+            model: r"C:\models\m.gguf".into(),
+            ..Default::default()
+        };
+        // Unset ctx-size advertises the deliberate 131072 ceiling (see the
+        // comment in preset_to_opencode_model), output = context / 4.
+        p.ctx_size = None;
+        let e = preset_to_opencode_model(&p);
+        assert_eq!(e["limit"]["context"], 131072);
+        assert_eq!(e["limit"]["output"], 32768);
+        // Small contexts still advertise at least 32000 output tokens.
+        p.ctx_size = Some(8192);
+        let e = preset_to_opencode_model(&p);
+        assert_eq!(e["limit"]["context"], 8192);
+        assert_eq!(e["limit"]["output"], 32000);
+    }
+
+    #[test]
+    fn friendly_model_name_cases() {
+        // Title-cases the filename stem, separators become spaces.
+        assert_eq!(
+            friendly_model_name("id", r"C:\m\gemma-4-12b_q6.gguf"),
+            "Gemma 4 12b Q6"
+        );
+        // Caps at 6 words.
+        assert_eq!(
+            friendly_model_name("id", r"C:\m\a-b-c-d-e-f-g-h.gguf"),
+            "A B C D E F"
+        );
+        // No usable stem falls back to the preset id.
+        assert_eq!(friendly_model_name("fallback-id", ""), "Fallback Id");
+    }
 }

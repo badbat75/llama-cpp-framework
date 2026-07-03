@@ -10,10 +10,6 @@ use slint::SharedString;
 use crate::gui::PresetForm;
 use crate::{ini, presets};
 
-pub fn blank_form() -> PresetForm {
-    PresetForm::default()
-}
-
 /// The preset's string value, or the schema default when it's empty — so the
 /// form's text defaults track `Preset::default()` instead of being re-hardcoded.
 fn str_or(val: &str, default: &str) -> SharedString {

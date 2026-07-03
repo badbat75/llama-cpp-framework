@@ -176,7 +176,7 @@ ModelsDir = {models_dir}
     if !models_dir.is_empty() {
         let _ = fs::create_dir_all(&models_dir);
     }
-    fs::write(&path, body)
+    ini::atomic_write(&path, &body)
 }
 
 /// `Key = n` when `keep(n)` holds for a set value, else the commented `hint`.

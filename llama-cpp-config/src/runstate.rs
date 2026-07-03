@@ -174,8 +174,8 @@ pub fn start() -> io::Result<()> {
 ///
 /// Returns `io::Result` for symmetry with `start()`, but is currently infallible:
 /// a missing/failed kill is not surfaced here. The caller (`stop_server_async`)
-/// re-polls `load()` and reports "still running" if the kill didn't land — that
-/// re-check, not this return value, is the source of truth for the outcome.
+/// re-polls `is_running()` and reports "still running" if the kill didn't land —
+/// that re-check, not this return value, is the source of truth for the outcome.
 pub fn stop() -> io::Result<()> {
     #[cfg(windows)]
     {
@@ -237,5 +237,94 @@ fn quote_arg(s: &str) -> String {
         format!("\"{s}\"")
     } else {
         s.to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::server_cfg::ServerConfig;
+    use std::path::Path;
+
+    fn args_for(cfg: &ServerConfig) -> Vec<String> {
+        server_args(cfg, Path::new("presets.ini"))
+    }
+
+    // "auto" (unset / non-positive) MUST omit the flag entirely so llama.cpp
+    // applies its own default — substituting a computed value would defeat it.
+    #[test]
+    fn auto_fields_omit_their_flags() {
+        let a = args_for(&ServerConfig::default());
+        for flag in ["-t", "--threads-batch", "--cache-reuse", "--device"] {
+            assert!(!a.contains(&flag.to_string()), "{flag} must be omitted");
+        }
+        // Framework policy flags and defaults are always present.
+        assert!(a.contains(&"--mlock".to_string()), "mlock defaults to true");
+        assert!(a.contains(&"8080".to_string()), "port defaults to 8080");
+        assert!(a.contains(&"localhost".to_string()));
+        assert!(a.contains(&"--webui-mcp-proxy".to_string()));
+    }
+
+    #[test]
+    fn explicit_values_emit_flag_value_pairs() {
+        let cfg = ServerConfig {
+            threads: Some(12),
+            threads_batch: Some(24),
+            cache_reuse: Some(256),
+            mlock: Some(false),
+            ..Default::default()
+        };
+        let a = args_for(&cfg);
+        let pair = |flag: &str, val: &str| {
+            a.iter()
+                .position(|x| x == flag)
+                .is_some_and(|i| a.get(i + 1).is_some_and(|v| v == val))
+        };
+        assert!(pair("-t", "12"));
+        assert!(pair("--threads-batch", "24"));
+        assert!(pair("--cache-reuse", "256"));
+        assert!(!a.contains(&"--mlock".to_string()));
+    }
+
+    #[test]
+    fn nonpositive_overrides_are_treated_as_auto() {
+        let cfg = ServerConfig {
+            threads: Some(0),
+            threads_batch: Some(-1),
+            cache_reuse: Some(0),
+            ..Default::default()
+        };
+        let a = args_for(&cfg);
+        for flag in ["-t", "--threads-batch", "--cache-reuse"] {
+            assert!(!a.contains(&flag.to_string()), "{flag} must be omitted");
+        }
+    }
+
+    #[test]
+    fn blank_strings_are_omitted_and_padded_ones_trimmed() {
+        let cfg = ServerConfig {
+            device: Some("  ".into()),
+            split_mode: Some(" row ".into()),
+            tensor_split: Some("3,1".into()),
+            ..Default::default()
+        };
+        let a = args_for(&cfg);
+        assert!(!a.contains(&"--device".to_string()));
+        let i = a.iter().position(|x| x == "--split-mode").unwrap();
+        assert_eq!(a[i + 1], "row");
+        let i = a.iter().position(|x| x == "--tensor-split").unwrap();
+        assert_eq!(a[i + 1], "3,1");
+    }
+
+    #[test]
+    fn quote_arg_quotes_whitespace_only() {
+        assert_eq!(
+            quote_arg(r"C:\path with spaces\x.exe"),
+            "\"C:\\path with spaces\\x.exe\""
+        );
+        assert_eq!(quote_arg("--port"), "--port");
+        // Embedded quotes are NOT escaped — no config value carries them today;
+        // revisit if one ever can.
+        assert_eq!(quote_arg("a\"b"), "a\"b");
     }
 }

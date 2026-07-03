@@ -184,8 +184,7 @@ pub fn save(preset: &Preset) -> io::Result<()> {
     }
     let body = render_section(preset);
     ini::replace_section(&path, &preset.id, &body)?;
-    let current = server_cfg::load().models_dir.unwrap_or_default();
-    if current.is_empty() {
+    if server_cfg::opt_nonblank(server_cfg::load().models_dir).is_none() {
         if let Some(models_dir) = infer_models_dir(&preset.model) {
             let _ = ini::replace_key(&paths::server_ini(), "Server", "ModelsDir", &models_dir);
         }
@@ -214,6 +213,19 @@ pub fn rename(old_id: &str, new_id: &str) -> io::Result<()> {
     }
     let path = paths::presets_ini();
     ini::rename_section(&path, old_id, new)
+}
+
+/// First of `base`, `base-2`, `base-3`, … that isn't already in `existing`.
+/// De-conflicts an id derived by `make_id`: Clone must never overwrite an
+/// existing preset when the picked model already has one.
+pub(crate) fn unique_id(base: &str, existing: &[String]) -> String {
+    if !existing.iter().any(|e| e == base) {
+        return base.to_string();
+    }
+    (2..)
+        .map(|n| format!("{base}-{n}"))
+        .find(|cand| !existing.iter().any(|e| e == cand))
+        .unwrap_or_else(|| base.to_string())
 }
 
 pub fn make_id(model_path: &str) -> String {
@@ -270,7 +282,7 @@ pub fn render_section(p: &Preset) -> String {
     out.push_str("; in this file are preserved.\r\n\r\n");
 
     out.push_str("; Model: local path (-m).\r\n");
-    out.push_str(&format!("model = {}\r\n", p.model));
+    out.push_str(&format!("model = {}\r\n", p.model.trim()));
     out.push_str("\r\n; Sub-model paths\r\n");
     emit_str(&mut out, "mmproj", &p.mmproj);
     emit_str(&mut out, "model-draft", &p.model_draft);
@@ -338,7 +350,11 @@ pub fn render_section(p: &Preset) -> String {
 }
 
 fn emit_str(out: &mut String, key: &str, val: &str) {
-    if !val.trim().is_empty() {
+    // Write trimmed: the reader (ini::read_all) trims values on parse, so
+    // emitting padding would break the round-trip identity (in-memory preset
+    // != reloaded preset) for e.g. a path pasted with a trailing space.
+    let val = val.trim();
+    if !val.is_empty() {
         out.push_str(&format!("{key} = {val}\r\n"));
     }
 }
@@ -504,5 +520,38 @@ mod tests {
         assert_eq!(sections.len(), 1, "one section written");
         let parsed = Preset::from_keys(&sections[0].id, &sections[0].keys);
         assert_eq!(parsed, original);
+    }
+
+    #[test]
+    fn unique_id_first_free_suffix() {
+        let existing = vec!["m".to_string(), "m-2".to_string()];
+        assert_eq!(unique_id("m", &existing), "m-3");
+    }
+
+    #[test]
+    fn unique_id_base_free_returns_base() {
+        assert_eq!(unique_id("m", &["other".to_string()]), "m");
+        assert_eq!(unique_id("m", &[]), "m");
+    }
+
+    // The writer trims (emit_str + the model line) because the reader trims on
+    // parse — padded input must still round-trip to the TRIMMED value, not
+    // diverge between the in-memory preset and the reloaded one.
+    #[test]
+    fn padded_values_round_trip_trimmed() {
+        let p = Preset {
+            id: "pad".into(),
+            model: "  E:\\m\\model.gguf ".into(),
+            device: " CUDA0  ".into(),
+            ..Default::default()
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("presets.ini");
+        fs::write(&path, render_section(&p)).unwrap();
+
+        let sections = ini::read_all(&path);
+        let parsed = Preset::from_keys(&sections[0].id, &sections[0].keys);
+        assert_eq!(parsed.model, "E:\\m\\model.gguf");
+        assert_eq!(parsed.device, "CUDA0");
     }
 }

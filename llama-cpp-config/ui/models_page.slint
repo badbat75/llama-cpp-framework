@@ -334,32 +334,28 @@ export component ModelsPage inherits HorizontalLayout {
                 LabeledField {
                     label: "Draft GPU layers";
                     hint: "Draft-model layers offloaded to GPU (--n-gpu-layers-draft).\nA drafter with real layers (e.g. DFlash) gets a 0..layer-count slider.\nAn MTP/nextn head has no transformer layers (block_count 0), so it becomes a plain CPU/GPU switch.\nPin a device above — multi-GPU auto-split crashes MTP heads.\nauto = omit the flag → llama.cpp offloads ALL draft layers to GPU.";
-                    CheckBox {
+                    // Real drafter (block_count > 0): the same auto + slider +
+                    // readout row as the other layer knobs — one canonical
+                    // implementation (AutoSlider) instead of an inline copy.
+                    if AppState.model_info_draft_n_layer > 0 : AutoSlider {
+                        auto <=> AppState.form.n_gpu_layers_draft_auto;
+                        value <=> AppState.form.n_gpu_layers_draft;
+                        maximum: AppState.draft_layers_max;
+                        // Active only when a draft is available (selected or embedded MTP).
+                        usable: AppState.draft_active;
+                    }
+                    // MTP/nextn head (0 layers) or no header: auto checkbox + a
+                    // binary CPU/GPU choice. A SegmentedControl (not a Switch):
+                    // its highlight is a pure read of the model, so it never goes
+                    // stale after a click — a Switch's `checked` self-assignment
+                    // would break its one-way binding (the v1.1.1 staleness
+                    // class). on GPU = all draft layers (99), on CPU = 0.
+                    if AppState.model_info_draft_n_layer == 0 : CheckBox {
                         text: "auto";
                         // Active only when a draft is available (selected or embedded MTP).
                         enabled: AppState.draft_active;
                         checked <=> AppState.form.n_gpu_layers_draft_auto;
                     }
-                    // Real drafter (block_count > 0): 0..layer-count slider + numeric readout.
-                    if AppState.model_info_draft_n_layer > 0 : Slider {
-                        horizontal-stretch: 1;
-                        enabled: !AppState.form.n_gpu_layers_draft_auto && AppState.draft_active;
-                        minimum: 0;
-                        maximum: AppState.draft_layers_max;
-                        value: Math.min(AppState.form.n_gpu_layers_draft, AppState.draft_layers_max);
-                        changed(v) => { AppState.form.n_gpu_layers_draft = Math.round(v); }
-                    }
-                    if AppState.model_info_draft_n_layer > 0 : Text {
-                        width: 44px;
-                        horizontal-alignment: right;
-                        vertical-alignment: center;
-                        text: AppState.form.n_gpu_layers_draft_auto ? "auto" : "\{Math.min(AppState.form.n_gpu_layers_draft, AppState.draft_layers_max)}";
-                    }
-                    // MTP/nextn head (0 layers) or no header: a binary CPU/GPU choice.
-                    // A SegmentedControl (not a Switch): its highlight is a pure read
-                    // of the model, so it never goes stale after a click — a Switch's
-                    // `checked` self-assignment would break its one-way binding (the
-                    // v1.1.1 staleness class). on GPU = all draft layers (99), on CPU = 0.
                     if AppState.model_info_draft_n_layer == 0 : SegmentedControl {
                         horizontal-stretch: 1;
                         enabled: !AppState.form.n_gpu_layers_draft_auto && AppState.draft_active;
@@ -584,7 +580,8 @@ export component ModelsPage inherits HorizontalLayout {
                 Button {
                     text: "Save preset";
                     primary: true;
-                    enabled: AppState.selected_preset_index >= 0 && AppState.form.id != "" && AppState.preset_dirty;
+                    // Shared with the Ctrl+S shortcut — the gate lives in state.slint.
+                    enabled: AppState.can_save_preset;
                     clicked => { AppState.save_preset(); }
                 }
             }

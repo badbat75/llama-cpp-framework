@@ -18,6 +18,16 @@ pub(super) fn wire(app: &AppWindow) {
                     return;
                 };
                 // Flip the one row in place rather than rebuilding the whole model.
+                // SAFETY OF THE ONE-WAY BINDING: the row CheckBox binds
+                // `checked: item.enabled` one-way, and clicking it self-assigns
+                // `checked` — permanently breaking that delegate's binding (the
+                // "overwritten bindings" class). That stays invisible ONLY
+                // because this in-place write originates from the clicked row's
+                // own widget, whose broken binding already shows the new value.
+                // Any OTHER enabled-state change (an "Enable all" button, a
+                // partial refresh) must rebuild the whole model instead — see
+                // refresh_integrations, which replaces the ModelRc so the `for`
+                // delegates are recreated with fresh bindings.
                 if let Some(mut entry) = models.row_data(idx) {
                     entry.enabled = !entry.enabled;
                     models.set_row_data(idx, entry);

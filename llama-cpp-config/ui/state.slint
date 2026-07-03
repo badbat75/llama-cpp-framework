@@ -36,12 +36,15 @@ export global AppState {
     // (src/server_form.rs); `server_form_base` is the loaded/saved baseline and
     // dirty-tracking is a single struct compare. The bind/device dropdowns below
     // are option lists (not form values), so they stay separate.
-    in-out property <ServerForm> server_form: {
-        port: "8080", hostname: "localhost", mlock: true, split_mode: "default",
-        threads_auto: true, threads_batch_auto: true,
-    };
+    // No Slint-side initializer: Rust seeds both structs from disk before the
+    // event loop starts (gui::run() → load_server_into_ui), and the display
+    // defaults have ONE owner — server_form::config_to_form.
+    in-out property <ServerForm> server_form;
     in-out property <ServerForm> server_form_base;
     out property <bool> server_dirty: server_form != server_form_base;
+    // Save gating shared by the Server tab's Save button and the Ctrl+S
+    // shortcut (app.slint) — single source so the two can't drift.
+    out property <bool> can_save_server: server_dirty;
 
     // Logical-processor count (std::thread::available_parallelism), pushed from
     // Rust at startup — the upper bound for the CPU-threads / batch-threads
@@ -76,6 +79,9 @@ export global AppState {
     // (re)loaded or saved). Struct inequality drives Save/Revert enabled.
     in-out property <PresetForm> form_base;
     out property <bool> preset_dirty: form != form_base;
+    // Save gating shared by the Models tab's Save button and the Ctrl+S
+    // shortcut (app.slint) — single source so the two can't drift.
+    out property <bool> can_save_preset: selected_preset_index >= 0 && form.id != "" && preset_dirty;
     in-out property <string> presets_path: "";
     in-out property <string> presets_filter: "";
 

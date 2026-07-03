@@ -90,8 +90,10 @@ export component AppWindow inherits Window {
         KeyBinding {
             keys: @keys(Control + S);
             activated => {
-                if (AppState.current_tab == 0) { AppState.save_server(); }
-                else if (AppState.current_tab == 1 && AppState.selected_preset_index >= 0 && AppState.form.id != "") { AppState.save_preset(); }
+                // Same gating as the Save buttons — both read the can_save_*
+                // properties in state.slint so the conditions can't drift.
+                if (AppState.current_tab == 0 && AppState.can_save_server) { AppState.save_server(); }
+                else if (AppState.current_tab == 1 && AppState.can_save_preset) { AppState.save_preset(); }
                 else if (AppState.current_tab == 2) { AppState.save_integrations(); }
             }
         }
@@ -290,7 +292,10 @@ export component AppWindow inherits Window {
                         Button {
                             text: "Open chat UI";
                             enabled: AppState.server_running && !AppState.server_stopping;
-                            clicked => { Platform.open-url("http://localhost:" + AppState.server_form.port); }
+                            // server_form_base, not server_form: the running server
+                            // listens on the SAVED port (runstate reads server.ini),
+                            // not on an unsaved edit of the port field.
+                            clicked => { Platform.open-url("http://localhost:" + AppState.server_form_base.port); }
                         }
                         // Re-read the config files and re-scan the models
                         // directory. Always available — use it after adding a
@@ -317,6 +322,8 @@ export component AppWindow inherits Window {
         }
 
         // ─── Footer status bar ──────────────────────────────────────
+        // One HorizontalLayout: the status message stretches and elides so a
+        // long error can never underlap the version / run-state cells.
         Rectangle {
             height: 32px;
             horizontal-stretch: 1;
@@ -324,55 +331,51 @@ export component AppWindow inherits Window {
             Rectangle {
                 y: 0;
                 height: 1px;
-                horizontal-stretch: 1;
                 background: Palette.border;
             }
-            // ─── Messages (left) ──────────────────────────────────
-            if AppState.status_text != "" : Text {
-                x: 16px;
-                y: 0;
-                height: 100%;
-                text: AppState.status_text;
-                color: AppState.status_is_error ? #c62828 : Palette.foreground;
-                font-size: 12px;
-                vertical-alignment: center;
-            }
+            HorizontalLayout {
+                padding-left: 16px;
+                padding-right: 16px;
+                spacing: 12px;
 
-            // ─── llama-server version (right, left of the run state) ──
-            if AppState.server_version != "" : Text {
-                x: parent.width - 350px;
-                y: 0;
-                height: 100%;
-                width: 200px;
-                text: "llama-server " + AppState.server_version;
-                font-size: 12px;
-                vertical-alignment: center;
-                horizontal-alignment: right;
-                overflow: elide;
-                color: Palette.foreground.transparentize(Tokens.faint);
-            }
+                // Messages (left). Always present so the layout keeps its
+                // stretch cell even while the text is empty.
+                Text {
+                    text: AppState.status_text;
+                    color: AppState.status_is_error ? #c62828 : Palette.foreground;
+                    font-size: 12px;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                    overflow: elide;
+                }
 
-            // ─── Server status (right) ────────────────────────────
-            Text {
-                x: parent.width - 140px;
-                y: 0;
-                height: 100%;
-                width: 108px;
-                text: AppState.server_status_is_error ? "Error"
-                    : (AppState.server_running ? "Running" : "Stopped");
-                font-size: 12px;
-                vertical-alignment: center;
-                horizontal-alignment: right;
-                color: Palette.foreground.transparentize(Tokens.muted);
-            }
-            Rectangle {
-                x: parent.width - 24px;
-                y: 12px;
-                width: 8px;
-                height: 8px;
-                border-radius: 4px;
-                background: AppState.server_status_is_error ? #c62828
-                    : (AppState.server_running ? #2e7d32 : #666666);
+                // llama-server version (left of the run state).
+                if AppState.server_version != "" : Text {
+                    text: "llama-server " + AppState.server_version;
+                    font-size: 12px;
+                    vertical-alignment: center;
+                    color: Palette.foreground.transparentize(Tokens.faint);
+                }
+
+                // Run state + colored dot (right).
+                Text {
+                    text: AppState.server_status_is_error ? "Error"
+                        : (AppState.server_running ? "Running" : "Stopped");
+                    font-size: 12px;
+                    vertical-alignment: center;
+                    color: Palette.foreground.transparentize(Tokens.muted);
+                }
+                Rectangle {
+                    width: 8px;
+                    Rectangle {
+                        y: (parent.height - self.height) / 2;
+                        width: 8px;
+                        height: 8px;
+                        border-radius: 4px;
+                        background: AppState.server_status_is_error ? #c62828
+                            : (AppState.server_running ? #2e7d32 : #666666);
+                    }
+                }
             }
         }
 

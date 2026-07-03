@@ -176,7 +176,8 @@ export component ServerPage inherits ScrollView {
             Button {
                 text: "Save changes";
                 primary: true;
-                enabled: AppState.server_dirty;
+                // Shared with the Ctrl+S shortcut — the gate lives in state.slint.
+                enabled: AppState.can_save_server;
                 clicked => { AppState.save_server(); }
             }
         }

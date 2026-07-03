@@ -66,6 +66,14 @@ export component IntegrationsPage inherits ScrollView {
                     padding-left: 12px;
                     padding-right: 12px;
                     spacing: 8px;
+                    // Sanctioned one-way binding, with a real invariant behind
+                    // it: clicking self-assigns `checked`, permanently breaking
+                    // THIS delegate's binding. That stays invisible only because
+                    // the sole in-place row write (toggle_integration_model)
+                    // originates from this very widget; every other enabled-state
+                    // change must rebuild the whole model (refresh_integrations)
+                    // so the `for` delegates get fresh bindings. Details at the
+                    // toggle handler in src/gui/integrations_tab.rs.
                     CheckBox {
                         text: "";
                         checked: item.enabled;

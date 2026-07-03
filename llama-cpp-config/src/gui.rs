@@ -52,7 +52,7 @@ use std::rc::Rc;
 
 use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel};
 
-use crate::form::{blank_form, form_to_preset, preset_to_form};
+use crate::form::{form_to_preset, preset_to_form};
 use crate::{
     devices, integrations, model_scan, net_ifaces, paths, presets, runstate, server_cfg,
     server_form, server_version,
@@ -73,6 +73,17 @@ struct State {
     // Full (unfiltered) model scan backing the new-preset dialog, so the search
     // box can filter without re-hitting disk on every keystroke.
     dialog_models_all: Vec<model_scan::FileOption>,
+}
+
+/// TEST-ONLY seam for the e2e save-flow test (src/tests/save_flow.rs): build the
+/// shared `State`, seed the preset list from disk, and wire the Models tab —
+/// nothing else (no tray, no probes, no single-instance, no event loop). The
+/// caller must have redirected config IO first (see `paths::data_root`).
+#[cfg(test)]
+pub(crate) fn wire_models_tab_for_tests(app: &AppWindow) {
+    let state = Rc::new(RefCell::new(State::default()));
+    refresh_presets(app, &state);
+    models_tab::wire(app, &state);
 }
 
 pub fn run() -> anyhow::Result<()> {
@@ -281,7 +292,7 @@ fn reload_presets(app: &AppWindow, state: &Rc<RefCell<State>>, want: Option<&str
     let st = state.borrow();
     match usize::try_from(idx).ok().and_then(|i| st.presets.get(i)) {
         Some(p) => apply_form(app, preset_to_form(p)),
-        None => apply_form(app, blank_form()),
+        None => apply_form(app, PresetForm::default()),
     }
 }
 

@@ -178,4 +178,9 @@ fn editable_widgets_track_model_after_edit() {
         "0.7",
         "0.2",
     );
+
+    // ── E2E save/revert/delete flow (src/tests/save_flow.rs) ─────────────
+    // Shares this single #[test] and window: the testing backend is a
+    // process-global, single-threaded platform (see the header note).
+    super::save_flow::run(&app);
 }

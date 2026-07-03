@@ -21,7 +21,14 @@ pub(crate) fn home_dir() -> PathBuf {
 }
 
 /// `%LOCALAPPDATA%\llama.cpp` on Windows, `$HOME/.local/share/llama.cpp` elsewhere.
+///
+/// `LLAMA_CPP_CONFIG_DATA_ROOT` overrides the whole tree. It exists for the
+/// e2e tests under `src/tests/`, which point config IO at a temp dir so they
+/// never touch the user's real data — it is NOT a supported end-user knob.
 pub fn data_root() -> PathBuf {
+    if let Some(p) = env_path("LLAMA_CPP_CONFIG_DATA_ROOT") {
+        return p.join("llama.cpp");
+    }
     #[cfg(windows)]
     {
         env_path("LOCALAPPDATA")

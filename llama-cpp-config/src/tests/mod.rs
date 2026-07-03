@@ -10,4 +10,8 @@
 // each source file); only tests that span modules or need a built `AppWindow`
 // live here.
 
+// NOTE: all e2e phases run inside ui_bindings' single #[test] (the Slint
+// testing backend is a process-global, single-threaded platform); save_flow
+// exposes a plain fn called from there.
+mod save_flow;
 mod ui_bindings;

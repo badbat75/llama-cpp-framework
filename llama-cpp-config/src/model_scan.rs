@@ -279,4 +279,64 @@ mod tests {
         assert_eq!(values[1], r"D:\stray\draft.gguf");
         assert_eq!(specs[1], "draft-dflash");
     }
+
+    // The per-category index rules of the plain build_options — the contract an
+    // agent copies when adding the next file-backed dropdown.
+
+    #[test]
+    fn build_options_required_empty_selects_nothing() {
+        let (labels, _, idx) = build_options(Category::Model, vec![opt("a", r"C:\a")], "");
+        assert_eq!(labels, vec!["a"]); // no (none) row for a required category
+        assert_eq!(idx, -1);
+    }
+
+    #[test]
+    fn build_options_optional_prepends_none_row() {
+        let (labels, values, idx) = build_options(Category::Mmproj, vec![opt("a", r"C:\a")], "");
+        assert_eq!(labels, vec!["(none)", "a"]);
+        assert_eq!(values[0], "");
+        assert_eq!(idx, 0); // empty current selects the (none) row
+    }
+
+    #[test]
+    fn build_options_matches_paths_slash_and_case_insensitively() {
+        let scanned = vec![opt("m.gguf", r"C:\Models\m.gguf")];
+        let (_, _, idx) = build_options(Category::Model, scanned, "c:/models/M.GGUF");
+        assert_eq!(idx, 0);
+    }
+
+    #[test]
+    fn build_options_stale_value_inserts_after_fixed_rows() {
+        // Required: the (custom) row lands at 0; optional: after the (none) row.
+        let (labels, _, idx) =
+            build_options(Category::Model, vec![opt("a", r"C:\a")], r"D:\gone\x.gguf");
+        assert_eq!(idx, 0);
+        assert_eq!(labels[0], "(custom) x.gguf");
+        let (labels, _, idx) =
+            build_options(Category::Mmproj, vec![opt("a", r"C:\a")], r"D:\gone\x.gguf");
+        assert_eq!(idx, 1);
+        assert_eq!(labels[1], "(custom) x.gguf");
+    }
+
+    // The shard gate that keeps the model dropdown from listing every shard of
+    // a multi-file GGUF: only exactly-5-digit `-NNNNN-of-NNNNN` suffixes count,
+    // and only the 00001 shard is listed.
+
+    #[test]
+    fn split_shard_suffix_accepts_5digit_counters_only() {
+        assert_eq!(
+            split_shard_suffix("model-00002-of-00003"),
+            Some(("model", "00002"))
+        );
+        assert_eq!(split_shard_suffix("model-2-of-3"), None);
+        assert_eq!(split_shard_suffix("model-000002-of-000003"), None);
+        assert_eq!(split_shard_suffix("model"), None);
+    }
+
+    #[test]
+    fn multi_shard_trailers_are_skipped_first_shard_kept() {
+        assert!(is_multi_shard_trailer("model-00002-of-00003.gguf"));
+        assert!(!is_multi_shard_trailer("model-00001-of-00003.gguf"));
+        assert!(!is_multi_shard_trailer("model.gguf"));
+    }
 }

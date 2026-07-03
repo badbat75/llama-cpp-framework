@@ -91,7 +91,7 @@ pub(super) fn wire(app: &AppWindow, state: &Rc<RefCell<State>>) {
                     // reload_presets would otherwise select.
                     reload_presets(&app, &state, None);
                     app.global::<AppState>().set_selected_preset_index(-1);
-                    apply_form(&app, blank_form());
+                    apply_form(&app, PresetForm::default());
                     refresh_file_options(&app);
                     refresh_integrations(&app);
                 }
@@ -401,7 +401,7 @@ fn run_new_clone(
     // (or one that already has a preset) would otherwise overwrite it. Pick the
     // first free "<id>", "<id>-2", … instead of clobbering.
     let existing: Vec<String> = presets::load_all().into_iter().map(|p| p.id).collect();
-    let id = unique_id(&base_id, &existing);
+    let id = presets::unique_id(&base_id, &existing);
     let cloned = presets::Preset {
         id: id.clone(),
         model: path_str,
@@ -413,17 +413,6 @@ fn run_new_clone(
         cloned,
         format!("Cloned [{}] -> [{id}] (same parameters) — saved.", base.id),
     );
-}
-
-/// First of `base`, `base-2`, `base-3`, … that isn't already in `existing`.
-fn unique_id(base: &str, existing: &[String]) -> String {
-    if !existing.iter().any(|e| e == base) {
-        return base.to_string();
-    }
-    (2..)
-        .map(|n| format!("{base}-{n}"))
-        .find(|cand| !existing.iter().any(|e| e == cand))
-        .unwrap_or_else(|| base.to_string())
 }
 
 fn commit_new_preset(
