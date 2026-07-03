@@ -8,7 +8,7 @@ use crate::ini;
 use crate::paths;
 use crate::server_cfg;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Preset {
     pub id: String,
     pub model: String,

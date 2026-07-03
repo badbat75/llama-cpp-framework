@@ -15,7 +15,7 @@ llama-cpp-config preset delete .. → remove one preset
 
 Built with [Slint](https://slint.dev). The nav rail switches between three tabs and carries the server run controls (Start/Stop over Open chat UI over Refresh) at its bottom, reachable from any tab. **Refresh** re-reads `server.ini` / `presets.ini`, re-scans the models directory, and reloads integration state — use it after adding a model file or hand-editing a config file outside the GUI, without restarting. A status footer shows the llama-server state (running / not running) and version.
 
-Each tab body is its own Slint component (`ui\server_page.slint`, `ui\models_page.slint`, `ui\integrations_page.slint`); `ui\app.slint` is the `AppWindow` shell that owns all properties/callbacks and forwards them into the pages.
+Each tab body is its own Slint component (`ui\server_page.slint`, `ui\models_page.slint`, `ui\integrations_page.slint`). All shared state — every property and callback the pages and Rust both touch — lives in a single `export global AppState` (`ui\state.slint`); the pages read/write `AppState.<name>` directly and Rust drives it via `app.global::<AppState>()`. `ui\app.slint` is just the window chrome (nav rail, run controls, modals, footer) plus the tray.
 
 ### Server tab — `server.ini`
 
@@ -73,7 +73,9 @@ The build script (`build.rs`) converts `resources\llama.ico` to a PNG at compile
 |------|---------|
 | `src\main.rs` | Entry point: no args → GUI, subcommand → CLI dispatcher |
 | `src\cli.rs` | Clap subcommands: `server` (show/set), `preset` (list/show/delete) |
-| `src\gui.rs` | Slint GUI: window setup in `run()`, per-tab wiring in `wire_*` helpers, status polling, form ↔ preset conversion |
+| `src\gui.rs` | Slint GUI: window setup in `run()`, per-tab wiring in `wire_*` helpers, status polling |
+| `src\form.rs` | `PresetForm` ↔ `presets::Preset` conversion (`preset_to_form` / `form_to_preset`) + a round-trip test; defaults sourced from `Preset::default()` |
+| `src\proc.rs` | `run_hidden()`: launch a child process with `CREATE_NO_WINDOW` on Windows (shared by the device / version / run-state probes) |
 | `src\server_cfg.rs` | Read/write `server.ini` |
 | `src\presets.rs` | Read/write `presets.ini` (the `Preset` schema and INI round-trip) |
 | `src\model_scan.rs` | Walk `ModelsDir` for `.gguf` files; build model/draft option lists |
@@ -86,7 +88,8 @@ The build script (`build.rs`) converts `resources\llama.ico` to a PNG at compile
 | `src\net_ifaces.rs` | Enumerate local network interfaces (for hostname suggestion) |
 | `src\server_version.rs` | Parse `llama-server --version` output |
 | `src\single_instance.rs` | Windows single-instance mutex + window activation (Win32 FFI) |
-| `ui\app.slint` | `AppWindow` shell: nav rail, run controls, modals, footer, tray; owns all properties/callbacks |
+| `ui\app.slint` | `AppWindow` window chrome + `AppTray`: nav rail, run controls, modals, footer |
+| `ui\state.slint` | `export global AppState`: all shared properties + callbacks (declared once), driven from Rust via `app.global::<AppState>()` |
 | `ui\server_page.slint` | Server tab component |
 | `ui\models_page.slint` | Models tab component (preset editor) |
 | `ui\integrations_page.slint` | Integrations tab component |
@@ -100,4 +103,4 @@ The build script (`build.rs`) converts `resources\llama.ico` to a PNG at compile
 - OS portability via `#[cfg(windows)]` / `#[cfg(not(windows))]` compile-time branching — no runtime OS detection.
 - No external INI crate: `ini.rs` is a simple hand-rolled INI reader/writer (~100 lines).
 - GUI callbacks are `Send + 'static` closures passed to `slint::ComponentHandle::global()`.
-- The `AppWindow` (`ui\app.slint`) owns every property and callback the Rust side drives; the per-tab page components receive them via Slint bindings (`<=>` for in-out data, one-way for derived props, `=> { root.x() }` for callbacks). Adding a UI field that Rust reads/writes means declaring it on `AppWindow` **and** forwarding it into the relevant page component.
+- Every property and callback the Rust side drives lives in the `AppState` global (`ui\state.slint`), declared once. Rust uses `app.global::<AppState>().set_x()/get_x()/on_x()`; the pages reference `AppState.x` directly. Adding a UI field that Rust reads/writes is a **one-file** change in `ui\state.slint` — no per-page re-declaration or forwarding. (The tray, `AppTray`, is a separate root and keeps its own pushed-in state.)

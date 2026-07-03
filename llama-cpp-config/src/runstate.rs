@@ -9,13 +9,10 @@ pub struct RunState;
 pub fn load() -> Option<RunState> {
     #[cfg(windows)]
     {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x08000000;
-        let output = std::process::Command::new("tasklist")
-            .args(["/fi", "IMAGENAME eq llama-server.exe", "/fo", "csv", "/nh"])
-            .creation_flags(CREATE_NO_WINDOW)
-            .output()
-            .ok()?;
+        let output = crate::proc::run_hidden(
+            std::path::Path::new("tasklist"),
+            ["/fi", "IMAGENAME eq llama-server.exe", "/fo", "csv", "/nh"],
+        )?;
         let stdout = String::from_utf8_lossy(&output.stdout);
         // tasklist returns "INFO: No tasks..." when nothing matches — not empty
         if stdout.to_lowercase().contains("llama-server.exe") {
@@ -199,12 +196,13 @@ pub fn start() -> io::Result<()> {
 pub fn stop() -> io::Result<()> {
     #[cfg(windows)]
     {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x08000000;
-        std::process::Command::new("taskkill")
-            .args(["/f", "/im", "llama-server.exe"])
-            .creation_flags(CREATE_NO_WINDOW)
-            .output()?;
+        // Spawn failure (taskkill missing) is effectively impossible on Windows;
+        // if the kill doesn't land, the caller's re-check of the run state
+        // surfaces it as "still running".
+        crate::proc::run_hidden(
+            std::path::Path::new("taskkill"),
+            ["/f", "/im", "llama-server.exe"],
+        );
     }
     #[cfg(not(windows))]
     {

@@ -1,64 +1,11 @@
-// ModelsPage: the models tab, extracted from app.slint.
-// AppWindow owns the real state and forwards these props/callbacks in.
+// ModelsPage: the models tab (preset editor). All state lives in AppState
+// (state.slint); this component lays out the widgets against it.
 
-import { LineEdit, TextEdit, ComboBox, CheckBox, Button, ListView, ScrollView, Palette, RadioGroup, Slider, Switch } from "std-widgets.slint";
-import { SectionCard, LabeledField } from "components.slint";
-import { PresetForm, PresetSummary } from "types.slint";
+import { LineEdit, TextEdit, ComboBox, CheckBox, Button, ListView, ScrollView, Palette, RadioGroup, Slider, Switch, SpinBox } from "std-widgets.slint";
+import { SectionCard, LabeledField, SegmentedControl } from "components.slint";
+import { AppState } from "state.slint";
 
 export component ModelsPage inherits HorizontalLayout {
-    in-out property <PresetForm> form;
-    in-out property <[PresetSummary]> presets;
-    in-out property <int> selected_preset_index;
-    in-out property <string> presets_path;
-    in-out property <string> presets_filter;
-    in-out property <[string]> model_labels;
-    in-out property <[string]> model_values;
-    in-out property <int> model_index;
-    in-out property <[string]> mmproj_labels;
-    in-out property <[string]> mmproj_values;
-    in-out property <int> mmproj_index;
-    in-out property <[string]> draft_labels;
-    in-out property <[string]> draft_values;
-    in-out property <[string]> draft_specs;
-    in-out property <int> draft_index;
-    in-out property <[string]> pdev_labels;
-    in-out property <[string]> pdev_values;
-    in-out property <int> pdev_index;
-    in-out property <[string]> pdraft_labels;
-    in-out property <[string]> pdraft_values;
-    in-out property <int> pdraft_index;
-    in-out property <bool> model_info_ready;
-    in-out property <string> model_info_note;
-    in-out property <string> model_info_kind;
-    in-out property <bool> model_info_has_moe;
-    in-out property <string> model_info_moe;
-    in-out property <string> model_info_arch_quant;
-    in-out property <string> model_info_layers_ctx;
-    in-out property <string> model_info_attn;
-    in-out property <string> model_info_draft;
-    in-out property <bool> model_info_has_mmproj;
-    in-out property <string> model_info_mmproj;
-    in-out property <bool> model_info_has_draft_file;
-    in-out property <string> model_info_draft_file;
-    in-out property <int> model_info_draft_n_layer;
-    in property <int> gpu_layers_max;
-    in property <int> draft_layers_max;
-    in property <bool> draft_active;
-    in property <bool> preset_dirty;
-    in-out property <string> server_device;
-    in-out property <bool> show_rename_dialog;
-    in-out property <string> rename_old_id;
-    in-out property <string> rename_new_id;
-    callback select_preset(int);
-    callback save_preset();
-    callback revert_preset();
-    callback delete_preset(string);
-    callback new_preset();
-    callback clone_preset();
-    callback filter_presets(string);
-    callback model_changed();
-    callback sync_device_dropdowns();
-
     padding: 20px;
     spacing: 16px;
 
@@ -77,8 +24,8 @@ export component ModelsPage inherits HorizontalLayout {
         LineEdit {
             placeholder-text: "Filter presets…";
             input-type: search;
-            text: root.presets_filter;
-            edited(t) => { root.presets_filter = t; root.filter_presets(t); }
+            text: AppState.presets_filter;
+            edited(t) => { AppState.presets_filter = t; AppState.filter_presets(t); }
         }
 
         Rectangle {
@@ -96,13 +43,13 @@ export component ModelsPage inherits HorizontalLayout {
                 // delegate is a fixed 36px tall — a data-dependent height confuses
                 // ListView's running-sum layout and the rows render on top of each
                 // other. `p.orig_index` maps back to the full presets vector.
-                for p in root.presets : Rectangle {
+                for p in AppState.presets : Rectangle {
                     height: 36px;
-                    background: p.orig_index == root.selected_preset_index
+                    background: p.orig_index == AppState.selected_preset_index
                         ? Palette.accent-background.transparentize(0.82)
                         : (item-touch.has-hover ? Palette.background : transparent);
 
-                    if p.orig_index == root.selected_preset_index : Rectangle {
+                    if p.orig_index == AppState.selected_preset_index : Rectangle {
                         x: 0; y: 6px; width: 3px; height: parent.height - 12px;
                         border-radius: 1.5px;
                         background: Palette.accent-background;
@@ -121,7 +68,7 @@ export component ModelsPage inherits HorizontalLayout {
                     }
                     item-touch := TouchArea {
                         mouse-cursor: pointer;
-                        clicked => { root.select_preset(p.orig_index); }
+                        clicked => { AppState.select_preset(p.orig_index); }
                     }
                 }
             }
@@ -133,35 +80,35 @@ export component ModelsPage inherits HorizontalLayout {
                 spacing: 6px;
                 Button {
                     text: "New…";
-                    clicked => { root.new_preset(); }
+                    clicked => { AppState.new_preset(); }
                 }
                 Button {
                     text: "Clone…";
-                    enabled: root.selected_preset_index >= 0;
-                    clicked => { root.clone_preset(); }
+                    enabled: AppState.selected_preset_index >= 0;
+                    clicked => { AppState.clone_preset(); }
                 }
             }
             HorizontalLayout {
                 spacing: 6px;
                 Button {
                     text: "Rename…";
-                    enabled: root.selected_preset_index >= 0;
+                    enabled: AppState.selected_preset_index >= 0;
                     clicked => {
-                        root.rename_old_id = root.form.id;
-                        root.rename_new_id = root.form.id;
-                        root.show_rename_dialog = true;
+                        AppState.rename_old_id = AppState.form.id;
+                        AppState.rename_new_id = AppState.form.id;
+                        AppState.show_rename_dialog = true;
                     }
                 }
                 Button {
                     text: "Delete";
-                    enabled: root.selected_preset_index >= 0;
-                    clicked => { root.delete_preset(root.form.id); }
+                    enabled: AppState.selected_preset_index >= 0;
+                    clicked => { AppState.delete_preset(AppState.form.id); }
                 }
             }
         }
 
         Text {
-            text: root.presets_path;
+            text: AppState.presets_path;
             font-size: 10px;
             color: Palette.foreground.transparentize(0.5);
             wrap: word-wrap;
@@ -177,8 +124,8 @@ export component ModelsPage inherits HorizontalLayout {
             spacing: 14px;
 
             Text {
-                text: root.selected_preset_index >= 0
-                    ? "Preset id: " + root.form.id
+                text: AppState.selected_preset_index >= 0
+                    ? "Preset id: " + AppState.form.id
                     : "Select a preset on the left, or click New…";
                 font-size: 14px;
                 font-weight: 600;
@@ -191,13 +138,13 @@ export component ModelsPage inherits HorizontalLayout {
                     label: "Model file";
                     hint: "Main model weights for this preset (--model / -m).\nPick a .gguf from models\\.";
                     ComboBox {
-                        model: root.model_labels;
-                        current-index <=> root.model_index;
+                        model: AppState.model_labels;
+                        current-index <=> AppState.model_index;
                         selected(value) => {
                             let i = self.current-index;
-                            if (i >= 0 && i < root.model_values.length) {
-                                root.form.model = root.model_values[i];
-                                root.model_changed();
+                            if (i >= 0 && i < AppState.model_values.length) {
+                                AppState.form.model = AppState.model_values[i];
+                                AppState.model_changed();
                             }
                         }
                     }
@@ -206,13 +153,13 @@ export component ModelsPage inherits HorizontalLayout {
                     label: "MMProj";
                     hint: "Multimodal projector (--mmproj) for vision models, so the server can read images.\nBlank for text-only models.";
                     ComboBox {
-                        model: root.mmproj_labels;
-                        current-index <=> root.mmproj_index;
+                        model: AppState.mmproj_labels;
+                        current-index <=> AppState.mmproj_index;
                         selected(value) => {
                             let i = self.current-index;
-                            if (i >= 0 && i < root.mmproj_values.length) {
-                                root.form.mmproj = root.mmproj_values[i];
-                                root.model_changed();
+                            if (i >= 0 && i < AppState.mmproj_values.length) {
+                                AppState.form.mmproj = AppState.mmproj_values[i];
+                                AppState.model_changed();
                             }
                         }
                     }
@@ -221,32 +168,32 @@ export component ModelsPage inherits HorizontalLayout {
                     label: "Draft model";
                     hint: "Optional speculator (feeds --model-draft).\nMTP heads (from mtps\\) set --spec-type draft-mtp; DFlash drafters (from dflashs\\) set draft-dflash.\nPicking one auto-pins the draft to the server GPU, or CPU if none.\n(none) = no speculation.";
                     ComboBox {
-                        model: root.draft_labels;
-                        current-index <=> root.draft_index;
+                        model: AppState.draft_labels;
+                        current-index <=> AppState.draft_index;
                         selected(value) => {
                             let i = self.current-index;
-                            if (i >= 0 && i < root.draft_values.length) {
-                                root.form.model_draft = root.draft_values[i];
+                            if (i >= 0 && i < AppState.draft_values.length) {
+                                AppState.form.model_draft = AppState.draft_values[i];
                                 // Picking a draft model selects its speculator: MTP heads ->
                                 // draft-mtp, DFlash drafters -> draft-dflash, (none) -> none.
-                                root.form.spec_type = root.draft_specs[i];
-                                if (root.form.model_draft != "") {
+                                AppState.form.spec_type = AppState.draft_specs[i];
+                                if (AppState.form.model_draft != "") {
                                     // Run the draft on GPU by pinning it to one device (the multi-device
                                     // auto split crashes gemma4 MTP heads). Reuse the server's GPU device
                                     // if set; otherwise fall back to CPU, which always works.
-                                    if (root.form.n_gpu_layers_draft_auto && root.form.device_draft == "") {
-                                        root.form.n_gpu_layers_draft_auto = false;
-                                        if (root.server_device != "") {
-                                            root.form.device_draft = root.server_device;
-                                            root.form.n_gpu_layers_draft = 99;
+                                    if (AppState.form.n_gpu_layers_draft_auto && AppState.form.device_draft == "") {
+                                        AppState.form.n_gpu_layers_draft_auto = false;
+                                        if (AppState.server_device != "") {
+                                            AppState.form.device_draft = AppState.server_device;
+                                            AppState.form.n_gpu_layers_draft = 99;
                                         } else {
-                                            root.form.n_gpu_layers_draft = 0;
+                                            AppState.form.n_gpu_layers_draft = 0;
                                         }
                                     }
                                 }
                                 // The draft-device dropdown was just changed programmatically.
-                                root.sync_device_dropdowns();
-                                root.model_changed();
+                                AppState.sync_device_dropdowns();
+                                AppState.model_changed();
                             }
                         }
                     }
@@ -256,23 +203,23 @@ export component ModelsPage inherits HorizontalLayout {
                     hint: "Speculative decoding mode (--spec-type).\nAuto-set when you pick a draft model above: MTP heads → draft-mtp, DFlash drafters → draft-dflash.\nOverride only if you know what you need.";
                     ComboBox {
                         // Active only when a draft is available (selected or embedded MTP).
-                        enabled: root.draft_active;
+                        enabled: AppState.draft_active;
                         model: ["none", "draft-mtp", "draft-dflash", "draft-simple", "ngram-mod"];
-                        current-value: root.form.spec_type == "" ? "none" : root.form.spec_type;
-                        selected(value) => { root.form.spec_type = value; }
+                        // form.spec_type is never "" (preset_to_form maps empty → "none").
+                        current-value <=> AppState.form.spec_type;
                     }
                 }
             }
 
             SectionCard {
                 heading: "Model info";
-                if root.model_info_ready : VerticalLayout {
+                if AppState.model_info_ready : VerticalLayout {
                     spacing: 8px;
                     LabeledField {
                         label: "Type";
                         hint: "Dense runs every weight each token; MoE activates only a few experts, so VRAM ≈ all weights but compute ≈ active experts.\nMoE is what makes the 'MoE CPU layers' lever below useful.";
                         Text {
-                            text: root.model_info_kind;
+                            text: AppState.model_info_kind;
                             vertical-alignment: center;
                             font-size: 13px;
                             wrap: word-wrap;
@@ -280,11 +227,11 @@ export component ModelsPage inherits HorizontalLayout {
                             color: Palette.foreground;
                         }
                     }
-                    if root.model_info_has_moe : LabeledField {
+                    if AppState.model_info_has_moe : LabeledField {
                         label: "MoE layers";
                         hint: "How many layers carry expert (FFN) weights — the range for the 'MoE CPU layers' lever (--n-cpu-moe) below.\nRaise it to move more expert layers to CPU: less VRAM, slower generation.";
                         Text {
-                            text: root.model_info_moe;
+                            text: AppState.model_info_moe;
                             vertical-alignment: center;
                             font-size: 13px;
                             wrap: word-wrap;
@@ -295,7 +242,7 @@ export component ModelsPage inherits HorizontalLayout {
                     LabeledField {
                         label: "Arch / quant";
                         Text {
-                            text: root.model_info_arch_quant;
+                            text: AppState.model_info_arch_quant;
                             vertical-alignment: center;
                             font-size: 13px;
                             wrap: word-wrap;
@@ -307,7 +254,7 @@ export component ModelsPage inherits HorizontalLayout {
                         label: "Layers / ctx";
                         hint: "block_count guides --n-gpu-layers; the trained context is the sane upper bound for --ctx-size (going higher needs RoPE scaling).";
                         Text {
-                            text: root.model_info_layers_ctx;
+                            text: AppState.model_info_layers_ctx;
                             vertical-alignment: center;
                             font-size: 13px;
                             wrap: word-wrap;
@@ -319,7 +266,7 @@ export component ModelsPage inherits HorizontalLayout {
                         label: "Attention";
                         hint: "Head counts.\nFewer KV heads (GQA) shrink the KV cache, so a higher --ctx-size fits in the same VRAM.";
                         Text {
-                            text: root.model_info_attn;
+                            text: AppState.model_info_attn;
                             vertical-alignment: center;
                             font-size: 13px;
                             wrap: word-wrap;
@@ -327,11 +274,11 @@ export component ModelsPage inherits HorizontalLayout {
                             color: Palette.foreground;
                         }
                     }
-                    if root.model_info_has_mmproj : LabeledField {
+                    if AppState.model_info_has_mmproj : LabeledField {
                         label: "MMProj";
                         hint: "The selected multimodal projector: projector type, modality (vision/audio), encoder depth, and native image / patch size.";
                         Text {
-                            text: root.model_info_mmproj;
+                            text: AppState.model_info_mmproj;
                             vertical-alignment: center;
                             font-size: 13px;
                             wrap: word-wrap;
@@ -343,7 +290,7 @@ export component ModelsPage inherits HorizontalLayout {
                         label: "Draft";
                         hint: "Whether the model embeds MTP (next-n) layers, and whether a matching MTP/DFlash drafter sits in your mtps\\ / dflashs\\ folders — pick it as the Draft model in the Assets card above.";
                         Text {
-                            text: root.model_info_draft;
+                            text: AppState.model_info_draft;
                             vertical-alignment: center;
                             font-size: 13px;
                             wrap: word-wrap;
@@ -351,11 +298,11 @@ export component ModelsPage inherits HorizontalLayout {
                             color: Palette.foreground;
                         }
                     }
-                    if root.model_info_has_draft_file : LabeledField {
+                    if AppState.model_info_has_draft_file : LabeledField {
                         label: "Draft file";
                         hint: "The selected draft/MTP/DFlash file's own header: arch, quant, layers, and (DFlash) trained block_size with the implied --spec-draft-n-max ceiling.";
                         Text {
-                            text: root.model_info_draft_file;
+                            text: AppState.model_info_draft_file;
                             vertical-alignment: center;
                             font-size: 13px;
                             wrap: word-wrap;
@@ -364,10 +311,10 @@ export component ModelsPage inherits HorizontalLayout {
                         }
                     }
                 }
-                if !root.model_info_ready : Text {
-                    text: root.model_info_note == ""
+                if !AppState.model_info_ready : Text {
+                    text: AppState.model_info_note == ""
                         ? "Select a model to see its GGUF details."
-                        : root.model_info_note;
+                        : AppState.model_info_note;
                     font-size: 13px;
                     wrap: word-wrap;
                     color: Palette.foreground.transparentize(0.35);
@@ -380,12 +327,12 @@ export component ModelsPage inherits HorizontalLayout {
                     label: "GPU device";
                     hint: "GPU this model runs on (--device, e.g. CUDA0).\nOverrides the server default.\nBlank = use server default.";
                     ComboBox {
-                        model: root.pdev_labels;
-                        current-index <=> root.pdev_index;
+                        model: AppState.pdev_labels;
+                        current-index <=> AppState.pdev_index;
                         selected(value) => {
                             let i = self.current-index;
-                            if (i >= 0 && i < root.pdev_values.length) {
-                                root.form.device = root.pdev_values[i];
+                            if (i >= 0 && i < AppState.pdev_values.length) {
+                                AppState.form.device = AppState.pdev_values[i];
                             }
                         }
                     }
@@ -396,10 +343,10 @@ export component ModelsPage inherits HorizontalLayout {
                     ComboBox {
                         // A pinned GPU device runs on one device, so the split
                         // strategy has nothing to split — disable it.
-                        enabled: root.form.device == "";
+                        enabled: AppState.form.device == "";
                         model: ["default", "none", "layer", "row"];
-                        current-value: root.form.split_mode == "" ? "default" : root.form.split_mode;
-                        selected(value) => { root.form.split_mode = value; }
+                        // form.split_mode is never "" (preset_to_form maps empty → "default").
+                        current-value <=> AppState.form.split_mode;
                     }
                 }
                 LabeledField {
@@ -408,10 +355,9 @@ export component ModelsPage inherits HorizontalLayout {
                     LineEdit {
                         // Per-GPU proportions only apply across multiple GPUs;
                         // a pinned device makes them moot — disable it.
-                        enabled: root.form.device == "";
-                        text: root.form.tensor_split;
+                        enabled: AppState.form.device == "";
+                        text <=> AppState.form.tensor_split;
                         placeholder-text: "e.g. 3,1  (blank = server default)";
-                        edited(t) => { root.form.tensor_split = t; }
                     }
                 }
                 LabeledField {
@@ -419,22 +365,21 @@ export component ModelsPage inherits HorizontalLayout {
                     hint: "--n-gpu-layers: model layers offloaded to GPU.\nSlider max = the model's layer count (all on GPU); lower keeps layers on CPU to save VRAM.\nauto = omit the flag → llama.cpp offloads ALL layers to GPU (the framework runs with -fit off, so there is no auto-fit to VRAM — a model too big to fit will fail to load).";
                     CheckBox {
                         text: "auto";
-                        checked: root.form.n_gpu_layers_auto;
-                        toggled => { root.form.n_gpu_layers_auto = self.checked; }
+                        checked <=> AppState.form.n_gpu_layers_auto;
                     }
                     Slider {
                         horizontal-stretch: 1;
-                        enabled: !root.form.n_gpu_layers_auto;
+                        enabled: !AppState.form.n_gpu_layers_auto;
                         minimum: 0;
-                        maximum: root.gpu_layers_max;
-                        value: Math.min(root.form.n_gpu_layers, root.gpu_layers_max);
-                        changed(v) => { root.form.n_gpu_layers = Math.round(v); }
+                        maximum: AppState.gpu_layers_max;
+                        value: Math.min(AppState.form.n_gpu_layers, AppState.gpu_layers_max);
+                        changed(v) => { AppState.form.n_gpu_layers = Math.round(v); }
                     }
                     Text {
                         width: 44px;
                         horizontal-alignment: right;
                         vertical-alignment: center;
-                        text: root.form.n_gpu_layers_auto ? "auto" : "\{Math.min(root.form.n_gpu_layers, root.gpu_layers_max)}";
+                        text: AppState.form.n_gpu_layers_auto ? "auto" : "\{Math.min(AppState.form.n_gpu_layers, AppState.gpu_layers_max)}";
                     }
                 }
                 LabeledField {
@@ -443,23 +388,22 @@ export component ModelsPage inherits HorizontalLayout {
                     CheckBox {
                         text: "auto";
                         // --n-cpu-moe only affects MoE models.
-                        enabled: root.model_info_has_moe;
-                        checked: root.form.n_cpu_moe_auto;
-                        toggled => { root.form.n_cpu_moe_auto = self.checked; }
+                        enabled: AppState.model_info_has_moe;
+                        checked <=> AppState.form.n_cpu_moe_auto;
                     }
                     Slider {
                         horizontal-stretch: 1;
-                        enabled: !root.form.n_cpu_moe_auto && root.model_info_has_moe;
+                        enabled: !AppState.form.n_cpu_moe_auto && AppState.model_info_has_moe;
                         minimum: 0;
-                        maximum: root.gpu_layers_max;
-                        value: Math.min(root.form.n_cpu_moe, root.gpu_layers_max);
-                        changed(v) => { root.form.n_cpu_moe = Math.round(v); }
+                        maximum: AppState.gpu_layers_max;
+                        value: Math.min(AppState.form.n_cpu_moe, AppState.gpu_layers_max);
+                        changed(v) => { AppState.form.n_cpu_moe = Math.round(v); }
                     }
                     Text {
                         width: 44px;
                         horizontal-alignment: right;
                         vertical-alignment: center;
-                        text: root.form.n_cpu_moe_auto ? "auto" : "\{Math.min(root.form.n_cpu_moe, root.gpu_layers_max)}";
+                        text: AppState.form.n_cpu_moe_auto ? "auto" : "\{Math.min(AppState.form.n_cpu_moe, AppState.gpu_layers_max)}";
                     }
                 }
                 LabeledField {
@@ -467,13 +411,13 @@ export component ModelsPage inherits HorizontalLayout {
                     hint: "GPU for the draft model (--device-draft).\nPin to ONE device — multi-GPU auto-split crashes MTP heads.\nBlank = auto / same as model.";
                     ComboBox {
                         // Active only when a draft is available (selected or embedded MTP).
-                        enabled: root.draft_active;
-                        model: root.pdraft_labels;
-                        current-index <=> root.pdraft_index;
+                        enabled: AppState.draft_active;
+                        model: AppState.pdraft_labels;
+                        current-index <=> AppState.pdraft_index;
                         selected(value) => {
                             let i = self.current-index;
-                            if (i >= 0 && i < root.pdraft_values.length) {
-                                root.form.device_draft = root.pdraft_values[i];
+                            if (i >= 0 && i < AppState.pdraft_values.length) {
+                                AppState.form.device_draft = AppState.pdraft_values[i];
                             }
                         }
                     }
@@ -484,35 +428,34 @@ export component ModelsPage inherits HorizontalLayout {
                     CheckBox {
                         text: "auto";
                         // Active only when a draft is available (selected or embedded MTP).
-                        enabled: root.draft_active;
-                        checked: root.form.n_gpu_layers_draft_auto;
-                        toggled => { root.form.n_gpu_layers_draft_auto = self.checked; }
+                        enabled: AppState.draft_active;
+                        checked <=> AppState.form.n_gpu_layers_draft_auto;
                     }
                     // Real drafter (block_count > 0): 0..layer-count slider + numeric readout.
-                    if root.model_info_draft_n_layer > 0 : Slider {
+                    if AppState.model_info_draft_n_layer > 0 : Slider {
                         horizontal-stretch: 1;
-                        enabled: !root.form.n_gpu_layers_draft_auto && root.draft_active;
+                        enabled: !AppState.form.n_gpu_layers_draft_auto && AppState.draft_active;
                         minimum: 0;
-                        maximum: root.draft_layers_max;
-                        value: Math.min(root.form.n_gpu_layers_draft, root.draft_layers_max);
-                        changed(v) => { root.form.n_gpu_layers_draft = Math.round(v); }
+                        maximum: AppState.draft_layers_max;
+                        value: Math.min(AppState.form.n_gpu_layers_draft, AppState.draft_layers_max);
+                        changed(v) => { AppState.form.n_gpu_layers_draft = Math.round(v); }
                     }
-                    if root.model_info_draft_n_layer > 0 : Text {
+                    if AppState.model_info_draft_n_layer > 0 : Text {
                         width: 44px;
                         horizontal-alignment: right;
                         vertical-alignment: center;
-                        text: root.form.n_gpu_layers_draft_auto ? "auto" : "\{Math.min(root.form.n_gpu_layers_draft, root.draft_layers_max)}";
+                        text: AppState.form.n_gpu_layers_draft_auto ? "auto" : "\{Math.min(AppState.form.n_gpu_layers_draft, AppState.draft_layers_max)}";
                     }
                     // MTP/nextn head (0 layers) or no header: a binary CPU/GPU switch.
                     // on = all on GPU (99), off = CPU (0).
-                    if root.model_info_draft_n_layer == 0 : Switch {
+                    if AppState.model_info_draft_n_layer == 0 : Switch {
                         horizontal-stretch: 1;
-                        enabled: !root.form.n_gpu_layers_draft_auto && root.draft_active;
-                        checked: root.form.n_gpu_layers_draft >= 1;
-                        text: root.form.n_gpu_layers_draft_auto
+                        enabled: !AppState.form.n_gpu_layers_draft_auto && AppState.draft_active;
+                        checked: AppState.form.n_gpu_layers_draft >= 1;
+                        text: AppState.form.n_gpu_layers_draft_auto
                             ? "auto (all on GPU)"
-                            : (root.form.n_gpu_layers_draft >= 1 ? "on GPU (all)" : "on CPU");
-                        toggled => { root.form.n_gpu_layers_draft = self.checked ? 99 : 0; }
+                            : (AppState.form.n_gpu_layers_draft >= 1 ? "on GPU (all)" : "on CPU");
+                        toggled => { AppState.form.n_gpu_layers_draft = self.checked ? 99 : 0; }
                     }
                 }
             }
@@ -522,37 +465,43 @@ export component ModelsPage inherits HorizontalLayout {
                 LabeledField {
                     label: "Context size";
                     hint: "Context window in tokens (--ctx-size).\nBigger = longer history but more KV-cache VRAM; split across parallel slots.";
-                    LineEdit {
-                        text: "\{root.form.ctx_size}";
-                        input-type: number;
-                        edited(t) => { root.form.ctx_size = t.to-float(); }
+                    SpinBox {
+                        // Type a value or use the steppers. The maximum is set far
+                        // above any real value so it never clamps typed input.
+                        horizontal-stretch: 1;
+                        minimum: 0;
+                        maximum: 100000000;
+                        value <=> AppState.form.ctx_size;
                     }
                 }
                 LabeledField {
                     label: "Parallel seqs";
                     hint: "--parallel: concurrent request slots.\nContext is divided among them, so N=4 gives each slot ctx-size / 4 tokens.";
-                    LineEdit {
-                        text: "\{root.form.parallel}";
-                        input-type: number;
-                        edited(t) => { root.form.parallel = t.to-float(); }
+                    SpinBox {
+                        horizontal-stretch: 1;
+                        minimum: 0;
+                        maximum: 100000;
+                        value <=> AppState.form.parallel;
                     }
                 }
                 LabeledField {
                     label: "Batch size";
                     hint: "--batch-size: logical batch (tokens prefilled per step).\nHigher speeds prefill, uses more VRAM.";
-                    LineEdit {
-                        text: "\{root.form.batch_size}";
-                        input-type: number;
-                        edited(t) => { root.form.batch_size = t.to-float(); }
+                    SpinBox {
+                        horizontal-stretch: 1;
+                        minimum: 0;
+                        maximum: 100000000;
+                        value <=> AppState.form.batch_size;
                     }
                 }
                 LabeledField {
                     label: "U-Batch size";
                     hint: "--ubatch-size: physical micro-batch computed at once.\nMust be ≤ batch size.";
-                    LineEdit {
-                        text: "\{root.form.ubatch_size}";
-                        input-type: number;
-                        edited(t) => { root.form.ubatch_size = t.to-float(); }
+                    SpinBox {
+                        horizontal-stretch: 1;
+                        minimum: 0;
+                        maximum: 100000000;
+                        value <=> AppState.form.ubatch_size;
                     }
                 }
             }
@@ -564,8 +513,7 @@ export component ModelsPage inherits HorizontalLayout {
                     hint: "KV cache quantization.\nLower = less VRAM but lower quality.\nNote: Qwen3-Coder needs q8_0 for reliable tool calling — q4_0 makes it drop the <tool_call> wrapper.";
                     ComboBox {
                         model: ["f32", "f16", "q8_0", "q5_0", "q4_0", "q4_1"];
-                        current-value: root.form.cache_type_k == "" ? "q8_0" : root.form.cache_type_k;
-                        selected(value) => { root.form.cache_type_k = value; }
+                        current-value <=> AppState.form.cache_type_k;
                     }
                 }
                 LabeledField {
@@ -573,8 +521,7 @@ export component ModelsPage inherits HorizontalLayout {
                     hint: "KV cache quantization for V (--cache-type-v).\nLower = less VRAM, lower quality; usually matched to K.\nNeeds flash attention.";
                     ComboBox {
                         model: ["f32", "f16", "q8_0", "q5_0", "q4_0", "q4_1"];
-                        current-value: root.form.cache_type_v == "" ? "q8_0" : root.form.cache_type_v;
-                        selected(value) => { root.form.cache_type_v = value; }
+                        current-value <=> AppState.form.cache_type_v;
                     }
                 }
                 LabeledField {
@@ -582,18 +529,16 @@ export component ModelsPage inherits HorizontalLayout {
                     hint: "Enables the fused flash-attention kernel (-fa): faster prefill and lower KV memory.\nRecommended on; required for quantized KV cache to help on most backends.";
                     CheckBox {
                         text: "enable flash attention (-fa)";
-                        checked: root.form.flash_attn;
-                        toggled => { root.form.flash_attn = self.checked; }
+                        checked <=> AppState.form.flash_attn;
                     }
                 }
                 LabeledField {
                     label: "Cache RAM (MiB)";
                     hint: "--cache-ram: RAM limit (MiB) for the prompt cache (past-prompt KV kept for reuse).\nBlank = default; 0 disables.";
                     LineEdit {
-                        text: "\{root.form.cache_ram}";
+                        text <=> AppState.form.cache_ram;
                         input-type: number;
                         placeholder-text: "8192";
-                        edited(t) => { root.form.cache_ram = t.to-float(); }
                     }
                 }
             }
@@ -605,52 +550,29 @@ export component ModelsPage inherits HorizontalLayout {
                     hint: "--jinja: use the model's embedded Jinja chat template instead of built-in heuristics.\nRecommended on for correct tool-call / role formatting.";
                     CheckBox {
                         text: "use embedded chat template (--jinja)";
-                        checked: root.form.jinja;
-                        toggled => { root.form.jinja = self.checked; }
+                        checked <=> AppState.form.jinja;
                     }
                 }
                 LabeledField {
                     label: "Reasoning";
                     hint: "auto: model decides (for Gemma auto≡on).\non: force thinking.\noff: disable.\nNote reasoning=on can invalidate the KV cache mid-conversation; prefer auto.";
-                    // RadioGroup is driven from form.reasoning via each button's
-                    // `checked` binding; `selected` writes the pick back. Safe here
-                    // because the value is always exactly one of auto/on/off (never
-                    // empty/disabled), so the group never deselects-all.
-                    RadioGroup {
-                        orientation: horizontal;
-                        selected(value) => { root.form.reasoning = value; }
-                        RadioButton {
-                            text: "auto";
-                            checked: root.form.reasoning == "auto" || root.form.reasoning == "";
-                        }
-                        RadioButton {
-                            text: "on";
-                            checked: root.form.reasoning == "on";
-                        }
-                        RadioButton {
-                            text: "off";
-                            checked: root.form.reasoning == "off";
-                        }
+                    // A RadioGroup imperatively sets each button's `checked` on
+                    // selection, which breaks the binding and leaves the pick stale
+                    // on preset switch. SegmentedControl derives its highlight purely
+                    // from `current`, so it stays in sync.
+                    SegmentedControl {
+                        options: ["auto", "on", "off"];
+                        current: AppState.form.reasoning == "" ? "auto" : AppState.form.reasoning;
+                        activated(value) => { AppState.form.reasoning = value; }
                     }
                 }
                 LabeledField {
                     label: "Reason format";
                     hint: "--reasoning-format: how thinking output is delivered.\nauto = let the template decide; deepseek = parse <think> blocks into a separate reasoning channel; none = inline.";
-                    RadioGroup {
-                        orientation: horizontal;
-                        selected(value) => { root.form.reasoning_format = value; }
-                        RadioButton {
-                            text: "auto";
-                            checked: root.form.reasoning_format == "auto" || root.form.reasoning_format == "";
-                        }
-                        RadioButton {
-                            text: "none";
-                            checked: root.form.reasoning_format == "none";
-                        }
-                        RadioButton {
-                            text: "deepseek";
-                            checked: root.form.reasoning_format == "deepseek";
-                        }
+                    SegmentedControl {
+                        options: ["auto", "none", "deepseek"];
+                        current: AppState.form.reasoning_format == "" ? "auto" : AppState.form.reasoning_format;
+                        activated(value) => { AppState.form.reasoning_format = value; }
                     }
                 }
             }
@@ -661,55 +583,49 @@ export component ModelsPage inherits HorizontalLayout {
                     label: "Temperature";
                     hint: "--temp: sampling temperature.\nLower = more deterministic, higher = more creative.\nBlank = default.";
                     LineEdit {
-                        text: root.form.temp;
+                        text <=> AppState.form.temp;
                         placeholder-text: "default";
-                        edited(t) => { root.form.temp = t; }
                     }
                 }
                 LabeledField {
                     label: "Top-K";
                     hint: "--top-k: keep only the K most-likely tokens before sampling.\n0 / blank = disabled.";
                     LineEdit {
-                        text: root.form.top_k;
+                        text <=> AppState.form.top_k;
                         input-type: number;
                         placeholder-text: "default";
-                        edited(t) => { root.form.top_k = t; }
                     }
                 }
                 LabeledField {
                     label: "Top-P";
                     hint: "--top-p: nucleus sampling — smallest token set whose probabilities sum to P (e.g. 0.95).\nBlank = default.";
                     LineEdit {
-                        text: root.form.top_p;
+                        text <=> AppState.form.top_p;
                         placeholder-text: "default";
-                        edited(t) => { root.form.top_p = t; }
                     }
                 }
                 LabeledField {
                     label: "Min-P";
                     hint: "--min-p: drop tokens below this fraction of the top token's probability.\nBlank = default.";
                     LineEdit {
-                        text: root.form.min_p;
+                        text <=> AppState.form.min_p;
                         placeholder-text: "default";
-                        edited(t) => { root.form.min_p = t; }
                     }
                 }
                 LabeledField {
                     label: "Repeat penalty";
                     hint: "--repeat-penalty: >1 discourages repeating recent tokens (e.g. 1.1).\nBlank = default.";
                     LineEdit {
-                        text: root.form.repeat_penalty;
+                        text <=> AppState.form.repeat_penalty;
                         placeholder-text: "default";
-                        edited(t) => { root.form.repeat_penalty = t; }
                     }
                 }
                 LabeledField {
                     label: "Presence penalty";
                     hint: "--presence-penalty: positive values discourage reusing any seen token, pushing new topics.\nBlank = default.";
                     LineEdit {
-                        text: root.form.presence_penalty;
+                        text <=> AppState.form.presence_penalty;
                         placeholder-text: "default";
-                        edited(t) => { root.form.presence_penalty = t; }
                     }
                 }
             }
@@ -721,9 +637,8 @@ export component ModelsPage inherits HorizontalLayout {
                     label_width: 130px;
                     hint: "--chat-template-kwargs: JSON merged into the chat template, e.g. {\"enable_thinking\":true}.\nAdvanced — leave blank unless the model documents kwargs.";
                     LineEdit {
-                        text: root.form.chat_template_kwargs;
+                        text <=> AppState.form.chat_template_kwargs;
                         placeholder-text: "e.g. {\"temperature\":0.7}";
-                        edited(t) => { root.form.chat_template_kwargs = t; }
                     }
                 }
             }
@@ -735,11 +650,10 @@ export component ModelsPage inherits HorizontalLayout {
                     hint: "Max draft tokens proposed per step.\nDFlash clamps this to the GGUF's trained block_size-1 (e.g. 15).\nBlank = model default.";
                     LineEdit {
                         // Active only when a draft is available (selected or embedded MTP).
-                        enabled: root.draft_active;
-                        text: root.form.spec_draft_n_max;
+                        enabled: AppState.draft_active;
+                        text <=> AppState.form.spec_draft_n_max;
                         input-type: number;
                         placeholder-text: "blank = default";
-                        edited(t) => { root.form.spec_draft_n_max = t; }
                     }
                 }
             }
@@ -749,14 +663,14 @@ export component ModelsPage inherits HorizontalLayout {
                 spacing: 8px;
                 Button {
                     text: "Revert";
-                    enabled: root.selected_preset_index >= 0 && root.preset_dirty;
-                    clicked => { root.revert_preset(); }
+                    enabled: AppState.selected_preset_index >= 0 && AppState.preset_dirty;
+                    clicked => { AppState.revert_preset(); }
                 }
                 Button {
                     text: "Save preset";
                     primary: true;
-                    enabled: root.selected_preset_index >= 0 && root.form.id != "" && root.preset_dirty;
-                    clicked => { root.save_preset(); }
+                    enabled: AppState.selected_preset_index >= 0 && AppState.form.id != "" && AppState.preset_dirty;
+                    clicked => { AppState.save_preset(); }
                 }
             }
         }

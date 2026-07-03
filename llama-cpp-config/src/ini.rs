@@ -62,12 +62,7 @@ fn strip_inline_comment(val: &str) -> Cow<'_, str> {
         }
         prev_was_space = c.is_whitespace();
     }
-    let trimmed = val.trim_end();
-    if trimmed.len() == val.len() {
-        Cow::Borrowed(val)
-    } else {
-        Cow::Borrowed(trimmed)
-    }
+    Cow::Borrowed(val.trim_end())
 }
 
 /// Read only the named section's keys, or empty if not present.

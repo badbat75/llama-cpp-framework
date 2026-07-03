@@ -1,7 +1,5 @@
 // Spawns `llama-server.exe --version` for the header version badge.
 
-use std::process::Command;
-
 use crate::paths;
 
 pub fn probe() -> Option<String> {
@@ -10,24 +8,8 @@ pub fn probe() -> Option<String> {
     parse(&stdout)
 }
 
-#[cfg(windows)]
 fn run(exe: &std::path::Path) -> Option<String> {
-    use std::os::windows::process::CommandExt;
-    const CREATE_NO_WINDOW: u32 = 0x08000000;
-    let output = Command::new(exe)
-        .arg("--version")
-        .creation_flags(CREATE_NO_WINDOW)
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    Some(String::from_utf8_lossy(&output.stdout).into_owned())
-}
-
-#[cfg(not(windows))]
-fn run(exe: &std::path::Path) -> Option<String> {
-    let output = Command::new(exe).arg("--version").output().ok()?;
+    let output = crate::proc::run_hidden(exe, ["--version"])?;
     if !output.status.success() {
         return None;
     }

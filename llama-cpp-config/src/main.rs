@@ -10,6 +10,7 @@
 
 mod cli;
 mod devices;
+mod form;
 mod gguf;
 mod gui;
 mod ini;
@@ -18,6 +19,7 @@ mod model_scan;
 mod net_ifaces;
 mod paths;
 mod presets;
+mod proc;
 mod runstate;
 mod server_cfg;
 mod server_version;

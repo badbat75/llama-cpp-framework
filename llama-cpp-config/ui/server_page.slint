@@ -1,33 +1,15 @@
-// ServerPage: the server tab, extracted from app.slint.
-// AppWindow owns the real state and forwards these props/callbacks in.
+// ServerPage: the server tab. All state lives in AppState (state.slint); this
+// component just lays out the widgets against it.
+//
+// Editable widgets bind two-way (`<=>`): a one-way binding breaks the moment the
+// user types/toggles (Slint's "overwritten bindings" rule), which would leave the
+// field stale after a Revert / reload.
 
-import { LineEdit, TextEdit, ComboBox, CheckBox, Button, ListView, ScrollView, Palette, RadioGroup, Slider, Switch } from "std-widgets.slint";
+import { LineEdit, TextEdit, ComboBox, CheckBox, Button, ListView, ScrollView, Palette, RadioGroup, Slider, Switch, SpinBox } from "std-widgets.slint";
 import { SectionCard, LabeledField } from "components.slint";
+import { AppState } from "state.slint";
 
 export component ServerPage inherits ScrollView {
-    in-out property <string> server_port;
-    in-out property <string> server_hostname;
-    in-out property <[string]> bind_labels;
-    in-out property <[string]> bind_values;
-    in-out property <int> bind_index;
-    in-out property <bool> server_mlock;
-    in-out property <string> server_threads;
-    in-out property <string> server_cache_reuse;
-    in-out property <string> server_threads_batch;
-    in-out property <string> server_models_max;
-    in-out property <string> server_models_dir;
-    in-out property <string> server_device;
-    in-out property <string> server_split_mode;
-    in-out property <string> server_tensor_split;
-    in-out property <[string]> server_dev_labels;
-    in-out property <[string]> server_dev_values;
-    in-out property <int> server_dev_index;
-    in property <string> server_command_line;
-    in property <bool> server_dirty;
-    callback save_server();
-    callback revert_server();
-    callback browse_models_dir(string) -> string;
-
     VerticalLayout {
         padding: 24px;
         spacing: 16px;
@@ -52,23 +34,21 @@ export component ServerPage inherits ScrollView {
                 label: "Port";
                 hint: "TCP port llama-server listens on (--port).\nDefault 8080 — the chat UI and integrations connect here.";
                 LineEdit {
-                    text: root.server_port;
+                    text <=> AppState.server_port;
                     input-type: number;
                     placeholder-text: "8080";
-                    edited(t) => { root.server_port = t; }
                 }
             }
             LabeledField {
                 label: "Bind to";
                 hint: "Interface to bind (--host).\nlocalhost = this PC only; 0.0.0.0 = all interfaces, reachable from the LAN.";
                 ComboBox {
-                    model: root.bind_labels;
-                    current-index: root.bind_index;
+                    model: AppState.bind_labels;
+                    current-index <=> AppState.bind_index;
                     selected(value) => {
                         let i = self.current-index;
-                        root.bind_index = i;
-                        if (i >= 0 && i < root.bind_values.length) {
-                            root.server_hostname = root.bind_values[i];
+                        if (i >= 0 && i < AppState.bind_values.length) {
+                            AppState.server_hostname = AppState.bind_values[i];
                         }
                     }
                 }
@@ -82,62 +62,56 @@ export component ServerPage inherits ScrollView {
                 hint: "Locks model weights into physical RAM (--mlock) so the OS can't page them out.\nKeeps latency stable; needs enough free RAM for the whole model.";
                 CheckBox {
                     text: "lock model in physical RAM";
-                    checked: root.server_mlock;
-                    toggled => { root.server_mlock = self.checked; }
+                    checked <=> AppState.server_mlock;
                 }
             }
             LabeledField {
                 label: "CPU threads";
                 hint: "--threads: CPU threads for generation.\nBlank = half the physical-core count; more won't help once GPU-bound.";
                 LineEdit {
-                    text: root.server_threads;
+                    text <=> AppState.server_threads;
                     input-type: number;
                     placeholder-text: "blank = half the physical-core count";
-                    edited(t) => { root.server_threads = t; }
                 }
             }
             LabeledField {
                 label: "Cache reuse";
                 hint: "--cache-reuse: minimum prefix length (tokens) the server reuses from the KV cache across requests, skipping re-prefill.\nHigher saves compute on shared prefixes.";
                 LineEdit {
-                    text: root.server_cache_reuse;
+                    text <=> AppState.server_cache_reuse;
                     input-type: number;
                     placeholder-text: "256";
-                    edited(t) => { root.server_cache_reuse = t; }
                 }
             }
             LabeledField {
                 label: "Batch threads";
                 hint: "--threads-batch: CPU threads for prompt processing (prefill).\nBlank = ~75% of cores.";
                 LineEdit {
-                    text: root.server_threads_batch;
+                    text <=> AppState.server_threads_batch;
                     input-type: number;
                     placeholder-text: "blank = 75% of cores";
-                    edited(t) => { root.server_threads_batch = t; }
                 }
             }
             LabeledField {
                 label: "Max models";
                 hint: "--models-max: how many preset models llama-server keeps resident at once.\n1 = load one at a time (lowest VRAM); higher lets it hot-swap without reloading.";
                 LineEdit {
-                    text: root.server_models_max;
+                    text <=> AppState.server_models_max;
                     input-type: number;
                     placeholder-text: "1 (one at a time)";
-                    edited(t) => { root.server_models_max = t; }
                 }
             }
             LabeledField {
                 label: "Models folder";
                 hint: "Root folder scanned for GGUFs.\nPickers read its subfolders: models\\, mmprojs\\, mtps\\, dflashs\\.";
                 LineEdit {
-                    text: root.server_models_dir;
+                    text <=> AppState.server_models_dir;
                     placeholder-text: "root dir (models\\ and mmprojs\\ underneath)";
-                    edited(t) => { root.server_models_dir = t; }
                 }
                 Button {
                     text: "Browse…";
                     clicked => {
-                        root.server_models_dir = root.browse_models_dir(root.server_models_dir);
+                        AppState.server_models_dir = AppState.browse_models_dir(AppState.server_models_dir);
                     }
                 }
             }
@@ -145,12 +119,12 @@ export component ServerPage inherits ScrollView {
                 label: "GPU device";
                 hint: "Default GPU for all presets (--device, e.g. CUDA0).\nA per-preset GPU device overrides it.\nBlank = all detected devices.";
                 ComboBox {
-                    model: root.server_dev_labels;
-                    current-index <=> root.server_dev_index;
+                    model: AppState.server_dev_labels;
+                    current-index <=> AppState.server_dev_index;
                     selected(value) => {
                         let i = self.current-index;
-                        if (i >= 0 && i < root.server_dev_values.length) {
-                            root.server_device = root.server_dev_values[i];
+                        if (i >= 0 && i < AppState.server_dev_values.length) {
+                            AppState.server_device = AppState.server_dev_values[i];
                         }
                     }
                 }
@@ -161,12 +135,10 @@ export component ServerPage inherits ScrollView {
                 ComboBox {
                     // A pinned GPU device runs on one device, so there is
                     // nothing to split — disable it.
-                    enabled: root.server_device == "";
+                    enabled: AppState.server_device == "";
                     model: ["default", "none", "layer", "row"];
-                    current-value: root.server_split_mode == "" ? "default" : root.server_split_mode;
-                    selected(value) => {
-                        root.server_split_mode = value == "default" ? "" : value;
-                    }
+                    // server_split_mode holds "default" when unset (see load_server_into_ui).
+                    current-value <=> AppState.server_split_mode;
                 }
             }
             LabeledField {
@@ -175,10 +147,9 @@ export component ServerPage inherits ScrollView {
                 LineEdit {
                     // Per-GPU proportions only apply across multiple GPUs;
                     // a pinned device makes them moot — disable it.
-                    enabled: root.server_device == "";
-                    text: root.server_tensor_split;
+                    enabled: AppState.server_device == "";
+                    text <=> AppState.server_tensor_split;
                     placeholder-text: "e.g. 3,1  (blank = even)";
-                    edited(t) => { root.server_tensor_split = t; }
                 }
             }
         }
@@ -192,7 +163,7 @@ export component ServerPage inherits ScrollView {
             // line-continuation char (`` ` `` on Windows, `\` on
             // POSIX), so it pastes straight into a terminal.
             TextEdit {
-                text: root.server_command_line;
+                text: AppState.server_command_line;
                 read-only: true;
                 wrap: word-wrap;
                 min-height: 160px;
@@ -204,14 +175,14 @@ export component ServerPage inherits ScrollView {
             spacing: 8px;
             Button {
                 text: "Revert";
-                enabled: root.server_dirty;
-                clicked => { root.revert_server(); }
+                enabled: AppState.server_dirty;
+                clicked => { AppState.revert_server(); }
             }
             Button {
                 text: "Save changes";
                 primary: true;
-                enabled: root.server_dirty;
-                clicked => { root.save_server(); }
+                enabled: AppState.server_dirty;
+                clicked => { AppState.save_server(); }
             }
         }
     }

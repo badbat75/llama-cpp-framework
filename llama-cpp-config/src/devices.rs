@@ -26,24 +26,8 @@ pub fn list() -> Vec<DeviceOption> {
     }
 }
 
-#[cfg(windows)]
 fn run(exe: &std::path::Path) -> Option<String> {
-    use std::os::windows::process::CommandExt;
-    const CREATE_NO_WINDOW: u32 = 0x08000000;
-    let output = std::process::Command::new(exe)
-        .arg("--list-devices")
-        .creation_flags(CREATE_NO_WINDOW)
-        .output()
-        .ok()?;
-    Some(combine(&output))
-}
-
-#[cfg(not(windows))]
-fn run(exe: &std::path::Path) -> Option<String> {
-    let output = std::process::Command::new(exe)
-        .arg("--list-devices")
-        .output()
-        .ok()?;
+    let output = crate::proc::run_hidden(exe, ["--list-devices"])?;
     Some(combine(&output))
 }
 

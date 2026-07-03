@@ -1,0 +1,204 @@
+// Shared application state for the configurator.
+//
+// Every property and callback that the shell (app.slint) and the tab pages
+// (server_page / models_page / integrations_page) both touch lives here, in one
+// exported global, so each datum is declared ONCE instead of three times
+// (AppWindow field → forwarding binding → page field). Rust drives it via
+// `app.global::<AppState>()`; the pages read/write `AppState.<name>` directly.
+//
+// The tray (`AppTray` in app.slint) is a separate root and does NOT use this
+// global — it keeps its own pushed-in state.
+
+import { PresetSummary, PresetForm, IntegrationModel } from "types.slint";
+
+export global AppState {
+    // Crate version (CARGO_PKG_VERSION), pushed in from Rust at startup so the
+    // title bar always reflects the built version.
+    in-out property <string> app_version;
+
+    // ── Navigation ───────────────────────────────────────────────────
+    // 0 = Server, 1 = Models, 2 = Integrations.
+    in-out property <int> current_tab: 0;
+
+    // ── Live status ──────────────────────────────────────────────────
+    in-out property <bool> server_running: false;
+    // Transitional flag: Stop has been triggered but the process is still
+    // running (a forced kill lingers a moment while the GPU context unwinds).
+    // Held true by Rust until `tasklist` confirms the process is gone.
+    in-out property <bool> server_stopping: false;
+    in-out property <bool> server_status_is_error: false;
+    in-out property <string> server_version: "";
+    in-out property <string> server_command_line: "";
+
+    // ── Server tab state ─────────────────────────────────────────────
+    in-out property <string> server_port: "8080";
+    in-out property <string> server_hostname: "localhost";
+    in-out property <[string]> bind_labels;
+    in-out property <[string]> bind_values;
+    in-out property <int> bind_index: 0;
+    in-out property <bool> server_mlock: true;
+    in-out property <string> server_threads: "";
+    in-out property <string> server_cache_reuse: "";
+    in-out property <string> server_threads_batch: "";
+    in-out property <string> server_models_max: "";
+    in-out property <string> server_models_dir: "";
+    in-out property <string> server_device: "";
+    in-out property <string> server_split_mode: "";
+    in-out property <string> server_tensor_split: "";
+
+    // Baseline snapshot of the loaded server config (set by Rust on load/save).
+    // `server_dirty` is true while any field differs — drives Save/Revert enabled.
+    in-out property <string> server_port_base;
+    in-out property <string> server_hostname_base;
+    in-out property <bool> server_mlock_base;
+    in-out property <string> server_threads_base;
+    in-out property <string> server_cache_reuse_base;
+    in-out property <string> server_threads_batch_base;
+    in-out property <string> server_models_max_base;
+    in-out property <string> server_models_dir_base;
+    in-out property <string> server_device_base;
+    in-out property <string> server_split_mode_base;
+    in-out property <string> server_tensor_split_base;
+    out property <bool> server_dirty:
+        server_port != server_port_base
+        || server_hostname != server_hostname_base
+        || server_mlock != server_mlock_base
+        || server_threads != server_threads_base
+        || server_cache_reuse != server_cache_reuse_base
+        || server_threads_batch != server_threads_batch_base
+        || server_models_max != server_models_max_base
+        || server_models_dir != server_models_dir_base
+        || server_device != server_device_base
+        || server_split_mode != server_split_mode_base
+        || server_tensor_split != server_tensor_split_base;
+
+    // GPU device enumeration (parsed from `llama-server --list-devices`).
+    // `all_device_*` is the cached raw list filled by the async probe; the
+    // per-combobox *_labels/_values/_index triples are derived from it.
+    in-out property <[string]> all_device_ids;
+    in-out property <[string]> all_device_labels;
+    in-out property <[string]> server_dev_labels;
+    in-out property <[string]> server_dev_values;
+    in-out property <int> server_dev_index: 0;
+    in-out property <[string]> pdev_labels;
+    in-out property <[string]> pdev_values;
+    in-out property <int> pdev_index: 0;
+    in-out property <[string]> pdraft_labels;
+    in-out property <[string]> pdraft_values;
+    in-out property <int> pdraft_index: 0;
+
+    // ── Models tab state ─────────────────────────────────────────────
+    in-out property <[PresetSummary]> presets;
+    in-out property <int> selected_preset_index: -1;
+    in-out property <PresetForm> form;
+    // Baseline snapshot of the loaded preset (set by Rust whenever the form is
+    // (re)loaded or saved). Struct inequality drives Save/Revert enabled.
+    in-out property <PresetForm> form_base;
+    out property <bool> preset_dirty: form != form_base;
+    in-out property <string> presets_path: "";
+    in-out property <string> presets_filter: "";
+
+    // File-field dropdowns for model and mmproj
+    in-out property <[string]> model_labels;
+    in-out property <[string]> model_values;
+    in-out property <int> model_index: -1;
+    in-out property <[string]> mmproj_labels;
+    in-out property <[string]> mmproj_values;
+    in-out property <int> mmproj_index: -1;
+    // Unified draft-model picker (MTP heads from mtps\ + DFlash drafters from
+    // dflashs\). `draft_specs[i]` is the --spec-type to apply when row i is picked.
+    in-out property <[string]> draft_labels;
+    in-out property <[string]> draft_values;
+    in-out property <[string]> draft_specs;
+    in-out property <int> draft_index: -1;
+
+    // Read-only "Model info" box, filled by Rust (model_changed) from the
+    // selected model's GGUF header. `model_info_ready` gates between the info
+    // rows and a muted placeholder/error note (`model_info_note`).
+    in-out property <bool> model_info_ready: false;
+    in-out property <string> model_info_note;
+    in-out property <string> model_info_kind;
+    // MoE-only: how many layers hold experts + the --n-cpu-moe range. Hidden for
+    // dense models (`model_info_has_moe`).
+    in-out property <bool> model_info_has_moe: false;
+    in-out property <string> model_info_moe;
+    in-out property <string> model_info_arch_quant;
+    in-out property <string> model_info_layers_ctx;
+    in-out property <string> model_info_attn;
+    in-out property <string> model_info_draft;
+    // Optional rows, shown only when a mmproj / draft file is selected.
+    in-out property <bool> model_info_has_mmproj: false;
+    in-out property <string> model_info_mmproj;
+    in-out property <bool> model_info_has_draft_file: false;
+    in-out property <string> model_info_draft_file;
+    // True when the main model embeds MTP/nextn heads (`<arch>.nextn_predict_layers` > 0):
+    // speculative decoding is possible even before an external draft file is picked.
+    in-out property <bool> model_info_embeds_mtp: false;
+    // Layer counts (block_count) of the selected model and draft, driving the
+    // GPU-layers / MoE-CPU-layers / draft-GPU-layers slider maxima. 0 = unknown
+    // (metadata unavailable), in which case the sliders fall back to a 0..99 range.
+    in-out property <int> model_info_n_layer: 0;
+    in-out property <int> model_info_draft_n_layer: 0;
+    out property <int> gpu_layers_max: model_info_n_layer > 0 ? model_info_n_layer : 99;
+    out property <int> draft_layers_max: model_info_draft_n_layer > 0 ? model_info_draft_n_layer : 99;
+    // Speculative-decoding controls are active when a draft model is selected OR
+    // the main model embeds MTP heads — otherwise there is nothing to draft with.
+    out property <bool> draft_active: form.model_draft != "" || model_info_embeds_mtp;
+
+    // ── New-preset dialog state ─────────────────────────────────────
+    in-out property <bool> show_new_kind_picker: false;
+    in-out property <string> new_dialog_source_id: "";
+    in-out property <[string]> dialog_model_labels;
+    in-out property <[string]> dialog_model_values;
+    in-out property <int> dialog_model_index: -1;
+    in-out property <string> dialog_filter: "";
+
+    // ── Rename-preset dialog state ──────────────────────────────────
+    in-out property <bool> show_rename_dialog: false;
+    in-out property <string> rename_old_id: "";
+    in-out property <string> rename_new_id: "";
+
+    // ── Integrations tab state ─────────────────────────────────────
+    in-out property <string> integration_base_url: "";
+    in-out property <[IntegrationModel]> integration_models;
+    in-out property <bool> integration_provider_active: false;
+    in-out property <string> integration_claude_env: "";
+
+    // ── Status / toast ───────────────────────────────────────────────
+    in-out property <string> status_text: "";
+    in-out property <bool> status_is_error: false;
+
+    // ── Callbacks ────────────────────────────────────────────────────
+    callback save_server();
+    callback revert_server();
+    callback browse_models_dir(string) -> string;
+
+    callback select_preset(int);
+    callback save_preset();
+    callback revert_preset();
+    callback delete_preset(string);
+    callback new_preset();
+    callback clone_preset();
+    callback pick_new_empty();
+    callback pick_new_clone();
+    callback rename_preset(string, string);
+    callback filter_presets(string);
+    callback filter_dialog_models(string);
+    // Recompute the "Model info" box from the currently selected model file.
+    callback model_changed();
+
+    callback refresh_status();
+    callback start_server();
+    callback stop_server();
+    // Re-read server.ini / presets.ini and re-scan the models directory.
+    // Picks up files added on disk or config files edited by hand outside
+    // the GUI, without restarting the app.
+    callback reload_all();
+    // Recompute the device dropdown indices after the form is mutated in-UI
+    // (e.g. the MTP picker auto-filling the draft device).
+    callback sync_device_dropdowns();
+
+    callback toggle_integration_model(int);
+    callback save_integrations();
+    callback revert_integrations();
+}

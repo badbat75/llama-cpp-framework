@@ -1,10 +1,16 @@
 // llama.cpp-framework configurator — Slint UI.
 //
 // Left navigation rail (Server / Models / Integrations) and a content area that swaps
-// pages via `current_tab`. Live server status is shown in the footer.
+// pages via `AppState.current_tab`. Live server status is shown in the footer.
+//
+// All shared data/callbacks live in `AppState` (state.slint); this file is just
+// the window shell and the tray. Rust drives everything via `app.global::<AppState>()`.
 
 import { LineEdit, TextEdit, ComboBox, CheckBox, Button, ListView, ScrollView, Palette, RadioGroup, Slider, Switch } from "std-widgets.slint";
-import { PresetSummary, PresetForm, IntegrationModel } from "types.slint";
+import { AppState } from "state.slint";
+// Re-export so Slint generates the Rust accessor (`app.global::<AppState>()`);
+// a bare import wouldn't surface it to Rust.
+export { AppState }
 import { ServerPage } from "server_page.slint";
 import { ModelsPage } from "models_page.slint";
 import { IntegrationsPage } from "integrations_page.slint";
@@ -59,12 +65,9 @@ component NavItem inherits Rectangle {
 }
 
 export component AppWindow inherits Window {
-    // Crate version (CARGO_PKG_VERSION), pushed in from Rust at startup so the
-    // title bar always reflects the built version.
-    in property <string> app_version;
-    title: root.app_version == ""
+    title: AppState.app_version == ""
         ? "llama.cpp-framework configurator"
-        : "llama.cpp-framework configurator v" + root.app_version;
+        : "llama.cpp-framework configurator v" + AppState.app_version;
     icon: @image-url("llama.png");
     // Keep the floor low enough that the whole window — including the Save/Revert
     // row at the bottom of each scrolling page — fits on a 1366×768 laptop after
@@ -78,192 +81,6 @@ export component AppWindow inherits Window {
     // the user clicks into any widget.
     forward-focus: shortcuts;
 
-    // ── Navigation ───────────────────────────────────────────────────
-    // 0 = Server, 1 = Models, 2 = Integrations.
-    in-out property <int> current_tab: 0;
-
-    // ── Live status ──────────────────────────────────────────────────
-    in property <bool> server_running: false;
-    // Transitional flag: Stop has been triggered but the process is still
-    // running (a forced kill lingers a moment while the GPU context unwinds).
-    // Held true by Rust until `tasklist` confirms the process is gone.
-    in property <bool> server_stopping: false;
-    in-out property <bool> server_status_is_error: false;
-    in property <string> server_version: "";
-    in property <string> server_command_line: "";
-
-    // ── Server tab state ─────────────────────────────────────────────
-    in-out property <string> server_port: "8080";
-    in-out property <string> server_hostname: "localhost";
-    in-out property <[string]> bind_labels;
-    in-out property <[string]> bind_values;
-    in-out property <int> bind_index: 0;
-    in-out property <bool> server_mlock: true;
-    in-out property <string> server_threads: "";
-    in-out property <string> server_cache_reuse: "";
-    in-out property <string> server_threads_batch: "";
-    in-out property <string> server_models_max: "";
-    in-out property <string> server_models_dir: "";
-    in-out property <string> server_device: "";
-    in-out property <string> server_split_mode: "";
-    in-out property <string> server_tensor_split: "";
-
-    // Baseline snapshot of the loaded server config (set by Rust on load/save).
-    // `server_dirty` is true while any field differs — drives Save/Revert enabled.
-    in-out property <string> server_port_base;
-    in-out property <string> server_hostname_base;
-    in-out property <bool> server_mlock_base;
-    in-out property <string> server_threads_base;
-    in-out property <string> server_cache_reuse_base;
-    in-out property <string> server_threads_batch_base;
-    in-out property <string> server_models_max_base;
-    in-out property <string> server_models_dir_base;
-    in-out property <string> server_device_base;
-    in-out property <string> server_split_mode_base;
-    in-out property <string> server_tensor_split_base;
-    out property <bool> server_dirty:
-        root.server_port != root.server_port_base
-        || root.server_hostname != root.server_hostname_base
-        || root.server_mlock != root.server_mlock_base
-        || root.server_threads != root.server_threads_base
-        || root.server_cache_reuse != root.server_cache_reuse_base
-        || root.server_threads_batch != root.server_threads_batch_base
-        || root.server_models_max != root.server_models_max_base
-        || root.server_models_dir != root.server_models_dir_base
-        || root.server_device != root.server_device_base
-        || root.server_split_mode != root.server_split_mode_base
-        || root.server_tensor_split != root.server_tensor_split_base;
-
-    // GPU device enumeration (parsed from `llama-server --list-devices`).
-    // `all_device_*` is the cached raw list filled by the async probe; the
-    // per-combobox *_labels/_values/_index triples are derived from it.
-    in-out property <[string]> all_device_ids;
-    in-out property <[string]> all_device_labels;
-    in-out property <[string]> server_dev_labels;
-    in-out property <[string]> server_dev_values;
-    in-out property <int> server_dev_index: 0;
-    in-out property <[string]> pdev_labels;
-    in-out property <[string]> pdev_values;
-    in-out property <int> pdev_index: 0;
-    in-out property <[string]> pdraft_labels;
-    in-out property <[string]> pdraft_values;
-    in-out property <int> pdraft_index: 0;
-
-    // ── Models tab state ─────────────────────────────────────────────
-    in-out property <[PresetSummary]> presets;
-    in-out property <int> selected_preset_index: -1;
-    in-out property <PresetForm> form;
-    // Baseline snapshot of the loaded preset (set by Rust whenever the form is
-    // (re)loaded or saved). Struct inequality drives Save/Revert enabled.
-    in-out property <PresetForm> form_base;
-    out property <bool> preset_dirty: root.form != root.form_base;
-    in-out property <string> presets_path: "";
-    in-out property <string> presets_filter: "";
-
-    // File-field dropdowns for model and mmproj
-    in-out property <[string]> model_labels;
-    in-out property <[string]> model_values;
-    in-out property <int> model_index: -1;
-    in-out property <[string]> mmproj_labels;
-    in-out property <[string]> mmproj_values;
-    in-out property <int> mmproj_index: -1;
-    // Unified draft-model picker (MTP heads from mtps\ + DFlash drafters from
-    // dflashs\). `draft_specs[i]` is the --spec-type to apply when row i is picked.
-    in-out property <[string]> draft_labels;
-    in-out property <[string]> draft_values;
-    in-out property <[string]> draft_specs;
-    in-out property <int> draft_index: -1;
-
-    // Read-only "Model info" box, filled by Rust (model_changed) from the
-    // selected model's GGUF header. `model_info_ready` gates between the info
-    // rows and a muted placeholder/error note (`model_info_note`).
-    in-out property <bool> model_info_ready: false;
-    in-out property <string> model_info_note;
-    in-out property <string> model_info_kind;
-    // MoE-only: how many layers hold experts + the --n-cpu-moe range. Hidden for
-    // dense models (`model_info_has_moe`).
-    in-out property <bool> model_info_has_moe: false;
-    in-out property <string> model_info_moe;
-    in-out property <string> model_info_arch_quant;
-    in-out property <string> model_info_layers_ctx;
-    in-out property <string> model_info_attn;
-    in-out property <string> model_info_draft;
-    // Optional rows, shown only when a mmproj / draft file is selected.
-    in-out property <bool> model_info_has_mmproj: false;
-    in-out property <string> model_info_mmproj;
-    in-out property <bool> model_info_has_draft_file: false;
-    in-out property <string> model_info_draft_file;
-    // True when the main model embeds MTP/nextn heads (`<arch>.nextn_predict_layers` > 0):
-    // speculative decoding is possible even before an external draft file is picked.
-    in-out property <bool> model_info_embeds_mtp: false;
-    // Layer counts (block_count) of the selected model and draft, driving the
-    // GPU-layers / MoE-CPU-layers / draft-GPU-layers slider maxima. 0 = unknown
-    // (metadata unavailable), in which case the sliders fall back to a 0..99 range.
-    in-out property <int> model_info_n_layer: 0;
-    in-out property <int> model_info_draft_n_layer: 0;
-    out property <int> gpu_layers_max: root.model_info_n_layer > 0 ? root.model_info_n_layer : 99;
-    out property <int> draft_layers_max: root.model_info_draft_n_layer > 0 ? root.model_info_draft_n_layer : 99;
-    // Speculative-decoding controls are active when a draft model is selected OR
-    // the main model embeds MTP heads — otherwise there is nothing to draft with.
-    out property <bool> draft_active: root.form.model_draft != "" || root.model_info_embeds_mtp;
-
-    // ── New-preset dialog state ─────────────────────────────────────
-    in-out property <bool> show_new_kind_picker: false;
-    in-out property <string> new_dialog_source_id: "";
-    in-out property <[string]> dialog_model_labels;
-    in-out property <[string]> dialog_model_values;
-    in-out property <int> dialog_model_index: -1;
-    in-out property <string> dialog_filter: "";
-
-    // ── Rename-preset dialog state ──────────────────────────────────
-    in-out property <bool> show_rename_dialog: false;
-    in-out property <string> rename_old_id: "";
-    in-out property <string> rename_new_id: "";
-
-    // ── Integrations tab state ─────────────────────────────────────
-    in-out property <string> integration_base_url: "";
-    in-out property <[IntegrationModel]> integration_models;
-    in-out property <bool> integration_provider_active: false;
-    in-out property <string> integration_claude_env: "";
-
-    // ── Status / toast ───────────────────────────────────────────────
-    in-out property <string> status_text: "";
-    in-out property <bool> status_is_error: false;
-
-    // ── Callbacks ────────────────────────────────────────────────────
-    callback save_server();
-    callback revert_server();
-    callback browse_models_dir(string) -> string;
-
-    callback select_preset(int);
-    callback save_preset();
-    callback revert_preset();
-    callback delete_preset(string);
-    callback new_preset();
-    callback clone_preset();
-    callback pick_new_empty();
-    callback pick_new_clone();
-    callback rename_preset(string, string);
-    callback filter_presets(string);
-    callback filter_dialog_models(string);
-    // Recompute the "Model info" box from the currently selected model file.
-    callback model_changed();
-
-    callback refresh_status();
-    callback start_server();
-    callback stop_server();
-    // Re-read server.ini / presets.ini and re-scan the models directory.
-    // Picks up files added on disk or config files edited by hand outside
-    // the GUI, without restarting the app.
-    callback reload_all();
-    // Recompute the device dropdown indices after the form is mutated in-UI
-    // (e.g. the MTP picker auto-filling the draft device).
-    callback sync_device_dropdowns();
-
-    callback toggle_integration_model(int);
-    callback save_integrations();
-    callback revert_integrations();
-
     shortcuts := FocusScope {
         width: 100%;
         height: 100%;
@@ -272,16 +89,16 @@ export component AppWindow inherits Window {
         KeyBinding {
             keys: @keys(Control + S);
             activated => {
-                if (root.current_tab == 0) { root.save_server(); }
-                else if (root.current_tab == 1 && root.selected_preset_index >= 0 && root.form.id != "") { root.save_preset(); }
-                else if (root.current_tab == 2) { root.save_integrations(); }
+                if (AppState.current_tab == 0) { AppState.save_server(); }
+                else if (AppState.current_tab == 1 && AppState.selected_preset_index >= 0 && AppState.form.id != "") { AppState.save_preset(); }
+                else if (AppState.current_tab == 2) { AppState.save_integrations(); }
             }
         }
-        KeyBinding { keys: @keys(Control + "1"); activated => { root.current_tab = 0; } }
-        KeyBinding { keys: @keys(Control + "2"); activated => { root.current_tab = 1; } }
-        KeyBinding { keys: @keys(Control + "3"); activated => { root.current_tab = 2; } }
-        KeyBinding { keys: @keys(F5); activated => { root.refresh_status(); } }
-        KeyBinding { keys: @keys(Control + N); activated => { root.new_preset(); } }
+        KeyBinding { keys: @keys(Control + "1"); activated => { AppState.current_tab = 0; } }
+        KeyBinding { keys: @keys(Control + "2"); activated => { AppState.current_tab = 1; } }
+        KeyBinding { keys: @keys(Control + "3"); activated => { AppState.current_tab = 2; } }
+        KeyBinding { keys: @keys(F5); activated => { AppState.refresh_status(); } }
+        KeyBinding { keys: @keys(Control + N); activated => { AppState.new_preset(); } }
 
     VerticalLayout {
         width: 100%;
@@ -289,13 +106,13 @@ export component AppWindow inherits Window {
         spacing: 0px;
 
         // ─── Overlay modals ────────────────────────────────────────────
-        if root.show_new_kind_picker: Rectangle {
+        if AppState.show_new_kind_picker: Rectangle {
             z: 1;
             width: 100%;
             height: 100%;
             background: #000000.transparentize(0.45);
             TouchArea {
-                clicked => { root.show_new_kind_picker = false; }
+                clicked => { AppState.show_new_kind_picker = false; }
             }
             Rectangle {
                 x: (parent.width - self.width) / 2;
@@ -314,15 +131,15 @@ export component AppWindow inherits Window {
                     padding: 22px;
                     spacing: 12px;
                     Text {
-                        text: root.new_dialog_source_id == "" ? "New preset" : "Clone preset";
+                        text: AppState.new_dialog_source_id == "" ? "New preset" : "Clone preset";
                         font-size: 16px;
                         font-weight: 700;
                         color: Palette.foreground;
                     }
                     Text {
-                        text: root.new_dialog_source_id == ""
+                        text: AppState.new_dialog_source_id == ""
                             ? "Pick the model for the new preset from your ModelsDir. It is created with default parameters."
-                            : "Cloning [" + root.new_dialog_source_id + "] → pick the target model from your ModelsDir. The new preset copies every parameter from [" + root.new_dialog_source_id + "] onto the model you pick.";
+                            : "Cloning [" + AppState.new_dialog_source_id + "] → pick the target model from your ModelsDir. The new preset copies every parameter from [" + AppState.new_dialog_source_id + "] onto the model you pick.";
                         wrap: word-wrap;
                         font-size: 12px;
                         color: Palette.foreground.transparentize(0.25);
@@ -330,8 +147,8 @@ export component AppWindow inherits Window {
                     LineEdit {
                         placeholder-text: "Filter models…";
                         input-type: search;
-                        text: root.dialog_filter;
-                        edited(t) => { root.dialog_filter = t; root.filter_dialog_models(t); }
+                        text: AppState.dialog_filter;
+                        edited(t) => { AppState.dialog_filter = t; AppState.filter_dialog_models(t); }
                     }
                     Rectangle {
                         border-width: 1px;
@@ -339,7 +156,7 @@ export component AppWindow inherits Window {
                         border-radius: 8px;
                         background: Palette.alternate-background;
                         vertical-stretch: 1;
-                        if root.dialog_model_labels.length == 0 : Text {
+                        if AppState.dialog_model_labels.length == 0 : Text {
                             x: 16px;
                             y: 16px;
                             width: parent.width - 32px;
@@ -349,12 +166,12 @@ export component AppWindow inherits Window {
                             color: Palette.foreground.transparentize(0.4);
                         }
                         ListView {
-                            for label[i] in root.dialog_model_labels : Rectangle {
+                            for label[i] in AppState.dialog_model_labels : Rectangle {
                                 height: 32px;
-                                background: i == root.dialog_model_index
+                                background: i == AppState.dialog_model_index
                                     ? Palette.accent-background.transparentize(0.82)
                                     : (touch.has-hover ? Palette.background : transparent);
-                                if i == root.dialog_model_index : Rectangle {
+                                if i == AppState.dialog_model_index : Rectangle {
                                     x: 0; y: 4px; width: 3px; height: parent.height - 8px;
                                     border-radius: 1.5px;
                                     background: Palette.accent-background;
@@ -372,7 +189,7 @@ export component AppWindow inherits Window {
                                 }
                                 touch := TouchArea {
                                     mouse-cursor: pointer;
-                                    clicked => { root.dialog_model_index = i; }
+                                    clicked => { AppState.dialog_model_index = i; }
                                 }
                             }
                         }
@@ -382,18 +199,18 @@ export component AppWindow inherits Window {
                         alignment: end;
                         Button {
                             text: "Cancel";
-                            clicked => { root.show_new_kind_picker = false; }
+                            clicked => { AppState.show_new_kind_picker = false; }
                         }
                         Button {
-                            text: root.new_dialog_source_id == "" ? "Create" : "Clone";
+                            text: AppState.new_dialog_source_id == "" ? "Create" : "Clone";
                             primary: true;
-                            enabled: root.dialog_model_index >= 0;
+                            enabled: AppState.dialog_model_index >= 0;
                             clicked => {
-                                root.show_new_kind_picker = false;
-                                if (root.new_dialog_source_id == "") {
-                                    root.pick_new_empty();
+                                AppState.show_new_kind_picker = false;
+                                if (AppState.new_dialog_source_id == "") {
+                                    AppState.pick_new_empty();
                                 } else {
-                                    root.pick_new_clone();
+                                    AppState.pick_new_clone();
                                 }
                             }
                         }
@@ -402,13 +219,13 @@ export component AppWindow inherits Window {
             }
         }
 
-        if root.show_rename_dialog: Rectangle {
+        if AppState.show_rename_dialog: Rectangle {
             z: 1;
             width: 100%;
             height: 100%;
             background: #000000.transparentize(0.45);
             TouchArea {
-                clicked => { root.show_rename_dialog = false; }
+                clicked => { AppState.show_rename_dialog = false; }
             }
             Rectangle {
                 x: (parent.width - self.width) / 2;
@@ -433,20 +250,20 @@ export component AppWindow inherits Window {
                         color: Palette.foreground;
                     }
                     Text {
-                        text: "Renaming [" + root.rename_old_id + "]. This only changes the section header in presets.ini; every parameter inside is preserved.";
+                        text: "Renaming [" + AppState.rename_old_id + "]. This only changes the section header in presets.ini; every parameter inside is preserved.";
                         wrap: word-wrap;
                         font-size: 12px;
                         color: Palette.foreground.transparentize(0.25);
                     }
                     LineEdit {
-                        text: root.rename_new_id;
+                        text: AppState.rename_new_id;
                         placeholder-text: "New id";
-                        edited(t) => { root.rename_new_id = t; }
+                        edited(t) => { AppState.rename_new_id = t; }
                         accepted(t) => {
-                            root.rename_new_id = t;
-                            if (t != "" && t != root.rename_old_id) {
-                                root.show_rename_dialog = false;
-                                root.rename_preset(root.rename_old_id, t);
+                            AppState.rename_new_id = t;
+                            if (t != "" && t != AppState.rename_old_id) {
+                                AppState.show_rename_dialog = false;
+                                AppState.rename_preset(AppState.rename_old_id, t);
                             }
                         }
                     }
@@ -456,15 +273,15 @@ export component AppWindow inherits Window {
                         alignment: end;
                         Button {
                             text: "Cancel";
-                            clicked => { root.show_rename_dialog = false; }
+                            clicked => { AppState.show_rename_dialog = false; }
                         }
                         Button {
                             text: "Rename";
                             primary: true;
-                            enabled: root.rename_new_id != "" && root.rename_new_id != root.rename_old_id;
+                            enabled: AppState.rename_new_id != "" && AppState.rename_new_id != AppState.rename_old_id;
                             clicked => {
-                                root.show_rename_dialog = false;
-                                root.rename_preset(root.rename_old_id, root.rename_new_id);
+                                AppState.show_rename_dialog = false;
+                                AppState.rename_preset(AppState.rename_old_id, AppState.rename_new_id);
                             }
                         }
                     }
@@ -493,58 +310,57 @@ export component AppWindow inherits Window {
                     NavItem {
                         glyph: "\u{E713}";
                         label: "Server";
-                        selected: root.current_tab == 0;
-                        clicked => { root.current_tab = 0; }
+                        selected: AppState.current_tab == 0;
+                        clicked => { AppState.current_tab = 0; }
                     }
                     NavItem {
                         glyph: "\u{EB9F}";
                         label: "Models";
-                        selected: root.current_tab == 1;
-                        clicked => { root.current_tab = 1; }
+                        selected: AppState.current_tab == 1;
+                        clicked => { AppState.current_tab = 1; }
                     }
                     NavItem {
                         glyph: "\u{E943}";
                         label: "Integrations";
-                        selected: root.current_tab == 2;
-                        clicked => { root.current_tab = 2; }
+                        selected: AppState.current_tab == 2;
+                        clicked => { AppState.current_tab = 2; }
                     }
 
                     // Spacer pushes the server controls to the bottom of the rail.
                     Rectangle { vertical-stretch: 1; }
 
                     // ── Server controls ──────────────────────────────
-                    // Moved here from the Server tab's old "Control" card:
-                    // Start/Stop stacked over Open chat UI. Live status drives
-                    // which of Start/Stop shows; Open chat UI is enabled only
-                    // while the server is running.
+                    // Start/Stop stacked over Open chat UI over Refresh. Live
+                    // status drives which of Start/Stop shows; Open chat UI is
+                    // enabled only while the server is running.
                     VerticalLayout {
                         spacing: 8px;
                         // Transitional state: Stop was triggered but the process
                         // (and its GPU context) is still tearing down.
-                        if root.server_stopping : Button {
+                        if AppState.server_stopping : Button {
                             text: "Stopping…";
                             enabled: false;
                         }
-                        if !root.server_stopping && root.server_running : Button {
+                        if !AppState.server_stopping && AppState.server_running : Button {
                             text: "Stop";
-                            clicked => { root.stop_server(); }
+                            clicked => { AppState.stop_server(); }
                         }
-                        if !root.server_stopping && !root.server_running : Button {
+                        if !AppState.server_stopping && !AppState.server_running : Button {
                             text: "Start";
                             primary: true;
-                            clicked => { root.start_server(); }
+                            clicked => { AppState.start_server(); }
                         }
                         Button {
                             text: "Open chat UI";
-                            enabled: root.server_running && !root.server_stopping;
-                            clicked => { Platform.open-url("http://localhost:" + root.server_port); }
+                            enabled: AppState.server_running && !AppState.server_stopping;
+                            clicked => { Platform.open-url("http://localhost:" + AppState.server_port); }
                         }
                         // Re-read the config files and re-scan the models
                         // directory. Always available — use it after adding a
                         // model file or hand-editing server.ini / presets.ini.
                         Button {
                             text: "Refresh";
-                            clicked => { root.reload_all(); }
+                            clicked => { AppState.reload_all(); }
                         }
                     }
                     }
@@ -556,101 +372,10 @@ export component AppWindow inherits Window {
                 background: Palette.background;
 
                 VerticalLayout {
-
-                // ─────────────── Page 0: Server ───────────────
-                if root.current_tab == 0 : ServerPage {
-                    server_port <=> root.server_port;
-                    server_hostname <=> root.server_hostname;
-                    bind_labels <=> root.bind_labels;
-                    bind_values <=> root.bind_values;
-                    bind_index <=> root.bind_index;
-                    server_mlock <=> root.server_mlock;
-                    server_threads <=> root.server_threads;
-                    server_cache_reuse <=> root.server_cache_reuse;
-                    server_threads_batch <=> root.server_threads_batch;
-                    server_models_max <=> root.server_models_max;
-                    server_models_dir <=> root.server_models_dir;
-                    server_device <=> root.server_device;
-                    server_split_mode <=> root.server_split_mode;
-                    server_tensor_split <=> root.server_tensor_split;
-                    server_dev_labels <=> root.server_dev_labels;
-                    server_dev_values <=> root.server_dev_values;
-                    server_dev_index <=> root.server_dev_index;
-                    server_command_line: root.server_command_line;
-                    server_dirty: root.server_dirty;
-                    save_server => { root.save_server(); }
-                    revert_server => { root.revert_server(); }
-                    browse_models_dir(a) => { root.browse_models_dir(a) }
+                    if AppState.current_tab == 0 : ServerPage { }
+                    if AppState.current_tab == 1 : ModelsPage { }
+                    if AppState.current_tab == 2 : IntegrationsPage { }
                 }
-
-                // ─────────────── Page 1: Models ───────────────
-                if root.current_tab == 1 : ModelsPage {
-                    form <=> root.form;
-                    presets <=> root.presets;
-                    selected_preset_index <=> root.selected_preset_index;
-                    presets_path <=> root.presets_path;
-                    presets_filter <=> root.presets_filter;
-                    model_labels <=> root.model_labels;
-                    model_values <=> root.model_values;
-                    model_index <=> root.model_index;
-                    mmproj_labels <=> root.mmproj_labels;
-                    mmproj_values <=> root.mmproj_values;
-                    mmproj_index <=> root.mmproj_index;
-                    draft_labels <=> root.draft_labels;
-                    draft_values <=> root.draft_values;
-                    draft_specs <=> root.draft_specs;
-                    draft_index <=> root.draft_index;
-                    pdev_labels <=> root.pdev_labels;
-                    pdev_values <=> root.pdev_values;
-                    pdev_index <=> root.pdev_index;
-                    pdraft_labels <=> root.pdraft_labels;
-                    pdraft_values <=> root.pdraft_values;
-                    pdraft_index <=> root.pdraft_index;
-                    model_info_ready <=> root.model_info_ready;
-                    model_info_note <=> root.model_info_note;
-                    model_info_kind <=> root.model_info_kind;
-                    model_info_has_moe <=> root.model_info_has_moe;
-                    model_info_moe <=> root.model_info_moe;
-                    model_info_arch_quant <=> root.model_info_arch_quant;
-                    model_info_layers_ctx <=> root.model_info_layers_ctx;
-                    model_info_attn <=> root.model_info_attn;
-                    model_info_draft <=> root.model_info_draft;
-                    model_info_has_mmproj <=> root.model_info_has_mmproj;
-                    model_info_mmproj <=> root.model_info_mmproj;
-                    model_info_has_draft_file <=> root.model_info_has_draft_file;
-                    model_info_draft_file <=> root.model_info_draft_file;
-                    model_info_draft_n_layer <=> root.model_info_draft_n_layer;
-                    gpu_layers_max: root.gpu_layers_max;
-                    draft_layers_max: root.draft_layers_max;
-                    draft_active: root.draft_active;
-                    preset_dirty: root.preset_dirty;
-                    server_device <=> root.server_device;
-                    show_rename_dialog <=> root.show_rename_dialog;
-                    rename_old_id <=> root.rename_old_id;
-                    rename_new_id <=> root.rename_new_id;
-                    select_preset(a) => { root.select_preset(a); }
-                    save_preset => { root.save_preset(); }
-                    revert_preset => { root.revert_preset(); }
-                    delete_preset(a) => { root.delete_preset(a); }
-                    new_preset => { root.new_preset(); }
-                    clone_preset => { root.clone_preset(); }
-                    filter_presets(a) => { root.filter_presets(a); }
-                    model_changed => { root.model_changed(); }
-                    sync_device_dropdowns => { root.sync_device_dropdowns(); }
-                }
-
-                // ─────────────── Page 2: Integrations ───────────────
-                if root.current_tab == 2 : IntegrationsPage {
-                    integration_base_url <=> root.integration_base_url;
-                    integration_models <=> root.integration_models;
-                    integration_provider_active <=> root.integration_provider_active;
-                    integration_claude_env <=> root.integration_claude_env;
-                    toggle_integration_model(a) => { root.toggle_integration_model(a); }
-                    save_integrations => { root.save_integrations(); }
-                    revert_integrations => { root.revert_integrations(); }
-                }
-
-                } // /VerticalLayout (content swap)
             }
         }
 
@@ -666,12 +391,12 @@ export component AppWindow inherits Window {
                 background: Palette.border;
             }
             // ─── Messages (left) ──────────────────────────────────
-            if root.status_text != "" : Text {
+            if AppState.status_text != "" : Text {
                 x: 16px;
                 y: 0;
                 height: 100%;
-                text: root.status_text;
-                color: root.status_is_error ? #c62828 : Palette.foreground;
+                text: AppState.status_text;
+                color: AppState.status_is_error ? #c62828 : Palette.foreground;
                 font-size: 12px;
                 vertical-alignment: center;
             }
@@ -682,8 +407,8 @@ export component AppWindow inherits Window {
                 y: 0;
                 height: 100%;
                 width: 108px;
-                text: root.server_status_is_error ? "Error"
-                    : (root.server_running ? "Running" : "Stopped");
+                text: AppState.server_status_is_error ? "Error"
+                    : (AppState.server_running ? "Running" : "Stopped");
                 font-size: 12px;
                 vertical-alignment: center;
                 horizontal-alignment: right;
@@ -695,8 +420,8 @@ export component AppWindow inherits Window {
                 width: 8px;
                 height: 8px;
                 border-radius: 4px;
-                background: root.server_status_is_error ? #c62828
-                    : (root.server_running ? #2e7d32 : #666666);
+                background: AppState.server_status_is_error ? #c62828
+                    : (AppState.server_running ? #2e7d32 : #666666);
             }
         }
 

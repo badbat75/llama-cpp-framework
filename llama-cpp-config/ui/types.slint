@@ -22,6 +22,9 @@ export struct PresetForm {
     device: string,
     split_mode: string,
     tensor_split: string,
+    // Always-valued integers: two-way-bound to a SpinBox `value` (int), so
+    // editing keeps them reactive (a one-way binding breaks on user input,
+    // leaving the field stale on preset switch).
     ctx_size: int,
     n_gpu_layers: int,
     n_gpu_layers_auto: bool,
@@ -31,7 +34,9 @@ export struct PresetForm {
     cache_type_k: string,
     cache_type_v: string,
     flash_attn: bool,
-    cache_ram: int,
+    // Blank-able numerics stay `string` (LineEdit `text <=>`): SpinBox has no
+    // "empty" state, and these carry a "blank = default" meaning.
+    cache_ram: string,
     jinja: bool,
     reasoning: string,
     reasoning_format: string,

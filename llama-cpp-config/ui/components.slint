@@ -36,6 +36,47 @@ export component SectionCard {
     }
 }
 
+// A horizontal set of mutually-exclusive pills — a reactive replacement for a
+// `RadioGroup` in a form. The selected state is a PURE derived read of `current`
+// (supplied by the caller as a binding); this component never assigns a bound
+// property imperatively, so — unlike `RadioButton.checked` — the caller's binding
+// is never broken and the highlight follows `current` even after the user clicks
+// (e.g. when the backing model is swapped on a preset switch). Clicks are reported
+// via `activated`; the caller writes the model.
+export component SegmentedControl inherits HorizontalLayout {
+    in property <[string]> options;
+    in property <string> current;
+    callback activated(string);
+    spacing: 6px;
+    for opt in root.options : Rectangle {
+        height: 30px;
+        min-width: 60px;
+        border-radius: 6px;
+        border-width: 1px;
+        border-color: opt == root.current ? Palette.accent-background : Palette.border;
+        background: opt == root.current
+            ? Palette.accent-background.transparentize(0.85)
+            : (touch.has-hover ? Palette.alternate-background : transparent);
+        HorizontalLayout {
+            padding-left: 12px;
+            padding-right: 12px;
+            Text {
+                text: opt;
+                vertical-alignment: center;
+                horizontal-alignment: center;
+                horizontal-stretch: 1;
+                font-size: 13px;
+                font-weight: opt == root.current ? 600 : 400;
+                color: opt == root.current ? Palette.accent-background : Palette.foreground;
+            }
+        }
+        touch := TouchArea {
+            mouse-cursor: pointer;
+            clicked => { root.activated(opt); }
+        }
+    }
+}
+
 export component LabeledField inherits HorizontalLayout {
     in property <string> label;
     // Optional hover help. When set, an ⓘ glyph is shown after the label and
