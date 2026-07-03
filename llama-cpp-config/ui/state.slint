@@ -10,6 +10,7 @@
 // global — it keeps its own pushed-in state.
 
 import { PresetSummary, PresetForm, ServerForm, IntegrationModel } from "types.slint";
+import { Options } from "components.slint";
 
 export global AppState {
     // Crate version (CARGO_PKG_VERSION), pushed in from Rust at startup so the
@@ -29,6 +30,11 @@ export global AppState {
     in-out property <bool> server_status_is_error: false;
     in-out property <string> server_version: "";
     in-out property <string> server_command_line: "";
+    // The URL the Open-chat button launches. Derived by Rust from the SAVED
+    // server.ini alongside the command line (gui::refresh_server_snapshot):
+    // saved port + client_host, which maps a 0.0.0.0 bind to localhost (a
+    // listen address is not a connectable one).
+    in-out property <string> chat_url: "";
 
     // ── Server tab state ─────────────────────────────────────────────
     // All editable server.ini fields live in one struct (ServerForm), like the
@@ -56,20 +62,18 @@ export global AppState {
     in-out property <[string]> bind_values;
     in-out property <int> bind_index: 0;
 
-    // GPU device enumeration (parsed from `llama-server --list-devices`).
-    // `all_device_*` is the cached raw list filled by the async probe; the
-    // per-combobox *_labels/_values/_index triples are derived from it.
-    in-out property <[string]> all_device_ids;
-    in-out property <[string]> all_device_labels;
+    // GPU-device dropdown triples (server-wide, per-preset model, per-preset
+    // draft), derived from the async `--list-devices` probe. The raw device
+    // list itself is Rust-only (`devices::probed()`), not published here.
     in-out property <[string]> server_dev_labels;
     in-out property <[string]> server_dev_values;
     in-out property <int> server_dev_index: 0;
-    in-out property <[string]> pdev_labels;
-    in-out property <[string]> pdev_values;
-    in-out property <int> pdev_index: 0;
-    in-out property <[string]> pdraft_labels;
-    in-out property <[string]> pdraft_values;
-    in-out property <int> pdraft_index: 0;
+    in-out property <[string]> preset_dev_labels;
+    in-out property <[string]> preset_dev_values;
+    in-out property <int> preset_dev_index: 0;
+    in-out property <[string]> preset_draft_dev_labels;
+    in-out property <[string]> preset_draft_dev_values;
+    in-out property <int> preset_draft_dev_index: 0;
 
     // ── Models tab state ─────────────────────────────────────────────
     in-out property <[PresetSummary]> presets;
@@ -93,10 +97,10 @@ export global AppState {
     in-out property <[string]> mmproj_values;
     in-out property <int> mmproj_index: -1;
     // Unified draft-model picker (MTP heads from mtps\ + DFlash drafters from
-    // dflashs\). `draft_specs[i]` is the --spec-type to apply when row i is picked.
+    // dflashs\). Only labels + index live here; the per-row (--model-draft,
+    // --spec-type) pairs are Rust-only (`State.draft_rows` in gui.rs), read by
+    // the draft_picked handler.
     in-out property <[string]> draft_labels;
-    in-out property <[string]> draft_values;
-    in-out property <[string]> draft_specs;
     in-out property <int> draft_index: -1;
 
     // Read-only "Model info" box, filled by Rust (model_changed) from the
@@ -123,11 +127,12 @@ export global AppState {
     in-out property <bool> model_info_embeds_mtp: false;
     // Layer counts (block_count) of the selected model and draft, driving the
     // GPU-layers / MoE-CPU-layers / draft-GPU-layers slider maxima. 0 = unknown
-    // (metadata unavailable), in which case the sliders fall back to a 0..99 range.
+    // (metadata unavailable), in which case the sliders fall back to a
+    // 0..Options.all_layers range.
     in-out property <int> model_info_n_layer: 0;
     in-out property <int> model_info_draft_n_layer: 0;
-    out property <int> gpu_layers_max: model_info_n_layer > 0 ? model_info_n_layer : 99;
-    out property <int> draft_layers_max: model_info_draft_n_layer > 0 ? model_info_draft_n_layer : 99;
+    out property <int> gpu_layers_max: model_info_n_layer > 0 ? model_info_n_layer : Options.all_layers;
+    out property <int> draft_layers_max: model_info_draft_n_layer > 0 ? model_info_draft_n_layer : Options.all_layers;
     // Speculative-decoding controls are active when a draft model is selected OR
     // the main model embeds MTP heads — otherwise there is nothing to draft with.
     out property <bool> draft_active: form.model_draft != "" || model_info_embeds_mtp;

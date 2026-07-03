@@ -1,4 +1,18 @@
 // Minimal INI parser / writer that preserves comments and section order.
+//
+// The behavioral contract callers rely on:
+// - Section lookup is CASE-INSENSITIVE everywhere (read_section and all the
+//   writers, via find_section_header) — a hand-edited `[server]` header never
+//   spawns a duplicate section.
+// - Values are TRIMMED on parse, and an inline `; note` / `# note` tail is
+//   stripped only when the marker has whitespace on BOTH sides ("a;b" stays a
+//   value) — writers must therefore emit trimmed values or break round-trips.
+// - Writers preserve the file's existing line endings (per line on replace,
+//   detected once on insert); brand-new content defaults to CRLF.
+// - `atomic_write` (sibling temp file + rename) is the canonical write path —
+//   every config writer in the crate funnels through it.
+// - `parse_int` / `parse_float` / `parse_bool` are the shared lenient scalar
+//   parsers ("true"/"false" only for bools; anything else reads as unset).
 
 use std::borrow::Cow;
 use std::collections::BTreeMap;
@@ -79,20 +93,27 @@ pub fn read_section(path: &Path, section: &str) -> BTreeMap<String, String> {
 pub fn replace_key(path: &Path, section: &str, key: &str, value: &str) -> std::io::Result<()> {
     let new_line = format!("{key} = {value}");
     let content = fs::read_to_string(path).unwrap_or_default();
+    // Inserted lines follow the file's line-ending style (the replace path
+    // below preserves it per line); brand-new / empty files get CRLF.
+    let eol = if content.contains('\n') && !content.contains("\r\n") {
+        "\n"
+    } else {
+        "\r\n"
+    };
 
     let header = format!("[{section}]");
     let Some(header_pos) = find_section_header(&content, &header) else {
         let mut out = content;
         if !out.is_empty() && !out.ends_with('\n') {
-            out.push_str("\r\n");
+            out.push_str(eol);
         }
         if !out.is_empty() {
-            out.push_str("\r\n");
+            out.push_str(eol);
         }
         out.push_str(&header);
-        out.push_str("\r\n");
+        out.push_str(eol);
         out.push_str(&new_line);
-        out.push_str("\r\n");
+        out.push_str(eol);
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
@@ -124,7 +145,7 @@ pub fn replace_key(path: &Path, section: &str, key: &str, value: &str) -> std::i
     if !replaced {
         let trimmed = new_body.trim_end_matches(['\r', '\n']);
         let tail = &new_body[trimmed.len()..];
-        new_body = format!("{trimmed}\r\n{new_line}\r\n{tail}");
+        new_body = format!("{trimmed}{eol}{new_line}{eol}{tail}");
     }
 
     let mut out = String::with_capacity(content.len() + new_line.len());
@@ -386,6 +407,12 @@ mod tests {
         let content = fs::read_to_string(&path).unwrap();
         assert!(content.contains("Hostname = 0.0.0.0\n"));
         assert!(!content.contains("Hostname = 0.0.0.0\r\n"));
+        // The insert path too: appending a missing key must not smuggle a CRLF
+        // into an LF-only file.
+        replace_key(&path, "Server", "ModelsDir", "C:/models").unwrap();
+        let content = fs::read_to_string(&path).unwrap();
+        assert!(!content.contains('\r'), "LF-only file gained a CR");
+        assert_eq!(read_section(&path, "Server")["ModelsDir"], "C:/models");
     }
 
     #[test]

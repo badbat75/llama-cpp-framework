@@ -1,8 +1,13 @@
 // ModelsPage: the models tab (preset editor). All state lives in AppState
 // (state.slint); this component lays out the widgets against it.
+//
+// Layout: preset list (left column) | editor cards (right, grep `heading:`):
+// Assets → Model info → Hardware Config → Resource / context → KV cache →
+// Chat / reasoning → Sampling overrides → Advanced → Speculative decoding,
+// then the FormActions row.
 
-import { LineEdit, ComboBox, CheckBox, Button, ListView, ScrollView, Palette, Slider, SpinBox } from "std-widgets.slint";
-import { SectionCard, LabeledField, InfoRow, SegmentedControl, MappedComboBox, AutoSlider, FormActions, Tokens, Options } from "components.slint";
+import { LineEdit, ComboBox, CheckBox, Button, ListView, ScrollView, Palette, SpinBox } from "std-widgets.slint";
+import { SectionCard, LabeledField, InfoRow, SegmentedControl, MappedComboBox, AutoSlider, FormActions, SelectableRow, Tokens, Options } from "components.slint";
 import { AppState } from "state.slint";
 
 export component ModelsPage inherits HorizontalLayout {
@@ -43,35 +48,11 @@ export component ModelsPage inherits HorizontalLayout {
                 // delegate is a fixed 36px tall — a data-dependent height confuses
                 // ListView's running-sum layout and the rows render on top of each
                 // other. `p.orig_index` maps back to the full presets vector.
-                for p in AppState.presets : Rectangle {
-                    accessible-role: list-item;
-                    accessible-label: p.id;
+                for p in AppState.presets : SelectableRow {
                     height: 36px;
-                    background: p.orig_index == AppState.selected_preset_index
-                        ? Palette.accent-background.transparentize(Tokens.sel)
-                        : (item-touch.has-hover ? Palette.background : transparent);
-
-                    if p.orig_index == AppState.selected_preset_index : Rectangle {
-                        x: 0; y: 6px; width: 3px; height: parent.height - 12px;
-                        border-radius: 1.5px;
-                        background: Palette.accent-background;
-                    }
-
-                    HorizontalLayout {
-                        padding-left: 12px;
-                        padding-right: 12px;
-                        Text {
-                            text: p.id;
-                            font-size: 12px;
-                            color: Palette.foreground;
-                            vertical-alignment: center;
-                            overflow: elide;
-                        }
-                    }
-                    item-touch := TouchArea {
-                        mouse-cursor: pointer;
-                        clicked => { AppState.select_preset(p.orig_index); }
-                    }
+                    label: p.id;
+                    selected: p.orig_index == AppState.selected_preset_index;
+                    clicked => { AppState.select_preset(p.orig_index); }
                 }
             }
         }
@@ -95,6 +76,10 @@ export component ModelsPage inherits HorizontalLayout {
                 Button {
                     text: "Rename…";
                     enabled: AppState.selected_preset_index >= 0;
+                    // Opens its dialog purely Slint-side (seed the fields, show
+                    // the modal) — unlike New…/Clone…, which route through Rust
+                    // callbacks. The actual rename fires from the dialog in
+                    // app.slint (AppState.rename_preset).
                     clicked => {
                         AppState.rename_old_id = AppState.form.id;
                         AppState.rename_new_id = AppState.form.id;
@@ -249,9 +234,9 @@ export component ModelsPage inherits HorizontalLayout {
                     label: "GPU device";
                     hint: "GPU this model runs on (--device, e.g. CUDA0).\nOverrides the server default.\nBlank = use server default.";
                     MappedComboBox {
-                        labels: AppState.pdev_labels;
-                        values: AppState.pdev_values;
-                        index <=> AppState.pdev_index;
+                        labels: AppState.preset_dev_labels;
+                        values: AppState.preset_dev_values;
+                        index <=> AppState.preset_dev_index;
                         picked(v) => { AppState.form.device = v; }
                     }
                 }
@@ -304,9 +289,9 @@ export component ModelsPage inherits HorizontalLayout {
                     MappedComboBox {
                         // Active only when a draft is available (selected or embedded MTP).
                         enabled: AppState.draft_active;
-                        labels: AppState.pdraft_labels;
-                        values: AppState.pdraft_values;
-                        index <=> AppState.pdraft_index;
+                        labels: AppState.preset_draft_dev_labels;
+                        values: AppState.preset_draft_dev_values;
+                        index <=> AppState.preset_draft_dev_index;
                         picked(v) => { AppState.form.device_draft = v; }
                     }
                 }
@@ -328,7 +313,7 @@ export component ModelsPage inherits HorizontalLayout {
                     // its highlight is a pure read of the model, so it never goes
                     // stale after a click — a Switch's `checked` self-assignment
                     // would break its one-way binding (the v1.1.1 staleness
-                    // class). on GPU = all draft layers (99), on CPU = 0.
+                    // class). on GPU = all draft layers, on CPU = 0.
                     if AppState.model_info_draft_n_layer == 0 : CheckBox {
                         text: "auto";
                         // Active only when a draft is available (selected or embedded MTP).
@@ -340,7 +325,7 @@ export component ModelsPage inherits HorizontalLayout {
                         enabled: !AppState.form.n_gpu_layers_draft_auto && AppState.draft_active;
                         options: ["on GPU", "on CPU"];
                         current: AppState.form.n_gpu_layers_draft >= 1 ? "on GPU" : "on CPU";
-                        activated(v) => { AppState.form.n_gpu_layers_draft = v == "on GPU" ? 99 : 0; }
+                        activated(v) => { AppState.form.n_gpu_layers_draft = v == "on GPU" ? Options.all_layers : 0; }
                     }
                 }
             }

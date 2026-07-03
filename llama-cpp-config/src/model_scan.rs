@@ -1,4 +1,10 @@
 // Catalogue .gguf files under a ModelsDir subdirectory for the GUI dropdowns.
+//
+// `list` walks `<root>/<Category::subdir()>` recursively, skipping non-first
+// shards of multi-file GGUFs. `build_options` / `build_draft_options` turn a
+// scan into the `(labels, values[, specs], index)` arrays a dropdown binds to;
+// a `current` value missing from the scan is preserved as a "(custom)" row
+// (`custom_row`) so a stale or hand-edited path never silently disappears.
 
 use std::path::{Component, Path, PathBuf};
 
@@ -166,14 +172,22 @@ pub fn build_options(
         return (labels, values, i as i32);
     }
 
-    let basename = Path::new(current_trim)
+    let (label, value) = custom_row(current_trim);
+    let insert_at = if category.is_optional() { 1 } else { 0 };
+    labels.insert(insert_at, label);
+    values.insert(insert_at, value);
+    (labels, values, insert_at as i32)
+}
+
+/// The `(label, value)` pair preserving a current path that matched no scanned
+/// file — shared by `build_options` and `build_draft_options` so the two
+/// "(custom)" rows can't drift.
+fn custom_row(current: &str) -> (String, String) {
+    let basename = Path::new(current)
         .file_name()
         .map(|s| s.to_string_lossy().into_owned())
-        .unwrap_or_else(|| current_trim.to_string());
-    let insert_at = if category.is_optional() { 1 } else { 0 };
-    labels.insert(insert_at, format!("(custom) {basename}"));
-    values.insert(insert_at, current_trim.to_string());
-    (labels, values, insert_at as i32)
+        .unwrap_or_else(|| current.to_string());
+    (format!("(custom) {basename}"), current.to_string())
 }
 
 /// Build the unified draft-model dropdown that merges MTP heads (`mtps\`) and
@@ -213,16 +227,13 @@ pub fn build_draft_options(
         return (labels, values, specs, i as i32);
     }
 
-    let basename = Path::new(current_trim)
-        .file_name()
-        .map(|s| s.to_string_lossy().into_owned())
-        .unwrap_or_else(|| current_trim.to_string());
     let spec = match current_spec.trim() {
         "" => "none",
         other => other,
     };
-    labels.insert(1, format!("(custom) {basename}"));
-    values.insert(1, current_trim.to_string());
+    let (label, value) = custom_row(current_trim);
+    labels.insert(1, label);
+    values.insert(1, value);
     specs.insert(1, spec.to_string());
     (labels, values, specs, 1)
 }

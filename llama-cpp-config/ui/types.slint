@@ -2,7 +2,6 @@
 
 export struct PresetSummary {
     id: string,
-    model: string,
     // Index into the full (unfiltered) presets vector on the Rust side. The list
     // model only holds rows that pass the filter, so the `for` index is NOT a
     // stable handle — `orig_index` is what select_preset()/highlighting use.

@@ -77,13 +77,12 @@ pub fn detect_opencode_provider() -> bool {
 // ── Claude Code ────────────────────────────────────────────────────────
 
 /// Generates a PowerShell snippet that sets the env vars needed for
-/// Claude Code to use llama-server as a custom model provider.
-pub fn claude_code_env_script(base_url: &str) -> String {
+/// Claude Code to use llama-server as a custom model provider. `example_id` is
+/// a preset id to show in the commented model line (the caller already holds
+/// the loaded presets — this stays a pure string builder, no hidden disk IO).
+pub fn claude_code_env_script(base_url: &str, example_id: Option<&str>) -> String {
     let base = base_url.trim_end_matches("/v1");
-    let example = presets::load_all()
-        .first()
-        .map(|p| p.id.clone())
-        .unwrap_or_else(|| "<preset-id>".to_string());
+    let example = example_id.unwrap_or("<preset-id>");
     format!(
         "# Run this in PowerShell before launching Claude Code to use your local llama-server.\r\n\
          $env:ANTHROPIC_BASE_URL = \"{base}\"\r\n\

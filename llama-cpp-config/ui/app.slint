@@ -8,7 +8,7 @@
 
 import { LineEdit, Button, ListView, Palette } from "std-widgets.slint";
 import { AppState } from "state.slint";
-import { Tokens, ModalOverlay } from "components.slint";
+import { Tokens, ModalOverlay, AccentBar, SelectableRow } from "components.slint";
 // Re-export so Slint generates the Rust accessor (`app.global::<AppState>()`);
 // a bare import wouldn't surface it to Rust.
 export { AppState }
@@ -37,11 +37,7 @@ component NavItem inherits Rectangle {
         ? Palette.accent-background.transparentize(Tokens.sel)
         : (touch.has-hover ? Palette.alternate-background : transparent);
 
-    if selected : Rectangle {
-        x: 0; y: 8px; width: 3px; height: parent.height - 16px;
-        border-radius: 1.5px;
-        background: Palette.accent-background;
-    }
+    if selected : AccentBar { y: 8px; height: parent.height - 16px; }
 
     HorizontalLayout {
         padding-left: 16px;
@@ -101,8 +97,10 @@ export component AppWindow inherits Window {
             keys: @keys(Control + S);
             activated => {
                 if (AppState.modal_open) { return; }
-                // Same gating as the Save buttons — both read the can_save_*
-                // properties in state.slint so the conditions can't drift.
+                // Same gating as the Save buttons: tabs 0/1 read the shared
+                // can_save_* properties in state.slint so those conditions
+                // can't drift; tab 2 (integrations) is deliberately ungated on
+                // both surfaces (its Save is always available).
                 if (AppState.current_tab == 0 && AppState.can_save_server) { AppState.save_server(); }
                 else if (AppState.current_tab == 1 && AppState.can_save_preset) { AppState.save_preset(); }
                 else if (AppState.current_tab == 2) { AppState.save_integrations(); }
@@ -183,10 +181,11 @@ export component AppWindow inherits Window {
                         Button {
                             text: "Open chat UI";
                             enabled: AppState.server_running && !AppState.server_stopping;
-                            // server_form_base, not server_form: the running server
-                            // listens on the SAVED port (runstate reads server.ini),
-                            // not on an unsaved edit of the port field.
-                            clicked => { Platform.open-url("http://localhost:" + AppState.server_form_base.port); }
+                            // chat_url tracks the SAVED server.ini (host+port),
+                            // not an unsaved form edit — and maps a 0.0.0.0
+                            // bind to localhost. Derived in Rust
+                            // (gui::refresh_server_snapshot).
+                            clicked => { Platform.open-url(AppState.chat_url); }
                         }
                         // Re-read the config files and re-scan the models
                         // directory. Always available — use it after adding a
@@ -312,33 +311,11 @@ export component AppWindow inherits Window {
                 color: Palette.foreground.transparentize(Tokens.muted);
             }
             ListView {
-                for label[i] in AppState.dialog_model_labels : Rectangle {
-                    accessible-role: list-item;
-                    accessible-label: label;
+                for label[i] in AppState.dialog_model_labels : SelectableRow {
                     height: 32px;
-                    background: i == AppState.dialog_model_index
-                        ? Palette.accent-background.transparentize(Tokens.sel)
-                        : (touch.has-hover ? Palette.background : transparent);
-                    if i == AppState.dialog_model_index : Rectangle {
-                        x: 0; y: 4px; width: 3px; height: parent.height - 8px;
-                        border-radius: 1.5px;
-                        background: Palette.accent-background;
-                    }
-                    HorizontalLayout {
-                        padding-left: 12px;
-                        padding-right: 12px;
-                        Text {
-                            text: label;
-                            font-size: 12px;
-                            color: Palette.foreground;
-                            vertical-alignment: center;
-                            overflow: elide;
-                        }
-                    }
-                    touch := TouchArea {
-                        mouse-cursor: pointer;
-                        clicked => { AppState.dialog_model_index = i; }
-                    }
+                    label: label;
+                    selected: i == AppState.dialog_model_index;
+                    clicked => { AppState.dialog_model_index = i; }
                 }
             }
         }
@@ -374,10 +351,12 @@ export component AppWindow inherits Window {
             text <=> AppState.rename_new_id;
             placeholder-text: "New id";
             init => { self.focus(); }
-            accepted(t) => {
-                if (t != "" && t != AppState.rename_old_id) {
+            // Enter submits iff the Rename button would allow it — one gate
+            // (the button's `enabled`), so the two paths can't drift.
+            accepted => {
+                if (rename-btn.enabled) {
                     AppState.show_rename_dialog = false;
-                    AppState.rename_preset(AppState.rename_old_id, t);
+                    AppState.rename_preset(AppState.rename_old_id, AppState.rename_new_id);
                 }
             }
         }
@@ -389,7 +368,7 @@ export component AppWindow inherits Window {
                 text: "Cancel";
                 clicked => { AppState.show_rename_dialog = false; }
             }
-            Button {
+            rename-btn := Button {
                 text: "Rename";
                 primary: true;
                 enabled: AppState.rename_new_id != "" && AppState.rename_new_id != AppState.rename_old_id;

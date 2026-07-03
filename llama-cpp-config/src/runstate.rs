@@ -43,10 +43,10 @@ fn server_args(
     cfg: &crate::server_cfg::ServerConfig,
     presets_path: &std::path::Path,
 ) -> Vec<String> {
-    let hostname = cfg.hostname.clone().unwrap_or_else(|| "localhost".into());
-    let port = cfg.port.unwrap_or(8080);
+    let hostname = cfg.hostname_or_default();
+    let port = cfg.port_or_default();
     let models_max = cfg.models_max.unwrap_or(1);
-    let mlock = cfg.mlock.unwrap_or(true);
+    let mlock = cfg.mlock_or_default();
 
     // Fixed framework policy flags (not exposed in the UI):
     //   --webui-mcp-proxy : serve the built-in web UI's MCP proxy endpoint.
@@ -211,13 +211,20 @@ pub fn command_line() -> Option<String> {
     let cfg = crate::server_cfg::load();
     let exe = crate::paths::llama_server_exe()?;
     let presets_path = crate::paths::presets_ini();
+    Some(render_command_line(
+        &exe.to_string_lossy(),
+        &server_args(&cfg, &presets_path),
+    ))
+}
 
-    // Group the flat arg list into `--flag [value...]` lines: a token that
-    // starts with '-' opens a new line; following non-flag tokens (values)
-    // attach to the current line.
-    let mut lines: Vec<String> = vec![quote_arg(&exe.to_string_lossy())];
-    for arg in server_args(&cfg, &presets_path) {
-        let q = quote_arg(&arg);
+/// Group the flat arg list into `--flag [value...]` lines: a token that starts
+/// with '-' opens a new line; following non-flag tokens (values) attach to the
+/// current line. Pure (no IO) — `command_line()` is the config-loading wrapper,
+/// mirroring the `render`/`save` split in server_cfg.
+fn render_command_line(exe: &str, args: &[String]) -> String {
+    let mut lines: Vec<String> = vec![quote_arg(exe)];
+    for arg in args {
+        let q = quote_arg(arg);
         if arg.starts_with('-') {
             lines.push(q);
         } else if let Some(last) = lines.last_mut() {
@@ -227,7 +234,7 @@ pub fn command_line() -> Option<String> {
     }
 
     let joiner = format!(" {LINE_CONTINUATION}\n  ");
-    Some(lines.join(&joiner))
+    lines.join(&joiner)
 }
 
 fn quote_arg(s: &str) -> String {
@@ -312,6 +319,29 @@ mod tests {
         assert_eq!(a[i + 1], "row");
         let i = a.iter().position(|x| x == "--tensor-split").unwrap();
         assert_eq!(a[i + 1], "3,1");
+    }
+
+    // The Command Line card's grouping: values share their flag's line, each
+    // line joins with the platform continuation char so the block pastes
+    // straight into a terminal.
+    #[test]
+    fn render_command_line_groups_flags_with_their_values() {
+        let args: Vec<String> = ["--port", "8080", "--mlock", "-fit", "off"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let out = render_command_line(r"C:\bin\llama-server.exe", &args);
+        let lines: Vec<&str> = out.lines().collect();
+        assert_eq!(lines.len(), 4, "exe + one line per flag group");
+        assert!(lines[0].starts_with(r"C:\bin\llama-server.exe"));
+        assert!(lines[1].contains("--port 8080"), "value attaches to flag");
+        assert!(lines[2].contains("--mlock"));
+        assert!(lines[3].trim_start().starts_with("-fit off"));
+        // Every line but the last ends with the continuation char.
+        for line in &lines[..lines.len() - 1] {
+            assert!(line.ends_with(LINE_CONTINUATION), "bad tail: {line:?}");
+        }
+        assert!(!lines[lines.len() - 1].ends_with(LINE_CONTINUATION));
     }
 
     #[test]

@@ -1,5 +1,8 @@
-# Shared bootstrap for build/runtime scripts.
-# Dot-source at the top of every script: . "$PSScriptRoot\common.ps1"
+# Shared bootstrap for the BUILD scripts (02-build.ps1 / 03-package.ps1), which
+# dot-source it: . "$PSScriptRoot\common.ps1"
+# 00-install-prerequisites.ps1 and 01-configure.ps1 deliberately do NOT — they
+# read build\config-build.psd1 directly so they work on a fresh machine before
+# (or while) that file exists.
 #
 # - Loads $cfg from build\config-build.psd1 (build-time paths, GPU targets, compiler).
 # - Adds ROCm/HIP\bin to PATH so HIP DLLs are loadable at both build and run time.

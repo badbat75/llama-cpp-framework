@@ -131,11 +131,58 @@ pub fn run(cli: Cli) -> Result<()> {
     }
 }
 
-/// One aligned `  Label        value` line of `server show` output. The label
-/// column is wide enough for the longest key ("ThreadsBatch:"), so a new field
-/// is a single `row(...)` call that can't misalign the rest.
-fn row(label: &str, value: String) {
-    println!("  {label:<13} {value}");
+/// The aligned body of `server show`, one `  Label        value` row per field
+/// (the label column fits the longest key, "ThreadsBatch:"). Pure so the test
+/// below can pin that every `ServerConfig` field is printed — a field added to
+/// the schema but forgotten here would otherwise be a silent omission.
+fn show_lines(cfg: &server_cfg::ServerConfig) -> String {
+    let mut out = String::new();
+    let mut row = |label: &str, value: String| {
+        out.push_str(&format!("  {label:<13} {value}\n"));
+    };
+    row("Port:", cfg.port.map_or("-".into(), |v| v.to_string()));
+    row(
+        "Hostname:",
+        cfg.hostname.clone().unwrap_or_else(|| "-".into()),
+    );
+    row("Mlock:", cfg.mlock.map_or("-".into(), |v| v.to_string()));
+    row(
+        "Threads:",
+        cfg.threads.map_or_else(|| "auto".into(), |v| v.to_string()),
+    );
+    row(
+        "CacheReuse:",
+        cfg.cache_reuse.map_or("-".into(), |v| v.to_string()),
+    );
+    row(
+        "ThreadsBatch:",
+        cfg.threads_batch
+            .map_or_else(|| "auto".into(), |v| v.to_string()),
+    );
+    row(
+        "ModelsMax:",
+        cfg.models_max
+            .map_or_else(|| "auto (default: 1)".into(), |v| v.to_string()),
+    );
+    row(
+        "ModelsDir:",
+        cfg.models_dir.clone().unwrap_or_else(|| "-".into()),
+    );
+    row(
+        "Device:",
+        cfg.device.clone().unwrap_or_else(|| "auto (all)".into()),
+    );
+    row(
+        "SplitMode:",
+        cfg.split_mode
+            .clone()
+            .unwrap_or_else(|| "layer (default)".into()),
+    );
+    row(
+        "TensorSplit:",
+        cfg.tensor_split.clone().unwrap_or_else(|| "even".into()),
+    );
+    out
 }
 
 fn run_server(c: ServerCmd) -> Result<()> {
@@ -143,37 +190,7 @@ fn run_server(c: ServerCmd) -> Result<()> {
         ServerCmd::Show => {
             let cfg = server_cfg::load();
             println!("server.ini: {}", paths::server_ini().display());
-            row("Port:", cfg.port.map_or("-".into(), |v| v.to_string()));
-            row("Hostname:", cfg.hostname.unwrap_or_else(|| "-".into()));
-            row("Mlock:", cfg.mlock.map_or("-".into(), |v| v.to_string()));
-            row(
-                "Threads:",
-                cfg.threads.map_or_else(|| "auto".into(), |v| v.to_string()),
-            );
-            row(
-                "CacheReuse:",
-                cfg.cache_reuse.map_or("-".into(), |v| v.to_string()),
-            );
-            row(
-                "ThreadsBatch:",
-                cfg.threads_batch
-                    .map_or_else(|| "auto".into(), |v| v.to_string()),
-            );
-            row(
-                "ModelsMax:",
-                cfg.models_max
-                    .map_or_else(|| "auto (default: 1)".into(), |v| v.to_string()),
-            );
-            row("ModelsDir:", cfg.models_dir.unwrap_or_else(|| "-".into()));
-            row("Device:", cfg.device.unwrap_or_else(|| "auto (all)".into()));
-            row(
-                "SplitMode:",
-                cfg.split_mode.unwrap_or_else(|| "layer (default)".into()),
-            );
-            row(
-                "TensorSplit:",
-                cfg.tensor_split.unwrap_or_else(|| "even".into()),
-            );
+            print!("{}", show_lines(&cfg));
             Ok(())
         }
         ServerCmd::Set(s) => {
@@ -252,6 +269,53 @@ mod tests {
         assert_eq!(cfg.device.as_deref(), Some("CUDA0"));
         assert_eq!(cfg.split_mode.as_deref(), Some("row"));
         assert_eq!(cfg.tensor_split.as_deref(), Some("3,1"));
+    }
+
+    // The Show leg of the 3-spot CLI fan-out: every field set in a rich config
+    // must surface in `server show`'s output. Complements the `apply` test
+    // above so neither CLI leg can silently drop a new server field.
+    #[test]
+    fn show_lines_prints_every_field() {
+        let cfg = ServerConfig {
+            port: Some(9000),
+            hostname: Some("0.0.0.0".into()),
+            mlock: Some(false),
+            threads: Some(8),
+            cache_reuse: Some(256),
+            threads_batch: Some(16),
+            models_max: Some(3),
+            models_dir: Some(r"D:\models".into()),
+            device: Some("CUDA0".into()),
+            split_mode: Some("row".into()),
+            tensor_split: Some("3,1".into()),
+        };
+        let out = show_lines(&cfg);
+        for needle in [
+            "Port:",
+            "9000",
+            "Hostname:",
+            "0.0.0.0",
+            "Mlock:",
+            "false",
+            "Threads:",
+            "8",
+            "CacheReuse:",
+            "256",
+            "ThreadsBatch:",
+            "16",
+            "ModelsMax:",
+            "3",
+            "ModelsDir:",
+            r"D:\models",
+            "Device:",
+            "CUDA0",
+            "SplitMode:",
+            "row",
+            "TensorSplit:",
+            "3,1",
+        ] {
+            assert!(out.contains(needle), "missing {needle:?} in:\n{out}");
+        }
     }
 
     #[test]

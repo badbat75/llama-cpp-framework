@@ -2,6 +2,8 @@
 // so the GUI can offer a dropdown of the *actually available* backends
 // (CUDA0, Vulkan0, …) instead of a free-text field.
 
+use std::sync::OnceLock;
+
 use crate::paths;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -11,6 +13,25 @@ pub struct DeviceOption {
     /// Human-friendly description for the dropdown (e.g.
     /// `CUDA0 — NVIDIA GeForce RTX 4070 SUPER (12281 MiB, 10844 MiB free)`).
     pub label: String,
+}
+
+/// The one-shot probe cache: `gui::spawn_device_probe` runs `list()` once at
+/// startup (a few hundred ms — it spawns llama-server) and parks the result
+/// here; the UI thread rebuilds its dropdowns from `probed()` without ever
+/// re-probing. A plain Rust cache instead of Slint properties because the
+/// device list is Rust-only data — no `.slint` file reads it.
+static PROBED: OnceLock<Vec<DeviceOption>> = OnceLock::new();
+
+/// Publish the startup probe's result (later calls are ignored — the list is
+/// probed once per process).
+pub fn set_probed(devs: Vec<DeviceOption>) {
+    let _ = PROBED.set(devs);
+}
+
+/// The cached probe result; empty until the startup probe lands (the dropdowns
+/// then show just the "(default)" entry plus any custom value).
+pub fn probed() -> &'static [DeviceOption] {
+    PROBED.get().map(Vec::as_slice).unwrap_or(&[])
 }
 
 /// Spawn `llama-server --list-devices` and return the parsed device list.

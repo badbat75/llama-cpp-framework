@@ -7,7 +7,7 @@
 # and are written by llama-cpp-config on first launch.
 
 param(
-    [string]$LlamaCppDir  # path to llama.cpp source. If omitted, defaults to .\build
+    [string]$LlamaCppDir  # path to llama.cpp source. If omitted, defaults to .\build\llama.cpp
 )
 
 # ── Detection functions ──────────────────────────────────────────────

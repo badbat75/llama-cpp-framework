@@ -8,16 +8,19 @@
 //! Slint types through `use super::*`. All shared UI state lives in the Slint
 //! `AppState` global (ui/state.slint), reached with
 //! `let s = app.global::<AppState>()`. `State` (below) is the small Rust-side
-//! cache the callbacks share via `Rc<RefCell<…>>`: the loaded presets vector and
-//! the new-preset dialog's model scan.
+//! cache the callbacks share via `Rc<RefCell<…>>`: the loaded presets vector,
+//! the new-preset dialog's model scan, and the draft dropdown's (value, spec)
+//! rows. (The GPU-device probe result is cached in `devices::probed()` — it is
+//! process-wide, set once from the probe thread.)
 //!
 //! ## Helper verb taxonomy (so a grep lands in the right family)
 //! - `load_*`            : server.ini ↔ UI (through `server_form::config_to_form`
 //!   / `form_to_config`; the preset side is `form.rs`).
 //! - `refresh_*` / `reload_*` : rebuild a list/section from disk or the device
 //!   cache (`reload_presets`, `refresh_file_options`, `refresh_device_options`,
-//!   `refresh_integrations`, `refresh_run_status`; `reload_all_from_disk` is the
-//!   everything-at-once hub shared by startup and the Refresh button).
+//!   `refresh_integrations`, `refresh_run_status`, `refresh_server_snapshot`;
+//!   `reload_all_from_disk` is the everything-at-once hub shared by startup and
+//!   the Refresh button).
 //! - `*_options`         : build a dropdown's (labels, values, index) model
 //!   triple the caller hands to the matching `set_*` accessors (`device_options`,
 //!   `scanned_options`).
@@ -74,6 +77,10 @@ struct State {
     // Full (unfiltered) model scan backing the new-preset dialog, so the search
     // box can filter without re-hitting disk on every keystroke.
     dialog_models_all: Vec<model_scan::FileOption>,
+    // (--model-draft value, --spec-type) per draft-dropdown row, parallel to
+    // AppState.draft_labels. Rust-only data (only `draft_picked` reads it), so
+    // it lives here instead of as published Slint arrays no page ever binds.
+    draft_rows: Vec<(String, String)>,
 }
 
 /// TEST-ONLY seam for the e2e save-flow test (src/tests/save_flow.rs): build the
@@ -161,7 +168,7 @@ pub fn run() -> anyhow::Result<()> {
         );
     }
 
-    server_tab::wire(&app, &tray);
+    server_tab::wire(&app, &tray, &state);
     models_tab::wire(&app, &state);
     integrations_tab::wire(&app);
     tray::wire(&app, &tray);
@@ -210,11 +217,28 @@ fn load_server_into_ui(app: &AppWindow) {
     let s = app.global::<AppState>();
     let form = server_form::config_to_form(&server_cfg::load());
     populate_bind_options(app, form.hostname.as_str());
-    let cmdline = runstate::command_line().unwrap_or_default();
-    s.set_server_command_line(SharedString::from(cmdline));
+    refresh_server_snapshot(app);
     // Set form + base together so `server_dirty` reads false right after load.
     s.set_server_form(form.clone());
     s.set_server_form_base(form);
+}
+
+/// Recompute the read-only projections of the SAVED server.ini: the Command
+/// Line card and the chat-UI URL. Both must track the file, not the form — the
+/// running server listens on what was saved, not on an unsaved edit. Shared by
+/// `load_server_into_ui` and the Server tab's save handler. The URL uses
+/// `client_host()`, so an all-interfaces bind (0.0.0.0) opens localhost instead
+/// of a dead address.
+fn refresh_server_snapshot(app: &AppWindow) {
+    let s = app.global::<AppState>();
+    let cmdline = runstate::command_line().unwrap_or_default();
+    s.set_server_command_line(SharedString::from(cmdline));
+    let cfg = server_cfg::load();
+    s.set_chat_url(SharedString::from(format!(
+        "http://{}:{}",
+        cfg.client_host(),
+        cfg.port_or_default()
+    )));
 }
 
 fn populate_bind_options(app: &AppWindow, current: &str) {
@@ -247,7 +271,6 @@ fn preset_summaries(presets: &[presets::Preset], filter: &str) -> Vec<PresetSumm
         .filter(|(_, p)| preset_matches(p, filter))
         .map(|(i, p)| PresetSummary {
             id: p.id.clone().into(),
-            model: p.model.clone().into(),
             orig_index: i as i32,
         })
         .collect()
@@ -264,7 +287,7 @@ fn reload_all_from_disk(
 ) {
     load_server_into_ui(app);
     reload_presets(app, state, None);
-    refresh_file_options(app);
+    refresh_file_options(app, state);
     refresh_integrations(app);
     refresh_run_status(app.as_weak(), tray_weak, true);
 }
@@ -306,11 +329,15 @@ fn reload_presets(app: &AppWindow, state: &Rc<RefCell<State>>, want: Option<&str
 /// (`refresh_device_options`) and the Model-info box (`models_tab::update_model_info`).
 /// Call after anything that changes `models_dir`, a form file field, or the
 /// selected preset — this is the hub a newly-added file-backed dropdown extends.
-fn refresh_file_options(app: &AppWindow) {
+fn refresh_file_options(app: &AppWindow, state: &Rc<RefCell<State>>) {
     let s = app.global::<AppState>();
     let models_dir = s.get_server_form().models_dir.to_string();
     let form = s.get_form();
 
+    // Note: the trailing update_model_info() re-walks mtps\ / dflashs\ on its
+    // own (gguf::external_drafters) — a cheap directory listing, kept so that
+    // helper stays self-contained for its other callers (model_changed,
+    // draft_picked), which have no scan in hand.
     let model_scan_result = model_scan::list(&models_dir, model_scan::Category::Model.subdir());
     let mmproj_scan_result = model_scan::list(&models_dir, model_scan::Category::Mmproj.subdir());
     let mtp_scan_result = model_scan::list(&models_dir, model_scan::Category::Mtp.subdir());
@@ -334,8 +361,8 @@ fn refresh_file_options(app: &AppWindow) {
     s.set_mmproj_values(val);
     s.set_mmproj_index(idx);
     // Draft picker: MTP heads (mtps\) and DFlash drafters (dflashs\) share one
-    // dropdown (both feed --model-draft); `draft_specs` carries the matching
-    // --spec-type the UI applies when a row is picked.
+    // dropdown (both feed --model-draft). Only the labels + index go to Slint;
+    // the (value, spec) rows the pick policy needs stay in `State.draft_rows`.
     let (draft_labels, draft_values, draft_specs, draft_idx) = model_scan::build_draft_options(
         mtp_scan_result,
         dflash_scan_result,
@@ -343,55 +370,38 @@ fn refresh_file_options(app: &AppWindow) {
         form.spec_type.as_str(),
     );
     s.set_draft_labels(string_model(draft_labels));
-    s.set_draft_values(string_model(draft_values));
-    s.set_draft_specs(string_model(draft_specs));
     s.set_draft_index(draft_idx);
+    state.borrow_mut().draft_rows = draft_values.into_iter().zip(draft_specs).collect();
 
     refresh_device_options(app);
     models_tab::update_model_info(app);
 }
 
 /// Rebuild the three GPU-device dropdowns (server-wide, per-preset main,
-/// per-preset draft) from the cached `--list-devices` result, recomputing each
-/// selected index against the current server.ini / form values.
+/// per-preset draft) from the cached `--list-devices` result
+/// (`devices::probed()`), recomputing each selected index against the current
+/// server.ini / form values.
 fn refresh_device_options(app: &AppWindow) {
     let s = app.global::<AppState>();
-    let devs = cached_devices(app);
+    let devs = devices::probed();
     let form = s.get_form();
     let server_device = s.get_server_form().device;
 
-    let (lbl, val, idx) = device_options(&devs, server_device.as_str(), "(all detected devices)");
+    let (lbl, val, idx) = device_options(devs, server_device.as_str(), "(all detected devices)");
     s.set_server_dev_labels(lbl);
     s.set_server_dev_values(val);
     s.set_server_dev_index(idx);
 
-    let (lbl, val, idx) = device_options(&devs, form.device.as_str(), "(server default)");
-    s.set_pdev_labels(lbl);
-    s.set_pdev_values(val);
-    s.set_pdev_index(idx);
+    let (lbl, val, idx) = device_options(devs, form.device.as_str(), "(server default)");
+    s.set_preset_dev_labels(lbl);
+    s.set_preset_dev_values(val);
+    s.set_preset_dev_index(idx);
 
     let (lbl, val, idx) =
-        device_options(&devs, form.device_draft.as_str(), "(auto / same as model)");
-    s.set_pdraft_labels(lbl);
-    s.set_pdraft_values(val);
-    s.set_pdraft_index(idx);
-}
-
-/// Reconstruct the cached device list from the two parallel Slint arrays the
-/// async probe fills in (`all_device_ids` / `all_device_labels`).
-fn cached_devices(app: &AppWindow) -> Vec<devices::DeviceOption> {
-    let s = app.global::<AppState>();
-    let ids = s.get_all_device_ids();
-    let labels = s.get_all_device_labels();
-    let n = ids.row_count().min(labels.row_count());
-    (0..n)
-        .filter_map(|i| {
-            Some(devices::DeviceOption {
-                id: ids.row_data(i)?.to_string(),
-                label: labels.row_data(i)?.to_string(),
-            })
-        })
-        .collect()
+        device_options(devs, form.device_draft.as_str(), "(auto / same as model)");
+    s.set_preset_draft_dev_labels(lbl);
+    s.set_preset_draft_dev_values(val);
+    s.set_preset_draft_dev_index(idx);
 }
 
 /// A dropdown's `(labels, values, index)` as Slint models, ready to hand to the
@@ -408,6 +418,9 @@ fn device_options(
     let (labels, values, idx) = devices::build_options(devs, current, empty_label);
     (string_model(labels), string_model(values), idx)
 }
+
+// (The raw device list itself lives in `devices::probed()` — a Rust-side cache,
+// not Slint state, because no .slint file ever reads it.)
 
 fn scanned_options(
     category: model_scan::Category,
@@ -446,20 +459,15 @@ fn spawn_version_probe(app_weak: slint::Weak<AppWindow>) {
 }
 
 /// Enumerate GPU devices off the UI thread (`--list-devices` spawns llama-server
-/// and can take a few hundred ms — including a CUDA init), then publish the
-/// result and rebuild the device dropdowns via the event loop.
+/// and can take a few hundred ms — including a CUDA init), park the result in
+/// `devices::probed()`, then rebuild the device dropdowns via the event loop.
 fn spawn_device_probe(app_weak: slint::Weak<AppWindow>) {
     std::thread::spawn(move || {
-        let list = devices::list();
-        let ids: Vec<SharedString> = list.iter().map(|d| d.id.clone().into()).collect();
-        let labels: Vec<SharedString> = list.iter().map(|d| d.label.clone().into()).collect();
+        devices::set_probed(devices::list());
         slint::invoke_from_event_loop(move || {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
-            let s = app.global::<AppState>();
-            s.set_all_device_ids(model(ids));
-            s.set_all_device_labels(model(labels));
             // Recompute the dropdown indices now that the device list exists.
             refresh_device_options(&app);
         })
@@ -593,17 +601,20 @@ fn apply_form(app: &AppWindow, form: PresetForm) {
 fn refresh_integrations(app: &AppWindow) {
     let s = app.global::<AppState>();
     let cfg = server_cfg::load();
-    let port = cfg.port.unwrap_or(8080);
-    let hostname = cfg.hostname.unwrap_or_else(|| "localhost".into());
-    let base_url = format!("http://{hostname}:{port}/v1");
-    let claude_env = integrations::claude_code_env_script(&base_url);
+    // client_host, not the bind hostname: 0.0.0.0 is a listen address — a
+    // client pointed at it gets a connection error, so map it to localhost.
+    let base_url = format!("http://{}:{}/v1", cfg.client_host(), cfg.port_or_default());
+
+    let all_presets = presets::load_all();
+    let example = all_presets.first().map(|p| p.id.as_str());
+    let claude_env = integrations::claude_code_env_script(&base_url, example);
     s.set_integration_claude_env(SharedString::from(claude_env));
     s.set_integration_base_url(SharedString::from(base_url));
 
     s.set_integration_provider_active(integrations::detect_opencode_provider());
 
     let enabled_ids = integrations::opencode_model_ids();
-    let items: Vec<IntegrationModel> = presets::load_all()
+    let items: Vec<IntegrationModel> = all_presets
         .iter()
         .map(|p| IntegrationModel {
             id: SharedString::from(p.id.clone()),
@@ -612,4 +623,52 @@ fn refresh_integrations(app: &AppWindow) {
         })
         .collect();
     s.set_integration_models(model(items));
+}
+
+// Pure-struct tests (PresetSummary is a plain generated struct — no Slint
+// backend needed, same class as models_tab's apply_draft_pick tests).
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn p(id: &str, model: &str) -> presets::Preset {
+        presets::Preset {
+            id: id.into(),
+            model: model.into(),
+            ..Default::default()
+        }
+    }
+
+    // The invariant select_preset() depends on: a filtered row's `orig_index`
+    // points into the UNFILTERED presets vector (the list `for` index is not a
+    // stable handle once rows are dropped).
+    #[test]
+    fn preset_summaries_keep_orig_index_under_filter() {
+        let all = vec![
+            p("alpha", r"C:\m\models\a.gguf"),
+            p("bravo", r"C:\m\models\qwen3.gguf"),
+            p("charlie", r"C:\m\models\c.gguf"),
+        ];
+
+        // Filter matches case-insensitively on the id OR the model path.
+        let rows = preset_summaries(&all, "QWEN");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].id.as_str(), "bravo");
+        assert_eq!(rows[0].orig_index, 1, "index into the unfiltered vector");
+
+        let rows = preset_summaries(&all, "charlie");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].orig_index, 2);
+
+        // No filter: everything, in order, indices dense.
+        let rows = preset_summaries(&all, "");
+        assert_eq!(rows.len(), 3);
+        assert!(rows
+            .iter()
+            .enumerate()
+            .all(|(i, r)| r.orig_index == i as i32));
+
+        // No match: empty list (the UI then shows -1 / a blank form).
+        assert!(preset_summaries(&all, "zzz").is_empty());
+    }
 }

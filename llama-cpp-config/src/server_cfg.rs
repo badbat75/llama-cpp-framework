@@ -14,11 +14,14 @@
 //   4. `ServerForm` struct                   — ui/types.slint
 //   5. the input widget                      — ui/server_page.slint (bind two-way `<=>`)
 //   6. `config_to_form` + `form_to_config`   — src/server_form.rs (BOTH directions)
-//   7. THREE spots in src/cli.rs             — the `ServerSet` flag field, the
-//      `Show` `println!`, and the `Set` handler that copies the flag into `cfg`
+//   7. THREE spots in src/cli.rs             — the `ServerSet` flag field, a
+//      `row(...)` in `show_lines`, and `ServerSet::apply` copying the flag into `cfg`
 // Guards: the save→load round-trip test in this file (steps 2–3: a key-name typo
-// or wrong `keep` rule fails it) and the form round-trip in server_form.rs
-// (`form_to_config(config_to_form(c)) == c`, step 6).
+// or wrong `keep` rule fails it), the form round-trip in server_form.rs
+// (`form_to_config(config_to_form(c)) == c`, step 6), and cli.rs's
+// `server_set_apply_copies_every_field` + `show_lines_prints_every_field`
+// (step 7 — `apply`'s exhaustive struct literal breaks compilation when a
+// `ServerSet` field is added but the test isn't extended).
 
 use std::fs;
 use std::io;
@@ -65,6 +68,45 @@ impl ServerConfig {
             .clone()
             .filter(|s| !s.trim().is_empty())
             .unwrap_or_else(default_models_dir)
+    }
+
+    // The always-written trio's defaults (Port / Hostname / Mlock render as real
+    // lines even when unset). ONE home each — `render()`, `server_form`,
+    // `runstate::server_args`, and the GUI all pull from here, so changing a
+    // default is a one-line edit instead of a four-file hunt.
+
+    /// The configured port, or 8080 when unset.
+    pub fn port_or_default(&self) -> i32 {
+        self.port.unwrap_or(8080)
+    }
+
+    /// The configured bind host, or "localhost" when unset/blank. This is what
+    /// llama-server LISTENS on (`--host`) — for the address clients connect to,
+    /// use [`Self::client_host`].
+    pub fn hostname_or_default(&self) -> String {
+        self.hostname
+            .clone()
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| "localhost".into())
+    }
+
+    /// The configured mlock flag, or `true` (the framework default) when unset.
+    pub fn mlock_or_default(&self) -> bool {
+        self.mlock.unwrap_or(true)
+    }
+
+    /// The host a CLIENT on this machine should connect to. Same as
+    /// `hostname_or_default` except the all-interfaces bind `0.0.0.0` maps to
+    /// `localhost`: it is a listen address, not a connectable one (Windows
+    /// refuses it as a destination). Used by the Open-chat URL and the
+    /// Integrations base URL.
+    pub fn client_host(&self) -> String {
+        let host = self.hostname_or_default();
+        if host == "0.0.0.0" {
+            "localhost".into()
+        } else {
+            host
+        }
     }
 }
 
@@ -115,9 +157,9 @@ pub fn save(cfg: &ServerConfig) -> io::Result<()> {
 /// `save()`; the round-trip test drives this directly, mirroring
 /// `presets::render_section`.
 fn render(cfg: &ServerConfig) -> String {
-    let port = cfg.port.unwrap_or(8080);
-    let hostname = cfg.hostname.as_deref().unwrap_or("localhost");
-    let mlock = cfg.mlock.unwrap_or(true);
+    let port = cfg.port_or_default();
+    let hostname = cfg.hostname_or_default();
+    let mlock = cfg.mlock_or_default();
 
     let models_dir = cfg.models_dir_or_default();
 
@@ -185,8 +227,9 @@ Mlock = {mlock_lit}
 {split_mode_line}
 {tensor_split_line}
 
-; ModelsDir: root directory. Models are scanned from ModelsDir/models/,
-; mmproj projection files from ModelsDir/mmprojs/, MTP/draft heads from ModelsDir/mtps/.
+; ModelsDir: root directory. Models are scanned from ModelsDir/models/, mmproj
+; projection files from ModelsDir/mmprojs/, MTP/draft heads from ModelsDir/mtps/,
+; DFlash drafters from ModelsDir/dflashs/.
 ModelsDir = {models_dir}
 "
     )
@@ -278,5 +321,20 @@ mod tests {
         assert_eq!(reloaded.threads_batch, None, "threads_batch <= 0 is auto");
         assert_eq!(reloaded.models_max, None, "models_max == 1 is the default");
         assert_eq!(reloaded.device, None, "blank device is unset");
+    }
+
+    // client_host is what the Open-chat button and the Integrations base URL
+    // use: a concrete bind address passes through, but the all-interfaces
+    // listen address 0.0.0.0 is not client-connectable and maps to localhost.
+    #[test]
+    fn client_host_maps_wildcard_bind_to_localhost() {
+        let with = |h: &str| ServerConfig {
+            hostname: Some(h.into()),
+            ..Default::default()
+        };
+        assert_eq!(with("0.0.0.0").client_host(), "localhost");
+        assert_eq!(with("192.168.1.5").client_host(), "192.168.1.5");
+        assert_eq!(with("localhost").client_host(), "localhost");
+        assert_eq!(ServerConfig::default().client_host(), "localhost");
     }
 }

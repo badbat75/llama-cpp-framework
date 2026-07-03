@@ -1,6 +1,9 @@
 // ServerPage: the server tab. All state lives in AppState (state.slint); this
 // component just lays out the widgets against it.
 //
+// Layout (grep `heading:`): Network → Resources → Command Line cards, then the
+// FormActions row.
+//
 // Editable widgets bind two-way (`<=>`): a one-way binding breaks the moment the
 // user types/toggles (Slint's "overwritten bindings" rule), which would leave the
 // field stale after a Revert / reload.

@@ -5,9 +5,10 @@
 
 use super::*;
 
-pub(super) fn wire(app: &AppWindow, tray: &AppTray) {
+pub(super) fn wire(app: &AppWindow, tray: &AppTray, state: &Rc<RefCell<State>>) {
     {
         let app_weak = app.as_weak();
+        let state = state.clone();
         app.global::<AppState>().on_save_server(move || {
             let Some(app) = app_weak.upgrade() else {
                 return;
@@ -21,9 +22,10 @@ pub(super) fn wire(app: &AppWindow, tray: &AppTray) {
                         format!("Saved {}", paths::server_ini().display()),
                         false,
                     );
-                    let cmdline = runstate::command_line().unwrap_or_default();
-                    s.set_server_command_line(SharedString::from(cmdline));
-                    refresh_file_options(&app);
+                    // Re-derive the saved-config projections (Command Line
+                    // card + chat URL) from the file just written.
+                    refresh_server_snapshot(&app);
+                    refresh_file_options(&app, &state);
                     refresh_integrations(&app);
                     snapshot_server_base(&app);
                 }
@@ -33,12 +35,13 @@ pub(super) fn wire(app: &AppWindow, tray: &AppTray) {
     }
     {
         let app_weak = app.as_weak();
+        let state = state.clone();
         app.global::<AppState>().on_revert_server(move || {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
             load_server_into_ui(&app);
-            refresh_file_options(&app);
+            refresh_file_options(&app, &state);
             refresh_integrations(&app);
             set_status(
                 &app,

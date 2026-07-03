@@ -1,6 +1,6 @@
 [package]
 name = "llama-cpp-config"
-version = "1.2.5"
+version = "1.2.6"
 edition = "2021"
 build = "build.rs"
 description = "GUI + CLI configurator for llama.cpp-framework"
@@ -13,7 +13,6 @@ path = "src/main.rs"
 [dependencies]
 slint = { version = "1.17", default-features = false, features = ["std", "compat-1-2", "backend-winit", "renderer-skia", "accessibility", "unstable-winit-030", "system-tray"] }
 clap = { version = "4.6", features = ["derive"] }
-serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 anyhow = "1"
 rfd = { version = "0.17", default-features = false }

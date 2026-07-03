@@ -2,9 +2,10 @@
 // `server_cfg::ServerConfig` schema — the server-side mirror of `form.rs`.
 // Kept out of `gui.rs` (which only shuttles the whole `ServerForm`, never
 // per-field) so adding a server field touches this file plus `ServerForm`
-// (ui/types.slint), the widget (ui/server_page.slint) and `ServerConfig`
-// (server_cfg.rs) — not the GUI wiring. Numerics ride as blank-able strings,
-// like the preset form.
+// (ui/types.slint), the widget (ui/server_page.slint), `ServerConfig`
+// (server_cfg.rs), and the CLI (three spots in cli.rs — the full checklist
+// lives at the top of server_cfg.rs) — not the GUI wiring. Numerics ride as
+// blank-able strings, like the preset form.
 
 use slint::SharedString;
 
@@ -24,17 +25,11 @@ fn num(v: Option<i32>) -> SharedString {
 /// `form_to_config` reverses each of these.
 pub fn config_to_form(cfg: &server_cfg::ServerConfig) -> ServerForm {
     ServerForm {
-        port: cfg
-            .port
-            .map(|v| v.to_string())
-            .unwrap_or_else(|| "8080".into())
-            .into(),
-        hostname: cfg
-            .hostname
-            .clone()
-            .unwrap_or_else(|| "localhost".into())
-            .into(),
-        mlock: cfg.mlock.unwrap_or(true),
+        // The display defaults for the always-present trio have ONE owner:
+        // the *_or_default helpers on ServerConfig (see server_cfg.rs).
+        port: cfg.port_or_default().to_string().into(),
+        hostname: cfg.hostname_or_default().into(),
+        mlock: cfg.mlock_or_default(),
         // Thread counts are auto-flagged sliders: unset ⇒ "auto" (omit the flag).
         threads: cfg.threads.unwrap_or(0),
         threads_auto: cfg.threads.is_none(),

@@ -25,7 +25,7 @@ pub(super) fn wire(app: &AppWindow, state: &Rc<RefCell<State>>) {
                 app.global::<AppState>().set_selected_preset_index(index);
                 apply_form(&app, preset_to_form(p));
                 drop(st);
-                refresh_file_options(&app);
+                refresh_file_options(&app, &state);
             }
         });
     }
@@ -67,7 +67,7 @@ pub(super) fn wire(app: &AppWindow, state: &Rc<RefCell<State>>) {
             // Reload from disk keeping the current selection; reload_presets
             // re-applies (and re-baselines) the form, so no second apply here.
             reload_presets(&app, &state, None);
-            refresh_file_options(&app);
+            refresh_file_options(&app, &state);
             let label = app.global::<AppState>().get_form().id;
             set_status(&app, format!("Reloaded [{label}] from presets.ini"), false);
         });
@@ -92,7 +92,7 @@ pub(super) fn wire(app: &AppWindow, state: &Rc<RefCell<State>>) {
                     reload_presets(&app, &state, None);
                     app.global::<AppState>().set_selected_preset_index(-1);
                     apply_form(&app, PresetForm::default());
-                    refresh_file_options(&app);
+                    refresh_file_options(&app, &state);
                     refresh_integrations(&app);
                 }
                 Err(e) => set_status(&app, format!("Delete failed: {e}"), true),
@@ -237,19 +237,18 @@ pub(super) fn wire(app: &AppWindow, state: &Rc<RefCell<State>>) {
     }
     {
         let app_weak = app.as_weak();
+        let state = state.clone();
         app.global::<AppState>().on_draft_picked(move |index| {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
             let s = app.global::<AppState>();
-            let i = match usize::try_from(index) {
-                Ok(i) => i,
-                Err(_) => return,
-            };
-            let (Some(value), Some(spec)) = (
-                s.get_draft_values().row_data(i),
-                s.get_draft_specs().row_data(i),
-            ) else {
+            // Map the picked row to its (--model-draft, --spec-type) pair via
+            // the Rust-side rows cache (parallel to AppState.draft_labels).
+            let picked = usize::try_from(index)
+                .ok()
+                .and_then(|i| state.borrow().draft_rows.get(i).cloned());
+            let Some((value, spec)) = picked else {
                 return;
             };
             let mut form = s.get_form();
@@ -267,6 +266,11 @@ pub(super) fn wire(app: &AppWindow, state: &Rc<RefCell<State>>) {
     }
 }
 
+/// "All layers on GPU" sentinel for the --n-gpu-layers* flags: any value above
+/// a real block count. Mirrors `Options.all_layers` in ui/components.slint —
+/// keep the two in sync.
+const ALL_LAYERS: i32 = 99;
+
 /// Apply a draft-picker selection to the form: set `model_draft` + `spec_type`
 /// from the picked row (MTP heads → draft-mtp, DFlash drafters → draft-dflash,
 /// "(none)" → empty), then auto-pin an unconfigured draft to ONE device — the
@@ -281,7 +285,7 @@ fn apply_draft_pick(form: &mut PresetForm, value: &str, spec: &str, server_devic
         form.n_gpu_layers_draft_auto = false;
         if !server_device.is_empty() {
             form.device_draft = server_device.into();
-            form.n_gpu_layers_draft = 99;
+            form.n_gpu_layers_draft = ALL_LAYERS;
         } else {
             form.n_gpu_layers_draft = 0;
         }
@@ -296,7 +300,7 @@ fn apply_draft_pick(form: &mut PresetForm, value: &str, spec: &str, server_devic
 /// stay put; delete keeps its own sequence because it clears the selection.)
 fn preset_written(app: &AppWindow, state: &Rc<RefCell<State>>, want: Option<&str>) {
     reload_presets(app, state, want);
-    refresh_file_options(app);
+    refresh_file_options(app, state);
     refresh_integrations(app);
 }
 
