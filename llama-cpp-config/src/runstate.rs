@@ -6,53 +6,35 @@
 
 use std::io;
 
-#[derive(Debug, Clone)]
-pub struct RunState;
-
-/// Returns `Some(state)` if llama-server.exe is running.
-pub fn load() -> Option<RunState> {
+/// `true` if an `llama-server` process is currently running.
+pub fn is_running() -> bool {
     #[cfg(windows)]
     {
-        let output = crate::proc::run_hidden(
+        let Some(output) = crate::proc::run_hidden(
             std::path::Path::new("tasklist"),
             ["/fi", "IMAGENAME eq llama-server.exe", "/fo", "csv", "/nh"],
-        )?;
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        // tasklist returns "INFO: No tasks..." when nothing matches — not empty
-        if stdout.to_lowercase().contains("llama-server.exe") {
-            return Some(RunState);
-        }
-        None
+        ) else {
+            return false;
+        };
+        // tasklist returns "INFO: No tasks..." when nothing matches — not empty.
+        String::from_utf8_lossy(&output.stdout)
+            .to_lowercase()
+            .contains("llama-server.exe")
     }
 
     #[cfg(not(windows))]
     {
-        let output = std::process::Command::new("pgrep")
+        std::process::Command::new("pgrep")
             .args(["-f", "llama-server"])
             .output()
-            .ok()?;
-        if output.status.success() {
-            return Some(RunState);
-        }
-        None
+            .is_ok_and(|o| o.status.success())
     }
 }
 
-/// Check that the presets file has at least one [section] header.
+/// `true` if the presets file has at least one section (reusing the real INI
+/// parser instead of a hand-rolled header scan).
 fn has_presets() -> bool {
-    let path = crate::paths::presets_ini();
-    match std::fs::read_to_string(&path) {
-        Ok(content) => {
-            for line in content.lines() {
-                let trimmed = line.trim();
-                if trimmed.starts_with('[') && trimmed.ends_with(']') && trimmed.len() > 2 {
-                    return true;
-                }
-            }
-            false
-        }
-        Err(_) => false,
-    }
+    !crate::ini::read_all(&crate::paths::presets_ini()).is_empty()
 }
 
 /// The full llama-server argument list derived from server.ini.
@@ -133,7 +115,7 @@ fn server_args(
 
 /// Launch llama-server.exe with args from server.ini + presets.ini.
 pub fn start() -> io::Result<()> {
-    if load().is_some() {
+    if is_running() {
         return Ok(()); // already running
     }
 

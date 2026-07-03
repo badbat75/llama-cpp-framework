@@ -85,7 +85,8 @@ The build script (`build.rs`) converts `resources\llama.ico` to a PNG at compile
 | `src\server_cfg.rs` | Read/write `server.ini` |
 | `src\presets.rs` | Read/write `presets.ini` (the `Preset` schema and INI round-trip) |
 | `src\model_scan.rs` | Walk `ModelsDir` for `.gguf` files; build model/draft option lists |
-| `src\gguf.rs` | Read GGUF metadata for the "Model info" box via llama.cpp's own reader (runtime-loaded `ggml-base.dll`, no reimplemented parser): model (dense/MoE + layer split, layers, ctx, GQA, quant, embedded MTP), mmproj (clip), and draft (layers, DFlash `block_size`); read synchronously, uncached |
+| `src\gguf.rs` | Read GGUF metadata for the "Model info" box via llama.cpp's own reader (runtime-loaded `ggml-base.dll`, no reimplemented parser): model (dense/MoE + layer split, layers, ctx, GQA, quant, embedded MTP), mmproj (clip), and draft (layers, DFlash `block_size`); read synchronously, uncached — pure field-extraction logic |
+| `src\gguf\ffi.rs` | The `ggml-base.dll` FFI behind `gguf.rs`: dynamic DLL load + a `KvSource` over a live `gguf_context` (Windows); a `None` stub elsewhere. Public surface: `ffi::open(path)` |
 | `src\devices.rs` | Enumerate GPU backends via `llama-server --list-devices` |
 | `src\ini.rs` | Minimal INI parser/writer (no external crate) |
 | `src\paths.rs` | Platform-specific config and log paths |
@@ -100,7 +101,7 @@ The build script (`build.rs`) converts `resources\llama.ico` to a PNG at compile
 | `ui\models_page.slint` | Models tab component (preset editor) |
 | `ui\integrations_page.slint` | Integrations tab component |
 | `ui\components.slint` | Shared visual pieces: `SectionCard`, `LabeledField`, `SegmentedControl`, `MappedComboBox` (labels/values/index combo with a bounds-checked `picked`), `AutoSlider` (auto-checkbox + slider + readout), and the `Tokens` global (canonical muted-text / selection alphas) |
-| `ui\types.slint` | Shared Slint structs (`PresetSummary`, `PresetForm`, `IntegrationModel`) |
+| `ui\types.slint` | Shared Slint structs (`PresetSummary`, `PresetForm`, `ServerForm`, `IntegrationModel`) |
 | `src\tests\` | End-to-end / cross-cutting tests (internal `#[cfg(test)] mod tests`). `ui_bindings.rs`: headless Slint-testing-backend test — editable widgets must track the model after an edit, guarding the one-way-binding staleness bug (v1.1.1) |
 | `build.rs` | Compile-time ICO → PNG, embed EXE resource on Windows; emits Slint element debug info for non-release builds (needed by the UI test) |
 

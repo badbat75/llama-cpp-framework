@@ -43,12 +43,9 @@ pub(super) fn wire(app: &AppWindow, state: &Rc<RefCell<State>>) {
             match presets::save(&p) {
                 Ok(()) => {
                     set_status(&app, format!("Saved preset [{}]", p.id), false);
-                    refresh_presets(&app, &state);
-                    let st = state.borrow();
-                    if let Some(i) = st.presets.iter().position(|x| x.id == p.id) {
-                        s.set_selected_preset_index(i as i32);
-                    }
-                    drop(st);
+                    // Rebuild the list from disk and re-select the just-saved preset
+                    // (re-baselining the form so Save/Revert go disabled).
+                    reload_presets(&app, &state, Some(&p.id));
                     refresh_file_options(&app);
                     refresh_integrations(&app);
                 }
@@ -63,16 +60,12 @@ pub(super) fn wire(app: &AppWindow, state: &Rc<RefCell<State>>) {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
-            refresh_presets(&app, &state);
-            let idx = app.global::<AppState>().get_selected_preset_index();
-            let st = state.borrow();
-            if let Some(p) = usize::try_from(idx).ok().and_then(|i| st.presets.get(i)) {
-                let label = p.id.clone();
-                apply_form(&app, preset_to_form(p));
-                drop(st);
-                refresh_file_options(&app);
-                set_status(&app, format!("Reloaded [{label}] from presets.ini"), false);
-            }
+            // Reload from disk keeping the current selection; reload_presets
+            // re-applies (and re-baselines) the form, so no second apply here.
+            reload_presets(&app, &state, None);
+            refresh_file_options(&app);
+            let label = app.global::<AppState>().get_form().id;
+            set_status(&app, format!("Reloaded [{label}] from presets.ini"), false);
         });
     }
     {
@@ -88,7 +81,10 @@ pub(super) fn wire(app: &AppWindow, state: &Rc<RefCell<State>>) {
             match presets::delete(id.as_str()) {
                 Ok(()) => {
                     set_status(&app, format!("Deleted [{id}]"), false);
-                    refresh_presets(&app, &state);
+                    // Rebuild the list from disk, then clear the selection: after a
+                    // delete we show an empty editor rather than auto-selecting a
+                    // neighbour.
+                    reload_presets(&app, &state, None);
                     app.global::<AppState>().set_selected_preset_index(-1);
                     apply_form(&app, blank_form());
                     refresh_file_options(&app);
@@ -225,5 +221,122 @@ pub(super) fn wire(app: &AppWindow, state: &Rc<RefCell<State>>) {
             let st = state.borrow();
             apply_dialog_models(&app, &st.dialog_models_all, q.as_str());
         });
+    }
+}
+
+// ── New / Clone dialog funnel ─────────────────────────────────────────
+// The picker dialog → save path, used only by the wiring above. Moved here from
+// `gui.rs` so the whole flow sits next to its callers. Reaches `gui`'s shared
+// helpers (`model`, `reload_presets`, `refresh_*`, `set_status`) via `use super::*`.
+
+fn populate_dialog_models(app: &AppWindow, state: &Rc<RefCell<State>>) {
+    let s = app.global::<AppState>();
+    let models_dir = s.get_server_form().models_dir.to_string();
+    let scanned = model_scan::list(&models_dir, model_scan::Category::Model.subdir());
+    state.borrow_mut().dialog_models_all = scanned;
+    s.set_dialog_filter(SharedString::from(""));
+    let st = state.borrow();
+    apply_dialog_models(app, &st.dialog_models_all, "");
+}
+
+/// Filter the cached dialog model scan by a case-insensitive substring on the
+/// label and publish the result. Filtering both arrays from ONE matched list
+/// keeps `dialog_model_index` consistent with `dialog_model_values`.
+fn apply_dialog_models(app: &AppWindow, all: &[model_scan::FileOption], filter: &str) {
+    let s = app.global::<AppState>();
+    let q = filter.to_lowercase();
+    let matched: Vec<&model_scan::FileOption> = all
+        .iter()
+        .filter(|f| q.is_empty() || f.label.to_lowercase().contains(&q))
+        .collect();
+    let labels: Vec<SharedString> = matched
+        .iter()
+        .map(|f| SharedString::from(f.label.clone()))
+        .collect();
+    let values: Vec<SharedString> = matched
+        .iter()
+        .map(|f| SharedString::from(f.path.clone()))
+        .collect();
+    s.set_dialog_model_labels(model(labels));
+    s.set_dialog_model_values(model(values));
+    s.set_dialog_model_index(-1);
+}
+
+fn picked_dialog_model_path(app: &AppWindow) -> Option<PathBuf> {
+    let s = app.global::<AppState>();
+    let idx = s.get_dialog_model_index();
+    if idx < 0 {
+        return None;
+    }
+    let values = s.get_dialog_model_values();
+    let i = usize::try_from(idx).ok()?;
+    if i >= values.row_count() {
+        return None;
+    }
+    Some(PathBuf::from(values.row_data(i)?.to_string()))
+}
+
+fn run_new_empty(app: &AppWindow, state: &Rc<RefCell<State>>, path: PathBuf) {
+    let id = presets::make_id(&path.to_string_lossy());
+    let p = presets::Preset::new_default(id.clone(), path.to_string_lossy().into_owned());
+    commit_new_preset(
+        app,
+        state,
+        p,
+        format!("Added [{id}] — tweak parameters and Save."),
+    );
+}
+
+fn run_new_clone(
+    app: &AppWindow,
+    state: &Rc<RefCell<State>>,
+    base: presets::Preset,
+    path: PathBuf,
+) {
+    let path_str = path.to_string_lossy().into_owned();
+    let base_id = presets::make_id(&path_str);
+    // The id is derived from the picked model, so cloning onto the same model
+    // (or one that already has a preset) would otherwise overwrite it. Pick the
+    // first free "<id>", "<id>-2", … instead of clobbering.
+    let existing: Vec<String> = presets::load_all().into_iter().map(|p| p.id).collect();
+    let id = unique_id(&base_id, &existing);
+    let cloned = presets::Preset {
+        id: id.clone(),
+        model: path_str,
+        ..base.clone()
+    };
+    commit_new_preset(
+        app,
+        state,
+        cloned,
+        format!("Cloned [{}] -> [{id}] (same parameters) — saved.", base.id),
+    );
+}
+
+/// First of `base`, `base-2`, `base-3`, … that isn't already in `existing`.
+fn unique_id(base: &str, existing: &[String]) -> String {
+    if !existing.iter().any(|e| e == base) {
+        return base.to_string();
+    }
+    (2..)
+        .map(|n| format!("{base}-{n}"))
+        .find(|cand| !existing.iter().any(|e| e == cand))
+        .unwrap_or_else(|| base.to_string())
+}
+
+fn commit_new_preset(
+    app: &AppWindow,
+    state: &Rc<RefCell<State>>,
+    p: presets::Preset,
+    success_status: String,
+) {
+    match presets::save(&p) {
+        Ok(()) => {
+            reload_presets(app, state, Some(&p.id));
+            refresh_file_options(app);
+            refresh_integrations(app);
+            set_status(app, success_status, false);
+        }
+        Err(e) => set_status(app, format!("Save failed: {e}"), true),
     }
 }

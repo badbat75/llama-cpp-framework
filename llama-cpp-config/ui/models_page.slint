@@ -1,8 +1,8 @@
 // ModelsPage: the models tab (preset editor). All state lives in AppState
 // (state.slint); this component lays out the widgets against it.
 
-import { LineEdit, TextEdit, ComboBox, CheckBox, Button, ListView, ScrollView, Palette, RadioGroup, Slider, Switch, SpinBox } from "std-widgets.slint";
-import { SectionCard, LabeledField, SegmentedControl, MappedComboBox, AutoSlider, Tokens } from "components.slint";
+import { LineEdit, ComboBox, CheckBox, Button, ListView, ScrollView, Palette, Slider, Switch, SpinBox } from "std-widgets.slint";
+import { SectionCard, LabeledField, InfoRow, SegmentedControl, MappedComboBox, AutoSlider, Tokens } from "components.slint";
 import { AppState } from "state.slint";
 
 export component ModelsPage inherits HorizontalLayout {
@@ -214,100 +214,44 @@ export component ModelsPage inherits HorizontalLayout {
                 heading: "Model info";
                 if AppState.model_info_ready : VerticalLayout {
                     spacing: 8px;
-                    LabeledField {
+                    InfoRow {
                         label: "Type";
                         hint: "Dense runs every weight each token; MoE activates only a few experts, so VRAM ≈ all weights but compute ≈ active experts.\nMoE is what makes the 'MoE CPU layers' lever below useful.";
-                        Text {
-                            text: AppState.model_info_kind;
-                            vertical-alignment: center;
-                            font-size: 13px;
-                            wrap: word-wrap;
-                            horizontal-stretch: 1;
-                            color: Palette.foreground;
-                        }
+                        value: AppState.model_info_kind;
                     }
-                    if AppState.model_info_has_moe : LabeledField {
+                    if AppState.model_info_has_moe : InfoRow {
                         label: "MoE layers";
                         hint: "How many layers carry expert (FFN) weights — the range for the 'MoE CPU layers' lever (--n-cpu-moe) below.\nRaise it to move more expert layers to CPU: less VRAM, slower generation.";
-                        Text {
-                            text: AppState.model_info_moe;
-                            vertical-alignment: center;
-                            font-size: 13px;
-                            wrap: word-wrap;
-                            horizontal-stretch: 1;
-                            color: Palette.foreground;
-                        }
+                        value: AppState.model_info_moe;
                     }
-                    LabeledField {
+                    InfoRow {
                         label: "Arch / quant";
-                        Text {
-                            text: AppState.model_info_arch_quant;
-                            vertical-alignment: center;
-                            font-size: 13px;
-                            wrap: word-wrap;
-                            horizontal-stretch: 1;
-                            color: Palette.foreground;
-                        }
+                        value: AppState.model_info_arch_quant;
                     }
-                    LabeledField {
+                    InfoRow {
                         label: "Layers / ctx";
                         hint: "block_count guides --n-gpu-layers; the trained context is the sane upper bound for --ctx-size (going higher needs RoPE scaling).";
-                        Text {
-                            text: AppState.model_info_layers_ctx;
-                            vertical-alignment: center;
-                            font-size: 13px;
-                            wrap: word-wrap;
-                            horizontal-stretch: 1;
-                            color: Palette.foreground;
-                        }
+                        value: AppState.model_info_layers_ctx;
                     }
-                    LabeledField {
+                    InfoRow {
                         label: "Attention";
                         hint: "Head counts.\nFewer KV heads (GQA) shrink the KV cache, so a higher --ctx-size fits in the same VRAM.";
-                        Text {
-                            text: AppState.model_info_attn;
-                            vertical-alignment: center;
-                            font-size: 13px;
-                            wrap: word-wrap;
-                            horizontal-stretch: 1;
-                            color: Palette.foreground;
-                        }
+                        value: AppState.model_info_attn;
                     }
-                    if AppState.model_info_has_mmproj : LabeledField {
+                    if AppState.model_info_has_mmproj : InfoRow {
                         label: "MMProj";
                         hint: "The selected multimodal projector: projector type, modality (vision/audio), encoder depth, and native image / patch size.";
-                        Text {
-                            text: AppState.model_info_mmproj;
-                            vertical-alignment: center;
-                            font-size: 13px;
-                            wrap: word-wrap;
-                            horizontal-stretch: 1;
-                            color: Palette.foreground;
-                        }
+                        value: AppState.model_info_mmproj;
                     }
-                    LabeledField {
+                    InfoRow {
                         label: "Draft";
                         hint: "Whether the model embeds MTP (next-n) layers, and whether a matching MTP/DFlash drafter sits in your mtps\\ / dflashs\\ folders — pick it as the Draft model in the Assets card above.";
-                        Text {
-                            text: AppState.model_info_draft;
-                            vertical-alignment: center;
-                            font-size: 13px;
-                            wrap: word-wrap;
-                            horizontal-stretch: 1;
-                            color: Palette.foreground;
-                        }
+                        value: AppState.model_info_draft;
                     }
-                    if AppState.model_info_has_draft_file : LabeledField {
+                    if AppState.model_info_has_draft_file : InfoRow {
                         label: "Draft file";
                         hint: "The selected draft/MTP/DFlash file's own header: arch, quant, layers, and (DFlash) trained block_size with the implied --spec-draft-n-max ceiling.";
-                        Text {
-                            text: AppState.model_info_draft_file;
-                            vertical-alignment: center;
-                            font-size: 13px;
-                            wrap: word-wrap;
-                            horizontal-stretch: 1;
-                            color: Palette.foreground;
-                        }
+                        value: AppState.model_info_draft_file;
                     }
                 }
                 if !AppState.model_info_ready : Text {

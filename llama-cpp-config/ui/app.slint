@@ -6,7 +6,7 @@
 // All shared data/callbacks live in `AppState` (state.slint); this file is just
 // the window shell and the tray. Rust drives everything via `app.global::<AppState>()`.
 
-import { LineEdit, TextEdit, ComboBox, CheckBox, Button, ListView, ScrollView, Palette, RadioGroup, Slider, Switch } from "std-widgets.slint";
+import { LineEdit, Button, ListView, Palette } from "std-widgets.slint";
 import { AppState } from "state.slint";
 import { Tokens } from "components.slint";
 // Re-export so Slint generates the Rust accessor (`app.global::<AppState>()`);

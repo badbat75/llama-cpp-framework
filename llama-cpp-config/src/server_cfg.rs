@@ -3,6 +3,21 @@
 // `save()` rewrites the whole `[Server]` section from a `ServerConfig`. Unset
 // optional fields are emitted as commented `; Key = example  ; help` hint lines
 // (never omitted) so the file self-documents every available knob.
+//
+// ADD A SERVER FIELD — the mirror of the preset recipe (top of presets.rs), one
+// tier smaller but reaching the CLI (the server has a per-field `set`). Trace an
+// existing field like `threads` (PascalCase INI key ↔ snake_case Rust field):
+//   1. `ServerConfig` struct field (+ doc)   — below
+//   2. `load`                                — INI read; `keys.get("Key")` → field
+//   3. `save`                                — INI write; an `int_line_or_hint` /
+//      `str_line_or_hint` line + a `{…_line}` slot in the `[Server]` body
+//   4. `ServerForm` struct                   — ui/types.slint
+//   5. the input widget                      — ui/server_page.slint (bind two-way `<=>`)
+//   6. `config_to_form` + `form_to_config`   — src/server_form.rs (BOTH directions)
+//   7. THREE spots in src/cli.rs             — the `ServerSet` flag field, the
+//      `Show` `println!`, and the `Set` handler that copies the flag into `cfg`
+// Guard: the round-trip test in server_form.rs (`form_to_config(config_to_form(c))
+// == c`) — a field wired into one conversion only drops out there.
 
 use std::fs;
 use std::io;

@@ -30,6 +30,13 @@ fn num_or(val: Option<i32>, default: Option<i32>) -> SharedString {
         .into()
 }
 
+/// An optional value (no schema default) as its decimal string, or "" when unset
+/// — the blank-able text a LineEdit shows for the "blank = leave unset" sampling
+/// overrides. Pairs with `ini::parse_int` / `parse_float` on the way back.
+fn txt<T: ToString>(v: Option<T>) -> SharedString {
+    v.map(|n| n.to_string()).unwrap_or_default().into()
+}
+
 pub fn preset_to_form(p: &presets::Preset) -> PresetForm {
     // Domain defaults are pulled from `Preset::default()` so the form and the
     // INI can't drift apart. The literals that remain are UI-only choices with
@@ -46,11 +53,7 @@ pub fn preset_to_form(p: &presets::Preset) -> PresetForm {
         } else {
             p.spec_type.clone().into()
         },
-        spec_draft_n_max: p
-            .spec_draft_n_max
-            .map(|v| v.to_string())
-            .unwrap_or_default()
-            .into(),
+        spec_draft_n_max: txt(p.spec_draft_n_max),
         n_gpu_layers_draft: p.n_gpu_layers_draft.unwrap_or(99),
         n_gpu_layers_draft_auto: p.n_gpu_layers_draft.is_none(),
         device_draft: p.device_draft.clone().into(),
@@ -76,20 +79,12 @@ pub fn preset_to_form(p: &presets::Preset) -> PresetForm {
         reasoning_format: str_or(&p.reasoning_format, &d.reasoning_format),
         n_cpu_moe: p.n_cpu_moe.unwrap_or(0),
         n_cpu_moe_auto: p.n_cpu_moe.is_none(),
-        temp: p.temp.map(|v| v.to_string()).unwrap_or_default().into(),
-        top_k: p.top_k.map(|v| v.to_string()).unwrap_or_default().into(),
-        top_p: p.top_p.map(|v| v.to_string()).unwrap_or_default().into(),
-        min_p: p.min_p.map(|v| v.to_string()).unwrap_or_default().into(),
-        repeat_penalty: p
-            .repeat_penalty
-            .map(|v| v.to_string())
-            .unwrap_or_default()
-            .into(),
-        presence_penalty: p
-            .presence_penalty
-            .map(|v| v.to_string())
-            .unwrap_or_default()
-            .into(),
+        temp: txt(p.temp),
+        top_k: txt(p.top_k),
+        top_p: txt(p.top_p),
+        min_p: txt(p.min_p),
+        repeat_penalty: txt(p.repeat_penalty),
+        presence_penalty: txt(p.presence_penalty),
         chat_template_kwargs: p.chat_template_kwargs.clone().into(),
     }
 }

@@ -1,6 +1,6 @@
 // Reusable visual pieces shared by the page components.
 
-import { LineEdit, TextEdit, ComboBox, CheckBox, Button, ListView, ScrollView, Palette, RadioGroup, Slider, Switch } from "std-widgets.slint";
+import { ComboBox, CheckBox, Slider, Palette } from "std-widgets.slint";
 
 // Canonical transparency levels for muted text and selection tints, so every
 // page pulls from the same handful of values instead of eyeballing a new alpha.
@@ -189,4 +189,20 @@ export component LabeledField inherits HorizontalLayout {
         }
     }
     @children
+}
+
+// A read-only `label → value` row for the "Model info" card: a LabeledField
+// whose body is one wrapped, foreground-coloured Text. Collapses the repeated
+// `LabeledField { Text { …six identical props… } }` boilerplate to a single
+// line per fact. `label`/`hint`/`label_width` are inherited from LabeledField.
+export component InfoRow inherits LabeledField {
+    in property <string> value;
+    Text {
+        text: root.value;
+        vertical-alignment: center;
+        font-size: 13px;
+        wrap: word-wrap;
+        horizontal-stretch: 1;
+        color: Palette.foreground;
+    }
 }

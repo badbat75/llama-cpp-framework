@@ -17,13 +17,16 @@
 //! - `refresh_*`         : rebuild a list/section from disk or the device cache
 //!   (`refresh_presets`, `refresh_file_options`, `refresh_device_options`,
 //!   `refresh_integrations`, `refresh_run_status`).
-//! - `apply_*`           : push a computed (labels, values, index) triple — or a
-//!   whole form — into `AppState` through a small closure.
-//! - `populate_*`        : fill a dialog's option lists (bind interfaces, dialog
-//!   models).
+//! - `*_options`         : build a dropdown's (labels, values, index) model
+//!   triple the caller hands to the matching `set_*` accessors (`device_options`,
+//!   `scanned_options`).
+//! - `apply_form`        : push a whole `PresetForm` + its baseline into `AppState`.
+//! - `populate_*`        : fill a dialog's option lists (bind interfaces).
 //! - `spawn_*`           : run a slow probe off the UI thread, then apply the
 //!   result via `invoke_from_event_loop` (`spawn_version_probe`, `spawn_device_probe`).
-//! - `run_new_*` / `commit_new_preset` : the New / Clone → save funnel.
+//!
+//! The New / Clone dialog funnel (`populate_dialog_models` … `commit_new_preset`)
+//! lives in `gui/models_tab.rs` next to its only callers, not here.
 //!
 //! ## Dirty tracking
 //! Save/Revert enable off `*_dirty` in state.slint, each computed as
@@ -332,30 +335,23 @@ fn refresh_file_options(app: &AppWindow) {
     let mtp_scan_result = model_scan::list(&models_dir, model_scan::Category::Mtp.subdir());
     let dflash_scan_result = model_scan::list(&models_dir, model_scan::Category::Dflash.subdir());
 
-    apply_scanned(
-        app,
+    let (lbl, val, idx) = scanned_options(
         model_scan::Category::Model,
         model_scan_result,
         form.model.as_str(),
-        |app, lbl, val, idx| {
-            let s = app.global::<AppState>();
-            s.set_model_labels(lbl);
-            s.set_model_values(val);
-            s.set_model_index(idx);
-        },
     );
-    apply_scanned(
-        app,
+    s.set_model_labels(lbl);
+    s.set_model_values(val);
+    s.set_model_index(idx);
+
+    let (lbl, val, idx) = scanned_options(
         model_scan::Category::Mmproj,
         mmproj_scan_result,
         form.mmproj.as_str(),
-        |app, lbl, val, idx| {
-            let s = app.global::<AppState>();
-            s.set_mmproj_labels(lbl);
-            s.set_mmproj_values(val);
-            s.set_mmproj_index(idx);
-        },
     );
+    s.set_mmproj_labels(lbl);
+    s.set_mmproj_values(val);
+    s.set_mmproj_index(idx);
     // Draft picker: MTP heads (mtps\) and DFlash drafters (dflashs\) share one
     // dropdown (both feed --model-draft); `draft_specs` carries the matching
     // --spec-type the UI applies when a row is picked.
@@ -451,42 +447,21 @@ fn refresh_device_options(app: &AppWindow) {
     let form = s.get_form();
     let server_device = s.get_server_form().device;
 
-    apply_device(
-        app,
-        &devs,
-        server_device.as_str(),
-        "(all detected devices)",
-        |app, lbl, val, idx| {
-            let s = app.global::<AppState>();
-            s.set_server_dev_labels(lbl);
-            s.set_server_dev_values(val);
-            s.set_server_dev_index(idx);
-        },
-    );
-    apply_device(
-        app,
-        &devs,
-        form.device.as_str(),
-        "(server default)",
-        |app, lbl, val, idx| {
-            let s = app.global::<AppState>();
-            s.set_pdev_labels(lbl);
-            s.set_pdev_values(val);
-            s.set_pdev_index(idx);
-        },
-    );
-    apply_device(
-        app,
-        &devs,
-        form.device_draft.as_str(),
-        "(auto / same as model)",
-        |app, lbl, val, idx| {
-            let s = app.global::<AppState>();
-            s.set_pdraft_labels(lbl);
-            s.set_pdraft_values(val);
-            s.set_pdraft_index(idx);
-        },
-    );
+    let (lbl, val, idx) = device_options(&devs, server_device.as_str(), "(all detected devices)");
+    s.set_server_dev_labels(lbl);
+    s.set_server_dev_values(val);
+    s.set_server_dev_index(idx);
+
+    let (lbl, val, idx) = device_options(&devs, form.device.as_str(), "(server default)");
+    s.set_pdev_labels(lbl);
+    s.set_pdev_values(val);
+    s.set_pdev_index(idx);
+
+    let (lbl, val, idx) =
+        device_options(&devs, form.device_draft.as_str(), "(auto / same as model)");
+    s.set_pdraft_labels(lbl);
+    s.set_pdraft_values(val);
+    s.set_pdraft_index(idx);
 }
 
 /// Reconstruct the cached device list from the two parallel Slint arrays the
@@ -506,140 +481,28 @@ fn cached_devices(app: &AppWindow) -> Vec<devices::DeviceOption> {
         .collect()
 }
 
-fn apply_device(
-    app: &AppWindow,
+/// A dropdown's `(labels, values, index)` as Slint models, ready to hand to the
+/// three matching `set_*` accessors. The two builders below wrap the raw
+/// `Vec<String>` triples from `devices` / `model_scan` so each call site is three
+/// plain `s.set_*` lines against the `AppState` it already holds.
+type OptionModels = (ModelRc<SharedString>, ModelRc<SharedString>, i32);
+
+fn device_options(
     devs: &[devices::DeviceOption],
     current: &str,
     empty_label: &str,
-    apply: impl FnOnce(&AppWindow, ModelRc<SharedString>, ModelRc<SharedString>, i32),
-) {
+) -> OptionModels {
     let (labels, values, idx) = devices::build_options(devs, current, empty_label);
-    apply(app, string_model(labels), string_model(values), idx);
+    (string_model(labels), string_model(values), idx)
 }
 
-fn apply_scanned(
-    app: &AppWindow,
+fn scanned_options(
     category: model_scan::Category,
     scanned: Vec<model_scan::FileOption>,
     current: &str,
-    apply: impl FnOnce(&AppWindow, ModelRc<SharedString>, ModelRc<SharedString>, i32),
-) {
+) -> OptionModels {
     let (labels, values, idx) = model_scan::build_options(category, scanned, current);
-    apply(app, string_model(labels), string_model(values), idx);
-}
-
-// ── Dialog helpers ───────────────────────────────────────────────────
-
-fn populate_dialog_models(app: &AppWindow, state: &Rc<RefCell<State>>) {
-    let s = app.global::<AppState>();
-    let models_dir = s.get_server_form().models_dir.to_string();
-    let scanned = model_scan::list(&models_dir, model_scan::Category::Model.subdir());
-    state.borrow_mut().dialog_models_all = scanned;
-    s.set_dialog_filter(SharedString::from(""));
-    let st = state.borrow();
-    apply_dialog_models(app, &st.dialog_models_all, "");
-}
-
-/// Filter the cached dialog model scan by a case-insensitive substring on the
-/// label and publish the result. Filtering both arrays from ONE matched list
-/// keeps `dialog_model_index` consistent with `dialog_model_values`.
-fn apply_dialog_models(app: &AppWindow, all: &[model_scan::FileOption], filter: &str) {
-    let s = app.global::<AppState>();
-    let q = filter.to_lowercase();
-    let matched: Vec<&model_scan::FileOption> = all
-        .iter()
-        .filter(|f| q.is_empty() || f.label.to_lowercase().contains(&q))
-        .collect();
-    let labels: Vec<SharedString> = matched
-        .iter()
-        .map(|f| SharedString::from(f.label.clone()))
-        .collect();
-    let values: Vec<SharedString> = matched
-        .iter()
-        .map(|f| SharedString::from(f.path.clone()))
-        .collect();
-    s.set_dialog_model_labels(model(labels));
-    s.set_dialog_model_values(model(values));
-    s.set_dialog_model_index(-1);
-}
-
-fn picked_dialog_model_path(app: &AppWindow) -> Option<PathBuf> {
-    let s = app.global::<AppState>();
-    let idx = s.get_dialog_model_index();
-    if idx < 0 {
-        return None;
-    }
-    let values = s.get_dialog_model_values();
-    let i = usize::try_from(idx).ok()?;
-    if i >= values.row_count() {
-        return None;
-    }
-    Some(PathBuf::from(values.row_data(i)?.to_string()))
-}
-
-fn run_new_empty(app: &AppWindow, state: &Rc<RefCell<State>>, path: PathBuf) {
-    let id = presets::make_id(&path.to_string_lossy());
-    let p = presets::Preset::new_default(id.clone(), path.to_string_lossy().into_owned());
-    commit_new_preset(
-        app,
-        state,
-        p,
-        format!("Added [{id}] — tweak parameters and Save."),
-    );
-}
-
-fn run_new_clone(
-    app: &AppWindow,
-    state: &Rc<RefCell<State>>,
-    base: presets::Preset,
-    path: PathBuf,
-) {
-    let path_str = path.to_string_lossy().into_owned();
-    let base_id = presets::make_id(&path_str);
-    // The id is derived from the picked model, so cloning onto the same model
-    // (or one that already has a preset) would otherwise overwrite it. Pick the
-    // first free "<id>", "<id>-2", … instead of clobbering.
-    let existing: Vec<String> = presets::load_all().into_iter().map(|p| p.id).collect();
-    let id = unique_id(&base_id, &existing);
-    let cloned = presets::Preset {
-        id: id.clone(),
-        model: path_str,
-        ..base.clone()
-    };
-    commit_new_preset(
-        app,
-        state,
-        cloned,
-        format!("Cloned [{}] -> [{id}] (same parameters) — saved.", base.id),
-    );
-}
-
-/// First of `base`, `base-2`, `base-3`, … that isn't already in `existing`.
-fn unique_id(base: &str, existing: &[String]) -> String {
-    if !existing.iter().any(|e| e == base) {
-        return base.to_string();
-    }
-    (2..)
-        .map(|n| format!("{base}-{n}"))
-        .find(|cand| !existing.iter().any(|e| e == cand))
-        .unwrap_or_else(|| base.to_string())
-}
-
-fn commit_new_preset(
-    app: &AppWindow,
-    state: &Rc<RefCell<State>>,
-    p: presets::Preset,
-    success_status: String,
-) {
-    match presets::save(&p) {
-        Ok(()) => {
-            reload_presets(app, state, Some(&p.id));
-            refresh_file_options(app);
-            refresh_integrations(app);
-            set_status(app, success_status, false);
-        }
-        Err(e) => set_status(app, format!("Save failed: {e}"), true),
-    }
+    (string_model(labels), string_model(values), idx)
 }
 
 // ── Status / version ─────────────────────────────────────────────────
@@ -700,14 +563,14 @@ fn stop_server_async(app_weak: slint::Weak<AppWindow>, tray_weak: slint::Weak<Ap
     }
     std::thread::spawn(move || {
         let result = runstate::stop();
-        let mut running = runstate::load().is_some();
+        let mut running = runstate::is_running();
         let step = std::time::Duration::from_millis(300);
         let cap = std::time::Duration::from_secs(15);
         let mut waited = std::time::Duration::ZERO;
         while running && waited < cap {
             std::thread::sleep(step);
             waited += step;
-            running = runstate::load().is_some();
+            running = runstate::is_running();
         }
         slint::invoke_from_event_loop(move || {
             if let Some(app) = app_weak.upgrade() {
@@ -746,7 +609,7 @@ fn stop_server_async(app_weak: slint::Weak<AppWindow>, tray_weak: slint::Weak<Ap
 /// `spawn_version_probe`.
 fn refresh_run_status(app_weak: slint::Weak<AppWindow>, tray_weak: slint::Weak<AppTray>) {
     std::thread::spawn(move || {
-        let running = runstate::load().is_some();
+        let running = runstate::is_running();
         slint::invoke_from_event_loop(move || {
             if let Some(app) = app_weak.upgrade() {
                 let s = app.global::<AppState>();
