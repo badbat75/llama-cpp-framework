@@ -1,0 +1,53 @@
+// Shared Slint structs used across the configurator UI.
+
+export struct PresetSummary {
+    id: string,
+    model: string,
+    // Index into the full (unfiltered) presets vector on the Rust side. The list
+    // model only holds rows that pass the filter, so the `for` index is NOT a
+    // stable handle — `orig_index` is what select_preset()/highlighting use.
+    orig_index: int,
+}
+
+export struct PresetForm {
+    id: string,
+    model: string,
+    mmproj: string,
+    model_draft: string,
+    spec_type: string,
+    spec_draft_n_max: string,
+    n_gpu_layers_draft: int,
+    n_gpu_layers_draft_auto: bool,
+    device_draft: string,
+    device: string,
+    split_mode: string,
+    tensor_split: string,
+    ctx_size: int,
+    n_gpu_layers: int,
+    n_gpu_layers_auto: bool,
+    parallel: int,
+    batch_size: int,
+    ubatch_size: int,
+    cache_type_k: string,
+    cache_type_v: string,
+    flash_attn: bool,
+    cache_ram: int,
+    jinja: bool,
+    reasoning: string,
+    reasoning_format: string,
+    n_cpu_moe: int,
+    n_cpu_moe_auto: bool,
+    temp: string,
+    top_k: string,
+    top_p: string,
+    min_p: string,
+    repeat_penalty: string,
+    presence_penalty: string,
+    chat_template_kwargs: string,
+}
+
+export struct IntegrationModel {
+    id: string,
+    label: string,
+    enabled: bool,
+}

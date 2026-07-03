@@ -114,7 +114,25 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         );
     }
 
-    // ── Server tab callbacks ─────────────────────────────────────────
+    wire_server_tab(&app, &tray);
+    wire_models_tab(&app, &state);
+    wire_integrations_tab(&app);
+    wire_tray(&app, &tray);
+
+    // Closing the window hides it to the tray instead of quitting; the visible
+    // tray icon keeps the event loop alive. Use the tray's "Quit" to exit.
+    app.window()
+        .on_close_requested(|| slint::CloseRequestResponse::HideWindow);
+
+    app.show()?;
+    tray.show()?;
+    slint::run_event_loop()?;
+    Ok(())
+}
+
+// ── Per-tab callback wiring (called from run) ─────────────────
+
+fn wire_server_tab(app: &AppWindow, tray: &AppTray) {
     {
         let app_weak = app.as_weak();
         app.on_save_server(move || {
@@ -196,8 +214,9 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
             stop_server_async(app_weak.clone(), tray_weak.clone());
         });
     }
+}
 
-    // ── Models tab callbacks ─────────────────────────────────────────
+fn wire_models_tab(app: &AppWindow, state: &Rc<RefCell<State>>) {
     {
         let app_weak = app.as_weak();
         let state = state.clone();
@@ -426,9 +445,10 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
             apply_dialog_models(&app, &st.dialog_models_all, q.as_str());
         });
     }
+}
 
-    // ── Integrations tab callbacks ────────────────────────────────────
-    refresh_integrations(&app);
+fn wire_integrations_tab(app: &AppWindow) {
+    refresh_integrations(app);
     {
         let app_weak = app.as_weak();
         app.on_toggle_integration_model(move |index| {
@@ -479,8 +499,9 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
             set_status(&app, "Reloaded integration state.".into(), false);
         });
     }
+}
 
-    // ── System-tray callbacks ─────────────────────────────────────────
+fn wire_tray(app: &AppWindow, tray: &AppTray) {
     {
         let app_weak = app.as_weak();
         tray.on_open_window(move || {
@@ -513,16 +534,6 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     tray.on_quit_app(|| {
         slint::quit_event_loop().ok();
     });
-
-    // Closing the window hides it to the tray instead of quitting; the visible
-    // tray icon keeps the event loop alive. Use the tray's "Quit" to exit.
-    app.window()
-        .on_close_requested(|| slint::CloseRequestResponse::HideWindow);
-
-    app.show()?;
-    tray.show()?;
-    slint::run_event_loop()?;
-    Ok(())
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────

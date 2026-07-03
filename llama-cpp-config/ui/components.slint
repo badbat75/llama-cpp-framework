@@ -1,0 +1,87 @@
+// Reusable visual pieces shared by the page components.
+
+import { LineEdit, TextEdit, ComboBox, CheckBox, Button, ListView, ScrollView, Palette, RadioGroup, Slider, Switch } from "std-widgets.slint";
+
+export component SectionCard {
+    in property <string> heading;
+    in property <length> content_spacing: 10px;
+    in property <length> content_padding: 16px;
+
+    VerticalLayout {
+        spacing: 8px;
+
+        if root.heading != "" : Text {
+            text: root.heading;
+            font-size: 13px;
+            font-weight: 600;
+            color: Palette.foreground;
+        }
+
+        Rectangle {
+            border-radius: 8px;
+            border-width: 1px;
+            border-color: Palette.border;
+            background: Palette.alternate-background;
+            // Subtle elevation (Skia renderer only).
+            drop-shadow-color: #00000022;
+            drop-shadow-blur: 10px;
+            drop-shadow-offset-y: 2px;
+
+            VerticalLayout {
+                padding: root.content_padding;
+                spacing: root.content_spacing;
+                @children
+            }
+        }
+    }
+}
+
+export component LabeledField inherits HorizontalLayout {
+    in property <string> label;
+    // Optional hover help. When set, an ⓘ glyph is shown after the label and
+    // carries a Tooltip — keeps long explanations out of the input placeholders.
+    in property <string> hint;
+    in property <length> label_width: 130px;
+    spacing: 8px;
+    alignment: stretch;
+    HorizontalLayout {
+        width: root.label_width;
+        spacing: 4px;
+        alignment: start;
+        Text {
+            text: root.label;
+            vertical-alignment: center;
+            font-size: 13px;
+            // Elide instead of overflowing onto the field when the label is long;
+            // horizontal-stretch lets the ⓘ keep its own cell on the right.
+            overflow: elide;
+            horizontal-stretch: 1;
+        }
+        if root.hint != "" : Text {
+            text: "\u{E946}";
+            font-family: "Segoe Fluent Icons";
+            font-size: 13px;
+            // Fixed-width cell so the glyph is always visible and gives the
+            // Tooltip a reliable hover target — inside a 130px label row a
+            // stretched/0-width cell would collapse and never trigger hover.
+            width: 16px;
+            horizontal-stretch: 0;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            color: Palette.foreground.transparentize(0.45);
+            // Custom content (a plain Text) avoids the styled-text/@markdown
+            // conversion that Tooltip.text would require for a string property.
+            // It MUST be wrapped in a layout: ToolTipImpl is a plain Rectangle
+            // and does not lay out a bare fixed-width child, so the popup stays
+            // ~padding-wide and the text spills off its right edge. A layout
+            // propagates the 300px width up so the Rectangle sizes to it.
+            Tooltip {
+                VerticalLayout {
+                    padding: 10px;
+                    Text { text: root.hint; wrap: word-wrap; width: 300px; font-size: 14px; }
+                }
+            }
+        }
+    }
+    @children
+}

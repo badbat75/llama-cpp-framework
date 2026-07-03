@@ -1,0 +1,132 @@
+// IntegrationsPage: the integrations tab, extracted from app.slint.
+// AppWindow owns the real state and forwards these props/callbacks in.
+
+import { LineEdit, TextEdit, ComboBox, CheckBox, Button, ListView, ScrollView, Palette, RadioGroup, Slider, Switch } from "std-widgets.slint";
+import { SectionCard, LabeledField } from "components.slint";
+import { IntegrationModel } from "types.slint";
+
+export component IntegrationsPage inherits ScrollView {
+    in-out property <string> integration_base_url;
+    in-out property <[IntegrationModel]> integration_models;
+    in-out property <bool> integration_provider_active;
+    in-out property <string> integration_claude_env;
+    callback toggle_integration_model(int);
+    callback save_integrations();
+    callback revert_integrations();
+
+    VerticalLayout {
+        padding: 24px;
+        spacing: 16px;
+        alignment: start;
+
+        Text {
+            text: "Integrations";
+            font-size: 22px;
+            font-weight: 600;
+            color: Palette.foreground;
+        }
+        Text {
+            text: "Expose presets as models in your AI coding tools. OpenCode is configured directly; Claude Code needs environment variables.";
+            color: Palette.foreground.transparentize(0.4);
+            font-size: 12px;
+            wrap: word-wrap;
+        }
+
+        SectionCard {
+            heading: "Provider";
+            LabeledField {
+                label: "Status";
+                Text {
+                    text: root.integration_provider_active
+                        ? "llama-server provider active in opencode.json"
+                        : "No llama-server provider in opencode.json";
+                    color: root.integration_provider_active ? #2e7d32 : Palette.foreground.transparentize(0.45);
+                    font-size: 13px;
+                    vertical-alignment: center;
+                }
+            }
+            LabeledField {
+                label: "baseURL";
+                hint: "OpenAI-compatible endpoint exposed by llama-server (host:port + /v1).\nPoint OpenCode / Claude Code at this URL.";
+                LineEdit {
+                    text: root.integration_base_url;
+                    read-only: true;
+                    horizontal-stretch: 1;
+                }
+            }
+        }
+
+        SectionCard {
+            heading: "Models (toggle presets to expose)";
+            content_padding: 8px;
+
+            if root.integration_models.length == 0 : Text {
+                text: "No presets found. Create presets under the Models tab first.";
+                font-size: 12px;
+                color: Palette.foreground.transparentize(0.45);
+                wrap: word-wrap;
+            }
+
+            for item[i] in root.integration_models : Rectangle {
+                height: 36px;
+                background: Math.mod(i, 2) == 0 ? transparent : Palette.alternate-background.transparentize(0.3);
+
+                HorizontalLayout {
+                    padding-left: 12px;
+                    padding-right: 12px;
+                    spacing: 8px;
+                    CheckBox {
+                        text: "";
+                        checked: item.enabled;
+                        toggled => { root.toggle_integration_model(i); }
+                    }
+                    Text {
+                        text: item.id;
+                        font-size: 13px;
+                        font-weight: 600;
+                        color: Palette.foreground;
+                        vertical-alignment: center;
+                    }
+                    Text {
+                        text: item.label;
+                        font-size: 11px;
+                        color: Palette.foreground.transparentize(0.4);
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+                }
+            }
+        }
+
+        SectionCard {
+            heading: "Claude Code";
+            content_padding: 12px;
+            Text {
+                text: "Claude Code uses environment variables to connect to a custom endpoint. Copy the snippet below and run it in PowerShell before launching Claude Code, or add it to your PROFILE.";
+                wrap: word-wrap;
+                font-size: 12px;
+                color: Palette.foreground.transparentize(0.4);
+            }
+            LineEdit {
+                text: root.integration_claude_env;
+                read-only: true;
+                font-size: 11px;
+                horizontal-stretch: 1;
+            }
+        }
+
+        HorizontalLayout {
+            alignment: end;
+            spacing: 8px;
+            Button {
+                text: "Revert";
+                clicked => { root.revert_integrations(); }
+            }
+            Button {
+                text: "Save to opencode.json";
+                primary: true;
+                clicked => { root.save_integrations(); }
+            }
+        }
+    }
+}
