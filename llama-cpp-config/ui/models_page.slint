@@ -1,7 +1,7 @@
 // ModelsPage: the models tab (preset editor). All state lives in AppState
 // (state.slint); this component lays out the widgets against it.
 
-import { LineEdit, ComboBox, CheckBox, Button, ListView, ScrollView, Palette, Slider, Switch, SpinBox } from "std-widgets.slint";
+import { LineEdit, ComboBox, CheckBox, Button, ListView, ScrollView, Palette, Slider, SpinBox } from "std-widgets.slint";
 import { SectionCard, LabeledField, InfoRow, SegmentedControl, MappedComboBox, AutoSlider, Tokens, Options } from "components.slint";
 import { AppState } from "state.slint";
 
@@ -355,16 +355,17 @@ export component ModelsPage inherits HorizontalLayout {
                         vertical-alignment: center;
                         text: AppState.form.n_gpu_layers_draft_auto ? "auto" : "\{Math.min(AppState.form.n_gpu_layers_draft, AppState.draft_layers_max)}";
                     }
-                    // MTP/nextn head (0 layers) or no header: a binary CPU/GPU switch.
-                    // on = all on GPU (99), off = CPU (0).
-                    if AppState.model_info_draft_n_layer == 0 : Switch {
+                    // MTP/nextn head (0 layers) or no header: a binary CPU/GPU choice.
+                    // A SegmentedControl (not a Switch): its highlight is a pure read
+                    // of the model, so it never goes stale after a click — a Switch's
+                    // `checked` self-assignment would break its one-way binding (the
+                    // v1.1.1 staleness class). on GPU = all draft layers (99), on CPU = 0.
+                    if AppState.model_info_draft_n_layer == 0 : SegmentedControl {
                         horizontal-stretch: 1;
                         enabled: !AppState.form.n_gpu_layers_draft_auto && AppState.draft_active;
-                        checked: AppState.form.n_gpu_layers_draft >= 1;
-                        text: AppState.form.n_gpu_layers_draft_auto
-                            ? "auto (all on GPU)"
-                            : (AppState.form.n_gpu_layers_draft >= 1 ? "on GPU (all)" : "on CPU");
-                        toggled => { AppState.form.n_gpu_layers_draft = self.checked ? 99 : 0; }
+                        options: ["on GPU", "on CPU"];
+                        current: AppState.form.n_gpu_layers_draft >= 1 ? "on GPU" : "on CPU";
+                        activated(v) => { AppState.form.n_gpu_layers_draft = v == "on GPU" ? 99 : 0; }
                     }
                 }
             }

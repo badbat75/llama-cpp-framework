@@ -18,9 +18,10 @@
 //! and CheckBox (`checked`). ComboBox is out of scope — its only accessibility
 //! action is "expand" (open the popup); changing the selection needs real popup
 //! interaction under an event loop, which this no-event-loop harness can't drive.
-//! `SegmentedControl` (the reasoning picker) is safe by construction — it reads
-//! `current` purely and never self-assigns — and exposes no accessible value to
-//! read back, so it isn't behaviorally testable here either.
+//! `SegmentedControl` (the reasoning + reason-format pickers and the draft
+//! on-GPU/on-CPU control) is safe by construction — it reads `current` purely and
+//! never self-assigns — and exposes no accessible value to read back, so it isn't
+//! behaviorally testable here either.
 //!
 //! Requires Slint element debug info, which build.rs emits for non-release
 //! profiles only (see the `PROFILE` gate there); `cargo test --release` can't find

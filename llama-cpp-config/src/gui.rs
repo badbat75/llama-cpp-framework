@@ -215,26 +215,10 @@ fn load_server_into_ui(app: &AppWindow) {
 
 fn populate_bind_options(app: &AppWindow, current: &str) {
     let s = app.global::<AppState>();
-    let mut opts = net_ifaces::list_options();
-    let mut index = opts.iter().position(|o| o.value == current);
-    if index.is_none() && !current.is_empty() {
-        // Slot 2 is right after the two fixed rows net_ifaces::list_options()
-        // always emits first (localhost, 0.0.0.0), so the stray saved value sits
-        // at the head of the real interfaces rather than above the presets.
-        opts.insert(
-            2,
-            net_ifaces::BindOption {
-                label: format!("{current} (no longer present)"),
-                value: current.to_string(),
-            },
-        );
-        index = Some(2);
-    }
-    let labels: Vec<SharedString> = opts.iter().map(|o| o.label.clone().into()).collect();
-    let values: Vec<SharedString> = opts.iter().map(|o| o.value.clone().into()).collect();
-    s.set_bind_labels(model(labels));
-    s.set_bind_values(model(values));
-    s.set_bind_index(index.unwrap_or(0) as i32);
+    let (labels, values, index) = bind_options(current);
+    s.set_bind_labels(labels);
+    s.set_bind_values(values);
+    s.set_bind_index(index);
 }
 
 // ── Preset helpers ───────────────────────────────────────────────────
@@ -418,6 +402,11 @@ fn scanned_options(
     (string_model(labels), string_model(values), idx)
 }
 
+fn bind_options(current: &str) -> OptionModels {
+    let (labels, values, idx) = net_ifaces::build_options(&net_ifaces::interfaces(), current);
+    (string_model(labels), string_model(values), idx)
+}
+
 // ── Status / version ─────────────────────────────────────────────────
 
 fn set_status(app: &AppWindow, text: String, is_error: bool) {
@@ -588,10 +577,9 @@ fn refresh_integrations(app: &AppWindow) {
     let port = cfg.port.unwrap_or(8080);
     let hostname = cfg.hostname.unwrap_or_else(|| "localhost".into());
     let base_url = format!("http://{hostname}:{port}/v1");
-    s.set_integration_base_url(SharedString::from(base_url));
-
-    let claude_env = integrations::claude_code_env_script(&format!("http://{hostname}:{port}/v1"));
+    let claude_env = integrations::claude_code_env_script(&base_url);
     s.set_integration_claude_env(SharedString::from(claude_env));
+    s.set_integration_base_url(SharedString::from(base_url));
 
     s.set_integration_provider_active(integrations::detect_opencode_provider());
 

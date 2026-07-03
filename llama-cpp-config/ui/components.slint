@@ -118,8 +118,11 @@ export component SectionCard {
 export component SegmentedControl inherits HorizontalLayout {
     in property <[string]> options;
     in property <string> current;
+    // Grey out + swallow clicks when false (dims like a disabled std widget).
+    in property <bool> enabled: true;
     callback activated(string);
     spacing: 6px;
+    opacity: root.enabled ? 1.0 : 0.4;
     for opt in root.options : Rectangle {
         height: 30px;
         min-width: 60px;
@@ -143,6 +146,7 @@ export component SegmentedControl inherits HorizontalLayout {
             }
         }
         touch := TouchArea {
+            enabled: root.enabled;
             mouse-cursor: pointer;
             clicked => { root.activated(opt); }
         }

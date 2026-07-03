@@ -20,6 +20,10 @@ use std::path::Path;
 
 use crate::model_scan;
 
+/// Separator between the parts of a Model-info box line ("arch · quant · size").
+/// Single source so every line joins on the exact same glyph + spacing.
+const SEP: &str = "  ·  ";
+
 /// Read a handful of typed metadata values by key. Abstracts over the live gguf
 /// context (via `ggml-base.dll`) so the field-extraction logic stays testable
 /// without the DLL (see the `tests` module's map-backed source).
@@ -149,7 +153,7 @@ impl ModelInfo {
         } else {
             format!("all {} layers hold experts", self.n_layer)
         };
-        format!("{desc}  ·  saves VRAM (slower)")
+        format!("{desc}{SEP}saves VRAM (slower)")
     }
 
     pub fn arch_quant_line(&self) -> String {
@@ -160,7 +164,7 @@ impl ModelInfo {
         if !self.size_label.is_empty() {
             parts.push(&self.size_label);
         }
-        parts.join("  ·  ")
+        parts.join(SEP)
     }
 
     pub fn layers_ctx_line(&self) -> String {
@@ -177,7 +181,7 @@ impl ModelInfo {
         if parts.is_empty() {
             "n/a".to_string()
         } else {
-            parts.join("  ·  ")
+            parts.join(SEP)
         }
     }
 
@@ -225,7 +229,7 @@ impl ModelInfo {
         if self.nextn_predict_layers > 0 {
             parts.push(format!("nextn {}", self.nextn_predict_layers));
         }
-        parts.join("  ·  ")
+        parts.join(SEP)
     }
 }
 
@@ -270,7 +274,7 @@ impl MmprojInfo {
                 parts.push(format!("{}px", self.image_size));
             }
         }
-        parts.join("  ·  ")
+        parts.join(SEP)
     }
 }
 
@@ -301,7 +305,7 @@ pub fn draft_line(info: &ModelInfo, ext: &ExternalDraft) -> String {
         }
     };
 
-    format!("{embedded}  ·  {external}")
+    format!("{embedded}{SEP}{external}")
 }
 
 // ── Reading via ggml-base.dll ────────────────────────────────────────────

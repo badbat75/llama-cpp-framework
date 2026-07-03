@@ -47,9 +47,11 @@ pub fn save_opencode_models(checked_ids: &[String], base_url: &str) -> Result<()
         all_presets.iter().map(|p| (p.id.as_str(), p)).collect();
 
     let models = v
-        .pointer_mut("/provider/llama.cpp/models")
+        .get_mut("provider")
+        .and_then(|p| p.get_mut(PROVIDER_KEY))
+        .and_then(|p| p.get_mut("models"))
         .and_then(|m| m.as_object_mut())
-        .ok_or_else(|| anyhow::anyhow!("provider.llama.cpp.models is not an object"))?;
+        .ok_or_else(|| anyhow::anyhow!("provider.{PROVIDER_KEY}.models is not an object"))?;
 
     models.clear();
 
@@ -68,7 +70,7 @@ pub fn save_opencode_models(checked_ids: &[String], base_url: &str) -> Result<()
 
 pub fn detect_opencode_provider() -> bool {
     read_opencode()
-        .and_then(|v| v.pointer("/provider/llama.cpp").cloned())
+        .and_then(|v| v.get("provider").and_then(|p| p.get(PROVIDER_KEY)).cloned())
         .is_some()
 }
 

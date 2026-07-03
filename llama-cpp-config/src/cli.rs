@@ -36,7 +36,7 @@ pub enum ServerCmd {
     Set(ServerSet),
 }
 
-#[derive(Args, Debug)]
+#[derive(Args, Debug, Default)]
 pub struct ServerSet {
     #[arg(long)]
     pub port: Option<i32>,
@@ -67,6 +67,50 @@ pub struct ServerSet {
     /// Per-GPU weight proportions (--tensor-split), e.g. "3,1" (empty = even).
     #[arg(long)]
     pub tensor_split: Option<String>,
+}
+
+impl ServerSet {
+    /// Copy every provided flag into `cfg`, applying each field's clearing rule
+    /// (see the per-field docs above): a `None` flag leaves the field untouched;
+    /// non-positive thread/reuse values clear the override; a blank device/split
+    /// string unsets it. The single, unit-tested home for `server set`'s field
+    /// mapping — keep it in lockstep with the `ServerConfig` schema.
+    fn apply(&self, cfg: &mut server_cfg::ServerConfig) {
+        if let Some(p) = self.port {
+            cfg.port = Some(p);
+        }
+        if let Some(h) = &self.hostname {
+            cfg.hostname = Some(h.clone());
+        }
+        if let Some(m) = self.mlock {
+            cfg.mlock = Some(m);
+        }
+        if let Some(t) = self.threads {
+            cfg.threads = if t > 0 { Some(t) } else { None };
+        }
+        if let Some(cr) = self.cache_reuse {
+            cfg.cache_reuse = if cr > 0 { Some(cr) } else { None };
+        }
+        if let Some(tb) = self.threads_batch {
+            cfg.threads_batch = if tb > 0 { Some(tb) } else { None };
+        }
+        if let Some(m) = self.models_max {
+            cfg.models_max = Some(m);
+        }
+        if let Some(d) = &self.models_dir {
+            cfg.models_dir = Some(d.clone());
+        }
+        // A blank string clears the field (blank = unset).
+        if let Some(dev) = &self.device {
+            cfg.device = server_cfg::opt_nonblank(Some(dev.clone()));
+        }
+        if let Some(sm) = &self.split_mode {
+            cfg.split_mode = server_cfg::opt_nonblank(Some(sm.clone()));
+        }
+        if let Some(ts) = &self.tensor_split {
+            cfg.tensor_split = server_cfg::opt_nonblank(Some(ts.clone()));
+        }
+    }
 }
 
 #[derive(Subcommand, Debug)]
@@ -134,40 +178,7 @@ fn run_server(c: ServerCmd) -> Result<()> {
         }
         ServerCmd::Set(s) => {
             let mut cfg = server_cfg::load();
-            if let Some(p) = s.port {
-                cfg.port = Some(p);
-            }
-            if let Some(h) = s.hostname {
-                cfg.hostname = Some(h);
-            }
-            if let Some(m) = s.mlock {
-                cfg.mlock = Some(m);
-            }
-            if let Some(t) = s.threads {
-                cfg.threads = if t > 0 { Some(t) } else { None };
-            }
-            if let Some(cr) = s.cache_reuse {
-                cfg.cache_reuse = if cr > 0 { Some(cr) } else { None };
-            }
-            if let Some(tb) = s.threads_batch {
-                cfg.threads_batch = if tb > 0 { Some(tb) } else { None };
-            }
-            if let Some(m) = s.models_max {
-                cfg.models_max = Some(m);
-            }
-            if let Some(d) = s.models_dir {
-                cfg.models_dir = Some(d);
-            }
-            // Passing an empty string clears the field (blank = unset).
-            if let Some(dev) = s.device {
-                cfg.device = server_cfg::opt_nonblank(Some(dev));
-            }
-            if let Some(sm) = s.split_mode {
-                cfg.split_mode = server_cfg::opt_nonblank(Some(sm));
-            }
-            if let Some(ts) = s.tensor_split {
-                cfg.tensor_split = server_cfg::opt_nonblank(Some(ts));
-            }
+            s.apply(&mut cfg);
             server_cfg::save(&cfg).context("save server.ini")?;
             println!("Wrote {}", paths::server_ini().display());
             Ok(())
@@ -201,5 +212,87 @@ fn run_preset(c: PresetCmd) -> Result<()> {
             println!("Removed [{id}] from {}", paths::presets_ini().display());
             Ok(())
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::server_cfg::ServerConfig;
+
+    // The only guard on `server set`'s schema mirror: every other server-field
+    // spot (server_cfg load/save, the form conversions) has a round-trip test,
+    // but `apply` is the CLI-only copy — an omitted field here is silent.
+
+    #[test]
+    fn server_set_apply_copies_every_field() {
+        let set = ServerSet {
+            port: Some(9000),
+            hostname: Some("0.0.0.0".into()),
+            mlock: Some(true),
+            threads: Some(8),
+            cache_reuse: Some(256),
+            threads_batch: Some(16),
+            models_max: Some(3),
+            models_dir: Some("D:\\models".into()),
+            device: Some("CUDA0".into()),
+            split_mode: Some("row".into()),
+            tensor_split: Some("3,1".into()),
+        };
+        let mut cfg = ServerConfig::default();
+        set.apply(&mut cfg);
+        assert_eq!(cfg.port, Some(9000));
+        assert_eq!(cfg.hostname.as_deref(), Some("0.0.0.0"));
+        assert_eq!(cfg.mlock, Some(true));
+        assert_eq!(cfg.threads, Some(8));
+        assert_eq!(cfg.cache_reuse, Some(256));
+        assert_eq!(cfg.threads_batch, Some(16));
+        assert_eq!(cfg.models_max, Some(3));
+        assert_eq!(cfg.models_dir.as_deref(), Some("D:\\models"));
+        assert_eq!(cfg.device.as_deref(), Some("CUDA0"));
+        assert_eq!(cfg.split_mode.as_deref(), Some("row"));
+        assert_eq!(cfg.tensor_split.as_deref(), Some("3,1"));
+    }
+
+    #[test]
+    fn server_set_apply_leaves_unset_flags_untouched() {
+        let before = ServerConfig {
+            port: Some(1234),
+            hostname: Some("localhost".into()),
+            threads: Some(6),
+            ..Default::default()
+        };
+        let mut cfg = before.clone();
+        ServerSet::default().apply(&mut cfg); // all flags None
+        assert_eq!(cfg, before);
+    }
+
+    #[test]
+    fn server_set_apply_clears_overrides_on_nonpositive_and_blank() {
+        let mut cfg = ServerConfig {
+            threads: Some(8),
+            cache_reuse: Some(64),
+            threads_batch: Some(4),
+            device: Some("CUDA0".into()),
+            split_mode: Some("row".into()),
+            tensor_split: Some("3,1".into()),
+            ..Default::default()
+        };
+        let set = ServerSet {
+            threads: Some(0),
+            cache_reuse: Some(-1),
+            threads_batch: Some(0),
+            device: Some(String::new()),
+            split_mode: Some("  ".into()),
+            tensor_split: Some(String::new()),
+            ..Default::default()
+        };
+        set.apply(&mut cfg);
+        assert_eq!(cfg.threads, None);
+        assert_eq!(cfg.cache_reuse, None);
+        assert_eq!(cfg.threads_batch, None);
+        assert_eq!(cfg.device, None);
+        assert_eq!(cfg.split_mode, None);
+        assert_eq!(cfg.tensor_split, None);
     }
 }
