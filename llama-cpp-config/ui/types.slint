@@ -9,6 +9,9 @@ export struct PresetSummary {
     orig_index: int,
 }
 
+// Adding a field? This struct is step 5 of the 7-step fan-out documented at the
+// top of src/presets.rs (struct + Default + from_keys + render_section here in
+// Rust, PresetForm + widget in Slint, both form.rs conversions).
 export struct PresetForm {
     id: string,
     model: string,
@@ -49,6 +52,31 @@ export struct PresetForm {
     repeat_penalty: string,
     presence_penalty: string,
     chat_template_kwargs: string,
+}
+
+// The server tab's edit form, the server-side mirror of PresetForm: all of
+// server.ini's editable fields in one struct so the Server page binds two-way to
+// `AppState.server_form.<field>`, dirty-tracking is a single struct compare
+// (`server_form != server_form_base`), and adding a server field touches this
+// struct + server_page.slint + server_cfg.rs + the two conversions in
+// src/server_form.rs — never the GUI wiring. Like PresetForm, most numerics ride
+// as blank-able `string`; the CPU-thread counts instead ride as slider `int`s
+// paired with an `_auto` flag (auto = omit the flag, let llama.cpp pick), the
+// same shape as PresetForm's layer sliders.
+export struct ServerForm {
+    port: string,
+    hostname: string,
+    mlock: bool,
+    threads: int,
+    threads_auto: bool,
+    cache_reuse: string,
+    threads_batch: int,
+    threads_batch_auto: bool,
+    models_max: string,
+    models_dir: string,
+    device: string,
+    split_mode: string,
+    tensor_split: string,
 }
 
 export struct IntegrationModel {

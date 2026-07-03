@@ -2,6 +2,70 @@
 
 import { LineEdit, TextEdit, ComboBox, CheckBox, Button, ListView, ScrollView, Palette, RadioGroup, Slider, Switch } from "std-widgets.slint";
 
+// Canonical transparency levels for muted text and selection tints, so every
+// page pulls from the same handful of values instead of eyeballing a new alpha.
+// Used as `Palette.foreground.transparentize(Tokens.muted)` etc.
+export global Tokens {
+    out property <float> subtle: 0.25;   // secondary text on a modal / high-contrast surface
+    out property <float> muted: 0.4;     // page subtitles, help glyphs, "no results" notes
+    out property <float> faint: 0.5;     // least-important text (paths, hints)
+    out property <float> sel: 0.82;      // accent tint for a selected/active row
+}
+
+// A ComboBox backed by parallel label/value arrays with a bounds-checked
+// selection: `labels` drives the popup, `index` two-way-binds the current row,
+// and `picked(value)` fires with `values[index]` — guarded so an out-of-range
+// index (e.g. an empty list) can never index past the array. The caller does the
+// assignment and any side effects, keeping the write site visible.
+export component MappedComboBox inherits ComboBox {
+    in property <[string]> labels;
+    in property <[string]> values;
+    in-out property <int> index;
+    callback picked(string);
+    model: root.labels;
+    current-index <=> root.index;
+    selected => {
+        if (self.current-index >= 0 && self.current-index < root.values.length) {
+            root.picked(root.values[self.current-index]);
+        }
+    }
+}
+
+// An "auto" checkbox + a 0..maximum slider + a right-aligned numeric readout —
+// the "count, or let llama.cpp decide" lever used for the layer-offload flags
+// (--n-gpu-layers, --n-cpu-moe) and the CPU-thread counts (--threads,
+// --threads-batch). `auto` (two-way) omits the flag and disables the slider;
+// `value` (two-way) is the count (a slider is display+`changed`, not an editable
+// two-way widget). `usable` gates the whole row on an external precondition
+// (e.g. "model is MoE").
+export component AutoSlider inherits HorizontalLayout {
+    in-out property <bool> auto;
+    in-out property <int> value;
+    in property <int> maximum;
+    in property <bool> usable: true;
+    horizontal-stretch: 1;
+    spacing: 8px;
+    CheckBox {
+        text: "auto";
+        enabled: root.usable;
+        checked <=> root.auto;
+    }
+    Slider {
+        horizontal-stretch: 1;
+        enabled: !root.auto && root.usable;
+        minimum: 0;
+        maximum: root.maximum;
+        value: Math.min(root.value, root.maximum);
+        changed(v) => { root.value = Math.round(v); }
+    }
+    Text {
+        width: 44px;
+        horizontal-alignment: right;
+        vertical-alignment: center;
+        text: root.auto ? "auto" : "\{Math.min(root.value, root.maximum)}";
+    }
+}
+
 export component SectionCard {
     in property <string> heading;
     in property <length> content_spacing: 10px;
@@ -55,7 +119,7 @@ export component SegmentedControl inherits HorizontalLayout {
         border-width: 1px;
         border-color: opt == root.current ? Palette.accent-background : Palette.border;
         background: opt == root.current
-            ? Palette.accent-background.transparentize(0.85)
+            ? Palette.accent-background.transparentize(Tokens.sel)
             : (touch.has-hover ? Palette.alternate-background : transparent);
         HorizontalLayout {
             padding-left: 12px;
@@ -109,7 +173,7 @@ export component LabeledField inherits HorizontalLayout {
             horizontal-stretch: 0;
             horizontal-alignment: center;
             vertical-alignment: center;
-            color: Palette.foreground.transparentize(0.45);
+            color: Palette.foreground.transparentize(Tokens.muted);
             // Custom content (a plain Text) avoids the styled-text/@markdown
             // conversion that Tooltip.text would require for a string property.
             // It MUST be wrapped in a layout: ToolTipImpl is a plain Rectangle

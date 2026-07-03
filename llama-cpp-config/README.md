@@ -19,7 +19,7 @@ Each tab body is its own Slint component (`ui\server_page.slint`, `ui\models_pag
 
 ### Server tab — `server.ini`
 
-- Fields: port, hostname, mlock, threads, cache reuse, threads-batch, models-max, models-dir (with a Browse button), GPU device.
+- Fields: port, hostname, mlock, threads, cache reuse, threads-batch, models-max, models-dir (with a Browse button), GPU device. **threads** and **threads-batch** are sliders capped at the machine's logical-processor count, each with an "auto" checkbox that omits the flag (let llama.cpp pick).
 - **Multi-GPU split** (machine-wide default, overridable per-model): **GPU split mode** (`--split-mode`: none/layer/row) and **tensor split** (`--tensor-split`, e.g. `3,1`) control how a model is distributed across GPUs — identical on CUDA and HIP.
 - A read-only, multi-line **Command Line** card shows the exact `llama-server` invocation **Start** would run, one `--flag value` per line joined with the shell's line-continuation character (`` ` `` on Windows, `\` on Linux) so you can paste it straight into a terminal.
 
@@ -30,8 +30,12 @@ Scans `.gguf` files under `ModelsDir`, shows the presets table, and edits per-mo
 - **Assets** — the file pickers and speculator selection: model file (`--model`), MMProj (`--mmproj`), ONE draft-model dropdown that merges MTP heads (scanned from `mtps\`) and DFlash drafters (scanned from `dflashs\`), both feeding `--model-draft`, plus the spec-type dropdown. Picking an MTP head auto-selects `--spec-type draft-mtp`; picking a DFlash drafter auto-selects `--spec-type draft-dflash`. Either way, when a server GPU device is set the draft is pinned to it (`device-draft`, `n-gpu-layers-draft = 99`); otherwise it falls back to CPU (`n-gpu-layers-draft = 0`).
 - **Model info** (read-only, between Assets and Hardware Config) — reads GGUF metadata through llama.cpp's own reader (runtime-loaded `ggml-base.dll`, no reimplemented parser; see `gguf.rs`): dense vs MoE (+ expert counts), layer count, trained context, GQA shape, quant, and whether it embeds MTP layers — plus whether a matching MTP/DFlash drafter is present. For MoE models a **MoE layers** row shows how many layers carry experts (with a "saves VRAM (slower)" note), sizing the `--n-cpu-moe` field. A **MMProj** row (projector type, vision/audio modality, encoder depth, image/patch size) and a **Draft file** row (the drafter's arch/layers and, for DFlash, the trained `block_size` → the implied `--spec-draft-n-max` ceiling) appear when those are selected. Reads are synchronous and uncached; if `ggml-base.dll` can't be loaded the box shows "unavailable".
 - **Hardware Config** (directly under Model info) — every placement knob: GPU device (`--device`), GPU split mode + tensor split (overriding the server default), GPU layers (`--n-gpu-layers`), MoE CPU layers (`--n-cpu-moe`), draft device (`--device-draft`), draft GPU layers (`--n-gpu-layers-draft`).
-- **Advanced** — ctx-size, parallel, batch/ubatch, KV cache types, flash-attn, sampling, reasoning, etc.
-- **Speculative decoding (MTP / DFlash)** (last, below Advanced) — only **Draft n-max** (`--spec-draft-n-max`, max drafted tokens per step; DFlash clamps it to the model's trained `block_size - 1`, e.g. 15).
+- **Resource / context** — ctx-size, parallel seqs, batch/ubatch (all always-valued `SpinBox`es).
+- **KV cache** — K/V cache-type dropdowns, flash-attn, cache-ram.
+- **Chat / reasoning** — jinja, reasoning + reasoning-format (`SegmentedControl`s).
+- **Sampling overrides** — temp, top-k/p, min-p, repeat/presence penalty (blank = unset).
+- **Advanced** — chat-template-kwargs only.
+- **Speculative decoding (MTP / DFlash)** (last) — only **Draft n-max** (`--spec-draft-n-max`, max drafted tokens per step; DFlash clamps it to the model's trained `block_size - 1`, e.g. 15).
 
 Field behaviors:
 
@@ -73,8 +77,10 @@ The build script (`build.rs`) converts `resources\llama.ico` to a PNG at compile
 |------|---------|
 | `src\main.rs` | Entry point: no args → GUI, subcommand → CLI dispatcher |
 | `src\cli.rs` | Clap subcommands: `server` (show/set), `preset` (list/show/delete) |
-| `src\gui.rs` | Slint GUI: window setup in `run()`, per-tab wiring in `wire_*` helpers, status polling |
+| `src\gui.rs` | Slint GUI module root: `run()` (window setup), the shared `State` cache, and all `load_*` / `refresh_*` / `apply_*` / `spawn_*` helpers |
+| `src\gui\` | Per-tab callback wiring, one file each — `server_tab.rs`, `models_tab.rs`, `integrations_tab.rs`, `tray.rs` (each a `wire()` reaching `gui`'s helpers via `use super::*`) |
 | `src\form.rs` | `PresetForm` ↔ `presets::Preset` conversion (`preset_to_form` / `form_to_preset`) + a round-trip test; defaults sourced from `Preset::default()` |
+| `src\server_form.rs` | `ServerForm` ↔ `server_cfg::ServerConfig` conversion (`config_to_form` / `form_to_config`) + a round-trip test — the server-side mirror of `form.rs` |
 | `src\proc.rs` | `run_hidden()`: launch a child process with `CREATE_NO_WINDOW` on Windows (shared by the device / version / run-state probes) |
 | `src\server_cfg.rs` | Read/write `server.ini` |
 | `src\presets.rs` | Read/write `presets.ini` (the `Preset` schema and INI round-trip) |
@@ -93,7 +99,7 @@ The build script (`build.rs`) converts `resources\llama.ico` to a PNG at compile
 | `ui\server_page.slint` | Server tab component |
 | `ui\models_page.slint` | Models tab component (preset editor) |
 | `ui\integrations_page.slint` | Integrations tab component |
-| `ui\components.slint` | Shared visual pieces (`SectionCard`, `LabeledField`) |
+| `ui\components.slint` | Shared visual pieces: `SectionCard`, `LabeledField`, `SegmentedControl`, `MappedComboBox` (labels/values/index combo with a bounds-checked `picked`), `AutoSlider` (auto-checkbox + slider + readout), and the `Tokens` global (canonical muted-text / selection alphas) |
 | `ui\types.slint` | Shared Slint structs (`PresetSummary`, `PresetForm`, `IntegrationModel`) |
 | `src\tests\` | End-to-end / cross-cutting tests (internal `#[cfg(test)] mod tests`). `ui_bindings.rs`: headless Slint-testing-backend test — editable widgets must track the model after an edit, guarding the one-way-binding staleness bug (v1.1.1) |
 | `build.rs` | Compile-time ICO → PNG, embed EXE resource on Windows; emits Slint element debug info for non-release builds (needed by the UI test) |
@@ -105,7 +111,7 @@ The build script (`build.rs`) converts `resources\llama.ico` to a PNG at compile
 - No external INI crate: `ini.rs` is a simple hand-rolled INI reader/writer (~100 lines).
 - GUI callbacks are `Send + 'static` closures passed to `slint::ComponentHandle::global()`.
 - Every property and callback the Rust side drives lives in the `AppState` global (`ui\state.slint`), declared once. Rust uses `app.global::<AppState>().set_x()/get_x()/on_x()`; the pages reference `AppState.x` directly. Adding a UI field that Rust reads/writes is a **one-file** change in `ui\state.slint` — no per-page re-declaration or forwarding. (The tray, `AppTray`, is a separate root and keeps its own pushed-in state.)
-- Editable widgets bind two-way (`<=>`) to `AppState`, never one-way (`prop: AppState.x`): a one-way binding breaks the instant the user edits the field (Slint's "overwritten bindings" rule), leaving it stale on the next preset switch / Revert. `SegmentedControl` (a reactive replacement for `RadioGroup`) is the exception — it reads `current` purely and reports clicks via `activated`.
+- Editable widgets that back a scalar `AppState` field bind two-way (`<=>`), never one-way (`prop: AppState.x`): a one-way binding breaks the instant the user edits the field (Slint's "overwritten bindings" rule), leaving it stale on the next preset switch / Revert. The recognized one-way cases are: read-only displays (the `model_info_*` texts, the integration status/baseURL fields), per-row model widgets inside a `for` (the integration checkboxes, `checked: item.enabled` + a `toggled` callback), the `labels`/`values`/`index` ComboBox split (see `MappedComboBox`), and `SegmentedControl` (the reactive `RadioGroup` replacement — reads `current` purely, reports clicks via `activated`).
 
 ## Tests
 

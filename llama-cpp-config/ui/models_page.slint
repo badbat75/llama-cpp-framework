@@ -2,7 +2,7 @@
 // (state.slint); this component lays out the widgets against it.
 
 import { LineEdit, TextEdit, ComboBox, CheckBox, Button, ListView, ScrollView, Palette, RadioGroup, Slider, Switch, SpinBox } from "std-widgets.slint";
-import { SectionCard, LabeledField, SegmentedControl } from "components.slint";
+import { SectionCard, LabeledField, SegmentedControl, MappedComboBox, AutoSlider, Tokens } from "components.slint";
 import { AppState } from "state.slint";
 
 export component ModelsPage inherits HorizontalLayout {
@@ -46,7 +46,7 @@ export component ModelsPage inherits HorizontalLayout {
                 for p in AppState.presets : Rectangle {
                     height: 36px;
                     background: p.orig_index == AppState.selected_preset_index
-                        ? Palette.accent-background.transparentize(0.82)
+                        ? Palette.accent-background.transparentize(Tokens.sel)
                         : (item-touch.has-hover ? Palette.background : transparent);
 
                     if p.orig_index == AppState.selected_preset_index : Rectangle {
@@ -110,7 +110,7 @@ export component ModelsPage inherits HorizontalLayout {
         Text {
             text: AppState.presets_path;
             font-size: 10px;
-            color: Palette.foreground.transparentize(0.5);
+            color: Palette.foreground.transparentize(Tokens.faint);
             wrap: word-wrap;
         }
     }
@@ -137,36 +137,35 @@ export component ModelsPage inherits HorizontalLayout {
                 LabeledField {
                     label: "Model file";
                     hint: "Main model weights for this preset (--model / -m).\nPick a .gguf from models\\.";
-                    ComboBox {
-                        model: AppState.model_labels;
-                        current-index <=> AppState.model_index;
-                        selected(value) => {
-                            let i = self.current-index;
-                            if (i >= 0 && i < AppState.model_values.length) {
-                                AppState.form.model = AppState.model_values[i];
-                                AppState.model_changed();
-                            }
+                    MappedComboBox {
+                        labels: AppState.model_labels;
+                        values: AppState.model_values;
+                        index <=> AppState.model_index;
+                        picked(v) => {
+                            AppState.form.model = v;
+                            AppState.model_changed();
                         }
                     }
                 }
                 LabeledField {
                     label: "MMProj";
                     hint: "Multimodal projector (--mmproj) for vision models, so the server can read images.\nBlank for text-only models.";
-                    ComboBox {
-                        model: AppState.mmproj_labels;
-                        current-index <=> AppState.mmproj_index;
-                        selected(value) => {
-                            let i = self.current-index;
-                            if (i >= 0 && i < AppState.mmproj_values.length) {
-                                AppState.form.mmproj = AppState.mmproj_values[i];
-                                AppState.model_changed();
-                            }
+                    MappedComboBox {
+                        labels: AppState.mmproj_labels;
+                        values: AppState.mmproj_values;
+                        index <=> AppState.mmproj_index;
+                        picked(v) => {
+                            AppState.form.mmproj = v;
+                            AppState.model_changed();
                         }
                     }
                 }
                 LabeledField {
                     label: "Draft model";
                     hint: "Optional speculator (feeds --model-draft).\nMTP heads (from mtps\\) set --spec-type draft-mtp; DFlash drafters (from dflashs\\) set draft-dflash.\nPicking one auto-pins the draft to the server GPU, or CPU if none.\n(none) = no speculation.";
+                    // A raw ComboBox (not MappedComboBox): the handler needs the
+                    // selected INDEX to read the parallel `draft_specs` array, not
+                    // just the picked value.
                     ComboBox {
                         model: AppState.draft_labels;
                         current-index <=> AppState.draft_index;
@@ -183,8 +182,8 @@ export component ModelsPage inherits HorizontalLayout {
                                     // if set; otherwise fall back to CPU, which always works.
                                     if (AppState.form.n_gpu_layers_draft_auto && AppState.form.device_draft == "") {
                                         AppState.form.n_gpu_layers_draft_auto = false;
-                                        if (AppState.server_device != "") {
-                                            AppState.form.device_draft = AppState.server_device;
+                                        if (AppState.server_form.device != "") {
+                                            AppState.form.device_draft = AppState.server_form.device;
                                             AppState.form.n_gpu_layers_draft = 99;
                                         } else {
                                             AppState.form.n_gpu_layers_draft = 0;
@@ -317,7 +316,7 @@ export component ModelsPage inherits HorizontalLayout {
                         : AppState.model_info_note;
                     font-size: 13px;
                     wrap: word-wrap;
-                    color: Palette.foreground.transparentize(0.35);
+                    color: Palette.foreground.transparentize(Tokens.muted);
                 }
             }
 
@@ -326,15 +325,11 @@ export component ModelsPage inherits HorizontalLayout {
                 LabeledField {
                     label: "GPU device";
                     hint: "GPU this model runs on (--device, e.g. CUDA0).\nOverrides the server default.\nBlank = use server default.";
-                    ComboBox {
-                        model: AppState.pdev_labels;
-                        current-index <=> AppState.pdev_index;
-                        selected(value) => {
-                            let i = self.current-index;
-                            if (i >= 0 && i < AppState.pdev_values.length) {
-                                AppState.form.device = AppState.pdev_values[i];
-                            }
-                        }
+                    MappedComboBox {
+                        labels: AppState.pdev_labels;
+                        values: AppState.pdev_values;
+                        index <=> AppState.pdev_index;
+                        picked(v) => { AppState.form.device = v; }
                     }
                 }
                 LabeledField {
@@ -363,63 +358,33 @@ export component ModelsPage inherits HorizontalLayout {
                 LabeledField {
                     label: "GPU layers";
                     hint: "--n-gpu-layers: model layers offloaded to GPU.\nSlider max = the model's layer count (all on GPU); lower keeps layers on CPU to save VRAM.\nauto = omit the flag → llama.cpp offloads ALL layers to GPU (the framework runs with -fit off, so there is no auto-fit to VRAM — a model too big to fit will fail to load).";
-                    CheckBox {
-                        text: "auto";
-                        checked <=> AppState.form.n_gpu_layers_auto;
-                    }
-                    Slider {
-                        horizontal-stretch: 1;
-                        enabled: !AppState.form.n_gpu_layers_auto;
-                        minimum: 0;
+                    AutoSlider {
+                        auto <=> AppState.form.n_gpu_layers_auto;
+                        value <=> AppState.form.n_gpu_layers;
                         maximum: AppState.gpu_layers_max;
-                        value: Math.min(AppState.form.n_gpu_layers, AppState.gpu_layers_max);
-                        changed(v) => { AppState.form.n_gpu_layers = Math.round(v); }
-                    }
-                    Text {
-                        width: 44px;
-                        horizontal-alignment: right;
-                        vertical-alignment: center;
-                        text: AppState.form.n_gpu_layers_auto ? "auto" : "\{Math.min(AppState.form.n_gpu_layers, AppState.gpu_layers_max)}";
                     }
                 }
                 LabeledField {
                     label: "MoE CPU layers";
                     hint: "Number of Mixture-of-Experts layers whose expert (FFN) weights stay on CPU (--n-cpu-moe) to save VRAM.\nOnly affects MoE models; N/A for dense models like Gemma.\nSlider max = the model's layer count.\nauto = omit the flag → equivalent to 0: no expert weights are kept on CPU, so every expert stays on GPU with its layer.";
-                    CheckBox {
-                        text: "auto";
-                        // --n-cpu-moe only affects MoE models.
-                        enabled: AppState.model_info_has_moe;
-                        checked <=> AppState.form.n_cpu_moe_auto;
-                    }
-                    Slider {
-                        horizontal-stretch: 1;
-                        enabled: !AppState.form.n_cpu_moe_auto && AppState.model_info_has_moe;
-                        minimum: 0;
+                    // --n-cpu-moe only affects MoE models, so gate the whole row on it.
+                    AutoSlider {
+                        auto <=> AppState.form.n_cpu_moe_auto;
+                        value <=> AppState.form.n_cpu_moe;
                         maximum: AppState.gpu_layers_max;
-                        value: Math.min(AppState.form.n_cpu_moe, AppState.gpu_layers_max);
-                        changed(v) => { AppState.form.n_cpu_moe = Math.round(v); }
-                    }
-                    Text {
-                        width: 44px;
-                        horizontal-alignment: right;
-                        vertical-alignment: center;
-                        text: AppState.form.n_cpu_moe_auto ? "auto" : "\{Math.min(AppState.form.n_cpu_moe, AppState.gpu_layers_max)}";
+                        usable: AppState.model_info_has_moe;
                     }
                 }
                 LabeledField {
                     label: "Draft device";
                     hint: "GPU for the draft model (--device-draft).\nPin to ONE device — multi-GPU auto-split crashes MTP heads.\nBlank = auto / same as model.";
-                    ComboBox {
+                    MappedComboBox {
                         // Active only when a draft is available (selected or embedded MTP).
                         enabled: AppState.draft_active;
-                        model: AppState.pdraft_labels;
-                        current-index <=> AppState.pdraft_index;
-                        selected(value) => {
-                            let i = self.current-index;
-                            if (i >= 0 && i < AppState.pdraft_values.length) {
-                                AppState.form.device_draft = AppState.pdraft_values[i];
-                            }
-                        }
+                        labels: AppState.pdraft_labels;
+                        values: AppState.pdraft_values;
+                        index <=> AppState.pdraft_index;
+                        picked(v) => { AppState.form.device_draft = v; }
                     }
                 }
                 LabeledField {
@@ -469,7 +434,7 @@ export component ModelsPage inherits HorizontalLayout {
                         // Type a value or use the steppers. The maximum is set far
                         // above any real value so it never clamps typed input.
                         // accessible-label is also the handle the headless UI test
-                        // (src/ui_tests.rs) finds this field by.
+                        // (src/tests/ui_bindings.rs) finds this field by.
                         accessible-label: "preset-ctx-size";
                         horizontal-stretch: 1;
                         minimum: 0;
@@ -587,7 +552,7 @@ export component ModelsPage inherits HorizontalLayout {
                     hint: "--temp: sampling temperature.\nLower = more deterministic, higher = more creative.\nBlank = default.";
                     LineEdit {
                         // accessible-label is also the handle the headless UI test
-                        // (src/ui_tests.rs) finds this field by.
+                        // (src/tests/ui_bindings.rs) finds this field by.
                         accessible-label: "preset-temp";
                         text <=> AppState.form.temp;
                         placeholder-text: "default";

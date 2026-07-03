@@ -9,7 +9,7 @@
 // The tray (`AppTray` in app.slint) is a separate root and does NOT use this
 // global — it keeps its own pushed-in state.
 
-import { PresetSummary, PresetForm, IntegrationModel } from "types.slint";
+import { PresetSummary, PresetForm, ServerForm, IntegrationModel } from "types.slint";
 
 export global AppState {
     // Crate version (CARGO_PKG_VERSION), pushed in from Rust at startup so the
@@ -31,46 +31,27 @@ export global AppState {
     in-out property <string> server_command_line: "";
 
     // ── Server tab state ─────────────────────────────────────────────
-    in-out property <string> server_port: "8080";
-    in-out property <string> server_hostname: "localhost";
+    // All editable server.ini fields live in one struct (ServerForm), like the
+    // preset side's `form`. Rust drives it via config_to_form / form_to_config
+    // (src/server_form.rs); `server_form_base` is the loaded/saved baseline and
+    // dirty-tracking is a single struct compare. The bind/device dropdowns below
+    // are option lists (not form values), so they stay separate.
+    in-out property <ServerForm> server_form: {
+        port: "8080", hostname: "localhost", mlock: true, split_mode: "default",
+        threads_auto: true, threads_batch_auto: true,
+    };
+    in-out property <ServerForm> server_form_base;
+    out property <bool> server_dirty: server_form != server_form_base;
+
+    // Logical-processor count (std::thread::available_parallelism), pushed from
+    // Rust at startup — the upper bound for the CPU-threads / batch-threads
+    // sliders. A generous fallback keeps the sliders usable if the probe fails.
+    in-out property <int> cpu_threads_max: 32;
+
+    // "Bind to" (hostname) dropdown options, derived from the local interfaces.
     in-out property <[string]> bind_labels;
     in-out property <[string]> bind_values;
     in-out property <int> bind_index: 0;
-    in-out property <bool> server_mlock: true;
-    in-out property <string> server_threads: "";
-    in-out property <string> server_cache_reuse: "";
-    in-out property <string> server_threads_batch: "";
-    in-out property <string> server_models_max: "";
-    in-out property <string> server_models_dir: "";
-    in-out property <string> server_device: "";
-    in-out property <string> server_split_mode: "";
-    in-out property <string> server_tensor_split: "";
-
-    // Baseline snapshot of the loaded server config (set by Rust on load/save).
-    // `server_dirty` is true while any field differs — drives Save/Revert enabled.
-    in-out property <string> server_port_base;
-    in-out property <string> server_hostname_base;
-    in-out property <bool> server_mlock_base;
-    in-out property <string> server_threads_base;
-    in-out property <string> server_cache_reuse_base;
-    in-out property <string> server_threads_batch_base;
-    in-out property <string> server_models_max_base;
-    in-out property <string> server_models_dir_base;
-    in-out property <string> server_device_base;
-    in-out property <string> server_split_mode_base;
-    in-out property <string> server_tensor_split_base;
-    out property <bool> server_dirty:
-        server_port != server_port_base
-        || server_hostname != server_hostname_base
-        || server_mlock != server_mlock_base
-        || server_threads != server_threads_base
-        || server_cache_reuse != server_cache_reuse_base
-        || server_threads_batch != server_threads_batch_base
-        || server_models_max != server_models_max_base
-        || server_models_dir != server_models_dir_base
-        || server_device != server_device_base
-        || server_split_mode != server_split_mode_base
-        || server_tensor_split != server_tensor_split_base;
 
     // GPU device enumeration (parsed from `llama-server --list-devices`).
     // `all_device_*` is the cached raw list filled by the async probe; the

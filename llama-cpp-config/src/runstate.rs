@@ -1,4 +1,8 @@
-// Probes / starts / stops the llama-server process.
+// Probes / starts / stops the llama-server process, and reconstructs its launch
+// command from server.ini. `server_args()` is the single source of truth for the
+// arg list, shared by `start()` (spawns the process) and `command_line()` (the
+// human-readable, shell-pasteable rendering shown in the Server tab's Command
+// Line card).
 
 use std::io;
 
@@ -51,12 +55,6 @@ fn has_presets() -> bool {
     }
 }
 
-fn cpu_cores() -> u32 {
-    std::thread::available_parallelism()
-        .map(|n| n.get() as u32)
-        .unwrap_or(4)
-}
-
 /// The full llama-server argument list derived from server.ini.
 /// Single source of truth for both `start()` and `command_line()`.
 fn server_args(
@@ -68,16 +66,13 @@ fn server_args(
     let models_max = cfg.models_max.unwrap_or(1);
     let mlock = cfg.mlock.unwrap_or(true);
 
-    let cores = cpu_cores();
-    let threads = cfg
-        .threads
-        .filter(|&n| n > 0)
-        .unwrap_or((cores as f64 * 0.5) as i32);
-    let threads_batch = cfg
-        .threads_batch
-        .filter(|&n| n > 0)
-        .unwrap_or((cores as f64 * 0.75) as i32);
-
+    // Fixed framework policy flags (not exposed in the UI):
+    //   --webui-mcp-proxy : serve the built-in web UI's MCP proxy endpoint.
+    //   -fit off          : disable llama.cpp's auto-fit-to-VRAM. The GUI's
+    //                       "auto" n-gpu-layers means "offload ALL layers", so
+    //                       auto-fitting would silently override that choice.
+    //   -lv 4             : log verbosity 4 (per-request logging) into the
+    //                       captured llama-server.log.
     let mut args: Vec<String> = vec![
         "--models-preset".into(),
         presets_path.to_string_lossy().into_owned(),
@@ -92,11 +87,19 @@ fn server_args(
         "off".into(),
         "-lv".into(),
         "4".into(),
-        "-t".into(),
-        threads.to_string(),
-        "--threads-batch".into(),
-        threads_batch.to_string(),
     ];
+
+    // CPU thread counts: when unset ("auto") omit the flag entirely so llama.cpp
+    // applies its own default; only pass an explicit value when the user set one.
+    // (We must NOT substitute a computed default here — that would defeat "auto".)
+    if let Some(t) = cfg.threads.filter(|&n| n > 0) {
+        args.push("-t".into());
+        args.push(t.to_string());
+    }
+    if let Some(tb) = cfg.threads_batch.filter(|&n| n > 0) {
+        args.push("--threads-batch".into());
+        args.push(tb.to_string());
+    }
 
     if mlock {
         args.push("--mlock".into());
@@ -193,6 +196,11 @@ pub fn start() -> io::Result<()> {
 
 /// Force-kill all llama-server.exe processes (taskkill /f — llama-server has
 /// no graceful shutdown channel when running detached without a console).
+///
+/// Returns `io::Result` for symmetry with `start()`, but is currently infallible:
+/// a missing/failed kill is not surfaced here. The caller (`stop_server_async`)
+/// re-polls `load()` and reports "still running" if the kill didn't land — that
+/// re-check, not this return value, is the source of truth for the outcome.
 pub fn stop() -> io::Result<()> {
     #[cfg(windows)]
     {

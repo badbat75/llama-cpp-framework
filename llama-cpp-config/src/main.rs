@@ -22,6 +22,7 @@ mod presets;
 mod proc;
 mod runstate;
 mod server_cfg;
+mod server_form;
 mod server_version;
 #[cfg(windows)]
 mod single_instance;

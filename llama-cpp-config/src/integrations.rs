@@ -171,6 +171,10 @@ fn preset_to_opencode_model(p: &presets::Preset) -> Value {
         entry["reasoning"] = json!(p.reasoning == "on");
     }
 
+    // Advertised context for the tool's model entry. Deliberately larger than
+    // Preset::default().ctx_size (32768): opencode only needs the ceiling the
+    // model *can* serve, not the preset's runtime ctx-size — so don't "align"
+    // these two numbers.
     let context = p.ctx_size.unwrap_or(131072);
     let output = std::cmp::max(context / 4, 32000);
     entry["limit"] = json!({

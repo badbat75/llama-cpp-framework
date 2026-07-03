@@ -1,6 +1,9 @@
 // Conversion between the Slint edit form (`PresetForm`) and the `presets::Preset`
-// schema. Kept out of `gui.rs` so the most common change — adding a preset field —
-// touches this file plus `presets.rs`, not the ~1300-line GUI module.
+// schema. Kept out of `gui.rs` (which only shuttles the whole `PresetForm` around,
+// never per-field) so adding a preset field touches small files. This is steps 7
+// (both directions below) of the 7-step fan-out; the full checklist — including
+// the `ui/types.slint` and `ui/models_page.slint` edits it's easy to forget —
+// lives at the top of `presets.rs`.
 
 use slint::SharedString;
 

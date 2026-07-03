@@ -77,7 +77,7 @@ pub enum PresetCmd {
 
 pub fn run(cli: Cli) -> Result<()> {
     match cli.command {
-        Command::Gui => crate::gui::run().map_err(|e| anyhow::anyhow!("{e:#}")),
+        Command::Gui => crate::gui::run(),
         Command::Server(c) => run_server(c),
         Command::Preset(c) => run_preset(c),
     }
@@ -162,26 +162,15 @@ fn run_server(c: ServerCmd) -> Result<()> {
             if let Some(d) = s.models_dir {
                 cfg.models_dir = Some(d);
             }
+            // Passing an empty string clears the field (blank = unset).
             if let Some(dev) = s.device {
-                cfg.device = if dev.trim().is_empty() {
-                    None
-                } else {
-                    Some(dev)
-                };
+                cfg.device = server_cfg::opt_nonblank(Some(dev));
             }
             if let Some(sm) = s.split_mode {
-                cfg.split_mode = if sm.trim().is_empty() {
-                    None
-                } else {
-                    Some(sm)
-                };
+                cfg.split_mode = server_cfg::opt_nonblank(Some(sm));
             }
             if let Some(ts) = s.tensor_split {
-                cfg.tensor_split = if ts.trim().is_empty() {
-                    None
-                } else {
-                    Some(ts)
-                };
+                cfg.tensor_split = server_cfg::opt_nonblank(Some(ts));
             }
             server_cfg::save(&cfg).context("save server.ini")?;
             println!("Wrote {}", paths::server_ini().display());

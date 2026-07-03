@@ -6,7 +6,7 @@
 // field stale after a Revert / reload.
 
 import { LineEdit, TextEdit, ComboBox, CheckBox, Button, ListView, ScrollView, Palette, RadioGroup, Slider, Switch, SpinBox } from "std-widgets.slint";
-import { SectionCard, LabeledField } from "components.slint";
+import { SectionCard, LabeledField, MappedComboBox, AutoSlider, Tokens } from "components.slint";
 import { AppState } from "state.slint";
 
 export component ServerPage inherits ScrollView {
@@ -23,7 +23,7 @@ export component ServerPage inherits ScrollView {
         }
         Text {
             text: "Machine-wide llama-server settings (server.ini). Per-model knobs live under Models.";
-            color: Palette.foreground.transparentize(0.4);
+            color: Palette.foreground.transparentize(Tokens.muted);
             font-size: 12px;
             wrap: word-wrap;
         }
@@ -35,9 +35,9 @@ export component ServerPage inherits ScrollView {
                 hint: "TCP port llama-server listens on (--port).\nDefault 8080 — the chat UI and integrations connect here.";
                 LineEdit {
                     // accessible-label doubles as the stable handle the headless
-                    // UI test (src/ui_tests.rs) uses to find this field.
+                    // UI test (src/tests/ui_bindings.rs) uses to find this field.
                     accessible-label: "server-port";
-                    text <=> AppState.server_port;
+                    text <=> AppState.server_form.port;
                     input-type: number;
                     placeholder-text: "8080";
                 }
@@ -45,15 +45,11 @@ export component ServerPage inherits ScrollView {
             LabeledField {
                 label: "Bind to";
                 hint: "Interface to bind (--host).\nlocalhost = this PC only; 0.0.0.0 = all interfaces, reachable from the LAN.";
-                ComboBox {
-                    model: AppState.bind_labels;
-                    current-index <=> AppState.bind_index;
-                    selected(value) => {
-                        let i = self.current-index;
-                        if (i >= 0 && i < AppState.bind_values.length) {
-                            AppState.server_hostname = AppState.bind_values[i];
-                        }
-                    }
+                MappedComboBox {
+                    labels: AppState.bind_labels;
+                    values: AppState.bind_values;
+                    index <=> AppState.bind_index;
+                    picked(v) => { AppState.server_form.hostname = v; }
                 }
             }
         }
@@ -65,41 +61,41 @@ export component ServerPage inherits ScrollView {
                 hint: "Locks model weights into physical RAM (--mlock) so the OS can't page them out.\nKeeps latency stable; needs enough free RAM for the whole model.";
                 CheckBox {
                     text: "lock model in physical RAM";
-                    checked <=> AppState.server_mlock;
+                    checked <=> AppState.server_form.mlock;
                 }
             }
             LabeledField {
                 label: "CPU threads";
-                hint: "--threads: CPU threads for generation.\nBlank = half the physical-core count; more won't help once GPU-bound.";
-                LineEdit {
-                    text <=> AppState.server_threads;
-                    input-type: number;
-                    placeholder-text: "blank = half the physical-core count";
+                hint: "--threads: CPU threads for generation.\nauto = omit the flag; llama.cpp defaults to the physical-core count it detects. More won't help once GPU-bound. Max = logical processors.";
+                AutoSlider {
+                    auto <=> AppState.server_form.threads_auto;
+                    value <=> AppState.server_form.threads;
+                    maximum: AppState.cpu_threads_max;
                 }
             }
             LabeledField {
                 label: "Cache reuse";
                 hint: "--cache-reuse: minimum prefix length (tokens) the server reuses from the KV cache across requests, skipping re-prefill.\nHigher saves compute on shared prefixes.";
                 LineEdit {
-                    text <=> AppState.server_cache_reuse;
+                    text <=> AppState.server_form.cache_reuse;
                     input-type: number;
                     placeholder-text: "256";
                 }
             }
             LabeledField {
                 label: "Batch threads";
-                hint: "--threads-batch: CPU threads for prompt processing (prefill).\nBlank = ~75% of cores.";
-                LineEdit {
-                    text <=> AppState.server_threads_batch;
-                    input-type: number;
-                    placeholder-text: "blank = 75% of cores";
+                hint: "--threads-batch: CPU threads for prompt processing (prefill).\nauto = omit the flag; llama.cpp defaults it to the same as --threads. Max = logical processors.";
+                AutoSlider {
+                    auto <=> AppState.server_form.threads_batch_auto;
+                    value <=> AppState.server_form.threads_batch;
+                    maximum: AppState.cpu_threads_max;
                 }
             }
             LabeledField {
                 label: "Max models";
                 hint: "--models-max: how many preset models llama-server keeps resident at once.\n1 = load one at a time (lowest VRAM); higher lets it hot-swap without reloading.";
                 LineEdit {
-                    text <=> AppState.server_models_max;
+                    text <=> AppState.server_form.models_max;
                     input-type: number;
                     placeholder-text: "1 (one at a time)";
                 }
@@ -108,28 +104,24 @@ export component ServerPage inherits ScrollView {
                 label: "Models folder";
                 hint: "Root folder scanned for GGUFs.\nPickers read its subfolders: models\\, mmprojs\\, mtps\\, dflashs\\.";
                 LineEdit {
-                    text <=> AppState.server_models_dir;
+                    text <=> AppState.server_form.models_dir;
                     placeholder-text: "root dir (models\\ and mmprojs\\ underneath)";
                 }
                 Button {
                     text: "Browse…";
                     clicked => {
-                        AppState.server_models_dir = AppState.browse_models_dir(AppState.server_models_dir);
+                        AppState.server_form.models_dir = AppState.browse_models_dir(AppState.server_form.models_dir);
                     }
                 }
             }
             LabeledField {
                 label: "GPU device";
                 hint: "Default GPU for all presets (--device, e.g. CUDA0).\nA per-preset GPU device overrides it.\nBlank = all detected devices.";
-                ComboBox {
-                    model: AppState.server_dev_labels;
-                    current-index <=> AppState.server_dev_index;
-                    selected(value) => {
-                        let i = self.current-index;
-                        if (i >= 0 && i < AppState.server_dev_values.length) {
-                            AppState.server_device = AppState.server_dev_values[i];
-                        }
-                    }
+                MappedComboBox {
+                    labels: AppState.server_dev_labels;
+                    values: AppState.server_dev_values;
+                    index <=> AppState.server_dev_index;
+                    picked(v) => { AppState.server_form.device = v; }
                 }
             }
             LabeledField {
@@ -138,10 +130,10 @@ export component ServerPage inherits ScrollView {
                 ComboBox {
                     // A pinned GPU device runs on one device, so there is
                     // nothing to split — disable it.
-                    enabled: AppState.server_device == "";
+                    enabled: AppState.server_form.device == "";
                     model: ["default", "none", "layer", "row"];
-                    // server_split_mode holds "default" when unset (see load_server_into_ui).
-                    current-value <=> AppState.server_split_mode;
+                    // server_form.split_mode holds "default" when unset (see config_to_form).
+                    current-value <=> AppState.server_form.split_mode;
                 }
             }
             LabeledField {
@@ -150,8 +142,8 @@ export component ServerPage inherits ScrollView {
                 LineEdit {
                     // Per-GPU proportions only apply across multiple GPUs;
                     // a pinned device makes them moot — disable it.
-                    enabled: AppState.server_device == "";
-                    text <=> AppState.server_tensor_split;
+                    enabled: AppState.server_form.device == "";
+                    text <=> AppState.server_form.tensor_split;
                     placeholder-text: "e.g. 3,1  (blank = even)";
                 }
             }

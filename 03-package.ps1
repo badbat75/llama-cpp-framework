@@ -70,15 +70,10 @@ cmake --install $buildDir --prefix $stageDir
 if ($LASTEXITCODE -ne 0) { throw "cmake --install failed" }
 
 # ── Stage llama-cpp-config (Rust binary) ────────────────────────────
-$configExe = Join-Path $PSScriptRoot "build\llama-cpp-config\llama-cpp-config.exe"
-$configProdExe = Join-Path $PSScriptRoot "llama-cpp-config\target\release\llama-cpp-config.exe"
+# Straight from cargo's release output — 02-build.ps1 leaves it there, no copy.
+$configExe = Join-Path $PSScriptRoot "llama-cpp-config\target\release\llama-cpp-config.exe"
 if (-not (Test-Path $configExe)) {
-    if (Test-Path $configProdExe) {
-        $configExe = $configProdExe
-    }
-    else {
-        throw "llama-cpp-config.exe not found. Run 02-build.ps1 first."
-    }
+    throw "llama-cpp-config.exe not found at $configExe. Run 02-build.ps1 first."
 }
 Copy-Item $configExe -Destination $stageDir -Force
 Write-Host "Staged llama-cpp-config.exe" -ForegroundColor DarkGray

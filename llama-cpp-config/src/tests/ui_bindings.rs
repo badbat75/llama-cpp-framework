@@ -31,7 +31,7 @@
 use i_slint_backend_testing::{self as itest, ElementHandle};
 use slint::ComponentHandle;
 
-use crate::gui::{AppState, AppWindow, PresetForm};
+use crate::gui::{AppState, AppWindow, PresetForm, ServerForm};
 
 /// Build the window on the headless testing backend and realize its item tree so
 /// the default page's widgets are materialized and findable. `init_no_event_loop`
@@ -106,37 +106,44 @@ fn set_form(st: &AppState, mutate: impl FnOnce(&mut PresetForm)) {
     st.set_form(form);
 }
 
+/// Same read-mutate-write dance for the server form (also one struct property).
+fn set_server_form(st: &AppState, mutate: impl FnOnce(&mut ServerForm)) {
+    let mut form = st.get_server_form();
+    mutate(&mut form);
+    st.set_server_form(form);
+}
+
 #[test]
 fn editable_widgets_track_model_after_edit() {
     let app = realized_app();
     let st = app.global::<AppState>();
 
     // ── Server tab (shown by default) ────────────────────────────────
-    // LineEdit — `text <=> AppState.server_port`.
+    // LineEdit — `text <=> AppState.server_form.port`.
     assert_reload_reaches_widget(
         &by_label(&app, "server-port"),
-        "LineEdit server_port",
+        "LineEdit server_form.port",
         value_of,
         |e| e.set_accessible_value("9999"),
-        |v| st.set_server_port(v.into()),
+        |v| set_server_form(&st, |f| f.port = v.into()),
         "8080",
         "1234",
     );
 
-    // CheckBox — `checked <=> AppState.server_mlock`. The only edit is a toggle,
-    // so the edit leaves the *opposite* of `load`. `reload` therefore restores
-    // `load` (true→false→true): a frozen widget would sit on the toggled value
-    // and mismatch. Found by its visible text (the checkbox's accessible-label).
+    // CheckBox — `checked <=> AppState.server_form.mlock`. The only edit is a
+    // toggle, so the edit leaves the *opposite* of `load`. `reload` therefore
+    // restores `load` (true→false→true): a frozen widget would sit on the toggled
+    // value and mismatch. Found by its visible text (the checkbox's accessible-label).
     assert_reload_reaches_widget(
         &by_label(&app, "lock model in physical RAM"),
-        "CheckBox server_mlock",
+        "CheckBox server_form.mlock",
         |e| {
             e.accessible_checked()
                 .map(|b| b.to_string())
                 .unwrap_or_default()
         },
         |e| e.invoke_accessible_default_action(),
-        |v| st.set_server_mlock(v == "true"),
+        |v| set_server_form(&st, |f| f.mlock = v == "true"),
         "true",
         "true",
     );

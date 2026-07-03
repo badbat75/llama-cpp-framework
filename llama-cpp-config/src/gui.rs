@@ -1,4 +1,43 @@
-// Slint GUI wiring for llama.cpp-framework configurator.
+//! Slint GUI wiring for the llama.cpp-framework configurator.
+//!
+//! ## Shape
+//! `run()` builds `AppWindow` + `AppTray`, seeds the UI from disk, then wires
+//! each tab's callbacks via the per-tab submodules `server_tab` / `models_tab` /
+//! `integrations_tab` / `tray` (one file each, under `gui/`). Those submodules
+//! reach this module's shared helpers, the `State` cache, and the generated
+//! Slint types through `use super::*`. All shared UI state lives in the Slint
+//! `AppState` global (ui/state.slint), reached with
+//! `let s = app.global::<AppState>()`. `State` (below) is the small Rust-side
+//! cache the callbacks share via `Rc<RefCell<…>>`: the loaded presets vector and
+//! the new-preset dialog's model scan.
+//!
+//! ## Helper verb taxonomy (so a grep lands in the right family)
+//! - `load_*` / `read_*` : server.ini ↔ UI (through `server_form::config_to_form`
+//!   / `form_to_config`; the preset side is `form.rs`).
+//! - `refresh_*`         : rebuild a list/section from disk or the device cache
+//!   (`refresh_presets`, `refresh_file_options`, `refresh_device_options`,
+//!   `refresh_integrations`, `refresh_run_status`).
+//! - `apply_*`           : push a computed (labels, values, index) triple — or a
+//!   whole form — into `AppState` through a small closure.
+//! - `populate_*`        : fill a dialog's option lists (bind interfaces, dialog
+//!   models).
+//! - `spawn_*`           : run a slow probe off the UI thread, then apply the
+//!   result via `invoke_from_event_loop` (`spawn_version_probe`, `spawn_device_probe`).
+//! - `run_new_*` / `commit_new_preset` : the New / Clone → save funnel.
+//!
+//! ## Dirty tracking
+//! Save/Revert enable off `*_dirty` in state.slint, each computed as
+//! `form != form_base` (presets) / `server_form != server_form_base` (server).
+//! Rust keeps the baseline in sync: `apply_form` sets form + base together;
+//! `snapshot_server_base` re-baselines the server form after a save.
+//!
+//! ## Threading
+//! The event loop is single-threaded. Slow work (`--list-devices`, `--version`,
+//! `tasklist`, the stop wait) runs on `std::thread::spawn`; results come back
+//! through `slint::invoke_from_event_loop` guarded by `Weak::upgrade`.
+//!
+//! `AppTray` is a SEPARATE Slint root — it does NOT use `AppState`; Rust pushes
+//! state to it directly (`tray.set_server_running` / `tray.on_*`).
 
 use std::cell::RefCell;
 use std::path::PathBuf;
@@ -8,11 +47,18 @@ use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel};
 
 use crate::form::{blank_form, form_to_preset, preset_to_form};
 use crate::{
-    devices, gguf, ini, integrations, model_scan, net_ifaces, paths, presets, runstate, server_cfg,
-    server_version,
+    devices, gguf, integrations, model_scan, net_ifaces, paths, presets, runstate, server_cfg,
+    server_form, server_version,
 };
 
 slint::include_modules!();
+
+// Per-tab callback wiring — one file each under `gui/`. Each `wire()` reaches the
+// shared helpers, the `State` cache, and the generated Slint types via `use super::*`.
+mod integrations_tab;
+mod models_tab;
+mod server_tab;
+mod tray;
 
 #[derive(Default)]
 struct State {
@@ -22,7 +68,7 @@ struct State {
     dialog_models_all: Vec<model_scan::FileOption>,
 }
 
-pub fn run() -> Result<(), Box<dyn std::error::Error>> {
+pub fn run() -> anyhow::Result<()> {
     // Single-instance: if the configurator is already running, hand off to it
     // (it surfaces its window) and exit instead of opening a second window.
     #[cfg(windows)]
@@ -32,8 +78,13 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let app = AppWindow::new()?;
-    app.global::<AppState>()
-        .set_app_version(SharedString::from(env!("CARGO_PKG_VERSION")));
+    let s = app.global::<AppState>();
+    s.set_app_version(SharedString::from(env!("CARGO_PKG_VERSION")));
+    // Upper bound for the Server tab's CPU-thread sliders: this machine's logical
+    // processor count. Leaves the Slint fallback in place if the query fails.
+    if let Ok(n) = std::thread::available_parallelism() {
+        s.set_cpu_threads_max(i32::try_from(n.get()).unwrap_or(i32::MAX));
+    }
     let tray = AppTray::new()?;
     let state = Rc::new(RefCell::new(State::default()));
 
@@ -55,7 +106,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     {
         let app_weak = app.as_weak();
-        app.global::<AppState>().on_sync_device_dropdowns(move || {
+        s.on_sync_device_dropdowns(move || {
             if let Some(app) = app_weak.upgrade() {
                 refresh_device_options(&app);
             }
@@ -64,22 +115,21 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     {
         let app_weak = app.as_weak();
-        app.global::<AppState>().on_model_changed(move || {
+        s.on_model_changed(move || {
             if let Some(app) = app_weak.upgrade() {
                 update_model_info(&app);
             }
         });
     }
 
-    app.global::<AppState>()
-        .set_presets_path(SharedString::from(
-            paths::presets_ini().to_string_lossy().into_owned(),
-        ));
+    s.set_presets_path(SharedString::from(
+        paths::presets_ini().to_string_lossy().into_owned(),
+    ));
 
     {
         let app_weak = app.as_weak();
         let tray_weak = tray.as_weak();
-        app.global::<AppState>().on_refresh_status(move || {
+        s.on_refresh_status(move || {
             refresh_run_status(app_weak.clone(), tray_weak.clone());
         });
     }
@@ -91,7 +141,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         let app_weak = app.as_weak();
         let tray_weak = tray.as_weak();
         let state = state.clone();
-        app.global::<AppState>().on_reload_all(move || {
+        s.on_reload_all(move || {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
@@ -117,10 +167,10 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         );
     }
 
-    wire_server_tab(&app, &tray);
-    wire_models_tab(&app, &state);
-    wire_integrations_tab(&app);
-    wire_tray(&app, &tray);
+    server_tab::wire(&app, &tray);
+    models_tab::wire(&app, &state);
+    integrations_tab::wire(&app);
+    tray::wire(&app, &tray);
 
     // Closing the window hides it to the tray instead of quitting; the visible
     // tray icon keeps the event loop alive. Use the tray's "Quit" to exit.
@@ -131,410 +181,6 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     tray.show()?;
     slint::run_event_loop()?;
     Ok(())
-}
-
-// ── Per-tab callback wiring (called from run) ─────────────────
-
-fn wire_server_tab(app: &AppWindow, tray: &AppTray) {
-    {
-        let app_weak = app.as_weak();
-        app.global::<AppState>().on_save_server(move || {
-            let Some(app) = app_weak.upgrade() else {
-                return;
-            };
-            let cfg = read_server_from_ui(&app);
-            match server_cfg::save(&cfg) {
-                Ok(()) => {
-                    set_status(
-                        &app,
-                        format!("Saved {}", paths::server_ini().display()),
-                        false,
-                    );
-                    let cmdline = runstate::command_line().unwrap_or_default();
-                    app.global::<AppState>()
-                        .set_server_command_line(SharedString::from(cmdline));
-                    refresh_file_options(&app);
-                    refresh_integrations(&app);
-                    snapshot_server_base(&app);
-                }
-                Err(e) => set_status(&app, format!("Save failed: {e}"), true),
-            }
-        });
-    }
-    {
-        let app_weak = app.as_weak();
-        app.global::<AppState>().on_revert_server(move || {
-            let Some(app) = app_weak.upgrade() else {
-                return;
-            };
-            load_server_into_ui(&app);
-            refresh_file_options(&app);
-            refresh_integrations(&app);
-            set_status(
-                &app,
-                format!("Reloaded {}", paths::server_ini().display()),
-                false,
-            );
-        });
-    }
-    {
-        let app_weak = app.as_weak();
-        app.global::<AppState>()
-            .on_browse_models_dir(move |current| {
-                let _app = app_weak.upgrade();
-                let start = if !current.is_empty() {
-                    PathBuf::from(current.as_str())
-                } else {
-                    PathBuf::from(server_cfg::default_models_dir())
-                };
-                pick_dir(&start)
-                    .map(|p| SharedString::from(p.to_string_lossy().into_owned()))
-                    .unwrap_or(current)
-            });
-    }
-
-    {
-        let app_weak = app.as_weak();
-        let tray_weak = tray.as_weak();
-        app.global::<AppState>().on_start_server(move || {
-            let Some(app) = app_weak.upgrade() else {
-                return;
-            };
-            match runstate::start() {
-                Ok(()) => {
-                    set_status(&app, "llama-server started.".into(), false);
-                    refresh_run_status(app.as_weak(), tray_weak.clone());
-                }
-                Err(e) => {
-                    set_status(&app, format!("Failed to start: {e}"), true);
-                    app.global::<AppState>().set_server_status_is_error(true);
-                }
-            }
-        });
-    }
-    {
-        let app_weak = app.as_weak();
-        let tray_weak = tray.as_weak();
-        app.global::<AppState>().on_stop_server(move || {
-            stop_server_async(app_weak.clone(), tray_weak.clone());
-        });
-    }
-}
-
-fn wire_models_tab(app: &AppWindow, state: &Rc<RefCell<State>>) {
-    {
-        let app_weak = app.as_weak();
-        let state = state.clone();
-        app.global::<AppState>().on_select_preset(move |index| {
-            let Some(app) = app_weak.upgrade() else {
-                return;
-            };
-            let st = state.borrow();
-            if let Some(p) = usize::try_from(index).ok().and_then(|i| st.presets.get(i)) {
-                app.global::<AppState>().set_selected_preset_index(index);
-                apply_form(&app, preset_to_form(p));
-                drop(st);
-                refresh_file_options(&app);
-            }
-        });
-    }
-    {
-        let app_weak = app.as_weak();
-        let state = state.clone();
-        app.global::<AppState>().on_save_preset(move || {
-            let Some(app) = app_weak.upgrade() else {
-                return;
-            };
-            let p = form_to_preset(&app.global::<AppState>().get_form());
-            if p.id.is_empty() {
-                set_status(&app, "Preset id is empty.".into(), true);
-                return;
-            }
-            if p.model.is_empty() {
-                set_status(&app, "Pick a model file before saving.".into(), true);
-                return;
-            }
-            match presets::save(&p) {
-                Ok(()) => {
-                    set_status(&app, format!("Saved preset [{}]", p.id), false);
-                    refresh_presets(&app, &state);
-                    let st = state.borrow();
-                    if let Some(i) = st.presets.iter().position(|x| x.id == p.id) {
-                        app.global::<AppState>().set_selected_preset_index(i as i32);
-                    }
-                    drop(st);
-                    refresh_file_options(&app);
-                    refresh_integrations(&app);
-                }
-                Err(e) => set_status(&app, format!("Save failed: {e}"), true),
-            }
-        });
-    }
-    {
-        let app_weak = app.as_weak();
-        let state = state.clone();
-        app.global::<AppState>().on_revert_preset(move || {
-            let Some(app) = app_weak.upgrade() else {
-                return;
-            };
-            refresh_presets(&app, &state);
-            let idx = app.global::<AppState>().get_selected_preset_index();
-            let st = state.borrow();
-            if let Some(p) = usize::try_from(idx).ok().and_then(|i| st.presets.get(i)) {
-                let label = p.id.clone();
-                apply_form(&app, preset_to_form(p));
-                drop(st);
-                refresh_file_options(&app);
-                set_status(&app, format!("Reloaded [{label}] from presets.ini"), false);
-            }
-        });
-    }
-    {
-        let app_weak = app.as_weak();
-        let state = state.clone();
-        app.global::<AppState>().on_delete_preset(move |id| {
-            let Some(app) = app_weak.upgrade() else {
-                return;
-            };
-            if id.is_empty() {
-                return;
-            }
-            match presets::delete(id.as_str()) {
-                Ok(()) => {
-                    set_status(&app, format!("Deleted [{id}]"), false);
-                    refresh_presets(&app, &state);
-                    app.global::<AppState>().set_selected_preset_index(-1);
-                    apply_form(&app, blank_form());
-                    refresh_file_options(&app);
-                    refresh_integrations(&app);
-                }
-                Err(e) => set_status(&app, format!("Delete failed: {e}"), true),
-            }
-        });
-    }
-
-    // Holds the preset a Clone is based on, between opening the picker and the
-    // user confirming a target model. `new_dialog_source_id == ""` means the
-    // picker is in plain "New" (empty-preset) mode; non-empty means Clone.
-    let pending_clone_base: Rc<RefCell<Option<presets::Preset>>> = Rc::new(RefCell::new(None));
-    {
-        let app_weak = app.as_weak();
-        let state = state.clone();
-        let pending_clone_base = pending_clone_base.clone();
-        app.global::<AppState>().on_new_preset(move || {
-            let Some(app) = app_weak.upgrade() else {
-                return;
-            };
-            // "New…" is always create-from-scratch — independent of any current
-            // selection, so it can never silently turn into a clone.
-            *pending_clone_base.borrow_mut() = None;
-            populate_dialog_models(&app, &state);
-            app.global::<AppState>()
-                .set_new_dialog_source_id(SharedString::from(""));
-            app.global::<AppState>().set_show_new_kind_picker(true);
-        });
-    }
-    {
-        let app_weak = app.as_weak();
-        let state = state.clone();
-        let pending_clone_base = pending_clone_base.clone();
-        app.global::<AppState>().on_clone_preset(move || {
-            let Some(app) = app_weak.upgrade() else {
-                return;
-            };
-            // Clone source is always the selected preset (the button is disabled
-            // otherwise). Stash it and surface its id in the dialog so it's clear
-            // what is being copied.
-            let selected = {
-                let st = state.borrow();
-                let idx = app.global::<AppState>().get_selected_preset_index();
-                usize::try_from(idx)
-                    .ok()
-                    .and_then(|i| st.presets.get(i))
-                    .cloned()
-            };
-            let Some(p) = selected else {
-                set_status(&app, "Select a preset to clone first.".into(), true);
-                return;
-            };
-            populate_dialog_models(&app, &state);
-            app.global::<AppState>()
-                .set_new_dialog_source_id(SharedString::from(p.id.clone()));
-            *pending_clone_base.borrow_mut() = Some(p);
-            app.global::<AppState>().set_show_new_kind_picker(true);
-        });
-    }
-    {
-        let app_weak = app.as_weak();
-        let state = state.clone();
-        let pending_clone_base = pending_clone_base.clone();
-        app.global::<AppState>().on_pick_new_empty(move || {
-            let Some(app) = app_weak.upgrade() else {
-                return;
-            };
-            *pending_clone_base.borrow_mut() = None;
-            let Some(path) = picked_dialog_model_path(&app) else {
-                set_status(&app, "Pick a model from the list first.".into(), true);
-                return;
-            };
-            run_new_empty(&app, &state, path);
-        });
-    }
-    {
-        let app_weak = app.as_weak();
-        let state = state.clone();
-        app.global::<AppState>().on_pick_new_clone(move || {
-            let Some(app) = app_weak.upgrade() else {
-                return;
-            };
-            let Some(path) = picked_dialog_model_path(&app) else {
-                set_status(&app, "Pick a model from the list first.".into(), true);
-                return;
-            };
-            let Some(base) = pending_clone_base.borrow_mut().take() else {
-                set_status(&app, "Clone source no longer available.".into(), true);
-                return;
-            };
-            run_new_clone(&app, &state, base, path);
-        });
-    }
-    {
-        let app_weak = app.as_weak();
-        let state = state.clone();
-        app.global::<AppState>()
-            .on_rename_preset(move |old_id, new_id| {
-                let Some(app) = app_weak.upgrade() else {
-                    return;
-                };
-                match presets::rename(old_id.as_str(), new_id.as_str()) {
-                    Ok(()) => {
-                        set_status(&app, format!("Renamed [{old_id}] -> [{new_id}]"), false);
-                        reload_presets(&app, &state, Some(new_id.as_str()));
-                        refresh_file_options(&app);
-                        refresh_integrations(&app);
-                    }
-                    Err(e) => set_status(&app, format!("Rename failed: {e}"), true),
-                }
-            });
-    }
-    {
-        let app_weak = app.as_weak();
-        let state = state.clone();
-        app.global::<AppState>().on_filter_presets(move |q| {
-            let Some(app) = app_weak.upgrade() else {
-                return;
-            };
-            let st = state.borrow();
-            let summaries = preset_summaries(&st.presets, q.as_str());
-            app.global::<AppState>()
-                .set_presets(ModelRc::from(Rc::new(VecModel::from(summaries))));
-        });
-    }
-    {
-        let app_weak = app.as_weak();
-        let state = state.clone();
-        app.global::<AppState>().on_filter_dialog_models(move |q| {
-            let Some(app) = app_weak.upgrade() else {
-                return;
-            };
-            let st = state.borrow();
-            apply_dialog_models(&app, &st.dialog_models_all, q.as_str());
-        });
-    }
-}
-
-fn wire_integrations_tab(app: &AppWindow) {
-    refresh_integrations(app);
-    {
-        let app_weak = app.as_weak();
-        app.global::<AppState>()
-            .on_toggle_integration_model(move |index| {
-                let Some(app) = app_weak.upgrade() else {
-                    return;
-                };
-                let idx = usize::try_from(index).unwrap_or(usize::MAX);
-                let models = app.global::<AppState>().get_integration_models();
-                if idx < models.iter().count() {
-                    let mut v: Vec<IntegrationModel> = models.iter().collect();
-                    if let Some(entry) = v.get_mut(idx) {
-                        entry.enabled = !entry.enabled;
-                    }
-                    let rc = Rc::new(VecModel::from(v));
-                    app.global::<AppState>()
-                        .set_integration_models(ModelRc::from(rc));
-                }
-            });
-    }
-    {
-        let app_weak = app.as_weak();
-        app.global::<AppState>().on_save_integrations(move || {
-            let Some(app) = app_weak.upgrade() else {
-                return;
-            };
-            let models = app.global::<AppState>().get_integration_models();
-            let checked: Vec<String> = models
-                .iter()
-                .filter(|m| m.enabled)
-                .map(|m| m.id.to_string())
-                .collect();
-            let base_url = app
-                .global::<AppState>()
-                .get_integration_base_url()
-                .to_string();
-            match integrations::save_opencode_models(&checked, &base_url) {
-                Ok(()) => {
-                    set_status(&app, "Saved model list to opencode.json.".into(), false);
-                    refresh_integrations(&app);
-                }
-                Err(e) => set_status(&app, format!("Save failed: {e}"), true),
-            }
-        });
-    }
-    {
-        let app_weak = app.as_weak();
-        app.global::<AppState>().on_revert_integrations(move || {
-            let Some(app) = app_weak.upgrade() else {
-                return;
-            };
-            refresh_integrations(&app);
-            set_status(&app, "Reloaded integration state.".into(), false);
-        });
-    }
-}
-
-fn wire_tray(app: &AppWindow, tray: &AppTray) {
-    {
-        let app_weak = app.as_weak();
-        tray.on_open_window(move || {
-            if let Some(app) = app_weak.upgrade() {
-                app.show().ok();
-            }
-        });
-    }
-    {
-        let app_weak = app.as_weak();
-        let tray_weak = tray.as_weak();
-        tray.on_start_server(move || {
-            let (is_err, msg) = match runstate::start() {
-                Ok(()) => (false, "llama-server started.".to_string()),
-                Err(e) => (true, format!("Failed to start: {e}")),
-            };
-            if let Some(app) = app_weak.upgrade() {
-                set_status(&app, msg, is_err);
-            }
-            refresh_run_status(app_weak.clone(), tray_weak.clone());
-        });
-    }
-    {
-        let app_weak = app.as_weak();
-        let tray_weak = tray.as_weak();
-        tray.on_stop_server(move || {
-            stop_server_async(app_weak.clone(), tray_weak.clone());
-        });
-    }
-    tray.on_quit_app(|| {
-        slint::quit_event_loop().ok();
-    });
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────
@@ -560,59 +206,32 @@ fn pick_dir(start: &std::path::Path) -> Option<PathBuf> {
         .pick_folder()
 }
 
+/// Wrap a `Vec<T>` as a Slint list model (the `[T]` properties the UI binds to).
+/// One home for the `ModelRc::from(Rc::new(VecModel::from(..)))` incantation.
+fn model<T: Clone + 'static>(items: Vec<T>) -> ModelRc<T> {
+    ModelRc::from(Rc::new(VecModel::from(items)))
+}
+
+/// A `Vec<String>` as a `[string]` model (the dropdowns bind to `SharedString`).
+fn string_model(items: Vec<String>) -> ModelRc<SharedString> {
+    model(items.into_iter().map(SharedString::from).collect())
+}
+
 // ── Server helpers ───────────────────────────────────────────────────
 
 fn load_server_into_ui(app: &AppWindow) {
-    let cfg = server_cfg::load();
-    app.global::<AppState>().set_server_port(SharedString::from(
-        cfg.port
-            .map(|v| v.to_string())
-            .unwrap_or_else(|| "8080".into()),
-    ));
-    let hostname = cfg.hostname.unwrap_or_else(|| "localhost".into());
-    populate_bind_options(app, &hostname);
-    app.global::<AppState>()
-        .set_server_hostname(SharedString::from(hostname));
-    app.global::<AppState>()
-        .set_server_mlock(cfg.mlock.unwrap_or(true));
-    app.global::<AppState>()
-        .set_server_threads(SharedString::from(
-            cfg.threads.map(|v| v.to_string()).unwrap_or_default(),
-        ));
-    app.global::<AppState>()
-        .set_server_cache_reuse(SharedString::from(
-            cfg.cache_reuse.map(|v| v.to_string()).unwrap_or_default(),
-        ));
-    app.global::<AppState>()
-        .set_server_threads_batch(SharedString::from(
-            cfg.threads_batch.map(|v| v.to_string()).unwrap_or_default(),
-        ));
-    app.global::<AppState>()
-        .set_server_models_max(SharedString::from(
-            cfg.models_max.map(|v| v.to_string()).unwrap_or_default(),
-        ));
-    app.global::<AppState>()
-        .set_server_models_dir(SharedString::from(
-            cfg.models_dir
-                .unwrap_or_else(server_cfg::default_models_dir),
-        ));
-    app.global::<AppState>()
-        .set_server_device(SharedString::from(cfg.device.unwrap_or_default()));
-    app.global::<AppState>()
-        .set_server_split_mode(SharedString::from(
-            // "default" is the combo's sentinel for "inherit / layer"; the combo
-            // two-way-binds to this, so store the sentinel rather than "".
-            cfg.split_mode.unwrap_or_else(|| "default".into()),
-        ));
-    app.global::<AppState>()
-        .set_server_tensor_split(SharedString::from(cfg.tensor_split.unwrap_or_default()));
+    let s = app.global::<AppState>();
+    let form = server_form::config_to_form(&server_cfg::load());
+    populate_bind_options(app, form.hostname.as_str());
     let cmdline = runstate::command_line().unwrap_or_default();
-    app.global::<AppState>()
-        .set_server_command_line(SharedString::from(cmdline));
-    snapshot_server_base(app);
+    s.set_server_command_line(SharedString::from(cmdline));
+    // Set form + base together so `server_dirty` reads false right after load.
+    s.set_server_form(form.clone());
+    s.set_server_form_base(form);
 }
 
 fn populate_bind_options(app: &AppWindow, current: &str) {
+    let s = app.global::<AppState>();
     let mut opts = net_ifaces::list_options();
     let mut index = opts.iter().position(|o| o.value == current);
     if index.is_none() && !current.is_empty() {
@@ -627,79 +246,16 @@ fn populate_bind_options(app: &AppWindow, current: &str) {
     }
     let labels: Vec<SharedString> = opts.iter().map(|o| o.label.clone().into()).collect();
     let values: Vec<SharedString> = opts.iter().map(|o| o.value.clone().into()).collect();
-    app.global::<AppState>()
-        .set_bind_labels(ModelRc::from(Rc::new(VecModel::from(labels))));
-    app.global::<AppState>()
-        .set_bind_values(ModelRc::from(Rc::new(VecModel::from(values))));
-    app.global::<AppState>()
-        .set_bind_index(index.unwrap_or(0) as i32);
+    s.set_bind_labels(model(labels));
+    s.set_bind_values(model(values));
+    s.set_bind_index(index.unwrap_or(0) as i32);
 }
 
-fn read_server_from_ui(app: &AppWindow) -> server_cfg::ServerConfig {
-    server_cfg::ServerConfig {
-        port: ini::parse_int(app.global::<AppState>().get_server_port().as_str()),
-        hostname: Some(app.global::<AppState>().get_server_hostname().to_string()),
-        mlock: Some(app.global::<AppState>().get_server_mlock()),
-        threads: ini::parse_int(app.global::<AppState>().get_server_threads().as_str()),
-        cache_reuse: ini::parse_int(app.global::<AppState>().get_server_cache_reuse().as_str()),
-        threads_batch: ini::parse_int(app.global::<AppState>().get_server_threads_batch().as_str()),
-        models_max: ini::parse_int(app.global::<AppState>().get_server_models_max().as_str()),
-        models_dir: Some(app.global::<AppState>().get_server_models_dir().to_string()),
-        device: {
-            let d = app.global::<AppState>().get_server_device().to_string();
-            if d.trim().is_empty() {
-                None
-            } else {
-                Some(d)
-            }
-        },
-        split_mode: {
-            // "" and the combo sentinel "default" both mean "no explicit split".
-            let s = app.global::<AppState>().get_server_split_mode().to_string();
-            match s.trim() {
-                "" | "default" => None,
-                other => Some(other.to_string()),
-            }
-        },
-        tensor_split: {
-            let s = app
-                .global::<AppState>()
-                .get_server_tensor_split()
-                .to_string();
-            if s.trim().is_empty() {
-                None
-            } else {
-                Some(s)
-            }
-        },
-    }
-}
-
-/// Copy the current server fields into their `*_base` baselines so the UI's
-/// `server_dirty` reads false until the user edits something again.
+/// Re-baseline the server form after a save so `server_dirty` reads false until
+/// the next edit — the server analog of `apply_form`'s base handling.
 fn snapshot_server_base(app: &AppWindow) {
-    app.global::<AppState>()
-        .set_server_port_base(app.global::<AppState>().get_server_port());
-    app.global::<AppState>()
-        .set_server_hostname_base(app.global::<AppState>().get_server_hostname());
-    app.global::<AppState>()
-        .set_server_mlock_base(app.global::<AppState>().get_server_mlock());
-    app.global::<AppState>()
-        .set_server_threads_base(app.global::<AppState>().get_server_threads());
-    app.global::<AppState>()
-        .set_server_cache_reuse_base(app.global::<AppState>().get_server_cache_reuse());
-    app.global::<AppState>()
-        .set_server_threads_batch_base(app.global::<AppState>().get_server_threads_batch());
-    app.global::<AppState>()
-        .set_server_models_max_base(app.global::<AppState>().get_server_models_max());
-    app.global::<AppState>()
-        .set_server_models_dir_base(app.global::<AppState>().get_server_models_dir());
-    app.global::<AppState>()
-        .set_server_device_base(app.global::<AppState>().get_server_device());
-    app.global::<AppState>()
-        .set_server_split_mode_base(app.global::<AppState>().get_server_split_mode());
-    app.global::<AppState>()
-        .set_server_tensor_split_base(app.global::<AppState>().get_server_tensor_split());
+    let s = app.global::<AppState>();
+    s.set_server_form_base(s.get_server_form());
 }
 
 // ── Preset helpers ───────────────────────────────────────────────────
@@ -744,12 +300,12 @@ fn refresh_presets(app: &AppWindow, state: &Rc<RefCell<State>>) {
 /// Callers that also need to refresh the file/device dropdowns or integrations
 /// do so themselves afterward — this only owns the preset list + selection.
 fn reload_presets(app: &AppWindow, state: &Rc<RefCell<State>>, want: Option<&str>) {
+    let s = app.global::<AppState>();
     let all = presets::load_all();
-    let summaries = preset_summaries(&all, app.global::<AppState>().get_presets_filter().as_str());
-    app.global::<AppState>()
-        .set_presets(ModelRc::from(Rc::new(VecModel::from(summaries))));
+    let summaries = preset_summaries(&all, s.get_presets_filter().as_str());
+    s.set_presets(model(summaries));
 
-    let prev_sel = app.global::<AppState>().get_selected_preset_index();
+    let prev_sel = s.get_selected_preset_index();
     let idx = match want {
         Some(id) => all.iter().position(|p| p.id == id).map(|i| i as i32),
         None => (prev_sel >= 0 && (prev_sel as usize) < all.len()).then_some(prev_sel),
@@ -757,7 +313,7 @@ fn reload_presets(app: &AppWindow, state: &Rc<RefCell<State>>, want: Option<&str
     .unwrap_or(if all.is_empty() { -1 } else { 0 });
 
     state.borrow_mut().presets = all;
-    app.global::<AppState>().set_selected_preset_index(idx);
+    s.set_selected_preset_index(idx);
 
     let st = state.borrow();
     match usize::try_from(idx).ok().and_then(|i| st.presets.get(i)) {
@@ -767,8 +323,9 @@ fn reload_presets(app: &AppWindow, state: &Rc<RefCell<State>>, want: Option<&str
 }
 
 fn refresh_file_options(app: &AppWindow) {
-    let models_dir = app.global::<AppState>().get_server_models_dir().to_string();
-    let form = app.global::<AppState>().get_form();
+    let s = app.global::<AppState>();
+    let models_dir = s.get_server_form().models_dir.to_string();
+    let form = s.get_form();
 
     let model_scan_result = model_scan::list(&models_dir, model_scan::Category::Model.subdir());
     let mmproj_scan_result = model_scan::list(&models_dir, model_scan::Category::Mmproj.subdir());
@@ -781,9 +338,10 @@ fn refresh_file_options(app: &AppWindow) {
         model_scan_result,
         form.model.as_str(),
         |app, lbl, val, idx| {
-            app.global::<AppState>().set_model_labels(lbl);
-            app.global::<AppState>().set_model_values(val);
-            app.global::<AppState>().set_model_index(idx);
+            let s = app.global::<AppState>();
+            s.set_model_labels(lbl);
+            s.set_model_values(val);
+            s.set_model_index(idx);
         },
     );
     apply_scanned(
@@ -792,9 +350,10 @@ fn refresh_file_options(app: &AppWindow) {
         mmproj_scan_result,
         form.mmproj.as_str(),
         |app, lbl, val, idx| {
-            app.global::<AppState>().set_mmproj_labels(lbl);
-            app.global::<AppState>().set_mmproj_values(val);
-            app.global::<AppState>().set_mmproj_index(idx);
+            let s = app.global::<AppState>();
+            s.set_mmproj_labels(lbl);
+            s.set_mmproj_values(val);
+            s.set_mmproj_index(idx);
         },
     );
     // Draft picker: MTP heads (mtps\) and DFlash drafters (dflashs\) share one
@@ -806,13 +365,10 @@ fn refresh_file_options(app: &AppWindow) {
         form.model_draft.as_str(),
         form.spec_type.as_str(),
     );
-    app.global::<AppState>()
-        .set_draft_labels(string_model(draft_labels));
-    app.global::<AppState>()
-        .set_draft_values(string_model(draft_values));
-    app.global::<AppState>()
-        .set_draft_specs(string_model(draft_specs));
-    app.global::<AppState>().set_draft_index(draft_idx);
+    s.set_draft_labels(string_model(draft_labels));
+    s.set_draft_values(string_model(draft_values));
+    s.set_draft_specs(string_model(draft_specs));
+    s.set_draft_index(draft_idx);
 
     refresh_device_options(app);
     update_model_info(app);
@@ -823,64 +379,53 @@ fn refresh_file_options(app: &AppWindow) {
 /// headers plus a cross-reference of the framework's MTP/DFlash drafters. Called
 /// whenever the model/mmproj/draft field changes (combo pick, preset load).
 fn update_model_info(app: &AppWindow) {
-    let form = app.global::<AppState>().get_form();
+    let s = app.global::<AppState>();
+    let form = s.get_form();
     let model = form.model.to_string();
 
     // Reset the optional rows; the success path re-enables the ones that apply.
-    app.global::<AppState>().set_model_info_has_moe(false);
-    app.global::<AppState>().set_model_info_has_mmproj(false);
-    app.global::<AppState>()
-        .set_model_info_has_draft_file(false);
-    app.global::<AppState>().set_model_info_embeds_mtp(false);
+    s.set_model_info_has_moe(false);
+    s.set_model_info_has_mmproj(false);
+    s.set_model_info_has_draft_file(false);
+    s.set_model_info_embeds_mtp(false);
     // Reset the slider maxima; 0 = unknown → the UI falls back to a 0..99 range.
-    app.global::<AppState>().set_model_info_n_layer(0);
-    app.global::<AppState>().set_model_info_draft_n_layer(0);
+    s.set_model_info_n_layer(0);
+    s.set_model_info_draft_n_layer(0);
 
     if model.trim().is_empty() {
-        app.global::<AppState>().set_model_info_ready(false);
-        app.global::<AppState>()
-            .set_model_info_note(SharedString::from("Select a model to see its details."));
+        s.set_model_info_ready(false);
+        s.set_model_info_note(SharedString::from("Select a model to see its details."));
         return;
     }
 
     let Some(info) = gguf::read_model_info(std::path::Path::new(&model)) else {
-        app.global::<AppState>().set_model_info_ready(false);
-        app.global::<AppState>()
-            .set_model_info_note(SharedString::from(
+        s.set_model_info_ready(false);
+        s.set_model_info_note(SharedString::from(
             "Metadata unavailable — is ggml-base.dll beside the app, and the file a valid GGUF?",
         ));
         return;
     };
 
-    let models_dir = app.global::<AppState>().get_server_models_dir().to_string();
+    let models_dir = s.get_server_form().models_dir.to_string();
     let ext = gguf::external_drafters(&models_dir, &model);
-    app.global::<AppState>()
-        .set_model_info_kind(SharedString::from(info.kind_line()));
-    app.global::<AppState>()
-        .set_model_info_n_layer(info.n_layer as i32);
-    app.global::<AppState>().set_model_info_has_moe(info.is_moe);
-    app.global::<AppState>()
-        .set_model_info_moe(SharedString::from(info.moe_offload_line()));
-    app.global::<AppState>()
-        .set_model_info_arch_quant(SharedString::from(info.arch_quant_line()));
-    app.global::<AppState>()
-        .set_model_info_layers_ctx(SharedString::from(info.layers_ctx_line()));
-    app.global::<AppState>()
-        .set_model_info_attn(SharedString::from(info.attn_line()));
-    app.global::<AppState>()
-        .set_model_info_draft(SharedString::from(gguf::draft_line(&info, &ext)));
+    s.set_model_info_kind(SharedString::from(info.kind_line()));
+    s.set_model_info_n_layer(info.n_layer as i32);
+    s.set_model_info_has_moe(info.is_moe);
+    s.set_model_info_moe(SharedString::from(info.moe_offload_line()));
+    s.set_model_info_arch_quant(SharedString::from(info.arch_quant_line()));
+    s.set_model_info_layers_ctx(SharedString::from(info.layers_ctx_line()));
+    s.set_model_info_attn(SharedString::from(info.attn_line()));
+    s.set_model_info_draft(SharedString::from(gguf::draft_line(&info, &ext)));
     // Enables the speculative-decoding controls even before an external draft is
     // picked, when the model itself embeds MTP/nextn heads.
-    app.global::<AppState>()
-        .set_model_info_embeds_mtp(info.nextn_predict_layers > 0);
+    s.set_model_info_embeds_mtp(info.nextn_predict_layers > 0);
 
     // Optional: the selected mmproj's clip header.
     let mmproj = form.mmproj.to_string();
     if !mmproj.trim().is_empty() {
         if let Some(mp) = gguf::read_mmproj_info(std::path::Path::new(&mmproj)) {
-            app.global::<AppState>()
-                .set_model_info_mmproj(SharedString::from(mp.mmproj_line()));
-            app.global::<AppState>().set_model_info_has_mmproj(true);
+            s.set_model_info_mmproj(SharedString::from(mp.mmproj_line()));
+            s.set_model_info_has_mmproj(true);
         }
     }
 
@@ -888,33 +433,34 @@ fn update_model_info(app: &AppWindow) {
     let draft = form.model_draft.to_string();
     if !draft.trim().is_empty() {
         if let Some(d) = gguf::read_model_info(std::path::Path::new(&draft)) {
-            app.global::<AppState>()
-                .set_model_info_draft_file(SharedString::from(d.draft_file_line()));
-            app.global::<AppState>()
-                .set_model_info_draft_n_layer(d.n_layer as i32);
-            app.global::<AppState>().set_model_info_has_draft_file(true);
+            s.set_model_info_draft_file(SharedString::from(d.draft_file_line()));
+            s.set_model_info_draft_n_layer(d.n_layer as i32);
+            s.set_model_info_has_draft_file(true);
         }
     }
 
-    app.global::<AppState>().set_model_info_ready(true);
+    s.set_model_info_ready(true);
 }
 
 /// Rebuild the three GPU-device dropdowns (server-wide, per-preset main,
 /// per-preset draft) from the cached `--list-devices` result, recomputing each
 /// selected index against the current server.ini / form values.
 fn refresh_device_options(app: &AppWindow) {
+    let s = app.global::<AppState>();
     let devs = cached_devices(app);
-    let form = app.global::<AppState>().get_form();
+    let form = s.get_form();
+    let server_device = s.get_server_form().device;
 
     apply_device(
         app,
         &devs,
-        app.global::<AppState>().get_server_device().as_str(),
+        server_device.as_str(),
         "(all detected devices)",
         |app, lbl, val, idx| {
-            app.global::<AppState>().set_server_dev_labels(lbl);
-            app.global::<AppState>().set_server_dev_values(val);
-            app.global::<AppState>().set_server_dev_index(idx);
+            let s = app.global::<AppState>();
+            s.set_server_dev_labels(lbl);
+            s.set_server_dev_values(val);
+            s.set_server_dev_index(idx);
         },
     );
     apply_device(
@@ -923,9 +469,10 @@ fn refresh_device_options(app: &AppWindow) {
         form.device.as_str(),
         "(server default)",
         |app, lbl, val, idx| {
-            app.global::<AppState>().set_pdev_labels(lbl);
-            app.global::<AppState>().set_pdev_values(val);
-            app.global::<AppState>().set_pdev_index(idx);
+            let s = app.global::<AppState>();
+            s.set_pdev_labels(lbl);
+            s.set_pdev_values(val);
+            s.set_pdev_index(idx);
         },
     );
     apply_device(
@@ -934,9 +481,10 @@ fn refresh_device_options(app: &AppWindow) {
         form.device_draft.as_str(),
         "(auto / same as model)",
         |app, lbl, val, idx| {
-            app.global::<AppState>().set_pdraft_labels(lbl);
-            app.global::<AppState>().set_pdraft_values(val);
-            app.global::<AppState>().set_pdraft_index(idx);
+            let s = app.global::<AppState>();
+            s.set_pdraft_labels(lbl);
+            s.set_pdraft_values(val);
+            s.set_pdraft_index(idx);
         },
     );
 }
@@ -944,8 +492,9 @@ fn refresh_device_options(app: &AppWindow) {
 /// Reconstruct the cached device list from the two parallel Slint arrays the
 /// async probe fills in (`all_device_ids` / `all_device_labels`).
 fn cached_devices(app: &AppWindow) -> Vec<devices::DeviceOption> {
-    let ids = app.global::<AppState>().get_all_device_ids();
-    let labels = app.global::<AppState>().get_all_device_labels();
+    let s = app.global::<AppState>();
+    let ids = s.get_all_device_ids();
+    let labels = s.get_all_device_labels();
     let n = ids.row_count().min(labels.row_count());
     (0..n)
         .filter_map(|i| {
@@ -955,17 +504,6 @@ fn cached_devices(app: &AppWindow) -> Vec<devices::DeviceOption> {
             })
         })
         .collect()
-}
-
-/// Wrap a `Vec<String>` as a Slint string model (the `[string]` properties the
-/// dropdowns bind to).
-fn string_model(items: Vec<String>) -> ModelRc<SharedString> {
-    ModelRc::from(Rc::new(VecModel::from(
-        items
-            .into_iter()
-            .map(SharedString::from)
-            .collect::<Vec<_>>(),
-    )))
 }
 
 fn apply_device(
@@ -993,49 +531,50 @@ fn apply_scanned(
 // ── Dialog helpers ───────────────────────────────────────────────────
 
 fn populate_dialog_models(app: &AppWindow, state: &Rc<RefCell<State>>) {
-    let models_dir = app.global::<AppState>().get_server_models_dir().to_string();
+    let s = app.global::<AppState>();
+    let models_dir = s.get_server_form().models_dir.to_string();
     let scanned = model_scan::list(&models_dir, model_scan::Category::Model.subdir());
     state.borrow_mut().dialog_models_all = scanned;
-    app.global::<AppState>()
-        .set_dialog_filter(SharedString::from(""));
+    s.set_dialog_filter(SharedString::from(""));
     let st = state.borrow();
     apply_dialog_models(app, &st.dialog_models_all, "");
 }
 
 /// Filter the cached dialog model scan by a case-insensitive substring on the
-/// label and publish the result. Filtering both arrays together keeps
-/// `dialog_model_index` consistent with `dialog_model_values`.
+/// label and publish the result. Filtering both arrays from ONE matched list
+/// keeps `dialog_model_index` consistent with `dialog_model_values`.
 fn apply_dialog_models(app: &AppWindow, all: &[model_scan::FileOption], filter: &str) {
+    let s = app.global::<AppState>();
     let q = filter.to_lowercase();
-    let labels: Vec<SharedString> = all
+    let matched: Vec<&model_scan::FileOption> = all
         .iter()
         .filter(|f| q.is_empty() || f.label.to_lowercase().contains(&q))
+        .collect();
+    let labels: Vec<SharedString> = matched
+        .iter()
         .map(|f| SharedString::from(f.label.clone()))
         .collect();
-    let values: Vec<SharedString> = all
+    let values: Vec<SharedString> = matched
         .iter()
-        .filter(|f| q.is_empty() || f.label.to_lowercase().contains(&q))
         .map(|f| SharedString::from(f.path.clone()))
         .collect();
-    app.global::<AppState>()
-        .set_dialog_model_labels(ModelRc::from(Rc::new(VecModel::from(labels))));
-    app.global::<AppState>()
-        .set_dialog_model_values(ModelRc::from(Rc::new(VecModel::from(values))));
-    app.global::<AppState>().set_dialog_model_index(-1);
+    s.set_dialog_model_labels(model(labels));
+    s.set_dialog_model_values(model(values));
+    s.set_dialog_model_index(-1);
 }
 
 fn picked_dialog_model_path(app: &AppWindow) -> Option<PathBuf> {
-    let idx = app.global::<AppState>().get_dialog_model_index();
+    let s = app.global::<AppState>();
+    let idx = s.get_dialog_model_index();
     if idx < 0 {
         return None;
     }
-    let values = app.global::<AppState>().get_dialog_model_values();
+    let values = s.get_dialog_model_values();
     let i = usize::try_from(idx).ok()?;
     if i >= values.row_count() {
         return None;
     }
-    let s = values.row_data(i)?;
-    Some(PathBuf::from(s.to_string()))
+    Some(PathBuf::from(values.row_data(i)?.to_string()))
 }
 
 fn run_new_empty(app: &AppWindow, state: &Rc<RefCell<State>>, path: PathBuf) {
@@ -1106,9 +645,9 @@ fn commit_new_preset(
 // ── Status / version ─────────────────────────────────────────────────
 
 fn set_status(app: &AppWindow, text: String, is_error: bool) {
-    app.global::<AppState>()
-        .set_status_text(SharedString::from(text));
-    app.global::<AppState>().set_status_is_error(is_error);
+    let s = app.global::<AppState>();
+    s.set_status_text(SharedString::from(text));
+    s.set_status_is_error(is_error);
 }
 
 fn spawn_version_probe(app_weak: slint::Weak<AppWindow>) {
@@ -1137,10 +676,9 @@ fn spawn_device_probe(app_weak: slint::Weak<AppWindow>) {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
-            app.global::<AppState>()
-                .set_all_device_ids(ModelRc::from(Rc::new(VecModel::from(ids))));
-            app.global::<AppState>()
-                .set_all_device_labels(ModelRc::from(Rc::new(VecModel::from(labels))));
+            let s = app.global::<AppState>();
+            s.set_all_device_ids(model(ids));
+            s.set_all_device_labels(model(labels));
             // Recompute the dropdown indices now that the device list exists.
             refresh_device_options(&app);
         })
@@ -1173,15 +711,16 @@ fn stop_server_async(app_weak: slint::Weak<AppWindow>, tray_weak: slint::Weak<Ap
         }
         slint::invoke_from_event_loop(move || {
             if let Some(app) = app_weak.upgrade() {
-                app.global::<AppState>().set_server_stopping(false);
-                app.global::<AppState>().set_server_running(running);
+                let s = app.global::<AppState>();
+                s.set_server_stopping(false);
+                s.set_server_running(running);
                 match result {
                     Ok(()) if !running => {
-                        app.global::<AppState>().set_server_status_is_error(false);
+                        s.set_server_status_is_error(false);
                         set_status(&app, "llama-server stopped.".into(), false);
                     }
                     Ok(()) => {
-                        app.global::<AppState>().set_server_status_is_error(true);
+                        s.set_server_status_is_error(true);
                         set_status(
                             &app,
                             "Stop timed out — llama-server is still running.".into(),
@@ -1189,7 +728,7 @@ fn stop_server_async(app_weak: slint::Weak<AppWindow>, tray_weak: slint::Weak<Ap
                         );
                     }
                     Err(e) => {
-                        app.global::<AppState>().set_server_status_is_error(true);
+                        s.set_server_status_is_error(true);
                         set_status(&app, format!("Failed to stop: {e}"), true);
                     }
                 }
@@ -1210,8 +749,9 @@ fn refresh_run_status(app_weak: slint::Weak<AppWindow>, tray_weak: slint::Weak<A
         let running = runstate::load().is_some();
         slint::invoke_from_event_loop(move || {
             if let Some(app) = app_weak.upgrade() {
-                app.global::<AppState>().set_server_running(running);
-                app.global::<AppState>().set_server_status_is_error(false);
+                let s = app.global::<AppState>();
+                s.set_server_running(running);
+                s.set_server_status_is_error(false);
             }
             if let Some(tray) = tray_weak.upgrade() {
                 tray.set_server_running(running);
@@ -1227,41 +767,34 @@ fn refresh_run_status(app_weak: slint::Weak<AppWindow>, tray_weak: slint::Weak<A
 /// (`form != form_base`) reads false right after a (re)load or save and only
 /// turns true once the user actually edits a field.
 fn apply_form(app: &AppWindow, form: PresetForm) {
-    app.global::<AppState>().set_form_base(form.clone());
-    app.global::<AppState>().set_form(form);
+    let s = app.global::<AppState>();
+    s.set_form_base(form.clone());
+    s.set_form(form);
 }
 
 // ── Integrations helpers ──────────────────────────────────────────────
 
 fn refresh_integrations(app: &AppWindow) {
+    let s = app.global::<AppState>();
     let cfg = server_cfg::load();
     let port = cfg.port.unwrap_or(8080);
     let hostname = cfg.hostname.unwrap_or_else(|| "localhost".into());
     let base_url = format!("http://{hostname}:{port}/v1");
-    app.global::<AppState>()
-        .set_integration_base_url(SharedString::from(base_url));
+    s.set_integration_base_url(SharedString::from(base_url));
 
     let claude_env = integrations::claude_code_env_script(&format!("http://{hostname}:{port}/v1"));
-    app.global::<AppState>()
-        .set_integration_claude_env(SharedString::from(claude_env));
+    s.set_integration_claude_env(SharedString::from(claude_env));
 
-    let active = integrations::detect_opencode_provider();
-    app.global::<AppState>()
-        .set_integration_provider_active(active);
+    s.set_integration_provider_active(integrations::detect_opencode_provider());
 
     let enabled_ids = integrations::opencode_model_ids();
-    let all_presets = presets::load_all();
-
-    let mut items: Vec<IntegrationModel> = Vec::new();
-    for p in &all_presets {
-        let label = integrations::friendly_model_name(&p.id, &p.model);
-        items.push(IntegrationModel {
+    let items: Vec<IntegrationModel> = presets::load_all()
+        .iter()
+        .map(|p| IntegrationModel {
             id: SharedString::from(p.id.clone()),
-            label: SharedString::from(label),
+            label: SharedString::from(integrations::friendly_model_name(&p.id, &p.model)),
             enabled: enabled_ids.contains(&p.id),
-        });
-    }
-    let rc = Rc::new(VecModel::from(items));
-    app.global::<AppState>()
-        .set_integration_models(ModelRc::from(rc));
+        })
+        .collect();
+    s.set_integration_models(model(items));
 }

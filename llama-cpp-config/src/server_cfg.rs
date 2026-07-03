@@ -1,4 +1,8 @@
 // server.ini schema and IO for llama.cpp-framework.
+//
+// `save()` rewrites the whole `[Server]` section from a `ServerConfig`. Unset
+// optional fields are emitted as commented `; Key = example  ; help` hint lines
+// (never omitted) so the file self-documents every available knob.
 
 use std::fs;
 use std::io;
@@ -6,7 +10,7 @@ use std::io;
 use crate::ini;
 use crate::paths;
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct ServerConfig {
     pub port: Option<i32>,
     pub hostname: Option<String>,
@@ -48,16 +52,17 @@ pub fn load() -> ServerConfig {
         threads_batch: keys.get("ThreadsBatch").and_then(|v| ini::parse_int(v)),
         models_max: keys.get("ModelsMax").and_then(|v| ini::parse_int(v)),
         models_dir: keys.get("ModelsDir").cloned(),
-        device: keys.get("Device").cloned().filter(|s| !s.trim().is_empty()),
-        split_mode: keys
-            .get("SplitMode")
-            .cloned()
-            .filter(|s| !s.trim().is_empty()),
-        tensor_split: keys
-            .get("TensorSplit")
-            .cloned()
-            .filter(|s| !s.trim().is_empty()),
+        device: opt_nonblank(keys.get("Device").cloned()),
+        split_mode: opt_nonblank(keys.get("SplitMode").cloned()),
+        tensor_split: opt_nonblank(keys.get("TensorSplit").cloned()),
     }
+}
+
+/// `Some(s)` unless `s` is blank (whitespace only), in which case `None`. The
+/// single home for the "blank means unset" rule the string fields (device /
+/// split-mode / tensor-split) share on both `load()` and the CLI `server set`.
+pub fn opt_nonblank(s: Option<String>) -> Option<String> {
+    s.filter(|v| !v.trim().is_empty())
 }
 
 pub fn save(cfg: &ServerConfig) -> io::Result<()> {
@@ -71,44 +76,49 @@ pub fn save(cfg: &ServerConfig) -> io::Result<()> {
         .filter(|s| !s.is_empty())
         .unwrap_or_else(default_models_dir);
 
-    let threads_line = match cfg.threads {
-        Some(n) if n > 0 => format!("Threads = {n}"),
-        _ => "; Threads = 12  ; optional override; auto-detected if commented".to_string(),
-    };
-
-    let cache_reuse_line = match cfg.cache_reuse {
-        Some(n) => format!("CacheReuse = {n}"),
-        None => "; CacheReuse = 256  ; minimum chunk size for prompt cache reuse (--cache-reuse)"
-            .to_string(),
-    };
-
-    let threads_batch_line = match cfg.threads_batch {
-        Some(n) if n > 0 => format!("ThreadsBatch = {n}"),
-        _ => "; ThreadsBatch = 12  ; optional override; auto-detected if commented".to_string(),
-    };
-
-    let models_max_line = match cfg.models_max {
-        Some(n) if n != 1 => format!("ModelsMax = {n}"),
-        _ => "; ModelsMax = 2  ; uncomment to allow N models resident at once (0 = unlimited; runtime default if unset: 1)".to_string(),
-    };
-
-    let device_line = match cfg.device.as_deref().map(str::trim) {
-        Some(d) if !d.is_empty() => format!("Device = {d}"),
-        _ => "; Device = CUDA0  ; pin the main model to one GPU (--device); blank = all detected devices"
-            .to_string(),
-    };
-
-    let split_mode_line = match cfg.split_mode.as_deref().map(str::trim) {
-        Some(s) if !s.is_empty() => format!("SplitMode = {s}"),
-        _ => "; SplitMode = layer  ; multi-GPU split (--split-mode): none|layer|row; blank = layer (default)"
-            .to_string(),
-    };
-
-    let tensor_split_line = match cfg.tensor_split.as_deref().map(str::trim) {
-        Some(s) if !s.is_empty() => format!("TensorSplit = {s}"),
-        _ => "; TensorSplit = 3,1  ; per-GPU weight proportions (--tensor-split); blank = even split"
-            .to_string(),
-    };
+    // Each optional field renders as either `Key = value` or, when unset/default,
+    // a commented `; Key = example  ; help` hint line (see int_line_or_hint /
+    // str_line_or_hint). The `keep` predicate is where the per-field "is this
+    // worth writing?" rule lives (n > 0, n != 1, …).
+    let threads_line = int_line_or_hint(
+        cfg.threads,
+        "Threads",
+        "; Threads = 12  ; optional override; auto-detected if commented",
+        |n| n > 0,
+    );
+    let cache_reuse_line = int_line_or_hint(
+        cfg.cache_reuse,
+        "CacheReuse",
+        "; CacheReuse = 256  ; minimum chunk size for prompt cache reuse (--cache-reuse)",
+        |_| true,
+    );
+    let threads_batch_line = int_line_or_hint(
+        cfg.threads_batch,
+        "ThreadsBatch",
+        "; ThreadsBatch = 12  ; optional override; auto-detected if commented",
+        |n| n > 0,
+    );
+    let models_max_line = int_line_or_hint(
+        cfg.models_max,
+        "ModelsMax",
+        "; ModelsMax = 2  ; uncomment to allow N models resident at once (0 = unlimited; runtime default if unset: 1)",
+        |n| n != 1,
+    );
+    let device_line = str_line_or_hint(
+        cfg.device.as_deref(),
+        "Device",
+        "; Device = CUDA0  ; pin the main model to one GPU (--device); blank = all detected devices",
+    );
+    let split_mode_line = str_line_or_hint(
+        cfg.split_mode.as_deref(),
+        "SplitMode",
+        "; SplitMode = layer  ; multi-GPU split (--split-mode): none|layer|row; blank = layer (default)",
+    );
+    let tensor_split_line = str_line_or_hint(
+        cfg.tensor_split.as_deref(),
+        "TensorSplit",
+        "; TensorSplit = 3,1  ; per-GPU weight proportions (--tensor-split); blank = even split",
+    );
 
     let mlock_lit = if mlock { "true" } else { "false" };
 
@@ -144,4 +154,20 @@ ModelsDir = {models_dir}
         let _ = fs::create_dir_all(&models_dir);
     }
     fs::write(&path, body)
+}
+
+/// `Key = n` when `keep(n)` holds for a set value, else the commented `hint`.
+fn int_line_or_hint(v: Option<i32>, key: &str, hint: &str, keep: impl Fn(i32) -> bool) -> String {
+    match v {
+        Some(n) if keep(n) => format!("{key} = {n}"),
+        _ => hint.to_string(),
+    }
+}
+
+/// `Key = value` for a non-blank string, else the commented `hint`.
+fn str_line_or_hint(v: Option<&str>, key: &str, hint: &str) -> String {
+    match v.map(str::trim) {
+        Some(s) if !s.is_empty() => format!("{key} = {s}"),
+        _ => hint.to_string(),
+    }
 }

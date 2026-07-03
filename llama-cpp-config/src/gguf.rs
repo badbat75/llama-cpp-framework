@@ -564,36 +564,33 @@ mod ffi {
 
     fn load() -> Option<Api> {
         let h = load_dll()?;
+        // Resolve a symbol and transmute it to its declared fn-pointer alias.
+        // A macro (not a fn) so each symbol name stays a plain, greppable literal
+        // and the target type is explicit at the call site; `?` propagates a
+        // missing symbol as `None`.
+        macro_rules! sym {
+            ($ty:ty, $name:literal) => {
+                std::mem::transmute::<*const c_void, $ty>(proc(h, $name)?)
+            };
+        }
         // SAFETY: symbols resolved from ggml-base.dll have the C signatures
         // declared in `gguf.h`; each is transmuted to its matching fn pointer.
         unsafe {
             Some(Api {
-                init: std::mem::transmute::<*const c_void, FnInit>(proc(
-                    h,
-                    b"gguf_init_from_file\0",
-                )?),
-                free: std::mem::transmute::<*const c_void, FnFree>(proc(h, b"gguf_free\0")?),
-                find_key: std::mem::transmute::<*const c_void, FnFind>(proc(
-                    h,
-                    b"gguf_find_key\0",
-                )?),
-                kv_type: std::mem::transmute::<*const c_void, FnType>(proc(
-                    h,
-                    b"gguf_get_kv_type\0",
-                )?),
-                v_u8: std::mem::transmute::<*const c_void, FnU8>(proc(h, b"gguf_get_val_u8\0")?),
-                v_i8: std::mem::transmute::<*const c_void, FnI8>(proc(h, b"gguf_get_val_i8\0")?),
-                v_u16: std::mem::transmute::<*const c_void, FnU16>(proc(h, b"gguf_get_val_u16\0")?),
-                v_i16: std::mem::transmute::<*const c_void, FnI16>(proc(h, b"gguf_get_val_i16\0")?),
-                v_u32: std::mem::transmute::<*const c_void, FnU32>(proc(h, b"gguf_get_val_u32\0")?),
-                v_i32: std::mem::transmute::<*const c_void, FnI32>(proc(h, b"gguf_get_val_i32\0")?),
-                v_u64: std::mem::transmute::<*const c_void, FnU64>(proc(h, b"gguf_get_val_u64\0")?),
-                v_i64: std::mem::transmute::<*const c_void, FnI64>(proc(h, b"gguf_get_val_i64\0")?),
-                v_bool: std::mem::transmute::<*const c_void, FnBool>(proc(
-                    h,
-                    b"gguf_get_val_bool\0",
-                )?),
-                v_str: std::mem::transmute::<*const c_void, FnStr>(proc(h, b"gguf_get_val_str\0")?),
+                init: sym!(FnInit, b"gguf_init_from_file\0"),
+                free: sym!(FnFree, b"gguf_free\0"),
+                find_key: sym!(FnFind, b"gguf_find_key\0"),
+                kv_type: sym!(FnType, b"gguf_get_kv_type\0"),
+                v_u8: sym!(FnU8, b"gguf_get_val_u8\0"),
+                v_i8: sym!(FnI8, b"gguf_get_val_i8\0"),
+                v_u16: sym!(FnU16, b"gguf_get_val_u16\0"),
+                v_i16: sym!(FnI16, b"gguf_get_val_i16\0"),
+                v_u32: sym!(FnU32, b"gguf_get_val_u32\0"),
+                v_i32: sym!(FnI32, b"gguf_get_val_i32\0"),
+                v_u64: sym!(FnU64, b"gguf_get_val_u64\0"),
+                v_i64: sym!(FnI64, b"gguf_get_val_i64\0"),
+                v_bool: sym!(FnBool, b"gguf_get_val_bool\0"),
+                v_str: sym!(FnStr, b"gguf_get_val_str\0"),
             })
         }
     }

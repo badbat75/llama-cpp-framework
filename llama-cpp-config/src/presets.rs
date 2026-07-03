@@ -1,4 +1,18 @@
 // presets.ini schema and IO for llama.cpp-framework.
+//
+// ADD A PRESET FIELD — the recurring change fans out to all of these (trace an
+// existing field like `ctx-size` as the template; kebab-case INI key ↔
+// snake_case Rust field):
+//   1. `Preset` struct field (+ doc)      — below
+//   2. `impl Default for Preset`          — below
+//   3. `Preset::from_keys`                — INI read, below
+//   4. `render_section` + `emit_*` (+ `;` comment) — INI write, below
+//   5. `PresetForm` struct                — ui/types.slint
+//   6. the input widget                   — ui/models_page.slint (bind two-way `<=>`)
+//   7. `preset_to_form` + `form_to_preset` — src/form.rs (BOTH directions)
+// Guards: the INI round-trip test in this file (`full_preset_round_trips`) and
+// the form round-trip test in form.rs (`form_to_preset(preset_to_form(p)) == p`)
+// — a field wired into one side only drops out of one of them.
 
 use std::fs;
 use std::io;
@@ -156,6 +170,13 @@ pub fn load_all() -> Vec<Preset> {
         .collect()
 }
 
+/// Write (replace) the preset's section in presets.ini.
+///
+/// Side effect: on the FIRST save, when server.ini has no `ModelsDir` yet, this
+/// also seeds it — inferred from the model's path (its `models\` grandparent) —
+/// so the file pickers have a root to scan without a separate setup step. The
+/// seeding error is intentionally ignored: a preset save must still succeed even
+/// if server.ini can't be touched.
 pub fn save(preset: &Preset) -> io::Result<()> {
     let path = paths::presets_ini();
     if let Some(parent) = path.parent() {
@@ -442,6 +463,58 @@ mod tests {
         assert_eq!(p.model_draft, r"C:\dflash\m-dflash.gguf");
         assert_eq!(p.spec_type, "draft-dflash");
         assert_eq!(p.spec_draft_n_max, Some(15));
+    }
+
+    // The guard for step 4 of the "add a preset field" recipe: a fully-populated
+    // preset must survive render_section -> (write) -> ini::read_all -> from_keys
+    // unchanged. Runs through the REAL read path (ini::read_all, which strips
+    // inline comments) rather than a hand-rolled `split_once('=')`, so a field
+    // added to the struct/Default/from_keys but forgotten in render_section (or
+    // vice-versa) fails here instead of silently not persisting.
+    #[test]
+    fn full_preset_round_trips_through_ini() {
+        let original = Preset {
+            id: "full".into(),
+            model: r"E:\m\model.gguf".into(),
+            mmproj: r"E:\mmprojs\clip.gguf".into(),
+            model_draft: r"E:\dflashs\model-dflash.gguf".into(),
+            spec_type: "draft-dflash".into(),
+            spec_draft_n_max: Some(15),
+            n_gpu_layers_draft: Some(99),
+            device_draft: "CUDA0".into(),
+            device: "CUDA0".into(),
+            split_mode: "row".into(),
+            tensor_split: "3,1".into(),
+            ctx_size: Some(65536),
+            n_gpu_layers: Some(40),
+            parallel: Some(2),
+            batch_size: Some(1024),
+            ubatch_size: Some(256),
+            cache_type_k: "f16".into(),
+            cache_type_v: "q8_0".into(),
+            flash_attn: Some(false),
+            cache_ram: Some(4096),
+            jinja: Some(false),
+            reasoning: "on".into(),
+            reasoning_format: "deepseek".into(),
+            n_cpu_moe: Some(12),
+            temp: Some(0.7),
+            top_k: Some(40),
+            top_p: Some(0.95),
+            min_p: Some(0.05),
+            repeat_penalty: Some(1.1),
+            presence_penalty: Some(0.5),
+            chat_template_kwargs: r#"{"enable_thinking":true}"#.into(),
+        };
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("presets.ini");
+        fs::write(&path, render_section(&original)).unwrap();
+
+        let sections = ini::read_all(&path);
+        assert_eq!(sections.len(), 1, "one section written");
+        let parsed = Preset::from_keys(&sections[0].id, &sections[0].keys);
+        assert_eq!(parsed, original);
     }
 
     #[test]

@@ -9,16 +9,29 @@ $ErrorActionPreference = 'Stop'
 Write-Host ""
 Write-Host "  === llama.cpp (CMake) ===" -ForegroundColor Yellow
 
-# Clone llama.cpp if missing, otherwise pull latest
+# Clone llama.cpp if missing, otherwise fetch. Either way we build from the latest
+# release TAG (bNNNN) rather than master HEAD: pinning to a tag gives a clean
+# `git describe` (e.g. `b9867`, not `b9867-1-g…`) that names the bundled build and
+# the installer package, and ships a tagged commit instead of an arbitrary master tip.
 if (-not (Test-Path "$($cfg.LlamaCppDir)\CMakeLists.txt")) {
     Write-Host "llama.cpp not found at $($cfg.LlamaCppDir), cloning..." -ForegroundColor Yellow
     git clone https://github.com/ggerganov/llama.cpp $cfg.LlamaCppDir
     if ($LASTEXITCODE -ne 0) { throw "git clone failed" }
 } else {
-    Write-Host "Pulling latest llama.cpp..." -ForegroundColor Cyan
-    git -C $cfg.LlamaCppDir pull --ff-only
-    if ($LASTEXITCODE -ne 0) { throw "git pull failed" }
+    Write-Host "Fetching latest llama.cpp (branches + tags)..." -ForegroundColor Cyan
+    git -C $cfg.LlamaCppDir fetch origin --tags
+    if ($LASTEXITCODE -ne 0) { throw "git fetch failed" }
 }
+
+# Newest release tag reachable from origin/master (the highest bNNNN); detach the
+# working tree onto it so the build — and `git describe` in 03-package.ps1 — see a
+# clean tagged release.
+$llamaTag = (git -C $cfg.LlamaCppDir describe --tags --abbrev=0 origin/master 2>$null | Select-Object -First 1)
+if (-not $llamaTag) { throw "could not resolve latest llama.cpp release tag from origin/master" }
+$llamaTag = $llamaTag.Trim()
+Write-Host "Checking out llama.cpp release tag: $llamaTag" -ForegroundColor Cyan
+git -C $cfg.LlamaCppDir checkout --detach $llamaTag
+if ($LASTEXITCODE -ne 0) { throw "git checkout $llamaTag failed" }
 
 $buildDir = Join-Path $PSScriptRoot "build\llama.cpp-cmake"
 New-Item -ItemType Directory -Path $buildDir -Force | Out-Null
@@ -112,23 +125,18 @@ if (-not $cargo) {
 Write-Host "cargo: $($cargo.Source)" -ForegroundColor DarkGray
 
 $rustProjectDir = Join-Path $PSScriptRoot "llama-cpp-config"
-$rustBuildDir   = Join-Path $PSScriptRoot "build\llama-cpp-config"
 
 Push-Location $rustProjectDir
 try {
     cargo build --release
     if ($LASTEXITCODE -ne 0) { throw "cargo build failed" }
-
-    New-Item -ItemType Directory -Path $rustBuildDir -Force | Out-Null
-    $exe = Join-Path $rustProjectDir "target\release\llama-cpp-config.exe"
-    if (Test-Path $exe) {
-        Copy-Item $exe -Destination $rustBuildDir -Force
-        Write-Host "  Copied to $rustBuildDir\" -ForegroundColor DarkGray
-    }
 }
 finally {
     Pop-Location
 }
 
-Write-Host "llama-cpp-config build complete: $rustBuildDir\llama-cpp-config.exe" -ForegroundColor Green
+# 03-package.ps1 stages the binary straight from cargo's target\release dir — no
+# intermediate copy under build\.
+$exe = Join-Path $rustProjectDir "target\release\llama-cpp-config.exe"
+Write-Host "llama-cpp-config build complete: $exe" -ForegroundColor Green
 Write-Host ""

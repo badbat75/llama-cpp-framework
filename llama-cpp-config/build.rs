@@ -16,7 +16,9 @@ fn main() {
     img.write_png(&mut png_bytes).expect("Failed to encode PNG");
     let png_path = Path::new(&out_dir).join("llama.png");
     std::fs::write(&png_path, &png_bytes).expect("Failed to write PNG");
-    println!("cargo:rustc-env=LLCONFIG_ICON_PNG={}", png_path.display());
+    // Both PNGs are loaded by Slint via @image-url("llama.png" / "llama-on.png")
+    // resolved against OUT_DIR (see with_include_paths below), so no build-env
+    // var is needed to hand their paths to the Rust code.
 
     // Same frame + green status dot -> llama-on.png.
     let mut rgba = img.into_rgba_data();
@@ -32,8 +34,8 @@ fn main() {
     let mut config = slint_build::CompilerConfiguration::new()
         .with_style("fluent".into())
         .with_include_paths(vec![std::path::PathBuf::from(out_dir)]);
-    // The headless UI tests (src/ui_tests.rs) drive widgets through Slint's
-    // ElementHandle API, which needs the compiler to emit element debug info.
+    // The headless UI tests (src/tests/ui_bindings.rs) drive widgets through
+    // Slint's ElementHandle API, which needs the compiler to emit element debug info.
     // Enable it only for non-release builds so the size-optimized release binary
     // (opt-level=z + strip) doesn't carry test-only metadata. `cargo test` runs
     // in the "debug" profile; `cargo test --release` would not find widgets.

@@ -8,6 +8,7 @@
 
 import { LineEdit, TextEdit, ComboBox, CheckBox, Button, ListView, ScrollView, Palette, RadioGroup, Slider, Switch } from "std-widgets.slint";
 import { AppState } from "state.slint";
+import { Tokens } from "components.slint";
 // Re-export so Slint generates the Rust accessor (`app.global::<AppState>()`);
 // a bare import wouldn't surface it to Rust.
 export { AppState }
@@ -26,7 +27,7 @@ component NavItem inherits Rectangle {
     height: 40px;
     border-radius: 6px;
     background: selected
-        ? Palette.accent-background.transparentize(0.82)
+        ? Palette.accent-background.transparentize(Tokens.sel)
         : (touch.has-hover ? Palette.alternate-background : transparent);
 
     if selected : Rectangle {
@@ -142,7 +143,7 @@ export component AppWindow inherits Window {
                             : "Cloning [" + AppState.new_dialog_source_id + "] → pick the target model from your ModelsDir. The new preset copies every parameter from [" + AppState.new_dialog_source_id + "] onto the model you pick.";
                         wrap: word-wrap;
                         font-size: 12px;
-                        color: Palette.foreground.transparentize(0.25);
+                        color: Palette.foreground.transparentize(Tokens.subtle);
                     }
                     LineEdit {
                         placeholder-text: "Filter models…";
@@ -163,13 +164,13 @@ export component AppWindow inherits Window {
                             text: "No .gguf files found under ModelsDir. Drop files there and reopen this dialog.";
                             wrap: word-wrap;
                             font-size: 12px;
-                            color: Palette.foreground.transparentize(0.4);
+                            color: Palette.foreground.transparentize(Tokens.muted);
                         }
                         ListView {
                             for label[i] in AppState.dialog_model_labels : Rectangle {
                                 height: 32px;
                                 background: i == AppState.dialog_model_index
-                                    ? Palette.accent-background.transparentize(0.82)
+                                    ? Palette.accent-background.transparentize(Tokens.sel)
                                     : (touch.has-hover ? Palette.background : transparent);
                                 if i == AppState.dialog_model_index : Rectangle {
                                     x: 0; y: 4px; width: 3px; height: parent.height - 8px;
@@ -253,7 +254,7 @@ export component AppWindow inherits Window {
                         text: "Renaming [" + AppState.rename_old_id + "]. This only changes the section header in presets.ini; every parameter inside is preserved.";
                         wrap: word-wrap;
                         font-size: 12px;
-                        color: Palette.foreground.transparentize(0.25);
+                        color: Palette.foreground.transparentize(Tokens.subtle);
                     }
                     LineEdit {
                         text: AppState.rename_new_id;
@@ -353,7 +354,7 @@ export component AppWindow inherits Window {
                         Button {
                             text: "Open chat UI";
                             enabled: AppState.server_running && !AppState.server_stopping;
-                            clicked => { Platform.open-url("http://localhost:" + AppState.server_port); }
+                            clicked => { Platform.open-url("http://localhost:" + AppState.server_form.port); }
                         }
                         // Re-read the config files and re-scan the models
                         // directory. Always available — use it after adding a
@@ -412,7 +413,7 @@ export component AppWindow inherits Window {
                 font-size: 12px;
                 vertical-alignment: center;
                 horizontal-alignment: right;
-                color: Palette.foreground.transparentize(0.45);
+                color: Palette.foreground.transparentize(Tokens.muted);
             }
             Rectangle {
                 x: parent.width - 24px;

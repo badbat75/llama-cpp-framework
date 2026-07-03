@@ -34,12 +34,13 @@ impl Category {
 }
 
 pub fn list(root_dir: &str, subdir: &str) -> Vec<FileOption> {
-    let dir = PathBuf::from(root_dir).join(subdir);
-    let dir_str = dir.to_string_lossy();
-    if dir_str.trim().is_empty() {
+    // Guard the actual variable input: a blank models-dir would otherwise scan a
+    // relative `./<subdir>` against the process cwd. (`subdir` is always a
+    // non-empty Category::subdir(), so joining it can't produce the empty path.)
+    if root_dir.trim().is_empty() {
         return Vec::new();
     }
-    let root = dir;
+    let root = PathBuf::from(root_dir).join(subdir);
     let mut out: Vec<FileOption> = Vec::new();
     let mut seen_paths: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut walk: Vec<PathBuf> = vec![root.clone()];
