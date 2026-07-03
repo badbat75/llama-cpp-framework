@@ -25,6 +25,10 @@ mod server_cfg;
 mod server_version;
 #[cfg(windows)]
 mod single_instance;
+// Cross-cutting end-to-end tests (e.g. the Slint UI regression test) live under
+// src/tests/; per-module unit tests stay inline in their own files.
+#[cfg(test)]
+mod tests;
 
 use clap::Parser;
 

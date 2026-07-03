@@ -34,6 +34,9 @@ export component ServerPage inherits ScrollView {
                 label: "Port";
                 hint: "TCP port llama-server listens on (--port).\nDefault 8080 — the chat UI and integrations connect here.";
                 LineEdit {
+                    // accessible-label doubles as the stable handle the headless
+                    // UI test (src/ui_tests.rs) uses to find this field.
+                    accessible-label: "server-port";
                     text <=> AppState.server_port;
                     input-type: number;
                     placeholder-text: "8080";

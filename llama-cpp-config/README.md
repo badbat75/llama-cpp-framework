@@ -95,7 +95,8 @@ The build script (`build.rs`) converts `resources\llama.ico` to a PNG at compile
 | `ui\integrations_page.slint` | Integrations tab component |
 | `ui\components.slint` | Shared visual pieces (`SectionCard`, `LabeledField`) |
 | `ui\types.slint` | Shared Slint structs (`PresetSummary`, `PresetForm`, `IntegrationModel`) |
-| `build.rs` | Compile-time ICO → PNG, embed EXE resource on Windows |
+| `src\tests\` | End-to-end / cross-cutting tests (internal `#[cfg(test)] mod tests`). `ui_bindings.rs`: headless Slint-testing-backend test — editable widgets must track the model after an edit, guarding the one-way-binding staleness bug (v1.1.1) |
+| `build.rs` | Compile-time ICO → PNG, embed EXE resource on Windows; emits Slint element debug info for non-release builds (needed by the UI test) |
 
 ## Code conventions
 
@@ -104,3 +105,10 @@ The build script (`build.rs`) converts `resources\llama.ico` to a PNG at compile
 - No external INI crate: `ini.rs` is a simple hand-rolled INI reader/writer (~100 lines).
 - GUI callbacks are `Send + 'static` closures passed to `slint::ComponentHandle::global()`.
 - Every property and callback the Rust side drives lives in the `AppState` global (`ui\state.slint`), declared once. Rust uses `app.global::<AppState>().set_x()/get_x()/on_x()`; the pages reference `AppState.x` directly. Adding a UI field that Rust reads/writes is a **one-file** change in `ui\state.slint` — no per-page re-declaration or forwarding. (The tray, `AppTray`, is a separate root and keeps its own pushed-in state.)
+- Editable widgets bind two-way (`<=>`) to `AppState`, never one-way (`prop: AppState.x`): a one-way binding breaks the instant the user edits the field (Slint's "overwritten bindings" rule), leaving it stale on the next preset switch / Revert. `SegmentedControl` (a reactive replacement for `RadioGroup`) is the exception — it reads `current` purely and reports clicks via `activated`.
+
+## Tests
+
+`cargo test` runs the per-module round-trip **unit** tests (INI / form / version — inline `#[cfg(test)] mod tests` in each file) plus the cross-cutting **end-to-end** tests under `src\tests\`. Unit tests stay next to the code they cover; e2e tests that span modules or need a built `AppWindow` live in `src\tests\` (an internal `#[cfg(test)]` module tree, so they reach `crate::…` directly — no lib/bin split needed; a top-level `tests\` dir would compile as a separate crate that can't see a binary crate's internals).
+
+`src\tests\ui_bindings.rs` drives the real `AppWindow` on Slint's testing backend and asserts each editable-widget kind (LineEdit / SpinBox / CheckBox) still tracks a fresh model value after a simulated edit — the guard against the one-way-binding staleness class of bug. It needs Slint element debug info, which `build.rs` emits only for non-release profiles, so run it with the default (debug) profile: `cargo test` works, `cargo test --release` cannot find the widgets.

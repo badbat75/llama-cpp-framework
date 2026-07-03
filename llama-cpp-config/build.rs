@@ -29,9 +29,17 @@ fn main() {
     std::fs::write(Path::new(&out_dir).join("llama-on.png"), &on_bytes)
         .expect("Failed to write running PNG");
 
-    let config = slint_build::CompilerConfiguration::new()
+    let mut config = slint_build::CompilerConfiguration::new()
         .with_style("fluent".into())
         .with_include_paths(vec![std::path::PathBuf::from(out_dir)]);
+    // The headless UI tests (src/ui_tests.rs) drive widgets through Slint's
+    // ElementHandle API, which needs the compiler to emit element debug info.
+    // Enable it only for non-release builds so the size-optimized release binary
+    // (opt-level=z + strip) doesn't carry test-only metadata. `cargo test` runs
+    // in the "debug" profile; `cargo test --release` would not find widgets.
+    if std::env::var("PROFILE").as_deref() != Ok("release") {
+        config = config.with_debug_info(true);
+    }
     slint_build::compile_with_config("ui/app.slint", config).expect("Slint build failed");
 
     #[cfg(windows)]

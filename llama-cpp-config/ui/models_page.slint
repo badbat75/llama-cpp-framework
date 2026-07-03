@@ -468,6 +468,9 @@ export component ModelsPage inherits HorizontalLayout {
                     SpinBox {
                         // Type a value or use the steppers. The maximum is set far
                         // above any real value so it never clamps typed input.
+                        // accessible-label is also the handle the headless UI test
+                        // (src/ui_tests.rs) finds this field by.
+                        accessible-label: "preset-ctx-size";
                         horizontal-stretch: 1;
                         minimum: 0;
                         maximum: 100000000;
@@ -583,6 +586,9 @@ export component ModelsPage inherits HorizontalLayout {
                     label: "Temperature";
                     hint: "--temp: sampling temperature.\nLower = more deterministic, higher = more creative.\nBlank = default.";
                     LineEdit {
+                        // accessible-label is also the handle the headless UI test
+                        // (src/ui_tests.rs) finds this field by.
+                        accessible-label: "preset-temp";
                         text <=> AppState.form.temp;
                         placeholder-text: "default";
                     }
