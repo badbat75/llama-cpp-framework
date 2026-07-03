@@ -17,14 +17,7 @@ pub(super) fn wire(app: &AppWindow, tray: &AppTray) {
         let app_weak = app.as_weak();
         let tray_weak = tray.as_weak();
         tray.on_start_server(move || {
-            let (is_err, msg) = match runstate::start() {
-                Ok(()) => (false, "llama-server started.".to_string()),
-                Err(e) => (true, format!("Failed to start: {e}")),
-            };
-            if let Some(app) = app_weak.upgrade() {
-                set_status(&app, msg, is_err);
-            }
-            refresh_run_status(app_weak.clone(), tray_weak.clone());
+            start_server(app_weak.clone(), tray_weak.clone());
         });
     }
     {

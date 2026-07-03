@@ -44,12 +44,16 @@ pub struct ServerSet {
     pub hostname: Option<String>,
     #[arg(long)]
     pub mlock: Option<bool>,
+    /// CPU threads for generation. 0 or negative clears the override (auto).
     #[arg(long)]
     pub threads: Option<i32>,
+    /// Minimum prompt-cache reuse chunk. 0 or negative clears the override.
     #[arg(long)]
     pub cache_reuse: Option<i32>,
+    /// CPU threads for prompt processing. 0 or negative clears the override (auto).
     #[arg(long)]
     pub threads_batch: Option<i32>,
+    /// Models kept resident at once. Stored as-is (0 = unlimited); NOT cleared by 0.
     #[arg(long)]
     pub models_max: Option<i32>,
     #[arg(long)]
@@ -83,56 +87,48 @@ pub fn run(cli: Cli) -> Result<()> {
     }
 }
 
+/// One aligned `  Label        value` line of `server show` output. The label
+/// column is wide enough for the longest key ("ThreadsBatch:"), so a new field
+/// is a single `row(...)` call that can't misalign the rest.
+fn row(label: &str, value: String) {
+    println!("  {label:<13} {value}");
+}
+
 fn run_server(c: ServerCmd) -> Result<()> {
     match c {
         ServerCmd::Show => {
             let cfg = server_cfg::load();
             println!("server.ini: {}", paths::server_ini().display());
-            println!(
-                "  Port:         {}",
-                cfg.port.map_or("-".into(), |v| v.to_string())
-            );
-            println!(
-                "  Hostname:     {}",
-                cfg.hostname.unwrap_or_else(|| "-".into())
-            );
-            println!(
-                "  Mlock:        {}",
-                cfg.mlock.map_or("-".into(), |v| v.to_string())
-            );
-            println!(
-                "  Threads:      {}",
+            row("Port:", cfg.port.map_or("-".into(), |v| v.to_string()));
+            row("Hostname:", cfg.hostname.unwrap_or_else(|| "-".into()));
+            row("Mlock:", cfg.mlock.map_or("-".into(), |v| v.to_string()));
+            row(
+                "Threads:",
                 cfg.threads.map_or_else(|| "auto".into(), |v| v.to_string()),
             );
-            println!(
-                "  CacheReuse:   {}",
-                cfg.cache_reuse.map_or("-".into(), |v| v.to_string())
+            row(
+                "CacheReuse:",
+                cfg.cache_reuse.map_or("-".into(), |v| v.to_string()),
             );
-            println!(
-                "  ThreadsBatch: {}",
+            row(
+                "ThreadsBatch:",
                 cfg.threads_batch
                     .map_or_else(|| "auto".into(), |v| v.to_string()),
             );
-            println!(
-                "  ModelsMax:    {}",
+            row(
+                "ModelsMax:",
                 cfg.models_max
                     .map_or_else(|| "auto (default: 1)".into(), |v| v.to_string()),
             );
-            println!(
-                "  ModelsDir:    {}",
-                cfg.models_dir.unwrap_or_else(|| "-".into())
+            row("ModelsDir:", cfg.models_dir.unwrap_or_else(|| "-".into()));
+            row("Device:", cfg.device.unwrap_or_else(|| "auto (all)".into()));
+            row(
+                "SplitMode:",
+                cfg.split_mode.unwrap_or_else(|| "layer (default)".into()),
             );
-            println!(
-                "  Device:       {}",
-                cfg.device.unwrap_or_else(|| "auto (all)".into())
-            );
-            println!(
-                "  SplitMode:    {}",
-                cfg.split_mode.unwrap_or_else(|| "layer (default)".into())
-            );
-            println!(
-                "  TensorSplit:  {}",
-                cfg.tensor_split.unwrap_or_else(|| "even".into())
+            row(
+                "TensorSplit:",
+                cfg.tensor_split.unwrap_or_else(|| "even".into()),
             );
             Ok(())
         }

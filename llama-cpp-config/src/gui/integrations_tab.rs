@@ -1,10 +1,11 @@
 //! Integrations-tab callback wiring (the opencode.json model list + Claude Code
-//! snippet). Helpers live in the parent `gui` module; `use super::*` pulls them in.
+//! snippet). Helpers live in the parent `gui` module; `use super::*` pulls them
+//! in. The initial seed (`refresh_integrations`) runs in `gui::run()` alongside
+//! the other tabs' seeds; `wire()` here is pure callback attachment.
 
 use super::*;
 
 pub(super) fn wire(app: &AppWindow) {
-    refresh_integrations(app);
     {
         let app_weak = app.as_weak();
         app.global::<AppState>()

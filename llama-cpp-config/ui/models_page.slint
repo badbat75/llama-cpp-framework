@@ -2,7 +2,7 @@
 // (state.slint); this component lays out the widgets against it.
 
 import { LineEdit, ComboBox, CheckBox, Button, ListView, ScrollView, Palette, Slider, Switch, SpinBox } from "std-widgets.slint";
-import { SectionCard, LabeledField, InfoRow, SegmentedControl, MappedComboBox, AutoSlider, Tokens } from "components.slint";
+import { SectionCard, LabeledField, InfoRow, SegmentedControl, MappedComboBox, AutoSlider, Tokens, Options } from "components.slint";
 import { AppState } from "state.slint";
 
 export component ModelsPage inherits HorizontalLayout {
@@ -24,8 +24,8 @@ export component ModelsPage inherits HorizontalLayout {
         LineEdit {
             placeholder-text: "Filter presets…";
             input-type: search;
-            text: AppState.presets_filter;
-            edited(t) => { AppState.presets_filter = t; AppState.filter_presets(t); }
+            text <=> AppState.presets_filter;
+            edited(t) => { AppState.filter_presets(t); }
         }
 
         Rectangle {
@@ -283,7 +283,7 @@ export component ModelsPage inherits HorizontalLayout {
                         // A pinned GPU device runs on one device, so the split
                         // strategy has nothing to split — disable it.
                         enabled: AppState.form.device == "";
-                        model: ["default", "none", "layer", "row"];
+                        model: Options.split_modes;
                         // form.split_mode is never "" (preset_to_form maps empty → "default").
                         current-value <=> AppState.form.split_mode;
                     }
@@ -424,7 +424,7 @@ export component ModelsPage inherits HorizontalLayout {
                     label: "K-cache type";
                     hint: "KV cache quantization.\nLower = less VRAM but lower quality.\nNote: Qwen3-Coder needs q8_0 for reliable tool calling — q4_0 makes it drop the <tool_call> wrapper.";
                     ComboBox {
-                        model: ["f32", "f16", "q8_0", "q5_0", "q4_0", "q4_1"];
+                        model: Options.cache_types;
                         current-value <=> AppState.form.cache_type_k;
                     }
                 }
@@ -432,7 +432,7 @@ export component ModelsPage inherits HorizontalLayout {
                     label: "V-cache type";
                     hint: "KV cache quantization for V (--cache-type-v).\nLower = less VRAM, lower quality; usually matched to K.\nNeeds flash attention.";
                     ComboBox {
-                        model: ["f32", "f16", "q8_0", "q5_0", "q4_0", "q4_1"];
+                        model: Options.cache_types;
                         current-value <=> AppState.form.cache_type_v;
                     }
                 }
@@ -549,7 +549,6 @@ export component ModelsPage inherits HorizontalLayout {
                 heading: "Advanced";
                 LabeledField {
                     label: "Chat kwargs";
-                    label_width: 130px;
                     hint: "--chat-template-kwargs: JSON merged into the chat template, e.g. {\"enable_thinking\":true}.\nAdvanced — leave blank unless the model documents kwargs.";
                     LineEdit {
                         text <=> AppState.form.chat_template_kwargs;

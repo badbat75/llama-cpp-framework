@@ -57,12 +57,13 @@ export struct PresetForm {
 // The server tab's edit form, the server-side mirror of PresetForm: all of
 // server.ini's editable fields in one struct so the Server page binds two-way to
 // `AppState.server_form.<field>`, dirty-tracking is a single struct compare
-// (`server_form != server_form_base`), and adding a server field touches this
-// struct + server_page.slint + server_cfg.rs + the two conversions in
-// src/server_form.rs — never the GUI wiring. Like PresetForm, most numerics ride
-// as blank-able `string`; the CPU-thread counts instead ride as slider `int`s
-// paired with an `_auto` flag (auto = omit the flag, let llama.cpp pick), the
-// same shape as PresetForm's layer sliders.
+// (`server_form != server_form_base`). Adding a server field follows the
+// checklist at the top of src/server_cfg.rs (this struct + server_page.slint +
+// server_cfg.rs + both conversions in src/server_form.rs + 3 spots in cli.rs) —
+// never the GUI wiring. Like PresetForm, most numerics ride as blank-able
+// `string`; the CPU-thread counts instead ride as slider `int`s paired with an
+// `_auto` flag (auto = omit the flag, let llama.cpp pick), the same shape as
+// PresetForm's layer sliders.
 export struct ServerForm {
     port: string,
     hostname: string,

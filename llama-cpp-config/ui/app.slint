@@ -8,7 +8,7 @@
 
 import { LineEdit, Button, ListView, Palette } from "std-widgets.slint";
 import { AppState } from "state.slint";
-import { Tokens } from "components.slint";
+import { Tokens, ModalOverlay } from "components.slint";
 // Re-export so Slint generates the Rust accessor (`app.global::<AppState>()`);
 // a bare import wouldn't surface it to Rust.
 export { AppState }
@@ -107,184 +107,120 @@ export component AppWindow inherits Window {
         spacing: 0px;
 
         // ─── Overlay modals ────────────────────────────────────────────
-        if AppState.show_new_kind_picker: Rectangle {
-            z: 1;
-            width: 100%;
-            height: 100%;
-            background: #000000.transparentize(0.45);
-            TouchArea {
-                clicked => { AppState.show_new_kind_picker = false; }
+        if AppState.show_new_kind_picker: ModalOverlay {
+            title: AppState.new_dialog_source_id == "" ? "New preset" : "Clone preset";
+            description: AppState.new_dialog_source_id == ""
+                ? "Pick the model for the new preset from your ModelsDir. It is created with default parameters."
+                : "Cloning [" + AppState.new_dialog_source_id + "] → pick the target model from your ModelsDir. The new preset copies every parameter from [" + AppState.new_dialog_source_id + "] onto the model you pick.";
+            card_width: 520px;
+            card_height: 480px;
+            dismissed => { AppState.show_new_kind_picker = false; }
+
+            LineEdit {
+                placeholder-text: "Filter models…";
+                input-type: search;
+                text <=> AppState.dialog_filter;
+                edited(t) => { AppState.filter_dialog_models(t); }
             }
             Rectangle {
-                x: (parent.width - self.width) / 2;
-                y: (parent.height - self.height) / 2;
-                width: 520px;
-                height: 480px;
-                background: Palette.background;
-                border-radius: 10px;
                 border-width: 1px;
                 border-color: Palette.border;
-                drop-shadow-color: #00000066;
-                drop-shadow-blur: 24px;
-                drop-shadow-offset-y: 6px;
-                TouchArea { }
-                VerticalLayout {
-                    padding: 22px;
-                    spacing: 12px;
-                    Text {
-                        text: AppState.new_dialog_source_id == "" ? "New preset" : "Clone preset";
-                        font-size: 16px;
-                        font-weight: 700;
-                        color: Palette.foreground;
-                    }
-                    Text {
-                        text: AppState.new_dialog_source_id == ""
-                            ? "Pick the model for the new preset from your ModelsDir. It is created with default parameters."
-                            : "Cloning [" + AppState.new_dialog_source_id + "] → pick the target model from your ModelsDir. The new preset copies every parameter from [" + AppState.new_dialog_source_id + "] onto the model you pick.";
-                        wrap: word-wrap;
-                        font-size: 12px;
-                        color: Palette.foreground.transparentize(Tokens.subtle);
-                    }
-                    LineEdit {
-                        placeholder-text: "Filter models…";
-                        input-type: search;
-                        text: AppState.dialog_filter;
-                        edited(t) => { AppState.dialog_filter = t; AppState.filter_dialog_models(t); }
-                    }
-                    Rectangle {
-                        border-width: 1px;
-                        border-color: Palette.border;
-                        border-radius: 8px;
-                        background: Palette.alternate-background;
-                        vertical-stretch: 1;
-                        if AppState.dialog_model_labels.length == 0 : Text {
-                            x: 16px;
-                            y: 16px;
-                            width: parent.width - 32px;
-                            text: "No .gguf files found under ModelsDir. Drop files there and reopen this dialog.";
-                            wrap: word-wrap;
-                            font-size: 12px;
-                            color: Palette.foreground.transparentize(Tokens.muted);
+                border-radius: 8px;
+                background: Palette.alternate-background;
+                vertical-stretch: 1;
+                if AppState.dialog_model_labels.length == 0 : Text {
+                    x: 16px;
+                    y: 16px;
+                    width: parent.width - 32px;
+                    text: "No .gguf files found under ModelsDir. Drop files there and reopen this dialog.";
+                    wrap: word-wrap;
+                    font-size: 12px;
+                    color: Palette.foreground.transparentize(Tokens.muted);
+                }
+                ListView {
+                    for label[i] in AppState.dialog_model_labels : Rectangle {
+                        height: 32px;
+                        background: i == AppState.dialog_model_index
+                            ? Palette.accent-background.transparentize(Tokens.sel)
+                            : (touch.has-hover ? Palette.background : transparent);
+                        if i == AppState.dialog_model_index : Rectangle {
+                            x: 0; y: 4px; width: 3px; height: parent.height - 8px;
+                            border-radius: 1.5px;
+                            background: Palette.accent-background;
                         }
-                        ListView {
-                            for label[i] in AppState.dialog_model_labels : Rectangle {
-                                height: 32px;
-                                background: i == AppState.dialog_model_index
-                                    ? Palette.accent-background.transparentize(Tokens.sel)
-                                    : (touch.has-hover ? Palette.background : transparent);
-                                if i == AppState.dialog_model_index : Rectangle {
-                                    x: 0; y: 4px; width: 3px; height: parent.height - 8px;
-                                    border-radius: 1.5px;
-                                    background: Palette.accent-background;
-                                }
-                                HorizontalLayout {
-                                    padding-left: 12px;
-                                    padding-right: 12px;
-                                    Text {
-                                        text: label;
-                                        font-size: 12px;
-                                        color: Palette.foreground;
-                                        vertical-alignment: center;
-                                        overflow: elide;
-                                    }
-                                }
-                                touch := TouchArea {
-                                    mouse-cursor: pointer;
-                                    clicked => { AppState.dialog_model_index = i; }
-                                }
+                        HorizontalLayout {
+                            padding-left: 12px;
+                            padding-right: 12px;
+                            Text {
+                                text: label;
+                                font-size: 12px;
+                                color: Palette.foreground;
+                                vertical-alignment: center;
+                                overflow: elide;
                             }
                         }
-                    }
-                    HorizontalLayout {
-                        spacing: 8px;
-                        alignment: end;
-                        Button {
-                            text: "Cancel";
-                            clicked => { AppState.show_new_kind_picker = false; }
+                        touch := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => { AppState.dialog_model_index = i; }
                         }
-                        Button {
-                            text: AppState.new_dialog_source_id == "" ? "Create" : "Clone";
-                            primary: true;
-                            enabled: AppState.dialog_model_index >= 0;
-                            clicked => {
-                                AppState.show_new_kind_picker = false;
-                                if (AppState.new_dialog_source_id == "") {
-                                    AppState.pick_new_empty();
-                                } else {
-                                    AppState.pick_new_clone();
-                                }
-                            }
+                    }
+                }
+            }
+            HorizontalLayout {
+                spacing: 8px;
+                alignment: end;
+                Button {
+                    text: "Cancel";
+                    clicked => { AppState.show_new_kind_picker = false; }
+                }
+                Button {
+                    text: AppState.new_dialog_source_id == "" ? "Create" : "Clone";
+                    primary: true;
+                    enabled: AppState.dialog_model_index >= 0;
+                    clicked => {
+                        AppState.show_new_kind_picker = false;
+                        if (AppState.new_dialog_source_id == "") {
+                            AppState.pick_new_empty();
+                        } else {
+                            AppState.pick_new_clone();
                         }
                     }
                 }
             }
         }
 
-        if AppState.show_rename_dialog: Rectangle {
-            z: 1;
-            width: 100%;
-            height: 100%;
-            background: #000000.transparentize(0.45);
-            TouchArea {
-                clicked => { AppState.show_rename_dialog = false; }
+        if AppState.show_rename_dialog: ModalOverlay {
+            title: "Rename preset";
+            description: "Renaming [" + AppState.rename_old_id + "]. This only changes the section header in presets.ini; every parameter inside is preserved.";
+            card_width: 440px;
+            card_height: 220px;
+            dismissed => { AppState.show_rename_dialog = false; }
+
+            LineEdit {
+                text <=> AppState.rename_new_id;
+                placeholder-text: "New id";
+                accepted(t) => {
+                    if (t != "" && t != AppState.rename_old_id) {
+                        AppState.show_rename_dialog = false;
+                        AppState.rename_preset(AppState.rename_old_id, t);
+                    }
+                }
             }
-            Rectangle {
-                x: (parent.width - self.width) / 2;
-                y: (parent.height - self.height) / 2;
-                width: 440px;
-                height: 220px;
-                background: Palette.background;
-                border-radius: 10px;
-                border-width: 1px;
-                border-color: Palette.border;
-                drop-shadow-color: #00000066;
-                drop-shadow-blur: 24px;
-                drop-shadow-offset-y: 6px;
-                TouchArea { }
-                VerticalLayout {
-                    padding: 22px;
-                    spacing: 12px;
-                    Text {
-                        text: "Rename preset";
-                        font-size: 16px;
-                        font-weight: 700;
-                        color: Palette.foreground;
-                    }
-                    Text {
-                        text: "Renaming [" + AppState.rename_old_id + "]. This only changes the section header in presets.ini; every parameter inside is preserved.";
-                        wrap: word-wrap;
-                        font-size: 12px;
-                        color: Palette.foreground.transparentize(Tokens.subtle);
-                    }
-                    LineEdit {
-                        text: AppState.rename_new_id;
-                        placeholder-text: "New id";
-                        edited(t) => { AppState.rename_new_id = t; }
-                        accepted(t) => {
-                            AppState.rename_new_id = t;
-                            if (t != "" && t != AppState.rename_old_id) {
-                                AppState.show_rename_dialog = false;
-                                AppState.rename_preset(AppState.rename_old_id, t);
-                            }
-                        }
-                    }
-                    Rectangle { vertical-stretch: 1; }
-                    HorizontalLayout {
-                        spacing: 8px;
-                        alignment: end;
-                        Button {
-                            text: "Cancel";
-                            clicked => { AppState.show_rename_dialog = false; }
-                        }
-                        Button {
-                            text: "Rename";
-                            primary: true;
-                            enabled: AppState.rename_new_id != "" && AppState.rename_new_id != AppState.rename_old_id;
-                            clicked => {
-                                AppState.show_rename_dialog = false;
-                                AppState.rename_preset(AppState.rename_old_id, AppState.rename_new_id);
-                            }
-                        }
+            Rectangle { vertical-stretch: 1; }
+            HorizontalLayout {
+                spacing: 8px;
+                alignment: end;
+                Button {
+                    text: "Cancel";
+                    clicked => { AppState.show_rename_dialog = false; }
+                }
+                Button {
+                    text: "Rename";
+                    primary: true;
+                    enabled: AppState.rename_new_id != "" && AppState.rename_new_id != AppState.rename_old_id;
+                    clicked => {
+                        AppState.show_rename_dialog = false;
+                        AppState.rename_preset(AppState.rename_old_id, AppState.rename_new_id);
                     }
                 }
             }
@@ -364,8 +300,8 @@ export component AppWindow inherits Window {
                             clicked => { AppState.reload_all(); }
                         }
                     }
-                    }
                 }
+            }
 
             // Content area
             Rectangle {
@@ -400,6 +336,20 @@ export component AppWindow inherits Window {
                 color: AppState.status_is_error ? #c62828 : Palette.foreground;
                 font-size: 12px;
                 vertical-alignment: center;
+            }
+
+            // ─── llama-server version (right, left of the run state) ──
+            if AppState.server_version != "" : Text {
+                x: parent.width - 350px;
+                y: 0;
+                height: 100%;
+                width: 200px;
+                text: "llama-server " + AppState.server_version;
+                font-size: 12px;
+                vertical-alignment: center;
+                horizontal-alignment: right;
+                overflow: elide;
+                color: Palette.foreground.transparentize(Tokens.faint);
             }
 
             // ─── Server status (right) ────────────────────────────

@@ -42,11 +42,9 @@ pub fn config_to_form(cfg: &server_cfg::ServerConfig) -> ServerForm {
         threads_batch: cfg.threads_batch.unwrap_or(0),
         threads_batch_auto: cfg.threads_batch.is_none(),
         models_max: num(cfg.models_max),
-        models_dir: cfg
-            .models_dir
-            .clone()
-            .unwrap_or_else(server_cfg::default_models_dir)
-            .into(),
+        // Same "blank ⇒ default dir" rule as save()/start(), so a hand-edited
+        // blank ModelsDir shows the default it will actually resolve to.
+        models_dir: cfg.models_dir_or_default().into(),
         device: cfg.device.clone().unwrap_or_default().into(),
         // "default" is the combo's sentinel for "inherit / layer" — it two-way-
         // binds to this, so store the sentinel rather than "".

@@ -136,11 +136,7 @@ pub fn start() -> io::Result<()> {
     let cfg = crate::server_cfg::load();
     let presets_path = crate::paths::presets_ini();
 
-    let models_dir = cfg
-        .models_dir
-        .clone()
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(crate::server_cfg::default_models_dir);
+    let models_dir = cfg.models_dir_or_default();
 
     let data_root = crate::paths::data_root();
     let log_dir = data_root.join("logs");
@@ -164,12 +160,9 @@ pub fn start() -> io::Result<()> {
     cmd.stdout(log_file);
     cmd.stderr(log_file_err);
 
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x08000000;
-        cmd.creation_flags(CREATE_NO_WINDOW);
-    }
+    // No console flash: same CREATE_NO_WINDOW as the fire-and-forget probes, but
+    // applied to a Command we spawn with custom stdio/env (so not run_hidden).
+    crate::proc::hide_console(&mut cmd);
 
     cmd.spawn()?;
 

@@ -409,8 +409,10 @@ mod tests {
             .any(|l| l.starts_with("spec-draft-n-max =")));
     }
 
+    // Key names are pinned here; the parse-back is covered by the full round-trip
+    // below (which populates split_mode/tensor_split), so no hand-rolled reparse.
     #[test]
-    fn split_keys_round_trip_through_render_and_parse() {
+    fn render_emits_split_keys_when_set() {
         let original = Preset {
             id: "split".into(),
             model: r"E:\m\model.gguf".into(),
@@ -421,19 +423,6 @@ mod tests {
         let ini = render_section(&original);
         assert!(ini.contains("split-mode = row\r\n"));
         assert!(ini.contains("tensor-split = 3,1\r\n"));
-
-        let mut k: BTreeMap<String, String> = BTreeMap::new();
-        for line in ini.lines() {
-            if line.starts_with(';') || line.starts_with('[') {
-                continue;
-            }
-            if let Some((key, val)) = line.split_once('=') {
-                k.insert(key.trim().to_string(), val.trim().to_string());
-            }
-        }
-        let parsed = Preset::from_keys(&original.id, &k);
-        assert_eq!(parsed.split_mode, "row");
-        assert_eq!(parsed.tensor_split, "3,1");
     }
 
     #[test]
@@ -515,38 +504,5 @@ mod tests {
         assert_eq!(sections.len(), 1, "one section written");
         let parsed = Preset::from_keys(&sections[0].id, &sections[0].keys);
         assert_eq!(parsed, original);
-    }
-
-    #[test]
-    fn mtp_round_trips_through_render_and_parse() {
-        let original = Preset {
-            id: "round".into(),
-            model: r"E:\m\model.gguf".into(),
-            model_draft: r"E:\mtps\model-mtp.gguf".into(),
-            spec_type: "draft-mtp".into(),
-            spec_draft_n_max: Some(10),
-            n_gpu_layers_draft: Some(99),
-            device_draft: "CUDA0".into(),
-            device: "CUDA0".into(),
-            ..Default::default()
-        };
-        let ini = render_section(&original);
-        // Re-parse the key=value lines the way ini::read_all would feed from_keys.
-        let mut k: BTreeMap<String, String> = BTreeMap::new();
-        for line in ini.lines() {
-            if line.starts_with(';') || line.starts_with('[') {
-                continue;
-            }
-            if let Some((key, val)) = line.split_once('=') {
-                k.insert(key.trim().to_string(), val.trim().to_string());
-            }
-        }
-        let parsed = Preset::from_keys(&original.id, &k);
-        assert_eq!(parsed.model_draft, original.model_draft);
-        assert_eq!(parsed.spec_type, original.spec_type);
-        assert_eq!(parsed.spec_draft_n_max, original.spec_draft_n_max);
-        assert_eq!(parsed.n_gpu_layers_draft, original.n_gpu_layers_draft);
-        assert_eq!(parsed.device_draft, original.device_draft);
-        assert_eq!(parsed.device, original.device);
     }
 }

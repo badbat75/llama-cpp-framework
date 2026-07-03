@@ -100,7 +100,7 @@ The build script (`build.rs`) converts `resources\llama.ico` to a PNG at compile
 | `ui\server_page.slint` | Server tab component |
 | `ui\models_page.slint` | Models tab component (preset editor) |
 | `ui\integrations_page.slint` | Integrations tab component |
-| `ui\components.slint` | Shared visual pieces: `SectionCard`, `LabeledField`, `SegmentedControl`, `MappedComboBox` (labels/values/index combo with a bounds-checked `picked`), `AutoSlider` (auto-checkbox + slider + readout), and the `Tokens` global (canonical muted-text / selection alphas) |
+| `ui\components.slint` | Shared visual pieces: `SectionCard`, `LabeledField`, `InfoRow` (read-only label→value row), `SegmentedControl`, `MappedComboBox` (labels/values/index combo with a bounds-checked `picked`), `AutoSlider` (auto-checkbox + slider + readout), `ModalOverlay` (dim-backdrop dialog shell used by the New/Clone + Rename dialogs), and the `Tokens` / `Options` globals (canonical muted-text / selection alphas; shared option lists) |
 | `ui\types.slint` | Shared Slint structs (`PresetSummary`, `PresetForm`, `ServerForm`, `IntegrationModel`) |
 | `src\tests\` | End-to-end / cross-cutting tests (internal `#[cfg(test)] mod tests`). `ui_bindings.rs`: headless Slint-testing-backend test — editable widgets must track the model after an edit, guarding the one-way-binding staleness bug (v1.1.1) |
 | `build.rs` | Compile-time ICO → PNG, embed EXE resource on Windows; emits Slint element debug info for non-release builds (needed by the UI test) |

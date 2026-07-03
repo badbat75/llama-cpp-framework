@@ -12,7 +12,7 @@
 //! the new-preset dialog's model scan.
 //!
 //! ## Helper verb taxonomy (so a grep lands in the right family)
-//! - `load_*` / `read_*` : server.ini ↔ UI (through `server_form::config_to_form`
+//! - `load_*`            : server.ini ↔ UI (through `server_form::config_to_form`
 //!   / `form_to_config`; the preset side is `form.rs`).
 //! - `refresh_*`         : rebuild a list/section from disk or the device cache
 //!   (`refresh_presets`, `refresh_file_options`, `refresh_device_options`,
@@ -21,18 +21,22 @@
 //!   triple the caller hands to the matching `set_*` accessors (`device_options`,
 //!   `scanned_options`).
 //! - `apply_form`        : push a whole `PresetForm` + its baseline into `AppState`.
-//! - `populate_*`        : fill a dialog's option lists (bind interfaces).
+//! - `populate_*`        : fill a dropdown's parallel option arrays in place
+//!   (`populate_bind_options` — the Server tab's bind-address list).
+//! - `start_server` / `stop_server_async` : the canonical run-control paths shared
+//!   by the Server tab and the tray, so both surfaces report a start/stop identically.
 //! - `spawn_*`           : run a slow probe off the UI thread, then apply the
 //!   result via `invoke_from_event_loop` (`spawn_version_probe`, `spawn_device_probe`).
 //!
-//! The New / Clone dialog funnel (`populate_dialog_models` … `commit_new_preset`)
-//! lives in `gui/models_tab.rs` next to its only callers, not here.
+//! Tab-specific helpers live next to their only callers in `gui/`: the New / Clone
+//! dialog funnel (`populate_dialog_models` … `commit_new_preset`) and the
+//! Model-info box (`update_model_info`) are in `gui/models_tab.rs`.
 //!
 //! ## Dirty tracking
 //! Save/Revert enable off `*_dirty` in state.slint, each computed as
 //! `form != form_base` (presets) / `server_form != server_form_base` (server).
-//! Rust keeps the baseline in sync: `apply_form` sets form + base together;
-//! `snapshot_server_base` re-baselines the server form after a save.
+//! Rust keeps the baseline in sync: `apply_form` sets form + base together; the
+//! server tab re-baselines its form after a save (`server_tab::snapshot_server_base`).
 //!
 //! ## Threading
 //! The event loop is single-threaded. Slow work (`--list-devices`, `--version`,
@@ -50,7 +54,7 @@ use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel};
 
 use crate::form::{blank_form, form_to_preset, preset_to_form};
 use crate::{
-    devices, gguf, integrations, model_scan, net_ifaces, paths, presets, runstate, server_cfg,
+    devices, integrations, model_scan, net_ifaces, paths, presets, runstate, server_cfg,
     server_form, server_version,
 };
 
@@ -104,26 +108,9 @@ pub fn run() -> anyhow::Result<()> {
     refresh_presets(&app, &state);
     refresh_run_status(app.as_weak(), tray.as_weak());
     refresh_file_options(&app);
+    refresh_integrations(&app);
     spawn_version_probe(app.as_weak());
     spawn_device_probe(app.as_weak());
-
-    {
-        let app_weak = app.as_weak();
-        s.on_sync_device_dropdowns(move || {
-            if let Some(app) = app_weak.upgrade() {
-                refresh_device_options(&app);
-            }
-        });
-    }
-
-    {
-        let app_weak = app.as_weak();
-        s.on_model_changed(move || {
-            if let Some(app) = app_weak.upgrade() {
-                update_model_info(&app);
-            }
-        });
-    }
 
     s.set_presets_path(SharedString::from(
         paths::presets_ini().to_string_lossy().into_owned(),
@@ -202,13 +189,6 @@ fn activate_window(app: AppWindow) {
     });
 }
 
-fn pick_dir(start: &std::path::Path) -> Option<PathBuf> {
-    rfd::FileDialog::new()
-        .set_title("Pick a folder")
-        .set_directory(start)
-        .pick_folder()
-}
-
 /// Wrap a `Vec<T>` as a Slint list model (the `[T]` properties the UI binds to).
 /// One home for the `ModelRc::from(Rc::new(VecModel::from(..)))` incantation.
 fn model<T: Clone + 'static>(items: Vec<T>) -> ModelRc<T> {
@@ -238,6 +218,9 @@ fn populate_bind_options(app: &AppWindow, current: &str) {
     let mut opts = net_ifaces::list_options();
     let mut index = opts.iter().position(|o| o.value == current);
     if index.is_none() && !current.is_empty() {
+        // Slot 2 is right after the two fixed rows net_ifaces::list_options()
+        // always emits first (localhost, 0.0.0.0), so the stray saved value sits
+        // at the head of the real interfaces rather than above the presets.
         opts.insert(
             2,
             net_ifaces::BindOption {
@@ -252,13 +235,6 @@ fn populate_bind_options(app: &AppWindow, current: &str) {
     s.set_bind_labels(model(labels));
     s.set_bind_values(model(values));
     s.set_bind_index(index.unwrap_or(0) as i32);
-}
-
-/// Re-baseline the server form after a save so `server_dirty` reads false until
-/// the next edit — the server analog of `apply_form`'s base handling.
-fn snapshot_server_base(app: &AppWindow) {
-    let s = app.global::<AppState>();
-    s.set_server_form_base(s.get_server_form());
 }
 
 // ── Preset helpers ───────────────────────────────────────────────────
@@ -325,6 +301,11 @@ fn reload_presets(app: &AppWindow, state: &Rc<RefCell<State>>, want: Option<&str
     }
 }
 
+/// Rebuild every file-backed dropdown (model / mmproj / the unified draft
+/// picker) from a fresh `ModelsDir` scan, then cascade into the device dropdowns
+/// (`refresh_device_options`) and the Model-info box (`models_tab::update_model_info`).
+/// Call after anything that changes `models_dir`, a form file field, or the
+/// selected preset — this is the hub a newly-added file-backed dropdown extends.
 fn refresh_file_options(app: &AppWindow) {
     let s = app.global::<AppState>();
     let models_dir = s.get_server_form().models_dir.to_string();
@@ -367,75 +348,7 @@ fn refresh_file_options(app: &AppWindow) {
     s.set_draft_index(draft_idx);
 
     refresh_device_options(app);
-    update_model_info(app);
-}
-
-/// Fill the read-only "Model info" box from the selected model's GGUF header
-/// (read via `ggml-base.dll`), enriched with the selected mmproj and draft
-/// headers plus a cross-reference of the framework's MTP/DFlash drafters. Called
-/// whenever the model/mmproj/draft field changes (combo pick, preset load).
-fn update_model_info(app: &AppWindow) {
-    let s = app.global::<AppState>();
-    let form = s.get_form();
-    let model = form.model.to_string();
-
-    // Reset the optional rows; the success path re-enables the ones that apply.
-    s.set_model_info_has_moe(false);
-    s.set_model_info_has_mmproj(false);
-    s.set_model_info_has_draft_file(false);
-    s.set_model_info_embeds_mtp(false);
-    // Reset the slider maxima; 0 = unknown → the UI falls back to a 0..99 range.
-    s.set_model_info_n_layer(0);
-    s.set_model_info_draft_n_layer(0);
-
-    if model.trim().is_empty() {
-        s.set_model_info_ready(false);
-        s.set_model_info_note(SharedString::from("Select a model to see its details."));
-        return;
-    }
-
-    let Some(info) = gguf::read_model_info(std::path::Path::new(&model)) else {
-        s.set_model_info_ready(false);
-        s.set_model_info_note(SharedString::from(
-            "Metadata unavailable — is ggml-base.dll beside the app, and the file a valid GGUF?",
-        ));
-        return;
-    };
-
-    let models_dir = s.get_server_form().models_dir.to_string();
-    let ext = gguf::external_drafters(&models_dir, &model);
-    s.set_model_info_kind(SharedString::from(info.kind_line()));
-    s.set_model_info_n_layer(info.n_layer as i32);
-    s.set_model_info_has_moe(info.is_moe);
-    s.set_model_info_moe(SharedString::from(info.moe_offload_line()));
-    s.set_model_info_arch_quant(SharedString::from(info.arch_quant_line()));
-    s.set_model_info_layers_ctx(SharedString::from(info.layers_ctx_line()));
-    s.set_model_info_attn(SharedString::from(info.attn_line()));
-    s.set_model_info_draft(SharedString::from(gguf::draft_line(&info, &ext)));
-    // Enables the speculative-decoding controls even before an external draft is
-    // picked, when the model itself embeds MTP/nextn heads.
-    s.set_model_info_embeds_mtp(info.nextn_predict_layers > 0);
-
-    // Optional: the selected mmproj's clip header.
-    let mmproj = form.mmproj.to_string();
-    if !mmproj.trim().is_empty() {
-        if let Some(mp) = gguf::read_mmproj_info(std::path::Path::new(&mmproj)) {
-            s.set_model_info_mmproj(SharedString::from(mp.mmproj_line()));
-            s.set_model_info_has_mmproj(true);
-        }
-    }
-
-    // Optional: the selected draft/MTP/DFlash file's own header.
-    let draft = form.model_draft.to_string();
-    if !draft.trim().is_empty() {
-        if let Some(d) = gguf::read_model_info(std::path::Path::new(&draft)) {
-            s.set_model_info_draft_file(SharedString::from(d.draft_file_line()));
-            s.set_model_info_draft_n_layer(d.n_layer as i32);
-            s.set_model_info_has_draft_file(true);
-        }
-    }
-
-    s.set_model_info_ready(true);
+    models_tab::update_model_info(app);
 }
 
 /// Rebuild the three GPU-device dropdowns (server-wide, per-preset main,
@@ -549,6 +462,35 @@ fn spawn_device_probe(app_weak: slint::Weak<AppWindow>) {
     });
 }
 
+/// Start llama-server, then reflect the outcome on both the window and the tray.
+/// The single canonical start path shared by the Server tab's Start button and
+/// the tray menu, so a failed start reports identically from either surface. On
+/// error we set the footer's error flag directly rather than calling
+/// `refresh_run_status` (which clears that flag as it re-probes) — the mistake
+/// the two hand-rolled copies used to make differently.
+fn start_server(app_weak: slint::Weak<AppWindow>, tray_weak: slint::Weak<AppTray>) {
+    match runstate::start() {
+        Ok(()) => {
+            if let Some(app) = app_weak.upgrade() {
+                set_status(&app, "llama-server started.".into(), false);
+            }
+            // Confirm the run state (and clear any stale error) off the UI thread.
+            refresh_run_status(app_weak, tray_weak);
+        }
+        Err(e) => {
+            if let Some(app) = app_weak.upgrade() {
+                let s = app.global::<AppState>();
+                set_status(&app, format!("Failed to start: {e}"), true);
+                s.set_server_status_is_error(true);
+                s.set_server_running(false);
+            }
+            if let Some(tray) = tray_weak.upgrade() {
+                tray.set_server_running(false);
+            }
+        }
+    }
+}
+
 /// Trigger a stop and drive the transitional "Stopping…" state.
 ///
 /// The forced `taskkill` returns quickly, but the process can linger in
@@ -637,6 +579,9 @@ fn apply_form(app: &AppWindow, form: PresetForm) {
 
 // ── Integrations helpers ──────────────────────────────────────────────
 
+/// Rebuild the Integrations tab from disk: the opencode.json base URL + the
+/// per-preset toggle list + the Claude Code env snippet, all derived from
+/// server.ini (port/host) and presets.ini. Call after any change to those.
 fn refresh_integrations(app: &AppWindow) {
     let s = app.global::<AppState>();
     let cfg = server_cfg::load();

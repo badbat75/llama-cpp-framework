@@ -6,7 +6,7 @@
 // field stale after a Revert / reload.
 
 import { LineEdit, TextEdit, ComboBox, CheckBox, Button, ScrollView, Palette } from "std-widgets.slint";
-import { SectionCard, LabeledField, MappedComboBox, AutoSlider, Tokens } from "components.slint";
+import { SectionCard, LabeledField, MappedComboBox, AutoSlider, Tokens, Options } from "components.slint";
 import { AppState } from "state.slint";
 
 export component ServerPage inherits ScrollView {
@@ -131,7 +131,7 @@ export component ServerPage inherits ScrollView {
                     // A pinned GPU device runs on one device, so there is
                     // nothing to split — disable it.
                     enabled: AppState.server_form.device == "";
-                    model: ["default", "none", "layer", "row"];
+                    model: Options.split_modes;
                     // server_form.split_mode holds "default" when unset (see config_to_form).
                     current-value <=> AppState.server_form.split_mode;
                 }

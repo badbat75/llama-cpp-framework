@@ -12,6 +12,14 @@ export global Tokens {
     out property <float> sel: 0.82;      // accent tint for a selected/active row
 }
 
+// Canonical option lists reused by more than one page, so a new llama.cpp cache
+// type or split mode is a one-line edit here instead of several scattered literal
+// arrays that could drift.
+export global Options {
+    out property <[string]> cache_types: ["f32", "f16", "q8_0", "q5_0", "q4_0", "q4_1"];
+    out property <[string]> split_modes: ["default", "none", "layer", "row"];
+}
+
 // A ComboBox backed by parallel label/value arrays with a bounds-checked
 // selection: `labels` drives the popup, `index` two-way-binds the current row,
 // and `picked(value)` fires with `values[index]` — guarded so an out-of-range
@@ -204,5 +212,57 @@ export component InfoRow inherits LabeledField {
         wrap: word-wrap;
         horizontal-stretch: 1;
         color: Palette.foreground;
+    }
+}
+
+// A centered modal card floating over a full-screen dim backdrop. Clicking the
+// backdrop fires `dismissed`; the card swallows its own clicks (the empty inner
+// TouchArea) so a click inside doesn't dismiss. The title + optional description
+// are laid out first, then the caller's body/buttons via `@children`. Collapses
+// the ~30 lines of identical chrome each dialog in app.slint used to repeat.
+export component ModalOverlay inherits Rectangle {
+    in property <string> title;
+    in property <string> description;
+    in property <length> card_width: 440px;
+    in property <length> card_height: 220px;
+    callback dismissed();
+
+    z: 1;
+    width: 100%;
+    height: 100%;
+    background: #000000.transparentize(0.45);
+    TouchArea {
+        clicked => { root.dismissed(); }
+    }
+    Rectangle {
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        width: root.card_width;
+        height: root.card_height;
+        background: Palette.background;
+        border-radius: 10px;
+        border-width: 1px;
+        border-color: Palette.border;
+        drop-shadow-color: #00000066;
+        drop-shadow-blur: 24px;
+        drop-shadow-offset-y: 6px;
+        TouchArea { }
+        VerticalLayout {
+            padding: 22px;
+            spacing: 12px;
+            Text {
+                text: root.title;
+                font-size: 16px;
+                font-weight: 700;
+                color: Palette.foreground;
+            }
+            if root.description != "" : Text {
+                text: root.description;
+                wrap: word-wrap;
+                font-size: 12px;
+                color: Palette.foreground.transparentize(Tokens.subtle);
+            }
+            @children
+        }
     }
 }

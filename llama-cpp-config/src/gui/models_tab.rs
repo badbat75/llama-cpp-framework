@@ -2,9 +2,15 @@
 //!
 //! Shared state, generated Slint types, and the `refresh_*` / `reload_presets` /
 //! `apply_form` helpers live in the parent `gui` module; `use super::*` pulls
-//! them in.
+//! them in. Two Models-tab-only helpers live HERE next to their callers instead
+//! of in the shared hub: `update_model_info` (the GGUF "Model info" box) and the
+//! New / Clone dialog funnel (`populate_dialog_models` … `commit_new_preset`).
 
 use super::*;
+
+// The Model-info box is the only helper that reaches `gguf` directly; gui.rs no
+// longer does, so pull it in here rather than through the parent's `use super::*`.
+use crate::gguf;
 
 pub(super) fn wire(app: &AppWindow, state: &Rc<RefCell<State>>) {
     {
@@ -43,11 +49,9 @@ pub(super) fn wire(app: &AppWindow, state: &Rc<RefCell<State>>) {
             match presets::save(&p) {
                 Ok(()) => {
                     set_status(&app, format!("Saved preset [{}]", p.id), false);
-                    // Rebuild the list from disk and re-select the just-saved preset
-                    // (re-baselining the form so Save/Revert go disabled).
-                    reload_presets(&app, &state, Some(&p.id));
-                    refresh_file_options(&app);
-                    refresh_integrations(&app);
+                    // Rebuild + re-select the just-saved preset (re-baselining the
+                    // form so Save/Revert go disabled) and refresh the dependents.
+                    preset_written(&app, &state, Some(&p.id));
                 }
                 Err(e) => set_status(&app, format!("Save failed: {e}"), true),
             }
@@ -81,9 +85,10 @@ pub(super) fn wire(app: &AppWindow, state: &Rc<RefCell<State>>) {
             match presets::delete(id.as_str()) {
                 Ok(()) => {
                     set_status(&app, format!("Deleted [{id}]"), false);
-                    // Rebuild the list from disk, then clear the selection: after a
-                    // delete we show an empty editor rather than auto-selecting a
-                    // neighbour.
+                    // Not preset_written(): after a delete we clear the selection
+                    // and show an empty editor, so the file/integration refreshes
+                    // must run AFTER the form is blanked, not against the neighbour
+                    // reload_presets would otherwise select.
                     reload_presets(&app, &state, None);
                     app.global::<AppState>().set_selected_preset_index(-1);
                     apply_form(&app, blank_form());
@@ -191,9 +196,7 @@ pub(super) fn wire(app: &AppWindow, state: &Rc<RefCell<State>>) {
                 match presets::rename(old_id.as_str(), new_id.as_str()) {
                     Ok(()) => {
                         set_status(&app, format!("Renamed [{old_id}] -> [{new_id}]"), false);
-                        reload_presets(&app, &state, Some(new_id.as_str()));
-                        refresh_file_options(&app);
-                        refresh_integrations(&app);
+                        preset_written(&app, &state, Some(new_id.as_str()));
                     }
                     Err(e) => set_status(&app, format!("Rename failed: {e}"), true),
                 }
@@ -222,6 +225,105 @@ pub(super) fn wire(app: &AppWindow, state: &Rc<RefCell<State>>) {
             apply_dialog_models(&app, &st.dialog_models_all, q.as_str());
         });
     }
+    // Model-info box + device-dropdown sync fire only from the Models page
+    // (models_page.slint), so they're wired here rather than in run()'s seed.
+    {
+        let app_weak = app.as_weak();
+        app.global::<AppState>().on_model_changed(move || {
+            if let Some(app) = app_weak.upgrade() {
+                update_model_info(&app);
+            }
+        });
+    }
+    {
+        let app_weak = app.as_weak();
+        app.global::<AppState>().on_sync_device_dropdowns(move || {
+            if let Some(app) = app_weak.upgrade() {
+                refresh_device_options(&app);
+            }
+        });
+    }
+}
+
+/// Refresh everything that depends on the preset set after a presets.ini write:
+/// the (re-selected) preset list (`reload_presets`), the file/device dropdowns,
+/// and the Integrations tab. `want` picks the selection like `reload_presets`.
+/// The invariant every write path follows — save / rename / clone all funnel
+/// through here. (select/revert do NOT: they don't mutate disk, so integrations
+/// stay put; delete keeps its own sequence because it clears the selection.)
+fn preset_written(app: &AppWindow, state: &Rc<RefCell<State>>, want: Option<&str>) {
+    reload_presets(app, state, want);
+    refresh_file_options(app);
+    refresh_integrations(app);
+}
+
+/// Fill the read-only "Model info" box from the selected model's GGUF header
+/// (read via `ggml-base.dll`), enriched with the selected mmproj and draft
+/// headers plus a cross-reference of the framework's MTP/DFlash drafters. Called
+/// whenever the model/mmproj/draft field changes (combo pick, preset load).
+/// `pub(super)` so the shared `refresh_file_options` in gui.rs can drive it.
+pub(super) fn update_model_info(app: &AppWindow) {
+    let s = app.global::<AppState>();
+    let form = s.get_form();
+    let model = form.model.to_string();
+
+    // Reset the optional rows; the success path re-enables the ones that apply.
+    s.set_model_info_has_moe(false);
+    s.set_model_info_has_mmproj(false);
+    s.set_model_info_has_draft_file(false);
+    s.set_model_info_embeds_mtp(false);
+    // Reset the slider maxima; 0 = unknown → the UI falls back to a 0..99 range.
+    s.set_model_info_n_layer(0);
+    s.set_model_info_draft_n_layer(0);
+
+    if model.trim().is_empty() {
+        s.set_model_info_ready(false);
+        s.set_model_info_note(SharedString::from("Select a model to see its details."));
+        return;
+    }
+
+    let Some(info) = gguf::read_model_info(std::path::Path::new(&model)) else {
+        s.set_model_info_ready(false);
+        s.set_model_info_note(SharedString::from(
+            "Metadata unavailable — is ggml-base.dll beside the app, and the file a valid GGUF?",
+        ));
+        return;
+    };
+
+    let models_dir = s.get_server_form().models_dir.to_string();
+    let ext = gguf::external_drafters(&models_dir, &model);
+    s.set_model_info_kind(SharedString::from(info.kind_line()));
+    s.set_model_info_n_layer(info.n_layer as i32);
+    s.set_model_info_has_moe(info.is_moe);
+    s.set_model_info_moe(SharedString::from(info.moe_offload_line()));
+    s.set_model_info_arch_quant(SharedString::from(info.arch_quant_line()));
+    s.set_model_info_layers_ctx(SharedString::from(info.layers_ctx_line()));
+    s.set_model_info_attn(SharedString::from(info.attn_line()));
+    s.set_model_info_draft(SharedString::from(gguf::draft_line(&info, &ext)));
+    // Enables the speculative-decoding controls even before an external draft is
+    // picked, when the model itself embeds MTP/nextn heads.
+    s.set_model_info_embeds_mtp(info.nextn_predict_layers > 0);
+
+    // Optional: the selected mmproj's clip header.
+    let mmproj = form.mmproj.to_string();
+    if !mmproj.trim().is_empty() {
+        if let Some(mp) = gguf::read_mmproj_info(std::path::Path::new(&mmproj)) {
+            s.set_model_info_mmproj(SharedString::from(mp.mmproj_line()));
+            s.set_model_info_has_mmproj(true);
+        }
+    }
+
+    // Optional: the selected draft/MTP/DFlash file's own header.
+    let draft = form.model_draft.to_string();
+    if !draft.trim().is_empty() {
+        if let Some(d) = gguf::read_model_info(std::path::Path::new(&draft)) {
+            s.set_model_info_draft_file(SharedString::from(d.draft_file_line()));
+            s.set_model_info_draft_n_layer(d.n_layer as i32);
+            s.set_model_info_has_draft_file(true);
+        }
+    }
+
+    s.set_model_info_ready(true);
 }
 
 // ── New / Clone dialog funnel ─────────────────────────────────────────
@@ -332,9 +434,7 @@ fn commit_new_preset(
 ) {
     match presets::save(&p) {
         Ok(()) => {
-            reload_presets(app, state, Some(&p.id));
-            refresh_file_options(app);
-            refresh_integrations(app);
+            preset_written(app, state, Some(&p.id));
             set_status(app, success_status, false);
         }
         Err(e) => set_status(app, format!("Save failed: {e}"), true),

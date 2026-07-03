@@ -64,19 +64,7 @@ pub(super) fn wire(app: &AppWindow, tray: &AppTray) {
         let app_weak = app.as_weak();
         let tray_weak = tray.as_weak();
         app.global::<AppState>().on_start_server(move || {
-            let Some(app) = app_weak.upgrade() else {
-                return;
-            };
-            match runstate::start() {
-                Ok(()) => {
-                    set_status(&app, "llama-server started.".into(), false);
-                    refresh_run_status(app.as_weak(), tray_weak.clone());
-                }
-                Err(e) => {
-                    set_status(&app, format!("Failed to start: {e}"), true);
-                    app.global::<AppState>().set_server_status_is_error(true);
-                }
-            }
+            start_server(app_weak.clone(), tray_weak.clone());
         });
     }
     {
@@ -86,4 +74,20 @@ pub(super) fn wire(app: &AppWindow, tray: &AppTray) {
             stop_server_async(app_weak.clone(), tray_weak.clone());
         });
     }
+}
+
+/// Native folder picker for the "Browse…" button, seeded at `start`. Server-tab
+/// only, so it lives here rather than in the shared hub.
+fn pick_dir(start: &std::path::Path) -> Option<PathBuf> {
+    rfd::FileDialog::new()
+        .set_title("Pick a folder")
+        .set_directory(start)
+        .pick_folder()
+}
+
+/// Re-baseline the server form after a save so `server_dirty` reads false until
+/// the next edit — the server analog of `apply_form`'s base handling.
+fn snapshot_server_base(app: &AppWindow) {
+    let s = app.global::<AppState>();
+    s.set_server_form_base(s.get_server_form());
 }

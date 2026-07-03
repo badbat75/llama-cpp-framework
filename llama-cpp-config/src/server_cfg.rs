@@ -55,6 +55,18 @@ pub fn default_models_dir() -> String {
         .into_owned()
 }
 
+impl ServerConfig {
+    /// The configured ModelsDir, or `default_models_dir()` when unset/blank —
+    /// the single home for the "blank ModelsDir ⇒ default dir" rule shared by
+    /// `save()`, `runstate::start()`, and `server_form::config_to_form`.
+    pub fn models_dir_or_default(&self) -> String {
+        self.models_dir
+            .clone()
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(default_models_dir)
+    }
+}
+
 pub fn load() -> ServerConfig {
     let path = paths::server_ini();
     let keys = ini::read_section(&path, "Server");
@@ -85,11 +97,7 @@ pub fn save(cfg: &ServerConfig) -> io::Result<()> {
     let hostname = cfg.hostname.as_deref().unwrap_or("localhost");
     let mlock = cfg.mlock.unwrap_or(true);
 
-    let models_dir = cfg
-        .models_dir
-        .clone()
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(default_models_dir);
+    let models_dir = cfg.models_dir_or_default();
 
     // Each optional field renders as either `Key = value` or, when unset/default,
     // a commented `; Key = example  ; help` hint line (see int_line_or_hint /
