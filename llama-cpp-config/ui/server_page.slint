@@ -6,7 +6,7 @@
 // field stale after a Revert / reload.
 
 import { LineEdit, TextEdit, ComboBox, CheckBox, Button, ScrollView, Palette } from "std-widgets.slint";
-import { SectionCard, LabeledField, MappedComboBox, AutoSlider, Tokens, Options } from "components.slint";
+import { SectionCard, LabeledField, MappedComboBox, AutoSlider, FormActions, Tokens, Options } from "components.slint";
 import { AppState } from "state.slint";
 
 export component ServerPage inherits ScrollView {
@@ -165,21 +165,13 @@ export component ServerPage inherits ScrollView {
             }
         }
 
-        HorizontalLayout {
-            alignment: end;
-            spacing: 8px;
-            Button {
-                text: "Revert";
-                enabled: AppState.server_dirty;
-                clicked => { AppState.revert_server(); }
-            }
-            Button {
-                text: "Save changes";
-                primary: true;
-                // Shared with the Ctrl+S shortcut — the gate lives in state.slint.
-                enabled: AppState.can_save_server;
-                clicked => { AppState.save_server(); }
-            }
+        FormActions {
+            save_text: "Save changes";
+            // Shared with the Ctrl+S shortcut — the gate lives in state.slint.
+            save_enabled: AppState.can_save_server;
+            revert_enabled: AppState.server_dirty;
+            save => { AppState.save_server(); }
+            revert => { AppState.revert_server(); }
         }
     }
 }

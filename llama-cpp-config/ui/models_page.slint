@@ -2,11 +2,11 @@
 // (state.slint); this component lays out the widgets against it.
 
 import { LineEdit, ComboBox, CheckBox, Button, ListView, ScrollView, Palette, Slider, SpinBox } from "std-widgets.slint";
-import { SectionCard, LabeledField, InfoRow, SegmentedControl, MappedComboBox, AutoSlider, Tokens, Options } from "components.slint";
+import { SectionCard, LabeledField, InfoRow, SegmentedControl, MappedComboBox, AutoSlider, FormActions, Tokens, Options } from "components.slint";
 import { AppState } from "state.slint";
 
 export component ModelsPage inherits HorizontalLayout {
-    padding: 20px;
+    padding: 24px;
     spacing: 16px;
 
     // Left column: preset list
@@ -44,6 +44,8 @@ export component ModelsPage inherits HorizontalLayout {
                 // ListView's running-sum layout and the rows render on top of each
                 // other. `p.orig_index` maps back to the full presets vector.
                 for p in AppState.presets : Rectangle {
+                    accessible-role: list-item;
+                    accessible-label: p.id;
                     height: 36px;
                     background: p.orig_index == AppState.selected_preset_index
                         ? Palette.accent-background.transparentize(Tokens.sel)
@@ -121,7 +123,7 @@ export component ModelsPage inherits HorizontalLayout {
         VerticalLayout {
             padding-left: 4px;
             padding-right: 4px;
-            spacing: 14px;
+            spacing: 16px;
 
             Text {
                 text: AppState.selected_preset_index >= 0
@@ -165,36 +167,13 @@ export component ModelsPage inherits HorizontalLayout {
                     hint: "Optional speculator (feeds --model-draft).\nMTP heads (from mtps\\) set --spec-type draft-mtp; DFlash drafters (from dflashs\\) set draft-dflash.\nPicking one auto-pins the draft to the server GPU, or CPU if none.\n(none) = no speculation.";
                     // A raw ComboBox (not MappedComboBox): the handler needs the
                     // selected INDEX to read the parallel `draft_specs` array, not
-                    // just the picked value.
+                    // just the picked value. The pick POLICY (spec-type + the
+                    // gemma4 auto-pin workaround) lives in Rust — see the
+                    // `draft_picked` handler in src/gui/models_tab.rs.
                     ComboBox {
                         model: AppState.draft_labels;
                         current-index <=> AppState.draft_index;
-                        selected(value) => {
-                            let i = self.current-index;
-                            if (i >= 0 && i < AppState.draft_values.length) {
-                                AppState.form.model_draft = AppState.draft_values[i];
-                                // Picking a draft model selects its speculator: MTP heads ->
-                                // draft-mtp, DFlash drafters -> draft-dflash, (none) -> none.
-                                AppState.form.spec_type = AppState.draft_specs[i];
-                                if (AppState.form.model_draft != "") {
-                                    // Run the draft on GPU by pinning it to one device (the multi-device
-                                    // auto split crashes gemma4 MTP heads). Reuse the server's GPU device
-                                    // if set; otherwise fall back to CPU, which always works.
-                                    if (AppState.form.n_gpu_layers_draft_auto && AppState.form.device_draft == "") {
-                                        AppState.form.n_gpu_layers_draft_auto = false;
-                                        if (AppState.server_form.device != "") {
-                                            AppState.form.device_draft = AppState.server_form.device;
-                                            AppState.form.n_gpu_layers_draft = 99;
-                                        } else {
-                                            AppState.form.n_gpu_layers_draft = 0;
-                                        }
-                                    }
-                                }
-                                // The draft-device dropdown was just changed programmatically.
-                                AppState.sync_device_dropdowns();
-                                AppState.model_changed();
-                            }
-                        }
+                        selected => { AppState.draft_picked(self.current-index); }
                     }
                 }
                 LabeledField {
@@ -315,7 +294,7 @@ export component ModelsPage inherits HorizontalLayout {
                     AutoSlider {
                         auto <=> AppState.form.n_cpu_moe_auto;
                         value <=> AppState.form.n_cpu_moe;
-                        maximum: AppState.gpu_layers_max;
+                        maximum: AppState.gpu_layers_max;  // = the model's layer count
                         usable: AppState.model_info_has_moe;
                     }
                 }
@@ -569,21 +548,13 @@ export component ModelsPage inherits HorizontalLayout {
                 }
             }
 
-            HorizontalLayout {
-                alignment: end;
-                spacing: 8px;
-                Button {
-                    text: "Revert";
-                    enabled: AppState.selected_preset_index >= 0 && AppState.preset_dirty;
-                    clicked => { AppState.revert_preset(); }
-                }
-                Button {
-                    text: "Save preset";
-                    primary: true;
-                    // Shared with the Ctrl+S shortcut — the gate lives in state.slint.
-                    enabled: AppState.can_save_preset;
-                    clicked => { AppState.save_preset(); }
-                }
+            FormActions {
+                save_text: "Save preset";
+                // Shared with the Ctrl+S shortcut — the gate lives in state.slint.
+                save_enabled: AppState.can_save_preset;
+                revert_enabled: AppState.selected_preset_index >= 0 && AppState.preset_dirty;
+                save => { AppState.save_preset(); }
+                revert => { AppState.revert_preset(); }
             }
         }
     }

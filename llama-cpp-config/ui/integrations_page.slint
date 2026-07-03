@@ -1,7 +1,7 @@
 // IntegrationsPage: the integrations tab. All state lives in AppState (state.slint).
 
-import { LineEdit, CheckBox, Button, ScrollView, Palette } from "std-widgets.slint";
-import { SectionCard, LabeledField, Tokens } from "components.slint";
+import { LineEdit, CheckBox, ScrollView, Palette } from "std-widgets.slint";
+import { SectionCard, LabeledField, FormActions, Tokens } from "components.slint";
 import { AppState } from "state.slint";
 
 export component IntegrationsPage inherits ScrollView {
@@ -31,7 +31,7 @@ export component IntegrationsPage inherits ScrollView {
                     text: AppState.integration_provider_active
                         ? "llama-server provider active in opencode.json"
                         : "No llama-server provider in opencode.json";
-                    color: AppState.integration_provider_active ? #2e7d32 : Palette.foreground.transparentize(Tokens.muted);
+                    color: AppState.integration_provider_active ? Tokens.ok : Palette.foreground.transparentize(Tokens.muted);
                     font-size: 13px;
                     vertical-alignment: center;
                 }
@@ -60,7 +60,7 @@ export component IntegrationsPage inherits ScrollView {
 
             for item[i] in AppState.integration_models : Rectangle {
                 height: 36px;
-                background: Math.mod(i, 2) == 0 ? transparent : Palette.alternate-background.transparentize(0.3);
+                background: Math.mod(i, 2) == 0 ? transparent : Palette.alternate-background.transparentize(Tokens.zebra);
 
                 HorizontalLayout {
                     padding-left: 12px;
@@ -114,18 +114,10 @@ export component IntegrationsPage inherits ScrollView {
             }
         }
 
-        HorizontalLayout {
-            alignment: end;
-            spacing: 8px;
-            Button {
-                text: "Revert";
-                clicked => { AppState.revert_integrations(); }
-            }
-            Button {
-                text: "Save to opencode.json";
-                primary: true;
-                clicked => { AppState.save_integrations(); }
-            }
+        FormActions {
+            save_text: "Save to opencode.json";
+            save => { AppState.save_integrations(); }
+            revert => { AppState.revert_integrations(); }
         }
     }
 }

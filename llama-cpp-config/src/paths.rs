@@ -22,9 +22,10 @@ pub(crate) fn home_dir() -> PathBuf {
 
 /// `%LOCALAPPDATA%\llama.cpp` on Windows, `$HOME/.local/share/llama.cpp` elsewhere.
 ///
-/// `LLAMA_CPP_CONFIG_DATA_ROOT` overrides the whole tree. It exists for the
-/// e2e tests under `src/tests/`, which point config IO at a temp dir so they
-/// never touch the user's real data — it is NOT a supported end-user knob.
+/// `LLAMA_CPP_CONFIG_DATA_ROOT` overrides the whole tree (and
+/// `opencode_user_config` below). It exists for the e2e tests under
+/// `src/tests/`, which point config IO at a temp dir so they never touch the
+/// user's real data — it is NOT a supported end-user knob.
 pub fn data_root() -> PathBuf {
     if let Some(p) = env_path("LLAMA_CPP_CONFIG_DATA_ROOT") {
         return p.join("llama.cpp");
@@ -55,7 +56,13 @@ pub fn presets_ini() -> PathBuf {
 
 /// `%USERPROFILE%\.config\opencode\opencode.json` on Windows,
 /// `$HOME/.config/opencode/opencode.json` elsewhere.
+///
+/// The test override redirects this too: the e2e tests exercise flows that read
+/// (and could one day write) opencode.json, and must never touch the real one.
 pub fn opencode_user_config() -> PathBuf {
+    if let Some(p) = env_path("LLAMA_CPP_CONFIG_DATA_ROOT") {
+        return p.join("opencode").join("opencode.json");
+    }
     home_dir()
         .join(".config")
         .join("opencode")

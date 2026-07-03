@@ -24,6 +24,13 @@ component NavItem inherits Rectangle {
     in property <bool> selected;
     callback clicked;
 
+    // Surface the rail item to assistive tech — a bare Rectangle+TouchArea
+    // is invisible to it.
+    accessible-role: tab;
+    accessible-label: root.label;
+    accessible-checkable: true;
+    accessible-checked: root.selected;
+
     height: 40px;
     border-radius: 6px;
     background: selected
@@ -87,9 +94,13 @@ export component AppWindow inherits Window {
         height: 100%;
 
         // ─── Keyboard shortcuts (app-wide; events bubble up to this scope) ──
+        // Every binding gates on !modal_open: while a dialog is up, saving the
+        // page behind the backdrop, switching tabs, or stacking a second dialog
+        // would act on UI the user can't see. Esc inside ModalOverlay dismisses.
         KeyBinding {
             keys: @keys(Control + S);
             activated => {
+                if (AppState.modal_open) { return; }
                 // Same gating as the Save buttons — both read the can_save_*
                 // properties in state.slint so the conditions can't drift.
                 if (AppState.current_tab == 0 && AppState.can_save_server) { AppState.save_server(); }
@@ -97,136 +108,16 @@ export component AppWindow inherits Window {
                 else if (AppState.current_tab == 2) { AppState.save_integrations(); }
             }
         }
-        KeyBinding { keys: @keys(Control + "1"); activated => { AppState.current_tab = 0; } }
-        KeyBinding { keys: @keys(Control + "2"); activated => { AppState.current_tab = 1; } }
-        KeyBinding { keys: @keys(Control + "3"); activated => { AppState.current_tab = 2; } }
-        KeyBinding { keys: @keys(F5); activated => { AppState.refresh_status(); } }
-        KeyBinding { keys: @keys(Control + N); activated => { AppState.new_preset(); } }
+        KeyBinding { keys: @keys(Control + "1"); activated => { if (!AppState.modal_open) { AppState.current_tab = 0; } } }
+        KeyBinding { keys: @keys(Control + "2"); activated => { if (!AppState.modal_open) { AppState.current_tab = 1; } } }
+        KeyBinding { keys: @keys(Control + "3"); activated => { if (!AppState.modal_open) { AppState.current_tab = 2; } } }
+        KeyBinding { keys: @keys(F5); activated => { if (!AppState.modal_open) { AppState.refresh_status(); } } }
+        KeyBinding { keys: @keys(Control + N); activated => { if (!AppState.modal_open) { AppState.new_preset(); } } }
 
     VerticalLayout {
         width: 100%;
         height: 100%;
         spacing: 0px;
-
-        // ─── Overlay modals ────────────────────────────────────────────
-        if AppState.show_new_kind_picker: ModalOverlay {
-            title: AppState.new_dialog_source_id == "" ? "New preset" : "Clone preset";
-            description: AppState.new_dialog_source_id == ""
-                ? "Pick the model for the new preset from your ModelsDir. It is created with default parameters."
-                : "Cloning [" + AppState.new_dialog_source_id + "] → pick the target model from your ModelsDir. The new preset copies every parameter from [" + AppState.new_dialog_source_id + "] onto the model you pick.";
-            card_width: 520px;
-            card_height: 480px;
-            dismissed => { AppState.show_new_kind_picker = false; }
-
-            LineEdit {
-                placeholder-text: "Filter models…";
-                input-type: search;
-                text <=> AppState.dialog_filter;
-                edited(t) => { AppState.filter_dialog_models(t); }
-            }
-            Rectangle {
-                border-width: 1px;
-                border-color: Palette.border;
-                border-radius: 8px;
-                background: Palette.alternate-background;
-                vertical-stretch: 1;
-                if AppState.dialog_model_labels.length == 0 : Text {
-                    x: 16px;
-                    y: 16px;
-                    width: parent.width - 32px;
-                    text: "No .gguf files found under ModelsDir. Drop files there and reopen this dialog.";
-                    wrap: word-wrap;
-                    font-size: 12px;
-                    color: Palette.foreground.transparentize(Tokens.muted);
-                }
-                ListView {
-                    for label[i] in AppState.dialog_model_labels : Rectangle {
-                        height: 32px;
-                        background: i == AppState.dialog_model_index
-                            ? Palette.accent-background.transparentize(Tokens.sel)
-                            : (touch.has-hover ? Palette.background : transparent);
-                        if i == AppState.dialog_model_index : Rectangle {
-                            x: 0; y: 4px; width: 3px; height: parent.height - 8px;
-                            border-radius: 1.5px;
-                            background: Palette.accent-background;
-                        }
-                        HorizontalLayout {
-                            padding-left: 12px;
-                            padding-right: 12px;
-                            Text {
-                                text: label;
-                                font-size: 12px;
-                                color: Palette.foreground;
-                                vertical-alignment: center;
-                                overflow: elide;
-                            }
-                        }
-                        touch := TouchArea {
-                            mouse-cursor: pointer;
-                            clicked => { AppState.dialog_model_index = i; }
-                        }
-                    }
-                }
-            }
-            HorizontalLayout {
-                spacing: 8px;
-                alignment: end;
-                Button {
-                    text: "Cancel";
-                    clicked => { AppState.show_new_kind_picker = false; }
-                }
-                Button {
-                    text: AppState.new_dialog_source_id == "" ? "Create" : "Clone";
-                    primary: true;
-                    enabled: AppState.dialog_model_index >= 0;
-                    clicked => {
-                        AppState.show_new_kind_picker = false;
-                        if (AppState.new_dialog_source_id == "") {
-                            AppState.pick_new_empty();
-                        } else {
-                            AppState.pick_new_clone();
-                        }
-                    }
-                }
-            }
-        }
-
-        if AppState.show_rename_dialog: ModalOverlay {
-            title: "Rename preset";
-            description: "Renaming [" + AppState.rename_old_id + "]. This only changes the section header in presets.ini; every parameter inside is preserved.";
-            card_width: 440px;
-            card_height: 220px;
-            dismissed => { AppState.show_rename_dialog = false; }
-
-            LineEdit {
-                text <=> AppState.rename_new_id;
-                placeholder-text: "New id";
-                accepted(t) => {
-                    if (t != "" && t != AppState.rename_old_id) {
-                        AppState.show_rename_dialog = false;
-                        AppState.rename_preset(AppState.rename_old_id, t);
-                    }
-                }
-            }
-            Rectangle { vertical-stretch: 1; }
-            HorizontalLayout {
-                spacing: 8px;
-                alignment: end;
-                Button {
-                    text: "Cancel";
-                    clicked => { AppState.show_rename_dialog = false; }
-                }
-                Button {
-                    text: "Rename";
-                    primary: true;
-                    enabled: AppState.rename_new_id != "" && AppState.rename_new_id != AppState.rename_old_id;
-                    clicked => {
-                        AppState.show_rename_dialog = false;
-                        AppState.rename_preset(AppState.rename_old_id, AppState.rename_new_id);
-                    }
-                }
-            }
-        }
 
         // ─── Body: nav rail | content ─────────────────────────────
         HorizontalLayout {
@@ -342,7 +233,7 @@ export component AppWindow inherits Window {
                 // stretch cell even while the text is empty.
                 Text {
                     text: AppState.status_text;
-                    color: AppState.status_is_error ? #c62828 : Palette.foreground;
+                    color: AppState.status_is_error ? Tokens.err : Palette.foreground;
                     font-size: 12px;
                     vertical-alignment: center;
                     horizontal-stretch: 1;
@@ -372,14 +263,143 @@ export component AppWindow inherits Window {
                         width: 8px;
                         height: 8px;
                         border-radius: 4px;
-                        background: AppState.server_status_is_error ? #c62828
-                            : (AppState.server_running ? #2e7d32 : #666666);
+                        background: AppState.server_status_is_error ? Tokens.err
+                            : (AppState.server_running ? Tokens.ok : Tokens.off);
                     }
                 }
             }
         }
 
     } // /main VerticalLayout
+
+    // ─── Overlay modals ────────────────────────────────────────────────
+    // Direct children of the FocusScope, declared AFTER the body layout (plus
+    // ModalOverlay's z:1) so they stack on top of it. They must NOT live inside
+    // the VerticalLayout: a 100%×100% overlay allocated as a layout ROW would
+    // squeeze the nav/content row and footer while open, and if the layout
+    // compressed the overlay instead, the backdrop would no longer cover the
+    // footer — leaving UI clickable under an "open" modal.
+    if AppState.show_new_kind_picker: ModalOverlay {
+        title: AppState.new_dialog_source_id == "" ? "New preset" : "Clone preset";
+        description: AppState.new_dialog_source_id == ""
+            ? "Pick the model for the new preset from your ModelsDir. It is created with default parameters."
+            : "Cloning [" + AppState.new_dialog_source_id + "] → pick the target model from your ModelsDir. The new preset copies every parameter from [" + AppState.new_dialog_source_id + "] onto the model you pick.";
+        card_width: 520px;
+        card_height: 480px;
+        dismissed => { AppState.show_new_kind_picker = false; }
+
+        LineEdit {
+            placeholder-text: "Filter models…";
+            input-type: search;
+            text <=> AppState.dialog_filter;
+            edited(t) => { AppState.filter_dialog_models(t); }
+            // Type-to-filter immediately when the dialog opens.
+            init => { self.focus(); }
+        }
+        Rectangle {
+            border-width: 1px;
+            border-color: Palette.border;
+            border-radius: 8px;
+            background: Palette.alternate-background;
+            vertical-stretch: 1;
+            if AppState.dialog_model_labels.length == 0 : Text {
+                x: 16px;
+                y: 16px;
+                width: parent.width - 32px;
+                text: "No .gguf files found under ModelsDir. Drop files there and reopen this dialog.";
+                wrap: word-wrap;
+                font-size: 12px;
+                color: Palette.foreground.transparentize(Tokens.muted);
+            }
+            ListView {
+                for label[i] in AppState.dialog_model_labels : Rectangle {
+                    accessible-role: list-item;
+                    accessible-label: label;
+                    height: 32px;
+                    background: i == AppState.dialog_model_index
+                        ? Palette.accent-background.transparentize(Tokens.sel)
+                        : (touch.has-hover ? Palette.background : transparent);
+                    if i == AppState.dialog_model_index : Rectangle {
+                        x: 0; y: 4px; width: 3px; height: parent.height - 8px;
+                        border-radius: 1.5px;
+                        background: Palette.accent-background;
+                    }
+                    HorizontalLayout {
+                        padding-left: 12px;
+                        padding-right: 12px;
+                        Text {
+                            text: label;
+                            font-size: 12px;
+                            color: Palette.foreground;
+                            vertical-alignment: center;
+                            overflow: elide;
+                        }
+                    }
+                    touch := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => { AppState.dialog_model_index = i; }
+                    }
+                }
+            }
+        }
+        HorizontalLayout {
+            spacing: 8px;
+            alignment: end;
+            Button {
+                text: "Cancel";
+                clicked => { AppState.show_new_kind_picker = false; }
+            }
+            Button {
+                text: AppState.new_dialog_source_id == "" ? "Create" : "Clone";
+                primary: true;
+                enabled: AppState.dialog_model_index >= 0;
+                clicked => {
+                    AppState.show_new_kind_picker = false;
+                    if (AppState.new_dialog_source_id == "") {
+                        AppState.pick_new_empty();
+                    } else {
+                        AppState.pick_new_clone();
+                    }
+                }
+            }
+        }
+    }
+
+    if AppState.show_rename_dialog: ModalOverlay {
+        title: "Rename preset";
+        description: "Renaming [" + AppState.rename_old_id + "]. This only changes the section header in presets.ini; every parameter inside is preserved.";
+        dismissed => { AppState.show_rename_dialog = false; }
+
+        LineEdit {
+            text <=> AppState.rename_new_id;
+            placeholder-text: "New id";
+            init => { self.focus(); }
+            accepted(t) => {
+                if (t != "" && t != AppState.rename_old_id) {
+                    AppState.show_rename_dialog = false;
+                    AppState.rename_preset(AppState.rename_old_id, t);
+                }
+            }
+        }
+        Rectangle { vertical-stretch: 1; }
+        HorizontalLayout {
+            spacing: 8px;
+            alignment: end;
+            Button {
+                text: "Cancel";
+                clicked => { AppState.show_rename_dialog = false; }
+            }
+            Button {
+                text: "Rename";
+                primary: true;
+                enabled: AppState.rename_new_id != "" && AppState.rename_new_id != AppState.rename_old_id;
+                clicked => {
+                    AppState.show_rename_dialog = false;
+                    AppState.rename_preset(AppState.rename_old_id, AppState.rename_new_id);
+                }
+            }
+        }
+    }
     } // /shortcuts FocusScope
 } // End of AppWindow
 

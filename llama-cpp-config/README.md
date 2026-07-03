@@ -4,6 +4,7 @@ GUI + CLI configurator for [llama.cpp-framework](..).
 
 ```text
 llama-cpp-config                  → launch the GUI
+llama-cpp-config gui              → same, explicit
 llama-cpp-config server show      → print server.ini
 llama-cpp-config server set ...   → update server.ini fields
 llama-cpp-config preset list      → list models with their presets
@@ -17,6 +18,8 @@ Built with [Slint](https://slint.dev). The nav rail switches between three tabs 
 
 Each tab body is its own Slint component (`ui\server_page.slint`, `ui\models_page.slint`, `ui\integrations_page.slint`). All shared state — every property and callback the pages and Rust both touch — lives in a single `export global AppState` (`ui\state.slint`); the pages read/write `AppState.<name>` directly and Rust drives it via `app.global::<AppState>()`. `ui\app.slint` is just the window chrome (nav rail, run controls, modals, footer) plus the tray.
 
+Modal dialogs (New/Clone picker, Rename) overlay the whole window: Esc or a backdrop click dismisses them, and the app-wide shortcuts (Ctrl+S, Ctrl+N, Ctrl+1–3, F5) are inert while one is open (`AppState.modal_open`).
+
 ### Server tab — `server.ini`
 
 - Fields: port, hostname, mlock, threads, cache reuse, threads-batch, models-max, models-dir (with a Browse button), GPU device. **threads** and **threads-batch** are sliders capped at the machine's logical-processor count, each with an "auto" checkbox that omits the flag (let llama.cpp pick).
@@ -27,7 +30,7 @@ Each tab body is its own Slint component (`ui\server_page.slint`, `ui\models_pag
 
 Scans `.gguf` files under `ModelsDir`, shows the presets table, and edits per-model settings. The editor is grouped into cards by concern:
 
-- **Assets** — the file pickers and speculator selection: model file (`--model`), MMProj (`--mmproj`), ONE draft-model dropdown that merges MTP heads (scanned from `mtps\`) and DFlash drafters (scanned from `dflashs\`), both feeding `--model-draft`, plus the spec-type dropdown. Picking an MTP head auto-selects `--spec-type draft-mtp`; picking a DFlash drafter auto-selects `--spec-type draft-dflash`. Either way, when a server GPU device is set the draft is pinned to it (`device-draft`, `n-gpu-layers-draft = 99`); otherwise it falls back to CPU (`n-gpu-layers-draft = 0`).
+- **Assets** — the file pickers and speculator selection: model file (`--model`), MMProj (`--mmproj`), ONE draft-model dropdown that merges MTP heads (scanned from `mtps\`) and DFlash drafters (scanned from `dflashs\`), both feeding `--model-draft`, plus the spec-type dropdown. Picking an MTP head auto-selects `--spec-type draft-mtp`; picking a DFlash drafter auto-selects `--spec-type draft-dflash`. Either way, when a server GPU device is set the draft is pinned to it (`device-draft`, `n-gpu-layers-draft = 99`); otherwise it falls back to CPU (`n-gpu-layers-draft = 0`). The pick policy lives in Rust (`apply_draft_pick` in `gui/models_tab.rs`, unit-tested), not in the `.slint` handler.
 - **Model info** (read-only, between Assets and Hardware Config) — reads GGUF metadata through llama.cpp's own reader (runtime-loaded `ggml-base.dll`, no reimplemented parser; see `gguf.rs`): dense vs MoE (+ expert counts), layer count, trained context, GQA shape, quant, and whether it embeds MTP layers — plus whether a matching MTP/DFlash drafter is present. For MoE models a **MoE layers** row shows how many layers carry experts (with a "saves VRAM (slower)" note), sizing the `--n-cpu-moe` field. A **MMProj** row (projector type, vision/audio modality, encoder depth, image/patch size) and a **Draft file** row (the drafter's arch/layers and, for DFlash, the trained `block_size` → the implied `--spec-draft-n-max` ceiling) appear when those are selected. Reads are synchronous and uncached; if `ggml-base.dll` can't be loaded the box shows "unavailable".
 - **Hardware Config** (directly under Model info) — every placement knob: GPU device (`--device`), GPU split mode + tensor split (overriding the server default), GPU layers (`--n-gpu-layers`), MoE CPU layers (`--n-cpu-moe`), draft device (`--device-draft`), draft GPU layers (`--n-gpu-layers-draft`).
 - **Resource / context** — ctx-size, parallel seqs, batch/ubatch (all always-valued `SpinBox`es).
@@ -82,14 +85,14 @@ The build script (`build.rs`) converts `resources\llama.ico` to a PNG at compile
 | `src\form.rs` | `PresetForm` ↔ `presets::Preset` conversion (`preset_to_form` / `form_to_preset`) + a round-trip test; defaults sourced from `Preset::default()` |
 | `src\server_form.rs` | `ServerForm` ↔ `server_cfg::ServerConfig` conversion (`config_to_form` / `form_to_config`) + a round-trip test — the server-side mirror of `form.rs` |
 | `src\proc.rs` | `run_hidden()`: launch a child process with `CREATE_NO_WINDOW` on Windows (shared by the device / version / run-state probes) |
-| `src\server_cfg.rs` | Read/write `server.ini` |
+| `src\server_cfg.rs` | Read/write `server.ini` (`from_keys` / `render` back `load` / `save`; save→load round-trip test pins the key names + `keep` rules) |
 | `src\presets.rs` | Read/write `presets.ini` (the `Preset` schema and INI round-trip) |
 | `src\model_scan.rs` | Walk `ModelsDir` for `.gguf` files; build model/draft option lists |
 | `src\gguf.rs` | Read GGUF metadata for the "Model info" box via llama.cpp's own reader (runtime-loaded `ggml-base.dll`, no reimplemented parser): model (dense/MoE + layer split, layers, ctx, GQA, quant, embedded MTP), mmproj (clip), and draft (layers, DFlash `block_size`); read synchronously, uncached — pure field-extraction logic |
 | `src\gguf\ffi.rs` | The `ggml-base.dll` FFI behind `gguf.rs`: dynamic DLL load + a `KvSource` over a live `gguf_context` (Windows); a `None` stub elsewhere. Public surface: `ffi::open(path)` |
 | `src\devices.rs` | Enumerate GPU backends via `llama-server --list-devices` |
 | `src\ini.rs` | Minimal INI parser/writer (no external crate) |
-| `src\paths.rs` | Platform-specific config and log paths (`LLAMA_CPP_CONFIG_DATA_ROOT` redirects the whole tree — test-only escape hatch, not an end-user knob) |
+| `src\paths.rs` | Platform-specific config and log paths (`LLAMA_CPP_CONFIG_DATA_ROOT` redirects the whole tree, opencode.json included — test-only escape hatch, not an end-user knob) |
 | `src\integrations.rs` | opencode.json model list, Claude Code snippet |
 | `src\runstate.rs` | Detect if `llama-server` is running; render the launch command line |
 | `src\net_ifaces.rs` | Enumerate local network interfaces (for hostname suggestion) |
@@ -100,7 +103,7 @@ The build script (`build.rs`) converts `resources\llama.ico` to a PNG at compile
 | `ui\server_page.slint` | Server tab component |
 | `ui\models_page.slint` | Models tab component (preset editor) |
 | `ui\integrations_page.slint` | Integrations tab component |
-| `ui\components.slint` | Shared visual pieces: `SectionCard`, `LabeledField`, `InfoRow` (read-only label→value row), `SegmentedControl`, `MappedComboBox` (labels/values/index combo with a bounds-checked `picked`), `AutoSlider` (auto-checkbox + slider + readout), `ModalOverlay` (dim-backdrop dialog shell used by the New/Clone + Rename dialogs), and the `Tokens` / `Options` globals (canonical muted-text / selection alphas; shared option lists) |
+| `ui\components.slint` | Shared visual pieces: `SectionCard`, `LabeledField`, `InfoRow` (read-only label→value row), `SegmentedControl`, `MappedComboBox` (labels/values/index combo with a bounds-checked `picked`), `AutoSlider` (auto-checkbox + slider + readout), `ModalOverlay` (dim-backdrop dialog shell used by the New/Clone + Rename dialogs; Esc dismisses), `FormActions` (the Revert + primary-Save row ending every tab), and the `Tokens` / `Options` globals (canonical muted-text / selection alphas, semantic status colors `ok`/`err`/`off`; shared option lists) |
 | `ui\types.slint` | Shared Slint structs (`PresetSummary`, `PresetForm`, `ServerForm`, `IntegrationModel`) |
 | `src\tests\` | End-to-end / cross-cutting tests (internal `#[cfg(test)] mod tests`). `ui_bindings.rs`: headless Slint-testing-backend test — editable widgets must track the model after an edit, guarding the one-way-binding staleness bug (v1.1.1). `save_flow.rs`: drives the real Models-tab wiring (save → reload → reselect, revert, delete) against a temp config dir |
 | `build.rs` | Compile-time ICO → PNG, embed EXE resource on Windows; emits Slint element debug info for non-release builds (needed by the UI test) |

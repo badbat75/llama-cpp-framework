@@ -225,7 +225,7 @@ pub(super) fn wire(app: &AppWindow, state: &Rc<RefCell<State>>) {
             apply_dialog_models(&app, &st.dialog_models_all, q.as_str());
         });
     }
-    // Model-info box + device-dropdown sync fire only from the Models page
+    // Model-info box + draft-pick policy fire only from the Models page
     // (models_page.slint), so they're wired here rather than in run()'s seed.
     {
         let app_weak = app.as_weak();
@@ -237,11 +237,54 @@ pub(super) fn wire(app: &AppWindow, state: &Rc<RefCell<State>>) {
     }
     {
         let app_weak = app.as_weak();
-        app.global::<AppState>().on_sync_device_dropdowns(move || {
-            if let Some(app) = app_weak.upgrade() {
-                refresh_device_options(&app);
-            }
+        app.global::<AppState>().on_draft_picked(move |index| {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let s = app.global::<AppState>();
+            let i = match usize::try_from(index) {
+                Ok(i) => i,
+                Err(_) => return,
+            };
+            let (Some(value), Some(spec)) = (
+                s.get_draft_values().row_data(i),
+                s.get_draft_specs().row_data(i),
+            ) else {
+                return;
+            };
+            let mut form = s.get_form();
+            apply_draft_pick(
+                &mut form,
+                &value,
+                &spec,
+                s.get_server_form().device.as_str(),
+            );
+            s.set_form(form);
+            // The draft-device dropdown may have been changed programmatically.
+            refresh_device_options(&app);
+            update_model_info(&app);
         });
+    }
+}
+
+/// Apply a draft-picker selection to the form: set `model_draft` + `spec_type`
+/// from the picked row (MTP heads → draft-mtp, DFlash drafters → draft-dflash,
+/// "(none)" → empty), then auto-pin an unconfigured draft to ONE device — the
+/// multi-device "auto" split crashes gemma4 MTP heads. Reuse the server's GPU
+/// device (all layers on it) if set; otherwise fall back to CPU, which always
+/// works. A draft the user already configured (auto off or a device pinned) is
+/// left alone.
+fn apply_draft_pick(form: &mut PresetForm, value: &str, spec: &str, server_device: &str) {
+    form.model_draft = value.into();
+    form.spec_type = spec.into();
+    if !value.is_empty() && form.n_gpu_layers_draft_auto && form.device_draft.is_empty() {
+        form.n_gpu_layers_draft_auto = false;
+        if !server_device.is_empty() {
+            form.device_draft = server_device.into();
+            form.n_gpu_layers_draft = 99;
+        } else {
+            form.n_gpu_layers_draft = 0;
+        }
     }
 }
 
@@ -427,5 +470,74 @@ fn commit_new_preset(
             set_status(app, success_status, false);
         }
         Err(e) => set_status(app, format!("Save failed: {e}"), true),
+    }
+}
+
+// Pure-struct tests (no Slint backend needed — PresetForm is a plain generated
+// struct). The gemma4-MTP auto-pin policy used to live untestable inside the
+// .slint pick handler; these pin its three branches.
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn form_with_auto_draft() -> PresetForm {
+        PresetForm {
+            n_gpu_layers_draft_auto: true,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn pick_pins_draft_to_server_gpu_when_set() {
+        let mut f = form_with_auto_draft();
+        apply_draft_pick(&mut f, r"C:\m\mtps\head.gguf", "draft-mtp", "CUDA0");
+        assert_eq!(f.model_draft, r"C:\m\mtps\head.gguf");
+        assert_eq!(f.spec_type, "draft-mtp");
+        assert!(!f.n_gpu_layers_draft_auto);
+        assert_eq!(f.device_draft, "CUDA0");
+        assert_eq!(f.n_gpu_layers_draft, 99);
+    }
+
+    #[test]
+    fn pick_falls_back_to_cpu_without_a_server_device() {
+        let mut f = form_with_auto_draft();
+        apply_draft_pick(&mut f, r"C:\m\dflashs\d.gguf", "draft-dflash", "");
+        assert_eq!(f.spec_type, "draft-dflash");
+        assert!(!f.n_gpu_layers_draft_auto);
+        assert_eq!(f.device_draft, "");
+        assert_eq!(f.n_gpu_layers_draft, 0);
+    }
+
+    #[test]
+    fn pick_leaves_a_user_configured_draft_alone() {
+        // Auto already off → the user chose an offload; don't second-guess it.
+        let mut f = PresetForm {
+            n_gpu_layers_draft_auto: false,
+            n_gpu_layers_draft: 7,
+            ..Default::default()
+        };
+        apply_draft_pick(&mut f, r"C:\m\mtps\head.gguf", "draft-mtp", "CUDA0");
+        assert_eq!(f.n_gpu_layers_draft, 7);
+        assert_eq!(f.device_draft, "");
+
+        // Device already pinned → keep it, even with auto on.
+        let mut f = PresetForm {
+            n_gpu_layers_draft_auto: true,
+            device_draft: "CUDA1".into(),
+            ..Default::default()
+        };
+        apply_draft_pick(&mut f, r"C:\m\mtps\head.gguf", "draft-mtp", "CUDA0");
+        assert!(f.n_gpu_layers_draft_auto);
+        assert_eq!(f.device_draft, "CUDA1");
+    }
+
+    #[test]
+    fn picking_none_clears_without_pinning() {
+        let mut f = form_with_auto_draft();
+        apply_draft_pick(&mut f, "", "", "CUDA0");
+        assert_eq!(f.model_draft, "");
+        assert_eq!(f.spec_type, "");
+        assert!(f.n_gpu_layers_draft_auto, "(none) must not flip auto off");
+        assert_eq!(f.device_draft, "");
     }
 }

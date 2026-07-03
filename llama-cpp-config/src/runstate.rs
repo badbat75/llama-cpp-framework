@@ -172,11 +172,10 @@ pub fn start() -> io::Result<()> {
 /// Force-kill all llama-server.exe processes (taskkill /f — llama-server has
 /// no graceful shutdown channel when running detached without a console).
 ///
-/// Returns `io::Result` for symmetry with `start()`, but is currently infallible:
-/// a missing/failed kill is not surfaced here. The caller (`stop_server_async`)
-/// re-polls `is_running()` and reports "still running" if the kill didn't land —
-/// that re-check, not this return value, is the source of truth for the outcome.
-pub fn stop() -> io::Result<()> {
+/// Infallible by design: a missing/failed kill is not surfaced here. The caller
+/// (`stop_server_async`) re-polls `is_running()` and reports "still running" if
+/// the kill didn't land — that re-check is the source of truth for the outcome.
+pub fn stop() {
     #[cfg(windows)]
     {
         // Spawn failure (taskkill missing) is effectively impossible on Windows;
@@ -194,7 +193,6 @@ pub fn stop() -> io::Result<()> {
             .arg("llama-server")
             .output();
     }
-    Ok(())
 }
 
 /// Shell line-continuation character: PowerShell uses a backtick, POSIX shells

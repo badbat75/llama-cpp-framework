@@ -75,7 +75,13 @@ pub fn build_options(ifaces: &[BindOption], current: &str) -> (Vec<String>, Vec<
     let fixed = opts.len();
     opts.extend_from_slice(ifaces);
 
-    let mut index = opts.iter().position(|o| o.value == current);
+    // Case-insensitive, like the sibling builders (devices matches ids
+    // case-insensitively, model_scan uses paths_eq): a hand-edited
+    // `Hostname = Localhost` must select the localhost row, not spawn a
+    // spurious "(no longer present)" twin.
+    let mut index = opts
+        .iter()
+        .position(|o| o.value.eq_ignore_ascii_case(current));
     if index.is_none() && !current.is_empty() {
         opts.insert(
             fixed,
@@ -132,6 +138,13 @@ mod tests {
         let (_labels, values, idx) = build_options(&ifaces, "192.168.1.10");
         assert_eq!(values[idx as usize], "192.168.1.10");
         assert_eq!(values.len(), 3); // 2 fixed rows + 1 interface
+    }
+
+    #[test]
+    fn build_options_matches_current_case_insensitively() {
+        let (labels, values, idx) = build_options(&[], "Localhost");
+        assert_eq!(values[idx as usize], "localhost");
+        assert!(!labels.iter().any(|l| l.contains("no longer present")));
     }
 
     #[test]

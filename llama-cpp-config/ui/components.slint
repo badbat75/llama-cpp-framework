@@ -1,6 +1,6 @@
 // Reusable visual pieces shared by the page components.
 
-import { ComboBox, CheckBox, Slider, Palette } from "std-widgets.slint";
+import { ComboBox, CheckBox, Slider, Button, Palette } from "std-widgets.slint";
 
 // Canonical transparency levels for muted text and selection tints, so every
 // page pulls from the same handful of values instead of eyeballing a new alpha.
@@ -10,6 +10,13 @@ export global Tokens {
     out property <float> muted: 0.4;     // page subtitles, help glyphs, "no results" notes
     out property <float> faint: 0.5;     // least-important text (paths, hints)
     out property <float> sel: 0.82;      // accent tint for a selected/active row
+    out property <float> zebra: 0.3;     // alternate-row tint in striped lists
+
+    // Semantic status colors (footer run-state text + dot, integration status).
+    // One home so an "error red" tweaked in one place can't drift from the others.
+    out property <color> ok: #2e7d32;
+    out property <color> err: #c62828;
+    out property <color> off: #666666;
 }
 
 // Canonical option lists reused by more than one page, so a new llama.cpp cache
@@ -51,6 +58,9 @@ export component AutoSlider inherits HorizontalLayout {
     in-out property <int> value;
     in property <int> maximum;
     in property <bool> usable: true;
+    // The displayed count: the model value clamped to the slider range (a saved
+    // 99 on a 48-layer model shows as 48). Shared by the slider and the readout.
+    property <int> shown: Math.min(root.value, root.maximum);
     horizontal-stretch: 1;
     spacing: 8px;
     CheckBox {
@@ -63,14 +73,14 @@ export component AutoSlider inherits HorizontalLayout {
         enabled: !root.auto && root.usable;
         minimum: 0;
         maximum: root.maximum;
-        value: Math.min(root.value, root.maximum);
+        value: root.shown;
         changed(v) => { root.value = Math.round(v); }
     }
     Text {
         width: 44px;
         horizontal-alignment: right;
         vertical-alignment: center;
-        text: root.auto ? "auto" : "\{Math.min(root.value, root.maximum)}";
+        text: root.auto ? "auto" : "\{root.shown}";
     }
 }
 
@@ -124,6 +134,12 @@ export component SegmentedControl inherits HorizontalLayout {
     spacing: 6px;
     opacity: root.enabled ? 1.0 : 0.4;
     for opt in root.options : Rectangle {
+        // Surface the pill to assistive tech (and to the headless UI test's
+        // accessible-label lookup) — a bare Rectangle+TouchArea is invisible.
+        accessible-role: button;
+        accessible-label: opt;
+        accessible-checkable: true;
+        accessible-checked: opt == root.current;
         height: 30px;
         min-width: 60px;
         border-radius: 6px;
@@ -220,10 +236,11 @@ export component InfoRow inherits LabeledField {
 }
 
 // A centered modal card floating over a full-screen dim backdrop. Clicking the
-// backdrop fires `dismissed`; the card swallows its own clicks (the empty inner
-// TouchArea) so a click inside doesn't dismiss. The title + optional description
-// are laid out first, then the caller's body/buttons via `@children`. Collapses
-// the ~30 lines of identical chrome each dialog in app.slint used to repeat.
+// backdrop (or pressing Escape) fires `dismissed`; the card swallows its own
+// clicks (the empty inner TouchArea) so a click inside doesn't dismiss. The
+// title + optional description are laid out first, then the caller's
+// body/buttons via `@children`. Collapses the ~30 lines of identical chrome
+// each dialog in app.slint used to repeat.
 export component ModalOverlay inherits Rectangle {
     in property <string> title;
     in property <string> description;
@@ -238,35 +255,73 @@ export component ModalOverlay inherits Rectangle {
     TouchArea {
         clicked => { root.dismissed(); }
     }
-    Rectangle {
-        x: (parent.width - self.width) / 2;
-        y: (parent.height - self.height) / 2;
-        width: root.card_width;
-        height: root.card_height;
-        background: Palette.background;
-        border-radius: 10px;
-        border-width: 1px;
-        border-color: Palette.border;
-        drop-shadow-color: #00000066;
-        drop-shadow-blur: 24px;
-        drop-shadow-offset-y: 6px;
-        TouchArea { }
-        VerticalLayout {
-            padding: 22px;
-            spacing: 12px;
-            Text {
-                text: root.title;
-                font-size: 16px;
-                font-weight: 700;
-                color: Palette.foreground;
+    // Escape dismisses. The scope wraps the card so a key the focused child
+    // widget doesn't handle bubbles up here; it also takes focus when the
+    // dialog opens (a child's own `init => focus()` — e.g. a dialog's text
+    // field — runs after and wins, which is the desired order).
+    FocusScope {
+        init => { self.focus(); }
+        key-pressed(event) => {
+            if (event.text == Key.Escape) {
+                root.dismissed();
+                return accept;
             }
-            if root.description != "" : Text {
-                text: root.description;
-                wrap: word-wrap;
-                font-size: 12px;
-                color: Palette.foreground.transparentize(Tokens.subtle);
-            }
-            @children
+            reject
         }
+        Rectangle {
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            width: root.card_width;
+            height: root.card_height;
+            background: Palette.background;
+            border-radius: 10px;
+            border-width: 1px;
+            border-color: Palette.border;
+            drop-shadow-color: #00000066;
+            drop-shadow-blur: 24px;
+            drop-shadow-offset-y: 6px;
+            TouchArea { }
+            VerticalLayout {
+                padding: 22px;
+                spacing: 12px;
+                Text {
+                    text: root.title;
+                    font-size: 16px;
+                    font-weight: 700;
+                    color: Palette.foreground;
+                }
+                if root.description != "" : Text {
+                    text: root.description;
+                    wrap: word-wrap;
+                    font-size: 12px;
+                    color: Palette.foreground.transparentize(Tokens.subtle);
+                }
+                @children
+            }
+        }
+    }
+}
+
+// The action row every tab ends with: right-aligned Revert + primary Save.
+// One home so the three tabs' rows can't drift — the save-button text and the
+// two enabled gates are the only per-tab differences.
+export component FormActions inherits HorizontalLayout {
+    in property <string> save_text: "Save";
+    in property <bool> save_enabled: true;
+    in property <bool> revert_enabled: true;
+    callback save();
+    callback revert();
+    alignment: end;
+    spacing: 8px;
+    Button {
+        text: "Revert";
+        enabled: root.revert_enabled;
+        clicked => { root.revert(); }
+    }
+    Button {
+        text: root.save_text;
+        primary: true;
+        enabled: root.save_enabled;
+        clicked => { root.save(); }
     }
 }

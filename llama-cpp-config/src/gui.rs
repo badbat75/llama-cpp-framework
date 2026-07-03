@@ -14,9 +14,10 @@
 //! ## Helper verb taxonomy (so a grep lands in the right family)
 //! - `load_*`            : server.ini ↔ UI (through `server_form::config_to_form`
 //!   / `form_to_config`; the preset side is `form.rs`).
-//! - `refresh_*`         : rebuild a list/section from disk or the device cache
-//!   (`refresh_presets`, `refresh_file_options`, `refresh_device_options`,
-//!   `refresh_integrations`, `refresh_run_status`).
+//! - `refresh_*` / `reload_*` : rebuild a list/section from disk or the device
+//!   cache (`reload_presets`, `refresh_file_options`, `refresh_device_options`,
+//!   `refresh_integrations`, `refresh_run_status`; `reload_all_from_disk` is the
+//!   everything-at-once hub shared by startup and the Refresh button).
 //! - `*_options`         : build a dropdown's (labels, values, index) model
 //!   triple the caller hands to the matching `set_*` accessors (`device_options`,
 //!   `scanned_options`).
@@ -82,7 +83,7 @@ struct State {
 #[cfg(test)]
 pub(crate) fn wire_models_tab_for_tests(app: &AppWindow) {
     let state = Rc::new(RefCell::new(State::default()));
-    refresh_presets(app, &state);
+    reload_presets(app, &state, None);
     models_tab::wire(app, &state);
 }
 
@@ -115,11 +116,7 @@ pub fn run() -> anyhow::Result<()> {
         });
     }
 
-    load_server_into_ui(&app);
-    refresh_presets(&app, &state);
-    refresh_run_status(app.as_weak(), tray.as_weak());
-    refresh_file_options(&app);
-    refresh_integrations(&app);
+    reload_all_from_disk(&app, &state, tray.as_weak());
     spawn_version_probe(app.as_weak());
     spawn_device_probe(app.as_weak());
 
@@ -131,13 +128,11 @@ pub fn run() -> anyhow::Result<()> {
         let app_weak = app.as_weak();
         let tray_weak = tray.as_weak();
         s.on_refresh_status(move || {
-            refresh_run_status(app_weak.clone(), tray_weak.clone());
+            // Explicit user refresh (F5): also clear a stale error state.
+            refresh_run_status(app_weak.clone(), tray_weak.clone(), true);
         });
     }
 
-    // Reload everything from disk: server.ini, presets.ini, the models-dir
-    // scan, and the integration state. Lets the user pick up files added to
-    // the models directory or config files edited by hand, without a restart.
     {
         let app_weak = app.as_weak();
         let tray_weak = tray.as_weak();
@@ -146,11 +141,7 @@ pub fn run() -> anyhow::Result<()> {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
-            load_server_into_ui(&app);
-            refresh_presets(&app, &state);
-            refresh_file_options(&app);
-            refresh_integrations(&app);
-            refresh_run_status(app.as_weak(), tray_weak.clone());
+            reload_all_from_disk(&app, &state, tray_weak.clone());
             set_status(&app, "Reloaded configuration from disk.".into(), false);
         });
     }
@@ -163,7 +154,9 @@ pub fn run() -> anyhow::Result<()> {
             slint::TimerMode::Repeated,
             std::time::Duration::from_secs(5),
             move || {
-                refresh_run_status(app_weak.clone(), tray_weak.clone());
+                // Periodic tick: keep an error footer red (clear_error = false) —
+                // only an explicit action (F5 / Refresh / a new start) resets it.
+                refresh_run_status(app_weak.clone(), tray_weak.clone(), false);
             },
         );
     }
@@ -260,8 +253,20 @@ fn preset_summaries(presets: &[presets::Preset], filter: &str) -> Vec<PresetSumm
         .collect()
 }
 
-fn refresh_presets(app: &AppWindow, state: &Rc<RefCell<State>>) {
+/// Seed / re-seed every disk-backed piece of the UI: server.ini, presets.ini,
+/// the ModelsDir scan, the integration state, and the live run status. The one
+/// home shared by `run()`'s startup seed and the Refresh button (`reload_all`),
+/// so a newly added disk-backed `refresh_*` hub is wired in exactly one place.
+fn reload_all_from_disk(
+    app: &AppWindow,
+    state: &Rc<RefCell<State>>,
+    tray_weak: slint::Weak<AppTray>,
+) {
+    load_server_into_ui(app);
     reload_presets(app, state, None);
+    refresh_file_options(app);
+    refresh_integrations(app);
+    refresh_run_status(app.as_weak(), tray_weak, true);
 }
 
 /// Reload `presets.ini` into `state`, rebuild the (filtered) list model, then
@@ -475,7 +480,7 @@ fn start_server(app_weak: slint::Weak<AppWindow>, tray_weak: slint::Weak<AppTray
                 set_status(&app, "llama-server started.".into(), false);
             }
             // Confirm the run state (and clear any stale error) off the UI thread.
-            refresh_run_status(app_weak, tray_weak);
+            refresh_run_status(app_weak, tray_weak, true);
         }
         Err(e) => {
             if let Some(app) = app_weak.upgrade() {
@@ -504,7 +509,7 @@ fn stop_server_async(app_weak: slint::Weak<AppWindow>, tray_weak: slint::Weak<Ap
         set_status(&app, "Stopping llama-server…".into(), false);
     }
     std::thread::spawn(move || {
-        let result = runstate::stop();
+        runstate::stop();
         let mut running = runstate::is_running();
         let step = std::time::Duration::from_millis(300);
         let cap = std::time::Duration::from_secs(15);
@@ -519,23 +524,17 @@ fn stop_server_async(app_weak: slint::Weak<AppWindow>, tray_weak: slint::Weak<Ap
                 let s = app.global::<AppState>();
                 s.set_server_stopping(false);
                 s.set_server_running(running);
-                match result {
-                    Ok(()) if !running => {
-                        s.set_server_status_is_error(false);
-                        set_status(&app, "llama-server stopped.".into(), false);
-                    }
-                    Ok(()) => {
-                        s.set_server_status_is_error(true);
-                        set_status(
-                            &app,
-                            "Stop timed out — llama-server is still running.".into(),
-                            true,
-                        );
-                    }
-                    Err(e) => {
-                        s.set_server_status_is_error(true);
-                        set_status(&app, format!("Failed to stop: {e}"), true);
-                    }
+                // `stop()` can't fail; the re-polled run state is the outcome.
+                if running {
+                    s.set_server_status_is_error(true);
+                    set_status(
+                        &app,
+                        "Stop timed out — llama-server is still running.".into(),
+                        true,
+                    );
+                } else {
+                    s.set_server_status_is_error(false);
+                    set_status(&app, "llama-server stopped.".into(), false);
                 }
             }
             if let Some(tray) = tray_weak.upgrade() {
@@ -548,15 +547,24 @@ fn stop_server_async(app_weak: slint::Weak<AppWindow>, tray_weak: slint::Weak<Ap
 
 /// Probe the llama-server process off the UI thread (`tasklist` can take
 /// hundreds of ms) and apply the result via the event loop, mirroring
-/// `spawn_version_probe`.
-fn refresh_run_status(app_weak: slint::Weak<AppWindow>, tray_weak: slint::Weak<AppTray>) {
+/// `spawn_version_probe`. `clear_error` decides whether the footer's error flag
+/// is reset: explicit actions (startup, F5, Refresh, a new start) pass `true`;
+/// the periodic status timer passes `false` so it can't silently wipe the red
+/// state a failed start / stop-timeout deliberately set.
+fn refresh_run_status(
+    app_weak: slint::Weak<AppWindow>,
+    tray_weak: slint::Weak<AppTray>,
+    clear_error: bool,
+) {
     std::thread::spawn(move || {
         let running = runstate::is_running();
         slint::invoke_from_event_loop(move || {
             if let Some(app) = app_weak.upgrade() {
                 let s = app.global::<AppState>();
                 s.set_server_running(running);
-                s.set_server_status_is_error(false);
+                if clear_error {
+                    s.set_server_status_is_error(false);
+                }
             }
             if let Some(tray) = tray_weak.upgrade() {
                 tray.set_server_running(running);

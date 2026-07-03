@@ -10,8 +10,8 @@
 //   5. `PresetForm` struct                — ui/types.slint
 //   6. the input widget                   — ui/models_page.slint (bind two-way `<=>`)
 //   7. `preset_to_form` + `form_to_preset` — src/form.rs (BOTH directions)
-// Guards: the INI round-trip test in this file (`full_preset_round_trips`) and
-// the form round-trip test in form.rs (`form_to_preset(preset_to_form(p)) == p`)
+// Guards: the INI round-trip test in this file (`full_preset_round_trips_through_ini`)
+// and the form round-trip test in form.rs (`form_to_preset(preset_to_form(p)) == p`)
 // — a field wired into one side only drops out of one of them.
 
 use std::fs;
@@ -520,6 +520,41 @@ mod tests {
         assert_eq!(sections.len(), 1, "one section written");
         let parsed = Preset::from_keys(&sections[0].id, &sections[0].keys);
         assert_eq!(parsed, original);
+    }
+
+    // make_id feeds every generated preset id from an arbitrary filename:
+    // shard-suffix strip → char whitelist (alnum . - _) → collapse runs of
+    // anything else to one underscore → trim edge underscores.
+    #[test]
+    fn make_id_sanitizes_stems() {
+        assert_eq!(
+            make_id(r"C:\llm\models\Qwen 3 (v2)-00001-of-00003.gguf"),
+            "Qwen_3_v2"
+        );
+        assert_eq!(
+            make_id(r"C:\m\gemma-3-12b-it-Q6_K.gguf"),
+            "gemma-3-12b-it-Q6_K"
+        );
+        assert_eq!(make_id("weird  ~~name~~ .gguf"), "weird_name");
+        assert_eq!(make_id(""), "");
+    }
+
+    // infer_models_dir seeds server.ini's ModelsDir on the first save: the
+    // grandparent when the file sits in a `models` dir (any case), else the parent.
+    #[test]
+    fn infer_models_dir_prefers_models_grandparent() {
+        assert_eq!(
+            infer_models_dir(r"E:\llm\models\m.gguf").as_deref(),
+            Some(r"E:\llm")
+        );
+        assert_eq!(
+            infer_models_dir(r"E:\llm\MODELS\m.gguf").as_deref(),
+            Some(r"E:\llm")
+        );
+        assert_eq!(
+            infer_models_dir(r"E:\other\m.gguf").as_deref(),
+            Some(r"E:\other")
+        );
     }
 
     #[test]

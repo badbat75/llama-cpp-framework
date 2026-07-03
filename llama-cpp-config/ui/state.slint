@@ -145,6 +145,11 @@ export global AppState {
     in-out property <string> rename_old_id: "";
     in-out property <string> rename_new_id: "";
 
+    // True while any modal dialog is open. The app-wide keyboard shortcuts
+    // (app.slint) gate on this so Ctrl+S / Ctrl+N / tab switches can't act on
+    // the page hidden behind the backdrop.
+    out property <bool> modal_open: show_new_kind_picker || show_rename_dialog;
+
     // ── Integrations tab state ─────────────────────────────────────
     in-out property <string> integration_base_url: "";
     in-out property <[IntegrationModel]> integration_models;
@@ -173,6 +178,11 @@ export global AppState {
     callback filter_dialog_models(string);
     // Recompute the "Model info" box from the currently selected model file.
     callback model_changed();
+    // A row was picked in the draft-model dropdown. The policy (set model_draft +
+    // spec_type from the parallel arrays, auto-pin the draft device — the gemma4
+    // MTP-crash workaround) lives in Rust (gui/models_tab.rs) where it is
+    // unit-tested; the .slint side only reports the picked index.
+    callback draft_picked(int);
 
     callback refresh_status();
     callback start_server();
@@ -181,9 +191,6 @@ export global AppState {
     // Picks up files added on disk or config files edited by hand outside
     // the GUI, without restarting the app.
     callback reload_all();
-    // Recompute the device dropdown indices after the form is mutated in-UI
-    // (e.g. the MTP picker auto-filling the draft device).
-    callback sync_device_dropdowns();
 
     callback toggle_integration_model(int);
     callback save_integrations();
