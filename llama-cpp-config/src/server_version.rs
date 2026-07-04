@@ -19,9 +19,16 @@ fn run(exe: &std::path::Path) -> Option<String> {
 }
 
 /// Turn `"version: 9999 (abc12345)\n"` into `"9999-abc12345"`. The input is
-/// the combined stdout+stderr, so skip leading blank lines before parsing.
+/// the combined stdout+stderr, which can carry noise around the version line
+/// (dynamic-backend builds print `load_backend: …` banners), so prefer the
+/// line with the `version: ` prefix and only fall back to the first non-empty
+/// line when no line carries it.
 fn parse(s: &str) -> Option<String> {
-    let line = s.lines().map(str::trim).find(|l| !l.is_empty())?;
+    let line = s
+        .lines()
+        .map(str::trim)
+        .find(|l| l.starts_with("version: "))
+        .or_else(|| s.lines().map(str::trim).find(|l| !l.is_empty()))?;
     let stripped = line.strip_prefix("version: ").unwrap_or(line);
     // If there's a parenthetical commit hash, convert it to dash form
     if let Some((ver, rest)) = stripped.split_once(' ') {
@@ -67,6 +74,18 @@ mod tests {
     fn parses_combined_output_with_leading_blank_line() {
         assert_eq!(
             parse("\nversion: 9870 (2d973636e)\n").as_deref(),
+            Some("9870-2d973636e"),
+        );
+    }
+
+    /// Dynamic-backend builds print `load_backend: …` banners around the
+    /// version line — the parser must pick the `version: ` line, not just the
+    /// first non-empty one.
+    #[test]
+    fn skips_backend_banner_lines() {
+        assert_eq!(
+            parse("load_backend: loaded CUDA backend from C:\\x\\ggml-cuda.dll\nversion: 9870 (2d973636e)\n")
+                .as_deref(),
             Some("9870-2d973636e"),
         );
     }

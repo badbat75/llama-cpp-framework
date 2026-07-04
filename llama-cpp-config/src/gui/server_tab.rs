@@ -67,7 +67,7 @@ pub(super) fn wire(app: &AppWindow, tray: &AppTray, state: &Rc<RefCell<State>>) 
         let app_weak = app.as_weak();
         let tray_weak = tray.as_weak();
         app.global::<AppState>().on_start_server(move || {
-            start_server(app_weak.clone(), tray_weak.clone());
+            start_server_async(app_weak.clone(), tray_weak.clone());
         });
     }
     {

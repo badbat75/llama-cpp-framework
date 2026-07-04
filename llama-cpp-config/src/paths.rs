@@ -1,7 +1,10 @@
 // Paths for the llama.cpp-framework configuration tool.
 //
-// User runtime state lives under %LOCALAPPDATA%\llama.cpp\ on Windows
-// (config\server.ini, config\presets.ini, logs\llama-server.log).
+// Two jobs: (1) the user runtime tree — %LOCALAPPDATA%\llama.cpp\ on Windows
+// (config\server.ini, config\presets.ini, logs\llama-server.log), overridable
+// for tests via LLAMA_CPP_CONFIG_DATA_ROOT; (2) locating llama-server.exe
+// across the installer and dev layouts (`llama_server_exe`, which also strips
+// canonicalize()'s \\?\ prefix so the path is shell-pasteable).
 
 use std::path::PathBuf;
 

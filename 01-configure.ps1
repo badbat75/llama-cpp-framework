@@ -76,22 +76,6 @@ function Find-ROCm {
 }
 
 
-function Find-CacheDir {
-    # Prefer LLAMA_CACHE env, then common locations
-    if ($env:LLAMA_CACHE -and (Test-Path $env:LLAMA_CACHE)) {
-        return $env:LLAMA_CACHE
-    }
-    $candidates = @(
-        "E:\llama.cpp\models"
-        "D:\llama.cpp\models"
-        "$env:USERPROFILE\.cache\llama.cpp"
-    )
-    foreach ($p in $candidates) {
-        if (Test-Path $p) { return $p }
-    }
-    return $null
-}
-
 function Find-Tool([string]$Name) {
     $cmd = Get-Command $Name -ErrorAction SilentlyContinue
     if ($cmd) { return $cmd.Source }
@@ -146,11 +130,6 @@ if (-not $LlamaCppDir) {
 $val = (Resolve-Path $LlamaCppDir -ErrorAction SilentlyContinue)?.Path ?? $LlamaCppDir
 $detected.LlamaCppDir = $val
 Write-Host "  [OK] LlamaCppDir    : $val" -ForegroundColor Green
-
-$val = Find-CacheDir
-$detected.CacheDir = $val
-if ($val) { Write-Host "  [OK] CacheDir       : $val" -ForegroundColor Green }
-else      { Write-Host "  [--] CacheDir       : not found (will use default LLAMA_CACHE)" -ForegroundColor Yellow }
 
 Write-Host ""
 
@@ -210,7 +189,6 @@ $buildLines.Add("    LlamaCppDir  = $(Fmt $detected.LlamaCppDir)")
 $buildLines.Add("    OpenSSLDir   = $(Fmt $detected.OpenSSLDir)")
 $buildLines.Add("    HipPath      = $(Fmt $detected.HipPath)")
 $buildLines.Add("    VsDevShell   = $(Fmt $detected.VsDevShell)")
-$buildLines.Add("    CacheDir     = $(Fmt $detected.CacheDir)")
 $buildLines.Add('')
 $buildLines.Add('    # Build settings')
 $buildLines.Add("    GpuTargets  = 'gfx900;gfx906;gfx908;gfx90a;gfx942;gfx950;gfx1030;gfx1100;gfx1101;gfx1102;gfx1200;gfx1201'")

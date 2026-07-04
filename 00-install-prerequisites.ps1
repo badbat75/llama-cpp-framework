@@ -6,8 +6,10 @@
 # resolves). Manual SDKs (CUDA, Vulkan, AMD HIP) are only probed and their
 # install URLs printed.
 #
-# When build\config-build.psd1 + llama.cpp clone exist, also runs `git pull --ff-only`
-# on the source and flags a rebuild if the commit moved.
+# When build\config-build.psd1 + llama.cpp clone exist, also fetches the source
+# and flags a rebuild when a newer release tag (bNNNN) is available. (No `git
+# pull`: 02-build.ps1 pins the clone to a tag on a detached HEAD, so a pull
+# would always fail — the checkout onto the new tag is 02-build.ps1's job.)
 #
 # Safe to run any time — idempotent.
 
@@ -38,12 +40,14 @@ function Get-WingetVersion {
     return $null
 }
 
-function Get-GitCommit {
+# The checked-out llama.cpp build tag (02-build.ps1 detaches onto the newest
+# bNNNN release tag, so `git describe --tags` is e.g. "b9871").
+function Get-GitDescribe {
     param([string]$RepoDir)
     if (-not $RepoDir -or -not (Test-Path "$RepoDir\.git")) { return $null }
-    $sha = git -C $RepoDir rev-parse --short HEAD 2>$null
-    if ($LASTEXITCODE -ne 0) { return $null }
-    return $sha.Trim()
+    $tag = git -C $RepoDir describe --tags 2>$null
+    if ($LASTEXITCODE -ne 0 -or -not $tag) { return $null }
+    return $tag.Trim()
 }
 
 # ── Tracked packages and SDKs ───────────────────────────────────────
@@ -84,7 +88,7 @@ foreach ($p in $wingetPackages) {
 
 $cfgPath = Join-Path $PSScriptRoot 'build\config-build.psd1'
 $cfg = if (Test-Path $cfgPath) { Import-PowerShellDataFile $cfgPath } else { $null }
-$beforeLlama = if ($cfg) { Get-GitCommit $cfg.LlamaCppDir } else { $null }
+$beforeLlama = if ($cfg) { Get-GitDescribe $cfg.LlamaCppDir } else { $null }
 
 foreach ($p in $wingetPackages) {
     $v = $before[$p.Id]
@@ -138,14 +142,21 @@ if (Test-IsAdmin) {
     }
 }
 
-# ── Pull llama.cpp source if cloned ─────────────────────────────────
+# ── Check llama.cpp source for a newer release tag ──────────────────
+# The clone sits on a detached HEAD (02-build.ps1 pins it to a bNNNN tag), so
+# no pull here — just fetch and compare against the newest tag reachable from
+# origin/master (the same tag 02-build.ps1 would check out).
 
+$latestLlama = $null
 if ($cfg -and $beforeLlama) {
     Write-Host ""
-    Write-Host "Updating llama.cpp..." -ForegroundColor Cyan
-    git -C $cfg.LlamaCppDir pull --ff-only
+    Write-Host "Checking llama.cpp for updates..." -ForegroundColor Cyan
+    git -C $cfg.LlamaCppDir fetch origin --tags
     if ($LASTEXITCODE -ne 0) {
-        Write-Host "  git pull failed in $($cfg.LlamaCppDir)" -ForegroundColor Yellow
+        Write-Host "  git fetch failed in $($cfg.LlamaCppDir)" -ForegroundColor Yellow
+    } else {
+        $latestLlama = (git -C $cfg.LlamaCppDir describe --tags --abbrev=0 origin/master 2>$null | Select-Object -First 1)
+        if ($latestLlama) { $latestLlama = $latestLlama.Trim() }
     }
 }
 
@@ -153,7 +164,6 @@ if ($cfg -and $beforeLlama) {
 
 $after = @{}
 foreach ($p in $wingetPackages) { $after[$p.Id] = Get-WingetVersion $p.Id }
-$afterLlama = if ($cfg) { Get-GitCommit $cfg.LlamaCppDir } else { $null }
 
 # ── Report ──────────────────────────────────────────────────────────
 
@@ -178,9 +188,15 @@ foreach ($p in $wingetPackages) {
 }
 
 $rebuildLlama = $false
-if      (-not $beforeLlama)            { Write-ReportRow "[--]" DarkGray "llama.cpp" "(not cloned)" }
-elseif  ($beforeLlama -ne $afterLlama) { Write-ReportRow "[++]" Green    "llama.cpp" "$beforeLlama -> $afterLlama"; $rebuildLlama = $true }
-else                                   { Write-ReportRow "[OK]" DarkGray "llama.cpp" $beforeLlama }
+if (-not $beforeLlama) {
+    Write-ReportRow "[--]" DarkGray "llama.cpp" "(not cloned)"
+} elseif ($latestLlama -and $latestLlama -ne $beforeLlama) {
+    # 02-build.ps1 performs the actual checkout onto the new tag.
+    Write-ReportRow "[++]" Green "llama.cpp" "$beforeLlama -> $latestLlama available"
+    $rebuildLlama = $true
+} else {
+    Write-ReportRow "[OK]" DarkGray "llama.cpp" $beforeLlama
+}
 
 Write-Host ""
 Write-Host "  Manual SDKs (not auto-updated):" -ForegroundColor DarkGray
@@ -195,7 +211,7 @@ if (-not $cfg) {
     Write-Host "  Next: .\01-configure.ps1   # detect paths and generate build\config-build.psd1" -ForegroundColor Cyan
 } elseif ($rebuildLlama) {
     Write-Host "  Recommended actions:" -ForegroundColor Yellow
-    Write-Host "    .\02-build.ps1            # llama.cpp source updated" -ForegroundColor Yellow
+    Write-Host "    .\02-build.ps1            # newer llama.cpp release available" -ForegroundColor Yellow
     Write-Host "    .\03-package.ps1          # rebuild installer afterwards" -ForegroundColor Yellow
 } else {
     Write-Host "  Toolchain up to date." -ForegroundColor Green

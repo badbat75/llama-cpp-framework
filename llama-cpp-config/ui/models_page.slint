@@ -185,7 +185,7 @@ export component ModelsPage inherits HorizontalLayout {
                     }
                     if AppState.model_info_has_moe : InfoRow {
                         label: "MoE layers";
-                        hint: "How many layers carry expert (FFN) weights — the range for the 'MoE CPU layers' lever (--n-cpu-moe) below.\nRaise it to move more expert layers to CPU: less VRAM, slower generation.";
+                        hint: "How many layers carry expert (FFN) weights — the useful upper bound for the 'MoE CPU layers' lever (--n-cpu-moe) below (its slider runs to the total layer count).\nRaise it to move more expert layers to CPU: less VRAM, slower generation.";
                         value: AppState.model_info_moe;
                     }
                     InfoRow {
@@ -399,9 +399,9 @@ export component ModelsPage inherits HorizontalLayout {
                 }
                 LabeledField {
                     label: "Flash Attention";
-                    hint: "Enables the fused flash-attention kernel (-fa): faster prefill and lower KV memory.\nRecommended on; required for quantized KV cache to help on most backends.";
+                    hint: "Enables the fused flash-attention kernel (--flash-attn): faster prefill and lower KV memory.\nRecommended on; required for quantized KV cache to help on most backends.";
                     CheckBox {
-                        text: "enable flash attention (-fa)";
+                        text: "enable flash attention (--flash-attn)";
                         checked <=> AppState.form.flash_attn;
                     }
                 }
@@ -428,7 +428,7 @@ export component ModelsPage inherits HorizontalLayout {
                 }
                 LabeledField {
                     label: "Reasoning";
-                    hint: "auto: model decides (for Gemma auto≡on).\non: force thinking.\noff: disable.\nNote reasoning=on can invalidate the KV cache mid-conversation; prefer auto.";
+                    hint: "Thinking mode (--reasoning).\nauto: model decides (for Gemma auto≡on).\non: force thinking.\noff: disable.\nNote reasoning=on can invalidate the KV cache mid-conversation; prefer auto.";
                     // A RadioGroup imperatively sets each button's `checked` on
                     // selection, which breaks the binding and leaves the pick stale
                     // on preset switch. SegmentedControl derives its highlight purely
@@ -522,7 +522,7 @@ export component ModelsPage inherits HorizontalLayout {
                 heading: "Speculative decoding (MTP / DFlash)";
                 LabeledField {
                     label: "Draft n-max";
-                    hint: "Max draft tokens proposed per step.\nDFlash clamps this to the GGUF's trained block_size-1 (e.g. 15).\nBlank = model default.";
+                    hint: "Max draft tokens proposed per step (--spec-draft-n-max).\nDFlash clamps this to the GGUF's trained block_size-1 (e.g. 15).\nBlank = model default.";
                     LineEdit {
                         // Active only when a draft is available (selected or embedded MTP).
                         enabled: AppState.draft_active;

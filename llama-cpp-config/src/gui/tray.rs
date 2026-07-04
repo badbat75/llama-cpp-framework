@@ -21,7 +21,7 @@ pub(super) fn wire(app: &AppWindow, tray: &AppTray) {
         let app_weak = app.as_weak();
         let tray_weak = tray.as_weak();
         tray.on_start_server(move || {
-            start_server(app_weak.clone(), tray_weak.clone());
+            start_server_async(app_weak.clone(), tray_weak.clone());
         });
     }
     {

@@ -164,17 +164,22 @@ export component AppWindow inherits Window {
                     // enabled only while the server is running.
                     VerticalLayout {
                         spacing: 8px;
-                        // Transitional state: Stop was triggered but the process
-                        // (and its GPU context) is still tearing down.
+                        // Transitional states: a Start/Stop was triggered and
+                        // the launch / teardown is still in flight off the UI
+                        // thread (Rust holds the flag until it lands).
                         if AppState.server_stopping : Button {
                             text: "Stopping…";
                             enabled: false;
                         }
-                        if !AppState.server_stopping && AppState.server_running : Button {
+                        if AppState.server_starting : Button {
+                            text: "Starting…";
+                            enabled: false;
+                        }
+                        if !AppState.server_stopping && !AppState.server_starting && AppState.server_running : Button {
                             text: "Stop";
                             clicked => { AppState.stop_server(); }
                         }
-                        if !AppState.server_stopping && !AppState.server_running : Button {
+                        if !AppState.server_stopping && !AppState.server_starting && !AppState.server_running : Button {
                             text: "Start";
                             primary: true;
                             clicked => { AppState.start_server(); }

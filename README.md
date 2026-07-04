@@ -10,18 +10,21 @@ PowerShell scripts to build and run [llama.cpp](https://github.com/ggerganov/lla
 - [Visual Studio](https://visualstudio.microsoft.com/) with C++ workload
 - [Git](https://git-scm.com/)
 
-Optional (installed automatically by scripts as needed):
+Installed/updated via winget by `00-install-prerequisites.ps1`:
 - [OpenSSL](https://slproweb.com/products/Win32OpenSSL.html)
+- [NSIS](https://nsis.sourceforge.io/) (for installer packaging)
+
+GPU SDKs (manual install — `00-install-prerequisites.ps1` only probes for them and prints the download URLs):
 - [CUDA Toolkit](https://developer.nvidia.com/cuda-toolkit)
 - [Vulkan SDK](https://vulkan.lunarg.com/)
 - [AMD HIP SDK (ROCm)](https://rocm.docs.amd.com/)
-- [NSIS](https://nsis.sourceforge.io/) (for installer packaging, installed via winget if missing)
 
 ## Quick start
 
 ```powershell
 # 1. Install / update the toolchain (elevates via UAC as needed).
-#    Re-run any time to upgrade winget packages and pull llama.cpp.
+#    Re-run any time to upgrade winget packages and check llama.cpp for
+#    a newer release tag.
 .\00-install-prerequisites.ps1
 
 # 2. Auto-detect paths and generate config-build.psd1
@@ -52,6 +55,7 @@ All build artifacts live under `build\` so a single `rm -rf build\` returns the 
 │   └── staging/            ← cmake --install staging area for NSIS
 ├── dist/                    ← final installer .exe
 ├── llama-cpp-config/        ← Rust GUI + CLI configurator (source)
+├── patches/                 ← checked-in build workarounds (HIP clang runtime wrapper)
 ├── resources/               ← llama.ico (installer + EXE icon)
 └── *.ps1                    ← top-level build/package scripts
 ```
@@ -70,7 +74,7 @@ Settings are split between build-time and runtime so the same scripts work both 
 
 | Section | Keys |
 |---------|------|
-| Paths | `LlamaCppDir`, `OpenSSLDir`, `HipPath`, `VsDevShell`, `CacheDir` |
+| Paths | `LlamaCppDir`, `OpenSSLDir`, `HipPath`, `VsDevShell` |
 | Build | `GpuTargets`, `BuildType`, `CCompiler`, `CxxCompiler`, `MarchFlags`, `BuildJobs` |
 
 Runtime configs are created and edited with `llama-cpp-config` (GUI when launched with no arguments, headless CLI via `server` / `preset` subcommands). The installer ships it in `bin\` next to `llama-server.exe`, with an optional Start Menu shortcut ("llama.cpp Config"). See [llama-cpp-config\README.md](llama-cpp-config/README.md).
@@ -79,16 +83,16 @@ Runtime configs are created and edited with `llama-cpp-config` (GUI when launche
 
 | Script | Description |
 |--------|-------------|
-| `00-install-prerequisites.ps1` | Idempotent toolchain bootstrapper. Installs missing winget packages (PowerShell 7+, OpenSSL, NSIS) and upgrades present ones in a single UAC-elevated session; pulls llama.cpp source when cloned; flags CUDA / Vulkan / HIP SDKs for manual install; reports version changes and recommends a rebuild only when llama.cpp source moved. |
+| `00-install-prerequisites.ps1` | Idempotent toolchain bootstrapper. Installs missing winget packages (PowerShell 7+, OpenSSL, NSIS) and upgrades present ones in a single UAC-elevated session; fetches the llama.cpp clone and flags a rebuild when a newer release tag is available; flags CUDA / Vulkan / HIP SDKs for manual install; reports version changes. |
 | `01-configure.ps1` | Detects environment, verifies tools, writes `config-build.psd1`. Accepts `-LlamaCppDir`. |
-| `02-build.ps1` | Builds **both** llama.cpp (CMake configure out-of-source into `build\llama.cpp-cmake\` + Ninja) **and** `llama-cpp-config` (`cargo build --release`, copied to `build\llama-cpp-config\`). Auto-clones llama.cpp into `build\llama.cpp\`. Uses sccache when available. |
-| `03-package.ps1` | Stages from `build\llama.cpp-cmake\` + `build\llama-cpp-config\` into `build\staging\`, then runs NSIS to produce `dist\llama_cpp-<version>-win64-setup.exe`. |
+| `02-build.ps1` | Builds **both** llama.cpp (CMake configure out-of-source into `build\llama.cpp-cmake\` + Ninja, checked out at the newest `bNNNN` release tag) **and** `llama-cpp-config` (`cargo build --release`; no intermediate copy — packaging stages it straight from cargo's target dir). Auto-clones llama.cpp into `build\llama.cpp\`. Uses sccache when available. |
+| `03-package.ps1` | Stages from `build\llama.cpp-cmake\` + `llama-cpp-config\target\release\` into `build\staging\`, then runs NSIS to produce `dist\llama-cpp-framework-v<version>-<llamaBuild>-<arch>-setup.exe`. |
 | `common.ps1` | Shared bootstrap: loads `$cfg` from `config-build.psd1`, prepends ROCm `bin\` to PATH, exposes `Enable-VsDevShell` as a function. VS Dev Shell activation is **opt-in** — only build/package scripts call it. |
 | `llama-cpp-config\` | Rust GUI + CLI configurator for `server.ini` / `presets.ini`, opencode/Claude Code integrations, and llama-server start/stop. See [llama-cpp-config\README.md](llama-cpp-config/README.md). |
 
 ## Packaging
 
-`03-package.ps1` produces a Windows installer at `dist\llama_cpp-<version>-win64-setup.exe`. The installer:
+`03-package.ps1` produces a Windows installer at `dist\llama-cpp-framework-v<version>-<llamaBuild>-<arch>-setup.exe` (e.g. `llama-cpp-framework-v1.2.7-b9871-x64-setup.exe`). The installer:
 
 - Installs llama.cpp binaries to `C:\Program Files\llama.cpp\` (`llama-cpp-config.exe` and `llama.ico` go into `bin\` next to `llama-server.exe`).
 - Optionally adds `bin\` to the system PATH.

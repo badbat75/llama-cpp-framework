@@ -1,9 +1,14 @@
 // Minimal INI parser / writer that preserves comments and section order.
 //
 // The behavioral contract callers rely on:
-// - Section lookup is CASE-INSENSITIVE everywhere (read_section and all the
-//   writers, via find_section_header) — a hand-edited `[server]` header never
-//   spawns a duplicate section.
+// - Section lookup is CASE-INSENSITIVE and WHITESPACE-TOLERANT everywhere
+//   (read_all trims each line; the writers match via find_section_header /
+//   next_section_start with the same tolerance) — a hand-edited `[server]` or
+//   `  [server]` header never spawns a duplicate and is never swallowed by a
+//   neighbouring section's rewrite.
+// - KEY lookup is asymmetric by design: reads are exact-case (`BTreeMap`
+//   lookups like `keys.get("Port")`), while replace_key matches an existing
+//   key case-insensitively and rewrites the line in canonical case.
 // - Values are TRIMMED on parse, and an inline `; note` / `# note` tail is
 //   stripped only when the marker has whitespace on BOTH sides ("a;b" stays a
 //   value) — writers must therefore emit trimmed values or break round-trips.
@@ -131,8 +136,8 @@ pub fn replace_key(path: &Path, section: &str, key: &str, value: &str) -> std::i
     let mut replaced = false;
     let lines_iter = section_body.split_inclusive('\n');
     for line in lines_iter {
-        let trimmed = line.trim_start();
-        if !replaced && line_starts_with_key(trimmed, key) {
+        // line_starts_with_key does its own trim_start.
+        if !replaced && line_starts_with_key(line, key) {
             new_body.push_str(&new_line);
             new_body.push_str(if line.ends_with("\r\n") { "\r\n" } else { "\n" });
             replaced = true;
@@ -187,7 +192,9 @@ pub fn replace_section(path: &Path, section_name: &str, section_body: &str) -> s
     };
 
     let next = next_section_start(&content, header_pos + header.len()).unwrap_or(content.len());
-    let before = &content[..header_pos];
+    // Splice from the header's line start so an indented header's leading
+    // whitespace is replaced along with it, not left glued to the new body.
+    let before = &content[..line_start_of(&content, header_pos)];
     let after = &content[next..];
     let separator = if after.is_empty() { "" } else { eol };
 
@@ -240,7 +247,7 @@ pub fn delete_section(path: &Path, section_name: &str) -> std::io::Result<()> {
     };
     let next = next_section_start(&content, header_pos + header.len()).unwrap_or(content.len());
     let mut out = String::with_capacity(content.len());
-    out.push_str(&content[..header_pos]);
+    out.push_str(&content[..line_start_of(&content, header_pos)]);
     out.push_str(&content[next..]);
     let tidied = out
         .replace("\r\n\r\n\r\n", "\r\n\r\n")
@@ -273,33 +280,50 @@ fn line_starts_with_key(line: &str, key: &str) -> bool {
     r.starts_with('=')
 }
 
-/// Byte offset of the line that equals `header` (case-insensitive, matching
-/// the lookup semantics of `read_section`).
+/// Byte offset of the `[` of the line that equals `header` (case-insensitive
+/// and whitespace-trimmed, matching the lookup semantics of `read_all` — an
+/// indented or trailing-space header is still that section, so the writers
+/// must find it where the reader does).
 fn find_section_header(content: &str, header: &str) -> Option<usize> {
     let mut offset = 0;
     for line in content.split_inclusive('\n') {
-        let trimmed = line.trim_end_matches(['\r', '\n']);
-        if trimmed.eq_ignore_ascii_case(header) {
-            return Some(offset);
+        if line.trim().eq_ignore_ascii_case(header) {
+            // Point at the `[` itself so splicers (rename_section) can swap
+            // exactly `[name]` regardless of indentation.
+            return Some(offset + (line.len() - line.trim_start().len()));
         }
         offset += line.len();
     }
     None
 }
 
+/// Byte offset of the first line at/after `from` that opens a new section.
+/// Tolerates leading blanks/tabs for the same reason as `find_section_header`;
+/// returns the line start (indent included) so section-boundary splices keep
+/// the next section's own line intact.
 fn next_section_start(content: &str, from: usize) -> Option<usize> {
     let bytes = content.as_bytes();
     let mut i = from;
     while i < bytes.len() {
         if bytes[i] == b'\n' {
             let line_start = i + 1;
-            if bytes.get(line_start) == Some(&b'[') {
+            let mut j = line_start;
+            while matches!(bytes.get(j), Some(b' ' | b'\t')) {
+                j += 1;
+            }
+            if bytes.get(j) == Some(&b'[') {
                 return Some(line_start);
             }
         }
         i += 1;
     }
     None
+}
+
+/// Start of the line containing byte offset `pos` — used to widen a section
+/// splice back over the header's indentation.
+fn line_start_of(content: &str, pos: usize) -> usize {
+    content[..pos].rfind('\n').map(|p| p + 1).unwrap_or(0)
 }
 
 /// The file's line-ending style: LF only when the content has newlines and no
@@ -492,5 +516,33 @@ mod tests {
         // Deleting a missing section (or from a missing file) is a no-op.
         delete_section(&path, "nope").unwrap();
         delete_section(Path::new("does/not/exist.ini"), "a").unwrap();
+    }
+
+    // The reader trims each line before the `[` check, so a hand-indented
+    // header IS a section — the writers' boundary scan must honor the same
+    // rule or a neighbouring rewrite silently swallows it.
+    #[test]
+    fn writers_respect_indented_section_headers() {
+        let (_d, path) = ini_file("[a]\r\nk = 1\r\n  [b]\r\nk = 2\r\n");
+
+        // Rewriting [a] must stop at the indented [b], not absorb it.
+        replace_section(&path, "a", "[a]\r\nk = 9\r\n").unwrap();
+        assert_eq!(read_section(&path, "a")["k"], "9");
+        assert_eq!(read_section(&path, "b")["k"], "2");
+
+        // A key appended to [a] must land in [a], not fall through into [b].
+        replace_key(&path, "a", "extra", "3").unwrap();
+        assert_eq!(read_section(&path, "a")["extra"], "3");
+        assert!(!read_section(&path, "b").contains_key("extra"));
+
+        // The indented header itself is addressable...
+        replace_section(&path, "b", "[b]\r\nk = 7\r\n").unwrap();
+        assert_eq!(read_section(&path, "b")["k"], "7");
+
+        // ...and deleting [a] leaves [b] intact.
+        delete_section(&path, "a").unwrap();
+        let sections = read_all(&path);
+        assert_eq!(sections.len(), 1);
+        assert_eq!(sections[0].id, "b");
     }
 }

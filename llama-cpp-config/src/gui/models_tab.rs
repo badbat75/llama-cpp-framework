@@ -85,6 +85,9 @@ pub(super) fn wire(app: &AppWindow, state: &Rc<RefCell<State>>) {
             match presets::delete(id.as_str()) {
                 Ok(()) => {
                     set_status(&app, format!("Deleted [{id}]"), false);
+                    // Drop the id from opencode.json too, or OpenCode keeps
+                    // offering a model llama-server no longer knows.
+                    sync_opencode_after_preset_change(&app, id.as_str(), None);
                     // Not preset_written(): after a delete we clear the selection
                     // and show an empty editor, so the file/integration refreshes
                     // must run AFTER the form is blanked, not against the neighbour
@@ -196,6 +199,12 @@ pub(super) fn wire(app: &AppWindow, state: &Rc<RefCell<State>>) {
                 match presets::rename(old_id.as_str(), new_id.as_str()) {
                     Ok(()) => {
                         set_status(&app, format!("Renamed [{old_id}] -> [{new_id}]"), false);
+                        // Carry an exposed opencode.json model over to the new id.
+                        sync_opencode_after_preset_change(
+                            &app,
+                            old_id.as_str(),
+                            Some(new_id.as_str()),
+                        );
                         preset_written(&app, &state, Some(new_id.as_str()));
                     }
                     Err(e) => set_status(&app, format!("Rename failed: {e}"), true),

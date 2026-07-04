@@ -51,10 +51,12 @@ pub struct ServerConfig {
     pub tensor_split: Option<String>,
 }
 
+/// Default ModelsDir when server.ini leaves it unset. ModelsDir is the *root*
+/// the four fixed subfolders hang off (models\, mmprojs\, mtps\, dflashs\ —
+/// see `model_scan`), so this is a bare `~\.llama.cpp`, not `…\models`.
 pub fn default_models_dir() -> String {
     paths::home_dir()
         .join(".llama.cpp")
-        .join("models")
         .to_string_lossy()
         .into_owned()
 }
@@ -147,9 +149,9 @@ pub fn save(cfg: &ServerConfig) -> io::Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
-    if !models_dir.is_empty() {
-        let _ = fs::create_dir_all(&models_dir);
-    }
+    // models_dir_or_default() never returns blank (it falls back to the
+    // home-derived default), so this is unconditionally safe to create.
+    let _ = fs::create_dir_all(&models_dir);
     ini::atomic_write(&path, &render(cfg))
 }
 
@@ -177,7 +179,7 @@ fn render(cfg: &ServerConfig) -> String {
         cfg.cache_reuse,
         "CacheReuse",
         "; CacheReuse = 256  ; minimum chunk size for prompt cache reuse (--cache-reuse)",
-        |_| true,
+        |n| n > 0,
     );
     let threads_batch_line = int_line_or_hint(
         cfg.threads_batch,
@@ -311,6 +313,7 @@ mod tests {
     fn not_worth_writing_values_collapse_to_hints() {
         let cfg = ServerConfig {
             threads: Some(0),
+            cache_reuse: Some(-3),
             threads_batch: Some(-4),
             models_max: Some(1),
             device: Some("   ".into()),
@@ -318,6 +321,10 @@ mod tests {
         };
         let reloaded = round_trip(&cfg);
         assert_eq!(reloaded.threads, None, "threads <= 0 is auto");
+        assert_eq!(
+            reloaded.cache_reuse, None,
+            "cache_reuse <= 0 clears the override (same rule as the CLI set)"
+        );
         assert_eq!(reloaded.threads_batch, None, "threads_batch <= 0 is auto");
         assert_eq!(reloaded.models_max, None, "models_max == 1 is the default");
         assert_eq!(reloaded.device, None, "blank device is unset");

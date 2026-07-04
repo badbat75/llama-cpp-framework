@@ -11,7 +11,7 @@
 //! cache the callbacks share via `Rc<RefCell<…>>`: the loaded presets vector,
 //! the new-preset dialog's model scan, and the draft dropdown's (value, spec)
 //! rows. (The GPU-device probe result is cached in `devices::probed()` — it is
-//! process-wide, set once from the probe thread.)
+//! process-wide, written by the probe thread at startup and on Refresh/F5.)
 //!
 //! ## Helper verb taxonomy (so a grep lands in the right family)
 //! - `load_*`            : server.ini ↔ UI (through `server_form::config_to_form`
@@ -27,8 +27,9 @@
 //! - `apply_form`        : push a whole `PresetForm` + its baseline into `AppState`.
 //! - `populate_*`        : fill a dropdown's parallel option arrays in place
 //!   (`populate_bind_options` — the Server tab's bind-address list).
-//! - `start_server` / `stop_server_async` : the canonical run-control paths shared
-//!   by the Server tab and the tray, so both surfaces report a start/stop identically.
+//! - `start_server_async` / `stop_server_async` : the canonical run-control paths
+//!   shared by the Server tab and the tray, so both surfaces report a start/stop
+//!   identically; both run off the UI thread and drive a transitional flag.
 //! - `spawn_*`           : run a slow probe off the UI thread, then apply the
 //!   result via `invoke_from_event_loop` (`spawn_version_probe`, `spawn_device_probe`).
 //!
@@ -129,8 +130,6 @@ pub fn run() -> anyhow::Result<()> {
     }
 
     reload_all_from_disk(&app, &state, tray.as_weak());
-    spawn_version_probe(app.as_weak());
-    spawn_device_probe(app.as_weak());
 
     s.set_presets_path(SharedString::from(
         paths::presets_ini().to_string_lossy().into_owned(),
@@ -282,9 +281,11 @@ fn preset_summaries(presets: &[presets::Preset], filter: &str) -> Vec<PresetSumm
 }
 
 /// Seed / re-seed every disk-backed piece of the UI: server.ini, presets.ini,
-/// the ModelsDir scan, the integration state, and the live run status. The one
-/// home shared by `run()`'s startup seed and the Refresh button (`reload_all`),
-/// so a newly added disk-backed `refresh_*` hub is wired in exactly one place.
+/// the ModelsDir scan, the integration state, the live run status, and the
+/// llama-server version + device probes (the exe can change under us — e.g. a
+/// `02-build.ps1` rerun while the configurator is open). The one home shared by
+/// `run()`'s startup seed and the Refresh button (`reload_all`), so a newly
+/// added disk-backed `refresh_*` hub is wired in exactly one place.
 fn reload_all_from_disk(
     app: &AppWindow,
     state: &Rc<RefCell<State>>,
@@ -295,6 +296,8 @@ fn reload_all_from_disk(
     refresh_file_options(app, state);
     refresh_integrations(app);
     refresh_run_status(app.as_weak(), tray_weak, true);
+    spawn_version_probe(app.as_weak());
+    spawn_device_probe(app.as_weak());
 }
 
 /// Reload `presets.ini` into `state`, rebuild the (filtered) list model, then
@@ -392,18 +395,18 @@ fn refresh_device_options(app: &AppWindow) {
     let form = s.get_form();
     let server_device = s.get_server_form().device;
 
-    let (lbl, val, idx) = device_options(devs, server_device.as_str(), "(all detected devices)");
+    let (lbl, val, idx) = device_options(&devs, server_device.as_str(), "(all detected devices)");
     s.set_server_dev_labels(lbl);
     s.set_server_dev_values(val);
     s.set_server_dev_index(idx);
 
-    let (lbl, val, idx) = device_options(devs, form.device.as_str(), "(server default)");
+    let (lbl, val, idx) = device_options(&devs, form.device.as_str(), "(server default)");
     s.set_preset_dev_labels(lbl);
     s.set_preset_dev_values(val);
     s.set_preset_dev_index(idx);
 
     let (lbl, val, idx) =
-        device_options(devs, form.device_draft.as_str(), "(auto / same as model)");
+        device_options(&devs, form.device_draft.as_str(), "(auto / same as model)");
     s.set_preset_draft_dev_labels(lbl);
     s.set_preset_draft_dev_values(val);
     s.set_preset_draft_dev_index(idx);
@@ -480,33 +483,63 @@ fn spawn_device_probe(app_weak: slint::Weak<AppWindow>) {
     });
 }
 
-/// Start llama-server, then reflect the outcome on both the window and the tray.
+/// Superseding counter for run-state probes: bumped on the UI thread whenever a
+/// start/stop transition begins or lands. `refresh_run_status` stamps its
+/// sample with the generation it saw and its apply closure discards a stale
+/// one — otherwise a slow periodic `tasklist` sampled *before* a transition
+/// could apply *after* it and flip the footer/tray back for up to a tick.
+static RUN_STATUS_GEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+fn bump_run_status_gen() {
+    RUN_STATUS_GEN.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+}
+
+/// Start llama-server without blocking the UI thread (`runstate::start` opens
+/// with a `tasklist` probe — hundreds of ms — before the spawn itself) and
+/// drive the transitional "Starting…" state, mirroring `stop_server_async`.
 /// The single canonical start path shared by the Server tab's Start button and
 /// the tray menu, so a failed start reports identically from either surface. On
 /// error we set the footer's error flag directly rather than calling
 /// `refresh_run_status` (which clears that flag as it re-probes) — the mistake
 /// the two hand-rolled copies used to make differently.
-fn start_server(app_weak: slint::Weak<AppWindow>, tray_weak: slint::Weak<AppTray>) {
-    match runstate::start() {
-        Ok(()) => {
-            if let Some(app) = app_weak.upgrade() {
-                set_status(&app, "llama-server started.".into(), false);
-            }
-            // Confirm the run state (and clear any stale error) off the UI thread.
-            refresh_run_status(app_weak, tray_weak, true);
+fn start_server_async(app_weak: slint::Weak<AppWindow>, tray_weak: slint::Weak<AppTray>) {
+    if let Some(app) = app_weak.upgrade() {
+        let s = app.global::<AppState>();
+        // Re-entry guard: the window's buttons hide during a transition, but
+        // the tray menu doesn't — a second click mid-transition is a no-op.
+        if s.get_server_starting() || s.get_server_stopping() {
+            return;
         }
-        Err(e) => {
+        s.set_server_starting(true);
+        set_status(&app, "Starting llama-server…".into(), false);
+    }
+    bump_run_status_gen();
+    std::thread::spawn(move || {
+        let result = runstate::start();
+        slint::invoke_from_event_loop(move || {
+            bump_run_status_gen();
+            let running = result.is_ok();
             if let Some(app) = app_weak.upgrade() {
                 let s = app.global::<AppState>();
-                set_status(&app, format!("Failed to start: {e}"), true);
-                s.set_server_status_is_error(true);
-                s.set_server_running(false);
+                s.set_server_starting(false);
+                s.set_server_running(running);
+                match &result {
+                    Ok(()) => {
+                        s.set_server_status_is_error(false);
+                        set_status(&app, "llama-server started.".into(), false);
+                    }
+                    Err(e) => {
+                        s.set_server_status_is_error(true);
+                        set_status(&app, format!("Failed to start: {e}"), true);
+                    }
+                }
             }
             if let Some(tray) = tray_weak.upgrade() {
-                tray.set_server_running(false);
+                tray.set_server_running(running);
             }
-        }
-    }
+        })
+        .ok();
+    });
 }
 
 /// Trigger a stop and drive the transitional "Stopping…" state.
@@ -521,6 +554,7 @@ fn stop_server_async(app_weak: slint::Weak<AppWindow>, tray_weak: slint::Weak<Ap
         app.global::<AppState>().set_server_stopping(true);
         set_status(&app, "Stopping llama-server…".into(), false);
     }
+    bump_run_status_gen();
     std::thread::spawn(move || {
         runstate::stop();
         let mut running = runstate::is_running();
@@ -533,6 +567,7 @@ fn stop_server_async(app_weak: slint::Weak<AppWindow>, tray_weak: slint::Weak<Ap
             running = runstate::is_running();
         }
         slint::invoke_from_event_loop(move || {
+            bump_run_status_gen();
             if let Some(app) = app_weak.upgrade() {
                 let s = app.global::<AppState>();
                 s.set_server_stopping(false);
@@ -570,8 +605,14 @@ fn refresh_run_status(
     clear_error: bool,
 ) {
     std::thread::spawn(move || {
+        let sampled_gen = RUN_STATUS_GEN.load(std::sync::atomic::Ordering::SeqCst);
         let running = runstate::is_running();
         slint::invoke_from_event_loop(move || {
+            // A start/stop transition began or landed after this sample was
+            // taken — its result is authoritative, ours is stale. Drop it.
+            if RUN_STATUS_GEN.load(std::sync::atomic::Ordering::SeqCst) != sampled_gen {
+                return;
+            }
             if let Some(app) = app_weak.upgrade() {
                 let s = app.global::<AppState>();
                 s.set_server_running(running);
@@ -605,10 +646,7 @@ fn apply_form(app: &AppWindow, form: PresetForm) {
 /// server.ini (port/host) and presets.ini. Call after any change to those.
 fn refresh_integrations(app: &AppWindow) {
     let s = app.global::<AppState>();
-    let cfg = server_cfg::load();
-    // client_host, not the bind hostname: 0.0.0.0 is a listen address — a
-    // client pointed at it gets a connection error, so map it to localhost.
-    let base_url = format!("http://{}:{}/v1", cfg.client_host(), cfg.port_or_default());
+    let base_url = opencode_base_url(&server_cfg::load());
 
     let all_presets = presets::load_all();
     let example = all_presets.first().map(|p| p.id.as_str());
@@ -628,6 +666,38 @@ fn refresh_integrations(app: &AppWindow) {
         })
         .collect();
     s.set_integration_models(model(items));
+}
+
+/// The opencode provider base URL derived from the SAVED server.ini — the
+/// client_host, not the bind hostname: 0.0.0.0 is a listen address, a client
+/// pointed at it gets a connection error, so it maps to localhost.
+fn opencode_base_url(cfg: &server_cfg::ServerConfig) -> String {
+    format!("http://{}:{}/v1", cfg.client_host(), cfg.port_or_default())
+}
+
+/// Keep opencode.json in step with a preset rename (`new_id = Some`) or delete
+/// (`None`): when the old id is exposed as a model there, rewrite the models
+/// list with it renamed / dropped — otherwise OpenCode keeps offering an id
+/// `llama-server --models-preset` no longer knows, and the stale entry isn't
+/// even visible in the Integrations tab (its rows are built from presets). A
+/// no-op when the id wasn't exposed, so this can never create the provider
+/// section as a side effect. A failure only flags the footer — the file
+/// self-heals on the next Integrations save.
+fn sync_opencode_after_preset_change(app: &AppWindow, old_id: &str, new_id: Option<&str>) {
+    let ids = integrations::opencode_model_ids();
+    if !ids.iter().any(|i| i == old_id) {
+        return;
+    }
+    let checked: Vec<String> = ids
+        .iter()
+        .filter(|i| i.as_str() != old_id)
+        .cloned()
+        .chain(new_id.map(str::to_string))
+        .collect();
+    let base_url = opencode_base_url(&server_cfg::load());
+    if let Err(e) = integrations::save_opencode_models(&checked, &base_url) {
+        set_status(app, format!("opencode.json update failed: {e}"), true);
+    }
 }
 
 // Pure-struct tests (PresetSummary is a plain generated struct — no Slint

@@ -29,6 +29,10 @@ export global AppState {
     // running (a forced kill lingers a moment while the GPU context unwinds).
     // Held true by Rust until `tasklist` confirms the process is gone.
     in-out property <bool> server_stopping: false;
+    // Transitional flag: Start has been triggered but the launch (which opens
+    // with a tasklist probe) hasn't completed — held true by Rust while the
+    // start runs off the UI thread, mirroring server_stopping.
+    in-out property <bool> server_starting: false;
     in-out property <bool> server_status_is_error: false;
     in-out property <string> server_version: "";
     in-out property <string> server_command_line: "";

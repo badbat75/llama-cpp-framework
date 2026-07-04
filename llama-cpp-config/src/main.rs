@@ -34,6 +34,15 @@ mod tests;
 use clap::Parser;
 
 fn main() {
+    // Attach to the parent console (if any) BEFORE branching: the release
+    // binary is windows_subsystem = "windows", so without this a GUI-launch
+    // failure's eprintln! would be silently discarded when run from a
+    // terminal. No-op when launched from Explorer.
+    #[cfg(all(not(debug_assertions), target_os = "windows"))]
+    unsafe {
+        attach_parent_console();
+    }
+
     let argv: Vec<String> = std::env::args().collect();
     if argv.len() <= 1 {
         if let Err(e) = gui::run() {
@@ -41,11 +50,6 @@ fn main() {
             std::process::exit(1);
         }
         return;
-    }
-
-    #[cfg(all(not(debug_assertions), target_os = "windows"))]
-    unsafe {
-        attach_parent_console();
     }
 
     let cli = cli::Cli::parse();

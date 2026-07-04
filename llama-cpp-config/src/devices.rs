@@ -2,7 +2,7 @@
 // so the GUI can offer a dropdown of the *actually available* backends
 // (CUDA0, Vulkan0, …) instead of a free-text field.
 
-use std::sync::OnceLock;
+use std::sync::RwLock;
 
 use crate::paths;
 
@@ -15,23 +15,23 @@ pub struct DeviceOption {
     pub label: String,
 }
 
-/// The one-shot probe cache: `gui::spawn_device_probe` runs `list()` once at
-/// startup (a few hundred ms — it spawns llama-server) and parks the result
-/// here; the UI thread rebuilds its dropdowns from `probed()` without ever
-/// re-probing. A plain Rust cache instead of Slint properties because the
-/// device list is Rust-only data — no `.slint` file reads it.
-static PROBED: OnceLock<Vec<DeviceOption>> = OnceLock::new();
+/// The probe cache: `gui::spawn_device_probe` runs `list()` off the UI thread
+/// (a few hundred ms — it spawns llama-server) and parks the result here; the
+/// UI thread rebuilds its dropdowns from `probed()` without re-probing. A
+/// plain Rust cache instead of Slint properties because the device list is
+/// Rust-only data — no `.slint` file reads it.
+static PROBED: RwLock<Vec<DeviceOption>> = RwLock::new(Vec::new());
 
-/// Publish the startup probe's result (later calls are ignored — the list is
-/// probed once per process).
+/// Publish a probe's result. Replaces the previous list — the GUI re-probes
+/// on Refresh/F5, e.g. after llama.cpp was rebuilt with a different backend.
 pub fn set_probed(devs: Vec<DeviceOption>) {
-    let _ = PROBED.set(devs);
+    *PROBED.write().unwrap() = devs;
 }
 
-/// The cached probe result; empty until the startup probe lands (the dropdowns
+/// The cached probe result; empty until the first probe lands (the dropdowns
 /// then show just the "(default)" entry plus any custom value).
-pub fn probed() -> &'static [DeviceOption] {
-    PROBED.get().map(Vec::as_slice).unwrap_or(&[])
+pub fn probed() -> Vec<DeviceOption> {
+    PROBED.read().unwrap().clone()
 }
 
 /// Spawn `llama-server --list-devices` and return the parsed device list.

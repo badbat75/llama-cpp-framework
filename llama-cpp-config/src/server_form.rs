@@ -65,7 +65,9 @@ pub fn form_to_config(f: &ServerForm) -> server_cfg::ServerConfig {
         } else {
             Some(f.threads)
         },
-        cache_reuse: ini::parse_int(f.cache_reuse.as_str()),
+        // Same "0 or negative clears the override" rule as the CLI's set and
+        // save()'s keep predicate — all three legs must agree.
+        cache_reuse: ini::parse_int(f.cache_reuse.as_str()).filter(|v| *v > 0),
         threads_batch: if f.threads_batch_auto {
             None
         } else {
