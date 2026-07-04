@@ -1,8 +1,10 @@
 // server.ini schema and IO for llama.cpp-framework.
 //
-// `save()` rewrites the whole `[Server]` section from a `ServerConfig`. Unset
-// optional fields are emitted as commented `; Key = example  ; help` hint lines
-// (never omitted) so the file self-documents every available knob.
+// `save()` rewrites the whole FILE from a `ServerConfig` (server.ini is fully
+// generated — unlike presets.ini, hand-added content outside the template does
+// not survive a save). Unset optional fields are emitted as commented
+// `; Key = example  ; help` hint lines (never omitted) so the file
+// self-documents every available knob.
 //
 // ADD A SERVER FIELD — the mirror of the preset recipe (top of presets.rs), one
 // tier smaller but reaching the CLI (the server has a per-field `set`). Trace an
@@ -123,13 +125,13 @@ pub fn load() -> ServerConfig {
 fn from_keys(keys: &std::collections::BTreeMap<String, String>) -> ServerConfig {
     ServerConfig {
         port: keys.get("Port").and_then(|v| ini::parse_int(v)),
-        hostname: keys.get("Hostname").cloned(),
+        hostname: opt_nonblank(keys.get("Hostname").cloned()),
         mlock: keys.get("Mlock").and_then(|v| ini::parse_bool(v)),
         threads: keys.get("Threads").and_then(|v| ini::parse_int(v)),
         cache_reuse: keys.get("CacheReuse").and_then(|v| ini::parse_int(v)),
         threads_batch: keys.get("ThreadsBatch").and_then(|v| ini::parse_int(v)),
         models_max: keys.get("ModelsMax").and_then(|v| ini::parse_int(v)),
-        models_dir: keys.get("ModelsDir").cloned(),
+        models_dir: opt_nonblank(keys.get("ModelsDir").cloned()),
         device: opt_nonblank(keys.get("Device").cloned()),
         split_mode: opt_nonblank(keys.get("SplitMode").cloned()),
         tensor_split: opt_nonblank(keys.get("TensorSplit").cloned()),
@@ -137,8 +139,10 @@ fn from_keys(keys: &std::collections::BTreeMap<String, String>) -> ServerConfig 
 }
 
 /// `Some(s)` unless `s` is blank (whitespace only), in which case `None`. The
-/// single home for the "blank means unset" rule the string fields (device /
-/// split-mode / tensor-split) share on both `load()` and the CLI `server set`.
+/// single home for the "blank means unset" rule EVERY optional string field
+/// shares on both `load()` and the CLI `server set` — a hand-edited
+/// `Hostname =` line must load as unset (falling back to the default), not as
+/// `Some("")`.
 pub fn opt_nonblank(s: Option<String>) -> Option<String> {
     s.filter(|v| !v.trim().is_empty())
 }

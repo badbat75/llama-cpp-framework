@@ -551,7 +551,15 @@ fn start_server_async(app_weak: slint::Weak<AppWindow>, tray_weak: slint::Weak<A
 /// process can't pin the UI in "Stopping…" forever.
 fn stop_server_async(app_weak: slint::Weak<AppWindow>, tray_weak: slint::Weak<AppTray>) {
     if let Some(app) = app_weak.upgrade() {
-        app.global::<AppState>().set_server_stopping(true);
+        let s = app.global::<AppState>();
+        // Same re-entry guard as start: the tray menu keeps offering "Stop
+        // server" for the whole (up to 15 s) stop wait — without it, each
+        // extra click spawns another taskkill + wait thread and double-bumps
+        // the status generation.
+        if s.get_server_starting() || s.get_server_stopping() {
+            return;
+        }
+        s.set_server_stopping(true);
         set_status(&app, "Stopping llama-server…".into(), false);
     }
     bump_run_status_gen();

@@ -225,7 +225,7 @@ pub(crate) fn unique_id(base: &str, existing: &[String]) -> String {
     (2..)
         .map(|n| format!("{base}-{n}"))
         .find(|cand| !existing.iter().any(|e| e == cand))
-        .unwrap_or_else(|| base.to_string())
+        .expect("(2..) is unbounded, so find always yields")
 }
 
 pub fn make_id(model_path: &str) -> String {

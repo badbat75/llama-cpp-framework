@@ -9,9 +9,13 @@
 // - KEY lookup is asymmetric by design: reads are exact-case (`BTreeMap`
 //   lookups like `keys.get("Port")`), while replace_key matches an existing
 //   key case-insensitively and rewrites the line in canonical case.
-// - Values are TRIMMED on parse, and an inline `; note` / `# note` tail is
-//   stripped only when the marker has whitespace on BOTH sides ("a;b" stays a
-//   value) — writers must therefore emit trimmed values or break round-trips.
+// - Values are TRIMMED on parse, and everything from the FIRST `;` or `#` on
+//   is stripped as an inline comment — spaced or not ("a;b" reads as "a").
+//   This mirrors llama-server's own preset parser (common/preset.cpp PEG:
+//   `eol-start ::= ws ([;#] / newline / EOF)`), which presets.ini must obey:
+//   `;`/`#` simply cannot occur inside a value, and a writer that emits one
+//   produces a value llama-server would truncate anyway. Writers must also
+//   emit trimmed values or break round-trips.
 // - Writers preserve the file's existing line endings (per line on
 //   replace_key's replace path, detected once everywhere else — section
 //   bodies arrive CRLF from the renderers and are converted to the file's
@@ -21,7 +25,6 @@
 // - `parse_int` / `parse_float` / `parse_bool` are the shared lenient scalar
 //   parsers ("true"/"false" only for bools; anything else reads as unset).
 
-use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
@@ -63,7 +66,7 @@ pub fn read_all(path: &Path) -> Vec<Section> {
         if let Some(eq) = t.find('=') {
             let key = t[..eq].trim().to_string();
             let val = t[eq + 1..].trim();
-            s.keys.insert(key, strip_inline_comment(val).into_owned());
+            s.keys.insert(key, strip_inline_comment(val).to_string());
         }
     }
     if let Some(s) = cur {
@@ -72,18 +75,13 @@ pub fn read_all(path: &Path) -> Vec<Section> {
     out
 }
 
-fn strip_inline_comment(val: &str) -> Cow<'_, str> {
-    let mut prev_was_space = false;
-    for (i, c) in val.char_indices() {
-        if (c == ';' || c == '#') && prev_was_space {
-            let rest = &val[i + c.len_utf8()..];
-            if rest.chars().next().is_some_and(char::is_whitespace) {
-                return Cow::Owned(val[..i].trim_end().to_string());
-            }
-        }
-        prev_was_space = c.is_whitespace();
-    }
-    Cow::Borrowed(val.trim_end())
+// Everything from the first `;` or `#` is comment, spaced or not — the exact
+// rule of llama-server's preset PEG (see the header contract). Being MORE
+// lenient here (e.g. requiring whitespace around the marker) would make the
+// GUI show a value llama-server truncates.
+fn strip_inline_comment(val: &str) -> &str {
+    let end = val.find([';', '#']).unwrap_or(val.len());
+    val[..end].trim_end()
 }
 
 /// Read only the named section's keys, or empty if not present.
@@ -398,9 +396,11 @@ mod tests {
     fn strip_inline_comment_cases() {
         assert_eq!(strip_inline_comment("8080 ; note"), "8080");
         assert_eq!(strip_inline_comment("8080 # note"), "8080");
-        // No whitespace around the marker → part of the value.
-        assert_eq!(strip_inline_comment("a;b"), "a;b");
-        assert_eq!(strip_inline_comment("x ;y"), "x ;y");
+        // llama-server's PEG cuts at the FIRST marker even unspaced — we must
+        // read exactly what it would read, not keep a longer value it won't.
+        assert_eq!(strip_inline_comment("a;b"), "a");
+        assert_eq!(strip_inline_comment("x ;y"), "x");
+        assert_eq!(strip_inline_comment("q8#0"), "q8");
         assert_eq!(strip_inline_comment("plain  "), "plain");
     }
 

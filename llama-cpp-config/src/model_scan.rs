@@ -124,11 +124,15 @@ pub(crate) fn split_shard_suffix(stem: &str) -> Option<(&str, &str)> {
 }
 
 fn is_multi_shard_trailer(name: &str) -> bool {
-    // Match -NNNNN-of-NNNNN.gguf where the first number isn't 00001
-    let stem = name
-        .strip_suffix(".gguf")
-        .or_else(|| name.strip_suffix(".GGUF"))
-        .unwrap_or(name);
+    // Match -NNNNN-of-NNNNN.gguf where the first number isn't 00001. The
+    // extension strip must be case-INsensitive like the scan's extension
+    // filter, or a `.Gguf` non-first shard slips into the dropdown.
+    let stem = match name.len().checked_sub(5) {
+        Some(cut) if name.is_char_boundary(cut) && name[cut..].eq_ignore_ascii_case(".gguf") => {
+            &name[..cut]
+        }
+        _ => name,
+    };
     matches!(split_shard_suffix(stem), Some((_, counter)) if counter != "00001")
 }
 
@@ -349,5 +353,9 @@ mod tests {
         assert!(is_multi_shard_trailer("model-00002-of-00003.gguf"));
         assert!(!is_multi_shard_trailer("model-00001-of-00003.gguf"));
         assert!(!is_multi_shard_trailer("model.gguf"));
+        // The extension strip is case-insensitive like the scan's filter —
+        // a mixed-case shard must not slip past the gate.
+        assert!(is_multi_shard_trailer("model-00002-of-00003.Gguf"));
+        assert!(is_multi_shard_trailer("model-00002-of-00003.GGUF"));
     }
 }

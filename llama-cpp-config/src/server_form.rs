@@ -7,16 +7,9 @@
 // lives at the top of server_cfg.rs) — not the GUI wiring. Numerics ride as
 // blank-able strings, like the preset form.
 
-use slint::SharedString;
-
+use crate::form::txt;
 use crate::gui::ServerForm;
 use crate::{ini, server_cfg};
-
-/// An optional integer as its decimal string, or "" when unset — the blank-able
-/// text a LineEdit shows. Pairs with `ini::parse_int` on the way back.
-fn num(v: Option<i32>) -> SharedString {
-    v.map(|n| n.to_string()).unwrap_or_default().into()
-}
 
 /// `ServerConfig` → the editable form. Materializes the display defaults the UI
 /// needs for always-present controls (port "8080", the models dir, and the
@@ -33,10 +26,10 @@ pub fn config_to_form(cfg: &server_cfg::ServerConfig) -> ServerForm {
         // Thread counts are auto-flagged sliders: unset ⇒ "auto" (omit the flag).
         threads: cfg.threads.unwrap_or(0),
         threads_auto: cfg.threads.is_none(),
-        cache_reuse: num(cfg.cache_reuse),
+        cache_reuse: txt(cfg.cache_reuse),
         threads_batch: cfg.threads_batch.unwrap_or(0),
         threads_batch_auto: cfg.threads_batch.is_none(),
-        models_max: num(cfg.models_max),
+        models_max: txt(cfg.models_max),
         // Same "blank ⇒ default dir" rule as save()/start(), so a hand-edited
         // blank ModelsDir shows the default it will actually resolve to.
         models_dir: cfg.models_dir_or_default().into(),

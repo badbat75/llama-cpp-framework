@@ -14,8 +14,11 @@
 //! pushes a fresh model value and asserts the widget followed it.
 //!
 //! Coverage is one case per editable-widget *kind*, since the "overwritten
-//! binding" rule is per-kind, not per-field: LineEdit (`text`), SpinBox (`value`)
-//! and CheckBox (`checked`). ComboBox is out of scope — its only accessibility
+//! binding" rule is per-kind, not per-field: LineEdit (`text`), SpinBox (`value`),
+//! CheckBox (`checked`) and Slider (`value`, via `AutoSlider` — the std Slider
+//! imperatively self-assigns `value` on every drag/set, so it can never hold a
+//! plain one-way binding; the AutoSlider's `changed shown` push is what this
+//! test pins). ComboBox is out of scope — its only accessibility
 //! action is "expand" (open the popup); changing the selection needs real popup
 //! interaction under an event loop, which this no-event-loop harness can't drive.
 //! `SegmentedControl` (the reasoning + reason-format pickers and the draft
@@ -155,6 +158,33 @@ fn editable_widgets_track_model_after_edit() {
         |v| set_server_form(&st, |f| f.mlock = v == "true"),
         "true",
         "true",
+    );
+
+    // Slider — the thumb inside the CPU-threads AutoSlider. The std Slider
+    // self-assigns `value` on every user set (drag, keys, this accessibility
+    // set-value), which killed the component's old one-way `value:` binding —
+    // the v1.2.9 stale-thumb bug. External updates now reach it through
+    // AutoSlider's `changed shown` push; this is the case that pins it.
+    // The slider reports its accessible value as a float — normalize to int.
+    // The push rides a `changed` callback, which Slint dispatches on the next
+    // event-loop turn — mock one after each model write or the read races it.
+    set_server_form(&st, |f| f.threads_auto = false);
+    assert_reload_reaches_widget(
+        &by_label(&app, "server-threads"),
+        "Slider server_form.threads",
+        |e| {
+            value_of(e)
+                .parse::<f64>()
+                .map(|v| (v.round() as i64).to_string())
+                .unwrap_or_default()
+        },
+        |e| e.set_accessible_value("20"),
+        |v| {
+            set_server_form(&st, |f| f.threads = v.parse().expect("int"));
+            itest::mock_elapsed_time(std::time::Duration::from_millis(1));
+        },
+        "8",
+        "16",
     );
 
     // ── Models tab ───────────────────────────────────────────────────

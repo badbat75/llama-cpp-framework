@@ -1,3 +1,12 @@
+// Build script, three jobs:
+// - ICO → PNG ×2: decode resources/llama.ico's largest frame and emit the
+//   plain tray icon plus a green-dot "running" variant into OUT_DIR, where
+//   the Slint @image-url includes resolve them.
+// - Compile the .slint UI, emitting element debug info for NON-release
+//   profiles only — the e2e tests (src/tests/) need it to find widgets, so
+//   they must run under `cargo test`, not `--release`.
+// - Windows only: embed the ICO as the EXE resource (winresource).
+
 use std::path::Path;
 
 fn main() {

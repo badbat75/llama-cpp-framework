@@ -29,7 +29,8 @@ fn num_or(val: Option<i32>, default: Option<i32>) -> SharedString {
 /// An optional value (no schema default) as its decimal string, or "" when unset
 /// — the blank-able text a LineEdit shows for the "blank = leave unset" sampling
 /// overrides. Pairs with `ini::parse_int` / `parse_float` on the way back.
-fn txt<T: ToString>(v: Option<T>) -> SharedString {
+// Also used by the server-side mirror (server_form.rs) — one home for the rule.
+pub(crate) fn txt<T: ToString>(v: Option<T>) -> SharedString {
     v.map(|n| n.to_string()).unwrap_or_default().into()
 }
 
@@ -128,7 +129,10 @@ pub fn form_to_preset(f: &PresetForm) -> presets::Preset {
         cache_type_k: f.cache_type_k.to_string(),
         cache_type_v: f.cache_type_v.to_string(),
         flash_attn: Some(f.flash_attn),
-        cache_ram: ini::parse_int(f.cache_ram.as_str()).filter(|v| *v > 0),
+        // Any integer is meaningful to --cache-ram (0 disables, -1 = no
+        // limit), matching the hint and `Preset::from_keys` — only blank/
+        // non-numeric collapses to None.
+        cache_ram: ini::parse_int(f.cache_ram.as_str()),
         jinja: Some(f.jinja),
         reasoning: f.reasoning.to_string(),
         reasoning_format: f.reasoning_format.to_string(),
@@ -202,5 +206,19 @@ mod tests {
             chat_template_kwargs: r#"{"enable_thinking":true}"#.into(),
         };
         assert_eq!(round_trip(&p), p);
+    }
+
+    // "0 disables, -1 = no limit" — the documented --cache-ram sentinels must
+    // survive the form leg (a `> 0` filter here once silently dropped them,
+    // falling back to llama-server's 8192 MiB default).
+    #[test]
+    fn cache_ram_sentinels_round_trip() {
+        for v in [0, -1] {
+            let p = Preset {
+                cache_ram: Some(v),
+                ..Preset::default()
+            };
+            assert_eq!(round_trip(&p).cache_ram, Some(v));
+        }
     }
 }

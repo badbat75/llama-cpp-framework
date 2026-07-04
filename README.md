@@ -11,6 +11,7 @@ PowerShell scripts to build and run [llama.cpp](https://github.com/ggerganov/lla
 - [Git](https://git-scm.com/)
 
 Installed/updated via winget by `00-install-prerequisites.ps1`:
+- [PowerShell 7+](https://github.com/PowerShell/PowerShell)
 - [OpenSSL](https://slproweb.com/products/Win32OpenSSL.html)
 - [NSIS](https://nsis.sourceforge.io/) (for installer packaging)
 
@@ -55,6 +56,7 @@ All build artifacts live under `build\` so a single `rm -rf build\` returns the 
 │   └── staging/            ← cmake --install staging area for NSIS
 ├── dist/                    ← final installer .exe
 ├── llama-cpp-config/        ← Rust GUI + CLI configurator (source)
+├── llama-cpp.nsi.template   ← NSIS installer template (placeholders filled by 03-package.ps1)
 ├── patches/                 ← checked-in build workarounds (HIP clang runtime wrapper)
 ├── resources/               ← llama.ico (installer + EXE icon)
 └── *.ps1                    ← top-level build/package scripts

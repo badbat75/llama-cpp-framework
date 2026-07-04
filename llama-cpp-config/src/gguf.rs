@@ -388,8 +388,17 @@ fn is_quant_token(t: &str) -> bool {
     b.len() == 2 && b[0] == b'q' && b[1].is_ascii_digit()
 }
 
+/// Number of DISTINCT tokens the two lists share. `family_tokens` doesn't
+/// dedup, and HF-style names often repeat the family (e.g. a label carrying
+/// the repo name twice) — counting duplicates would let a single shared token
+/// clear the "> 1 shared tokens" match threshold.
 fn token_overlap(a: &[String], b: &[String]) -> usize {
-    a.iter().filter(|t| b.contains(t)).count()
+    let bs: std::collections::HashSet<&str> = b.iter().map(String::as_str).collect();
+    a.iter()
+        .map(String::as_str)
+        .filter(|t| bs.contains(t))
+        .collect::<std::collections::HashSet<&str>>()
+        .len()
 }
 
 // ── Small helpers ────────────────────────────────────────────────────────
@@ -593,6 +602,18 @@ mod tests {
         assert!(!t
             .iter()
             .any(|x| x == "q4" || x == "k" || x == "m" || x == "gguf"));
+    }
+
+    // The "> 1 shared tokens" match threshold means DISTINCT tokens: a name
+    // repeating its family token (HF repo + file name both carrying it) must
+    // not clear the bar with a single real match.
+    #[test]
+    fn token_overlap_counts_distinct_tokens_only() {
+        let model = family_tokens("GLM-4.5-Air-GLM-4.5-Air-Q4_K_M.gguf");
+        let drafter = family_tokens("glm-dflash.gguf");
+        assert_eq!(token_overlap(&model, &drafter), 1);
+        let real = family_tokens("GLM-4.5-Air-DFlash.gguf");
+        assert!(token_overlap(&model, &real) > 1);
     }
 
     #[test]

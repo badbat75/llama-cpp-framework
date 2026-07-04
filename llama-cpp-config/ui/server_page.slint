@@ -74,6 +74,7 @@ export component ServerPage inherits ScrollView {
                     auto <=> AppState.server_form.threads_auto;
                     value <=> AppState.server_form.threads;
                     maximum: AppState.cpu_threads_max;
+                    slider-label: "server-threads";
                 }
             }
             LabeledField {

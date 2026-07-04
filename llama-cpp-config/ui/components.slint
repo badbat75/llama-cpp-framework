@@ -107,14 +107,20 @@ export component MappedComboBox inherits ComboBox {
 // the "count, or let llama.cpp decide" lever used for the layer-offload flags
 // (--n-gpu-layers, --n-cpu-moe) and the CPU-thread counts (--threads,
 // --threads-batch). `auto` (two-way) omits the flag and disables the slider;
-// `value` (two-way) is the count (a slider is display+`changed`, not an editable
-// two-way widget). `usable` gates the whole row on an external precondition
-// (e.g. "model is MoE").
+// `value` (two-way) is the count. The inner Slider's value is float and its
+// own drag handler self-assigns it, so it can't be bound two-way to the int
+// `value`: outward flows through `changed(v)`, inward through the
+// `changed shown` push below (a plain `value:` binding dies on the first
+// drag — the recurring stale-widget class). `usable` gates the whole row on
+// an external precondition (e.g. "model is MoE").
 export component AutoSlider inherits HorizontalLayout {
     in-out property <bool> auto;
     in-out property <int> value;
     in property <int> maximum;
     in property <bool> usable: true;
+    // Forwarded to the inner Slider's accessible-label so the e2e binding
+    // test (src/tests/ui_bindings.rs) can find one instance and drive it.
+    in property <string> slider-label;
     // The displayed count: the model value clamped to the slider range (a saved
     // 99 on a 48-layer model shows as 48). Shared by the slider and the readout.
     property <int> shown: Math.min(root.value, root.maximum);
@@ -125,13 +131,24 @@ export component AutoSlider inherits HorizontalLayout {
         enabled: root.usable;
         checked <=> root.auto;
     }
-    Slider {
+    sl := Slider {
         horizontal-stretch: 1;
+        accessible-label: root.slider-label;
         enabled: !root.auto && root.usable;
         minimum: 0;
         maximum: root.maximum;
         value: root.shown;
         changed(v) => { root.value = Math.round(v); }
+    }
+    // Keep the thumb in sync with external value changes (preset switch,
+    // Revert, GGUF-driven `maximum` change): the std Slider imperatively
+    // overwrites its `value` on every drag, which permanently discards the
+    // declarative init binding above — so updates must be pushed. The guard
+    // avoids re-entering while the drag itself round-trips through `shown`.
+    changed shown => {
+        if (sl.value != root.shown) {
+            sl.value = root.shown;
+        }
     }
     Text {
         width: 44px;
