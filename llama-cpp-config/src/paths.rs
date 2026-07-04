@@ -104,8 +104,28 @@ pub fn llama_server_exe() -> Option<PathBuf> {
     ];
     for c in &candidates {
         if c.exists() {
-            return c.canonicalize().ok().or_else(|| Some(c.clone()));
+            return Some(
+                c.canonicalize()
+                    .map(strip_extended_prefix)
+                    .unwrap_or_else(|_| c.clone()),
+            );
         }
     }
     None
+}
+
+/// Drop the `\\?\` extended-length prefix Windows' `canonicalize` prepends:
+/// the path is also *displayed* (the Command Line card renders it as the
+/// pasteable exe line), and some shells reject the prefix. UNC results
+/// (`\\?\UNC\…`) are left as-is — a bare strip would corrupt them.
+fn strip_extended_prefix(p: PathBuf) -> PathBuf {
+    #[cfg(windows)]
+    {
+        if let Some(rest) = p.to_str().and_then(|s| s.strip_prefix(r"\\?\")) {
+            if !rest.starts_with("UNC") {
+                return PathBuf::from(rest);
+            }
+        }
+    }
+    p
 }

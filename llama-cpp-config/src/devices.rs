@@ -49,16 +49,7 @@ pub fn list() -> Vec<DeviceOption> {
 
 fn run(exe: &std::path::Path) -> Option<String> {
     let output = crate::proc::run_hidden(exe, ["--list-devices"])?;
-    Some(combine(&output))
-}
-
-/// llama.cpp prints the list on stdout, but join stderr too so a future
-/// change of stream (or a backend banner) doesn't drop the entries.
-fn combine(output: &std::process::Output) -> String {
-    let mut s = String::from_utf8_lossy(&output.stdout).into_owned();
-    s.push('\n');
-    s.push_str(&String::from_utf8_lossy(&output.stderr));
-    s
+    Some(crate::proc::combined_output(&output))
 }
 
 /// Parse the `--list-devices` block. Each device is an indented line shaped

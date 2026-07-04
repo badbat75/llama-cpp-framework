@@ -1,9 +1,11 @@
 // Shared application state for the configurator.
 //
-// Every property and callback that the shell (app.slint) and the tab pages
-// (server_page / models_page / integrations_page) both touch lives here, in one
-// exported global, so each datum is declared ONCE instead of three times
-// (AppWindow field → forwarding binding → page field). Rust drives it via
+// Every property and callback that Rust drives — plus anything more than one
+// component reads — lives here, in one exported global, so each datum is
+// declared ONCE instead of three times (AppWindow field → forwarding binding →
+// page field). The tab pages are conditionally instantiated, so Rust cannot
+// reach a property declared on a page: a Rust-driven datum belongs here even
+// when a single page reads it. Rust drives the global via
 // `app.global::<AppState>()`; the pages read/write `AppState.<name>` directly.
 //
 // The tray (`AppTray` in app.slint) is a separate root and does NOT use this
@@ -62,18 +64,13 @@ export global AppState {
     in-out property <[string]> bind_values;
     in-out property <int> bind_index: 0;
 
-    // GPU-device dropdown triples (server-wide, per-preset model, per-preset
-    // draft), derived from the async `--list-devices` probe. The raw device
-    // list itself is Rust-only (`devices::probed()`), not published here.
+    // Server-wide GPU-device dropdown triple, derived from the async
+    // `--list-devices` probe. The raw device list itself is Rust-only
+    // (`devices::probed()`), not published here. The per-preset twins
+    // (model + draft device) live under "Models tab state" below.
     in-out property <[string]> server_dev_labels;
     in-out property <[string]> server_dev_values;
     in-out property <int> server_dev_index: 0;
-    in-out property <[string]> preset_dev_labels;
-    in-out property <[string]> preset_dev_values;
-    in-out property <int> preset_dev_index: 0;
-    in-out property <[string]> preset_draft_dev_labels;
-    in-out property <[string]> preset_draft_dev_values;
-    in-out property <int> preset_draft_dev_index: 0;
 
     // ── Models tab state ─────────────────────────────────────────────
     in-out property <[PresetSummary]> presets;
@@ -88,6 +85,16 @@ export global AppState {
     out property <bool> can_save_preset: selected_preset_index >= 0 && form.id != "" && preset_dirty;
     in-out property <string> presets_path: "";
     in-out property <string> presets_filter: "";
+
+    // Per-preset GPU-device dropdown triples (model device + draft device),
+    // fed from the same `devices::probed()` cache as the server-wide triple
+    // under "Server tab state" above.
+    in-out property <[string]> preset_dev_labels;
+    in-out property <[string]> preset_dev_values;
+    in-out property <int> preset_dev_index: 0;
+    in-out property <[string]> preset_draft_dev_labels;
+    in-out property <[string]> preset_draft_dev_values;
+    in-out property <int> preset_draft_dev_index: 0;
 
     // File-field dropdowns for model and mmproj
     in-out property <[string]> model_labels;
@@ -141,7 +148,6 @@ export global AppState {
     in-out property <bool> show_new_kind_picker: false;
     in-out property <string> new_dialog_source_id: "";
     in-out property <[string]> dialog_model_labels;
-    in-out property <[string]> dialog_model_values;
     in-out property <int> dialog_model_index: -1;
     in-out property <string> dialog_filter: "";
 

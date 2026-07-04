@@ -160,7 +160,7 @@ pub(super) fn wire(app: &AppWindow, state: &Rc<RefCell<State>>) {
                 return;
             };
             *pending_clone_base.borrow_mut() = None;
-            let Some(path) = picked_dialog_model_path(&app) else {
+            let Some(path) = picked_dialog_model_path(&app, &state) else {
                 set_status(&app, "Pick a model from the list first.".into(), true);
                 return;
             };
@@ -174,7 +174,7 @@ pub(super) fn wire(app: &AppWindow, state: &Rc<RefCell<State>>) {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
-            let Some(path) = picked_dialog_model_path(&app) else {
+            let Some(path) = picked_dialog_model_path(&app, &state) else {
                 set_status(&app, "Pick a model from the list first.".into(), true);
                 return;
             };
@@ -221,8 +221,7 @@ pub(super) fn wire(app: &AppWindow, state: &Rc<RefCell<State>>) {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
-            let st = state.borrow();
-            apply_dialog_models(&app, &st.dialog_models_all, q.as_str());
+            apply_dialog_models(&app, &state, q.as_str());
         });
     }
     // Model-info box + draft-pick policy fire only from the Models page
@@ -266,10 +265,9 @@ pub(super) fn wire(app: &AppWindow, state: &Rc<RefCell<State>>) {
     }
 }
 
-/// "All layers on GPU" sentinel for the --n-gpu-layers* flags: any value above
-/// a real block count. Mirrors `Options.all_layers` in ui/components.slint —
-/// keep the two in sync.
-const ALL_LAYERS: i32 = 99;
+// The "all layers on GPU" sentinel lives in form.rs next to the slider
+// fallbacks that share it (and its Slint mirror is test-asserted there).
+use crate::form::ALL_LAYERS;
 
 /// Apply a draft-picker selection to the form: set `model_draft` + `spec_type`
 /// from the picked row (MTP heads → draft-mtp, DFlash drafters → draft-dflash,
@@ -384,50 +382,54 @@ fn populate_dialog_models(app: &AppWindow, state: &Rc<RefCell<State>>) {
     let scanned = model_scan::list(&models_dir, model_scan::Category::Model.subdir());
     state.borrow_mut().dialog_models_all = scanned;
     s.set_dialog_filter(SharedString::from(""));
-    let st = state.borrow();
-    apply_dialog_models(app, &st.dialog_models_all, "");
+    apply_dialog_models(app, state, "");
 }
 
 /// Filter the cached dialog model scan by a case-insensitive substring on the
-/// label and publish the result. Filtering both arrays from ONE matched list
-/// keeps `dialog_model_index` consistent with `dialog_model_values`.
-fn apply_dialog_models(app: &AppWindow, all: &[model_scan::FileOption], filter: &str) {
-    let s = app.global::<AppState>();
+/// label and publish the result. Filtering label and path from ONE matched
+/// list keeps `dialog_model_index` consistent with the paths; the paths are
+/// Rust-only data (only `picked_dialog_model_path` reads them), so they stay
+/// in `State.dialog_models_filtered` rather than as a published Slint array.
+fn apply_dialog_models(app: &AppWindow, state: &Rc<RefCell<State>>, filter: &str) {
     let q = filter.to_lowercase();
-    let matched: Vec<&model_scan::FileOption> = all
+    let (labels, paths): (Vec<SharedString>, Vec<String>) = state
+        .borrow()
+        .dialog_models_all
         .iter()
         .filter(|f| q.is_empty() || f.label.to_lowercase().contains(&q))
-        .collect();
-    let labels: Vec<SharedString> = matched
-        .iter()
-        .map(|f| SharedString::from(f.label.clone()))
-        .collect();
-    let values: Vec<SharedString> = matched
-        .iter()
-        .map(|f| SharedString::from(f.path.clone()))
-        .collect();
+        .map(|f| (SharedString::from(f.label.clone()), f.path.clone()))
+        .unzip();
+    state.borrow_mut().dialog_models_filtered = paths;
+    let s = app.global::<AppState>();
     s.set_dialog_model_labels(model(labels));
-    s.set_dialog_model_values(model(values));
     s.set_dialog_model_index(-1);
 }
 
-fn picked_dialog_model_path(app: &AppWindow) -> Option<PathBuf> {
-    let s = app.global::<AppState>();
-    let idx = s.get_dialog_model_index();
-    if idx < 0 {
-        return None;
-    }
-    let values = s.get_dialog_model_values();
+fn picked_dialog_model_path(app: &AppWindow, state: &Rc<RefCell<State>>) -> Option<PathBuf> {
+    let idx = app.global::<AppState>().get_dialog_model_index();
     let i = usize::try_from(idx).ok()?;
-    if i >= values.row_count() {
-        return None;
-    }
-    Some(PathBuf::from(values.row_data(i)?.to_string()))
+    state
+        .borrow()
+        .dialog_models_filtered
+        .get(i)
+        .map(PathBuf::from)
+}
+
+/// Preset id for a newly picked model file, de-conflicted against the live
+/// presets. The id derives from the file name, so picking a model that already
+/// has a preset — or a different file that sanitizes to the same id — would
+/// otherwise make `presets::save` wholesale-replace the tuned section. Both
+/// New and Clone must route through this: first free `<id>`, `<id>-2`, ….
+fn deconflicted_id(path_str: &str) -> String {
+    let base_id = presets::make_id(path_str);
+    let existing: Vec<String> = presets::load_all().into_iter().map(|p| p.id).collect();
+    presets::unique_id(&base_id, &existing)
 }
 
 fn run_new_empty(app: &AppWindow, state: &Rc<RefCell<State>>, path: PathBuf) {
-    let id = presets::make_id(&path.to_string_lossy());
-    let p = presets::Preset::new_default(id.clone(), path.to_string_lossy().into_owned());
+    let path_str = path.to_string_lossy().into_owned();
+    let id = deconflicted_id(&path_str);
+    let p = presets::Preset::new_default(id.clone(), path_str);
     commit_new_preset(
         app,
         state,
@@ -443,12 +445,7 @@ fn run_new_clone(
     path: PathBuf,
 ) {
     let path_str = path.to_string_lossy().into_owned();
-    let base_id = presets::make_id(&path_str);
-    // The id is derived from the picked model, so cloning onto the same model
-    // (or one that already has a preset) would otherwise overwrite it. Pick the
-    // first free "<id>", "<id>-2", … instead of clobbering.
-    let existing: Vec<String> = presets::load_all().into_iter().map(|p| p.id).collect();
-    let id = presets::unique_id(&base_id, &existing);
+    let id = deconflicted_id(&path_str);
     let cloned = presets::Preset {
         id: id.clone(),
         model: path_str,

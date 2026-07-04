@@ -1,8 +1,10 @@
 ﻿# Install & update the llama.cpp build toolchain in one shot.
 #
 # winget packages (PowerShell 7+, OpenSSL, NSIS) are installed if missing and
-# upgraded if present, in a single self-elevated session. Manual SDKs (CUDA,
-# Vulkan, AMD HIP) are only probed and their install URLs printed.
+# upgraded if present, in a single self-elevated session (which also symlinks
+# OpenSSL's lib\VC\x64\MD\*.lib up to lib\ so cmake's find_package(OpenSSL)
+# resolves). Manual SDKs (CUDA, Vulkan, AMD HIP) are only probed and their
+# install URLs printed.
 #
 # When build\config-build.psd1 + llama.cpp clone exist, also runs `git pull --ff-only`
 # on the source and flags a rebuild if the commit moved.

@@ -8,10 +8,11 @@
 
 import { LineEdit, Button, ListView, Palette } from "std-widgets.slint";
 import { AppState } from "state.slint";
-import { Tokens, ModalOverlay, AccentBar, SelectableRow } from "components.slint";
-// Re-export so Slint generates the Rust accessor (`app.global::<AppState>()`);
-// a bare import wouldn't surface it to Rust.
-export { AppState }
+import { Tokens, Options, ModalOverlay, AccentBar, SelectableRow } from "components.slint";
+// Re-export so Slint generates the Rust accessors (`app.global::<AppState>()`);
+// a bare import wouldn't surface them to Rust. `Options` is exported only so
+// the e2e test can assert `Options.all_layers == form::ALL_LAYERS`.
+export { AppState, Options }
 import { ServerPage } from "server_page.slint";
 import { ModelsPage } from "models_page.slint";
 import { IntegrationsPage } from "integrations_page.slint";
@@ -347,18 +348,21 @@ export component AppWindow inherits Window {
         description: "Renaming [" + AppState.rename_old_id + "]. This only changes the section header in presets.ini; every parameter inside is preserved.";
         dismissed => { AppState.show_rename_dialog = false; }
 
+        // ONE home for the submit action AND its gate (the Rename button's
+        // `enabled`): Enter and the button click both funnel through here, so
+        // neither the condition nor the action can drift between the two paths.
+        function submit-rename() {
+            if (rename-btn.enabled) {
+                AppState.show_rename_dialog = false;
+                AppState.rename_preset(AppState.rename_old_id, AppState.rename_new_id);
+            }
+        }
+
         LineEdit {
             text <=> AppState.rename_new_id;
             placeholder-text: "New id";
             init => { self.focus(); }
-            // Enter submits iff the Rename button would allow it — one gate
-            // (the button's `enabled`), so the two paths can't drift.
-            accepted => {
-                if (rename-btn.enabled) {
-                    AppState.show_rename_dialog = false;
-                    AppState.rename_preset(AppState.rename_old_id, AppState.rename_new_id);
-                }
-            }
+            accepted => { submit-rename(); }
         }
         Rectangle { vertical-stretch: 1; }
         HorizontalLayout {
@@ -372,10 +376,7 @@ export component AppWindow inherits Window {
                 text: "Rename";
                 primary: true;
                 enabled: AppState.rename_new_id != "" && AppState.rename_new_id != AppState.rename_old_id;
-                clicked => {
-                    AppState.show_rename_dialog = false;
-                    AppState.rename_preset(AppState.rename_old_id, AppState.rename_new_id);
-                }
+                clicked => { submit-rename(); }
             }
         }
     }

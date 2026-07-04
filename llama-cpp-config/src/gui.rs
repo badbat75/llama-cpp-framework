@@ -77,6 +77,11 @@ struct State {
     // Full (unfiltered) model scan backing the new-preset dialog, so the search
     // box can filter without re-hitting disk on every keystroke.
     dialog_models_all: Vec<model_scan::FileOption>,
+    // Paths of the currently filtered dialog rows, parallel to
+    // AppState.dialog_model_labels. Rust-only data (only
+    // `picked_dialog_model_path` reads it), so it lives here instead of as a
+    // published Slint array no page ever binds.
+    dialog_models_filtered: Vec<String>,
     // (--model-draft value, --spec-type) per draft-dropdown row, parallel to
     // AppState.draft_labels. Rust-only data (only `draft_picked` reads it), so
     // it lives here instead of as published Slint arrays no page ever binds.
@@ -188,8 +193,8 @@ pub fn run() -> anyhow::Result<()> {
 
 /// Bring the running instance's window to the front: re-show it if it was hidden
 /// to the tray, un-minimize, and take focus. Called when a second launch pokes
-/// the single-instance activation event.
-#[cfg(windows)]
+/// the single-instance activation event, and by the tray's "Open window" item
+/// (a bare `show()` would leave a minimized window minimized).
 fn activate_window(app: AppWindow) {
     use slint::winit_030::WinitWindowAccessor;
     app.show().ok();

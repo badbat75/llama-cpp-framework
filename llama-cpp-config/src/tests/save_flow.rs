@@ -2,8 +2,9 @@
 //!
 //! `ui_bindings.rs` covers binding *direction*; this covers the callback
 //! *funnel*: save → `preset_written` → reload → reselect → re-baseline, the
-//! Revert path, and delete's deliberate clear-selection sequence — the wiring
-//! in `gui/models_tab.rs` that no pure-Rust unit test can reach.
+//! Revert path, delete's deliberate clear-selection sequence, and the New…
+//! dialog's id de-conflict guard — the wiring in `gui/models_tab.rs` that no
+//! pure-Rust unit test can reach.
 //!
 //! Config IO is redirected at a temp dir through `LLAMA_CPP_CONFIG_DATA_ROOT`
 //! (see `paths::data_root`), set here BEFORE the Models tab is wired, so the
@@ -14,7 +15,7 @@
 //! `#[test]` (and its window) — this module exposes `run(&app)` and is called
 //! from there after the binding assertions.
 
-use slint::ComponentHandle;
+use slint::{ComponentHandle, Model};
 
 use crate::gui::{AppState, AppWindow};
 
@@ -86,5 +87,34 @@ pub(super) fn run(app: &AppWindow) {
         st.get_form().id.as_str(),
         "",
         "delete must blank the editor"
+    );
+
+    // ── New… twice on the same model must NOT overwrite the first preset ──
+    // Drive the real dialog funnel: New… scans models_dir for the picker, the
+    // pick derives the id from the file name — so the second pass hits a live
+    // id and must save under the first free suffix instead of clobbering.
+    std::fs::create_dir_all(model_path.parent().unwrap()).expect("models dir");
+    std::fs::write(&model_path, b"").expect("model file");
+    let mut sform = st.get_server_form();
+    sform.models_dir = dir.path().to_string_lossy().as_ref().into();
+    st.set_server_form(sform);
+    for _ in 0..2 {
+        st.invoke_new_preset();
+        assert!(
+            st.get_dialog_model_labels().row_count() >= 1,
+            "New… dialog must list the scanned model"
+        );
+        st.set_dialog_model_index(0);
+        st.invoke_pick_new_empty();
+        assert!(
+            !st.get_status_is_error(),
+            "New… failed: {}",
+            st.get_status_text()
+        );
+    }
+    let ini = std::fs::read_to_string(crate::paths::presets_ini()).expect("presets.ini");
+    assert!(
+        ini.contains("[e2e]") && ini.contains("[e2e-2]"),
+        "second New… must de-conflict to e2e-2, not overwrite:\n{ini}"
     );
 }

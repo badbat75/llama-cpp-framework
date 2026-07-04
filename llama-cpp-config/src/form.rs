@@ -33,11 +33,19 @@ fn txt<T: ToString>(v: Option<T>) -> SharedString {
     v.map(|n| n.to_string()).unwrap_or_default().into()
 }
 
+/// "All layers on GPU" sentinel for the `--n-gpu-layers*` sliders: any value
+/// above a real block count. The single Rust home (the form fallbacks here,
+/// `apply_draft_pick` in gui/models_tab.rs). Mirrors `Options.all_layers` in
+/// ui/components.slint — the equality is asserted in the e2e test
+/// (src/tests/ui_bindings.rs), so a drift fails the suite instead of shipping
+/// two different sentinels.
+pub(crate) const ALL_LAYERS: i32 = 99;
+
 pub fn preset_to_form(p: &presets::Preset) -> PresetForm {
     // Domain defaults are pulled from `Preset::default()` so the form and the
     // INI can't drift apart. The literals that remain are UI-only choices with
     // no counterpart in `Preset`: slider fallback positions while a flag is
-    // "auto" (99 / 0), and empty→sentinel labels ("none" / "default").
+    // "auto" (ALL_LAYERS / 0), and empty→sentinel labels ("none" / "default").
     let d = presets::Preset::default();
     PresetForm {
         id: p.id.clone().into(),
@@ -50,7 +58,7 @@ pub fn preset_to_form(p: &presets::Preset) -> PresetForm {
             p.spec_type.clone().into()
         },
         spec_draft_n_max: txt(p.spec_draft_n_max),
-        n_gpu_layers_draft: p.n_gpu_layers_draft.unwrap_or(99),
+        n_gpu_layers_draft: p.n_gpu_layers_draft.unwrap_or(ALL_LAYERS),
         n_gpu_layers_draft_auto: p.n_gpu_layers_draft.is_none(),
         device_draft: p.device_draft.clone().into(),
         device: p.device.clone().into(),
@@ -61,7 +69,7 @@ pub fn preset_to_form(p: &presets::Preset) -> PresetForm {
         },
         tensor_split: p.tensor_split.clone().into(),
         ctx_size: p.ctx_size.or(d.ctx_size).unwrap_or_default(),
-        n_gpu_layers: p.n_gpu_layers.unwrap_or(99),
+        n_gpu_layers: p.n_gpu_layers.unwrap_or(ALL_LAYERS),
         n_gpu_layers_auto: p.n_gpu_layers.is_none(),
         parallel: p.parallel.or(d.parallel).unwrap_or_default(),
         batch_size: p.batch_size.or(d.batch_size).unwrap_or_default(),

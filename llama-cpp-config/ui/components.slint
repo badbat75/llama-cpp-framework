@@ -32,8 +32,8 @@ export global Options {
     out property <[string]> cache_types: ["f32", "f16", "q8_0", "q5_0", "q4_0", "q4_1"];
     out property <[string]> split_modes: ["default", "none", "layer", "row"];
     // "All layers on GPU" sentinel for the --n-gpu-layers* flags: any value
-    // above a real block count. Mirrors ALL_LAYERS in src/gui/models_tab.rs —
-    // keep the two in sync.
+    // above a real block count. Mirrors ALL_LAYERS in src/form.rs — the
+    // equality is asserted by the e2e test (src/tests/ui_bindings.rs).
     out property <int> all_layers: 99;
 }
 

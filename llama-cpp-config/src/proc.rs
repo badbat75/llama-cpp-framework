@@ -6,6 +6,7 @@
 // `hide_console` for callers that build the `Command` themselves — custom
 // stdio/env then `spawn()` (`runstate::start`). On non-Windows both are no-ops
 // beyond the plain command, so callers that differ only by that flag collapse.
+// `combined_output` joins a probe's stdout+stderr — parse that, not one stream.
 
 use std::ffi::OsStr;
 use std::path::Path;
@@ -39,4 +40,15 @@ where
     cmd.args(args);
     hide_console(&mut cmd);
     cmd.output().ok()
+}
+
+/// Join a child's stdout and stderr into one string. llama.cpp tools split
+/// output across the two streams (`--version` prints to **stderr**,
+/// `--list-devices` to stdout), so probes must parse the combination — reading
+/// a single stream silently blanks them when upstream moves the output.
+pub fn combined_output(output: &Output) -> String {
+    let mut s = String::from_utf8_lossy(&output.stdout).into_owned();
+    s.push('\n');
+    s.push_str(&String::from_utf8_lossy(&output.stderr));
+    s
 }

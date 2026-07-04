@@ -24,7 +24,7 @@ A companion Rust binary (`llama-cpp-config`) provides a GUI + CLI configurator f
   - **GPU-device fields** (server-wide + per-preset model/draft) are dropdowns populated from `llama-server --list-devices` (`devices.rs`), probed once async at startup and cached Rust-side (`devices::probed()`) — not free text, and not Slint state.
   - **CLI** (`cli.rs`, clap): `gui` (force-launch, also the no-subcommand default), `server` (show/set), `preset` (list/show/delete). No per-field preset `set`.
   - Reads/writes `%LOCALAPPDATA%\llama.cpp\config\server.ini` + `presets.ini` (`paths.rs`, `server_cfg.rs`, `presets.rs`, `ini.rs`).
-  - Build-time ICO→PNG (`build.rs` + `ico` crate); `winresource` embeds the ICO as an EXE resource on Windows.
+  - Build-time ICO→PNG ×2 — plain + a running-dot variant the tray's icon switches to (`build.rs` + `ico` crate); `winresource` embeds the ICO as an EXE resource on Windows.
   - **Single-instance** (`single_instance.rs`, Windows-only Win32 FFI): a named mutex gates the GUI; a second launch pokes an activation event + `AllowSetForegroundWindow` and exits, and the live instance's listener thread surfaces its window. CLI subcommands unaffected.
 - `resources\llama.ico` — icon used by the NSIS installer and embedded in `llama-cpp-config.exe`.
 

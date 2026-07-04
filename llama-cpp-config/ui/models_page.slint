@@ -383,7 +383,7 @@ export component ModelsPage inherits HorizontalLayout {
                 heading: "KV cache";
                 LabeledField {
                     label: "K-cache type";
-                    hint: "KV cache quantization.\nLower = less VRAM but lower quality.\nNote: Qwen3-Coder needs q8_0 for reliable tool calling — q4_0 makes it drop the <tool_call> wrapper.";
+                    hint: "KV cache quantization for K (--cache-type-k).\nLower = less VRAM but lower quality.\nNote: Qwen3-Coder needs q8_0 for reliable tool calling — q4_0 makes it drop the <tool_call> wrapper.";
                     ComboBox {
                         model: Options.cache_types;
                         current-value <=> AppState.form.cache_type_k;

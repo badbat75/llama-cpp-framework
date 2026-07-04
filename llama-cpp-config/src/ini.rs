@@ -7,8 +7,10 @@
 // - Values are TRIMMED on parse, and an inline `; note` / `# note` tail is
 //   stripped only when the marker has whitespace on BOTH sides ("a;b" stays a
 //   value) — writers must therefore emit trimmed values or break round-trips.
-// - Writers preserve the file's existing line endings (per line on replace,
-//   detected once on insert); brand-new content defaults to CRLF.
+// - Writers preserve the file's existing line endings (per line on
+//   replace_key's replace path, detected once everywhere else — section
+//   bodies arrive CRLF from the renderers and are converted to the file's
+//   style); brand-new content defaults to CRLF.
 // - `atomic_write` (sibling temp file + rename) is the canonical write path —
 //   every config writer in the crate funnels through it.
 // - `parse_int` / `parse_float` / `parse_bool` are the shared lenient scalar
@@ -95,11 +97,7 @@ pub fn replace_key(path: &Path, section: &str, key: &str, value: &str) -> std::i
     let content = fs::read_to_string(path).unwrap_or_default();
     // Inserted lines follow the file's line-ending style (the replace path
     // below preserves it per line); brand-new / empty files get CRLF.
-    let eol = if content.contains('\n') && !content.contains("\r\n") {
-        "\n"
-    } else {
-        "\r\n"
-    };
+    let eol = detect_eol(&content);
 
     let header = format!("[{section}]");
     let Some(header_pos) = find_section_header(&content, &header) else {
@@ -159,17 +157,27 @@ pub fn replace_key(path: &Path, section: &str, key: &str, value: &str) -> std::i
     atomic_write(path, &out)
 }
 
-/// Replace (or insert) an entire named section.
+/// Replace (or insert) an entire named section. The body arrives CRLF from
+/// the renderers (`presets::render_section`, `ServerConfig::render`) and is
+/// converted to the file's own line-ending style, so a hand-maintained
+/// LF-only file doesn't gain mixed endings on every save.
 pub fn replace_section(path: &Path, section_name: &str, section_body: &str) -> std::io::Result<()> {
     let header = format!("[{section_name}]");
-    let new_section = ensure_trailing_newline(section_body.trim_end());
     let content = fs::read_to_string(path).unwrap_or_default();
+    let eol = detect_eol(&content);
+    let body = normalize_eol(section_body.trim_end(), eol);
+    let new_section = if body.is_empty() {
+        String::new()
+    } else {
+        format!("{body}{eol}")
+    };
 
     let Some(header_pos) = find_section_header(&content, &header) else {
         let mut out = content;
         if !out.is_empty() {
             out = out.trim_end_matches(['\r', '\n']).to_string();
-            out.push_str("\r\n\r\n");
+            out.push_str(eol);
+            out.push_str(eol);
         }
         out.push_str(&new_section);
         if let Some(parent) = path.parent() {
@@ -181,7 +189,7 @@ pub fn replace_section(path: &Path, section_name: &str, section_body: &str) -> s
     let next = next_section_start(&content, header_pos + header.len()).unwrap_or(content.len());
     let before = &content[..header_pos];
     let after = &content[next..];
-    let separator = if after.is_empty() { "" } else { "\r\n" };
+    let separator = if after.is_empty() { "" } else { eol };
 
     let mut out = String::with_capacity(before.len() + new_section.len() + after.len() + 4);
     out.push_str(before);
@@ -294,16 +302,23 @@ fn next_section_start(content: &str, from: usize) -> Option<usize> {
     None
 }
 
-fn ensure_trailing_newline(s: &str) -> String {
-    if s.is_empty() {
-        return String::new();
-    }
-    if s.ends_with('\n') {
-        s.to_string()
+/// The file's line-ending style: LF only when the content has newlines and no
+/// CRLF; everything else — including brand-new / empty files — is CRLF.
+fn detect_eol(content: &str) -> &'static str {
+    if content.contains('\n') && !content.contains("\r\n") {
+        "\n"
     } else {
-        let mut out = s.to_string();
-        out.push_str("\r\n");
-        out
+        "\r\n"
+    }
+}
+
+/// Rewrite `s` with `eol` as its line ending (input may mix CRLF and LF).
+fn normalize_eol(s: &str, eol: &str) -> String {
+    let lf = s.replace("\r\n", "\n");
+    if eol == "\n" {
+        lf
+    } else {
+        lf.replace('\n', "\r\n")
     }
 }
 
@@ -431,6 +446,22 @@ mod tests {
         replace_section(&path, "b", "[b]\r\nk = 2\r\n").unwrap();
         assert_eq!(read_section(&path, "b")["k"], "2");
         assert_eq!(read_section(&path, "a")["k"], "1");
+    }
+
+    #[test]
+    fn replace_section_preserves_lf_only_files() {
+        let (_d, path) = ini_file("[a]\nk = 1\n");
+        // Both paths — replacing an existing section and appending a new one —
+        // must convert the CRLF-rendered body to the file's LF-only style.
+        replace_section(&path, "a", "[a]\r\nk = 9\r\n").unwrap();
+        replace_section(&path, "b", "[b]\r\nk = 2\r\n").unwrap();
+        let content = fs::read_to_string(&path).unwrap();
+        assert!(
+            !content.contains('\r'),
+            "LF-only file gained a CR: {content:?}"
+        );
+        assert_eq!(read_section(&path, "a")["k"], "9");
+        assert_eq!(read_section(&path, "b")["k"], "2");
     }
 
     #[test]

@@ -28,9 +28,9 @@ Modal dialogs (New/Clone picker, Rename) overlay the whole window: Esc or a back
 
 ### Models tab — `presets.ini`
 
-Scans `.gguf` files under `ModelsDir`, shows the presets table, and edits per-model settings. The editor is grouped into cards by concern:
+Scans `.gguf` files under `ModelsDir`'s fixed subfolders — `models\` (main models), `mmprojs\`, `mtps\`, `dflashs\` (`model_scan::Category::subdir`); a file sitting at the `ModelsDir` root is not scanned — shows the presets table, and edits per-model settings. The editor is grouped into cards by concern:
 
-- **Assets** — the file pickers and speculator selection: model file (`--model`), MMProj (`--mmproj`), ONE draft-model dropdown that merges MTP heads (scanned from `mtps\`) and DFlash drafters (scanned from `dflashs\`), both feeding `--model-draft`, plus the spec-type dropdown. Picking an MTP head auto-selects `--spec-type draft-mtp`; picking a DFlash drafter auto-selects `--spec-type draft-dflash`. Either way, when a server GPU device is set the draft is pinned to it (`device-draft`, `n-gpu-layers-draft = 99` — the shared "all layers" sentinel, `Options.all_layers` / `models_tab::ALL_LAYERS`); otherwise it falls back to CPU (`n-gpu-layers-draft = 0`). The pick policy lives in Rust (`apply_draft_pick` in `gui/models_tab.rs`, unit-tested), not in the `.slint` handler.
+- **Assets** — the file pickers and speculator selection: model file (`--model`), MMProj (`--mmproj`), ONE draft-model dropdown that merges MTP heads (scanned from `mtps\`) and DFlash drafters (scanned from `dflashs\`), both feeding `--model-draft`, plus the spec-type dropdown. Picking an MTP head auto-selects `--spec-type draft-mtp`; picking a DFlash drafter auto-selects `--spec-type draft-dflash`. Either way, when a server GPU device is set the draft is pinned to it (`device-draft`, `n-gpu-layers-draft = 99` — the shared "all layers" sentinel, `Options.all_layers` / `form::ALL_LAYERS`, equality test-asserted); otherwise it falls back to CPU (`n-gpu-layers-draft = 0`). The pick policy lives in Rust (`apply_draft_pick` in `gui/models_tab.rs`, unit-tested), not in the `.slint` handler.
 - **Model info** (read-only, between Assets and Hardware Config) — reads GGUF metadata through llama.cpp's own reader (runtime-loaded `ggml-base.dll`, no reimplemented parser; see `gguf.rs`): dense vs MoE (+ expert counts), layer count, trained context, GQA shape, quant, and whether it embeds MTP layers — plus whether a matching MTP/DFlash drafter is present. For MoE models a **MoE layers** row shows how many layers carry experts (with a "saves VRAM (slower)" note), sizing the `--n-cpu-moe` field. A **MMProj** row (projector type, vision/audio modality, encoder depth, image/patch size) and a **Draft file** row (the drafter's arch/layers and, for DFlash, the trained `block_size` → the implied `--spec-draft-n-max` ceiling) appear when those are selected. Reads are synchronous and uncached; if `ggml-base.dll` can't be loaded the box shows "unavailable".
 - **Hardware Config** (directly under Model info) — every placement knob: GPU device (`--device`), GPU split mode + tensor split (overriding the server default), GPU layers (`--n-gpu-layers`), MoE CPU layers (`--n-cpu-moe`), draft device (`--device-draft`), draft GPU layers (`--n-gpu-layers-draft`).
 - **Resource / context** — ctx-size, parallel seqs, batch/ubatch (all always-valued `SpinBox`es).
@@ -72,7 +72,7 @@ cargo build --release
 ..\02-build.ps1
 ```
 
-The build script (`build.rs`) converts `resources\llama.ico` to a PNG at compile time (using the `ico` crate) for the Slint GUI, and on Windows embeds the ICO as an EXE resource via `winresource`.
+The build script (`build.rs`) converts `resources\llama.ico` to two PNGs at compile time (using the `ico` crate) for the Slint GUI — the plain icon plus a green-dotted "running" variant the tray switches to while llama-server is up — and on Windows embeds the ICO as an EXE resource via `winresource`.
 
 ## Source layout
 
@@ -106,7 +106,7 @@ The build script (`build.rs`) converts `resources\llama.ico` to a PNG at compile
 | `ui\components.slint` | Shared visual pieces: `SectionCard`, `LabeledField`, `InfoRow` (read-only label→value row), `SegmentedControl`, `MappedComboBox` (labels/values/index combo with a bounds-checked `picked`), `AutoSlider` (auto-checkbox + slider + readout), `ModalOverlay` (dim-backdrop dialog shell used by the New/Clone + Rename dialogs; Esc dismisses), `FormActions` (the Revert + primary-Save row ending every tab), `SelectableRow` + `AccentBar` (the selectable-list row and the selected-row bar shared by the nav rail, preset list, and dialog model list), and the `Tokens` / `Options` globals (canonical muted-text / selection alphas, semantic status colors `ok`/`err`/`off`, overlay backdrop/shadow colors; shared option lists + the `all_layers` sentinel) |
 | `ui\types.slint` | Shared Slint structs (`PresetSummary`, `PresetForm`, `ServerForm`, `IntegrationModel`) |
 | `src\tests\` | End-to-end / cross-cutting tests (internal `#[cfg(test)] mod tests`). `ui_bindings.rs`: headless Slint-testing-backend test — editable widgets must track the model after an edit, guarding the one-way-binding staleness bug (v1.1.1). `save_flow.rs`: drives the real Models-tab wiring (save → reload → reselect, revert, delete) against a temp config dir |
-| `build.rs` | Compile-time ICO → PNG, embed EXE resource on Windows; emits Slint element debug info for non-release builds (needed by the UI test) |
+| `build.rs` | Compile-time ICO → two PNGs (plain + running-dot tray variant), embed EXE resource on Windows; emits Slint element debug info for non-release builds (needed by the UI test) |
 
 ## Code conventions
 

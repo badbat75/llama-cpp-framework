@@ -119,6 +119,14 @@ fn editable_widgets_track_model_after_edit() {
     let app = realized_app();
     let st = app.global::<AppState>();
 
+    // The two homes of the "all layers on GPU" sentinel must agree — the
+    // mirror comments in form.rs / components.slint can't fail a build.
+    assert_eq!(
+        app.global::<crate::gui::Options>().get_all_layers(),
+        crate::form::ALL_LAYERS,
+        "Options.all_layers (ui/components.slint) drifted from form::ALL_LAYERS"
+    );
+
     // ── Server tab (shown by default) ────────────────────────────────
     // LineEdit — `text <=> AppState.server_form.port`.
     assert_reload_reaches_widget(

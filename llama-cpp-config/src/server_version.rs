@@ -4,24 +4,24 @@ use crate::paths;
 
 pub fn probe() -> Option<String> {
     let exe = paths::llama_server_exe()?;
-    let stdout = run(&exe)?;
-    parse(&stdout)
+    let text = run(&exe)?;
+    parse(&text)
 }
 
+/// `llama-server --version` prints to **stderr**, so parse the combined
+/// streams (`proc::combined_output`) — reading stdout alone yields "".
 fn run(exe: &std::path::Path) -> Option<String> {
     let output = crate::proc::run_hidden(exe, ["--version"])?;
     if !output.status.success() {
         return None;
     }
-    Some(String::from_utf8_lossy(&output.stdout).into_owned())
+    Some(crate::proc::combined_output(&output))
 }
 
-/// Turn `"version: 9999 (abc12345)\n"` into `"9999-abc12345"`.
+/// Turn `"version: 9999 (abc12345)\n"` into `"9999-abc12345"`. The input is
+/// the combined stdout+stderr, so skip leading blank lines before parsing.
 fn parse(s: &str) -> Option<String> {
-    let line = s.lines().next()?.trim();
-    if line.is_empty() {
-        return None;
-    }
+    let line = s.lines().map(str::trim).find(|l| !l.is_empty())?;
     let stripped = line.strip_prefix("version: ").unwrap_or(line);
     // If there's a parenthetical commit hash, convert it to dash form
     if let Some((ver, rest)) = stripped.split_once(' ') {
@@ -58,5 +58,16 @@ mod tests {
     #[test]
     fn empty_input_is_none() {
         assert!(parse("").is_none());
+        assert!(parse("\n\n").is_none());
+    }
+
+    /// The real shape: `--version` prints to stderr, so the combined
+    /// stdout+stderr text starts with stdout's blank line.
+    #[test]
+    fn parses_combined_output_with_leading_blank_line() {
+        assert_eq!(
+            parse("\nversion: 9870 (2d973636e)\n").as_deref(),
+            Some("9870-2d973636e"),
+        );
     }
 }
