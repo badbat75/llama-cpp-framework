@@ -526,7 +526,7 @@ export component ModelsPage inherits HorizontalLayout {
                     hint: "--chat-template-kwargs: JSON merged into the chat template, e.g. {\"enable_thinking\":true}.\nAdvanced — leave blank unless the model documents kwargs.";
                     LineEdit {
                         text <=> AppState.form.chat_template_kwargs;
-                        placeholder-text: "e.g. {\"temperature\":0.7}";
+                        placeholder-text: "e.g. {\"enable_thinking\":true}";
                     }
                 }
             }

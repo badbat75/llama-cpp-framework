@@ -39,6 +39,37 @@ pub(super) fn run(app: &AppWindow) {
         "a rejected save must not create presets.ini"
     );
 
+    // ── Guard rails: save() itself enforces the `;`/`#` path validation ──
+    // The pure `validate_for_save` fns have their own unit tests; THIS pins
+    // the call-site wiring (`save()`'s first line, both sides) — deleting
+    // either call used to pass the whole suite, silently regressing the
+    // v1.2.11 reload-truncated guard.
+    let mut form = st.get_form();
+    form.id = "hostile".into();
+    form.model = r"C:\Models #1\m.gguf".into();
+    st.set_form(form);
+    st.invoke_save_preset();
+    assert!(
+        st.get_status_is_error(),
+        "a `#` model path must be rejected by presets::save"
+    );
+    assert!(
+        !crate::paths::presets_ini().exists(),
+        "a path-rejected save must not create presets.ini"
+    );
+    let hostile_server = crate::server_cfg::ServerConfig {
+        models_dir: Some(r"E:\llm ; models".into()),
+        ..Default::default()
+    };
+    assert!(
+        crate::server_cfg::save(&hostile_server).is_err(),
+        "a `;` ModelsDir must be rejected by server_cfg::save"
+    );
+    assert!(
+        !crate::paths::server_ini().exists(),
+        "a path-rejected save must not create server.ini"
+    );
+
     // ── Save: reload + reselect + re-baseline ────────────────────────────
     let model_path = dir.path().join("models").join("e2e.gguf");
     let mut form = st.get_form();
@@ -277,6 +308,28 @@ pub(super) fn run(app: &AppWindow) {
     assert!(
         crate::gui::integrations_dirty(app),
         "a pending toggle must read as integrations-dirty"
+    );
+    // A preset write path rebuilds the list with MERGE semantics: the pending
+    // toggle must survive (fresh delegate, preserved enabled flag) — only the
+    // reset paths (F5 behind the guard, Integrations Save/Revert) drop it.
+    st.invoke_save_preset(); // → preset_written → refresh_integrations (merge)
+    itest::mock_elapsed_time(std::time::Duration::from_millis(1));
+    assert!(
+        !st.get_status_is_error(),
+        "re-save failed: {}",
+        st.get_status_text()
+    );
+    let cb = ElementHandle::find_by_accessible_label(app, label.as_str())
+        .next()
+        .expect("row checkbox after merge rebuild");
+    assert_eq!(
+        cb.accessible_checked(),
+        Some(true),
+        "a preset save must not wipe a pending Integrations toggle"
+    );
+    assert!(
+        crate::gui::integrations_dirty(app),
+        "the pending toggle must stay integrations-dirty across a preset save"
     );
     st.invoke_revert_integrations(); // Rust-side rebuild: back to disk state
     itest::mock_elapsed_time(std::time::Duration::from_millis(1));

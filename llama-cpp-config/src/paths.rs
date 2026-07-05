@@ -67,6 +67,12 @@ pub fn presets_ini() -> PathBuf {
     config_dir().join("presets.ini")
 }
 
+/// The llama-server log file. ONE home for the path — `runstate::start()`
+/// writes it, the GUI's "no longer running — see …" message points at it.
+pub fn server_log() -> PathBuf {
+    data_root().join("logs").join("llama-server.log")
+}
+
 /// `%USERPROFILE%\.config\opencode\opencode.json` on Windows,
 /// `$HOME/.config/opencode/opencode.json` elsewhere.
 ///

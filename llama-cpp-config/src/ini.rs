@@ -163,7 +163,16 @@ pub fn replace_key(path: &Path, section: &str, key: &str, value: &str) -> std::i
         // line_starts_with_key does its own trim_start.
         if !replaced && line_starts_with_key(line, key) {
             new_body.push_str(&new_line);
-            new_body.push_str(if line.ends_with("\r\n") { "\r\n" } else { "\n" });
+            // An unterminated final line has no ending to preserve — fall
+            // back to the file's detected EOL, not a hardcoded `\n` that
+            // would mix endings into a CRLF file.
+            new_body.push_str(if line.ends_with("\r\n") {
+                "\r\n"
+            } else if line.ends_with('\n') {
+                "\n"
+            } else {
+                eol
+            });
             replaced = true;
         } else {
             new_body.push_str(line);
@@ -488,6 +497,19 @@ mod tests {
         assert_eq!(
             fs::read_to_string(&path).unwrap(),
             "[Server]\r\nPort = 8080\r\n"
+        );
+    }
+
+    // Replacing an UNTERMINATED final line has no ending to preserve — it
+    // must fall back to the file's detected EOL, not hardcode `\n` and mix
+    // endings into a CRLF file.
+    #[test]
+    fn replace_key_keeps_crlf_when_replacing_unterminated_last_line() {
+        let (_d, path) = ini_file("[Server]\r\nModelsDir = C:/old");
+        replace_key(&path, "Server", "ModelsDir", "C:/new").unwrap();
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            "[Server]\r\nModelsDir = C:/new\r\n"
         );
     }
 

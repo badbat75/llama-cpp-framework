@@ -99,9 +99,9 @@ struct State {
 
 /// TEST-ONLY seam for the e2e flow test (src/tests/save_flow.rs): build the
 /// shared `State`, seed the preset list from disk, and wire the Models +
-/// Integrations tabs — nothing else (no tray, no probes, no single-instance,
-/// no event loop). The caller must have redirected config IO first (see
-/// `paths::data_root`).
+/// Integrations tabs plus the discard dialog — nothing else (no tray, no
+/// probes, no single-instance, no event loop). The caller must have redirected
+/// config IO first (see `paths::data_root`).
 #[cfg(test)]
 pub(crate) fn wire_tabs_for_tests(app: &AppWindow) {
     let state = Rc::new(RefCell::new(State::default()));
@@ -257,11 +257,14 @@ fn refresh_server_snapshot(app: &AppWindow) {
     let cmdline = runstate::command_line().unwrap_or_default();
     s.set_server_command_line(SharedString::from(cmdline));
     let cfg = server_cfg::load();
-    s.set_chat_url(SharedString::from(format!(
-        "http://{}:{}",
-        cfg.client_host(),
-        cfg.port_or_default()
-    )));
+    s.set_chat_url(SharedString::from(client_base_url(&cfg)));
+}
+
+/// The client-facing base URL for a config: `client_host()` (0.0.0.0 →
+/// localhost) + port. ONE home for the URL assembly — the chat URL, the
+/// launched-URL snapshot, and `opencode_base_url` all build on it.
+fn client_base_url(cfg: &server_cfg::ServerConfig) -> String {
+    format!("http://{}:{}", cfg.client_host(), cfg.port_or_default())
 }
 
 fn populate_bind_options(app: &AppWindow, current: &str) {
@@ -367,7 +370,9 @@ fn reload_all_from_disk(
     load_server_into_ui(app);
     reload_presets(app, state, None);
     refresh_file_options(app, state);
-    refresh_integrations(app);
+    // Reset variant: F5's whole point is "back to disk", and the caller sits
+    // behind the integrations_dirty discard guard.
+    refresh_integrations_reset(app);
     refresh_run_status(app.as_weak(), tray_weak, true);
     spawn_version_probe(app.as_weak());
     spawn_device_probe(app.as_weak());
@@ -612,7 +617,7 @@ fn start_server_async(app_weak: slint::Weak<AppWindow>, tray_weak: slint::Weak<A
             .as_ref()
             .ok()
             .and_then(|launched| launched.as_ref())
-            .map(|cfg| format!("http://{}:{}", cfg.client_host(), cfg.port_or_default()));
+            .map(client_base_url);
         slint::invoke_from_event_loop(move || {
             bump_run_status_gen();
             let running = result.is_ok();
@@ -755,10 +760,7 @@ fn refresh_run_status(
                         &app,
                         format!(
                             "llama-server is no longer running — see {}",
-                            crate::paths::data_root()
-                                .join("logs")
-                                .join("llama-server.log")
-                                .display()
+                            crate::paths::server_log().display()
                         ),
                         true,
                     );
@@ -788,7 +790,25 @@ fn apply_form(app: &AppWindow, form: PresetForm) {
 /// Rebuild the Integrations tab from disk: the opencode.json base URL + the
 /// per-preset toggle list + the Claude Code env snippet, all derived from
 /// server.ini (port/host) and presets.ini. Call after any change to those.
+///
+/// This variant MERGES: ids already in the UI model keep their in-UI enabled
+/// flag (a pending, unsaved toggle), only new ids take the on-disk value — so
+/// the preset/server write paths (save/rename/clone/delete, server save) don't
+/// silently wipe pending toggles the F5 guard would have asked about. For the
+/// paths whose meaning IS "back to disk", use `refresh_integrations_reset`.
 fn refresh_integrations(app: &AppWindow) {
+    rebuild_integrations(app, true);
+}
+
+/// Reset-to-disk variant of `refresh_integrations`: pending row toggles are
+/// dropped. Used by the startup seed / F5 (`reload_all_from_disk`, which sits
+/// behind the `integrations_dirty` discard guard) and the Integrations tab's
+/// own Save/Revert.
+fn refresh_integrations_reset(app: &AppWindow) {
+    rebuild_integrations(app, false);
+}
+
+fn rebuild_integrations(app: &AppWindow, keep_pending: bool) {
     let s = app.global::<AppState>();
     let base_url = opencode_base_url(&server_cfg::load());
 
@@ -800,13 +820,27 @@ fn refresh_integrations(app: &AppWindow) {
 
     s.set_integration_provider_active(integrations::detect_opencode_provider());
 
+    // Either way the ModelRc is REPLACED, never patched row-by-row — the row
+    // CheckBox's one-way binding contract requires fresh `for` delegates on
+    // every non-widget-originated change (see gui/integrations_tab.rs).
+    let pending: std::collections::BTreeMap<String, bool> = if keep_pending {
+        s.get_integration_models()
+            .iter()
+            .map(|m| (m.id.to_string(), m.enabled))
+            .collect()
+    } else {
+        Default::default()
+    };
     let enabled_ids = integrations::opencode_model_ids();
     let items: Vec<IntegrationModel> = all_presets
         .iter()
         .map(|p| IntegrationModel {
             id: SharedString::from(p.id.clone()),
             label: SharedString::from(integrations::friendly_model_name(&p.id, &p.model)),
-            enabled: enabled_ids.contains(&p.id),
+            enabled: pending
+                .get(&p.id)
+                .copied()
+                .unwrap_or_else(|| enabled_ids.contains(&p.id)),
         })
         .collect();
     s.set_integration_models(model(items));
@@ -829,7 +863,7 @@ pub(crate) fn integrations_dirty(app: &AppWindow) -> bool {
 /// client_host, not the bind hostname: 0.0.0.0 is a listen address, a client
 /// pointed at it gets a connection error, so it maps to localhost.
 fn opencode_base_url(cfg: &server_cfg::ServerConfig) -> String {
-    format!("http://{}:{}/v1", cfg.client_host(), cfg.port_or_default())
+    format!("{}/v1", client_base_url(cfg))
 }
 
 /// Keep opencode.json in step with a preset rename (`new_id = Some`) or delete

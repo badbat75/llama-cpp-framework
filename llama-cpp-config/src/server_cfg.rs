@@ -29,8 +29,9 @@
 // or wrong `keep` rule fails it), the form round-trip in server_form.rs
 // (`form_to_config(config_to_form(c)) == c`, step 6), cli.rs's
 // `server_set_apply_copies_every_field` + `show_lines_prints_every_field`
-// (step 7 — both derive their assertions from exhaustive literals, so a new
-// field can't compile without being copied AND printed), and runstate's
+// (step 7 — the first is airtight, whole-struct equality against an exhaustive
+// literal; the second's destructure only forces the BIND — extend its manual
+// `needles` array too, or the Show row goes unguarded), and runstate's
 // `server_args_covers_every_config_field` (step 8 — its exhaustive destructure
 // breaks compilation until the launch path consumes the field). Give the new
 // field a NON-DEFAULT value when extending the rich fixtures: `None` satisfies

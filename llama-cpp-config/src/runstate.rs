@@ -149,9 +149,10 @@ pub fn start() -> io::Result<Option<crate::server_cfg::ServerConfig>> {
     let models_dir = cfg.models_dir_or_default();
 
     let data_root = crate::paths::data_root();
-    let log_dir = data_root.join("logs");
-    std::fs::create_dir_all(&log_dir)?;
-    let log_path = log_dir.join("llama-server.log");
+    let log_path = crate::paths::server_log();
+    if let Some(log_dir) = log_path.parent() {
+        std::fs::create_dir_all(log_dir)?;
+    }
 
     let log_file = std::fs::OpenOptions::new()
         .create(true)

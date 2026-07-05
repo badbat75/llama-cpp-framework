@@ -51,7 +51,7 @@ pub(super) fn wire(app: &AppWindow) {
             match integrations::save_opencode_models(&checked, &base_url) {
                 Ok(()) => {
                     set_status(&app, "Saved model list to opencode.json.".into(), false);
-                    refresh_integrations(&app);
+                    refresh_integrations_reset(&app);
                 }
                 Err(e) => set_status(&app, format!("Save failed: {e}"), true),
             }
@@ -63,7 +63,7 @@ pub(super) fn wire(app: &AppWindow) {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
-            refresh_integrations(&app);
+            refresh_integrations_reset(&app);
             set_status(&app, "Reloaded integration state.".into(), false);
         });
     }

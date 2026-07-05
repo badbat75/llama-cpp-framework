@@ -225,6 +225,12 @@ fn run_preset(c: PresetCmd) -> Result<()> {
             Ok(())
         }
         PresetCmd::Delete { id } => {
+            // ini::delete_section is a documented no-op for a missing section,
+            // so look the id up first — mirroring Show — or a typo'd id gets a
+            // "Removed" message for a preset that never existed.
+            if !presets::load_all().iter().any(|p| p.id == id) {
+                anyhow::bail!("No preset named `{id}`. Run `llama-cpp-config preset list`.");
+            }
             presets::delete(&id).context("delete preset")?;
             println!("Removed [{id}] from {}", paths::presets_ini().display());
             Ok(())
@@ -296,9 +302,11 @@ mod tests {
             split_mode: Some("row".into()),
             tensor_split: Some("3,1".into()),
         };
-        // Labels AND values derive from an exhaustive destructure, so a field
-        // added to the schema can't be initialized here without also being
-        // asserted — `show_lines` omitting it fails the value check.
+        // The exhaustive destructure breaks compilation the moment a field is
+        // added, until this test decides what to do with it — but the
+        // assertions come from the hand-maintained `needles` array below:
+        // bind the new field AND add its needle, or its Show row goes
+        // unguarded (binding alone, or `field: _`, compiles fine).
         let ServerConfig {
             port,
             hostname,

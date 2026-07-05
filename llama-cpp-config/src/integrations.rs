@@ -64,6 +64,12 @@ pub fn save_opencode_models(checked_ids: &[String], base_url: &str) -> Result<()
     }
 
     let serialized = serde_json::to_string_pretty(&v)?;
+    // OpenCode may never have run on this machine — create its config dir
+    // like every other writer does (read_or_create_value already treats the
+    // missing FILE as an empty object, so the missing DIR must not fail).
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
+    }
     ini::atomic_write(&path, &(serialized + "\n"))
         .with_context(|| format!("write {}", path.display()))?;
     Ok(())

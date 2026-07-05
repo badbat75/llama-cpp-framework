@@ -260,9 +260,14 @@ export component AppWindow inherits Window {
                     color: Palette.foreground.transparentize(Tokens.faint);
                 }
 
-                // Run state + colored dot (right).
+                // Run state + colored dot (right). Mirrors the nav rail's
+                // transitional states (Starting…/Stopping…) so the two never
+                // contradict each other mid-transition; the dot stays neutral
+                // until the transition lands.
                 Text {
                     text: AppState.server_status_is_error ? "Error"
+                        : AppState.server_starting ? "Starting…"
+                        : AppState.server_stopping ? "Stopping…"
                         : (AppState.server_running ? "Running" : "Stopped");
                     font-size: 12px;
                     vertical-alignment: center;
@@ -276,6 +281,7 @@ export component AppWindow inherits Window {
                         height: 8px;
                         border-radius: 4px;
                         background: AppState.server_status_is_error ? Tokens.err
+                            : AppState.server_starting || AppState.server_stopping ? Tokens.off
                             : (AppState.server_running ? Tokens.ok : Tokens.off);
                     }
                 }

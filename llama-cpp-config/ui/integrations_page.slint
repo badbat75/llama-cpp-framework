@@ -63,7 +63,10 @@ export component IntegrationsPage inherits ScrollView {
 
             for item[i] in AppState.integration_models : Rectangle {
                 height: 36px;
-                background: Math.mod(i, 2) == 0 ? transparent : Palette.alternate-background.transparentize(Tokens.zebra);
+                // Tint with the WINDOW background: these rows sit on a
+                // SectionCard, whose surface IS alternate-background — tinting
+                // with the card's own colour composites to exactly itself.
+                background: Math.mod(i, 2) == 0 ? transparent : Palette.background.transparentize(Tokens.zebra);
 
                 HorizontalLayout {
                     padding-left: 12px;

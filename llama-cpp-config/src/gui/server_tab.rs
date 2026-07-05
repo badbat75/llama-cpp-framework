@@ -44,14 +44,15 @@ pub(super) fn wire(app: &AppWindow, tray: &AppTray, state: &Rc<RefCell<State>>) 
     }
     {
         let app_weak = app.as_weak();
-        let state = state.clone();
         app.global::<AppState>().on_revert_server(move || {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
             load_server_into_ui(&app);
-            refresh_file_options(&app, &state);
-            refresh_integrations(&app);
+            // No refresh_file_options / refresh_integrations here: a form
+            // revert never touches disk, and both hubs derive from the SAVED
+            // config — the only observable effect of calling them was wiping
+            // pending Integrations toggles.
             set_status(
                 &app,
                 format!("Reloaded {}", paths::server_ini().display()),
