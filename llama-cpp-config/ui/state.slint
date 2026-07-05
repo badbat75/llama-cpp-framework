@@ -143,13 +143,15 @@ export global AppState {
     // speculative decoding is possible even before an external draft file is picked.
     in-out property <bool> model_info_embeds_mtp: false;
     // Layer counts (block_count) of the selected model and draft, driving the
-    // GPU-layers / MoE-CPU-layers / draft-GPU-layers slider maxima. 0 = unknown
-    // (metadata unavailable), in which case the sliders fall back to a
-    // 0..Options.all_layers range.
+    // GPU-layers / MoE-CPU-layers / draft-GPU-layers slider maxima. For the
+    // MODEL sliders 0 = unknown (metadata unavailable) and gpu_layers_max
+    // falls back to a 0..Options.all_layers range; the draft slider needs no
+    // fallback — models_page only shows it when draft_n_layer > 0 (a 0-layer
+    // MTP head gets the CPU/GPU switch instead).
     in-out property <int> model_info_n_layer: 0;
     in-out property <int> model_info_draft_n_layer: 0;
     out property <int> gpu_layers_max: model_info_n_layer > 0 ? model_info_n_layer : Options.all_layers;
-    out property <int> draft_layers_max: model_info_draft_n_layer > 0 ? model_info_draft_n_layer : Options.all_layers;
+    out property <int> draft_layers_max: model_info_draft_n_layer;
     // Speculative-decoding controls are active when a draft model is selected OR
     // the main model embeds MTP heads — otherwise there is nothing to draft with.
     out property <bool> draft_active: form.model_draft != "" || model_info_embeds_mtp;
@@ -168,9 +170,9 @@ export global AppState {
 
     // ── Discard-confirm dialog state ─────────────────────────────────
     // Shown by Rust (gui::confirm_discard_then) when a navigation action —
-    // preset switch, Refresh/reload_all, New…/Clone… — would replace a dirty
-    // form. The pending action is stashed Rust-side (gui::State) and runs only
-    // on confirm; cancel drops it and keeps the edits.
+    // preset switch, Refresh/reload_all, New…/Clone…/Rename… — would replace
+    // a dirty form. The pending action is stashed Rust-side (gui::State) and
+    // runs only on confirm; cancel drops it and keeps the edits.
     in-out property <bool> show_discard_dialog: false;
 
     // ── Delete-confirm dialog state ──────────────────────────────────
@@ -209,6 +211,10 @@ export global AppState {
     callback pick_new_empty();
     callback pick_new_clone();
     callback rename_preset(string, string);
+    // Rename… button entry point. Routed through Rust (not opened Slint-side)
+    // so a dirty form gets the same discard-confirm guard as the other
+    // form-replacing navigations — committing a rename reloads from disk.
+    callback request_rename();
     // Discard-confirm dialog verdict (see its state block above): confirm runs
     // the stashed pending action, cancel drops it.
     callback confirm_discard();
@@ -223,7 +229,6 @@ export global AppState {
     // unit-tested; the .slint side only reports the picked index.
     callback draft_picked(int);
 
-    callback refresh_status();
     callback start_server();
     callback stop_server();
     // Re-read server.ini / presets.ini and re-scan the models directory.

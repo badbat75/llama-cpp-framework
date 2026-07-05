@@ -79,6 +79,9 @@ export component IntegrationsPage inherits ScrollView {
                     // toggle handler in src/gui/integrations_tab.rs.
                     CheckBox {
                         text: "";
+                        // Findable handle for the e2e rebuild-invariant phase
+                        // (src/tests/save_flow.rs) — text is empty by design.
+                        accessible-label: "integration-" + item.id;
                         checked: item.enabled;
                         toggled => { AppState.toggle_integration_model(i); }
                     }

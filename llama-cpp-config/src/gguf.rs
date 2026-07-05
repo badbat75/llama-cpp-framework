@@ -7,7 +7,9 @@
 // `gguf_init_from_file` with `no_alloc = true`, so only the header + tensor
 // infos are read, never the multi-GB weights. No GGUF parsing is reimplemented
 // here. If the DLL can't be loaded (e.g. a bare `cargo run` with no llama.cpp
-// alongside), reads return `None` and the box shows "unavailable".
+// alongside), reads return `None` and the box shows "unavailable" — and the
+// load is retried on the next read (only success is memoized; see `ffi::api`),
+// so a DLL that appears later (a finished `02-build.ps1`) is picked up live.
 //
 // Reads are synchronous and uncached — the header parse is fast enough to run on
 // the UI thread when the model/mmproj/draft selection changes.

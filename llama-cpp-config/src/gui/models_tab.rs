@@ -202,6 +202,32 @@ pub(super) fn wire(app: &AppWindow, state: &Rc<RefCell<State>>) {
     {
         let app_weak = app.as_weak();
         let state = state.clone();
+        app.global::<AppState>().on_request_rename(move || {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            // Same entry-point guard as New…/Clone… — committing the rename
+            // reloads the form from disk (preset_written), discarding edits.
+            let dirty = app.global::<AppState>().get_preset_dirty();
+            let action: Box<dyn Fn()> = {
+                let app_weak = app_weak.clone();
+                Box::new(move || {
+                    let Some(app) = app_weak.upgrade() else {
+                        return;
+                    };
+                    let s = app.global::<AppState>();
+                    let id = s.get_form().id;
+                    s.set_rename_old_id(id.clone());
+                    s.set_rename_new_id(id);
+                    s.set_show_rename_dialog(true);
+                })
+            };
+            confirm_discard_then(&app, &state, dirty, action);
+        });
+    }
+    {
+        let app_weak = app.as_weak();
+        let state = state.clone();
         app.global::<AppState>()
             .on_rename_preset(move |old_id, new_id| {
                 let Some(app) = app_weak.upgrade() else {
@@ -410,7 +436,8 @@ pub(super) fn update_model_info(app: &AppWindow) {
         return;
     };
 
-    let models_dir = s.get_server_form().models_dir.to_string();
+    // SAVED config, like refresh_file_options — see the note there.
+    let models_dir = server_cfg::load().models_dir_or_default();
     let ext = gguf::external_drafters(&models_dir, &model);
     s.set_model_info_kind(SharedString::from(info.kind_line()));
     s.set_model_info_n_layer(info.n_layer as i32);
@@ -453,7 +480,8 @@ pub(super) fn update_model_info(app: &AppWindow) {
 
 fn populate_dialog_models(app: &AppWindow, state: &Rc<RefCell<State>>) {
     let s = app.global::<AppState>();
-    let models_dir = s.get_server_form().models_dir.to_string();
+    // SAVED config, like refresh_file_options — see the note there.
+    let models_dir = server_cfg::load().models_dir_or_default();
     let scanned = model_scan::list(&models_dir, model_scan::Category::Model.subdir());
     state.borrow_mut().dialog_models_all = scanned;
     s.set_dialog_filter(SharedString::from(""));

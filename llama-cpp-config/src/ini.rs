@@ -84,6 +84,26 @@ fn strip_inline_comment(val: &str) -> &str {
     val[..end].trim_end()
 }
 
+/// Save-boundary guard for the comment rule above: the format has NO escaping,
+/// so a value containing `;` or `#` (legal in Windows paths, e.g.
+/// `C:\Models #1`) would write fine and silently reload truncated — by this
+/// parser and by llama-server's own preset reader alike. Callers that persist
+/// path-valued fields (`server_cfg::save`, `presets::save`) reject such values
+/// here instead, so the user gets an error naming the field rather than a
+/// config that quietly points somewhere else.
+pub fn reject_comment_markers(field: &str, value: &str) -> std::io::Result<()> {
+    if value.contains([';', '#']) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!(
+                "{field} contains ';' or '#', which the INI comment rule would \
+                 truncate on reload — use a path without those characters"
+            ),
+        ));
+    }
+    Ok(())
+}
+
 /// Read only the named section's keys, or empty if not present.
 pub fn read_section(path: &Path, section: &str) -> BTreeMap<String, String> {
     for s in read_all(path) {
@@ -103,7 +123,7 @@ pub fn replace_key(path: &Path, section: &str, key: &str, value: &str) -> std::i
     let eol = detect_eol(&content);
 
     let header = format!("[{section}]");
-    let Some(header_pos) = find_section_header(&content, &header) else {
+    let Some((_, header_end)) = find_section_header(&content, section) else {
         let mut out = content;
         if !out.is_empty() && !out.ends_with('\n') {
             out.push_str(eol);
@@ -121,12 +141,7 @@ pub fn replace_key(path: &Path, section: &str, key: &str, value: &str) -> std::i
         return atomic_write(path, &out);
     };
 
-    let section_start = header_pos + header.len();
-    let section_start = section_start
-        + content[section_start..]
-            .find('\n')
-            .map(|n| n + 1)
-            .unwrap_or(0);
+    let section_start = header_end + content[header_end..].find('\n').map(|n| n + 1).unwrap_or(0);
     let section_end = next_section_start(&content, section_start).unwrap_or(content.len());
     let section_body = &content[section_start..section_end];
 
@@ -173,7 +188,6 @@ pub fn replace_key(path: &Path, section: &str, key: &str, value: &str) -> std::i
 /// converted to the file's own line-ending style, so a hand-maintained
 /// LF-only file doesn't gain mixed endings on every save.
 pub fn replace_section(path: &Path, section_name: &str, section_body: &str) -> std::io::Result<()> {
-    let header = format!("[{section_name}]");
     let content = fs::read_to_string(path).unwrap_or_default();
     let eol = detect_eol(&content);
     let body = normalize_eol(section_body.trim_end(), eol);
@@ -183,7 +197,7 @@ pub fn replace_section(path: &Path, section_name: &str, section_body: &str) -> s
         format!("{body}{eol}")
     };
 
-    let Some(header_pos) = find_section_header(&content, &header) else {
+    let Some((header_pos, header_end)) = find_section_header(&content, section_name) else {
         let mut out = content;
         if !out.is_empty() {
             out = out.trim_end_matches(['\r', '\n']).to_string();
@@ -197,7 +211,7 @@ pub fn replace_section(path: &Path, section_name: &str, section_body: &str) -> s
         return atomic_write(path, &out);
     };
 
-    let next = next_section_start(&content, header_pos + header.len()).unwrap_or(content.len());
+    let next = next_section_start(&content, header_end).unwrap_or(content.len());
     // Splice from the header's line start so an indented header's leading
     // whitespace is replaced along with it, not left glued to the new body.
     let before = &content[..line_start_of(&content, header_pos)];
@@ -218,17 +232,16 @@ pub fn replace_section(path: &Path, section_name: &str, section_body: &str) -> s
 
 /// Rename a section header in place.
 pub fn rename_section(path: &Path, old: &str, new: &str) -> std::io::Result<()> {
-    let old_header = format!("[{old}]");
     let new_header = format!("[{new}]");
     let content = fs::read_to_string(path)?;
-    let Some(pos) = find_section_header(&content, &old_header) else {
+    let Some((pos, end)) = find_section_header(&content, old) else {
         return Err(std::io::Error::new(
             std::io::ErrorKind::NotFound,
             format!("section [{old}] not found"),
         ));
     };
     // A case-only rename matches itself — only a *different* section counts.
-    if find_section_header(&content, &new_header).is_some_and(|p| p != pos) {
+    if find_section_header(&content, new).is_some_and(|(p, _)| p != pos) {
         return Err(std::io::Error::new(
             std::io::ErrorKind::AlreadyExists,
             format!("section [{new}] already exists"),
@@ -237,21 +250,20 @@ pub fn rename_section(path: &Path, old: &str, new: &str) -> std::io::Result<()> 
     let mut out = String::with_capacity(content.len() + new.len());
     out.push_str(&content[..pos]);
     out.push_str(&new_header);
-    out.push_str(&content[pos + old_header.len()..]);
+    out.push_str(&content[end..]);
     atomic_write(path, &out)
 }
 
 /// Remove a section entirely.
 pub fn delete_section(path: &Path, section_name: &str) -> std::io::Result<()> {
-    let header = format!("[{section_name}]");
     let content = match fs::read_to_string(path) {
         Ok(c) => c,
         Err(_) => return Ok(()),
     };
-    let Some(header_pos) = find_section_header(&content, &header) else {
+    let Some((header_pos, header_end)) = find_section_header(&content, section_name) else {
         return Ok(());
     };
-    let next = next_section_start(&content, header_pos + header.len()).unwrap_or(content.len());
+    let next = next_section_start(&content, header_end).unwrap_or(content.len());
     let mut out = String::with_capacity(content.len());
     out.push_str(&content[..line_start_of(&content, header_pos)]);
     out.push_str(&content[next..]);
@@ -286,17 +298,22 @@ fn line_starts_with_key(line: &str, key: &str) -> bool {
     r.starts_with('=')
 }
 
-/// Byte offset of the `[` of the line that equals `header` (case-insensitive
-/// and whitespace-trimmed, matching the lookup semantics of `read_all` — an
-/// indented or trailing-space header is still that section, so the writers
-/// must find it where the reader does).
-fn find_section_header(content: &str, header: &str) -> Option<usize> {
+/// Byte span (`[` ..= `]`, exclusive end) of the header line whose NAME equals
+/// `section` — parsed exactly the way `read_all` parses a header (trim the
+/// line, strip `[`/`]`, trim the name, compare case-insensitively), so the
+/// writers find a section wherever the reader does: an indented, trailing-space
+/// or internally-spaced `[ name ]` header is still that section. Returning the
+/// real span (not `"[name]".len()`) keeps splicers correct when the on-disk
+/// header is longer than the canonical one.
+fn find_section_header(content: &str, section: &str) -> Option<(usize, usize)> {
     let mut offset = 0;
     for line in content.split_inclusive('\n') {
-        if line.trim().eq_ignore_ascii_case(header) {
-            // Point at the `[` itself so splicers (rename_section) can swap
-            // exactly `[name]` regardless of indentation.
-            return Some(offset + (line.len() - line.trim_start().len()));
+        let t = line.trim();
+        if let Some(name) = t.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
+            if name.trim().eq_ignore_ascii_case(section) {
+                let start = offset + (line.len() - line.trim_start().len());
+                return Some((start, start + t.len()));
+            }
         }
         offset += line.len();
     }
@@ -555,6 +572,59 @@ mod tests {
         // ...and deleting [a] leaves [b] intact.
         delete_section(&path, "a").unwrap();
         let sections = read_all(&path);
+        assert_eq!(sections.len(), 1);
+        assert_eq!(sections[0].id, "b");
+    }
+
+    #[test]
+    fn reject_comment_markers_matches_the_strip_rule() {
+        assert!(reject_comment_markers("f", r"C:\Models\plain").is_ok());
+        for hostile in [r"C:\Models #1", r"C:\a;b", "x#y"] {
+            let err = reject_comment_markers("ModelsDir", hostile).expect_err(hostile);
+            assert!(
+                err.to_string().contains("ModelsDir"),
+                "error names the field"
+            );
+            // The guard exists precisely because the reader would truncate it.
+            assert_ne!(strip_inline_comment(hostile), hostile);
+        }
+    }
+
+    // read_all trims the NAME inside the brackets, so a hand-edited `[ a ]`
+    // lists as section `a`. The writers must find it there too — matching the
+    // whole line against `[a]` missed it, so replace_section appended a fresh
+    // duplicate `[a]` and every later read returned the stale first copy
+    // ("edits never stick").
+    #[test]
+    fn writers_respect_internal_header_whitespace() {
+        let (_d, path) = ini_file("[ a ]\r\nk = 1\r\n[b]\r\nk = 2\r\n");
+        assert_eq!(read_section(&path, "a")["k"], "1");
+
+        // Rewrite must hit the existing `[ a ]`, never spawn a second [a]…
+        replace_section(&path, "a", "[a]\r\nk = 9\r\n").unwrap();
+        let sections = read_all(&path);
+        assert_eq!(sections.iter().filter(|s| s.id == "a").count(), 1);
+        assert_eq!(read_section(&path, "a")["k"], "9");
+
+        // …replace_key must land inside it…
+        let (_d2, path2) = ini_file("[ a ]\r\nk = 1\r\n[b]\r\nk = 2\r\n");
+        replace_key(&path2, "a", "extra", "3").unwrap();
+        assert_eq!(read_section(&path2, "a")["extra"], "3");
+        assert!(!read_section(&path2, "b").contains_key("extra"));
+
+        // …rename must swap the REAL `[ a ]` span (no dangling ` ]`)…
+        let (_d3, path3) = ini_file("[ a ]\r\nk = 1\r\n");
+        rename_section(&path3, "a", "c").unwrap();
+        assert_eq!(
+            fs::read_to_string(&path3).unwrap(),
+            "[c]\r\nk = 1\r\n",
+            "rename must replace the actual header text"
+        );
+
+        // …and delete must remove it.
+        let (_d4, path4) = ini_file("[ a ]\r\nk = 1\r\n[b]\r\nk = 2\r\n");
+        delete_section(&path4, "a").unwrap();
+        let sections = read_all(&path4);
         assert_eq!(sections.len(), 1);
         assert_eq!(sections[0].id, "b");
     }

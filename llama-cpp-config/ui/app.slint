@@ -110,8 +110,12 @@ export component AppWindow inherits Window {
         KeyBinding { keys: @keys(Control + "1"); activated => { if (!AppState.modal_open) { AppState.current_tab = 0; } } }
         KeyBinding { keys: @keys(Control + "2"); activated => { if (!AppState.modal_open) { AppState.current_tab = 1; } } }
         KeyBinding { keys: @keys(Control + "3"); activated => { if (!AppState.modal_open) { AppState.current_tab = 2; } } }
-        KeyBinding { keys: @keys(F5); activated => { if (!AppState.modal_open) { AppState.refresh_status(); } } }
-        KeyBinding { keys: @keys(Control + N); activated => { if (!AppState.modal_open) { AppState.new_preset(); } } }
+        // F5 = the Refresh button (full disk re-read + re-probe, inheriting
+        // the dirty-form discard guard), not just a run-status poll.
+        KeyBinding { keys: @keys(F5); activated => { if (!AppState.modal_open) { AppState.reload_all(); } } }
+        // Ctrl+N works from any tab — jump to Models first, or the preset
+        // would be created (and selected) on a hidden page.
+        KeyBinding { keys: @keys(Control + N); activated => { if (!AppState.modal_open) { AppState.current_tab = 1; AppState.new_preset(); } } }
 
     VerticalLayout {
         width: 100%;
@@ -298,6 +302,20 @@ export component AppWindow inherits Window {
             input-type: search;
             text <=> AppState.dialog_filter;
             edited(t) => { AppState.filter_dialog_models(t); }
+            // Keyboard path: filter down to ONE match, Enter picks it and
+            // confirms — same body as the Create/Clone button. (The rows are
+            // TouchArea-only, so without this the dialog needs the mouse.)
+            accepted => {
+                if (AppState.dialog_model_labels.length == 1) {
+                    AppState.dialog_model_index = 0;
+                    AppState.show_new_kind_picker = false;
+                    if (AppState.new_dialog_source_id == "") {
+                        AppState.pick_new_empty();
+                    } else {
+                        AppState.pick_new_clone();
+                    }
+                }
+            }
             // Type-to-filter immediately when the dialog opens.
             init => { self.focus(); }
         }

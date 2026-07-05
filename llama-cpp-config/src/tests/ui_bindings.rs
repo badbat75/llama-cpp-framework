@@ -28,9 +28,8 @@
 //!
 //! Requires Slint element debug info, which build.rs emits for non-release
 //! profiles only (see the `PROFILE` gate there); `cargo test --release` can't find
-//! the widgets. It is ONE `#[test]` on purpose: the testing backend is a
-//! process-global, single-threaded platform, so a single window exercised
-//! sequentially avoids cargo's parallel-test threads racing on it.
+//! the widgets. It is ONE `#[test]` on purpose — every e2e phase shares it and
+//! this window; topology rationale: `src/tests/mod.rs`.
 
 use i_slint_backend_testing::{self as itest, ElementHandle};
 use slint::ComponentHandle;

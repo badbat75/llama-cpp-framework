@@ -6,7 +6,8 @@
 #
 # - Loads $cfg from build\config-build.psd1 (build-time paths, GPU targets, compiler).
 # - Adds ROCm/HIP\bin to PATH so HIP DLLs are loadable at both build and run time.
-# - Exposes Enable-VsDevShell as a function; build scripts call it, runtime scripts don't.
+# - Exposes Enable-VsDevShell as a function; both dot-sourcers call it (the
+#   activation stays opt-in so a future non-build consumer isn't forced into it).
 
 $cfgPath = Join-Path $PSScriptRoot 'build\config-build.psd1'
 if (-not (Test-Path $cfgPath)) {

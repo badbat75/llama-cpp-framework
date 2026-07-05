@@ -117,9 +117,13 @@ fn server_args(
 }
 
 /// Launch llama-server.exe with args from server.ini + presets.ini.
-pub fn start() -> io::Result<()> {
+///
+/// Returns the config the process was ACTUALLY launched with, so the caller
+/// can snapshot the client URL from it — re-loading server.ini after the fact
+/// would race a save landing between the two reads.
+pub fn start() -> io::Result<crate::server_cfg::ServerConfig> {
     if is_running() {
-        return Ok(()); // already running
+        return Ok(crate::server_cfg::load()); // already running
     }
 
     if !has_presets() {
@@ -169,7 +173,7 @@ pub fn start() -> io::Result<()> {
 
     cmd.spawn()?;
 
-    Ok(())
+    Ok(cfg)
 }
 
 /// Force-kill all llama-server.exe processes (taskkill /f — llama-server has

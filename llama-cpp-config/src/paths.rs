@@ -15,6 +15,13 @@ fn env_path(var: &str) -> Option<PathBuf> {
 }
 
 pub(crate) fn home_dir() -> PathBuf {
+    // Under the e2e redirect the temp dir stands in for the whole profile:
+    // home-derived paths (e.g. `server_cfg::default_models_dir`, which save()
+    // CREATES on disk) must stay inside the temp tree, or a redirected test
+    // would silently touch — and mkdir under — the user's real home.
+    if let Some(p) = env_path("LLAMA_CPP_CONFIG_DATA_ROOT") {
+        return p;
+    }
     #[cfg(windows)]
     {
         env_path("USERPROFILE").expect("USERPROFILE not set")
@@ -27,8 +34,9 @@ pub(crate) fn home_dir() -> PathBuf {
 
 /// `%LOCALAPPDATA%\llama.cpp` on Windows, `$HOME/.local/share/llama.cpp` elsewhere.
 ///
-/// `LLAMA_CPP_CONFIG_DATA_ROOT` overrides the whole tree (and
-/// `opencode_user_config` below). It exists for the e2e tests under
+/// `LLAMA_CPP_CONFIG_DATA_ROOT` overrides the whole tree (plus
+/// `opencode_user_config` below AND `home_dir` above, so home-derived
+/// defaults land in the temp tree too). It exists for the e2e tests under
 /// `src/tests/`, which point config IO at a temp dir so they never touch the
 /// user's real data — it is NOT a supported end-user knob.
 pub fn data_root() -> PathBuf {

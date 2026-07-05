@@ -160,7 +160,6 @@ export component AutoSlider inherits HorizontalLayout {
 
 export component SectionCard {
     in property <string> heading;
-    in property <length> content_spacing: 10px;
     in property <length> content_padding: 16px;
 
     VerticalLayout {
@@ -185,7 +184,7 @@ export component SectionCard {
 
             VerticalLayout {
                 padding: root.content_padding;
-                spacing: root.content_spacing;
+                spacing: 10px;
                 @children
             }
         }
@@ -248,11 +247,10 @@ export component LabeledField inherits HorizontalLayout {
     // Optional hover help. When set, an ⓘ glyph is shown after the label and
     // carries a Tooltip — keeps long explanations out of the input placeholders.
     in property <string> hint;
-    in property <length> label_width: 130px;
     spacing: 8px;
     alignment: stretch;
     HorizontalLayout {
-        width: root.label_width;
+        width: 130px;
         spacing: 4px;
         alignment: start;
         Text {
@@ -296,7 +294,7 @@ export component LabeledField inherits HorizontalLayout {
 // A read-only `label → value` row for the "Model info" card: a LabeledField
 // whose body is one wrapped, foreground-coloured Text. Collapses the repeated
 // `LabeledField { Text { …six identical props… } }` boilerplate to a single
-// line per fact. `label`/`hint`/`label_width` are inherited from LabeledField.
+// line per fact. `label`/`hint` are inherited from LabeledField.
 export component InfoRow inherits LabeledField {
     in property <string> value;
     Text {

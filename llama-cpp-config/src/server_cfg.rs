@@ -158,6 +158,9 @@ pub fn opt_nonblank(s: Option<String>) -> Option<String> {
 
 pub fn save(cfg: &ServerConfig) -> io::Result<()> {
     let models_dir = cfg.models_dir_or_default();
+    // The INI format can't escape `;`/`#`, so a dir containing one would
+    // silently reload truncated — refuse to write it (ini::reject_comment_markers).
+    ini::reject_comment_markers("ModelsDir", &models_dir)?;
     let path = paths::server_ini();
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;

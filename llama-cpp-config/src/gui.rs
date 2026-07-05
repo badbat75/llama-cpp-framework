@@ -95,15 +95,17 @@ struct State {
     pending_discard: Option<Box<dyn Fn()>>,
 }
 
-/// TEST-ONLY seam for the e2e save-flow test (src/tests/save_flow.rs): build the
-/// shared `State`, seed the preset list from disk, and wire the Models tab —
-/// nothing else (no tray, no probes, no single-instance, no event loop). The
-/// caller must have redirected config IO first (see `paths::data_root`).
+/// TEST-ONLY seam for the e2e flow test (src/tests/save_flow.rs): build the
+/// shared `State`, seed the preset list from disk, and wire the Models +
+/// Integrations tabs — nothing else (no tray, no probes, no single-instance,
+/// no event loop). The caller must have redirected config IO first (see
+/// `paths::data_root`).
 #[cfg(test)]
-pub(crate) fn wire_models_tab_for_tests(app: &AppWindow) {
+pub(crate) fn wire_tabs_for_tests(app: &AppWindow) {
     let state = Rc::new(RefCell::new(State::default()));
     reload_presets(app, &state, None);
     models_tab::wire(app, &state);
+    integrations_tab::wire(app);
     wire_discard_confirm(app, &state);
 }
 
@@ -141,15 +143,6 @@ pub fn run() -> anyhow::Result<()> {
     s.set_presets_path(SharedString::from(
         paths::presets_ini().to_string_lossy().into_owned(),
     ));
-
-    {
-        let app_weak = app.as_weak();
-        let tray_weak = tray.as_weak();
-        s.on_refresh_status(move || {
-            // Explicit user refresh (F5): also clear a stale error state.
-            refresh_run_status(app_weak.clone(), tray_weak.clone(), true);
-        });
-    }
 
     {
         let app_weak = app.as_weak();
@@ -298,8 +291,8 @@ fn confirm_discard_then(
 }
 
 /// Wire the discard dialog's verdict callbacks. Called from `run()` and from
-/// the e2e seam (`wire_models_tab_for_tests`) — the guarded handlers live in
-/// both wirings.
+/// the e2e seam (`wire_tabs_for_tests`) — the guarded handlers live in both
+/// wirings.
 fn wire_discard_confirm(app: &AppWindow, state: &Rc<RefCell<State>>) {
     {
         let app_weak = app.as_weak();
@@ -361,8 +354,8 @@ fn preset_summaries(presets: &[presets::Preset], filter: &str) -> Vec<PresetSumm
 /// the ModelsDir scan, the integration state, the live run status, and the
 /// llama-server version + device probes (the exe can change under us — e.g. a
 /// `02-build.ps1` rerun while the configurator is open). The one home shared by
-/// `run()`'s startup seed and the Refresh button (`reload_all`), so a newly
-/// added disk-backed `refresh_*` hub is wired in exactly one place.
+/// `run()`'s startup seed and Refresh/F5 (`reload_all`), so a newly added
+/// disk-backed `refresh_*` hub is wired in exactly one place.
 fn reload_all_from_disk(
     app: &AppWindow,
     state: &Rc<RefCell<State>>,
@@ -423,7 +416,12 @@ fn reload_presets(app: &AppWindow, state: &Rc<RefCell<State>>, want: Option<&str
 /// selected preset — this is the hub a newly-added file-backed dropdown extends.
 fn refresh_file_options(app: &AppWindow, state: &Rc<RefCell<State>>) {
     let s = app.global::<AppState>();
-    let models_dir = s.get_server_form().models_dir.to_string();
+    // SAVED config, not the live form: like every other client-facing
+    // projection (chat URL, Command Line card), the scans must agree with
+    // what a launch would use — an unsaved ModelsDir edit must not make the
+    // pickers list models the server won't find. The Server tab's Save
+    // handler re-runs this hub, so the scans follow the file.
+    let models_dir = server_cfg::load().models_dir_or_default();
     let form = s.get_form();
 
     // Note: the trailing update_model_info() re-walks mtps\ / dflashs\ on its
@@ -600,13 +598,14 @@ fn start_server_async(app_weak: slint::Weak<AppWindow>, tray_weak: slint::Weak<A
     bump_run_status_gen();
     std::thread::spawn(move || {
         let result = runstate::start();
-        // Snapshot the client URL the process was launched with (`start()` read
-        // the same saved config): the RUNNING server keeps listening there even
-        // if a later save changes server.ini, so Open-chat must prefer it.
-        let launched_url = result.is_ok().then(|| {
-            let cfg = crate::server_cfg::load();
-            format!("http://{}:{}", cfg.client_host(), cfg.port_or_default())
-        });
+        // Snapshot the client URL from the config `start()` ACTUALLY launched
+        // with (returned, not re-loaded — a save landing mid-start must not
+        // leak into the snapshot): the RUNNING server keeps listening there
+        // even if a later save changes server.ini, so Open-chat must prefer it.
+        let launched_url = result
+            .as_ref()
+            .ok()
+            .map(|cfg| format!("http://{}:{}", cfg.client_host(), cfg.port_or_default()));
         slint::invoke_from_event_loop(move || {
             bump_run_status_gen();
             let running = result.is_ok();
@@ -618,7 +617,7 @@ fn start_server_async(app_weak: slint::Weak<AppWindow>, tray_weak: slint::Weak<A
                     s.set_launched_url(SharedString::from(url.as_str()));
                 }
                 match &result {
-                    Ok(()) => {
+                    Ok(_) => {
                         s.set_server_status_is_error(false);
                         set_status(&app, "llama-server started.".into(), false);
                     }
@@ -721,6 +720,7 @@ fn refresh_run_status(
             }
             if let Some(app) = app_weak.upgrade() {
                 let s = app.global::<AppState>();
+                let was_running = s.get_server_running();
                 s.set_server_running(running);
                 if !running {
                     // The server stopped outside the GUI — drop the stale
@@ -730,6 +730,27 @@ fn refresh_run_status(
                 }
                 if clear_error {
                     s.set_server_status_is_error(false);
+                }
+                // A running→stopped flip with no transition in flight is an
+                // external kill or a post-spawn death (`start()` only verifies
+                // the SPAWN — a bad preset or a taken port kills the process
+                // moments later): surface it instead of silently flipping the
+                // footer to "Stopped" under a status line still saying
+                // "llama-server started.". Neutral wording — a crash and an
+                // external taskkill are indistinguishable here.
+                if was_running && !running && !s.get_server_starting() && !s.get_server_stopping() {
+                    s.set_server_status_is_error(true);
+                    set_status(
+                        &app,
+                        format!(
+                            "llama-server is no longer running — see {}",
+                            crate::paths::data_root()
+                                .join("logs")
+                                .join("llama-server.log")
+                                .display()
+                        ),
+                        true,
+                    );
                 }
             }
             if let Some(tray) = tray_weak.upgrade() {

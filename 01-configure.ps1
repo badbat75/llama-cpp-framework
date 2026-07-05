@@ -13,30 +13,39 @@ param(
 # ── Detection functions ──────────────────────────────────────────────
 
 function Find-VsDevShell {
-    # Search known VS installation roots, newest first
-    $roots = @(
-        "${env:ProgramFiles}\Microsoft Visual Studio"
-        "${env:ProgramFiles(x86)}\Microsoft Visual Studio"
-    )
-    foreach ($root in $roots) {
-        if (-not (Test-Path $root)) { continue }
-        # Sort version folders descending (18, 17, 2022, 2019...)
-        $versions = Get-ChildItem $root -Directory | Sort-Object Name -Descending
-        foreach ($ver in $versions) {
-            $editions = @("Enterprise", "Professional", "Community", "BuildTools")
-            foreach ($ed in $editions) {
-                $script = Join-Path $ver.FullName "$ed\Common7\Tools\Launch-VsDevShell.ps1"
-                if (Test-Path $script) { return $script }
-            }
-        }
-    }
-    # Fallback: vswhere
+    # vswhere first: it knows real product versions, so "newest" is correct
+    # across the year-dir → major-version-dir naming switch (2022 vs 18).
     $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
     if (Test-Path $vswhere) {
         $installPath = & $vswhere -latest -property installationPath 2>$null
         if ($installPath) {
             $script = Join-Path $installPath "Common7\Tools\Launch-VsDevShell.ps1"
             if (Test-Path $script) { return $script }
+        }
+    }
+    # Fallback (no vswhere): scan known VS installation roots, newest first.
+    # Folder names mix years (2019, 2022) and major versions (18, …), and a
+    # plain string sort puts "2022" above "18" — map years to their major
+    # version (2022→17, 2019→16, 2017→15) so the comparison is numeric.
+    $roots = @(
+        "${env:ProgramFiles}\Microsoft Visual Studio"
+        "${env:ProgramFiles(x86)}\Microsoft Visual Studio"
+    )
+    foreach ($root in $roots) {
+        if (-not (Test-Path $root)) { continue }
+        $versions = Get-ChildItem $root -Directory | Sort-Object -Descending {
+            # NB: inside switch blocks $_ is the switch VALUE (the name string).
+            switch ($_.Name) {
+                '2022' { 17 } '2019' { 16 } '2017' { 15 }
+                default { $v = 0; [void][int]::TryParse($_, [ref]$v); $v }
+            }
+        }
+        foreach ($ver in $versions) {
+            $editions = @("Enterprise", "Professional", "Community", "BuildTools")
+            foreach ($ed in $editions) {
+                $script = Join-Path $ver.FullName "$ed\Common7\Tools\Launch-VsDevShell.ps1"
+                if (Test-Path $script) { return $script }
+            }
         }
     }
     return $null
@@ -67,8 +76,11 @@ function Find-ROCm {
     }
     $base = "${env:ProgramFiles}\AMD\ROCm"
     if (-not (Test-Path $base)) { return $null }
-    # Pick the latest version folder
-    $latest = Get-ChildItem $base -Directory | Sort-Object Name -Descending | Select-Object -First 1
+    # Pick the latest version folder — numerically ([version]), not as strings:
+    # a string sort would rank "7.1" above a future "10.0".
+    $latest = Get-ChildItem $base -Directory |
+        Sort-Object -Descending { $v = $null; if ([version]::TryParse($_.Name, [ref]$v)) { $v } else { [version]'0.0' } } |
+        Select-Object -First 1
     if ($latest -and (Test-Path "$($latest.FullName)\bin")) {
         return $latest.FullName
     }

@@ -49,11 +49,22 @@ pub fn list(root_dir: &str, subdir: &str) -> Vec<FileOption> {
     let root = PathBuf::from(root_dir).join(subdir);
     let mut out: Vec<FileOption> = Vec::new();
     let mut seen_paths: std::collections::HashSet<String> = std::collections::HashSet::new();
+    // Visited-directory set, keyed on the canonicalized path: `is_dir()`
+    // follows junctions/symlinks, so a self-referencing junction inside the
+    // tree would otherwise loop the worklist forever (the GUI scans on every
+    // dropdown rebuild — a hang, not just a slow scan). Canonicalize resolves
+    // the link target, so revisiting an already-walked dir is a cheap skip.
+    let mut visited_dirs: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
     let mut walk: Vec<PathBuf> = vec![root.clone()];
 
     while let Some(dir) = walk.pop() {
         if !dir.is_dir() {
             continue;
+        }
+        if let Ok(canon) = dir.canonicalize() {
+            if !visited_dirs.insert(canon) {
+                continue;
+            }
         }
         let Ok(entries) = std::fs::read_dir(&dir) else {
             continue;

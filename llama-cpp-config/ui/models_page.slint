@@ -87,15 +87,11 @@ export component ModelsPage inherits HorizontalLayout {
                 Button {
                     text: "Rename…";
                     enabled: AppState.selected_preset_index >= 0;
-                    // Opens its dialog purely Slint-side (seed the fields, show
-                    // the modal) — unlike New…/Clone…, which route through Rust
-                    // callbacks. The actual rename fires from the dialog in
-                    // app.slint (AppState.rename_preset).
-                    clicked => {
-                        AppState.rename_old_id = AppState.form.id;
-                        AppState.rename_new_id = AppState.form.id;
-                        AppState.show_rename_dialog = true;
-                    }
+                    // Routes through Rust like New…/Clone… so a dirty form gets
+                    // the discard-confirm guard before the dialog opens; the
+                    // actual rename then fires from the dialog in app.slint
+                    // (AppState.rename_preset).
+                    clicked => { AppState.request_rename(); }
                 }
                 Button {
                     text: "Delete";

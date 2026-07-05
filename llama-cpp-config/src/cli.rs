@@ -327,8 +327,13 @@ mod tests {
         ];
         let out = show_lines(&cfg);
         for (label, value) in needles {
-            assert!(out.contains(label), "missing {label:?} in:\n{out}");
-            assert!(out.contains(&value), "missing {value:?} in:\n{out}");
+            // Label and value must share a LINE: two separate contains() could
+            // both pass off other fields (e.g. ModelsMax "3" matching inside
+            // TensorSplit's "3,1") while this field's row prints a placeholder.
+            assert!(
+                out.lines().any(|l| l.contains(label) && l.contains(&value)),
+                "no line pairs {label:?} with {value:?} in:\n{out}"
+            );
         }
     }
 

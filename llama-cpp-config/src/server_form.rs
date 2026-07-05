@@ -50,7 +50,11 @@ pub fn config_to_form(cfg: &server_cfg::ServerConfig) -> ServerForm {
 pub fn form_to_config(f: &ServerForm) -> server_cfg::ServerConfig {
     server_cfg::ServerConfig {
         port: ini::parse_int(f.port.as_str()),
-        hostname: Some(f.hostname.to_string()),
+        // Blank collapses to None like every optional string, matching what
+        // the same input produces via `server set` / `load()` — a `Some("")`
+        // here would only diverge the in-memory config, since every consumer
+        // re-blanks it through `hostname_or_default`.
+        hostname: server_cfg::opt_nonblank(Some(f.hostname.to_string())),
         mlock: Some(f.mlock),
         // "auto" ⇒ omit the flag; otherwise the slider's value.
         threads: if f.threads_auto {
@@ -67,7 +71,8 @@ pub fn form_to_config(f: &ServerForm) -> server_cfg::ServerConfig {
             Some(f.threads_batch)
         },
         models_max: ini::parse_int(f.models_max.as_str()),
-        models_dir: Some(f.models_dir.to_string()),
+        // Blank ⇒ None (fall back to the default dir), same rule as hostname.
+        models_dir: server_cfg::opt_nonblank(Some(f.models_dir.to_string())),
         device: server_cfg::opt_nonblank(Some(f.device.to_string())),
         // "" and the combo sentinel "default" both mean "no explicit split".
         split_mode: match f.split_mode.as_str() {

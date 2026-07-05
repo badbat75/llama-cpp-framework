@@ -180,6 +180,7 @@ pub fn load_all() -> Vec<Preset> {
 /// seeding error is intentionally ignored: a preset save must still succeed even
 /// if server.ini can't be touched.
 pub fn save(preset: &Preset) -> io::Result<()> {
+    validate_for_save(preset)?;
     let path = paths::presets_ini();
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
@@ -191,6 +192,22 @@ pub fn save(preset: &Preset) -> io::Result<()> {
         if let Some(models_dir) = infer_models_dir(&preset.model) {
             let _ = ini::replace_key(&paths::server_ini(), "Server", "ModelsDir", &models_dir);
         }
+    }
+    Ok(())
+}
+
+/// Save-boundary validation, pure so the unit test never touches `paths::`:
+/// the path-valued fields must survive the INI comment rule — a `;`/`#` in a
+/// GGUF path would silently reload truncated (here AND in llama-server's own
+/// preset reader), so refuse it with the field name (the cure is renaming the
+/// file). See `ini::reject_comment_markers`.
+fn validate_for_save(preset: &Preset) -> io::Result<()> {
+    for (field, value) in [
+        ("model", &preset.model),
+        ("mmproj", &preset.mmproj),
+        ("model-draft", &preset.model_draft),
+    ] {
+        ini::reject_comment_markers(field, value)?;
     }
     Ok(())
 }
@@ -212,6 +229,19 @@ pub fn rename(old_id: &str, new_id: &str) -> io::Result<()> {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
             "new preset id is unchanged",
+        ));
+    }
+    // The rename dialog is the one free-text way into a section header —
+    // generated ids go through `make_id`'s whitelist. Hold renames to the
+    // same charset: `[`/`]`/newline would corrupt the section structure,
+    // `;`/`#` gets misread as a comment (here and by llama-server alike).
+    if !new
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_'))
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "preset ids may only use letters, digits, '.', '-' and '_'",
         ));
     }
     let path = paths::presets_ini();
@@ -392,6 +422,45 @@ mod tests {
         assert!(rename("old", "  ").is_err(), "blank new id");
         assert!(rename("old", "old").is_err(), "unchanged id");
         assert!(rename("old", " old ").is_err(), "unchanged after trim");
+    }
+
+    // Free-text rename ids must stay inside make_id's charset — `[`/`]`/CR/LF
+    // would corrupt the INI section structure, `;`/`#`/`=` get misparsed.
+    // All rejected before any IO (per the src/tests/mod.rs warning).
+    #[test]
+    fn rename_rejects_hostile_ids() {
+        for hostile in ["a;b", "a#b", "a[b", "a]b", "a=b", "a b", "a\nb"] {
+            assert!(rename("old", hostile).is_err(), "must reject {hostile:?}");
+        }
+    }
+
+    // Pure validation (no IO): a `;`/`#` in a path field would silently reload
+    // truncated through the INI comment rule, so save must refuse it.
+    #[test]
+    fn save_validation_rejects_comment_markers_in_path_fields() {
+        let clean = Preset {
+            id: "m".into(),
+            model: r"C:\models\m.gguf".into(),
+            mmproj: r"C:\models\m-mmproj.gguf".into(),
+            model_draft: r"C:\models\mtps\m-mtp.gguf".into(),
+            ..Default::default()
+        };
+        assert!(validate_for_save(&clean).is_ok());
+
+        for (field, hostile) in [
+            ("model", r"C:\Models #1\m.gguf"),
+            ("mmproj", r"C:\a;b\m-mmproj.gguf"),
+            ("model-draft", r"C:\models\m #mtp.gguf"),
+        ] {
+            let mut p = clean.clone();
+            match field {
+                "model" => p.model = hostile.into(),
+                "mmproj" => p.mmproj = hostile.into(),
+                _ => p.model_draft = hostile.into(),
+            }
+            let err = validate_for_save(&p).expect_err(field);
+            assert!(err.to_string().contains(field), "error names the field");
+        }
     }
 
     #[test]

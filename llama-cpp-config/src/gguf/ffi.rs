@@ -78,7 +78,7 @@ mod windows_impl {
         v_str: FnStr,
     }
     // `Api` holds only C function pointers (Send + Sync), so it is safe to cache
-    // in a `static OnceLock`.
+    // in a `static OnceLock`. Only SUCCESS is cached — see `api()`.
 
     #[link(name = "kernel32")]
     extern "system" {
@@ -86,7 +86,7 @@ mod windows_impl {
         fn GetProcAddress(module: HModule, name: *const u8) -> *const c_void;
     }
 
-    static API: OnceLock<Option<Api>> = OnceLock::new();
+    static API: OnceLock<Api> = OnceLock::new();
 
     fn wide(p: &Path) -> Vec<u16> {
         p.as_os_str()
@@ -157,8 +157,18 @@ mod windows_impl {
         }
     }
 
+    // Memoize SUCCESS only: caching a failed load would leave the Model-info
+    // box dead until restart when the configurator started before the DLL
+    // existed (e.g. mid `02-build.ps1`) — the exe tree can change under us,
+    // and the other probes (version, devices) do re-probe on Refresh. A failed
+    // `LoadLibraryW` is cheap, so retrying per read costs nothing.
     fn api() -> Option<&'static Api> {
-        API.get_or_init(load).as_ref()
+        if let Some(a) = API.get() {
+            return Some(a);
+        }
+        let a = load()?;
+        // If another thread won a race, its identical instance is kept.
+        Some(API.get_or_init(|| a))
     }
 
     pub struct Ctx {
