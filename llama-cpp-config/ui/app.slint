@@ -3,8 +3,11 @@
 // Left navigation rail (Server / Models / Integrations) and a content area that swaps
 // pages via `AppState.current_tab`. Live server status is shown in the footer.
 //
-// All shared data/callbacks live in `AppState` (state.slint); this file is just
-// the window shell and the tray. Rust drives everything via `app.global::<AppState>()`.
+// All shared data/callbacks live in `AppState` (state.slint); this file is the
+// window shell and the tray, PLUS the app-wide pieces that must sit above the
+// pages: the keyboard shortcuts (Ctrl+S/1/2/3/N, F5 — the KeyBindings block)
+// and the four overlay modals (New/Clone picker, Discard, Delete, Rename).
+// Rust drives everything via `app.global::<AppState>()`.
 
 import { LineEdit, Button, ListView, Palette } from "std-widgets.slint";
 import { AppState } from "state.slint";
@@ -297,23 +300,33 @@ export component AppWindow inherits Window {
         card_height: 480px;
         dismissed => { AppState.show_new_kind_picker = false; }
 
+        // ONE home for the confirm action (hide + empty/clone branch), like
+        // the rename dialog's submit-rename(): Enter and the Create/Clone
+        // button both funnel through here so the action can't drift between
+        // the two paths. The GATES legitimately stay per-path: Enter requires
+        // a sole filtered match (and seeds the index), the button requires a
+        // row selection.
+        function confirm-pick() {
+            AppState.show_new_kind_picker = false;
+            if (AppState.new_dialog_source_id == "") {
+                AppState.pick_new_empty();
+            } else {
+                AppState.pick_new_clone();
+            }
+        }
+
         LineEdit {
             placeholder-text: "Filter models…";
             input-type: search;
             text <=> AppState.dialog_filter;
             edited(t) => { AppState.filter_dialog_models(t); }
             // Keyboard path: filter down to ONE match, Enter picks it and
-            // confirms — same body as the Create/Clone button. (The rows are
-            // TouchArea-only, so without this the dialog needs the mouse.)
+            // confirms. (The rows are TouchArea-only, so without this the
+            // dialog needs the mouse.)
             accepted => {
                 if (AppState.dialog_model_labels.length == 1) {
                     AppState.dialog_model_index = 0;
-                    AppState.show_new_kind_picker = false;
-                    if (AppState.new_dialog_source_id == "") {
-                        AppState.pick_new_empty();
-                    } else {
-                        AppState.pick_new_clone();
-                    }
+                    confirm-pick();
                 }
             }
             // Type-to-filter immediately when the dialog opens.
@@ -354,14 +367,7 @@ export component AppWindow inherits Window {
                 text: AppState.new_dialog_source_id == "" ? "Create" : "Clone";
                 primary: true;
                 enabled: AppState.dialog_model_index >= 0;
-                clicked => {
-                    AppState.show_new_kind_picker = false;
-                    if (AppState.new_dialog_source_id == "") {
-                        AppState.pick_new_empty();
-                    } else {
-                        AppState.pick_new_clone();
-                    }
-                }
+                clicked => { confirm-pick(); }
             }
         }
     }

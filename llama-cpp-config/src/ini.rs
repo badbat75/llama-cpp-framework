@@ -141,8 +141,19 @@ pub fn replace_key(path: &Path, section: &str, key: &str, value: &str) -> std::i
         return atomic_write(path, &out);
     };
 
-    let section_start = header_end + content[header_end..].find('\n').map(|n| n + 1).unwrap_or(0);
-    let section_end = next_section_start(&content, section_start).unwrap_or(content.len());
+    // Body starts after the header's newline; a header that is the file's
+    // last line (no terminator) gets one added at the splice below so the
+    // appended key starts on its own line instead of glued to the `]`.
+    let (section_start, header_needs_eol) = match content[header_end..].find('\n') {
+        Some(n) => (header_end + n + 1, false),
+        None => (content.len(), true),
+    };
+    // Scan from header_end (like replace_section / delete_section), NOT from
+    // section_start: next_section_start only sees a header on a line AFTER a
+    // '\n' at/beyond `from`, so scanning from the body start skips a
+    // neighbouring header sitting exactly there (empty body) — the key would
+    // splice into THAT section instead.
+    let section_end = next_section_start(&content, header_end).unwrap_or(content.len());
     let section_body = &content[section_start..section_end];
 
     let mut new_body = String::new();
@@ -174,6 +185,9 @@ pub fn replace_key(path: &Path, section: &str, key: &str, value: &str) -> std::i
 
     let mut out = String::with_capacity(content.len() + new_line.len());
     out.push_str(&content[..section_start]);
+    if header_needs_eol {
+        out.push_str(eol);
+    }
     out.push_str(&new_body);
     out.push_str(&content[section_end..]);
 
@@ -448,6 +462,32 @@ mod tests {
         assert_eq!(
             fs::read_to_string(&path).unwrap(),
             "[Server]\r\nPort = 8080\r\nModelsDir = C:/models\r\n\r\n[other]\r\nk = v\r\n"
+        );
+    }
+
+    // next_section_start only recognizes a header AFTER a '\n' at/beyond
+    // `from`, so scanning from the body start missed a neighbouring header
+    // sitting exactly there: appending to an empty-bodied section spliced the
+    // key into the NEXT section instead (and read_section still saw nothing).
+    #[test]
+    fn replace_key_respects_empty_section_body() {
+        let (_d, path) = ini_file("[Server]\r\n[other]\r\nk = 2\r\n");
+        replace_key(&path, "Server", "ModelsDir", "C:/models").unwrap();
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            "[Server]\r\nModelsDir = C:/models\r\n[other]\r\nk = 2\r\n"
+        );
+    }
+
+    // A header that is the file's last line (no terminator) used to have the
+    // key glued straight onto the `]`, destroying the header line.
+    #[test]
+    fn replace_key_handles_header_without_trailing_newline() {
+        let (_d, path) = ini_file("[Server]");
+        replace_key(&path, "Server", "Port", "8080").unwrap();
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            "[Server]\r\nPort = 8080\r\n"
         );
     }
 

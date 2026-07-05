@@ -10,11 +10,19 @@
 //   5. `PresetForm` struct                — ui/types.slint
 //   6. the input widget                   — ui/models_page.slint (bind two-way `<=>`)
 //   7. `preset_to_form` + `form_to_preset` — src/form.rs (BOTH directions)
+//   8. PATH-VALUED field only (a filesystem path the user can point anywhere):
+//      add it to `validate_for_save`'s list below AND to the
+//      `save_validation_rejects_comment_markers_in_path_fields` test — the INI
+//      format can't escape `;`/`#` (legal in Windows dirs), so an unvalidated
+//      path saves fine and reloads TRUNCATED. Nothing fails if you skip this.
 // Guards: the INI round-trip test in this file (`full_preset_round_trips_through_ini`)
 // and the form round-trip test in form.rs (`form_to_preset(preset_to_form(p)) == p`)
 // — a field wired into one side only drops out of one of them. Give the new
 // field a NON-DEFAULT value when extending the rich fixtures: `None`/empty
 // satisfies the compiler but makes the round-trips vacuous for that field.
+// Step 8 is the one step NO test catches when skipped (round-trip fixtures use
+// clean paths) — same for its widget (step 6: a forgotten widget just never
+// appears in the UI).
 
 use std::fs;
 use std::io;

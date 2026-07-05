@@ -1,4 +1,6 @@
-//! Server-tab callback wiring (the server.ini editor).
+//! Server-tab callback wiring (the server.ini editor), plus the nav-rail run
+//! controls (`start_server` / `stop_server` — thin wrappers over the parent's
+//! `start_server_async` / `stop_server_async`, which the tray shares).
 //!
 //! Shared state, generated Slint types, and the `load_*` / `refresh_*` / `set_status`
 //! helpers all live in the parent `gui` module; `use super::*` pulls them in.

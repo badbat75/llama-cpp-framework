@@ -25,6 +25,13 @@ function Test-IsAdmin {
 
 function Get-WingetVersion {
     param([string]$Id)
+    # Locally relax EAP: under Windows PowerShell 5.1 — which is exactly what
+    # runs this script on a fresh machine, since it is the script that INSTALLS
+    # PowerShell 7 (hence no `#requires -Version 7` like its siblings) — a
+    # native command writing anything to a REDIRECTED stderr throws a
+    # terminating NativeCommandError when $ErrorActionPreference is 'Stop'.
+    # Function-local, so the rest of the script keeps fail-fast semantics.
+    $ErrorActionPreference = 'Continue'
     # winget's table output is locale-dependent and the column order puts Name
     # first (e.g. "PowerShell 7-x64  Microsoft.PowerShell  7.4.6.0  winget"),
     # so match the Id token anywhere on the line and return the next
@@ -44,6 +51,10 @@ function Get-WingetVersion {
 # bNNNN release tag, so `git describe --tags` is e.g. "b9871").
 function Get-GitDescribe {
     param([string]$RepoDir)
+    # Same PS 5.1 stderr-redirect rationale as Get-WingetVersion: a tagless /
+    # grafted clone makes `git describe` print to the redirected stderr, which
+    # must degrade to $null here, not terminate the script.
+    $ErrorActionPreference = 'Continue'
     if (-not $RepoDir -or -not (Test-Path "$RepoDir\.git")) { return $null }
     $tag = git -C $RepoDir describe --tags 2>$null
     if ($LASTEXITCODE -ne 0 -or -not $tag) { return $null }
@@ -155,7 +166,12 @@ if ($cfg -and $beforeLlama) {
     if ($LASTEXITCODE -ne 0) {
         Write-Host "  git fetch failed in $($cfg.LlamaCppDir)" -ForegroundColor Yellow
     } else {
+        # Set/restore EAP around the stderr redirect (same PS 5.1 rationale as
+        # Get-WingetVersion — this one runs at script scope, not in a function).
+        $prevEap = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
         $latestLlama = (git -C $cfg.LlamaCppDir describe --tags --abbrev=0 origin/master 2>$null | Select-Object -First 1)
+        $ErrorActionPreference = $prevEap
         if ($latestLlama) { $latestLlama = $latestLlama.Trim() }
     }
 }

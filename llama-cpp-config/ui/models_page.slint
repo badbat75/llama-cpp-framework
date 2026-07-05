@@ -255,7 +255,7 @@ export component ModelsPage inherits HorizontalLayout {
                 }
                 LabeledField {
                     label: "GPU split mode";
-                    hint: "Multi-GPU split for this model (--split-mode), overrides the server default; same on CUDA and HIP.\nlayer splits layers + KV; row is tensor-parallel; none = single GPU.\ndefault = inherit server.\nIgnored when a GPU device pins one device.";
+                    hint: "Multi-GPU split for this model (--split-mode), overrides the server default; same on CUDA and HIP.\nlayer splits layers + KV; row is tensor-parallel; none = single GPU.\ndefault = inherit server.\nIgnored when the GPU device above pins one device (a server-wide pin also bypasses it at launch).";
                     ComboBox {
                         // A pinned GPU device runs on one device, so the split
                         // strategy has nothing to split — disable it.

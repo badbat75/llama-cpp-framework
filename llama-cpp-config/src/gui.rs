@@ -9,8 +9,10 @@
 //! `AppState` global (ui/state.slint), reached with
 //! `let s = app.global::<AppState>()`. `State` (below) is the small Rust-side
 //! cache the callbacks share via `Rc<RefCell<…>>`: the loaded presets vector,
-//! the new-preset dialog's model scan, and the draft dropdown's (value, spec)
-//! rows. (The GPU-device probe result is cached in `devices::probed()` — it is
+//! the new-preset dialog's model scan, the draft dropdown's (value, spec)
+//! rows, and the discard dialog's parked action (`pending_discard` — the
+//! continuation `confirm_discard_then` stashes until the user's verdict).
+//! (The GPU-device probe result is cached in `devices::probed()` — it is
 //! process-wide, written by the probe thread at startup and on Refresh/F5.)
 //!
 //! ## Helper verb taxonomy (so a grep lands in the right family)
@@ -20,7 +22,7 @@
 //!   cache (`reload_presets`, `refresh_file_options`, `refresh_device_options`,
 //!   `refresh_integrations`, `refresh_run_status`, `refresh_server_snapshot`;
 //!   `reload_all_from_disk` is the everything-at-once hub shared by startup and
-//!   the Refresh button).
+//!   Refresh/F5).
 //! - `*_options`         : build a dropdown's (labels, values, index) model
 //!   triple the caller hands to the matching `set_*` accessors (`device_options`,
 //!   `scanned_options`).
@@ -153,9 +155,10 @@ pub fn run() -> anyhow::Result<()> {
                 return;
             };
             let s = app.global::<AppState>();
-            // Reloading replaces BOTH forms from disk, so unsaved edits on
-            // either tab need the discard confirmation.
-            let dirty = s.get_preset_dirty() || s.get_server_dirty();
+            // Reloading replaces BOTH forms from disk and rebuilds the
+            // Integrations list, so unsaved edits on ANY tab need the
+            // discard confirmation.
+            let dirty = s.get_preset_dirty() || s.get_server_dirty() || integrations_dirty(&app);
             let action: Box<dyn Fn()> = {
                 let app_weak = app_weak.clone();
                 let tray_weak = tray_weak.clone();
@@ -602,9 +605,13 @@ fn start_server_async(app_weak: slint::Weak<AppWindow>, tray_weak: slint::Weak<A
         // with (returned, not re-loaded — a save landing mid-start must not
         // leak into the snapshot): the RUNNING server keeps listening there
         // even if a later save changes server.ini, so Open-chat must prefer it.
+        // `Ok(None)` = already running: WE launched nothing, so there is no
+        // launch config to pin — leave launched_url alone (per its contract,
+        // it stays empty for a server started outside the GUI).
         let launched_url = result
             .as_ref()
             .ok()
+            .and_then(|launched| launched.as_ref())
             .map(|cfg| format!("http://{}:{}", cfg.client_host(), cfg.port_or_default()));
         slint::invoke_from_event_loop(move || {
             bump_run_status_gen();
@@ -617,9 +624,13 @@ fn start_server_async(app_weak: slint::Weak<AppWindow>, tray_weak: slint::Weak<A
                     s.set_launched_url(SharedString::from(url.as_str()));
                 }
                 match &result {
-                    Ok(_) => {
+                    Ok(Some(_)) => {
                         s.set_server_status_is_error(false);
                         set_status(&app, "llama-server started.".into(), false);
+                    }
+                    Ok(None) => {
+                        s.set_server_status_is_error(false);
+                        set_status(&app, "llama-server is already running.".into(), false);
                     }
                     Err(e) => {
                         s.set_server_status_is_error(true);
@@ -799,6 +810,19 @@ fn refresh_integrations(app: &AppWindow) {
         })
         .collect();
     s.set_integration_models(model(items));
+}
+
+/// Unsaved Integrations edits. The row toggles have no dirty flag like the two
+/// forms (they live only in the UI model), so compare the enabled set against
+/// the on-disk opencode.json instead. Consulted by the F5/Refresh discard
+/// guard — `reload_all_from_disk` rebuilds the list and would otherwise wipe
+/// pending toggles without the confirmation the form tabs get.
+pub(crate) fn integrations_dirty(app: &AppWindow) -> bool {
+    let enabled_ids = integrations::opencode_model_ids();
+    app.global::<AppState>()
+        .get_integration_models()
+        .iter()
+        .any(|m| m.enabled != enabled_ids.iter().any(|id| id == m.id.as_str()))
 }
 
 /// The opencode provider base URL derived from the SAVED server.ini — the

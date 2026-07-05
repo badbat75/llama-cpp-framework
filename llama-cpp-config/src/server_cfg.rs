@@ -21,6 +21,10 @@
 //   8. `runstate::server_args`               — map the field to its llama-server
 //      flag (or wave it through with a comment if it's launch-env only, like
 //      ModelsDir → LLAMA_CACHE in `start()`)
+//   9. PATH-VALUED field only: add it to `validate_for_save` below (and extend
+//      `save_validation_rejects_comment_markers_in_models_dir`) — the INI
+//      format can't escape `;`/`#`, so an unvalidated path saves fine and
+//      reloads TRUNCATED. Like the widget, nothing fails if you skip this.
 // Guards: the save→load round-trip test in this file (steps 2–3: a key-name typo
 // or wrong `keep` rule fails it), the form round-trip in server_form.rs
 // (`form_to_config(config_to_form(c)) == c`, step 6), cli.rs's
@@ -157,10 +161,8 @@ pub fn opt_nonblank(s: Option<String>) -> Option<String> {
 }
 
 pub fn save(cfg: &ServerConfig) -> io::Result<()> {
+    validate_for_save(cfg)?;
     let models_dir = cfg.models_dir_or_default();
-    // The INI format can't escape `;`/`#`, so a dir containing one would
-    // silently reload truncated — refuse to write it (ini::reject_comment_markers).
-    ini::reject_comment_markers("ModelsDir", &models_dir)?;
     let path = paths::server_ini();
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
@@ -169,6 +171,14 @@ pub fn save(cfg: &ServerConfig) -> io::Result<()> {
     // home-derived default), so this is unconditionally safe to create.
     let _ = fs::create_dir_all(&models_dir);
     ini::atomic_write(&path, &render(cfg))
+}
+
+/// Save-boundary validation, pure so the unit test never touches `paths::` —
+/// the mirror of `presets::validate_for_save`. The INI format can't escape
+/// `;`/`#`, so a ModelsDir containing one would silently reload truncated
+/// (see `ini::reject_comment_markers`).
+fn validate_for_save(cfg: &ServerConfig) -> io::Result<()> {
+    ini::reject_comment_markers("ModelsDir", &cfg.models_dir_or_default())
 }
 
 /// Render the whole server.ini body. Pure (no IO) — the file-writing wrapper is
@@ -344,6 +354,28 @@ mod tests {
         assert_eq!(reloaded.threads_batch, None, "threads_batch <= 0 is auto");
         assert_eq!(reloaded.models_max, None, "models_max == 1 is the default");
         assert_eq!(reloaded.device, None, "blank device is unset");
+    }
+
+    // Pure validation (no IO), the server-side mirror of presets'
+    // save_validation_rejects_comment_markers_in_path_fields: a `;`/`#` in
+    // ModelsDir would silently reload truncated through the INI comment rule,
+    // so save must refuse it.
+    #[test]
+    fn save_validation_rejects_comment_markers_in_models_dir() {
+        // Explicit clean dir: a default config would derive ModelsDir via
+        // paths::home_dir(), which unit tests must stay away from (mod.rs).
+        let with = |dir: &str| ServerConfig {
+            models_dir: Some(dir.into()),
+            ..Default::default()
+        };
+        assert!(validate_for_save(&with(r"E:\llm")).is_ok());
+        for hostile in [r"C:\Models #1", r"C:\a;b"] {
+            let err = validate_for_save(&with(hostile)).expect_err(hostile);
+            assert!(
+                err.to_string().contains("ModelsDir"),
+                "error names the field"
+            );
+        }
     }
 
     // client_host is what the Open-chat button and the Integrations base URL

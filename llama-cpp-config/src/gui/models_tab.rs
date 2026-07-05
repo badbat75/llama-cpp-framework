@@ -2,9 +2,17 @@
 //!
 //! Shared state, generated Slint types, and the `refresh_*` / `reload_presets` /
 //! `apply_form` helpers live in the parent `gui` module; `use super::*` pulls
-//! them in. Two Models-tab-only helpers live HERE next to their callers instead
-//! of in the shared hub: `update_model_info` (the GGUF "Model info" box) and the
-//! New / Clone dialog funnel (`populate_dialog_models` … `commit_new_preset`).
+//! them in. The Models-tab-only helper families live HERE next to their callers
+//! instead of in the shared hub:
+//! - `update_model_info` — the GGUF "Model info" box;
+//! - the New / Clone dialog funnel (`populate_dialog_models` … `commit_new_preset`);
+//! - the discard-guarded navigation bodies (`do_select_preset`,
+//!   `open_new_dialog`, `open_clone_dialog`, and the Rename seed behind
+//!   `request_rename`) — the actions `confirm_discard_then` parks;
+//! - `preset_written` — the reload + reselect + re-baseline invariant every
+//!   write path (save / rename / clone / New…) funnels through;
+//! - `apply_draft_pick` — the merged MTP/DFlash draft-pick policy (incl. the
+//!   gemma4 auto-pin), unit-tested below.
 
 use super::*;
 

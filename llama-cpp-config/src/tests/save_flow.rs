@@ -272,6 +272,12 @@ pub(super) fn run(app: &AppWindow) {
             .enabled,
         "the toggle callback must flip the row in place"
     );
+    // The pending toggle is what the F5/Refresh discard guard consults —
+    // integrations_dirty compares the UI rows against the on-disk enabled set.
+    assert!(
+        crate::gui::integrations_dirty(app),
+        "a pending toggle must read as integrations-dirty"
+    );
     st.invoke_revert_integrations(); // Rust-side rebuild: back to disk state
     itest::mock_elapsed_time(std::time::Duration::from_millis(1));
     let cb = ElementHandle::find_by_accessible_label(app, label.as_str())
@@ -281,5 +287,9 @@ pub(super) fn run(app: &AppWindow) {
         cb.accessible_checked(),
         Some(false),
         "a rebuild must recreate the delegate so the checkbox tracks the model again"
+    );
+    assert!(
+        !crate::gui::integrations_dirty(app),
+        "a rebuild from disk must clear the integrations-dirty signal"
     );
 }
