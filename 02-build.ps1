@@ -1,4 +1,5 @@
-﻿# Build llama.cpp with CUDA + Vulkan + HIP (ROCm) support,
+﻿#requires -Version 7
+# Build llama.cpp with CUDA + Vulkan + HIP (ROCm) support,
 # then build llama-cpp-config (Rust GUI + CLI configurator).
 
 . "$PSScriptRoot\common.ps1"  # loads $cfg, adds ROCm to PATH

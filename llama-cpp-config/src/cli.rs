@@ -72,15 +72,16 @@ pub struct ServerSet {
 impl ServerSet {
     /// Copy every provided flag into `cfg`, applying each field's clearing rule
     /// (see the per-field docs above): a `None` flag leaves the field untouched;
-    /// non-positive thread/reuse values clear the override; a blank device/split
-    /// string unsets it. The single, unit-tested home for `server set`'s field
-    /// mapping — keep it in lockstep with the `ServerConfig` schema.
+    /// non-positive thread/reuse values clear the override; a blank string
+    /// unsets any optional string field (`opt_nonblank`, matching `load()`).
+    /// The single, unit-tested home for `server set`'s field mapping — keep it
+    /// in lockstep with the `ServerConfig` schema.
     fn apply(&self, cfg: &mut server_cfg::ServerConfig) {
         if let Some(p) = self.port {
             cfg.port = Some(p);
         }
         if let Some(h) = &self.hostname {
-            cfg.hostname = Some(h.clone());
+            cfg.hostname = server_cfg::opt_nonblank(Some(h.clone()));
         }
         if let Some(m) = self.mlock {
             cfg.mlock = Some(m);
@@ -98,9 +99,8 @@ impl ServerSet {
             cfg.models_max = Some(m);
         }
         if let Some(d) = &self.models_dir {
-            cfg.models_dir = Some(d.clone());
+            cfg.models_dir = server_cfg::opt_nonblank(Some(d.clone()));
         }
-        // A blank string clears the field (blank = unset).
         if let Some(dev) = &self.device {
             cfg.device = server_cfg::opt_nonblank(Some(dev.clone()));
         }
@@ -258,17 +258,24 @@ mod tests {
         };
         let mut cfg = ServerConfig::default();
         set.apply(&mut cfg);
-        assert_eq!(cfg.port, Some(9000));
-        assert_eq!(cfg.hostname.as_deref(), Some("0.0.0.0"));
-        assert_eq!(cfg.mlock, Some(true));
-        assert_eq!(cfg.threads, Some(8));
-        assert_eq!(cfg.cache_reuse, Some(256));
-        assert_eq!(cfg.threads_batch, Some(16));
-        assert_eq!(cfg.models_max, Some(3));
-        assert_eq!(cfg.models_dir.as_deref(), Some("D:\\models"));
-        assert_eq!(cfg.device.as_deref(), Some("CUDA0"));
-        assert_eq!(cfg.split_mode.as_deref(), Some("row"));
-        assert_eq!(cfg.tensor_split.as_deref(), Some("3,1"));
+        // Whole-struct equality against a second exhaustive literal: the
+        // compiler forces a value for a new field in BOTH literals, and the
+        // equality fails until `apply` actually copies it — an initialized-
+        // but-never-copied field can't slip through.
+        let expected = ServerConfig {
+            port: Some(9000),
+            hostname: Some("0.0.0.0".into()),
+            mlock: Some(true),
+            threads: Some(8),
+            cache_reuse: Some(256),
+            threads_batch: Some(16),
+            models_max: Some(3),
+            models_dir: Some(r"D:\models".into()),
+            device: Some("CUDA0".into()),
+            split_mode: Some("row".into()),
+            tensor_split: Some("3,1".into()),
+        };
+        assert_eq!(cfg, expected);
     }
 
     // The Show leg of the 3-spot CLI fan-out: every field set in a rich config
@@ -289,32 +296,39 @@ mod tests {
             split_mode: Some("row".into()),
             tensor_split: Some("3,1".into()),
         };
+        // Labels AND values derive from an exhaustive destructure, so a field
+        // added to the schema can't be initialized here without also being
+        // asserted — `show_lines` omitting it fails the value check.
+        let ServerConfig {
+            port,
+            hostname,
+            mlock,
+            threads,
+            cache_reuse,
+            threads_batch,
+            models_max,
+            models_dir,
+            device,
+            split_mode,
+            tensor_split,
+        } = cfg.clone();
+        let needles = [
+            ("Port:", port.unwrap().to_string()),
+            ("Hostname:", hostname.unwrap()),
+            ("Mlock:", mlock.unwrap().to_string()),
+            ("Threads:", threads.unwrap().to_string()),
+            ("CacheReuse:", cache_reuse.unwrap().to_string()),
+            ("ThreadsBatch:", threads_batch.unwrap().to_string()),
+            ("ModelsMax:", models_max.unwrap().to_string()),
+            ("ModelsDir:", models_dir.unwrap()),
+            ("Device:", device.unwrap()),
+            ("SplitMode:", split_mode.unwrap()),
+            ("TensorSplit:", tensor_split.unwrap()),
+        ];
         let out = show_lines(&cfg);
-        for needle in [
-            "Port:",
-            "9000",
-            "Hostname:",
-            "0.0.0.0",
-            "Mlock:",
-            "false",
-            "Threads:",
-            "8",
-            "CacheReuse:",
-            "256",
-            "ThreadsBatch:",
-            "16",
-            "ModelsMax:",
-            "3",
-            "ModelsDir:",
-            r"D:\models",
-            "Device:",
-            "CUDA0",
-            "SplitMode:",
-            "row",
-            "TensorSplit:",
-            "3,1",
-        ] {
-            assert!(out.contains(needle), "missing {needle:?} in:\n{out}");
+        for (label, value) in needles {
+            assert!(out.contains(label), "missing {label:?} in:\n{out}");
+            assert!(out.contains(&value), "missing {value:?} in:\n{out}");
         }
     }
 
@@ -334,27 +348,33 @@ mod tests {
     #[test]
     fn server_set_apply_clears_overrides_on_nonpositive_and_blank() {
         let mut cfg = ServerConfig {
+            hostname: Some("0.0.0.0".into()),
             threads: Some(8),
             cache_reuse: Some(64),
             threads_batch: Some(4),
+            models_dir: Some(r"D:\models".into()),
             device: Some("CUDA0".into()),
             split_mode: Some("row".into()),
             tensor_split: Some("3,1".into()),
             ..Default::default()
         };
         let set = ServerSet {
+            hostname: Some("  ".into()),
             threads: Some(0),
             cache_reuse: Some(-1),
             threads_batch: Some(0),
+            models_dir: Some(String::new()),
             device: Some(String::new()),
             split_mode: Some("  ".into()),
             tensor_split: Some(String::new()),
             ..Default::default()
         };
         set.apply(&mut cfg);
+        assert_eq!(cfg.hostname, None);
         assert_eq!(cfg.threads, None);
         assert_eq!(cfg.cache_reuse, None);
         assert_eq!(cfg.threads_batch, None);
+        assert_eq!(cfg.models_dir, None);
         assert_eq!(cfg.device, None);
         assert_eq!(cfg.split_mode, None);
         assert_eq!(cfg.tensor_split, None);

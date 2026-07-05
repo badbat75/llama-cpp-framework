@@ -20,13 +20,20 @@ pub(super) fn wire(app: &AppWindow, state: &Rc<RefCell<State>>) {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
-            let st = state.borrow();
-            if let Some(p) = usize::try_from(index).ok().and_then(|i| st.presets.get(i)) {
-                app.global::<AppState>().set_selected_preset_index(index);
-                apply_form(&app, preset_to_form(p));
-                drop(st);
-                refresh_file_options(&app, &state);
-            }
+            // Switching presets replaces the form — unsaved edits need the
+            // discard confirmation first.
+            let dirty = app.global::<AppState>().get_preset_dirty();
+            let action: Box<dyn Fn()> = {
+                let app_weak = app_weak.clone();
+                let state = state.clone();
+                Box::new(move || {
+                    let Some(app) = app_weak.upgrade() else {
+                        return;
+                    };
+                    do_select_preset(&app, &state, index);
+                })
+            };
+            confirm_discard_then(&app, &state, dirty, action);
         });
     }
     {
@@ -115,13 +122,22 @@ pub(super) fn wire(app: &AppWindow, state: &Rc<RefCell<State>>) {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
-            // "New…" is always create-from-scratch — independent of any current
-            // selection, so it can never silently turn into a clone.
-            *pending_clone_base.borrow_mut() = None;
-            populate_dialog_models(&app, &state);
-            let s = app.global::<AppState>();
-            s.set_new_dialog_source_id(SharedString::from(""));
-            s.set_show_new_kind_picker(true);
+            // Committing the new preset will replace the form (preset_written
+            // reloads + reselects), so guard dirty edits at the entry point —
+            // a discard dialog can't stack on the picker modal later.
+            let dirty = app.global::<AppState>().get_preset_dirty();
+            let action: Box<dyn Fn()> = {
+                let app_weak = app_weak.clone();
+                let state = state.clone();
+                let pending_clone_base = pending_clone_base.clone();
+                Box::new(move || {
+                    let Some(app) = app_weak.upgrade() else {
+                        return;
+                    };
+                    open_new_dialog(&app, &state, &pending_clone_base);
+                })
+            };
+            confirm_discard_then(&app, &state, dirty, action);
         });
     }
     {
@@ -132,26 +148,21 @@ pub(super) fn wire(app: &AppWindow, state: &Rc<RefCell<State>>) {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
-            let s = app.global::<AppState>();
-            // Clone source is always the selected preset (the button is disabled
-            // otherwise). Stash it and surface its id in the dialog so it's clear
-            // what is being copied.
-            let selected = {
-                let st = state.borrow();
-                let idx = s.get_selected_preset_index();
-                usize::try_from(idx)
-                    .ok()
-                    .and_then(|i| st.presets.get(i))
-                    .cloned()
+            // Same entry-point guard as New… (the clone's commit also replaces
+            // the form).
+            let dirty = app.global::<AppState>().get_preset_dirty();
+            let action: Box<dyn Fn()> = {
+                let app_weak = app_weak.clone();
+                let state = state.clone();
+                let pending_clone_base = pending_clone_base.clone();
+                Box::new(move || {
+                    let Some(app) = app_weak.upgrade() else {
+                        return;
+                    };
+                    open_clone_dialog(&app, &state, &pending_clone_base);
+                })
             };
-            let Some(p) = selected else {
-                set_status(&app, "Select a preset to clone first.".into(), true);
-                return;
-            };
-            populate_dialog_models(&app, &state);
-            s.set_new_dialog_source_id(SharedString::from(p.id.clone()));
-            *pending_clone_base.borrow_mut() = Some(p);
-            s.set_show_new_kind_picker(true);
+            confirm_discard_then(&app, &state, dirty, action);
         });
     }
     {
@@ -272,6 +283,61 @@ pub(super) fn wire(app: &AppWindow, state: &Rc<RefCell<State>>) {
             update_model_info(&app);
         });
     }
+}
+
+/// The actual preset switch (the guarded body of `on_select_preset`): load the
+/// indexed preset into the editor and refresh its dependent dropdowns.
+fn do_select_preset(app: &AppWindow, state: &Rc<RefCell<State>>, index: i32) {
+    let st = state.borrow();
+    if let Some(p) = usize::try_from(index).ok().and_then(|i| st.presets.get(i)) {
+        app.global::<AppState>().set_selected_preset_index(index);
+        apply_form(app, preset_to_form(p));
+        drop(st);
+        refresh_file_options(app, state);
+    }
+}
+
+/// Open the model picker in plain "New" mode (the guarded body of
+/// `on_new_preset`). "New…" is always create-from-scratch — independent of any
+/// current selection, so it can never silently turn into a clone.
+fn open_new_dialog(
+    app: &AppWindow,
+    state: &Rc<RefCell<State>>,
+    pending_clone_base: &Rc<RefCell<Option<presets::Preset>>>,
+) {
+    *pending_clone_base.borrow_mut() = None;
+    populate_dialog_models(app, state);
+    let s = app.global::<AppState>();
+    s.set_new_dialog_source_id(SharedString::from(""));
+    s.set_show_new_kind_picker(true);
+}
+
+/// Open the model picker in Clone mode (the guarded body of `on_clone_preset`).
+/// The clone source is always the selected preset (the button is disabled
+/// otherwise): stash it and surface its id in the dialog so it's clear what is
+/// being copied.
+fn open_clone_dialog(
+    app: &AppWindow,
+    state: &Rc<RefCell<State>>,
+    pending_clone_base: &Rc<RefCell<Option<presets::Preset>>>,
+) {
+    let s = app.global::<AppState>();
+    let selected = {
+        let st = state.borrow();
+        let idx = s.get_selected_preset_index();
+        usize::try_from(idx)
+            .ok()
+            .and_then(|i| st.presets.get(i))
+            .cloned()
+    };
+    let Some(p) = selected else {
+        set_status(app, "Select a preset to clone first.".into(), true);
+        return;
+    };
+    populate_dialog_models(app, state);
+    s.set_new_dialog_source_id(SharedString::from(p.id.clone()));
+    *pending_clone_base.borrow_mut() = Some(p);
+    s.set_show_new_kind_picker(true);
 }
 
 // The "all layers on GPU" sentinel lives in form.rs next to the slider

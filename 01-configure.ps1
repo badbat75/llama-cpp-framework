@@ -104,10 +104,21 @@ $detected.VsDevShell = $val
 if ($val) { Write-Host "  [OK] VsDevShell     : $val" -ForegroundColor Green }
 else      { Write-Host "  [!!] VsDevShell     : NOT FOUND" -ForegroundColor Red; $gaps += "VsDevShell — Install Visual Studio with C++ workload" }
 
-# Activate VS Dev Shell early so tool detection (cmake, clang, ninja) works
+# Activate VS Dev Shell early so tool detection (cmake, clang, ninja) works.
+# This duplicates common.ps1's Enable-VsDevShell on purpose: common.ps1 throws
+# before build\config-build.psd1 exists, which is exactly when this script runs.
+# Keep the vswhere PATH fixup in step with it.
 if ($val) {
     Write-Host ""
     Write-Host "  Activating VS Developer Shell..." -ForegroundColor DarkGray
+    # vswhere.exe lives in the VS Installer dir, which isn't on PATH by default;
+    # without it the spawned VsDevCmd prints "'vswhere.exe' is not recognized".
+    $pf86 = ${env:ProgramFiles(x86)}
+    if (-not $pf86) { $pf86 = 'C:\Program Files (x86)' }
+    $vsInstaller = Join-Path $pf86 'Microsoft Visual Studio\Installer'
+    if ((Test-Path (Join-Path $vsInstaller 'vswhere.exe')) -and ($env:PATH -notlike "*$vsInstaller*")) {
+        $env:PATH = "$vsInstaller;$env:PATH"
+    }
     $prevDir = Get-Location
     & $val -Arch amd64
     Set-Location $prevDir

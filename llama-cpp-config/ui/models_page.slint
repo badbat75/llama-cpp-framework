@@ -43,6 +43,17 @@ export component ModelsPage inherits HorizontalLayout {
             min-height: 160px;
             vertical-stretch: 1;
 
+            if AppState.presets.length == 0 : Text {
+                x: 16px;
+                y: 16px;
+                width: parent.width - 32px;
+                text: AppState.presets_filter == ""
+                    ? "No presets yet — click New… to create one."
+                    : "No presets match the filter.";
+                wrap: word-wrap;
+                font-size: 12px;
+                color: Palette.foreground.transparentize(Tokens.muted);
+            }
             ListView {
                 // The Rust side already filtered out non-matching rows, so every
                 // delegate is a fixed 36px tall — a data-dependent height confuses
@@ -89,7 +100,12 @@ export component ModelsPage inherits HorizontalLayout {
                 Button {
                     text: "Delete";
                     enabled: AppState.selected_preset_index >= 0;
-                    clicked => { AppState.delete_preset(AppState.form.id); }
+                    // Confirmation modal (app.slint) — the delete itself is
+                    // one presets.ini rewrite with no undo.
+                    clicked => {
+                        AppState.delete_target_id = AppState.form.id;
+                        AppState.show_delete_dialog = true;
+                    }
                 }
             }
         }
@@ -151,7 +167,8 @@ export component ModelsPage inherits HorizontalLayout {
                     label: "Draft model";
                     hint: "Optional speculator (feeds --model-draft).\nMTP heads (from mtps\\) set --spec-type draft-mtp; DFlash drafters (from dflashs\\) set draft-dflash.\nPicking one auto-pins the draft to the server GPU, or CPU if none.\n(none) = no speculation.";
                     // A raw ComboBox (not MappedComboBox): the handler needs the
-                    // selected INDEX to read the parallel `draft_specs` array, not
+                    // selected INDEX to read the Rust-side `State.draft_rows`
+                    // cache (the per-row --model-draft/--spec-type pairs), not
                     // just the picked value. The pick POLICY (spec-type + the
                     // gemma4 auto-pin workaround) lives in Rust — see the
                     // `draft_picked` handler in src/gui/models_tab.rs.

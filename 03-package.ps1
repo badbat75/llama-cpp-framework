@@ -1,5 +1,8 @@
-﻿# Package llama.cpp binaries + llama-cpp-config into an NSIS installer
+﻿#requires -Version 7
+# Package llama.cpp binaries + llama-cpp-config into an NSIS installer
 # Requires: a successful build (02-build.ps1) and NSIS
+# (PowerShell 7 pin: under 5.1 `Set-Content -Encoding UTF8` would BOM the
+# generated .nsi, and the shared scripts assume pwsh semantics throughout.)
 
 . "$PSScriptRoot\common.ps1"  # loads $cfg, adds ROCm to PATH
 Enable-VsDevShell             # cmake --install needs the VS env

@@ -36,11 +36,17 @@ export global AppState {
     in-out property <bool> server_status_is_error: false;
     in-out property <string> server_version: "";
     in-out property <string> server_command_line: "";
-    // The URL the Open-chat button launches. Derived by Rust from the SAVED
-    // server.ini alongside the command line (gui::refresh_server_snapshot):
-    // saved port + client_host, which maps a 0.0.0.0 bind to localhost (a
-    // listen address is not a connectable one).
+    // Client URL of the SAVED server.ini, derived by Rust alongside the
+    // command line (gui::refresh_server_snapshot): saved port + client_host,
+    // which maps a 0.0.0.0 bind to localhost (a listen address is not a
+    // connectable one).
     in-out property <string> chat_url: "";
+    // Client URL snapshotted when the GUI launched llama-server (empty while
+    // stopped, or when the server was started outside the GUI). The RUNNING
+    // process listens on what it was launched with — saving a new port only
+    // changes the file — so the Open-chat button prefers this over chat_url.
+    in-out property <string> launched_url: "";
+    out property <string> open_chat_url: server_running && launched_url != "" ? launched_url : chat_url;
 
     // ── Server tab state ─────────────────────────────────────────────
     // All editable server.ini fields live in one struct (ServerForm), like the
@@ -160,10 +166,24 @@ export global AppState {
     in-out property <string> rename_old_id: "";
     in-out property <string> rename_new_id: "";
 
+    // ── Discard-confirm dialog state ─────────────────────────────────
+    // Shown by Rust (gui::confirm_discard_then) when a navigation action —
+    // preset switch, Refresh/reload_all, New…/Clone… — would replace a dirty
+    // form. The pending action is stashed Rust-side (gui::State) and runs only
+    // on confirm; cancel drops it and keeps the edits.
+    in-out property <bool> show_discard_dialog: false;
+
+    // ── Delete-confirm dialog state ──────────────────────────────────
+    // Purely Slint-side: the Models page's Delete button seeds the target id
+    // and shows this; the modal's Delete button fires the real delete_preset.
+    in-out property <bool> show_delete_dialog: false;
+    in-out property <string> delete_target_id: "";
+
     // True while any modal dialog is open. The app-wide keyboard shortcuts
     // (app.slint) gate on this so Ctrl+S / Ctrl+N / tab switches can't act on
     // the page hidden behind the backdrop.
-    out property <bool> modal_open: show_new_kind_picker || show_rename_dialog;
+    out property <bool> modal_open: show_new_kind_picker || show_rename_dialog
+        || show_discard_dialog || show_delete_dialog;
 
     // ── Integrations tab state ─────────────────────────────────────
     in-out property <string> integration_base_url: "";
@@ -189,6 +209,10 @@ export global AppState {
     callback pick_new_empty();
     callback pick_new_clone();
     callback rename_preset(string, string);
+    // Discard-confirm dialog verdict (see its state block above): confirm runs
+    // the stashed pending action, cancel drops it.
+    callback confirm_discard();
+    callback cancel_discard();
     callback filter_presets(string);
     callback filter_dialog_models(string);
     // Recompute the "Model info" box from the currently selected model file.

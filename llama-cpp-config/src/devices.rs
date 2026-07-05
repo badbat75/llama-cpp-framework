@@ -49,6 +49,10 @@ pub fn list() -> Vec<DeviceOption> {
 
 fn run(exe: &std::path::Path) -> Option<String> {
     let output = crate::proc::run_hidden(exe, ["--list-devices"])?;
+    // Deliberately no `status.success()` check (unlike server_version::run):
+    // llama-server can exit non-zero AFTER printing a usable device block —
+    // e.g. a backend that fails late — and `parse` already ignores any noise,
+    // so a partial list beats an empty dropdown.
     Some(crate::proc::combined_output(&output))
 }
 

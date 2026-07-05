@@ -12,7 +12,9 @@
 //   7. `preset_to_form` + `form_to_preset` — src/form.rs (BOTH directions)
 // Guards: the INI round-trip test in this file (`full_preset_round_trips_through_ini`)
 // and the form round-trip test in form.rs (`form_to_preset(preset_to_form(p)) == p`)
-// — a field wired into one side only drops out of one of them.
+// — a field wired into one side only drops out of one of them. Give the new
+// field a NON-DEFAULT value when extending the rich fixtures: `None`/empty
+// satisfies the compiler but makes the round-trips vacuous for that field.
 
 use std::fs;
 use std::io;
@@ -184,7 +186,8 @@ pub fn save(preset: &Preset) -> io::Result<()> {
     }
     let body = render_section(preset);
     ini::replace_section(&path, &preset.id, &body)?;
-    if server_cfg::opt_nonblank(server_cfg::load().models_dir).is_none() {
+    // `load()` already normalizes blank to None (opt_nonblank in from_keys).
+    if server_cfg::load().models_dir.is_none() {
         if let Some(models_dir) = infer_models_dir(&preset.model) {
             let _ = ini::replace_key(&paths::server_ini(), "Server", "ModelsDir", &models_dir);
         }
@@ -381,6 +384,15 @@ fn emit_i32(out: &mut String, key: &str, val: Option<i32>) {
 mod tests {
     use super::*;
     use std::collections::BTreeMap;
+
+    // Validation only — both shapes must reject BEFORE any file IO (so this
+    // never touches paths::, per the src/tests/mod.rs warning).
+    #[test]
+    fn rename_rejects_blank_and_unchanged_ids() {
+        assert!(rename("old", "  ").is_err(), "blank new id");
+        assert!(rename("old", "old").is_err(), "unchanged id");
+        assert!(rename("old", " old ").is_err(), "unchanged after trim");
+    }
 
     #[test]
     fn render_emits_mtp_keys_when_set() {

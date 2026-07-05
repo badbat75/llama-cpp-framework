@@ -17,11 +17,18 @@ pub(super) fn wire(app: &AppWindow, tray: &AppTray, state: &Rc<RefCell<State>>) 
             let cfg = server_form::form_to_config(&s.get_server_form());
             match server_cfg::save(&cfg) {
                 Ok(()) => {
-                    set_status(
-                        &app,
-                        format!("Saved {}", paths::server_ini().display()),
-                        false,
-                    );
+                    // A RUNNING server keeps the config it was launched with —
+                    // the save only changes the file — so surface the restart
+                    // step instead of implying the change is live.
+                    let msg = if s.get_server_running() {
+                        format!(
+                            "Saved {} — restart llama-server to apply.",
+                            paths::server_ini().display()
+                        )
+                    } else {
+                        format!("Saved {}", paths::server_ini().display())
+                    };
+                    set_status(&app, msg, false);
                     // Re-derive the saved-config projections (Command Line
                     // card + chat URL) from the file just written.
                     refresh_server_snapshot(&app);
@@ -80,7 +87,11 @@ pub(super) fn wire(app: &AppWindow, tray: &AppTray, state: &Rc<RefCell<State>>) 
 }
 
 /// Native folder picker for the "Browse…" button, seeded at `start`. Server-tab
-/// only, so it lives here rather than in the shared hub.
+/// only, so it lives here rather than in the shared hub. Deliberately BLOCKS
+/// the UI thread (the sanctioned exception to gui.rs's threading contract): a
+/// native modal dialog is supposed to hold its owner, and pumping our loop
+/// underneath it would let the 5 s status tick repaint a window the user can't
+/// interact with anyway.
 fn pick_dir(start: &std::path::Path) -> Option<PathBuf> {
     rfd::FileDialog::new()
         .set_title("Pick a folder")

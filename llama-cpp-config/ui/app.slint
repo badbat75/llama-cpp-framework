@@ -187,11 +187,11 @@ export component AppWindow inherits Window {
                         Button {
                             text: "Open chat UI";
                             enabled: AppState.server_running && !AppState.server_stopping;
-                            // chat_url tracks the SAVED server.ini (host+port),
-                            // not an unsaved form edit — and maps a 0.0.0.0
-                            // bind to localhost. Derived in Rust
-                            // (gui::refresh_server_snapshot).
-                            clicked => { Platform.open-url(AppState.chat_url); }
+                            // open_chat_url prefers the URL the RUNNING server
+                            // was launched with over the saved server.ini one
+                            // (a save while running changes the file, not the
+                            // listening process) — see state.slint.
+                            clicked => { Platform.open-url(AppState.open_chat_url); }
                         }
                         // Re-read the config files and re-scan the models
                         // directory. Always available — use it after adding a
@@ -343,6 +343,53 @@ export component AppWindow inherits Window {
                     } else {
                         AppState.pick_new_clone();
                     }
+                }
+            }
+        }
+    }
+
+    if AppState.show_discard_dialog: ModalOverlay {
+        title: "Discard unsaved changes?";
+        description: "You have unsaved edits that will be lost if you continue.";
+        card_height: 160px;
+        dismissed => { AppState.cancel_discard(); }
+
+        Rectangle { vertical-stretch: 1; }
+        HorizontalLayout {
+            spacing: 8px;
+            alignment: end;
+            Button {
+                text: "Keep editing";
+                clicked => { AppState.cancel_discard(); }
+            }
+            Button {
+                text: "Discard changes";
+                primary: true;
+                clicked => { AppState.confirm_discard(); }
+            }
+        }
+    }
+
+    if AppState.show_delete_dialog: ModalOverlay {
+        title: "Delete preset";
+        description: "Delete [" + AppState.delete_target_id + "] from presets.ini? This cannot be undone.";
+        card_height: 160px;
+        dismissed => { AppState.show_delete_dialog = false; }
+
+        Rectangle { vertical-stretch: 1; }
+        HorizontalLayout {
+            spacing: 8px;
+            alignment: end;
+            Button {
+                text: "Cancel";
+                clicked => { AppState.show_delete_dialog = false; }
+            }
+            Button {
+                text: "Delete";
+                primary: true;
+                clicked => {
+                    AppState.show_delete_dialog = false;
+                    AppState.delete_preset(AppState.delete_target_id);
                 }
             }
         }

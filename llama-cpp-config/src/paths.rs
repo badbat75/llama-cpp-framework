@@ -1,10 +1,12 @@
 // Paths for the llama.cpp-framework configuration tool.
 //
-// Two jobs: (1) the user runtime tree — %LOCALAPPDATA%\llama.cpp\ on Windows
+// Three jobs: (1) the user runtime tree — %LOCALAPPDATA%\llama.cpp\ on Windows
 // (config\server.ini, config\presets.ini, logs\llama-server.log), overridable
 // for tests via LLAMA_CPP_CONFIG_DATA_ROOT; (2) locating llama-server.exe
 // across the installer and dev layouts (`llama_server_exe`, which also strips
-// canonicalize()'s \\?\ prefix so the path is shell-pasteable).
+// canonicalize()'s \\?\ prefix so the path is shell-pasteable); (3) the ONE
+// path outside that tree — OpenCode's user config (`opencode_user_config`,
+// ~/.config/opencode/opencode.json), used by the Integrations tab.
 
 use std::path::PathBuf;
 

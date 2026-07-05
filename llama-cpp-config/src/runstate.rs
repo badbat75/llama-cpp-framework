@@ -225,7 +225,15 @@ pub fn command_line() -> Option<String> {
 /// current line. Pure (no IO) — `command_line()` is the config-loading wrapper,
 /// mirroring the `render`/`save` split in server_cfg.
 fn render_command_line(exe: &str, args: &[String]) -> String {
-    let mut lines: Vec<String> = vec![quote_arg(exe)];
+    // PowerShell parses a quoted string at command position as an expression,
+    // not a command — and the default install path ("C:\Program Files\…") gets
+    // quoted by `quote_arg`. The call operator makes the paste work there and
+    // is harmless for unquoted paths.
+    #[cfg(windows)]
+    let exe_line = format!("& {}", quote_arg(exe));
+    #[cfg(not(windows))]
+    let exe_line = quote_arg(exe);
+    let mut lines: Vec<String> = vec![exe_line];
     for arg in args {
         let q = quote_arg(arg);
         if arg.starts_with('-') {
@@ -294,6 +302,57 @@ mod tests {
         assert!(!a.contains(&"--mlock".to_string()));
     }
 
+    // Step-8 guard of the server-field recipe (top of server_cfg.rs): every
+    // ServerConfig field must be consumed by the launch path — mapped to a
+    // llama-server flag here, or explicitly waved through with a comment
+    // saying where `start()` uses it. The exhaustive destructure breaks
+    // compilation the moment a field is added, until this test decides.
+    #[test]
+    fn server_args_covers_every_config_field() {
+        let cfg = ServerConfig {
+            port: Some(9090),
+            hostname: Some("0.0.0.0".into()),
+            mlock: Some(true),
+            threads: Some(6),
+            cache_reuse: Some(64),
+            threads_batch: Some(12),
+            models_max: Some(3),
+            models_dir: Some(r"D:\models".into()),
+            device: Some("CUDA0".into()),
+            split_mode: Some("row".into()),
+            tensor_split: Some("3,1".into()),
+        };
+        let ServerConfig {
+            port,
+            hostname,
+            mlock,
+            threads,
+            cache_reuse,
+            threads_batch,
+            models_max,
+            models_dir: _, // launch env only: start() exports it as LLAMA_CACHE
+            device,
+            split_mode,
+            tensor_split,
+        } = cfg.clone();
+        let a = args_for(&cfg);
+        let pair = |flag: &str, val: String| {
+            a.iter()
+                .position(|x| x == flag)
+                .is_some_and(|i| a.get(i + 1).is_some_and(|v| *v == val))
+        };
+        assert!(pair("--port", port.unwrap().to_string()));
+        assert!(pair("--host", hostname.unwrap()));
+        assert_eq!(a.contains(&"--mlock".to_string()), mlock.unwrap());
+        assert!(pair("-t", threads.unwrap().to_string()));
+        assert!(pair("--cache-reuse", cache_reuse.unwrap().to_string()));
+        assert!(pair("--threads-batch", threads_batch.unwrap().to_string()));
+        assert!(pair("--models-max", models_max.unwrap().to_string()));
+        assert!(pair("--device", device.unwrap()));
+        assert!(pair("--split-mode", split_mode.unwrap()));
+        assert!(pair("--tensor-split", tensor_split.unwrap()));
+    }
+
     #[test]
     fn nonpositive_overrides_are_treated_as_auto() {
         let cfg = ServerConfig {
@@ -336,6 +395,9 @@ mod tests {
         let out = render_command_line(r"C:\bin\llama-server.exe", &args);
         let lines: Vec<&str> = out.lines().collect();
         assert_eq!(lines.len(), 4, "exe + one line per flag group");
+        #[cfg(windows)]
+        assert!(lines[0].starts_with(r"& C:\bin\llama-server.exe"));
+        #[cfg(not(windows))]
         assert!(lines[0].starts_with(r"C:\bin\llama-server.exe"));
         assert!(lines[1].contains("--port 8080"), "value attaches to flag");
         assert!(lines[2].contains("--mlock"));
@@ -345,6 +407,22 @@ mod tests {
             assert!(line.ends_with(LINE_CONTINUATION), "bad tail: {line:?}");
         }
         assert!(!lines[lines.len() - 1].ends_with(LINE_CONTINUATION));
+    }
+
+    // The default NSIS install dir has a space ("C:\Program Files\llama.cpp"),
+    // so the pasted line must survive PowerShell's expression-vs-command
+    // parsing: a bare quoted path at command position is an error there.
+    #[cfg(windows)]
+    #[test]
+    fn render_command_line_calls_a_quoted_exe_with_the_call_operator() {
+        let out = render_command_line(
+            r"C:\Program Files\llama.cpp\bin\llama-server.exe",
+            &["--port".to_string(), "8080".to_string()],
+        );
+        assert!(
+            out.starts_with("& \"C:\\Program Files\\llama.cpp\\bin\\llama-server.exe\""),
+            "bad exe line: {out:?}"
+        );
     }
 
     #[test]

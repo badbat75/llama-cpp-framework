@@ -1,10 +1,12 @@
-//! End-to-end save / revert / delete flow over the REAL Models-tab wiring.
+//! End-to-end save / revert / delete / rename / clone flow over the REAL
+//! Models-tab wiring.
 //!
 //! `ui_bindings.rs` covers binding *direction*; this covers the callback
 //! *funnel*: save → `preset_written` → reload → reselect → re-baseline, the
-//! Revert path, delete's deliberate clear-selection sequence, and the New…
-//! dialog's id de-conflict guard — the wiring in `gui/models_tab.rs` that no
-//! pure-Rust unit test can reach.
+//! Revert path, delete's deliberate clear-selection sequence, the New…
+//! dialog's id de-conflict guard, the rename + clone funnels, and the
+//! discard-confirm guard on a dirty form — the wiring in `gui/models_tab.rs`
+//! that no pure-Rust unit test can reach.
 //!
 //! Config IO is redirected at a temp dir through `LLAMA_CPP_CONFIG_DATA_ROOT`
 //! (see `paths::data_root`), set here BEFORE the Models tab is wired, so the
@@ -117,4 +119,93 @@ pub(super) fn run(app: &AppWindow) {
         ini.contains("[e2e]") && ini.contains("[e2e-2]"),
         "second New… must de-conflict to e2e-2, not overwrite:\n{ini}"
     );
+
+    // ── Rename: funnel = rename + reselect + re-baseline ─────────────────
+    st.invoke_rename_preset("e2e".into(), "e2e-renamed".into());
+    assert!(
+        !st.get_status_is_error(),
+        "rename failed: {}",
+        st.get_status_text()
+    );
+    let ini = std::fs::read_to_string(crate::paths::presets_ini()).expect("presets.ini");
+    assert!(
+        !ini.contains("[e2e]\n") && !ini.contains("[e2e]\r\n"),
+        "old section must be gone:\n{ini}"
+    );
+    assert!(
+        ini.contains("[e2e-renamed]"),
+        "renamed section missing:\n{ini}"
+    );
+    assert_eq!(
+        st.get_form().id.as_str(),
+        "e2e-renamed",
+        "rename must reselect the renamed preset"
+    );
+    assert!(!st.get_preset_dirty(), "rename must re-baseline the form");
+
+    // ── Clone: copies the source's parameters onto the picked model ──────
+    // Give the source a distinguishing parameter first, then clone it onto
+    // the (only) scanned model; the id derives from the file name and "e2e"
+    // is free again after the rename.
+    let mut form = st.get_form();
+    form.device = "CUDA1".into();
+    st.set_form(form);
+    st.invoke_save_preset();
+    assert!(!st.get_status_is_error());
+    st.invoke_clone_preset();
+    assert!(st.get_show_new_kind_picker(), "Clone… must open the picker");
+    assert_eq!(
+        st.get_new_dialog_source_id().as_str(),
+        "e2e-renamed",
+        "the picker must surface the clone source"
+    );
+    st.set_dialog_model_index(0);
+    // The picker's Clone button hides the modal before firing the callback —
+    // mirror that, or the dialog state leaks into the next phase.
+    st.set_show_new_kind_picker(false);
+    st.invoke_pick_new_clone();
+    assert!(
+        !st.get_status_is_error(),
+        "clone failed: {}",
+        st.get_status_text()
+    );
+    assert_eq!(
+        st.get_form().id.as_str(),
+        "e2e",
+        "clone must reselect the new preset under the de-conflicted id"
+    );
+    assert_eq!(
+        st.get_form().device.as_str(),
+        "CUDA1",
+        "clone must copy the source's parameters"
+    );
+
+    // ── Dirty guard: navigation on a dirty form asks before discarding ───
+    let mut form = st.get_form();
+    form.ctx_size = 12345;
+    st.set_form(form);
+    assert!(st.get_preset_dirty());
+    st.invoke_new_preset();
+    assert!(
+        st.get_show_discard_dialog(),
+        "New… on a dirty form must raise the discard dialog"
+    );
+    assert!(
+        !st.get_show_new_kind_picker(),
+        "the parked action must wait for the verdict"
+    );
+    st.invoke_cancel_discard();
+    assert!(!st.get_show_discard_dialog());
+    assert_eq!(
+        st.get_form().ctx_size,
+        12345,
+        "cancel must keep the unsaved edits"
+    );
+    st.invoke_new_preset();
+    st.invoke_confirm_discard();
+    assert!(
+        st.get_show_new_kind_picker(),
+        "confirm must run the parked action"
+    );
+    st.set_show_new_kind_picker(false);
 }

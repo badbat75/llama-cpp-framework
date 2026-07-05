@@ -18,12 +18,19 @@
 //   6. `config_to_form` + `form_to_config`   — src/server_form.rs (BOTH directions)
 //   7. THREE spots in src/cli.rs             — the `ServerSet` flag field, a
 //      `row(...)` in `show_lines`, and `ServerSet::apply` copying the flag into `cfg`
+//   8. `runstate::server_args`               — map the field to its llama-server
+//      flag (or wave it through with a comment if it's launch-env only, like
+//      ModelsDir → LLAMA_CACHE in `start()`)
 // Guards: the save→load round-trip test in this file (steps 2–3: a key-name typo
 // or wrong `keep` rule fails it), the form round-trip in server_form.rs
-// (`form_to_config(config_to_form(c)) == c`, step 6), and cli.rs's
+// (`form_to_config(config_to_form(c)) == c`, step 6), cli.rs's
 // `server_set_apply_copies_every_field` + `show_lines_prints_every_field`
-// (step 7 — `apply`'s exhaustive struct literal breaks compilation when a
-// `ServerSet` field is added but the test isn't extended).
+// (step 7 — both derive their assertions from exhaustive literals, so a new
+// field can't compile without being copied AND printed), and runstate's
+// `server_args_covers_every_config_field` (step 8 — its exhaustive destructure
+// breaks compilation until the launch path consumes the field). Give the new
+// field a NON-DEFAULT value when extending the rich fixtures: `None` satisfies
+// the compiler but makes every round-trip vacuous for that field.
 
 use std::fs;
 use std::io;
@@ -69,9 +76,10 @@ impl ServerConfig {
     /// `save()`, `runstate::start()`, and `server_form::config_to_form`.
     pub fn models_dir_or_default(&self) -> String {
         self.models_dir
-            .clone()
-            .filter(|s| !s.trim().is_empty())
-            .unwrap_or_else(default_models_dir)
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map_or_else(default_models_dir, str::to_string)
     }
 
     // The always-written trio's defaults (Port / Hostname / Mlock render as real
@@ -89,9 +97,10 @@ impl ServerConfig {
     /// use [`Self::client_host`].
     pub fn hostname_or_default(&self) -> String {
         self.hostname
-            .clone()
-            .filter(|s| !s.trim().is_empty())
-            .unwrap_or_else(|| "localhost".into())
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map_or_else(|| "localhost".into(), str::to_string)
     }
 
     /// The configured mlock flag, or `true` (the framework default) when unset.

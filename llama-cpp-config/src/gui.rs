@@ -46,7 +46,10 @@
 //! ## Threading
 //! The event loop is single-threaded. Slow work (`--list-devices`, `--version`,
 //! `tasklist`, the stop wait) runs on `std::thread::spawn`; results come back
-//! through `slint::invoke_from_event_loop` guarded by `Weak::upgrade`.
+//! through `slint::invoke_from_event_loop` guarded by `Weak::upgrade`. One
+//! sanctioned on-thread blocker: the native folder picker
+//! (`server_tab::pick_dir`) is a modal OS dialog — blocking its caller is the
+//! conventional behavior, not a stall to fix.
 //!
 //! `AppTray` is a SEPARATE Slint root — it does NOT use `AppState`; Rust pushes
 //! state to it directly (`tray.set_server_running` / `tray.on_*`).
@@ -87,6 +90,9 @@ struct State {
     // AppState.draft_labels. Rust-only data (only `draft_picked` reads it), so
     // it lives here instead of as published Slint arrays no page ever binds.
     draft_rows: Vec<(String, String)>,
+    // Action parked by `confirm_discard_then` while the discard-confirm dialog
+    // is up; `confirm_discard` runs it, `cancel_discard` drops it.
+    pending_discard: Option<Box<dyn Fn()>>,
 }
 
 /// TEST-ONLY seam for the e2e save-flow test (src/tests/save_flow.rs): build the
@@ -98,6 +104,7 @@ pub(crate) fn wire_models_tab_for_tests(app: &AppWindow) {
     let state = Rc::new(RefCell::new(State::default()));
     reload_presets(app, &state, None);
     models_tab::wire(app, &state);
+    wire_discard_confirm(app, &state);
 }
 
 pub fn run() -> anyhow::Result<()> {
@@ -152,10 +159,26 @@ pub fn run() -> anyhow::Result<()> {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
-            reload_all_from_disk(&app, &state, tray_weak.clone());
-            set_status(&app, "Reloaded configuration from disk.".into(), false);
+            let s = app.global::<AppState>();
+            // Reloading replaces BOTH forms from disk, so unsaved edits on
+            // either tab need the discard confirmation.
+            let dirty = s.get_preset_dirty() || s.get_server_dirty();
+            let action: Box<dyn Fn()> = {
+                let app_weak = app_weak.clone();
+                let tray_weak = tray_weak.clone();
+                let state = state.clone();
+                Box::new(move || {
+                    let Some(app) = app_weak.upgrade() else {
+                        return;
+                    };
+                    reload_all_from_disk(&app, &state, tray_weak.clone());
+                    set_status(&app, "Reloaded configuration from disk.".into(), false);
+                })
+            };
+            confirm_discard_then(&app, &state, dirty, action);
         });
     }
+    wire_discard_confirm(&app, &state);
 
     let status_timer = slint::Timer::default();
     {
@@ -253,6 +276,60 @@ fn populate_bind_options(app: &AppWindow, current: &str) {
     s.set_bind_index(index);
 }
 
+// ── Discard-confirm guard ────────────────────────────────────────────
+
+/// Run `action` now — or, when the caller's form is `dirty`, park it in
+/// `State.pending_discard` and raise the discard-confirm dialog instead. The
+/// dialog's Confirm runs the parked action, Cancel drops it (keeping the
+/// edits). The guard shared by every navigation that replaces a dirty form:
+/// preset switch, Refresh/`reload_all`, and the New…/Clone… entry points.
+fn confirm_discard_then(
+    app: &AppWindow,
+    state: &Rc<RefCell<State>>,
+    dirty: bool,
+    action: Box<dyn Fn()>,
+) {
+    if dirty {
+        state.borrow_mut().pending_discard = Some(action);
+        app.global::<AppState>().set_show_discard_dialog(true);
+    } else {
+        action();
+    }
+}
+
+/// Wire the discard dialog's verdict callbacks. Called from `run()` and from
+/// the e2e seam (`wire_models_tab_for_tests`) — the guarded handlers live in
+/// both wirings.
+fn wire_discard_confirm(app: &AppWindow, state: &Rc<RefCell<State>>) {
+    {
+        let app_weak = app.as_weak();
+        let state = state.clone();
+        app.global::<AppState>().on_confirm_discard(move || {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            app.global::<AppState>().set_show_discard_dialog(false);
+            // Take the action out of the RefCell BEFORE running it — it will
+            // borrow `state` itself (reload_presets & co.).
+            let action = state.borrow_mut().pending_discard.take();
+            if let Some(action) = action {
+                action();
+            }
+        });
+    }
+    {
+        let app_weak = app.as_weak();
+        let state = state.clone();
+        app.global::<AppState>().on_cancel_discard(move || {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            app.global::<AppState>().set_show_discard_dialog(false);
+            state.borrow_mut().pending_discard = None;
+        });
+    }
+}
+
 // ── Preset helpers ───────────────────────────────────────────────────
 
 /// `true` if the preset matches the (case-insensitive) filter on id or model.
@@ -303,7 +380,9 @@ fn reload_all_from_disk(
 /// Reload `presets.ini` into `state`, rebuild the (filtered) list model, then
 /// pick the selection and apply its form:
 /// - `want = Some(id)` selects that preset if it exists (used after save/clone/rename);
-/// - `want = None` keeps the current index if still in range (a plain refresh);
+/// - `want = None` keeps the current preset — matched by the loaded form's ID
+///   first (a hand-edited presets.ini may have shifted the indices), falling
+///   back to the old index when the id is gone;
 /// - either way it falls back to the first preset, or `-1` + a blank form when
 ///   the list is empty.
 ///
@@ -316,9 +395,14 @@ fn reload_presets(app: &AppWindow, state: &Rc<RefCell<State>>, want: Option<&str
     s.set_presets(model(summaries));
 
     let prev_sel = s.get_selected_preset_index();
+    let cur_id = s.get_form().id;
     let idx = match want {
         Some(id) => all.iter().position(|p| p.id == id).map(|i| i as i32),
-        None => (prev_sel >= 0 && (prev_sel as usize) < all.len()).then_some(prev_sel),
+        None => all
+            .iter()
+            .position(|p| !cur_id.is_empty() && p.id == cur_id.as_str())
+            .map(|i| i as i32)
+            .or_else(|| (prev_sel >= 0 && (prev_sel as usize) < all.len()).then_some(prev_sel)),
     }
     .unwrap_or(if all.is_empty() { -1 } else { 0 });
 
@@ -516,6 +600,13 @@ fn start_server_async(app_weak: slint::Weak<AppWindow>, tray_weak: slint::Weak<A
     bump_run_status_gen();
     std::thread::spawn(move || {
         let result = runstate::start();
+        // Snapshot the client URL the process was launched with (`start()` read
+        // the same saved config): the RUNNING server keeps listening there even
+        // if a later save changes server.ini, so Open-chat must prefer it.
+        let launched_url = result.is_ok().then(|| {
+            let cfg = crate::server_cfg::load();
+            format!("http://{}:{}", cfg.client_host(), cfg.port_or_default())
+        });
         slint::invoke_from_event_loop(move || {
             bump_run_status_gen();
             let running = result.is_ok();
@@ -523,6 +614,9 @@ fn start_server_async(app_weak: slint::Weak<AppWindow>, tray_weak: slint::Weak<A
                 let s = app.global::<AppState>();
                 s.set_server_starting(false);
                 s.set_server_running(running);
+                if let Some(url) = &launched_url {
+                    s.set_launched_url(SharedString::from(url.as_str()));
+                }
                 match &result {
                     Ok(()) => {
                         s.set_server_status_is_error(false);
@@ -580,6 +674,10 @@ fn stop_server_async(app_weak: slint::Weak<AppWindow>, tray_weak: slint::Weak<Ap
                 let s = app.global::<AppState>();
                 s.set_server_stopping(false);
                 s.set_server_running(running);
+                if !running {
+                    // No process to point Open-chat at any more.
+                    s.set_launched_url(SharedString::default());
+                }
                 // `stop()` can't fail; the re-polled run state is the outcome.
                 if running {
                     s.set_server_status_is_error(true);
@@ -624,6 +722,12 @@ fn refresh_run_status(
             if let Some(app) = app_weak.upgrade() {
                 let s = app.global::<AppState>();
                 s.set_server_running(running);
+                if !running {
+                    // The server stopped outside the GUI — drop the stale
+                    // launch snapshot so a future Open-chat falls back to the
+                    // saved config.
+                    s.set_launched_url(SharedString::default());
+                }
                 if clear_error {
                     s.set_server_status_is_error(false);
                 }

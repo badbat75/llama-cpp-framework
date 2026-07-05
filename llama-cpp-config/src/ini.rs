@@ -146,7 +146,15 @@ pub fn replace_key(path: &Path, section: &str, key: &str, value: &str) -> std::i
     if !replaced {
         let trimmed = new_body.trim_end_matches(['\r', '\n']);
         let tail = &new_body[trimmed.len()..];
-        new_body = format!("{trimmed}{eol}{new_line}{eol}{tail}");
+        // `tail` still holds the last real line's terminator (plus any blank
+        // separator lines before the next section), so don't add another `eol`
+        // in front of it — that duplicated the terminator, growing one blank
+        // line per appended key.
+        new_body = if trimmed.is_empty() {
+            format!("{new_line}{eol}{tail}")
+        } else {
+            format!("{trimmed}{eol}{new_line}{tail}")
+        };
     }
 
     let mut out = String::with_capacity(content.len() + new_line.len());
@@ -417,8 +425,13 @@ mod tests {
     fn replace_key_appends_missing_key_to_section() {
         let (_d, path) = ini_file("[Server]\r\nPort = 8080\r\n\r\n[other]\r\nk = v\r\n");
         replace_key(&path, "Server", "ModelsDir", "C:/models").unwrap();
-        assert_eq!(read_section(&path, "Server")["ModelsDir"], "C:/models");
-        assert_eq!(read_section(&path, "other")["k"], "v");
+        // Exact content: the new line slots in after the last real line, and
+        // the single blank separator line stays single (the append path once
+        // duplicated the terminator, growing a blank line per appended key).
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            "[Server]\r\nPort = 8080\r\nModelsDir = C:/models\r\n\r\n[other]\r\nk = v\r\n"
+        );
     }
 
     #[test]
