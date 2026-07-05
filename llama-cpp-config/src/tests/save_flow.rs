@@ -345,4 +345,58 @@ pub(super) fn run(app: &AppWindow) {
         !crate::gui::integrations_dirty(app),
         "a rebuild from disk must clear the integrations-dirty signal"
     );
+
+    // ── Integrations Save writes opencode.json (create_dir_all + reset leg) ──
+    // Under the redirect the parent dir (<tmp>\opencode\) does NOT exist — the
+    // exact "OpenCode never ran here" shape the v1.2.13 create_dir_all fix is
+    // for. Re-toggle a row on, Save, and assert the file appears, the id is
+    // registered, and the save (→ refresh_integrations_reset) re-baselined to
+    // clean. Deleting the create_dir_all block, or dropping the reset call,
+    // fails here.
+    assert!(
+        !crate::paths::opencode_user_config().exists(),
+        "opencode.json (and its parent dir) must be absent before the first save"
+    );
+    let cb = ElementHandle::find_by_accessible_label(app, label.as_str())
+        .next()
+        .expect("row checkbox before save");
+    cb.invoke_accessible_default_action(); // re-expose row 0
+    assert!(
+        crate::gui::integrations_dirty(app),
+        "re-toggle must be dirty"
+    );
+    st.invoke_save_integrations();
+    itest::mock_elapsed_time(std::time::Duration::from_millis(1));
+    assert!(
+        !st.get_status_is_error(),
+        "Integrations Save failed (missing opencode dir?): {}",
+        st.get_status_text()
+    );
+    assert!(
+        crate::paths::opencode_user_config().exists(),
+        "save must create opencode.json even when its dir never existed"
+    );
+    assert!(
+        crate::integrations::opencode_model_ids().contains(&first_id.to_string()),
+        "the toggled preset must be registered in opencode.json"
+    );
+    assert!(
+        !crate::gui::integrations_dirty(app),
+        "save (→ refresh_integrations_reset) must re-baseline to clean"
+    );
+
+    // ── CLI: `preset delete <typo>` errors instead of a false "Removed" ─────
+    // The v1.2.13 lookup-before-delete guard; the redirect keeps cli::run on
+    // the temp tree. (`load_all` resolves real paths, so this can't be an
+    // inline unit test — only the redirect harness reaches it.)
+    use crate::cli::{Cli, Command, PresetCmd};
+    assert!(
+        crate::cli::run(Cli {
+            command: Command::Preset(PresetCmd::Delete {
+                id: "no-such-preset".into(),
+            }),
+        })
+        .is_err(),
+        "deleting a nonexistent preset must error, not report success"
+    );
 }

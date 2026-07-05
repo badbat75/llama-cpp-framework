@@ -19,10 +19,10 @@ pub fn is_running() -> bool {
         ) else {
             return false;
         };
-        // tasklist returns "INFO: No tasks..." when nothing matches — not empty.
-        String::from_utf8_lossy(&output.stdout)
-            .to_lowercase()
-            .contains("llama-server.exe")
+        running_from_tasklist(
+            &String::from_utf8_lossy(&output.stdout),
+            &crate::proc::probe_pids(),
+        )
     }
 
     #[cfg(not(windows))]
@@ -32,6 +32,31 @@ pub fn is_running() -> bool {
             .output()
             .is_ok_and(|o| o.status.success())
     }
+}
+
+/// The PID (2nd CSV field) of a `tasklist /fo csv /nh` row like
+/// `"llama-server.exe","1234","Console","1","12,345 K"`. Splitting on `,` is
+/// safe for field 2 — the only comma-bearing field (Mem Usage) comes after it.
+#[cfg(windows)]
+fn parse_tasklist_pid(line: &str) -> Option<u32> {
+    line.split(',')
+        .nth(1)?
+        .trim()
+        .trim_matches('"')
+        .parse()
+        .ok()
+}
+
+/// `true` if the tasklist output names a live `llama-server.exe` whose PID is
+/// NOT one of our own transient probes. tasklist prints "INFO: No tasks..." when
+/// nothing matches (so no row names the image). A row whose PID won't parse is
+/// counted as a real server (safer to over-report than to miss a live one).
+#[cfg(windows)]
+fn running_from_tasklist(stdout: &str, probe_pids: &[u32]) -> bool {
+    stdout.lines().any(|line| {
+        line.to_lowercase().contains("llama-server.exe")
+            && parse_tasklist_pid(line).is_none_or(|pid| !probe_pids.contains(&pid))
+    })
 }
 
 /// `true` if the presets file has at least one section (reusing the real INI
@@ -116,6 +141,12 @@ fn server_args(
     args
 }
 
+/// How long `start()` watches a freshly spawned llama-server before declaring
+/// success — long enough to catch a launch that dies on a bad preset, a taken
+/// port, or a missing model (those exit within ~1 s), short enough that a
+/// healthy server (still alive while it loads the model) isn't held up.
+const LAUNCH_GRACE: std::time::Duration = std::time::Duration::from_millis(2500);
+
 /// Launch llama-server.exe with args from server.ini + presets.ini.
 ///
 /// Returns `Some(cfg)` — the config the process was ACTUALLY launched with —
@@ -124,6 +155,13 @@ fn server_args(
 /// means the server was already running: nothing was launched, so there is no
 /// launch config to snapshot — the live process may be on an older saved
 /// config, or not GUI-launched at all.
+///
+/// After spawning, it watches the child for `LAUNCH_GRACE`: a process that
+/// exits in that window (bad preset, port already bound, model load failure)
+/// returns an `Err` pointing at the log, so the caller reports the failure NOW
+/// instead of an optimistic "started" that the 5 s status tick later contradicts
+/// with "no longer running". A process still alive after the window is reported
+/// as started (it may still be loading the model — that's fine, it's up).
 pub fn start() -> io::Result<Option<crate::server_cfg::ServerConfig>> {
     if is_running() {
         return Ok(None); // already running — we launched nothing
@@ -175,8 +213,36 @@ pub fn start() -> io::Result<Option<crate::server_cfg::ServerConfig>> {
     // applied to a Command we spawn with custom stdio/env (so not run_hidden).
     crate::proc::hide_console(&mut cmd);
 
-    cmd.spawn()?;
+    let mut child = cmd.spawn()?;
 
+    // Confirm the server SURVIVES launch — spawning only proves the exe started,
+    // not that it got past arg parsing / port bind / model load. Poll for a
+    // short grace window; if it exits, surface that immediately with the log
+    // path (llama-server writes its own error trail there). Runs on the caller's
+    // worker thread (`start_server_async`), so the brief blocking wait keeps the
+    // UI in "Starting…" rather than stalling it.
+    let step = std::time::Duration::from_millis(150);
+    let mut waited = std::time::Duration::ZERO;
+    while waited < LAUNCH_GRACE {
+        match child.try_wait() {
+            // Exited during the grace window → a failed launch, not a running server.
+            Ok(Some(status)) => {
+                return Err(io::Error::other(format!(
+                    "llama-server exited on launch ({status}). Check the log: {}",
+                    log_path.display()
+                )));
+            }
+            // Still alive — keep it running and stop watching.
+            Ok(None) => {}
+            // Can't poll the child; don't block the launch on a probe failure.
+            Err(_) => break,
+        }
+        std::thread::sleep(step);
+        waited += step;
+    }
+
+    // Dropping `child` here does NOT kill the process on Windows (std leaves it
+    // detached) — the server keeps running; we just stop watching it.
     Ok(Some(cfg))
 }
 
@@ -272,6 +338,47 @@ mod tests {
 
     fn args_for(cfg: &ServerConfig) -> Vec<String> {
         server_args(cfg, Path::new("presets.ini"))
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn tasklist_pid_parses_the_second_csv_field() {
+        assert_eq!(
+            parse_tasklist_pid(r#""llama-server.exe","1234","Console","1","12,345 K""#),
+            Some(1234)
+        );
+        assert_eq!(parse_tasklist_pid("INFO: No tasks are running ..."), None);
+    }
+
+    // The startup false-positive fix: a --version / --list-devices probe shares
+    // the llama-server.exe image name, so is_running must exclude its PID or a
+    // fresh GUI flips to "no longer running" when the probe exits.
+    #[cfg(windows)]
+    #[test]
+    fn running_excludes_our_own_probe_pids() {
+        let none = "INFO: No tasks are running which match the specified criteria.";
+        assert!(!running_from_tasklist(none, &[]));
+
+        let one = r#""llama-server.exe","1234","Console","1","12,345 K""#;
+        assert!(
+            running_from_tasklist(one, &[]),
+            "a real server reads as running"
+        );
+        assert!(
+            !running_from_tasklist(one, &[1234]),
+            "the same PID, if it's our probe, must not"
+        );
+
+        let two = "\"llama-server.exe\",\"1234\",\"Console\",\"1\",\"10 K\"\n\
+                   \"llama-server.exe\",\"5678\",\"Console\",\"1\",\"20 K\"";
+        assert!(
+            running_from_tasklist(two, &[1234]),
+            "a real server alongside a live probe still counts"
+        );
+        assert!(
+            !running_from_tasklist(two, &[1234, 5678]),
+            "both are probes"
+        );
     }
 
     // "auto" (unset / non-positive) MUST omit the flag entirely so llama.cpp

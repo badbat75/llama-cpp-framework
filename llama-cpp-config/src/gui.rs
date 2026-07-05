@@ -717,9 +717,10 @@ fn stop_server_async(app_weak: slint::Weak<AppWindow>, tray_weak: slint::Weak<Ap
 /// Probe the llama-server process off the UI thread (`tasklist` can take
 /// hundreds of ms) and apply the result via the event loop, mirroring
 /// `spawn_version_probe`. `clear_error` decides whether the footer's error flag
-/// is reset: explicit actions (startup, F5, Refresh, a new start) pass `true`;
+/// is reset: the reload-from-disk actions (startup, F5, Refresh) pass `true`;
 /// the periodic status timer passes `false` so it can't silently wipe the red
-/// state a failed start / stop-timeout deliberately set.
+/// state a failed start / stop-timeout deliberately set. (The start/stop paths
+/// don't call this — they manage the error flag directly.)
 fn refresh_run_status(
     app_weak: slint::Weak<AppWindow>,
     tray_weak: slint::Weak<AppTray>,
@@ -748,12 +749,13 @@ fn refresh_run_status(
                     s.set_server_status_is_error(false);
                 }
                 // A running→stopped flip with no transition in flight is an
-                // external kill or a post-spawn death (`start()` only verifies
-                // the SPAWN — a bad preset or a taken port kills the process
-                // moments later): surface it instead of silently flipping the
-                // footer to "Stopped" under a status line still saying
-                // "llama-server started.". Neutral wording — a crash and an
-                // external taskkill are indistinguishable here.
+                // external kill or a later crash: `start()` watches a grace
+                // window and reports an immediate launch death itself, but a
+                // process that dies LATER (an external taskkill, or a crash once
+                // the model is loaded) only shows up on this tick — surface it
+                // instead of silently flipping the footer to "Stopped" under a
+                // status line still saying "llama-server started.". Neutral
+                // wording — a crash and an external taskkill look the same here.
                 if was_running && !running && !s.get_server_starting() && !s.get_server_stopping() {
                     s.set_server_status_is_error(true);
                     set_status(

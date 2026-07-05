@@ -12,8 +12,12 @@
 // - `read-only: true` text widgets (pure displays never self-assign);
 // - bindings to non-AppState expressions (component-internal wiring, e.g. the
 //   AutoSlider's `value: root.shown` init that its `changed shown` hook pushes);
-// - custom components (SegmentedControl, MappedComboBox, AutoSlider) — their
-//   reactive patterns are verified behaviorally in ui_bindings.rs.
+// - custom components (SegmentedControl, MappedComboBox, EnumComboBox,
+//   AutoSlider) — the reactive binding lives INSIDE the component (against
+//   `root`, not `AppState`), so an instance carries no one-way `AppState` hit
+//   to flag. AutoSlider's slider push is pinned in ui_bindings.rs; the others
+//   are structural (EnumComboBox drives current-index to sidestep the
+//   `current-value` #11970 bug — see `no_current_value_bindings…` below).
 
 use std::fmt::Write as _;
 use std::path::Path;
@@ -59,21 +63,25 @@ fn opens_widget(code: &str, widget: &str) -> bool {
 }
 
 /// The one-way violations inside a single widget block's text, as
-/// "property" strings (empty when clean).
+/// "property" strings (empty when clean). Comments are already stripped in
+/// `scan`; here the block is split into statement-like fragments on `;`/`{`/`}`
+/// so a property sharing a line with the widget opener
+/// (`LineEdit { text: AppState.x; }`) or with a sibling statement is still seen
+/// — a per-line `starts_with` only caught the one-statement-per-line style.
 fn block_violations(widget: &str, props: &[&str], block: &str) -> Vec<String> {
-    let read_only = block
-        .lines()
-        .map(strip_line_comment)
-        .any(|l| l.trim_start().starts_with("read-only:") && l.contains("true"));
+    let fragments: Vec<&str> = block.split([';', '{', '}']).collect();
+    let read_only = fragments
+        .iter()
+        .any(|f| f.trim_start().starts_with("read-only:") && f.contains("true"));
     if read_only && (widget == "LineEdit" || widget == "TextEdit") {
         return Vec::new();
     }
     let mut out = Vec::new();
-    for line in block.lines().map(strip_line_comment) {
-        let t = line.trim_start();
+    for frag in &fragments {
+        let t = frag.trim_start();
         for prop in props {
-            if t.starts_with(prop) && line.contains("AppState.") && !line.contains("<=>") {
-                out.push(format!("{prop} {}", t.trim_end()));
+            if t.starts_with(prop) && frag.contains("AppState.") && !frag.contains("<=>") {
+                out.push(format!("{prop} {}", t.trim().replace('\n', " ")));
             }
         }
     }
@@ -132,6 +140,45 @@ fn no_one_way_appstate_bindings_on_self_assigning_widgets() {
     );
 }
 
+// #11970 guard: writing `current-value` does NOT move a ComboBox's selection,
+// so a two-way `current-value <=>` binding leaves the dropdown stale on a model
+// change (a preset switch). `EnumComboBox` drives `current-index` instead —
+// keep it that way: no `.slint` should BIND `current-value` at all. The one-way
+// scan above deliberately allows `<=>`, so it can't catch this two-way form;
+// a dedicated line scan can. (Reads like `self.current-value` inside an
+// expression are fine — only a binding, i.e. a line STARTING with the property,
+// is flagged.)
+#[test]
+fn no_current_value_bindings_use_enum_combo_box_instead() {
+    let ui = Path::new(env!("CARGO_MANIFEST_DIR")).join("ui");
+    let mut hits = String::new();
+    for entry in std::fs::read_dir(&ui).expect("ui/ dir") {
+        let path = entry.expect("dir entry").path();
+        if path.extension().is_some_and(|e| e == "slint") {
+            let source = std::fs::read_to_string(&path).expect("read .slint");
+            for (n, line) in source.lines().enumerate() {
+                if strip_line_comment(line)
+                    .trim_start()
+                    .starts_with("current-value")
+                {
+                    let _ = writeln!(
+                        hits,
+                        "{}:{}: {}",
+                        path.file_name().unwrap().to_string_lossy(),
+                        n + 1,
+                        line.trim()
+                    );
+                }
+            }
+        }
+    }
+    assert!(
+        hits.is_empty(),
+        "`current-value` bindings don't move the selection (Slint #11970) — use \
+         EnumComboBox (drives current-index):\n{hits}"
+    );
+}
+
 // The scanner must actually catch the bug class it exists for — feed it the
 // exact v1.1.1-shaped regression and a few sanctioned shapes.
 #[test]
@@ -140,9 +187,20 @@ fn scanner_flags_the_known_bad_shapes_and_passes_the_sanctioned_ones() {
     scan("LineEdit {\n    text: AppState.form.id;\n}\n", "t", &mut v);
     assert!(v.contains("LineEdit"), "one-way LineEdit must be flagged");
 
+    // Same bug written as a one-liner: the property shares the opener's line,
+    // so the old per-line `starts_with` missed it entirely.
+    let mut v = String::new();
+    scan("LineEdit { text: AppState.form.id; }\n", "t", &mut v);
+    assert!(
+        v.contains("LineEdit"),
+        "one-LINER one-way LineEdit must be flagged"
+    );
+
     for good in [
         "LineEdit {\n    text <=> AppState.form.id;\n}\n",
         "LineEdit {\n    read-only: true;\n    text: AppState.chat_url;\n}\n",
+        // Sanctioned read-only, but as a one-liner.
+        "LineEdit { read-only: true; text: AppState.chat_url; }\n",
         "Text {\n    text: AppState.status_text;\n}\n",
         "Slider {\n    value: root.shown;\n}\n",
         "MappedComboBox {\n    current-value: AppState.x;\n}\n",

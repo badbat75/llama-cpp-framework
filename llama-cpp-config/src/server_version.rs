@@ -11,7 +11,7 @@ pub fn probe() -> Option<String> {
 /// `llama-server --version` prints to **stderr**, so parse the combined
 /// streams (`proc::combined_output`) — reading stdout alone yields "".
 fn run(exe: &std::path::Path) -> Option<String> {
-    let output = crate::proc::run_hidden(exe, ["--version"])?;
+    let output = crate::proc::run_hidden_probe(exe, ["--version"])?;
     if !output.status.success() {
         return None;
     }

@@ -218,7 +218,9 @@ fn run_preset(c: PresetCmd) -> Result<()> {
         }
         PresetCmd::Show { id } => {
             let presets = presets::load_all();
-            let Some(p) = presets.iter().find(|p| p.id == id) else {
+            // Case-insensitive, like the whole INI section layer (read_section,
+            // rename_section, delete_section all use eq_ignore_ascii_case).
+            let Some(p) = presets.iter().find(|p| p.id.eq_ignore_ascii_case(&id)) else {
                 anyhow::bail!("No preset named `{id}`. Run `llama-cpp-config preset list`.");
             };
             println!("{}", presets::render_section(p));
@@ -227,12 +229,19 @@ fn run_preset(c: PresetCmd) -> Result<()> {
         PresetCmd::Delete { id } => {
             // ini::delete_section is a documented no-op for a missing section,
             // so look the id up first — mirroring Show — or a typo'd id gets a
-            // "Removed" message for a preset that never existed.
-            if !presets::load_all().iter().any(|p| p.id == id) {
+            // "Removed" message for a preset that never existed. Match
+            // case-insensitively (as the INI layer does) and delete by the
+            // STORED id so the header is hit whatever case the user typed.
+            let presets = presets::load_all();
+            let Some(p) = presets.iter().find(|p| p.id.eq_ignore_ascii_case(&id)) else {
                 anyhow::bail!("No preset named `{id}`. Run `llama-cpp-config preset list`.");
-            }
-            presets::delete(&id).context("delete preset")?;
-            println!("Removed [{id}] from {}", paths::presets_ini().display());
+            };
+            let real_id = p.id.clone();
+            presets::delete(&real_id).context("delete preset")?;
+            println!(
+                "Removed [{real_id}] from {}",
+                paths::presets_ini().display()
+            );
             Ok(())
         }
     }

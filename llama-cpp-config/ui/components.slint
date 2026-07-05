@@ -4,10 +4,14 @@
 // - layout/chrome: `SectionCard`, `LabeledField`, `InfoRow`, `FormActions`,
 //   `ModalOverlay` (backdrop + card shared by all four app.slint modals)
 // - inputs: `SegmentedControl`, `MappedComboBox` (label↔value ComboBox),
-//   `AutoSlider` (Slider + "auto" checkbox, the push-binding pattern)
-// - list rows: `SelectableRow` / `AccentBar`
+//   `EnumComboBox` (string-valued ComboBox driven through current-index — the
+//   #11970-safe replacement for a `current-value` two-way binding),
+//   `AutoSlider` (Slider + "auto" checkbox, the push-binding pattern),
+//   `SplitFields` (GPU split-mode + tensor-split pair, Server + Models tabs)
+// - list rows/panels: `SelectableRow` / `AccentBar`, `ListPanel` (the bordered
+//   list container around the preset list + the New/Clone model picker)
 
-import { ComboBox, CheckBox, Slider, Button, Palette } from "std-widgets.slint";
+import { ComboBox, LineEdit, CheckBox, Slider, Button, Palette } from "std-widgets.slint";
 
 // Canonical transparency levels for muted text and selection tints, so every
 // page pulls from the same handful of values instead of eyeballing a new alpha.
@@ -19,7 +23,8 @@ export global Tokens {
     out property <float> sel: 0.82;      // accent tint for a selected/active row
     out property <float> zebra: 0.3;     // alternate-row tint in striped lists
 
-    // Semantic status colors (footer run-state text + dot, integration status).
+    // Semantic status colors (footer status message + run-state dot, integration
+    // status). NB the footer run-state *text* is muted, not semantic (app.slint).
     // One home so an "error red" tweaked in one place can't drift from the others.
     out property <color> ok: #2e7d32;
     out property <color> err: #c62828;
@@ -91,6 +96,30 @@ export component SelectableRow inherits Rectangle {
     }
 }
 
+// The bordered, rounded container the preset list and the New/Clone model
+// picker both sit in: 1px border + 8px radius over the card surface, a muted
+// placeholder Text when `is_empty`, and the caller's ListView as `@children`.
+// One home for the chrome (and one row height at the use sites) so the two
+// lists can't drift. The caller sets `min-height`/`vertical-stretch`.
+export component ListPanel inherits Rectangle {
+    in property <bool> is_empty;
+    in property <string> empty_text;
+    border-width: 1px;
+    border-color: Palette.border;
+    border-radius: 8px;
+    background: Palette.alternate-background;
+    if root.is_empty : Text {
+        x: 16px;
+        y: 16px;
+        width: parent.width - 32px;
+        text: root.empty_text;
+        wrap: word-wrap;
+        font-size: 12px;
+        color: Palette.foreground.transparentize(Tokens.muted);
+    }
+    @children
+}
+
 // A ComboBox backed by parallel label/value arrays with a bounds-checked
 // selection: `labels` drives the popup, `index` two-way-binds the current row,
 // and `picked(value)` fires with `values[index]` — guarded so an out-of-range
@@ -106,6 +135,43 @@ export component MappedComboBox inherits ComboBox {
     selected => {
         if (self.current-index >= 0 && self.current-index < root.values.length) {
             root.picked(root.values[self.current-index]);
+        }
+    }
+}
+
+// A ComboBox over a fixed string option list, two-way-bound to a string `value`,
+// driven through current-INDEX. Writing `current-value` does NOT move the
+// selection (Slint #11970 — it warns and leaves the dropdown stale on a model
+// change), so the display is set via `current-index`, derived from `value`'s
+// position in `options` and PUSHED on change (a plain binding dies on the first
+// pick — the std widget self-assigns current-index — same class as AutoSlider's
+// slider). A user pick writes the chosen string back through `value`. `value`
+// should be a member of `options` (an unknown value shows the first entry).
+export component EnumComboBox inherits ComboBox {
+    in property <[string]> options;
+    in-out property <string> value;
+    // `value`'s position in `options`. Slint has no array index-of and no loops
+    // inside functions, so this is an explicit scan bounded at 8 entries (the
+    // longest option list here is cache_types = 6) — extend the chain if a list
+    // grows past 8. An out-of-range `options[i]` reads back as "" (never a real
+    // `value`), so the tail branches stay inert.
+    property <int> value_index: root.value == root.options[0] ? 0
+        : root.value == root.options[1] ? 1
+        : root.value == root.options[2] ? 2
+        : root.value == root.options[3] ? 3
+        : root.value == root.options[4] ? 4
+        : root.value == root.options[5] ? 5
+        : root.value == root.options[6] ? 6
+        : root.value == root.options[7] ? 7
+        : 0;
+    model: root.options;
+    current-index: root.value_index;
+    selected => {
+        root.value = self.current-value;
+    }
+    changed value_index => {
+        if (self.current-index != root.value_index) {
+            self.current-index = root.value_index;
         }
     }
 }
@@ -402,5 +468,42 @@ export component FormActions inherits HorizontalLayout {
         primary: true;
         enabled: root.save_enabled;
         clicked => { root.save(); }
+    }
+}
+
+// The "GPU split mode" + "Tensor split" field pair, shared by the Server tab
+// (server-wide default) and the Models tab (per-preset override). Both fields
+// disable when a single GPU `device` is pinned — one device has nothing to
+// split — so that guard lives here once instead of at four field sites. The
+// two hints and the tensor-split placeholder differ per tab (inputs);
+// `split_mode`/`tensor_split` two-way-chain to the caller's AppState field
+// (same `<=>`-through-a-component pattern as AutoSlider.auto). `split_mode` must
+// stay a non-empty member of Options.split_modes ("default" when unset — the
+// form conversions guarantee it) or the ComboBox shows a blank current row.
+export component SplitFields inherits VerticalLayout {
+    in property <string> device;
+    in property <string> split_mode_hint;
+    in property <string> tensor_split_hint;
+    in property <string> tensor_split_placeholder;
+    in-out property <string> split_mode;
+    in-out property <string> tensor_split;
+    spacing: 10px;
+    LabeledField {
+        label: "GPU split mode";
+        hint: root.split_mode_hint;
+        EnumComboBox {
+            enabled: root.device == "";
+            options: Options.split_modes;
+            value <=> root.split_mode;
+        }
+    }
+    LabeledField {
+        label: "Tensor split";
+        hint: root.tensor_split_hint;
+        LineEdit {
+            enabled: root.device == "";
+            text <=> root.tensor_split;
+            placeholder-text: root.tensor_split_placeholder;
+        }
     }
 }

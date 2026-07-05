@@ -10,11 +10,13 @@
 //   5. `PresetForm` struct                — ui/types.slint
 //   6. the input widget                   — ui/models_page.slint (bind two-way `<=>`)
 //   7. `preset_to_form` + `form_to_preset` — src/form.rs (BOTH directions)
-//   8. PATH-VALUED field only (a filesystem path the user can point anywhere):
-//      add it to `validate_for_save`'s list below AND to the
-//      `save_validation_rejects_comment_markers_in_path_fields` test — the INI
-//      format can't escape `;`/`#` (legal in Windows dirs), so an unvalidated
-//      path saves fine and reloads TRUNCATED. Nothing fails if you skip this.
+//   8. FREE-TEXT field only (any value the user types freely — a filesystem
+//      path, OR raw JSON like `chat-template-kwargs`): add it to
+//      `validate_for_save`'s list below AND to the
+//      `save_validation_rejects_comment_markers_in_free_text_fields` test — the
+//      INI format can't escape `;`/`#` (legal in Windows dirs and in JSON
+//      strings), so an unvalidated value saves fine and reloads TRUNCATED.
+//      Nothing fails if you skip this.
 // Guards: the INI round-trip test in this file (`full_preset_round_trips_through_ini`)
 // and the form round-trip test in form.rs (`form_to_preset(preset_to_form(p)) == p`)
 // — a field wired into one side only drops out of one of them. Give the new
@@ -204,16 +206,39 @@ pub fn save(preset: &Preset) -> io::Result<()> {
     Ok(())
 }
 
+/// True if `id` uses only the presets.ini section-header charset (letters,
+/// digits, `.`, `-`, `_`). `[`/`]`/newline break the section structure; `;`/`#`
+/// get misread as an inline comment (here and by llama-server's preset reader).
+/// Enforced at BOTH free-text ways into a header — `rename` and the save
+/// boundary — so a hand-authored id (a future `preset set`/import, or an
+/// editable-id GUI change) can't corrupt the file. Emptiness is a separate
+/// check so `rename` can keep its own "…is empty" message.
+fn valid_id(id: &str) -> bool {
+    id.chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_'))
+}
+
 /// Save-boundary validation, pure so the unit test never touches `paths::`:
-/// the path-valued fields must survive the INI comment rule — a `;`/`#` in a
-/// GGUF path would silently reload truncated (here AND in llama-server's own
-/// preset reader), so refuse it with the field name (the cure is renaming the
-/// file). See `ini::reject_comment_markers`.
+/// the id becomes a section header and the free-text fields must survive the
+/// INI comment rule — a `;`/`#` in a GGUF path OR in the raw-JSON
+/// `chat-template-kwargs` would silently reload truncated (here AND in
+/// llama-server's own preset reader), so refuse it with the field name (the
+/// cure is renaming the file / fixing the JSON). See `ini::reject_comment_markers`.
 fn validate_for_save(preset: &Preset) -> io::Result<()> {
+    if preset.id.is_empty() || !valid_id(&preset.id) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!(
+                "invalid preset id `{}`: use letters, digits, '.', '-', '_'",
+                preset.id
+            ),
+        ));
+    }
     for (field, value) in [
         ("model", &preset.model),
         ("mmproj", &preset.mmproj),
         ("model-draft", &preset.model_draft),
+        ("chat-template-kwargs", &preset.chat_template_kwargs),
     ] {
         ini::reject_comment_markers(field, value)?;
     }
@@ -239,14 +264,11 @@ pub fn rename(old_id: &str, new_id: &str) -> io::Result<()> {
             "new preset id is unchanged",
         ));
     }
-    // The rename dialog is the one free-text way into a section header —
-    // generated ids go through `make_id`'s whitelist. Hold renames to the
-    // same charset: `[`/`]`/newline would corrupt the section structure,
-    // `;`/`#` gets misread as a comment (here and by llama-server alike).
-    if !new
-        .chars()
-        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_'))
-    {
+    // The rename dialog is one free-text way into a section header (the save
+    // boundary is the other — see `valid_id`). Hold it to the same charset:
+    // `[`/`]`/newline would corrupt the section structure, `;`/`#` gets misread
+    // as a comment (here and by llama-server alike).
+    if !valid_id(new) {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
             "preset ids may only use letters, digits, '.', '-' and '_'",
@@ -442,15 +464,17 @@ mod tests {
         }
     }
 
-    // Pure validation (no IO): a `;`/`#` in a path field would silently reload
-    // truncated through the INI comment rule, so save must refuse it.
+    // Pure validation (no IO): a `;`/`#` in ANY free-text field (a path, or the
+    // raw-JSON chat-template-kwargs) would silently reload truncated through the
+    // INI comment rule, so save must refuse it.
     #[test]
-    fn save_validation_rejects_comment_markers_in_path_fields() {
+    fn save_validation_rejects_comment_markers_in_free_text_fields() {
         let clean = Preset {
             id: "m".into(),
             model: r"C:\models\m.gguf".into(),
             mmproj: r"C:\models\m-mmproj.gguf".into(),
             model_draft: r"C:\models\mtps\m-mtp.gguf".into(),
+            chat_template_kwargs: r#"{"enable_thinking":true}"#.into(),
             ..Default::default()
         };
         assert!(validate_for_save(&clean).is_ok());
@@ -459,15 +483,43 @@ mod tests {
             ("model", r"C:\Models #1\m.gguf"),
             ("mmproj", r"C:\a;b\m-mmproj.gguf"),
             ("model-draft", r"C:\models\m #mtp.gguf"),
+            // Legal inside a JSON string, fatal to the INI reader.
+            ("chat-template-kwargs", r##"{"tag":"#think"}"##),
         ] {
             let mut p = clean.clone();
             match field {
                 "model" => p.model = hostile.into(),
                 "mmproj" => p.mmproj = hostile.into(),
+                "chat-template-kwargs" => p.chat_template_kwargs = hostile.into(),
                 _ => p.model_draft = hostile.into(),
             }
             let err = validate_for_save(&p).expect_err(field);
             assert!(err.to_string().contains(field), "error names the field");
+        }
+    }
+
+    // The id becomes a `[section]` header: reject the empty (`[]`) and the
+    // structure-breaking charset at the save boundary, not only in `rename`.
+    #[test]
+    fn save_validation_rejects_bad_ids() {
+        assert!(valid_id("qwen3-coder.q8_0"));
+        assert!(!valid_id("has space"));
+        assert!(!valid_id("a;b"));
+        assert!(!valid_id("a]b"));
+
+        let base = Preset {
+            model: r"C:\models\m.gguf".into(),
+            ..Default::default()
+        };
+        for bad in ["", "has space", "a;b", "sec]tion"] {
+            let p = Preset {
+                id: bad.into(),
+                ..base.clone()
+            };
+            assert!(
+                validate_for_save(&p).is_err(),
+                "id {bad:?} must be rejected"
+            );
         }
     }
 

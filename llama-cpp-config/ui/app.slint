@@ -11,7 +11,7 @@
 
 import { LineEdit, Button, ListView, Palette } from "std-widgets.slint";
 import { AppState } from "state.slint";
-import { Tokens, Options, ModalOverlay, AccentBar, SelectableRow } from "components.slint";
+import { Tokens, Options, ModalOverlay, AccentBar, SelectableRow, ListPanel } from "components.slint";
 // Re-export so Slint generates the Rust accessors (`app.global::<AppState>()`);
 // a bare import wouldn't surface them to Rust. `Options` is exported only so
 // the e2e test can assert `Options.all_layers == form::ALL_LAYERS`.
@@ -338,24 +338,17 @@ export component AppWindow inherits Window {
             // Type-to-filter immediately when the dialog opens.
             init => { self.focus(); }
         }
-        Rectangle {
-            border-width: 1px;
-            border-color: Palette.border;
-            border-radius: 8px;
-            background: Palette.alternate-background;
+        ListPanel {
+            is_empty: AppState.dialog_model_labels.length == 0;
+            // Distinguish "no models at all" from "filter excluded them" — else a
+            // no-match filter wrongly tells the user their ModelsDir is empty.
+            empty_text: AppState.dialog_filter == ""
+                ? "No .gguf files found under ModelsDir. Drop files there and reopen this dialog."
+                : "No models match the filter.";
             vertical-stretch: 1;
-            if AppState.dialog_model_labels.length == 0 : Text {
-                x: 16px;
-                y: 16px;
-                width: parent.width - 32px;
-                text: "No .gguf files found under ModelsDir. Drop files there and reopen this dialog.";
-                wrap: word-wrap;
-                font-size: 12px;
-                color: Palette.foreground.transparentize(Tokens.muted);
-            }
             ListView {
                 for label[i] in AppState.dialog_model_labels : SelectableRow {
-                    height: 32px;
+                    height: 36px;
                     label: label;
                     selected: i == AppState.dialog_model_index;
                     clicked => { AppState.dialog_model_index = i; }

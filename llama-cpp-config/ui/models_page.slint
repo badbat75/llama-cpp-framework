@@ -7,7 +7,7 @@
 // then the FormActions row.
 
 import { LineEdit, ComboBox, CheckBox, Button, ListView, ScrollView, Palette, SpinBox } from "std-widgets.slint";
-import { SectionCard, LabeledField, InfoRow, SegmentedControl, MappedComboBox, AutoSlider, FormActions, SelectableRow, Tokens, Options } from "components.slint";
+import { SectionCard, LabeledField, InfoRow, SegmentedControl, MappedComboBox, EnumComboBox, AutoSlider, FormActions, SelectableRow, ListPanel, SplitFields, Tokens, Options } from "components.slint";
 import { AppState } from "state.slint";
 
 export component ModelsPage inherits HorizontalLayout {
@@ -33,27 +33,15 @@ export component ModelsPage inherits HorizontalLayout {
             edited(t) => { AppState.filter_presets(t); }
         }
 
-        Rectangle {
-            border-width: 1px;
-            border-color: Palette.border;
-            border-radius: 8px;
-            background: Palette.alternate-background;
+        ListPanel {
+            is_empty: AppState.presets.length == 0;
+            empty_text: AppState.presets_filter == ""
+                ? "No presets yet — click New… to create one."
+                : "No presets match the filter.";
             // Keep the floor modest so the Models tab still fits a
             // small screen; vertical-stretch grows it on big ones.
             min-height: 160px;
             vertical-stretch: 1;
-
-            if AppState.presets.length == 0 : Text {
-                x: 16px;
-                y: 16px;
-                width: parent.width - 32px;
-                text: AppState.presets_filter == ""
-                    ? "No presets yet — click New… to create one."
-                    : "No presets match the filter.";
-                wrap: word-wrap;
-                font-size: 12px;
-                color: Palette.foreground.transparentize(Tokens.muted);
-            }
             ListView {
                 // The Rust side already filtered out non-matching rows, so every
                 // delegate is a fixed 36px tall — a data-dependent height confuses
@@ -177,12 +165,12 @@ export component ModelsPage inherits HorizontalLayout {
                 LabeledField {
                     label: "Spec type";
                     hint: "Speculative decoding mode (--spec-type).\nAuto-set when you pick a draft model above: MTP heads → draft-mtp, DFlash drafters → draft-dflash.\nOverride only if you know what you need.";
-                    ComboBox {
+                    EnumComboBox {
                         // Active only when a draft is available (selected or embedded MTP).
                         enabled: AppState.draft_active;
-                        model: ["none", "draft-mtp", "draft-dflash", "draft-simple", "ngram-mod"];
+                        options: ["none", "draft-mtp", "draft-dflash", "draft-simple", "ngram-mod"];
                         // form.spec_type is never "" (preset_to_form maps empty → "none").
-                        current-value <=> AppState.form.spec_type;
+                        value <=> AppState.form.spec_type;
                     }
                 }
             }
@@ -253,28 +241,15 @@ export component ModelsPage inherits HorizontalLayout {
                         picked(v) => { AppState.form.device = v; }
                     }
                 }
-                LabeledField {
-                    label: "GPU split mode";
-                    hint: "Multi-GPU split for this model (--split-mode), overrides the server default; same on CUDA and HIP.\nlayer splits layers + KV; row is tensor-parallel; none = single GPU.\ndefault = inherit server.\nIgnored when the GPU device above pins one device (a server-wide pin also bypasses it at launch).";
-                    ComboBox {
-                        // A pinned GPU device runs on one device, so the split
-                        // strategy has nothing to split — disable it.
-                        enabled: AppState.form.device == "";
-                        model: Options.split_modes;
-                        // form.split_mode is never "" (preset_to_form maps empty → "default").
-                        current-value <=> AppState.form.split_mode;
-                    }
-                }
-                LabeledField {
-                    label: "Tensor split";
-                    hint: "Per-GPU weight proportions for this model (--tensor-split), e.g. 3,1 (75%/25%).\nOverrides the server default.\nBlank = inherit server / even split.";
-                    LineEdit {
-                        // Per-GPU proportions only apply across multiple GPUs;
-                        // a pinned device makes them moot — disable it.
-                        enabled: AppState.form.device == "";
-                        text <=> AppState.form.tensor_split;
-                        placeholder-text: "e.g. 3,1  (blank = server default)";
-                    }
+                // Disabled when the GPU device above pins one device; form.split_mode
+                // is never "" (preset_to_form maps empty → "default"). See SplitFields.
+                SplitFields {
+                    device: AppState.form.device;
+                    split_mode <=> AppState.form.split_mode;
+                    tensor_split <=> AppState.form.tensor_split;
+                    split_mode_hint: "Multi-GPU split for this model (--split-mode), overrides the server default; same on CUDA and HIP.\nlayer splits layers + KV; row is tensor-parallel; none = single GPU.\ndefault = inherit server.\nIgnored when the GPU device above pins one device (a server-wide pin also bypasses it at launch).";
+                    tensor_split_hint: "Per-GPU weight proportions for this model (--tensor-split), e.g. 3,1 (75%/25%).\nOverrides the server default.\nBlank = inherit server / even split.";
+                    tensor_split_placeholder: "e.g. 3,1  (blank = server default)";
                 }
                 LabeledField {
                     label: "GPU layers";
@@ -397,17 +372,17 @@ export component ModelsPage inherits HorizontalLayout {
                 LabeledField {
                     label: "K-cache type";
                     hint: "KV cache quantization for K (--cache-type-k).\nLower = less VRAM but lower quality.\nNote: Qwen3-Coder needs q8_0 for reliable tool calling — q4_0 makes it drop the <tool_call> wrapper.";
-                    ComboBox {
-                        model: Options.cache_types;
-                        current-value <=> AppState.form.cache_type_k;
+                    EnumComboBox {
+                        options: Options.cache_types;
+                        value <=> AppState.form.cache_type_k;
                     }
                 }
                 LabeledField {
                     label: "V-cache type";
                     hint: "KV cache quantization for V (--cache-type-v).\nLower = less VRAM, lower quality; usually matched to K.\nNeeds flash attention.";
-                    ComboBox {
-                        model: Options.cache_types;
-                        current-value <=> AppState.form.cache_type_v;
+                    EnumComboBox {
+                        options: Options.cache_types;
+                        value <=> AppState.form.cache_type_v;
                     }
                 }
                 LabeledField {

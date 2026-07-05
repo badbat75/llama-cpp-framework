@@ -305,12 +305,11 @@ pub(super) fn wire(app: &AppWindow, state: &Rc<RefCell<State>>) {
                 return;
             };
             let mut form = s.get_form();
-            apply_draft_pick(
-                &mut form,
-                &value,
-                &spec,
-                s.get_server_form().device.as_str(),
-            );
+            // The server-wide fallback is the SAVED device (where the model will
+            // actually run at launch) — not the live, possibly-unsaved Server
+            // form, which would leak an edited-then-reverted device into a save.
+            let server_device = crate::server_cfg::load().device.unwrap_or_default();
+            apply_draft_pick(&mut form, &value, &spec, &server_device);
             s.set_form(form);
             // The draft-device dropdown may have been changed programmatically.
             refresh_device_options(&app);
@@ -381,17 +380,26 @@ use crate::form::ALL_LAYERS;
 /// Apply a draft-picker selection to the form: set `model_draft` + `spec_type`
 /// from the picked row (MTP heads → draft-mtp, DFlash drafters → draft-dflash,
 /// "(none)" → empty), then auto-pin an unconfigured draft to ONE device — the
-/// multi-device "auto" split crashes gemma4 MTP heads. Reuse the server's GPU
-/// device (all layers on it) if set; otherwise fall back to CPU, which always
-/// works. A draft the user already configured (auto off or a device pinned) is
-/// left alone.
+/// multi-device "auto" split crashes gemma4 MTP heads. Pin to the SAME GPU the
+/// model runs on so both land together: the preset's own `device` override
+/// wins, else the server-wide default (`server_device`, all layers on it);
+/// otherwise fall back to CPU, which always works. A draft the user already
+/// configured (auto off or a device pinned) is left alone.
 fn apply_draft_pick(form: &mut PresetForm, value: &str, spec: &str, server_device: &str) {
     form.model_draft = value.into();
     form.spec_type = spec.into();
     if !value.is_empty() && form.n_gpu_layers_draft_auto && form.device_draft.is_empty() {
         form.n_gpu_layers_draft_auto = false;
-        if !server_device.is_empty() {
-            form.device_draft = server_device.into();
+        // The model's own pin wins over the server default: pinning the draft to
+        // a different device than the model is the exact split this heuristic
+        // exists to avoid. Clone before mutating device_draft below.
+        let pin = if form.device.is_empty() {
+            server_device.to_string()
+        } else {
+            form.device.to_string()
+        };
+        if !pin.is_empty() {
+            form.device_draft = pin.into();
             form.n_gpu_layers_draft = ALL_LAYERS;
         } else {
             form.n_gpu_layers_draft = 0;
@@ -532,7 +540,15 @@ fn picked_dialog_model_path(app: &AppWindow, state: &Rc<RefCell<State>>) -> Opti
 /// otherwise make `presets::save` wholesale-replace the tuned section. Both
 /// New and Clone must route through this: first free `<id>`, `<id>-2`, ….
 fn deconflicted_id(path_str: &str) -> String {
-    let base_id = presets::make_id(path_str);
+    let mut base_id = presets::make_id(path_str);
+    if base_id.is_empty() {
+        // make_id keeps only [A-Za-z0-9.\-_]; a model file named entirely in a
+        // non-ASCII script (CJK, Cyrillic, …) sanitizes to "" → unique_id("")
+        // stays "" → a `[]` section save() would then reject (and the GUI
+        // couldn't delete, on_delete_preset early-returns on an empty id).
+        // Fall back to a usable stem before de-conflicting.
+        base_id = "preset".to_string();
+    }
     let existing: Vec<String> = presets::load_all().into_iter().map(|p| p.id).collect();
     presets::unique_id(&base_id, &existing)
 }
@@ -607,6 +623,20 @@ mod tests {
         assert_eq!(f.spec_type, "draft-mtp");
         assert!(!f.n_gpu_layers_draft_auto);
         assert_eq!(f.device_draft, "CUDA0");
+        assert_eq!(f.n_gpu_layers_draft, 99);
+    }
+
+    #[test]
+    fn pick_prefers_the_presets_own_device_over_the_server_default() {
+        // The model is pinned to CUDA1; the draft must follow it there, not to
+        // the server-wide CUDA0 — model and draft must share ONE device.
+        let mut f = PresetForm {
+            n_gpu_layers_draft_auto: true,
+            device: "CUDA1".into(),
+            ..Default::default()
+        };
+        apply_draft_pick(&mut f, r"C:\m\mtps\head.gguf", "draft-mtp", "CUDA0");
+        assert_eq!(f.device_draft, "CUDA1");
         assert_eq!(f.n_gpu_layers_draft, 99);
     }
 

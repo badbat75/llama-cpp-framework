@@ -9,7 +9,7 @@
 // field stale after a Revert / reload.
 
 import { LineEdit, TextEdit, ComboBox, CheckBox, Button, ScrollView, Palette } from "std-widgets.slint";
-import { SectionCard, LabeledField, MappedComboBox, AutoSlider, FormActions, Tokens, Options } from "components.slint";
+import { SectionCard, LabeledField, MappedComboBox, AutoSlider, FormActions, SplitFields, Tokens, Options } from "components.slint";
 import { AppState } from "state.slint";
 
 export component ServerPage inherits ScrollView {
@@ -128,28 +128,15 @@ export component ServerPage inherits ScrollView {
                     picked(v) => { AppState.server_form.device = v; }
                 }
             }
-            LabeledField {
-                label: "GPU split mode";
-                hint: "Multi-GPU split strategy (--split-mode), same on CUDA and HIP.\nlayer (default) splits layers + KV across GPUs; row splits per-row (tensor-parallel, more PCIe traffic); none = single GPU.\nIgnored when GPU device pins one device.";
-                ComboBox {
-                    // A pinned GPU device runs on one device, so there is
-                    // nothing to split — disable it.
-                    enabled: AppState.server_form.device == "";
-                    model: Options.split_modes;
-                    // server_form.split_mode holds "default" when unset (see config_to_form).
-                    current-value <=> AppState.server_form.split_mode;
-                }
-            }
-            LabeledField {
-                label: "Tensor split";
-                hint: "Per-GPU weight proportions (--tensor-split), e.g. 3,1 to put 75% on the first GPU and 25% on the second (useful when GPUs differ in VRAM).\nBlank = even split.";
-                LineEdit {
-                    // Per-GPU proportions only apply across multiple GPUs;
-                    // a pinned device makes them moot — disable it.
-                    enabled: AppState.server_form.device == "";
-                    text <=> AppState.server_form.tensor_split;
-                    placeholder-text: "e.g. 3,1  (blank = even)";
-                }
+            // Disabled when the GPU device above pins one device; server_form.split_mode
+            // holds "default" when unset (config_to_form). See SplitFields.
+            SplitFields {
+                device: AppState.server_form.device;
+                split_mode <=> AppState.server_form.split_mode;
+                tensor_split <=> AppState.server_form.tensor_split;
+                split_mode_hint: "Multi-GPU split strategy (--split-mode), same on CUDA and HIP.\nlayer (default) splits layers + KV across GPUs; row splits per-row (tensor-parallel, more PCIe traffic); none = single GPU.\nIgnored when GPU device pins one device.";
+                tensor_split_hint: "Per-GPU weight proportions (--tensor-split), e.g. 3,1 to put 75% on the first GPU and 25% on the second (useful when GPUs differ in VRAM).\nBlank = even split.";
+                tensor_split_placeholder: "e.g. 3,1  (blank = even)";
             }
         }
 
