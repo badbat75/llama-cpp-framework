@@ -4,32 +4,33 @@
 // per-field) so adding a server field touches this file plus `ServerForm`
 // (ui/types.slint), the widget (ui/server_page.slint), `ServerConfig`
 // (server_cfg.rs), and the CLI (three spots in cli.rs — the full checklist
-// lives at the top of server_cfg.rs) — not the GUI wiring. Numerics ride as
-// blank-able strings, like the preset form.
+// lives at the top of server_cfg.rs) — not the GUI wiring.
 
-use crate::form::txt;
 use crate::gui::ServerForm;
-use crate::{ini, server_cfg};
+use crate::server_cfg;
 
 /// `ServerConfig` → the editable form. Materializes the display defaults the UI
-/// needs for always-present controls (port "8080", the models dir, and the
-/// split-mode combo's "default" sentinel); the blank-able fields stay "" when
-/// unset, and the thread counts map `None` → the slider's "auto" flag.
-/// `form_to_config` reverses each of these.
+/// needs for always-present controls (the models dir, and the split-mode combo's
+/// "default" sentinel); the port / cache-reuse / models-max now carry a
+/// `*_default` checkbox (checked = omit the flag → fall back to llama.cpp's
+/// own default), with the int seeded from the schema default so the disabled
+/// SpinBox shows a hint; the thread counts map `None` → the slider's "auto"
+/// flag. `form_to_config` reverses each of these.
 pub fn config_to_form(cfg: &server_cfg::ServerConfig) -> ServerForm {
     ServerForm {
-        // The display defaults for the always-present trio have ONE owner:
-        // the *_or_default helpers on ServerConfig (see server_cfg.rs).
-        port: cfg.port_or_default().to_string().into(),
+        port: cfg.port.unwrap_or(8080),
+        port_default: cfg.port.is_none(),
         hostname: cfg.hostname_or_default().into(),
         mlock: cfg.mlock_or_default(),
         // Thread counts are auto-flagged sliders: unset ⇒ "auto" (omit the flag).
         threads: cfg.threads.unwrap_or(0),
         threads_auto: cfg.threads.is_none(),
-        cache_reuse: txt(cfg.cache_reuse),
+        cache_reuse: cfg.cache_reuse.unwrap_or(0),
+        cache_reuse_default: cfg.cache_reuse.is_none(),
         threads_batch: cfg.threads_batch.unwrap_or(0),
         threads_batch_auto: cfg.threads_batch.is_none(),
-        models_max: txt(cfg.models_max),
+        models_max: cfg.models_max.unwrap_or(0),
+        models_max_default: cfg.models_max.is_none(),
         // Same "blank ⇒ default dir" rule as save()/start(), so a hand-edited
         // blank ModelsDir shows the default it will actually resolve to.
         models_dir: cfg.models_dir_or_default().into(),
@@ -45,11 +46,18 @@ pub fn config_to_form(cfg: &server_cfg::ServerConfig) -> ServerForm {
     }
 }
 
-/// The editable form → `ServerConfig`. Blank / sentinel string fields collapse
-/// back to `None` (server.ini's `save` renders those as commented hint lines).
+/// The editable form → `ServerConfig`. The `*_default` checkbox decides
+/// None/Some for port / cache-reuse / models-max (checked ⇒ None); the thread
+/// counts use their existing `_auto` flags; blank / sentinel string fields
+/// collapse back to `None` (server.ini's `save` renders those as commented
+/// hint lines).
 pub fn form_to_config(f: &ServerForm) -> server_cfg::ServerConfig {
     server_cfg::ServerConfig {
-        port: ini::parse_int(f.port.as_str()),
+        port: if f.port_default {
+            None
+        } else {
+            Some(f.port).filter(|v| *v > 0)
+        },
         // Blank collapses to None like every optional string, matching what
         // the same input produces via `server set` / `load()` — a `Some("")`
         // here would only diverge the in-memory config, since every consumer
@@ -62,15 +70,21 @@ pub fn form_to_config(f: &ServerForm) -> server_cfg::ServerConfig {
         } else {
             Some(f.threads)
         },
-        // Same "0 or negative clears the override" rule as the CLI's set and
-        // save()'s keep predicate — all three legs must agree.
-        cache_reuse: ini::parse_int(f.cache_reuse.as_str()).filter(|v| *v > 0),
+        cache_reuse: if f.cache_reuse_default {
+            None
+        } else {
+            Some(f.cache_reuse).filter(|v| *v > 0)
+        },
         threads_batch: if f.threads_batch_auto {
             None
         } else {
             Some(f.threads_batch)
         },
-        models_max: ini::parse_int(f.models_max.as_str()),
+        models_max: if f.models_max_default {
+            None
+        } else {
+            Some(f.models_max)
+        },
         // Blank ⇒ None (fall back to the default dir), same rule as hostname.
         models_dir: server_cfg::opt_nonblank(Some(f.models_dir.to_string())),
         device: server_cfg::opt_nonblank(Some(f.device.to_string())),

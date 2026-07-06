@@ -6,8 +6,8 @@
 // Chat / reasoning → Sampling overrides → Advanced → Speculative decoding,
 // then the FormActions row.
 
-import { LineEdit, ComboBox, CheckBox, Button, ListView, ScrollView, Palette, SpinBox } from "std-widgets.slint";
-import { SectionCard, LabeledField, InfoRow, SegmentedControl, MappedComboBox, EnumComboBox, AutoSlider, FormActions, SelectableRow, ListPanel, SplitFields, Tokens, Options } from "components.slint";
+import { LineEdit, ComboBox, CheckBox, Button, ListView, ScrollView, Palette } from "std-widgets.slint";
+import { SectionCard, LabeledField, InfoRow, SegmentedControl, MappedComboBox, EnumComboBox, AutoSlider, DefaultSpinBox, DefaultLineEdit, FormActions, SelectableRow, ListPanel, SplitFields, Tokens, Options } from "components.slint";
 import { AppState } from "state.slint";
 
 export component ModelsPage inherits HorizontalLayout {
@@ -253,7 +253,7 @@ export component ModelsPage inherits HorizontalLayout {
                 }
                 LabeledField {
                     label: "GPU layers";
-                    hint: "--n-gpu-layers: model layers offloaded to GPU.\nSlider max = the model's layer count (all on GPU); lower keeps layers on CPU to save VRAM.\nauto = omit the flag → llama.cpp offloads ALL layers to GPU (the framework runs with -fit off, so there is no auto-fit to VRAM — a model too big to fit will fail to load).";
+                    hint: "--n-gpu-layers: model layers offloaded to GPU.\nSlider max = the model's layer count (all on GPU); lower keeps layers on CPU to save VRAM.\ndefault = omit the flag → llama.cpp offloads ALL layers to GPU (the framework runs with -fit off, so there is no auto-fit to VRAM — a model too big to fit will fail to load).";
                     AutoSlider {
                         auto <=> AppState.form.n_gpu_layers_auto;
                         value <=> AppState.form.n_gpu_layers;
@@ -262,7 +262,7 @@ export component ModelsPage inherits HorizontalLayout {
                 }
                 LabeledField {
                     label: "MoE CPU layers";
-                    hint: "Number of Mixture-of-Experts layers whose expert (FFN) weights stay on CPU (--n-cpu-moe) to save VRAM.\nOnly affects MoE models; N/A for dense models like Gemma.\nSlider max = the model's layer count.\nauto = omit the flag → equivalent to 0: no expert weights are kept on CPU, so every expert stays on GPU with its layer.";
+                    hint: "Number of Mixture-of-Experts layers whose expert (FFN) weights stay on CPU (--n-cpu-moe) to save VRAM.\nOnly affects MoE models; N/A for dense models like Gemma.\nSlider max = the model's layer count.\ndefault = omit the flag → 0: no expert weights are kept on CPU, so every expert stays on GPU with its layer.";
                     // --n-cpu-moe only affects MoE models, so gate the whole row on it.
                     AutoSlider {
                         auto <=> AppState.form.n_cpu_moe_auto;
@@ -285,7 +285,7 @@ export component ModelsPage inherits HorizontalLayout {
                 }
                 LabeledField {
                     label: "Draft GPU layers";
-                    hint: "Draft-model layers offloaded to GPU (--n-gpu-layers-draft).\nA drafter with real layers (e.g. DFlash) gets a 0..layer-count slider.\nAn MTP/nextn head has no transformer layers (block_count 0), so it becomes a plain CPU/GPU switch.\nPin a device above — multi-GPU auto-split crashes MTP heads.\nauto = omit the flag → llama.cpp offloads ALL draft layers to GPU.";
+                    hint: "Draft-model layers offloaded to GPU (--n-gpu-layers-draft).\nA drafter with real layers (e.g. DFlash) gets a 0..layer-count slider.\nAn MTP/nextn head has no transformer layers (block_count 0), so it becomes a plain CPU/GPU switch.\nPin a device above — multi-GPU auto-split crashes MTP heads.\ndefault = omit the flag → llama.cpp offloads ALL draft layers to GPU.";
                     // Real drafter (block_count > 0): the same auto + slider +
                     // readout row as the other layer knobs — one canonical
                     // implementation (AutoSlider) instead of an inline copy.
@@ -303,7 +303,7 @@ export component ModelsPage inherits HorizontalLayout {
                     // would break its one-way binding (the v1.1.1 staleness
                     // class). on GPU = all draft layers, on CPU = 0.
                     if AppState.model_info_draft_n_layer == 0 : CheckBox {
-                        text: "auto";
+                        text: "default";
                         // Active only when a draft is available (selected or embedded MTP).
                         enabled: AppState.draft_active;
                         checked <=> AppState.form.n_gpu_layers_draft_auto;
@@ -322,47 +322,43 @@ export component ModelsPage inherits HorizontalLayout {
                 heading: "Resource / context";
                 LabeledField {
                     label: "Context size";
-                    hint: "Context window in tokens (--ctx-size).\nBigger = longer history but more KV-cache VRAM; split across parallel slots.";
-                    SpinBox {
-                        // Type a value or use the steppers. The maximum is set far
-                        // above any real value so it never clamps typed input.
-                        // accessible-label is also the handle the headless UI test
-                        // (src/tests/ui_bindings.rs) finds this field by.
-                        accessible-label: "preset-ctx-size";
-                        horizontal-stretch: 1;
+                    hint: "Context window in tokens (--ctx-size).\nBigger = longer history but more KV-cache VRAM; split across parallel slots.\ndefault = omit the flag → llama.cpp default: 0 (load from model).";
+                    DefaultSpinBox {
+                        spinbox-label: "preset-ctx-size";
+                        default <=> AppState.form.ctx_size_default;
+                        value <=> AppState.form.ctx_size;
                         minimum: 0;
                         maximum: 100000000;
-                        value <=> AppState.form.ctx_size;
                     }
                 }
                 LabeledField {
                     label: "Parallel seqs";
-                    hint: "--parallel: concurrent request slots.\nContext is divided among them, so N=4 gives each slot ctx-size / 4 tokens.";
-                    SpinBox {
-                        horizontal-stretch: 1;
+                    hint: "--parallel: concurrent request slots.\nContext is divided among them, so N=4 gives each slot ctx-size / 4 tokens.\ndefault = omit the flag → llama.cpp default: 4.";
+                    DefaultSpinBox {
+                        default <=> AppState.form.parallel_default;
+                        value <=> AppState.form.parallel;
                         minimum: 0;
                         maximum: 100000;
-                        value <=> AppState.form.parallel;
                     }
                 }
                 LabeledField {
                     label: "Batch size";
-                    hint: "--batch-size: logical batch (tokens prefilled per step).\nHigher speeds prefill, uses more VRAM.";
-                    SpinBox {
-                        horizontal-stretch: 1;
+                    hint: "--batch-size: logical batch (tokens prefilled per step).\nHigher speeds prefill, uses more VRAM.\ndefault = omit the flag → llama.cpp default: 2048.";
+                    DefaultSpinBox {
+                        default <=> AppState.form.batch_size_default;
+                        value <=> AppState.form.batch_size;
                         minimum: 0;
                         maximum: 100000000;
-                        value <=> AppState.form.batch_size;
                     }
                 }
                 LabeledField {
                     label: "U-Batch size";
-                    hint: "--ubatch-size: physical micro-batch computed at once.\nMust be ≤ batch size.";
-                    SpinBox {
-                        horizontal-stretch: 1;
+                    hint: "--ubatch-size: physical micro-batch computed at once.\nMust be ≤ batch size.\ndefault = omit the flag → llama.cpp default: 512.";
+                    DefaultSpinBox {
+                        default <=> AppState.form.ubatch_size_default;
+                        value <=> AppState.form.ubatch_size;
                         minimum: 0;
                         maximum: 100000000;
-                        value <=> AppState.form.ubatch_size;
                     }
                 }
             }
@@ -395,11 +391,12 @@ export component ModelsPage inherits HorizontalLayout {
                 }
                 LabeledField {
                     label: "Cache RAM (MiB)";
-                    hint: "--cache-ram: RAM limit (MiB) for the prompt cache (past-prompt KV kept for reuse).\nBlank = default; 0 disables.";
-                    LineEdit {
-                        text <=> AppState.form.cache_ram;
-                        input-type: number;
-                        placeholder-text: "8192";
+                    hint: "--cache-ram: RAM limit (MiB) for the prompt cache (past-prompt KV kept for reuse).\ndefault = omit the flag → llama.cpp default: 8192 MiB.\n0 disables; -1 = no limit.";
+                    DefaultSpinBox {
+                        default <=> AppState.form.cache_ram_default;
+                        value <=> AppState.form.cache_ram;
+                        minimum: -1;
+                        maximum: 100000000;
                     }
                 }
             }
@@ -439,57 +436,60 @@ export component ModelsPage inherits HorizontalLayout {
             }
 
             SectionCard {
-                heading: "Sampling overrides (blank = unset)";
+                heading: "Sampling overrides";
                 LabeledField {
                     label: "Temperature";
-                    hint: "--temp: sampling temperature.\nLower = more deterministic, higher = more creative.\nBlank = default.";
-                    LineEdit {
-                        // accessible-label is also the handle the headless UI test
-                        // (src/tests/ui_bindings.rs) finds this field by.
-                        accessible-label: "preset-temp";
-                        text <=> AppState.form.temp;
-                        placeholder-text: "default";
+                    hint: "--temp: sampling temperature.\nLower = more deterministic, higher = more creative.\ndefault = omit the flag → llama.cpp default: 0.80.";
+                    DefaultLineEdit {
+                        edit-label: "preset-temp";
+                        default <=> AppState.form.temp_default;
+                        value <=> AppState.form.temp;
+                        placeholder: "e.g. 0.7";
                     }
                 }
                 LabeledField {
                     label: "Top-K";
-                    hint: "--top-k: keep only the K most-likely tokens before sampling.\n0 / blank = disabled.";
-                    LineEdit {
-                        text <=> AppState.form.top_k;
-                        input-type: number;
-                        placeholder-text: "default";
+                    hint: "--top-k: keep only the K most-likely tokens before sampling.\n0 / default = disabled.\ndefault = omit the flag → llama.cpp default: 40.";
+                    DefaultLineEdit {
+                        default <=> AppState.form.top_k_default;
+                        value <=> AppState.form.top_k;
+                        placeholder: "e.g. 40";
                     }
                 }
                 LabeledField {
                     label: "Top-P";
-                    hint: "--top-p: nucleus sampling — smallest token set whose probabilities sum to P (e.g. 0.95).\nBlank = default.";
-                    LineEdit {
-                        text <=> AppState.form.top_p;
-                        placeholder-text: "default";
+                    hint: "--top-p: nucleus sampling — smallest token set whose probabilities sum to P (e.g. 0.95).\ndefault = omit the flag → llama.cpp default: 0.95.";
+                    DefaultLineEdit {
+                        default <=> AppState.form.top_p_default;
+                        value <=> AppState.form.top_p;
+                        placeholder: "e.g. 0.95";
                     }
                 }
                 LabeledField {
                     label: "Min-P";
-                    hint: "--min-p: drop tokens below this fraction of the top token's probability.\nBlank = default.";
-                    LineEdit {
-                        text <=> AppState.form.min_p;
-                        placeholder-text: "default";
+                    hint: "--min-p: drop tokens below this fraction of the top token's probability.\ndefault = omit the flag → llama.cpp default: 0.05.";
+                    DefaultLineEdit {
+                        default <=> AppState.form.min_p_default;
+                        value <=> AppState.form.min_p;
+                        placeholder: "e.g. 0.05";
                     }
                 }
                 LabeledField {
                     label: "Repeat penalty";
-                    hint: "--repeat-penalty: >1 discourages repeating recent tokens (e.g. 1.1).\nBlank = default.";
-                    LineEdit {
-                        text <=> AppState.form.repeat_penalty;
-                        placeholder-text: "default";
+                    hint: "--repeat-penalty: >1 discourages repeating recent tokens (e.g. 1.1).\ndefault = omit the flag → llama.cpp default: 1.0.";
+                    DefaultLineEdit {
+                        default <=> AppState.form.repeat_penalty_default;
+                        value <=> AppState.form.repeat_penalty;
+                        placeholder: "e.g. 1.1";
                     }
                 }
                 LabeledField {
                     label: "Presence penalty";
-                    hint: "--presence-penalty: positive values discourage reusing any seen token, pushing new topics.\nBlank = default.";
-                    LineEdit {
-                        text <=> AppState.form.presence_penalty;
-                        placeholder-text: "default";
+                    hint: "--presence-penalty: positive values discourage reusing any seen token, pushing new topics.\ndefault = omit the flag → llama.cpp default: 0.0.";
+                    DefaultLineEdit {
+                        default <=> AppState.form.presence_penalty_default;
+                        value <=> AppState.form.presence_penalty;
+                        placeholder: "e.g. 0.5";
                     }
                 }
             }
@@ -510,13 +510,14 @@ export component ModelsPage inherits HorizontalLayout {
                 heading: "Speculative decoding (MTP / DFlash)";
                 LabeledField {
                     label: "Draft n-max";
-                    hint: "Max draft tokens proposed per step (--spec-draft-n-max).\nDFlash clamps this to the GGUF's trained block_size-1 (e.g. 15).\nBlank = model default.";
-                    LineEdit {
+                    hint: "Max draft tokens proposed per step (--spec-draft-n-max).\nDFlash clamps this to the GGUF's trained block_size-1 (e.g. 15).\ndefault = omit the flag → llama.cpp default: 3.";
+                    DefaultSpinBox {
                         // Active only when a draft is available (selected or embedded MTP).
                         enabled: AppState.draft_active;
-                        text <=> AppState.form.spec_draft_n_max;
-                        input-type: number;
-                        placeholder-text: "blank = default";
+                        default <=> AppState.form.spec_draft_n_max_default;
+                        value <=> AppState.form.spec_draft_n_max;
+                        minimum: 0;
+                        maximum: 100000;
                     }
                 }
             }

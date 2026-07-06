@@ -11,7 +11,7 @@
 // - list rows/panels: `SelectableRow` / `AccentBar`, `ListPanel` (the bordered
 //   list container around the preset list + the New/Clone model picker)
 
-import { ComboBox, LineEdit, CheckBox, Slider, Button, Palette } from "std-widgets.slint";
+import { ComboBox, LineEdit, CheckBox, Slider, SpinBox, Button, Palette } from "std-widgets.slint";
 
 // Canonical transparency levels for muted text and selection tints, so every
 // page pulls from the same handful of values instead of eyeballing a new alpha.
@@ -200,7 +200,7 @@ export component AutoSlider inherits HorizontalLayout {
     horizontal-stretch: 1;
     spacing: 8px;
     CheckBox {
-        text: "auto";
+        text: "default";
         enabled: root.usable;
         checked <=> root.auto;
     }
@@ -227,7 +227,74 @@ export component AutoSlider inherits HorizontalLayout {
         width: 44px;
         horizontal-alignment: right;
         vertical-alignment: center;
-        text: root.auto ? "auto" : "\{root.shown}";
+        text: root.auto ? "default" : "\{root.shown}";
+    }
+}
+
+// A "default" checkbox + a SpinBox — the "integer, or let llama.cpp decide"
+// lever used for the always-integer numeric fields (ctx-size, parallel,
+// batch-size, cache-ram, top-k, port, cache-reuse, models-max, …). `default`
+// (two-way) omits the flag on save (None) and disables the SpinBox; `value`
+// (two-way) is the count. Same shape as AutoSlider (auto checkbox + Slider):
+// the checkbox carries the "unset" state, the input carries the value.
+//
+// When `default` is checked the SpinBox is disabled but still shows `value`,
+// so preset_to_form seeds it with a display hint (the schema default) — the
+// user sees what they'd get if they uncheck, and can edit straight away.
+export component DefaultSpinBox inherits HorizontalLayout {
+    in-out property <bool> default;
+    in-out property <int> value;
+    in property <int> minimum: 0;
+    in property <int> maximum: 100000000;
+    // Forwarded to the inner SpinBox's accessible-label so the e2e binding
+    // test (src/tests/ui_bindings.rs) can find and drive one instance.
+    in property <string> spinbox-label;
+    // Gates the whole row on an external precondition (e.g. "a draft is
+    // selected"), matching AutoSlider's `usable`.
+    in property <bool> enabled: true;
+    spacing: 8px;
+    CheckBox {
+        text: "default";
+        enabled: root.enabled;
+        checked <=> root.default;
+    }
+    SpinBox {
+        horizontal-stretch: 1;
+        accessible-label: root.spinbox-label;
+        enabled: !root.default && root.enabled;
+        minimum: root.minimum;
+        maximum: root.maximum;
+        value <=> root.value;
+    }
+}
+
+// A "default" checkbox + a LineEdit (input-type: number) — the float-valued
+// mirror of DefaultSpinBox, for sampling knobs (temp, top-p, min-p,
+// repeat-penalty, presence-penalty) that SpinBox can't cover (it's int-only).
+// `default` (two-way) omits the flag (None); `value` (two-way) is the string
+// the LineEdit shows/edits.
+export component DefaultLineEdit inherits HorizontalLayout {
+    in-out property <bool> default;
+    in-out property <string> value;
+    in property <string> placeholder;
+    // Forwarded to the inner LineEdit's accessible-label so the e2e binding
+    // test (src/tests/ui_bindings.rs) can find and drive one instance.
+    in property <string> edit-label;
+    // Gates the whole row on an external precondition, matching DefaultSpinBox.
+    in property <bool> enabled: true;
+    spacing: 8px;
+    CheckBox {
+        text: "default";
+        enabled: root.enabled;
+        checked <=> root.default;
+    }
+    LineEdit {
+        horizontal-stretch: 1;
+        accessible-label: root.edit-label;
+        enabled: !root.default && root.enabled;
+        text <=> root.value;
+        input-type: number;
+        placeholder-text: root.placeholder;
     }
 }
 

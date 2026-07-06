@@ -17,39 +17,54 @@ export struct PresetForm {
     mmproj: string,
     model_draft: string,
     spec_type: string,
-    spec_draft_n_max: string,
+    spec_draft_n_max: int,
+    spec_draft_n_max_default: bool,
     n_gpu_layers_draft: int,
     n_gpu_layers_draft_auto: bool,
     device_draft: string,
     device: string,
     split_mode: string,
     tensor_split: string,
-    // Always-valued integers: two-way-bound to a SpinBox `value` (int), so
-    // editing keeps them reactive (a one-way binding breaks on user input,
-    // leaving the field stale on preset switch).
+    // Integer numerics: two-way-bound to a DefaultSpinBox `value` (int). The
+    // `*_default` bool carries the "omit the flag" state (checkbox checked =
+    // let llama.cpp pick its own default); the int is always populated so the
+    // disabled SpinBox shows a sensible hint (the schema default) when the
+    // checkbox is on — see preset_to_form in src/form.rs.
     ctx_size: int,
+    ctx_size_default: bool,
     n_gpu_layers: int,
     n_gpu_layers_auto: bool,
     parallel: int,
+    parallel_default: bool,
     batch_size: int,
+    batch_size_default: bool,
     ubatch_size: int,
+    ubatch_size_default: bool,
     cache_type_k: string,
     cache_type_v: string,
     flash_attn: bool,
-    // Blank-able numerics stay `string` (LineEdit `text <=>`): SpinBox has no
-    // "empty" state, and these carry a "blank = default" meaning.
-    cache_ram: string,
+    cache_ram: int,
+    cache_ram_default: bool,
     jinja: bool,
     reasoning: string,
     reasoning_format: string,
     n_cpu_moe: int,
     n_cpu_moe_auto: bool,
+    // Float-valued sampling knobs: SpinBox is int-only, so they ride as
+    // `string` (a DefaultLineEdit `text <=>`) paired with a `*_default` bool
+    // — same "checkbox omits the flag" shape as the integer fields above.
     temp: string,
+    temp_default: bool,
     top_k: string,
+    top_k_default: bool,
     top_p: string,
+    top_p_default: bool,
     min_p: string,
+    min_p_default: bool,
     repeat_penalty: string,
+    repeat_penalty_default: bool,
     presence_penalty: string,
+    presence_penalty_default: bool,
     chat_template_kwargs: string,
 }
 
@@ -64,15 +79,18 @@ export struct PresetForm {
 // `_auto` flag (auto = omit the flag, let llama.cpp pick), the same shape as
 // PresetForm's layer sliders.
 export struct ServerForm {
-    port: string,
+    port: int,
+    port_default: bool,
     hostname: string,
     mlock: bool,
     threads: int,
     threads_auto: bool,
-    cache_reuse: string,
+    cache_reuse: int,
+    cache_reuse_default: bool,
     threads_batch: int,
     threads_batch_auto: bool,
-    models_max: string,
+    models_max: int,
+    models_max_default: bool,
     models_dir: string,
     device: string,
     split_mode: string,

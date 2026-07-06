@@ -9,7 +9,7 @@
 // field stale after a Revert / reload.
 
 import { LineEdit, TextEdit, ComboBox, CheckBox, Button, ScrollView, Palette } from "std-widgets.slint";
-import { SectionCard, LabeledField, MappedComboBox, AutoSlider, FormActions, SplitFields, Tokens, Options } from "components.slint";
+import { SectionCard, LabeledField, MappedComboBox, AutoSlider, DefaultSpinBox, FormActions, SplitFields, Tokens, Options } from "components.slint";
 import { AppState } from "state.slint";
 
 export component ServerPage inherits ScrollView {
@@ -35,14 +35,13 @@ export component ServerPage inherits ScrollView {
             heading: "Network";
             LabeledField {
                 label: "Port";
-                hint: "TCP port llama-server listens on (--port).\nDefault 8080 — the chat UI and integrations connect here.";
-                LineEdit {
-                    // accessible-label doubles as the stable handle the headless
-                    // UI test (src/tests/ui_bindings.rs) uses to find this field.
-                    accessible-label: "server-port";
-                    text <=> AppState.server_form.port;
-                    input-type: number;
-                    placeholder-text: "8080";
+                hint: "TCP port llama-server listens on (--port).\ndefault = omit the flag → llama.cpp default: 8080. The chat UI and integrations connect here.";
+                DefaultSpinBox {
+                    spinbox-label: "server-port";
+                    default <=> AppState.server_form.port_default;
+                    value <=> AppState.server_form.port;
+                    minimum: 0;
+                    maximum: 65535;
                 }
             }
             LabeledField {
@@ -69,7 +68,7 @@ export component ServerPage inherits ScrollView {
             }
             LabeledField {
                 label: "CPU threads";
-                hint: "--threads: CPU threads for generation.\nauto = omit the flag; llama.cpp defaults to the physical-core count it detects. More won't help once GPU-bound. Max = logical processors.";
+                hint: "--threads: CPU threads for generation.\ndefault = omit the flag → llama.cpp auto-detects the physical-core count. More won't help once GPU-bound. Max = logical processors.";
                 AutoSlider {
                     auto <=> AppState.server_form.threads_auto;
                     value <=> AppState.server_form.threads;
@@ -79,16 +78,17 @@ export component ServerPage inherits ScrollView {
             }
             LabeledField {
                 label: "Cache reuse";
-                hint: "--cache-reuse: minimum prefix length (tokens) the server reuses from the KV cache across requests, skipping re-prefill.\nHigher saves compute on shared prefixes.";
-                LineEdit {
-                    text <=> AppState.server_form.cache_reuse;
-                    input-type: number;
-                    placeholder-text: "256";
+                hint: "--cache-reuse: minimum prefix length (tokens) the server reuses from the KV cache across requests, skipping re-prefill.\nHigher saves compute on shared prefixes.\ndefault = omit the flag → llama.cpp default: 0 (disabled).";
+                DefaultSpinBox {
+                    default <=> AppState.server_form.cache_reuse_default;
+                    value <=> AppState.server_form.cache_reuse;
+                    minimum: 1;
+                    maximum: 100000000;
                 }
             }
             LabeledField {
                 label: "Batch threads";
-                hint: "--threads-batch: CPU threads for prompt processing (prefill).\nauto = omit the flag; llama.cpp defaults it to the same as --threads. Max = logical processors.";
+                hint: "--threads-batch: CPU threads for prompt processing (prefill).\ndefault = omit the flag → llama.cpp defaults to the same as --threads. Max = logical processors.";
                 AutoSlider {
                     auto <=> AppState.server_form.threads_batch_auto;
                     value <=> AppState.server_form.threads_batch;
@@ -97,11 +97,12 @@ export component ServerPage inherits ScrollView {
             }
             LabeledField {
                 label: "Max models";
-                hint: "--models-max: how many preset models llama-server keeps resident at once.\n1 = load one at a time (lowest VRAM); higher lets it hot-swap without reloading.";
-                LineEdit {
-                    text <=> AppState.server_form.models_max;
-                    input-type: number;
-                    placeholder-text: "1 (one at a time)";
+                hint: "--models-max: how many preset models llama-server keeps resident at once.\n1 = load one at a time (lowest VRAM); higher lets it hot-swap without reloading.\ndefault = omit the flag → llama.cpp default: 4.\n0 = unlimited.";
+                DefaultSpinBox {
+                    default <=> AppState.server_form.models_max_default;
+                    value <=> AppState.server_form.models_max;
+                    minimum: 0;
+                    maximum: 100000;
                 }
             }
             LabeledField {
