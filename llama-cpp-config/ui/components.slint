@@ -268,11 +268,14 @@ export component DefaultSpinBox inherits HorizontalLayout {
     }
 }
 
-// A "default" checkbox + a LineEdit (input-type: number) — the float-valued
+// A "default" checkbox + a LineEdit (input-type: decimal) — the float-valued
 // mirror of DefaultSpinBox, for sampling knobs (temp, top-p, min-p,
 // repeat-penalty, presence-penalty) that SpinBox can't cover (it's int-only).
 // `default` (two-way) omits the flag (None); `value` (two-way) is the string
-// the LineEdit shows/edits.
+// the LineEdit shows/edits. `decimal` (not `number`) is required so the field
+// accepts the decimal separator — `number` filters it out, making it
+// impossible to type fractional values; the matching comma→dot normalization
+// lives in `ini::parse_float`.
 export component DefaultLineEdit inherits HorizontalLayout {
     in-out property <bool> default;
     in-out property <string> value;
@@ -293,7 +296,7 @@ export component DefaultLineEdit inherits HorizontalLayout {
         accessible-label: root.edit-label;
         enabled: !root.default && root.enabled;
         text <=> root.value;
-        input-type: number;
+        input-type: decimal;
         placeholder-text: root.placeholder;
     }
 }

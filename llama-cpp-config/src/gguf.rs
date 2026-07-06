@@ -60,6 +60,10 @@ pub struct ModelInfo {
     /// `<arch>.block_size` — DFlash drafters' trained diffusion block; the
     /// `--spec-draft-n-max` ceiling is `block_size - 1`. 0 if absent.
     pub block_size: u32,
+    /// Raw `tokenizer.chat_template` metadata (None when the GGUF carries
+    /// none). `chat_template_line()` classifies it for the info box; the GUI's
+    /// Preview button shows this raw text in a modal.
+    pub chat_template: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -110,6 +114,9 @@ impl ModelInfo {
             head_count_kv: a("attention.head_count_kv").unwrap_or(0),
             nextn_predict_layers: a("nextn_predict_layers").unwrap_or(0),
             block_size: a("block_size").unwrap_or(0),
+            chat_template: s
+                .string("tokenizer.chat_template")
+                .filter(|t| !t.is_empty()),
             arch,
         })
     }
@@ -206,6 +213,24 @@ impl ModelInfo {
                 "{} heads / {} KV (GQA)",
                 self.head_count, self.head_count_kv
             )
+        }
+    }
+
+    /// One-line status for the Model info "Chat template" row: `Jinja
+    /// (embedded)` when the GGUF ships a `tokenizer.chat_template` with Jinja
+    /// `{%`/`{{}` markers, `embedded (non-Jinja)` for a marker-less (older /
+    /// builtin-name) template, or `none` when the metadata is absent. The
+    /// `{%`/`{{}` heuristic mirrors llama.cpp's own `common_chat_verify_template`.
+    pub fn chat_template_line(&self) -> String {
+        match &self.chat_template {
+            None => "none".to_string(),
+            Some(t) => {
+                if t.contains("{%") || t.contains("{{") {
+                    "Jinja (embedded)".to_string()
+                } else {
+                    "embedded (non-Jinja)".to_string()
+                }
+            }
         }
     }
 
@@ -555,6 +580,37 @@ mod tests {
         assert!(info.moe_offload_line().is_empty());
         assert_eq!(info.attn_line(), "32 heads / 8 KV (GQA 4×)");
         assert_eq!(info.quant, "Q6_K");
+    }
+
+    #[test]
+    fn chat_template_line_classifies_jinja_legacy_and_none() {
+        // No template metadata → "none", and the raw value is None.
+        let m = map(vec![("general.architecture", Tv::S("llama"))]);
+        let info = ModelInfo::from_kv(&m).unwrap();
+        assert_eq!(info.chat_template_line(), "none");
+        assert!(info.chat_template.is_none());
+
+        // Jinja markers ({% / {{) → "Jinja (embedded)".
+        let m = map(vec![
+            ("general.architecture", Tv::S("llama")),
+            (
+                "tokenizer.chat_template",
+                Tv::S(
+                    "{% for message in messages %}{{ message.content }}{% endfor %}",
+                ),
+            ),
+        ]);
+        let info = ModelInfo::from_kv(&m).unwrap();
+        assert_eq!(info.chat_template_line(), "Jinja (embedded)");
+        assert!(info.chat_template.as_deref().is_some_and(|t| t.contains("{%")));
+
+        // Marker-less string (e.g. a builtin name) → "embedded (non-Jinja)".
+        let m = map(vec![
+            ("general.architecture", Tv::S("llama")),
+            ("tokenizer.chat_template", Tv::S("chatml")),
+        ]);
+        let info = ModelInfo::from_kv(&m).unwrap();
+        assert_eq!(info.chat_template_line(), "embedded (non-Jinja)");
     }
 
     #[test]

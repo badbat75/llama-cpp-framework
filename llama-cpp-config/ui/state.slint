@@ -134,6 +134,14 @@ export global AppState {
     in-out property <string> model_info_layers_ctx;
     in-out property <string> model_info_attn;
     in-out property <string> model_info_draft;
+    // Chat template detection (read from GGUF `tokenizer.chat_template`).
+    // `model_info_chat_template` is the short InfoRow status
+    // ("Jinja (embedded)" / "embedded (non-Jinja)" / "none");
+    // `chat_template_preview` holds the raw template text for the Preview
+    // modal, and is empty when no template is embedded — which also gates the
+    // Preview button (no point previewing an absent template).
+    in-out property <string> model_info_chat_template: "none";
+    in-out property <string> chat_template_preview: "";
     // Optional rows, shown only when a mmproj / draft file is selected.
     in-out property <bool> model_info_has_mmproj: false;
     in-out property <string> model_info_mmproj;
@@ -181,11 +189,17 @@ export global AppState {
     in-out property <bool> show_delete_dialog: false;
     in-out property <string> delete_target_id: "";
 
+    // ── Chat-template preview dialog state ──────────────────────────
+    // Purely Slint-side: the Models-page "Chat template" row's Preview button
+    // flips this. The raw template text is already in `chat_template_preview`
+    // (pushed by Rust on every model change), so opening needs no callback.
+    in-out property <bool> show_chat_template_dialog: false;
+
     // True while any modal dialog is open. The app-wide keyboard shortcuts
     // (app.slint) gate on this so Ctrl+S / Ctrl+N / tab switches can't act on
     // the page hidden behind the backdrop.
     out property <bool> modal_open: show_new_kind_picker || show_rename_dialog
-        || show_discard_dialog || show_delete_dialog;
+        || show_discard_dialog || show_delete_dialog || show_chat_template_dialog;
 
     // ── Integrations tab state ─────────────────────────────────────
     in-out property <string> integration_base_url: "";

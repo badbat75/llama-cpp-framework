@@ -203,6 +203,26 @@ export component ModelsPage inherits HorizontalLayout {
                         hint: "Head counts.\nFewer KV heads (GQA) shrink the KV cache, so a higher --ctx-size fits in the same VRAM.";
                         value: AppState.model_info_attn;
                     }
+                    // A LabeledField (not InfoRow) so the body can hold BOTH a
+                    // status Text and a Preview button: LabeledField forwards
+                    // @children into its row layout, InfoRow fills that slot
+                    // with its own Text. The button opens a modal showing the
+                    // raw template; it's hidden when no template is embedded.
+                    LabeledField {
+                        label: "Chat template";
+                        hint: "Whether the GGUF embeds a Jinja2 chat template (metadata key tokenizer.chat_template).\nJinja (embedded) = llama-server applies it automatically to /v1/chat/completions.\nembedded (non-Jinja) = marker-less/older form; may need --chat-template <name> or --jinja off.\nnone = pass --chat-template / --chat-template-file to supply one.";
+                        Text {
+                            text: AppState.model_info_chat_template;
+                            vertical-alignment: center;
+                            font-size: 13px;
+                            horizontal-stretch: 1;
+                            color: Palette.foreground;
+                        }
+                        if AppState.chat_template_preview != "" : Button {
+                            text: "Preview";
+                            clicked => { AppState.show_chat_template_dialog = true; }
+                        }
+                    }
                     if AppState.model_info_has_mmproj : InfoRow {
                         label: "MMProj";
                         hint: "The selected multimodal projector: projector type, modality (vision/audio), encoder depth, and native image / patch size.";

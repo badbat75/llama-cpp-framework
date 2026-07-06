@@ -437,6 +437,10 @@ pub(super) fn update_model_info(app: &AppWindow) {
     // Reset the slider maxima; 0 = unknown → the UI falls back to a 0..99 range.
     s.set_model_info_n_layer(0);
     s.set_model_info_draft_n_layer(0);
+    // Reset the chat-template row to its "no model" defaults so a stale
+    // template can't linger across a model switch (or an empty selection).
+    s.set_model_info_chat_template(SharedString::from("none"));
+    s.set_chat_template_preview(SharedString::from(""));
 
     if model.trim().is_empty() {
         s.set_model_info_ready(false);
@@ -463,6 +467,10 @@ pub(super) fn update_model_info(app: &AppWindow) {
     s.set_model_info_layers_ctx(SharedString::from(info.layers_ctx_line()));
     s.set_model_info_attn(SharedString::from(info.attn_line()));
     s.set_model_info_draft(SharedString::from(gguf::draft_line(&info, &ext)));
+    // Chat template: short status for the InfoRow, raw text for the Preview
+    // modal (empty when none — also gates the Preview button visibility).
+    s.set_model_info_chat_template(SharedString::from(info.chat_template_line()));
+    s.set_chat_template_preview(SharedString::from(info.chat_template.clone().unwrap_or_default()));
     // Enables the speculative-decoding controls even before an external draft is
     // picked, when the model itself embeds MTP/nextn heads.
     s.set_model_info_embeds_mtp(info.nextn_predict_layers > 0);

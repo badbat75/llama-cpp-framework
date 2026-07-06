@@ -397,7 +397,12 @@ pub fn parse_int(s: &str) -> Option<i32> {
 }
 
 pub fn parse_float(s: &str) -> Option<f64> {
-    s.trim().parse().ok()
+    // Accept comma as the decimal separator (e.g. "0,5" on a comma-decimal
+    // keyboard layout like Italian/German/French) by normalizing to the
+    // period that Rust's f64 parser — and llama.cpp's CLI — expect. Domain
+    // values are small sampling knobs (0.0–2.0), so a thousands-separator
+    // reading never applies; a plain replace is safe.
+    s.trim().replace(',', ".").parse().ok()
 }
 
 pub fn parse_bool(s: &str) -> Option<bool> {
@@ -450,6 +455,22 @@ mod tests {
         assert_eq!(strip_inline_comment("x ;y"), "x");
         assert_eq!(strip_inline_comment("q8#0"), "q8");
         assert_eq!(strip_inline_comment("plain  "), "plain");
+    }
+
+    #[test]
+    fn parse_float_accepts_dot_or_comma_separator() {
+        // Period — the canonical form llama-server's CLI expects.
+        assert_eq!(parse_float("0.5"), Some(0.5));
+        assert_eq!(parse_float("1.25"), Some(1.25));
+        // Comma — the natural separator on a comma-decimal keyboard
+        // (Italian/German/French). Must normalize to the same value so the
+        // sampling knobs are editable on those layouts.
+        assert_eq!(parse_float("0,5"), Some(0.5));
+        assert_eq!(parse_float("1,25"), Some(1.25));
+        // Surrounding whitespace is tolerated, blank/garbage yields None.
+        assert_eq!(parse_float("  0,7  "), Some(0.7));
+        assert_eq!(parse_float(""), None);
+        assert_eq!(parse_float("abc"), None);
     }
 
     #[test]

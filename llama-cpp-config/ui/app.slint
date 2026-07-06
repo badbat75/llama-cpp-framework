@@ -9,7 +9,7 @@
 // and the four overlay modals (New/Clone picker, Discard, Delete, Rename).
 // Rust drives everything via `app.global::<AppState>()`.
 
-import { LineEdit, Button, ListView, Palette } from "std-widgets.slint";
+import { LineEdit, TextEdit, Button, ListView, Palette } from "std-widgets.slint";
 import { AppState } from "state.slint";
 import { Tokens, Options, ModalOverlay, AccentBar, SelectableRow, ListPanel } from "components.slint";
 // Re-export so Slint generates the Rust accessors (`app.global::<AppState>()`);
@@ -452,6 +452,34 @@ export component AppWindow inherits Window {
                 primary: true;
                 enabled: AppState.rename_new_id != "" && AppState.rename_new_id != AppState.rename_old_id;
                 clicked => { submit-rename(); }
+            }
+        }
+    }
+    if AppState.show_chat_template_dialog: ModalOverlay {
+        title: "Chat template (GGUF: tokenizer.chat_template)";
+        description: "The Jinja2 template embedded in the model. llama-server applies it to /v1/chat/completions unless overridden with --chat-template or --chat-template-file. Read-only — select and Ctrl+C to copy.";
+        card_width: 760px;
+        card_height: 560px;
+        dismissed => { AppState.show_chat_template_dialog = false; }
+
+        // Read-only so the template stays selectable/copyable (Ctrl+C) but
+        // can't be edited into the (non-existent) binding back to Rust — a
+        // plain Text wouldn't allow selection.
+        TextEdit {
+            text: AppState.chat_template_preview;
+            read-only: true;
+            wrap: word-wrap;
+            font-family: "Consolas";
+            font-size: 12px;
+            vertical-stretch: 1;
+        }
+        HorizontalLayout {
+            spacing: 8px;
+            alignment: end;
+            Button {
+                text: "Close";
+                primary: true;
+                clicked => { AppState.show_chat_template_dialog = false; }
             }
         }
     }
