@@ -6,7 +6,8 @@
 // All shared data/callbacks live in `AppState` (state.slint); this file is the
 // window shell and the tray, PLUS the app-wide pieces that must sit above the
 // pages: the keyboard shortcuts (Ctrl+S/1/2/3/N, F5 — the KeyBindings block)
-// and the four overlay modals (New/Clone picker, Discard, Delete, Rename).
+// and the five overlay modals (New/Clone picker, Discard, Delete, Rename,
+// Chat-template preview).
 // Rust drives everything via `app.global::<AppState>()`.
 
 import { LineEdit, TextEdit, Button, ListView, Palette } from "std-widgets.slint";

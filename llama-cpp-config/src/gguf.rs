@@ -1,6 +1,7 @@
 // Describe a model in the GUI's "Model info" box: dense-vs-MoE (+ layer split),
-// layer count, trained context, GQA shape, quant, embedded MTP, plus the
-// selected mmproj (clip) and draft/DFlash headers.
+// layer count, trained context, GQA shape, quant, embedded MTP, the embedded
+// chat template (Jinja vs non-Jinja detection, with a raw-text preview), plus
+// the selected mmproj (clip) and draft/DFlash headers.
 //
 // Metadata is read with llama.cpp's OWN gguf reader — we runtime-load
 // `ggml-base.dll` (shipped next to `llama-cpp-config.exe` in `bin\`) and call
@@ -595,14 +596,15 @@ mod tests {
             ("general.architecture", Tv::S("llama")),
             (
                 "tokenizer.chat_template",
-                Tv::S(
-                    "{% for message in messages %}{{ message.content }}{% endfor %}",
-                ),
+                Tv::S("{% for message in messages %}{{ message.content }}{% endfor %}"),
             ),
         ]);
         let info = ModelInfo::from_kv(&m).unwrap();
         assert_eq!(info.chat_template_line(), "Jinja (embedded)");
-        assert!(info.chat_template.as_deref().is_some_and(|t| t.contains("{%")));
+        assert!(info
+            .chat_template
+            .as_deref()
+            .is_some_and(|t| t.contains("{%")));
 
         // Marker-less string (e.g. a builtin name) → "embedded (non-Jinja)".
         let m = map(vec![

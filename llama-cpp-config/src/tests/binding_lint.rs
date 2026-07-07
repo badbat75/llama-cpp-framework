@@ -18,6 +18,11 @@
 //   to flag. AutoSlider's slider push is pinned in ui_bindings.rs; the others
 //   are structural (EnumComboBox drives current-index to sidestep the
 //   `current-value` #11970 bug — see `no_current_value_bindings…` below).
+//   NOT escaped: DefaultSpinBox / DefaultLineEdit — their inner std SpinBox /
+//   LineEdit self-assigns through `<=> root.value`, so the CALL SITE must bind
+//   `value`/`default` two-way; they're listed in SELF_ASSIGNING and scanned
+//   like a bare widget (the `Default` prefix stops them matching SpinBox/
+//   LineEdit, so they need their own entry).
 
 use std::fmt::Write as _;
 use std::path::Path;
@@ -33,6 +38,10 @@ const SELF_ASSIGNING: &[(&str, &[&str])] = &[
     ("SpinBox", &["value:"]),
     ("Slider", &["value:"]),
     ("ComboBox", &["current-value:", "current-index:"]),
+    // Composites wrapping a bare std widget bound `<=> root.value` — the call
+    // site must be two-way too (see the header's "NOT escaped" note).
+    ("DefaultSpinBox", &["value:", "default:"]),
+    ("DefaultLineEdit", &["value:", "default:"]),
 ];
 
 fn strip_line_comment(line: &str) -> &str {

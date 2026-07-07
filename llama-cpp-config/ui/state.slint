@@ -135,7 +135,8 @@ export global AppState {
     in-out property <string> model_info_attn;
     in-out property <string> model_info_draft;
     // Chat template detection (read from GGUF `tokenizer.chat_template`).
-    // `model_info_chat_template` is the short InfoRow status
+    // `model_info_chat_template` is the short status text — rendered in a
+    // LabeledField (not an InfoRow) so a Preview button can sit beside it —
     // ("Jinja (embedded)" / "embedded (non-Jinja)" / "none");
     // `chat_template_preview` holds the raw template text for the Preview
     // modal, and is empty when no template is embedded — which also gates the

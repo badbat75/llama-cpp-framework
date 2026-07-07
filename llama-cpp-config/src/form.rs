@@ -16,11 +16,12 @@ fn str_or(val: &str, default: &str) -> SharedString {
     SharedString::from(if val.is_empty() { default } else { val })
 }
 
-/// An optional value (no schema default) as its decimal string, or "" when unset
-/// — the blank-able text a LineEdit shows for the "blank = leave unset" sampling
-/// overrides. Pairs with `ini::parse_int` / `parse_float` on the way back.
-// Also used by the server-side mirror (server_form.rs) — one home for the rule.
-pub(crate) fn txt<T: ToString>(v: Option<T>) -> SharedString {
+/// An optional float (no schema default) as its decimal string, or "" when unset
+/// — the blank-able text a `DefaultLineEdit` shows for the sampling overrides
+/// (temp / top-p / min-p / repeat- + presence-penalty). Pairs with
+/// `ini::parse_float` on the way back. (Top-K, the one integer sampler, rides a
+/// `DefaultSpinBox` instead, so it doesn't go through here.)
+fn txt(v: Option<f64>) -> SharedString {
     v.map(|n| n.to_string()).unwrap_or_default().into()
 }
 
@@ -85,7 +86,7 @@ pub fn preset_to_form(p: &presets::Preset) -> PresetForm {
         n_cpu_moe_auto: p.n_cpu_moe.is_none(),
         temp: txt(p.temp),
         temp_default: p.temp.is_none(),
-        top_k: txt(p.top_k),
+        top_k: p.top_k.unwrap_or_default(),
         top_k_default: p.top_k.is_none(),
         top_p: txt(p.top_p),
         top_p_default: p.top_p.is_none(),
@@ -175,11 +176,10 @@ pub fn form_to_preset(f: &PresetForm) -> presets::Preset {
         } else {
             ini::parse_float(f.temp.as_str())
         },
-        top_k: if f.top_k_default {
-            None
-        } else {
-            ini::parse_int(f.top_k.as_str())
-        },
+        // Integer-valued (a DefaultSpinBox `value`, unlike the float sampling
+        // knobs below) — any int is meaningful (0 = disable top-k), so only the
+        // "default" checkbox collapses to None.
+        top_k: if f.top_k_default { None } else { Some(f.top_k) },
         top_p: if f.top_p_default {
             None
         } else {

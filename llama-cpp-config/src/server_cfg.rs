@@ -6,16 +6,20 @@
 // `; Key = example  ; help` hint lines (never omitted) so the file
 // self-documents every available knob.
 //
-// ADD A SERVER FIELD — the mirror of the preset recipe (top of presets.rs), one
-// tier smaller but reaching the CLI (the server has a per-field `set`). Trace an
+// ADD A SERVER FIELD — the mirror of the preset recipe (top of presets.rs): a
+// smaller schema, but a LARGER per-field fan-out — it also reaches the CLI (the
+// server has a per-field `set`) and the launch path (steps 7-8 below). Trace an
 // existing field like `threads` (PascalCase INI key ↔ snake_case Rust field):
 //   1. `ServerConfig` struct field (+ doc)   — below
 //   2. `from_keys` (backs `load`)            — INI read; `keys.get("Key")` → field
 //   3. `render` (backs `save`)               — INI write; an `int_line_or_hint` /
 //      `str_line_or_hint` line + a `{…_line}` slot in the `[Server]` body
-//   4. `ServerForm` struct                   — ui/types.slint
-//   5. the input widget                      — ui/server_page.slint (bind two-way `<=>`)
-//   6. `config_to_form` + `form_to_config`   — src/server_form.rs (BOTH directions)
+//   4. `ServerForm` struct                   — ui/types.slint (a NUMERIC field
+//      also needs a paired `<field>_default` bool — the "omit the flag" checkbox)
+//   5. the input widget                      — ui/server_page.slint, bind two-way
+//      `<=>`: DefaultSpinBox for numerics (wire BOTH `value` and `default`)
+//   6. `config_to_form` + `form_to_config`   — src/server_form.rs (BOTH
+//      directions; derive `<field>_default` via `is_none()` / `if <field>_default`)
 //   7. THREE spots in src/cli.rs             — the `ServerSet` flag field, a
 //      `row(...)` in `show_lines`, and `ServerSet::apply` copying the flag into `cfg`
 //   8. `runstate::server_args`               — map the field to its llama-server

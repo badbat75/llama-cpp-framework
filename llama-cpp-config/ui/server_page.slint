@@ -8,8 +8,8 @@
 // user types/toggles (Slint's "overwritten bindings" rule), which would leave the
 // field stale after a Revert / reload.
 
-import { LineEdit, TextEdit, ComboBox, CheckBox, Button, ScrollView, Palette } from "std-widgets.slint";
-import { SectionCard, LabeledField, MappedComboBox, AutoSlider, DefaultSpinBox, FormActions, SplitFields, Tokens, Options } from "components.slint";
+import { LineEdit, TextEdit, CheckBox, Button, ScrollView, Palette } from "std-widgets.slint";
+import { SectionCard, LabeledField, MappedComboBox, AutoSlider, DefaultSpinBox, FormActions, SplitFields, Tokens } from "components.slint";
 import { AppState } from "state.slint";
 
 export component ServerPage inherits ScrollView {
@@ -40,7 +40,6 @@ export component ServerPage inherits ScrollView {
                     spinbox-label: "server-port";
                     default <=> AppState.server_form.port_default;
                     value <=> AppState.server_form.port;
-                    minimum: 0;
                     maximum: 65535;
                 }
             }
@@ -83,7 +82,6 @@ export component ServerPage inherits ScrollView {
                     default <=> AppState.server_form.cache_reuse_default;
                     value <=> AppState.server_form.cache_reuse;
                     minimum: 1;
-                    maximum: 100000000;
                 }
             }
             LabeledField {
@@ -101,7 +99,6 @@ export component ServerPage inherits ScrollView {
                 DefaultSpinBox {
                     default <=> AppState.server_form.models_max_default;
                     value <=> AppState.server_form.models_max;
-                    minimum: 0;
                     maximum: 100000;
                 }
             }

@@ -7,9 +7,14 @@
 //   2. `impl Default for Preset`          — below
 //   3. `Preset::from_keys`                — INI read, below
 //   4. `render_section` + `emit_*` (+ `;` comment) — INI write, below
-//   5. `PresetForm` struct                — ui/types.slint
-//   6. the input widget                   — ui/models_page.slint (bind two-way `<=>`)
-//   7. `preset_to_form` + `form_to_preset` — src/form.rs (BOTH directions)
+//   5. `PresetForm` struct                — ui/types.slint (a NUMERIC field also
+//      needs a paired `<field>_default: bool` — the "omit the flag" checkbox)
+//   6. the input widget                   — ui/models_page.slint, bind two-way
+//      `<=>`: DefaultSpinBox (int) / DefaultLineEdit (float) for numerics — wire
+//      BOTH `value` and `default`; EnumComboBox for string dropdowns
+//   7. `preset_to_form` + `form_to_preset` — src/form.rs (BOTH directions; a
+//      numeric derives `<field>_default` via `is_none()` one way and
+//      `if <field>_default { None } else { … }` the other)
 //   8. FREE-TEXT field only (any value the user types freely — a filesystem
 //      path, OR raw JSON like `chat-template-kwargs`): add it to
 //      `validate_for_save`'s list below AND to the

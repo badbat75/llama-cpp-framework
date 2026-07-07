@@ -347,8 +347,6 @@ export component ModelsPage inherits HorizontalLayout {
                         spinbox-label: "preset-ctx-size";
                         default <=> AppState.form.ctx_size_default;
                         value <=> AppState.form.ctx_size;
-                        minimum: 0;
-                        maximum: 100000000;
                     }
                 }
                 LabeledField {
@@ -357,7 +355,6 @@ export component ModelsPage inherits HorizontalLayout {
                     DefaultSpinBox {
                         default <=> AppState.form.parallel_default;
                         value <=> AppState.form.parallel;
-                        minimum: 0;
                         maximum: 100000;
                     }
                 }
@@ -367,8 +364,6 @@ export component ModelsPage inherits HorizontalLayout {
                     DefaultSpinBox {
                         default <=> AppState.form.batch_size_default;
                         value <=> AppState.form.batch_size;
-                        minimum: 0;
-                        maximum: 100000000;
                     }
                 }
                 LabeledField {
@@ -377,8 +372,6 @@ export component ModelsPage inherits HorizontalLayout {
                     DefaultSpinBox {
                         default <=> AppState.form.ubatch_size_default;
                         value <=> AppState.form.ubatch_size;
-                        minimum: 0;
-                        maximum: 100000000;
                     }
                 }
             }
@@ -416,7 +409,6 @@ export component ModelsPage inherits HorizontalLayout {
                         default <=> AppState.form.cache_ram_default;
                         value <=> AppState.form.cache_ram;
                         minimum: -1;
-                        maximum: 100000000;
                     }
                 }
             }
@@ -470,10 +462,12 @@ export component ModelsPage inherits HorizontalLayout {
                 LabeledField {
                     label: "Top-K";
                     hint: "--top-k: keep only the K most-likely tokens before sampling.\n0 / default = disabled.\ndefault = omit the flag → llama.cpp default: 40.";
-                    DefaultLineEdit {
+                    // Integer-valued, so a DefaultSpinBox (not the float
+                    // DefaultLineEdit used by the other sampling knobs) — a
+                    // decimal editor would let `40,5` slip past the int parse.
+                    DefaultSpinBox {
                         default <=> AppState.form.top_k_default;
                         value <=> AppState.form.top_k;
-                        placeholder: "e.g. 40";
                     }
                 }
                 LabeledField {
@@ -536,7 +530,6 @@ export component ModelsPage inherits HorizontalLayout {
                         enabled: AppState.draft_active;
                         default <=> AppState.form.spec_draft_n_max_default;
                         value <=> AppState.form.spec_draft_n_max;
-                        minimum: 0;
                         maximum: 100000;
                     }
                 }

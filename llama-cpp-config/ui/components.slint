@@ -2,11 +2,13 @@
 // - globals: `Tokens` (canonical alpha levels), `Options` (shared option lists
 //   + the `all_layers` slider bound)
 // - layout/chrome: `SectionCard`, `LabeledField`, `InfoRow`, `FormActions`,
-//   `ModalOverlay` (backdrop + card shared by all four app.slint modals)
+//   `ModalOverlay` (backdrop + card shared by all five app.slint modals)
 // - inputs: `SegmentedControl`, `MappedComboBox` (label↔value ComboBox),
 //   `EnumComboBox` (string-valued ComboBox driven through current-index — the
 //   #11970-safe replacement for a `current-value` two-way binding),
-//   `AutoSlider` (Slider + "auto" checkbox, the push-binding pattern),
+//   `AutoSlider` (Slider + "default" checkbox, the push-binding pattern),
+//   `DefaultSpinBox` / `DefaultLineEdit` (a "default" checkbox + an int SpinBox
+//   / float LineEdit — the "value, or omit the flag" pattern for numeric fields),
 //   `SplitFields` (GPU split-mode + tensor-split pair, Server + Models tabs)
 // - list rows/panels: `SelectableRow` / `AccentBar`, `ListPanel` (the bordered
 //   list container around the preset list + the New/Clone model picker)
@@ -176,11 +178,12 @@ export component EnumComboBox inherits ComboBox {
     }
 }
 
-// An "auto" checkbox + a 0..maximum slider + a right-aligned numeric readout —
-// the "count, or let llama.cpp decide" lever used for the layer-offload flags
+// A "default" checkbox + a 0..maximum slider + a right-aligned readout — the
+// "count, or let llama.cpp decide" lever used for the layer-offload flags
 // (--n-gpu-layers, --n-cpu-moe) and the CPU-thread counts (--threads,
-// --threads-batch). `auto` (two-way) omits the flag and disables the slider;
-// `value` (two-way) is the count. The inner Slider's value is float and its
+// --threads-batch). `auto` (two-way; the on-screen label reads "default") omits
+// the flag and disables the slider; `value` (two-way) is the count. The readout
+// shows "default" when checked, else the count. The inner Slider's value is float and its
 // own drag handler self-assigns it, so it can't be bound two-way to the int
 // `value`: outward flows through `changed(v)`, inward through the
 // `changed shown` push below (a plain `value:` binding dies on the first
@@ -224,7 +227,9 @@ export component AutoSlider inherits HorizontalLayout {
         }
     }
     Text {
-        width: 44px;
+        // min-width, not a fixed width: the "default" string is wider than the
+        // numeric readout it replaced and would clip in a fixed 44px cell.
+        min-width: 44px;
         horizontal-alignment: right;
         vertical-alignment: center;
         text: root.auto ? "default" : "\{root.shown}";

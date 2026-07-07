@@ -50,13 +50,15 @@ export struct PresetForm {
     reasoning_format: string,
     n_cpu_moe: int,
     n_cpu_moe_auto: bool,
-    // Float-valued sampling knobs: SpinBox is int-only, so they ride as
-    // `string` (a DefaultLineEdit `text <=>`) paired with a `*_default` bool
-    // — same "checkbox omits the flag" shape as the integer fields above.
+    // Sampling knobs, each paired with a `*_default` bool (checkbox omits the
+    // flag — same shape as the integer fields above). Top-K is integer-valued
+    // (a DefaultSpinBox `value`, int); the float knobs (temp/top-p/min-p/
+    // penalties) ride as `string` (a DefaultLineEdit `text <=>`) since SpinBox
+    // is int-only.
+    top_k: int,
+    top_k_default: bool,
     temp: string,
     temp_default: bool,
-    top_k: string,
-    top_k_default: bool,
     top_p: string,
     top_p_default: bool,
     min_p: string,
@@ -74,10 +76,11 @@ export struct PresetForm {
 // (`server_form != server_form_base`). Adding a server field follows the
 // checklist at the top of src/server_cfg.rs (this struct + server_page.slint +
 // server_cfg.rs + both conversions in src/server_form.rs + 3 spots in cli.rs +
-// runstate::server_args) — never the GUI wiring. Like PresetForm, most numerics ride as blank-able
-// `string`; the CPU-thread counts instead ride as slider `int`s paired with an
-// `_auto` flag (auto = omit the flag, let llama.cpp pick), the same shape as
-// PresetForm's layer sliders.
+// runstate::server_args) — never the GUI wiring. Numerics ride as `int` paired
+// with a `*_default` bool (a DefaultSpinBox — checkbox omits the flag); the
+// CPU-thread counts instead ride as slider `int`s paired with an `_auto` flag
+// (auto = omit the flag, let llama.cpp pick), the same shape as PresetForm's
+// layer sliders.
 export struct ServerForm {
     port: int,
     port_default: bool,
