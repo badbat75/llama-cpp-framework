@@ -9,6 +9,8 @@
 
 use std::io;
 
+// ── Run detection (is_running + tasklist) ────────────────────────────────
+
 /// `true` if an `llama-server` process is currently running.
 pub fn is_running() -> bool {
     #[cfg(windows)]
@@ -64,6 +66,8 @@ fn running_from_tasklist(stdout: &str, probe_pids: &[u32]) -> bool {
 fn has_presets() -> bool {
     !crate::ini::read_all(&crate::paths::presets_ini()).is_empty()
 }
+
+// ── Launch argument assembly (server_args) ───────────────────────────────
 
 /// The full llama-server argument list derived from server.ini.
 /// Single source of truth for both `start()` and `command_line()`.
@@ -146,6 +150,8 @@ fn server_args(
 /// port, or a missing model (those exit within ~1 s), short enough that a
 /// healthy server (still alive while it loads the model) isn't held up.
 const LAUNCH_GRACE: std::time::Duration = std::time::Duration::from_millis(2500);
+
+// ── Process control (start / stop) ───────────────────────────────────────
 
 /// Launch llama-server.exe with args from server.ini + presets.ini.
 ///
@@ -271,6 +277,8 @@ pub fn stop() {
             .output();
     }
 }
+
+// ── Command-line rendering ───────────────────────────────────────────────
 
 /// Shell line-continuation character: PowerShell uses a backtick, POSIX shells
 /// use a backslash. Only used to pretty-print `command_line()` for the UI.

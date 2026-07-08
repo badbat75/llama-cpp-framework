@@ -20,6 +20,8 @@ use super::*;
 // longer does, so pull it in here rather than through the parent's `use super::*`.
 use crate::gguf;
 
+// ── Callback wiring (entry point) ─────────────────────────────────────
+
 pub(super) fn wire(app: &AppWindow, state: &Rc<RefCell<State>>) {
     {
         let app_weak = app.as_weak();
@@ -318,6 +320,8 @@ pub(super) fn wire(app: &AppWindow, state: &Rc<RefCell<State>>) {
     }
 }
 
+// ── Discard-guarded navigation (select / New / Clone) ─────────────────
+
 /// The actual preset switch (the guarded body of `on_select_preset`): load the
 /// indexed preset into the editor and refresh its dependent dropdowns.
 fn do_select_preset(app: &AppWindow, state: &Rc<RefCell<State>>, index: i32) {
@@ -377,6 +381,8 @@ fn open_clone_dialog(
 // fallbacks that share it (and its Slint mirror is test-asserted there).
 use crate::form::ALL_LAYERS;
 
+// ── Draft-pick policy ─────────────────────────────────────────────────
+
 /// Apply a draft-picker selection to the form: set `model_draft` + `spec_type`
 /// from the picked row (MTP heads → draft-mtp, DFlash drafters → draft-dflash,
 /// "(none)" → empty), then auto-pin an unconfigured draft to ONE device — the
@@ -407,6 +413,8 @@ fn apply_draft_pick(form: &mut PresetForm, value: &str, spec: &str, server_devic
     }
 }
 
+// ── Write invariant: reload + reselect + re-baseline ──────────────────
+
 /// Refresh everything that depends on the preset set after a presets.ini write:
 /// the (re-selected) preset list (`reload_presets`), the file/device dropdowns,
 /// and the Integrations tab. `want` picks the selection like `reload_presets`.
@@ -418,6 +426,8 @@ fn preset_written(app: &AppWindow, state: &Rc<RefCell<State>>, want: Option<&str
     refresh_file_options(app, state);
     refresh_integrations(app);
 }
+
+// ── Model-info box (GGUF reads) ───────────────────────────────────────
 
 /// Fill the read-only "Model info" box from the selected model's GGUF header
 /// (read via `ggml-base.dll`), enriched with the selected mmproj and draft

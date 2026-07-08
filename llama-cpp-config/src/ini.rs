@@ -29,6 +29,8 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 
+// ── Types & readers ──────────────────────────────────────────────────────
+
 #[derive(Debug, Default, Clone)]
 pub struct Section {
     pub id: String,
@@ -113,6 +115,8 @@ pub fn read_section(path: &Path, section: &str) -> BTreeMap<String, String> {
     }
     BTreeMap::new()
 }
+
+// ── Writers (atomic, section-preserving) ─────────────────────────────────
 
 /// Replace one key inside the named section.
 pub fn replace_key(path: &Path, section: &str, key: &str, value: &str) -> std::io::Result<()> {
@@ -308,6 +312,8 @@ pub fn atomic_write(path: &Path, contents: &str) -> std::io::Result<()> {
     fs::rename(&tmp, path)
 }
 
+// ── Internal: section-header scanning & EOL ──────────────────────────────
+
 fn line_starts_with_key(line: &str, key: &str) -> bool {
     let line = line.trim_start();
     if line.len() < key.len() || !line.is_char_boundary(key.len()) {
@@ -391,6 +397,8 @@ fn normalize_eol(s: &str, eol: &str) -> String {
         lf.replace('\n', "\r\n")
     }
 }
+
+// ── Value parsers ────────────────────────────────────────────────────────
 
 pub fn parse_int(s: &str) -> Option<i32> {
     s.trim().parse().ok()

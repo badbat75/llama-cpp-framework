@@ -40,6 +40,8 @@ use crate::ini;
 use crate::paths;
 use crate::server_cfg;
 
+// ── Schema: Preset + Default ─────────────────────────────────────────────
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Preset {
     pub id: String,
@@ -77,12 +79,15 @@ pub struct Preset {
     pub cache_type_k: String,
     pub cache_type_v: String,
     pub flash_attn: Option<bool>,
+    /// KV-cache RAM budget in MiB (--cache-ram): `-1` = no limit, `0` disables.
     pub cache_ram: Option<i32>,
     pub jinja: Option<bool>,
     pub reasoning: String,
     pub reasoning_format: String,
     pub n_cpu_moe: Option<i32>,
     pub temp: Option<f64>,
+    /// Integer sampler (--top-k): backed by an int SpinBox, not the float editor
+    /// the other samplers use — a decimal field would let `40,5` slip the int parse.
     pub top_k: Option<i32>,
     pub top_p: Option<f64>,
     pub min_p: Option<f64>,
@@ -132,6 +137,8 @@ impl Default for Preset {
     }
 }
 
+// ── Construct & parse (from_keys = INI read) ─────────────────────────────
+
 impl Preset {
     pub fn new_default(id: String, model: String) -> Self {
         Self {
@@ -179,6 +186,8 @@ impl Preset {
         }
     }
 }
+
+// ── File IO (load / save / delete / rename / id) ─────────────────────────
 
 pub fn load_all() -> Vec<Preset> {
     let path = paths::presets_ini();
@@ -342,6 +351,8 @@ fn infer_models_dir(model_path: &str) -> Option<String> {
     };
     Some(root.to_string_lossy().into_owned())
 }
+
+// ── INI write (render_section + emit_*) ──────────────────────────────────
 
 pub fn render_section(p: &Preset) -> String {
     let mut out = String::new();
