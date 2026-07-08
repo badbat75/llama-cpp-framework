@@ -1,4 +1,4 @@
-// Spawns `llama-server.exe --version` for the footer's version badge.
+//! Spawns `llama-server.exe --version` for the footer's version badge.
 
 use crate::paths;
 

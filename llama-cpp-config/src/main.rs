@@ -1,4 +1,4 @@
-// llama-cpp-config — GUI + CLI configurator for llama.cpp-framework.
+//! llama-cpp-config — GUI + CLI configurator for llama.cpp-framework.
 
 //   llama-cpp-config                  → GUI
 //   llama-cpp-config <subcommand> ... → headless CLI (clap-defined in cli.rs)

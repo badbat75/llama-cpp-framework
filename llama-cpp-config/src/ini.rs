@@ -1,29 +1,29 @@
-// Minimal INI parser / writer that preserves comments and section order.
-//
-// The behavioral contract callers rely on:
-// - Section lookup is CASE-INSENSITIVE and WHITESPACE-TOLERANT everywhere
-//   (read_all trims each line; the writers match via find_section_header /
-//   next_section_start with the same tolerance) — a hand-edited `[server]` or
-//   `  [server]` header never spawns a duplicate and is never swallowed by a
-//   neighbouring section's rewrite.
-// - KEY lookup is asymmetric by design: reads are exact-case (`BTreeMap`
-//   lookups like `keys.get("Port")`), while replace_key matches an existing
-//   key case-insensitively and rewrites the line in canonical case.
-// - Values are TRIMMED on parse, and everything from the FIRST `;` or `#` on
-//   is stripped as an inline comment — spaced or not ("a;b" reads as "a").
-//   This mirrors llama-server's own preset parser (common/preset.cpp PEG:
-//   `eol-start ::= ws ([;#] / newline / EOF)`), which presets.ini must obey:
-//   `;`/`#` simply cannot occur inside a value, and a writer that emits one
-//   produces a value llama-server would truncate anyway. Writers must also
-//   emit trimmed values or break round-trips.
-// - Writers preserve the file's existing line endings (per line on
-//   replace_key's replace path, detected once everywhere else — section
-//   bodies arrive CRLF from the renderers and are converted to the file's
-//   style); brand-new content defaults to CRLF.
-// - `atomic_write` (sibling temp file + rename) is the canonical write path —
-//   every config writer in the crate funnels through it.
-// - `parse_int` / `parse_float` / `parse_bool` are the shared lenient scalar
-//   parsers ("true"/"false" only for bools; anything else reads as unset).
+//! Minimal INI parser / writer that preserves comments and section order.
+//!
+//! The behavioral contract callers rely on:
+//! - Section lookup is CASE-INSENSITIVE and WHITESPACE-TOLERANT everywhere
+//!   (read_all trims each line; the writers match via find_section_header /
+//!   next_section_start with the same tolerance) — a hand-edited `[server]` or
+//!   `  [server]` header never spawns a duplicate and is never swallowed by a
+//!   neighbouring section's rewrite.
+//! - KEY lookup is asymmetric by design: reads are exact-case (`BTreeMap`
+//!   lookups like `keys.get("Port")`), while replace_key matches an existing
+//!   key case-insensitively and rewrites the line in canonical case.
+//! - Values are TRIMMED on parse, and everything from the FIRST `;` or `#` on
+//!   is stripped as an inline comment — spaced or not ("a;b" reads as "a").
+//!   This mirrors llama-server's own preset parser (common/preset.cpp PEG:
+//!   `eol-start ::= ws ([;#] / newline / EOF)`), which presets.ini must obey:
+//!   `;`/`#` simply cannot occur inside a value, and a writer that emits one
+//!   produces a value llama-server would truncate anyway. Writers must also
+//!   emit trimmed values or break round-trips.
+//! - Writers preserve the file's existing line endings (per line on
+//!   replace_key's replace path, detected once everywhere else — section
+//!   bodies arrive CRLF from the renderers and are converted to the file's
+//!   style); brand-new content defaults to CRLF.
+//! - `atomic_write` (sibling temp file + rename) is the canonical write path —
+//!   every config writer in the crate funnels through it.
+//! - `parse_int` / `parse_float` / `parse_bool` are the shared lenient scalar
+//!   parsers ("true"/"false" only for bools; anything else reads as unset).
 
 use std::collections::BTreeMap;
 use std::fs;

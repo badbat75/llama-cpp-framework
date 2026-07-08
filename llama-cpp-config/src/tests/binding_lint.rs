@@ -1,28 +1,28 @@
-// Lint-style guard for the stale-widget bug class (shipped in v1.1.1, v1.2.3,
-// v1.2.9): an EDITABLE std widget binding one of its self-assigned properties
-// one-way to `AppState` goes stale on the first user edit — the widget's own
-// imperative write discards the binding. The e2e test (ui_bindings.rs) drives
-// one widget PER KIND, so a brand-new widget instance with a one-way binding
-// would slip past it; this scan closes that hole by reading every ui/*.slint
-// TEXT and flagging the pattern itself. Plain string scanning, no Slint
-// backend — it runs as its own #[test].
-//
-// Sanctioned escapes (why a hit is NOT flagged):
-// - two-way `<=>` bindings (the convention);
-// - `read-only: true` text widgets (pure displays never self-assign);
-// - bindings to non-AppState expressions (component-internal wiring, e.g. the
-//   AutoSlider's `value: root.shown` init that its `changed shown` hook pushes);
-// - custom components (SegmentedControl, MappedComboBox, EnumComboBox,
-//   AutoSlider) — the reactive binding lives INSIDE the component (against
-//   `root`, not `AppState`), so an instance carries no one-way `AppState` hit
-//   to flag. AutoSlider's slider push is pinned in ui_bindings.rs; the others
-//   are structural (EnumComboBox drives current-index to sidestep the
-//   `current-value` #11970 bug — see `no_current_value_bindings…` below).
-//   NOT escaped: DefaultSpinBox / DefaultLineEdit — their inner std SpinBox /
-//   LineEdit self-assigns through `<=> root.value`, so the CALL SITE must bind
-//   `value`/`default` two-way; they're listed in SELF_ASSIGNING and scanned
-//   like a bare widget (the `Default` prefix stops them matching SpinBox/
-//   LineEdit, so they need their own entry).
+//! Lint-style guard for the stale-widget bug class (shipped in v1.1.1, v1.2.3,
+//! v1.2.9): an EDITABLE std widget binding one of its self-assigned properties
+//! one-way to `AppState` goes stale on the first user edit — the widget's own
+//! imperative write discards the binding. The e2e test (ui_bindings.rs) drives
+//! one widget PER KIND, so a brand-new widget instance with a one-way binding
+//! would slip past it; this scan closes that hole by reading every ui/*.slint
+//! TEXT and flagging the pattern itself. Plain string scanning, no Slint
+//! backend — it runs as its own #[test].
+//!
+//! Sanctioned escapes (why a hit is NOT flagged):
+//! - two-way `<=>` bindings (the convention);
+//! - `read-only: true` text widgets (pure displays never self-assign);
+//! - bindings to non-AppState expressions (component-internal wiring, e.g. the
+//!   AutoSlider's `value: root.shown` init that its `changed shown` hook pushes);
+//! - custom components (SegmentedControl, MappedComboBox, EnumComboBox,
+//!   AutoSlider) — the reactive binding lives INSIDE the component (against
+//!   `root`, not `AppState`), so an instance carries no one-way `AppState` hit
+//!   to flag. AutoSlider's slider push is pinned in ui_bindings.rs; the others
+//!   are structural (EnumComboBox drives current-index to sidestep the
+//!   `current-value` #11970 bug — see `no_current_value_bindings…` below).
+//!   NOT escaped: DefaultSpinBox / DefaultLineEdit — their inner std SpinBox /
+//!   LineEdit self-assigns through `<=> root.value`, so the CALL SITE must bind
+//!   `value`/`default` two-way; they're listed in SELF_ASSIGNING and scanned
+//!   like a bare widget (the `Default` prefix stops them matching SpinBox/
+//!   LineEdit, so they need their own entry).
 
 use std::fmt::Write as _;
 use std::path::Path;

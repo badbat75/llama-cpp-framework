@@ -89,10 +89,15 @@ $cmakeArgs += "-DCMAKE_HIP_FLAGS=$hipWorkaroundFlags"
 if ($sccachePath) {
     $cmakeArgs += "-DCMAKE_C_COMPILER_LAUNCHER=$sccachePath"
     $cmakeArgs += "-DCMAKE_CXX_COMPILER_LAUNCHER=$sccachePath"
-    # nvcc is intentionally NOT wrapped with sccache: sccache's nvcc support
-    # mishandles multi-arch fatbin generation on CUDA 13.x, so fatbinary fails
-    # with "Could not open input file '<tu>.compute_75.ptx'" on every .cu.obj.
-    # Host C/CXX (clang) caching is unaffected and kept.
+    # nvcc is intentionally NOT wrapped with sccache (no CMAKE_CUDA_COMPILER_LAUNCHER):
+    # sccache still mishandles multi-arch fatbin generation on CUDA 13.x, so fatbinary
+    # fails with "Could not open input file '<tu>.compute_75.ptx'" on every .cu.obj.
+    # Retested with sccache 0.16.0 (2026-07) — still broken. Host C/CXX (clang)
+    # caching is unaffected and kept.
+    # -U clears any stale CUDA launcher a prior run/experiment may have baked into
+    # CMakeCache.txt: an existing cache keeps the value even when it's no longer
+    # passed, silently re-wrapping nvcc and breaking the CUDA build.
+    $cmakeArgs += "-UCMAKE_CUDA_COMPILER_LAUNCHER"
 }
 
 Write-Host "Configuring..." -ForegroundColor Cyan
@@ -129,7 +134,11 @@ $rustProjectDir = Join-Path $PSScriptRoot "llama-cpp-config"
 
 Push-Location $rustProjectDir
 try {
-    cargo build --release
+    # Cap cargo at the same job count as the C++ build (0 = cargo's default,
+    # which is all cores) so a Rust rebuild leaves the same CPU headroom.
+    $cargoBuildArgs = @("build", "--release")
+    if ($cfg.BuildJobs -gt 0) { $cargoBuildArgs += "--jobs", $cfg.BuildJobs }
+    cargo @cargoBuildArgs
     if ($LASTEXITCODE -ne 0) { throw "cargo build failed" }
 }
 finally {

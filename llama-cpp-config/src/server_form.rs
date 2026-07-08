@@ -1,10 +1,10 @@
-// Conversion between the Slint server form (`ServerForm`) and the
-// `server_cfg::ServerConfig` schema — the server-side mirror of `form.rs`.
-// Kept out of `gui.rs` (which only shuttles the whole `ServerForm`, never
-// per-field) so adding a server field touches this file plus `ServerForm`
-// (ui/types.slint), the widget (ui/server_page.slint), `ServerConfig`
-// (server_cfg.rs), and the CLI (three spots in cli.rs — the full checklist
-// lives at the top of server_cfg.rs) — not the GUI wiring.
+//! Conversion between the Slint server form (`ServerForm`) and the
+//! `server_cfg::ServerConfig` schema — the server-side mirror of `form.rs`.
+//! Kept out of `gui.rs` (which only shuttles the whole `ServerForm`, never
+//! per-field) so adding a server field touches this file plus `ServerForm`
+//! (ui/types.slint), the widget (ui/server_page.slint), `ServerConfig`
+//! (server_cfg.rs), and the CLI (three spots in cli.rs — the full checklist
+//! lives at the top of server_cfg.rs) — not the GUI wiring.
 
 use crate::gui::ServerForm;
 use crate::server_cfg;

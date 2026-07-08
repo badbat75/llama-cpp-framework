@@ -1,6 +1,6 @@
-// Enumerate GPU / compute devices by parsing `llama-server.exe --list-devices`,
-// so the GUI can offer a dropdown of the *actually available* backends
-// (CUDA0, Vulkan0, …) instead of a free-text field.
+//! Enumerate GPU / compute devices by parsing `llama-server.exe --list-devices`,
+//! so the GUI can offer a dropdown of the *actually available* backends
+//! (CUDA0, Vulkan0, …) instead of a free-text field.
 
 use std::sync::RwLock;
 

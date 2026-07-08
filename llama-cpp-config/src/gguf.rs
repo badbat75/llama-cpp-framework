@@ -1,23 +1,23 @@
-// Describe a model in the GUI's "Model info" box: dense-vs-MoE (+ layer split),
-// layer count, trained context, GQA shape, quant, embedded MTP, the embedded
-// chat template (Jinja vs non-Jinja detection, with a raw-text preview), plus
-// the selected mmproj (clip) and draft/DFlash headers.
-//
-// Metadata is read with llama.cpp's OWN gguf reader — we runtime-load
-// `ggml-base.dll` (shipped next to `llama-cpp-config.exe` in `bin\`) and call
-// `gguf_init_from_file` with `no_alloc = true`, so only the header + tensor
-// infos are read, never the multi-GB weights. No GGUF parsing is reimplemented
-// here. If the DLL can't be loaded (e.g. a bare `cargo run` with no llama.cpp
-// alongside), reads return `None` and the box shows "unavailable" — and the
-// load is retried on the next read (only success is memoized; see `ffi::api`),
-// so a DLL that appears later (a finished `02-build.ps1`) is picked up live.
-//
-// Reads are synchronous and uncached — the header parse is fast enough to run on
-// the UI thread when the model/mmproj/draft selection changes.
-//
-// Key names and the `general.file_type` enum mirror the bundled llama.cpp
-// (`src/llama-arch.cpp`, `include/llama.h`, `tools/mtmd/clip-impl.h`); the GGUF
-// value-type enum mirrors `ggml/include/gguf.h`.
+//! Describe a model in the GUI's "Model info" box: dense-vs-MoE (+ layer split),
+//! layer count, trained context, GQA shape, quant, embedded MTP, the embedded
+//! chat template (Jinja vs non-Jinja detection, with a raw-text preview), plus
+//! the selected mmproj (clip) and draft/DFlash headers.
+//!
+//! Metadata is read with llama.cpp's OWN gguf reader — we runtime-load
+//! `ggml-base.dll` (shipped next to `llama-cpp-config.exe` in `bin\`) and call
+//! `gguf_init_from_file` with `no_alloc = true`, so only the header + tensor
+//! infos are read, never the multi-GB weights. No GGUF parsing is reimplemented
+//! here. If the DLL can't be loaded (e.g. a bare `cargo run` with no llama.cpp
+//! alongside), reads return `None` and the box shows "unavailable" — and the
+//! load is retried on the next read (only success is memoized; see `ffi::api`),
+//! so a DLL that appears later (a finished `02-build.ps1`) is picked up live.
+//!
+//! Reads are synchronous and uncached — the header parse is fast enough to run on
+//! the UI thread when the model/mmproj/draft selection changes.
+//!
+//! Key names and the `general.file_type` enum mirror the bundled llama.cpp
+//! (`src/llama-arch.cpp`, `include/llama.h`, `tools/mtmd/clip-impl.h`); the GGUF
+//! value-type enum mirrors `ggml/include/gguf.h`.
 
 use std::path::Path;
 

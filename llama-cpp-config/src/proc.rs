@@ -1,20 +1,20 @@
-// Launch a child process without flashing a console window on Windows.
-//
-// Single home for the `CREATE_NO_WINDOW` dance the process probes share. Entry
-// points: `run_hidden` for the fire-and-forget system probes (the Windows
-// branch of `runstate::is_running`/`stop` — tasklist / taskkill), and
-// `hide_console` for callers that build the `Command` themselves — custom
-// stdio/env then `spawn()` (`runstate::start`). On non-Windows both are no-ops
-// beyond the plain command, so callers that differ only by that flag collapse.
-// `combined_output` joins a probe's stdout+stderr — parse that, not one stream.
-//
-// `run_hidden_probe` is the variant for the transient `llama-server.exe` probes
-// (`devices --list-devices`, `server_version --version`): it registers the child
-// PID in `PROBE_PIDS` for its lifetime so `runstate::is_running` can EXCLUDE it.
-// Both share the `llama-server.exe` image name, so a probe running concurrently
-// with the run-status poll otherwise reads as a live server — which made a fresh
-// GUI (whose startup fires the probes and the poll together) wrongly flip to
-// "llama-server is no longer running" seconds after launch.
+//! Launch a child process without flashing a console window on Windows.
+//!
+//! Single home for the `CREATE_NO_WINDOW` dance the process probes share. Entry
+//! points: `run_hidden` for the fire-and-forget system probes (the Windows
+//! branch of `runstate::is_running`/`stop` — tasklist / taskkill), and
+//! `hide_console` for callers that build the `Command` themselves — custom
+//! stdio/env then `spawn()` (`runstate::start`). On non-Windows both are no-ops
+//! beyond the plain command, so callers that differ only by that flag collapse.
+//! `combined_output` joins a probe's stdout+stderr — parse that, not one stream.
+//!
+//! `run_hidden_probe` is the variant for the transient `llama-server.exe` probes
+//! (`devices --list-devices`, `server_version --version`): it registers the child
+//! PID in `PROBE_PIDS` for its lifetime so `runstate::is_running` can EXCLUDE it.
+//! Both share the `llama-server.exe` image name, so a probe running concurrently
+//! with the run-status poll otherwise reads as a live server — which made a fresh
+//! GUI (whose startup fires the probes and the poll together) wrongly flip to
+//! "llama-server is no longer running" seconds after launch.
 
 use std::ffi::OsStr;
 use std::path::Path;

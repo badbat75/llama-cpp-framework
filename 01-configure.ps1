@@ -219,7 +219,9 @@ $buildLines.Add("    BuildType   = 'Release'")
 $buildLines.Add("    CCompiler   = 'clang'")
 $buildLines.Add("    CxxCompiler = 'clang'")
 $buildLines.Add("    MarchFlags  = '-march=x86-64-v3'")
-$buildLines.Add("    BuildJobs   = [int]0")
+$buildLines.Add('    # Parallel build jobs: 3/4 of logical cores, leaving headroom for')
+$buildLines.Add('    # interactive use during a long CUDA/HIP compile (0 = use all cores).')
+$buildLines.Add("    BuildJobs   = [int]$([math]::Max(1, [math]::Floor([Environment]::ProcessorCount * 3 / 4)))")
 $buildLines.Add('}')
 $buildDir = Join-Path $PSScriptRoot 'build'
 New-Item -ItemType Directory -Path $buildDir -Force | Out-Null

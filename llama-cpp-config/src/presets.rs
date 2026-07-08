@@ -1,35 +1,36 @@
-// presets.ini schema and IO for llama.cpp-framework.
-//
-// ADD A PRESET FIELD — the recurring change fans out to all of these (trace an
-// existing field like `ctx-size` as the template; kebab-case INI key ↔
-// snake_case Rust field):
-//   1. `Preset` struct field (+ doc)      — below
-//   2. `impl Default for Preset`          — below
-//   3. `Preset::from_keys`                — INI read, below
-//   4. `render_section` + `emit_*` (+ `;` comment) — INI write, below
-//   5. `PresetForm` struct                — ui/types.slint (a NUMERIC field also
-//      needs a paired `<field>_default: bool` — the "omit the flag" checkbox)
-//   6. the input widget                   — ui/models_page.slint, bind two-way
-//      `<=>`: DefaultSpinBox (int) / DefaultLineEdit (float) for numerics — wire
-//      BOTH `value` and `default`; EnumComboBox for string dropdowns
-//   7. `preset_to_form` + `form_to_preset` — src/form.rs (BOTH directions; a
-//      numeric derives `<field>_default` via `is_none()` one way and
-//      `if <field>_default { None } else { … }` the other)
-//   8. FREE-TEXT field only (any value the user types freely — a filesystem
-//      path, OR raw JSON like `chat-template-kwargs`): add it to
-//      `validate_for_save`'s list below AND to the
-//      `save_validation_rejects_comment_markers_in_free_text_fields` test — the
-//      INI format can't escape `;`/`#` (legal in Windows dirs and in JSON
-//      strings), so an unvalidated value saves fine and reloads TRUNCATED.
-//      Nothing fails if you skip this.
-// Guards: the INI round-trip test in this file (`full_preset_round_trips_through_ini`)
-// and the form round-trip test in form.rs (`form_to_preset(preset_to_form(p)) == p`)
-// — a field wired into one side only drops out of one of them. Give the new
-// field a NON-DEFAULT value when extending the rich fixtures: `None`/empty
-// satisfies the compiler but makes the round-trips vacuous for that field.
-// Step 8 is the one step NO test catches when skipped (round-trip fixtures use
-// clean paths) — same for its widget (step 6: a forgotten widget just never
-// appears in the UI).
+//! presets.ini schema and IO for llama.cpp-framework.
+//!
+//! ADD A PRESET FIELD — the recurring change fans out to all of these (trace an
+//! existing field like `ctx-size` as the template; kebab-case INI key ↔
+//! snake_case Rust field):
+//!   1. `Preset` struct field (+ doc)      — below
+//!   2. `impl Default for Preset`          — below
+//!   3. `Preset::from_keys`                — INI read, below
+//!   4. `render_section` + `emit_*` (+ `;` comment) — INI write, below
+//!   5. `PresetForm` struct                — ui/types.slint (a NUMERIC field also
+//!      needs a paired `<field>_default: bool` — the "omit the flag" checkbox)
+//!   6. the input widget                   — ui/models_page.slint, bind two-way
+//!      `<=>`: DefaultSpinBox (int) / DefaultLineEdit (float) for numerics — wire
+//!      BOTH `value` and `default`; EnumComboBox for string dropdowns
+//!   7. `preset_to_form` + `form_to_preset` — src/form.rs (BOTH directions; a
+//!      numeric derives `<field>_default` via `is_none()` one way and
+//!      `if <field>_default { None } else { … }` the other)
+//!   8. FREE-TEXT field only (any value the user types freely — a filesystem
+//!      path, OR raw JSON like `chat-template-kwargs`): add it to
+//!      `validate_for_save`'s list below AND to the
+//!      `save_validation_rejects_comment_markers_in_free_text_fields` test — the
+//!      INI format can't escape `;`/`#` (legal in Windows dirs and in JSON
+//!      strings), so an unvalidated value saves fine and reloads TRUNCATED.
+//!      Nothing fails if you skip this.
+//!
+//! Guards: the INI round-trip test in this file (`full_preset_round_trips_through_ini`)
+//! and the form round-trip test in form.rs (`form_to_preset(preset_to_form(p)) == p`)
+//! — a field wired into one side only drops out of one of them. Give the new
+//! field a NON-DEFAULT value when extending the rich fixtures: `None`/empty
+//! satisfies the compiler but makes the round-trips vacuous for that field.
+//! Step 8 is the one step NO test catches when skipped (round-trip fixtures use
+//! clean paths) — same for its widget (step 6: a forgotten widget just never
+//! appears in the UI).
 
 use std::fs;
 use std::io;

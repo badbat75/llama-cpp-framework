@@ -1,14 +1,14 @@
-// Windows single-instance guard for the GUI.
-//
-// A named mutex marks "the configurator is already running". A second launch
-// finds the mutex already taken, pokes a named auto-reset event so the live
-// instance surfaces its window (which may be hidden in the tray or minimized),
-// then exits without building a second UI. The first instance owns the mutex +
-// event for its whole lifetime and runs a tiny background thread that waits on
-// the event and calls back into the UI thread.
-//
-// Implemented with raw Win32 FFI (no extra crates), matching the style of
-// `main.rs`'s `attach_parent_console`.
+//! Windows single-instance guard for the GUI.
+//!
+//! A named mutex marks "the configurator is already running". A second launch
+//! finds the mutex already taken, pokes a named auto-reset event so the live
+//! instance surfaces its window (which may be hidden in the tray or minimized),
+//! then exits without building a second UI. The first instance owns the mutex +
+//! event for its whole lifetime and runs a tiny background thread that waits on
+//! the event and calls back into the UI thread.
+//!
+//! Implemented with raw Win32 FFI (no extra crates), matching the style of
+//! `main.rs`'s `attach_parent_console`.
 
 #![cfg(windows)]
 

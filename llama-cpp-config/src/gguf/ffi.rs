@@ -1,9 +1,9 @@
-// ggml-base.dll glue — the `KvSource` backed by llama.cpp's own gguf reader.
-//
-// Split out of gguf.rs so the field-extraction logic (`ModelInfo::from_kv` &
-// friends) reads without the ~230 lines of Win32 FFI below. The module's public
-// surface is just `open(path) -> Option<Ctx>` plus `Ctx: KvSource`; the parent
-// picks the right platform impl through the re-exports here.
+//! ggml-base.dll glue — the `KvSource` backed by llama.cpp's own gguf reader.
+//!
+//! Split out of gguf.rs so the field-extraction logic (`ModelInfo::from_kv` &
+//! friends) reads without the ~230 lines of Win32 FFI below. The module's public
+//! surface is just `open(path) -> Option<Ctx>` plus `Ctx: KvSource`; the parent
+//! picks the right platform impl through the re-exports here.
 
 // Only `open` is re-exported: callers use the returned `Ctx` (a `KvSource`) by
 // value/ref without ever naming its type, so re-exporting `Ctx` too would be an

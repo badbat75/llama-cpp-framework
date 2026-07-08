@@ -18,6 +18,10 @@ import { ComboBox, LineEdit, CheckBox, Slider, SpinBox, Button, Palette } from "
 // Canonical transparency levels for muted text and selection tints, so every
 // page pulls from the same handful of values instead of eyeballing a new alpha.
 // Used as `Palette.foreground.transparentize(Tokens.muted)` etc.
+// Scope note: `Tokens` holds only cross-cutting alpha/color values. Layout
+// metrics (body font-size 13px, the 130px label column, 8px card radius, 16px
+// card padding) are deliberately kept inline at each use site — not tokenized —
+// so this stays a color/alpha vocabulary, not a half-built design system.
 export global Tokens {
     out property <float> subtle: 0.25;   // secondary text on a modal / high-contrast surface
     out property <float> muted: 0.4;     // page subtitles, help glyphs, "no results" notes
@@ -196,7 +200,7 @@ export component AutoSlider inherits HorizontalLayout {
     in property <bool> usable: true;
     // Forwarded to the inner Slider's accessible-label so the e2e binding
     // test (src/tests/ui_bindings.rs) can find one instance and drive it.
-    in property <string> slider-label;
+    in property <string> slider_label;
     // The displayed count: the model value clamped to the slider range (a saved
     // 99 on a 48-layer model shows as 48). Shared by the slider and the readout.
     property <int> shown: Math.min(root.value, root.maximum);
@@ -209,7 +213,7 @@ export component AutoSlider inherits HorizontalLayout {
     }
     sl := Slider {
         horizontal-stretch: 1;
-        accessible-label: root.slider-label;
+        accessible-label: root.slider_label;
         enabled: !root.auto && root.usable;
         minimum: 0;
         maximum: root.maximum;
@@ -253,7 +257,7 @@ export component DefaultSpinBox inherits HorizontalLayout {
     in property <int> maximum: 100000000;
     // Forwarded to the inner SpinBox's accessible-label so the e2e binding
     // test (src/tests/ui_bindings.rs) can find and drive one instance.
-    in property <string> spinbox-label;
+    in property <string> spinbox_label;
     // Gates the whole row on an external precondition (e.g. "a draft is
     // selected"), matching AutoSlider's `usable`.
     in property <bool> enabled: true;
@@ -265,7 +269,7 @@ export component DefaultSpinBox inherits HorizontalLayout {
     }
     SpinBox {
         horizontal-stretch: 1;
-        accessible-label: root.spinbox-label;
+        accessible-label: root.spinbox_label;
         enabled: !root.default && root.enabled;
         minimum: root.minimum;
         maximum: root.maximum;
@@ -287,7 +291,7 @@ export component DefaultLineEdit inherits HorizontalLayout {
     in property <string> placeholder;
     // Forwarded to the inner LineEdit's accessible-label so the e2e binding
     // test (src/tests/ui_bindings.rs) can find and drive one instance.
-    in property <string> edit-label;
+    in property <string> edit_label;
     // Gates the whole row on an external precondition, matching DefaultSpinBox.
     in property <bool> enabled: true;
     spacing: 8px;
@@ -298,7 +302,7 @@ export component DefaultLineEdit inherits HorizontalLayout {
     }
     LineEdit {
         horizontal-stretch: 1;
-        accessible-label: root.edit-label;
+        accessible-label: root.edit_label;
         enabled: !root.default && root.enabled;
         text <=> root.value;
         input-type: decimal;
@@ -306,6 +310,10 @@ export component DefaultLineEdit inherits HorizontalLayout {
     }
 }
 
+// A titled card: an optional `heading` over a bordered, subtly-elevated body
+// (rounded rectangle + drop shadow) wrapping `@children`. `content_padding`
+// tunes the inner inset (16px default). This is the section container every
+// tab groups its form fields into.
 export component SectionCard {
     in property <string> heading;
     in property <length> content_padding: 16px;
@@ -390,6 +398,9 @@ export component SegmentedControl inherits HorizontalLayout {
     }
 }
 
+// The two-column form row every labeled input sits in: a fixed 130px `label`
+// column (with an optional ⓘ hover `hint`) on the left, the stretched field
+// `@children` on the right.
 export component LabeledField inherits HorizontalLayout {
     in property <string> label;
     // Optional hover help. When set, an ⓘ glyph is shown after the label and

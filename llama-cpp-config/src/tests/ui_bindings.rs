@@ -133,7 +133,7 @@ fn editable_widgets_track_model_after_edit() {
     // SpinBox (inside DefaultSpinBox) — `value <=> AppState.server_form.port`.
     // Port is now an int (was a string LineEdit); the DefaultSpinBox wraps it
     // with a "default" checkbox, but the SpinBox's accessible-label is still
-    // "server-port" (forwarded via the component's `spinbox-label`).
+    // "server-port" (forwarded via the component's `spinbox_label`).
     assert_reload_reaches_widget(
         &by_label(&app, "server-port"),
         "SpinBox server_form.port",

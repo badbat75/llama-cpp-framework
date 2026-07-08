@@ -1,10 +1,10 @@
-// Catalogue .gguf files under a ModelsDir subdirectory for the GUI dropdowns.
-//
-// `list` walks `<root>/<Category::subdir()>` recursively, skipping non-first
-// shards of multi-file GGUFs. `build_options` / `build_draft_options` turn a
-// scan into the `(labels, values[, specs], index)` arrays a dropdown binds to;
-// a `current` value missing from the scan is preserved as a "(custom)" row
-// (`custom_row`) so a stale or hand-edited path never silently disappears.
+//! Catalogue .gguf files under a ModelsDir subdirectory for the GUI dropdowns.
+//!
+//! `list` walks `<root>/<Category::subdir()>` recursively, skipping non-first
+//! shards of multi-file GGUFs. `build_options` / `build_draft_options` turn a
+//! scan into the `(labels, values[, specs], index)` arrays a dropdown binds to;
+//! a `current` value missing from the scan is preserved as a "(custom)" row
+//! (`custom_row`) so a stale or hand-edited path never silently disappears.
 
 use std::path::{Component, Path, PathBuf};
 

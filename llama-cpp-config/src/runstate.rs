@@ -1,11 +1,11 @@
-// Probes / starts / stops the llama-server process, and reconstructs its launch
-// command from server.ini. `server_args()` is the single source of truth for the
-// arg list, shared by `start()` (spawns the process) and `command_line()` (the
-// human-readable, shell-pasteable rendering shown in the Server tab's Command
-// Line card). `start()` additionally sets cwd = `paths::data_root()` and
-// `LLAMA_CACHE` = ModelsDir, and appends both output streams to
-// `logs\llama-server.log` — env/cwd/logging are NOT part of `command_line()`'s
-// pasteable rendering, so a pasted command reproduces the args only.
+//! Probes / starts / stops the llama-server process, and reconstructs its launch
+//! command from server.ini. `server_args()` is the single source of truth for the
+//! arg list, shared by `start()` (spawns the process) and `command_line()` (the
+//! human-readable, shell-pasteable rendering shown in the Server tab's Command
+//! Line card). `start()` additionally sets cwd = `paths::data_root()` and
+//! `LLAMA_CACHE` = ModelsDir, and appends both output streams to
+//! `logs\llama-server.log` — env/cwd/logging are NOT part of `command_line()`'s
+//! pasteable rendering, so a pasted command reproduces the args only.
 
 use std::io;
 

@@ -1,4 +1,4 @@
-// Headless CLI dispatcher for llama-cpp-config.
+//! Headless CLI dispatcher for llama-cpp-config.
 
 use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand};

@@ -1,9 +1,9 @@
-// Provider & model integration for opencode and Claude Code.
-//
-// Manages the `provider.llama.cpp` section in opencode.json, auto-generating
-// model entries from presets.ini. Claude Code does not support per-file
-// custom providers natively; an env-var snippet is generated for the GUI's
-// Claude Code card instead (copy-paste only — never written to disk).
+//! Provider & model integration for opencode and Claude Code.
+//!
+//! Manages the `provider.llama.cpp` section in opencode.json, auto-generating
+//! model entries from presets.ini. Claude Code does not support per-file
+//! custom providers natively; an env-var snippet is generated for the GUI's
+//! Claude Code card instead (copy-paste only — never written to disk).
 
 use std::collections::BTreeMap;
 use std::fs;

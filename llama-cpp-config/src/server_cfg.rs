@@ -1,45 +1,46 @@
-// server.ini schema and IO for llama.cpp-framework.
-//
-// `save()` rewrites the whole FILE from a `ServerConfig` (server.ini is fully
-// generated — unlike presets.ini, hand-added content outside the template does
-// not survive a save). Unset optional fields are emitted as commented
-// `; Key = example  ; help` hint lines (never omitted) so the file
-// self-documents every available knob.
-//
-// ADD A SERVER FIELD — the mirror of the preset recipe (top of presets.rs): a
-// smaller schema, but a LARGER per-field fan-out — it also reaches the CLI (the
-// server has a per-field `set`) and the launch path (steps 7-8 below). Trace an
-// existing field like `threads` (PascalCase INI key ↔ snake_case Rust field):
-//   1. `ServerConfig` struct field (+ doc)   — below
-//   2. `from_keys` (backs `load`)            — INI read; `keys.get("Key")` → field
-//   3. `render` (backs `save`)               — INI write; an `int_line_or_hint` /
-//      `str_line_or_hint` line + a `{…_line}` slot in the `[Server]` body
-//   4. `ServerForm` struct                   — ui/types.slint (a NUMERIC field
-//      also needs a paired `<field>_default` bool — the "omit the flag" checkbox)
-//   5. the input widget                      — ui/server_page.slint, bind two-way
-//      `<=>`: DefaultSpinBox for numerics (wire BOTH `value` and `default`)
-//   6. `config_to_form` + `form_to_config`   — src/server_form.rs (BOTH
-//      directions; derive `<field>_default` via `is_none()` / `if <field>_default`)
-//   7. THREE spots in src/cli.rs             — the `ServerSet` flag field, a
-//      `row(...)` in `show_lines`, and `ServerSet::apply` copying the flag into `cfg`
-//   8. `runstate::server_args`               — map the field to its llama-server
-//      flag (or wave it through with a comment if it's launch-env only, like
-//      ModelsDir → LLAMA_CACHE in `start()`)
-//   9. PATH-VALUED field only: add it to `validate_for_save` below (and extend
-//      `save_validation_rejects_comment_markers_in_models_dir`) — the INI
-//      format can't escape `;`/`#`, so an unvalidated path saves fine and
-//      reloads TRUNCATED. Like the widget, nothing fails if you skip this.
-// Guards: the save→load round-trip test in this file (steps 2–3: a key-name typo
-// or wrong `keep` rule fails it), the form round-trip in server_form.rs
-// (`form_to_config(config_to_form(c)) == c`, step 6), cli.rs's
-// `server_set_apply_copies_every_field` + `show_lines_prints_every_field`
-// (step 7 — the first is airtight, whole-struct equality against an exhaustive
-// literal; the second's destructure only forces the BIND — extend its manual
-// `needles` array too, or the Show row goes unguarded), and runstate's
-// `server_args_covers_every_config_field` (step 8 — its exhaustive destructure
-// breaks compilation until the launch path consumes the field). Give the new
-// field a NON-DEFAULT value when extending the rich fixtures: `None` satisfies
-// the compiler but makes every round-trip vacuous for that field.
+//! server.ini schema and IO for llama.cpp-framework.
+//!
+//! `save()` rewrites the whole FILE from a `ServerConfig` (server.ini is fully
+//! generated — unlike presets.ini, hand-added content outside the template does
+//! not survive a save). Unset optional fields are emitted as commented
+//! `; Key = example  ; help` hint lines (never omitted) so the file
+//! self-documents every available knob.
+//!
+//! ADD A SERVER FIELD — the mirror of the preset recipe (top of presets.rs): a
+//! smaller schema, but a LARGER per-field fan-out — it also reaches the CLI (the
+//! server has a per-field `set`) and the launch path (steps 7-8 below). Trace an
+//! existing field like `threads` (PascalCase INI key ↔ snake_case Rust field):
+//!   1. `ServerConfig` struct field (+ doc)   — below
+//!   2. `from_keys` (backs `load`)            — INI read; `keys.get("Key")` → field
+//!   3. `render` (backs `save`)               — INI write; an `int_line_or_hint` /
+//!      `str_line_or_hint` line + a `{…_line}` slot in the `[Server]` body
+//!   4. `ServerForm` struct                   — ui/types.slint (a NUMERIC field
+//!      also needs a paired `<field>_default` bool — the "omit the flag" checkbox)
+//!   5. the input widget                      — ui/server_page.slint, bind two-way
+//!      `<=>`: DefaultSpinBox for numerics (wire BOTH `value` and `default`)
+//!   6. `config_to_form` + `form_to_config`   — src/server_form.rs (BOTH
+//!      directions; derive `<field>_default` via `is_none()` / `if <field>_default`)
+//!   7. THREE spots in src/cli.rs             — the `ServerSet` flag field, a
+//!      `row(...)` in `show_lines`, and `ServerSet::apply` copying the flag into `cfg`
+//!   8. `runstate::server_args`               — map the field to its llama-server
+//!      flag (or wave it through with a comment if it's launch-env only, like
+//!      ModelsDir → LLAMA_CACHE in `start()`)
+//!   9. PATH-VALUED field only: add it to `validate_for_save` below (and extend
+//!      `save_validation_rejects_comment_markers_in_models_dir`) — the INI
+//!      format can't escape `;`/`#`, so an unvalidated path saves fine and
+//!      reloads TRUNCATED. Like the widget, nothing fails if you skip this.
+//!
+//! Guards: the save→load round-trip test in this file (steps 2–3: a key-name typo
+//! or wrong `keep` rule fails it), the form round-trip in server_form.rs
+//! (`form_to_config(config_to_form(c)) == c`, step 6), cli.rs's
+//! `server_set_apply_copies_every_field` + `show_lines_prints_every_field`
+//! (step 7 — the first is airtight, whole-struct equality against an exhaustive
+//! literal; the second's destructure only forces the BIND — extend its manual
+//! `needles` array too, or the Show row goes unguarded), and runstate's
+//! `server_args_covers_every_config_field` (step 8 — its exhaustive destructure
+//! breaks compilation until the launch path consumes the field). Give the new
+//! field a NON-DEFAULT value when extending the rich fixtures: `None` satisfies
+//! the compiler but makes every round-trip vacuous for that field.
 
 use std::fs;
 use std::io;

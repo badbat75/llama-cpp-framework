@@ -344,7 +344,7 @@ export component ModelsPage inherits HorizontalLayout {
                     label: "Context size";
                     hint: "Context window in tokens (--ctx-size).\nBigger = longer history but more KV-cache VRAM; split across parallel slots.\ndefault = omit the flag → llama.cpp default: 0 (load from model).";
                     DefaultSpinBox {
-                        spinbox-label: "preset-ctx-size";
+                        spinbox_label: "preset-ctx-size";
                         default <=> AppState.form.ctx_size_default;
                         value <=> AppState.form.ctx_size;
                     }
@@ -453,7 +453,7 @@ export component ModelsPage inherits HorizontalLayout {
                     label: "Temperature";
                     hint: "--temp: sampling temperature.\nLower = more deterministic, higher = more creative.\ndefault = omit the flag → llama.cpp default: 0.80.";
                     DefaultLineEdit {
-                        edit-label: "preset-temp";
+                        edit_label: "preset-temp";
                         default <=> AppState.form.temp_default;
                         value <=> AppState.form.temp;
                         placeholder: "e.g. 0.7";

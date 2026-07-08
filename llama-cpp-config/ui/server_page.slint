@@ -37,7 +37,7 @@ export component ServerPage inherits ScrollView {
                 label: "Port";
                 hint: "TCP port llama-server listens on (--port).\ndefault = omit the flag → llama.cpp default: 8080. The chat UI and integrations connect here.";
                 DefaultSpinBox {
-                    spinbox-label: "server-port";
+                    spinbox_label: "server-port";
                     default <=> AppState.server_form.port_default;
                     value <=> AppState.server_form.port;
                     maximum: 65535;
@@ -72,7 +72,7 @@ export component ServerPage inherits ScrollView {
                     auto <=> AppState.server_form.threads_auto;
                     value <=> AppState.server_form.threads;
                     maximum: AppState.cpu_threads_max;
-                    slider-label: "server-threads";
+                    slider_label: "server-threads";
                 }
             }
             LabeledField {

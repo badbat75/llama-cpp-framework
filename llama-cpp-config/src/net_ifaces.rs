@@ -1,4 +1,4 @@
-// Network interface enumeration for the "Bind to" combo in the Server tab.
+//! Network interface enumeration for the "Bind to" combo in the Server tab.
 
 use std::net::Ipv4Addr;
 
