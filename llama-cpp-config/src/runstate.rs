@@ -76,32 +76,53 @@ fn server_args(
     presets_path: &std::path::Path,
 ) -> Vec<String> {
     let hostname = cfg.hostname_or_default();
-    let port = cfg.port_or_default();
-    let models_max = cfg.models_max.unwrap_or(1);
     let mlock = cfg.mlock_or_default();
 
-    // Fixed framework policy flags (not exposed in the UI):
-    //   --webui-mcp-proxy : serve the built-in web UI's MCP proxy endpoint.
-    //   -fit off          : disable llama.cpp's auto-fit-to-VRAM. The GUI's
-    //                       "auto" n-gpu-layers means "offload ALL layers", so
-    //                       auto-fitting would silently override that choice.
-    //   -lv 4             : log verbosity 4 (per-request logging) into the
-    //                       captured llama-server.log.
     let mut args: Vec<String> = vec![
         "--models-preset".into(),
         presets_path.to_string_lossy().into_owned(),
-        "--models-max".into(),
-        models_max.to_string(),
-        "--port".into(),
-        port.to_string(),
-        "--host".into(),
-        hostname,
-        "--webui-mcp-proxy".into(),
-        "-fit".into(),
-        "off".into(),
-        "-lv".into(),
-        "4".into(),
     ];
+
+    // --port / --models-max are omitted when unset (the UI's "default" checkbox
+    // stores None). Forcing a value here is exactly what made "default" still
+    // emit `--port 8080` / `--models-max 1`; omitting the flag lets llama.cpp
+    // apply its own default (port 8080; 4 resident models). A 0 port is never
+    // valid so it counts as unset, but models-max 0 (= unlimited) IS a real
+    // value and is passed through.
+    if let Some(p) = cfg.port.filter(|&n| n > 0) {
+        args.push("--port".into());
+        args.push(p.to_string());
+    }
+    if let Some(mm) = cfg.models_max {
+        args.push("--models-max".into());
+        args.push(mm.to_string());
+    }
+
+    args.push("--host".into());
+    args.push(hostname);
+
+    // --webui-mcp-proxy : serve the built-in web UI's MCP proxy endpoint. A
+    //   presence flag — omitted when off (llama.cpp then defaults it disabled).
+    // -fit on|off       : llama.cpp's auto-fit-to-VRAM. Always passed with an
+    //   explicit value; defaults off because the GUI's "default" n-gpu-layers
+    //   means "offload ALL layers", which -fit on would silently override.
+    // Both were fixed framework policy; the Server tab's Advanced card now
+    // exposes them (they still keep those framework defaults when untouched).
+    if cfg.webui_mcp_proxy_or_default() {
+        args.push("--webui-mcp-proxy".into());
+    }
+    args.push("-fit".into());
+    args.push(if cfg.fit_or_default() {
+        "on".into()
+    } else {
+        "off".into()
+    });
+
+    // -lv N : log verbosity threshold into the captured llama-server.log.
+    //   Framework default 4 (per-request logging) when unset — always passed
+    //   (the Server tab's Advanced card exposes the level).
+    args.push("-lv".into());
+    args.push(cfg.log_verbosity_or_default().to_string());
 
     // CPU thread counts: when unset ("auto") omit the flag entirely so llama.cpp
     // applies its own default; only pass an explicit value when the user set one.
@@ -394,13 +415,22 @@ mod tests {
     #[test]
     fn auto_fields_omit_their_flags() {
         let a = args_for(&ServerConfig::default());
-        for flag in ["-t", "--threads-batch", "--cache-reuse", "--device"] {
+        // port / models-max join the unset-omits-the-flag group: the UI
+        // "default" checkbox stores None, and a forced value here is what left
+        // "default" still showing --port 8080 / --models-max 1.
+        for flag in [
+            "-t",
+            "--threads-batch",
+            "--cache-reuse",
+            "--device",
+            "--port",
+            "--models-max",
+        ] {
             assert!(!a.contains(&flag.to_string()), "{flag} must be omitted");
         }
-        // Framework policy flags and defaults are always present.
+        // Framework policy flags and always-written fields remain present.
         assert!(a.contains(&"--mlock".to_string()), "mlock defaults to true");
-        assert!(a.contains(&"8080".to_string()), "port defaults to 8080");
-        assert!(a.contains(&"localhost".to_string()));
+        assert!(a.contains(&"localhost".to_string()), "host is always written");
         assert!(a.contains(&"--webui-mcp-proxy".to_string()));
     }
 
@@ -444,6 +474,9 @@ mod tests {
             device: Some("CUDA0".into()),
             split_mode: Some("row".into()),
             tensor_split: Some("3,1".into()),
+            webui_mcp_proxy: Some(false),
+            fit: Some(true),
+            log_verbosity: Some(2),
         };
         let ServerConfig {
             port,
@@ -457,6 +490,9 @@ mod tests {
             device,
             split_mode,
             tensor_split,
+            webui_mcp_proxy,
+            fit,
+            log_verbosity,
         } = cfg.clone();
         let a = args_for(&cfg);
         let pair = |flag: &str, val: String| {
@@ -474,6 +510,31 @@ mod tests {
         assert!(pair("--device", device.unwrap()));
         assert!(pair("--split-mode", split_mode.unwrap()));
         assert!(pair("--tensor-split", tensor_split.unwrap()));
+        // webui-mcp-proxy is a presence flag: Some(false) here ⇒ omitted.
+        assert_eq!(
+            a.contains(&"--webui-mcp-proxy".to_string()),
+            webui_mcp_proxy.unwrap()
+        );
+        // fit is always passed with an explicit on|off value.
+        assert!(pair("-fit", if fit.unwrap() { "on" } else { "off" }.into()));
+        // log verbosity is always passed (framework default 4 when unset).
+        assert!(pair("-lv", log_verbosity.unwrap().to_string()));
+    }
+
+    // Unlike the thread/port fields (where <= 0 means "unset"), models-max 0 is
+    // a real value (= unlimited) and must be passed, not mistaken for "default".
+    #[test]
+    fn models_max_zero_is_passed_as_unlimited() {
+        let a = args_for(&ServerConfig {
+            models_max: Some(0),
+            ..Default::default()
+        });
+        let at = a.iter().position(|x| x == "--models-max");
+        assert_eq!(
+            at.and_then(|i| a.get(i + 1)).map(String::as_str),
+            Some("0"),
+            "models-max 0 (unlimited) is passed explicitly"
+        );
     }
 
     #[test]

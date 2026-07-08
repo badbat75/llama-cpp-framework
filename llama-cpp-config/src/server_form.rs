@@ -29,7 +29,9 @@ pub fn config_to_form(cfg: &server_cfg::ServerConfig) -> ServerForm {
         cache_reuse_default: cfg.cache_reuse.is_none(),
         threads_batch: cfg.threads_batch.unwrap_or(0),
         threads_batch_auto: cfg.threads_batch.is_none(),
-        models_max: cfg.models_max.unwrap_or(0),
+        // Seed the disabled SpinBox with llama.cpp's own default (4) so the
+        // "default" hint the user sees matches what omitting the flag yields.
+        models_max: cfg.models_max.unwrap_or(4),
         models_max_default: cfg.models_max.is_none(),
         // Same "blank ⇒ default dir" rule as save()/start(), so a hand-edited
         // blank ModelsDir shows the default it will actually resolve to.
@@ -43,6 +45,13 @@ pub fn config_to_form(cfg: &server_cfg::ServerConfig) -> ServerForm {
             .unwrap_or_else(|| "default".into())
             .into(),
         tensor_split: cfg.tensor_split.clone().unwrap_or_default().into(),
+        // Plain bool toggles (framework defaults materialized when unset), same
+        // shape as `mlock`.
+        webui_mcp_proxy: cfg.webui_mcp_proxy_or_default(),
+        fit: cfg.fit_or_default(),
+        // Always has a value (framework default 4 when unset) — a plain SpinBox,
+        // no "default" checkbox: the launch always passes -lv.
+        log_verbosity: cfg.log_verbosity_or_default(),
     }
 }
 
@@ -94,6 +103,9 @@ pub fn form_to_config(f: &ServerForm) -> server_cfg::ServerConfig {
             other => Some(other.to_string()),
         },
         tensor_split: server_cfg::opt_nonblank(Some(f.tensor_split.to_string())),
+        webui_mcp_proxy: Some(f.webui_mcp_proxy),
+        fit: Some(f.fit),
+        log_verbosity: Some(f.log_verbosity),
     }
 }
 
@@ -121,6 +133,9 @@ mod tests {
             device: Some("CUDA0".into()),
             split_mode: Some("row".into()),
             tensor_split: Some("3,1".into()),
+            webui_mcp_proxy: Some(false),
+            fit: Some(true),
+            log_verbosity: Some(2),
         };
         assert_eq!(form_to_config(&config_to_form(&cfg)), cfg);
     }

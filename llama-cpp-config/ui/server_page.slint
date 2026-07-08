@@ -1,14 +1,16 @@
 // ServerPage: the server tab. All state lives in AppState (state.slint); this
 // component just lays out the widgets against it.
 //
-// Layout (grep `heading:`): Network → Resources → Command Line cards, then the
-// FormActions row.
+// Layout (grep `heading:`): Network → Resources → Advanced cards, then the
+// FormActions row (Save/Revert), then the Command Line card last. The Command
+// Line card auto-sizes to its content (a hidden mirror-Text drives its height) so
+// it never shows its own inner scrollbar — the page's own ScrollView handles it.
 //
 // Editable widgets bind two-way (`<=>`): a one-way binding breaks the moment the
 // user types/toggles (Slint's "overwritten bindings" rule), which would leave the
 // field stale after a Revert / reload.
 
-import { LineEdit, TextEdit, CheckBox, Button, ScrollView, Palette } from "std-widgets.slint";
+import { LineEdit, TextEdit, CheckBox, SpinBox, Button, ScrollView, Palette } from "std-widgets.slint";
 import { SectionCard, LabeledField, MappedComboBox, AutoSlider, DefaultSpinBox, FormActions, SplitFields, Tokens } from "components.slint";
 import { AppState } from "state.slint";
 
@@ -139,18 +141,31 @@ export component ServerPage inherits ScrollView {
         }
 
         SectionCard {
-            heading: "Command Line";
-            content_padding: 12px;
-            // Read-only, multi-line view of the exact llama-server
-            // invocation `Start` would run. Rust formats it one
-            // `--flag value` per line, joined with the shell's
-            // line-continuation char (`` ` `` on Windows, `\` on
-            // POSIX), so it pastes straight into a terminal.
-            TextEdit {
-                text: AppState.server_command_line;
-                read-only: true;
-                wrap: word-wrap;
-                min-height: 160px;
+            heading: "Advanced";
+            LabeledField {
+                label: "Web UI MCP proxy";
+                hint: "Enable the built-in chat UI's MCP CORS proxy (--webui-mcp-proxy).\nThe bundled chat UI needs it to call MCP tools. Experimental upstream — don't enable on an untrusted network.\ndefault = on.";
+                CheckBox {
+                    text: "serve the web UI's MCP proxy endpoint";
+                    checked <=> AppState.server_form.webui_mcp_proxy;
+                }
+            }
+            LabeledField {
+                label: "Fit to VRAM";
+                hint: "Let llama.cpp auto-shrink unset arguments to fit device memory (-fit on|off).\nOff by default: a preset's 'default' n-gpu-layers means 'offload every layer', which -fit on would silently override.\ndefault = off.";
+                CheckBox {
+                    text: "auto-fit unset args to device memory (-fit on)";
+                    checked <=> AppState.server_form.fit;
+                }
+            }
+            LabeledField {
+                label: "Log level";
+                hint: "llama-server log verbosity threshold (-lv / --log-verbosity).\nMessages above this level are dropped; higher = more detail.\nFramework default 4 records per-request logging into logs/llama-server.log.";
+                SpinBox {
+                    value <=> AppState.server_form.log_verbosity;
+                    minimum: 0;
+                    maximum: 10;
+                }
             }
         }
 
@@ -161,6 +176,50 @@ export component ServerPage inherits ScrollView {
             revert_enabled: AppState.server_dirty;
             save => { AppState.save_server(); }
             revert => { AppState.revert_server(); }
+        }
+
+        SectionCard {
+            heading: "Command Line";
+            content_padding: 12px;
+            // Read-only, multi-line view of the exact llama-server
+            // invocation `Start` would run. Rust formats it one
+            // `--flag value` per line, joined with the shell's
+            // line-continuation char (`` ` `` on Windows, `\` on
+            // POSIX), so it pastes straight into a terminal.
+            //
+            // Auto-height: the box sizes to a hidden mirror Text that wraps the
+            // same string, so the whole command shows at once with no inner
+            // scrollbar (the page's own ScrollView handles overflow). It stays a
+            // read-only TextEdit, not a plain Text, so the command remains
+            // selectable/copyable (Ctrl+C) — the same reason the chat-template
+            // preview is a TextEdit (app.slint). Neither the mirror nor the
+            // TextEdit sets a font, so both render at the same default metrics
+            // and the mirror's height matches the TextEdit's wrapped content.
+            Rectangle {
+                // Height tracks the wrapped content so the box never shows its
+                // own scrollbar (it re-derives only on Save/Revert/load, when the
+                // command string itself changes). The mirror Text (12px narrower
+                // per side) wraps at least as often as the TextEdit's text area,
+                // so it can only OVER-count lines; then +48px clears the
+                // TextEdit's border + top/bottom padding, which measured ~one text
+                // line taller than the bare mirror (a +24px buffer left the box
+                // one line short, so the scrollbar came back).
+                height: mirror.preferred-height + 48px;
+                mirror := Text {
+                    x: 12px;
+                    width: parent.width - 24px;
+                    text: AppState.server_command_line;
+                    wrap: word-wrap;
+                    visible: false;
+                }
+                TextEdit {
+                    width: 100%;
+                    height: 100%;
+                    text: AppState.server_command_line;
+                    read-only: true;
+                    wrap: word-wrap;
+                }
+            }
         }
     }
 }

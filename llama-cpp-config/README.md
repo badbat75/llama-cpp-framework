@@ -34,7 +34,8 @@ Any navigation that would replace a dirty form — switching presets, Refresh/F5
 
 - Fields: port, hostname, mlock, threads, cache reuse, threads-batch, models-max, models-dir (with a Browse button), GPU device. **threads** and **threads-batch** are sliders capped at the machine's logical-processor count, each with a "default" checkbox that omits the flag (let llama.cpp pick). The scalar fields (port, cache reuse, models-max) are `DefaultSpinBox`es — a "default" checkbox omits the flag, or an explicit integer.
 - **Multi-GPU split** (machine-wide default, overridable per-model): **GPU split mode** (`--split-mode`: none/layer/row) and **tensor split** (`--tensor-split`, e.g. `3,1`) control how a model is distributed across GPUs — identical on CUDA and HIP.
-- A read-only, multi-line **Command Line** card shows the exact `llama-server` invocation **Start** would run, one `--flag value` per line joined with the shell's line-continuation character (`` ` `` on Windows, `\` on Linux) so you can paste it straight into a terminal.
+- **Advanced** card: **Web UI MCP proxy** (`--webui-mcp-proxy`, on by default — the bundled chat UI needs it to call MCP tools), **Fit to VRAM** (`-fit on|off`, off by default so a preset's "offload all layers" isn't silently overridden), and **Log level** (`-lv`, framework default 4). These were previously fixed policy flags; they now round-trip through `server.ini` and default to the same framework values when untouched.
+- A read-only, multi-line **Command Line** card shows the exact `llama-server` invocation **Start** would run, one `--flag value` per line joined with the shell's line-continuation character (`` ` `` on Windows, `\` on Linux) so you can paste it straight into a terminal. It auto-sizes to its content (no inner scrollbar).
 
 ### Models tab — `presets.ini`
 
@@ -101,7 +102,7 @@ The build script (`build.rs`) converts `resources\llama.ico` to two PNGs at comp
 | `src\ini.rs` | Minimal INI parser/writer (no external crate) |
 | `src\paths.rs` | Platform-specific config and log paths (`LLAMA_CPP_CONFIG_DATA_ROOT` redirects the whole tree — opencode.json and home-derived defaults included — test-only escape hatch, not an end-user knob) |
 | `src\integrations.rs` | opencode.json model list, Claude Code snippet |
-| `src\runstate.rs` | Detect if `llama-server` is running; start/stop it; render the launch command line (incl. the fixed policy flags `--webui-mcp-proxy` / `-fit off` / `-lv 4`) |
+| `src\runstate.rs` | Detect if `llama-server` is running; start/stop it; render the launch command line (incl. `--webui-mcp-proxy` / `-fit` / `-lv`, exposed on the Server tab's Advanced card and defaulting to the framework's on / off / 4) |
 | `src\net_ifaces.rs` | Enumerate local network interfaces — populates the Server tab's "Bind to" dropdown |
 | `src\server_version.rs` | Parse `llama-server --version` output |
 | `src\single_instance.rs` | Windows single-instance mutex + window activation (Win32 FFI) |

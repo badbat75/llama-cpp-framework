@@ -98,6 +98,14 @@ export struct ServerForm {
     device: string,
     split_mode: string,
     tensor_split: string,
+    // Plain bool toggles (CheckBox, two-way <=>), the same shape as `mlock`:
+    // webui_mcp_proxy enables the web UI's MCP proxy (--webui-mcp-proxy); fit is
+    // llama.cpp's -fit on|off VRAM auto-fitting (checked = on).
+    webui_mcp_proxy: bool,
+    fit: bool,
+    // Log verbosity threshold (-lv). A plain SpinBox (two-way <=>), always set —
+    // no "default" checkbox, since the launch always passes -lv.
+    log_verbosity: int,
 }
 
 export struct IntegrationModel {

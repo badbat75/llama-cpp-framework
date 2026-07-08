@@ -67,6 +67,15 @@ pub struct ServerSet {
     /// Per-GPU weight proportions (--tensor-split), e.g. "3,1" (empty = even).
     #[arg(long)]
     pub tensor_split: Option<String>,
+    /// Enable the web UI's MCP CORS proxy (--webui-mcp-proxy). true = on.
+    #[arg(long)]
+    pub webui_mcp_proxy: Option<bool>,
+    /// Auto-fit unset args to device memory (-fit): true = on, false = off.
+    #[arg(long)]
+    pub fit: Option<bool>,
+    /// llama-server log verbosity threshold (-lv / --log-verbosity).
+    #[arg(long)]
+    pub log_verbosity: Option<i32>,
 }
 
 impl ServerSet {
@@ -110,6 +119,15 @@ impl ServerSet {
         if let Some(ts) = &self.tensor_split {
             cfg.tensor_split = server_cfg::opt_nonblank(Some(ts.clone()));
         }
+        if let Some(w) = self.webui_mcp_proxy {
+            cfg.webui_mcp_proxy = Some(w);
+        }
+        if let Some(f) = self.fit {
+            cfg.fit = Some(f);
+        }
+        if let Some(lv) = self.log_verbosity {
+            cfg.log_verbosity = Some(lv);
+        }
     }
 }
 
@@ -138,7 +156,7 @@ pub fn run(cli: Cli) -> Result<()> {
 fn show_lines(cfg: &server_cfg::ServerConfig) -> String {
     let mut out = String::new();
     let mut row = |label: &str, value: String| {
-        out.push_str(&format!("  {label:<13} {value}\n"));
+        out.push_str(&format!("  {label:<14} {value}\n"));
     };
     row("Port:", cfg.port.map_or("-".into(), |v| v.to_string()));
     row(
@@ -162,7 +180,7 @@ fn show_lines(cfg: &server_cfg::ServerConfig) -> String {
     row(
         "ModelsMax:",
         cfg.models_max
-            .map_or_else(|| "auto (default: 1)".into(), |v| v.to_string()),
+            .map_or_else(|| "auto (default: 4)".into(), |v| v.to_string()),
     );
     row(
         "ModelsDir:",
@@ -181,6 +199,21 @@ fn show_lines(cfg: &server_cfg::ServerConfig) -> String {
     row(
         "TensorSplit:",
         cfg.tensor_split.clone().unwrap_or_else(|| "even".into()),
+    );
+    row(
+        "WebuiMcpProxy:",
+        cfg.webui_mcp_proxy
+            .map_or_else(|| "true (default)".into(), |v| v.to_string()),
+    );
+    row(
+        "Fit:",
+        cfg.fit
+            .map_or_else(|| "false (default)".into(), |v| v.to_string()),
+    );
+    row(
+        "LogVerbosity:",
+        cfg.log_verbosity
+            .map_or_else(|| "4 (default)".into(), |v| v.to_string()),
     );
     out
 }
@@ -270,6 +303,9 @@ mod tests {
             device: Some("CUDA0".into()),
             split_mode: Some("row".into()),
             tensor_split: Some("3,1".into()),
+            webui_mcp_proxy: Some(false),
+            fit: Some(true),
+            log_verbosity: Some(2),
         };
         let mut cfg = ServerConfig::default();
         set.apply(&mut cfg);
@@ -289,6 +325,9 @@ mod tests {
             device: Some("CUDA0".into()),
             split_mode: Some("row".into()),
             tensor_split: Some("3,1".into()),
+            webui_mcp_proxy: Some(false),
+            fit: Some(true),
+            log_verbosity: Some(2),
         };
         assert_eq!(cfg, expected);
     }
@@ -310,6 +349,9 @@ mod tests {
             device: Some("CUDA0".into()),
             split_mode: Some("row".into()),
             tensor_split: Some("3,1".into()),
+            webui_mcp_proxy: Some(false),
+            fit: Some(true),
+            log_verbosity: Some(2),
         };
         // The exhaustive destructure breaks compilation the moment a field is
         // added, until this test decides what to do with it — but the
@@ -328,6 +370,9 @@ mod tests {
             device,
             split_mode,
             tensor_split,
+            webui_mcp_proxy,
+            fit,
+            log_verbosity,
         } = cfg.clone();
         let needles = [
             ("Port:", port.unwrap().to_string()),
@@ -341,6 +386,9 @@ mod tests {
             ("Device:", device.unwrap()),
             ("SplitMode:", split_mode.unwrap()),
             ("TensorSplit:", tensor_split.unwrap()),
+            ("WebuiMcpProxy:", webui_mcp_proxy.unwrap().to_string()),
+            ("Fit:", fit.unwrap().to_string()),
+            ("LogVerbosity:", log_verbosity.unwrap().to_string()),
         ];
         let out = show_lines(&cfg);
         for (label, value) in needles {

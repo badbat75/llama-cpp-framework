@@ -68,6 +68,19 @@ pub struct ServerConfig {
     /// Per-GPU weight proportions (--tensor-split / -ts), e.g. "3,1" for 75/25.
     /// Empty/None = even split across the visible GPUs.
     pub tensor_split: Option<String>,
+    /// Enable the built-in web UI's MCP CORS proxy (--webui-mcp-proxy).
+    /// None = the framework default (on) — the bundled chat UI needs it to call
+    /// MCP tools. Experimental upstream (llama.cpp defaults it OFF); don't enable
+    /// on an untrusted network.
+    pub webui_mcp_proxy: Option<bool>,
+    /// Let llama.cpp auto-shrink unset args to fit device memory (-fit on|off).
+    /// None = the framework default (off): the GUI's "default" n-gpu-layers means
+    /// "offload every layer", which -fit on would silently override.
+    pub fit: Option<bool>,
+    /// llama-server log verbosity threshold (-lv / --log-verbosity N): messages
+    /// above this level are dropped. None = the framework default (4, per-request
+    /// logging into the captured llama-server.log). Always passed to the launch.
+    pub log_verbosity: Option<i32>,
 }
 
 /// Default ModelsDir when server.ini leaves it unset. ModelsDir is the *root*
@@ -118,6 +131,21 @@ impl ServerConfig {
         self.mlock.unwrap_or(true)
     }
 
+    /// The web-UI MCP proxy flag, or `true` (the framework default) when unset.
+    pub fn webui_mcp_proxy_or_default(&self) -> bool {
+        self.webui_mcp_proxy.unwrap_or(true)
+    }
+
+    /// The -fit flag, or `false` (the framework default: off) when unset.
+    pub fn fit_or_default(&self) -> bool {
+        self.fit.unwrap_or(false)
+    }
+
+    /// The log verbosity (-lv), or `4` (the framework default) when unset.
+    pub fn log_verbosity_or_default(&self) -> i32 {
+        self.log_verbosity.unwrap_or(4)
+    }
+
     /// The host a CLIENT on this machine should connect to. Same as
     /// `hostname_or_default` except the all-interfaces bind `0.0.0.0` maps to
     /// `localhost`: it is a listen address, not a connectable one (Windows
@@ -154,6 +182,9 @@ fn from_keys(keys: &std::collections::BTreeMap<String, String>) -> ServerConfig 
         device: opt_nonblank(keys.get("Device").cloned()),
         split_mode: opt_nonblank(keys.get("SplitMode").cloned()),
         tensor_split: opt_nonblank(keys.get("TensorSplit").cloned()),
+        webui_mcp_proxy: keys.get("WebuiMcpProxy").and_then(|v| ini::parse_bool(v)),
+        fit: keys.get("Fit").and_then(|v| ini::parse_bool(v)),
+        log_verbosity: keys.get("LogVerbosity").and_then(|v| ini::parse_int(v)),
     }
 }
 
@@ -191,7 +222,6 @@ fn validate_for_save(cfg: &ServerConfig) -> io::Result<()> {
 /// `save()`; the round-trip test drives this directly, mirroring
 /// `presets::render_section`.
 fn render(cfg: &ServerConfig) -> String {
-    let port = cfg.port_or_default();
     let hostname = cfg.hostname_or_default();
     let mlock = cfg.mlock_or_default();
 
@@ -201,6 +231,16 @@ fn render(cfg: &ServerConfig) -> String {
     // a commented `; Key = example  ; help` hint line (see int_line_or_hint /
     // str_line_or_hint). The `keep` predicate is where the per-field "is this
     // worth writing?" rule lives (n > 0, n != 1, …).
+    // Port collapses to a commented hint when unset (the UI "default" checkbox),
+    // so None round-trips as None instead of a forced 8080 — otherwise "default"
+    // would silently re-materialize as an explicit port on the next reload, and
+    // the launch line would keep passing --port 8080.
+    let port_line = int_line_or_hint(
+        cfg.port,
+        "Port",
+        "; Port = 8080  ; TCP port llama-server binds (--port); commented = llama.cpp default 8080",
+        |n| n > 0,
+    );
     let threads_line = int_line_or_hint(
         cfg.threads,
         "Threads",
@@ -219,11 +259,15 @@ fn render(cfg: &ServerConfig) -> String {
         "; ThreadsBatch = 12  ; optional override; auto-detected if commented",
         |n| n > 0,
     );
+    // Any non-negative value is an explicit choice now that the UI carries the
+    // unset state in a "default" checkbox (0 = unlimited is a real value); only
+    // None collapses to the hint. The old `n != 1` treated 1 as "the default",
+    // a stale remnant of when the launch path forced --models-max 1.
     let models_max_line = int_line_or_hint(
         cfg.models_max,
         "ModelsMax",
-        "; ModelsMax = 2  ; uncomment to allow N models resident at once (0 = unlimited; runtime default if unset: 1)",
-        |n| n != 1,
+        "; ModelsMax = 2  ; cap resident models (0 = unlimited); commented = llama.cpp default 4",
+        |n| n >= 0,
     );
     let device_line = str_line_or_hint(
         cfg.device.as_deref(),
@@ -242,6 +286,19 @@ fn render(cfg: &ServerConfig) -> String {
     );
 
     let mlock_lit = if mlock { "true" } else { "false" };
+    // Always written like Mlock (a bool with a framework default), so an unset
+    // one reloads as the explicit default rather than None.
+    let webui_lit = if cfg.webui_mcp_proxy_or_default() {
+        "true"
+    } else {
+        "false"
+    };
+    let fit_lit = if cfg.fit_or_default() {
+        "true"
+    } else {
+        "false"
+    };
+    let log_verbosity = cfg.log_verbosity_or_default();
 
     format!(
         "; Generated by llama-cpp-config.
@@ -250,9 +307,18 @@ fn render(cfg: &ServerConfig) -> String {
 ; Per-model knobs live in presets.ini.
 
 [Server]
-Port = {port}
+{port_line}
 Hostname = {hostname}
 Mlock = {mlock_lit}
+; WebuiMcpProxy: enable the built-in web UI's MCP CORS proxy (--webui-mcp-proxy).
+; The bundled chat UI needs it to call MCP tools; disable on an untrusted network.
+WebuiMcpProxy = {webui_lit}
+; Fit: let llama.cpp auto-shrink unset args to fit device memory (-fit on|off).
+; Off by default — a per-preset offload-all-layers choice would be overridden.
+Fit = {fit_lit}
+; LogVerbosity: llama-server log threshold (-lv); higher logs more. Framework
+; default 4 captures per-request logging into logs/llama-server.log.
+LogVerbosity = {log_verbosity}
 {threads_line}
 {cache_reuse_line}
 {threads_batch_line}
@@ -315,22 +381,31 @@ mod tests {
             device: Some("CUDA0".into()),
             split_mode: Some("row".into()),
             tensor_split: Some("3,1".into()),
+            webui_mcp_proxy: Some(false),
+            fit: Some(true),
+            log_verbosity: Some(2),
         };
         assert_eq!(round_trip(&original), original);
     }
 
     // The writer's DELIBERATE collapses, pinned as documented behavior:
-    // - Port/Hostname/Mlock are always written, so an unset one reloads as the
-    //   default (8080 / localhost / true) rather than None.
-    // - `keep` predicates turn "not worth writing" values into commented hint
-    //   lines: threads/threads_batch <= 0, models_max == 1.
+    // - Hostname/Mlock/WebuiMcpProxy/Fit/LogVerbosity are always written, so an
+    //   unset one reloads as the framework default (localhost / true / true /
+    //   false / 4) rather than None.
+    // - `keep` predicates turn unset/"not worth writing" values into commented
+    //   hint lines: port <= 0, threads/threads_batch <= 0, models_max unset.
+    //   An unset port reloads as None (not a forced 8080), so the UI "default"
+    //   checkbox round-trips and the launch line omits --port.
     // - ModelsDir falls back to default_models_dir() when unset.
     #[test]
     fn default_config_reloads_as_explicit_defaults() {
         let reloaded = round_trip(&ServerConfig::default());
-        assert_eq!(reloaded.port, Some(8080));
+        assert_eq!(reloaded.port, None);
         assert_eq!(reloaded.hostname.as_deref(), Some("localhost"));
         assert_eq!(reloaded.mlock, Some(true));
+        assert_eq!(reloaded.webui_mcp_proxy, Some(true));
+        assert_eq!(reloaded.fit, Some(false));
+        assert_eq!(reloaded.log_verbosity, Some(4));
         assert_eq!(reloaded.threads, None);
         assert_eq!(reloaded.threads_batch, None);
         assert_eq!(reloaded.cache_reuse, None);
@@ -344,22 +419,36 @@ mod tests {
     #[test]
     fn not_worth_writing_values_collapse_to_hints() {
         let cfg = ServerConfig {
+            port: Some(0),
             threads: Some(0),
             cache_reuse: Some(-3),
             threads_batch: Some(-4),
-            models_max: Some(1),
             device: Some("   ".into()),
             ..Default::default()
         };
         let reloaded = round_trip(&cfg);
+        assert_eq!(reloaded.port, None, "port <= 0 is unset (llama.cpp default)");
         assert_eq!(reloaded.threads, None, "threads <= 0 is auto");
         assert_eq!(
             reloaded.cache_reuse, None,
             "cache_reuse <= 0 clears the override (same rule as the CLI set)"
         );
         assert_eq!(reloaded.threads_batch, None, "threads_batch <= 0 is auto");
-        assert_eq!(reloaded.models_max, None, "models_max == 1 is the default");
         assert_eq!(reloaded.device, None, "blank device is unset");
+    }
+
+    // The "default" checkbox carries the unset state now, so every non-negative
+    // models_max is an explicit value that must persist — including 1 (which the
+    // old `n != 1` predicate wrongly swallowed) and 0 (unlimited).
+    #[test]
+    fn explicit_models_max_round_trips_including_one_and_zero() {
+        for n in [0, 1, 8] {
+            let reloaded = round_trip(&ServerConfig {
+                models_max: Some(n),
+                ..Default::default()
+            });
+            assert_eq!(reloaded.models_max, Some(n), "models_max {n} must persist");
+        }
     }
 
     // Pure validation (no IO), the server-side mirror of presets'
