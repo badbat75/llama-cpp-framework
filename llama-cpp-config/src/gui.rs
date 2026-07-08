@@ -53,8 +53,11 @@
 //! (`server_tab::pick_dir`) is a modal OS dialog — blocking its caller is the
 //! conventional behavior, not a stall to fix.
 //!
-//! `AppTray` is a SEPARATE Slint root — it does NOT use `AppState`; Rust pushes
-//! state to it directly (`tray.set_server_running` / `tray.on_*`).
+//! `AppTray` and `LogWindow` are SEPARATE Slint roots — they do NOT use
+//! `AppState`; Rust pushes state to them directly (`tray.set_server_running` /
+//! `tray.on_*`; the log tail in `gui/log_window.rs`). `LogWindow` is a real
+//! second window on the same event loop: non-modal, so the main window stays
+//! interactive while it is open.
 
 use std::cell::RefCell;
 use std::path::PathBuf;
@@ -73,6 +76,7 @@ slint::include_modules!();
 // Per-tab callback wiring — one file each under `gui/`. Each `wire()` reaches the
 // shared helpers, the `State` cache, and the generated Slint types via `use super::*`.
 mod integrations_tab;
+mod log_window;
 mod models_tab;
 mod server_tab;
 mod tray;
@@ -195,6 +199,11 @@ pub fn run() -> anyhow::Result<()> {
     models_tab::wire(&app, &state);
     integrations_tab::wire(&app);
     tray::wire(&app, &tray);
+    // Independent log-tail window (View logs). Both halves must outlive the
+    // event loop like status_timer above — dropping the Timer stops the tail.
+    // (The timer only RUNS while the window is open: armed on View logs,
+    // stopped on close.)
+    let (_log_window, _log_timer) = log_window::wire(&app)?;
 
     // Closing the window hides it to the tray instead of quitting; the visible
     // tray icon keeps the event loop alive. Use the tray's "Quit" to exit.

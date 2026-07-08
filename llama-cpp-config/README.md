@@ -14,11 +14,12 @@ llama-cpp-config preset delete .. → remove one preset
 
 ## GUI
 
-Built with [Slint](https://slint.dev). The nav rail switches between three tabs and carries the server run controls (Start/Stop over Open chat UI over Refresh) at its bottom, reachable from any tab. A status footer shows the llama-server state (running / not running) and version.
+Built with [Slint](https://slint.dev). The nav rail switches between three tabs and carries the server run controls (Start/Stop over Open chat UI over View logs over Refresh) at its bottom, reachable from any tab. A status footer shows the llama-server state (running / not running) and version.
 
-The two non-obvious run controls:
+The non-obvious run controls:
 
 - **Open chat UI** launches the URL the RUNNING server was started with (`AppState.launched_url`, snapshotted at launch — a save while running changes the file, not the listening process; the footer says "restart llama-server to apply"). When the GUI didn't start the server it falls back to the SAVED host+port (`AppState.chat_url`, derived in Rust via `ServerConfig::client_host()` — a `0.0.0.0` bind maps to `localhost`, since a listen address isn't a connectable one; the Integrations base URL uses the same mapping).
+- **View logs** opens `logs\llama-server.log` in an independent, non-modal window (`LogWindow`, a third Slint root beside `AppWindow`/`AppTray`) that follows the file live like `tail -f` — the main window stays fully interactive while it is open. The tail is a 500 ms `slint::Timer` poll — armed by the View-logs click, stopped by the window's close button, so a closed window costs nothing — over a bounded in-memory tail: 64 KB backfill on open, 256 KB retained (trimmed on line/char boundaries — the log is not pure ASCII), truncation/rotation resets, missing file shows a placeholder and keeps polling (`gui/log_window.rs`, file logic unit-tested). Auto-scroll (checkbox, on by default) follows new output by parking the TextEdit cursor at the end; untick it to read scrolled-back text while the server keeps writing. A header readout ("17.3 MB · updated 5 s ago") refreshes every tick — llama-server legitimately goes quiet between requests, and the aging readout is what distinguishes a live tail over an idle file from a stuck one. Always enabled — the log outlives the process, so it's exactly what you want after a crash or failed start.
 - **Refresh** (the button, or F5) re-reads `server.ini` / `presets.ini`, re-scans the models directory, reloads integration state, and re-probes the run status, llama-server version, and GPU devices (the exe can change under us — e.g. a `02-build.ps1` rerun). Use it after adding a model file or hand-editing a config file outside the GUI, without restarting.
 
 Each tab body is its own Slint component (`ui\server_page.slint`, `ui\models_page.slint`, `ui\integrations_page.slint`). All shared state — every property and callback the pages and Rust both touch — lives in a single `export global AppState` (`ui\state.slint`); the pages read/write `AppState.<name>` directly and Rust drives it via `app.global::<AppState>()`. `ui\app.slint` is just the window chrome (nav rail, run controls, modals, footer) plus the tray.
@@ -89,7 +90,7 @@ The build script (`build.rs`) converts `resources\llama.ico` to two PNGs at comp
 | `src\main.rs` | Entry point: no args → GUI, subcommand → CLI dispatcher |
 | `src\cli.rs` | Clap subcommands: `server` (show/set), `preset` (list/show/delete) |
 | `src\gui.rs` | Slint GUI module root: `run()` (window setup), the shared `State` cache, and all `load_*` / `refresh_*` / `apply_*` / `spawn_*` helpers |
-| `src\gui\` | Per-tab callback wiring, one file each — `server_tab.rs`, `models_tab.rs`, `integrations_tab.rs`, `tray.rs` (each a `wire()` reaching `gui`'s helpers via `use super::*`) |
+| `src\gui\` | Per-tab callback wiring, one file each — `server_tab.rs`, `models_tab.rs`, `integrations_tab.rs`, `tray.rs`, plus `log_window.rs` (the View-logs window: tail-follow state machine + poll timer) — each a `wire()` reaching `gui`'s helpers via `use super::*` |
 | `src\form.rs` | `PresetForm` ↔ `presets::Preset` conversion (`preset_to_form` / `form_to_preset`) + a round-trip test; defaults sourced from `Preset::default()` |
 | `src\server_form.rs` | `ServerForm` ↔ `server_cfg::ServerConfig` conversion (`config_to_form` / `form_to_config`) + a round-trip test — the server-side mirror of `form.rs` |
 | `src\proc.rs` | `run_hidden()`: launch a child process with `CREATE_NO_WINDOW` on Windows (shared by the device / version / run-state probes) |
@@ -106,7 +107,8 @@ The build script (`build.rs`) converts `resources\llama.ico` to two PNGs at comp
 | `src\net_ifaces.rs` | Enumerate local network interfaces — populates the Server tab's "Bind to" dropdown |
 | `src\server_version.rs` | Parse `llama-server --version` output |
 | `src\single_instance.rs` | Windows single-instance mutex + window activation (Win32 FFI) |
-| `ui\app.slint` | `AppWindow` window chrome + `AppTray`: nav rail, run controls, modals, footer |
+| `ui\app.slint` | `AppWindow` window chrome + `AppTray`: nav rail, run controls, modals, footer (re-exports `LogWindow` for the Rust codegen) |
+| `ui\log_window.slint` | `LogWindow`: the independent View-logs window (read-only TextEdit tail + Auto-scroll checkbox), pushed-in state like the tray |
 | `ui\state.slint` | `export global AppState`: all shared properties + callbacks (declared once), driven from Rust via `app.global::<AppState>()` |
 | `ui\server_page.slint` | Server tab component |
 | `ui\models_page.slint` | Models tab component (preset editor) |
@@ -122,7 +124,7 @@ The build script (`build.rs`) converts `resources\llama.ico` to two PNGs at comp
 - OS portability via `#[cfg(windows)]` / `#[cfg(not(windows))]` compile-time branching — no runtime OS detection.
 - No external INI crate: `ini.rs` is a hand-rolled INI reader/writer with an explicit behavioral contract in its header (case/whitespace-tolerant section lookup, inline-comment stripping matching llama-server's own preset PEG, EOL detection, atomic writes).
 - GUI callbacks are `Send + 'static` closures passed to `slint::ComponentHandle::global()`.
-- Every property and callback the Rust side drives lives in the `AppState` global (`ui\state.slint`), declared once. Rust uses `app.global::<AppState>().set_x()/get_x()/on_x()`; the pages reference `AppState.x` directly. Adding a UI field that Rust reads/writes is a **one-file** change in `ui\state.slint` — no per-page re-declaration or forwarding. (The tray, `AppTray`, is a separate root and keeps its own pushed-in state.)
+- Every property and callback the Rust side drives lives in the `AppState` global (`ui\state.slint`), declared once. Rust uses `app.global::<AppState>().set_x()/get_x()/on_x()`; the pages reference `AppState.x` directly. Adding a UI field that Rust reads/writes is a **one-file** change in `ui\state.slint` — no per-page re-declaration or forwarding. (The tray, `AppTray`, and the View-logs window, `LogWindow`, are separate roots and keep their own pushed-in state.)
 - Editable widgets that back a scalar `AppState` field bind two-way (`<=>`), never one-way (`prop: AppState.x`): a one-way binding breaks the instant the user edits the field (Slint's "overwritten bindings" rule), leaving it stale on the next preset switch / Revert. The recognized one-way cases are:
   - **Read-only displays** — the `model_info_*` texts, the integration status/baseURL fields, the Server tab's Command Line `TextEdit`, the Claude-env snippet `LineEdit`.
   - **Per-row model widgets inside a `for`** — the integration checkboxes, `checked: item.enabled` + a `toggled` callback. Safe ONLY because the sole in-place row write originates from the clicked widget itself; any other enabled-state change must rebuild the whole model so the delegates get fresh bindings (see `gui/integrations_tab.rs`).

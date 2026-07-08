@@ -17,6 +17,10 @@ import { Tokens, Options, ModalOverlay, AccentBar, SelectableRow, ListPanel } fr
 // a bare import wouldn't surface them to Rust. `Options` is exported only so
 // the e2e test can assert `Options.all_layers == form::ALL_LAYERS`.
 export { AppState, Options }
+// The log-tail viewer — a third root component beside AppWindow/AppTray,
+// re-exported so gui.rs can instantiate it (`LogWindow::new()`).
+import { LogWindow } from "log_window.slint";
+export { LogWindow }
 import { ServerPage } from "server_page.slint";
 import { ModelsPage } from "models_page.slint";
 import { IntegrationsPage } from "integrations_page.slint";
@@ -167,9 +171,9 @@ export component AppWindow inherits Window {
                     Rectangle { vertical-stretch: 1; }
 
                     // ── Server controls ──────────────────────────────
-                    // Start/Stop stacked over Open chat UI over Refresh. Live
-                    // status drives which of Start/Stop shows; Open chat UI is
-                    // enabled only while the server is running.
+                    // Start/Stop stacked over Open chat UI over View logs over
+                    // Refresh. Live status drives which of Start/Stop shows;
+                    // Open chat UI is enabled only while the server is running.
                     VerticalLayout {
                         spacing: 8px;
                         // Transitional states: a Start/Stop was triggered and
@@ -200,6 +204,14 @@ export component AppWindow inherits Window {
                             // (a save while running changes the file, not the
                             // listening process) — see state.slint.
                             clicked => { Platform.open-url(AppState.open_chat_url); }
+                        }
+                        // Tail logs\llama-server.log in an independent,
+                        // non-modal window (LogWindow). Always enabled — the
+                        // log outlives the process, so it's exactly what you
+                        // want to read after a crash or a failed start.
+                        Button {
+                            text: "View logs";
+                            clicked => { AppState.view_logs(); }
                         }
                         // Re-read the config files and re-scan the models
                         // directory. Always available — use it after adding a

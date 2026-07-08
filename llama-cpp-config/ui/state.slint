@@ -246,6 +246,10 @@ export global AppState {
 
     callback start_server();
     callback stop_server();
+    // Open (or re-focus) the independent log-tail window (LogWindow in
+    // log_window.slint) — a separate non-modal root, so the main window stays
+    // interactive while it is up. Wired in gui/log_window.rs.
+    callback view_logs();
     // Re-read server.ini / presets.ini and re-scan the models directory.
     // Picks up files added on disk or config files edited by hand outside
     // the GUI, without restarting the app.
