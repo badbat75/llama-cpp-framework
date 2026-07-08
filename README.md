@@ -58,7 +58,7 @@ All build artifacts live under `build\` so a single `rm -rf build\` returns the 
 ├── llama-cpp-config/        ← Rust GUI + CLI configurator (source)
 ├── llama-cpp.nsi.template   ← NSIS installer template (placeholders filled by 03-package.ps1)
 ├── patches/                 ← checked-in build workarounds (HIP clang runtime wrapper)
-├── resources/               ← llama.ico (installer + EXE icon)
+├── resources/               ← icon generator (llama.ico is built on demand, gitignored)
 └── *.ps1                    ← top-level build/package scripts
 ```
 

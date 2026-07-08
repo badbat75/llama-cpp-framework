@@ -5,6 +5,8 @@ use clap::{Args, Parser, Subcommand};
 
 use crate::{paths, presets, server_cfg};
 
+// ── Command definitions (clap) ───────────────────────────────────────────
+
 #[derive(Parser, Debug)]
 #[command(
     name = "llama-cpp-config",
@@ -140,6 +142,8 @@ pub enum PresetCmd {
     /// Delete a preset section.
     Delete { id: String },
 }
+
+// ── Dispatch & rendering ─────────────────────────────────────────────────
 
 pub fn run(cli: Cli) -> Result<()> {
     match cli.command {

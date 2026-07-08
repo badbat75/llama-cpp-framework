@@ -430,7 +430,10 @@ mod tests {
         }
         // Framework policy flags and always-written fields remain present.
         assert!(a.contains(&"--mlock".to_string()), "mlock defaults to true");
-        assert!(a.contains(&"localhost".to_string()), "host is always written");
+        assert!(
+            a.contains(&"localhost".to_string()),
+            "host is always written"
+        );
         assert!(a.contains(&"--webui-mcp-proxy".to_string()));
     }
 

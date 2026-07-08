@@ -1,4 +1,7 @@
-// Build script, three jobs:
+// Build script, four jobs:
+// - Icon bootstrap: resources/llama.ico is generated, not checked in — when
+//   it's missing, run resources/generate-llama-ico.mjs to rasterize it from
+//   the llama.cpp clone's webui logo.
 // - ICO → PNG ×2: decode resources/llama.ico's largest frame and emit the
 //   plain tray icon plus a green-dot "running" variant into OUT_DIR, where
 //   the Slint @image-url includes resolve them.
@@ -15,6 +18,7 @@ fn main() {
     // bottom-right corner. The tray binds its icon to whichever matches state.
     let ico_path = "../resources/llama.ico";
     println!("cargo:rerun-if-changed={ico_path}");
+    ensure_icon(ico_path);
 
     let out_dir = std::env::var("OUT_DIR").expect("OUT_DIR not set");
 
@@ -55,6 +59,47 @@ fn main() {
 
     #[cfg(windows)]
     embed_windows_resources();
+}
+
+/// Generate the icon when it's absent (fresh checkout, or deleted on purpose
+/// to pick up an upstream logo change) by running the node script that
+/// rasterizes it from the llama.cpp clone's webui logo. Needs node + npm and
+/// the clone (02-build.ps1 creates it before this cargo leg runs); a missing
+/// prerequisite fails the build with the script's own error message.
+fn ensure_icon(ico_path: &str) {
+    if Path::new(ico_path).exists() {
+        return;
+    }
+    #[cfg(windows)]
+    const NPM: &str = "npm.cmd";
+    #[cfg(not(windows))]
+    const NPM: &str = "npm";
+    let resources = Path::new("../resources");
+    if !resources.join("node_modules/sharp-ico").exists() {
+        run_checked(
+            std::process::Command::new(NPM)
+                .args(["install", "--no-save", "sharp", "sharp-ico"])
+                .current_dir(resources),
+        );
+    }
+    run_checked(
+        std::process::Command::new("node")
+            .arg("generate-llama-ico.mjs")
+            .current_dir(resources),
+    );
+}
+
+fn run_checked(cmd: &mut std::process::Command) {
+    let out = cmd
+        .output()
+        .unwrap_or_else(|e| panic!("Failed to spawn {cmd:?}: {e}"));
+    if !out.status.success() {
+        panic!(
+            "{cmd:?} failed:\n{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
 }
 
 fn decode_largest_frame(path: &str) -> ico::IconImage {

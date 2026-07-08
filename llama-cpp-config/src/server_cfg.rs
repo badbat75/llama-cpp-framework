@@ -48,6 +48,7 @@ use std::io;
 use crate::ini;
 use crate::paths;
 
+// ── Schema: ServerConfig ─────────────────────────────────────────────────
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ServerConfig {
     pub port: Option<i32>,
@@ -82,6 +83,8 @@ pub struct ServerConfig {
     /// logging into the captured llama-server.log). Always passed to the launch.
     pub log_verbosity: Option<i32>,
 }
+
+// ── Defaults & accessors ─────────────────────────────────────────────────
 
 /// Default ModelsDir when server.ini leaves it unset. ModelsDir is the *root*
 /// the four fixed subfolders hang off (models\, mmprojs\, mtps\, dflashs\ —
@@ -161,6 +164,8 @@ impl ServerConfig {
     }
 }
 
+// ── Construct & parse (from_keys = INI read) ─────────────────────────────
+
 pub fn load() -> ServerConfig {
     let path = paths::server_ini();
     from_keys(&ini::read_section(&path, "Server"))
@@ -196,6 +201,8 @@ fn from_keys(keys: &std::collections::BTreeMap<String, String>) -> ServerConfig 
 pub fn opt_nonblank(s: Option<String>) -> Option<String> {
     s.filter(|v| !v.trim().is_empty())
 }
+
+// ── Save & render (INI write) ────────────────────────────────────────────
 
 pub fn save(cfg: &ServerConfig) -> io::Result<()> {
     validate_for_save(cfg)?;
@@ -427,7 +434,10 @@ mod tests {
             ..Default::default()
         };
         let reloaded = round_trip(&cfg);
-        assert_eq!(reloaded.port, None, "port <= 0 is unset (llama.cpp default)");
+        assert_eq!(
+            reloaded.port, None,
+            "port <= 0 is unset (llama.cpp default)"
+        );
         assert_eq!(reloaded.threads, None, "threads <= 0 is auto");
         assert_eq!(
             reloaded.cache_reuse, None,

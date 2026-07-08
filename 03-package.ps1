@@ -81,8 +81,23 @@ if (-not (Test-Path $configExe)) {
 Copy-Item $configExe -Destination $stageDir -Force
 Write-Host "Staged llama-cpp-config.exe" -ForegroundColor DarkGray
 
-# Copy the icon for the installer
-Copy-Item "$PSScriptRoot\resources\llama.ico" -Destination $stageDir -Force
+# Copy the icon for the installer. llama.ico is generated, not checked in —
+# 02-build.ps1's cargo leg (build.rs) normally creates it; regenerate here if
+# it has since gone missing.
+$iconPath = Join-Path $PSScriptRoot "resources\llama.ico"
+if (-not (Test-Path $iconPath)) {
+    Write-Host "llama.ico missing - regenerating from the llama.cpp webui logo..." -ForegroundColor Cyan
+    Push-Location (Join-Path $PSScriptRoot "resources")
+    try {
+        if (-not (Test-Path "node_modules\sharp-ico")) {
+            npm install --no-save sharp sharp-ico | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw "npm install failed" }
+        }
+        node generate-llama-ico.mjs
+        if ($LASTEXITCODE -ne 0) { throw "generate-llama-ico.mjs failed" }
+    } finally { Pop-Location }
+}
+Copy-Item $iconPath -Destination $stageDir -Force
 
 # ── Generate .nsi from template ─────────────────────────────────────
 $templatePath = Join-Path $PSScriptRoot "llama-cpp.nsi.template"
