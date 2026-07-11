@@ -63,6 +63,12 @@ $cmakeArgs = @(
     "-DGGML_VULKAN=ON"
     "-DGGML_HIP=ON"
     "-DGPU_TARGETS=$($cfg.GpuTargets)"
+    # ROCm's hip-config-amd.cmake derives the --offload-arch flags from
+    # GPU_BUILD_TARGETS, which it seeds from GPU_TARGETS with a `set(... CACHE ...)`
+    # — a no-op once the entry exists. Without -U, editing GpuTargets silently does
+    # nothing on an existing build dir: the cached arch list wins and Ninja sees
+    # unchanged command lines. Clearing it re-derives the list every configure.
+    "-UGPU_BUILD_TARGETS"
     "-DCMAKE_BUILD_TYPE=$($cfg.BuildType)"
     "-DCMAKE_C_COMPILER=$($cfg.CCompiler)"
     "-DCMAKE_CXX_COMPILER=$($cfg.CxxCompiler)"
