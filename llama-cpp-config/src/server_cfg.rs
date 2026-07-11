@@ -54,6 +54,13 @@ pub struct ServerConfig {
     pub port: Option<i32>,
     pub hostname: Option<String>,
     pub mlock: Option<bool>,
+    /// Read the weights into RAM instead of memory-mapping the GGUF (--no-mmap).
+    /// None = the framework default (off = mmap on, llama.cpp's own default).
+    /// Load is slower and costs the model's size in RAM, but nothing can be
+    /// dropped back to the file later. Pairs with `mlock`, which locks whatever
+    /// is resident: with mmap on, pages fault in from the GGUF as they're first
+    /// touched, so mlock alone only pins what has already been read.
+    pub no_mmap: Option<bool>,
     pub threads: Option<i32>,
     pub cache_reuse: Option<i32>,
     pub threads_batch: Option<i32>,
@@ -134,6 +141,12 @@ impl ServerConfig {
         self.mlock.unwrap_or(true)
     }
 
+    /// The no-mmap flag, or `false` (the framework default: keep llama.cpp's
+    /// mmap) when unset.
+    pub fn no_mmap_or_default(&self) -> bool {
+        self.no_mmap.unwrap_or(false)
+    }
+
     /// The web-UI MCP proxy flag, or `true` (the framework default) when unset.
     pub fn webui_mcp_proxy_or_default(&self) -> bool {
         self.webui_mcp_proxy.unwrap_or(true)
@@ -179,6 +192,7 @@ fn from_keys(keys: &std::collections::BTreeMap<String, String>) -> ServerConfig 
         port: keys.get("Port").and_then(|v| ini::parse_int(v)),
         hostname: opt_nonblank(keys.get("Hostname").cloned()),
         mlock: keys.get("Mlock").and_then(|v| ini::parse_bool(v)),
+        no_mmap: keys.get("NoMmap").and_then(|v| ini::parse_bool(v)),
         threads: keys.get("Threads").and_then(|v| ini::parse_int(v)),
         cache_reuse: keys.get("CacheReuse").and_then(|v| ini::parse_int(v)),
         threads_batch: keys.get("ThreadsBatch").and_then(|v| ini::parse_int(v)),
@@ -295,6 +309,11 @@ fn render(cfg: &ServerConfig) -> String {
     let mlock_lit = if mlock { "true" } else { "false" };
     // Always written like Mlock (a bool with a framework default), so an unset
     // one reloads as the explicit default rather than None.
+    let no_mmap_lit = if cfg.no_mmap_or_default() {
+        "true"
+    } else {
+        "false"
+    };
     let webui_lit = if cfg.webui_mcp_proxy_or_default() {
         "true"
     } else {
@@ -317,6 +336,10 @@ fn render(cfg: &ServerConfig) -> String {
 {port_line}
 Hostname = {hostname}
 Mlock = {mlock_lit}
+; NoMmap: read the weights into RAM instead of memory-mapping the GGUF
+; (--no-mmap). Off by default (llama.cpp mmaps). Slower to load and costs the
+; model's size in RAM, but the pages can't be dropped back to the file.
+NoMmap = {no_mmap_lit}
 ; WebuiMcpProxy: enable the built-in web UI's MCP CORS proxy (--webui-mcp-proxy).
 ; The bundled chat UI needs it to call MCP tools; disable on an untrusted network.
 WebuiMcpProxy = {webui_lit}
@@ -380,6 +403,7 @@ mod tests {
             port: Some(8081),
             hostname: Some("0.0.0.0".into()),
             mlock: Some(false),
+            no_mmap: Some(true),
             threads: Some(12),
             cache_reuse: Some(256),
             threads_batch: Some(24),
@@ -396,9 +420,9 @@ mod tests {
     }
 
     // The writer's DELIBERATE collapses, pinned as documented behavior:
-    // - Hostname/Mlock/WebuiMcpProxy/Fit/LogVerbosity are always written, so an
-    //   unset one reloads as the framework default (localhost / true / true /
-    //   false / 4) rather than None.
+    // - Hostname/Mlock/NoMmap/WebuiMcpProxy/Fit/LogVerbosity are always written,
+    //   so an unset one reloads as the framework default (localhost / true /
+    //   false / true / false / 4) rather than None.
     // - `keep` predicates turn unset/"not worth writing" values into commented
     //   hint lines: port <= 0, threads/threads_batch <= 0, models_max unset.
     //   An unset port reloads as None (not a forced 8080), so the UI "default"
@@ -410,6 +434,7 @@ mod tests {
         assert_eq!(reloaded.port, None);
         assert_eq!(reloaded.hostname.as_deref(), Some("localhost"));
         assert_eq!(reloaded.mlock, Some(true));
+        assert_eq!(reloaded.no_mmap, Some(false));
         assert_eq!(reloaded.webui_mcp_proxy, Some(true));
         assert_eq!(reloaded.fit, Some(false));
         assert_eq!(reloaded.log_verbosity, Some(4));

@@ -22,6 +22,7 @@ pub fn config_to_form(cfg: &server_cfg::ServerConfig) -> ServerForm {
         port_default: cfg.port.is_none(),
         hostname: cfg.hostname_or_default().into(),
         mlock: cfg.mlock_or_default(),
+        no_mmap: cfg.no_mmap_or_default(),
         // Thread counts are auto-flagged sliders: unset ⇒ "auto" (omit the flag).
         threads: cfg.threads.unwrap_or(0),
         threads_auto: cfg.threads.is_none(),
@@ -73,6 +74,7 @@ pub fn form_to_config(f: &ServerForm) -> server_cfg::ServerConfig {
         // re-blanks it through `hostname_or_default`.
         hostname: server_cfg::opt_nonblank(Some(f.hostname.to_string())),
         mlock: Some(f.mlock),
+        no_mmap: Some(f.no_mmap),
         // "auto" ⇒ omit the flag; otherwise the slider's value.
         threads: if f.threads_auto {
             None
@@ -125,6 +127,7 @@ mod tests {
             port: Some(9090),
             hostname: Some("0.0.0.0".into()),
             mlock: Some(false),
+            no_mmap: Some(true),
             threads: Some(8),
             cache_reuse: Some(256),
             threads_batch: Some(12),

@@ -141,6 +141,12 @@ fn server_args(
     if mlock {
         args.push("--mlock".into());
     }
+    // --no-mmap : presence flag, omitted when off (llama.cpp then mmaps the
+    //   GGUF, its own default). On, the weights are read into RAM up front —
+    //   slower to load, but the pages can't be dropped back to the file.
+    if cfg.no_mmap_or_default() {
+        args.push("--no-mmap".into());
+    }
     if let Some(cr) = cfg.cache_reuse {
         if cr > 0 {
             args.push("--cache-reuse".into());
@@ -433,6 +439,10 @@ mod tests {
         ] {
             assert!(!a.contains(&flag.to_string()), "{flag} must be omitted");
         }
+        assert!(
+            !a.contains(&"--no-mmap".to_string()),
+            "no-mmap defaults to false (llama.cpp mmaps)"
+        );
         // Framework policy flags and always-written fields remain present.
         assert!(a.contains(&"--mlock".to_string()), "mlock defaults to true");
         assert!(
@@ -474,6 +484,7 @@ mod tests {
             port: Some(9090),
             hostname: Some("0.0.0.0".into()),
             mlock: Some(true),
+            no_mmap: Some(true),
             threads: Some(6),
             cache_reuse: Some(64),
             threads_batch: Some(12),
@@ -490,6 +501,7 @@ mod tests {
             port,
             hostname,
             mlock,
+            no_mmap,
             threads,
             cache_reuse,
             threads_batch,
@@ -511,6 +523,8 @@ mod tests {
         assert!(pair("--port", port.unwrap().to_string()));
         assert!(pair("--host", hostname.unwrap()));
         assert_eq!(a.contains(&"--mlock".to_string()), mlock.unwrap());
+        // Presence flag like --mlock: Some(true) here ⇒ emitted.
+        assert_eq!(a.contains(&"--no-mmap".to_string()), no_mmap.unwrap());
         assert!(pair("-t", threads.unwrap().to_string()));
         assert!(pair("--cache-reuse", cache_reuse.unwrap().to_string()));
         assert!(pair("--threads-batch", threads_batch.unwrap().to_string()));

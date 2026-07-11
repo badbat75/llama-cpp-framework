@@ -46,6 +46,9 @@ pub struct ServerSet {
     pub hostname: Option<String>,
     #[arg(long)]
     pub mlock: Option<bool>,
+    /// Read the weights into RAM instead of mmapping the GGUF (--no-mmap). true = on.
+    #[arg(long)]
+    pub no_mmap: Option<bool>,
     /// CPU threads for generation. 0 or negative clears the override (auto).
     #[arg(long)]
     pub threads: Option<i32>,
@@ -96,6 +99,9 @@ impl ServerSet {
         }
         if let Some(m) = self.mlock {
             cfg.mlock = Some(m);
+        }
+        if let Some(nm) = self.no_mmap {
+            cfg.no_mmap = Some(nm);
         }
         if let Some(t) = self.threads {
             cfg.threads = if t > 0 { Some(t) } else { None };
@@ -168,6 +174,11 @@ fn show_lines(cfg: &server_cfg::ServerConfig) -> String {
         cfg.hostname.clone().unwrap_or_else(|| "-".into()),
     );
     row("Mlock:", cfg.mlock.map_or("-".into(), |v| v.to_string()));
+    row(
+        "NoMmap:",
+        cfg.no_mmap
+            .map_or_else(|| "false (default)".into(), |v| v.to_string()),
+    );
     row(
         "Threads:",
         cfg.threads.map_or_else(|| "auto".into(), |v| v.to_string()),
@@ -299,6 +310,7 @@ mod tests {
             port: Some(9000),
             hostname: Some("0.0.0.0".into()),
             mlock: Some(true),
+            no_mmap: Some(true),
             threads: Some(8),
             cache_reuse: Some(256),
             threads_batch: Some(16),
@@ -321,6 +333,7 @@ mod tests {
             port: Some(9000),
             hostname: Some("0.0.0.0".into()),
             mlock: Some(true),
+            no_mmap: Some(true),
             threads: Some(8),
             cache_reuse: Some(256),
             threads_batch: Some(16),
@@ -345,6 +358,7 @@ mod tests {
             port: Some(9000),
             hostname: Some("0.0.0.0".into()),
             mlock: Some(false),
+            no_mmap: Some(true),
             threads: Some(8),
             cache_reuse: Some(256),
             threads_batch: Some(16),
@@ -366,6 +380,7 @@ mod tests {
             port,
             hostname,
             mlock,
+            no_mmap,
             threads,
             cache_reuse,
             threads_batch,
@@ -382,6 +397,7 @@ mod tests {
             ("Port:", port.unwrap().to_string()),
             ("Hostname:", hostname.unwrap()),
             ("Mlock:", mlock.unwrap().to_string()),
+            ("NoMmap:", no_mmap.unwrap().to_string()),
             ("Threads:", threads.unwrap().to_string()),
             ("CacheReuse:", cache_reuse.unwrap().to_string()),
             ("ThreadsBatch:", threads_batch.unwrap().to_string()),

@@ -86,6 +86,9 @@ export struct ServerForm {
     port_default: bool,
     hostname: string,
     mlock: bool,
+    // --no-mmap: read the weights into RAM instead of mmapping the GGUF. Same
+    // plain-bool shape as `mlock`; checked = pass the flag (framework default: off).
+    no_mmap: bool,
     threads: int,
     threads_auto: bool,
     cache_reuse: int,

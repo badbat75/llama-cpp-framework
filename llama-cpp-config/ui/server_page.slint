@@ -68,6 +68,14 @@ export component ServerPage inherits ScrollView {
                 }
             }
             LabeledField {
+                label: "No mmap";
+                hint: "Reads the weights into RAM instead of memory-mapping the GGUF (--no-mmap).\nSlower to load and costs the model's size in RAM, but the pages can't be dropped back to the file. Pairs with Mlock, which only locks what is already resident.\ndefault = off (llama.cpp mmaps the file).";
+                CheckBox {
+                    text: "read weights into RAM instead of mmap";
+                    checked <=> AppState.server_form.no_mmap;
+                }
+            }
+            LabeledField {
                 label: "CPU threads";
                 hint: "--threads: CPU threads for generation.\ndefault = omit the flag → llama.cpp auto-detects the physical-core count. More won't help once GPU-bound. Max = logical processors.";
                 AutoSlider {
