@@ -2,10 +2,12 @@
 //! command from server.ini. `server_args()` is the single source of truth for the
 //! arg list, shared by `start()` (spawns the process) and `command_line()` (the
 //! human-readable, shell-pasteable rendering shown in the Server tab's Command
-//! Line card). `start()` additionally sets cwd = `paths::data_root()` and
-//! `LLAMA_CACHE` = ModelsDir, and appends both output streams to
-//! `logs\llama-server.log` — env/cwd/logging are NOT part of `command_line()`'s
-//! pasteable rendering, so a pasted command reproduces the args only.
+//! Line card). `start()` additionally sets cwd = `paths::data_root()`,
+//! `LLAMA_CACHE` = ModelsDir and the ROCm PATH prepend
+//! (`proc::prepend_rocm_path` — HIP devices vanish without it), and appends both
+//! output streams to `logs\llama-server.log` — env/cwd/logging are NOT part of
+//! `command_line()`'s pasteable rendering, so a pasted command reproduces the
+//! args only.
 
 use std::io;
 
@@ -229,6 +231,9 @@ pub fn start() -> io::Result<Option<crate::server_cfg::ServerConfig>> {
 
     cmd.current_dir(&data_root);
     cmd.env("LLAMA_CACHE", &models_dir);
+    // Make ggml-hip.dll loadable — the HIP SDK's bin dir isn't on the system
+    // PATH, and ggml silently skips a backend whose DLL deps don't resolve.
+    crate::proc::prepend_rocm_path(&mut cmd);
     // llama-server writes most of its logging (model load, request logs,
     // GGML asserts, crash traces) to stderr — capture both streams in the
     // same log file so the log isn't empty and crashes leave a trail.

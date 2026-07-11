@@ -93,7 +93,7 @@ The build script (`build.rs`) first regenerates `resources\llama.ico` if it's mi
 | `src\gui\` | Per-tab callback wiring, one file each — `server_tab.rs`, `models_tab.rs`, `integrations_tab.rs`, `tray.rs`, plus `log_window.rs` (the View-logs window: tail-follow state machine + poll timer) — each a `wire()` reaching `gui`'s helpers via `use super::*` |
 | `src\form.rs` | `PresetForm` ↔ `presets::Preset` conversion (`preset_to_form` / `form_to_preset`) + a round-trip test; defaults sourced from `Preset::default()` |
 | `src\server_form.rs` | `ServerForm` ↔ `server_cfg::ServerConfig` conversion (`config_to_form` / `form_to_config`) + a round-trip test — the server-side mirror of `form.rs` |
-| `src\proc.rs` | `run_hidden()`: launch a child process with `CREATE_NO_WINDOW` on Windows (shared by the device / version / run-state probes) |
+| `src\proc.rs` | `run_hidden()`: launch a child process with `CREATE_NO_WINDOW` on Windows (shared by the device / version / run-state probes); `prepend_rocm_path()`: put the ROCm bin dir on every llama-server child's PATH so ggml-hip.dll loads (the HIP SDK installer never adds it, and ggml silently skips an unloadable backend → HIP GPUs would enumerate as Vulkan-only) |
 | `src\server_cfg.rs` | Read/write `server.ini` (`from_keys` / `render` back `load` / `save`; save→load round-trip test pins the key names + `keep` rules) |
 | `src\presets.rs` | Read/write `presets.ini` (the `Preset` schema and INI round-trip) |
 | `src\model_scan.rs` | Walk `ModelsDir` for `.gguf` files; build model/draft option lists |
@@ -101,7 +101,7 @@ The build script (`build.rs`) first regenerates `resources\llama.ico` if it's mi
 | `src\gguf\ffi.rs` | The `ggml-base.dll` FFI behind `gguf.rs`: dynamic DLL load + a `KvSource` over a live `gguf_context` (Windows); a `None` stub elsewhere. Public surface: `ffi::open(path)` |
 | `src\devices.rs` | Enumerate GPU backends via `llama-server --list-devices` |
 | `src\ini.rs` | Minimal INI parser/writer (no external crate) |
-| `src\paths.rs` | Platform-specific config and log paths (`LLAMA_CPP_CONFIG_DATA_ROOT` redirects the whole tree — opencode.json and home-derived defaults included — test-only escape hatch, not an end-user knob) |
+| `src\paths.rs` | Platform-specific config and log paths (`LLAMA_CPP_CONFIG_DATA_ROOT` redirects the whole tree — opencode.json and home-derived defaults included — test-only escape hatch, not an end-user knob); also locates the ROCm runtime (`rocm_bin_dir`: `HIP_PATH`, else newest `%ProgramFiles%\AMD\ROCm\<ver>`) |
 | `src\integrations.rs` | opencode.json model list, Claude Code snippet |
 | `src\runstate.rs` | Detect if `llama-server` is running; start/stop it; render the launch command line (incl. `--webui-mcp-proxy` / `-fit` / `-lv`, exposed on the Server tab's Advanced card and defaulting to the framework's on / off / 4) |
 | `src\net_ifaces.rs` | Enumerate local network interfaces — populates the Server tab's "Bind to" dropdown |

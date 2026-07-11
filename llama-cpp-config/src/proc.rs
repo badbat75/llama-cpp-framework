@@ -11,6 +11,12 @@
 //! `run_hidden_probe` is the variant for the transient `llama-server.exe` probes
 //! (`devices --list-devices`, `server_version --version`): it registers the child
 //! PID in `PROBE_PIDS` for its lifetime so `runstate::is_running` can EXCLUDE it.
+//!
+//! Every llama-server child — the probes here and `runstate::start` — also gets
+//! the ROCm runtime dir prepended to its PATH (`prepend_rocm_path`): ggml loads
+//! backends dynamically and silently drops ggml-hip.dll when its imports don't
+//! resolve, and AMD's HIP SDK installer never puts its bin dir on the system
+//! PATH — without the prepend, HIP GPUs enumerate as Vulkan-only.
 //! Both share the `llama-server.exe` image name, so a probe running concurrently
 //! with the run-status poll otherwise reads as a live server — which made a fresh
 //! GUI (whose startup fires the probes and the poll together) wrongly flip to
@@ -46,6 +52,31 @@ pub fn hide_console(cmd: &mut Command) {
     }
 }
 
+/// Prepend the ROCm/HIP runtime dir (`paths::rocm_bin_dir`) to `cmd`'s PATH so
+/// ggml-hip.dll's imports (`amdhip64_*.dll`, `rocblas.dll`, …) resolve in the
+/// child. Apply to every llama-server we spawn (see the module header); a no-op
+/// when no ROCm install is found. Harmlessly duplicates the entry if the dir is
+/// already on PATH.
+pub fn prepend_rocm_path(cmd: &mut Command) {
+    if let Some(bin) = crate::paths::rocm_bin_dir() {
+        if let Some(path) = prepend_path_var(&bin, std::env::var_os("PATH")) {
+            cmd.env("PATH", path);
+        }
+    }
+}
+
+/// `dir` prepended to a PATH-shaped value. Pure so the precedence is testable.
+/// `None` only if the parts won't re-join (a dir embedding the separator —
+/// unreachable from real installs); the caller then leaves PATH untouched
+/// rather than risk clobbering it.
+fn prepend_path_var(dir: &Path, current: Option<std::ffi::OsString>) -> Option<std::ffi::OsString> {
+    let mut parts = vec![dir.to_path_buf()];
+    if let Some(cur) = &current {
+        parts.extend(std::env::split_paths(cur));
+    }
+    std::env::join_paths(parts).ok()
+}
+
 /// Run `exe` with `args`, capturing stdout/stderr. Returns `None` if the process
 /// can't be spawned. On Windows the child gets `CREATE_NO_WINDOW` (via
 /// `hide_console`) so no console window pops up for these background probes.
@@ -75,6 +106,7 @@ where
     let mut cmd = Command::new(exe);
     cmd.args(args).stdout(Stdio::piped()).stderr(Stdio::piped());
     hide_console(&mut cmd);
+    prepend_rocm_path(&mut cmd);
     let child = cmd.spawn().ok()?;
     let pid = child.id();
     PROBE_PIDS.lock().expect("PROBE_PIDS lock").push(pid);
@@ -95,4 +127,32 @@ pub fn combined_output(output: &Output) -> String {
     s.push('\n');
     s.push_str(&String::from_utf8_lossy(&output.stderr));
     s
+}
+
+#[cfg(test)]
+mod tests {
+    use super::prepend_path_var;
+    use std::path::{Path, PathBuf};
+
+    #[test]
+    fn prepend_path_var_puts_dir_first_and_keeps_the_rest() {
+        let current = std::env::join_paths([Path::new("a"), Path::new("b")]).unwrap();
+        let joined = prepend_path_var(Path::new("rocm_bin"), Some(current)).unwrap();
+        let parts: Vec<PathBuf> = std::env::split_paths(&joined).collect();
+        assert_eq!(
+            parts,
+            vec![
+                PathBuf::from("rocm_bin"),
+                PathBuf::from("a"),
+                PathBuf::from("b")
+            ]
+        );
+    }
+
+    #[test]
+    fn prepend_path_var_without_current_is_just_the_dir() {
+        let joined = prepend_path_var(Path::new("rocm_bin"), None).unwrap();
+        let parts: Vec<PathBuf> = std::env::split_paths(&joined).collect();
+        assert_eq!(parts, vec![PathBuf::from("rocm_bin")]);
+    }
 }

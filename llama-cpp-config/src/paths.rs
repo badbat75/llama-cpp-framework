@@ -1,12 +1,14 @@
 //! Paths for the llama.cpp-framework configuration tool.
 //!
-//! Three jobs: (1) the user runtime tree — %LOCALAPPDATA%\llama.cpp\ on Windows
+//! Four jobs: (1) the user runtime tree — %LOCALAPPDATA%\llama.cpp\ on Windows
 //! (config\server.ini, config\presets.ini, logs\llama-server.log), overridable
 //! for tests via LLAMA_CPP_CONFIG_DATA_ROOT; (2) locating llama-server.exe
 //! across the installer and dev layouts (`llama_server_exe`, which also strips
 //! canonicalize()'s \\?\ prefix so the path is shell-pasteable); (3) the ONE
 //! path outside that tree — OpenCode's user config (`opencode_user_config`,
-//! ~/.config/opencode/opencode.json), used by the Integrations tab.
+//! ~/.config/opencode/opencode.json), used by the Integrations tab; (4) locating
+//! the ROCm/HIP runtime (`rocm_bin_dir`) so `proc` can make ggml-hip.dll
+//! loadable in the llama-server children we spawn.
 
 use std::path::PathBuf;
 
@@ -88,6 +90,55 @@ pub fn opencode_user_config() -> PathBuf {
         .join("opencode.json")
 }
 
+/// The ROCm/HIP runtime dir on Windows (`…\AMD\ROCm\<ver>\bin`, home of
+/// `amdhip64_*.dll` / `rocblas.dll`). AMD's HIP SDK installer sets the
+/// machine-wide `HIP_PATH` env var but does NOT add this dir to the system
+/// PATH — and ggml loads backends dynamically, silently dropping ggml-hip.dll
+/// when its imports don't resolve, so HIP GPUs then enumerate as Vulkan-only.
+/// `proc::prepend_rocm_path` feeds this to every llama-server child. Primary
+/// signal is `HIP_PATH`; fallback scans `%ProgramFiles%\AMD\ROCm` for the
+/// newest versioned install. `None` when no ROCm is found, and on non-Windows
+/// (there the loader resolves the runtime without PATH).
+pub fn rocm_bin_dir() -> Option<PathBuf> {
+    #[cfg(windows)]
+    {
+        if let Some(hip) = env_path("HIP_PATH") {
+            let bin = hip.join("bin");
+            if bin.is_dir() {
+                return Some(bin);
+            }
+        }
+        let root = env_path("ProgramFiles")?.join("AMD").join("ROCm");
+        let versions: Vec<String> = std::fs::read_dir(&root)
+            .ok()?
+            .flatten()
+            .filter(|e| e.path().join("bin").is_dir())
+            .filter_map(|e| e.file_name().into_string().ok())
+            .collect();
+        let newest = newest_version(&versions)?;
+        Some(root.join(newest).join("bin"))
+    }
+    #[cfg(not(windows))]
+    {
+        None
+    }
+}
+
+/// The highest version-shaped name ("7.1", "6.4.2") in `names`, compared by
+/// numeric components — a string sort would rank "7.1" above "10.0". Names
+/// with any non-numeric component are ignored.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn newest_version(names: &[String]) -> Option<&String> {
+    fn key(name: &str) -> Option<Vec<u32>> {
+        name.split('.').map(|c| c.parse().ok()).collect()
+    }
+    names
+        .iter()
+        .filter_map(|n| key(n).map(|k| (k, n)))
+        .max_by(|a, b| a.0.cmp(&b.0))
+        .map(|(_, n)| n)
+}
+
 fn server_binary_name() -> &'static str {
     if cfg!(windows) {
         "llama-server.exe"
@@ -147,4 +198,31 @@ fn strip_extended_prefix(p: PathBuf) -> PathBuf {
         }
     }
     p
+}
+
+#[cfg(test)]
+mod tests {
+    use super::newest_version;
+
+    fn names(v: &[&str]) -> Vec<String> {
+        v.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn newest_version_compares_numerically_not_lexically() {
+        let n = names(&["6.2", "10.0", "7.1"]);
+        assert_eq!(newest_version(&n).map(String::as_str), Some("10.0"));
+    }
+
+    #[test]
+    fn newest_version_handles_mixed_depth_and_ignores_non_numeric() {
+        let n = names(&["6.4.2", "6.4", "temp", "7.1-beta"]);
+        assert_eq!(newest_version(&n).map(String::as_str), Some("6.4.2"));
+    }
+
+    #[test]
+    fn newest_version_none_when_nothing_version_shaped() {
+        assert_eq!(newest_version(&names(&["bin", "docs"])), None);
+        assert_eq!(newest_version(&[]), None);
+    }
 }
