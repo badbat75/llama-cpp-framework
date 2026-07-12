@@ -9,11 +9,13 @@
 //   `AutoSlider` (Slider + "default" checkbox, the push-binding pattern),
 //   `DefaultSpinBox` / `DefaultLineEdit` (a "default" checkbox + an int SpinBox
 //   / float LineEdit — the "value, or omit the flag" pattern for numeric fields),
-//   `SplitFields` (GPU split-mode + tensor-split pair, Server + Models tabs)
+//   `GpuSplitTable` (the GPU distribution table — which devices + what weights,
+//   i.e. --device + --tensor-split + --split-mode; Server + Models tabs)
 // - list rows/panels: `SelectableRow` / `AccentBar`, `ListPanel` (the bordered
 //   list container around the preset list + the New/Clone model picker)
 
 import { ComboBox, LineEdit, CheckBox, Slider, SpinBox, Button, Palette } from "std-widgets.slint";
+import { GpuRow } from "types.slint";
 
 // Canonical transparency levels for muted text and selection tints, so every
 // page pulls from the same handful of values instead of eyeballing a new alpha.
@@ -557,39 +559,258 @@ export component FormActions inherits HorizontalLayout {
     }
 }
 
-// The "GPU split mode" + "Tensor split" field pair, shared by the Server tab
-// (server-wide default) and the Models tab (per-preset override). Both fields
-// disable when a single GPU `device` is pinned — one device has nothing to
-// split — so that guard lives here once instead of at four field sites. The
-// two hints and the tensor-split placeholder differ per tab (inputs);
-// `split_mode`/`tensor_split` two-way-chain to the caller's AppState field
-// (same `<=>`-through-a-component pattern as AutoSlider.auto). `split_mode` must
-// stay a non-empty member of Options.split_modes ("default" when unset — the
-// form conversions guarantee it) or the ComboBox shows a blank current row.
-export component SplitFields inherits VerticalLayout {
-    in property <string> device;
+// The GPU distribution table: which devices a model runs on and in what
+// proportion, shared by the Server tab (server-wide default) and the Models tab
+// (per-preset override). It replaces what used to be a single-select "GPU device"
+// ComboBox plus a free-text "Tensor split" LineEdit — two fields that only make
+// sense read together, because `--tensor-split` is a positional vector indexed
+// over the devices named by `--device`, in `--device` order. Typing `3,1` against
+// an unseen, unchosen device list (six entries on a CUDA+ROCm box, half of them
+// duplicate Vulkan views) is guesswork; a table isn't.
+//
+// Rust owns everything: `rows`, `summary`, `selected` and `weight_total` are all
+// pushed from src/gpu_split.rs, which renders the selection back into the form's
+// `device` + `tensor_split` strings. The .slint side only reports edits, and it
+// addresses devices BY ID, never by row index.
+//
+// Rows are always in `--list-devices` order, checked or not — a toggle changes
+// checkmarks, never positions. An earlier cut listed the checked devices first,
+// which re-sorted the table under the cursor: the next click landed on whatever
+// row had slid into that spot, and that is how a model got pinned to an iGPU that
+// cannot run inference. Because every edit also re-sorts the `device` list into
+// this same order, the checked rows read top-to-bottom ARE the --device list and
+// its --tensor-split vector.
+//
+// BINDING NOTE (the sanctioned one-way `for`-row exception, same as the
+// Integrations checkboxes): `checked: row.enabled` and `value: row.weight` are
+// one-way, and a click/edit self-assigns them, permanently breaking THAT
+// delegate's binding. Two rules keep that invisible:
+//   1. toggle / Auto / Even / preset switch / device probe REBUILD the whole row
+//      model, so every delegate gets a fresh binding (gui::refresh_gpu_rows).
+//   2. a weight edit changes no OTHER row's weight, so it needs no rebuild at
+//      all — which is exactly why the SpinBoxes stay disabled in Auto mode
+//      (leaving Auto seeds every weight; that's what the Even button is for).
+// The share column reads the SpinBox's LIVE value (`w.value`), not `row.weight`,
+// so it keeps up with a broken-binding delegate.
+export component GpuSplitTable inherits VerticalLayout {
+    in property <[GpuRow]> rows;
+    in property <string> summary;
+    // Checked devices, and the sum of their weights (0 = Auto: a blank
+    // --tensor-split, which llama.cpp fills in from each device's FREE VRAM at
+    // load time — not an even split).
+    in property <int> selected;
+    in property <int> weight_total;
+    // Non-empty to show a warning strip above the table (the Models tab uses it
+    // for "a server-wide selection overrides this one at launch").
+    in property <string> warning;
     in property <string> split_mode_hint;
-    in property <string> tensor_split_hint;
-    in property <string> tensor_split_placeholder;
     in-out property <string> split_mode;
-    in-out property <string> tensor_split;
+    callback toggled(string);
+    callback weight_edited(string, int);
+    callback auto_split();
+    callback even_split();
+
+    property <bool> weights_editable: root.selected >= 2 && root.weight_total > 0;
+
+    pure function share_text(enabled: bool, weight: int) -> string {
+        if (!enabled) {
+            return "—";
+        }
+        if (root.selected < 2) {
+            return "100%";
+        }
+        if (root.weight_total <= 0) {
+            return "auto";
+        }
+        return "\{Math.round(weight * 100 / root.weight_total)}%";
+    }
+
     spacing: 10px;
+
+    if root.warning != "" : Text {
+        text: root.warning;
+        wrap: word-wrap;
+        font-size: 12px;
+        color: Tokens.err;
+    }
+
+    // Header row. Column widths are repeated verbatim by the delegate below —
+    // there is no grid here, just two HorizontalLayouts kept in step by hand.
+    HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 12px;
+        spacing: 8px;
+        Rectangle { width: 24px; }
+        Text {
+            text: "Device";
+            horizontal-stretch: 1;
+            font-size: 12px;
+            color: Palette.foreground.transparentize(Tokens.muted);
+        }
+        Text {
+            width: 120px;
+            text: "VRAM";
+            font-size: 12px;
+            color: Palette.foreground.transparentize(Tokens.muted);
+        }
+        Text {
+            width: 84px;
+            text: "Weight";
+            font-size: 12px;
+            color: Palette.foreground.transparentize(Tokens.muted);
+        }
+        Text {
+            width: 52px;
+            text: "Share";
+            horizontal-alignment: right;
+            font-size: 12px;
+            color: Palette.foreground.transparentize(Tokens.muted);
+        }
+    }
+
+    if root.rows.length == 0 : Text {
+        text: "Detecting GPUs…";
+        font-size: 13px;
+        color: Palette.foreground.transparentize(Tokens.muted);
+    }
+
+    for row[i] in root.rows : Rectangle {
+        height: 40px;
+        // Tint with the WINDOW background: these rows sit on a SectionCard, whose
+        // surface IS alternate-background — tinting with the card's own colour
+        // would composite to exactly itself. Same trick as integrations_page.
+        background: Math.mod(i, 2) == 0 ? transparent : Palette.background.transparentize(Tokens.zebra);
+
+        HorizontalLayout {
+            padding-left: 12px;
+            padding-right: 12px;
+            padding-top: 4px;
+            padding-bottom: 4px;
+            spacing: 8px;
+
+            CheckBox {
+                width: 24px;
+                text: "";
+                // Findable handle for the e2e table phase (src/tests/save_flow.rs)
+                // — text is empty by design.
+                accessible-label: "gpu-" + row.id;
+                checked: row.enabled;
+                toggled => {
+                    root.toggled(row.id);
+                }
+            }
+
+            HorizontalLayout {
+                horizontal-stretch: 1;
+                spacing: 8px;
+                Text {
+                    width: 64px;
+                    text: row.id;
+                    vertical-alignment: center;
+                    font-size: 13px;
+                    font-weight: 600;
+                    color: Palette.foreground;
+                }
+                Text {
+                    text: row.name;
+                    vertical-alignment: center;
+                    font-size: 13px;
+                    overflow: elide;
+                    horizontal-stretch: 1;
+                    // A selected device the probe doesn't know (stale config, or
+                    // the probe hasn't landed) reads as an absence, not a GPU.
+                    color: row.detected
+                        ? Palette.foreground
+                        : Palette.foreground.transparentize(Tokens.faint);
+                }
+            }
+
+            Text {
+                width: 120px;
+                text: row.vram;
+                vertical-alignment: center;
+                font-size: 13px;
+                color: Palette.foreground.transparentize(Tokens.faint);
+            }
+
+            Rectangle {
+                width: 84px;
+                w := SpinBox {
+                    x: 0;
+                    y: 0;
+                    width: parent.width;
+                    height: parent.height;
+                    visible: row.enabled;
+                    enabled: root.weights_editable;
+                    minimum: 0;
+                    maximum: 999;
+                    value: row.weight;
+                    edited(v) => {
+                        root.weight_edited(row.id, v);
+                    }
+                }
+                Text {
+                    width: parent.width;
+                    height: parent.height;
+                    visible: !row.enabled;
+                    text: "—";
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                    font-size: 13px;
+                    color: Palette.foreground.transparentize(Tokens.faint);
+                }
+            }
+
+            Text {
+                width: 52px;
+                text: root.share_text(row.enabled, w.value);
+                horizontal-alignment: right;
+                vertical-alignment: center;
+                font-size: 13px;
+                color: Palette.foreground;
+            }
+        }
+    }
+
+    HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 12px;
+        spacing: 8px;
+        Button {
+            text: "Auto";
+            enabled: root.selected >= 2 && root.weight_total > 0;
+            clicked => {
+                root.auto_split();
+            }
+        }
+        Button {
+            text: "Even";
+            enabled: root.selected >= 2;
+            clicked => {
+                root.even_split();
+            }
+        }
+        Text {
+            text: root.summary;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+            overflow: elide;
+            font-size: 12px;
+            color: Palette.foreground.transparentize(Tokens.faint);
+        }
+    }
+
     LabeledField {
         label: "GPU split mode";
         hint: root.split_mode_hint;
         EnumComboBox {
-            enabled: root.device == "";
+            // One device has nothing to split. Zero means "all detected devices",
+            // which llama.cpp still splits — so the combo stays live there.
+            // `split_mode` is never "" (the form conversions map empty →
+            // "default"), or the ComboBox would show a blank current row.
+            enabled: root.selected != 1;
             options: Options.split_modes;
             value <=> root.split_mode;
-        }
-    }
-    LabeledField {
-        label: "Tensor split";
-        hint: root.tensor_split_hint;
-        LineEdit {
-            enabled: root.device == "";
-            text <=> root.tensor_split;
-            placeholder-text: root.tensor_split_placeholder;
         }
     }
 }

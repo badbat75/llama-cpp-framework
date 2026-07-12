@@ -11,7 +11,7 @@
 // The tray (`AppTray` in app.slint) is a separate root and does NOT use this
 // global — it keeps its own pushed-in state.
 
-import { PresetSummary, PresetForm, ServerForm, IntegrationModel } from "types.slint";
+import { PresetSummary, PresetForm, ServerForm, IntegrationModel, GpuRow } from "types.slint";
 import { Options } from "components.slint";
 
 export global AppState {
@@ -74,13 +74,28 @@ export global AppState {
     in-out property <[string]> bind_values;
     in-out property <int> bind_index: 0;
 
-    // Server-wide GPU-device dropdown triple, derived from the async
-    // `--list-devices` probe. The raw device list itself is Rust-only
-    // (`devices::probed()`), not published here. The per-preset twins
-    // (model + draft device) live under "Models tab state" below.
-    in-out property <[string]> server_dev_labels;
-    in-out property <[string]> server_dev_values;
-    in-out property <int> server_dev_index: 0;
+    // Server-wide GPU distribution table (GpuSplitTable). Rows come from the
+    // async `--list-devices` probe crossed with `server_form.device` /
+    // `.tensor_split` — Rust owns both the row model and the strings it renders
+    // back into (src/gpu_split.rs). The per-preset twin lives under "Models tab
+    // state" below; the raw device list stays Rust-only (`devices::probed()`).
+    in-out property <[GpuRow]> server_gpu_rows;
+    // The llama-server flags this selection produces, shown under the table.
+    in-out property <string> server_gpu_summary;
+    // How many devices are checked. Drives the split-mode combo (one device has
+    // nothing to split) and the weight column (so does zero).
+    in-out property <int> server_gpu_selected: 0;
+    // Sum of the checked devices' weights. 0 = Auto (blank --tensor-split →
+    // llama.cpp splits by free VRAM); any positive value means explicit weights,
+    // and is the denominator behind the table's Share column.
+    in-out property <int> server_gpu_total: 0;
+
+    // Vision-encoder (mmproj) device dropdown triple. Its own list because the
+    // CLIP context ignores --device entirely: llama.cpp grabs the first GPU
+    // backend it finds unless MTMD_BACKEND_DEVICE names one (see runstate::start).
+    in-out property <[string]> mmproj_dev_labels;
+    in-out property <[string]> mmproj_dev_values;
+    in-out property <int> mmproj_dev_index: 0;
 
     // ── Models tab state ─────────────────────────────────────────────
     in-out property <[PresetSummary]> presets;
@@ -96,12 +111,20 @@ export global AppState {
     in-out property <string> presets_path: "";
     in-out property <string> presets_filter: "";
 
-    // Per-preset GPU-device dropdown triples (model device + draft device),
-    // fed from the same `devices::probed()` cache as the server-wide triple
-    // under "Server tab state" above.
-    in-out property <[string]> preset_dev_labels;
-    in-out property <[string]> preset_dev_values;
-    in-out property <int> preset_dev_index: 0;
+    // Per-preset GPU distribution table — the twin of the server-wide one above,
+    // over `form.device` / `form.tensor_split`. Overridden at launch by a
+    // server-wide selection (llama-server's router copies its OWN CLI args over
+    // every preset key), which is what `gpu_override_warning` says out loud.
+    in-out property <[GpuRow]> preset_gpu_rows;
+    in-out property <string> preset_gpu_summary;
+    in-out property <int> preset_gpu_selected: 0;
+    in-out property <int> preset_gpu_total: 0;
+    out property <string> gpu_override_warning: server_form.device == "" ? ""
+        : "The Server tab pins GPUs (" + server_form.device + "). llama-server passes that on its own command line, which overrides every preset's selection — this table won't apply until the server-wide one is cleared.";
+
+    // Draft-model GPU-device dropdown triple, fed from the same
+    // `devices::probed()` cache as the tables above. Still a dropdown, not a
+    // table: --device-draft takes ONE device (a draft is never split).
     in-out property <[string]> preset_draft_dev_labels;
     in-out property <[string]> preset_draft_dev_values;
     in-out property <int> preset_draft_dev_index: 0;
@@ -164,6 +187,16 @@ export global AppState {
     // Speculative-decoding controls are active when a draft model is selected OR
     // the main model embeds MTP heads — otherwise there is nothing to draft with.
     out property <bool> draft_active: form.model_draft != "" || model_info_embeds_mtp;
+    // …but the draft PLACEMENT controls (--device-draft, --n-gpu-layers-draft)
+    // need a separate draft FILE, not just a draft. llama.cpp applies both only
+    // inside `if (has_dft())`, i.e. when a --model-draft path was given; with
+    // embedded MTP heads it builds the draft context against the target model
+    // itself ("MTP draft context lives on the target model" — server-context.cpp),
+    // so the draft runs on the MODEL's device and both flags are silently ignored.
+    // Enabling them anyway is how a draft ends up "pinned" to a GPU that then sits
+    // idle. `embedded_mtp_note` explains that where the controls are.
+    out property <bool> draft_file_active: form.model_draft != "";
+    out property <bool> embedded_mtp_note: draft_active && !draft_file_active;
 
     // ── New-preset dialog state ─────────────────────────────────────
     in-out property <bool> show_new_kind_picker: false;
@@ -216,6 +249,20 @@ export global AppState {
     callback save_server();
     callback revert_server();
     callback browse_models_dir(string) -> string;
+
+    // GPU distribution table, one set per scope (server-wide / per-preset). Every
+    // edit is a whole-selection rewrite in Rust (src/gpu_split.rs): the handler
+    // rewrites the form's `device` + `tensor_split` strings, then REBUILDS the row
+    // model. Devices are addressed by id, never by row index. See GpuSplitTable's
+    // binding note (and why the row ORDER is fixed to the probe's).
+    callback server_gpu_toggle(string);
+    callback server_gpu_weight(string, int);
+    callback server_gpu_auto();
+    callback server_gpu_even();
+    callback preset_gpu_toggle(string);
+    callback preset_gpu_weight(string, int);
+    callback preset_gpu_auto();
+    callback preset_gpu_even();
 
     callback select_preset(int);
     callback save_preset();

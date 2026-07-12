@@ -12,6 +12,7 @@ mod cli;
 mod devices;
 mod form;
 mod gguf;
+mod gpu_split;
 mod gui;
 mod ini;
 mod integrations;

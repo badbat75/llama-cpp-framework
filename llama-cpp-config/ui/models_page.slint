@@ -2,12 +2,12 @@
 // (state.slint); this component lays out the widgets against it.
 //
 // Layout: preset list (left column) | editor cards (right, grep `heading:`):
-// Assets → Model info → Hardware Config → Resource / context → KV cache →
-// Chat / reasoning → Sampling overrides → Advanced → Speculative decoding,
-// then the FormActions row.
+// Assets → Model info → GPU distribution → Hardware Config → Resource / context →
+// KV cache → Chat / reasoning → Sampling overrides → Advanced →
+// Speculative decoding, then the FormActions row.
 
 import { LineEdit, ComboBox, CheckBox, Button, ListView, ScrollView, Palette } from "std-widgets.slint";
-import { SectionCard, LabeledField, InfoRow, SegmentedControl, MappedComboBox, EnumComboBox, AutoSlider, DefaultSpinBox, DefaultLineEdit, FormActions, SelectableRow, ListPanel, SplitFields, Tokens, Options } from "components.slint";
+import { SectionCard, LabeledField, InfoRow, SegmentedControl, MappedComboBox, EnumComboBox, AutoSlider, DefaultSpinBox, DefaultLineEdit, FormActions, SelectableRow, ListPanel, GpuSplitTable, Tokens, Options } from "components.slint";
 import { AppState } from "state.slint";
 
 export component ModelsPage inherits HorizontalLayout {
@@ -148,8 +148,17 @@ export component ModelsPage inherits HorizontalLayout {
                     }
                 }
                 LabeledField {
+                    label: "Vision on GPU";
+                    hint: "Offload the multimodal projector — the mmproj/CLIP image encoder — to GPU (--mmproj-offload / --no-mmproj-offload).\nOn (llama.cpp's default) it holds VRAM for as long as the model is loaded but only computes on image requests. Off keeps it on CPU: slower image encoding, no VRAM.\nWHICH GPU it lands on is a separate question — see 'Vision encoder' on the Server tab.";
+                    CheckBox {
+                        enabled: AppState.form.mmproj != "";
+                        text: "offload the image encoder to GPU";
+                        checked <=> AppState.form.mmproj_offload;
+                    }
+                }
+                LabeledField {
                     label: "Draft model";
-                    hint: "Optional speculator (feeds --model-draft).\nMTP heads (from mtps\\) set --spec-type draft-mtp; DFlash drafters (from dflashs\\) set draft-dflash.\nPicking one auto-pins the draft to the server GPU, or CPU if none.\n(none) = no speculation.";
+                    hint: "Optional speculator (feeds --model-draft).\nMTP heads (from mtps\\) set --spec-type draft-mtp; DFlash drafters (from dflashs\\) set draft-dflash.\nPicking one auto-pins the draft to the server GPU, or CPU if none.\n(none) = no speculation.\nLeave at (none) when the MAIN model already embeds MTP heads — those need only Spec type.";
                     // A raw ComboBox (not MappedComboBox): the handler needs the
                     // selected INDEX to read the Rust-side `State.draft_rows`
                     // cache (the per-row --model-draft/--spec-type pairs), not
@@ -250,27 +259,31 @@ export component ModelsPage inherits HorizontalLayout {
             }
 
             SectionCard {
-                heading: "Hardware Config";
-                LabeledField {
-                    label: "GPU device";
-                    hint: "GPU this model runs on (--device, e.g. CUDA0).\nOverrides the server default.\nBlank = use server default.";
-                    MappedComboBox {
-                        labels: AppState.preset_dev_labels;
-                        values: AppState.preset_dev_values;
-                        index <=> AppState.preset_dev_index;
-                        picked(v) => { AppState.form.device = v; }
-                    }
+                heading: "GPU distribution";
+                Text {
+                    text: "Which GPUs THIS model runs on (--device) and how much of it each one holds (--tensor-split). Checking nothing inherits the server default. Two GPUs of different sizes? Check both and give the bigger one a bigger weight.";
+                    wrap: word-wrap;
+                    font-size: 12px;
+                    color: Palette.foreground.transparentize(Tokens.muted);
                 }
-                // Disabled when the GPU device above pins one device; form.split_mode
-                // is never "" (preset_to_form maps empty → "default"). See SplitFields.
-                SplitFields {
-                    device: AppState.form.device;
+                GpuSplitTable {
+                    rows: AppState.preset_gpu_rows;
+                    summary: AppState.preset_gpu_summary;
+                    selected: AppState.preset_gpu_selected;
+                    weight_total: AppState.preset_gpu_total;
+                    warning: AppState.gpu_override_warning;
+                    // form.split_mode is never "" (preset_to_form maps empty → "default").
                     split_mode <=> AppState.form.split_mode;
-                    tensor_split <=> AppState.form.tensor_split;
-                    split_mode_hint: "Multi-GPU split for this model (--split-mode), overrides the server default; same on CUDA and HIP.\nlayer splits layers + KV; row is tensor-parallel; none = single GPU.\ndefault = inherit server.\nIgnored when the GPU device above pins one device (a server-wide pin also bypasses it at launch).";
-                    tensor_split_hint: "Per-GPU weight proportions for this model (--tensor-split), e.g. 3,1 (75%/25%).\nOverrides the server default.\nBlank = inherit server / even split.";
-                    tensor_split_placeholder: "e.g. 3,1  (blank = server default)";
+                    split_mode_hint: "Multi-GPU split for this model (--split-mode), overrides the server default; same on CUDA and HIP.\nlayer splits layers + KV; row is tensor-parallel; none = single GPU.\ndefault = inherit server.\nIrrelevant with one GPU checked.";
+                    toggled(id) => { AppState.preset_gpu_toggle(id); }
+                    weight_edited(id, w) => { AppState.preset_gpu_weight(id, w); }
+                    auto_split() => { AppState.preset_gpu_auto(); }
+                    even_split() => { AppState.preset_gpu_even(); }
                 }
+            }
+
+            SectionCard {
+                heading: "Hardware Config";
                 LabeledField {
                     label: "GPU layers";
                     hint: "--n-gpu-layers: model layers offloaded to GPU.\nSlider max = the model's layer count (all on GPU); lower keeps layers on CPU to save VRAM.\ndefault = omit the flag → llama.cpp offloads ALL layers to GPU (the framework runs with -fit off, so there is no auto-fit to VRAM — a model too big to fit will fail to load).";
@@ -291,12 +304,27 @@ export component ModelsPage inherits HorizontalLayout {
                         usable: AppState.model_info_has_moe;
                     }
                 }
+                // The two draft-PLACEMENT knobs below need a separate draft FILE,
+                // not merely a draft: llama.cpp reads --device-draft and
+                // --n-gpu-layers-draft only inside `if (has_dft())`, which is
+                // false without --model-draft. With embedded MTP heads it builds
+                // the draft context against the target model itself, so the draft
+                // runs wherever the MODEL does and both flags are ignored — a pin
+                // set here would look effective (VRAM even shows up on that card,
+                // from the vision encoder) while the GPU never drafts a token.
+                // Hence draft_file_active, not draft_active. See state.slint.
+                if AppState.embedded_mtp_note : Text {
+                    text: "Embedded MTP heads: the draft runs inside the main model's context, on the model's own GPU. Draft device and Draft GPU layers apply only to a separate draft model file, so they stay disabled here.";
+                    wrap: word-wrap;
+                    font-size: 12px;
+                    color: Palette.foreground.transparentize(Tokens.muted);
+                }
                 LabeledField {
                     label: "Draft device";
-                    hint: "GPU for the draft model (--device-draft).\nPin to ONE device — multi-GPU auto-split crashes MTP heads.\nBlank = auto / same as model.";
+                    hint: "GPU for a separate draft model file (--device-draft).\nPin to ONE device — multi-GPU auto-split crashes MTP heads.\nIgnored (and disabled) with embedded MTP heads: that draft shares the main model's context and device.\nBlank = auto / same as model.";
                     MappedComboBox {
-                        // Active only when a draft is available (selected or embedded MTP).
-                        enabled: AppState.draft_active;
+                        // Needs a draft FILE — llama.cpp ignores it otherwise.
+                        enabled: AppState.draft_file_active;
                         labels: AppState.preset_draft_dev_labels;
                         values: AppState.preset_draft_dev_values;
                         index <=> AppState.preset_draft_dev_index;
@@ -305,7 +333,7 @@ export component ModelsPage inherits HorizontalLayout {
                 }
                 LabeledField {
                     label: "Draft GPU layers";
-                    hint: "Draft-model layers offloaded to GPU (--n-gpu-layers-draft).\nA drafter with real layers (e.g. DFlash) gets a 0..layer-count slider.\nAn MTP/nextn head has no transformer layers (block_count 0), so it becomes a plain CPU/GPU switch.\nPin a device above — multi-GPU auto-split crashes MTP heads.\ndefault = omit the flag → llama.cpp offloads ALL draft layers to GPU.";
+                    hint: "Layers of a separate draft model file offloaded to GPU (--n-gpu-layers-draft).\nA drafter with real layers (e.g. DFlash) gets a 0..layer-count slider.\nAn MTP/nextn head file has no transformer layers (block_count 0), so it becomes a plain CPU/GPU switch.\nPin a device above — multi-GPU auto-split crashes MTP heads.\nIgnored (and disabled) with embedded MTP heads.\ndefault = omit the flag → llama.cpp offloads ALL draft layers to GPU.";
                     // Real drafter (block_count > 0): the same auto + slider +
                     // readout row as the other layer knobs — one canonical
                     // implementation (AutoSlider) instead of an inline copy.
@@ -313,8 +341,7 @@ export component ModelsPage inherits HorizontalLayout {
                         auto <=> AppState.form.n_gpu_layers_draft_auto;
                         value <=> AppState.form.n_gpu_layers_draft;
                         maximum: AppState.draft_layers_max;
-                        // Active only when a draft is available (selected or embedded MTP).
-                        usable: AppState.draft_active;
+                        usable: AppState.draft_file_active;
                     }
                     // MTP/nextn head (0 layers) or no header: auto checkbox + a
                     // binary CPU/GPU choice. A SegmentedControl (not a Switch):
@@ -324,13 +351,12 @@ export component ModelsPage inherits HorizontalLayout {
                     // class). on GPU = all draft layers, on CPU = 0.
                     if AppState.model_info_draft_n_layer == 0 : CheckBox {
                         text: "default";
-                        // Active only when a draft is available (selected or embedded MTP).
-                        enabled: AppState.draft_active;
+                        enabled: AppState.draft_file_active;
                         checked <=> AppState.form.n_gpu_layers_draft_auto;
                     }
                     if AppState.model_info_draft_n_layer == 0 : SegmentedControl {
                         horizontal-stretch: 1;
-                        enabled: !AppState.form.n_gpu_layers_draft_auto && AppState.draft_active;
+                        enabled: !AppState.form.n_gpu_layers_draft_auto && AppState.draft_file_active;
                         options: ["on GPU", "on CPU"];
                         current: AppState.form.n_gpu_layers_draft >= 1 ? "on GPU" : "on CPU";
                         activated(v) => { AppState.form.n_gpu_layers_draft = v == "on GPU" ? Options.all_layers : 0; }

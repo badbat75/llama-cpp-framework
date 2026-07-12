@@ -46,6 +46,7 @@ pub fn preset_to_form(p: &presets::Preset) -> PresetForm {
         id: p.id.clone().into(),
         model: p.model.clone().into(),
         mmproj: p.mmproj.clone().into(),
+        mmproj_offload: p.mmproj_offload.or(d.mmproj_offload).unwrap_or_default(),
         model_draft: p.model_draft.clone().into(),
         spec_type: if p.spec_type.is_empty() {
             "none".into()
@@ -105,6 +106,7 @@ pub fn form_to_preset(f: &PresetForm) -> presets::Preset {
         id: f.id.to_string(),
         model: f.model.to_string(),
         mmproj: f.mmproj.to_string(),
+        mmproj_offload: Some(f.mmproj_offload),
         model_draft: f.model_draft.to_string(),
         spec_type: match f.spec_type.as_str() {
             "" | "none" => String::new(),
@@ -229,12 +231,13 @@ mod tests {
             id: "round".into(),
             model: r"E:\m\model.gguf".into(),
             mmproj: r"E:\mmprojs\clip.gguf".into(),
+            mmproj_offload: Some(false),
             model_draft: r"E:\mtps\model-mtp.gguf".into(),
             spec_type: "draft-mtp".into(),
             spec_draft_n_max: Some(10),
             n_gpu_layers_draft: Some(99),
             device_draft: "CUDA0".into(),
-            device: "CUDA0".into(),
+            device: "CUDA0,ROCm1".into(),
             split_mode: "row".into(),
             tensor_split: "3,1".into(),
             ctx_size: Some(65536),

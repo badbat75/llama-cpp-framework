@@ -63,15 +63,18 @@ pub struct ServerSet {
     pub models_max: Option<i32>,
     #[arg(long)]
     pub models_dir: Option<String>,
-    /// GPU device for the main model, e.g. "CUDA0" (empty string = all devices).
+    /// GPUs models run on, in split order, e.g. "ROCm1,CUDA0" (empty = all detected).
     #[arg(long)]
     pub device: Option<String>,
     /// Multi-GPU split mode (--split-mode): none|layer|row (empty = default/layer).
     #[arg(long)]
     pub split_mode: Option<String>,
-    /// Per-GPU weight proportions (--tensor-split), e.g. "3,1" (empty = even).
+    /// How much each --device holds (--tensor-split), e.g. "3,1" (empty = by free VRAM).
     #[arg(long)]
     pub tensor_split: Option<String>,
+    /// GPU for the image encoder, e.g. "ROCm1" (empty = the first GPU llama.cpp finds).
+    #[arg(long)]
+    pub mmproj_device: Option<String>,
     /// Enable the web UI's MCP CORS proxy (--webui-mcp-proxy). true = on.
     #[arg(long)]
     pub webui_mcp_proxy: Option<bool>,
@@ -126,6 +129,9 @@ impl ServerSet {
         }
         if let Some(ts) = &self.tensor_split {
             cfg.tensor_split = server_cfg::opt_nonblank(Some(ts.clone()));
+        }
+        if let Some(md) = &self.mmproj_device {
+            cfg.mmproj_device = server_cfg::opt_nonblank(Some(md.clone()));
         }
         if let Some(w) = self.webui_mcp_proxy {
             cfg.webui_mcp_proxy = Some(w);
@@ -213,7 +219,15 @@ fn show_lines(cfg: &server_cfg::ServerConfig) -> String {
     );
     row(
         "TensorSplit:",
-        cfg.tensor_split.clone().unwrap_or_else(|| "even".into()),
+        cfg.tensor_split
+            .clone()
+            .unwrap_or_else(|| "auto (by free VRAM)".into()),
+    );
+    row(
+        "MmprojDevice:",
+        cfg.mmproj_device
+            .clone()
+            .unwrap_or_else(|| "auto (first GPU)".into()),
     );
     row(
         "WebuiMcpProxy:",
@@ -316,9 +330,10 @@ mod tests {
             threads_batch: Some(16),
             models_max: Some(3),
             models_dir: Some("D:\\models".into()),
-            device: Some("CUDA0".into()),
+            device: Some("ROCm1,CUDA0".into()),
             split_mode: Some("row".into()),
             tensor_split: Some("3,1".into()),
+            mmproj_device: Some("ROCm1".into()),
             webui_mcp_proxy: Some(false),
             fit: Some(true),
             log_verbosity: Some(2),
@@ -339,9 +354,10 @@ mod tests {
             threads_batch: Some(16),
             models_max: Some(3),
             models_dir: Some(r"D:\models".into()),
-            device: Some("CUDA0".into()),
+            device: Some("ROCm1,CUDA0".into()),
             split_mode: Some("row".into()),
             tensor_split: Some("3,1".into()),
+            mmproj_device: Some("ROCm1".into()),
             webui_mcp_proxy: Some(false),
             fit: Some(true),
             log_verbosity: Some(2),
@@ -364,9 +380,10 @@ mod tests {
             threads_batch: Some(16),
             models_max: Some(3),
             models_dir: Some(r"D:\models".into()),
-            device: Some("CUDA0".into()),
+            device: Some("ROCm1,CUDA0".into()),
             split_mode: Some("row".into()),
             tensor_split: Some("3,1".into()),
+            mmproj_device: Some("ROCm1".into()),
             webui_mcp_proxy: Some(false),
             fit: Some(true),
             log_verbosity: Some(2),
@@ -389,6 +406,7 @@ mod tests {
             device,
             split_mode,
             tensor_split,
+            mmproj_device,
             webui_mcp_proxy,
             fit,
             log_verbosity,
@@ -406,6 +424,7 @@ mod tests {
             ("Device:", device.unwrap()),
             ("SplitMode:", split_mode.unwrap()),
             ("TensorSplit:", tensor_split.unwrap()),
+            ("MmprojDevice:", mmproj_device.unwrap()),
             ("WebuiMcpProxy:", webui_mcp_proxy.unwrap().to_string()),
             ("Fit:", fit.unwrap().to_string()),
             ("LogVerbosity:", log_verbosity.unwrap().to_string()),

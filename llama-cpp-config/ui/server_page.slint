@@ -1,8 +1,9 @@
 // ServerPage: the server tab. All state lives in AppState (state.slint); this
 // component just lays out the widgets against it.
 //
-// Layout (grep `heading:`): Network → Resources → Advanced cards, then the
-// FormActions row (Save/Revert), then the Command Line card last. The Command
+// Layout (grep `heading:`): Network → Resources → GPU distribution → Advanced
+// cards, then the FormActions row (Save/Revert), then the Command Line card
+// last. The Command
 // Line card auto-sizes to its content (a hidden mirror-Text drives its height) so
 // it never shows its own inner scrollbar — the page's own ScrollView handles it.
 //
@@ -11,7 +12,7 @@
 // field stale after a Revert / reload.
 
 import { LineEdit, TextEdit, CheckBox, SpinBox, Button, ScrollView, Palette } from "std-widgets.slint";
-import { SectionCard, LabeledField, MappedComboBox, AutoSlider, DefaultSpinBox, FormActions, SplitFields, Tokens } from "components.slint";
+import { SectionCard, LabeledField, MappedComboBox, AutoSlider, DefaultSpinBox, FormActions, GpuSplitTable, Tokens } from "components.slint";
 import { AppState } from "state.slint";
 
 export component ServerPage inherits ScrollView {
@@ -126,25 +127,37 @@ export component ServerPage inherits ScrollView {
                     }
                 }
             }
-            LabeledField {
-                label: "GPU device";
-                hint: "Default GPU for all presets (--device, e.g. CUDA0).\nA per-preset GPU device overrides it.\nBlank = all detected devices.";
-                MappedComboBox {
-                    labels: AppState.server_dev_labels;
-                    values: AppState.server_dev_values;
-                    index <=> AppState.server_dev_index;
-                    picked(v) => { AppState.server_form.device = v; }
-                }
+        }
+
+        SectionCard {
+            heading: "GPU distribution";
+            Text {
+                text: "Default for every preset (--device / --tensor-split). Check the GPUs a model may use and, if they differ in VRAM, how much of it each takes. A preset can override this — unless something is checked here, in which case the server-wide choice wins at launch.";
+                wrap: word-wrap;
+                font-size: 12px;
+                color: Palette.foreground.transparentize(Tokens.muted);
             }
-            // Disabled when the GPU device above pins one device; server_form.split_mode
-            // holds "default" when unset (config_to_form). See SplitFields.
-            SplitFields {
-                device: AppState.server_form.device;
+            GpuSplitTable {
+                rows: AppState.server_gpu_rows;
+                summary: AppState.server_gpu_summary;
+                selected: AppState.server_gpu_selected;
+                weight_total: AppState.server_gpu_total;
                 split_mode <=> AppState.server_form.split_mode;
-                tensor_split <=> AppState.server_form.tensor_split;
-                split_mode_hint: "Multi-GPU split strategy (--split-mode), same on CUDA and HIP.\nlayer (default) splits layers + KV across GPUs; row splits per-row (tensor-parallel, more PCIe traffic); none = single GPU.\nIgnored when GPU device pins one device.";
-                tensor_split_hint: "Per-GPU weight proportions (--tensor-split), e.g. 3,1 to put 75% on the first GPU and 25% on the second (useful when GPUs differ in VRAM).\nBlank = even split.";
-                tensor_split_placeholder: "e.g. 3,1  (blank = even)";
+                split_mode_hint: "Multi-GPU split strategy (--split-mode), same on CUDA and HIP.\nlayer (default) splits layers + KV across GPUs; row splits per-row (tensor-parallel, more PCIe traffic); none = single GPU.\nIrrelevant with one GPU checked.";
+                toggled(id) => { AppState.server_gpu_toggle(id); }
+                weight_edited(id, w) => { AppState.server_gpu_weight(id, w); }
+                auto_split() => { AppState.server_gpu_auto(); }
+                even_split() => { AppState.server_gpu_even(); }
+            }
+            LabeledField {
+                label: "Vision encoder";
+                hint: "GPU for the multimodal projector — the mmproj/CLIP image encoder (MTMD_BACKEND_DEVICE).\nIt does NOT follow --device: llama.cpp puts the encoder on the FIRST GPU backend it finds, which on a mixed box is often not the one running the model. It then holds VRAM there and stays idle until an image arrives.\ndefault = that first GPU. Set it to the model's GPU to keep everything on one card.";
+                MappedComboBox {
+                    labels: AppState.mmproj_dev_labels;
+                    values: AppState.mmproj_dev_values;
+                    index <=> AppState.mmproj_dev_index;
+                    picked(v) => { AppState.server_form.mmproj_device = v; }
+                }
             }
         }
 

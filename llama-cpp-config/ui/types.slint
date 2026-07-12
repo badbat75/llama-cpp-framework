@@ -15,6 +15,9 @@ export struct PresetForm {
     id: string,
     model: string,
     mmproj: string,
+    // --mmproj-offload: run the image encoder on GPU (llama.cpp's default) or
+    // keep it on CPU. Plain bool (CheckBox, two-way <=>), same shape as flash_attn.
+    mmproj_offload: bool,
     model_draft: string,
     spec_type: string,
     spec_draft_n_max: int,
@@ -98,9 +101,14 @@ export struct ServerForm {
     models_max: int,
     models_max_default: bool,
     models_dir: string,
+    // `device` + `tensor_split` are written by the GPU distribution table
+    // (GpuSplitTable), not typed: --tensor-split is positional over --device, so
+    // the two only make sense edited together. `mmproj_device` is separate on
+    // purpose — the image encoder ignores --device (see server_cfg.rs).
     device: string,
     split_mode: string,
     tensor_split: string,
+    mmproj_device: string,
     // Plain bool toggles (CheckBox, two-way <=>), the same shape as `mlock`:
     // webui_mcp_proxy enables the web UI's MCP proxy (--webui-mcp-proxy); fit is
     // llama.cpp's -fit on|off VRAM auto-fitting (checked = on).
@@ -115,4 +123,24 @@ export struct IntegrationModel {
     id: string,
     label: string,
     enabled: bool,
+}
+
+// One row of the GPU distribution table (GpuSplitTable in components.slint), the
+// widget behind the `device` + `tensor_split` string pair on BOTH forms. Rows are
+// built entirely in Rust (src/gpu_split.rs — selected devices first, in split
+// order, since that order IS the --tensor-split index) and are read-only to
+// Slint: the delegates report edits through the page's callbacks, which rewrite
+// the two form strings and rebuild the whole model. `share` and `vram` arrive
+// pre-formatted so no percentage math lives in the .slint.
+export struct GpuRow {
+    id: string,
+    name: string,
+    vram: string,
+    // False for a selected device the --list-devices probe doesn't know (stale
+    // config, another machine's GPU, or simply the async probe hasn't landed).
+    // The row is kept anyway so saving can't silently drop it.
+    detected: bool,
+    enabled: bool,
+    weight: int,
+    share: string,
 }

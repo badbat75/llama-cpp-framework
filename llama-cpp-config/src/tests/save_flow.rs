@@ -28,6 +28,14 @@ pub(super) fn run(app: &AppWindow) {
     let dir = tempfile::tempdir().expect("tempdir");
     std::env::set_var("LLAMA_CPP_CONFIG_DATA_ROOT", dir.path());
 
+    // Stand in for the `--list-devices` probe (there is no llama-server here), so
+    // the GPU distribution table has rows to drive further down. Process-wide,
+    // like the real probe cache; seeded before the wiring so every rebuild sees it.
+    crate::devices::set_probed(crate::devices::parse(
+        "  CUDA0: NVIDIA GeForce RTX 4070 SUPER (12281 MiB, 10844 MiB free)\n  \
+         ROCm1: AMD Radeon AI PRO R9700 (32624 MiB, 32462 MiB free)\n",
+    ));
+
     crate::gui::wire_tabs_for_tests(app);
     let st = app.global::<AppState>();
 
@@ -212,6 +220,105 @@ pub(super) fn run(app: &AppWindow) {
         st.get_form().device.as_str(),
         "CUDA1",
         "clone must copy the source's parameters"
+    );
+
+    // ── GPU distribution table: the whole --device/--tensor-split funnel ──
+    // The table is the ONLY writer of `device` + `tensor_split` now, so this
+    // drives the real row checkboxes and asserts the strings that reach the INI.
+    // It starts from the clone above, whose device is "CUDA1" — a device the
+    // probe doesn't know, which must still show as a checked row (a save that
+    // silently dropped it would rewrite the user's config).
+    let row_ids = || -> Vec<String> {
+        let rows = st.get_preset_gpu_rows();
+        (0..rows.row_count())
+            .map(|i| rows.row_data(i).expect("row").id.to_string())
+            .collect()
+    };
+    // Probe order, with the unknown id last (it is only a row because it is
+    // selected). The probed rows must hold that order for EVERY selection below —
+    // the bug this replaces re-sorted checked-first, so each click slid the next
+    // row under the cursor and a model got pinned to the wrong GPU.
+    assert_eq!(
+        row_ids(),
+        ["CUDA0", "ROCm1", "CUDA1"],
+        "2 probed (in probe order) + 1 selected-but-unknown"
+    );
+    let rows = st.get_preset_gpu_rows();
+    assert_eq!(rows.row_data(0).expect("row 0").vram.as_str(), "12.0 GB (10.6 free)");
+    let unknown = rows.row_data(2).expect("row 2");
+    assert!(unknown.enabled && !unknown.detected, "the stale CUDA1 pin is kept");
+
+    let gpu_checkbox = |id: &str| {
+        ElementHandle::find_by_accessible_label(app, format!("gpu-{id}").as_str())
+            .next()
+            .unwrap_or_else(|| panic!("no checkbox for {id}"))
+    };
+    gpu_checkbox("CUDA1").invoke_accessible_default_action(); // uncheck the stale pin
+    assert_eq!(st.get_form().device.as_str(), "");
+    // From here the table is exactly the probe, and every toggle must leave it so.
+    let order = ["CUDA0", "ROCm1"];
+    assert_eq!(row_ids(), order, "dropping the unknown pin drops its row");
+    gpu_checkbox("ROCm1").invoke_accessible_default_action();
+    assert_eq!(row_ids(), order, "a toggle must not move the rows");
+    gpu_checkbox("CUDA0").invoke_accessible_default_action();
+    assert_eq!(row_ids(), order, "a toggle must not move the rows");
+    assert_eq!(
+        st.get_form().device.as_str(),
+        "CUDA0,ROCm1",
+        "the device list is canonicalized into probe order, whatever order they were checked in"
+    );
+    assert_eq!(st.get_preset_gpu_selected(), 2);
+    assert_eq!(
+        st.get_form().tensor_split.as_str(),
+        "",
+        "two devices start in Auto: llama.cpp splits by free VRAM"
+    );
+    assert_eq!(st.get_preset_gpu_total(), 0, "Auto ⇒ no weight denominator");
+
+    st.invoke_preset_gpu_even();
+    assert_eq!(st.get_form().tensor_split.as_str(), "1,1");
+    st.invoke_preset_gpu_weight("ROCm1".into(), 3);
+    assert_eq!(
+        st.get_form().tensor_split.as_str(),
+        "1,3",
+        "the weight follows its device's position in the list"
+    );
+    assert_eq!(st.get_preset_gpu_total(), 4, "the Share column's denominator");
+    assert!(
+        st.get_preset_gpu_summary().contains("--tensor-split 1,3"),
+        "summary: {}",
+        st.get_preset_gpu_summary()
+    );
+    st.invoke_preset_gpu_auto();
+    assert_eq!(
+        st.get_form().tensor_split.as_str(),
+        "",
+        "Auto clears the vector — it is NOT the same launch as Even"
+    );
+    st.invoke_preset_gpu_even();
+    st.invoke_preset_gpu_weight("ROCm1".into(), 3);
+
+    st.invoke_save_preset();
+    assert!(!st.get_status_is_error(), "{}", st.get_status_text());
+    let ini = std::fs::read_to_string(crate::paths::presets_ini()).expect("presets.ini");
+    assert!(
+        ini.contains("device = CUDA0,ROCm1") && ini.contains("tensor-split = 1,3"),
+        "the table's selection must reach the INI:\n{ini}"
+    );
+
+    // The rebuild half of the one-way `for`-row binding contract (same shape as
+    // the Integrations phase below): the click above self-assigned `checked`,
+    // permanently breaking THAT delegate's binding. Revert rebuilds the whole row
+    // model from disk, so the checkbox must follow — a set_row_data
+    // "optimization" in refresh_gpu_rows would leave it stale and lying.
+    gpu_checkbox("CUDA0").invoke_accessible_default_action(); // uncheck → dirty
+    assert_eq!(st.get_form().device.as_str(), "ROCm1");
+    st.invoke_revert_preset();
+    assert_eq!(st.get_form().device.as_str(), "CUDA0,ROCm1");
+    assert_eq!(
+        gpu_checkbox("CUDA0").accessible_checked(),
+        Some(true),
+        "a rebuild must reach the clicked checkbox"
     );
 
     // ── Dirty guard: navigation on a dirty form asks before discarding ───

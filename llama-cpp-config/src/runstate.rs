@@ -174,6 +174,21 @@ fn server_args(
     args
 }
 
+/// The environment llama-server is launched with, beyond the inherited one and
+/// the ROCm PATH prepend (`proc::prepend_rocm_path`). LLAMA_CACHE is set
+/// separately in `start()` — it comes from a path helper, not from a bare config
+/// field. This is the sibling of `server_args` for the settings llama.cpp exposes
+/// ONLY as env vars, so `start()` and `command_line()` render the same launch.
+fn env_vars(cfg: &crate::server_cfg::ServerConfig) -> Vec<(String, String)> {
+    let mut env: Vec<(String, String)> = Vec::new();
+    if let Some(dev) = cfg.mmproj_device.as_deref().map(str::trim) {
+        if !dev.is_empty() {
+            env.push(("MTMD_BACKEND_DEVICE".into(), dev.to_string()));
+        }
+    }
+    env
+}
+
 /// How long `start()` watches a freshly spawned llama-server before declaring
 /// success — long enough to catch a launch that dies on a bad preset, a taken
 /// port, or a missing model (those exit within ~1 s), short enough that a
@@ -237,6 +252,15 @@ pub fn start() -> io::Result<Option<crate::server_cfg::ServerConfig>> {
 
     cmd.current_dir(&data_root);
     cmd.env("LLAMA_CACHE", &models_dir);
+    // Put the image encoder (mmproj/CLIP) on a chosen GPU. There is no flag for
+    // this: `clip_ctx` reads MTMD_BACKEND_DEVICE itself and otherwise takes the
+    // FIRST GPU backend the registry offers — it never looks at --device. On a
+    // mixed box that strands the encoder on the wrong card, where it holds VRAM
+    // for the model's whole life and computes only when an image arrives.
+    // Inherited by the router's per-model children, so it covers every preset.
+    for dev in env_vars(&cfg) {
+        cmd.env(dev.0, dev.1);
+    }
     // Make ggml-hip.dll loadable — the HIP SDK's bin dir isn't on the system
     // PATH, and ggml silently skips a backend whose DLL deps don't resolve.
     crate::proc::prepend_rocm_path(&mut cmd);
@@ -331,6 +355,7 @@ pub fn command_line() -> Option<String> {
     Some(render_command_line(
         &exe.to_string_lossy(),
         &server_args(&cfg, &presets_path),
+        &env_vars(&cfg),
     ))
 }
 
@@ -338,7 +363,12 @@ pub fn command_line() -> Option<String> {
 /// with '-' opens a new line; following non-flag tokens (values) attach to the
 /// current line. Pure (no IO) — `command_line()` is the config-loading wrapper,
 /// mirroring the `render`/`save` split in server_cfg.
-fn render_command_line(exe: &str, args: &[String]) -> String {
+///
+/// `env` is prepended as standalone assignment lines (NOT continued into the
+/// command): a setting llama.cpp only exposes as an env var is still part of the
+/// launch, and a pasted block that silently dropped it would run a different
+/// server than the GUI does.
+fn render_command_line(exe: &str, args: &[String], env: &[(String, String)]) -> String {
     // PowerShell parses a quoted string at command position as an expression,
     // not a command — and the default install path ("C:\Program Files\…") gets
     // quoted by `quote_arg`. The call operator makes the paste work there and
@@ -347,6 +377,13 @@ fn render_command_line(exe: &str, args: &[String]) -> String {
     let exe_line = format!("& {}", quote_arg(exe));
     #[cfg(not(windows))]
     let exe_line = quote_arg(exe);
+    let mut out = String::new();
+    for (k, v) in env {
+        #[cfg(windows)]
+        out.push_str(&format!("$env:{k} = \"{v}\"\n"));
+        #[cfg(not(windows))]
+        out.push_str(&format!("export {k}=\"{v}\"\n"));
+    }
     let mut lines: Vec<String> = vec![exe_line];
     for arg in args {
         let q = quote_arg(arg);
@@ -359,7 +396,8 @@ fn render_command_line(exe: &str, args: &[String]) -> String {
     }
 
     let joiner = format!(" {LINE_CONTINUATION}\n  ");
-    lines.join(&joiner)
+    out.push_str(&lines.join(&joiner));
+    out
 }
 
 fn quote_arg(s: &str) -> String {
@@ -490,9 +528,10 @@ mod tests {
             threads_batch: Some(12),
             models_max: Some(3),
             models_dir: Some(r"D:\models".into()),
-            device: Some("CUDA0".into()),
+            device: Some("ROCm1,CUDA0".into()),
             split_mode: Some("row".into()),
             tensor_split: Some("3,1".into()),
+            mmproj_device: Some("ROCm1".into()),
             webui_mcp_proxy: Some(false),
             fit: Some(true),
             log_verbosity: Some(2),
@@ -510,6 +549,10 @@ mod tests {
             device,
             split_mode,
             tensor_split,
+            // launch env only: start() exports it as MTMD_BACKEND_DEVICE. It is
+            // not a llama-server flag at all — the image encoder's device can
+            // only be chosen through that env var (clip.cpp reads it directly).
+            mmproj_device: _,
             webui_mcp_proxy,
             fit,
             log_verbosity,
@@ -598,7 +641,7 @@ mod tests {
             .iter()
             .map(|s| s.to_string())
             .collect();
-        let out = render_command_line(r"C:\bin\llama-server.exe", &args);
+        let out = render_command_line(r"C:\bin\llama-server.exe", &args, &[]);
         let lines: Vec<&str> = out.lines().collect();
         assert_eq!(lines.len(), 4, "exe + one line per flag group");
         #[cfg(windows)]
@@ -624,11 +667,37 @@ mod tests {
         let out = render_command_line(
             r"C:\Program Files\llama.cpp\bin\llama-server.exe",
             &["--port".to_string(), "8080".to_string()],
+            &[],
         );
         assert!(
             out.starts_with("& \"C:\\Program Files\\llama.cpp\\bin\\llama-server.exe\""),
             "bad exe line: {out:?}"
         );
+    }
+
+    // MmprojDevice is not a llama-server flag — the image encoder's GPU can only
+    // be chosen through MTMD_BACKEND_DEVICE. Both launch surfaces must carry it:
+    // `start()` sets it on the child, and the pasted command line has to as well,
+    // or the block a user copies out of the GUI runs a differently-placed encoder.
+    #[test]
+    fn mmproj_device_rides_the_env_not_the_args() {
+        let cfg = ServerConfig {
+            mmproj_device: Some("ROCm1".into()),
+            ..Default::default()
+        };
+        assert!(!args_for(&cfg).iter().any(|a| a.contains("ROCm1")));
+        assert_eq!(
+            env_vars(&cfg),
+            [("MTMD_BACKEND_DEVICE".to_string(), "ROCm1".to_string())]
+        );
+        assert!(env_vars(&ServerConfig::default()).is_empty());
+
+        let out = render_command_line(r"C:\bin\llama-server.exe", &[], &env_vars(&cfg));
+        assert!(out.contains("MTMD_BACKEND_DEVICE"), "no env line in:\n{out}");
+        assert!(out.contains("ROCm1"));
+        // The env assignment is its own statement — continuing it into the
+        // command would make the paste a syntax error.
+        assert!(!out.lines().next().unwrap().ends_with(LINE_CONTINUATION));
     }
 
     #[test]

@@ -318,6 +318,64 @@ pub(super) fn wire(app: &AppWindow, state: &Rc<RefCell<State>>) {
             update_model_info(&app);
         });
     }
+
+    wire_gpu_table(app);
+}
+
+/// The per-preset GPU distribution table's four callbacks — the twin of
+/// `server_tab::wire_gpu_table`, over `form.device` + `form.tensor_split`. The
+/// rebuild-vs-scalars-only distinction is documented there.
+fn wire_gpu_table(app: &AppWindow) {
+    let s = app.global::<AppState>();
+    {
+        let app_weak = app.as_weak();
+        s.on_preset_gpu_toggle(move |id| {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let sel = gpu_split::toggle(&devices::probed(), &preset_selection(&app), id.as_str());
+            set_preset_selection(&app, &sel);
+            refresh_gpu_rows(&app);
+        });
+    }
+    {
+        let app_weak = app.as_weak();
+        s.on_preset_gpu_weight(move |id, weight| {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let sel = gpu_split::set_weight(
+                &devices::probed(),
+                &preset_selection(&app),
+                id.as_str(),
+                weight,
+            );
+            set_preset_selection(&app, &sel);
+            refresh_gpu_scalars(&app);
+        });
+    }
+    {
+        let app_weak = app.as_weak();
+        s.on_preset_gpu_auto(move || {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let sel = gpu_split::set_auto(&devices::probed(), &preset_selection(&app));
+            set_preset_selection(&app, &sel);
+            refresh_gpu_rows(&app);
+        });
+    }
+    {
+        let app_weak = app.as_weak();
+        s.on_preset_gpu_even(move || {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let sel = gpu_split::set_even(&devices::probed(), &preset_selection(&app));
+            set_preset_selection(&app, &sel);
+            refresh_gpu_rows(&app);
+        });
+    }
 }
 
 // ── Discard-guarded navigation (select / New / Clone) ─────────────────
@@ -387,28 +445,37 @@ use crate::form::ALL_LAYERS;
 /// from the picked row (MTP heads → draft-mtp, DFlash drafters → draft-dflash,
 /// "(none)" → empty), then auto-pin an unconfigured draft to ONE device — the
 /// multi-device "auto" split crashes gemma4 MTP heads. Pin to the SAME GPU the
-/// model runs on so both land together: the preset's own `device` override
+/// model runs on so both land together: the preset's own `device` selection
 /// wins, else the server-wide default (`server_device`, all layers on it);
 /// otherwise fall back to CPU, which always works. A draft the user already
 /// configured (auto off or a device pinned) is left alone.
+///
+/// Both device fields can now name SEVERAL GPUs ("ROCm1,CUDA0" — the distribution
+/// table writes them in split order), but `--device-draft` pins one drafter, and
+/// the whole point here is to avoid the multi-device split. So the pin is the
+/// FIRST device of whichever list applies — the one llama.cpp's split starts from.
+///
+/// This only fires for a draft FILE. Embedded MTP heads (spec-type alone) never
+/// reach it: llama.cpp ignores both keys for them and the UI disables both fields.
 fn apply_draft_pick(form: &mut PresetForm, value: &str, spec: &str, server_device: &str) {
     form.model_draft = value.into();
     form.spec_type = spec.into();
     if !value.is_empty() && form.n_gpu_layers_draft_auto && form.device_draft.is_empty() {
         form.n_gpu_layers_draft_auto = false;
-        // The model's own pin wins over the server default: pinning the draft to
-        // a different device than the model is the exact split this heuristic
-        // exists to avoid. Clone before mutating device_draft below.
-        let pin = if form.device.is_empty() {
-            server_device.to_string()
+        // The model's own selection wins over the server default: pinning the
+        // draft to a different device than the model is the exact split this
+        // heuristic exists to avoid.
+        let list = if form.device.is_empty() {
+            server_device
         } else {
-            form.device.to_string()
+            form.device.as_str()
         };
-        if !pin.is_empty() {
-            form.device_draft = pin.into();
-            form.n_gpu_layers_draft = ALL_LAYERS;
-        } else {
-            form.n_gpu_layers_draft = 0;
+        match gpu_split::parse_device_list(list).first() {
+            Some(pin) => {
+                form.device_draft = pin.as_str().into();
+                form.n_gpu_layers_draft = ALL_LAYERS;
+            }
+            None => form.n_gpu_layers_draft = 0,
         }
     }
 }

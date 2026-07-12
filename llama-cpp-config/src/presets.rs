@@ -47,27 +47,47 @@ pub struct Preset {
     pub id: String,
     pub model: String,
     pub mmproj: String,
+    /// GPU-offload the multimodal projector — the mmproj/CLIP image encoder
+    /// (--mmproj-offload / --no-mmproj-offload). None/true = llama.cpp's default
+    /// (offloaded). Note WHICH GPU is not this flag's business and not --device's
+    /// either: the CLIP context grabs the first GPU backend it finds unless
+    /// `MTMD_BACKEND_DEVICE` names one (server.ini `MmprojDevice`). Turn this off
+    /// to keep the encoder on CPU entirely — it only runs on image requests, so a
+    /// text-mostly workload pays nothing but the VRAM it was holding.
+    pub mmproj_offload: Option<bool>,
     // Speculative decoding / Multi-Token Prediction (MTP) / DFlash.
     // `model_draft` is the draft GGUF (--model-draft): an MTP head, a DFlash
     // drafter, or a small standalone draft model. `spec_type` selects the
     // speculator (--spec-type, e.g. "draft-mtp" or "draft-dflash"). Empty = unset.
     // `spec_draft_n_max` (--spec-draft-n-max) caps drafted tokens per step;
     // DFlash clamps it to the trained block_size-1 (e.g. 15).
-    // `n_gpu_layers_draft` (--n-gpu-layers-draft) controls draft offload;
-    // `device_draft` (--device-draft) pins the draft to one GPU (e.g. "CUDA0").
-    // gemma4-assistant MTP heads (n_layer=0) crash under the multi-device
-    // "auto" split, so pin to a single device to run the draft on GPU.
+    //
+    // `n_gpu_layers_draft` (--n-gpu-layers-draft) and `device_draft`
+    // (--device-draft) place a draft FILE, and llama.cpp reads them ONLY when one
+    // is set: both live inside `if (has_dft())`, i.e. `--model-draft` given. With
+    // MTP heads EMBEDDED in the main GGUF (`spec_type` set, `model_draft` empty)
+    // the draft context is built against the target model itself — it runs on the
+    // model's own device and both keys are silently ignored. Setting them there is
+    // how a GPU ends up looking "assigned" to the draft while never drafting a
+    // token. A SEPARATE MTP head file (e.g. gemma4-assistant, n_layer=0) is the
+    // case where they do apply — and there, pin to ONE device: the multi-device
+    // "auto" split crashes those heads.
     pub model_draft: String,
     pub spec_type: String,
     pub spec_draft_n_max: Option<i32>,
     pub n_gpu_layers_draft: Option<i32>,
     pub device_draft: String,
-    /// GPU device(s) for THIS model (--device), e.g. "CUDA0". Per-preset
-    /// override of server.ini Device. Pinning a small model to one GPU lets it
-    /// fit fully (no multi-device memory fitting), which is required for GPU MTP.
+    /// The GPUs THIS model runs on (--device): one id ("ROCm1") or a comma-
+    /// separated list in split order ("ROCm1,CUDA0"). Per-preset override of
+    /// server.ini Device — but a server-wide Device WINS over it at launch, since
+    /// llama-server's router passes its own CLI args on top of every preset.
+    /// Empty = inherit the server default. Written by the GPU distribution table
+    /// (src/gpu_split.rs), never typed by hand.
     pub device: String,
     /// Multi-GPU split for THIS model. `split_mode` (--split-mode): none|layer|row;
-    /// `tensor_split` (--tensor-split): per-GPU weight proportions like "3,1".
+    /// `tensor_split` (--tensor-split): per-GPU weight proportions like "3,1",
+    /// positional over the `device` list ABOVE, in that order. Empty tensor_split
+    /// with 2+ devices = llama.cpp splits by free VRAM at load (NOT evenly).
     /// Empty = inherit the server.ini default. Identical on CUDA and HIP.
     pub split_mode: String,
     pub tensor_split: String,
@@ -102,6 +122,7 @@ impl Default for Preset {
             id: String::new(),
             model: String::new(),
             mmproj: String::new(),
+            mmproj_offload: Some(true),
             model_draft: String::new(),
             spec_type: String::new(),
             spec_draft_n_max: None,
@@ -155,6 +176,7 @@ impl Preset {
             id: id.to_string(),
             model: get("model"),
             mmproj: get("mmproj"),
+            mmproj_offload: getb("mmproj-offload"),
             model_draft: get("model-draft"),
             spec_type: get("spec-type"),
             spec_draft_n_max: k.get("spec-draft-n-max").and_then(|v| ini::parse_int(v)),
@@ -365,32 +387,41 @@ pub fn render_section(p: &Preset) -> String {
     out.push_str(&format!("model = {}\r\n", p.model.trim()));
     out.push_str("\r\n; Sub-model paths\r\n");
     emit_str(&mut out, "mmproj", &p.mmproj);
+    out.push_str("; mmproj-offload = false keeps the image encoder on CPU. It is NOT placed by\r\n");
+    out.push_str("; `device`: llama.cpp puts the encoder on the first GPU backend it finds\r\n");
+    out.push_str("; unless server.ini MmprojDevice (env MTMD_BACKEND_DEVICE) names one.\r\n");
+    emit_bool(&mut out, "mmproj-offload", p.mmproj_offload);
     emit_str(&mut out, "model-draft", &p.model_draft);
 
     out.push_str("\r\n; Speculative decoding / Multi-Token Prediction / DFlash\r\n");
     out.push_str("; spec-type pairs model-draft with a speculator: draft-mtp (MTP head),\r\n");
     out.push_str("; draft-dflash (DFlash block-diffusion drafter), or draft-simple.\r\n");
+    out.push_str("; MTP heads embedded in the main GGUF need spec-type ALONE (no model-draft).\r\n");
     emit_str(&mut out, "spec-type", &p.spec_type);
     out.push_str("; spec-draft-n-max = max drafted tokens per step. DFlash clamps this to the\r\n");
     out.push_str(
         "; model's trained block_size - 1 (e.g. 15); also applies to draft-mtp/simple.\r\n",
     );
     emit_i32(&mut out, "spec-draft-n-max", p.spec_draft_n_max);
-    out.push_str("; Run the draft on GPU by pinning it to ONE device (device-draft, e.g.\r\n");
-    out.push_str("; CUDA0) with n-gpu-layers-draft = 99. gemma4-assistant MTP heads\r\n");
-    out.push_str("; (n_layer=0) crash under the multi-device auto split; pinning avoids it.\r\n");
-    out.push_str("; Use n-gpu-layers-draft = 0 to fall back to CPU.\r\n");
+    out.push_str("; The next two place a SEPARATE draft file and are ignored without\r\n");
+    out.push_str("; model-draft: with EMBEDDED MTP heads the draft context is built against\r\n");
+    out.push_str("; the target model and runs on the model's own device. With a separate MTP\r\n");
+    out.push_str("; head file (e.g. gemma4-assistant, n_layer=0) pin it to ONE device — the\r\n");
+    out.push_str("; multi-device auto split crashes those heads — with n-gpu-layers-draft =\r\n");
+    out.push_str("; 99, or 0 to fall back to CPU.\r\n");
     emit_i32(&mut out, "n-gpu-layers-draft", p.n_gpu_layers_draft);
     emit_str(&mut out, "device-draft", &p.device_draft);
 
     out.push_str("\r\n; Resource / context\r\n");
     emit_i32(&mut out, "ctx-size", p.ctx_size);
     emit_i32(&mut out, "n-gpu-layers", p.n_gpu_layers);
-    out.push_str("; device = CUDA0 pins this model to one GPU (overrides server.ini Device).\r\n");
+    out.push_str("; GPU distribution for this model (overrides server.ini — but a server-wide\r\n");
+    out.push_str("; Device wins at launch; same on CUDA and HIP). device = the GPUs it runs\r\n");
+    out.push_str("; on, e.g. ROCm1 or ROCm1,CUDA0. tensor-split = how much each one holds,\r\n");
+    out.push_str("; e.g. 3,1 — positional over `device`, IN THAT ORDER. Blank tensor-split\r\n");
+    out.push_str("; with 2+ devices = llama.cpp splits by free VRAM (not evenly).\r\n");
+    out.push_str("; split-mode = none|layer|row. Blank = server default.\r\n");
     emit_str(&mut out, "device", &p.device);
-    out.push_str("; Multi-GPU distribution for this model (overrides server.ini; same on\r\n");
-    out.push_str("; CUDA and HIP): split-mode = none|layer|row, tensor-split = per-GPU\r\n");
-    out.push_str("; weight proportions (e.g. 3,1). Blank = server default.\r\n");
     emit_str(&mut out, "split-mode", &p.split_mode);
     emit_str(&mut out, "tensor-split", &p.tensor_split);
     emit_i32(&mut out, "parallel", p.parallel);
@@ -640,12 +671,13 @@ mod tests {
             id: "full".into(),
             model: r"E:\m\model.gguf".into(),
             mmproj: r"E:\mmprojs\clip.gguf".into(),
+            mmproj_offload: Some(false),
             model_draft: r"E:\dflashs\model-dflash.gguf".into(),
             spec_type: "draft-dflash".into(),
             spec_draft_n_max: Some(15),
             n_gpu_layers_draft: Some(99),
             device_draft: "CUDA0".into(),
-            device: "CUDA0".into(),
+            device: "CUDA0,ROCm1".into(),
             split_mode: "row".into(),
             tensor_split: "3,1".into(),
             ctx_size: Some(65536),

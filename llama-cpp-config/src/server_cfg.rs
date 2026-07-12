@@ -66,16 +66,29 @@ pub struct ServerConfig {
     pub threads_batch: Option<i32>,
     pub models_max: Option<i32>,
     pub models_dir: Option<String>,
-    /// GPU device(s) for the main model, e.g. "CUDA0" (--device). Empty/None =
-    /// let llama.cpp use all detected devices. Pinning to one device avoids
-    /// splitting across an iGPU or a duplicate Vulkan view of the same GPU.
+    /// The GPUs every model runs on by default (--device): one id ("CUDA0") or a
+    /// comma-separated list in split order ("ROCm1,CUDA0"). Empty/None = let
+    /// llama.cpp use all detected devices — which on a mixed box means an iGPU and
+    /// duplicate Vulkan views of the same cards. Set here, this OVERRIDES every
+    /// preset's own `device`: llama-server's router passes its CLI args on top of
+    /// each preset. Written by the GPU distribution table (src/gpu_split.rs).
     pub device: Option<String>,
     /// Multi-GPU split strategy (--split-mode / -sm): "none" | "layer" | "row".
     /// Empty/None = llama.cpp default ("layer"). Identical on CUDA and HIP.
     pub split_mode: Option<String>,
-    /// Per-GPU weight proportions (--tensor-split / -ts), e.g. "3,1" for 75/25.
-    /// Empty/None = even split across the visible GPUs.
+    /// Per-GPU weight proportions (--tensor-split / -ts), e.g. "3,1" for 75/25 —
+    /// positional over `device` above, in that order. Empty/None with 2+ devices =
+    /// llama.cpp splits by each device's FREE memory at load (not evenly).
     pub tensor_split: Option<String>,
+    /// The GPU the multimodal projector — the mmproj/CLIP image encoder — runs on.
+    /// NOT a llama-server flag: it is the `MTMD_BACKEND_DEVICE` env var, set on the
+    /// child in `runstate::start`. It needs its own knob because the encoder ignores
+    /// `--device` entirely — `clip_ctx` takes the FIRST GPU backend the registry
+    /// offers, which on a CUDA+ROCm box is the NVIDIA card even when the model is on
+    /// the AMD one. It then holds that card's VRAM for the model's whole lifetime
+    /// while computing only on image requests, which reads exactly like a GPU that
+    /// has been "assigned something" and does nothing. None = leave llama.cpp to it.
+    pub mmproj_device: Option<String>,
     /// Enable the built-in web UI's MCP CORS proxy (--webui-mcp-proxy).
     /// None = the framework default (on) — the bundled chat UI needs it to call
     /// MCP tools. Experimental upstream (llama.cpp defaults it OFF); don't enable
@@ -201,6 +214,7 @@ fn from_keys(keys: &std::collections::BTreeMap<String, String>) -> ServerConfig 
         device: opt_nonblank(keys.get("Device").cloned()),
         split_mode: opt_nonblank(keys.get("SplitMode").cloned()),
         tensor_split: opt_nonblank(keys.get("TensorSplit").cloned()),
+        mmproj_device: opt_nonblank(keys.get("MmprojDevice").cloned()),
         webui_mcp_proxy: keys.get("WebuiMcpProxy").and_then(|v| ini::parse_bool(v)),
         fit: keys.get("Fit").and_then(|v| ini::parse_bool(v)),
         log_verbosity: keys.get("LogVerbosity").and_then(|v| ini::parse_int(v)),
@@ -293,7 +307,7 @@ fn render(cfg: &ServerConfig) -> String {
     let device_line = str_line_or_hint(
         cfg.device.as_deref(),
         "Device",
-        "; Device = CUDA0  ; pin the main model to one GPU (--device); blank = all detected devices",
+        "; Device = ROCm1,CUDA0  ; the GPUs models run on (--device), in split order; blank = all detected",
     );
     let split_mode_line = str_line_or_hint(
         cfg.split_mode.as_deref(),
@@ -303,7 +317,12 @@ fn render(cfg: &ServerConfig) -> String {
     let tensor_split_line = str_line_or_hint(
         cfg.tensor_split.as_deref(),
         "TensorSplit",
-        "; TensorSplit = 3,1  ; per-GPU weight proportions (--tensor-split); blank = even split",
+        "; TensorSplit = 3,1  ; how much of the model each Device holds (--tensor-split), same order; blank = by free VRAM",
+    );
+    let mmproj_device_line = str_line_or_hint(
+        cfg.mmproj_device.as_deref(),
+        "MmprojDevice",
+        "; MmprojDevice = ROCm1  ; GPU for the image encoder (env MTMD_BACKEND_DEVICE); blank = first GPU found",
     );
 
     let mlock_lit = if mlock { "true" } else { "false" };
@@ -353,9 +372,17 @@ LogVerbosity = {log_verbosity}
 {cache_reuse_line}
 {threads_batch_line}
 {models_max_line}
+; GPU distribution. Device = the GPUs models run on; TensorSplit = how much of
+; the model each of them holds, positional over Device IN THAT ORDER. Set here,
+; both OVERRIDE every preset's own values — llama-server's router passes its own
+; command line on top of each preset.
 {device_line}
 {split_mode_line}
 {tensor_split_line}
+; MmprojDevice does NOT follow Device: llama.cpp puts the image encoder on the
+; first GPU backend it finds, where it holds VRAM but only computes on image
+; requests. Name a device here to move it (e.g. onto the model's own GPU).
+{mmproj_device_line}
 
 ; ModelsDir: root directory. Models are scanned from ModelsDir/models/, mmproj
 ; projection files from ModelsDir/mmprojs/, MTP/draft heads from ModelsDir/mtps/,
@@ -409,9 +436,10 @@ mod tests {
             threads_batch: Some(24),
             models_max: Some(2),
             models_dir: Some(r"E:\llm".into()),
-            device: Some("CUDA0".into()),
+            device: Some("ROCm1,CUDA0".into()),
             split_mode: Some("row".into()),
             tensor_split: Some("3,1".into()),
+            mmproj_device: Some("ROCm1".into()),
             webui_mcp_proxy: Some(false),
             fit: Some(true),
             log_verbosity: Some(2),
@@ -445,6 +473,7 @@ mod tests {
         assert_eq!(reloaded.device, None);
         assert_eq!(reloaded.split_mode, None);
         assert_eq!(reloaded.tensor_split, None);
+        assert_eq!(reloaded.mmproj_device, None);
         assert_eq!(reloaded.models_dir, Some(default_models_dir()));
     }
 

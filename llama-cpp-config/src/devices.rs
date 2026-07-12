@@ -1,6 +1,13 @@
 //! Enumerate GPU / compute devices by parsing `llama-server.exe --list-devices`,
-//! so the GUI can offer a dropdown of the *actually available* backends
-//! (CUDA0, Vulkan0, …) instead of a free-text field.
+//! so the GUI can offer the *actually available* backends (CUDA0, Vulkan0, …)
+//! instead of a free-text field.
+//!
+//! Two consumers, two shapes. `build_options` builds the `(labels, values, index)`
+//! triple behind the draft-device ComboBox — it only needs `id` + `label`. The GPU
+//! distribution table (`gpu_split`) needs the parts *separately* (name in one
+//! column, VRAM in another, free bytes to explain llama.cpp's auto split), so
+//! `parse` also breaks the trailing `(12281 MiB, 10844 MiB free)` out into
+//! `total_mib` / `free_mib` rather than leaving them baked into the label.
 
 use std::sync::RwLock;
 
@@ -13,6 +20,34 @@ pub struct DeviceOption {
     /// Human-friendly description for the dropdown (e.g.
     /// `CUDA0 — NVIDIA GeForce RTX 4070 SUPER (12281 MiB, 10844 MiB free)`).
     pub label: String,
+    /// The bare product name, with the VRAM parenthetical stripped (e.g.
+    /// `NVIDIA GeForce RTX 4070 SUPER`). Empty when the line carried none.
+    pub name: String,
+    /// Total device memory in MiB; 0 when `--list-devices` didn't report it.
+    pub total_mib: u64,
+    /// Free device memory in MiB at probe time; 0 when unreported. llama.cpp's
+    /// default (blank `--tensor-split`) splits a model in proportion to THIS.
+    pub free_mib: u64,
+}
+
+impl DeviceOption {
+    /// True for the CPU pseudo-device, which `--device` does not accept and the
+    /// GPU table must skip.
+    pub fn is_cpu(&self) -> bool {
+        self.id.eq_ignore_ascii_case("CPU")
+    }
+
+    /// The VRAM column: `32.6 GB (32.4 free)`, or empty when unreported.
+    pub fn vram_summary(&self) -> String {
+        if self.total_mib == 0 {
+            return String::new();
+        }
+        format!(
+            "{:.1} GB ({:.1} free)",
+            self.total_mib as f64 / 1024.0,
+            self.free_mib as f64 / 1024.0
+        )
+    }
 }
 
 /// The probe cache: `gui::spawn_device_probe` runs `list()` off the UI thread
@@ -85,12 +120,46 @@ pub(crate) fn parse(s: &str) -> Vec<DeviceOption> {
         } else {
             format!("{id} — {desc}")
         };
+        let (name, total_mib, free_mib) = split_desc(desc);
         out.push(DeviceOption {
             id: id.to_string(),
             label,
+            name,
+            total_mib,
+            free_mib,
         });
     }
     out
+}
+
+/// Split a device description into `(name, total_mib, free_mib)`.
+/// `NVIDIA GeForce RTX 4070 SUPER (12281 MiB, 10844 MiB free)` →
+/// `("NVIDIA GeForce RTX 4070 SUPER", 12281, 10844)`. A description without the
+/// trailing parenthetical (or with an unparseable one) keeps its whole text as
+/// the name and reports 0/0 — the table then shows a blank VRAM cell rather than
+/// a wrong one.
+fn split_desc(desc: &str) -> (String, u64, u64) {
+    let Some(open) = desc.rfind('(') else {
+        return (desc.to_string(), 0, 0);
+    };
+    let Some(inner) = desc[open + 1..].strip_suffix(')') else {
+        return (desc.to_string(), 0, 0);
+    };
+    let name = desc[..open].trim().to_string();
+    let mut parts = inner.split(',').map(|p| leading_u64(p.trim()));
+    let total = parts.next().flatten();
+    let free = parts.next().flatten();
+    match total {
+        Some(t) => (name, t, free.unwrap_or(0)),
+        None => (desc.to_string(), 0, 0),
+    }
+}
+
+/// The leading integer of `12281 MiB` / `10844 MiB free`. `None` when the part
+/// doesn't start with digits.
+fn leading_u64(s: &str) -> Option<u64> {
+    let digits: String = s.chars().take_while(char::is_ascii_digit).collect();
+    digits.parse().ok()
 }
 
 /// Build the `(labels, values, selected_index)` triple for a device combobox.
@@ -140,6 +209,39 @@ mod tests {
         assert!(devs[0]
             .label
             .starts_with("CUDA0 — NVIDIA GeForce RTX 4070 SUPER"));
+    }
+
+    #[test]
+    fn parses_name_and_vram_out_of_the_description() {
+        let devs = parse(SAMPLE);
+        assert_eq!(devs[0].name, "NVIDIA GeForce RTX 4070 SUPER");
+        assert_eq!(devs[0].total_mib, 12281);
+        assert_eq!(devs[0].free_mib, 10844);
+        // A name that itself contains parens: only the LAST one is the VRAM.
+        assert_eq!(devs[1].name, "AMD Radeon(TM) Graphics");
+        assert_eq!(devs[1].total_mib, 33593);
+    }
+
+    #[test]
+    fn a_description_without_vram_keeps_its_whole_text_as_the_name() {
+        let devs = parse("  SYCL0: Some Accelerator\n");
+        assert_eq!(devs[0].name, "Some Accelerator");
+        assert_eq!(devs[0].total_mib, 0);
+        assert_eq!(devs[0].free_mib, 0);
+        assert!(devs[0].vram_summary().is_empty());
+    }
+
+    #[test]
+    fn vram_summary_renders_gib() {
+        let devs = parse(SAMPLE);
+        assert_eq!(devs[0].vram_summary(), "12.0 GB (10.6 free)");
+    }
+
+    #[test]
+    fn cpu_is_flagged_so_the_gpu_table_can_skip_it() {
+        let devs = parse("  CPU: AMD Ryzen 9 9900X (63090 MiB, 48233 MiB free)\n");
+        assert!(devs[0].is_cpu());
+        assert!(!parse(SAMPLE)[0].is_cpu());
     }
 
     #[test]

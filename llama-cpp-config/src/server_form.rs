@@ -46,6 +46,7 @@ pub fn config_to_form(cfg: &server_cfg::ServerConfig) -> ServerForm {
             .unwrap_or_else(|| "default".into())
             .into(),
         tensor_split: cfg.tensor_split.clone().unwrap_or_default().into(),
+        mmproj_device: cfg.mmproj_device.clone().unwrap_or_default().into(),
         // Plain bool toggles (framework defaults materialized when unset), same
         // shape as `mlock`.
         webui_mcp_proxy: cfg.webui_mcp_proxy_or_default(),
@@ -105,6 +106,7 @@ pub fn form_to_config(f: &ServerForm) -> server_cfg::ServerConfig {
             other => Some(other.to_string()),
         },
         tensor_split: server_cfg::opt_nonblank(Some(f.tensor_split.to_string())),
+        mmproj_device: server_cfg::opt_nonblank(Some(f.mmproj_device.to_string())),
         webui_mcp_proxy: Some(f.webui_mcp_proxy),
         fit: Some(f.fit),
         log_verbosity: Some(f.log_verbosity),
@@ -133,9 +135,10 @@ mod tests {
             threads_batch: Some(12),
             models_max: Some(2),
             models_dir: Some(r"E:\models".into()),
-            device: Some("CUDA0".into()),
+            device: Some("ROCm1,CUDA0".into()),
             split_mode: Some("row".into()),
             tensor_split: Some("3,1".into()),
+            mmproj_device: Some("ROCm1".into()),
             webui_mcp_proxy: Some(false),
             fit: Some(true),
             log_verbosity: Some(2),

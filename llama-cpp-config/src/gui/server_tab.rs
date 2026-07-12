@@ -73,6 +73,8 @@ pub(super) fn wire(app: &AppWindow, tray: &AppTray, state: &Rc<RefCell<State>>) 
                 .unwrap_or(current)
         });
 
+    wire_gpu_table(app);
+
     {
         let app_weak = app.as_weak();
         let tray_weak = tray.as_weak();
@@ -85,6 +87,71 @@ pub(super) fn wire(app: &AppWindow, tray: &AppTray, state: &Rc<RefCell<State>>) 
         let tray_weak = tray.as_weak();
         app.global::<AppState>().on_stop_server(move || {
             stop_server_async(app_weak.clone(), tray_weak.clone());
+        });
+    }
+}
+
+/// The server-wide GPU distribution table's four callbacks. Each one derives a
+/// new selection with `gpu_split` (the pure rules live there, unit-tested) and
+/// writes it back into `server_form.device` + `.tensor_split` — those two strings
+/// ARE the state; the table holds no copy.
+///
+/// Note which refresh each one ends with. Toggle / Auto / Even REBUILD the row
+/// model, because they change rows the user didn't click and the delegates' one-
+/// way bindings only survive a rebuild. A weight edit deliberately does NOT: it
+/// changes no other row's weight (the SpinBoxes are disabled in Auto mode, so
+/// there is never a seed-the-others step), and rebuilding would recreate the very
+/// SpinBox being typed into — multi-digit weights would be impossible. See
+/// GpuSplitTable's binding note in ui/components.slint.
+fn wire_gpu_table(app: &AppWindow) {
+    let s = app.global::<AppState>();
+    {
+        let app_weak = app.as_weak();
+        s.on_server_gpu_toggle(move |id| {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let sel = gpu_split::toggle(&devices::probed(), &server_selection(&app), id.as_str());
+            set_server_selection(&app, &sel);
+            refresh_gpu_rows(&app);
+        });
+    }
+    {
+        let app_weak = app.as_weak();
+        s.on_server_gpu_weight(move |id, weight| {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let sel = gpu_split::set_weight(
+                &devices::probed(),
+                &server_selection(&app),
+                id.as_str(),
+                weight,
+            );
+            set_server_selection(&app, &sel);
+            refresh_gpu_scalars(&app);
+        });
+    }
+    {
+        let app_weak = app.as_weak();
+        s.on_server_gpu_auto(move || {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let sel = gpu_split::set_auto(&devices::probed(), &server_selection(&app));
+            set_server_selection(&app, &sel);
+            refresh_gpu_rows(&app);
+        });
+    }
+    {
+        let app_weak = app.as_weak();
+        s.on_server_gpu_even(move || {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let sel = gpu_split::set_even(&devices::probed(), &server_selection(&app));
+            set_server_selection(&app, &sel);
+            refresh_gpu_rows(&app);
         });
     }
 }

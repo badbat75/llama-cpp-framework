@@ -67,7 +67,7 @@ use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel};
 
 use crate::form::{form_to_preset, preset_to_form};
 use crate::{
-    devices, integrations, model_scan, net_ifaces, paths, presets, runstate, server_cfg,
+    devices, gpu_split, integrations, model_scan, net_ifaces, paths, presets, runstate, server_cfg,
     server_form, server_version,
 };
 
@@ -253,6 +253,9 @@ fn load_server_into_ui(app: &AppWindow) {
     // Set form + base together so `server_dirty` reads false right after load.
     s.set_server_form(form.clone());
     s.set_server_form_base(form);
+    // Re-project the freshly loaded device/tensor-split strings into the table
+    // (and the mmproj dropdown's index) — see apply_form for why it's a rebuild.
+    refresh_device_options(app);
 }
 
 /// Recompute the read-only projections of the SAVED server.ini: the Command
@@ -484,31 +487,109 @@ fn refresh_file_options(app: &AppWindow, state: &Rc<RefCell<State>>) {
     models_tab::update_model_info(app);
 }
 
-/// Rebuild the three GPU-device dropdowns (server-wide, per-preset main,
-/// per-preset draft) from the cached `--list-devices` result
-/// (`devices::probed()`), recomputing each selected index against the current
-/// server.ini / form values.
+/// Rebuild the two GPU-device dropdowns — the draft device and the image
+/// encoder's — from the cached `--list-devices` result (`devices::probed()`),
+/// recomputing each selected index against the current server.ini / form values.
+/// The MAIN device is not a dropdown: it can name several GPUs in split order, so
+/// it rides the GPU distribution table instead (`refresh_gpu_rows`).
 fn refresh_device_options(app: &AppWindow) {
     let s = app.global::<AppState>();
     let devs = devices::probed();
     let form = s.get_form();
-    let server_device = s.get_server_form().device;
+    let mmproj_device = s.get_server_form().mmproj_device;
 
-    let (lbl, val, idx) = device_options(&devs, server_device.as_str(), "(all detected devices)");
-    s.set_server_dev_labels(lbl);
-    s.set_server_dev_values(val);
-    s.set_server_dev_index(idx);
-
-    let (lbl, val, idx) = device_options(&devs, form.device.as_str(), "(server default)");
-    s.set_preset_dev_labels(lbl);
-    s.set_preset_dev_values(val);
-    s.set_preset_dev_index(idx);
+    let (lbl, val, idx) = device_options(&devs, mmproj_device.as_str(), "(default: first GPU)");
+    s.set_mmproj_dev_labels(lbl);
+    s.set_mmproj_dev_values(val);
+    s.set_mmproj_dev_index(idx);
 
     let (lbl, val, idx) =
         device_options(&devs, form.device_draft.as_str(), "(auto / same as model)");
     s.set_preset_draft_dev_labels(lbl);
     s.set_preset_draft_dev_values(val);
     s.set_preset_draft_dev_index(idx);
+
+    refresh_gpu_rows(app);
+}
+
+/// Rebuild BOTH GPU distribution tables (server-wide + per-preset) from the
+/// device probe crossed with each form's `device` / `tensor_split` strings.
+///
+/// Always a full rebuild of the row model, never an in-place row edit: the
+/// delegates bind one-way (`checked: row.enabled`, `value: row.weight`) and a
+/// click self-assigns them, so only fresh delegates are guaranteed to show the
+/// truth. That is affordable because it is not on the weight-typing path — a
+/// weight edit changes no other row (see GpuSplitTable's binding note), so its
+/// handler updates the derived scalars and leaves the model alone.
+fn refresh_gpu_rows(app: &AppWindow) {
+    let s = app.global::<AppState>();
+    let devs = devices::probed();
+    s.set_server_gpu_rows(model(gpu_split::build_rows(&devs, &server_selection(app))));
+    s.set_preset_gpu_rows(model(gpu_split::build_rows(&devs, &preset_selection(app))));
+    refresh_gpu_scalars(app);
+}
+
+/// The derived numbers the tables render off: how many devices are checked, the
+/// weight sum (0 = Auto, and the Share column's denominator), and the flags line.
+/// Separate from `refresh_gpu_rows` because the weight-edit path needs THESE
+/// without the row rebuild that would recreate the SpinBox being typed into.
+fn refresh_gpu_scalars(app: &AppWindow) {
+    let s = app.global::<AppState>();
+
+    let server = server_selection(app);
+    s.set_server_gpu_selected(gpu_count(&server));
+    s.set_server_gpu_total(gpu_weight_total(&server));
+    s.set_server_gpu_summary(gpu_split::summary(&server).into());
+
+    let preset = preset_selection(app);
+    s.set_preset_gpu_selected(gpu_count(&preset));
+    s.set_preset_gpu_total(gpu_weight_total(&preset));
+    s.set_preset_gpu_summary(gpu_split::summary(&preset).into());
+}
+
+fn gpu_count(sel: &gpu_split::GpuSelection) -> i32 {
+    i32::try_from(gpu_split::parse_device_list(&sel.device).len()).unwrap_or(i32::MAX)
+}
+
+fn gpu_weight_total(sel: &gpu_split::GpuSelection) -> i32 {
+    gpu_split::parse_weights(&sel.tensor_split).iter().sum()
+}
+
+// The selection IS the form's `device` + `tensor_split` pair — there is no third
+// copy of it, so a hand-edited INI stays authoritative and nothing can desync.
+// The four `*_gpu_*` callbacks per tab all follow the same two steps: derive the
+// new selection with `gpu_split`, then `set_*_selection` + a refresh.
+
+pub(crate) fn server_selection(app: &AppWindow) -> gpu_split::GpuSelection {
+    let f = app.global::<AppState>().get_server_form();
+    gpu_split::GpuSelection {
+        device: f.device.to_string(),
+        tensor_split: f.tensor_split.to_string(),
+    }
+}
+
+pub(crate) fn preset_selection(app: &AppWindow) -> gpu_split::GpuSelection {
+    let f = app.global::<AppState>().get_form();
+    gpu_split::GpuSelection {
+        device: f.device.to_string(),
+        tensor_split: f.tensor_split.to_string(),
+    }
+}
+
+pub(crate) fn set_server_selection(app: &AppWindow, sel: &gpu_split::GpuSelection) {
+    let s = app.global::<AppState>();
+    let mut f = s.get_server_form();
+    f.device = sel.device.clone().into();
+    f.tensor_split = sel.tensor_split.clone().into();
+    s.set_server_form(f);
+}
+
+pub(crate) fn set_preset_selection(app: &AppWindow, sel: &gpu_split::GpuSelection) {
+    let s = app.global::<AppState>();
+    let mut f = s.get_form();
+    f.device = sel.device.clone().into();
+    f.tensor_split = sel.tensor_split.clone().into();
+    s.set_form(f);
 }
 
 /// A dropdown's `(labels, values, index)` as Slint models, ready to hand to the
@@ -794,6 +875,11 @@ fn apply_form(app: &AppWindow, form: PresetForm) {
     let s = app.global::<AppState>();
     s.set_form_base(form.clone());
     s.set_form(form);
+    // The GPU table is a projection of form.device / form.tensor_split, so a form
+    // it didn't write (preset switch, Revert, reload) has to be re-projected —
+    // and as a full rebuild, since the delegates' one-way bindings don't survive
+    // a click. Same reason load_server_into_ui rebuilds after seeding its form.
+    refresh_gpu_rows(app);
 }
 
 // ── Integrations helpers ──────────────────────────────────────────────
