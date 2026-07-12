@@ -255,11 +255,16 @@ export global AppState {
     // rewrites the form's `device` + `tensor_split` strings, then REBUILDS the row
     // model. Devices are addressed by id, never by row index. See GpuSplitTable's
     // binding note (and why the row ORDER is fixed to the probe's).
+    // `*_gpu_move(id, delta)` is the drag handle: move a checked device `delta`
+    // places within the split (negative = towards the head). Position 0 is
+    // llama.cpp's main_gpu, so this is the only way to choose which GPU leads.
     callback server_gpu_toggle(string);
+    callback server_gpu_move(string, int);
     callback server_gpu_weight(string, int);
     callback server_gpu_auto();
     callback server_gpu_even();
     callback preset_gpu_toggle(string);
+    callback preset_gpu_move(string, int);
     callback preset_gpu_weight(string, int);
     callback preset_gpu_auto();
     callback preset_gpu_even();

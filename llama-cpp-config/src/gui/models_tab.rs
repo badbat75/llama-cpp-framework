@@ -333,7 +333,18 @@ fn wire_gpu_table(app: &AppWindow) {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
-            let sel = gpu_split::toggle(&devices::probed(), &preset_selection(&app), id.as_str());
+            let sel = gpu_split::toggle(&preset_selection(&app), id.as_str());
+            set_preset_selection(&app, &sel);
+            refresh_gpu_rows(&app);
+        });
+    }
+    {
+        let app_weak = app.as_weak();
+        s.on_preset_gpu_move(move |id, delta| {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let sel = gpu_split::move_by(&preset_selection(&app), id.as_str(), delta);
             set_preset_selection(&app, &sel);
             refresh_gpu_rows(&app);
         });
@@ -344,12 +355,7 @@ fn wire_gpu_table(app: &AppWindow) {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
-            let sel = gpu_split::set_weight(
-                &devices::probed(),
-                &preset_selection(&app),
-                id.as_str(),
-                weight,
-            );
+            let sel = gpu_split::set_weight(&preset_selection(&app), id.as_str(), weight);
             set_preset_selection(&app, &sel);
             refresh_gpu_scalars(&app);
         });
@@ -360,7 +366,7 @@ fn wire_gpu_table(app: &AppWindow) {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
-            let sel = gpu_split::set_auto(&devices::probed(), &preset_selection(&app));
+            let sel = gpu_split::set_auto(&preset_selection(&app));
             set_preset_selection(&app, &sel);
             refresh_gpu_rows(&app);
         });
@@ -371,7 +377,7 @@ fn wire_gpu_table(app: &AppWindow) {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
-            let sel = gpu_split::set_even(&devices::probed(), &preset_selection(&app));
+            let sel = gpu_split::set_even(&preset_selection(&app));
             set_preset_selection(&app, &sel);
             refresh_gpu_rows(&app);
         });

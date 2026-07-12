@@ -111,7 +111,18 @@ fn wire_gpu_table(app: &AppWindow) {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
-            let sel = gpu_split::toggle(&devices::probed(), &server_selection(&app), id.as_str());
+            let sel = gpu_split::toggle(&server_selection(&app), id.as_str());
+            set_server_selection(&app, &sel);
+            refresh_gpu_rows(&app);
+        });
+    }
+    {
+        let app_weak = app.as_weak();
+        s.on_server_gpu_move(move |id, delta| {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let sel = gpu_split::move_by(&server_selection(&app), id.as_str(), delta);
             set_server_selection(&app, &sel);
             refresh_gpu_rows(&app);
         });
@@ -122,12 +133,7 @@ fn wire_gpu_table(app: &AppWindow) {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
-            let sel = gpu_split::set_weight(
-                &devices::probed(),
-                &server_selection(&app),
-                id.as_str(),
-                weight,
-            );
+            let sel = gpu_split::set_weight(&server_selection(&app), id.as_str(), weight);
             set_server_selection(&app, &sel);
             refresh_gpu_scalars(&app);
         });
@@ -138,7 +144,7 @@ fn wire_gpu_table(app: &AppWindow) {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
-            let sel = gpu_split::set_auto(&devices::probed(), &server_selection(&app));
+            let sel = gpu_split::set_auto(&server_selection(&app));
             set_server_selection(&app, &sel);
             refresh_gpu_rows(&app);
         });
@@ -149,7 +155,7 @@ fn wire_gpu_table(app: &AppWindow) {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
-            let sel = gpu_split::set_even(&devices::probed(), &server_selection(&app));
+            let sel = gpu_split::set_even(&server_selection(&app));
             set_server_selection(&app, &sel);
             refresh_gpu_rows(&app);
         });

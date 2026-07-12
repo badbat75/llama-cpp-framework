@@ -234,19 +234,18 @@ pub(super) fn run(app: &AppWindow) {
             .map(|i| rows.row_data(i).expect("row").id.to_string())
             .collect()
     };
-    // Probe order, with the unknown id last (it is only a row because it is
-    // selected). The probed rows must hold that order for EVERY selection below —
-    // the bug this replaces re-sorted checked-first, so each click slid the next
-    // row under the cursor and a model got pinned to the wrong GPU.
+    // The clone's stale CUDA1 pin is the only checked device, so it heads the
+    // table; the probed GPUs follow in probe order. The row order IS the split
+    // order — which is what makes the drag handle (exercised below) meaningful.
     assert_eq!(
         row_ids(),
-        ["CUDA0", "ROCm1", "CUDA1"],
-        "2 probed (in probe order) + 1 selected-but-unknown"
+        ["CUDA1", "CUDA0", "ROCm1"],
+        "the checked device leads, then the probe"
     );
     let rows = st.get_preset_gpu_rows();
-    assert_eq!(rows.row_data(0).expect("row 0").vram.as_str(), "12.0 GB (10.6 free)");
-    let unknown = rows.row_data(2).expect("row 2");
+    let unknown = rows.row_data(0).expect("row 0");
     assert!(unknown.enabled && !unknown.detected, "the stale CUDA1 pin is kept");
+    assert_eq!(rows.row_data(1).expect("row 1").vram.as_str(), "12.0 GB (10.6 free)");
 
     let gpu_checkbox = |id: &str| {
         ElementHandle::find_by_accessible_label(app, format!("gpu-{id}").as_str())
@@ -255,18 +254,15 @@ pub(super) fn run(app: &AppWindow) {
     };
     gpu_checkbox("CUDA1").invoke_accessible_default_action(); // uncheck the stale pin
     assert_eq!(st.get_form().device.as_str(), "");
-    // From here the table is exactly the probe, and every toggle must leave it so.
-    let order = ["CUDA0", "ROCm1"];
-    assert_eq!(row_ids(), order, "dropping the unknown pin drops its row");
+    assert_eq!(row_ids(), ["CUDA0", "ROCm1"], "dropping the pin drops its row");
     gpu_checkbox("ROCm1").invoke_accessible_default_action();
-    assert_eq!(row_ids(), order, "a toggle must not move the rows");
     gpu_checkbox("CUDA0").invoke_accessible_default_action();
-    assert_eq!(row_ids(), order, "a toggle must not move the rows");
     assert_eq!(
         st.get_form().device.as_str(),
-        "CUDA0,ROCm1",
-        "the device list is canonicalized into probe order, whatever order they were checked in"
+        "ROCm1,CUDA0",
+        "a checked device is APPENDED — the split order is the order you checked"
     );
+    assert_eq!(row_ids(), ["ROCm1", "CUDA0"], "the rows follow the split order");
     assert_eq!(st.get_preset_gpu_selected(), 2);
     assert_eq!(
         st.get_form().tensor_split.as_str(),
@@ -280,12 +276,12 @@ pub(super) fn run(app: &AppWindow) {
     st.invoke_preset_gpu_weight("ROCm1".into(), 3);
     assert_eq!(
         st.get_form().tensor_split.as_str(),
-        "1,3",
+        "3,1",
         "the weight follows its device's position in the list"
     );
     assert_eq!(st.get_preset_gpu_total(), 4, "the Share column's denominator");
     assert!(
-        st.get_preset_gpu_summary().contains("--tensor-split 1,3"),
+        st.get_preset_gpu_summary().contains("--tensor-split 3,1"),
         "summary: {}",
         st.get_preset_gpu_summary()
     );
@@ -298,11 +294,21 @@ pub(super) fn run(app: &AppWindow) {
     st.invoke_preset_gpu_even();
     st.invoke_preset_gpu_weight("ROCm1".into(), 3);
 
+    // The drag handle: promote CUDA0 to the head of the split. Position 0 is
+    // llama.cpp's main_gpu, and a checkbox can only append — so this is the only
+    // way to get there. The weight must ride along with its device.
+    st.invoke_preset_gpu_move("CUDA0".into(), -1);
+    assert_eq!(st.get_form().device.as_str(), "CUDA0,ROCm1");
+    assert_eq!(st.get_form().tensor_split.as_str(), "1,3", "weights rode along");
+    assert_eq!(row_ids(), ["CUDA0", "ROCm1"], "the rows follow the new order");
+    st.invoke_preset_gpu_move("CUDA0".into(), 1); // back, so the INI below is 3,1
+    assert_eq!(st.get_form().device.as_str(), "ROCm1,CUDA0");
+
     st.invoke_save_preset();
     assert!(!st.get_status_is_error(), "{}", st.get_status_text());
     let ini = std::fs::read_to_string(crate::paths::presets_ini()).expect("presets.ini");
     assert!(
-        ini.contains("device = CUDA0,ROCm1") && ini.contains("tensor-split = 1,3"),
+        ini.contains("device = ROCm1,CUDA0") && ini.contains("tensor-split = 3,1"),
         "the table's selection must reach the INI:\n{ini}"
     );
 
@@ -314,7 +320,7 @@ pub(super) fn run(app: &AppWindow) {
     gpu_checkbox("CUDA0").invoke_accessible_default_action(); // uncheck → dirty
     assert_eq!(st.get_form().device.as_str(), "ROCm1");
     st.invoke_revert_preset();
-    assert_eq!(st.get_form().device.as_str(), "CUDA0,ROCm1");
+    assert_eq!(st.get_form().device.as_str(), "ROCm1,CUDA0");
     assert_eq!(
         gpu_checkbox("CUDA0").accessible_checked(),
         Some(true),

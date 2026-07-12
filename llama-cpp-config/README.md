@@ -64,7 +64,11 @@ Field behaviors:
 
 `--tensor-split` is a positional vector indexed over the devices named by `--device`, **in `--device` order**. Typing `3,1` into a text box therefore means nothing until you know which devices those are — and with `--device` unset, "those devices" is every detected backend, which on a mixed box is a CUDA card, two ROCm devices (one of them an iGPU) and three duplicate Vulkan views of the same three GPUs. So the two settings share one widget (`GpuSplitTable`, used by both tabs): a row per detected GPU with a checkbox, its VRAM, an editable weight, and the derived share, plus a summary line showing the exact flags produced.
 
-Rows are built in Rust (`gpu_split::build_rows`) and are **always in `--list-devices` order, checked or not** — a toggle moves checkmarks, never rows. (An earlier cut listed the checked devices first; that re-sorted the table under the cursor, and the next click landed on whichever row had slid into that spot — which is how a model got pinned to an iGPU that cannot run inference.) Every edit also re-sorts the `device` list into that same order, so the checked rows read top to bottom *are* the `--device` list and its `--tensor-split` vector. The cost: a hand-written `device = CUDA0,ROCm1` in the reverse order is normalized the first time the table is touched — weights travel with their device, so only which GPU is "first" can change.
+Rows are built in Rust (`gpu_split::build_rows`): the **checked devices first, in split order**, then the rest in probe order. So the table read top to bottom *is* the `--device` list and its `--tensor-split` vector. Checking a box **appends** the device to the split; the **≡ drag handle** on each checked row is how you reorder it — the weight rides along with its device, so the proportions survive a move.
+
+Position 0 is not cosmetic: it is `devices[0]`, which is also llama.cpp's **`main_gpu`** (it defaults `--main-gpu` to 0 and the framework never overrides it). With `--split-mode none` that is the *only* GPU llama.cpp keeps; under `layer` it takes the first slice of layers. Without the handle there was no way to put a chosen GPU at the head.
+
+> The `--list-devices` ids are **not stable** across driver states — the same machine has enumerated its discrete AMD card as `ROCm0` on one boot and `ROCm1` on another, with the iGPU taking the other slot. Presets pin by id, so the table always shows the device **name** next to it: check the name, not the number.
 
 The four states it can express map 1:1 onto llama.cpp:
 

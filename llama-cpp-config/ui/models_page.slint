@@ -261,7 +261,7 @@ export component ModelsPage inherits HorizontalLayout {
             SectionCard {
                 heading: "GPU distribution";
                 Text {
-                    text: "Which GPUs THIS model runs on (--device) and how much of it each one holds (--tensor-split). Checking nothing inherits the server default. Two GPUs of different sizes? Check both and give the bigger one a bigger weight.";
+                    text: "Which GPUs THIS model runs on (--device) and how much of it each one holds (--tensor-split). Checking nothing inherits the server default. Two GPUs of different sizes? Check both and give the bigger one a bigger weight. The checked rows, top to bottom, are the split order — drag ≡ to reorder; the first one is llama.cpp's main GPU.";
                     wrap: word-wrap;
                     font-size: 12px;
                     color: Palette.foreground.transparentize(Tokens.muted);
@@ -276,6 +276,7 @@ export component ModelsPage inherits HorizontalLayout {
                     split_mode <=> AppState.form.split_mode;
                     split_mode_hint: "Multi-GPU split for this model (--split-mode), overrides the server default; same on CUDA and HIP.\nlayer splits layers + KV; row is tensor-parallel; none = single GPU.\ndefault = inherit server.\nIrrelevant with one GPU checked.";
                     toggled(id) => { AppState.preset_gpu_toggle(id); }
+                    reordered(id, delta) => { AppState.preset_gpu_move(id, delta); }
                     weight_edited(id, w) => { AppState.preset_gpu_weight(id, w); }
                     auto_split() => { AppState.preset_gpu_auto(); }
                     even_split() => { AppState.preset_gpu_even(); }

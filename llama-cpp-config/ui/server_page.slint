@@ -132,7 +132,7 @@ export component ServerPage inherits ScrollView {
         SectionCard {
             heading: "GPU distribution";
             Text {
-                text: "Default for every preset (--device / --tensor-split). Check the GPUs a model may use and, if they differ in VRAM, how much of it each takes. A preset can override this — unless something is checked here, in which case the server-wide choice wins at launch.";
+                text: "Default for every preset (--device / --tensor-split). Check the GPUs a model may use and, if they differ in VRAM, how much of it each takes. The checked rows, top to bottom, are the split order — drag ≡ to reorder; the first one is llama.cpp's main GPU (the only one used with split mode 'none'). A preset can override this — unless something is checked here, in which case the server-wide choice wins at launch.";
                 wrap: word-wrap;
                 font-size: 12px;
                 color: Palette.foreground.transparentize(Tokens.muted);
@@ -145,6 +145,7 @@ export component ServerPage inherits ScrollView {
                 split_mode <=> AppState.server_form.split_mode;
                 split_mode_hint: "Multi-GPU split strategy (--split-mode), same on CUDA and HIP.\nlayer (default) splits layers + KV across GPUs; row splits per-row (tensor-parallel, more PCIe traffic); none = single GPU.\nIrrelevant with one GPU checked.";
                 toggled(id) => { AppState.server_gpu_toggle(id); }
+                reordered(id, delta) => { AppState.server_gpu_move(id, delta); }
                 weight_edited(id, w) => { AppState.server_gpu_weight(id, w); }
                 auto_split() => { AppState.server_gpu_auto(); }
                 even_split() => { AppState.server_gpu_even(); }

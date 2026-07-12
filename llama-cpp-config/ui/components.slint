@@ -573,13 +573,12 @@ export component FormActions inherits HorizontalLayout {
 // `device` + `tensor_split` strings. The .slint side only reports edits, and it
 // addresses devices BY ID, never by row index.
 //
-// Rows are always in `--list-devices` order, checked or not — a toggle changes
-// checkmarks, never positions. An earlier cut listed the checked devices first,
-// which re-sorted the table under the cursor: the next click landed on whatever
-// row had slid into that spot, and that is how a model got pinned to an iGPU that
-// cannot run inference. Because every edit also re-sorts the `device` list into
-// this same order, the checked rows read top-to-bottom ARE the --device list and
-// its --tensor-split vector.
+// The checked rows come FIRST, in split order: read top to bottom they ARE the
+// --device list and its --tensor-split vector. That is what makes the ≡ drag
+// handle mean something — and position 0 is not cosmetic, it is llama.cpp's
+// main_gpu (the sole GPU under --split-mode none, the first slice of layers under
+// layer). Checking a box APPENDS the device at the end of the split; the handle
+// is how you promote it. Nothing reorders on its own.
 //
 // BINDING NOTE (the sanctioned one-way `for`-row exception, same as the
 // Integrations checkboxes): `checked: row.enabled` and `value: row.weight` are
@@ -606,11 +605,55 @@ export component GpuSplitTable inherits VerticalLayout {
     in property <string> split_mode_hint;
     in-out property <string> split_mode;
     callback toggled(string);
+    // Drag-handle result: move this device `delta` places within the split
+    // (negative = up / towards the head). Reported ONCE, on release: the drag
+    // itself is a pure visual preview (`row_y` below), because rebuilding the row
+    // model mid-drag would recreate this delegate and drop the TouchArea's grab.
+    callback reordered(string, int);
     callback weight_edited(string, int);
     callback auto_split();
     callback even_split();
 
     property <bool> weights_editable: root.selected >= 2 && root.weight_total > 0;
+    // One home for the row height: it lays the rows out, and it is the divisor
+    // that turns a drag distance into a row delta. They must not drift.
+    property <length> row_height: 40px;
+
+    // Live-drag state. Set by the handle's TouchArea while it is held, cleared on
+    // release. Only `row_y` reads it — the row MODEL never changes during a drag.
+    property <string> drag_id: "";
+    property <int> drag_from: 0;
+    property <length> drag_dy: 0;
+
+    // Where the dragged row would land: its own index plus the rows of travel,
+    // clamped to the checked block (the only rows with a position in the split).
+    pure function drag_target() -> int {
+        Math.max(0, Math.min(root.selected - 1,
+            root.drag_from + Math.round(root.drag_dy / root.row_height)))
+    }
+
+    // The rows are positioned by hand rather than by a layout so a drag can move
+    // them: the held row follows the pointer, and the rows it passes slide one slot
+    // to open the gap. Nothing here is committed — `reordered` on release is.
+    pure function row_y(i: int, id: string) -> length {
+        if (root.drag_id == "") {
+            return i * root.row_height;
+        }
+        if (root.drag_id == id) {
+            return root.drag_from * root.row_height + root.drag_dy;
+        }
+        // Unchecked rows sit below the split and never take part.
+        if (i >= root.selected) {
+            return i * root.row_height;
+        }
+        if (i > root.drag_from && i <= root.drag_target()) {
+            return (i - 1) * root.row_height;   // dragging down: shift up
+        }
+        if (i >= root.drag_target() && i < root.drag_from) {
+            return (i + 1) * root.row_height;   // dragging up: shift down
+        }
+        return i * root.row_height;
+    }
 
     pure function share_text(enabled: bool, weight: int) -> string {
         if (!enabled) {
@@ -641,6 +684,7 @@ export component GpuSplitTable inherits VerticalLayout {
         padding-right: 12px;
         spacing: 8px;
         Rectangle { width: 24px; }
+        Rectangle { width: 18px; }
         Text {
             text: "Device";
             horizontal-stretch: 1;
@@ -674,100 +718,149 @@ export component GpuSplitTable inherits VerticalLayout {
         color: Palette.foreground.transparentize(Tokens.muted);
     }
 
-    for row[i] in root.rows : Rectangle {
-        height: 40px;
-        // Tint with the WINDOW background: these rows sit on a SectionCard, whose
-        // surface IS alternate-background — tinting with the card's own colour
-        // would composite to exactly itself. Same trick as integrations_page.
-        background: Math.mod(i, 2) == 0 ? transparent : Palette.background.transparentize(Tokens.zebra);
-
-        HorizontalLayout {
-            padding-left: 12px;
-            padding-right: 12px;
-            padding-top: 4px;
-            padding-bottom: 4px;
-            spacing: 8px;
-
-            CheckBox {
-                width: 24px;
-                text: "";
-                // Findable handle for the e2e table phase (src/tests/save_flow.rs)
-                // — text is empty by design.
-                accessible-label: "gpu-" + row.id;
-                checked: row.enabled;
-                toggled => {
-                    root.toggled(row.id);
-                }
-            }
-
+    // Hand-positioned rows (see `row_y`), so a drag can slide them. Height is the
+    // whole block, since the enclosing VerticalLayout can't measure absolute children.
+    Rectangle {
+        height: root.rows.length * root.row_height;
+        for row[i] in root.rows : Rectangle {
+            x: 0;
+            y: root.row_y(i, row.id);
+            width: parent.width;
+            height: root.row_height;
+            // Tint with the WINDOW background: these rows sit on a SectionCard, whose
+            // surface IS alternate-background — tinting with the card's own colour
+            // would composite to exactly itself. Same trick as integrations_page.
+            // Opaque while held, so the dragged row reads as floating over the others.
+            background: grip.pressed ? Palette.alternate-background
+                : (Math.mod(i, 2) == 0 ? transparent : Palette.background.transparentize(Tokens.zebra));
+            border-radius: grip.pressed ? 4px : 0;
+            drop-shadow-color: grip.pressed ? Tokens.shadow-card : transparent;
+            drop-shadow-blur: 8px;
+    
             HorizontalLayout {
-                horizontal-stretch: 1;
+                padding-left: 12px;
+                padding-right: 12px;
+                padding-top: 4px;
+                padding-bottom: 4px;
                 spacing: 8px;
-                Text {
-                    width: 64px;
-                    text: row.id;
-                    vertical-alignment: center;
-                    font-size: 13px;
-                    font-weight: 600;
-                    color: Palette.foreground;
-                }
-                Text {
-                    text: row.name;
-                    vertical-alignment: center;
-                    font-size: 13px;
-                    overflow: elide;
-                    horizontal-stretch: 1;
-                    // A selected device the probe doesn't know (stale config, or
-                    // the probe hasn't landed) reads as an absence, not a GPU.
-                    color: row.detected
-                        ? Palette.foreground
-                        : Palette.foreground.transparentize(Tokens.faint);
-                }
-            }
-
-            Text {
-                width: 120px;
-                text: row.vram;
-                vertical-alignment: center;
-                font-size: 13px;
-                color: Palette.foreground.transparentize(Tokens.faint);
-            }
-
-            Rectangle {
-                width: 84px;
-                w := SpinBox {
-                    x: 0;
-                    y: 0;
-                    width: parent.width;
-                    height: parent.height;
-                    visible: row.enabled;
-                    enabled: root.weights_editable;
-                    minimum: 0;
-                    maximum: 999;
-                    value: row.weight;
-                    edited(v) => {
-                        root.weight_edited(row.id, v);
+    
+                CheckBox {
+                    width: 24px;
+                    text: "";
+                    // Findable handle for the e2e table phase (src/tests/save_flow.rs)
+                    // — text is empty by design.
+                    accessible-label: "gpu-" + row.id;
+                    checked: row.enabled;
+                    toggled => {
+                        root.toggled(row.id);
                     }
                 }
+    
+                // Drag handle. Only checked rows have a position in the split, and with
+                // a single device there is nothing to order. While held it feeds the
+                // live preview (`drag_*` → `row_y`); on release it reports the move
+                // once, and the resulting model rebuild is what actually moves the row.
+                Rectangle {
+                    width: 18px;
+                    Text {
+                        x: 0;
+                        y: 0;
+                        width: parent.width;
+                        height: parent.height;
+                        visible: row.enabled && root.selected >= 2;
+                        text: "≡";
+                        font-size: 15px;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                        color: Palette.foreground.transparentize(grip.has-hover ? 0 : Tokens.faint);
+                    }
+                    grip := TouchArea {
+                        enabled: row.enabled && root.selected >= 2;
+                        mouse-cursor: grip.pressed ? MouseCursor.grabbing : MouseCursor.grab;
+                        moved => {
+                            root.drag_id = row.id;
+                            root.drag_from = i;
+                            root.drag_dy = self.mouse-y - self.pressed-y;
+                        }
+                        pointer-event(ev) => {
+                            if (ev.kind == PointerEventKind.up && root.drag_id == row.id) {
+                                root.reordered(row.id, root.drag_target() - root.drag_from);
+                                root.drag_id = "";
+                                root.drag_dy = 0;
+                            }
+                        }
+                    }
+                }
+    
+                HorizontalLayout {
+                    horizontal-stretch: 1;
+                    spacing: 8px;
+                    Text {
+                        width: 64px;
+                        text: row.id;
+                        vertical-alignment: center;
+                        font-size: 13px;
+                        font-weight: 600;
+                        color: Palette.foreground;
+                    }
+                    Text {
+                        text: row.name;
+                        vertical-alignment: center;
+                        font-size: 13px;
+                        overflow: elide;
+                        horizontal-stretch: 1;
+                        // A selected device the probe doesn't know (stale config, or
+                        // the probe hasn't landed) reads as an absence, not a GPU.
+                        color: row.detected
+                            ? Palette.foreground
+                            : Palette.foreground.transparentize(Tokens.faint);
+                    }
+                }
+    
                 Text {
-                    width: parent.width;
-                    height: parent.height;
-                    visible: !row.enabled;
-                    text: "—";
-                    horizontal-alignment: center;
+                    width: 120px;
+                    text: row.vram;
                     vertical-alignment: center;
                     font-size: 13px;
                     color: Palette.foreground.transparentize(Tokens.faint);
                 }
-            }
-
-            Text {
-                width: 52px;
-                text: root.share_text(row.enabled, w.value);
-                horizontal-alignment: right;
-                vertical-alignment: center;
-                font-size: 13px;
-                color: Palette.foreground;
+    
+                Rectangle {
+                    width: 84px;
+                    w := SpinBox {
+                        x: 0;
+                        y: 0;
+                        width: parent.width;
+                        height: parent.height;
+                        visible: row.enabled;
+                        enabled: root.weights_editable;
+                        minimum: 0;
+                        maximum: 999;
+                        value: row.weight;
+                        edited(v) => {
+                            root.weight_edited(row.id, v);
+                        }
+                    }
+                    Text {
+                        width: parent.width;
+                        height: parent.height;
+                        visible: !row.enabled;
+                        text: "—";
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                        font-size: 13px;
+                        color: Palette.foreground.transparentize(Tokens.faint);
+                    }
+                }
+    
+                Text {
+                    width: 52px;
+                    text: root.share_text(row.enabled, w.value);
+                    horizontal-alignment: right;
+                    vertical-alignment: center;
+                    font-size: 13px;
+                    color: Palette.foreground;
+                }
             }
         }
     }
