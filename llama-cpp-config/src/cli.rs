@@ -35,7 +35,11 @@ pub enum ServerCmd {
     /// Print the current server.ini values.
     Show,
     /// Update one or more server.ini fields.
-    Set(ServerSet),
+    // Boxed: `ServerSet` carries one Option per server.ini field, so it grows
+    // with the schema and has outgrown clippy's enum-variant size threshold
+    // against the payload-less `Show`. clap derives `Args` for the inner struct
+    // and unwraps the Box itself, so the CLI surface is unchanged.
+    Set(Box<ServerSet>),
 }
 
 #[derive(Args, Debug, Default)]
@@ -72,6 +76,10 @@ pub struct ServerSet {
     /// How much each --device holds (--tensor-split), e.g. "3,1" (empty = by free VRAM).
     #[arg(long)]
     pub tensor_split: Option<String>,
+    /// Pin tensors to a device (--override-tensor), e.g. "token_embd\.weight=ROCm0"
+    /// (empty = none). REPLACES every preset's own rules; an unknown device stops the server.
+    #[arg(long)]
+    pub override_tensor: Option<String>,
     /// GPU for the image encoder, e.g. "ROCm1" (empty = the first GPU llama.cpp finds).
     #[arg(long)]
     pub mmproj_device: Option<String>,
@@ -129,6 +137,9 @@ impl ServerSet {
         }
         if let Some(ts) = &self.tensor_split {
             cfg.tensor_split = server_cfg::opt_nonblank(Some(ts.clone()));
+        }
+        if let Some(ot) = &self.override_tensor {
+            cfg.override_tensor = server_cfg::opt_nonblank(Some(ot.clone()));
         }
         if let Some(md) = &self.mmproj_device {
             cfg.mmproj_device = server_cfg::opt_nonblank(Some(md.clone()));
@@ -222,6 +233,12 @@ fn show_lines(cfg: &server_cfg::ServerConfig) -> String {
         cfg.tensor_split
             .clone()
             .unwrap_or_else(|| "auto (by free VRAM)".into()),
+    );
+    row(
+        "OverrideTensor:",
+        cfg.override_tensor
+            .clone()
+            .unwrap_or_else(|| "none".into()),
     );
     row(
         "MmprojDevice:",
@@ -333,6 +350,7 @@ mod tests {
             device: Some("ROCm1,CUDA0".into()),
             split_mode: Some("row".into()),
             tensor_split: Some("3,1".into()),
+            override_tensor: Some(r"token_embd\.weight=ROCm1".into()),
             mmproj_device: Some("ROCm1".into()),
             webui_mcp_proxy: Some(false),
             fit: Some(true),
@@ -357,6 +375,7 @@ mod tests {
             device: Some("ROCm1,CUDA0".into()),
             split_mode: Some("row".into()),
             tensor_split: Some("3,1".into()),
+            override_tensor: Some(r"token_embd\.weight=ROCm1".into()),
             mmproj_device: Some("ROCm1".into()),
             webui_mcp_proxy: Some(false),
             fit: Some(true),
@@ -383,6 +402,7 @@ mod tests {
             device: Some("ROCm1,CUDA0".into()),
             split_mode: Some("row".into()),
             tensor_split: Some("3,1".into()),
+            override_tensor: Some(r"token_embd\.weight=ROCm1".into()),
             mmproj_device: Some("ROCm1".into()),
             webui_mcp_proxy: Some(false),
             fit: Some(true),
@@ -406,6 +426,7 @@ mod tests {
             device,
             split_mode,
             tensor_split,
+            override_tensor,
             mmproj_device,
             webui_mcp_proxy,
             fit,
@@ -424,6 +445,7 @@ mod tests {
             ("Device:", device.unwrap()),
             ("SplitMode:", split_mode.unwrap()),
             ("TensorSplit:", tensor_split.unwrap()),
+            ("OverrideTensor:", override_tensor.unwrap()),
             ("MmprojDevice:", mmproj_device.unwrap()),
             ("WebuiMcpProxy:", webui_mcp_proxy.unwrap().to_string()),
             ("Fit:", fit.unwrap().to_string()),
@@ -465,6 +487,7 @@ mod tests {
             device: Some("CUDA0".into()),
             split_mode: Some("row".into()),
             tensor_split: Some("3,1".into()),
+            override_tensor: Some(r"token_embd\.weight=CUDA0".into()),
             ..Default::default()
         };
         let set = ServerSet {
@@ -476,6 +499,7 @@ mod tests {
             device: Some(String::new()),
             split_mode: Some("  ".into()),
             tensor_split: Some(String::new()),
+            override_tensor: Some(String::new()),
             ..Default::default()
         };
         set.apply(&mut cfg);
@@ -487,5 +511,6 @@ mod tests {
         assert_eq!(cfg.device, None);
         assert_eq!(cfg.split_mode, None);
         assert_eq!(cfg.tensor_split, None);
+        assert_eq!(cfg.override_tensor, None);
     }
 }

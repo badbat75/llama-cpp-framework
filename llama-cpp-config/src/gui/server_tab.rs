@@ -73,7 +73,7 @@ pub(super) fn wire(app: &AppWindow, tray: &AppTray, state: &Rc<RefCell<State>>) 
                 .unwrap_or(current)
         });
 
-    wire_gpu_table(app);
+    wire_tables(app);
 
     {
         let app_weak = app.as_weak();
@@ -87,6 +87,92 @@ pub(super) fn wire(app: &AppWindow, tray: &AppTray, state: &Rc<RefCell<State>>) 
         let tray_weak = tray.as_weak();
         app.global::<AppState>().on_stop_server(move || {
             stop_server_async(app_weak.clone(), tray_weak.clone());
+        });
+    }
+}
+
+/// The Server tab's two device tables (GPU distribution + tensor placement).
+/// Split out of `wire` because these need nothing but the window — no tray, no
+/// shared `State` — which is what lets the e2e harness wire them without
+/// fabricating a tray (`gui::wire_tabs_for_tests`). The rest of `wire` (Save,
+/// Revert, Start/Stop) does need both, and stays there.
+pub(super) fn wire_tables(app: &AppWindow) {
+    wire_gpu_table(app);
+    wire_tensor_table(app);
+}
+
+/// The server-wide tensor-placement table's five callbacks, over
+/// `server_form.override_tensor` — the twin of `models_tab::wire_tensor_table`,
+/// which documents why `set_pattern` refreshes only the scalars (rebuilding would
+/// recreate the LineEdit being typed into and drop the caret).
+///
+/// What differs is only the blast radius of what they write: this string lands on
+/// the ROUTER's command line, so it replaces every preset's rules rather than
+/// adding to them (see `server_cfg::ServerConfig::override_tensor`).
+fn wire_tensor_table(app: &AppWindow) {
+    let s = app.global::<AppState>();
+    {
+        let app_weak = app.as_weak();
+        s.on_server_tensor_add(move || {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let rules = tensor_override::add(&server_overrides(&app), &devices::probed());
+            set_server_overrides(&app, &rules);
+            refresh_tensor_rows(&app);
+        });
+    }
+    {
+        let app_weak = app.as_weak();
+        s.on_server_tensor_remove(move |index| {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let rules = tensor_override::remove(&server_overrides(&app), row_index(index));
+            set_server_overrides(&app, &rules);
+            refresh_tensor_rows(&app);
+        });
+    }
+    {
+        let app_weak = app.as_weak();
+        s.on_server_tensor_kind(move |index, kind| {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let rules =
+                tensor_override::set_kind(&server_overrides(&app), row_index(index), kind.as_str());
+            set_server_overrides(&app, &rules);
+            refresh_tensor_rows(&app);
+        });
+    }
+    {
+        let app_weak = app.as_weak();
+        s.on_server_tensor_device(move |index, device| {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let rules = tensor_override::set_device(
+                &server_overrides(&app),
+                row_index(index),
+                device.as_str(),
+            );
+            set_server_overrides(&app, &rules);
+            refresh_tensor_rows(&app);
+        });
+    }
+    {
+        let app_weak = app.as_weak();
+        s.on_server_tensor_pattern(move |index, pattern| {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let rules = tensor_override::set_pattern(
+                &server_overrides(&app),
+                row_index(index),
+                pattern.as_str(),
+            );
+            set_server_overrides(&app, &rules);
+            refresh_tensor_scalars(&app);
         });
     }
 }

@@ -31,9 +31,13 @@ pub(super) fn run(app: &AppWindow) {
     // Stand in for the `--list-devices` probe (there is no llama-server here), so
     // the GPU distribution table has rows to drive further down. Process-wide,
     // like the real probe cache; seeded before the wiring so every rebuild sees it.
+    // The CPU line is deliberate: the real probe always prints it, the GPU table
+    // must FILTER it out (`--device` won't take it) and the tensor-placement table
+    // must OFFER it (`--override-tensor` explicitly targets it) — both asserted below.
     crate::devices::set_probed(crate::devices::parse(
         "  CUDA0: NVIDIA GeForce RTX 4070 SUPER (12281 MiB, 10844 MiB free)\n  \
-         ROCm1: AMD Radeon AI PRO R9700 (32624 MiB, 32462 MiB free)\n",
+         ROCm1: AMD Radeon AI PRO R9700 (32624 MiB, 32462 MiB free)\n  \
+         CPU: AMD Ryzen 9 9900X (63090 MiB, 48233 MiB free)\n",
     ));
 
     crate::gui::wire_tabs_for_tests(app);
@@ -326,6 +330,196 @@ pub(super) fn run(app: &AppWindow) {
         Some(true),
         "a rebuild must reach the clicked checkbox"
     );
+
+    // ── Tensor placement: the whole --override-tensor funnel ─────────────
+    // The table is the ONLY writer of `override_tensor`, and the value's grammar
+    // is unforgiving: llama.cpp splits it on `,` and each rule at its FIRST `=`
+    // BEFORE parsing, so a rule that survives that without a device is a throw at
+    // load. This drives the real callbacks and asserts the string that reaches the
+    // INI, comma and equals signs included.
+    let ot_rows = || st.get_preset_tensor_rows();
+    assert_eq!(ot_rows().row_count(), 0, "a preset starts with no overrides");
+    assert!(
+        st.get_preset_tensor_summary().starts_with("(no overrides"),
+        "summary: {}",
+        st.get_preset_tensor_summary()
+    );
+
+    st.invoke_preset_tensor_add();
+    let row = ot_rows().row_data(0).expect("row 0");
+    assert_eq!(row.kind_index, 0, "Add seeds the Embedding table…");
+    assert_eq!(row.device.as_str(), "CUDA0", "…on the first probed GPU");
+    assert!(!row.custom, "a canned kind hides the regex field");
+    assert!(row.detected && row.problem.is_empty());
+    assert_eq!(
+        st.get_form().override_tensor.as_str(),
+        r"token_embd\.weight=CUDA0",
+        "the one rule that pays for this table: the embedding table off pinned host RAM"
+    );
+    assert!(st.get_preset_tensor_warning().is_empty());
+
+    // The CPU is a first-class target here — and the contrast with the GPU table
+    // above (which filters it out, since --device won't take it) is the point.
+    let dev_values: Vec<String> = {
+        let v = st.get_preset_tensor_dev_values();
+        (0..v.row_count())
+            .map(|i| v.row_data(i).expect("value").to_string())
+            .collect()
+    };
+    assert_eq!(dev_values, ["CUDA0", "ROCm1", "CPU"]);
+    assert!(
+        !row_ids().contains(&"CPU".to_string()),
+        "…while the GPU distribution table must NOT offer it"
+    );
+
+    // A second rule: the experts regex, sent to the CPU (i.e. exactly --cpu-moe).
+    st.invoke_preset_tensor_add();
+    st.invoke_preset_tensor_kind(1, "exps".into());
+    st.invoke_preset_tensor_device(1, "CPU".into());
+    assert_eq!(
+        st.get_form().override_tensor.as_str(),
+        r"token_embd\.weight=CUDA0,\.ffn_(up|down|gate|gate_up)_(ch|)exps=CPU",
+        "two rules, comma-joined — `,` and `=` ARE the grammar"
+    );
+
+    // Custom clears the regex and reveals the row's text field (a row's kind is
+    // DERIVED from its pattern, so it could not both stay `\.ffn_…_exps` and read
+    // as Custom). The regex it then takes is SANITIZED: a `{1,2}` quantifier would
+    // tear its own rule in half at llama.cpp's comma split.
+    st.invoke_preset_tensor_kind(1, "custom".into());
+    let row = ot_rows().row_data(1).expect("row 1");
+    assert!(row.custom, "Custom must reveal the regex field");
+    assert_eq!(row.device.as_str(), "CPU", "…while the device stays put");
+    st.invoke_preset_tensor_pattern(1, r"blk\.{1,2}\.attn=x".into());
+    assert_eq!(
+        st.get_form().override_tensor.as_str(),
+        r"token_embd\.weight=CUDA0,blk\.{12}\.attnx=CPU",
+        "the two separators are stripped, so the value is still TWO rules"
+    );
+
+    st.invoke_save_preset();
+    assert!(!st.get_status_is_error(), "{}", st.get_status_text());
+    let ini = std::fs::read_to_string(crate::paths::presets_ini()).expect("presets.ini");
+    assert!(
+        ini.contains(r"override-tensor = token_embd\.weight=CUDA0,blk\.{12}\.attnx=CPU"),
+        "the table's rules must reach the INI:\n{ini}"
+    );
+
+    // The rebuild half of the one-way `for`-row binding contract, as in the GPU
+    // phase — but for the row's LineEdit, whose handler deliberately does NOT
+    // rebuild (that would recreate the field mid-keystroke and drop the caret).
+    // The widget's own write breaks its binding permanently; only Revert's full
+    // rebuild can bring it back, and it must.
+    let ot_pattern = || {
+        ElementHandle::find_by_accessible_label(app, "ot-pattern-1")
+            .next()
+            .expect("the Custom row's regex field")
+    };
+    assert_eq!(
+        ot_pattern().accessible_value().unwrap_or_default(),
+        r"blk\.{12}\.attnx"
+    );
+    ot_pattern().set_accessible_value(r"attn_norm"); // the edit that breaks the binding
+    assert_eq!(
+        st.get_form().override_tensor.as_str(),
+        r"token_embd\.weight=CUDA0,attn_norm=CPU",
+        "a keystroke in the regex field must reach the form"
+    );
+    st.invoke_revert_preset();
+    assert_eq!(
+        ot_pattern().accessible_value().unwrap_or_default(),
+        r"blk\.{12}\.attnx",
+        "a rebuild must reach the edited regex field"
+    );
+
+    // A rule with NO device is what a hand-edited INI leaves behind, and llama.cpp
+    // throws on it during arg parsing — the model just never loads. So write it the
+    // way it really arrives (into the file, then reload) and pin both halves of the
+    // answer: the table explains it, and the save refuses to write it back.
+    let ini = std::fs::read_to_string(crate::paths::presets_ini()).expect("presets.ini");
+    let hand_edited = ini.replace(
+        r"override-tensor = token_embd\.weight=CUDA0,blk\.{12}\.attnx=CPU",
+        r"override-tensor = token_embd\.weight",
+    );
+    assert_ne!(hand_edited, ini, "the line to hand-edit must be there");
+    std::fs::write(crate::paths::presets_ini(), &hand_edited).expect("hand-edit presets.ini");
+    st.invoke_revert_preset(); // reloads from disk → rebuilds the table
+    assert!(
+        st.get_preset_tensor_warning().contains("token_embd"),
+        "warning: {}",
+        st.get_preset_tensor_warning()
+    );
+    assert_eq!(
+        ot_rows().row_data(0).expect("row 0").problem.as_str(),
+        "pick a device"
+    );
+    st.invoke_save_preset();
+    assert!(
+        st.get_status_is_error(),
+        "a rule with no device must be refused by presets::save"
+    );
+
+    // Repair it through the table (which is the cure the warning implies) and
+    // leave the preset saved and clean for the phases below.
+    st.invoke_preset_tensor_device(0, "CUDA0".into());
+    assert!(st.get_preset_tensor_warning().is_empty());
+    st.invoke_save_preset();
+    assert!(!st.get_status_is_error(), "{}", st.get_status_text());
+
+    // ── The SERVER-wide tensor table: same widget, different blast radius ──
+    // The two tables are independent state, and the server's does not merely
+    // out-rank the preset's — it ERASES it. llama-server's router merges its own
+    // CLI args into every preset as a key→value map, so only ONE --override-tensor
+    // ever reaches a child: the server's. (`-ot` push_backs onto a vector inside
+    // llama.cpp, which makes "they concatenate" the natural guess and a wrong one;
+    // verified against b9976.) Hence the warning, and hence this test.
+    assert_eq!(st.get_server_tensor_rows().row_count(), 0);
+    assert!(
+        st.get_tensor_override_warning().is_empty(),
+        "no server-wide rules ⇒ the preset's table applies, so nothing to warn about"
+    );
+
+    st.invoke_server_tensor_add();
+    st.invoke_server_tensor_device(0, "ROCm1".into());
+    assert_eq!(
+        st.get_server_form().override_tensor.as_str(),
+        r"token_embd\.weight=ROCm1",
+        "the server table writes server_form, NOT the preset's form"
+    );
+    assert_eq!(
+        st.get_form().override_tensor.as_str(),
+        r"token_embd\.weight=CUDA0",
+        "…and the preset's rules stay exactly where they were"
+    );
+    assert!(
+        st.get_server_tensor_summary()
+            .contains(r"--override-tensor token_embd\.weight=ROCm1")
+    );
+    // The Models tab must now say, out loud, that its own table is dead.
+    let warn = st.get_tensor_override_warning();
+    assert!(
+        warn.contains("REPLACES") && warn.contains(r"token_embd\.weight=ROCm1"),
+        "the preset table must announce it is shadowed, and by what: {warn}"
+    );
+
+    // Save through the same conversion the Save button uses. (The button itself
+    // is not wired here: it needs the tray and the run-state machinery — see
+    // gui::wire_tabs_for_tests — so this covers the form → config → INI leg.)
+    let cfg = crate::server_form::form_to_config(&st.get_server_form());
+    crate::server_cfg::save(&cfg).expect("save server.ini");
+    let ini = std::fs::read_to_string(crate::paths::server_ini()).expect("server.ini");
+    assert!(
+        ini.contains(r"OverrideTensor = token_embd\.weight=ROCm1"),
+        "the server table's rules must reach server.ini:\n{ini}"
+    );
+    // (That it then reaches llama-server's command line — the step that makes it
+    // win over the presets — is pinned by runstate's own
+    // `server_args_covers_every_config_field`.)
+
+    // Clearing it hands the presets back their own rules — and the warning goes.
+    st.invoke_server_tensor_remove(0);
+    assert_eq!(st.get_server_form().override_tensor.as_str(), "");
+    assert!(st.get_tensor_override_warning().is_empty());
 
     // ── Dirty guard: navigation on a dirty form asks before discarding ───
     let mut form = st.get_form();

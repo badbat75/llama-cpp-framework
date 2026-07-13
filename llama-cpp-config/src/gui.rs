@@ -68,7 +68,7 @@ use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel};
 use crate::form::{form_to_preset, preset_to_form};
 use crate::{
     devices, gpu_split, integrations, model_scan, net_ifaces, paths, presets, runstate, server_cfg,
-    server_form, server_version,
+    server_form, server_version, tensor_override,
 };
 
 slint::include_modules!();
@@ -106,10 +106,16 @@ struct State {
 /// Integrations tabs plus the discard dialog — nothing else (no tray, no
 /// probes, no single-instance, no event loop). The caller must have redirected
 /// config IO first (see `paths::data_root`).
+///
+/// The Server tab is wired only as far as its two DEVICE TABLES
+/// (`server_tab::wire_tables`) — they need nothing but the window. Its Save /
+/// Revert / Start / Stop callbacks need a tray and the async run-state machinery,
+/// so they stay out, and the test drives the save through `server_cfg::save`.
 #[cfg(test)]
 pub(crate) fn wire_tabs_for_tests(app: &AppWindow) {
     let state = Rc::new(RefCell::new(State::default()));
     reload_presets(app, &state, None);
+    server_tab::wire_tables(app);
     models_tab::wire(app, &state);
     integrations_tab::wire(app);
     wire_discard_confirm(app, &state);
@@ -527,6 +533,75 @@ fn refresh_gpu_rows(app: &AppWindow) {
     s.set_server_gpu_rows(model(gpu_split::build_rows(&devs, &server_selection(app))));
     s.set_preset_gpu_rows(model(gpu_split::build_rows(&devs, &preset_selection(app))));
     refresh_gpu_scalars(app);
+    refresh_tensor_rows(app);
+}
+
+/// Rebuild BOTH tensor-placement tables (server-wide + per-preset) from the
+/// device probe crossed with each form's `override_tensor` string — rows, the
+/// shared dropdown models, and the derived strings. The twin of
+/// `refresh_gpu_rows` (and called from it, so a preset switch / Revert / probe
+/// landing re-projects all four tables in one go).
+///
+/// Always a full rebuild, for the same reason: the delegates bind one-way
+/// (`index: row.kind_index`, `text: row.pattern`) and an edit self-assigns them,
+/// so only fresh delegates are guaranteed to show the truth. The one path that
+/// must NOT come through here is a pattern keystroke — rebuilding would recreate
+/// the LineEdit being typed into — which is what `refresh_tensor_scalars` is for.
+fn refresh_tensor_rows(app: &AppWindow) {
+    let s = app.global::<AppState>();
+    let devs = devices::probed();
+    let server = server_overrides(app);
+    let preset = preset_overrides(app);
+
+    // The KIND dropdown is shared (a static list), but the DEVICE dropdown is
+    // per-scope and must stay that way: `device_options` appends a `(custom)`
+    // entry for every device id the probe doesn't know, so its length — and hence
+    // every row's `device_index` — depends on the rules of THAT table. One shared
+    // model would alias the indices the moment the two scopes named two different
+    // unknown devices (a config carried over from another machine), and a row
+    // would render pointing at the other table's device.
+    let (labels, values) = tensor_override::device_options(&devs, &server);
+    s.set_server_tensor_dev_labels(string_model(labels));
+    s.set_server_tensor_dev_values(string_model(values));
+    let (labels, values) = tensor_override::device_options(&devs, &preset);
+    s.set_preset_tensor_dev_labels(string_model(labels));
+    s.set_preset_tensor_dev_values(string_model(values));
+
+    s.set_tensor_kind_labels(string_model(
+        tensor_override::KINDS.iter().map(|k| k.label.into()).collect(),
+    ));
+    s.set_tensor_kind_values(string_model(
+        tensor_override::KINDS.iter().map(|k| k.id.into()).collect(),
+    ));
+
+    s.set_server_tensor_rows(model(tensor_override::build_rows(&devs, &server)));
+    s.set_preset_tensor_rows(model(tensor_override::build_rows(&devs, &preset)));
+    refresh_tensor_scalars(app);
+}
+
+/// The tensor table's derived strings: the flag line, and the warning for a value
+/// llama.cpp would refuse. Separate from the row rebuild because the pattern-edit
+/// path needs THESE without recreating the LineEdit being typed into.
+fn refresh_tensor_scalars(app: &AppWindow) {
+    let s = app.global::<AppState>();
+
+    let server = server_overrides(app);
+    s.set_server_tensor_summary(tensor_override::summary(&server).into());
+    s.set_server_tensor_warning(
+        tensor_override::validate(&server)
+            .err()
+            .unwrap_or_default()
+            .into(),
+    );
+
+    let preset = preset_overrides(app);
+    s.set_preset_tensor_summary(tensor_override::summary(&preset).into());
+    s.set_preset_tensor_warning(
+        tensor_override::validate(&preset)
+            .err()
+            .unwrap_or_default()
+            .into(),
+    );
 }
 
 /// The derived numbers the tables render off: how many devices are checked, the
@@ -589,6 +664,44 @@ pub(crate) fn set_preset_selection(app: &AppWindow, sel: &gpu_split::GpuSelectio
     let mut f = s.get_form();
     f.device = sel.device.clone().into();
     f.tensor_split = sel.tensor_split.clone().into();
+    s.set_form(f);
+}
+
+// Same contract for the tensor-placement tables: the rules ARE the scope's
+// `override_tensor` string, with no second copy, so a hand-edited INI stays
+// authoritative. Every `*_tensor_*` callback derives the new string with
+// `tensor_override`, writes it back here, then refreshes.
+
+pub(crate) fn server_overrides(app: &AppWindow) -> String {
+    app.global::<AppState>()
+        .get_server_form()
+        .override_tensor
+        .to_string()
+}
+
+pub(crate) fn set_server_overrides(app: &AppWindow, rules: &str) {
+    let s = app.global::<AppState>();
+    let mut f = s.get_server_form();
+    f.override_tensor = rules.into();
+    s.set_server_form(f);
+}
+
+/// A Slint row index (`int`) as a Rust one. A negative index can't address a row,
+/// so it maps to an out-of-range one — every `tensor_override` edit treats that as
+/// a no-op rather than panicking or hitting the wrong rule. Shared by both tables'
+/// callbacks (server_tab / models_tab).
+pub(crate) fn row_index(i: i32) -> usize {
+    usize::try_from(i).unwrap_or(usize::MAX)
+}
+
+pub(crate) fn preset_overrides(app: &AppWindow) -> String {
+    app.global::<AppState>().get_form().override_tensor.to_string()
+}
+
+pub(crate) fn set_preset_overrides(app: &AppWindow, rules: &str) {
+    let s = app.global::<AppState>();
+    let mut f = s.get_form();
+    f.override_tensor = rules.into();
     s.set_form(f);
 }
 

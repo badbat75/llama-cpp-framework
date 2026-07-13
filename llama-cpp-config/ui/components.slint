@@ -10,12 +10,14 @@
 //   `DefaultSpinBox` / `DefaultLineEdit` (a "default" checkbox + an int SpinBox
 //   / float LineEdit — the "value, or omit the flag" pattern for numeric fields),
 //   `GpuSplitTable` (the GPU distribution table — which devices + what weights,
-//   i.e. --device + --tensor-split + --split-mode; Server + Models tabs)
+//   i.e. --device + --tensor-split + --split-mode; Server + Models tabs),
+//   `TensorOverrideTable` (the tensor-placement table — which tensors go on a
+//   device of their own, i.e. --override-tensor; Models tab)
 // - list rows/panels: `SelectableRow` / `AccentBar`, `ListPanel` (the bordered
 //   list container around the preset list + the New/Clone model picker)
 
 import { ComboBox, LineEdit, CheckBox, Slider, SpinBox, Button, Palette } from "std-widgets.slint";
-import { GpuRow } from "types.slint";
+import { GpuRow, TensorOverrideRow } from "types.slint";
 
 // Canonical transparency levels for muted text and selection tints, so every
 // page pulls from the same handful of values instead of eyeballing a new alpha.
@@ -904,6 +906,190 @@ export component GpuSplitTable inherits VerticalLayout {
             enabled: root.selected != 1;
             options: Options.split_modes;
             value <=> root.split_mode;
+        }
+    }
+}
+
+// The tensor-placement table: `--override-tensor` as (what → where) rows instead
+// of a `<regex>=<device>,…` string. Rows come from Rust (src/tensor_override.rs),
+// which owns every rule; this component only reports edits, addressed by ROW
+// INDEX (the same pattern may appear twice, so there is no id to name one by).
+//
+// Why the pattern is a dropdown and not just a text field: llama.cpp splits the
+// value on `,` and each rule at its FIRST `=` BEFORE it parses anything, and
+// neither is escapable — so a hand-typed regex with a `{1,2}` quantifier tears
+// its own rule in half and the model fails to load. The three canned patterns
+// cover what people actually reach for; `Custom regex…` reveals the text field,
+// which strips those two characters on the Rust side.
+//
+// BINDING NOTE (the sanctioned one-way `for`-row exception, as in GpuSplitTable):
+// `index: row.kind_index` / `index: row.device_index` / `text: row.pattern` are
+// one-way, and a pick/keystroke self-assigns them, permanently breaking THAT
+// delegate's binding. Two rules keep that invisible:
+//   1. add / remove / kind / device REBUILD the whole row model, so every
+//      delegate gets a fresh binding (gui::refresh_tensor_rows).
+//   2. a pattern edit changes no OTHER row, so it needs no rebuild at all — and
+//      MUST not do one, or the LineEdit being typed into would be recreated and
+//      drop the caret. Its handler refreshes the derived strings only.
+export component TensorOverrideTable inherits VerticalLayout {
+    in property <[TensorOverrideRow]> rows;
+    in property <string> summary;
+    // The two shared dropdown models: the canned patterns (last = "Custom regex…")
+    // and the probed devices, CPU included — it is a legal -ot target.
+    in property <[string]> kind_labels;
+    in property <[string]> kind_values;
+    in property <[string]> dev_labels;
+    in property <[string]> dev_values;
+    // Non-empty to show a warning strip above the table (a value llama.cpp would
+    // refuse to parse — only a hand-edited INI can produce one).
+    in property <string> warning;
+    // A SECOND, independent strip: these rules are shadowed at launch by a
+    // server-wide value (the Models tab's copy passes AppState.tensor_override_warning).
+    // Independent because a table can be both invalid AND shadowed, and the two
+    // say different things — one is "llama.cpp will refuse this", the other is
+    // "llama.cpp will never see this".
+    in property <string> override_warning;
+
+    callback added();
+    callback removed(int);
+    callback kind_picked(int, string);
+    callback device_picked(int, string);
+    callback pattern_edited(int, string);
+
+    spacing: 10px;
+
+    if root.override_warning != "" : Text {
+        text: root.override_warning;
+        wrap: word-wrap;
+        font-size: 12px;
+        color: Tokens.err;
+    }
+
+    if root.warning != "" : Text {
+        text: root.warning;
+        wrap: word-wrap;
+        font-size: 12px;
+        color: Tokens.err;
+    }
+
+    // Header. Column widths are repeated verbatim by the delegate below — there
+    // is no grid here, just two HorizontalLayouts kept in step by hand.
+    if root.rows.length > 0 : HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 12px;
+        spacing: 8px;
+        Text {
+            text: "Tensor";
+            horizontal-stretch: 1;
+            font-size: 12px;
+            color: Palette.foreground.transparentize(Tokens.muted);
+        }
+        Text {
+            width: 260px;
+            text: "Goes on";
+            font-size: 12px;
+            color: Palette.foreground.transparentize(Tokens.muted);
+        }
+        Rectangle { width: 36px; }
+    }
+
+    for row[i] in root.rows : Rectangle {
+        // Tint with the WINDOW background: these rows sit on a SectionCard, whose
+        // surface IS alternate-background — tinting with the card's own colour
+        // would composite to exactly itself. Same trick as GpuSplitTable.
+        background: Math.mod(i, 2) == 0 ? transparent
+            : Palette.background.transparentize(Tokens.zebra);
+
+        VerticalLayout {
+            padding-left: 12px;
+            padding-right: 12px;
+            padding-top: 4px;
+            padding-bottom: 4px;
+            spacing: 4px;
+
+            HorizontalLayout {
+                spacing: 8px;
+
+                MappedComboBox {
+                    horizontal-stretch: 1;
+                    // Findable handle for the e2e table phase (src/tests/save_flow.rs).
+                    accessible-label: "ot-kind-" + i;
+                    labels: root.kind_labels;
+                    values: root.kind_values;
+                    index: row.kind_index;
+                    picked(v) => {
+                        root.kind_picked(i, v);
+                    }
+                }
+
+                MappedComboBox {
+                    width: 260px;
+                    accessible-label: "ot-device-" + i;
+                    labels: root.dev_labels;
+                    values: root.dev_values;
+                    // -1 when the rule names no device: the ComboBox then shows a
+                    // blank row, and `row.problem` says "pick a device".
+                    index: row.device_index;
+                    picked(v) => {
+                        root.device_picked(i, v);
+                    }
+                }
+
+                Button {
+                    width: 36px;
+                    // U+00D7, which Segoe UI HAS. It shipped once as "✕" (U+2715,
+                    // Dingbats), which Segoe UI does not have and nothing falls back
+                    // for: a correctly laid out, perfectly empty box. The icon-font
+                    // escape LabeledField's hint uses (`\u{E711}` +
+                    // `font-family: "Segoe Fluent Icons"`) is NOT available here —
+                    // std Button has no font-family property, only Text does — so a
+                    // button's label is stuck with the default font, and its glyph
+                    // must be one that font covers. Guarded by
+                    // `slint_string_literals_only_use_glyphs_proven_to_render`.
+                    text: "×";
+                    clicked => {
+                        root.removed(i);
+                    }
+                }
+            }
+
+            // Only the Custom kind gets a text field — every other row's pattern
+            // is a canned constant, and letting it be edited would just be a
+            // slower way of picking Custom.
+            if row.custom : LineEdit {
+                accessible-label: "ot-pattern-" + i;
+                placeholder-text: "regex matched against tensor names, e.g. blk\\.1[0-9]\\..*_exps";
+                text: row.pattern;
+                edited(t) => {
+                    root.pattern_edited(i, t);
+                }
+            }
+
+            if row.problem != "" : Text {
+                text: row.problem;
+                font-size: 12px;
+                color: Tokens.err;
+            }
+        }
+    }
+
+    HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 12px;
+        spacing: 8px;
+        Button {
+            text: "+ Add override";
+            clicked => {
+                root.added();
+            }
+        }
+        Text {
+            text: root.summary;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+            overflow: elide;
+            font-size: 12px;
+            color: Palette.foreground.transparentize(Tokens.faint);
         }
     }
 }

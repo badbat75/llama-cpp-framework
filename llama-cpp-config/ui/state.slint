@@ -11,7 +11,7 @@
 // The tray (`AppTray` in app.slint) is a separate root and does NOT use this
 // global — it keeps its own pushed-in state.
 
-import { PresetSummary, PresetForm, ServerForm, IntegrationModel, GpuRow } from "types.slint";
+import { PresetSummary, PresetForm, ServerForm, IntegrationModel, GpuRow, TensorOverrideRow } from "types.slint";
 import { Options } from "components.slint";
 
 export global AppState {
@@ -90,6 +90,14 @@ export global AppState {
     // and is the denominator behind the table's Share column.
     in-out property <int> server_gpu_total: 0;
 
+    // Server-wide tensor-placement table (TensorOverrideTable) — the twin of the
+    // per-preset one below, over `server_form.override_tensor`.
+    in-out property <[TensorOverrideRow]> server_tensor_rows;
+    in-out property <string> server_tensor_summary;
+    in-out property <string> server_tensor_warning;
+    in-out property <[string]> server_tensor_dev_labels;
+    in-out property <[string]> server_tensor_dev_values;
+
     // Vision-encoder (mmproj) device dropdown triple. Its own list because the
     // CLIP context ignores --device entirely: llama.cpp grabs the first GPU
     // backend it finds unless MTMD_BACKEND_DEVICE names one (see runstate::start).
@@ -121,6 +129,39 @@ export global AppState {
     in-out property <int> preset_gpu_total: 0;
     out property <string> gpu_override_warning: server_form.device == "" ? ""
         : "The Server tab pins GPUs (" + server_form.device + "). llama-server passes that on its own command line, which overrides every preset's selection — this table won't apply until the server-wide one is cleared.";
+
+    // Per-preset tensor-placement table (TensorOverrideTable), over the single
+    // `form.override_tensor` string. Rows and BOTH dropdown models are built in
+    // Rust (src/tensor_override.rs) and are read-only to Slint; every edit is a
+    // whole-string rewrite. Rules are addressed by ROW INDEX, not by an id — the
+    // same pattern may legitimately appear twice (two devices, two halves of a
+    // model), unlike the GPU table's unique device ids.
+    in-out property <[TensorOverrideRow]> preset_tensor_rows;
+    in-out property <string> preset_tensor_summary;
+    // The exact twin of `gpu_override_warning`: a server-wide value shadows this
+    // table. And it shadows it WHOLESALE — `-ot` is a vector inside llama.cpp, so
+    // "the two lists get concatenated" is the natural guess and it is wrong: the
+    // router merges its own CLI args into every preset as a key→value map, so the
+    // server's `--override-tensor` overwrites the preset's key and only one flag
+    // ever reaches the child. Verified against b9976; see server_cfg.rs.
+    out property <string> tensor_override_warning: server_form.override_tensor == "" ? ""
+        : "The Server tab sets a tensor placement (" + server_form.override_tensor + "). llama-server passes that on its own command line, which REPLACES every preset's rules — these ones won't apply at all until the server-wide table is cleared.";
+    // Non-empty when the value is one llama.cpp would refuse (a rule with no
+    // device). Only a hand-edited presets.ini reaches it — the table sanitizes
+    // everything it writes — but that value would fail the model's LOAD, so it
+    // is worth saying out loud rather than at the next launch.
+    in-out property <string> preset_tensor_warning;
+    // The option models behind every row's two dropdowns. The KIND list is shared
+    // by both tables (canned patterns; last entry = "Custom regex…", the only one
+    // that reveals the pattern's text field). The DEVICE list is NOT: it is the
+    // probed devices INCLUDING the CPU (a legal -ot target, unlike in the GPU
+    // table above) PLUS a `(custom)` entry per device id the probe doesn't know,
+    // which is a property of that table's own rules — so each scope gets its own
+    // model, or the two would alias each other's row indices (see gui.rs).
+    in-out property <[string]> tensor_kind_labels;
+    in-out property <[string]> tensor_kind_values;
+    in-out property <[string]> preset_tensor_dev_labels;
+    in-out property <[string]> preset_tensor_dev_values;
 
     // Draft-model GPU-device dropdown triple, fed from the same
     // `devices::probed()` cache as the tables above. Still a dropdown, not a
@@ -268,6 +309,25 @@ export global AppState {
     callback preset_gpu_weight(string, int);
     callback preset_gpu_auto();
     callback preset_gpu_even();
+
+    // Tensor-placement table, one set per scope (server-wide / per-preset). Same
+    // shape as the GPU table's: each one rewrites the scope's `override_tensor`
+    // string in Rust (src/tensor_override.rs) and rebuilds the row model — except
+    // `*_tensor_pattern`, the text field, which must NOT rebuild (that would
+    // recreate the LineEdit being typed into and drop the caret), so it refreshes
+    // only the derived strings. The int is the ROW INDEX; the string is the picked
+    // kind id / device id / regex.
+    callback server_tensor_add();
+    callback server_tensor_remove(int);
+    callback server_tensor_kind(int, string);
+    callback server_tensor_device(int, string);
+    callback server_tensor_pattern(int, string);
+
+    callback preset_tensor_add();
+    callback preset_tensor_remove(int);
+    callback preset_tensor_kind(int, string);
+    callback preset_tensor_device(int, string);
+    callback preset_tensor_pattern(int, string);
 
     callback select_preset(int);
     callback save_preset();

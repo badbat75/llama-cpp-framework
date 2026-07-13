@@ -65,6 +65,7 @@ pub fn preset_to_form(p: &presets::Preset) -> PresetForm {
             p.split_mode.clone().into()
         },
         tensor_split: p.tensor_split.clone().into(),
+        override_tensor: p.override_tensor.clone().into(),
         ctx_size: p.ctx_size.or(d.ctx_size).unwrap_or_default(),
         ctx_size_default: p.ctx_size.is_none(),
         n_gpu_layers: p.n_gpu_layers.unwrap_or(ALL_LAYERS),
@@ -83,6 +84,15 @@ pub fn preset_to_form(p: &presets::Preset) -> PresetForm {
         jinja: p.jinja.or(d.jinja).unwrap_or_default(),
         reasoning: str_or(&p.reasoning, &d.reasoning),
         reasoning_format: str_or(&p.reasoning_format, &d.reasoning_format),
+        // Tri-state, so it deliberately does NOT fall back to `d` the way the
+        // fields above do: `None` is not "unset, show the default" here, it IS a
+        // value — "let the template decide", distinct from an explicit off.
+        reasoning_preserve: match p.reasoning_preserve {
+            Some(true) => "on",
+            Some(false) => "off",
+            None => "default",
+        }
+        .into(),
         n_cpu_moe: p.n_cpu_moe.unwrap_or(0),
         n_cpu_moe_auto: p.n_cpu_moe.is_none(),
         temp: txt(p.temp),
@@ -129,6 +139,7 @@ pub fn form_to_preset(f: &PresetForm) -> presets::Preset {
             other => other.to_string(),
         },
         tensor_split: f.tensor_split.to_string(),
+        override_tensor: f.override_tensor.to_string(),
         ctx_size: if f.ctx_size_default {
             None
         } else {
@@ -168,6 +179,11 @@ pub fn form_to_preset(f: &PresetForm) -> presets::Preset {
         jinja: Some(f.jinja),
         reasoning: f.reasoning.to_string(),
         reasoning_format: f.reasoning_format.to_string(),
+        reasoning_preserve: match f.reasoning_preserve.as_str() {
+            "on" => Some(true),
+            "off" => Some(false),
+            _ => None, // "default" — omit the key, let the template decide
+        },
         n_cpu_moe: if f.n_cpu_moe_auto {
             None
         } else {
@@ -225,6 +241,38 @@ mod tests {
         assert_eq!(round_trip(&p), p);
     }
 
+    // reasoning-preserve is the one TRI-state field: None ("let the template
+    // decide", key omitted) is a third value, not the absence of one. The two
+    // round-trip fixtures above pin Some(true)/Some(false); this pins all three at
+    // once, and above all that None SURVIVES. The bug it guards is the natural
+    // simplification `Some(f.reasoning_preserve == "on")`, which collapses None to
+    // Some(false) — every preset that never asked would silently start emitting
+    // --no-reasoning-preserve, overriding templates that preserve by default.
+    #[test]
+    fn reasoning_preserve_keeps_all_three_states_apart() {
+        for state in [None, Some(true), Some(false)] {
+            let p = Preset {
+                reasoning_preserve: state,
+                ..Preset::default()
+            };
+            assert_eq!(round_trip(&p).reasoning_preserve, state, "state {state:?}");
+        }
+
+        // …and the form spelling is the one the SegmentedControl's `options` list
+        // uses — a mismatch here leaves the control with no segment highlighted.
+        let spelling = |state| {
+            preset_to_form(&Preset {
+                reasoning_preserve: state,
+                ..Preset::default()
+            })
+            .reasoning_preserve
+            .to_string()
+        };
+        assert_eq!(spelling(None), "default");
+        assert_eq!(spelling(Some(true)), "on");
+        assert_eq!(spelling(Some(false)), "off");
+    }
+
     #[test]
     fn rich_preset_round_trips() {
         let p = Preset {
@@ -240,6 +288,7 @@ mod tests {
             device: "CUDA0,ROCm1".into(),
             split_mode: "row".into(),
             tensor_split: "3,1".into(),
+            override_tensor: r"token_embd\.weight=ROCm0".into(),
             ctx_size: Some(65536),
             n_gpu_layers: Some(40),
             parallel: Some(2),
@@ -252,6 +301,7 @@ mod tests {
             jinja: Some(false),
             reasoning: "on".into(),
             reasoning_format: "deepseek".into(),
+            reasoning_preserve: Some(true),
             n_cpu_moe: Some(12),
             temp: Some(0.7),
             top_k: Some(40),

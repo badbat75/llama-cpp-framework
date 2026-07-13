@@ -27,6 +27,7 @@ mod server_form;
 mod server_version;
 #[cfg(windows)]
 mod single_instance;
+mod tensor_override;
 // Cross-cutting end-to-end tests (e.g. the Slint UI regression test) live under
 // src/tests/; per-module unit tests stay inline in their own files.
 #[cfg(test)]

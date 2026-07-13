@@ -1,8 +1,9 @@
 // ServerPage: the server tab. All state lives in AppState (state.slint); this
 // component just lays out the widgets against it.
 //
-// Layout (grep `heading:`): Network → Resources → GPU distribution → Advanced
-// cards, then the FormActions row (Save/Revert), then the Command Line card
+// Layout (grep `heading:`): Network → Resources → GPU distribution → Tensor
+// placement → Advanced cards, then the FormActions row (Save/Revert), then the
+// Command Line card
 // last. The Command
 // Line card auto-sizes to its content (a hidden mirror-Text drives its height) so
 // it never shows its own inner scrollbar — the page's own ScrollView handles it.
@@ -12,7 +13,7 @@
 // field stale after a Revert / reload.
 
 import { LineEdit, TextEdit, CheckBox, SpinBox, Button, ScrollView, Palette } from "std-widgets.slint";
-import { SectionCard, LabeledField, MappedComboBox, AutoSlider, DefaultSpinBox, FormActions, GpuSplitTable, Tokens } from "components.slint";
+import { SectionCard, LabeledField, MappedComboBox, AutoSlider, DefaultSpinBox, FormActions, GpuSplitTable, TensorOverrideTable, Tokens } from "components.slint";
 import { AppState } from "state.slint";
 
 export component ServerPage inherits ScrollView {
@@ -159,6 +160,30 @@ export component ServerPage inherits ScrollView {
                     index <=> AppState.mmproj_dev_index;
                     picked(v) => { AppState.server_form.mmproj_device = v; }
                 }
+            }
+        }
+
+        SectionCard {
+            heading: "Tensor placement";
+            Text {
+                text: "Pin tensors to a device for EVERY model, whatever layer they landed on (--override-tensor). The one that pays: llama.cpp leaves the embedding table in pinned host RAM even when it reports 'offloaded N/N layers to GPU' — Windows counts that as Shared GPU memory. Setting anything here REPLACES each preset's own rules, it does not add to them; leave it empty to let every preset keep its own. A device this machine doesn't have stops the server from starting at all.";
+                wrap: word-wrap;
+                font-size: 12px;
+                color: Palette.foreground.transparentize(Tokens.muted);
+            }
+            TensorOverrideTable {
+                rows: AppState.server_tensor_rows;
+                summary: AppState.server_tensor_summary;
+                warning: AppState.server_tensor_warning;
+                kind_labels: AppState.tensor_kind_labels;
+                kind_values: AppState.tensor_kind_values;
+                dev_labels: AppState.server_tensor_dev_labels;
+                dev_values: AppState.server_tensor_dev_values;
+                added() => { AppState.server_tensor_add(); }
+                removed(i) => { AppState.server_tensor_remove(i); }
+                kind_picked(i, kind) => { AppState.server_tensor_kind(i, kind); }
+                device_picked(i, dev) => { AppState.server_tensor_device(i, dev); }
+                pattern_edited(i, p) => { AppState.server_tensor_pattern(i, p); }
             }
         }
 

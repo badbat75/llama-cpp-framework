@@ -91,6 +91,16 @@ pub struct Preset {
     /// Empty = inherit the server.ini default. Identical on CUDA and HIP.
     pub split_mode: String,
     pub tensor_split: String,
+    /// Per-tensor placement (--override-tensor): `<regex>=<buffer type>` rules,
+    /// comma-separated, e.g. `token_embd\.weight=ROCm0`. A rule sends every tensor
+    /// whose NAME matches the regex to the named device instead of the one its
+    /// layer landed on — which is how you move the token-embedding table off the
+    /// PINNED HOST buffer llama.cpp parks it in (`ROCm_Host`/`CUDA_Host`, i.e.
+    /// Windows "Shared GPU memory") even when it reports every layer offloaded.
+    /// Empty = no overrides. Written by the tensor-placement table
+    /// (src/tensor_override.rs), never typed by hand: llama.cpp splits the value
+    /// on `,` and at the first `=` BEFORE parsing, and neither can be escaped.
+    pub override_tensor: String,
     pub ctx_size: Option<i32>,
     pub n_gpu_layers: Option<i32>,
     pub parallel: Option<i32>,
@@ -104,6 +114,24 @@ pub struct Preset {
     pub jinja: Option<bool>,
     pub reasoning: String,
     pub reasoning_format: String,
+    /// Keep the reasoning trace of EVERY assistant turn in the history replayed to
+    /// the model, not just the last one (--reasoning-preserve /
+    /// --no-reasoning-preserve). `None` = the template's own default: llama.cpp
+    /// passes neither flag, which is why this is a tri-state and not a checkbox.
+    ///
+    /// This is the ONLY supported lever, and it is NOT interchangeable with putting
+    /// `preserve_thinking` into `chat_template_kwargs` by hand. The flag sets the
+    /// kwarg `preserve_reasoning`, and `caps_apply_preserve_reasoning`
+    /// (common/jinja/caps.cpp) expands THAT into three template variables at once —
+    /// `preserve_thinking = v`, `clear_thinking = !v`, `truncate_history_thinking =
+    /// !v` — because templates disagree on which name they read (LFM2.5 reads
+    /// preserve_thinking, GLM-4.7 reads clear_thinking, Nemotron reads
+    /// truncate_history_thinking). A hand-written `preserve_thinking` kwarg sets one
+    /// of the three, so on a template keyed to either other name it is a SILENT
+    /// no-op; it also misses the capability probe, which is what logs "chat template
+    /// supports preserving reasoning, consider enabling it via --reasoning-preserve"
+    /// (supported but off) or "…does NOT support preserving reasoning" (unsupported).
+    pub reasoning_preserve: Option<bool>,
     pub n_cpu_moe: Option<i32>,
     pub temp: Option<f64>,
     /// Integer sampler (--top-k): backed by an int SpinBox, not the float editor
@@ -131,6 +159,7 @@ impl Default for Preset {
             device: String::new(),
             split_mode: String::new(),
             tensor_split: String::new(),
+            override_tensor: String::new(),
             ctx_size: Some(32768),
             // Default to "auto" (omit --n-gpu-layers) like n-cpu-moe and the draft
             // layers: the GUI shows all three sliders with their "auto" box checked
@@ -146,6 +175,7 @@ impl Default for Preset {
             jinja: Some(true),
             reasoning: "auto".into(),
             reasoning_format: "auto".into(),
+            reasoning_preserve: None,
             n_cpu_moe: None,
             temp: None,
             top_k: None,
@@ -185,6 +215,7 @@ impl Preset {
             device: get("device"),
             split_mode: get("split-mode"),
             tensor_split: get("tensor-split"),
+            override_tensor: get("override-tensor"),
             ctx_size: k.get("ctx-size").and_then(|v| ini::parse_int(v)),
             n_gpu_layers: k.get("n-gpu-layers").and_then(|v| ini::parse_int(v)),
             parallel: k.get("parallel").and_then(|v| ini::parse_int(v)),
@@ -197,6 +228,7 @@ impl Preset {
             jinja: getb("jinja"),
             reasoning: get("reasoning"),
             reasoning_format: get("reasoning-format"),
+            reasoning_preserve: getb("reasoning-preserve"),
             n_cpu_moe: k.get("n-cpu-moe").and_then(|v| ini::parse_int(v)),
             temp: k.get("temp").and_then(|v| ini::parse_float(v)),
             top_k: k.get("top-k").and_then(|v| ini::parse_int(v)),
@@ -261,6 +293,13 @@ fn valid_id(id: &str) -> bool {
 /// `chat-template-kwargs` would silently reload truncated (here AND in
 /// llama-server's own preset reader), so refuse it with the field name (the
 /// cure is renaming the file / fixing the JSON). See `ini::reject_comment_markers`.
+///
+/// `override-tensor` gets a SECOND check on top of that one: its own grammar.
+/// llama.cpp splits the value on `,` and each rule at its first `=` before it
+/// parses anything, and a rule that comes out of that without a device is a
+/// `throw` during arg parsing — the model simply never loads, and the reason is
+/// buried in a child process's log. The table can't produce one; a hand-edited
+/// INI can, which is exactly why the check lives at the save boundary too.
 fn validate_for_save(preset: &Preset) -> io::Result<()> {
     if preset.id.is_empty() || !valid_id(&preset.id) {
         return Err(io::Error::new(
@@ -276,9 +315,12 @@ fn validate_for_save(preset: &Preset) -> io::Result<()> {
         ("mmproj", &preset.mmproj),
         ("model-draft", &preset.model_draft),
         ("chat-template-kwargs", &preset.chat_template_kwargs),
+        ("override-tensor", &preset.override_tensor),
     ] {
         ini::reject_comment_markers(field, value)?;
     }
+    crate::tensor_override::validate(&preset.override_tensor)
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
     Ok(())
 }
 
@@ -424,6 +466,13 @@ pub fn render_section(p: &Preset) -> String {
     emit_str(&mut out, "device", &p.device);
     emit_str(&mut out, "split-mode", &p.split_mode);
     emit_str(&mut out, "tensor-split", &p.tensor_split);
+    out.push_str("; override-tensor sends the tensors whose NAME matches a regex to a device of\r\n");
+    out.push_str("; their own, whatever `device` says — `<regex>=<device|CPU>`, comma-separated.\r\n");
+    out.push_str("; llama.cpp keeps token_embd.weight in PINNED HOST memory even when every\r\n");
+    out.push_str("; layer is offloaded (that is the ROCm_Host/CUDA_Host buffer in the log, and\r\n");
+    out.push_str("; the \"Shared GPU memory\" Windows reports); token_embd\\.weight=ROCm0 moves it\r\n");
+    out.push_str("; onto the GPU. No escaping exists: a pattern cannot contain `,` or `=`.\r\n");
+    emit_str(&mut out, "override-tensor", &p.override_tensor);
     emit_i32(&mut out, "parallel", p.parallel);
     emit_i32(&mut out, "batch-size", p.batch_size);
     emit_i32(&mut out, "ubatch-size", p.ubatch_size);
@@ -442,6 +491,12 @@ pub fn render_section(p: &Preset) -> String {
     out.push_str("\r\n; Reasoning / thinking\r\n");
     emit_str(&mut out, "reasoning", &p.reasoning);
     emit_str(&mut out, "reasoning-format", &p.reasoning_format);
+    out.push_str("; reasoning-preserve keeps the thinking of EVERY past turn in the replayed\r\n");
+    out.push_str("; history, not just the last one. Omit the key = the template's own default.\r\n");
+    out.push_str("; Do NOT hand-write preserve_thinking into chat-template-kwargs instead: this\r\n");
+    out.push_str("; flag sets preserve_thinking, clear_thinking AND truncate_history_thinking\r\n");
+    out.push_str("; together, and templates disagree on which of the three they read.\r\n");
+    emit_bool(&mut out, "reasoning-preserve", p.reasoning_preserve);
 
     out.push_str("\r\n; MoE\r\n");
     emit_i32(&mut out, "n-cpu-moe", p.n_cpu_moe);
@@ -523,6 +578,7 @@ mod tests {
             mmproj: r"C:\models\m-mmproj.gguf".into(),
             model_draft: r"C:\models\mtps\m-mtp.gguf".into(),
             chat_template_kwargs: r#"{"enable_thinking":true}"#.into(),
+            override_tensor: r"token_embd\.weight=ROCm0".into(),
             ..Default::default()
         };
         assert!(validate_for_save(&clean).is_ok());
@@ -533,12 +589,16 @@ mod tests {
             ("model-draft", r"C:\models\m #mtp.gguf"),
             // Legal inside a JSON string, fatal to the INI reader.
             ("chat-template-kwargs", r##"{"tag":"#think"}"##),
+            // Legal inside a regex (a character class), fatal to the INI reader:
+            // the value reloads truncated at the `#`, silently losing the rule.
+            ("override-tensor", r"blk\.[0-9#]+\.attn=CPU"),
         ] {
             let mut p = clean.clone();
             match field {
                 "model" => p.model = hostile.into(),
                 "mmproj" => p.mmproj = hostile.into(),
                 "chat-template-kwargs" => p.chat_template_kwargs = hostile.into(),
+                "override-tensor" => p.override_tensor = hostile.into(),
                 _ => p.model_draft = hostile.into(),
             }
             let err = validate_for_save(&p).expect_err(field);
@@ -680,6 +740,11 @@ mod tests {
             device: "CUDA0,ROCm1".into(),
             split_mode: "row".into(),
             tensor_split: "3,1".into(),
+            // Two rules, so the `,` that separates them AND the `=` inside each
+            // one both cross the INI reader — the two characters the value's own
+            // grammar is built on.
+            override_tensor: r"token_embd\.weight=ROCm0,\.ffn_(up|down|gate|gate_up)_(ch|)exps=CPU"
+                .into(),
             ctx_size: Some(65536),
             n_gpu_layers: Some(40),
             parallel: Some(2),
@@ -692,6 +757,10 @@ mod tests {
             jinja: Some(false),
             reasoning: "on".into(),
             reasoning_format: "deepseek".into(),
+            // Some(false) — not None: the round-trip must prove `false` survives as
+            // `false` and does not collapse into "key absent" (a distinct state:
+            // --no-reasoning-preserve vs. the template's own default).
+            reasoning_preserve: Some(false),
             n_cpu_moe: Some(12),
             temp: Some(0.7),
             top_k: Some(40),
@@ -710,6 +779,60 @@ mod tests {
         assert_eq!(sections.len(), 1, "one section written");
         let parsed = Preset::from_keys(&sections[0].id, &sections[0].keys);
         assert_eq!(parsed, original);
+    }
+
+    // The key name is pinned here (the round-trip above proves it parses back).
+    // `override-tensor` is llama.cpp's own long-arg spelling minus the dashes,
+    // which is what its preset reader matches on (common/preset.cpp,
+    // `get_map_key_opt`) — any other spelling makes llama-server refuse the whole
+    // file with "option not recognized".
+    #[test]
+    fn render_emits_the_override_tensor_key_when_set_and_omits_it_when_empty() {
+        let p = Preset {
+            id: "ot".into(),
+            model: r"E:\m\model.gguf".into(),
+            override_tensor: r"token_embd\.weight=ROCm0".into(),
+            ..Default::default()
+        };
+        assert!(render_section(&p).contains("override-tensor = token_embd\\.weight=ROCm0\r\n"));
+
+        let empty = Preset {
+            override_tensor: String::new(),
+            ..p
+        };
+        let ini = render_section(&empty);
+        let value_lines: Vec<&str> = ini
+            .lines()
+            .filter(|l| !l.trim_start().starts_with(';'))
+            .collect();
+        assert!(!value_lines
+            .iter()
+            .any(|l| l.starts_with("override-tensor =")));
+    }
+
+    // The save boundary owns --override-tensor's grammar (see validate_for_save):
+    // a rule llama.cpp would `throw` on must never reach the file, because there
+    // the symptom is only "the model didn't load".
+    #[test]
+    fn save_validation_rejects_a_malformed_override_tensor_rule() {
+        let base = Preset {
+            id: "ot".into(),
+            model: r"C:\models\m.gguf".into(),
+            ..Default::default()
+        };
+        let ok = Preset {
+            override_tensor: r"token_embd\.weight=ROCm0".into(),
+            ..base.clone()
+        };
+        assert!(validate_for_save(&ok).is_ok());
+
+        // A pattern with no `=<device>`: llama.cpp's parse throws "invalid value".
+        let dangling = Preset {
+            override_tensor: r"token_embd\.weight".into(),
+            ..base
+        };
+        let err = validate_for_save(&dangling).expect_err("no device");
+        assert!(err.to_string().contains("token_embd"), "quotes the rule");
     }
 
     // make_id feeds every generated preset id from an arbitrary filename:

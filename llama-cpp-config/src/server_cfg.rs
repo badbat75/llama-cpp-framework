@@ -80,6 +80,27 @@ pub struct ServerConfig {
     /// positional over `device` above, in that order. Empty/None with 2+ devices =
     /// llama.cpp splits by each device's FREE memory at load (not evenly).
     pub tensor_split: Option<String>,
+    /// Tensor-placement rules applied to EVERY model (--override-tensor / -ot):
+    /// `<regex>=<buffer type>` rules joined by `,`, e.g. `token_embd\.weight=ROCm0`.
+    /// None/blank = no rules (every tensor goes wherever its layer went). Written
+    /// by the tensor-placement table (src/tensor_override.rs), same schema as the
+    /// per-preset `override-tensor`.
+    ///
+    /// Set here, this REPLACES every preset's own rules — it does not add to them.
+    /// `-ot` is a `push_back` onto a vector inside llama.cpp, so accumulating would
+    /// be the natural guess, but the router never lets two reach the child: it
+    /// merges its own CLI args into each preset as a KEY→VALUE map
+    /// (`common_preset::merge`, `options[opt] = val`), with the CLI as the writer.
+    /// Verified against b9976 — a preset asking for `token_embd\.weight=CPU` under a
+    /// server-wide `token_embd\.weight=CUDA0` spawns its child with the CUDA0 rule
+    /// and no trace of the CPU one. `AppState.tensor_override_warning` says so in
+    /// the Models tab, the same way the GPU table's does.
+    ///
+    /// One asymmetry with the per-preset field: the buffer type is validated by the
+    /// ROUTER at startup, against its own device registry. A rule naming a device
+    /// this machine doesn't have ("unknown buffer type") therefore kills the whole
+    /// SERVER, not just the model that would have used it.
+    pub override_tensor: Option<String>,
     /// The GPU the multimodal projector — the mmproj/CLIP image encoder — runs on.
     /// NOT a llama-server flag: it is the `MTMD_BACKEND_DEVICE` env var, set on the
     /// child in `runstate::start`. It needs its own knob because the encoder ignores
@@ -214,6 +235,7 @@ fn from_keys(keys: &std::collections::BTreeMap<String, String>) -> ServerConfig 
         device: opt_nonblank(keys.get("Device").cloned()),
         split_mode: opt_nonblank(keys.get("SplitMode").cloned()),
         tensor_split: opt_nonblank(keys.get("TensorSplit").cloned()),
+        override_tensor: opt_nonblank(keys.get("OverrideTensor").cloned()),
         mmproj_device: opt_nonblank(keys.get("MmprojDevice").cloned()),
         webui_mcp_proxy: keys.get("WebuiMcpProxy").and_then(|v| ini::parse_bool(v)),
         fit: keys.get("Fit").and_then(|v| ini::parse_bool(v)),
@@ -248,9 +270,18 @@ pub fn save(cfg: &ServerConfig) -> io::Result<()> {
 /// Save-boundary validation, pure so the unit test never touches `paths::` —
 /// the mirror of `presets::validate_for_save`. The INI format can't escape
 /// `;`/`#`, so a ModelsDir containing one would silently reload truncated
-/// (see `ini::reject_comment_markers`).
+/// (see `ini::reject_comment_markers`). OverrideTensor gets the same treatment
+/// (a custom regex is free-text, so it CAN hold a `#`) plus its own grammar
+/// check, for the reason spelled out on `presets::validate_for_save`: a rule
+/// with no device is a `throw` during llama.cpp's arg parsing. Here it is worse
+/// than there — the router parses `-ot` for the whole SERVER, so a bad value
+/// means nothing starts at all, not just one model.
 fn validate_for_save(cfg: &ServerConfig) -> io::Result<()> {
-    ini::reject_comment_markers("ModelsDir", &cfg.models_dir_or_default())
+    ini::reject_comment_markers("ModelsDir", &cfg.models_dir_or_default())?;
+    let overrides = cfg.override_tensor.clone().unwrap_or_default();
+    ini::reject_comment_markers("OverrideTensor", &overrides)?;
+    crate::tensor_override::validate(&overrides)
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))
 }
 
 /// Render the whole server.ini body. Pure (no IO) — the file-writing wrapper is
@@ -319,6 +350,11 @@ fn render(cfg: &ServerConfig) -> String {
         "TensorSplit",
         "; TensorSplit = 3,1  ; how much of the model each Device holds (--tensor-split), same order; blank = by free VRAM",
     );
+    let override_tensor_line = str_line_or_hint(
+        cfg.override_tensor.as_deref(),
+        "OverrideTensor",
+        r"; OverrideTensor = token_embd\.weight=ROCm0  ; put matching tensors on a named device (--override-tensor); blank = none",
+    );
     let mmproj_device_line = str_line_or_hint(
         cfg.mmproj_device.as_deref(),
         "MmprojDevice",
@@ -379,6 +415,13 @@ LogVerbosity = {log_verbosity}
 {device_line}
 {split_mode_line}
 {tensor_split_line}
+; OverrideTensor: pin tensors matching a regex to a named device, whatever their
+; layer got (--override-tensor). `token_embd\\.weight=ROCm0` is the one that pays:
+; llama.cpp parks the embedding table in PINNED host RAM even at 'offloaded N/N
+; layers', which Windows counts as Shared GPU memory. Set here, this REPLACES
+; every preset's own rules (it does not add to them), and an unknown device name
+; stops the SERVER from starting, not just one model.
+{override_tensor_line}
 ; MmprojDevice does NOT follow Device: llama.cpp puts the image encoder on the
 ; first GPU backend it finds, where it holds VRAM but only computes on image
 ; requests. Name a device here to move it (e.g. onto the model's own GPU).
@@ -439,6 +482,9 @@ mod tests {
             device: Some("ROCm1,CUDA0".into()),
             split_mode: Some("row".into()),
             tensor_split: Some("3,1".into()),
+            // Two rules, so the `,` that joins them has to survive the INI reader
+            // — the value's own grammar, not just the key name, is under test.
+            override_tensor: Some(r"token_embd\.weight=ROCm1,^output\.weight=CPU".into()),
             mmproj_device: Some("ROCm1".into()),
             webui_mcp_proxy: Some(false),
             fit: Some(true),
@@ -473,6 +519,7 @@ mod tests {
         assert_eq!(reloaded.device, None);
         assert_eq!(reloaded.split_mode, None);
         assert_eq!(reloaded.tensor_split, None);
+        assert_eq!(reloaded.override_tensor, None);
         assert_eq!(reloaded.mmproj_device, None);
         assert_eq!(reloaded.models_dir, Some(default_models_dir()));
     }
@@ -535,6 +582,31 @@ mod tests {
                 "error names the field"
             );
         }
+    }
+
+    // OverrideTensor is refused on the same two grounds as the per-preset one —
+    // and the stakes are higher here: the ROUTER parses this `-ot`, so a value
+    // llama.cpp throws on takes down the whole server, not one model. The regex
+    // is free text, so `#`/`;` really can reach it (they'd truncate the INI line
+    // on reload); a rule with no device is what a hand-edited `,` leaves behind.
+    #[test]
+    fn save_validation_rejects_a_broken_override_tensor() {
+        let with = |ot: &str| ServerConfig {
+            models_dir: Some(r"E:\llm".into()),
+            override_tensor: Some(ot.into()),
+            ..Default::default()
+        };
+        assert!(validate_for_save(&with(r"token_embd\.weight=ROCm0")).is_ok());
+        assert!(validate_for_save(&with("")).is_ok(), "unset is fine");
+
+        let err = validate_for_save(&with(r"token_embd\.weight=ROCm0,dangling")).expect_err("rule");
+        assert!(err.to_string().contains("dangling"), "quotes the rule: {err}");
+
+        let err = validate_for_save(&with("blk#1=CPU")).expect_err("comment marker");
+        assert!(
+            err.to_string().contains("OverrideTensor"),
+            "error names the field: {err}"
+        );
     }
 
     // client_host is what the Open-chat button and the Integrations base URL

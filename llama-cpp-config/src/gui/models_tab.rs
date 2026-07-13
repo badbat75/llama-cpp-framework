@@ -320,6 +320,84 @@ pub(super) fn wire(app: &AppWindow, state: &Rc<RefCell<State>>) {
     }
 
     wire_gpu_table(app);
+    wire_tensor_table(app);
+}
+
+/// The tensor-placement table's five callbacks, over `form.override_tensor`. Same
+/// two-step shape as `wire_gpu_table`: derive the new value with `tensor_override`,
+/// write it back, refresh.
+///
+/// The exception is `pattern` — the Custom row's text field. It refreshes the
+/// derived strings ONLY: a row rebuild would recreate the LineEdit mid-keystroke
+/// and drop the caret. It can afford to, for the same reason the GPU table's
+/// weight edit can — a pattern edit changes no other row (see TensorOverrideTable's
+/// binding note).
+fn wire_tensor_table(app: &AppWindow) {
+    let s = app.global::<AppState>();
+    {
+        let app_weak = app.as_weak();
+        s.on_preset_tensor_add(move || {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let rules = tensor_override::add(&preset_overrides(&app), &devices::probed());
+            set_preset_overrides(&app, &rules);
+            refresh_tensor_rows(&app);
+        });
+    }
+    {
+        let app_weak = app.as_weak();
+        s.on_preset_tensor_remove(move |index| {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let rules = tensor_override::remove(&preset_overrides(&app), row_index(index));
+            set_preset_overrides(&app, &rules);
+            refresh_tensor_rows(&app);
+        });
+    }
+    {
+        let app_weak = app.as_weak();
+        s.on_preset_tensor_kind(move |index, kind| {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let rules =
+                tensor_override::set_kind(&preset_overrides(&app), row_index(index), kind.as_str());
+            set_preset_overrides(&app, &rules);
+            refresh_tensor_rows(&app);
+        });
+    }
+    {
+        let app_weak = app.as_weak();
+        s.on_preset_tensor_device(move |index, device| {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let rules = tensor_override::set_device(
+                &preset_overrides(&app),
+                row_index(index),
+                device.as_str(),
+            );
+            set_preset_overrides(&app, &rules);
+            refresh_tensor_rows(&app);
+        });
+    }
+    {
+        let app_weak = app.as_weak();
+        s.on_preset_tensor_pattern(move |index, pattern| {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let rules = tensor_override::set_pattern(
+                &preset_overrides(&app),
+                row_index(index),
+                pattern.as_str(),
+            );
+            set_preset_overrides(&app, &rules);
+            refresh_tensor_scalars(&app);
+        });
+    }
 }
 
 /// The per-preset GPU distribution table's four callbacks — the twin of

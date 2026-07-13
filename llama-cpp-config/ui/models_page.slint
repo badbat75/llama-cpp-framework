@@ -7,7 +7,7 @@
 // Speculative decoding, then the FormActions row.
 
 import { LineEdit, ComboBox, CheckBox, Button, ListView, ScrollView, Palette } from "std-widgets.slint";
-import { SectionCard, LabeledField, InfoRow, SegmentedControl, MappedComboBox, EnumComboBox, AutoSlider, DefaultSpinBox, DefaultLineEdit, FormActions, SelectableRow, ListPanel, GpuSplitTable, Tokens, Options } from "components.slint";
+import { SectionCard, LabeledField, InfoRow, SegmentedControl, MappedComboBox, EnumComboBox, AutoSlider, DefaultSpinBox, DefaultLineEdit, FormActions, SelectableRow, ListPanel, GpuSplitTable, TensorOverrideTable, Tokens, Options } from "components.slint";
 import { AppState } from "state.slint";
 
 export component ModelsPage inherits HorizontalLayout {
@@ -284,6 +284,31 @@ export component ModelsPage inherits HorizontalLayout {
             }
 
             SectionCard {
+                heading: "Tensor placement";
+                Text {
+                    text: "Exceptions to the table above (--override-tensor): tensors that go on a device of their own, whatever their layer does. The one that usually pays: llama.cpp keeps the EMBEDDING TABLE in pinned host RAM even when it reports every layer offloaded — which is what Windows counts as \"Shared GPU memory\", so a model that fits in VRAM with room to spare still shows GBs of it. Put it on a GPU to reclaim that; send big tensors to CPU to free VRAM instead. Rules apply in order — the first match wins.";
+                    wrap: word-wrap;
+                    font-size: 12px;
+                    color: Palette.foreground.transparentize(Tokens.muted);
+                }
+                TensorOverrideTable {
+                    rows: AppState.preset_tensor_rows;
+                    summary: AppState.preset_tensor_summary;
+                    warning: AppState.preset_tensor_warning;
+                    override_warning: AppState.tensor_override_warning;
+                    kind_labels: AppState.tensor_kind_labels;
+                    kind_values: AppState.tensor_kind_values;
+                    dev_labels: AppState.preset_tensor_dev_labels;
+                    dev_values: AppState.preset_tensor_dev_values;
+                    added() => { AppState.preset_tensor_add(); }
+                    removed(i) => { AppState.preset_tensor_remove(i); }
+                    kind_picked(i, kind) => { AppState.preset_tensor_kind(i, kind); }
+                    device_picked(i, dev) => { AppState.preset_tensor_device(i, dev); }
+                    pattern_edited(i, p) => { AppState.preset_tensor_pattern(i, p); }
+                }
+            }
+
+            SectionCard {
                 heading: "Hardware Config";
                 LabeledField {
                     label: "GPU layers";
@@ -470,6 +495,15 @@ export component ModelsPage inherits HorizontalLayout {
                         options: ["auto", "none", "deepseek"];
                         current: AppState.form.reasoning_format == "" ? "auto" : AppState.form.reasoning_format;
                         activated(value) => { AppState.form.reasoning_format = value; }
+                    }
+                }
+                LabeledField {
+                    label: "Keep past thinking";
+                    hint: "--reasoning-preserve: replay the thinking of EVERY past assistant turn back to the model, not just the last one.\ndefault = whatever the chat template does on its own; on = keep it; off = drop it.\nThis is the supported lever — do NOT hand-write preserve_thinking into 'Template kwargs' below. llama.cpp expands this ONE flag into preserve_thinking + clear_thinking + truncate_history_thinking, and templates disagree on which of the three they read, so setting the raw kwarg is a silent no-op on most of them.\nIt only works where the template supports it; llama-server says so at startup ('chat template supports preserving reasoning' / '…does NOT support').\nCosts prompt tokens: the trace is re-sent every turn.";
+                    SegmentedControl {
+                        options: ["default", "on", "off"];
+                        current: AppState.form.reasoning_preserve == "" ? "default" : AppState.form.reasoning_preserve;
+                        activated(value) => { AppState.form.reasoning_preserve = value; }
                     }
                 }
             }

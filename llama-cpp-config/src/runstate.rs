@@ -171,6 +171,16 @@ fn server_args(
             args.push(ts.to_string());
         }
     }
+    // One flag carrying every rule, comma-joined — llama.cpp splits it itself. It
+    // lands on the ROUTER's command line, which is exactly why it wins: the router
+    // merges its own args into each preset as a key→value map, so this REPLACES a
+    // preset's `override-tensor` rather than adding to it (see server_cfg).
+    if let Some(ot) = cfg.override_tensor.as_deref().map(str::trim) {
+        if !ot.is_empty() {
+            args.push("--override-tensor".into());
+            args.push(ot.to_string());
+        }
+    }
     args
 }
 
@@ -531,6 +541,9 @@ mod tests {
             device: Some("ROCm1,CUDA0".into()),
             split_mode: Some("row".into()),
             tensor_split: Some("3,1".into()),
+            // Two rules: the `,` that joins them must reach llama-server as ONE
+            // argument (it does its own splitting), not as two.
+            override_tensor: Some(r"token_embd\.weight=ROCm1,^output\.weight=CPU".into()),
             mmproj_device: Some("ROCm1".into()),
             webui_mcp_proxy: Some(false),
             fit: Some(true),
@@ -549,6 +562,7 @@ mod tests {
             device,
             split_mode,
             tensor_split,
+            override_tensor,
             // launch env only: start() exports it as MTMD_BACKEND_DEVICE. It is
             // not a llama-server flag at all — the image encoder's device can
             // only be chosen through that env var (clip.cpp reads it directly).
@@ -575,6 +589,7 @@ mod tests {
         assert!(pair("--device", device.unwrap()));
         assert!(pair("--split-mode", split_mode.unwrap()));
         assert!(pair("--tensor-split", tensor_split.unwrap()));
+        assert!(pair("--override-tensor", override_tensor.unwrap()));
         // webui-mcp-proxy is a presence flag: Some(false) here ⇒ omitted.
         assert_eq!(
             a.contains(&"--webui-mcp-proxy".to_string()),

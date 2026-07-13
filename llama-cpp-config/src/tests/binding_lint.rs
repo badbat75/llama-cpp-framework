@@ -188,6 +188,151 @@ fn no_current_value_bindings_use_enum_combo_box_instead() {
     );
 }
 
+// ── Glyph coverage ───────────────────────────────────────────────────────
+
+/// Non-ASCII codepoints the UI may draw with the DEFAULT font. Every one is in
+/// Segoe UI's cmap — checked, not assumed (`GlyphTypeface.CharacterToGlyphMap`
+/// over `segoeui.ttf`), which is the only thing that settles coverage. Nothing
+/// falls back: a codepoint Segoe UI lacks draws as an empty box, full stop.
+///
+/// An ICON does not belong here. It goes through the icon font with its family
+/// named at the call site — `text: "\u{E711}"; font-family: "Segoe Fluent Icons";`
+/// — the idiom `LabeledField`'s hint glyph already uses. The scan skips `\u{…}`
+/// escapes for exactly that reason, so that path stays open.
+///
+/// Deliberately absent: `ⓘ` and `─`, which appear in this codebase only inside
+/// COMMENTS. Segoe UI has neither, so neither is proven — listing them would
+/// have pre-approved two glyphs that draw as boxes the day someone used one.
+const RENDERABLE: &[char] = &['·', '×', '—', '…', '→', '↔', '≈', '≡', '≤'];
+
+/// Every double-quoted literal in a `.slint` source, with its 1-based line.
+/// A real scanner rather than a line grep because `//` inside a string (a URL)
+/// must not read as a comment, and `✕` inside a comment must not read as UI text.
+fn string_literals(source: &str) -> Vec<(usize, String)> {
+    #[derive(PartialEq)]
+    enum S {
+        Code,
+        Line,
+        Block,
+        Str,
+    }
+    let mut out = Vec::new();
+    let (mut state, mut line, mut buf, mut at) = (S::Code, 1usize, String::new(), 1usize);
+    let mut it = source.chars().peekable();
+    while let Some(c) = it.next() {
+        match state {
+            S::Code => match c {
+                '/' if it.peek() == Some(&'/') => state = S::Line,
+                '/' if it.peek() == Some(&'*') => state = S::Block,
+                '"' => {
+                    buf.clear();
+                    at = line;
+                    state = S::Str;
+                }
+                _ => {}
+            },
+            S::Line => {
+                if c == '\n' {
+                    state = S::Code;
+                }
+            }
+            S::Block => {
+                if c == '*' && it.peek() == Some(&'/') {
+                    it.next();
+                    state = S::Code;
+                }
+            }
+            S::Str => match c {
+                '\\' => {
+                    it.next(); // the escaped char is never a glyph we judge
+                }
+                '"' => {
+                    out.push((at, std::mem::take(&mut buf)));
+                    state = S::Code;
+                }
+                _ => buf.push(c),
+            },
+        }
+        if c == '\n' {
+            line += 1;
+        }
+    }
+    out
+}
+
+// The tensor table's remove button first shipped reading `✕` (U+2715, Dingbats),
+// which Segoe UI does not have — so it drew as an empty box: a button with no
+// icon. Nothing failed. The glyph is valid Slint, valid UTF-8, and the layout is
+// identical; only a human looking at the window could tell, which is what this
+// scan replaces. It is not a hypothetical: EVERY non-ASCII character this UI
+// actually draws is in Segoe UI, and the one that wasn't is the one that broke.
+#[test]
+fn slint_string_literals_only_use_glyphs_proven_to_render() {
+    let ui = Path::new(env!("CARGO_MANIFEST_DIR")).join("ui");
+    let (mut hits, mut scanned) = (String::new(), 0);
+    for entry in std::fs::read_dir(&ui).expect("ui/ dir") {
+        let path = entry.expect("dir entry").path();
+        if path.extension().is_some_and(|e| e == "slint") {
+            let source = std::fs::read_to_string(&path).expect("read .slint");
+            for (line, text) in string_literals(&source) {
+                for c in text.chars().filter(|c| !c.is_ascii()) {
+                    if !RENDERABLE.contains(&c) {
+                        let _ = writeln!(
+                            hits,
+                            "{}:{}: U+{:04X} '{c}' in {text:?}",
+                            path.file_name().unwrap().to_string_lossy(),
+                            line,
+                            c as u32,
+                        );
+                    }
+                }
+            }
+            scanned += 1;
+        }
+    }
+    assert!(scanned >= 7, "expected the full ui/ set, scanned {scanned}");
+    assert!(
+        hits.is_empty(),
+        "glyph(s) not known to render in the GUI's font stack — they draw as an \
+         empty box, silently. Run the GUI, look at it, and only then add the char \
+         to RENDERABLE:\n{hits}"
+    );
+}
+
+#[test]
+fn glyph_scan_reads_ui_text_and_ignores_comments_and_urls() {
+    // The bug, as shipped — found AND rejected. Without the second assert this
+    // test would still pass with '✕' sitting in RENDERABLE, i.e. with the lint
+    // that exists for it disarmed.
+    let lits = string_literals("Button { text: \"✕\"; }\n");
+    assert_eq!(lits, vec![(1, "✕".to_string())]);
+    assert!(!RENDERABLE.contains(&'✕'), "the tofu glyph must stay rejected");
+
+    // A comment ABOUT the bad glyph is not UI text (this very file's fix has
+    // one) — and a `//` inside a string is a URL, not a comment.
+    let src = "// don't use ✕ here\nText { text: \"see http://x/y — ok\"; }\n";
+    let lits = string_literals(src);
+    assert_eq!(lits, vec![(2, "see http://x/y — ok".to_string())]);
+    assert!(lits[0].1.chars().filter(|c| !c.is_ascii()).all(|c| RENDERABLE.contains(&c)));
+
+    // Escaped quotes must not end the literal early: one literal, not three —
+    // otherwise the tail of a hint string would go unscanned.
+    let lits = string_literals(r#"Text { text: "a \"q\" b ≡"; }"#);
+    assert_eq!(lits.len(), 1, "escaped quote split the literal: {lits:?}");
+    assert!(lits[0].1.ends_with('≡'), "tail lost: {:?}", lits[0].1);
+
+    // The sanctioned way to draw an icon — a `\u{…}` escape under an explicitly
+    // named icon font — must stay open: the escape is skipped, so no bare glyph
+    // reaches the allowlist check and the lint has nothing to say about it.
+    let lits = string_literals(r#"Button { text: "\u{E711}"; font-family: "Segoe Fluent Icons"; }"#);
+    assert!(
+        lits.iter()
+            .flat_map(|(_, t)| t.chars())
+            .all(|c| c.is_ascii()),
+        "a \\u{{…}} icon escape must not surface a non-ASCII char to judge: {lits:?}"
+    );
+}
+
 // The scanner must actually catch the bug class it exists for — feed it the
 // exact v1.1.1-shaped regression and a few sanctioned shapes.
 #[test]

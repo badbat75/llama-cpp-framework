@@ -28,6 +28,13 @@ export struct PresetForm {
     device: string,
     split_mode: string,
     tensor_split: string,
+    // --override-tensor: the `<regex>=<device>,…` rule list, written by the
+    // tensor-placement table (TensorOverrideTable), never typed — llama.cpp
+    // splits the value on `,` and at the first `=` before it parses anything, so
+    // a free-text field would let an unescapable separator through. Same
+    // table-not-a-field reasoning as `device`/`tensor_split` above; the rules
+    // live in src/tensor_override.rs.
+    override_tensor: string,
     // Integer numerics: two-way-bound to a DefaultSpinBox `value` (int). The
     // `*_default` bool carries the "omit the flag" state (checkbox checked =
     // let llama.cpp pick its own default); the int is always populated so the
@@ -51,6 +58,10 @@ export struct PresetForm {
     jinja: bool,
     reasoning: string,
     reasoning_format: string,
+    // --reasoning-preserve, a TRI-state carried as a string: "default" (omit the
+    // flag — the template's own behaviour), "on", "off". Not a bool: "off"
+    // (--no-reasoning-preserve) and "default" are different instructions.
+    reasoning_preserve: string,
     n_cpu_moe: int,
     n_cpu_moe_auto: bool,
     // Sampling knobs, each paired with a `*_default` bool (checkbox omits the
@@ -108,6 +119,12 @@ export struct ServerForm {
     device: string,
     split_mode: string,
     tensor_split: string,
+    // --override-tensor, the server-wide twin of PresetForm's field above (same
+    // TensorOverrideTable, same `<regex>=<device>,…` grammar). Set here it
+    // REPLACES every preset's rules rather than adding to them: the router merges
+    // its own CLI args into each preset as a key→value map, so only one
+    // --override-tensor ever reaches a child (verified — see server_cfg.rs).
+    override_tensor: string,
     mmproj_device: string,
     // Plain bool toggles (CheckBox, two-way <=>), the same shape as `mlock`:
     // webui_mcp_proxy enables the web UI's MCP proxy (--webui-mcp-proxy); fit is
@@ -143,4 +160,29 @@ export struct GpuRow {
     enabled: bool,
     weight: int,
     share: string,
+}
+
+// One rule of the tensor-placement table (TensorOverrideTable in
+// components.slint), the widget behind the preset's `override_tensor` string.
+// Same shape as GpuRow: built entirely in Rust (src/tensor_override.rs) and
+// read-only to Slint — the delegates report edits through the page's callbacks,
+// which rewrite the one form string and rebuild the whole model. Rows are
+// addressed by INDEX (a pattern may legitimately repeat, so there is no id).
+export struct TensorOverrideRow {
+    // The rule's regex, matched against tensor names with regex_search.
+    pattern: string,
+    // Which entry of AppState.tensor_kind_labels this pattern is: a canned one,
+    // or the last index = "Custom regex…" (`custom`), which is the only kind
+    // that shows the pattern's text field.
+    kind_index: int,
+    custom: bool,
+    // The target buffer type — a device id, or CPU — and its position in the
+    // shared AppState.tensor_dev_values model. -1 when the rule names none.
+    device: string,
+    device_index: int,
+    // False for a device the --list-devices probe doesn't know; the rule is kept
+    // (and offered as a "(custom)" dropdown entry) so a save can't drop it.
+    detected: bool,
+    // This row's own complaint, or "" when it is fine.
+    problem: string,
 }

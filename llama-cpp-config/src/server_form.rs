@@ -46,6 +46,9 @@ pub fn config_to_form(cfg: &server_cfg::ServerConfig) -> ServerForm {
             .unwrap_or_else(|| "default".into())
             .into(),
         tensor_split: cfg.tensor_split.clone().unwrap_or_default().into(),
+        // Driven by the tensor-placement table, which reads and rewrites this one
+        // string — no second copy of the rules exists (see src/tensor_override.rs).
+        override_tensor: cfg.override_tensor.clone().unwrap_or_default().into(),
         mmproj_device: cfg.mmproj_device.clone().unwrap_or_default().into(),
         // Plain bool toggles (framework defaults materialized when unset), same
         // shape as `mlock`.
@@ -106,6 +109,7 @@ pub fn form_to_config(f: &ServerForm) -> server_cfg::ServerConfig {
             other => Some(other.to_string()),
         },
         tensor_split: server_cfg::opt_nonblank(Some(f.tensor_split.to_string())),
+        override_tensor: server_cfg::opt_nonblank(Some(f.override_tensor.to_string())),
         mmproj_device: server_cfg::opt_nonblank(Some(f.mmproj_device.to_string())),
         webui_mcp_proxy: Some(f.webui_mcp_proxy),
         fit: Some(f.fit),
@@ -138,6 +142,7 @@ mod tests {
             device: Some("ROCm1,CUDA0".into()),
             split_mode: Some("row".into()),
             tensor_split: Some("3,1".into()),
+            override_tensor: Some(r"token_embd\.weight=ROCm1".into()),
             mmproj_device: Some("ROCm1".into()),
             webui_mcp_proxy: Some(false),
             fit: Some(true),
