@@ -51,7 +51,11 @@ export global Tokens {
 // type or split mode is a one-line edit here instead of several scattered literal
 // arrays that could drift.
 export global Options {
-    out property <[string]> cache_types: ["f32", "f16", "q8_0", "q5_0", "q4_0", "q4_1"];
+    // "default" is a state, not a type: it OMITS --cache-type-k/-v and lets
+    // llama.cpp pick (f16). It is not a synonym for the f16 entry — that one
+    // pins f16 whatever llama.cpp's default becomes. Same "empty string carried
+    // as the word default" shape as `split_modes` below (form.rs maps both ways).
+    out property <[string]> cache_types: ["default", "f32", "f16", "q8_0", "q5_0", "q4_0", "q4_1"];
     out property <[string]> split_modes: ["default", "none", "layer", "row"];
     // "All layers on GPU" sentinel for the --n-gpu-layers* flags: any value
     // above a real block count. Mirrors ALL_LAYERS in src/form.rs — the
@@ -162,7 +166,7 @@ export component EnumComboBox inherits ComboBox {
     in-out property <string> value;
     // `value`'s position in `options`. Slint has no array index-of and no loops
     // inside functions, so this is an explicit scan bounded at 8 entries (the
-    // longest option list here is cache_types = 6) — extend the chain if a list
+    // longest option list here is cache_types = 7) — extend the chain if a list
     // grows past 8. An out-of-range `options[i]` reads back as "" (never a real
     // `value`), so the tail branches stay inert.
     property <int> value_index: root.value == root.options[0] ? 0

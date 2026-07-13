@@ -106,8 +106,20 @@ pub struct Preset {
     pub parallel: Option<i32>,
     pub batch_size: Option<i32>,
     pub ubatch_size: Option<i32>,
+    /// KV-cache quantization for K and V (--cache-type-k / --cache-type-v).
+    /// EMPTY = omit the flag → llama.cpp's own default, f16. Empty is not a
+    /// synonym for `"f16"`: the literal pins f16 forever, the empty string follows
+    /// llama.cpp. Both reach the form as the word "default" (`Options.cache_types`
+    /// first entry), like `split_mode` — see src/form.rs `enum_or_default`.
     pub cache_type_k: String,
     pub cache_type_v: String,
+    /// The fused flash-attention kernel (--flash-attn). llama.cpp takes
+    /// `[on|off|auto]` and defaults to **auto** (on where the backend supports it,
+    /// off where it doesn't), so this is a TRI-state and NOT a checkbox: `None` =
+    /// omit the flag (auto), `Some(true)` = force it on, `Some(false)` = force it
+    /// off. The third state is the one a bool cannot reach, and it is the default.
+    /// Note `Some(false)` also takes away most of the point of a quantized K/V
+    /// cache, which needs the kernel to pay off on most backends.
     pub flash_attn: Option<bool>,
     /// KV-cache RAM budget in MiB (--cache-ram): `-1` = no limit, `0` disables.
     pub cache_ram: Option<i32>,
@@ -478,6 +490,11 @@ pub fn render_section(p: &Preset) -> String {
     emit_i32(&mut out, "ubatch-size", p.ubatch_size);
 
     out.push_str("\r\n; KV cache\r\n");
+    out.push_str("; Omit cache-type-k/-v to get llama.cpp's own default (f16) rather than\r\n");
+    out.push_str("; pinning a type. flash-attn is [on|off|auto] and DEFAULTS TO AUTO (on where\r\n");
+    out.push_str("; the backend supports it), so omit the key for auto; flash-attn = false\r\n");
+    out.push_str("; forces the kernel off, which also costs a quantized K/V cache most of its\r\n");
+    out.push_str("; benefit.\r\n");
     emit_str(&mut out, "cache-type-k", &p.cache_type_k);
     emit_str(&mut out, "cache-type-v", &p.cache_type_v);
     emit_bool(&mut out, "flash-attn", p.flash_attn);

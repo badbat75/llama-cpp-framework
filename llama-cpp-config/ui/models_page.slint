@@ -432,7 +432,11 @@ export component ModelsPage inherits HorizontalLayout {
                 heading: "KV cache";
                 LabeledField {
                     label: "K-cache type";
-                    hint: "KV cache quantization for K (--cache-type-k).\nLower = less VRAM but lower quality.\nNote: Qwen3-Coder needs q8_0 for reliable tool calling — q4_0 makes it drop the <tool_call> wrapper.";
+                    hint: "KV cache quantization for K (--cache-type-k).\nLower = less VRAM but lower quality.\ndefault = omit the flag → llama.cpp default: f16.\nNote: Qwen3-Coder needs q8_0 for reliable tool calling — q4_0 makes it drop the <tool_call> wrapper.";
+                    // "default" is the first entry of Options.cache_types and is
+                    // NOT the f16 entry: it omits the flag (form.rs maps it to an
+                    // empty string, which render_section drops) rather than pinning
+                    // today's llama.cpp default as a literal value.
                     EnumComboBox {
                         options: Options.cache_types;
                         value <=> AppState.form.cache_type_k;
@@ -440,7 +444,7 @@ export component ModelsPage inherits HorizontalLayout {
                 }
                 LabeledField {
                     label: "V-cache type";
-                    hint: "KV cache quantization for V (--cache-type-v).\nLower = less VRAM, lower quality; usually matched to K.\nNeeds flash attention.";
+                    hint: "KV cache quantization for V (--cache-type-v).\nLower = less VRAM, lower quality; usually matched to K.\nNeeds flash attention.\ndefault = omit the flag → llama.cpp default: f16.";
                     EnumComboBox {
                         options: Options.cache_types;
                         value <=> AppState.form.cache_type_v;
@@ -448,10 +452,16 @@ export component ModelsPage inherits HorizontalLayout {
                 }
                 LabeledField {
                     label: "Flash Attention";
-                    hint: "Enables the fused flash-attention kernel (--flash-attn): faster prefill and lower KV memory.\nRecommended on; required for quantized KV cache to help on most backends.";
-                    CheckBox {
-                        text: "enable flash attention (--flash-attn)";
-                        checked <=> AppState.form.flash_attn;
+                    hint: "The fused flash-attention kernel (--flash-attn): faster prefill and lower KV memory.\ndefault = omit the flag → llama.cpp default: auto, i.e. on wherever the backend supports it, off where it doesn't.\non forces it (llama.cpp errors out if the backend can't); off disables it, which also takes away most of the gain from a quantized K/V cache.";
+                    // TRI-state, not a checkbox: --flash-attn is [on|off|auto] and
+                    // its default is auto, so a bool can only ever say two of the
+                    // three things. Same shape (and same reason) as "Keep past
+                    // thinking" below — a SegmentedControl over a form STRING,
+                    // mapped to Option<bool> in form.rs.
+                    SegmentedControl {
+                        options: ["default", "on", "off"];
+                        current: AppState.form.flash_attn == "" ? "default" : AppState.form.flash_attn;
+                        activated(value) => { AppState.form.flash_attn = value; }
                     }
                 }
                 LabeledField {

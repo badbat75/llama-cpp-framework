@@ -16,6 +16,50 @@ fn str_or(val: &str, default: &str) -> SharedString {
     SharedString::from(if val.is_empty() { default } else { val })
 }
 
+/// An `Option<bool>` as the word the tri-state `SegmentedControl`s show — the
+/// widget for a flag whose "unset" is a THIRD instruction rather than the absence
+/// of one (`--flash-attn`, whose own default is `auto`; `--reasoning-preserve`,
+/// whose default is whatever the chat template does). Pairs with `tri_bool` on the
+/// way back. Not a bool anywhere: `Some(false)` (pass the negative flag) and
+/// `None` (pass nothing) are different instructions to llama.cpp.
+fn tri_state(v: Option<bool>) -> SharedString {
+    match v {
+        Some(true) => "on",
+        Some(false) => "off",
+        None => "default",
+    }
+    .into()
+}
+
+/// The form spelling → `Option<bool>`, the inverse of `tri_state`. Anything that
+/// isn't an explicit on/off is `None` — the natural simplification
+/// `Some(s == "on")` collapses "default" into an explicit off, which is a real
+/// flag (`--no-flash-attn` / `--no-reasoning-preserve`) with real consequences.
+fn tri_bool(s: &str) -> Option<bool> {
+    match s {
+        "on" => Some(true),
+        "off" => Some(false),
+        _ => None,
+    }
+}
+
+/// An enum-valued string field where empty means "omit the flag": carried to the
+/// form as the word "default", which is the first entry of the widget's option
+/// list (`Options.cache_types`, `Options.split_modes`). Pairs with `enum_or_empty`.
+fn enum_or_default(val: &str) -> SharedString {
+    SharedString::from(if val.is_empty() { "default" } else { val })
+}
+
+/// The form spelling → the INI value, the inverse of `enum_or_default`: the
+/// "default" entry (and an empty string) collapse to "", which `render_section`'s
+/// `emit_str` then drops from the file entirely.
+fn enum_or_empty(val: &str) -> String {
+    match val {
+        "" | "default" => String::new(),
+        other => other.to_string(),
+    }
+}
+
 /// An optional float (no schema default) as its decimal string, or "" when unset
 /// — the blank-able text a `DefaultLineEdit` shows for the sampling overrides
 /// (temp / top-p / min-p / repeat- + presence-penalty). Pairs with
@@ -76,9 +120,15 @@ pub fn preset_to_form(p: &presets::Preset) -> PresetForm {
         batch_size_default: p.batch_size.is_none(),
         ubatch_size: p.ubatch_size.or(d.ubatch_size).unwrap_or_default(),
         ubatch_size_default: p.ubatch_size.is_none(),
-        cache_type_k: str_or(&p.cache_type_k, &d.cache_type_k),
-        cache_type_v: str_or(&p.cache_type_v, &d.cache_type_v),
-        flash_attn: p.flash_attn.or(d.flash_attn).unwrap_or_default(),
+        // The KV-cache trio is "unset means unset", NOT "unset means show the
+        // schema default" — they deliberately skip the `str_or(…, &d.…)` /
+        // `.or(d.…)` fallback the fields above use. An omitted cache-type-k used
+        // to display as `q8_0` (Preset::default()'s value) and get WRITTEN BACK as
+        // q8_0 on the next save, quietly turning llama.cpp's f16 into q8_0 on a
+        // preset nobody had touched. Empty ↔ "default" here, like `split_mode`.
+        cache_type_k: enum_or_default(&p.cache_type_k),
+        cache_type_v: enum_or_default(&p.cache_type_v),
+        flash_attn: tri_state(p.flash_attn),
         cache_ram: p.cache_ram.or(d.cache_ram).unwrap_or(0),
         cache_ram_default: p.cache_ram.is_none(),
         jinja: p.jinja.or(d.jinja).unwrap_or_default(),
@@ -87,12 +137,7 @@ pub fn preset_to_form(p: &presets::Preset) -> PresetForm {
         // Tri-state, so it deliberately does NOT fall back to `d` the way the
         // fields above do: `None` is not "unset, show the default" here, it IS a
         // value — "let the template decide", distinct from an explicit off.
-        reasoning_preserve: match p.reasoning_preserve {
-            Some(true) => "on",
-            Some(false) => "off",
-            None => "default",
-        }
-        .into(),
+        reasoning_preserve: tri_state(p.reasoning_preserve),
         n_cpu_moe: p.n_cpu_moe.unwrap_or(0),
         n_cpu_moe_auto: p.n_cpu_moe.is_none(),
         temp: txt(p.temp),
@@ -165,9 +210,9 @@ pub fn form_to_preset(f: &PresetForm) -> presets::Preset {
         } else {
             Some(f.ubatch_size).filter(|v| *v > 0)
         },
-        cache_type_k: f.cache_type_k.to_string(),
-        cache_type_v: f.cache_type_v.to_string(),
-        flash_attn: Some(f.flash_attn),
+        cache_type_k: enum_or_empty(f.cache_type_k.as_str()),
+        cache_type_v: enum_or_empty(f.cache_type_v.as_str()),
+        flash_attn: tri_bool(f.flash_attn.as_str()),
         // Any integer is meaningful to --cache-ram (0 disables, -1 = no
         // limit), matching the hint and `Preset::from_keys` — only the
         // "default" checkbox collapses to None.
@@ -179,11 +224,8 @@ pub fn form_to_preset(f: &PresetForm) -> presets::Preset {
         jinja: Some(f.jinja),
         reasoning: f.reasoning.to_string(),
         reasoning_format: f.reasoning_format.to_string(),
-        reasoning_preserve: match f.reasoning_preserve.as_str() {
-            "on" => Some(true),
-            "off" => Some(false),
-            _ => None, // "default" — omit the key, let the template decide
-        },
+        // "default" → None: omit the key, let the template decide.
+        reasoning_preserve: tri_bool(f.reasoning_preserve.as_str()),
         n_cpu_moe: if f.n_cpu_moe_auto {
             None
         } else {
@@ -271,6 +313,47 @@ mod tests {
         assert_eq!(spelling(None), "default");
         assert_eq!(spelling(Some(true)), "on");
         assert_eq!(spelling(Some(false)), "off");
+    }
+
+    // The KV-cache card's other three flags have an "unset" that is a real
+    // instruction too, so it has to survive the form the way reasoning-preserve's
+    // does. It did not: `cache_type_k/v` fell back to `Preset::default()` (q8_0)
+    // and `flash_attn` to Some(true) whenever the key was absent — so a preset
+    // that had never named a cache type DISPLAYED q8_0 and, on the next save of
+    // any unrelated field, WROTE q8_0, quietly requantizing a KV cache llama.cpp
+    // would have left at f16. The empty/None state must reach the form as
+    // "default" and come back out empty/None.
+    #[test]
+    fn kv_cache_unset_state_survives_the_form_round_trip() {
+        let unset = Preset {
+            cache_type_k: String::new(),
+            cache_type_v: String::new(),
+            flash_attn: None,
+            ..Preset::default()
+        };
+        let back = round_trip(&unset);
+        assert_eq!(back.cache_type_k, "", "cache-type-k invented a value");
+        assert_eq!(back.cache_type_v, "", "cache-type-v invented a value");
+        assert_eq!(back.flash_attn, None, "flash-attn invented a value");
+
+        // …and the form spellings are the ones the widgets' option lists use — a
+        // mismatch leaves the ComboBox on its first row / the SegmentedControl with
+        // no pill lit. "default" is `Options.cache_types[0]` and the first pill.
+        let f = preset_to_form(&unset);
+        assert_eq!(f.cache_type_k, "default");
+        assert_eq!(f.cache_type_v, "default");
+        assert_eq!(f.flash_attn, "default");
+
+        // An explicit choice is still an explicit choice — including "off", which
+        // is NOT the same as unset (it passes --flash-attn off, forcing the kernel
+        // away even where the backend has it).
+        for state in [None, Some(true), Some(false)] {
+            let p = Preset {
+                flash_attn: state,
+                ..Preset::default()
+            };
+            assert_eq!(round_trip(&p).flash_attn, state, "flash-attn {state:?}");
+        }
     }
 
     #[test]

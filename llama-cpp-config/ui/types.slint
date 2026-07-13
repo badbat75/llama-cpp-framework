@@ -16,7 +16,7 @@ export struct PresetForm {
     model: string,
     mmproj: string,
     // --mmproj-offload: run the image encoder on GPU (llama.cpp's default) or
-    // keep it on CPU. Plain bool (CheckBox, two-way <=>), same shape as flash_attn.
+    // keep it on CPU. Plain bool (CheckBox, two-way <=>), same shape as jinja.
     mmproj_offload: bool,
     model_draft: string,
     spec_type: string,
@@ -50,9 +50,16 @@ export struct PresetForm {
     batch_size_default: bool,
     ubatch_size: int,
     ubatch_size_default: bool,
+    // --cache-type-k/-v: an EnumComboBox over Options.cache_types, whose FIRST
+    // entry is "default" — the spelling this string carries for the empty INI
+    // value (omit the flag). Same empty↔"default" mapping as `split_mode` above.
     cache_type_k: string,
     cache_type_v: string,
-    flash_attn: bool,
+    // --flash-attn, a TRI-state carried as a string like `reasoning_preserve`
+    // below: "default" (omit the flag — llama.cpp's own default is `auto`), "on",
+    // "off". Not a bool: the flag takes [on|off|auto], so a checkbox could only
+    // ever reach two of its three states, and the unreachable one is the default.
+    flash_attn: string,
     cache_ram: int,
     cache_ram_default: bool,
     jinja: bool,
