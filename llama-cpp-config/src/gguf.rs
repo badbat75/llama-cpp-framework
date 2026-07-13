@@ -34,6 +34,9 @@ trait KvSource {
     fn u32(&self, key: &str) -> Option<u32>;
     fn string(&self, key: &str) -> Option<String>;
     fn boolean(&self, key: &str) -> Option<bool>;
+    /// A tensor's `(ggml_type, size_in_bytes)` by name — from the GGUF's tensor
+    /// infos, not its KV block. `None` when the tensor is absent.
+    fn tensor(&self, name: &str) -> Option<(u32, u64)>;
 }
 
 // ── Public descriptions ──────────────────────────────────────────────────
@@ -65,6 +68,11 @@ pub struct ModelInfo {
     /// none). `chat_template_line()` classifies it for the info box; the GUI's
     /// Preview button shows this raw text in a modal.
     pub chat_template: Option<String>,
+    /// `token_embd.weight`'s `(ggml_type, bytes)`. Both halves drive a decision
+    /// the rest of the box can't: whether an `override-tensor` rule pinning the
+    /// embedding table to a GPU is a win or a catastrophe — see `embd_line`.
+    /// None when the GGUF names its embedding tensor something else.
+    pub embd: Option<(u32, u64)>,
 }
 
 #[derive(Debug, Clone)]
@@ -118,6 +126,7 @@ impl ModelInfo {
             chat_template: s
                 .string("tokenizer.chat_template")
                 .filter(|t| !t.is_empty()),
+            embd: s.tensor("token_embd.weight"),
             arch,
         })
     }
@@ -175,6 +184,61 @@ impl ModelInfo {
             parts.push(&self.size_label);
         }
         parts.join(SEP)
+    }
+
+    /// The "Embeddings" row: `token_embd.weight`'s own quant and size. Facts only
+    /// — the VERDICT they imply is `embd_pin_warning`, which the Tensor-placement
+    /// table raises at the moment a rule actually pins the table. Both halves of
+    /// this row exist because that verdict has two independent preconditions:
+    ///
+    /// Pinning the embedding table is the documented cure for the GBs of Windows
+    /// "Shared GPU memory" a fully-offloaded model still shows (llama.cpp parks
+    /// `token_embd` in a pinned host buffer even at `offloaded N/N layers`). But
+    /// the cure has TWO preconditions, and violating either turns a win into a
+    /// 10-15x loss — both measured on a 27B split across ROCm + CUDA:
+    ///
+    /// 1. **The type must have a GPU `get_rows` kernel.** ggml-cuda/ggml-hip
+    ///    implement `GET_ROWS` for F32/F16/BF16/I32/Q1_0/Q4_0/Q4_1/Q5_0/Q5_1/Q8_0
+    ///    ONLY (`ggml-cuda.cu`, `supports_op`) — every K-quant falls to `default:
+    ///    return false`. Pin a K-quant embedding table and the tensor sits in VRAM
+    ///    the GPU cannot read, so the lookup round-trips to the host EVERY token:
+    ///    decode collapsed 25 t/s → 2.8 t/s (Q4_K embd) and → 1.9 t/s (Q5_K, whose
+    ///    table is bigger, hence slower — the penalty tracks the table size).
+    ///    Prefill is untouched (one round-trip per 2048-token batch amortizes it),
+    ///    which is why this reads as "the GPU is idle" rather than "the GPU is slow".
+    ///    The trap is that a file's NAME does not tell you: Unsloth's Q6_K_XL keeps
+    ///    `token_embd` at Q8_0 (safe), while its Q4_K_XL/Q5_K_XL use Q4_K/Q5_K (not).
+    /// 2. **The card must have room for it.** Pinning MOVES the table out of host
+    ///    RAM and into VRAM, so it is a straight add to the device's footprint —
+    ///    hence the size here. With the KV cache already filling the card, that
+    ///    add is what tips it into paging (23 t/s → 13.7 t/s, a Q8_0 table on a
+    ///    card holding a 256k f16 KV cache). Size is the number to budget against.
+    pub fn embd_line(&self) -> String {
+        match self.embd {
+            Some((ty, bytes)) => {
+                format!("{}{SEP}{}", ggml_type_name(ty), format_mib(bytes))
+            }
+            None => "n/a".to_string(),
+        }
+    }
+
+    /// The warning the Tensor-placement table shows when this model's embedding
+    /// table is pinned to a GPU it cannot be read from. Empty when the type is
+    /// safe — and equally empty when it is UNKNOWN (no `token_embd.weight`, or no
+    /// `ggml-base.dll` to read it with): a metadata read we couldn't do is not
+    /// evidence of a problem, and crying wolf on every unreadable GGUF would train
+    /// the warning away. So `!embd_pinnable()` alone must never gate this.
+    pub fn embd_pin_warning(&self) -> String {
+        match self.embd {
+            Some((ty, _)) if !gpu_has_get_rows(ty) => format!(
+                "This model stores token_embd as {} — CUDA/ROCm have no get_rows kernel for \
+                 K-quants, so pinning it to a GPU sends the whole table back to host RAM on \
+                 EVERY token (measured: 25 → 2.8 tok/s). Point the rule at CPU, or use a build \
+                 whose embedding table is Q8_0/F16/BF16.",
+                ggml_type_name(ty)
+            ),
+            _ => String::new(),
+        }
     }
 
     pub fn layers_ctx_line(&self) -> String {
@@ -446,6 +510,89 @@ fn group_thousands(n: u64) -> String {
     out
 }
 
+/// `1_349_517_312` -> `"1.26 GiB"` / `715_128_832` -> `"682 MiB"`. Sizes the VRAM
+/// an `override-tensor` pin would add to the target device.
+fn format_mib(bytes: u64) -> String {
+    let mib = bytes as f64 / (1024.0 * 1024.0);
+    if mib >= 1024.0 {
+        format!("{:.2} GiB", mib / 1024.0)
+    } else {
+        format!("{mib:.0} MiB")
+    }
+}
+
+/// Map a `ggml_type` (ggml/include/ggml.h) to its name. This is NOT the
+/// `general.file_type` LLAMA_FTYPE enum that `ftype_name` maps — the two disagree
+/// on nearly every value (e.g. 7 is Q8_0 as an ftype but Q5_1 as a ggml_type), so
+/// crossing them would silently mislabel every tensor.
+fn ggml_type_name(t: u32) -> String {
+    let name = match t {
+        0 => "F32",
+        1 => "F16",
+        2 => "Q4_0",
+        3 => "Q4_1",
+        6 => "Q5_0",
+        7 => "Q5_1",
+        8 => "Q8_0",
+        9 => "Q8_1",
+        10 => "Q2_K",
+        11 => "Q3_K",
+        12 => "Q4_K",
+        13 => "Q5_K",
+        14 => "Q6_K",
+        15 => "Q8_K",
+        16 => "IQ2_XXS",
+        17 => "IQ2_XS",
+        18 => "IQ3_XXS",
+        19 => "IQ1_S",
+        20 => "IQ4_NL",
+        21 => "IQ3_S",
+        22 => "IQ2_S",
+        23 => "IQ4_XS",
+        24 => "I8",
+        25 => "I16",
+        26 => "I32",
+        27 => "I64",
+        28 => "F64",
+        29 => "IQ1_M",
+        30 => "BF16",
+        34 => "TQ1_0",
+        35 => "TQ2_0",
+        39 => "MXFP4",
+        40 => "NVFP4",
+        41 => "Q1_0",
+        42 => "Q2_0",
+        _ => return format!("ggml_type {t}"),
+    };
+    name.to_string()
+}
+
+/// Whether ggml-cuda / ggml-hip can run `GET_ROWS` (the embedding lookup) on a
+/// tensor of this `ggml_type`. Mirrors the `case GGML_OP_GET_ROWS` arm of
+/// `ggml_backend_cuda_device_supports_op` (`ggml/src/ggml-cuda/ggml-cuda.cu`),
+/// which whitelists exactly these and returns false for everything else — every
+/// K-quant and every IQ-quant included.
+///
+/// Keep this list in sync with that switch when bumping llama.cpp: a type that
+/// GAINS a kernel upstream and is missing here only costs a needless warning, but
+/// a type that is listed here WITHOUT a kernel silently green-lights the pin that
+/// `embd_line` exists to prevent.
+fn gpu_has_get_rows(ggml_type: u32) -> bool {
+    matches!(
+        ggml_type,
+        0  // F32
+        | 1  // F16
+        | 2  // Q4_0
+        | 3  // Q4_1
+        | 6  // Q5_0
+        | 7  // Q5_1
+        | 8  // Q8_0
+        | 26 // I32
+        | 30 // BF16
+        | 41 // Q1_0
+    )
+}
+
 /// Map `general.file_type` (LLAMA_FTYPE) to its quant name. Falls back to
 /// `"ftype N"` for values this build predates.
 fn ftype_name(ft: u32) -> String {
@@ -509,30 +656,48 @@ mod tests {
         S(&'static str),
         B(bool),
     }
-    struct Map(HashMap<&'static str, Tv>);
+    struct Map {
+        kv: HashMap<&'static str, Tv>,
+        /// name -> (ggml_type, bytes), mirroring the GGUF's tensor infos.
+        tensors: HashMap<&'static str, (u32, u64)>,
+    }
     impl KvSource for Map {
         fn u32(&self, key: &str) -> Option<u32> {
-            match self.0.get(key) {
+            match self.kv.get(key) {
                 Some(Tv::U(n)) => Some(*n),
                 _ => None,
             }
         }
         fn string(&self, key: &str) -> Option<String> {
-            match self.0.get(key) {
+            match self.kv.get(key) {
                 Some(Tv::S(s)) => Some((*s).to_string()),
                 _ => None,
             }
         }
         fn boolean(&self, key: &str) -> Option<bool> {
-            match self.0.get(key) {
+            match self.kv.get(key) {
                 Some(Tv::B(b)) => Some(*b),
                 _ => None,
             }
         }
+        fn tensor(&self, name: &str) -> Option<(u32, u64)> {
+            self.tensors.get(name).copied()
+        }
     }
 
     fn map(pairs: Vec<(&'static str, Tv)>) -> Map {
-        Map(pairs.into_iter().collect())
+        Map {
+            kv: pairs.into_iter().collect(),
+            tensors: HashMap::new(),
+        }
+    }
+
+    /// `map` plus the GGUF's tensor infos — only `token_embd.weight` is read.
+    fn map_t(pairs: Vec<(&'static str, Tv)>, tensors: Vec<(&'static str, (u32, u64))>) -> Map {
+        Map {
+            kv: pairs.into_iter().collect(),
+            tensors: tensors.into_iter().collect(),
+        }
     }
 
     #[test]
@@ -692,6 +857,70 @@ mod tests {
         let line = draft_line(&info, &ext);
         assert!(line.contains("embedded MTP: yes (1 nextn layer)"));
         assert!(line.contains("DFlash looks compatible (glm-dflash.gguf)"));
+    }
+
+    /// The whole point of the Embeddings row: the FILE NAME does not tell you
+    /// whether pinning `token_embd` is safe. These are the real headers of three
+    /// Unsloth "XL" builds of the SAME model — the Q6_K_XL keeps its embedding
+    /// table at Q8_0 (a type ggml-cuda/hip can `get_rows` on GPU), while the
+    /// Q5/Q4 builds drop it to a K-quant, which has no GPU kernel. Pinning those
+    /// two round-trips the table to the host every token: measured 2.8 t/s (Q4_K)
+    /// and 1.9 t/s (Q5_K) against 21-52 t/s unpinned.
+    #[test]
+    fn embd_verdict_follows_the_tensor_type_not_the_file_name() {
+        let base = || vec![("general.architecture", Tv::S("qwen35"))];
+
+        // Qwen3.6-27B-UD-MTP-Q6_K_XL.gguf — embd is Q8_0: whitelisted.
+        let info = ModelInfo::from_kv(&map_t(
+            base(),
+            vec![("token_embd.weight", (8, 1_351_614_464))],
+        ))
+        .unwrap();
+        assert_eq!(info.embd_line(), "Q8_0  ·  1.26 GiB");
+        assert!(info.embd_pin_warning().is_empty());
+
+        // Qwen3.6-27B-UD-Q4_K_XL.gguf — embd is Q4_K: no GPU get_rows. The ROW is
+        // unchanged in shape (facts only); the VERDICT lives in the warning.
+        let info = ModelInfo::from_kv(&map_t(
+            base(),
+            vec![("token_embd.weight", (12, 715_128_832))],
+        ))
+        .unwrap();
+        assert_eq!(info.embd_line(), "Q4_K  ·  682 MiB");
+        assert!(info.embd_pin_warning().contains("Q4_K"));
+
+        // Q5_K (13) is a K-quant too — the trap is not specific to Q4.
+        let info = ModelInfo::from_kv(&map_t(
+            base(),
+            vec![("token_embd.weight", (13, 873_463_808))],
+        ))
+        .unwrap();
+        assert_eq!(info.embd_line(), "Q5_K  ·  833 MiB");
+        assert!(info.embd_pin_warning().contains("Q5_K"));
+
+        // Unknown type (no `token_embd.weight`, or no DLL to read it with) must
+        // NOT warn: a metadata read we couldn't do is not evidence of a problem.
+        // This is also what keeps the e2e fixture's unreadable GGUF quiet.
+        let info = ModelInfo::from_kv(&map(base())).unwrap();
+        assert_eq!(info.embd_line(), "n/a");
+        assert!(info.embd_pin_warning().is_empty());
+    }
+
+    /// `ggml_type` and `general.file_type` (LLAMA_FTYPE) are different enums that
+    /// overlap numerically — 7 means Q8_0 as an ftype but Q5_1 as a ggml_type, and
+    /// 14 means Q4_K_S vs Q6_K. Reading a tensor's type through `ftype_name` (or
+    /// vice versa) would mislabel almost everything, so pin the divergence.
+    #[test]
+    fn ggml_type_and_ftype_enums_are_not_interchangeable() {
+        assert_eq!(ggml_type_name(7), "Q5_1");
+        assert_eq!(ftype_name(7), "Q8_0");
+        assert_eq!(ggml_type_name(14), "Q6_K");
+        assert_eq!(ftype_name(14), "Q4_K_S");
+        // BF16 and Q8_0 are get_rows-capable; every K-quant and IQ-quant is not.
+        assert!(gpu_has_get_rows(30) && gpu_has_get_rows(8));
+        for k_quant in [10u32, 11, 12, 13, 14, 15, 23] {
+            assert!(!gpu_has_get_rows(k_quant), "type {k_quant} must not be pinnable");
+        }
     }
 
     #[test]

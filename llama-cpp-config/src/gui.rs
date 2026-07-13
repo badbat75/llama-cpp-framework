@@ -596,12 +596,25 @@ fn refresh_tensor_scalars(app: &AppWindow) {
 
     let preset = preset_overrides(app);
     s.set_preset_tensor_summary(tensor_override::summary(&preset).into());
-    s.set_preset_tensor_warning(
-        tensor_override::validate(&preset)
-            .err()
-            .unwrap_or_default()
-            .into(),
-    );
+    // Two warnings share this strip, and the order is deliberate. `validate`'s is
+    // a value llama-server would REFUSE (no device after the `=`), so it outranks
+    // the model-dependent one, which is a rule llama.cpp accepts and then executes
+    // catastrophically slowly: pinning a K-quant `token_embd` to a GPU that has no
+    // `get_rows` kernel for it. The latter needs the SELECTED MODEL's embedding
+    // type, which `models_tab::update_model_info` has already parked in
+    // `model_info_embd_warning` — reading it back from AppState (rather than
+    // re-opening the GGUF) is what keeps this callable on every pattern keystroke.
+    // It is empty unless the type is known AND unpinnable, so an unreadable GGUF
+    // stays silent instead of warning about a type nobody could read.
+    let refused = tensor_override::validate(&preset).err().unwrap_or_default();
+    let warning = if !refused.is_empty() {
+        refused
+    } else if tensor_override::pins_embeddings_to_gpu(&preset) {
+        s.get_model_info_embd_warning().to_string()
+    } else {
+        String::new()
+    };
+    s.set_preset_tensor_warning(warning.into());
 }
 
 /// The derived numbers the tables render off: how many devices are checked, the

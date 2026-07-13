@@ -50,6 +50,12 @@ mod windows_impl {
     type FnFree = unsafe extern "C" fn(GgufCtx);
     type FnFind = unsafe extern "C" fn(GgufCtx, *const c_char) -> i64;
     type FnType = unsafe extern "C" fn(GgufCtx, i64) -> i32;
+    // Tensor infos (not KV): `gguf_find_tensor` returns -1 when absent, and the
+    // type is a `ggml_type` enum (ggml.h), NOT the `general.file_type` LLAMA_FTYPE
+    // that `ftype_name` maps — the two enums disagree on nearly every value.
+    type FnFindTensor = unsafe extern "C" fn(GgufCtx, *const c_char) -> i64;
+    type FnTensorType = unsafe extern "C" fn(GgufCtx, i64) -> i32;
+    type FnTensorSize = unsafe extern "C" fn(GgufCtx, i64) -> usize;
     type FnU8 = unsafe extern "C" fn(GgufCtx, i64) -> u8;
     type FnI8 = unsafe extern "C" fn(GgufCtx, i64) -> i8;
     type FnU16 = unsafe extern "C" fn(GgufCtx, i64) -> u16;
@@ -76,6 +82,9 @@ mod windows_impl {
         v_i64: FnI64,
         v_bool: FnBool,
         v_str: FnStr,
+        find_tensor: FnFindTensor,
+        tensor_type: FnTensorType,
+        tensor_size: FnTensorSize,
     }
     // `Api` holds only C function pointers (Send + Sync), so it is safe to cache
     // in a `static OnceLock`. Only SUCCESS is cached — see `api()`.
@@ -153,6 +162,9 @@ mod windows_impl {
                 v_i64: sym!(FnI64, b"gguf_get_val_i64\0"),
                 v_bool: sym!(FnBool, b"gguf_get_val_bool\0"),
                 v_str: sym!(FnStr, b"gguf_get_val_str\0"),
+                find_tensor: sym!(FnFindTensor, b"gguf_find_tensor\0"),
+                tensor_type: sym!(FnTensorType, b"gguf_get_tensor_type\0"),
+                tensor_size: sym!(FnTensorSize, b"gguf_get_tensor_size\0"),
             })
         }
     }
@@ -253,6 +265,22 @@ mod windows_impl {
                 Some((self.api.v_bool)(self.ptr, id))
             }
         }
+
+        fn tensor(&self, name: &str) -> Option<(u32, u64)> {
+            let c = CString::new(name).ok()?;
+            // SAFETY: find_tensor returns -1 for an absent name; the getters are
+            // only called with an id it handed back, which indexes this ctx's
+            // tensor infos (read at `open` under no_alloc).
+            unsafe {
+                let id = (self.api.find_tensor)(self.ptr, c.as_ptr());
+                if id < 0 {
+                    return None;
+                }
+                let ty = (self.api.tensor_type)(self.ptr, id);
+                let size = (self.api.tensor_size)(self.ptr, id);
+                Some((u32::try_from(ty).ok()?, size as u64))
+            }
+        }
     }
 }
 
@@ -277,6 +305,9 @@ mod stub_impl {
             None
         }
         fn boolean(&self, _key: &str) -> Option<bool> {
+            None
+        }
+        fn tensor(&self, _name: &str) -> Option<(u32, u64)> {
             None
         }
     }

@@ -195,6 +195,16 @@ export global AppState {
     in-out property <bool> model_info_has_moe: false;
     in-out property <string> model_info_moe;
     in-out property <string> model_info_arch_quant;
+    // token_embd's OWN quant + size — not implied by the file's name or by
+    // `model_info_arch_quant`: Unsloth's Q6_K_XL keeps the embedding table at
+    // Q8_0 while its Q4_K_XL/Q5_K_XL drop it to a K-quant, and only the former
+    // can be pinned to a GPU (CUDA/ROCm implement get_rows for no K-quant).
+    // `model_info_embd_warning` is non-empty ONLY when the type is known AND
+    // unpinnable — it is what the Tensor-placement table shows when a rule
+    // pins the table anyway. Empty for an unreadable GGUF, so a failed metadata
+    // read never masquerades as a problem.
+    in-out property <string> model_info_embd;
+    in-out property <string> model_info_embd_warning;
     in-out property <string> model_info_layers_ctx;
     in-out property <string> model_info_attn;
     in-out property <string> model_info_draft;

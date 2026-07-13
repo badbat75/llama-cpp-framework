@@ -605,12 +605,19 @@ pub(super) fn update_model_info(app: &AppWindow) {
     // a stale template from lingering.
     s.set_model_info_chat_template(SharedString::from("none"));
     s.set_chat_template_preview(SharedString::from(""));
+    // Unlike the rows above, the embd WARNING is read by the Tensor-placement
+    // table, which is NOT behind `model_info_ready` — so a stale one would keep
+    // accusing the next model (or an unreadable one) of the previous model's
+    // K-quant. It must be cleared on every entry, not just repainted on success.
+    s.set_model_info_embd(SharedString::from("n/a"));
+    s.set_model_info_embd_warning(SharedString::from(""));
 
     if model.trim().is_empty() {
         s.set_model_info_ready(false);
         s.set_model_info_note(SharedString::from(
             "Select a model to see its GGUF details.",
         ));
+        refresh_tensor_scalars(app);
         return;
     }
 
@@ -619,6 +626,7 @@ pub(super) fn update_model_info(app: &AppWindow) {
         s.set_model_info_note(SharedString::from(
             "Metadata unavailable — is ggml-base.dll beside the app, and the file a valid GGUF?",
         ));
+        refresh_tensor_scalars(app);
         return;
     };
 
@@ -630,6 +638,11 @@ pub(super) fn update_model_info(app: &AppWindow) {
     s.set_model_info_has_moe(info.is_moe);
     s.set_model_info_moe(SharedString::from(info.moe_offload_line()));
     s.set_model_info_arch_quant(SharedString::from(info.arch_quant_line()));
+    s.set_model_info_embd(SharedString::from(info.embd_line()));
+    // Feeds the Tensor-placement table's warning strip (see refresh_tensor_scalars).
+    // Set BEFORE the refresh below, which reads it back off AppState rather than
+    // re-opening the GGUF on every pattern keystroke.
+    s.set_model_info_embd_warning(SharedString::from(info.embd_pin_warning()));
     s.set_model_info_layers_ctx(SharedString::from(info.layers_ctx_line()));
     s.set_model_info_attn(SharedString::from(info.attn_line()));
     s.set_model_info_draft(SharedString::from(gguf::draft_line(&info, &ext)));
@@ -642,6 +655,9 @@ pub(super) fn update_model_info(app: &AppWindow) {
     // Enables the speculative-decoding controls even before an external draft is
     // picked, when the model itself embeds MTP/nextn heads.
     s.set_model_info_embeds_mtp(info.nextn_predict_layers > 0);
+    // The Tensor-placement warning depends on BOTH the rules and the model, and
+    // the rules did not change here — so re-derive it now that the model has.
+    refresh_tensor_scalars(app);
 
     // Optional: the selected mmproj's clip header.
     let mmproj = form.mmproj.to_string();

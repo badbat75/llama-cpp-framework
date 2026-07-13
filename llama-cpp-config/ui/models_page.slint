@@ -203,6 +203,11 @@ export component ModelsPage inherits HorizontalLayout {
                         value: AppState.model_info_arch_quant;
                     }
                     InfoRow {
+                        label: "Embeddings";
+                        hint: "token_embd.weight's OWN quant and size — the file's name does not tell you this (Unsloth's Q6_K_XL keeps it at Q8_0; its Q4_K_XL/Q5_K_XL drop it to a K-quant).\nIt decides whether the Tensor placement rule below may pin the embedding table to a GPU: CUDA/ROCm implement get_rows only for F32/F16/BF16/Q4_0/Q4_1/Q5_0/Q5_1/Q8_0 — never a K-quant. Pin a K-quant table and every token drags it back to host RAM (25 → 2.8 tok/s measured).\nThe size is the VRAM the pin ADDS to that card: budget it against the KV cache, or the card starts paging.";
+                        value: AppState.model_info_embd;
+                    }
+                    InfoRow {
                         label: "Layers / ctx";
                         hint: "block_count guides --n-gpu-layers; the trained context is the sane upper bound for --ctx-size (going higher needs RoPE scaling).";
                         value: AppState.model_info_layers_ctx;

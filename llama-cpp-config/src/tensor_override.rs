@@ -251,6 +251,20 @@ pub fn validate(s: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// True when the rules pin the embedding table to a GPU — the one placement whose
+/// payoff depends on the MODEL, not on the rule: `token_embd` must be stored in a
+/// type ggml-cuda/ggml-hip can `get_rows` on-device (see `gguf::ModelInfo::
+/// embd_pin_warning`). `CPU` targets are not a pin — leaving the table in host
+/// memory is exactly what the rule would be undoing — so they don't count, and an
+/// empty device is `validate`'s business, not ours.
+pub fn pins_embeddings_to_gpu(s: &str) -> bool {
+    parse(s).iter().any(|r| {
+        r.pattern.contains("token_embd")
+            && !r.device.is_empty()
+            && !r.device.eq_ignore_ascii_case("CPU")
+    })
+}
+
 // ── Display ──────────────────────────────────────────────────────────────
 
 /// The dropdown behind every row's Device cell: every probed device INCLUDING
@@ -531,6 +545,25 @@ mod tests {
             summary(&format!("{EMBD}=ROCm0")),
             format!("--override-tensor {EMBD}=ROCm0")
         );
+    }
+
+    // Only a GPU target is a "pin": `=CPU` leaves the table in host memory, which
+    // is the state the rule would otherwise be undoing, so it must NOT trip the
+    // model-dependent warning. Neither may an experts-only rule.
+    #[test]
+    fn only_a_gpu_target_counts_as_pinning_the_embeddings() {
+        assert!(pins_embeddings_to_gpu(&format!("{EMBD}=ROCm0")));
+        assert!(pins_embeddings_to_gpu(&format!("{EMBD}=CUDA0")));
+        assert!(!pins_embeddings_to_gpu(&format!("{EMBD}=CPU")));
+        assert!(!pins_embeddings_to_gpu(&format!("{EMBD}=cpu")));
+        assert!(!pins_embeddings_to_gpu(r"\.ffn_up_exps=CPU"));
+        assert!(!pins_embeddings_to_gpu(""));
+        // A rule with no device is validate()'s complaint, not this one's.
+        assert!(!pins_embeddings_to_gpu(EMBD));
+        // Found among several rules, not just alone.
+        assert!(pins_embeddings_to_gpu(&format!(
+            r"\.ffn_up_exps=CPU,{EMBD}=ROCm0"
+        )));
     }
 
     // The canned experts regex must stay byte-identical to llama.cpp's
