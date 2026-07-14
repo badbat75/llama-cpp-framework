@@ -89,7 +89,12 @@ pub struct ServerSet {
     /// Auto-fit unset args to device memory (-fit): true = on, false = off.
     #[arg(long)]
     pub fit: Option<bool>,
-    /// llama-server log verbosity threshold (-lv / --log-verbosity).
+    /// Continue a trailing assistant message instead of answering it
+    /// (--prefill-assistant / --no-prefill-assistant). true = llama.cpp's default.
+    #[arg(long)]
+    pub prefill_assistant: Option<bool>,
+    /// llama-server log verbosity threshold (-lv / --log-verbosity): 0 output,
+    /// 1 error, 2 warning, 3 info, 4 trace, 5 debug.
     #[arg(long)]
     pub log_verbosity: Option<i32>,
 }
@@ -150,6 +155,9 @@ impl ServerSet {
         if let Some(f) = self.fit {
             cfg.fit = Some(f);
         }
+        if let Some(p) = self.prefill_assistant {
+            cfg.prefill_assistant = Some(p);
+        }
         if let Some(lv) = self.log_verbosity {
             cfg.log_verbosity = Some(lv);
         }
@@ -177,13 +185,13 @@ pub fn run(cli: Cli) -> Result<()> {
 }
 
 /// The aligned body of `server show`, one `  Label        value` row per field
-/// (the label column fits the longest key, "ThreadsBatch:"). Pure so the test
+/// (the label column fits the longest key, "PrefillAssistant:"). Pure so the test
 /// below can pin that every `ServerConfig` field is printed — a field added to
 /// the schema but forgotten here would otherwise be a silent omission.
 fn show_lines(cfg: &server_cfg::ServerConfig) -> String {
     let mut out = String::new();
     let mut row = |label: &str, value: String| {
-        out.push_str(&format!("  {label:<14} {value}\n"));
+        out.push_str(&format!("  {label:<18} {value}\n"));
     };
     row("Port:", cfg.port.map_or("-".into(), |v| v.to_string()));
     row(
@@ -255,6 +263,11 @@ fn show_lines(cfg: &server_cfg::ServerConfig) -> String {
         "Fit:",
         cfg.fit
             .map_or_else(|| "false (default)".into(), |v| v.to_string()),
+    );
+    row(
+        "PrefillAssistant:",
+        cfg.prefill_assistant
+            .map_or_else(|| "true (default)".into(), |v| v.to_string()),
     );
     row(
         "LogVerbosity:",
@@ -354,6 +367,7 @@ mod tests {
             mmproj_device: Some("ROCm1".into()),
             webui_mcp_proxy: Some(false),
             fit: Some(true),
+            prefill_assistant: Some(false),
             log_verbosity: Some(2),
         };
         let mut cfg = ServerConfig::default();
@@ -379,6 +393,7 @@ mod tests {
             mmproj_device: Some("ROCm1".into()),
             webui_mcp_proxy: Some(false),
             fit: Some(true),
+            prefill_assistant: Some(false),
             log_verbosity: Some(2),
         };
         assert_eq!(cfg, expected);
@@ -406,6 +421,7 @@ mod tests {
             mmproj_device: Some("ROCm1".into()),
             webui_mcp_proxy: Some(false),
             fit: Some(true),
+            prefill_assistant: Some(false),
             log_verbosity: Some(2),
         };
         // The exhaustive destructure breaks compilation the moment a field is
@@ -430,6 +446,7 @@ mod tests {
             mmproj_device,
             webui_mcp_proxy,
             fit,
+            prefill_assistant,
             log_verbosity,
         } = cfg.clone();
         let needles = [
@@ -449,6 +466,10 @@ mod tests {
             ("MmprojDevice:", mmproj_device.unwrap()),
             ("WebuiMcpProxy:", webui_mcp_proxy.unwrap().to_string()),
             ("Fit:", fit.unwrap().to_string()),
+            (
+                "PrefillAssistant:",
+                prefill_assistant.unwrap().to_string(),
+            ),
             ("LogVerbosity:", log_verbosity.unwrap().to_string()),
         ];
         let out = show_lines(&cfg);

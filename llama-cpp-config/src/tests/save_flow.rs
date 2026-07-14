@@ -523,7 +523,7 @@ pub(super) fn run(app: &AppWindow) {
 
     // ── Dirty guard: navigation on a dirty form asks before discarding ───
     let mut form = st.get_form();
-    form.ctx_size = 12345;
+    form.ctx_size = "12345".into();
     st.set_form(form);
     assert!(st.get_preset_dirty());
     st.invoke_new_preset();
@@ -538,8 +538,8 @@ pub(super) fn run(app: &AppWindow) {
     st.invoke_cancel_discard();
     assert!(!st.get_show_discard_dialog());
     assert_eq!(
-        st.get_form().ctx_size,
-        12345,
+        st.get_form().ctx_size.as_str(),
+        "12345",
         "cancel must keep the unsaved edits"
     );
     st.invoke_new_preset();

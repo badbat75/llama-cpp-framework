@@ -14,7 +14,9 @@
 //! pushes a fresh model value and asserts the widget followed it.
 //!
 //! Coverage is one case per editable-widget *kind*, since the "overwritten
-//! binding" rule is per-kind, not per-field: LineEdit (`text`), SpinBox (`value`),
+//! binding" rule is per-kind, not per-field: LineEdit (`text` — which is now every
+//! numeric field of both forms too, integers included; the SpinBox they used to be
+//! is gone, see ui/components.slint),
 //! CheckBox (`checked`) and Slider (`value`, via `AutoSlider` — the std Slider
 //! imperatively self-assigns `value` on every drag/set, so it can never hold a
 //! plain one-way binding; the AutoSlider's `changed shown` push is what this
@@ -32,7 +34,7 @@
 //! this window; topology rationale: `src/tests/mod.rs`.
 
 use i_slint_backend_testing::{self as itest, ElementHandle};
-use slint::ComponentHandle;
+use slint::{ComponentHandle, Model};
 
 use crate::gui::{AppState, AppWindow, PresetForm, ServerForm};
 
@@ -129,17 +131,37 @@ fn editable_widgets_track_model_after_edit() {
         "Options.all_layers (ui/components.slint) drifted from form::ALL_LAYERS"
     );
 
+    // Same drift guard for the -lv dropdown: `server_form` maps a level to the
+    // LABEL the combo shows, so a label it can't find leaves the combo on its
+    // first entry (OUTPUT:0) — and SAVES that on the next write, silencing the log.
+    let slint_levels: Vec<String> = app
+        .global::<crate::gui::Options>()
+        .get_log_levels()
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    let rust_levels: Vec<String> = crate::server_form::LOG_LEVELS
+        .iter()
+        .map(|(label, _)| (*label).to_string())
+        .collect();
+    assert_eq!(
+        slint_levels, rust_levels,
+        "Options.log_levels (ui/components.slint) drifted from server_form::LOG_LEVELS"
+    );
+
     // ── Server tab (shown by default) ────────────────────────────────
-    // SpinBox (inside DefaultSpinBox) — `value <=> AppState.server_form.port`.
-    // Port is now an int (was a string LineEdit); the DefaultSpinBox wraps it
-    // with a "default" checkbox, but the SpinBox's accessible-label is still
-    // "server-port" (forwarded via the component's `spinbox_label`).
+    // LineEdit (inside DefaultLineEdit) — `text <=> AppState.server_form.port`.
+    // Every numeric field of both forms is one of these since v1.5.0, integers
+    // included: the SpinBox they used to be edits itself on a stray mouse-wheel
+    // over the page (ui/components.slint spells it out). So the *kind* under test
+    // here is the same as `form.temp` below — this case stays because it is the
+    // only Server-tab numeric, and it pins the int-as-text conversion.
     assert_reload_reaches_widget(
         &by_label(&app, "server-port"),
-        "SpinBox server_form.port",
+        "LineEdit server_form.port",
         value_of,
         |e| e.set_accessible_value("9999"),
-        |v| set_server_form(&st, |f| f.port = v.parse().expect("int")),
+        |v| set_server_form(&st, |f| f.port = v.into()),
         "8080",
         "1234",
     );
@@ -196,13 +218,14 @@ fn editable_widgets_track_model_after_edit() {
     st.set_current_tab(1);
     itest::mock_elapsed_time(std::time::Duration::from_millis(1));
 
-    // SpinBox — `value <=> AppState.form.ctx_size`.
+    // LineEdit — `text <=> AppState.form.ctx_size` (an INTEGER field: since v1.5.0
+    // they are all text, see the note on the port above).
     assert_reload_reaches_widget(
         &by_label(&app, "preset-ctx-size"),
-        "SpinBox ctx_size",
+        "LineEdit ctx_size",
         value_of,
         |e| e.set_accessible_value("500"),
-        |v| set_form(&st, |f| f.ctx_size = v.parse().expect("int")),
+        |v| set_form(&st, |f| f.ctx_size = v.into()),
         "8192",
         "65536",
     );

@@ -605,6 +605,11 @@ pub(super) fn update_model_info(app: &AppWindow) {
     // a stale template from lingering.
     s.set_model_info_chat_template(SharedString::from("none"));
     s.set_chat_template_preview(SharedString::from(""));
+    // The two reasoning rows are read from that same template, so they reset with
+    // it — and to "unknown", never to "no": an unread GGUF is not evidence that a
+    // model cannot think (the same rule the embd warning below follows).
+    s.set_model_info_thinking(SharedString::from("unknown"));
+    s.set_model_info_past_thinking(SharedString::from("unknown"));
     // Unlike the rows above, the embd WARNING is read by the Tensor-placement
     // table, which is NOT behind `model_info_ready` — so a stale one would keep
     // accusing the next model (or an unreadable one) of the previous model's
@@ -652,6 +657,8 @@ pub(super) fn update_model_info(app: &AppWindow) {
     s.set_chat_template_preview(SharedString::from(
         info.chat_template.clone().unwrap_or_default(),
     ));
+    s.set_model_info_thinking(SharedString::from(info.thinking_line()));
+    s.set_model_info_past_thinking(SharedString::from(info.past_thinking_line()));
     // Enables the speculative-decoding controls even before an external draft is
     // picked, when the model itself embeds MTP/nextn heads.
     s.set_model_info_embeds_mtp(info.nextn_predict_layers > 0);

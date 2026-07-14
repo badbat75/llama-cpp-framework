@@ -15,9 +15,13 @@
 //!   3. `render` (backs `save`)               — INI write; an `int_line_or_hint` /
 //!      `str_line_or_hint` line + a `{…_line}` slot in the `[Server]` body
 //!   4. `ServerForm` struct                   — ui/types.slint (a NUMERIC field
-//!      also needs a paired `<field>_default` bool — the "omit the flag" checkbox)
+//!      rides as a `string` plus a paired `<field>_default` bool — the "omit the
+//!      flag" checkbox)
 //!   5. the input widget                      — ui/server_page.slint, bind two-way
-//!      `<=>`: DefaultSpinBox for numerics (wire BOTH `value` and `default`)
+//!      `<=>`: DefaultLineEdit for numerics (`input_type: InputType.number` for an
+//!      integer; wire BOTH `value` and `default`). Never a SpinBox — it edits itself
+//!      on a stray mouse-wheel, and `binding_lint`'s `no_spinbox_widgets_anywhere`
+//!      fails the build if one returns
 //!   6. `config_to_form` + `form_to_config`   — src/server_form.rs (BOTH
 //!      directions; derive `<field>_default` via `is_none()` / `if <field>_default`)
 //!   7. THREE spots in src/cli.rs             — the `ServerSet` flag field, a
@@ -119,9 +123,25 @@ pub struct ServerConfig {
     /// None = the framework default (off): the GUI's "default" n-gpu-layers means
     /// "offload every layer", which -fit on would silently override.
     pub fit: Option<bool>,
+    /// Continue a TRAILING assistant message instead of answering it
+    /// (--prefill-assistant / --no-prefill-assistant). None = llama.cpp's own
+    /// default, which is ON: when the last message of a request is an assistant
+    /// message, the server treats it as the START of the reply and generates the
+    /// continuation, rather than as a finished turn to answer.
+    ///
+    /// It is a SERVER-scope flag upstream (`set_examples({LLAMA_EXAMPLE_SERVER})`)
+    /// and read from the child's `params_base` (`server-context.cpp` →
+    /// `chat_params.prefill_assistant`), not from anything model-specific — which
+    /// is why it lives here and not in `presets.ini`. Turn it OFF when a client
+    /// legitimately ends a conversation on an assistant turn and expects a fresh
+    /// reply, and the model instead resumes mid-sentence.
+    pub prefill_assistant: Option<bool>,
     /// llama-server log verbosity threshold (-lv / --log-verbosity N): messages
     /// above this level are dropped. None = the framework default (4, per-request
     /// logging into the captured llama-server.log). Always passed to the launch.
+    /// llama.cpp defines exactly six levels — 0 output, 1 error, 2 warning,
+    /// 3 info, 4 trace, 5 debug (`common/arg.cpp`, `common/log.h`) — which is why
+    /// the GUI offers them as a dropdown rather than a free number.
     pub log_verbosity: Option<i32>,
 }
 
@@ -191,6 +211,12 @@ impl ServerConfig {
         self.fit.unwrap_or(false)
     }
 
+    /// Prefill a trailing assistant message, or `true` (llama.cpp's own default)
+    /// when unset.
+    pub fn prefill_assistant_or_default(&self) -> bool {
+        self.prefill_assistant.unwrap_or(true)
+    }
+
     /// The log verbosity (-lv), or `4` (the framework default) when unset.
     pub fn log_verbosity_or_default(&self) -> i32 {
         self.log_verbosity.unwrap_or(4)
@@ -239,6 +265,7 @@ fn from_keys(keys: &std::collections::BTreeMap<String, String>) -> ServerConfig 
         mmproj_device: opt_nonblank(keys.get("MmprojDevice").cloned()),
         webui_mcp_proxy: keys.get("WebuiMcpProxy").and_then(|v| ini::parse_bool(v)),
         fit: keys.get("Fit").and_then(|v| ini::parse_bool(v)),
+        prefill_assistant: keys.get("PrefillAssistant").and_then(|v| ini::parse_bool(v)),
         log_verbosity: keys.get("LogVerbosity").and_then(|v| ini::parse_int(v)),
     }
 }
@@ -379,6 +406,11 @@ fn render(cfg: &ServerConfig) -> String {
     } else {
         "false"
     };
+    let prefill_lit = if cfg.prefill_assistant_or_default() {
+        "true"
+    } else {
+        "false"
+    };
     let log_verbosity = cfg.log_verbosity_or_default();
 
     format!(
@@ -401,8 +433,14 @@ WebuiMcpProxy = {webui_lit}
 ; Fit: let llama.cpp auto-shrink unset args to fit device memory (-fit on|off).
 ; Off by default — a per-preset offload-all-layers choice would be overridden.
 Fit = {fit_lit}
-; LogVerbosity: llama-server log threshold (-lv); higher logs more. Framework
-; default 4 captures per-request logging into logs/llama-server.log.
+; PrefillAssistant: when a request's LAST message is an assistant message, treat
+; it as the start of the reply and continue it (--prefill-assistant, llama.cpp's
+; default) instead of answering it as a finished turn (--no-prefill-assistant).
+PrefillAssistant = {prefill_lit}
+; LogVerbosity: llama-server log threshold (-lv). llama.cpp defines six levels:
+; 0 output, 1 error, 2 warning, 3 info, 4 trace, 5 debug — a message is printed
+; when its level is <= this. Framework default 4 captures per-request logging
+; into logs/llama-server.log; 5 also logs the per-tensor override lines.
 LogVerbosity = {log_verbosity}
 {threads_line}
 {cache_reuse_line}
@@ -488,6 +526,9 @@ mod tests {
             mmproj_device: Some("ROCm1".into()),
             webui_mcp_proxy: Some(false),
             fit: Some(true),
+            // Non-default (llama.cpp prefills by default), so the round-trip is
+            // not vacuous for it.
+            prefill_assistant: Some(false),
             log_verbosity: Some(2),
         };
         assert_eq!(round_trip(&original), original);
@@ -511,6 +552,7 @@ mod tests {
         assert_eq!(reloaded.no_mmap, Some(false));
         assert_eq!(reloaded.webui_mcp_proxy, Some(true));
         assert_eq!(reloaded.fit, Some(false));
+        assert_eq!(reloaded.prefill_assistant, Some(true));
         assert_eq!(reloaded.log_verbosity, Some(4));
         assert_eq!(reloaded.threads, None);
         assert_eq!(reloaded.threads_batch, None);

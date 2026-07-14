@@ -63,10 +63,23 @@ fn enum_or_empty(val: &str) -> String {
 /// An optional float (no schema default) as its decimal string, or "" when unset
 /// — the blank-able text a `DefaultLineEdit` shows for the sampling overrides
 /// (temp / top-p / min-p / repeat- + presence-penalty). Pairs with
-/// `ini::parse_float` on the way back. (Top-K, the one integer sampler, rides a
-/// `DefaultSpinBox` instead, so it doesn't go through here.)
+/// `ini::parse_float` on the way back.
 fn txt(v: Option<f64>) -> SharedString {
     v.map(|n| n.to_string()).unwrap_or_default().into()
+}
+
+/// An optional INT as the text its `DefaultLineEdit` shows, falling back to
+/// `hint` when the key is unset — the integer twin of `txt`, and the reason the
+/// integers are strings on the form at all: they left their `SpinBox` in v1.5.0
+/// because Slint's spins itself on a stray mouse-wheel over the page (the full
+/// story is on the component, ui/components.slint).
+///
+/// Unlike `txt` this is never blank: an unset integer still SHOWS its hint, in a
+/// disabled field, so unticking "default" starts from a sensible number rather
+/// than an empty box. The `*_default` checkbox — not the text — is what carries
+/// "unset" back to the preset.
+fn itxt(v: Option<i32>, hint: i32) -> SharedString {
+    v.unwrap_or(hint).to_string().into()
 }
 
 /// "All layers on GPU" sentinel for the `--n-gpu-layers*` sliders: any value
@@ -77,14 +90,32 @@ fn txt(v: Option<f64>) -> SharedString {
 /// two different sentinels.
 pub(crate) const ALL_LAYERS: i32 = 99;
 
+/// Where a numeric field parks while its **default** box is ticked: the value the
+/// user takes over at the moment they untick it. These are llama.cpp's OWN
+/// defaults (`common_params`, common/common.h @ b9995), so unticking a box and
+/// saving reproduces what was already running instead of quietly changing it.
+///
+/// They can't be read off `Preset::default()` any more — a new preset now leaves
+/// every one of these keys UNSET (that is what "the model runs on llama.cpp's
+/// defaults" means), so the schema has no number left to lend. `--ctx-size` has
+/// none to mirror in the first place: its default is `0` = "the context the model
+/// was trained with", so the box parks on a conservative 32k rather than on a `0`
+/// that would read as broken. The tooltips in ui/models_page.slint name the real
+/// default per field, and they are the text these numbers must not contradict.
+const HINT_CTX_SIZE: i32 = 32768;
+const HINT_PARALLEL: i32 = 4;
+const HINT_BATCH_SIZE: i32 = 2048;
+const HINT_UBATCH_SIZE: i32 = 512;
+const HINT_CACHE_RAM: i32 = 8192;
+const HINT_TOP_K: i32 = 40;
+const HINT_SPEC_DRAFT_N_MAX: i32 = 3;
+
 pub fn preset_to_form(p: &presets::Preset) -> PresetForm {
-    // Domain defaults are pulled from `Preset::default()` so the form and the
-    // INI can't drift apart. The literals that remain are UI-only choices with
-    // no counterpart in `Preset`: slider fallback positions while a flag is
-    // "auto"/"default" (ALL_LAYERS / 0 / the schema default), and empty→sentinel
-    // labels ("none" / "default"). For the `*_default` checkbox fields, the int
-    // value is always populated (even when the checkbox is on) so the disabled
-    // SpinBox shows a sensible hint — unwrap_or the schema default, or 0.
+    // String/bool domain defaults are pulled from `Preset::default()` so the form
+    // and the INI can't drift apart. The literals that remain are UI-only choices
+    // with no counterpart in `Preset`: slider fallback positions while a flag is
+    // "auto"/"default" (ALL_LAYERS / 0 / the HINT_* values above), and
+    // empty→sentinel labels ("none" / "default").
     let d = presets::Preset::default();
     PresetForm {
         id: p.id.clone().into(),
@@ -97,7 +128,7 @@ pub fn preset_to_form(p: &presets::Preset) -> PresetForm {
         } else {
             p.spec_type.clone().into()
         },
-        spec_draft_n_max: p.spec_draft_n_max.unwrap_or(0),
+        spec_draft_n_max: itxt(p.spec_draft_n_max, HINT_SPEC_DRAFT_N_MAX),
         spec_draft_n_max_default: p.spec_draft_n_max.is_none(),
         n_gpu_layers_draft: p.n_gpu_layers_draft.unwrap_or(ALL_LAYERS),
         n_gpu_layers_draft_auto: p.n_gpu_layers_draft.is_none(),
@@ -110,26 +141,27 @@ pub fn preset_to_form(p: &presets::Preset) -> PresetForm {
         },
         tensor_split: p.tensor_split.clone().into(),
         override_tensor: p.override_tensor.clone().into(),
-        ctx_size: p.ctx_size.or(d.ctx_size).unwrap_or_default(),
+        ctx_size: itxt(p.ctx_size, HINT_CTX_SIZE),
         ctx_size_default: p.ctx_size.is_none(),
         n_gpu_layers: p.n_gpu_layers.unwrap_or(ALL_LAYERS),
         n_gpu_layers_auto: p.n_gpu_layers.is_none(),
-        parallel: p.parallel.or(d.parallel).unwrap_or_default(),
+        parallel: itxt(p.parallel, HINT_PARALLEL),
         parallel_default: p.parallel.is_none(),
-        batch_size: p.batch_size.or(d.batch_size).unwrap_or_default(),
+        batch_size: itxt(p.batch_size, HINT_BATCH_SIZE),
         batch_size_default: p.batch_size.is_none(),
-        ubatch_size: p.ubatch_size.or(d.ubatch_size).unwrap_or_default(),
+        ubatch_size: itxt(p.ubatch_size, HINT_UBATCH_SIZE),
         ubatch_size_default: p.ubatch_size.is_none(),
-        // The KV-cache trio is "unset means unset", NOT "unset means show the
-        // schema default" — they deliberately skip the `str_or(…, &d.…)` /
-        // `.or(d.…)` fallback the fields above use. An omitted cache-type-k used
-        // to display as `q8_0` (Preset::default()'s value) and get WRITTEN BACK as
-        // q8_0 on the next save, quietly turning llama.cpp's f16 into q8_0 on a
-        // preset nobody had touched. Empty ↔ "default" here, like `split_mode`.
+        // The KV-cache trio carries its "unset" into the WIDGET (the "default"
+        // entry / pill) instead of parking on a hint the way the numeric fields
+        // above do — because here the displayed value IS the saved one. An omitted
+        // cache-type-k once fell back to the schema (which then said `q8_0`), so it
+        // displayed q8_0 and got WRITTEN BACK as q8_0 on the next save of any
+        // unrelated field, quietly turning llama.cpp's f16 into q8_0 on a preset
+        // nobody had touched. Empty ↔ "default" here, like `split_mode`.
         cache_type_k: enum_or_default(&p.cache_type_k),
         cache_type_v: enum_or_default(&p.cache_type_v),
         flash_attn: tri_state(p.flash_attn),
-        cache_ram: p.cache_ram.or(d.cache_ram).unwrap_or(0),
+        cache_ram: itxt(p.cache_ram, HINT_CACHE_RAM),
         cache_ram_default: p.cache_ram.is_none(),
         jinja: p.jinja.or(d.jinja).unwrap_or_default(),
         reasoning: str_or(&p.reasoning, &d.reasoning),
@@ -142,7 +174,7 @@ pub fn preset_to_form(p: &presets::Preset) -> PresetForm {
         n_cpu_moe_auto: p.n_cpu_moe.is_none(),
         temp: txt(p.temp),
         temp_default: p.temp.is_none(),
-        top_k: p.top_k.unwrap_or_default(),
+        top_k: itxt(p.top_k, HINT_TOP_K),
         top_k_default: p.top_k.is_none(),
         top_p: txt(p.top_p),
         top_p_default: p.top_p.is_none(),
@@ -167,10 +199,15 @@ pub fn form_to_preset(f: &PresetForm) -> presets::Preset {
             "" | "none" => String::new(),
             other => other.to_string(),
         },
+        // The integer fields are TEXT on the form (see `itxt`), so each one is
+        // re-parsed here: unparseable (or blank) text reads as unset, the same rule
+        // the float knobs below have always followed. The `> 0` filters that
+        // survive are the ones that were the SpinBox's `minimum` — the widget can
+        // no longer refuse the value, so this is where a 0 stops being a value.
         spec_draft_n_max: if f.spec_draft_n_max_default {
             None
         } else {
-            Some(f.spec_draft_n_max)
+            ini::parse_int(f.spec_draft_n_max.as_str()).filter(|v| *v > 0)
         },
         n_gpu_layers_draft: if f.n_gpu_layers_draft_auto {
             None
@@ -188,7 +225,7 @@ pub fn form_to_preset(f: &PresetForm) -> presets::Preset {
         ctx_size: if f.ctx_size_default {
             None
         } else {
-            Some(f.ctx_size).filter(|v| *v > 0)
+            ini::parse_int(f.ctx_size.as_str()).filter(|v| *v > 0)
         },
         n_gpu_layers: if f.n_gpu_layers_auto {
             None
@@ -198,28 +235,29 @@ pub fn form_to_preset(f: &PresetForm) -> presets::Preset {
         parallel: if f.parallel_default {
             None
         } else {
-            Some(f.parallel).filter(|v| *v > 0)
+            ini::parse_int(f.parallel.as_str()).filter(|v| *v > 0)
         },
         batch_size: if f.batch_size_default {
             None
         } else {
-            Some(f.batch_size).filter(|v| *v > 0)
+            ini::parse_int(f.batch_size.as_str()).filter(|v| *v > 0)
         },
         ubatch_size: if f.ubatch_size_default {
             None
         } else {
-            Some(f.ubatch_size).filter(|v| *v > 0)
+            ini::parse_int(f.ubatch_size.as_str()).filter(|v| *v > 0)
         },
         cache_type_k: enum_or_empty(f.cache_type_k.as_str()),
         cache_type_v: enum_or_empty(f.cache_type_v.as_str()),
         flash_attn: tri_bool(f.flash_attn.as_str()),
         // Any integer is meaningful to --cache-ram (0 disables, -1 = no
-        // limit), matching the hint and `Preset::from_keys` — only the
-        // "default" checkbox collapses to None.
+        // limit), matching the hint and `Preset::from_keys` — so NO `> 0` filter
+        // here, and its field is the one integer taking `decimal` input (the only
+        // `input_type` that lets a `-` be typed at all).
         cache_ram: if f.cache_ram_default {
             None
         } else {
-            Some(f.cache_ram)
+            ini::parse_int(f.cache_ram.as_str())
         },
         jinja: Some(f.jinja),
         reasoning: f.reasoning.to_string(),
@@ -236,10 +274,14 @@ pub fn form_to_preset(f: &PresetForm) -> presets::Preset {
         } else {
             ini::parse_float(f.temp.as_str())
         },
-        // Integer-valued (a DefaultSpinBox `value`, unlike the float sampling
-        // knobs below) — any int is meaningful (0 = disable top-k), so only the
-        // "default" checkbox collapses to None.
-        top_k: if f.top_k_default { None } else { Some(f.top_k) },
+        // Integer-valued (digits-only input, unlike the float sampling knobs
+        // below) — any int is meaningful (0 = disable top-k), so no `> 0` filter:
+        // only the "default" checkbox, or text that isn't a number, collapses to None.
+        top_k: if f.top_k_default {
+            None
+        } else {
+            ini::parse_int(f.top_k.as_str())
+        },
         top_p: if f.top_p_default {
             None
         } else {
@@ -317,11 +359,11 @@ mod tests {
 
     // The KV-cache card's other three flags have an "unset" that is a real
     // instruction too, so it has to survive the form the way reasoning-preserve's
-    // does. It did not: `cache_type_k/v` fell back to `Preset::default()` (q8_0)
-    // and `flash_attn` to Some(true) whenever the key was absent — so a preset
-    // that had never named a cache type DISPLAYED q8_0 and, on the next save of
-    // any unrelated field, WROTE q8_0, quietly requantizing a KV cache llama.cpp
-    // would have left at f16. The empty/None state must reach the form as
+    // does. It did not: `cache_type_k/v` fell back to `Preset::default()` (which
+    // then said q8_0) and `flash_attn` to Some(true) whenever the key was absent —
+    // so a preset that had never named a cache type DISPLAYED q8_0 and, on the next
+    // save of any unrelated field, WROTE q8_0, quietly requantizing a KV cache
+    // llama.cpp would have left at f16. The empty/None state must reach the form as
     // "default" and come back out empty/None.
     #[test]
     fn kv_cache_unset_state_survives_the_form_round_trip() {

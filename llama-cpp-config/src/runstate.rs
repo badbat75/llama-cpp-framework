@@ -120,6 +120,14 @@ fn server_args(
         "off".into()
     });
 
+    // --no-prefill-assistant : only when turned OFF. This is a NEGATIVE presence
+    //   flag — llama.cpp prefills a trailing assistant message by default, and
+    //   `--prefill-assistant` is merely the (redundant) affirmative — so passing
+    //   nothing is what keeps the default behaviour.
+    if !cfg.prefill_assistant_or_default() {
+        args.push("--no-prefill-assistant".into());
+    }
+
     // -lv N : log verbosity threshold into the captured llama-server.log.
     //   Framework default 4 (per-request logging) when unset — always passed
     //   (the Server tab's Advanced card exposes the level).
@@ -547,6 +555,8 @@ mod tests {
             mmproj_device: Some("ROCm1".into()),
             webui_mcp_proxy: Some(false),
             fit: Some(true),
+            // The NEGATIVE presence flag: Some(false) is the state that emits one.
+            prefill_assistant: Some(false),
             log_verbosity: Some(2),
         };
         let ServerConfig {
@@ -569,6 +579,7 @@ mod tests {
             mmproj_device: _,
             webui_mcp_proxy,
             fit,
+            prefill_assistant,
             log_verbosity,
         } = cfg.clone();
         let a = args_for(&cfg);
@@ -597,6 +608,19 @@ mod tests {
         );
         // fit is always passed with an explicit on|off value.
         assert!(pair("-fit", if fit.unwrap() { "on" } else { "off" }.into()));
+        // prefill-assistant is a NEGATIVE presence flag — the flag exists to turn
+        // llama.cpp's default OFF, so Some(false) emits it and Some(true) emits
+        // nothing. Asserting the emitted case AND the silent one, because "no flag"
+        // is the state a `!` typo would produce for both.
+        assert_eq!(
+            a.contains(&"--no-prefill-assistant".to_string()),
+            !prefill_assistant.unwrap()
+        );
+        assert!(!args_for(&ServerConfig {
+            prefill_assistant: Some(true),
+            ..Default::default()
+        })
+        .contains(&"--no-prefill-assistant".to_string()));
         // log verbosity is always passed (framework default 4 when unset).
         assert!(pair("-lv", log_verbosity.unwrap().to_string()));
     }

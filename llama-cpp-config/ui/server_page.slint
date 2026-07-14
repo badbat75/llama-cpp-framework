@@ -12,8 +12,8 @@
 // user types/toggles (Slint's "overwritten bindings" rule), which would leave the
 // field stale after a Revert / reload.
 
-import { LineEdit, TextEdit, CheckBox, SpinBox, Button, ScrollView, Palette } from "std-widgets.slint";
-import { SectionCard, LabeledField, MappedComboBox, AutoSlider, DefaultSpinBox, FormActions, GpuSplitTable, TensorOverrideTable, Tokens } from "components.slint";
+import { LineEdit, TextEdit, CheckBox, Button, ScrollView, Palette } from "std-widgets.slint";
+import { SectionCard, LabeledField, MappedComboBox, EnumComboBox, AutoSlider, DefaultLineEdit, FormActions, GpuSplitTable, TensorOverrideTable, Tokens, Options } from "components.slint";
 import { AppState } from "state.slint";
 
 export component ServerPage inherits ScrollView {
@@ -40,11 +40,11 @@ export component ServerPage inherits ScrollView {
             LabeledField {
                 label: "Port";
                 hint: "TCP port llama-server listens on (--port).\ndefault = omit the flag → llama.cpp default: 8080. The chat UI and integrations connect here.";
-                DefaultSpinBox {
-                    spinbox_label: "server-port";
+                DefaultLineEdit {
+                    edit_label: "server-port";
+                    input_type: InputType.number;
                     default <=> AppState.server_form.port_default;
                     value <=> AppState.server_form.port;
-                    maximum: 65535;
                 }
             }
             LabeledField {
@@ -90,10 +90,10 @@ export component ServerPage inherits ScrollView {
             LabeledField {
                 label: "Cache reuse";
                 hint: "--cache-reuse: minimum prefix length (tokens) the server reuses from the KV cache across requests, skipping re-prefill.\nHigher saves compute on shared prefixes.\ndefault = omit the flag → llama.cpp default: 0 (disabled).";
-                DefaultSpinBox {
+                DefaultLineEdit {
+                    input_type: InputType.number;
                     default <=> AppState.server_form.cache_reuse_default;
                     value <=> AppState.server_form.cache_reuse;
-                    minimum: 1;
                 }
             }
             LabeledField {
@@ -108,10 +108,10 @@ export component ServerPage inherits ScrollView {
             LabeledField {
                 label: "Max models";
                 hint: "--models-max: how many preset models llama-server keeps resident at once.\n1 = load one at a time (lowest VRAM); higher lets it hot-swap without reloading.\ndefault = omit the flag → llama.cpp default: 4.\n0 = unlimited.";
-                DefaultSpinBox {
+                DefaultLineEdit {
+                    input_type: InputType.number;
                     default <=> AppState.server_form.models_max_default;
                     value <=> AppState.server_form.models_max;
-                    maximum: 100000;
                 }
             }
             LabeledField {
@@ -206,12 +206,21 @@ export component ServerPage inherits ScrollView {
                 }
             }
             LabeledField {
+                label: "Prefill assistant";
+                hint: "--prefill-assistant / --no-prefill-assistant: what to do when a request's LAST message is an assistant message.\nOn (llama.cpp's default): treat it as the START of the reply and continue it — this is what lets a client seed the answer's opening.\nOff: treat it as a finished turn and answer it instead. Turn it off if a client legitimately ends on an assistant turn and the model resumes mid-sentence rather than replying.";
+                CheckBox {
+                    text: "continue a trailing assistant message (--prefill-assistant)";
+                    checked <=> AppState.server_form.prefill_assistant;
+                }
+            }
+            LabeledField {
                 label: "Log level";
-                hint: "llama-server log verbosity threshold (-lv / --log-verbosity).\nMessages above this level are dropped; higher = more detail.\nFramework default 4 records per-request logging into logs/llama-server.log.";
-                SpinBox {
+                hint: "llama-server log verbosity threshold (-lv / --log-verbosity): a message is printed when its own level is ≤ this one, so DEBUG:5 shows everything and OUTPUT:0 almost nothing.\nllama.cpp defines exactly these six levels — the number after the colon is what is passed to -lv.\nFramework default TRACE:4 records per-request logging into logs/llama-server.log; DEBUG:5 also logs the per-tensor override lines that tools\\report-memory.ps1 reads.";
+                // A dropdown, not a number: the six levels are the whole domain
+                // (see Options.log_levels), and the form carries the LABEL.
+                EnumComboBox {
+                    options: Options.log_levels;
                     value <=> AppState.server_form.log_verbosity;
-                    minimum: 0;
-                    maximum: 10;
                 }
             }
         }

@@ -217,6 +217,16 @@ export global AppState {
     // Preview button (no point previewing an absent template).
     in-out property <string> model_info_chat_template: "none";
     in-out property <string> chat_template_preview: "";
+    // Reasoning support, read off that same template's SOURCE (no Jinja engine
+    // here — see gguf.rs `Thinking`). `model_info_thinking` says whether the model
+    // thinks and whether --reasoning can switch it; `model_info_past_thinking`
+    // says whether --reasoning-preserve is a LEVER at all — i.e. whether the
+    // template names one of the three variables that flag sets. A `no` there is
+    // the useful half: it means the flag changes nothing on this model, which the
+    // llama-server log cannot tell you (its probe reports "supported" for a
+    // template that preserves unconditionally too).
+    in-out property <string> model_info_thinking: "unknown";
+    in-out property <string> model_info_past_thinking: "unknown";
     // Optional rows, shown only when a mmproj / draft file is selected.
     in-out property <bool> model_info_has_mmproj: false;
     in-out property <string> model_info_mmproj;

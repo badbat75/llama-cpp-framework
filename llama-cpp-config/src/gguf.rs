@@ -95,6 +95,68 @@ pub struct ExternalDraft {
     pub best: Option<(String, &'static str)>,
 }
 
+// ── Reasoning support, read off the chat template ────────────────────────
+
+/// What the embedded chat template does about thinking. Derived by SCANNING THE
+/// TEMPLATE SOURCE for the variables and tags llama.cpp's own levers act on — we
+/// have no Jinja engine here, while llama.cpp answers the same question by
+/// *rendering* the template twice and diffing the output
+/// (`common_chat_templates_support_enable_thinking`, `jinja::caps_get`). So this
+/// is an approximation, and it is one-directional on purpose: every verdict below
+/// rests on a name the template must mention for the lever to reach it, so a
+/// `yes` is a fact about the template, while a `no` can only ever mean "no marker
+/// this build knows about" — which is why the row says what it read, and the
+/// llama-server load log stays the last word.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Thinking {
+    /// The GGUF embeds no template at all — nothing to read.
+    NoTemplate,
+    /// No thinking marker anywhere: `--reasoning` has nothing to switch.
+    None,
+    /// Gated on `enable_thinking` — the kwarg `--reasoning on|off` writes
+    /// (`common/arg.cpp`: `default_template_kwargs["enable_thinking"]`).
+    Switchable,
+    /// Thinks unconditionally, but takes a `reasoning_effort` level (gpt-oss /
+    /// harmony). `--reasoning off` cannot silence it; the kwarg tunes it.
+    EffortOnly,
+    /// Thinks unconditionally and exposes no switch — `--reasoning` is inert.
+    Always,
+}
+
+/// The three variables `--reasoning-preserve` sets, verbatim from
+/// `caps_apply_preserve_reasoning` (`common/jinja/caps.cpp`). A template that
+/// mentions none of them cannot see the flag. Keep in sync with that function:
+/// a variable added upstream and missing here reads as "the flag is a no-op" on
+/// the very templates it was added for.
+const PRESERVE_VARS: [&str; 3] = [
+    "preserve_thinking",
+    "clear_thinking",
+    "truncate_history_thinking",
+];
+
+/// Evidence that a template handles a reasoning trace. Every entry is template
+/// *mechanics* — a variable, a message field, or a trace tag — never prose, so a
+/// system prompt that merely says "think step by step" is not mistaken for a
+/// thinking model. Drawn from llama.cpp's bundled template corpus
+/// (`models/templates/`, 60 files): the tags cover DeepSeek-R1 / Qwen / GLM /
+/// Kimi (`<think>`), Mistral and Ministral-Reasoning (`[THINK]`, which also
+/// carries its trace as a `'thinking'` content block), ByteDance Seed
+/// (`<seed:think>`) and gpt-oss (`<|channel|>`, `message.thinking`), while
+/// `reasoning_content` is the field a preserved trace travels in.
+const THINKING_MARKERS: [&str; 11] = [
+    "enable_thinking",
+    "reasoning_content",
+    "reasoning_effort",
+    ".thinking",
+    "'thinking'",
+    "\"thinking\"",
+    "<think>",
+    "</think>",
+    "[THINK]",
+    "<seed:think>",
+    "<|channel|>",
+];
+
 // ── Field extraction (platform-independent, testable) ────────────────────
 
 impl ModelInfo {
@@ -279,6 +341,80 @@ impl ModelInfo {
                 self.head_count, self.head_count_kv
             )
         }
+    }
+
+    /// The "Thinking" row: does this model reason, and can `--reasoning on|off`
+    /// switch it? See `Thinking` for how (and how imperfectly) this is read.
+    ///
+    /// Note the negative arm says "no marker in the chat template", not "no": the
+    /// subject of every verdict here is the TEMPLATE, and a model can still think
+    /// with a template that never mentions it (MiMo-VL's names nothing at all, yet
+    /// the model emits `<think>` and llama-server's reasoning parser picks it up
+    /// from the output). What the template's silence *does* prove is that neither
+    /// `--reasoning` nor `--reasoning-preserve` has anything to act on.
+    pub fn thinking_line(&self) -> String {
+        match self.thinking() {
+            Thinking::NoTemplate => "unknown (no embedded chat template)".to_string(),
+            Thinking::None => "no marker in the chat template".to_string(),
+            Thinking::Switchable => {
+                format!("yes{SEP}--reasoning on|off switches it (enable_thinking)")
+            }
+            Thinking::EffortOnly => {
+                format!("yes{SEP}always on{SEP}effort via chat-template-kwargs reasoning_effort")
+            }
+            Thinking::Always => format!("yes{SEP}always on (no enable_thinking switch)"),
+        }
+    }
+
+    /// The "Past thinking" row: is `--reasoning-preserve` a LEVER on this
+    /// template — i.e. does the template read any of the three variables the flag
+    /// sets?
+    ///
+    /// This answers a question llama-server's own log cannot. The flag sets the
+    /// kwarg `preserve_reasoning`, which `caps_apply_preserve_reasoning`
+    /// (common/jinja/caps.cpp) expands into `preserve_thinking`, `clear_thinking`
+    /// and `truncate_history_thinking` — and templates read different ones of the
+    /// three (Qwen3.6/LFM2.5 the first, GLM-4.7 the second, Nemotron the third).
+    /// A template that names NONE of them cannot see the flag at all, so setting
+    /// it there is a no-op. llama.cpp's capability probe reports `supports
+    /// preserving reasoning` by RENDERING the template and checking whether a past
+    /// turn's trace came out — which is `true` both for a template that gates on
+    /// the flag and for one that preserves unconditionally (Ornith-1.0), and those
+    /// are opposite answers to "will this flag do anything".
+    ///
+    /// So there is no "the model doesn't think" arm: whatever the model does, a
+    /// template that names no preserve variable is one the flag cannot reach, and
+    /// that is the whole question this row answers.
+    pub fn past_thinking_line(&self) -> String {
+        match (self.thinking(), self.preserve_var()) {
+            (Thinking::NoTemplate, _) => "unknown (no embedded chat template)".to_string(),
+            (_, Some(var)) => format!("yes{SEP}--reasoning-preserve (template reads {var})"),
+            (_, None) => format!("no{SEP}--reasoning-preserve is a no-op on this template"),
+        }
+    }
+
+    /// Which of `--reasoning-preserve`'s three template variables this template
+    /// reads, if any. First match wins — a template naming several (none in
+    /// llama.cpp's bundled set does) is still driven by the same one flag.
+    fn preserve_var(&self) -> Option<&'static str> {
+        let t = self.chat_template.as_deref()?;
+        PRESERVE_VARS.iter().copied().find(|v| t.contains(v))
+    }
+
+    fn thinking(&self) -> Thinking {
+        let Some(t) = self.chat_template.as_deref() else {
+            return Thinking::NoTemplate;
+        };
+        if t.contains("enable_thinking") {
+            return Thinking::Switchable;
+        }
+        if !THINKING_MARKERS.iter().any(|m| t.contains(m)) && self.preserve_var().is_none() {
+            return Thinking::None;
+        }
+        if t.contains("reasoning_effort") {
+            return Thinking::EffortOnly;
+        }
+        Thinking::Always
     }
 
     /// One-line status for the Model info "Chat template" row: `Jinja
@@ -780,6 +916,112 @@ mod tests {
         assert_eq!(info.chat_template_line(), "embedded (non-Jinja)");
     }
 
+    /// Build a model whose only interesting metadata is its chat template.
+    fn with_template(tmpl: &'static str) -> ModelInfo {
+        ModelInfo::from_kv(&map(vec![
+            ("general.architecture", Tv::S("qwen35")),
+            ("tokenizer.chat_template", Tv::S(tmpl)),
+        ]))
+        .unwrap()
+    }
+
+    /// The Thinking / Past-thinking rows, against the shapes llama.cpp's own
+    /// bundled templates (`models/templates/`) actually use. The pairing is the
+    /// point: the two rows answer different questions, and a model can be a
+    /// thinker whose past thinking no flag can keep (`enable_thinking` with no
+    /// preserve variable — the Qwen3.5 form, which re-renders history WITHOUT the
+    /// trace as soon as a newer turn arrives).
+    #[test]
+    fn thinking_rows_read_the_levers_the_template_actually_exposes() {
+        // Qwen3.5: switchable, but nothing gates the history → the flag is inert.
+        let qwen35 = with_template(
+            "{%- if enable_thinking is defined and enable_thinking is false %}{{- '<think>\\n\\n</think>\\n\\n' }}\
+             {%- endif %}{%- if loop.index0 > ns.last_query_index %}{{- '<think>' + reasoning_content + '</think>' }}{%- endif %}",
+        );
+        assert_eq!(
+            qwen35.thinking_line(),
+            "yes  ·  --reasoning on|off switches it (enable_thinking)"
+        );
+        assert_eq!(
+            qwen35.past_thinking_line(),
+            "no  ·  --reasoning-preserve is a no-op on this template"
+        );
+
+        // Qwen3.6 adds the gate (README's "Keep past thinking" section quotes it).
+        let qwen36 = with_template(
+            "{%- if enable_thinking %}…{%- endif %}\
+             {%- if preserve_thinking or loop.index0 > ns.last_query_index %}{{- '<think>' + reasoning_content + '</think>' }}{%- endif %}",
+        );
+        assert_eq!(
+            qwen36.past_thinking_line(),
+            "yes  ·  --reasoning-preserve (template reads preserve_thinking)"
+        );
+
+        // Same flag, a different one of its three variables (GLM-4.7 / Nemotron).
+        let glm = with_template(
+            "{%- if enable_thinking %}…{%- endif %}\
+             {%- if ((clear_thinking is defined and not clear_thinking) or loop.index0 > ns.last_user_index) and reasoning_content -%}{{ '<think>' + reasoning_content + '</think>' }}{%- endif -%}",
+        );
+        assert_eq!(
+            glm.past_thinking_line(),
+            "yes  ·  --reasoning-preserve (template reads clear_thinking)"
+        );
+        let nemotron = with_template(
+            "{%- if truncate_history_thinking %}{%- set content = content.split('</think>')[-1] %}{%- endif %}",
+        );
+        assert_eq!(
+            nemotron.past_thinking_line(),
+            "yes  ·  --reasoning-preserve (template reads truncate_history_thinking)"
+        );
+
+        // Ministral-3-Reasoning: [THINK] tags and a 'thinking' content block, no
+        // enable_thinking anywhere — it always thinks and --reasoning can't stop it.
+        let ministral = with_template(
+            "{%- elif block['type'] == 'thinking' %}{{- '[THINK]' + block['thinking'] + '[/THINK]' }}",
+        );
+        assert_eq!(
+            ministral.thinking_line(),
+            "yes  ·  always on (no enable_thinking switch)"
+        );
+        assert_eq!(
+            ministral.past_thinking_line(),
+            "no  ·  --reasoning-preserve is a no-op on this template"
+        );
+
+        // gpt-oss: no on/off switch, a reasoning_effort level instead.
+        let gpt_oss = with_template(
+            "{%- if reasoning_effort is not defined %}{%- set reasoning_effort = \"medium\" %}{%- endif %}\
+             {{- \"# Valid channels: analysis, commentary, final.\" }}{{- message.thinking }}",
+        );
+        assert_eq!(
+            gpt_oss.thinking_line(),
+            "yes  ·  always on  ·  effort via chat-template-kwargs reasoning_effort"
+        );
+
+        // A template with no thinking mechanics (Llama-3.1's) — but MiMo-VL, which
+        // DOES think, has one just as bare, so the verdict names the TEMPLATE and
+        // never the model. What the silence proves is only that --reasoning and
+        // --reasoning-preserve have nothing here to act on, which is exactly what
+        // both rows are for.
+        let llama = with_template(
+            "{%- for message in messages %}{{- '<|start_header_id|>' + message['role'] + '<|end_header_id|>' + message['content'] }}{%- endfor %}",
+        );
+        assert_eq!(llama.thinking_line(), "no marker in the chat template");
+        assert_eq!(
+            llama.past_thinking_line(),
+            "no  ·  --reasoning-preserve is a no-op on this template"
+        );
+
+        // No template at all: say so, rather than claiming the model can't think.
+        let bare =
+            ModelInfo::from_kv(&map(vec![("general.architecture", Tv::S("llama"))])).unwrap();
+        assert_eq!(bare.thinking_line(), "unknown (no embedded chat template)");
+        assert_eq!(
+            bare.past_thinking_line(),
+            "unknown (no embedded chat template)"
+        );
+    }
+
     #[test]
     fn draft_file_line_surfaces_dflash_block_size() {
         let m = map(vec![
@@ -919,7 +1161,10 @@ mod tests {
         // BF16 and Q8_0 are get_rows-capable; every K-quant and IQ-quant is not.
         assert!(gpu_has_get_rows(30) && gpu_has_get_rows(8));
         for k_quant in [10u32, 11, 12, 13, 14, 15, 23] {
-            assert!(!gpu_has_get_rows(k_quant), "type {k_quant} must not be pinnable");
+            assert!(
+                !gpu_has_get_rows(k_quant),
+                "type {k_quant} must not be pinnable"
+            );
         }
     }
 

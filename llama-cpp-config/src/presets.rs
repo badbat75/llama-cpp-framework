@@ -7,14 +7,19 @@
 //!   2. `impl Default for Preset`          — below
 //!   3. `Preset::from_keys`                — INI read, below
 //!   4. `render_section` + `emit_*` (+ `;` comment) — INI write, below
-//!   5. `PresetForm` struct                — ui/types.slint (a NUMERIC field also
-//!      needs a paired `<field>_default: bool` — the "omit the flag" checkbox)
+//!   5. `PresetForm` struct                — ui/types.slint (a NUMERIC field rides
+//!      as a `string`, integers included, plus a paired `<field>_default: bool` —
+//!      the "omit the flag" checkbox)
 //!   6. the input widget                   — ui/models_page.slint, bind two-way
-//!      `<=>`: DefaultSpinBox (int) / DefaultLineEdit (float) for numerics — wire
-//!      BOTH `value` and `default`; EnumComboBox for string dropdowns
+//!      `<=>`: DefaultLineEdit for EVERY numeric (`input_type: InputType.number`
+//!      for an integer, `decimal` for a float or a signed one) — wire BOTH `value`
+//!      and `default`; EnumComboBox for string dropdowns. Never a SpinBox: it edits
+//!      itself on a stray mouse-wheel over the page, and a test now bans it
+//!      (src\tests\binding_lint.rs `no_spinbox_widgets_anywhere`).
 //!   7. `preset_to_form` + `form_to_preset` — src/form.rs (BOTH directions; a
-//!      numeric derives `<field>_default` via `is_none()` one way and
-//!      `if <field>_default { None } else { … }` the other)
+//!      numeric goes out through `itxt`/`txt` and comes back through
+//!      `ini::parse_int`/`parse_float`, deriving `<field>_default` via `is_none()`
+//!      one way and `if <field>_default { None } else { … }` the other)
 //!   8. FREE-TEXT field only (any value the user types freely — a filesystem
 //!      path, OR raw JSON like `chat-template-kwargs`): add it to
 //!      `validate_for_save`'s list below AND to the
@@ -156,6 +161,22 @@ pub struct Preset {
     pub chat_template_kwargs: String,
 }
 
+/// A new preset (`new_default`) leaves EVERY tunable unset, so the model runs on
+/// llama.cpp's own defaults until the user overrides something on purpose — each
+/// `None`/`""` below is a key `render_section` omits, which is what the GUI shows
+/// as a ticked **default** box. The framework used to seed its own opinions here
+/// (32k context, 4 slots, 512-token batches, a q8_0 KV cache, forced flash-attn),
+/// which read like llama.cpp's defaults but were not, and `parallel = 4` in
+/// particular is not inert: pinning it turns OFF the unified KV cache that
+/// llama-server's auto mode enables, quartering the context a single request may
+/// use (see `integrations::effective_ctx`).
+///
+/// The four values that are not `None` are the ones with nothing to omit: the form
+/// binds `jinja` and `mmproj-offload` to plain checkboxes and `reasoning` /
+/// `reasoning-format` to dropdowns with no "unset" entry, so the key is always
+/// written — and each is set to exactly what llama.cpp would have done anyway
+/// (`use_jinja = true` for the server, mmproj offloaded, both reasoning knobs on
+/// `auto`), which keeps writing them a no-op.
 impl Default for Preset {
     fn default() -> Self {
         Self {
@@ -172,18 +193,15 @@ impl Default for Preset {
             split_mode: String::new(),
             tensor_split: String::new(),
             override_tensor: String::new(),
-            ctx_size: Some(32768),
-            // Default to "auto" (omit --n-gpu-layers) like n-cpu-moe and the draft
-            // layers: the GUI shows all three sliders with their "auto" box checked
-            // for a new preset. n_cpu_moe / n_gpu_layers_draft are already None.
+            ctx_size: None,
             n_gpu_layers: None,
-            parallel: Some(4),
-            batch_size: Some(512),
-            ubatch_size: Some(512),
-            cache_type_k: "q8_0".into(),
-            cache_type_v: "q8_0".into(),
-            flash_attn: Some(true),
-            cache_ram: Some(8192),
+            parallel: None,
+            batch_size: None,
+            ubatch_size: None,
+            cache_type_k: String::new(),
+            cache_type_v: String::new(),
+            flash_attn: None,
+            cache_ram: None,
             jinja: Some(true),
             reasoning: "auto".into(),
             reasoning_format: "auto".into(),
@@ -478,11 +496,19 @@ pub fn render_section(p: &Preset) -> String {
     emit_str(&mut out, "device", &p.device);
     emit_str(&mut out, "split-mode", &p.split_mode);
     emit_str(&mut out, "tensor-split", &p.tensor_split);
-    out.push_str("; override-tensor sends the tensors whose NAME matches a regex to a device of\r\n");
-    out.push_str("; their own, whatever `device` says — `<regex>=<device|CPU>`, comma-separated.\r\n");
+    out.push_str(
+        "; override-tensor sends the tensors whose NAME matches a regex to a device of\r\n",
+    );
+    out.push_str(
+        "; their own, whatever `device` says — `<regex>=<device|CPU>`, comma-separated.\r\n",
+    );
     out.push_str("; llama.cpp keeps token_embd.weight in PINNED HOST memory even when every\r\n");
-    out.push_str("; layer is offloaded (that is the ROCm_Host/CUDA_Host buffer in the log, and\r\n");
-    out.push_str("; the \"Shared GPU memory\" Windows reports); token_embd\\.weight=ROCm0 moves it\r\n");
+    out.push_str(
+        "; layer is offloaded (that is the ROCm_Host/CUDA_Host buffer in the log, and\r\n",
+    );
+    out.push_str(
+        "; the \"Shared GPU memory\" Windows reports); token_embd\\.weight=ROCm0 moves it\r\n",
+    );
     out.push_str("; onto the GPU. No escaping exists: a pattern cannot contain `,` or `=`.\r\n");
     emit_str(&mut out, "override-tensor", &p.override_tensor);
     emit_i32(&mut out, "parallel", p.parallel);
@@ -491,7 +517,9 @@ pub fn render_section(p: &Preset) -> String {
 
     out.push_str("\r\n; KV cache\r\n");
     out.push_str("; Omit cache-type-k/-v to get llama.cpp's own default (f16) rather than\r\n");
-    out.push_str("; pinning a type. flash-attn is [on|off|auto] and DEFAULTS TO AUTO (on where\r\n");
+    out.push_str(
+        "; pinning a type. flash-attn is [on|off|auto] and DEFAULTS TO AUTO (on where\r\n",
+    );
     out.push_str("; the backend supports it), so omit the key for auto; flash-attn = false\r\n");
     out.push_str("; forces the kernel off, which also costs a quantized K/V cache most of its\r\n");
     out.push_str("; benefit.\r\n");
@@ -509,8 +537,12 @@ pub fn render_section(p: &Preset) -> String {
     emit_str(&mut out, "reasoning", &p.reasoning);
     emit_str(&mut out, "reasoning-format", &p.reasoning_format);
     out.push_str("; reasoning-preserve keeps the thinking of EVERY past turn in the replayed\r\n");
-    out.push_str("; history, not just the last one. Omit the key = the template's own default.\r\n");
-    out.push_str("; Do NOT hand-write preserve_thinking into chat-template-kwargs instead: this\r\n");
+    out.push_str(
+        "; history, not just the last one. Omit the key = the template's own default.\r\n",
+    );
+    out.push_str(
+        "; Do NOT hand-write preserve_thinking into chat-template-kwargs instead: this\r\n",
+    );
     out.push_str("; flag sets preserve_thinking, clear_thinking AND truncate_history_thinking\r\n");
     out.push_str("; together, and templates disagree on which of the three they read.\r\n");
     emit_bool(&mut out, "reasoning-preserve", p.reasoning_preserve);

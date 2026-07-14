@@ -7,7 +7,7 @@
 // Speculative decoding, then the FormActions row.
 
 import { LineEdit, ComboBox, CheckBox, Button, ListView, ScrollView, Palette } from "std-widgets.slint";
-import { SectionCard, LabeledField, InfoRow, SegmentedControl, MappedComboBox, EnumComboBox, AutoSlider, DefaultSpinBox, DefaultLineEdit, FormActions, SelectableRow, ListPanel, GpuSplitTable, TensorOverrideTable, Tokens, Options } from "components.slint";
+import { SectionCard, LabeledField, InfoRow, SegmentedControl, MappedComboBox, EnumComboBox, AutoSlider, DefaultLineEdit, FormActions, SelectableRow, ListPanel, GpuSplitTable, TensorOverrideTable, Tokens, Options } from "components.slint";
 import { AppState } from "state.slint";
 
 export component ModelsPage inherits HorizontalLayout {
@@ -237,6 +237,16 @@ export component ModelsPage inherits HorizontalLayout {
                             clicked => { AppState.show_chat_template_dialog = true; }
                         }
                     }
+                    InfoRow {
+                        label: "Thinking";
+                        hint: "Whether the embedded chat template does reasoning, and whether the Reasoning field (--reasoning on|off) can switch it: that flag only sets the template variable enable_thinking, so a template that never mentions it thinks no matter what you pick (auto = on, off = on).\nRead from the template's SOURCE — this app has no Jinja engine, while llama.cpp answers the same question by rendering the template. The verdict is therefore about the TEMPLATE, not the model: 'no marker in the chat template' does not prove the model can't think (MiMo-VL's template names nothing, yet the model emits <think> and llama-server parses it out of the output) — it proves only that neither --reasoning nor Keep past thinking has anything here to act on.";
+                        value: AppState.model_info_thinking;
+                    }
+                    InfoRow {
+                        label: "Past thinking";
+                        hint: "Whether 'Keep past thinking' (--reasoning-preserve) is a LEVER on this model. The flag sets three template variables at once — preserve_thinking, clear_thinking, truncate_history_thinking — and templates read different ones; a template that names NONE of them cannot see the flag, so setting it there does nothing.\nThis is what llama-server's log cannot tell you: its probe reports 'supports preserving reasoning' by rendering the template and checking a past trace came out, which is equally true of a template that preserves unconditionally and of one you can actually control.";
+                        value: AppState.model_info_past_thinking;
+                    }
                     if AppState.model_info_has_mmproj : InfoRow {
                         label: "MMProj";
                         hint: "The selected multimodal projector: projector type, modality (vision/audio), encoder depth, and native image / patch size.";
@@ -399,26 +409,28 @@ export component ModelsPage inherits HorizontalLayout {
                 heading: "Resource / context";
                 LabeledField {
                     label: "Context size";
-                    hint: "Context window in tokens (--ctx-size).\nBigger = longer history but more KV-cache VRAM; split across parallel slots.\ndefault = omit the flag → llama.cpp default: 0 (load from model).";
-                    DefaultSpinBox {
-                        spinbox_label: "preset-ctx-size";
+                    hint: "Context window in tokens (--ctx-size).\nBigger = longer history but more KV-cache VRAM; split across parallel slots.\ndefault = omit the flag → llama.cpp default: 0, i.e. load the context the model was TRAINED with (which can be far more than the number shown here).";
+                    DefaultLineEdit {
+                        edit_label: "preset-ctx-size";
+                        input_type: InputType.number;
                         default <=> AppState.form.ctx_size_default;
                         value <=> AppState.form.ctx_size;
                     }
                 }
                 LabeledField {
                     label: "Parallel seqs";
-                    hint: "--parallel: concurrent request slots.\nContext is divided among them, so N=4 gives each slot ctx-size / 4 tokens.\ndefault = omit the flag → llama.cpp default: 4.";
-                    DefaultSpinBox {
+                    hint: "--parallel: concurrent request slots. The context is DIVIDED among them, so N=2 leaves each request ctx-size / 2 tokens.\ndefault = omit the flag → llama-server's own default is auto (-1), which picks 4 slots AND a unified KV cache — and with a unified cache every slot may use the WHOLE context. So leaving this at default is what gives one request the model's full context; pinning a number is what quietly divides it.";
+                    DefaultLineEdit {
+                        input_type: InputType.number;
                         default <=> AppState.form.parallel_default;
                         value <=> AppState.form.parallel;
-                        maximum: 100000;
                     }
                 }
                 LabeledField {
                     label: "Batch size";
                     hint: "--batch-size: logical batch (tokens prefilled per step).\nHigher speeds prefill, uses more VRAM.\ndefault = omit the flag → llama.cpp default: 2048.";
-                    DefaultSpinBox {
+                    DefaultLineEdit {
+                        input_type: InputType.number;
                         default <=> AppState.form.batch_size_default;
                         value <=> AppState.form.batch_size;
                     }
@@ -426,7 +438,8 @@ export component ModelsPage inherits HorizontalLayout {
                 LabeledField {
                     label: "U-Batch size";
                     hint: "--ubatch-size: physical micro-batch computed at once.\nMust be ≤ batch size.\ndefault = omit the flag → llama.cpp default: 512.";
-                    DefaultSpinBox {
+                    DefaultLineEdit {
+                        input_type: InputType.number;
                         default <=> AppState.form.ubatch_size_default;
                         value <=> AppState.form.ubatch_size;
                     }
@@ -472,10 +485,13 @@ export component ModelsPage inherits HorizontalLayout {
                 LabeledField {
                     label: "Cache RAM (MiB)";
                     hint: "--cache-ram: RAM limit (MiB) for the prompt cache (past-prompt KV kept for reuse).\ndefault = omit the flag → llama.cpp default: 8192 MiB.\n0 disables; -1 = no limit.";
-                    DefaultSpinBox {
+                    // `decimal`, not `number`: this is the one integer field whose
+                    // value may start with a `-` (the -1 sentinel), and `number`
+                    // accepts digits only. Rust still parses it as an int.
+                    DefaultLineEdit {
+                        input_type: InputType.decimal;
                         default <=> AppState.form.cache_ram_default;
                         value <=> AppState.form.cache_ram;
-                        minimum: -1;
                     }
                 }
             }
@@ -538,10 +554,11 @@ export component ModelsPage inherits HorizontalLayout {
                 LabeledField {
                     label: "Top-K";
                     hint: "--top-k: keep only the K most-likely tokens before sampling.\n0 / default = disabled.\ndefault = omit the flag → llama.cpp default: 40.";
-                    // Integer-valued, so a DefaultSpinBox (not the float
-                    // DefaultLineEdit used by the other sampling knobs) — a
-                    // decimal editor would let `40,5` slip past the int parse.
-                    DefaultSpinBox {
+                    // Integer-valued, so `number` (digits only) and not the
+                    // `decimal` the float knobs below take — a decimal editor
+                    // would let `40,5` slip past the int parse.
+                    DefaultLineEdit {
+                        input_type: InputType.number;
                         default <=> AppState.form.top_k_default;
                         value <=> AppState.form.top_k;
                     }
@@ -601,12 +618,12 @@ export component ModelsPage inherits HorizontalLayout {
                 LabeledField {
                     label: "Draft n-max";
                     hint: "Max draft tokens proposed per step (--spec-draft-n-max).\nDFlash clamps this to the GGUF's trained block_size-1 (e.g. 15).\ndefault = omit the flag → llama.cpp default: 3.";
-                    DefaultSpinBox {
+                    DefaultLineEdit {
                         // Active only when a draft is available (selected or embedded MTP).
                         enabled: AppState.draft_active;
+                        input_type: InputType.number;
                         default <=> AppState.form.spec_draft_n_max_default;
                         value <=> AppState.form.spec_draft_n_max;
-                        maximum: 100000;
                     }
                 }
             }

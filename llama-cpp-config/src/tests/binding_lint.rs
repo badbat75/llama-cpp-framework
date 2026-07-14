@@ -18,11 +18,15 @@
 //!   to flag. AutoSlider's slider push is pinned in ui_bindings.rs; the others
 //!   are structural (EnumComboBox drives current-index to sidestep the
 //!   `current-value` #11970 bug — see `no_current_value_bindings…` below).
-//!   NOT escaped: DefaultSpinBox / DefaultLineEdit — their inner std SpinBox /
-//!   LineEdit self-assigns through `<=> root.value`, so the CALL SITE must bind
-//!   `value`/`default` two-way; they're listed in SELF_ASSIGNING and scanned
-//!   like a bare widget (the `Default` prefix stops them matching SpinBox/
-//!   LineEdit, so they need their own entry).
+//!   NOT escaped: DefaultLineEdit — its inner std LineEdit self-assigns through
+//!   `<=> root.value`, so the CALL SITE must bind `value`/`default` two-way; it is
+//!   listed in SELF_ASSIGNING and scanned like a bare widget (the `Default` prefix
+//!   stops it matching LineEdit, so it needs its own entry).
+//!
+//! A second, unrelated rule lives here because it is the same kind of scan:
+//! `no_spinbox_widgets_anywhere` — the std SpinBox is BANNED from this UI (it
+//! edits itself on a stray mouse-wheel; see ui/components.slint), and a text scan
+//! is the only thing that can say so about a widget nobody has instantiated yet.
 
 use std::fmt::Write as _;
 use std::path::Path;
@@ -35,12 +39,13 @@ const SELF_ASSIGNING: &[(&str, &[&str])] = &[
     ("TextEdit", &["text:"]),
     ("CheckBox", &["checked:"]),
     ("Switch", &["checked:"]),
+    // SpinBox is banned outright (`no_spinbox_widgets_anywhere`), but it stays
+    // listed: if one ever comes back, it should trip BOTH rules, not neither.
     ("SpinBox", &["value:"]),
     ("Slider", &["value:"]),
     ("ComboBox", &["current-value:", "current-index:"]),
-    // Composites wrapping a bare std widget bound `<=> root.value` — the call
+    // A composite wrapping a bare std widget bound `<=> root.value` — the call
     // site must be two-way too (see the header's "NOT escaped" note).
-    ("DefaultSpinBox", &["value:", "default:"]),
     ("DefaultLineEdit", &["value:", "default:"]),
 ];
 
@@ -146,6 +151,53 @@ fn no_one_way_appstate_bindings_on_self_assigning_widgets() {
         violations.is_empty(),
         "one-way AppState bindings on self-assigning widgets (use `<=>`, or a \
          sanctioned pattern from the README conventions table):\n{violations}"
+    );
+}
+
+/// The std `SpinBox` is banned from this UI, and this is the only thing that can
+/// enforce it: it is not a stale-binding bug (the scan above would catch that) but
+/// a SILENT-EDIT one, and it needs no binding at all to bite.
+///
+/// `SpinBoxBase` (i-slint-compiler's widget library) puts a TouchArea over the
+/// whole widget whose `scroll-event` increments/decrements and always returns
+/// `accept` — with no `has-focus` guard, unlike its own `ComboBoxBase`, which
+/// rejects a scroll it isn't focused for. So wheeling the page with the pointer
+/// merely PASSING OVER a SpinBox edits the config (and eats the scroll, so the page
+/// doesn't even move): a preset silently gains a different ctx-size, and nothing in
+/// the UI says so. There is no property to disable it and no way to intercept the
+/// event from outside (the TouchArea lives inside the widget), so the fix was to
+/// stop using the widget — every numeric field is a `DefaultLineEdit` now
+/// (ui/components.slint). Re-adding a SpinBox re-adds the bug; hence this scan.
+#[test]
+fn no_spinbox_widgets_anywhere() {
+    let ui = Path::new(env!("CARGO_MANIFEST_DIR")).join("ui");
+    let mut hits = String::new();
+    for entry in std::fs::read_dir(&ui).expect("ui/ dir") {
+        let path = entry.expect("dir entry").path();
+        if path.extension().is_some_and(|e| e == "slint") {
+            let source = std::fs::read_to_string(&path).expect("read .slint");
+            for (n, line) in source.lines().enumerate() {
+                let code = strip_line_comment(line);
+                // The block opener, not a mention: `SpinBox {` (possibly behind
+                // `x :=`). `opens_widget`'s identifier-boundary rule keeps
+                // DefaultSpinBox-style names from matching, if one ever returns.
+                if opens_widget(code, "SpinBox") {
+                    let _ = writeln!(
+                        hits,
+                        "{}:{}: {}",
+                        path.file_name().unwrap().to_string_lossy(),
+                        n + 1,
+                        line.trim()
+                    );
+                }
+            }
+        }
+    }
+    assert!(
+        hits.is_empty(),
+        "Slint's SpinBox edits itself on a mouse-wheel over the page (no has-focus \
+         guard on its scroll-event) — use DefaultLineEdit with `input_type: \
+         InputType.number`:\n{hits}"
     );
 }
 

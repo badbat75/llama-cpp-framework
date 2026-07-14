@@ -16,7 +16,7 @@
 // - list rows/panels: `SelectableRow` / `AccentBar`, `ListPanel` (the bordered
 //   list container around the preset list + the New/Clone model picker)
 
-import { ComboBox, LineEdit, CheckBox, Slider, SpinBox, Button, Palette } from "std-widgets.slint";
+import { ComboBox, LineEdit, CheckBox, Slider, Button, Palette } from "std-widgets.slint";
 import { GpuRow, TensorOverrideRow } from "types.slint";
 
 // Canonical transparency levels for muted text and selection tints, so every
@@ -57,6 +57,13 @@ export global Options {
     // as the word default" shape as `split_modes` below (form.rs maps both ways).
     out property <[string]> cache_types: ["default", "f32", "f16", "q8_0", "q5_0", "q4_0", "q4_1"];
     out property <[string]> split_modes: ["default", "none", "layer", "row"];
+    // The -lv threshold, as "<name>:<level>". llama.cpp defines exactly these six
+    // and a message prints when its own level is <= the threshold, so DEBUG:5 shows
+    // everything and OUTPUT:0 almost nothing (`common/arg.cpp`, `common/log.h`).
+    // A free number bought nothing but the chance to type a level that isn't one.
+    // Mirrors LOG_LEVELS in src/server_form.rs — the equality is asserted by the
+    // e2e test (src/tests/ui_bindings.rs), so the two lists cannot drift.
+    out property <[string]> log_levels: ["OUTPUT:0", "ERROR:1", "WARN:2", "INFO:3", "TRACE:4", "DEBUG:5"];
     // "All layers on GPU" sentinel for the --n-gpu-layers* flags: any value
     // above a real block count. Mirrors ALL_LAYERS in src/form.rs — the
     // equality is asserted by the e2e test (src/tests/ui_bindings.rs).
@@ -248,51 +255,33 @@ export component AutoSlider inherits HorizontalLayout {
     }
 }
 
-// A "default" checkbox + a SpinBox — the "integer, or let llama.cpp decide"
-// lever used for the always-integer numeric fields (ctx-size, parallel,
-// batch-size, cache-ram, top-k, port, cache-reuse, models-max, …). `default`
-// (two-way) omits the flag on save (None) and disables the SpinBox; `value`
-// (two-way) is the count. Same shape as AutoSlider (auto checkbox + Slider):
-// the checkbox carries the "unset" state, the input carries the value.
+// A "default" checkbox + a LineEdit — the ONE numeric field of both forms, for
+// every "a number, or let llama.cpp decide" knob: the integers (ctx-size,
+// parallel, batch-size, cache-ram, top-k, port, cache-reuse, models-max, …) and
+// the float sampling knobs (temp, top-p, min-p, repeat/presence-penalty) alike.
+// `default` (two-way) omits the flag on save (None) and disables the field;
+// `value` (two-way) is the text. Same shape as AutoSlider (auto checkbox +
+// Slider): the checkbox carries the "unset" state, the input carries the value.
 //
-// When `default` is checked the SpinBox is disabled but still shows `value`,
-// so preset_to_form seeds it with a display hint (the schema default) — the
-// user sees what they'd get if they uncheck, and can edit straight away.
-export component DefaultSpinBox inherits HorizontalLayout {
-    in-out property <bool> default;
-    in-out property <int> value;
-    in property <int> minimum: 0;
-    in property <int> maximum: 100000000;
-    // Forwarded to the inner SpinBox's accessible-label so the e2e binding
-    // test (src/tests/ui_bindings.rs) can find and drive one instance.
-    in property <string> spinbox_label;
-    // Gates the whole row on an external precondition (e.g. "a draft is
-    // selected"), matching AutoSlider's `usable`.
-    in property <bool> enabled: true;
-    spacing: 8px;
-    CheckBox {
-        text: "default";
-        enabled: root.enabled;
-        checked <=> root.default;
-    }
-    SpinBox {
-        horizontal-stretch: 1;
-        accessible-label: root.spinbox_label;
-        enabled: !root.default && root.enabled;
-        minimum: root.minimum;
-        maximum: root.maximum;
-        value <=> root.value;
-    }
-}
-
-// A "default" checkbox + a LineEdit (input-type: decimal) — the float-valued
-// mirror of DefaultSpinBox, for sampling knobs (temp, top-p, min-p,
-// repeat-penalty, presence-penalty) that SpinBox can't cover (it's int-only).
-// `default` (two-way) omits the flag (None); `value` (two-way) is the string
-// the LineEdit shows/edits. `decimal` (not `number`) is required so the field
-// accepts the decimal separator — `number` filters it out, making it
-// impossible to type fractional values; the matching comma→dot normalization
-// lives in `ini::parse_float`.
+// When `default` is checked the field is disabled but still shows `value`, so
+// preset_to_form seeds it with a display hint (form.rs's HINT_*) — the user sees
+// what they would get on unticking, and can edit straight away.
+//
+// THE INTEGERS RODE A SpinBox UNTIL v1.5.0, and the reason they no longer do is
+// not cosmetic: Slint's `SpinBoxBase` puts a TouchArea over the whole widget whose
+// `scroll-event` increments/decrements and always returns `accept` — with no
+// `has-focus` guard, unlike its own `ComboBoxBase`, which rejects a scroll it is
+// not focused for. So merely wheeling the page with the pointer passing over a
+// SpinBox silently edited the preset (and ate the scroll, so the page didn't even
+// move). There is no property to disable it and no way to intercept the event
+// (the TouchArea lives INSIDE the widget), so the fix is to stop using it: a
+// LineEdit has no scroll handler at all. `input_type` is what makes it an integer
+// field — `number` accepts ASCII digits ONLY (i-slint-core `accept_text_input`),
+// so no `40.5` can slip a `parse_int`, which is what the SpinBox used to buy us.
+// The two exceptions are the fields that must accept a leading `-` (cache-ram's
+// `-1` = no limit) and the floats: `decimal` also allows the sign and the decimal
+// separator, and Rust re-checks the text either way (`ini::parse_int` /
+// `parse_float`, the latter normalizing a comma).
 export component DefaultLineEdit inherits HorizontalLayout {
     in-out property <bool> default;
     in-out property <string> value;
@@ -300,8 +289,11 @@ export component DefaultLineEdit inherits HorizontalLayout {
     // Forwarded to the inner LineEdit's accessible-label so the e2e binding
     // test (src/tests/ui_bindings.rs) can find and drive one instance.
     in property <string> edit_label;
-    // Gates the whole row on an external precondition, matching DefaultSpinBox.
+    // Gates the whole row on an external precondition (e.g. "a draft is
+    // selected"), matching AutoSlider's `usable`.
     in property <bool> enabled: true;
+    // `number` = integers (digits only); `decimal` = signed / fractional.
+    in property <InputType> input_type: InputType.decimal;
     spacing: 8px;
     CheckBox {
         text: "default";
@@ -313,7 +305,7 @@ export component DefaultLineEdit inherits HorizontalLayout {
         accessible-label: root.edit_label;
         enabled: !root.default && root.enabled;
         text <=> root.value;
-        input-type: decimal;
+        input-type: root.input_type;
         placeholder-text: root.placeholder;
     }
 }
@@ -587,16 +579,16 @@ export component FormActions inherits HorizontalLayout {
 // is how you promote it. Nothing reorders on its own.
 //
 // BINDING NOTE (the sanctioned one-way `for`-row exception, same as the
-// Integrations checkboxes): `checked: row.enabled` and `value: row.weight` are
+// Integrations checkboxes): `checked: row.enabled` and `text: row.weight` are
 // one-way, and a click/edit self-assigns them, permanently breaking THAT
 // delegate's binding. Two rules keep that invisible:
 //   1. toggle / Auto / Even / preset switch / device probe REBUILD the whole row
 //      model, so every delegate gets a fresh binding (gui::refresh_gpu_rows).
 //   2. a weight edit changes no OTHER row's weight, so it needs no rebuild at
-//      all — which is exactly why the SpinBoxes stay disabled in Auto mode
+//      all — which is exactly why the weight fields stay disabled in Auto mode
 //      (leaving Auto seeds every weight; that's what the Even button is for).
-// The share column reads the SpinBox's LIVE value (`w.value`), not `row.weight`,
-// so it keeps up with a broken-binding delegate.
+// The share column reads the field's LIVE text (`w.text`), not `row.weight`, so
+// it keeps up with a broken-binding delegate.
 export component GpuSplitTable inherits VerticalLayout {
     in property <[GpuRow]> rows;
     in property <string> summary;
@@ -833,18 +825,22 @@ export component GpuSplitTable inherits VerticalLayout {
     
                 Rectangle {
                     width: 84px;
-                    w := SpinBox {
+                    // A LineEdit, not a SpinBox, for the reason spelled out on
+                    // DefaultLineEdit: a SpinBox here turned a scroll of the page
+                    // into a silent edit of the split. `number` keeps it digits-
+                    // only now that there is no minimum/maximum to lean on; the
+                    // value is re-checked in Rust (gpu_split::set_weight).
+                    w := LineEdit {
                         x: 0;
                         y: 0;
                         width: parent.width;
                         height: parent.height;
                         visible: row.enabled;
                         enabled: root.weights_editable;
-                        minimum: 0;
-                        maximum: 999;
-                        value: row.weight;
-                        edited(v) => {
-                            root.weight_edited(row.id, v);
+                        input-type: InputType.number;
+                        text: row.weight;
+                        edited(t) => {
+                            root.weight_edited(row.id, t.to-float());
                         }
                     }
                     Text {
@@ -861,7 +857,7 @@ export component GpuSplitTable inherits VerticalLayout {
     
                 Text {
                     width: 52px;
-                    text: root.share_text(row.enabled, w.value);
+                    text: root.share_text(row.enabled, w.text.to-float());
                     horizontal-alignment: right;
                     vertical-alignment: center;
                     font-size: 13px;

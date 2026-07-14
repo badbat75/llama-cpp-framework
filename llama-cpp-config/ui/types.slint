@@ -20,7 +20,7 @@ export struct PresetForm {
     mmproj_offload: bool,
     model_draft: string,
     spec_type: string,
-    spec_draft_n_max: int,
+    spec_draft_n_max: string,
     spec_draft_n_max_default: bool,
     n_gpu_layers_draft: int,
     n_gpu_layers_draft_auto: bool,
@@ -35,20 +35,25 @@ export struct PresetForm {
     // table-not-a-field reasoning as `device`/`tensor_split` above; the rules
     // live in src/tensor_override.rs.
     override_tensor: string,
-    // Integer numerics: two-way-bound to a DefaultSpinBox `value` (int). The
-    // `*_default` bool carries the "omit the flag" state (checkbox checked =
-    // let llama.cpp pick its own default); the int is always populated so the
-    // disabled SpinBox shows a sensible hint (the schema default) when the
-    // checkbox is on — see preset_to_form in src/form.rs.
-    ctx_size: int,
+    // Numerics ride as STRINGS, integers included: every one of them is a
+    // `DefaultLineEdit` (`value <=>`), because the SpinBox they used to sit in
+    // edits itself on a stray mouse-wheel over the page — see the component's
+    // header. The text is what the user typed; Rust re-parses it (`ini::parse_int`)
+    // and an unparseable field reads as unset, exactly like the float knobs.
+    // The `*_default` bool carries the "omit the flag" state (checkbox checked =
+    // let llama.cpp pick its own default); the string is populated even then, so
+    // the disabled field shows a hint (form.rs's HINT_*) of what unticking gives.
+    // The three LAYER counts below are the exception — they stay `int`, because
+    // they ride a Slider (AutoSlider), which has no scroll handler to abuse.
+    ctx_size: string,
     ctx_size_default: bool,
     n_gpu_layers: int,
     n_gpu_layers_auto: bool,
-    parallel: int,
+    parallel: string,
     parallel_default: bool,
-    batch_size: int,
+    batch_size: string,
     batch_size_default: bool,
-    ubatch_size: int,
+    ubatch_size: string,
     ubatch_size_default: bool,
     // --cache-type-k/-v: an EnumComboBox over Options.cache_types, whose FIRST
     // entry is "default" — the spelling this string carries for the empty INI
@@ -60,7 +65,10 @@ export struct PresetForm {
     // "off". Not a bool: the flag takes [on|off|auto], so a checkbox could only
     // ever reach two of its three states, and the unreachable one is the default.
     flash_attn: string,
-    cache_ram: int,
+    // --cache-ram is the one integer field that must accept a leading `-` (its
+    // `-1` = no limit), so its widget takes `input_type: decimal` while the other
+    // integers are digits-only `number`. See DefaultLineEdit.
+    cache_ram: string,
     cache_ram_default: bool,
     jinja: bool,
     reasoning: string,
@@ -72,11 +80,10 @@ export struct PresetForm {
     n_cpu_moe: int,
     n_cpu_moe_auto: bool,
     // Sampling knobs, each paired with a `*_default` bool (checkbox omits the
-    // flag — same shape as the integer fields above). Top-K is integer-valued
-    // (a DefaultSpinBox `value`, int); the float knobs (temp/top-p/min-p/
-    // penalties) ride as `string` (a DefaultLineEdit `text <=>`) since SpinBox
-    // is int-only.
-    top_k: int,
+    // flag — same shape as the integer fields above). Top-K is integer-valued, so
+    // its field is digits-only (`input_type: number`); the rest are floats
+    // (`decimal`). All of them are `DefaultLineEdit`s over a string.
+    top_k: string,
     top_k_default: bool,
     temp: string,
     temp_default: bool,
@@ -97,13 +104,14 @@ export struct PresetForm {
 // (`server_form != server_form_base`). Adding a server field follows the
 // checklist at the top of src/server_cfg.rs (this struct + server_page.slint +
 // server_cfg.rs + both conversions in src/server_form.rs + 3 spots in cli.rs +
-// runstate::server_args) — never the GUI wiring. Numerics ride as `int` paired
-// with a `*_default` bool (a DefaultSpinBox — checkbox omits the flag); the
-// CPU-thread counts instead ride as slider `int`s paired with an `_auto` flag
+// runstate::server_args) — never the GUI wiring. Numerics ride as `string` paired
+// with a `*_default` bool (a DefaultLineEdit — checkbox omits the flag), for the
+// same reason PresetForm's do: their old SpinBox edited itself on a stray scroll.
+// The CPU-thread counts instead ride as slider `int`s paired with an `_auto` flag
 // (auto = omit the flag, let llama.cpp pick), the same shape as PresetForm's
-// layer sliders.
+// layer sliders — a Slider has no scroll handler, so it keeps its int.
 export struct ServerForm {
-    port: int,
+    port: string,
     port_default: bool,
     hostname: string,
     mlock: bool,
@@ -112,11 +120,11 @@ export struct ServerForm {
     no_mmap: bool,
     threads: int,
     threads_auto: bool,
-    cache_reuse: int,
+    cache_reuse: string,
     cache_reuse_default: bool,
     threads_batch: int,
     threads_batch_auto: bool,
-    models_max: int,
+    models_max: string,
     models_max_default: bool,
     models_dir: string,
     // `device` + `tensor_split` are written by the GPU distribution table
@@ -135,12 +143,19 @@ export struct ServerForm {
     mmproj_device: string,
     // Plain bool toggles (CheckBox, two-way <=>), the same shape as `mlock`:
     // webui_mcp_proxy enables the web UI's MCP proxy (--webui-mcp-proxy); fit is
-    // llama.cpp's -fit on|off VRAM auto-fitting (checked = on).
+    // llama.cpp's -fit on|off VRAM auto-fitting (checked = on); prefill_assistant
+    // continues a TRAILING assistant message instead of answering it
+    // (--no-prefill-assistant turns it off — checked = llama.cpp's own default).
     webui_mcp_proxy: bool,
     fit: bool,
-    // Log verbosity threshold (-lv). A plain SpinBox (two-way <=>), always set —
-    // no "default" checkbox, since the launch always passes -lv.
-    log_verbosity: int,
+    prefill_assistant: bool,
+    // Log verbosity threshold (-lv), carried as the DROPDOWN LABEL — "DEBUG:5",
+    // "TRACE:4", … — not as the bare number. llama.cpp defines exactly six levels
+    // and nothing else is meaningful (`common/arg.cpp`), so the widget is an
+    // EnumComboBox over `Options.log_levels` and the label is what round-trips;
+    // `server_form::log_level_label` / `parse_log_level` map it to the int, and the
+    // Rust list is asserted against the Slint one in the e2e (they must not drift).
+    log_verbosity: string,
 }
 
 export struct IntegrationModel {
