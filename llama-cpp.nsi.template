@@ -30,6 +30,7 @@ FunctionEnd
 !define MUI_UNICON "@STAGING_DIR@\llama.ico"
 
 !insertmacro MUI_PAGE_WELCOME
+Page custom CheckAndStopProcesses
 Page custom CheckPreviousInstall
 !insertmacro MUI_PAGE_DIRECTORY
 !insertmacro MUI_PAGE_COMPONENTS
@@ -64,6 +65,45 @@ Function CheckPreviousInstall
         Delete "$INSTDIR\uninstall.exe"
         RMDir "$INSTDIR"
     done:
+FunctionEnd
+
+; ── Stop running processes before installation ──────────────────────
+Function CheckAndStopProcesses
+    ; Show confirmation dialog
+    MessageBox MB_YESNO|MB_ICONQUESTION "Stop running processes?" IDYES check_and_stop IDNO abort
+
+abort:
+    Abort "Installation aborted by user."
+
+check_and_stop:
+    ; Read installation path from registry
+    StrCpy $0 ""
+    ReadRegStr $0 HKLM "Software\llama.cpp" "InstallDir"
+    
+    ; If not found, force kill anyway
+    StrCmp $0 "" force_kill
+    
+    ; Build path to llama-cpp-config.exe
+    StrCpy $1 "$0\bin\llama-cpp-config.exe"
+    
+    ; Check if file exists and execute stop-and-close command
+    IfFileExists $1 have_exe
+    force_kill:
+        ; Force kill all llama processes
+        nsExec::ExecToLog 'powershell -Command "Get-Process | Where-Object {$$_.ProcessName -like ''*llama-server*''} | Stop-Process -Force"'
+        nsExec::ExecToLog 'powershell -Command "Get-Process | Where-Object {$$_.ProcessName -like ''*llama-cpp-config*''} | Stop-Process -Force"'
+        goto done
+    
+    have_exe:
+        ; Execute "llama-cpp-config.exe control stop-and-close" silently
+        ExecWait '"$1" control stop-and-close'
+        Sleep 1000
+
+    ; Force kill any remaining processes
+    nsExec::ExecToLog 'powershell -Command "Get-Process | Where-Object {$$_.ProcessName -like ''*llama-server*''} | Stop-Process -Force"'
+    nsExec::ExecToLog 'powershell -Command "Get-Process | Where-Object {$$_.ProcessName -like ''*llama-cpp-config*''} | Stop-Process -Force"'
+
+done:
 FunctionEnd
 
 ; ── Main section: binaries ──────────────────────────────────────────

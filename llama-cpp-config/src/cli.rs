@@ -28,6 +28,21 @@ pub enum Command {
     /// Per-model presets (presets.ini).
     #[command(subcommand)]
     Preset(PresetCmd),
+    /// Control the llama-server process.
+    #[command(subcommand)]
+    Control(ControlCmd),
+}
+
+#[derive(Subcommand, Debug)]
+pub enum ControlCmd {
+    /// Start llama-server.
+    Start,
+    /// Stop llama-server.
+    Stop,
+    /// Restart llama-server.
+    Restart,
+    /// Stop llama-server and close the config GUI if running.
+    StopAndClose,
 }
 
 #[derive(Subcommand, Debug)]
@@ -193,6 +208,7 @@ pub fn run(cli: Cli) -> Result<()> {
         Command::Gui => crate::gui::run(),
         Command::Server(c) => run_server(c),
         Command::Preset(c) => run_preset(c),
+        Command::Control(c) => run_control(c),
     }
 }
 
@@ -356,6 +372,49 @@ fn run_preset(c: PresetCmd) -> Result<()> {
                 "Removed [{real_id}] from {}",
                 paths::presets_ini().display()
             );
+            Ok(())
+        }
+    }
+}
+
+// ── Control commands ────────────────────────────────────────────────────
+
+fn run_control(c: ControlCmd) -> Result<()> {
+    use crate::runstate;
+    match c {
+        ControlCmd::Start => {
+            match runstate::start() {
+                Ok(Some(_)) => println!("llama-server started."),
+                Ok(None) => println!("llama-server is already running."),
+                Err(e) => anyhow::bail!("Failed to start llama-server: {}", e),
+            }
+            Ok(())
+        }
+        ControlCmd::Stop => {
+            runstate::stop();
+            if runstate::is_running() {
+                anyhow::bail!("Failed to stop llama-server.");
+            } else {
+                println!("llama-server stopped.");
+            }
+            Ok(())
+        }
+        ControlCmd::Restart => {
+            runstate::stop();
+            std::thread::sleep(std::time::Duration::from_millis(1000));
+            match runstate::start() {
+                Ok(Some(_)) => println!("llama-server restarted."),
+                Ok(None) => println!("llama-server is already running."),
+                Err(e) => anyhow::bail!("Failed to restart llama-server: {}", e),
+            }
+            Ok(())
+        }
+        ControlCmd::StopAndClose => {
+            runstate::stop();
+            std::thread::sleep(std::time::Duration::from_millis(500));
+            #[cfg(windows)]
+            crate::single_instance::signal_close();
+            println!("llama-server stopped and config GUI closed.");
             Ok(())
         }
     }

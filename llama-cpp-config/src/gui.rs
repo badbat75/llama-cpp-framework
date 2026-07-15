@@ -141,12 +141,20 @@ pub fn run() -> anyhow::Result<()> {
     let tray = AppTray::new()?;
     let state = Rc::new(RefCell::new(State::default()));
 
-    // Surface the live window when another launch pokes the activation event.
+    // Surface the live window when another launch pokes the activation event,
+    // or exit when a close request is signaled (e.g., by `llama-cpp-config stop-and-close`).
     #[cfg(windows)]
     {
         let app_weak = app.as_weak();
-        _instance.spawn_listener(move || {
-            let _ = app_weak.upgrade_in_event_loop(activate_window);
+        _instance.spawn_listener(move |event| {
+            match event {
+                crate::single_instance::Event::Activate => {
+                    let _ = app_weak.upgrade_in_event_loop(activate_window);
+                }
+                crate::single_instance::Event::Close => {
+                    std::process::exit(0);
+                }
+            }
         });
     }
 

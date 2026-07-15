@@ -33,7 +33,12 @@ extern "system" {
         name: *const u16,
     ) -> Handle;
     fn SetEvent(handle: Handle) -> i32;
-    fn WaitForSingleObject(handle: Handle, millis: u32) -> u32;
+    fn WaitForMultipleObjects(
+        count: u32,
+        handles: *const Handle,
+        wait_all: u32,
+        millis: u32,
+    ) -> u32;
     fn CloseHandle(handle: Handle) -> i32;
     fn GetLastError() -> u32;
 }
@@ -47,6 +52,7 @@ extern "system" {
 // session, which is also what survives fast-user-switching / RDP cleanly.
 const MUTEX_NAME: &str = r"Local\llama-cpp-config.singleton";
 const EVENT_NAME: &str = r"Local\llama-cpp-config.activate";
+const CLOSE_EVENT_NAME: &str = r"Local\llama-cpp-config.close";
 
 fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
@@ -59,10 +65,11 @@ pub enum Acquire {
     Secondary,
 }
 
-/// Holds the singleton mutex + activation event open for the process lifetime.
+/// Holds the singleton mutex + activation event + close event open for the process lifetime.
 pub struct InstanceGuard {
     mutex: Handle,
     event: Handle,
+    close_event: Handle,
 }
 
 /// Try to become the single instance. If one is already running, poke it and
@@ -87,37 +94,64 @@ pub fn acquire() -> Acquire {
         }
         // First instance: own an auto-reset event for the process lifetime.
         let event = CreateEventW(std::ptr::null(), 0, 0, event_name.as_ptr());
-        Acquire::Primary(InstanceGuard { mutex, event })
+        let close_event = CreateEventW(std::ptr::null(), 0, 0, wide(CLOSE_EVENT_NAME).as_ptr());
+        Acquire::Primary(InstanceGuard { mutex, event, close_event })
     }
 }
 
 impl InstanceGuard {
-    /// Spawn a background thread that runs `on_activate` each time another
-    /// launch pokes the activation event.
-    pub fn spawn_listener<F: Fn() + Send + 'static>(&self, on_activate: F) {
-        // HANDLE isn't Send; move it across as an integer and rebuild it. It
-        // stays valid because `self` (the owner) lives for the whole process.
+    /// Spawn a background thread that runs `on_event` each time another
+    /// launch pokes the activation event or a close request is made.
+    pub fn spawn_listener<F: Fn(Event) + Send + 'static>(&self, on_event: F) {
         let event = self.event as usize;
-        if event == 0 {
+        let close_event = self.close_event as usize;
+        if event == 0 || close_event == 0 {
             return;
         }
         std::thread::spawn(move || {
             let event = event as Handle;
+            let close_event = close_event as Handle;
             loop {
-                // SAFETY: the handle is open until the guard drops at exit; a
-                // closed/failed wait returns a non-signalled code and ends the loop.
-                if unsafe { WaitForSingleObject(event, INFINITE) } != WAIT_OBJECT_0 {
+                let ret = unsafe {
+                    let handles = [event, close_event];
+                    WaitForMultipleObjects(2, handles.as_ptr(), 0, INFINITE)
+                };
+                if ret == WAIT_OBJECT_0 {
+                    on_event(Event::Activate);
+                } else if ret == WAIT_OBJECT_0 + 1 {
+                    on_event(Event::Close);
+                } else {
                     break;
                 }
-                on_activate();
             }
         });
     }
 }
 
+/// Signal the close request to the primary instance of the configurator.
+pub fn signal_close() {
+    let name = wide(CLOSE_EVENT_NAME);
+    unsafe {
+        let event = CreateEventW(std::ptr::null(), 0, 0, name.as_ptr());
+        if !event.is_null() {
+            SetEvent(event);
+            CloseHandle(event);
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Event {
+    Activate,
+    Close,
+}
+
 impl Drop for InstanceGuard {
     fn drop(&mut self) {
         unsafe {
+            if !self.close_event.is_null() {
+                CloseHandle(self.close_event);
+            }
             if !self.event.is_null() {
                 CloseHandle(self.event);
             }

@@ -5,6 +5,10 @@ GUI + CLI configurator for [llama.cpp-framework](..).
 ```text
 llama-cpp-config                  → launch the GUI
 llama-cpp-config gui              → same, explicit
+llama-cpp-config control start    → start llama-server
+llama-cpp-config control stop     → stop llama-server
+llama-cpp-config control restart  → restart llama-server
+llama-cpp-config control stop-and-close → stop llama-server and close the GUI
 llama-cpp-config server show      → print server.ini
 llama-cpp-config server set ...   → update server.ini fields
 llama-cpp-config preset list      → list models with their presets
@@ -156,6 +160,19 @@ The entry used to advertise a flat `131072` whenever `ctx-size` was absent, whic
 
 On Linux / macOS, `%LOCALAPPDATA%\llama.cpp` maps to `$HOME/.local/share/llama.cpp`.
 
+## Control commands
+
+The following subcommands control the llama-server process:
+
+```powershell
+llama-cpp-config control start      → start llama-server
+llama-cpp-config control stop       → stop llama-server
+llama-cpp-config control restart    → restart llama-server
+llama-cpp-config control stop-and-close → stop llama-server and close the config GUI (Windows only)
+```
+
+The `stop-and-close` command is Windows-only and uses a named event to signal the running GUI instance to exit gracefully.
+
 ## Build
 
 ```powershell
@@ -173,7 +190,7 @@ The build script (`build.rs`) first regenerates `resources\llama.ico` if it's mi
 | File | Purpose |
 |------|---------|
 | `src\main.rs` | Entry point: no args → GUI, subcommand → CLI dispatcher |
-| `src\cli.rs` | Clap subcommands: `server` (show/set), `preset` (list/show/delete) |
+| `src\cli.rs` | Clap subcommands: `server` (show/set), `preset` (list/show/delete), `control` (start/stop/restart/stop-and-close) |
 | `src\gui.rs` | Slint GUI module root: `run()` (window setup), the shared `State` cache, and all `load_*` / `refresh_*` / `apply_*` / `spawn_*` helpers |
 | `src\gui\` | Per-tab callback wiring, one file each — `server_tab.rs`, `models_tab.rs`, `integrations_tab.rs`, `tray.rs`, plus `log_window.rs` (the View-logs window: tail-follow state machine + poll timer) — each a `wire()` reaching `gui`'s helpers via `use super::*` |
 | `src\form.rs` | `PresetForm` ↔ `presets::Preset` conversion (`preset_to_form` / `form_to_preset`) + a round-trip test; string/bool defaults sourced from `Preset::default()`, while the number a *disabled* SpinBox parks on comes from its own `HINT_*` consts (llama.cpp's own defaults — the schema has none to lend now that a new preset leaves every tunable unset) |
@@ -193,7 +210,7 @@ The build script (`build.rs`) first regenerates `resources\llama.ico` if it's mi
 | `src\runstate.rs` | Detect if `llama-server` is running; start/stop it; render the launch command line (incl. `--webui-mcp-proxy` / `-fit` / `-lv`, exposed on the Server tab's Advanced card and defaulting to the framework's on / off / 4) |
 | `src\net_ifaces.rs` | Enumerate local network interfaces — populates the Server tab's "Bind to" dropdown |
 | `src\server_version.rs` | Parse `llama-server --version` output |
-| `src\single_instance.rs` | Windows single-instance mutex + window activation (Win32 FFI) |
+| `src\single_instance.rs` | Windows single-instance mutex + activation/close events (Win32 FFI) |
 | `ui\app.slint` | `AppWindow` window chrome + `AppTray`: nav rail, run controls, modals, footer (re-exports `LogWindow` for the Rust codegen) |
 | `ui\log_window.slint` | `LogWindow`: the independent View-logs window (read-only TextEdit tail + Auto-scroll checkbox), pushed-in state like the tray |
 | `ui\state.slint` | `export global AppState`: all shared properties + callbacks (declared once), driven from Rust via `app.global::<AppState>()` |

@@ -60,10 +60,10 @@ Cross-cutting rules the recipes rely on:
 
 ## Release process
 
-1. **Bump version** in `llama-cpp-config\Cargo.toml` (`[package] version = "X.Y.Z"`).
+1. **Bump version** in `llama-cpp-config\Cargo.toml` (`[package] version = "X.Y.Z"`). The next build also refreshes the crate's line in `Cargo.lock` — both files belong to the release commit.
 2. **Run `02-build.ps1`** — builds llama.cpp (fetches latest `bNNNN` tag) and llama-cpp-config.
 3. **Run `03-package.ps1`** — stages binaries, builds NSIS installer to `.\dist\llama-cpp-framework-vX.Y.Z-bNNNN-x64-setup.exe`.
-4. **Commit** all changes with a descriptive message summarizing what changed.
+4. **Commit** all changes. Subject: **`Release vX.Y.Z: <summary>`** — the SAME first line as the tag (step 5); every release commit follows this (`git log --oneline` — a `feat:`/`docs:`-style subject is not the convention here). Body: a prose summary, closing with a **`Bundles llama.cpp bNNNN (up from bMMMM).`** line, then the **`Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>`** trailer.
 5. **Tag**: `git tag -a X.Y.Z -m "Release vX.Y.Z: <short summary>..." && git push origin X.Y.Z`
    - Tag name: **no `v` prefix** (e.g. `1.5.1`, not `v1.5.1`).
    - Tag message: starts with `Release vX.Y.Z: <summary>` on first line, then blank line, then bullet points of changes. Match the style of previous tags (`git show 1.5.0`).
@@ -76,6 +76,7 @@ Cross-cutting rules the recipes rely on:
 
 | Artifact | Format | Example |
 |---|---|---|
+| Commit subject | `Release vX.Y.Z: <summary>` (matches the tag) | `Release v1.5.1: proxy/gateway support...` |
 | Tag name | `X.Y.Z` (no `v`) | `1.5.1` |
 | Tag message | `Release vX.Y.Z: <summary>\n\n- bullets...` | `Release v1.5.1: proxy/gateway support...` |
 | Release title | `vX.Y.Z (llama.cpp bNNNN)` | `v1.5.1 (llama.cpp b10017)` |
