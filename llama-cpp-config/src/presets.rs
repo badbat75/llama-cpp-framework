@@ -459,7 +459,9 @@ pub fn render_section(p: &Preset) -> String {
     out.push_str(&format!("model = {}\r\n", p.model.trim()));
     out.push_str("\r\n; Sub-model paths\r\n");
     emit_str(&mut out, "mmproj", &p.mmproj);
-    out.push_str("; mmproj-offload = false keeps the image encoder on CPU. It is NOT placed by\r\n");
+    out.push_str(
+        "; mmproj-offload = false keeps the image encoder on CPU. It is NOT placed by\r\n",
+    );
     out.push_str("; `device`: llama.cpp puts the encoder on the first GPU backend it finds\r\n");
     out.push_str("; unless server.ini MmprojDevice (env MTMD_BACKEND_DEVICE) names one.\r\n");
     emit_bool(&mut out, "mmproj-offload", p.mmproj_offload);
@@ -468,7 +470,9 @@ pub fn render_section(p: &Preset) -> String {
     out.push_str("\r\n; Speculative decoding / Multi-Token Prediction / DFlash\r\n");
     out.push_str("; spec-type pairs model-draft with a speculator: draft-mtp (MTP head),\r\n");
     out.push_str("; draft-dflash (DFlash block-diffusion drafter), or draft-simple.\r\n");
-    out.push_str("; MTP heads embedded in the main GGUF need spec-type ALONE (no model-draft).\r\n");
+    out.push_str(
+        "; MTP heads embedded in the main GGUF need spec-type ALONE (no model-draft).\r\n",
+    );
     emit_str(&mut out, "spec-type", &p.spec_type);
     out.push_str("; spec-draft-n-max = max drafted tokens per step. DFlash clamps this to the\r\n");
     out.push_str(

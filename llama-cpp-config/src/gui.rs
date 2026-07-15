@@ -275,7 +275,7 @@ fn refresh_server_snapshot(app: &AppWindow) {
     let cmdline = runstate::command_line().unwrap_or_default();
     s.set_server_command_line(SharedString::from(cmdline));
     let cfg = server_cfg::load();
-    s.set_chat_url(SharedString::from(client_base_url(&cfg)));
+    s.set_chat_url(SharedString::from(cfg.opencode_base_url_or_default()));
 }
 
 /// The client-facing base URL for a config: `client_host()` (0.0.0.0 →
@@ -568,7 +568,10 @@ fn refresh_tensor_rows(app: &AppWindow) {
     s.set_preset_tensor_dev_values(string_model(values));
 
     s.set_tensor_kind_labels(string_model(
-        tensor_override::KINDS.iter().map(|k| k.label.into()).collect(),
+        tensor_override::KINDS
+            .iter()
+            .map(|k| k.label.into())
+            .collect(),
     ));
     s.set_tensor_kind_values(string_model(
         tensor_override::KINDS.iter().map(|k| k.id.into()).collect(),
@@ -708,7 +711,10 @@ pub(crate) fn row_index(i: i32) -> usize {
 }
 
 pub(crate) fn preset_overrides(app: &AppWindow) -> String {
-    app.global::<AppState>().get_form().override_tensor.to_string()
+    app.global::<AppState>()
+        .get_form()
+        .override_tensor
+        .to_string()
 }
 
 pub(crate) fn set_preset_overrides(app: &AppWindow, rules: &str) {
@@ -1033,13 +1039,14 @@ fn refresh_integrations_reset(app: &AppWindow) {
 
 fn rebuild_integrations(app: &AppWindow, keep_pending: bool) {
     let s = app.global::<AppState>();
-    let base_url = opencode_base_url(&server_cfg::load());
+    let cfg = server_cfg::load();
+    let base_url = cfg.opencode_base_url_or_default();
+    let api_key = cfg.opencode_api_key.as_deref();
 
     let all_presets = presets::load_all();
     let example = all_presets.first().map(|p| p.id.as_str());
-    let claude_env = integrations::claude_code_env_script(&base_url, example);
+    let claude_env = integrations::claude_code_env_script(&base_url, api_key, example);
     s.set_integration_claude_env(SharedString::from(claude_env));
-    s.set_integration_base_url(SharedString::from(base_url));
 
     s.set_integration_provider_active(integrations::detect_opencode_provider());
 
@@ -1071,22 +1078,15 @@ fn rebuild_integrations(app: &AppWindow, keep_pending: bool) {
 
 /// Unsaved Integrations edits. The row toggles have no dirty flag like the two
 /// forms (they live only in the UI model), so compare the enabled set against
-/// the on-disk opencode.json instead. Consulted by the F5/Refresh discard
-/// guard — `reload_all_from_disk` rebuilds the list and would otherwise wipe
-/// pending toggles without the confirmation the form tabs get.
+/// the on-disk opencode.json instead. Consulted by the F5/Refresh discard guard
+/// — `reload_all_from_disk` rebuilds the list and would otherwise wipe pending
+/// toggles without the confirmation the form tabs get.
 pub(crate) fn integrations_dirty(app: &AppWindow) -> bool {
     let enabled_ids = integrations::opencode_model_ids();
     app.global::<AppState>()
         .get_integration_models()
         .iter()
         .any(|m| m.enabled != enabled_ids.iter().any(|id| id == m.id.as_str()))
-}
-
-/// The opencode provider base URL derived from the SAVED server.ini — the
-/// client_host, not the bind hostname: 0.0.0.0 is a listen address, a client
-/// pointed at it gets a connection error, so it maps to localhost.
-fn opencode_base_url(cfg: &server_cfg::ServerConfig) -> String {
-    format!("{}/v1", client_base_url(cfg))
 }
 
 /// Keep opencode.json in step with a preset rename (`new_id = Some`) or delete
@@ -1108,8 +1108,10 @@ fn sync_opencode_after_preset_change(app: &AppWindow, old_id: &str, new_id: Opti
         .cloned()
         .chain(new_id.map(str::to_string))
         .collect();
-    let base_url = opencode_base_url(&server_cfg::load());
-    if let Err(e) = integrations::save_opencode_models(&checked, &base_url) {
+    let cfg = server_cfg::load();
+    let base_url = cfg.opencode_base_url_or_default();
+    let api_key = cfg.opencode_api_key.as_deref();
+    if let Err(e) = integrations::save_opencode_models(&checked, &base_url, api_key) {
         set_status(app, format!("opencode.json update failed: {e}"), true);
     }
 }

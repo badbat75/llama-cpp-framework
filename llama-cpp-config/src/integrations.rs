@@ -51,11 +51,16 @@ pub fn opencode_model_ids() -> Vec<String> {
 /// Ensures the provider entry exists and syncs the models list from presets.
 /// `checked_ids` are the preset IDs the user wants exposed.
 /// `base_url` comes from the current server.ini (e.g. "http://127.0.0.1:8080/v1").
-pub fn save_opencode_models(checked_ids: &[String], base_url: &str) -> Result<()> {
+/// `api_key` is the optional API key for proxy/gateway authentication.
+pub fn save_opencode_models(
+    checked_ids: &[String],
+    base_url: &str,
+    api_key: Option<&str>,
+) -> Result<()> {
     let path = paths::opencode_user_config();
     let mut v = read_or_create_value(&path)?;
 
-    ensure_provider_section(&mut v, base_url)?;
+    ensure_provider_section(&mut v, base_url, api_key)?;
 
     let all_presets = presets::load_all();
     let preset_map: BTreeMap<&str, &presets::Preset> =
@@ -108,13 +113,18 @@ pub fn detect_opencode_provider() -> bool {
 /// Claude Code to use llama-server as a custom model provider. `example_id` is
 /// a preset id to show in the commented model line (the caller already holds
 /// the loaded presets — this stays a pure string builder, no hidden disk IO).
-pub fn claude_code_env_script(base_url: &str, example_id: Option<&str>) -> String {
-    let base = base_url.trim_end_matches("/v1");
+/// `api_key` is the optional API key for proxy/gateway authentication.
+pub fn claude_code_env_script(
+    base_url: &str,
+    api_key: Option<&str>,
+    example_id: Option<&str>,
+) -> String {
     let example = example_id.unwrap_or("<preset-id>");
+    let api_key_val = api_key.unwrap_or("not-needed");
     format!(
         "# Run this in PowerShell before launching Claude Code to use your local llama-server.\r\n\
-         $env:ANTHROPIC_BASE_URL = \"{base}\"\r\n\
-         $env:ANTHROPIC_API_KEY = \"not-needed\"\r\n\
+         $env:ANTHROPIC_BASE_URL = \"{base_url}\"\r\n\
+         $env:ANTHROPIC_API_KEY = \"{api_key_val}\"\r\n\
          # Pick a preset id from your presets.ini as the model name, e.g.:\r\n\
          # $env:ANTHROPIC_DEFAULT_SONNET_MODEL = \"{example}\"\r\n\
          # Then launch: claude\r\n",
@@ -148,10 +158,13 @@ fn read_or_create_value(path: &Path) -> Result<Value> {
     }
 }
 
-fn ensure_provider_section(v: &mut Value, base_url: &str) -> Result<()> {
+fn ensure_provider_section(v: &mut Value, base_url: &str, api_key: Option<&str>) -> Result<()> {
     let obj = v
         .as_object_mut()
         .ok_or_else(|| anyhow::anyhow!("top-level is not an object"))?;
+
+    // Append /v1 for the OpenAI-compatible API endpoint.
+    let api_base = format!("{base_url}/v1");
 
     let provider = obj
         .entry("provider".to_string())
@@ -166,7 +179,7 @@ fn ensure_provider_section(v: &mut Value, base_url: &str) -> Result<()> {
             json!({
                 "npm": PROVIDER_NPM,
                 "name": PROVIDER_NAME,
-                "options": { "baseURL": base_url },
+                "options": { "baseURL": api_base },
                 "models": {}
             })
         });
@@ -183,7 +196,12 @@ fn ensure_provider_section(v: &mut Value, base_url: &str) -> Result<()> {
     let opts_obj = opts
         .as_object_mut()
         .ok_or_else(|| anyhow::anyhow!("options is not an object"))?;
-    opts_obj.insert("baseURL".to_string(), json!(base_url));
+    opts_obj.insert("baseURL".to_string(), json!(api_base));
+    if let Some(key) = api_key {
+        opts_obj.insert("apiKey".to_string(), json!(key));
+    } else {
+        opts_obj.remove("apiKey");
+    }
 
     lp_obj
         .entry("models".to_string())
@@ -316,7 +334,7 @@ mod tests {
                 "other": { "npm": "@other/sdk", "models": { "x": {} } }
             }
         });
-        ensure_provider_section(&mut v, "http://localhost:8080/v1").unwrap();
+        ensure_provider_section(&mut v, "http://localhost:8080", None).unwrap();
         assert_eq!(v["theme"], "dark");
         assert_eq!(v["provider"]["other"]["npm"], "@other/sdk");
         assert_eq!(v["provider"]["other"]["models"]["x"], json!({}));
@@ -331,12 +349,16 @@ mod tests {
     #[test]
     fn ensure_provider_section_updates_base_url_in_place() {
         let mut v = json!({});
-        ensure_provider_section(&mut v, "http://localhost:8080/v1").unwrap();
-        ensure_provider_section(&mut v, "http://0.0.0.0:9090/v1").unwrap();
+        ensure_provider_section(&mut v, "http://localhost:8080", Some("sk-old")).unwrap();
+        ensure_provider_section(&mut v, "http://0.0.0.0:9090", None).unwrap();
         assert_eq!(
             v["provider"][PROVIDER_KEY]["options"]["baseURL"],
             "http://0.0.0.0:9090/v1"
         );
+        // apiKey should be removed when None is passed
+        assert!(v["provider"][PROVIDER_KEY]["options"]
+            .get("apiKey")
+            .is_none());
     }
 
     #[test]

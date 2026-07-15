@@ -160,7 +160,9 @@ pub fn move_by(sel: &GpuSelection, id: &str, delta: i32) -> GpuSelection {
         return sel.clone();
     };
     let last = picks.len().saturating_sub(1);
-    let to = usize::try_from(i64::from(delta) + from as i64).unwrap_or(0).min(last);
+    let to = usize::try_from(i64::from(delta) + from as i64)
+        .unwrap_or(0)
+        .min(last);
     if to == from {
         return sel.clone();
     }

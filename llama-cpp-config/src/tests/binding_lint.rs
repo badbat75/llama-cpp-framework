@@ -358,14 +358,21 @@ fn glyph_scan_reads_ui_text_and_ignores_comments_and_urls() {
     // that exists for it disarmed.
     let lits = string_literals("Button { text: \"✕\"; }\n");
     assert_eq!(lits, vec![(1, "✕".to_string())]);
-    assert!(!RENDERABLE.contains(&'✕'), "the tofu glyph must stay rejected");
+    assert!(
+        !RENDERABLE.contains(&'✕'),
+        "the tofu glyph must stay rejected"
+    );
 
     // A comment ABOUT the bad glyph is not UI text (this very file's fix has
     // one) — and a `//` inside a string is a URL, not a comment.
     let src = "// don't use ✕ here\nText { text: \"see http://x/y — ok\"; }\n";
     let lits = string_literals(src);
     assert_eq!(lits, vec![(2, "see http://x/y — ok".to_string())]);
-    assert!(lits[0].1.chars().filter(|c| !c.is_ascii()).all(|c| RENDERABLE.contains(&c)));
+    assert!(lits[0]
+        .1
+        .chars()
+        .filter(|c| !c.is_ascii())
+        .all(|c| RENDERABLE.contains(&c)));
 
     // Escaped quotes must not end the literal early: one literal, not three —
     // otherwise the tail of a hint string would go unscanned.
@@ -376,7 +383,8 @@ fn glyph_scan_reads_ui_text_and_ignores_comments_and_urls() {
     // The sanctioned way to draw an icon — a `\u{…}` escape under an explicitly
     // named icon font — must stay open: the escape is skipped, so no bare glyph
     // reaches the allowlist check and the lint has nothing to say about it.
-    let lits = string_literals(r#"Button { text: "\u{E711}"; font-family: "Segoe Fluent Icons"; }"#);
+    let lits =
+        string_literals(r#"Button { text: "\u{E711}"; font-family: "Segoe Fluent Icons"; }"#);
     assert!(
         lits.iter()
             .flat_map(|(_, t)| t.chars())

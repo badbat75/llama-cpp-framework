@@ -18,7 +18,7 @@ Built with [Slint](https://slint.dev). The nav rail switches between three tabs 
 
 The non-obvious run controls:
 
-- **Open chat UI** launches the URL the RUNNING server was started with (`AppState.launched_url`, snapshotted at launch — a save while running changes the file, not the listening process; the footer says "restart llama-server to apply"). When the GUI didn't start the server it falls back to the SAVED host+port (`AppState.chat_url`, derived in Rust via `ServerConfig::client_host()` — a `0.0.0.0` bind maps to `localhost`, since a listen address isn't a connectable one; the Integrations base URL uses the same mapping).
+- **Open chat UI** launches the URL the RUNNING server was started with (`AppState.launched_url`, snapshotted at launch — a save while running changes the file, not the listening process; the footer says "restart llama-server to apply"). When the GUI didn't start the server it falls back to the SAVED Base URL (`AppState.chat_url`, from `ServerConfig::opencode_base_url_or_default()` — uses the custom Base URL if set, otherwise auto-derives from host+port; a `0.0.0.0` bind maps to `localhost`, since a listen address isn't a connectable one).
 - **View logs** opens `logs\llama-server.log` in an independent, non-modal window (`LogWindow`) that follows the file live like `tail -f`, leaving the main window fully interactive while it is open. Auto-scroll (checkbox, on by default) parks the cursor at the end; untick it to read scrolled-back text while the server keeps writing. A header readout ("17.3 MB · updated 5 s ago") ages every tick, so a live-but-quiet tail (llama-server goes silent between requests) reads differently from a stuck one. Always enabled — the log outlives the process, so it's exactly what you want after a crash or failed start. The tail mechanics (500 ms timer armed/stopped with the window, bounded in-memory buffer, truncation/rotation handling) live in `gui\log_window.rs` and `ui\log_window.slint`.
 - **Refresh** (the button, or F5) re-reads `server.ini` / `presets.ini`, re-scans the models directory, reloads integration state, and re-probes the run status, llama-server version, and GPU devices (the exe can change under us — e.g. a `02-build.ps1` rerun). Use it after adding a model file or hand-editing a config file outside the GUI, without restarting.
 
@@ -28,7 +28,7 @@ Modal dialogs (New/Clone picker, Rename, the Delete confirmation, the discard-co
 
 Any navigation that would replace a dirty form — switching presets, Refresh/F5, opening New…/Clone…/Rename… — first asks to discard the unsaved edits (`gui::confirm_discard_then` parks the action Rust-side until the verdict). What counts as "dirty", and how the Integrations list survives a rebuild:
 
-- For Refresh/F5, "dirty" also counts pending Integrations toggles (`gui::integrations_dirty` — those rows have no form baseline, so it compares them against the on-disk `opencode.json`).
+- For Refresh/F5, "dirty" also counts pending Integrations toggles (`gui::integrations_dirty` — those rows have no form baseline, so it compares the enabled set against the on-disk `opencode.json`).
 - The other write paths that rebuild the Integrations list (preset save/rename/clone/delete, server save) MERGE instead of asking: existing rows keep their pending in-UI toggle, only new ids take the disk value (`gui::refresh_integrations` vs `refresh_integrations_reset`, whose reset-to-disk semantics are reserved for F5 — behind the guard — and the Integrations tab's own Save/Revert).
 
 ### Server tab — `server.ini`
@@ -41,6 +41,7 @@ Any navigation that would replace a dirty form — switching presets, Refresh/F5
   - **Prefill assistant** decides what happens when a request's *last* message is an assistant message: on (llama.cpp's own default) it is treated as the **start of the reply** and continued; off, it is treated as a finished turn and answered. It is a server-scope flag upstream (`set_examples({LLAMA_EXAMPLE_SERVER})`, read from the child's `params_base`), not a model property — hence the Server tab and not `presets.ini`. Only the *off* state produces a flag (`--no-prefill-assistant`); the affirmative is redundant, so leaving it on passes nothing.
   - **Log level** is a **dropdown, not a number**: `-lv` has exactly six levels (`OUTPUT:0`, `ERROR:1`, `WARN:2`, `INFO:3`, `TRACE:4`, `DEBUG:5` — `common/arg.cpp`), a message prints when its own level is ≤ the threshold, and a free-number field could only ever offer levels that do not exist. The framework default is `TRACE:4`; `DEBUG:5` is what also logs the per-tensor `buffer type overridden` lines that `tools\report-memory.ps1` reads. The form carries the *label*, and `server_form::LOG_LEVELS` is asserted equal to `Options.log_levels` in the e2e so the two lists cannot drift.
 - A read-only, multi-line **Command Line** card shows the exact `llama-server` invocation **Start** would run, one `--flag value` per line joined with the shell's line-continuation character (`` ` `` on Windows, `\` on Linux) so you can paste it straight into a terminal. It auto-sizes to its content (no inner scrollbar).
+- **Network** card: **Base URL** and **API Key** fields for integration endpoints (opencode.json + Claude Code). **Base URL** has a **Default** checkbox — checked = auto-derived from host+port, nothing written to server.ini; unchecked = editable override (useful behind a reverse proxy or LLM gateway). The stored value is the base without `/v1`; the suffix is appended automatically only for opencode.json's `baseURL`. **API Key** has a **No key** checkbox — checked = no key used, field disabled; unchecked = editable. These fields also affect the Open chat UI button URL.
 
 ### Models tab — `presets.ini`
 
@@ -132,7 +133,11 @@ Two things it does not promise. It only bites where the template actually gates 
 
 ### Integrations tab
 
-Toggle which models appear in `opencode.json`'s `provider.llama.cpp.models` list, and copy a Claude Code env-variable snippet.
+Three sections: **Models** (toggle presets to expose), **OpenCode** (provider status + action buttons), and **Claude Code** (env-variable snippet).
+
+The **OpenCode** box carries three buttons: **Save** writes the toggled model list to `opencode.json` (reading Base URL and API Key from server.ini), **Revert** reloads from disk, and **Open** launches Explorer on the folder containing `opencode.json` (`~/.config/opencode/`).
+
+The **Claude Code** snippet includes the API key from server.ini when set (otherwise `not-needed`).
 
 The one field that is not a straight copy is each model's **`limit.context`** — and it is not the preset's `ctx-size`. opencode fills a prompt up to whatever ceiling it is handed, so the number has to be the context **one request** can actually use, which llama.cpp derives from three things at once (`integrations::effective_ctx`):
 
@@ -208,7 +213,7 @@ The build script (`build.rs`) first regenerates `resources\llama.ico` if it's mi
 - GUI callbacks are `Send + 'static` closures passed to `slint::ComponentHandle::global()`.
 - Every property and callback the Rust side drives lives in the `AppState` global (`ui\state.slint`), declared once. Rust uses `app.global::<AppState>().set_x()/get_x()/on_x()`; the pages reference `AppState.x` directly. Adding a UI field that Rust reads/writes is a **one-file** change in `ui\state.slint` — no per-page re-declaration or forwarding. (The tray, `AppTray`, and the View-logs window, `LogWindow`, are separate roots and keep their own pushed-in state.)
 - Editable widgets that back a scalar `AppState` field bind two-way (`<=>`), never one-way (`prop: AppState.x`): a one-way binding breaks the instant the user edits the field (Slint's "overwritten bindings" rule), leaving it stale on the next preset switch / Revert. The recognized one-way cases are:
-  - **Read-only displays** — the `model_info_*` texts, the integration status/baseURL fields, the Server tab's Command Line `TextEdit`, the Claude-env snippet `LineEdit`.
+  - **Read-only displays** — the `model_info_*` texts, the integration status field, the Server tab's Command Line `TextEdit`, the Claude-env snippet `LineEdit`.
   - **Per-row model widgets inside a `for`** — the integration checkboxes (`checked: item.enabled` + a `toggled` callback), the GPU table's row checkbox + weight field, and the tensor-placement table's two row ComboBoxes + regex LineEdit. Safe ONLY because the sole in-place row write originates from the clicked/typed-into widget itself; any other change must rebuild the whole model so the delegates get fresh bindings (see `gui/integrations_tab.rs`, `gui::refresh_gpu_rows`, `gui::refresh_tensor_rows` — which is also why neither a GPU weight edit nor a regex keystroke touches another row, and so needs no rebuild: rebuilding mid-keystroke would recreate the field and drop the caret).
   - **The `labels`/`values`/`index` ComboBox split** — see `MappedComboBox`.
   - **String-valued ComboBoxes** — a `current-value` two-way binding does NOT move the selection on a model change (Slint #11970), so `EnumComboBox` drives `current-index` instead, derived from the string `value` and pushed on change like the slider below (see `ui\components.slint`).

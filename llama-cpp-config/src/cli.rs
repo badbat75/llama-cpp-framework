@@ -97,6 +97,12 @@ pub struct ServerSet {
     /// 1 error, 2 warning, 3 info, 4 trace, 5 debug.
     #[arg(long)]
     pub log_verbosity: Option<i32>,
+    /// Override the integration base URL (opencode.json + Claude Code). Empty = auto.
+    #[arg(long)]
+    pub opencode_base_url: Option<String>,
+    /// API key for the integration provider. Empty = none.
+    #[arg(long)]
+    pub opencode_api_key: Option<String>,
 }
 
 impl ServerSet {
@@ -160,6 +166,12 @@ impl ServerSet {
         }
         if let Some(lv) = self.log_verbosity {
             cfg.log_verbosity = Some(lv);
+        }
+        if let Some(url) = &self.opencode_base_url {
+            cfg.opencode_base_url = server_cfg::opt_nonblank(Some(url.clone()));
+        }
+        if let Some(key) = &self.opencode_api_key {
+            cfg.opencode_api_key = server_cfg::opt_nonblank(Some(key.clone()));
         }
     }
 }
@@ -244,9 +256,7 @@ fn show_lines(cfg: &server_cfg::ServerConfig) -> String {
     );
     row(
         "OverrideTensor:",
-        cfg.override_tensor
-            .clone()
-            .unwrap_or_else(|| "none".into()),
+        cfg.override_tensor.clone().unwrap_or_else(|| "none".into()),
     );
     row(
         "MmprojDevice:",
@@ -273,6 +283,18 @@ fn show_lines(cfg: &server_cfg::ServerConfig) -> String {
         "LogVerbosity:",
         cfg.log_verbosity
             .map_or_else(|| "4 (default)".into(), |v| v.to_string()),
+    );
+    row(
+        "OpencodeBaseUrl:",
+        cfg.opencode_base_url
+            .clone()
+            .unwrap_or_else(|| "auto (host:port, /v1 appended)".into()),
+    );
+    row(
+        "OpencodeApiKey:",
+        cfg.opencode_api_key
+            .clone()
+            .unwrap_or_else(|| "(none)".into()),
     );
     out
 }
@@ -369,6 +391,8 @@ mod tests {
             fit: Some(true),
             prefill_assistant: Some(false),
             log_verbosity: Some(2),
+            opencode_base_url: Some("https://llm.example.com".into()),
+            opencode_api_key: Some("sk-test-key".into()),
         };
         let mut cfg = ServerConfig::default();
         set.apply(&mut cfg);
@@ -385,7 +409,7 @@ mod tests {
             cache_reuse: Some(256),
             threads_batch: Some(16),
             models_max: Some(3),
-            models_dir: Some(r"D:\models".into()),
+            models_dir: Some("D:\\models".into()),
             device: Some("ROCm1,CUDA0".into()),
             split_mode: Some("row".into()),
             tensor_split: Some("3,1".into()),
@@ -395,6 +419,8 @@ mod tests {
             fit: Some(true),
             prefill_assistant: Some(false),
             log_verbosity: Some(2),
+            opencode_base_url: Some("https://llm.example.com".into()),
+            opencode_api_key: Some("sk-test-key".into()),
         };
         assert_eq!(cfg, expected);
     }
@@ -423,6 +449,8 @@ mod tests {
             fit: Some(true),
             prefill_assistant: Some(false),
             log_verbosity: Some(2),
+            opencode_base_url: Some("https://llm.example.com".into()),
+            opencode_api_key: Some("sk-test-key".into()),
         };
         // The exhaustive destructure breaks compilation the moment a field is
         // added, until this test decides what to do with it — but the
@@ -448,6 +476,8 @@ mod tests {
             fit,
             prefill_assistant,
             log_verbosity,
+            opencode_base_url,
+            opencode_api_key,
         } = cfg.clone();
         let needles = [
             ("Port:", port.unwrap().to_string()),
@@ -466,11 +496,10 @@ mod tests {
             ("MmprojDevice:", mmproj_device.unwrap()),
             ("WebuiMcpProxy:", webui_mcp_proxy.unwrap().to_string()),
             ("Fit:", fit.unwrap().to_string()),
-            (
-                "PrefillAssistant:",
-                prefill_assistant.unwrap().to_string(),
-            ),
+            ("PrefillAssistant:", prefill_assistant.unwrap().to_string()),
             ("LogVerbosity:", log_verbosity.unwrap().to_string()),
+            ("OpencodeBaseUrl:", opencode_base_url.unwrap()),
+            ("OpencodeApiKey:", opencode_api_key.unwrap()),
         ];
         let out = show_lines(&cfg);
         for (label, value) in needles {

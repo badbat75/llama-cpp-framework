@@ -558,6 +558,8 @@ mod tests {
             // The NEGATIVE presence flag: Some(false) is the state that emits one.
             prefill_assistant: Some(false),
             log_verbosity: Some(2),
+            opencode_base_url: Some("https://llm.example.com".into()),
+            opencode_api_key: Some("sk-test-key".into()),
         };
         let ServerConfig {
             port,
@@ -581,6 +583,13 @@ mod tests {
             fit,
             prefill_assistant,
             log_verbosity,
+            // Integration-only: not a llama-server flag. Used by opencode.json
+            // and Claude Code snippet. The GUI edits it on the Server tab
+            // (Network section).
+            opencode_base_url: _,
+            // Integration-only: not a llama-server flag. Written as apiKey in
+            // opencode.json. The GUI edits it on the Server tab (Network section).
+            opencode_api_key: _,
         } = cfg.clone();
         let a = args_for(&cfg);
         let pair = |flag: &str, val: String| {
@@ -732,7 +741,10 @@ mod tests {
         assert!(env_vars(&ServerConfig::default()).is_empty());
 
         let out = render_command_line(r"C:\bin\llama-server.exe", &[], &env_vars(&cfg));
-        assert!(out.contains("MTMD_BACKEND_DEVICE"), "no env line in:\n{out}");
+        assert!(
+            out.contains("MTMD_BACKEND_DEVICE"),
+            "no env line in:\n{out}"
+        );
         assert!(out.contains("ROCm1"));
         // The env assignment is its own statement — continuing it into the
         // command would make the paste a syntax error.

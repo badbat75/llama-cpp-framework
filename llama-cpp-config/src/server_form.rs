@@ -112,6 +112,16 @@ pub fn config_to_form(cfg: &server_cfg::ServerConfig) -> ServerForm {
         // "default" checkbox: the launch always passes -lv. The form carries the
         // LABEL ("TRACE:4"), which is what the EnumComboBox matches on.
         log_verbosity: log_level_label(cfg.log_verbosity_or_default()),
+        // Base URL: when unset, show auto-derived and check the default box.
+        opencode_base_url: cfg
+            .opencode_base_url
+            .clone()
+            .unwrap_or_else(|| cfg.opencode_base_url_or_default())
+            .into(),
+        base_url_default: cfg.opencode_base_url.is_none(),
+        // API Key: when unset, show empty and check the nokey box.
+        opencode_api_key: cfg.opencode_api_key.clone().unwrap_or_default().into(),
+        api_key_nokey: cfg.opencode_api_key.is_none(),
     }
 }
 
@@ -177,6 +187,22 @@ pub fn form_to_config(f: &ServerForm) -> server_cfg::ServerConfig {
         // The one field with no "unset" state (the launch always passes -lv): the
         // form carries the dropdown's label, and `parse_log_level` maps it back.
         log_verbosity: Some(parse_log_level(f.log_verbosity.as_str())),
+        // Default checked = None (auto-derived); unchecked = save the value.
+        // Strip trailing slashes then /v1 so the convention "store without
+        // suffix" holds even if the user typed it (e.g. https://gw.example.com/v1/).
+        opencode_base_url: if f.base_url_default {
+            None
+        } else {
+            let url = f.opencode_base_url.trim().trim_end_matches('/');
+            let cleaned = url.strip_suffix("/v1").unwrap_or(url).trim_end_matches('/');
+            server_cfg::opt_nonblank(Some(cleaned.to_string()))
+        },
+        // No key checked = None; unchecked = save the value.
+        opencode_api_key: if f.api_key_nokey {
+            None
+        } else {
+            server_cfg::opt_nonblank(Some(f.opencode_api_key.to_string()))
+        },
     }
 }
 
@@ -212,6 +238,8 @@ mod tests {
             // Non-default, so the round-trip is not vacuous for it.
             prefill_assistant: Some(false),
             log_verbosity: Some(2),
+            opencode_base_url: Some("https://proxy.example.com".into()),
+            opencode_api_key: Some("sk-test-key".into()),
         };
         assert_eq!(form_to_config(&config_to_form(&cfg)), cfg);
     }
@@ -260,5 +288,31 @@ mod tests {
         let cfg = form_to_config(&form);
         assert_eq!(cfg.threads, None);
         assert_eq!(cfg.threads_batch, None);
+    }
+
+    /// form_to_config strips trailing /v1 and / from the Base URL so the
+    /// convention "store without suffix" holds even when the user typed it.
+    #[test]
+    fn base_url_strips_trailing_v1_and_slash() {
+        let cases = [
+            ("https://gw.example.com/v1/", "https://gw.example.com"),
+            ("https://gw.example.com/v1", "https://gw.example.com"),
+            ("https://gw.example.com/", "https://gw.example.com"),
+            ("https://gw.example.com", "https://gw.example.com"),
+            ("https://gw.example.com/v1//", "https://gw.example.com"),
+        ];
+        for (input, expected) in cases {
+            let form = ServerForm {
+                opencode_base_url: input.into(),
+                base_url_default: false,
+                ..Default::default()
+            };
+            let cfg = form_to_config(&form);
+            assert_eq!(
+                cfg.opencode_base_url.as_deref(),
+                Some(expected),
+                "input: {input}"
+            );
+        }
     }
 }

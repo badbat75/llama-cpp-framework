@@ -47,8 +47,10 @@ pub(super) fn wire(app: &AppWindow) {
                 .filter(|m| m.enabled)
                 .map(|m| m.id.to_string())
                 .collect();
-            let base_url = s.get_integration_base_url().to_string();
-            match integrations::save_opencode_models(&checked, &base_url) {
+            let cfg = server_cfg::load();
+            let base_url = cfg.opencode_base_url_or_default();
+            let api_key = cfg.opencode_api_key.as_deref();
+            match integrations::save_opencode_models(&checked, &base_url, api_key) {
                 Ok(()) => {
                     set_status(&app, "Saved model list to opencode.json.".into(), false);
                     refresh_integrations_reset(&app);
@@ -65,6 +67,14 @@ pub(super) fn wire(app: &AppWindow) {
             };
             refresh_integrations_reset(&app);
             set_status(&app, "Reloaded integration state.".into(), false);
+        });
+    }
+    {
+        app.global::<AppState>().on_open_opencode_folder(|| {
+            let path = paths::opencode_user_config();
+            if let Some(parent) = path.parent() {
+                let _ = std::process::Command::new("explorer").arg(parent).spawn();
+            }
         });
     }
 }

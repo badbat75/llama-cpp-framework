@@ -248,8 +248,14 @@ pub(super) fn run(app: &AppWindow) {
     );
     let rows = st.get_preset_gpu_rows();
     let unknown = rows.row_data(0).expect("row 0");
-    assert!(unknown.enabled && !unknown.detected, "the stale CUDA1 pin is kept");
-    assert_eq!(rows.row_data(1).expect("row 1").vram.as_str(), "12.0 GB (10.6 free)");
+    assert!(
+        unknown.enabled && !unknown.detected,
+        "the stale CUDA1 pin is kept"
+    );
+    assert_eq!(
+        rows.row_data(1).expect("row 1").vram.as_str(),
+        "12.0 GB (10.6 free)"
+    );
 
     let gpu_checkbox = |id: &str| {
         ElementHandle::find_by_accessible_label(app, format!("gpu-{id}").as_str())
@@ -258,7 +264,11 @@ pub(super) fn run(app: &AppWindow) {
     };
     gpu_checkbox("CUDA1").invoke_accessible_default_action(); // uncheck the stale pin
     assert_eq!(st.get_form().device.as_str(), "");
-    assert_eq!(row_ids(), ["CUDA0", "ROCm1"], "dropping the pin drops its row");
+    assert_eq!(
+        row_ids(),
+        ["CUDA0", "ROCm1"],
+        "dropping the pin drops its row"
+    );
     gpu_checkbox("ROCm1").invoke_accessible_default_action();
     gpu_checkbox("CUDA0").invoke_accessible_default_action();
     assert_eq!(
@@ -266,7 +276,11 @@ pub(super) fn run(app: &AppWindow) {
         "ROCm1,CUDA0",
         "a checked device is APPENDED — the split order is the order you checked"
     );
-    assert_eq!(row_ids(), ["ROCm1", "CUDA0"], "the rows follow the split order");
+    assert_eq!(
+        row_ids(),
+        ["ROCm1", "CUDA0"],
+        "the rows follow the split order"
+    );
     assert_eq!(st.get_preset_gpu_selected(), 2);
     assert_eq!(
         st.get_form().tensor_split.as_str(),
@@ -283,7 +297,11 @@ pub(super) fn run(app: &AppWindow) {
         "3,1",
         "the weight follows its device's position in the list"
     );
-    assert_eq!(st.get_preset_gpu_total(), 4, "the Share column's denominator");
+    assert_eq!(
+        st.get_preset_gpu_total(),
+        4,
+        "the Share column's denominator"
+    );
     assert!(
         st.get_preset_gpu_summary().contains("--tensor-split 3,1"),
         "summary: {}",
@@ -303,8 +321,16 @@ pub(super) fn run(app: &AppWindow) {
     // way to get there. The weight must ride along with its device.
     st.invoke_preset_gpu_move("CUDA0".into(), -1);
     assert_eq!(st.get_form().device.as_str(), "CUDA0,ROCm1");
-    assert_eq!(st.get_form().tensor_split.as_str(), "1,3", "weights rode along");
-    assert_eq!(row_ids(), ["CUDA0", "ROCm1"], "the rows follow the new order");
+    assert_eq!(
+        st.get_form().tensor_split.as_str(),
+        "1,3",
+        "weights rode along"
+    );
+    assert_eq!(
+        row_ids(),
+        ["CUDA0", "ROCm1"],
+        "the rows follow the new order"
+    );
     st.invoke_preset_gpu_move("CUDA0".into(), 1); // back, so the INI below is 3,1
     assert_eq!(st.get_form().device.as_str(), "ROCm1,CUDA0");
 
@@ -338,7 +364,11 @@ pub(super) fn run(app: &AppWindow) {
     // load. This drives the real callbacks and asserts the string that reaches the
     // INI, comma and equals signs included.
     let ot_rows = || st.get_preset_tensor_rows();
-    assert_eq!(ot_rows().row_count(), 0, "a preset starts with no overrides");
+    assert_eq!(
+        ot_rows().row_count(),
+        0,
+        "a preset starts with no overrides"
+    );
     assert!(
         st.get_preset_tensor_summary().starts_with("(no overrides"),
         "summary: {}",
@@ -491,10 +521,9 @@ pub(super) fn run(app: &AppWindow) {
         r"token_embd\.weight=CUDA0",
         "…and the preset's rules stay exactly where they were"
     );
-    assert!(
-        st.get_server_tensor_summary()
-            .contains(r"--override-tensor token_embd\.weight=ROCm1")
-    );
+    assert!(st
+        .get_server_tensor_summary()
+        .contains(r"--override-tensor token_embd\.weight=ROCm1"));
     // The Models tab must now say, out loud, that its own table is dead.
     let warn = st.get_tensor_override_warning();
     assert!(

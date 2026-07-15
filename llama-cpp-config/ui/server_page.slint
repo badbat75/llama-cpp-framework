@@ -57,6 +57,32 @@ export component ServerPage inherits ScrollView {
                     picked(v) => { AppState.server_form.hostname = v; }
                 }
             }
+            LabeledField {
+                label: "Base URL";
+                hint: "Base URL for integrations (opencode.json + Claude Code).\nDefault = auto from host+port (/v1 appended for opencode.json). Uncheck to override for proxy/gateway.";
+                DefaultLineEdit {
+                    edit_label: "server-base-url";
+                    input_type: InputType.text;
+                    default <=> AppState.server_form.base_url_default;
+                    value <=> AppState.server_form.opencode_base_url;
+                }
+            }
+            LabeledField {
+                label: "API Key";
+                hint: "Authentication key for the integration provider.\nNo key = none. Used when behind a proxy or LLM gateway that requires an API key.";
+                HorizontalLayout {
+                    spacing: 8px;
+                    CheckBox {
+                        text: "No key";
+                        checked <=> AppState.server_form.api_key_nokey;
+                    }
+                    LineEdit {
+                        enabled: !AppState.server_form.api_key_nokey;
+                        text <=> AppState.server_form.opencode_api_key;
+                        horizontal-stretch: 1;
+                    }
+                }
+            }
         }
 
         SectionCard {

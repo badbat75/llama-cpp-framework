@@ -297,7 +297,6 @@ export global AppState {
         || show_discard_dialog || show_delete_dialog || show_chat_template_dialog;
 
     // ── Integrations tab state ─────────────────────────────────────
-    in-out property <string> integration_base_url: "";
     in-out property <[IntegrationModel]> integration_models;
     in-out property <bool> integration_provider_active: false;
     in-out property <string> integration_claude_env: "";
@@ -390,4 +389,5 @@ export global AppState {
     callback toggle_integration_model(int);
     callback save_integrations();
     callback revert_integrations();
+    callback open_opencode_folder();
 }

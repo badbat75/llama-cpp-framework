@@ -508,7 +508,10 @@ mod tests {
         let (labels, values) = device_options(&devs(), &s);
         assert_eq!(values.last().unwrap(), "SYCL3");
         assert!(labels.last().unwrap().starts_with("(custom)"));
-        assert_eq!(rows[0].device_index, 3, "the (custom) entry, after the 3 real ones");
+        assert_eq!(
+            rows[0].device_index, 3,
+            "the (custom) entry, after the 3 real ones"
+        );
     }
 
     // ── Rows ──────────────────────────────────────────────────────────────
@@ -524,7 +527,10 @@ mod tests {
         assert!(rows[0].detected);
         assert_eq!(rows[0].problem, "");
         assert_eq!(rows[1].kind_index, 2, "MoE experts");
-        assert_eq!(rows[1].device_index, 2, "CPU is offered, unlike in gpu_split");
+        assert_eq!(
+            rows[1].device_index, 2,
+            "CPU is offered, unlike in gpu_split"
+        );
     }
 
     // A hand-written regex lands on the Custom row with its text intact — the

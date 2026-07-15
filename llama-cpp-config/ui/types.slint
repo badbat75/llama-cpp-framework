@@ -156,6 +156,14 @@ export struct ServerForm {
     // `server_form::log_level_label` / `parse_log_level` map it to the int, and the
     // Rust list is asserted against the Slint one in the e2e (they must not drift).
     log_verbosity: string,
+    // Integration base URL (server.ini OpencodeBaseUrl). When base_url_default is
+    // true, the field shows the auto-derived URL and nothing is written to server.ini.
+    opencode_base_url: string,
+    base_url_default: bool,
+    // API key for the integration provider (server.ini OpencodeApiKey). When
+    // api_key_nokey is true, the field is disabled and no key is used.
+    opencode_api_key: string,
+    api_key_nokey: bool,
 }
 
 export struct IntegrationModel {

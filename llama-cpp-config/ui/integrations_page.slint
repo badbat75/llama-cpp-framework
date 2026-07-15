@@ -1,10 +1,10 @@
 // IntegrationsPage: the integrations tab. All state lives in AppState (state.slint).
 //
-// Layout (grep `heading:`): Provider → Models (toggle list) → Claude Code
-// cards, then the FormActions row.
+// Layout (grep `heading:`): Models (toggle list) → OpenCode (status + buttons)
+// → Claude Code card.
 
-import { LineEdit, CheckBox, ScrollView, Palette } from "std-widgets.slint";
-import { SectionCard, LabeledField, FormActions, Tokens } from "components.slint";
+import { LineEdit, CheckBox, Button, ScrollView, Palette } from "std-widgets.slint";
+import { SectionCard, LabeledField, Tokens } from "components.slint";
 import { AppState } from "state.slint";
 
 export component IntegrationsPage inherits ScrollView {
@@ -27,31 +27,7 @@ export component IntegrationsPage inherits ScrollView {
         }
 
         SectionCard {
-            heading: "Provider";
-            LabeledField {
-                label: "Status";
-                Text {
-                    text: AppState.integration_provider_active
-                        ? "llama-server provider active in opencode.json"
-                        : "No llama-server provider in opencode.json";
-                    color: AppState.integration_provider_active ? Tokens.ok : Palette.foreground.transparentize(Tokens.muted);
-                    font-size: 13px;
-                    vertical-alignment: center;
-                }
-            }
-            LabeledField {
-                label: "baseURL";
-                hint: "OpenAI-compatible endpoint exposed by llama-server (host:port + /v1).\nPoint OpenCode / Claude Code at this URL.";
-                LineEdit {
-                    text: AppState.integration_base_url;
-                    read-only: true;
-                    horizontal-stretch: 1;
-                }
-            }
-        }
-
-        SectionCard {
-            heading: "Models (toggle presets to expose)";
+            heading: "Models";
             content_padding: 8px;
 
             if AppState.integration_models.length == 0 : Text {
@@ -107,6 +83,36 @@ export component IntegrationsPage inherits ScrollView {
         }
 
         SectionCard {
+            heading: "OpenCode";
+            LabeledField {
+                label: "Status";
+                Text {
+                    text: AppState.integration_provider_active
+                        ? "llama-server provider active in opencode.json"
+                        : "No llama-server provider in opencode.json";
+                    color: AppState.integration_provider_active ? Tokens.ok : Palette.foreground.transparentize(Tokens.muted);
+                    font-size: 13px;
+                    vertical-alignment: center;
+                }
+            }
+            HorizontalLayout {
+                spacing: 8px;
+                Button {
+                    text: "Save";
+                    clicked => { AppState.save_integrations(); }
+                }
+                Button {
+                    text: "Revert";
+                    clicked => { AppState.revert_integrations(); }
+                }
+                Button {
+                    text: "Open";
+                    clicked => { AppState.open_opencode_folder(); }
+                }
+            }
+        }
+
+        SectionCard {
             heading: "Claude Code";
             content_padding: 12px;
             Text {
@@ -121,12 +127,6 @@ export component IntegrationsPage inherits ScrollView {
                 font-size: 11px;
                 horizontal-stretch: 1;
             }
-        }
-
-        FormActions {
-            save_text: "Save to opencode.json";
-            save => { AppState.save_integrations(); }
-            revert => { AppState.revert_integrations(); }
         }
     }
 }

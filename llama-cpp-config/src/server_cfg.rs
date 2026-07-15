@@ -143,6 +143,15 @@ pub struct ServerConfig {
     /// 3 info, 4 trace, 5 debug (`common/arg.cpp`, `common/log.h`) — which is why
     /// the GUI offers them as a dropdown rather than a free number.
     pub log_verbosity: Option<i32>,
+    /// Explicit override for the integration base URL (opencode.json + Claude Code
+    /// snippet). When set, this value is used instead of auto-deriving from
+    /// hostname + port. Useful for reverse-proxy setups where the client-facing
+    /// URL differs from the server bind address. None = auto-derive from server.ini.
+    pub opencode_base_url: Option<String>,
+    /// API key for the integration provider. Written as `apiKey` in opencode.json
+    /// and used by Claude Code env snippet. Useful when the server is exposed
+    /// through a proxy or LLM gateway that requires authentication. None = unset.
+    pub opencode_api_key: Option<String>,
 }
 
 // ── Defaults & accessors ─────────────────────────────────────────────────
@@ -222,6 +231,17 @@ impl ServerConfig {
         self.log_verbosity.unwrap_or(4)
     }
 
+    /// The integration base URL: explicit override if set, otherwise auto-derived
+    /// from hostname + port + `/v1` suffix. Used by opencode.json and Claude Code.
+    pub fn opencode_base_url_or_default(&self) -> String {
+        if let Some(url) = self.opencode_base_url.as_deref().map(str::trim) {
+            if !url.is_empty() {
+                return url.to_string();
+            }
+        }
+        format!("http://{}:{}", self.client_host(), self.port_or_default())
+    }
+
     /// The host a CLIENT on this machine should connect to. Same as
     /// `hostname_or_default` except the all-interfaces bind `0.0.0.0` maps to
     /// `localhost`: it is a listen address, not a connectable one (Windows
@@ -265,8 +285,12 @@ fn from_keys(keys: &std::collections::BTreeMap<String, String>) -> ServerConfig 
         mmproj_device: opt_nonblank(keys.get("MmprojDevice").cloned()),
         webui_mcp_proxy: keys.get("WebuiMcpProxy").and_then(|v| ini::parse_bool(v)),
         fit: keys.get("Fit").and_then(|v| ini::parse_bool(v)),
-        prefill_assistant: keys.get("PrefillAssistant").and_then(|v| ini::parse_bool(v)),
+        prefill_assistant: keys
+            .get("PrefillAssistant")
+            .and_then(|v| ini::parse_bool(v)),
         log_verbosity: keys.get("LogVerbosity").and_then(|v| ini::parse_int(v)),
+        opencode_base_url: opt_nonblank(keys.get("OpencodeBaseUrl").cloned()),
+        opencode_api_key: opt_nonblank(keys.get("OpencodeApiKey").cloned()),
     }
 }
 
@@ -308,7 +332,10 @@ fn validate_for_save(cfg: &ServerConfig) -> io::Result<()> {
     let overrides = cfg.override_tensor.clone().unwrap_or_default();
     ini::reject_comment_markers("OverrideTensor", &overrides)?;
     crate::tensor_override::validate(&overrides)
-        .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
+    ini::reject_comment_markers("OpencodeBaseUrl", cfg.opencode_base_url.as_deref().unwrap_or(""))?;
+    ini::reject_comment_markers("OpencodeApiKey", cfg.opencode_api_key.as_deref().unwrap_or(""))?;
+    Ok(())
 }
 
 /// Render the whole server.ini body. Pure (no IO) — the file-writing wrapper is
@@ -387,6 +414,16 @@ fn render(cfg: &ServerConfig) -> String {
         "MmprojDevice",
         "; MmprojDevice = ROCm1  ; GPU for the image encoder (env MTMD_BACKEND_DEVICE); blank = first GPU found",
     );
+    let opencode_base_url_line = str_line_or_hint(
+        cfg.opencode_base_url.as_deref(),
+        "OpencodeBaseUrl",
+        "; OpencodeBaseUrl = https://llm.example.com  ; base URL for integrations (opencode.json + Claude Code); /v1 appended automatically; blank = auto from host+port",
+    );
+    let opencode_api_key_line = str_line_or_hint(
+        cfg.opencode_api_key.as_deref(),
+        "OpencodeApiKey",
+        "; OpencodeApiKey = sk-xxx  ; API key for proxy/gateway authentication (opencode.json apiKey + Claude Code); blank = none",
+    );
 
     let mlock_lit = if mlock { "true" } else { "false" };
     // Always written like Mlock (a bool with a framework default), so an unset
@@ -464,6 +501,11 @@ LogVerbosity = {log_verbosity}
 ; first GPU backend it finds, where it holds VRAM but only computes on image
 ; requests. Name a device here to move it (e.g. onto the model's own GPU).
 {mmproj_device_line}
+; OpencodeBaseUrl overrides the auto-derived integration URL (host:port/v1).
+; OpencodeApiKey is the provider's API key for authentication.
+; Both are useful when exposing llama-server through a reverse proxy or LLM gateway.
+{opencode_base_url_line}
+{opencode_api_key_line}
 
 ; ModelsDir: root directory. Models are scanned from ModelsDir/models/, mmproj
 ; projection files from ModelsDir/mmprojs/, MTP/draft heads from ModelsDir/mtps/,
@@ -530,6 +572,8 @@ mod tests {
             // not vacuous for it.
             prefill_assistant: Some(false),
             log_verbosity: Some(2),
+            opencode_base_url: Some("https://llm.example.com".into()),
+            opencode_api_key: Some("sk-proxy-key-123".into()),
         };
         assert_eq!(round_trip(&original), original);
     }
@@ -642,7 +686,10 @@ mod tests {
         assert!(validate_for_save(&with("")).is_ok(), "unset is fine");
 
         let err = validate_for_save(&with(r"token_embd\.weight=ROCm0,dangling")).expect_err("rule");
-        assert!(err.to_string().contains("dangling"), "quotes the rule: {err}");
+        assert!(
+            err.to_string().contains("dangling"),
+            "quotes the rule: {err}"
+        );
 
         let err = validate_for_save(&with("blk#1=CPU")).expect_err("comment marker");
         assert!(
@@ -664,5 +711,29 @@ mod tests {
         assert_eq!(with("192.168.1.5").client_host(), "192.168.1.5");
         assert_eq!(with("localhost").client_host(), "localhost");
         assert_eq!(ServerConfig::default().client_host(), "localhost");
+    }
+
+    // OpencodeBaseUrl and OpencodeApiKey are free-text fields written to
+    // server.ini — like OverrideTensor, a comment marker would reload truncated.
+    #[test]
+    fn save_validation_rejects_comment_markers_in_integration_fields() {
+        let with_key = |k: &str| ServerConfig {
+            models_dir: Some(r"E:\llm".into()),
+            opencode_api_key: Some(k.into()),
+            ..Default::default()
+        };
+        let with_url = |u: &str| ServerConfig {
+            models_dir: Some(r"E:\llm".into()),
+            opencode_base_url: Some(u.into()),
+            ..Default::default()
+        };
+        assert!(validate_for_save(&with_key("sk-abc123")).is_ok());
+        assert!(validate_for_save(&with_url("https://gw.example.com")).is_ok());
+
+        let err = validate_for_save(&with_key("sk#bad")).expect_err("comment marker");
+        assert!(err.to_string().contains("OpencodeApiKey"), "{err}");
+
+        let err = validate_for_save(&with_url("https://gw;bad")).expect_err("comment marker");
+        assert!(err.to_string().contains("OpencodeBaseUrl"), "{err}");
     }
 }
