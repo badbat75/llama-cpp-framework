@@ -57,3 +57,26 @@ Cross-cutting rules the recipes rely on:
 - Editable widgets bind **two-way** (`<=>`) to `AppState.…` — a one-way binding goes stale after the first edit. The sanctioned one-way exceptions (read-only displays, `for`-row widgets, `MappedComboBox`, the Slider/AutoSlider push, `SegmentedControl`) are catalogued in the crate README's conventions section.
 - Nearly every step is guarded by a test that fails when skipped: INI and form round-trips (`presets.rs` / `form.rs`; `server_cfg.rs` / `server_form.rs`), the CLI leg's exhaustive-struct tests (`cli.rs`), the launch-arg leg (`runstate.rs`), widget-binding staleness (`src\tests\ui_bindings.rs` — one widget PER KIND, plus the one-way-binding text lint `src\tests\binding_lint.rs`) and the Models/Integrations callback funnel (`src\tests\save_flow.rs`). The unguarded remainder — nothing fails for either: forgetting the widget entirely (the field just never appears in the UI), and skipping the path-field `validate_for_save` step (a `;`/`#` path then saves fine and reloads truncated; see the checklists' final step).
 - Run the e2e tests with `cargo test` (debug profile), **not** `--release` — they need Slint element debug info that `build.rs` emits for non-release builds only. Full test-topology rationale (single shared `#[test]`, `LLAMA_CPP_CONFIG_DATA_ROOT` redirect, `src\tests\` vs `tests\`): crate README "Tests" section.
+
+## Release process
+
+1. **Bump version** in `llama-cpp-config\Cargo.toml` (`[package] version = "X.Y.Z"`).
+2. **Run `02-build.ps1`** — builds llama.cpp (fetches latest `bNNNN` tag) and llama-cpp-config.
+3. **Run `03-package.ps1`** — stages binaries, builds NSIS installer to `.\dist\llama-cpp-framework-vX.Y.Z-bNNNN-x64-setup.exe`.
+4. **Commit** all changes with a descriptive message summarizing what changed.
+5. **Tag**: `git tag -a X.Y.Z -m "Release vX.Y.Z: <short summary>..." && git push origin X.Y.Z`
+   - Tag name: **no `v` prefix** (e.g. `1.5.1`, not `v1.5.1`).
+   - Tag message: starts with `Release vX.Y.Z: <summary>` on first line, then blank line, then bullet points of changes. Match the style of previous tags (`git show 1.5.0`).
+6. **Create release**: `gh release create X.Y.Z --title "vX.Y.Z (llama.cpp bNNNN)" --notes "<markdown body>"`
+   - Title format: **`vX.Y.Z (llama.cpp bNNNN)`** (with `v` prefix, includes bundled llama.cpp build).
+   - Body: detailed markdown with sections (`##`, `###`), bullet points, code formatting. Match the style of previous releases (`gh release view 1.5.0`). End with test count and bundled llama.cpp build.
+7. **Attach installer**: `gh release upload X.Y.Z dist\llama-cpp-framework-vX.Y.Z-bNNNN-x64-setup.exe`
+
+**Formatting conventions** (verified against 1.5.0):
+
+| Artifact | Format | Example |
+|---|---|---|
+| Tag name | `X.Y.Z` (no `v`) | `1.5.1` |
+| Tag message | `Release vX.Y.Z: <summary>\n\n- bullets...` | `Release v1.5.1: proxy/gateway support...` |
+| Release title | `vX.Y.Z (llama.cpp bNNNN)` | `v1.5.1 (llama.cpp b10017)` |
+| Installer name | `llama-cpp-framework-vX.Y.Z-bNNNN-x64-setup.exe` | `llama-cpp-framework-v1.5.1-b10017-x64-setup.exe` |
