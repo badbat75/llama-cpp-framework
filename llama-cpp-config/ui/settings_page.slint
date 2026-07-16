@@ -1,0 +1,66 @@
+// SettingsPage: the configurator's own preferences (not llama-server's — those
+// are the Server tab). All state lives in AppState (state.slint).
+//
+// No Save/Revert row: each toggle applies the moment it is clicked. The
+// CheckBox binds two-way, so the property is already flipped when `toggled`
+// fires; the Rust handler persists it and, on a failed write, pushes the real
+// state back through that same binding (src/gui/settings_tab.rs).
+
+import { CheckBox, ScrollView, Palette } from "std-widgets.slint";
+import { SectionCard, LabeledField, Tokens } from "components.slint";
+import { AppState } from "state.slint";
+
+export component SettingsPage inherits ScrollView {
+    VerticalLayout {
+        padding: 24px;
+        spacing: 16px;
+        alignment: start;
+
+        Text {
+            text: "Settings";
+            font-size: 22px;
+            font-weight: 600;
+            color: Palette.foreground;
+        }
+        Text {
+            text: "Preferences for the configurator itself. Changes apply immediately — there is nothing to save.";
+            color: Palette.foreground.transparentize(Tokens.muted);
+            font-size: 12px;
+            wrap: word-wrap;
+        }
+
+        SectionCard {
+            heading: "Startup";
+            LabeledField {
+                label: "Start with Windows";
+                hint: "Adds llama-cpp-config to your Windows startup apps (the per-user Run registry entry — the same one Task Manager's Startup apps panel manages).\nCombine it with the llama-server toggle below to bring the server up at logon too.\nIf the app is moved or updated to a new location, re-tick this to refresh the stored path.";
+                CheckBox {
+                    text: "launch llama-cpp-config at logon";
+                    enabled: AppState.startup_supported;
+                    checked <=> AppState.start_with_windows;
+                    toggled => { AppState.toggle_start_with_windows(); }
+                }
+            }
+            LabeledField {
+                label: "Start minimized";
+                hint: "How the logon launch above comes up: minimized to the system tray (recommended — nothing opens over your session, the tray icon is the handle), or as the open configurator window.\nOnly applies to the 'Start with Windows' launch — starting the app yourself always opens the window.";
+                CheckBox {
+                    text: "start minimized to the system tray at logon";
+                    // Shapes the Run entry's command, so it needs one to shape.
+                    enabled: AppState.startup_supported && AppState.start_with_windows;
+                    checked <=> AppState.start_minimized_to_tray;
+                    toggled => { AppState.toggle_start_minimized(); }
+                }
+            }
+            LabeledField {
+                label: "Start llama-server";
+                hint: "Starts llama-server automatically whenever llama-cpp-config launches — any launch, not just the logon one.\nUses the same start path as the Start button (a failure shows in the footer, and View logs has the details). Does nothing when the server is already running.";
+                CheckBox {
+                    text: "start llama-server when llama-cpp-config launches";
+                    checked <=> AppState.start_server_on_launch;
+                    toggled => { AppState.toggle_start_server_on_launch(); }
+                }
+            }
+        }
+    }
+}

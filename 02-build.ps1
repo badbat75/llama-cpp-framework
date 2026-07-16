@@ -36,6 +36,24 @@ if ($LASTEXITCODE -ne 0) { throw "git checkout $llamaTag failed" }
 
 $buildDir = Join-Path $PSScriptRoot "build\llama.cpp-cmake"
 New-Item -ItemType Directory -Path $buildDir -Force | Out-Null
+
+# A CMakeCache.txt written by a previous toolchain pins the old compiler path
+# (and the HIP paths derived from it): when the ROCm dist moves — e.g. a
+# TheRock version bump relocating HIP_PATH — the cached entries poison the
+# reconfigure. Detect the compiler mismatch and start clean. Only comparable
+# when the config carries a full path (01-configure writes one when it can).
+$cacheFile = Join-Path $buildDir 'CMakeCache.txt'
+if ((Test-Path $cacheFile) -and [System.IO.Path]::IsPathRooted($cfg.CCompiler)) {
+    $cachedCc = Select-String -Path $cacheFile -Pattern '^CMAKE_C_COMPILER:[^=]+=(.+)$' |
+        Select-Object -First 1 | ForEach-Object { $_.Matches[0].Groups[1].Value }
+    if ($cachedCc -and (($cachedCc -replace '/', '\') -ne ($cfg.CCompiler -replace '/', '\'))) {
+        Write-Host "Cached compiler changed:" -ForegroundColor Yellow
+        Write-Host "  $cachedCc -> $($cfg.CCompiler)" -ForegroundColor Yellow
+        Write-Host "  wiping $buildDir for a clean configure" -ForegroundColor Yellow
+        Remove-Item $buildDir -Recurse -Force
+        New-Item -ItemType Directory -Path $buildDir -Force | Out-Null
+    }
+}
 $opensslPath = $cfg.OpenSSLDir -replace '\\', '/'
 
 # ── sccache: use local cache if available ─────────────────────────
@@ -77,17 +95,42 @@ $cmakeArgs = @(
     "-DCMAKE_CUDA_FLAGS=-w"
 )
 
-# ── HIP workaround for ROCm 7.1 + MSVC 14.51 (VS 18) ─────────────
+# ── HIP workaround for MSVC 14.51 (VS 18) <cmath> include order ──
 # The stock __clang_hip_runtime_wrapper.h includes <cmath> before the HIP
 # device math headers, causing MSVC's _CLANG_BUILTIN2 constexpr overloads
 # (implicitly __host__ __device__) to conflict with __device__ declarations
 # in __clang_cuda_math_forward_declares.h and __clang_hip_cmath.h.
-# A patched wrapper (patches\__clang_hip_runtime_wrapper.h) reverses the include order.
-# We suppress the stock wrapper via -D__CLANG_HIP_RUNTIME_WRAPPER_H__ and
-# force-include the patched copy.  We pass the flags through both
-# CMAKE_CXX_FLAGS and CMAKE_HIP_FLAGS because CMake on Windows treats
-# HIP sources as CXX when enable_language(HIP) is not called.
-$hipPatchedInc = (Join-Path $PSScriptRoot "patches\__clang_hip_runtime_wrapper.h") -replace '\\', '/'
+# First hit with ROCm 7.1; re-verified 2026-07-16 against TheRock ROCm 7.14
+# (AMD clang 23) + MSVC 14.51.36231: the stock headers still trip the same
+# isgreater/_CLANG_BUILTIN2 conflict and the patched wrapper still compiles
+# clean — so this stays until MSVC or ROCm fix the overload clash upstream.
+# A patched wrapper reverses the include order; we suppress the stock one via
+# -D__CLANG_HIP_RUNTIME_WRAPPER_H__ and force-include the patched copy. The
+# copy is a modified snapshot of the toolchain's OWN header, so it is
+# versioned per clang resource major (patches\hip\<major>\) and selected from
+# the installed dist — a ROCm bump that changes the clang major fails fast
+# with regeneration instructions (patches\hip\README.md) instead of silently
+# force-including a stale wrapper. Flags go through both CMAKE_CXX_FLAGS and
+# CMAKE_HIP_FLAGS because CMake on Windows treats HIP sources as CXX when
+# enable_language(HIP) is not called.
+$clangMajor = $null
+foreach ($resRoot in @('lib\llvm\lib\clang', 'lib\clang')) {   # TheRock dist, legacy HIP SDK
+    $d = Join-Path $cfg.HipPath $resRoot
+    if (-not (Test-Path $d)) { continue }
+    $clangMajor = Get-ChildItem $d -Directory |
+        ForEach-Object { $v = 0; if ([int]::TryParse($_.Name, [ref]$v)) { $v } } |
+        Sort-Object -Descending | Select-Object -First 1
+    if ($clangMajor) { break }
+}
+if (-not $clangMajor) {
+    throw "could not detect the ROCm clang resource version under $($cfg.HipPath) (probed lib\llvm\lib\clang and lib\clang)"
+}
+$hipPatchedInc = Join-Path $PSScriptRoot "patches\hip\$clangMajor\__clang_hip_runtime_wrapper.h"
+if (-not (Test-Path $hipPatchedInc)) {
+    throw "no patched HIP runtime wrapper for clang $clangMajor (expected $hipPatchedInc). New toolchain — regenerate and validate it per patches\hip\README.md."
+}
+Write-Host "HIP wrapper patch: patches\hip\$clangMajor (clang resource major $clangMajor)" -ForegroundColor DarkGray
+$hipPatchedInc = $hipPatchedInc -replace '\\', '/'
 $hipWorkaroundFlags = "-D__CLANG_HIP_RUNTIME_WRAPPER_H__ -include `"$hipPatchedInc`""
 $cmakeArgs += "-DCMAKE_CXX_FLAGS=$($cfg.MarchFlags) -w $hipWorkaroundFlags"
 $cmakeArgs += "-DCMAKE_HIP_FLAGS=$hipWorkaroundFlags"

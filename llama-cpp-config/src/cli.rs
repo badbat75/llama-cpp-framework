@@ -21,7 +21,13 @@ pub struct Cli {
 #[derive(Subcommand, Debug)]
 pub enum Command {
     /// Force-launch the GUI (default when no subcommand is given).
-    Gui,
+    Gui {
+        /// Start hidden in the system tray instead of opening the window.
+        /// This is what the "Start with Windows" logon entry launches
+        /// (see src/startup.rs).
+        #[arg(long)]
+        minimized: bool,
+    },
     /// Server-wide settings (server.ini).
     #[command(subcommand)]
     Server(ServerCmd),
@@ -205,7 +211,7 @@ pub enum PresetCmd {
 
 pub fn run(cli: Cli) -> Result<()> {
     match cli.command {
-        Command::Gui => crate::gui::run(),
+        Command::Gui { minimized } => crate::gui::run(minimized),
         Command::Server(c) => run_server(c),
         Command::Preset(c) => run_preset(c),
         Command::Control(c) => run_control(c),

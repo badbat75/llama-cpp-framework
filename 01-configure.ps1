@@ -70,10 +70,12 @@ function Find-OpenSSL {
 }
 
 function Find-ROCm {
-    # Check HIP_PATH env first
-    if ($env:HIP_PATH -and (Test-Path "$env:HIP_PATH\bin\hipcc.exe")) {
-        return $env:HIP_PATH
+    # Check HIP_PATH env first — process env, then machine env (a console opened
+    # before 00-install-prerequisites.ps1 set the machine vars has a stale copy).
+    foreach ($hp in @($env:HIP_PATH, [Environment]::GetEnvironmentVariable('HIP_PATH', 'Machine'))) {
+        if ($hp -and (Test-Path "$hp\bin\hipcc.exe")) { return $hp }
     }
+    # Legacy HIP SDK installs (pre-TheRock).
     $base = "${env:ProgramFiles}\AMD\ROCm"
     if (-not (Test-Path $base)) { return $null }
     # Pick the latest version folder — numerically ([version]), not as strings:
@@ -88,13 +90,49 @@ function Find-ROCm {
 }
 
 
+# GPU targets are DERIVED from the installed ROCm dist, not hand-maintained:
+# the archs the dist ships Windows BLAS kernels for are exactly the ones worth
+# (and safe) building. Enumeration + policy, so a dist bump only needs a
+# re-run of this script:
+#  - TheRock dist: .kpack\blas_lib_gfx*.kpack is the authoritative per-arch
+#    kernel list (the 7.1-era TensileLibrary_lazy_*.dat files survive as a
+#    legacy subset — only used as fallback for a legacy HIP SDK install).
+#  - policy: drop CDNA/Vega (gfx9xx) — kpacks exist for MI cards but there is
+#    no Windows driver for them (and gfx906's kernels are gone from TheRock).
+#  - safety net: always keep the Ryzen iGPU archs in the fatbin even if a
+#    future dist drops their kernels: the driver-bundled HIP runtime
+#    (amdhip64_7.dll) fails kernel-module load on EVERY visible device when
+#    one visible device has no matching code object — a visible iGPU would
+#    otherwise break the dGPU with "device kernel image is invalid".
+$gpuTargetsIgpuSafety = @('gfx1035', 'gfx1036', 'gfx1103', 'gfx1152', 'gfx1153')
+# Snapshot of TheRock 7.14.0 coverage — used only when no ROCm dist is present
+# at configure time (the HIP build cannot succeed then anyway, but the config
+# stays complete and editable).
+$gpuTargetsFallback = 'gfx1010;gfx1011;gfx1012;gfx1030;gfx1031;gfx1032;gfx1033;gfx1034;gfx1035;gfx1036;gfx1100;gfx1101;gfx1102;gfx1103;gfx1150;gfx1151;gfx1152;gfx1153;gfx1200;gfx1201'
+
+function Get-GpuTargets([string]$HipPath) {
+    if (-not $HipPath) { return $null }
+    $archs = @(Get-ChildItem (Join-Path $HipPath '.kpack') -Filter 'blas_lib_gfx*.kpack' -ErrorAction SilentlyContinue |
+        ForEach-Object { $_.BaseName -replace '^blas_lib_' })
+    if (-not $archs) {
+        $archs = @(Get-ChildItem (Join-Path $HipPath 'bin\rocblas\library') -Filter 'TensileLibrary_lazy_gfx*.dat' -ErrorAction SilentlyContinue |
+            ForEach-Object { $_.BaseName -replace '^TensileLibrary_lazy_' })
+    }
+    if (-not $archs) { return $null }
+    $archs = @($archs | Where-Object { $_ -notmatch '^gfx9' })
+    return (($archs + $gpuTargetsIgpuSafety) | Sort-Object -Unique) -join ';'
+}
+
 function Find-Tool([string]$Name) {
     $cmd = Get-Command $Name -ErrorAction SilentlyContinue
     if ($cmd) { return $cmd.Source }
-    # Fallback: check HIP_PATH\bin (ROCm ships its own clang, cmake, etc.)
+    # Fallback: ROCm ships its own toolchain — the legacy HIP SDK under bin\,
+    # the TheRock dist under lib\llvm\bin (clang, lld, llvm-*).
     if ($detected.HipPath) {
-        $hipBin = Join-Path $detected.HipPath "bin\$Name.exe"
-        if (Test-Path $hipBin) { return $hipBin }
+        foreach ($sub in @('bin', 'lib\llvm\bin')) {
+            $exe = Join-Path $detected.HipPath "$sub\$Name.exe"
+            if (Test-Path $exe) { return $exe }
+        }
     }
     return $null
 }
@@ -145,6 +183,15 @@ $val = Find-ROCm
 $detected.HipPath = $val
 if ($val) { Write-Host "  [OK] HipPath        : $val" -ForegroundColor Green }
 else      { Write-Host "  [--] HipPath        : not found (optional, needed for HIP/ROCm)" -ForegroundColor Yellow }
+
+$gpuTargets = Get-GpuTargets $detected.HipPath
+if ($gpuTargets) {
+    Write-Host "  [OK] GpuTargets     : $(($gpuTargets -split ';').Count) archs from the installed ROCm dist" -ForegroundColor Green
+    Write-Host "                        $gpuTargets" -ForegroundColor DarkGray
+} else {
+    $gpuTargets = $gpuTargetsFallback
+    Write-Host "  [--] GpuTargets     : no kernel list found in the dist — using the 7.14.0 snapshot" -ForegroundColor Yellow
+}
 
 # LlamaCppDir (source clone): CLI param → default .\build\llama.cpp
 if (-not $LlamaCppDir) {
@@ -214,22 +261,24 @@ $buildLines.Add("    HipPath      = $(Fmt $detected.HipPath)")
 $buildLines.Add("    VsDevShell   = $(Fmt $detected.VsDevShell)")
 $buildLines.Add('')
 $buildLines.Add('    # Build settings')
-$buildLines.Add('    # GpuTargets = the archs ROCm 7.1 can actually serve on Windows, plus the iGPUs')
-$buildLines.Add('    # that merely need to EXIST in the fatbin. Two groups, both required:')
-$buildLines.Add('    #  * inference-capable — rocBLAS ships Tensile kernels for exactly these:')
-$buildLines.Add('    #    gfx906 (Radeon VII), gfx1030 (RDNA2), gfx110x (RDNA3), gfx115x (Strix/Strix')
-$buildLines.Add('    #    Halo), gfx120x (RDNA4). CDNA/Vega (gfx900/908/90a/942/950) is deliberately')
-$buildLines.Add('    #    ABSENT: no Windows rocBLAS kernels and no Windows driver for MI cards, so')
-$buildLines.Add('    #    building them only cost compile time and ~56 MiB of ggml-hip.dll each.')
-$buildLines.Add('    #  * code-object-only (gfx1035/1036/1103/1152/1153, Ryzen iGPUs) — useless for')
-$buildLines.Add('    #    inference, but the driver-bundled HIP runtime (amdhip64_7.dll 10.0.3679)')
-$buildLines.Add('    #    fails kernel-module load on EVERY visible device when one of them has no')
-$buildLines.Add('    #    matching code object: a visible iGPU otherwise breaks the dGPU with')
-$buildLines.Add('    #    "device kernel image is invalid". Do not prune them.')
-$buildLines.Add("    GpuTargets  = 'gfx906;gfx1030;gfx1035;gfx1036;gfx1100;gfx1101;gfx1102;gfx1103;gfx1150;gfx1151;gfx1152;gfx1153;gfx1200;gfx1201'")
+$buildLines.Add('    # GpuTargets: DERIVED from the installed ROCm dist by 01-configure.ps1 —')
+$buildLines.Add('    # the archs the dist ships Windows BLAS kernels for (.kpack\blas_lib_gfx*.')
+$buildLines.Add('    # kpack; legacy SDK fallback: TensileLibrary_lazy_gfx*.dat), minus CDNA/')
+$buildLines.Add('    # Vega gfx9xx (no Windows driver for MI cards), plus the Ryzen iGPU archs')
+$buildLines.Add('    # even when kernels are absent (the driver HIP runtime fails module load')
+$buildLines.Add('    # on EVERY visible device when one visible device has no code object).')
+$buildLines.Add('    # Re-run 01-configure.ps1 after a ROCm dist bump to refresh. Hand-edit')
+$buildLines.Add('    # only to prune (~56 MiB of ggml-hip.dll per arch) — and never prune the')
+$buildLines.Add('    # iGPU archs (gfx1035/1036/1103/1152/1153).')
+$buildLines.Add("    GpuTargets  = '$gpuTargets'")
 $buildLines.Add("    BuildType   = 'Release'")
-$buildLines.Add("    CCompiler   = 'clang'")
-$buildLines.Add("    CxxCompiler = 'clang'")
+# Full path to the resolved clang (bare 'clang' as a last resort): with the
+# TheRock dist the compiler lives in HIP_PATH\lib\llvm\bin, which is not on a
+# stale console's PATH — a bare name in the config then fails at cmake time.
+$clangPath = Find-Tool 'clang'
+if (-not $clangPath) { $clangPath = 'clang' }
+$buildLines.Add("    CCompiler   = $(Fmt $clangPath)")
+$buildLines.Add("    CxxCompiler = $(Fmt $clangPath)")
 $buildLines.Add("    MarchFlags  = '-march=x86-64-v3'")
 $buildLines.Add('    # Parallel build jobs: 3/4 of logical cores, leaving headroom for')
 $buildLines.Add('    # interactive use during a long CUDA/HIP compile (0 = use all cores).')

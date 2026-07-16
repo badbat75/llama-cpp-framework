@@ -20,6 +20,24 @@ if ($cfg.HipPath -and (Test-Path $cfg.HipPath)) {
     if ($env:PATH -notlike "*$($env:HIP_PATH)\bin*") {
         $env:PATH = "$env:HIP_PATH\bin;$env:PATH"
     }
+    # TheRock dist keeps the LLVM toolchain (clang for the HIP device compile)
+    # under lib\llvm\bin — the legacy HIP SDK shipped clang in bin\ instead.
+    $llvmBin = Join-Path $env:HIP_PATH 'lib\llvm\bin'
+    if ((Test-Path $llvmBin) -and ($env:PATH -notlike "*$llvmBin*")) {
+        $env:PATH = "$llvmBin;$env:PATH"
+    }
+    # Mirror the rest of the TheRock machine env (00-install sets it system-wide,
+    # but a console opened before that run has a stale copy): clang finds the
+    # device bitcode via HIP_DEVICE_LIB_PATH — TheRock keeps it under
+    # lib\llvm\amdgcn\bitcode, not the <rocm>\amdgcn\bitcode layout clang
+    # derives from --rocm-path, so without the var the HIP device compile dies
+    # with "cannot find ROCm device library".
+    $bitcode = Join-Path $env:HIP_PATH 'lib\llvm\amdgcn\bitcode'
+    if (Test-Path $bitcode) {
+        $env:HIP_DEVICE_LIB_PATH = $bitcode
+        $env:HIP_PLATFORM       = 'amd'
+        $env:LLVM_PATH          = Join-Path $env:HIP_PATH 'lib\llvm'
+    }
 }
 
 function Enable-VsDevShell {

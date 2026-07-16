@@ -1,11 +1,12 @@
 // llama.cpp-framework configurator — Slint UI.
 //
-// Left navigation rail (Server / Models / Integrations) and a content area that swaps
-// pages via `AppState.current_tab`. Live server status is shown in the footer.
+// Left navigation rail (Server / Models / Integrations / Settings) and a content
+// area that swaps pages via `AppState.current_tab`. Live server status is shown
+// in the footer.
 //
 // All shared data/callbacks live in `AppState` (state.slint); this file is the
 // window shell and the tray, PLUS the app-wide pieces that must sit above the
-// pages: the keyboard shortcuts (Ctrl+S/1/2/3/N, F5 — the KeyBindings block)
+// pages: the keyboard shortcuts (Ctrl+S/1/2/3/4/N, F5 — the KeyBindings block)
 // and the five overlay modals (New/Clone picker, Discard, Delete, Rename,
 // Chat-template preview).
 // Rust drives everything via `app.global::<AppState>()`.
@@ -24,6 +25,7 @@ export { LogWindow }
 import { ServerPage } from "server_page.slint";
 import { ModelsPage } from "models_page.slint";
 import { IntegrationsPage } from "integrations_page.slint";
+import { SettingsPage } from "settings_page.slint";
 
 // ── Nav rail item ──────────────────────────────
 
@@ -109,7 +111,9 @@ export component AppWindow inherits Window {
                 // Same gating as the Save buttons: tabs 0/1 read the shared
                 // can_save_* properties in state.slint so those conditions
                 // can't drift; tab 2 (integrations) is deliberately ungated on
-                // both surfaces (its Save is always available).
+                // both surfaces (its Save is always available). Tab 3
+                // (settings) has no Save at all — its toggles apply on click —
+                // so Ctrl+S is intentionally inert there.
                 if (AppState.current_tab == 0 && AppState.can_save_server) { AppState.save_server(); }
                 else if (AppState.current_tab == 1 && AppState.can_save_preset) { AppState.save_preset(); }
                 else if (AppState.current_tab == 2) { AppState.save_integrations(); }
@@ -118,6 +122,7 @@ export component AppWindow inherits Window {
         KeyBinding { keys: @keys(Control + "1"); activated => { if (!AppState.modal_open) { AppState.current_tab = 0; } } }
         KeyBinding { keys: @keys(Control + "2"); activated => { if (!AppState.modal_open) { AppState.current_tab = 1; } } }
         KeyBinding { keys: @keys(Control + "3"); activated => { if (!AppState.modal_open) { AppState.current_tab = 2; } } }
+        KeyBinding { keys: @keys(Control + "4"); activated => { if (!AppState.modal_open) { AppState.current_tab = 3; } } }
         // F5 = the Refresh button (full disk re-read + re-probe, inheriting
         // the dirty-form discard guard), not just a run-status poll.
         KeyBinding { keys: @keys(F5); activated => { if (!AppState.modal_open) { AppState.reload_all(); } } }
@@ -165,6 +170,14 @@ export component AppWindow inherits Window {
                         label: "Integrations";
                         selected: AppState.current_tab == 2;
                         clicked => { AppState.current_tab = 2; }
+                    }
+                    NavItem {
+                        // U+E9E9 "Equalizer" (preference sliders) — E713, the
+                        // canonical gear, already means the Server tab here.
+                        glyph: "\u{E9E9}";
+                        label: "Settings";
+                        selected: AppState.current_tab == 3;
+                        clicked => { AppState.current_tab = 3; }
                     }
 
                     // Spacer pushes the server controls to the bottom of the rail.
@@ -233,6 +246,7 @@ export component AppWindow inherits Window {
                     if AppState.current_tab == 0 : ServerPage { }
                     if AppState.current_tab == 1 : ModelsPage { }
                     if AppState.current_tab == 2 : IntegrationsPage { }
+                    if AppState.current_tab == 3 : SettingsPage { }
                 }
             }
         }

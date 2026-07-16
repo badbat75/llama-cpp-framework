@@ -20,7 +20,7 @@ export global AppState {
     in-out property <string> app_version;
 
     // ── Navigation ───────────────────────────────────────────────────
-    // 0 = Server, 1 = Models, 2 = Integrations.
+    // 0 = Server, 1 = Models, 2 = Integrations, 3 = Settings.
     in-out property <int> current_tab: 0;
 
     // ── Live status ──────────────────────────────────────────────────
@@ -301,6 +301,24 @@ export global AppState {
     in-out property <bool> integration_provider_active: false;
     in-out property <string> integration_claude_env: "";
 
+    // ── Settings tab state ──────────────────────────────────────────
+    // App-level preferences (the configurator's own, not llama-server's).
+    // No Save/Revert and no dirty state: each toggle's callback fires AFTER
+    // the two-way binding flipped the property, and Rust persists that value
+    // immediately — or pushes the real state back on a failed write, which
+    // reaches the checkbox precisely because the binding is two-way.
+    // `start_with_windows` + `start_minimized_to_tray` together mirror the
+    // HKCU Run registry entry (the registry IS the state — src/startup.rs:
+    // presence, and whether the stored command carries `--minimized`);
+    // `start_server_on_launch` lives in settings.ini (src/settings.rs). All
+    // re-read on Refresh/F5. The tray toggle only means anything while
+    // start_with_windows is on (there is no Run entry to shape otherwise),
+    // so the page disables it — the kept value is what a fresh enable writes.
+    in-out property <bool> startup_supported: true;
+    in-out property <bool> start_with_windows: false;
+    in-out property <bool> start_minimized_to_tray: true;
+    in-out property <bool> start_server_on_launch: false;
+
     // ── Status / toast ───────────────────────────────────────────────
     in-out property <string> status_text: "";
     in-out property <bool> status_is_error: false;
@@ -390,4 +408,10 @@ export global AppState {
     callback save_integrations();
     callback revert_integrations();
     callback open_opencode_folder();
+
+    // Settings tab: fired AFTER the two-way binding flipped the property (see
+    // the state block above) — Rust reads the new value and persists it.
+    callback toggle_start_with_windows();
+    callback toggle_start_minimized();
+    callback toggle_start_server_on_launch();
 }

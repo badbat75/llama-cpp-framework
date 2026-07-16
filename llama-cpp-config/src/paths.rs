@@ -69,6 +69,12 @@ pub fn presets_ini() -> PathBuf {
     config_dir().join("presets.ini")
 }
 
+/// The configurator's OWN settings (the Settings tab — see `settings.rs`),
+/// kept apart from server.ini, whose every key maps to a llama-server flag.
+pub fn settings_ini() -> PathBuf {
+    config_dir().join("settings.ini")
+}
+
 /// The llama-server log file. ONE home for the path — `runstate::start()`
 /// writes it, the GUI's "no longer running — see …" message points at it.
 pub fn server_log() -> PathBuf {

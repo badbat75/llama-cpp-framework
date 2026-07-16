@@ -72,6 +72,42 @@ Write-Host "Staging llama.cpp binaries..." -ForegroundColor Cyan
 cmake --install $buildDir --prefix $stageDir
 if ($LASTEXITCODE -ne 0) { throw "cmake --install failed" }
 
+# ── Stage the OpenSSL runtime next to llama-server.exe ──────────────
+# llama-server links OpenSSL dynamically as NORMAL imports (libcrypto-N-x64 /
+# libssl-N-x64) — on a machine without an OpenSSL install the exe fails at
+# load, so the two DLLs must ship in bin\ (the application dir wins the DLL
+# search order, so a system OpenSSL of any other version cannot conflict).
+# The ABI-versioned names are read from the freshly staged server binaries'
+# import tables (plain ASCII in the PE image, no tooling needed), and the DLLs
+# are copied from the same OpenSSL install the build linked against.
+$sslNames = Get-ChildItem (Join-Path $stageDir 'bin') -Filter 'llama-server*' -File |
+    ForEach-Object {
+        $raw = [System.Text.Encoding]::ASCII.GetString([System.IO.File]::ReadAllBytes($_.FullName))
+        [regex]::Matches($raw, '(?:libcrypto|libssl)-\d+-x64\.dll') | ForEach-Object Value
+    } | Sort-Object -Unique
+if (-not $sslNames) {
+    throw "No OpenSSL import names found in the staged llama-server binaries — import scan broken or upstream layout changed; refusing to package a server that may not start on clean machines"
+}
+foreach ($name in $sslNames) {
+    $src = Join-Path $cfg.OpenSSLDir "bin\$name"
+    if (-not (Test-Path $src)) {
+        throw "OpenSSL runtime $name not found in $($cfg.OpenSSLDir)\bin — llama-server.exe imports it and would fail to load on machines without OpenSSL"
+    }
+    Copy-Item $src -Destination (Join-Path $stageDir 'bin') -Force
+    Write-Host "Staged $name (OpenSSL runtime)" -ForegroundColor DarkGray
+}
+
+# ── Stage the runtime-deps helper + shared dist pins ────────────────
+# install-runtime-deps.ps1 installs on END-USER machines what we deliberately
+# do not bundle (VC++ redist; ROCm/TheRock for AMD; cuBLAS redist for NVIDIA).
+# The installer's finish page offers to run it; it stays in bin\ for later
+# re-runs. dist-pins.psd1 is the same pins file 00-install-prerequisites.ps1
+# reads — one source of truth for the pinned dist versions/URLs.
+foreach ($f in 'installer\install-runtime-deps.ps1', 'installer\dist-pins.psd1') {
+    Copy-Item (Join-Path $PSScriptRoot $f) -Destination (Join-Path $stageDir 'bin') -Force
+    Write-Host "Staged $(Split-Path $f -Leaf)" -ForegroundColor DarkGray
+}
+
 # ── Stage llama-cpp-config (Rust binary) ────────────────────────────
 # Straight from cargo's release output — 02-build.ps1 leaves it there, no copy.
 $configExe = Join-Path $PSScriptRoot "llama-cpp-config\target\release\llama-cpp-config.exe"
@@ -100,7 +136,7 @@ if (-not (Test-Path $iconPath)) {
 Copy-Item $iconPath -Destination $stageDir -Force
 
 # ── Generate .nsi from template ─────────────────────────────────────
-$templatePath = Join-Path $PSScriptRoot "llama-cpp.nsi.template"
+$templatePath = Join-Path $PSScriptRoot "installer\llama-cpp-framework.nsi.template"
 $nsiPath      = Join-Path $PSScriptRoot "build\llama-cpp.nsi"
 # e.g. llama-cpp-framework-v1.0.0-b3456-x64-setup.exe
 $installerName = "llama-cpp-framework-v$frameworkVersion-$llamaBuild-$arch-setup.exe"

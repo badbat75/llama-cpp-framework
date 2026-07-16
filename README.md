@@ -55,9 +55,10 @@ All build artifacts live under `build\` so a single `rm -rf build\` returns the 
 │   ├── llama.cpp-cmake/    ← cmake binary dir (out-of-source build)
 │   └── staging/            ← cmake --install staging area for NSIS
 ├── dist/                    ← final installer .exe
+├── installer/               ← NSIS template, dist-pins.psd1 (pinned external dists) and
+│                              install-runtime-deps.ps1 (end-user deps helper, bundled)
 ├── llama-cpp-config/        ← Rust GUI + CLI configurator (source)
-├── llama-cpp.nsi.template   ← NSIS installer template (placeholders filled by 03-package.ps1)
-├── patches/                 ← checked-in build workarounds (HIP clang runtime wrapper)
+├── patches/                 ← checked-in build workarounds (HIP clang runtime wrapper, per clang major)
 ├── resources/               ← icon generator (llama.ico is built on demand, gitignored)
 └── *.ps1                    ← top-level build/package scripts
 ```

@@ -68,7 +68,7 @@ use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel};
 use crate::form::{form_to_preset, preset_to_form};
 use crate::{
     devices, gpu_split, integrations, model_scan, net_ifaces, paths, presets, runstate, server_cfg,
-    server_form, server_version, tensor_override,
+    server_form, server_version, settings, startup, tensor_override,
 };
 
 slint::include_modules!();
@@ -79,6 +79,7 @@ mod integrations_tab;
 mod log_window;
 mod models_tab;
 mod server_tab;
+mod settings_tab;
 mod tray;
 
 #[derive(Default)]
@@ -121,7 +122,12 @@ pub(crate) fn wire_tabs_for_tests(app: &AppWindow) {
     wire_discard_confirm(app, &state);
 }
 
-pub fn run() -> anyhow::Result<()> {
+/// Build and run the GUI. `start_minimized` (the `gui --minimized` flag, used
+/// by the "Start with Windows" logon entry) skips the initial `app.show()`:
+/// the app comes up tray-only, exactly like the existing hide-on-close state —
+/// the visible tray icon keeps the event loop alive, and the window appears on
+/// a tray click or a second launch's activation poke.
+pub fn run(start_minimized: bool) -> anyhow::Result<()> {
     // Single-instance: if the configurator is already running, hand off to it
     // (it surfaces its window) and exit instead of opening a second window.
     #[cfg(windows)]
@@ -212,6 +218,7 @@ pub fn run() -> anyhow::Result<()> {
     server_tab::wire(&app, &tray, &state);
     models_tab::wire(&app, &state);
     integrations_tab::wire(&app);
+    settings_tab::wire(&app);
     tray::wire(&app, &tray);
     // Independent log-tail window (View logs). Both halves must outlive the
     // event loop like status_timer above — dropping the Timer stops the tail.
@@ -224,7 +231,19 @@ pub fn run() -> anyhow::Result<()> {
     app.window()
         .on_close_requested(|| slint::CloseRequestResponse::HideWindow);
 
-    app.show()?;
+    // Auto-start llama-server when the Settings tab asks for it — on EVERY GUI
+    // launch, not just the logon one (that's the toggle's contract). The shared
+    // start path probes first, so an already-running server just reports
+    // "already running" instead of double-spawning.
+    if settings::load().start_server_on_launch {
+        start_server_async(app.as_weak(), tray.as_weak());
+    }
+
+    // A logon launch (`gui --minimized`) stays in the tray: skipping show()
+    // leaves the window in exactly the hide-on-close state above.
+    if !start_minimized {
+        app.show()?;
+    }
     tray.show()?;
     slint::run_event_loop()?;
     Ok(())
@@ -399,6 +418,7 @@ fn reload_all_from_disk(
     // Reset variant: F5's whole point is "back to disk", and the caller sits
     // behind the integrations_dirty discard guard.
     refresh_integrations_reset(app);
+    settings_tab::refresh(app);
     refresh_run_status(app.as_weak(), tray_weak, true);
     spawn_version_probe(app.as_weak());
     spawn_device_probe(app.as_weak());

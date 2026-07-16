@@ -29,12 +29,26 @@ FunctionEnd
 !define MUI_ICON "@STAGING_DIR@\llama.ico"
 !define MUI_UNICON "@STAGING_DIR@\llama.ico"
 
+; Welcome page doubles as the runtime-requirements notice: the installer
+; bundles llama.cpp + configurator + OpenSSL runtime, but GPU backends need
+; system-side components we deliberately do not ship (drivers can't be
+; bundled; ROCm/cuBLAS are hundreds of MB and GPU-specific). Backends whose
+; dependencies are missing are skipped silently at runtime — the GPU then
+; falls back to Vulkan, which ships with every driver. Say it HERE, because
+; nothing says it later.
+!define MUI_WELCOMEPAGE_TITLE "llama.cpp-framework v@VERSION@"
+!define MUI_WELCOMEPAGE_TEXT "This installs llama.cpp-framework (llama.cpp @LLAMA_BUILD@) with the llama-cpp-config configurator. OpenSSL is bundled.$\r$\n$\r$\nNot bundled - needed at runtime:$\r$\n$\r$\n- Visual C++ Redistributable x64: always required$\r$\n$\r$\n- AMD GPU: Adrenalin driver required. For the ROCm backend, also AMD ROCm / TheRock; without it the GPU runs on Vulkan$\r$\n$\r$\n- NVIDIA GPU: NVIDIA driver required. For the CUDA backend, also the cuBLAS runtime; without it the GPU runs on Vulkan$\r$\n$\r$\n- Vulkan: nothing to install (ships with GPU drivers)$\r$\n$\r$\nThe optional components on the next pages can install the missing pieces for you (drivers excluded)."
+
 !insertmacro MUI_PAGE_WELCOME
 Page custom CheckAndStopProcesses
 Page custom CheckPreviousInstall
 !insertmacro MUI_PAGE_DIRECTORY
 !insertmacro MUI_PAGE_COMPONENTS
 !insertmacro MUI_PAGE_INSTFILES
+; Runtime dependencies are installed via the three optional component
+; sections below (SecDeps*), not from the finish page — the finish text only
+; points at the helper for later re-runs.
+!define MUI_FINISHPAGE_TEXT "llama.cpp-framework v@VERSION@ (llama @LLAMA_BUILD@) has been installed on your computer.$\r$\n$\r$\nRuntime dependencies (VC++ runtime, AMD ROCm, NVIDIA cuBLAS) can be installed or repaired any time by running bin\install-runtime-deps.ps1 from the install folder.$\r$\n$\r$\nClick Finish to close Setup."
 !insertmacro MUI_PAGE_FINISH
 
 !insertmacro MUI_UNPAGE_CONFIRM
@@ -164,12 +178,38 @@ Section "Add to system PATH" SecPath
     SendMessage ${HWND_BROADCAST} ${WM_SETTINGCHANGE} 0 "STR:Environment" /TIMEOUT=5000
 SectionEnd
 
+; ── Optional: runtime dependencies (bundled helper) ─────────────────
+; Each section runs install-runtime-deps.ps1 with an explicit component
+; switch plus -Unattended: the choice was made HERE via the checkbox, so the
+; helper must not prompt again. ExecWait shows a PowerShell console with the
+; download progress (curl) and blocks the installer until the leg completes.
+; The helper is idempotent — components already present are skipped — and
+; runs elevated because the installer is. These sections must come after
+; SecMain: the script and dist-pins.psd1 are staged into $INSTDIR\bin by it,
+; and the cuBLAS DLLs land next to llama-server.exe there.
+Section /o "Base requirements (VC++ runtime, ~19 MB)" SecDepsBase
+    DetailPrint "Runtime deps: VC++ redistributable (skipped if present)..."
+    ExecWait 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$INSTDIR\bin\install-runtime-deps.ps1" -Unattended -VcRedist'
+SectionEnd
+
+Section /o "AMD ROCm runtime (~4.3 GB download)" SecDepsAmd
+    DetailPrint "Runtime deps: AMD ROCm/TheRock (skipped if present)..."
+    ExecWait 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$INSTDIR\bin\install-runtime-deps.ps1" -Unattended -Amd'
+SectionEnd
+
+Section /o "NVIDIA cuBLAS runtime (~375 MB download)" SecDepsNvidia
+    DetailPrint "Runtime deps: NVIDIA cuBLAS (skipped if present)..."
+    ExecWait 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$INSTDIR\bin\install-runtime-deps.ps1" -Unattended -Nvidia'
+SectionEnd
 
 ; ── Section descriptions ────────────────────────────────────────────
 !insertmacro MUI_FUNCTION_DESCRIPTION_BEGIN
     !insertmacro MUI_DESCRIPTION_TEXT ${SecMain} "Core llama.cpp binaries and llama-cpp-config configurator."
     !insertmacro MUI_DESCRIPTION_TEXT ${SecStartMenu} "Create a Start Menu shortcut to llama-cpp-config."
     !insertmacro MUI_DESCRIPTION_TEXT ${SecPath} "Add llama.cpp bin directory to system PATH."
+    !insertmacro MUI_DESCRIPTION_TEXT ${SecDepsBase} "Microsoft Visual C++ runtime - required to run anything in this package. Skipped if already installed."
+    !insertmacro MUI_DESCRIPTION_TEXT ${SecDepsAmd} "AMD ROCm/TheRock libraries for the HIP backend (~4.3 GB download, ~25 GB on disk; requires the Adrenalin driver). Without it AMD GPUs run on Vulkan."
+    !insertmacro MUI_DESCRIPTION_TEXT ${SecDepsNvidia} "NVIDIA cuBLAS runtime for the CUDA backend (~375 MB download; requires the NVIDIA driver). Without it NVIDIA GPUs run on Vulkan."
 !insertmacro MUI_FUNCTION_DESCRIPTION_END
 
 ; ── Uninstaller ─────────────────────────────────────────────────────

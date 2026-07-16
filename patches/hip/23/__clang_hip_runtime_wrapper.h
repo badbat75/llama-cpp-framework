@@ -6,11 +6,12 @@
  *
  *===-----------------------------------------------------------------------===
  *
- * PATCHED: Reordered includes so HIP device math headers are processed before
- * standard library <cmath>.  This works around a ROCm 7.1 + MSVC 14.51 (VS 18)
- * conflict where MSVC's _CLANG_BUILTIN2 constexpr overloads (implicitly
- * __host__ __device__) clash with ROCm's __device__ isgreater/isless/etc.
- * declarations in __clang_cuda_math_forward_declares.h and __clang_hip_cmath.h.
+ * PATCHED copy of the clang 23 stock header (TheRock ROCm 7.14.0), see
+ * patches\hip\README.md for the recipe. Reordered includes so HIP device math
+ * headers are processed before standard library <cmath>: MSVC 14.51's
+ * _CLANG_BUILTIN2 constexpr overloads (implicitly __host__ __device__) clash
+ * with the __device__ isgreater/isless/etc. declarations in
+ * __clang_cuda_math_forward_declares.h and __clang_hip_cmath.h.
  */
 
 /*
@@ -38,6 +39,9 @@
 #define __shared__ __attribute__((shared))
 #define __constant__ __attribute__((constant))
 #define __managed__ __attribute__((managed))
+
+#define __cluster_dims__(...) __attribute__((cluster_dims(__VA_ARGS__)))
+#define __no_cluster__ __attribute__((no_cluster))
 
 #if !defined(__cplusplus) || __cplusplus < 201103L
   #define nullptr NULL;

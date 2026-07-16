@@ -25,8 +25,10 @@ mod runstate;
 mod server_cfg;
 mod server_form;
 mod server_version;
+mod settings;
 #[cfg(windows)]
 mod single_instance;
+mod startup;
 mod tensor_override;
 // Cross-cutting end-to-end tests (e.g. the Slint UI regression test) live under
 // src/tests/; per-module unit tests stay inline in their own files.
@@ -47,7 +49,7 @@ fn main() {
 
     let argv: Vec<String> = std::env::args().collect();
     if argv.len() <= 1 {
-        if let Err(e) = gui::run() {
+        if let Err(e) = gui::run(false) {
             eprintln!("GUI error: {e:#}");
             std::process::exit(1);
         }
