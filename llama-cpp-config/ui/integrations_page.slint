@@ -70,6 +70,14 @@ export component IntegrationsPage inherits ScrollView {
                         font-weight: 600;
                         color: Palette.foreground;
                         vertical-alignment: center;
+                        // Fixed-width first column so the label column below starts
+                        // at the SAME x on every row — with stretch 0 on both texts
+                        // the layout distributed the slack by the (variable) id width,
+                        // so the labels rendered ragged. Same idiom as LabeledField's
+                        // 130px label cell. min-width (not width) lets a longer-than-
+                        // usual id take the room it needs rather than eliding.
+                        min-width: 300px;
+                        horizontal-stretch: 0;
                     }
                     Text {
                         text: item.label;
@@ -77,6 +85,9 @@ export component IntegrationsPage inherits ScrollView {
                         color: Palette.foreground.transparentize(Tokens.muted);
                         vertical-alignment: center;
                         overflow: elide;
+                        // Take all the remaining width and left-align (default), so
+                        // the label column has one consistent left edge.
+                        horizontal-stretch: 1;
                     }
                 }
             }

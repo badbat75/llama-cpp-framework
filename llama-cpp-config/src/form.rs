@@ -109,6 +109,11 @@ const HINT_UBATCH_SIZE: i32 = 512;
 const HINT_CACHE_RAM: i32 = 8192;
 const HINT_TOP_K: i32 = 40;
 const HINT_SPEC_DRAFT_N_MAX: i32 = 3;
+// --image-min/max-tokens have no fixed llama.cpp numeric default (their -1 = read
+// from the model), so the box parks on a sane value the way --ctx-size does: the
+// 1024 llama.cpp itself suggests for Qwen-VL grounding, and a matching upper bound.
+const HINT_IMAGE_MIN_TOKENS: i32 = 1024;
+const HINT_IMAGE_MAX_TOKENS: i32 = 2048;
 
 pub fn preset_to_form(p: &presets::Preset) -> PresetForm {
     // String/bool domain defaults are pulled from `Preset::default()` so the form
@@ -122,6 +127,10 @@ pub fn preset_to_form(p: &presets::Preset) -> PresetForm {
         model: p.model.clone().into(),
         mmproj: p.mmproj.clone().into(),
         mmproj_offload: p.mmproj_offload.or(d.mmproj_offload).unwrap_or_default(),
+        image_min_tokens: itxt(p.image_min_tokens, HINT_IMAGE_MIN_TOKENS),
+        image_min_tokens_default: p.image_min_tokens.is_none(),
+        image_max_tokens: itxt(p.image_max_tokens, HINT_IMAGE_MAX_TOKENS),
+        image_max_tokens_default: p.image_max_tokens.is_none(),
         model_draft: p.model_draft.clone().into(),
         spec_type: if p.spec_type.is_empty() {
             "none".into()
@@ -194,6 +203,19 @@ pub fn form_to_preset(f: &PresetForm) -> presets::Preset {
         model: f.model.to_string(),
         mmproj: f.mmproj.to_string(),
         mmproj_offload: Some(f.mmproj_offload),
+        // Vision-token bounds: positive only (llama.cpp's -1 = "read from model" is
+        // exactly our omit-the-flag/None), so `> 0` collapses 0 or a stray sign to
+        // unset — same rule as ctx-size above.
+        image_min_tokens: if f.image_min_tokens_default {
+            None
+        } else {
+            ini::parse_int(f.image_min_tokens.as_str()).filter(|v| *v > 0)
+        },
+        image_max_tokens: if f.image_max_tokens_default {
+            None
+        } else {
+            ini::parse_int(f.image_max_tokens.as_str()).filter(|v| *v > 0)
+        },
         model_draft: f.model_draft.to_string(),
         spec_type: match f.spec_type.as_str() {
             "" | "none" => String::new(),
@@ -405,6 +427,8 @@ mod tests {
             model: r"E:\m\model.gguf".into(),
             mmproj: r"E:\mmprojs\clip.gguf".into(),
             mmproj_offload: Some(false),
+            image_min_tokens: Some(1024),
+            image_max_tokens: Some(2048),
             model_draft: r"E:\mtps\model-mtp.gguf".into(),
             spec_type: "draft-mtp".into(),
             spec_draft_n_max: Some(10),

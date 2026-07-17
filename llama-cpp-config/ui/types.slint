@@ -18,6 +18,13 @@ export struct PresetForm {
     // --mmproj-offload: run the image encoder on GPU (llama.cpp's default) or
     // keep it on CPU. Plain bool (CheckBox, two-way <=>), same shape as jinja.
     mmproj_offload: bool,
+    // --image-min-tokens / --image-max-tokens: per-image token bounds for
+    // dynamic-resolution vision models. Numeric DefaultLineEdit fields (string +
+    // `_default` checkbox), same shape as ctx-size; gated on an mmproj being set.
+    image_min_tokens: string,
+    image_min_tokens_default: bool,
+    image_max_tokens: string,
+    image_max_tokens_default: bool,
     model_draft: string,
     spec_type: string,
     spec_draft_n_max: string,

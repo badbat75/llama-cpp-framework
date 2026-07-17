@@ -60,6 +60,16 @@ pub struct Preset {
     /// to keep the encoder on CPU entirely — it only runs on image requests, so a
     /// text-mostly workload pays nothing but the VRAM it was holding.
     pub mmproj_offload: Option<bool>,
+    /// Minimum / maximum tokens a single image may take on vision models with
+    /// DYNAMIC resolution (--image-min-tokens / --image-max-tokens). `None` = omit
+    /// the flag → llama.cpp reads the bound from the model's metadata (its own -1
+    /// sentinel). Only the mmproj/CLIP encoder reads these (`clip.cpp` folds them
+    /// into `custom_image_min/max_pixels`), so they do nothing without an mmproj —
+    /// the widgets are gated on one being selected. Qwen-VL warns at load that it
+    /// needs at least 1024 image tokens for grounding accuracy and prints
+    /// `try adding --image-min-tokens 1024` (llama.cpp #16842); this is that knob.
+    pub image_min_tokens: Option<i32>,
+    pub image_max_tokens: Option<i32>,
     // Speculative decoding / Multi-Token Prediction (MTP) / DFlash.
     // `model_draft` is the draft GGUF (--model-draft): an MTP head, a DFlash
     // drafter, or a small standalone draft model. `spec_type` selects the
@@ -184,6 +194,8 @@ impl Default for Preset {
             model: String::new(),
             mmproj: String::new(),
             mmproj_offload: Some(true),
+            image_min_tokens: None,
+            image_max_tokens: None,
             model_draft: String::new(),
             spec_type: String::new(),
             spec_draft_n_max: None,
@@ -237,6 +249,8 @@ impl Preset {
             model: get("model"),
             mmproj: get("mmproj"),
             mmproj_offload: getb("mmproj-offload"),
+            image_min_tokens: k.get("image-min-tokens").and_then(|v| ini::parse_int(v)),
+            image_max_tokens: k.get("image-max-tokens").and_then(|v| ini::parse_int(v)),
             model_draft: get("model-draft"),
             spec_type: get("spec-type"),
             spec_draft_n_max: k.get("spec-draft-n-max").and_then(|v| ini::parse_int(v)),
@@ -465,6 +479,13 @@ pub fn render_section(p: &Preset) -> String {
     out.push_str("; `device`: llama.cpp puts the encoder on the first GPU backend it finds\r\n");
     out.push_str("; unless server.ini MmprojDevice (env MTMD_BACKEND_DEVICE) names one.\r\n");
     emit_bool(&mut out, "mmproj-offload", p.mmproj_offload);
+    out.push_str(
+        "; image-min-tokens / image-max-tokens bound the tokens ONE image takes on\r\n",
+    );
+    out.push_str("; DYNAMIC-resolution vision models (Qwen-VL wants >= 1024 for grounding\r\n");
+    out.push_str("; accuracy). Omit = read the bound from the model; needs an mmproj.\r\n");
+    emit_i32(&mut out, "image-min-tokens", p.image_min_tokens);
+    emit_i32(&mut out, "image-max-tokens", p.image_max_tokens);
     emit_str(&mut out, "model-draft", &p.model_draft);
 
     out.push_str("\r\n; Speculative decoding / Multi-Token Prediction / DFlash\r\n");
@@ -785,6 +806,8 @@ mod tests {
             model: r"E:\m\model.gguf".into(),
             mmproj: r"E:\mmprojs\clip.gguf".into(),
             mmproj_offload: Some(false),
+            image_min_tokens: Some(1024),
+            image_max_tokens: Some(2048),
             model_draft: r"E:\dflashs\model-dflash.gguf".into(),
             spec_type: "draft-dflash".into(),
             spec_draft_n_max: Some(15),

@@ -4,7 +4,7 @@
 // Layout: preset list (left column) | editor cards (right, grep `heading:`):
 // Assets → Model info → GPU distribution → Hardware Config → Resource / context →
 // KV cache → Chat / reasoning → Sampling overrides → Advanced →
-// Speculative decoding, then the FormActions row.
+// Vision → Speculative decoding, then the FormActions row.
 
 import { LineEdit, ComboBox, CheckBox, Button, ListView, ScrollView, Palette } from "std-widgets.slint";
 import { SectionCard, LabeledField, InfoRow, SegmentedControl, MappedComboBox, EnumComboBox, AutoSlider, DefaultLineEdit, FormActions, SelectableRow, ListPanel, GpuSplitTable, TensorOverrideTable, Tokens, Options } from "components.slint";
@@ -145,15 +145,6 @@ export component ModelsPage inherits HorizontalLayout {
                             AppState.form.mmproj = v;
                             AppState.model_changed();
                         }
-                    }
-                }
-                LabeledField {
-                    label: "Vision on GPU";
-                    hint: "Offload the multimodal projector — the mmproj/CLIP image encoder — to GPU (--mmproj-offload / --no-mmproj-offload).\nOn (llama.cpp's default) it holds VRAM for as long as the model is loaded but only computes on image requests. Off keeps it on CPU: slower image encoding, no VRAM.\nWHICH GPU it lands on is a separate question — see 'Vision encoder' on the Server tab.";
-                    CheckBox {
-                        enabled: AppState.form.mmproj != "";
-                        text: "offload the image encoder to GPU";
-                        checked <=> AppState.form.mmproj_offload;
                     }
                 }
                 LabeledField {
@@ -609,6 +600,46 @@ export component ModelsPage inherits HorizontalLayout {
                     LineEdit {
                         text <=> AppState.form.chat_template_kwargs;
                         placeholder-text: "e.g. {\"enable_thinking\":true}";
+                    }
+                }
+            }
+
+            SectionCard {
+                heading: "Vision";
+                LabeledField {
+                    label: "Vision on GPU";
+                    hint: "Offload the multimodal projector — the mmproj/CLIP image encoder — to GPU (--mmproj-offload / --no-mmproj-offload).\nOn (llama.cpp's default) it holds VRAM for as long as the model is loaded but only computes on image requests. Off keeps it on CPU: slower image encoding, no VRAM.\nWHICH GPU it lands on is a separate question — see 'Vision encoder' on the Server tab.";
+                    CheckBox {
+                        enabled: AppState.form.mmproj != "";
+                        text: "offload the image encoder to GPU";
+                        checked <=> AppState.form.mmproj_offload;
+                    }
+                }
+                Text {
+                    text: "The two bounds below cap the tokens ONE image takes on dynamic-resolution vision models — only the mmproj/CLIP encoder reads them (pick an MMProj above to enable them). Leave at default to read the bound from the model.";
+                    wrap: word-wrap;
+                    font-size: 12px;
+                    color: Palette.foreground.transparentize(Tokens.muted);
+                }
+                LabeledField {
+                    label: "Min image tokens";
+                    hint: "--image-min-tokens: minimum tokens each image is encoded to.\nOnly used by vision models with dynamic resolution.\ndefault = omit the flag → read the bound from the model.\nQwen-VL warns it needs at least 1024 for grounding accuracy (llama.cpp #16842) — set 1024 here if you see that warning.";
+                    DefaultLineEdit {
+                        // Vision-only: the encoder is what reads it, so gate on an mmproj.
+                        enabled: AppState.form.mmproj != "";
+                        input_type: InputType.number;
+                        default <=> AppState.form.image_min_tokens_default;
+                        value <=> AppState.form.image_min_tokens;
+                    }
+                }
+                LabeledField {
+                    label: "Max image tokens";
+                    hint: "--image-max-tokens: maximum tokens each image is encoded to.\nOnly used by vision models with dynamic resolution.\ndefault = omit the flag → read the bound from the model.\nLower it to cap the prefill cost (and VRAM) of large images.";
+                    DefaultLineEdit {
+                        enabled: AppState.form.mmproj != "";
+                        input_type: InputType.number;
+                        default <=> AppState.form.image_max_tokens_default;
+                        value <=> AppState.form.image_max_tokens;
                     }
                 }
             }
