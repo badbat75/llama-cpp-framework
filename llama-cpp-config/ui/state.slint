@@ -46,7 +46,8 @@ export global AppState {
     // process listens on what it was launched with — saving a new port only
     // changes the file — so the Open-chat button prefers this over chat_url.
     in-out property <string> launched_url: "";
-    out property <string> open_chat_url: server_running && launched_url != "" ? launched_url : chat_url;
+    out property <string> open_chat_url: !server_form.base_url_default ? chat_url
+        : (server_running && launched_url != "" ? launched_url : chat_url);
 
     // ── Server tab state ─────────────────────────────────────────────
     // All editable server.ini fields live in one struct (ServerForm), like the
