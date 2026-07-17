@@ -89,10 +89,10 @@ pub struct MmprojInfo {
 /// cross-referenced by filename against the selected model.
 #[derive(Debug, Clone, Default)]
 pub struct ExternalDraft {
-    pub mtp_count: usize,
-    pub dflash_count: usize,
     /// Best filename-overlap match, if any: (label, "MTP" | "DFlash").
     pub best: Option<(String, &'static str)>,
+    /// GGUF header of the best matching drafter, if readable.
+    pub best_info: Option<ModelInfo>,
 }
 
 // ── Reasoning support, read off the chat template ────────────────────────
@@ -234,7 +234,7 @@ impl ModelInfo {
         } else {
             format!("all {} layers hold experts", self.n_layer)
         };
-        format!("{desc}{SEP}saves VRAM (slower)")
+        desc
     }
 
     pub fn arch_quant_line(&self) -> String {
@@ -344,52 +344,25 @@ impl ModelInfo {
     }
 
     /// The "Thinking" row: does this model reason, and can `--reasoning on|off`
-    /// switch it? See `Thinking` for how (and how imperfectly) this is read.
-    ///
-    /// Note the negative arm says "no marker in the chat template", not "no": the
-    /// subject of every verdict here is the TEMPLATE, and a model can still think
-    /// with a template that never mentions it (MiMo-VL's names nothing at all, yet
-    /// the model emits `<think>` and llama-server's reasoning parser picks it up
-    /// from the output). What the template's silence *does* prove is that neither
-    /// `--reasoning` nor `--reasoning-preserve` has anything to act on.
+    /// switch it?
     pub fn thinking_line(&self) -> String {
         match self.thinking() {
             Thinking::NoTemplate => "unknown (no embedded chat template)".to_string(),
             Thinking::None => "no marker in the chat template".to_string(),
-            Thinking::Switchable => {
-                format!("yes{SEP}--reasoning on|off switches it (enable_thinking)")
-            }
-            Thinking::EffortOnly => {
-                format!("yes{SEP}always on{SEP}effort via chat-template-kwargs reasoning_effort")
-            }
-            Thinking::Always => format!("yes{SEP}always on (no enable_thinking switch)"),
+            Thinking::Switchable => "yes".to_string(),
+            Thinking::EffortOnly => "yes".to_string(),
+            Thinking::Always => "yes".to_string(),
         }
     }
 
     /// The "Past thinking" row: is `--reasoning-preserve` a LEVER on this
     /// template — i.e. does the template read any of the three variables the flag
     /// sets?
-    ///
-    /// This answers a question llama-server's own log cannot. The flag sets the
-    /// kwarg `preserve_reasoning`, which `caps_apply_preserve_reasoning`
-    /// (common/jinja/caps.cpp) expands into `preserve_thinking`, `clear_thinking`
-    /// and `truncate_history_thinking` — and templates read different ones of the
-    /// three (Qwen3.6/LFM2.5 the first, GLM-4.7 the second, Nemotron the third).
-    /// A template that names NONE of them cannot see the flag at all, so setting
-    /// it there is a no-op. llama.cpp's capability probe reports `supports
-    /// preserving reasoning` by RENDERING the template and checking whether a past
-    /// turn's trace came out — which is `true` both for a template that gates on
-    /// the flag and for one that preserves unconditionally (Ornith-1.0), and those
-    /// are opposite answers to "will this flag do anything".
-    ///
-    /// So there is no "the model doesn't think" arm: whatever the model does, a
-    /// template that names no preserve variable is one the flag cannot reach, and
-    /// that is the whole question this row answers.
     pub fn past_thinking_line(&self) -> String {
         match (self.thinking(), self.preserve_var()) {
             (Thinking::NoTemplate, _) => "unknown (no embedded chat template)".to_string(),
-            (_, Some(var)) => format!("yes{SEP}--reasoning-preserve (template reads {var})"),
-            (_, None) => format!("no{SEP}--reasoning-preserve is a no-op on this template"),
+            (_, Some(_)) => "yes".to_string(),
+            (_, None) => "no".to_string(),
         }
     }
 
@@ -507,33 +480,27 @@ impl MmprojInfo {
 }
 
 /// One-line summary of embedded MTP + any matching external drafter, for the
-/// "Draft" row of the info box.
+/// "Draft" row of the info box. Shows characteristics if present, empty otherwise.
 pub fn draft_line(info: &ModelInfo, ext: &ExternalDraft) -> String {
-    let embedded = if info.nextn_predict_layers > 0 {
+    let mut parts = Vec::new();
+
+    if info.nextn_predict_layers > 0 {
         let n = info.nextn_predict_layers;
-        format!(
-            "embedded MTP: yes ({n} nextn layer{})",
+        parts.push(format!(
+            "MTP: {n} nextn layer{}",
             if n == 1 { "" } else { "s" }
-        )
-    } else {
-        "embedded MTP: no".to_string()
-    };
+        ));
+    }
 
-    let external = if let Some((label, kind)) = &ext.best {
-        format!("external: {kind} looks compatible ({label})")
-    } else {
-        let total = ext.mtp_count + ext.dflash_count;
-        if total > 0 {
-            format!(
-                "external: none matched ({} MTP, {} DFlash in library)",
-                ext.mtp_count, ext.dflash_count
-            )
+    if let Some((label, kind)) = &ext.best {
+        if let Some(draft_info) = &ext.best_info {
+            parts.push(format!("{}: {}", label, draft_info.draft_file_line()));
         } else {
-            "external: none in library".to_string()
+            parts.push(format!("{kind}: {label}"));
         }
-    };
+    }
 
-    format!("{embedded}{SEP}{external}")
+    parts.join(SEP)
 }
 
 // ── Reading via ggml-base.dll ────────────────────────────────────────────
@@ -567,9 +534,8 @@ pub fn external_drafters(models_dir: &str, model_path: &str) -> ExternalDraft {
     let dflash = model_scan::list(models_dir, model_scan::Category::Dflash.subdir());
 
     let mut out = ExternalDraft {
-        mtp_count: mtp.len(),
-        dflash_count: dflash.len(),
         best: None,
+        best_info: None,
     };
 
     let mut best_score = 1usize; // require strictly > 1 shared tokens
@@ -582,6 +548,9 @@ pub fn external_drafters(models_dir: &str, model_path: &str) -> ExternalDraft {
         if score > best_score {
             best_score = score;
             out.best = Some((opt.label.clone(), kind));
+            if let Some(info) = read_model_info(std::path::Path::new(&opt.path)) {
+                out.best_info = Some(info);
+            }
         }
     }
     out
@@ -860,7 +829,7 @@ mod tests {
         );
         assert_eq!(
             info.moe_offload_line(),
-            "45 of 48 layers hold experts (first 3 dense)  ·  saves VRAM (slower)"
+            "45 of 48 layers hold experts (first 3 dense)"
         );
         assert_eq!(info.arch_quant_line(), "deepseek2  ·  Q4_K_M  ·  236B-A21B");
         assert_eq!(info.layers_ctx_line(), "48 layers  ·  trained ctx 163,840");
@@ -938,65 +907,41 @@ mod tests {
             "{%- if enable_thinking is defined and enable_thinking is false %}{{- '<think>\\n\\n</think>\\n\\n' }}\
              {%- endif %}{%- if loop.index0 > ns.last_query_index %}{{- '<think>' + reasoning_content + '</think>' }}{%- endif %}",
         );
-        assert_eq!(
-            qwen35.thinking_line(),
-            "yes  ·  --reasoning on|off switches it (enable_thinking)"
-        );
-        assert_eq!(
-            qwen35.past_thinking_line(),
-            "no  ·  --reasoning-preserve is a no-op on this template"
-        );
+        assert_eq!(qwen35.thinking_line(), "yes");
+        assert_eq!(qwen35.past_thinking_line(), "no");
 
         // Qwen3.6 adds the gate (README's "Keep past thinking" section quotes it).
         let qwen36 = with_template(
             "{%- if enable_thinking %}…{%- endif %}\
              {%- if preserve_thinking or loop.index0 > ns.last_query_index %}{{- '<think>' + reasoning_content + '</think>' }}{%- endif %}",
         );
-        assert_eq!(
-            qwen36.past_thinking_line(),
-            "yes  ·  --reasoning-preserve (template reads preserve_thinking)"
-        );
+        assert_eq!(qwen36.past_thinking_line(), "yes");
 
         // Same flag, a different one of its three variables (GLM-4.7 / Nemotron).
         let glm = with_template(
             "{%- if enable_thinking %}…{%- endif %}\
-             {%- if ((clear_thinking is defined and not clear_thinking) or loop.index0 > ns.last_user_index) and reasoning_content -%}{{ '<think>' + reasoning_content + '</think>' }}{%- endif -%}",
+             {%- if ((clear_thinking is defined and not clear_thinking) or loop.index0 > ns.last_user_index) and reasoning_content -%}{{ '<think>' + reasoning_content + 'enddate' }}{%- endif -%}",
         );
-        assert_eq!(
-            glm.past_thinking_line(),
-            "yes  ·  --reasoning-preserve (template reads clear_thinking)"
-        );
+        assert_eq!(glm.past_thinking_line(), "yes");
         let nemotron = with_template(
-            "{%- if truncate_history_thinking %}{%- set content = content.split('</think>')[-1] %}{%- endif %}",
+            "{%- if truncate_history_thinking %}{%- set content = content.split('enddate')[-1] %}{%- endif %}",
         );
-        assert_eq!(
-            nemotron.past_thinking_line(),
-            "yes  ·  --reasoning-preserve (template reads truncate_history_thinking)"
-        );
+        assert_eq!(nemotron.past_thinking_line(), "yes");
 
         // Ministral-3-Reasoning: [THINK] tags and a 'thinking' content block, no
         // enable_thinking anywhere — it always thinks and --reasoning can't stop it.
         let ministral = with_template(
             "{%- elif block['type'] == 'thinking' %}{{- '[THINK]' + block['thinking'] + '[/THINK]' }}",
         );
-        assert_eq!(
-            ministral.thinking_line(),
-            "yes  ·  always on (no enable_thinking switch)"
-        );
-        assert_eq!(
-            ministral.past_thinking_line(),
-            "no  ·  --reasoning-preserve is a no-op on this template"
-        );
+        assert_eq!(ministral.thinking_line(), "yes");
+        assert_eq!(ministral.past_thinking_line(), "no");
 
         // gpt-oss: no on/off switch, a reasoning_effort level instead.
         let gpt_oss = with_template(
             "{%- if reasoning_effort is not defined %}{%- set reasoning_effort = \"medium\" %}{%- endif %}\
              {{- \"# Valid channels: analysis, commentary, final.\" }}{{- message.thinking }}",
         );
-        assert_eq!(
-            gpt_oss.thinking_line(),
-            "yes  ·  always on  ·  effort via chat-template-kwargs reasoning_effort"
-        );
+        assert_eq!(gpt_oss.thinking_line(), "yes");
 
         // A template with no thinking mechanics (Llama-3.1's) — but MiMo-VL, which
         // DOES think, has one just as bare, so the verdict names the TEMPLATE and
@@ -1007,10 +952,7 @@ mod tests {
             "{%- for message in messages %}{{- '<|start_header_id|>' + message['role'] + '<|end_header_id|>' + message['content'] }}{%- endfor %}",
         );
         assert_eq!(llama.thinking_line(), "no marker in the chat template");
-        assert_eq!(
-            llama.past_thinking_line(),
-            "no  ·  --reasoning-preserve is a no-op on this template"
-        );
+        assert_eq!(llama.past_thinking_line(), "no");
 
         // No template at all: say so, rather than claiming the model can't think.
         let bare =
@@ -1092,13 +1034,12 @@ mod tests {
         ]);
         let info = ModelInfo::from_kv(&m).unwrap();
         let ext = ExternalDraft {
-            mtp_count: 0,
-            dflash_count: 2,
             best: Some(("glm-dflash.gguf".into(), "DFlash")),
+            best_info: None,
         };
         let line = draft_line(&info, &ext);
-        assert!(line.contains("embedded MTP: yes (1 nextn layer)"));
-        assert!(line.contains("DFlash looks compatible (glm-dflash.gguf)"));
+        assert!(line.contains("MTP: 1 nextn layer"));
+        assert!(line.contains("DFlash: glm-dflash.gguf"));
     }
 
     /// The whole point of the Embeddings row: the FILE NAME does not tell you
@@ -1180,7 +1121,7 @@ mod tests {
         assert_eq!(info.kind_line(), "MoE — 128 experts, 8 active/tok");
         assert_eq!(
             info.moe_offload_line(),
-            "all 48 layers hold experts  ·  saves VRAM (slower)"
+            "all 48 layers hold experts"
         );
     }
 }
