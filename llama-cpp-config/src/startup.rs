@@ -9,6 +9,17 @@
 //! could silently desync — and re-enabling the toggle after the install moved
 //! is what refreshes the stored exe path.
 //!
+//! The entry registers the INSTALLED copy, not `current_exe()`: `set_enabled`
+//! prefers the exe under `HKLM\Software\llama.cpp\InstallDir\bin`
+//! (`installed_exe`), falling back to `current_exe()` only when no install is
+//! recorded (portable / dev use). `current_exe()` alone is a footgun — toggling
+//! the setting from a second, non-installed build (e.g. a `cargo run` debug exe)
+//! would persist THAT path into logon startup, and the debug build is
+//! console-subsystem (see `main.rs`), so every logon then flashes an empty
+//! console window that owns the app (closing it kills the app). Preferring the
+//! installed copy makes the toggle write the Program Files GUI build regardless
+//! of which build flipped it.
+//!
 //! Raw Win32 FFI (no extra crates), matching `single_instance.rs`. On
 //! non-Windows the toggles are unsupported: `is_enabled` is `false` and the UI
 //! disables the checkboxes (`AppState.startup_supported`).
@@ -27,6 +38,18 @@ pub fn is_supported() -> bool {
 fn run_command(exe: &std::path::Path, minimized: bool) -> String {
     let flag = if minimized { " --minimized" } else { "" };
     format!("\"{}\" gui{flag}", exe.display())
+}
+
+/// The exe to register in logon startup: the installed copy when one is
+/// recorded (`HKLM InstallDir`), else the running exe. Pure so the precedence is
+/// testable without touching the registry; `set_enabled` supplies `installed`
+/// from `installed_exe()` and `current` from `std::env::current_exe()`.
+#[cfg_attr(not(windows), allow(dead_code))] // non-Windows keeps only the test caller
+fn choose_autostart_exe(
+    installed: Option<std::path::PathBuf>,
+    current: std::path::PathBuf,
+) -> std::path::PathBuf {
+    installed.unwrap_or(current)
 }
 
 #[cfg(windows)]
@@ -59,6 +82,7 @@ mod win {
 
     // Predefined key handles are sentinel values, not real handles — no close.
     const HKEY_CURRENT_USER: Hkey = 0x8000_0001_u32 as usize as Hkey;
+    const HKEY_LOCAL_MACHINE: Hkey = 0x8000_0002_u32 as usize as Hkey;
     const KEY_QUERY_VALUE: u32 = 0x0001;
     const KEY_SET_VALUE: u32 = 0x0002;
     const REG_SZ: u32 = 1;
@@ -114,15 +138,20 @@ mod win {
         }
     }
 
-    /// The command the Run entry currently stores, or `None` when absent /
-    /// unreadable. Both public reads derive from this, so the entry stays the
-    /// single source of truth for the two startup toggles.
-    fn stored_command() -> Option<String> {
-        let key = open_run_key(KEY_QUERY_VALUE).ok()?;
-        let name = wide(VALUE_NAME);
+    /// Read a `REG_SZ` value from `root\subkey`, or `None` when the key/value is
+    /// absent, unreadable, or not a string. Shared by `stored_command` (HKCU Run)
+    /// and `install_dir` (HKLM InstallDir).
+    fn read_reg_sz(root: Hkey, subkey: &str, value: &str) -> Option<String> {
+        let sub = wide(subkey);
+        let mut key: Hkey = std::ptr::null_mut();
+        if unsafe { RegOpenKeyExW(root, sub.as_ptr(), 0, KEY_QUERY_VALUE, &mut key) }
+            != ERROR_SUCCESS
+        {
+            return None;
+        }
+        let name = wide(value);
         // Two-call pattern: size the buffer, then read. A value grown between
-        // the calls fails the second with ERROR_MORE_DATA and reads as None —
-        // fine for a value only this app and the Startup panel touch.
+        // the calls fails the second with ERROR_MORE_DATA and reads as None.
         let mut kind: u32 = 0;
         let mut byte_len: u32 = 0;
         let sized = unsafe {
@@ -161,6 +190,32 @@ mod win {
         Some(s)
     }
 
+    /// The command the Run entry currently stores, or `None` when absent /
+    /// unreadable. Both public reads derive from this, so the entry stays the
+    /// single source of truth for the two startup toggles.
+    fn stored_command() -> Option<String> {
+        read_reg_sz(HKEY_CURRENT_USER, RUN_KEY, VALUE_NAME)
+    }
+
+    const INSTALL_KEY: &str = r"Software\llama.cpp";
+    const INSTALL_VALUE: &str = "InstallDir";
+
+    /// The exe of the INSTALLED copy (`InstallDir\bin\llama-cpp-config.exe`) as
+    /// recorded by the NSIS installer, or `None` when no install is registered
+    /// (portable / dev use) or the recorded exe is missing. `set_enabled`
+    /// prefers this over `current_exe()` so the logon entry always launches the
+    /// installed GUI build, never a debug build that happens to flip the toggle.
+    fn installed_exe() -> Option<std::path::PathBuf> {
+        let dir = read_reg_sz(HKEY_LOCAL_MACHINE, INSTALL_KEY, INSTALL_VALUE)?;
+        if dir.is_empty() {
+            return None;
+        }
+        let exe = std::path::Path::new(&dir)
+            .join("bin")
+            .join("llama-cpp-config.exe");
+        exe.is_file().then_some(exe)
+    }
+
     /// Whether the logon Run entry exists. Presence is the state — the stored
     /// command isn't compared against the current exe path, so a moved install
     /// still reads as enabled (re-toggling refreshes the path).
@@ -175,14 +230,17 @@ mod win {
     }
 
     /// Create (or overwrite — an enable also refreshes a stale exe path and
-    /// applies the current `minimized` choice) or delete the Run entry.
+    /// applies the current `minimized` choice) or delete the Run entry. The
+    /// stored exe is the INSTALLED copy when one is registered (`installed_exe`),
+    /// else the running exe — so the logon entry launches the Program Files GUI
+    /// build even when the toggle is flipped from a dev/debug build.
     /// Deleting an absent value is a success: the goal state, not the
     /// transition, is what the caller asked for.
     pub fn set_enabled(on: bool, minimized: bool) -> io::Result<()> {
         let key = open_run_key(KEY_SET_VALUE)?;
         let name = wide(VALUE_NAME);
         let ret = if on {
-            let exe = std::env::current_exe()?;
+            let exe = super::choose_autostart_exe(installed_exe(), std::env::current_exe()?);
             let data = wide(&run_command(&exe, minimized));
             let byte_len = u32::try_from(data.len() * 2)
                 .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "command too long"))?;
@@ -213,7 +271,21 @@ mod win {
 
 #[cfg(test)]
 mod tests {
-    use super::run_command;
+    use super::{choose_autostart_exe, run_command};
+    use std::path::PathBuf;
+
+    // The autostart entry registers the installed copy when one is recorded,
+    // falling back to the running exe only when no install is present.
+    #[test]
+    fn choose_autostart_exe_prefers_the_installed_copy() {
+        let installed = PathBuf::from(r"C:\Program Files\llama.cpp\bin\llama-cpp-config.exe");
+        let current = PathBuf::from(r"C:\dev\target\debug\llama-cpp-config.exe");
+        assert_eq!(
+            choose_autostart_exe(Some(installed.clone()), current.clone()),
+            installed
+        );
+        assert_eq!(choose_autostart_exe(None, current.clone()), current);
+    }
 
     // The exe path is quoted (Program Files has a space) and the launch goes
     // through `gui`, with `--minimized` only when the tray toggle asks for it.
