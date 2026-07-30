@@ -1,6 +1,6 @@
 [package]
 name = "llama-cpp-config"
-version = "1.6.3"
+version = "1.6.4"
 edition = "2021"
 build = "build.rs"
 description = "GUI + CLI configurator for llama.cpp-framework"
@@ -30,6 +30,15 @@ ico = "0.5"
 
 [target.'cfg(windows)'.build-dependencies]
 winresource = "0.1"
+
+# Incremental compilation is OFF on purpose: Cargo garbage-collects the sessions
+# *inside* target\debug\incremental\<crate>-<hash>\ but never removes an obsolete
+# <hash> directory, and that hash changes on every version bump, Cargo.lock
+# change and rustc upgrade. With a release-per-week cadence that accumulated ~100
+# dead directories / 73 GB in ten days. Cost: a debug `cargo build`/`cargo test`
+# recompiles this crate whole (dependencies stay cached in target\debug\deps\).
+[profile.dev]
+incremental = false
 
 [profile.release]
 opt-level = "z"

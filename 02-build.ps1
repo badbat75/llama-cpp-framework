@@ -65,6 +65,12 @@ if ($sccachePath) {
     $env:SCCACHE_CACHE_SIZE = "10G"
     $env:SCCACHE_IDLE_TIMEOUT = "0"
     $env:SCCACHE_MAX_FRAME_LENGTH = "104857600"  # 100MB — GPU multi-arch objects are large
+    # Client-side mode (sccache 0.17+): cache lookup + compile run in the client process,
+    # the daemon serves only shared state — removes the per-compile server round-trip.
+    # Older sccache ignores the var. sccache itself ignores it under SCCACHE_ERROR_LOG
+    # or distributed compilation (neither used here); stats stay server-side, so
+    # --show-stats below still aggregates the whole build.
+    $env:SCCACHE_CLIENT_SIDE = "1"
     Write-Host "sccache: $sccachePath (cache: $sccacheDir)" -ForegroundColor Cyan
 } else {
     Write-Host "sccache not found — building without compiler cache" -ForegroundColor DarkGray
@@ -141,8 +147,10 @@ if ($sccachePath) {
     # nvcc is intentionally NOT wrapped with sccache (no CMAKE_CUDA_COMPILER_LAUNCHER):
     # sccache still mishandles multi-arch fatbin generation on CUDA 13.x, so fatbinary
     # fails with "Could not open input file '<tu>.compute_75.ptx'" on every .cu.obj.
-    # Retested with sccache 0.16.0 (2026-07) — still broken. Host C/CXX (clang)
-    # caching is unaffected and kept.
+    # Retested with sccache 0.17.0 (2026-07) — still broken, in server AND
+    # client-side mode (minimal repro: multi-gencode nvcc -c, fatbinary can't
+    # find the per-arch intermediates sccache's nvcc decomposition produced).
+    # Host C/CXX (clang) caching is unaffected and kept.
     # -U clears any stale CUDA launcher a prior run/experiment may have baked into
     # CMakeCache.txt: an existing cache keeps the value even when it's no longer
     # passed, silently re-wrapping nvcc and breaking the CUDA build.
