@@ -56,6 +56,73 @@ if ((Test-Path $cacheFile) -and [System.IO.Path]::IsPathRooted($cfg.CCompiler)) 
 }
 $opensslPath = $cfg.OpenSSLDir -replace '\\', '/'
 
+# ── Vulkan SDK: resolve the newest installed version ──────────────
+# The LunarG SDK installs into a VERSIONED dir (C:\VulkanSDK\<x.y.z.w>) and an
+# upgrade removes the old tree, so every absolute path into it dies with it.
+# Two things then keep pointing at the dead version:
+#   - VULKAN_SDK in a console opened before the upgrade (and CMake's FindVulkan
+#     searches that env var first — it is also what ggml-vulkan appends to
+#     CMAKE_PREFIX_PATH for find_package(SPIRV-Headers));
+#   - the CMakeCache entries FindVulkan wrote (Vulkan_INCLUDE_DIR /
+#     Vulkan_LIBRARY / Vulkan_GLSLC_EXECUTABLE / Vulkan_GLSLANG_VALIDATOR_
+#     EXECUTABLE), which CMake reuses WITHOUT checking the files still exist —
+#     unlike a config-package <pkg>_DIR, which is re-searched when it vanishes.
+# So the fix is to scan the PARENT dir and pin the highest version ourselves:
+# set VULKAN_SDK for this process and pass the four cached paths explicitly, so
+# they override whatever the cache holds. Deliberately NOT a build-dir wipe like
+# the compiler-mismatch check above: only the Vulkan backend needs recompiling,
+# and a wipe would cost a full CUDA + HIP rebuild.
+function Find-VulkanSdk {
+    # The parent of whatever VULKAN_SDK names (process env, then machine env —
+    # a stale console has an old value but still the right root), then the
+    # default install roots.
+    $roots = @()
+    foreach ($sdk in @($env:VULKAN_SDK, [Environment]::GetEnvironmentVariable('VULKAN_SDK', 'Machine'))) {
+        if ($sdk) { $roots += (Split-Path $sdk -Parent) }
+    }
+    $roots += @('C:\VulkanSDK', "${env:ProgramFiles}\VulkanSDK", "${env:ProgramFiles(x86)}\VulkanSDK")
+
+    $best = $null
+    $bestVer = $null
+    foreach ($root in ($roots | Where-Object { $_ } | Select-Object -Unique)) {
+        if (-not (Test-Path $root)) { continue }
+        foreach ($d in (Get-ChildItem $root -Directory -ErrorAction SilentlyContinue)) {
+            # Compare numerically ([version]): a string sort ranks 1.4.9 above
+            # 1.4.10. Skip anything the build cannot actually consume — the
+            # import lib and the shader compiler ggml-vulkan invokes.
+            $v = $null
+            if (-not [version]::TryParse($d.Name, [ref]$v)) { continue }
+            if (-not (Test-Path (Join-Path $d.FullName 'Lib\vulkan-1.lib'))) { continue }
+            if (-not (Test-Path (Join-Path $d.FullName 'Bin\glslc.exe'))) { continue }
+            if (-not $bestVer -or $v -gt $bestVer) { $bestVer = $v; $best = $d.FullName }
+        }
+    }
+    return $best
+}
+
+$vulkanArgs = @()
+$vulkanSdk = Find-VulkanSdk
+if ($vulkanSdk) {
+    Write-Host "Vulkan SDK: $vulkanSdk" -ForegroundColor Cyan
+    if ($env:VULKAN_SDK -ne $vulkanSdk) {
+        Write-Host "  (VULKAN_SDK was '$env:VULKAN_SDK' — overridden for this build)" -ForegroundColor DarkGray
+    }
+    $env:VULKAN_SDK = $vulkanSdk
+    $vk = $vulkanSdk -replace '\\', '/'
+    $vulkanArgs += "-DVulkan_INCLUDE_DIR:PATH=$vk/Include"
+    $vulkanArgs += "-DVulkan_LIBRARY:FILEPATH=$vk/Lib/vulkan-1.lib"
+    $vulkanArgs += "-DVulkan_GLSLC_EXECUTABLE:FILEPATH=$vk/Bin/glslc.exe"
+    # Found unconditionally by FindVulkan (legacy var), so a stale cached path
+    # would survive the same way — refresh it too, when the SDK still ships it.
+    if (Test-Path "$vulkanSdk\Bin\glslangValidator.exe") {
+        $vulkanArgs += "-DVulkan_GLSLANG_VALIDATOR_EXECUTABLE:FILEPATH=$vk/Bin/glslangValidator.exe"
+    }
+} else {
+    # Non-standard layout (unversioned dir, custom root): leave FindVulkan to its
+    # own search rather than guessing — it fails loudly enough if nothing is there.
+    Write-Host "Vulkan SDK: no versioned install found — leaving detection to CMake" -ForegroundColor Yellow
+}
+
 # ── sccache: use local cache if available ─────────────────────────
 $sccachePath = Get-Command sccache -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source
 if ($sccachePath) {
@@ -100,6 +167,10 @@ $cmakeArgs = @(
     "-DOPENSSL_ROOT_DIR:PATH=$opensslPath"
     "-DCMAKE_CUDA_FLAGS=-w"
 )
+
+# Pinned Vulkan SDK paths (see Find-VulkanSdk above) — empty when no versioned
+# install was found, in which case FindVulkan does its own search.
+$cmakeArgs += $vulkanArgs
 
 # ── HIP workaround for MSVC 14.51 (VS 18) <cmath> include order ──
 # The stock __clang_hip_runtime_wrapper.h includes <cmath> before the HIP
