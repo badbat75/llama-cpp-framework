@@ -57,14 +57,23 @@ use crate::paths;
 pub struct ServerConfig {
     pub port: Option<i32>,
     pub hostname: Option<String>,
-    pub mlock: Option<bool>,
-    /// Read the weights into RAM instead of memory-mapping the GGUF (--no-mmap).
-    /// None = the framework default (off = mmap on, llama.cpp's own default).
-    /// Load is slower and costs the model's size in RAM, but nothing can be
-    /// dropped back to the file later. Pairs with `mlock`, which locks whatever
-    /// is resident: with mmap on, pages fault in from the GGUF as they're first
-    /// touched, so mlock alone only pins what has already been read.
-    pub no_mmap: Option<bool>,
+    /// How llama.cpp brings the weights in (-lm / --load-mode): one of
+    /// [`LOAD_MODES`]. None = the framework default ("auto", which is also
+    /// llama.cpp's: mmap unless a device can't do it).
+    ///
+    /// It replaced the `Mlock` + `NoMmap` bools in b10105 (upstream PR #20834),
+    /// and the swap is NOT cosmetic. The old flags still parse, but each now
+    /// OVERWRITES the whole mode instead of setting one bool of two, so they
+    /// stopped composing: `--mlock --no-mmap` is last-one-wins (the mlock is
+    /// silently lost), and a lone `--mlock` selects MLOCK, which is mlock
+    /// WITHOUT mmap — `use_mmap` is true only for mmap / mmap+mlock / auto
+    /// (`llama-model-loader.cpp`), while mlock itself is on for mlock /
+    /// mmap+mlock (`llama-model.cpp`). Two independent checkboxes cannot express
+    /// that, which is why this is one enum.
+    ///
+    /// A server.ini predating the change is migrated on read — see
+    /// `migrated_load_mode`.
+    pub load_mode: Option<String>,
     pub threads: Option<i32>,
     pub cache_reuse: Option<i32>,
     pub threads_batch: Option<i32>,
@@ -156,6 +165,27 @@ pub struct ServerConfig {
 
 // ── Defaults & accessors ─────────────────────────────────────────────────
 
+/// Every value `-lm` accepts, in the dropdown's order (`common/arg.cpp`'s
+/// `--load-mode` help; `enum llama_load_mode` in include/llama.h). Mirrors
+/// `Options.load_modes` in ui/components.slint — the e2e (`src/tests/ui_bindings.rs`)
+/// asserts the two lists are equal, because a value the dropdown does not contain
+/// leaves the combo showing its first entry ("auto") and quietly SAVES that on the
+/// next write.
+pub const LOAD_MODES: [&str; 6] = ["auto", "none", "mmap", "mlock", "mmap+mlock", "dio"];
+
+/// The framework default when `LoadMode` is unset: llama.cpp's own default.
+pub const DEFAULT_LOAD_MODE: &str = LOAD_MODES[0];
+
+/// `v` as one of [`LOAD_MODES`], ignoring case and surrounding space; `None` when
+/// it names no mode llama.cpp has. Handing back the CANONICAL `&'static str` is the
+/// point: a hand-edited `LoadMode = MMAP+MLOCK` then shows and re-saves as the
+/// dropdown's own entry instead of falling back to "auto" and silently rewriting a
+/// setting the user did choose.
+pub fn normalize_load_mode(v: &str) -> Option<&'static str> {
+    let v = v.trim();
+    LOAD_MODES.into_iter().find(|m| m.eq_ignore_ascii_case(v))
+}
+
 /// Default ModelsDir when server.ini leaves it unset. ModelsDir is the *root*
 /// the four fixed subfolders hang off (models\, mmprojs\, mtps\, dflashs\ —
 /// see `model_scan`), so this is a bare `~\.llama.cpp`, not `…\models`.
@@ -178,8 +208,8 @@ impl ServerConfig {
             .map_or_else(default_models_dir, str::to_string)
     }
 
-    // The always-written trio's defaults (Port / Hostname / Mlock render as real
-    // lines even when unset). ONE home each — `render()`, `server_form`,
+    // The always-written trio's defaults (Port / Hostname / LoadMode render as
+    // real lines even when unset). ONE home each — `render()`, `server_form`,
     // `runstate::server_args`, and the GUI all pull from here, so changing a
     // default is a one-line edit instead of a four-file hunt.
 
@@ -199,15 +229,14 @@ impl ServerConfig {
             .map_or_else(|| "localhost".into(), str::to_string)
     }
 
-    /// The configured mlock flag, or `true` (the framework default) when unset.
-    pub fn mlock_or_default(&self) -> bool {
-        self.mlock.unwrap_or(true)
-    }
-
-    /// The no-mmap flag, or `false` (the framework default: keep llama.cpp's
-    /// mmap) when unset.
-    pub fn no_mmap_or_default(&self) -> bool {
-        self.no_mmap.unwrap_or(false)
+    /// The configured load mode, or `"auto"` (the framework default) when unset
+    /// or unrecognised. Always one of [`LOAD_MODES`], so the launch line can pass
+    /// it to `-lm` unchecked.
+    pub fn load_mode_or_default(&self) -> &'static str {
+        self.load_mode
+            .as_deref()
+            .and_then(normalize_load_mode)
+            .unwrap_or(DEFAULT_LOAD_MODE)
     }
 
     /// The web-UI MCP proxy flag, or `true` (the framework default) when unset.
@@ -271,8 +300,11 @@ fn from_keys(keys: &std::collections::BTreeMap<String, String>) -> ServerConfig 
     ServerConfig {
         port: keys.get("Port").and_then(|v| ini::parse_int(v)),
         hostname: opt_nonblank(keys.get("Hostname").cloned()),
-        mlock: keys.get("Mlock").and_then(|v| ini::parse_bool(v)),
-        no_mmap: keys.get("NoMmap").and_then(|v| ini::parse_bool(v)),
+        load_mode: keys
+            .get("LoadMode")
+            .and_then(|v| normalize_load_mode(v))
+            .or_else(|| migrated_load_mode(keys))
+            .map(str::to_string),
         threads: keys.get("Threads").and_then(|v| ini::parse_int(v)),
         cache_reuse: keys.get("CacheReuse").and_then(|v| ini::parse_int(v)),
         threads_batch: keys.get("ThreadsBatch").and_then(|v| ini::parse_int(v)),
@@ -291,6 +323,28 @@ fn from_keys(keys: &std::collections::BTreeMap<String, String>) -> ServerConfig 
         log_verbosity: keys.get("LogVerbosity").and_then(|v| ini::parse_int(v)),
         opencode_base_url: opt_nonblank(keys.get("OpencodeBaseUrl").cloned()),
         opencode_api_key: opt_nonblank(keys.get("OpencodeApiKey").cloned()),
+    }
+}
+
+/// The pre-b10105 `Mlock` / `NoMmap` pair as a `LoadMode`, for a server.ini
+/// written before the two collapsed into one enum. Consulted only when `LoadMode`
+/// is absent; the old keys then disappear on the next save, since `render`
+/// rewrites the whole file.
+///
+/// Only a `NoMmap` the user actually turned ON carries over. `Mlock = true` was
+/// the framework default and every save materialized it whether or not anyone
+/// chose it, so there is no way to tell an intent from a default — honouring it
+/// would hand the old default to every existing install and make the new one
+/// ("auto", llama.cpp's own) reachable for nobody. `Mlock = true` + `NoMmap = true`
+/// is the exception because it is unambiguous, and it is precisely the pair the
+/// old launch line got WRONG: it emitted `--mlock --no-mmap`, and under b10105
+/// the second flag overwrote the mode and dropped the mlock.
+fn migrated_load_mode(keys: &std::collections::BTreeMap<String, String>) -> Option<&'static str> {
+    let flag = |k: &str| keys.get(k).and_then(|v| ini::parse_bool(v));
+    match (flag("Mlock"), flag("NoMmap")) {
+        (Some(true), Some(true)) => Some("mlock"),
+        (_, Some(true)) => Some("none"),
+        _ => None,
     }
 }
 
@@ -343,7 +397,10 @@ fn validate_for_save(cfg: &ServerConfig) -> io::Result<()> {
 /// `presets::render_section`.
 fn render(cfg: &ServerConfig) -> String {
     let hostname = cfg.hostname_or_default();
-    let mlock = cfg.mlock_or_default();
+    // Canonicalized on the way out (`load_mode_or_default`), so a hand-edited
+    // value that is not a mode is corrected here rather than silently ignored
+    // at every read.
+    let load_mode = cfg.load_mode_or_default();
 
     let models_dir = cfg.models_dir_or_default();
 
@@ -425,14 +482,8 @@ fn render(cfg: &ServerConfig) -> String {
         "; OpencodeApiKey = sk-xxx  ; API key for proxy/gateway authentication (opencode.json apiKey + Claude Code); blank = none",
     );
 
-    let mlock_lit = if mlock { "true" } else { "false" };
-    // Always written like Mlock (a bool with a framework default), so an unset
-    // one reloads as the explicit default rather than None.
-    let no_mmap_lit = if cfg.no_mmap_or_default() {
-        "true"
-    } else {
-        "false"
-    };
+    // Always written like Hostname (a value with a framework default), so an
+    // unset one reloads as the explicit default rather than None.
     let webui_lit = if cfg.webui_mcp_proxy_or_default() {
         "true"
     } else {
@@ -459,11 +510,16 @@ fn render(cfg: &ServerConfig) -> String {
 [Server]
 {port_line}
 Hostname = {hostname}
-Mlock = {mlock_lit}
-; NoMmap: read the weights into RAM instead of memory-mapping the GGUF
-; (--no-mmap). Off by default (llama.cpp mmaps). Slower to load and costs the
-; model's size in RAM, but the pages can't be dropped back to the file.
-NoMmap = {no_mmap_lit}
+; LoadMode: how the weights are brought in (-lm / --load-mode). ONE enum, not two
+; flags: llama.cpp folded --mlock / --no-mmap / -dio into it in b10105 and its
+; values are mutually exclusive.
+;   auto        memory-map the GGUF unless a device can't (llama.cpp's default)
+;   none        neither mmap nor mlock: read the weights into RAM up front
+;   mmap        memory-map, always
+;   mlock       lock the weights in physical RAM, WITHOUT mmap
+;   mmap+mlock  memory-map and lock what it maps
+;   dio         Direct I/O where available
+LoadMode = {load_mode}
 ; WebuiMcpProxy: enable the built-in web UI's MCP CORS proxy (--webui-mcp-proxy).
 ; The bundled chat UI needs it to call MCP tools; disable on an untrusted network.
 WebuiMcpProxy = {webui_lit}
@@ -552,8 +608,9 @@ mod tests {
         let original = ServerConfig {
             port: Some(8081),
             hostname: Some("0.0.0.0".into()),
-            mlock: Some(false),
-            no_mmap: Some(true),
+            // Non-default, and the one value carrying a `+` — which the INI
+            // reader must not treat as anything special.
+            load_mode: Some("mmap+mlock".into()),
             threads: Some(12),
             cache_reuse: Some(256),
             threads_batch: Some(24),
@@ -579,9 +636,9 @@ mod tests {
     }
 
     // The writer's DELIBERATE collapses, pinned as documented behavior:
-    // - Hostname/Mlock/NoMmap/WebuiMcpProxy/Fit/LogVerbosity are always written,
-    //   so an unset one reloads as the framework default (localhost / true /
-    //   false / true / false / 4) rather than None.
+    // - Hostname/LoadMode/WebuiMcpProxy/Fit/LogVerbosity are always written,
+    //   so an unset one reloads as the framework default (localhost / auto /
+    //   true / false / 4) rather than None.
     // - `keep` predicates turn unset/"not worth writing" values into commented
     //   hint lines: port <= 0, threads/threads_batch <= 0, models_max unset.
     //   An unset port reloads as None (not a forced 8080), so the UI "default"
@@ -592,8 +649,7 @@ mod tests {
         let reloaded = round_trip(&ServerConfig::default());
         assert_eq!(reloaded.port, None);
         assert_eq!(reloaded.hostname.as_deref(), Some("localhost"));
-        assert_eq!(reloaded.mlock, Some(true));
-        assert_eq!(reloaded.no_mmap, Some(false));
+        assert_eq!(reloaded.load_mode.as_deref(), Some("auto"));
         assert_eq!(reloaded.webui_mcp_proxy, Some(true));
         assert_eq!(reloaded.fit, Some(false));
         assert_eq!(reloaded.prefill_assistant, Some(true));
@@ -608,6 +664,68 @@ mod tests {
         assert_eq!(reloaded.override_tensor, None);
         assert_eq!(reloaded.mmproj_device, None);
         assert_eq!(reloaded.models_dir, Some(default_models_dir()));
+    }
+
+    /// A server.ini written before b10105 carries `Mlock` / `NoMmap` and no
+    /// `LoadMode`. Only an explicit `NoMmap = true` survives the collapse — see
+    /// `migrated_load_mode` for why an `Mlock = true` alone cannot.
+    #[test]
+    fn pre_load_mode_ini_migrates() {
+        let cases = [
+            // The old framework default, materialized into every file: no intent
+            // to read, so it lands on the NEW framework default.
+            (Some("true"), Some("false"), None),
+            (Some("false"), Some("false"), None),
+            (None, None, None),
+            // Unambiguous, and exactly the pair the old launch line got wrong
+            // (`--mlock --no-mmap` = last one wins = mlock silently dropped).
+            (Some("true"), Some("true"), Some("mlock")),
+            (Some("false"), Some("true"), Some("none")),
+        ];
+        for (mlock, no_mmap, expected) in cases {
+            let mut keys = std::collections::BTreeMap::new();
+            keys.insert("Hostname".to_string(), "localhost".to_string());
+            for (k, v) in [("Mlock", mlock), ("NoMmap", no_mmap)] {
+                if let Some(v) = v {
+                    keys.insert(k.to_string(), v.to_string());
+                }
+            }
+            assert_eq!(
+                from_keys(&keys).load_mode.as_deref(),
+                expected,
+                "Mlock={mlock:?} NoMmap={no_mmap:?}"
+            );
+        }
+        // An explicit LoadMode wins over both legacy keys, whatever they say.
+        let keys = std::collections::BTreeMap::from([
+            ("LoadMode".to_string(), "dio".to_string()),
+            ("Mlock".to_string(), "true".to_string()),
+            ("NoMmap".to_string(), "true".to_string()),
+        ]);
+        assert_eq!(from_keys(&keys).load_mode.as_deref(), Some("dio"));
+    }
+
+    /// A hand-edited LoadMode is canonicalized rather than silently dropped, and
+    /// a value that names no mode falls back to the default — never to whatever
+    /// llama.cpp would do with an argument it rejects (it exits).
+    #[test]
+    fn load_mode_normalizes_and_falls_back() {
+        for (input, expected) in [
+            ("MMAP+MLOCK", Some("mmap+mlock")),
+            ("  mlock  ", Some("mlock")),
+            ("Auto", Some("auto")),
+            ("--mlock", None),
+            ("", None),
+        ] {
+            assert_eq!(normalize_load_mode(input), expected, "input {input:?}");
+        }
+        let cfg = ServerConfig {
+            load_mode: Some("nonsense".into()),
+            ..Default::default()
+        };
+        assert_eq!(cfg.load_mode_or_default(), "auto");
+        // …and the corrected value is what the next save writes.
+        assert_eq!(round_trip(&cfg).load_mode.as_deref(), Some("auto"));
     }
 
     #[test]

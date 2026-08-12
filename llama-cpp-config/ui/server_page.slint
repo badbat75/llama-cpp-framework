@@ -88,19 +88,14 @@ export component ServerPage inherits ScrollView {
         SectionCard {
             heading: "Resources";
             LabeledField {
-                label: "Mlock (lock RAM)";
-                hint: "Locks model weights into physical RAM (--mlock) so the OS can't page them out.\nKeeps latency stable; needs enough free RAM for the whole model.";
-                CheckBox {
-                    text: "lock model in physical RAM";
-                    checked <=> AppState.server_form.mlock;
-                }
-            }
-            LabeledField {
-                label: "No mmap";
-                hint: "Reads the weights into RAM instead of memory-mapping the GGUF (--no-mmap).\nSlower to load and costs the model's size in RAM, but the pages can't be dropped back to the file. Pairs with Mlock, which only locks what is already resident.\ndefault = off (llama.cpp mmaps the file).";
-                CheckBox {
-                    text: "read weights into RAM instead of mmap";
-                    checked <=> AppState.server_form.no_mmap;
+                label: "Load mode";
+                hint: "How llama.cpp brings the weights in (-lm / --load-mode). One setting, not two: mlock, mmap and Direct I/O are mutually exclusive states of the same enum since llama.cpp b10105.\nauto (default) memory-maps the GGUF unless a device can't — llama.cpp's own default, fastest to load.\nnone reads the weights into RAM up front: slower, costs the model's size in RAM, but nothing can be dropped back to the file.\nmmap always memory-maps.\nmlock locks the weights in physical RAM WITHOUT mmapping — keeps latency stable, needs room for the whole model.\nmmap+mlock memory-maps and locks what it maps.\ndio uses Direct I/O where the platform offers it.";
+                // A dropdown, not two checkboxes: --mlock and --no-mmap each
+                // OVERWRITE this enum in llama.cpp, so the pair they used to
+                // emit was last-one-wins (see src/server_cfg.rs `load_mode`).
+                EnumComboBox {
+                    options: Options.load_modes;
+                    value <=> AppState.server_form.load_mode;
                 }
             }
             LabeledField {

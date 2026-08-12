@@ -65,7 +65,7 @@ use std::rc::Rc;
 
 use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel};
 
-use crate::form::{form_to_preset, preset_to_form};
+use crate::form::{form_to_preset, preset_to_form, prune_inactive_draft_fields};
 use crate::{
     devices, gpu_split, integrations, model_scan, net_ifaces, paths, presets, runstate, server_cfg,
     server_form, server_version, settings, startup, tensor_override,

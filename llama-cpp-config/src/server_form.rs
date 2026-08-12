@@ -74,8 +74,10 @@ pub fn config_to_form(cfg: &server_cfg::ServerConfig) -> ServerForm {
         port: itxt(cfg.port, 8080),
         port_default: cfg.port.is_none(),
         hostname: cfg.hostname_or_default().into(),
-        mlock: cfg.mlock_or_default(),
-        no_mmap: cfg.no_mmap_or_default(),
+        // Always has a value (framework default "auto" when unset or unknown),
+        // and it IS the dropdown's entry — unlike the -lv combo below, whose
+        // form value is a label that has to be mapped back.
+        load_mode: cfg.load_mode_or_default().into(),
         // Thread counts are auto-flagged sliders: unset ⇒ "auto" (omit the flag).
         threads: cfg.threads.unwrap_or(0),
         threads_auto: cfg.threads.is_none(),
@@ -146,8 +148,14 @@ pub fn form_to_config(f: &ServerForm) -> server_cfg::ServerConfig {
         // here would only diverge the in-memory config, since every consumer
         // re-blanks it through `hostname_or_default`.
         hostname: server_cfg::opt_nonblank(Some(f.hostname.to_string())),
-        mlock: Some(f.mlock),
-        no_mmap: Some(f.no_mmap),
+        // Canonicalized rather than trusted: the combo can only produce one of
+        // Options.load_modes, but a stale/hand-built form must not put a value
+        // llama-server would reject onto the launch line.
+        load_mode: Some(
+            server_cfg::normalize_load_mode(f.load_mode.as_str())
+                .unwrap_or(server_cfg::DEFAULT_LOAD_MODE)
+                .to_string(),
+        ),
         // "auto" ⇒ omit the flag; otherwise the slider's value.
         threads: if f.threads_auto {
             None
@@ -221,8 +229,8 @@ mod tests {
         let cfg = ServerConfig {
             port: Some(9090),
             hostname: Some("0.0.0.0".into()),
-            mlock: Some(false),
-            no_mmap: Some(true),
+            // Non-default, so the round-trip is not vacuous for it.
+            load_mode: Some("mmap+mlock".into()),
             threads: Some(8),
             cache_reuse: Some(256),
             threads_batch: Some(12),
@@ -260,6 +268,26 @@ mod tests {
         // A label the dropdown can't produce falls back to the framework default,
         // never to 0 — losing the log entirely is the one outcome nobody wants.
         assert_eq!(parse_log_level("nonsense"), 4);
+    }
+
+    /// The load-mode combo carries the raw `-lm` value, so the only thing that
+    /// can go wrong is a value outside the six — which must land on the default
+    /// rather than on the launch line, where llama-server would refuse it and
+    /// nothing would start.
+    #[test]
+    fn load_mode_falls_back_to_default() {
+        for mode in server_cfg::LOAD_MODES {
+            let form = ServerForm {
+                load_mode: mode.into(),
+                ..Default::default()
+            };
+            assert_eq!(form_to_config(&form).load_mode.as_deref(), Some(mode));
+        }
+        let form = ServerForm {
+            load_mode: "--mlock".into(),
+            ..Default::default()
+        };
+        assert_eq!(form_to_config(&form).load_mode.as_deref(), Some("auto"));
     }
 
     // The "default"/None ⇄ sentinel mapping specifically: an unset split-mode

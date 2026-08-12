@@ -121,10 +121,16 @@ export struct ServerForm {
     port: string,
     port_default: bool,
     hostname: string,
-    mlock: bool,
-    // --no-mmap: read the weights into RAM instead of mmapping the GGUF. Same
-    // plain-bool shape as `mlock`; checked = pass the flag (framework default: off).
-    no_mmap: bool,
+    // -lm / --load-mode, carried as the RAW value ("auto", "mmap+mlock", …) —
+    // unlike log_verbosity below, whose combo entries are labels needing a map.
+    // An EnumComboBox over Options.load_modes; the Rust list (server_cfg::LOAD_MODES)
+    // is asserted against the Slint one in the e2e so they can't drift.
+    //
+    // It was two CheckBoxes (mlock + no_mmap) until llama.cpp folded --mlock /
+    // --no-mmap / -dio into this one enum in b10105: they are mutually exclusive
+    // states, so two independent toggles could express combinations that do not
+    // exist — and did, silently (see src/server_cfg.rs `load_mode`).
+    load_mode: string,
     threads: int,
     threads_auto: bool,
     cache_reuse: string,

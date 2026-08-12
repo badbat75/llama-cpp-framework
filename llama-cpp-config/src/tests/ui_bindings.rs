@@ -149,6 +149,23 @@ fn editable_widgets_track_model_after_edit() {
         "Options.log_levels (ui/components.slint) drifted from server_form::LOG_LEVELS"
     );
 
+    // Same drift guard for the -lm dropdown, where the stakes are one step
+    // higher: its entries are passed to llama-server VERBATIM, so a mode the
+    // Rust list has and the combo doesn't leaves the combo on "auto" and saves
+    // that over the user's choice, while the reverse puts a value on the launch
+    // line that llama-server rejects outright ("invalid value") — nothing starts.
+    let slint_modes: Vec<String> = app
+        .global::<crate::gui::Options>()
+        .get_load_modes()
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    assert_eq!(
+        slint_modes,
+        crate::server_cfg::LOAD_MODES.to_vec(),
+        "Options.load_modes (ui/components.slint) drifted from server_cfg::LOAD_MODES"
+    );
+
     // ── Server tab (shown by default) ────────────────────────────────
     // LineEdit (inside DefaultLineEdit) — `text <=> AppState.server_form.port`.
     // Every numeric field of both forms is one of these since v1.5.0, integers
@@ -166,20 +183,22 @@ fn editable_widgets_track_model_after_edit() {
         "1234",
     );
 
-    // CheckBox — `checked <=> AppState.server_form.mlock`. The only edit is a
-    // toggle, so the edit leaves the *opposite* of `load`. `reload` therefore
-    // restores `load` (true→false→true): a frozen widget would sit on the toggled
-    // value and mismatch. Found by its visible text (the checkbox's accessible-label).
+    // CheckBox — `checked <=> AppState.server_form.webui_mcp_proxy`. The only
+    // edit is a toggle, so the edit leaves the *opposite* of `load`. `reload`
+    // therefore restores `load` (true→false→true): a frozen widget would sit on
+    // the toggled value and mismatch. Found by its visible text (the checkbox's
+    // accessible-label). Any plain-bool toggle pins the KIND — this one because
+    // it also defaults to true, so the toggle actually changes something.
     assert_reload_reaches_widget(
-        &by_label(&app, "lock model in physical RAM"),
-        "CheckBox server_form.mlock",
+        &by_label(&app, "serve the web UI's MCP proxy endpoint"),
+        "CheckBox server_form.webui_mcp_proxy",
         |e| {
             e.accessible_checked()
                 .map(|b| b.to_string())
                 .unwrap_or_default()
         },
         |e| e.invoke_accessible_default_action(),
-        |v| set_server_form(&st, |f| f.mlock = v == "true"),
+        |v| set_server_form(&st, |f| f.webui_mcp_proxy = v == "true"),
         "true",
         "true",
     );

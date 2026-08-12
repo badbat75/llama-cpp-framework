@@ -328,6 +328,32 @@ pub fn form_to_preset(f: &PresetForm) -> presets::Preset {
     }
 }
 
+/// `presets::prune_inactive_draft_keys` applied to the live FORM, returning the
+/// same list of dropped INI keys. Called when the Model-info box learns what the
+/// selected model is (`update_model_info`), so the greyed-out speculative fields
+/// cannot keep a value the model can't use — see the policy's own doc comment
+/// for what "can't use" costs.
+///
+/// The policy stays in `presets.rs` and the form conversions stay in the two
+/// functions above: this round-trips through `Preset` to reuse both. Only the
+/// draft fields are lifted back out, deliberately — writing the whole converted
+/// form back would also normalize whatever half-typed text sits in the OTHER
+/// numeric fields, and this runs while the user is editing.
+pub fn prune_inactive_draft_fields(f: &mut PresetForm, embeds_mtp: bool) -> Vec<&'static str> {
+    let mut p = form_to_preset(f);
+    let dropped = presets::prune_inactive_draft_keys(&mut p, embeds_mtp);
+    if !dropped.is_empty() {
+        let pruned = preset_to_form(&p);
+        f.spec_type = pruned.spec_type;
+        f.spec_draft_n_max = pruned.spec_draft_n_max;
+        f.spec_draft_n_max_default = pruned.spec_draft_n_max_default;
+        f.n_gpu_layers_draft = pruned.n_gpu_layers_draft;
+        f.n_gpu_layers_draft_auto = pruned.n_gpu_layers_draft_auto;
+        f.device_draft = pruned.device_draft;
+    }
+    dropped
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -335,6 +361,47 @@ mod tests {
 
     fn round_trip(p: &Preset) -> Preset {
         form_to_preset(&preset_to_form(p))
+    }
+
+    // The prune's FORM spelling, which is not the schema's: an emptied
+    // `spec_type` has to come back as the combo's "none" entry (an empty string
+    // matches no option and leaves the widget showing the old one), and the two
+    // omit-the-flag companions as their `_default` / `_auto` booleans.
+    #[test]
+    fn prune_resets_the_draft_fields_to_their_form_spelling() {
+        let mut f = preset_to_form(&Preset {
+            spec_type: "draft-mtp".into(),
+            spec_draft_n_max: Some(2),
+            n_gpu_layers_draft: Some(99),
+            device_draft: "CUDA0".into(),
+            ctx_size: Some(65536),
+            ..Preset::default()
+        });
+        // Half-typed text in an unrelated field: this runs on every model /
+        // mmproj / draft change, i.e. WHILE the user is editing, so the write-back
+        // must not launder the rest of the form through form_to_preset.
+        f.temp = "1.".into();
+
+        let dropped = prune_inactive_draft_fields(&mut f, false);
+
+        assert_eq!(dropped.len(), 4, "all four keys are dead without a draft");
+        assert_eq!(f.spec_type, "none");
+        assert!(f.spec_draft_n_max_default);
+        assert!(f.n_gpu_layers_draft_auto);
+        assert_eq!(f.device_draft, "");
+        assert_eq!(f.ctx_size, "65536", "unrelated field survives");
+        assert_eq!(f.temp, "1.", "in-progress text survives");
+    }
+
+    // Nothing to drop → the form must come back byte-identical, or every
+    // model-info refresh would mark a clean preset dirty.
+    #[test]
+    fn prune_leaves_a_clean_form_untouched() {
+        let mut f = preset_to_form(&Preset::default());
+        f.temp = "1.".into();
+        let before = f.clone();
+        assert!(prune_inactive_draft_fields(&mut f, false).is_empty());
+        assert_eq!(f, before);
     }
 
     // A preset in its "saved" shape (string fields non-empty, matching

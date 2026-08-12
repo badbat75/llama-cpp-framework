@@ -57,6 +57,12 @@ export global Options {
     // as the word default" shape as `split_modes` below (form.rs maps both ways).
     out property <[string]> cache_types: ["default", "f32", "f16", "q8_0", "q5_0", "q4_0", "q4_1"];
     out property <[string]> split_modes: ["default", "none", "layer", "row"];
+    // -lm / --load-mode: how llama.cpp brings the weights in. These six are the
+    // whole domain and they are MUTUALLY EXCLUSIVE — it is one enum, not the two
+    // independent --mlock / --no-mmap bools it replaced in b10105. Mirrors
+    // LOAD_MODES in src/server_cfg.rs (equality asserted by the e2e test,
+    // src/tests/ui_bindings.rs), and the values are passed to -lm verbatim.
+    out property <[string]> load_modes: ["auto", "none", "mmap", "mlock", "mmap+mlock", "dio"];
     // The -lv threshold, as "<name>:<level>". llama.cpp defines exactly these six
     // and a message prints when its own level is <= the threshold, so DEBUG:5 shows
     // everything and OUTPUT:0 almost nothing (`common/arg.cpp`, `common/log.h`).

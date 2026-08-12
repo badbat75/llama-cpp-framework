@@ -285,6 +285,58 @@ impl Preset {
     }
 }
 
+// ── Dead speculative keys (prune at the write boundary) ──────────────────
+
+/// Drop the speculative-decoding keys this model cannot act on, returning the
+/// INI names of the ones removed (for the caller's status line).
+///
+/// `embeds_mtp` is the model's own `<arch>.nextn_predict_layers > 0`, which the
+/// caller must have actually READ (`gguf::read_model_info`). An unreadable GGUF
+/// is not evidence of absence, so callers SKIP the prune there rather than pass
+/// `false` — deleting a working `spec-type` because ggml-base.dll went missing
+/// would be the worse failure.
+///
+/// Two dead sets, only the second of which announces itself:
+/// - Without a draft FILE, `--device-draft` / `--n-gpu-layers-draft` are read
+///   inside llama.cpp's `if (has_dft())` and silently ignored (field docs above).
+/// - Without a draft file AND without embedded MTP heads there is nothing to
+///   draft with at all, so `--spec-type` / `--spec-draft-n-max` go too. A
+///   surviving `spec-type = draft-mtp` is NOT inert: llama-server builds an MTP
+///   draft context against the target model, `llama_init_from_model` rejects it
+///   ("context type MTP requested but model doesn't contain MTP layers") and the
+///   model fails to load entirely.
+///
+/// Why this is a write-boundary chore and not something the UI already prevents:
+/// the widgets are `enabled: draft_active` — DISABLED, not cleared. A value that
+/// arrives from somewhere other than those widgets stays in the form, greyed out
+/// and unreadable, and is written back on the next save. Two ways in, both
+/// ordinary: cloning a preset copies every field of its base onto a different
+/// model, and re-pointing a preset at another model keeps the old one's keys.
+pub fn prune_inactive_draft_keys(p: &mut Preset, embeds_mtp: bool) -> Vec<&'static str> {
+    let mut dropped = Vec::new();
+    // A draft file makes all four live — nothing to prune.
+    if !p.model_draft.is_empty() {
+        return dropped;
+    }
+    if !embeds_mtp {
+        if !p.spec_type.is_empty() {
+            p.spec_type.clear();
+            dropped.push("spec-type");
+        }
+        if p.spec_draft_n_max.take().is_some() {
+            dropped.push("spec-draft-n-max");
+        }
+    }
+    if p.n_gpu_layers_draft.take().is_some() {
+        dropped.push("n-gpu-layers-draft");
+    }
+    if !p.device_draft.is_empty() {
+        p.device_draft.clear();
+        dropped.push("device-draft");
+    }
+    dropped
+}
+
 // ── File IO (load / save / delete / rename / id) ─────────────────────────
 
 pub fn load_all() -> Vec<Preset> {
@@ -621,6 +673,75 @@ fn emit_i32(out: &mut String, key: &str, val: Option<i32>) {
 mod tests {
     use super::*;
     use std::collections::BTreeMap;
+
+    // The four speculative keys, all set, with no draft FILE — the shape a Clone
+    // (or a re-pointed model) leaves behind on a model that can't use them.
+    fn preset_with_dead_draft_keys() -> Preset {
+        Preset {
+            model_draft: String::new(),
+            spec_type: "draft-mtp".into(),
+            spec_draft_n_max: Some(2),
+            n_gpu_layers_draft: Some(99),
+            device_draft: "CUDA0".into(),
+            ..Default::default()
+        }
+    }
+
+    // No draft file and no embedded heads: all four go, and the reported list is
+    // the INI key names in file order.
+    #[test]
+    fn prune_drops_every_speculative_key_without_a_draft() {
+        let mut p = preset_with_dead_draft_keys();
+        let dropped = prune_inactive_draft_keys(&mut p, false);
+        assert_eq!(
+            dropped,
+            vec![
+                "spec-type",
+                "spec-draft-n-max",
+                "n-gpu-layers-draft",
+                "device-draft"
+            ]
+        );
+        assert_eq!(p.spec_type, "");
+        assert_eq!(p.spec_draft_n_max, None);
+        assert_eq!(p.n_gpu_layers_draft, None);
+        assert_eq!(p.device_draft, "");
+    }
+
+    // Embedded MTP heads: the speculator stays (it is the whole point), but the
+    // two PLACEMENT keys still die — llama.cpp reads them only inside
+    // `if (has_dft())`, so they'd pin a draft that runs on the model's device.
+    #[test]
+    fn prune_keeps_the_speculator_for_embedded_mtp_heads() {
+        let mut p = preset_with_dead_draft_keys();
+        let dropped = prune_inactive_draft_keys(&mut p, true);
+        assert_eq!(dropped, vec!["n-gpu-layers-draft", "device-draft"]);
+        assert_eq!(p.spec_type, "draft-mtp");
+        assert_eq!(p.spec_draft_n_max, Some(2));
+        assert_eq!(p.n_gpu_layers_draft, None);
+        assert_eq!(p.device_draft, "");
+    }
+
+    // A draft FILE makes all four live, on any model — prune must not touch them.
+    #[test]
+    fn prune_leaves_a_preset_with_a_draft_file_alone() {
+        let mut p = Preset {
+            model_draft: r"E:\mtps\head.gguf".into(),
+            ..preset_with_dead_draft_keys()
+        };
+        let before = p.clone();
+        assert!(prune_inactive_draft_keys(&mut p, false).is_empty());
+        assert_eq!(p, before);
+    }
+
+    // Nothing set = nothing dropped: the status line must stay silent on the
+    // overwhelmingly common preset, not announce a no-op on every save.
+    #[test]
+    fn prune_reports_nothing_on_a_clean_preset() {
+        let mut p = Preset::default();
+        assert!(prune_inactive_draft_keys(&mut p, false).is_empty());
+        assert_eq!(p, Preset::default());
+    }
 
     // Validation only — both shapes must reject BEFORE any file IO (so this
     // never touches paths::, per the src/tests/mod.rs warning).

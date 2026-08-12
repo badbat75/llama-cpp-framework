@@ -78,7 +78,6 @@ fn server_args(
     presets_path: &std::path::Path,
 ) -> Vec<String> {
     let hostname = cfg.hostname_or_default();
-    let mlock = cfg.mlock_or_default();
 
     let mut args: Vec<String> = vec![
         "--models-preset".into(),
@@ -146,15 +145,18 @@ fn server_args(
         args.push(tb.to_string());
     }
 
-    if mlock {
-        args.push("--mlock".into());
-    }
-    // --no-mmap : presence flag, omitted when off (llama.cpp then mmaps the
-    //   GGUF, its own default). On, the weights are read into RAM up front —
-    //   slower to load, but the pages can't be dropped back to the file.
-    if cfg.no_mmap_or_default() {
-        args.push("--no-mmap".into());
-    }
+    // -lm MODE : how the weights are brought in. Always passed with an explicit
+    //   value (framework default "auto", which is llama.cpp's own), the same way
+    //   -fit and -lv are — this is what the Command Line card has to show, and
+    //   `load_mode_or_default` guarantees the value is one llama.cpp accepts.
+    //
+    //   NEVER emit the old --mlock / --no-mmap here. They are deprecated since
+    //   b10105 and, worse, no longer compose: each overwrites the whole mode, so
+    //   the pair this used to send (`--mlock --no-mmap`) was last-one-wins and
+    //   dropped the mlock, while a lone `--mlock` also turned mmap OFF — see
+    //   `server_cfg::load_mode`.
+    args.push("-lm".into());
+    args.push(cfg.load_mode_or_default().into());
     if let Some(cr) = cfg.cache_reuse {
         if cr > 0 {
             args.push("--cache-reuse".into());
@@ -495,12 +497,19 @@ mod tests {
         ] {
             assert!(!a.contains(&flag.to_string()), "{flag} must be omitted");
         }
-        assert!(
-            !a.contains(&"--no-mmap".to_string()),
-            "no-mmap defaults to false (llama.cpp mmaps)"
-        );
+        // The deprecated pair must never reappear: each overwrites the whole
+        // load mode in llama.cpp, so emitting them alongside -lm would silently
+        // decide it (last one wins).
+        for flag in ["--mlock", "--no-mmap", "--mmap", "-dio"] {
+            assert!(!a.contains(&flag.to_string()), "{flag} is deprecated");
+        }
         // Framework policy flags and always-written fields remain present.
-        assert!(a.contains(&"--mlock".to_string()), "mlock defaults to true");
+        assert!(
+            a.iter()
+                .position(|x| x == "-lm")
+                .is_some_and(|i| a.get(i + 1).is_some_and(|v| v == "auto")),
+            "load mode defaults to auto"
+        );
         assert!(
             a.contains(&"localhost".to_string()),
             "host is always written"
@@ -514,7 +523,7 @@ mod tests {
             threads: Some(12),
             threads_batch: Some(24),
             cache_reuse: Some(256),
-            mlock: Some(false),
+            load_mode: Some("mmap+mlock".into()),
             ..Default::default()
         };
         let a = args_for(&cfg);
@@ -526,7 +535,7 @@ mod tests {
         assert!(pair("-t", "12"));
         assert!(pair("--threads-batch", "24"));
         assert!(pair("--cache-reuse", "256"));
-        assert!(!a.contains(&"--mlock".to_string()));
+        assert!(pair("-lm", "mmap+mlock"));
     }
 
     // Step-8 guard of the server-field recipe (top of server_cfg.rs): every
@@ -539,8 +548,7 @@ mod tests {
         let cfg = ServerConfig {
             port: Some(9090),
             hostname: Some("0.0.0.0".into()),
-            mlock: Some(true),
-            no_mmap: Some(true),
+            load_mode: Some("mlock".into()),
             threads: Some(6),
             cache_reuse: Some(64),
             threads_batch: Some(12),
@@ -564,8 +572,7 @@ mod tests {
         let ServerConfig {
             port,
             hostname,
-            mlock,
-            no_mmap,
+            load_mode,
             threads,
             cache_reuse,
             threads_batch,
@@ -599,9 +606,7 @@ mod tests {
         };
         assert!(pair("--port", port.unwrap().to_string()));
         assert!(pair("--host", hostname.unwrap()));
-        assert_eq!(a.contains(&"--mlock".to_string()), mlock.unwrap());
-        // Presence flag like --mlock: Some(true) here ⇒ emitted.
-        assert_eq!(a.contains(&"--no-mmap".to_string()), no_mmap.unwrap());
+        assert!(pair("-lm", load_mode.unwrap()));
         assert!(pair("-t", threads.unwrap().to_string()));
         assert!(pair("--cache-reuse", cache_reuse.unwrap().to_string()));
         assert!(pair("--threads-batch", threads_batch.unwrap().to_string()));
@@ -685,7 +690,9 @@ mod tests {
     // straight into a terminal.
     #[test]
     fn render_command_line_groups_flags_with_their_values() {
-        let args: Vec<String> = ["--port", "8080", "--mlock", "-fit", "off"]
+        // --webui-mcp-proxy is the valueless flag of the three: it must get a
+        // line of its own rather than swallow the next flag as its value.
+        let args: Vec<String> = ["--port", "8080", "--webui-mcp-proxy", "-fit", "off"]
             .iter()
             .map(|s| s.to_string())
             .collect();
@@ -697,7 +704,7 @@ mod tests {
         #[cfg(not(windows))]
         assert!(lines[0].starts_with(r"C:\bin\llama-server.exe"));
         assert!(lines[1].contains("--port 8080"), "value attaches to flag");
-        assert!(lines[2].contains("--mlock"));
+        assert!(lines[2].contains("--webui-mcp-proxy"));
         assert!(lines[3].trim_start().starts_with("-fit off"));
         // Every line but the last ends with the continuation char.
         for line in &lines[..lines.len() - 1] {

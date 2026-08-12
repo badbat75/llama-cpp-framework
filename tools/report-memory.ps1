@@ -455,7 +455,7 @@ function Format-Ghosts {
             $rowMiB = if ($row) { ($row | Measure-Object MiB -Sum).Sum } else { 0 }
             $sum    = ($g.Group | Measure-Object MiB -Sum).Sum
             if ($sum -gt $rowMiB + 1) {
-                '{0} -> {1:N0} MiB logged into {2}, but that buffer holds {3:N2} MiB: mmap is on, so llama.cpp served those tensors from the mapped file instead. --no-mmap if you meant to pin them.' -f $p.Pattern, $sum, $g.Name, $rowMiB
+                '{0} -> {1:N0} MiB logged into {2}, but that buffer holds {3:N2} MiB: mmap is on, so llama.cpp served those tensors from the mapped file instead. Load mode "none" (-lm none) if you meant to pin them.' -f $p.Pattern, $sum, $g.Name, $rowMiB
             }
         }
     }

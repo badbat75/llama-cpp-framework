@@ -54,7 +54,15 @@ pub(super) fn wire(app: &AppWindow, state: &Rc<RefCell<State>>) {
                 return;
             };
             let s = app.global::<AppState>();
-            let p = form_to_preset(&s.get_form());
+            let mut p = form_to_preset(&s.get_form());
+            // Belt and braces: `update_model_info` already pruned the FORM, but
+            // the save is the boundary that reaches DISK, and a preset that
+            // llama-server then refuses to load is the failure being prevented.
+            // Gated on `model_info_ready` — false means the GGUF could not be
+            // read, where "no MTP metadata" is not evidence of no MTP.
+            if s.get_model_info_ready() {
+                presets::prune_inactive_draft_keys(&mut p, s.get_model_info_embeds_mtp());
+            }
             if p.id.is_empty() {
                 set_status(&app, "Preset id is empty.".into(), true);
                 return;
@@ -661,7 +669,32 @@ pub(super) fn update_model_info(app: &AppWindow) {
     s.set_model_info_past_thinking(SharedString::from(info.past_thinking_line()));
     // Enables the speculative-decoding controls even before an external draft is
     // picked, when the model itself embeds MTP/nextn heads.
-    s.set_model_info_embeds_mtp(info.nextn_predict_layers > 0);
+    let embeds_mtp = info.nextn_predict_layers > 0;
+    s.set_model_info_embeds_mtp(embeds_mtp);
+    // …and, now that the model is known, drop any speculative keys it cannot act
+    // on. The widgets that hold them are `enabled: draft_active`, so a value the
+    // user never typed (a Clone's, or the model this preset used to point at)
+    // would otherwise sit there greyed out and unreadable until llama-server
+    // failed on it. Pruning the form makes the change visible AND leaves the
+    // preset dirty, so Save is reachable — the file on disk is where the damage
+    // lives, and a preset the user only OPENS is never re-saved otherwise.
+    let mut pruned_form = form.clone();
+    let dropped = prune_inactive_draft_fields(&mut pruned_form, embeds_mtp);
+    if !dropped.is_empty() {
+        s.set_form(pruned_form);
+        // Two different reasons, and naming the wrong one would teach the user
+        // the wrong lesson: with embedded MTP heads only the PLACEMENT keys die.
+        let why = if embeds_mtp {
+            "they place a separate draft FILE, and this preset has none"
+        } else {
+            "this model has no MTP heads and no draft file"
+        };
+        set_status(
+            app,
+            format!("Dropped {} — {why}. Save to persist.", dropped.join(", ")),
+            false,
+        );
+    }
     // The Tensor-placement warning depends on BOTH the rules and the model, and
     // the rules did not change here — so re-derive it now that the model has.
     refresh_tensor_scalars(app);
@@ -772,16 +805,34 @@ fn run_new_clone(
 ) {
     let path_str = path.to_string_lossy().into_owned();
     let id = deconflicted_id(&path_str);
-    let cloned = presets::Preset {
+    let mut cloned = presets::Preset {
         id: id.clone(),
         model: path_str,
         ..base.clone()
+    };
+    // A clone keeps every field of its base — including the speculative ones,
+    // which belong to the base's MODEL, not to the preset. Cloning an MTP preset
+    // onto a model without MTP heads writes `spec-type = draft-mtp` straight to
+    // disk, where the UI greys it out instead of showing it and llama-server
+    // refuses to load the model at all. This path never passes through the form,
+    // so it prunes against the target's own header. Unreadable GGUF = keep
+    // everything: see `prune_inactive_draft_keys` on why absence isn't evidence.
+    let dropped = match gguf::read_model_info(&path) {
+        Some(info) => {
+            presets::prune_inactive_draft_keys(&mut cloned, info.nextn_predict_layers > 0)
+        }
+        None => Vec::new(),
+    };
+    let note = if dropped.is_empty() {
+        String::new()
+    } else {
+        format!(" Dropped {} (not applicable to this model).", dropped.join(", "))
     };
     commit_new_preset(
         app,
         state,
         cloned,
-        format!("Cloned [{}] -> [{id}] (same parameters) — saved.", base.id),
+        format!("Cloned [{}] -> [{id}] — saved.{note}", base.id),
     );
 }
 

@@ -69,11 +69,11 @@ pub struct ServerSet {
     pub port: Option<i32>,
     #[arg(long)]
     pub hostname: Option<String>,
-    #[arg(long)]
-    pub mlock: Option<bool>,
-    /// Read the weights into RAM instead of mmapping the GGUF (--no-mmap). true = on.
-    #[arg(long)]
-    pub no_mmap: Option<bool>,
+    /// How the weights are brought in (-lm / --load-mode). Replaces the removed
+    /// --mlock / --no-mmap pair, which llama.cpp deprecated in b10105 (they are
+    /// mutually exclusive states of one enum, not two independent bools).
+    #[arg(long, value_parser = clap::builder::PossibleValuesParser::new(server_cfg::LOAD_MODES))]
+    pub load_mode: Option<String>,
     /// CPU threads for generation. 0 or negative clears the override (auto).
     #[arg(long)]
     pub threads: Option<i32>,
@@ -140,11 +140,11 @@ impl ServerSet {
         if let Some(h) = &self.hostname {
             cfg.hostname = server_cfg::opt_nonblank(Some(h.clone()));
         }
-        if let Some(m) = self.mlock {
-            cfg.mlock = Some(m);
-        }
-        if let Some(nm) = self.no_mmap {
-            cfg.no_mmap = Some(nm);
+        // clap's PossibleValuesParser already refused anything outside
+        // LOAD_MODES, so this is a straight copy — no clearing rule (there is no
+        // "unset" state: the launch always passes -lm).
+        if let Some(lm) = &self.load_mode {
+            cfg.load_mode = Some(lm.clone());
         }
         if let Some(t) = self.threads {
             cfg.threads = if t > 0 { Some(t) } else { None };
@@ -232,11 +232,11 @@ fn show_lines(cfg: &server_cfg::ServerConfig) -> String {
         "Hostname:",
         cfg.hostname.clone().unwrap_or_else(|| "-".into()),
     );
-    row("Mlock:", cfg.mlock.map_or("-".into(), |v| v.to_string()));
     row(
-        "NoMmap:",
-        cfg.no_mmap
-            .map_or_else(|| "false (default)".into(), |v| v.to_string()),
+        "LoadMode:",
+        cfg.load_mode
+            .clone()
+            .unwrap_or_else(|| "auto (default)".into()),
     );
     row(
         "Threads:",
@@ -440,8 +440,7 @@ mod tests {
         let set = ServerSet {
             port: Some(9000),
             hostname: Some("0.0.0.0".into()),
-            mlock: Some(true),
-            no_mmap: Some(true),
+            load_mode: Some("mmap+mlock".into()),
             threads: Some(8),
             cache_reuse: Some(256),
             threads_batch: Some(16),
@@ -468,8 +467,7 @@ mod tests {
         let expected = ServerConfig {
             port: Some(9000),
             hostname: Some("0.0.0.0".into()),
-            mlock: Some(true),
-            no_mmap: Some(true),
+            load_mode: Some("mmap+mlock".into()),
             threads: Some(8),
             cache_reuse: Some(256),
             threads_batch: Some(16),
@@ -498,8 +496,7 @@ mod tests {
         let cfg = ServerConfig {
             port: Some(9000),
             hostname: Some("0.0.0.0".into()),
-            mlock: Some(false),
-            no_mmap: Some(true),
+            load_mode: Some("mmap+mlock".into()),
             threads: Some(8),
             cache_reuse: Some(256),
             threads_batch: Some(16),
@@ -525,8 +522,7 @@ mod tests {
         let ServerConfig {
             port,
             hostname,
-            mlock,
-            no_mmap,
+            load_mode,
             threads,
             cache_reuse,
             threads_batch,
@@ -547,8 +543,7 @@ mod tests {
         let needles = [
             ("Port:", port.unwrap().to_string()),
             ("Hostname:", hostname.unwrap()),
-            ("Mlock:", mlock.unwrap().to_string()),
-            ("NoMmap:", no_mmap.unwrap().to_string()),
+            ("LoadMode:", load_mode.unwrap()),
             ("Threads:", threads.unwrap().to_string()),
             ("CacheReuse:", cache_reuse.unwrap().to_string()),
             ("ThreadsBatch:", threads_batch.unwrap().to_string()),

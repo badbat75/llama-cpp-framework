@@ -212,6 +212,17 @@ $hipWorkaroundFlags = "-D__CLANG_HIP_RUNTIME_WRAPPER_H__ -include `"$hipPatchedI
 $cmakeArgs += "-DCMAKE_CXX_FLAGS=$($cfg.MarchFlags) -w $hipWorkaroundFlags"
 $cmakeArgs += "-DCMAKE_HIP_FLAGS=$hipWorkaroundFlags"
 
+# lld, when the compiler is an LLVM one that ships it (01-configure resolves it
+# next to the clang it picked, and leaves Linker empty otherwise — an MSVC
+# toolchain must keep link.exe). CMake finds lld-link on its own in the common
+# case, so this normally re-states the value already in the cache and costs
+# nothing; what it buys is that the fallback to link.exe can no longer happen
+# silently. Absent from a config-build.psd1 written before this key existed —
+# hence the truthiness check, not a Test-Path on a null.
+if ($cfg.Linker) {
+    $cmakeArgs += "-DCMAKE_LINKER=$($cfg.Linker)"
+}
+
 if ($sccachePath) {
     $cmakeArgs += "-DCMAKE_C_COMPILER_LAUNCHER=$sccachePath"
     $cmakeArgs += "-DCMAKE_CXX_COMPILER_LAUNCHER=$sccachePath"
