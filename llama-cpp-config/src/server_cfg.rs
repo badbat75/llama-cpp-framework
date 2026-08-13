@@ -123,6 +123,34 @@ pub struct ServerConfig {
     /// while computing only on image requests, which reads exactly like a GPU that
     /// has been "assigned something" and does nothing. None = leave llama.cpp to it.
     pub mmproj_device: Option<String>,
+    /// Which GEMM backend rocBLAS uses under the HIP build (env var
+    /// `ROCBLAS_USE_HIPBLASLT`): `Some(false)` exports `0` (force Tensile),
+    /// `Some(true)` exports `1` (force hipBLASLt), `None` leaves the variable
+    /// unset so rocBLAS routes as it sees fit. A TRI-state, not a bool, for the
+    /// same reason `--flash-attn` is one: "don't set it" is a third instruction,
+    /// and it is the one the framework defaults to.
+    ///
+    /// Like `mmproj_device` this is not a llama-server flag — it is read by
+    /// rocBLAS itself, so it can only ride the environment (`runstate::env_vars`,
+    /// exported by `start()` and shown in the Command Line card; the router's
+    /// per-model children inherit it). Nothing else reads it, so it is inert on a
+    /// CUDA or Vulkan build.
+    ///
+    /// The state that pays is OFF. On gfx1201 (Radeon AI PRO R9700) under
+    /// ROCm/TheRock 7.14, rocBLAS's default routing sends 16-bit GEMMs through
+    /// hipBLASLt, and the SECOND 16-bit GEMM in a process fails at kernel launch
+    /// — f32 is immune, and the identical call sequence passes on Tensile
+    /// (standalone repro: default and `=1` fail, `=0` passes for
+    /// batched/strided/plain × bf16/f16). llama-server aborts on the first
+    /// prefill batch of any BF16/F16 model. Forcing Tensile is a full-speed cure
+    /// rather than a degradation: measured pp512 587 t/s, tg128 35 t/s on Ornith
+    /// BF16, against ~19 t/s prefill for the older
+    /// `GGML_CUDA_CUBLAS_COMPUTE_TYPE=f32` workaround. Upstream: llama.cpp
+    /// #25836, ROCm #6461, TheRock #7271.
+    ///
+    /// Left unset by default all the same: the bug is per-arch, and hipBLASLt is
+    /// the faster path everywhere it works.
+    pub rocblas_use_hipblaslt: Option<bool>,
     /// Enable the built-in web UI's MCP CORS proxy (--webui-mcp-proxy).
     /// None = the framework default (on) — the bundled chat UI needs it to call
     /// MCP tools. Experimental upstream (llama.cpp defaults it OFF); don't enable
@@ -315,6 +343,11 @@ fn from_keys(keys: &std::collections::BTreeMap<String, String>) -> ServerConfig 
         tensor_split: opt_nonblank(keys.get("TensorSplit").cloned()),
         override_tensor: opt_nonblank(keys.get("OverrideTensor").cloned()),
         mmproj_device: opt_nonblank(keys.get("MmprojDevice").cloned()),
+        // Absent (or unparseable) stays None — "leave the env var alone" is a
+        // real third state here, not a stand-in for a framework default.
+        rocblas_use_hipblaslt: keys
+            .get("RocblasUseHipblaslt")
+            .and_then(|v| ini::parse_bool(v)),
         webui_mcp_proxy: keys.get("WebuiMcpProxy").and_then(|v| ini::parse_bool(v)),
         fit: keys.get("Fit").and_then(|v| ini::parse_bool(v)),
         prefill_assistant: keys
@@ -471,6 +504,13 @@ fn render(cfg: &ServerConfig) -> String {
         "MmprojDevice",
         "; MmprojDevice = ROCm1  ; GPU for the image encoder (env MTMD_BACKEND_DEVICE); blank = first GPU found",
     );
+    // The one bool with a real unset state (see the field's doc): unset means the
+    // env var is never exported, which is neither `true` nor `false`.
+    let rocblas_hipblaslt_line = bool_line_or_hint(
+        cfg.rocblas_use_hipblaslt,
+        "RocblasUseHipblaslt",
+        "; RocblasUseHipblaslt = false  ; rocBLAS GEMM backend (env ROCBLAS_USE_HIPBLASLT): false = Tensile, true = hipBLASLt; commented = rocBLAS decides",
+    );
     let opencode_base_url_line = str_line_or_hint(
         cfg.opencode_base_url.as_deref(),
         "OpencodeBaseUrl",
@@ -557,6 +597,14 @@ LogVerbosity = {log_verbosity}
 ; first GPU backend it finds, where it holds VRAM but only computes on image
 ; requests. Name a device here to move it (e.g. onto the model's own GPU).
 {mmproj_device_line}
+; SDK tuning: vendor-library environment variables, not llama-server flags —
+; llama.cpp never sees them, so nothing validates them and each only bites the
+; backend it belongs to. RocblasUseHipblaslt picks rocBLAS's GEMM backend:
+; false forces Tensile, true forces hipBLASLt, commented leaves rocBLAS to its
+; own routing. Set it false on gfx1201 (Radeon AI PRO R9700): hipBLASLt fails
+; the second 16-bit GEMM of a process there, so every BF16/F16 model aborts on
+; its first prefill batch (ROCm issue #6461). Inert on CUDA / Vulkan builds.
+{rocblas_hipblaslt_line}
 ; OpencodeBaseUrl overrides the auto-derived integration URL (host:port/v1).
 ; OpencodeApiKey is the provider's API key for authentication.
 ; Both are useful when exposing llama-server through a reverse proxy or LLM gateway.
@@ -576,6 +624,18 @@ fn int_line_or_hint(v: Option<i32>, key: &str, hint: &str, keep: impl Fn(i32) ->
     match v {
         Some(n) if keep(n) => format!("{key} = {n}"),
         _ => hint.to_string(),
+    }
+}
+
+/// `Key = true|false` for a set bool, else the commented `hint`. The bool twin of
+/// `str_line_or_hint`, for the one bool whose unset state is a real third
+/// instruction (never export the variable) rather than a framework default — the
+/// always-written bools above (WebuiMcpProxy / Fit / PrefillAssistant) render
+/// their default instead of a hint, which is why they don't use this.
+fn bool_line_or_hint(v: Option<bool>, key: &str, hint: &str) -> String {
+    match v {
+        Some(b) => format!("{key} = {b}"),
+        None => hint.to_string(),
     }
 }
 
@@ -623,6 +683,9 @@ mod tests {
             // — the value's own grammar, not just the key name, is under test.
             override_tensor: Some(r"token_embd\.weight=ROCm1,^output\.weight=CPU".into()),
             mmproj_device: Some("ROCm1".into()),
+            // Non-default (unset is the framework default): the state that
+            // matters, and the one a `keep`-style collapse would swallow.
+            rocblas_use_hipblaslt: Some(false),
             webui_mcp_proxy: Some(false),
             fit: Some(true),
             // Non-default (llama.cpp prefills by default), so the round-trip is
@@ -663,7 +726,25 @@ mod tests {
         assert_eq!(reloaded.tensor_split, None);
         assert_eq!(reloaded.override_tensor, None);
         assert_eq!(reloaded.mmproj_device, None);
+        // The one bool that stays None: unset means the env var is never
+        // exported, so materializing a default would BE a decision.
+        assert_eq!(reloaded.rocblas_use_hipblaslt, None);
         assert_eq!(reloaded.models_dir, Some(default_models_dir()));
+    }
+
+    /// `RocblasUseHipblaslt = false` is a value, not an absence — the trap in a
+    /// bool that renders through a hint line, since the obvious "only write it
+    /// when true" would silently turn the workaround state back into "unset" on
+    /// the next save.
+    #[test]
+    fn rocblas_hipblaslt_round_trips_both_states_and_stays_unset_when_absent() {
+        for state in [Some(true), Some(false), None] {
+            let cfg = ServerConfig {
+                rocblas_use_hipblaslt: state,
+                ..Default::default()
+            };
+            assert_eq!(round_trip(&cfg).rocblas_use_hipblaslt, state, "{state:?}");
+        }
     }
 
     /// A server.ini written before b10105 carries `Mlock` / `NoMmap` and no

@@ -2,18 +2,23 @@
 // component just lays out the widgets against it.
 //
 // Layout (grep `heading:`): Network → Resources → GPU distribution → Tensor
-// placement → Advanced cards, then the FormActions row (Save/Revert), then the
-// Command Line card
+// placement → Advanced → SDK Tuning cards, then the FormActions row
+// (Save/Revert), then the Command Line card
 // last. The Command
 // Line card auto-sizes to its content (a hidden mirror-Text drives its height) so
 // it never shows its own inner scrollbar — the page's own ScrollView handles it.
+//
+// SDK Tuning is the one card that holds no llama-server flags: its fields are
+// vendor-library environment variables (`runstate::env_vars`), so they are split
+// per GPU SDK — a knob there is read by the backend's own libraries, never by
+// llama.cpp, and is inert on every other backend.
 //
 // Editable widgets bind two-way (`<=>`): a one-way binding breaks the moment the
 // user types/toggles (Slint's "overwritten bindings" rule), which would leave the
 // field stale after a Revert / reload.
 
 import { LineEdit, TextEdit, CheckBox, Button, ScrollView, Palette } from "std-widgets.slint";
-import { SectionCard, LabeledField, MappedComboBox, EnumComboBox, AutoSlider, DefaultLineEdit, FormActions, GpuSplitTable, TensorOverrideTable, Tokens, Options } from "components.slint";
+import { SectionCard, LabeledField, SegmentedControl, MappedComboBox, EnumComboBox, AutoSlider, DefaultLineEdit, FormActions, GpuSplitTable, TensorOverrideTable, Tokens, Options } from "components.slint";
 import { AppState } from "state.slint";
 
 export component ServerPage inherits ScrollView {
@@ -242,6 +247,49 @@ export component ServerPage inherits ScrollView {
                 EnumComboBox {
                     options: Options.log_levels;
                     value <=> AppState.server_form.log_verbosity;
+                }
+            }
+        }
+
+        SectionCard {
+            heading: "SDK Tuning";
+            Text {
+                text: "Environment variables of the GPU vendor's own libraries, exported onto llama-server at launch (its per-model children inherit them). They are not llama.cpp flags: nothing validates them, and each one is read only by the backend it belongs to — inert on the others. The Command Line card below shows exactly what gets exported.";
+                wrap: word-wrap;
+                font-size: 12px;
+                color: Palette.foreground.transparentize(Tokens.muted);
+            }
+
+            Text {
+                text: "CUDA";
+                font-size: 12px;
+                font-weight: 600;
+                color: Palette.foreground;
+            }
+            Text {
+                text: "Nothing to tune. The cuBLAS path needs no environment workaround on the builds this framework ships.";
+                wrap: word-wrap;
+                font-size: 12px;
+                color: Palette.foreground.transparentize(Tokens.muted);
+            }
+
+            Text {
+                text: "ROCm";
+                font-size: 12px;
+                font-weight: 600;
+                color: Palette.foreground;
+            }
+            LabeledField {
+                label: "hipBLASLt";
+                hint: "ROCBLAS_USE_HIPBLASLT: which of its two GEMM backends rocBLAS uses. Read by rocBLAS itself, so it rides the environment — there is no llama-server flag for it.\ndefault = don't set the variable: rocBLAS routes as it sees fit, which on RDNA4 means hipBLASLt for 16-bit GEMMs.\non forces hipBLASLt (=1); off forces Tensile (=0).\nSet it off on a Radeon AI PRO R9700 (gfx1201): hipBLASLt fails the SECOND 16-bit GEMM of a process there, so every BF16/F16 model aborts on its first prefill batch. Tensile costs nothing — measured pp512 587 t/s, tg128 35 t/s on Ornith BF16, where the older f32-compute workaround managed 19 t/s prefill. Upstream: ROCm issue #6461.\nNo effect on CUDA or Vulkan builds.";
+                // TRI-state, not a checkbox: unset (never export the variable)
+                // is a third instruction, and it is the framework default —
+                // same shape and same reason as the preset tab's Flash
+                // Attention control (form.rs's tri_state / tri_bool).
+                SegmentedControl {
+                    options: ["default", "on", "off"];
+                    current: AppState.server_form.rocblas_use_hipblaslt == "" ? "default" : AppState.server_form.rocblas_use_hipblaslt;
+                    activated(value) => { AppState.server_form.rocblas_use_hipblaslt = value; }
                 }
             }
         }

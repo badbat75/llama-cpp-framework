@@ -104,6 +104,11 @@ pub struct ServerSet {
     /// GPU for the image encoder, e.g. "ROCm1" (empty = the first GPU llama.cpp finds).
     #[arg(long)]
     pub mmproj_device: Option<String>,
+    /// rocBLAS GEMM backend (env ROCBLAS_USE_HIPBLASLT): off = Tensile (the
+    /// gfx1201 BF16/F16 workaround), on = hipBLASLt, default = leave the variable
+    /// unset. A tri-state word rather than a bool, so `default` can clear it back.
+    #[arg(long, value_parser = clap::builder::PossibleValuesParser::new(["default", "on", "off"]))]
+    pub rocblas_use_hipblaslt: Option<String>,
     /// Enable the web UI's MCP CORS proxy (--webui-mcp-proxy). true = on.
     #[arg(long)]
     pub webui_mcp_proxy: Option<bool>,
@@ -176,6 +181,12 @@ impl ServerSet {
         if let Some(md) = &self.mmproj_device {
             cfg.mmproj_device = server_cfg::opt_nonblank(Some(md.clone()));
         }
+        // The tri-state's clearing rule: `default` is how the CLI reaches the
+        // unset state (a bool flag could only ever set one of the other two).
+        // clap's PossibleValuesParser already refused anything else.
+        if let Some(hb) = &self.rocblas_use_hipblaslt {
+            cfg.rocblas_use_hipblaslt = crate::form::tri_bool(hb);
+        }
         if let Some(w) = self.webui_mcp_proxy {
             cfg.webui_mcp_proxy = Some(w);
         }
@@ -219,13 +230,13 @@ pub fn run(cli: Cli) -> Result<()> {
 }
 
 /// The aligned body of `server show`, one `  Label        value` row per field
-/// (the label column fits the longest key, "PrefillAssistant:"). Pure so the test
-/// below can pin that every `ServerConfig` field is printed — a field added to
-/// the schema but forgotten here would otherwise be a silent omission.
+/// (the label column fits the longest key, "RocblasUseHipblaslt:"). Pure so the
+/// test below can pin that every `ServerConfig` field is printed — a field added
+/// to the schema but forgotten here would otherwise be a silent omission.
 fn show_lines(cfg: &server_cfg::ServerConfig) -> String {
     let mut out = String::new();
     let mut row = |label: &str, value: String| {
-        out.push_str(&format!("  {label:<18} {value}\n"));
+        out.push_str(&format!("  {label:<21} {value}\n"));
     };
     row("Port:", cfg.port.map_or("-".into(), |v| v.to_string()));
     row(
@@ -285,6 +296,19 @@ fn show_lines(cfg: &server_cfg::ServerConfig) -> String {
         cfg.mmproj_device
             .clone()
             .unwrap_or_else(|| "auto (first GPU)".into()),
+    );
+    row(
+        "RocblasUseHipblaslt:",
+        cfg.rocblas_use_hipblaslt.map_or_else(
+            || "default (rocBLAS decides)".into(),
+            |v| {
+                if v {
+                    "on (hipBLASLt)".into()
+                } else {
+                    "off (Tensile)".to_string()
+                }
+            },
+        ),
     );
     row(
         "WebuiMcpProxy:",
@@ -451,6 +475,9 @@ mod tests {
             tensor_split: Some("3,1".into()),
             override_tensor: Some(r"token_embd\.weight=ROCm1".into()),
             mmproj_device: Some("ROCm1".into()),
+            // The tri-state arrives as its WORD (clap refuses anything else) and
+            // must land as the matching Option<bool>.
+            rocblas_use_hipblaslt: Some("off".into()),
             webui_mcp_proxy: Some(false),
             fit: Some(true),
             prefill_assistant: Some(false),
@@ -478,6 +505,7 @@ mod tests {
             tensor_split: Some("3,1".into()),
             override_tensor: Some(r"token_embd\.weight=ROCm1".into()),
             mmproj_device: Some("ROCm1".into()),
+            rocblas_use_hipblaslt: Some(false),
             webui_mcp_proxy: Some(false),
             fit: Some(true),
             prefill_assistant: Some(false),
@@ -507,6 +535,7 @@ mod tests {
             tensor_split: Some("3,1".into()),
             override_tensor: Some(r"token_embd\.weight=ROCm1".into()),
             mmproj_device: Some("ROCm1".into()),
+            rocblas_use_hipblaslt: Some(false),
             webui_mcp_proxy: Some(false),
             fit: Some(true),
             prefill_assistant: Some(false),
@@ -533,6 +562,7 @@ mod tests {
             tensor_split,
             override_tensor,
             mmproj_device,
+            rocblas_use_hipblaslt,
             webui_mcp_proxy,
             fit,
             prefill_assistant,
@@ -554,6 +584,16 @@ mod tests {
             ("TensorSplit:", tensor_split.unwrap()),
             ("OverrideTensor:", override_tensor.unwrap()),
             ("MmprojDevice:", mmproj_device.unwrap()),
+            // The row prints the tri-state's WORD, not the bool's `to_string()`:
+            // "false" would read as a value the CLI can't even be given.
+            (
+                "RocblasUseHipblaslt:",
+                if rocblas_use_hipblaslt.unwrap() {
+                    "on".to_string()
+                } else {
+                    "off".to_string()
+                },
+            ),
             ("WebuiMcpProxy:", webui_mcp_proxy.unwrap().to_string()),
             ("Fit:", fit.unwrap().to_string()),
             ("PrefillAssistant:", prefill_assistant.unwrap().to_string()),
@@ -570,6 +610,25 @@ mod tests {
                 out.lines().any(|l| l.contains(label) && l.contains(&value)),
                 "no line pairs {label:?} with {value:?} in:\n{out}"
             );
+        }
+    }
+
+    // The tri-state's own clearing rule: `--rocblas-use-hipblaslt default` is the
+    // ONLY way back to unset from the CLI, and unset is what keeps the env var
+    // off the child entirely. A bool flag could not express it.
+    #[test]
+    fn server_set_rocblas_hipblaslt_takes_all_three_states() {
+        for (word, expected) in [("on", Some(true)), ("off", Some(false)), ("default", None)] {
+            let mut cfg = ServerConfig {
+                rocblas_use_hipblaslt: Some(true),
+                ..Default::default()
+            };
+            ServerSet {
+                rocblas_use_hipblaslt: Some(word.into()),
+                ..Default::default()
+            }
+            .apply(&mut cfg);
+            assert_eq!(cfg.rocblas_use_hipblaslt, expected, "{word}");
         }
     }
 

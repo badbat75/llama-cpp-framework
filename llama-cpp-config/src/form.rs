@@ -22,7 +22,11 @@ fn str_or(val: &str, default: &str) -> SharedString {
 /// whose default is whatever the chat template does). Pairs with `tri_bool` on the
 /// way back. Not a bool anywhere: `Some(false)` (pass the negative flag) and
 /// `None` (pass nothing) are different instructions to llama.cpp.
-fn tri_state(v: Option<bool>) -> SharedString {
+///
+/// Shared with the SERVER form (`server_form.rs`, `rocblas_use_hipblaslt`), whose
+/// third state is "never export the env var" — same shape, same widget, so the
+/// pair lives here once rather than being re-derived per form.
+pub(crate) fn tri_state(v: Option<bool>) -> SharedString {
     match v {
         Some(true) => "on",
         Some(false) => "off",
@@ -35,7 +39,7 @@ fn tri_state(v: Option<bool>) -> SharedString {
 /// isn't an explicit on/off is `None` — the natural simplification
 /// `Some(s == "on")` collapses "default" into an explicit off, which is a real
 /// flag (`--no-flash-attn` / `--no-reasoning-preserve`) with real consequences.
-fn tri_bool(s: &str) -> Option<bool> {
+pub(crate) fn tri_bool(s: &str) -> Option<bool> {
     match s {
         "on" => Some(true),
         "off" => Some(false),

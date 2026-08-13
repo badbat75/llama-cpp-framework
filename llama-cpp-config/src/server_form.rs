@@ -105,6 +105,11 @@ pub fn config_to_form(cfg: &server_cfg::ServerConfig) -> ServerForm {
         // string — no second copy of the rules exists (see src/tensor_override.rs).
         override_tensor: cfg.override_tensor.clone().unwrap_or_default().into(),
         mmproj_device: cfg.mmproj_device.clone().unwrap_or_default().into(),
+        // The SDK Tuning card's one knob: a TRI-state over the same
+        // SegmentedControl (and the same helper pair) as the preset tab's
+        // flash-attn, because "never export ROCBLAS_USE_HIPBLASLT" is a third
+        // instruction and the framework's default.
+        rocblas_use_hipblaslt: crate::form::tri_state(cfg.rocblas_use_hipblaslt),
         // Plain bool toggles (framework defaults materialized when unset), same
         // shape as `mlock`.
         webui_mcp_proxy: cfg.webui_mcp_proxy_or_default(),
@@ -189,6 +194,11 @@ pub fn form_to_config(f: &ServerForm) -> server_cfg::ServerConfig {
         tensor_split: server_cfg::opt_nonblank(Some(f.tensor_split.to_string())),
         override_tensor: server_cfg::opt_nonblank(Some(f.override_tensor.to_string())),
         mmproj_device: server_cfg::opt_nonblank(Some(f.mmproj_device.to_string())),
+        // "default" (and anything unrecognised) collapses to None — the natural
+        // `Some(s == "on")` would turn "leave the variable alone" into an
+        // explicit `ROCBLAS_USE_HIPBLASLT=0`, i.e. into the Tensile workaround
+        // for everyone who never asked for it.
+        rocblas_use_hipblaslt: crate::form::tri_bool(f.rocblas_use_hipblaslt.as_str()),
         webui_mcp_proxy: Some(f.webui_mcp_proxy),
         fit: Some(f.fit),
         prefill_assistant: Some(f.prefill_assistant),
@@ -241,6 +251,9 @@ mod tests {
             tensor_split: Some("3,1".into()),
             override_tensor: Some(r"token_embd\.weight=ROCm1".into()),
             mmproj_device: Some("ROCm1".into()),
+            // Non-default (None is the framework default), so the tri-state's
+            // round-trip through the form's string spelling isn't vacuous.
+            rocblas_use_hipblaslt: Some(false),
             webui_mcp_proxy: Some(false),
             fit: Some(true),
             // Non-default, so the round-trip is not vacuous for it.
@@ -288,6 +301,26 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(form_to_config(&form).load_mode.as_deref(), Some("auto"));
+    }
+
+    /// The SDK Tuning tri-state, all three states in both directions. "default"
+    /// must come back as `None` and NOT as an explicit off: the difference is
+    /// whether `ROCBLAS_USE_HIPBLASLT=0` reaches the child at all, i.e. whether
+    /// every machine silently gets the Tensile workaround.
+    #[test]
+    fn rocblas_hipblaslt_tri_state_round_trips() {
+        for (state, word) in [(Some(true), "on"), (Some(false), "off"), (None, "default")] {
+            let form = config_to_form(&ServerConfig {
+                rocblas_use_hipblaslt: state,
+                // Explicit, like the sibling tests below: an unset ModelsDir
+                // would send config_to_form through `paths::` (mod.rs — unit
+                // tests must stay clear of it).
+                models_dir: Some(r"E:\models".into()),
+                ..Default::default()
+            });
+            assert_eq!(form.rocblas_use_hipblaslt.as_str(), word, "{state:?}");
+            assert_eq!(form_to_config(&form).rocblas_use_hipblaslt, state, "{word}");
+        }
     }
 
     // The "default"/None ⇄ sentinel mapping specifically: an unset split-mode

@@ -206,6 +206,18 @@ fn env_vars(cfg: &crate::server_cfg::ServerConfig) -> Vec<(String, String)> {
             env.push(("MTMD_BACKEND_DEVICE".into(), dev.to_string()));
         }
     }
+    // ROCBLAS_USE_HIPBLASLT: rocBLAS's switch between its two GEMM backends. Read
+    // by rocBLAS itself — llama.cpp has no flag for it and never sees it — and
+    // parsed as an INT, so the value is "1"/"0", never "true"/"false". `0` forces
+    // Tensile, which is the cure for gfx1201's hipBLASLt failing the second
+    // 16-bit GEMM of a process (see server_cfg::rocblas_use_hipblaslt). Unset
+    // exports nothing at all, which is a third state and the default.
+    if let Some(on) = cfg.rocblas_use_hipblaslt {
+        env.push((
+            "ROCBLAS_USE_HIPBLASLT".into(),
+            if on { "1" } else { "0" }.into(),
+        ));
+    }
     env
 }
 
@@ -561,6 +573,7 @@ mod tests {
             // argument (it does its own splitting), not as two.
             override_tensor: Some(r"token_embd\.weight=ROCm1,^output\.weight=CPU".into()),
             mmproj_device: Some("ROCm1".into()),
+            rocblas_use_hipblaslt: Some(false),
             webui_mcp_proxy: Some(false),
             fit: Some(true),
             // The NEGATIVE presence flag: Some(false) is the state that emits one.
@@ -586,6 +599,10 @@ mod tests {
             // not a llama-server flag at all — the image encoder's device can
             // only be chosen through that env var (clip.cpp reads it directly).
             mmproj_device: _,
+            // launch env only: `env_vars` exports it as ROCBLAS_USE_HIPBLASLT.
+            // Also not a llama-server flag — rocBLAS reads it itself, below
+            // llama.cpp. Its own assertions live in the env test further down.
+            rocblas_use_hipblaslt: _,
             webui_mcp_proxy,
             fit,
             prefill_assistant,
@@ -756,6 +773,43 @@ mod tests {
         // The env assignment is its own statement — continuing it into the
         // command would make the paste a syntax error.
         assert!(!out.lines().next().unwrap().ends_with(LINE_CONTINUATION));
+    }
+
+    // The SDK-tuning tri-state, on the same env-only path as MmprojDevice above.
+    // Three things it pins: the value is the INT rocBLAS parses ("0"/"1", never
+    // "false"/"true"), `None` exports NOTHING (a default-on-every-machine
+    // workaround is exactly what the tri-state exists to avoid), and it reaches
+    // the pasteable command line — a block that dropped it would run the backend
+    // this setting exists to steer away from.
+    #[test]
+    fn rocblas_hipblaslt_rides_the_env_as_zero_or_one() {
+        let with = |v: Option<bool>| ServerConfig {
+            rocblas_use_hipblaslt: v,
+            ..Default::default()
+        };
+        assert_eq!(
+            env_vars(&with(Some(false))),
+            [("ROCBLAS_USE_HIPBLASLT".to_string(), "0".to_string())]
+        );
+        assert_eq!(
+            env_vars(&with(Some(true))),
+            [("ROCBLAS_USE_HIPBLASLT".to_string(), "1".to_string())]
+        );
+        assert!(
+            env_vars(&with(None)).is_empty(),
+            "unset must export nothing"
+        );
+        // Not an argument on either surface — llama-server would refuse it.
+        assert!(!args_for(&with(Some(false)))
+            .iter()
+            .any(|a| a.contains("HIPBLASLT")));
+
+        let out = render_command_line(
+            r"C:\bin\llama-server.exe",
+            &[],
+            &env_vars(&with(Some(false))),
+        );
+        assert!(out.contains("ROCBLAS_USE_HIPBLASLT"), "no env line in:\n{out}");
     }
 
     #[test]

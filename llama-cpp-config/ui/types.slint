@@ -154,6 +154,14 @@ export struct ServerForm {
     // --override-tensor ever reaches a child (verified — see server_cfg.rs).
     override_tensor: string,
     mmproj_device: string,
+    // ROCBLAS_USE_HIPBLASLT (the SDK Tuning card's ROCm half), a TRI-state
+    // carried as a string exactly like PresetForm's `flash_attn`: "default"
+    // (never export the variable — rocBLAS routes as it sees fit), "on" (=1,
+    // force hipBLASLt), "off" (=0, force Tensile). Not a bool: "default" and
+    // "on" are different instructions, and only "off" cures the gfx1201 16-bit
+    // GEMM failure (see src/server_cfg.rs). A SegmentedControl, and the same
+    // form::tri_state / tri_bool pair the preset tri-states use.
+    rocblas_use_hipblaslt: string,
     // Plain bool toggles (CheckBox, two-way <=>), the same shape as `mlock`:
     // webui_mcp_proxy enables the web UI's MCP proxy (--webui-mcp-proxy); fit is
     // llama.cpp's -fit on|off VRAM auto-fitting (checked = on); prefill_assistant
