@@ -143,6 +143,8 @@ pub fn preset_to_form(p: &presets::Preset) -> PresetForm {
         },
         spec_draft_n_max: itxt(p.spec_draft_n_max, HINT_SPEC_DRAFT_N_MAX),
         spec_draft_n_max_default: p.spec_draft_n_max.is_none(),
+        spec_draft_type_k: enum_or_default(&p.spec_draft_type_k),
+        spec_draft_type_v: enum_or_default(&p.spec_draft_type_v),
         n_gpu_layers_draft: p.n_gpu_layers_draft.unwrap_or(ALL_LAYERS),
         n_gpu_layers_draft_auto: p.n_gpu_layers_draft.is_none(),
         device_draft: p.device_draft.clone().into(),
@@ -235,6 +237,8 @@ pub fn form_to_preset(f: &PresetForm) -> presets::Preset {
         } else {
             ini::parse_int(f.spec_draft_n_max.as_str()).filter(|v| *v > 0)
         },
+        spec_draft_type_k: enum_or_empty(f.spec_draft_type_k.as_str()),
+        spec_draft_type_v: enum_or_empty(f.spec_draft_type_v.as_str()),
         n_gpu_layers_draft: if f.n_gpu_layers_draft_auto {
             None
         } else {
@@ -351,6 +355,8 @@ pub fn prune_inactive_draft_fields(f: &mut PresetForm, embeds_mtp: bool) -> Vec<
         f.spec_type = pruned.spec_type;
         f.spec_draft_n_max = pruned.spec_draft_n_max;
         f.spec_draft_n_max_default = pruned.spec_draft_n_max_default;
+        f.spec_draft_type_k = pruned.spec_draft_type_k;
+        f.spec_draft_type_v = pruned.spec_draft_type_v;
         f.n_gpu_layers_draft = pruned.n_gpu_layers_draft;
         f.n_gpu_layers_draft_auto = pruned.n_gpu_layers_draft_auto;
         f.device_draft = pruned.device_draft;
@@ -369,13 +375,16 @@ mod tests {
 
     // The prune's FORM spelling, which is not the schema's: an emptied
     // `spec_type` has to come back as the combo's "none" entry (an empty string
-    // matches no option and leaves the widget showing the old one), and the two
+    // matches no option and leaves the widget showing the old one), the draft KV
+    // types as the combo's "default" entry for the same reason, and the two
     // omit-the-flag companions as their `_default` / `_auto` booleans.
     #[test]
     fn prune_resets_the_draft_fields_to_their_form_spelling() {
         let mut f = preset_to_form(&Preset {
             spec_type: "draft-mtp".into(),
             spec_draft_n_max: Some(2),
+            spec_draft_type_k: "q8_0".into(),
+            spec_draft_type_v: "q8_0".into(),
             n_gpu_layers_draft: Some(99),
             device_draft: "CUDA0".into(),
             ctx_size: Some(65536),
@@ -388,9 +397,13 @@ mod tests {
 
         let dropped = prune_inactive_draft_fields(&mut f, false);
 
-        assert_eq!(dropped.len(), 4, "all four keys are dead without a draft");
+        assert_eq!(dropped.len(), 6, "all six keys are dead without a draft");
         assert_eq!(f.spec_type, "none");
         assert!(f.spec_draft_n_max_default);
+        // Empty ↔ "default", the EnumComboBox's first entry — an empty string
+        // matches no option and would leave q8_0 showing.
+        assert_eq!(f.spec_draft_type_k, "default");
+        assert_eq!(f.spec_draft_type_v, "default");
         assert!(f.n_gpu_layers_draft_auto);
         assert_eq!(f.device_draft, "");
         assert_eq!(f.ctx_size, "65536", "unrelated field survives");
@@ -503,6 +516,9 @@ mod tests {
             model_draft: r"E:\mtps\model-mtp.gguf".into(),
             spec_type: "draft-mtp".into(),
             spec_draft_n_max: Some(10),
+            // Not the cache_type_k/-v below — the draft cache is its own setting.
+            spec_draft_type_k: "q4_0".into(),
+            spec_draft_type_v: "q4_1".into(),
             n_gpu_layers_draft: Some(99),
             device_draft: "CUDA0".into(),
             device: "CUDA0,ROCm1".into(),

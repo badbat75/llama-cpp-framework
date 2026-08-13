@@ -603,6 +603,11 @@ export component GpuSplitTable inherits VerticalLayout {
     // load time — not an even split).
     in property <int> selected;
     in property <int> weight_total;
+    // Positions the split is cut over for the model in hand — > 0 switches the
+    // editable column from the raw ratio to the BLOCK count, the unit llama.cpp
+    // actually resolves in (gpu_split::Layout). 0 wherever no single model
+    // applies, which is always true of the server-wide table.
+    in property <int> positions: 0;
     // Non-empty to show a warning strip above the table (the Models tab uses it
     // for "a server-wide selection overrides this one at launch").
     in property <string> warning;
@@ -615,13 +620,30 @@ export component GpuSplitTable inherits VerticalLayout {
     // model mid-drag would recreate this delegate and drop the TouchArea's grab.
     callback reordered(string, int);
     callback weight_edited(string, int);
+    // Blocks-mode result. Reported on COMMIT (Enter or leaving the field), never
+    // per keystroke, and that asymmetry with `weight_edited` is forced: a block
+    // count is constrained to the positions, so giving one device more takes it
+    // from another — the handler has to rewrite the whole vector and rebuild the
+    // rows, which would destroy the widget being driven if it ran continuously.
+    // Slider.released is exactly that commit point: it fires on pointer-up after
+    // a drag AND on key-release for the arrows / Home / End, so keyboard editing
+    // lands too (slider-base.slint).
+    callback blocks_edited(string, int);
     callback auto_split();
     callback even_split();
 
     property <bool> weights_editable: root.selected >= 2 && root.weight_total > 0;
+    // Blocks need a model to be counted against AND an explicit vector to count:
+    // under Auto llama.cpp weighs the devices by their FREE VRAM at load, so there
+    // is no answer to give until it runs.
+    property <bool> blocks_mode: root.positions > 0 && root.weight_total > 0;
     // One home for the row height: it lays the rows out, and it is the divisor
     // that turns a drag distance into a row delta. They must not drift.
     property <length> row_height: 40px;
+    // …and one home for the editable column's width, because the header and the
+    // delegate below repeat every column width by hand. Blocks mode needs room
+    // for a slider plus its readout; a bare weight field does not.
+    property <length> value_col_width: root.blocks_mode ? 152px : 84px;
 
     // Live-drag state. Set by the handle's TouchArea while it is held, cleared on
     // release. Only `row_y` reads it — the row MODEL never changes during a drag.
@@ -659,6 +681,9 @@ export component GpuSplitTable inherits VerticalLayout {
         return i * root.row_height;
     }
 
+    // In blocks mode the denominator is the positions, not the weight sum — and
+    // the caller passes `row.blocks` rather than the live field text, so the whole
+    // table snaps together on commit instead of one row moving mid-word.
     pure function share_text(enabled: bool, weight: int) -> string {
         if (!enabled) {
             return "—";
@@ -668,6 +693,9 @@ export component GpuSplitTable inherits VerticalLayout {
         }
         if (root.weight_total <= 0) {
             return "auto";
+        }
+        if (root.blocks_mode) {
+            return "\{Math.round(weight * 100 / root.positions)}%";
         }
         return "\{Math.round(weight * 100 / root.weight_total)}%";
     }
@@ -702,8 +730,9 @@ export component GpuSplitTable inherits VerticalLayout {
             color: Palette.foreground.transparentize(Tokens.muted);
         }
         Text {
-            width: 84px;
-            text: "Weight";
+            width: root.value_col_width;
+            // "Blocks/34" so the column reads as a budget: the cells sum to it.
+            text: root.blocks_mode ? "Blocks/\{root.positions}" : "Weight";
             font-size: 12px;
             color: Palette.foreground.transparentize(Tokens.muted);
         }
@@ -807,17 +836,29 @@ export component GpuSplitTable inherits VerticalLayout {
                         font-weight: 600;
                         color: Palette.foreground;
                     }
-                    Text {
-                        text: row.name;
-                        vertical-alignment: center;
-                        font-size: 13px;
-                        overflow: elide;
+                    VerticalLayout {
                         horizontal-stretch: 1;
-                        // A selected device the probe doesn't know (stale config, or
-                        // the probe hasn't landed) reads as an absence, not a GPU.
-                        color: row.detected
-                            ? Palette.foreground
-                            : Palette.foreground.transparentize(Tokens.faint);
+                        alignment: center;
+                        Text {
+                            text: row.name;
+                            font-size: 13px;
+                            overflow: elide;
+                            // A selected device the probe doesn't know (stale config, or
+                            // the probe hasn't landed) reads as an absence, not a GPU.
+                            color: row.detected
+                                ? Palette.foreground
+                                : Palette.foreground.transparentize(Tokens.faint);
+                        }
+                        // WHICH positions this device ends up with, not just how
+                        // many — the last one is the output layer rather than a
+                        // block, and it carries the biggest single tensor in the
+                        // model, so a bare count would hide it.
+                        if row.blocks_label != "" : Text {
+                            text: row.blocks_label;
+                            font-size: 11px;
+                            overflow: elide;
+                            color: Palette.foreground.transparentize(Tokens.muted);
+                        }
                     }
                 }
     
@@ -830,23 +871,84 @@ export component GpuSplitTable inherits VerticalLayout {
                 }
     
                 Rectangle {
-                    width: 84px;
-                    // A LineEdit, not a SpinBox, for the reason spelled out on
+                    width: root.value_col_width;
+                    // BOTH editors live here, one hidden by `blocks_mode` — which
+                    // is a table-wide constant, so the spare one costs an instance
+                    // and nothing else. They are not `if`-guarded because the Share
+                    // column reads their ids, and a conditional element would take
+                    // those out of scope.
+                    //
+                    // Neither is a SpinBox, for the reason spelled out on
                     // DefaultLineEdit: a SpinBox here turned a scroll of the page
-                    // into a silent edit of the split. `number` keeps it digits-
-                    // only now that there is no minimum/maximum to lean on; the
-                    // value is re-checked in Rust (gpu_split::set_weight).
+                    // into a silent edit of the split. A Slider is safe on that
+                    // count — slider-base.slint handles no scroll event at all.
+                    //
+                    // A weight is independent, so its field applies as you type;
+                    // `number` keeps it digits-only, and the value is re-checked in
+                    // Rust (gpu_split::set_weight).
                     w := LineEdit {
                         x: 0;
                         y: 0;
                         width: parent.width;
                         height: parent.height;
-                        visible: row.enabled;
+                        visible: row.enabled && !root.blocks_mode;
                         enabled: root.weights_editable;
                         input-type: InputType.number;
                         text: row.weight;
                         edited(t) => {
                             root.weight_edited(row.id, t.to-float());
+                        }
+                    }
+                    // A block count is NOT independent — it is a share of a fixed
+                    // budget — so it gets the widget for exactly that: a bounded
+                    // drag with `released` as its single commit point.
+                    HorizontalLayout {
+                        x: 0;
+                        y: 0;
+                        width: parent.width;
+                        height: parent.height;
+                        visible: row.enabled && root.blocks_mode;
+                        spacing: 6px;
+                        sl := Slider {
+                            horizontal-stretch: 1;
+                            // The thumb owns its value mid-drag, discarding this
+                            // init binding — harmless HERE because a `for` delegate
+                            // is recreated on every rebuild and gets a fresh one.
+                            // (AutoSlider needs its `changed shown` push precisely
+                            // because it is NOT inside a delegate.)
+                            value: row.blocks;
+                            minimum: 0;
+                            maximum: root.positions;
+                            step: 1;
+                            enabled: root.weights_editable;
+                            // Findable handle for the e2e table phase, like the
+                            // row checkbox above.
+                            accessible-label: "blocks-" + row.id;
+                            // KNOWN GAP, and it is Slint's, not ours: the widget
+                            // raises `released` from the pointer-up and the
+                            // key-release paths only. Its accessibility actions
+                            // (`accessible-action-set-value` / `-increment` /
+                            // `-decrement`) all route through `base.set-value`,
+                            // which raises `changed` and nothing else — so a value
+                            // set through an assistive client moves the thumb and
+                            // never commits. Keyboard arrows are unaffected (they
+                            // go through `key-released`). Committing on `changed`
+                            // instead would rebuild the rows on every pixel of a
+                            // drag, destroying the slider being dragged.
+                            released(v) => {
+                                root.blocks_edited(row.id, Math.round(v));
+                            }
+                        }
+                        Text {
+                            width: 26px;
+                            // The LIVE thumb value, not `row.blocks`: the point of
+                            // a slider is that the number answers the drag before
+                            // anything is committed.
+                            text: Math.round(sl.value);
+                            horizontal-alignment: right;
+                            vertical-alignment: center;
+                            font-size: 13px;
+                            color: Palette.foreground;
                         }
                     }
                     Text {
@@ -863,7 +965,12 @@ export component GpuSplitTable inherits VerticalLayout {
     
                 Text {
                     width: 52px;
-                    text: root.share_text(row.enabled, w.text.to-float());
+                    // Follows whichever editor is live, so the dragged row's share
+                    // tracks its own thumb. The OTHER rows settle only on release:
+                    // they are the ones paying for the drag, and what they will owe
+                    // exists nowhere until Rust recomputes the vector.
+                    text: root.share_text(row.enabled,
+                        root.blocks_mode ? Math.round(sl.value) : w.text.to-float());
                     horizontal-alignment: right;
                     vertical-alignment: center;
                     font-size: 13px;

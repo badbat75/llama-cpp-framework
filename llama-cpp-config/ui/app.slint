@@ -87,9 +87,14 @@ export component AppWindow inherits Window {
     // Keep the floor low enough that the whole window — including the Save/Revert
     // row at the bottom of each scrolling page — fits on a 1366×768 laptop after
     // the title bar and taskbar. The preferred size stays roomy on big screens.
-    min-width: 820px;
+    // Both grew by 68px when the GPU table's editable column went from an 84px
+    // weight field to a 152px slider + readout: the widest row in the app is that
+    // table, and its columns are fixed, so the floor has to move with them or the
+    // device NAME (the only elastic column, and the one the ids are unreliable
+    // without) is what gets squeezed out.
+    min-width: 888px;
     min-height: 520px;
-    preferred-width: 1080px;
+    preferred-width: 1148px;
     preferred-height: 760px;
     background: Palette.background;
     // Give the shortcut FocusScope focus on startup so KeyBindings fire before

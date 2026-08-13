@@ -334,6 +334,75 @@ pub(super) fn run(app: &AppWindow) {
     st.invoke_preset_gpu_move("CUDA0".into(), 1); // back, so the INI below is 3,1
     assert_eq!(st.get_form().device.as_str(), "ROCm1,CUDA0");
 
+    // The same table in BLOCKS — the unit the split is actually cut in. It only
+    // appears once a model header has been read (`preset_split_positions` is 0
+    // until then, which is also what keeps the server-wide table on ratios), so
+    // stand one in: 33 blocks is Ornith-1.0-9B (32 trunk + 1 nextn), i.e. 34
+    // positions once the output layer is counted.
+    st.set_model_info_n_layer(33);
+    st.invoke_preset_gpu_blocks("ROCm1".into(), 29);
+    assert_eq!(
+        st.get_form().tensor_split.as_str(),
+        "29,5",
+        "the counts ARE the weights — 3,1 projected to 26/8, and 29 takes 3 off the back"
+    );
+    assert_eq!(st.get_preset_split_positions(), 34);
+    let rows = st.get_preset_gpu_rows();
+    assert_eq!(
+        (rows.row_data(0).expect("row 0").blocks, rows.row_data(1).expect("row 1").blocks),
+        (29, 5),
+        "what was typed survives its own projection"
+    );
+    assert_eq!(
+        rows.row_data(1).expect("row 1").blocks_label.as_str(),
+        "blocks 29-32 + output",
+        "the tail names the output layer — it is a position, not a block"
+    );
+    // …and it reached the widget. The thumb binds one-way to `row.blocks` and
+    // discards that binding the moment it is dragged, so what keeps it honest is
+    // the delegate being rebuilt on every commit — this is the assertion that
+    // fails if a commit ever stops rebuilding the rows.
+    assert_eq!(
+        ElementHandle::find_by_accessible_label(app, "blocks-ROCm1")
+            .next()
+            .expect("no slider for ROCm1")
+            .accessible_value()
+            .unwrap_or_default()
+            .parse::<f64>()
+            .map(|v| v.round() as i64)
+            .unwrap_or(-1),
+        29,
+        "the slider shows the committed count"
+    );
+    // Re-committing the same count (which leaving the field after Enter does) must
+    // not churn the vector.
+    st.invoke_preset_gpu_blocks("ROCm1".into(), 29);
+    assert_eq!(st.get_form().tensor_split.as_str(), "29,5");
+    // Back to a plain ratio for the INI assertions below.
+    st.invoke_preset_gpu_even();
+    st.invoke_preset_gpu_weight("ROCm1".into(), 3);
+    assert_eq!(st.get_form().tensor_split.as_str(), "3,1");
+    // A model change has to re-project the table, not just the Model-info box:
+    // the block column counts against THIS model's block_count, so leaving it on
+    // the previous one would have every row quoting a budget that no longer
+    // exists. Here the fixture GGUF is unreadable, so the count drops to 0 and
+    // the column falls back to ratios — the same path a real switch takes.
+    st.invoke_model_changed();
+    assert_eq!(
+        st.get_preset_split_positions(),
+        0,
+        "an unreadable model takes the block column back out"
+    );
+    assert_eq!(
+        st.get_preset_gpu_rows().row_data(0).expect("row 0").blocks,
+        0
+    );
+    assert_eq!(
+        st.get_form().tensor_split.as_str(),
+        "3,1",
+        "…without touching the ratio it is projecting"
+    );
+
     st.invoke_save_preset();
     assert!(!st.get_status_is_error(), "{}", st.get_status_text());
     let ini = std::fs::read_to_string(crate::paths::presets_ini()).expect("presets.ini");

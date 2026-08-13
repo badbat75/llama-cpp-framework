@@ -558,10 +558,38 @@ fn refresh_device_options(app: &AppWindow) {
 fn refresh_gpu_rows(app: &AppWindow) {
     let s = app.global::<AppState>();
     let devs = devices::probed();
-    s.set_server_gpu_rows(model(gpu_split::build_rows(&devs, &server_selection(app))));
-    s.set_preset_gpu_rows(model(gpu_split::build_rows(&devs, &preset_selection(app))));
+    // The server-wide table gets no layout on purpose: it applies to EVERY preset,
+    // so there is no single `n_layer_all` to project its weights onto. It stays a
+    // ratio table; only the per-preset one, which knows its model, shows blocks.
+    s.set_server_gpu_rows(model(gpu_split::build_rows(
+        &devs,
+        &server_selection(app),
+        None,
+    )));
+    s.set_preset_gpu_rows(model(gpu_split::build_rows(
+        &devs,
+        &preset_selection(app),
+        preset_split_layout(app),
+    )));
     refresh_gpu_scalars(app);
     refresh_tensor_rows(app);
+}
+
+/// The per-preset split's `Layout`: the selected model's block count crossed with
+/// its GPU-layers setting. `None` — no model, an unreadable header, or nothing
+/// offloaded — is what puts the table back into raw-weight mode.
+pub(crate) fn preset_split_layout(app: &AppWindow) -> Option<gpu_split::Layout> {
+    let s = app.global::<AppState>();
+    let f = s.get_form();
+    // The form carries ALL_LAYERS as its "auto" placeholder, which is a real 99
+    // rather than llama.cpp's -1 sentinel — so read the companion bool, not the
+    // number, or a 40-layer model would look like it had 99 offloaded.
+    let ngl = if f.n_gpu_layers_auto {
+        -1
+    } else {
+        f.n_gpu_layers
+    };
+    gpu_split::Layout::new(s.get_model_info_n_layer(), ngl)
 }
 
 /// Rebuild BOTH tensor-placement tables (server-wide + per-preset) from the
@@ -664,6 +692,9 @@ fn refresh_gpu_scalars(app: &AppWindow) {
     s.set_preset_gpu_selected(gpu_count(&preset));
     s.set_preset_gpu_total(gpu_weight_total(&preset));
     s.set_preset_gpu_summary(gpu_split::summary(&preset).into());
+    // 0 = "no model to project onto", which is what switches the table's editable
+    // column back from blocks to raw weights.
+    s.set_preset_split_positions(preset_split_layout(app).map_or(0, |l| l.count));
 }
 
 fn gpu_count(sel: &gpu_split::GpuSelection) -> i32 {

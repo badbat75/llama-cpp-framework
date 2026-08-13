@@ -90,6 +90,29 @@ pub struct Preset {
     pub model_draft: String,
     pub spec_type: String,
     pub spec_draft_n_max: Option<i32>,
+    /// KV-cache quantization for the DRAFT context's K and V
+    /// (--spec-draft-type-k / --spec-draft-type-v, aliases -ctkd / -ctvd).
+    /// Empty = omit the flag, the same empty↔"default" shape as `cache_type_k`
+    /// below — but the default they fall back to is NOT the model's.
+    ///
+    /// `common_base_params_to_speculative` (common/speculative.cpp) starts from
+    /// `result = params`, so the draft context inherits the model's
+    /// `cache_type_k`/`_v` — and then unconditionally overwrites both with
+    /// `params.speculative.draft.cache_type_k/_v`, whose own default is
+    /// `GGML_TYPE_F16` (common/common.h). So a preset that runs the model on a
+    /// q8_0 KV cache still drafts against an **f16** one: these two flags are
+    /// the only way to reach it, and "leave them alone and it follows the model"
+    /// is exactly the wrong guess.
+    ///
+    /// Note the contrast with the two PLACEMENT keys below. That overwrite sits
+    /// OUTSIDE the `if (has_draft)` block that guards `devices`, `n_gpu_layers`
+    /// and `tensor_buft_overrides`, so unlike `device_draft` /
+    /// `n_gpu_layers_draft` these two DO apply to MTP heads EMBEDDED in the main
+    /// GGUF — the case where the placement pair is silently ignored. Hence they
+    /// ride with the speculator in `prune_inactive_draft_keys`, not with the
+    /// placement pair.
+    pub spec_draft_type_k: String,
+    pub spec_draft_type_v: String,
     pub n_gpu_layers_draft: Option<i32>,
     pub device_draft: String,
     /// The GPUs THIS model runs on (--device): one id ("ROCm1") or a comma-
@@ -199,6 +222,8 @@ impl Default for Preset {
             model_draft: String::new(),
             spec_type: String::new(),
             spec_draft_n_max: None,
+            spec_draft_type_k: String::new(),
+            spec_draft_type_v: String::new(),
             n_gpu_layers_draft: None,
             device_draft: String::new(),
             device: String::new(),
@@ -254,6 +279,8 @@ impl Preset {
             model_draft: get("model-draft"),
             spec_type: get("spec-type"),
             spec_draft_n_max: k.get("spec-draft-n-max").and_then(|v| ini::parse_int(v)),
+            spec_draft_type_k: get("spec-draft-type-k"),
+            spec_draft_type_v: get("spec-draft-type-v"),
             n_gpu_layers_draft: k.get("n-gpu-layers-draft").and_then(|v| ini::parse_int(v)),
             device_draft: get("device-draft"),
             device: get("device"),
@@ -300,7 +327,8 @@ impl Preset {
 /// - Without a draft FILE, `--device-draft` / `--n-gpu-layers-draft` are read
 ///   inside llama.cpp's `if (has_dft())` and silently ignored (field docs above).
 /// - Without a draft file AND without embedded MTP heads there is nothing to
-///   draft with at all, so `--spec-type` / `--spec-draft-n-max` go too. A
+///   draft with at all, so `--spec-type` / `--spec-draft-n-max` and the draft
+///   KV types (`--spec-draft-type-k/-v`, which DO survive embedded MTP) go too. A
 ///   surviving `spec-type = draft-mtp` is NOT inert: llama-server builds an MTP
 ///   draft context against the target model, `llama_init_from_model` rejects it
 ///   ("context type MTP requested but model doesn't contain MTP layers") and the
@@ -325,6 +353,18 @@ pub fn prune_inactive_draft_keys(p: &mut Preset, embeds_mtp: bool) -> Vec<&'stat
         }
         if p.spec_draft_n_max.take().is_some() {
             dropped.push("spec-draft-n-max");
+        }
+        // The draft KV types belong to THIS group, not the placement one below:
+        // llama.cpp applies them whenever a draft context exists, embedded MTP
+        // heads included (see the field docs) — so they only die when there is no
+        // speculation at all.
+        if !p.spec_draft_type_k.is_empty() {
+            p.spec_draft_type_k.clear();
+            dropped.push("spec-draft-type-k");
+        }
+        if !p.spec_draft_type_v.is_empty() {
+            p.spec_draft_type_v.clear();
+            dropped.push("spec-draft-type-v");
         }
     }
     if p.n_gpu_layers_draft.take().is_some() {
@@ -552,6 +592,13 @@ pub fn render_section(p: &Preset) -> String {
         "; model's trained block_size - 1 (e.g. 15); also applies to draft-mtp/simple.\r\n",
     );
     emit_i32(&mut out, "spec-draft-n-max", p.spec_draft_n_max);
+    out.push_str("; spec-draft-type-k / -v quantize the DRAFT context's KV cache (-ctkd /\r\n");
+    out.push_str("; -ctvd). Omitting them is NOT 'follow the model': llama.cpp copies\r\n");
+    out.push_str("; cache-type-k/-v into the draft params and then overwrites both with the\r\n");
+    out.push_str("; draft's own default, f16. Unlike the two placement keys below, these DO\r\n");
+    out.push_str("; apply to MTP heads embedded in the main GGUF.\r\n");
+    emit_str(&mut out, "spec-draft-type-k", &p.spec_draft_type_k);
+    emit_str(&mut out, "spec-draft-type-v", &p.spec_draft_type_v);
     out.push_str("; The next two place a SEPARATE draft file and are ignored without\r\n");
     out.push_str("; model-draft: with EMBEDDED MTP heads the draft context is built against\r\n");
     out.push_str("; the target model and runs on the model's own device. With a separate MTP\r\n");
@@ -674,20 +721,22 @@ mod tests {
     use super::*;
     use std::collections::BTreeMap;
 
-    // The four speculative keys, all set, with no draft FILE — the shape a Clone
-    // (or a re-pointed model) leaves behind on a model that can't use them.
+    // All six speculative keys set, with no draft FILE — the shape a Clone (or a
+    // re-pointed model) leaves behind on a model that can't use them.
     fn preset_with_dead_draft_keys() -> Preset {
         Preset {
             model_draft: String::new(),
             spec_type: "draft-mtp".into(),
             spec_draft_n_max: Some(2),
+            spec_draft_type_k: "q8_0".into(),
+            spec_draft_type_v: "q8_0".into(),
             n_gpu_layers_draft: Some(99),
             device_draft: "CUDA0".into(),
             ..Default::default()
         }
     }
 
-    // No draft file and no embedded heads: all four go, and the reported list is
+    // No draft file and no embedded heads: all six go, and the reported list is
     // the INI key names in file order.
     #[test]
     fn prune_drops_every_speculative_key_without_a_draft() {
@@ -698,19 +747,24 @@ mod tests {
             vec![
                 "spec-type",
                 "spec-draft-n-max",
+                "spec-draft-type-k",
+                "spec-draft-type-v",
                 "n-gpu-layers-draft",
                 "device-draft"
             ]
         );
         assert_eq!(p.spec_type, "");
         assert_eq!(p.spec_draft_n_max, None);
+        assert_eq!(p.spec_draft_type_k, "");
+        assert_eq!(p.spec_draft_type_v, "");
         assert_eq!(p.n_gpu_layers_draft, None);
         assert_eq!(p.device_draft, "");
     }
 
-    // Embedded MTP heads: the speculator stays (it is the whole point), but the
-    // two PLACEMENT keys still die — llama.cpp reads them only inside
-    // `if (has_dft())`, so they'd pin a draft that runs on the model's device.
+    // Embedded MTP heads: the speculator stays (it is the whole point), and so do
+    // the draft KV types — llama.cpp applies those to any draft context. Only the
+    // two PLACEMENT keys die: those it reads inside `if (has_dft())`, so they'd
+    // pin a draft that runs on the model's device.
     #[test]
     fn prune_keeps_the_speculator_for_embedded_mtp_heads() {
         let mut p = preset_with_dead_draft_keys();
@@ -718,6 +772,8 @@ mod tests {
         assert_eq!(dropped, vec!["n-gpu-layers-draft", "device-draft"]);
         assert_eq!(p.spec_type, "draft-mtp");
         assert_eq!(p.spec_draft_n_max, Some(2));
+        assert_eq!(p.spec_draft_type_k, "q8_0");
+        assert_eq!(p.spec_draft_type_v, "q8_0");
         assert_eq!(p.n_gpu_layers_draft, None);
         assert_eq!(p.device_draft, "");
     }
@@ -834,6 +890,8 @@ mod tests {
             model_draft: r"C:\dflash\m-dflash.gguf".into(),
             spec_type: "draft-dflash".into(),
             spec_draft_n_max: Some(15),
+            spec_draft_type_k: "q8_0".into(),
+            spec_draft_type_v: "q5_0".into(),
             n_gpu_layers_draft: Some(99),
             device_draft: "CUDA0".into(),
             device: "CUDA0".into(),
@@ -843,6 +901,8 @@ mod tests {
         assert!(ini.contains("model-draft = C:\\dflash\\m-dflash.gguf\r\n"));
         assert!(ini.contains("spec-type = draft-dflash\r\n"));
         assert!(ini.contains("spec-draft-n-max = 15\r\n"));
+        assert!(ini.contains("spec-draft-type-k = q8_0\r\n"));
+        assert!(ini.contains("spec-draft-type-v = q5_0\r\n"));
         assert!(ini.contains("n-gpu-layers-draft = 99\r\n"));
         assert!(ini.contains("device-draft = CUDA0\r\n"));
         assert!(ini.contains("device = CUDA0\r\n"));
@@ -867,6 +927,12 @@ mod tests {
         assert!(!value_lines
             .iter()
             .any(|l| l.starts_with("spec-draft-n-max =")));
+        assert!(!value_lines
+            .iter()
+            .any(|l| l.starts_with("spec-draft-type-k =")));
+        assert!(!value_lines
+            .iter()
+            .any(|l| l.starts_with("spec-draft-type-v =")));
     }
 
     // Key names are pinned here; the parse-back is covered by the full round-trip
@@ -908,10 +974,14 @@ mod tests {
         k.insert("model-draft".into(), r"C:\dflash\m-dflash.gguf".into());
         k.insert("spec-type".into(), "draft-dflash".into());
         k.insert("spec-draft-n-max".into(), "15".into());
+        k.insert("spec-draft-type-k".into(), "q8_0".into());
+        k.insert("spec-draft-type-v".into(), "q5_0".into());
         let p = Preset::from_keys("m", &k);
         assert_eq!(p.model_draft, r"C:\dflash\m-dflash.gguf");
         assert_eq!(p.spec_type, "draft-dflash");
         assert_eq!(p.spec_draft_n_max, Some(15));
+        assert_eq!(p.spec_draft_type_k, "q8_0");
+        assert_eq!(p.spec_draft_type_v, "q5_0");
     }
 
     // The guard for step 4 of the "add a preset field" recipe: a fully-populated
@@ -932,6 +1002,11 @@ mod tests {
             model_draft: r"E:\dflashs\model-dflash.gguf".into(),
             spec_type: "draft-dflash".into(),
             spec_draft_n_max: Some(15),
+            // Deliberately NOT the cache_type_k/-v below: the draft cache is a
+            // separate setting, and matching values would make the round-trip
+            // blind to the two being crossed.
+            spec_draft_type_k: "q4_0".into(),
+            spec_draft_type_v: "q4_1".into(),
             n_gpu_layers_draft: Some(99),
             device_draft: "CUDA0".into(),
             device: "CUDA0,ROCm1".into(),

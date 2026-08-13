@@ -448,6 +448,31 @@ fn wire_gpu_table(app: &AppWindow) {
     }
     {
         let app_weak = app.as_weak();
+        s.on_preset_gpu_blocks(move |id, blocks| {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let Some(layout) = preset_split_layout(&app) else {
+                return;
+            };
+            let current = preset_selection(&app);
+            let sel = gpu_split::set_blocks(&current, id.as_str(), blocks, layout);
+            // Committing the same count again — which leaving the field after an
+            // Enter does — must not rebuild: the rebuild recreates the delegate,
+            // and re-entering here from its teardown is how that turns into a loop.
+            if sel == current {
+                return;
+            }
+            set_preset_selection(&app, &sel);
+            // Unlike a weight edit this DOES rebuild: the count that was typed is
+            // paid for by the other rows, so their cells and ranges are stale until
+            // the model is rebuilt. That is affordable only because the callback is
+            // commit-based (see `blocks_edited` in components.slint).
+            refresh_gpu_rows(&app);
+        });
+    }
+    {
+        let app_weak = app.as_weak();
         s.on_preset_gpu_auto(move || {
             let Some(app) = app_weak.upgrade() else {
                 return;
@@ -625,12 +650,17 @@ pub(super) fn update_model_info(app: &AppWindow) {
     s.set_model_info_embd(SharedString::from("n/a"));
     s.set_model_info_embd_warning(SharedString::from(""));
 
+    // Both failure paths reset `model_info_n_layer` above, and the GPU table
+    // projects its weights onto exactly that — so they have to go through
+    // `refresh_gpu_rows` (which subsumes the tensor refresh) rather than the
+    // tensor-only one, or the block column would keep counting against the
+    // PREVIOUS model. This is not a keystroke path, so the full rebuild is free.
     if model.trim().is_empty() {
         s.set_model_info_ready(false);
         s.set_model_info_note(SharedString::from(
             "Select a model to see its GGUF details.",
         ));
-        refresh_tensor_scalars(app);
+        refresh_gpu_rows(app);
         return;
     }
 
@@ -639,7 +669,7 @@ pub(super) fn update_model_info(app: &AppWindow) {
         s.set_model_info_note(SharedString::from(
             "Metadata unavailable — is ggml-base.dll beside the app, and the file a valid GGUF?",
         ));
-        refresh_tensor_scalars(app);
+        refresh_gpu_rows(app);
         return;
     };
 
@@ -695,9 +725,12 @@ pub(super) fn update_model_info(app: &AppWindow) {
             false,
         );
     }
-    // The Tensor-placement warning depends on BOTH the rules and the model, and
-    // the rules did not change here — so re-derive it now that the model has.
-    refresh_tensor_scalars(app);
+    // Two tables depend on BOTH their own rules and the model, and only the model
+    // changed here: the Tensor-placement warning (its embd verdict) and the GPU
+    // split's block column, which counts against this model's `block_count`.
+    // `refresh_gpu_rows` re-derives both — it has to rebuild the ROWS, not just
+    // the scalars, because the per-row counts and ranges live in the row model.
+    refresh_gpu_rows(app);
 
     // Optional: the selected mmproj's clip header.
     let mmproj = form.mmproj.to_string();
