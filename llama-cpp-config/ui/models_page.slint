@@ -149,7 +149,7 @@ export component ModelsPage inherits HorizontalLayout {
                 }
                 LabeledField {
                     label: "Draft model";
-                    hint: "Optional speculator (feeds --model-draft).\nMTP heads (from mtps\\) set --spec-type draft-mtp; DFlash drafters (from dflashs\\) set draft-dflash.\nPicking one auto-pins the draft to the server GPU, or CPU if none.\n(none) = no speculation.\nLeave at (none) when the MAIN model already embeds MTP heads: those need only Spec type.";
+                    hint: "Optional speculator (feeds --model-draft).\nPicking one sets Spec type from the file's own GGUF header (DFlash vs DSpark vs MTP), falling back to the folder it came from (mtps\\ → draft-mtp, dflashs\\ → draft-dflash).\nPicking one auto-pins the draft to the server GPU, or CPU if none.\n(none) = no speculation.\nLeave at (none) when the MAIN model already embeds MTP heads: those need only Spec type.";
                     // A raw ComboBox (not MappedComboBox): the handler needs the
                     // selected INDEX to read the Rust-side `State.draft_rows`
                     // cache (the per-row --model-draft/--spec-type pairs), not
@@ -164,11 +164,13 @@ export component ModelsPage inherits HorizontalLayout {
                 }
                 LabeledField {
                     label: "Spec type";
-                    hint: "Speculative decoding mode (--spec-type).\nAuto-set when you pick a draft model above: MTP heads → draft-mtp, DFlash drafters → draft-dflash.\nOverride only if you know what you need.";
+                    hint: "Speculative decoding mode (--spec-type).\nAuto-set when you pick a draft model above, read from that file's header: a DFlash drafter carrying a Markov head is draft-dspark, one without it draft-dflash, a nextn head draft-mtp.\nOverride only if you know what you need.";
                     EnumComboBox {
                         // Active only when a draft is available (selected or embedded MTP).
+                        // draft-dspark sits next to draft-dflash: same arch, same
+                        // dflashs\ folder, told apart only by the Markov head.
                         enabled: AppState.draft_active;
-                        options: ["none", "draft-mtp", "draft-dflash", "draft-simple", "ngram-mod"];
+                        options: ["none", "draft-mtp", "draft-dflash", "draft-dspark", "draft-simple", "ngram-mod"];
                         // form.spec_type is never "" (preset_to_form maps empty → "none").
                         value <=> AppState.form.spec_type;
                     }

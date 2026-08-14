@@ -16,8 +16,9 @@
 
 use super::*;
 
-// The Model-info box is the only helper that reaches `gguf` directly; gui.rs no
-// longer does, so pull it in here rather than through the parent's `use super::*`.
+// The Model-info box and the draft pick's speculator lookup are the only helpers
+// that reach `gguf` directly; gui.rs no longer does, so pull it in here rather
+// than through the parent's `use super::*`.
 use crate::gguf;
 
 // ── Callback wiring (entry point) ─────────────────────────────────────
@@ -314,6 +315,19 @@ pub(super) fn wire(app: &AppWindow, state: &Rc<RefCell<State>>) {
             let Some((value, spec)) = picked else {
                 return;
             };
+            // The FILE's own header is the authority on which speculator it
+            // needs; the row's spec only says which folder it was found in, and
+            // that folder cannot tell a DSpark drafter from a DFlash one. The
+            // guess survives as the fallback, for the header that stays silent
+            // (a blockless MTP head) and the GGUF that won't open at all: see
+            // `gguf::draft_spec_type`.
+            let spec = if value.is_empty() {
+                spec
+            } else {
+                gguf::draft_spec_type(std::path::Path::new(&value))
+                    .map(str::to_string)
+                    .unwrap_or(spec)
+            };
             let mut form = s.get_form();
             // The server-wide fallback is the SAVED device (where the model will
             // actually run at launch), not the live, possibly-unsaved Server
@@ -574,9 +588,10 @@ use crate::form::ALL_LAYERS;
 // ── Draft-pick policy ─────────────────────────────────────────────────
 
 /// Apply a draft-picker selection to the form: set `model_draft` + `spec_type`
-/// from the picked row (MTP heads → draft-mtp, DFlash drafters → draft-dflash,
-/// "(none)" → empty), then auto-pin an unconfigured draft to ONE device: the
-/// multi-device "auto" split crashes gemma4 MTP heads. Pin to the SAME GPU the
+/// from the picked row (`spec` already resolved by the caller from the drafter's
+/// own GGUF header, with its folder as the fallback; "(none)" → empty), then
+/// auto-pin an unconfigured draft to ONE device: the multi-device "auto" split
+/// crashes gemma4 MTP heads. Pin to the SAME GPU the
 /// model runs on so both land together: the preset's own `device` selection
 /// wins, else the server-wide default (`server_device`, all layers on it);
 /// otherwise fall back to CPU, which always works. A draft the user already

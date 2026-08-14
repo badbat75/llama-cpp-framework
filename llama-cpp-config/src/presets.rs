@@ -77,6 +77,12 @@ pub struct Preset {
     // `spec_draft_n_max` (--spec-draft-n-max) caps drafted tokens per step;
     // DFlash clamps it to the trained block_size-1 (e.g. 15).
     //
+    // The GUI always writes `spec_type` rather than leaving it to llama.cpp's own
+    // header sniffing (b10406/b10428: `--model-draft` with no `--spec-type` reads
+    // the draft GGUF and infers one). Same source, read earlier: the picker shows
+    // the verdict, `gguf::draft_spec_type` is where it comes from, and an explicit
+    // key still works on builds predating the auto-detect.
+    //
     // `n_gpu_layers_draft` (--n-gpu-layers-draft) and `device_draft`
     // (--device-draft) place a draft FILE, and llama.cpp reads them ONLY when one
     // is set: both live inside `if (has_dft())`, i.e. `--model-draft` given. With
@@ -588,7 +594,8 @@ pub fn render_section(p: &Preset) -> String {
 
     out.push_str("\r\n; Speculative decoding / Multi-Token Prediction / DFlash\r\n");
     out.push_str("; spec-type pairs model-draft with a speculator: draft-mtp (MTP head),\r\n");
-    out.push_str("; draft-dflash (DFlash block-diffusion drafter), or draft-simple.\r\n");
+    out.push_str("; draft-dflash / draft-dspark (block-diffusion drafters; dspark is the\r\n");
+    out.push_str("; one whose GGUF carries a Markov head), or draft-simple.\r\n");
     out.push_str(
         "; MTP heads embedded in the main GGUF need spec-type ALONE (no model-draft).\r\n",
     );

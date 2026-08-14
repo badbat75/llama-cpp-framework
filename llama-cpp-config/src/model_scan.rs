@@ -211,6 +211,13 @@ fn custom_row(current: &str) -> (String, String) {
 /// to apply when each row is picked ("none" for the empty row, "draft-mtp" /
 /// "draft-dflash" for scanned entries). Returns `(labels, values, specs, index)`.
 ///
+/// That per-row spec is the FOLDER's guess and only the fallback: the picked
+/// file's own header decides (`gguf::draft_spec_type`, called from the
+/// `draft_picked` handler), because `dflashs\` holds both DFlash and DSpark
+/// drafters and nothing outside the file tells them apart. The guess is what
+/// survives for a header that stays silent or a GGUF that will not open, which
+/// is why it is still built here rather than dropped.
+///
 /// A `current` path that matches no scanned file is preserved as a `(custom)`
 /// row keeping its existing `current_spec`, mirroring [`build_options`].
 pub fn build_draft_options(

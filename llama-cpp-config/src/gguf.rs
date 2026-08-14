@@ -1,7 +1,8 @@
 //! Describe a model in the GUI's "Model info" box: dense-vs-MoE (+ layer split),
 //! layer count, trained context, GQA shape, quant, embedded MTP, the embedded
 //! chat template (Jinja vs non-Jinja detection, with a raw-text preview), plus
-//! the selected mmproj (clip) and draft/DFlash headers.
+//! the selected mmproj (clip) and draft/DFlash headers. Also classifies a draft
+//! GGUF into the `--spec-type` it calls for (`draft_spec_type`).
 //!
 //! Metadata is read with llama.cpp's OWN gguf reader: we runtime-load
 //! `ggml-base.dll` (shipped next to `llama-cpp-config.exe` in `bin\`) and call
@@ -518,6 +519,55 @@ pub fn read_mmproj_info(path: &Path) -> Option<MmprojInfo> {
     MmprojInfo::from_kv(&ctx)
 }
 
+// ── Which speculator a draft file calls for ──────────────────────────────
+
+/// The `--spec-type` a DRAFT GGUF asks for, read from its own header. `None`
+/// when the header names no speculator this build knows (an unreadable file
+/// included: no `ggml-base.dll`, or not a GGUF at all).
+///
+/// Mirrors llama.cpp's `common_speculative_types_from_gguf`
+/// (`common/speculative.cpp`, added in b10406 and extended to MTP in b10428),
+/// which llama-server now runs itself on `--model-draft` when no `--spec-type`
+/// was given. Two reasons this exists anyway: the framework always WRITES
+/// `spec-type` into the preset, so upstream's auto-detect never fires; and the
+/// FOLDER a drafter was dropped in (the picker's other source of truth) cannot
+/// tell `draft-dspark` from `draft-dflash`, since both live in `dflashs\` and
+/// only a tensor inside the file separates them.
+///
+/// The verdicts, in upstream's order:
+/// - arch `dflash` carrying a `markov_w1.weight` tensor → `draft-dspark`
+/// - arch `dflash` without it → `draft-dflash`
+/// - a `blk.<block_count - 1>.nextn.eh_proj.weight` tensor → `draft-mtp`
+///
+/// A separate MTP head file with no blocks of its own (gemma4-assistant,
+/// `block_count = 0`) matches none of them, upstream included. So `None` means
+/// "the header did not say", never "no speculator", and the caller keeps the
+/// folder-derived guess rather than clearing the key.
+pub fn draft_spec_type(path: &Path) -> Option<&'static str> {
+    let ctx = ffi::open(path)?;
+    spec_type_from_kv(&ctx)
+}
+
+fn spec_type_from_kv<S: KvSource>(s: &S) -> Option<&'static str> {
+    let arch = s.string("general.architecture")?;
+    if arch == "dflash" {
+        // The Markov head is the whole difference between the two DFlash
+        // flavours: same arch, same file name shape, different speculator.
+        return Some(if s.tensor("markov_w1.weight").is_some() {
+            "draft-dspark"
+        } else {
+            "draft-dflash"
+        });
+    }
+    // MTP heads ride the LAST block of the file, so that is the one to probe.
+    // `checked_sub` where upstream wraps: a 0-block file looks up
+    // `blk.4294967295.nextn.eh_proj.weight` there and finds nothing, which is
+    // the same answer this returns.
+    let last = s.u32(&format!("{arch}.block_count"))?.checked_sub(1)?;
+    s.tensor(&format!("blk.{last}.nextn.eh_proj.weight"))
+        .map(|_| "draft-mtp")
+}
+
 // ── External drafter cross-reference ─────────────────────────────────────
 
 /// Scan `mtps\` and `dflashs\` under `models_dir` and pick the drafter whose
@@ -797,7 +847,8 @@ mod tests {
         }
     }
 
-    /// `map` plus the GGUF's tensor infos: only `token_embd.weight` is read.
+    /// `map` plus the GGUF's tensor infos: `token_embd.weight` for the
+    /// Embeddings row, the Markov / nextn heads for `spec_type_from_kv`.
     fn map_t(pairs: Vec<(&'static str, Tv)>, tensors: Vec<(&'static str, (u32, u64))>) -> Map {
         Map {
             kv: pairs.into_iter().collect(),
@@ -1040,6 +1091,74 @@ mod tests {
         let line = draft_line(&info, &ext);
         assert!(line.contains("MTP: 1 nextn layer"));
         assert!(line.contains("DFlash: glm-dflash.gguf"));
+    }
+
+    // ── Draft speculator classification ──────────────────────────────────
+    //
+    // The reason the picker cannot go on the folder alone: a DSpark drafter and
+    // a plain DFlash one share the arch, the file-name shape and the `dflashs\`
+    // folder they are dropped in. Only the Markov head separates them, and
+    // llama.cpp reads exactly this to answer the same question
+    // (`common_speculative_types_from_gguf`).
+
+    #[test]
+    fn spec_type_reads_dspark_from_the_markov_head() {
+        let m = map_t(
+            vec![("general.architecture", Tv::S("dflash"))],
+            vec![("markov_w1.weight", (0, 4096))],
+        );
+        assert_eq!(spec_type_from_kv(&m), Some("draft-dspark"));
+    }
+
+    #[test]
+    fn spec_type_reads_plain_dflash_without_it() {
+        let m = map(vec![("general.architecture", Tv::S("dflash"))]);
+        assert_eq!(spec_type_from_kv(&m), Some("draft-dflash"));
+    }
+
+    // An MTP head announces itself on the LAST block, so the probe has to be
+    // aimed there: `block_count - 1`, not block 0 and not a scan.
+    #[test]
+    fn spec_type_reads_mtp_from_the_last_blocks_nextn_head() {
+        let m = map_t(
+            vec![
+                ("general.architecture", Tv::S("qwen35moe")),
+                ("qwen35moe.block_count", Tv::U(48)),
+            ],
+            vec![("blk.47.nextn.eh_proj.weight", (0, 4096))],
+        );
+        assert_eq!(spec_type_from_kv(&m), Some("draft-mtp"));
+
+        // Same file, the head on any other block: not what llama.cpp looks for.
+        let m = map_t(
+            vec![
+                ("general.architecture", Tv::S("qwen35moe")),
+                ("qwen35moe.block_count", Tv::U(48)),
+            ],
+            vec![("blk.0.nextn.eh_proj.weight", (0, 4096))],
+        );
+        assert_eq!(spec_type_from_kv(&m), None);
+    }
+
+    // A head file with no blocks of its own (gemma4-assistant, block_count 0)
+    // matches nothing, upstream included. `None` is "the header did not say",
+    // which is why the caller falls back to the folder instead of clearing the
+    // key: that file IS a draft-mtp head.
+    #[test]
+    fn spec_type_is_silent_for_a_blockless_head_file() {
+        let m = map_t(
+            vec![
+                ("general.architecture", Tv::S("gemma4-assistant")),
+                ("gemma4-assistant.block_count", Tv::U(0)),
+            ],
+            vec![("token_embd.weight", (8, 4096))],
+        );
+        assert_eq!(spec_type_from_kv(&m), None);
+
+        // …and with no block_count key at all, where upstream's own reader would
+        // assert on the missing key rather than answer.
+        let m = map(vec![("general.architecture", Tv::S("gemma4-assistant"))]);
+        assert_eq!(spec_type_from_kv(&m), None);
     }
 
     /// The whole point of the Embeddings row: the FILE NAME does not tell you
