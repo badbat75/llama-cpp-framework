@@ -246,6 +246,22 @@ fn wire_gpu_table(app: &AppWindow) {
             refresh_gpu_rows(&app);
         });
     }
+    {
+        let app_weak = app.as_weak();
+        s.on_server_split_mode_picked(move |v| {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let st = app.global::<AppState>();
+            let mut f = st.get_server_form();
+            f.split_mode = v;
+            st.set_server_form(f);
+            // The mode decides what every column means — and the server-wide
+            // value shadows the preset table too — so a pick re-projects BOTH
+            // tables, not just this tab's scalars.
+            refresh_gpu_rows(&app);
+        });
+    }
 }
 
 /// Native folder picker for the "Browse…" button, seeded at `start`. Server-tab

@@ -81,8 +81,17 @@ export global AppState {
     // back into (src/gpu_split.rs). The per-preset twin lives under "Models tab
     // state" below; the raw device list stays Rust-only (`devices::probed()`).
     in-out property <[GpuRow]> server_gpu_rows;
-    // The llama-server flags this selection produces, shown under the table.
-    in-out property <string> server_gpu_summary;
+    // The split-mode combo model, shared by BOTH tables (gpu_split::MODE_LABELS
+    // / MODE_VALUES, pushed once per row refresh); the index is per-scope and
+    // two-way — Rust recomputes it from the form value on every refresh, a pick
+    // reports back through *_split_mode_picked. The effective mode ("layer" /
+    // "none" / "row", gpu_split::effective_mode — the server-wide flag rides
+    // the router's CLI, so it shadows every preset's key) is what actually
+    // bends each table's columns.
+    in-out property <[string]> split_mode_labels;
+    in-out property <[string]> split_mode_values;
+    in-out property <int> server_split_mode_index: 0;
+    in-out property <string> server_gpu_mode: "layer";
     // How many devices are checked. Drives the split-mode combo (one device has
     // nothing to split) and the weight column (so does zero).
     in-out property <int> server_gpu_selected: 0;
@@ -125,7 +134,8 @@ export global AppState {
     // server-wide selection (llama-server's router copies its OWN CLI args over
     // every preset key), which is what `gpu_override_warning` says out loud.
     in-out property <[GpuRow]> preset_gpu_rows;
-    in-out property <string> preset_gpu_summary;
+    in-out property <int> preset_split_mode_index: 0;
+    in-out property <string> preset_gpu_mode: "layer";
     in-out property <int> preset_gpu_selected: 0;
     in-out property <int> preset_gpu_total: 0;
     // Positions this model's split is cut over — its block count plus one for the
@@ -133,8 +143,15 @@ export global AppState {
     // what lets the table edit BLOCKS instead of ratios; 0 = no model read, so the
     // table falls back to raw weights the way the server-wide one always does.
     in-out property <int> preset_split_positions: 0;
-    out property <string> gpu_override_warning: server_form.device == "" ? ""
-        : "The Server tab pins GPUs (" + server_form.device + "). llama-server passes that on its own command line, which overrides every preset's selection — this table won't apply until the server-wide one is cleared.";
+    out property <string> gpu_override_warning: server_form.device != ""
+        ? "The Server tab pins GPUs (" + server_form.device + "). llama-server passes that on its own command line, which overrides every preset's selection — this table won't apply until the server-wide one is cleared."
+        // Same shadowing, split-mode edition: the server-wide mode rides the
+        // router's CLI too, so a differing preset pick is dead on arrival.
+        : (server_form.split_mode != "default" && server_form.split_mode != ""
+            && form.split_mode != "default" && form.split_mode != ""
+            && form.split_mode != server_form.split_mode)
+        ? "The Server tab sets GPU split mode '" + server_form.split_mode + "', which llama-server passes on its own command line — it overrides this preset's split mode."
+        : "";
 
     // Per-preset tensor-placement table (TensorOverrideTable), over the single
     // `form.override_tensor` string. Rows and BOTH dropdown models are built in
@@ -342,6 +359,12 @@ export global AppState {
     // `*_gpu_move(id, delta)` is the drag handle: move a checked device `delta`
     // places within the split (negative = towards the head). Position 0 is
     // llama.cpp's main_gpu, so this is the only way to choose which GPU leads.
+    // `*_split_mode_picked(value)`: the mode combo's pick, as a MODE_VALUES
+    // spelling ("default"/"none"/"row"). Rust writes it into the scope's form
+    // and rebuilds the rows — the mode decides what the columns mean, so a
+    // pick is a full re-projection, not a scalar update.
+    callback server_split_mode_picked(string);
+    callback preset_split_mode_picked(string);
     callback server_gpu_toggle(string);
     callback server_gpu_move(string, int);
     callback server_gpu_weight(string, int);

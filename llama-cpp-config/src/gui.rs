@@ -558,6 +558,16 @@ fn refresh_device_options(app: &AppWindow) {
 fn refresh_gpu_rows(app: &AppWindow) {
     let s = app.global::<AppState>();
     let devs = devices::probed();
+    let (server_mode, preset_mode) = gpu_modes(app);
+    // The combo model is static, but pushed from here rather than kept in the
+    // .slint so the labels/values pair has ONE owner next to the code that
+    // interprets a pick (gpu_split::MODE_*).
+    s.set_split_mode_labels(string_model(
+        gpu_split::MODE_LABELS.iter().map(|l| (*l).into()).collect(),
+    ));
+    s.set_split_mode_values(string_model(
+        gpu_split::MODE_VALUES.iter().map(|v| (*v).into()).collect(),
+    ));
     // The server-wide table gets no layout on purpose: it applies to EVERY preset,
     // so there is no single `n_layer_all` to project its weights onto. It stays a
     // ratio table; only the per-preset one, which knows its model, shows blocks.
@@ -565,14 +575,30 @@ fn refresh_gpu_rows(app: &AppWindow) {
         &devs,
         &server_selection(app),
         None,
+        server_mode,
     )));
     s.set_preset_gpu_rows(model(gpu_split::build_rows(
         &devs,
         &preset_selection(app),
         preset_split_layout(app),
+        preset_mode,
     )));
     refresh_gpu_scalars(app);
     refresh_tensor_rows(app);
+}
+
+/// The two tables' EFFECTIVE split modes, `(server, preset)`: the server-wide
+/// value rides the router's own command line (`runstate::server_args`), which
+/// the router copies over every preset key — so whenever it is set it shadows
+/// the preset's, an explicit value included (gpu_split::effective_mode).
+fn gpu_modes(app: &AppWindow) -> (gpu_split::SplitMode, gpu_split::SplitMode) {
+    let s = app.global::<AppState>();
+    let server = s.get_server_form().split_mode;
+    let preset = s.get_form().split_mode;
+    (
+        gpu_split::effective_mode(server.as_str(), None),
+        gpu_split::effective_mode(server.as_str(), Some(preset.as_str())),
+    )
 }
 
 /// The per-preset split's `Layout`: the selected model's block count crossed with
@@ -682,19 +708,30 @@ fn refresh_tensor_scalars(app: &AppWindow) {
 /// without the row rebuild that would recreate the SpinBox being typed into.
 fn refresh_gpu_scalars(app: &AppWindow) {
     let s = app.global::<AppState>();
+    let (server_mode, preset_mode) = gpu_modes(app);
 
     let server = server_selection(app);
     s.set_server_gpu_selected(gpu_count(&server));
     s.set_server_gpu_total(gpu_weight_total(&server));
-    s.set_server_gpu_summary(gpu_split::summary(&server).into());
+    s.set_server_gpu_mode(server_mode.as_str().into());
+    s.set_server_split_mode_index(gpu_split::mode_index(
+        s.get_server_form().split_mode.as_str(),
+    ));
 
     let preset = preset_selection(app);
     s.set_preset_gpu_selected(gpu_count(&preset));
     s.set_preset_gpu_total(gpu_weight_total(&preset));
-    s.set_preset_gpu_summary(gpu_split::summary(&preset).into());
+    s.set_preset_gpu_mode(preset_mode.as_str().into());
+    s.set_preset_split_mode_index(gpu_split::mode_index(s.get_form().split_mode.as_str()));
     // 0 = "no model to project onto", which is what switches the table's editable
-    // column back from blocks to raw weights.
-    s.set_preset_split_positions(preset_split_layout(app).map_or(0, |l| l.count));
+    // column back from blocks to raw weights — and any mode but layer counts as
+    // that too: under `row` the bytes follow row fractions, under `none` the
+    // vector is dead, so a block cut would misreport both.
+    s.set_preset_split_positions(if preset_mode == gpu_split::SplitMode::Layer {
+        preset_split_layout(app).map_or(0, |l| l.count)
+    } else {
+        0
+    });
 }
 
 fn gpu_count(sel: &gpu_split::GpuSelection) -> i32 {

@@ -159,18 +159,21 @@ export component ServerPage inherits ScrollView {
         SectionCard {
             heading: "GPU distribution";
             Text {
-                text: "Default for every preset (--device / --tensor-split). Check the GPUs a model may use and, if they differ in VRAM, how much of it each takes. The checked rows, top to bottom, are the split order — drag ≡ to reorder; the first one is llama.cpp's main GPU (the only one used with split mode 'none'). A preset can override this — unless something is checked here, in which case the server-wide choice wins at launch.";
+                text: "Default for every preset (--split-mode / --device / --tensor-split). Check the GPUs a model may use and, if they differ in VRAM, how much of it each takes; nothing checked = all detected GPUs, split by free VRAM at load. The checked rows, top to bottom, are the split order — drag ≡ to reorder; the first one is llama.cpp's main GPU (the only one used with split mode 'none'). A preset can override each of these — unless it is set here, in which case the server-wide choice wins at launch.";
                 wrap: word-wrap;
                 font-size: 12px;
                 color: Palette.foreground.transparentize(Tokens.muted);
             }
             GpuSplitTable {
                 rows: AppState.server_gpu_rows;
-                summary: AppState.server_gpu_summary;
                 selected: AppState.server_gpu_selected;
                 weight_total: AppState.server_gpu_total;
-                split_mode <=> AppState.server_form.split_mode;
-                split_mode_hint: "Multi-GPU split strategy (--split-mode), same on CUDA and HIP.\nlayer (default) splits layers + KV across GPUs; row splits per-row (tensor-parallel, more PCIe traffic); none = single GPU.\nIrrelevant with one GPU checked.";
+                mode_labels: AppState.split_mode_labels;
+                mode_values: AppState.split_mode_values;
+                mode_index <=> AppState.server_split_mode_index;
+                effective_mode: AppState.server_gpu_mode;
+                mode_picked(v) => { AppState.server_split_mode_picked(v); }
+                split_mode_hint: "How a model is split across the checked GPUs (--split-mode), same on CUDA and HIP.\nlayer (default): each GPU takes a consecutive run of blocks — the table edits the cut.\nnone: single GPU — the first checked row; the other checked rows go unused.\nrow: weight matrices are split row-wise by the ratio (needs CUDA/ROCm — Vulkan falls back to the layer cut); the KV cache still follows the layer cut.\nSet here it overrides every preset's mode. Irrelevant with one GPU checked.";
                 toggled(id) => { AppState.server_gpu_toggle(id); }
                 reordered(id, delta) => { AppState.server_gpu_move(id, delta); }
                 weight_edited(id, w) => { AppState.server_gpu_weight(id, w); }

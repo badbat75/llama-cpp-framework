@@ -302,11 +302,27 @@ pub(super) fn run(app: &AppWindow) {
         4,
         "the Share column's denominator"
     );
-    assert!(
-        st.get_preset_gpu_summary().contains("--tensor-split 3,1"),
-        "summary: {}",
-        st.get_preset_gpu_summary()
-    );
+    // The split-mode pick funnels through Rust (the combo is a MappedComboBox:
+    // the pick writes the form, and the refresh re-projects the rows), and the
+    // mode bends the columns — under `none` the vector is dead, so the head row
+    // reads 100% and the other CHECKED row says "unused" out loud (a "—" would
+    // read as merely unchecked).
+    st.invoke_preset_split_mode_picked("none".into());
+    assert_eq!(st.get_form().split_mode.as_str(), "none");
+    assert_eq!(st.get_preset_gpu_mode().as_str(), "none");
+    assert_eq!(st.get_preset_split_mode_index(), 1);
+    {
+        let rows = st.get_preset_gpu_rows();
+        assert_eq!(rows.row_data(0).expect("row 0").share.as_str(), "100%");
+        assert_eq!(rows.row_data(1).expect("row 1").share.as_str(), "unused");
+    }
+    // Back to the merged "layer (default)" entry — index and effective mode
+    // follow, and the ratio the mode never touched is still there.
+    st.invoke_preset_split_mode_picked("default".into());
+    assert_eq!(st.get_form().split_mode.as_str(), "default");
+    assert_eq!(st.get_preset_split_mode_index(), 0);
+    assert_eq!(st.get_preset_gpu_mode().as_str(), "layer");
+    assert_eq!(st.get_form().tensor_split.as_str(), "3,1");
     st.invoke_preset_gpu_auto();
     assert_eq!(
         st.get_form().tensor_split.as_str(),
@@ -378,6 +394,13 @@ pub(super) fn run(app: &AppWindow) {
     // not churn the vector.
     st.invoke_preset_gpu_blocks("ROCm1".into(), 29);
     assert_eq!(st.get_form().tensor_split.as_str(), "29,5");
+    // `row` bends the same table off blocks: the bytes follow row fractions
+    // there, so the projection must retire even while the model is known — and
+    // come straight back when the mode does.
+    st.invoke_preset_split_mode_picked("row".into());
+    assert_eq!(st.get_preset_split_positions(), 0, "row mode has no block cut");
+    st.invoke_preset_split_mode_picked("default".into());
+    assert_eq!(st.get_preset_split_positions(), 34, "layer gets the blocks back");
     // Back to a plain ratio for the INI assertions below.
     st.invoke_preset_gpu_even();
     st.invoke_preset_gpu_weight("ROCm1".into(), 3);

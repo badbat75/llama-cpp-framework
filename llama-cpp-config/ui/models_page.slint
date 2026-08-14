@@ -267,24 +267,29 @@ export component ModelsPage inherits HorizontalLayout {
             SectionCard {
                 heading: "GPU distribution";
                 Text {
-                    text: "Which GPUs THIS model runs on (--device) and how much of it each one holds (--tensor-split). Checking nothing inherits the server default. Two GPUs of different sizes? Check both and give the bigger one more. Once the model's header is read the column counts BLOCKS instead of ratios — that is what llama.cpp actually cuts, and each row says which ones it gets (the last position is the output layer, not a block). Drag a slider to move the cut; the other rows pay for it when you let go. The checked rows, top to bottom, are the split order — drag ≡ to reorder; the first one is llama.cpp's main GPU.";
+                    text: "How THIS model is split across GPUs (split-mode), which ones it runs on (device) and how much each holds (tensor-split) — all saved to presets.ini. Checking nothing inherits the server default. Two GPUs of different sizes? Check both and give the bigger one more. In layer mode, once the model's header is read the column counts BLOCKS instead of ratios — that is what llama.cpp actually cuts, and each row says which ones it gets (the last position is the output layer, not a block). Drag a slider to move the cut; the other rows pay for it when you let go. The checked rows, top to bottom, are the split order — drag ≡ to reorder; the first one is llama.cpp's main GPU.";
                     wrap: word-wrap;
                     font-size: 12px;
                     color: Palette.foreground.transparentize(Tokens.muted);
                 }
                 GpuSplitTable {
                     rows: AppState.preset_gpu_rows;
-                    summary: AppState.preset_gpu_summary;
                     selected: AppState.preset_gpu_selected;
                     weight_total: AppState.preset_gpu_total;
-                    // Non-zero once the model's header is read: the table then
-                    // edits BLOCKS instead of ratios. The server-wide twin never
-                    // passes this — it has no one model to count against.
+                    // Non-zero once the model's header is read AND the effective
+                    // mode is layer: the table then edits BLOCKS instead of
+                    // ratios. The server-wide twin never passes this — it has no
+                    // one model to count against.
                     positions: AppState.preset_split_positions;
                     warning: AppState.gpu_override_warning;
-                    // form.split_mode is never "" (preset_to_form maps empty → "default").
-                    split_mode <=> AppState.form.split_mode;
-                    split_mode_hint: "Multi-GPU split for this model (--split-mode), overrides the server default; same on CUDA and HIP.\nlayer splits layers + KV; row is tensor-parallel; none = single GPU.\ndefault = inherit server.\nIrrelevant with one GPU checked.";
+                    mode_labels: AppState.split_mode_labels;
+                    mode_values: AppState.split_mode_values;
+                    mode_index <=> AppState.preset_split_mode_index;
+                    // Inheritance resolved in Rust: a server-wide mode shadows
+                    // this preset's pick, and the columns must follow the truth.
+                    effective_mode: AppState.preset_gpu_mode;
+                    mode_picked(v) => { AppState.preset_split_mode_picked(v); }
+                    split_mode_hint: "Multi-GPU split for THIS model (split-mode), same on CUDA and HIP. A server-wide mode overrides it.\nlayer (default, = inherit): each GPU takes a consecutive run of blocks — the table edits the cut.\nnone: single GPU — the first checked row; the other checked rows go unused.\nrow: weight matrices are split row-wise by the ratio (needs CUDA/ROCm — Vulkan falls back to the layer cut); the KV cache still follows the layer cut.\nIrrelevant with one GPU checked.";
                     toggled(id) => { AppState.preset_gpu_toggle(id); }
                     reordered(id, delta) => { AppState.preset_gpu_move(id, delta); }
                     weight_edited(id, w) => { AppState.preset_gpu_weight(id, w); }

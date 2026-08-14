@@ -71,6 +71,21 @@
 //! weighted); unchecking removes it and its weight together. Weights are carried
 //! in the same tuple as their device, so a reorder moves them as a unit — the
 //! split proportions survive, only the positions change.
+//!
+//! ## The split MODE decides what the columns mean
+//! `--split-mode` is part of the same selection, which is why the combo sits
+//! ABOVE the table: under `layer` (llama.cpp's default) the vector cuts blocks,
+//! so the table edits blocks wherever a model is known; under `none` llama.cpp
+//! keeps ONLY the head row (`devices[main_gpu]`, and the framework never moves
+//! `--main-gpu` off 0) and the vector is dead, so the editors go away and the
+//! head row reads 100%; under `row` the weight MATRICES are split row-wise by
+//! the normalized vector (backend split buffer type — the layer cut still runs
+//! over the same vector, so the KV cache and non-matrix tensors follow it, but
+//! the bulk of the bytes follow the row fractions), so the honest editable unit
+//! is the raw ratio and never blocks. `SplitMode` is that verdict;
+//! `effective_mode` resolves the scope inheritance — the server-wide mode rides
+//! the router's own command line, so whenever it is set it shadows every
+//! preset's key.
 
 use slint::SharedString;
 
@@ -91,6 +106,93 @@ pub struct GpuSelection {
 /// selected device is 0 the selection is in auto mode and renders a blank
 /// `tensor_split`.
 type Pick = (String, i32);
+
+// ── Split mode ───────────────────────────────────────────────────────────
+
+/// What `--split-mode` makes of the selection — the DISPLAY verdict, not the
+/// flag domain: a value this code does not know (today `tensor`, experimental
+/// in llama.cpp and refused by its `--fit` pass) degrades to `Row` — ratio
+/// editing, no block projection — because inventing a block cut for an unknown
+/// mode would misreport exactly what the mode handling exists to make honest.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SplitMode {
+    /// `layer`, and the absent flag (llama.cpp defaults to layer): the vector
+    /// cuts blocks, so the table may edit blocks (`Layout`).
+    #[default]
+    Layer,
+    /// `none`: llama.cpp drops every device but `devices[main_gpu]` — the head
+    /// row — before loading (`llama_prepare_model_devices`), so the weight
+    /// vector means nothing and the drag handle is the only knob left.
+    Single,
+    /// `row` (and any unknown value): weight matrices are split row-wise by the
+    /// normalized vector via the backend's split buffer type (CUDA/ROCm; a
+    /// backend without one — Vulkan — quietly falls back to the layer cut).
+    /// The layer assignment still runs over the same vector, so KV and the
+    /// non-matrix tensors follow it — but the bulk of the bytes follow the row
+    /// fractions, so the editable unit is the ratio, never blocks.
+    Row,
+}
+
+impl SplitMode {
+    /// The INI/form spelling → the verdict. "" and the form's "default"
+    /// sentinel are Layer — llama.cpp's own default — and so is an explicit
+    /// `layer`.
+    pub fn parse(s: &str) -> Self {
+        match s.trim() {
+            "none" => Self::Single,
+            "" | "default" | "layer" => Self::Layer,
+            _ => Self::Row,
+        }
+    }
+
+    /// The spelling the tables' gating property carries ("layer"/"none"/"row").
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Layer => "layer",
+            Self::Single => "none",
+            Self::Row => "row",
+        }
+    }
+}
+
+/// The mode a table actually runs under, scope inheritance resolved. The
+/// server-wide mode rides the ROUTER's command line (`runstate::server_args`),
+/// and the router copies its CLI args over every preset key — so whenever it is
+/// set it WINS, an explicit `layer` included. A preset's own key matters only
+/// while the server-wide one is absent. Pass `None` for the server table
+/// itself.
+pub fn effective_mode(server_mode: &str, preset_mode: Option<&str>) -> SplitMode {
+    let server = server_mode.trim();
+    if !(server.is_empty() || server == "default") {
+        return SplitMode::parse(server);
+    }
+    preset_mode.map_or(SplitMode::Layer, SplitMode::parse)
+}
+
+/// The split-mode combo as label/value/index rows rather than an enum list: the
+/// old list spelled "default" and "layer" as two entries, which for a preset are
+/// the SAME launch in every reachable configuration (an absent key falls back to
+/// layer — or to the server-wide mode, which when set overrides an explicit key
+/// too), so the duplicate entry was pure ambiguity. One entry now carries both;
+/// picking it stores "default", which the form conversions drop from the INI.
+pub const MODE_VALUES: [&str; 3] = ["default", "none", "row"];
+pub const MODE_LABELS: [&str; 3] = [
+    "layer — split by blocks (default)",
+    "none — single GPU",
+    "row — split matrices by rows",
+];
+
+/// The combo row for a form value, aligned with `MODE_VALUES`. Everything that
+/// is not `none`/`row` sits on the merged layer entry — including a hand-written
+/// value this build doesn't list (`tensor`), which keeps its INI spelling
+/// untouched until the user actually picks a row.
+pub fn mode_index(form_value: &str) -> i32 {
+    match form_value.trim() {
+        "none" => 1,
+        "row" => 2,
+        _ => 0,
+    }
+}
 
 // ── String ↔ selection ───────────────────────────────────────────────────
 
@@ -445,13 +547,22 @@ pub fn set_even(sel: &GpuSelection) -> GpuSelection {
 /// which applies to every preset and so has no single `n_layer_all`, or a model
 /// whose header hasn't been read — leaves `blocks`/`blocks_label` empty and the
 /// table falls back to editing raw weights.
+///
+/// `mode` is the EFFECTIVE split mode (`effective_mode`). It bends the rows the
+/// way llama.cpp will bend the launch: `Row` discards the layout (the bytes
+/// follow row fractions, so a block cut would misreport the placement), and
+/// `Single` additionally overrides the share column — the head row holds the
+/// whole model and every other checked row is dead weight, which "unused" says
+/// where a "—" would read as merely unchecked.
 pub fn build_rows(
     devices: &[DeviceOption],
     sel: &GpuSelection,
     layout: Option<Layout>,
+    mode: SplitMode,
 ) -> Vec<GpuRow> {
     let picks = picks(sel);
     let total: i32 = picks.iter().map(|&(_, w)| w).sum();
+    let layout = if mode == SplitMode::Layer { layout } else { None };
     let counts = layout.and_then(|l| block_counts(&weights_of(&picks), l));
     let ranges = counts
         .as_ref()
@@ -473,7 +584,11 @@ pub fn build_rows(
             detected: dev.is_some(),
             enabled: true,
             weight: *weight,
-            share: share(picks.len(), *weight, total).into(),
+            share: match mode {
+                SplitMode::Single if i == 0 => "100%".into(),
+                SplitMode::Single => "unused".into(),
+                _ => share(picks.len(), *weight, total).into(),
+            },
             blocks: counts.as_ref().and_then(|c| c.get(i)).copied().unwrap_or(0),
             blocks_label: ranges.get(i).cloned().unwrap_or_default().into(),
         });
@@ -508,23 +623,6 @@ fn share(count: usize, weight: i32, total: i32) -> String {
         return "auto".into();
     }
     format!("{:.0}%", f64::from(weight) * 100.0 / f64::from(total))
-}
-
-/// The line under the table: the llama-server flags this selection produces.
-pub fn summary(sel: &GpuSelection) -> String {
-    let picks = picks(sel);
-    if picks.is_empty() {
-        return "(all detected devices — llama.cpp chooses and splits automatically)".into();
-    }
-    let mut s = format!("--device {}", sel.device);
-    if sel.tensor_split.is_empty() {
-        if picks.len() > 1 {
-            s.push_str("   (auto split, by free VRAM at load)");
-        }
-    } else {
-        s.push_str(&format!("   --tensor-split {}", sel.tensor_split));
-    }
-    s
 }
 
 #[cfg(test)]
@@ -562,7 +660,7 @@ mod tests {
 
     #[test]
     fn checked_rows_come_first_in_split_order_then_the_rest_in_probe_order() {
-        let rows = build_rows(&devs(), &sel("ROCm0,CUDA0", "3,1"), None);
+        let rows = build_rows(&devs(), &sel("ROCm0,CUDA0", "3,1"), None, SplitMode::Layer);
         assert_eq!(ids(&rows), ["ROCm0", "CUDA0", "ROCm1", "Vulkan0"]);
         assert!(rows[0].enabled && rows[1].enabled && !rows[2].enabled);
     }
@@ -574,7 +672,10 @@ mod tests {
     fn move_by_promotes_a_device_and_its_weight_together() {
         let s = move_by(&sel("CUDA0,ROCm0", "1,3"), "ROCm0", -1);
         assert_eq!(s, sel("ROCm0,CUDA0", "3,1"), "the weight rides along");
-        assert_eq!(ids(&build_rows(&devs(), &s, None))[0], "ROCm0");
+        assert_eq!(
+            ids(&build_rows(&devs(), &s, None, SplitMode::Layer))[0],
+            "ROCm0"
+        );
     }
 
     #[test]
@@ -597,9 +698,7 @@ mod tests {
 
     #[test]
     fn nothing_selected_renders_both_strings_empty() {
-        let s = render(&[]);
-        assert_eq!(s, sel("", ""));
-        assert!(summary(&s).starts_with("(all detected devices"));
+        assert_eq!(render(&[]), sel("", ""));
     }
 
     #[test]
@@ -614,7 +713,6 @@ mod tests {
     fn two_devices_unweighted_stay_auto() {
         let s = toggle(&sel("ROCm0", ""), "CUDA0");
         assert_eq!(s, sel("ROCm0,CUDA0", ""));
-        assert!(summary(&s).contains("auto split"));
     }
 
     #[test]
@@ -622,7 +720,6 @@ mod tests {
         let s = set_weight(&sel("ROCm0,CUDA0", ""), "ROCm0", 3);
         // The untouched device is seeded to 1, not left at 0 — 3:1, not 3:0.
         assert_eq!(s, sel("ROCm0,CUDA0", "3,1"));
-        assert_eq!(summary(&s), "--device ROCm0,CUDA0   --tensor-split 3,1");
     }
 
     // ── Edits ─────────────────────────────────────────────────────────────
@@ -669,7 +766,7 @@ mod tests {
 
     #[test]
     fn rows_carry_the_selection_its_weights_and_the_derived_share() {
-        let rows = build_rows(&devs(), &sel("ROCm0,CUDA0", "3,1"), None);
+        let rows = build_rows(&devs(), &sel("ROCm0,CUDA0", "3,1"), None, SplitMode::Layer);
         assert_eq!(rows.len(), 4); // CPU is not a --device participant
         assert_eq!(rows[0].share, "75%");
         assert_eq!(rows[1].share, "25%");
@@ -681,14 +778,14 @@ mod tests {
 
     #[test]
     fn rows_report_auto_when_no_weights_are_set() {
-        let rows = build_rows(&devs(), &sel("ROCm0,CUDA0", ""), None);
+        let rows = build_rows(&devs(), &sel("ROCm0,CUDA0", ""), None, SplitMode::Layer);
         assert_eq!(rows[0].share, "auto");
         assert_eq!(rows[1].share, "auto");
     }
 
     #[test]
     fn a_single_selected_device_holds_the_whole_model() {
-        let rows = build_rows(&devs(), &sel("ROCm0", ""), None);
+        let rows = build_rows(&devs(), &sel("ROCm0", ""), None, SplitMode::Layer);
         assert_eq!(rows[0].share, "100%");
     }
 
@@ -697,7 +794,7 @@ mod tests {
         // The probe is async: the GUI can render before it lands, and a config
         // may name a device from another machine. Dropping the row would let the
         // next save quietly rewrite `device`.
-        let rows = build_rows(&devs(), &sel("SYCL3,ROCm0", "1,1"), None);
+        let rows = build_rows(&devs(), &sel("SYCL3,ROCm0", "1,1"), None, SplitMode::Layer);
         assert_eq!(rows[0].id, "SYCL3");
         assert!(rows[0].enabled);
         assert!(!rows[0].detected);
@@ -712,7 +809,7 @@ mod tests {
 
     #[test]
     fn rows_are_empty_of_gpus_before_the_probe_lands_but_keep_the_selection() {
-        let rows = build_rows(&[], &sel("ROCm0", ""), None);
+        let rows = build_rows(&[], &sel("ROCm0", ""), None, SplitMode::Layer);
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].id, "ROCm0");
         assert!(!rows[0].detected);
@@ -738,7 +835,10 @@ mod tests {
     #[test]
     fn a_hand_written_order_survives_every_edit_that_is_not_a_move() {
         let hand = sel("Vulkan0,CUDA0", "3,1");
-        assert_eq!(ids(&build_rows(&devs(), &hand, None))[0], "Vulkan0");
+        assert_eq!(
+            ids(&build_rows(&devs(), &hand, None, SplitMode::Layer))[0],
+            "Vulkan0"
+        );
         assert_eq!(set_even(&hand), sel("Vulkan0,CUDA0", "1,1"));
         assert_eq!(
             set_weight(&hand, "CUDA0", 2),
@@ -994,7 +1094,7 @@ mod tests {
     #[test]
     fn rows_carry_blocks_only_when_a_layout_is_given() {
         let s = sel("ROCm0,CUDA0", "85,15");
-        let with = build_rows(&devs(), &s, Some(full(ORNITH)));
+        let with = build_rows(&devs(), &s, Some(full(ORNITH)), SplitMode::Layer);
         assert_eq!((with[0].blocks, with[1].blocks), (29, 5));
         assert_eq!(with[0].blocks_label, "blocks 0-28");
         assert_eq!(with[1].blocks_label, "blocks 29-32 + output");
@@ -1003,7 +1103,7 @@ mod tests {
         assert_eq!(with[2].blocks, 0);
         assert_eq!(with[2].blocks_label, "");
 
-        let without = build_rows(&devs(), &s, None);
+        let without = build_rows(&devs(), &s, None, SplitMode::Layer);
         assert!(without.iter().all(|r| r.blocks == 0 && r.blocks_label.is_empty()));
 
         // Three checked devices, projected the same way — the rows are the split
@@ -1012,6 +1112,7 @@ mod tests {
             &devs(),
             &sel("ROCm0,CUDA0,Vulkan0", "5,20,9"),
             Some(full(ORNITH)),
+            SplitMode::Layer,
         );
         assert_eq!(
             three
@@ -1025,5 +1126,89 @@ mod tests {
                 (9, "blocks 25-32 + output".to_string()),
             ]
         );
+    }
+
+    // ── Split mode ────────────────────────────────────────────────────────
+
+    // The flag domain, plus the deliberate degradations: the form's "default"
+    // sentinel and an explicit "layer" are the same verdict, and an unknown
+    // value (llama.cpp's experimental `tensor`) must NOT earn a block cut.
+    #[test]
+    fn split_mode_parses_the_flag_domain_and_degrades_unknowns_to_row() {
+        assert_eq!(SplitMode::parse(""), SplitMode::Layer);
+        assert_eq!(SplitMode::parse("default"), SplitMode::Layer);
+        assert_eq!(SplitMode::parse("layer"), SplitMode::Layer);
+        assert_eq!(SplitMode::parse(" none "), SplitMode::Single);
+        assert_eq!(SplitMode::parse("row"), SplitMode::Row);
+        assert_eq!(SplitMode::parse("tensor"), SplitMode::Row);
+        assert_eq!(SplitMode::Single.as_str(), "none");
+    }
+
+    // The server-wide mode rides the router's CLI, which the router copies over
+    // every preset key — so a set server mode wins even against an explicit
+    // preset value, and the preset's own key matters only while it is absent.
+    #[test]
+    fn effective_mode_lets_the_server_wide_flag_shadow_the_preset() {
+        assert_eq!(effective_mode("", None), SplitMode::Layer);
+        assert_eq!(effective_mode("default", Some("row")), SplitMode::Row);
+        assert_eq!(effective_mode("", Some("none")), SplitMode::Single);
+        assert_eq!(effective_mode("none", Some("row")), SplitMode::Single);
+        assert_eq!(
+            effective_mode("layer", Some("row")),
+            SplitMode::Layer,
+            "an explicit server-wide layer forces layer"
+        );
+    }
+
+    // One combo entry for default+layer: for a preset they are the same launch
+    // in every reachable configuration, so two entries were pure ambiguity. A
+    // hand-written value outside the list sits on that entry too (and keeps its
+    // INI spelling — nothing here rewrites it).
+    #[test]
+    fn mode_index_collapses_default_and_layer_onto_one_entry() {
+        assert_eq!(MODE_VALUES.len(), MODE_LABELS.len());
+        assert_eq!(mode_index(""), 0);
+        assert_eq!(mode_index("default"), 0);
+        assert_eq!(mode_index("layer"), 0);
+        assert_eq!(mode_index("none"), 1);
+        assert_eq!(mode_index("row"), 2);
+        assert_eq!(mode_index("tensor"), 0);
+        // The values written back by a pick are the INI/form spellings.
+        assert_eq!(MODE_VALUES, ["default", "none", "row"]);
+    }
+
+    // Under `none` llama.cpp drops every device but the head, so the rows must
+    // say so: no block projection even when a layout is known, the head at
+    // 100%, and the other CHECKED rows explicitly "unused" (a "—" would read as
+    // merely unchecked).
+    #[test]
+    fn single_mode_uses_only_the_head_row() {
+        let rows = build_rows(
+            &devs(),
+            &sel("ROCm0,CUDA0", "3,1"),
+            Some(full(ORNITH)),
+            SplitMode::Single,
+        );
+        assert_eq!(rows[0].share, "100%");
+        assert_eq!(rows[1].share, "unused");
+        assert_eq!(rows[2].share, "—", "unchecked rows keep the dash");
+        assert!(rows.iter().all(|r| r.blocks == 0 && r.blocks_label.is_empty()));
+        assert_eq!(rows[0].weight, 3, "the stored ratio survives the mode");
+    }
+
+    // Under `row` the bytes follow row fractions, not block cuts — so the block
+    // column must stay out even when the model is known, while the ratio/share
+    // pair keeps working exactly as in the no-layout fallback.
+    #[test]
+    fn row_mode_edits_ratios_never_blocks() {
+        let rows = build_rows(
+            &devs(),
+            &sel("ROCm0,CUDA0", "3,1"),
+            Some(full(ORNITH)),
+            SplitMode::Row,
+        );
+        assert!(rows.iter().all(|r| r.blocks == 0 && r.blocks_label.is_empty()));
+        assert_eq!(rows[0].share, "75%");
+        assert_eq!(rows[1].share, "25%");
     }
 }

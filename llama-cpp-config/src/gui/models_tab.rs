@@ -493,6 +493,21 @@ fn wire_gpu_table(app: &AppWindow) {
             refresh_gpu_rows(&app);
         });
     }
+    {
+        let app_weak = app.as_weak();
+        s.on_preset_split_mode_picked(move |v| {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let st = app.global::<AppState>();
+            let mut f = st.get_form();
+            f.split_mode = v;
+            st.set_form(f);
+            // The mode decides what the columns mean (blocks vs ratio vs
+            // nothing editable), so a pick is a full re-projection.
+            refresh_gpu_rows(&app);
+        });
+    }
 }
 
 // ── Discard-guarded navigation (select / New / Clone) ─────────────────

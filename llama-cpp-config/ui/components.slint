@@ -53,10 +53,11 @@ export global Tokens {
 export global Options {
     // "default" is a state, not a type: it OMITS --cache-type-k/-v and lets
     // llama.cpp pick (f16). It is not a synonym for the f16 entry — that one
-    // pins f16 whatever llama.cpp's default becomes. Same "empty string carried
-    // as the word default" shape as `split_modes` below (form.rs maps both ways).
+    // pins f16 whatever llama.cpp's default becomes. The same "empty string
+    // carried as the word default" mapping is in form.rs (both ways). The
+    // split-mode combo is NOT here: its label/value rows live in Rust
+    // (gpu_split::MODE_LABELS / MODE_VALUES) and are pushed into the tables.
     out property <[string]> cache_types: ["default", "f32", "f16", "q8_0", "q5_0", "q4_0", "q4_1"];
-    out property <[string]> split_modes: ["default", "none", "layer", "row"];
     // -lm / --load-mode: how llama.cpp brings the weights in. These six are the
     // whole domain and they are MUTUALLY EXCLUSIVE — it is one enum, not the two
     // independent --mlock / --no-mmap bools it replaced in b10105. Mirrors
@@ -572,17 +573,28 @@ export component FormActions inherits HorizontalLayout {
 // an unseen, unchosen device list (six entries on a CUDA+ROCm box, half of them
 // duplicate Vulkan views) is guesswork; a table isn't.
 //
-// Rust owns everything: `rows`, `summary`, `selected` and `weight_total` are all
-// pushed from src/gpu_split.rs, which renders the selection back into the form's
-// `device` + `tensor_split` strings. The .slint side only reports edits, and it
-// addresses devices BY ID, never by row index.
+// Rust owns everything: `rows`, `selected`, `weight_total` and the split-mode
+// combo model (`mode_labels`/`mode_values`/`mode_index`, gpu_split::MODE_*) are
+// all pushed from src/gpu_split.rs, which renders the selection back into the
+// form's `device` + `tensor_split` strings. The .slint side only reports edits,
+// and it addresses devices BY ID, never by row index.
+//
+// The MODE selector sits ABOVE the rows because it decides what they mean, and
+// `effective_mode` — scope inheritance resolved in Rust (gpu_split::
+// effective_mode; the server-wide flag rides the router's CLI and shadows every
+// preset) — bends the columns to match: `layer` edits blocks where a model is
+// known, `row` edits the raw ratio (the bytes follow row fractions, so a block
+// cut would lie), `none` retires the editors entirely — only the head row runs,
+// which the Share column says out loud. The combo's one "layer (default)" entry
+// deliberately merges the old default/layer pair: for a preset they are the
+// same launch in every reachable configuration.
 //
 // The checked rows come FIRST, in split order: read top to bottom they ARE the
 // --device list and its --tensor-split vector. That is what makes the ≡ drag
 // handle mean something — and position 0 is not cosmetic, it is llama.cpp's
-// main_gpu (the sole GPU under --split-mode none, the first slice of layers under
-// layer). Checking a box APPENDS the device at the end of the split; the handle
-// is how you promote it. Nothing reorders on its own.
+// main_gpu (the ONE GPU kept under split mode none, the first slice of layers
+// under layer). Checking a box APPENDS the device at the end of the split; the
+// handle is how you promote it. Nothing reorders on its own.
 //
 // BINDING NOTE (the sanctioned one-way `for`-row exception, same as the
 // Integrations checkboxes): `checked: row.enabled` and `text: row.weight` are
@@ -597,7 +609,6 @@ export component FormActions inherits HorizontalLayout {
 // it keeps up with a broken-binding delegate.
 export component GpuSplitTable inherits VerticalLayout {
     in property <[GpuRow]> rows;
-    in property <string> summary;
     // Checked devices, and the sum of their weights (0 = Auto: a blank
     // --tensor-split, which llama.cpp fills in from each device's FREE VRAM at
     // load time — not an even split).
@@ -606,13 +617,26 @@ export component GpuSplitTable inherits VerticalLayout {
     // Positions the split is cut over for the model in hand — > 0 switches the
     // editable column from the raw ratio to the BLOCK count, the unit llama.cpp
     // actually resolves in (gpu_split::Layout). 0 wherever no single model
-    // applies, which is always true of the server-wide table.
+    // applies — the server-wide table always, and every mode but layer (Rust
+    // gates it: blocks are a layer-mode projection only).
     in property <int> positions: 0;
     // Non-empty to show a warning strip above the table (the Models tab uses it
     // for "a server-wide selection overrides this one at launch").
     in property <string> warning;
     in property <string> split_mode_hint;
-    in-out property <string> split_mode;
+    // The split-mode combo model, pushed from Rust (gpu_split::MODE_LABELS /
+    // MODE_VALUES / mode_index). The index binds two-way through to AppState so
+    // a preset switch / Revert reaches the dropdown; a pick reports the VALUE
+    // through `mode_picked`, and Rust writes the form + rebuilds the rows.
+    in property <[string]> mode_labels;
+    in property <[string]> mode_values;
+    in-out property <int> mode_index;
+    // The mode the launch will actually run under ("layer"/"none"/"row"),
+    // inheritance resolved in Rust (gpu_split::effective_mode) — NOT the raw
+    // combo value: a preset on "layer (default)" under a server-wide `none`
+    // effectively runs single-GPU, and the columns must say so.
+    in property <string> effective_mode: "layer";
+    callback mode_picked(string);
     callback toggled(string);
     // Drag-handle result: move this device `delta` places within the split
     // (negative = up / towards the head). Reported ONCE, on release: the drag
@@ -632,7 +656,12 @@ export component GpuSplitTable inherits VerticalLayout {
     callback auto_split();
     callback even_split();
 
-    property <bool> weights_editable: root.selected >= 2 && root.weight_total > 0;
+    // Single-GPU mode retires every weight editor: llama.cpp keeps only the
+    // head device, so there is nothing the vector could still steer — the drag
+    // handle (which GPU leads) is the one control left standing.
+    property <bool> single_mode: root.effective_mode == "none";
+    property <bool> weights_editable: root.selected >= 2 && root.weight_total > 0
+        && !root.single_mode;
     // Blocks need a model to be counted against AND an explicit vector to count:
     // under Auto llama.cpp weighs the devices by their FREE VRAM at load, so there
     // is no answer to give until it runs.
@@ -707,6 +736,23 @@ export component GpuSplitTable inherits VerticalLayout {
         wrap: word-wrap;
         font-size: 12px;
         color: Tokens.err;
+    }
+
+    // The mode comes FIRST: it decides what the columns below mean, so reading
+    // (and editing) top to bottom follows the dependency.
+    LabeledField {
+        label: "GPU split mode";
+        hint: root.split_mode_hint;
+        MappedComboBox {
+            // One device has nothing to split. Zero means "all detected
+            // devices", which llama.cpp still splits — so the combo stays live
+            // there.
+            enabled: root.selected != 1;
+            labels: root.mode_labels;
+            values: root.mode_values;
+            index <=> root.mode_index;
+            picked(v) => { root.mode_picked(v); }
+        }
     }
 
     // Header row. Column widths are repeated verbatim by the delegate below —
@@ -891,7 +937,9 @@ export component GpuSplitTable inherits VerticalLayout {
                         y: 0;
                         width: parent.width;
                         height: parent.height;
-                        visible: row.enabled && !root.blocks_mode;
+                        // In single-GPU mode the vector is dead, so no editor —
+                        // the dash below takes the cell instead.
+                        visible: row.enabled && !root.blocks_mode && !root.single_mode;
                         enabled: root.weights_editable;
                         input-type: InputType.number;
                         text: row.weight;
@@ -954,7 +1002,7 @@ export component GpuSplitTable inherits VerticalLayout {
                     Text {
                         width: parent.width;
                         height: parent.height;
-                        visible: !row.enabled;
+                        visible: !row.enabled || root.single_mode;
                         text: "—";
                         horizontal-alignment: center;
                         vertical-alignment: center;
@@ -962,15 +1010,18 @@ export component GpuSplitTable inherits VerticalLayout {
                         color: Palette.foreground.transparentize(Tokens.faint);
                     }
                 }
-    
+
                 Text {
                     width: 52px;
                     // Follows whichever editor is live, so the dragged row's share
                     // tracks its own thumb. The OTHER rows settle only on release:
                     // they are the ones paying for the drag, and what they will owe
                     // exists nowhere until Rust recomputes the vector.
-                    text: root.share_text(row.enabled,
-                        root.blocks_mode ? Math.round(sl.value) : w.text.to-float());
+                    // Single-GPU mode has no live editor, so the Rust-computed
+                    // share ("100%" / "unused") is shown verbatim.
+                    text: root.single_mode ? row.share
+                        : root.share_text(row.enabled,
+                            root.blocks_mode ? Math.round(sl.value) : w.text.to-float());
                     horizontal-alignment: right;
                     vertical-alignment: center;
                     font-size: 13px;
@@ -984,41 +1035,20 @@ export component GpuSplitTable inherits VerticalLayout {
         padding-left: 12px;
         padding-right: 12px;
         spacing: 8px;
+        alignment: start;
         Button {
             text: "Auto";
-            enabled: root.selected >= 2 && root.weight_total > 0;
+            enabled: root.selected >= 2 && root.weight_total > 0 && !root.single_mode;
             clicked => {
                 root.auto_split();
             }
         }
         Button {
             text: "Even";
-            enabled: root.selected >= 2;
+            enabled: root.selected >= 2 && !root.single_mode;
             clicked => {
                 root.even_split();
             }
-        }
-        Text {
-            text: root.summary;
-            vertical-alignment: center;
-            horizontal-stretch: 1;
-            overflow: elide;
-            font-size: 12px;
-            color: Palette.foreground.transparentize(Tokens.faint);
-        }
-    }
-
-    LabeledField {
-        label: "GPU split mode";
-        hint: root.split_mode_hint;
-        EnumComboBox {
-            // One device has nothing to split. Zero means "all detected devices",
-            // which llama.cpp still splits — so the combo stays live there.
-            // `split_mode` is never "" (the form conversions map empty →
-            // "default"), or the ComboBox would show a blank current row.
-            enabled: root.selected != 1;
-            options: Options.split_modes;
-            value <=> root.split_mode;
         }
     }
 }

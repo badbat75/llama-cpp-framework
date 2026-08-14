@@ -78,7 +78,7 @@ Field behaviors:
 
 ### GPU distribution table
 
-`--tensor-split` is a positional vector indexed over the devices named by `--device`, **in `--device` order**. Typing `3,1` into a text box therefore means nothing until you know which devices those are — and with `--device` unset, "those devices" is every detected backend, which on a mixed box is a CUDA card, two ROCm devices (one of them an iGPU) and three duplicate Vulkan views of the same three GPUs. So the two settings share one widget (`GpuSplitTable`, used by both tabs): a row per detected GPU with a checkbox, its VRAM, an editable weight, and the derived share, plus a summary line showing the exact flags produced.
+`--tensor-split` is a positional vector indexed over the devices named by `--device`, **in `--device` order**. Typing `3,1` into a text box therefore means nothing until you know which devices those are — and with `--device` unset, "those devices" is every detected backend, which on a mixed box is a CUDA card, two ROCm devices (one of them an iGPU) and three duplicate Vulkan views of the same three GPUs. So the two settings share one widget (`GpuSplitTable`, used by both tabs): the **split-mode selector on top** (it decides what the rows below mean), then a row per detected GPU with a checkbox, its VRAM, an editable weight, and the derived share. There is deliberately no flags-preview line under the table: the values are persisted to the INIs, and a preview that showed `--device`/`--tensor-split` while ignoring the mode used to read as the whole truth while being stale.
 
 Rows are built in Rust (`gpu_split::build_rows`): the **checked devices first, in split order**, then the rest in probe order. So the table read top to bottom *is* the `--device` list and its `--tensor-split` vector. Checking a box **appends** the device to the split; the **≡ drag handle** on each checked row is how you reorder it — the weight rides along with its device, so the proportions survive a move.
 
@@ -97,11 +97,23 @@ The four states it can express map 1:1 onto llama.cpp:
 
 Note that blank-with-2-GPUs is *auto-by-free-VRAM*, **not** an even split — hence **Auto** and **Even** are two separate buttons, and the weight fields stay disabled until the split is explicit (Even is the way in). That is also what keeps the one-way `for`-row bindings honest: a weight edit never rewrites another row's weight, so it needs no model rebuild — while toggle / Auto / Even do rebuild, giving every delegate a fresh binding. All of it is guarded: `gpu_split`'s unit tests for the rules, and a `save_flow` phase that clicks the real checkboxes and asserts what reaches the INI.
 
+#### The split mode decides what the columns mean
+
+`--split-mode` is part of the same selection, which is why its combo sits **above** the table, and the columns follow the **effective** mode (`gpu_split::SplitMode` / `effective_mode`), not just the combo:
+
+- **layer** (llama.cpp's default): the vector cuts consecutive runs of blocks — the block projection below applies.
+- **none**: llama.cpp drops every device but `devices[main_gpu]` *before loading* (`llama_prepare_model_devices`), so the vector is dead. The editors retire, the head row reads **100%** and every other checked row says **unused** — the ≡ drag handle (which GPU leads) is the one control left.
+- **row**: the weight *matrices* are split **row-wise** by the normalized vector, via the backend's split buffer type (CUDA/ROCm; a backend without one — Vulkan — quietly falls back to the layer cut). The layer assignment still runs over the same vector, so the KV cache and non-matrix tensors follow it, but the bulk of the bytes follow the row fractions — so the table edits the **raw ratio** and never shows blocks there. (llama.cpp's experimental `tensor` mode is not offered; a hand-written value is preserved and treated like `row` for display: ratio, no block cut.)
+
+The combo has **one** "layer (default)" entry where there used to be a separate "default" and "layer": for a preset those are the same launch in every reachable configuration (an absent key falls back to layer — or to the server-wide mode, which when set overrides an explicit preset key too, because the router's CLI wins the merge). Picking it stores nothing in the INI. The mode pick is a `MappedComboBox` funnel (labels/values/index pushed from Rust, `*_split_mode_picked` writes the form and re-projects both tables) — the server-wide combo shadows the preset one, and the Models tab warns when a differing preset pick is dead on arrival.
+
+> **A server-wide `SplitMode = layer` is dropped on read** (`server_cfg::server_split_mode`), and that is a real behaviour change, not a cosmetic one. llama.cpp already defaults to layer, so the flag changed nothing about the server's own launch — but the router copies its CLI args over **every** preset (`preset.merge(base_preset)` in `server-models.cpp`; `unset_reserved_args` does *not* prune `--split-mode`), so emitting it silently neutered each preset's mode: the Models tab combo stayed live while being unable to change anything. Nobody picks `layer` to mean "forbid every preset from choosing row/none" — it is simply what the old two-entry combo wrote when either of its identical entries was picked. So it collapses to unset: the server's launch is unchanged, presets get their mode back, and the next save removes the key from the file. `none` / `row` are kept, because those *do* change the launch and overriding every preset with them is a deliberate, visible choice.
+
 #### Weights are ratios; the Models tab edits them as blocks
 
 `--tensor-split` is normalized, so `85,15`, `17,3` and `29,5` are the same launch. What llama.cpp does with that ratio is cut **`n_layer_all + 1` positions** in two — every block of the GGUF (the nextn/MTP ones included) plus one more for the **output layer**, `dev_output = get_layer_buft_list(n_layer_all)`. On a 33-block model that is 34 places to cut and a percent field offers 100 of them: **83 / 84 / 85% all cut in the same place**, so two of every three edits move the number and change nothing.
 
-So wherever a model is known — the Models tab, once its header has been read — the editable column switches to **`Blocks/34`** and each row gains the range it holds (`blocks 29-32 + output`). The server-wide table keeps raw weights: it applies to every preset, so it has no single `block_count` to project onto. Both are the same widget, switched by one `positions` property.
+So wherever a model is known — the Models tab, once its header has been read, and only under the **layer** mode (see above) — the editable column switches to **`Blocks/34`** and each row gains the range it holds (`blocks 29-32 + output`). The server-wide table keeps raw weights: it applies to every preset, so it has no single `block_count` to project onto. Both are the same widget, switched by one `positions` property (pushed as 0 for every non-layer mode).
 
 Writing a count back needs no inverse: a vector summing to the positions gives position `il` to the first device whose prefix sum passes it, so **the weights *are* the counts** and `set_blocks` stores what was typed (`29,5` → blocks 0-28 / 29-32+output, exactly). Three consequences worth knowing:
 
@@ -113,7 +125,7 @@ Auto has no counts to show — llama.cpp weighs the devices by their **free VRAM
 
 A selected device the probe doesn't know — a stale id, another machine's GPU, or simply the async probe not landed yet — is kept as a `(not detected)` checked row, so a save can never silently drop it.
 
-> **Note:** a server-wide selection **overrides** every preset's own, because llama-server's router passes its own CLI args on top of each preset (`preset.merge(base_preset)`). The Models tab shows a warning strip when that is in effect.
+> **Note:** a server-wide selection **overrides** every preset's own — the split mode included — because llama-server's router passes its own CLI args on top of each preset (`preset.merge(base_preset)`). The Models tab shows a warning strip when that is in effect, and the preset table's columns follow the *effective* mode, so a server-wide `none` visibly retires the preset's editors too.
 
 ### Tensor placement table
 

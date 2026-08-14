@@ -186,9 +186,13 @@ pub fn form_to_config(f: &ServerForm) -> server_cfg::ServerConfig {
         // Blank ⇒ None (fall back to the default dir), same rule as hostname.
         models_dir: server_cfg::opt_nonblank(Some(f.models_dir.to_string())),
         device: server_cfg::opt_nonblank(Some(f.device.to_string())),
-        // "" and the combo sentinel "default" both mean "no explicit split".
+        // "" and the combo sentinel "default" both mean "no explicit split" —
+        // and so does "layer", which the combo merges into that same entry and
+        // `server_cfg::server_split_mode` drops on read (an explicit layer only
+        // ever blocked every preset's own mode). Kept here too so the invariant
+        // holds for a value that never went through a load.
         split_mode: match f.split_mode.as_str() {
-            "" | "default" => None,
+            "" | "default" | "layer" => None,
             other => Some(other.to_string()),
         },
         tensor_split: server_cfg::opt_nonblank(Some(f.tensor_split.to_string())),

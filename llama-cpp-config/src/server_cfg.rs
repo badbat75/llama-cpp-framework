@@ -86,8 +86,9 @@ pub struct ServerConfig {
     /// preset's own `device`: llama-server's router passes its CLI args on top of
     /// each preset. Written by the GPU distribution table (src/gpu_split.rs).
     pub device: Option<String>,
-    /// Multi-GPU split strategy (--split-mode / -sm): "none" | "layer" | "row".
-    /// Empty/None = llama.cpp default ("layer"). Identical on CUDA and HIP.
+    /// Multi-GPU split strategy (--split-mode / -sm): "none" | "row".
+    /// Empty/None = llama.cpp's default (layer) AND every preset free to pick its
+    /// own. An explicit `"layer"` is dropped on read — see `server_split_mode`.
     pub split_mode: Option<String>,
     /// Per-GPU weight proportions (--tensor-split / -ts), e.g. "3,1" for 75/25 —
     /// positional over `device` above, in that order. Empty/None with 2+ devices =
@@ -339,7 +340,7 @@ fn from_keys(keys: &std::collections::BTreeMap<String, String>) -> ServerConfig 
         models_max: keys.get("ModelsMax").and_then(|v| ini::parse_int(v)),
         models_dir: opt_nonblank(keys.get("ModelsDir").cloned()),
         device: opt_nonblank(keys.get("Device").cloned()),
-        split_mode: opt_nonblank(keys.get("SplitMode").cloned()),
+        split_mode: server_split_mode(keys.get("SplitMode")),
         tensor_split: opt_nonblank(keys.get("TensorSplit").cloned()),
         override_tensor: opt_nonblank(keys.get("OverrideTensor").cloned()),
         mmproj_device: opt_nonblank(keys.get("MmprojDevice").cloned()),
@@ -372,6 +373,28 @@ fn from_keys(keys: &std::collections::BTreeMap<String, String>) -> ServerConfig 
 /// is the exception because it is unambiguous, and it is precisely the pair the
 /// old launch line got WRONG: it emitted `--mlock --no-mmap`, and under b10105
 /// the second flag overwrote the mode and dropped the mlock.
+/// The server-wide `--split-mode`, with an explicit `layer` collapsed to None.
+///
+/// The two spellings are not merely redundant here, and the difference is
+/// invisible in the wrong direction: llama.cpp already defaults to layer, so the
+/// flag changes nothing about how a model is split — but the ROUTER copies its
+/// own CLI args over every preset (`preset.merge(base_preset)`,
+/// `server-models.cpp`, and `unset_reserved_args` does NOT prune
+/// `--split-mode`), so emitting it silently neuters each preset's own mode. The
+/// Models tab then shows a live combo that cannot change anything, which is
+/// exactly the trap this collapse removes.
+///
+/// Nobody chooses `layer` to mean "forbid every preset from picking row/none" —
+/// it is what the old two-entry combo ("default" and "layer", one and the same
+/// launch) wrote when either entry was picked. So it is dropped on read: the
+/// server's own launch is unchanged, presets get their mode back, and the next
+/// save drops the key from the file. `none` / `row` are kept: those DO change
+/// the launch, and overriding every preset with them is a deliberate choice the
+/// combo makes visible.
+pub fn server_split_mode(raw: Option<&String>) -> Option<String> {
+    opt_nonblank(raw.cloned()).filter(|v| !v.trim().eq_ignore_ascii_case("layer"))
+}
+
 fn migrated_load_mode(keys: &std::collections::BTreeMap<String, String>) -> Option<&'static str> {
     let flag = |k: &str| keys.get(k).and_then(|v| ini::parse_bool(v));
     match (flag("Mlock"), flag("NoMmap")) {
@@ -807,6 +830,33 @@ mod tests {
         assert_eq!(cfg.load_mode_or_default(), "auto");
         // …and the corrected value is what the next save writes.
         assert_eq!(round_trip(&cfg).load_mode.as_deref(), Some("auto"));
+    }
+
+    /// A server-wide `SplitMode = layer` is dropped on read. It changes nothing
+    /// about the server's own launch (llama.cpp already defaults to layer) and
+    /// its only real effect was to override every preset's mode, since the
+    /// router merges its CLI args into each preset — a choice nobody makes on
+    /// purpose, and one the merged combo entry can no longer express. `none` and
+    /// `row` DO change the launch, so they survive and keep overriding.
+    #[test]
+    fn an_explicit_server_wide_layer_split_mode_is_dropped_on_read() {
+        let read = |v: &str| {
+            from_keys(&std::collections::BTreeMap::from([(
+                "SplitMode".to_string(),
+                v.to_string(),
+            )]))
+            .split_mode
+        };
+        assert_eq!(read("layer"), None);
+        assert_eq!(read("  LAYER  "), None, "trimmed and case-insensitive");
+        assert_eq!(read("row"), Some("row".into()));
+        assert_eq!(read("none"), Some("none".into()));
+        // …and the dropped key is gone from the file the next save writes.
+        let cfg = ServerConfig {
+            split_mode: Some("layer".into()),
+            ..Default::default()
+        };
+        assert_eq!(round_trip(&cfg).split_mode, None);
     }
 
     #[test]

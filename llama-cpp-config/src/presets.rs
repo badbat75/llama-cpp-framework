@@ -122,7 +122,12 @@ pub struct Preset {
     /// Empty = inherit the server default. Written by the GPU distribution table
     /// (src/gpu_split.rs), never typed by hand.
     pub device: String,
-    /// Multi-GPU split for THIS model. `split_mode` (--split-mode): none|layer|row;
+    /// Multi-GPU split for THIS model. `split_mode` (--split-mode): none|layer|row —
+    /// `none` keeps ONLY the first `device` entry (main_gpu) and ignores the
+    /// vector; `row` splits the weight matrices row-wise by the vector (backend
+    /// split buffer type, CUDA/ROCm only — Vulkan falls back to the layer cut).
+    /// A server-wide SplitMode OVERRIDES this key at launch (the router's CLI
+    /// wins the merge), `layer` spelled out included.
     /// `tensor_split` (--tensor-split): per-GPU weight proportions like "3,1",
     /// positional over the `device` list ABOVE, in that order. Empty tensor_split
     /// with 2+ devices = llama.cpp splits by free VRAM at load (NOT evenly).
@@ -616,7 +621,10 @@ pub fn render_section(p: &Preset) -> String {
     out.push_str("; on, e.g. ROCm1 or ROCm1,CUDA0. tensor-split = how much each one holds,\r\n");
     out.push_str("; e.g. 3,1 — positional over `device`, IN THAT ORDER. Blank tensor-split\r\n");
     out.push_str("; with 2+ devices = llama.cpp splits by free VRAM (not evenly).\r\n");
-    out.push_str("; split-mode = none|layer|row. Blank = server default.\r\n");
+    out.push_str("; split-mode = none|layer|row. Blank = layer, or the server-wide mode — which\r\n");
+    out.push_str("; also OVERRIDES this key whenever it is set (the router's CLI wins the merge).\r\n");
+    out.push_str("; none = only the first device runs (tensor-split is ignored); row = weight\r\n");
+    out.push_str("; matrices split row-wise by the vector (CUDA/ROCm only).\r\n");
     emit_str(&mut out, "device", &p.device);
     emit_str(&mut out, "split-mode", &p.split_mode);
     emit_str(&mut out, "tensor-split", &p.tensor_split);

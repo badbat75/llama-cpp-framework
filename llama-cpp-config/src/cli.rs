@@ -91,7 +91,8 @@ pub struct ServerSet {
     /// GPUs models run on, in split order, e.g. "ROCm1,CUDA0" (empty = all detected).
     #[arg(long)]
     pub device: Option<String>,
-    /// Multi-GPU split mode (--split-mode): none|layer|row (empty = default/layer).
+    /// Multi-GPU split mode (--split-mode): none|row (empty, or layer, = default:
+    /// llama.cpp splits by layer and each preset may pick its own mode).
     #[arg(long)]
     pub split_mode: Option<String>,
     /// How much each --device holds (--tensor-split), e.g. "3,1" (empty = by free VRAM).
@@ -170,7 +171,10 @@ impl ServerSet {
             cfg.device = server_cfg::opt_nonblank(Some(dev.clone()));
         }
         if let Some(sm) = &self.split_mode {
-            cfg.split_mode = server_cfg::opt_nonblank(Some(sm.clone()));
+            // Same collapse as the INI read and the GUI save: an explicit
+            // server-wide `layer` only ever blocked every preset's own mode
+            // (see server_cfg::server_split_mode), so it stores as unset.
+            cfg.split_mode = server_cfg::server_split_mode(Some(sm));
         }
         if let Some(ts) = &self.tensor_split {
             cfg.tensor_split = server_cfg::opt_nonblank(Some(ts.clone()));
