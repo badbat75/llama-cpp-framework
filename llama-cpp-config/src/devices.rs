@@ -3,7 +3,7 @@
 //! instead of a free-text field.
 //!
 //! Two consumers, two shapes. `build_options` builds the `(labels, values, index)`
-//! triple behind the draft-device ComboBox — it only needs `id` + `label`. The GPU
+//! triple behind the draft-device ComboBox; it only needs `id` + `label`. The GPU
 //! distribution table (`gpu_split`) needs the parts *separately* (name in one
 //! column, VRAM in another, free bytes to explain llama.cpp's auto split), so
 //! `parse` also breaks the trailing `(12281 MiB, 10844 MiB free)` out into
@@ -18,7 +18,7 @@ pub struct DeviceOption {
     /// The token llama.cpp expects after `--device` (e.g. `CUDA0`).
     pub id: String,
     /// Human-friendly description for the dropdown (e.g.
-    /// `CUDA0 — NVIDIA GeForce RTX 4070 SUPER (12281 MiB, 10844 MiB free)`).
+    /// `CUDA0: NVIDIA GeForce RTX 4070 SUPER (12281 MiB, 10844 MiB free)`).
     pub label: String,
     /// The bare product name, with the VRAM parenthetical stripped (e.g.
     /// `NVIDIA GeForce RTX 4070 SUPER`). Empty when the line carried none.
@@ -51,13 +51,13 @@ impl DeviceOption {
 }
 
 /// The probe cache: `gui::spawn_device_probe` runs `list()` off the UI thread
-/// (a few hundred ms — it spawns llama-server) and parks the result here; the
+/// (a few hundred ms: it spawns llama-server) and parks the result here; the
 /// UI thread rebuilds its dropdowns from `probed()` without re-probing. A
 /// plain Rust cache instead of Slint properties because the device list is
-/// Rust-only data — no `.slint` file reads it.
+/// Rust-only data; no `.slint` file reads it.
 static PROBED: RwLock<Vec<DeviceOption>> = RwLock::new(Vec::new());
 
-/// Publish a probe's result. Replaces the previous list — the GUI re-probes
+/// Publish a probe's result. Replaces the previous list; the GUI re-probes
 /// on Refresh/F5, e.g. after llama.cpp was rebuilt with a different backend.
 pub fn set_probed(devs: Vec<DeviceOption>) {
     *PROBED.write().unwrap() = devs;
@@ -70,7 +70,7 @@ pub fn probed() -> Vec<DeviceOption> {
 }
 
 /// Spawn `llama-server --list-devices` and return the parsed device list.
-/// Returns an empty vec when llama-server is missing or the call fails — the
+/// Returns an empty vec when llama-server is missing or the call fails; the
 /// GUI then falls back to just the "(default)" entry plus any custom value.
 pub fn list() -> Vec<DeviceOption> {
     let Some(exe) = paths::llama_server_exe() else {
@@ -85,8 +85,8 @@ pub fn list() -> Vec<DeviceOption> {
 fn run(exe: &std::path::Path) -> Option<String> {
     let output = crate::proc::run_hidden_probe(exe, ["--list-devices"])?;
     // Deliberately no `status.success()` check (unlike server_version::run):
-    // llama-server can exit non-zero AFTER printing a usable device block —
-    // e.g. a backend that fails late — and `parse` already ignores any noise,
+    // llama-server can exit non-zero AFTER printing a usable device block
+    // (e.g. a backend that fails late), and `parse` already ignores any noise,
     // so a partial list beats an empty dropdown.
     Some(crate::proc::combined_output(&output))
 }
@@ -118,7 +118,7 @@ pub(crate) fn parse(s: &str) -> Vec<DeviceOption> {
         let label = if desc.is_empty() {
             id.to_string()
         } else {
-            format!("{id} — {desc}")
+            format!("{id}: {desc}")
         };
         let (name, total_mib, free_mib) = split_desc(desc);
         out.push(DeviceOption {
@@ -136,7 +136,7 @@ pub(crate) fn parse(s: &str) -> Vec<DeviceOption> {
 /// `NVIDIA GeForce RTX 4070 SUPER (12281 MiB, 10844 MiB free)` →
 /// `("NVIDIA GeForce RTX 4070 SUPER", 12281, 10844)`. A description without the
 /// trailing parenthetical (or with an unparseable one) keeps its whole text as
-/// the name and reports 0/0 — the table then shows a blank VRAM cell rather than
+/// the name and reports 0/0; the table then shows a blank VRAM cell rather than
 /// a wrong one.
 fn split_desc(desc: &str) -> (String, u64, u64) {
     let Some(open) = desc.rfind('(') else {
@@ -208,7 +208,7 @@ mod tests {
         assert_eq!(devs[2].id, "Vulkan1");
         assert!(devs[0]
             .label
-            .starts_with("CUDA0 — NVIDIA GeForce RTX 4070 SUPER"));
+            .starts_with("CUDA0: NVIDIA GeForce RTX 4070 SUPER"));
     }
 
     #[test]

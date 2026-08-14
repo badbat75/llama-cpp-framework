@@ -2,8 +2,8 @@
 //!
 //! Guards the "editable widget goes stale after an edit" class of bug that
 //! shipped in v1.1.1 and was fixed in v1.1.2: a one-way binding on an editable
-//! widget (`text: AppState.x`) breaks the instant the user edits the field —
-//! Slint's "overwritten bindings" rule — so a later model change (preset switch
+//! widget (`text: AppState.x`) breaks the instant the user edits the field
+//! (Slint's "overwritten bindings" rule), so a later model change (preset switch
 //! or Revert) never reaches the widget. The fix is a two-way binding (`<=>`).
 //!
 //! Pure-Rust tests (form.rs round-trips) can't see this bug: it lives entirely in
@@ -14,23 +14,23 @@
 //! pushes a fresh model value and asserts the widget followed it.
 //!
 //! Coverage is one case per editable-widget *kind*, since the "overwritten
-//! binding" rule is per-kind, not per-field: LineEdit (`text` — which is now every
+//! binding" rule is per-kind, not per-field: LineEdit (`text`, which is now every
 //! numeric field of both forms too, integers included; the SpinBox they used to be
 //! is gone, see ui/components.slint),
-//! CheckBox (`checked`) and Slider (`value`, via `AutoSlider` — the std Slider
+//! CheckBox (`checked`) and Slider (`value`, via `AutoSlider`: the std Slider
 //! imperatively self-assigns `value` on every drag/set, so it can never hold a
 //! plain one-way binding; the AutoSlider's `changed shown` push is what this
-//! test pins). ComboBox is out of scope — its only accessibility
+//! test pins). ComboBox is out of scope: its only accessibility
 //! action is "expand" (open the popup); changing the selection needs real popup
 //! interaction under an event loop, which this no-event-loop harness can't drive.
 //! `SegmentedControl` (the reasoning + reason-format pickers and the draft
-//! on-GPU/on-CPU control) is safe by construction — it reads `current` purely and
-//! never self-assigns — so it has no staleness mode for this test to catch (its
+//! on-GPU/on-CPU control) is safe by construction (it reads `current` purely and
+//! never self-assigns), so it has no staleness mode for this test to catch (its
 //! pills do expose `accessible-checked`, but only for assistive tech).
 //!
 //! Requires Slint element debug info, which build.rs emits for non-release
 //! profiles only (see the `PROFILE` gate there); `cargo test --release` can't find
-//! the widgets. It is ONE `#[test]` on purpose — every e2e phase shares it and
+//! the widgets. It is ONE `#[test]` on purpose: every e2e phase shares it and
 //! this window; topology rationale: `src/tests/mod.rs`.
 
 use i_slint_backend_testing::{self as itest, ElementHandle};
@@ -57,7 +57,7 @@ fn realized_app() -> AppWindow {
 
 /// Locate a widget by its `accessible-label`. Uses the accessibility tree, which
 /// is always present (unlike element ids, which additionally need the id kept in
-/// debug info). Panics with the label if nothing matches — a renamed/removed
+/// debug info). Panics with the label if nothing matches: a renamed/removed
 /// widget should fail loudly, not silently skip its assertion.
 fn by_label(app: &AppWindow, label: &str) -> ElementHandle {
     ElementHandle::find_by_accessible_label(app, label)
@@ -74,7 +74,7 @@ fn by_label(app: &AppWindow, label: &str) -> ElementHandle {
 ///
 /// `load` and `reload` are the displayed-value strings before and after the
 /// reload. They must differ from the value `edit` leaves behind, or a frozen
-/// widget could coincidentally match — see the CheckBox call site.
+/// widget could coincidentally match; see the CheckBox call site.
 fn assert_reload_reaches_widget(
     field: &ElementHandle,
     what: &str,
@@ -90,7 +90,7 @@ fn assert_reload_reaches_widget(
         load,
         "{what}: widget should mirror the model on load"
     );
-    edit(field); // imperative self-write — breaks a one-way binding
+    edit(field); // imperative self-write: breaks a one-way binding
     set_model(reload);
     assert_eq!(
         read(field),
@@ -123,7 +123,7 @@ fn editable_widgets_track_model_after_edit() {
     let app = realized_app();
     let st = app.global::<AppState>();
 
-    // The two homes of the "all layers on GPU" sentinel must agree — the
+    // The two homes of the "all layers on GPU" sentinel must agree: the
     // mirror comments in form.rs / components.slint can't fail a build.
     assert_eq!(
         app.global::<crate::gui::Options>().get_all_layers(),
@@ -133,7 +133,7 @@ fn editable_widgets_track_model_after_edit() {
 
     // Same drift guard for the -lv dropdown: `server_form` maps a level to the
     // LABEL the combo shows, so a label it can't find leaves the combo on its
-    // first entry (OUTPUT:0) — and SAVES that on the next write, silencing the log.
+    // first entry (OUTPUT:0), and SAVES that on the next write, silencing the log.
     let slint_levels: Vec<String> = app
         .global::<crate::gui::Options>()
         .get_log_levels()
@@ -153,7 +153,7 @@ fn editable_widgets_track_model_after_edit() {
     // higher: its entries are passed to llama-server VERBATIM, so a mode the
     // Rust list has and the combo doesn't leaves the combo on "auto" and saves
     // that over the user's choice, while the reverse puts a value on the launch
-    // line that llama-server rejects outright ("invalid value") — nothing starts.
+    // line that llama-server rejects outright ("invalid value"); nothing starts.
     let slint_modes: Vec<String> = app
         .global::<crate::gui::Options>()
         .get_load_modes()
@@ -167,11 +167,11 @@ fn editable_widgets_track_model_after_edit() {
     );
 
     // ── Server tab (shown by default) ────────────────────────────────
-    // LineEdit (inside DefaultLineEdit) — `text <=> AppState.server_form.port`.
+    // LineEdit (inside DefaultLineEdit): `text <=> AppState.server_form.port`.
     // Every numeric field of both forms is one of these since v1.5.0, integers
     // included: the SpinBox they used to be edits itself on a stray mouse-wheel
     // over the page (ui/components.slint spells it out). So the *kind* under test
-    // here is the same as `form.temp` below — this case stays because it is the
+    // here is the same as `form.temp` below: this case stays because it is the
     // only Server-tab numeric, and it pins the int-as-text conversion.
     assert_reload_reaches_widget(
         &by_label(&app, "server-port"),
@@ -183,11 +183,11 @@ fn editable_widgets_track_model_after_edit() {
         "1234",
     );
 
-    // CheckBox — `checked <=> AppState.server_form.webui_mcp_proxy`. The only
+    // CheckBox: `checked <=> AppState.server_form.webui_mcp_proxy`. The only
     // edit is a toggle, so the edit leaves the *opposite* of `load`. `reload`
     // therefore restores `load` (true→false→true): a frozen widget would sit on
     // the toggled value and mismatch. Found by its visible text (the checkbox's
-    // accessible-label). Any plain-bool toggle pins the KIND — this one because
+    // accessible-label). Any plain-bool toggle pins the KIND: this one because
     // it also defaults to true, so the toggle actually changes something.
     assert_reload_reaches_widget(
         &by_label(&app, "serve the web UI's MCP proxy endpoint"),
@@ -203,14 +203,14 @@ fn editable_widgets_track_model_after_edit() {
         "true",
     );
 
-    // Slider — the thumb inside the CPU-threads AutoSlider. The std Slider
+    // Slider: the thumb inside the CPU-threads AutoSlider. The std Slider
     // self-assigns `value` on every user set (drag, keys, this accessibility
-    // set-value), which killed the component's old one-way `value:` binding —
+    // set-value), which killed the component's old one-way `value:` binding,
     // the v1.2.9 stale-thumb bug. External updates now reach it through
     // AutoSlider's `changed shown` push; this is the case that pins it.
-    // The slider reports its accessible value as a float — normalize to int.
+    // The slider reports its accessible value as a float: normalize to int.
     // The push rides a `changed` callback, which Slint dispatches on the next
-    // event-loop turn — mock one after each model write or the read races it.
+    // event-loop turn: mock one after each model write or the read races it.
     set_server_form(&st, |f| f.threads_auto = false);
     assert_reload_reaches_widget(
         &by_label(&app, "server-threads"),
@@ -237,7 +237,7 @@ fn editable_widgets_track_model_after_edit() {
     st.set_current_tab(1);
     itest::mock_elapsed_time(std::time::Duration::from_millis(1));
 
-    // LineEdit — `text <=> AppState.form.ctx_size` (an INTEGER field: since v1.5.0
+    // LineEdit: `text <=> AppState.form.ctx_size` (an INTEGER field: since v1.5.0
     // they are all text, see the note on the port above).
     assert_reload_reaches_widget(
         &by_label(&app, "preset-ctx-size"),
@@ -249,7 +249,7 @@ fn editable_widgets_track_model_after_edit() {
         "65536",
     );
 
-    // LineEdit — `text <=> AppState.form.temp` (the field the v1.1.1 bug report
+    // LineEdit: `text <=> AppState.form.temp` (the field the v1.1.1 bug report
     // named, alongside top-k).
     assert_reload_reaches_widget(
         &by_label(&app, "preset-temp"),

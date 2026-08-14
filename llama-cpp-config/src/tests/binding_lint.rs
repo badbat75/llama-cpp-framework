@@ -1,11 +1,11 @@
 //! Lint-style guard for the stale-widget bug class (shipped in v1.1.1, v1.2.3,
 //! v1.2.9): an EDITABLE std widget binding one of its self-assigned properties
-//! one-way to `AppState` goes stale on the first user edit — the widget's own
+//! one-way to `AppState` goes stale on the first user edit: the widget's own
 //! imperative write discards the binding. The e2e test (ui_bindings.rs) drives
 //! one widget PER KIND, so a brand-new widget instance with a one-way binding
 //! would slip past it; this scan closes that hole by reading every ui/*.slint
 //! TEXT and flagging the pattern itself. Plain string scanning, no Slint
-//! backend — it runs as its own #[test].
+//! backend; it runs as its own #[test].
 //!
 //! Sanctioned escapes (why a hit is NOT flagged):
 //! - two-way `<=>` bindings (the convention);
@@ -13,18 +13,18 @@
 //! - bindings to non-AppState expressions (component-internal wiring, e.g. the
 //!   AutoSlider's `value: root.shown` init that its `changed shown` hook pushes);
 //! - custom components (SegmentedControl, MappedComboBox, EnumComboBox,
-//!   AutoSlider) — the reactive binding lives INSIDE the component (against
+//!   AutoSlider): the reactive binding lives INSIDE the component (against
 //!   `root`, not `AppState`), so an instance carries no one-way `AppState` hit
 //!   to flag. AutoSlider's slider push is pinned in ui_bindings.rs; the others
 //!   are structural (EnumComboBox drives current-index to sidestep the
-//!   `current-value` #11970 bug — see `no_current_value_bindings…` below).
-//!   NOT escaped: DefaultLineEdit — its inner std LineEdit self-assigns through
+//!   `current-value` #11970 bug; see `no_current_value_bindings…` below).
+//!   NOT escaped: DefaultLineEdit, whose inner std LineEdit self-assigns through
 //!   `<=> root.value`, so the CALL SITE must bind `value`/`default` two-way; it is
 //!   listed in SELF_ASSIGNING and scanned like a bare widget (the `Default` prefix
 //!   stops it matching LineEdit, so it needs its own entry).
 //!
 //! A second, unrelated rule lives here because it is the same kind of scan:
-//! `no_spinbox_widgets_anywhere` — the std SpinBox is BANNED from this UI (it
+//! `no_spinbox_widgets_anywhere`: the std SpinBox is BANNED from this UI (it
 //! edits itself on a stray mouse-wheel; see ui/components.slint), and a text scan
 //! is the only thing that can say so about a widget nobody has instantiated yet.
 
@@ -44,7 +44,7 @@ const SELF_ASSIGNING: &[(&str, &[&str])] = &[
     ("SpinBox", &["value:"]),
     ("Slider", &["value:"]),
     ("ComboBox", &["current-value:", "current-index:"]),
-    // A composite wrapping a bare std widget bound `<=> root.value` — the call
+    // A composite wrapping a bare std widget bound `<=> root.value`: the call
     // site must be two-way too (see the header's "NOT escaped" note).
     ("DefaultLineEdit", &["value:", "default:"]),
 ];
@@ -80,8 +80,8 @@ fn opens_widget(code: &str, widget: &str) -> bool {
 /// "property" strings (empty when clean). Comments are already stripped in
 /// `scan`; here the block is split into statement-like fragments on `;`/`{`/`}`
 /// so a property sharing a line with the widget opener
-/// (`LineEdit { text: AppState.x; }`) or with a sibling statement is still seen
-/// — a per-line `starts_with` only caught the one-statement-per-line style.
+/// (`LineEdit { text: AppState.x; }`) or with a sibling statement is still seen:
+/// a per-line `starts_with` only caught the one-statement-per-line style.
 fn block_violations(widget: &str, props: &[&str], block: &str) -> Vec<String> {
     let fragments: Vec<&str> = block.split([';', '{', '}']).collect();
     let read_only = fragments
@@ -103,7 +103,7 @@ fn block_violations(widget: &str, props: &[&str], block: &str) -> Vec<String> {
 }
 
 /// Scan one .slint source: track editable-widget blocks by brace depth and
-/// collect their violations as "file: widget — line" strings.
+/// collect their violations as "file: widget, line" strings.
 fn scan(source: &str, file_label: &str, violations: &mut String) {
     // (widget name, self-assigned props, depth at open, accumulated block text)
     let mut stack: Vec<(&str, &[&str], i32, String)> = Vec::new();
@@ -123,7 +123,7 @@ fn scan(source: &str, file_label: &str, violations: &mut String) {
         while stack.last().is_some_and(|b| depth <= b.2) {
             let (widget, props, _, block) = stack.pop().unwrap();
             for v in block_violations(widget, props, &block) {
-                let _ = writeln!(violations, "{file_label}: {widget} — {v}");
+                let _ = writeln!(violations, "{file_label}: {widget}, {v}");
             }
         }
     }
@@ -160,13 +160,13 @@ fn no_one_way_appstate_bindings_on_self_assigning_widgets() {
 ///
 /// `SpinBoxBase` (i-slint-compiler's widget library) puts a TouchArea over the
 /// whole widget whose `scroll-event` increments/decrements and always returns
-/// `accept` — with no `has-focus` guard, unlike its own `ComboBoxBase`, which
+/// `accept`, with no `has-focus` guard, unlike its own `ComboBoxBase`, which
 /// rejects a scroll it isn't focused for. So wheeling the page with the pointer
 /// merely PASSING OVER a SpinBox edits the config (and eats the scroll, so the page
 /// doesn't even move): a preset silently gains a different ctx-size, and nothing in
 /// the UI says so. There is no property to disable it and no way to intercept the
 /// event from outside (the TouchArea lives inside the widget), so the fix was to
-/// stop using the widget — every numeric field is a `DefaultLineEdit` now
+/// stop using the widget: every numeric field is a `DefaultLineEdit` now
 /// (ui/components.slint). Re-adding a SpinBox re-adds the bug; hence this scan.
 #[test]
 fn no_spinbox_widgets_anywhere() {
@@ -196,18 +196,18 @@ fn no_spinbox_widgets_anywhere() {
     assert!(
         hits.is_empty(),
         "Slint's SpinBox edits itself on a mouse-wheel over the page (no has-focus \
-         guard on its scroll-event) — use DefaultLineEdit with `input_type: \
+         guard on its scroll-event); use DefaultLineEdit with `input_type: \
          InputType.number`:\n{hits}"
     );
 }
 
 // #11970 guard: writing `current-value` does NOT move a ComboBox's selection,
 // so a two-way `current-value <=>` binding leaves the dropdown stale on a model
-// change (a preset switch). `EnumComboBox` drives `current-index` instead —
+// change (a preset switch). `EnumComboBox` drives `current-index` instead;
 // keep it that way: no `.slint` should BIND `current-value` at all. The one-way
 // scan above deliberately allows `<=>`, so it can't catch this two-way form;
 // a dedicated line scan can. (Reads like `self.current-value` inside an
-// expression are fine — only a binding, i.e. a line STARTING with the property,
+// expression are fine: only a binding, i.e. a line STARTING with the property,
 // is flagged.)
 #[test]
 fn no_current_value_bindings_use_enum_combo_box_instead() {
@@ -235,7 +235,7 @@ fn no_current_value_bindings_use_enum_combo_box_instead() {
     }
     assert!(
         hits.is_empty(),
-        "`current-value` bindings don't move the selection (Slint #11970) — use \
+        "`current-value` bindings don't move the selection (Slint #11970); use \
          EnumComboBox (drives current-index):\n{hits}"
     );
 }
@@ -243,17 +243,17 @@ fn no_current_value_bindings_use_enum_combo_box_instead() {
 // ── Glyph coverage ───────────────────────────────────────────────────────
 
 /// Non-ASCII codepoints the UI may draw with the DEFAULT font. Every one is in
-/// Segoe UI's cmap — checked, not assumed (`GlyphTypeface.CharacterToGlyphMap`
+/// Segoe UI's cmap: checked, not assumed (`GlyphTypeface.CharacterToGlyphMap`
 /// over `segoeui.ttf`), which is the only thing that settles coverage. Nothing
 /// falls back: a codepoint Segoe UI lacks draws as an empty box, full stop.
 ///
 /// An ICON does not belong here. It goes through the icon font with its family
-/// named at the call site — `text: "\u{E711}"; font-family: "Segoe Fluent Icons";`
-/// — the idiom `LabeledField`'s hint glyph already uses. The scan skips `\u{…}`
+/// named at the call site: `text: "\u{E711}"; font-family: "Segoe Fluent Icons";`
+/// is the idiom `LabeledField`'s hint glyph already uses. The scan skips `\u{…}`
 /// escapes for exactly that reason, so that path stays open.
 ///
 /// Deliberately absent: `ⓘ` and `─`, which appear in this codebase only inside
-/// COMMENTS. Segoe UI has neither, so neither is proven — listing them would
+/// COMMENTS. Segoe UI has neither, so neither is proven; listing them would
 /// have pre-approved two glyphs that draw as boxes the day someone used one.
 const RENDERABLE: &[char] = &['·', '×', '—', '…', '→', '↔', '≈', '≡', '≤'];
 
@@ -313,7 +313,7 @@ fn string_literals(source: &str) -> Vec<(usize, String)> {
 }
 
 // The tensor table's remove button first shipped reading `✕` (U+2715, Dingbats),
-// which Segoe UI does not have — so it drew as an empty box: a button with no
+// which Segoe UI does not have, so it drew as an empty box: a button with no
 // icon. Nothing failed. The glyph is valid Slint, valid UTF-8, and the layout is
 // identical; only a human looking at the window could tell, which is what this
 // scan replaces. It is not a hypothetical: EVERY non-ASCII character this UI
@@ -345,7 +345,7 @@ fn slint_string_literals_only_use_glyphs_proven_to_render() {
     assert!(scanned >= 7, "expected the full ui/ set, scanned {scanned}");
     assert!(
         hits.is_empty(),
-        "glyph(s) not known to render in the GUI's font stack — they draw as an \
+        "glyph(s) not known to render in the GUI's font stack: they draw as an \
          empty box, silently. Run the GUI, look at it, and only then add the char \
          to RENDERABLE:\n{hits}"
     );
@@ -353,7 +353,7 @@ fn slint_string_literals_only_use_glyphs_proven_to_render() {
 
 #[test]
 fn glyph_scan_reads_ui_text_and_ignores_comments_and_urls() {
-    // The bug, as shipped — found AND rejected. Without the second assert this
+    // The bug, as shipped: found AND rejected. Without the second assert this
     // test would still pass with '✕' sitting in RENDERABLE, i.e. with the lint
     // that exists for it disarmed.
     let lits = string_literals("Button { text: \"✕\"; }\n");
@@ -364,7 +364,7 @@ fn glyph_scan_reads_ui_text_and_ignores_comments_and_urls() {
     );
 
     // A comment ABOUT the bad glyph is not UI text (this very file's fix has
-    // one) — and a `//` inside a string is a URL, not a comment.
+    // one), and a `//` inside a string is a URL, not a comment.
     let src = "// don't use ✕ here\nText { text: \"see http://x/y — ok\"; }\n";
     let lits = string_literals(src);
     assert_eq!(lits, vec![(2, "see http://x/y — ok".to_string())]);
@@ -374,14 +374,14 @@ fn glyph_scan_reads_ui_text_and_ignores_comments_and_urls() {
         .filter(|c| !c.is_ascii())
         .all(|c| RENDERABLE.contains(&c)));
 
-    // Escaped quotes must not end the literal early: one literal, not three —
+    // Escaped quotes must not end the literal early: one literal, not three;
     // otherwise the tail of a hint string would go unscanned.
     let lits = string_literals(r#"Text { text: "a \"q\" b ≡"; }"#);
     assert_eq!(lits.len(), 1, "escaped quote split the literal: {lits:?}");
     assert!(lits[0].1.ends_with('≡'), "tail lost: {:?}", lits[0].1);
 
-    // The sanctioned way to draw an icon — a `\u{…}` escape under an explicitly
-    // named icon font — must stay open: the escape is skipped, so no bare glyph
+    // The sanctioned way to draw an icon (a `\u{…}` escape under an explicitly
+    // named icon font) must stay open: the escape is skipped, so no bare glyph
     // reaches the allowlist check and the lint has nothing to say about it.
     let lits =
         string_literals(r#"Button { text: "\u{E711}"; font-family: "Segoe Fluent Icons"; }"#);
@@ -393,7 +393,7 @@ fn glyph_scan_reads_ui_text_and_ignores_comments_and_urls() {
     );
 }
 
-// The scanner must actually catch the bug class it exists for — feed it the
+// The scanner must actually catch the bug class it exists for: feed it the
 // exact v1.1.1-shaped regression and a few sanctioned shapes.
 #[test]
 fn scanner_flags_the_known_bad_shapes_and_passes_the_sanctioned_ones() {

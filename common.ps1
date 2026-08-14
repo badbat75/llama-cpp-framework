@@ -1,6 +1,6 @@
 # Shared bootstrap for the BUILD scripts (02-build.ps1 / 03-package.ps1), which
 # dot-source it: . "$PSScriptRoot\common.ps1"
-# 00-install-prerequisites.ps1 and 01-configure.ps1 deliberately do NOT — they
+# 00-install-prerequisites.ps1 and 01-configure.ps1 deliberately do NOT: they
 # read build\config-build.psd1 directly so they work on a fresh machine before
 # (or while) that file exists.
 #
@@ -21,14 +21,14 @@ if ($cfg.HipPath -and (Test-Path $cfg.HipPath)) {
         $env:PATH = "$env:HIP_PATH\bin;$env:PATH"
     }
     # TheRock dist keeps the LLVM toolchain (clang for the HIP device compile)
-    # under lib\llvm\bin — the legacy HIP SDK shipped clang in bin\ instead.
+    # under lib\llvm\bin; the legacy HIP SDK shipped clang in bin\ instead.
     $llvmBin = Join-Path $env:HIP_PATH 'lib\llvm\bin'
     if ((Test-Path $llvmBin) -and ($env:PATH -notlike "*$llvmBin*")) {
         $env:PATH = "$llvmBin;$env:PATH"
     }
     # Mirror the rest of the TheRock machine env (00-install sets it system-wide,
     # but a console opened before that run has a stale copy): clang finds the
-    # device bitcode via HIP_DEVICE_LIB_PATH — TheRock keeps it under
+    # device bitcode via HIP_DEVICE_LIB_PATH; TheRock keeps it under
     # lib\llvm\amdgcn\bitcode, not the <rocm>\amdgcn\bitcode layout clang
     # derives from --rocm-path, so without the var the HIP device compile dies
     # with "cannot find ROCm device library".

@@ -5,8 +5,8 @@
 //! *funnel*: save → `preset_written` → reload → reselect → re-baseline, the
 //! Revert path, delete's deliberate clear-selection sequence, the New…
 //! dialog's id de-conflict guard, the rename + clone funnels, the
-//! discard-confirm guard on a dirty form — the wiring in `gui/models_tab.rs`
-//! that no pure-Rust unit test can reach — and the Integrations row-checkbox
+//! discard-confirm guard on a dirty form (the wiring in `gui/models_tab.rs`
+//! that no pure-Rust unit test can reach), and the Integrations row-checkbox
 //! contract (in-place toggle from the widget itself, full model rebuild for
 //! everything else).
 //!
@@ -14,7 +14,7 @@
 //! (see `paths::data_root`), set here BEFORE the tabs are wired, so the flow
 //! never touches the user's real `%LOCALAPPDATA%\llama.cpp`.
 //!
-//! Not a `#[test]` of its own — exposes `run(&app)`, called from ui_bindings'
+//! Not a `#[test]` of its own: exposes `run(&app)`, called from ui_bindings'
 //! single shared `#[test]`. Topology rationale: `src/tests/mod.rs`.
 
 use i_slint_backend_testing::{self as itest, ElementHandle};
@@ -33,7 +33,7 @@ pub(super) fn run(app: &AppWindow) {
     // like the real probe cache; seeded before the wiring so every rebuild sees it.
     // The CPU line is deliberate: the real probe always prints it, the GPU table
     // must FILTER it out (`--device` won't take it) and the tensor-placement table
-    // must OFFER it (`--override-tensor` explicitly targets it) — both asserted below.
+    // must OFFER it (`--override-tensor` explicitly targets it), both asserted below.
     crate::devices::set_probed(crate::devices::parse(
         "  CUDA0: NVIDIA GeForce RTX 4070 SUPER (12281 MiB, 10844 MiB free)\n  \
          ROCm1: AMD Radeon AI PRO R9700 (32624 MiB, 32462 MiB free)\n  \
@@ -53,7 +53,7 @@ pub(super) fn run(app: &AppWindow) {
 
     // ── Guard rails: save() itself enforces the `;`/`#` path validation ──
     // The pure `validate_for_save` fns have their own unit tests; THIS pins
-    // the call-site wiring (`save()`'s first line, both sides) — deleting
+    // the call-site wiring (`save()`'s first line, both sides): deleting
     // either call used to pass the whole suite, silently regressing the
     // v1.2.11 reload-truncated guard.
     let mut form = st.get_form();
@@ -137,7 +137,7 @@ pub(super) fn run(app: &AppWindow) {
 
     // ── New… twice on the same model must NOT overwrite the first preset ──
     // Drive the real dialog funnel: New… scans models_dir for the picker, the
-    // pick derives the id from the file name — so the second pass hits a live
+    // pick derives the id from the file name, so the second pass hits a live
     // id and must save under the first free suffix instead of clobbering.
     std::fs::create_dir_all(model_path.parent().unwrap()).expect("models dir");
     std::fs::write(&model_path, b"").expect("model file");
@@ -206,7 +206,7 @@ pub(super) fn run(app: &AppWindow) {
         "the picker must surface the clone source"
     );
     st.set_dialog_model_index(0);
-    // The picker's Clone button hides the modal before firing the callback —
+    // The picker's Clone button hides the modal before firing the callback:
     // mirror that, or the dialog state leaks into the next phase.
     st.set_show_new_kind_picker(false);
     st.invoke_pick_new_clone();
@@ -229,7 +229,7 @@ pub(super) fn run(app: &AppWindow) {
     // ── GPU distribution table: the whole --device/--tensor-split funnel ──
     // The table is the ONLY writer of `device` + `tensor_split` now, so this
     // drives the real row checkboxes and asserts the strings that reach the INI.
-    // It starts from the clone above, whose device is "CUDA1" — a device the
+    // It starts from the clone above, whose device is "CUDA1", a device the
     // probe doesn't know, which must still show as a checked row (a save that
     // silently dropped it would rewrite the user's config).
     let row_ids = || -> Vec<String> {
@@ -240,7 +240,7 @@ pub(super) fn run(app: &AppWindow) {
     };
     // The clone's stale CUDA1 pin is the only checked device, so it heads the
     // table; the probed GPUs follow in probe order. The row order IS the split
-    // order — which is what makes the drag handle (exercised below) meaningful.
+    // order, which is what makes the drag handle (exercised below) meaningful.
     assert_eq!(
         row_ids(),
         ["CUDA1", "CUDA0", "ROCm1"],
@@ -274,7 +274,7 @@ pub(super) fn run(app: &AppWindow) {
     assert_eq!(
         st.get_form().device.as_str(),
         "ROCm1,CUDA0",
-        "a checked device is APPENDED — the split order is the order you checked"
+        "a checked device is APPENDED: the split order is the order you checked"
     );
     assert_eq!(
         row_ids(),
@@ -304,7 +304,7 @@ pub(super) fn run(app: &AppWindow) {
     );
     // The split-mode pick funnels through Rust (the combo is a MappedComboBox:
     // the pick writes the form, and the refresh re-projects the rows), and the
-    // mode bends the columns — under `none` the vector is dead, so the head row
+    // mode bends the columns: under `none` the vector is dead, so the head row
     // reads 100% and the other CHECKED row says "unused" out loud (a "—" would
     // read as merely unchecked).
     st.invoke_preset_split_mode_picked("none".into());
@@ -316,7 +316,7 @@ pub(super) fn run(app: &AppWindow) {
         assert_eq!(rows.row_data(0).expect("row 0").share.as_str(), "100%");
         assert_eq!(rows.row_data(1).expect("row 1").share.as_str(), "unused");
     }
-    // Back to the merged "layer (default)" entry — index and effective mode
+    // Back to the merged "layer (default)" entry: index and effective mode
     // follow, and the ratio the mode never touched is still there.
     st.invoke_preset_split_mode_picked("default".into());
     assert_eq!(st.get_form().split_mode.as_str(), "default");
@@ -327,13 +327,13 @@ pub(super) fn run(app: &AppWindow) {
     assert_eq!(
         st.get_form().tensor_split.as_str(),
         "",
-        "Auto clears the vector — it is NOT the same launch as Even"
+        "Auto clears the vector; it is NOT the same launch as Even"
     );
     st.invoke_preset_gpu_even();
     st.invoke_preset_gpu_weight("ROCm1".into(), 3);
 
     // The drag handle: promote CUDA0 to the head of the split. Position 0 is
-    // llama.cpp's main_gpu, and a checkbox can only append — so this is the only
+    // llama.cpp's main_gpu, and a checkbox can only append, so this is the only
     // way to get there. The weight must ride along with its device.
     st.invoke_preset_gpu_move("CUDA0".into(), -1);
     assert_eq!(st.get_form().device.as_str(), "CUDA0,ROCm1");
@@ -350,7 +350,7 @@ pub(super) fn run(app: &AppWindow) {
     st.invoke_preset_gpu_move("CUDA0".into(), 1); // back, so the INI below is 3,1
     assert_eq!(st.get_form().device.as_str(), "ROCm1,CUDA0");
 
-    // The same table in BLOCKS — the unit the split is actually cut in. It only
+    // The same table in BLOCKS: the unit the split is actually cut in. It only
     // appears once a model header has been read (`preset_split_positions` is 0
     // until then, which is also what keeps the server-wide table on ratios), so
     // stand one in: 33 blocks is Ornith-1.0-9B (32 trunk + 1 nextn), i.e. 34
@@ -360,7 +360,7 @@ pub(super) fn run(app: &AppWindow) {
     assert_eq!(
         st.get_form().tensor_split.as_str(),
         "29,5",
-        "the counts ARE the weights — 3,1 projected to 26/8, and 29 takes 3 off the back"
+        "the counts ARE the weights: 3,1 projected to 26/8, and 29 takes 3 off the back"
     );
     assert_eq!(st.get_preset_split_positions(), 34);
     let rows = st.get_preset_gpu_rows();
@@ -372,11 +372,11 @@ pub(super) fn run(app: &AppWindow) {
     assert_eq!(
         rows.row_data(1).expect("row 1").blocks_label.as_str(),
         "blocks 29-32 + output",
-        "the tail names the output layer — it is a position, not a block"
+        "the tail names the output layer: it is a position, not a block"
     );
     // …and it reached the widget. The thumb binds one-way to `row.blocks` and
     // discards that binding the moment it is dragged, so what keeps it honest is
-    // the delegate being rebuilt on every commit — this is the assertion that
+    // the delegate being rebuilt on every commit: this is the assertion that
     // fails if a commit ever stops rebuilding the rows.
     assert_eq!(
         ElementHandle::find_by_accessible_label(app, "blocks-ROCm1")
@@ -395,7 +395,7 @@ pub(super) fn run(app: &AppWindow) {
     st.invoke_preset_gpu_blocks("ROCm1".into(), 29);
     assert_eq!(st.get_form().tensor_split.as_str(), "29,5");
     // `row` bends the same table off blocks: the bytes follow row fractions
-    // there, so the projection must retire even while the model is known — and
+    // there, so the projection must retire even while the model is known, and
     // come straight back when the mode does.
     st.invoke_preset_split_mode_picked("row".into());
     assert_eq!(st.get_preset_split_positions(), 0, "row mode has no block cut");
@@ -409,7 +409,7 @@ pub(super) fn run(app: &AppWindow) {
     // the block column counts against THIS model's block_count, so leaving it on
     // the previous one would have every row quoting a budget that no longer
     // exists. Here the fixture GGUF is unreadable, so the count drops to 0 and
-    // the column falls back to ratios — the same path a real switch takes.
+    // the column falls back to ratios: the same path a real switch takes.
     st.invoke_model_changed();
     assert_eq!(
         st.get_preset_split_positions(),
@@ -437,7 +437,7 @@ pub(super) fn run(app: &AppWindow) {
     // The rebuild half of the one-way `for`-row binding contract (same shape as
     // the Integrations phase below): the click above self-assigned `checked`,
     // permanently breaking THAT delegate's binding. Revert rebuilds the whole row
-    // model from disk, so the checkbox must follow — a set_row_data
+    // model from disk, so the checkbox must follow: a set_row_data
     // "optimization" in refresh_gpu_rows would leave it stale and lying.
     gpu_checkbox("CUDA0").invoke_accessible_default_action(); // uncheck → dirty
     assert_eq!(st.get_form().device.as_str(), "ROCm1");
@@ -480,7 +480,7 @@ pub(super) fn run(app: &AppWindow) {
     );
     assert!(st.get_preset_tensor_warning().is_empty());
 
-    // The CPU is a first-class target here — and the contrast with the GPU table
+    // The CPU is a first-class target here, and the contrast with the GPU table
     // above (which filters it out, since --device won't take it) is the point.
     let dev_values: Vec<String> = {
         let v = st.get_preset_tensor_dev_values();
@@ -501,7 +501,7 @@ pub(super) fn run(app: &AppWindow) {
     assert_eq!(
         st.get_form().override_tensor.as_str(),
         r"token_embd\.weight=CUDA0,\.ffn_(up|down|gate|gate_up)_(ch|)exps=CPU",
-        "two rules, comma-joined — `,` and `=` ARE the grammar"
+        "two rules, comma-joined: `,` and `=` ARE the grammar"
     );
 
     // Custom clears the regex and reveals the row's text field (a row's kind is
@@ -528,7 +528,7 @@ pub(super) fn run(app: &AppWindow) {
     );
 
     // The rebuild half of the one-way `for`-row binding contract, as in the GPU
-    // phase — but for the row's LineEdit, whose handler deliberately does NOT
+    // phase, but for the row's LineEdit, whose handler deliberately does NOT
     // rebuild (that would recreate the field mid-keystroke and drop the caret).
     // The widget's own write breaks its binding permanently; only Revert's full
     // rebuild can bring it back, and it must.
@@ -555,7 +555,7 @@ pub(super) fn run(app: &AppWindow) {
     );
 
     // A rule with NO device is what a hand-edited INI leaves behind, and llama.cpp
-    // throws on it during arg parsing — the model just never loads. So write it the
+    // throws on it during arg parsing; the model just never loads. So write it the
     // way it really arrives (into the file, then reload) and pin both halves of the
     // answer: the table explains it, and the save refuses to write it back.
     let ini = std::fs::read_to_string(crate::paths::presets_ini()).expect("presets.ini");
@@ -590,7 +590,7 @@ pub(super) fn run(app: &AppWindow) {
 
     // ── The SERVER-wide tensor table: same widget, different blast radius ──
     // The two tables are independent state, and the server's does not merely
-    // out-rank the preset's — it ERASES it. llama-server's router merges its own
+    // out-rank the preset's; it ERASES it. llama-server's router merges its own
     // CLI args into every preset as a key→value map, so only ONE --override-tensor
     // ever reaches a child: the server's. (`-ot` push_backs onto a vector inside
     // llama.cpp, which makes "they concatenate" the natural guess and a wrong one;
@@ -624,8 +624,8 @@ pub(super) fn run(app: &AppWindow) {
     );
 
     // Save through the same conversion the Save button uses. (The button itself
-    // is not wired here: it needs the tray and the run-state machinery — see
-    // gui::wire_tabs_for_tests — so this covers the form → config → INI leg.)
+    // is not wired here: it needs the tray and the run-state machinery (see
+    // gui::wire_tabs_for_tests), so this covers the form → config → INI leg.)
     let cfg = crate::server_form::form_to_config(&st.get_server_form());
     crate::server_cfg::save(&cfg).expect("save server.ini");
     let ini = std::fs::read_to_string(crate::paths::server_ini()).expect("server.ini");
@@ -633,11 +633,11 @@ pub(super) fn run(app: &AppWindow) {
         ini.contains(r"OverrideTensor = token_embd\.weight=ROCm1"),
         "the server table's rules must reach server.ini:\n{ini}"
     );
-    // (That it then reaches llama-server's command line — the step that makes it
-    // win over the presets — is pinned by runstate's own
+    // (That it then reaches llama-server's command line, the step that makes it
+    // win over the presets, is pinned by runstate's own
     // `server_args_covers_every_config_field`.)
 
-    // Clearing it hands the presets back their own rules — and the warning goes.
+    // Clearing it hands the presets back their own rules, and the warning goes.
     st.invoke_server_tensor_remove(0);
     assert_eq!(st.get_server_form().override_tensor.as_str(), "");
     assert!(st.get_tensor_override_warning().is_empty());
@@ -698,7 +698,7 @@ pub(super) fn run(app: &AppWindow) {
     st.set_show_rename_dialog(false);
 
     // ── Integrations: a model rebuild must reach the row checkboxes ──────
-    // The row CheckBox binds one-way (`checked: item.enabled`) — sanctioned
+    // The row CheckBox binds one-way (`checked: item.enabled`), sanctioned
     // ONLY because the in-place toggle originates from the clicked widget
     // itself, and every OTHER enabled-state change rebuilds the whole model
     // (refresh_integrations replaces the ModelRc → fresh delegates). This
@@ -731,14 +731,14 @@ pub(super) fn run(app: &AppWindow) {
             .enabled,
         "the toggle callback must flip the row in place"
     );
-    // The pending toggle is what the F5/Refresh discard guard consults —
+    // The pending toggle is what the F5/Refresh discard guard consults:
     // integrations_dirty compares the UI rows against the on-disk enabled set.
     assert!(
         crate::gui::integrations_dirty(app),
         "a pending toggle must read as integrations-dirty"
     );
     // A preset write path rebuilds the list with MERGE semantics: the pending
-    // toggle must survive (fresh delegate, preserved enabled flag) — only the
+    // toggle must survive (fresh delegate, preserved enabled flag); only the
     // reset paths (F5 behind the guard, Integrations Save/Revert) drop it.
     st.invoke_save_preset(); // → preset_written → refresh_integrations (merge)
     itest::mock_elapsed_time(std::time::Duration::from_millis(1));
@@ -775,7 +775,7 @@ pub(super) fn run(app: &AppWindow) {
     );
 
     // ── Integrations Save writes opencode.json (create_dir_all + reset leg) ──
-    // Under the redirect the parent dir (<tmp>\opencode\) does NOT exist — the
+    // Under the redirect the parent dir (<tmp>\opencode\) does NOT exist: the
     // exact "OpenCode never ran here" shape the v1.2.13 create_dir_all fix is
     // for. Re-toggle a row on, Save, and assert the file appears, the id is
     // registered, and the save (→ refresh_integrations_reset) re-baselined to
@@ -816,7 +816,7 @@ pub(super) fn run(app: &AppWindow) {
     // ── CLI: `preset delete <typo>` errors instead of a false "Removed" ─────
     // The v1.2.13 lookup-before-delete guard; the redirect keeps cli::run on
     // the temp tree. (`load_all` resolves real paths, so this can't be an
-    // inline unit test — only the redirect harness reaches it.)
+    // inline unit test: only the redirect harness reaches it.)
     use crate::cli::{Cli, Command, PresetCmd};
     assert!(
         crate::cli::run(Cli {

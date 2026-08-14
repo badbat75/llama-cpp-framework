@@ -9,7 +9,7 @@ pub fn probe() -> Option<String> {
 }
 
 /// `llama-server --version` prints to **stderr**, so parse the combined
-/// streams (`proc::combined_output`) — reading stdout alone yields "".
+/// streams (`proc::combined_output`); reading stdout alone yields "".
 fn run(exe: &std::path::Path) -> Option<String> {
     let output = crate::proc::run_hidden_probe(exe, ["--version"])?;
     if !output.status.success() {
@@ -79,7 +79,7 @@ mod tests {
     }
 
     /// Dynamic-backend builds print `load_backend: …` banners around the
-    /// version line — the parser must pick the `version: ` line, not just the
+    /// version line; the parser must pick the `version: ` line, not just the
     /// first non-empty one.
     #[test]
     fn skips_backend_banner_lines() {

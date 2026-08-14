@@ -1,40 +1,40 @@
 //! presets.ini schema and IO for llama.cpp-framework.
 //!
-//! ADD A PRESET FIELD — the recurring change fans out to all of these (trace an
+//! ADD A PRESET FIELD. The recurring change fans out to all of these (trace an
 //! existing field like `ctx-size` as the template; kebab-case INI key ↔
 //! snake_case Rust field):
-//!   1. `Preset` struct field (+ doc)      — below
-//!   2. `impl Default for Preset`          — below
-//!   3. `Preset::from_keys`                — INI read, below
-//!   4. `render_section` + `emit_*` (+ `;` comment) — INI write, below
-//!   5. `PresetForm` struct                — ui/types.slint (a NUMERIC field rides
-//!      as a `string`, integers included, plus a paired `<field>_default: bool` —
+//!   1. `Preset` struct field (+ doc)      : below
+//!   2. `impl Default for Preset`          : below
+//!   3. `Preset::from_keys`                : INI read, below
+//!   4. `render_section` + `emit_*` (+ `;` comment) : INI write, below
+//!   5. `PresetForm` struct                : ui/types.slint (a NUMERIC field rides
+//!      as a `string`, integers included, plus a paired `<field>_default: bool`,
 //!      the "omit the flag" checkbox)
-//!   6. the input widget                   — ui/models_page.slint, bind two-way
+//!   6. the input widget                   : ui/models_page.slint, bind two-way
 //!      `<=>`: DefaultLineEdit for EVERY numeric (`input_type: InputType.number`
-//!      for an integer, `decimal` for a float or a signed one) — wire BOTH `value`
+//!      for an integer, `decimal` for a float or a signed one), wire BOTH `value`
 //!      and `default`; EnumComboBox for string dropdowns. Never a SpinBox: it edits
 //!      itself on a stray mouse-wheel over the page, and a test now bans it
 //!      (src\tests\binding_lint.rs `no_spinbox_widgets_anywhere`).
-//!   7. `preset_to_form` + `form_to_preset` — src/form.rs (BOTH directions; a
+//!   7. `preset_to_form` + `form_to_preset` : src/form.rs (BOTH directions; a
 //!      numeric goes out through `itxt`/`txt` and comes back through
 //!      `ini::parse_int`/`parse_float`, deriving `<field>_default` via `is_none()`
 //!      one way and `if <field>_default { None } else { … }` the other)
-//!   8. FREE-TEXT field only (any value the user types freely — a filesystem
+//!   8. FREE-TEXT field only (any value the user types freely: a filesystem
 //!      path, OR raw JSON like `chat-template-kwargs`): add it to
 //!      `validate_for_save`'s list below AND to the
-//!      `save_validation_rejects_comment_markers_in_free_text_fields` test — the
-//!      INI format can't escape `;`/`#` (legal in Windows dirs and in JSON
-//!      strings), so an unvalidated value saves fine and reloads TRUNCATED.
-//!      Nothing fails if you skip this.
+//!      `save_validation_rejects_comment_markers_in_free_text_fields` test,
+//!      because the INI format can't escape `;`/`#` (legal in Windows dirs and
+//!      in JSON strings), so an unvalidated value saves fine and reloads
+//!      TRUNCATED. Nothing fails if you skip this.
 //!
 //! Guards: the INI round-trip test in this file (`full_preset_round_trips_through_ini`)
-//! and the form round-trip test in form.rs (`form_to_preset(preset_to_form(p)) == p`)
-//! — a field wired into one side only drops out of one of them. Give the new
+//! and the form round-trip test in form.rs (`form_to_preset(preset_to_form(p)) == p`);
+//! a field wired into one side only drops out of one of them. Give the new
 //! field a NON-DEFAULT value when extending the rich fixtures: `None`/empty
 //! satisfies the compiler but makes the round-trips vacuous for that field.
 //! Step 8 is the one step NO test catches when skipped (round-trip fixtures use
-//! clean paths) — same for its widget (step 6: a forgotten widget just never
+//! clean paths), same for its widget (step 6: a forgotten widget just never
 //! appears in the UI).
 
 use std::fs;
@@ -52,19 +52,19 @@ pub struct Preset {
     pub id: String,
     pub model: String,
     pub mmproj: String,
-    /// GPU-offload the multimodal projector — the mmproj/CLIP image encoder
+    /// GPU-offload the multimodal projector, the mmproj/CLIP image encoder
     /// (--mmproj-offload / --no-mmproj-offload). None/true = llama.cpp's default
     /// (offloaded). Note WHICH GPU is not this flag's business and not --device's
     /// either: the CLIP context grabs the first GPU backend it finds unless
     /// `MTMD_BACKEND_DEVICE` names one (server.ini `MmprojDevice`). Turn this off
-    /// to keep the encoder on CPU entirely — it only runs on image requests, so a
+    /// to keep the encoder on CPU entirely: it only runs on image requests, so a
     /// text-mostly workload pays nothing but the VRAM it was holding.
     pub mmproj_offload: Option<bool>,
     /// Minimum / maximum tokens a single image may take on vision models with
     /// DYNAMIC resolution (--image-min-tokens / --image-max-tokens). `None` = omit
     /// the flag → llama.cpp reads the bound from the model's metadata (its own -1
     /// sentinel). Only the mmproj/CLIP encoder reads these (`clip.cpp` folds them
-    /// into `custom_image_min/max_pixels`), so they do nothing without an mmproj —
+    /// into `custom_image_min/max_pixels`), so they do nothing without an mmproj;
     /// the widgets are gated on one being selected. Qwen-VL warns at load that it
     /// needs at least 1024 image tokens for grounding accuracy and prints
     /// `try adding --image-min-tokens 1024` (llama.cpp #16842); this is that knob.
@@ -81,11 +81,11 @@ pub struct Preset {
     // (--device-draft) place a draft FILE, and llama.cpp reads them ONLY when one
     // is set: both live inside `if (has_dft())`, i.e. `--model-draft` given. With
     // MTP heads EMBEDDED in the main GGUF (`spec_type` set, `model_draft` empty)
-    // the draft context is built against the target model itself — it runs on the
+    // the draft context is built against the target model itself: it runs on the
     // model's own device and both keys are silently ignored. Setting them there is
     // how a GPU ends up looking "assigned" to the draft while never drafting a
     // token. A SEPARATE MTP head file (e.g. gemma4-assistant, n_layer=0) is the
-    // case where they do apply — and there, pin to ONE device: the multi-device
+    // case where they do apply, and there, pin to ONE device: the multi-device
     // "auto" split crashes those heads.
     pub model_draft: String,
     pub spec_type: String,
@@ -93,11 +93,11 @@ pub struct Preset {
     /// KV-cache quantization for the DRAFT context's K and V
     /// (--spec-draft-type-k / --spec-draft-type-v, aliases -ctkd / -ctvd).
     /// Empty = omit the flag, the same empty↔"default" shape as `cache_type_k`
-    /// below — but the default they fall back to is NOT the model's.
+    /// below, but the default they fall back to is NOT the model's.
     ///
     /// `common_base_params_to_speculative` (common/speculative.cpp) starts from
     /// `result = params`, so the draft context inherits the model's
-    /// `cache_type_k`/`_v` — and then unconditionally overwrites both with
+    /// `cache_type_k`/`_v`, and then unconditionally overwrites both with
     /// `params.speculative.draft.cache_type_k/_v`, whose own default is
     /// `GGML_TYPE_F16` (common/common.h). So a preset that runs the model on a
     /// q8_0 KV cache still drafts against an **f16** one: these two flags are
@@ -108,7 +108,7 @@ pub struct Preset {
     /// OUTSIDE the `if (has_draft)` block that guards `devices`, `n_gpu_layers`
     /// and `tensor_buft_overrides`, so unlike `device_draft` /
     /// `n_gpu_layers_draft` these two DO apply to MTP heads EMBEDDED in the main
-    /// GGUF — the case where the placement pair is silently ignored. Hence they
+    /// GGUF, the case where the placement pair is silently ignored. Hence they
     /// ride with the speculator in `prune_inactive_draft_keys`, not with the
     /// placement pair.
     pub spec_draft_type_k: String,
@@ -117,15 +117,15 @@ pub struct Preset {
     pub device_draft: String,
     /// The GPUs THIS model runs on (--device): one id ("ROCm1") or a comma-
     /// separated list in split order ("ROCm1,CUDA0"). Per-preset override of
-    /// server.ini Device — but a server-wide Device WINS over it at launch, since
+    /// server.ini Device, but a server-wide Device WINS over it at launch, since
     /// llama-server's router passes its own CLI args on top of every preset.
     /// Empty = inherit the server default. Written by the GPU distribution table
     /// (src/gpu_split.rs), never typed by hand.
     pub device: String,
-    /// Multi-GPU split for THIS model. `split_mode` (--split-mode): none|layer|row —
+    /// Multi-GPU split for THIS model. `split_mode` (--split-mode): none|layer|row.
     /// `none` keeps ONLY the first `device` entry (main_gpu) and ignores the
     /// vector; `row` splits the weight matrices row-wise by the vector (backend
-    /// split buffer type, CUDA/ROCm only — Vulkan falls back to the layer cut).
+    /// split buffer type, CUDA/ROCm only; Vulkan falls back to the layer cut).
     /// A server-wide SplitMode OVERRIDES this key at launch (the router's CLI
     /// wins the merge), `layer` spelled out included.
     /// `tensor_split` (--tensor-split): per-GPU weight proportions like "3,1",
@@ -137,7 +137,7 @@ pub struct Preset {
     /// Per-tensor placement (--override-tensor): `<regex>=<buffer type>` rules,
     /// comma-separated, e.g. `token_embd\.weight=ROCm0`. A rule sends every tensor
     /// whose NAME matches the regex to the named device instead of the one its
-    /// layer landed on — which is how you move the token-embedding table off the
+    /// layer landed on, which is how you move the token-embedding table off the
     /// PINNED HOST buffer llama.cpp parks it in (`ROCm_Host`/`CUDA_Host`, i.e.
     /// Windows "Shared GPU memory") even when it reports every layer offloaded.
     /// Empty = no overrides. Written by the tensor-placement table
@@ -153,7 +153,7 @@ pub struct Preset {
     /// EMPTY = omit the flag → llama.cpp's own default, f16. Empty is not a
     /// synonym for `"f16"`: the literal pins f16 forever, the empty string follows
     /// llama.cpp. Both reach the form as the word "default" (`Options.cache_types`
-    /// first entry), like `split_mode` — see src/form.rs `enum_or_default`.
+    /// first entry), like `split_mode`; see src/form.rs `enum_or_default`.
     pub cache_type_k: String,
     pub cache_type_v: String,
     /// The fused flash-attention kernel (--flash-attn). llama.cpp takes
@@ -177,9 +177,9 @@ pub struct Preset {
     /// This is the ONLY supported lever, and it is NOT interchangeable with putting
     /// `preserve_thinking` into `chat_template_kwargs` by hand. The flag sets the
     /// kwarg `preserve_reasoning`, and `caps_apply_preserve_reasoning`
-    /// (common/jinja/caps.cpp) expands THAT into three template variables at once —
-    /// `preserve_thinking = v`, `clear_thinking = !v`, `truncate_history_thinking =
-    /// !v` — because templates disagree on which name they read (LFM2.5 reads
+    /// (common/jinja/caps.cpp) expands THAT into three template variables at once
+    /// (`preserve_thinking = v`, `clear_thinking = !v`, `truncate_history_thinking
+    /// = !v`), because templates disagree on which name they read (LFM2.5 reads
     /// preserve_thinking, GLM-4.7 reads clear_thinking, Nemotron reads
     /// truncate_history_thinking). A hand-written `preserve_thinking` kwarg sets one
     /// of the three, so on a template keyed to either other name it is a SILENT
@@ -190,7 +190,7 @@ pub struct Preset {
     pub n_cpu_moe: Option<i32>,
     pub temp: Option<f64>,
     /// Integer sampler (--top-k): backed by an int SpinBox, not the float editor
-    /// the other samplers use — a decimal field would let `40,5` slip the int parse.
+    /// the other samplers use: a decimal field would let `40,5` slip the int parse.
     pub top_k: Option<i32>,
     pub top_p: Option<f64>,
     pub min_p: Option<f64>,
@@ -200,7 +200,7 @@ pub struct Preset {
 }
 
 /// A new preset (`new_default`) leaves EVERY tunable unset, so the model runs on
-/// llama.cpp's own defaults until the user overrides something on purpose — each
+/// llama.cpp's own defaults until the user overrides something on purpose; each
 /// `None`/`""` below is a key `render_section` omits, which is what the GUI shows
 /// as a ticked **default** box. The framework used to seed its own opinions here
 /// (32k context, 4 slots, 512-token batches, a q8_0 KV cache, forced flash-attn),
@@ -212,7 +212,7 @@ pub struct Preset {
 /// The four values that are not `None` are the ones with nothing to omit: the form
 /// binds `jinja` and `mmproj-offload` to plain checkboxes and `reasoning` /
 /// `reasoning-format` to dropdowns with no "unset" entry, so the key is always
-/// written — and each is set to exactly what llama.cpp would have done anyway
+/// written, and each is set to exactly what llama.cpp would have done anyway
 /// (`use_jinja = true` for the server, mmproj offloaded, both reasoning knobs on
 /// `auto`), which keeps writing them a no-op.
 impl Default for Preset {
@@ -325,7 +325,7 @@ impl Preset {
 /// `embeds_mtp` is the model's own `<arch>.nextn_predict_layers > 0`, which the
 /// caller must have actually READ (`gguf::read_model_info`). An unreadable GGUF
 /// is not evidence of absence, so callers SKIP the prune there rather than pass
-/// `false` — deleting a working `spec-type` because ggml-base.dll went missing
+/// `false`: deleting a working `spec-type` because ggml-base.dll went missing
 /// would be the worse failure.
 ///
 /// Two dead sets, only the second of which announces itself:
@@ -340,14 +340,15 @@ impl Preset {
 ///   model fails to load entirely.
 ///
 /// Why this is a write-boundary chore and not something the UI already prevents:
-/// the widgets are `enabled: draft_active` — DISABLED, not cleared. A value that
-/// arrives from somewhere other than those widgets stays in the form, greyed out
-/// and unreadable, and is written back on the next save. Two ways in, both
-/// ordinary: cloning a preset copies every field of its base onto a different
-/// model, and re-pointing a preset at another model keeps the old one's keys.
+/// the widgets are `enabled: draft_active`, i.e. DISABLED, not cleared. A value
+/// that arrives from somewhere other than those widgets stays in the form,
+/// greyed out and unreadable, and is written back on the next save. Two ways in,
+/// both ordinary: cloning a preset copies every field of its base onto a
+/// different model, and re-pointing a preset at another model keeps the old
+/// one's keys.
 pub fn prune_inactive_draft_keys(p: &mut Preset, embeds_mtp: bool) -> Vec<&'static str> {
     let mut dropped = Vec::new();
-    // A draft file makes all four live — nothing to prune.
+    // A draft file makes all four live; nothing to prune.
     if !p.model_draft.is_empty() {
         return dropped;
     }
@@ -361,7 +362,7 @@ pub fn prune_inactive_draft_keys(p: &mut Preset, embeds_mtp: bool) -> Vec<&'stat
         }
         // The draft KV types belong to THIS group, not the placement one below:
         // llama.cpp applies them whenever a draft context exists, embedded MTP
-        // heads included (see the field docs) — so they only die when there is no
+        // heads included (see the field docs), so they only die when there is no
         // speculation at all.
         if !p.spec_draft_type_k.is_empty() {
             p.spec_draft_type_k.clear();
@@ -395,7 +396,7 @@ pub fn load_all() -> Vec<Preset> {
 /// Write (replace) the preset's section in presets.ini.
 ///
 /// Side effect: on the FIRST save, when server.ini has no `ModelsDir` yet, this
-/// also seeds it — inferred from the model's path (its `models\` grandparent) —
+/// also seeds it, inferred from the model's path (its `models\` grandparent),
 /// so the file pickers have a root to scan without a separate setup step. The
 /// seeding error is intentionally ignored: a preset save must still succeed even
 /// if server.ini can't be touched.
@@ -419,8 +420,8 @@ pub fn save(preset: &Preset) -> io::Result<()> {
 /// True if `id` uses only the presets.ini section-header charset (letters,
 /// digits, `.`, `-`, `_`). `[`/`]`/newline break the section structure; `;`/`#`
 /// get misread as an inline comment (here and by llama-server's preset reader).
-/// Enforced at BOTH free-text ways into a header — `rename` and the save
-/// boundary — so a hand-authored id (a future `preset set`/import, or an
+/// Enforced at BOTH free-text ways into a header (`rename` and the save
+/// boundary), so a hand-authored id (a future `preset set`/import, or an
 /// editable-id GUI change) can't corrupt the file. Emptiness is a separate
 /// check so `rename` can keep its own "…is empty" message.
 fn valid_id(id: &str) -> bool {
@@ -430,7 +431,7 @@ fn valid_id(id: &str) -> bool {
 
 /// Save-boundary validation, pure so the unit test never touches `paths::`:
 /// the id becomes a section header and the free-text fields must survive the
-/// INI comment rule — a `;`/`#` in a GGUF path OR in the raw-JSON
+/// INI comment rule: a `;`/`#` in a GGUF path OR in the raw-JSON
 /// `chat-template-kwargs` would silently reload truncated (here AND in
 /// llama-server's own preset reader), so refuse it with the field name (the
 /// cure is renaming the file / fixing the JSON). See `ini::reject_comment_markers`.
@@ -438,7 +439,7 @@ fn valid_id(id: &str) -> bool {
 /// `override-tensor` gets a SECOND check on top of that one: its own grammar.
 /// llama.cpp splits the value on `,` and each rule at its first `=` before it
 /// parses anything, and a rule that comes out of that without a device is a
-/// `throw` during arg parsing — the model simply never loads, and the reason is
+/// `throw` during arg parsing; the model simply never loads, and the reason is
 /// buried in a child process's log. The table can't produce one; a hand-edited
 /// INI can, which is exactly why the check lives at the save boundary too.
 fn validate_for_save(preset: &Preset) -> io::Result<()> {
@@ -485,7 +486,7 @@ pub fn rename(old_id: &str, new_id: &str) -> io::Result<()> {
         ));
     }
     // The rename dialog is one free-text way into a section header (the save
-    // boundary is the other — see `valid_id`). Hold it to the same charset:
+    // boundary is the other; see `valid_id`). Hold it to the same charset:
     // `[`/`]`/newline would corrupt the section structure, `;`/`#` gets misread
     // as a comment (here and by llama-server alike).
     if !valid_id(new) {
@@ -607,21 +608,21 @@ pub fn render_section(p: &Preset) -> String {
     out.push_str("; The next two place a SEPARATE draft file and are ignored without\r\n");
     out.push_str("; model-draft: with EMBEDDED MTP heads the draft context is built against\r\n");
     out.push_str("; the target model and runs on the model's own device. With a separate MTP\r\n");
-    out.push_str("; head file (e.g. gemma4-assistant, n_layer=0) pin it to ONE device — the\r\n");
-    out.push_str("; multi-device auto split crashes those heads — with n-gpu-layers-draft =\r\n");
-    out.push_str("; 99, or 0 to fall back to CPU.\r\n");
+    out.push_str("; head file (e.g. gemma4-assistant, n_layer=0) pin it to ONE device with\r\n");
+    out.push_str("; n-gpu-layers-draft = 99, or 0 to fall back to CPU: the multi-device auto\r\n");
+    out.push_str("; split crashes those heads.\r\n");
     emit_i32(&mut out, "n-gpu-layers-draft", p.n_gpu_layers_draft);
     emit_str(&mut out, "device-draft", &p.device_draft);
 
     out.push_str("\r\n; Resource / context\r\n");
     emit_i32(&mut out, "ctx-size", p.ctx_size);
     emit_i32(&mut out, "n-gpu-layers", p.n_gpu_layers);
-    out.push_str("; GPU distribution for this model (overrides server.ini — but a server-wide\r\n");
+    out.push_str("; GPU distribution for this model (overrides server.ini, but a server-wide\r\n");
     out.push_str("; Device wins at launch; same on CUDA and HIP). device = the GPUs it runs\r\n");
     out.push_str("; on, e.g. ROCm1 or ROCm1,CUDA0. tensor-split = how much each one holds,\r\n");
-    out.push_str("; e.g. 3,1 — positional over `device`, IN THAT ORDER. Blank tensor-split\r\n");
+    out.push_str("; e.g. 3,1 (positional over `device`, IN THAT ORDER). Blank tensor-split\r\n");
     out.push_str("; with 2+ devices = llama.cpp splits by free VRAM (not evenly).\r\n");
-    out.push_str("; split-mode = none|layer|row. Blank = layer, or the server-wide mode — which\r\n");
+    out.push_str("; split-mode = none|layer|row. Blank = layer, or the server-wide mode, which\r\n");
     out.push_str("; also OVERRIDES this key whenever it is set (the router's CLI wins the merge).\r\n");
     out.push_str("; none = only the first device runs (tensor-split is ignored); row = weight\r\n");
     out.push_str("; matrices split row-wise by the vector (CUDA/ROCm only).\r\n");
@@ -632,7 +633,7 @@ pub fn render_section(p: &Preset) -> String {
         "; override-tensor sends the tensors whose NAME matches a regex to a device of\r\n",
     );
     out.push_str(
-        "; their own, whatever `device` says — `<regex>=<device|CPU>`, comma-separated.\r\n",
+        "; their own, whatever `device` says: `<regex>=<device|CPU>`, comma-separated.\r\n",
     );
     out.push_str("; llama.cpp keeps token_embd.weight in PINNED HOST memory even when every\r\n");
     out.push_str(
@@ -729,7 +730,7 @@ mod tests {
     use super::*;
     use std::collections::BTreeMap;
 
-    // All six speculative keys set, with no draft FILE — the shape a Clone (or a
+    // All six speculative keys set, with no draft FILE: the shape a Clone (or a
     // re-pointed model) leaves behind on a model that can't use them.
     fn preset_with_dead_draft_keys() -> Preset {
         Preset {
@@ -770,7 +771,7 @@ mod tests {
     }
 
     // Embedded MTP heads: the speculator stays (it is the whole point), and so do
-    // the draft KV types — llama.cpp applies those to any draft context. Only the
+    // the draft KV types; llama.cpp applies those to any draft context. Only the
     // two PLACEMENT keys die: those it reads inside `if (has_dft())`, so they'd
     // pin a draft that runs on the model's device.
     #[test]
@@ -786,7 +787,7 @@ mod tests {
         assert_eq!(p.device_draft, "");
     }
 
-    // A draft FILE makes all four live, on any model — prune must not touch them.
+    // A draft FILE makes all four live, on any model; prune must not touch them.
     #[test]
     fn prune_leaves_a_preset_with_a_draft_file_alone() {
         let mut p = Preset {
@@ -807,7 +808,7 @@ mod tests {
         assert_eq!(p, Preset::default());
     }
 
-    // Validation only — both shapes must reject BEFORE any file IO (so this
+    // Validation only: both shapes must reject BEFORE any file IO (so this
     // never touches paths::, per the src/tests/mod.rs warning).
     #[test]
     fn rename_rejects_blank_and_unchanged_ids() {
@@ -816,7 +817,7 @@ mod tests {
         assert!(rename("old", " old ").is_err(), "unchanged after trim");
     }
 
-    // Free-text rename ids must stay inside make_id's charset — `[`/`]`/CR/LF
+    // Free-text rename ids must stay inside make_id's charset: `[`/`]`/CR/LF
     // would corrupt the INI section structure, `;`/`#`/`=` get misparsed.
     // All rejected before any IO (per the src/tests/mod.rs warning).
     #[test]
@@ -924,7 +925,7 @@ mod tests {
             ..Default::default()
         };
         let ini = render_section(&p);
-        // Only value lines count — the section carries a `; spec-type = …` help
+        // Only value lines count: the section carries a `; spec-type = …` help
         // comment that must not be mistaken for an emitted key.
         let value_lines: Vec<&str> = ini
             .lines()
@@ -1021,7 +1022,7 @@ mod tests {
             split_mode: "row".into(),
             tensor_split: "3,1".into(),
             // Two rules, so the `,` that separates them AND the `=` inside each
-            // one both cross the INI reader — the two characters the value's own
+            // one both cross the INI reader: the two characters the value's own
             // grammar is built on.
             override_tensor: r"token_embd\.weight=ROCm0,\.ffn_(up|down|gate|gate_up)_(ch|)exps=CPU"
                 .into(),
@@ -1037,7 +1038,7 @@ mod tests {
             jinja: Some(false),
             reasoning: "on".into(),
             reasoning_format: "deepseek".into(),
-            // Some(false) — not None: the round-trip must prove `false` survives as
+            // Some(false), not None: the round-trip must prove `false` survives as
             // `false` and does not collapse into "key absent" (a distinct state:
             // --no-reasoning-preserve vs. the template's own default).
             reasoning_preserve: Some(false),
@@ -1064,7 +1065,7 @@ mod tests {
     // The key name is pinned here (the round-trip above proves it parses back).
     // `override-tensor` is llama.cpp's own long-arg spelling minus the dashes,
     // which is what its preset reader matches on (common/preset.cpp,
-    // `get_map_key_opt`) — any other spelling makes llama-server refuse the whole
+    // `get_map_key_opt`); any other spelling makes llama-server refuse the whole
     // file with "option not recognized".
     #[test]
     fn render_emits_the_override_tensor_key_when_set_and_omits_it_when_empty() {
@@ -1163,7 +1164,7 @@ mod tests {
     }
 
     // The writer trims (emit_str + the model line) because the reader trims on
-    // parse — padded input must still round-trip to the TRIMMED value, not
+    // parse: padded input must still round-trip to the TRIMMED value, not
     // diverge between the in-memory preset and the reloaded one.
     #[test]
     fn padded_values_round_trip_trimmed() {

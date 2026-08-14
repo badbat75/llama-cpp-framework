@@ -1,4 +1,4 @@
-//! ggml-base.dll glue — the `KvSource` backed by llama.cpp's own gguf reader.
+//! ggml-base.dll glue: the `KvSource` backed by llama.cpp's own gguf reader.
 //!
 //! Split out of gguf.rs so the field-extraction logic (`ModelInfo::from_kv` &
 //! friends) reads without the ~230 lines of Win32 FFI below. The module's public
@@ -52,7 +52,7 @@ mod windows_impl {
     type FnType = unsafe extern "C" fn(GgufCtx, i64) -> i32;
     // Tensor infos (not KV): `gguf_find_tensor` returns -1 when absent, and the
     // type is a `ggml_type` enum (ggml.h), NOT the `general.file_type` LLAMA_FTYPE
-    // that `ftype_name` maps — the two enums disagree on nearly every value.
+    // that `ftype_name` maps; the two enums disagree on nearly every value.
     type FnFindTensor = unsafe extern "C" fn(GgufCtx, *const c_char) -> i64;
     type FnTensorType = unsafe extern "C" fn(GgufCtx, i64) -> i32;
     type FnTensorSize = unsafe extern "C" fn(GgufCtx, i64) -> usize;
@@ -87,7 +87,7 @@ mod windows_impl {
         tensor_size: FnTensorSize,
     }
     // `Api` holds only C function pointers (Send + Sync), so it is safe to cache
-    // in a `static OnceLock`. Only SUCCESS is cached — see `api()`.
+    // in a `static OnceLock`. Only SUCCESS is cached; see `api()`.
 
     #[link(name = "kernel32")]
     extern "system" {
@@ -171,7 +171,7 @@ mod windows_impl {
 
     // Memoize SUCCESS only: caching a failed load would leave the Model-info
     // box dead until restart when the configurator started before the DLL
-    // existed (e.g. mid `02-build.ps1`) — the exe tree can change under us,
+    // existed (e.g. mid `02-build.ps1`); the exe tree can change under us,
     // and the other probes (version, devices) do re-probe on Refresh. A failed
     // `LoadLibraryW` is cheap, so retrying per read costs nothing.
     fn api() -> Option<&'static Api> {

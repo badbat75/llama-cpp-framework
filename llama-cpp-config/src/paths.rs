@@ -1,11 +1,11 @@
 //! Paths for the llama.cpp-framework configuration tool.
 //!
-//! Four jobs: (1) the user runtime tree — %LOCALAPPDATA%\llama.cpp\ on Windows
+//! Four jobs: (1) the user runtime tree, %LOCALAPPDATA%\llama.cpp\ on Windows
 //! (config\server.ini, config\presets.ini, logs\llama-server.log), overridable
 //! for tests via LLAMA_CPP_CONFIG_DATA_ROOT; (2) locating llama-server.exe
 //! across the installer and dev layouts (`llama_server_exe`, which also strips
 //! canonicalize()'s \\?\ prefix so the path is shell-pasteable); (3) the ONE
-//! path outside that tree — OpenCode's user config (`opencode_user_config`,
+//! path outside that tree, OpenCode's user config (`opencode_user_config`,
 //! ~/.config/opencode/opencode.json), used by the Integrations tab; (4) locating
 //! the ROCm/HIP runtime (`rocm_bin_dir`) so `proc` can make ggml-hip.dll
 //! loadable in the llama-server children we spawn.
@@ -20,7 +20,7 @@ pub(crate) fn home_dir() -> PathBuf {
     // Under the e2e redirect the temp dir stands in for the whole profile:
     // home-derived paths (e.g. `server_cfg::default_models_dir`, which save()
     // CREATES on disk) must stay inside the temp tree, or a redirected test
-    // would silently touch — and mkdir under — the user's real home.
+    // would silently touch (and mkdir under) the user's real home.
     if let Some(p) = env_path("LLAMA_CPP_CONFIG_DATA_ROOT") {
         return p;
     }
@@ -40,7 +40,7 @@ pub(crate) fn home_dir() -> PathBuf {
 /// `opencode_user_config` below AND `home_dir` above, so home-derived
 /// defaults land in the temp tree too). It exists for the e2e tests under
 /// `src/tests/`, which point config IO at a temp dir so they never touch the
-/// user's real data — it is NOT a supported end-user knob.
+/// user's real data; it is NOT a supported end-user knob.
 pub fn data_root() -> PathBuf {
     if let Some(p) = env_path("LLAMA_CPP_CONFIG_DATA_ROOT") {
         return p.join("llama.cpp");
@@ -69,14 +69,14 @@ pub fn presets_ini() -> PathBuf {
     config_dir().join("presets.ini")
 }
 
-/// The configurator's OWN settings (the Settings tab — see `settings.rs`),
+/// The configurator's OWN settings (the Settings tab; see `settings.rs`),
 /// kept apart from server.ini, whose every key maps to a llama-server flag.
 pub fn settings_ini() -> PathBuf {
     config_dir().join("settings.ini")
 }
 
-/// The llama-server log file. ONE home for the path — `runstate::start()`
-/// writes it, the GUI's "no longer running — see …" message points at it.
+/// The llama-server log file. ONE home for the path: `runstate::start()`
+/// writes it, the GUI's "no longer running" message points at it.
 pub fn server_log() -> PathBuf {
     data_root().join("logs").join("llama-server.log")
 }
@@ -99,7 +99,7 @@ pub fn opencode_user_config() -> PathBuf {
 /// The ROCm/HIP runtime dir on Windows (`…\AMD\ROCm\<ver>\bin`, home of
 /// `amdhip64_*.dll` / `rocblas.dll`). AMD's HIP SDK installer sets the
 /// machine-wide `HIP_PATH` env var but does NOT add this dir to the system
-/// PATH — and ggml loads backends dynamically, silently dropping ggml-hip.dll
+/// PATH, and ggml loads backends dynamically, silently dropping ggml-hip.dll
 /// when its imports don't resolve, so HIP GPUs then enumerate as Vulkan-only.
 /// `proc::prepend_rocm_path` feeds this to every llama-server child. Primary
 /// signal is `HIP_PATH`; fallback scans `%ProgramFiles%\AMD\ROCm` for the
@@ -131,7 +131,7 @@ pub fn rocm_bin_dir() -> Option<PathBuf> {
 }
 
 /// The highest version-shaped name ("7.1", "6.4.2") in `names`, compared by
-/// numeric components — a string sort would rank "7.1" above "10.0". Names
+/// numeric components: a string sort would rank "7.1" above "10.0". Names
 /// with any non-numeric component are ignored.
 #[cfg_attr(not(windows), allow(dead_code))]
 fn newest_version(names: &[String]) -> Option<&String> {
@@ -154,9 +154,9 @@ fn server_binary_name() -> &'static str {
 }
 
 /// Where llama-server lives. Tries (in order):
-/// 1. `<exe-dir>\<binary>` — installer layout
-/// 2. `<exe-dir>\..\..\..\build\llama.cpp-cmake\bin\<binary>` — dev layout
-/// 3. `<exe-dir>\..\build\llama.cpp-cmake\bin\<binary>` — alt dev layout
+/// 1. `<exe-dir>\<binary>`: installer layout
+/// 2. `<exe-dir>\..\..\..\build\llama.cpp-cmake\bin\<binary>`: dev layout
+/// 3. `<exe-dir>\..\build\llama.cpp-cmake\bin\<binary>`: alt dev layout
 pub fn llama_server_exe() -> Option<PathBuf> {
     let exe = std::env::current_exe().ok()?;
     let exe_dir = exe.parent()?;
@@ -193,7 +193,7 @@ pub fn llama_server_exe() -> Option<PathBuf> {
 /// Drop the `\\?\` extended-length prefix Windows' `canonicalize` prepends:
 /// the path is also *displayed* (the Command Line card renders it as the
 /// pasteable exe line), and some shells reject the prefix. UNC results
-/// (`\\?\UNC\…`) are left as-is — a bare strip would corrupt them.
+/// (`\\?\UNC\…`) are left as-is: a bare strip would corrupt them.
 fn strip_extended_prefix(p: PathBuf) -> PathBuf {
     #[cfg(windows)]
     {

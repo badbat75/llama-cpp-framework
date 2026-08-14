@@ -8,22 +8,22 @@
 //! `-ot` is a list of `<regex>=<buffer type>` rules. llama.cpp matches the regex
 //! against every tensor NAME with `std::regex_search` (`llama-model-loader.cpp`)
 //! and, on a hit, allocates that tensor from the named buffer type instead of the
-//! one its layer would have used. The buffer type is a DEVICE name — llama.cpp
+//! one its layer would have used. The buffer type is a DEVICE name: llama.cpp
 //! builds the lookup from `ggml_backend_dev_buffer_type` over every backend, so
 //! the legal values are exactly the ids `--list-devices` prints, plus `CPU`
-//! (`common/arg.cpp`, `parse_tensor_buffer_overrides` — an unknown one is a
+//! (`common/arg.cpp`, `parse_tensor_buffer_overrides`: an unknown one is a
 //! hard `throw`, i.e. the model fails to load).
 //!
 //! ## Why a table and not a text field
 //! The grammar is positional and unforgiving in two ways that a free-text field
 //! quietly walks into, because llama.cpp splits BEFORE it parses:
-//!   - rules are split on `,` — so a `{1,2}` quantifier inside a regex tears the
+//!   - rules are split on `,`, so a `{1,2}` quantifier inside a regex tears the
 //!     rule in half, and the half without an `=` is a fatal "invalid value";
-//!   - a rule is split at its FIRST `=` — so an `=` inside the regex silently
+//!   - a rule is split at its FIRST `=`, so an `=` inside the regex silently
 //!     eats part of the pattern.
 //!
 //! Neither is escapable. So the pattern is a field the user can't type freely,
-//! which is exactly what `sanitize_pattern` enforces (below) — and the device is
+//! which is exactly what `sanitize_pattern` enforces (below), and the device is
 //! a dropdown of real device ids, not a string to spell.
 //!
 //! ## The three canned patterns
@@ -33,10 +33,10 @@
 //!
 //! `Embedding table` is the one that pays for the table's existence. llama.cpp
 //! leaves `token_embd.weight` in HOST memory even when it reports
-//! `offloaded 33/33 layers to GPU` — the embedding lookup is a `get_rows` over a
+//! `offloaded 33/33 layers to GPU`: the embedding lookup is a `get_rows` over a
 //! handful of tokens, cheap on CPU and worth ~1-2 GiB of VRAM. But with a GPU
 //! backend active that host buffer is PINNED (`ROCm_Host` / `CUDA_Host`), and
-//! Windows counts pinned host memory as **Shared GPU memory** — so a model that
+//! Windows counts pinned host memory as **Shared GPU memory**, so a model that
 //! fits in VRAM with room to spare still shows GBs of shared allocation, and the
 //! graph carries a CPU split it didn't need. On a big-vocab BF16 model the table
 //! is huge (`n_vocab 248320 × n_embd 4096 × 2 B` = 1940 MiB), which is when
@@ -54,8 +54,8 @@ pub struct Rule {
     pub device: String,
 }
 
-/// A named pattern for the "Tensor" dropdown. The last entry is always `CUSTOM`
-/// — the free-text escape hatch, which carries no canned pattern of its own.
+/// A named pattern for the "Tensor" dropdown. The last entry is always `CUSTOM`:
+/// the free-text escape hatch, which carries no canned pattern of its own.
 pub struct Kind {
     /// Stable id, round-tripped through the Slint combo's `values` model.
     pub id: &'static str,
@@ -64,13 +64,13 @@ pub struct Kind {
     pub pattern: &'static str,
 }
 
-/// The `Custom regex…` kind's id — the one that keeps the row's existing pattern
+/// The `Custom regex…` kind's id: the one that keeps the row's existing pattern
 /// and lets the user edit it.
 pub const CUSTOM: &str = "custom";
 
 /// The canned patterns, in dropdown order. `exps` is llama.cpp's own expert
-/// regex verbatim (`LLM_FFN_EXPS_REGEX` in `common/common.h`) — the one
-/// `--cpu-moe` installs — so "MoE experts → CPU" here is exactly `-cmoe`.
+/// regex verbatim (`LLM_FFN_EXPS_REGEX` in `common/common.h`), the one
+/// `--cpu-moe` installs, so "MoE experts → CPU" here is exactly `-cmoe`.
 pub const KINDS: &[Kind] = &[
     Kind {
         id: "embd",
@@ -95,7 +95,7 @@ pub const KINDS: &[Kind] = &[
 ];
 
 /// The kind a pattern belongs to: the canned entry it matches verbatim, else
-/// `CUSTOM` (always the last index, so an unrecognised — i.e. hand-written —
+/// `CUSTOM` (always the last index, so an unrecognised, i.e. hand-written,
 /// pattern lands on the free-text row).
 fn kind_index(pattern: &str) -> usize {
     KINDS
@@ -111,7 +111,7 @@ fn is_custom(pattern: &str) -> bool {
 // ── String ↔ rules ───────────────────────────────────────────────────────
 
 /// `"token_embd\.weight=ROCm0, x=CPU"` → two rules. Tolerant on purpose: a piece
-/// with no `=` (only reachable from a hand-edited INI — the table can't produce
+/// with no `=` (only reachable from a hand-edited INI: the table can't produce
 /// one) keeps its text as the pattern and an EMPTY device, so the row survives,
 /// shows its problem, and can be fixed instead of vanishing on the next save.
 pub fn parse(s: &str) -> Vec<Rule> {
@@ -151,8 +151,8 @@ fn sanitize_pattern(p: &str) -> String {
 
 // ── Edits (each returns the new INI value; the caller writes it to the form) ──
 
-/// Append a rule. Seeded with the Embedding table — the reason this table exists
-/// (module header) — on the first real GPU the probe found, so the common case is
+/// Append a rule. Seeded with the Embedding table, the reason this table exists
+/// (module header), on the first real GPU the probe found, so the common case is
 /// one click. Falls back to CPU when no GPU is known yet (an un-probed GUI): a
 /// device is never left blank, because a blank one can't be saved.
 pub fn add(s: &str, devices: &[DeviceOption]) -> String {
@@ -181,13 +181,13 @@ pub fn remove(s: &str, index: usize) -> String {
 }
 
 /// Switch a row to another named pattern: the kind writes its canned regex over
-/// whatever was there, and `CUSTOM` — whose canned regex is the empty string —
+/// whatever was there, and `CUSTOM` (whose canned regex is the empty string)
 /// therefore CLEARS it, handing the user an empty field to type into.
 ///
 /// That is not a choice so much as a consequence: a row's kind is DERIVED from
 /// its pattern (`kind_index`), with no hidden "is custom" bit anywhere, because a
 /// second source of truth is a second thing to keep in sync with a hand-edited
-/// INI. So a row still holding `\.ffn_…_exps` necessarily reads as the MoE kind —
+/// INI. So a row still holding `\.ffn_…_exps` necessarily reads as the MoE kind:
 /// "Custom, but the text happens to equal a canned regex" is not a state this can
 /// represent, and pretending otherwise would leave the user picking Custom and
 /// watching nothing happen.
@@ -203,7 +203,7 @@ pub fn set_kind(s: &str, index: usize, kind_id: &str) -> String {
     render(&rules)
 }
 
-/// Set a row's regex (the Custom row's text field). Sanitized — see
+/// Set a row's regex (the Custom row's text field). Sanitized; see
 /// `sanitize_pattern`.
 pub fn set_pattern(s: &str, index: usize, pattern: &str) -> String {
     let mut rules = parse(s);
@@ -227,7 +227,7 @@ pub fn set_device(s: &str, index: usize, device: &str) -> String {
 // ── Validation ───────────────────────────────────────────────────────────
 
 /// Refuse a value llama.cpp would choke on. Only a hand-edited INI can get here
-/// — the table sanitizes — but that is exactly the case worth catching, because
+/// (the table sanitizes), but that is exactly the case worth catching, because
 /// llama.cpp's failure mode is a `throw` during arg parsing: the model does not
 /// load, and the reason is buried in a child process's log.
 ///
@@ -242,7 +242,7 @@ pub fn validate(s: &str) -> Result<(), String> {
         }
         if rule.device.is_empty() {
             return Err(format!(
-                "tensor override {n} (`{}`) names no device — a rule is `<pattern>=<device>`, \
+                "tensor override {n} (`{}`) names no device: a rule is `<pattern>=<device>`, \
                  and llama.cpp splits it at the first `=`",
                 rule.pattern
             ));
@@ -251,11 +251,11 @@ pub fn validate(s: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// True when the rules pin the embedding table to a GPU — the one placement whose
+/// True when the rules pin the embedding table to a GPU, the one placement whose
 /// payoff depends on the MODEL, not on the rule: `token_embd` must be stored in a
 /// type ggml-cuda/ggml-hip can `get_rows` on-device (see `gguf::ModelInfo::
-/// embd_pin_warning`). `CPU` targets are not a pin — leaving the table in host
-/// memory is exactly what the rule would be undoing — so they don't count, and an
+/// embd_pin_warning`). `CPU` targets are not a pin (leaving the table in host
+/// memory is exactly what the rule would be undoing), so they don't count, and an
 /// empty device is `validate`'s business, not ours.
 pub fn pins_embeddings_to_gpu(s: &str) -> bool {
     parse(s).iter().any(|r| {
@@ -268,7 +268,7 @@ pub fn pins_embeddings_to_gpu(s: &str) -> bool {
 // ── Display ──────────────────────────────────────────────────────────────
 
 /// The dropdown behind every row's Device cell: every probed device INCLUDING
-/// the CPU (unlike the GPU distribution table, which filters it out — `-ot`'s
+/// the CPU (unlike the GPU distribution table, which filters it out: `-ot`'s
 /// whole point is that CPU is a legal target), plus any device a rule already
 /// names that the probe doesn't know, kept as a `(custom)` entry so a stale or
 /// another-machine id is never silently rewritten by the next save.
@@ -331,7 +331,7 @@ fn row_problem(rule: &Rule, detected: bool) -> String {
 /// The line under the table: the llama-server flag these rules produce.
 pub fn summary(s: &str) -> String {
     if parse(s).is_empty() {
-        return "(no overrides — every tensor goes wherever its layer went)".into();
+        return "(no overrides: every tensor goes wherever its layer went)".into();
     }
     format!("--override-tensor {}", render(&parse(s)))
 }
@@ -341,7 +341,7 @@ mod tests {
     use super::*;
     use crate::devices;
 
-    // The same mixed box the gpu_split tests use, plus its CPU — which IS a
+    // The same mixed box the gpu_split tests use, plus its CPU, which IS a
     // legal -ot target (and the only one gpu_split filters out).
     const SAMPLE: &str = "Available devices:\n  \
         ROCm0: AMD Radeon AI PRO R9700 (32624 MiB, 32462 MiB free)\n  \
@@ -370,7 +370,7 @@ mod tests {
         assert_eq!(
             parse(&s),
             [rule(EMBD, "ROCm0"), rule(EXPS, "CPU")],
-            "the experts regex carries `|` and `(` — neither is a separator"
+            "the experts regex carries `|` and `(`; neither is a separator"
         );
         assert_eq!(render(&parse(&s)), s);
     }
@@ -383,7 +383,7 @@ mod tests {
     }
 
     // A rule is split at its FIRST `=` (llama.cpp's `override.find('=')`), so a
-    // pattern can never own one — and a device that itself contained `=` would
+    // pattern can never own one, and a device that itself contained `=` would
     // be a nonsense buffer type anyway.
     #[test]
     fn a_rule_splits_at_the_first_equals_like_llama_cpp_does() {
@@ -421,7 +421,7 @@ mod tests {
     // ── Edits ─────────────────────────────────────────────────────────────
 
     // Adding a row is one click for the case the table exists for: the embedding
-    // table, on a real GPU — never a blank device (which cannot be saved).
+    // table, on a real GPU, never a blank device (which cannot be saved).
     #[test]
     fn add_seeds_the_embedding_table_on_the_first_gpu() {
         let s = add("", &devs());
@@ -446,7 +446,7 @@ mod tests {
         assert_eq!(remove(&s, 9), s, "an out-of-range index is a no-op");
     }
 
-    // A kind writes its regex over the row — and Custom's regex is the empty
+    // A kind writes its regex over the row, and Custom's regex is the empty
     // string, so picking it hands over an empty field. It CANNOT keep the pattern
     // it was switched from: the kind is derived from the pattern, so a row still
     // holding `\.ffn_…_exps` would just read back as the MoE kind and the text
@@ -462,7 +462,7 @@ mod tests {
         assert!(rows[0].custom, "…and the row now offers its regex field");
         assert_eq!(rows[0].kind_index as usize, KINDS.len() - 1);
         // An empty pattern is a real rule llama.cpp would not want, so it says so
-        // until the user types — rather than silently saving a no-op rule.
+        // until the user types, rather than silently saving a no-op rule.
         assert!(validate(&custom).is_err());
         assert_eq!(rows[0].problem, "empty pattern");
 
@@ -496,7 +496,7 @@ mod tests {
     }
 
     // An unknown DEVICE is not a save-blocker (the probe is async, and a config
-    // can legitimately name another machine's GPU) — it's a row-level flag.
+    // can legitimately name another machine's GPU); it's a row-level flag.
     #[test]
     fn an_unknown_device_is_flagged_on_its_row_not_refused_at_save() {
         let s = format!("{EMBD}=SYCL3");
@@ -533,7 +533,7 @@ mod tests {
         );
     }
 
-    // A hand-written regex lands on the Custom row with its text intact — the
+    // A hand-written regex lands on the Custom row with its text intact: the
     // only way an unrecognised pattern stays editable.
     #[test]
     fn an_unrecognised_pattern_becomes_the_custom_row() {
@@ -573,7 +573,7 @@ mod tests {
     }
 
     // The canned experts regex must stay byte-identical to llama.cpp's
-    // LLM_FFN_EXPS_REGEX (common/common.h) — the one --cpu-moe installs. If
+    // LLM_FFN_EXPS_REGEX (common/common.h), the one --cpu-moe installs. If
     // upstream renames its expert tensors, this is the line that has to move.
     #[test]
     fn the_experts_kind_is_llama_cpps_own_regex() {

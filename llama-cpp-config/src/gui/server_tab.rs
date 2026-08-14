@@ -1,5 +1,5 @@
 //! Server-tab callback wiring (the server.ini editor), plus the nav-rail run
-//! controls (`start_server` / `stop_server` — thin wrappers over the parent's
+//! controls (`start_server` / `stop_server`: thin wrappers over the parent's
 //! `start_server_async` / `stop_server_async`, which the tray shares).
 //!
 //! Shared state, generated Slint types, and the `load_*` / `refresh_*` / `set_status`
@@ -19,12 +19,12 @@ pub(super) fn wire(app: &AppWindow, tray: &AppTray, state: &Rc<RefCell<State>>) 
             let cfg = server_form::form_to_config(&s.get_server_form());
             match server_cfg::save(&cfg) {
                 Ok(()) => {
-                    // A RUNNING server keeps the config it was launched with —
-                    // the save only changes the file — so surface the restart
+                    // A RUNNING server keeps the config it was launched with
+                    // (the save only changes the file), so surface the restart
                     // step instead of implying the change is live.
                     let msg = if s.get_server_running() {
                         format!(
-                            "Saved {} — restart llama-server to apply.",
+                            "Saved {}: restart llama-server to apply.",
                             paths::server_ini().display()
                         )
                     } else {
@@ -51,7 +51,7 @@ pub(super) fn wire(app: &AppWindow, tray: &AppTray, state: &Rc<RefCell<State>>) 
             load_server_into_ui(&app);
             // No refresh_file_options / refresh_integrations here: a form
             // revert never touches disk, and both hubs derive from the SAVED
-            // config — the only observable effect of calling them was wiping
+            // config; the only observable effect of calling them was wiping
             // pending Integrations toggles.
             set_status(
                 &app,
@@ -60,7 +60,7 @@ pub(super) fn wire(app: &AppWindow, tray: &AppTray, state: &Rc<RefCell<State>>) 
             );
         });
     }
-    // Browse callback needs nothing from `app` — it works purely on its argument.
+    // Browse callback needs nothing from `app`; it works purely on its argument.
     app.global::<AppState>()
         .on_browse_models_dir(move |current| {
             let start = if !current.is_empty() {
@@ -92,8 +92,8 @@ pub(super) fn wire(app: &AppWindow, tray: &AppTray, state: &Rc<RefCell<State>>) 
 }
 
 /// The Server tab's two device tables (GPU distribution + tensor placement).
-/// Split out of `wire` because these need nothing but the window — no tray, no
-/// shared `State` — which is what lets the e2e harness wire them without
+/// Split out of `wire` because these need nothing but the window (no tray, no
+/// shared `State`), which is what lets the e2e harness wire them without
 /// fabricating a tray (`gui::wire_tabs_for_tests`). The rest of `wire` (Save,
 /// Revert, Start/Stop) does need both, and stays there.
 pub(super) fn wire_tables(app: &AppWindow) {
@@ -102,7 +102,7 @@ pub(super) fn wire_tables(app: &AppWindow) {
 }
 
 /// The server-wide tensor-placement table's five callbacks, over
-/// `server_form.override_tensor` — the twin of `models_tab::wire_tensor_table`,
+/// `server_form.override_tensor`: the twin of `models_tab::wire_tensor_table`,
 /// which documents why `set_pattern` refreshes only the scalars (rebuilding would
 /// recreate the LineEdit being typed into and drop the caret).
 ///
@@ -179,7 +179,7 @@ fn wire_tensor_table(app: &AppWindow) {
 
 /// The server-wide GPU distribution table's four callbacks. Each one derives a
 /// new selection with `gpu_split` (the pure rules live there, unit-tested) and
-/// writes it back into `server_form.device` + `.tensor_split` — those two strings
+/// writes it back into `server_form.device` + `.tensor_split`: those two strings
 /// ARE the state; the table holds no copy.
 ///
 /// Note which refresh each one ends with. Toggle / Auto / Even REBUILD the row
@@ -187,7 +187,7 @@ fn wire_tensor_table(app: &AppWindow) {
 /// way bindings only survive a rebuild. A weight edit deliberately does NOT: it
 /// changes no other row's weight (the SpinBoxes are disabled in Auto mode, so
 /// there is never a seed-the-others step), and rebuilding would recreate the very
-/// SpinBox being typed into — multi-digit weights would be impossible. See
+/// SpinBox being typed into; multi-digit weights would be impossible. See
 /// GpuSplitTable's binding note in ui/components.slint.
 fn wire_gpu_table(app: &AppWindow) {
     let s = app.global::<AppState>();
@@ -256,8 +256,8 @@ fn wire_gpu_table(app: &AppWindow) {
             let mut f = st.get_server_form();
             f.split_mode = v;
             st.set_server_form(f);
-            // The mode decides what every column means — and the server-wide
-            // value shadows the preset table too — so a pick re-projects BOTH
+            // The mode decides what every column means (and the server-wide
+            // value shadows the preset table too), so a pick re-projects BOTH
             // tables, not just this tab's scalars.
             refresh_gpu_rows(&app);
         });
@@ -278,7 +278,7 @@ fn pick_dir(start: &std::path::Path) -> Option<PathBuf> {
 }
 
 /// Re-baseline the server form after a save so `server_dirty` reads false until
-/// the next edit — the server analog of `apply_form`'s base handling.
+/// the next edit: the server analog of `apply_form`'s base handling.
 fn snapshot_server_base(app: &AppWindow) {
     let s = app.global::<AppState>();
     s.set_server_form_base(s.get_server_form());

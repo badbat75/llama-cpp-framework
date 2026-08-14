@@ -1,9 +1,9 @@
-// llama-server log viewer — an independent second root window (like AppTray),
+// llama-server log viewer: an independent second root window (like AppTray),
 // shown non-modally beside the main configurator: while it is open the main
 // window stays fully interactive. Rust (src/gui/log_window.rs) tails
 // logs\llama-server.log on a timer and pushes the retained text into
 // `log_text`; after each push it invokes `scroll-to-end` so the view follows
-// the file like `tail -f` — unless the user unticks Auto-scroll to read
+// the file like `tail -f`, unless the user unticks Auto-scroll to read
 // scrolled-back output while the server keeps writing.
 
 import { TextEdit, CheckBox, Palette } from "std-widgets.slint";
@@ -19,13 +19,13 @@ export component LogWindow inherits Window {
     background: Palette.background;
 
     // The retained tail of the log file, pushed from Rust on every poll that
-    // found new bytes (never edited UI-side — the TextEdit below is read-only).
+    // found new bytes (never edited UI-side: the TextEdit below is read-only).
     in property <string> log_text;
     // The tailed file's path (display only, so the user can find the full file).
     in property <string> log_path;
     // Liveness readout, refreshed on every poll: file size + how long ago the
     // file last grew ("17.3 MB · updated 5 s ago"). llama-server can go quiet
-    // for minutes between requests — without this a live tail over a silent
+    // for minutes between requests; without this a live tail over a silent
     // file is indistinguishable from a stuck one.
     in property <string> tail_status;
     // Owned by this window; Rust reads it to decide whether to follow the tail.
@@ -66,7 +66,7 @@ export component LogWindow inherits Window {
         }
 
         // Read-only so the log stays selectable/copyable (Ctrl+C) but can't be
-        // edited — same pattern as the chat-template preview and the Command
+        // edited, same pattern as the chat-template preview and the Command
         // Line card.
         log-view := TextEdit {
             text: root.log_text;

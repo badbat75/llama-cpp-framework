@@ -1,12 +1,12 @@
 // Build script, four jobs:
-// - Icon bootstrap: resources/llama.ico is generated, not checked in — when
+// - Icon bootstrap: resources/llama.ico is generated, not checked in; when
 //   it's missing, run resources/generate-llama-ico.mjs to rasterize it from
 //   the llama.cpp clone's webui logo.
 // - ICO → PNG ×2: decode resources/llama.ico's largest frame and emit the
 //   plain tray icon plus a green-dot "running" variant into OUT_DIR, where
 //   the Slint @image-url includes resolve them.
 // - Compile the .slint UI, emitting element debug info for NON-release
-//   profiles only — the e2e tests (src/tests/) need it to find widgets, so
+//   profiles only: the e2e tests (src/tests/) need it to find widgets, so
 //   they must run under `cargo test`, not `--release`.
 // - Windows only: embed the ICO as the EXE resource (winresource).
 
@@ -114,7 +114,7 @@ fn decode_largest_frame(path: &str) -> ico::IconImage {
 }
 
 /// Paint a filled green circle with a white ring in the bottom-right quadrant of
-/// the RGBA buffer — a "server running" status badge. Pixels are fully opaque so
+/// the RGBA buffer: a "server running" status badge. Pixels are fully opaque so
 /// the dot reads clearly once the platform scales the icon down for the tray.
 fn draw_status_dot(rgba: &mut [u8], w: u32, h: u32) {
     let wf = w as f32;

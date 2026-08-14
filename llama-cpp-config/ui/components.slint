@@ -4,14 +4,14 @@
 // - layout/chrome: `SectionCard`, `LabeledField`, `InfoRow`, `FormActions`,
 //   `ModalOverlay` (backdrop + card shared by all five app.slint modals)
 // - inputs: `SegmentedControl`, `MappedComboBox` (label↔value ComboBox),
-//   `EnumComboBox` (string-valued ComboBox driven through current-index — the
+//   `EnumComboBox` (string-valued ComboBox driven through current-index, the
 //   #11970-safe replacement for a `current-value` two-way binding),
 //   `AutoSlider` (Slider + "default" checkbox, the push-binding pattern),
 //   `DefaultSpinBox` / `DefaultLineEdit` (a "default" checkbox + an int SpinBox
-//   / float LineEdit — the "value, or omit the flag" pattern for numeric fields),
-//   `GpuSplitTable` (the GPU distribution table — which devices + what weights,
+//   / float LineEdit, the "value, or omit the flag" pattern for numeric fields),
+//   `GpuSplitTable` (the GPU distribution table: which devices + what weights,
 //   i.e. --device + --tensor-split + --split-mode; Server + Models tabs),
-//   `TensorOverrideTable` (the tensor-placement table — which tensors go on a
+//   `TensorOverrideTable` (the tensor-placement table: which tensors go on a
 //   device of their own, i.e. --override-tensor; Models tab)
 // - list rows/panels: `SelectableRow` / `AccentBar`, `ListPanel` (the bordered
 //   list container around the preset list + the New/Clone model picker)
@@ -24,7 +24,7 @@ import { GpuRow, TensorOverrideRow } from "types.slint";
 // Used as `Palette.foreground.transparentize(Tokens.muted)` etc.
 // Scope note: `Tokens` holds only cross-cutting alpha/color values. Layout
 // metrics (body font-size 13px, the 130px label column, 8px card radius, 16px
-// card padding) are deliberately kept inline at each use site — not tokenized —
+// card padding) are deliberately kept inline at each use site, not tokenized,
 // so this stays a color/alpha vocabulary, not a half-built design system.
 export global Tokens {
     out property <float> subtle: 0.25;   // secondary text on a modal / high-contrast surface
@@ -41,7 +41,7 @@ export global Tokens {
     out property <color> off: #666666;
 
     // Overlay / elevation colors (the modal backdrop and the two drop-shadow
-    // strengths — cards vs the floating modal card).
+    // strengths: cards vs the floating modal card).
     out property <color> backdrop: #000000.transparentize(0.45);
     out property <color> shadow-card: #00000022;
     out property <color> shadow-modal: #00000066;
@@ -52,14 +52,14 @@ export global Tokens {
 // arrays that could drift.
 export global Options {
     // "default" is a state, not a type: it OMITS --cache-type-k/-v and lets
-    // llama.cpp pick (f16). It is not a synonym for the f16 entry — that one
+    // llama.cpp pick (f16). It is not a synonym for the f16 entry; that one
     // pins f16 whatever llama.cpp's default becomes. The same "empty string
     // carried as the word default" mapping is in form.rs (both ways). The
     // split-mode combo is NOT here: its label/value rows live in Rust
     // (gpu_split::MODE_LABELS / MODE_VALUES) and are pushed into the tables.
     out property <[string]> cache_types: ["default", "f32", "f16", "q8_0", "q5_0", "q4_0", "q4_1"];
     // -lm / --load-mode: how llama.cpp brings the weights in. These six are the
-    // whole domain and they are MUTUALLY EXCLUSIVE — it is one enum, not the two
+    // whole domain and they are MUTUALLY EXCLUSIVE: it is one enum, not the two
     // independent --mlock / --no-mmap bools it replaced in b10105. Mirrors
     // LOAD_MODES in src/server_cfg.rs (equality asserted by the e2e test,
     // src/tests/ui_bindings.rs), and the values are passed to -lm verbatim.
@@ -68,16 +68,16 @@ export global Options {
     // and a message prints when its own level is <= the threshold, so DEBUG:5 shows
     // everything and OUTPUT:0 almost nothing (`common/arg.cpp`, `common/log.h`).
     // A free number bought nothing but the chance to type a level that isn't one.
-    // Mirrors LOG_LEVELS in src/server_form.rs — the equality is asserted by the
+    // Mirrors LOG_LEVELS in src/server_form.rs; the equality is asserted by the
     // e2e test (src/tests/ui_bindings.rs), so the two lists cannot drift.
     out property <[string]> log_levels: ["OUTPUT:0", "ERROR:1", "WARN:2", "INFO:3", "TRACE:4", "DEBUG:5"];
     // "All layers on GPU" sentinel for the --n-gpu-layers* flags: any value
-    // above a real block count. Mirrors ALL_LAYERS in src/form.rs — the
+    // above a real block count. Mirrors ALL_LAYERS in src/form.rs; the
     // equality is asserted by the e2e test (src/tests/ui_bindings.rs).
     out property <int> all_layers: 99;
 }
 
-// The 3px accent bar marking the selected row — shared by the nav rail
+// The 3px accent bar marking the selected row, shared by the nav rail
 // (NavItem), the preset list, and the dialog model list so the selection visual
 // is defined once. The caller sets `y`/`height` (a component root cannot reach
 // `parent`, so the vertical inset lives at the use site).
@@ -92,7 +92,7 @@ export component AccentBar inherits Rectangle {
 // list): selection tint + accent bar, hover highlight, a padded elided label,
 // and a list-item accessibility role. `clicked` reports the activation; the
 // CALLER owns the selection state (`selected` is a pure derived read, so the
-// highlight follows the model even after clicks — the same no-self-assignment
+// highlight follows the model even after clicks; the same no-self-assignment
 // rule as SegmentedControl). Set `height` at the use site.
 export component SelectableRow inherits Rectangle {
     in property <string> label;
@@ -150,7 +150,7 @@ export component ListPanel inherits Rectangle {
 
 // A ComboBox backed by parallel label/value arrays with a bounds-checked
 // selection: `labels` drives the popup, `index` two-way-binds the current row,
-// and `picked(value)` fires with `values[index]` — guarded so an out-of-range
+// and `picked(value)` fires with `values[index]`, guarded so an out-of-range
 // index (e.g. an empty list) can never index past the array. The caller does the
 // assignment and any side effects, keeping the write site visible.
 export component MappedComboBox inherits ComboBox {
@@ -169,10 +169,10 @@ export component MappedComboBox inherits ComboBox {
 
 // A ComboBox over a fixed string option list, two-way-bound to a string `value`,
 // driven through current-INDEX. Writing `current-value` does NOT move the
-// selection (Slint #11970 — it warns and leaves the dropdown stale on a model
+// selection (Slint #11970: it warns and leaves the dropdown stale on a model
 // change), so the display is set via `current-index`, derived from `value`'s
 // position in `options` and PUSHED on change (a plain binding dies on the first
-// pick — the std widget self-assigns current-index — same class as AutoSlider's
+// pick: the std widget self-assigns current-index, same class as AutoSlider's
 // slider). A user pick writes the chosen string back through `value`. `value`
 // should be a member of `options` (an unknown value shows the first entry).
 export component EnumComboBox inherits ComboBox {
@@ -180,7 +180,7 @@ export component EnumComboBox inherits ComboBox {
     in-out property <string> value;
     // `value`'s position in `options`. Slint has no array index-of and no loops
     // inside functions, so this is an explicit scan bounded at 8 entries (the
-    // longest option list here is cache_types = 7) — extend the chain if a list
+    // longest option list here is cache_types = 7); extend the chain if a list
     // grows past 8. An out-of-range `options[i]` reads back as "" (never a real
     // `value`), so the tail branches stay inert.
     property <int> value_index: root.value == root.options[0] ? 0
@@ -204,7 +204,7 @@ export component EnumComboBox inherits ComboBox {
     }
 }
 
-// A "default" checkbox + a 0..maximum slider + a right-aligned readout — the
+// A "default" checkbox + a 0..maximum slider + a right-aligned readout, the
 // "count, or let llama.cpp decide" lever used for the layer-offload flags
 // (--n-gpu-layers, --n-cpu-moe) and the CPU-thread counts (--threads,
 // --threads-batch). `auto` (two-way; the on-screen label reads "default") omits
@@ -213,7 +213,7 @@ export component EnumComboBox inherits ComboBox {
 // own drag handler self-assigns it, so it can't be bound two-way to the int
 // `value`: outward flows through `changed(v)`, inward through the
 // `changed shown` push below (a plain `value:` binding dies on the first
-// drag — the recurring stale-widget class). `usable` gates the whole row on
+// drag: the recurring stale-widget class). `usable` gates the whole row on
 // an external precondition (e.g. "model is MoE").
 export component AutoSlider inherits HorizontalLayout {
     in-out property <bool> auto;
@@ -245,7 +245,7 @@ export component AutoSlider inherits HorizontalLayout {
     // Keep the thumb in sync with external value changes (preset switch,
     // Revert, GGUF-driven `maximum` change): the std Slider imperatively
     // overwrites its `value` on every drag, which permanently discards the
-    // declarative init binding above — so updates must be pushed. The guard
+    // declarative init binding above, so updates must be pushed. The guard
     // avoids re-entering while the drag itself round-trips through `shown`.
     changed shown => {
         if (sl.value != root.shown) {
@@ -262,7 +262,7 @@ export component AutoSlider inherits HorizontalLayout {
     }
 }
 
-// A "default" checkbox + a LineEdit — the ONE numeric field of both forms, for
+// A "default" checkbox + a LineEdit, the ONE numeric field of both forms, for
 // every "a number, or let llama.cpp decide" knob: the integers (ctx-size,
 // parallel, batch-size, cache-ram, top-k, port, cache-reuse, models-max, …) and
 // the float sampling knobs (temp, top-p, min-p, repeat/presence-penalty) alike.
@@ -271,19 +271,19 @@ export component AutoSlider inherits HorizontalLayout {
 // Slider): the checkbox carries the "unset" state, the input carries the value.
 //
 // When `default` is checked the field is disabled but still shows `value`, so
-// preset_to_form seeds it with a display hint (form.rs's HINT_*) — the user sees
+// preset_to_form seeds it with a display hint (form.rs's HINT_*); the user sees
 // what they would get on unticking, and can edit straight away.
 //
 // THE INTEGERS RODE A SpinBox UNTIL v1.5.0, and the reason they no longer do is
 // not cosmetic: Slint's `SpinBoxBase` puts a TouchArea over the whole widget whose
-// `scroll-event` increments/decrements and always returns `accept` — with no
+// `scroll-event` increments/decrements and always returns `accept`, with no
 // `has-focus` guard, unlike its own `ComboBoxBase`, which rejects a scroll it is
 // not focused for. So merely wheeling the page with the pointer passing over a
 // SpinBox silently edited the preset (and ate the scroll, so the page didn't even
 // move). There is no property to disable it and no way to intercept the event
 // (the TouchArea lives INSIDE the widget), so the fix is to stop using it: a
 // LineEdit has no scroll handler at all. `input_type` is what makes it an integer
-// field — `number` accepts ASCII digits ONLY (i-slint-core `accept_text_input`),
+// field: `number` accepts ASCII digits ONLY (i-slint-core `accept_text_input`),
 // so no `40.5` can slip a `parse_int`, which is what the SpinBox used to buy us.
 // The two exceptions are the fields that must accept a leading `-` (cache-ram's
 // `-1` = no limit) and the floats: `decimal` also allows the sign and the decimal
@@ -354,10 +354,10 @@ export component SectionCard {
     }
 }
 
-// A horizontal set of mutually-exclusive pills — a reactive replacement for a
+// A horizontal set of mutually-exclusive pills, a reactive replacement for a
 // `RadioGroup` in a form. The selected state is a PURE derived read of `current`
 // (supplied by the caller as a binding); this component never assigns a bound
-// property imperatively, so — unlike `RadioButton.checked` — the caller's binding
+// property imperatively, so, unlike `RadioButton.checked`, the caller's binding
 // is never broken and the highlight follows `current` even after the user clicks
 // (e.g. when the backing model is swapped on a preset switch). Clicks are reported
 // via `activated`; the caller writes the model.
@@ -371,7 +371,7 @@ export component SegmentedControl inherits HorizontalLayout {
     opacity: root.enabled ? 1.0 : 0.4;
     for opt in root.options : Rectangle {
         // Surface the pill to assistive tech (and to the headless UI test's
-        // accessible-label lookup) — a bare Rectangle+TouchArea is invisible.
+        // accessible-label lookup): a bare Rectangle+TouchArea is invisible.
         accessible-role: button;
         accessible-label: opt;
         accessible-checkable: true;
@@ -411,7 +411,8 @@ export component SegmentedControl inherits HorizontalLayout {
 export component LabeledField inherits HorizontalLayout {
     in property <string> label;
     // Optional hover help. When set, an ⓘ glyph is shown after the label and
-    // carries a Tooltip — keeps long explanations out of the input placeholders.
+    // carries a Tooltip, which keeps long explanations out of the input
+    // placeholders.
     in property <string> hint;
     spacing: 8px;
     alignment: stretch;
@@ -433,7 +434,7 @@ export component LabeledField inherits HorizontalLayout {
             font-family: "Segoe Fluent Icons";
             font-size: 13px;
             // Fixed-width cell so the glyph is always visible and gives the
-            // Tooltip a reliable hover target — inside a 130px label row a
+            // Tooltip a reliable hover target: inside a 130px label row a
             // stretched/0-width cell would collapse and never trigger hover.
             width: 16px;
             horizontal-stretch: 0;
@@ -495,8 +496,8 @@ export component ModalOverlay inherits Rectangle {
     }
     // Escape dismisses. The scope wraps the card so a key the focused child
     // widget doesn't handle bubbles up here; it also takes focus when the
-    // dialog opens (a child's own `init => focus()` — e.g. a dialog's text
-    // field — runs after and wins, which is the desired order).
+    // dialog opens (a child's own `init => focus()`, e.g. a dialog's text
+    // field, runs after and wins, which is the desired order).
     FocusScope {
         init => { self.focus(); }
         key-pressed(event) => {
@@ -541,7 +542,7 @@ export component ModalOverlay inherits Rectangle {
 }
 
 // The action row every tab ends with: right-aligned Revert + primary Save.
-// One home so the three tabs' rows can't drift — the save-button text and the
+// One home so the three tabs' rows can't drift; the save-button text and the
 // two enabled gates are the only per-tab differences.
 export component FormActions inherits HorizontalLayout {
     in property <string> save_text: "Save";
@@ -567,7 +568,7 @@ export component FormActions inherits HorizontalLayout {
 // The GPU distribution table: which devices a model runs on and in what
 // proportion, shared by the Server tab (server-wide default) and the Models tab
 // (per-preset override). It replaces what used to be a single-select "GPU device"
-// ComboBox plus a free-text "Tensor split" LineEdit — two fields that only make
+// ComboBox plus a free-text "Tensor split" LineEdit: two fields that only make
 // sense read together, because `--tensor-split` is a positional vector indexed
 // over the devices named by `--device`, in `--device` order. Typing `3,1` against
 // an unseen, unchosen device list (six entries on a CUDA+ROCm box, half of them
@@ -580,18 +581,18 @@ export component FormActions inherits HorizontalLayout {
 // and it addresses devices BY ID, never by row index.
 //
 // The MODE selector sits ABOVE the rows because it decides what they mean, and
-// `effective_mode` — scope inheritance resolved in Rust (gpu_split::
+// `effective_mode`, scope inheritance resolved in Rust (gpu_split::
 // effective_mode; the server-wide flag rides the router's CLI and shadows every
-// preset) — bends the columns to match: `layer` edits blocks where a model is
+// preset), bends the columns to match: `layer` edits blocks where a model is
 // known, `row` edits the raw ratio (the bytes follow row fractions, so a block
-// cut would lie), `none` retires the editors entirely — only the head row runs,
+// cut would lie), `none` retires the editors entirely: only the head row runs,
 // which the Share column says out loud. The combo's one "layer (default)" entry
 // deliberately merges the old default/layer pair: for a preset they are the
 // same launch in every reachable configuration.
 //
 // The checked rows come FIRST, in split order: read top to bottom they ARE the
 // --device list and its --tensor-split vector. That is what makes the ≡ drag
-// handle mean something — and position 0 is not cosmetic, it is llama.cpp's
+// handle mean something, and position 0 is not cosmetic, it is llama.cpp's
 // main_gpu (the ONE GPU kept under split mode none, the first slice of layers
 // under layer). Checking a box APPENDS the device at the end of the split; the
 // handle is how you promote it. Nothing reorders on its own.
@@ -603,7 +604,7 @@ export component FormActions inherits HorizontalLayout {
 //   1. toggle / Auto / Even / preset switch / device probe REBUILD the whole row
 //      model, so every delegate gets a fresh binding (gui::refresh_gpu_rows).
 //   2. a weight edit changes no OTHER row's weight, so it needs no rebuild at
-//      all — which is exactly why the weight fields stay disabled in Auto mode
+//      all, which is exactly why the weight fields stay disabled in Auto mode
 //      (leaving Auto seeds every weight; that's what the Even button is for).
 // The share column reads the field's LIVE text (`w.text`), not `row.weight`, so
 // it keeps up with a broken-binding delegate.
@@ -611,13 +612,13 @@ export component GpuSplitTable inherits VerticalLayout {
     in property <[GpuRow]> rows;
     // Checked devices, and the sum of their weights (0 = Auto: a blank
     // --tensor-split, which llama.cpp fills in from each device's FREE VRAM at
-    // load time — not an even split).
+    // load time, not an even split).
     in property <int> selected;
     in property <int> weight_total;
-    // Positions the split is cut over for the model in hand — > 0 switches the
+    // Positions the split is cut over for the model in hand; > 0 switches the
     // editable column from the raw ratio to the BLOCK count, the unit llama.cpp
     // actually resolves in (gpu_split::Layout). 0 wherever no single model
-    // applies — the server-wide table always, and every mode but layer (Rust
+    // applies: the server-wide table always, and every mode but layer (Rust
     // gates it: blocks are a layer-mode projection only).
     in property <int> positions: 0;
     // Non-empty to show a warning strip above the table (the Models tab uses it
@@ -632,7 +633,7 @@ export component GpuSplitTable inherits VerticalLayout {
     in property <[string]> mode_values;
     in-out property <int> mode_index;
     // The mode the launch will actually run under ("layer"/"none"/"row"),
-    // inheritance resolved in Rust (gpu_split::effective_mode) — NOT the raw
+    // inheritance resolved in Rust (gpu_split::effective_mode), NOT the raw
     // combo value: a preset on "layer (default)" under a server-wide `none`
     // effectively runs single-GPU, and the columns must say so.
     in property <string> effective_mode: "layer";
@@ -647,7 +648,7 @@ export component GpuSplitTable inherits VerticalLayout {
     // Blocks-mode result. Reported on COMMIT (Enter or leaving the field), never
     // per keystroke, and that asymmetry with `weight_edited` is forced: a block
     // count is constrained to the positions, so giving one device more takes it
-    // from another — the handler has to rewrite the whole vector and rebuild the
+    // from another; the handler has to rewrite the whole vector and rebuild the
     // rows, which would destroy the widget being driven if it ran continuously.
     // Slider.released is exactly that commit point: it fires on pointer-up after
     // a drag AND on key-release for the arrows / Home / End, so keyboard editing
@@ -657,7 +658,7 @@ export component GpuSplitTable inherits VerticalLayout {
     callback even_split();
 
     // Single-GPU mode retires every weight editor: llama.cpp keeps only the
-    // head device, so there is nothing the vector could still steer — the drag
+    // head device, so there is nothing the vector could still steer; the drag
     // handle (which GPU leads) is the one control left standing.
     property <bool> single_mode: root.effective_mode == "none";
     property <bool> weights_editable: root.selected >= 2 && root.weight_total > 0
@@ -675,7 +676,7 @@ export component GpuSplitTable inherits VerticalLayout {
     property <length> value_col_width: root.blocks_mode ? 152px : 84px;
 
     // Live-drag state. Set by the handle's TouchArea while it is held, cleared on
-    // release. Only `row_y` reads it — the row MODEL never changes during a drag.
+    // release. Only `row_y` reads it; the row MODEL never changes during a drag.
     property <string> drag_id: "";
     property <int> drag_from: 0;
     property <length> drag_dy: 0;
@@ -689,7 +690,7 @@ export component GpuSplitTable inherits VerticalLayout {
 
     // The rows are positioned by hand rather than by a layout so a drag can move
     // them: the held row follows the pointer, and the rows it passes slide one slot
-    // to open the gap. Nothing here is committed — `reordered` on release is.
+    // to open the gap. Nothing here is committed; `reordered` on release is.
     pure function row_y(i: int, id: string) -> length {
         if (root.drag_id == "") {
             return i * root.row_height;
@@ -710,7 +711,7 @@ export component GpuSplitTable inherits VerticalLayout {
         return i * root.row_height;
     }
 
-    // In blocks mode the denominator is the positions, not the weight sum — and
+    // In blocks mode the denominator is the positions, not the weight sum, and
     // the caller passes `row.blocks` rather than the live field text, so the whole
     // table snaps together on commit instead of one row moving mid-word.
     pure function share_text(enabled: bool, weight: int) -> string {
@@ -745,7 +746,7 @@ export component GpuSplitTable inherits VerticalLayout {
         hint: root.split_mode_hint;
         MappedComboBox {
             // One device has nothing to split. Zero means "all detected
-            // devices", which llama.cpp still splits — so the combo stays live
+            // devices", which llama.cpp still splits, so the combo stays live
             // there.
             enabled: root.selected != 1;
             labels: root.mode_labels;
@@ -755,7 +756,7 @@ export component GpuSplitTable inherits VerticalLayout {
         }
     }
 
-    // Header row. Column widths are repeated verbatim by the delegate below —
+    // Header row. Column widths are repeated verbatim by the delegate below:
     // there is no grid here, just two HorizontalLayouts kept in step by hand.
     HorizontalLayout {
         padding-left: 12px;
@@ -807,7 +808,7 @@ export component GpuSplitTable inherits VerticalLayout {
             width: parent.width;
             height: root.row_height;
             // Tint with the WINDOW background: these rows sit on a SectionCard, whose
-            // surface IS alternate-background — tinting with the card's own colour
+            // surface IS alternate-background; tinting with the card's own colour
             // would composite to exactly itself. Same trick as integrations_page.
             // Opaque while held, so the dragged row reads as floating over the others.
             background: grip.pressed ? Palette.alternate-background
@@ -826,8 +827,8 @@ export component GpuSplitTable inherits VerticalLayout {
                 CheckBox {
                     width: 24px;
                     text: "";
-                    // Findable handle for the e2e table phase (src/tests/save_flow.rs)
-                    // — text is empty by design.
+                    // Findable handle for the e2e table phase (src/tests/save_flow.rs);
+                    // text is empty by design.
                     accessible-label: "gpu-" + row.id;
                     checked: row.enabled;
                     toggled => {
@@ -896,7 +897,7 @@ export component GpuSplitTable inherits VerticalLayout {
                                 : Palette.foreground.transparentize(Tokens.faint);
                         }
                         // WHICH positions this device ends up with, not just how
-                        // many — the last one is the output layer rather than a
+                        // many: the last one is the output layer rather than a
                         // block, and it carries the biggest single tensor in the
                         // model, so a bare count would hide it.
                         if row.blocks_label != "" : Text {
@@ -918,7 +919,7 @@ export component GpuSplitTable inherits VerticalLayout {
     
                 Rectangle {
                     width: root.value_col_width;
-                    // BOTH editors live here, one hidden by `blocks_mode` — which
+                    // BOTH editors live here, one hidden by `blocks_mode`, which
                     // is a table-wide constant, so the spare one costs an instance
                     // and nothing else. They are not `if`-guarded because the Share
                     // column reads their ids, and a conditional element would take
@@ -927,7 +928,7 @@ export component GpuSplitTable inherits VerticalLayout {
                     // Neither is a SpinBox, for the reason spelled out on
                     // DefaultLineEdit: a SpinBox here turned a scroll of the page
                     // into a silent edit of the split. A Slider is safe on that
-                    // count — slider-base.slint handles no scroll event at all.
+                    // count: slider-base.slint handles no scroll event at all.
                     //
                     // A weight is independent, so its field applies as you type;
                     // `number` keeps it digits-only, and the value is re-checked in
@@ -937,7 +938,7 @@ export component GpuSplitTable inherits VerticalLayout {
                         y: 0;
                         width: parent.width;
                         height: parent.height;
-                        // In single-GPU mode the vector is dead, so no editor —
+                        // In single-GPU mode the vector is dead, so no editor;
                         // the dash below takes the cell instead.
                         visible: row.enabled && !root.blocks_mode && !root.single_mode;
                         enabled: root.weights_editable;
@@ -947,8 +948,8 @@ export component GpuSplitTable inherits VerticalLayout {
                             root.weight_edited(row.id, t.to-float());
                         }
                     }
-                    // A block count is NOT independent — it is a share of a fixed
-                    // budget — so it gets the widget for exactly that: a bounded
+                    // A block count is NOT independent (it is a share of a fixed
+                    // budget), so it gets the widget for exactly that: a bounded
                     // drag with `released` as its single commit point.
                     HorizontalLayout {
                         x: 0;
@@ -960,7 +961,7 @@ export component GpuSplitTable inherits VerticalLayout {
                         sl := Slider {
                             horizontal-stretch: 1;
                             // The thumb owns its value mid-drag, discarding this
-                            // init binding — harmless HERE because a `for` delegate
+                            // init binding, harmless HERE because a `for` delegate
                             // is recreated on every rebuild and gets a fresh one.
                             // (AutoSlider needs its `changed shown` push precisely
                             // because it is NOT inside a delegate.)
@@ -977,7 +978,7 @@ export component GpuSplitTable inherits VerticalLayout {
                             // key-release paths only. Its accessibility actions
                             // (`accessible-action-set-value` / `-increment` /
                             // `-decrement`) all route through `base.set-value`,
-                            // which raises `changed` and nothing else — so a value
+                            // which raises `changed` and nothing else, so a value
                             // set through an assistive client moves the thumb and
                             // never commits. Keyboard arrows are unaffected (they
                             // go through `key-released`). Committing on `changed`
@@ -1060,7 +1061,7 @@ export component GpuSplitTable inherits VerticalLayout {
 //
 // Why the pattern is a dropdown and not just a text field: llama.cpp splits the
 // value on `,` and each rule at its FIRST `=` BEFORE it parses anything, and
-// neither is escapable — so a hand-typed regex with a `{1,2}` quantifier tears
+// neither is escapable, so a hand-typed regex with a `{1,2}` quantifier tears
 // its own rule in half and the model fails to load. The three canned patterns
 // cover what people actually reach for; `Custom regex…` reveals the text field,
 // which strips those two characters on the Rust side.
@@ -1071,25 +1072,25 @@ export component GpuSplitTable inherits VerticalLayout {
 // delegate's binding. Two rules keep that invisible:
 //   1. add / remove / kind / device REBUILD the whole row model, so every
 //      delegate gets a fresh binding (gui::refresh_tensor_rows).
-//   2. a pattern edit changes no OTHER row, so it needs no rebuild at all — and
+//   2. a pattern edit changes no OTHER row, so it needs no rebuild at all, and
 //      MUST not do one, or the LineEdit being typed into would be recreated and
 //      drop the caret. Its handler refreshes the derived strings only.
 export component TensorOverrideTable inherits VerticalLayout {
     in property <[TensorOverrideRow]> rows;
     in property <string> summary;
     // The two shared dropdown models: the canned patterns (last = "Custom regex…")
-    // and the probed devices, CPU included — it is a legal -ot target.
+    // and the probed devices, CPU included; it is a legal -ot target.
     in property <[string]> kind_labels;
     in property <[string]> kind_values;
     in property <[string]> dev_labels;
     in property <[string]> dev_values;
     // Non-empty to show a warning strip above the table (a value llama.cpp would
-    // refuse to parse — only a hand-edited INI can produce one).
+    // refuse to parse; only a hand-edited INI can produce one).
     in property <string> warning;
     // A SECOND, independent strip: these rules are shadowed at launch by a
     // server-wide value (the Models tab's copy passes AppState.tensor_override_warning).
     // Independent because a table can be both invalid AND shadowed, and the two
-    // say different things — one is "llama.cpp will refuse this", the other is
+    // say different things: one is "llama.cpp will refuse this", the other is
     // "llama.cpp will never see this".
     in property <string> override_warning;
 
@@ -1115,7 +1116,7 @@ export component TensorOverrideTable inherits VerticalLayout {
         color: Tokens.err;
     }
 
-    // Header. Column widths are repeated verbatim by the delegate below — there
+    // Header. Column widths are repeated verbatim by the delegate below: there
     // is no grid here, just two HorizontalLayouts kept in step by hand.
     if root.rows.length > 0 : HorizontalLayout {
         padding-left: 12px;
@@ -1138,7 +1139,7 @@ export component TensorOverrideTable inherits VerticalLayout {
 
     for row[i] in root.rows : Rectangle {
         // Tint with the WINDOW background: these rows sit on a SectionCard, whose
-        // surface IS alternate-background — tinting with the card's own colour
+        // surface IS alternate-background; tinting with the card's own colour
         // would composite to exactly itself. Same trick as GpuSplitTable.
         background: Math.mod(i, 2) == 0 ? transparent
             : Palette.background.transparentize(Tokens.zebra);
@@ -1184,8 +1185,8 @@ export component TensorOverrideTable inherits VerticalLayout {
                     // Dingbats), which Segoe UI does not have and nothing falls back
                     // for: a correctly laid out, perfectly empty box. The icon-font
                     // escape LabeledField's hint uses (`\u{E711}` +
-                    // `font-family: "Segoe Fluent Icons"`) is NOT available here —
-                    // std Button has no font-family property, only Text does — so a
+                    // `font-family: "Segoe Fluent Icons"`) is NOT available here
+                    // (std Button has no font-family property, only Text does), so a
                     // button's label is stuck with the default font, and its glyph
                     // must be one that font covers. Guarded by
                     // `slint_string_literals_only_use_glyphs_proven_to_render`.
@@ -1196,7 +1197,7 @@ export component TensorOverrideTable inherits VerticalLayout {
                 }
             }
 
-            // Only the Custom kind gets a text field — every other row's pattern
+            // Only the Custom kind gets a text field: every other row's pattern
             // is a canned constant, and letting it be edited would just be a
             // slower way of picking Custom.
             if row.custom : LineEdit {

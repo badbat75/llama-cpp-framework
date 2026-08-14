@@ -6,11 +6,11 @@
 // (Save/Revert), then the Command Line card
 // last. The Command
 // Line card auto-sizes to its content (a hidden mirror-Text drives its height) so
-// it never shows its own inner scrollbar — the page's own ScrollView handles it.
+// it never shows its own inner scrollbar; the page's own ScrollView handles it.
 //
 // SDK Tuning is the one card that holds no llama-server flags: its fields are
 // vendor-library environment variables (`runstate::env_vars`), so they are split
-// per GPU SDK — a knob there is read by the backend's own libraries, never by
+// per GPU SDK: a knob there is read by the backend's own libraries, never by
 // llama.cpp, and is inert on every other backend.
 //
 // Editable widgets bind two-way (`<=>`): a one-way binding breaks the moment the
@@ -94,7 +94,7 @@ export component ServerPage inherits ScrollView {
             heading: "Resources";
             LabeledField {
                 label: "Load mode";
-                hint: "How llama.cpp brings the weights in (-lm / --load-mode). One setting, not two: mlock, mmap and Direct I/O are mutually exclusive states of the same enum since llama.cpp b10105.\nauto (default) memory-maps the GGUF unless a device can't — llama.cpp's own default, fastest to load.\nnone reads the weights into RAM up front: slower, costs the model's size in RAM, but nothing can be dropped back to the file.\nmmap always memory-maps.\nmlock locks the weights in physical RAM WITHOUT mmapping — keeps latency stable, needs room for the whole model.\nmmap+mlock memory-maps and locks what it maps.\ndio uses Direct I/O where the platform offers it.";
+                hint: "How llama.cpp brings the weights in (-lm / --load-mode). One setting, not two: mlock, mmap and Direct I/O are mutually exclusive states of the same enum since llama.cpp b10105.\nauto (default) memory-maps the GGUF unless a device can't; llama.cpp's own default, fastest to load.\nnone reads the weights into RAM up front: slower, costs the model's size in RAM, but nothing can be dropped back to the file.\nmmap always memory-maps.\nmlock locks the weights in physical RAM WITHOUT mmapping: keeps latency stable, needs room for the whole model.\nmmap+mlock memory-maps and locks what it maps.\ndio uses Direct I/O where the platform offers it.";
                 // A dropdown, not two checkboxes: --mlock and --no-mmap each
                 // OVERWRITE this enum in llama.cpp, so the pair they used to
                 // emit was last-one-wins (see src/server_cfg.rs `load_mode`).
@@ -159,7 +159,7 @@ export component ServerPage inherits ScrollView {
         SectionCard {
             heading: "GPU distribution";
             Text {
-                text: "Default for every preset (--split-mode / --device / --tensor-split). Check the GPUs a model may use and, if they differ in VRAM, how much of it each takes; nothing checked = all detected GPUs, split by free VRAM at load. The checked rows, top to bottom, are the split order — drag ≡ to reorder; the first one is llama.cpp's main GPU (the only one used with split mode 'none'). A preset can override each of these — unless it is set here, in which case the server-wide choice wins at launch.";
+                text: "Default for every preset (--split-mode / --device / --tensor-split). Check the GPUs a model may use and, if they differ in VRAM, how much of it each takes; nothing checked = all detected GPUs, split by free VRAM at load. The checked rows, top to bottom, are the split order: drag ≡ to reorder; the first one is llama.cpp's main GPU (the only one used with split mode 'none'). A preset can override each of these, unless it is set here, in which case the server-wide choice wins at launch.";
                 wrap: word-wrap;
                 font-size: 12px;
                 color: Palette.foreground.transparentize(Tokens.muted);
@@ -173,7 +173,7 @@ export component ServerPage inherits ScrollView {
                 mode_index <=> AppState.server_split_mode_index;
                 effective_mode: AppState.server_gpu_mode;
                 mode_picked(v) => { AppState.server_split_mode_picked(v); }
-                split_mode_hint: "How a model is split across the checked GPUs (--split-mode), same on CUDA and HIP.\nlayer (default): each GPU takes a consecutive run of blocks — the table edits the cut.\nnone: single GPU — the first checked row; the other checked rows go unused.\nrow: weight matrices are split row-wise by the ratio (needs CUDA/ROCm — Vulkan falls back to the layer cut); the KV cache still follows the layer cut.\nSet here it overrides every preset's mode. Irrelevant with one GPU checked.";
+                split_mode_hint: "How a model is split across the checked GPUs (--split-mode), same on CUDA and HIP.\nlayer (default): each GPU takes a consecutive run of blocks; the table edits the cut.\nnone: single GPU, the first checked row; the other checked rows go unused.\nrow: weight matrices are split row-wise by the ratio (needs CUDA/ROCm; Vulkan falls back to the layer cut); the KV cache still follows the layer cut.\nSet here it overrides every preset's mode. Irrelevant with one GPU checked.";
                 toggled(id) => { AppState.server_gpu_toggle(id); }
                 reordered(id, delta) => { AppState.server_gpu_move(id, delta); }
                 weight_edited(id, w) => { AppState.server_gpu_weight(id, w); }
@@ -182,7 +182,7 @@ export component ServerPage inherits ScrollView {
             }
             LabeledField {
                 label: "Vision encoder";
-                hint: "GPU for the multimodal projector — the mmproj/CLIP image encoder (MTMD_BACKEND_DEVICE).\nIt does NOT follow --device: llama.cpp puts the encoder on the FIRST GPU backend it finds, which on a mixed box is often not the one running the model. It then holds VRAM there and stays idle until an image arrives.\ndefault = that first GPU. Set it to the model's GPU to keep everything on one card.";
+                hint: "GPU for the multimodal projector, the mmproj/CLIP image encoder (MTMD_BACKEND_DEVICE).\nIt does NOT follow --device: llama.cpp puts the encoder on the FIRST GPU backend it finds, which on a mixed box is often not the one running the model. It then holds VRAM there and stays idle until an image arrives.\ndefault = that first GPU. Set it to the model's GPU to keep everything on one card.";
                 MappedComboBox {
                     labels: AppState.mmproj_dev_labels;
                     values: AppState.mmproj_dev_values;
@@ -195,7 +195,7 @@ export component ServerPage inherits ScrollView {
         SectionCard {
             heading: "Tensor placement";
             Text {
-                text: "Pin tensors to a device for EVERY model, whatever layer they landed on (--override-tensor). The one that pays: llama.cpp leaves the embedding table in pinned host RAM even when it reports 'offloaded N/N layers to GPU' — Windows counts that as Shared GPU memory. Setting anything here REPLACES each preset's own rules, it does not add to them; leave it empty to let every preset keep its own. A device this machine doesn't have stops the server from starting at all.";
+                text: "Pin tensors to a device for EVERY model, whatever layer they landed on (--override-tensor). The one that pays: llama.cpp leaves the embedding table in pinned host RAM even when it reports 'offloaded N/N layers to GPU'; Windows counts that as Shared GPU memory. Setting anything here REPLACES each preset's own rules, it does not add to them; leave it empty to let every preset keep its own. A device this machine doesn't have stops the server from starting at all.";
                 wrap: word-wrap;
                 font-size: 12px;
                 color: Palette.foreground.transparentize(Tokens.muted);
@@ -220,7 +220,7 @@ export component ServerPage inherits ScrollView {
             heading: "Advanced";
             LabeledField {
                 label: "Web UI MCP proxy";
-                hint: "Enable the built-in chat UI's MCP CORS proxy (--webui-mcp-proxy).\nThe bundled chat UI needs it to call MCP tools. Experimental upstream — don't enable on an untrusted network.\ndefault = on.";
+                hint: "Enable the built-in chat UI's MCP CORS proxy (--webui-mcp-proxy).\nThe bundled chat UI needs it to call MCP tools. Experimental upstream; don't enable on an untrusted network.\ndefault = on.";
                 CheckBox {
                     text: "serve the web UI's MCP proxy endpoint";
                     checked <=> AppState.server_form.webui_mcp_proxy;
@@ -236,7 +236,7 @@ export component ServerPage inherits ScrollView {
             }
             LabeledField {
                 label: "Prefill assistant";
-                hint: "--prefill-assistant / --no-prefill-assistant: what to do when a request's LAST message is an assistant message.\nOn (llama.cpp's default): treat it as the START of the reply and continue it — this is what lets a client seed the answer's opening.\nOff: treat it as a finished turn and answer it instead. Turn it off if a client legitimately ends on an assistant turn and the model resumes mid-sentence rather than replying.";
+                hint: "--prefill-assistant / --no-prefill-assistant: what to do when a request's LAST message is an assistant message.\nOn (llama.cpp's default): treat it as the START of the reply and continue it; this is what lets a client seed the answer's opening.\nOff: treat it as a finished turn and answer it instead. Turn it off if a client legitimately ends on an assistant turn and the model resumes mid-sentence rather than replying.";
                 CheckBox {
                     text: "continue a trailing assistant message (--prefill-assistant)";
                     checked <=> AppState.server_form.prefill_assistant;
@@ -244,7 +244,7 @@ export component ServerPage inherits ScrollView {
             }
             LabeledField {
                 label: "Log level";
-                hint: "llama-server log verbosity threshold (-lv / --log-verbosity): a message is printed when its own level is ≤ this one, so DEBUG:5 shows everything and OUTPUT:0 almost nothing.\nllama.cpp defines exactly these six levels — the number after the colon is what is passed to -lv.\nFramework default TRACE:4 records per-request logging into logs/llama-server.log; DEBUG:5 also logs the per-tensor override lines that tools\\report-memory.ps1 reads.";
+                hint: "llama-server log verbosity threshold (-lv / --log-verbosity): a message is printed when its own level is ≤ this one, so DEBUG:5 shows everything and OUTPUT:0 almost nothing.\nllama.cpp defines exactly these six levels; the number after the colon is what is passed to -lv.\nFramework default TRACE:4 records per-request logging into logs/llama-server.log; DEBUG:5 also logs the per-tensor override lines that tools\\report-memory.ps1 reads.";
                 // A dropdown, not a number: the six levels are the whole domain
                 // (see Options.log_levels), and the form carries the LABEL.
                 EnumComboBox {
@@ -257,7 +257,7 @@ export component ServerPage inherits ScrollView {
         SectionCard {
             heading: "SDK Tuning";
             Text {
-                text: "Environment variables of the GPU vendor's own libraries, exported onto llama-server at launch (its per-model children inherit them). They are not llama.cpp flags: nothing validates them, and each one is read only by the backend it belongs to — inert on the others. The Command Line card below shows exactly what gets exported.";
+                text: "Environment variables of the GPU vendor's own libraries, exported onto llama-server at launch (its per-model children inherit them). They are not llama.cpp flags: nothing validates them, and each one is read only by the backend it belongs to, inert on the others. The Command Line card below shows exactly what gets exported.";
                 wrap: word-wrap;
                 font-size: 12px;
                 color: Palette.foreground.transparentize(Tokens.muted);
@@ -284,9 +284,9 @@ export component ServerPage inherits ScrollView {
             }
             LabeledField {
                 label: "hipBLASLt";
-                hint: "ROCBLAS_USE_HIPBLASLT: which of its two GEMM backends rocBLAS uses. Read by rocBLAS itself, so it rides the environment — there is no llama-server flag for it.\ndefault = don't set the variable: rocBLAS routes as it sees fit, which on RDNA4 means hipBLASLt for 16-bit GEMMs.\non forces hipBLASLt (=1); off forces Tensile (=0).\nSet it off on a Radeon AI PRO R9700 (gfx1201): hipBLASLt fails the SECOND 16-bit GEMM of a process there, so every BF16/F16 model aborts on its first prefill batch. Tensile costs nothing — measured pp512 587 t/s, tg128 35 t/s on Ornith BF16, where the older f32-compute workaround managed 19 t/s prefill. Upstream: ROCm issue #6461.\nNo effect on CUDA or Vulkan builds.";
+                hint: "ROCBLAS_USE_HIPBLASLT: which of its two GEMM backends rocBLAS uses. Read by rocBLAS itself, so it rides the environment; there is no llama-server flag for it.\ndefault = don't set the variable: rocBLAS routes as it sees fit, which on RDNA4 means hipBLASLt for 16-bit GEMMs.\non forces hipBLASLt (=1); off forces Tensile (=0).\nSet it off on a Radeon AI PRO R9700 (gfx1201): hipBLASLt fails the SECOND 16-bit GEMM of a process there, so every BF16/F16 model aborts on its first prefill batch. Tensile costs nothing: measured pp512 587 t/s, tg128 35 t/s on Ornith BF16, where the older f32-compute workaround managed 19 t/s prefill. Upstream: ROCm issue #6461.\nNo effect on CUDA or Vulkan builds.";
                 // TRI-state, not a checkbox: unset (never export the variable)
-                // is a third instruction, and it is the framework default —
+                // is a third instruction, and it is the framework default,
                 // same shape and same reason as the preset tab's Flash
                 // Attention control (form.rs's tri_state / tri_bool).
                 SegmentedControl {
@@ -299,7 +299,7 @@ export component ServerPage inherits ScrollView {
 
         FormActions {
             save_text: "Save changes";
-            // Shared with the Ctrl+S shortcut — the gate lives in state.slint.
+            // Shared with the Ctrl+S shortcut; the gate lives in state.slint.
             save_enabled: AppState.can_save_server;
             revert_enabled: AppState.server_dirty;
             save => { AppState.save_server(); }
@@ -319,7 +319,7 @@ export component ServerPage inherits ScrollView {
             // same string, so the whole command shows at once with no inner
             // scrollbar (the page's own ScrollView handles overflow). It stays a
             // read-only TextEdit, not a plain Text, so the command remains
-            // selectable/copyable (Ctrl+C) — the same reason the chat-template
+            // selectable/copyable (Ctrl+C), the same reason the chat-template
             // preview is a TextEdit (app.slint). Neither the mirror nor the
             // TextEdit sets a font, so both render at the same default metrics
             // and the mirror's height matches the TextEdit's wrapped content.

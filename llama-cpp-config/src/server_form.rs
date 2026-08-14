@@ -1,10 +1,10 @@
 //! Conversion between the Slint server form (`ServerForm`) and the
-//! `server_cfg::ServerConfig` schema — the server-side mirror of `form.rs`.
+//! `server_cfg::ServerConfig` schema: the server-side mirror of `form.rs`.
 //! Kept out of `gui.rs` (which only shuttles the whole `ServerForm`, never
 //! per-field) so adding a server field touches this file plus `ServerForm`
 //! (ui/types.slint), the widget (ui/server_page.slint), `ServerConfig`
-//! (server_cfg.rs), and the CLI (three spots in cli.rs — the full checklist
-//! lives at the top of server_cfg.rs) — not the GUI wiring.
+//! (server_cfg.rs), and the CLI (three spots in cli.rs; the full checklist
+//! lives at the top of server_cfg.rs), not the GUI wiring.
 
 use slint::SharedString;
 
@@ -13,7 +13,7 @@ use crate::ini;
 use crate::server_cfg;
 
 /// An optional int as the text its `DefaultLineEdit` shows, falling back to
-/// `hint` when the key is unset — the server-side twin of `form::itxt` (and its
+/// `hint` when the key is unset, the server-side twin of `form::itxt` (and its
 /// doc explains why these numerics are text and not a SpinBox `value`: Slint's
 /// SpinBox edits itself on a stray scroll of the page).
 fn itxt(v: Option<i32>, hint: i32) -> SharedString {
@@ -25,7 +25,7 @@ fn itxt(v: Option<i32>, hint: i32) -> SharedString {
 /// (`common/arg.cpp`'s `--verbosity` help, `common/log.h`'s `LOG_LEVEL_*`), so a
 /// free-number field could only ever offer levels that do not exist.
 ///
-/// Mirrors `Options.log_levels` in ui/components.slint — same strings, same order.
+/// Mirrors `Options.log_levels` in ui/components.slint: same strings, same order.
 /// The e2e (`src/tests/ui_bindings.rs`) asserts the two lists are equal, because a
 /// label here that the dropdown does not contain would leave the combo showing its
 /// first entry (OUTPUT:0) and quietly SAVE that on the next write.
@@ -41,7 +41,7 @@ pub(crate) const LOG_LEVELS: [(&str, i32); 6] = [
 /// An `-lv` value as its dropdown label. Out-of-range values are CLAMPED into the
 /// six, which is behaviour-preserving where it matters: a hand-edited `LogVerbosity
 /// = 7` prints exactly what `5` prints (nothing in llama.cpp logs above DEBUG), so
-/// it shows — and re-saves — as DEBUG:5 rather than as a level that does not exist.
+/// it shows (and re-saves) as DEBUG:5 rather than as a level that does not exist.
 fn log_level_label(v: i32) -> SharedString {
     let clamped = v.clamp(LOG_LEVELS[0].1, LOG_LEVELS[LOG_LEVELS.len() - 1].1);
     LOG_LEVELS
@@ -53,7 +53,7 @@ fn log_level_label(v: i32) -> SharedString {
 
 /// The dropdown label back to the `-lv` number, the inverse of `log_level_label`.
 /// An unknown label (only a hand-edited form could produce one) falls back to the
-/// framework default rather than to 0 — silence is the one outcome nobody asked for.
+/// framework default rather than to 0; silence is the one outcome nobody asked for.
 fn parse_log_level(label: &str) -> i32 {
     LOG_LEVELS
         .iter()
@@ -75,7 +75,7 @@ pub fn config_to_form(cfg: &server_cfg::ServerConfig) -> ServerForm {
         port_default: cfg.port.is_none(),
         hostname: cfg.hostname_or_default().into(),
         // Always has a value (framework default "auto" when unset or unknown),
-        // and it IS the dropdown's entry — unlike the -lv combo below, whose
+        // and it IS the dropdown's entry, unlike the -lv combo below, whose
         // form value is a label that has to be mapped back.
         load_mode: cfg.load_mode_or_default().into(),
         // Thread counts are auto-flagged sliders: unset ⇒ "auto" (omit the flag).
@@ -93,7 +93,7 @@ pub fn config_to_form(cfg: &server_cfg::ServerConfig) -> ServerForm {
         // blank ModelsDir shows the default it will actually resolve to.
         models_dir: cfg.models_dir_or_default().into(),
         device: cfg.device.clone().unwrap_or_default().into(),
-        // "default" is the combo's sentinel for "inherit / layer" — it two-way-
+        // "default" is the combo's sentinel for "inherit / layer"; it two-way-
         // binds to this, so store the sentinel rather than "".
         split_mode: cfg
             .split_mode
@@ -102,7 +102,7 @@ pub fn config_to_form(cfg: &server_cfg::ServerConfig) -> ServerForm {
             .into(),
         tensor_split: cfg.tensor_split.clone().unwrap_or_default().into(),
         // Driven by the tensor-placement table, which reads and rewrites this one
-        // string — no second copy of the rules exists (see src/tensor_override.rs).
+        // string; no second copy of the rules exists (see src/tensor_override.rs).
         override_tensor: cfg.override_tensor.clone().unwrap_or_default().into(),
         mmproj_device: cfg.mmproj_device.clone().unwrap_or_default().into(),
         // The SDK Tuning card's one knob: a TRI-state over the same
@@ -115,7 +115,7 @@ pub fn config_to_form(cfg: &server_cfg::ServerConfig) -> ServerForm {
         webui_mcp_proxy: cfg.webui_mcp_proxy_or_default(),
         fit: cfg.fit_or_default(),
         prefill_assistant: cfg.prefill_assistant_or_default(),
-        // Always has a value (framework default 4 when unset) — a dropdown, no
+        // Always has a value (framework default 4 when unset); a dropdown, no
         // "default" checkbox: the launch always passes -lv. The form carries the
         // LABEL ("TRACE:4"), which is what the EnumComboBox matches on.
         log_verbosity: log_level_label(cfg.log_verbosity_or_default()),
@@ -141,7 +141,7 @@ pub fn form_to_config(f: &ServerForm) -> server_cfg::ServerConfig {
     server_cfg::ServerConfig {
         // The numerics are TEXT on the form (see `itxt`), so each is re-parsed:
         // unparseable or blank reads as unset (⇒ llama.cpp's own default), and the
-        // range checks that were the SpinBox's `minimum`/`maximum` live here now —
+        // range checks that were the SpinBox's `minimum`/`maximum` live here now:
         // a LineEdit cannot refuse a value the way the SpinBox did.
         port: if f.port_default {
             None
@@ -149,7 +149,7 @@ pub fn form_to_config(f: &ServerForm) -> server_cfg::ServerConfig {
             ini::parse_int(f.port.as_str()).filter(|v| (1..=65535).contains(v))
         },
         // Blank collapses to None like every optional string, matching what
-        // the same input produces via `server set` / `load()` — a `Some("")`
+        // the same input produces via `server set` / `load()`: a `Some("")`
         // here would only diverge the in-memory config, since every consumer
         // re-blanks it through `hostname_or_default`.
         hostname: server_cfg::opt_nonblank(Some(f.hostname.to_string())),
@@ -186,7 +186,7 @@ pub fn form_to_config(f: &ServerForm) -> server_cfg::ServerConfig {
         // Blank ⇒ None (fall back to the default dir), same rule as hostname.
         models_dir: server_cfg::opt_nonblank(Some(f.models_dir.to_string())),
         device: server_cfg::opt_nonblank(Some(f.device.to_string())),
-        // "" and the combo sentinel "default" both mean "no explicit split" —
+        // "" and the combo sentinel "default" both mean "no explicit split",
         // and so does "layer", which the combo merges into that same entry and
         // `server_cfg::server_split_mode` drops on read (an explicit layer only
         // ever blocked every preset's own mode). Kept here too so the invariant
@@ -198,7 +198,7 @@ pub fn form_to_config(f: &ServerForm) -> server_cfg::ServerConfig {
         tensor_split: server_cfg::opt_nonblank(Some(f.tensor_split.to_string())),
         override_tensor: server_cfg::opt_nonblank(Some(f.override_tensor.to_string())),
         mmproj_device: server_cfg::opt_nonblank(Some(f.mmproj_device.to_string())),
-        // "default" (and anything unrecognised) collapses to None — the natural
+        // "default" (and anything unrecognised) collapses to None: the natural
         // `Some(s == "on")` would turn "leave the variable alone" into an
         // explicit `ROCBLAS_USE_HIPBLASLT=0`, i.e. into the Tensile workaround
         // for everyone who never asked for it.
@@ -236,8 +236,8 @@ mod tests {
     // A fully-populated (all-`Some`, non-blank) config survives config → form →
     // config unchanged. The guard for the server-field fan-out: a field wired
     // into one conversion but not the other drops out here. (Configs with `None`
-    // port / models_dir are NOT fixed points — the form materializes their
-    // display defaults — which is why this uses an all-populated config.)
+    // port / models_dir are NOT fixed points, since the form materializes their
+    // display defaults, which is why this uses an all-populated config.)
     #[test]
     fn rich_server_config_round_trips() {
         let cfg = ServerConfig {
@@ -271,7 +271,7 @@ mod tests {
 
     /// The log level is the one field the form carries as a LABEL rather than as
     /// its value, so the two halves of that mapping must compose back to identity
-    /// for every level llama.cpp has — and the out-of-domain cases must land
+    /// for every level llama.cpp has, and the out-of-domain cases must land
     /// somewhere defensible rather than on OUTPUT:0 (which would silence the log).
     #[test]
     fn log_level_labels_round_trip_and_clamp() {
@@ -283,12 +283,12 @@ mod tests {
         assert_eq!(log_level_label(7).as_str(), "DEBUG:5");
         assert_eq!(log_level_label(-2).as_str(), "OUTPUT:0");
         // A label the dropdown can't produce falls back to the framework default,
-        // never to 0 — losing the log entirely is the one outcome nobody wants.
+        // never to 0: losing the log entirely is the one outcome nobody wants.
         assert_eq!(parse_log_level("nonsense"), 4);
     }
 
     /// The load-mode combo carries the raw `-lm` value, so the only thing that
-    /// can go wrong is a value outside the six — which must land on the default
+    /// can go wrong is a value outside the six, which must land on the default
     /// rather than on the launch line, where llama-server would refuse it and
     /// nothing would start.
     #[test]
@@ -317,7 +317,7 @@ mod tests {
             let form = config_to_form(&ServerConfig {
                 rocblas_use_hipblaslt: state,
                 // Explicit, like the sibling tests below: an unset ModelsDir
-                // would send config_to_form through `paths::` (mod.rs — unit
+                // would send config_to_form through `paths::` (mod.rs: unit
                 // tests must stay clear of it).
                 models_dir: Some(r"E:\models".into()),
                 ..Default::default()

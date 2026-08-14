@@ -40,7 +40,7 @@ export component IntegrationsPage inherits ScrollView {
             for item[i] in AppState.integration_models : Rectangle {
                 height: 36px;
                 // Tint with the WINDOW background: these rows sit on a
-                // SectionCard, whose surface IS alternate-background — tinting
+                // SectionCard, whose surface IS alternate-background; tinting
                 // with the card's own colour composites to exactly itself.
                 background: Math.mod(i, 2) == 0 ? transparent : Palette.background.transparentize(Tokens.zebra);
 
@@ -59,7 +59,7 @@ export component IntegrationsPage inherits ScrollView {
                     CheckBox {
                         text: "";
                         // Findable handle for the e2e rebuild-invariant phase
-                        // (src/tests/save_flow.rs) — text is empty by design.
+                        // (src/tests/save_flow.rs); text is empty by design.
                         accessible-label: "integration-" + item.id;
                         checked: item.enabled;
                         toggled => { AppState.toggle_integration_model(i); }
@@ -71,7 +71,7 @@ export component IntegrationsPage inherits ScrollView {
                         color: Palette.foreground;
                         vertical-alignment: center;
                         // Fixed-width first column so the label column below starts
-                        // at the SAME x on every row — with stretch 0 on both texts
+                        // at the SAME x on every row; with stretch 0 on both texts
                         // the layout distributed the slack by the (variable) id width,
                         // so the labels rendered ragged. Same idiom as LabeledField's
                         // 130px label cell. min-width (not width) lets a longer-than-

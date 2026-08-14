@@ -1,10 +1,10 @@
 //! View-logs window wiring: `LogWindow` (ui/log_window.slint) is an
-//! independent third Slint root beside `AppWindow`/`AppTray` — non-modal, so
+//! independent third Slint root beside `AppWindow`/`AppTray`: non-modal, so
 //! the configurator stays fully interactive while the log is open. Like the
 //! tray it does NOT use `AppState`; Rust pushes state to it directly.
 //!
 //! The tail runs on a `slint::Timer` (UI thread) that exists only while the
-//! window is open — armed by the View-logs click, stopped by the window's
+//! window is open, armed by the View-logs click, stopped by the window's
 //! close button, so a closed window costs nothing (no wakeups, no file IO).
 //! Every 500 ms `read_increment` reads the bytes appended to
 //! `logs\llama-server.log` since the last poll and folds them into a bounded
@@ -24,7 +24,7 @@ use std::path::Path;
 /// First-open (or post-rotation) backfill: start reading this far from EOF
 /// instead of replaying a log that can be tens of MB at `-lv 4`.
 const INIT_TAIL: u64 = 64 * 1024;
-/// Cap on the retained text — the TextEdit gets sluggish on multi-MB content,
+/// Cap on the retained text: the TextEdit gets sluggish on multi-MB content,
 /// and "the last quarter-MB" is plenty for a live tail (the full file stays on
 /// disk, and the window shows its path).
 const MAX_RETAINED: usize = 256 * 1024;
@@ -33,7 +33,7 @@ const MAX_RETAINED: usize = 256 * 1024;
 const POLL_EVERY: std::time::Duration = std::time::Duration::from_millis(500);
 
 const MISSING_TEXT: &str =
-    "(log file not found — it is created the first time llama-server starts)";
+    "(log file not found: it is created the first time llama-server starts)";
 
 /// The tail-follower state between polls.
 #[derive(Default)]
@@ -62,7 +62,7 @@ fn read_increment(t: &mut Tail, path: &Path) {
     }
     let len = file.metadata().map(|m| m.len()).unwrap_or(0);
     if len < t.offset {
-        // Truncated or rotated under us — start over from the (new) top.
+        // Truncated or rotated under us: start over from the (new) top.
         t.offset = 0;
         t.buffer.clear();
     }
@@ -79,7 +79,7 @@ fn read_increment(t: &mut Tail, path: &Path) {
     }
     t.offset += bytes.len() as u64;
     // Lossy: a multi-byte char split across two polls degrades to replacement
-    // chars — acceptable for a log viewer (llama-server output is ASCII).
+    // chars, acceptable for a log viewer (llama-server output is ASCII).
     let mut chunk = String::from_utf8_lossy(&bytes).into_owned();
     if backfill {
         // The backfill seek landed mid-line; drop the partial first line.
@@ -90,7 +90,7 @@ fn read_increment(t: &mut Tail, path: &Path) {
     t.buffer.push_str(&chunk);
     if t.buffer.len() > MAX_RETAINED {
         let mut over = t.buffer.len() - MAX_RETAINED;
-        // `over` is a byte count and can land inside a multi-byte char —
+        // `over` is a byte count and can land inside a multi-byte char;
         // advance to a boundary BEFORE slicing, or the index panics inside
         // the timer callback (the real log is not pure ASCII: chat-template
         // dumps and model metadata carry Unicode).
@@ -108,8 +108,8 @@ fn read_increment(t: &mut Tail, path: &Path) {
 }
 
 /// One timer tick: advance the tail, and only when the text actually changed
-/// push it to the window (an unconditional set would repaint — and clamp a
-/// selection the user is dragging — every 500 ms even on an idle log). The
+/// push it to the window (an unconditional set would repaint, and clamp a
+/// selection the user is dragging, every 500 ms even on an idle log). The
 /// tail_status readout refreshes every tick regardless: its whole point is to
 /// keep visibly aging while the file does NOT change.
 fn poll(win: &LogWindow, tail: &RefCell<Tail>) {
@@ -132,7 +132,7 @@ fn poll(win: &LogWindow, tail: &RefCell<Tail>) {
 
 /// The header's liveness readout: "size · updated N ago". llama-server can
 /// legitimately go quiet for minutes (router mode logs nothing between
-/// requests) — a visibly aging "updated …" is what tells the user the tail is
+/// requests); a visibly aging "updated …" is what tells the user the tail is
 /// alive and the FILE is idle, not the window stuck.
 fn tail_status(path: &std::path::Path) -> String {
     let Ok(meta) = std::fs::metadata(path) else {
@@ -155,7 +155,7 @@ fn tail_status(path: &std::path::Path) -> String {
 
 /// Build the window and wire `AppState.view_logs`. The poll timer runs ONLY
 /// while the window is open: started by the View-logs click, stopped by the
-/// window's close button — closed, the tail costs literally nothing (no timer
+/// window's close button; closed, the tail costs literally nothing (no timer
 /// wakeups, no file IO). The caller (gui::run) must keep the returned pair
 /// alive for the whole event loop.
 pub(super) fn wire(app: &AppWindow) -> Result<(LogWindow, Rc<slint::Timer>), slint::PlatformError> {
@@ -195,7 +195,7 @@ pub(super) fn wire(app: &AppWindow) -> Result<(LogWindow, Rc<slint::Timer>), sli
                 w.set_minimized(false);
                 w.focus_window();
             });
-            // Immediate fill — don't sit blank until the first timer tick.
+            // Immediate fill: don't sit blank until the first timer tick.
             poll(&win, &tail);
             // (Re)arm the poll. `start` on a running timer just restarts it,
             // so a second click while the window is already open is harmless.
@@ -206,7 +206,7 @@ pub(super) fn wire(app: &AppWindow) -> Result<(LogWindow, Rc<slint::Timer>), sli
                     return;
                 };
                 // Belt and braces: close stops the timer, so a hidden window
-                // here means some future code path hid it another way — skip
+                // here means some future code path hid it another way; skip
                 // the file IO rather than tail into the void.
                 if !win.window().is_visible() {
                     return;
@@ -219,7 +219,7 @@ pub(super) fn wire(app: &AppWindow) -> Result<(LogWindow, Rc<slint::Timer>), sli
     Ok((win, timer))
 }
 
-// File-side tail behavior (no Slint backend needed — `read_increment` is pure
+// File-side tail behavior (no Slint backend needed: `read_increment` is pure
 // file IO on a caller-supplied path, so this never touches `paths::`).
 #[cfg(test)]
 mod tests {
@@ -301,7 +301,7 @@ mod tests {
 
         // Small first read (no backfill), then one over-cap append whose
         // byte layout puts `len - MAX_RETAINED` at an odd offset inside a
-        // run of 2-byte chars — i.e. mid-'é'.
+        // run of 2-byte chars, i.e. mid-'é'.
         append(&log, "x\n");
         read_increment(&mut t, &log);
         append(&log, &format!("{}\n", "é".repeat(131_500)));
@@ -310,7 +310,7 @@ mod tests {
 
         assert!(t.buffer.len() <= MAX_RETAINED);
         // The é-monster line had no newline in range, so the cut lands right
-        // after it — only the following full line survives.
+        // after it; only the following full line survives.
         assert_eq!(t.buffer, "tail line\n");
     }
 

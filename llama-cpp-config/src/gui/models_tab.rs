@@ -4,14 +4,14 @@
 //! `apply_form` helpers live in the parent `gui` module; `use super::*` pulls
 //! them in. The Models-tab-only helper families live HERE next to their callers
 //! instead of in the shared hub:
-//! - `update_model_info` — the GGUF "Model info" box;
+//! - `update_model_info`: the GGUF "Model info" box;
 //! - the New / Clone dialog funnel (`populate_dialog_models` … `commit_new_preset`);
 //! - the discard-guarded navigation bodies (`do_select_preset`,
 //!   `open_new_dialog`, `open_clone_dialog`, and the Rename seed behind
-//!   `request_rename`) — the actions `confirm_discard_then` parks;
-//! - `preset_written` — the reload + reselect + re-baseline invariant every
+//!   `request_rename`): the actions `confirm_discard_then` parks;
+//! - `preset_written`: the reload + reselect + re-baseline invariant every
 //!   write path (save / rename / clone / New…) funnels through;
-//! - `apply_draft_pick` — the merged MTP/DFlash draft-pick policy (incl. the
+//! - `apply_draft_pick`: the merged MTP/DFlash draft-pick policy (incl. the
 //!   gemma4 auto-pin), unit-tested below.
 
 use super::*;
@@ -30,7 +30,7 @@ pub(super) fn wire(app: &AppWindow, state: &Rc<RefCell<State>>) {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
-            // Switching presets replaces the form — unsaved edits need the
+            // Switching presets replaces the form; unsaved edits need the
             // discard confirmation first.
             let dirty = app.global::<AppState>().get_preset_dirty();
             let action: Box<dyn Fn()> = {
@@ -58,7 +58,7 @@ pub(super) fn wire(app: &AppWindow, state: &Rc<RefCell<State>>) {
             // Belt and braces: `update_model_info` already pruned the FORM, but
             // the save is the boundary that reaches DISK, and a preset that
             // llama-server then refuses to load is the failure being prevented.
-            // Gated on `model_info_ready` — false means the GGUF could not be
+            // Gated on `model_info_ready`: false means the GGUF could not be
             // read, where "no MTP metadata" is not evidence of no MTP.
             if s.get_model_info_ready() {
                 presets::prune_inactive_draft_keys(&mut p, s.get_model_info_embeds_mtp());
@@ -141,7 +141,7 @@ pub(super) fn wire(app: &AppWindow, state: &Rc<RefCell<State>>) {
                 return;
             };
             // Committing the new preset will replace the form (preset_written
-            // reloads + reselects), so guard dirty edits at the entry point —
+            // reloads + reselects), so guard dirty edits at the entry point:
             // a discard dialog can't stack on the picker modal later.
             let dirty = app.global::<AppState>().get_preset_dirty();
             let action: Box<dyn Fn()> = {
@@ -224,7 +224,7 @@ pub(super) fn wire(app: &AppWindow, state: &Rc<RefCell<State>>) {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
-            // Same entry-point guard as New…/Clone… — committing the rename
+            // Same entry-point guard as New…/Clone…: committing the rename
             // reloads the form from disk (preset_written), discarding edits.
             let dirty = app.global::<AppState>().get_preset_dirty();
             let action: Box<dyn Fn()> = {
@@ -316,7 +316,7 @@ pub(super) fn wire(app: &AppWindow, state: &Rc<RefCell<State>>) {
             };
             let mut form = s.get_form();
             // The server-wide fallback is the SAVED device (where the model will
-            // actually run at launch) — not the live, possibly-unsaved Server
+            // actually run at launch), not the live, possibly-unsaved Server
             // form, which would leak an edited-then-reverted device into a save.
             let server_device = crate::server_cfg::load().device.unwrap_or_default();
             apply_draft_pick(&mut form, &value, &spec, &server_device);
@@ -335,10 +335,10 @@ pub(super) fn wire(app: &AppWindow, state: &Rc<RefCell<State>>) {
 /// two-step shape as `wire_gpu_table`: derive the new value with `tensor_override`,
 /// write it back, refresh.
 ///
-/// The exception is `pattern` — the Custom row's text field. It refreshes the
+/// The exception is `pattern`: the Custom row's text field. It refreshes the
 /// derived strings ONLY: a row rebuild would recreate the LineEdit mid-keystroke
 /// and drop the caret. It can afford to, for the same reason the GPU table's
-/// weight edit can — a pattern edit changes no other row (see TensorOverrideTable's
+/// weight edit can: a pattern edit changes no other row (see TensorOverrideTable's
 /// binding note).
 fn wire_tensor_table(app: &AppWindow) {
     let s = app.global::<AppState>();
@@ -408,7 +408,7 @@ fn wire_tensor_table(app: &AppWindow) {
     }
 }
 
-/// The per-preset GPU distribution table's four callbacks — the twin of
+/// The per-preset GPU distribution table's four callbacks: the twin of
 /// `server_tab::wire_gpu_table`, over `form.device` + `form.tensor_split`. The
 /// rebuild-vs-scalars-only distinction is documented there.
 fn wire_gpu_table(app: &AppWindow) {
@@ -457,8 +457,8 @@ fn wire_gpu_table(app: &AppWindow) {
             };
             let current = preset_selection(&app);
             let sel = gpu_split::set_blocks(&current, id.as_str(), blocks, layout);
-            // Committing the same count again — which leaving the field after an
-            // Enter does — must not rebuild: the rebuild recreates the delegate,
+            // Committing the same count again (which leaving the field after an
+            // Enter does) must not rebuild: the rebuild recreates the delegate,
             // and re-entering here from its teardown is how that turns into a loop.
             if sel == current {
                 return;
@@ -525,7 +525,7 @@ fn do_select_preset(app: &AppWindow, state: &Rc<RefCell<State>>, index: i32) {
 }
 
 /// Open the model picker in plain "New" mode (the guarded body of
-/// `on_new_preset`). "New…" is always create-from-scratch — independent of any
+/// `on_new_preset`). "New…" is always create-from-scratch, independent of any
 /// current selection, so it can never silently turn into a clone.
 fn open_new_dialog(
     app: &AppWindow,
@@ -575,17 +575,17 @@ use crate::form::ALL_LAYERS;
 
 /// Apply a draft-picker selection to the form: set `model_draft` + `spec_type`
 /// from the picked row (MTP heads → draft-mtp, DFlash drafters → draft-dflash,
-/// "(none)" → empty), then auto-pin an unconfigured draft to ONE device — the
+/// "(none)" → empty), then auto-pin an unconfigured draft to ONE device: the
 /// multi-device "auto" split crashes gemma4 MTP heads. Pin to the SAME GPU the
 /// model runs on so both land together: the preset's own `device` selection
 /// wins, else the server-wide default (`server_device`, all layers on it);
 /// otherwise fall back to CPU, which always works. A draft the user already
 /// configured (auto off or a device pinned) is left alone.
 ///
-/// Both device fields can now name SEVERAL GPUs ("ROCm1,CUDA0" — the distribution
+/// Both device fields can now name SEVERAL GPUs ("ROCm1,CUDA0"; the distribution
 /// table writes them in split order), but `--device-draft` pins one drafter, and
 /// the whole point here is to avoid the multi-device split. So the pin is the
-/// FIRST device of whichever list applies — the one llama.cpp's split starts from.
+/// FIRST device of whichever list applies: the one llama.cpp's split starts from.
 ///
 /// This only fires for a draft FILE. Embedded MTP heads (spec-type alone) never
 /// reach it: llama.cpp ignores both keys for them and the UI disables both fields.
@@ -617,7 +617,7 @@ fn apply_draft_pick(form: &mut PresetForm, value: &str, spec: &str, server_devic
 /// Refresh everything that depends on the preset set after a presets.ini write:
 /// the (re-selected) preset list (`reload_presets`), the file/device dropdowns,
 /// and the Integrations tab. `want` picks the selection like `reload_presets`.
-/// The invariant every write path follows — save / rename / clone all funnel
+/// The invariant every write path follows: save / rename / clone all funnel
 /// through here. (select/revert do NOT: they don't mutate disk, so integrations
 /// stay put; delete keeps its own sequence because it clears the selection.)
 fn preset_written(app: &AppWindow, state: &Rc<RefCell<State>>, want: Option<&str>) {
@@ -649,24 +649,24 @@ pub(super) fn update_model_info(app: &AppWindow) {
     // Chat-template row: reset alongside the sibling `has_*` / `n_layer` resets
     // for coherence. Unlike those (which gate always-visible controls), this row
     // lives behind `model_info_ready`, so the value is never shown until the
-    // success path below overwrites it — the gate, not this reset, is what keeps
+    // success path below overwrites it; the gate, not this reset, is what keeps
     // a stale template from lingering.
     s.set_model_info_chat_template(SharedString::from("none"));
     s.set_chat_template_preview(SharedString::from(""));
     // The two reasoning rows are read from that same template, so they reset with
-    // it — and to "unknown", never to "no": an unread GGUF is not evidence that a
+    // it, and to "unknown", never to "no": an unread GGUF is not evidence that a
     // model cannot think (the same rule the embd warning below follows).
     s.set_model_info_thinking(SharedString::from("unknown"));
     s.set_model_info_past_thinking(SharedString::from("unknown"));
     // Unlike the rows above, the embd WARNING is read by the Tensor-placement
-    // table, which is NOT behind `model_info_ready` — so a stale one would keep
+    // table, which is NOT behind `model_info_ready`, so a stale one would keep
     // accusing the next model (or an unreadable one) of the previous model's
     // K-quant. It must be cleared on every entry, not just repainted on success.
     s.set_model_info_embd(SharedString::from("n/a"));
     s.set_model_info_embd_warning(SharedString::from(""));
 
     // Both failure paths reset `model_info_n_layer` above, and the GPU table
-    // projects its weights onto exactly that — so they have to go through
+    // projects its weights onto exactly that, so they have to go through
     // `refresh_gpu_rows` (which subsumes the tensor refresh) rather than the
     // tensor-only one, or the block column would keep counting against the
     // PREVIOUS model. This is not a keystroke path, so the full rebuild is free.
@@ -682,13 +682,13 @@ pub(super) fn update_model_info(app: &AppWindow) {
     let Some(info) = gguf::read_model_info(std::path::Path::new(&model)) else {
         s.set_model_info_ready(false);
         s.set_model_info_note(SharedString::from(
-            "Metadata unavailable — is ggml-base.dll beside the app, and the file a valid GGUF?",
+            "Metadata unavailable: is ggml-base.dll beside the app, and the file a valid GGUF?",
         ));
         refresh_gpu_rows(app);
         return;
     };
 
-    // SAVED config, like refresh_file_options — see the note there.
+    // SAVED config, like refresh_file_options; see the note there.
     let models_dir = server_cfg::load().models_dir_or_default();
     let ext = gguf::external_drafters(&models_dir, &model);
     s.set_model_info_kind(SharedString::from(info.kind_line()));
@@ -705,7 +705,7 @@ pub(super) fn update_model_info(app: &AppWindow) {
     s.set_model_info_attn(SharedString::from(info.attn_line()));
     s.set_model_info_draft(SharedString::from(gguf::draft_line(&info, &ext)));
     // Chat template: short status for the InfoRow, raw text for the Preview
-    // modal (empty when none — also gates the Preview button visibility).
+    // modal (empty when none; also gates the Preview button visibility).
     s.set_model_info_chat_template(SharedString::from(info.chat_template_line()));
     s.set_chat_template_preview(SharedString::from(
         info.chat_template.clone().unwrap_or_default(),
@@ -721,7 +721,7 @@ pub(super) fn update_model_info(app: &AppWindow) {
     // user never typed (a Clone's, or the model this preset used to point at)
     // would otherwise sit there greyed out and unreadable until llama-server
     // failed on it. Pruning the form makes the change visible AND leaves the
-    // preset dirty, so Save is reachable — the file on disk is where the damage
+    // preset dirty, so Save is reachable: the file on disk is where the damage
     // lives, and a preset the user only OPENS is never re-saved otherwise.
     let mut pruned_form = form.clone();
     let dropped = prune_inactive_draft_fields(&mut pruned_form, embeds_mtp);
@@ -736,14 +736,14 @@ pub(super) fn update_model_info(app: &AppWindow) {
         };
         set_status(
             app,
-            format!("Dropped {} — {why}. Save to persist.", dropped.join(", ")),
+            format!("Dropped {}: {why}. Save to persist.", dropped.join(", ")),
             false,
         );
     }
     // Two tables depend on BOTH their own rules and the model, and only the model
     // changed here: the Tensor-placement warning (its embd verdict) and the GPU
     // split's block column, which counts against this model's `block_count`.
-    // `refresh_gpu_rows` re-derives both — it has to rebuild the ROWS, not just
+    // `refresh_gpu_rows` re-derives both; it has to rebuild the ROWS, not just
     // the scalars, because the per-row counts and ranges live in the row model.
     refresh_gpu_rows(app);
 
@@ -776,7 +776,7 @@ pub(super) fn update_model_info(app: &AppWindow) {
 
 fn populate_dialog_models(app: &AppWindow, state: &Rc<RefCell<State>>) {
     let s = app.global::<AppState>();
-    // SAVED config, like refresh_file_options — see the note there.
+    // SAVED config, like refresh_file_options; see the note there.
     let models_dir = server_cfg::load().models_dir_or_default();
     let scanned = model_scan::list(&models_dir, model_scan::Category::Model.subdir());
     state.borrow_mut().dialog_models_all = scanned;
@@ -816,7 +816,7 @@ fn picked_dialog_model_path(app: &AppWindow, state: &Rc<RefCell<State>>) -> Opti
 
 /// Preset id for a newly picked model file, de-conflicted against the live
 /// presets. The id derives from the file name, so picking a model that already
-/// has a preset — or a different file that sanitizes to the same id — would
+/// has a preset (or a different file that sanitizes to the same id) would
 /// otherwise make `presets::save` wholesale-replace the tuned section. Both
 /// New and Clone must route through this: first free `<id>`, `<id>-2`, ….
 fn deconflicted_id(path_str: &str) -> String {
@@ -841,7 +841,7 @@ fn run_new_empty(app: &AppWindow, state: &Rc<RefCell<State>>, path: PathBuf) {
         app,
         state,
         p,
-        format!("Added [{id}] — tweak parameters and Save."),
+        format!("Added [{id}]: tweak parameters and Save."),
     );
 }
 
@@ -858,7 +858,7 @@ fn run_new_clone(
         model: path_str,
         ..base.clone()
     };
-    // A clone keeps every field of its base — including the speculative ones,
+    // A clone keeps every field of its base, including the speculative ones,
     // which belong to the base's MODEL, not to the preset. Cloning an MTP preset
     // onto a model without MTP heads writes `spec-type = draft-mtp` straight to
     // disk, where the UI greys it out instead of showing it and llama-server
@@ -880,7 +880,7 @@ fn run_new_clone(
         app,
         state,
         cloned,
-        format!("Cloned [{}] -> [{id}] — saved.{note}", base.id),
+        format!("Cloned [{}] -> [{id}], saved.{note}", base.id),
     );
 }
 
@@ -899,7 +899,7 @@ fn commit_new_preset(
     }
 }
 
-// Pure-struct tests (no Slint backend needed — PresetForm is a plain generated
+// Pure-struct tests (no Slint backend needed: PresetForm is a plain generated
 // struct). The gemma4-MTP auto-pin policy used to live untestable inside the
 // .slint pick handler; these pin its three branches.
 #[cfg(test)]
@@ -927,7 +927,7 @@ mod tests {
     #[test]
     fn pick_prefers_the_presets_own_device_over_the_server_default() {
         // The model is pinned to CUDA1; the draft must follow it there, not to
-        // the server-wide CUDA0 — model and draft must share ONE device.
+        // the server-wide CUDA0: model and draft must share ONE device.
         let mut f = PresetForm {
             n_gpu_layers_draft_auto: true,
             device: "CUDA1".into(),

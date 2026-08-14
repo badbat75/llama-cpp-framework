@@ -2,23 +2,23 @@
 //!
 //! Single home for the `CREATE_NO_WINDOW` dance the process probes share. Entry
 //! points: `run_hidden` for the fire-and-forget system probes (the Windows
-//! branch of `runstate::is_running`/`stop` — tasklist / taskkill), and
-//! `hide_console` for callers that build the `Command` themselves — custom
+//! branch of `runstate::is_running`/`stop`: tasklist / taskkill), and
+//! `hide_console` for callers that build the `Command` themselves: custom
 //! stdio/env then `spawn()` (`runstate::start`). On non-Windows both are no-ops
 //! beyond the plain command, so callers that differ only by that flag collapse.
-//! `combined_output` joins a probe's stdout+stderr — parse that, not one stream.
+//! `combined_output` joins a probe's stdout+stderr; parse that, not one stream.
 //!
 //! `run_hidden_probe` is the variant for the transient `llama-server.exe` probes
 //! (`devices --list-devices`, `server_version --version`): it registers the child
 //! PID in `PROBE_PIDS` for its lifetime so `runstate::is_running` can EXCLUDE it.
 //!
-//! Every llama-server child — the probes here and `runstate::start` — also gets
+//! Every llama-server child (the probes here and `runstate::start`) also gets
 //! the ROCm runtime dir prepended to its PATH (`prepend_rocm_path`): ggml loads
 //! backends dynamically and silently drops ggml-hip.dll when its imports don't
 //! resolve, and AMD's HIP SDK installer never puts its bin dir on the system
-//! PATH — without the prepend, HIP GPUs enumerate as Vulkan-only.
+//! PATH; without the prepend, HIP GPUs enumerate as Vulkan-only.
 //! Both share the `llama-server.exe` image name, so a probe running concurrently
-//! with the run-status poll otherwise reads as a live server — which made a fresh
+//! with the run-status poll otherwise reads as a live server, which made a fresh
 //! GUI (whose startup fires the probes and the poll together) wrongly flip to
 //! "llama-server is no longer running" seconds after launch.
 
@@ -66,7 +66,7 @@ pub fn prepend_rocm_path(cmd: &mut Command) {
 }
 
 /// `dir` prepended to a PATH-shaped value. Pure so the precedence is testable.
-/// `None` only if the parts won't re-join (a dir embedding the separator —
+/// `None` only if the parts won't re-join (a dir embedding the separator,
 /// unreachable from real installs); the caller then leaves PATH untouched
 /// rather than risk clobbering it.
 fn prepend_path_var(dir: &Path, current: Option<std::ffi::OsString>) -> Option<std::ffi::OsString> {
@@ -94,7 +94,7 @@ where
 /// Like `run_hidden`, but registers the child PID in `PROBE_PIDS` for its
 /// lifetime so a concurrent `runstate::is_running` can exclude this transient
 /// `llama-server.exe` (see the module header). Use for the llama-server probes
-/// only — NOT for tasklist/taskkill, which are a different image with nothing to
+/// only; NOT for tasklist/taskkill, which are a different image with nothing to
 /// exclude. Spawns explicitly (not `cmd.output()`) so the PID is knowable while
 /// the child runs; stdout/stderr are piped so `wait_with_output` still captures
 /// them.
@@ -120,7 +120,7 @@ where
 
 /// Join a child's stdout and stderr into one string. llama.cpp tools split
 /// output across the two streams (`--version` prints to **stderr**,
-/// `--list-devices` to stdout), so probes must parse the combination — reading
+/// `--list-devices` to stdout), so probes must parse the combination; reading
 /// a single stream silently blanks them when upstream moves the output.
 pub fn combined_output(output: &Output) -> String {
     let mut s = String::from_utf8_lossy(&output.stdout).into_owned();

@@ -1,18 +1,18 @@
-//! "Start with Windows" — the per-user logon Run registry entry.
+//! "Start with Windows": the per-user logon Run registry entry.
 //!
 //! The Settings tab's startup toggles ARE this entry
 //! (`HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, value
 //! `llama-cpp-config`): its presence is "start with Windows", and whether the
 //! stored command carries `gui --minimized` (start in the tray) or plain `gui`
-//! (open the window) is "start minimized". Both are READ BACK from the entry —
-//! no INI mirror that Task Manager's Startup panel (which edits the same key)
-//! could silently desync — and re-enabling the toggle after the install moved
-//! is what refreshes the stored exe path.
+//! (open the window) is "start minimized". Both are READ BACK from the entry,
+//! with no INI mirror that Task Manager's Startup panel (which edits the same
+//! key) could silently desync, and re-enabling the toggle after the install
+//! moved is what refreshes the stored exe path.
 //!
 //! The entry registers the INSTALLED copy, not `current_exe()`: `set_enabled`
 //! prefers the exe under `HKLM\Software\llama.cpp\InstallDir\bin`
 //! (`installed_exe`), falling back to `current_exe()` only when no install is
-//! recorded (portable / dev use). `current_exe()` alone is a footgun — toggling
+//! recorded (portable / dev use). `current_exe()` alone is a footgun: toggling
 //! the setting from a second, non-installed build (e.g. a `cargo run` debug exe)
 //! would persist THAT path into logon startup, and the debug build is
 //! console-subsystem (see `main.rs`), so every logon then flashes an empty
@@ -80,7 +80,7 @@ mod win {
 
     type Hkey = *mut c_void;
 
-    // Predefined key handles are sentinel values, not real handles — no close.
+    // Predefined key handles are sentinel values, not real handles; no close.
     const HKEY_CURRENT_USER: Hkey = 0x8000_0001_u32 as usize as Hkey;
     const HKEY_LOCAL_MACHINE: Hkey = 0x8000_0002_u32 as usize as Hkey;
     const KEY_QUERY_VALUE: u32 = 0x0001;
@@ -216,7 +216,7 @@ mod win {
         exe.is_file().then_some(exe)
     }
 
-    /// Whether the logon Run entry exists. Presence is the state — the stored
+    /// Whether the logon Run entry exists. Presence is the state: the stored
     /// command isn't compared against the current exe path, so a moved install
     /// still reads as enabled (re-toggling refreshes the path).
     pub fn is_enabled() -> bool {
@@ -224,15 +224,15 @@ mod win {
     }
 
     /// Whether the stored command starts in the tray (`--minimized`). `false`
-    /// when the entry is absent — the caller gates on `is_enabled` anyway.
+    /// when the entry is absent; the caller gates on `is_enabled` anyway.
     pub fn starts_minimized() -> bool {
         stored_command().is_some_and(|c| c.contains("--minimized"))
     }
 
-    /// Create (or overwrite — an enable also refreshes a stale exe path and
+    /// Create (or overwrite: an enable also refreshes a stale exe path and
     /// applies the current `minimized` choice) or delete the Run entry. The
     /// stored exe is the INSTALLED copy when one is registered (`installed_exe`),
-    /// else the running exe — so the logon entry launches the Program Files GUI
+    /// else the running exe, so the logon entry launches the Program Files GUI
     /// build even when the toggle is flipped from a dev/debug build.
     /// Deleting an absent value is a success: the goal state, not the
     /// transition, is what the caller asked for.
@@ -289,9 +289,9 @@ mod tests {
 
     // The exe path is quoted (Program Files has a space) and the launch goes
     // through `gui`, with `--minimized` only when the tray toggle asks for it.
-    // The registry legs stay out of the normal run — thin FFI over a fixed key,
-    // and `cargo test` must not write the developer's real HKCU Run key —
-    // but see the #[ignore] round-trip below for a manual check.
+    // The registry legs stay out of the normal run (thin FFI over a fixed key,
+    // and `cargo test` must not write the developer's real HKCU Run key), but
+    // see the #[ignore] round-trip below for a manual check.
     #[test]
     fn run_command_quotes_the_exe_and_carries_the_minimized_choice() {
         let exe = std::path::Path::new(r"C:\Program Files\llama.cpp\bin\llama-cpp-config.exe");

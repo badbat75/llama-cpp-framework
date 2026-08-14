@@ -3,16 +3,16 @@
 //! chat template (Jinja vs non-Jinja detection, with a raw-text preview), plus
 //! the selected mmproj (clip) and draft/DFlash headers.
 //!
-//! Metadata is read with llama.cpp's OWN gguf reader — we runtime-load
+//! Metadata is read with llama.cpp's OWN gguf reader: we runtime-load
 //! `ggml-base.dll` (shipped next to `llama-cpp-config.exe` in `bin\`) and call
 //! `gguf_init_from_file` with `no_alloc = true`, so only the header + tensor
 //! infos are read, never the multi-GB weights. No GGUF parsing is reimplemented
 //! here. If the DLL can't be loaded (e.g. a bare `cargo run` with no llama.cpp
-//! alongside), reads return `None` and the box shows "unavailable" — and the
+//! alongside), reads return `None` and the box shows "unavailable", and the
 //! load is retried on the next read (only success is memoized; see `ffi::api`),
 //! so a DLL that appears later (a finished `02-build.ps1`) is picked up live.
 //!
-//! Reads are synchronous and uncached — the header parse is fast enough to run on
+//! Reads are synchronous and uncached: the header parse is fast enough to run on
 //! the UI thread when the model/mmproj/draft selection changes.
 //!
 //! Key names and the `general.file_type` enum mirror the bundled llama.cpp
@@ -34,7 +34,7 @@ trait KvSource {
     fn u32(&self, key: &str) -> Option<u32>;
     fn string(&self, key: &str) -> Option<String>;
     fn boolean(&self, key: &str) -> Option<bool>;
-    /// A tensor's `(ggml_type, size_in_bytes)` by name — from the GGUF's tensor
+    /// A tensor's `(ggml_type, size_in_bytes)` by name, from the GGUF's tensor
     /// infos, not its KV block. `None` when the tensor is absent.
     fn tensor(&self, name: &str) -> Option<(u32, u64)>;
 }
@@ -61,7 +61,7 @@ pub struct ModelInfo {
     pub head_count_kv: u32,
     /// `<arch>.nextn_predict_layers`; > 0 means the model embeds MTP heads.
     pub nextn_predict_layers: u32,
-    /// `<arch>.block_size` — DFlash drafters' trained diffusion block; the
+    /// `<arch>.block_size`: DFlash drafters' trained diffusion block; the
     /// `--spec-draft-n-max` ceiling is `block_size - 1`. 0 if absent.
     pub block_size: u32,
     /// Raw `tokenizer.chat_template` metadata (None when the GGUF carries
@@ -70,7 +70,7 @@ pub struct ModelInfo {
     pub chat_template: Option<String>,
     /// `token_embd.weight`'s `(ggml_type, bytes)`. Both halves drive a decision
     /// the rest of the box can't: whether an `override-tensor` rule pinning the
-    /// embedding table to a GPU is a win or a catastrophe — see `embd_line`.
+    /// embedding table to a GPU is a win or a catastrophe; see `embd_line`.
     /// None when the GGUF names its embedding tensor something else.
     pub embd: Option<(u32, u64)>,
 }
@@ -98,28 +98,28 @@ pub struct ExternalDraft {
 // ── Reasoning support, read off the chat template ────────────────────────
 
 /// What the embedded chat template does about thinking. Derived by SCANNING THE
-/// TEMPLATE SOURCE for the variables and tags llama.cpp's own levers act on — we
+/// TEMPLATE SOURCE for the variables and tags llama.cpp's own levers act on; we
 /// have no Jinja engine here, while llama.cpp answers the same question by
 /// *rendering* the template twice and diffing the output
 /// (`common_chat_templates_support_enable_thinking`, `jinja::caps_get`). So this
 /// is an approximation, and it is one-directional on purpose: every verdict below
 /// rests on a name the template must mention for the lever to reach it, so a
 /// `yes` is a fact about the template, while a `no` can only ever mean "no marker
-/// this build knows about" — which is why the row says what it read, and the
+/// this build knows about", which is why the row says what it read, and the
 /// llama-server load log stays the last word.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Thinking {
-    /// The GGUF embeds no template at all — nothing to read.
+    /// The GGUF embeds no template at all: nothing to read.
     NoTemplate,
     /// No thinking marker anywhere: `--reasoning` has nothing to switch.
     None,
-    /// Gated on `enable_thinking` — the kwarg `--reasoning on|off` writes
+    /// Gated on `enable_thinking`: the kwarg `--reasoning on|off` writes
     /// (`common/arg.cpp`: `default_template_kwargs["enable_thinking"]`).
     Switchable,
     /// Thinks unconditionally, but takes a `reasoning_effort` level (gpt-oss /
     /// harmony). `--reasoning off` cannot silence it; the kwarg tunes it.
     EffortOnly,
-    /// Thinks unconditionally and exposes no switch — `--reasoning` is inert.
+    /// Thinks unconditionally and exposes no switch; `--reasoning` is inert.
     Always,
 }
 
@@ -135,7 +135,7 @@ const PRESERVE_VARS: [&str; 3] = [
 ];
 
 /// Evidence that a template handles a reasoning trace. Every entry is template
-/// *mechanics* — a variable, a message field, or a trace tag — never prose, so a
+/// *mechanics* (a variable, a message field, or a trace tag), never prose, so a
 /// system prompt that merely says "think step by step" is not mistaken for a
 /// thinking model. Drawn from llama.cpp's bundled template corpus
 /// (`models/templates/`, 60 files): the tags cover DeepSeek-R1 / Qwen / GLM /
@@ -206,10 +206,10 @@ impl ModelInfo {
         if self.expert_shared_count > 0 {
             parts.push(format!("{} shared", self.expert_shared_count));
         }
-        format!("MoE — {}", parts.join(", "))
+        format!("MoE: {}", parts.join(", "))
     }
 
-    /// How many transformer layers actually carry MoE expert weights — the count
+    /// How many transformer layers actually carry MoE expert weights: the count
     /// that sizes the `--n-cpu-moe` lever (which keeps the first N layers' experts
     /// on CPU, trading VRAM for speed). Empty for dense models, where the lever is
     /// a no-op.
@@ -248,8 +248,8 @@ impl ModelInfo {
         parts.join(SEP)
     }
 
-    /// The "Embeddings" row: `token_embd.weight`'s own quant and size. Facts only
-    /// — the VERDICT they imply is `embd_pin_warning`, which the Tensor-placement
+    /// The "Embeddings" row: `token_embd.weight`'s own quant and size. Facts only:
+    /// the VERDICT they imply is `embd_pin_warning`, which the Tensor-placement
     /// table raises at the moment a rule actually pins the table. Both halves of
     /// this row exist because that verdict has two independent preconditions:
     ///
@@ -257,21 +257,21 @@ impl ModelInfo {
     /// "Shared GPU memory" a fully-offloaded model still shows (llama.cpp parks
     /// `token_embd` in a pinned host buffer even at `offloaded N/N layers`). But
     /// the cure has TWO preconditions, and violating either turns a win into a
-    /// 10-15x loss — both measured on a 27B split across ROCm + CUDA:
+    /// 10-15x loss, both measured on a 27B split across ROCm + CUDA:
     ///
     /// 1. **The type must have a GPU `get_rows` kernel.** ggml-cuda/ggml-hip
     ///    implement `GET_ROWS` for F32/F16/BF16/I32/Q1_0/Q4_0/Q4_1/Q5_0/Q5_1/Q8_0
-    ///    ONLY (`ggml-cuda.cu`, `supports_op`) — every K-quant falls to `default:
+    ///    ONLY (`ggml-cuda.cu`, `supports_op`); every K-quant falls to `default:
     ///    return false`. Pin a K-quant embedding table and the tensor sits in VRAM
     ///    the GPU cannot read, so the lookup round-trips to the host EVERY token:
     ///    decode collapsed 25 t/s → 2.8 t/s (Q4_K embd) and → 1.9 t/s (Q5_K, whose
-    ///    table is bigger, hence slower — the penalty tracks the table size).
+    ///    table is bigger, hence slower; the penalty tracks the table size).
     ///    Prefill is untouched (one round-trip per 2048-token batch amortizes it),
     ///    which is why this reads as "the GPU is idle" rather than "the GPU is slow".
     ///    The trap is that a file's NAME does not tell you: Unsloth's Q6_K_XL keeps
     ///    `token_embd` at Q8_0 (safe), while its Q4_K_XL/Q5_K_XL use Q4_K/Q5_K (not).
     /// 2. **The card must have room for it.** Pinning MOVES the table out of host
-    ///    RAM and into VRAM, so it is a straight add to the device's footprint —
+    ///    RAM and into VRAM, so it is a straight add to the device's footprint,
     ///    hence the size here. With the KV cache already filling the card, that
     ///    add is what tips it into paging (23 t/s → 13.7 t/s, a Q8_0 table on a
     ///    card holding a 256k f16 KV cache). Size is the number to budget against.
@@ -286,14 +286,14 @@ impl ModelInfo {
 
     /// The warning the Tensor-placement table shows when this model's embedding
     /// table is pinned to a GPU it cannot be read from. Empty when the type is
-    /// safe — and equally empty when it is UNKNOWN (no `token_embd.weight`, or no
+    /// safe, and equally empty when it is UNKNOWN (no `token_embd.weight`, or no
     /// `ggml-base.dll` to read it with): a metadata read we couldn't do is not
     /// evidence of a problem, and crying wolf on every unreadable GGUF would train
     /// the warning away. So `!embd_pinnable()` alone must never gate this.
     pub fn embd_pin_warning(&self) -> String {
         match self.embd {
             Some((ty, _)) if !gpu_has_get_rows(ty) => format!(
-                "This model stores token_embd as {} — CUDA/ROCm have no get_rows kernel for \
+                "This model stores token_embd as {}: CUDA/ROCm have no get_rows kernel for \
                  K-quants, so pinning it to a GPU sends the whole table back to host RAM on \
                  EVERY token (measured: 25 → 2.8 tok/s). Point the rule at CPU, or use a build \
                  whose embedding table is Q8_0/F16/BF16.",
@@ -356,7 +356,7 @@ impl ModelInfo {
     }
 
     /// The "Past thinking" row: is `--reasoning-preserve` a LEVER on this
-    /// template — i.e. does the template read any of the three variables the flag
+    /// template, i.e. does the template read any of the three variables the flag
     /// sets?
     pub fn past_thinking_line(&self) -> String {
         match (self.thinking(), self.preserve_var()) {
@@ -367,7 +367,7 @@ impl ModelInfo {
     }
 
     /// Which of `--reasoning-preserve`'s three template variables this template
-    /// reads, if any. First match wins — a template naming several (none in
+    /// reads, if any. First match wins; a template naming several (none in
     /// llama.cpp's bundled set does) is still driven by the same one flag.
     fn preserve_var(&self) -> Option<&'static str> {
         let t = self.chat_template.as_deref()?;
@@ -521,7 +521,7 @@ pub fn read_mmproj_info(path: &Path) -> Option<MmprojInfo> {
 // ── External drafter cross-reference ─────────────────────────────────────
 
 /// Scan `mtps\` and `dflashs\` under `models_dir` and pick the drafter whose
-/// filename shares the most "family" tokens with the model (a loose heuristic —
+/// filename shares the most "family" tokens with the model (a loose heuristic:
 /// requires ≥2 shared distinctive tokens to claim a match).
 pub fn external_drafters(models_dir: &str, model_path: &str) -> ExternalDraft {
     let model_stem = Path::new(model_path)
@@ -587,7 +587,7 @@ fn is_quant_token(t: &str) -> bool {
 
 /// Number of DISTINCT tokens the two lists share. `family_tokens` doesn't
 /// dedup, and HF-style names often repeat the family (e.g. a label carrying
-/// the repo name twice) — counting duplicates would let a single shared token
+/// the repo name twice); counting duplicates would let a single shared token
 /// clear the "> 1 shared tokens" match threshold.
 fn token_overlap(a: &[String], b: &[String]) -> usize {
     let bs: std::collections::HashSet<&str> = b.iter().map(String::as_str).collect();
@@ -627,7 +627,7 @@ fn format_mib(bytes: u64) -> String {
 }
 
 /// Map a `ggml_type` (ggml/include/ggml.h) to its name. This is NOT the
-/// `general.file_type` LLAMA_FTYPE enum that `ftype_name` maps — the two disagree
+/// `general.file_type` LLAMA_FTYPE enum that `ftype_name` maps: the two disagree
 /// on nearly every value (e.g. 7 is Q8_0 as an ftype but Q5_1 as a ggml_type), so
 /// crossing them would silently mislabel every tensor.
 fn ggml_type_name(t: u32) -> String {
@@ -675,7 +675,7 @@ fn ggml_type_name(t: u32) -> String {
 /// Whether ggml-cuda / ggml-hip can run `GET_ROWS` (the embedding lookup) on a
 /// tensor of this `ggml_type`. Mirrors the `case GGML_OP_GET_ROWS` arm of
 /// `ggml_backend_cuda_device_supports_op` (`ggml/src/ggml-cuda/ggml-cuda.cu`),
-/// which whitelists exactly these and returns false for everything else — every
+/// which whitelists exactly these and returns false for everything else, every
 /// K-quant and every IQ-quant included.
 ///
 /// Keep this list in sync with that switch when bumping llama.cpp: a type that
@@ -797,7 +797,7 @@ mod tests {
         }
     }
 
-    /// `map` plus the GGUF's tensor infos — only `token_embd.weight` is read.
+    /// `map` plus the GGUF's tensor infos: only `token_embd.weight` is read.
     fn map_t(pairs: Vec<(&'static str, Tv)>, tensors: Vec<(&'static str, (u32, u64))>) -> Map {
         Map {
             kv: pairs.into_iter().collect(),
@@ -825,7 +825,7 @@ mod tests {
         assert_eq!(info.quant, "Q4_K_M");
         assert_eq!(
             info.kind_line(),
-            "MoE — 160 experts, 6 active/tok, 2 shared"
+            "MoE: 160 experts, 6 active/tok, 2 shared"
         );
         assert_eq!(
             info.moe_offload_line(),
@@ -898,7 +898,7 @@ mod tests {
     /// bundled templates (`models/templates/`) actually use. The pairing is the
     /// point: the two rows answer different questions, and a model can be a
     /// thinker whose past thinking no flag can keep (`enable_thinking` with no
-    /// preserve variable — the Qwen3.5 form, which re-renders history WITHOUT the
+    /// preserve variable: the Qwen3.5 form, which re-renders history WITHOUT the
     /// trace as soon as a newer turn arrives).
     #[test]
     fn thinking_rows_read_the_levers_the_template_actually_exposes() {
@@ -929,7 +929,7 @@ mod tests {
         assert_eq!(nemotron.past_thinking_line(), "yes");
 
         // Ministral-3-Reasoning: [THINK] tags and a 'thinking' content block, no
-        // enable_thinking anywhere — it always thinks and --reasoning can't stop it.
+        // enable_thinking anywhere; it always thinks and --reasoning can't stop it.
         let ministral = with_template(
             "{%- elif block['type'] == 'thinking' %}{{- '[THINK]' + block['thinking'] + '[/THINK]' }}",
         );
@@ -943,7 +943,7 @@ mod tests {
         );
         assert_eq!(gpt_oss.thinking_line(), "yes");
 
-        // A template with no thinking mechanics (Llama-3.1's) — but MiMo-VL, which
+        // A template with no thinking mechanics (Llama-3.1's), but MiMo-VL, which
         // DOES think, has one just as bare, so the verdict names the TEMPLATE and
         // never the model. What the silence proves is only that --reasoning and
         // --reasoning-preserve have nothing here to act on, which is exactly what
@@ -1044,7 +1044,7 @@ mod tests {
 
     /// The whole point of the Embeddings row: the FILE NAME does not tell you
     /// whether pinning `token_embd` is safe. These are the real headers of three
-    /// Unsloth "XL" builds of the SAME model — the Q6_K_XL keeps its embedding
+    /// Unsloth "XL" builds of the SAME model: the Q6_K_XL keeps its embedding
     /// table at Q8_0 (a type ggml-cuda/hip can `get_rows` on GPU), while the
     /// Q5/Q4 builds drop it to a K-quant, which has no GPU kernel. Pinning those
     /// two round-trips the table to the host every token: measured 2.8 t/s (Q4_K)
@@ -1053,7 +1053,7 @@ mod tests {
     fn embd_verdict_follows_the_tensor_type_not_the_file_name() {
         let base = || vec![("general.architecture", Tv::S("qwen35"))];
 
-        // Qwen3.6-27B-UD-MTP-Q6_K_XL.gguf — embd is Q8_0: whitelisted.
+        // Qwen3.6-27B-UD-MTP-Q6_K_XL.gguf, embd is Q8_0: whitelisted.
         let info = ModelInfo::from_kv(&map_t(
             base(),
             vec![("token_embd.weight", (8, 1_351_614_464))],
@@ -1062,7 +1062,7 @@ mod tests {
         assert_eq!(info.embd_line(), "Q8_0  ·  1.26 GiB");
         assert!(info.embd_pin_warning().is_empty());
 
-        // Qwen3.6-27B-UD-Q4_K_XL.gguf — embd is Q4_K: no GPU get_rows. The ROW is
+        // Qwen3.6-27B-UD-Q4_K_XL.gguf, embd is Q4_K: no GPU get_rows. The ROW is
         // unchanged in shape (facts only); the VERDICT lives in the warning.
         let info = ModelInfo::from_kv(&map_t(
             base(),
@@ -1072,7 +1072,7 @@ mod tests {
         assert_eq!(info.embd_line(), "Q4_K  ·  682 MiB");
         assert!(info.embd_pin_warning().contains("Q4_K"));
 
-        // Q5_K (13) is a K-quant too — the trap is not specific to Q4.
+        // Q5_K (13) is a K-quant too: the trap is not specific to Q4.
         let info = ModelInfo::from_kv(&map_t(
             base(),
             vec![("token_embd.weight", (13, 873_463_808))],
@@ -1090,7 +1090,7 @@ mod tests {
     }
 
     /// `ggml_type` and `general.file_type` (LLAMA_FTYPE) are different enums that
-    /// overlap numerically — 7 means Q8_0 as an ftype but Q5_1 as a ggml_type, and
+    /// overlap numerically: 7 means Q8_0 as an ftype but Q5_1 as a ggml_type, and
     /// 14 means Q4_K_S vs Q6_K. Reading a tensor's type through `ftype_name` (or
     /// vice versa) would mislabel almost everything, so pin the divergence.
     #[test]
@@ -1118,7 +1118,7 @@ mod tests {
             ("qwen3moe.expert_used_count", Tv::U(8)),
         ]);
         let info = ModelInfo::from_kv(&m).unwrap();
-        assert_eq!(info.kind_line(), "MoE — 128 experts, 8 active/tok");
+        assert_eq!(info.kind_line(), "MoE: 128 experts, 8 active/tok");
         assert_eq!(
             info.moe_offload_line(),
             "all 48 layers hold experts"

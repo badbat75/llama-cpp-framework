@@ -4,8 +4,8 @@
 //! human-readable, shell-pasteable rendering shown in the Server tab's Command
 //! Line card). `start()` additionally sets cwd = `paths::data_root()`,
 //! `LLAMA_CACHE` = ModelsDir and the ROCm PATH prepend
-//! (`proc::prepend_rocm_path` — HIP devices vanish without it), and appends both
-//! output streams to `logs\llama-server.log` — env/cwd/logging are NOT part of
+//! (`proc::prepend_rocm_path`: HIP devices vanish without it), and appends both
+//! output streams to `logs\llama-server.log`; env/cwd/logging are NOT part of
 //! `command_line()`'s pasteable rendering, so a pasted command reproduces the
 //! args only.
 
@@ -40,7 +40,7 @@ pub fn is_running() -> bool {
 
 /// The PID (2nd CSV field) of a `tasklist /fo csv /nh` row like
 /// `"llama-server.exe","1234","Console","1","12,345 K"`. Splitting on `,` is
-/// safe for field 2 — the only comma-bearing field (Mem Usage) comes after it.
+/// safe for field 2: the only comma-bearing field (Mem Usage) comes after it.
 #[cfg(windows)]
 fn parse_tasklist_pid(line: &str) -> Option<u32> {
     line.split(',')
@@ -103,7 +103,7 @@ fn server_args(
     args.push(hostname);
 
     // --webui-mcp-proxy : serve the built-in web UI's MCP proxy endpoint. A
-    //   presence flag — omitted when off (llama.cpp then defaults it disabled).
+    //   presence flag, omitted when off (llama.cpp then defaults it disabled).
     // -fit on|off       : llama.cpp's auto-fit-to-VRAM. Always passed with an
     //   explicit value; defaults off because the GUI's "default" n-gpu-layers
     //   means "offload ALL layers", which -fit on would silently override.
@@ -120,22 +120,22 @@ fn server_args(
     });
 
     // --no-prefill-assistant : only when turned OFF. This is a NEGATIVE presence
-    //   flag — llama.cpp prefills a trailing assistant message by default, and
-    //   `--prefill-assistant` is merely the (redundant) affirmative — so passing
+    //   flag: llama.cpp prefills a trailing assistant message by default, and
+    //   `--prefill-assistant` is merely the (redundant) affirmative, so passing
     //   nothing is what keeps the default behaviour.
     if !cfg.prefill_assistant_or_default() {
         args.push("--no-prefill-assistant".into());
     }
 
     // -lv N : log verbosity threshold into the captured llama-server.log.
-    //   Framework default 4 (per-request logging) when unset — always passed
+    //   Framework default 4 (per-request logging) when unset; always passed
     //   (the Server tab's Advanced card exposes the level).
     args.push("-lv".into());
     args.push(cfg.log_verbosity_or_default().to_string());
 
     // CPU thread counts: when unset ("auto") omit the flag entirely so llama.cpp
     // applies its own default; only pass an explicit value when the user set one.
-    // (We must NOT substitute a computed default here — that would defeat "auto".)
+    // (We must NOT substitute a computed default here; that would defeat "auto".)
     if let Some(t) = cfg.threads.filter(|&n| n > 0) {
         args.push("-t".into());
         args.push(t.to_string());
@@ -147,13 +147,13 @@ fn server_args(
 
     // -lm MODE : how the weights are brought in. Always passed with an explicit
     //   value (framework default "auto", which is llama.cpp's own), the same way
-    //   -fit and -lv are — this is what the Command Line card has to show, and
+    //   -fit and -lv are; this is what the Command Line card has to show, and
     //   `load_mode_or_default` guarantees the value is one llama.cpp accepts.
     //
     //   NEVER emit the old --mlock / --no-mmap here. They are deprecated since
     //   b10105 and, worse, no longer compose: each overwrites the whole mode, so
     //   the pair this used to send (`--mlock --no-mmap`) was last-one-wins and
-    //   dropped the mlock, while a lone `--mlock` also turned mmap OFF — see
+    //   dropped the mlock, while a lone `--mlock` also turned mmap OFF; see
     //   `server_cfg::load_mode`.
     args.push("-lm".into());
     args.push(cfg.load_mode_or_default().into());
@@ -181,7 +181,7 @@ fn server_args(
             args.push(ts.to_string());
         }
     }
-    // One flag carrying every rule, comma-joined — llama.cpp splits it itself. It
+    // One flag carrying every rule, comma-joined: llama.cpp splits it itself. It
     // lands on the ROUTER's command line, which is exactly why it wins: the router
     // merges its own args into each preset as a key→value map, so this REPLACES a
     // preset's `override-tensor` rather than adding to it (see server_cfg).
@@ -196,7 +196,7 @@ fn server_args(
 
 /// The environment llama-server is launched with, beyond the inherited one and
 /// the ROCm PATH prepend (`proc::prepend_rocm_path`). LLAMA_CACHE is set
-/// separately in `start()` — it comes from a path helper, not from a bare config
+/// separately in `start()`: it comes from a path helper, not from a bare config
 /// field. This is the sibling of `server_args` for the settings llama.cpp exposes
 /// ONLY as env vars, so `start()` and `command_line()` render the same launch.
 fn env_vars(cfg: &crate::server_cfg::ServerConfig) -> Vec<(String, String)> {
@@ -207,7 +207,7 @@ fn env_vars(cfg: &crate::server_cfg::ServerConfig) -> Vec<(String, String)> {
         }
     }
     // ROCBLAS_USE_HIPBLASLT: rocBLAS's switch between its two GEMM backends. Read
-    // by rocBLAS itself — llama.cpp has no flag for it and never sees it — and
+    // by rocBLAS itself (llama.cpp has no flag for it and never sees it) and
     // parsed as an INT, so the value is "1"/"0", never "true"/"false". `0` forces
     // Tensile, which is the cure for gfx1201's hipBLASLt failing the second
     // 16-bit GEMM of a process (see server_cfg::rocblas_use_hipblaslt). Unset
@@ -222,7 +222,7 @@ fn env_vars(cfg: &crate::server_cfg::ServerConfig) -> Vec<(String, String)> {
 }
 
 /// How long `start()` watches a freshly spawned llama-server before declaring
-/// success — long enough to catch a launch that dies on a bad preset, a taken
+/// success: long enough to catch a launch that dies on a bad preset, a taken
 /// port, or a missing model (those exit within ~1 s), short enough that a
 /// healthy server (still alive while it loads the model) isn't held up.
 const LAUNCH_GRACE: std::time::Duration = std::time::Duration::from_millis(2500);
@@ -231,11 +231,11 @@ const LAUNCH_GRACE: std::time::Duration = std::time::Duration::from_millis(2500)
 
 /// Launch llama-server.exe with args from server.ini + presets.ini.
 ///
-/// Returns `Some(cfg)` — the config the process was ACTUALLY launched with —
+/// Returns `Some(cfg)` (the config the process was ACTUALLY launched with)
 /// so the caller can snapshot the client URL from it (re-loading server.ini
 /// after the fact would race a save landing between the two reads). `Ok(None)`
 /// means the server was already running: nothing was launched, so there is no
-/// launch config to snapshot — the live process may be on an older saved
+/// launch config to snapshot; the live process may be on an older saved
 /// config, or not GUI-launched at all.
 ///
 /// After spawning, it watches the child for `LAUNCH_GRACE`: a process that
@@ -243,16 +243,16 @@ const LAUNCH_GRACE: std::time::Duration = std::time::Duration::from_millis(2500)
 /// returns an `Err` pointing at the log, so the caller reports the failure NOW
 /// instead of an optimistic "started" that the 5 s status tick later contradicts
 /// with "no longer running". A process still alive after the window is reported
-/// as started (it may still be loading the model — that's fine, it's up).
+/// as started (it may still be loading the model; that's fine, it's up).
 pub fn start() -> io::Result<Option<crate::server_cfg::ServerConfig>> {
     if is_running() {
-        return Ok(None); // already running — we launched nothing
+        return Ok(None); // already running; we launched nothing
     }
 
     if !has_presets() {
         return Err(io::Error::new(
             io::ErrorKind::NotFound,
-            "No model presets configured — add one on the Models page first.",
+            "No model presets configured: add one on the Models page first.",
         ));
     }
 
@@ -286,18 +286,18 @@ pub fn start() -> io::Result<Option<crate::server_cfg::ServerConfig>> {
     cmd.env("LLAMA_CACHE", &models_dir);
     // Put the image encoder (mmproj/CLIP) on a chosen GPU. There is no flag for
     // this: `clip_ctx` reads MTMD_BACKEND_DEVICE itself and otherwise takes the
-    // FIRST GPU backend the registry offers — it never looks at --device. On a
+    // FIRST GPU backend the registry offers; it never looks at --device. On a
     // mixed box that strands the encoder on the wrong card, where it holds VRAM
     // for the model's whole life and computes only when an image arrives.
     // Inherited by the router's per-model children, so it covers every preset.
     for dev in env_vars(&cfg) {
         cmd.env(dev.0, dev.1);
     }
-    // Make ggml-hip.dll loadable — the HIP SDK's bin dir isn't on the system
+    // Make ggml-hip.dll loadable: the HIP SDK's bin dir isn't on the system
     // PATH, and ggml silently skips a backend whose DLL deps don't resolve.
     crate::proc::prepend_rocm_path(&mut cmd);
     // llama-server writes most of its logging (model load, request logs,
-    // GGML asserts, crash traces) to stderr — capture both streams in the
+    // GGML asserts, crash traces) to stderr; capture both streams in the
     // same log file so the log isn't empty and crashes leave a trail.
     let log_file_err = log_file.try_clone()?;
     cmd.stdout(log_file);
@@ -309,7 +309,7 @@ pub fn start() -> io::Result<Option<crate::server_cfg::ServerConfig>> {
 
     let mut child = cmd.spawn()?;
 
-    // Confirm the server SURVIVES launch — spawning only proves the exe started,
+    // Confirm the server SURVIVES launch: spawning only proves the exe started,
     // not that it got past arg parsing / port bind / model load. Poll for a
     // short grace window; if it exits, surface that immediately with the log
     // path (llama-server writes its own error trail there). Runs on the caller's
@@ -326,7 +326,7 @@ pub fn start() -> io::Result<Option<crate::server_cfg::ServerConfig>> {
                     log_path.display()
                 )));
             }
-            // Still alive — keep it running and stop watching.
+            // Still alive: keep it running and stop watching.
             Ok(None) => {}
             // Can't poll the child; don't block the launch on a probe failure.
             Err(_) => break,
@@ -336,16 +336,16 @@ pub fn start() -> io::Result<Option<crate::server_cfg::ServerConfig>> {
     }
 
     // Dropping `child` here does NOT kill the process on Windows (std leaves it
-    // detached) — the server keeps running; we just stop watching it.
+    // detached): the server keeps running; we just stop watching it.
     Ok(Some(cfg))
 }
 
-/// Force-kill all llama-server.exe processes (taskkill /f — llama-server has
+/// Force-kill all llama-server.exe processes (taskkill /f: llama-server has
 /// no graceful shutdown channel when running detached without a console).
 ///
 /// Infallible by design: a missing/failed kill is not surfaced here. The caller
 /// (`stop_server_async`) re-polls `is_running()` and reports "still running" if
-/// the kill didn't land — that re-check is the source of truth for the outcome.
+/// the kill didn't land; that re-check is the source of truth for the outcome.
 pub fn stop() {
     #[cfg(windows)]
     {
@@ -393,7 +393,7 @@ pub fn command_line() -> Option<String> {
 
 /// Group the flat arg list into `--flag [value...]` lines: a token that starts
 /// with '-' opens a new line; following non-flag tokens (values) attach to the
-/// current line. Pure (no IO) — `command_line()` is the config-loading wrapper,
+/// current line. Pure (no IO): `command_line()` is the config-loading wrapper,
 /// mirroring the `render`/`save` split in server_cfg.
 ///
 /// `env` is prepended as standalone assignment lines (NOT continued into the
@@ -402,7 +402,7 @@ pub fn command_line() -> Option<String> {
 /// server than the GUI does.
 fn render_command_line(exe: &str, args: &[String], env: &[(String, String)]) -> String {
     // PowerShell parses a quoted string at command position as an expression,
-    // not a command — and the default install path ("C:\Program Files\…") gets
+    // not a command, and the default install path ("C:\Program Files\…") gets
     // quoted by `quote_arg`. The call operator makes the paste work there and
     // is harmless for unquoted paths.
     #[cfg(windows)]
@@ -492,7 +492,7 @@ mod tests {
     }
 
     // "auto" (unset / non-positive) MUST omit the flag entirely so llama.cpp
-    // applies its own default — substituting a computed value would defeat it.
+    // applies its own default; substituting a computed value would defeat it.
     #[test]
     fn auto_fields_omit_their_flags() {
         let a = args_for(&ServerConfig::default());
@@ -551,7 +551,7 @@ mod tests {
     }
 
     // Step-8 guard of the server-field recipe (top of server_cfg.rs): every
-    // ServerConfig field must be consumed by the launch path — mapped to a
+    // ServerConfig field must be consumed by the launch path: mapped to a
     // llama-server flag here, or explicitly waved through with a comment
     // saying where `start()` uses it. The exhaustive destructure breaks
     // compilation the moment a field is added, until this test decides.
@@ -596,11 +596,11 @@ mod tests {
             tensor_split,
             override_tensor,
             // launch env only: start() exports it as MTMD_BACKEND_DEVICE. It is
-            // not a llama-server flag at all — the image encoder's device can
+            // not a llama-server flag at all: the image encoder's device can
             // only be chosen through that env var (clip.cpp reads it directly).
             mmproj_device: _,
             // launch env only: `env_vars` exports it as ROCBLAS_USE_HIPBLASLT.
-            // Also not a llama-server flag — rocBLAS reads it itself, below
+            // Also not a llama-server flag: rocBLAS reads it itself, below
             // llama.cpp. Its own assertions live in the env test further down.
             rocblas_use_hipblaslt: _,
             webui_mcp_proxy,
@@ -639,7 +639,7 @@ mod tests {
         );
         // fit is always passed with an explicit on|off value.
         assert!(pair("-fit", if fit.unwrap() { "on" } else { "off" }.into()));
-        // prefill-assistant is a NEGATIVE presence flag — the flag exists to turn
+        // prefill-assistant is a NEGATIVE presence flag: it exists to turn
         // llama.cpp's default OFF, so Some(false) emits it and Some(true) emits
         // nothing. Asserting the emitted case AND the silent one, because "no flag"
         // is the state a `!` typo would produce for both.
@@ -747,7 +747,7 @@ mod tests {
         );
     }
 
-    // MmprojDevice is not a llama-server flag — the image encoder's GPU can only
+    // MmprojDevice is not a llama-server flag: the image encoder's GPU can only
     // be chosen through MTMD_BACKEND_DEVICE. Both launch surfaces must carry it:
     // `start()` sets it on the child, and the pasted command line has to as well,
     // or the block a user copies out of the GUI runs a differently-placed encoder.
@@ -770,7 +770,7 @@ mod tests {
             "no env line in:\n{out}"
         );
         assert!(out.contains("ROCm1"));
-        // The env assignment is its own statement — continuing it into the
+        // The env assignment is its own statement: continuing it into the
         // command would make the paste a syntax error.
         assert!(!out.lines().next().unwrap().ends_with(LINE_CONTINUATION));
     }
@@ -779,7 +779,7 @@ mod tests {
     // Three things it pins: the value is the INT rocBLAS parses ("0"/"1", never
     // "false"/"true"), `None` exports NOTHING (a default-on-every-machine
     // workaround is exactly what the tri-state exists to avoid), and it reaches
-    // the pasteable command line — a block that dropped it would run the backend
+    // the pasteable command line; a block that dropped it would run the backend
     // this setting exists to steer away from.
     #[test]
     fn rocblas_hipblaslt_rides_the_env_as_zero_or_one() {
@@ -799,7 +799,7 @@ mod tests {
             env_vars(&with(None)).is_empty(),
             "unset must export nothing"
         );
-        // Not an argument on either surface — llama-server would refuse it.
+        // Not an argument on either surface: llama-server would refuse it.
         assert!(!args_for(&with(Some(false)))
             .iter()
             .any(|a| a.contains("HIPBLASLT")));
@@ -819,7 +819,7 @@ mod tests {
             "\"C:\\path with spaces\\x.exe\""
         );
         assert_eq!(quote_arg("--port"), "--port");
-        // Embedded quotes are NOT escaped — no config value carries them today;
+        // Embedded quotes are NOT escaped: no config value carries them today;
         // revisit if one ever can.
         assert_eq!(quote_arg("a\"b"), "a\"b");
     }

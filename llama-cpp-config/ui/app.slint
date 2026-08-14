@@ -1,4 +1,4 @@
-// llama.cpp-framework configurator — Slint UI.
+// llama.cpp-framework configurator: Slint UI.
 //
 // Left navigation rail (Server / Models / Integrations / Settings) and a content
 // area that swaps pages via `AppState.current_tab`. Live server status is shown
@@ -6,7 +6,7 @@
 //
 // All shared data/callbacks live in `AppState` (state.slint); this file is the
 // window shell and the tray, PLUS the app-wide pieces that must sit above the
-// pages: the keyboard shortcuts (Ctrl+S/1/2/3/4/N, F5 — the KeyBindings block)
+// pages: the keyboard shortcuts (Ctrl+S/1/2/3/4/N, F5, in the KeyBindings block)
 // and the five overlay modals (New/Clone picker, Discard, Delete, Rename,
 // Chat-template preview).
 // Rust drives everything via `app.global::<AppState>()`.
@@ -18,7 +18,7 @@ import { Tokens, Options, ModalOverlay, AccentBar, SelectableRow, ListPanel } fr
 // a bare import wouldn't surface them to Rust. `Options` is exported only so
 // the e2e test can assert `Options.all_layers == form::ALL_LAYERS`.
 export { AppState, Options }
-// The log-tail viewer — a third root component beside AppWindow/AppTray,
+// The log-tail viewer: a third root component beside AppWindow/AppTray,
 // re-exported so gui.rs can instantiate it (`LogWindow::new()`).
 import { LogWindow } from "log_window.slint";
 export { LogWindow }
@@ -35,7 +35,7 @@ component NavItem inherits Rectangle {
     in property <bool> selected;
     callback clicked;
 
-    // Surface the rail item to assistive tech — a bare Rectangle+TouchArea
+    // Surface the rail item to assistive tech: a bare Rectangle+TouchArea
     // is invisible to it.
     accessible-role: tab;
     accessible-label: root.label;
@@ -84,8 +84,8 @@ export component AppWindow inherits Window {
         ? "llama.cpp-framework configurator"
         : "llama.cpp-framework configurator v" + AppState.app_version;
     icon: @image-url("llama.png");
-    // Keep the floor low enough that the whole window — including the Save/Revert
-    // row at the bottom of each scrolling page — fits on a 1366×768 laptop after
+    // Keep the floor low enough that the whole window (including the Save/Revert
+    // row at the bottom of each scrolling page) fits on a 1366×768 laptop after
     // the title bar and taskbar. The preferred size stays roomy on big screens.
     // Both grew by 68px when the GPU table's editable column went from an 84px
     // weight field to a 152px slider + readout: the widest row in the app is that
@@ -117,7 +117,7 @@ export component AppWindow inherits Window {
                 // can_save_* properties in state.slint so those conditions
                 // can't drift; tab 2 (integrations) is deliberately ungated on
                 // both surfaces (its Save is always available). Tab 3
-                // (settings) has no Save at all — its toggles apply on click —
+                // (settings) has no Save at all (its toggles apply on click),
                 // so Ctrl+S is intentionally inert there.
                 if (AppState.current_tab == 0 && AppState.can_save_server) { AppState.save_server(); }
                 else if (AppState.current_tab == 1 && AppState.can_save_preset) { AppState.save_preset(); }
@@ -131,7 +131,7 @@ export component AppWindow inherits Window {
         // F5 = the Refresh button (full disk re-read + re-probe, inheriting
         // the dirty-form discard guard), not just a run-status poll.
         KeyBinding { keys: @keys(F5); activated => { if (!AppState.modal_open) { AppState.reload_all(); } } }
-        // Ctrl+N works from any tab — jump to Models first, or the preset
+        // Ctrl+N works from any tab: jump to Models first, or the preset
         // would be created (and selected) on a hidden page.
         KeyBinding { keys: @keys(Control + N); activated => { if (!AppState.modal_open) { AppState.current_tab = 1; AppState.new_preset(); } } }
 
@@ -177,7 +177,7 @@ export component AppWindow inherits Window {
                         clicked => { AppState.current_tab = 2; }
                     }
                     NavItem {
-                        // U+E9E9 "Equalizer" (preference sliders) — E713, the
+                        // U+E9E9 "Equalizer" (preference sliders); E713, the
                         // canonical gear, already means the Server tab here.
                         glyph: "\u{E9E9}";
                         label: "Settings";
@@ -220,11 +220,11 @@ export component AppWindow inherits Window {
                             // open_chat_url prefers the URL the RUNNING server
                             // was launched with over the saved server.ini one
                             // (a save while running changes the file, not the
-                            // listening process) — see state.slint.
+                            // listening process); see state.slint.
                             clicked => { Platform.open-url(AppState.open_chat_url); }
                         }
                         // Tail logs\llama-server.log in an independent,
-                        // non-modal window (LogWindow). Always enabled — the
+                        // non-modal window (LogWindow). Always enabled: the
                         // log outlives the process, so it's exactly what you
                         // want to read after a crash or a failed start.
                         Button {
@@ -232,7 +232,7 @@ export component AppWindow inherits Window {
                             clicked => { AppState.view_logs(); }
                         }
                         // Re-read the config files and re-scan the models
-                        // directory. Always available — use it after adding a
+                        // directory. Always available: use it after adding a
                         // model file or hand-editing server.ini / presets.ini.
                         Button {
                             text: "Refresh";
@@ -328,7 +328,7 @@ export component AppWindow inherits Window {
     // the VerticalLayout: a 100%×100% overlay allocated as a layout ROW would
     // squeeze the nav/content row and footer while open, and if the layout
     // compressed the overlay instead, the backdrop would no longer cover the
-    // footer — leaving UI clickable under an "open" modal.
+    // footer, leaving UI clickable under an "open" modal.
     if AppState.show_new_kind_picker: ModalOverlay {
         title: AppState.new_dialog_source_id == "" ? "New preset" : "Clone preset";
         description: AppState.new_dialog_source_id == ""
@@ -372,7 +372,7 @@ export component AppWindow inherits Window {
         }
         ListPanel {
             is_empty: AppState.dialog_model_labels.length == 0;
-            // Distinguish "no models at all" from "filter excluded them" — else a
+            // Distinguish "no models at all" from "filter excluded them"; else a
             // no-match filter wrongly tells the user their ModelsDir is empty.
             empty_text: AppState.dialog_filter == ""
                 ? "No .gguf files found under ModelsDir. Drop files there and reopen this dialog."
@@ -489,13 +489,13 @@ export component AppWindow inherits Window {
     }
     if AppState.show_chat_template_dialog: ModalOverlay {
         title: "Chat template (GGUF: tokenizer.chat_template)";
-        description: "The Jinja2 template embedded in the model. llama-server applies it to /v1/chat/completions unless overridden with --chat-template or --chat-template-file. Read-only — select and Ctrl+C to copy.";
+        description: "The Jinja2 template embedded in the model. llama-server applies it to /v1/chat/completions unless overridden with --chat-template or --chat-template-file. Read-only: select and Ctrl+C to copy.";
         card_width: 760px;
         card_height: 560px;
         dismissed => { AppState.show_chat_template_dialog = false; }
 
         // Read-only so the template stays selectable/copyable (Ctrl+C) but
-        // can't be edited into the (non-existent) binding back to Rust — a
+        // can't be edited into the (non-existent) binding back to Rust; a
         // plain Text wouldn't allow selection.
         TextEdit {
             text: AppState.chat_template_preview;
@@ -528,7 +528,7 @@ export component AppTray inherits SystemTrayIcon {
     // generated by build.rs). The icon property is change-tracked, so this
     // updates the tray live as the status flips.
     icon: root.server_running ? @image-url("llama-on.png") : @image-url("llama.png");
-    tooltip: root.server_running ? "llama.cpp — server running" : "llama.cpp — server stopped";
+    tooltip: root.server_running ? "llama.cpp: server running" : "llama.cpp: server stopped";
     callback open_window();
     callback start_server();
     callback stop_server();

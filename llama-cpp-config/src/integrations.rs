@@ -3,11 +3,11 @@
 //! Manages the `provider.llama.cpp` section in opencode.json, auto-generating
 //! model entries from presets.ini. Claude Code does not support per-file
 //! custom providers natively; an env-var snippet is generated for the GUI's
-//! Claude Code card instead (copy-paste only — never written to disk).
+//! Claude Code card instead (copy-paste only, never written to disk).
 //!
 //! The one non-mechanical field is a model's `limit.context`, and it is not a
 //! copy of the preset's `ctx-size`: opencode fills a prompt to whatever ceiling it
-//! is given, so the number has to be the context ONE request can actually use —
+//! is given, so the number has to be the context ONE request can actually use,
 //! which llama.cpp derives from `ctx-size`, `parallel` and the model's trained
 //! context TOGETHER. The whole derivation, and the three upstream rules behind it,
 //! lives in `effective_ctx`; it is the reason this module reads GGUF headers.
@@ -30,7 +30,7 @@ const PROVIDER_NAME: &str = "llama-server (local)";
 
 /// Advertised context when the model's trained context can't be read (no
 /// `ggml-base.dll` beside the app, or an unreadable GGUF) AND the preset names no
-/// `ctx-size`. A guess, and the only one left — `effective_ctx` derives every
+/// `ctx-size`. A guess, and the only one left; `effective_ctx` derives every
 /// other case.
 const CTX_FALLBACK: i64 = 131_072;
 
@@ -77,7 +77,7 @@ pub fn save_opencode_models(
 
     for id in checked_ids {
         if let Some(p) = preset_map.get(id.as_str()) {
-            // The model's TRAINED context — the only source for what a preset that
+            // The model's TRAINED context: the only source for what a preset that
             // names no `ctx-size` will actually load (see `effective_ctx`). A header
             // read, so it costs nothing next to the file it describes; `None` when
             // the GGUF (or ggml-base.dll) can't be read, and then the fallback bites.
@@ -90,7 +90,7 @@ pub fn save_opencode_models(
     }
 
     let serialized = serde_json::to_string_pretty(&v)?;
-    // OpenCode may never have run on this machine — create its config dir
+    // OpenCode may never have run on this machine; create its config dir
     // like every other writer does (read_or_create_value already treats the
     // missing FILE as an empty object, so the missing DIR must not fail).
     if let Some(parent) = path.parent() {
@@ -112,7 +112,7 @@ pub fn detect_opencode_provider() -> bool {
 /// Generates a PowerShell snippet that sets the env vars needed for
 /// Claude Code to use llama-server as a custom model provider. `example_id` is
 /// a preset id to show in the commented model line (the caller already holds
-/// the loaded presets — this stays a pure string builder, no hidden disk IO).
+/// the loaded presets; this stays a pure string builder, no hidden disk IO).
 /// `api_key` is the optional API key for proxy/gateway authentication.
 pub fn claude_code_env_script(
     base_url: &str,
@@ -229,7 +229,7 @@ fn preset_to_opencode_model(p: &presets::Preset, n_ctx_train: Option<u32>) -> Va
     entry
 }
 
-/// The context ONE request may actually use — which is what an opencode model
+/// The context ONE request may actually use, which is what an opencode model
 /// entry must advertise, since opencode packs prompts up to that ceiling and
 /// llama-server rejects whatever exceeds a slot. It is neither `ctx-size` nor the
 /// model's trained context; three llama.cpp rules stand between them, and each one
@@ -243,13 +243,13 @@ fn preset_to_opencode_model(p: &presets::Preset, n_ctx_train: Option<u32>) -> Va
 ///    loads 256k, and advertising 128k under-sells it by half.
 /// 2. **…but the context is SPLIT ACROSS SLOTS**: `n_ctx_seq = n_ctx / n_seq_max`,
 ///    with `n_seq_max = n_parallel` (llama-context.cpp / common.cpp). So `parallel
-///    = 2` halves what a single request may ask for — the same 256k model serves
+///    = 2` halves what a single request may ask for; the same 256k model serves
 ///    128k per request. This is the half that makes the naive "just use the trained
 ///    context" fix WORSE than the bug: it would promise a context the server
 ///    refuses.
 /// 3. **…unless `parallel` is omitted.** llama-server defaults `n_parallel` to
 ///    `-1` = auto (common/arg.cpp, server-only), and auto picks 4 slots *and a
-///    unified KV cache* (tools/server/server.cpp) — under which `n_ctx_seq = n_ctx`,
+///    unified KV cache* (tools/server/server.cpp), under which `n_ctx_seq = n_ctx`,
 ///    i.e. every slot sees the whole context. Omitting the key is thus the way to
 ///    get the model's full trained context per request, and pinning `parallel` is
 ///    what silently divides it.
@@ -260,7 +260,7 @@ fn preset_to_opencode_model(p: &presets::Preset, n_ctx_train: Option<u32>) -> Va
 fn effective_ctx(ctx_size: Option<i32>, parallel: Option<i32>, n_ctx_train: Option<u32>) -> i64 {
     let trained = n_ctx_train.map(i64::from);
     // Rule 1. `ctx-size = 0` is llama.cpp's own spelling of "from the model", and
-    // `Preset::from_keys` keeps it as Some(0) — treat it like the absent key.
+    // `Preset::from_keys` keeps it as Some(0); treat it like the absent key.
     let n_ctx = match ctx_size.map(i64::from).filter(|c| *c > 0) {
         Some(c) => c,
         None => match trained {
@@ -285,7 +285,7 @@ fn effective_ctx(ctx_size: Option<i32>, parallel: Option<i32>, n_ctx_train: Opti
     }
 }
 
-/// `GGML_PAD(x, 256)` — llama.cpp rounds both `n_ctx` and the per-sequence slice
+/// `GGML_PAD(x, 256)`: llama.cpp rounds both `n_ctx` and the per-sequence slice
 /// up to a 256-token boundary (llama-context.cpp), so a preset asking for 100,000
 /// really gets 100,096. Mirrored rather than ignored because the advertised number
 /// is compared against by a client that will happily fill it to the last token.
@@ -417,7 +417,7 @@ mod tests {
         // the case that made the old hard-coded 131072 look right by accident.
         assert_eq!(effective_ctx(None, Some(2), TRAINED), 131_072);
         assert_eq!(effective_ctx(None, Some(4), TRAINED), 65_536);
-        // An explicit ctx-size is split the same way — it is not a per-slot number.
+        // An explicit ctx-size is split the same way; it is not a per-slot number.
         assert_eq!(effective_ctx(Some(65_536), Some(2), TRAINED), 32_768);
         assert_eq!(effective_ctx(Some(65_536), None, TRAINED), 65_536);
         // ctx-size = 0 is llama.cpp's own "load it from the model".

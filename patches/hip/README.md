@@ -3,7 +3,7 @@
 `<clang-major>\__clang_hip_runtime_wrapper.h` is a **modified copy of that
 toolchain's own stock header** (`<HIP_PATH>\lib\llvm\lib\clang\<major>\include\`
 on the TheRock dist). `02-build.ps1` detects the installed toolchain's clang
-resource major and force-includes the matching copy — and **fails fast when no
+resource major and force-includes the matching copy, and **fails fast when no
 matching copy exists**, because force-including a wrapper generated from a
 different clang's headers means silently drifting from the toolchain (clang 23
 added `__cluster_dims__`/`__no_cluster__` that the 7.1-era copy lacked).
@@ -36,11 +36,11 @@ function". First hit on ROCm 7.1; still present on TheRock ROCm 7.14
    block, prefixed with `#include <math.h>` (provides FP_NAN etc. that
    `__clang_hip_cmath.h` needs). Keep `<algorithm>`/`<complex>`/`<new>` in the
    std-lib section after `<cmath>`. Keep everything else byte-identical to
-   stock — the patch is the include ORDER, nothing else.
+   stock: the patch is the include ORDER, nothing else.
 4. Validate both directions with a small `-x hip` TU that includes `<cmath>` +
    `hip/hip_runtime.h` and calls `std::sqrt`/`std::isgreater`/`sinf` in a
    kernel (inside a VS dev shell, with the TheRock env set):
-   - stock (no flags): expected to FAIL with the overload clash — if it
+   - stock (no flags): expected to FAIL with the overload clash; if it
      compiles clean, MSVC/ROCm fixed it upstream: delete this machinery
      instead of regenerating.
    - patched (`-D__CLANG_HIP_RUNTIME_WRAPPER_H__ -include <patched>`): must

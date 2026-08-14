@@ -1,14 +1,14 @@
 //! Settings-tab callback wiring (the configurator's own preferences).
 //!
 //! Unlike the form tabs there is no Save/Revert and no dirty state: each toggle
-//! APPLIES on click — the checkbox is already flipped through its two-way
+//! APPLIES on click: the checkbox is already flipped through its two-way
 //! binding when the callback fires, so the handler persists that value and, on
 //! a failed write, pushes the real state back into the property (the two-way
 //! binding is what makes that rollback reach the widget). Because nothing here
 //! is ever pending, the tab needs no leg in the F5/Refresh discard guard.
 //!
 //! Backing stores, deliberately different per toggle: "Start with Windows" and
-//! "start minimized" together ARE the HKCU Run registry entry (`startup.rs` —
+//! "start minimized" together ARE the HKCU Run registry entry (`startup.rs`:
 //! presence + whether the stored command carries `--minimized`; no INI mirror
 //! that Task Manager's Startup panel could desync), while "start llama-server
 //! on launch" lives in settings.ini (`settings.rs`). `refresh` re-reads all of
@@ -25,7 +25,7 @@ pub(super) fn refresh(app: &AppWindow) {
     let enabled = startup::is_enabled();
     s.set_start_with_windows(enabled);
     // With no Run entry there is nothing to read the tray choice from; default
-    // the (disabled) checkbox to minimized — the recommended shape, and what a
+    // the (disabled) checkbox to minimized: the recommended shape, and what a
     // fresh enable will then write.
     s.set_start_minimized_to_tray(if enabled {
         startup::starts_minimized()

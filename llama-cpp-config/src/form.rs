@@ -1,8 +1,8 @@
 //! Conversion between the Slint edit form (`PresetForm`) and the `presets::Preset`
 //! schema. Kept out of `gui.rs` (which only shuttles the whole `PresetForm` around,
 //! never per-field) so adding a preset field touches small files. This is step 7
-//! (both directions below) of the 7-step fan-out; the full checklist — including
-//! the `ui/types.slint` and `ui/models_page.slint` edits it's easy to forget —
+//! (both directions below) of the 7-step fan-out; the full checklist (including
+//! the `ui/types.slint` and `ui/models_page.slint` edits it's easy to forget)
 //! lives at the top of `presets.rs`.
 
 use slint::SharedString;
@@ -10,13 +10,13 @@ use slint::SharedString;
 use crate::gui::PresetForm;
 use crate::{ini, presets};
 
-/// The preset's string value, or the schema default when it's empty — so the
+/// The preset's string value, or the schema default when it's empty, so the
 /// form's text defaults track `Preset::default()` instead of being re-hardcoded.
 fn str_or(val: &str, default: &str) -> SharedString {
     SharedString::from(if val.is_empty() { default } else { val })
 }
 
-/// An `Option<bool>` as the word the tri-state `SegmentedControl`s show — the
+/// An `Option<bool>` as the word the tri-state `SegmentedControl`s show: the
 /// widget for a flag whose "unset" is a THIRD instruction rather than the absence
 /// of one (`--flash-attn`, whose own default is `auto`; `--reasoning-preserve`,
 /// whose default is whatever the chat template does). Pairs with `tri_bool` on the
@@ -24,7 +24,7 @@ fn str_or(val: &str, default: &str) -> SharedString {
 /// `None` (pass nothing) are different instructions to llama.cpp.
 ///
 /// Shared with the SERVER form (`server_form.rs`, `rocblas_use_hipblaslt`), whose
-/// third state is "never export the env var" — same shape, same widget, so the
+/// third state is "never export the env var"; same shape, same widget, so the
 /// pair lives here once rather than being re-derived per form.
 pub(crate) fn tri_state(v: Option<bool>) -> SharedString {
     match v {
@@ -36,7 +36,7 @@ pub(crate) fn tri_state(v: Option<bool>) -> SharedString {
 }
 
 /// The form spelling → `Option<bool>`, the inverse of `tri_state`. Anything that
-/// isn't an explicit on/off is `None` — the natural simplification
+/// isn't an explicit on/off is `None`: the natural simplification
 /// `Some(s == "on")` collapses "default" into an explicit off, which is a real
 /// flag (`--no-flash-attn` / `--no-reasoning-preserve`) with real consequences.
 pub(crate) fn tri_bool(s: &str) -> Option<bool> {
@@ -64,23 +64,23 @@ fn enum_or_empty(val: &str) -> String {
     }
 }
 
-/// An optional float (no schema default) as its decimal string, or "" when unset
-/// — the blank-able text a `DefaultLineEdit` shows for the sampling overrides
-/// (temp / top-p / min-p / repeat- + presence-penalty). Pairs with
+/// An optional float (no schema default) as its decimal string, or "" when
+/// unset: the blank-able text a `DefaultLineEdit` shows for the sampling
+/// overrides (temp / top-p / min-p / repeat- + presence-penalty). Pairs with
 /// `ini::parse_float` on the way back.
 fn txt(v: Option<f64>) -> SharedString {
     v.map(|n| n.to_string()).unwrap_or_default().into()
 }
 
 /// An optional INT as the text its `DefaultLineEdit` shows, falling back to
-/// `hint` when the key is unset — the integer twin of `txt`, and the reason the
+/// `hint` when the key is unset, the integer twin of `txt`, and the reason the
 /// integers are strings on the form at all: they left their `SpinBox` in v1.5.0
 /// because Slint's spins itself on a stray mouse-wheel over the page (the full
 /// story is on the component, ui/components.slint).
 ///
 /// Unlike `txt` this is never blank: an unset integer still SHOWS its hint, in a
 /// disabled field, so unticking "default" starts from a sensible number rather
-/// than an empty box. The `*_default` checkbox — not the text — is what carries
+/// than an empty box. The `*_default` checkbox (not the text) is what carries
 /// "unset" back to the preset.
 fn itxt(v: Option<i32>, hint: i32) -> SharedString {
     v.unwrap_or(hint).to_string().into()
@@ -89,7 +89,7 @@ fn itxt(v: Option<i32>, hint: i32) -> SharedString {
 /// "All layers on GPU" sentinel for the `--n-gpu-layers*` sliders: any value
 /// above a real block count. The single Rust home (the form fallbacks here,
 /// `apply_draft_pick` in gui/models_tab.rs). Mirrors `Options.all_layers` in
-/// ui/components.slint — the equality is asserted in the e2e test
+/// ui/components.slint; the equality is asserted in the e2e test
 /// (src/tests/ui_bindings.rs), so a drift fails the suite instead of shipping
 /// two different sentinels.
 pub(crate) const ALL_LAYERS: i32 = 99;
@@ -99,7 +99,7 @@ pub(crate) const ALL_LAYERS: i32 = 99;
 /// defaults (`common_params`, common/common.h @ b9995), so unticking a box and
 /// saving reproduces what was already running instead of quietly changing it.
 ///
-/// They can't be read off `Preset::default()` any more — a new preset now leaves
+/// They can't be read off `Preset::default()` any more: a new preset now leaves
 /// every one of these keys UNSET (that is what "the model runs on llama.cpp's
 /// defaults" means), so the schema has no number left to lend. `--ctx-size` has
 /// none to mirror in the first place: its default is `0` = "the context the model
@@ -168,7 +168,7 @@ pub fn preset_to_form(p: &presets::Preset) -> PresetForm {
         ubatch_size_default: p.ubatch_size.is_none(),
         // The KV-cache trio carries its "unset" into the WIDGET (the "default"
         // entry / pill) instead of parking on a hint the way the numeric fields
-        // above do — because here the displayed value IS the saved one. An omitted
+        // above do, because here the displayed value IS the saved one. An omitted
         // cache-type-k once fell back to the schema (which then said `q8_0`), so it
         // displayed q8_0 and got WRITTEN BACK as q8_0 on the next save of any
         // unrelated field, quietly turning llama.cpp's f16 into q8_0 on a preset
@@ -183,7 +183,7 @@ pub fn preset_to_form(p: &presets::Preset) -> PresetForm {
         reasoning_format: str_or(&p.reasoning_format, &d.reasoning_format),
         // Tri-state, so it deliberately does NOT fall back to `d` the way the
         // fields above do: `None` is not "unset, show the default" here, it IS a
-        // value — "let the template decide", distinct from an explicit off.
+        // value: "let the template decide", distinct from an explicit off.
         reasoning_preserve: tri_state(p.reasoning_preserve),
         n_cpu_moe: p.n_cpu_moe.unwrap_or(0),
         n_cpu_moe_auto: p.n_cpu_moe.is_none(),
@@ -211,7 +211,7 @@ pub fn form_to_preset(f: &PresetForm) -> presets::Preset {
         mmproj_offload: Some(f.mmproj_offload),
         // Vision-token bounds: positive only (llama.cpp's -1 = "read from model" is
         // exactly our omit-the-flag/None), so `> 0` collapses 0 or a stray sign to
-        // unset — same rule as ctx-size above.
+        // unset, same rule as ctx-size above.
         image_min_tokens: if f.image_min_tokens_default {
             None
         } else {
@@ -230,7 +230,7 @@ pub fn form_to_preset(f: &PresetForm) -> presets::Preset {
         // The integer fields are TEXT on the form (see `itxt`), so each one is
         // re-parsed here: unparseable (or blank) text reads as unset, the same rule
         // the float knobs below have always followed. The `> 0` filters that
-        // survive are the ones that were the SpinBox's `minimum` — the widget can
+        // survive are the ones that were the SpinBox's `minimum`: the widget can
         // no longer refuse the value, so this is where a 0 stops being a value.
         spec_draft_n_max: if f.spec_draft_n_max_default {
             None
@@ -281,7 +281,7 @@ pub fn form_to_preset(f: &PresetForm) -> presets::Preset {
         cache_type_v: enum_or_empty(f.cache_type_v.as_str()),
         flash_attn: tri_bool(f.flash_attn.as_str()),
         // Any integer is meaningful to --cache-ram (0 disables, -1 = no
-        // limit), matching the hint and `Preset::from_keys` — so NO `> 0` filter
+        // limit), matching the hint and `Preset::from_keys`, so NO `> 0` filter
         // here, and its field is the one integer taking `decimal` input (the only
         // `input_type` that lets a `-` be typed at all).
         cache_ram: if f.cache_ram_default {
@@ -305,7 +305,7 @@ pub fn form_to_preset(f: &PresetForm) -> presets::Preset {
             ini::parse_float(f.temp.as_str())
         },
         // Integer-valued (digits-only input, unlike the float sampling knobs
-        // below) — any int is meaningful (0 = disable top-k), so no `> 0` filter:
+        // below); any int is meaningful (0 = disable top-k), so no `> 0` filter:
         // only the "default" checkbox, or text that isn't a number, collapses to None.
         top_k: if f.top_k_default {
             None
@@ -339,12 +339,12 @@ pub fn form_to_preset(f: &PresetForm) -> presets::Preset {
 /// `presets::prune_inactive_draft_keys` applied to the live FORM, returning the
 /// same list of dropped INI keys. Called when the Model-info box learns what the
 /// selected model is (`update_model_info`), so the greyed-out speculative fields
-/// cannot keep a value the model can't use — see the policy's own doc comment
+/// cannot keep a value the model can't use; see the policy's own doc comment
 /// for what "can't use" costs.
 ///
 /// The policy stays in `presets.rs` and the form conversions stay in the two
 /// functions above: this round-trips through `Preset` to reuse both. Only the
-/// draft fields are lifted back out, deliberately — writing the whole converted
+/// draft fields are lifted back out, deliberately: writing the whole converted
 /// form back would also normalize whatever half-typed text sits in the OTHER
 /// numeric fields, and this runs while the user is editing.
 pub fn prune_inactive_draft_fields(f: &mut PresetForm, embeds_mtp: bool) -> Vec<&'static str> {
@@ -400,7 +400,7 @@ mod tests {
         assert_eq!(dropped.len(), 6, "all six keys are dead without a draft");
         assert_eq!(f.spec_type, "none");
         assert!(f.spec_draft_n_max_default);
-        // Empty ↔ "default", the EnumComboBox's first entry — an empty string
+        // Empty ↔ "default", the EnumComboBox's first entry: an empty string
         // matches no option and would leave q8_0 showing.
         assert_eq!(f.spec_draft_type_k, "default");
         assert_eq!(f.spec_draft_type_v, "default");
@@ -436,7 +436,7 @@ mod tests {
     // round-trip fixtures above pin Some(true)/Some(false); this pins all three at
     // once, and above all that None SURVIVES. The bug it guards is the natural
     // simplification `Some(f.reasoning_preserve == "on")`, which collapses None to
-    // Some(false) — every preset that never asked would silently start emitting
+    // Some(false): every preset that never asked would silently start emitting
     // --no-reasoning-preserve, overriding templates that preserve by default.
     #[test]
     fn reasoning_preserve_keeps_all_three_states_apart() {
@@ -449,7 +449,7 @@ mod tests {
         }
 
         // …and the form spelling is the one the SegmentedControl's `options` list
-        // uses — a mismatch here leaves the control with no segment highlighted.
+        // uses; a mismatch here leaves the control with no segment highlighted.
         let spelling = |state| {
             preset_to_form(&Preset {
                 reasoning_preserve: state,
@@ -466,7 +466,7 @@ mod tests {
     // The KV-cache card's other three flags have an "unset" that is a real
     // instruction too, so it has to survive the form the way reasoning-preserve's
     // does. It did not: `cache_type_k/v` fell back to `Preset::default()` (which
-    // then said q8_0) and `flash_attn` to Some(true) whenever the key was absent —
+    // then said q8_0) and `flash_attn` to Some(true) whenever the key was absent,
     // so a preset that had never named a cache type DISPLAYED q8_0 and, on the next
     // save of any unrelated field, WROTE q8_0, quietly requantizing a KV cache
     // llama.cpp would have left at f16. The empty/None state must reach the form as
@@ -484,7 +484,7 @@ mod tests {
         assert_eq!(back.cache_type_v, "", "cache-type-v invented a value");
         assert_eq!(back.flash_attn, None, "flash-attn invented a value");
 
-        // …and the form spellings are the ones the widgets' option lists use — a
+        // …and the form spellings are the ones the widgets' option lists use; a
         // mismatch leaves the ComboBox on its first row / the SegmentedControl with
         // no pill lit. "default" is `Options.cache_types[0]` and the first pill.
         let f = preset_to_form(&unset);
@@ -492,7 +492,7 @@ mod tests {
         assert_eq!(f.cache_type_v, "default");
         assert_eq!(f.flash_attn, "default");
 
-        // An explicit choice is still an explicit choice — including "off", which
+        // An explicit choice is still an explicit choice, including "off", which
         // is NOT the same as unset (it passes --flash-attn off, forcing the kernel
         // away even where the backend has it).
         for state in [None, Some(true), Some(false)] {
@@ -516,7 +516,7 @@ mod tests {
             model_draft: r"E:\mtps\model-mtp.gguf".into(),
             spec_type: "draft-mtp".into(),
             spec_draft_n_max: Some(10),
-            // Not the cache_type_k/-v below — the draft cache is its own setting.
+            // Not the cache_type_k/-v below: the draft cache is its own setting.
             spec_draft_type_k: "q4_0".into(),
             spec_draft_type_v: "q4_1".into(),
             n_gpu_layers_draft: Some(99),
@@ -550,7 +550,7 @@ mod tests {
         assert_eq!(round_trip(&p), p);
     }
 
-    // "0 disables, -1 = no limit" — the documented --cache-ram sentinels must
+    // "0 disables, -1 = no limit": the documented --cache-ram sentinels must
     // survive the form leg (a `> 0` filter here once silently dropped them,
     // falling back to llama-server's 8192 MiB default).
     #[test]

@@ -25,7 +25,7 @@ fn fixed_rows() -> Vec<BindOption> {
 }
 
 /// Enumerate the machine's usable IPv4 interfaces (loopback / link-local
-/// filtered out), sorted by name then address, each as an `ip (name — net/prefix)`
+/// filtered out), sorted by name then address, each as an `ip (name, net/prefix)`
 /// row. Empty when enumeration fails.
 pub fn interfaces() -> Vec<BindOption> {
     let mut ifaces = match if_addrs::get_if_addrs() {
@@ -50,7 +50,7 @@ pub fn interfaces() -> Vec<BindOption> {
         let prefix = netmask_to_prefix(v4.netmask);
         let network = network_of(v4.ip, v4.netmask);
         let label = format!(
-            "{ip} ({name} — {net}/{prefix})",
+            "{ip} ({name}, {net}/{prefix})",
             ip = v4.ip,
             name = iface.name,
             net = network,
@@ -114,7 +114,7 @@ mod tests {
 
     fn iface(value: &str) -> BindOption {
         BindOption {
-            label: format!("{value} (eth0 — {value}/24)"),
+            label: format!("{value} (eth0, {value}/24)"),
             value: value.to_string(),
         }
     }

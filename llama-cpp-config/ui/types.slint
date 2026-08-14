@@ -4,7 +4,7 @@ export struct PresetSummary {
     id: string,
     // Index into the full (unfiltered) presets vector on the Rust side. The list
     // model only holds rows that pass the filter, so the `for` index is NOT a
-    // stable handle — `orig_index` is what select_preset()/highlighting use.
+    // stable handle; `orig_index` is what select_preset()/highlighting use.
     orig_index: int,
 }
 
@@ -31,7 +31,7 @@ export struct PresetForm {
     spec_draft_n_max_default: bool,
     // --spec-draft-type-k/-v (-ctkd/-ctvd): the DRAFT context's KV cache types.
     // EnumComboBox over Options.cache_types with the same empty↔"default"
-    // spelling as cache_type_k/-v below — but "default" here means f16, NOT
+    // spelling as cache_type_k/-v below, but "default" here means f16, NOT
     // "whatever the model uses": llama.cpp overwrites the inherited value with
     // the draft's own default. See the field docs in src/presets.rs.
     spec_draft_type_k: string,
@@ -43,7 +43,7 @@ export struct PresetForm {
     split_mode: string,
     tensor_split: string,
     // --override-tensor: the `<regex>=<device>,…` rule list, written by the
-    // tensor-placement table (TensorOverrideTable), never typed — llama.cpp
+    // tensor-placement table (TensorOverrideTable), never typed: llama.cpp
     // splits the value on `,` and at the first `=` before it parses anything, so
     // a free-text field would let an unescapable separator through. Same
     // table-not-a-field reasoning as `device`/`tensor_split` above; the rules
@@ -51,13 +51,13 @@ export struct PresetForm {
     override_tensor: string,
     // Numerics ride as STRINGS, integers included: every one of them is a
     // `DefaultLineEdit` (`value <=>`), because the SpinBox they used to sit in
-    // edits itself on a stray mouse-wheel over the page — see the component's
+    // edits itself on a stray mouse-wheel over the page; see the component's
     // header. The text is what the user typed; Rust re-parses it (`ini::parse_int`)
     // and an unparseable field reads as unset, exactly like the float knobs.
     // The `*_default` bool carries the "omit the flag" state (checkbox checked =
     // let llama.cpp pick its own default); the string is populated even then, so
     // the disabled field shows a hint (form.rs's HINT_*) of what unticking gives.
-    // The three LAYER counts below are the exception — they stay `int`, because
+    // The three LAYER counts below are the exception: they stay `int`, because
     // they ride a Slider (AutoSlider), which has no scroll handler to abuse.
     ctx_size: string,
     ctx_size_default: bool,
@@ -70,12 +70,12 @@ export struct PresetForm {
     ubatch_size: string,
     ubatch_size_default: bool,
     // --cache-type-k/-v: an EnumComboBox over Options.cache_types, whose FIRST
-    // entry is "default" — the spelling this string carries for the empty INI
+    // entry is "default", the spelling this string carries for the empty INI
     // value (omit the flag). Same empty↔"default" mapping as `split_mode` above.
     cache_type_k: string,
     cache_type_v: string,
     // --flash-attn, a TRI-state carried as a string like `reasoning_preserve`
-    // below: "default" (omit the flag — llama.cpp's own default is `auto`), "on",
+    // below: "default" (omit the flag; llama.cpp's own default is `auto`), "on",
     // "off". Not a bool: the flag takes [on|off|auto], so a checkbox could only
     // ever reach two of its three states, and the unreachable one is the default.
     flash_attn: string,
@@ -88,13 +88,13 @@ export struct PresetForm {
     reasoning: string,
     reasoning_format: string,
     // --reasoning-preserve, a TRI-state carried as a string: "default" (omit the
-    // flag — the template's own behaviour), "on", "off". Not a bool: "off"
+    // flag: the template's own behaviour), "on", "off". Not a bool: "off"
     // (--no-reasoning-preserve) and "default" are different instructions.
     reasoning_preserve: string,
     n_cpu_moe: int,
     n_cpu_moe_auto: bool,
     // Sampling knobs, each paired with a `*_default` bool (checkbox omits the
-    // flag — same shape as the integer fields above). Top-K is integer-valued, so
+    // flag, same shape as the integer fields above). Top-K is integer-valued, so
     // its field is digits-only (`input_type: number`); the rest are floats
     // (`decimal`). All of them are `DefaultLineEdit`s over a string.
     top_k: string,
@@ -118,17 +118,17 @@ export struct PresetForm {
 // (`server_form != server_form_base`). Adding a server field follows the
 // checklist at the top of src/server_cfg.rs (this struct + server_page.slint +
 // server_cfg.rs + both conversions in src/server_form.rs + 3 spots in cli.rs +
-// runstate::server_args) — never the GUI wiring. Numerics ride as `string` paired
-// with a `*_default` bool (a DefaultLineEdit — checkbox omits the flag), for the
+// runstate::server_args), never the GUI wiring. Numerics ride as `string` paired
+// with a `*_default` bool (a DefaultLineEdit: checkbox omits the flag), for the
 // same reason PresetForm's do: their old SpinBox edited itself on a stray scroll.
 // The CPU-thread counts instead ride as slider `int`s paired with an `_auto` flag
 // (auto = omit the flag, let llama.cpp pick), the same shape as PresetForm's
-// layer sliders — a Slider has no scroll handler, so it keeps its int.
+// layer sliders; a Slider has no scroll handler, so it keeps its int.
 export struct ServerForm {
     port: string,
     port_default: bool,
     hostname: string,
-    // -lm / --load-mode, carried as the RAW value ("auto", "mmap+mlock", …) —
+    // -lm / --load-mode, carried as the RAW value ("auto", "mmap+mlock", …),
     // unlike log_verbosity below, whose combo entries are labels needing a map.
     // An EnumComboBox over Options.load_modes; the Rust list (server_cfg::LOAD_MODES)
     // is asserted against the Slint one in the e2e so they can't drift.
@@ -136,7 +136,7 @@ export struct ServerForm {
     // It was two CheckBoxes (mlock + no_mmap) until llama.cpp folded --mlock /
     // --no-mmap / -dio into this one enum in b10105: they are mutually exclusive
     // states, so two independent toggles could express combinations that do not
-    // exist — and did, silently (see src/server_cfg.rs `load_mode`).
+    // exist, and did so silently (see src/server_cfg.rs `load_mode`).
     load_mode: string,
     threads: int,
     threads_auto: bool,
@@ -150,7 +150,7 @@ export struct ServerForm {
     // `device` + `tensor_split` are written by the GPU distribution table
     // (GpuSplitTable), not typed: --tensor-split is positional over --device, so
     // the two only make sense edited together. `mmproj_device` is separate on
-    // purpose — the image encoder ignores --device (see server_cfg.rs).
+    // purpose: the image encoder ignores --device (see server_cfg.rs).
     device: string,
     split_mode: string,
     tensor_split: string,
@@ -158,12 +158,12 @@ export struct ServerForm {
     // TensorOverrideTable, same `<regex>=<device>,…` grammar). Set here it
     // REPLACES every preset's rules rather than adding to them: the router merges
     // its own CLI args into each preset as a key→value map, so only one
-    // --override-tensor ever reaches a child (verified — see server_cfg.rs).
+    // --override-tensor ever reaches a child (verified; see server_cfg.rs).
     override_tensor: string,
     mmproj_device: string,
     // ROCBLAS_USE_HIPBLASLT (the SDK Tuning card's ROCm half), a TRI-state
     // carried as a string exactly like PresetForm's `flash_attn`: "default"
-    // (never export the variable — rocBLAS routes as it sees fit), "on" (=1,
+    // (never export the variable: rocBLAS routes as it sees fit), "on" (=1,
     // force hipBLASLt), "off" (=0, force Tensile). Not a bool: "default" and
     // "on" are different instructions, and only "off" cures the gfx1201 16-bit
     // GEMM failure (see src/server_cfg.rs). A SegmentedControl, and the same
@@ -173,12 +173,12 @@ export struct ServerForm {
     // webui_mcp_proxy enables the web UI's MCP proxy (--webui-mcp-proxy); fit is
     // llama.cpp's -fit on|off VRAM auto-fitting (checked = on); prefill_assistant
     // continues a TRAILING assistant message instead of answering it
-    // (--no-prefill-assistant turns it off — checked = llama.cpp's own default).
+    // (--no-prefill-assistant turns it off; checked = llama.cpp's own default).
     webui_mcp_proxy: bool,
     fit: bool,
     prefill_assistant: bool,
-    // Log verbosity threshold (-lv), carried as the DROPDOWN LABEL — "DEBUG:5",
-    // "TRACE:4", … — not as the bare number. llama.cpp defines exactly six levels
+    // Log verbosity threshold (-lv), carried as the DROPDOWN LABEL ("DEBUG:5",
+    // "TRACE:4", …), not as the bare number. llama.cpp defines exactly six levels
     // and nothing else is meaningful (`common/arg.cpp`), so the widget is an
     // EnumComboBox over `Options.log_levels` and the label is what round-trips;
     // `server_form::log_level_label` / `parse_log_level` map it to the int, and the
@@ -202,7 +202,7 @@ export struct IntegrationModel {
 
 // One row of the GPU distribution table (GpuSplitTable in components.slint), the
 // widget behind the `device` + `tensor_split` string pair on BOTH forms. Rows are
-// built entirely in Rust (src/gpu_split.rs — selected devices first, in split
+// built entirely in Rust (src/gpu_split.rs: selected devices first, in split
 // order, since that order IS the --tensor-split index) and are read-only to
 // Slint: the delegates report edits through the page's callbacks, which rewrite
 // the two form strings and rebuild the whole model. `share` and `vram` arrive
@@ -220,8 +220,8 @@ export struct GpuRow {
     share: string,
     // The same split expressed the way llama.cpp actually cuts it: how many of
     // the model's positions this device ends up with, and which ones. Both are
-    // a PROJECTION of `weight` under the model in hand — Rust recomputes them
-    // from the weight vector on every rebuild — so they are empty/0 wherever
+    // a PROJECTION of `weight` under the model in hand (Rust recomputes them
+    // from the weight vector on every rebuild), so they are empty/0 wherever
     // there is no model to project onto (the server-wide table) or the split is
     // auto (llama.cpp decides by free VRAM at load, which is not knowable here).
     // See `Layout` in src/gpu_split.rs for why the count is n_layer_all + 1.
@@ -232,7 +232,7 @@ export struct GpuRow {
 // One rule of the tensor-placement table (TensorOverrideTable in
 // components.slint), the widget behind the preset's `override_tensor` string.
 // Same shape as GpuRow: built entirely in Rust (src/tensor_override.rs) and
-// read-only to Slint — the delegates report edits through the page's callbacks,
+// read-only to Slint: the delegates report edits through the page's callbacks,
 // which rewrite the one form string and rebuild the whole model. Rows are
 // addressed by INDEX (a pattern may legitimately repeat, so there is no id).
 export struct TensorOverrideRow {
@@ -243,7 +243,7 @@ export struct TensorOverrideRow {
     // that shows the pattern's text field.
     kind_index: int,
     custom: bool,
-    // The target buffer type — a device id, or CPU — and its position in the
+    // The target buffer type (a device id, or CPU) and its position in the
     // shared AppState.tensor_dev_values model. -1 when the rule names none.
     device: string,
     device_index: int,

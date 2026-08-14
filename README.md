@@ -1,8 +1,8 @@
 # llama.cpp-framework
 
-> **Windows only** — all scripts are PowerShell (.ps1) and target Windows 10/11 exclusively.
+> **Windows only**: all scripts are PowerShell (.ps1) and target Windows 10/11 exclusively.
 
-PowerShell scripts to build and run [llama.cpp](https://github.com/ggerganov/llama.cpp) on Windows with multi-GPU backend support (CUDA, Vulkan, ROCm/HIP) and NSIS installer packaging. The chat UI built into `llama-server` is used as the frontend — no separate web UI is bundled.
+PowerShell scripts to build and run [llama.cpp](https://github.com/ggerganov/llama.cpp) on Windows with multi-GPU backend support (CUDA, Vulkan, ROCm/HIP) and NSIS installer packaging. The chat UI built into `llama-server` is used as the frontend; no separate web UI is bundled.
 
 ## Prerequisites
 
@@ -15,7 +15,7 @@ Installed/updated via winget by `00-install-prerequisites.ps1`:
 - [OpenSSL](https://slproweb.com/products/Win32OpenSSL.html)
 - [NSIS](https://nsis.sourceforge.io/) (for installer packaging)
 
-GPU SDKs (manual install — `00-install-prerequisites.ps1` only probes for them and prints the download URLs):
+GPU SDKs (manual install; `00-install-prerequisites.ps1` only probes for them and prints the download URLs):
 - [CUDA Toolkit](https://developer.nvidia.com/cuda-toolkit)
 - [Vulkan SDK](https://vulkan.lunarg.com/)
 - [AMD HIP SDK (ROCm)](https://rocm.docs.amd.com/)
@@ -73,7 +73,7 @@ Settings are split between build-time and runtime so the same scripts work both 
 | `server.ini` | `%LOCALAPPDATA%\llama.cpp\config\` | Machine-wide llama-server runtime (port, host, threads, threads-batch, cache-reuse, load mode, models dir, max simultaneous models, GPU distribution via device / split-mode / tensor-split, and the image encoder's device). Single `[Server]` section. Written by `llama-cpp-config`. |
 | `presets.ini` | `%LOCALAPPDATA%\llama.cpp\config\` | Per-model presets: one `[<model-id>]` section each with model path, ctx size, GPU layers, GPU distribution (device / split-mode / tensor-split), batch sizes, cache types, flash-attn, sampling, MoE expert offload, chat-template kwargs, speculative decoding (draft model / spec-type / draft device+layers). Consumed directly by `llama-server --models-preset`. Written by `llama-cpp-config`. |
 
-> **GPU distribution** is edited as a table, not as free text: `--tensor-split` is a positional vector over the devices named by `--device`, so the configurator lists the detected GPUs with a checkbox and a weight each and derives both settings from that. The [configurator README](llama-cpp-config/README.md#gpu-distribution-table) has the details — including the two footguns it exists to make visible: a blank tensor-split over 2+ GPUs means *split by free VRAM*, not evenly; and the **image encoder (mmproj/CLIP) ignores `--device`** — llama.cpp puts it on the first GPU backend it finds, where it holds VRAM but only works on image requests.
+> **GPU distribution** is edited as a table, not as free text: `--tensor-split` is a positional vector over the devices named by `--device`, so the configurator lists the detected GPUs with a checkbox and a weight each and derives both settings from that. The [configurator README](llama-cpp-config/README.md#gpu-distribution-table) has the details, including the two footguns it exists to make visible: a blank tensor-split over 2+ GPUs means *split by free VRAM*, not evenly; and the **image encoder (mmproj/CLIP) ignores `--device`**: llama.cpp puts it on the first GPU backend it finds, where it holds VRAM but only works on image requests.
 
 `config-build.psd1` keys:
 
@@ -90,9 +90,9 @@ Runtime configs are created and edited with `llama-cpp-config` (GUI when launche
 |--------|-------------|
 | `00-install-prerequisites.ps1` | Idempotent toolchain bootstrapper. Installs missing winget packages (PowerShell 7+, OpenSSL, NSIS) and upgrades present ones in a single UAC-elevated session; fetches the llama.cpp clone and flags a rebuild when a newer release tag is available; flags CUDA / Vulkan / HIP SDKs for manual install; reports version changes. |
 | `01-configure.ps1` | Detects environment, verifies tools, writes `config-build.psd1`. Accepts `-LlamaCppDir`. |
-| `02-build.ps1` | Builds **both** llama.cpp (CMake configure out-of-source into `build\llama.cpp-cmake\` + Ninja, checked out at the newest `bNNNN` release tag) **and** `llama-cpp-config` (`cargo build --release`; no intermediate copy — packaging stages it straight from cargo's target dir). Auto-clones llama.cpp into `build\llama.cpp\`. Uses sccache when available. |
+| `02-build.ps1` | Builds **both** llama.cpp (CMake configure out-of-source into `build\llama.cpp-cmake\` + Ninja, checked out at the newest `bNNNN` release tag) **and** `llama-cpp-config` (`cargo build --release`; no intermediate copy: packaging stages it straight from cargo's target dir). Auto-clones llama.cpp into `build\llama.cpp\`. Uses sccache when available. |
 | `03-package.ps1` | Stages from `build\llama.cpp-cmake\` + `llama-cpp-config\target\release\` into `build\staging\`, then runs NSIS to produce `dist\llama-cpp-framework-v<version>-<llamaBuild>-<arch>-setup.exe`. |
-| `common.ps1` | Shared bootstrap: loads `$cfg` from `config-build.psd1`, prepends ROCm `bin\` to PATH, exposes `Enable-VsDevShell` as a function. VS Dev Shell activation is **opt-in** — only build/package scripts call it. |
+| `common.ps1` | Shared bootstrap: loads `$cfg` from `config-build.psd1`, prepends ROCm `bin\` to PATH, exposes `Enable-VsDevShell` as a function. VS Dev Shell activation is **opt-in**: only build/package scripts call it. |
 | `llama-cpp-config\` | Rust GUI + CLI configurator for `server.ini` / `presets.ini`, opencode/Claude Code integrations, and llama-server start/stop. See [llama-cpp-config\README.md](llama-cpp-config/README.md). |
 
 ## Packaging

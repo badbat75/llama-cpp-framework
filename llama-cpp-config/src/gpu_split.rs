@@ -5,11 +5,11 @@
 //!
 //! ## Why a table and not two text fields
 //! `--tensor-split` is a positional vector indexed over the **filtered** device
-//! list — the devices named by `--device`, in `--device` order (llama.cpp's
+//! list: the devices named by `--device`, in `--device` order (llama.cpp's
 //! `llama-model.cpp` copies `tensor_split[0..n_devices()]` over `model->devices`,
 //! and `docs/multi-gpu.md`: *"The values follow the order in --device"*). With
 //! `--device` unset that list is every detected backend, which on a mixed box is
-//! CUDA0 + two ROCm + three duplicate Vulkan views of the same three GPUs — so a
+//! CUDA0 + two ROCm + three duplicate Vulkan views of the same three GPUs, so a
 //! weight vector typed by hand is indexed against a list the user can't see and
 //! didn't choose. The two fields only make sense together, which is what this
 //! module models: one selection, rendered into the `device` + `tensor_split`
@@ -19,14 +19,14 @@
 //! | selected | `device`        | `tensor_split` | meaning                                       |
 //! |----------|-----------------|----------------|-----------------------------------------------|
 //! | 0        | `""`            | `""`           | llama.cpp uses all detected devices           |
-//! | 1        | `"ROCm1"`       | `""`           | one GPU — nothing to split                    |
+//! | 1        | `"ROCm1"`       | `""`           | one GPU, nothing to split                     |
 //! | ≥2 auto  | `"ROCm1,CUDA0"` | `""`           | llama.cpp splits by **free** VRAM at load     |
 //! | ≥2 fixed | `"ROCm1,CUDA0"` | `"3,1"`        | explicit proportions                          |
 //!
 //! Note the third row: a blank `tensor_split` is *auto-by-free-VRAM*, NOT an even
 //! split (llama.cpp's `all_zero` branch fills `splits[i]` with each device's free
 //! memory). That's why the table offers **Auto** (clear) and **Even** (all 1s) as
-//! two distinct buttons — they are two different launches.
+//! two distinct buttons; they are two different launches.
 //!
 //! The selection is never held as separate state: it is derived from the form's
 //! two strings on every rebuild and rendered straight back into them, so a
@@ -35,22 +35,22 @@
 //! ## The weights are RATIOS; the table edits them as BLOCKS
 //! `--tensor-split` is normalized, so `85,15`, `17,3` and `29,5` are one launch.
 //! What llama.cpp then does with the ratio is cut `n_layer_all + 1` positions in
-//! two — every block plus the output layer — which means the knob has ~34 usable
+//! two (every block plus the output layer), which means the knob has ~34 usable
 //! settings on a 9B and a percent field offers 100 of them: 83 / 84 / 85% all cut
 //! in the same place, so two of every three edits move a number and change
 //! nothing. Hence `Layout` + `block_counts`: wherever a model is known the column
 //! is shown and edited in blocks, which changes exactly when the launch does.
 //!
 //! Writing it back needs no inverse. A vector summing to the positions assigns
-//! position `il` to the first device whose prefix sum passes it — so the weights
+//! position `il` to the first device whose prefix sum passes it, so the weights
 //! ARE the counts, and `set_blocks` just stores what it is given. What it cannot
 //! do is store it alone: counts are constrained to the positions, so one going up
 //! means another coming down (the back absorbs first). That constraint is also
-//! what picks the widget — a `Slider` over `0..positions`, committing once on
+//! what picks the widget: a `Slider` over `0..positions`, committing once on
 //! `released`, because a share of a fixed budget is what a slider is for and
 //! because applying it mid-drag would rebuild the row being dragged.
 //!
-//! The projection is one-way and re-derived on every rebuild — nothing persists a
+//! The projection is one-way and re-derived on every rebuild; nothing persists a
 //! block count. The INI keeps a ratio, which is the portable thing: re-point a
 //! preset at a model with a different `block_count` and `29,5` still means 85%,
 //! now cut somewhere else. The number in the cell is a VIEW of the ratio under the
@@ -59,7 +59,7 @@
 //! ## The row order IS the split order, and the user owns it
 //! Checked devices come FIRST, in `--device` order, then the rest in probe order.
 //! So the table read top to bottom is literally the `--device` list and its
-//! `--tensor-split` vector — and the drag handle (`move_by`) is how you change it.
+//! `--tensor-split` vector, and the drag handle (`move_by`) is how you change it.
 //!
 //! Position 0 is not cosmetic: it is `devices[0]`, which is also `main_gpu`
 //! (llama.cpp defaults `--main-gpu` to 0, and the framework never overrides it).
@@ -69,7 +69,7 @@
 //!
 //! Checking a device APPENDS it (last in the split, weight 1 if the others are
 //! weighted); unchecking removes it and its weight together. Weights are carried
-//! in the same tuple as their device, so a reorder moves them as a unit — the
+//! in the same tuple as their device, so a reorder moves them as a unit: the
 //! split proportions survive, only the positions change.
 //!
 //! ## The split MODE decides what the columns mean
@@ -79,11 +79,11 @@
 //! keeps ONLY the head row (`devices[main_gpu]`, and the framework never moves
 //! `--main-gpu` off 0) and the vector is dead, so the editors go away and the
 //! head row reads 100%; under `row` the weight MATRICES are split row-wise by
-//! the normalized vector (backend split buffer type — the layer cut still runs
+//! the normalized vector (backend split buffer type; the layer cut still runs
 //! over the same vector, so the KV cache and non-matrix tensors follow it, but
 //! the bulk of the bytes follow the row fractions), so the honest editable unit
 //! is the raw ratio and never blocks. `SplitMode` is that verdict;
-//! `effective_mode` resolves the scope inheritance — the server-wide mode rides
+//! `effective_mode` resolves the scope inheritance: the server-wide mode rides
 //! the router's own command line, so whenever it is set it shadows every
 //! preset's key.
 
@@ -102,17 +102,17 @@ pub struct GpuSelection {
     pub tensor_split: String,
 }
 
-/// A selected device and its weight. Weight 0 means "unweighted" — when EVERY
+/// A selected device and its weight. Weight 0 means "unweighted": when EVERY
 /// selected device is 0 the selection is in auto mode and renders a blank
 /// `tensor_split`.
 type Pick = (String, i32);
 
 // ── Split mode ───────────────────────────────────────────────────────────
 
-/// What `--split-mode` makes of the selection — the DISPLAY verdict, not the
-/// flag domain: a value this code does not know (today `tensor`, experimental
-/// in llama.cpp and refused by its `--fit` pass) degrades to `Row` — ratio
-/// editing, no block projection — because inventing a block cut for an unknown
+/// What `--split-mode` makes of the selection (the DISPLAY verdict, not the
+/// flag domain): a value this code does not know (today `tensor`, experimental
+/// in llama.cpp and refused by its `--fit` pass) degrades to `Row` (ratio
+/// editing, no block projection) because inventing a block cut for an unknown
 /// mode would misreport exactly what the mode handling exists to make honest.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SplitMode {
@@ -120,22 +120,22 @@ pub enum SplitMode {
     /// cuts blocks, so the table may edit blocks (`Layout`).
     #[default]
     Layer,
-    /// `none`: llama.cpp drops every device but `devices[main_gpu]` — the head
-    /// row — before loading (`llama_prepare_model_devices`), so the weight
+    /// `none`: llama.cpp drops every device but `devices[main_gpu]`, the head
+    /// row, before loading (`llama_prepare_model_devices`), so the weight
     /// vector means nothing and the drag handle is the only knob left.
     Single,
     /// `row` (and any unknown value): weight matrices are split row-wise by the
     /// normalized vector via the backend's split buffer type (CUDA/ROCm; a
-    /// backend without one — Vulkan — quietly falls back to the layer cut).
+    /// backend without one, Vulkan, quietly falls back to the layer cut).
     /// The layer assignment still runs over the same vector, so KV and the
-    /// non-matrix tensors follow it — but the bulk of the bytes follow the row
+    /// non-matrix tensors follow it, but the bulk of the bytes follow the row
     /// fractions, so the editable unit is the ratio, never blocks.
     Row,
 }
 
 impl SplitMode {
     /// The INI/form spelling → the verdict. "" and the form's "default"
-    /// sentinel are Layer — llama.cpp's own default — and so is an explicit
+    /// sentinel are Layer (llama.cpp's own default), and so is an explicit
     /// `layer`.
     pub fn parse(s: &str) -> Self {
         match s.trim() {
@@ -157,7 +157,7 @@ impl SplitMode {
 
 /// The mode a table actually runs under, scope inheritance resolved. The
 /// server-wide mode rides the ROUTER's command line (`runstate::server_args`),
-/// and the router copies its CLI args over every preset key — so whenever it is
+/// and the router copies its CLI args over every preset key, so whenever it is
 /// set it WINS, an explicit `layer` included. A preset's own key matters only
 /// while the server-wide one is absent. Pass `None` for the server table
 /// itself.
@@ -172,18 +172,18 @@ pub fn effective_mode(server_mode: &str, preset_mode: Option<&str>) -> SplitMode
 /// The split-mode combo as label/value/index rows rather than an enum list: the
 /// old list spelled "default" and "layer" as two entries, which for a preset are
 /// the SAME launch in every reachable configuration (an absent key falls back to
-/// layer — or to the server-wide mode, which when set overrides an explicit key
+/// layer, or to the server-wide mode, which when set overrides an explicit key
 /// too), so the duplicate entry was pure ambiguity. One entry now carries both;
 /// picking it stores "default", which the form conversions drop from the INI.
 pub const MODE_VALUES: [&str; 3] = ["default", "none", "row"];
 pub const MODE_LABELS: [&str; 3] = [
-    "layer — split by blocks (default)",
-    "none — single GPU",
-    "row — split matrices by rows",
+    "layer: split by blocks (default)",
+    "none: single GPU",
+    "row: split matrices by rows",
 ];
 
 /// The combo row for a form value, aligned with `MODE_VALUES`. Everything that
-/// is not `none`/`row` sits on the merged layer entry — including a hand-written
+/// is not `none`/`row` sits on the merged layer entry, including a hand-written
 /// value this build doesn't list (`tensor`), which keeps its INI spelling
 /// untouched until the user actually picks a row.
 pub fn mode_index(form_value: &str) -> i32 {
@@ -229,7 +229,7 @@ fn picks(sel: &GpuSelection) -> Vec<Pick> {
 }
 
 /// Render picks back into the INI string pair, IN THE GIVEN ORDER (that order is
-/// the user's — see the module header) — the one place the four-state table above
+/// the user's; see the module header): the one place the four-state table above
 /// is enforced. `tensor_split` collapses to empty for fewer than two devices
 /// (nothing to split) and for an all-zero weight vector (auto).
 fn render(picks: &[Pick]) -> GpuSelection {
@@ -259,9 +259,9 @@ fn render(picks: &[Pick]) -> GpuSelection {
 /// The positions one model's `--tensor-split` is resolved over.
 ///
 /// llama.cpp does not split "layers" and it does not split by size: it splits
-/// `n_layer_all + 1` POSITIONS — every block in the GGUF (the nextn/MTP ones
+/// `n_layer_all + 1` POSITIONS, i.e. every block in the GGUF (the nextn/MTP ones
 /// included, they are ordinary trailing blocks) plus one more for the output
-/// layer, `dev_output = get_layer_buft_list(n_layer_all)` — and it NORMALIZES the
+/// layer, `dev_output = get_layer_buft_list(n_layer_all)`; and it NORMALIZES the
 /// weight vector over them. So the weights are pure ratios at any scale, and the
 /// thing the user actually chose is a cut point between two blocks.
 ///
@@ -269,9 +269,9 @@ fn render(picks: &[Pick]) -> GpuSelection {
 /// only 34 places to cut, so 83 / 84 / 85% are the same launch and two of those
 /// three edits change nothing. A block count cannot misreport that.
 ///
-/// Partial offload takes positions off the FRONT — the first
+/// Partial offload takes positions off the FRONT: the first
 /// `n_layer_all + 1 - n_gpu_layers` go to the CPU and the split runs over what is
-/// left (`i_gpu_start` / `act_gpu_layers`, llama-model.cpp) — so `start` moves and
+/// left (`i_gpu_start` / `act_gpu_layers`, llama-model.cpp), so `start` moves and
 /// `count` shrinks as the GPU-layers slider comes down, and the counts shown to
 /// the user move with it. That is the truth, not a glitch.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -286,8 +286,8 @@ pub struct Layout {
 impl Layout {
     /// `n_layer_all` is the GGUF's `block_count`; `n_gpu_layers` negative means
     /// "all", which is llama.cpp's own default (llama.h: *a negative value means
-    /// all layers*). `None` whenever there is nothing to draw — no model read
-    /// yet, or an offload of zero layers — and every caller then falls back to
+    /// all layers*). `None` whenever there is nothing to draw (no model read
+    /// yet, or an offload of zero layers), and every caller then falls back to
     /// plain weights.
     pub fn new(n_layer_all: i32, n_gpu_layers: i32) -> Option<Self> {
         if n_layer_all <= 0 {
@@ -308,7 +308,7 @@ impl Layout {
         })
     }
 
-    /// The last position, which is the OUTPUT layer rather than a block — worth
+    /// The last position, which is the OUTPUT layer rather than a block, worth
     /// naming because it carries `output.weight`, routinely the single biggest
     /// tensor on its device (1.9 GiB on a 9B at BF16).
     fn output_position(self) -> i32 {
@@ -320,8 +320,8 @@ impl Layout {
 /// exactly: position `il` goes to `upper_bound(splits, (il - i_gpu_start) /
 /// act_gpu_layers)`, i.e. the first device whose cumulative share exceeds it.
 ///
-/// Done in integers — `cum * count > pos * total` is that same comparison with
-/// the two divisions cleared — which is not just faster but avoids inventing a
+/// Done in integers (`cum * count > pos * total` is that same comparison with
+/// the two divisions cleared), which is not just faster but avoids inventing a
 /// disagreement: llama.cpp's floats are exact here anyway (each side is one
 /// correctly-rounded division of small integers, so equal ratios round equal and
 /// the boundary case cannot drift between the two).
@@ -356,7 +356,7 @@ pub fn block_counts(weights: &[i32], layout: Layout) -> Option<Vec<i32>> {
 
 /// The per-device range label that goes with `block_counts`: `blocks 0-28`,
 /// `blocks 29-32 + output`. The output layer is called out by name because it is
-/// a position but not a block — "5 blocks" would otherwise quietly include the
+/// a position but not a block; "5 blocks" would otherwise quietly include the
 /// model's biggest single tensor without saying so.
 pub fn block_ranges(counts: &[i32], layout: Layout) -> Vec<String> {
     let mut out = Vec::with_capacity(counts.len());
@@ -384,7 +384,7 @@ pub fn block_ranges(counts: &[i32], layout: Layout) -> Vec<String> {
 
 // ── Edits (each returns the new selection; the caller writes it to the form) ──
 
-/// Check / uncheck a device. A newly checked one is APPENDED — last in the split,
+/// Check / uncheck a device. A newly checked one is APPENDED: last in the split,
 /// at weight 1 when the others are already weighted (adding it at 0 would silently
 /// give the new GPU no layers, which is never what checking a box means). Use
 /// `move_by` to promote it; nothing here reorders on its own.
@@ -404,7 +404,7 @@ pub fn toggle(sel: &GpuSelection, id: &str) -> GpuSelection {
 
 /// Move a checked device `delta` places within the split (negative = towards the
 /// head), clamped to the ends. This is the drag handle: it is the ONLY way to
-/// choose which GPU sits at position 0 — `devices[0]` is llama.cpp's `main_gpu`
+/// choose which GPU sits at position 0: `devices[0]` is llama.cpp's `main_gpu`
 /// (the sole GPU under `--split-mode none`, and the first slice of layers under
 /// `layer`). The weight rides along in the same tuple, so the proportions are
 /// preserved and only the positions change.
@@ -447,18 +447,18 @@ pub fn set_weight(sel: &GpuSelection, id: &str, weight: i32) -> GpuSelection {
     render(&picks)
 }
 
-/// Set one device's BLOCK count — the same edit as `set_weight`, in the unit the
+/// Set one device's BLOCK count: the same edit as `set_weight`, in the unit the
 /// split is actually resolved in (see `Layout`).
 ///
 /// The weights are rewritten as the counts themselves, which is EXACT rather than
 /// approximate: a vector summing to `layout.count` gives position `il` to the
 /// first device whose prefix sum exceeds it, so the weights *are* the counts.
-/// `29,5` over 34 positions is blocks 0-28 / 29-33 — not an 85% that happens to
+/// `29,5` over 34 positions is blocks 0-28 / 29-33, not an 85% that happens to
 /// round there, and not a value that needs an inverse to be invented.
 ///
 /// Unlike a weight, a count cannot be edited alone: the vector has to keep
 /// summing to `layout.count`, so someone else has to give the difference up. The
-/// rows absorb it from the BACK — the last row that isn't the edited one first,
+/// rows absorb it from the BACK: the last row that isn't the edited one first,
 /// then walking towards the head, taking from each only what it has. That keeps
 /// the common edits local: with two devices the other row simply takes the
 /// remainder, and with three, editing the head or the middle moves only the tail
@@ -471,7 +471,7 @@ pub fn set_blocks(sel: &GpuSelection, id: &str, blocks: i32, layout: Layout) -> 
         return sel.clone();
     };
     let n = picks.len();
-    // Auto has no counts to start from, so seed an even cut — the same "make the
+    // Auto has no counts to start from, so seed an even cut, the same "make the
     // implicit explicit before applying the edit" move `set_weight` makes.
     let mut counts = block_counts(&weights_of(&picks), layout)
         .unwrap_or_else(|| even_counts(n, layout.count));
@@ -506,7 +506,7 @@ fn weights_of(picks: &[Pick]) -> Vec<i32> {
     picks.iter().map(|&(_, w)| w).collect()
 }
 
-/// `count` positions over `n` devices, remainder to the back — the same direction
+/// `count` positions over `n` devices, remainder to the back: the same direction
 /// `set_blocks` absorbs in.
 fn even_counts(n: usize, count: i32) -> Vec<i32> {
     if n == 0 {
@@ -534,24 +534,24 @@ pub fn set_even(sel: &GpuSelection) -> GpuSelection {
 
 // ── Display ──────────────────────────────────────────────────────────────
 
-/// The table rows: the CHECKED devices first, in split order — the row order IS
-/// the `--device` order, which is what makes the drag handle mean something — then
-/// every other probed GPU, in probe order.
+/// The table rows: the CHECKED devices first, in split order (the row order IS
+/// the `--device` order, which is what makes the drag handle mean something),
+/// then every other probed GPU, in probe order.
 ///
-/// A checked id the probe doesn't know — stale, hand-edited, or simply checked
-/// before the async probe landed — still gets its row (`detected: false`), so the
+/// A checked id the probe doesn't know (stale, hand-edited, or simply checked
+/// before the async probe landed) still gets its row (`detected: false`), so the
 /// next save can't silently drop it.
 ///
 /// `layout` is the model to project the weights onto (`Layout`), and it is what
-/// turns the ratio column into a block column. `None` — the server-wide table,
+/// turns the ratio column into a block column. `None` (the server-wide table,
 /// which applies to every preset and so has no single `n_layer_all`, or a model
-/// whose header hasn't been read — leaves `blocks`/`blocks_label` empty and the
+/// whose header hasn't been read) leaves `blocks`/`blocks_label` empty and the
 /// table falls back to editing raw weights.
 ///
 /// `mode` is the EFFECTIVE split mode (`effective_mode`). It bends the rows the
 /// way llama.cpp will bend the launch: `Row` discards the layout (the bytes
 /// follow row fractions, so a block cut would misreport the placement), and
-/// `Single` additionally overrides the share column — the head row holds the
+/// `Single` additionally overrides the share column: the head row holds the
 /// whole model and every other checked row is dead weight, which "unused" says
 /// where a "—" would read as merely unchecked.
 pub fn build_rows(
@@ -631,7 +631,7 @@ mod tests {
     use crate::devices;
 
     // A real mixed box, trimmed. ROCm0 is the discrete R9700 and ROCm1 an iGPU
-    // that cannot run inference — adjacent rows, one mis-click apart. (And that
+    // that cannot run inference: adjacent rows, one mis-click apart. (And that
     // pairing is not even stable: the same machine has enumerated them the other
     // way round, which is why the table shows the NAME next to every id.)
     const SAMPLE: &str = "Available devices:\n  \
@@ -666,7 +666,7 @@ mod tests {
     }
 
     // The drag handle. Position 0 is llama.cpp's main_gpu, and appending is the
-    // only thing a checkbox can do — so without this there is no way to promote a
+    // only thing a checkbox can do, so without this there is no way to promote a
     // GPU to the head of the split.
     #[test]
     fn move_by_promotes_a_device_and_its_weight_together() {
@@ -718,7 +718,7 @@ mod tests {
     #[test]
     fn two_devices_weighted_render_the_vector_in_device_order() {
         let s = set_weight(&sel("ROCm0,CUDA0", ""), "ROCm0", 3);
-        // The untouched device is seeded to 1, not left at 0 — 3:1, not 3:0.
+        // The untouched device is seeded to 1, not left at 0 (3:1, not 3:0).
         assert_eq!(s, sel("ROCm0,CUDA0", "3,1"));
     }
 
@@ -830,7 +830,7 @@ mod tests {
         assert_eq!(parse_device_list(" ROCm0 , CUDA0 , "), ["ROCm0", "CUDA0"]);
     }
 
-    // A hand-written order is honoured as written — the table never re-sorts it
+    // A hand-written order is honoured as written: the table never re-sorts it
     // behind the user's back; only the drag handle moves a device.
     #[test]
     fn a_hand_written_order_survives_every_edit_that_is_not_a_move() {
@@ -898,7 +898,7 @@ mod tests {
         assert_eq!(block_counts(&[86, 14], l), Some(vec![30, 4]));
     }
 
-    // Even is all-1s (see the module header), which is NOT one block each — the
+    // Even is all-1s (see the module header), which is NOT one block each; the
     // projection is what makes that legible instead of a column of 1s.
     #[test]
     fn even_projects_to_half_the_positions_not_to_a_weight_of_one() {
@@ -936,7 +936,7 @@ mod tests {
     }
 
     // The label has to name the output layer: it is a position but not a block,
-    // and it carries `output.weight` — 1.9 GiB on a 9B at BF16, routinely the
+    // and it carries `output.weight`: 1.9 GiB on a 9B at BF16, routinely the
     // biggest single tensor on its device.
     #[test]
     fn the_range_label_names_the_output_layer_separately() {
@@ -967,7 +967,7 @@ mod tests {
         let l = full(ORNITH);
         let two = sel("ROCm0,CUDA0", "85,15");
         // Typing back the count already shown normalizes the vector and changes
-        // nothing about the cut — 85,15 and 29,5 are the same launch.
+        // nothing about the cut: 85,15 and 29,5 are the same launch.
         let same = set_blocks(&two, "ROCm0", 29, l);
         assert_eq!(same, sel("ROCm0,CUDA0", "29,5"));
         assert_eq!(block_counts(&[29, 5], l), block_counts(&[85, 15], l));
@@ -993,7 +993,7 @@ mod tests {
 
     // Editing anything but the head: the tail still pays first, and a row IN FRONT
     // of the edited one is touched only once everything behind it is at zero.
-    // (Three devices is where that direction becomes observable at all — with two
+    // (Three devices is where that direction becomes observable at all; with two
     // there is only ever one other row to take from.)
     #[test]
     fn a_middle_or_last_row_edit_still_absorbs_from_the_tail_first() {
@@ -1009,7 +1009,7 @@ mod tests {
             set_blocks(&three, "CUDA0", 20, l),
             sel("ROCm0,CUDA0,Vulkan0", "12,20,2")
         );
-        // Middle row up past what the tail holds: the HEAD gives up the rest —
+        // Middle row up past what the tail holds: the HEAD gives up the rest;
         // it has to, or the count asked for cannot be honoured.
         assert_eq!(
             set_blocks(&three, "CUDA0", 30, l),
@@ -1034,7 +1034,7 @@ mod tests {
         for n in 0..=l.count {
             let s = set_blocks(&sel("ROCm0,CUDA0", "1,1"), "ROCm0", n, l);
             let got = block_counts(&parse_weights(&s.tensor_split), l);
-            // A 0/34 or 34/0 split renders a real vector, never a blank one —
+            // A 0/34 or 34/0 split renders a real vector, never a blank one:
             // blank would mean auto, which is a different launch entirely.
             assert_eq!(got, Some(vec![n, l.count - n]), "{n} blocks");
         }
@@ -1065,7 +1065,7 @@ mod tests {
                     }
                     // Every label but one opens with its first position. The
                     // exception is a lone tail, which is NAMED (`output layer`)
-                    // rather than numbered — and can only be the last position.
+                    // rather than numbered, and can only be the last position.
                     match first_position(&label) {
                         Some(first) => assert_eq!(first, pos, "{id}={n}: {label}"),
                         None => {
@@ -1089,7 +1089,7 @@ mod tests {
         );
     }
 
-    // The rows carry the projection only when a model is there to project onto —
+    // The rows carry the projection only when a model is there to project onto:
     // the server-wide table passes None and stays a ratio table.
     #[test]
     fn rows_carry_blocks_only_when_a_layout_is_given() {
@@ -1106,7 +1106,7 @@ mod tests {
         let without = build_rows(&devs(), &s, None, SplitMode::Layer);
         assert!(without.iter().all(|r| r.blocks == 0 && r.blocks_label.is_empty()));
 
-        // Three checked devices, projected the same way — the rows are the split
+        // Three checked devices, projected the same way: the rows are the split
         // order, so the ranges run down the table in one unbroken sequence.
         let three = build_rows(
             &devs(),
@@ -1145,7 +1145,7 @@ mod tests {
     }
 
     // The server-wide mode rides the router's CLI, which the router copies over
-    // every preset key — so a set server mode wins even against an explicit
+    // every preset key, so a set server mode wins even against an explicit
     // preset value, and the preset's own key matters only while it is absent.
     #[test]
     fn effective_mode_lets_the_server_wide_flag_shadow_the_preset() {
@@ -1163,7 +1163,7 @@ mod tests {
     // One combo entry for default+layer: for a preset they are the same launch
     // in every reachable configuration, so two entries were pure ambiguity. A
     // hand-written value outside the list sits on that entry too (and keeps its
-    // INI spelling — nothing here rewrites it).
+    // INI spelling; nothing here rewrites it).
     #[test]
     fn mode_index_collapses_default_and_layer_onto_one_entry() {
         assert_eq!(MODE_VALUES.len(), MODE_LABELS.len());
@@ -1196,7 +1196,7 @@ mod tests {
         assert_eq!(rows[0].weight, 3, "the stored ratio survives the mode");
     }
 
-    // Under `row` the bytes follow row fractions, not block cuts — so the block
+    // Under `row` the bytes follow row fractions, not block cuts, so the block
     // column must stay out even when the model is known, while the ratio/share
     // pair keeps working exactly as in the no-layout fallback.
     #[test]

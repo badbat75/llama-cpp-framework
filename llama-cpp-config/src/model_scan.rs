@@ -52,7 +52,7 @@ pub fn list(root_dir: &str, subdir: &str) -> Vec<FileOption> {
     // Visited-directory set, keyed on the canonicalized path: `is_dir()`
     // follows junctions/symlinks, so a self-referencing junction inside the
     // tree would otherwise loop the worklist forever (the GUI scans on every
-    // dropdown rebuild — a hang, not just a slow scan). Canonicalize resolves
+    // dropdown rebuild: a hang, not just a slow scan). Canonicalize resolves
     // the link target, so revisiting an already-walked dir is a cheap skip.
     let mut visited_dirs: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
     let mut walk: Vec<PathBuf> = vec![root.clone()];
@@ -195,7 +195,7 @@ pub fn build_options(
 }
 
 /// The `(label, value)` pair preserving a current path that matched no scanned
-/// file — shared by `build_options` and `build_draft_options` so the two
+/// file, shared by `build_options` and `build_draft_options` so the two
 /// "(custom)" rows can't drift.
 fn custom_row(current: &str) -> (String, String) {
     let basename = Path::new(current)
@@ -306,7 +306,7 @@ mod tests {
         assert_eq!(specs[1], "draft-dflash");
     }
 
-    // The per-category index rules of the plain build_options — the contract an
+    // The per-category index rules of the plain build_options: the contract an
     // agent copies when adding the next file-backed dropdown.
 
     #[test]
@@ -364,7 +364,7 @@ mod tests {
         assert!(is_multi_shard_trailer("model-00002-of-00003.gguf"));
         assert!(!is_multi_shard_trailer("model-00001-of-00003.gguf"));
         assert!(!is_multi_shard_trailer("model.gguf"));
-        // The extension strip is case-insensitive like the scan's filter —
+        // The extension strip is case-insensitive like the scan's filter;
         // a mixed-case shard must not slip past the gate.
         assert!(is_multi_shard_trailer("model-00002-of-00003.Gguf"));
         assert!(is_multi_shard_trailer("model-00002-of-00003.GGUF"));

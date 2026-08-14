@@ -10,9 +10,9 @@
 //! `let s = app.global::<AppState>()`. `State` (below) is the small Rust-side
 //! cache the callbacks share via `Rc<RefCell<…>>`: the loaded presets vector,
 //! the new-preset dialog's model scan, the draft dropdown's (value, spec)
-//! rows, and the discard dialog's parked action (`pending_discard` — the
+//! rows, and the discard dialog's parked action (`pending_discard`: the
 //! continuation `confirm_discard_then` stashes until the user's verdict).
-//! (The GPU-device probe result is cached in `devices::probed()` — it is
+//! (The GPU-device probe result is cached in `devices::probed()`; it is
 //! process-wide, written by the probe thread at startup and on Refresh/F5.)
 //!
 //! ## Helper verb taxonomy (so a grep lands in the right family)
@@ -28,7 +28,7 @@
 //!   `scanned_options`).
 //! - `apply_form`        : push a whole `PresetForm` + its baseline into `AppState`.
 //! - `populate_*`        : fill a dropdown's parallel option arrays in place
-//!   (`populate_bind_options` — the Server tab's bind-address list).
+//!   (`populate_bind_options`, the Server tab's bind-address list).
 //! - `start_server_async` / `stop_server_async` : the canonical run-control paths
 //!   shared by the Server tab and the tray, so both surfaces report a start/stop
 //!   identically; both run off the UI thread and drive a transitional flag.
@@ -50,10 +50,10 @@
 //! `tasklist`, the stop wait) runs on `std::thread::spawn`; results come back
 //! through `slint::invoke_from_event_loop` guarded by `Weak::upgrade`. One
 //! sanctioned on-thread blocker: the native folder picker
-//! (`server_tab::pick_dir`) is a modal OS dialog — blocking its caller is the
+//! (`server_tab::pick_dir`) is a modal OS dialog; blocking its caller is the
 //! conventional behavior, not a stall to fix.
 //!
-//! `AppTray` and `LogWindow` are SEPARATE Slint roots — they do NOT use
+//! `AppTray` and `LogWindow` are SEPARATE Slint roots: they do NOT use
 //! `AppState`; Rust pushes state to them directly (`tray.set_server_running` /
 //! `tray.on_*`; the log tail in `gui/log_window.rs`). `LogWindow` is a real
 //! second window on the same event loop: non-modal, so the main window stays
@@ -73,7 +73,7 @@ use crate::{
 
 slint::include_modules!();
 
-// Per-tab callback wiring — one file each under `gui/`. Each `wire()` reaches the
+// Per-tab callback wiring: one file each under `gui/`. Each `wire()` reaches the
 // shared helpers, the `State` cache, and the generated Slint types via `use super::*`.
 mod integrations_tab;
 mod log_window;
@@ -104,12 +104,12 @@ struct State {
 
 /// TEST-ONLY seam for the e2e flow test (src/tests/save_flow.rs): build the
 /// shared `State`, seed the preset list from disk, and wire the Models +
-/// Integrations tabs plus the discard dialog — nothing else (no tray, no
+/// Integrations tabs plus the discard dialog, and nothing else (no tray, no
 /// probes, no single-instance, no event loop). The caller must have redirected
 /// config IO first (see `paths::data_root`).
 ///
 /// The Server tab is wired only as far as its two DEVICE TABLES
-/// (`server_tab::wire_tables`) — they need nothing but the window. Its Save /
+/// (`server_tab::wire_tables`); they need nothing but the window. Its Save /
 /// Revert / Start / Stop callbacks need a tray and the async run-state machinery,
 /// so they stay out, and the test drives the save through `server_cfg::save`.
 #[cfg(test)]
@@ -124,7 +124,7 @@ pub(crate) fn wire_tabs_for_tests(app: &AppWindow) {
 
 /// Build and run the GUI. `start_minimized` (the `gui --minimized` flag, used
 /// by the "Start with Windows" logon entry) skips the initial `app.show()`:
-/// the app comes up tray-only, exactly like the existing hide-on-close state —
+/// the app comes up tray-only, exactly like the existing hide-on-close state;
 /// the visible tray icon keeps the event loop alive, and the window appears on
 /// a tray click or a second launch's activation poke.
 pub fn run(start_minimized: bool) -> anyhow::Result<()> {
@@ -208,7 +208,7 @@ pub fn run(start_minimized: bool) -> anyhow::Result<()> {
             slint::TimerMode::Repeated,
             std::time::Duration::from_secs(5),
             move || {
-                // Periodic tick: keep an error footer red (clear_error = false) —
+                // Periodic tick: keep an error footer red (clear_error = false);
                 // only an explicit action (F5 / Refresh / a new start) resets it.
                 refresh_run_status(app_weak.clone(), tray_weak.clone(), false);
             },
@@ -221,7 +221,7 @@ pub fn run(start_minimized: bool) -> anyhow::Result<()> {
     settings_tab::wire(&app);
     tray::wire(&app, &tray);
     // Independent log-tail window (View logs). Both halves must outlive the
-    // event loop like status_timer above — dropping the Timer stops the tail.
+    // event loop like status_timer above: dropping the Timer stops the tail.
     // (The timer only RUNS while the window is open: armed on View logs,
     // stopped on close.)
     let (_log_window, _log_timer) = log_window::wire(&app)?;
@@ -231,7 +231,7 @@ pub fn run(start_minimized: bool) -> anyhow::Result<()> {
     app.window()
         .on_close_requested(|| slint::CloseRequestResponse::HideWindow);
 
-    // Auto-start llama-server when the Settings tab asks for it — on EVERY GUI
+    // Auto-start llama-server when the Settings tab asks for it, on EVERY GUI
     // launch, not just the logon one (that's the toggle's contract). The shared
     // start path probes first, so an already-running server just reports
     // "already running" instead of double-spawning.
@@ -287,12 +287,12 @@ fn load_server_into_ui(app: &AppWindow) {
     s.set_server_form(form.clone());
     s.set_server_form_base(form);
     // Re-project the freshly loaded device/tensor-split strings into the table
-    // (and the mmproj dropdown's index) — see apply_form for why it's a rebuild.
+    // (and the mmproj dropdown's index); see apply_form for why it's a rebuild.
     refresh_device_options(app);
 }
 
 /// Recompute the read-only projections of the SAVED server.ini: the Command
-/// Line card and the chat-UI URL. Both must track the file, not the form — the
+/// Line card and the chat-UI URL. Both must track the file, not the form: the
 /// running server listens on what was saved, not on an unsaved edit. Shared by
 /// `load_server_into_ui` and the Server tab's save handler. The URL uses
 /// `client_host()`, so an all-interfaces bind (0.0.0.0) opens localhost instead
@@ -306,7 +306,7 @@ fn refresh_server_snapshot(app: &AppWindow) {
 }
 
 /// The client-facing base URL for a config: `client_host()` (0.0.0.0 →
-/// localhost) + port. ONE home for the URL assembly — the chat URL, the
+/// localhost) + port. ONE home for the URL assembly: the chat URL, the
 /// launched-URL snapshot, and `opencode_base_url` all build on it.
 fn client_base_url(cfg: &server_cfg::ServerConfig) -> String {
     format!("http://{}:{}", cfg.client_host(), cfg.port_or_default())
@@ -322,7 +322,7 @@ fn populate_bind_options(app: &AppWindow, current: &str) {
 
 // ── Discard-confirm guard ────────────────────────────────────────────
 
-/// Run `action` now — or, when the caller's form is `dirty`, park it in
+/// Run `action` now; or, when the caller's form is `dirty`, park it in
 /// `State.pending_discard` and raise the discard-confirm dialog instead. The
 /// dialog's Confirm runs the parked action, Cancel drops it (keeping the
 /// edits). The guard shared by every navigation that replaces a dirty form:
@@ -342,7 +342,7 @@ fn confirm_discard_then(
 }
 
 /// Wire the discard dialog's verdict callbacks. Called from `run()` and from
-/// the e2e seam (`wire_tabs_for_tests`) — the guarded handlers live in both
+/// the e2e seam (`wire_tabs_for_tests`): the guarded handlers live in both
 /// wirings.
 fn wire_discard_confirm(app: &AppWindow, state: &Rc<RefCell<State>>) {
     {
@@ -353,7 +353,7 @@ fn wire_discard_confirm(app: &AppWindow, state: &Rc<RefCell<State>>) {
                 return;
             };
             app.global::<AppState>().set_show_discard_dialog(false);
-            // Take the action out of the RefCell BEFORE running it — it will
+            // Take the action out of the RefCell BEFORE running it: it will
             // borrow `state` itself (reload_presets & co.).
             let action = state.borrow_mut().pending_discard.take();
             if let Some(action) = action {
@@ -403,7 +403,7 @@ fn preset_summaries(presets: &[presets::Preset], filter: &str) -> Vec<PresetSumm
 
 /// Seed / re-seed every disk-backed piece of the UI: server.ini, presets.ini,
 /// the ModelsDir scan, the integration state, the live run status, and the
-/// llama-server version + device probes (the exe can change under us — e.g. a
+/// llama-server version + device probes (the exe can change under us, e.g. a
 /// `02-build.ps1` rerun while the configurator is open). The one home shared by
 /// `run()`'s startup seed and Refresh/F5 (`reload_all`), so a newly added
 /// disk-backed `refresh_*` hub is wired in exactly one place.
@@ -427,14 +427,14 @@ fn reload_all_from_disk(
 /// Reload `presets.ini` into `state`, rebuild the (filtered) list model, then
 /// pick the selection and apply its form:
 /// - `want = Some(id)` selects that preset if it exists (used after save/clone/rename);
-/// - `want = None` keeps the current preset — matched by the loaded form's ID
+/// - `want = None` keeps the current preset, matched by the loaded form's ID
 ///   first (a hand-edited presets.ini may have shifted the indices), falling
 ///   back to the old index when the id is gone;
 /// - either way it falls back to the first preset, or `-1` + a blank form when
 ///   the list is empty.
 ///
 /// Callers that also need to refresh the file/device dropdowns or integrations
-/// do so themselves afterward — this only owns the preset list + selection.
+/// do so themselves afterward; this only owns the preset list + selection.
 fn reload_presets(app: &AppWindow, state: &Rc<RefCell<State>>, want: Option<&str>) {
     let s = app.global::<AppState>();
     let all = presets::load_all();
@@ -467,19 +467,19 @@ fn reload_presets(app: &AppWindow, state: &Rc<RefCell<State>>, want: Option<&str
 /// picker) from a fresh `ModelsDir` scan, then cascade into the device dropdowns
 /// (`refresh_device_options`) and the Model-info box (`models_tab::update_model_info`).
 /// Call after anything that changes `models_dir`, a form file field, or the
-/// selected preset — this is the hub a newly-added file-backed dropdown extends.
+/// selected preset; this is the hub a newly-added file-backed dropdown extends.
 fn refresh_file_options(app: &AppWindow, state: &Rc<RefCell<State>>) {
     let s = app.global::<AppState>();
     // SAVED config, not the live form: like every other client-facing
     // projection (chat URL, Command Line card), the scans must agree with
-    // what a launch would use — an unsaved ModelsDir edit must not make the
+    // what a launch would use: an unsaved ModelsDir edit must not make the
     // pickers list models the server won't find. The Server tab's Save
     // handler re-runs this hub, so the scans follow the file.
     let models_dir = server_cfg::load().models_dir_or_default();
     let form = s.get_form();
 
     // Note: the trailing update_model_info() re-walks mtps\ / dflashs\ on its
-    // own (gguf::external_drafters) — a cheap directory listing, kept so that
+    // own (gguf::external_drafters), a cheap directory listing, kept so that
     // helper stays self-contained for its other callers (model_changed,
     // draft_picked), which have no scan in hand.
     let model_scan_result = model_scan::list(&models_dir, model_scan::Category::Model.subdir());
@@ -521,8 +521,8 @@ fn refresh_file_options(app: &AppWindow, state: &Rc<RefCell<State>>) {
     models_tab::update_model_info(app);
 }
 
-/// Rebuild the two GPU-device dropdowns — the draft device and the image
-/// encoder's — from the cached `--list-devices` result (`devices::probed()`),
+/// Rebuild the two GPU-device dropdowns (the draft device and the image
+/// encoder's) from the cached `--list-devices` result (`devices::probed()`),
 /// recomputing each selected index against the current server.ini / form values.
 /// The MAIN device is not a dropdown: it can name several GPUs in split order, so
 /// it rides the GPU distribution table instead (`refresh_gpu_rows`).
@@ -552,7 +552,7 @@ fn refresh_device_options(app: &AppWindow) {
 /// Always a full rebuild of the row model, never an in-place row edit: the
 /// delegates bind one-way (`checked: row.enabled`, `value: row.weight`) and a
 /// click self-assigns them, so only fresh delegates are guaranteed to show the
-/// truth. That is affordable because it is not on the weight-typing path — a
+/// truth. That is affordable because it is not on the weight-typing path: a
 /// weight edit changes no other row (see GpuSplitTable's binding note), so its
 /// handler updates the derived scalars and leaves the model alone.
 fn refresh_gpu_rows(app: &AppWindow) {
@@ -589,7 +589,7 @@ fn refresh_gpu_rows(app: &AppWindow) {
 
 /// The two tables' EFFECTIVE split modes, `(server, preset)`: the server-wide
 /// value rides the router's own command line (`runstate::server_args`), which
-/// the router copies over every preset key — so whenever it is set it shadows
+/// the router copies over every preset key, so whenever it is set it shadows
 /// the preset's, an explicit value included (gpu_split::effective_mode).
 fn gpu_modes(app: &AppWindow) -> (gpu_split::SplitMode, gpu_split::SplitMode) {
     let s = app.global::<AppState>();
@@ -602,13 +602,13 @@ fn gpu_modes(app: &AppWindow) -> (gpu_split::SplitMode, gpu_split::SplitMode) {
 }
 
 /// The per-preset split's `Layout`: the selected model's block count crossed with
-/// its GPU-layers setting. `None` — no model, an unreadable header, or nothing
-/// offloaded — is what puts the table back into raw-weight mode.
+/// its GPU-layers setting. `None` (no model, an unreadable header, or nothing
+/// offloaded) is what puts the table back into raw-weight mode.
 pub(crate) fn preset_split_layout(app: &AppWindow) -> Option<gpu_split::Layout> {
     let s = app.global::<AppState>();
     let f = s.get_form();
     // The form carries ALL_LAYERS as its "auto" placeholder, which is a real 99
-    // rather than llama.cpp's -1 sentinel — so read the companion bool, not the
+    // rather than llama.cpp's -1 sentinel, so read the companion bool, not the
     // number, or a 40-layer model would look like it had 99 offloaded.
     let ngl = if f.n_gpu_layers_auto {
         -1
@@ -619,7 +619,7 @@ pub(crate) fn preset_split_layout(app: &AppWindow) -> Option<gpu_split::Layout> 
 }
 
 /// Rebuild BOTH tensor-placement tables (server-wide + per-preset) from the
-/// device probe crossed with each form's `override_tensor` string — rows, the
+/// device probe crossed with each form's `override_tensor` string: rows, the
 /// shared dropdown models, and the derived strings. The twin of
 /// `refresh_gpu_rows` (and called from it, so a preset switch / Revert / probe
 /// landing re-projects all four tables in one go).
@@ -627,8 +627,8 @@ pub(crate) fn preset_split_layout(app: &AppWindow) -> Option<gpu_split::Layout> 
 /// Always a full rebuild, for the same reason: the delegates bind one-way
 /// (`index: row.kind_index`, `text: row.pattern`) and an edit self-assigns them,
 /// so only fresh delegates are guaranteed to show the truth. The one path that
-/// must NOT come through here is a pattern keystroke — rebuilding would recreate
-/// the LineEdit being typed into — which is what `refresh_tensor_scalars` is for.
+/// must NOT come through here is a pattern keystroke (rebuilding would recreate
+/// the LineEdit being typed into), which is what `refresh_tensor_scalars` is for.
 fn refresh_tensor_rows(app: &AppWindow) {
     let s = app.global::<AppState>();
     let devs = devices::probed();
@@ -637,8 +637,8 @@ fn refresh_tensor_rows(app: &AppWindow) {
 
     // The KIND dropdown is shared (a static list), but the DEVICE dropdown is
     // per-scope and must stay that way: `device_options` appends a `(custom)`
-    // entry for every device id the probe doesn't know, so its length — and hence
-    // every row's `device_index` — depends on the rules of THAT table. One shared
+    // entry for every device id the probe doesn't know, so its length, and hence
+    // every row's `device_index`, depends on the rules of THAT table. One shared
     // model would alias the indices the moment the two scopes named two different
     // unknown devices (a config carried over from another machine), and a row
     // would render pointing at the other table's device.
@@ -687,7 +687,7 @@ fn refresh_tensor_scalars(app: &AppWindow) {
     // catastrophically slowly: pinning a K-quant `token_embd` to a GPU that has no
     // `get_rows` kernel for it. The latter needs the SELECTED MODEL's embedding
     // type, which `models_tab::update_model_info` has already parked in
-    // `model_info_embd_warning` — reading it back from AppState (rather than
+    // `model_info_embd_warning`; reading it back from AppState (rather than
     // re-opening the GGUF) is what keeps this callable on every pattern keystroke.
     // It is empty unless the type is known AND unpinnable, so an unreadable GGUF
     // stays silent instead of warning about a type nobody could read.
@@ -724,7 +724,7 @@ fn refresh_gpu_scalars(app: &AppWindow) {
     s.set_preset_gpu_mode(preset_mode.as_str().into());
     s.set_preset_split_mode_index(gpu_split::mode_index(s.get_form().split_mode.as_str()));
     // 0 = "no model to project onto", which is what switches the table's editable
-    // column back from blocks to raw weights — and any mode but layer counts as
+    // column back from blocks to raw weights, and any mode but layer counts as
     // that too: under `row` the bytes follow row fractions, under `none` the
     // vector is dead, so a block cut would misreport both.
     s.set_preset_split_positions(if preset_mode == gpu_split::SplitMode::Layer {
@@ -742,7 +742,7 @@ fn gpu_weight_total(sel: &gpu_split::GpuSelection) -> i32 {
     gpu_split::parse_weights(&sel.tensor_split).iter().sum()
 }
 
-// The selection IS the form's `device` + `tensor_split` pair — there is no third
+// The selection IS the form's `device` + `tensor_split` pair; there is no third
 // copy of it, so a hand-edited INI stays authoritative and nothing can desync.
 // The four `*_gpu_*` callbacks per tab all follow the same two steps: derive the
 // new selection with `gpu_split`, then `set_*_selection` + a refresh.
@@ -799,7 +799,7 @@ pub(crate) fn set_server_overrides(app: &AppWindow, rules: &str) {
 }
 
 /// A Slint row index (`int`) as a Rust one. A negative index can't address a row,
-/// so it maps to an out-of-range one — every `tensor_override` edit treats that as
+/// so it maps to an out-of-range one; every `tensor_override` edit treats that as
 /// a no-op rather than panicking or hitting the wrong rule. Shared by both tables'
 /// callbacks (server_tab / models_tab).
 pub(crate) fn row_index(i: i32) -> usize {
@@ -835,7 +835,7 @@ fn device_options(
     (string_model(labels), string_model(values), idx)
 }
 
-// (The raw device list itself lives in `devices::probed()` — a Rust-side cache,
+// (The raw device list itself lives in `devices::probed()`, a Rust-side cache,
 // not Slint state, because no .slint file ever reads it.)
 
 fn scanned_options(
@@ -875,7 +875,7 @@ fn spawn_version_probe(app_weak: slint::Weak<AppWindow>) {
 }
 
 /// Enumerate GPU devices off the UI thread (`--list-devices` spawns llama-server
-/// and can take a few hundred ms — including a CUDA init), park the result in
+/// and can take a few hundred ms, including a CUDA init), park the result in
 /// `devices::probed()`, then rebuild the device dropdowns via the event loop.
 fn spawn_device_probe(app_weak: slint::Weak<AppWindow>) {
     std::thread::spawn(move || {
@@ -894,7 +894,7 @@ fn spawn_device_probe(app_weak: slint::Weak<AppWindow>) {
 /// Superseding counter for run-state probes: bumped on the UI thread whenever a
 /// start/stop transition begins or lands. `refresh_run_status` stamps its
 /// sample with the generation it saw and its apply closure discards a stale
-/// one — otherwise a slow periodic `tasklist` sampled *before* a transition
+/// one; otherwise a slow periodic `tasklist` sampled *before* a transition
 /// could apply *after* it and flip the footer/tray back for up to a tick.
 static RUN_STATUS_GEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
@@ -903,18 +903,18 @@ fn bump_run_status_gen() {
 }
 
 /// Start llama-server without blocking the UI thread (`runstate::start` opens
-/// with a `tasklist` probe — hundreds of ms — before the spawn itself) and
+/// with a `tasklist` probe, hundreds of ms, before the spawn itself) and
 /// drive the transitional "Starting…" state, mirroring `stop_server_async`.
 /// The single canonical start path shared by the Server tab's Start button and
 /// the tray menu, so a failed start reports identically from either surface. On
 /// error we set the footer's error flag directly rather than calling
-/// `refresh_run_status` (which clears that flag as it re-probes) — the mistake
+/// `refresh_run_status` (which clears that flag as it re-probes), the mistake
 /// the two hand-rolled copies used to make differently.
 fn start_server_async(app_weak: slint::Weak<AppWindow>, tray_weak: slint::Weak<AppTray>) {
     if let Some(app) = app_weak.upgrade() {
         let s = app.global::<AppState>();
         // Re-entry guard: the window's buttons hide during a transition, but
-        // the tray menu doesn't — a second click mid-transition is a no-op.
+        // the tray menu doesn't: a second click mid-transition is a no-op.
         if s.get_server_starting() || s.get_server_stopping() {
             return;
         }
@@ -925,11 +925,11 @@ fn start_server_async(app_weak: slint::Weak<AppWindow>, tray_weak: slint::Weak<A
     std::thread::spawn(move || {
         let result = runstate::start();
         // Snapshot the client URL from the config `start()` ACTUALLY launched
-        // with (returned, not re-loaded — a save landing mid-start must not
+        // with (returned, not re-loaded; a save landing mid-start must not
         // leak into the snapshot): the RUNNING server keeps listening there
         // even if a later save changes server.ini, so Open-chat must prefer it.
         // `Ok(None)` = already running: WE launched nothing, so there is no
-        // launch config to pin — leave launched_url alone (per its contract,
+        // launch config to pin; leave launched_url alone (per its contract,
         // it stays empty for a server started outside the GUI).
         let launched_url = result
             .as_ref()
@@ -972,7 +972,7 @@ fn start_server_async(app_weak: slint::Weak<AppWindow>, tray_weak: slint::Weak<A
 /// Trigger a stop and drive the transitional "Stopping…" state.
 ///
 /// The forced `taskkill` returns quickly, but the process can linger in
-/// `tasklist` for a second or two while its GPU context unwinds — so the kill
+/// `tasklist` for a second or two while its GPU context unwinds, so the kill
 /// and the wait-for-exit run off the UI thread and `server_stopping` stays true
 /// until the process actually disappears. The wait is capped so a wedged
 /// process can't pin the UI in "Stopping…" forever.
@@ -980,7 +980,7 @@ fn stop_server_async(app_weak: slint::Weak<AppWindow>, tray_weak: slint::Weak<Ap
     if let Some(app) = app_weak.upgrade() {
         let s = app.global::<AppState>();
         // Same re-entry guard as start: the tray menu keeps offering "Stop
-        // server" for the whole (up to 15 s) stop wait — without it, each
+        // server" for the whole (up to 15 s) stop wait; without it, each
         // extra click spawns another taskkill + wait thread and double-bumps
         // the status generation.
         if s.get_server_starting() || s.get_server_stopping() {
@@ -1016,7 +1016,7 @@ fn stop_server_async(app_weak: slint::Weak<AppWindow>, tray_weak: slint::Weak<Ap
                     s.set_server_status_is_error(true);
                     set_status(
                         &app,
-                        "Stop timed out — llama-server is still running.".into(),
+                        "Stop timed out: llama-server is still running.".into(),
                         true,
                     );
                 } else {
@@ -1038,7 +1038,7 @@ fn stop_server_async(app_weak: slint::Weak<AppWindow>, tray_weak: slint::Weak<Ap
 /// is reset: the reload-from-disk actions (startup, F5, Refresh) pass `true`;
 /// the periodic status timer passes `false` so it can't silently wipe the red
 /// state a failed start / stop-timeout deliberately set. (The start/stop paths
-/// don't call this — they manage the error flag directly.)
+/// don't call this; they manage the error flag directly.)
 fn refresh_run_status(
     app_weak: slint::Weak<AppWindow>,
     tray_weak: slint::Weak<AppTray>,
@@ -1049,7 +1049,7 @@ fn refresh_run_status(
         let running = runstate::is_running();
         slint::invoke_from_event_loop(move || {
             // A start/stop transition began or landed after this sample was
-            // taken — its result is authoritative, ours is stale. Drop it.
+            // taken: its result is authoritative, ours is stale. Drop it.
             if RUN_STATUS_GEN.load(std::sync::atomic::Ordering::SeqCst) != sampled_gen {
                 return;
             }
@@ -1058,7 +1058,7 @@ fn refresh_run_status(
                 let was_running = s.get_server_running();
                 s.set_server_running(running);
                 if !running {
-                    // The server stopped outside the GUI — drop the stale
+                    // The server stopped outside the GUI: drop the stale
                     // launch snapshot so a future Open-chat falls back to the
                     // saved config.
                     s.set_launched_url(SharedString::default());
@@ -1070,16 +1070,16 @@ fn refresh_run_status(
                 // external kill or a later crash: `start()` watches a grace
                 // window and reports an immediate launch death itself, but a
                 // process that dies LATER (an external taskkill, or a crash once
-                // the model is loaded) only shows up on this tick — surface it
+                // the model is loaded) only shows up on this tick; surface it
                 // instead of silently flipping the footer to "Stopped" under a
                 // status line still saying "llama-server started.". Neutral
-                // wording — a crash and an external taskkill look the same here.
+                // wording: a crash and an external taskkill look the same here.
                 if was_running && !running && !s.get_server_starting() && !s.get_server_stopping() {
                     s.set_server_status_is_error(true);
                     set_status(
                         &app,
                         format!(
-                            "llama-server is no longer running — see {}",
+                            "llama-server is no longer running; see {}",
                             crate::paths::server_log().display()
                         ),
                         true,
@@ -1104,7 +1104,7 @@ fn apply_form(app: &AppWindow, form: PresetForm) {
     s.set_form_base(form.clone());
     s.set_form(form);
     // The GPU table is a projection of form.device / form.tensor_split, so a form
-    // it didn't write (preset switch, Revert, reload) has to be re-projected —
+    // it didn't write (preset switch, Revert, reload) has to be re-projected,
     // and as a full rebuild, since the delegates' one-way bindings don't survive
     // a click. Same reason load_server_into_ui rebuilds after seeding its form.
     refresh_gpu_rows(app);
@@ -1117,7 +1117,7 @@ fn apply_form(app: &AppWindow, form: PresetForm) {
 /// server.ini (port/host) and presets.ini. Call after any change to those.
 ///
 /// This variant MERGES: ids already in the UI model keep their in-UI enabled
-/// flag (a pending, unsaved toggle), only new ids take the on-disk value — so
+/// flag (a pending, unsaved toggle), only new ids take the on-disk value, so
 /// the preset/server write paths (save/rename/clone/delete, server save) don't
 /// silently wipe pending toggles the F5 guard would have asked about. For the
 /// paths whose meaning IS "back to disk", use `refresh_integrations_reset`.
@@ -1146,7 +1146,7 @@ fn rebuild_integrations(app: &AppWindow, keep_pending: bool) {
 
     s.set_integration_provider_active(integrations::detect_opencode_provider());
 
-    // Either way the ModelRc is REPLACED, never patched row-by-row — the row
+    // Either way the ModelRc is REPLACED, never patched row-by-row: the row
     // CheckBox's one-way binding contract requires fresh `for` delegates on
     // every non-widget-originated change (see gui/integrations_tab.rs).
     let pending: std::collections::BTreeMap<String, bool> = if keep_pending {
@@ -1174,9 +1174,9 @@ fn rebuild_integrations(app: &AppWindow, keep_pending: bool) {
 
 /// Unsaved Integrations edits. The row toggles have no dirty flag like the two
 /// forms (they live only in the UI model), so compare the enabled set against
-/// the on-disk opencode.json instead. Consulted by the F5/Refresh discard guard
-/// — `reload_all_from_disk` rebuilds the list and would otherwise wipe pending
-/// toggles without the confirmation the form tabs get.
+/// the on-disk opencode.json instead. Consulted by the F5/Refresh discard
+/// guard: `reload_all_from_disk` rebuilds the list and would otherwise wipe
+/// pending toggles without the confirmation the form tabs get.
 pub(crate) fn integrations_dirty(app: &AppWindow) -> bool {
     let enabled_ids = integrations::opencode_model_ids();
     app.global::<AppState>()
@@ -1187,11 +1187,11 @@ pub(crate) fn integrations_dirty(app: &AppWindow) -> bool {
 
 /// Keep opencode.json in step with a preset rename (`new_id = Some`) or delete
 /// (`None`): when the old id is exposed as a model there, rewrite the models
-/// list with it renamed / dropped — otherwise OpenCode keeps offering an id
+/// list with it renamed / dropped; otherwise OpenCode keeps offering an id
 /// `llama-server --models-preset` no longer knows, and the stale entry isn't
 /// even visible in the Integrations tab (its rows are built from presets). A
 /// no-op when the id wasn't exposed, so this can never create the provider
-/// section as a side effect. A failure only flags the footer — the file
+/// section as a side effect. A failure only flags the footer; the file
 /// self-heals on the next Integrations save.
 fn sync_opencode_after_preset_change(app: &AppWindow, old_id: &str, new_id: Option<&str>) {
     let ids = integrations::opencode_model_ids();
@@ -1212,7 +1212,7 @@ fn sync_opencode_after_preset_change(app: &AppWindow, old_id: &str, new_id: Opti
     }
 }
 
-// Pure-struct tests (PresetSummary is a plain generated struct — no Slint
+// Pure-struct tests (PresetSummary is a plain generated struct, no Slint
 // backend needed, same class as models_tab's apply_draft_pick tests).
 #[cfg(test)]
 mod tests {

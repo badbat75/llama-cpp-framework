@@ -36,7 +36,7 @@ export component ModelsPage inherits HorizontalLayout {
         ListPanel {
             is_empty: AppState.presets.length == 0;
             empty_text: AppState.presets_filter == ""
-                ? "No presets yet — click New… to create one."
+                ? "No presets yet: click New… to create one."
                 : "No presets match the filter.";
             // Keep the floor modest so the Models tab still fits a
             // small screen; vertical-stretch grows it on big ones.
@@ -44,7 +44,7 @@ export component ModelsPage inherits HorizontalLayout {
             vertical-stretch: 1;
             ListView {
                 // The Rust side already filtered out non-matching rows, so every
-                // delegate is a fixed 36px tall — a data-dependent height confuses
+                // delegate is a fixed 36px tall; a data-dependent height confuses
                 // ListView's running-sum layout and the rows render on top of each
                 // other. `p.orig_index` maps back to the full presets vector.
                 for p in AppState.presets : SelectableRow {
@@ -84,7 +84,7 @@ export component ModelsPage inherits HorizontalLayout {
                 Button {
                     text: "Delete";
                     enabled: AppState.selected_preset_index >= 0;
-                    // Confirmation modal (app.slint) — the delete itself is
+                    // Confirmation modal (app.slint): the delete itself is
                     // one presets.ini rewrite with no undo.
                     clicked => {
                         AppState.delete_target_id = AppState.form.id;
@@ -149,12 +149,12 @@ export component ModelsPage inherits HorizontalLayout {
                 }
                 LabeledField {
                     label: "Draft model";
-                    hint: "Optional speculator (feeds --model-draft).\nMTP heads (from mtps\\) set --spec-type draft-mtp; DFlash drafters (from dflashs\\) set draft-dflash.\nPicking one auto-pins the draft to the server GPU, or CPU if none.\n(none) = no speculation.\nLeave at (none) when the MAIN model already embeds MTP heads — those need only Spec type.";
+                    hint: "Optional speculator (feeds --model-draft).\nMTP heads (from mtps\\) set --spec-type draft-mtp; DFlash drafters (from dflashs\\) set draft-dflash.\nPicking one auto-pins the draft to the server GPU, or CPU if none.\n(none) = no speculation.\nLeave at (none) when the MAIN model already embeds MTP heads: those need only Spec type.";
                     // A raw ComboBox (not MappedComboBox): the handler needs the
                     // selected INDEX to read the Rust-side `State.draft_rows`
                     // cache (the per-row --model-draft/--spec-type pairs), not
                     // just the picked value. The pick POLICY (spec-type + the
-                    // gemma4 auto-pin workaround) lives in Rust — see the
+                    // gemma4 auto-pin workaround) lives in Rust; see the
                     // `draft_picked` handler in src/gui/models_tab.rs.
                     ComboBox {
                         model: AppState.draft_labels;
@@ -186,7 +186,7 @@ export component ModelsPage inherits HorizontalLayout {
                     }
                     if AppState.model_info_has_moe : InfoRow {
                         label: "MoE layers";
-                        hint: "How many layers carry expert (FFN) weights — the useful upper bound for the 'MoE CPU layers' lever (--n-cpu-moe) below (its slider runs to the total layer count).\nRaise it to move more expert layers to CPU: less VRAM, slower generation.";
+                        hint: "How many layers carry expert (FFN) weights, the useful upper bound for the 'MoE CPU layers' lever (--n-cpu-moe) below (its slider runs to the total layer count).\nRaise it to move more expert layers to CPU: less VRAM, slower generation.";
                         value: AppState.model_info_moe;
                     }
                     InfoRow {
@@ -195,7 +195,7 @@ export component ModelsPage inherits HorizontalLayout {
                     }
                     InfoRow {
                         label: "Embeddings";
-                        hint: "token_embd.weight's OWN quant and size — the file's name does not tell you this (Unsloth's Q6_K_XL keeps it at Q8_0; its Q4_K_XL/Q5_K_XL drop it to a K-quant).\nIt decides whether the Tensor placement rule below may pin the embedding table to a GPU: CUDA/ROCm implement get_rows only for F32/F16/BF16/Q4_0/Q4_1/Q5_0/Q5_1/Q8_0 — never a K-quant. Pin a K-quant table and every token drags it back to host RAM (25 → 2.8 tok/s measured).\nThe size is the VRAM the pin ADDS to that card: budget it against the KV cache, or the card starts paging.";
+                        hint: "token_embd.weight's OWN quant and size; the file's name does not tell you this (Unsloth's Q6_K_XL keeps it at Q8_0; its Q4_K_XL/Q5_K_XL drop it to a K-quant).\nIt decides whether the Tensor placement rule below may pin the embedding table to a GPU: CUDA/ROCm implement get_rows only for F32/F16/BF16/Q4_0/Q4_1/Q5_0/Q5_1/Q8_0, never a K-quant. Pin a K-quant table and every token drags it back to host RAM (25 → 2.8 tok/s measured).\nThe size is the VRAM the pin ADDS to that card: budget it against the KV cache, or the card starts paging.";
                         value: AppState.model_info_embd;
                     }
                     InfoRow {
@@ -230,12 +230,12 @@ export component ModelsPage inherits HorizontalLayout {
                     }
                     InfoRow {
                         label: "Thinking";
-                        hint: "Whether the embedded chat template does reasoning, and whether the Reasoning field (--reasoning on|off) can switch it: that flag only sets the template variable enable_thinking, so a template that never mentions it thinks no matter what you pick (auto = on, off = on).\nRead from the template's SOURCE — this app has no Jinja engine, while llama.cpp answers the same question by rendering the template. The verdict is therefore about the TEMPLATE, not the model: 'no marker in the chat template' does not prove the model can't think (MiMo-VL's template names nothing, yet the model emits <think> and llama-server parses it out of the output) — it proves only that neither --reasoning nor Keep past thinking has anything here to act on.";
+                        hint: "Whether the embedded chat template does reasoning, and whether the Reasoning field (--reasoning on|off) can switch it: that flag only sets the template variable enable_thinking, so a template that never mentions it thinks no matter what you pick (auto = on, off = on).\nRead from the template's SOURCE: this app has no Jinja engine, while llama.cpp answers the same question by rendering the template. The verdict is therefore about the TEMPLATE, not the model: 'no marker in the chat template' does not prove the model can't think (MiMo-VL's template names nothing, yet the model emits <think> and llama-server parses it out of the output); it proves only that neither --reasoning nor Keep past thinking has anything here to act on.";
                         value: AppState.model_info_thinking;
                     }
                     InfoRow {
                         label: "Past thinking";
-                        hint: "Whether 'Keep past thinking' (--reasoning-preserve) is a LEVER on this model. The flag sets three template variables at once — preserve_thinking, clear_thinking, truncate_history_thinking — and templates read different ones; a template that names NONE of them cannot see the flag, so setting it there does nothing.\nThis is what llama-server's log cannot tell you: its probe reports 'supports preserving reasoning' by rendering the template and checking a past trace came out, which is equally true of a template that preserves unconditionally and of one you can actually control.";
+                        hint: "Whether 'Keep past thinking' (--reasoning-preserve) is a LEVER on this model. The flag sets three template variables at once (preserve_thinking, clear_thinking, truncate_history_thinking), and templates read different ones; a template that names NONE of them cannot see the flag, so setting it there does nothing.\nThis is what llama-server's log cannot tell you: its probe reports 'supports preserving reasoning' by rendering the template and checking a past trace came out, which is equally true of a template that preserves unconditionally and of one you can actually control.";
                         value: AppState.model_info_past_thinking;
                     }
                     if AppState.model_info_has_mmproj : InfoRow {
@@ -245,7 +245,7 @@ export component ModelsPage inherits HorizontalLayout {
                     }
                     InfoRow {
                         label: "Draft";
-                        hint: "Whether the model embeds MTP (next-n) layers, and whether a matching MTP/DFlash drafter sits in your mtps\\ / dflashs\\ folders — pick it as the Draft model in the Assets card above.";
+                        hint: "Whether the model embeds MTP (next-n) layers, and whether a matching MTP/DFlash drafter sits in your mtps\\ / dflashs\\ folders; pick it as the Draft model in the Assets card above.";
                         value: AppState.model_info_draft;
                     }
                     if AppState.model_info_has_draft_file : InfoRow {
@@ -267,7 +267,7 @@ export component ModelsPage inherits HorizontalLayout {
             SectionCard {
                 heading: "GPU distribution";
                 Text {
-                    text: "How THIS model is split across GPUs (split-mode), which ones it runs on (device) and how much each holds (tensor-split) — all saved to presets.ini. Checking nothing inherits the server default. Two GPUs of different sizes? Check both and give the bigger one more. In layer mode, once the model's header is read the column counts BLOCKS instead of ratios — that is what llama.cpp actually cuts, and each row says which ones it gets (the last position is the output layer, not a block). Drag a slider to move the cut; the other rows pay for it when you let go. The checked rows, top to bottom, are the split order — drag ≡ to reorder; the first one is llama.cpp's main GPU.";
+                    text: "How THIS model is split across GPUs (split-mode), which ones it runs on (device) and how much each holds (tensor-split), all saved to presets.ini. Checking nothing inherits the server default. Two GPUs of different sizes? Check both and give the bigger one more. In layer mode, once the model's header is read the column counts BLOCKS instead of ratios: that is what llama.cpp actually cuts, and each row says which ones it gets (the last position is the output layer, not a block). Drag a slider to move the cut; the other rows pay for it when you let go. The checked rows, top to bottom, are the split order: drag ≡ to reorder; the first one is llama.cpp's main GPU.";
                     wrap: word-wrap;
                     font-size: 12px;
                     color: Palette.foreground.transparentize(Tokens.muted);
@@ -278,7 +278,7 @@ export component ModelsPage inherits HorizontalLayout {
                     weight_total: AppState.preset_gpu_total;
                     // Non-zero once the model's header is read AND the effective
                     // mode is layer: the table then edits BLOCKS instead of
-                    // ratios. The server-wide twin never passes this — it has no
+                    // ratios. The server-wide twin never passes this: it has no
                     // one model to count against.
                     positions: AppState.preset_split_positions;
                     warning: AppState.gpu_override_warning;
@@ -289,7 +289,7 @@ export component ModelsPage inherits HorizontalLayout {
                     // this preset's pick, and the columns must follow the truth.
                     effective_mode: AppState.preset_gpu_mode;
                     mode_picked(v) => { AppState.preset_split_mode_picked(v); }
-                    split_mode_hint: "Multi-GPU split for THIS model (split-mode), same on CUDA and HIP. A server-wide mode overrides it.\nlayer (default, = inherit): each GPU takes a consecutive run of blocks — the table edits the cut.\nnone: single GPU — the first checked row; the other checked rows go unused.\nrow: weight matrices are split row-wise by the ratio (needs CUDA/ROCm — Vulkan falls back to the layer cut); the KV cache still follows the layer cut.\nIrrelevant with one GPU checked.";
+                    split_mode_hint: "Multi-GPU split for THIS model (split-mode), same on CUDA and HIP. A server-wide mode overrides it.\nlayer (default, = inherit): each GPU takes a consecutive run of blocks; the table edits the cut.\nnone: single GPU, the first checked row; the other checked rows go unused.\nrow: weight matrices are split row-wise by the ratio (needs CUDA/ROCm; Vulkan falls back to the layer cut); the KV cache still follows the layer cut.\nIrrelevant with one GPU checked.";
                     toggled(id) => { AppState.preset_gpu_toggle(id); }
                     reordered(id, delta) => { AppState.preset_gpu_move(id, delta); }
                     weight_edited(id, w) => { AppState.preset_gpu_weight(id, w); }
@@ -302,7 +302,7 @@ export component ModelsPage inherits HorizontalLayout {
             SectionCard {
                 heading: "Tensor placement";
                 Text {
-                    text: "Exceptions to the table above (--override-tensor): tensors that go on a device of their own, whatever their layer does. The one that usually pays: llama.cpp keeps the EMBEDDING TABLE in pinned host RAM even when it reports every layer offloaded — which is what Windows counts as \"Shared GPU memory\", so a model that fits in VRAM with room to spare still shows GBs of it. Put it on a GPU to reclaim that; send big tensors to CPU to free VRAM instead. Rules apply in order — the first match wins.";
+                    text: "Exceptions to the table above (--override-tensor): tensors that go on a device of their own, whatever their layer does. The one that usually pays: llama.cpp keeps the EMBEDDING TABLE in pinned host RAM even when it reports every layer offloaded, which is what Windows counts as \"Shared GPU memory\", so a model that fits in VRAM with room to spare still shows GBs of it. Put it on a GPU to reclaim that; send big tensors to CPU to free VRAM instead. Rules apply in order: the first match wins.";
                     wrap: word-wrap;
                     font-size: 12px;
                     color: Palette.foreground.transparentize(Tokens.muted);
@@ -328,7 +328,7 @@ export component ModelsPage inherits HorizontalLayout {
                 heading: "Hardware Config";
                 LabeledField {
                     label: "GPU layers";
-                    hint: "--n-gpu-layers: model layers offloaded to GPU.\nSlider max = the model's layer count (all on GPU); lower keeps layers on CPU to save VRAM.\ndefault = omit the flag → llama.cpp offloads ALL layers to GPU (the framework runs with -fit off, so there is no auto-fit to VRAM — a model too big to fit will fail to load).";
+                    hint: "--n-gpu-layers: model layers offloaded to GPU.\nSlider max = the model's layer count (all on GPU); lower keeps layers on CPU to save VRAM.\ndefault = omit the flag → llama.cpp offloads ALL layers to GPU (the framework runs with -fit off, so there is no auto-fit to VRAM; a model too big to fit will fail to load).";
                     AutoSlider {
                         auto <=> AppState.form.n_gpu_layers_auto;
                         value <=> AppState.form.n_gpu_layers;
@@ -351,7 +351,7 @@ export component ModelsPage inherits HorizontalLayout {
                 // --n-gpu-layers-draft only inside `if (has_dft())`, which is
                 // false without --model-draft. With embedded MTP heads it builds
                 // the draft context against the target model itself, so the draft
-                // runs wherever the MODEL does and both flags are ignored — a pin
+                // runs wherever the MODEL does and both flags are ignored; a pin
                 // set here would look effective (VRAM even shows up on that card,
                 // from the vision encoder) while the GPU never drafts a token.
                 // Hence draft_file_active, not draft_active. See state.slint.
@@ -363,9 +363,9 @@ export component ModelsPage inherits HorizontalLayout {
                 }
                 LabeledField {
                     label: "Draft device";
-                    hint: "GPU for a separate draft model file (--device-draft).\nPin to ONE device — multi-GPU auto-split crashes MTP heads.\nIgnored (and disabled) with embedded MTP heads: that draft shares the main model's context and device.\nBlank = auto / same as model.";
+                    hint: "GPU for a separate draft model file (--device-draft).\nPin to ONE device: multi-GPU auto-split crashes MTP heads.\nIgnored (and disabled) with embedded MTP heads: that draft shares the main model's context and device.\nBlank = auto / same as model.";
                     MappedComboBox {
-                        // Needs a draft FILE — llama.cpp ignores it otherwise.
+                        // Needs a draft FILE; llama.cpp ignores it otherwise.
                         enabled: AppState.draft_file_active;
                         labels: AppState.preset_draft_dev_labels;
                         values: AppState.preset_draft_dev_values;
@@ -375,9 +375,9 @@ export component ModelsPage inherits HorizontalLayout {
                 }
                 LabeledField {
                     label: "Draft GPU layers";
-                    hint: "Layers of a separate draft model file offloaded to GPU (--n-gpu-layers-draft).\nA drafter with real layers (e.g. DFlash) gets a 0..layer-count slider.\nAn MTP/nextn head file has no transformer layers (block_count 0), so it becomes a plain CPU/GPU switch.\nPin a device above — multi-GPU auto-split crashes MTP heads.\nIgnored (and disabled) with embedded MTP heads.\ndefault = omit the flag → llama.cpp offloads ALL draft layers to GPU.";
+                    hint: "Layers of a separate draft model file offloaded to GPU (--n-gpu-layers-draft).\nA drafter with real layers (e.g. DFlash) gets a 0..layer-count slider.\nAn MTP/nextn head file has no transformer layers (block_count 0), so it becomes a plain CPU/GPU switch.\nPin a device above: multi-GPU auto-split crashes MTP heads.\nIgnored (and disabled) with embedded MTP heads.\ndefault = omit the flag → llama.cpp offloads ALL draft layers to GPU.";
                     // Real drafter (block_count > 0): the same auto + slider +
-                    // readout row as the other layer knobs — one canonical
+                    // readout row as the other layer knobs, one canonical
                     // implementation (AutoSlider) instead of an inline copy.
                     if AppState.model_info_draft_n_layer > 0 : AutoSlider {
                         auto <=> AppState.form.n_gpu_layers_draft_auto;
@@ -388,7 +388,7 @@ export component ModelsPage inherits HorizontalLayout {
                     // MTP/nextn head (0 layers) or no header: auto checkbox + a
                     // binary CPU/GPU choice. A SegmentedControl (not a Switch):
                     // its highlight is a pure read of the model, so it never goes
-                    // stale after a click — a Switch's `checked` self-assignment
+                    // stale after a click; a Switch's `checked` self-assignment
                     // would break its one-way binding (the v1.1.1 staleness
                     // class). on GPU = all draft layers, on CPU = 0.
                     if AppState.model_info_draft_n_layer == 0 : CheckBox {
@@ -420,7 +420,7 @@ export component ModelsPage inherits HorizontalLayout {
                 }
                 LabeledField {
                     label: "Parallel seqs";
-                    hint: "--parallel: concurrent request slots. The context is DIVIDED among them, so N=2 leaves each request ctx-size / 2 tokens.\ndefault = omit the flag → llama-server's own default is auto (-1), which picks 4 slots AND a unified KV cache — and with a unified cache every slot may use the WHOLE context. So leaving this at default is what gives one request the model's full context; pinning a number is what quietly divides it.";
+                    hint: "--parallel: concurrent request slots. The context is DIVIDED among them, so N=2 leaves each request ctx-size / 2 tokens.\ndefault = omit the flag → llama-server's own default is auto (-1), which picks 4 slots AND a unified KV cache, and with a unified cache every slot may use the WHOLE context. So leaving this at default is what gives one request the model's full context; pinning a number is what quietly divides it.";
                     DefaultLineEdit {
                         input_type: InputType.number;
                         default <=> AppState.form.parallel_default;
@@ -451,7 +451,7 @@ export component ModelsPage inherits HorizontalLayout {
                 heading: "KV cache";
                 LabeledField {
                     label: "K-cache type";
-                    hint: "KV cache quantization for K (--cache-type-k).\nLower = less VRAM but lower quality.\ndefault = omit the flag → llama.cpp default: f16.\nNote: Qwen3-Coder needs q8_0 for reliable tool calling — q4_0 makes it drop the <tool_call> wrapper.";
+                    hint: "KV cache quantization for K (--cache-type-k).\nLower = less VRAM but lower quality.\ndefault = omit the flag → llama.cpp default: f16.\nNote: Qwen3-Coder needs q8_0 for reliable tool calling; q4_0 makes it drop the <tool_call> wrapper.";
                     // "default" is the first entry of Options.cache_types and is
                     // NOT the f16 entry: it omits the flag (form.rs maps it to an
                     // empty string, which render_section drops) rather than pinning
@@ -475,7 +475,7 @@ export component ModelsPage inherits HorizontalLayout {
                     // TRI-state, not a checkbox: --flash-attn is [on|off|auto] and
                     // its default is auto, so a bool can only ever say two of the
                     // three things. Same shape (and same reason) as "Keep past
-                    // thinking" below — a SegmentedControl over a form STRING,
+                    // thinking" below: a SegmentedControl over a form STRING,
                     // mapped to Option<bool> in form.rs.
                     SegmentedControl {
                         options: ["default", "on", "off"];
@@ -531,7 +531,7 @@ export component ModelsPage inherits HorizontalLayout {
                 }
                 LabeledField {
                     label: "Keep past thinking";
-                    hint: "--reasoning-preserve: replay the thinking of EVERY past assistant turn back to the model, not just the last one.\ndefault = whatever the chat template does on its own; on = keep it; off = drop it.\nThis is the supported lever — do NOT hand-write preserve_thinking into 'Template kwargs' below. llama.cpp expands this ONE flag into preserve_thinking + clear_thinking + truncate_history_thinking, and templates disagree on which of the three they read, so setting the raw kwarg is a silent no-op on most of them.\nIt only works where the template supports it; llama-server says so at startup ('chat template supports preserving reasoning' / '…does NOT support').\nCosts prompt tokens: the trace is re-sent every turn.";
+                    hint: "--reasoning-preserve: replay the thinking of EVERY past assistant turn back to the model, not just the last one.\ndefault = whatever the chat template does on its own; on = keep it; off = drop it.\nThis is the supported lever; do NOT hand-write preserve_thinking into 'Template kwargs' below. llama.cpp expands this ONE flag into preserve_thinking + clear_thinking + truncate_history_thinking, and templates disagree on which of the three they read, so setting the raw kwarg is a silent no-op on most of them.\nIt only works where the template supports it; llama-server says so at startup ('chat template supports preserving reasoning' / '…does NOT support').\nCosts prompt tokens: the trace is re-sent every turn.";
                     SegmentedControl {
                         options: ["default", "on", "off"];
                         current: AppState.form.reasoning_preserve == "" ? "default" : AppState.form.reasoning_preserve;
@@ -556,7 +556,7 @@ export component ModelsPage inherits HorizontalLayout {
                     label: "Top-K";
                     hint: "--top-k: keep only the K most-likely tokens before sampling.\n0 / default = disabled.\ndefault = omit the flag → llama.cpp default: 40.";
                     // Integer-valued, so `number` (digits only) and not the
-                    // `decimal` the float knobs below take — a decimal editor
+                    // `decimal` the float knobs below take; a decimal editor
                     // would let `40,5` slip past the int parse.
                     DefaultLineEdit {
                         input_type: InputType.number;
@@ -566,7 +566,7 @@ export component ModelsPage inherits HorizontalLayout {
                 }
                 LabeledField {
                     label: "Top-P";
-                    hint: "--top-p: nucleus sampling — smallest token set whose probabilities sum to P (e.g. 0.95).\ndefault = omit the flag → llama.cpp default: 0.95.";
+                    hint: "--top-p: nucleus sampling, smallest token set whose probabilities sum to P (e.g. 0.95).\ndefault = omit the flag → llama.cpp default: 0.95.";
                     DefaultLineEdit {
                         default <=> AppState.form.top_p_default;
                         value <=> AppState.form.top_p;
@@ -606,7 +606,7 @@ export component ModelsPage inherits HorizontalLayout {
                 heading: "Advanced";
                 LabeledField {
                     label: "Chat kwargs";
-                    hint: "--chat-template-kwargs: JSON merged into the chat template, e.g. {\"enable_thinking\":true}.\nAdvanced — leave blank unless the model documents kwargs.";
+                    hint: "--chat-template-kwargs: JSON merged into the chat template, e.g. {\"enable_thinking\":true}.\nAdvanced: leave blank unless the model documents kwargs.";
                     LineEdit {
                         text <=> AppState.form.chat_template_kwargs;
                         placeholder-text: "e.g. {\"enable_thinking\":true}";
@@ -618,7 +618,7 @@ export component ModelsPage inherits HorizontalLayout {
                 heading: "Vision";
                 LabeledField {
                     label: "Vision on GPU";
-                    hint: "Offload the multimodal projector — the mmproj/CLIP image encoder — to GPU (--mmproj-offload / --no-mmproj-offload).\nOn (llama.cpp's default) it holds VRAM for as long as the model is loaded but only computes on image requests. Off keeps it on CPU: slower image encoding, no VRAM.\nWHICH GPU it lands on is a separate question — see 'Vision encoder' on the Server tab.";
+                    hint: "Offload the multimodal projector, the mmproj/CLIP image encoder, to GPU (--mmproj-offload / --no-mmproj-offload).\nOn (llama.cpp's default) it holds VRAM for as long as the model is loaded but only computes on image requests. Off keeps it on CPU: slower image encoding, no VRAM.\nWHICH GPU it lands on is a separate question; see 'Vision encoder' on the Server tab.";
                     CheckBox {
                         enabled: AppState.form.mmproj != "";
                         text: "offload the image encoder to GPU";
@@ -626,14 +626,14 @@ export component ModelsPage inherits HorizontalLayout {
                     }
                 }
                 Text {
-                    text: "The two bounds below cap the tokens ONE image takes on dynamic-resolution vision models — only the mmproj/CLIP encoder reads them (pick an MMProj above to enable them). Leave at default to read the bound from the model.";
+                    text: "The two bounds below cap the tokens ONE image takes on dynamic-resolution vision models; only the mmproj/CLIP encoder reads them (pick an MMProj above to enable them). Leave at default to read the bound from the model.";
                     wrap: word-wrap;
                     font-size: 12px;
                     color: Palette.foreground.transparentize(Tokens.muted);
                 }
                 LabeledField {
                     label: "Min image tokens";
-                    hint: "--image-min-tokens: minimum tokens each image is encoded to.\nOnly used by vision models with dynamic resolution.\ndefault = omit the flag → read the bound from the model.\nQwen-VL warns it needs at least 1024 for grounding accuracy (llama.cpp #16842) — set 1024 here if you see that warning.";
+                    hint: "--image-min-tokens: minimum tokens each image is encoded to.\nOnly used by vision models with dynamic resolution.\ndefault = omit the flag → read the bound from the model.\nQwen-VL warns it needs at least 1024 for grounding accuracy (llama.cpp #16842); set 1024 here if you see that warning.";
                     DefaultLineEdit {
                         // Vision-only: the encoder is what reads it, so gate on an mmproj.
                         enabled: AppState.form.mmproj != "";
@@ -668,16 +668,16 @@ export component ModelsPage inherits HorizontalLayout {
                     }
                 }
                 Text {
-                    text: "The draft context keeps its OWN KV cache, and it does not follow the model's: llama.cpp overwrites the inherited types with the draft default, f16. Quantize it here to reclaim the VRAM — unlike the placement flags above, these two also apply to MTP heads embedded in the main model.";
+                    text: "The draft context keeps its OWN KV cache, and it does not follow the model's: llama.cpp overwrites the inherited types with the draft default, f16. Quantize it here to reclaim the VRAM; unlike the placement flags above, these two also apply to MTP heads embedded in the main model.";
                     wrap: word-wrap;
                     font-size: 12px;
                     color: Palette.foreground.transparentize(Tokens.muted);
                 }
                 LabeledField {
                     label: "Draft K-cache type";
-                    hint: "KV cache quantization for K in the DRAFT context (--spec-draft-type-k, alias -ctkd).\ndefault = omit the flag → llama.cpp's DRAFT default: f16 — NOT the model's K-cache type, which llama.cpp copies in and then overwrites.\nA draft context is small, so this matters most on a separate draft model with a large context.";
+                    hint: "KV cache quantization for K in the DRAFT context (--spec-draft-type-k, alias -ctkd).\ndefault = omit the flag → llama.cpp's DRAFT default: f16, NOT the model's K-cache type, which llama.cpp copies in and then overwrites.\nA draft context is small, so this matters most on a separate draft model with a large context.";
                     EnumComboBox {
-                        // Active whenever a draft context exists — a picked draft
+                        // Active whenever a draft context exists: a picked draft
                         // file OR embedded MTP heads (draft_active), since these
                         // apply in both cases.
                         enabled: AppState.draft_active;
@@ -698,7 +698,7 @@ export component ModelsPage inherits HorizontalLayout {
 
             FormActions {
                 save_text: "Save preset";
-                // Shared with the Ctrl+S shortcut — the gate lives in state.slint.
+                // Shared with the Ctrl+S shortcut; the gate lives in state.slint.
                 save_enabled: AppState.can_save_preset;
                 revert_enabled: AppState.selected_preset_index >= 0 && AppState.preset_dirty;
                 save => { AppState.save_preset(); }

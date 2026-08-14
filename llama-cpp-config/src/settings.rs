@@ -1,13 +1,13 @@
-//! settings.ini schema and IO — the configurator's OWN settings.
+//! settings.ini schema and IO: the configurator's OWN settings.
 //!
 //! Not to be confused with server.ini (`server_cfg.rs`): every key there maps
 //! to a llama-server flag or launch-env value and rides the full per-field
 //! recipe (CLI `server set`, `runstate::server_args`, …). The keys here
-//! configure llama-cpp-config itself — they never reach a llama-server command
-//! line — so they live in their own file with none of that machinery.
+//! configure llama-cpp-config itself (they never reach a llama-server command
+//! line), so they live in their own file with none of that machinery.
 //!
 //! Note the one Settings-tab toggle that is deliberately NOT here: "Start with
-//! Windows" is the HKCU Run registry entry itself (`startup.rs`) — mirroring it
+//! Windows" is the HKCU Run registry entry itself (`startup.rs`); mirroring it
 //! into this file would only add a copy that Task Manager's Startup panel can
 //! silently desync.
 
@@ -20,7 +20,7 @@ use crate::paths;
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Settings {
     /// Start llama-server automatically when the GUI launches (any launch, not
-    /// just the logon one). `false` when unset — the framework default.
+    /// just the logon one). `false` when unset: the framework default.
     pub start_server_on_launch: bool,
 }
 
@@ -74,7 +74,7 @@ StartServerOnLaunch = {autostart_lit}
 mod tests {
     use super::*;
 
-    /// `render` → parse-back through the real INI reader — a key-name typo
+    /// `render` → parse-back through the real INI reader: a key-name typo
     /// between `from_keys` and the writer fails here (same guard shape as
     /// server_cfg's round-trip).
     fn round_trip(cfg: &Settings) -> Settings {

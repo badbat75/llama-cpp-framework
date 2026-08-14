@@ -25,7 +25,7 @@ if (-not (Test-Path "$($cfg.LlamaCppDir)\CMakeLists.txt")) {
 }
 
 # Newest release tag reachable from origin/master (the highest bNNNN); detach the
-# working tree onto it so the build — and `git describe` in 03-package.ps1 — see a
+# working tree onto it so the build, and `git describe` in 03-package.ps1, see a
 # clean tagged release.
 $llamaTag = (git -C $cfg.LlamaCppDir describe --tags --abbrev=0 origin/master 2>$null | Select-Object -First 1)
 if (-not $llamaTag) { throw "could not resolve latest llama.cpp release tag from origin/master" }
@@ -38,8 +38,8 @@ $buildDir = Join-Path $PSScriptRoot "build\llama.cpp-cmake"
 New-Item -ItemType Directory -Path $buildDir -Force | Out-Null
 
 # A CMakeCache.txt written by a previous toolchain pins the old compiler path
-# (and the HIP paths derived from it): when the ROCm dist moves — e.g. a
-# TheRock version bump relocating HIP_PATH — the cached entries poison the
+# (and the HIP paths derived from it): when the ROCm dist moves (e.g. a
+# TheRock version bump relocating HIP_PATH), the cached entries poison the
 # reconfigure. Detect the compiler mismatch and start clean. Only comparable
 # when the config carries a full path (01-configure writes one when it can).
 $cacheFile = Join-Path $buildDir 'CMakeCache.txt'
@@ -61,11 +61,11 @@ $opensslPath = $cfg.OpenSSLDir -replace '\\', '/'
 # upgrade removes the old tree, so every absolute path into it dies with it.
 # Two things then keep pointing at the dead version:
 #   - VULKAN_SDK in a console opened before the upgrade (and CMake's FindVulkan
-#     searches that env var first — it is also what ggml-vulkan appends to
+#     searches that env var first; it is also what ggml-vulkan appends to
 #     CMAKE_PREFIX_PATH for find_package(SPIRV-Headers));
 #   - the CMakeCache entries FindVulkan wrote (Vulkan_INCLUDE_DIR /
 #     Vulkan_LIBRARY / Vulkan_GLSLC_EXECUTABLE / Vulkan_GLSLANG_VALIDATOR_
-#     EXECUTABLE), which CMake reuses WITHOUT checking the files still exist —
+#     EXECUTABLE), which CMake reuses WITHOUT checking the files still exist,
 #     unlike a config-package <pkg>_DIR, which is re-searched when it vanishes.
 # So the fix is to scan the PARENT dir and pin the highest version ourselves:
 # set VULKAN_SDK for this process and pass the four cached paths explicitly, so
@@ -73,7 +73,7 @@ $opensslPath = $cfg.OpenSSLDir -replace '\\', '/'
 # the compiler-mismatch check above: only the Vulkan backend needs recompiling,
 # and a wipe would cost a full CUDA + HIP rebuild.
 function Find-VulkanSdk {
-    # The parent of whatever VULKAN_SDK names (process env, then machine env —
+    # The parent of whatever VULKAN_SDK names (process env, then machine env:
     # a stale console has an old value but still the right root), then the
     # default install roots.
     $roots = @()
@@ -88,7 +88,7 @@ function Find-VulkanSdk {
         if (-not (Test-Path $root)) { continue }
         foreach ($d in (Get-ChildItem $root -Directory -ErrorAction SilentlyContinue)) {
             # Compare numerically ([version]): a string sort ranks 1.4.9 above
-            # 1.4.10. Skip anything the build cannot actually consume — the
+            # 1.4.10. Skip anything the build cannot actually consume: the
             # import lib and the shader compiler ggml-vulkan invokes.
             $v = $null
             if (-not [version]::TryParse($d.Name, [ref]$v)) { continue }
@@ -105,7 +105,7 @@ $vulkanSdk = Find-VulkanSdk
 if ($vulkanSdk) {
     Write-Host "Vulkan SDK: $vulkanSdk" -ForegroundColor Cyan
     if ($env:VULKAN_SDK -ne $vulkanSdk) {
-        Write-Host "  (VULKAN_SDK was '$env:VULKAN_SDK' — overridden for this build)" -ForegroundColor DarkGray
+        Write-Host "  (VULKAN_SDK was '$env:VULKAN_SDK', overridden for this build)" -ForegroundColor DarkGray
     }
     $env:VULKAN_SDK = $vulkanSdk
     $vk = $vulkanSdk -replace '\\', '/'
@@ -113,14 +113,14 @@ if ($vulkanSdk) {
     $vulkanArgs += "-DVulkan_LIBRARY:FILEPATH=$vk/Lib/vulkan-1.lib"
     $vulkanArgs += "-DVulkan_GLSLC_EXECUTABLE:FILEPATH=$vk/Bin/glslc.exe"
     # Found unconditionally by FindVulkan (legacy var), so a stale cached path
-    # would survive the same way — refresh it too, when the SDK still ships it.
+    # would survive the same way; refresh it too, when the SDK still ships it.
     if (Test-Path "$vulkanSdk\Bin\glslangValidator.exe") {
         $vulkanArgs += "-DVulkan_GLSLANG_VALIDATOR_EXECUTABLE:FILEPATH=$vk/Bin/glslangValidator.exe"
     }
 } else {
     # Non-standard layout (unversioned dir, custom root): leave FindVulkan to its
-    # own search rather than guessing — it fails loudly enough if nothing is there.
-    Write-Host "Vulkan SDK: no versioned install found — leaving detection to CMake" -ForegroundColor Yellow
+    # own search rather than guessing; it fails loudly enough if nothing is there.
+    Write-Host "Vulkan SDK: no versioned install found, leaving detection to CMake" -ForegroundColor Yellow
 }
 
 # ── sccache: use local cache if available ─────────────────────────
@@ -131,16 +131,16 @@ if ($sccachePath) {
     $env:SCCACHE_DIR = $sccacheDir
     $env:SCCACHE_CACHE_SIZE = "10G"
     $env:SCCACHE_IDLE_TIMEOUT = "0"
-    $env:SCCACHE_MAX_FRAME_LENGTH = "104857600"  # 100MB — GPU multi-arch objects are large
+    $env:SCCACHE_MAX_FRAME_LENGTH = "104857600"  # 100MB: GPU multi-arch objects are large
     # Client-side mode (sccache 0.17+): cache lookup + compile run in the client process,
-    # the daemon serves only shared state — removes the per-compile server round-trip.
+    # the daemon serves only shared state, which removes the per-compile round-trip.
     # Older sccache ignores the var. sccache itself ignores it under SCCACHE_ERROR_LOG
     # or distributed compilation (neither used here); stats stay server-side, so
     # --show-stats below still aggregates the whole build.
     $env:SCCACHE_CLIENT_SIDE = "1"
     Write-Host "sccache: $sccachePath (cache: $sccacheDir)" -ForegroundColor Cyan
 } else {
-    Write-Host "sccache not found — building without compiler cache" -ForegroundColor DarkGray
+    Write-Host "sccache not found, building without compiler cache" -ForegroundColor DarkGray
 }
 
 $cmakeArgs = @(
@@ -155,8 +155,8 @@ $cmakeArgs = @(
     "-DGGML_HIP=ON"
     "-DGPU_TARGETS=$($cfg.GpuTargets)"
     # ROCm's hip-config-amd.cmake derives the --offload-arch flags from
-    # GPU_BUILD_TARGETS, which it seeds from GPU_TARGETS with a `set(... CACHE ...)`
-    # — a no-op once the entry exists. Without -U, editing GpuTargets silently does
+    # GPU_BUILD_TARGETS, which it seeds from GPU_TARGETS with a `set(... CACHE ...)`:
+    # a no-op once the entry exists. Without -U, editing GpuTargets silently does
     # nothing on an existing build dir: the cached arch list wins and Ninja sees
     # unchanged command lines. Clearing it re-derives the list every configure.
     "-UGPU_BUILD_TARGETS"
@@ -168,7 +168,7 @@ $cmakeArgs = @(
     "-DCMAKE_CUDA_FLAGS=-w"
 )
 
-# Pinned Vulkan SDK paths (see Find-VulkanSdk above) — empty when no versioned
+# Pinned Vulkan SDK paths (see Find-VulkanSdk above), empty when no versioned
 # install was found, in which case FindVulkan does its own search.
 $cmakeArgs += $vulkanArgs
 
@@ -180,12 +180,12 @@ $cmakeArgs += $vulkanArgs
 # First hit with ROCm 7.1; re-verified 2026-07-16 against TheRock ROCm 7.14
 # (AMD clang 23) + MSVC 14.51.36231: the stock headers still trip the same
 # isgreater/_CLANG_BUILTIN2 conflict and the patched wrapper still compiles
-# clean — so this stays until MSVC or ROCm fix the overload clash upstream.
+# clean, so this stays until MSVC or ROCm fix the overload clash upstream.
 # A patched wrapper reverses the include order; we suppress the stock one via
 # -D__CLANG_HIP_RUNTIME_WRAPPER_H__ and force-include the patched copy. The
 # copy is a modified snapshot of the toolchain's OWN header, so it is
 # versioned per clang resource major (patches\hip\<major>\) and selected from
-# the installed dist — a ROCm bump that changes the clang major fails fast
+# the installed dist; a ROCm bump that changes the clang major fails fast
 # with regeneration instructions (patches\hip\README.md) instead of silently
 # force-including a stale wrapper. Flags go through both CMAKE_CXX_FLAGS and
 # CMAKE_HIP_FLAGS because CMake on Windows treats HIP sources as CXX when
@@ -204,7 +204,7 @@ if (-not $clangMajor) {
 }
 $hipPatchedInc = Join-Path $PSScriptRoot "patches\hip\$clangMajor\__clang_hip_runtime_wrapper.h"
 if (-not (Test-Path $hipPatchedInc)) {
-    throw "no patched HIP runtime wrapper for clang $clangMajor (expected $hipPatchedInc). New toolchain — regenerate and validate it per patches\hip\README.md."
+    throw "no patched HIP runtime wrapper for clang $clangMajor (expected $hipPatchedInc). New toolchain: regenerate and validate it per patches\hip\README.md."
 }
 Write-Host "HIP wrapper patch: patches\hip\$clangMajor (clang resource major $clangMajor)" -ForegroundColor DarkGray
 $hipPatchedInc = $hipPatchedInc -replace '\\', '/'
@@ -213,11 +213,11 @@ $cmakeArgs += "-DCMAKE_CXX_FLAGS=$($cfg.MarchFlags) -w $hipWorkaroundFlags"
 $cmakeArgs += "-DCMAKE_HIP_FLAGS=$hipWorkaroundFlags"
 
 # lld, when the compiler is an LLVM one that ships it (01-configure resolves it
-# next to the clang it picked, and leaves Linker empty otherwise — an MSVC
+# next to the clang it picked, and leaves Linker empty otherwise; an MSVC
 # toolchain must keep link.exe). CMake finds lld-link on its own in the common
 # case, so this normally re-states the value already in the cache and costs
 # nothing; what it buys is that the fallback to link.exe can no longer happen
-# silently. Absent from a config-build.psd1 written before this key existed —
+# silently. Absent from a config-build.psd1 written before this key existed,
 # hence the truthiness check, not a Test-Path on a null.
 if ($cfg.Linker) {
     $cmakeArgs += "-DCMAKE_LINKER=$($cfg.Linker)"
@@ -229,7 +229,7 @@ if ($sccachePath) {
     # nvcc is intentionally NOT wrapped with sccache (no CMAKE_CUDA_COMPILER_LAUNCHER):
     # sccache still mishandles multi-arch fatbin generation on CUDA 13.x, so fatbinary
     # fails with "Could not open input file '<tu>.compute_75.ptx'" on every .cu.obj.
-    # Retested with sccache 0.17.0 (2026-07) — still broken, in server AND
+    # Retested with sccache 0.17.0 (2026-07): still broken, in server AND
     # client-side mode (minimal repro: multi-gencode nvcc -c, fatbinary can't
     # find the per-arch intermediates sccache's nvcc decomposition produced).
     # Host C/CXX (clang) caching is unaffected and kept.
@@ -284,7 +284,7 @@ finally {
     Pop-Location
 }
 
-# 03-package.ps1 stages the binary straight from cargo's target\release dir — no
+# 03-package.ps1 stages the binary straight from cargo's target\release dir: no
 # intermediate copy under build\.
 $exe = Join-Path $rustProjectDir "target\release\llama-cpp-config.exe"
 Write-Host "llama-cpp-config build complete: $exe" -ForegroundColor Green

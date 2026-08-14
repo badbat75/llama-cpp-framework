@@ -1,7 +1,7 @@
 // Shared application state for the configurator.
 //
-// Every property and callback that Rust drives — plus anything more than one
-// component reads — lives here, in one exported global, so each datum is
+// Every property and callback that Rust drives (plus anything more than one
+// component reads) lives here, in one exported global, so each datum is
 // declared ONCE instead of three times (AppWindow field → forwarding binding →
 // page field). The tab pages are conditionally instantiated, so Rust cannot
 // reach a property declared on a page: a Rust-driven datum belongs here even
@@ -9,7 +9,7 @@
 // `app.global::<AppState>()`; the pages read/write `AppState.<name>` directly.
 //
 // The tray (`AppTray` in app.slint) is a separate root and does NOT use this
-// global — it keeps its own pushed-in state.
+// global; it keeps its own pushed-in state.
 
 import { PresetSummary, PresetForm, ServerForm, IntegrationModel, GpuRow, TensorOverrideRow } from "types.slint";
 import { Options } from "components.slint";
@@ -30,7 +30,7 @@ export global AppState {
     // Held true by Rust until `tasklist` confirms the process is gone.
     in-out property <bool> server_stopping: false;
     // Transitional flag: Start has been triggered but the launch (which opens
-    // with a tasklist probe) hasn't completed — held true by Rust while the
+    // with a tasklist probe) hasn't completed, held true by Rust while the
     // start runs off the UI thread, mirroring server_stopping.
     in-out property <bool> server_starting: false;
     in-out property <bool> server_status_is_error: false;
@@ -43,8 +43,8 @@ export global AppState {
     in-out property <string> chat_url: "";
     // Client URL snapshotted when the GUI launched llama-server (empty while
     // stopped, or when the server was started outside the GUI). The RUNNING
-    // process listens on what it was launched with — saving a new port only
-    // changes the file — so the Open-chat button prefers this over chat_url.
+    // process listens on what it was launched with (saving a new port only
+    // changes the file), so the Open-chat button prefers this over chat_url.
     in-out property <string> launched_url: "";
     out property <string> open_chat_url: !server_form.base_url_default ? chat_url
         : (server_running && launched_url != "" ? launched_url : chat_url);
@@ -57,16 +57,16 @@ export global AppState {
     // are option lists (not form values), so they stay separate.
     // No Slint-side initializer: Rust seeds both structs from disk before the
     // event loop starts (gui::run() → load_server_into_ui), and the display
-    // defaults have ONE owner — server_form::config_to_form.
+    // defaults have ONE owner: server_form::config_to_form.
     in-out property <ServerForm> server_form;
     in-out property <ServerForm> server_form_base;
     out property <bool> server_dirty: server_form != server_form_base;
     // Save gating shared by the Server tab's Save button and the Ctrl+S
-    // shortcut (app.slint) — single source so the two can't drift.
+    // shortcut (app.slint): single source so the two can't drift.
     out property <bool> can_save_server: server_dirty;
 
     // Logical-processor count (std::thread::available_parallelism), pushed from
-    // Rust at startup — the upper bound for the CPU-threads / batch-threads
+    // Rust at startup, the upper bound for the CPU-threads / batch-threads
     // sliders. A generous fallback keeps the sliders usable if the probe fails.
     in-out property <int> cpu_threads_max: 32;
 
@@ -77,15 +77,15 @@ export global AppState {
 
     // Server-wide GPU distribution table (GpuSplitTable). Rows come from the
     // async `--list-devices` probe crossed with `server_form.device` /
-    // `.tensor_split` — Rust owns both the row model and the strings it renders
+    // `.tensor_split`; Rust owns both the row model and the strings it renders
     // back into (src/gpu_split.rs). The per-preset twin lives under "Models tab
     // state" below; the raw device list stays Rust-only (`devices::probed()`).
     in-out property <[GpuRow]> server_gpu_rows;
     // The split-mode combo model, shared by BOTH tables (gpu_split::MODE_LABELS
     // / MODE_VALUES, pushed once per row refresh); the index is per-scope and
-    // two-way — Rust recomputes it from the form value on every refresh, a pick
+    // two-way: Rust recomputes it from the form value on every refresh, a pick
     // reports back through *_split_mode_picked. The effective mode ("layer" /
-    // "none" / "row", gpu_split::effective_mode — the server-wide flag rides
+    // "none" / "row", gpu_split::effective_mode; the server-wide flag rides
     // the router's CLI, so it shadows every preset's key) is what actually
     // bends each table's columns.
     in-out property <[string]> split_mode_labels;
@@ -100,7 +100,7 @@ export global AppState {
     // and is the denominator behind the table's Share column.
     in-out property <int> server_gpu_total: 0;
 
-    // Server-wide tensor-placement table (TensorOverrideTable) — the twin of the
+    // Server-wide tensor-placement table (TensorOverrideTable), the twin of the
     // per-preset one below, over `server_form.override_tensor`.
     in-out property <[TensorOverrideRow]> server_tensor_rows;
     in-out property <string> server_tensor_summary;
@@ -124,12 +124,12 @@ export global AppState {
     in-out property <PresetForm> form_base;
     out property <bool> preset_dirty: form != form_base;
     // Save gating shared by the Models tab's Save button and the Ctrl+S
-    // shortcut (app.slint) — single source so the two can't drift.
+    // shortcut (app.slint): single source so the two can't drift.
     out property <bool> can_save_preset: selected_preset_index >= 0 && form.id != "" && preset_dirty;
     in-out property <string> presets_path: "";
     in-out property <string> presets_filter: "";
 
-    // Per-preset GPU distribution table — the twin of the server-wide one above,
+    // Per-preset GPU distribution table, the twin of the server-wide one above,
     // over `form.device` / `form.tensor_split`. Overridden at launch by a
     // server-wide selection (llama-server's router copies its OWN CLI args over
     // every preset key), which is what `gpu_override_warning` says out loud.
@@ -138,40 +138,40 @@ export global AppState {
     in-out property <string> preset_gpu_mode: "layer";
     in-out property <int> preset_gpu_selected: 0;
     in-out property <int> preset_gpu_total: 0;
-    // Positions this model's split is cut over — its block count plus one for the
+    // Positions this model's split is cut over: its block count plus one for the
     // output layer, minus whatever stays on the CPU (gpu_split::Layout). It is
     // what lets the table edit BLOCKS instead of ratios; 0 = no model read, so the
     // table falls back to raw weights the way the server-wide one always does.
     in-out property <int> preset_split_positions: 0;
     out property <string> gpu_override_warning: server_form.device != ""
-        ? "The Server tab pins GPUs (" + server_form.device + "). llama-server passes that on its own command line, which overrides every preset's selection — this table won't apply until the server-wide one is cleared."
+        ? "The Server tab pins GPUs (" + server_form.device + "). llama-server passes that on its own command line, which overrides every preset's selection; this table won't apply until the server-wide one is cleared."
         // Same shadowing, split-mode edition: the server-wide mode rides the
         // router's CLI too, so a differing preset pick is dead on arrival.
         : (server_form.split_mode != "default" && server_form.split_mode != ""
             && form.split_mode != "default" && form.split_mode != ""
             && form.split_mode != server_form.split_mode)
-        ? "The Server tab sets GPU split mode '" + server_form.split_mode + "', which llama-server passes on its own command line — it overrides this preset's split mode."
+        ? "The Server tab sets GPU split mode '" + server_form.split_mode + "', which llama-server passes on its own command line; it overrides this preset's split mode."
         : "";
 
     // Per-preset tensor-placement table (TensorOverrideTable), over the single
     // `form.override_tensor` string. Rows and BOTH dropdown models are built in
     // Rust (src/tensor_override.rs) and are read-only to Slint; every edit is a
-    // whole-string rewrite. Rules are addressed by ROW INDEX, not by an id — the
+    // whole-string rewrite. Rules are addressed by ROW INDEX, not by an id: the
     // same pattern may legitimately appear twice (two devices, two halves of a
     // model), unlike the GPU table's unique device ids.
     in-out property <[TensorOverrideRow]> preset_tensor_rows;
     in-out property <string> preset_tensor_summary;
     // The exact twin of `gpu_override_warning`: a server-wide value shadows this
-    // table. And it shadows it WHOLESALE — `-ot` is a vector inside llama.cpp, so
+    // table. And it shadows it WHOLESALE; `-ot` is a vector inside llama.cpp, so
     // "the two lists get concatenated" is the natural guess and it is wrong: the
     // router merges its own CLI args into every preset as a key→value map, so the
     // server's `--override-tensor` overwrites the preset's key and only one flag
     // ever reaches the child. Verified against b9976; see server_cfg.rs.
     out property <string> tensor_override_warning: server_form.override_tensor == "" ? ""
-        : "The Server tab sets a tensor placement (" + server_form.override_tensor + "). llama-server passes that on its own command line, which REPLACES every preset's rules — these ones won't apply at all until the server-wide table is cleared.";
+        : "The Server tab sets a tensor placement (" + server_form.override_tensor + "). llama-server passes that on its own command line, which REPLACES every preset's rules; these ones won't apply at all until the server-wide table is cleared.";
     // Non-empty when the value is one llama.cpp would refuse (a rule with no
-    // device). Only a hand-edited presets.ini reaches it — the table sanitizes
-    // everything it writes — but that value would fail the model's LOAD, so it
+    // device). Only a hand-edited presets.ini reaches it (the table sanitizes
+    // everything it writes), but that value would fail the model's LOAD, so it
     // is worth saying out loud rather than at the next launch.
     in-out property <string> preset_tensor_warning;
     // The option models behind every row's two dropdowns. The KIND list is shared
@@ -179,7 +179,7 @@ export global AppState {
     // that reveals the pattern's text field). The DEVICE list is NOT: it is the
     // probed devices INCLUDING the CPU (a legal -ot target, unlike in the GPU
     // table above) PLUS a `(custom)` entry per device id the probe doesn't know,
-    // which is a property of that table's own rules — so each scope gets its own
+    // which is a property of that table's own rules, so each scope gets its own
     // model, or the two would alias each other's row indices (see gui.rs).
     in-out property <[string]> tensor_kind_labels;
     in-out property <[string]> tensor_kind_values;
@@ -218,12 +218,12 @@ export global AppState {
     in-out property <bool> model_info_has_moe: false;
     in-out property <string> model_info_moe;
     in-out property <string> model_info_arch_quant;
-    // token_embd's OWN quant + size — not implied by the file's name or by
+    // token_embd's OWN quant + size, not implied by the file's name or by
     // `model_info_arch_quant`: Unsloth's Q6_K_XL keeps the embedding table at
     // Q8_0 while its Q4_K_XL/Q5_K_XL drop it to a K-quant, and only the former
     // can be pinned to a GPU (CUDA/ROCm implement get_rows for no K-quant).
     // `model_info_embd_warning` is non-empty ONLY when the type is known AND
-    // unpinnable — it is what the Tensor-placement table shows when a rule
+    // unpinnable; it is what the Tensor-placement table shows when a rule
     // pins the table anyway. Empty for an unreadable GGUF, so a failed metadata
     // read never masquerades as a problem.
     in-out property <string> model_info_embd;
@@ -232,18 +232,18 @@ export global AppState {
     in-out property <string> model_info_attn;
     in-out property <string> model_info_draft;
     // Chat template detection (read from GGUF `tokenizer.chat_template`).
-    // `model_info_chat_template` is the short status text — rendered in a
-    // LabeledField (not an InfoRow) so a Preview button can sit beside it —
-    // ("Jinja (embedded)" / "embedded (non-Jinja)" / "none");
+    // `model_info_chat_template` is the short status text ("Jinja (embedded)" /
+    // "embedded (non-Jinja)" / "none"), rendered in a LabeledField (not an
+    // InfoRow) so a Preview button can sit beside it;
     // `chat_template_preview` holds the raw template text for the Preview
-    // modal, and is empty when no template is embedded — which also gates the
+    // modal, and is empty when no template is embedded, which also gates the
     // Preview button (no point previewing an absent template).
     in-out property <string> model_info_chat_template: "none";
     in-out property <string> chat_template_preview: "";
     // Reasoning support, read off that same template's SOURCE (no Jinja engine
-    // here — see gguf.rs `Thinking`). `model_info_thinking` says whether the model
+    // here; see gguf.rs `Thinking`). `model_info_thinking` says whether the model
     // thinks and whether --reasoning can switch it; `model_info_past_thinking`
-    // says whether --reasoning-preserve is a LEVER at all — i.e. whether the
+    // says whether --reasoning-preserve is a LEVER at all, i.e. whether the
     // template names one of the three variables that flag sets. A `no` there is
     // the useful half: it means the flag changes nothing on this model, which the
     // llama-server log cannot tell you (its probe reports "supported" for a
@@ -262,20 +262,20 @@ export global AppState {
     // GPU-layers / MoE-CPU-layers / draft-GPU-layers slider maxima. For the
     // MODEL sliders 0 = unknown (metadata unavailable) and gpu_layers_max
     // falls back to a 0..Options.all_layers range; the draft slider needs no
-    // fallback — models_page only shows it when draft_n_layer > 0 (a 0-layer
+    // fallback: models_page only shows it when draft_n_layer > 0 (a 0-layer
     // MTP head gets the CPU/GPU switch instead).
     in-out property <int> model_info_n_layer: 0;
     in-out property <int> model_info_draft_n_layer: 0;
     out property <int> gpu_layers_max: model_info_n_layer > 0 ? model_info_n_layer : Options.all_layers;
     out property <int> draft_layers_max: model_info_draft_n_layer;
     // Speculative-decoding controls are active when a draft model is selected OR
-    // the main model embeds MTP heads — otherwise there is nothing to draft with.
+    // the main model embeds MTP heads; otherwise there is nothing to draft with.
     out property <bool> draft_active: form.model_draft != "" || model_info_embeds_mtp;
     // …but the draft PLACEMENT controls (--device-draft, --n-gpu-layers-draft)
     // need a separate draft FILE, not just a draft. llama.cpp applies both only
     // inside `if (has_dft())`, i.e. when a --model-draft path was given; with
     // embedded MTP heads it builds the draft context against the target model
-    // itself ("MTP draft context lives on the target model" — server-context.cpp),
+    // itself ("MTP draft context lives on the target model", server-context.cpp),
     // so the draft runs on the MODEL's device and both flags are silently ignored.
     // Enabling them anyway is how a draft ends up "pinned" to a GPU that then sits
     // idle. `embedded_mtp_note` explains that where the controls are.
@@ -295,8 +295,8 @@ export global AppState {
     in-out property <string> rename_new_id: "";
 
     // ── Discard-confirm dialog state ─────────────────────────────────
-    // Shown by Rust (gui::confirm_discard_then) when a navigation action —
-    // preset switch, Refresh/reload_all, New…/Clone…/Rename… — would replace
+    // Shown by Rust (gui::confirm_discard_then) when a navigation action
+    // (preset switch, Refresh/reload_all, New…/Clone…/Rename…) would replace
     // a dirty form. The pending action is stashed Rust-side (gui::State) and
     // runs only on confirm; cancel drops it and keeps the edits.
     in-out property <bool> show_discard_dialog: false;
@@ -328,15 +328,15 @@ export global AppState {
     // App-level preferences (the configurator's own, not llama-server's).
     // No Save/Revert and no dirty state: each toggle's callback fires AFTER
     // the two-way binding flipped the property, and Rust persists that value
-    // immediately — or pushes the real state back on a failed write, which
+    // immediately, or pushes the real state back on a failed write, which
     // reaches the checkbox precisely because the binding is two-way.
     // `start_with_windows` + `start_minimized_to_tray` together mirror the
-    // HKCU Run registry entry (the registry IS the state — src/startup.rs:
+    // HKCU Run registry entry (the registry IS the state; src/startup.rs:
     // presence, and whether the stored command carries `--minimized`);
     // `start_server_on_launch` lives in settings.ini (src/settings.rs). All
     // re-read on Refresh/F5. The tray toggle only means anything while
     // start_with_windows is on (there is no Run entry to shape otherwise),
-    // so the page disables it — the kept value is what a fresh enable writes.
+    // so the page disables it; the kept value is what a fresh enable writes.
     in-out property <bool> startup_supported: true;
     in-out property <bool> start_with_windows: false;
     in-out property <bool> start_minimized_to_tray: true;
@@ -361,7 +361,7 @@ export global AppState {
     // llama.cpp's main_gpu, so this is the only way to choose which GPU leads.
     // `*_split_mode_picked(value)`: the mode combo's pick, as a MODE_VALUES
     // spelling ("default"/"none"/"row"). Rust writes it into the scope's form
-    // and rebuilds the rows — the mode decides what the columns mean, so a
+    // and rebuilds the rows: the mode decides what the columns mean, so a
     // pick is a full re-projection, not a scalar update.
     callback server_split_mode_picked(string);
     callback preset_split_mode_picked(string);
@@ -375,7 +375,7 @@ export global AppState {
     callback preset_gpu_weight(string, int);
     // The same edit as `preset_gpu_weight` in blocks (see gpu_split::set_blocks).
     // It is COMMIT-based, not per-keystroke, because a block count is constrained
-    // — giving one device more takes it from another — so unlike a weight it
+    // (giving one device more takes it from another), so unlike a weight it
     // cannot be applied without rewriting the other rows, and rewriting them on
     // every keystroke would recreate the very LineEdit being typed into.
     callback preset_gpu_blocks(string, int);
@@ -384,7 +384,7 @@ export global AppState {
 
     // Tensor-placement table, one set per scope (server-wide / per-preset). Same
     // shape as the GPU table's: each one rewrites the scope's `override_tensor`
-    // string in Rust (src/tensor_override.rs) and rebuilds the row model — except
+    // string in Rust (src/tensor_override.rs) and rebuilds the row model, except
     // `*_tensor_pattern`, the text field, which must NOT rebuild (that would
     // recreate the LineEdit being typed into and drop the caret), so it refreshes
     // only the derived strings. The int is the ROW INDEX; the string is the picked
@@ -412,7 +412,7 @@ export global AppState {
     callback rename_preset(string, string);
     // Rename… button entry point. Routed through Rust (not opened Slint-side)
     // so a dirty form gets the same discard-confirm guard as the other
-    // form-replacing navigations — committing a rename reloads from disk.
+    // form-replacing navigations; committing a rename reloads from disk.
     callback request_rename();
     // Discard-confirm dialog verdict (see its state block above): confirm runs
     // the stashed pending action, cancel drops it.
@@ -423,7 +423,7 @@ export global AppState {
     // Recompute the "Model info" box from the currently selected model file.
     callback model_changed();
     // A row was picked in the draft-model dropdown. The policy (set model_draft +
-    // spec_type from the parallel arrays, auto-pin the draft device — the gemma4
+    // spec_type from the parallel arrays, auto-pin the draft device: the gemma4
     // MTP-crash workaround) lives in Rust (gui/models_tab.rs) where it is
     // unit-tested; the .slint side only reports the picked index.
     callback draft_picked(int);
@@ -431,7 +431,7 @@ export global AppState {
     callback start_server();
     callback stop_server();
     // Open (or re-focus) the independent log-tail window (LogWindow in
-    // log_window.slint) — a separate non-modal root, so the main window stays
+    // log_window.slint), a separate non-modal root, so the main window stays
     // interactive while it is up. Wired in gui/log_window.rs.
     callback view_logs();
     // Re-read server.ini / presets.ini and re-scan the models directory.
@@ -445,7 +445,7 @@ export global AppState {
     callback open_opencode_folder();
 
     // Settings tab: fired AFTER the two-way binding flipped the property (see
-    // the state block above) — Rust reads the new value and persists it.
+    // the state block above); Rust reads the new value and persists it.
     callback toggle_start_with_windows();
     callback toggle_start_minimized();
     callback toggle_start_server_on_launch();

@@ -137,7 +137,7 @@ impl ServerSet {
     /// (see the per-field docs above): a `None` flag leaves the field untouched;
     /// non-positive thread/reuse values clear the override; a blank string
     /// unsets any optional string field (`opt_nonblank`, matching `load()`).
-    /// The single, unit-tested home for `server set`'s field mapping — keep it
+    /// The single, unit-tested home for `server set`'s field mapping; keep it
     /// in lockstep with the `ServerConfig` schema.
     fn apply(&self, cfg: &mut server_cfg::ServerConfig) {
         if let Some(p) = self.port {
@@ -147,7 +147,7 @@ impl ServerSet {
             cfg.hostname = server_cfg::opt_nonblank(Some(h.clone()));
         }
         // clap's PossibleValuesParser already refused anything outside
-        // LOAD_MODES, so this is a straight copy — no clearing rule (there is no
+        // LOAD_MODES, so this is a straight copy, no clearing rule (there is no
         // "unset" state: the launch always passes -lm).
         if let Some(lm) = &self.load_mode {
             cfg.load_mode = Some(lm.clone());
@@ -235,7 +235,7 @@ pub fn run(cli: Cli) -> Result<()> {
 
 /// The aligned body of `server show`, one `  Label        value` row per field
 /// (the label column fits the longest key, "RocblasUseHipblaslt:"). Pure so the
-/// test below can pin that every `ServerConfig` field is printed — a field added
+/// test below can pin that every `ServerConfig` field is printed; a field added
 /// to the schema but forgotten here would otherwise be a silent omission.
 fn show_lines(cfg: &server_cfg::ServerConfig) -> String {
     let mut out = String::new();
@@ -392,7 +392,7 @@ fn run_preset(c: PresetCmd) -> Result<()> {
         }
         PresetCmd::Delete { id } => {
             // ini::delete_section is a documented no-op for a missing section,
-            // so look the id up first — mirroring Show — or a typo'd id gets a
+            // so look the id up first (mirroring Show), or a typo'd id gets a
             // "Removed" message for a preset that never existed. Match
             // case-insensitively (as the INI layer does) and delete by the
             // STORED id so the header is hit whatever case the user typed.
@@ -461,7 +461,7 @@ mod tests {
 
     // The only guard on `server set`'s schema mirror: every other server-field
     // spot (server_cfg load/save, the form conversions) has a round-trip test,
-    // but `apply` is the CLI-only copy — an omitted field here is silent.
+    // but `apply` is the CLI-only copy; an omitted field here is silent.
 
     #[test]
     fn server_set_apply_copies_every_field() {
@@ -493,7 +493,7 @@ mod tests {
         set.apply(&mut cfg);
         // Whole-struct equality against a second exhaustive literal: the
         // compiler forces a value for a new field in BOTH literals, and the
-        // equality fails until `apply` actually copies it — an initialized-
+        // equality fails until `apply` actually copies it; an initialized-
         // but-never-copied field can't slip through.
         let expected = ServerConfig {
             port: Some(9000),
@@ -548,7 +548,7 @@ mod tests {
             opencode_api_key: Some("sk-test-key".into()),
         };
         // The exhaustive destructure breaks compilation the moment a field is
-        // added, until this test decides what to do with it — but the
+        // added, until this test decides what to do with it, but the
         // assertions come from the hand-maintained `needles` array below:
         // bind the new field AND add its needle, or its Show row goes
         // unguarded (binding alone, or `field: _`, compiles fine).

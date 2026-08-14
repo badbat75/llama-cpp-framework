@@ -1,10 +1,10 @@
 # Memory slicing report for the llama-server instance that is running right now.
 #
 # Two independent sources, cross-checked against each other:
-#   1. llama-server's own load log (%LOCALAPPDATA%\llama.cpp\logs\llama-server.log)
-#      — every buffer llama.cpp allocates announces itself there with its size and
+#   1. llama-server's own load log (%LOCALAPPDATA%\llama.cpp\logs\llama-server.log):
+#      every buffer llama.cpp allocates announces itself there with its size and
 #      its device, so the REQUESTED footprint can be rebuilt exactly.
-#   2. Windows' GPU perf counters for the live process — what the driver ACTUALLY
+#   2. Windows' GPU perf counters for the live process: what the driver ACTUALLY
 #      handed out, split into dedicated VRAM vs shared (system RAM over PCIe).
 #
 # Divergence between the two is the whole point of the report: when a device is
@@ -13,7 +13,7 @@
 # much was asked for, (2) says how much of it landed in real VRAM.
 #
 # TENSOR PLACEMENT is not a section of its own: it is an 'of which placed' COLUMN on
-# each balance sheet, filled in on the 'model weights' row — because that is what an
+# each balance sheet, filled in on the 'model weights' row, because that is what an
 # --override-tensor rule does. It moves a tensor INTO some device's model buffer; it
 # allocates nothing extra. So it is already inside that row and inside 'requested', and
 # giving it a row to be summed would push 'requested' past what the card really holds.
@@ -48,7 +48,7 @@ $ErrorActionPreference = 'Stop'
 #
 # Also returns the child's command line. The router (the llama-server the user
 # launched, with --models-preset) prints the args it is about to spawn a child
-# with, one per line, JUST BEFORE that child starts logging — so the args sit
+# with, one per line, JUST BEFORE that child starts logging, so the args sit
 # outside the block and have to be picked up separately. They are the only place
 # the EFFECTIVE options appear: the router overlays its own CLI args onto every
 # preset, so what a child actually gets is neither file alone.
@@ -66,7 +66,7 @@ function Get-LastLoadBlock {
             $from = $starts[-1] - 1
             # The child prints its build and its verbosity JUST ABOVE the device_info
             # banner, and verbosity decides whether the per-tensor override lines exist
-            # at all — so the block has to reach back over them. Scan a small window
+            # at all, so the block has to reach back over them. Scan a small window
             # rather than walking contiguously backwards: the two banners are not always
             # adjacent to device_info (at -lv 5 a blank line lands between them).
             $edge = [math]::Max(0, $from - 10)
@@ -89,7 +89,7 @@ function Get-LastLoadBlock {
 }
 
 # Every child line carries its own port as a `[56996]` prefix, and the router
-# names that port when it announces the spawn — so the args are matched to the
+# names that port when it announces the spawn, so the args are matched to the
 # block by PORT, not by "the spawn header nearest above", which would pick the
 # wrong one whenever the router has several models up. A llama-server started
 # WITHOUT the router has no prefix and no spawn line: then there are simply no
@@ -107,7 +107,7 @@ function Get-SpawnArgs {
 
     # The router prints 'load: spawning ... with args:' with ONE space after the
     # colon, then one arg per line indented under it with two or more. That indent
-    # is the only thing separating an arg (which can be any string at all — regexes,
+    # is the only thing separating an arg (which can be any string at all: regexes,
     # JSON, paths with spaces) from the router's next log line. argv[0], the exe
     # path, comes through as the first 'arg'; harmless, nothing looks it up.
     $argv = @()
@@ -171,13 +171,13 @@ function ConvertFrom-LoadBlock {
         # The one line that says an --override-tensor rule DID something, and the
         # only per-tensor accounting in the whole log. It is LLAMA_LOG_DEBUG, and
         # DEBUG is verbosity 5 (common/log.h: LOG_LEVEL_DEBUG = 5, printed when
-        # `verbosity <= thold`), so at the usual -lv 4 it is absent — silence here
+        # `verbosity <= thold`), so at the usual -lv 4 it is absent; silence here
         # means "not logged", never "no tensor matched".
         #
         # 'buffer type' is the RESOLVED one, not the one the rule asked for: a rule
         # ending in =CPU comes back as CUDA_Host/ROCm_Host whenever a GPU backend is
         # loaded and mmap is off (llama.cpp picks the GPU's pinned host buffer for
-        # CPU-side weights) — i.e. it lands in exactly the memory Windows charts as
+        # CPU-side weights), i.e. it lands in exactly the memory Windows charts as
         # 'Shared GPU'. Print what the log says, never what the rule asked for.
         if ($line -match 'tensor (?<name>\S+) \((?<mib>\d+) MiB (?<type>[^)]+)\) buffer type overridden to (?<buft>\S+)') {
             $info.Hits += [pscustomobject]@{
@@ -191,7 +191,7 @@ function ConvertFrom-LoadBlock {
 
         # First occurrence only, all four: a separate draft/MTP head file (gemma4-assistant
         # and friends) prints its own print_info block AFTER the model's, and it would
-        # otherwise win — reporting the head's arch and its nonsense parameter count
+        # otherwise win, reporting the head's arch and its nonsense parameter count
         # ('422.86 B params' for a 12B model) as if they were the model's.
         if ((-not $info.Arch)        -and $line -match 'print_info: arch\s+=\s+(?<v>\S+)')             { $info.Arch        = $Matches.v; continue }
         if ((-not $info.ParamsB)     -and $line -match 'print_info: model params\s+=\s+(?<v>[\d.]+)')  { $info.ParamsB     = [double] $Matches.v; continue }
@@ -216,14 +216,14 @@ function ConvertFrom-LoadBlock {
         # A sliding-window model builds TWO KV caches (llama_kv_cache_iswa: a full one
         # for the global-attention layers, a small one for the sliding-window layers),
         # and each announces its buffers with the SAME 'llama_kv_cache: <dev> KV buffer
-        # size' line — same source, same device, same kind. Gemma-4-12B, for one:
+        # size' line: same source, same device, same kind. Gemma-4-12B, for one:
         #     creating non-SWA KV cache, size = 98304 cells
         #     llama_kv_cache:  CUDA0 KV buffer size = 816.00 MiB
         #     creating     SWA KV cache, size = 1536 cells
         #     llama_kv_cache:  CUDA0 KV buffer size = 255.00 MiB
         # Both are allocated and both are on the card. Without this latch they collapse
         # into one (see the de-duplication below) and the report quietly loses the SWA
-        # cache — 255 MiB in that example. A latch is safe here where it was not for the
+        # cache, 255 MiB in that example. A latch is safe here where it was not for the
         # clip graph: llama.cpp prints the banner immediately before each cache is built,
         # in both the fit dry run and the real load.
         if ($line -match 'llama_kv_cache_iswa: creating\s+(?<w>non-SWA|SWA) KV cache') {
@@ -253,14 +253,14 @@ function ConvertFrom-LoadBlock {
         #
         # Those are ALL the 'buffer size' lines llama.cpp can print (grep the source: it
         # is model / KV / RS / compute / output / LoRA / DSV4 <name> state, and nothing
-        # else). Anything not matched here is not reported as smaller — it vanishes from
+        # else). Anything not matched here is not reported as smaller; it vanishes from
         # the balance sheet entirely, which is why the list is exhaustive rather than
         # just the kinds the machine at hand happens to allocate.
         if ($line -match '(?<src>[\w:]+):\s+(?<dev>\S+)\s+(?<kind>model|KV|RS|compute|output|LoRA|DSV4 \S+ state)\s+buffer size\s*=\s*(?<mib>[\d.]+) MiB') {
             # reserve_compute_meta is the clip/mtmd graph and ONLY that. The vision
             # encoder loads after the draft context, and llama.cpp then re-emits the
             # draft's sched_reserve lines: those still belong to the draft, so the
-            # owner cannot be a "we have seen the clip banner" latch — it has to be
+            # owner cannot be a "we have seen the clip banner" latch; it has to be
             # the source that printed the line.
             $owner =
                 if     ($Matches.src -eq 'reserve_compute_meta') { 'mmproj' }
@@ -283,13 +283,13 @@ function ConvertFrom-LoadBlock {
 
     # llama.cpp re-reserves the compute graph after the slots come up: the same
     # buffer announced twice, NOT a second allocation. Collapse duplicates by
-    # keeping the largest value per (owner, kind, device) — summing double-counts.
+    # keeping the largest value per (owner, kind, device); summing double-counts.
     $info.Buffers = $info.Buffers |
         Group-Object Owner, Kind, Device |
         ForEach-Object { $_.Group | Sort-Object MiB -Descending | Select-Object -First 1 }
 
     # Same trap one level down: with --fit on (the default) llama.cpp LOADS THE
-    # MODEL TWICE — a no_alloc dry run to size the fit, then the real one — and the
+    # MODEL TWICE (a no_alloc dry run to size the fit, then the real one), and the
     # loader re-emits an override line per tensor each time. Collapse by tensor name;
     # counting the raw lines double-counts every rule's hits.
     $info.Hits = $info.Hits | Group-Object Tensor | ForEach-Object { $_.Group[-1] }
@@ -327,7 +327,7 @@ function Get-OverrideRules {
     if ($i -lt 0 -or $i + 1 -ge $SpawnArgs.Count) { return @() }
 
     # `<pattern>=<buffer type>` joined by ',', split at the FIRST '='. This is
-    # llama.cpp's own grammar and it has no escaping — which is why a `{1,2}`
+    # llama.cpp's own grammar and it has no escaping, which is why a `{1,2}`
     # quantifier in a pattern tears the rule in half before anyone parses it.
     @($SpawnArgs[$i + 1] -split ',' | Where-Object { $_.Trim() } | ForEach-Object {
         $eq = $_.IndexOf('=')
@@ -340,13 +340,13 @@ function Get-OverrideRules {
 
 # Attribute each moved tensor to the rule that moved it. llama.cpp walks the rules
 # in order and stops at the FIRST whose pattern matches (std::regex_search, i.e.
-# unanchored — .NET's IsMatch is the same), so a later rule never gets a tensor an
+# unanchored; .NET's IsMatch is the same), so a later rule never gets a tensor an
 # earlier one already claimed. Replicate that, or an overlapping pair of rules
 # reads as if both fired.
 #
 # A rule with zero tensors is the failure mode this whole section exists for: an
 # unknown DEVICE is loud (the child dies with 'unknown buffer type'), but a pattern
-# that matches nothing is completely silent — it just quietly does nothing forever.
+# that matches nothing is completely silent; it just quietly does nothing forever.
 function Join-OverrideHits {
     param($Rules, $Hits)
 
@@ -377,13 +377,13 @@ function Join-OverrideHits {
 }
 
 # The placement cell for one row of a balance sheet: what the --override-tensor rules
-# put THERE. It is an 'of which', never an allocation of its own — an overridden tensor
+# put THERE. It is an 'of which', never an allocation of its own: an overridden tensor
 # is moved INSIDE the model buffer of the device it landed on, so it is already counted
 # in that device's 'model weights' row and in every total built from it. Giving it a row
 # of its own and summing it would inflate 'requested' past what the card actually holds,
 # and the whole report hangs on comparing that figure with 'free at load'.
 #
-# Hence: only the model-weights row can carry it, and only the main model's — llama.cpp
+# Hence: only the model-weights row can carry it, and only the main model's; llama.cpp
 # names the tensor but not which load it came from, so a draft file's weights (same
 # tensor names) are left out of the attribution rather than guessed at.
 #
@@ -391,7 +391,7 @@ function Join-OverrideHits {
 # differ whenever llama.cpp resolves the request to something else (=CPU becoming
 # ROCm_Host is the standard case). With the hits unlogged (-lv < 5) there is nothing to
 # count, so the cell names the rules that TARGET the device and says why the figure is
-# missing — a rule aimed at a card whose weights never moved is the whole diagnosis.
+# missing: a rule aimed at a card whose weights never moved is the whole diagnosis.
 function Get-Placement {
     param($Placed, $Row, [bool] $HitsLogged)
 
@@ -413,7 +413,7 @@ function Get-Placement {
     # An 'of which' larger than the row it hangs off is not a rounding artefact, it is
     # the log contradicting itself: llama.cpp names the buffer at override time, and with
     # mmap on it then serves the tensor out of the mapped file instead, leaving the named
-    # buffer empty. Say nothing here — Format-Ghosts explains it below the table rather
+    # buffer empty. Say nothing here; Format-Ghosts explains it below the table rather
     # than printing '1,302 MiB of which' against a 0 MiB row. (Hit sizes are %zu, i.e.
     # truncated, so a real placement can undershoot the row but never overshoot it.)
     $sum = ($here | Measure-Object MiB -Sum).Sum
@@ -443,7 +443,7 @@ function Expand-Rows {
 }
 
 # The rules whose tensors were logged into a buffer that never materialised (see above).
-# Returns one line per (rule, buffer), or nothing — which is the normal case.
+# Returns one line per (rule, buffer), or nothing, which is the normal case.
 function Format-Ghosts {
     param($Placed, $Buffers, [bool] $HitsLogged)
 
@@ -512,13 +512,13 @@ $rules  = @(Get-OverrideRules -SpawnArgs $loaded.SpawnArgs)
 $placed = @(Join-OverrideHits -Rules $rules -Hits $load.Hits)
 
 # Per-device totals. Everything the CPU backend owns is RAM, not VRAM: it gets its
-# own bucket, never charged to a GPU. Match '^CPU' with no anchor at the end — the
+# own bucket, never charged to a GPU. Match '^CPU' with no anchor at the end: the
 # plain 'CPU' backend is only one of its buffer types, and the others are NOT
 # cosmetic variants:
 #   CPU_Mapped  weights served straight out of the mmap'd file (the default!)
 #   CPU_REPACK  weights re-tiled for the CPU kernels
 #   *_Host      PINNED host memory owned by a GPU backend (ROCm_Host, CUDA_Host)
-# Anchoring on '^CPU$' — as this did — leaves CPU_Mapped looking like a device, and
+# Anchoring on '^CPU$', as this did, leaves CPU_Mapped looking like a device, and
 # with mmap on (i.e. unless --no-mmap) the entire CPU-side model lands there: the
 # report would then invent a GPU named CPU_Mapped and try to match a LUID to it.
 $isHost   = { param($d) $d -match '_Host$' -or $d -match '^CPU' }
@@ -558,7 +558,7 @@ $hostRows = @($load.Buffers | Where-Object { & $isHost $_.Device })
 $hostMiB  = if ($hostRows) { ($hostRows | Measure-Object MiB -Sum).Sum } else { 0 }
 
 # Model weights that did NOT make it onto a GPU, split by what kind of host memory
-# they landed in — pinned (*_Host, owned by a GPU backend, charted by Windows as
+# they landed in: pinned (*_Host, owned by a GPU backend, charted by Windows as
 # shared GPU memory) vs ordinary RAM (CPU, CPU_Mapped). The distinction is the whole
 # point: only the pinned half explains a card showing GBs of shared allocation.
 $modelHost    = @($hostRows | Where-Object { $_.Kind -eq 'model' })
@@ -594,7 +594,7 @@ Write-Host "Process    : PID $($procs.Id -join ', ') (started $(($procs | Sort-O
 
 foreach ($d in ($deviceRows | Sort-Object RequestedMiB -Descending)) {
     Write-Host ''
-    Write-Host "$($d.Device) — $($d.Desc)" -ForegroundColor Cyan
+    Write-Host "$($d.Device) : $($d.Desc)" -ForegroundColor Cyan
 
     $label = {
         param($r)
@@ -626,14 +626,14 @@ foreach ($d in ($deviceRows | Sort-Object RequestedMiB -Descending)) {
     # The diagnosis: asked for more than the card had free, so WDDM paged the rest
     # out to system memory and every access to it now crosses PCIe. Note the log
     # never accounts for the driver's own context (a few hundred MiB per backend),
-    # so 'requested' just under 'free at load' can still spill — hence the second
+    # so 'requested' just under 'free at load' can still spill, hence the second
     # arm, which trusts the live counter over the arithmetic. A few hundred MiB of
     # shared is normal driver staging on both backends; only flag a real overflow.
     if ($d.FreeAtLoadMiB -and $d.RequestedMiB -gt $d.FreeAtLoadMiB) {
         $over = $d.RequestedMiB - $d.FreeAtLoadMiB
-        Write-Host ("  OVERSUBSCRIBED by {0:N0} MiB — the excess lives in shared system memory, not VRAM." -f $over) -ForegroundColor Red
+        Write-Host ("  OVERSUBSCRIBED by {0:N0} MiB: the excess lives in shared system memory, not VRAM." -f $over) -ForegroundColor Red
     } elseif ($liveRow -and $liveRow.SharedMiB -gt 1024) {
-        Write-Host ("  {0:N0} MiB in shared system memory though the log fits — driver context overhead pushed it over." -f $liveRow.SharedMiB) -ForegroundColor Yellow
+        Write-Host ("  {0:N0} MiB in shared system memory though the log fits; driver context overhead pushed it over." -f $liveRow.SharedMiB) -ForegroundColor Yellow
     }
 }
 
@@ -646,33 +646,33 @@ if ($hostRows) {
         Format-Table -AutoSize | Out-String | Write-Host -NoNewline
     Write-Host ("  total     {0,9:N2} MiB" -f $hostMiB)
 
-    Write-Host '  *_Host is PINNED host memory owned by a GPU backend — Windows charts it under the card, as'
+    Write-Host '  *_Host is PINNED host memory owned by a GPU backend; Windows charts it under the card, as'
     Write-Host '  shared GPU memory. CPU / CPU_Mapped is ordinary RAM and shows up nowhere on the GPU.'
 
     if ($pinnedMiB -gt 0) {
         # The one everybody hits: 'offloaded N/N layers to GPU' and yet GBs of shared
         # memory. token_embd.weight is parked in a host buffer BY DESIGN (an embedding
-        # lookup is a get_rows over a handful of tokens — cheap on the CPU, and it saves
+        # lookup is a get_rows over a handful of tokens: cheap on the CPU, and it saves
         # VRAM), and with a GPU backend loaded that buffer is pinned. Nothing overflowed.
         #
         # Whether an =CPU rule PUT it there is read off the pinned buffer actually
         # existing, never off the override line alone: with mmap on, llama.cpp logs
         # 'overridden to CUDA_Host' and then serves the tensor straight out of the mapped
-        # file (CPU_Mapped) — same debug line, ordinary RAM after all.
+        # file (CPU_Mapped): same debug line, ordinary RAM after all.
         $cpuToPinned = @($placed | Where-Object {
             $hitsLogged -and $_.Device -match '^CPU' -and (@($_.Resolved) -match '_Host$')
         })
         $target = ($deviceRows | Sort-Object RequestedMiB -Descending | Select-Object -First 1)
 
         Write-Host ''
-        Write-Host ("  {0:N2} MiB of MODEL WEIGHTS are pinned ({1}) — that is your shared GPU memory, and it is" -f $pinnedMiB, (($pinnedRows | Select-Object -ExpandProperty Device -Unique) -join ', ')) -ForegroundColor Yellow
+        Write-Host ("  {0:N2} MiB of MODEL WEIGHTS are pinned ({1}); that is your shared GPU memory, and it is" -f $pinnedMiB, (($pinnedRows | Select-Object -ExpandProperty Device -Unique) -join ', ')) -ForegroundColor Yellow
         Write-Host '  by design, not an overflow: llama.cpp parks the embedding table in a host buffer even at'
         Write-Host '  N/N layers offloaded.'
         if ($cpuToPinned) {
             Write-Host ("  That is where your =CPU rule put it ({0}). Aim it at a GPU device instead: the VRAM is" -f (($cpuToPinned | ForEach-Object { $_.Pattern }) -join ', '))
             Write-Host '  freed either way, but =CPU leaves the allocation in the shared bucket.'
         } elseif ($rules) {
-            Write-Host '  No --override-tensor rule of yours claimed it — check the patterns against the names above.'
+            Write-Host '  No --override-tensor rule of yours claimed it; check the patterns against the names above.'
         } elseif ($target) {
             Write-Host ("  Reclaim it with a Tensor placement rule:  token_embd\.weight={0}" -f $target.Device)
         }
@@ -687,7 +687,7 @@ if ($hostRows) {
 # pattern that matches nothing is perfectly silent and stays silent forever.
 foreach ($p in @($placed | Where-Object { $hitsLogged -and $_.Tensors -eq 0 })) {
     Write-Host ''
-    Write-Host ("DEAD RULE — '{0}={1}' matched no tensor at all." -f $p.Pattern, $p.Device) -ForegroundColor Red
+    Write-Host ("DEAD RULE: '{0}={1}' matched no tensor at all." -f $p.Pattern, $p.Device) -ForegroundColor Red
     Write-Host 'A bad device name stops the server; a pattern that matches nothing just quietly does nothing.'
 }
 

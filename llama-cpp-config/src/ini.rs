@@ -3,24 +3,24 @@
 //! The behavioral contract callers rely on:
 //! - Section lookup is CASE-INSENSITIVE and WHITESPACE-TOLERANT everywhere
 //!   (read_all trims each line; the writers match via find_section_header /
-//!   next_section_start with the same tolerance) — a hand-edited `[server]` or
+//!   next_section_start with the same tolerance): a hand-edited `[server]` or
 //!   `  [server]` header never spawns a duplicate and is never swallowed by a
 //!   neighbouring section's rewrite.
 //! - KEY lookup is asymmetric by design: reads are exact-case (`BTreeMap`
 //!   lookups like `keys.get("Port")`), while replace_key matches an existing
 //!   key case-insensitively and rewrites the line in canonical case.
 //! - Values are TRIMMED on parse, and everything from the FIRST `;` or `#` on
-//!   is stripped as an inline comment — spaced or not ("a;b" reads as "a").
+//!   is stripped as an inline comment, spaced or not ("a;b" reads as "a").
 //!   This mirrors llama-server's own preset parser (common/preset.cpp PEG:
 //!   `eol-start ::= ws ([;#] / newline / EOF)`), which presets.ini must obey:
 //!   `;`/`#` simply cannot occur inside a value, and a writer that emits one
 //!   produces a value llama-server would truncate anyway. Writers must also
 //!   emit trimmed values or break round-trips.
 //! - Writers preserve the file's existing line endings (per line on
-//!   replace_key's replace path, detected once everywhere else — section
+//!   replace_key's replace path, detected once everywhere else; section
 //!   bodies arrive CRLF from the renderers and are converted to the file's
 //!   style); brand-new content defaults to CRLF.
-//! - `atomic_write` (sibling temp file + rename) is the canonical write path —
+//! - `atomic_write` (sibling temp file + rename) is the canonical write path:
 //!   every config writer in the crate funnels through it.
 //! - `parse_int` / `parse_float` / `parse_bool` are the shared lenient scalar
 //!   parsers ("true"/"false" only for bools; anything else reads as unset).
@@ -77,7 +77,7 @@ pub fn read_all(path: &Path) -> Vec<Section> {
     out
 }
 
-// Everything from the first `;` or `#` is comment, spaced or not — the exact
+// Everything from the first `;` or `#` is comment, spaced or not: the exact
 // rule of llama-server's preset PEG (see the header contract). Being MORE
 // lenient here (e.g. requiring whitespace around the marker) would make the
 // GUI show a value llama-server truncates.
@@ -88,7 +88,7 @@ fn strip_inline_comment(val: &str) -> &str {
 
 /// Save-boundary guard for the comment rule above: the format has NO escaping,
 /// so a value containing `;` or `#` (legal in Windows paths, e.g.
-/// `C:\Models #1`) would write fine and silently reload truncated — by this
+/// `C:\Models #1`) would write fine and silently reload truncated, by this
 /// parser and by llama-server's own preset reader alike. Callers that persist
 /// path-valued fields (`server_cfg::save`, `presets::save`) reject such values
 /// here instead, so the user gets an error naming the field rather than a
@@ -99,7 +99,7 @@ pub fn reject_comment_markers(field: &str, value: &str) -> std::io::Result<()> {
             std::io::ErrorKind::InvalidInput,
             format!(
                 "{field} contains ';' or '#', which the INI comment rule would \
-                 truncate on reload — use a path without those characters"
+                 truncate on reload; use a path without those characters"
             ),
         ));
     }
@@ -155,7 +155,7 @@ pub fn replace_key(path: &Path, section: &str, key: &str, value: &str) -> std::i
     // Scan from header_end (like replace_section / delete_section), NOT from
     // section_start: next_section_start only sees a header on a line AFTER a
     // '\n' at/beyond `from`, so scanning from the body start skips a
-    // neighbouring header sitting exactly there (empty body) — the key would
+    // neighbouring header sitting exactly there (empty body): the key would
     // splice into THAT section instead.
     let section_end = next_section_start(&content, header_end).unwrap_or(content.len());
     let section_body = &content[section_start..section_end];
@@ -167,7 +167,7 @@ pub fn replace_key(path: &Path, section: &str, key: &str, value: &str) -> std::i
         // line_starts_with_key does its own trim_start.
         if !replaced && line_starts_with_key(line, key) {
             new_body.push_str(&new_line);
-            // An unterminated final line has no ending to preserve — fall
+            // An unterminated final line has no ending to preserve: fall
             // back to the file's detected EOL, not a hardcoded `\n` that
             // would mix endings into a CRLF file.
             new_body.push_str(if line.ends_with("\r\n") {
@@ -187,7 +187,7 @@ pub fn replace_key(path: &Path, section: &str, key: &str, value: &str) -> std::i
         let tail = &new_body[trimmed.len()..];
         // `tail` still holds the last real line's terminator (plus any blank
         // separator lines before the next section), so don't add another `eol`
-        // in front of it — that duplicated the terminator, growing one blank
+        // in front of it: that duplicated the terminator, growing one blank
         // line per appended key.
         new_body = if trimmed.is_empty() {
             format!("{new_line}{eol}{tail}")
@@ -267,7 +267,7 @@ pub fn rename_section(path: &Path, old: &str, new: &str) -> std::io::Result<()> 
             format!("section [{old}] not found"),
         ));
     };
-    // A case-only rename matches itself — only a *different* section counts.
+    // A case-only rename matches itself; only a *different* section counts.
     if find_section_header(&content, new).is_some_and(|(p, _)| p != pos) {
         return Err(std::io::Error::new(
             std::io::ErrorKind::AlreadyExists,
@@ -328,7 +328,7 @@ fn line_starts_with_key(line: &str, key: &str) -> bool {
 }
 
 /// Byte span (`[` ..= `]`, exclusive end) of the header line whose NAME equals
-/// `section` — parsed exactly the way `read_all` parses a header (trim the
+/// `section`, parsed exactly the way `read_all` parses a header (trim the
 /// line, strip `[`/`]`, trim the name, compare case-insensitively), so the
 /// writers find a section wherever the reader does: an indented, trailing-space
 /// or internally-spaced `[ name ]` header is still that section. Returning the
@@ -372,14 +372,14 @@ fn next_section_start(content: &str, from: usize) -> Option<usize> {
     None
 }
 
-/// Start of the line containing byte offset `pos` — used to widen a section
+/// Start of the line containing byte offset `pos`, used to widen a section
 /// splice back over the header's indentation.
 fn line_start_of(content: &str, pos: usize) -> usize {
     content[..pos].rfind('\n').map(|p| p + 1).unwrap_or(0)
 }
 
 /// The file's line-ending style: LF only when the content has newlines and no
-/// CRLF; everything else — including brand-new / empty files — is CRLF.
+/// CRLF; everything else, including brand-new / empty files, is CRLF.
 fn detect_eol(content: &str) -> &'static str {
     if content.contains('\n') && !content.contains("\r\n") {
         "\n"
@@ -407,7 +407,7 @@ pub fn parse_int(s: &str) -> Option<i32> {
 pub fn parse_float(s: &str) -> Option<f64> {
     // Accept comma as the decimal separator (e.g. "0,5" on a comma-decimal
     // keyboard layout like Italian/German/French) by normalizing to the
-    // period that Rust's f64 parser — and llama.cpp's CLI — expect. Domain
+    // period that Rust's f64 parser (and llama.cpp's CLI) expect. Domain
     // values are small sampling knobs (0.0–2.0), so a thousands-separator
     // reading never applies; a plain replace is safe.
     s.trim().replace(',', ".").parse().ok()
@@ -457,7 +457,7 @@ mod tests {
     fn strip_inline_comment_cases() {
         assert_eq!(strip_inline_comment("8080 ; note"), "8080");
         assert_eq!(strip_inline_comment("8080 # note"), "8080");
-        // llama-server's PEG cuts at the FIRST marker even unspaced — we must
+        // llama-server's PEG cuts at the FIRST marker even unspaced: we must
         // read exactly what it would read, not keep a longer value it won't.
         assert_eq!(strip_inline_comment("a;b"), "a");
         assert_eq!(strip_inline_comment("x ;y"), "x");
@@ -467,10 +467,10 @@ mod tests {
 
     #[test]
     fn parse_float_accepts_dot_or_comma_separator() {
-        // Period — the canonical form llama-server's CLI expects.
+        // Period: the canonical form llama-server's CLI expects.
         assert_eq!(parse_float("0.5"), Some(0.5));
         assert_eq!(parse_float("1.25"), Some(1.25));
-        // Comma — the natural separator on a comma-decimal keyboard
+        // Comma: the natural separator on a comma-decimal keyboard
         // (Italian/German/French). Must normalize to the same value so the
         // sampling knobs are editable on those layouts.
         assert_eq!(parse_float("0,5"), Some(0.5));
@@ -529,7 +529,7 @@ mod tests {
         );
     }
 
-    // Replacing an UNTERMINATED final line has no ending to preserve — it
+    // Replacing an UNTERMINATED final line has no ending to preserve: it
     // must fall back to the file's detected EOL, not hardcode `\n` and mix
     // endings into a CRLF file.
     #[test]
@@ -596,7 +596,7 @@ mod tests {
     #[test]
     fn replace_section_preserves_lf_only_files() {
         let (_d, path) = ini_file("[a]\nk = 1\n");
-        // Both paths — replacing an existing section and appending a new one —
+        // Both paths (replacing an existing section and appending a new one)
         // must convert the CRLF-rendered body to the file's LF-only style.
         replace_section(&path, "a", "[a]\r\nk = 9\r\n").unwrap();
         replace_section(&path, "b", "[b]\r\nk = 2\r\n").unwrap();
@@ -640,7 +640,7 @@ mod tests {
     }
 
     // The reader trims each line before the `[` check, so a hand-indented
-    // header IS a section — the writers' boundary scan must honor the same
+    // header IS a section: the writers' boundary scan must honor the same
     // rule or a neighbouring rewrite silently swallows it.
     #[test]
     fn writers_respect_indented_section_headers() {
@@ -682,7 +682,7 @@ mod tests {
     }
 
     // read_all trims the NAME inside the brackets, so a hand-edited `[ a ]`
-    // lists as section `a`. The writers must find it there too — matching the
+    // lists as section `a`. The writers must find it there too: matching the
     // whole line against `[a]` missed it, so replace_section appended a fresh
     // duplicate `[a]` and every later read returned the stale first copy
     // ("edits never stick").

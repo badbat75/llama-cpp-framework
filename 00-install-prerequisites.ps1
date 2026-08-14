@@ -12,9 +12,9 @@
 # When build\config-build.psd1 + llama.cpp clone exist, also fetches the source
 # and flags a rebuild when a newer release tag (bNNNN) is available. (No `git
 # pull`: 02-build.ps1 pins the clone to a tag on a detached HEAD, so a pull
-# would always fail — the checkout onto the new tag is 02-build.ps1's job.)
+# would always fail; the checkout onto the new tag is 02-build.ps1's job.)
 #
-# Safe to run any time — idempotent.
+# Safe to run any time: idempotent.
 
 [CmdletBinding()]
 param()
@@ -28,9 +28,9 @@ function Test-IsAdmin {
 
 function Get-WingetVersion {
     param([string]$Id)
-    # Locally relax EAP: under Windows PowerShell 5.1 — which is exactly what
+    # Locally relax EAP: under Windows PowerShell 5.1, which is exactly what
     # runs this script on a fresh machine, since it is the script that INSTALLS
-    # PowerShell 7 (hence no `#requires -Version 7` like its siblings) — a
+    # PowerShell 7 (hence no `#requires -Version 7` like its siblings), a
     # native command writing anything to a REDIRECTED stderr throws a
     # terminating NativeCommandError when $ErrorActionPreference is 'Stop'.
     # Function-local, so the rest of the script keeps fail-fast semantics.
@@ -82,7 +82,7 @@ $manualSdks = @(
 # ── ROCm (TheRock) dist ─────────────────────────────────────────────
 # AMD now distributes Windows ROCm/HIP as TheRock dist tarballs (the classic
 # HIP SDK installer is discontinued). The version is PINNED in
-# installer\dist-pins.psd1 — the single source of truth shared with the
+# installer\dist-pins.psd1: the single source of truth shared with the
 # end-user runtime-deps script that 03-package.ps1 bundles into the installer.
 # Bump it THERE, deliberately, and re-run; this script converges the install
 # to the pin (rationale for the multiarch tarball and the prerelease fallback
@@ -90,7 +90,7 @@ $manualSdks = @(
 $rocm = (Import-PowerShellDataFile (Join-Path $PSScriptRoot 'installer\dist-pins.psd1')).Rocm
 
 # Installed TheRock version: the marker our install step writes; else the
-# dist's own .info\version (covers a manual install — note it says "7.14.0"
+# dist's own .info\version (covers a manual install; note it says "7.14.0"
 # even for an rc build, which is why our marker takes precedence); else
 # 'unknown' for an unversioned/interrupted tree ('unknown' never equals Pin,
 # so the next run converges it to the pin).
@@ -111,7 +111,7 @@ function Get-RemoteFileSize {
     param([string]$Url)
     # Same PS 5.1 redirected-stderr rationale as Get-WingetVersion.
     $ErrorActionPreference = 'Continue'
-    # curl.exe explicitly — PS 5.1 aliases `curl` to Invoke-WebRequest.
+    # curl.exe explicitly: PS 5.1 aliases `curl` to Invoke-WebRequest.
     $head = curl.exe -sIL --fail --max-time 30 $Url 2>$null | Out-String
     if ($LASTEXITCODE -ne 0) { return $null }
     if ($head -match '(?im)^Content-Length:\s*(\d+)') { return [long]$Matches[1] }
@@ -121,7 +121,7 @@ function Get-RemoteFileSize {
 # ── Banner ──────────────────────────────────────────────────────────
 
 Write-Host ""
-Write-Host "  llama.cpp-framework — Install & Update Toolchain" -ForegroundColor Cyan
+Write-Host "  llama.cpp-framework: Install & Update Toolchain" -ForegroundColor Cyan
 Write-Host "  ================================================" -ForegroundColor Cyan
 Write-Host ""
 
@@ -168,14 +168,14 @@ if ($rocmBefore -ne $rocm.Pin) {
         $rocmBlocked = 'no dist URL reachable (offline? not yet published?)'
     } elseif ($rocmTarget.Version -eq $rocmBefore) {
         # Already on the reachable fallback (e.g. the rc while the stable pin
-        # is still propagating) — nothing better is published yet, keep it.
+        # is still propagating); nothing better is published yet, keep it.
         $rocmBlocked = "pinned $($rocm.Pin) not published yet"
         $rocmTarget  = $null
     }
 }
 if ($rocmTarget -and $rocmBefore -and (Get-Process llama-server -ErrorAction SilentlyContinue)) {
     # Upgrading wipes InstallDir, and a running llama-server holds ROCm DLLs
-    # loaded from there — never yank them out from under it.
+    # loaded from there; never yank them out from under it.
     $rocmBlocked = 'llama-server is running - stop it and re-run'
     $rocmTarget  = $null
 }
@@ -185,7 +185,7 @@ if ($rocmTarget) {
     $drive  = (Split-Path -Qualifier $rocm.InstallDir).TrimEnd(':')
     $freeGB = [math]::Round((Get-PSDrive $drive).Free / 1GB, 1)
     if ($freeGB -lt 40) {
-        Write-Host "  warning: only $freeGB GB free on ${drive}: — download + extract want ~40 GB" -ForegroundColor Yellow
+        Write-Host "  warning: only $freeGB GB free on ${drive}: (download + extract want ~40 GB)" -ForegroundColor Yellow
     }
 } elseif ($rocmBlocked) {
     Write-Host "ROCm (TheRock): $rocmBlocked" -ForegroundColor Yellow
@@ -203,7 +203,7 @@ foreach ($p in $present) {
     $blocks += "winget upgrade --id $($p.Id) --exact --silent --accept-source-agreements --accept-package-agreements"
 }
 # OpenSSL ships libs under lib\VC\x64\MD\ but cmake/find_package expects them
-# directly under lib\. Idempotent — safe to re-run after any OpenSSL touch.
+# directly under lib\. Idempotent: safe to re-run after any OpenSSL touch.
 $blocks += @'
 
 $d = "${env:ProgramFiles}\OpenSSL-Win64"
@@ -241,7 +241,7 @@ if (-not $haveTar) {
     if ($LASTEXITCODE -eq 0 -and (Get-Item $rocmTar -ErrorAction SilentlyContinue).Length -eq $rocmSize) {
         $haveTar = $true
     } else {
-        Write-Host "  download failed (curl exit $LASTEXITCODE) — partial file kept, a re-run resumes it" -ForegroundColor Red
+        Write-Host "  download failed (curl exit $LASTEXITCODE); partial file kept, a re-run resumes it" -ForegroundColor Red
     }
 }
 if ($haveTar) {
@@ -250,7 +250,7 @@ if ($haveTar) {
         Remove-Item $rocmDir -Recurse -Force -ErrorAction SilentlyContinue
     }
     if (Test-Path $rocmDir) {
-        Write-Host "  cannot clear $rocmDir (files in use?) — close whatever uses ROCm and re-run" -ForegroundColor Red
+        Write-Host "  cannot clear $rocmDir (files in use?); close whatever uses ROCm and re-run" -ForegroundColor Red
     } else {
         New-Item -ItemType Directory -Force -Path $rocmDir | Out-Null
         Write-Host "  extracting to $rocmDir (several GB, takes a while)..." -ForegroundColor DarkGray
@@ -260,7 +260,7 @@ if ($haveTar) {
             Remove-Item $rocmTar -Force
             Write-Host "  ROCm (TheRock) $rocmVer installed" -ForegroundColor Green
         } else {
-            Write-Host "  extraction failed (tar exit $LASTEXITCODE) — tarball kept for retry" -ForegroundColor Red
+            Write-Host "  extraction failed (tar exit $LASTEXITCODE); tarball kept for retry" -ForegroundColor Red
         }
     }
 }
@@ -273,7 +273,7 @@ if ($haveTar) {
 # (HIP_DEVICE_LIB_PATH, HIP_PLATFORM, LLVM_PATH) are deliberately NOT set
 # machine-wide: the Adrenalin driver's own HIP runtime (System32's
 # amdhip64_7.dll + amd_comgr_3.dll) reads LLVM_PATH at RUNTIME, and pointing
-# it at TheRock's newer LLVM half-breaks it — hipMemGetInfo starts returning
+# it at TheRock's newer LLVM half-breaks it: hipMemGetInfo starts returning
 # "invalid argument" (devices report 0 MiB) and every llama-server dies with
 # an access violation (0xC0000005) mid weight-upload. Found 2026-07-16 with
 # Adrenalin + TheRock 7.14; builds get all three per-process from common.ps1.
@@ -321,7 +321,7 @@ if (Test-IsAdmin) {
 
 # ── Check llama.cpp source for a newer release tag ──────────────────
 # The clone sits on a detached HEAD (02-build.ps1 pins it to a bNNNN tag), so
-# no pull here — just fetch and compare against the newest tag reachable from
+# no pull here, just fetch and compare against the newest tag reachable from
 # origin/master (the same tag 02-build.ps1 would check out).
 
 $latestLlama = $null
@@ -333,7 +333,7 @@ if ($cfg -and $beforeLlama) {
         Write-Host "  git fetch failed in $($cfg.LlamaCppDir)" -ForegroundColor Yellow
     } else {
         # Set/restore EAP around the stderr redirect (same PS 5.1 rationale as
-        # Get-WingetVersion — this one runs at script scope, not in a function).
+        # Get-WingetVersion; this one runs at script scope, not in a function).
         $prevEap = $ErrorActionPreference
         $ErrorActionPreference = 'Continue'
         $latestLlama = (git -C $cfg.LlamaCppDir describe --tags --abbrev=0 origin/master 2>$null | Select-Object -First 1)
@@ -351,7 +351,7 @@ $rocmAfter = Get-RocmInstalledVersion
 # Make the dist visible to THIS session too (a 01-configure.ps1 run in the
 # same console). HIP_PATH/PATH reach new terminals via the machine env; the
 # three compile-time vars are PROCESS-scoped on purpose (machine-wide
-# LLVM_PATH breaks the driver HIP runtime — see the elevated block) and
+# LLVM_PATH breaks the driver HIP runtime; see the elevated block) and
 # build consoles get them from common.ps1.
 if ($rocmAfter -and $rocmAfter -ne 'unknown') {
     $env:HIP_PATH            = $rocm.InstallDir
@@ -391,7 +391,7 @@ if (-not $rocmBefore -and $rocmAfter) {
     $rocmChanged = $true
 } elseif (-not $rocmBefore -and -not $rocmAfter) {
     $detail = 'install failed'
-    if ($rocmBlocked) { $detail = "not installed — $rocmBlocked" }
+    if ($rocmBlocked) { $detail = "not installed: $rocmBlocked" }
     Write-ReportRow "[!!]" Red "ROCm (TheRock)" $detail
 } elseif ($rocmBefore -ne $rocmAfter) {
     Write-ReportRow "[++]" Green "ROCm (TheRock)" "$rocmBefore -> $rocmAfter"
@@ -400,7 +400,7 @@ if (-not $rocmBefore -and $rocmAfter) {
     Write-ReportRow "[OK]" DarkGray "ROCm (TheRock)" $rocmAfter
 } else {
     $detail = "$rocmAfter (pin $($rocm.Pin)"
-    if ($rocmBlocked) { $detail += " — $rocmBlocked" }
+    if ($rocmBlocked) { $detail += ", $rocmBlocked" }
     $detail += ')'
     Write-ReportRow "[..]" Yellow "ROCm (TheRock)" $detail
 }
@@ -418,15 +418,15 @@ if (-not $beforeLlama) {
 
 # ── ROCm environment sanity ─────────────────────────────────────────
 # Two HIP runtimes reachable in an ambiguous order are the classic cause of
-# silent crashes in multi-backend builds — surface the known offenders.
+# silent crashes in multi-backend builds; surface the known offenders.
 
 $envWarnings = @()
 if (Test-Path "${env:ProgramFiles}\AMD\ROCm") {
-    $envWarnings += "legacy AMD HIP SDK still under ${env:ProgramFiles}\AMD\ROCm — uninstall it (duplicate HIP runtimes)"
+    $envWarnings += "legacy AMD HIP SDK still under ${env:ProgramFiles}\AMD\ROCm; uninstall it (duplicate HIP runtimes)"
 }
 $userHip = [Environment]::GetEnvironmentVariable('HIP_PATH', 'User')
 if ($userHip -and ($userHip.TrimEnd('\') -ne $rocm.InstallDir)) {
-    $envWarnings += "user-level HIP_PATH ($userHip) shadows the machine one — remove it"
+    $envWarnings += "user-level HIP_PATH ($userHip) shadows the machine one; remove it"
 }
 # Compile-time vars in a persistent scope poison the DRIVER's HIP runtime
 # (System32 amdhip64_7.dll reads LLVM_PATH at runtime: hipMemGetInfo fails
@@ -437,7 +437,7 @@ foreach ($scope in 'Machine', 'User') {
     foreach ($name in 'LLVM_PATH', 'HIP_DEVICE_LIB_PATH', 'HIP_PLATFORM') {
         $v = [Environment]::GetEnvironmentVariable($name, $scope)
         if ($v) {
-            $envWarnings += "$scope-level $name ($v) breaks the driver HIP runtime (0xC0000005 at model load) — remove it; builds set it per-process via common.ps1"
+            $envWarnings += "$scope-level $name ($v) breaks the driver HIP runtime (0xC0000005 at model load): remove it; builds set it per-process via common.ps1"
         }
     }
 }
@@ -463,7 +463,7 @@ foreach ($s in $manualSdks) {
 
 Write-Host ""
 if ($rocmChanged) {
-    Write-Host "  ROCm dist changed — verify with hipInfo.exe in a NEW terminal (all GPUs should list)," -ForegroundColor DarkGray
+    Write-Host "  ROCm dist changed: verify with hipInfo.exe in a NEW terminal (all GPUs should list)," -ForegroundColor DarkGray
     Write-Host "  and re-check GpuTargets in build\config-build.psd1 against the new kernel set:" -ForegroundColor DarkGray
     Write-Host "    dir $($rocm.InstallDir)\bin\rocblas\library\TensileLibrary_lazy_gfx*.dat" -ForegroundColor DarkGray
     Write-Host ""

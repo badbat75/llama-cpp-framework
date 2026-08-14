@@ -15,7 +15,7 @@ InstallDirRegKey HKLM "Software\llama.cpp" "InstallDir"
 RequestExecutionLevel admin
 SetCompressor /SOLID lzma
 
-; Write to the native 64-bit registry view, not Wow6432Node — otherwise
+; Write to the native 64-bit registry view, not Wow6432Node; otherwise
 ; PowerShell reading HKLM:\Software\llama.cpp can't find our keys. Must be
 ; called from within a Function (not at top-level), so apply it in onInit.
 Function .onInit
@@ -33,7 +33,7 @@ FunctionEnd
 ; bundles llama.cpp + configurator + OpenSSL runtime, but GPU backends need
 ; system-side components we deliberately do not ship (drivers can't be
 ; bundled; ROCm/cuBLAS are hundreds of MB and GPU-specific). Backends whose
-; dependencies are missing are skipped silently at runtime — the GPU then
+; dependencies are missing are skipped silently at runtime; the GPU then
 ; falls back to Vulkan, which ships with every driver. Say it HERE, because
 ; nothing says it later.
 !define MUI_WELCOMEPAGE_TITLE "llama.cpp-framework v@VERSION@"
@@ -46,7 +46,7 @@ Page custom CheckPreviousInstall
 !insertmacro MUI_PAGE_COMPONENTS
 !insertmacro MUI_PAGE_INSTFILES
 ; Runtime dependencies are installed via the three optional component
-; sections below (SecDeps*), not from the finish page — the finish text only
+; sections below (SecDeps*), not from the finish page; the finish text only
 ; points at the helper for later re-runs.
 !define MUI_FINISHPAGE_TEXT "llama.cpp-framework v@VERSION@ (llama @LLAMA_BUILD@) has been installed on your computer.$\r$\n$\r$\nRuntime dependencies (VC++ runtime, AMD ROCm, NVIDIA cuBLAS) can be installed or repaired any time by running bin\install-runtime-deps.ps1 from the install folder.$\r$\n$\r$\nClick Finish to close Setup."
 !insertmacro MUI_PAGE_FINISH
@@ -66,7 +66,7 @@ Function CheckPreviousInstall
         "llama.cpp-framework v$1 is already installed.$\n$\nUninstall the previous version before continuing?" \
         IDYES uninstall
 
-    ; User chose No — abort
+    ; User chose No: abort
     Abort
 
     uninstall:
@@ -130,7 +130,7 @@ Section "llama.cpp binaries (required)" SecMain
     SetOutPath "$INSTDIR\lib"
     File /nonfatal /r "@STAGING_DIR@\lib\*.*"
 
-    ; llama-cpp-config (Rust GUI + CLI configurator) — side-by-side with llama-server
+    ; llama-cpp-config (Rust GUI + CLI configurator), side-by-side with llama-server
     SetOutPath "$INSTDIR\bin"
     File "@STAGING_DIR@\llama-cpp-config.exe"
     File "@STAGING_DIR@\llama.ico"
@@ -138,7 +138,7 @@ Section "llama.cpp binaries (required)" SecMain
     ; Uninstaller
     WriteUninstaller "$INSTDIR\uninstall.exe"
 
-    ; Registry — Add/Remove Programs
+    ; Registry: Add/Remove Programs
     WriteRegStr HKLM "Software\llama.cpp" "InstallDir" "$INSTDIR"
     WriteRegStr HKLM "Software\llama.cpp" "LlamaBuild" "@LLAMA_BUILD@"
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\llama.cpp" \
@@ -183,7 +183,7 @@ SectionEnd
 ; switch plus -Unattended: the choice was made HERE via the checkbox, so the
 ; helper must not prompt again. ExecWait shows a PowerShell console with the
 ; download progress (curl) and blocks the installer until the leg completes.
-; The helper is idempotent — components already present are skipped — and
+; The helper is idempotent (components already present are skipped) and
 ; runs elevated because the installer is. These sections must come after
 ; SecMain: the script and dist-pins.psd1 are staged into $INSTDIR\bin by it,
 ; and the cuBLAS DLLs land next to llama-server.exe there.
