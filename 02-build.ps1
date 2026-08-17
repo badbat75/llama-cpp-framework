@@ -168,6 +168,21 @@ $cmakeArgs = @(
     "-DCMAKE_CUDA_FLAGS=-w"
 )
 
+# llama.cpp calls itself "<X.Y.Z>-dev" unless told otherwise: CMakeLists.txt
+# defaults LLAMA_BUILD_IS_DEV to ON, with "set this to OFF when making a release
+# from a release tag (vX.Y.Z)". We check out a tag and never a branch tip, so a
+# SEMVER tag (the scheme upstream adopted in b10398, alongside its own release
+# workflows) is exactly that case and the -dev suffix would be a lie; a plain
+# bNNNN tag is a nightly and keeps it. The value rides a compile definition on
+# the `llama` target (src/CMakeLists.txt), so it reaches `llama-server
+# --version` and from there the configurator's footer badge. Flipping it
+# recompiles that target, not ggml's CUDA/HIP kernels.
+$cmakeArgs += if ($llamaTag -match '^v\d+\.\d+\.\d+$') {
+    "-DLLAMA_BUILD_IS_DEV=OFF"
+} else {
+    "-DLLAMA_BUILD_IS_DEV=ON"
+}
+
 # Pinned Vulkan SDK paths (see Find-VulkanSdk above), empty when no versioned
 # install was found, in which case FindVulkan does its own search.
 $cmakeArgs += $vulkanArgs

@@ -117,8 +117,10 @@ enum Thinking {
     /// Gated on `enable_thinking`: the kwarg `--reasoning on|off` writes
     /// (`common/arg.cpp`: `default_template_kwargs["enable_thinking"]`).
     Switchable,
-    /// Thinks unconditionally, but takes a `reasoning_effort` level (gpt-oss /
-    /// harmony). `--reasoning off` cannot silence it; the kwarg tunes it.
+    /// Thinks unconditionally, but takes an effort LEVEL (gpt-oss / harmony).
+    /// `--reasoning off` cannot silence it; `--reasoning-effort` (b10434+) tunes
+    /// it, and llama-server reports nothing about that flag at startup, which
+    /// makes this verdict the only signal the user gets. See `EFFORT_VARS`.
     EffortOnly,
     /// Thinks unconditionally and exposes no switch; `--reasoning` is inert.
     Always,
@@ -135,6 +137,13 @@ const PRESERVE_VARS: [&str; 3] = [
     "truncate_history_thinking",
 ];
 
+/// The two variables `--reasoning-effort` sets, verbatim from
+/// `caps_apply_reasoning_effort` (`common/jinja/caps.cpp`), which binds ONE value
+/// to both names because templates disagree on which to read. Same rule as
+/// `PRESERVE_VARS`: matching only one of them reads as "the level is not a lever
+/// here" on every template keyed to the other.
+const EFFORT_VARS: [&str; 2] = ["reasoning_effort", "reasoning_strength"];
+
 /// Evidence that a template handles a reasoning trace. Every entry is template
 /// *mechanics* (a variable, a message field, or a trace tag), never prose, so a
 /// system prompt that merely says "think step by step" is not mistaken for a
@@ -144,10 +153,11 @@ const PRESERVE_VARS: [&str; 3] = [
 /// carries its trace as a `'thinking'` content block), ByteDance Seed
 /// (`<seed:think>`) and gpt-oss (`<|channel|>`, `message.thinking`), while
 /// `reasoning_content` is the field a preserved trace travels in.
-const THINKING_MARKERS: [&str; 11] = [
+const THINKING_MARKERS: [&str; 12] = [
     "enable_thinking",
     "reasoning_content",
     "reasoning_effort",
+    "reasoning_strength",
     ".thinking",
     "'thinking'",
     "\"thinking\"",
@@ -385,7 +395,7 @@ impl ModelInfo {
         if !THINKING_MARKERS.iter().any(|m| t.contains(m)) && self.preserve_var().is_none() {
             return Thinking::None;
         }
-        if t.contains("reasoning_effort") {
+        if EFFORT_VARS.iter().any(|v| t.contains(v)) {
             return Thinking::EffortOnly;
         }
         Thinking::Always
@@ -993,6 +1003,19 @@ mod tests {
              {{- \"# Valid channels: analysis, commentary, final.\" }}{{- message.thinking }}",
         );
         assert_eq!(gpt_oss.thinking_line(), "yes");
+        assert_eq!(gpt_oss.thinking(), Thinking::EffortOnly);
+
+        // The SECOND name --reasoning-effort binds, and the reason EFFORT_VARS is
+        // a list: `caps_apply_reasoning_effort` sets reasoning_effort AND
+        // reasoning_strength from one value, so a template reading only the
+        // latter takes the level just as much. Matching the first name alone
+        // filed this under Always, i.e. "the flag has nothing to act on here",
+        // which is the opposite answer.
+        let strength_only = with_template(
+            "{%- if reasoning_strength == 'high' %}{{- '<think>' }}{%- endif %}{{- message.thinking }}",
+        );
+        assert_eq!(strength_only.thinking_line(), "yes");
+        assert_eq!(strength_only.thinking(), Thinking::EffortOnly);
 
         // A template with no thinking mechanics (Llama-3.1's), but MiMo-VL, which
         // DOES think, has one just as bare, so the verdict names the TEMPLATE and

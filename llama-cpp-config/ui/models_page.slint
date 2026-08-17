@@ -532,12 +532,57 @@ export component ModelsPage inherits HorizontalLayout {
                     }
                 }
                 LabeledField {
+                    label: "Reasoning effort";
+                    hint: "--reasoning-effort: how hard the template should ask the model to think.\ndefault = omit the flag → whatever the template does on its own.\nNeither a switch nor a token cap: it is a level handed to the chat template, so a template that reads neither reasoning_effort nor reasoning_strength ignores it in silence. gpt-oss and harmony templates read it; most do not.\nDo NOT hand-write reasoning_effort into 'Template kwargs' below: this ONE flag binds both names at once, and a raw kwarg sets one of the two, a silent no-op on a template keyed to the other.\nllama-server prints nothing about this at startup, unlike 'Keep past thinking', so the Thinking row in Model info is the only place that tells you whether it is a lever here.\nNeeds llama.cpp b10434 or newer: an older server rejects the key outright and refuses to start.";
+                    // Seven entries is past what a SegmentedControl can carry, and
+                    // the first one is the "omit the flag" state, so this follows
+                    // the cache-type combos rather than the switches above.
+                    EnumComboBox {
+                        options: ["default", "minimal", "low", "medium", "high", "xhigh", "max"];
+                        value <=> AppState.form.reasoning_effort;
+                    }
+                }
+                LabeledField {
                     label: "Keep past thinking";
                     hint: "--reasoning-preserve: replay the thinking of EVERY past assistant turn back to the model, not just the last one.\ndefault = whatever the chat template does on its own; on = keep it; off = drop it.\nThis is the supported lever; do NOT hand-write preserve_thinking into 'Template kwargs' below. llama.cpp expands this ONE flag into preserve_thinking + clear_thinking + truncate_history_thinking, and templates disagree on which of the three they read, so setting the raw kwarg is a silent no-op on most of them.\nIt only works where the template supports it; llama-server says so at startup ('chat template supports preserving reasoning' / '…does NOT support').\nCosts prompt tokens: the trace is re-sent every turn.";
                     SegmentedControl {
                         options: ["default", "on", "off"];
                         current: AppState.form.reasoning_preserve == "" ? "default" : AppState.form.reasoning_preserve;
                         activated(value) => { AppState.form.reasoning_preserve = value; }
+                    }
+                }
+                Text {
+                    text: "The next three split one output budget in two. --reasoning-budget caps the THINKING alone; nothing caps the answer on its own, because --n-predict bounds thinking + answer together, so the answer gets what the thinking leaves. Do not copy a model card's raw pair in: those are ceilings for the context the card assumes, and a budget larger than your context never fires.";
+                    wrap: word-wrap;
+                    font-size: 12px;
+                    color: Palette.foreground.transparentize(Tokens.muted);
+                }
+                LabeledField {
+                    label: "Thinking budget";
+                    hint: "Tokens the thinking block may use (--reasoning-budget).\n-1 = unrestricted, 0 = close it immediately, N > 0 = a real budget.\ndefault = omit the flag → llama.cpp default: -1.\nNot a truncation: at the limit the sampler FORCES the template's end-of-thinking tag, so the model still writes a normal answer. It only works where the template declares thinking tags.\nPick it by how long you are willing to wait: at 20 tok/s, 16384 tokens is about 13 minutes of thinking.";
+                    DefaultLineEdit {
+                        edit_label: "preset-reasoning-budget";
+                        // decimal, not number: -1 needs a typeable leading sign.
+                        input_type: InputType.decimal;
+                        default <=> AppState.form.reasoning_budget_default;
+                        value <=> AppState.form.reasoning_budget;
+                    }
+                }
+                LabeledField {
+                    label: "Budget message";
+                    hint: "Text injected just before the forced end-of-thinking tag when the budget runs out (--reasoning-budget-message), to steer the model into wrapping up instead of stopping mid-thought.\nBlank = omit the flag: llama.cpp closes the block with no message.\nWrite it in the language the model answers in: an injection in another language invites language mixing.\nNo ';' or '#': the INI format cannot escape them and the value would reload truncated.";
+                    LineEdit {
+                        text <=> AppState.form.reasoning_budget_message;
+                        placeholder-text: "e.g. Budget reached, write the final answer now.";
+                    }
+                }
+                LabeledField {
+                    label: "Max output";
+                    hint: "Total tokens generated per request, thinking AND answer together (--n-predict).\n-1 = keep going until the context is full.\ndefault = omit the flag → llama.cpp default: -1.\nOnly a DEFAULT, never a clamp: the request's own max_tokens wins whenever the client sends one, in either direction, so this bites only clients that send none.";
+                    DefaultLineEdit {
+                        input_type: InputType.decimal;
+                        default <=> AppState.form.n_predict_default;
+                        value <=> AppState.form.n_predict;
                     }
                 }
             }

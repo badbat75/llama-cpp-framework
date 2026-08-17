@@ -22,10 +22,25 @@ else {
     throw "Could not read [package] version from $cargoTomlPath"
 }
 
-# llama build = git describe of the bundled llama.cpp checkout (e.g. b3456).
+# llama build = the bNNNN identity of the bundled llama.cpp checkout (e.g. b3456).
+#
+# `git describe --tags` is the preferred source and is enough whenever the
+# checkout sits on a bNNNN tag. It stopped being enough in 2026-08: llama.cpp
+# adopted semantic versioning (b10398) and now also tags releases `vX.Y.Z`, and
+# describe returns the NEAREST tag, so a checkout of `v0.1.0` would name itself
+# `0.1.0`. That is a product version, not a build identity: it stays `0.1.0`
+# across every commit until the next release, so two different builds would
+# claim the same installer file name, the same ARP DisplayName and the same
+# LlamaBuild registry value. Fall back to the build NUMBER, which is what a
+# bNNNN tag carries anyway: cmake/build-info.cmake derives LLAMA_BUILD_NUMBER
+# from this very `rev-list --count`, and llama-server prints it as `build N`.
 Push-Location $cfg.LlamaCppDir
-$llamaBuild = (git describe --tags 2>$null) -replace '^v', ''
-if (-not $llamaBuild) { $llamaBuild = "b0-$(git rev-parse --short HEAD)" }
+$llamaBuild = (git describe --tags 2>$null | Select-Object -First 1)
+if ($llamaBuild) { $llamaBuild = $llamaBuild.Trim() }
+if ($llamaBuild -notmatch '^b\d+$') {
+    $buildNumber = (git rev-list --count HEAD 2>$null | Select-Object -First 1)
+    $llamaBuild = if ($buildNumber) { "b$($buildNumber.Trim())" } else { "b0-$(git rev-parse --short HEAD)" }
+}
 Pop-Location
 
 # Architecture token for the package name (native 64-bit build).

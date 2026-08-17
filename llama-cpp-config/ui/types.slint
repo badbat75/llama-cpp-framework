@@ -87,10 +87,24 @@ export struct PresetForm {
     jinja: bool,
     reasoning: string,
     reasoning_format: string,
+    // --reasoning-effort, an enum-valued string whose FIRST entry is "default" =
+    // omit the flag (form.rs maps it to an empty string both ways), the same
+    // mapping cache_type_k/-v use. No `_default` twin: the word is the state.
+    reasoning_effort: string,
     // --reasoning-preserve, a TRI-state carried as a string: "default" (omit the
     // flag: the template's own behaviour), "on", "off". Not a bool: "off"
     // (--no-reasoning-preserve) and "default" are different instructions.
     reasoning_preserve: string,
+    // --reasoning-budget (thinking only) and --n-predict (thinking + answer
+    // together). Both take `input_type: decimal` rather than `number`, for the
+    // same reason cache_ram does: their `-1` needs a typeable leading `-`.
+    // reasoning_budget_message is plain free text and so has no `_default` twin:
+    // empty already means "omit the flag".
+    reasoning_budget: string,
+    reasoning_budget_default: bool,
+    reasoning_budget_message: string,
+    n_predict: string,
+    n_predict_default: bool,
     n_cpu_moe: int,
     n_cpu_moe_auto: bool,
     // Sampling knobs, each paired with a `*_default` bool (checkbox omits the

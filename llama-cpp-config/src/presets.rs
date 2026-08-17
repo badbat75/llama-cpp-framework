@@ -175,6 +175,34 @@ pub struct Preset {
     pub jinja: Option<bool>,
     pub reasoning: String,
     pub reasoning_format: String,
+    /// How hard the model should think, as a level handed to the chat template
+    /// (--reasoning-effort). Empty = omit the flag, i.e. whatever the template
+    /// defaults to; the documented levels are `minimal`, `low`, `medium`, `high`,
+    /// `xhigh` and `max`.
+    ///
+    /// Same trap as `reasoning_preserve` below, one variable fewer: it is a
+    /// template kwarg with a real flag in front of it, not a knob llama.cpp acts
+    /// on itself. `common/arg.cpp` stores it as
+    /// `default_template_kwargs["reasoning_effort"]` (the literal `default`
+    /// ERASES that entry, which is why empty means omit), and
+    /// `caps_apply_reasoning_effort` (common/jinja/caps.cpp) binds it to TWO
+    /// template variables at once, `reasoning_effort` and `reasoning_strength`,
+    /// because templates disagree on the name. Hand-writing either one into
+    /// `chat_template_kwargs` therefore sets one of the two and is a silent no-op
+    /// on a template keyed to the other.
+    ///
+    /// A template that reads neither name ignores the value entirely, and unlike
+    /// --reasoning-preserve llama-server says NOTHING about it at startup: the
+    /// capability probe fills `supports_reasoning_effort` but no log line reports
+    /// it, so Model info's Thinking row (`gguf::Thinking::EffortOnly`) is the only
+    /// place that answers "is this a lever on this model".
+    ///
+    /// Needs llama.cpp **b10434** or newer. On an older llama-server the key is
+    /// not merely ignored: `common_preset_context::load` throws "option
+    /// 'reasoning-effort' not recognized in preset '<id>'" (`ignore_unknown_keys`
+    /// is true only for the shared user config.ini, never for --models-preset),
+    /// so the whole server refuses to start.
+    pub reasoning_effort: String,
     /// Keep the reasoning trace of EVERY assistant turn in the history replayed to
     /// the model, not just the last one (--reasoning-preserve /
     /// --no-reasoning-preserve). `None` = the template's own default: llama.cpp
@@ -193,6 +221,40 @@ pub struct Preset {
     /// supports preserving reasoning, consider enabling it via --reasoning-preserve"
     /// (supported but off) or "…does NOT support preserving reasoning" (unsupported).
     pub reasoning_preserve: Option<bool>,
+    /// Token budget for the THINKING block alone (--reasoning-budget). `None` =
+    /// omit the flag → llama.cpp's own default, `-1` = unrestricted. Every integer
+    /// is meaningful (`0` closes the block at once, `N > 0` is a real budget), so
+    /// this takes NO `> 0` filter on the form leg, like `cache_ram`.
+    ///
+    /// It is not a truncation: at the limit the sampler forces the template's
+    /// end-of-thinking tag (`common_sampler_reasoning_budget_force`, after
+    /// injecting `reasoning_budget_message`), so the model still writes a normal
+    /// answer. It only arms where the template declares thinking tags, which is
+    /// where the forced sequence comes from.
+    ///
+    /// This is the only cap on thinking, and there is NO companion flag for the
+    /// answer: `n_predict` below bounds thinking + answer together, so the answer
+    /// gets `n_predict` minus the thinking actually spent. Do not copy a model
+    /// card's "reasoning N / final response M" pair in as-is either: those are
+    /// ceilings for the context the card assumes, and a budget larger than the
+    /// context never fires, leaving a runaway generation to end by filling the KV
+    /// cache instead.
+    pub reasoning_budget: Option<i32>,
+    /// Text injected just before the forced end-of-thinking tag when
+    /// `reasoning_budget` runs out (--reasoning-budget-message), to steer the
+    /// model into wrapping up rather than stopping mid-thought. Empty = omit the
+    /// flag: llama.cpp closes the block with no message. FREE TEXT, hence its
+    /// entry in `validate_for_save`: a `;` or `#` reloads truncated.
+    pub reasoning_budget_message: String,
+    /// Total tokens generated per request, thinking AND answer together
+    /// (--n-predict). `None` = omit the flag → llama.cpp's default `-1`, i.e.
+    /// until the context is full; `-1` stays meaningful as an explicit value, so
+    /// no `> 0` filter here either.
+    ///
+    /// A fallback DEFAULT, never a clamp: `server-context.cpp` takes the request's
+    /// own `n_predict` (OpenAI `max_tokens`) whenever it is set, in either
+    /// direction, and reaches for this only when the client sends none.
+    pub n_predict: Option<i32>,
     pub n_cpu_moe: Option<i32>,
     pub temp: Option<f64>,
     /// Integer sampler (--top-k): backed by an int SpinBox, not the float editor
@@ -253,7 +315,11 @@ impl Default for Preset {
             jinja: Some(true),
             reasoning: "auto".into(),
             reasoning_format: "auto".into(),
+            reasoning_effort: String::new(),
             reasoning_preserve: None,
+            reasoning_budget: None,
+            reasoning_budget_message: String::new(),
+            n_predict: None,
             n_cpu_moe: None,
             temp: None,
             top_k: None,
@@ -310,7 +376,11 @@ impl Preset {
             jinja: getb("jinja"),
             reasoning: get("reasoning"),
             reasoning_format: get("reasoning-format"),
+            reasoning_effort: get("reasoning-effort"),
             reasoning_preserve: getb("reasoning-preserve"),
+            reasoning_budget: k.get("reasoning-budget").and_then(|v| ini::parse_int(v)),
+            reasoning_budget_message: get("reasoning-budget-message"),
+            n_predict: k.get("n-predict").and_then(|v| ini::parse_int(v)),
             n_cpu_moe: k.get("n-cpu-moe").and_then(|v| ini::parse_int(v)),
             temp: k.get("temp").and_then(|v| ini::parse_float(v)),
             top_k: k.get("top-k").and_then(|v| ini::parse_int(v)),
@@ -464,6 +534,7 @@ fn validate_for_save(preset: &Preset) -> io::Result<()> {
         ("model-draft", &preset.model_draft),
         ("chat-template-kwargs", &preset.chat_template_kwargs),
         ("override-tensor", &preset.override_tensor),
+        ("reasoning-budget-message", &preset.reasoning_budget_message),
     ] {
         ini::reject_comment_markers(field, value)?;
     }
@@ -676,6 +747,13 @@ pub fn render_section(p: &Preset) -> String {
     out.push_str("\r\n; Reasoning / thinking\r\n");
     emit_str(&mut out, "reasoning", &p.reasoning);
     emit_str(&mut out, "reasoning-format", &p.reasoning_format);
+    out.push_str("; reasoning-effort hands the chat template a level (minimal, low, medium,\r\n");
+    out.push_str("; high, xhigh, max). Omit the key = the template's own default. It is a\r\n");
+    out.push_str("; template kwarg with a flag in front: llama.cpp binds it to BOTH\r\n");
+    out.push_str("; reasoning_effort and reasoning_strength, so a template reading neither\r\n");
+    out.push_str("; name ignores it. Needs llama.cpp b10434+; an older server refuses to\r\n");
+    out.push_str("; start on the unrecognized key rather than skipping it.\r\n");
+    emit_str(&mut out, "reasoning-effort", &p.reasoning_effort);
     out.push_str("; reasoning-preserve keeps the thinking of EVERY past turn in the replayed\r\n");
     out.push_str(
         "; history, not just the last one. Omit the key = the template's own default.\r\n",
@@ -686,6 +764,21 @@ pub fn render_section(p: &Preset) -> String {
     out.push_str("; flag sets preserve_thinking, clear_thinking AND truncate_history_thinking\r\n");
     out.push_str("; together, and templates disagree on which of the three they read.\r\n");
     emit_bool(&mut out, "reasoning-preserve", p.reasoning_preserve);
+    out.push_str("; reasoning-budget caps the THINKING block alone, in tokens: -1 unrestricted,\r\n");
+    out.push_str("; 0 closes it at once, N > 0 is a budget. At the limit the sampler FORCES the\r\n");
+    out.push_str("; template's end-of-thinking tag (after reasoning-budget-message, when set),\r\n");
+    out.push_str("; so the answer is still written normally rather than truncated. Nothing caps\r\n");
+    out.push_str("; the ANSWER on its own: n-predict below bounds thinking + answer together, so\r\n");
+    out.push_str("; a budget bigger than the context never fires at all.\r\n");
+    emit_i32(&mut out, "reasoning-budget", p.reasoning_budget);
+    emit_str(
+        &mut out,
+        "reasoning-budget-message",
+        &p.reasoning_budget_message,
+    );
+    out.push_str("; n-predict is the TOTAL generated per request and only a DEFAULT: the\r\n");
+    out.push_str("; request's own max_tokens wins whenever the client sends one.\r\n");
+    emit_i32(&mut out, "n-predict", p.n_predict);
 
     out.push_str("\r\n; MoE\r\n");
     emit_i32(&mut out, "n-cpu-moe", p.n_cpu_moe);
@@ -846,6 +939,7 @@ mod tests {
             model_draft: r"C:\models\mtps\m-mtp.gguf".into(),
             chat_template_kwargs: r#"{"enable_thinking":true}"#.into(),
             override_tensor: r"token_embd\.weight=ROCm0".into(),
+            reasoning_budget_message: "Budget reached, write the final answer now.".into(),
             ..Default::default()
         };
         assert!(validate_for_save(&clean).is_ok());
@@ -859,6 +953,12 @@ mod tests {
             // Legal inside a regex (a character class), fatal to the INI reader:
             // the value reloads truncated at the `#`, silently losing the rule.
             ("override-tensor", r"blk\.[0-9#]+\.attn=CPU"),
+            // Ordinary English prose reaches the model here, and prose is exactly
+            // where a `;` turns up unprompted.
+            (
+                "reasoning-budget-message",
+                "Stop now; write the final answer.",
+            ),
         ] {
             let mut p = clean.clone();
             match field {
@@ -866,6 +966,7 @@ mod tests {
                 "mmproj" => p.mmproj = hostile.into(),
                 "chat-template-kwargs" => p.chat_template_kwargs = hostile.into(),
                 "override-tensor" => p.override_tensor = hostile.into(),
+                "reasoning-budget-message" => p.reasoning_budget_message = hostile.into(),
                 _ => p.model_draft = hostile.into(),
             }
             let err = validate_for_save(&p).expect_err(field);
@@ -1045,10 +1146,16 @@ mod tests {
             jinja: Some(false),
             reasoning: "on".into(),
             reasoning_format: "deepseek".into(),
+            reasoning_effort: "high".into(),
             // Some(false), not None: the round-trip must prove `false` survives as
             // `false` and does not collapse into "key absent" (a distinct state:
             // --no-reasoning-preserve vs. the template's own default).
             reasoning_preserve: Some(false),
+            reasoning_budget: Some(16384),
+            reasoning_budget_message: "Budget reached, write the final answer now.".into(),
+            // Negative on purpose: `-1` is a documented value here (generate until
+            // the context is full), so the minus sign has to survive render + parse.
+            n_predict: Some(-1),
             n_cpu_moe: Some(12),
             temp: Some(0.7),
             top_k: Some(40),
@@ -1096,6 +1203,48 @@ mod tests {
         assert!(!value_lines
             .iter()
             .any(|l| l.starts_with("override-tensor =")));
+    }
+
+    // Same reason as the test above, for the output-budget trio: these are
+    // llama.cpp's long flags minus the dashes, which is what `get_map_key_opt`
+    // matches on. `reasoning-budget` and `reasoning-budget-message` are
+    // registered for LLAMA_EXAMPLE_SERVER and `n-predict` for every example, so
+    // all three are legal in a router preset; any OTHER spelling makes
+    // llama-server reject the whole presets.ini with "option not recognized",
+    // taking every other model down with it.
+    #[test]
+    fn render_emits_the_output_budget_keys_with_llama_cpps_own_spelling() {
+        let p = Preset {
+            id: "budget".into(),
+            model: r"E:\m\model.gguf".into(),
+            reasoning_budget: Some(16384),
+            reasoning_budget_message: "Wrap up now.".into(),
+            // -1 is a value here, not "unset": it has to reach the file.
+            n_predict: Some(-1),
+            ..Default::default()
+        };
+        let ini = render_section(&p);
+        assert!(ini.contains("reasoning-budget = 16384\r\n"));
+        assert!(ini.contains("reasoning-budget-message = Wrap up now.\r\n"));
+        assert!(ini.contains("n-predict = -1\r\n"));
+
+        let unset = Preset {
+            reasoning_budget: None,
+            reasoning_budget_message: String::new(),
+            n_predict: None,
+            ..p
+        };
+        let value_lines: Vec<String> = render_section(&unset)
+            .lines()
+            .filter(|l| !l.trim_start().starts_with(';'))
+            .map(|l| l.to_string())
+            .collect();
+        for key in ["reasoning-budget", "reasoning-budget-message", "n-predict"] {
+            assert!(
+                !value_lines.iter().any(|l| l.starts_with(&format!("{key} ="))),
+                "{key} must be omitted when unset"
+            );
+        }
     }
 
     // The save boundary owns --override-tensor's grammar (see validate_for_save):

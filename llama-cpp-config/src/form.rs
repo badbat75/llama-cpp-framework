@@ -118,6 +118,13 @@ const HINT_SPEC_DRAFT_N_MAX: i32 = 3;
 // 1024 llama.cpp itself suggests for Qwen-VL grounding, and a matching upper bound.
 const HINT_IMAGE_MIN_TOKENS: i32 = 1024;
 const HINT_IMAGE_MAX_TOKENS: i32 = 2048;
+// --reasoning-budget and --n-predict both default to `-1` in llama.cpp (no
+// budget / generate until the context is full), and unlike --ctx-size's `0` that
+// number is not a broken-looking placeholder but a value worth keeping, so
+// neither gets an invented parking number. Both widgets take `decimal` input for
+// it, the only kind that lets a `-` be typed at all (see `cache_ram`).
+const HINT_REASONING_BUDGET: i32 = -1;
+const HINT_N_PREDICT: i32 = -1;
 
 pub fn preset_to_form(p: &presets::Preset) -> PresetForm {
     // String/bool domain defaults are pulled from `Preset::default()` so the form
@@ -181,10 +188,19 @@ pub fn preset_to_form(p: &presets::Preset) -> PresetForm {
         jinja: p.jinja.or(d.jinja).unwrap_or_default(),
         reasoning: str_or(&p.reasoning, &d.reasoning),
         reasoning_format: str_or(&p.reasoning_format, &d.reasoning_format),
+        // Not `str_or`: an empty reasoning-effort has no schema default to fall
+        // back to, it IS the "omit the flag" state, carried to the combo as the
+        // word "default" exactly like the cache types above.
+        reasoning_effort: enum_or_default(&p.reasoning_effort),
         // Tri-state, so it deliberately does NOT fall back to `d` the way the
         // fields above do: `None` is not "unset, show the default" here, it IS a
         // value: "let the template decide", distinct from an explicit off.
         reasoning_preserve: tri_state(p.reasoning_preserve),
+        reasoning_budget: itxt(p.reasoning_budget, HINT_REASONING_BUDGET),
+        reasoning_budget_default: p.reasoning_budget.is_none(),
+        reasoning_budget_message: p.reasoning_budget_message.clone().into(),
+        n_predict: itxt(p.n_predict, HINT_N_PREDICT),
+        n_predict_default: p.n_predict.is_none(),
         n_cpu_moe: p.n_cpu_moe.unwrap_or(0),
         n_cpu_moe_auto: p.n_cpu_moe.is_none(),
         temp: txt(p.temp),
@@ -292,8 +308,23 @@ pub fn form_to_preset(f: &PresetForm) -> presets::Preset {
         jinja: Some(f.jinja),
         reasoning: f.reasoning.to_string(),
         reasoning_format: f.reasoning_format.to_string(),
+        reasoning_effort: enum_or_empty(f.reasoning_effort.as_str()),
         // "default" → None: omit the key, let the template decide.
         reasoning_preserve: tri_bool(f.reasoning_preserve.as_str()),
+        // Every integer is meaningful to both of these (-1 = unrestricted / until
+        // the context is full, 0 = close the thinking block at once), so NO `> 0`
+        // filter, the same rule --cache-ram follows above.
+        reasoning_budget: if f.reasoning_budget_default {
+            None
+        } else {
+            ini::parse_int(f.reasoning_budget.as_str())
+        },
+        reasoning_budget_message: f.reasoning_budget_message.to_string(),
+        n_predict: if f.n_predict_default {
+            None
+        } else {
+            ini::parse_int(f.n_predict.as_str())
+        },
         n_cpu_moe: if f.n_cpu_moe_auto {
             None
         } else {
@@ -537,7 +568,11 @@ mod tests {
             jinja: Some(false),
             reasoning: "on".into(),
             reasoning_format: "deepseek".into(),
+            reasoning_effort: "xhigh".into(),
             reasoning_preserve: Some(true),
+            reasoning_budget: Some(16384),
+            reasoning_budget_message: "Budget reached, write the final answer now.".into(),
+            n_predict: Some(24576),
             n_cpu_moe: Some(12),
             temp: Some(0.7),
             top_k: Some(40),
@@ -562,5 +597,37 @@ mod tests {
             };
             assert_eq!(round_trip(&p).cache_ram, Some(v));
         }
+    }
+
+    // Same trap, two more fields: `-1` is "unrestricted" for --reasoning-budget
+    // and "until the context is full" for --n-predict, and `0` closes the
+    // thinking block immediately. A `> 0` filter copied from the neighbouring
+    // integers would silently turn each of those into "key absent", which is a
+    // DIFFERENT instruction: it hands the thinking back its unlimited default.
+    #[test]
+    fn reasoning_budget_and_n_predict_sentinels_round_trip() {
+        for v in [0, -1, 16384] {
+            let p = Preset {
+                reasoning_budget: Some(v),
+                n_predict: Some(v),
+                ..Preset::default()
+            };
+            let back = round_trip(&p);
+            assert_eq!(back.reasoning_budget, Some(v), "reasoning-budget {v}");
+            assert_eq!(back.n_predict, Some(v), "n-predict {v}");
+        }
+    }
+
+    // The message is free text that reaches the model verbatim, so it must not be
+    // laundered on the way through the form (trimmed, quoted, or collapsed to
+    // empty): what the user typed is what gets injected before the end tag.
+    #[test]
+    fn reasoning_budget_message_survives_verbatim() {
+        let msg = "Budget reached. Stop analysing and write the final answer now.";
+        let p = Preset {
+            reasoning_budget_message: msg.into(),
+            ..Preset::default()
+        };
+        assert_eq!(round_trip(&p).reasoning_budget_message, msg);
     }
 }
