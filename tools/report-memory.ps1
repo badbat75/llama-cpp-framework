@@ -10,7 +10,10 @@
 # Divergence between the two is the whole point of the report: when a device is
 # oversubscribed, WDDM does not fail the allocation, it silently pages the excess
 # into shared memory, and the only symptom is that decoding got slow. (1) says how
-# much was asked for, (2) says how much of it landed in real VRAM.
+# much was asked for, (2) says how much of it landed in real VRAM. That only holds
+# while the two describe the SAME process, so the log block is matched to a live
+# listening port rather than simply being the newest one in the file: see
+# Get-LastLoadBlock, where the trap is spelled out.
 #
 # TENSOR PLACEMENT is not a section of its own: it is an 'of which placed' COLUMN on
 # each balance sheet, filled in on the 'model weights' row, because that is what an
@@ -42,7 +45,19 @@ $ErrorActionPreference = 'Stop'
 
 # ---------------------------------------------------------------- log block ---
 
-# The last load block = everything from the final 'device_info' banner onwards.
+# The load block = everything from a 'device_info' banner onwards, and the one this
+# report wants is the newest block belonging to a process that is STILL ALIVE, which
+# is not the same thing as the newest block in the file. The log carries no PIDs, so
+# the only handle on whose block this is, is the PORT every child line is prefixed
+# with (`[58939]`), matched against the ports the live llama-server processes listen
+# on. Skipping that check is not a theoretical risk: the banner AND every 'buffer
+# size' line are TRACE (common.cpp logs them with COM_TRC, so they need -lv >= 4),
+# and server.ini can perfectly well be set to 3, at which point the running child
+# writes neither. The newest block in the file is then some earlier, chattier run,
+# and the report would describe a model that exited hours ago while pairing it with
+# the live process' counters: two sources that no longer have anything to do with
+# each other, which is the one failure this whole report exists to prevent.
+#
 # Read the tail in growing bites so a 20 MB log with -lv 4 per-request spam does
 # not have to be slurped whole just to find a block that is usually near the end.
 #
@@ -52,18 +67,60 @@ $ErrorActionPreference = 'Stop'
 # outside the block and have to be picked up separately. They are the only place
 # the EFFECTIVE options appear: the router overlays its own CLI args onto every
 # preset, so what a child actually gets is neither file alone.
+
+# Which ports the live llama-server processes are listening on. Known = $false when
+# the listener table could not be read at all, which is NOT the same as an empty
+# port list (a router that is up with no model loaded): the first means 'cannot
+# verify', the second means 'verified, and no child is serving'.
+function Get-LivePorts {
+    param([int[]] $ProcessIds)
+
+    try {
+        $conns = @(Get-NetTCPConnection -State Listen -ErrorAction Stop)
+    } catch {
+        Write-Warning "Cannot read the TCP listener table ($($_.Exception.Message)); using the newest load block in the log without checking that it belongs to a live process."
+        return [pscustomobject]@{ Known = $false; Ports = @() }
+    }
+
+    [pscustomobject]@{
+        Known = $true
+        Ports = @($conns |
+            Where-Object { $ProcessIds -contains [int] $_.OwningProcess } |
+            ForEach-Object { [string] $_.LocalPort } |
+            Sort-Object -Unique)
+    }
+}
+
 function Get-LastLoadBlock {
-    param([string] $Path)
+    param(
+        [string]   $Path,
+        [string[]] $LivePorts = @(),
+        # $false = the listener table was unreadable, so take the newest block and hope,
+        # which is what this did unconditionally before.
+        [bool]     $VerifyPorts = $true
+    )
 
     if (-not (Test-Path $Path)) { throw "Log not found: $Path" }
+
+    # A $null from the caller would otherwise reject every block ($null -notcontains
+    # anything is true) and blow up on .Count under StrictMode.
+    $LivePorts = @($LivePorts)
+
+    $lines   = @()
+    $stale   = @()   # ports of complete blocks rejected as dead, newest first
+    $loading = @()   # ports of LIVE children whose block has not reached load_model yet
 
     foreach ($tail in 5000, 50000, 200000, 0) {
         $lines = if ($tail -eq 0) { Get-Content -LiteralPath $Path } else { Get-Content -LiteralPath $Path -Tail $tail }
         # llama-server's own colouring, if any, would break every regex below.
         $lines = $lines -replace "`e\[[0-9;]*m", ''
-        $starts = @($lines | Select-String -SimpleMatch 'common_param: device_info' | ForEach-Object { $_.LineNumber })
-        if ($starts.Count -gt 0) {
-            $from = $starts[-1] - 1
+        $starts  = @($lines | Select-String -SimpleMatch 'common_param: device_info' | ForEach-Object { $_.LineNumber })
+        $stale   = @()
+        $loading = @()
+        # Newest block first: an older one only gets a look once the newest turns out
+        # to belong to a process that has exited.
+        for ($s = $starts.Count - 1; $s -ge 0; $s--) {
+            $from = $starts[$s] - 1
             # The child prints its build and its verbosity JUST ABOVE the device_info
             # banner, and verbosity decides whether the per-tensor override lines exist
             # at all, so the block has to reach back over them. Scan a small window
@@ -73,19 +130,78 @@ function Get-LastLoadBlock {
             for ($i = $from - 1; $i -ge $edge; $i--) {
                 if ($lines[$i] -match 'common_params_print_info:') { $from = $i }
             }
-            $block = $lines[$from..($lines.Count - 1)]
-            # A block that never reached load_model is a crashed/aborted start.
-            if ($block | Select-String -SimpleMatch 'srv    load_model: initializing' -Quiet) {
-                return [pscustomobject]@{
-                    Lines     = $block
-                    # @() or PowerShell unrolls 'no args' to $null on the way out.
-                    SpawnArgs = @(Get-SpawnArgs -Lines $lines -Before $from -Block $block)
-                }
+            # Only the NEWEST block runs to the end of the file; an older one stops at the
+            # next block's banner. Letting it run on would hand it the buffer lines of
+            # every child that started after it, which with two models up is routine.
+            $to    = if ($s -lt $starts.Count - 1) { $starts[$s + 1] - 2 } else { $lines.Count - 1 }
+            $block = $lines[$from..$to]
+
+            $port = $null
+            foreach ($l in $block) { if ($l -match '^\[(?<p>\d+)\]') { $port = $Matches.p; break } }
+            # No prefix at all = a llama-server run WITHOUT the router, i.e. the live
+            # process itself: there is nothing else it could be, so nothing to check.
+            $isLive = -not ($port -and $VerifyPorts) -or ($LivePorts -contains $port)
+
+            # A block with no load_model line has not finished. Which of the two reasons it
+            # is depends entirely on whether the port is live, and the difference matters:
+            # the banner and the device list are printed in the first fraction of a second
+            # while the weights take seconds to land, so running the report during a load
+            # is ORDINARY, not an error, and it must not be reported as "reload the model"
+            # (that is what the newest block being a dead child means instead).
+            if (-not ($block | Select-String -SimpleMatch 'srv    load_model: initializing' -Quiet)) {
+                if ($isLive) { $loading += @($port) }
+                continue
+            }
+
+            if (-not $isLive) {
+                $stale += $port
+                continue
+            }
+            # Belt and braces once a port is known: keep only the lines this child wrote,
+            # so an interleaved sibling cannot donate a buffer row to the balance sheet.
+            if ($port) { $block = @($block | Where-Object { $_ -match "^\[$port\]" }) }
+
+            return [pscustomobject]@{
+                Lines     = $block
+                Port      = $port
+                # @() or PowerShell unrolls 'no args' to $null on the way out.
+                SpawnArgs = @(Get-SpawnArgs -Lines $lines -Before $from -Block $block)
             }
         }
         if ($tail -eq 0) { break }
     }
-    throw "No completed model load found in $Path. Is llama-server running?"
+
+    # A live child that is mid-load is not a failure to diagnose, it is a "try again in a
+    # few seconds", so it gets its own message and pre-empts everything below.
+    if ($loading.Count -gt 0) {
+        # $null when the block carries no port prefix, i.e. a llama-server without the router.
+        $who = if ($loading[0]) { "child on port $($loading[0])" } else { 'llama-server' }
+        throw "The live $who is still loading: its log block has the device list but not yet 'load_model: initializing', so no buffer has been announced. Re-run once the model has finished loading."
+    }
+
+    # Name the cause rather than asking 'is llama-server running?': by here it IS
+    # running, and much the likeliest reason its load left no trace is a verbosity
+    # below 4, where neither the banner nor a single 'buffer size' line is printed.
+    $msg = "No load block in $Path belongs to a running llama-server"
+    if ($VerifyPorts -and $LivePorts.Count -gt 0) { $msg += " (listening on port $($LivePorts -join ', '))" }
+    $msg += '.'
+    if ($stale.Count -gt 0) {
+        $msg += " The newest block in the log is port $($stale[0]), a child that has exited."
+    }
+
+    $quiet = @()
+    foreach ($p in @($LivePorts)) {
+        $m = @($lines | Select-String -Pattern "^\[$p\].*verbosity = (?<v>\d+)") | Select-Object -Last 1
+        if ($m -and ([int] $m.Matches[0].Groups['v'].Value) -lt 4) {
+            $quiet += "$p at -lv $($m.Matches[0].Groups['v'].Value)"
+        }
+    }
+    if ($quiet.Count -gt 0) {
+        $msg += " The live child logs below the level this report reads ($($quiet -join ', ')): the device_info banner and every 'buffer size' line are TRACE. Set LogVerbosity = 4 in server.ini (5 to also get the per-tensor placement lines) and reload the model."
+    } else {
+        $msg += ' Reload the model so it writes a fresh load block, or point -LogPath at the log it was started with.'
+    }
+    throw $msg
 }
 
 # Every child line carries its own port as a `[56996]` prefix, and the router
@@ -505,7 +621,8 @@ function Get-LiveGpuUsage {
 $procs = @(Get-Process llama-server -ErrorAction SilentlyContinue)
 if ($procs.Count -eq 0) { throw 'llama-server is not running.' }
 
-$loaded = Get-LastLoadBlock -Path $LogPath
+$listen = Get-LivePorts -ProcessIds $procs.Id
+$loaded = Get-LastLoadBlock -Path $LogPath -LivePorts $listen.Ports -VerifyPorts $listen.Known
 $load   = ConvertFrom-LoadBlock -Block $loaded.Lines
 $live   = @(Get-LiveGpuUsage -ProcessIds $procs.Id)
 $rules  = @(Get-OverrideRules -SpawnArgs $loaded.SpawnArgs)
@@ -574,6 +691,7 @@ if ($Json) {
     [pscustomobject]@{
         Model     = $load.Model
         Arch      = $load.Arch
+        Port      = $loaded.Port
         NCtx      = $load.NCtx
         Verbosity = $load.Verbosity
         Buffers   = $load.Buffers
@@ -590,7 +708,8 @@ Write-Host ''
 Write-Host "Model      : $($load.Model)" -ForegroundColor Cyan
 Write-Host "Weights    : $($load.ParamsB) B params, $($load.FileType), $($load.FileSizeGiB) GiB on disk, arch $($load.Arch)"
 Write-Host "Context    : n_ctx $($load.NCtx), n_seq_max $($load.NSeqMax), flash_attn $($load.FlashAttn), $($load.CacheTypes)"
-Write-Host "Process    : PID $($procs.Id -join ', ') (started $(($procs | Sort-Object StartTime | Select-Object -First 1).StartTime))"
+$onPort = if ($loaded.Port) { ", child on port $($loaded.Port)" } else { '' }
+Write-Host "Process    : PID $($procs.Id -join ', ')$onPort (started $(($procs | Sort-Object StartTime | Select-Object -First 1).StartTime))"
 
 foreach ($d in ($deviceRows | Sort-Object RequestedMiB -Descending)) {
     Write-Host ''
@@ -623,6 +742,21 @@ foreach ($d in ($deviceRows | Sort-Object RequestedMiB -Descending)) {
         Write-Host ("  live      {0,9:N0} MiB dedicated + {1:N0} MiB shared (system RAM)" -f $liveRow.DedicatedMiB, $liveRow.SharedMiB)
     }
 
+    # Shared memory under a card is NOT evidence of a spill on its own, and reading it
+    # that way is the report's own version of the trap it exists to expose: the backend's
+    # `*_Host` buffers are pinned host memory BY DESIGN (a host compute buffer, the
+    # embedding table), and Windows charts them under the card exactly like paged-out
+    # VRAM. So subtract them first and judge only the remainder. llama.cpp names those
+    # buffers per BACKEND (`ROCm_Host`, `CUDA_Host`), never per device, so with two cards
+    # on one backend they can only be matched family-wide; and WDDM charges the same
+    # allocation under EVERY adapter of that family (verified 2026-08-18: the identical
+    # 2,120 MiB shows up under both the R9700 and the AMD iGPU), which is why this is a
+    # subtraction and not an apportionment.
+    $family      = ($d.Device -replace '\d+$', '') + '_Host'
+    $pinnedFam   = @($hostRows | Where-Object { $_.Device -eq $family })
+    $pinnedFamMiB= if ($pinnedFam) { ($pinnedFam | Measure-Object MiB -Sum).Sum } else { 0 }
+    $unexplained = if ($liveRow) { $liveRow.SharedMiB - $pinnedFamMiB } else { 0 }
+
     # The diagnosis: asked for more than the card had free, so WDDM paged the rest
     # out to system memory and every access to it now crosses PCIe. Note the log
     # never accounts for the driver's own context (a few hundred MiB per backend),
@@ -632,8 +766,10 @@ foreach ($d in ($deviceRows | Sort-Object RequestedMiB -Descending)) {
     if ($d.FreeAtLoadMiB -and $d.RequestedMiB -gt $d.FreeAtLoadMiB) {
         $over = $d.RequestedMiB - $d.FreeAtLoadMiB
         Write-Host ("  OVERSUBSCRIBED by {0:N0} MiB: the excess lives in shared system memory, not VRAM." -f $over) -ForegroundColor Red
-    } elseif ($liveRow -and $liveRow.SharedMiB -gt 1024) {
-        Write-Host ("  {0:N0} MiB in shared system memory though the log fits; driver context overhead pushed it over." -f $liveRow.SharedMiB) -ForegroundColor Yellow
+    } elseif ($liveRow -and $unexplained -gt 1024) {
+        Write-Host ("  {0:N0} MiB in shared system memory beyond the {1:N0} MiB of pinned {2} buffers, though the log fits; driver context overhead pushed it over." -f $unexplained, $pinnedFamMiB, $family) -ForegroundColor Yellow
+    } elseif ($liveRow -and $pinnedFamMiB -gt 1024) {
+        Write-Host ("  of the {0:N0} MiB shared, {1:N0} MiB is the backend's pinned {2} buffers: by design, not a spill." -f $liveRow.SharedMiB, $pinnedFamMiB, $family) -ForegroundColor DarkGray
     }
 }
 
