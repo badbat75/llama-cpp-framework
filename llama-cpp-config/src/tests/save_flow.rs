@@ -365,7 +365,10 @@ pub(super) fn run(app: &AppWindow) {
     assert_eq!(st.get_preset_split_positions(), 34);
     let rows = st.get_preset_gpu_rows();
     assert_eq!(
-        (rows.row_data(0).expect("row 0").blocks, rows.row_data(1).expect("row 1").blocks),
+        (
+            rows.row_data(0).expect("row 0").blocks,
+            rows.row_data(1).expect("row 1").blocks
+        ),
         (29, 5),
         "what was typed survives its own projection"
     );
@@ -398,9 +401,17 @@ pub(super) fn run(app: &AppWindow) {
     // there, so the projection must retire even while the model is known, and
     // come straight back when the mode does.
     st.invoke_preset_split_mode_picked("row".into());
-    assert_eq!(st.get_preset_split_positions(), 0, "row mode has no block cut");
+    assert_eq!(
+        st.get_preset_split_positions(),
+        0,
+        "row mode has no block cut"
+    );
     st.invoke_preset_split_mode_picked("default".into());
-    assert_eq!(st.get_preset_split_positions(), 34, "layer gets the blocks back");
+    assert_eq!(
+        st.get_preset_split_positions(),
+        34,
+        "layer gets the blocks back"
+    );
     // Back to a plain ratio for the INI assertions below.
     st.invoke_preset_gpu_even();
     st.invoke_preset_gpu_weight("ROCm1".into(), 3);

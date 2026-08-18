@@ -198,6 +198,13 @@ export struct ServerForm {
     // `server_form::log_level_label` / `parse_log_level` map it to the int, and the
     // Rust list is asserted against the Slint one in the e2e (they must not drift).
     log_verbosity: string,
+    // Slot KV-cache snapshots (server.ini SaveStateOnShutdown + StateDir). The
+    // toggle is a plain CheckBox; state_dir is a path field that ALWAYS carries a
+    // value (the resolved default, like models_dir), because the directory holds
+    // one multi-GiB dump per model and where they land has to be visible before
+    // the toggle is switched on rather than after the disk fills.
+    save_state_on_shutdown: bool,
+    state_dir: string,
     // Integration base URL (server.ini OpencodeBaseUrl). When base_url_default is
     // true, the field shows the auto-derived URL and nothing is written to server.ini.
     opencode_base_url: string,

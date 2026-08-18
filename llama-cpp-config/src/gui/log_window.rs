@@ -32,8 +32,7 @@ const MAX_RETAINED: usize = 256 * 1024;
 /// the profiler; the poll is skipped entirely while the window is hidden.
 const POLL_EVERY: std::time::Duration = std::time::Duration::from_millis(500);
 
-const MISSING_TEXT: &str =
-    "(log file not found: it is created the first time llama-server starts)";
+const MISSING_TEXT: &str = "(log file not found: it is created the first time llama-server starts)";
 
 /// The tail-follower state between polls.
 #[derive(Default)]

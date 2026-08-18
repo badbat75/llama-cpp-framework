@@ -884,10 +884,7 @@ mod tests {
         let info = ModelInfo::from_kv(&m).unwrap();
         assert!(info.is_moe);
         assert_eq!(info.quant, "Q4_K_M");
-        assert_eq!(
-            info.kind_line(),
-            "MoE: 160 experts, 6 active/tok, 2 shared"
-        );
+        assert_eq!(info.kind_line(), "MoE: 160 experts, 6 active/tok, 2 shared");
         assert_eq!(
             info.moe_offload_line(),
             "45 of 48 layers hold experts (first 3 dense)"
@@ -1261,9 +1258,6 @@ mod tests {
         ]);
         let info = ModelInfo::from_kv(&m).unwrap();
         assert_eq!(info.kind_line(), "MoE: 128 experts, 8 active/tok");
-        assert_eq!(
-            info.moe_offload_line(),
-            "all 48 layers hold experts"
-        );
+        assert_eq!(info.moe_offload_line(), "all 48 layers hold experts");
     }
 }

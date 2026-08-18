@@ -124,6 +124,14 @@ pub struct ServerSet {
     /// 1 error, 2 warning, 3 info, 4 trace, 5 debug.
     #[arg(long)]
     pub log_verbosity: Option<i32>,
+    /// Snapshot each loaded model's KV cache when the server stops and restore
+    /// the newest one on the next start (--slot-save-path). true = on.
+    #[arg(long)]
+    pub save_state_on_shutdown: Option<bool>,
+    /// Folder for those snapshots (~8.3 GiB per model at a 262k context).
+    /// Empty = the default under the user's runtime root.
+    #[arg(long)]
+    pub state_dir: Option<String>,
     /// Override the integration base URL (opencode.json + Claude Code). Empty = auto.
     #[arg(long)]
     pub opencode_base_url: Option<String>,
@@ -202,6 +210,12 @@ impl ServerSet {
         }
         if let Some(lv) = self.log_verbosity {
             cfg.log_verbosity = Some(lv);
+        }
+        if let Some(v) = self.save_state_on_shutdown {
+            cfg.save_state_on_shutdown = Some(v);
+        }
+        if let Some(dir) = &self.state_dir {
+            cfg.state_dir = server_cfg::opt_nonblank(Some(dir.clone()));
         }
         if let Some(url) = &self.opencode_base_url {
             cfg.opencode_base_url = server_cfg::opt_nonblank(Some(url.clone()));
@@ -335,6 +349,17 @@ fn show_lines(cfg: &server_cfg::ServerConfig) -> String {
             .map_or_else(|| "4 (default)".into(), |v| v.to_string()),
     );
     row(
+        "SaveStateOnShutdown:",
+        cfg.save_state_on_shutdown
+            .map_or_else(|| "false (default)".into(), |v| v.to_string()),
+    );
+    row(
+        "StateDir:",
+        cfg.state_dir
+            .clone()
+            .unwrap_or_else(|| format!("{} (default)", cfg.state_dir_or_default())),
+    );
+    row(
         "OpencodeBaseUrl:",
         cfg.opencode_base_url
             .clone()
@@ -413,18 +438,67 @@ fn run_preset(c: PresetCmd) -> Result<()> {
 
 // ── Control commands ────────────────────────────────────────────────────
 
+/// Dump every loaded model's slot before a stop, printing what happened.
+///
+/// Deliberately infallible: a snapshot that cannot be written must NOT stop the
+/// stop. Aborting a shutdown over a cache the user can rebuild by prefilling
+/// would trade a recoverable loss for an unusable command. Silent when the
+/// feature is off, which is the default.
+fn snapshot_before_stop() {
+    let cfg = crate::server_cfg::load();
+    if !cfg.save_state_on_shutdown_or_default() {
+        return;
+    }
+    println!("Saving the conversation snapshot…");
+    let (saved, errors) = crate::slot_state::save_all(&cfg);
+    for t in &saved {
+        println!("  saved {}", t.describe());
+    }
+    for e in &errors {
+        eprintln!("  snapshot failed: {e}");
+    }
+}
+
+/// Push the last shutdown's conversation back in after a start. Takes the config
+/// `start()` ACTUALLY launched with, so a server that was already running is
+/// never handed a stale snapshot over whatever it has been doing since.
+///
+/// Slow by nature (the proxied restore makes the router load the model, then
+/// reads the KV cache off disk) and, like its twin above, never fatal: a server
+/// that started is started whether or not the cache came back.
+fn snapshot_after_start(cfg: &crate::server_cfg::ServerConfig) {
+    if !cfg.save_state_on_shutdown_or_default() {
+        return;
+    }
+    let known: Vec<String> = crate::presets::load_all()
+        .into_iter()
+        .map(|p| p.id)
+        .collect();
+    println!("Restoring the conversation snapshot…");
+    match crate::slot_state::restore_newest(cfg, &known) {
+        Ok(Some(t)) => println!("  restored {}", t.describe()),
+        // Nothing on disk: the ordinary first-run state, not worth a line.
+        Ok(None) => {}
+        Err(e) => eprintln!("  snapshot not restored: {e}"),
+    }
+}
+
 fn run_control(c: ControlCmd) -> Result<()> {
     use crate::runstate;
     match c {
         ControlCmd::Start => {
             match runstate::start() {
-                Ok(Some(_)) => println!("llama-server started."),
+                Ok(Some(cfg)) => {
+                    println!("llama-server started.");
+                    snapshot_after_start(&cfg);
+                }
                 Ok(None) => println!("llama-server is already running."),
                 Err(e) => anyhow::bail!("Failed to start llama-server: {}", e),
             }
             Ok(())
         }
         ControlCmd::Stop => {
+            snapshot_before_stop();
             runstate::stop();
             if runstate::is_running() {
                 anyhow::bail!("Failed to stop llama-server.");
@@ -434,16 +508,24 @@ fn run_control(c: ControlCmd) -> Result<()> {
             Ok(())
         }
         ControlCmd::Restart => {
+            // The full round trip: the snapshot taken here is the one the start
+            // below puts back, which is what makes a restart cheap on a long
+            // conversation instead of a fresh multi-minute prefill.
+            snapshot_before_stop();
             runstate::stop();
             std::thread::sleep(std::time::Duration::from_millis(1000));
             match runstate::start() {
-                Ok(Some(_)) => println!("llama-server restarted."),
+                Ok(Some(cfg)) => {
+                    println!("llama-server restarted.");
+                    snapshot_after_start(&cfg);
+                }
                 Ok(None) => println!("llama-server is already running."),
                 Err(e) => anyhow::bail!("Failed to restart llama-server: {}", e),
             }
             Ok(())
         }
         ControlCmd::StopAndClose => {
+            snapshot_before_stop();
             runstate::stop();
             std::thread::sleep(std::time::Duration::from_millis(500));
             #[cfg(windows)]
@@ -486,6 +568,8 @@ mod tests {
             fit: Some(true),
             prefill_assistant: Some(false),
             log_verbosity: Some(2),
+            save_state_on_shutdown: Some(true),
+            state_dir: Some(r"E:\llama-state".into()),
             opencode_base_url: Some("https://llm.example.com".into()),
             opencode_api_key: Some("sk-test-key".into()),
         };
@@ -514,6 +598,8 @@ mod tests {
             fit: Some(true),
             prefill_assistant: Some(false),
             log_verbosity: Some(2),
+            save_state_on_shutdown: Some(true),
+            state_dir: Some(r"E:\llama-state".into()),
             opencode_base_url: Some("https://llm.example.com".into()),
             opencode_api_key: Some("sk-test-key".into()),
         };
@@ -544,6 +630,8 @@ mod tests {
             fit: Some(true),
             prefill_assistant: Some(false),
             log_verbosity: Some(2),
+            save_state_on_shutdown: Some(true),
+            state_dir: Some(r"E:\llama-state".into()),
             opencode_base_url: Some("https://llm.example.com".into()),
             opencode_api_key: Some("sk-test-key".into()),
         };
@@ -571,6 +659,8 @@ mod tests {
             fit,
             prefill_assistant,
             log_verbosity,
+            save_state_on_shutdown,
+            state_dir,
             opencode_base_url,
             opencode_api_key,
         } = cfg.clone();
@@ -602,6 +692,11 @@ mod tests {
             ("Fit:", fit.unwrap().to_string()),
             ("PrefillAssistant:", prefill_assistant.unwrap().to_string()),
             ("LogVerbosity:", log_verbosity.unwrap().to_string()),
+            (
+                "SaveStateOnShutdown:",
+                save_state_on_shutdown.unwrap().to_string(),
+            ),
+            ("StateDir:", state_dir.unwrap()),
             ("OpencodeBaseUrl:", opencode_base_url.unwrap()),
             ("OpencodeApiKey:", opencode_api_key.unwrap()),
         ];

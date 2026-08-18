@@ -60,18 +60,21 @@ pub(super) fn wire(app: &AppWindow, tray: &AppTray, state: &Rc<RefCell<State>>) 
             );
         });
     }
-    // Browse callback needs nothing from `app`; it works purely on its argument.
-    app.global::<AppState>()
-        .on_browse_models_dir(move |current| {
-            let start = if !current.is_empty() {
-                PathBuf::from(current.as_str())
-            } else {
-                PathBuf::from(server_cfg::default_models_dir())
-            };
-            pick_dir(&start)
-                .map(|p| SharedString::from(p.to_string_lossy().into_owned()))
-                .unwrap_or(current)
-        });
+    // Browse callback needs nothing from `app`; it works purely on its argument,
+    // which is why one handler serves every path field on the tab. The models
+    // root is the fallback for an EMPTY argument only, and it is the one field
+    // that can arrive empty (the snapshot dir always carries its resolved
+    // default, see server_form::config_to_form).
+    app.global::<AppState>().on_browse_dir(move |current| {
+        let start = if !current.is_empty() {
+            PathBuf::from(current.as_str())
+        } else {
+            PathBuf::from(server_cfg::default_models_dir())
+        };
+        pick_dir(&start)
+            .map(|p| SharedString::from(p.to_string_lossy().into_owned()))
+            .unwrap_or(current)
+    });
 
     wire_tables(app);
 

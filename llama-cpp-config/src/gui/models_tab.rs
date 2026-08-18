@@ -889,7 +889,10 @@ fn run_new_clone(
     let note = if dropped.is_empty() {
         String::new()
     } else {
-        format!(" Dropped {} (not applicable to this model).", dropped.join(", "))
+        format!(
+            " Dropped {} (not applicable to this model).",
+            dropped.join(", ")
+        )
     };
     commit_new_preset(
         app,

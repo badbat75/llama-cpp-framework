@@ -317,7 +317,10 @@ mod tests {
 
         super::set_enabled(true, true).expect("enable minimized");
         assert!(super::is_enabled(), "value should exist after enable");
-        assert!(super::starts_minimized(), "command should carry --minimized");
+        assert!(
+            super::starts_minimized(),
+            "command should carry --minimized"
+        );
 
         super::set_enabled(true, false).expect("rewrite without --minimized");
         assert!(super::is_enabled());

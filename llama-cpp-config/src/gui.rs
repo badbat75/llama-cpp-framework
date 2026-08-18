@@ -152,14 +152,12 @@ pub fn run(start_minimized: bool) -> anyhow::Result<()> {
     #[cfg(windows)]
     {
         let app_weak = app.as_weak();
-        _instance.spawn_listener(move |event| {
-            match event {
-                crate::single_instance::Event::Activate => {
-                    let _ = app_weak.upgrade_in_event_loop(activate_window);
-                }
-                crate::single_instance::Event::Close => {
-                    std::process::exit(0);
-                }
+        _instance.spawn_listener(move |event| match event {
+            crate::single_instance::Event::Activate => {
+                let _ = app_weak.upgrade_in_event_loop(activate_window);
+            }
+            crate::single_instance::Event::Close => {
+                std::process::exit(0);
             }
         });
     }
@@ -860,6 +858,44 @@ fn set_status(app: &AppWindow, text: String, is_error: bool) {
     s.set_status_is_error(is_error);
 }
 
+/// `set_status` from a WORKER thread: hops onto the event loop first, since
+/// every Slint property is owned by the UI thread. Used by the run-control
+/// paths, whose slow legs (a multi-GiB snapshot save or restore) have to report
+/// progress from off-thread rather than only at the end.
+fn post_status(app_weak: &slint::Weak<AppWindow>, text: String, is_error: bool) {
+    let weak = app_weak.clone();
+    slint::invoke_from_event_loop(move || {
+        if let Some(app) = weak.upgrade() {
+            set_status(&app, text, is_error);
+        }
+    })
+    .ok();
+}
+
+/// Fold a `slot_state::save_all` result into one status line.
+///
+/// Errors are reported but never escalated to the caller: a snapshot that fails
+/// must not stop the STOP. The alternative (aborting the shutdown on a failed
+/// save) would leave the user with a server they asked to stop and cannot,
+/// which is worse than losing a cache they can rebuild by prefilling.
+fn snapshot_summary(saved: &[crate::slot_state::Transfer], errors: &[String]) -> Option<String> {
+    if saved.is_empty() && errors.is_empty() {
+        return None;
+    }
+    let mut parts = Vec::new();
+    if !saved.is_empty() {
+        let list: Vec<String> = saved
+            .iter()
+            .map(crate::slot_state::Transfer::describe)
+            .collect();
+        parts.push(format!("Snapshot saved: {}", list.join(", ")));
+    }
+    for e in errors {
+        parts.push(format!("Snapshot failed: {e}"));
+    }
+    Some(parts.join(". "))
+}
+
 fn spawn_version_probe(app_weak: slint::Weak<AppWindow>) {
     std::thread::spawn(move || {
         let version = server_version::probe();
@@ -936,6 +972,16 @@ fn start_server_async(app_weak: slint::Weak<AppWindow>, tray_weak: slint::Weak<A
             .ok()
             .and_then(|launched| launched.as_ref())
             .map(client_base_url);
+        // The config WE launched with, kept for the snapshot restore below.
+        // `Ok(None)` (already running) deliberately yields None: that server's
+        // slot is whatever it has been doing since, and pushing an old
+        // conversation into it would discard live state, not recover any.
+        let launched_cfg = result
+            .as_ref()
+            .ok()
+            .and_then(|launched| launched.as_ref())
+            .cloned();
+        let restore_weak = app_weak.clone();
         slint::invoke_from_event_loop(move || {
             bump_run_status_gen();
             let running = result.is_ok();
@@ -966,6 +1012,40 @@ fn start_server_async(app_weak: slint::Weak<AppWindow>, tray_weak: slint::Weak<A
             }
         })
         .ok();
+
+        // Push the last shutdown's conversation back in, AFTER the UI has been
+        // told the server is up. It is the slowest thing the framework does (the
+        // proxied restore makes the router load the model, then reads ~8 GiB of
+        // KV cache off disk), so it must not sit inside the "Starting…"
+        // transition, and it stays on this worker thread rather than blocking
+        // the event loop. Nothing to restore is the ordinary first-run state and
+        // says nothing at all.
+        if let Some(cfg) =
+            launched_cfg.filter(server_cfg::ServerConfig::save_state_on_shutdown_or_default)
+        {
+            let known: Vec<String> = crate::presets::load_all()
+                .into_iter()
+                .map(|p| p.id)
+                .collect();
+            post_status(
+                &restore_weak,
+                "Restoring the conversation snapshot…".into(),
+                false,
+            );
+            match crate::slot_state::restore_newest(&cfg, &known) {
+                Ok(Some(t)) => post_status(
+                    &restore_weak,
+                    format!("llama-server started. Snapshot restored: {}", t.describe()),
+                    false,
+                ),
+                Ok(None) => post_status(&restore_weak, "llama-server started.".into(), false),
+                Err(e) => post_status(
+                    &restore_weak,
+                    format!("llama-server started. Snapshot not restored: {e}"),
+                    true,
+                ),
+            }
+        }
     });
 }
 
@@ -991,6 +1071,19 @@ fn stop_server_async(app_weak: slint::Weak<AppWindow>, tray_weak: slint::Weak<Ap
     }
     bump_run_status_gen();
     std::thread::spawn(move || {
+        // Snapshot BEFORE the kill: the KV cache is process memory, so once
+        // taskkill lands there is nothing left to save. This is the slow leg
+        // (~8 GiB per model), which is why it reports its own progress and why
+        // the whole stop path already lives off the UI thread.
+        let cfg = server_cfg::load();
+        let snapshot = if cfg.save_state_on_shutdown_or_default() {
+            post_status(&app_weak, "Saving the conversation snapshot…".into(), false);
+            let (saved, errors) = crate::slot_state::save_all(&cfg);
+            snapshot_summary(&saved, &errors)
+        } else {
+            None
+        };
+
         runstate::stop();
         let mut running = runstate::is_running();
         let step = std::time::Duration::from_millis(300);
@@ -1021,7 +1114,14 @@ fn stop_server_async(app_weak: slint::Weak<AppWindow>, tray_weak: slint::Weak<Ap
                     );
                 } else {
                     s.set_server_status_is_error(false);
-                    set_status(&app, "llama-server stopped.".into(), false);
+                    // The snapshot line rides along rather than replacing the
+                    // outcome: "stopped" is what the user asked about, the
+                    // snapshot is what it cost (or failed to do).
+                    let msg = snapshot.map_or_else(
+                        || "llama-server stopped.".to_string(),
+                        |s| format!("llama-server stopped. {s}"),
+                    );
+                    set_status(&app, msg, false);
                 }
             }
             if let Some(tray) = tray_weak.upgrade() {

@@ -654,9 +654,7 @@ pub fn render_section(p: &Preset) -> String {
     out.push_str("; `device`: llama.cpp puts the encoder on the first GPU backend it finds\r\n");
     out.push_str("; unless server.ini MmprojDevice (env MTMD_BACKEND_DEVICE) names one.\r\n");
     emit_bool(&mut out, "mmproj-offload", p.mmproj_offload);
-    out.push_str(
-        "; image-min-tokens / image-max-tokens bound the tokens ONE image takes on\r\n",
-    );
+    out.push_str("; image-min-tokens / image-max-tokens bound the tokens ONE image takes on\r\n");
     out.push_str("; DYNAMIC-resolution vision models (Qwen-VL wants >= 1024 for grounding\r\n");
     out.push_str("; accuracy). Omit = read the bound from the model; needs an mmproj.\r\n");
     emit_i32(&mut out, "image-min-tokens", p.image_min_tokens);
@@ -700,8 +698,12 @@ pub fn render_section(p: &Preset) -> String {
     out.push_str("; on, e.g. ROCm1 or ROCm1,CUDA0. tensor-split = how much each one holds,\r\n");
     out.push_str("; e.g. 3,1 (positional over `device`, IN THAT ORDER). Blank tensor-split\r\n");
     out.push_str("; with 2+ devices = llama.cpp splits by free VRAM (not evenly).\r\n");
-    out.push_str("; split-mode = none|layer|row. Blank = layer, or the server-wide mode, which\r\n");
-    out.push_str("; also OVERRIDES this key whenever it is set (the router's CLI wins the merge).\r\n");
+    out.push_str(
+        "; split-mode = none|layer|row. Blank = layer, or the server-wide mode, which\r\n",
+    );
+    out.push_str(
+        "; also OVERRIDES this key whenever it is set (the router's CLI wins the merge).\r\n",
+    );
     out.push_str("; none = only the first device runs (tensor-split is ignored); row = weight\r\n");
     out.push_str("; matrices split row-wise by the vector (CUDA/ROCm only).\r\n");
     emit_str(&mut out, "device", &p.device);
@@ -764,11 +766,21 @@ pub fn render_section(p: &Preset) -> String {
     out.push_str("; flag sets preserve_thinking, clear_thinking AND truncate_history_thinking\r\n");
     out.push_str("; together, and templates disagree on which of the three they read.\r\n");
     emit_bool(&mut out, "reasoning-preserve", p.reasoning_preserve);
-    out.push_str("; reasoning-budget caps the THINKING block alone, in tokens: -1 unrestricted,\r\n");
-    out.push_str("; 0 closes it at once, N > 0 is a budget. At the limit the sampler FORCES the\r\n");
-    out.push_str("; template's end-of-thinking tag (after reasoning-budget-message, when set),\r\n");
-    out.push_str("; so the answer is still written normally rather than truncated. Nothing caps\r\n");
-    out.push_str("; the ANSWER on its own: n-predict below bounds thinking + answer together, so\r\n");
+    out.push_str(
+        "; reasoning-budget caps the THINKING block alone, in tokens: -1 unrestricted,\r\n",
+    );
+    out.push_str(
+        "; 0 closes it at once, N > 0 is a budget. At the limit the sampler FORCES the\r\n",
+    );
+    out.push_str(
+        "; template's end-of-thinking tag (after reasoning-budget-message, when set),\r\n",
+    );
+    out.push_str(
+        "; so the answer is still written normally rather than truncated. Nothing caps\r\n",
+    );
+    out.push_str(
+        "; the ANSWER on its own: n-predict below bounds thinking + answer together, so\r\n",
+    );
     out.push_str("; a budget bigger than the context never fires at all.\r\n");
     emit_i32(&mut out, "reasoning-budget", p.reasoning_budget);
     emit_str(
@@ -1241,7 +1253,9 @@ mod tests {
             .collect();
         for key in ["reasoning-budget", "reasoning-budget-message", "n-predict"] {
             assert!(
-                !value_lines.iter().any(|l| l.starts_with(&format!("{key} ="))),
+                !value_lines
+                    .iter()
+                    .any(|l| l.starts_with(&format!("{key} ="))),
                 "{key} must be omitted when unset"
             );
         }

@@ -349,7 +349,12 @@ export global AppState {
     // ── Callbacks ────────────────────────────────────────────────────
     callback save_server();
     callback revert_server();
-    callback browse_models_dir(string) -> string;
+    // Directory picker, shared by every path field on the Server tab (models
+    // root, snapshot dir). The argument is the path to open at; only an EMPTY
+    // one falls back to the models root, and models_dir is the single field
+    // that can be empty, so the fallback stays correct without a second
+    // callback per field.
+    callback browse_dir(string) -> string;
 
     // GPU distribution table, one set per scope (server-wide / per-preset). Every
     // edit is a whole-selection rewrite in Rust (src/gpu_split.rs): the handler

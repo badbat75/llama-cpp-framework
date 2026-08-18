@@ -72,25 +72,24 @@ pub(super) fn wire(app: &AppWindow) {
     }
     {
         let app_weak = app.as_weak();
-        app.global::<AppState>()
-            .on_toggle_start_minimized(move || {
-                let Some(app) = app_weak.upgrade() else {
-                    return;
-                };
-                // The checkbox is only enabled while "Start with Windows" is on
-                // (there is no entry to rewrite otherwise), but guard anyway:
-                // with it off the choice is UI-only until a fresh enable
-                // writes it.
-                if !app.global::<AppState>().get_start_with_windows() {
-                    return;
-                }
-                let message = if app.global::<AppState>().get_start_minimized_to_tray() {
-                    "The logon launch will start minimized to the tray.".into()
-                } else {
-                    "The logon launch will open the configurator window.".into()
-                };
-                apply_startup_entry(&app, message);
-            });
+        app.global::<AppState>().on_toggle_start_minimized(move || {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            // The checkbox is only enabled while "Start with Windows" is on
+            // (there is no entry to rewrite otherwise), but guard anyway:
+            // with it off the choice is UI-only until a fresh enable
+            // writes it.
+            if !app.global::<AppState>().get_start_with_windows() {
+                return;
+            }
+            let message = if app.global::<AppState>().get_start_minimized_to_tray() {
+                "The logon launch will start minimized to the tray.".into()
+            } else {
+                "The logon launch will open the configurator window.".into()
+            };
+            apply_startup_entry(&app, message);
+        });
     }
     {
         let app_weak = app.as_weak();

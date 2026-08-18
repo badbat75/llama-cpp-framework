@@ -191,6 +191,25 @@ fn server_args(
             args.push(ot.to_string());
         }
     }
+    // --slot-save-path DIR : turns on the /slots save|restore endpoints, which is
+    //   what `slot_state` calls around a stop and a start. Emitted only when the
+    //   feature is on, because the flag is not free: llama.cpp validates the
+    //   directory while PARSING it and throws "not a directory" on a missing one,
+    //   so an always-on flag would turn a deleted folder into a server that
+    //   refuses to start. `start()` creates the directory first for the same
+    //   reason.
+    //
+    //   It reaches the per-model CHILDREN even though it is the ROUTER's flag,
+    //   and by an unusual route: the option has no env name, so it cannot ride a
+    //   preset key, but `get_map_key_opt` (common/preset.cpp) also maps every
+    //   option by its flag name with the dashes stripped. The router therefore
+    //   parses its own argv into `base_preset` and merges that onto every model
+    //   (`preset.merge(base_preset)`), and `unset_reserved_args` does not prune
+    //   it. See the slot_state module header.
+    if cfg.save_state_on_shutdown_or_default() {
+        args.push("--slot-save-path".into());
+        args.push(cfg.state_dir_or_default());
+    }
     args
 }
 
@@ -278,6 +297,15 @@ pub fn start() -> io::Result<Option<crate::server_cfg::ServerConfig>> {
         .create(true)
         .append(true)
         .open(&log_path)?;
+
+    // The snapshot directory must exist BEFORE the spawn, not at the first save:
+    // llama.cpp validates `--slot-save-path` inside the argument handler
+    // (`fs_is_directory` or it throws "not a directory"), so a missing directory
+    // does not degrade to "no snapshots this run", it makes llama-server exit
+    // during arg parsing and the launch fails with nothing but a log line.
+    if cfg.save_state_on_shutdown_or_default() {
+        crate::slot_state::ensure_dir(&cfg)?;
+    }
 
     let mut cmd = std::process::Command::new(&exe);
     cmd.args(server_args(&cfg, &presets_path));
@@ -579,6 +607,10 @@ mod tests {
             // The NEGATIVE presence flag: Some(false) is the state that emits one.
             prefill_assistant: Some(false),
             log_verbosity: Some(2),
+            // On, with an EXPLICIT dir: resolving the default would reach into
+            // `paths::`, which unit tests must not touch (src/tests/mod.rs).
+            save_state_on_shutdown: Some(true),
+            state_dir: Some(r"E:\llama-state".into()),
             opencode_base_url: Some("https://llm.example.com".into()),
             opencode_api_key: Some("sk-test-key".into()),
         };
@@ -607,6 +639,8 @@ mod tests {
             fit,
             prefill_assistant,
             log_verbosity,
+            save_state_on_shutdown,
+            state_dir,
             // Integration-only: not a llama-server flag. Used by opencode.json
             // and Claude Code snippet. The GUI edits it on the Server tab
             // (Network section).
@@ -654,6 +688,36 @@ mod tests {
         .contains(&"--no-prefill-assistant".to_string()));
         // log verbosity is always passed (framework default 4 when unset).
         assert!(pair("-lv", log_verbosity.unwrap().to_string()));
+        // The two snapshot fields ride ONE flag: the toggle decides whether it
+        // appears, the directory is its value.
+        assert_eq!(save_state_on_shutdown, Some(true));
+        assert!(pair("--slot-save-path", state_dir.unwrap()));
+    }
+
+    /// `--slot-save-path` must be ABSENT when snapshots are off, and that is not
+    /// cosmetic: llama.cpp validates the directory while parsing the flag and
+    /// throws "not a directory" on a missing one, so emitting it unconditionally
+    /// would turn a deleted folder into a server that refuses to start.
+    #[test]
+    fn slot_save_path_is_omitted_when_snapshots_are_off() {
+        let off = args_for(&ServerConfig {
+            state_dir: Some(r"E:\llama-state".into()),
+            ..Default::default()
+        });
+        assert!(
+            !off.contains(&"--slot-save-path".to_string()),
+            "a StateDir alone must not enable the endpoints"
+        );
+
+        let on = args_for(&ServerConfig {
+            save_state_on_shutdown: Some(true),
+            state_dir: Some(r"E:\llama-state".into()),
+            ..Default::default()
+        });
+        assert!(on
+            .iter()
+            .position(|x| x == "--slot-save-path")
+            .is_some_and(|i| on.get(i + 1).is_some_and(|v| v == r"E:\llama-state")));
     }
 
     // Unlike the thread/port fields (where <= 0 means "unset"), models-max 0 is
@@ -809,7 +873,10 @@ mod tests {
             &[],
             &env_vars(&with(Some(false))),
         );
-        assert!(out.contains("ROCBLAS_USE_HIPBLASLT"), "no env line in:\n{out}");
+        assert!(
+            out.contains("ROCBLAS_USE_HIPBLASLT"),
+            "no env line in:\n{out}"
+        );
     }
 
     #[test]

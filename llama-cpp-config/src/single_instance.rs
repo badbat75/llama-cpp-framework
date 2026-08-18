@@ -95,7 +95,11 @@ pub fn acquire() -> Acquire {
         // First instance: own an auto-reset event for the process lifetime.
         let event = CreateEventW(std::ptr::null(), 0, 0, event_name.as_ptr());
         let close_event = CreateEventW(std::ptr::null(), 0, 0, wide(CLOSE_EVENT_NAME).as_ptr());
-        Acquire::Primary(InstanceGuard { mutex, event, close_event })
+        Acquire::Primary(InstanceGuard {
+            mutex,
+            event,
+            close_event,
+        })
     }
 }
 

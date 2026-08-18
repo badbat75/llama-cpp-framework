@@ -473,8 +473,8 @@ pub fn set_blocks(sel: &GpuSelection, id: &str, blocks: i32, layout: Layout) -> 
     let n = picks.len();
     // Auto has no counts to start from, so seed an even cut, the same "make the
     // implicit explicit before applying the edit" move `set_weight` makes.
-    let mut counts = block_counts(&weights_of(&picks), layout)
-        .unwrap_or_else(|| even_counts(n, layout.count));
+    let mut counts =
+        block_counts(&weights_of(&picks), layout).unwrap_or_else(|| even_counts(n, layout.count));
 
     let want = blocks.clamp(0, layout.count);
     let mut delta = want - counts[idx];
@@ -562,7 +562,11 @@ pub fn build_rows(
 ) -> Vec<GpuRow> {
     let picks = picks(sel);
     let total: i32 = picks.iter().map(|&(_, w)| w).sum();
-    let layout = if mode == SplitMode::Layer { layout } else { None };
+    let layout = if mode == SplitMode::Layer {
+        layout
+    } else {
+        None
+    };
     let counts = layout.and_then(|l| block_counts(&weights_of(&picks), l));
     let ranges = counts
         .as_ref()
@@ -917,10 +921,19 @@ mod tests {
     // them off the front (i_gpu_start), not the back.
     #[test]
     fn the_layout_counts_the_output_layer_and_partial_offload_shifts_the_start() {
-        assert_eq!(Layout::new(ORNITH, -1), Some(Layout { start: 0, count: 34 }));
+        assert_eq!(
+            Layout::new(ORNITH, -1),
+            Some(Layout {
+                start: 0,
+                count: 34
+            })
+        );
         assert_eq!(
             Layout::new(ORNITH, 99),
-            Some(Layout { start: 0, count: 34 }),
+            Some(Layout {
+                start: 0,
+                count: 34
+            }),
             "an ngl past the end is still just all of them"
         );
         assert_eq!(
@@ -950,8 +963,14 @@ mod tests {
             ["blocks 0-32", "output layer"],
             "a one-position tail is the output layer alone"
         );
-        assert_eq!(block_ranges(&[32, 2], l), ["blocks 0-31", "block 32 + output"]);
-        assert_eq!(block_ranges(&[34, 0], l), ["blocks 0-32 + output", "nothing"]);
+        assert_eq!(
+            block_ranges(&[32, 2], l),
+            ["blocks 0-31", "block 32 + output"]
+        );
+        assert_eq!(
+            block_ranges(&[34, 0], l),
+            ["blocks 0-32 + output", "nothing"]
+        );
         // Partial offload: the ranges start where the GPU does.
         let partial = Layout::new(ORNITH, 10).expect("layout");
         assert_eq!(
@@ -972,7 +991,10 @@ mod tests {
         assert_eq!(same, sel("ROCm0,CUDA0", "29,5"));
         assert_eq!(block_counts(&[29, 5], l), block_counts(&[85, 15], l));
         // Giving the first device less hands the surplus to the other one.
-        assert_eq!(set_blocks(&two, "ROCm0", 20, l), sel("ROCm0,CUDA0", "20,14"));
+        assert_eq!(
+            set_blocks(&two, "ROCm0", 20, l),
+            sel("ROCm0,CUDA0", "20,14")
+        );
         // Three devices: the LAST row absorbs first, so an edit stays local.
         let three = sel("ROCm0,CUDA0,Vulkan0", "1,1,1");
         assert_eq!(
@@ -985,7 +1007,10 @@ mod tests {
             sel("ROCm0,CUDA0,Vulkan0", "34,0,0")
         );
         // Out of range is clamped, never wrapped or written through.
-        assert_eq!(set_blocks(&two, "ROCm0", 999, l), sel("ROCm0,CUDA0", "34,0"));
+        assert_eq!(
+            set_blocks(&two, "ROCm0", 999, l),
+            sel("ROCm0,CUDA0", "34,0")
+        );
         assert_eq!(set_blocks(&two, "ROCm0", -5, l), sel("ROCm0,CUDA0", "0,34"));
         // An unknown id is a no-op, like every other edit here.
         assert_eq!(set_blocks(&two, "CUDA9", 4, l), two);
@@ -1104,7 +1129,9 @@ mod tests {
         assert_eq!(with[2].blocks_label, "");
 
         let without = build_rows(&devs(), &s, None, SplitMode::Layer);
-        assert!(without.iter().all(|r| r.blocks == 0 && r.blocks_label.is_empty()));
+        assert!(without
+            .iter()
+            .all(|r| r.blocks == 0 && r.blocks_label.is_empty()));
 
         // Three checked devices, projected the same way: the rows are the split
         // order, so the ranges run down the table in one unbroken sequence.
@@ -1192,7 +1219,9 @@ mod tests {
         assert_eq!(rows[0].share, "100%");
         assert_eq!(rows[1].share, "unused");
         assert_eq!(rows[2].share, "—", "unchecked rows keep the dash");
-        assert!(rows.iter().all(|r| r.blocks == 0 && r.blocks_label.is_empty()));
+        assert!(rows
+            .iter()
+            .all(|r| r.blocks == 0 && r.blocks_label.is_empty()));
         assert_eq!(rows[0].weight, 3, "the stored ratio survives the mode");
     }
 
@@ -1207,7 +1236,9 @@ mod tests {
             Some(full(ORNITH)),
             SplitMode::Row,
         );
-        assert!(rows.iter().all(|r| r.blocks == 0 && r.blocks_label.is_empty()));
+        assert!(rows
+            .iter()
+            .all(|r| r.blocks == 0 && r.blocks_label.is_empty()));
         assert_eq!(rows[0].share, "75%");
         assert_eq!(rows[1].share, "25%");
     }

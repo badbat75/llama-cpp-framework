@@ -28,6 +28,7 @@ mod server_version;
 mod settings;
 #[cfg(windows)]
 mod single_instance;
+mod slot_state;
 mod startup;
 mod tensor_override;
 // Cross-cutting end-to-end tests (e.g. the Slint UI regression test) live under

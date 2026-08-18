@@ -181,6 +181,45 @@ pub struct ServerConfig {
     /// 3 info, 4 trace, 5 debug (`common/arg.cpp`, `common/log.h`), which is why
     /// the GUI offers them as a dropdown rather than a free number.
     pub log_verbosity: Option<i32>,
+    /// Dump each loaded model's KV cache to disk when the server stops, and hand
+    /// the newest one back on the next start (`--slot-save-path` plus the
+    /// `/slots/{id}?action=save|restore` calls the framework makes around the
+    /// launch; the mechanism and its two upstream surprises are documented in
+    /// `slot_state`). None = the framework default (off).
+    ///
+    /// What it buys is the one cost no amount of VRAM tuning touches: prefill is
+    /// QUADRATIC in the prompt length, and the KV cache is process memory, so a
+    /// restart re-reads the whole conversation from zero. Measured on a 234k
+    /// prompt (Qwen3.8-27B, hybrid `qwen35`): about 17 minutes of prefill, against
+    /// ~8.3 GiB of sequential IO to reload the same state.
+    ///
+    /// Off by default because it is not free: each snapshot is roughly one byte
+    /// on disk per byte of KV cache, the stop path waits for the write, and the
+    /// start path loads the model eagerly to push the state back in. A machine
+    /// running short prompts pays all of that for nothing.
+    pub save_state_on_shutdown: Option<bool>,
+    /// Where those snapshots live (`--slot-save-path`). None/blank =
+    /// `slot_state::default_state_dir()`, a `state\` sibling of `config\` and
+    /// `logs\` under the user's runtime root.
+    ///
+    /// It is overridable rather than fixed for one reason: the default sits on
+    /// the SYSTEM drive and these files are large. The size follows the tokens
+    /// the slot actually HOLDS, not `ctx-size`: the KV cache is dumped for the
+    /// conversation, not for the allocated context, so a 127,579-token
+    /// conversation on Qwen3.8-27B measured 4,703,061,864 bytes (4.38 GiB, i.e.
+    /// the arch's 36 KiB per token) where a full 262k context would be ~8.3 GiB.
+    /// That is a ceiling to plan disk against, never a fixed cost of enabling
+    /// the feature.
+    /// A user whose models already live on another disk will want the dumps
+    /// there too, and a default that fills C:\ with no way out would be a poor
+    /// one.
+    ///
+    /// The directory must EXIST before the launch, which is why
+    /// `runstate::start` creates it: llama.cpp validates the path while parsing
+    /// the flag (`fs_is_directory` or it throws "not a directory"), so a missing
+    /// directory does not degrade to "no snapshots", it stops the server from
+    /// starting at all.
+    pub state_dir: Option<String>,
     /// Explicit override for the integration base URL (opencode.json + Claude Code
     /// snippet). When set, this value is used instead of auto-deriving from
     /// hostname + port. Useful for reverse-proxy setups where the client-facing
@@ -289,6 +328,21 @@ impl ServerConfig {
         self.log_verbosity.unwrap_or(4)
     }
 
+    /// Snapshot the slot on shutdown, or `false` (the framework default: off)
+    /// when unset.
+    pub fn save_state_on_shutdown_or_default(&self) -> bool {
+        self.save_state_on_shutdown.unwrap_or(false)
+    }
+
+    /// The configured snapshot directory, or `slot_state::default_state_dir()`
+    /// when unset/blank. Delegates so the fallback has ONE home, shared by
+    /// `render()`, the launch path, the form and the save/restore legs.
+    pub fn state_dir_or_default(&self) -> String {
+        crate::slot_state::state_dir(self)
+            .to_string_lossy()
+            .into_owned()
+    }
+
     /// The integration base URL: explicit override if set, otherwise auto-derived
     /// from hostname + port + `/v1` suffix. Used by opencode.json and Claude Code.
     pub fn opencode_base_url_or_default(&self) -> String {
@@ -355,6 +409,10 @@ fn from_keys(keys: &std::collections::BTreeMap<String, String>) -> ServerConfig 
             .get("PrefillAssistant")
             .and_then(|v| ini::parse_bool(v)),
         log_verbosity: keys.get("LogVerbosity").and_then(|v| ini::parse_int(v)),
+        save_state_on_shutdown: keys
+            .get("SaveStateOnShutdown")
+            .and_then(|v| ini::parse_bool(v)),
+        state_dir: opt_nonblank(keys.get("StateDir").cloned()),
         opencode_base_url: opt_nonblank(keys.get("OpencodeBaseUrl").cloned()),
         opencode_api_key: opt_nonblank(keys.get("OpencodeApiKey").cloned()),
     }
@@ -439,12 +497,28 @@ pub fn save(cfg: &ServerConfig) -> io::Result<()> {
 /// means nothing starts at all, not just one model.
 fn validate_for_save(cfg: &ServerConfig) -> io::Result<()> {
     ini::reject_comment_markers("ModelsDir", &cfg.models_dir_or_default())?;
+    // Same rule as ModelsDir, and with a second bite here: a truncated StateDir
+    // would reload as a path that does not exist, and llama.cpp rejects
+    // `--slot-save-path` on a missing directory by refusing to START.
+    //
+    // Only the EXPLICIT value is checked, not the resolved default: a marker can
+    // only arrive by being typed, and rejecting every save on a machine whose
+    // %LOCALAPPDATA% happens to contain a `;` would wedge the app over a path
+    // the user cannot edit from here. It also keeps this function free of
+    // `paths::`, which unit tests must not touch (see src/tests/mod.rs).
+    ini::reject_comment_markers("StateDir", cfg.state_dir.as_deref().unwrap_or(""))?;
     let overrides = cfg.override_tensor.clone().unwrap_or_default();
     ini::reject_comment_markers("OverrideTensor", &overrides)?;
     crate::tensor_override::validate(&overrides)
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
-    ini::reject_comment_markers("OpencodeBaseUrl", cfg.opencode_base_url.as_deref().unwrap_or(""))?;
-    ini::reject_comment_markers("OpencodeApiKey", cfg.opencode_api_key.as_deref().unwrap_or(""))?;
+    ini::reject_comment_markers(
+        "OpencodeBaseUrl",
+        cfg.opencode_base_url.as_deref().unwrap_or(""),
+    )?;
+    ini::reject_comment_markers(
+        "OpencodeApiKey",
+        cfg.opencode_api_key.as_deref().unwrap_or(""),
+    )?;
     Ok(())
 }
 
@@ -564,6 +638,16 @@ fn render(cfg: &ServerConfig) -> String {
     };
     let log_verbosity = cfg.log_verbosity_or_default();
 
+    // Like ModelsDir, StateDir is always written with its RESOLVED value rather
+    // than collapsing to a hint: the directory holds multi-GiB dumps, so where
+    // they land has to be visible in the file, not implied by a blank line.
+    let save_state_lit = if cfg.save_state_on_shutdown_or_default() {
+        "true"
+    } else {
+        "false"
+    };
+    let state_dir = cfg.state_dir_or_default();
+
     format!(
         "; Generated by llama-cpp-config.
 ;
@@ -628,6 +712,19 @@ LogVerbosity = {log_verbosity}
 ; the second 16-bit GEMM of a process there, so every BF16/F16 model aborts on
 ; its first prefill batch (ROCm issue #6461). Inert on CUDA / Vulkan builds.
 {rocblas_hipblaslt_line}
+; SaveStateOnShutdown: dump each loaded model's KV cache to StateDir when the
+; server stops (--slot-save-path + a /slots save call), and push the newest one
+; back on the next start. It buys back the one cost VRAM tuning cannot touch:
+; prefill is QUADRATIC in the prompt length and the cache dies with the process,
+; so a restart re-reads the whole conversation. Measured on a 234k-token prompt:
+; ~17 minutes of prefill against ~8.3 GiB of sequential IO. Off by default: each
+; snapshot costs that much disk, the stop waits for the write, and the next start
+; loads the model eagerly to push the state back in.
+SaveStateOnShutdown = {save_state_lit}
+; StateDir: where those snapshots go. One file per model, overwritten each time,
+; and dumps of models that are no longer loaded are pruned on save. Point it at a
+; data disk if the system drive is tight: a 262k-context snapshot is ~8.3 GiB.
+StateDir = {state_dir}
 ; OpencodeBaseUrl overrides the auto-derived integration URL (host:port/v1).
 ; OpencodeApiKey is the provider's API key for authentication.
 ; Both are useful when exposing llama-server through a reverse proxy or LLM gateway.
@@ -716,6 +813,10 @@ mod tests {
             // not vacuous for it.
             prefill_assistant: Some(false),
             log_verbosity: Some(2),
+            // Non-default (off is the framework default), and a StateDir off the
+            // system drive, which is the whole reason the path is overridable.
+            save_state_on_shutdown: Some(true),
+            state_dir: Some(r"E:\llama-state".into()),
             opencode_base_url: Some("https://llm.example.com".into()),
             opencode_api_key: Some("sk-proxy-key-123".into()),
         };
@@ -754,6 +855,13 @@ mod tests {
         // exported, so materializing a default would BE a decision.
         assert_eq!(reloaded.rocblas_use_hipblaslt, None);
         assert_eq!(reloaded.models_dir, Some(default_models_dir()));
+        // Snapshots are off until asked for, and StateDir materializes like
+        // ModelsDir: an 8 GiB-per-dump directory has to be visible in the file.
+        assert_eq!(reloaded.save_state_on_shutdown, Some(false));
+        assert_eq!(
+            reloaded.state_dir,
+            Some(ServerConfig::default().state_dir_or_default())
+        );
     }
 
     /// `RocblasUseHipblaslt = false` is a value, not an absence: the trap in a
@@ -918,6 +1026,34 @@ mod tests {
                 "error names the field"
             );
         }
+    }
+
+    /// StateDir gets the same treatment, and it matters more than for most
+    /// paths: a truncated one reloads as a directory that does not exist, and
+    /// llama.cpp refuses to START on a `--slot-save-path` it cannot stat.
+    /// ModelsDir is pinned alongside so the clean case is not vacuous.
+    #[test]
+    fn save_validation_rejects_comment_markers_in_state_dir() {
+        let with = |dir: &str| ServerConfig {
+            models_dir: Some(r"E:\llm".into()),
+            state_dir: Some(dir.into()),
+            ..Default::default()
+        };
+        assert!(validate_for_save(&with(r"E:\llama-state")).is_ok());
+        for hostile in [r"E:\state #1", r"E:\a;b"] {
+            let err = validate_for_save(&with(hostile)).expect_err(hostile);
+            assert!(
+                err.to_string().contains("StateDir"),
+                "error names the field"
+            );
+        }
+        // An unset StateDir must not be validated against the machine-derived
+        // default: that would drag `paths::` into a pure function.
+        assert!(validate_for_save(&ServerConfig {
+            models_dir: Some(r"E:\llm".into()),
+            ..Default::default()
+        })
+        .is_ok());
     }
 
     // OverrideTensor is refused on the same two grounds as the per-preset one,

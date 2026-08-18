@@ -150,7 +150,7 @@ export component ServerPage inherits ScrollView {
                 Button {
                     text: "Browse…";
                     clicked => {
-                        AppState.server_form.models_dir = AppState.browse_models_dir(AppState.server_form.models_dir);
+                        AppState.server_form.models_dir = AppState.browse_dir(AppState.server_form.models_dir);
                     }
                 }
             }
@@ -250,6 +250,40 @@ export component ServerPage inherits ScrollView {
                 EnumComboBox {
                     options: Options.log_levels;
                     value <=> AppState.server_form.log_verbosity;
+                }
+            }
+        }
+
+        SectionCard {
+            heading: "Conversation snapshots";
+            Text {
+                text: "Write each loaded model's KV cache to disk when the server stops, and push the newest one back on the next start. It buys back the one cost no VRAM tuning touches: reading a prompt is quadratic in its length and the cache dies with the process, so a restart re-reads the whole conversation. A 234k-token prompt costs about 17 minutes of prefill against roughly 8 GiB of sequential disk IO. Off by default: every snapshot costs that much disk, stopping waits for the write, and the next start loads the model eagerly to push the state back in.";
+                wrap: word-wrap;
+                font-size: 12px;
+                color: Palette.foreground.transparentize(Tokens.muted);
+            }
+            LabeledField {
+                label: "Save on shutdown";
+                hint: "Dump the running conversation to the snapshot folder when llama-server stops (--slot-save-path plus a /slots save call), and restore it at the next start.\nOne file per loaded model, overwritten each time; dumps of models that are no longer loaded are pruned.\nWorth it for long agentic sessions, pointless for short prompts.\ndefault = off.";
+                CheckBox {
+                    text: "snapshot the KV cache on stop and restore it on start";
+                    checked <=> AppState.server_form.save_state_on_shutdown;
+                }
+            }
+            LabeledField {
+                label: "Snapshot folder";
+                hint: "Where the dumps go. A snapshot is roughly one byte per byte of KV cache, and it scales with the tokens actually in the conversation, NOT with ctx-size: measured 4.4 GiB for a 127k-token conversation on a 27B model, where a full 262k context would be about 8.3 GiB.\nThe default sits under %LOCALAPPDATA%, on the system drive; point it at a data disk if C: is tight.\nThe folder is created at launch: llama.cpp refuses to start on a --slot-save-path it cannot find.";
+                LineEdit {
+                    text <=> AppState.server_form.state_dir;
+                    enabled: AppState.server_form.save_state_on_shutdown;
+                    placeholder-text: "folder for the KV-cache dumps";
+                }
+                Button {
+                    text: "Browse…";
+                    enabled: AppState.server_form.save_state_on_shutdown;
+                    clicked => {
+                        AppState.server_form.state_dir = AppState.browse_dir(AppState.server_form.state_dir);
+                    }
                 }
             }
         }
