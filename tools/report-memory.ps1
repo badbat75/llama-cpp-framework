@@ -757,15 +757,30 @@ foreach ($d in ($deviceRows | Sort-Object RequestedMiB -Descending)) {
     $pinnedFamMiB= if ($pinnedFam) { ($pinnedFam | Measure-Object MiB -Sum).Sum } else { 0 }
     $unexplained = if ($liveRow) { $liveRow.SharedMiB - $pinnedFamMiB } else { 0 }
 
-    # The diagnosis: asked for more than the card had free, so WDDM paged the rest
-    # out to system memory and every access to it now crosses PCIe. Note the log
-    # never accounts for the driver's own context (a few hundred MiB per backend),
-    # so 'requested' just under 'free at load' can still spill, hence the second
-    # arm, which trusts the live counter over the arithmetic. A few hundred MiB of
-    # shared is normal driver staging on both backends; only flag a real overflow.
+    # The diagnosis, and the arithmetic never gets the last word: asking for more than
+    # the card reported free does NOT prove anything paged. WDDM can satisfy it in
+    # dedicated VRAM anyway by trimming other processes, and 'free at load' is itself a
+    # snapshot taken before the weights land, from which the log's 'requested' omits the
+    # driver's own context (a few hundred MiB per backend). So when a live counter exists
+    # it decides: a spill shows up as SHARED memory beyond the backend's pinned buffers,
+    # and if that has not moved then the excess went into real VRAM and the finding is
+    # 'no headroom left', which is a different instruction to the reader than 'it is
+    # paging' (verified 2026-08-18: requested 85 MiB past free-at-load, dedicated grew by
+    # exactly the requested amount and shared stayed flat at 124 MiB).
+    #
+    # The corroboration threshold is deliberately lower than the standalone one below:
+    # here the arithmetic has already raised the suspicion, so a few hundred MiB of shared
+    # is enough to confirm it, whereas a device whose log fits needs a big shared
+    # allocation before it means anything at all. Both are above ordinary driver staging.
     if ($d.FreeAtLoadMiB -and $d.RequestedMiB -gt $d.FreeAtLoadMiB) {
         $over = $d.RequestedMiB - $d.FreeAtLoadMiB
-        Write-Host ("  OVERSUBSCRIBED by {0:N0} MiB: the excess lives in shared system memory, not VRAM." -f $over) -ForegroundColor Red
+        if (-not $liveRow) {
+            Write-Host ("  {0:N0} MiB PAST the {1:N0} MiB free at load; no live counter for this device, so whether it paged cannot be confirmed here." -f $over, $d.FreeAtLoadMiB) -ForegroundColor Yellow
+        } elseif ($unexplained -gt 256) {
+            Write-Host ("  OVERSUBSCRIBED by {0:N0} MiB against {1:N0} MiB free at load, and the live counter agrees: {2:N0} MiB of shared beyond the pinned {3} buffers. That excess crosses PCIe on every access." -f $over, $d.FreeAtLoadMiB, $unexplained, $family) -ForegroundColor Red
+        } else {
+            Write-Host ("  AT THE LIMIT: {0:N0} MiB past the {1:N0} MiB free at load, yet the driver placed it all in dedicated VRAM ({2:N0} MiB) and shared is {3:N0} MiB, {4:N0} of it pinned {5} buffers. Nothing is paging, but there is no headroom left for anything else on this card." -f $over, $d.FreeAtLoadMiB, $liveRow.DedicatedMiB, $liveRow.SharedMiB, $pinnedFamMiB, $family) -ForegroundColor Yellow
+        }
     } elseif ($liveRow -and $unexplained -gt 1024) {
         Write-Host ("  {0:N0} MiB in shared system memory beyond the {1:N0} MiB of pinned {2} buffers, though the log fits; driver context overhead pushed it over." -f $unexplained, $pinnedFamMiB, $family) -ForegroundColor Yellow
     } elseif ($liveRow -and $pinnedFamMiB -gt 1024) {
