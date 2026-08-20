@@ -1,0 +1,3 @@
+# Patch files are consumed by `git apply` against LF sources: a CRLF
+# checkout of one does not apply. Keep them byte-identical to upstream.
+*.patch text eol=lf

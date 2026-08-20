@@ -296,9 +296,21 @@ if ($clangPath -ne 'clang') {
 }
 $buildLines.Add("    Linker      = $(Fmt $linkerPath)")
 $buildLines.Add("    MarchFlags  = '-march=x86-64-v3'")
-$buildJobs = [math]::Max(1, [math]::Floor([Environment]::ProcessorCount * 3 / 4))
-$buildLines.Add('    # Parallel build jobs: 3/4 of logical cores, leaving headroom for')
-$buildLines.Add('    # interactive use during a long CUDA/HIP compile (0 = use all cores).')
+# 3/4 of the logical cores, and never all of them. The `Min(.., count - 1)` is
+# the reservation: at this ratio it does not bind on any real machine, and it
+# is kept deliberately, so that "one core stays free" is a property of the
+# formula rather than a side effect of the ratio that a later tuning pass could
+# silently take away. The outer Max keeps a 1-core machine at one job (0 would
+# be "build nothing"), the single case that cannot honour the reservation. Note
+# -j is a count of concurrent COMPILE PROCESSES, not a CPU quota: no affinity is
+# set, so nvcc (which forks cicc/ptxas per arch) and the threaded lld links can
+# still put the machine over that share.
+$buildJobs = [math]::Max(1, [math]::Min(
+    [math]::Floor([Environment]::ProcessorCount * 3 / 4),
+    [Environment]::ProcessorCount - 1))
+$buildLines.Add('    # Parallel build jobs: 3/4 of logical cores, never all of them, so at')
+$buildLines.Add('    # least one stays free for interactive use during a long CUDA/HIP')
+$buildLines.Add('    # compile (0 = use all cores).')
 $buildLines.Add("    BuildJobs   = [int]$buildJobs")
 $buildLines.Add('}')
 $buildDir = Join-Path $PSScriptRoot 'build'

@@ -24,15 +24,86 @@ if (-not (Test-Path "$($cfg.LlamaCppDir)\CMakeLists.txt")) {
     if ($LASTEXITCODE -ne 0) { throw "git fetch failed" }
 }
 
+# ── Out-of-tree source patches (PROVISIONAL by design) ────────────
+# patches\llama.cpp\*.patch are changes that are NOT in upstream llama.cpp and
+# that this framework carries on top of the release tag it builds. Every one of
+# them is expected to be TEMPORARY: the moment the same support lands upstream
+# the patch stops applying, the build fails fast (see the apply leg after the
+# checkout) and the file is meant to be DELETED, not rebased. When the directory
+# empties, this whole mechanism can go with it. patches\llama.cpp\README.md
+# holds, per patch, what it buys, its provenance, and how to tell at runtime
+# whether it is live.
+#
+# The clone is left PATCHED between builds (that is the tree the last build's
+# binaries came from), so the patches have to be REVERTED before a checkout that
+# moves HEAD, or a tag bump touching a patched file aborts it with "local
+# changes would be overwritten". They are reverted only in that case: on the
+# common re-run, where the tag has not moved, rewriting the file would bump its
+# mtime and cost a needless recompile plus a relink of llama.dll and everything
+# downstream of it.
+$llamaPatchDir = Join-Path $PSScriptRoot 'patches\llama.cpp'
+$llamaPatches  = @(Get-ChildItem $llamaPatchDir -Filter '*.patch' -File -ErrorAction SilentlyContinue |
+    Sort-Object Name)
+
+# Can this patch be applied (or un-applied) to the tree as it stands? A failing
+# `git apply --check` is an ANSWER here, not an error: EAP is relaxed
+# function-locally around the stderr redirect and the exit code is read directly.
+function Test-GitApply {
+    param([Parameter(Mandatory)][string] $Patch, [switch] $Reverse)
+    $ErrorActionPreference = 'Continue'
+    $gitArgs = @('-C', $cfg.LlamaCppDir, 'apply', '--check')
+    if ($Reverse) { $gitArgs += '--reverse' }
+    git @gitArgs -- $Patch 2>$null
+    return $LASTEXITCODE -eq 0
+}
+
 # Newest release tag reachable from origin/master (the highest bNNNN); detach the
 # working tree onto it so the build, and `git describe` in 03-package.ps1, see a
 # clean tagged release.
 $llamaTag = (git -C $cfg.LlamaCppDir describe --tags --abbrev=0 origin/master 2>$null | Select-Object -First 1)
 if (-not $llamaTag) { throw "could not resolve latest llama.cpp release tag from origin/master" }
 $llamaTag = $llamaTag.Trim()
+
+# Does the checkout below actually move HEAD? (`rev-parse <tag>^{commit}` peels
+# an annotated tag to the commit it points at, which is what a detached HEAD
+# holds.) Only then are the patches in the way.
+$headSha = (git -C $cfg.LlamaCppDir rev-parse HEAD).Trim()
+$tagSha  = (git -C $cfg.LlamaCppDir rev-parse "$llamaTag^{commit}").Trim()
+if ($headSha -ne $tagSha) {
+    foreach ($patch in $llamaPatches) {
+        if (-not (Test-GitApply $patch.FullName -Reverse)) { continue }
+        git -C $cfg.LlamaCppDir apply --reverse -- $patch.FullName
+        if ($LASTEXITCODE -ne 0) { throw "git apply --reverse $($patch.Name) failed" }
+        Write-Host "Reverted patch for a clean checkout: $($patch.Name)" -ForegroundColor DarkGray
+    }
+}
+
 Write-Host "Checking out llama.cpp release tag: $llamaTag" -ForegroundColor Cyan
 git -C $cfg.LlamaCppDir checkout --detach $llamaTag
 if ($LASTEXITCODE -ne 0) { throw "git checkout $llamaTag failed" }
+
+# Re-apply the out-of-tree patches onto the checked-out tag. Three outcomes, and
+# the third is the whole point of probing first: it applies (normal), it is
+# already applied (the tag did not move, or an interrupted build left it in
+# place), or it applies in NEITHER direction, which means upstream
+# moved the code out from under it. That last case is deliberately FATAL: a
+# patch that silently stops applying ships a binary behaving differently from
+# the last one built, with nothing in the log saying so. When the reason is that
+# upstream has landed the same feature, the fix is to DELETE the patch file
+# (git history keeps it), not to rebase it.
+foreach ($patch in $llamaPatches) {
+    if (Test-GitApply $patch.FullName) {
+        git -C $cfg.LlamaCppDir apply -- $patch.FullName
+        if ($LASTEXITCODE -ne 0) { throw "git apply $($patch.Name) failed" }
+        Write-Host "Applied patch: patches\llama.cpp\$($patch.Name)" -ForegroundColor Cyan
+    } elseif (Test-GitApply $patch.FullName -Reverse) {
+        Write-Host "Patch already applied: patches\llama.cpp\$($patch.Name)" -ForegroundColor DarkGray
+    } else {
+        throw ("patches\llama.cpp\$($patch.Name) applies in neither direction to $llamaTag. " +
+               "Upstream moved the code it touches: refresh the patch, or delete it if upstream " +
+               "now ships the same support. See patches\llama.cpp\README.md.")
+    }
+}
 
 $buildDir = Join-Path $PSScriptRoot "build\llama.cpp-cmake"
 New-Item -ItemType Directory -Path $buildDir -Force | Out-Null
