@@ -2,7 +2,7 @@
 
 `02-build.ps1` applies every `*.patch` in this directory to `$cfg.LlamaCppDir`
 (`build\llama.cpp`) in file-name order, right after it detaches the clone onto
-the newest `bNNNN` release tag, and **reverts them again before the next
+the newest `vX.Y.Z` release tag, and **reverts them again before the next
 fetch/checkout** so the checkout always runs on a clean tree (a tag bump that
 touches a patched file would otherwise abort with "local changes would be
 overwritten"). Both legs probe with `git apply --check` first, so re-running

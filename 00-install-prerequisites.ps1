@@ -10,7 +10,7 @@
 # SDKs (CUDA, Vulkan) are only probed and their install URLs printed.
 #
 # When build\config-build.psd1 + llama.cpp clone exist, also fetches the source
-# and flags a rebuild when a newer release tag (bNNNN) is available. (No `git
+# and flags a rebuild when a newer release tag (vX.Y.Z) is available. (No `git
 # pull`: 02-build.ps1 pins the clone to a tag on a detached HEAD, so a pull
 # would always fail; the checkout onto the new tag is 02-build.ps1's job.)
 #
@@ -50,8 +50,9 @@ function Get-WingetVersion {
     return $null
 }
 
-# The checked-out llama.cpp build tag (02-build.ps1 detaches onto the newest
-# bNNNN release tag, so `git describe --tags` is e.g. "b9871").
+# The checked-out llama.cpp tag (02-build.ps1 detaches onto the newest vX.Y.Z
+# RELEASE tag, so `git describe --tags` is e.g. "v0.2.0"; on a commit tagged both
+# ways describe prefers the annotated release tag over the lightweight bNNNN).
 function Get-GitDescribe {
     param([string]$RepoDir)
     # Same PS 5.1 stderr-redirect rationale as Get-WingetVersion: a tagless /
@@ -320,9 +321,13 @@ if (Test-IsAdmin) {
 }
 
 # ── Check llama.cpp source for a newer release tag ──────────────────
-# The clone sits on a detached HEAD (02-build.ps1 pins it to a bNNNN tag), so
-# no pull here, just fetch and compare against the newest tag reachable from
-# origin/master (the same tag 02-build.ps1 would check out).
+# The clone sits on a detached HEAD (02-build.ps1 pins it to a vX.Y.Z release
+# tag), so no pull here, just fetch and compare against the newest RELEASE tag
+# reachable from origin/master. The selection has to be the same one
+# 02-build.ps1 makes, or this report recommends a rebuild for a nightly that
+# build would never check out: highest `^v\d+\.\d+\.\d+$` among the tags merged
+# into master, version-sorted, nightlies and pre-releases ignored. The rationale
+# for each half of that lives at the selection in 02-build.ps1.
 
 $latestLlama = $null
 if ($cfg -and $beforeLlama) {
@@ -336,9 +341,11 @@ if ($cfg -and $beforeLlama) {
         # Get-WingetVersion; this one runs at script scope, not in a function).
         $prevEap = $ErrorActionPreference
         $ErrorActionPreference = 'Continue'
-        $latestLlama = (git -C $cfg.LlamaCppDir describe --tags --abbrev=0 origin/master 2>$null | Select-Object -First 1)
+        $latestLlama = (git -C $cfg.LlamaCppDir tag --list 'v[0-9]*' --merged origin/master --sort=-v:refname 2>$null |
+            ForEach-Object { $_.Trim() } |
+            Where-Object { $_ -match '^v\d+\.\d+\.\d+$' } |
+            Select-Object -First 1)
         $ErrorActionPreference = $prevEap
-        if ($latestLlama) { $latestLlama = $latestLlama.Trim() }
     }
 }
 

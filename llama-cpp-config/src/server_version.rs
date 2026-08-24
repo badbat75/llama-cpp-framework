@@ -29,16 +29,22 @@ fn run(exe: &std::path::Path) -> Option<String> {
 /// older     version: 9870 (2d973636e)
 /// ```
 ///
-/// The badge keeps the version and the BUILD number and drops the commit: that
-/// number is `bNNNN` without the `b`, i.e. the same identity the release tags,
-/// the installer name and `LlamaBuild` in the registry all carry, so it is the
-/// half a user can actually match against something. The version is prepended
-/// only when the binary reports one, so an older llama-server reads `b9870`
-/// rather than growing an invented `0.0.0`.
+/// The badge keeps the version and the BUILD number and drops the commit,
+/// because since 2026-08 those are the two halves a user can match against
+/// something and they name different things: the VERSION is upstream's release
+/// (`vX.Y.Z`), which is what the framework now builds from and therefore what
+/// the installer name and `LlamaBuild` in the registry carry, while the build
+/// number is the `bNNNN` nightly tag on the same commit, which is what
+/// llama.cpp's own issues and PRs cite. The version is prepended only when the
+/// binary reports one, so an older llama-server reads `b9870` rather than
+/// growing an invented `0.0.0`.
 ///
 /// The `-dev` suffix is llama.cpp's own: `LLAMA_BUILD_IS_DEV` defaults ON and
 /// upstream turns it off only when building from a release tag, so it is a fact
-/// about the binary and is shown as-is rather than trimmed.
+/// about the binary and is shown as-is rather than trimmed. Since the framework
+/// builds only release tags it passes `OFF` unconditionally (02-build.ps1), so a
+/// `-dev` in this badge says the server being probed did not come from this
+/// framework's packaging.
 ///
 /// The input is the combined stdout+stderr, which can carry noise around the
 /// version line (dynamic-backend builds print `load_backend: …` banners), so

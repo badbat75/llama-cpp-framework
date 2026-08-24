@@ -1,7 +1,8 @@
 ; llama.cpp NSIS Installer Template
 ; Placeholders replaced by 03-package.ps1:
 ;   @VERSION@ (framework / configurator version), @LLAMA_BUILD@ (bundled
-;   llama.cpp build, e.g. b3456), @STAGING_DIR@, @OUTPUT_FILE@
+;   llama.cpp release tag, e.g. v0.2.0; a bNNNN build number only when the
+;   checkout was not on a release), @STAGING_DIR@, @OUTPUT_FILE@
 
 !include "MUI2.nsh"
 !include "WinMessages.nsh"
@@ -56,6 +57,28 @@ Page custom CheckPreviousInstall
 
 !insertmacro MUI_LANGUAGE "English"
 
+; ── Root-level leftovers from OLDER layouts ─────────────────────────
+; Installs up to 2026-06-30 put llama-cpp-config.exe and llama.ico at the
+; install ROOT; the tree then moved under bin\ and no uninstall looked there
+; again, so that June copy survived every upgrade since. It also kept $INSTDIR
+; alive, because the closing RMDir is non-recursive on purpose ($INSTDIR is
+; user-chosen, and RMDir /r would follow a careless choice down a shared folder
+; or a drive root). Hence an explicit list, and an entry may only be retired
+; once no installed version can still have written it.
+;
+; Used from BOTH sides on purpose. The uninstaller is the obvious place, but on
+; its own the cure would always arrive one generation late: an upgrade runs the
+; uninstaller ALREADY on disk, which is the old buggy one, while the fixed one
+; is merely written during that same install and does not run until the next.
+; So the installer repeats the cleanup after the old uninstaller has had its
+; turn, and trusts nothing it did. A macro rather than two copies, because two
+; copies of a list whose whole job is to not forget an entry will drift.
+!macro CleanLegacyRoot
+    Delete "$INSTDIR\llama-cpp-config.exe"
+    Delete "$INSTDIR\llama.ico"
+    Delete "$INSTDIR\uninstall.exe"
+!macroend
+
 ; ── Upgrade: remove previous installation silently ──────────────────
 Function CheckPreviousInstall
     ReadRegStr $0 HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\llama.cpp" "UninstallString"
@@ -75,8 +98,15 @@ Function CheckPreviousInstall
         StrLen $3 $2
         IntOp $3 $3 - 1
         StrCpy $2 $2 $3     ; remove last char (quote)
+        ; `_?=` keeps the uninstaller from relocating to $TEMP, which is what
+        ; makes ExecWait able to wait for it, and is also why it cannot delete
+        ; itself: that is finished here, once ExecWait has returned and the
+        ; image is no longer locked. Both layouts are cleared, because the
+        ; installer being replaced may predate the move into bin\.
         ExecWait '"$2" /S _?=$INSTDIR'
-        Delete "$INSTDIR\uninstall.exe"
+        Delete "$INSTDIR\bin\llama-cpp-uninstall.exe"
+        !insertmacro CleanLegacyRoot
+        RMDir "$INSTDIR\bin"
         RMDir "$INSTDIR"
     done:
 FunctionEnd
@@ -135,8 +165,24 @@ Section "llama.cpp binaries (required)" SecMain
     File "@STAGING_DIR@\llama-cpp-config.exe"
     File "@STAGING_DIR@\llama.ico"
 
-    ; Uninstaller
-    WriteUninstaller "$INSTDIR\uninstall.exe"
+    ; Uninstaller. Lives in bin\ so the install root holds nothing but bin\ and
+    ; lib\: a file at the root outlives every uninstall, because the Uninstall
+    ; section's closing RMDir is non-recursive on purpose (see there).
+    ;
+    ; The name is namespaced rather than a bare `uninstall.exe` because bin\ is
+    ; what the optional PATH component puts on the SYSTEM path: a generic
+    ; `uninstall` command in every shell on the machine is the same mistake as
+    ; shipping llama.cpp's `test*.exe`, which 03-package.ps1 prunes for exactly
+    ; that reason.
+    ;
+    ; Self-deletion is not a problem in either launch mode. Run normally, an
+    ; NSIS uninstaller copies itself to $TEMP and executes from there, so the
+    ; `RMDir /r "$INSTDIR\bin"` that removes it is deleting a file nothing holds
+    ; open. Run from CheckPreviousInstall with `_?=$INSTDIR`, that copy is
+    ; suppressed by design (the caller has to be able to wait for it), so it
+    ; cannot delete itself; there the caller finishes the job after ExecWait
+    ; returns and the lock is gone.
+    WriteUninstaller "$INSTDIR\bin\llama-cpp-uninstall.exe"
 
     ; Registry: Add/Remove Programs
     WriteRegStr HKLM "Software\llama.cpp" "InstallDir" "$INSTDIR"
@@ -144,7 +190,7 @@ Section "llama.cpp binaries (required)" SecMain
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\llama.cpp" \
         "DisplayName" "llama.cpp-framework v@VERSION@ (llama @LLAMA_BUILD@)"
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\llama.cpp" \
-        "UninstallString" "$\"$INSTDIR\uninstall.exe$\""
+        "UninstallString" "$\"$INSTDIR\bin\llama-cpp-uninstall.exe$\""
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\llama.cpp" \
         "DisplayVersion" "@VERSION@"
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\llama.cpp" \
@@ -228,7 +274,9 @@ Section "Uninstall"
     ; Files
     RMDir /r "$INSTDIR\bin"
     RMDir /r "$INSTDIR\lib"
-    Delete "$INSTDIR\uninstall.exe"
+
+    ; Root-level leftovers from older layouts (see the macro for the why).
+    !insertmacro CleanLegacyRoot
     RMDir "$INSTDIR"
 
     ; Start Menu

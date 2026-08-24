@@ -11,9 +11,11 @@ Write-Host ""
 Write-Host "  === llama.cpp (CMake) ===" -ForegroundColor Yellow
 
 # Clone llama.cpp if missing, otherwise fetch. Either way we build from the latest
-# release TAG (bNNNN) rather than master HEAD: pinning to a tag gives a clean
-# `git describe` (e.g. `b9867`, not `b9867-1-g…`) that names the bundled build and
-# the installer package, and ships a tagged commit instead of an arbitrary master tip.
+# RELEASE tag (vX.Y.Z) rather than master HEAD: pinning to a tag gives a clean
+# `git describe` (e.g. `v0.2.0`, not `v0.2.0-11-g…`) that names the bundled
+# llama.cpp and the installer package, and ships a tagged release instead of an
+# arbitrary master tip. See the tag selection below for why the bNNNN nightlies
+# upstream also tags are deliberately ignored.
 if (-not (Test-Path "$($cfg.LlamaCppDir)\CMakeLists.txt")) {
     Write-Host "llama.cpp not found at $($cfg.LlamaCppDir), cloning..." -ForegroundColor Yellow
     git clone https://github.com/ggerganov/llama.cpp $cfg.LlamaCppDir
@@ -57,12 +59,37 @@ function Test-GitApply {
     return $LASTEXITCODE -eq 0
 }
 
-# Newest release tag reachable from origin/master (the highest bNNNN); detach the
-# working tree onto it so the build, and `git describe` in 03-package.ps1, see a
-# clean tagged release.
-$llamaTag = (git -C $cfg.LlamaCppDir describe --tags --abbrev=0 origin/master 2>$null | Select-Object -First 1)
-if (-not $llamaTag) { throw "could not resolve latest llama.cpp release tag from origin/master" }
-$llamaTag = $llamaTag.Trim()
+# ── Which llama.cpp does this build ship? The newest RELEASE ──────
+# Upstream tags two different things. Every merge to master gets a lightweight
+# nightly tag `bNNNN`; a release additionally gets an annotated `vX.Y.Z` on that
+# same commit (the semver scheme adopted in b10398, alongside upstream's own
+# release workflows). The framework tracks the RELEASES, so the nightlies are
+# ignored here even when they are newer: at the time of writing origin/master
+# was at b10605 while the newest release was v0.2.0 (= b10566).
+#
+# `git describe --abbrev=0` cannot answer this, which is why it is gone: it
+# returns the tag NEAREST to origin/master, i.e. whichever nightly was cut last.
+# The listing below asks the opposite question, "of the release tags that are
+# ancestors of master, which is the highest", with `--merged` doing the
+# reachability half and `--sort=-v:refname` ordering the rest as VERSIONS rather
+# than as strings (so v0.10.0 outranks v0.2.0, which a lexical sort gets wrong).
+#
+# The `^v\d+\.\d+\.\d+$` filter is the strict half and is deliberate: a
+# pre-release tag (`v0.3.0-rc1`) sorts above the release it precedes, and a
+# release candidate is not what "the latest release" means. `--list 'v[0-9]*'`
+# only narrows the ref walk; the regex is what decides.
+#
+# Detach the working tree onto the winner so the build, and `git describe` in
+# 03-package.ps1, see a clean tagged release.
+$llamaTag = (git -C $cfg.LlamaCppDir tag --list 'v[0-9]*' --merged origin/master --sort=-v:refname 2>$null |
+    ForEach-Object { $_.Trim() } |
+    Where-Object { $_ -match '^v\d+\.\d+\.\d+$' } |
+    Select-Object -First 1)
+if (-not $llamaTag) {
+    throw ("could not resolve a llama.cpp release tag (vX.Y.Z) reachable from origin/master in " +
+           "$($cfg.LlamaCppDir). Check the fetch above brought tags down; upstream has tagged " +
+           "releases this way since b10398.")
+}
 
 # Does the checkout below actually move HEAD? (`rev-parse <tag>^{commit}` peels
 # an annotated tag to the commit it points at, which is what a detached HEAD
@@ -241,18 +268,16 @@ $cmakeArgs = @(
 
 # llama.cpp calls itself "<X.Y.Z>-dev" unless told otherwise: CMakeLists.txt
 # defaults LLAMA_BUILD_IS_DEV to ON, with "set this to OFF when making a release
-# from a release tag (vX.Y.Z)". We check out a tag and never a branch tip, so a
-# SEMVER tag (the scheme upstream adopted in b10398, alongside its own release
-# workflows) is exactly that case and the -dev suffix would be a lie; a plain
-# bNNNN tag is a nightly and keeps it. The value rides a compile definition on
-# the `llama` target (src/CMakeLists.txt), so it reaches `llama-server
-# --version` and from there the configurator's footer badge. Flipping it
-# recompiles that target, not ggml's CUDA/HIP kernels.
-$cmakeArgs += if ($llamaTag -match '^v\d+\.\d+\.\d+$') {
-    "-DLLAMA_BUILD_IS_DEV=OFF"
-} else {
-    "-DLLAMA_BUILD_IS_DEV=ON"
-}
+# from a release tag (vX.Y.Z)". That is exactly and only what we check out (the
+# tag selection above admits nothing else), so the -dev suffix would be a lie
+# here and the flag is unconditional; it was a conditional back when the
+# checkout could land on a bNNNN nightly, which the framework no longer builds.
+# The value rides a compile definition on the `llama` target
+# (src/CMakeLists.txt), so it reaches `llama-server --version` and from there
+# the configurator's footer badge, which is where the difference is visible:
+# `0.2.0 · b10566` rather than `0.2.0-dev · b10566`. Flipping it recompiles that
+# target, not ggml's CUDA/HIP kernels.
+$cmakeArgs += "-DLLAMA_BUILD_IS_DEV=OFF"
 
 # Pinned Vulkan SDK paths (see Find-VulkanSdk above), empty when no versioned
 # install was found, in which case FindVulkan does its own search.

@@ -90,14 +90,14 @@ Runtime configs are created and edited with `llama-cpp-config` (GUI when launche
 |--------|-------------|
 | `00-install-prerequisites.ps1` | Idempotent toolchain bootstrapper. Installs missing winget packages (PowerShell 7+, OpenSSL, NSIS) and upgrades present ones in a single UAC-elevated session; fetches the llama.cpp clone and flags a rebuild when a newer release tag is available; flags CUDA / Vulkan / HIP SDKs for manual install; reports version changes. |
 | `01-configure.ps1` | Detects environment, verifies tools, writes `config-build.psd1`. Accepts `-LlamaCppDir`. |
-| `02-build.ps1` | Builds **both** llama.cpp (CMake configure out-of-source into `build\llama.cpp-cmake\` + Ninja, checked out at the newest `bNNNN` release tag) **and** `llama-cpp-config` (`cargo build --release`; no intermediate copy: packaging stages it straight from cargo's target dir). Auto-clones llama.cpp into `build\llama.cpp\`. Uses sccache when available. |
+| `02-build.ps1` | Builds **both** llama.cpp (CMake configure out-of-source into `build\llama.cpp-cmake\` + Ninja, checked out at the newest `vX.Y.Z` release tag: upstream also tags every merge to master `bNNNN`, and those nightlies are not candidates) **and** `llama-cpp-config` (`cargo build --release`; no intermediate copy: packaging stages it straight from cargo's target dir). Auto-clones llama.cpp into `build\llama.cpp\`. Uses sccache when available. |
 | `03-package.ps1` | Stages from `build\llama.cpp-cmake\` + `llama-cpp-config\target\release\` into `build\staging\`, then runs NSIS to produce `dist\llama-cpp-framework-v<version>-<llamaBuild>-<arch>-setup.exe`. |
 | `common.ps1` | Shared bootstrap: loads `$cfg` from `config-build.psd1`, prepends ROCm `bin\` to PATH, exposes `Enable-VsDevShell` as a function. VS Dev Shell activation is **opt-in**: only build/package scripts call it. |
 | `llama-cpp-config\` | Rust GUI + CLI configurator for `server.ini` / `presets.ini`, opencode/Claude Code integrations, and llama-server start/stop. See [llama-cpp-config\README.md](llama-cpp-config/README.md). |
 
 ## Packaging
 
-`03-package.ps1` produces a Windows installer at `dist\llama-cpp-framework-v<version>-<llamaBuild>-<arch>-setup.exe` (e.g. `llama-cpp-framework-v1.2.7-b9871-x64-setup.exe`). The installer:
+`03-package.ps1` produces a Windows installer at `dist\llama-cpp-framework-v<version>-<llamaRelease>-<arch>-setup.exe` (e.g. `llama-cpp-framework-v1.11.2-v0.2.0-x64-setup.exe`: the framework version first, the bundled llama.cpp release second). The installer:
 
 - Installs llama.cpp binaries to `C:\Program Files\llama.cpp\` (`llama-cpp-config.exe` and `llama.ico` go into `bin\` next to `llama-server.exe`).
 - Optionally adds `bin\` to the system PATH.
