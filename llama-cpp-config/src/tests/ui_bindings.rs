@@ -118,6 +118,98 @@ fn set_server_form(st: &AppState, mutate: impl FnOnce(&mut ServerForm)) {
     st.set_server_form(form);
 }
 
+/// The "a wrapped value escapes its card" regression (shipped in v1.11.2, fixed
+/// in v1.11.3): a long `Draft` value in the Models tab's "Model info" card was
+/// painted OUTSIDE the card's rounded rectangle, over the heading of the card
+/// below it.
+///
+/// Cause, and why only a geometry test can see it: Slint measures a wrapping
+/// `Text` against a width the layout supplies, and across a component boundary
+/// (`InfoRow` is one) that width is the component's own *preferred* one, i.e.
+/// what the text would take on a single unwrapped line. A value wrapping to
+/// three lines was therefore published as one, the card was sized two lines
+/// short, and the rows kept painting at their real height. Every string involved
+/// is correct, so no round-trip or binding test can catch it; only the rows'
+/// position RELATIVE to their card gives it away. `ui/components.slint`'s
+/// `WrapText` is the fix, and this is what pins it.
+///
+/// The values are set directly on `AppState` (the GGUF path needs real model
+/// files) and cleared again, so the later phases see the state they expect.
+fn assert_wrapped_info_row_stays_inside_its_card(app: &AppWindow, st: &AppState) {
+    use i_slint_backend_testing::ElementQuery;
+
+    // Long enough to wrap whatever width the window in `realized_app` gives the
+    // editor column, and shaped like the real thing (the report was an MTP
+    // drafter's line). ASCII separators: the glyph whitelist is not the subject
+    // here, and a real `·` would tie this test to `binding_lint`'s RENDERABLE.
+    st.set_model_info_ready(true);
+    st.set_model_info_has_draft_file(true);
+    st.set_model_info_draft(slint::SharedString::from(
+        "MTP: 1 nextn layer / Qwen3.8-27B-Uncensored-HauhauCS-Aggressive-FastMTP-32K.gguf: \
+         qwen35 / Q3_K_M / 65 layers / nextn 1, plus enough further text that this value has \
+         to wrap over three lines even in a generously wide window, which is exactly the room \
+         the card around it has to make",
+    ));
+    st.set_model_info_draft_file(slint::SharedString::from(
+        "qwen35 / Q3_K_M / 65 layers / nextn 1",
+    ));
+    let check = |at: &str| {
+        itest::mock_elapsed_time(std::time::Duration::from_millis(16));
+        // The card is found by its heading: `SectionCard` starts AT its heading
+        // Text, so the two share a top edge.
+        let heading = ElementQuery::from_root(app)
+            .match_descendants()
+            .match_predicate(|e| e.accessible_label().is_some_and(|l| l == "Model info"))
+            .find_first()
+            .expect("no 'Model info' heading on the Models tab");
+        let top = heading.absolute_position().y;
+        let card = ElementQuery::from_root(app)
+            .match_descendants()
+            .match_inherits("SectionCard")
+            .find_all()
+            .into_iter()
+            .find(|e| (e.absolute_position().y - top).abs() < 0.5)
+            .expect("no SectionCard at the 'Model info' heading");
+        let card_bottom = card.absolute_position().y + card.size().height;
+
+        // The rows all live in that one card (the Models tab has no other
+        // InfoRow), so the lowest bottom edge is the one to check.
+        let rows = ElementQuery::from_root(app)
+            .match_descendants()
+            .match_inherits("InfoRow")
+            .find_all();
+        let wrapped = rows.iter().any(|e| e.size().height > 20.0);
+        assert!(
+            wrapped,
+            "{at}: no InfoRow wrapped, so the fixture stopped exercising the bug"
+        );
+        let rows_bottom = rows
+            .iter()
+            .map(|e| e.absolute_position().y + e.size().height)
+            .fold(f32::MIN, f32::max);
+        assert!(
+            rows_bottom <= card_bottom,
+            "{at}: a Model-info row paints outside its card: rows end at \
+             {rows_bottom}, the card at {card_bottom} (card top {top}, height {})",
+            card.size().height
+        );
+    };
+
+    // Both widths, because the whole defect is width-dependent: the narrow one
+    // is the window's own `min-width` (ui/app.slint), i.e. the tightest the user
+    // can pull the editor column, and the one the report came from.
+    check("wide window");
+    app.window().set_size(slint::PhysicalSize::new(888, 3200));
+    check("narrow window");
+    app.window().set_size(slint::PhysicalSize::new(1400, 3200));
+
+    st.set_model_info_ready(false);
+    st.set_model_info_has_draft_file(false);
+    st.set_model_info_draft(slint::SharedString::from(""));
+    st.set_model_info_draft_file(slint::SharedString::from(""));
+    itest::mock_elapsed_time(std::time::Duration::from_millis(16));
+}
+
 #[test]
 fn editable_widgets_track_model_after_edit() {
     let app = realized_app();
@@ -236,6 +328,9 @@ fn editable_widgets_track_model_after_edit() {
     // (a bare property change doesn't rebuild the item tree without a render).
     st.set_current_tab(1);
     itest::mock_elapsed_time(std::time::Duration::from_millis(1));
+
+    // A wrapped Model-info value must not paint outside its card (v1.11.3).
+    assert_wrapped_info_row_stays_inside_its_card(&app, &st);
 
     // LineEdit: `text <=> AppState.form.ctx_size` (an INTEGER field: since v1.5.0
     // they are all text, see the note on the port above).

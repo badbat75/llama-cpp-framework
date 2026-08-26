@@ -476,10 +476,6 @@ fn refresh_file_options(app: &AppWindow, state: &Rc<RefCell<State>>) {
     let models_dir = server_cfg::load().models_dir_or_default();
     let form = s.get_form();
 
-    // Note: the trailing update_model_info() re-walks mtps\ / dflashs\ on its
-    // own (gguf::external_drafters), a cheap directory listing, kept so that
-    // helper stays self-contained for its other callers (model_changed,
-    // draft_picked), which have no scan in hand.
     let model_scan_result = model_scan::list(&models_dir, model_scan::Category::Model.subdir());
     let mmproj_scan_result = model_scan::list(&models_dir, model_scan::Category::Mmproj.subdir());
     let mtp_scan_result = model_scan::list(&models_dir, model_scan::Category::Mtp.subdir());

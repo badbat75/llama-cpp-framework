@@ -247,7 +247,7 @@ export component ModelsPage inherits HorizontalLayout {
                     }
                     InfoRow {
                         label: "Draft";
-                        hint: "Whether the model embeds MTP (next-n) layers, and whether a matching MTP/DFlash drafter sits in your mtps\\ / dflashs\\ folders; pick it as the Draft model in the Assets card above.";
+                        hint: "What actually drafts for this preset: the MTP (next-n) layers the model itself embeds, plus the draft file picked in the Assets card above (the row below reads that file's header).\nNothing else appears here. A drafter sitting in mtps\\ / dflashs\\ that this preset does not point at is not part of the config, and naming it made this row read as if it were: it is offered in the Draft model picker above and nowhere else.\nnone = no embedded heads and no draft file: this preset does not speculate.";
                         value: AppState.model_info_draft;
                     }
                     if AppState.model_info_has_draft_file : InfoRow {

@@ -644,9 +644,10 @@ fn preset_written(app: &AppWindow, state: &Rc<RefCell<State>>, want: Option<&str
 // ── Model-info box (GGUF reads) ───────────────────────────────────────
 
 /// Fill the read-only "Model info" box from the selected model's GGUF header
-/// (read via `ggml-base.dll`), enriched with the selected mmproj and draft
-/// headers plus a cross-reference of the framework's MTP/DFlash drafters. Called
-/// whenever the model/mmproj/draft field changes (combo pick, preset load).
+/// (read via `ggml-base.dll`), enriched with the headers of the mmproj and the
+/// draft file this preset SELECTS, and nothing that it doesn't (see
+/// `gguf::draft_line`). Called whenever the model/mmproj/draft field changes
+/// (combo pick, preset load).
 /// `pub(super)` so the shared `refresh_file_options` in gui.rs can drive it.
 pub(super) fn update_model_info(app: &AppWindow) {
     let s = app.global::<AppState>();
@@ -703,9 +704,6 @@ pub(super) fn update_model_info(app: &AppWindow) {
         return;
     };
 
-    // SAVED config, like refresh_file_options; see the note there.
-    let models_dir = server_cfg::load().models_dir_or_default();
-    let ext = gguf::external_drafters(&models_dir, &model);
     s.set_model_info_kind(SharedString::from(info.kind_line()));
     s.set_model_info_n_layer(info.n_layer as i32);
     s.set_model_info_has_moe(info.is_moe);
@@ -718,7 +716,15 @@ pub(super) fn update_model_info(app: &AppWindow) {
     s.set_model_info_embd_warning(SharedString::from(info.embd_pin_warning()));
     s.set_model_info_layers_ctx(SharedString::from(info.layers_ctx_line()));
     s.set_model_info_attn(SharedString::from(info.attn_line()));
-    s.set_model_info_draft(SharedString::from(gguf::draft_line(&info, &ext)));
+    // The row reports only what this preset LOADS: the model's own MTP heads
+    // plus the picked draft file, hence the preset's `--model-draft` here. It
+    // used to also advertise the best filename match in `mtps\`, which is what
+    // made it read the same whether a draft was selected or not (see
+    // `draft_line`).
+    s.set_model_info_draft(SharedString::from(gguf::draft_line(
+        &info,
+        form.model_draft.as_str(),
+    )));
     // Chat template: short status for the InfoRow, raw text for the Preview
     // modal (empty when none; also gates the Preview button visibility).
     s.set_model_info_chat_template(SharedString::from(info.chat_template_line()));

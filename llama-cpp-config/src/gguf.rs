@@ -4,6 +4,11 @@
 //! the selected mmproj (clip) and draft/DFlash headers. Also classifies a draft
 //! GGUF into the `--spec-type` it calls for (`draft_spec_type`).
 //!
+//! Every line here describes a file the preset actually LOADS. That is a rule,
+//! not an accident: the box used to also advertise the drafter whose filename
+//! best matched the model, and a row that names a file nobody loaded is read as
+//! a claim about the running config (see `draft_line`).
+//!
 //! Metadata is read with llama.cpp's OWN gguf reader: we runtime-load
 //! `ggml-base.dll` (shipped next to `llama-cpp-config.exe` in `bin\`) and call
 //! `gguf_init_from_file` with `no_alloc = true`, so only the header + tensor
@@ -21,8 +26,6 @@
 //! value-type enum mirrors `ggml/include/gguf.h`.
 
 use std::path::Path;
-
-use crate::model_scan;
 
 /// Separator between the parts of a Model-info box line ("arch · quant · size").
 /// Single source so every line joins on the exact same glyph + spacing.
@@ -84,16 +87,6 @@ pub struct MmprojInfo {
     pub vision_block_count: u32,
     pub image_size: u32,
     pub patch_size: u32,
-}
-
-/// External speculators found in the framework's `mtps\` / `dflashs\` folders,
-/// cross-referenced by filename against the selected model.
-#[derive(Debug, Clone, Default)]
-pub struct ExternalDraft {
-    /// Best filename-overlap match, if any: (label, "MTP" | "DFlash").
-    pub best: Option<(String, &'static str)>,
-    /// GGUF header of the best matching drafter, if readable.
-    pub best_info: Option<ModelInfo>,
 }
 
 // ── Reasoning support, read off the chat template ────────────────────────
@@ -490,9 +483,22 @@ impl MmprojInfo {
     }
 }
 
-/// One-line summary of embedded MTP + any matching external drafter, for the
-/// "Draft" row of the info box. Shows characteristics if present, empty otherwise.
-pub fn draft_line(info: &ModelInfo, ext: &ExternalDraft) -> String {
+/// One-line summary of this preset's drafting situation, for the "Draft" row of
+/// the info box: the MTP/next-n layers the MODEL embeds, plus the draft file the
+/// preset points at (`selected_draft`, its `--model-draft`, empty when none).
+///
+/// Everything here is something that is actually LOADED, and that rule is the
+/// whole design of the row. It used to also advertise the drafter whose filename
+/// best matched the model in `mtps\` / `dflashs\`, which read as state and was
+/// not: the same answer whether or not the preset used that file, unchanged by
+/// picking or dropping one, and identical after a restart (reported twice
+/// against v1.11.2). Worse, the match was a token overlap, so a
+/// `Qwen3.8-27B-UD` preset was offered the `Qwen3.8-27B-Uncensored-…-FastMTP`
+/// head on `qwen3` + `27b` alone: a drafter for a different fine-tune, which
+/// llama.cpp would happily load and then reject nearly every token of. The
+/// picker in the Assets card lists every drafter on disk anyway, so nothing was
+/// lost with it.
+pub fn draft_line(info: &ModelInfo, selected_draft: &str) -> String {
     let mut parts = Vec::new();
 
     if info.nextn_predict_layers > 0 {
@@ -503,14 +509,20 @@ pub fn draft_line(info: &ModelInfo, ext: &ExternalDraft) -> String {
         ));
     }
 
-    if let Some((label, kind)) = &ext.best {
-        if let Some(draft_info) = &ext.best_info {
-            parts.push(format!("{}: {}", label, draft_info.draft_file_line()));
-        } else {
-            parts.push(format!("{kind}: {label}"));
-        }
+    let selected = selected_draft.trim();
+    if !selected.is_empty() {
+        // The picked file's own header is the row below this one ("Draft file"),
+        // so this half only has to say WHICH file is in play.
+        let name = Path::new(selected)
+            .file_name()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| selected.to_string());
+        parts.push(format!("draft file: {name}"));
     }
 
+    if parts.is_empty() {
+        return "none".to_string();
+    }
     parts.join(SEP)
 }
 
@@ -578,85 +590,14 @@ fn spec_type_from_kv<S: KvSource>(s: &S) -> Option<&'static str> {
         .map(|_| "draft-mtp")
 }
 
-// ── External drafter cross-reference ─────────────────────────────────────
-
-/// Scan `mtps\` and `dflashs\` under `models_dir` and pick the drafter whose
-/// filename shares the most "family" tokens with the model (a loose heuristic:
-/// requires ≥2 shared distinctive tokens to claim a match).
-pub fn external_drafters(models_dir: &str, model_path: &str) -> ExternalDraft {
-    let model_stem = Path::new(model_path)
-        .file_name()
-        .map(|s| s.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    let model_tokens = family_tokens(&model_stem);
-
-    let mtp = model_scan::list(models_dir, model_scan::Category::Mtp.subdir());
-    let dflash = model_scan::list(models_dir, model_scan::Category::Dflash.subdir());
-
-    let mut out = ExternalDraft {
-        best: None,
-        best_info: None,
-    };
-
-    let mut best_score = 1usize; // require strictly > 1 shared tokens
-    for (opt, kind) in mtp
-        .iter()
-        .map(|o| (o, "MTP"))
-        .chain(dflash.iter().map(|o| (o, "DFlash")))
-    {
-        let score = token_overlap(&model_tokens, &family_tokens(&opt.label));
-        if score > best_score {
-            best_score = score;
-            out.best = Some((opt.label.clone(), kind));
-            if let Some(info) = read_model_info(std::path::Path::new(&opt.path)) {
-                out.best_info = Some(info);
-            }
-        }
-    }
-    out
-}
-
-/// Lowercased, alphanumeric "family" tokens of a filename, dropping quant/format
-/// noise and pure-digit shard counters so matching keys on model identity
-/// (e.g. `qwen3`, `30b`, `a3b`) rather than quant strings.
-fn family_tokens(name: &str) -> Vec<String> {
-    const NOISE: &[&str] = &[
-        "gguf", "mtp", "dflash", "draft", "of", "the", "model", "instruct", "chat", "it", "base",
-        "hf", "gs", "mostly", "f16", "f32", "bf16", "fp16", "fp32", "mxfp4", "nvfp4", "iq1", "iq2",
-        "iq3", "iq4", "tq1", "tq2", "xxs", "xs", "km", "ks", "moe",
-    ];
-    name.to_ascii_lowercase()
-        .split(|c: char| !c.is_ascii_alphanumeric())
-        .filter(|t| t.len() >= 2)
-        .filter(|t| !t.chars().all(|c| c.is_ascii_digit()))
-        .filter(|t| !is_quant_token(t))
-        .filter(|t| !NOISE.contains(t))
-        .map(|t| t.to_string())
-        .collect()
-}
-
-/// Match bare quant tokens like `q4`, `q5`, `q8`, and the lone `k`/`m`/`s`
-/// suffixes that `Q4_K_M`-style names split into.
-fn is_quant_token(t: &str) -> bool {
-    if matches!(t, "k" | "m" | "s") {
-        return true;
-    }
-    let b = t.as_bytes();
-    b.len() == 2 && b[0] == b'q' && b[1].is_ascii_digit()
-}
-
-/// Number of DISTINCT tokens the two lists share. `family_tokens` doesn't
-/// dedup, and HF-style names often repeat the family (e.g. a label carrying
-/// the repo name twice); counting duplicates would let a single shared token
-/// clear the "> 1 shared tokens" match threshold.
-fn token_overlap(a: &[String], b: &[String]) -> usize {
-    let bs: std::collections::HashSet<&str> = b.iter().map(String::as_str).collect();
-    a.iter()
-        .map(String::as_str)
-        .filter(|t| bs.contains(t))
-        .collect::<std::collections::HashSet<&str>>()
-        .len()
-}
+// The filename cross-reference that used to live here (scan `mtps\` /
+// `dflashs\`, score each drafter by shared "family" tokens with the model, feed
+// the winner to the Draft row) is GONE, in v1.11.3, and is not to come back in
+// that shape: it put a drafter the preset does not load in a box that otherwise
+// only reports loaded things, and the score was loose enough to offer
+// `Qwen3.8-27B-UD` the head built for `Qwen3.8-27B-Uncensored-…` on `qwen3` +
+// `27b` alone. The Assets card's picker already lists every drafter on disk,
+// which is where choosing one belongs.
 
 // ── Small helpers ────────────────────────────────────────────────────────
 
@@ -1074,43 +1015,46 @@ mod tests {
     }
 
     #[test]
-    fn family_tokens_drop_quant_noise() {
-        let t = family_tokens("Qwen3-30B-A3B-Q4_K_M.gguf");
-        assert!(t.contains(&"qwen3".to_string()));
-        assert!(t.contains(&"30b".to_string()));
-        assert!(t.contains(&"a3b".to_string()));
-        assert!(!t
-            .iter()
-            .any(|x| x == "q4" || x == "k" || x == "m" || x == "gguf"));
-    }
-
-    // The "> 1 shared tokens" match threshold means DISTINCT tokens: a name
-    // repeating its family token (HF repo + file name both carrying it) must
-    // not clear the bar with a single real match.
-    #[test]
-    fn token_overlap_counts_distinct_tokens_only() {
-        let model = family_tokens("GLM-4.5-Air-GLM-4.5-Air-Q4_K_M.gguf");
-        let drafter = family_tokens("glm-dflash.gguf");
-        assert_eq!(token_overlap(&model, &drafter), 1);
-        let real = family_tokens("GLM-4.5-Air-DFlash.gguf");
-        assert!(token_overlap(&model, &real) > 1);
-    }
-
-    #[test]
-    fn draft_line_reports_embedded_and_external() {
+    fn draft_line_reports_the_embedded_mtp_heads() {
         let m = map(vec![
             ("general.architecture", Tv::S("glm4moe")),
             ("glm4moe.expert_count", Tv::U(128)),
             ("glm4moe.nextn_predict_layers", Tv::U(1)),
         ]);
         let info = ModelInfo::from_kv(&m).unwrap();
-        let ext = ExternalDraft {
-            best: Some(("glm-dflash.gguf".into(), "DFlash")),
-            best_info: None,
-        };
-        let line = draft_line(&info, &ext);
-        assert!(line.contains("MTP: 1 nextn layer"));
-        assert!(line.contains("DFlash: glm-dflash.gguf"));
+        assert_eq!(draft_line(&info, ""), "MTP: 1 nextn layer");
+    }
+
+    /// The v1.11.2 report, in two halves. The row said the same thing whether a
+    /// drafter was picked or not (and after a restart with none picked), because
+    /// it described what a `mtps\` filename scan FOUND rather than what the
+    /// preset loads. So: a pick is NAMED, and no pick leaves nothing behind but
+    /// what the model itself embeds. Nothing in this row may be a file the
+    /// preset does not load.
+    #[test]
+    fn draft_line_names_the_picked_file_and_nothing_else() {
+        let m = map(vec![
+            ("general.architecture", Tv::S("qwen35")),
+            ("qwen35.nextn_predict_layers", Tv::U(1)),
+        ]);
+        let info = ModelInfo::from_kv(&m).unwrap();
+        let picked = draft_line(&info, r"C:\models\mtps\qwen-mtp.gguf");
+        assert!(picked.contains("MTP: 1 nextn layer"));
+        assert!(picked.contains("draft file: qwen-mtp.gguf"));
+        assert_eq!(
+            draft_line(&info, ""),
+            "MTP: 1 nextn layer",
+            "with no draft picked the row must name no file at all"
+        );
+    }
+
+    /// A model that embeds nothing, with nothing picked, must still say
+    /// something: an empty value reads as a broken row.
+    #[test]
+    fn draft_line_says_none_when_there_is_nothing_to_report() {
+        let m = map(vec![("general.architecture", Tv::S("llama"))]);
+        let info = ModelInfo::from_kv(&m).unwrap();
+        assert_eq!(draft_line(&info, ""), "none");
     }
 
     // ── Draft speculator classification ──────────────────────────────────

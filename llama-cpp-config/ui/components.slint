@@ -2,7 +2,9 @@
 // - globals: `Tokens` (canonical alpha levels), `Options` (shared option lists
 //   + the `all_layers` slider bound)
 // - layout/chrome: `SectionCard`, `LabeledField`, `InfoRow`, `FormActions`,
-//   `ModalOverlay` (backdrop + card shared by all five app.slint modals)
+//   `ModalOverlay` (backdrop + card shared by all five app.slint modals),
+//   `WrapText` (word-wrapped text that reports its REAL height, the one to use
+//   for wrapping text declared inside a component rather than in a page's card)
 // - inputs: `SegmentedControl`, `MappedComboBox` (label↔value ComboBox),
 //   `EnumComboBox` (string-valued ComboBox driven through current-index, the
 //   #11970-safe replacement for a `current-value` two-way binding),
@@ -405,6 +407,52 @@ export component SegmentedControl inherits HorizontalLayout {
     }
 }
 
+// Word-wrapped text that reports the height it will ACTUALLY take, for use
+// INSIDE another component. A bare wrapped `Text` cannot, and the difference is
+// the v1.11.2 bug where the last "Model info" rows painted outside their card.
+//
+// Slint measures a wrapping Text against a width the layout supplies, and the
+// width it supplies depends on how far the question has to travel. A `Text`
+// sitting DIRECTLY in a card's layout is asked with no constraint at all, and
+// the item then falls back to reading its own `width`, i.e. the real one: that
+// is why every page-level paragraph in a SectionCard is fine. Ask ACROSS a
+// component boundary and the answer comes from the component's plain
+// `layout_info_v`, which Slint 1.17 evaluates at the root's own *preferred*
+// width (`default_cross_axis_constraint`): the width the text would take on ONE
+// unwrapped line. So a value that wraps to three lines is published as one, the
+// row is given a single line of space, and the card that holds it comes up two
+// lines short while the rows keep painting at their real height.
+//
+// The cure is to take the text out of the layout's hands: it is positioned by
+// hand at the width the row really gets, so its own implicit height IS the
+// wrapped height, and this component republishes that as its `height`, an
+// explicit size the layout above reads as a fixed constraint instead of
+// re-deriving one. Only text behind a component boundary needs this; a plain
+// `Text` in a page's own card does not (and pays a needless element for it).
+export component WrapText {
+    in property <string> text;
+    in property <length> font_size: 13px;
+    in property <brush> color: Palette.foreground;
+
+    // The one line that makes this component worth existing.
+    height: inner.height;
+    horizontal-stretch: 1;
+
+    inner := Text {
+        x: 0;
+        y: 0;
+        // Not in a layout: this width is what the wrap is measured against, and
+        // it is the row's real width because `root.width` is what the layout
+        // above assigned. `height` is left implicit on purpose, so it is the
+        // wrapped height at exactly that width.
+        width: root.width;
+        text: root.text;
+        wrap: word-wrap;
+        font-size: root.font_size;
+        color: root.color;
+    }
+}
+
 // The two-column form row every labeled input sits in: a fixed 130px `label`
 // column (with an optional ⓘ hover `hint`) on the left, the stretched field
 // `@children` on the right.
@@ -450,7 +498,13 @@ export component LabeledField inherits HorizontalLayout {
             Tooltip {
                 VerticalLayout {
                     padding: 10px;
-                    Text { text: root.hint; wrap: word-wrap; width: 300px; font-size: 14px; }
+                    // WrapText, not Text, for the same reason as InfoRow's value:
+                    // the popup is a component, so the wrapped hint would be
+                    // measured against the layout's width (the 300px plus its
+                    // padding) rather than the 300px it renders at, and a hint
+                    // that ends exactly on a line boundary would lose its last
+                    // line off the bottom of the popup.
+                    WrapText { text: root.hint; width: 300px; font_size: 14px; }
                 }
             }
         }
@@ -459,17 +513,18 @@ export component LabeledField inherits HorizontalLayout {
 }
 
 // A read-only `label → value` row for the "Model info" card: a LabeledField
-// whose body is one wrapped, foreground-coloured Text. Collapses the repeated
-// `LabeledField { Text { …six identical props… } }` boilerplate to a single
-// line per fact. `label`/`hint` are inherited from LabeledField.
+// whose body is one wrapped, foreground-coloured `WrapText`. Collapses the
+// repeated `LabeledField { Text { …six identical props… } }` boilerplate to a
+// single line per fact. `label`/`hint` are inherited from LabeledField.
+//
+// The body is a `WrapText` and not a `Text` because this row IS a component
+// boundary: see the footgun spelled out there. With a plain Text a wrapped value
+// escaped the "Model info" card, painting over the heading of the card below.
 export component InfoRow inherits LabeledField {
     in property <string> value;
-    Text {
+    WrapText {
         text: root.value;
-        vertical-alignment: center;
-        font-size: 13px;
-        wrap: word-wrap;
-        horizontal-stretch: 1;
+        font_size: 13px;
         color: Palette.foreground;
     }
 }
@@ -529,10 +584,12 @@ export component ModalOverlay inherits Rectangle {
                     font-weight: 700;
                     color: Palette.foreground;
                 }
-                if root.description != "" : Text {
+                // WrapText, not Text: the modal is a component, so a wrapped
+                // description would be published one line tall and the body
+                // below it would start inside the second line (see WrapText).
+                if root.description != "" : WrapText {
                     text: root.description;
-                    wrap: word-wrap;
-                    font-size: 12px;
+                    font_size: 12px;
                     color: Palette.foreground.transparentize(Tokens.subtle);
                 }
                 @children
@@ -732,10 +789,12 @@ export component GpuSplitTable inherits VerticalLayout {
 
     spacing: 10px;
 
-    if root.warning != "" : Text {
+    // WrapText, not Text: this table is a component, so a warning long enough
+    // to wrap would be published one line tall and paint over the mode row
+    // below it (see WrapText).
+    if root.warning != "" : WrapText {
         text: root.warning;
-        wrap: word-wrap;
-        font-size: 12px;
+        font_size: 12px;
         color: Tokens.err;
     }
 
@@ -1102,17 +1161,19 @@ export component TensorOverrideTable inherits VerticalLayout {
 
     spacing: 10px;
 
-    if root.override_warning != "" : Text {
+    // Both strips are WrapText, not Text: this table is a component, so a
+    // warning long enough to wrap (the shadowed-by-the-server one always is)
+    // would be published one line tall and paint over the table header below
+    // it (see WrapText).
+    if root.override_warning != "" : WrapText {
         text: root.override_warning;
-        wrap: word-wrap;
-        font-size: 12px;
+        font_size: 12px;
         color: Tokens.err;
     }
 
-    if root.warning != "" : Text {
+    if root.warning != "" : WrapText {
         text: root.warning;
-        wrap: word-wrap;
-        font-size: 12px;
+        font_size: 12px;
         color: Tokens.err;
     }
 
