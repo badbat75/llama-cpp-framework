@@ -75,6 +75,7 @@ slint::include_modules!();
 
 // Per-tab callback wiring: one file each under `gui/`. Each `wire()` reaches the
 // shared helpers, the `State` cache, and the generated Slint types via `use super::*`.
+mod bench_tab;
 mod integrations_tab;
 mod log_window;
 mod models_tab;
@@ -100,6 +101,14 @@ struct State {
     // Action parked by `confirm_discard_then` while the discard-confirm dialog
     // is up; `confirm_discard` runs it, `cancel_discard` drops it.
     pending_discard: Option<Box<dyn Fn()>>,
+    // The Benchmark tab's selection, as an ORDERED list of preset ids: position
+    // 1 is the baseline every ratio is measured against, so this is a list and
+    // not a set, and it cannot be derived from the row model (which is rebuilt
+    // from it). Rust-only, like `draft_rows` above.
+    bench_selection: Vec<String>,
+    // The run in flight, so Cancel can reach it. Only the cancel flag inside it
+    // crosses to the worker thread.
+    bench_handle: Option<crate::bench::exec::Handle>,
 }
 
 /// TEST-ONLY seam for the e2e flow test (src/tests/save_flow.rs): build the
@@ -119,6 +128,23 @@ pub(crate) fn wire_tabs_for_tests(app: &AppWindow) {
     server_tab::wire_tables(app);
     models_tab::wire(app, &state);
     integrations_tab::wire(app);
+    // No tray here: the only thing it gates is the automatic llama-server stop
+    // before a synthetic run, and the test never starts one.
+    bench_tab::wire(app, &state, None);
+    bench_tab::refresh(app, &state);
+    // A cut-down `reload_all`: the disk re-reads the flow test needs after it
+    // writes a preset behind the UI's back, without the discard guard, the
+    // device/version probes or the tray that the real one drives.
+    {
+        let app_weak = app.as_weak();
+        let state = state.clone();
+        app.global::<AppState>().on_reload_all(move || {
+            if let Some(app) = app_weak.upgrade() {
+                reload_presets(&app, &state, None);
+                bench_tab::refresh(&app, &state);
+            }
+        });
+    }
     wire_discard_confirm(app, &state);
 }
 
@@ -215,6 +241,7 @@ pub fn run(start_minimized: bool) -> anyhow::Result<()> {
 
     server_tab::wire(&app, &tray, &state);
     models_tab::wire(&app, &state);
+    bench_tab::wire(&app, &state, Some(tray.as_weak()));
     integrations_tab::wire(&app);
     settings_tab::wire(&app);
     tray::wire(&app, &tray);
@@ -416,6 +443,9 @@ fn reload_all_from_disk(
     // Reset variant: F5's whole point is "back to disk", and the caller sits
     // behind the integrations_dirty discard guard.
     refresh_integrations_reset(app);
+    // Re-lists the presets and the saved runs; the workload fields are left
+    // alone (they are this session's, not a projection of any file).
+    bench_tab::refresh(app, state);
     settings_tab::refresh(app);
     refresh_run_status(app.as_weak(), tray_weak, true);
     spawn_version_probe(app.as_weak());
@@ -525,6 +555,14 @@ fn refresh_device_options(app: &AppWindow) {
     let devs = devices::probed();
     let form = s.get_form();
     let mmproj_device = s.get_server_form().mmproj_device;
+
+    // Rides with the dropdowns because it is derived from the same probe: an
+    // AMD GPU with no ROCm device beside it means ggml silently dropped
+    // ggml-hip.dll, and that card is running on Vulkan at a fraction of the
+    // speed with nothing else in the UI saying so.
+    s.set_rocm_warning(SharedString::from(
+        devices::rocm_health().unwrap_or_default(),
+    ));
 
     let (lbl, val, idx) = device_options(&devs, mmproj_device.as_str(), "(default: first GPU)");
     s.set_mmproj_dev_labels(lbl);
@@ -1045,6 +1083,17 @@ fn start_server_async(app_weak: slint::Weak<AppWindow>, tray_weak: slint::Weak<A
     });
 }
 
+/// What runs on the UI thread once a stop has landed (see
+/// `stop_server_async_with`). Not `Send`: it closes over UI-thread state.
+type AfterStop = Box<dyn FnOnce(&AppWindow)>;
+
+thread_local! {
+    /// The continuation `stop_server_async_with` runs once a stop has landed.
+    /// A thread-local and not a parameter of the worker closure because of that
+    /// missing `Send`; see that function.
+    static AFTER_STOP: RefCell<Option<AfterStop>> = const { RefCell::new(None) };
+}
+
 /// Trigger a stop and drive the transitional "Stopping…" state.
 ///
 /// The forced `taskkill` returns quickly, but the process can linger in
@@ -1053,6 +1102,25 @@ fn start_server_async(app_weak: slint::Weak<AppWindow>, tray_weak: slint::Weak<A
 /// until the process actually disappears. The wait is capped so a wedged
 /// process can't pin the UI in "Stopping…" forever.
 fn stop_server_async(app_weak: slint::Weak<AppWindow>, tray_weak: slint::Weak<AppTray>) {
+    stop_server_async_with(app_weak, tray_weak, None);
+}
+
+/// `stop_server_async` plus a continuation that runs on the event loop once the
+/// stop has LANDED and the run-state has been applied, and only when the process
+/// is really gone (a stop that timed out leaves the server holding the GPU, so
+/// whatever wanted it stopped must not proceed).
+///
+/// It exists for the Benchmark tab's synthetic mode, which needs llama-server
+/// down before it may run and must not reach for `runstate::stop` itself: that
+/// would skip the conversation snapshot this path takes first, and would leave
+/// the footer, the tray and the status-generation counter describing a process
+/// that is no longer there (the next periodic tick would then report the
+/// deliberate stop as "llama-server is no longer running", in red).
+fn stop_server_async_with(
+    app_weak: slint::Weak<AppWindow>,
+    tray_weak: slint::Weak<AppTray>,
+    after: Option<AfterStop>,
+) {
     if let Some(app) = app_weak.upgrade() {
         let s = app.global::<AppState>();
         // Same re-entry guard as start: the tray menu keeps offering "Stop
@@ -1065,6 +1133,12 @@ fn stop_server_async(app_weak: slint::Weak<AppWindow>, tray_weak: slint::Weak<Ap
         s.set_server_stopping(true);
         set_status(&app, "Stopping llama-server…".into(), false);
     }
+    // Parked on the UI thread rather than carried into the worker: the
+    // continuation closes over UI-thread data (`Rc<RefCell<State>>`), which is
+    // not `Send`, and it never needs to leave this thread anyway. Stored only
+    // after the re-entry guard above, so a second Stop while one is in flight
+    // cannot replace the pending continuation with nothing.
+    AFTER_STOP.with(|slot| *slot.borrow_mut() = after);
     bump_run_status_gen();
     std::thread::spawn(move || {
         // Snapshot BEFORE the kill: the KV cache is process memory, so once
@@ -1122,6 +1196,16 @@ fn stop_server_async(app_weak: slint::Weak<AppWindow>, tray_weak: slint::Weak<Ap
             }
             if let Some(tray) = tray_weak.upgrade() {
                 tray.set_server_running(running);
+            }
+            // Last, so the continuation's own status line replaces the stop's
+            // rather than being replaced by it. A stop that TIMED OUT drops it
+            // instead of running it: the server still holds the GPU, which is
+            // the one thing the caller wanted gone.
+            let after = AFTER_STOP.with(|slot| slot.borrow_mut().take());
+            if let (Some(after), Some(app)) = (after, app_weak.upgrade()) {
+                if !running {
+                    after(&app);
+                }
             }
         })
         .ok();

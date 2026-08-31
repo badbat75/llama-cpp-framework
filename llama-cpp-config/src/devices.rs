@@ -190,6 +190,129 @@ pub fn build_options(
     (labels, values, 1)
 }
 
+// ── ROCm availability ────────────────────────────────────────────────────
+//
+// The HIP backend is the one that goes missing SILENTLY. ggml loads its
+// backends dynamically and drops one whose imports don't resolve without a
+// word, so a machine whose ROCm dist is absent, half-extracted, or simply not
+// on the child's PATH does not fail: it enumerates the same AMD card through
+// Vulkan and runs perhaps half as fast, with nothing anywhere saying why.
+// Observed twice while investigating this: a console whose PATH still named a
+// dist directory that had been renamed produced a device list with no ROCm row
+// at all, and a test harness that cheerfully reported "backends passed" having
+// tested only the CPU.
+//
+// The VERDICT therefore comes from the probe, never from a file list: an AMD
+// GPU visible with no ROCm device beside it is the whole diagnosis, and it is
+// true regardless of which ROCm version is installed or how its tree is laid
+// out. A file list would be worse than useless here, because the dist's own
+// contents move between versions: `origami.dll` (a hipBLASLt dependency) exists
+// in TheRock 10.0.0 and NOT in 7.14.0, so requiring it would report a healthy
+// 7.14 install as broken.
+//
+// The HINT is best effort and says so: it looks at the dist `HIP_PATH` names to
+// guess which of the three usual causes it is, and falls back to "the tree
+// looks complete, so the launch is not reaching it" rather than inventing one.
+
+/// Vendor of a detected device, by product name. llama.cpp reports the same
+/// physical card once per backend that can drive it, so an AMD card with a
+/// working HIP backend appears as BOTH `Vulkan1` and `ROCm0`; the absence of
+/// the second while the first is there is exactly the gap this detects.
+fn is_amd(d: &DeviceOption) -> bool {
+    let n = d.name.to_ascii_lowercase();
+    !d.is_cpu() && (n.contains("amd") || n.contains("radeon"))
+}
+
+/// True when any detected device is an AMD GPU, whatever backend found it.
+pub fn amd_gpu_present(devs: &[DeviceOption]) -> bool {
+    devs.iter().any(is_amd)
+}
+
+/// True when llama.cpp enumerated at least one ROCm device, i.e. `ggml-hip.dll`
+/// loaded and initialised.
+pub fn rocm_present(devs: &[DeviceOption]) -> bool {
+    devs.iter()
+        .any(|d| d.id.to_ascii_lowercase().starts_with("rocm"))
+}
+
+/// What the ROCm dist at `dist` (the `bin` directory `HIP_PATH` resolves to)
+/// looks like, for the HINT half of the message only.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DistState {
+    /// No ROCm install found at all.
+    Absent,
+    /// Found, but the HIP BLAS entry point `ggml-hip.dll` imports is not there.
+    NoRuntime,
+    /// Runtime present, but rocBLAS's Tensile kernel store is not. This is the
+    /// one that fails LATE: the backend initialises and the device shows up,
+    /// then the first matrix multiply dies with "Could not initialize Tensile
+    /// host". Measured against TheRock 10.0.0, where the store lives in
+    /// `bin\rocblas\library` and is found relative to rocblas.dll's own
+    /// directory (the `.kpack` files are the hipBLASLt store, a different path).
+    NoKernels,
+    /// Everything expected is there.
+    Complete,
+}
+
+/// Inspect a ROCm `bin` directory. Deliberately checks only the two things that
+/// are stable across every dist generation, for the reason in the section
+/// header: the rest of the file list moves between versions.
+pub fn dist_state(dist: Option<&std::path::Path>) -> DistState {
+    let Some(dir) = dist else {
+        return DistState::Absent;
+    };
+    if !dir.join("hipblas.dll").exists() {
+        return DistState::NoRuntime;
+    }
+    if !dir.join("rocblas").join("library").is_dir() {
+        return DistState::NoKernels;
+    }
+    DistState::Complete
+}
+
+/// The warning to show, or `None` when there is nothing wrong. Pure, so every
+/// branch is testable without a GPU or a ROCm install.
+///
+/// Says nothing when no AMD GPU is present (nothing to be missing), when ROCm
+/// is already working, or when the probe returned nothing at all: an empty
+/// device list means the probe itself failed or hasn't landed yet, and blaming
+/// ROCm for that would be a lie the user cannot act on.
+pub fn rocm_warning(devs: &[DeviceOption], state: DistState) -> Option<String> {
+    if devs.is_empty() || !amd_gpu_present(devs) || rocm_present(devs) {
+        return None;
+    }
+    let head = "An AMD GPU is detected but no ROCm device is: llama.cpp is running it through \
+                Vulkan instead of HIP.";
+    Some(match state {
+        DistState::Absent => format!(
+            "{head} No ROCm runtime was found. Install it with the bundled helper \
+             (bin\\install-runtime-deps.ps1 -Amd), or through the installer's \
+             \"AMD ROCm runtime\" component."
+        ),
+        DistState::NoRuntime => format!(
+            "{head} HIP_PATH names a directory with no hipblas.dll, so the extraction is \
+             incomplete. Re-run bin\\install-runtime-deps.ps1 -Amd."
+        ),
+        DistState::NoKernels => format!(
+            "{head} The runtime is there but rocBLAS's kernel store (rocblas\\library) is \
+             not, so even a loaded backend would fail on the first matrix multiply. \
+             Re-run bin\\install-runtime-deps.ps1 -Amd."
+        ),
+        DistState::Complete => format!(
+            "{head} The ROCm runtime looks complete, so the backend is failing to load \
+             rather than to install: most often a console whose PATH still names an older \
+             dist directory. Restart the app from a fresh session."
+        ),
+    })
+}
+
+/// `rocm_warning` against the live machine: the cached probe crossed with the
+/// dist `paths::rocm_bin_dir()` resolves.
+pub fn rocm_health() -> Option<String> {
+    let dist = paths::rocm_bin_dir();
+    rocm_warning(&probed(), dist_state(dist.as_deref()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -198,6 +321,78 @@ mod tests {
         CUDA0: NVIDIA GeForce RTX 4070 SUPER (12281 MiB, 10844 MiB free)\n  \
         Vulkan0: AMD Radeon(TM) Graphics (33593 MiB, 31913 MiB free)\n  \
         Vulkan1: NVIDIA GeForce RTX 4070 SUPER (11997 MiB, 10844 MiB free)\n";
+
+    // The silent-skip guard. SAMPLE is exactly the shape it takes: the AMD card
+    // is there through Vulkan, and the ROCm row that should sit beside it is
+    // not, which is what a machine looks like when ggml dropped ggml-hip.dll
+    // for an unresolved import.
+    #[test]
+    fn an_amd_gpu_without_a_rocm_device_is_reported_with_its_likely_cause() {
+        let devs = parse(SAMPLE);
+        assert!(amd_gpu_present(&devs));
+        assert!(!rocm_present(&devs));
+
+        // Each dist state must name a DIFFERENT remedy: "not installed",
+        // "installed but incomplete" and "complete, so it is the launch" are
+        // three different things for the user to do.
+        let absent = rocm_warning(&devs, DistState::Absent).expect("warned");
+        assert!(absent.contains("install-runtime-deps"), "{absent}");
+        let no_kernels = rocm_warning(&devs, DistState::NoKernels).expect("warned");
+        assert!(no_kernels.contains("rocblas\\library"), "{no_kernels}");
+        let complete = rocm_warning(&devs, DistState::Complete).expect("warned");
+        assert!(complete.contains("PATH"), "{complete}");
+        assert_ne!(absent, no_kernels);
+        assert_ne!(no_kernels, complete);
+    }
+
+    #[test]
+    fn nothing_is_claimed_when_there_is_nothing_to_claim() {
+        // ROCm working: silence, whatever the dist inspection thinks.
+        let ok = parse(
+            "Available devices:\n  \
+             ROCm0: AMD Radeon AI PRO R9700 (32624 MiB, 32462 MiB free)\n  \
+             Vulkan1: AMD Radeon AI PRO R9700 (32624 MiB, 31716 MiB free)\n",
+        );
+        assert!(rocm_present(&ok));
+        assert_eq!(rocm_warning(&ok, DistState::Absent), None);
+
+        // No AMD hardware: a missing ROCm is not a problem to report.
+        let nvidia = parse(
+            "Available devices:\n  \
+             CUDA0: NVIDIA GeForce RTX 4070 SUPER (12281 MiB, 10844 MiB free)\n",
+        );
+        assert!(!amd_gpu_present(&nvidia));
+        assert_eq!(rocm_warning(&nvidia, DistState::Absent), None);
+
+        // An empty list means the PROBE failed or has not landed, not that ROCm
+        // is broken; blaming ROCm there is a lie the user cannot act on.
+        assert_eq!(rocm_warning(&[], DistState::Absent), None);
+
+        // The CPU pseudo-device is never hardware to warn about, even though
+        // this machine's CPU is an AMD one and the name matches.
+        let cpu_only =
+            parse("Available devices:\n  CPU: AMD Ryzen 9 9900X (63090 MiB, 48233 MiB free)\n");
+        assert!(!amd_gpu_present(&cpu_only));
+        assert_eq!(rocm_warning(&cpu_only, DistState::Absent), None);
+    }
+
+    // The dist inspection checks the two things that survive a version bump and
+    // nothing else: `origami.dll` ships in TheRock 10.0.0 and not in 7.14.0, so
+    // a fuller file list would report a healthy 7.14 install as broken.
+    #[test]
+    fn dist_state_reads_the_two_stable_landmarks() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let bin = tmp.path().join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        assert_eq!(dist_state(None), DistState::Absent);
+        assert_eq!(dist_state(Some(&bin)), DistState::NoRuntime);
+
+        std::fs::write(bin.join("hipblas.dll"), b"").unwrap();
+        assert_eq!(dist_state(Some(&bin)), DistState::NoKernels);
+
+        std::fs::create_dir_all(bin.join("rocblas").join("library")).unwrap();
+        assert_eq!(dist_state(Some(&bin)), DistState::Complete);
+    }
 
     #[test]
     fn parses_device_ids_and_labels() {

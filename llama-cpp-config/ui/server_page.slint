@@ -18,7 +18,7 @@
 // field stale after a Revert / reload.
 
 import { LineEdit, TextEdit, CheckBox, Button, ScrollView, Palette } from "std-widgets.slint";
-import { SectionCard, LabeledField, SegmentedControl, MappedComboBox, EnumComboBox, AutoSlider, DefaultLineEdit, FormActions, GpuSplitTable, TensorOverrideTable, Tokens, Options } from "components.slint";
+import { SectionCard, LabeledField, SegmentedControl, MappedComboBox, EnumComboBox, AutoSlider, DefaultLineEdit, FormActions, GpuSplitTable, TensorOverrideTable, WrapText, Tokens, Options } from "components.slint";
 import { AppState } from "state.slint";
 
 export component ServerPage inherits ScrollView {
@@ -315,6 +315,18 @@ export component ServerPage inherits ScrollView {
                 font-size: 12px;
                 font-weight: 600;
                 color: Palette.foreground;
+            }
+            // The HIP backend is the one that disappears without saying so:
+            // ggml drops a backend whose imports don't resolve in silence, and
+            // the same AMD card keeps working through Vulkan at a fraction of
+            // the speed. Nothing else in the UI would report it, so this strip
+            // is the only place it surfaces. WrapText, not Text: inside a
+            // component a wrapped Text publishes a one-line height and paints
+            // over what follows.
+            if AppState.rocm_warning != "" : WrapText {
+                text: AppState.rocm_warning;
+                font_size: 12px;
+                color: Tokens.err;
             }
             LabeledField {
                 label: "hipBLASLt";

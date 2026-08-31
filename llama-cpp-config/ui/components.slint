@@ -303,11 +303,19 @@ export component DefaultLineEdit inherits HorizontalLayout {
     in property <bool> enabled: true;
     // `number` = integers (digits only); `decimal` = signed / fractional.
     in property <InputType> input_type: InputType.decimal;
+    // Fired after EITHER half changed (the checkbox or the text), for the
+    // callers that derive something from the value live. The two-way bindings
+    // above have already written the new state when it fires, so a handler
+    // just re-reads the properties. Optional: an unconnected callback is a
+    // no-op, which is why the form tabs (whose fields are read at save time,
+    // not per keystroke) simply ignore it.
+    callback edited();
     spacing: 8px;
     CheckBox {
         text: "default";
         enabled: root.enabled;
         checked <=> root.default;
+        toggled => { root.edited(); }
     }
     LineEdit {
         horizontal-stretch: 1;
@@ -316,6 +324,7 @@ export component DefaultLineEdit inherits HorizontalLayout {
         text <=> root.value;
         input-type: root.input_type;
         placeholder-text: root.placeholder;
+        edited => { root.edited(); }
     }
 }
 

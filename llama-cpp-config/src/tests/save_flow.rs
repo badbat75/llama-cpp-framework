@@ -717,7 +717,7 @@ pub(super) fn run(app: &AppWindow) {
     // permanently breaks that delegate's binding), then drive a Rust-side
     // reload and assert the checkbox followed. A set_row_data "optimization"
     // in refresh_integrations would leave the clicked checkbox stale here.
-    st.set_current_tab(2);
+    st.set_current_tab(3); // Integrations (2 is Benchmark)
     st.invoke_revert_integrations(); // (re)build integration_models from disk
     itest::mock_elapsed_time(std::time::Duration::from_millis(1));
     let models = st.get_integration_models();
@@ -822,6 +822,88 @@ pub(super) fn run(app: &AppWindow) {
     assert!(
         !crate::gui::integrations_dirty(app),
         "save (→ refresh_integrations_reset) must re-baseline to clean"
+    );
+
+    // ── Benchmark: the selection is an ORDERED list, and order is meaning ───
+    // Position 1 is the baseline every ratio in the results table divides by,
+    // so this pins the three things that cannot be seen from the row model:
+    // checking APPENDS, unchecking CLOSES THE GAP (rather than leaving a hole
+    // or re-sorting), and the baseline follows position 1. It also pins the
+    // preview funnel, whose whole point is that it is built by the code that
+    // builds the real command: a preview that stopped tracking the mode would
+    // show a llama-bench line for a run that sends HTTP, or the reverse.
+    for id in ["bench-a", "bench-b"] {
+        crate::presets::save(&crate::presets::Preset {
+            id: id.into(),
+            model: format!(r"E:\models\{id}.gguf"),
+            ..Default::default()
+        })
+        .expect("seed a benchmark preset");
+    }
+    st.invoke_reload_all(); // the seam's cut-down F5: re-read presets.ini
+    let bench_row = |id: &str| {
+        st.get_bench_presets()
+            .iter()
+            .find(|r| r.id.as_str() == id)
+            .unwrap_or_else(|| panic!("no benchmark row for {id}"))
+    };
+    assert_eq!(bench_row("bench-a").order, 0, "nothing is selected yet");
+
+    st.invoke_bench_toggle_preset("bench-b".into());
+    st.invoke_bench_toggle_preset("bench-a".into());
+    assert_eq!(
+        (bench_row("bench-b").order, bench_row("bench-a").order),
+        (1, 2),
+        "checking appends, so the FIRST one checked is the baseline"
+    );
+    assert_eq!(st.get_bench_selected_count(), 2);
+    assert_eq!(st.get_bench_baseline(), "bench-b");
+    assert!(
+        st.get_bench_preview().contains("bench-b"),
+        "the live preview must name the preset it will request: {}",
+        st.get_bench_preview()
+    );
+
+    st.invoke_bench_toggle_preset("bench-b".into());
+    assert_eq!(
+        (bench_row("bench-b").order, bench_row("bench-a").order),
+        (0, 1),
+        "unchecking must close the gap, not leave the survivor at position 2"
+    );
+    assert_eq!(st.get_bench_baseline(), "bench-a");
+
+    // The mode is what decides which engine runs, and the preview and the
+    // caveats must both follow it: llama-bench takes no prompt and cannot load
+    // a drafter, which is exactly what the caveat block exists to say.
+    assert!(st.get_bench_is_live(), "live is the default mode");
+    assert!(
+        st.get_bench_caveats().contains("cache_prompt"),
+        "the live caveats must name the cold-prefill guarantee"
+    );
+    st.invoke_bench_mode_picked("synthetic".into());
+    assert!(!st.get_bench_is_live());
+    assert!(
+        st.get_bench_caveats().contains("No speculative decoding"),
+        "the synthetic caveats must name the drafter it cannot load"
+    );
+    // No llama-server is running here, so a synthetic run needs no stop and
+    // reaches the engine, which then reports the missing exe rather than
+    // silently doing nothing. Either way the tab must not be left "running".
+    st.invoke_bench_mode_picked("live".into());
+
+    // A run with nothing selected is refused by the shared validator rather
+    // than spawning a worker that would find out on its own.
+    st.invoke_bench_toggle_preset("bench-a".into());
+    assert_eq!(st.get_bench_selected_count(), 0);
+    st.invoke_bench_run();
+    assert!(
+        st.get_status_is_error() && st.get_status_text().contains("at least one preset"),
+        "an empty selection must be refused: {}",
+        st.get_status_text()
+    );
+    assert!(
+        !st.get_bench_running(),
+        "a refused run must not arm the tab"
     );
 
     // ── CLI: `preset delete <typo>` errors instead of a false "Removed" ─────

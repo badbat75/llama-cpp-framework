@@ -2,9 +2,10 @@
 //!
 //! Four jobs: (1) the user runtime tree, %LOCALAPPDATA%\llama.cpp\ on Windows
 //! (config\server.ini, config\presets.ini, logs\llama-server.log), overridable
-//! for tests via LLAMA_CPP_CONFIG_DATA_ROOT; (2) locating llama-server.exe
-//! across the installer and dev layouts (`llama_server_exe`, which also strips
-//! canonicalize()'s \\?\ prefix so the path is shell-pasteable); (3) the ONE
+//! for tests via LLAMA_CPP_CONFIG_DATA_ROOT; (2) locating llama.cpp's binaries
+//! across the installer and dev layouts (`llama_bin`, with `llama_server_exe` /
+//! `llama_bench_exe` as its two callers; it also strips canonicalize()'s \\?\
+//! prefix so the path is shell-pasteable); (3) the ONE
 //! path outside that tree, OpenCode's user config (`opencode_user_config`,
 //! ~/.config/opencode/opencode.json), used by the Integrations tab; (4) locating
 //! the ROCm/HIP runtime (`rocm_bin_dir`) so `proc` can make ggml-hip.dll
@@ -145,22 +146,35 @@ fn newest_version(names: &[String]) -> Option<&String> {
         .map(|(_, n)| n)
 }
 
-fn server_binary_name() -> &'static str {
+fn binary_name(stem: &str) -> String {
     if cfg!(windows) {
-        "llama-server.exe"
+        format!("{stem}.exe")
     } else {
-        "llama-server"
+        stem.to_string()
     }
 }
 
-/// Where llama-server lives. Tries (in order):
+/// Where llama-server lives. See [`llama_bin`] for the search order.
+pub fn llama_server_exe() -> Option<PathBuf> {
+    llama_bin("llama-server")
+}
+
+/// Where `llama-bench` lives: same tree as llama-server, since the installer
+/// stages every tool cmake installs into one `bin\` (it is not pruned like the
+/// `test-*` harnesses are). The Benchmark tab's synthetic mode runs it.
+pub fn llama_bench_exe() -> Option<PathBuf> {
+    llama_bin("llama-bench")
+}
+
+/// Locate one of llama.cpp's binaries by stem. Tries (in order):
 /// 1. `<exe-dir>\<binary>`: installer layout
 /// 2. `<exe-dir>\..\..\..\build\llama.cpp-cmake\bin\<binary>`: dev layout
 /// 3. `<exe-dir>\..\build\llama.cpp-cmake\bin\<binary>`: alt dev layout
-pub fn llama_server_exe() -> Option<PathBuf> {
+pub fn llama_bin(stem: &str) -> Option<PathBuf> {
     let exe = std::env::current_exe().ok()?;
     let exe_dir = exe.parent()?;
-    let name = server_binary_name();
+    let name = binary_name(stem);
+    let name = name.as_str();
     let candidates = [
         exe_dir.join(name),
         exe_dir

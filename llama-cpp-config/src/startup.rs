@@ -53,7 +53,14 @@ fn choose_autostart_exe(
 }
 
 #[cfg(windows)]
-pub use win::{is_enabled, set_enabled, starts_minimized};
+pub use win::{is_enabled, machine_reg_sz, set_enabled, starts_minimized};
+
+/// Read one `REG_SZ` under `HKLM`; `None` off Windows, where there is no
+/// registry to read. See the Windows implementation for why it lives here.
+#[cfg(not(windows))]
+pub fn machine_reg_sz(_subkey: &str, _value: &str) -> Option<String> {
+    None
+}
 
 #[cfg(not(windows))]
 pub fn is_enabled() -> bool {
@@ -195,6 +202,15 @@ mod win {
     /// single source of truth for the two startup toggles.
     fn stored_command() -> Option<String> {
         read_reg_sz(HKEY_CURRENT_USER, RUN_KEY, VALUE_NAME)
+    }
+
+    /// Read one `REG_SZ` under `HKLM`, for callers outside this module. Exposed
+    /// so the benchmark's environment stamp (`bench::env`) can read the display
+    /// adapters' driver versions without a second copy of the registry FFI: this
+    /// module already owns it, and one `advapi32` binding is enough for the
+    /// crate.
+    pub fn machine_reg_sz(subkey: &str, value: &str) -> Option<String> {
+        read_reg_sz(HKEY_LOCAL_MACHINE, subkey, value)
     }
 
     const INSTALL_KEY: &str = r"Software\llama.cpp";

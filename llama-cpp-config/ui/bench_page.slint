@@ -1,0 +1,425 @@
+// BenchPage: the benchmark tab. All state lives in AppState (state.slint); this
+// component just lays out the widgets against it.
+//
+// Layout (grep `heading:`): Engine -> Presets -> Workload -> Preview (+ the Run
+// row) -> Results -> Saved runs.
+//
+// The ENGINE selector comes first because it decides everything below it: which
+// half of the Workload card is live, what the preview shows, and which
+// llama-server state the run needs. Live drives the RUNNING server with a real
+// prompt (production numbers, drafter included); synthetic runs llama-bench over
+// token counts, which takes no prompt and never samples. Same ordering rule as
+// the GPU table's split-mode combo: the thing that decides what the fields below
+// MEAN sits above them.
+//
+// Editable widgets bind two-way (`<=>`): a one-way binding breaks the moment the
+// user types (Slint's "overwritten bindings" rule), which would leave the field
+// stale after a mode switch or a reload. The per-row checkbox below is the
+// sanctioned exception, with the same invariant as the Integrations list: the
+// only in-place row write originates from the clicked widget itself, and every
+// other change rebuilds the whole model.
+
+import { LineEdit, TextEdit, CheckBox, Button, ComboBox, ScrollView, Palette } from "std-widgets.slint";
+import { SectionCard, LabeledField, SegmentedControl, MappedComboBox, DefaultLineEdit, WrapText, Tokens } from "components.slint";
+import { AppState } from "state.slint";
+
+export component BenchPage inherits ScrollView {
+    VerticalLayout {
+        padding: 24px;
+        spacing: 16px;
+        alignment: start;
+
+        Text {
+            text: "Benchmark";
+            font-size: 22px;
+            font-weight: 600;
+            color: Palette.foreground;
+        }
+        Text {
+            text: "Measure one preset, or compare several. The unit is the preset, not the model file: two presets over the same .gguf are a legitimate comparison, and usually the interesting one.";
+            color: Palette.foreground.transparentize(Tokens.muted);
+            font-size: 12px;
+            wrap: word-wrap;
+        }
+
+        SectionCard {
+            heading: "Engine";
+            LabeledField {
+                label: "Mode";
+                hint: "live: real requests to the RUNNING llama-server, with your prompt and a temperature override. Measures what the preset actually does, speculative drafter and chat template included.\nsynthetic: llama-bench over token counts. It takes no prompt and never samples, so it is perfectly reproducible, but it cannot load the preset's drafter and ignores the mmproj, the template and the reasoning flags.\nlive needs llama-server running; synthetic needs it stopped, and stops it for you.";
+                SegmentedControl {
+                    options: ["live", "synthetic"];
+                    current: AppState.bench_mode;
+                    activated(v) => { AppState.bench_mode_picked(v); }
+                }
+            }
+            WrapText {
+                text: AppState.bench_caveats;
+                font_size: 12px;
+                color: Palette.foreground.transparentize(Tokens.muted);
+            }
+        }
+
+        SectionCard {
+            heading: "Presets";
+            content_padding: 8px;
+
+            if AppState.bench_presets.length == 0 : Text {
+                text: "No presets found. Create one under the Models tab first.";
+                font-size: 12px;
+                color: Palette.foreground.transparentize(Tokens.muted);
+                wrap: word-wrap;
+            }
+
+            for item[i] in AppState.bench_presets : Rectangle {
+                height: 40px;
+                // Tint with the WINDOW background: these rows sit on a
+                // SectionCard, whose surface IS alternate-background.
+                background: Math.mod(i, 2) == 0 ? transparent : Palette.background.transparentize(Tokens.zebra);
+
+                HorizontalLayout {
+                    padding-left: 12px;
+                    padding-right: 12px;
+                    spacing: 8px;
+                    // One-way `checked`, same contract as the Integrations row:
+                    // the click self-assigns and breaks THIS delegate's binding,
+                    // which is invisible only because every other change to the
+                    // selection rebuilds the model (gui/bench_tab.rs).
+                    CheckBox {
+                        text: "";
+                        accessible-label: "bench-" + item.id;
+                        enabled: !AppState.bench_running;
+                        checked: item.selected;
+                        toggled => { AppState.bench_toggle_preset(item.id); }
+                    }
+                    Text {
+                        // The run order, and position 1 is not decoration: it is
+                        // the baseline every ratio is measured against.
+                        width: 28px;
+                        text: item.order > 0 ? item.order + "." : "";
+                        font-size: 12px;
+                        color: Palette.foreground.transparentize(Tokens.muted);
+                        vertical-alignment: center;
+                    }
+                    Text {
+                        text: item.id;
+                        font-size: 13px;
+                        font-weight: 600;
+                        color: Palette.foreground;
+                        vertical-alignment: center;
+                        min-width: 260px;
+                        horizontal-stretch: 0;
+                    }
+                    Text {
+                        text: item.model;
+                        font-size: 11px;
+                        color: Palette.foreground.transparentize(Tokens.muted);
+                        vertical-alignment: center;
+                        overflow: elide;
+                        horizontal-stretch: 1;
+                    }
+                }
+            }
+        }
+
+        SectionCard {
+            heading: "Workload";
+
+            // ── live half ────────────────────────────────────────────
+            if AppState.bench_is_live : LabeledField {
+                label: "Prompt";
+                hint: "Sent verbatim as a single user message. It is re-sent whole on every repetition with the prefix cache disabled, so each one is a cold prefill, which is what the prefill row measures.";
+                Rectangle {
+                    height: 120px;
+                    TextEdit {
+                        width: 100%;
+                        height: 100%;
+                        text <=> AppState.bench_prompt;
+                        wrap: word-wrap;
+                        edited => { AppState.bench_changed(); }
+                    }
+                }
+            }
+            if AppState.bench_is_live : LabeledField {
+                label: "Temperature";
+                hint: "Overrides the preset's own --temp for this run. 0 is greedy sampling, which is what makes two runs of the same prompt comparable; tick 'default' to leave the preset's value alone and accept the variance.";
+                DefaultLineEdit {
+                    edit_label: "bench-temp";
+                    default <=> AppState.bench_temp_default;
+                    value <=> AppState.bench_temp;
+                    input_type: InputType.decimal;
+                    placeholder: "0";
+                    edited => { AppState.bench_changed(); }
+                }
+            }
+            if AppState.bench_is_live : LabeledField {
+                label: "Max output tokens";
+                hint: "Cap on the generated answer (--max_tokens on the request). Long enough that the decode rate settles, short enough that a slow model does not turn one repetition into minutes.";
+                LineEdit {
+                    accessible-label: "bench-max-tokens";
+                    text <=> AppState.bench_max_tokens;
+                    input-type: InputType.number;
+                    edited => { AppState.bench_changed(); }
+                }
+            }
+
+            // ── synthetic half ───────────────────────────────────────
+            if !AppState.bench_is_live : LabeledField {
+                label: "Prompt lengths";
+                hint: "llama-bench's -p: how many TOKENS to prefill, comma separated. Not a text: this engine never tokenizes a prompt of yours and never samples. One pp row per length.";
+                LineEdit {
+                    accessible-label: "bench-prompt-lens";
+                    text <=> AppState.bench_prompt_lens;
+                    edited => { AppState.bench_changed(); }
+                }
+            }
+            if !AppState.bench_is_live : LabeledField {
+                label: "Generate";
+                hint: "llama-bench's -n: how many tokens to generate per decode test.";
+                LineEdit {
+                    accessible-label: "bench-n-gen";
+                    text <=> AppState.bench_n_gen;
+                    input-type: InputType.number;
+                    edited => { AppState.bench_changed(); }
+                }
+            }
+            if !AppState.bench_is_live : LabeledField {
+                label: "Depths";
+                hint: "llama-bench's -d: how many tokens of KV cache to prefill before each decode test, comma separated. Decode slows down with context, so a single depth of 0 measures only the best case.";
+                LineEdit {
+                    accessible-label: "bench-depths";
+                    text <=> AppState.bench_depths;
+                    edited => { AppState.bench_changed(); }
+                }
+            }
+
+            LabeledField {
+                label: "Repetitions";
+                hint: "Samples per measurement. The results table reports the mean and the sample standard deviation across them, which is what says whether a difference between two presets is real.";
+                LineEdit {
+                    accessible-label: "bench-reps";
+                    text <=> AppState.bench_reps;
+                    input-type: InputType.number;
+                    edited => { AppState.bench_changed(); }
+                }
+            }
+        }
+
+        SectionCard {
+            heading: "Preview";
+            content_padding: 12px;
+            Text {
+                text: "Exactly what Run will do, built by the same code that runs it.";
+                font-size: 12px;
+                color: Palette.foreground.transparentize(Tokens.muted);
+                wrap: word-wrap;
+            }
+            // Auto-height off a hidden mirror Text, the same trick (and the same
+            // +48px for the TextEdit's border and padding) as the Server tab's
+            // Command Line card: the box shows the whole thing with no inner
+            // scrollbar, and stays a read-only TextEdit so it can be selected
+            // and copied.
+            Rectangle {
+                height: mirror.preferred-height + 48px;
+                mirror := Text {
+                    x: 12px;
+                    width: parent.width - 24px;
+                    text: AppState.bench_preview;
+                    wrap: word-wrap;
+                    visible: false;
+                }
+                TextEdit {
+                    width: 100%;
+                    height: 100%;
+                    text: AppState.bench_preview;
+                    read-only: true;
+                    wrap: word-wrap;
+                }
+            }
+        }
+
+        HorizontalLayout {
+            spacing: 8px;
+            alignment: start;
+            Button {
+                text: AppState.bench_running ? "Running…" : "Run benchmark";
+                primary: true;
+                enabled: !AppState.bench_running && AppState.bench_selected_count > 0;
+                clicked => { AppState.bench_run(); }
+            }
+            Button {
+                text: "Cancel";
+                enabled: AppState.bench_running;
+                clicked => { AppState.bench_cancel(); }
+            }
+            Text {
+                text: AppState.bench_progress;
+                font-size: 12px;
+                color: Palette.foreground.transparentize(Tokens.muted);
+                vertical-alignment: center;
+                overflow: elide;
+                horizontal-stretch: 1;
+            }
+        }
+
+        SectionCard {
+            heading: "Results";
+            content_padding: 8px;
+
+            if AppState.bench_rows.length == 0 : Text {
+                text: "Nothing measured yet. Results appear here as each test completes, and every one is written to disk as it lands, so a run that dies keeps what it had.";
+                font-size: 12px;
+                color: Palette.foreground.transparentize(Tokens.muted);
+                wrap: word-wrap;
+            }
+
+            if AppState.bench_rows.length > 0 : HorizontalLayout {
+                padding-left: 12px;
+                padding-right: 12px;
+                spacing: 8px;
+                Text {
+                    width: 130px;
+                    text: "Test";
+                    font-size: 12px;
+                    color: Palette.foreground.transparentize(Tokens.muted);
+                }
+                Text {
+                    text: "Preset";
+                    horizontal-stretch: 1;
+                    font-size: 12px;
+                    color: Palette.foreground.transparentize(Tokens.muted);
+                }
+                Text {
+                    width: 80px;
+                    text: "t/s";
+                    horizontal-alignment: right;
+                    font-size: 12px;
+                    color: Palette.foreground.transparentize(Tokens.muted);
+                }
+                Text {
+                    width: 60px;
+                    text: "sd";
+                    horizontal-alignment: right;
+                    font-size: 12px;
+                    color: Palette.foreground.transparentize(Tokens.muted);
+                }
+                Text {
+                    width: 40px;
+                    text: "n";
+                    horizontal-alignment: right;
+                    font-size: 12px;
+                    color: Palette.foreground.transparentize(Tokens.muted);
+                }
+                Text {
+                    width: 70px;
+                    text: AppState.bench_baseline != "" ? "vs 1." : "ratio";
+                    horizontal-alignment: right;
+                    font-size: 12px;
+                    color: Palette.foreground.transparentize(Tokens.muted);
+                }
+            }
+
+            for row[i] in AppState.bench_rows : Rectangle {
+                height: row.note == "" ? 32px : 46px;
+                background: Math.mod(i, 2) == 0 ? transparent : Palette.background.transparentize(Tokens.zebra);
+
+                VerticalLayout {
+                    padding-top: 4px;
+                    padding-bottom: 4px;
+                    HorizontalLayout {
+                        padding-left: 12px;
+                        padding-right: 12px;
+                        spacing: 8px;
+                        Text {
+                            width: 130px;
+                            text: row.test;
+                            font-size: 12px;
+                            color: Palette.foreground;
+                            vertical-alignment: center;
+                            overflow: elide;
+                        }
+                        Text {
+                            text: row.preset;
+                            horizontal-stretch: 1;
+                            font-size: 12px;
+                            color: Palette.foreground;
+                            vertical-alignment: center;
+                            overflow: elide;
+                        }
+                        Text {
+                            width: 80px;
+                            text: row.mean;
+                            horizontal-alignment: right;
+                            font-size: 12px;
+                            font-weight: 600;
+                            color: Palette.foreground;
+                            vertical-alignment: center;
+                        }
+                        Text {
+                            width: 60px;
+                            text: row.sd;
+                            horizontal-alignment: right;
+                            font-size: 12px;
+                            color: Palette.foreground.transparentize(Tokens.faint);
+                            vertical-alignment: center;
+                        }
+                        Text {
+                            width: 40px;
+                            text: row.samples;
+                            horizontal-alignment: right;
+                            font-size: 12px;
+                            color: Palette.foreground.transparentize(Tokens.faint);
+                            vertical-alignment: center;
+                        }
+                        Text {
+                            width: 70px;
+                            text: row.ratio;
+                            horizontal-alignment: right;
+                            font-size: 12px;
+                            color: Palette.foreground.transparentize(Tokens.muted);
+                            vertical-alignment: center;
+                        }
+                    }
+                    if row.note != "" : HorizontalLayout {
+                        padding-left: 12px;
+                        padding-right: 12px;
+                        Text {
+                            text: row.note;
+                            font-size: 11px;
+                            color: Palette.foreground.transparentize(Tokens.muted);
+                            overflow: elide;
+                        }
+                    }
+                }
+            }
+        }
+
+        SectionCard {
+            heading: "Saved runs";
+            LabeledField {
+                label: "Run";
+                hint: "Every run writes three files to the bench folder as it goes: a .jsonl of the measurements (appended per test, so a run killed by a driver reset keeps what it had), a .md report, and a .log of the engine's own output. Picking one here reloads its table.";
+                MappedComboBox {
+                    enabled: !AppState.bench_running && AppState.bench_run_labels.length > 0;
+                    labels: AppState.bench_run_labels;
+                    values: AppState.bench_run_values;
+                    index <=> AppState.bench_run_index;
+                    picked(v) => { AppState.bench_run_picked(v); }
+                }
+            }
+            HorizontalLayout {
+                spacing: 8px;
+                alignment: start;
+                Button {
+                    text: "Open report";
+                    enabled: AppState.bench_report_path != "";
+                    clicked => { AppState.bench_open_report(); }
+                }
+                Button {
+                    text: "Open folder";
+                    clicked => { AppState.bench_open_folder(); }
+                }
+            }
+        }
+    }
+}

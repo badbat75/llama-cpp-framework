@@ -140,19 +140,37 @@ if ($doAmd) {
         Write-Host "       https://www.amd.com/en/support" -ForegroundColor Yellow
     } else {
         $hp = [Environment]::GetEnvironmentVariable('HIP_PATH', 'Machine')
-        if ($hp -and (Test-Path "$hp\bin\hipblas.dll")) {
+        # TWO landmarks, not one. hipblas.dll alone proves nothing: it is the
+        # entry point ggml-hip imports, but rocBLAS then reads its Tensile
+        # kernels from bin\rocblas\library, and without that directory the
+        # backend loads, the device shows up, and the FIRST matrix multiply dies
+        # with "Could not initialize Tensile host". An interrupted extraction
+        # lands exactly there, and the old one-file check waved it through.
+        # Both landmarks are version-stable (present in 7.14.0 and 10.0.0
+        # alike), unlike the rest of the file list: origami.dll for instance
+        # exists only from 10.0, so a fuller check would report a healthy 7.14
+        # install as broken.
+        $rocmOk = $hp -and (Test-Path "$hp\bin\hipblas.dll") -and (Test-Path "$hp\bin\rocblas\library")
+        if ($rocmOk) {
             Write-Host "  [OK] ROCm/TheRock at $hp" -ForegroundColor Green
         } elseif ($Report) {
             Write-Host "  [--] ROCm/TheRock MISSING - AMD GPUs will run on Vulkan, not HIP" -ForegroundColor Yellow
         } else {
+            if ($hp -and (Test-Path "$hp\bin\hipblas.dll")) {
+                Write-Host "  [!!] ROCm/TheRock at $hp is INCOMPLETE (bin\rocblas\library absent) - reinstalling" -ForegroundColor Yellow
+            }
             $dist = $null
             foreach ($d in $rocm.Dists) {
                 $size = Get-RemoteFileSize $d.Url
                 if ($size) { $dist = @{ Version = $d.Version; Url = $d.Url; Size = $size }; break }
             }
+            # One directory per version under Root, the same layout the build
+            # machine uses: HIP_PATH names the active one, so a later version
+            # installs beside this one instead of over it.
+            $distDir = if ($dist) { Join-Path $rocm.Root $dist.Version } else { $null }
             if (-not $dist) {
                 Write-Host "  [!!] ROCm dist not reachable (offline?)" -ForegroundColor Red
-            } elseif (Ask "  ROCm/TheRock $($dist.Version) is MISSING (HIP backend for AMD GPUs; $([math]::Round($dist.Size/1GB,1)) GB download, ~25 GB on disk). Install to $($rocm.InstallDir)?") {
+            } elseif (Ask "  ROCm/TheRock $($dist.Version) is MISSING (HIP backend for AMD GPUs; $([math]::Round($dist.Size/1GB,1)) GB download, ~25 GB on disk). Install to $distDir?") {
                 $tar = Join-Path $env:TEMP (Split-Path $dist.Url -Leaf)
                 $haveTar = (Test-Path $tar) -and ((Get-Item $tar).Length -eq $dist.Size)
                 if (-not $haveTar) {
@@ -162,15 +180,17 @@ if ($doAmd) {
                     if (-not $haveTar) { Write-Host "  download failed/incomplete - re-run to resume" -ForegroundColor Red }
                 }
                 if ($haveTar) {
-                    if (Test-Path $rocm.InstallDir) { Remove-Item $rocm.InstallDir -Recurse -Force -ErrorAction SilentlyContinue }
-                    if (Test-Path $rocm.InstallDir) {
-                        Write-Host "  cannot clear $($rocm.InstallDir) (files in use?)" -ForegroundColor Red
+                    # Only ever an incomplete tree of THIS version: another
+                    # version owns its own directory and is left alone.
+                    if (Test-Path $distDir) { Remove-Item $distDir -Recurse -Force -ErrorAction SilentlyContinue }
+                    if (Test-Path $distDir) {
+                        Write-Host "  cannot clear $distDir (files in use?)" -ForegroundColor Red
                     } else {
-                        New-Item -ItemType Directory -Force -Path $rocm.InstallDir | Out-Null
+                        New-Item -ItemType Directory -Force -Path $distDir | Out-Null
                         Write-Host "  extracting (takes a while)..." -ForegroundColor DarkGray
-                        tar.exe -xzf $tar -C $rocm.InstallDir --strip-components=1
+                        tar.exe -xzf $tar -C $distDir --strip-components=1
                         if ($LASTEXITCODE -eq 0) {
-                            Set-Content -Path (Join-Path $rocm.InstallDir $rocm.Marker) -Value $dist.Version
+                            Set-Content -Path (Join-Path $distDir $rocm.Marker) -Value $dist.Version
                             Remove-Item $tar -Force
                             # Runtime env only: HIP_PATH (llama-cpp-config finds the DLLs
                             # through it) + PATH so bare llama-server runs too. NEVER set
@@ -180,14 +200,22 @@ if ($doAmd) {
                             # LLVM there breaks it (hipMemGetInfo "invalid argument",
                             # 0xC0000005 during model load). Build machines get them
                             # per-process from common.ps1.
-                            [Environment]::SetEnvironmentVariable('HIP_PATH', $rocm.InstallDir, 'Machine')
+                            [Environment]::SetEnvironmentVariable('HIP_PATH', $distDir, 'Machine')
                             $key = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey('SYSTEM\CurrentControlSet\Control\Session Manager\Environment', $true)
                             $path = [string]$key.GetValue('Path', '', [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
-                            $parts = @($path -split ';' | Where-Object { $_ })
-                            $add = Join-Path $rocm.InstallDir 'bin'
-                            if ($parts -notcontains $add) {
-                                $key.SetValue('Path', (($parts + $add) -join ';'), [Microsoft.Win32.RegistryValueKind]::ExpandString)
+                            # Any other version dir left on PATH goes: two
+                            # amdhip64_*.dll directories are an ambiguous load
+                            # order, the classic silent-crash cause.
+                            $add = Join-Path $distDir 'bin'
+                            $under = $rocm.Root.TrimEnd('\') + '\'
+                            $parts = @()
+                            foreach ($p in @($path -split ';' | Where-Object { $_ })) {
+                                $t = $p.TrimEnd('\')
+                                if ($t.StartsWith($under, [StringComparison]::OrdinalIgnoreCase) -and $t -ne $add) { continue }
+                                $parts += $p
                             }
+                            if ($parts -notcontains $add) { $parts += $add }
+                            $key.SetValue('Path', ($parts -join ';'), [Microsoft.Win32.RegistryValueKind]::ExpandString)
                             $key.Close()
                             $actions += "ROCm/TheRock $($dist.Version) installed (HIP_PATH set)"
                             Write-Host "  [OK] ROCm/TheRock $($dist.Version) installed" -ForegroundColor Green

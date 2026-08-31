@@ -11,7 +11,7 @@
 // The tray (`AppTray` in app.slint) is a separate root and does NOT use this
 // global; it keeps its own pushed-in state.
 
-import { PresetSummary, PresetForm, ServerForm, IntegrationModel, GpuRow, TensorOverrideRow } from "types.slint";
+import { PresetSummary, PresetForm, ServerForm, IntegrationModel, GpuRow, TensorOverrideRow, BenchPresetRow, BenchResultRow } from "types.slint";
 import { Options } from "components.slint";
 
 export global AppState {
@@ -20,7 +20,7 @@ export global AppState {
     in-out property <string> app_version;
 
     // ── Navigation ───────────────────────────────────────────────────
-    // 0 = Server, 1 = Models, 2 = Integrations, 3 = Settings.
+    // 0 = Server, 1 = Models, 2 = Benchmark, 3 = Integrations, 4 = Settings.
     in-out property <int> current_tab: 0;
 
     // ── Live status ──────────────────────────────────────────────────
@@ -107,6 +107,14 @@ export global AppState {
     in-out property <string> server_tensor_warning;
     in-out property <[string]> server_tensor_dev_labels;
     in-out property <[string]> server_tensor_dev_values;
+
+    // Non-empty when an AMD GPU was detected but no ROCm device beside it, i.e.
+    // llama.cpp is driving that card through Vulkan instead of HIP. It is the
+    // one backend that goes missing SILENTLY (ggml drops a backend whose imports
+    // don't resolve without a word), so nothing else in the UI would say it.
+    // Computed in Rust from the probe crossed with the installed ROCm dist
+    // (devices::rocm_health) and refreshed with the device dropdowns.
+    in-out property <string> rocm_warning: "";
 
     // Vision-encoder (mmproj) device dropdown triple. Its own list because the
     // CLIP context ignores --device entirely: llama.cpp grabs the first GPU
@@ -319,6 +327,61 @@ export global AppState {
     out property <bool> modal_open: show_new_kind_picker || show_rename_dialog
         || show_discard_dialog || show_delete_dialog || show_chat_template_dialog;
 
+    // ── Benchmark tab state ─────────────────────────────────────────
+    // Two engines behind one tab, and the mode decides which half of the
+    // workload card is live, what the preview shows, and which llama-server
+    // state the run demands (live needs it UP, synthetic needs it DOWN).
+    // "live" = real requests to the running server, with a prompt and a
+    // temperature override; "synthetic" = llama-bench over token COUNTS, which
+    // takes no prompt and never samples. See src/bench.rs.
+    in-out property <string> bench_mode: "live";
+    out property <bool> bench_is_live: bench_mode == "live";
+    // The selectable presets, built in Rust: the checkbox reports through
+    // `bench_toggle_preset` and the whole model is rebuilt, so the row bindings
+    // stay one-way like the GPU table's.
+    in-out property <[BenchPresetRow]> bench_presets;
+    in-out property <int> bench_selected_count: 0;
+    // The first selected preset, i.e. the denominator of the ratio column.
+    in-out property <string> bench_baseline: "";
+
+    // Workload. Both halves are kept across a mode switch (the card shows the
+    // one the mode reads), and every field is a plain string re-parsed in Rust,
+    // for the same reason the two forms' numerics are: a SpinBox edits itself on
+    // a stray scroll.
+    in-out property <string> bench_prompt;
+    // "default" here means "leave the preset's own --temp alone", which is a
+    // third instruction, not a missing one. Unchecked with a 0 is the default:
+    // greedy sampling is what makes two runs of one prompt comparable.
+    in-out property <bool> bench_temp_default: false;
+    in-out property <string> bench_temp: "0";
+    in-out property <string> bench_max_tokens;
+    in-out property <string> bench_reps;
+    in-out property <string> bench_prompt_lens;
+    in-out property <string> bench_depths;
+    in-out property <string> bench_n_gen;
+
+    // Read-only preview of what Run will actually do: the llama-bench command
+    // line per preset (synthetic), or the HTTP request (live). The twin of the
+    // Server tab's Command Line card, and pushed from Rust for the same reason:
+    // it must be built by the code that builds the real thing.
+    in-out property <string> bench_preview: "";
+    // What this mode cannot measure, spelled out where the run is started
+    // rather than only in the saved report.
+    in-out property <string> bench_caveats: "";
+
+    in-out property <bool> bench_running: false;
+    in-out property <string> bench_progress: "";
+    in-out property <[BenchResultRow]> bench_rows;
+    // Which run the table is showing: "" while a run is live or when it shows
+    // the run just finished, otherwise the stamp of the reloaded past run.
+    in-out property <string> bench_showing: "";
+    in-out property <string> bench_report_path: "";
+    // Past runs from %LOCALAPPDATA%\llama.cpp\bench\, newest first
+    // (label = the human date, value = the stamp).
+    in-out property <[string]> bench_run_labels;
+    in-out property <[string]> bench_run_values;
+    in-out property <int> bench_run_index: -1;
+
     // ── Integrations tab state ─────────────────────────────────────
     in-out property <[IntegrationModel]> integration_models;
     in-out property <bool> integration_provider_active: false;
@@ -443,6 +506,24 @@ export global AppState {
     // Picks up files added on disk or config files edited by hand outside
     // the GUI, without restarting the app.
     callback reload_all();
+
+    // Benchmark tab. `bench_mode_picked` / `bench_toggle_preset` rewrite the
+    // selection in Rust and rebuild the row model (same contract as the GPU
+    // table: a row's checkbox binding is one-way, so anything that changes
+    // another row must rebuild). `bench_changed` is the catch-all a workload
+    // field's `edited` fires: it re-renders the preview from the same code that
+    // builds the real command. `bench_run` validates and starts; `bench_cancel`
+    // stops at the next repetition or test boundary.
+    callback bench_mode_picked(string);
+    callback bench_toggle_preset(string);
+    callback bench_changed();
+    callback bench_run();
+    callback bench_cancel();
+    callback bench_run_picked(string);
+    // Open the run folder (%LOCALAPPDATA%\llama.cpp\bench) in the file manager,
+    // and the current run's markdown report in the default editor.
+    callback bench_open_folder();
+    callback bench_open_report();
 
     callback toggle_integration_model(int);
     callback save_integrations();

@@ -8,12 +8,14 @@
     windows_subsystem = "windows"
 )]
 
+mod bench;
 mod cli;
 mod devices;
 mod form;
 mod gguf;
 mod gpu_split;
 mod gui;
+mod http;
 mod ini;
 mod integrations;
 mod model_scan;

@@ -218,7 +218,7 @@ fn server_args(
 /// separately in `start()`: it comes from a path helper, not from a bare config
 /// field. This is the sibling of `server_args` for the settings llama.cpp exposes
 /// ONLY as env vars, so `start()` and `command_line()` render the same launch.
-fn env_vars(cfg: &crate::server_cfg::ServerConfig) -> Vec<(String, String)> {
+pub fn env_vars(cfg: &crate::server_cfg::ServerConfig) -> Vec<(String, String)> {
     let mut env: Vec<(String, String)> = Vec::new();
     if let Some(dev) = cfg.mmproj_device.as_deref().map(str::trim) {
         if !dev.is_empty() {
@@ -428,7 +428,7 @@ pub fn command_line() -> Option<String> {
 /// command): a setting llama.cpp only exposes as an env var is still part of the
 /// launch, and a pasted block that silently dropped it would run a different
 /// server than the GUI does.
-fn render_command_line(exe: &str, args: &[String], env: &[(String, String)]) -> String {
+pub fn render_command_line(exe: &str, args: &[String], env: &[(String, String)]) -> String {
     // PowerShell parses a quoted string at command position as an expression,
     // not a command, and the default install path ("C:\Program Files\…") gets
     // quoted by `quote_arg`. The call operator makes the paste work there and

@@ -215,6 +215,42 @@ export struct ServerForm {
     api_key_nokey: bool,
 }
 
+// One selectable row of the Benchmark tab's preset list. The unit of a
+// benchmark is the PRESET, not the model file: two presets may point at the same
+// `.gguf` with different placement, KV types or drafters, and comparing exactly
+// that pair is the most useful thing the tab does. `model` is the file's base
+// name, shown under the id so such a pair reads as one file twice rather than as
+// a mistake. Built entirely in Rust (gui/bench_tab.rs) and read-only to Slint:
+// the row checkbox reports through a callback that rebuilds the model, the same
+// contract as GpuRow.
+export struct BenchPresetRow {
+    id: string,
+    model: string,
+    selected: bool,
+    // 1-based position in the run order, 0 when unselected. Position 1 is the
+    // BASELINE the ratio column divides by, so it is worth showing.
+    order: int,
+}
+
+// One row of the Benchmark tab's results table, pre-formatted in Rust
+// (bench::rows) so no arithmetic and no rounding lives in the .slint.
+export struct BenchResultRow {
+    // "pp2048" / "tg128 @ d8192" for the synthetic mode, "prefill" / "decode"
+    // for the live one.
+    test: string,
+    preset: string,
+    mean: string,
+    sd: string,
+    samples: int,
+    // Against the first selected preset: "1.00x" for the baseline itself, "-"
+    // where the baseline never ran this test.
+    ratio: string,
+    // What the number alone would hide: a prefix-cache hit that invalidates a
+    // prefill row, the drafter's acceptance on a decode row. Empty when there is
+    // nothing to say.
+    note: string,
+}
+
 export struct IntegrationModel {
     id: string,
     label: string,
