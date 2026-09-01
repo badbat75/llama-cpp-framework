@@ -247,6 +247,28 @@ Two blocks exist so that a comparison can be falsified rather than merely believ
 
 Every run writes three files to `%LOCALAPPDATA%\llama.cpp\bench\` **as it goes**, not at the end: `bench-<stamp>.jsonl` (one appended line per measurement, flushed immediately, plus llama-bench's own row kept **verbatim** beside each point: the point keeps mean, spread and count, the row carries everything else it measured, and the first version of this file kept only the aggregate, which is how the resolved flash-attention of a finished comparison turned out to be unrecoverable), `bench-<stamp>.md` (the report), and `bench-<stamp>.log` (the engine's own output, tee'd while it runs). That is not belt-and-braces: a benchmark is minutes of sustained GPU load, which is exactly when a driver reset or a bugcheck arrives, and results written only at the end are results lost on the first crash. A run that dies is a partial result, never an empty file, and **Saved runs** reloads any of them (a live point is revised as its repetitions accumulate, so the same key is appended several times and the last line wins). Stamps are UTC: this crate has no time-zone database and the stamp is also the file name, so a value that jumped an hour twice a year would break the ordering. Cancel takes effect at the next repetition or test boundary; a request already in flight is not interrupted.
 
+#### Sweeping one key, unattended: `bench sweep`
+
+The tab measures a configuration. A sweep measures a *question* about one ("how far does raising `spec-draft-n-max` keep paying?"), by running the same engines once per value of one presets.ini key:
+
+```powershell
+llama-cpp-config bench sweep --preset Qwen3.8-27B-UD --key spec-draft-n-max --values 2..8
+llama-cpp-config bench sweep --preset Qwen3.8-27B-UD --key device --values "Vulkan1,CUDA0;ROCm0,CUDA0" --apply best
+llama-cpp-config bench sweep --preset Qwen3.8-27B-UD --key ubatch-size --values 256,384,512 --mode synthetic
+```
+
+It is a CLI command and not a button because of what a leg costs: a model load plus `reps` cold prefills, so seven values is half an hour during which nothing else may touch the machine. That is a thing to start from a terminal and walk away from. Each leg writes the ordinary `bench-<stamp>.{jsonl,md,log}` trio described above, so a sweep killed at the fourth value leaves four finished, openable runs in **Saved runs**, not one truncated file; only the cross-leg digest is added, as `sweep-<stamp>.{jsonl,md}`, named so it stays *out* of that listing (which globs `bench-*.jsonl` and would fail to parse it).
+
+Five things it has to get right, each of which is a way the naive version would lie:
+
+- **A live leg restarts llama-server**, because the key rides the *child's* launch args: the router hands a child the preset's keys when it spawns it and nothing re-reads presets.ini afterwards. The restart is deliberately the bare stop/start pair and not what `control restart` does, since that one saves and restores the conversation snapshot: gigabytes of IO per leg to reinstate a KV cache the benchmark then declines to use (`cache_prompt: false`). The synthetic engine wants the opposite state (server **down**) and needs no restart at all, llama-bench being a fresh process that reads presets.ini as it builds its argv.
+- **`;` separates the values when a value contains a comma.** `device = Vulkan1,CUDA0` and `tensor-split = 60,6` are single values holding commas, so a comma-separated list could never sweep them; a `;` cannot appear in an INI value at all (llama-server's preset reader cuts a value at the first `;` or `#`), which makes it the one safe separator. `--values` splits on `;` when it sees one, on `,` otherwise, and expands `a..b` into the inclusive range. `unset` as a value removes the key for that leg.
+- **The key is typed, not spliced.** `--key` resolves through `bench::sweep::SWEEPABLE` to the real preset field, so a typo is refused up front with the list of keys that work, and every value is parsed *before* the first leg runs. Writing an unknown key into the INI instead would have llama-server merely warn about it, and the leg would then measure the unchanged configuration and report it as a data point.
+- **presets.ini is edited, and says so before it is.** The original value is written into the summary's first jsonl line before any leg starts, so a machine that reboots mid-sweep still has on disk the value to put back. At the end the preset is restored (`--apply original`, the default; `best` keeps the winner, `last` the final leg) and llama-server is left as the sweep found it: a running server is restarted onto the value presets.ini now names, rather than left running one the file no longer mentions.
+- **A failed leg keeps its row.** "This value does not load" is a result; a table that dropped it would read as if the value had never been tried. The sweep continues through the remaining values and exits non-zero at the end, after the summary is written.
+
+The summary ranks on `decode` (live) or the first `tg` row (synthetic), with the ratio measured against the *first* value, and carries the sweep's own caveats on top of the engine's: legs ran in order, so a card that heats up charges the drift to the last values, and two close values deserve a re-run with the order reversed.
+
 ### Integrations tab
 
 Three sections: **Models** (toggle presets to expose), **OpenCode** (provider status + action buttons), and **Claude Code** (env-variable snippet).
@@ -271,6 +293,7 @@ The entry used to advertise a flat `131072` whenever `ctx-size` was absent, whic
 | `presets.ini` | `%LOCALAPPDATA%\llama.cpp\config\` | INI, one `[model-id]` section per model |
 | `<model>.llamastate` | `%LOCALAPPDATA%\llama.cpp\state\` (overridable) | Binary KV-cache dump, written only when **SaveStateOnShutdown** is on |
 | `bench-<stamp>.{jsonl,md,log}` | `%LOCALAPPDATA%\llama.cpp\bench\` | One benchmark run: the appended measurement stream, its markdown report, and the engine's output |
+| `sweep-<stamp>.{jsonl,md}` | `%LOCALAPPDATA%\llama.cpp\bench\` | One `bench sweep`: the value to restore plus one line per leg, and the cross-leg summary |
 
 On Linux / macOS, `%LOCALAPPDATA%\llama.cpp` maps to `$HOME/.local/share/llama.cpp`.
 
@@ -328,6 +351,7 @@ The build script (`build.rs`) first regenerates `resources\llama.ico` if it's mi
 | `src\http.rs` | The minimal hand-rolled loopback HTTP client (`Connection: close`, chunked decoding), shared by the two features that talk to a running llama-server: `slot_state` and `bench::exec`. The read timeout is the caller's argument, since one waits out a multi-GiB KV dump and the other a cold prefill |
 | `src\bench.rs` | The Benchmark tab's rules: the plan, the preset-to-`llama-bench` argument mapping (including the three INI-to-flag separator conversions), the server-wide shadowing, the workload split into a prefill and a decode sweep, the live request body, `timings` parsing, mean/stddev aggregation with the ratio column, the markdown report, the jsonl stream format and the UTC stamps. Pure, fully unit-tested |
 | `src\bench\env.rs` | The environment stamp a report carries (boot time + display-adapter driver versions, read from the registry through `startup::machine_reg_sz`), so two runs can be told apart when a driver changed underneath them |
+| `src\bench\sweep.rs` | `bench sweep`: the same engines run once per value of one preset key. Owns the sweepable-key table (typed setters, so a typo is refused before any GPU time), the `;`/`,`/`a..b` value grammar, the per-leg server preparation (a live leg restarts llama-server, snapshot-free), the restore of key and process, and the cross-leg summary. Its pure half is unit-tested; the loop itself is the CLI's `run_bench` |
 | `src\bench\exec.rs` | Running one: the two opposite llama-server preflights, `llama-bench` spawned with its stdout streamed line by line (and its stderr tee'd to the run log) so results land as they complete and a cancel is noticed while the pipe is quiet, or the live request loop with its per-preset warm-up |
 | `src\net_ifaces.rs` | Enumerate local network interfaces: populates the Server tab's "Bind to" dropdown |
 | `src\server_version.rs` | Parse `llama-server --version` into the footer badge (`0.1.0-dev · b10463`): two banner shapes, since llama.cpp gave itself a semantic version in b10398 and rewrote the line; the badge keeps the version and the build number and drops the commit |

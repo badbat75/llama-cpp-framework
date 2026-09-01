@@ -3,7 +3,7 @@
 use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand};
 
-use crate::{paths, presets, server_cfg};
+use crate::{bench, paths, presets, server_cfg};
 
 // ── Command definitions (clap) ───────────────────────────────────────────
 
@@ -37,6 +37,73 @@ pub enum Command {
     /// Control the llama-server process.
     #[command(subcommand)]
     Control(ControlCmd),
+    /// Benchmarks that run unattended (the GUI's Benchmark tab, in a loop).
+    #[command(subcommand)]
+    Bench(BenchCmd),
+}
+
+#[derive(Subcommand, Debug)]
+pub enum BenchCmd {
+    /// Benchmark one preset once per value of ONE of its keys.
+    ///
+    /// Each value is written to presets.ini, measured by the same engine the
+    /// Benchmark tab uses (so each leg leaves an ordinary bench-<stamp> report),
+    /// and the key is put back afterwards. A live sweep restarts llama-server
+    /// per value, because the key rides the child's launch args.
+    // Boxed for the reason `ServerSet` is: one payload-carrying variant next to
+    // the small ones would otherwise blow clippy's size threshold as the flags
+    // grow. clap unwraps the Box itself, so the CLI surface is unchanged.
+    Sweep(Box<BenchSweep>),
+}
+
+#[derive(Args, Debug)]
+pub struct BenchSweep {
+    /// Preset id to benchmark (as in `preset list`).
+    #[arg(long)]
+    pub preset: String,
+    /// The presets.ini key to vary, e.g. spec-draft-n-max.
+    #[arg(long)]
+    pub key: String,
+    /// Values to measure: `2,3,4`, the inclusive range `2..8`, or, when a value
+    /// itself contains a comma (device, tensor-split), `;`-separated:
+    /// `Vulkan1,CUDA0;CUDA0`. `unset` removes the key for that leg.
+    #[arg(long)]
+    pub values: String,
+    /// live = the running llama-server (real prompt, the preset's drafter);
+    /// synthetic = llama-bench (no prompt, no sampler, llama-server must be down).
+    #[arg(long, default_value = "live", value_parser = ["live", "synthetic"])]
+    pub mode: String,
+    /// Repetitions per value.
+    #[arg(long)]
+    pub reps: Option<i32>,
+    /// What the preset is left on when the sweep ends.
+    #[arg(long, default_value = "original", value_parser = ["original", "best", "last"])]
+    pub apply: String,
+    /// Treat this as the value the key had before the sweep, instead of reading
+    /// it from presets.ini. For after an interrupted sweep, which leaves the key
+    /// on one of its leg values (the value to pass is in its jsonl header, and
+    /// the sweep warns naming both).
+    #[arg(long)]
+    pub restore_to: Option<String>,
+    /// Live only: the prompt to send. Defaults to the framework's own.
+    #[arg(long)]
+    pub prompt: Option<String>,
+    /// Live only: sampling temperature, or `preset` to leave the preset's alone.
+    /// Defaults to 0, which is what makes two legs comparable.
+    #[arg(long)]
+    pub temp: Option<String>,
+    /// Live only: output cap per repetition.
+    #[arg(long)]
+    pub max_tokens: Option<i32>,
+    /// Synthetic only: prompt lengths, comma-separated.
+    #[arg(long)]
+    pub prompt_lens: Option<String>,
+    /// Synthetic only: KV depths, comma-separated.
+    #[arg(long)]
+    pub depths: Option<String>,
+    /// Synthetic only: generation length.
+    #[arg(long)]
+    pub n_gen: Option<i32>,
 }
 
 #[derive(Subcommand, Debug)]
@@ -244,7 +311,60 @@ pub fn run(cli: Cli) -> Result<()> {
         Command::Server(c) => run_server(c),
         Command::Preset(c) => run_preset(c),
         Command::Control(c) => run_control(c),
+        Command::Bench(c) => run_bench(c),
     }
+}
+
+/// The `bench sweep` leg: turn the flags into a `sweep::Opts` and run it. Every
+/// flag left out falls back to the Benchmark tab's own default, so a sweep and a
+/// run started from the GUI measure the same thing.
+fn run_bench(c: BenchCmd) -> Result<()> {
+    let BenchCmd::Sweep(a) = c;
+    let values = bench::sweep::parse_values(&a.values).map_err(|e| anyhow::anyhow!(e))?;
+
+    let mut plan = bench::Plan {
+        mode: bench::Mode::from_str(&a.mode),
+        ..bench::Plan::default()
+    };
+    if let Some(reps) = a.reps {
+        plan.reps = reps;
+    }
+    if let Some(prompt) = a.prompt {
+        plan.prompt = prompt;
+    }
+    if let Some(temp) = a.temp.as_deref() {
+        plan.temp = if temp.eq_ignore_ascii_case("preset") {
+            None
+        } else {
+            Some(
+                temp.parse::<f64>()
+                    .with_context(|| format!("--temp {temp} is not a number (or `preset`)"))?,
+            )
+        };
+    }
+    if let Some(max_tokens) = a.max_tokens {
+        plan.max_tokens = max_tokens;
+    }
+    if let Some(lens) = a.prompt_lens.as_deref() {
+        plan.prompt_lens = bench::parse_int_list(lens);
+    }
+    if let Some(depths) = a.depths.as_deref() {
+        plan.depths = bench::parse_int_list(depths);
+    }
+    if let Some(n_gen) = a.n_gen {
+        plan.n_gen = n_gen;
+    }
+
+    let opts = bench::sweep::Opts {
+        preset: a.preset,
+        key: a.key,
+        values,
+        plan,
+        apply: bench::sweep::Apply::from_str(&a.apply),
+        restore_to: a.restore_to,
+    };
+    bench::sweep::run(&opts).map_err(|e| anyhow::anyhow!(e))?;
+    Ok(())
 }
 
 /// The aligned body of `server show`, one `  Label        value` row per field

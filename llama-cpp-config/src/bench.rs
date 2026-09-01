@@ -65,6 +65,7 @@ use crate::server_cfg::ServerConfig;
 
 pub mod env;
 pub mod exec;
+pub mod sweep;
 
 // ── Defaults ─────────────────────────────────────────────────────────────
 

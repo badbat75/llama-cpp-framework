@@ -27,6 +27,11 @@
 //!      because the INI format can't escape `;`/`#` (legal in Windows dirs and
 //!      in JSON strings), so an unvalidated value saves fine and reloads
 //!      TRUNCATED. Nothing fails if you skip this.
+//!   9. LAUNCH-AFFECTING field only (one that changes what the child process
+//!      does: placement, batching, the cache, the drafter): add it to
+//!      `bench::sweep::SWEEPABLE` with the matching parser, so `bench sweep
+//!      --key <it>` can measure it. Nothing fails if you skip this either: the
+//!      key is simply refused, naming the ones that do work.
 //!
 //! Guards: the INI round-trip test in this file (`full_preset_round_trips_through_ini`)
 //! and the form round-trip test in form.rs (`form_to_preset(preset_to_form(p)) == p`);
