@@ -248,13 +248,30 @@ Section /o "NVIDIA cuBLAS runtime (~375 MB download)" SecDepsNvidia
     ExecWait 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$INSTDIR\bin\install-runtime-deps.ps1" -Unattended -Nvidia'
 SectionEnd
 
+; Hidden and always run (the leading '-' in the name), which is the whole
+; point: on a machine that already has ROCm this copies the dist's own
+; ~17 MB HIP runtime next to llama-server.exe, and that copy is what makes
+; BF16/F16 models run on RDNA4 (without it they run the dist's rocBLAS
+; against the DRIVER's HIP runtime out of System32, and abort at the first
+; prefill batch). Leaving it to SecDepsAmd would hide a 17 MB fix behind a
+; checkbox announcing 4.3 GB, i.e. behind the one box a user who already has
+; ROCm never ticks. Downloads nothing, prompts nothing, and stays silent when
+; there is no ROCm to copy from, so it is harmless on NVIDIA-only machines.
+; Runs LAST so an install that did tick SecDepsAmd is staged from the dist it
+; just installed. nsExec (not ExecWait) to keep it out of the user's face: it
+; needs no console, and its output lands in the details view.
+Section "-StageHipRuntime"
+    DetailPrint "Runtime deps: HIP runtime next to llama-server.exe (AMD only)..."
+    nsExec::ExecToLog 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$INSTDIR\bin\install-runtime-deps.ps1" -Unattended -StageHipRuntime'
+SectionEnd
+
 ; ── Section descriptions ────────────────────────────────────────────
 !insertmacro MUI_FUNCTION_DESCRIPTION_BEGIN
     !insertmacro MUI_DESCRIPTION_TEXT ${SecMain} "Core llama.cpp binaries and llama-cpp-config configurator."
     !insertmacro MUI_DESCRIPTION_TEXT ${SecStartMenu} "Create a Start Menu shortcut to llama-cpp-config."
     !insertmacro MUI_DESCRIPTION_TEXT ${SecPath} "Add llama.cpp bin directory to system PATH."
     !insertmacro MUI_DESCRIPTION_TEXT ${SecDepsBase} "Microsoft Visual C++ runtime - required to run anything in this package. Skipped if already installed."
-    !insertmacro MUI_DESCRIPTION_TEXT ${SecDepsAmd} "AMD ROCm/TheRock libraries for the HIP backend (~4.3 GB download, ~25 GB on disk; requires the Adrenalin driver). Without it AMD GPUs run on Vulkan."
+    !insertmacro MUI_DESCRIPTION_TEXT ${SecDepsAmd} "AMD ROCm/TheRock libraries for the HIP backend (~4.3 GB download, ~25 GB on disk; requires the Adrenalin driver). Without it AMD GPUs run on Vulkan. Tick it also when ROCm is already installed: the download is then skipped and it only stages the dist's HIP runtime here, which is what BF16/F16 models on RDNA4 need."
     !insertmacro MUI_DESCRIPTION_TEXT ${SecDepsNvidia} "NVIDIA cuBLAS runtime for the CUDA backend (~375 MB download; requires the NVIDIA driver). Without it NVIDIA GPUs run on Vulkan."
 !insertmacro MUI_FUNCTION_DESCRIPTION_END
 

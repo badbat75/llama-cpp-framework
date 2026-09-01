@@ -10,6 +10,12 @@
 #   - ROCm/TheRock (AMD GPUs)   - HIP backend user-space: hipblas/rocblas +
 #     kernels (~4.3 GB download, ~25 GB on disk). Requires the Adrenalin
 #     driver (not installable from here). Without it AMD GPUs run on Vulkan.
+#     The leg also stages the dist's own HIP runtime (amdhip64_*.dll, ~17 MB)
+#     next to llama-server.exe, which is what makes BF16/F16 models run on
+#     gfx1201 - see Invoke-HipRuntimeStaging for the why. That copy is
+#     reachable on its own as -StageHipRuntime (leg 2b), which downloads
+#     nothing and is what the installer's hidden always-run section calls, so
+#     a machine that already has ROCm gets it without ticking a 4.3 GB box.
 #   - cuBLAS runtime (NVIDIA)   - CUDA backend math libs, official NVIDIA
 #     per-component redist (~375 MB); the two DLLs land next to
 #     llama-server.exe. Requires the NVIDIA driver. Without it NVIDIA GPUs
@@ -19,9 +25,10 @@
 # are missing are skipped silently by llama-server at runtime (the GPU then
 # appears as Vulkan-only) - that is the symptom this script exists to fix.
 #
-# Component selection: the -VcRedist/-Amd/-Nvidia switches pick EXACTLY those
-# components (the installer's component checkboxes call this script that way,
-# one switch per section, combined with -Unattended so nothing prompts). With
+# Component selection: the -VcRedist/-Amd/-Nvidia/-StageHipRuntime switches
+# pick EXACTLY those components (the installer's component checkboxes call this
+# script that way, one switch per section, combined with -Unattended so nothing
+# prompts; -StageHipRuntime is the hidden always-run section, see leg 2b). With
 # no component switch: VC++ is always considered, and the GPU legs are an
 # explicit interactive choice ([A]MD / [N]VIDIA / [B]oth / [S]kip, detected
 # GPUs pre-fill the default) - or follow detection under -Unattended/-Report.
@@ -32,7 +39,8 @@ param(
     [switch]$Report,       # detection only, change nothing (no elevation needed)
     [switch]$VcRedist,     # component switch: VC++ redistributable only
     [switch]$Amd,          # component switch: AMD leg (ROCm/TheRock)
-    [switch]$Nvidia        # component switch: NVIDIA leg (cuBLAS)
+    [switch]$Nvidia,       # component switch: NVIDIA leg (cuBLAS)
+    [switch]$StageHipRuntime  # component switch: ONLY stage the HIP runtime
 )
 
 $ErrorActionPreference = 'Stop'
@@ -50,6 +58,7 @@ if (-not $Report -and -not (Test-IsAdmin)) {
     if ($VcRedist)   { $argList += ' -VcRedist' }
     if ($Amd)        { $argList += ' -Amd' }
     if ($Nvidia)     { $argList += ' -Nvidia' }
+    if ($StageHipRuntime) { $argList += ' -StageHipRuntime' }
     Start-Process powershell -Verb RunAs -ArgumentList $argList
     exit
 }
@@ -72,6 +81,55 @@ function Get-RemoteFileSize([string]$Url) {
     return $null
 }
 
+# The dist's own HIP runtime, staged next to llama-server.exe. This is what
+# makes BF16/F16 models run on gfx1201, and it is a load-order fix, not an
+# extra dependency: Windows resolves a static import from the EXE's own
+# directory and then System32, BOTH before PATH, and the AMD driver keeps its
+# own amdhip64_7.dll in System32. So without this copy every binary here runs
+# the dist's rocblas.dll + libhipblaslt.dll against the DRIVER's HIP runtime,
+# never the dist's, and that mix is the one that aborts at the first prefill
+# batch with "ROCm error: invalid argument" (the second 16-bit GEMM in a
+# process fails at kernel launch; ROCm#6461, TheRock#7271). Measured
+# 2026-09-01 as a same-directory A/B with this file as the only variable:
+# present -> passes, removed -> fails, identically on 7.14.0, 10.0.0,
+# 7.15.0a20260728 and 10.1.0a20260901, with ROCBLAS_USE_HIPBLASLT forced to 1
+# as well - so hipBLASLt itself is healthy and the dist version was never the
+# variable. Only the runtime moves: rocblas, hipblaslt, amd_comgr and
+# rocm_kpack keep resolving from HIP_PATH\bin over PATH, which the HIP backend
+# already depends on, so this stages no new failure mode. Deleting the copy
+# reverts to the driver's runtime.
+#
+# Freshness is decided by CONTENT, and it has to be: every dist stamps the
+# same 10.0.3581.0 into the DLL's VERSIONINFO, and 10.0.0 and
+# 7.15.0a20260728 are even the same 16,555,520 bytes while being different
+# binaries. So a (size, FileVersion) check would call a stale copy current the
+# moment HIP_PATH moves between two such dists, and leave the install running
+# another version's runtime. One SHA256 of a ~17 MB file per run is the cheap
+# way to be right.
+function Invoke-HipRuntimeStaging([string]$HipPath) {
+    foreach ($src in @(Get-ChildItem (Join-Path $HipPath 'bin') -Filter 'amdhip64_*.dll' -ErrorAction SilentlyContinue)) {
+        $dst = Join-Path $PSScriptRoot $src.Name
+        $cur = Get-Item $dst -ErrorAction SilentlyContinue
+        $ver = $src.VersionInfo.FileVersion
+        $same = $cur -and $cur.Length -eq $src.Length -and
+                (Get-FileHash $dst -Algorithm SHA256).Hash -eq (Get-FileHash $src.FullName -Algorithm SHA256).Hash
+        if ($same) {
+            Write-Host "  [OK] HIP runtime $($src.Name) $ver next to llama-server.exe" -ForegroundColor Green
+        } elseif ($Report) {
+            $why = if ($cur) { 'is a copy of another dist' } else { 'not staged' }
+            Write-Host "  [--] HIP runtime $($src.Name) $why - BF16/F16 models abort on gfx1201" -ForegroundColor Yellow
+        } else {
+            try {
+                Copy-Item $src.FullName -Destination $dst -Force
+                $script:actions += "HIP runtime $($src.Name) $ver staged next to llama-server.exe"
+                Write-Host "  [OK] HIP runtime $($src.Name) $ver staged next to llama-server.exe" -ForegroundColor Green
+            } catch {
+                Write-Host "  [!!] cannot write $dst - close llama-server and re-run" -ForegroundColor Red
+            }
+        }
+    }
+}
+
 Write-Host ""
 Write-Host "  llama.cpp-framework - runtime dependencies" -ForegroundColor Cyan
 Write-Host "  ===========================================" -ForegroundColor Cyan
@@ -86,9 +144,14 @@ Write-Host ""
 # Which component(s)? Explicit switches pick exactly those; otherwise VC++ is
 # always considered and the GPU legs are an explicit user choice - the
 # detected GPUs only set the default. -Unattended/-Report stay detection-based.
-$explicit = [bool]($VcRedist -or $Amd -or $Nvidia)
+$explicit = [bool]($VcRedist -or $Amd -or $Nvidia -or $StageHipRuntime)
 $doVc = (-not $explicit) -or [bool]$VcRedist
 $doAmd = $false; $doNvidia = $false
+# -StageHipRuntime is a component switch like the others, and it is the only
+# one that also happens INSIDE another leg: the AMD leg stages the runtime as
+# its last step, so with both switches the stage-only leg stands down rather
+# than hashing the same file twice.
+$doStageOnly = [bool]$StageHipRuntime -and -not [bool]$Amd
 if ($explicit) {
     $doAmd = [bool]$Amd; $doNvidia = [bool]$Nvidia
 } elseif ($Unattended -or $Report) {
@@ -219,11 +282,30 @@ if ($doAmd) {
                             $key.Close()
                             $actions += "ROCm/TheRock $($dist.Version) installed (HIP_PATH set)"
                             Write-Host "  [OK] ROCm/TheRock $($dist.Version) installed" -ForegroundColor Green
+                            $hp = $distDir; $rocmOk = $true
                         } else { Write-Host "  [!!] extraction failed (tar exit $LASTEXITCODE) - tarball kept for retry" -ForegroundColor Red }
                     }
                 }
             }
         }
+
+        if ($rocmOk) { Invoke-HipRuntimeStaging $hp }
+    }
+}
+
+# -- 2b) HIP runtime only (the installer's hidden always-run step) ---
+# The same copy the AMD leg makes, reachable WITHOUT asking for the 4.3 GB
+# component, and that separation is the point: a machine that already has ROCm
+# needs the ~17 MB file and nothing else, while the checkbox that would have
+# delivered it announces a 4.3 GB download, i.e. it is exactly the one such a
+# user never ticks. So the installer runs this on every install and upgrade
+# (hidden section, nothing to choose) and the component keeps its own job,
+# installing ROCm when it is missing. Silent when there is nothing to do (no
+# HIP_PATH, an incomplete dist): it also runs on NVIDIA-only machines.
+if ($doStageOnly) {
+    $hp = [Environment]::GetEnvironmentVariable('HIP_PATH', 'Machine')
+    if ($hp -and (Test-Path "$hp\bin\hipblas.dll") -and (Test-Path "$hp\bin\rocblas\library")) {
+        Invoke-HipRuntimeStaging $hp
     }
 }
 

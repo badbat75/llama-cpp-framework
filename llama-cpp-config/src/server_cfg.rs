@@ -149,8 +149,24 @@ pub struct ServerConfig {
     /// `GGML_CUDA_CUBLAS_COMPUTE_TYPE=f32` workaround. Upstream: llama.cpp
     /// #25836, ROCm #6461, TheRock #7271.
     ///
-    /// Left unset by default all the same: the bug is per-arch, and hipBLASLt is
-    /// the faster path everywhere it works.
+    /// What fails is a MIX, not a ROCm version, and that is where the other cure
+    /// comes from. Windows resolves a static import from the exe's own directory
+    /// and then System32, both BEFORE PATH, and the AMD driver keeps its own
+    /// `amdhip64_7.dll` in System32; so llama-server runs the dist's
+    /// `rocblas.dll` + `libhipblaslt.dll` against the DRIVER's HIP runtime,
+    /// never the dist's own. Copy the dist's runtime next to the exe and the
+    /// same GEMMs pass on 7.14.0, 10.0.0 and nightly 10.1.0a20260901 alike, with
+    /// `=1` forced as well, so hipBLASLt itself is healthy (measured 2026-09-01
+    /// as a same-directory A/B with that file as the only variable, and
+    /// end-to-end on `test-backend-ops test -o MUL_MAT -b ROCm0 -p type_a=bf16`).
+    /// Hence `installer\install-runtime-deps.ps1` stages `amdhip64_*.dll` from
+    /// `HIP_PATH\bin` into `bin\`, from a hidden always-run installer section
+    /// as well as from its AMD leg, so an install or upgrade carrying that
+    /// helper needs no knob here at all.
+    ///
+    /// Left unset by default all the same: the bug is per-arch, hipBLASLt is the
+    /// faster path everywhere it works, and the runtime finding rests on one
+    /// driver (32.0.22042.14002) on one box.
     pub rocblas_use_hipblaslt: Option<bool>,
     /// Enable the built-in web UI's MCP CORS proxy (--webui-mcp-proxy).
     /// None = the framework default (on): the bundled chat UI needs it to call
