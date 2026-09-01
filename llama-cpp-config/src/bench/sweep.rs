@@ -724,6 +724,17 @@ pub fn run(opts: &Opts) -> Result<PathBuf, String> {
     let port = u16::try_from(server_cfg::load().port_or_default())
         .map_err(|_| "invalid port in server.ini".to_string())?;
 
+    // BEFORE this run's own file exists, and that ordering is the whole
+    // correctness of the check: `interrupted` answers with the NEWEST sweep of
+    // this preset and key, which the moment the file below is created is this
+    // one, carrying neither its end line nor its report yet. Scanning after
+    // creating it therefore reports every sweep as interrupted (v1.13.0 did)
+    // and, worse, hides a real leftover behind the current file.
+    let leftover = match opts.restore_to {
+        Some(_) => None,
+        None => interrupted(&opts.preset, &opts.key),
+    };
+
     let stamp = super::stamp(super::now_secs());
     let dir = super::bench_dir();
     std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
@@ -752,16 +763,14 @@ pub fn run(opts: &Opts) -> Result<PathBuf, String> {
     // read out of presets.ini above is that leftover and not the configuration
     // this machine ran. Restoring it would quietly promote a half-measured
     // value to the permanent one, so say so while there is still time to stop.
-    if opts.restore_to.is_none() {
-        if let Some((path, restore)) = interrupted(&opts.preset, &opts.key) {
-            println!(
-                "WARNING: {} never finished, so `{} = {original}` may be ITS leftover. \
-                 That sweep recorded `{restore}` as the value to put back; \
-                 pass --restore-to {restore} to restore that instead.",
-                path.display(),
-                opts.key
-            );
-        }
+    if let Some((path, restore)) = &leftover {
+        println!(
+            "WARNING: {} never finished, so `{} = {original}` may be ITS leftover. \
+             That sweep recorded `{restore}` as the value to put back; \
+             pass --restore-to {restore} to restore that instead.",
+            path.display(),
+            opts.key
+        );
     }
 
     let mut legs: Vec<Leg> = Vec::new();
