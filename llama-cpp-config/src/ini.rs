@@ -20,8 +20,10 @@
 //!   replace_key's replace path, detected once everywhere else; section
 //!   bodies arrive CRLF from the renderers and are converted to the file's
 //!   style); brand-new content defaults to CRLF.
-//! - `atomic_write` (sibling temp file + rename) is the canonical write path:
-//!   every config writer in the crate funnels through it.
+//! - `atomic_write` (sibling temp file + FSYNC + rename) is the canonical write
+//!   path: every config writer in the crate funnels through it. The sync is not
+//!   belt-and-braces, it is the difference between atomicity and DURABILITY, and
+//!   this file learned the difference the hard way (see the function).
 //! - `parse_int` / `parse_float` / `parse_bool` are the shared lenient scalar
 //!   parsers ("true"/"false" only for bools; anything else reads as unset).
 
@@ -308,7 +310,24 @@ pub fn atomic_write(path: &Path, contents: &str) -> std::io::Result<()> {
             .map(|e| format!("{}.tmp", e.to_string_lossy()))
             .unwrap_or_else(|| "tmp".to_string()),
     );
-    fs::write(&tmp, contents)?;
+    // Write, then FLUSH TO THE DISK, then rename. The sync is the whole point of
+    // this being three steps instead of one: `rename` is a metadata operation,
+    // and the filesystem is free to commit it while the temp file's data blocks
+    // are still in the page cache. Lose power in that window and the rename
+    // survives while the bytes do not, which leaves the config file with the
+    // right SIZE and nothing but zeros inside.
+    //
+    // That is not hypothetical. On 2026-09-02 a 0x116 bugcheck (the AMD driver
+    // fault this machine is prone to) landed while a sweep was restoring one
+    // preset key, and presets.ini came back as 27,669 bytes of NUL: every model
+    // preset on the machine, gone, while server.ini and settings.ini (not being
+    // written at that moment) were untouched. `fs::write` + `rename` had made
+    // the update atomic, which was never the property at risk.
+    {
+        let mut file = fs::File::create(&tmp)?;
+        std::io::Write::write_all(&mut file, contents.as_bytes())?;
+        file.sync_all()?;
+    }
     fs::rename(&tmp, path)
 }
 

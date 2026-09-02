@@ -69,6 +69,22 @@ const STOP_TIMEOUT: Duration = Duration::from_secs(60);
 const READY_TIMEOUT: Duration = Duration::from_secs(120);
 const POLL: Duration = Duration::from_millis(500);
 
+/// How long to leave the GPUs alone after llama-server is gone, before the next
+/// leg loads the model again.
+///
+/// The process vanishing is NOT the same event as the driver releasing its
+/// memory, and a sweep is the one workload that asks for tens of GiB, drops
+/// them, and asks again a second later. Measured here on a 27B model split over
+/// a Vulkan R9700 and a CUDA 4070S: the leg after a restart died with
+/// `vk::Device::allocateMemory: ErrorOutOfDeviceMemory` on a 1,052,686,976-byte
+/// buffer, while `--list-devices` moments later reported 31 GiB free on that
+/// same card; an earlier run failed differently for the same reason (ROCm
+/// reporting "no ROCm-capable device is detected" mid-teardown, which then made
+/// an `MTMD_BACKEND_DEVICE=ROCm0` invalid and stopped the server from starting
+/// at all). Both are the previous child still being torn down. The wait costs
+/// seconds against a leg that runs for minutes.
+const GPU_SETTLE: Duration = Duration::from_secs(15);
+
 /// A short read timeout for the readiness probe: `/v1/models` is answered off
 /// the router's own state, so a router that needs seconds for it is not up yet.
 const PROBE_TIMEOUT: Duration = Duration::from_secs(5);
@@ -911,6 +927,7 @@ fn prepare_server(mode: Mode, port: u16) -> Result<(), String> {
         Mode::Live => {
             runstate::stop();
             wait_gone()?;
+            std::thread::sleep(GPU_SETTLE);
             // Bare start, not the `control restart` path: no snapshot save or
             // restore, see the module header.
             runstate::start().map_err(|e| format!("cannot start llama-server: {e}"))?;
@@ -920,6 +937,9 @@ fn prepare_server(mode: Mode, port: u16) -> Result<(), String> {
             if runstate::is_running() {
                 runstate::stop();
                 wait_gone()?;
+                // llama-bench asks the same cards for the same weights, so it
+                // needs the same settling the live path does.
+                std::thread::sleep(GPU_SETTLE);
             }
             Ok(())
         }

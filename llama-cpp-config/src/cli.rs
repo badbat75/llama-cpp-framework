@@ -86,8 +86,14 @@ pub struct BenchSweep {
     #[arg(long)]
     pub restore_to: Option<String>,
     /// Live only: the prompt to send. Defaults to the framework's own.
-    #[arg(long)]
+    #[arg(long, conflicts_with = "prompt_file")]
     pub prompt: Option<String>,
+    /// Live only: read the prompt from a UTF-8 file. The way to measure the
+    /// regime a long conversation actually runs in: a decode rate at 40k of
+    /// context is a different number from the same setting's rate at 2k, and a
+    /// prompt that size does not fit on a command line.
+    #[arg(long)]
+    pub prompt_file: Option<std::path::PathBuf>,
     /// Live only: sampling temperature, or `preset` to leave the preset's alone.
     /// Defaults to 0, which is what makes two legs comparable.
     #[arg(long)]
@@ -331,6 +337,18 @@ fn run_bench(c: BenchCmd) -> Result<()> {
     }
     if let Some(prompt) = a.prompt {
         plan.prompt = prompt;
+    }
+    if let Some(path) = a.prompt_file.as_deref() {
+        // Read here rather than in the sweep, so a missing or unreadable file
+        // fails before anything restarts llama-server. A blank file is refused
+        // for the same reason `validate` refuses a blank prompt: it would
+        // measure the model answering nothing.
+        let text = std::fs::read_to_string(path)
+            .with_context(|| format!("cannot read --prompt-file {}", path.display()))?;
+        if text.trim().is_empty() {
+            anyhow::bail!("--prompt-file {} is empty", path.display());
+        }
+        plan.prompt = text;
     }
     if let Some(temp) = a.temp.as_deref() {
         plan.temp = if temp.eq_ignore_ascii_case("preset") {
@@ -664,6 +682,32 @@ mod tests {
     // The only guard on `server set`'s schema mirror: every other server-field
     // spot (server_cfg load/save, the form conversions) has a round-trip test,
     // but `apply` is the CLI-only copy; an omitted field here is silent.
+
+    /// `--prompt` and `--prompt-file` are two ways to set one field, so clap
+    /// has to refuse both at once rather than letting the later assignment win
+    /// silently: a sweep that measured a prompt the caller did not intend is
+    /// indistinguishable from one that measured the right one.
+    #[test]
+    fn prompt_and_prompt_file_are_mutually_exclusive() {
+        let base = [
+            "llama-cpp-config",
+            "bench",
+            "sweep",
+            "--preset",
+            "P",
+            "--key",
+            "spec-draft-n-max",
+            "--values",
+            "2,3",
+        ];
+        assert!(Cli::try_parse_from(base).is_ok());
+        let mut with_both = base.to_vec();
+        with_both.extend(["--prompt", "hi", "--prompt-file", "p.txt"]);
+        assert!(Cli::try_parse_from(with_both).is_err());
+        let mut with_file = base.to_vec();
+        with_file.extend(["--prompt-file", "p.txt"]);
+        assert!(Cli::try_parse_from(with_file).is_ok());
+    }
 
     #[test]
     fn server_set_apply_copies_every_field() {

@@ -269,6 +269,12 @@ Five things it has to get right, each of which is a way the naive version would 
 
 The summary ranks on `decode` (live) or the first `tg` row (synthetic), with the ratio measured against the *first* value, and carries the sweep's own caveats on top of the engine's: legs ran in order, so a card that heats up charges the drift to the last values, and two close values deserve a re-run with the order reversed.
 
+#### Sweep at the depth you actually run at: `--prompt-file`
+
+A sweep ranks settings **in the regime it measured**, and the default prompt is 230 characters, i.e. the shallow-context regime. Production is usually not that: on this machine a real agentic session sits at 40k tokens of context, where the same preset that benchmarks at 57 t/s serves at 24 to 40. Two things move between the two regimes and both are worth measuring rather than assuming. The obvious one is the absolute rate, since attention over 40k costs on every token. The one that decides whether a sweep's verdict transfers is the *ranking*: at depth a verify pass is far more expensive relative to a draft iteration, so the value of drafting more tokens per step goes up, and the optimum of a knob like `spec-draft-n-max` can sit somewhere else than it does at 2k.
+
+`--prompt-file <path>` reads the prompt from a UTF-8 file (it conflicts with `--prompt`, since both set one field), which is the only practical way to hand a sweep tens of thousands of tokens. The file is read before anything restarts llama-server, so a missing or empty one fails immediately rather than after the first model load. Bear the cost in mind when sizing the run: every repetition asks for `cache_prompt: false`, so each one re-prefills the whole thing. Pair a long prompt with a `--max-tokens` cap; a fixed generation length also removes one source of scatter, since a repetition's rate tracks the acceptance of *its own* content.
+
 ### Integrations tab
 
 Three sections: **Models** (toggle presets to expose), **OpenCode** (provider status + action buttons), and **Claude Code** (env-variable snippet).
