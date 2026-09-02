@@ -85,13 +85,19 @@ pub struct BenchSweep {
     /// the sweep warns naming both).
     #[arg(long)]
     pub restore_to: Option<String>,
-    /// Live only: the prompt to send. Defaults to the framework's own.
+    /// Live only: the prompt to send, inline. The one source that is not a
+    /// file, and the report says so rather than naming one.
     #[arg(long, conflicts_with = "prompt_file")]
     pub prompt: Option<String>,
     /// Live only: read the prompt from a UTF-8 file. The way to measure the
     /// regime a long conversation actually runs in: a decode rate at 40k of
     /// context is a different number from the same setting's rate at 2k, and a
     /// prompt that size does not fit on a command line.
+    ///
+    /// With neither flag, the file the Benchmark tab uses (settings.ini
+    /// `BenchPromptFile`, default `config\bench-prompt.txt`, created from the
+    /// framework's own prompt when missing), so a scripted sweep and a run
+    /// from the GUI measure the same text.
     #[arg(long)]
     pub prompt_file: Option<std::path::PathBuf>,
     /// Live only: sampling temperature, or `preset` to leave the preset's alone.
@@ -335,20 +341,31 @@ fn run_bench(c: BenchCmd) -> Result<()> {
     if let Some(reps) = a.reps {
         plan.reps = reps;
     }
+    // The prompt, in the one place both front ends agree on: a FILE, read here
+    // rather than in the sweep so a missing or unreadable one fails before
+    // anything restarts llama-server. `--prompt` is the single escape hatch and
+    // the only source that is not a file (hence the `None` provenance, which is
+    // what the report prints). With neither flag the configured file is used,
+    // seeded with the framework's own prompt when it does not exist yet: the
+    // same bytes the Benchmark tab runs, so a sweep from a script and a run
+    // from the GUI are comparable by construction.
     if let Some(prompt) = a.prompt {
-        plan.prompt = prompt;
-    }
-    if let Some(path) = a.prompt_file.as_deref() {
-        // Read here rather than in the sweep, so a missing or unreadable file
-        // fails before anything restarts llama-server. A blank file is refused
-        // for the same reason `validate` refuses a blank prompt: it would
-        // measure the model answering nothing.
-        let text = std::fs::read_to_string(path)
-            .with_context(|| format!("cannot read --prompt-file {}", path.display()))?;
-        if text.trim().is_empty() {
-            anyhow::bail!("--prompt-file {} is empty", path.display());
-        }
-        plan.prompt = text;
+        plan.prompt = bench::normalize_prompt(&prompt);
+        plan.prompt_file = None;
+    } else if plan.mode == bench::Mode::Live {
+        let path = match a.prompt_file.as_deref() {
+            Some(p) => p.to_path_buf(),
+            None => {
+                // Both, so a machine driven only from the CLI still gets the
+                // long-context prompt on disk to point `--prompt-file` at.
+                bench::ensure_shipped_prompt_files();
+                let p = crate::settings::load().bench_prompt_path();
+                bench::ensure_prompt_file(&p);
+                p
+            }
+        };
+        plan.prompt = bench::load_prompt_file(&path).map_err(|e| anyhow::anyhow!(e))?;
+        plan.prompt_file = Some(path);
     }
     if let Some(temp) = a.temp.as_deref() {
         plan.temp = if temp.eq_ignore_ascii_case("preset") {

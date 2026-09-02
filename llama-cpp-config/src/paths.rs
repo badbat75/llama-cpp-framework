@@ -1,7 +1,8 @@
 //! Paths for the llama.cpp-framework configuration tool.
 //!
 //! Four jobs: (1) the user runtime tree, %LOCALAPPDATA%\llama.cpp\ on Windows
-//! (config\server.ini, config\presets.ini, logs\llama-server.log), overridable
+//! (config\server.ini, config\presets.ini, config\bench-prompt.txt,
+//! logs\llama-server.log), overridable
 //! for tests via LLAMA_CPP_CONFIG_DATA_ROOT; (2) locating llama.cpp's binaries
 //! across the installer and dev layouts (`llama_bin`, with `llama_server_exe` /
 //! `llama_bench_exe` as its two callers; it also strips canonicalize()'s \\?\
@@ -74,6 +75,33 @@ pub fn presets_ini() -> PathBuf {
 /// kept apart from server.ini, whose every key maps to a llama-server flag.
 pub fn settings_ini() -> PathBuf {
     config_dir().join("settings.ini")
+}
+
+/// The live benchmark's prompt, as a plain UTF-8 text file the user owns.
+///
+/// Under `config\` and not under `bench\` on purpose: `bench\` is output (one
+/// jsonl + md + log per run, listed by a `bench-*.jsonl` glob), this is input,
+/// and it is edited like the other three files in `config\`. Under
+/// %LOCALAPPDATA% and not next to the binaries because `bin\` lives in
+/// `$PROGRAMFILES64\llama.cpp`: a prompt shipped there could not be saved
+/// without elevation and would be overwritten by the next upgrade's `File`
+/// directive. The framework's own default text seeds this file on first use
+/// (`bench::ensure_prompt_file`), which is how it ships without being installed.
+///
+/// This is only the DEFAULT: settings.ini's `BenchPromptFile` can point the
+/// Benchmark tab and the CLI at any other file (a 32k-token prompt for
+/// measuring the regime a long conversation runs in, say).
+pub fn bench_prompt_file() -> PathBuf {
+    config_dir().join("bench-prompt.txt")
+}
+
+/// The long-context prompt shipped beside the short one (~40k tokens), seeded
+/// from the binary like it. Not the default, because a repetition of it is a
+/// 40k-token cold prefill: it is the file you point at when the question is
+/// "does this setting still win where I actually work", which is a different
+/// question from the one the default answers, and usually the one that matters.
+pub fn bench_long_prompt_file() -> PathBuf {
+    config_dir().join("bench-prompt-long.txt")
 }
 
 /// The llama-server log file. ONE home for the path: `runstate::start()`

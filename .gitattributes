@@ -1,3 +1,9 @@
 # Patch files are consumed by `git apply` against LF sources: a CRLF
 # checkout of one does not apply. Keep them byte-identical to upstream.
 *.patch text eol=lf
+
+# The shipped benchmark prompts are compiled INTO the binary (`include_str!`),
+# and a benchmark prompt that differs between two checkouts is two prompts. A
+# CRLF checkout would change every line ending, hence the digest the report
+# identifies the prompt by, hence the tokenization. Pin them to LF.
+llama-cpp-config/assets/*.txt text eol=lf

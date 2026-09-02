@@ -106,6 +106,10 @@ struct State {
     // not a set, and it cannot be derived from the row model (which is rebuilt
     // from it). Rust-only, like `draft_rows` above.
     bench_selection: Vec<String>,
+    // Last read of the live prompt FILE, kept so the readout and the preview do
+    // not re-read a possibly huge file on every keystroke and every 5 s tick.
+    // A display cache only: the run re-reads the file (see bench_tab).
+    bench_prompt: Option<bench_tab::PromptRead>,
     // The run in flight, so Cancel can reach it. Only the cancel flag inside it
     // crosses to the worker thread.
     bench_handle: Option<crate::bench::exec::Handle>,
@@ -228,6 +232,7 @@ pub fn run(start_minimized: bool) -> anyhow::Result<()> {
     {
         let app_weak = app.as_weak();
         let tray_weak = tray.as_weak();
+        let state = state.clone();
         status_timer.start(
             slint::TimerMode::Repeated,
             std::time::Duration::from_secs(5),
@@ -235,6 +240,16 @@ pub fn run(start_minimized: bool) -> anyhow::Result<()> {
                 // Periodic tick: keep an error footer red (clear_error = false);
                 // only an explicit action (F5 / Refresh / a new start) resets it.
                 refresh_run_status(app_weak.clone(), tray_weak.clone(), false);
+                // The benchmark's prompt lives in a file edited OUTSIDE this
+                // app (the Edit button opens the system editor), so its readout
+                // has no callback to hang off. It rides this tick instead: a
+                // stat per five seconds, and a re-read only when the file
+                // actually moved.
+                if let Some(app) = app_weak.upgrade() {
+                    if bench_tab::refresh_prompt_info(&app, &state) {
+                        bench_tab::refresh_preview(&app, &state);
+                    }
+                }
             },
         );
     }

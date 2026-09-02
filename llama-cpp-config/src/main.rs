@@ -28,6 +28,7 @@ mod server_cfg;
 mod server_form;
 mod server_version;
 mod settings;
+mod sha256;
 #[cfg(windows)]
 mod single_instance;
 mod slot_state;

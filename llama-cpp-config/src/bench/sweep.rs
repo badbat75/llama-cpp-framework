@@ -462,10 +462,12 @@ pub fn render_summary(s: &Summary) -> String {
             "| max output tokens | {} |\n",
             opts.plan.max_tokens
         ));
-        md.push_str(&format!(
-            "| prompt | {} chars |\n",
-            opts.plan.prompt.chars().count()
-        ));
+        // Same three rows the single-run report carries, from the same builder:
+        // a sweep is a comparison too, and "which prompt was this" has to be
+        // answerable from either file.
+        for (label, value) in super::prompt_report_rows(&opts.plan) {
+            md.push_str(&format!("| {label} | {value} |\n"));
+        }
     }
     md.push_str(&format!("| {} before the sweep | {} |\n", opts.key, s.original));
     md.push_str(&format!("| {} after it | {} |\n", opts.key, s.applied));

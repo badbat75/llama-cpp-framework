@@ -906,6 +906,77 @@ pub(super) fn run(app: &AppWindow) {
         "a refused run must not arm the tab"
     );
 
+    // ── Benchmark: the live prompt is a FILE the tab only points at ─────────
+    // Three things no unit test can reach, because all three are about the tab
+    // meeting the real disk through the redirect: the file is SEEDED (a fresh
+    // machine has a prompt without the installer having written one anywhere),
+    // the readout describes what is on disk right now, and an edit made OUTSIDE
+    // this process is picked up. That last one is the whole design: Edit hands
+    // the file to the system's text editor, so if the tab only ever read the
+    // file once, every prompt change after launch would be silently ignored.
+    let prompt_path = crate::paths::bench_prompt_file();
+    assert_eq!(
+        std::fs::read_to_string(&prompt_path).expect("the tab seeds the prompt file"),
+        crate::bench::DEFAULT_PROMPT,
+        "a fresh machine starts from the framework's own prompt"
+    );
+    assert_eq!(
+        st.get_bench_prompt_file().as_str(),
+        prompt_path.to_string_lossy(),
+        "the field names the file, not the text"
+    );
+    // The long-context prompt is seeded too, though nothing points at it: it
+    // has to be on disk beside the default for Browse… to reach it, and a
+    // benchmark that can only measure the 230-character regime is the tab's
+    // least useful one.
+    assert_eq!(
+        std::fs::read_to_string(crate::paths::bench_long_prompt_file())
+            .expect("the tab seeds the long prompt too"),
+        crate::bench::LONG_PROMPT
+    );
+    let seeded_info = st.get_bench_prompt_info().to_string();
+    assert!(
+        seeded_info.contains(&crate::sha256::short(
+            crate::bench::DEFAULT_PROMPT.as_bytes()
+        )),
+        "the readout carries the digest of what is on disk: {seeded_info}"
+    );
+
+    // Edited behind the app's back, exactly as Notepad would, CRLF and a BOM
+    // included. The readout must follow, and the digest must be the digest of
+    // the NORMALIZED text: the same prompt saved LF must hash the same, or
+    // "these two runs used the same prompt" stops being answerable.
+    std::fs::write(&prompt_path, "\u{feff}Explain flash attention.\r\n")
+        .expect("edit the prompt file out of process");
+    st.invoke_reload_all();
+    let edited_info = st.get_bench_prompt_info().to_string();
+    assert_ne!(edited_info, seeded_info, "an external edit must be noticed");
+    assert!(
+        edited_info.contains(&crate::sha256::short(b"Explain flash attention.\n")),
+        "the digest is of the text as SENT, BOM stripped and CRLF folded: {edited_info}"
+    );
+    st.invoke_bench_toggle_preset("bench-a".into()); // the preview needs one
+    assert!(
+        st.get_bench_preview().contains("Explain flash attention."),
+        "the request preview follows the file too: {}",
+        st.get_bench_preview()
+    );
+
+    // An empty prompt file is refused BY NAME: with the text out in a file,
+    // "the live mode needs a prompt" does not say where to put one.
+    std::fs::write(&prompt_path, "   \r\n").expect("blank the prompt file");
+    st.invoke_reload_all();
+    st.invoke_bench_run();
+    assert!(
+        st.get_status_is_error() && st.get_status_text().contains("bench-prompt.txt"),
+        "a blank prompt file must be reported by name: {}",
+        st.get_status_text()
+    );
+    assert!(!st.get_bench_running(), "and must not arm the tab");
+    st.invoke_bench_toggle_preset("bench-a".into());
+    std::fs::write(&prompt_path, crate::bench::DEFAULT_PROMPT).expect("restore the prompt file");
+    st.invoke_reload_all();
+
     // ── CLI: `preset delete <typo>` errors instead of a false "Removed" ─────
     // The v1.2.13 lookup-before-delete guard; the redirect keeps cli::run on
     // the temp tree. (`load_all` resolves real paths, so this can't be an

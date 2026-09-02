@@ -348,7 +348,17 @@ export global AppState {
     // one the mode reads), and every field is a plain string re-parsed in Rust,
     // for the same reason the two forms' numerics are: a SpinBox edits itself on
     // a stray scroll.
-    in-out property <string> bench_prompt;
+    // The live prompt is a FILE, never a text box: this is its path. The GUI
+    // and the CLI (`--prompt-file`, and the same default with no flag) read the
+    // same bytes, the file is read fresh at Run so an edit made outside is
+    // picked up, and a prompt of any size is editable in a real editor. See the
+    // src/bench.rs header for why the framework's own prompt is a SEED for this
+    // file rather than something the installer writes.
+    in-out property <string> bench_prompt_file;
+    // Read-only readout of the file as it stands ("230 chars, 230 bytes,
+    // sha256 8f3c…"), or why it cannot be read. Pushed from Rust, which re-reads
+    // the file when it changes on disk.
+    in-out property <string> bench_prompt_info: "";
     // "default" here means "leave the preset's own --temp alone", which is a
     // third instruction, not a missing one. Unchecked with a 0 is the default:
     // greedy sampling is what makes two runs of one prompt comparable.
@@ -524,6 +534,17 @@ export global AppState {
     // and the current run's markdown report in the default editor.
     callback bench_open_folder();
     callback bench_open_report();
+    // The prompt file: pick one (returns the picked path, or the argument back
+    // when the dialog is cancelled, exactly like `browse_dir`), and open the
+    // current one in the system's default text editor.
+    //
+    // Editing happens THERE and not in a window of ours on purpose: a Slint
+    // TextEdit is already sluggish at a few hundred KB (see log_window.slint,
+    // which caps its tail at 256 KB for that reason), and the prompts worth
+    // keeping in a file are the long ones. The file is re-read when it changes
+    // and again when Run starts, so an external editor is a live editor.
+    callback bench_pick_prompt(string) -> string;
+    callback bench_edit_prompt();
 
     callback toggle_integration_model(int);
     callback save_integrations();

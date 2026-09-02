@@ -25,6 +25,36 @@
 //! is carried over from the shell harness this tab replaced, so runs recorded
 //! before it stay comparable with runs recorded after.
 //!
+//! ## The live prompt is a FILE, and the GUI edits that file
+//!
+//! `Plan.prompt` is the resolved TEXT, but nothing stores it: the GUI and the
+//! CLI both carry a PATH (`Plan.prompt_file`, default
+//! `config\bench-prompt.txt`) and read it once, when the run starts. Three
+//! things follow, and each one was a defect of the field-in-the-window it
+//! replaced.
+//!
+//! *One source for both front ends.* The CLI grew `--prompt-file` because the
+//! interesting prompt is a long one (a decode rate at 40k of context is a
+//! different number from the same setting's at 2k) and that does not fit on a
+//! command line. A GUI text box next to it is a second prompt that no flag can
+//! reach, so the two would measure different things without saying so. Now
+//! `bench sweep` with no flag and the tab's Run button read the same bytes.
+//!
+//! *The prompt SHIPS without being installed.* `DEFAULT_PROMPT` is a seed:
+//! `ensure_prompt_file` writes it on first use. Installing the file into
+//! `bin\` instead would put it under `$PROGRAMFILES64\llama.cpp`, where the
+//! editor could not save it without elevation and the next upgrade's `File`
+//! directive would overwrite the user's edit.
+//!
+//! *Identity, not a copy.* The prompt was previously embedded verbatim in the
+//! report, which is what let an old comparison be checked. A file that anyone
+//! can edit between two runs breaks that, and a 100k-character prompt breaks
+//! the embedding too, so the report carries the path, the size and the
+//! **sha256** of the normalized text, and embeds the text up to
+//! `REPORT_PROMPT_CHARS`. `normalize_prompt` is why the digest means anything:
+//! the same prompt saved by Notepad (CRLF, maybe a BOM) and by the built-in
+//! editor must hash the same, because it tokenizes the same.
+//!
 //! ## The unit is the PRESET, never the model file
 //!
 //! Two presets may point at the same `.gguf` with different placement, KV types
@@ -96,9 +126,43 @@ pub const DEFAULT_MAX_TOKENS: i32 = 256;
 /// framework's own: fixed, self-contained, and phrased to pull a few hundred
 /// tokens of ordinary prose out of any instruct model, since a prompt that some
 /// models answer in one line and others in twenty is not a benchmark.
+///
+/// It is a SEED, not the prompt: `ensure_prompt_file` writes it to
+/// `config\bench-prompt.txt` the first time anything asks for a prompt, and
+/// every reader goes to the file from then on. That is what makes the shipped
+/// prompt editable (and replaceable) without an installer that writes into
+/// `$PROGRAMFILES64` and overwrites the edit on the next upgrade.
 pub const DEFAULT_PROMPT: &str = "Explain how a transformer decoder's key-value cache works, \
 why the cost of processing a prompt grows with its length, and what a speculative decoding \
 draft model changes about the decode step. Write about 200 words of plain prose.";
+
+/// The long-context prompt, shipped beside the short one and seeded as
+/// `config\bench-prompt-long.txt`: ~169k characters, roughly 40k tokens.
+///
+/// It is here because the default prompt measures a regime nobody works in. A
+/// benchmark ranks settings in the regime it measured, and 230 characters is
+/// the shallow end: at 40k of context the same preset that benchmarks at 57
+/// t/s serves at 24 to 40, and the RANKING moves too (a verify pass costs more
+/// relative to a draft iteration at depth, so `spec-draft-n-max` peaks at 5
+/// near the start of a conversation and at 3 at 43k). Shipping only the short
+/// prompt would mean shipping the tab's least useful measurement.
+///
+/// Compiled in rather than installed, for the same reason `DEFAULT_PROMPT` is:
+/// see the module header. It is a frozen snapshot of this repo's own docs;
+/// `assets\README.md` says why it must not be regenerated when they change.
+pub const LONG_PROMPT: &str = include_str!("../assets/bench-prompt-long.txt");
+
+/// How much of the prompt the pasteable preview shows before eliding. The
+/// preview is a request body meant to be read at a glance and pasted into
+/// `curl`; a 100k-character prompt inlined there is neither.
+const PREVIEW_PROMPT_CHARS: usize = 400;
+
+/// How much of the prompt the saved report embeds verbatim. Short prompts (the
+/// shipped one is 230 characters) stay wholly readable in the report, which is
+/// what made an old comparison checkable; a long one would otherwise turn a
+/// 4 KB report into a 400 KB one, so past that the sha256 in the settings block
+/// is what identifies it.
+const REPORT_PROMPT_CHARS: usize = 4096;
 
 // ── Mode ─────────────────────────────────────────────────────────────────
 
@@ -127,6 +191,117 @@ impl Mode {
     }
 }
 
+// ── The live prompt lives in a FILE ──────────────────────────────────────
+
+/// Fold a prompt file's raw contents into the text that will be sent.
+///
+/// Two normalizations, both of which decide whether two runs are comparable at
+/// all, since the tokenizer sees exactly these bytes:
+///  * a leading UTF-8 BOM is dropped. Notepad still writes one on request and
+///    several editors do it silently; left in, it is a token of the prompt and
+///    an invisible difference between "the same" prompt saved two ways.
+///  * CRLF becomes LF. The same text edited in the built-in window (which
+///    writes what the widget holds) and in Notepad (which writes CRLF) would
+///    otherwise tokenize differently, and the digest below would call them
+///    different prompts, correctly but uselessly.
+///
+/// Trailing whitespace is NOT touched: a prompt ending in a newline or not is a
+/// deliberate difference (some templates are sensitive to it), and this is the
+/// wrong place to decide it.
+pub fn normalize_prompt(raw: &str) -> String {
+    raw.strip_prefix('\u{feff}')
+        .unwrap_or(raw)
+        .replace("\r\n", "\n")
+}
+
+/// Read a prompt file, normalized. The error is the message shown verbatim in
+/// the GUI footer and printed by the CLI, so it names the path: "the prompt is
+/// empty" without saying which file is useless once the path is configurable.
+pub fn load_prompt_file(path: &std::path::Path) -> Result<String, String> {
+    let raw = std::fs::read_to_string(path)
+        .map_err(|e| format!("cannot read the prompt file {}: {e}", path.display()))?;
+    let text = normalize_prompt(&raw);
+    if text.trim().is_empty() {
+        return Err(format!("the prompt file {} is empty", path.display()));
+    }
+    Ok(text)
+}
+
+/// Which shipped prompt seeds this path, decided by FILE NAME.
+///
+/// The long prompt has to be restorable: delete `bench-prompt-long.txt` and the
+/// next seed must put the long text back, not quietly fill the file with the
+/// 230-character default and leave a benchmark measuring the shallow regime
+/// under a name that promises the deep one. Any other name is a file the user
+/// named, and the short prompt is the better thing to start it from.
+fn seed_for(path: &std::path::Path) -> &'static str {
+    let long = crate::paths::bench_long_prompt_file();
+    match (path.file_name(), long.file_name()) {
+        (Some(a), Some(b)) if a == b => LONG_PROMPT,
+        _ => DEFAULT_PROMPT,
+    }
+}
+
+/// The configured prompt file, seeded from the binary when it does not exist
+/// yet, so a fresh install has a prompt to run and to edit without the
+/// installer having placed one anywhere.
+///
+/// Seeding only ever CREATES: an existing file is never rewritten (the user's
+/// edits are the point), and a failed write is not fatal here, since the caller
+/// reports the read failure that follows with a better message than a write
+/// error nobody asked for.
+pub fn ensure_prompt_file(path: &std::path::Path) -> &std::path::Path {
+    if !path.exists() {
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let _ = crate::ini::atomic_write(path, seed_for(path));
+    }
+    path
+}
+
+/// Put BOTH shipped prompts on disk: the short default and the long one.
+///
+/// The long one is seeded even though nothing points at it yet, because a file
+/// nobody can find is a file nobody uses: Browse… opens on the configured
+/// prompt's own folder, so the two sit side by side and choosing the deep
+/// regime is one click rather than a documentation lookup.
+pub fn ensure_shipped_prompt_files() {
+    ensure_prompt_file(&crate::paths::bench_prompt_file());
+    ensure_prompt_file(&crate::paths::bench_long_prompt_file());
+}
+
+/// The prompt's identity, for the report and for the tab's readout.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct PromptInfo {
+    pub chars: usize,
+    pub bytes: usize,
+    /// sha256 of the NORMALIZED text (see `normalize_prompt`), which is what
+    /// reaches the model. Deliberately not the file's bytes: two files that
+    /// send the identical prompt must produce the identical digest, and the
+    /// price is that this does not match `Get-FileHash` on a CRLF file.
+    pub sha256: String,
+}
+
+pub fn prompt_info(text: &str) -> PromptInfo {
+    PromptInfo {
+        chars: text.chars().count(),
+        bytes: text.len(),
+        sha256: crate::sha256::hex(text.as_bytes()),
+    }
+}
+
+/// The one-line readout under the Benchmark tab's prompt field.
+pub fn prompt_summary(text: &str) -> String {
+    let info = prompt_info(text);
+    format!(
+        "{} chars, {} bytes, sha256 {}",
+        info.chars,
+        info.bytes,
+        crate::sha256::short(text.as_bytes())
+    )
+}
+
 // ── Plan ─────────────────────────────────────────────────────────────────
 
 /// One benchmark run as configured in the GUI. Both modes' fields live in one
@@ -139,7 +314,15 @@ pub struct Plan {
     pub presets: Vec<String>,
     pub reps: i32,
     // Live half.
+    /// The text that will be sent, already resolved. Whoever builds the plan
+    /// reads `prompt_file` into this, ONCE, at the moment the run starts: the
+    /// GUI keeps only a path, so a prompt edited in Notepad while the tab sits
+    /// open is picked up, and a cached copy can never be what gets benchmarked.
     pub prompt: String,
+    /// Where the text above came from, for the report. `None` means it was
+    /// given inline (`bench --prompt`), which is the one way to run a prompt
+    /// that is not in a file.
+    pub prompt_file: Option<PathBuf>,
     /// `None` leaves the preset's own `--temp` alone. The default is `Some(0.0)`:
     /// greedy sampling is what makes two runs of the same prompt comparable.
     pub temp: Option<f64>,
@@ -158,7 +341,12 @@ impl Default for Plan {
             mode: Mode::Live,
             presets: Vec::new(),
             reps: DEFAULT_REPS,
-            prompt: DEFAULT_PROMPT.to_string(),
+            // Unresolved: the caller reads `prompt_file` into it. Defaulting to
+            // DEFAULT_PROMPT here would make a plan whose prompt disagrees with
+            // the file every reader is pointed at, silently, whenever the read
+            // step is forgotten.
+            prompt: String::new(),
+            prompt_file: Some(crate::paths::bench_prompt_file()),
             temp: Some(0.0),
             max_tokens: DEFAULT_MAX_TOKENS,
             prompt_lens: parse_int_list(DEFAULT_PROMPT_LENS),
@@ -196,7 +384,14 @@ pub fn validate(plan: &Plan) -> Option<String> {
     match plan.mode {
         Mode::Live => {
             if plan.prompt.trim().is_empty() {
-                return Some("The live mode needs a prompt.".into());
+                // Reaching here means the prompt was never resolved (or the
+                // file held nothing but whitespace). Name the file: with the
+                // prompt out in one, "needs a prompt" does not say where to
+                // put it.
+                return Some(match &plan.prompt_file {
+                    Some(p) => format!("The live mode needs a prompt: {} is empty.", p.display()),
+                    None => "The live mode needs a prompt.".into(),
+                });
             }
             if plan.max_tokens < 1 {
                 return Some("Max output tokens must be at least 1.".into());
@@ -417,9 +612,18 @@ pub const LIVE_PATH: &str = "/v1/chat/completions";
 /// thing being measured. (`timings.cache_n` is read back anyway, so a build that
 /// ignored the field would be caught rather than believed.)
 pub fn live_body(preset_id: &str, plan: &Plan) -> String {
+    live_body_with(preset_id, plan, &plan.prompt)
+}
+
+/// The body with the message content substituted. One formatter for the real
+/// request and for the preview: the preview shows an ELIDED prompt (a prompt
+/// file can be 100k characters, and a request body nobody can read is not a
+/// preview), and routing both through here is what keeps that the only
+/// difference between them, instead of a second formatter that drifts.
+fn live_body_with(preset_id: &str, plan: &Plan, content: &str) -> String {
     let mut body = serde_json::json!({
         "model": preset_id,
-        "messages": [{ "role": "user", "content": plan.prompt }],
+        "messages": [{ "role": "user", "content": content }],
         "max_tokens": plan.max_tokens,
         "stream": false,
         "cache_prompt": false,
@@ -430,11 +634,25 @@ pub fn live_body(preset_id: &str, plan: &Plan) -> String {
     serde_json::to_string_pretty(&body).unwrap_or_default()
 }
 
-/// The pasteable preview of a live request: what `curl` would send.
+/// Cut `text` to `cap` characters, saying how much was cut. Char-based, not
+/// byte-based: a byte cut can land inside a UTF-8 sequence, and the counts the
+/// prompt is described by everywhere else are chars.
+fn elide(text: &str, cap: usize) -> String {
+    let total = text.chars().count();
+    if total <= cap {
+        return text.to_string();
+    }
+    let head: String = text.chars().take(cap).collect();
+    format!("{head}\n[truncated: {cap} of {total} chars shown]")
+}
+
+/// The pasteable preview of a live request: what `curl` would send, with the
+/// prompt elided past `PREVIEW_PROMPT_CHARS`.
 pub fn live_preview(port: u16, preset_id: &str, plan: &Plan) -> String {
+    let shown = elide(&plan.prompt, PREVIEW_PROMPT_CHARS);
     format!(
         "POST http://127.0.0.1:{port}{LIVE_PATH}\n{}",
-        live_body(preset_id, plan)
+        live_body_with(preset_id, plan, &shown)
     )
 }
 
@@ -766,6 +984,32 @@ pub fn caveats(mode: Mode) -> Vec<&'static str> {
     }
 }
 
+/// The settings-block rows describing the live prompt: where it came from, how
+/// big it is, and what it WAS.
+///
+/// The digest is the load-bearing one now that the prompt is a file anyone can
+/// edit between two runs. Embedding the text (below, up to a cap) makes a short
+/// prompt readable; only the sha256 makes "these two reports measured the same
+/// prompt" a checkable claim for a long one, and a report that cannot be
+/// checked is a report that has to be believed.
+pub(crate) fn prompt_report_rows(plan: &Plan) -> Vec<(String, String)> {
+    let info = prompt_info(&plan.prompt);
+    vec![
+        (
+            "prompt".to_string(),
+            match &plan.prompt_file {
+                Some(p) => format!("`{}`", p.display()),
+                None => "given inline (`--prompt`)".to_string(),
+            },
+        ),
+        (
+            "prompt size".to_string(),
+            format!("{} chars, {} bytes", info.chars, info.bytes),
+        ),
+        ("prompt sha256".to_string(), format!("`{}`", info.sha256)),
+    ]
+}
+
 /// Render the markdown report: a settings block, the rows, the prompt, and the
 /// caveats, shaped to paste straight into an issue.
 pub fn render_report(plan: &Plan, points: &[Point], meta: &RunMeta) -> String {
@@ -790,10 +1034,9 @@ pub fn render_report(plan: &Plan, points: &[Point], meta: &RunMeta) -> String {
                 }
             ));
             md.push_str(&format!("| max output tokens | {} |\n", plan.max_tokens));
-            md.push_str(&format!(
-                "| prompt | {} chars |\n",
-                plan.prompt.chars().count()
-            ));
+            for (label, value) in prompt_report_rows(plan) {
+                md.push_str(&format!("| {label} | {value} |\n"));
+            }
         }
         Mode::Synthetic => {
             md.push_str(&format!(
@@ -844,8 +1087,13 @@ pub fn render_report(plan: &Plan, points: &[Point], meta: &RunMeta) -> String {
     md.push_str("## Prompt\n\n");
     if plan.mode == Mode::Live {
         md.push_str("```\n");
-        md.push_str(plan.prompt.trim());
+        md.push_str(elide(plan.prompt.trim(), REPORT_PROMPT_CHARS).as_str());
         md.push_str("\n```\n\n");
+        md.push_str(
+            "The sha256 above is of the prompt as SENT (a leading BOM dropped, CRLF folded to \
+             LF), not of the file's bytes, so it will not match `Get-FileHash` on a CRLF file. \
+             Two runs whose digests agree measured the same prompt.\n\n",
+        );
     } else {
         md.push_str(
             "This mode takes no prompt: `-p` is a token count and the tool never samples.\n\n",
@@ -903,15 +1151,27 @@ pub fn run_paths(stamp: &str) -> (PathBuf, PathBuf, PathBuf) {
 /// The first line of every run file: the plan, so a reload knows the preset
 /// order (which is what the ratio column is measured against) and the mode.
 pub fn run_header_json(plan: &Plan, meta: &RunMeta) -> String {
-    serde_json::json!({
+    let mut header = serde_json::json!({
         "kind": "run",
         "mode": plan.mode.as_str(),
         "stamp": meta.stamp,
         "presets": plan.presets,
         "reps": plan.reps,
         "server_version": meta.server_version,
-    })
-    .to_string()
+    });
+    // The prompt's identity, in the machine-readable stream and not only in the
+    // markdown: comparing two old runs is a question about this line, and until
+    // the prompt moved into a file the jsonl carried nothing about it at all.
+    if plan.mode == Mode::Live {
+        let info = prompt_info(&plan.prompt);
+        header["prompt_file"] = match &plan.prompt_file {
+            Some(p) => serde_json::json!(p.to_string_lossy()),
+            None => serde_json::Value::Null,
+        };
+        header["prompt_chars"] = serde_json::json!(info.chars);
+        header["prompt_sha256"] = serde_json::json!(info.sha256);
+    }
+    header.to_string()
 }
 
 /// One point as a jsonl line.
@@ -1517,9 +1777,23 @@ mod tests {
     #[test]
     fn validate_refuses_the_plans_that_would_benchmark_nothing() {
         assert!(validate(&Plan::default()).is_some(), "no preset selected");
-        let base = Plan {
+        // A default plan carries a prompt FILE and no text: the caller reads
+        // one into the other at Run. So it must NOT validate, or a forgotten
+        // read would benchmark the model answering nothing, and the message
+        // has to name the file the text was supposed to come from.
+        let unresolved = Plan {
             presets: vec!["a".into()],
             ..Plan::default()
+        };
+        let problem = validate(&unresolved).expect("an unresolved prompt is not a plan");
+        assert!(
+            problem.contains("bench-prompt.txt"),
+            "the message names the file: {problem}"
+        );
+
+        let base = Plan {
+            prompt: DEFAULT_PROMPT.into(),
+            ..unresolved
         };
         assert!(validate(&base).is_none());
         assert!(validate(&Plan {
@@ -1535,6 +1809,192 @@ mod tests {
         })
         .is_none());
         assert!(validate(&Plan { reps: 0, ..base }).is_some());
+    }
+
+    /// The two normalizations that decide whether two runs are comparable: a
+    /// BOM is a token of the prompt if it survives, and CRLF against LF is a
+    /// different tokenization of "the same" text saved by two editors.
+    #[test]
+    fn normalize_strips_the_bom_and_folds_crlf() {
+        assert_eq!(normalize_prompt("\u{feff}hello"), "hello");
+        assert_eq!(normalize_prompt("a\r\nb\r\n"), "a\nb\n");
+        assert_eq!(normalize_prompt("\u{feff}a\r\nb"), "a\nb");
+        // A lone CR is left alone: it is not a line ending Windows editors
+        // write, and rewriting bytes nobody asked about is how a prompt stops
+        // being what the file says.
+        assert_eq!(normalize_prompt("a\rb"), "a\rb");
+        // Trailing whitespace survives: a prompt that ends in a newline is a
+        // deliberately different prompt for some templates.
+        assert_eq!(normalize_prompt("hi \n"), "hi \n");
+        // The digest follows the normalization, which is the whole point: the
+        // same prompt saved two ways must hash the same.
+        assert_eq!(
+            prompt_info(&normalize_prompt("a\r\nb")).sha256,
+            prompt_info(&normalize_prompt("a\nb")).sha256
+        );
+    }
+
+    #[test]
+    fn load_prompt_file_reads_normalizes_and_names_its_failures() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("nope.txt");
+        let err = load_prompt_file(&missing).expect_err("a missing file is an error");
+        assert!(err.contains("nope.txt"), "the error names the file: {err}");
+
+        let empty = dir.path().join("empty.txt");
+        std::fs::write(&empty, "   \r\n  ").unwrap();
+        let err = load_prompt_file(&empty).expect_err("whitespace is not a prompt");
+        assert!(err.contains("empty.txt"), "the error names the file: {err}");
+
+        let good = dir.path().join("p.txt");
+        std::fs::write(&good, "\u{feff}line one\r\nline two").unwrap();
+        assert_eq!(load_prompt_file(&good).unwrap(), "line one\nline two");
+    }
+
+    /// Seeding CREATES and never overwrites: the file is the user's, and the
+    /// framework's prompt is only what a fresh machine starts from.
+    #[test]
+    fn ensure_prompt_file_seeds_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("nested").join("bench-prompt.txt");
+        ensure_prompt_file(&path);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), DEFAULT_PROMPT);
+
+        std::fs::write(&path, "mine").unwrap();
+        ensure_prompt_file(&path);
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "mine",
+            "an existing prompt must survive a re-seed"
+        );
+    }
+
+    /// The seed follows the FILE NAME, or deleting the long prompt would bring
+    /// back a 230-character one under a name promising 40k tokens, and a sweep
+    /// would then rank settings in the shallow regime while the report named
+    /// the deep file.
+    #[test]
+    fn the_long_prompts_name_seeds_the_long_prompt() {
+        let dir = tempfile::tempdir().unwrap();
+        let long = dir.path().join("bench-prompt-long.txt");
+        ensure_prompt_file(&long);
+        assert_eq!(std::fs::read_to_string(&long).unwrap(), LONG_PROMPT);
+
+        let other = dir.path().join("my-own.txt");
+        ensure_prompt_file(&other);
+        assert_eq!(std::fs::read_to_string(&other).unwrap(), DEFAULT_PROMPT);
+    }
+
+    /// The shipped long prompt is only worth shipping if it is actually long,
+    /// and only usable if it survives normalization unchanged: it is compiled
+    /// in as bytes, so a CRLF checkout (or a BOM) would make it a different
+    /// prompt on a different machine. `.gitattributes` pins that; this notices
+    /// if the pin is ever lost.
+    #[test]
+    fn the_shipped_long_prompt_is_long_and_already_normalized() {
+        assert!(
+            LONG_PROMPT.chars().count() > 100_000,
+            "the long prompt is meant to be tens of thousands of tokens, got {}",
+            LONG_PROMPT.chars().count()
+        );
+        assert_eq!(
+            normalize_prompt(LONG_PROMPT),
+            LONG_PROMPT,
+            "the checked-in asset must already be LF and BOM-free"
+        );
+    }
+
+    /// The preview elides a long prompt; the REQUEST never does. One formatter
+    /// builds both, so this pins the only difference between them.
+    #[test]
+    fn the_preview_elides_the_prompt_and_the_request_does_not() {
+        let long: String = "x".repeat(PREVIEW_PROMPT_CHARS * 3);
+        let plan = Plan {
+            presets: vec!["a".into()],
+            prompt: long.clone(),
+            ..Plan::default()
+        };
+        let preview = live_preview(8080, "a", &plan);
+        assert!(preview.contains("chars shown]"), "the preview says it cut");
+        assert!(preview.len() < long.len(), "and actually cut");
+
+        let body = live_body("a", &plan);
+        let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(parsed["messages"][0]["content"], serde_json::json!(long));
+        assert_eq!(parsed["cache_prompt"], serde_json::json!(false));
+    }
+
+    /// What makes an old comparison checkable: the report identifies the prompt
+    /// by path AND digest, and embeds the text only up to a cap.
+    #[test]
+    fn the_report_identifies_the_prompt_by_path_and_digest() {
+        let plan = Plan {
+            presets: vec!["a".into()],
+            prompt: DEFAULT_PROMPT.into(),
+            prompt_file: Some(PathBuf::from(r"D:\prompts\short.txt")),
+            ..Plan::default()
+        };
+        let md = render_report(&plan, &[], &RunMeta::default());
+        assert!(md.contains(r"short.txt"), "the path is in the report");
+        assert!(md.contains(&crate::sha256::hex(DEFAULT_PROMPT.as_bytes())));
+        assert!(
+            md.contains(DEFAULT_PROMPT),
+            "a short prompt is embedded whole"
+        );
+
+        // Inline (`--prompt`) says so instead of printing an invented path.
+        let inline = Plan {
+            prompt_file: None,
+            ..plan.clone()
+        };
+        assert!(render_report(&inline, &[], &RunMeta::default()).contains("--prompt"));
+
+        // Past the cap the text is cut, the digest is not.
+        let long = Plan {
+            prompt: "y".repeat(REPORT_PROMPT_CHARS * 2),
+            ..plan
+        };
+        let md = render_report(&long, &[], &RunMeta::default());
+        assert!(md.contains("chars shown]"));
+        assert!(
+            md.len() < REPORT_PROMPT_CHARS * 2,
+            "the report stayed small"
+        );
+        assert!(md.contains(&crate::sha256::hex(long.prompt.as_bytes())));
+    }
+
+    /// The jsonl header carries the prompt's identity too: comparing two old
+    /// runs is a machine-readable question, and until the prompt became a file
+    /// this stream said nothing about it at all.
+    #[test]
+    fn the_run_header_carries_the_prompt_digest_for_live_runs_only() {
+        let plan = Plan {
+            presets: vec!["a".into()],
+            prompt: DEFAULT_PROMPT.into(),
+            prompt_file: Some(PathBuf::from("p.txt")),
+            ..Plan::default()
+        };
+        let header: serde_json::Value =
+            serde_json::from_str(&run_header_json(&plan, &RunMeta::default())).unwrap();
+        assert_eq!(header["prompt_file"], serde_json::json!("p.txt"));
+        assert_eq!(
+            header["prompt_sha256"],
+            serde_json::json!(crate::sha256::hex(DEFAULT_PROMPT.as_bytes()))
+        );
+        assert_eq!(
+            header["prompt_chars"],
+            serde_json::json!(DEFAULT_PROMPT.chars().count())
+        );
+
+        // The synthetic engine has no prompt to identify, so claiming one would
+        // be a lie in the machine-readable half of the record.
+        let synthetic = Plan {
+            mode: Mode::Synthetic,
+            ..plan
+        };
+        let header: serde_json::Value =
+            serde_json::from_str(&run_header_json(&synthetic, &RunMeta::default())).unwrap();
+        assert!(header.get("prompt_sha256").is_none());
     }
 
     #[test]

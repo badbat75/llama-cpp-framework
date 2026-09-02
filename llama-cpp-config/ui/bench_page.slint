@@ -127,17 +127,38 @@ export component BenchPage inherits ScrollView {
 
             // ── live half ────────────────────────────────────────────
             if AppState.bench_is_live : LabeledField {
-                label: "Prompt";
-                hint: "Sent verbatim as a single user message. It is re-sent whole on every repetition with the prefix cache disabled, so each one is a cold prefill, which is what the prefill row measures.";
-                Rectangle {
-                    height: 120px;
-                    TextEdit {
-                        width: 100%;
-                        height: 100%;
-                        text <=> AppState.bench_prompt;
-                        wrap: word-wrap;
-                        edited => { AppState.bench_changed(); }
+                label: "Prompt file";
+                hint: "The file whose text is sent verbatim as a single user message. It is re-sent whole on every repetition with the prefix cache disabled, so each one is a cold prefill, which is what the prefill row measures.\nTwo prompts ship, side by side in config\\: bench-prompt.txt (230 chars, the default) and bench-prompt-long.txt (~40k tokens). Use the long one when the question is whether a setting still wins at the context you actually work at: the ranking of a knob can differ from what the short prompt says.\nRead fresh when Run starts, so editing it while this window is open is enough: Edit opens it in your default text editor, which is also what makes a very long prompt practical.\nSame file the CLI uses with no --prompt-file, so a scripted `bench sweep` and this tab measure the same thing.";
+                LineEdit {
+                    accessible-label: "bench-prompt-file";
+                    text <=> AppState.bench_prompt_file;
+                    placeholder-text: "config\\bench-prompt.txt";
+                    edited => { AppState.bench_changed(); }
+                }
+                Button {
+                    text: "Browse…";
+                    clicked => {
+                        AppState.bench_prompt_file = AppState.bench_pick_prompt(AppState.bench_prompt_file);
+                        AppState.bench_changed();
                     }
+                }
+                Button {
+                    text: "Edit";
+                    clicked => { AppState.bench_edit_prompt(); }
+                }
+            }
+            // The file as it stands on disk: size and digest, or the reason it
+            // cannot be read. Under the field rather than in the hint because it
+            // is the answer to "is that the prompt I think it is", which is a
+            // question you ask right before pressing Run.
+            if AppState.bench_is_live : LabeledField {
+                label: "";
+                Text {
+                    text: AppState.bench_prompt_info;
+                    font-size: 12px;
+                    color: Palette.foreground.transparentize(Tokens.muted);
+                    vertical-alignment: center;
+                    overflow: elide;
                 }
             }
             if AppState.bench_is_live : LabeledField {

@@ -2,7 +2,22 @@
 //! `crate::bench` (pure, unit-tested), the running in `crate::bench::exec`; this
 //! file is the seam between them and `AppState`.
 //!
-//! Three things worth knowing before editing here.
+//! Four things worth knowing before editing here.
+//!
+//! **The prompt is a FILE and this tab never holds it**. The workload card
+//! carries a PATH (settings.ini `BenchPromptFile`, defaulting to
+//! `config\bench-prompt.txt`), Edit hands that file to the system's default
+//! text editor, and the text is read at Run. Three consequences live in this
+//! file: `refresh_prompt_info` is the only reader and caches its result
+//! `(path, mtime, len)`-gated, because it is called from every keystroke AND
+//! from the 5 s status tick (that tick is what makes an external edit show up
+//! with no callback to hang off); `plan_from_ui` fills the plan from that
+//! CACHE, which is fine for a preview and would not be for a measurement; and
+//! `on_bench_run` therefore re-reads the file itself before validating. Editing
+//! in a window of ours was the first design and was dropped: a Slint TextEdit
+//! is already sluggish at a few hundred KB (`log_window.rs` caps its tail at
+//! 256 KB for exactly that), and the prompts worth putting in a file are the
+//! long ones.
 //!
 //! **The selection is an ORDERED list of preset ids, kept Rust-side**
 //! (`State.bench_selection`), not a set derived from the row model. Order is
@@ -27,8 +42,118 @@
 
 use super::*;
 
+use std::path::Path;
+use std::time::SystemTime;
+
 use crate::bench::{self, exec, Mode, Plan};
 use crate::ini;
+
+/// The last read of the live prompt file, cached in `State`.
+///
+/// It exists so `refresh_prompt_info` is free to call from anywhere: from a
+/// keystroke in an unrelated workload field, and from the 5 s status tick that
+/// makes an external edit show up on its own. Both would otherwise re-read a
+/// file that can be megabytes. The cache is a display cache ONLY: the run
+/// re-reads the file itself, so a stale entry can never be what gets
+/// benchmarked.
+pub(super) struct PromptRead {
+    /// The path as the field held it, so retyping the field invalidates this.
+    path: String,
+    /// `(modified, len)`, so an edit made outside does too. `None` when the
+    /// file does not exist, which is itself a state worth noticing a change
+    /// from.
+    stamp: Option<(Option<SystemTime>, u64)>,
+    /// The normalized text, for the preview. Empty when the read failed.
+    text: String,
+}
+
+fn file_stamp(path: &Path) -> Option<(Option<SystemTime>, u64)> {
+    let meta = std::fs::metadata(path).ok()?;
+    Some((meta.modified().ok(), meta.len()))
+}
+
+/// The prompt file the tab is pointed at: the field, or the default when it is
+/// empty (which is what the field's placeholder promises).
+fn configured_prompt_path(s: &AppState) -> std::path::PathBuf {
+    let field = s.get_bench_prompt_file().to_string();
+    if field.trim().is_empty() {
+        paths::bench_prompt_file()
+    } else {
+        std::path::PathBuf::from(field.trim())
+    }
+}
+
+/// Re-read the prompt file when it (or the path) has changed, refreshing the
+/// readout under the field and the cached text the preview is built from.
+/// Returns whether anything changed, so a caller that has to rebuild the
+/// preview knows to.
+pub(super) fn refresh_prompt_info(app: &AppWindow, state: &Rc<RefCell<State>>) -> bool {
+    let s = app.global::<AppState>();
+    let path = configured_prompt_path(&s);
+    let key = path.to_string_lossy().into_owned();
+    let stamp = file_stamp(&path);
+    if let Some(prev) = state.borrow().bench_prompt.as_ref() {
+        if prev.path == key && prev.stamp == stamp {
+            return false;
+        }
+    }
+    let (text, info) = match bench::load_prompt_file(&path) {
+        Ok(t) => {
+            let summary = bench::prompt_summary(&t);
+            (t, summary)
+        }
+        // The error is the readout: "cannot read …" under the field is the
+        // whole diagnosis, and Run would report the same sentence anyway.
+        Err(e) => (String::new(), e),
+    };
+    s.set_bench_prompt_info(SharedString::from(info));
+    state.borrow_mut().bench_prompt = Some(PromptRead {
+        path: key,
+        stamp,
+        text,
+    });
+    true
+}
+
+/// Native file picker for the prompt, seeded at the current file. Blocks the UI
+/// thread for the same reason the Server tab's folder picker does: a native
+/// modal dialog is supposed to hold its owner (see `gui.rs`'s threading note).
+///
+/// Text files are the filter, "all files" the escape hatch: a prompt is plain
+/// text but nothing says it has to be named `.txt`.
+fn pick_prompt_file(start: &Path) -> Option<std::path::PathBuf> {
+    let mut dialog = rfd::FileDialog::new()
+        .set_title("Pick a prompt file")
+        .add_filter("Text files", &["txt", "md", "prompt"])
+        .add_filter("All files", &["*"]);
+    if let Some(parent) = start.parent().filter(|p| p.is_dir()) {
+        dialog = dialog.set_directory(parent);
+    }
+    if let Some(name) = start.file_name().and_then(|n| n.to_str()) {
+        dialog = dialog.set_file_name(name);
+    }
+    dialog.pick_file()
+}
+
+/// Persist the prompt file path into settings.ini, read-modify-write so this
+/// cannot wipe another key. Called when the path is PICKED and when a run
+/// starts, not on every keystroke: the write is an fsync (`ini::atomic_write`),
+/// and one per typed character is not what durability is for.
+fn persist_prompt_path(app: &AppWindow) {
+    let s = app.global::<AppState>();
+    let field = s.get_bench_prompt_file().to_string();
+    let mut cfg = settings::load();
+    if cfg.bench_prompt_file == field {
+        return;
+    }
+    cfg.bench_prompt_file = field;
+    if let Err(e) = settings::save(&cfg) {
+        // The only reachable failure is a path carrying ';' or '#', which the
+        // INI comment rule would truncate on reload. Say so: the run itself
+        // still works, it just will not be remembered.
+        set_status(app, format!("Prompt file not remembered: {e}"), true);
+    }
+}
 
 /// Seed / re-seed everything the tab reads from disk: the preset rows, the list
 /// of past runs, and the derived preview. Part of the `reload_all_from_disk` hub
@@ -36,8 +161,19 @@ use crate::ini;
 pub(super) fn refresh(app: &AppWindow, state: &Rc<RefCell<State>>) {
     let s = app.global::<AppState>();
     // First seed only: leave a workload the user has edited alone across an F5.
+    // The prompt PATH is disk-backed (settings.ini) unlike the rest of the
+    // workload, and is seeded here for the same reason the others are: an F5
+    // must not throw away a path typed but not yet run. Its FILE is re-read on
+    // every refresh below, which is the half that matters.
     if s.get_bench_reps().is_empty() {
-        s.set_bench_prompt(SharedString::from(bench::DEFAULT_PROMPT));
+        let configured = settings::load().bench_prompt_path();
+        // Both shipped prompts, not just the configured one: the long one has
+        // to be THERE for Browse… to find it next door.
+        bench::ensure_shipped_prompt_files();
+        bench::ensure_prompt_file(&configured);
+        s.set_bench_prompt_file(SharedString::from(
+            configured.to_string_lossy().into_owned(),
+        ));
         s.set_bench_temp(SharedString::from("0"));
         s.set_bench_max_tokens(SharedString::from(bench::DEFAULT_MAX_TOKENS.to_string()));
         s.set_bench_reps(SharedString::from(bench::DEFAULT_REPS.to_string()));
@@ -52,6 +188,9 @@ pub(super) fn refresh(app: &AppWindow, state: &Rc<RefCell<State>>) {
         .borrow_mut()
         .bench_selection
         .retain(|id| known.contains(id));
+    // Before the rows: `refresh_rows` ends in the preview, which is built from
+    // the cached prompt text this fills in.
+    refresh_prompt_info(app, state);
     refresh_rows(app, state);
     refresh_runs(app);
 }
@@ -91,7 +230,7 @@ fn file_name(path: &str) -> String {
 }
 
 /// Rebuild the pasteable preview and the mode's caveat block.
-fn refresh_preview(app: &AppWindow, state: &Rc<RefCell<State>>) {
+pub(super) fn refresh_preview(app: &AppWindow, state: &Rc<RefCell<State>>) {
     let s = app.global::<AppState>();
     let plan = plan_from_ui(app, state);
     s.set_bench_caveats(SharedString::from(
@@ -195,7 +334,17 @@ fn plan_from_ui(app: &AppWindow, state: &Rc<RefCell<State>>) -> Plan {
         mode,
         presets: state.borrow().bench_selection.clone(),
         reps: int(s.get_bench_reps(), bench::DEFAULT_REPS).max(1),
-        prompt: s.get_bench_prompt().to_string(),
+        // The CACHED text, which is what the preview needs. `on_bench_run`
+        // re-reads the file into the plan it actually runs: the preview may be
+        // up to one 5 s tick behind the file, a benchmark may not be behind at
+        // all.
+        prompt: state
+            .borrow()
+            .bench_prompt
+            .as_ref()
+            .map(|p| p.text.clone())
+            .unwrap_or_default(),
+        prompt_file: Some(configured_prompt_path(&s)),
         // Checked = "leave the preset's own --temp alone", which is a third
         // instruction and not a missing one, so it must send NO temperature
         // rather than a number.
@@ -336,8 +485,63 @@ pub(super) fn wire(
         let state = state.clone();
         app.global::<AppState>().on_bench_changed(move || {
             if let Some(app) = app_weak.upgrade() {
+                // Cheap unless the path or the file actually moved: the gate
+                // inside is what lets a keystroke in the Temperature field call
+                // this without re-reading a megabyte.
+                refresh_prompt_info(&app, &state);
                 refresh_preview(&app, &state);
             }
+        });
+    }
+    {
+        let app_weak = app.as_weak();
+        let state = state.clone();
+        app.global::<AppState>()
+            .on_bench_pick_prompt(move |current| {
+                let Some(app) = app_weak.upgrade() else {
+                    return current;
+                };
+                let start = std::path::PathBuf::from(current.as_str());
+                let Some(picked) = pick_prompt_file(&start) else {
+                    return current;
+                };
+                let picked = SharedString::from(picked.to_string_lossy().into_owned());
+                // Set it here rather than waiting for the caller's assignment:
+                // the persist and the re-read below both read the property.
+                let s = app.global::<AppState>();
+                s.set_bench_prompt_file(picked.clone());
+                persist_prompt_path(&app);
+                refresh_prompt_info(&app, &state);
+                picked
+            });
+    }
+    {
+        let app_weak = app.as_weak();
+        let state = state.clone();
+        app.global::<AppState>().on_bench_edit_prompt(move || {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let path = configured_prompt_path(&app.global::<AppState>());
+            // Seed a file that is not there yet: Edit on a path picked for a
+            // prompt not written yet must open something, and the framework's
+            // own prompt is a better starting point than an empty buffer.
+            bench::ensure_prompt_file(&path);
+            // The system's default .txt handler, the same one-liner the report
+            // and folder buttons use. Deliberately not a window of ours: see
+            // the callback's declaration in state.slint.
+            match std::process::Command::new("explorer").arg(&path).spawn() {
+                Ok(_) => set_status(
+                    &app,
+                    format!(
+                        "Opened {}. Save it and the readout follows within a few seconds.",
+                        path.display()
+                    ),
+                    false,
+                ),
+                Err(e) => set_status(&app, format!("Cannot open {}: {e}", path.display()), true),
+            }
+            refresh_prompt_info(&app, &state);
         });
     }
     {
@@ -351,7 +555,24 @@ pub(super) fn wire(
             if app.global::<AppState>().get_bench_running() {
                 return;
             }
-            let plan = plan_from_ui(&app, &state);
+            let mut plan = plan_from_ui(&app, &state);
+            // Read the prompt file HERE, not from the display cache: the point
+            // of keeping the prompt in a file is that it can be edited while
+            // this window is open, and a run that measured the previous version
+            // of the text would be wrong in the one way nothing downstream
+            // could detect (the report's own digest would agree with itself).
+            if plan.mode == Mode::Live {
+                if let Some(path) = plan.prompt_file.clone() {
+                    match bench::load_prompt_file(&path) {
+                        Ok(text) => plan.prompt = text,
+                        Err(e) => {
+                            set_status(&app, e, true);
+                            return;
+                        }
+                    }
+                }
+                persist_prompt_path(&app);
+            }
             if let Some(problem) = bench::validate(&plan) {
                 set_status(&app, problem, true);
                 return;
