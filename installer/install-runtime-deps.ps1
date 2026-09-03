@@ -11,8 +11,10 @@
 #     kernels (~4.3 GB download, ~25 GB on disk). Requires the Adrenalin
 #     driver (not installable from here). Without it AMD GPUs run on Vulkan.
 #     The leg also stages the dist's own HIP runtime (amdhip64_*.dll, ~17 MB)
-#     next to llama-server.exe, which is what makes BF16/F16 models run on
-#     gfx1201 - see Invoke-HipRuntimeStaging for the why. That copy is
+#     plus its code-object manager (amd_comgr*.dll, ~122 MB) next to
+#     llama-server.exe, which is what makes BF16/F16 models run on gfx1201
+#     and what keeps HIP enumeration alive once an iGPU is visible - see
+#     Invoke-HipRuntimeStaging for the why. That copy is
 #     reachable on its own as -StageHipRuntime (leg 2b), which downloads
 #     nothing and is what the installer's hidden always-run section calls, so
 #     a machine that already has ROCm gets it without ticking a 4.3 GB box.
@@ -94,30 +96,43 @@ function Get-RemoteFileSize([string]$Url) {
 # present -> passes, removed -> fails, identically on 7.14.0, 10.0.0,
 # 7.15.0a20260728 and 10.1.0a20260901, with ROCBLAS_USE_HIPBLASLT forced to 1
 # as well - so hipBLASLt itself is healthy and the dist version was never the
-# variable. Only the runtime moves: rocblas, hipblaslt, amd_comgr and
-# rocm_kpack keep resolving from HIP_PATH\bin over PATH, which the HIP backend
-# already depends on, so this stages no new failure mode. Deleting the copy
-# reverts to the driver's runtime.
+# variable. rocblas and hipblaslt keep resolving from HIP_PATH\bin over PATH
+# (System32 has no copy to shadow them with), but amd_comgr does NOT: the
+# runtime asks for it by bare name and System32 keeps the DRIVER's own
+# amd_comgr.dll, which precedes PATH - a different build the dist runtime was
+# never tested against. The mismatch went unnoticed while only a dGPU was
+# visible, but once an iGPU (gfx1036) enumerates ahead of it,
+# hipGetDeviceCount itself dies with "no ROCm-capable device is detected" and
+# the whole HIP backend disappears (root-caused 2026-09-03 by A/B/A: the
+# dist's comgr beside the staged runtime, both devices enumerate; without it,
+# none; amdocl64.dll is NOT needed). So amd_comgr*.dll is staged beside the
+# runtime too, and deleting both copies reverts to the driver's runtime.
 #
 # Freshness is decided by CONTENT, and it has to be: every dist stamps the
 # same 10.0.3581.0 into the DLL's VERSIONINFO, and 10.0.0 and
 # 7.15.0a20260728 are even the same 16,555,520 bytes while being different
 # binaries. So a (size, FileVersion) check would call a stale copy current the
 # moment HIP_PATH moves between two such dists, and leave the install running
-# another version's runtime. One SHA256 of a ~17 MB file per run is the cheap
-# way to be right.
+# another version's runtime. One SHA256 each of a ~17 MB and a ~122 MB file
+# per run is the cheap way to be right.
 function Invoke-HipRuntimeStaging([string]$HipPath) {
-    foreach ($src in @(Get-ChildItem (Join-Path $HipPath 'bin') -Filter 'amdhip64_*.dll' -ErrorAction SilentlyContinue)) {
+    # The runtime AND its code-object manager, both content-checked: see the
+    # block above for why amd_comgr*.dll must be the dist's own.
+    $srcs = @(Get-ChildItem (Join-Path $HipPath 'bin') -Filter 'amdhip64_*.dll' -ErrorAction SilentlyContinue) +
+            @(Get-ChildItem (Join-Path $HipPath 'bin') -Filter 'amd_comgr*.dll' -ErrorAction SilentlyContinue)
+    foreach ($src in $srcs) {
         $dst = Join-Path $PSScriptRoot $src.Name
         $cur = Get-Item $dst -ErrorAction SilentlyContinue
         $ver = $src.VersionInfo.FileVersion
         $same = $cur -and $cur.Length -eq $src.Length -and
                 (Get-FileHash $dst -Algorithm SHA256).Hash -eq (Get-FileHash $src.FullName -Algorithm SHA256).Hash
+        $why = if ($src.Name -like 'amdhip64_*') { '- BF16/F16 models abort on gfx1201' }
+               else { '- HIP enumerates no device once an iGPU is enabled' }
         if ($same) {
             Write-Host "  [OK] HIP runtime $($src.Name) $ver next to llama-server.exe" -ForegroundColor Green
         } elseif ($Report) {
-            $why = if ($cur) { 'is a copy of another dist' } else { 'not staged' }
-            Write-Host "  [--] HIP runtime $($src.Name) $why - BF16/F16 models abort on gfx1201" -ForegroundColor Yellow
+            $state = if ($cur) { 'is a copy of another dist' } else { 'not staged' }
+            Write-Host "  [--] HIP runtime $($src.Name) $state $why" -ForegroundColor Yellow
         } else {
             try {
                 Copy-Item $src.FullName -Destination $dst -Force

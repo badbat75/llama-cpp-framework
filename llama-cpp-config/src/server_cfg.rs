@@ -163,7 +163,11 @@ pub struct ServerConfig {
     /// Hence `installer\install-runtime-deps.ps1` stages `amdhip64_*.dll` from
     /// `HIP_PATH\bin` into `bin\`, from a hidden always-run installer section
     /// as well as from its AMD leg, so an install or upgrade carrying that
-    /// helper needs no knob here at all.
+    /// helper needs no knob here at all. The staging also carries the dist's
+    /// `amd_comgr*.dll`: the runtime asks for it by bare name and System32
+    /// keeps the DRIVER's own (a different build that precedes PATH), a mix
+    /// that stood until an iGPU appeared and then killed `hipGetDeviceCount`
+    /// outright, dropping the whole HIP backend (2026-09-03).
     ///
     /// Left unset by default all the same: the bug is per-arch, hipBLASLt is the
     /// faster path everywhere it works, and the runtime finding rests on one

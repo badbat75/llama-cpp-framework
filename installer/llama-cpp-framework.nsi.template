@@ -250,13 +250,15 @@ SectionEnd
 
 ; Hidden and always run (the leading '-' in the name), which is the whole
 ; point: on a machine that already has ROCm this copies the dist's own
-; ~17 MB HIP runtime next to llama-server.exe, and that copy is what makes
-; BF16/F16 models run on RDNA4 (without it they run the dist's rocBLAS
-; against the DRIVER's HIP runtime out of System32, and abort at the first
-; prefill batch). Leaving it to SecDepsAmd would hide a 17 MB fix behind a
-; checkbox announcing 4.3 GB, i.e. behind the one box a user who already has
-; ROCm never ticks. Downloads nothing, prompts nothing, and stays silent when
-; there is no ROCm to copy from, so it is harmless on NVIDIA-only machines.
+; ~17 MB HIP runtime (plus its ~122 MB amd_comgr.dll, without which HIP
+; enumeration dies once an iGPU is visible) next to llama-server.exe, and
+; that copy is what makes BF16/F16 models run on RDNA4 (without it they run
+; the dist's rocBLAS against the DRIVER's HIP runtime out of System32, and
+; abort at the first prefill batch). Leaving it to SecDepsAmd would hide the
+; fix behind a checkbox announcing 4.3 GB, i.e. behind the one box a user who
+; already has ROCm never ticks. Downloads nothing, prompts nothing, and stays
+; silent when there is no ROCm to copy from, so it is harmless on
+; NVIDIA-only machines.
 ; Runs LAST so an install that did tick SecDepsAmd is staged from the dist it
 ; just installed. nsExec (not ExecWait) to keep it out of the user's face: it
 ; needs no console, and its output lands in the details view.
