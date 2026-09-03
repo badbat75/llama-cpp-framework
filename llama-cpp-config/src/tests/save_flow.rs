@@ -406,7 +406,46 @@ pub(super) fn run(app: &AppWindow) {
         0,
         "row mode has no block cut"
     );
+    // `tensor` is a ratio too (weights and KV are cut along a tensor axis by
+    // the same vector), so the block cut retires there as well, the combo
+    // lands on its own entry rather than collapsing onto layer as it did while
+    // the mode was not offered, and with two GPUs checked, flash attention
+    // untouched and a supported arch the mode strip stays quiet.
+    st.invoke_preset_split_mode_picked("tensor".into());
+    assert_eq!(st.get_form().split_mode.as_str(), "tensor");
+    assert_eq!(st.get_preset_gpu_mode().as_str(), "tensor");
+    assert_eq!(st.get_preset_split_mode_index(), 2);
+    assert_eq!(
+        st.get_preset_split_positions(),
+        0,
+        "tensor mode has no block cut"
+    );
+    assert_eq!(st.get_preset_split_mode_warning().as_str(), "");
+    // ...and speaks up on the one precondition the form itself can break:
+    // flash attention off is a load failure under tensor mode. Computed in
+    // .slint straight off the form, so no Rust refresh sits between the edit
+    // and the strip.
+    {
+        let mut f = st.get_form();
+        f.flash_attn = "off".into();
+        st.set_form(f);
+        assert!(
+            st.get_preset_split_mode_warning()
+                .as_str()
+                .contains("flash attention"),
+            "tensor + flash-attn off must warn"
+        );
+        let mut f = st.get_form();
+        f.flash_attn = "default".into();
+        st.set_form(f);
+        assert_eq!(st.get_preset_split_mode_warning().as_str(), "");
+    }
     st.invoke_preset_split_mode_picked("default".into());
+    assert_eq!(
+        st.get_preset_split_mode_warning().as_str(),
+        "",
+        "the strip is about tensor mode only"
+    );
     assert_eq!(
         st.get_preset_split_positions(),
         34,

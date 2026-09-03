@@ -284,6 +284,9 @@ export component ModelsPage inherits HorizontalLayout {
                     // one model to count against.
                     positions: AppState.preset_split_positions;
                     warning: AppState.gpu_override_warning;
+                    // Split mode tensor's load-time refusals, against the
+                    // EFFECTIVE mode and this model's header (state.slint).
+                    mode_warning: AppState.preset_split_mode_warning;
                     mode_labels: AppState.split_mode_labels;
                     mode_values: AppState.split_mode_values;
                     mode_index <=> AppState.preset_split_mode_index;
@@ -291,7 +294,7 @@ export component ModelsPage inherits HorizontalLayout {
                     // this preset's pick, and the columns must follow the truth.
                     effective_mode: AppState.preset_gpu_mode;
                     mode_picked(v) => { AppState.preset_split_mode_picked(v); }
-                    split_mode_hint: "Multi-GPU split for THIS model (split-mode), same on CUDA and HIP. A server-wide mode overrides it.\nlayer (default, = inherit): each GPU takes a consecutive run of blocks; the table edits the cut.\nnone: single GPU, the first checked row; the other checked rows go unused.\nrow: weight matrices are split row-wise by the ratio (needs CUDA/ROCm; Vulkan falls back to the layer cut); the KV cache still follows the layer cut.\nIrrelevant with one GPU checked.";
+                    split_mode_hint: "Multi-GPU split for THIS model (split-mode), same on CUDA and HIP. A server-wide mode overrides it.\nlayer (default, = inherit): each GPU takes a consecutive run of blocks; the table edits the cut. Fastest prefill, tolerates a slow GPU link.\nnone: single GPU, the first checked row; the other checked rows go unused.\ntensor (experimental): tensor parallelism. The checked GPUs become one device and every weight AND the KV cache are cut across them by the ratio (blank = even). Fastest decode, needs a fast GPU link. Flash attention must be on (auto is promoted), fit is skipped (size ctx-size yourself), some architectures are refused at load, and llama.cpp tunes it for CUDA with no guarantees on other backends.\nrow (deprecated, superseded by tensor): weight matrices are split row-wise by the ratio (needs CUDA/ROCm; Vulkan falls back to the layer cut); the KV cache still follows the layer cut.\nIrrelevant with one GPU checked.";
                     toggled(id) => { AppState.preset_gpu_toggle(id); }
                     reordered(id, delta) => { AppState.preset_gpu_move(id, delta); }
                     weight_edited(id, w) => { AppState.preset_gpu_weight(id, w); }

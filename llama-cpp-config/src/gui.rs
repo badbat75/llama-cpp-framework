@@ -772,8 +772,9 @@ fn refresh_gpu_scalars(app: &AppWindow) {
     s.set_preset_split_mode_index(gpu_split::mode_index(s.get_form().split_mode.as_str()));
     // 0 = "no model to project onto", which is what switches the table's editable
     // column back from blocks to raw weights, and any mode but layer counts as
-    // that too: under `row` the bytes follow row fractions, under `none` the
-    // vector is dead, so a block cut would misreport both.
+    // that too: under `row` the bytes follow row fractions, under `tensor` a
+    // tensor-axis cut, under `none` the vector is dead, so a block cut would
+    // misreport all three.
     s.set_preset_split_positions(if preset_mode == gpu_split::SplitMode::Layer {
         preset_split_layout(app).map_or(0, |l| l.count)
     } else {

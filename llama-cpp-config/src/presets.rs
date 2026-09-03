@@ -133,15 +133,20 @@ pub struct Preset {
     /// Empty = inherit the server default. Written by the GPU distribution table
     /// (src/gpu_split.rs), never typed by hand.
     pub device: String,
-    /// Multi-GPU split for THIS model. `split_mode` (--split-mode): none|layer|row.
-    /// `none` keeps ONLY the first `device` entry (main_gpu) and ignores the
-    /// vector; `row` splits the weight matrices row-wise by the vector (backend
-    /// split buffer type, CUDA/ROCm only; Vulkan falls back to the layer cut).
-    /// A server-wide SplitMode OVERRIDES this key at launch (the router's CLI
-    /// wins the merge), `layer` spelled out included.
+    /// Multi-GPU split for THIS model. `split_mode` (--split-mode):
+    /// none|layer|tensor|row. `none` keeps ONLY the first `device` entry
+    /// (main_gpu) and ignores the vector; `tensor` (experimental upstream) folds
+    /// the `device` list into ONE meta device and cuts every weight AND the KV
+    /// cache along a tensor axis by the vector (needs flash-attn on, an arch
+    /// llama.cpp implements it for, and skips `--fit`; see gpu_split.rs); `row`
+    /// (deprecated upstream, superseded by `tensor`) splits the weight matrices
+    /// row-wise by the vector (backend split buffer type, CUDA/ROCm only; Vulkan
+    /// falls back to the layer cut). A server-wide SplitMode OVERRIDES this key
+    /// at launch (the router's CLI wins the merge), `layer` spelled out included.
     /// `tensor_split` (--tensor-split): per-GPU weight proportions like "3,1",
     /// positional over the `device` list ABOVE, in that order. Empty tensor_split
-    /// with 2+ devices = llama.cpp splits by free VRAM at load (NOT evenly).
+    /// with 2+ devices = llama.cpp splits by free VRAM at load (NOT evenly),
+    /// except under `tensor`, where empty IS an even cut.
     /// Empty = inherit the server.ini default. Identical on CUDA and HIP.
     pub split_mode: String,
     pub tensor_split: String,

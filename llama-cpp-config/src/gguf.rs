@@ -307,6 +307,27 @@ impl ModelInfo {
         }
     }
 
+    /// The warning the GPU distribution table shows under split mode `tensor`
+    /// when llama.cpp's tensor parallelism does not implement this model's
+    /// architecture: the load fails outright (`llama_model_create` throws
+    /// `LLAMA_SPLIT_MODE_TENSOR not implemented for architecture '...'`,
+    /// `src/llama-model.cpp`), and nothing the table edits can change that, so it
+    /// is worth saying at the pick rather than at the next launch. Empty for
+    /// every arch off the deny-list. Unlike `embd_pin_warning` there is no
+    /// "unknown" here to stay quiet on: `from_kv` requires `general.architecture`,
+    /// so an unreadable header never reaches this.
+    pub fn sm_tensor_warning(&self) -> String {
+        if arch_supports_sm_tensor(&self.arch) {
+            String::new()
+        } else {
+            format!(
+                "Split mode tensor: llama.cpp's tensor parallelism is not implemented for the \
+                 '{}' architecture, so the model will not load under it. Pick layer.",
+                self.arch
+            )
+        }
+    }
+
     pub fn layers_ctx_line(&self) -> String {
         let mut parts: Vec<String> = Vec::new();
         if self.n_layer > 0 {
@@ -696,6 +717,53 @@ fn gpu_has_get_rows(ggml_type: u32) -> bool {
         | 26 // I32
         | 30 // BF16
         | 41 // Q1_0
+    )
+}
+
+/// Whether llama.cpp's tensor parallelism (`--split-mode tensor`) implements this
+/// `general.architecture`. Mirrors `llm_arch_supports_sm_tensor`
+/// (`src/llama-arch.cpp`), which is a DENY-list: every arch not named there
+/// returns true, so the spellings are `LLM_ARCH_NAMES`' own (`falcon-h1`,
+/// `nemotron_h`, `granitehybrid`: hyphen, underscore and neither, exactly as
+/// upstream writes them). Verified against v0.3.0.
+///
+/// Keep it in sync with that switch when bumping llama.cpp. Neither drift is
+/// silent (the load fails with a clear log line either way), but they cost
+/// different things: an arch upstream ADDS to its deny-list and is missing here
+/// lets the pick through to a failed launch, which is what the warning exists to
+/// pre-empt, while an arch that GAINS support upstream and is still listed here
+/// only costs a needless warning. So err on the side of re-reading the switch.
+fn arch_supports_sm_tensor(arch: &str) -> bool {
+    !matches!(
+        arch,
+        "grok"
+            | "mpt"
+            | "plamo2"
+            | "minicpm3"
+            | "gemma3n"
+            | "mamba"
+            | "mamba2"
+            | "jamba"
+            | "falcon-h1"
+            | "olmo2"
+            | "olmoe"
+            | "deepseek2"
+            | "deepseek32"
+            | "dots3note"
+            | "glm-dsa"
+            | "bitnet"
+            | "t5"
+            | "nemotron_h"
+            | "nemotron_h_moe"
+            | "granitehybrid"
+            | "minimax-01"
+            | "minimax-m2"
+            | "minimax-m3"
+            | "mistral4"
+            | "kimi-linear"
+            | "bailingmoe3"
+            | "kimi-k3"
+            | "qwen3tts"
     )
 }
 
@@ -1189,6 +1257,24 @@ mod tests {
                 !gpu_has_get_rows(k_quant),
                 "type {k_quant} must not be pinnable"
             );
+        }
+    }
+
+    /// `--split-mode tensor` is refused at load for the archs upstream's
+    /// `llm_arch_supports_sm_tensor` deny-lists (a throw in `llama_model_create`),
+    /// so the verdict is per-ARCH, spelled the way `LLM_ARCH_NAMES` spells it,
+    /// and silent for everything else.
+    #[test]
+    fn sm_tensor_verdict_follows_upstreams_arch_deny_list() {
+        let info = |arch: &'static str| {
+            ModelInfo::from_kv(&map(vec![("general.architecture", Tv::S(arch))])).unwrap()
+        };
+        assert!(info("llama").sm_tensor_warning().is_empty());
+        assert!(info("qwen35").sm_tensor_warning().is_empty());
+        assert!(info("deepseek2").sm_tensor_warning().contains("deepseek2"));
+        // The three spellings upstream mixes: hyphen, underscore, neither.
+        for arch in ["falcon-h1", "nemotron_h", "granitehybrid"] {
+            assert!(!arch_supports_sm_tensor(arch), "{arch} is deny-listed");
         }
     }
 

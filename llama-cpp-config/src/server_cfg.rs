@@ -86,7 +86,8 @@ pub struct ServerConfig {
     /// preset's own `device`: llama-server's router passes its CLI args on top of
     /// each preset. Written by the GPU distribution table (src/gpu_split.rs).
     pub device: Option<String>,
-    /// Multi-GPU split strategy (--split-mode / -sm): "none" | "row".
+    /// Multi-GPU split strategy (--split-mode / -sm): "none" | "tensor" | "row"
+    /// (`row` deprecated upstream, superseded by `tensor`; see gpu_split.rs).
     /// Empty/None = llama.cpp's default (layer) AND every preset free to pick its
     /// own. An explicit `"layer"` is dropped on read; see `server_split_mode`.
     pub split_mode: Option<String>,
@@ -462,9 +463,9 @@ fn from_keys(keys: &std::collections::BTreeMap<String, String>) -> ServerConfig 
 /// it is what the old two-entry combo ("default" and "layer", one and the same
 /// launch) wrote when either entry was picked. So it is dropped on read: the
 /// server's own launch is unchanged, presets get their mode back, and the next
-/// save drops the key from the file. `none` / `row` are kept: those DO change
-/// the launch, and overriding every preset with them is a deliberate choice the
-/// combo makes visible.
+/// save drops the key from the file. `none` / `tensor` / `row` are kept: those
+/// DO change the launch, and overriding every preset with them is a deliberate
+/// choice the combo makes visible.
 pub fn server_split_mode(raw: Option<&String>) -> Option<String> {
     opt_nonblank(raw.cloned()).filter(|v| !v.trim().eq_ignore_ascii_case("layer"))
 }
@@ -600,7 +601,7 @@ fn render(cfg: &ServerConfig) -> String {
     let split_mode_line = str_line_or_hint(
         cfg.split_mode.as_deref(),
         "SplitMode",
-        "; SplitMode = layer  ; multi-GPU split (--split-mode): none|layer|row; blank = layer (default)",
+        "; SplitMode = layer  ; multi-GPU split (--split-mode): none|layer|tensor|row; blank = layer (default)",
     );
     let tensor_split_line = str_line_or_hint(
         cfg.tensor_split.as_deref(),
@@ -961,8 +962,9 @@ mod tests {
     /// about the server's own launch (llama.cpp already defaults to layer) and
     /// its only real effect was to override every preset's mode, since the
     /// router merges its CLI args into each preset, a choice nobody makes on
-    /// purpose, and one the merged combo entry can no longer express. `none` and
-    /// `row` DO change the launch, so they survive and keep overriding.
+    /// purpose, and one the merged combo entry can no longer express. `none`,
+    /// `tensor` and `row` DO change the launch, so they survive and keep
+    /// overriding.
     #[test]
     fn an_explicit_server_wide_layer_split_mode_is_dropped_on_read() {
         let read = |v: &str| {
@@ -975,6 +977,7 @@ mod tests {
         assert_eq!(read("layer"), None);
         assert_eq!(read("  LAYER  "), None, "trimmed and case-insensitive");
         assert_eq!(read("row"), Some("row".into()));
+        assert_eq!(read("tensor"), Some("tensor".into()));
         assert_eq!(read("none"), Some("none".into()));
         // …and the dropped key is gone from the file the next save writes.
         let cfg = ServerConfig {

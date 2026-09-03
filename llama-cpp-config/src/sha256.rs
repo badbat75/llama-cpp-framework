@@ -51,7 +51,10 @@ pub fn hex(data: &[u8]) -> String {
     msg.extend_from_slice(&bit_len.to_be_bytes());
 
     let mut w = [0u32; 64];
-    for chunk in msg.chunks_exact(64) {
+    // The padding above makes the length a multiple of 64, so the remainder
+    // `as_chunks` also returns is always empty; the fixed-size chunk is what
+    // clippy asks for over `chunks_exact(64)` (chunks_exact_to_as_chunks).
+    for chunk in msg.as_chunks::<64>().0 {
         for (i, word) in w.iter_mut().take(16).enumerate() {
             let b = &chunk[i * 4..i * 4 + 4];
             *word = u32::from_be_bytes([b[0], b[1], b[2], b[3]]);

@@ -85,9 +85,9 @@ export global AppState {
     // / MODE_VALUES, pushed once per row refresh); the index is per-scope and
     // two-way: Rust recomputes it from the form value on every refresh, a pick
     // reports back through *_split_mode_picked. The effective mode ("layer" /
-    // "none" / "row", gpu_split::effective_mode; the server-wide flag rides
-    // the router's CLI, so it shadows every preset's key) is what actually
-    // bends each table's columns.
+    // "none" / "tensor" / "row", gpu_split::effective_mode; the server-wide
+    // flag rides the router's CLI, so it shadows every preset's key) is what
+    // actually bends each table's columns.
     in-out property <[string]> split_mode_labels;
     in-out property <[string]> split_mode_values;
     in-out property <int> server_split_mode_index: 0;
@@ -159,6 +159,24 @@ export global AppState {
             && form.split_mode != "default" && form.split_mode != ""
             && form.split_mode != server_form.split_mode)
         ? "The Server tab sets GPU split mode '" + server_form.split_mode + "', which llama-server passes on its own command line; it overrides this preset's split mode."
+        : "";
+    // The preconditions of split mode `tensor` this form can see, each a LOAD
+    // failure llama.cpp reports only in its log, checked against the EFFECTIVE
+    // mode (a server-wide `tensor` raises them on every preset): the arch must
+    // be one upstream's tensor parallelism implements
+    // (`model_info_tensor_arch_warning`, read from the GGUF by Rust), flash
+    // attention must not be `off` (`llama_init_from_model` returns null; `auto`
+    // is promoted to on), and, the one with no error message at all, with no
+    // device pinned in EITHER scope llama.cpp pools EVERY detected device into
+    // the meta device, the duplicate Vulkan views of a card and the iGPU
+    // included (`llama_prepare_model_devices` dedups by device id only in the
+    // other modes). First wins: each one alone spoils the launch.
+    out property <string> preset_split_mode_warning: preset_gpu_mode != "tensor" ? ""
+        : model_info_tensor_arch_warning != "" ? model_info_tensor_arch_warning
+        : form.flash_attn == "off"
+        ? "Split mode tensor requires flash attention: with Flash attention off, llama.cpp refuses to create the context and the model does not load. Set it to on or default."
+        : (form.device == "" && server_form.device == "")
+        ? "Split mode tensor with no GPU checked here or on the Server tab: llama.cpp then pools EVERY detected device into the split, duplicate Vulkan views of the same card and the iGPU included. Check the GPUs to run on."
         : "";
 
     // Per-preset tensor-placement table (TensorOverrideTable), over the single
@@ -236,6 +254,12 @@ export global AppState {
     // read never masquerades as a problem.
     in-out property <string> model_info_embd;
     in-out property <string> model_info_embd_warning;
+    // Non-empty when llama.cpp's tensor parallelism does not implement this
+    // model's architecture (`gguf::arch_supports_sm_tensor`, a mirror of
+    // upstream's deny-list): under split mode `tensor` the load throws, so
+    // `preset_split_mode_warning` shows it the moment that mode is effective.
+    // Empty for an unreadable GGUF (same rule as the embd warning).
+    in-out property <string> model_info_tensor_arch_warning;
     in-out property <string> model_info_layers_ctx;
     in-out property <string> model_info_attn;
     in-out property <string> model_info_draft;
@@ -438,7 +462,7 @@ export global AppState {
     // places within the split (negative = towards the head). Position 0 is
     // llama.cpp's main_gpu, so this is the only way to choose which GPU leads.
     // `*_split_mode_picked(value)`: the mode combo's pick, as a MODE_VALUES
-    // spelling ("default"/"none"/"row"). Rust writes it into the scope's form
+    // spelling ("default"/"none"/"tensor"/"row"). Rust writes it into the scope's form
     // and rebuilds the rows: the mode decides what the columns mean, so a
     // pick is a full re-projection, not a scalar update.
     callback server_split_mode_picked(string);

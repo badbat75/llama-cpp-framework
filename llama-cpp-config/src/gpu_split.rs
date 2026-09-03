@@ -82,10 +82,16 @@
 //! the normalized vector (backend split buffer type; the layer cut still runs
 //! over the same vector, so the KV cache and non-matrix tensors follow it, but
 //! the bulk of the bytes follow the row fractions), so the honest editable unit
-//! is the raw ratio and never blocks. `SplitMode` is that verdict;
-//! `effective_mode` resolves the scope inheritance: the server-wide mode rides
-//! the router's own command line, so whenever it is set it shadows every
-//! preset's key.
+//! is the raw ratio and never blocks; under `tensor` (llama.cpp's tensor
+//! parallelism, experimental upstream and what deprecated `row`) the checked
+//! devices become ONE meta device and every weight AND the KV cache are cut
+//! along a tensor axis by the same normalized vector
+//! (`llama_meta_device_get_split_state`, `llama-model.cpp`), so it is a ratio
+//! there too, with one difference the share column has to state: a BLANK
+//! vector is an EVEN cut, not the free-VRAM weighting the other modes fall back
+//! to. `SplitMode` is that verdict; `effective_mode` resolves the scope
+//! inheritance: the server-wide mode rides the router's own command line, so
+//! whenever it is set it shadows every preset's key.
 
 use slint::SharedString;
 
@@ -110,8 +116,7 @@ type Pick = (String, i32);
 // ── Split mode ───────────────────────────────────────────────────────────
 
 /// What `--split-mode` makes of the selection (the DISPLAY verdict, not the
-/// flag domain): a value this code does not know (today `tensor`, experimental
-/// in llama.cpp and refused by its `--fit` pass) degrades to `Row` (ratio
+/// flag domain): a value this code does not know degrades to `Row` (ratio
 /// editing, no block projection) because inventing a block cut for an unknown
 /// mode would misreport exactly what the mode handling exists to make honest.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -129,8 +134,28 @@ pub enum SplitMode {
     /// backend without one, Vulkan, quietly falls back to the layer cut).
     /// The layer assignment still runs over the same vector, so KV and the
     /// non-matrix tensors follow it, but the bulk of the bytes follow the row
-    /// fractions, so the editable unit is the ratio, never blocks.
+    /// fractions, so the editable unit is the ratio, never blocks. DEPRECATED
+    /// upstream since `tensor` landed (`docs/multi-gpu.md`: "superseded by
+    /// `tensor` which should be universally superior if it can be used"), but
+    /// still accepted by the flag, so it stays listed: an INI that carries it
+    /// must show it, not read as layer.
     Row,
+    /// `tensor`: llama.cpp's tensor parallelism (b8738, PR #19378, experimental
+    /// upstream). The checked devices become ONE meta device, in `--device`
+    /// order, and every weight AND the KV cache are cut along a tensor axis by
+    /// the normalized vector (`llama_meta_device_get_split_state`), so the
+    /// editable unit is the ratio (no block cut exists), and a BLANK vector is an
+    /// EVEN cut (`tensor_split_scan.back() == 0` → `ne_s * (j+1) / n_devices`),
+    /// not the free-VRAM weighting of the other modes. `main_gpu` means nothing
+    /// here: there is one device. Three things the LAUNCH checks that no row can
+    /// show, hence the second warning strip under the combo
+    /// (`preset_split_mode_warning`): the arch must be one upstream implements
+    /// (`gguf::arch_supports_sm_tensor`), flash attention must not be `off`
+    /// (`auto` is promoted to on), and with no device pinned in either scope
+    /// llama.cpp pools EVERY detected device into the split, duplicate Vulkan
+    /// views included, since only the other modes dedup by device id. `--fit`
+    /// is skipped with a log warning, so `ctx-size` is the user's to size.
+    Tensor,
 }
 
 impl SplitMode {
@@ -141,16 +166,19 @@ impl SplitMode {
         match s.trim() {
             "none" => Self::Single,
             "" | "default" | "layer" => Self::Layer,
+            "tensor" => Self::Tensor,
             _ => Self::Row,
         }
     }
 
-    /// The spelling the tables' gating property carries ("layer"/"none"/"row").
+    /// The spelling the tables' gating property carries
+    /// ("layer"/"none"/"tensor"/"row").
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Layer => "layer",
             Self::Single => "none",
             Self::Row => "row",
+            Self::Tensor => "tensor",
         }
     }
 }
@@ -175,21 +203,26 @@ pub fn effective_mode(server_mode: &str, preset_mode: Option<&str>) -> SplitMode
 /// layer, or to the server-wide mode, which when set overrides an explicit key
 /// too), so the duplicate entry was pure ambiguity. One entry now carries both;
 /// picking it stores "default", which the form conversions drop from the INI.
-pub const MODE_VALUES: [&str; 3] = ["default", "none", "row"];
-pub const MODE_LABELS: [&str; 3] = [
+/// `row` sits LAST and says so: deprecated upstream (superseded by `tensor`),
+/// it stays listed because the flag still accepts it and an INI that carries it
+/// has to show it rather than silently reading as layer.
+pub const MODE_VALUES: [&str; 4] = ["default", "none", "tensor", "row"];
+pub const MODE_LABELS: [&str; 4] = [
     "layer: split by blocks (default)",
     "none: single GPU",
-    "row: split matrices by rows",
+    "tensor: tensor parallel across GPUs (experimental)",
+    "row: split matrices by rows (deprecated)",
 ];
 
 /// The combo row for a form value, aligned with `MODE_VALUES`. Everything that
-/// is not `none`/`row` sits on the merged layer entry, including a hand-written
-/// value this build doesn't list (`tensor`), which keeps its INI spelling
+/// is not `none`/`tensor`/`row` sits on the merged layer entry, including a
+/// hand-written value this build doesn't list, which keeps its INI spelling
 /// untouched until the user actually picks a row.
 pub fn mode_index(form_value: &str) -> i32 {
     match form_value.trim() {
         "none" => 1,
-        "row" => 2,
+        "tensor" => 2,
+        "row" => 3,
         _ => 0,
     }
 }
@@ -549,11 +582,13 @@ pub fn set_even(sel: &GpuSelection) -> GpuSelection {
 /// table falls back to editing raw weights.
 ///
 /// `mode` is the EFFECTIVE split mode (`effective_mode`). It bends the rows the
-/// way llama.cpp will bend the launch: `Row` discards the layout (the bytes
-/// follow row fractions, so a block cut would misreport the placement), and
-/// `Single` additionally overrides the share column: the head row holds the
-/// whole model and every other checked row is dead weight, which "unused" says
-/// where a "—" would read as merely unchecked.
+/// way llama.cpp will bend the launch: `Row` and `Tensor` discard the layout
+/// (the bytes follow row fractions, or a tensor-axis cut, so a block cut would
+/// misreport the placement), `Tensor` additionally names a blank vector "even"
+/// (the one mode where blank is not the free-VRAM weighting "auto" stands for),
+/// and `Single` overrides the share column: the head row holds the whole model
+/// and every other checked row is dead weight, which "unused" says where a "—"
+/// would read as merely unchecked.
 pub fn build_rows(
     devices: &[DeviceOption],
     sel: &GpuSelection,
@@ -591,6 +626,11 @@ pub fn build_rows(
             share: match mode {
                 SplitMode::Single if i == 0 => "100%".into(),
                 SplitMode::Single => "unused".into(),
+                // A blank vector under tensor parallelism is an EVEN cut
+                // (`llama_meta_device_get_split_state`: an all-zero scan cuts
+                // `ne_s * (j+1) / n_devices`), not the free-VRAM weighting
+                // "auto" names in the other modes.
+                SplitMode::Tensor if picks.len() >= 2 && total <= 0 => "even".into(),
                 _ => share(picks.len(), *weight, total).into(),
             },
             blocks: counts.as_ref().and_then(|c| c.get(i)).copied().unwrap_or(0),
@@ -1158,8 +1198,8 @@ mod tests {
     // ── Split mode ────────────────────────────────────────────────────────
 
     // The flag domain, plus the deliberate degradations: the form's "default"
-    // sentinel and an explicit "layer" are the same verdict, and an unknown
-    // value (llama.cpp's experimental `tensor`) must NOT earn a block cut.
+    // sentinel and an explicit "layer" are the same verdict, and a value the
+    // flag does not know must NOT earn a block cut.
     #[test]
     fn split_mode_parses_the_flag_domain_and_degrades_unknowns_to_row() {
         assert_eq!(SplitMode::parse(""), SplitMode::Layer);
@@ -1167,8 +1207,10 @@ mod tests {
         assert_eq!(SplitMode::parse("layer"), SplitMode::Layer);
         assert_eq!(SplitMode::parse(" none "), SplitMode::Single);
         assert_eq!(SplitMode::parse("row"), SplitMode::Row);
-        assert_eq!(SplitMode::parse("tensor"), SplitMode::Row);
+        assert_eq!(SplitMode::parse("tensor"), SplitMode::Tensor);
+        assert_eq!(SplitMode::parse("bogus"), SplitMode::Row);
         assert_eq!(SplitMode::Single.as_str(), "none");
+        assert_eq!(SplitMode::Tensor.as_str(), "tensor");
     }
 
     // The server-wide mode rides the router's CLI, which the router copies over
@@ -1179,7 +1221,9 @@ mod tests {
         assert_eq!(effective_mode("", None), SplitMode::Layer);
         assert_eq!(effective_mode("default", Some("row")), SplitMode::Row);
         assert_eq!(effective_mode("", Some("none")), SplitMode::Single);
+        assert_eq!(effective_mode("", Some("tensor")), SplitMode::Tensor);
         assert_eq!(effective_mode("none", Some("row")), SplitMode::Single);
+        assert_eq!(effective_mode("tensor", Some("row")), SplitMode::Tensor);
         assert_eq!(
             effective_mode("layer", Some("row")),
             SplitMode::Layer,
@@ -1190,7 +1234,8 @@ mod tests {
     // One combo entry for default+layer: for a preset they are the same launch
     // in every reachable configuration, so two entries were pure ambiguity. A
     // hand-written value outside the list sits on that entry too (and keeps its
-    // INI spelling; nothing here rewrites it).
+    // INI spelling; nothing here rewrites it). `tensor` has its own entry now;
+    // `row`, deprecated upstream, keeps one, last.
     #[test]
     fn mode_index_collapses_default_and_layer_onto_one_entry() {
         assert_eq!(MODE_VALUES.len(), MODE_LABELS.len());
@@ -1198,10 +1243,15 @@ mod tests {
         assert_eq!(mode_index("default"), 0);
         assert_eq!(mode_index("layer"), 0);
         assert_eq!(mode_index("none"), 1);
-        assert_eq!(mode_index("row"), 2);
-        assert_eq!(mode_index("tensor"), 0);
+        assert_eq!(mode_index("tensor"), 2);
+        assert_eq!(mode_index("row"), 3);
+        assert_eq!(mode_index("bogus"), 0);
         // The values written back by a pick are the INI/form spellings.
-        assert_eq!(MODE_VALUES, ["default", "none", "row"]);
+        assert_eq!(MODE_VALUES, ["default", "none", "tensor", "row"]);
+        assert!(
+            MODE_LABELS[3].contains("deprecated"),
+            "row must say it is deprecated"
+        );
     }
 
     // Under `none` llama.cpp drops every device but the head, so the rows must
@@ -1241,5 +1291,35 @@ mod tests {
             .all(|r| r.blocks == 0 && r.blocks_label.is_empty()));
         assert_eq!(rows[0].share, "75%");
         assert_eq!(rows[1].share, "25%");
+    }
+
+    // Under `tensor` the vector cuts every weight and the KV cache along a
+    // tensor axis, so it is a ratio too (no block cut, layout or not), and a
+    // BLANK vector is the one place llama.cpp splits EVENLY rather than by free
+    // VRAM, which the share column must say instead of "auto".
+    #[test]
+    fn tensor_mode_edits_ratios_and_reads_a_blank_vector_as_even() {
+        let rows = build_rows(
+            &devs(),
+            &sel("ROCm0,CUDA0", "3,1"),
+            Some(full(ORNITH)),
+            SplitMode::Tensor,
+        );
+        assert!(rows
+            .iter()
+            .all(|r| r.blocks == 0 && r.blocks_label.is_empty()));
+        assert_eq!(rows[0].share, "75%");
+        assert_eq!(rows[1].share, "25%");
+
+        let rows = build_rows(&devs(), &sel("ROCm0,CUDA0", ""), None, SplitMode::Tensor);
+        assert_eq!(rows[0].share, "even");
+        assert_eq!(rows[1].share, "even");
+        assert_eq!(rows[2].share, "—", "unchecked rows keep the dash");
+        // The same blank vector is free-VRAM "auto" everywhere else.
+        let rows = build_rows(&devs(), &sel("ROCm0,CUDA0", ""), None, SplitMode::Row);
+        assert_eq!(rows[0].share, "auto");
+        // One device has nothing to cut, evenly or otherwise.
+        let rows = build_rows(&devs(), &sel("ROCm0", ""), None, SplitMode::Tensor);
+        assert_eq!(rows[0].share, "100%");
     }
 }

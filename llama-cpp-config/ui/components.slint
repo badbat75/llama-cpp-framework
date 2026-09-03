@@ -651,10 +651,12 @@ export component FormActions inherits HorizontalLayout {
 // effective_mode; the server-wide flag rides the router's CLI and shadows every
 // preset), bends the columns to match: `layer` edits blocks where a model is
 // known, `row` edits the raw ratio (the bytes follow row fractions, so a block
-// cut would lie), `none` retires the editors entirely: only the head row runs,
-// which the Share column says out loud. The combo's one "layer (default)" entry
-// deliberately merges the old default/layer pair: for a preset they are the
-// same launch in every reachable configuration.
+// cut would lie), `tensor` the same ratio (weights AND KV are cut along a
+// tensor axis by it, and a blank vector is an EVEN cut there, which the Share
+// column says instead of "auto"), `none` retires the editors entirely: only the
+// head row runs, which the Share column says out loud. The combo's one "layer
+// (default)" entry deliberately merges the old default/layer pair: for a preset
+// they are the same launch in every reachable configuration.
 //
 // The checked rows come FIRST, in split order: read top to bottom they ARE the
 // --device list and its --tensor-split vector. That is what makes the ≡ drag
@@ -690,6 +692,12 @@ export component GpuSplitTable inherits VerticalLayout {
     // Non-empty to show a warning strip above the table (the Models tab uses it
     // for "a server-wide selection overrides this one at launch").
     in property <string> warning;
+    // A SECOND, independent strip, right under the mode combo: what the
+    // EFFECTIVE mode will make the launch do that no row can show (the Models
+    // tab passes AppState.preset_split_mode_warning: split mode tensor's
+    // load-time refusals). Independent of `warning` because a table can be both
+    // shadowed and misconfigured, and the two say different things.
+    in property <string> mode_warning;
     in property <string> split_mode_hint;
     // The split-mode combo model, pushed from Rust (gpu_split::MODE_LABELS /
     // MODE_VALUES / mode_index). The index binds two-way through to AppState so
@@ -698,7 +706,7 @@ export component GpuSplitTable inherits VerticalLayout {
     in property <[string]> mode_labels;
     in property <[string]> mode_values;
     in-out property <int> mode_index;
-    // The mode the launch will actually run under ("layer"/"none"/"row"),
+    // The mode the launch will actually run under ("layer"/"none"/"tensor"/"row"),
     // inheritance resolved in Rust (gpu_split::effective_mode), NOT the raw
     // combo value: a preset on "layer (default)" under a server-wide `none`
     // effectively runs single-GPU, and the columns must say so.
@@ -788,7 +796,10 @@ export component GpuSplitTable inherits VerticalLayout {
             return "100%";
         }
         if (root.weight_total <= 0) {
-            return "auto";
+            // A blank vector is llama.cpp's free-VRAM weighting in every mode
+            // but tensor, where it is an EVEN cut (gpu_split::build_rows says
+            // the same in the row model).
+            return root.effective_mode == "tensor" ? "even" : "auto";
         }
         if (root.blocks_mode) {
             return "\{Math.round(weight * 100 / root.positions)}%";
@@ -822,6 +833,15 @@ export component GpuSplitTable inherits VerticalLayout {
             index <=> root.mode_index;
             picked(v) => { root.mode_picked(v); }
         }
+    }
+
+    // What the effective mode does to the LAUNCH that the rows cannot show
+    // (split mode tensor's load-time refusals); sits under the combo it is
+    // about. WrapText for the same reason as the strip above.
+    if root.mode_warning != "" : WrapText {
+        text: root.mode_warning;
+        font_size: 12px;
+        color: Tokens.err;
     }
 
     // Header row. Column widths are repeated verbatim by the delegate below:

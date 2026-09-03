@@ -680,6 +680,10 @@ pub(super) fn update_model_info(app: &AppWindow) {
     // K-quant. It must be cleared on every entry, not just repainted on success.
     s.set_model_info_embd(SharedString::from("n/a"));
     s.set_model_info_embd_warning(SharedString::from(""));
+    // Same rule for the tensor-mode arch verdict: the GPU table reads it under
+    // split mode `tensor` whether or not `model_info_ready`, so it must not
+    // outlive the model it was read from.
+    s.set_model_info_tensor_arch_warning(SharedString::from(""));
 
     // Both failure paths reset `model_info_n_layer` above, and the GPU table
     // projects its weights onto exactly that, so they have to go through
@@ -709,6 +713,10 @@ pub(super) fn update_model_info(app: &AppWindow) {
     s.set_model_info_has_moe(info.is_moe);
     s.set_model_info_moe(SharedString::from(info.moe_offload_line()));
     s.set_model_info_arch_quant(SharedString::from(info.arch_quant_line()));
+    // Feeds the GPU table's mode strip under split mode `tensor` (state.slint
+    // `preset_split_mode_warning`): an arch llama.cpp's tensor parallelism
+    // refuses at load, read once here rather than on every mode pick.
+    s.set_model_info_tensor_arch_warning(SharedString::from(info.sm_tensor_warning()));
     s.set_model_info_embd(SharedString::from(info.embd_line()));
     // Feeds the Tensor-placement table's warning strip (see refresh_tensor_scalars).
     // Set BEFORE the refresh below, which reads it back off AppState rather than
