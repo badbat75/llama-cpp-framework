@@ -295,7 +295,6 @@ if ($clangPath -ne 'clang') {
     if (Test-Path -LiteralPath $candidate) { $linkerPath = $candidate }
 }
 $buildLines.Add("    Linker      = $(Fmt $linkerPath)")
-$buildLines.Add("    MarchFlags  = '-march=x86-64-v3'")
 # 3/4 of the logical cores, and never all of them. The `Min(.., count - 1)` is
 # the reservation: at this ratio it does not bind on any real machine, and it
 # is kept deliberately, so that "one core stays free" is a property of the

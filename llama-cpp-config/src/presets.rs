@@ -215,8 +215,21 @@ pub struct Preset {
     pub reasoning_effort: String,
     /// Keep the reasoning trace of EVERY assistant turn in the history replayed to
     /// the model, not just the last one (--reasoning-preserve /
-    /// --no-reasoning-preserve). `None` = the template's own default: llama.cpp
-    /// passes neither flag, which is why this is a tri-state and not a checkbox.
+    /// --no-reasoning-preserve). `None` = pass neither flag, which is why this is
+    /// a tri-state and not a checkbox: `Some(false)` is a real flag
+    /// (`--no-reasoning-preserve`) and `None` is llama.cpp's own default.
+    ///
+    /// What that default IS moved under us. Up to v0.3.0, passing nothing meant
+    /// "whatever the template does on its own" (the kwarg stayed unset). Since
+    /// **v0.4.0** (#28174) `common_params_parse` writes `preserve_reasoning =
+    /// "true"` into `default_template_kwargs` whenever the flag is absent, so
+    /// `None` now means ON: every supporting template keeps every past trace,
+    /// and llama-server says so at startup (`it is enabled by default (may use
+    /// more tokens, disable via --no-reasoning-preserve)`). The old `consider
+    /// enabling it via --reasoning-preserve` line only prints when it was turned
+    /// OFF explicitly. So `Some(false)` is the one state that changes anything
+    /// on a v0.4.0+ server, and `Some(true)` is worth writing only to pin the
+    /// behaviour against a future default flip.
     ///
     /// This is the ONLY supported lever, and it is NOT interchangeable with putting
     /// `preserve_thinking` into `chat_template_kwargs` by hand. The flag sets the
@@ -229,7 +242,9 @@ pub struct Preset {
     /// of the three, so on a template keyed to either other name it is a SILENT
     /// no-op; it also misses the capability probe, which is what logs "chat template
     /// supports preserving reasoning, consider enabling it via --reasoning-preserve"
-    /// (supported but off) or "…does NOT support preserving reasoning" (unsupported).
+    /// (supported but turned off) or "…does NOT support preserving reasoning"
+    /// (unsupported). Writing `preserve_reasoning` itself into the kwargs is
+    /// worse still since v0.4.0: it parses, then logs a DEPRECATED warning.
     pub reasoning_preserve: Option<bool>,
     /// Token budget for the THINKING block alone (--reasoning-budget). `None` =
     /// omit the flag → llama.cpp's own default, `-1` = unrestricted. Every integer
@@ -265,7 +280,29 @@ pub struct Preset {
     /// own `n_predict` (OpenAI `max_tokens`) whenever it is set, in either
     /// direction, and reaches for this only when the client sends none.
     pub n_predict: Option<i32>,
+    /// Keep the EXPERT weights of the first N layers on the CPU (--n-cpu-moe).
+    /// `None` = omit the flag → every expert stays on the GPU with its layer.
+    /// Sugar over `--override-tensor`: llama.cpp expands it into one
+    /// `blk\.<i>\.ffn_(up|down|gate|gate_up)_(ch|)exps=CPU` rule per layer
+    /// (`llm_add_n_cpu_ffn_overrides`, `LLM_FFN_EXPS_REGEX`), so on a DENSE model
+    /// it matches nothing and is a silent no-op; `n_cpu_ffn` is the dense lever.
     pub n_cpu_moe: Option<i32>,
+    /// Keep the DENSE FFN weights (`ffn_up` / `ffn_down` / `ffn_gate`) of the
+    /// first N layers on the CPU (--n-cpu-ffn / -ncffn, llama.cpp v0.4.0, #26622).
+    /// `None` = omit the flag. The same expansion as `n_cpu_moe` over
+    /// `LLM_FFN_DENSE_REGEX` (`\.ffn_(up|down|gate)\.`), which is why the two
+    /// coexist: on a MoE model the expert tensors are `ffn_*_exps` and the shared
+    /// experts `ffn_*_shexp`, neither of which this regex matches, so here it only
+    /// reaches the dense layers such a model may carry (DeepSeek's leading dense
+    /// blocks, the every-Nth-layer hybrids); on a dense model it is the whole FFN,
+    /// i.e. most of the layer. Per layer it is a coarser cut than `n_gpu_layers`
+    /// (which moves attention too) and a finer one than nothing at all.
+    ///
+    /// llama-bench has NO `-ncffn` (checked against v0.4.0), so the synthetic
+    /// benchmark reproduces this key by expanding it into the same per-layer
+    /// `-ot` rules llama.cpp would (`bench::synthetic_argv`), where a preset
+    /// carrying `n_cpu_moe` rides the tool's own `-ncmoe`.
+    pub n_cpu_ffn: Option<i32>,
     pub temp: Option<f64>,
     /// Integer sampler (--top-k): backed by an int SpinBox, not the float editor
     /// the other samplers use: a decimal field would let `40,5` slip the int parse.
@@ -331,6 +368,7 @@ impl Default for Preset {
             reasoning_budget_message: String::new(),
             n_predict: None,
             n_cpu_moe: None,
+            n_cpu_ffn: None,
             temp: None,
             top_k: None,
             top_p: None,
@@ -392,6 +430,7 @@ impl Preset {
             reasoning_budget_message: get("reasoning-budget-message"),
             n_predict: k.get("n-predict").and_then(|v| ini::parse_int(v)),
             n_cpu_moe: k.get("n-cpu-moe").and_then(|v| ini::parse_int(v)),
+            n_cpu_ffn: k.get("n-cpu-ffn").and_then(|v| ini::parse_int(v)),
             temp: k.get("temp").and_then(|v| ini::parse_float(v)),
             top_k: k.get("top-k").and_then(|v| ini::parse_int(v)),
             top_p: k.get("top-p").and_then(|v| ini::parse_float(v)),
@@ -767,9 +806,9 @@ pub fn render_section(p: &Preset) -> String {
     out.push_str("; start on the unrecognized key rather than skipping it.\r\n");
     emit_str(&mut out, "reasoning-effort", &p.reasoning_effort);
     out.push_str("; reasoning-preserve keeps the thinking of EVERY past turn in the replayed\r\n");
-    out.push_str(
-        "; history, not just the last one. Omit the key = the template's own default.\r\n",
-    );
+    out.push_str("; history, not just the last one. Omit the key = llama.cpp's own default,\r\n");
+    out.push_str("; which is ON since v0.4.0 (it was the template's own behaviour before), so\r\n");
+    out.push_str("; false is the value that changes something on a current server.\r\n");
     out.push_str(
         "; Do NOT hand-write preserve_thinking into chat-template-kwargs instead: this\r\n",
     );
@@ -802,8 +841,13 @@ pub fn render_section(p: &Preset) -> String {
     out.push_str("; request's own max_tokens wins whenever the client sends one.\r\n");
     emit_i32(&mut out, "n-predict", p.n_predict);
 
-    out.push_str("\r\n; MoE\r\n");
+    out.push_str("\r\n; FFN offload: both expand into per-layer override-tensor rules that keep\r\n");
+    out.push_str("; the first N layers' feed-forward weights on the CPU. n-cpu-moe matches the\r\n");
+    out.push_str("; EXPERT tensors (ffn_*_exps: a no-op on a dense model); n-cpu-ffn (llama.cpp\r\n");
+    out.push_str("; v0.4.0+) matches the DENSE ffn_up/down/gate, i.e. the whole FFN of a dense\r\n");
+    out.push_str("; model and only the dense layers of a MoE one.\r\n");
     emit_i32(&mut out, "n-cpu-moe", p.n_cpu_moe);
+    emit_i32(&mut out, "n-cpu-ffn", p.n_cpu_ffn);
 
     out.push_str("\r\n; Sampling overrides\r\n");
     emit_f64(&mut out, "temp", p.temp);
@@ -1171,7 +1215,8 @@ mod tests {
             reasoning_effort: "high".into(),
             // Some(false), not None: the round-trip must prove `false` survives as
             // `false` and does not collapse into "key absent" (a distinct state:
-            // --no-reasoning-preserve vs. the template's own default).
+            // --no-reasoning-preserve vs. llama.cpp's default, which is ON since
+            // v0.4.0, so this is exactly the value that must not go missing).
             reasoning_preserve: Some(false),
             reasoning_budget: Some(16384),
             reasoning_budget_message: "Budget reached, write the final answer now.".into(),
@@ -1179,6 +1224,7 @@ mod tests {
             // the context is full), so the minus sign has to survive render + parse.
             n_predict: Some(-1),
             n_cpu_moe: Some(12),
+            n_cpu_ffn: Some(4),
             temp: Some(0.7),
             top_k: Some(40),
             top_p: Some(0.95),

@@ -161,6 +161,10 @@ pub const SWEEPABLE: &[(&str, Setter)] = &[
         p.n_cpu_moe = int(v)?;
         Ok(())
     }),
+    ("n-cpu-ffn", |p, v| {
+        p.n_cpu_ffn = int(v)?;
+        Ok(())
+    }),
     // Context, batching and cache.
     ("ctx-size", |p, v| {
         p.ctx_size = int(v)?;

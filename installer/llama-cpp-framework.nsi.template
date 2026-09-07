@@ -251,7 +251,8 @@ SectionEnd
 ; Hidden and always run (the leading '-' in the name), which is the whole
 ; point: on a machine that already has ROCm this copies the dist's own
 ; ~17 MB HIP runtime (plus its ~122 MB amd_comgr.dll, without which HIP
-; enumeration dies once an iGPU is visible) next to llama-server.exe, and
+; enumeration dies once an iGPU is visible, and its ~180 KB rocm_kpack.dll,
+; the runtime's own direct import) next to llama-server.exe, and
 ; that copy is what makes BF16/F16 models run on RDNA4 (without it they run
 ; the dist's rocBLAS against the DRIVER's HIP runtime out of System32, and
 ; abort at the first prefill batch). Leaving it to SecDepsAmd would hide the

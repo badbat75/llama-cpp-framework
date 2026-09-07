@@ -63,7 +63,18 @@ pub struct ModelInfo {
     pub n_ctx_train: u32,
     pub head_count: u32,
     pub head_count_kv: u32,
+    /// `<arch>.embedding_length`, the model width and so `token_embd`'s row
+    /// length (`ne[0]`). Read for one decision only: ggml-cuda's `GET_ROWS`
+    /// kernel accepts an IQ4_NL / MXFP4 embedding table only when that width is
+    /// a multiple of the 256-value super-block (`gpu_has_get_rows`). 0 if absent.
+    pub n_embd: u32,
     /// `<arch>.nextn_predict_layers`; > 0 means the model embeds MTP heads.
+    /// Read per FILE, which since llama.cpp v0.4.0 (#28159) is also how upstream
+    /// reads it: the key moved from the ~18 per-arch loaders that bothered into
+    /// `llama_model::load_hparams` for every arch, so a nextn-bearing GGUF now
+    /// means MTP heads whatever its arch (the one exception being an arch that
+    /// repurposes the count for a router layer, granite-switch, which llama.cpp
+    /// refuses as MTP with the same "doesn't contain MTP layers" line).
     pub nextn_predict_layers: u32,
     /// `<arch>.block_size`: DFlash drafters' trained diffusion block; the
     /// `--spec-draft-n-max` ceiling is `block_size - 1`. 0 if absent.
@@ -187,6 +198,7 @@ impl ModelInfo {
             n_ctx_train: a("context_length").unwrap_or(0),
             head_count: a("attention.head_count").unwrap_or(0),
             head_count_kv: a("attention.head_count_kv").unwrap_or(0),
+            n_embd: a("embedding_length").unwrap_or(0),
             nextn_predict_layers: a("nextn_predict_layers").unwrap_or(0),
             block_size: a("block_size").unwrap_or(0),
             chat_template: s
@@ -216,7 +228,8 @@ impl ModelInfo {
     /// How many transformer layers actually carry MoE expert weights: the count
     /// that sizes the `--n-cpu-moe` lever (which keeps the first N layers' experts
     /// on CPU, trading VRAM for speed). Empty for dense models, where the lever is
-    /// a no-op.
+    /// a no-op and the FFN lever is `--n-cpu-ffn` instead (`Preset::n_cpu_ffn`,
+    /// sized by the plain layer count, so it needs no row of its own).
     pub fn moe_offload_line(&self) -> String {
         if !self.is_moe || self.n_layer == 0 {
             return String::new();
@@ -263,17 +276,22 @@ impl ModelInfo {
     /// the cure has TWO preconditions, and violating either turns a win into a
     /// 10-15x loss, both measured on a 27B split across ROCm + CUDA:
     ///
-    /// 1. **The type must have a GPU `get_rows` kernel.** ggml-cuda/ggml-hip
-    ///    implement `GET_ROWS` for F32/F16/BF16/I32/Q1_0/Q4_0/Q4_1/Q5_0/Q5_1/Q8_0
-    ///    ONLY (`ggml-cuda.cu`, `supports_op`); every K-quant falls to `default:
-    ///    return false`. Pin a K-quant embedding table and the tensor sits in VRAM
-    ///    the GPU cannot read, so the lookup round-trips to the host EVERY token:
-    ///    decode collapsed 25 t/s → 2.8 t/s (Q4_K embd) and → 1.9 t/s (Q5_K, whose
-    ///    table is bigger, hence slower; the penalty tracks the table size).
-    ///    Prefill is untouched (one round-trip per 2048-token batch amortizes it),
-    ///    which is why this reads as "the GPU is idle" rather than "the GPU is slow".
-    ///    The trap is that a file's NAME does not tell you: Unsloth's Q6_K_XL keeps
-    ///    `token_embd` at Q8_0 (safe), while its Q4_K_XL/Q5_K_XL use Q4_K/Q5_K (not).
+    /// 1. **The type must have a GPU `get_rows` kernel.** Pin a table of a type
+    ///    the backend cannot `GET_ROWS` and the tensor sits in VRAM the GPU cannot
+    ///    read, so the lookup round-trips to the host EVERY token: decode collapsed
+    ///    25 t/s → 2.8 t/s (Q4_K embd) and → 1.9 t/s (Q5_K, whose table is bigger,
+    ///    hence slower; the penalty tracks the table size). Prefill is untouched
+    ///    (one round-trip per 2048-token batch amortizes it), which is why this
+    ///    reads as "the GPU is idle" rather than "the GPU is slow". Those numbers
+    ///    were taken on b9976, when ggml-cuda/ggml-hip whitelisted only
+    ///    F32/F16/BF16/I32/Q1_0/Q4_0/Q4_1/Q5_0/Q5_1/Q8_0; **b10089** (#25962,
+    ///    2026-07-22, "cuda: GET_ROWS quants", whose PR text names exactly that
+    ///    round-trip as what it fixes) added every K-quant and IQ-quant, so from
+    ///    the b10428 bundle on a Q4_K/Q6_K table pins fine and the warning fires
+    ///    only for what is still left out: `gpu_has_get_rows` is the list. The
+    ///    trap that survives is that a file's NAME does not tell you the type:
+    ///    Unsloth's Q6_K_XL keeps `token_embd` at Q8_0 while its Q4_K_XL/Q5_K_XL
+    ///    use Q4_K/Q5_K, and the row exists so the type is read, not guessed.
     /// 2. **The card must have room for it.** Pinning MOVES the table out of host
     ///    RAM and into VRAM, so it is a straight add to the device's footprint,
     ///    hence the size here. With the KV cache already filling the card, that
@@ -296,11 +314,11 @@ impl ModelInfo {
     /// the warning away. So `!embd_pinnable()` alone must never gate this.
     pub fn embd_pin_warning(&self) -> String {
         match self.embd {
-            Some((ty, _)) if !gpu_has_get_rows(ty) => format!(
+            Some((ty, _)) if !gpu_has_get_rows(ty, self.n_embd) => format!(
                 "This model stores token_embd as {}: CUDA/ROCm have no get_rows kernel for \
-                 K-quants, so pinning it to a GPU sends the whole table back to host RAM on \
+                 that type, so pinning it to a GPU sends the whole table back to host RAM on \
                  EVERY token (measured: 25 → 2.8 tok/s). Point the rule at CPU, or use a build \
-                 whose embedding table is Q8_0/F16/BF16.",
+                 whose embedding table is Q8_0/F16/BF16 or a K-quant.",
                 ggml_type_name(ty)
             ),
             _ => String::new(),
@@ -596,6 +614,11 @@ fn spec_type_from_kv<S: KvSource>(s: &S) -> Option<&'static str> {
     if arch == "dflash" {
         // The Markov head is the whole difference between the two DFlash
         // flavours: same arch, same file name shape, different speculator.
+        // DFlash2 (v0.4.0, #27816: local convolution + candidate selector) is
+        // NOT a third flavour here: it keeps the arch and the `draft-dflash`
+        // spec type, and llama.cpp tells it apart on its own from the
+        // `dflash.selector_top_k` hparam (`is_dflash2 = selector_top_k > 0`
+        // inside common/speculative.cpp), so there is nothing for the key to say.
         return Some(if s.tensor("markov_w1.weight").is_some() {
             "draft-dspark"
         } else {
@@ -695,18 +718,28 @@ fn ggml_type_name(t: u32) -> String {
 }
 
 /// Whether ggml-cuda / ggml-hip can run `GET_ROWS` (the embedding lookup) on a
-/// tensor of this `ggml_type`. Mirrors the `case GGML_OP_GET_ROWS` arm of
-/// `ggml_backend_cuda_device_supports_op` (`ggml/src/ggml-cuda/ggml-cuda.cu`),
-/// which whitelists exactly these and returns false for everything else, every
-/// K-quant and every IQ-quant included.
+/// tensor of this `ggml_type` with rows `n_embd` long. Mirrors the
+/// `case GGML_OP_GET_ROWS` arm of `ggml_backend_cuda_device_supports_op`
+/// (`ggml/src/ggml-cuda/ggml-cuda.cu`), which whitelists exactly these and
+/// returns false for everything else. Verified against v0.4.0; ggml-hip
+/// compiles the same source, and ggml-vulkan's own arm covers the same quants.
 ///
-/// Keep this list in sync with that switch when bumping llama.cpp: a type that
-/// GAINS a kernel upstream and is missing here only costs a needless warning, but
-/// a type that is listed here WITHOUT a kernel silently green-lights the pin that
-/// `embd_line` exists to prevent.
-fn gpu_has_get_rows(ggml_type: u32) -> bool {
-    matches!(
-        ggml_type,
+/// The list grew in **b10089** (#25962, 2026-07-22): every K-quant and IQ-quant
+/// gained a kernel, and the two 32-value formats (IQ4_NL, MXFP4) are accepted
+/// only when the row length is a multiple of the 256-value super-block the
+/// kernel iterates on (`op->src[0]->ne[0] % QK_K == 0`), hence the `n_embd`
+/// argument; an unknown width (0) fails that test, which errs toward the
+/// warning. Still refused: Q8_1, Q8_K, the ternary TQ1_0/TQ2_0, NVFP4 and the
+/// integer/F64 types nobody stores an embedding table in.
+///
+/// Keep this list in sync with that switch when bumping llama.cpp, and diff it
+/// against the CURRENT source rather than the bundled range: this mirror sat
+/// three releases behind the kernel because every range diff started after it
+/// landed. A type that GAINS a kernel upstream and is missing here only costs a
+/// needless warning, but a type that is listed here WITHOUT a kernel silently
+/// green-lights the pin that `embd_line` exists to prevent.
+fn gpu_has_get_rows(ggml_type: u32, n_embd: u32) -> bool {
+    match ggml_type {
         0  // F32
         | 1  // F16
         | 2  // Q4_0
@@ -714,10 +747,28 @@ fn gpu_has_get_rows(ggml_type: u32) -> bool {
         | 6  // Q5_0
         | 7  // Q5_1
         | 8  // Q8_0
+        | 10 // Q2_K
+        | 11 // Q3_K
+        | 12 // Q4_K
+        | 13 // Q5_K
+        | 14 // Q6_K
+        | 16 // IQ2_XXS
+        | 17 // IQ2_XS
+        | 18 // IQ3_XXS
+        | 19 // IQ1_S
+        | 21 // IQ3_S
+        | 22 // IQ2_S
+        | 23 // IQ4_XS
         | 26 // I32
+        | 29 // IQ1_M
         | 30 // BF16
         | 41 // Q1_0
-    )
+        | 42 // Q2_0
+        => true,
+        // 32-value sub-blocks: the row must tile into QK_K super-blocks.
+        20 | 39 => n_embd > 0 && n_embd.is_multiple_of(256), // IQ4_NL, MXFP4
+        _ => false,
+    }
 }
 
 /// Whether llama.cpp's tensor parallelism (`--split-mode tensor`) implements this
@@ -725,7 +776,9 @@ fn gpu_has_get_rows(ggml_type: u32) -> bool {
 /// (`src/llama-arch.cpp`), which is a DENY-list: every arch not named there
 /// returns true, so the spellings are `LLM_ARCH_NAMES`' own (`falcon-h1`,
 /// `nemotron_h`, `granitehybrid`: hyphen, underscore and neither, exactly as
-/// upstream writes them). Verified against v0.3.0.
+/// upstream writes them). Verified against v0.4.0, which added `qwen4exp`
+/// (Qwen3.8-Flash-Next, #27742, with a "TODO: fix test-llama-archs" beside it,
+/// so it may leave the list again).
 ///
 /// Keep it in sync with that switch when bumping llama.cpp. Neither drift is
 /// silent (the load fails with a clear log line either way), but they cost
@@ -764,6 +817,7 @@ fn arch_supports_sm_tensor(arch: &str) -> bool {
             | "bailingmoe3"
             | "kimi-k3"
             | "qwen3tts"
+            | "qwen4exp"
     )
 }
 
@@ -1194,12 +1248,14 @@ mod tests {
     }
 
     /// The whole point of the Embeddings row: the FILE NAME does not tell you
-    /// whether pinning `token_embd` is safe. These are the real headers of three
+    /// which type `token_embd` is stored in. These are the real headers of three
     /// Unsloth "XL" builds of the SAME model: the Q6_K_XL keeps its embedding
-    /// table at Q8_0 (a type ggml-cuda/hip can `get_rows` on GPU), while the
-    /// Q5/Q4 builds drop it to a K-quant, which has no GPU kernel. Pinning those
-    /// two round-trips the table to the host every token: measured 2.8 t/s (Q4_K)
-    /// and 1.9 t/s (Q5_K) against 21-52 t/s unpinned.
+    /// table at Q8_0 while the Q5/Q4 builds drop it to a K-quant. Up to b10088
+    /// that was the difference between a pin that worked and one that
+    /// round-tripped the table to the host every token (measured 2.8 t/s (Q4_K)
+    /// and 1.9 t/s (Q5_K) against 21-52 t/s unpinned); since b10089 (#25962)
+    /// the K-quants have a kernel and all three pin, so the verdict has to
+    /// follow the TYPE against the current whitelist, not a remembered rule.
     #[test]
     fn embd_verdict_follows_the_tensor_type_not_the_file_name() {
         let base = || vec![("general.architecture", Tv::S("qwen35"))];
@@ -1213,24 +1269,34 @@ mod tests {
         assert_eq!(info.embd_line(), "Q8_0  ·  1.26 GiB");
         assert!(info.embd_pin_warning().is_empty());
 
-        // Qwen3.6-27B-UD-Q4_K_XL.gguf, embd is Q4_K: no GPU get_rows. The ROW is
-        // unchanged in shape (facts only); the VERDICT lives in the warning.
+        // Qwen3.6-27B-UD-Q4_K_XL.gguf, embd is Q4_K: a K-quant, pinnable since
+        // b10089. The ROW is unchanged in shape (facts only); the VERDICT lives
+        // in the warning, which must now stay quiet.
         let info = ModelInfo::from_kv(&map_t(
             base(),
             vec![("token_embd.weight", (12, 715_128_832))],
         ))
         .unwrap();
         assert_eq!(info.embd_line(), "Q4_K  ·  682 MiB");
-        assert!(info.embd_pin_warning().contains("Q4_K"));
+        assert!(info.embd_pin_warning().is_empty());
 
-        // Q5_K (13) is a K-quant too: the trap is not specific to Q4.
+        // Q5_K (13) likewise.
         let info = ModelInfo::from_kv(&map_t(
             base(),
             vec![("token_embd.weight", (13, 873_463_808))],
         ))
         .unwrap();
         assert_eq!(info.embd_line(), "Q5_K  ·  833 MiB");
-        assert!(info.embd_pin_warning().contains("Q5_K"));
+        assert!(info.embd_pin_warning().is_empty());
+
+        // A type with NO kernel still warns, naming the type: Q8_K (15) is the
+        // one `default: return false` case a quantizer could plausibly emit.
+        let info = ModelInfo::from_kv(&map_t(
+            base(),
+            vec![("token_embd.weight", (15, 873_463_808))],
+        ))
+        .unwrap();
+        assert!(info.embd_pin_warning().contains("Q8_K"));
 
         // Unknown type (no `token_embd.weight`, or no DLL to read it with) must
         // NOT warn: a metadata read we couldn't do is not evidence of a problem.
@@ -1238,6 +1304,20 @@ mod tests {
         let info = ModelInfo::from_kv(&map(base())).unwrap();
         assert_eq!(info.embd_line(), "n/a");
         assert!(info.embd_pin_warning().is_empty());
+    }
+
+    /// The two 32-value formats are conditional in upstream's switch: the
+    /// kernel iterates 256-value super-blocks, so the row length decides, and an
+    /// unknown width must land on the warning side.
+    #[test]
+    fn get_rows_width_condition_for_iq4_nl_and_mxfp4() {
+        for ty in [20u32, 39] {
+            assert!(gpu_has_get_rows(ty, 4096), "type {ty} at a 256-multiple");
+            assert!(!gpu_has_get_rows(ty, 4000), "type {ty} off the grid");
+            assert!(!gpu_has_get_rows(ty, 0), "type {ty} with unknown width");
+        }
+        // The width never rescues a type with no kernel at all.
+        assert!(!gpu_has_get_rows(15, 4096));
     }
 
     /// `ggml_type` and `general.file_type` (LLAMA_FTYPE) are different enums that
@@ -1250,12 +1330,17 @@ mod tests {
         assert_eq!(ftype_name(7), "Q8_0");
         assert_eq!(ggml_type_name(14), "Q6_K");
         assert_eq!(ftype_name(14), "Q4_K_S");
-        // BF16 and Q8_0 are get_rows-capable; every K-quant and IQ-quant is not.
-        assert!(gpu_has_get_rows(30) && gpu_has_get_rows(8));
-        for k_quant in [10u32, 11, 12, 13, 14, 15, 23] {
+        // The get_rows whitelist is keyed by ggml_type: BF16, Q8_0 and (since
+        // b10089) the K-quants and IQ-quants are pinnable; Q8_K, the ternary
+        // types and NVFP4 are the ones still without a kernel.
+        assert!(gpu_has_get_rows(30, 0) && gpu_has_get_rows(8, 0));
+        for quant in [10u32, 11, 12, 13, 14, 16, 17, 18, 19, 21, 22, 23, 29, 42] {
+            assert!(gpu_has_get_rows(quant, 0), "type {quant} must be pinnable");
+        }
+        for no_kernel in [9u32, 15, 34, 35, 40] {
             assert!(
-                !gpu_has_get_rows(k_quant),
-                "type {k_quant} must not be pinnable"
+                !gpu_has_get_rows(no_kernel, 4096),
+                "type {no_kernel} must not be pinnable"
             );
         }
     }
@@ -1272,8 +1357,9 @@ mod tests {
         assert!(info("llama").sm_tensor_warning().is_empty());
         assert!(info("qwen35").sm_tensor_warning().is_empty());
         assert!(info("deepseek2").sm_tensor_warning().contains("deepseek2"));
-        // The three spellings upstream mixes: hyphen, underscore, neither.
-        for arch in ["falcon-h1", "nemotron_h", "granitehybrid"] {
+        // The three spellings upstream mixes: hyphen, underscore, neither; plus
+        // the v0.4.0 addition.
+        for arch in ["falcon-h1", "nemotron_h", "granitehybrid", "qwen4exp"] {
             assert!(!arch_supports_sm_tensor(arch), "{arch} is deny-listed");
         }
     }

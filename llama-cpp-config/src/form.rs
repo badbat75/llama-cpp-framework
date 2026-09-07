@@ -19,9 +19,10 @@ fn str_or(val: &str, default: &str) -> SharedString {
 /// An `Option<bool>` as the word the tri-state `SegmentedControl`s show: the
 /// widget for a flag whose "unset" is a THIRD instruction rather than the absence
 /// of one (`--flash-attn`, whose own default is `auto`; `--reasoning-preserve`,
-/// whose default is whatever the chat template does). Pairs with `tri_bool` on the
-/// way back. Not a bool anywhere: `Some(false)` (pass the negative flag) and
-/// `None` (pass nothing) are different instructions to llama.cpp.
+/// whose default was the template's own behaviour up to llama.cpp v0.3.0 and is
+/// ON since v0.4.0). Pairs with `tri_bool` on the way back. Not a bool anywhere:
+/// `Some(false)` (pass the negative flag) and `None` (pass nothing) are different
+/// instructions to llama.cpp.
 ///
 /// Shared with the SERVER form (`server_form.rs`, `rocblas_use_hipblaslt`), whose
 /// third state is "never export the env var"; same shape, same widget, so the
@@ -194,7 +195,8 @@ pub fn preset_to_form(p: &presets::Preset) -> PresetForm {
         reasoning_effort: enum_or_default(&p.reasoning_effort),
         // Tri-state, so it deliberately does NOT fall back to `d` the way the
         // fields above do: `None` is not "unset, show the default" here, it IS a
-        // value: "let the template decide", distinct from an explicit off.
+        // value: "pass no flag, take llama.cpp's default" (on since v0.4.0),
+        // distinct from an explicit off.
         reasoning_preserve: tri_state(p.reasoning_preserve),
         reasoning_budget: itxt(p.reasoning_budget, HINT_REASONING_BUDGET),
         reasoning_budget_default: p.reasoning_budget.is_none(),
@@ -203,6 +205,8 @@ pub fn preset_to_form(p: &presets::Preset) -> PresetForm {
         n_predict_default: p.n_predict.is_none(),
         n_cpu_moe: p.n_cpu_moe.unwrap_or(0),
         n_cpu_moe_auto: p.n_cpu_moe.is_none(),
+        n_cpu_ffn: p.n_cpu_ffn.unwrap_or(0),
+        n_cpu_ffn_auto: p.n_cpu_ffn.is_none(),
         temp: txt(p.temp),
         temp_default: p.temp.is_none(),
         top_k: itxt(p.top_k, HINT_TOP_K),
@@ -329,6 +333,11 @@ pub fn form_to_preset(f: &PresetForm) -> presets::Preset {
             None
         } else {
             Some(f.n_cpu_moe)
+        },
+        n_cpu_ffn: if f.n_cpu_ffn_auto {
+            None
+        } else {
+            Some(f.n_cpu_ffn)
         },
         temp: if f.temp_default {
             None
@@ -462,13 +471,14 @@ mod tests {
         assert_eq!(round_trip(&p), p);
     }
 
-    // reasoning-preserve is the one TRI-state field: None ("let the template
-    // decide", key omitted) is a third value, not the absence of one. The two
-    // round-trip fixtures above pin Some(true)/Some(false); this pins all three at
-    // once, and above all that None SURVIVES. The bug it guards is the natural
-    // simplification `Some(f.reasoning_preserve == "on")`, which collapses None to
-    // Some(false): every preset that never asked would silently start emitting
-    // --no-reasoning-preserve, overriding templates that preserve by default.
+    // reasoning-preserve is the one TRI-state field: None (key omitted, i.e.
+    // llama.cpp's own default, which is ON since v0.4.0) is a third value, not
+    // the absence of one. The two round-trip fixtures above pin
+    // Some(true)/Some(false); this pins all three at once, and above all that
+    // None SURVIVES. The bug it guards is the natural simplification
+    // `Some(f.reasoning_preserve == "on")`, which collapses None to Some(false):
+    // every preset that never asked would silently start emitting
+    // --no-reasoning-preserve, i.e. turn the default OFF on every model.
     #[test]
     fn reasoning_preserve_keeps_all_three_states_apart() {
         for state in [None, Some(true), Some(false)] {
@@ -574,6 +584,7 @@ mod tests {
             reasoning_budget_message: "Budget reached, write the final answer now.".into(),
             n_predict: Some(24576),
             n_cpu_moe: Some(12),
+            n_cpu_ffn: Some(4),
             temp: Some(0.7),
             top_k: Some(40),
             top_p: Some(0.95),

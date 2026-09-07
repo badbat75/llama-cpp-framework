@@ -471,6 +471,19 @@ fn semicoloned(csv: &str) -> String {
         .join(";")
 }
 
+/// `--n-cpu-ffn N` as the `-ot` rules llama.cpp expands it into, one per layer:
+/// `blk\.<i>\.ffn_(up|down|gate)\.=CPU` for `i` in `0..N`
+/// (`llm_add_n_cpu_ffn_overrides` over `LLM_FFN_DENSE_REGEX`, common/common.h,
+/// v0.4.0). llama-bench understands `-ncmoe` but has no dense twin, so this is
+/// how the synthetic engine keeps the preset's placement instead of silently
+/// benchmarking every FFN on the GPU. `None` and `0` both expand to nothing,
+/// exactly as llama.cpp's loop over `0..N` does.
+fn n_cpu_ffn_rules(n: Option<i32>) -> Vec<String> {
+    (0..n.unwrap_or(0).max(0))
+        .map(|i| format!(r"blk\.{i}\.ffn_(up|down|gate)\.=CPU"))
+        .collect()
+}
+
 // ── Synthetic: the llama-bench command line ──────────────────────────────
 
 /// One llama-bench invocation's workload half.
@@ -543,8 +556,20 @@ pub fn synthetic_argv(p: &Preset, cfg: &ServerConfig, plan: &Plan, sweep: &Sweep
     if !eff.split_mode.is_empty() && eff.split_mode != "default" {
         push("-sm", eff.split_mode.clone());
     }
+    // ONE `-ot`, never two: a second `-ot` flag is a second configuration GROUP
+    // to llama-bench, i.e. a separate benchmark, so the `--n-cpu-ffn` expansion
+    // (llama-bench has no `-ncffn`, checked against v0.4.0) and the preset's own
+    // rules must share the value, `;`-joined. The expansion goes FIRST, which is
+    // the order llama-server sees them in: `common_preset` is a `std::map`, and
+    // `n-cpu-ffn` sorts before `override-tensor`; the loader takes the first
+    // matching rule, so the order only matters where a hand-written rule names
+    // one of the same tensors.
+    let mut ot: Vec<String> = n_cpu_ffn_rules(p.n_cpu_ffn);
     if !eff.override_tensor.is_empty() {
-        push("-ot", semicoloned(&eff.override_tensor));
+        ot.push(semicoloned(&eff.override_tensor));
+    }
+    if !ot.is_empty() {
+        push("-ot", ot.join(";"));
     }
     if let Some(n) = p.n_gpu_layers {
         push("-ngl", n.to_string());
@@ -979,6 +1004,7 @@ pub fn caveats(mode: Mode) -> Vec<&'static str> {
             "The mmproj, the chat template and every reasoning flag are ignored.",
             "`pp` is batch prefill throughput, not time to first token.",
             "`--ctx-size` is not honoured: llama-bench sizes the context as prompt + generated + depth.",
+            "`--n-cpu-ffn` has no llama-bench flag: it is replayed as the per-layer `blk\\.<i>\\.ffn_(up|down|gate)\\.=CPU` override-tensor rules llama.cpp expands it into, ahead of the preset's own rules.",
             "llama-server must be stopped: benching alongside it does not fail cleanly, it spills into shared memory and reads as a backend regression.",
         ],
     }
@@ -1497,6 +1523,41 @@ mod tests {
             Some(r"token_embd\.weight=ROCm0;output\.weight=CUDA0")
         );
         assert!(!a.iter().any(|x| x.contains(',') && x.contains('=')));
+    }
+
+    // llama-bench has `-ncmoe` but no `-ncffn`, so `n-cpu-ffn` rides `-ot` as
+    // the per-layer rules llama.cpp expands it into, and it has to share the ONE
+    // `-ot` value with the preset's own rules: a second `-ot` flag would be a
+    // second configuration group, i.e. a separate benchmark.
+    #[test]
+    fn n_cpu_ffn_expands_into_the_single_ot_value() {
+        let plan = Plan::default();
+        let p = Preset {
+            n_cpu_ffn: Some(2),
+            override_tensor: r"token_embd\.weight=ROCm0".into(),
+            ..preset("a")
+        };
+        let a = synthetic_argv(&p, &ServerConfig::default(), &plan, &first_sweep(&plan));
+        assert_eq!(a.iter().filter(|x| *x == "-ot").count(), 1);
+        assert_eq!(
+            argv_of(&a, "-ot").as_deref(),
+            Some(r"blk\.0\.ffn_(up|down|gate)\.=CPU;blk\.1\.ffn_(up|down|gate)\.=CPU;token_embd\.weight=ROCm0")
+        );
+        assert!(!a.iter().any(|x| x == "-ncffn"));
+
+        // Alone it still produces the flag; 0 and None produce nothing, like
+        // llama.cpp's own `for i in 0..N`.
+        let p = Preset {
+            n_cpu_ffn: Some(1),
+            ..preset("a")
+        };
+        let a = synthetic_argv(&p, &ServerConfig::default(), &plan, &first_sweep(&plan));
+        assert_eq!(
+            argv_of(&a, "-ot").as_deref(),
+            Some(r"blk\.0\.ffn_(up|down|gate)\.=CPU")
+        );
+        assert!(n_cpu_ffn_rules(Some(0)).is_empty());
+        assert!(n_cpu_ffn_rules(None).is_empty());
     }
 
     // The router copies the server's own CLI over every preset, so a benchmark

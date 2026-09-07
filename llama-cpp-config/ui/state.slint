@@ -246,8 +246,10 @@ export global AppState {
     in-out property <string> model_info_arch_quant;
     // token_embd's OWN quant + size, not implied by the file's name or by
     // `model_info_arch_quant`: Unsloth's Q6_K_XL keeps the embedding table at
-    // Q8_0 while its Q4_K_XL/Q5_K_XL drop it to a K-quant, and only the former
-    // can be pinned to a GPU (CUDA/ROCm implement get_rows for no K-quant).
+    // Q8_0 while its Q4_K_XL/Q5_K_XL drop it to a K-quant. Whether it can be
+    // pinned to a GPU is a per-TYPE question (the backend needs a get_rows
+    // kernel for it: `gguf::gpu_has_get_rows`, which covers the K-quants since
+    // llama.cpp b10089 and still excludes Q8_1/Q8_K/TQ*/NVFP4).
     // `model_info_embd_warning` is non-empty ONLY when the type is known AND
     // unpinnable; it is what the Tensor-placement table shows when a rule
     // pins the table anyway. Empty for an unreadable GGUF, so a failed metadata

@@ -677,7 +677,8 @@ pub(super) fn update_model_info(app: &AppWindow) {
     // Unlike the rows above, the embd WARNING is read by the Tensor-placement
     // table, which is NOT behind `model_info_ready`, so a stale one would keep
     // accusing the next model (or an unreadable one) of the previous model's
-    // K-quant. It must be cleared on every entry, not just repainted on success.
+    // unpinnable embedding type. It must be cleared on every entry, not just
+    // repainted on success.
     s.set_model_info_embd(SharedString::from("n/a"));
     s.set_model_info_embd_warning(SharedString::from(""));
     // Same rule for the tensor-mode arch verdict: the GPU table reads it under

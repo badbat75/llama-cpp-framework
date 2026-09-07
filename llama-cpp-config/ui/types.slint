@@ -92,7 +92,8 @@ export struct PresetForm {
     // mapping cache_type_k/-v use. No `_default` twin: the word is the state.
     reasoning_effort: string,
     // --reasoning-preserve, a TRI-state carried as a string: "default" (omit the
-    // flag: the template's own behaviour), "on", "off". Not a bool: "off"
+    // flag: llama.cpp's own default, ON since v0.4.0, the template's own
+    // behaviour before that), "on", "off". Not a bool: "off"
     // (--no-reasoning-preserve) and "default" are different instructions.
     reasoning_preserve: string,
     // --reasoning-budget (thinking only) and --n-predict (thinking + answer
@@ -107,6 +108,10 @@ export struct PresetForm {
     n_predict_default: bool,
     n_cpu_moe: int,
     n_cpu_moe_auto: bool,
+    // --n-cpu-ffn (llama.cpp v0.4.0+): the dense-FFN twin of n_cpu_moe, same
+    // AutoSlider shape (int + an `_auto` "omit the flag" bool).
+    n_cpu_ffn: int,
+    n_cpu_ffn_auto: bool,
     // Sampling knobs, each paired with a `*_default` bool (checkbox omits the
     // flag, same shape as the integer fields above). Top-K is integer-valued, so
     // its field is digits-only (`input_type: number`); the rest are floats

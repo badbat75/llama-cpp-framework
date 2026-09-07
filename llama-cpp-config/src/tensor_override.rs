@@ -26,10 +26,15 @@
 //! which is exactly what `sanitize_pattern` enforces (below), and the device is
 //! a dropdown of real device ids, not a string to spell.
 //!
-//! ## The three canned patterns
+//! ## The four canned patterns
 //! `KINDS` is the discoverable part: the regexes worth knowing, named. `Custom`
 //! is the escape hatch and keeps whatever pattern is already there, so switching
-//! a row to Custom never wipes the text you were about to edit.
+//! a row to Custom never wipes the text you were about to edit. Two of the four
+//! are llama.cpp's own regexes verbatim (`LLM_FFN_EXPS_REGEX` and, since v0.4.0,
+//! `LLM_FFN_DENSE_REGEX` in common/common.h): a rule with one of them pointed at
+//! CPU is what `--cpu-moe` / `--n-cpu-moe` / `--n-cpu-ffn` expand into, so the
+//! table can spell the same placement for EVERY layer where the sliders on the
+//! Hardware Config card take the first N.
 //!
 //! `Embedding table` is the one that pays for the table's existence. llama.cpp
 //! leaves `token_embd.weight` in HOST memory even when it reports
@@ -86,6 +91,15 @@ pub const KINDS: &[Kind] = &[
         id: "exps",
         label: "MoE experts, all layers (ffn_*_exps)",
         pattern: r"\.ffn_(up|down|gate|gate_up)_(ch|)exps",
+    },
+    // llama.cpp's `LLM_FFN_DENSE_REGEX` verbatim (v0.4.0), what `--n-cpu-ffn`
+    // expands into per layer. The trailing `\.` is load-bearing: it is what
+    // keeps `ffn_up_exps` / `ffn_up_shexp` OUT, so on a MoE model this reaches
+    // only the dense layers it may carry.
+    Kind {
+        id: "ffn",
+        label: "Dense FFN, all layers (ffn_up/down/gate)",
+        pattern: r"\.ffn_(up|down|gate)\.",
     },
     Kind {
         id: CUSTOM,
@@ -572,13 +586,21 @@ mod tests {
         )));
     }
 
-    // The canned experts regex must stay byte-identical to llama.cpp's
-    // LLM_FFN_EXPS_REGEX (common/common.h), the one --cpu-moe installs. If
-    // upstream renames its expert tensors, this is the line that has to move.
+    // The canned experts and dense-FFN regexes must stay byte-identical to
+    // llama.cpp's LLM_FFN_EXPS_REGEX / LLM_FFN_DENSE_REGEX (common/common.h),
+    // the ones --cpu-moe / --n-cpu-ffn install. If upstream renames its FFN
+    // tensors, these are the lines that have to move. Checked against v0.4.0.
     #[test]
-    fn the_experts_kind_is_llama_cpps_own_regex() {
+    fn the_ffn_kinds_are_llama_cpps_own_regexes() {
         assert_eq!(KINDS[2].pattern, r"\.ffn_(up|down|gate|gate_up)_(ch|)exps");
+        assert_eq!(KINDS[3].pattern, r"\.ffn_(up|down|gate)\.");
         assert_eq!(KINDS.last().unwrap().id, CUSTOM);
         assert!(KINDS.last().unwrap().pattern.is_empty());
+        // The dense regex must not swallow the expert or shared-expert tensors
+        // (`ffn_up_exps`, `ffn_up_shexp`): the trailing `\.` is the whole
+        // difference between the two kinds, so pin that character (this crate
+        // carries no regex engine to match against).
+        assert!(KINDS[3].pattern.ends_with(r"\."));
+        assert!(!KINDS[3].pattern.contains("exps"));
     }
 }

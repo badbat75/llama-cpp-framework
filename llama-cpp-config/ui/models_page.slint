@@ -183,7 +183,7 @@ export component ModelsPage inherits HorizontalLayout {
                     spacing: 8px;
                     InfoRow {
                         label: "Type";
-                        hint: "Dense runs every weight each token; MoE activates only a few experts, so VRAM ≈ all weights but compute ≈ active experts.\nMoE is what makes the 'MoE CPU layers' lever below useful.";
+                        hint: "Dense runs every weight each token; MoE activates only a few experts, so VRAM ≈ all weights but compute ≈ active experts.\nMoE is what makes the 'MoE CPU layers' lever below useful; on a dense model the FFN lever is 'Dense FFN CPU layers' (--n-cpu-ffn).";
                         value: AppState.model_info_kind;
                     }
                     if AppState.model_info_has_moe : InfoRow {
@@ -197,7 +197,7 @@ export component ModelsPage inherits HorizontalLayout {
                     }
                     InfoRow {
                         label: "Embeddings";
-                        hint: "token_embd.weight's OWN quant and size; the file's name does not tell you this (Unsloth's Q6_K_XL keeps it at Q8_0; its Q4_K_XL/Q5_K_XL drop it to a K-quant).\nIt decides whether the Tensor placement rule below may pin the embedding table to a GPU: CUDA/ROCm implement get_rows only for F32/F16/BF16/Q4_0/Q4_1/Q5_0/Q5_1/Q8_0, never a K-quant. Pin a K-quant table and every token drags it back to host RAM (25 → 2.8 tok/s measured).\nThe size is the VRAM the pin ADDS to that card: budget it against the KV cache, or the card starts paging.";
+                        hint: "token_embd.weight's OWN quant and size; the file's name does not tell you this (Unsloth's Q6_K_XL keeps it at Q8_0; its Q4_K_XL/Q5_K_XL drop it to a K-quant).\nIt decides whether the Tensor placement rule below may pin the embedding table to a GPU: the GPU needs a get_rows kernel for that exact type. Since llama.cpp b10089 (#25962, 2026-07-22) CUDA/ROCm/Vulkan cover the float types, the legacy Q4_0..Q8_0 quants, every K-quant and the IQ-quants (IQ4_NL/MXFP4 only when the embedding width is a multiple of 256); what is left out (Q8_1, Q8_K, the ternary TQ types, NVFP4) still round-trips the whole table to host RAM on every token (25 → 2.8 tok/s measured on a build predating that kernel).\nThe size is the VRAM the pin ADDS to that card: budget it against the KV cache, or the card starts paging.";
                         value: AppState.model_info_embd;
                     }
                     InfoRow {
@@ -342,13 +342,25 @@ export component ModelsPage inherits HorizontalLayout {
                 }
                 LabeledField {
                     label: "MoE CPU layers";
-                    hint: "Number of Mixture-of-Experts layers whose expert (FFN) weights stay on CPU (--n-cpu-moe) to save VRAM.\nOnly affects MoE models; N/A for dense models like Gemma.\nSlider max = the model's layer count.\ndefault = omit the flag → 0: no expert weights are kept on CPU, so every expert stays on GPU with its layer.";
+                    hint: "Number of Mixture-of-Experts layers whose expert (FFN) weights stay on CPU (--n-cpu-moe) to save VRAM.\nOnly affects MoE models: it expands into one override-tensor rule per layer over the ffn_*_exps tensors, which a dense model does not have; for a dense model use 'Dense FFN CPU layers' below.\nSlider max = the model's layer count.\ndefault = omit the flag → 0: no expert weights are kept on CPU, so every expert stays on GPU with its layer.";
                     // --n-cpu-moe only affects MoE models, so gate the whole row on it.
                     AutoSlider {
                         auto <=> AppState.form.n_cpu_moe_auto;
                         value <=> AppState.form.n_cpu_moe;
                         maximum: AppState.gpu_layers_max;  // = the model's layer count
                         usable: AppState.model_info_has_moe;
+                    }
+                }
+                LabeledField {
+                    label: "Dense FFN CPU layers";
+                    hint: "Number of layers whose DENSE feed-forward weights (ffn_up / ffn_down / ffn_gate) stay on CPU (--n-cpu-ffn, llama.cpp v0.4.0+) to save VRAM.\nThe dense twin of 'MoE CPU layers': on a dense model it is the whole FFN of the first N layers (most of the layer's bytes, attention stays on the GPU); on a MoE model it only reaches the dense layers such a model may carry (a leading dense prefix, every-Nth-layer hybrids), never the experts.\nSlider max = the model's layer count.\ndefault = omit the flag → every FFN stays on the GPU with its layer.\nNote the synthetic benchmark expands this into per-layer override-tensor rules: llama-bench has no -ncffn of its own.";
+                    // Not gated on has_moe like the row above: the dense FFN exists
+                    // on every model (on a MoE one, only in its dense layers), and
+                    // llama.cpp accepts the flag for both.
+                    AutoSlider {
+                        auto <=> AppState.form.n_cpu_ffn_auto;
+                        value <=> AppState.form.n_cpu_ffn;
+                        maximum: AppState.gpu_layers_max;  // = the model's layer count
                     }
                 }
                 // The two draft-PLACEMENT knobs below need a separate draft FILE,
@@ -547,7 +559,7 @@ export component ModelsPage inherits HorizontalLayout {
                 }
                 LabeledField {
                     label: "Keep past thinking";
-                    hint: "--reasoning-preserve: replay the thinking of EVERY past assistant turn back to the model, not just the last one.\ndefault = whatever the chat template does on its own; on = keep it; off = drop it.\nThis is the supported lever; do NOT hand-write preserve_thinking into 'Template kwargs' below. llama.cpp expands this ONE flag into preserve_thinking + clear_thinking + truncate_history_thinking, and templates disagree on which of the three they read, so setting the raw kwarg is a silent no-op on most of them.\nIt only works where the template supports it; llama-server says so at startup ('chat template supports preserving reasoning' / '…does NOT support').\nCosts prompt tokens: the trace is re-sent every turn.";
+                    hint: "--reasoning-preserve: replay the thinking of EVERY past assistant turn back to the model, not just the last one.\ndefault = pass no flag and take llama.cpp's default, which is ON since v0.4.0 (up to v0.3.0 it was whatever the chat template did on its own); on = keep it (pinned, whatever the default becomes); off = drop it (--no-reasoning-preserve), the one value that changes anything on a current server.\nThis is the supported lever; do NOT hand-write preserve_thinking (or preserve_reasoning, deprecated there since v0.4.0) into 'Template kwargs' below. llama.cpp expands this ONE flag into preserve_thinking + clear_thinking + truncate_history_thinking, and templates disagree on which of the three they read, so setting the raw kwarg is a silent no-op on most of them.\nIt only works where the template supports it; llama-server says so at startup ('chat template supports preserving reasoning, it is enabled by default' / '…does NOT support').\nCosts prompt tokens: the trace is re-sent every turn.";
                     SegmentedControl {
                         options: ["default", "on", "off"];
                         current: AppState.form.reasoning_preserve == "" ? "default" : AppState.form.reasoning_preserve;

@@ -241,16 +241,31 @@ if ($sccachePath) {
     Write-Host "sccache not found, building without compiler cache" -ForegroundColor DarkGray
 }
 
+# ── The configure line: checked-in options + this machine's paths ──
+# cmake-options.psd1 (repo root) carries the options that say WHAT is built
+# (backends, features, release vs dev, the embedded UI) and are the same on
+# every machine; each entry documents its own reason there. Everything below
+# it is derived from THIS machine (config-build.psd1, the Vulkan SDK, the HIP
+# header workaround, sccache) and stays here. Entries are validated before
+# cmake sees them: a typo in the data file must fail as a typo, not as a
+# silently ignored cache entry.
+$cmakeOptionsFile = Join-Path $PSScriptRoot 'cmake-options.psd1'
+$cmakeOptions = Import-PowerShellDataFile $cmakeOptionsFile
+if (-not $cmakeOptions.Generator) { throw "${cmakeOptionsFile}: Generator is missing" }
+$cmakeDefines = @()
+foreach ($def in @($cmakeOptions.Defines)) {
+    if ($def -notmatch '^[A-Za-z_][A-Za-z0-9_]*(:[A-Z]+)?=') {
+        throw "${cmakeOptionsFile}: '$def' is not NAME[:TYPE]=VALUE"
+    }
+    $cmakeDefines += "-D$def"
+}
+Write-Host "CMake options (cmake-options.psd1): $($cmakeOptions.Defines -join ' ')" -ForegroundColor DarkGray
+
 $cmakeArgs = @(
     "-S", $cfg.LlamaCppDir
     "-B", $buildDir
-    "-G", "Ninja"
-    "-DGGML_NATIVE=OFF"
-    "-DGGML_BACKEND_DL=ON"
-    "-DGGML_CPU_ALL_VARIANTS=ON"
-    "-DGGML_CUDA=ON"
-    "-DGGML_VULKAN=ON"
-    "-DGGML_HIP=ON"
+    "-G", $cmakeOptions.Generator
+) + $cmakeDefines + @(
     "-DGPU_TARGETS=$($cfg.GpuTargets)"
     # ROCm's hip-config-amd.cmake derives the --offload-arch flags from
     # GPU_BUILD_TARGETS, which it seeds from GPU_TARGETS with a `set(... CACHE ...)`:
@@ -261,23 +276,26 @@ $cmakeArgs = @(
     "-DCMAKE_BUILD_TYPE=$($cfg.BuildType)"
     "-DCMAKE_C_COMPILER=$($cfg.CCompiler)"
     "-DCMAKE_CXX_COMPILER=$($cfg.CxxCompiler)"
-    "-DCMAKE_C_FLAGS=$($cfg.MarchFlags) -w"
+    # No global -march (through v1.14.0 this carried -march=x86-64-v3). The ISA
+    # work lives in the ggml-cpu variants (GGML_CPU_ALL_VARIANTS), each compiled
+    # with its own -m flags and picked at runtime by CPU features; a global
+    # -march leaks into the baseline variants too (ggml-cpu-x64.dll was an AVX2
+    # build), which defeats them on the CPUs they exist for. Everything outside
+    # those variants is dispatch and bookkeeping and stays at the compiler's
+    # default baseline, as in upstream's own release binaries.
+    # -Wno-error=incompatible-pointer-types, C only: AMD clang 23 makes that
+    # diagnostic an error by default (GCC and MSVC do not), and upstream's
+    # ggml-cpu/arch/x86/quants.c trips it in the SSSE3 branch of the Q4_0 dot
+    # product (four _mm_prefetch calls passing a block pointer where clang's
+    # MSVC-compatible xmmintrin.h declares const char *). Only the sse42
+    # variant compiles that branch, which is why it surfaced the moment the
+    # global -march stopped promoting every variant to AVX2. Same code and
+    # same behaviour as upstream's own GCC/MSVC builds; unfixed on master as
+    # of 2026-09-07.
+    "-DCMAKE_C_FLAGS=-w -Wno-error=incompatible-pointer-types"
     "-DOPENSSL_ROOT_DIR:PATH=$opensslPath"
     "-DCMAKE_CUDA_FLAGS=-w"
 )
-
-# llama.cpp calls itself "<X.Y.Z>-dev" unless told otherwise: CMakeLists.txt
-# defaults LLAMA_BUILD_IS_DEV to ON, with "set this to OFF when making a release
-# from a release tag (vX.Y.Z)". That is exactly and only what we check out (the
-# tag selection above admits nothing else), so the -dev suffix would be a lie
-# here and the flag is unconditional; it was a conditional back when the
-# checkout could land on a bNNNN nightly, which the framework no longer builds.
-# The value rides a compile definition on the `llama` target
-# (src/CMakeLists.txt), so it reaches `llama-server --version` and from there
-# the configurator's footer badge, which is where the difference is visible:
-# `0.2.0 · b10566` rather than `0.2.0-dev · b10566`. Flipping it recompiles that
-# target, not ggml's CUDA/HIP kernels.
-$cmakeArgs += "-DLLAMA_BUILD_IS_DEV=OFF"
 
 # Pinned Vulkan SDK paths (see Find-VulkanSdk above), empty when no versioned
 # install was found, in which case FindVulkan does its own search.
@@ -320,7 +338,7 @@ if (-not (Test-Path $hipPatchedInc)) {
 Write-Host "HIP wrapper patch: patches\hip\$clangMajor (clang resource major $clangMajor)" -ForegroundColor DarkGray
 $hipPatchedInc = $hipPatchedInc -replace '\\', '/'
 $hipWorkaroundFlags = "-D__CLANG_HIP_RUNTIME_WRAPPER_H__ -include `"$hipPatchedInc`""
-$cmakeArgs += "-DCMAKE_CXX_FLAGS=$($cfg.MarchFlags) -w $hipWorkaroundFlags"
+$cmakeArgs += "-DCMAKE_CXX_FLAGS=-w $hipWorkaroundFlags"
 $cmakeArgs += "-DCMAKE_HIP_FLAGS=$hipWorkaroundFlags"
 
 # lld, when the compiler is an LLVM one that ships it (01-configure resolves it
@@ -333,6 +351,19 @@ $cmakeArgs += "-DCMAKE_HIP_FLAGS=$hipWorkaroundFlags"
 if ($cfg.Linker) {
     $cmakeArgs += "-DCMAKE_LINKER=$($cfg.Linker)"
 }
+
+# No linker flags of our own, and -U so none survive from an experiment. The
+# three CMAKE_*_LINKER_FLAGS are language-agnostic, so a `-Wl,...` put there
+# for lld-link (a ThinLTO thread count, a ThinLTO cache directory) also
+# reaches the CUDA target, whose DLL cmake links through `cmake -E vs_link_dll`
+# with lld-link called directly, where a `-Wl,` prefix is an "ignoring unknown
+# argument" warning; a per-language link option would need a
+# $<LINK_LANGUAGE:CXX> guard, i.e. a CMAKE_PROJECT_INCLUDE file, not a flag.
+# Nothing is needed for parallelism either: lld-link's ThinLTO backend already
+# runs one thread per physical core (measured on the ggml-base + ggml-cpu-zen4
+# relink: 22.5 s with the backend forced to one thread, 9.0 s default, 8.95 s
+# with every SMT thread, i.e. nothing to gain from the second half).
+$cmakeArgs += "-UCMAKE_EXE_LINKER_FLAGS", "-UCMAKE_SHARED_LINKER_FLAGS", "-UCMAKE_MODULE_LINKER_FLAGS"
 
 if ($sccachePath) {
     $cmakeArgs += "-DCMAKE_C_COMPILER_LAUNCHER=$sccachePath"
@@ -360,6 +391,35 @@ if ($cfg.BuildJobs -gt 0) { $cmakeBuildArgs += "-j", $cfg.BuildJobs } else { $cm
 Write-Host "Building..." -ForegroundColor Cyan
 cmake @cmakeBuildArgs
 if ($LASTEXITCODE -ne 0) { throw "CMake build failed" }
+
+# ── The chat UI must be IN the binary ─────────────────────────────
+# llama.cpp's scripts/ui-assets.cmake never fails: when neither the npm build
+# (LLAMA_BUILD_UI) nor the HuggingFace download (LLAMA_USE_PREBUILT_UI)
+# produced assets it prints a cmake WARNING and embeds an EMPTY UI, and a
+# llama-server with no chat page is exactly what this framework must not
+# package: the built-in UI is the frontend, nothing else is bundled. Upstream
+# made this reachable in v0.4.0 by defaulting LLAMA_BUILD_UI to OFF (see
+# cmake-options.psd1). Both provisioning paths write their assets to
+# tools\ui\dist under the build dir (a dist dir dropped into the SOURCE tree
+# is used as-is, so that spelling counts too), and the download path is the
+# only one that leaves a .ui-stamp behind, which is how the report below
+# knows which one ran.
+$uiDist    = Join-Path $buildDir 'tools\ui\dist\index.html'
+$uiSrcDist = Join-Path $cfg.LlamaCppDir 'tools\ui\dist\index.html'
+$uiStamp   = Join-Path $buildDir 'tools\ui\.ui-stamp'
+if (-not (Test-Path $uiDist) -and -not (Test-Path $uiSrcDist)) {
+    throw ("the web UI was not embedded ($uiDist is missing). LLAMA_BUILD_UI=ON needs node + npm on " +
+           "PATH (the npm failure is in the configure output above), the prebuilt fallback needs " +
+           "huggingface.co to be reachable. A llama-server without its chat UI is not packaged.")
+}
+if (Test-Path $uiStamp) {
+    $uiVer = (Get-Content $uiStamp -Raw).Trim()
+    Write-Host "Web UI: PREBUILT assets ($uiVer) downloaded from HuggingFace; the npm build did not produce any" -ForegroundColor Yellow
+} elseif (Test-Path $uiDist) {
+    Write-Host "Web UI: built from the checked-out sources (npm)" -ForegroundColor DarkGray
+} else {
+    Write-Host "Web UI: pre-built assets found in the source tree ($uiSrcDist)" -ForegroundColor DarkGray
+}
 
 if ($sccachePath) {
     Write-Host ""

@@ -11,8 +11,9 @@
 #     kernels (~4.3 GB download, ~25 GB on disk). Requires the Adrenalin
 #     driver (not installable from here). Without it AMD GPUs run on Vulkan.
 #     The leg also stages the dist's own HIP runtime (amdhip64_*.dll, ~17 MB)
-#     plus its code-object manager (amd_comgr*.dll, ~122 MB) next to
-#     llama-server.exe, which is what makes BF16/F16 models run on gfx1201
+#     plus its code-object manager (amd_comgr*.dll, ~122 MB) and its kernel
+#     package loader (rocm_kpack*.dll, ~180 KB, the runtime's direct import)
+#     next to llama-server.exe, which is what makes BF16/F16 models run on gfx1201
 #     and what keeps HIP enumeration alive once an iGPU is visible - see
 #     Invoke-HipRuntimeStaging for the why. That copy is
 #     reachable on its own as -StageHipRuntime (leg 2b), which downloads
@@ -106,7 +107,9 @@ function Get-RemoteFileSize([string]$Url) {
 # the whole HIP backend disappears (root-caused 2026-09-03 by A/B/A: the
 # dist's comgr beside the staged runtime, both devices enumerate; without it,
 # none; amdocl64.dll is NOT needed). So amd_comgr*.dll is staged beside the
-# runtime too, and deleting both copies reverts to the driver's runtime.
+# runtime too, with rocm_kpack*.dll (the runtime's own direct import, see the
+# function below) making it three, and deleting the three copies reverts to
+# the driver's runtime.
 #
 # Freshness is decided by CONTENT, and it has to be: every dist stamps the
 # same 10.0.3581.0 into the DLL's VERSIONINFO, and 10.0.0 and
@@ -116,10 +119,19 @@ function Get-RemoteFileSize([string]$Url) {
 # another version's runtime. One SHA256 each of a ~17 MB and a ~122 MB file
 # per run is the cheap way to be right.
 function Invoke-HipRuntimeStaging([string]$HipPath) {
-    # The runtime AND its code-object manager, both content-checked: see the
-    # block above for why amd_comgr*.dll must be the dist's own.
+    # The runtime, its code-object manager AND its kernel-package loader, all
+    # three content-checked: see the block above for why amd_comgr*.dll must be
+    # the dist's own. rocm_kpack.dll (~180 KB) is amdhip64_7's DIRECT import,
+    # so once the runtime beside the exe is the dist's, the kpack loader it
+    # binds must be the same dist's too, or the pair is a version mix again by
+    # another name; this is also exactly the trio llama.cpp's own Windows ROCm
+    # release bundles since v0.4.0 (#26973, for its issue #26929). Today no
+    # System32 copy of rocm_kpack exists to shadow the PATH one, so the copy
+    # changes which file loads only when HIP_PATH and the staged runtime
+    # disagree, which is the case it is for.
     $srcs = @(Get-ChildItem (Join-Path $HipPath 'bin') -Filter 'amdhip64_*.dll' -ErrorAction SilentlyContinue) +
-            @(Get-ChildItem (Join-Path $HipPath 'bin') -Filter 'amd_comgr*.dll' -ErrorAction SilentlyContinue)
+            @(Get-ChildItem (Join-Path $HipPath 'bin') -Filter 'amd_comgr*.dll' -ErrorAction SilentlyContinue) +
+            @(Get-ChildItem (Join-Path $HipPath 'bin') -Filter 'rocm_kpack*.dll' -ErrorAction SilentlyContinue)
     foreach ($src in $srcs) {
         $dst = Join-Path $PSScriptRoot $src.Name
         $cur = Get-Item $dst -ErrorAction SilentlyContinue
@@ -127,6 +139,7 @@ function Invoke-HipRuntimeStaging([string]$HipPath) {
         $same = $cur -and $cur.Length -eq $src.Length -and
                 (Get-FileHash $dst -Algorithm SHA256).Hash -eq (Get-FileHash $src.FullName -Algorithm SHA256).Hash
         $why = if ($src.Name -like 'amdhip64_*') { '- BF16/F16 models abort on gfx1201' }
+               elseif ($src.Name -like 'rocm_kpack*') { '- the staged runtime would bind another dist''s kpack loader' }
                else { '- HIP enumerates no device once an iGPU is enabled' }
         if ($same) {
             Write-Host "  [OK] HIP runtime $($src.Name) $ver next to llama-server.exe" -ForegroundColor Green

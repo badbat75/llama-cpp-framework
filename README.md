@@ -80,7 +80,7 @@ Settings are split between build-time and runtime so the same scripts work both 
 | Section | Keys |
 |---------|------|
 | Paths | `LlamaCppDir`, `OpenSSLDir`, `HipPath`, `VsDevShell` |
-| Build | `GpuTargets`, `BuildType`, `CCompiler`, `CxxCompiler`, `MarchFlags`, `BuildJobs` |
+| Build | `GpuTargets`, `BuildType`, `CCompiler`, `CxxCompiler`, `Linker`, `BuildJobs` |
 
 Runtime configs are created and edited with `llama-cpp-config` (GUI when launched with no arguments, headless CLI via `server` / `preset` subcommands). The installer ships it in `bin\` next to `llama-server.exe`, with an optional Start Menu shortcut ("llama.cpp Config"). See [llama-cpp-config\README.md](llama-cpp-config/README.md).
 

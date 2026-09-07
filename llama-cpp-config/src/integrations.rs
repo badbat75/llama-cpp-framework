@@ -255,8 +255,17 @@ fn preset_to_opencode_model(p: &presets::Preset, n_ctx_train: Option<u32>) -> Va
 ///    what silently divides it.
 ///
 /// Finally the server caps a slot at the trained context
-/// (`server-context.cpp`: `if (n_ctx_slot > n_ctx_train) n_ctx_slot = n_ctx_train`),
+/// (`server-context.cpp` `n_ctx_slot()`: `min(llama_n_ctx_seq, n_ctx_train)`),
 /// so a `ctx-size` above what the model was trained for buys nothing here either.
+///
+/// Two v0.4.0 caps this deliberately does NOT model, because neither has a
+/// field to read from: `--kv-unified-per-slot N` (#24124, server-only) lowers
+/// the per-slot figure to `min(n_ctx_seq, N)` and, with no `-c`, sizes the pool
+/// to `n_parallel * N`; and a preset pinning custom YaRN scaling (`rope-scaling
+/// yarn` + a `rope-freq-scale` off the trained one) makes llama.cpp REWRITE
+/// `n_ctx_train` to `n_ctx_orig_yarn / freq_scale` at context creation (#28030),
+/// which raises the cap this function reads from the header. Add the field
+/// first, then the rule, in that order.
 fn effective_ctx(ctx_size: Option<i32>, parallel: Option<i32>, n_ctx_train: Option<u32>) -> i64 {
     let trained = n_ctx_train.map(i64::from);
     // Rule 1. `ctx-size = 0` is llama.cpp's own spelling of "from the model", and

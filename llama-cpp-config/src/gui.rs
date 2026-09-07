@@ -731,8 +731,9 @@ fn refresh_tensor_scalars(app: &AppWindow) {
     // Two warnings share this strip, and the order is deliberate. `validate`'s is
     // a value llama-server would REFUSE (no device after the `=`), so it outranks
     // the model-dependent one, which is a rule llama.cpp accepts and then executes
-    // catastrophically slowly: pinning a K-quant `token_embd` to a GPU that has no
-    // `get_rows` kernel for it. The latter needs the SELECTED MODEL's embedding
+    // catastrophically slowly: pinning a `token_embd` of a type the GPU has no
+    // `get_rows` kernel for (a K-quant up to b10088, Q8_K/TQ/NVFP4 since; see
+    // `gguf::gpu_has_get_rows`). The latter needs the SELECTED MODEL's embedding
     // type, which `models_tab::update_model_info` has already parked in
     // `model_info_embd_warning`; reading it back from AppState (rather than
     // re-opening the GGUF) is what keeps this callable on every pattern keystroke.
