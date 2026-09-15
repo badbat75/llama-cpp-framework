@@ -149,8 +149,9 @@ pub struct ServerSet {
     #[arg(long)]
     pub hostname: Option<String>,
     /// How the weights are brought in (-lm / --load-mode). Replaces the removed
-    /// --mlock / --no-mmap pair, which llama.cpp deprecated in b10105 (they are
-    /// mutually exclusive states of one enum, not two independent bools).
+    /// --mlock / --no-mmap pair, which llama.cpp deprecated in b10105 and dropped
+    /// in v0.4.1 (they are mutually exclusive states of one enum, not two
+    /// independent bools).
     #[arg(long, value_parser = clap::builder::PossibleValuesParser::new(server_cfg::LOAD_MODES))]
     pub load_mode: Option<String>,
     /// CPU threads for generation. 0 or negative clears the override (auto).

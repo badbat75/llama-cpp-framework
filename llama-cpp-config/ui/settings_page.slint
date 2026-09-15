@@ -6,7 +6,7 @@
 // fires; the Rust handler persists it and, on a failed write, pushes the real
 // state back through that same binding (src/gui/settings_tab.rs).
 
-import { CheckBox, ScrollView, Palette } from "std-widgets.slint";
+import { CheckBox, LineEdit, ScrollView, Palette } from "std-widgets.slint";
 import { SectionCard, LabeledField, Tokens } from "components.slint";
 import { AppState } from "state.slint";
 
@@ -59,6 +59,41 @@ export component SettingsPage inherits ScrollView {
                     text: "start llama-server when llama-cpp-config launches";
                     checked <=> AppState.start_server_on_launch;
                     toggled => { AppState.toggle_start_server_on_launch(); }
+                }
+            }
+        }
+
+        SectionCard {
+            heading: "Logging";
+            LabeledField {
+                label: "Rotate the log";
+                hint: "When llama-server stops, logs\\llama-server.log is filed away as llama-server-<date>-<time>.log (the closing instant, UTC) and the next run starts in a clean file. The newest 10 closed logs are kept.\nA run that ended without a Stop (a crash, a driver reset, an external kill) is filed at the next start under its last-write time instead.\nOff = one file growing forever, the behaviour before 1.15.1.";
+                CheckBox {
+                    text: "file the log away when llama-server stops";
+                    checked <=> AppState.log_rotate;
+                    toggled => { AppState.toggle_log_rotate(); }
+                }
+            }
+            LabeledField {
+                label: "Only above";
+                hint: "Only a log LARGER than this many KB is filed; a shorter one stays and the next run appends below it, so a handful of short runs share one file instead of leaving one file each.\n0 files every non-empty log. Applies on Enter or when the field loses focus.";
+                LineEdit {
+                    accessible-label: "log-rotate-kb";
+                    enabled: AppState.log_rotate;
+                    text <=> AppState.log_rotate_kb;
+                    input-type: InputType.number;
+                    placeholder-text: "1024";
+                    accepted => { AppState.commit_log_rotate_kb(); }
+                    changed has-focus => {
+                        if (!self.has-focus) {
+                            AppState.commit_log_rotate_kb();
+                        }
+                    }
+                }
+                Text {
+                    text: "KB";
+                    vertical-alignment: center;
+                    color: Palette.foreground.transparentize(Tokens.muted);
                 }
             }
         }

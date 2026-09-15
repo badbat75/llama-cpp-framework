@@ -62,14 +62,16 @@ pub struct ServerConfig {
     /// llama.cpp's: mmap unless a device can't do it).
     ///
     /// It replaced the `Mlock` + `NoMmap` bools in b10105 (upstream PR #20834),
-    /// and the swap is NOT cosmetic. The old flags still parse, but each now
-    /// OVERWRITES the whole mode instead of setting one bool of two, so they
-    /// stopped composing: `--mlock --no-mmap` is last-one-wins (the mlock is
-    /// silently lost), and a lone `--mlock` selects MLOCK, which is mlock
-    /// WITHOUT mmap: `use_mmap` is true only for mmap / mmap+mlock / auto
+    /// and the swap is NOT cosmetic. From b10105 to v0.4.0 the old flags still
+    /// parsed, but each OVERWROTE the whole mode instead of setting one bool of
+    /// two, so they stopped composing: `--mlock --no-mmap` was last-one-wins
+    /// (the mlock silently lost), and a lone `--mlock` selected MLOCK, which is
+    /// mlock WITHOUT mmap: `use_mmap` is true only for mmap / mmap+mlock / auto
     /// (`llama-model-loader.cpp`), while mlock itself is on for mlock /
     /// mmap+mlock (`llama-model.cpp`). Two independent checkboxes cannot express
-    /// that, which is why this is one enum.
+    /// that, which is why this is one enum. v0.4.1 (#28334) then REMOVED
+    /// `--mlock` / `--mmap` / `--no-mmap` / `-dio` outright: a launch line still
+    /// carrying one fails to parse, so `-lm` is the only spelling left.
     ///
     /// A server.ini predating the change is migrated on read; see
     /// `migrated_load_mode`.
@@ -117,13 +119,23 @@ pub struct ServerConfig {
     /// SERVER, not just the model that would have used it.
     pub override_tensor: Option<String>,
     /// The GPU the multimodal projector (the mmproj/CLIP image encoder) runs on.
-    /// NOT a llama-server flag: it is the `MTMD_BACKEND_DEVICE` env var, set on the
-    /// child in `runstate::start`. It needs its own knob because the encoder ignores
-    /// `--device` entirely: `clip_ctx` takes the FIRST GPU backend the registry
-    /// offers, which on a CUDA+ROCm box is the NVIDIA card even when the model is on
-    /// the AMD one. It then holds that card's VRAM for the model's whole lifetime
-    /// while computing only on image requests, which reads exactly like a GPU that
-    /// has been "assigned something" and does nothing. None = leave llama.cpp to it.
+    /// Exported as the `MTMD_BACKEND_DEVICE` env var on the child in
+    /// `runstate::start`, which is the env name of llama.cpp's `-mmdev` /
+    /// `--mmproj-device` flag (#23255, v0.2.0; before that `clip_ctx` read the
+    /// variable itself, and the framework has ridden the env since, so the same
+    /// setting works on both). Env rather than flag because the router inherits
+    /// it to every per-model child with nothing to merge.
+    ///
+    /// What "unset" means moved in v0.4.1 (#28390): the encoder now FOLLOWS
+    /// `--device` (the first device of the list, resolved in `common_params_parse`
+    /// after the CLI is read; `--device none` keeps it on CPU). Up to v0.4.0 it
+    /// ignored `--device` entirely and took the FIRST GPU backend the registry
+    /// offers, which on a CUDA+ROCm box is the NVIDIA card even when the model is
+    /// on the AMD one, holding that card's VRAM for the model's whole lifetime
+    /// while computing only on image requests. That first-GPU fallback is still
+    /// what a preset with no `device` key gets, so the knob stays: it is the only
+    /// way to place the encoder when no device is pinned, or on a card other than
+    /// the model's first. None = leave llama.cpp to it.
     pub mmproj_device: Option<String>,
     /// Which GEMM backend rocBLAS uses under the HIP build (env var
     /// `ROCBLAS_USE_HIPBLASLT`): `Some(false)` exports `0` (force Tensile),
@@ -132,7 +144,7 @@ pub struct ServerConfig {
     /// same reason `--flash-attn` is one: "don't set it" is a third instruction,
     /// and it is the one the framework defaults to.
     ///
-    /// Like `mmproj_device` this is not a llama-server flag: it is read by
+    /// Unlike `mmproj_device` this has no llama-server flag at all: it is read by
     /// rocBLAS itself, so it can only ride the environment (`runstate::env_vars`,
     /// exported by `start()` and shown in the Command Line card; the router's
     /// per-model children inherit it). Nothing else reads it, so it is inert on a
@@ -620,7 +632,7 @@ fn render(cfg: &ServerConfig) -> String {
     let mmproj_device_line = str_line_or_hint(
         cfg.mmproj_device.as_deref(),
         "MmprojDevice",
-        "; MmprojDevice = ROCm1  ; GPU for the image encoder (env MTMD_BACKEND_DEVICE); blank = first GPU found",
+        "; MmprojDevice = ROCm1  ; GPU for the image encoder (env MTMD_BACKEND_DEVICE); blank = the preset's first device, or the first GPU found",
     );
     // The one bool with a real unset state (see the field's doc): unset means the
     // env var is never exported, which is neither `true` nor `false`.
@@ -721,9 +733,10 @@ LogVerbosity = {log_verbosity}
 ; every preset's own rules (it does not add to them), and an unknown device name
 ; stops the SERVER from starting, not just one model.
 {override_tensor_line}
-; MmprojDevice does NOT follow Device: llama.cpp puts the image encoder on the
-; first GPU backend it finds, where it holds VRAM but only computes on image
-; requests. Name a device here to move it (e.g. onto the model's own GPU).
+; MmprojDevice places the image encoder. Blank = llama.cpp's own default, which
+; since v0.4.1 is the FIRST device of the preset's (or this file's) Device list,
+; and, when neither pins one, the first GPU backend found, where it holds VRAM
+; but only computes on image requests. Name a device here to override both.
 {mmproj_device_line}
 ; SDK tuning: vendor-library environment variables, not llama-server flags;
 ; llama.cpp never sees them, so nothing validates them and each only bites the

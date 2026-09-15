@@ -579,7 +579,7 @@ fn refresh_device_options(app: &AppWindow) {
         devices::rocm_health().unwrap_or_default(),
     ));
 
-    let (lbl, val, idx) = device_options(&devs, mmproj_device.as_str(), "(default: first GPU)");
+    let (lbl, val, idx) = device_options(&devs, mmproj_device.as_str(), "(default: follows device)");
     s.set_mmproj_dev_labels(lbl);
     s.set_mmproj_dev_values(val);
     s.set_mmproj_dev_index(idx);

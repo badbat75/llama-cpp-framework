@@ -8,6 +8,23 @@
 //! output streams to `logs\llama-server.log`; env/cwd/logging are NOT part of
 //! `command_line()`'s pasteable rendering, so a pasted command reproduces the
 //! args only.
+//!
+//! The log is closed when a run ends and it has grown past a threshold.
+//! `stop()` closes it once the process is gone: the file is renamed to
+//! `llama-server-<yyyymmdd-hhmmss>.log` (the closing instant, UTC like every
+//! other stamp in this crate; see `bench::stamp`) and an empty
+//! `llama-server.log` takes its place, so the Log window, which resets on a
+//! file shorter than its offset, reads as blank right after the stop and the
+//! next start writes into a clean file. A run that did not end through
+//! `stop()` (a crash, a TDR, an external kill, a stop whose rename lost to a
+//! handle still closing) leaves its log behind, and `start()` closes THAT one
+//! with the file's mtime for a stamp before opening the new one, which is the
+//! last write of the dead run and so the same closing instant, recovered
+//! rather than recorded. Both go through `close_log_per_settings`, which reads
+//! settings.ini (`LogRotate`, on by default, and `LogRotateKb`, 1024 by
+//! default: a log at or under the threshold is left for the next run to append
+//! to, since a file per short run is clutter, not history); the newest
+//! `ROTATED_LOGS_KEPT` closed logs are kept, older ones deleted.
 
 use std::io;
 
@@ -150,11 +167,12 @@ fn server_args(
     //   -fit and -lv are; this is what the Command Line card has to show, and
     //   `load_mode_or_default` guarantees the value is one llama.cpp accepts.
     //
-    //   NEVER emit the old --mlock / --no-mmap here. They are deprecated since
-    //   b10105 and, worse, no longer compose: each overwrites the whole mode, so
-    //   the pair this used to send (`--mlock --no-mmap`) was last-one-wins and
-    //   dropped the mlock, while a lone `--mlock` also turned mmap OFF; see
-    //   `server_cfg::load_mode`.
+    //   NEVER emit the old --mlock / --no-mmap here. Deprecated in b10105, where
+    //   they stopped composing (each overwrote the whole mode, so the pair this
+    //   used to send, `--mlock --no-mmap`, was last-one-wins and dropped the
+    //   mlock, while a lone `--mlock` also turned mmap OFF), and REMOVED in
+    //   v0.4.1 (#28334), where any of them fails the parse and nothing starts;
+    //   see `server_cfg::load_mode`.
     args.push("-lm".into());
     args.push(cfg.load_mode_or_default().into());
     if let Some(cr) = cfg.cache_reuse {
@@ -293,6 +311,12 @@ pub fn start() -> io::Result<Option<crate::server_cfg::ServerConfig>> {
         std::fs::create_dir_all(log_dir)?;
     }
 
+    // A run that ended without `stop()` (crash, external kill) left its log
+    // here; close it under its own last-write stamp so this run starts clean.
+    // Best effort: a rename that fails just leaves the old run above the new
+    // one, which is what every start did before rotation existed.
+    close_log_per_settings(LogStamp::LastWrite);
+
     let log_file = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
@@ -312,9 +336,11 @@ pub fn start() -> io::Result<Option<crate::server_cfg::ServerConfig>> {
 
     cmd.current_dir(&data_root);
     cmd.env("LLAMA_CACHE", &models_dir);
-    // Put the image encoder (mmproj/CLIP) on a chosen GPU. There is no flag for
-    // this: `clip_ctx` reads MTMD_BACKEND_DEVICE itself and otherwise takes the
-    // FIRST GPU backend the registry offers; it never looks at --device. On a
+    // Put the image encoder (mmproj/CLIP) on a chosen GPU. MTMD_BACKEND_DEVICE
+    // is the env name of `-mmdev` / `--mmproj-device` (v0.2.0; `clip_ctx` read
+    // the variable itself before that), and unset it follows the first entry of
+    // --device since v0.4.1, or, with no device pinned, takes the FIRST GPU
+    // backend the registry offers, which up to v0.4.0 it did regardless. On a
     // mixed box that strands the encoder on the wrong card, where it holds VRAM
     // for the model's whole life and computes only when an image arrives.
     // Inherited by the router's per-model children, so it covers every preset.
@@ -369,11 +395,17 @@ pub fn start() -> io::Result<Option<crate::server_cfg::ServerConfig>> {
 }
 
 /// Force-kill all llama-server.exe processes (taskkill /f: llama-server has
-/// no graceful shutdown channel when running detached without a console).
+/// no graceful shutdown channel when running detached without a console), then
+/// close the run's log (module header) once the process is gone.
 ///
 /// Infallible by design: a missing/failed kill is not surfaced here. The caller
 /// (`stop_server_async`) re-polls `is_running()` and reports "still running" if
 /// the kill didn't land; that re-check is the source of truth for the outcome.
+/// The log is closed only after `is_running()` reads false, waited for up to
+/// `STOP_GRACE`: renaming the file while the process still holds it as stdout
+/// would carry its last lines into the closed log and, on a kill that never
+/// lands, would file a live run under a closing stamp. A wait that runs out
+/// skips the close; the next `start()` picks the file up by its mtime.
 pub fn stop() {
     #[cfg(windows)]
     {
@@ -391,6 +423,138 @@ pub fn stop() {
             .arg("-f")
             .arg("llama-server")
             .output();
+    }
+
+    let step = std::time::Duration::from_millis(250);
+    let mut waited = std::time::Duration::ZERO;
+    while is_running() {
+        if waited >= STOP_GRACE {
+            return;
+        }
+        std::thread::sleep(step);
+        waited += step;
+    }
+    close_log_per_settings(LogStamp::Now);
+}
+
+/// How long `stop()` waits for the killed process to disappear before giving
+/// up on closing the log. `taskkill /f` is synchronous in practice (the GUI's
+/// own 15 s re-poll almost never loops), so this is a ceiling, not a delay.
+const STOP_GRACE: std::time::Duration = std::time::Duration::from_secs(5);
+
+// ── Log rotation ─────────────────────────────────────────────────────────
+
+/// Closed logs kept beside `llama-server.log`; the oldest beyond this are
+/// deleted by `close_log`. At `-lv 4` a long session writes tens of MB, and
+/// before rotation the single file grew without bound, so a cap is the
+/// conservative side of this change, not the aggressive one.
+pub const ROTATED_LOGS_KEPT: usize = 10;
+
+/// Which instant names a closed log.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LogStamp {
+    /// The clock at the call: `stop()`, which knows the run just ended.
+    Now,
+    /// The file's own mtime: `start()`, closing a run that ended without a
+    /// `stop()`, whose last write is the best record of when.
+    LastWrite,
+}
+
+/// `close_log` on the live log under the user's settings: nothing when
+/// `LogRotate` is off, otherwise with `LogRotateKb` as the threshold. Best
+/// effort by design (its two callers are `stop()`, which cannot fail, and
+/// `start()`, where a log left in place is exactly what every start did before
+/// rotation existed): a rename that fails is retried by the next start, since
+/// the file is still there and still over the threshold.
+fn close_log_per_settings(stamp: LogStamp) {
+    if let Some(min_bytes) = crate::settings::load().log_rotate_threshold() {
+        let _ = close_log(&crate::paths::server_log(), stamp, min_bytes);
+    }
+}
+
+/// Close the run held in `log_path` if it is LARGER than `min_bytes`: rename
+/// it to `llama-server-<stamp>.log` beside itself, leave an EMPTY
+/// `llama-server.log` in its place, and prune the closed logs down to
+/// `ROTATED_LOGS_KEPT`. Returns the closed file's path, or `None` when there
+/// was nothing to close: no file, one at or under the threshold (left for the
+/// next run to append to), or an empty one whatever the threshold (the file
+/// this function itself leaves behind, so a stop after a failed launch and a
+/// start after a stop are both no-ops rather than a growing pile of empties).
+///
+/// A stamp collision (two closes within the same second, e.g. a `bench sweep`
+/// leg that dies at once) gets a `-2`, `-3`... suffix rather than overwriting
+/// the earlier run. The empty replacement is created here and not left to
+/// `start()` so the Log window, which shows a "not found" placeholder for a
+/// missing file, reads as blank after a stop instead of claiming the log has
+/// never existed.
+pub fn close_log(
+    log_path: &std::path::Path,
+    stamp: LogStamp,
+    min_bytes: u64,
+) -> io::Result<Option<std::path::PathBuf>> {
+    let meta = match std::fs::metadata(log_path) {
+        Ok(m) => m,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(e),
+    };
+    if meta.len() == 0 || meta.len() <= min_bytes {
+        return Ok(None);
+    }
+    let secs = match stamp {
+        LogStamp::Now => crate::bench::now_secs(),
+        LogStamp::LastWrite => meta
+            .modified()
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_secs())
+            .unwrap_or_else(crate::bench::now_secs),
+    };
+    let dir = log_path.parent().unwrap_or(std::path::Path::new("."));
+    let stem = closed_log_stem(log_path);
+    let base = format!("{stem}-{}", crate::bench::stamp(secs));
+    let mut target = dir.join(format!("{base}.log"));
+    let mut n = 1;
+    while target.exists() {
+        n += 1;
+        target = dir.join(format!("{base}-{n}.log"));
+    }
+    std::fs::rename(log_path, &target)?;
+    // The blank successor. Failing to create it is not a failed close: the
+    // run IS filed, and `start()` creates the file anyway.
+    let _ = std::fs::File::create(log_path);
+    prune_closed_logs(dir, &stem, ROTATED_LOGS_KEPT);
+    Ok(Some(target))
+}
+
+/// `llama-server` for `llama-server.log`: the prefix closed logs share.
+fn closed_log_stem(log_path: &std::path::Path) -> String {
+    log_path
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "llama-server".into())
+}
+
+/// Delete all but the newest `keep` closed logs (`<stem>-*.log`) in `dir`.
+/// The stamp sorts lexically as it sorts chronologically (`bench::stamp`), so
+/// the newest is simply the greatest name; the live `<stem>.log` carries no
+/// dash after the stem and is never a candidate. Best effort throughout: a
+/// file that will not delete stays, which costs disk, not correctness.
+fn prune_closed_logs(dir: &std::path::Path, stem: &str, keep: usize) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    let prefix = format!("{stem}-");
+    let mut closed: Vec<String> = entries
+        .flatten()
+        .filter_map(|e| {
+            let name = e.file_name().to_string_lossy().into_owned();
+            (name.starts_with(&prefix) && name.ends_with(".log")).then_some(name)
+        })
+        .collect();
+    closed.sort();
+    let excess = closed.len().saturating_sub(keep);
+    for name in closed.into_iter().take(excess) {
+        let _ = std::fs::remove_file(dir.join(name));
     }
 }
 
@@ -476,6 +640,141 @@ mod tests {
 
     fn args_for(cfg: &ServerConfig) -> Vec<String> {
         server_args(cfg, Path::new("presets.ini"))
+    }
+
+    // ── Log rotation ─────────────────────────────────────────────────────
+
+    fn closed_logs(dir: &Path) -> Vec<String> {
+        let mut v: Vec<String> = std::fs::read_dir(dir)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.starts_with("llama-server-"))
+            .collect();
+        v.sort();
+        v
+    }
+
+    #[test]
+    fn close_log_files_the_run_under_a_stamp_and_leaves_a_blank_successor() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = dir.path().join("llama-server.log");
+        std::fs::write(&log, "run one\n").unwrap();
+
+        let closed = close_log(&log, LogStamp::Now, 0).unwrap().expect("a run to close");
+        let name = closed.file_name().unwrap().to_string_lossy().into_owned();
+        assert!(
+            name.starts_with("llama-server-")
+                && name.ends_with(".log")
+                && name.len() == "llama-server-yyyymmdd-hhmmss.log".len(),
+            "llama-server-yyyymmdd-hhmmss.log, got {name}"
+        );
+        assert_eq!(std::fs::read_to_string(&closed).unwrap(), "run one\n");
+        // The live path is back, empty: the Log window resets on it and the
+        // next start appends to a clean file.
+        assert_eq!(std::fs::metadata(&log).unwrap().len(), 0);
+    }
+
+    /// The threshold is "larger than", in bytes: a log exactly at it stays.
+    #[test]
+    fn close_log_leaves_a_log_at_or_under_the_threshold() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = dir.path().join("llama-server.log");
+        std::fs::write(&log, "x".repeat(1024)).unwrap();
+        assert_eq!(close_log(&log, LogStamp::Now, 1024).unwrap(), None);
+        assert_eq!(std::fs::metadata(&log).unwrap().len(), 1024, "left in place");
+        assert!(closed_logs(dir.path()).is_empty());
+        std::fs::write(&log, "x".repeat(1025)).unwrap();
+        assert!(close_log(&log, LogStamp::Now, 1024).unwrap().is_some());
+        assert_eq!(std::fs::metadata(&log).unwrap().len(), 0);
+    }
+
+    #[test]
+    fn close_log_is_a_no_op_on_a_missing_or_empty_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = dir.path().join("llama-server.log");
+        assert_eq!(close_log(&log, LogStamp::Now, 0).unwrap(), None);
+        assert!(!log.exists(), "nothing to close creates nothing");
+
+        std::fs::write(&log, "").unwrap();
+        assert_eq!(close_log(&log, LogStamp::LastWrite, 0).unwrap(), None);
+        assert!(closed_logs(dir.path()).is_empty(), "an empty log is never filed");
+    }
+
+    #[test]
+    fn close_log_keeps_both_runs_on_a_same_second_collision() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = dir.path().join("llama-server.log");
+        std::fs::write(&log, "first\n").unwrap();
+        let a = close_log(&log, LogStamp::Now, 0).unwrap().unwrap();
+        std::fs::write(&log, "second\n").unwrap();
+        let b = close_log(&log, LogStamp::Now, 0).unwrap().unwrap();
+        assert_ne!(a, b);
+        assert_eq!(std::fs::read_to_string(&a).unwrap(), "first\n");
+        assert_eq!(std::fs::read_to_string(&b).unwrap(), "second\n");
+        // Same second, or the clock ticked over between the two closes; either
+        // way both stamps sort after the live file and before nothing.
+        assert_eq!(closed_logs(dir.path()).len(), 2);
+    }
+
+    #[test]
+    fn close_log_last_write_stamps_from_the_file_mtime() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = dir.path().join("llama-server.log");
+        std::fs::write(&log, "crashed run\n").unwrap();
+        // Push the mtime a day into the past: the stamp must follow the FILE,
+        // not the clock, or a log found at start would be filed under the
+        // start time rather than the run's end.
+        let past = std::time::SystemTime::now() - std::time::Duration::from_secs(86_400);
+        let f = std::fs::OpenOptions::new().write(true).open(&log).unwrap();
+        f.set_modified(past).unwrap();
+        drop(f);
+        let expected = crate::bench::stamp(
+            past.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs(),
+        );
+        let closed = close_log(&log, LogStamp::LastWrite, 0).unwrap().unwrap();
+        assert_eq!(
+            closed.file_name().unwrap().to_string_lossy(),
+            format!("llama-server-{expected}.log")
+        );
+    }
+
+    #[test]
+    fn prune_keeps_the_newest_closed_logs_and_never_the_live_one() {
+        let dir = tempfile::tempdir().unwrap();
+        for stamp in ["20260101-000000", "20260102-000000", "20260103-000000"] {
+            std::fs::write(dir.path().join(format!("llama-server-{stamp}.log")), "x").unwrap();
+        }
+        std::fs::write(dir.path().join("llama-server.log"), "live").unwrap();
+        std::fs::write(dir.path().join("other.log"), "not ours").unwrap();
+        prune_closed_logs(dir.path(), "llama-server", 2);
+        assert_eq!(
+            closed_logs(dir.path()),
+            vec![
+                "llama-server-20260102-000000.log".to_string(),
+                "llama-server-20260103-000000.log".to_string(),
+            ]
+        );
+        assert!(dir.path().join("llama-server.log").exists());
+        assert!(dir.path().join("other.log").exists());
+    }
+
+    #[test]
+    fn close_log_prunes_past_the_retention_cap() {
+        let dir = tempfile::tempdir().unwrap();
+        for i in 0..ROTATED_LOGS_KEPT {
+            std::fs::write(
+                dir.path().join(format!("llama-server-20260101-{i:06}.log")),
+                "x",
+            )
+            .unwrap();
+        }
+        let log = dir.path().join("llama-server.log");
+        std::fs::write(&log, "one more\n").unwrap();
+        close_log(&log, LogStamp::Now, 0).unwrap().unwrap();
+        let kept = closed_logs(dir.path());
+        assert_eq!(kept.len(), ROTATED_LOGS_KEPT);
+        assert!(!kept.contains(&"llama-server-20260101-000000.log".to_string()), "oldest goes");
     }
 
     #[cfg(windows)]
@@ -627,9 +926,9 @@ mod tests {
             split_mode,
             tensor_split,
             override_tensor,
-            // launch env only: start() exports it as MTMD_BACKEND_DEVICE. It is
-            // not a llama-server flag at all: the image encoder's device can
-            // only be chosen through that env var (clip.cpp reads it directly).
+            // launch env only: start() exports it as MTMD_BACKEND_DEVICE, the
+            // env name of `-mmdev`; the env reaches every router child with
+            // nothing to merge, where the flag would ride the router's argv.
             mmproj_device: _,
             // launch env only: `env_vars` exports it as ROCBLAS_USE_HIPBLASLT.
             // Also not a llama-server flag: rocBLAS reads it itself, below
@@ -811,10 +1110,10 @@ mod tests {
         );
     }
 
-    // MmprojDevice is not a llama-server flag: the image encoder's GPU can only
-    // be chosen through MTMD_BACKEND_DEVICE. Both launch surfaces must carry it:
-    // `start()` sets it on the child, and the pasted command line has to as well,
-    // or the block a user copies out of the GUI runs a differently-placed encoder.
+    // MmprojDevice rides the env (MTMD_BACKEND_DEVICE, the env name of `-mmdev`),
+    // never the args. Both launch surfaces must carry it: `start()` sets it on
+    // the child, and the pasted command line has to as well, or the block a user
+    // copies out of the GUI runs a differently-placed encoder.
     #[test]
     fn mmproj_device_rides_the_env_not_the_args() {
         let cfg = ServerConfig {

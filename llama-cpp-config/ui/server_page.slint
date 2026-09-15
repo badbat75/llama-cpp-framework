@@ -182,7 +182,7 @@ export component ServerPage inherits ScrollView {
             }
             LabeledField {
                 label: "Vision encoder";
-                hint: "GPU for the multimodal projector, the mmproj/CLIP image encoder (MTMD_BACKEND_DEVICE).\nIt does NOT follow --device: llama.cpp puts the encoder on the FIRST GPU backend it finds, which on a mixed box is often not the one running the model. It then holds VRAM there and stays idle until an image arrives.\ndefault = that first GPU. Set it to the model's GPU to keep everything on one card.";
+                hint: "GPU for the multimodal projector, the mmproj/CLIP image encoder (MTMD_BACKEND_DEVICE, the env name of --mmproj-device).\ndefault = llama.cpp's own placement: since v0.4.1 the FIRST entry of the preset's (or this tab's) device list; with no device pinned, the FIRST GPU backend it finds, which on a mixed box is often not the one running the model. It then holds VRAM there and stays idle until an image arrives.\nName a device here to override both.";
                 MappedComboBox {
                     labels: AppState.mmproj_dev_labels;
                     values: AppState.mmproj_dev_values;

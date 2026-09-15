@@ -776,9 +776,10 @@ fn gpu_has_get_rows(ggml_type: u32, n_embd: u32) -> bool {
 /// (`src/llama-arch.cpp`), which is a DENY-list: every arch not named there
 /// returns true, so the spellings are `LLM_ARCH_NAMES`' own (`falcon-h1`,
 /// `nemotron_h`, `granitehybrid`: hyphen, underscore and neither, exactly as
-/// upstream writes them). Verified against v0.4.0, which added `qwen4exp`
-/// (Qwen3.8-Flash-Next, #27742, with a "TODO: fix test-llama-archs" beside it,
-/// so it may leave the list again).
+/// upstream writes them). Verified against v0.4.1, which added `hy_v4` (Tencent
+/// Hy 4 preview, #28127); v0.4.0 had added `qwen4exp` (Qwen3.8-Flash-Next,
+/// #27742, with a "TODO: fix test-llama-archs" beside it, so it may leave the
+/// list again).
 ///
 /// Keep it in sync with that switch when bumping llama.cpp. Neither drift is
 /// silent (the load fails with a clear log line either way), but they cost
@@ -802,6 +803,7 @@ fn arch_supports_sm_tensor(arch: &str) -> bool {
             | "olmoe"
             | "deepseek2"
             | "deepseek32"
+            | "hy_v4"
             | "dots3note"
             | "glm-dsa"
             | "bitnet"
@@ -1358,8 +1360,8 @@ mod tests {
         assert!(info("qwen35").sm_tensor_warning().is_empty());
         assert!(info("deepseek2").sm_tensor_warning().contains("deepseek2"));
         // The three spellings upstream mixes: hyphen, underscore, neither; plus
-        // the v0.4.0 addition.
-        for arch in ["falcon-h1", "nemotron_h", "granitehybrid", "qwen4exp"] {
+        // the v0.4.0 (qwen4exp) and v0.4.1 (hy_v4) additions.
+        for arch in ["falcon-h1", "nemotron_h", "granitehybrid", "qwen4exp", "hy_v4"] {
             assert!(!arch_supports_sm_tensor(arch), "{arch} is deny-listed");
         }
     }

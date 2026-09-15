@@ -117,8 +117,9 @@ export global AppState {
     in-out property <string> rocm_warning: "";
 
     // Vision-encoder (mmproj) device dropdown triple. Its own list because the
-    // CLIP context ignores --device entirely: llama.cpp grabs the first GPU
-    // backend it finds unless MTMD_BACKEND_DEVICE names one (see runstate::start).
+    // encoder is placed separately: unset, llama.cpp follows the first entry of
+    // --device (v0.4.1) or grabs the first GPU backend it finds, and
+    // MTMD_BACKEND_DEVICE overrides both (see runstate::start).
     in-out property <[string]> mmproj_dev_labels;
     in-out property <[string]> mmproj_dev_values;
     in-out property <int> mmproj_dev_index: 0;
@@ -440,6 +441,13 @@ export global AppState {
     in-out property <bool> start_with_windows: false;
     in-out property <bool> start_minimized_to_tray: true;
     in-out property <bool> start_server_on_launch: false;
+    // Log rotation (settings.ini `LogRotate` / `LogRotateKb`, src/settings.rs):
+    // the toggle persists on click like the ones above; the threshold is a
+    // text field (see "Numeric fields are text" in the README) committed on
+    // Enter or focus loss through `commit_log_rotate_kb`, which parses it and
+    // pushes the stored value back when the text is not a size.
+    in-out property <bool> log_rotate: true;
+    in-out property <string> log_rotate_kb: "1024";
 
     // ── Status / toast ───────────────────────────────────────────────
     in-out property <string> status_text: "";
@@ -582,4 +590,8 @@ export global AppState {
     callback toggle_start_with_windows();
     callback toggle_start_minimized();
     callback toggle_start_server_on_launch();
+    callback toggle_log_rotate();
+    // Fired on Enter / focus loss in the threshold field; Rust parses
+    // `log_rotate_kb` and persists it, or restores the stored value.
+    callback commit_log_rotate_kb();
 }

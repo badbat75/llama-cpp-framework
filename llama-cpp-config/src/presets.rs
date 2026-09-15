@@ -59,11 +59,13 @@ pub struct Preset {
     pub mmproj: String,
     /// GPU-offload the multimodal projector, the mmproj/CLIP image encoder
     /// (--mmproj-offload / --no-mmproj-offload). None/true = llama.cpp's default
-    /// (offloaded). Note WHICH GPU is not this flag's business and not --device's
-    /// either: the CLIP context grabs the first GPU backend it finds unless
-    /// `MTMD_BACKEND_DEVICE` names one (server.ini `MmprojDevice`). Turn this off
-    /// to keep the encoder on CPU entirely: it only runs on image requests, so a
-    /// text-mostly workload pays nothing but the VRAM it was holding.
+    /// (offloaded). Note WHICH GPU is not this flag's business: since v0.4.1
+    /// (#28390) the encoder follows the FIRST device of `device` (`--device`), and
+    /// with no device pinned it grabs the first GPU backend it finds, as it always
+    /// did up to v0.4.0; server.ini `MmprojDevice` (`-mmdev`, ridden as the env
+    /// `MTMD_BACKEND_DEVICE`) overrides both. Turn this off to keep the encoder on
+    /// CPU entirely: it only runs on image requests, so a text-mostly workload
+    /// pays nothing but the VRAM it was holding.
     pub mmproj_offload: Option<bool>,
     /// Minimum / maximum tokens a single image may take on vision models with
     /// DYNAMIC resolution (--image-min-tokens / --image-max-tokens). `None` = omit
@@ -97,7 +99,12 @@ pub struct Preset {
     // how a GPU ends up looking "assigned" to the draft while never drafting a
     // token. A SEPARATE MTP head file (e.g. gemma4-assistant, n_layer=0) is the
     // case where they do apply, and there, pin to ONE device: the multi-device
-    // "auto" split crashes those heads.
+    // "auto" split crashes those heads. Since v0.4.1 (#28390) an EMPTY
+    // `device_draft` inherits the preset's own `device` list instead of meaning
+    // "every device" (`common_base_params_to_speculative`), so a preset pinned to
+    // one GPU pins its draft file with it, and a draft on exactly one device is
+    // forced to the layer split even under an inherited `split-mode = tensor`.
+    // Up to v0.4.0 the key had to be written for the pin to reach the draft.
     pub model_draft: String,
     pub spec_type: String,
     pub spec_draft_n_max: Option<i32>,
@@ -700,8 +707,9 @@ pub fn render_section(p: &Preset) -> String {
     out.push_str(
         "; mmproj-offload = false keeps the image encoder on CPU. It is NOT placed by\r\n",
     );
-    out.push_str("; `device`: llama.cpp puts the encoder on the first GPU backend it finds\r\n");
-    out.push_str("; unless server.ini MmprojDevice (env MTMD_BACKEND_DEVICE) names one.\r\n");
+    out.push_str("; this key: since v0.4.1 the encoder follows the FIRST entry of `device`, and\r\n");
+    out.push_str("; with no device pinned it takes the first GPU backend found; server.ini\r\n");
+    out.push_str("; MmprojDevice (env MTMD_BACKEND_DEVICE) overrides both.\r\n");
     emit_bool(&mut out, "mmproj-offload", p.mmproj_offload);
     out.push_str("; image-min-tokens / image-max-tokens bound the tokens ONE image takes on\r\n");
     out.push_str("; DYNAMIC-resolution vision models (Qwen-VL wants >= 1024 for grounding\r\n");

@@ -541,12 +541,16 @@ export component AppTray inherits SystemTrayIcon {
     icon: root.server_running ? @image-url("llama-on.png") : @image-url("llama.png");
     tooltip: root.server_running ? "llama.cpp: server running" : "llama.cpp: server stopped";
     callback open_window();
+    // The same View-logs window the Server tab opens (AppState.view_logs,
+    // wired in gui/tray.rs), reachable without surfacing the configurator.
+    callback open_log();
     callback start_server();
     callback stop_server();
     callback quit_app();
     clicked => { root.open_window(); }
     Menu {
         MenuItem { title: "Open configurator"; activated => { root.open_window(); } }
+        MenuItem { title: "Open log"; activated => { root.open_log(); } }
         MenuSeparator { }
         // Start only when stopped; Stop only when running. The menu tree is
         // reactive, so it rebuilds when server_running changes.

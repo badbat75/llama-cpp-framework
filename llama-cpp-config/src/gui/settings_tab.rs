@@ -11,9 +11,16 @@
 //! "start minimized" together ARE the HKCU Run registry entry (`startup.rs`:
 //! presence + whether the stored command carries `--minimized`; no INI mirror
 //! that Task Manager's Startup panel could desync), while "start llama-server
-//! on launch" lives in settings.ini (`settings.rs`). `refresh` re-reads all of
-//! them, so Refresh/F5 picks up out-of-band changes like any other disk-backed
-//! state.
+//! on launch" and the log-rotation pair live in settings.ini (`settings.rs`).
+//! `refresh` re-reads all of them, so Refresh/F5 picks up out-of-band changes
+//! like any other disk-backed state.
+//!
+//! The rotation threshold is the tab's one text field, and it does not persist
+//! per keystroke: `commit_log_rotate_kb` fires on Enter and on focus loss (the
+//! page's `changed has-focus` handler), parses the digits-only text, and on an
+//! empty or overflowing value restores the stored one instead of writing a
+//! default the user never typed. A commit that changes nothing writes nothing,
+//! so tabbing through the field leaves the footer alone.
 
 use super::*;
 
@@ -32,7 +39,28 @@ pub(super) fn refresh(app: &AppWindow) {
     } else {
         true
     });
-    s.set_start_server_on_launch(settings::load().start_server_on_launch);
+    let cfg = settings::load();
+    s.set_start_server_on_launch(cfg.start_server_on_launch);
+    s.set_log_rotate(cfg.log_rotate);
+    s.set_log_rotate_kb(SharedString::from(cfg.log_rotate_kb.to_string()));
+}
+
+/// Persist one settings.ini change read-modify-write (so no toggle's save can
+/// wipe another key), reporting the outcome in the footer; on a failed write
+/// the caller gets `false` and pushes the real state back into the property.
+fn persist_settings(app: &AppWindow, edit: impl FnOnce(&mut settings::Settings), ok: String) -> bool {
+    let mut cfg = settings::load();
+    edit(&mut cfg);
+    match settings::save(&cfg) {
+        Ok(()) => {
+            set_status(app, ok, false);
+            true
+        }
+        Err(e) => {
+            set_status(app, format!("Saving settings.ini failed: {e}"), true);
+            false
+        }
+    }
 }
 
 /// Rewrite (or delete) the Run entry from the two startup properties as they
@@ -100,25 +128,70 @@ pub(super) fn wire(app: &AppWindow) {
                 };
                 let s = app.global::<AppState>();
                 let want = s.get_start_server_on_launch();
-                // Read-modify-write so a future settings.ini key can't be wiped
-                // by this toggle's save.
-                let mut cfg = settings::load();
-                cfg.start_server_on_launch = want;
-                match settings::save(&cfg) {
-                    Ok(()) => set_status(
-                        &app,
-                        if want {
-                            "llama-server will start when llama-cpp-config launches.".into()
-                        } else {
-                            "llama-server will no longer start automatically.".into()
-                        },
-                        false,
-                    ),
-                    Err(e) => {
-                        s.set_start_server_on_launch(settings::load().start_server_on_launch);
-                        set_status(&app, format!("Saving settings.ini failed: {e}"), true);
-                    }
+                let ok = if want {
+                    "llama-server will start when llama-cpp-config launches."
+                } else {
+                    "llama-server will no longer start automatically."
+                };
+                if !persist_settings(&app, |c| c.start_server_on_launch = want, ok.into()) {
+                    s.set_start_server_on_launch(settings::load().start_server_on_launch);
                 }
             });
+    }
+    {
+        let app_weak = app.as_weak();
+        app.global::<AppState>().on_toggle_log_rotate(move || {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let s = app.global::<AppState>();
+            let want = s.get_log_rotate();
+            let ok = if want {
+                "llama-server.log will be filed away when the server stops."
+            } else {
+                "llama-server.log will grow across runs."
+            };
+            if !persist_settings(&app, |c| c.log_rotate = want, ok.into()) {
+                s.set_log_rotate(settings::load().log_rotate);
+            }
+        });
+    }
+    {
+        let app_weak = app.as_weak();
+        app.global::<AppState>().on_commit_log_rotate_kb(move || {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let s = app.global::<AppState>();
+            let text = s.get_log_rotate_kb();
+            let stored = settings::load().log_rotate_kb;
+            // The field is digits-only (`InputType.number`), so what can still
+            // fail is an empty field or an overflow; both restore the stored
+            // value rather than persist a default the user did not type.
+            let Some(kb) = crate::ini::parse_int(text.trim()).and_then(|n| u32::try_from(n).ok())
+            else {
+                s.set_log_rotate_kb(SharedString::from(stored.to_string()));
+                if !text.trim().is_empty() {
+                    set_status(&app, format!("'{text}' is not a size in KB."), true);
+                }
+                return;
+            };
+            if kb == stored {
+                // Focus loss with nothing typed: no write, no footer noise.
+                s.set_log_rotate_kb(SharedString::from(kb.to_string()));
+                return;
+            }
+            let ok = if kb == 0 {
+                "Every non-empty log will be filed away.".to_string()
+            } else {
+                format!("Logs larger than {kb} KB will be filed away.")
+            };
+            if persist_settings(&app, |c| c.log_rotate_kb = kb, ok) {
+                // Normalize what was typed (leading zeros) to what was stored.
+                s.set_log_rotate_kb(SharedString::from(kb.to_string()));
+            } else {
+                s.set_log_rotate_kb(SharedString::from(stored.to_string()));
+            }
+        });
     }
 }

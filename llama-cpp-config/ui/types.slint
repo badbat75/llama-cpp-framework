@@ -169,7 +169,8 @@ export struct ServerForm {
     // `device` + `tensor_split` are written by the GPU distribution table
     // (GpuSplitTable), not typed: --tensor-split is positional over --device, so
     // the two only make sense edited together. `mmproj_device` is separate on
-    // purpose: the image encoder ignores --device (see server_cfg.rs).
+    // purpose: the image encoder is placed on its own, following the first
+    // --device entry only since v0.4.1 (see server_cfg.rs).
     device: string,
     split_mode: string,
     tensor_split: string,
