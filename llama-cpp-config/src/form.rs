@@ -219,6 +219,9 @@ pub fn preset_to_form(p: &presets::Preset) -> PresetForm {
         repeat_penalty_default: p.repeat_penalty.is_none(),
         presence_penalty: txt(p.presence_penalty),
         presence_penalty_default: p.presence_penalty.is_none(),
+        // Tri-state like reasoning_preserve: None is "omit the flag", a value
+        // of its own, so no fallback to `d`.
+        backend_sampling: tri_state(p.backend_sampling),
         chat_template_kwargs: p.chat_template_kwargs.clone().into(),
     }
 }
@@ -372,6 +375,9 @@ pub fn form_to_preset(f: &PresetForm) -> presets::Preset {
         } else {
             ini::parse_float(f.presence_penalty.as_str())
         },
+        // "default" → None: omit the key. Never `Some(s == "on")`: that would
+        // write `backend-sampling = false` into every preset that never asked.
+        backend_sampling: tri_bool(f.backend_sampling.as_str()),
         chat_template_kwargs: f.chat_template_kwargs.to_string(),
     }
 }
@@ -591,9 +597,38 @@ mod tests {
             min_p: Some(0.05),
             repeat_penalty: Some(1.1),
             presence_penalty: Some(0.5),
+            backend_sampling: Some(true),
             chat_template_kwargs: r#"{"enable_thinking":true}"#.into(),
         };
         assert_eq!(round_trip(&p), p);
+    }
+
+    // backend-sampling is the third tri-state (after reasoning-preserve and
+    // flash-attn) and the one where the collapse would be least visible: the
+    // flag has no negated form, so `Some(false)` and `None` launch identically
+    // and a form that turned "default" into "off" would corrupt every preset's
+    // INI without changing a single argv. Pin all three states and the
+    // SegmentedControl spellings.
+    #[test]
+    fn backend_sampling_keeps_all_three_states_apart() {
+        for state in [None, Some(true), Some(false)] {
+            let p = Preset {
+                backend_sampling: state,
+                ..Preset::default()
+            };
+            assert_eq!(round_trip(&p).backend_sampling, state, "state {state:?}");
+        }
+        let spelling = |state| {
+            preset_to_form(&Preset {
+                backend_sampling: state,
+                ..Preset::default()
+            })
+            .backend_sampling
+            .to_string()
+        };
+        assert_eq!(spelling(None), "default");
+        assert_eq!(spelling(Some(true)), "on");
+        assert_eq!(spelling(Some(false)), "off");
     }
 
     // "0 disables, -1 = no limit": the documented --cache-ram sentinels must

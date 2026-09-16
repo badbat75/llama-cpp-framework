@@ -318,6 +318,39 @@ pub struct Preset {
     pub min_p: Option<f64>,
     pub repeat_penalty: Option<f64>,
     pub presence_penalty: Option<f64>,
+    /// Run the sampler chain on the model's backend, i.e. on the GPU that holds
+    /// the logits, instead of copying every logit row back to the host and
+    /// sampling there (--backend-sampling / -bs, experimental, llama.cpp #17004).
+    /// `None` = omit the flag, llama.cpp's own default (off).
+    ///
+    /// A tri-state for shape, not for the launch line: the flag has NO negated
+    /// form (`--no-backend-sampling` does not exist, unlike the draft-side
+    /// `--no-spec-draft-backend-sampling`), and llama.cpp's preset reader drops a
+    /// value-less flag whose value is falsey (`common_preset::to_args`), so
+    /// `false` and `None` reach the child as the same argv. `Some(false)` is kept
+    /// so the INI can say "considered and declined" and so a future negated flag
+    /// slots in without a migration; `Some(true)` is the only value that changes
+    /// anything today.
+    ///
+    /// What moves is the per-token round trip: on a 27B model the logits are
+    /// ~150k floats per output, and with a CPU sampler they cross PCIe every
+    /// token before `top_k`/`top_p`/`min_p`/`temp`/penalties/`dist` run on the
+    /// host. Backend-capable samplers (`src/llama-sampler.cpp`, the ones with a
+    /// `backend_apply`): greedy, dist, top-k, top-p, min-p, temp / temp-ext,
+    /// penalties, logit-bias. Anything else in the chain (typical, xtc,
+    /// mirostat, top-n-sigma, dry, adaptive-p) FALLS BACK to CPU sampling for
+    /// the whole chain, silently. Three things switch it off entirely, and only
+    /// the first two say so: a grammar / JSON schema (`common_sampler_init`
+    /// warns `backend sampling is not compatible with grammar, disabling`), a
+    /// `reasoning_budget` (same warning, `reasoning budget`), and
+    /// `split-mode = tensor` (`llama-context.cpp`: `not supported with
+    /// SPLIT_MODE_TENSOR; using CPU`, once per process). A request asking for
+    /// pre-sampling `n_probs` also takes the CPU path for that request.
+    ///
+    /// The draft side is a DIFFERENT flag with the opposite default:
+    /// `--spec-draft-backend-sampling` is ON since #23287, so an MTP/DFlash
+    /// drafter already samples on the backend whatever this key says.
+    pub backend_sampling: Option<bool>,
     pub chat_template_kwargs: String,
 }
 
@@ -382,6 +415,7 @@ impl Default for Preset {
             min_p: None,
             repeat_penalty: None,
             presence_penalty: None,
+            backend_sampling: None,
             chat_template_kwargs: String::new(),
         }
     }
@@ -444,6 +478,7 @@ impl Preset {
             min_p: k.get("min-p").and_then(|v| ini::parse_float(v)),
             repeat_penalty: k.get("repeat-penalty").and_then(|v| ini::parse_float(v)),
             presence_penalty: k.get("presence-penalty").and_then(|v| ini::parse_float(v)),
+            backend_sampling: getb("backend-sampling"),
             chat_template_kwargs: get("chat-template-kwargs"),
         }
     }
@@ -864,6 +899,15 @@ pub fn render_section(p: &Preset) -> String {
     emit_f64(&mut out, "min-p", p.min_p);
     emit_f64(&mut out, "repeat-penalty", p.repeat_penalty);
     emit_f64(&mut out, "presence-penalty", p.presence_penalty);
+    out.push_str("; backend-sampling runs the sampler chain on the GPU that holds the logits\r\n");
+    out.push_str("; instead of copying them to the host every token (experimental). Omit the\r\n");
+    out.push_str("; key = llama.cpp's default (off); false is written but the flag has no\r\n");
+    out.push_str("; negated form, so it launches exactly like the omitted key. Falls back to\r\n");
+    out.push_str("; CPU sampling, silently, when the chain holds a sampler without a backend\r\n");
+    out.push_str("; kernel (typical, xtc, mirostat, top-n-sigma, dry, adaptive-p), and is\r\n");
+    out.push_str("; disabled outright by a grammar / JSON schema, a reasoning-budget, or\r\n");
+    out.push_str("; split-mode = tensor.\r\n");
+    emit_bool(&mut out, "backend-sampling", p.backend_sampling);
 
     out.push_str("\r\n; Chat template kwargs\r\n");
     emit_str(&mut out, "chat-template-kwargs", &p.chat_template_kwargs);
@@ -1239,6 +1283,10 @@ mod tests {
             min_p: Some(0.05),
             repeat_penalty: Some(1.1),
             presence_penalty: Some(0.5),
+            // Some(false) for the same reason as reasoning_preserve above: the
+            // INI must keep `false` apart from "key absent" even though the two
+            // launch identically today (the flag has no negated form).
+            backend_sampling: Some(false),
             chat_template_kwargs: r#"{"enable_thinking":true}"#.into(),
         };
 

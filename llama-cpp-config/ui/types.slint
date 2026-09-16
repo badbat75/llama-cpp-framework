@@ -128,6 +128,11 @@ export struct PresetForm {
     repeat_penalty_default: bool,
     presence_penalty: string,
     presence_penalty_default: bool,
+    // --backend-sampling, a TRI-state carried as a string like flash_attn and
+    // reasoning_preserve: "default" (omit the flag; llama.cpp's default is off),
+    // "on", "off". The flag has no negated form, so "off" launches exactly like
+    // "default"; it is kept as a state so the INI can record the choice.
+    backend_sampling: string,
     chat_template_kwargs: string,
 }
 

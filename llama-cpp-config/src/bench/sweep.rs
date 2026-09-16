@@ -104,8 +104,10 @@ type Setter = fn(&mut presets::Preset, &str) -> Result<(), String>;
 /// writes rather than growing a bare key.
 ///
 /// The list is the launch-affecting knobs: things a benchmark can actually
-/// resolve. Sampler and reasoning keys are deliberately absent (the live engine
-/// overrides the temperature anyway, and the synthetic one ignores both).
+/// resolve. Sampler VALUES and reasoning keys are deliberately absent (the live
+/// engine overrides the temperature anyway, and the synthetic one ignores both);
+/// `backend-sampling` is in because it moves WHERE the chain runs, not what it
+/// samples.
 pub const SWEEPABLE: &[(&str, Setter)] = &[
     // Speculative decoding.
     ("spec-draft-n-max", |p, v| {
@@ -200,6 +202,13 @@ pub const SWEEPABLE: &[(&str, Setter)] = &[
     }),
     ("mmproj-offload", |p, v| {
         p.mmproj_offload = boolean(v)?;
+        Ok(())
+    }),
+    // Sampling PLACEMENT, not a sampler value: it moves where the chain runs,
+    // which is exactly what the live engine measures (the synthetic one never
+    // samples and ignores it, like every other sampling key).
+    ("backend-sampling", |p, v| {
+        p.backend_sampling = boolean(v)?;
         Ok(())
     }),
 ];
@@ -1159,7 +1168,7 @@ mod tests {
                 ..Default::default()
             };
             let value = match *key {
-                "flash-attn" | "mmproj-offload" => "true",
+                "flash-attn" | "mmproj-offload" | "backend-sampling" => "true",
                 "device" => "CUDA0",
                 "tensor-split" => "3,1",
                 "split-mode" => "layer",

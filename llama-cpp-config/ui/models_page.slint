@@ -662,6 +662,15 @@ export component ModelsPage inherits HorizontalLayout {
                         placeholder: "e.g. 0.5";
                     }
                 }
+                LabeledField {
+                    label: "Backend sampling";
+                    hint: "--backend-sampling (experimental): run the sampler chain on the GPU that holds the logits instead of copying every logit row to the host and sampling there.\ndefault = omit the flag → llama.cpp default: off. off writes the key but launches exactly like default (the flag has no negated form); on is the one value that changes anything.\nOnly some samplers have a GPU kernel (greedy, dist, top-k, top-p, min-p, temp, penalties, logit-bias). Any other sampler in the chain (typical, xtc, mirostat, top-n-sigma, dry, adaptive-p) drops the WHOLE chain back to CPU sampling, silently.\nDisabled outright by a grammar / JSON schema and by a Thinking budget (llama-server warns at startup), and by split mode 'tensor' (one warning per process). A request asking for pre-sampling probabilities takes the CPU path for that request.\nThe draft side is a separate flag that is already ON by default (--spec-draft-backend-sampling): an MTP/DFlash drafter samples on the backend whatever this says.";
+                    SegmentedControl {
+                        options: ["default", "on", "off"];
+                        current: AppState.form.backend_sampling == "" ? "default" : AppState.form.backend_sampling;
+                        activated(value) => { AppState.form.backend_sampling = value; }
+                    }
+                }
             }
 
             SectionCard {
