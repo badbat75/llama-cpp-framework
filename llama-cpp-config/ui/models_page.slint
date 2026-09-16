@@ -7,7 +7,7 @@
 // Vision → Speculative decoding, then the FormActions row.
 
 import { LineEdit, ComboBox, CheckBox, Button, ListView, ScrollView, Palette } from "std-widgets.slint";
-import { SectionCard, LabeledField, InfoRow, SegmentedControl, MappedComboBox, EnumComboBox, AutoSlider, DefaultLineEdit, FormActions, SelectableRow, ListPanel, GpuSplitTable, TensorOverrideTable, Tokens, Options } from "components.slint";
+import { SectionCard, LabeledField, InfoRow, SegmentedControl, MappedComboBox, EnumComboBox, AutoSlider, DefaultLineEdit, FormActions, SelectableRow, ListPanel, GpuSplitTable, TensorOverrideTable, Tokens, Options, WrapText } from "components.slint";
 import { AppState } from "state.slint";
 
 export component ModelsPage inherits HorizontalLayout {
@@ -466,6 +466,11 @@ export component ModelsPage inherits HorizontalLayout {
 
             SectionCard {
                 heading: "KV cache";
+                if AppState.preset_kv_cache_warning != "" : WrapText {
+                    text: AppState.preset_kv_cache_warning;
+                    font_size: 12px;
+                    color: Tokens.err;
+                }
                 LabeledField {
                     label: "K-cache type";
                     hint: "KV cache quantization for K (--cache-type-k).\nLower = less VRAM but lower quality.\ndefault = omit the flag → llama.cpp default: f16.\nNote: Qwen3-Coder needs q8_0 for reliable tool calling; q4_0 makes it drop the <tool_call> wrapper.";

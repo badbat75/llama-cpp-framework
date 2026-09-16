@@ -446,6 +446,28 @@ pub(super) fn run(app: &AppWindow) {
         "",
         "the strip is about tensor mode only"
     );
+    // The KV-cache strip is the opposite case: computed in Rust
+    // (kv_cache::warning) and reached through AppWindow's `changed
+    // kv_cache_inputs` handler, which runs only when change handlers are
+    // processed. So this pins the wiring, the handler and the callback, not the
+    // rules (kv_cache.rs tests those): iq4_nl on these CUDA/ROCm devices lands on
+    // the CPU, and putting the types back clears the strip.
+    {
+        let original = st.get_form();
+        let mut f = original.clone();
+        f.cache_type_k = "iq4_nl".into();
+        f.cache_type_v = "iq4_nl".into();
+        st.set_form(f);
+        itest::mock_elapsed_time(std::time::Duration::from_millis(16));
+        assert!(
+            st.get_preset_kv_cache_warning().as_str().contains("on the CPU"),
+            "iq4_nl on CUDA/ROCm must warn, got {:?}",
+            st.get_preset_kv_cache_warning()
+        );
+        st.set_form(original);
+        itest::mock_elapsed_time(std::time::Duration::from_millis(16));
+        assert_eq!(st.get_preset_kv_cache_warning().as_str(), "");
+    }
     assert_eq!(
         st.get_preset_split_positions(),
         34,

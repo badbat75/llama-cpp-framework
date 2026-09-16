@@ -18,6 +18,7 @@ mod gui;
 mod http;
 mod ini;
 mod integrations;
+mod kv_cache;
 mod model_scan;
 mod net_ifaces;
 mod paths;

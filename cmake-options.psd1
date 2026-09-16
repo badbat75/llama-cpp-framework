@@ -45,6 +45,25 @@
         'GGML_CUDA=ON'
         'GGML_VULKAN=ON'
         'GGML_HIP=ON'
+        # The K-V cache type pairs that get a NATIVE FlashAttention vector
+        # kernel, in ggml-cuda and ggml-hip alike (the HIP backend compiles the
+        # same template instances). Upstream's default is
+        # q4_0-q4_0;q8_0-q8_0;f16-f16;bf16-bf16 (f16-f16 is added whatever the
+        # list says). A pair outside the list still runs on the GPU, but every
+        # decode step of 1-2 query tokens converts the whole used K and V to f16
+        # first (llama-server logs "no FlashAttention vector kernel compiled
+        # ... (slow)"), so a q5_0 or q5_1 cache, the steps between q4_0 and
+        # q8_0 the configurator offers, paid that on every such step. Batched steps
+        # (prefill, MTP verify batches of 3+) convert to f16 for every type and
+        # are unaffected. Cost measured on the 2026-09-07 build: ~80 s of nvcc
+        # and ~160 s of HIP clang per pair, +1.6 MB ggml-cuda.dll and +7 MB
+        # ggml-hip.dll per pair. Mixed pairs (q8_0 K with a q5 V) are NOT
+        # listed and still take the slow path. Commas, not semicolons: the
+        # value is split on either, and a comma cannot turn into a CMake list
+        # on the way through the command line. Changing the list changes a
+        # compile definition on EVERY ggml-cuda / ggml-hip source, so the first
+        # build after an edit recompiles both backends in full.
+        'GGML_CUDA_FA_QUANTS=q4_0-q4_0,q8_0-q8_0,q5_0-q5_0,q5_1-q5_1,bf16-bf16'
 
         # ── optimisation ──────────────────────────────────────────────
         # Link-time optimisation, for the targets under ggml/src only: that

@@ -67,8 +67,8 @@ use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel};
 
 use crate::form::{form_to_preset, preset_to_form, prune_inactive_draft_fields};
 use crate::{
-    devices, gpu_split, integrations, model_scan, net_ifaces, paths, presets, runstate, server_cfg,
-    server_form, server_version, settings, startup, tensor_override,
+    devices, gpu_split, integrations, kv_cache, model_scan, net_ifaces, paths, presets, runstate,
+    server_cfg, server_form, server_version, settings, startup, tensor_override,
 };
 
 slint::include_modules!();
@@ -560,6 +560,30 @@ fn refresh_file_options(app: &AppWindow, state: &Rc<RefCell<State>>) {
     models_tab::update_model_info(app);
 }
 
+/// Recompute the Models tab's KV-cache strip from the form, the server-wide
+/// device pin and the device probe (`kv_cache::warning`).
+fn refresh_kv_cache_warning(app: &AppWindow) {
+    let s = app.global::<AppState>();
+    let form = s.get_form();
+    let server_device = s.get_server_form().device;
+    let probed = devices::probed();
+    let warning = kv_cache::warning(&kv_cache::Input {
+        device: form.device.as_str(),
+        server_device: server_device.as_str(),
+        probed: &probed,
+        cache_type_k: form.cache_type_k.as_str(),
+        cache_type_v: form.cache_type_v.as_str(),
+        flash_attn: form.flash_attn.as_str(),
+        draft: s.get_draft_active().then_some((
+            form.spec_draft_type_k.as_str(),
+            form.spec_draft_type_v.as_str(),
+        )),
+    });
+    if s.get_preset_kv_cache_warning().as_str() != warning {
+        s.set_preset_kv_cache_warning(SharedString::from(warning));
+    }
+}
+
 /// Rebuild the two GPU-device dropdowns (the draft device and the image
 /// encoder's) from the cached `--list-devices` result (`devices::probed()`),
 /// recomputing each selected index against the current server.ini / form values.
@@ -603,6 +627,10 @@ fn refresh_device_options(app: &AppWindow) {
 /// weight edit changes no other row (see GpuSplitTable's binding note), so its
 /// handler updates the derived scalars and leaves the model alone.
 fn refresh_gpu_rows(app: &AppWindow) {
+    // Every path that re-projects the device pins (preset load, the probe
+    // landing, a GPU-table edit on either tab) passes through here, and the KV
+    // verdict depends on exactly those pins.
+    refresh_kv_cache_warning(app);
     let s = app.global::<AppState>();
     let devs = devices::probed();
     let (server_mode, preset_mode) = gpu_modes(app);

@@ -102,6 +102,20 @@ export component AppWindow inherits Window {
     // the user clicks into any widget.
     forward-focus: shortcuts;
 
+    // Everything `preset_kv_cache_warning` depends on that a widget edits
+    // without a Rust callback of its own (the cache combos bind two-way, flash
+    // attention is a SegmentedControl writing the form). Here, not on
+    // ModelsPage, because that page only exists while its tab is shown and a
+    // `changed` handler that is not instantiated never fires. The device pins are
+    // in the key too, although the GPU tables' own callbacks already recompute.
+    property <string> kv_cache_inputs: AppState.form.cache_type_k + "|" + AppState.form.cache_type_v
+        + "|" + AppState.form.spec_draft_type_k + "|" + AppState.form.spec_draft_type_v
+        + "|" + AppState.form.flash_attn + "|" + (AppState.draft_active ? "draft" : "")
+        + "|" + AppState.form.device + "|" + AppState.server_form.device;
+    changed kv_cache_inputs => {
+        AppState.kv_cache_inputs_changed();
+    }
+
     shortcuts := FocusScope {
         width: 100%;
         height: 100%;

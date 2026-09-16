@@ -301,6 +301,15 @@ pub(super) fn wire(app: &AppWindow, state: &Rc<RefCell<State>>) {
     }
     {
         let app_weak = app.as_weak();
+        app.global::<AppState>()
+            .on_kv_cache_inputs_changed(move || {
+                if let Some(app) = app_weak.upgrade() {
+                    refresh_kv_cache_warning(&app);
+                }
+            });
+    }
+    {
+        let app_weak = app.as_weak();
         let state = state.clone();
         app.global::<AppState>().on_draft_picked(move |index| {
             let Some(app) = app_weak.upgrade() else {

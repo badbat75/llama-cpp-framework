@@ -59,7 +59,14 @@ export global Options {
     // carried as the word default" mapping is in form.rs (both ways). The
     // split-mode combo is NOT here: its label/value rows live in Rust
     // (gpu_split::MODE_LABELS / MODE_VALUES) and are pushed into the tables.
-    out property <[string]> cache_types: ["default", "f32", "f16", "q8_0", "q5_0", "q4_0", "q4_1"];
+    // The types are every one llama.cpp accepts (`kv_cache_types`,
+    // common/arg.cpp), highest precision first. Accepted is not the same as
+    // runnable on a given GPU (iq4_nl has no CUDA/HIP FlashAttention kernel), so
+    // the Models tab checks the picked pair against the preset's devices:
+    // src/kv_cache.rs, whose TYPES this list must equal after "default" (asserted
+    // by the e2e test, src/tests/ui_bindings.rs). There is no 6-bit K-quant cache
+    // type: q5_1 (6.0 bits per value) is the closest.
+    out property <[string]> cache_types: ["default", "f32", "f16", "bf16", "q8_0", "q5_1", "q5_0", "q4_1", "q4_0", "iq4_nl"];
     // -lm / --load-mode: how llama.cpp brings the weights in. These six are the
     // whole domain and they are MUTUALLY EXCLUSIVE: it is one enum, not the two
     // independent --mlock / --no-mmap bools it replaced in b10105. Mirrors
@@ -181,9 +188,11 @@ export component EnumComboBox inherits ComboBox {
     in property <[string]> options;
     in-out property <string> value;
     // `value`'s position in `options`. Slint has no array index-of and no loops
-    // inside functions, so this is an explicit scan bounded at 8 entries (the
-    // longest option list here is cache_types = 7); extend the chain if a list
-    // grows past 8. An out-of-range `options[i]` reads back as "" (never a real
+    // inside functions, so this is an explicit scan bounded at 12 entries (the
+    // longest option list here is cache_types = 10). A value past the last branch
+    // falls back to 0, i.e. the combo silently shows its FIRST entry, so the
+    // chain must cover the longest list: src/tests/binding_lint.rs fails when it
+    // does not. An out-of-range `options[i]` reads back as "" (never a real
     // `value`), so the tail branches stay inert.
     property <int> value_index: root.value == root.options[0] ? 0
         : root.value == root.options[1] ? 1
@@ -193,6 +202,10 @@ export component EnumComboBox inherits ComboBox {
         : root.value == root.options[5] ? 5
         : root.value == root.options[6] ? 6
         : root.value == root.options[7] ? 7
+        : root.value == root.options[8] ? 8
+        : root.value == root.options[9] ? 9
+        : root.value == root.options[10] ? 10
+        : root.value == root.options[11] ? 11
         : 0;
     model: root.options;
     current-index: root.value_index;

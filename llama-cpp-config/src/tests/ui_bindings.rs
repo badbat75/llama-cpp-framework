@@ -258,6 +258,24 @@ fn editable_widgets_track_model_after_edit() {
         "Options.load_modes (ui/components.slint) drifted from server_cfg::LOAD_MODES"
     );
 
+    // And for the KV-cache dropdowns: `kv_cache::warning` judges the types the
+    // combo offers, so a type added to one list and not the other is either
+    // unselectable or selectable with no kernel check behind it.
+    let slint_kv: Vec<String> = app
+        .global::<crate::gui::Options>()
+        .get_cache_types()
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    let rust_kv: Vec<String> = std::iter::once("default")
+        .chain(crate::kv_cache::TYPES.iter().copied())
+        .map(String::from)
+        .collect();
+    assert_eq!(
+        slint_kv, rust_kv,
+        "Options.cache_types (ui/components.slint) drifted from \"default\" + kv_cache::TYPES"
+    );
+
     // ── Server tab (shown by default) ────────────────────────────────
     // LineEdit (inside DefaultLineEdit): `text <=> AppState.server_form.port`.
     // Every numeric field of both forms is one of these since v1.5.0, integers

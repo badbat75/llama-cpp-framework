@@ -240,6 +240,63 @@ fn no_current_value_bindings_use_enum_combo_box_instead() {
     );
 }
 
+/// `EnumComboBox` finds `value` in `options` through an explicit ternary chain
+/// (Slint has no index-of), and a value past its last branch falls back to index
+/// 0: the combo SHOWS the first entry ("default") while the form still holds the
+/// real value, and nothing errors. Adding `bf16`, `q5_1` and `iq4_nl` took `cache_types`
+/// from 7 entries to 10 over an 8-branch chain, which is exactly that. So every
+/// string-array option list in ui/ (the `Options` globals and inline `options:`
+/// literals) must fit the chain.
+#[test]
+fn enum_combo_box_index_chain_covers_every_option_list() {
+    let ui = Path::new(env!("CARGO_MANIFEST_DIR")).join("ui");
+    let components =
+        std::fs::read_to_string(ui.join("components.slint")).expect("read components.slint");
+    let chain = components
+        .split("property <int> value_index:")
+        .nth(1)
+        .and_then(|rest| rest.split(';').next())
+        .expect("EnumComboBox value_index declaration");
+    let branches = chain.matches("root.options[").count();
+
+    let mut longest = (0, String::new());
+    for entry in std::fs::read_dir(&ui).expect("ui/ dir") {
+        let path = entry.expect("dir entry").path();
+        if !path.extension().is_some_and(|e| e == "slint") {
+            continue;
+        }
+        let source = std::fs::read_to_string(&path).expect("read .slint");
+        for (n, line) in source.lines().enumerate() {
+            let code = strip_line_comment(line);
+            // `<[string]>` opens the literal after it too, so counting quotes from
+            // the first `[` is still counting only the list's own entries.
+            let is_list = code.contains("<[string]>") || code.trim_start().starts_with("options:");
+            let (Some(open), Some(close)) = (code.find('['), code.rfind(']')) else {
+                continue;
+            };
+            if !is_list || close < open {
+                continue;
+            }
+            let entries = code[open..close].matches('"').count() / 2;
+            if entries > longest.0 {
+                let file = path.file_name().unwrap().to_string_lossy();
+                longest = (entries, format!("{file}:{}", n + 1));
+            }
+        }
+    }
+    assert!(
+        longest.0 >= 10,
+        "expected cache_types (10 entries) among the lists, longest {longest:?}"
+    );
+    assert!(
+        branches >= longest.0,
+        "EnumComboBox's value_index chain has {branches} branches but {} has {} options: \
+         extend the chain in ui/components.slint",
+        longest.1,
+        longest.0
+    );
+}
+
 // ── Glyph coverage ───────────────────────────────────────────────────────
 
 /// Non-ASCII codepoints the UI may draw with the DEFAULT font. Every one is in

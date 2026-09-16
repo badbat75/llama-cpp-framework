@@ -201,6 +201,13 @@ export global AppState {
     // everything it writes), but that value would fail the model's LOAD, so it
     // is worth saying out loud rather than at the next launch.
     in-out property <string> preset_tensor_warning;
+    // Non-empty when a KV cache the preset builds (the model's, or the draft's)
+    // has no FlashAttention kernel on a backend it runs on, has none compiled
+    // natively for its K-V pair, or cannot load at all (quantized V with flash
+    // attention off). Computed in Rust (src/kv_cache.rs) because it needs the
+    // device list parsed and the probe; recomputed on `kv_cache_inputs_changed`
+    // and whenever the GPU rows are rebuilt.
+    in-out property <string> preset_kv_cache_warning;
     // The option models behind every row's two dropdowns. The KIND list is shared
     // by both tables (canned patterns; last entry = "Custom regex…", the only one
     // that reveals the pattern's text field). The DEVICE list is NOT: it is the
@@ -534,6 +541,9 @@ export global AppState {
     callback filter_dialog_models(string);
     // Recompute the "Model info" box from the currently selected model file.
     callback model_changed();
+    // Recompute `preset_kv_cache_warning`: fired by AppWindow when a cache type,
+    // flash attention, the draft state or either device pin changes.
+    callback kv_cache_inputs_changed();
     // A row was picked in the draft-model dropdown. The policy (set model_draft +
     // spec_type from the parallel arrays, auto-pin the draft device: the gemma4
     // MTP-crash workaround) lives in Rust (gui/models_tab.rs) where it is
