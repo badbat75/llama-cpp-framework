@@ -56,14 +56,19 @@ pub(super) fn run(app: &AppWindow) {
     // the call-site wiring (`save()`'s first line, both sides): deleting
     // either call used to pass the whole suite, silently regressing the
     // v1.2.11 reload-truncated guard.
-    let mut form = st.get_form();
+    //
+    // From a NEW preset's form, not the blank editor's: the blank struct has every
+    // "default" box unticked over empty text, which the numeric refusal (tested
+    // below) would reject before `presets::save` is ever reached.
+    let mut form = crate::form::preset_to_form(&crate::presets::Preset::default());
     form.id = "hostile".into();
     form.model = r"C:\Models #1\m.gguf".into();
     st.set_form(form);
     st.invoke_save_preset();
     assert!(
-        st.get_status_is_error(),
-        "a `#` model path must be rejected by presets::save"
+        st.get_status_is_error() && !st.get_status_text().contains("Not saved:"),
+        "a `#` model path must be rejected by presets::save: {}",
+        st.get_status_text()
     );
     assert!(
         !crate::paths::presets_ini().exists(),
@@ -84,7 +89,7 @@ pub(super) fn run(app: &AppWindow) {
 
     // ── Save: reload + reselect + re-baseline ────────────────────────────
     let model_path = dir.path().join("models").join("e2e.gguf");
-    let mut form = st.get_form();
+    let mut form = crate::form::preset_to_form(&crate::presets::Preset::default());
     form.id = "e2e".into();
     form.model = model_path.to_string_lossy().as_ref().into();
     st.set_form(form);
@@ -106,6 +111,31 @@ pub(super) fn run(app: &AppWindow) {
         !st.get_preset_dirty(),
         "save must re-baseline the form (Save/Revert disabled)"
     );
+
+    // ── A mistyped integer refuses the save instead of dropping the key ──
+    // `form_to_preset` reads unparseable text as unset, and an unset ctx-size is
+    // the model's TRAINED context: a preset saved that way loads at 262144 and
+    // pages. 245760 typed next to the old value overflows i32.
+    let mut form = st.get_form();
+    form.ctx_size = "196608245760".into();
+    form.ctx_size_default = false;
+    st.set_form(form);
+    st.invoke_save_preset();
+    assert!(
+        st.get_status_is_error() && st.get_status_text().contains("ctx-size = `196608245760`"),
+        "an overflowing ctx-size must be refused by name: {}",
+        st.get_status_text()
+    );
+    assert_eq!(
+        std::fs::read_to_string(crate::paths::presets_ini()).expect("presets.ini"),
+        ini,
+        "a refused save must leave presets.ini untouched"
+    );
+    assert!(
+        st.get_preset_dirty(),
+        "the edit stays in the form to be corrected"
+    );
+    st.invoke_revert_preset();
 
     // ── Edit → Revert restores the on-disk value ─────────────────────────
     let mut form = st.get_form();

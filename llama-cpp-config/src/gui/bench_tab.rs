@@ -240,6 +240,15 @@ pub(super) fn refresh_preview(app: &AppWindow, state: &Rc<RefCell<State>>) {
             .collect::<Vec<_>>()
             .join("\n"),
     ));
+    // The preview is "exactly what Run will do", and Run will refuse.
+    let bad = invalid_numbers(&s, plan.mode);
+    if !bad.is_empty() {
+        s.set_bench_preview(SharedString::from(format!(
+            "Run will refuse: {}.",
+            bad.join("; ")
+        )));
+        return;
+    }
 
     let cfg = server_cfg::load();
     let all = presets::load_all();
@@ -322,10 +331,48 @@ fn refresh_runs(app: &AppWindow) {
     s.set_bench_run_index(idx);
 }
 
+/// The integer fields THIS mode reads whose text is not a number the run takes,
+/// one status-line phrase each; empty when the tab can run. Asked before
+/// `plan_from_ui`, whose fallback would otherwise run a mistyped Repetitions as
+/// the default 3, or drop a mistyped entry from Depths, without a word: a
+/// benchmark of a different workload than the one on screen. The fields of the
+/// other mode are hidden, so they are not held against this one.
+fn invalid_numbers(s: &AppState, mode: Mode) -> Vec<String> {
+    let mut out = Vec::new();
+    out.extend(ini::int_problem(
+        "Repetitions",
+        s.get_bench_reps().as_str(),
+        &ini::INT_POSITIVE,
+    ));
+    match mode {
+        Mode::Live => out.extend(ini::int_problem(
+            "Max output tokens",
+            s.get_bench_max_tokens().as_str(),
+            &ini::INT_POSITIVE,
+        )),
+        Mode::Synthetic => {
+            out.extend(bench::int_list_problem(
+                "Prompt lengths",
+                s.get_bench_prompt_lens().as_str(),
+            ));
+            out.extend(ini::int_problem(
+                "Generate",
+                s.get_bench_n_gen().as_str(),
+                &ini::INT_NON_NEGATIVE,
+            ));
+            out.extend(bench::int_list_problem(
+                "Depths",
+                s.get_bench_depths().as_str(),
+            ));
+        }
+    }
+    out
+}
+
 /// Read the whole tab into a `Plan`. Numbers ride as text (the same reason every
 /// other numeric field in this app does: a SpinBox edits itself on a stray
-/// scroll), so an unparseable field falls back to its default rather than
-/// failing the run.
+/// scroll), so an unparseable field falls back to its default here; Run and the
+/// preview ask `invalid_numbers` first, so that fallback is never what runs.
 fn plan_from_ui(app: &AppWindow, state: &Rc<RefCell<State>>) -> Plan {
     let s = app.global::<AppState>();
     let int = |v: SharedString, fallback: i32| ini::parse_int(v.as_str()).unwrap_or(fallback);
@@ -553,6 +600,12 @@ pub(super) fn wire(
                 return;
             };
             if app.global::<AppState>().get_bench_running() {
+                return;
+            }
+            let mode = Mode::from_str(app.global::<AppState>().get_bench_mode().as_str());
+            let bad = invalid_numbers(&app.global::<AppState>(), mode);
+            if !bad.is_empty() {
+                set_status(&app, format!("Not run: {}.", bad.join("; ")), true);
                 return;
             }
             let mut plan = plan_from_ui(&app, &state);

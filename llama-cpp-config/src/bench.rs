@@ -90,6 +90,7 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
+use crate::ini;
 use crate::presets::Preset;
 use crate::server_cfg::ServerConfig;
 
@@ -358,13 +359,34 @@ impl Default for Plan {
 
 /// Parse a comma-separated integer list ("2048, 8192"), dropping anything that
 /// is not a number. Empty in, empty out; the caller decides whether that is an
-/// error (a sweep with no lengths benchmarks nothing).
+/// error (a sweep with no lengths benchmarks nothing). Lenient, so both front
+/// ends ask `int_list_problem` first: a dropped entry is a length or a depth the
+/// run silently never measures.
 pub fn parse_int_list(s: &str) -> Vec<i32> {
     s.split(',')
         .map(str::trim)
         .filter(|p| !p.is_empty())
         .filter_map(|p| p.parse::<i32>().ok())
         .collect()
+}
+
+/// Why a comma-separated list of lengths or depths would not run as typed,
+/// naming the first bad entry, or `None`. Bad is what `parse_int_list` would
+/// drop (not a number, past `i32`) and, on top of it, a negative value, which
+/// that parser keeps but no token count can be. Empty entries are not problems:
+/// "2048," is the list the user meant, and an empty list is a real instruction
+/// (no prefill sweep, no `-d`).
+pub fn int_list_problem(label: &str, s: &str) -> Option<String> {
+    let bad = s
+        .split(',')
+        .map(str::trim)
+        .filter(|p| !p.is_empty())
+        .find(|p| ini::parse_int_in(p, &ini::INT_NON_NEGATIVE).is_none())?;
+    Some(format!(
+        "{label} = `{}`: `{bad}` is not a whole number from 0 to {}",
+        s.trim(),
+        i32::MAX
+    ))
 }
 
 /// Render an integer list back for the UI field.
@@ -1443,6 +1465,35 @@ mod tests {
             .position(|x| x == flag)
             .and_then(|i| a.get(i + 1))
             .cloned()
+    }
+
+    // A list entry `parse_int_list` would drop is a length or a depth the run
+    // never measures, so it is refused by value, and so is a negative one (kept
+    // by the parser, meaningless as a token count). Empty entries and an empty
+    // list are what the user meant, and 0 is a real depth.
+    #[test]
+    fn int_list_problem_names_the_entry_parse_int_list_drops() {
+        for ok in ["", " ", "2048,8192,32768", "0, 8192,", "2048"] {
+            assert_eq!(int_list_problem("Depths", ok), None, "{ok:?}");
+        }
+        for (bad, entry, dropped) in [
+            ("2048,abc", "abc", true),
+            ("2048, 8.192", "8.192", true),
+            ("99999999999", "99999999999", true),
+            ("-1,0", "-1", false),
+        ] {
+            let problem = int_list_problem("Prompt lengths", bad).expect(bad);
+            assert!(
+                problem.starts_with("Prompt lengths = ")
+                    && problem.contains(&format!("`{entry}` is not")),
+                "{problem}"
+            );
+            assert_eq!(
+                parse_int_list(bad).len() < bad.split(',').count(),
+                dropped,
+                "{bad:?}"
+            );
+        }
     }
 
     /// The prefill sweep of the default plan, the one most assertions want.

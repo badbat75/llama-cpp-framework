@@ -381,10 +381,18 @@ fn run_bench(c: BenchCmd) -> Result<()> {
     if let Some(max_tokens) = a.max_tokens {
         plan.max_tokens = max_tokens;
     }
+    // Refused by value rather than parsed leniently: an entry the parser drops
+    // is a length or a depth the sweep silently never measures.
     if let Some(lens) = a.prompt_lens.as_deref() {
+        if let Some(problem) = bench::int_list_problem("--prompt-lens", lens) {
+            anyhow::bail!(problem);
+        }
         plan.prompt_lens = bench::parse_int_list(lens);
     }
     if let Some(depths) = a.depths.as_deref() {
+        if let Some(problem) = bench::int_list_problem("--depths", depths) {
+            anyhow::bail!(problem);
+        }
         plan.depths = bench::parse_int_list(depths);
     }
     if let Some(n_gen) = a.n_gen {

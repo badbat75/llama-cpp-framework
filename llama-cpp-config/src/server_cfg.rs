@@ -23,7 +23,10 @@
 //!      on a stray mouse-wheel, and `binding_lint`'s `no_spinbox_widgets_anywhere`
 //!      fails the build if one returns
 //!   6. `config_to_form` + `form_to_config`   : src/server_form.rs (BOTH
-//!      directions; derive `<field>_default` via `is_none()` / `if <field>_default`)
+//!      directions; derive `<field>_default` via `is_none()` / `if <field>_default`).
+//!      An INTEGER text field also joins `server_form::int_fields` with the range
+//!      `form_to_config` reads it with, so Save refuses a mistyped value instead
+//!      of writing it as unset. Nothing fails if you skip this one
 //!   7. THREE spots in src/cli.rs             : the `ServerSet` flag field, a
 //!      `row(...)` in `show_lines`, and `ServerSet::apply` copying the flag into `cfg`
 //!   8. `runstate::server_args`               : map the field to its llama-server

@@ -5,6 +5,8 @@
 //! the `ui/types.slint` and `ui/models_page.slint` edits it's easy to forget)
 //! lives at the top of `presets.rs`.
 
+use std::ops::RangeInclusive;
+
 use slint::SharedString;
 
 use crate::gui::PresetForm;
@@ -238,12 +240,12 @@ pub fn form_to_preset(f: &PresetForm) -> presets::Preset {
         image_min_tokens: if f.image_min_tokens_default {
             None
         } else {
-            ini::parse_int(f.image_min_tokens.as_str()).filter(|v| *v > 0)
+            ini::parse_int_in(f.image_min_tokens.as_str(), &ini::INT_POSITIVE)
         },
         image_max_tokens: if f.image_max_tokens_default {
             None
         } else {
-            ini::parse_int(f.image_max_tokens.as_str()).filter(|v| *v > 0)
+            ini::parse_int_in(f.image_max_tokens.as_str(), &ini::INT_POSITIVE)
         },
         model_draft: f.model_draft.to_string(),
         spec_type: match f.spec_type.as_str() {
@@ -251,14 +253,16 @@ pub fn form_to_preset(f: &PresetForm) -> presets::Preset {
             other => other.to_string(),
         },
         // The integer fields are TEXT on the form (see `itxt`), so each one is
-        // re-parsed here: unparseable (or blank) text reads as unset, the same rule
-        // the float knobs below have always followed. The `> 0` filters that
-        // survive are the ones that were the SpinBox's `minimum`: the widget can
-        // no longer refuse the value, so this is where a 0 stops being a value.
+        // re-parsed here, inside the range that was the SpinBox's `minimum`
+        // (`INT_POSITIVE`) or none (`INT_ANY`). Text outside it reads as unset,
+        // which is only safe because the Save button asks `invalid_numbers` first
+        // and refuses: the lenient reading is for `prune_inactive_draft_fields`,
+        // which runs while the user is still typing. A range changed here must
+        // change in `int_fields` too (a test holds the two together).
         spec_draft_n_max: if f.spec_draft_n_max_default {
             None
         } else {
-            ini::parse_int(f.spec_draft_n_max.as_str()).filter(|v| *v > 0)
+            ini::parse_int_in(f.spec_draft_n_max.as_str(), &ini::INT_POSITIVE)
         },
         spec_draft_type_k: enum_or_empty(f.spec_draft_type_k.as_str()),
         spec_draft_type_v: enum_or_empty(f.spec_draft_type_v.as_str()),
@@ -278,7 +282,7 @@ pub fn form_to_preset(f: &PresetForm) -> presets::Preset {
         ctx_size: if f.ctx_size_default {
             None
         } else {
-            ini::parse_int(f.ctx_size.as_str()).filter(|v| *v > 0)
+            ini::parse_int_in(f.ctx_size.as_str(), &ini::INT_POSITIVE)
         },
         n_gpu_layers: if f.n_gpu_layers_auto {
             None
@@ -288,17 +292,17 @@ pub fn form_to_preset(f: &PresetForm) -> presets::Preset {
         parallel: if f.parallel_default {
             None
         } else {
-            ini::parse_int(f.parallel.as_str()).filter(|v| *v > 0)
+            ini::parse_int_in(f.parallel.as_str(), &ini::INT_POSITIVE)
         },
         batch_size: if f.batch_size_default {
             None
         } else {
-            ini::parse_int(f.batch_size.as_str()).filter(|v| *v > 0)
+            ini::parse_int_in(f.batch_size.as_str(), &ini::INT_POSITIVE)
         },
         ubatch_size: if f.ubatch_size_default {
             None
         } else {
-            ini::parse_int(f.ubatch_size.as_str()).filter(|v| *v > 0)
+            ini::parse_int_in(f.ubatch_size.as_str(), &ini::INT_POSITIVE)
         },
         cache_type_k: enum_or_empty(f.cache_type_k.as_str()),
         cache_type_v: enum_or_empty(f.cache_type_v.as_str()),
@@ -310,7 +314,7 @@ pub fn form_to_preset(f: &PresetForm) -> presets::Preset {
         cache_ram: if f.cache_ram_default {
             None
         } else {
-            ini::parse_int(f.cache_ram.as_str())
+            ini::parse_int_in(f.cache_ram.as_str(), &ini::INT_ANY)
         },
         jinja: Some(f.jinja),
         reasoning: f.reasoning.to_string(),
@@ -324,13 +328,13 @@ pub fn form_to_preset(f: &PresetForm) -> presets::Preset {
         reasoning_budget: if f.reasoning_budget_default {
             None
         } else {
-            ini::parse_int(f.reasoning_budget.as_str())
+            ini::parse_int_in(f.reasoning_budget.as_str(), &ini::INT_ANY)
         },
         reasoning_budget_message: f.reasoning_budget_message.to_string(),
         n_predict: if f.n_predict_default {
             None
         } else {
-            ini::parse_int(f.n_predict.as_str())
+            ini::parse_int_in(f.n_predict.as_str(), &ini::INT_ANY)
         },
         n_cpu_moe: if f.n_cpu_moe_auto {
             None
@@ -353,7 +357,7 @@ pub fn form_to_preset(f: &PresetForm) -> presets::Preset {
         top_k: if f.top_k_default {
             None
         } else {
-            ini::parse_int(f.top_k.as_str())
+            ini::parse_int_in(f.top_k.as_str(), &ini::INT_ANY)
         },
         top_p: if f.top_p_default {
             None
@@ -380,6 +384,91 @@ pub fn form_to_preset(f: &PresetForm) -> presets::Preset {
         backend_sampling: tri_bool(f.backend_sampling.as_str()),
         chat_template_kwargs: f.chat_template_kwargs.to_string(),
     }
+}
+
+/// Every INTEGER text field of the preset form, as (INI key, its "default" box,
+/// its text, the values it takes). The range is the one `form_to_preset` reads
+/// the same field with: `invalid_numbers_match_what_the_conversion_drops` holds
+/// the two together, and `every_integer_field_is_checked` holds this list to the
+/// `PresetForm` struct in ui/types.slint, so a new integer field that skips it
+/// fails a test instead of saving a mistyped number as an absent key.
+fn int_fields(f: &PresetForm) -> [(&'static str, bool, &str, RangeInclusive<i32>); 11] {
+    [
+        (
+            "image-min-tokens",
+            f.image_min_tokens_default,
+            f.image_min_tokens.as_str(),
+            ini::INT_POSITIVE,
+        ),
+        (
+            "image-max-tokens",
+            f.image_max_tokens_default,
+            f.image_max_tokens.as_str(),
+            ini::INT_POSITIVE,
+        ),
+        (
+            "spec-draft-n-max",
+            f.spec_draft_n_max_default,
+            f.spec_draft_n_max.as_str(),
+            ini::INT_POSITIVE,
+        ),
+        (
+            "ctx-size",
+            f.ctx_size_default,
+            f.ctx_size.as_str(),
+            ini::INT_POSITIVE,
+        ),
+        (
+            "parallel",
+            f.parallel_default,
+            f.parallel.as_str(),
+            ini::INT_POSITIVE,
+        ),
+        (
+            "batch-size",
+            f.batch_size_default,
+            f.batch_size.as_str(),
+            ini::INT_POSITIVE,
+        ),
+        (
+            "ubatch-size",
+            f.ubatch_size_default,
+            f.ubatch_size.as_str(),
+            ini::INT_POSITIVE,
+        ),
+        (
+            "cache-ram",
+            f.cache_ram_default,
+            f.cache_ram.as_str(),
+            ini::INT_ANY,
+        ),
+        (
+            "reasoning-budget",
+            f.reasoning_budget_default,
+            f.reasoning_budget.as_str(),
+            ini::INT_ANY,
+        ),
+        (
+            "n-predict",
+            f.n_predict_default,
+            f.n_predict.as_str(),
+            ini::INT_ANY,
+        ),
+        ("top-k", f.top_k_default, f.top_k.as_str(), ini::INT_ANY),
+    ]
+}
+
+/// The integer fields whose "default" box is unticked but whose text is not a
+/// number the key takes, one status-line phrase each; empty when the form can be
+/// saved. The Save button refuses on any, because `form_to_preset` would write
+/// each of them as an ABSENT key, and absent is an instruction of its own
+/// (`ctx-size` absent = the model's trained context; see `ini::int_problem`).
+pub fn invalid_numbers(f: &PresetForm) -> Vec<String> {
+    int_fields(f)
+        .into_iter()
+        .filter(|(_, default, ..)| !default)
+        .filter_map(|(key, _, text, range)| ini::int_problem(key, text, &range))
+        .collect()
 }
 
 /// `presets::prune_inactive_draft_keys` applied to the live FORM, returning the
@@ -412,6 +501,8 @@ pub fn prune_inactive_draft_fields(f: &mut PresetForm, embeds_mtp: bool) -> Vec<
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
+
     use super::*;
     use crate::presets::Preset;
 
@@ -475,6 +566,93 @@ mod tests {
     fn default_preset_round_trips() {
         let p = Preset::default();
         assert_eq!(round_trip(&p), p);
+    }
+
+    /// Put `text` in every integer field and untick every "default" box.
+    fn set_all_int_texts(f: &mut PresetForm, text: &str) {
+        for (field, default) in [
+            (&mut f.image_min_tokens, &mut f.image_min_tokens_default),
+            (&mut f.image_max_tokens, &mut f.image_max_tokens_default),
+            (&mut f.spec_draft_n_max, &mut f.spec_draft_n_max_default),
+            (&mut f.ctx_size, &mut f.ctx_size_default),
+            (&mut f.parallel, &mut f.parallel_default),
+            (&mut f.batch_size, &mut f.batch_size_default),
+            (&mut f.ubatch_size, &mut f.ubatch_size_default),
+            (&mut f.cache_ram, &mut f.cache_ram_default),
+            (&mut f.reasoning_budget, &mut f.reasoning_budget_default),
+            (&mut f.n_predict, &mut f.n_predict_default),
+            (&mut f.top_k, &mut f.top_k_default),
+        ] {
+            *field = text.into();
+            *default = false;
+        }
+    }
+
+    // The Save button's refusal and the conversion must agree field by field:
+    // what the refusal lets through reaches the INI as a key, and what it refuses
+    // is exactly what the conversion would have written as an ABSENT key. Read
+    // back through the rendered section, so there is no per-field accessor to
+    // drift. A field left out of `set_all_int_texts` keeps its ticked box, which
+    // the conversion drops and the unfiltered refusal passes: it fails here too.
+    #[test]
+    fn invalid_numbers_match_what_the_conversion_drops() {
+        for text in ["", "  ", "x", "0", "-1", "7", " 42 ", "1.5", "196608245760"] {
+            let mut f = preset_to_form(&Preset {
+                id: "t".into(),
+                ..Preset::default()
+            });
+            set_all_int_texts(&mut f, text);
+            let refused: BTreeSet<&str> = int_fields(&f)
+                .into_iter()
+                .filter(|(key, _, t, range)| ini::int_problem(key, t, range).is_some())
+                .map(|(key, ..)| key)
+                .collect();
+            let section = presets::render_section(&form_to_preset(&f));
+            let dropped: BTreeSet<&str> = int_fields(&f)
+                .into_iter()
+                .map(|(key, ..)| key)
+                .filter(|key| {
+                    let line = format!("{key} = ");
+                    !section.lines().any(|l| l.starts_with(&line))
+                })
+                .collect();
+            assert_eq!(refused, dropped, "text {text:?}");
+            assert_eq!(invalid_numbers(&f).len(), refused.len(), "text {text:?}");
+        }
+        // A ticked box is a choice, not a mistake: nothing to refuse.
+        let f = preset_to_form(&Preset::default());
+        assert!(invalid_numbers(&f).is_empty());
+    }
+
+    // `int_fields` has to list every integer field `PresetForm` has, read off
+    // ui/types.slint: each numeric text field there carries a `<name>_default`
+    // companion, and the five floats are the only ones that are not integers.
+    #[test]
+    fn every_integer_field_is_checked() {
+        let types = include_str!("../ui/types.slint");
+        let body = types
+            .split("export struct PresetForm {")
+            .nth(1)
+            .and_then(|rest| rest.split("\n}").next())
+            .expect("PresetForm in ui/types.slint");
+        let floats = [
+            "temp",
+            "top_p",
+            "min_p",
+            "repeat_penalty",
+            "presence_penalty",
+        ];
+        let in_struct: BTreeSet<String> = body
+            .lines()
+            .filter_map(|l| l.trim().strip_suffix("_default: bool,"))
+            .filter(|name| !floats.contains(name))
+            .map(str::to_string)
+            .collect();
+        let checked: BTreeSet<String> = int_fields(&PresetForm::default())
+            .into_iter()
+            .map(|(key, ..)| key.replace('-', "_"))
+            .collect();
+        assert_eq!(in_struct, checked);
     }
 
     // reasoning-preserve is the one TRI-state field: None (key omitted, i.e.

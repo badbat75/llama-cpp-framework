@@ -6,6 +6,8 @@
 //! (server_cfg.rs), and the CLI (three spots in cli.rs; the full checklist
 //! lives at the top of server_cfg.rs), not the GUI wiring.
 
+use std::ops::RangeInclusive;
+
 use slint::SharedString;
 
 use crate::gui::ServerForm;
@@ -60,6 +62,43 @@ fn parse_log_level(label: &str) -> i32 {
         .find(|(name, _)| *name == label)
         .map(|(_, n)| *n)
         .unwrap_or_else(|| server_cfg::ServerConfig::default().log_verbosity_or_default())
+}
+
+/// The ports a listener can bind.
+const PORT: RangeInclusive<i32> = 1..=65535;
+
+/// Every INTEGER text field of the server form, as (server.ini key, its "default"
+/// box, its text, the values it takes): the server twin of `form::int_fields`,
+/// with the ranges `form_to_config` reads the same fields with (the
+/// thread counts are sliders, and LogVerbosity a dropdown, so neither is here).
+fn int_fields(f: &ServerForm) -> [(&'static str, bool, &str, RangeInclusive<i32>); 3] {
+    [
+        ("Port", f.port_default, f.port.as_str(), PORT),
+        (
+            "CacheReuse",
+            f.cache_reuse_default,
+            f.cache_reuse.as_str(),
+            ini::INT_POSITIVE,
+        ),
+        (
+            "ModelsMax",
+            f.models_max_default,
+            f.models_max.as_str(),
+            ini::INT_ANY,
+        ),
+    ]
+}
+
+/// The integer fields whose "default" box is unticked but whose text is not a
+/// number the key takes, one status-line phrase each; empty when the form can
+/// be saved. The server twin of `form::invalid_numbers`: `form_to_config` would
+/// write each as unset, i.e. hand the key back to llama.cpp's default unasked.
+pub fn invalid_numbers(f: &ServerForm) -> Vec<String> {
+    int_fields(f)
+        .into_iter()
+        .filter(|(_, default, ..)| !default)
+        .filter_map(|(key, _, text, range)| ini::int_problem(key, text, &range))
+        .collect()
 }
 
 /// `ServerConfig` → the editable form. Materializes the display defaults the UI
@@ -144,14 +183,15 @@ pub fn config_to_form(cfg: &server_cfg::ServerConfig) -> ServerForm {
 /// hint lines).
 pub fn form_to_config(f: &ServerForm) -> server_cfg::ServerConfig {
     server_cfg::ServerConfig {
-        // The numerics are TEXT on the form (see `itxt`), so each is re-parsed:
-        // unparseable or blank reads as unset (⇒ llama.cpp's own default), and the
-        // range checks that were the SpinBox's `minimum`/`maximum` live here now:
-        // a LineEdit cannot refuse a value the way the SpinBox did.
+        // The numerics are TEXT on the form (see `itxt`), so each is re-parsed
+        // inside the range that was the SpinBox's `minimum`/`maximum`; text
+        // outside it reads as unset (⇒ llama.cpp's own default). The Save button
+        // asks `invalid_numbers` first and refuses instead, so that reading never
+        // reaches server.ini from the GUI. Same ranges as `int_fields`.
         port: if f.port_default {
             None
         } else {
-            ini::parse_int(f.port.as_str()).filter(|v| (1..=65535).contains(v))
+            ini::parse_int_in(f.port.as_str(), &PORT)
         },
         // Blank collapses to None like every optional string, matching what
         // the same input produces via `server set` / `load()`: a `Some("")`
@@ -175,7 +215,7 @@ pub fn form_to_config(f: &ServerForm) -> server_cfg::ServerConfig {
         cache_reuse: if f.cache_reuse_default {
             None
         } else {
-            ini::parse_int(f.cache_reuse.as_str()).filter(|v| *v > 0)
+            ini::parse_int_in(f.cache_reuse.as_str(), &ini::INT_POSITIVE)
         },
         threads_batch: if f.threads_batch_auto {
             None
@@ -186,7 +226,7 @@ pub fn form_to_config(f: &ServerForm) -> server_cfg::ServerConfig {
         models_max: if f.models_max_default {
             None
         } else {
-            ini::parse_int(f.models_max.as_str())
+            ini::parse_int_in(f.models_max.as_str(), &ini::INT_ANY)
         },
         // Blank ⇒ None (fall back to the default dir), same rule as hostname.
         models_dir: server_cfg::opt_nonblank(Some(f.models_dir.to_string())),
@@ -280,6 +320,68 @@ mod tests {
             opencode_api_key: Some("sk-test-key".into()),
         };
         assert_eq!(form_to_config(&config_to_form(&cfg)), cfg);
+    }
+
+    // The Save button's refusal and `form_to_config` agree on each integer field:
+    // refused exactly when the conversion would read the text as unset. Also
+    // pins the three ranges, `0` being a real ModelsMax (unlimited) and not a
+    // real Port or CacheReuse.
+    #[test]
+    fn invalid_numbers_match_what_the_conversion_drops() {
+        for text in [
+            "",
+            "x",
+            "0",
+            "-1",
+            "1",
+            "8080",
+            "65536",
+            "1.5",
+            "99999999999",
+        ] {
+            let form = ServerForm {
+                port: text.into(),
+                cache_reuse: text.into(),
+                models_max: text.into(),
+                models_dir: r"E:\models".into(),
+                ..Default::default()
+            };
+            let cfg = form_to_config(&form);
+            let dropped: Vec<&str> = [
+                ("Port", cfg.port),
+                ("CacheReuse", cfg.cache_reuse),
+                ("ModelsMax", cfg.models_max),
+            ]
+            .into_iter()
+            .filter(|(_, v)| v.is_none())
+            .map(|(key, _)| key)
+            .collect();
+            let refused: Vec<String> = invalid_numbers(&form);
+            assert_eq!(refused.len(), dropped.len(), "text {text:?}: {refused:?}");
+            for key in dropped {
+                assert!(
+                    refused.iter().any(|r| r.starts_with(key)),
+                    "text {text:?}: {key} dropped but not refused ({refused:?})"
+                );
+            }
+        }
+        let ticked = ServerForm {
+            port_default: true,
+            cache_reuse_default: true,
+            models_max_default: true,
+            ..Default::default()
+        };
+        assert!(
+            invalid_numbers(&ticked).is_empty(),
+            "a ticked box is a choice"
+        );
+        let zero = ServerForm {
+            port: "8080".into(),
+            cache_reuse: "256".into(),
+            models_max: "0".into(),
+            ..Default::default()
+        };
+        assert!(invalid_numbers(&zero).is_empty(), "ModelsMax 0 = unlimited");
     }
 
     /// The log level is the one field the form carries as a LABEL rather than as

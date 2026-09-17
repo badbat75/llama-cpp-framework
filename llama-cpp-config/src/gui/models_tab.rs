@@ -72,6 +72,20 @@ pub(super) fn wire(app: &AppWindow, state: &Rc<RefCell<State>>) {
                 set_status(&app, "Pick a model file before saving.".into(), true);
                 return;
             }
+            // Asked of the FORM, not of `p`: the conversion has already read a
+            // mistyped integer as an absent key, which is what is being refused.
+            let bad = crate::form::invalid_numbers(&s.get_form());
+            if !bad.is_empty() {
+                set_status(
+                    &app,
+                    format!(
+                        "Not saved: {}. Correct it, or tick its default box to leave the key unset.",
+                        bad.join("; ")
+                    ),
+                    true,
+                );
+                return;
+            }
             match presets::save(&p) {
                 Ok(()) => {
                     set_status(&app, format!("Saved preset [{}]", p.id), false);

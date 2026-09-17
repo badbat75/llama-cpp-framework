@@ -26,9 +26,13 @@
 //!   this file learned the difference the hard way (see the function).
 //! - `parse_int` / `parse_float` / `parse_bool` are the shared lenient scalar
 //!   parsers ("true"/"false" only for bools; anything else reads as unset).
+//!   Lenient is right for READING a file and wrong for SAVING a form: a form's
+//!   integer field goes through `int_problem` first, so a mistyped number is
+//!   refused instead of being written as an absent key.
 
 use std::collections::BTreeMap;
 use std::fs;
+use std::ops::RangeInclusive;
 use std::path::Path;
 
 // ── Types & readers ──────────────────────────────────────────────────────
@@ -423,6 +427,41 @@ pub fn parse_int(s: &str) -> Option<i32> {
     s.trim().parse().ok()
 }
 
+/// Every value an `i32` field can hold (`--cache-ram`'s `-1`, `--top-k`'s `0`).
+pub const INT_ANY: RangeInclusive<i32> = i32::MIN..=i32::MAX;
+/// Counts and sizes where `0` and below mean nothing (`--ctx-size`, `--parallel`).
+pub const INT_POSITIVE: RangeInclusive<i32> = 1..=i32::MAX;
+/// Lengths where `0` is a real value (llama-bench's `-n 0`, a depth of 0).
+pub const INT_NON_NEGATIVE: RangeInclusive<i32> = 0..=i32::MAX;
+
+/// `parse_int` restricted to `range`: what an integer FIELD of a form stands
+/// for, or `None` when its text is blank, not a number, past `i32`, or outside
+/// the range. Pairs with `int_problem`, which words the same verdict.
+pub fn parse_int_in(s: &str, range: &RangeInclusive<i32>) -> Option<i32> {
+    parse_int(s).filter(|v| range.contains(v))
+}
+
+/// Why `s` is not an integer in `range`, worded for the status line, or `None`
+/// when it is one. Every form that writes a config or starts a run asks this of
+/// each integer field it reads BEFORE converting, because the conversions are
+/// lenient on purpose (an unparseable field reads as unset, or as a default) and
+/// "unset" is a real instruction: a preset saved with an unparseable context
+/// has no `ctx-size` at all, and llama-server then loads the model's TRAINED
+/// context. Met on 2026-09-17: a context edit saved from the Models tab reached
+/// disk with no `ctx-size`, and the R9700 paged 1.5 GiB at 262144. The field is
+/// digits-only, so the text cannot have held a separator; a number typed next to
+/// the one already there (`196608245760`, past `i32`) is one way to that save.
+pub fn int_problem(label: &str, s: &str, range: &RangeInclusive<i32>) -> Option<String> {
+    if parse_int_in(s, range).is_some() {
+        return None;
+    }
+    let wanted = format!("a whole number from {} to {}", range.start(), range.end());
+    Some(match s.trim() {
+        "" => format!("{label} is empty, expected {wanted}"),
+        t => format!("{label} = `{t}` is not {wanted}"),
+    })
+}
+
 pub fn parse_float(s: &str) -> Option<f64> {
     // Accept comma as the decimal separator (e.g. "0,5" on a comma-decimal
     // keyboard layout like Italian/German/French) by normalizing to the
@@ -482,6 +521,41 @@ mod tests {
         assert_eq!(strip_inline_comment("x ;y"), "x");
         assert_eq!(strip_inline_comment("q8#0"), "q8");
         assert_eq!(strip_inline_comment("plain  "), "plain");
+    }
+
+    // The refusal names the field and the text, and it is exactly the complement
+    // of `parse_int_in`: overflow, blank, garbage, a fraction and an out-of-range
+    // value are refused; a padded number inside the range is not.
+    #[test]
+    fn int_problem_refuses_exactly_what_parse_int_in_rejects() {
+        let cases = [
+            ("196608245760", &INT_POSITIVE, false),
+            ("", &INT_POSITIVE, false),
+            ("  ", &INT_ANY, false),
+            ("abc", &INT_ANY, false),
+            ("1.5", &INT_ANY, false),
+            ("0", &INT_POSITIVE, false),
+            ("-1", &INT_NON_NEGATIVE, false),
+            ("0", &INT_NON_NEGATIVE, true),
+            ("-1", &INT_ANY, true),
+            (" 245760 ", &INT_POSITIVE, true),
+        ];
+        for (text, range, ok) in cases {
+            assert_eq!(parse_int_in(text, range).is_some(), ok, "{text:?}");
+            assert_eq!(
+                int_problem("ctx-size", text, range).is_none(),
+                ok,
+                "{text:?}"
+            );
+        }
+        assert_eq!(
+            int_problem("ctx-size", "196608245760", &INT_POSITIVE).unwrap(),
+            "ctx-size = `196608245760` is not a whole number from 1 to 2147483647"
+        );
+        assert_eq!(
+            int_problem("Port", " ", &(1..=65535)).unwrap(),
+            "Port is empty, expected a whole number from 1 to 65535"
+        );
     }
 
     #[test]

@@ -16,7 +16,22 @@ pub(super) fn wire(app: &AppWindow, tray: &AppTray, state: &Rc<RefCell<State>>) 
                 return;
             };
             let s = app.global::<AppState>();
-            let cfg = server_form::form_to_config(&s.get_server_form());
+            let form = s.get_server_form();
+            // Before the conversion, which reads a mistyped integer as unset:
+            // that would hand the key back to llama.cpp's default unasked.
+            let bad = server_form::invalid_numbers(&form);
+            if !bad.is_empty() {
+                set_status(
+                    &app,
+                    format!(
+                        "Not saved: {}. Correct it, or tick its default box to leave the key unset.",
+                        bad.join("; ")
+                    ),
+                    true,
+                );
+                return;
+            }
+            let cfg = server_form::form_to_config(&form);
             match server_cfg::save(&cfg) {
                 Ok(()) => {
                     // A RUNNING server keeps the config it was launched with

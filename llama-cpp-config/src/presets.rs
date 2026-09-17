@@ -18,8 +18,12 @@
 //!      (src\tests\binding_lint.rs `no_spinbox_widgets_anywhere`).
 //!   7. `preset_to_form` + `form_to_preset` : src/form.rs (BOTH directions; a
 //!      numeric goes out through `itxt`/`txt` and comes back through
-//!      `ini::parse_int`/`parse_float`, deriving `<field>_default` via `is_none()`
-//!      one way and `if <field>_default { None } else { … }` the other)
+//!      `ini::parse_int_in`/`parse_float`, deriving `<field>_default` via
+//!      `is_none()` one way and `if <field>_default { None } else { … }` the
+//!      other). An INTEGER field also joins `form::int_fields` with the same
+//!      range, which is what makes Save refuse a mistyped value instead of
+//!      writing it as an absent key; `every_integer_field_is_checked` fails until
+//!      it does
 //!   8. FREE-TEXT field only (any value the user types freely: a filesystem
 //!      path, OR raw JSON like `chat-template-kwargs`): add it to
 //!      `validate_for_save`'s list below AND to the
