@@ -11,7 +11,7 @@
 // The tray (`AppTray` in app.slint) is a separate root and does NOT use this
 // global; it keeps its own pushed-in state.
 
-import { PresetSummary, PresetForm, ServerForm, IntegrationModel, GpuRow, TensorOverrideRow, BenchPresetRow, BenchResultRow } from "types.slint";
+import { PresetSummary, PresetForm, ServerForm, GpuRow, TensorOverrideRow, BenchPresetRow, BenchResultRow } from "types.slint";
 import { Options } from "components.slint";
 
 export global AppState {
@@ -427,8 +427,12 @@ export global AppState {
     in-out property <int> bench_run_index: -1;
 
     // ── Integrations tab state ─────────────────────────────────────
-    in-out property <[IntegrationModel]> integration_models;
+    // All read-only projections, pushed by gui::refresh_integrations. There is
+    // no model list here: OpenCode lists every ENABLED preset (the switch in the
+    // Models tab), and the status line says whether opencode.json still does.
     in-out property <bool> integration_provider_active: false;
+    in-out property <bool> integration_in_sync: true;
+    in-out property <string> integration_status: "";
     in-out property <string> integration_claude_env: "";
 
     // ── Settings tab state ──────────────────────────────────────────
@@ -521,6 +525,10 @@ export global AppState {
     callback preset_tensor_pattern(int, string);
 
     callback select_preset(int);
+    // A row's on/off switch: (id, the state it was switched TO). Moves the
+    // preset between presets.ini and presets.ini.disabled; the form is left
+    // alone (see gui::refresh_preset_list).
+    callback toggle_preset_enabled(string, bool);
     callback save_preset();
     callback revert_preset();
     callback delete_preset(string);
@@ -590,9 +598,7 @@ export global AppState {
     callback bench_pick_prompt(string) -> string;
     callback bench_edit_prompt();
 
-    callback toggle_integration_model(int);
     callback save_integrations();
-    callback revert_integrations();
     callback open_opencode_folder();
 
     // Settings tab: fired AFTER the two-way binding flipped the property (see

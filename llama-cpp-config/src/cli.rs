@@ -308,12 +308,19 @@ impl ServerSet {
 
 #[derive(Subcommand, Debug)]
 pub enum PresetCmd {
-    /// List preset ids and the resolved model path for each.
+    /// List preset ids and the resolved model path for each, switched-off ones
+    /// included (marked).
     List,
     /// Dump one preset as INI.
     Show { id: String },
     /// Delete a preset section.
     Delete { id: String },
+    /// Switch a preset on: move it back into presets.ini, so llama-server
+    /// (after a restart) and OpenCode offer it again.
+    Enable { id: String },
+    /// Switch a preset off: park it in presets.ini.disabled, unchanged, where
+    /// llama-server and OpenCode no longer see it.
+    Disable { id: String },
 }
 
 // ── Dispatch & rendering ─────────────────────────────────────────────────
@@ -556,48 +563,97 @@ fn run_server(c: ServerCmd) -> Result<()> {
     }
 }
 
+/// Look a preset up in BOTH files, case-insensitively like the whole INI section
+/// layer (read_section, rename_section, delete_section all use
+/// eq_ignore_ascii_case). The writers below act on the STORED id so the header
+/// is hit whatever case the user typed.
+fn find_listed(id: &str) -> Result<presets::Listed> {
+    presets::load_listed()
+        .into_iter()
+        .find(|l| l.preset.id.eq_ignore_ascii_case(id))
+        .ok_or_else(|| {
+            anyhow::anyhow!("No preset named `{id}`. Run `llama-cpp-config preset list`.")
+        })
+}
+
+/// The same follow-up the GUI makes after every preset change: a configured
+/// OpenCode provider re-derives its model list from the enabled presets. Never
+/// fatal: the preset change itself has already landed.
+fn follow_opencode() {
+    match crate::integrations::follow_presets() {
+        Ok(true) => println!(
+            "Updated the model list in {}",
+            paths::opencode_user_config().display()
+        ),
+        Ok(false) => {}
+        Err(e) => eprintln!("opencode.json not updated: {e:#}"),
+    }
+}
+
 fn run_preset(c: PresetCmd) -> Result<()> {
     match c {
         PresetCmd::List => {
-            let presets = presets::load_all();
+            let listed = presets::load_listed();
             println!("presets.ini: {}", paths::presets_ini().display());
-            if presets.is_empty() {
+            if listed.iter().any(|l| !l.enabled) {
+                println!("switched off: {}", paths::presets_disabled_ini().display());
+            }
+            if listed.is_empty() {
                 println!("  (no presets defined)");
             }
-            for p in presets {
-                println!("  [{}]  model={}", p.id, p.model);
+            for l in listed {
+                let off = if l.enabled { "" } else { "  (off)" };
+                println!("  [{}]{off}  model={}", l.preset.id, l.preset.model);
             }
             Ok(())
         }
         PresetCmd::Show { id } => {
-            let presets = presets::load_all();
-            // Case-insensitive, like the whole INI section layer (read_section,
-            // rename_section, delete_section all use eq_ignore_ascii_case).
-            let Some(p) = presets.iter().find(|p| p.id.eq_ignore_ascii_case(&id)) else {
-                anyhow::bail!("No preset named `{id}`. Run `llama-cpp-config preset list`.");
-            };
-            println!("{}", presets::render_section(p));
+            let l = find_listed(&id)?;
+            if !l.enabled {
+                println!("; switched off: parked in presets.ini.disabled");
+            }
+            println!("{}", presets::render_section(&l.preset));
             Ok(())
         }
         PresetCmd::Delete { id } => {
             // ini::delete_section is a documented no-op for a missing section,
             // so look the id up first (mirroring Show), or a typo'd id gets a
-            // "Removed" message for a preset that never existed. Match
-            // case-insensitively (as the INI layer does) and delete by the
-            // STORED id so the header is hit whatever case the user typed.
-            let presets = presets::load_all();
-            let Some(p) = presets.iter().find(|p| p.id.eq_ignore_ascii_case(&id)) else {
-                anyhow::bail!("No preset named `{id}`. Run `llama-cpp-config preset list`.");
-            };
-            let real_id = p.id.clone();
+            // "Removed" message for a preset that never existed.
+            let l = find_listed(&id)?;
+            let real_id = l.preset.id;
             presets::delete(&real_id).context("delete preset")?;
-            println!(
-                "Removed [{real_id}] from {}",
-                paths::presets_ini().display()
-            );
+            let file = if l.enabled {
+                paths::presets_ini()
+            } else {
+                paths::presets_disabled_ini()
+            };
+            println!("Removed [{real_id}] from {}", file.display());
+            follow_opencode();
             Ok(())
         }
+        PresetCmd::Enable { id } => set_preset_enabled(&id, true),
+        PresetCmd::Disable { id } => set_preset_enabled(&id, false),
     }
+}
+
+fn set_preset_enabled(id: &str, enabled: bool) -> Result<()> {
+    let l = find_listed(id)?;
+    let real_id = l.preset.id;
+    let word = if enabled { "on" } else { "off" };
+    if l.enabled == enabled {
+        println!("[{real_id}] is already {word}.");
+        return Ok(());
+    }
+    presets::set_enabled(&real_id, enabled).context("switch preset")?;
+    println!("Switched [{real_id}] {word}.");
+    // The router reads presets.ini once, at launch.
+    if crate::runstate::is_running() {
+        println!(
+            "llama-server is running: restart it to apply (`llama-cpp-config control restart`)."
+        );
+    }
+    follow_opencode();
+    Ok(())
 }
 
 // ── Control commands ────────────────────────────────────────────────────

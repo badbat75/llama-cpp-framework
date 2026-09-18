@@ -71,6 +71,15 @@ pub fn presets_ini() -> PathBuf {
     config_dir().join("presets.ini")
 }
 
+/// The presets switched OFF: same INI format as `presets_ini()`, sections moved
+/// here verbatim by `presets::set_enabled`. A different EXTENSION on purpose:
+/// llama-server only ever reads the file `--models-preset` names, so a preset
+/// parked here is simply not offered, while a `*.ini` glob (the user's own, or a
+/// backup tool's) cannot mistake it for a live config.
+pub fn presets_disabled_ini() -> PathBuf {
+    config_dir().join("presets.ini.disabled")
+}
+
 /// The configurator's OWN settings (the Settings tab; see `settings.rs`),
 /// kept apart from server.ini, whose every key maps to a llama-server flag.
 pub fn settings_ini() -> PathBuf {

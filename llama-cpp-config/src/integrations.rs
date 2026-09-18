@@ -5,6 +5,15 @@
 //! custom providers natively; an env-var snippet is generated for the GUI's
 //! Claude Code card instead (copy-paste only, never written to disk).
 //!
+//! The model list is not a selection of its own: it is every ENABLED preset
+//! (`presets::load_all`, i.e. presets.ini), the same set llama-server serves,
+//! so switching a preset off in the Models tab is also how it leaves OpenCode.
+//! It used to be a second checkbox list here, which could offer OpenCode a model
+//! llama-server had no preset for, or hide one it did. The provider section is
+//! created only by the Integrations tab's Save; after that every preset change
+//! re-derives the list on its own (`follow_presets`), from the GUI and the CLI
+//! alike, and a machine that never set OpenCode up is never written to.
+//!
 //! The one non-mechanical field is a model's `limit.context`, and it is not a
 //! copy of the preset's `ctx-size`: opencode fills a prompt to whatever ceiling it
 //! is given, so the number has to be the context ONE request can actually use,
@@ -12,7 +21,6 @@
 //! context TOGETHER. The whole derivation, and the three upstream rules behind it,
 //! lives in `effective_ctx`; it is the reason this module reads GGUF headers.
 
-use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -23,6 +31,7 @@ use crate::gguf;
 use crate::ini;
 use crate::paths;
 use crate::presets;
+use crate::server_cfg;
 
 const PROVIDER_KEY: &str = "llama.cpp";
 const PROVIDER_NPM: &str = "@ai-sdk/openai-compatible";
@@ -36,7 +45,7 @@ const CTX_FALLBACK: i64 = 131_072;
 
 // ── opencode.json ──────────────────────────────────────────────────────
 
-/// Returns the set of preset IDs currently registered as models in opencode.json.
+/// Returns the preset IDs currently registered as models in opencode.json.
 pub fn opencode_model_ids() -> Vec<String> {
     let cfg = read_opencode();
     cfg.as_ref()
@@ -48,23 +57,19 @@ pub fn opencode_model_ids() -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// Ensures the provider entry exists and syncs the models list from presets.
-/// `checked_ids` are the preset IDs the user wants exposed.
+/// Ensures the provider entry exists and rebuilds its models list: one entry per
+/// ENABLED preset (see the module header).
 /// `base_url` comes from the current server.ini (e.g. "http://127.0.0.1:8080/v1").
 /// `api_key` is the optional API key for proxy/gateway authentication.
-pub fn save_opencode_models(
-    checked_ids: &[String],
-    base_url: &str,
-    api_key: Option<&str>,
-) -> Result<()> {
+///
+/// A rebuild that comes out identical to the file is not written: every preset
+/// save now lands here (`follow_presets`), and opencode.json is the user's file,
+/// so it is touched only when its content actually has to change.
+pub fn save_opencode_models(base_url: &str, api_key: Option<&str>) -> Result<()> {
     let path = paths::opencode_user_config();
     let mut v = read_or_create_value(&path)?;
 
     ensure_provider_section(&mut v, base_url, api_key)?;
-
-    let all_presets = presets::load_all();
-    let preset_map: BTreeMap<&str, &presets::Preset> =
-        all_presets.iter().map(|p| (p.id.as_str(), p)).collect();
 
     let models = v
         .get_mut("provider")
@@ -75,30 +80,74 @@ pub fn save_opencode_models(
 
     models.clear();
 
-    for id in checked_ids {
-        if let Some(p) = preset_map.get(id.as_str()) {
-            // The model's TRAINED context: the only source for what a preset that
-            // names no `ctx-size` will actually load (see `effective_ctx`). A header
-            // read, so it costs nothing next to the file it describes; `None` when
-            // the GGUF (or ggml-base.dll) can't be read, and then the fallback bites.
-            let trained = gguf::read_model_info(Path::new(&p.model))
-                .map(|i| i.n_ctx_train)
-                .filter(|c| *c > 0);
-            let entry = preset_to_opencode_model(p, trained);
-            models.insert(id.clone(), entry);
-        }
+    for p in presets::load_all() {
+        // The model's TRAINED context: the only source for what a preset that
+        // names no `ctx-size` will actually load (see `effective_ctx`). A header
+        // read, so it costs nothing next to the file it describes; `None` when
+        // the GGUF (or ggml-base.dll) can't be read, and then the fallback bites.
+        let trained = gguf::read_model_info(Path::new(&p.model))
+            .map(|i| i.n_ctx_train)
+            .filter(|c| *c > 0);
+        let entry = preset_to_opencode_model(&p, trained);
+        models.insert(p.id.clone(), entry);
     }
 
-    let serialized = serde_json::to_string_pretty(&v)?;
+    let serialized = serde_json::to_string_pretty(&v)? + "\n";
+    if fs::read_to_string(&path).is_ok_and(|current| current == serialized) {
+        return Ok(());
+    }
     // OpenCode may never have run on this machine; create its config dir
     // like every other writer does (read_or_create_value already treats the
     // missing FILE as an empty object, so the missing DIR must not fail).
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
     }
-    ini::atomic_write(&path, &(serialized + "\n"))
-        .with_context(|| format!("write {}", path.display()))?;
+    ini::atomic_write(&path, &serialized).with_context(|| format!("write {}", path.display()))?;
     Ok(())
+}
+
+/// The follow-up to every change of the enabled preset set or of a preset's
+/// content (a switch, a save, a rename, a delete, a New/Clone, and a server.ini
+/// save, which moves the base URL): rebuild opencode.json's model list, but ONLY
+/// when it already carries this provider. Returns whether it did. Creating the
+/// provider stays the Integrations tab's Save, so a machine that never set
+/// OpenCode up is never handed a config it did not ask for.
+pub fn follow_presets() -> Result<bool> {
+    if !detect_opencode_provider() {
+        return Ok(false);
+    }
+    let cfg = server_cfg::load();
+    save_opencode_models(
+        &cfg.opencode_base_url_or_default(),
+        cfg.opencode_api_key.as_deref(),
+    )?;
+    Ok(true)
+}
+
+/// How opencode.json's model list differs from the enabled preset set, by id:
+/// see `drift`. Both empty = in step. A difference is what a file written by a
+/// version with the old checkbox list, a hand-edit, or a failed `follow_presets`
+/// leaves behind; nothing rewrites it until the next preset change or Save, so
+/// the Integrations tab names it instead.
+pub fn opencode_drift() -> (Vec<String>, Vec<String>) {
+    let enabled: Vec<String> = presets::load_all().into_iter().map(|p| p.id).collect();
+    drift(&opencode_model_ids(), &enabled)
+}
+
+/// `(missing, extra)`: the enabled presets `listed` lacks, and the entries of
+/// `listed` that are not an enabled preset (switched off, renamed or deleted).
+fn drift(listed: &[String], enabled: &[String]) -> (Vec<String>, Vec<String>) {
+    let missing = enabled
+        .iter()
+        .filter(|id| !listed.contains(id))
+        .cloned()
+        .collect();
+    let extra = listed
+        .iter()
+        .filter(|id| !enabled.contains(id))
+        .cloned()
+        .collect();
+    (missing, extra)
 }
 
 pub fn detect_opencode_provider() -> bool {
@@ -439,6 +488,20 @@ mod tests {
         assert_eq!(effective_ctx(None, Some(2), NONE), 131_072);
         // …but an explicit ctx-size still works without the header.
         assert_eq!(effective_ctx(Some(32_768), Some(2), NONE), 16_384);
+    }
+
+    #[test]
+    fn drift_names_both_directions() {
+        let s = |v: &[&str]| v.iter().map(|x| (*x).to_string()).collect::<Vec<_>>();
+        // In step, whatever the order.
+        assert_eq!(drift(&s(&["b", "a"]), &s(&["a", "b"])), (vec![], vec![]));
+        // A preset switched on since the last write, and one switched off.
+        assert_eq!(
+            drift(&s(&["a", "gone"]), &s(&["a", "new"])),
+            (s(&["new"]), s(&["gone"]))
+        );
+        // No provider models at all: everything enabled is missing.
+        assert_eq!(drift(&[], &s(&["a"])), (s(&["a"]), vec![]));
     }
 
     #[test]

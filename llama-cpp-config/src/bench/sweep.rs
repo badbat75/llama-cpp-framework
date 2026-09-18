@@ -908,6 +908,17 @@ fn load_one(id: &str) -> Result<presets::Preset, String> {
         .find(|p| p.id == id)
         .cloned()
         .ok_or_else(|| {
+            // A switched-off preset is still listed everywhere else, so say why
+            // this one cannot be swept rather than pretend it does not exist.
+            if presets::load_listed()
+                .iter()
+                .any(|l| !l.enabled && l.preset.id == id)
+            {
+                return format!(
+                    "preset `{id}` is switched off, so llama-server does not offer it: \
+                     `llama-cpp-config preset enable {id}` first"
+                );
+            }
             let known: Vec<&str> = all.iter().map(|p| p.id.as_str()).collect();
             format!(
                 "no preset `{id}` in presets.ini. Known presets: {}",

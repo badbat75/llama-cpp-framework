@@ -287,10 +287,14 @@ pub fn start() -> io::Result<Option<crate::server_cfg::ServerConfig>> {
     }
 
     if !has_presets() {
-        return Err(io::Error::new(
-            io::ErrorKind::NotFound,
-            "No model presets configured: add one on the Models page first.",
-        ));
+        // Two different cures: the switched-off presets are still there, in the
+        // file llama-server does not read.
+        let msg = if crate::presets::load_listed().is_empty() {
+            "No model presets configured: add one on the Models page first."
+        } else {
+            "Every model preset is switched off: switch one on in the Models page first."
+        };
+        return Err(io::Error::new(io::ErrorKind::NotFound, msg));
     }
 
     let exe = crate::paths::llama_server_exe().ok_or_else(|| {

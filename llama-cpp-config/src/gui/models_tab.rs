@@ -125,9 +125,6 @@ pub(super) fn wire(app: &AppWindow, state: &Rc<RefCell<State>>) {
             match presets::delete(id.as_str()) {
                 Ok(()) => {
                     set_status(&app, format!("Deleted [{id}]"), false);
-                    // Drop the id from opencode.json too, or OpenCode keeps
-                    // offering a model llama-server no longer knows.
-                    sync_opencode_after_preset_change(&app, id.as_str(), None);
                     // Not preset_written(): after a delete we clear the selection
                     // and show an empty editor, so the file/integration refreshes
                     // must run AFTER the form is blanked, not against the neighbour
@@ -136,7 +133,7 @@ pub(super) fn wire(app: &AppWindow, state: &Rc<RefCell<State>>) {
                     app.global::<AppState>().set_selected_preset_index(-1);
                     apply_form(&app, PresetForm::default());
                     refresh_file_options(&app, &state);
-                    refresh_integrations(&app);
+                    presets_moved(&app, &state);
                 }
                 Err(e) => set_status(&app, format!("Delete failed: {e}"), true),
             }
@@ -269,16 +266,42 @@ pub(super) fn wire(app: &AppWindow, state: &Rc<RefCell<State>>) {
                 match presets::rename(old_id.as_str(), new_id.as_str()) {
                     Ok(()) => {
                         set_status(&app, format!("Renamed [{old_id}] -> [{new_id}]"), false);
-                        // Carry an exposed opencode.json model over to the new id.
-                        sync_opencode_after_preset_change(
-                            &app,
-                            old_id.as_str(),
-                            Some(new_id.as_str()),
-                        );
                         preset_written(&app, &state, Some(new_id.as_str()));
                     }
                     Err(e) => set_status(&app, format!("Rename failed: {e}"), true),
                 }
+            });
+    }
+    {
+        let app_weak = app.as_weak();
+        let state = state.clone();
+        app.global::<AppState>()
+            .on_toggle_preset_enabled(move |id, enabled| {
+                let Some(app) = app_weak.upgrade() else {
+                    return;
+                };
+                // Not behind the discard guard, and not a form reload: the switch
+                // moves the section between the two files without changing a
+                // word of it, so an unsaved edit stays in the form and its Save
+                // follows the preset into whichever file now holds it.
+                match presets::set_enabled(id.as_str(), enabled) {
+                    Ok(()) => {
+                        let state_word = if enabled { "Enabled" } else { "Disabled" };
+                        // The router reads presets.ini once, at launch.
+                        let tail = match (app.global::<AppState>().get_server_running(), enabled) {
+                            (true, _) => ": restart llama-server to apply.",
+                            (false, true) => ".",
+                            (false, false) => ": llama-server will not offer it.",
+                        };
+                        set_status(&app, format!("{state_word} [{id}]{tail}"), false);
+                    }
+                    Err(e) => set_status(&app, format!("Could not switch [{id}]: {e}"), true),
+                }
+                // Rebuilt on failure too: the click already flipped the switch
+                // and broke its one-way binding, and only a fresh row puts it
+                // back to what the files say.
+                refresh_preset_list(&app, &state);
+                presets_moved(&app, &state);
             });
     }
     {
@@ -553,9 +576,9 @@ fn wire_gpu_table(app: &AppWindow) {
 /// indexed preset into the editor and refresh its dependent dropdowns.
 fn do_select_preset(app: &AppWindow, state: &Rc<RefCell<State>>, index: i32) {
     let st = state.borrow();
-    if let Some(p) = usize::try_from(index).ok().and_then(|i| st.presets.get(i)) {
+    if let Some(l) = usize::try_from(index).ok().and_then(|i| st.presets.get(i)) {
         app.global::<AppState>().set_selected_preset_index(index);
-        apply_form(app, preset_to_form(p));
+        apply_form(app, preset_to_form(&l.preset));
         drop(st);
         refresh_file_options(app, state);
     }
@@ -592,7 +615,7 @@ fn open_clone_dialog(
         usize::try_from(idx)
             .ok()
             .and_then(|i| st.presets.get(i))
-            .cloned()
+            .map(|l| l.preset.clone())
     };
     let Some(p) = selected else {
         set_status(app, "Select a preset to clone first.".into(), true);
@@ -654,14 +677,26 @@ fn apply_draft_pick(form: &mut PresetForm, value: &str, spec: &str, server_devic
 
 /// Refresh everything that depends on the preset set after a presets.ini write:
 /// the (re-selected) preset list (`reload_presets`), the file/device dropdowns,
-/// and the Integrations tab. `want` picks the selection like `reload_presets`.
-/// The invariant every write path follows: save / rename / clone all funnel
-/// through here. (select/revert do NOT: they don't mutate disk, so integrations
-/// stay put; delete keeps its own sequence because it clears the selection.)
+/// and the tabs that read the enabled set (`presets_moved`). `want` picks the
+/// selection like `reload_presets`. The invariant every write path follows:
+/// save / rename / clone all funnel through here. (select/revert do NOT: they
+/// don't mutate disk; delete keeps its own sequence because it clears the
+/// selection, and the on/off switch its own because it must keep the form.)
 fn preset_written(app: &AppWindow, state: &Rc<RefCell<State>>, want: Option<&str>) {
     reload_presets(app, state, want);
     refresh_file_options(app, state);
-    refresh_integrations(app);
+    presets_moved(app, state);
+}
+
+/// The tail every preset write shares: the consumers of the ENABLED set, which
+/// a save can change (a `ctx-size` moves an opencode entry's `limit.context`)
+/// as surely as a switch or a delete can. opencode.json follows when it carries
+/// the provider (`follow_integrations`), and the Benchmark tab re-lists, since a
+/// preset that is off, renamed or gone can no longer be run (its refresh also
+/// drops it from the selection).
+fn presets_moved(app: &AppWindow, state: &Rc<RefCell<State>>) {
+    follow_integrations(app);
+    bench_tab::refresh(app, state);
 }
 
 // ── Model-info box (GGUF reads) ───────────────────────────────────────
@@ -867,11 +902,13 @@ fn picked_dialog_model_path(app: &AppWindow, state: &Rc<RefCell<State>>) -> Opti
         .map(PathBuf::from)
 }
 
-/// Preset id for a newly picked model file, de-conflicted against the live
-/// presets. The id derives from the file name, so picking a model that already
-/// has a preset (or a different file that sanitizes to the same id) would
-/// otherwise make `presets::save` wholesale-replace the tuned section. Both
-/// New and Clone must route through this: first free `<id>`, `<id>-2`, ….
+/// Preset id for a newly picked model file, de-conflicted against every preset,
+/// the switched-off ones included (a namesake parked in the disabled file would
+/// collide the day it is switched back on). The id derives from the file name,
+/// so picking a model that already has a preset (or a different file that
+/// sanitizes to the same id) would otherwise make `presets::save`
+/// wholesale-replace the tuned section. Both New and Clone must route through
+/// this: first free `<id>`, `<id>-2`, ….
 fn deconflicted_id(path_str: &str) -> String {
     let mut base_id = presets::make_id(path_str);
     if base_id.is_empty() {
@@ -882,7 +919,10 @@ fn deconflicted_id(path_str: &str) -> String {
         // Fall back to a usable stem before de-conflicting.
         base_id = "preset".to_string();
     }
-    let existing: Vec<String> = presets::load_all().into_iter().map(|p| p.id).collect();
+    let existing: Vec<String> = presets::load_listed()
+        .into_iter()
+        .map(|l| l.preset.id)
+        .collect();
     presets::unique_id(&base_id, &existing)
 }
 
@@ -948,8 +988,10 @@ fn commit_new_preset(
 ) {
     match presets::save(&p) {
         Ok(()) => {
-            preset_written(app, state, Some(&p.id));
+            // Status first, like the other write paths, so a failed opencode.json
+            // follow-up inside preset_written is not papered over by the success.
             set_status(app, success_status, false);
+            preset_written(app, state, Some(&p.id));
         }
         Err(e) => set_status(app, format!("Save failed: {e}"), true),
     }

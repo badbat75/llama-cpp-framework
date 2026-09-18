@@ -6,6 +6,9 @@ export struct PresetSummary {
     // model only holds rows that pass the filter, so the `for` index is NOT a
     // stable handle; `orig_index` is what select_preset()/highlighting use.
     orig_index: int,
+    // Switched on (its section is in presets.ini, so llama-server offers it) or
+    // off (parked in presets.ini.disabled). See src/presets.rs's module header.
+    enabled: bool,
 }
 
 // Adding a field? This struct is step 5 of the 7-step fan-out documented at the
@@ -260,12 +263,6 @@ export struct BenchResultRow {
     // prefill row, the drafter's acceptance on a decode row. Empty when there is
     // nothing to say.
     note: string,
-}
-
-export struct IntegrationModel {
-    id: string,
-    label: string,
-    enabled: bool,
 }
 
 // One row of the GPU distribution table (GpuSplitTable in components.slint), the

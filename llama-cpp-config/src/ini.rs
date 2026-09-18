@@ -287,6 +287,17 @@ pub fn rename_section(path: &Path, old: &str, new: &str) -> std::io::Result<()> 
     atomic_write(path, &out)
 }
 
+/// The named section's raw text, header line included, exactly as it sits on
+/// disk (comments, key order, hand-edits), up to the next section's header; or
+/// `None` when the file or the section is missing. The unit `delete_section`
+/// removes, so the pair moves a section between files without re-rendering it.
+pub fn section_text(path: &Path, section_name: &str) -> Option<String> {
+    let content = fs::read_to_string(path).ok()?;
+    let (header_pos, header_end) = find_section_header(&content, section_name)?;
+    let next = next_section_start(&content, header_end).unwrap_or(content.len());
+    Some(content[line_start_of(&content, header_pos)..next].to_string())
+}
+
 /// Remove a section entirely.
 pub fn delete_section(path: &Path, section_name: &str) -> std::io::Result<()> {
     let content = match fs::read_to_string(path) {
@@ -730,6 +741,31 @@ mod tests {
         // Deleting a missing section (or from a missing file) is a no-op.
         delete_section(&path, "nope").unwrap();
         delete_section(Path::new("does/not/exist.ini"), "a").unwrap();
+    }
+
+    // The move primitive behind a preset's on/off switch: the text must come out
+    // exactly as written (a hand comment and an unknown key included), stop at
+    // the next header, and splice into another file as that same section.
+    #[test]
+    fn section_text_moves_a_section_verbatim() {
+        let (_d, path) =
+            ini_file("[a]\r\n; mine\r\nk = 1\r\nodd-key = x\r\n\r\n  [B]\r\nk = 2\r\n");
+        let a = section_text(&path, "A").expect("case-insensitive lookup");
+        assert_eq!(a, "[a]\r\n; mine\r\nk = 1\r\nodd-key = x\r\n\r\n");
+        // An indented header comes out whole, indentation included.
+        assert_eq!(section_text(&path, "b").unwrap(), "  [B]\r\nk = 2\r\n");
+        assert!(section_text(&path, "nope").is_none());
+        assert!(section_text(Path::new("does/not/exist.ini"), "a").is_none());
+
+        let (_d2, other) = ini_file("[c]\r\nk = 3\r\n");
+        replace_section(&other, "a", &a).unwrap();
+        let moved = fs::read_to_string(&other).unwrap();
+        assert!(
+            moved.contains("[a]\r\n; mine\r\nk = 1\r\nodd-key = x\r\n"),
+            "{moved}"
+        );
+        assert_eq!(read_section(&other, "a")["odd-key"], "x");
+        assert_eq!(read_section(&other, "c")["k"], "3");
     }
 
     // The reader trims each line before the `[` check, so a hand-indented

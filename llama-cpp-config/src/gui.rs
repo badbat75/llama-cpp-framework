@@ -63,7 +63,7 @@ use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
 
-use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel};
+use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 
 use crate::form::{form_to_preset, preset_to_form, prune_inactive_draft_fields};
 use crate::{
@@ -85,7 +85,10 @@ mod tray;
 
 #[derive(Default)]
 struct State {
-    presets: Vec<presets::Preset>,
+    // Every preset the Models tab lists, BOTH files: the enabled ones, then the
+    // switched-off ones (`presets::load_listed`). `PresetSummary.orig_index`
+    // points in here.
+    presets: Vec<presets::Listed>,
     // Full (unfiltered) model scan backing the new-preset dialog, so the search
     // box can filter without re-hitting disk on every keystroke.
     dialog_models_all: Vec<model_scan::FileOption>,
@@ -137,14 +140,16 @@ pub(crate) fn wire_tabs_for_tests(app: &AppWindow) {
     bench_tab::wire(app, &state, None);
     bench_tab::refresh(app, &state);
     // A cut-down `reload_all`: the disk re-reads the flow test needs after it
-    // writes a preset behind the UI's back, without the discard guard, the
-    // device/version probes or the tray that the real one drives.
+    // writes a preset (or opencode.json) behind the UI's back, without the
+    // discard guard, the device/version probes or the tray that the real one
+    // drives.
     {
         let app_weak = app.as_weak();
         let state = state.clone();
         app.global::<AppState>().on_reload_all(move || {
             if let Some(app) = app_weak.upgrade() {
                 reload_presets(&app, &state, None);
+                refresh_integrations(&app);
                 bench_tab::refresh(&app, &state);
             }
         });
@@ -207,10 +212,9 @@ pub fn run(start_minimized: bool) -> anyhow::Result<()> {
                 return;
             };
             let s = app.global::<AppState>();
-            // Reloading replaces BOTH forms from disk and rebuilds the
-            // Integrations list, so unsaved edits on ANY tab need the
-            // discard confirmation.
-            let dirty = s.get_preset_dirty() || s.get_server_dirty() || integrations_dirty(&app);
+            // Reloading replaces BOTH forms from disk, so unsaved edits on
+            // either tab need the discard confirmation.
+            let dirty = s.get_preset_dirty() || s.get_server_dirty();
             let action: Box<dyn Fn()> = {
                 let app_weak = app_weak.clone();
                 let tray_weak = tray_weak.clone();
@@ -429,14 +433,15 @@ fn preset_matches(p: &presets::Preset, filter: &str) -> bool {
 /// filter. Each surviving row carries its `orig_index` into `state.presets` so
 /// `select_preset()` and the selection highlight stay correct under a filter
 /// (the list `for` index is NOT stable once rows are removed).
-fn preset_summaries(presets: &[presets::Preset], filter: &str) -> Vec<PresetSummary> {
+fn preset_summaries(presets: &[presets::Listed], filter: &str) -> Vec<PresetSummary> {
     presets
         .iter()
         .enumerate()
-        .filter(|(_, p)| preset_matches(p, filter))
-        .map(|(i, p)| PresetSummary {
-            id: p.id.clone().into(),
+        .filter(|(_, l)| preset_matches(&l.preset, filter))
+        .map(|(i, l)| PresetSummary {
+            id: l.preset.id.clone().into(),
             orig_index: i as i32,
+            enabled: l.enabled,
         })
         .collect()
 }
@@ -455,9 +460,8 @@ fn reload_all_from_disk(
     load_server_into_ui(app);
     reload_presets(app, state, None);
     refresh_file_options(app, state);
-    // Reset variant: F5's whole point is "back to disk", and the caller sits
-    // behind the integrations_dirty discard guard.
-    refresh_integrations_reset(app);
+    // Read-only: F5 reports a drifted opencode.json, it never rewrites it.
+    refresh_integrations(app);
     // Re-lists the presets and the saved runs; the workload fields are left
     // alone (they are this session's, not a projection of any file).
     bench_tab::refresh(app, state);
@@ -480,17 +484,17 @@ fn reload_all_from_disk(
 /// do so themselves afterward; this only owns the preset list + selection.
 fn reload_presets(app: &AppWindow, state: &Rc<RefCell<State>>, want: Option<&str>) {
     let s = app.global::<AppState>();
-    let all = presets::load_all();
+    let all = presets::load_listed();
     let summaries = preset_summaries(&all, s.get_presets_filter().as_str());
     s.set_presets(model(summaries));
 
     let prev_sel = s.get_selected_preset_index();
     let cur_id = s.get_form().id;
     let idx = match want {
-        Some(id) => all.iter().position(|p| p.id == id).map(|i| i as i32),
+        Some(id) => all.iter().position(|l| l.preset.id == id).map(|i| i as i32),
         None => all
             .iter()
-            .position(|p| !cur_id.is_empty() && p.id == cur_id.as_str())
+            .position(|l| !cur_id.is_empty() && l.preset.id == cur_id.as_str())
             .map(|i| i as i32)
             .or_else(|| (prev_sel >= 0 && (prev_sel as usize) < all.len()).then_some(prev_sel)),
     }
@@ -501,9 +505,32 @@ fn reload_presets(app: &AppWindow, state: &Rc<RefCell<State>>, want: Option<&str
 
     let st = state.borrow();
     match usize::try_from(idx).ok().and_then(|i| st.presets.get(i)) {
-        Some(p) => apply_form(app, preset_to_form(p)),
+        Some(l) => apply_form(app, preset_to_form(&l.preset)),
         None => apply_form(app, PresetForm::default()),
     }
+}
+
+/// `reload_presets` without the form: re-read both files, rebuild the list and
+/// point the selection back at the preset being edited, by id. For the one
+/// write that changes where a preset LIVES but not what it says, the on/off
+/// switch: it must neither discard an unsaved edit (the form stays, and its next
+/// Save lands in whichever file now holds the preset) nor wait on the discard
+/// dialog for something that discards nothing. Replacing the list model is also
+/// what gives every row's switch a fresh binding (see models_page.slint).
+fn refresh_preset_list(app: &AppWindow, state: &Rc<RefCell<State>>) {
+    let s = app.global::<AppState>();
+    let all = presets::load_listed();
+    s.set_presets(model(preset_summaries(
+        &all,
+        s.get_presets_filter().as_str(),
+    )));
+    let cur_id = s.get_form().id;
+    let idx = all
+        .iter()
+        .position(|l| !cur_id.is_empty() && l.preset.id == cur_id.as_str())
+        .map_or(-1, |i| i as i32);
+    state.borrow_mut().presets = all;
+    s.set_selected_preset_index(idx);
 }
 
 /// Rebuild every file-backed dropdown (model / mmproj / the unified draft
@@ -1337,104 +1364,76 @@ fn apply_form(app: &AppWindow, form: PresetForm) {
 
 // ── Integrations helpers ──────────────────────────────────────────────
 
-/// Rebuild the Integrations tab from disk: the opencode.json base URL + the
-/// per-preset toggle list + the Claude Code env snippet, all derived from
-/// server.ini (port/host) and presets.ini. Call after any change to those.
-///
-/// This variant MERGES: ids already in the UI model keep their in-UI enabled
-/// flag (a pending, unsaved toggle), only new ids take the on-disk value, so
-/// the preset/server write paths (save/rename/clone/delete, server save) don't
-/// silently wipe pending toggles the F5 guard would have asked about. For the
-/// paths whose meaning IS "back to disk", use `refresh_integrations_reset`.
+/// Re-derive the Integrations tab from disk: the Claude Code env snippet
+/// (server.ini's base URL + API key, an enabled preset as the example id) and
+/// the OpenCode status line, which says whether opencode.json carries the
+/// provider and, when it does, whether its model list is still the enabled
+/// preset set. Read-only: opencode.json is written by the tab's Save and by
+/// `follow_integrations`, never from here.
 fn refresh_integrations(app: &AppWindow) {
-    rebuild_integrations(app, true);
-}
-
-/// Reset-to-disk variant of `refresh_integrations`: pending row toggles are
-/// dropped. Used by the startup seed / F5 (`reload_all_from_disk`, which sits
-/// behind the `integrations_dirty` discard guard) and the Integrations tab's
-/// own Save/Revert.
-fn refresh_integrations_reset(app: &AppWindow) {
-    rebuild_integrations(app, false);
-}
-
-fn rebuild_integrations(app: &AppWindow, keep_pending: bool) {
     let s = app.global::<AppState>();
     let cfg = server_cfg::load();
     let base_url = cfg.opencode_base_url_or_default();
     let api_key = cfg.opencode_api_key.as_deref();
 
-    let all_presets = presets::load_all();
-    let example = all_presets.first().map(|p| p.id.as_str());
+    let enabled = presets::load_all();
+    let example = enabled.first().map(|p| p.id.as_str());
     let claude_env = integrations::claude_code_env_script(&base_url, api_key, example);
     s.set_integration_claude_env(SharedString::from(claude_env));
 
-    s.set_integration_provider_active(integrations::detect_opencode_provider());
+    let active = integrations::detect_opencode_provider();
+    let (missing, extra) = integrations::opencode_drift();
+    let in_sync = missing.is_empty() && extra.is_empty();
+    s.set_integration_provider_active(active);
+    s.set_integration_in_sync(in_sync);
+    s.set_integration_status(SharedString::from(integration_status(
+        active,
+        enabled.len(),
+        &missing,
+        &extra,
+    )));
+}
 
-    // Either way the ModelRc is REPLACED, never patched row-by-row: the row
-    // CheckBox's one-way binding contract requires fresh `for` delegates on
-    // every non-widget-originated change (see gui/integrations_tab.rs).
-    let pending: std::collections::BTreeMap<String, bool> = if keep_pending {
-        s.get_integration_models()
-            .iter()
-            .map(|m| (m.id.to_string(), m.enabled))
-            .collect()
-    } else {
-        Default::default()
+/// The OpenCode card's status line. Pure, so the three wordings are testable.
+fn integration_status(
+    active: bool,
+    enabled: usize,
+    missing: &[String],
+    extra: &[String],
+) -> String {
+    let set = match enabled {
+        1 => "the 1 enabled preset".to_string(),
+        n => format!("the {n} enabled presets"),
     };
-    let enabled_ids = integrations::opencode_model_ids();
-    let items: Vec<IntegrationModel> = all_presets
-        .iter()
-        .map(|p| IntegrationModel {
-            id: SharedString::from(p.id.clone()),
-            label: SharedString::from(integrations::friendly_model_name(&p.id, &p.model)),
-            enabled: pending
-                .get(&p.id)
-                .copied()
-                .unwrap_or_else(|| enabled_ids.contains(&p.id)),
-        })
-        .collect();
-    s.set_integration_models(model(items));
-}
-
-/// Unsaved Integrations edits. The row toggles have no dirty flag like the two
-/// forms (they live only in the UI model), so compare the enabled set against
-/// the on-disk opencode.json instead. Consulted by the F5/Refresh discard
-/// guard: `reload_all_from_disk` rebuilds the list and would otherwise wipe
-/// pending toggles without the confirmation the form tabs get.
-pub(crate) fn integrations_dirty(app: &AppWindow) -> bool {
-    let enabled_ids = integrations::opencode_model_ids();
-    app.global::<AppState>()
-        .get_integration_models()
-        .iter()
-        .any(|m| m.enabled != enabled_ids.iter().any(|id| id == m.id.as_str()))
-}
-
-/// Keep opencode.json in step with a preset rename (`new_id = Some`) or delete
-/// (`None`): when the old id is exposed as a model there, rewrite the models
-/// list with it renamed / dropped; otherwise OpenCode keeps offering an id
-/// `llama-server --models-preset` no longer knows, and the stale entry isn't
-/// even visible in the Integrations tab (its rows are built from presets). A
-/// no-op when the id wasn't exposed, so this can never create the provider
-/// section as a side effect. A failure only flags the footer; the file
-/// self-heals on the next Integrations save.
-fn sync_opencode_after_preset_change(app: &AppWindow, old_id: &str, new_id: Option<&str>) {
-    let ids = integrations::opencode_model_ids();
-    if !ids.iter().any(|i| i == old_id) {
-        return;
+    if !active {
+        return format!("No llama-server provider in opencode.json. Save adds one listing {set}.");
     }
-    let checked: Vec<String> = ids
-        .iter()
-        .filter(|i| i.as_str() != old_id)
-        .cloned()
-        .chain(new_id.map(str::to_string))
-        .collect();
-    let cfg = server_cfg::load();
-    let base_url = cfg.opencode_base_url_or_default();
-    let api_key = cfg.opencode_api_key.as_deref();
-    if let Err(e) = integrations::save_opencode_models(&checked, &base_url, api_key) {
+    if missing.is_empty() && extra.is_empty() {
+        return format!("llama-server provider active in opencode.json, listing {set}.");
+    }
+    let mut parts = Vec::new();
+    if !missing.is_empty() {
+        parts.push(format!("enabled but not listed: {}", missing.join(", ")));
+    }
+    if !extra.is_empty() {
+        parts.push(format!("listed but not enabled: {}", extra.join(", ")));
+    }
+    format!(
+        "opencode.json is out of step with the enabled presets ({}). Save brings it in line.",
+        parts.join("; ")
+    )
+}
+
+/// After a write that changes what OpenCode should list (a preset switched on or
+/// off, saved, renamed, deleted, created; server.ini's base URL or key): bring
+/// opencode.json along when it already carries the provider
+/// (`integrations::follow_presets`), then re-derive the tab. A failure only
+/// flags the footer, and the status line then names the drift it left.
+fn follow_integrations(app: &AppWindow) {
+    if let Err(e) = integrations::follow_presets() {
         set_status(app, format!("opencode.json update failed: {e}"), true);
     }
+    refresh_integrations(app);
 }
 
 // Pure-struct tests (PresetSummary is a plain generated struct, no Slint
@@ -1443,11 +1442,14 @@ fn sync_opencode_after_preset_change(app: &AppWindow, old_id: &str, new_id: Opti
 mod tests {
     use super::*;
 
-    fn p(id: &str, model: &str) -> presets::Preset {
-        presets::Preset {
-            id: id.into(),
-            model: model.into(),
-            ..Default::default()
+    fn p(id: &str, model: &str) -> presets::Listed {
+        presets::Listed {
+            preset: presets::Preset {
+                id: id.into(),
+                model: model.into(),
+                ..Default::default()
+            },
+            enabled: id != "bravo",
         }
     }
 
@@ -1467,6 +1469,7 @@ mod tests {
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].id.as_str(), "bravo");
         assert_eq!(rows[0].orig_index, 1, "index into the unfiltered vector");
+        assert!(!rows[0].enabled, "the row carries the switch's state");
 
         let rows = preset_summaries(&all, "charlie");
         assert_eq!(rows.len(), 1);
@@ -1482,5 +1485,24 @@ mod tests {
 
         // No match: empty list (the UI then shows -1 / a blank form).
         assert!(preset_summaries(&all, "zzz").is_empty());
+    }
+
+    #[test]
+    fn integration_status_wordings() {
+        let ids = |v: &[&str]| v.iter().map(|x| (*x).to_string()).collect::<Vec<_>>();
+        assert_eq!(
+            integration_status(false, 1, &ids(&["a"]), &[]),
+            "No llama-server provider in opencode.json. Save adds one listing the 1 enabled preset."
+        );
+        assert_eq!(
+            integration_status(true, 2, &[], &[]),
+            "llama-server provider active in opencode.json, listing the 2 enabled presets."
+        );
+        // Out of step names the ids, both ways, so the reader knows what Save changes.
+        assert_eq!(
+            integration_status(true, 2, &ids(&["new"]), &ids(&["off"])),
+            "opencode.json is out of step with the enabled presets \
+             (enabled but not listed: new; listed but not enabled: off). Save brings it in line."
+        );
     }
 }

@@ -6,7 +6,7 @@
 // KV cache → Chat / reasoning → Sampling overrides → Advanced →
 // Vision → Speculative decoding, then the FormActions row.
 
-import { LineEdit, ComboBox, CheckBox, Button, ListView, ScrollView, Palette } from "std-widgets.slint";
+import { LineEdit, ComboBox, CheckBox, Button, ListView, ScrollView, Switch, Palette } from "std-widgets.slint";
 import { SectionCard, LabeledField, InfoRow, SegmentedControl, MappedComboBox, EnumComboBox, AutoSlider, DefaultLineEdit, FormActions, SelectableRow, ListPanel, GpuSplitTable, TensorOverrideTable, Tokens, Options, WrapText } from "components.slint";
 import { AppState } from "state.slint";
 
@@ -50,8 +50,22 @@ export component ModelsPage inherits HorizontalLayout {
                 for p in AppState.presets : SelectableRow {
                     height: 36px;
                     label: p.id;
+                    muted: !p.enabled;
                     selected: p.orig_index == AppState.selected_preset_index;
                     clicked => { AppState.select_preset(p.orig_index); }
+                    // On = the section sits in presets.ini, so llama-server (and
+                    // OpenCode) offer it; off = parked in presets.ini.disabled.
+                    // Sanctioned one-way binding, the GPU table's contract: a
+                    // click self-assigns `checked`, breaking THIS delegate's
+                    // binding, and the handler always replaces the whole list
+                    // model (gui::refresh_preset_list), failure included, so the
+                    // delegates that show it are fresh ones.
+                    Switch {
+                        // Findable handle for the e2e flow (src/tests/save_flow.rs).
+                        accessible-label: "enabled-" + p.id;
+                        checked: p.enabled;
+                        toggled => { AppState.toggle_preset_enabled(p.id, self.checked); }
+                    }
                 }
             }
         }
@@ -92,6 +106,13 @@ export component ModelsPage inherits HorizontalLayout {
                     }
                 }
             }
+        }
+
+        Text {
+            text: "A preset switched off stays editable here, but llama-server and OpenCode no longer offer it.";
+            font-size: 10px;
+            color: Palette.foreground.transparentize(Tokens.faint);
+            wrap: word-wrap;
         }
 
         Text {

@@ -102,10 +102,13 @@ export component AccentBar inherits Rectangle {
 // and a list-item accessibility role. `clicked` reports the activation; the
 // CALLER owns the selection state (`selected` is a pure derived read, so the
 // highlight follows the model even after clicks; the same no-self-assignment
-// rule as SegmentedControl). Set `height` at the use site.
+// rule as SegmentedControl). Set `height` at the use site. `muted` dims the
+// label (a preset that is switched off), and `@children` are laid out after it,
+// at the row's right edge (the preset list's on/off switch).
 export component SelectableRow inherits Rectangle {
     in property <string> label;
     in property <bool> selected;
+    in property <bool> muted;
     callback clicked();
 
     accessible-role: list-item;
@@ -116,20 +119,25 @@ export component SelectableRow inherits Rectangle {
 
     if root.selected : AccentBar { y: 6px; height: parent.height - 12px; }
 
-    HorizontalLayout {
-        padding-left: 12px;
-        padding-right: 12px;
-        Text {
-            text: root.label;
-            font-size: 12px;
-            color: Palette.foreground;
-            vertical-alignment: center;
-            overflow: elide;
-        }
-    }
+    // UNDER the layout, not over it: a control passed in as a child has to get
+    // its own clicks, and the row takes every click that lands anywhere else.
     touch := TouchArea {
         mouse-cursor: pointer;
         clicked => { root.clicked(); }
+    }
+    HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 12px;
+        spacing: 8px;
+        Text {
+            text: root.label;
+            font-size: 12px;
+            color: root.muted ? Palette.foreground.transparentize(Tokens.faint) : Palette.foreground;
+            vertical-alignment: center;
+            overflow: elide;
+            horizontal-stretch: 1;
+        }
+        @children
     }
 }
 

@@ -799,121 +799,234 @@ pub(super) fn run(app: &AppWindow) {
     );
     st.set_show_rename_dialog(false);
 
-    // ── Integrations: a model rebuild must reach the row checkboxes ──────
-    // The row CheckBox binds one-way (`checked: item.enabled`), sanctioned
-    // ONLY because the in-place toggle originates from the clicked widget
-    // itself, and every OTHER enabled-state change rebuilds the whole model
-    // (refresh_integrations replaces the ModelRc → fresh delegates). This
-    // pins the rebuild half: click a row checkbox (the self-assign that
-    // permanently breaks that delegate's binding), then drive a Rust-side
-    // reload and assert the checkbox followed. A set_row_data "optimization"
-    // in refresh_integrations would leave the clicked checkbox stale here.
-    st.set_current_tab(3); // Integrations (2 is Benchmark)
-    st.invoke_revert_integrations(); // (re)build integration_models from disk
-    itest::mock_elapsed_time(std::time::Duration::from_millis(1));
-    let models = st.get_integration_models();
-    assert!(
-        models.row_count() >= 1,
-        "the presets saved above must be listed"
-    );
-    let first_id = models.row_data(0).expect("row 0").id;
-    assert!(
-        !models.row_data(0).expect("row 0").enabled,
-        "nothing is exposed in opencode.json yet"
-    );
-    let label = format!("integration-{first_id}");
-    let cb = ElementHandle::find_by_accessible_label(app, label.as_str())
-        .next()
-        .expect("row checkbox");
-    cb.invoke_accessible_default_action(); // the user click that breaks the binding
-    assert!(
-        st.get_integration_models()
-            .row_data(0)
-            .expect("row 0")
-            .enabled,
-        "the toggle callback must flip the row in place"
-    );
-    // The pending toggle is what the F5/Refresh discard guard consults:
-    // integrations_dirty compares the UI rows against the on-disk enabled set.
-    assert!(
-        crate::gui::integrations_dirty(app),
-        "a pending toggle must read as integrations-dirty"
-    );
-    // A preset write path rebuilds the list with MERGE semantics: the pending
-    // toggle must survive (fresh delegate, preserved enabled flag); only the
-    // reset paths (F5 behind the guard, Integrations Save/Revert) drop it.
-    st.invoke_save_preset(); // → preset_written → refresh_integrations (merge)
-    itest::mock_elapsed_time(std::time::Duration::from_millis(1));
-    assert!(
-        !st.get_status_is_error(),
-        "re-save failed: {}",
-        st.get_status_text()
-    );
-    let cb = ElementHandle::find_by_accessible_label(app, label.as_str())
-        .next()
-        .expect("row checkbox after merge rebuild");
+    // ── The on/off switch: the preset MOVES between two files, the form stays ──
+    // Switching a preset off moves its section, verbatim, from presets.ini (the
+    // file llama-server reads) to presets.ini.disabled. It is not a navigation:
+    // an unsaved edit must survive it, and the Save that follows must land in
+    // whichever file now holds the preset, or saving would switch it back on.
+    let presets_ini = crate::paths::presets_ini();
+    let parked_ini = crate::paths::presets_disabled_ini();
+    let read = |p: &std::path::Path| std::fs::read_to_string(p).unwrap_or_default();
+    let switch = |id: &str| {
+        ElementHandle::find_by_accessible_label(app, format!("enabled-{id}").as_str())
+            .next()
+            .unwrap_or_else(|| panic!("no on/off switch for {id}"))
+    };
+    let listed_enabled = |id: &str| {
+        st.get_presets()
+            .iter()
+            .find(|p| p.id.as_str() == id)
+            .unwrap_or_else(|| panic!("{id} is not listed"))
+            .enabled
+    };
+    let mut form = st.get_form();
     assert_eq!(
-        cb.accessible_checked(),
+        form.id.as_str(),
+        "e2e",
+        "the clone is still the one selected"
+    );
+    form.ctx_size = "65536".into();
+    form.ctx_size_default = false;
+    st.set_form(form);
+    let dirty_form = st.get_form();
+    assert!(st.get_preset_dirty());
+    assert_eq!(
+        switch("e2e").accessible_checked(),
         Some(true),
-        "a preset save must not wipe a pending Integrations toggle"
+        "presets start on"
     );
-    assert!(
-        crate::gui::integrations_dirty(app),
-        "the pending toggle must stay integrations-dirty across a preset save"
-    );
-    st.invoke_revert_integrations(); // Rust-side rebuild: back to disk state
+    let section_before = crate::ini::section_text(&presets_ini, "e2e").expect("[e2e] on disk");
+
+    switch("e2e").invoke_accessible_default_action(); // the user's click: off
     itest::mock_elapsed_time(std::time::Duration::from_millis(1));
-    let cb = ElementHandle::find_by_accessible_label(app, label.as_str())
-        .next()
-        .expect("row checkbox after rebuild");
+    assert!(!st.get_status_is_error(), "{}", st.get_status_text());
+    assert!(
+        !read(&presets_ini).contains("[e2e]"),
+        "llama-server's file must no longer carry it"
+    );
     assert_eq!(
-        cb.accessible_checked(),
+        crate::ini::section_text(&parked_ini, "e2e")
+            .expect("[e2e] parked")
+            .trim_end(),
+        section_before.trim_end(),
+        "the section moves verbatim, it is not re-rendered"
+    );
+    assert!(!listed_enabled("e2e"), "the row says off");
+    assert_eq!(
+        switch("e2e").accessible_checked(),
         Some(false),
-        "a rebuild must recreate the delegate so the checkbox tracks the model again"
+        "the rebuilt row's switch shows it"
+    );
+    assert_eq!(
+        st.get_form(),
+        dirty_form,
+        "the unsaved edit survives the switch"
+    );
+    assert!(st.get_preset_dirty());
+    let sel = st.get_selected_preset_index();
+    assert_eq!(
+        st.get_presets()
+            .iter()
+            .find(|p| p.orig_index == sel)
+            .map(|p| p.id.to_string()),
+        Some("e2e".to_string()),
+        "the selection follows the preset to its new place in the list"
     );
     assert!(
-        !crate::gui::integrations_dirty(app),
-        "a rebuild from disk must clear the integrations-dirty signal"
+        st.get_bench_presets()
+            .iter()
+            .all(|r| r.id.as_str() != "e2e"),
+        "a preset llama-server does not offer cannot be benchmarked"
     );
 
-    // ── Integrations Save writes opencode.json (create_dir_all + reset leg) ──
-    // Under the redirect the parent dir (<tmp>\opencode\) does NOT exist: the
-    // exact "OpenCode never ran here" shape the v1.2.13 create_dir_all fix is
-    // for. Re-toggle a row on, Save, and assert the file appears, the id is
-    // registered, and the save (→ refresh_integrations_reset) re-baselined to
-    // clean. Deleting the create_dir_all block, or dropping the reset call,
-    // fails here.
+    // Saving a switched-off preset edits it where it is parked.
+    st.invoke_save_preset();
+    assert!(!st.get_status_is_error(), "{}", st.get_status_text());
     assert!(
-        !crate::paths::opencode_user_config().exists(),
-        "opencode.json (and its parent dir) must be absent before the first save"
+        read(&parked_ini).contains("ctx-size = 65536") && !read(&presets_ini).contains("[e2e]"),
+        "the save must not switch the preset back on"
     );
-    let cb = ElementHandle::find_by_accessible_label(app, label.as_str())
-        .next()
-        .expect("row checkbox before save");
-    cb.invoke_accessible_default_action(); // re-expose row 0
+    assert!(!listed_enabled("e2e"));
+
+    // Ids stay unique across BOTH files: New… on the same model must not take the
+    // parked id (switching it back on would then overwrite one of the two), and a
+    // rename onto it is refused. (The server-table phase above saved a server.ini
+    // without a ModelsDir, so point the picker's scan back at the temp tree.)
+    let mut cfg = crate::server_cfg::load();
+    cfg.models_dir = Some(dir.path().to_string_lossy().into_owned());
+    crate::server_cfg::save(&cfg).expect("save server.ini");
     assert!(
-        crate::gui::integrations_dirty(app),
-        "re-toggle must be dirty"
+        !st.get_preset_dirty(),
+        "the save above re-baselined the form"
     );
-    st.invoke_save_integrations();
+    st.invoke_new_preset();
+    st.set_dialog_model_index(0);
+    st.invoke_pick_new_empty();
+    assert!(!st.get_status_is_error(), "{}", st.get_status_text());
+    assert_eq!(
+        st.get_form().id.as_str(),
+        "e2e-3",
+        "e2e (off) and e2e-2 are taken"
+    );
+    st.invoke_rename_preset("e2e-3".into(), "e2e".into());
+    assert!(
+        st.get_status_is_error() && st.get_status_text().contains("already exists"),
+        "a rename onto a switched-off preset must be refused: {}",
+        st.get_status_text()
+    );
+    st.invoke_delete_preset("e2e-3".into());
+
+    // And back on: the section returns to presets.ini, edit included.
+    switch("e2e").invoke_accessible_default_action();
     itest::mock_elapsed_time(std::time::Duration::from_millis(1));
+    assert!(!st.get_status_is_error(), "{}", st.get_status_text());
+    assert!(read(&presets_ini).contains("ctx-size = 65536"));
+    assert!(!read(&parked_ini).contains("[e2e]"));
+    assert!(listed_enabled("e2e"));
+    assert!(st
+        .get_bench_presets()
+        .iter()
+        .any(|r| r.id.as_str() == "e2e"));
+    // The rebuild half of the switch's one-way binding: that click broke its
+    // delegate's binding for good, so a change made ELSEWHERE (the CLI's path,
+    // then a reload) reaches the widget only if the row is recreated.
+    crate::presets::set_enabled("e2e", false).expect("switch off behind the UI");
+    st.invoke_reload_all();
+    assert_eq!(
+        switch("e2e").accessible_checked(),
+        Some(false),
+        "a rebuild must reach the clicked switch"
+    );
+    crate::presets::set_enabled("e2e", true).expect("and back on");
+    st.invoke_reload_all();
+    assert_eq!(switch("e2e").accessible_checked(), Some(true));
+
+    // ── Integrations: OpenCode lists the ENABLED presets, and follows them ──
+    // Every preset change above already ran the opencode.json follow-up, and it
+    // must not have created anything: only Save adds the provider. Under the
+    // redirect even the parent dir (<tmp>\opencode\) is missing, the exact
+    // "OpenCode never ran here" shape the v1.2.13 create_dir_all fix is for.
+    st.set_current_tab(3); // Integrations (2 is Benchmark)
+    let opencode = crate::paths::opencode_user_config();
+    assert!(
+        !opencode.exists(),
+        "a preset change must never create opencode.json on its own"
+    );
+    assert!(!st.get_integration_provider_active());
+    assert!(
+        st.get_integration_status().contains("Save adds one"),
+        "{}",
+        st.get_integration_status()
+    );
+    let enabled_ids = || {
+        let mut v: Vec<String> = crate::presets::load_all()
+            .into_iter()
+            .map(|p| p.id)
+            .collect();
+        v.sort();
+        v
+    };
+    let opencode_ids = || {
+        let mut v = crate::integrations::opencode_model_ids();
+        v.sort();
+        v
+    };
+    st.invoke_save_integrations();
     assert!(
         !st.get_status_is_error(),
         "Integrations Save failed (missing opencode dir?): {}",
         st.get_status_text()
     );
     assert!(
-        crate::paths::opencode_user_config().exists(),
-        "save must create opencode.json even when its dir never existed"
+        opencode.exists(),
+        "save must create opencode.json and its dir"
+    );
+    assert_eq!(
+        opencode_ids(),
+        enabled_ids(),
+        "one model per enabled preset"
+    );
+    assert!(st.get_integration_provider_active() && st.get_integration_in_sync());
+
+    // Now that the provider exists, a switch follows through on its own.
+    st.set_current_tab(1);
+    switch("e2e-2").invoke_accessible_default_action(); // off
+    itest::mock_elapsed_time(std::time::Duration::from_millis(1));
+    assert!(!st.get_status_is_error(), "{}", st.get_status_text());
+    assert!(
+        !crate::integrations::opencode_model_ids().contains(&"e2e-2".to_string()),
+        "switched off in the Models tab = gone from OpenCode"
+    );
+    assert_eq!(opencode_ids(), enabled_ids());
+    assert!(st.get_integration_in_sync());
+    switch("e2e-2").invoke_accessible_default_action(); // back on
+    itest::mock_elapsed_time(std::time::Duration::from_millis(1));
+    assert_eq!(opencode_ids(), enabled_ids(), "…and back");
+
+    // A file that drifted (written by a version with the old checkbox list, or
+    // edited by hand) is NAMED by a refresh, never rewritten by it; Save repairs.
+    let mut v: serde_json::Value =
+        serde_json::from_str(&read(&opencode)).expect("opencode.json is JSON");
+    v["provider"]["llama.cpp"]["models"]
+        .as_object_mut()
+        .expect("models object")
+        .remove("e2e-2");
+    std::fs::write(&opencode, serde_json::to_string_pretty(&v).unwrap()).expect("hand-edit");
+    st.invoke_reload_all();
+    assert!(!st.get_integration_in_sync());
+    assert!(
+        st.get_integration_status()
+            .contains("enabled but not listed: e2e-2"),
+        "{}",
+        st.get_integration_status()
     );
     assert!(
-        crate::integrations::opencode_model_ids().contains(&first_id.to_string()),
-        "the toggled preset must be registered in opencode.json"
+        !crate::integrations::opencode_model_ids().contains(&"e2e-2".to_string()),
+        "a refresh only reports"
     );
-    assert!(
-        !crate::gui::integrations_dirty(app),
-        "save (→ refresh_integrations_reset) must re-baseline to clean"
-    );
+    st.invoke_save_integrations();
+    assert!(st.get_integration_in_sync());
+    assert_eq!(opencode_ids(), enabled_ids());
 
     // ── Benchmark: the selection is an ORDERED list, and order is meaning ───
     // Position 1 is the baseline every ratio in the results table divides by,
@@ -1081,5 +1194,34 @@ pub(super) fn run(app: &AppWindow) {
         })
         .is_err(),
         "deleting a nonexistent preset must error, not report success"
+    );
+
+    // ── CLI: `preset disable|enable` is the same move the switch makes ──────
+    // Case-insensitive lookup (like show/delete), acting on the STORED id, and
+    // the OpenCode provider configured above follows it too.
+    let preset_cmd = |cmd: PresetCmd| {
+        crate::cli::run(Cli {
+            command: Command::Preset(cmd),
+        })
+    };
+    preset_cmd(PresetCmd::Disable { id: "E2E".into() }).expect("preset disable");
+    assert!(crate::presets::load_all().iter().all(|p| p.id != "e2e"));
+    assert!(crate::presets::load_listed()
+        .iter()
+        .any(|l| l.preset.id == "e2e" && !l.enabled));
+    assert!(
+        !crate::integrations::opencode_model_ids().contains(&"e2e".to_string()),
+        "the CLI makes the same opencode.json follow-up as the GUI"
+    );
+    preset_cmd(PresetCmd::Disable { id: "e2e".into() }).expect("already off is not an error");
+    preset_cmd(PresetCmd::Enable { id: "e2e".into() }).expect("preset enable");
+    assert!(crate::presets::load_all().iter().any(|p| p.id == "e2e"));
+    assert!(crate::integrations::opencode_model_ids().contains(&"e2e".to_string()));
+    assert!(
+        preset_cmd(PresetCmd::Enable {
+            id: "no-such-preset".into()
+        })
+        .is_err(),
+        "an unknown id must error"
     );
 }

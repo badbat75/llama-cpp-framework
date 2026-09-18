@@ -45,10 +45,26 @@
 //! Step 8 is the one step NO test catches when skipped (round-trip fixtures use
 //! clean paths), same for its widget (step 6: a forgotten widget just never
 //! appears in the UI).
+//!
+//! ENABLED vs DISABLED. A preset lives in exactly one of two files of the same
+//! format: `presets.ini`, the file `llama-server --models-preset` reads, which
+//! makes it the set of ENABLED presets, and `presets.ini.disabled`
+//! (`paths::presets_disabled_ini`), the ones switched off in the Models tab.
+//! `load_all` is the enabled set, and it is what everything that talks to
+//! llama-server reads (the Benchmark tab, the snapshot restore, `bench sweep`,
+//! the opencode.json model list); only the Models tab and the CLI's `preset`
+//! commands see both (`load_listed`). The switch MOVES the section's raw text
+//! (`set_enabled`), comments and hand-edits included, instead of re-rendering
+//! it. Commenting the lines out in place was the other option, and it loses on
+//! the way back: the file would hold two kinds of `;` line (the user's own notes
+//! and parked keys) that no reader can tell apart. Every write resolves the id's
+//! file first (`home_of`), so Save edits a disabled preset where it is parked,
+//! and ids stay unique ACROSS both files (Rename; New/Clone de-conflict against
+//! `load_listed`), so switching a preset back on can never land on a namesake.
 
 use std::fs;
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::ini;
 use crate::paths;
@@ -556,15 +572,127 @@ pub fn prune_inactive_draft_keys(p: &mut Preset, embeds_mtp: bool) -> Vec<&'stat
 
 // ── File IO (load / save / delete / rename / id) ─────────────────────────
 
+/// The ENABLED presets: every section of presets.ini, in file order, i.e.
+/// exactly what `llama-server --models-preset` serves. Everything that talks to
+/// llama-server reads this and only this; the switched-off ones are
+/// `load_listed`'s (see the module header).
 pub fn load_all() -> Vec<Preset> {
-    let path = paths::presets_ini();
-    ini::read_all(&path)
+    read_presets(&paths::presets_ini())
+}
+
+fn read_presets(path: &Path) -> Vec<Preset> {
+    ini::read_all(path)
         .into_iter()
         .map(|s| Preset::from_keys(&s.id, &s.keys))
         .collect()
 }
 
-/// Write (replace) the preset's section in presets.ini.
+/// A preset as the Models tab lists it: the preset, and whether it is on.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Listed {
+    pub preset: Preset,
+    pub enabled: bool,
+}
+
+/// Every preset in both files: the enabled ones first, then the disabled ones,
+/// each group in file order.
+pub fn load_listed() -> Vec<Listed> {
+    listed_from(&paths::presets_ini(), &paths::presets_disabled_ini())
+}
+
+/// `load_listed` over explicit paths (unit tests must never touch `paths::`).
+/// An id present in BOTH files is listed once, as enabled: that is what a
+/// `set_enabled` interrupted between its two writes leaves behind, and
+/// presets.ini is the copy llama-server actually serves.
+fn listed_from(enabled: &Path, parked: &Path) -> Vec<Listed> {
+    let on = read_presets(enabled);
+    let off: Vec<Preset> = read_presets(parked)
+        .into_iter()
+        .filter(|p| !on.iter().any(|q| q.id.eq_ignore_ascii_case(&p.id)))
+        .collect();
+    on.into_iter()
+        .map(|preset| Listed {
+            preset,
+            enabled: true,
+        })
+        .chain(off.into_iter().map(|preset| Listed {
+            preset,
+            enabled: false,
+        }))
+        .collect()
+}
+
+fn has_section(path: &Path, id: &str) -> bool {
+    ini::read_all(path)
+        .iter()
+        .any(|s| s.id.eq_ignore_ascii_case(id))
+}
+
+/// The file a preset's section lives in: see `home_in`.
+fn home_of(id: &str) -> PathBuf {
+    home_in(id, paths::presets_ini(), paths::presets_disabled_ini())
+}
+
+/// presets.ini when the id is there (enabled wins, as in `listed_from`), the
+/// disabled file when it is parked there, and presets.ini for an id in neither:
+/// a NEW preset starts switched on.
+fn home_in(id: &str, enabled: PathBuf, parked: PathBuf) -> PathBuf {
+    if !has_section(&enabled, id) && has_section(&parked, id) {
+        parked
+    } else {
+        enabled
+    }
+}
+
+/// Written once, when the disabled file is created, for whoever opens it by
+/// hand: what it is, and that llama-server never reads it.
+const DISABLED_FILE_HEADER: &str = "\
+; Presets switched OFF in llama-cpp-config (the switch beside each preset in\r\n\
+; the Models tab). Same format as presets.ini, but llama-server only reads\r\n\
+; presets.ini, so nothing here is offered. Switching a preset back on moves its\r\n\
+; section, unchanged, back to presets.ini.\r\n";
+
+/// Switch a preset on (`enabled`) or off by moving its section between
+/// presets.ini and the disabled file (`move_section`). A running llama-server
+/// keeps the set it was started with: the router reads presets.ini at launch.
+pub fn set_enabled(id: &str, enabled: bool) -> io::Result<()> {
+    let (on, off) = (paths::presets_ini(), paths::presets_disabled_ini());
+    if enabled {
+        move_section(id, &off, &on, None)
+    } else {
+        move_section(id, &on, &off, Some(DISABLED_FILE_HEADER))
+    }
+}
+
+/// Move one section, as raw text, from `from` to `to`. The destination is
+/// written FIRST: an interruption between the two writes leaves the preset in
+/// both files (read as enabled, see `listed_from`), never in neither, and the
+/// next move replaces that stale twin rather than adding a second one. A section
+/// already gone from `from` but present in `to` is success: the switch is
+/// already where it was asked to go.
+fn move_section(id: &str, from: &Path, to: &Path, new_file_header: Option<&str>) -> io::Result<()> {
+    let Some(text) = ini::section_text(from, id) else {
+        if has_section(to, id) {
+            return Ok(());
+        }
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("no preset named `{id}`"),
+        ));
+    };
+    if let Some(parent) = to.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    if let Some(header) = new_file_header.filter(|_| !to.exists()) {
+        ini::atomic_write(to, header)?;
+    }
+    ini::replace_section(to, id, &text)?;
+    ini::delete_section(from, id)
+}
+
+/// Write (replace) the preset's section in the file it lives in (`home_of`):
+/// presets.ini, or the disabled file for a preset that is switched off, so an
+/// edit never switches it back on as a side effect.
 ///
 /// Side effect: on the FIRST save, when server.ini has no `ModelsDir` yet, this
 /// also seeds it, inferred from the model's path (its `models\` grandparent),
@@ -573,7 +701,7 @@ pub fn load_all() -> Vec<Preset> {
 /// if server.ini can't be touched.
 pub fn save(preset: &Preset) -> io::Result<()> {
     validate_for_save(preset)?;
-    let path = paths::presets_ini();
+    let path = home_of(&preset.id);
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
@@ -638,9 +766,11 @@ fn validate_for_save(preset: &Preset) -> io::Result<()> {
     Ok(())
 }
 
+/// Remove a preset from whichever file holds it (both, for the twin an
+/// interrupted `set_enabled` leaves behind).
 pub fn delete(id: &str) -> io::Result<()> {
-    let path = paths::presets_ini();
-    ini::delete_section(&path, id)
+    ini::delete_section(&paths::presets_ini(), id)?;
+    ini::delete_section(&paths::presets_disabled_ini(), id)
 }
 
 pub fn rename(old_id: &str, new_id: &str) -> io::Result<()> {
@@ -667,8 +797,29 @@ pub fn rename(old_id: &str, new_id: &str) -> io::Result<()> {
             "preset ids may only use letters, digits, '.', '-' and '_'",
         ));
     }
-    let path = paths::presets_ini();
-    ini::rename_section(&path, old_id, new)
+    rename_in(
+        &paths::presets_ini(),
+        &paths::presets_disabled_ini(),
+        old_id,
+        new,
+    )
+}
+
+/// `rename` over explicit paths: the section is renamed in the file it lives in
+/// (`home_in`), and the new id must be free in the OTHER file too. `rename_section`
+/// only guards its own file, and a namesake parked in the disabled one would be
+/// overwritten the day this preset is switched off (or would overwrite it the day
+/// that one is switched on).
+fn rename_in(enabled: &Path, parked: &Path, old_id: &str, new: &str) -> io::Result<()> {
+    let home = home_in(old_id, enabled.to_path_buf(), parked.to_path_buf());
+    let other = if home == enabled { parked } else { enabled };
+    if !new.eq_ignore_ascii_case(old_id) && has_section(other, new) {
+        return Err(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            format!("a preset named `{new}` already exists"),
+        ));
+    }
+    ini::rename_section(&home, old_id, new)
 }
 
 /// First of `base`, `base-2`, `base-3`, … that isn't already in `existing`.
@@ -1468,5 +1619,125 @@ mod tests {
         let parsed = Preset::from_keys(&sections[0].id, &sections[0].keys);
         assert_eq!(parsed.model, "E:\\m\\model.gguf");
         assert_eq!(parsed.device, "CUDA0");
+    }
+
+    /// The two files of the on/off switch, in a temp dir: `(dir, enabled, parked)`.
+    fn preset_files(enabled: &str) -> (tempfile::TempDir, PathBuf, PathBuf) {
+        let dir = tempfile::tempdir().unwrap();
+        let on = dir.path().join("presets.ini");
+        fs::write(&on, enabled).unwrap();
+        let off = dir.path().join("presets.ini.disabled");
+        (dir, on, off)
+    }
+
+    fn listed_ids(on: &Path, off: &Path) -> Vec<(String, bool)> {
+        listed_from(on, off)
+            .into_iter()
+            .map(|l| (l.preset.id, l.enabled))
+            .collect()
+    }
+
+    // Off and back on is a MOVE of the section's text, not a re-render: the
+    // user's comment and a key this schema does not know both survive the round
+    // trip, and so does everything else in either file.
+    #[test]
+    fn switching_a_preset_off_and_on_moves_its_section_verbatim() {
+        let (_d, on, off) = preset_files(
+            "[a]\r\n; my note\r\nmodel = a.gguf\r\nfuture-key = 1\r\n\r\n[b]\r\nmodel = b.gguf\r\n",
+        );
+        move_section("a", &on, &off, Some(DISABLED_FILE_HEADER)).unwrap();
+        assert_eq!(
+            listed_ids(&on, &off),
+            [("b".into(), true), ("a".into(), false)]
+        );
+        assert!(!has_section(&on, "a"), "llama-server must no longer see it");
+        let parked = fs::read_to_string(&off).unwrap();
+        assert!(
+            parked.starts_with(DISABLED_FILE_HEADER),
+            "a new disabled file explains itself:\n{parked}"
+        );
+        assert!(parked.contains("; my note\r\nmodel = a.gguf\r\nfuture-key = 1"));
+
+        move_section("a", &off, &on, None).unwrap();
+        assert_eq!(
+            listed_ids(&on, &off),
+            [("b".into(), true), ("a".into(), true)]
+        );
+        let back = fs::read_to_string(&on).unwrap();
+        assert!(
+            back.contains("[a]\r\n; my note\r\nmodel = a.gguf\r\nfuture-key = 1"),
+            "{back}"
+        );
+        assert!(!has_section(&off, "a"));
+        assert!(
+            fs::read_to_string(&off)
+                .unwrap()
+                .starts_with(DISABLED_FILE_HEADER),
+            "the header is not a section: it stays"
+        );
+
+        // Asking for the state it is already in succeeds; an unknown id does not.
+        move_section("a", &off, &on, None).unwrap();
+        assert_eq!(
+            move_section("nope", &on, &off, None).unwrap_err().kind(),
+            io::ErrorKind::NotFound
+        );
+    }
+
+    // What a switch interrupted between its two writes leaves: the preset in BOTH
+    // files. It is listed once, as enabled (what llama-server serves), writes go
+    // to presets.ini, and the next switch replaces the stale twin.
+    #[test]
+    fn a_preset_left_in_both_files_reads_as_enabled() {
+        let (_d, on, off) = preset_files("[a]\r\nmodel = new.gguf\r\n");
+        fs::write(&off, "[A]\r\nmodel = old.gguf\r\n").unwrap();
+        let listed = listed_from(&on, &off);
+        assert_eq!(listed.len(), 1);
+        assert!(listed[0].enabled);
+        assert_eq!(listed[0].preset.model, "new.gguf");
+        assert_eq!(home_in("a", on.clone(), off.clone()), on);
+
+        move_section("a", &on, &off, None).unwrap();
+        assert_eq!(listed_ids(&on, &off), [("a".into(), false)]);
+        assert_eq!(listed_from(&on, &off)[0].preset.model, "new.gguf");
+    }
+
+    // An edit to a switched-off preset must stay switched off, and a new preset
+    // (in neither file) starts on.
+    #[test]
+    fn a_preset_is_written_where_it_lives() {
+        let (_d, on, off) = preset_files("[a]\r\nmodel = a.gguf\r\n");
+        fs::write(&off, "[b]\r\nmodel = b.gguf\r\n").unwrap();
+        assert_eq!(home_in("a", on.clone(), off.clone()), on);
+        assert_eq!(home_in("B", on.clone(), off.clone()), off);
+        assert_eq!(home_in("new", on.clone(), off.clone()), on);
+    }
+
+    // Ids are unique across BOTH files: a rename onto a parked id would collide
+    // the day either one is switched.
+    #[test]
+    fn rename_checks_the_other_file_too() {
+        let (_d, on, off) = preset_files("[a]\r\nmodel = a.gguf\r\n");
+        fs::write(&off, "[b]\r\nmodel = b.gguf\r\n").unwrap();
+        assert_eq!(
+            rename_in(&on, &off, "a", "b").unwrap_err().kind(),
+            io::ErrorKind::AlreadyExists
+        );
+        assert_eq!(
+            rename_in(&on, &off, "b", "a").unwrap_err().kind(),
+            io::ErrorKind::AlreadyExists
+        );
+        // A parked preset is renamed where it is parked.
+        rename_in(&on, &off, "b", "c").unwrap();
+        assert_eq!(
+            listed_ids(&on, &off),
+            [("a".into(), true), ("c".into(), false)]
+        );
+        // A case-only rename is not a collision with itself.
+        rename_in(&on, &off, "a", "A").unwrap();
+        assert_eq!(
+            listed_ids(&on, &off),
+            [("A".into(), true), ("c".into(), false)]
+        );
     }
 }

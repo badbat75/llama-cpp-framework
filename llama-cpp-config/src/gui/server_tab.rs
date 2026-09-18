@@ -50,7 +50,9 @@ pub(super) fn wire(app: &AppWindow, tray: &AppTray, state: &Rc<RefCell<State>>) 
                     // card + chat URL) from the file just written.
                     refresh_server_snapshot(&app);
                     refresh_file_options(&app, &state);
-                    refresh_integrations(&app);
+                    // The Base URL and API key opencode.json carries come from
+                    // server.ini, so a configured provider follows the save.
+                    follow_integrations(&app);
                     snapshot_server_base(&app);
                 }
                 Err(e) => set_status(&app, format!("Save failed: {e}"), true),
@@ -66,8 +68,7 @@ pub(super) fn wire(app: &AppWindow, tray: &AppTray, state: &Rc<RefCell<State>>) 
             load_server_into_ui(&app);
             // No refresh_file_options / refresh_integrations here: a form
             // revert never touches disk, and both hubs derive from the SAVED
-            // config; the only observable effect of calling them was wiping
-            // pending Integrations toggles.
+            // config, so there is nothing for them to re-derive.
             set_status(
                 &app,
                 format!("Reloaded {}", paths::server_ini().display()),
