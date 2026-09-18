@@ -12,6 +12,10 @@
 # instead of a download. The remaining manual SDKs (CUDA, Vulkan) are only
 # probed and their install URLs printed.
 #
+# sccache comes straight from its GitHub releases (user scope, no elevation)
+# rather than winget, whose manifest lags upstream by days; a winget copy left
+# by an earlier setup is uninstalled once the release copy is in place.
+#
 # When build\config-build.psd1 + llama.cpp clone exist, also fetches the source
 # and flags a rebuild when a newer release tag (vX.Y.Z) is available. (No `git
 # pull`: 02-build.ps1 pins the clone to a tag on a detached HEAD, so a pull
@@ -199,6 +203,143 @@ function Get-RocmLatestPublished {
     return $best
 }
 
+# ── sccache (GitHub release) ────────────────────────────────────────
+# Installed from mozilla/sccache's own release assets, not winget: the winget
+# manifest lags upstream by days (0.18.0 was published 2026-09-14 and winget
+# still served 0.17.0 four days later), and sccache is the tool whose releases
+# the nvcc wrapping in 02-build.ps1 waits on. It tracks the LATEST release,
+# unlike ROCm's pin: a compiler cache that misbehaves costs a cold build, not
+# a broken runtime, and latest is what `winget upgrade` gave it before.
+#
+# The directory is fixed and versionless on purpose. winget's portable layout
+# puts the version in the path (...\sccache-v0.17.0-x86_64-pc-windows-msvc\),
+# and 02-build.ps1 hands that full path to CMake as the compiler launcher, so
+# every upgrade changed the command line of every C/C++ object and ninja re-ran
+# all of them. 02-build.ps1 looks here before PATH for the same reason: a
+# console opened before this run can still resolve the old copy from PATH.
+$sccacheHome = Join-Path $env:LOCALAPPDATA 'Programs\sccache'
+$sccacheExe  = Join-Path $sccacheHome 'sccache.exe'
+$sccacheArch = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'aarch64' } else { 'x86_64' }
+
+# "sccache 0.18.0" -> "0.18.0"; $null when the exe is missing or unreadable.
+function Get-SccacheVersion([string]$Exe) {
+    # Same PS 5.1 redirected-stderr rationale as Get-WingetVersion.
+    $ErrorActionPreference = 'Continue'
+    if (-not $Exe -or -not (Test-Path $Exe)) { return $null }
+    $out = & $Exe --version 2>$null | Out-String
+    if ($out -match 'sccache\s+(\d+\.\d+\.\d+)') { return $Matches[1] }
+    return $null
+}
+
+# The newest sccache release for this arch as Version/Url/Sha256, or $null
+# when GitHub cannot say (offline, or the unauthenticated API limit of 60
+# requests an hour). /releases/latest already skips drafts and pre-releases.
+# The zip is FOUND in the release's asset list rather than composed from the
+# tag, and its sha256 comes from the API's `digest`, falling back to the
+# .sha256 file sccache publishes beside every asset.
+function Get-SccacheLatest {
+    # Same PS 5.1 redirected-stderr rationale as Get-WingetVersion.
+    $ErrorActionPreference = 'Continue'
+    # curl.exe explicitly: PS 5.1 aliases `curl` to Invoke-WebRequest.
+    $json = curl.exe -sL --fail --connect-timeout 5 --max-time 20 'https://api.github.com/repos/mozilla/sccache/releases/latest' 2>$null | Out-String
+    if ($LASTEXITCODE -ne 0 -or -not $json) { return $null }
+    try { $release = $json | ConvertFrom-Json } catch { return $null }
+    if ($release.tag_name -notmatch '^v(\d+\.\d+\.\d+)$') { return $null }
+    $version = $Matches[1]
+    $name  = "sccache-v$version-$sccacheArch-pc-windows-msvc.zip"
+    $asset = $release.assets | Where-Object { $_.name -eq $name } | Select-Object -First 1
+    if (-not $asset) { return $null }
+    $sha = $null
+    if ($asset.digest -match '^sha256:([0-9a-fA-F]{64})$') {
+        $sha = $Matches[1]
+    } else {
+        $sidecar = $release.assets | Where-Object { $_.name -eq "$name.sha256" } | Select-Object -First 1
+        if ($sidecar) {
+            $text = curl.exe -sL --fail --max-time 20 $sidecar.browser_download_url 2>$null | Out-String
+            if ($LASTEXITCODE -eq 0 -and $text -match '([0-9a-fA-F]{64})') { $sha = $Matches[1] }
+        }
+    }
+    if (-not $sha) { return $null }
+    return @{ Version = $version; Url = $asset.browser_download_url; Sha256 = $sha.ToLowerInvariant() }
+}
+
+# Stop the server of every sccache copy we know of: it keeps its exe mapped,
+# which blocks both replacing ours and uninstalling winget's, and a build that
+# died mid-way leaves one running. No server running is not an error.
+function Stop-SccacheServers {
+    # Same PS 5.1 redirected-stderr rationale as Get-WingetVersion.
+    $ErrorActionPreference = 'Continue'
+    foreach ($exe in @($sccacheExe, $sccacheOnPath | Where-Object { $_ -and (Test-Path $_) } | Select-Object -Unique)) {
+        & $exe --stop-server 2>$null | Out-Null
+    }
+}
+
+# Download, verify and put the release's sccache.exe at $sccacheExe. Returns
+# $null on success, else the reason (the report prints it). The exe is staged
+# beside the target and MOVED over it, so a download or copy that dies halfway
+# never leaves a truncated sccache.exe, and one still in use (a build running)
+# stays exactly as it was.
+function Install-Sccache($Latest) {
+    # Same PS 5.1 redirected-stderr rationale as Get-WingetVersion.
+    $ErrorActionPreference = 'Continue'
+    $work = Join-Path $env:TEMP "sccache-v$($Latest.Version)-install"
+    if (Test-Path $work) { Remove-Item $work -Recurse -Force }
+    New-Item -ItemType Directory -Force -Path $work | Out-Null
+    try {
+        $zip = Join-Path $work (Split-Path $Latest.Url -Leaf)
+        curl.exe --fail -sSL --retry 3 --retry-delay 5 -o $zip $Latest.Url
+        if ($LASTEXITCODE -ne 0) { return "download failed (curl exit $LASTEXITCODE)" }
+        $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($hash -ne $Latest.Sha256) { return "sha256 mismatch on $(Split-Path $zip -Leaf) (got $hash)" }
+        tar.exe -xf $zip -C $work
+        if ($LASTEXITCODE -ne 0) { return "extraction failed (tar exit $LASTEXITCODE)" }
+        $new = Get-ChildItem $work -Recurse -Filter 'sccache.exe' | Select-Object -First 1
+        if (-not $new) { return "no sccache.exe in $(Split-Path $zip -Leaf)" }
+
+        Stop-SccacheServers
+        New-Item -ItemType Directory -Force -Path $sccacheHome | Out-Null
+        $staged = "$sccacheExe.new"
+        Copy-Item $new.FullName $staged -Force
+        Move-Item $staged $sccacheExe -Force -ErrorAction SilentlyContinue
+        if (Test-Path $staged) {
+            Remove-Item $staged -Force
+            return "$sccacheExe is in use (a build running?); re-run once it finishes"
+        }
+        return $null
+    } finally {
+        Remove-Item $work -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
+# Append $Dir to the USER PATH; $true when it changed anything. Raw registry,
+# for the reason the machine PATH goes through it in the elevated leg: the
+# value must stay REG_EXPAND_SZ (a fresh profile's own entry is
+# %USERPROFILE%\AppData\Local\Microsoft\WindowsApps).
+function Add-UserPathEntry([string]$Dir) {
+    $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment', $true)
+    try {
+        $path  = [string]$key.GetValue('Path', '', [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+        $parts = @($path -split ';' | Where-Object { $_ })
+        if (@($parts | Where-Object { $_.TrimEnd('\') -eq $Dir.TrimEnd('\') }).Count) { return $false }
+        $key.SetValue('Path', (@($parts + $Dir) -join ';'), [Microsoft.Win32.RegistryValueKind]::ExpandString)
+    } finally {
+        $key.Close()
+    }
+    # A raw registry write notifies nobody (unlike
+    # [Environment]::SetEnvironmentVariable), so tell Explorer, or consoles it
+    # starts would not see the entry until the next logon.
+    if (-not ('Win32.EnvBroadcast' -as [type])) {
+        Add-Type -Namespace Win32 -Name EnvBroadcast -MemberDefinition @'
+[DllImport("user32.dll", CharSet = CharSet.Unicode)]
+public static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint msg, UIntPtr wParam, string lParam, uint flags, uint timeout, out UIntPtr result);
+'@
+    }
+    $result = [UIntPtr]::Zero
+    # HWND_BROADCAST, WM_SETTINGCHANGE, SMTO_ABORTIFHUNG, 5 s
+    [void][Win32.EnvBroadcast]::SendMessageTimeout([IntPtr]0xffff, 0x1A, [UIntPtr]::Zero, 'Environment', 2, 5000, [ref]$result)
+    return $true
+}
+
 # ── Banner ──────────────────────────────────────────────────────────
 
 Write-Host ""
@@ -220,6 +361,15 @@ foreach ($p in $wingetPackages) {
 $rocmBeforeDir = Get-RocmActiveDir
 $rocmBefore    = Get-RocmDirVersion $rocmBeforeDir
 $rocmOnDisk    = Get-RocmInstalled
+# sccache as 02-build.ps1 resolves it: our directory first, then PATH.
+$sccacheOnPath = Get-Command sccache -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty Source
+$sccacheWinget = Get-WingetVersion 'Mozilla.sccache'
+$sccacheBefore = Get-SccacheVersion $sccacheExe
+$sccacheBeforeFrom = $sccacheHome
+if (-not $sccacheBefore -and $sccacheOnPath) {
+    $sccacheBefore     = Get-SccacheVersion $sccacheOnPath
+    $sccacheBeforeFrom = if ($sccacheWinget) { 'winget' } else { Split-Path $sccacheOnPath }
+}
 
 $cfgPath = Join-Path $PSScriptRoot 'build\config-build.psd1'
 $cfg = if (Test-Path $cfgPath) { Import-PowerShellDataFile $cfgPath } else { $null }
@@ -230,6 +380,8 @@ foreach ($p in $wingetPackages) {
     if ($v) { Write-Host "  [OK] $($p.Name) $v" -ForegroundColor Green }
     else    { Write-Host "  [..] $($p.Name) not installed" -ForegroundColor Yellow }
 }
+if ($sccacheBefore) { Write-Host "  [OK] sccache $sccacheBefore ($sccacheBeforeFrom)" -ForegroundColor Green }
+else                { Write-Host "  [..] sccache not installed" -ForegroundColor Yellow }
 if ($rocmBefore) {
     Write-Host "  [OK] ROCm (TheRock) $rocmBefore ($rocmBeforeDir)" -ForegroundColor Green
     $others = @($rocmOnDisk.Keys | Where-Object { $rocmOnDisk[$_] -ne $rocmBeforeDir })
@@ -513,6 +665,42 @@ if (Test-IsAdmin) {
     }
 }
 
+# ── sccache: install / update from the GitHub release ───────────────
+# User scope, so it runs here and not in the elevated batch (an elevation
+# with a different admin account would install into THAT profile).
+
+Write-Host ""
+Write-Host "Checking sccache releases..." -ForegroundColor Cyan
+$sccacheIssue  = $null
+$sccacheWingetRemoved = $false
+$sccacheLatest = Get-SccacheLatest
+$sccacheOurs   = Get-SccacheVersion $sccacheExe
+if (-not $sccacheLatest) {
+    $sccacheIssue = 'latest release not resolved (offline, API rate limit, or no verifiable Windows zip); kept what is installed'
+} elseif (-not $sccacheOurs -or [version]$sccacheOurs -lt [version]$sccacheLatest.Version) {
+    Write-Host "  installing sccache $($sccacheLatest.Version) to $sccacheHome" -ForegroundColor Cyan
+    $sccacheIssue = Install-Sccache $sccacheLatest
+}
+if (Get-SccacheVersion $sccacheExe) {
+    if (Add-UserPathEntry $sccacheHome) {
+        Write-Host "  user PATH += $sccacheHome" -ForegroundColor DarkGray
+    }
+    if (@($env:PATH -split ';') -notcontains $sccacheHome) { $env:PATH = "$sccacheHome;$env:PATH" }
+    # Only once our copy works, so a failed download never leaves the machine
+    # with no sccache at all. Uninstalling also takes winget's directory off
+    # the user PATH, where it sat AHEAD of ours.
+    if ($sccacheWinget) {
+        Write-Host "  removing the winget copy (Mozilla.sccache $sccacheWinget)..." -ForegroundColor Cyan
+        Stop-SccacheServers
+        winget uninstall --id Mozilla.sccache --exact --silent --accept-source-agreements
+        if ($LASTEXITCODE -eq 0) {
+            $sccacheWingetRemoved = $true
+        } else {
+            $sccacheIssue = "winget uninstall Mozilla.sccache failed (exit $LASTEXITCODE); remove it by hand, its PATH entry shadows $sccacheHome"
+        }
+    }
+}
+
 # ── Check AMD for a stable newer than the pin ───────────────────────
 # Report-only, and deliberately so (installer\dist-pins.psd1 carries the why).
 # Best effort: an unreachable index is not a failure, it just leaves the row
@@ -611,6 +799,27 @@ foreach ($p in $wingetPackages) {
     else                           { Write-ReportRow "[OK]" DarkGray $p.Name $a }
 }
 
+# The copy 02-build.ps1 will pick: ours, else whatever PATH still offers.
+$sccacheAfter = Get-SccacheVersion $sccacheExe
+if (-not $sccacheAfter) { $sccacheAfter = Get-SccacheVersion $sccacheOnPath }
+if (-not $sccacheAfter) {
+    Write-ReportRow "[!!]" Red "sccache" "not installed"
+} elseif (-not $sccacheBefore) {
+    Write-ReportRow "[++]" Green "sccache" "installed $sccacheAfter (GitHub release)"
+} elseif ($sccacheBefore -ne $sccacheAfter) {
+    Write-ReportRow "[++]" Green "sccache" "$sccacheBefore -> $sccacheAfter (GitHub release)"
+} elseif ($sccacheIssue) {
+    Write-ReportRow "[..]" Yellow "sccache" $sccacheAfter
+} else {
+    Write-ReportRow "[OK]" DarkGray "sccache" $sccacheAfter
+}
+if ($sccacheIssue) {
+    Write-ReportRow "    " Yellow "" $sccacheIssue
+}
+if ($sccacheWingetRemoved) {
+    Write-ReportRow "    " DarkGray "" "winget copy removed; consoles opened earlier still have its PATH entry"
+}
+
 # HipPath is what build\config-build.psd1 pins (compiler path included), so
 # the "re-run 01-configure" verdict follows the DIRECTORY, not the version:
 # migrating the pre-versioning tree moves HIP_PATH without changing a digit.
@@ -679,10 +888,42 @@ foreach ($scope in 'Machine', 'User') {
         }
     }
 }
-# amdhip64_*.dll in more than one PATH dir (the driver's System32 copy aside).
+# The installed framework's bin\ is NOT a second dist, although it carries
+# amdhip64_*.dll and its optional PATH component puts it on the system PATH:
+# install-runtime-deps.ps1 stages the active dist's runtime there on purpose
+# (with amd_comgr*.dll and rocm_kpack*.dll; see that script), it holds no
+# rocblas/hipblaslt, and PATH never decides amdhip64_7.dll for any other exe
+# (its own dir, then the driver's System32 copy, both precede PATH). What can
+# go wrong with it is STALENESS: this script moves HIP_PATH, the staged copy
+# does not follow, and the installed llama-server then runs one dist's runtime
+# against another's rocBLAS. Compared by content, as the helper does (every
+# dist stamps the same FileVersion into these DLLs).
+# Doubled separators collapsed for comparison only: the installer writes its
+# PATH entry as ...\llama.cpp\\bin.
+function Get-NormalizedDir([string]$Dir) { ($Dir -replace '(?<!^)\\{2,}', '\').TrimEnd('\') }
+$fwBin = $null
+$fwDir = (Get-ItemProperty 'HKLM:\Software\llama.cpp' -ErrorAction SilentlyContinue).InstallDir
+if ($fwDir -and (Test-Path (Join-Path $fwDir 'bin'))) { $fwBin = Get-NormalizedDir (Join-Path $fwDir 'bin') }
+if ($fwBin -and $rocmAfterDir -and (Test-Path (Join-Path $rocmAfterDir 'bin'))) {
+    $unstaged = @()
+    foreach ($src in @(Get-ChildItem (Join-Path $rocmAfterDir 'bin') -File | Where-Object {
+            $_.Name -like 'amdhip64_*.dll' -or $_.Name -like 'amd_comgr*.dll' -or $_.Name -like 'rocm_kpack*.dll' })) {
+        $dst = Get-Item (Join-Path $fwBin $src.Name) -ErrorAction SilentlyContinue
+        if (-not $dst -or $dst.Length -ne $src.Length -or
+            (Get-FileHash $dst.FullName -Algorithm SHA256).Hash -ne (Get-FileHash $src.FullName -Algorithm SHA256).Hash) {
+            $unstaged += $src.Name
+        }
+    }
+    if ($unstaged.Count) {
+        $envWarnings += "$fwBin does not carry the active dist's HIP runtime ($($unstaged -join ', ')), so the installed llama-server mixes runtimes; re-stage it: powershell -ExecutionPolicy Bypass -File `"$fwBin\install-runtime-deps.ps1`" -StageHipRuntime"
+    }
+}
+# amdhip64_*.dll in more than one PATH dir: a second DIST (legacy SDK, a
+# hand-added TheRock), whose rocblas.dll/libhipblaslt.dll then resolve by
+# PATH order. The driver's System32 copy and our staged one are set aside.
 $pathAll = ([Environment]::GetEnvironmentVariable('Path', 'Machine'), [Environment]::GetEnvironmentVariable('Path', 'User')) -join ';'
-$hipDllDirs = @($pathAll -split ';' | Where-Object { $_ } | ForEach-Object { $_.TrimEnd('\') } | Select-Object -Unique |
-    Where-Object { ($_ -notlike "$env:windir*") -and (Test-Path (Join-Path $_ 'amdhip64*.dll')) })
+$hipDllDirs = @($pathAll -split ';' | Where-Object { $_ } | ForEach-Object { Get-NormalizedDir $_ } | Select-Object -Unique |
+    Where-Object { ($_ -notlike "$env:windir*") -and ($_ -ne $fwBin) -and (Test-Path (Join-Path $_ 'amdhip64*.dll')) })
 if ($hipDllDirs.Count -gt 1) {
     $envWarnings += "amdhip64_*.dll in $($hipDllDirs.Count) PATH dirs (ambiguous load order): $($hipDllDirs -join '; ')"
 }

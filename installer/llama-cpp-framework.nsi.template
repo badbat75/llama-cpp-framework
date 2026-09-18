@@ -79,6 +79,58 @@ Page custom CheckPreviousInstall
     Delete "$INSTDIR\uninstall.exe"
 !macroend
 
+; ── The cuBLAS runtime survives an upgrade ──────────────────────────
+; cublas64_13.dll + cublasLt64_13.dll (~550 MB) sit in bin\ next to
+; llama-server.exe but are NOT part of the package: install-runtime-deps.ps1
+; downloads them when the NVIDIA box is ticked. An upgrade runs the OLD
+; uninstaller first, whose `RMDir /r "$INSTDIR\bin"` takes them along, and
+; that box is unchecked by default, so every upgrade silently dropped NVIDIA
+; GPUs from CUDA to Vulkan (the HIP runtime is restaged by -StageHipRuntime
+; below; nothing did the same for cuBLAS). So the pair is PARKED beside bin\
+; before the old uninstaller runs, and SecMain moves it back.
+;
+; Both halves live in the installer, for the reason CleanLegacyRoot gives: a
+; fix in the uninstaller would arrive one generation late. And no uninstaller
+; may ever remove the park dir: the NEXT version's installer parks there before
+; running THIS one's uninstaller. The copy kept is whatever the machine had,
+; not the current pin: the helper treats any cublas64_13.dll as present, and
+; this keeps to that.
+!define CUBLAS_PARK "cublas-parked"
+Var ParkedCublas
+
+!macro ParkCublas NAME
+    ${If} ${FileExists} "$INSTDIR\bin\${NAME}"
+        CreateDirectory "$INSTDIR\${CUBLAS_PARK}"
+        Delete "$INSTDIR\${CUBLAS_PARK}\${NAME}"
+        Rename "$INSTDIR\bin\${NAME}" "$INSTDIR\${CUBLAS_PARK}\${NAME}"
+    ${EndIf}
+!macroend
+
+; Expects bin\ to exist (SecMain's SetOutPath has created it). A copy already
+; in bin\ wins over the parked one. Rename fails across volumes, which is what
+; a directory page pointing the upgrade elsewhere means, hence the copy
+; fallback; the parked file goes only once it landed.
+!macro RestoreCublas NAME
+    ${If} ${FileExists} "$ParkedCublas\${NAME}"
+        ${If} ${FileExists} "$INSTDIR\bin\${NAME}"
+            Delete "$ParkedCublas\${NAME}"
+        ${Else}
+            ClearErrors
+            Rename "$ParkedCublas\${NAME}" "$INSTDIR\bin\${NAME}"
+            ${If} ${Errors}
+                ClearErrors
+                CopyFiles /SILENT "$ParkedCublas\${NAME}" "$INSTDIR\bin"
+                ${IfNot} ${Errors}
+                    Delete "$ParkedCublas\${NAME}"
+                ${EndIf}
+            ${EndIf}
+            ${If} ${FileExists} "$INSTDIR\bin\${NAME}"
+                DetailPrint "Kept the installed cuBLAS runtime: ${NAME}"
+            ${EndIf}
+        ${EndIf}
+    ${EndIf}
+!macroend
+
 ; ── Upgrade: remove previous installation silently ──────────────────
 Function CheckPreviousInstall
     ReadRegStr $0 HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\llama.cpp" "UninstallString"
@@ -103,6 +155,12 @@ Function CheckPreviousInstall
         ; itself: that is finished here, once ExecWait has returned and the
         ; image is no longer locked. Both layouts are cleared, because the
         ; installer being replaced may predate the move into bin\.
+        ;
+        ; The cuBLAS runtime is parked first, or the old uninstaller deletes
+        ; it with bin\ (see ParkCublas).
+        StrCpy $ParkedCublas "$INSTDIR\${CUBLAS_PARK}"
+        !insertmacro ParkCublas "cublas64_13.dll"
+        !insertmacro ParkCublas "cublasLt64_13.dll"
         ExecWait '"$2" /S _?=$INSTDIR'
         Delete "$INSTDIR\bin\llama-cpp-uninstall.exe"
         !insertmacro CleanLegacyRoot
@@ -164,6 +222,19 @@ Section "llama.cpp binaries (required)" SecMain
     SetOutPath "$INSTDIR\bin"
     File "@STAGING_DIR@\llama-cpp-config.exe"
     File "@STAGING_DIR@\llama.ico"
+
+    ; The cuBLAS runtime CheckPreviousInstall parked goes back next to
+    ; llama-server.exe, BEFORE the SecDeps* sections, so a ticked NVIDIA box
+    ; finds it present and skips the download. With no upgrade this run, look
+    ; in this directory anyway: an upgrade cancelled after the old uninstaller
+    ; ran leaves the pair parked, and reinstalling into the same place must
+    ; pick it up.
+    ${If} $ParkedCublas == ""
+        StrCpy $ParkedCublas "$INSTDIR\${CUBLAS_PARK}"
+    ${EndIf}
+    !insertmacro RestoreCublas "cublas64_13.dll"
+    !insertmacro RestoreCublas "cublasLt64_13.dll"
+    RMDir "$ParkedCublas"
 
     ; Uninstaller. Lives in bin\ so the install root holds nothing but bin\ and
     ; lib\: a file at the root outlives every uninstall, because the Uninstall
@@ -243,7 +314,7 @@ Section /o "AMD ROCm runtime (~4.3 GB download)" SecDepsAmd
     ExecWait 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$INSTDIR\bin\install-runtime-deps.ps1" -Unattended -Amd'
 SectionEnd
 
-Section /o "NVIDIA cuBLAS runtime (~375 MB download)" SecDepsNvidia
+Section /o "NVIDIA cuBLAS runtime (~400 MB download)" SecDepsNvidia
     DetailPrint "Runtime deps: NVIDIA cuBLAS (skipped if present)..."
     ExecWait 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$INSTDIR\bin\install-runtime-deps.ps1" -Unattended -Nvidia'
 SectionEnd
@@ -275,7 +346,7 @@ SectionEnd
     !insertmacro MUI_DESCRIPTION_TEXT ${SecPath} "Add llama.cpp bin directory to system PATH."
     !insertmacro MUI_DESCRIPTION_TEXT ${SecDepsBase} "Microsoft Visual C++ runtime - required to run anything in this package. Skipped if already installed."
     !insertmacro MUI_DESCRIPTION_TEXT ${SecDepsAmd} "AMD ROCm/TheRock libraries for the HIP backend (~4.3 GB download, ~25 GB on disk; requires the Adrenalin driver). Without it AMD GPUs run on Vulkan. Tick it also when ROCm is already installed: the download is then skipped and it only stages the dist's HIP runtime here, which is what BF16/F16 models on RDNA4 need."
-    !insertmacro MUI_DESCRIPTION_TEXT ${SecDepsNvidia} "NVIDIA cuBLAS runtime for the CUDA backend (~375 MB download; requires the NVIDIA driver). Without it NVIDIA GPUs run on Vulkan."
+    !insertmacro MUI_DESCRIPTION_TEXT ${SecDepsNvidia} "NVIDIA cuBLAS runtime for the CUDA backend (~400 MB download; requires the NVIDIA driver). Without it NVIDIA GPUs run on Vulkan. An upgrade keeps the copy already installed, so there is no need to tick it again."
 !insertmacro MUI_FUNCTION_DESCRIPTION_END
 
 ; ── Uninstaller ─────────────────────────────────────────────────────

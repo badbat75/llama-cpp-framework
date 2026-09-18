@@ -20,7 +20,7 @@
 #     nothing and is what the installer's hidden always-run section calls, so
 #     a machine that already has ROCm gets it without ticking a 4.3 GB box.
 #   - cuBLAS runtime (NVIDIA)   - CUDA backend math libs, official NVIDIA
-#     per-component redist (~375 MB); the two DLLs land next to
+#     per-component redist (~400 MB); the two DLLs land next to
 #     llama-server.exe. Requires the NVIDIA driver. Without it NVIDIA GPUs
 #     run on Vulkan.
 #
@@ -354,7 +354,7 @@ if ($doNvidia) {
             Write-Host "  [OK] cuBLAS runtime (cublas64_13.dll) found" -ForegroundColor Green
         } elseif ($Report) {
             Write-Host "  [--] cuBLAS runtime MISSING - NVIDIA GPUs will run on Vulkan, not CUDA" -ForegroundColor Yellow
-        } elseif (Ask "  cuBLAS runtime is MISSING (CUDA backend for NVIDIA GPUs, ~375 MB). Install next to llama-server.exe?") {
+        } elseif (Ask "  cuBLAS runtime is MISSING (CUDA backend for NVIDIA GPUs, ~400 MB). Install next to llama-server.exe?") {
             $zip = Join-Path $env:TEMP (Split-Path $pins.CudaBlas.Url -Leaf)
             curl.exe --fail -L -C - --retry 3 -o $zip $pins.CudaBlas.Url
             if ($LASTEXITCODE -ne 0) { Write-Host "  download failed (curl exit $LASTEXITCODE)" -ForegroundColor Red }

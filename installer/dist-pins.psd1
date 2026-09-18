@@ -75,9 +75,9 @@
     # machines. Keep the major in sync with what the build links against
     # (cublas64_13 = any CUDA 13.x redist).
     CudaBlas = @{
-        Version = '13.6.0.2'   # libcublas component version (CUDA 13.3.1 redist)
-        Url     = 'https://developer.download.nvidia.com/compute/cuda/redist/libcublas/windows-x86_64/libcublas-windows-x86_64-13.6.0.2-archive.zip'
-        Sha256  = '62e9fa30560c8f0a28e0cdcf9d6fc1fed347bcfab8847239b9ae1fdc1d86408a'
+        Version = '13.8.0.4'   # libcublas component version (CUDA 13.4.2 = 13.4 Update 1 redist)
+        Url     = 'https://developer.download.nvidia.com/compute/cuda/redist/libcublas/windows-x86_64/libcublas-windows-x86_64-13.8.0.4-archive.zip'
+        Sha256  = '0974318e9861a61cb9091cf7de8d4c2880e9787fe311cb4bcbd08865663c5f43'
     }
 
     # Microsoft Visual C++ Redistributable x64 - required by every shipped

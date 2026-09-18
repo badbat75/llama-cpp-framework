@@ -221,8 +221,99 @@ if ($vulkanSdk) {
     Write-Host "Vulkan SDK: no versioned install found, leaving detection to CMake" -ForegroundColor Yellow
 }
 
+# ── CUDA toolkit: build with the newest installed version ─────────
+# Each CUDA toolkit installs into its own versioned dir (...\CUDA\v13.4) and an
+# upgrade leaves the older ones in place, so nothing breaks the way a Vulkan
+# SDK upgrade does: the old toolkit merely stops being the newest and the build
+# goes on using it. CMake picks nvcc ONCE, at the first configure of a build
+# dir, caches it as CMAKE_CUDA_COMPILER and never looks again, and
+# FindCUDAToolkit caches ~40 library paths from the same tree next to it (found
+# 2026-09-18: still compiling with 13.3 while 13.4 was installed and CUDA_PATH
+# named it). So the newest toolkit is pinned on every configure.
+#
+# Moving an existing build dir to another toolkit needs care, because passing
+# a different CMAKE_CUDA_COMPILER alone makes CMake compare it with the nvcc it
+# recorded in CMakeFiles\<ver>\CMakeCUDACompiler.cmake and, on a mismatch,
+# DELETE THE WHOLE CACHE and the top-level CMakeFiles dir ("You have changed
+# variables that require your cache to be deleted"). So on a change only the
+# CUDA half is reset: that language's identification files (CMake then
+# re-identifies nvcc from the new path instead of comparing) and the toolkit's
+# cache entries (-U, re-found on this configure). Only the CUDA objects
+# recompile, their command line naming the new nvcc; the C/C++ and HIP
+# targets are untouched. Verified on a scratch project mixing CXX and CUDA.
+function Find-CudaToolkit {
+    # The parent of whatever CUDA_PATH names (process env, then machine env),
+    # then the default install root. The newest by VERSION, not the one
+    # CUDA_PATH names: that is whichever toolkit was installed LAST.
+    $roots = @()
+    foreach ($p in @($env:CUDA_PATH, [Environment]::GetEnvironmentVariable('CUDA_PATH', 'Machine'))) {
+        if ($p) { $roots += (Split-Path $p.TrimEnd('\') -Parent) }
+    }
+    $roots += "${env:ProgramFiles}\NVIDIA GPU Computing Toolkit\CUDA"
+
+    $best = $null
+    $bestVer = $null
+    foreach ($root in ($roots | Where-Object { $_ } | Select-Object -Unique)) {
+        if (-not (Test-Path $root)) { continue }
+        foreach ($d in (Get-ChildItem $root -Directory -ErrorAction SilentlyContinue)) {
+            # v13.4 -> [version] 13.4, compared numerically (v13.10 > v13.9).
+            # Skip a tree the build cannot consume: nvcc, the static runtime
+            # ggml-cuda links, and cuBLAS.
+            $v = $null
+            if ($d.Name -notmatch '^v(\d+\.\d+)$' -or -not [version]::TryParse($Matches[1], [ref]$v)) { continue }
+            if (-not (Test-Path (Join-Path $d.FullName 'bin\nvcc.exe'))) { continue }
+            if (-not (Test-Path (Join-Path $d.FullName 'lib\x64\cudart_static.lib'))) { continue }
+            if (-not (Test-Path (Join-Path $d.FullName 'lib\x64\cublas.lib'))) { continue }
+            if (-not $bestVer -or $v -gt $bestVer) { $bestVer = $v; $best = $d.FullName }
+        }
+    }
+    return $best
+}
+
+$cudaArgs = @()
+$cudaToolkit = Find-CudaToolkit
+if ($cudaToolkit) {
+    Write-Host "CUDA toolkit: $cudaToolkit" -ForegroundColor Cyan
+    if ($env:CUDA_PATH -and ($env:CUDA_PATH.TrimEnd('\') -ne $cudaToolkit)) {
+        Write-Host "  (CUDA_PATH was '$env:CUDA_PATH', overridden for this build)" -ForegroundColor DarkGray
+    }
+    $env:CUDA_PATH = $cudaToolkit
+    $nvcc = (Join-Path $cudaToolkit 'bin\nvcc.exe') -replace '\\', '/'
+    $cachedNvcc = $null
+    if (Test-Path $cacheFile) {
+        $cachedNvcc = Select-String -Path $cacheFile -Pattern '^CMAKE_CUDA_COMPILER:[^=]+=(.+)$' |
+            Select-Object -First 1 | ForEach-Object { $_.Matches[0].Groups[1].Value }
+    }
+    if ($cachedNvcc -and (($cachedNvcc -replace '\\', '/') -ne $nvcc)) {
+        Write-Host "Cached CUDA toolkit changed:" -ForegroundColor Yellow
+        Write-Host "  $cachedNvcc -> $nvcc" -ForegroundColor Yellow
+        Write-Host "  resetting the CUDA detection only (the CUDA objects recompile, nothing else)" -ForegroundColor Yellow
+        Get-ChildItem (Join-Path $buildDir 'CMakeFiles') -Directory | Where-Object Name -match '^\d' | ForEach-Object {
+            Remove-Item -LiteralPath (Join-Path $_.FullName 'CMakeCUDACompiler.cmake'),
+                                     (Join-Path $_.FullName 'CMakeDetermineCompilerABI_CUDA.bin'),
+                                     (Join-Path $_.FullName 'CompilerIdCUDA') -Recurse -Force -ErrorAction SilentlyContinue
+        }
+        # Every entry FindCUDAToolkit writes. None of them is an option: the
+        # CUDA knobs of this build are GGML_CUDA_*, which these globs miss.
+        $cudaArgs += '-UCUDA_*', '-UCUDAToolkit_*', '-U_cmake_CUDAToolkit_*', '-UFIND_PACKAGE_MESSAGE_DETAILS_CUDAToolkit'
+    }
+    $cudaArgs += "-DCMAKE_CUDA_COMPILER:FILEPATH=$nvcc"
+} else {
+    # Non-standard layout: leave nvcc to CMake's own search (PATH, CUDA_PATH).
+    Write-Host "CUDA toolkit: no versioned install found, leaving detection to CMake" -ForegroundColor Yellow
+}
+
 # ── sccache: use local cache if available ─────────────────────────
-$sccachePath = Get-Command sccache -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source
+# The copy 00-install-prerequisites.ps1 keeps current comes first, from the
+# fixed directory it installs to: a console opened before that run may still
+# resolve an older (or uninstalled) copy from PATH, and this path is part of
+# every compile command via the launcher below, so it must not move between
+# builds or ninja re-runs every C/C++ compile. PATH second, for an sccache
+# installed any other way.
+$sccachePath = Join-Path $env:LOCALAPPDATA 'Programs\sccache\sccache.exe'
+if (-not (Test-Path $sccachePath)) {
+    $sccachePath = Get-Command sccache -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty Source
+}
 if ($sccachePath) {
     $sccacheDir = Join-Path $PSScriptRoot "build\.sccache"
     New-Item -ItemType Directory -Path $sccacheDir -Force | Out-Null
@@ -301,6 +392,10 @@ $cmakeArgs = @(
 # install was found, in which case FindVulkan does its own search.
 $cmakeArgs += $vulkanArgs
 
+# Pinned CUDA toolkit (see Find-CudaToolkit above), plus the -U reset when the
+# build dir was configured against another one.
+$cmakeArgs += $cudaArgs
+
 # ── HIP workaround for MSVC 14.51 (VS 18) <cmath> include order ──
 # The stock __clang_hip_runtime_wrapper.h includes <cmath> before the HIP
 # device math headers, causing MSVC's _CLANG_BUILTIN2 constexpr overloads
@@ -368,12 +463,17 @@ $cmakeArgs += "-UCMAKE_EXE_LINKER_FLAGS", "-UCMAKE_SHARED_LINKER_FLAGS", "-UCMAK
 if ($sccachePath) {
     $cmakeArgs += "-DCMAKE_C_COMPILER_LAUNCHER=$sccachePath"
     $cmakeArgs += "-DCMAKE_CXX_COMPILER_LAUNCHER=$sccachePath"
-    # nvcc is intentionally NOT wrapped with sccache (no CMAKE_CUDA_COMPILER_LAUNCHER):
-    # sccache still mishandles multi-arch fatbin generation on CUDA 13.x, so fatbinary
-    # fails with "Could not open input file '<tu>.compute_75.ptx'" on every .cu.obj.
-    # Retested with sccache 0.17.0 (2026-07): still broken, in server AND
-    # client-side mode (minimal repro: multi-gencode nvcc -c, fatbinary can't
-    # find the per-arch intermediates sccache's nvcc decomposition produced).
+    # nvcc is intentionally NOT wrapped with sccache (no CMAKE_CUDA_COMPILER_LAUNCHER).
+    # Through 0.17.0 sccache mis-grouped nvcc's device steps on CUDA 13.3+, so
+    # fatbinary failed with "Could not open input file '<tu>.compute_75.ptx'" on every
+    # .cu.obj (fixed in 0.18.0 by sccache #2722, with #2811 for escaped quotes in
+    # defines, which our -DGGML_CUDA_FA_QUANTS=\"...\" is). 0.18.0 fails in a new
+    # place (retested 2026-09-18, nvcc 13.3): for a PTX-only gencode of compute_90,
+    # i.e. ggml's default 90-virtual, nvcc runs `ptxas -arch=compute_90` with NO -o, a
+    # syntax check that emits nothing, and sccache treats it as a cacheable step, so
+    # every .cu dies with `Missing "cubin" file output`. compute_75/80 PTX and every
+    # SASS arch pass. Fix: sccache PR #2809 (open). Re-add the launcher only in a
+    # release that carries it, after a full CUDA build checked against bare nvcc.
     # Host C/CXX (clang) caching is unaffected and kept.
     # -U clears any stale CUDA launcher a prior run/experiment may have baked into
     # CMakeCache.txt: an existing cache keeps the value even when it's no longer
@@ -424,8 +524,8 @@ if (Test-Path $uiStamp) {
 if ($sccachePath) {
     Write-Host ""
     Write-Host "sccache stats:" -ForegroundColor Cyan
-    sccache --show-stats
-    sccache --stop-server 2>$null | Out-Null
+    & $sccachePath --show-stats
+    & $sccachePath --stop-server 2>$null | Out-Null
 }
 
 Write-Host "llama.cpp build complete: $buildDir\bin\" -ForegroundColor Green
