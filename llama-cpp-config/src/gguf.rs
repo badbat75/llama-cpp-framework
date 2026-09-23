@@ -721,8 +721,10 @@ fn ggml_type_name(t: u32) -> String {
 /// tensor of this `ggml_type` with rows `n_embd` long. Mirrors the
 /// `case GGML_OP_GET_ROWS` arm of `ggml_backend_cuda_device_supports_op`
 /// (`ggml/src/ggml-cuda/ggml-cuda.cu`), which whitelists exactly these and
-/// returns false for everything else. Verified against v0.4.0; ggml-hip
-/// compiles the same source, and ggml-vulkan's own arm covers the same quants.
+/// returns false for everything else. Verified against v0.5.0; ggml-hip
+/// compiles the same source. ggml-vulkan's own arm is a SUPERSET of this one
+/// (IQ4_NL and MXFP4 at any width, plus NVFP4, TQ1_0 and TQ2_0), so on a Vulkan
+/// device this mirror errs toward a needless warning, the safe direction.
 ///
 /// The list grew in **b10089** (#25962, 2026-07-22): every K-quant and IQ-quant
 /// gained a kernel, and the two 32-value formats (IQ4_NL, MXFP4) are accepted
@@ -776,7 +778,9 @@ fn gpu_has_get_rows(ggml_type: u32, n_embd: u32) -> bool {
 /// (`src/llama-arch.cpp`), which is a DENY-list: every arch not named there
 /// returns true, so the spellings are `LLM_ARCH_NAMES`' own (`falcon-h1`,
 /// `nemotron_h`, `granitehybrid`: hyphen, underscore and neither, exactly as
-/// upstream writes them). Verified against v0.4.1, which added `hy_v4` (Tencent
+/// upstream writes them). Verified against v0.5.0 (unchanged since v0.4.1,
+/// whose `hrm_text` arch, #27625, is not denied but forced MIRRORED in
+/// `llama_meta_device_get_split_state`). v0.4.1 added `hy_v4` (Tencent
 /// Hy 4 preview, #28127); v0.4.0 had added `qwen4exp` (Qwen3.8-Flash-Next,
 /// #27742, with a "TODO: fix test-llama-archs" beside it, so it may leave the
 /// list again).
@@ -862,6 +866,7 @@ fn ftype_name(ft: u32) -> String {
         38 => "MXFP4_MOE",
         39 => "NVFP4",
         40 => "Q1_0",
+        41 => "Q2_0",
         _ => return format!("ftype {ft}"),
     };
     name.to_string()
@@ -1332,6 +1337,10 @@ mod tests {
         assert_eq!(ftype_name(7), "Q8_0");
         assert_eq!(ggml_type_name(14), "Q6_K");
         assert_eq!(ftype_name(14), "Q4_K_S");
+        // 41 is Q2_0 in both enums' neighbourhood but by different routes:
+        // ggml_type 42 is Q2_0, LLAMA_FTYPE 41 is MOSTLY_Q2_0.
+        assert_eq!(ftype_name(41), "Q2_0");
+        assert_eq!(ggml_type_name(42), "Q2_0");
         // The get_rows whitelist is keyed by ggml_type: BF16, Q8_0 and (since
         // b10089) the K-quants and IQ-quants are pinnable; Q8_K, the ternary
         // types and NVFP4 are the ones still without a kernel.

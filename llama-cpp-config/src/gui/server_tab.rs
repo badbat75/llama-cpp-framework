@@ -118,6 +118,26 @@ pub(super) fn wire(app: &AppWindow, tray: &AppTray, state: &Rc<RefCell<State>>) 
 pub(super) fn wire_tables(app: &AppWindow) {
     wire_gpu_table(app);
     wire_tensor_table(app);
+    wire_bind_rows(app);
+}
+
+/// The "Bind to" checkboxes. `server_form.hostname` IS the state (a comma-
+/// separated `--host` list); a click rewrites it through `net_ifaces::toggle`
+/// and REBUILDS the rows, because checking 0.0.0.0 changes rows the user did not
+/// click and the delegates' one-way `checked` only survives a rebuild.
+fn wire_bind_rows(app: &AppWindow) {
+    let app_weak = app.as_weak();
+    app.global::<AppState>().on_bind_toggle(move |value| {
+        let Some(app) = app_weak.upgrade() else {
+            return;
+        };
+        let s = app.global::<AppState>();
+        let mut f = s.get_server_form();
+        let hosts = net_ifaces::toggle(f.hostname.as_str(), value.as_str());
+        f.hostname = hosts.as_str().into();
+        s.set_server_form(f);
+        populate_bind_options(&app, &hosts);
+    });
 }
 
 /// The server-wide tensor-placement table's five callbacks, over

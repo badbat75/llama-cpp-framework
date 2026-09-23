@@ -11,7 +11,7 @@
 // The tray (`AppTray` in app.slint) is a separate root and does NOT use this
 // global; it keeps its own pushed-in state.
 
-import { PresetSummary, PresetForm, ServerForm, GpuRow, TensorOverrideRow, BenchPresetRow, BenchResultRow } from "types.slint";
+import { PresetSummary, PresetForm, ServerForm, GpuRow, TensorOverrideRow, BenchPresetRow, BenchResultRow, BindRow } from "types.slint";
 import { Options } from "components.slint";
 
 export global AppState {
@@ -70,10 +70,11 @@ export global AppState {
     // sliders. A generous fallback keeps the sliders usable if the probe fails.
     in-out property <int> cpu_threads_max: 32;
 
-    // "Bind to" (hostname) dropdown options, derived from the local interfaces.
-    in-out property <[string]> bind_labels;
-    in-out property <[string]> bind_values;
-    in-out property <int> bind_index: 0;
+    // "Bind to" (hostname) checkboxes, derived from the local interfaces and the
+    // saved comma-separated list (src/net_ifaces.rs). A click calls bind_toggle,
+    // and Rust rewrites server_form.hostname and rebuilds these rows.
+    in-out property <[BindRow]> bind_rows;
+    callback bind_toggle(string);
 
     // Server-wide GPU distribution table (GpuSplitTable). Rows come from the
     // async `--list-devices` probe crossed with `server_form.device` /

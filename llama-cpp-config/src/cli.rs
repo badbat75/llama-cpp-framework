@@ -146,6 +146,8 @@ pub enum ServerCmd {
 pub struct ServerSet {
     #[arg(long)]
     pub port: Option<i32>,
+    /// Address(es) to listen on (--host): one, or several comma-separated
+    /// (llama.cpp v0.5.0+). 0.0.0.0 = all interfaces.
     #[arg(long)]
     pub hostname: Option<String>,
     /// How the weights are brought in (-lm / --load-mode). Replaces the removed

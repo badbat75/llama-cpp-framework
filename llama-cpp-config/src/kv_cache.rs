@@ -23,7 +23,7 @@
 //! - **A quantized V with flash attention `off` does not load at all**
 //!   (`quantized V cache requires flash_attn to be enabled`).
 //!
-//! All of this is a copy of upstream logic (llama.cpp v0.4.1) rather than a probe
+//! All of this is a copy of upstream logic (llama.cpp v0.5.0) rather than a probe
 //! of the installed DLLs: re-check `fattn.cu`, the Vulkan `supports_op` arm and
 //! `kv_cache_types` on every llama.cpp bump. A type that gains a kernel and is
 //! missing here only costs a needless warning; a type listed here WITHOUT one

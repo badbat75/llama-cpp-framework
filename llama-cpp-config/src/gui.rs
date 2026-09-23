@@ -27,8 +27,8 @@
 //!   triple the caller hands to the matching `set_*` accessors (`device_options`,
 //!   `scanned_options`).
 //! - `apply_form`        : push a whole `PresetForm` + its baseline into `AppState`.
-//! - `populate_*`        : fill a dropdown's parallel option arrays in place
-//!   (`populate_bind_options`, the Server tab's bind-address list).
+//! - `populate_*`        : rebuild a row model in place (`populate_bind_options`,
+//!   the Server tab's bind-address checkboxes).
 //! - `start_server_async` / `stop_server_async` : the canonical run-control paths
 //!   shared by the Server tab and the tray, so both surfaces report a start/stop
 //!   identically; both run off the UI thread and drive a transitional flag.
@@ -356,12 +356,17 @@ fn client_base_url(cfg: &server_cfg::ServerConfig) -> String {
     format!("http://{}:{}", cfg.client_host(), cfg.port_or_default())
 }
 
-fn populate_bind_options(app: &AppWindow, current: &str) {
-    let s = app.global::<AppState>();
-    let (labels, values, index) = bind_options(current);
-    s.set_bind_labels(labels);
-    s.set_bind_values(values);
-    s.set_bind_index(index);
+pub(crate) fn populate_bind_options(app: &AppWindow, current: &str) {
+    let rows = net_ifaces::build_rows(&net_ifaces::interfaces(), current)
+        .into_iter()
+        .map(|r| BindRow {
+            label: r.label.into(),
+            value: r.value.into(),
+            checked: r.checked,
+            enabled: r.enabled,
+        })
+        .collect();
+    app.global::<AppState>().set_bind_rows(model(rows));
 }
 
 // ── Discard-confirm guard ────────────────────────────────────────────
@@ -948,11 +953,6 @@ fn scanned_options(
     current: &str,
 ) -> OptionModels {
     let (labels, values, idx) = model_scan::build_options(category, scanned, current);
-    (string_model(labels), string_model(values), idx)
-}
-
-fn bind_options(current: &str) -> OptionModels {
-    let (labels, values, idx) = net_ifaces::build_options(&net_ifaces::interfaces(), current);
     (string_model(labels), string_model(values), idx)
 }
 

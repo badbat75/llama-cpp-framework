@@ -744,6 +744,47 @@ pub(super) fn run(app: &AppWindow) {
     assert_eq!(st.get_server_form().override_tensor.as_str(), "");
     assert!(st.get_tensor_override_warning().is_empty());
 
+    // ── Bind to: one checkbox per address, `server_form.hostname` IS the list ──
+    // The rows are one-way; each click must rewrite the comma-separated list AND
+    // rebuild the model, or checking 0.0.0.0 would leave the other rows showing
+    // the ticks it just cleared. A stale saved address keeps its (checked) row.
+    let mut f = st.get_server_form();
+    f.hostname = "localhost,10.9.9.9".into();
+    st.set_server_form(f);
+    crate::gui::populate_bind_options(app, "localhost,10.9.9.9");
+    // Pages are conditional on current_tab: the checkboxes exist only on 0.
+    let tab_before = st.get_current_tab();
+    st.set_current_tab(0);
+    let bind = |value: &str| {
+        ElementHandle::find_by_accessible_label(app, format!("bind-{value}").as_str())
+            .next()
+            .unwrap_or_else(|| panic!("no bind checkbox for {value}"))
+    };
+    let bind_row = |value: &str| {
+        let rows = st.get_bind_rows();
+        (0..rows.row_count())
+            .filter_map(|i| rows.row_data(i))
+            .find(|r| r.value.as_str() == value)
+            .unwrap_or_else(|| panic!("no bind row for {value}"))
+    };
+    assert!(bind_row("10.9.9.9").checked && bind_row("localhost").checked);
+    bind("0.0.0.0").invoke_accessible_default_action();
+    assert_eq!(st.get_server_form().hostname.as_str(), "0.0.0.0");
+    assert!(
+        !bind_row("localhost").checked && !bind_row("localhost").enabled,
+        "0.0.0.0 is exclusive: the other rows are cleared and locked"
+    );
+    bind("0.0.0.0").invoke_accessible_default_action();
+    assert_eq!(
+        st.get_server_form().hostname.as_str(),
+        "localhost",
+        "unchecking the last address falls back to the default"
+    );
+    assert!(bind_row("localhost").checked && bind_row("localhost").enabled);
+    let cfg = crate::server_form::form_to_config(&st.get_server_form());
+    assert_eq!(cfg.client_host(), "localhost");
+    st.set_current_tab(tab_before);
+
     // ── Dirty guard: navigation on a dirty form asks before discarding ───
     let mut form = st.get_form();
     form.ctx_size = "12345".into();

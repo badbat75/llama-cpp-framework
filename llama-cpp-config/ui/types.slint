@@ -246,6 +246,19 @@ export struct BenchPresetRow {
     order: int,
 }
 
+// One "Bind to" checkbox on the Server tab (src/net_ifaces.rs `BindRow`). Built
+// in Rust and read-only to Slint: the checkbox reports through a callback that
+// rewrites `server_form.hostname` and rebuilds the model, the same contract as
+// BenchPresetRow. `enabled` is false for every row but 0.0.0.0 while 0.0.0.0 is
+// checked: it already covers them, and llama.cpp calls overlapping binds
+// undefined behavior.
+export struct BindRow {
+    label: string,
+    value: string,
+    checked: bool,
+    enabled: bool,
+}
+
 // One row of the Benchmark tab's results table, pre-formatted in Rust
 // (bench::rows) so no arithmetic and no rounding lives in the .slint.
 export struct BenchResultRow {

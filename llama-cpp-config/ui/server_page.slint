@@ -54,12 +54,20 @@ export component ServerPage inherits ScrollView {
             }
             LabeledField {
                 label: "Bind to";
-                hint: "Interface to bind (--host).\nlocalhost = this PC only; 0.0.0.0 = all interfaces, reachable from the LAN.";
-                MappedComboBox {
-                    labels: AppState.bind_labels;
-                    values: AppState.bind_values;
-                    index <=> AppState.bind_index;
-                    picked(v) => { AppState.server_form.hostname = v; }
+                hint: "Addresses to listen on (--host); check one or more, each is bound on its own.\nlocalhost = this PC only; 0.0.0.0 = all interfaces, reachable from the LAN, and exclusive: it already covers every other row, so checking it clears them.\nThe chat UI and integrations connect to a loopback address when one is checked, otherwise to the first one.";
+                // One-way `checked`, same contract as the Benchmark tab's preset
+                // rows: the click self-assigns and breaks THIS delegate's
+                // binding, which stays invisible because every toggle rebuilds
+                // the model (gui/server_tab.rs `bind_toggle`).
+                VerticalLayout {
+                    spacing: 2px;
+                    for row in AppState.bind_rows : CheckBox {
+                        text: row.label;
+                        accessible-label: "bind-" + row.value;
+                        enabled: row.enabled;
+                        checked: row.checked;
+                        toggled => { AppState.bind_toggle(row.value); }
+                    }
                 }
             }
             LabeledField {

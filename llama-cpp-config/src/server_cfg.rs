@@ -195,7 +195,10 @@ pub struct ServerConfig {
     pub webui_mcp_proxy: Option<bool>,
     /// Let llama.cpp auto-shrink unset args to fit device memory (-fit on|off).
     /// None = the framework default (off): the GUI's "default" n-gpu-layers means
-    /// "offload every layer", which -fit on would silently override.
+    /// "offload every layer", which -fit on would silently override. Since
+    /// llama.cpp v0.5.0 (#28849), with `ctx-size` absent and `parallel` on auto
+    /// (4 slots, unified KV), the fit may grow the KV pool up to 4x the trained
+    /// context to fill VRAM; each slot is still capped at the trained context.
     pub fit: Option<bool>,
     /// Continue a TRAILING assistant message instead of answering it
     /// (--prefill-assistant / --no-prefill-assistant). None = llama.cpp's own
@@ -390,14 +393,27 @@ impl ServerConfig {
         format!("http://{}:{}", self.client_host(), self.port_or_default())
     }
 
-    /// The host a CLIENT on this machine should connect to. Same as
-    /// `hostname_or_default` except the all-interfaces bind `0.0.0.0` maps to
-    /// `localhost`: it is a listen address, not a connectable one (Windows
-    /// refuses it as a destination). Used by the Open-chat URL and the
-    /// Integrations base URL.
+    /// The host a CLIENT on this machine should connect to. `Hostname` may be a
+    /// comma-separated list (llama.cpp v0.5.0 binds each address), so pick one:
+    /// a loopback entry when the list has one, since every client this builds a
+    /// URL for runs on this machine, otherwise the first. The all-interfaces
+    /// bind `0.0.0.0` maps to `localhost`: it is a listen address, not a
+    /// connectable one (Windows refuses it as a destination). Used by the
+    /// Open-chat URL and the Integrations base URL.
     pub fn client_host(&self) -> String {
-        let host = self.hostname_or_default();
-        if host == "0.0.0.0" {
+        let hosts = crate::net_ifaces::parse_hosts(&self.hostname_or_default());
+        let is_local = |h: &&String| {
+            h.eq_ignore_ascii_case("localhost")
+                || h.starts_with("127.")
+                || h.as_str() == crate::net_ifaces::ALL_INTERFACES
+        };
+        let host = hosts
+            .iter()
+            .find(is_local)
+            .or(hosts.first())
+            .cloned()
+            .unwrap_or_else(|| "localhost".into());
+        if host == crate::net_ifaces::ALL_INTERFACES {
             "localhost".into()
         } else {
             host
@@ -562,7 +578,10 @@ fn validate_for_save(cfg: &ServerConfig) -> io::Result<()> {
 /// `save()`; the round-trip test drives this directly, mirroring
 /// `presets::render_section`.
 fn render(cfg: &ServerConfig) -> String {
-    let hostname = cfg.hostname_or_default();
+    // Canonical `a,b` (a hand-edited `a , b` is tidied, not rejected: llama.cpp
+    // trims each entry the same way).
+    let hostname =
+        crate::net_ifaces::join_hosts(&crate::net_ifaces::parse_hosts(&cfg.hostname_or_default()));
     // Canonicalized on the way out (`load_mode_or_default`), so a hand-edited
     // value that is not a mode is corrected here rather than silently ignored
     // at every read.
@@ -692,6 +711,9 @@ fn render(cfg: &ServerConfig) -> String {
 
 [Server]
 {port_line}
+; Hostname: the address(es) llama-server listens on (--host). Comma-separated to
+; bind several (llama.cpp v0.5.0+); 0.0.0.0 = all interfaces, never combined with
+; another address (they would overlap).
 Hostname = {hostname}
 ; LoadMode: how the weights are brought in (-lm / --load-mode). ONE enum, not two
 ; flags: llama.cpp folded --mlock / --no-mmap / -dio into it in b10105 and its
@@ -1136,6 +1158,11 @@ mod tests {
         assert_eq!(with("192.168.1.5").client_host(), "192.168.1.5");
         assert_eq!(with("localhost").client_host(), "localhost");
         assert_eq!(ServerConfig::default().client_host(), "localhost");
+        // A bind LIST (llama.cpp v0.5.0): a loopback entry wins wherever it
+        // sits, otherwise the first address; never the raw `a,b`.
+        assert_eq!(with("192.168.1.5,localhost").client_host(), "localhost");
+        assert_eq!(with("192.168.1.5, 127.0.0.1").client_host(), "127.0.0.1");
+        assert_eq!(with("192.168.1.5,10.0.0.2").client_host(), "192.168.1.5");
     }
 
     // OpencodeBaseUrl and OpencodeApiKey are free-text fields written to
