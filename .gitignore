@@ -13,3 +13,4 @@ resources/package.json
 resources/package-lock.json
 
 .claude/
+.vscode/
