@@ -264,7 +264,26 @@ function ConvertFrom-LoadBlock {
     # Which of a sliding-window model's two KV caches is currently being built.
     $swa = $false
 
+    # A separate draft FILE (DFlash, a gemma4-assistant head) is loaded BEFORE its
+    # llama_context is constructed, i.e. while the model's context is still the open
+    # one: its `load_tensors` lines would be charged to the model and then eaten by the
+    # (owner, kind, device) de-duplication below, which keeps only the larger of two
+    # "model buffer" rows. That dropped 1.7-1.95 GiB of DFlash2 weights from every
+    # balance sheet (found 2026-09-24). Latch on the banner that opens the load.
+    $draftFile = $false
+
+    # sched_reserve lines come in GROUPS (one line per device, back to back), and a
+    # group is not always owned by the context that is open when it prints: after the
+    # draft context, the slots' first batch re-reserves the MODEL's graph (DFlash2:
+    # 1080/1050 MiB with the model's own 202 MiB host buffer, against the draft's
+    # 243/536 with 10 MiB). Each group is tagged here and assigned after the loop.
+    $schedGroup = 0
+    $groupCtx   = @{}
+    $prevSched  = $false
+
     foreach ($line in $Block) {
+        $wasSched  = $prevSched
+        $prevSched = $false
 
         # - ROCm0   : AMD Radeon AI PRO R9700 (32624 MiB, 32462 MiB free)
         if ($line -match 'common_param:\s+-\s+(?<dev>\S+)\s*:\s+(?<desc>.+?)\s+\((?<total>\d+)\s+MiB,\s+(?<free>\d+)\s+MiB free\)') {
@@ -353,6 +372,12 @@ function ConvertFrom-LoadBlock {
             continue
         }
 
+        # common_speculative_init_result: loading draft model 'E:\...\drafter.gguf'
+        if ($line -match 'loading draft model') {
+            $draftFile = $true
+            continue
+        }
+
         # The vision encoder (clip/mtmd) loads last and prints its own weight total.
         if ($line -match 'load_hparams: model size:\s+(?<v>[\d.]+) MiB') {
             $info.MmprojMiB = [double] $Matches.v
@@ -380,11 +405,18 @@ function ConvertFrom-LoadBlock {
             # the source that printed the line.
             $owner =
                 if     ($Matches.src -eq 'reserve_compute_meta') { 'mmproj' }
-                elseif ($ctxIndex -ge 2)                         { 'draft' }
+                elseif ($ctxIndex -ge 2 -or $draftFile)          { 'draft' }
                 else                                             { 'model' }
 
             $kind = $Matches.kind
             if ($kind -eq 'KV' -and $swa) { $kind = 'KV-SWA' }
+
+            $group = 0
+            if ($Matches.src -eq 'sched_reserve') {
+                if (-not $wasSched) { $schedGroup++; $groupCtx[$schedGroup] = $ctxIndex }
+                $group     = $schedGroup
+                $prevSched = $true
+            }
 
             $info.Buffers += [pscustomobject]@{
                 Owner  = $owner
@@ -392,8 +424,35 @@ function ConvertFrom-LoadBlock {
                 Device = $Matches.dev
                 MiB    = [double] $Matches.mib
                 Src    = $Matches.src
+                Group  = $group
             }
             continue
+        }
+    }
+
+    # Who owns each sched_reserve group. Groups printed while the model's context is
+    # the open one (the fit dry run and the real load) are the model's. In the draft's
+    # context the first group is the draft's own; any later group is a RE-reserve, and
+    # it goes to whichever of the two reference groups its total is closer to (the
+    # model's and the draft's graphs differ several-fold, so the nearest one is
+    # unambiguous). A model with no draft context never reaches the second branch.
+    $sched = @($info.Buffers | Where-Object { $_.Group -gt 0 })
+    if ($sched) {
+        $sumOf = @{}
+        foreach ($g in ($sched | Group-Object Group)) {
+            $sumOf[[int] $g.Name] = ($g.Group | Measure-Object MiB -Sum).Sum
+        }
+        $ids      = @($sumOf.Keys | Sort-Object)
+        $modelRef = $ids | Where-Object { $groupCtx[$_] -le 1 } | Select-Object -First 1
+        $draftRef = $ids | Where-Object { $groupCtx[$_] -ge 2 } | Select-Object -First 1
+        foreach ($id in $ids) {
+            $owner =
+                if     ($groupCtx[$id] -le 1)                        { 'model' }
+                elseif ($id -eq $draftRef -or $null -eq $modelRef)   { 'draft' }
+                elseif ([math]::Abs($sumOf[$id] - $sumOf[$modelRef]) -le
+                        [math]::Abs($sumOf[$id] - $sumOf[$draftRef])) { 'model' }
+                else                                                  { 'draft' }
+            foreach ($r in ($sched | Where-Object Group -eq $id)) { $r.Owner = $owner }
         }
     }
 
@@ -724,6 +783,7 @@ foreach ($d in ($deviceRows | Sort-Object RequestedMiB -Descending)) {
             'model/RS'      { 'recurrent state' }
             'model/compute' { 'compute buffer' }
             'model/LoRA'    { 'LoRA adapter' }
+            'draft/model'   { 'draft weights' }
             'draft/KV'      { 'draft KV cache (MTP)' }
             'draft/KV-SWA'  { 'draft KV cache (sliding window)' }
             'draft/compute' { 'draft compute buffer' }
@@ -769,14 +829,20 @@ foreach ($d in ($deviceRows | Sort-Object RequestedMiB -Descending)) {
     # exactly the requested amount and shared stayed flat at 124 MiB).
     #
     # The corroboration threshold is deliberately lower than the standalone one below:
-    # here the arithmetic has already raised the suspicion, so a few hundred MiB of shared
+    # here the arithmetic has already raised the suspicion, so a moderate shared excess
     # is enough to confirm it, whereas a device whose log fits needs a big shared
-    # allocation before it means anything at all. Both are above ordinary driver staging.
+    # allocation before it means anything at all. Both must clear the driver's OWN
+    # non-local memory, which no log line accounts for and which is there with the card
+    # half empty: 290-360 MiB on the 4070 Super (CUDA) and ~210 MiB on the R9700 (HIP)
+    # beyond the pinned buffers, measured 2026-09-24 in runs with 1.5-1.9 GiB of VRAM
+    # free. At 256 MiB this line called a 4070 Super OVERSUBSCRIBED at its dedicated
+    # ceiling with exactly that baseline in shared (358 MiB, the same figure as at a
+    # split 400 MiB lighter); the one real spill of that campaign put 1,994 MiB there.
     if ($d.FreeAtLoadMiB -and $d.RequestedMiB -gt $d.FreeAtLoadMiB) {
         $over = $d.RequestedMiB - $d.FreeAtLoadMiB
         if (-not $liveRow) {
             Write-Host ("  {0:N0} MiB PAST the {1:N0} MiB free at load; no live counter for this device, so whether it paged cannot be confirmed here." -f $over, $d.FreeAtLoadMiB) -ForegroundColor Yellow
-        } elseif ($unexplained -gt 256) {
+        } elseif ($unexplained -gt 512) {
             Write-Host ("  OVERSUBSCRIBED by {0:N0} MiB against {1:N0} MiB free at load, and the live counter agrees: {2:N0} MiB of shared beyond the pinned {3} buffers. That excess crosses PCIe on every access." -f $over, $d.FreeAtLoadMiB, $unexplained, $family) -ForegroundColor Red
         } else {
             Write-Host ("  AT THE LIMIT: {0:N0} MiB past the {1:N0} MiB free at load, yet the driver placed it all in dedicated VRAM ({2:N0} MiB) and shared is {3:N0} MiB, {4:N0} of it pinned {5} buffers. Nothing is paging, but there is no headroom left for anything else on this card." -f $over, $d.FreeAtLoadMiB, $liveRow.DedicatedMiB, $liveRow.SharedMiB, $pinnedFamMiB, $family) -ForegroundColor Yellow
