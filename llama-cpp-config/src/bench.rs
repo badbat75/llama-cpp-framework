@@ -658,6 +658,11 @@ pub const LIVE_PATH: &str = "/v1/chat/completions";
 /// is meaningless. With it, every repetition is a cold prefill, which is the
 /// thing being measured. (`timings.cache_n` is read back anyway, so a build that
 /// ignored the field would be caught rather than believed.)
+///
+/// Streamed with `timings_per_token` so the decode can be split at the
+/// reasoning/answer boundary ([`parse_stream`]). The response is still read
+/// whole: the split comes from the server's cumulative timings on each event,
+/// not from when the events arrive, so nothing is timed on our side.
 pub fn live_body(preset_id: &str, plan: &Plan) -> String {
     live_body_with(preset_id, plan, &plan.prompt)
 }
@@ -672,7 +677,8 @@ fn live_body_with(preset_id: &str, plan: &Plan, content: &str) -> String {
         "model": preset_id,
         "messages": [{ "role": "user", "content": content }],
         "max_tokens": plan.max_tokens,
-        "stream": false,
+        "stream": true,
+        "timings_per_token": true,
         "cache_prompt": false,
     });
     if let Some(t) = plan.temp {
@@ -730,19 +736,11 @@ impl Timings {
     }
 }
 
-/// Pull the `timings` block out of a completion response body.
-pub fn parse_timings(body: &str) -> Result<Timings, String> {
-    let v: serde_json::Value =
-        serde_json::from_str(body).map_err(|e| format!("unreadable response: {e}"))?;
-    if let Some(msg) = v.pointer("/error/message").and_then(|m| m.as_str()) {
-        return Err(msg.to_string());
-    }
-    let t = v
-        .get("timings")
-        .ok_or_else(|| "no timings in the response (is this llama-server?)".to_string())?;
+/// One `timings` object (`server_slot_stats::to_json`).
+fn timings_from(t: &serde_json::Value) -> Timings {
     let num = |k: &str| t.get(k).and_then(serde_json::Value::as_f64).unwrap_or(0.0);
     let int = |k: &str| t.get(k).and_then(serde_json::Value::as_i64).unwrap_or(0);
-    Ok(Timings {
+    Timings {
         prompt_n: int("prompt_n"),
         prompt_tps: num("prompt_per_second"),
         predicted_n: int("predicted_n"),
@@ -750,12 +748,171 @@ pub fn parse_timings(body: &str) -> Result<Timings, String> {
         cache_n: int("cache_n"),
         draft_n: int("draft_n"),
         draft_accepted: int("draft_n_accepted"),
-    })
+    }
 }
 
-/// The two test labels a live repetition produces.
+/// The test labels a live repetition produces. The two phase rows exist only
+/// when the model reasoned (see [`parse_stream`]).
 pub const LIVE_PREFILL: &str = "prefill";
 pub const LIVE_DECODE: &str = "decode";
+pub const LIVE_DECODE_REASONING: &str = "decode (reasoning)";
+pub const LIVE_DECODE_ANSWER: &str = "decode (answer)";
+
+/// A trace point every this many generated tokens (see [`Streamed::trace`]).
+pub const TRACE_EVERY: i64 = 64;
+
+/// The generation cost of one span of the output, from llama-server's own
+/// cumulative `timings` (never a client-side clock).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Phase {
+    pub tokens: i64,
+    pub ms: f64,
+    /// Decode steps in the span: its tokens, minus the first token of the whole
+    /// output, which llama-server counts as free (it comes from the prompt's own
+    /// logits, `server_slot_stats::n_gen_steps`). Only the reasoning span, which
+    /// starts the output, loses one.
+    pub steps: i64,
+    pub draft_n: i64,
+    pub draft_accepted: i64,
+}
+
+impl Phase {
+    /// Tokens per second over the span, llama-server's own definition (steps
+    /// over time), or `None` for an empty span.
+    pub fn tps(&self) -> Option<f64> {
+        (self.ms > 0.0 && self.steps > 0).then(|| 1e3 * self.steps as f64 / self.ms)
+    }
+
+    pub fn acceptance(&self) -> Option<f64> {
+        (self.draft_n > 0).then(|| 100.0 * self.draft_accepted as f64 / self.draft_n as f64)
+    }
+}
+
+/// The decode split at the reasoning/answer boundary. A reasoning model's output
+/// is two workloads: exploratory thinking that a drafter predicts poorly, then an
+/// answer that restates it and drafts well. Their mean describes neither, and
+/// how much of the output each takes moves with the question.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct PhaseSplit {
+    pub reasoning: Phase,
+    pub answer: Phase,
+}
+
+/// One point of the per-repetition trace.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct TracePoint {
+    pub tokens: i64,
+    pub ms: f64,
+    pub draft_n: i64,
+    pub draft_accepted: i64,
+    pub reasoning: bool,
+}
+
+/// What a streamed live repetition yields.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Streamed {
+    /// The final timings, the same numbers a non-streamed response carries.
+    pub timings: Timings,
+    /// `None` when the model did not reason (no `reasoning_content` before the
+    /// answer).
+    pub split: Option<PhaseSplit>,
+    /// Cumulative timings every [`TRACE_EVERY`] tokens: the rate curve of the
+    /// repetition, for analysis from the jsonl rather than from the server log.
+    pub trace: Vec<TracePoint>,
+}
+
+/// Read a streamed (`stream: true`, `timings_per_token: true`) completion.
+///
+/// llama-server sends one SSE event per generated token, speculative steps
+/// included (each accepted token goes through `process_token` on its own), and
+/// with `timings_per_token` every event carries the slot's CUMULATIVE timings.
+/// So the split needs no clock of ours: the boundary is the last event whose
+/// delta is `reasoning_content`, and each phase is a difference of server
+/// timings. Tokens of one speculative step share one timestamp, which puts the
+/// boundary at step granularity, a few tokens at most.
+pub fn parse_stream(body: &str) -> Result<Streamed, String> {
+    let mut last: Option<serde_json::Value> = None;
+    let mut at_boundary: Option<serde_json::Value> = None;
+    let mut saw_reasoning = false;
+    let mut answering = false;
+    let mut trace = Vec::new();
+    let mut next_trace = TRACE_EVERY;
+
+    for line in body.lines() {
+        let Some(data) = line.trim().strip_prefix("data:") else {
+            continue;
+        };
+        let data = data.trim();
+        if data.is_empty() || data == "[DONE]" {
+            continue;
+        }
+        let v: serde_json::Value =
+            serde_json::from_str(data).map_err(|e| format!("unreadable stream event: {e}"))?;
+        if let Some(msg) = v.pointer("/error/message").and_then(|m| m.as_str()) {
+            return Err(msg.to_string());
+        }
+        let delta = v.pointer("/choices/0/delta");
+        let has = |k: &str| {
+            delta
+                .and_then(|d| d.get(k))
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|s| !s.is_empty())
+        };
+        if has("content") && !answering {
+            answering = true;
+        } else if has("reasoning_content") && !answering {
+            saw_reasoning = true;
+        }
+        let Some(t) = v.get("timings") else {
+            continue;
+        };
+        if saw_reasoning && !answering {
+            at_boundary = Some(t.clone());
+        }
+        let n = t.get("predicted_n").and_then(serde_json::Value::as_i64).unwrap_or(0);
+        if n >= next_trace {
+            let tt = timings_from(t);
+            trace.push(TracePoint {
+                tokens: n,
+                ms: t.get("predicted_ms").and_then(serde_json::Value::as_f64).unwrap_or(0.0),
+                draft_n: tt.draft_n,
+                draft_accepted: tt.draft_accepted,
+                reasoning: !answering,
+            });
+            next_trace = (n / TRACE_EVERY + 1) * TRACE_EVERY;
+        }
+        last = Some(t.clone());
+    }
+
+    let last = last.ok_or_else(|| "no timings in the stream (is this llama-server?)".to_string())?;
+    let timings = timings_from(&last);
+    let ms = |t: &serde_json::Value| t.get("predicted_ms").and_then(serde_json::Value::as_f64).unwrap_or(0.0);
+    let split = at_boundary.map(|b| {
+        let r = timings_from(&b);
+        let r_ms = ms(&b);
+        PhaseSplit {
+            reasoning: Phase {
+                tokens: r.predicted_n,
+                ms: r_ms,
+                steps: (r.predicted_n - 1).max(0),
+                draft_n: r.draft_n,
+                draft_accepted: r.draft_accepted,
+            },
+            answer: Phase {
+                tokens: timings.predicted_n - r.predicted_n,
+                ms: ms(&last) - r_ms,
+                steps: timings.predicted_n - r.predicted_n,
+                draft_n: timings.draft_n - r.draft_n,
+                draft_accepted: timings.draft_accepted - r.draft_accepted,
+            },
+        }
+    });
+    Ok(Streamed {
+        timings,
+        split,
+        trace,
+    })
+}
 
 // ── Results ──────────────────────────────────────────────────────────────
 
@@ -1252,6 +1409,65 @@ pub fn bench_row_json(preset: &str, row: &str) -> String {
     serde_json::json!({ "kind": "bench_row", "preset": preset, "row": parsed }).to_string()
 }
 
+/// The reasoning/answer split of one repetition, for its sample line.
+pub fn phases_json(split: &PhaseSplit) -> serde_json::Value {
+    let one = |p: &Phase| {
+        serde_json::json!({
+            "tokens": p.tokens,
+            "ms": p.ms,
+            "tps": p.tps(),
+            "draft_n": p.draft_n,
+            "draft_n_accepted": p.draft_accepted,
+            "draft_acceptance_pct": p.acceptance(),
+        })
+    };
+    serde_json::json!({ "reasoning": one(&split.reasoning), "answer": one(&split.answer) })
+}
+
+/// The per-repetition trace as compact rows: `[tokens, ms, draft_n,
+/// draft_n_accepted, phase]`, phase `"r"` or `"a"`. Cumulative, like the server
+/// timings it is read from, so any window's rate is a difference of two rows.
+pub fn trace_json(trace: &[TracePoint]) -> serde_json::Value {
+    trace
+        .iter()
+        .map(|p| {
+            serde_json::json!([
+                p.tokens,
+                p.ms,
+                p.draft_n,
+                p.draft_accepted,
+                if p.reasoning { "r" } else { "a" }
+            ])
+        })
+        .collect()
+}
+
+/// The point one decode phase contributes, over the repetitions where the phase
+/// had a rate. The note carries the mean span length and its acceptance: a phase
+/// rate is only readable next to how much of the output the phase took.
+pub fn phase_point(preset: &str, test: &str, spans: &[(f64, Phase)]) -> Option<Point> {
+    if spans.is_empty() {
+        return None;
+    }
+    let rates: Vec<f64> = spans.iter().map(|(r, _)| *r).collect();
+    let (mean, sd) = mean_sd(&rates);
+    let tokens = spans.iter().map(|(_, p)| p.tokens).sum::<i64>() / spans.len() as i64;
+    let dn: i64 = spans.iter().map(|(_, p)| p.draft_n).sum();
+    let da: i64 = spans.iter().map(|(_, p)| p.draft_accepted).sum();
+    let mut note = format!("{tokens} tokens");
+    if dn > 0 {
+        note.push_str(&format!(", draft accepted {:.0}%", 100.0 * da as f64 / dn as f64));
+    }
+    Some(Point {
+        preset: preset.into(),
+        test: test.into(),
+        mean,
+        sd,
+        n: spans.len() as i32,
+        note,
+    })
+}
+
 /// One raw repetition, kept beside the points it feeds. Nothing reads it back;
 /// it is the audit trail for a number that looks wrong later.
 pub fn sample_json(
@@ -1680,7 +1896,10 @@ mod tests {
         assert_eq!(body["model"], "qwen");
         assert_eq!(body["temperature"], serde_json::json!(0.0));
         assert_eq!(body["max_tokens"], serde_json::json!(64));
-        assert_eq!(body["stream"], serde_json::json!(false));
+        // Streamed, with the cumulative timings on every event: what the
+        // reasoning/answer split is computed from.
+        assert_eq!(body["stream"], serde_json::json!(true));
+        assert_eq!(body["timings_per_token"], serde_json::json!(true));
 
         // "the preset's own" must OMIT the key: sending any number would
         // override the preset with it.
@@ -1691,11 +1910,12 @@ mod tests {
 
     #[test]
     fn timings_are_read_from_the_right_keys() {
-        let body = r#"{"choices":[],"timings":{
+        let body = r#"data: {"choices":[],"timings":{
             "cache_n": 7, "prompt_n": 1024, "prompt_per_second": 900.5,
             "predicted_n": 128, "predicted_per_second": 35.25,
-            "draft_n": 100, "draft_n_accepted": 74 }}"#;
-        let t = parse_timings(body).unwrap();
+            "draft_n": 100, "draft_n_accepted": 74 }}"#
+            .replace('\n', "");
+        let t = parse_stream(&body).unwrap().timings;
         assert_eq!(t.prompt_n, 1024);
         assert!((t.prompt_tps - 900.5).abs() < 1e-9);
         assert!((t.predicted_tps - 35.25).abs() < 1e-9);
@@ -1704,13 +1924,127 @@ mod tests {
 
         // No drafter: no acceptance figure at all, rather than a 0% that would
         // read as "it drafted and everything was rejected".
-        let t = parse_timings(r#"{"timings":{"predicted_per_second":10}}"#).unwrap();
+        let t = parse_stream(r#"data: {"timings":{"predicted_per_second":10}}"#)
+            .unwrap()
+            .timings;
         assert_eq!(t.acceptance(), None);
+    }
 
-        // llama-server's error shape must surface as the error, not as
-        // "no timings": the message is the actionable half.
-        let err = parse_timings(r#"{"error":{"message":"model not found"}}"#).unwrap_err();
+    /// One SSE event the way llama-server writes it with `timings_per_token`:
+    /// a delta of one kind plus the slot's cumulative timings.
+    fn event(kind: &str, text: &str, n: i64, ms: f64, dn: i64, da: i64) -> String {
+        let delta = if kind.is_empty() {
+            serde_json::json!({})
+        } else {
+            serde_json::json!({ kind: text })
+        };
+        let v = serde_json::json!({
+            "choices": [{ "delta": delta }],
+            "timings": {
+                "prompt_n": 1000, "prompt_per_second": 800.0, "cache_n": 0,
+                "predicted_n": n, "predicted_ms": ms,
+                "predicted_per_second": if ms > 0.0 { 1e3 * (n - 1) as f64 / ms } else { 0.0 },
+                "draft_n": dn, "draft_n_accepted": da,
+            },
+        });
+        format!("data: {v}\n\n")
+    }
+
+    // The split is a difference of the server's cumulative timings at the last
+    // reasoning event, so each phase gets its own rate and acceptance.
+    #[test]
+    fn a_stream_splits_decode_at_the_reasoning_answer_boundary() {
+        let mut body = String::new();
+        body += &event("reasoning_content", "Let", 1, 0.0, 0, 0);
+        body += &event("reasoning_content", " me", 101, 5000.0, 150, 60);
+        body += &event("content", "The", 102, 5010.0, 152, 61);
+        body += &event("content", " end", 301, 9000.0, 400, 300);
+        body += &event("", "", 301, 9000.0, 400, 300); // finish_reason event
+        body += "data: [DONE]\n\n";
+        let s = parse_stream(&body).unwrap();
+
+        assert_eq!(s.timings.predicted_n, 301);
+        assert_eq!(s.timings.prompt_n, 1000);
+        let split = s.split.expect("the model reasoned");
+        assert_eq!(split.reasoning.tokens, 101);
+        assert_eq!(split.reasoning.steps, 100, "the first token is free");
+        assert!((split.reasoning.tps().unwrap() - 20.0).abs() < 1e-9);
+        assert_eq!(split.reasoning.acceptance().map(f64::round), Some(40.0));
+        assert_eq!(split.answer.tokens, 200);
+        assert!((split.answer.tps().unwrap() - 50.0).abs() < 1e-9);
+        assert_eq!(split.answer.draft_n, 250);
+        assert_eq!(split.answer.acceptance().map(f64::round), Some(96.0));
+    }
+
+    #[test]
+    fn a_stream_without_reasoning_has_no_split() {
+        let body = event("content", "Hi", 1, 0.0, 0, 0) + &event("content", "!", 2, 30.0, 0, 0);
+        let s = parse_stream(&body).unwrap();
+        assert_eq!(s.split, None);
+        assert_eq!(s.timings.predicted_n, 2);
+    }
+
+    // Output cut by max_tokens mid-thought: the whole decode is reasoning and
+    // the answer span is empty, which must read as "no rate", not as 0 t/s.
+    #[test]
+    fn a_stream_that_never_answers_has_an_empty_answer_span() {
+        let body = event("reasoning_content", "a", 1, 0.0, 0, 0)
+            + &event("reasoning_content", "b", 50, 1000.0, 60, 30);
+        let split = parse_stream(&body).unwrap().split.unwrap();
+        assert_eq!(split.reasoning.tokens, 50);
+        assert_eq!(split.answer.tokens, 0);
+        assert_eq!(split.answer.tps(), None);
+    }
+
+    #[test]
+    fn a_stream_traces_every_n_tokens_and_marks_the_phase() {
+        let mut body = String::new();
+        for n in 1..=200 {
+            let kind = if n <= 100 { "reasoning_content" } else { "content" };
+            body += &event(kind, "x", n, n as f64 * 10.0, n, n / 2);
+        }
+        let trace = parse_stream(&body).unwrap().trace;
+        let at: Vec<i64> = trace.iter().map(|p| p.tokens).collect();
+        assert_eq!(at, vec![64, 128, 192]);
+        assert!(trace[0].reasoning && !trace[1].reasoning);
+    }
+
+    #[test]
+    fn a_phase_point_averages_rates_and_notes_span_and_acceptance() {
+        let span = |tokens, dn, da| Phase {
+            tokens,
+            ms: 1.0,
+            steps: tokens,
+            draft_n: dn,
+            draft_accepted: da,
+        };
+        let p = phase_point(
+            "q",
+            LIVE_DECODE_REASONING,
+            &[(20.0, span(900, 100, 50)), (22.0, span(1000, 100, 70))],
+        )
+        .unwrap();
+        assert!((p.mean - 21.0).abs() < 1e-9);
+        assert_eq!(p.n, 2);
+        assert_eq!(p.note, "950 tokens, draft accepted 60%");
+        assert_eq!(phase_point("q", LIVE_DECODE_ANSWER, &[]), None);
+
+        let row = trace_json(&[TracePoint {
+            tokens: 64,
+            ms: 3.5,
+            draft_n: 10,
+            draft_accepted: 5,
+            reasoning: true,
+        }]);
+        assert_eq!(row, serde_json::json!([[64, 3.5, 10, 5, "r"]]));
+    }
+
+    #[test]
+    fn a_stream_error_event_surfaces_as_the_error() {
+        let body = r#"data: {"error":{"message":"model not found"}}"#;
+        let err = parse_stream(body).unwrap_err();
         assert!(err.contains("model not found"), "{err}");
+        assert!(parse_stream("").is_err(), "no timings at all is an error");
     }
 
     #[test]

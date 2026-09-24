@@ -312,6 +312,10 @@ fn run_live(
         let mut cache_seen: i64 = 0;
         let mut draft_n: i64 = 0;
         let mut draft_ok: i64 = 0;
+        // The two decode phases, per repetition: (rate, span) pairs, kept only
+        // for repetitions where the span has a rate.
+        let mut reasoning: Vec<(f64, super::Phase)> = Vec::new();
+        let mut answer: Vec<(f64, super::Phase)> = Vec::new();
 
         for rep in 1..=plan.reps {
             if cancelled(cancel) {
@@ -330,14 +334,23 @@ fn run_live(
                     preset.id, res.status
                 ));
             }
-            let t = super::parse_timings(&res.body).map_err(|e| format!("{}: {e}", preset.id))?;
+            let s = super::parse_stream(&res.body).map_err(|e| format!("{}: {e}", preset.id))?;
+            let t = &s.timings;
             prefill.push(t.prompt_tps);
             decode.push(t.predicted_tps);
             cache_seen = cache_seen.max(t.cache_n);
             draft_n += t.draft_n;
             draft_ok += t.draft_accepted;
+            if let Some(split) = &s.split {
+                if let Some(r) = split.reasoning.tps() {
+                    reasoning.push((r, split.reasoning.clone()));
+                }
+                if let Some(a) = split.answer.tps() {
+                    answer.push((a, split.answer.clone()));
+                }
+            }
 
-            let detail = serde_json::json!({
+            let mut detail = serde_json::json!({
                 "prompt_n": t.prompt_n,
                 "predicted_n": t.predicted_n,
                 "cache_n": t.cache_n,
@@ -345,6 +358,10 @@ fn run_live(
                 "draft_n_accepted": t.draft_accepted,
                 "draft_acceptance_pct": t.acceptance(),
             });
+            if let Some(split) = &s.split {
+                detail["phases"] = super::phases_json(split);
+            }
+            detail["trace"] = super::trace_json(&s.trace);
             let prefill_line = super::sample_json(
                 &preset.id,
                 super::LIVE_PREFILL,
@@ -395,6 +412,14 @@ fn run_live(
                 },
                 emit,
             );
+            for (test, spans) in [
+                (super::LIVE_DECODE_REASONING, &reasoning),
+                (super::LIVE_DECODE_ANSWER, &answer),
+            ] {
+                if let Some(point) = super::phase_point(&preset.id, test, spans) {
+                    run.put(point, emit);
+                }
+            }
         }
     }
     Ok(())
