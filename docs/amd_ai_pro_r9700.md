@@ -68,7 +68,7 @@ llama.cpp v0.5.0.
 | option | result |
 | --- | --- |
 | a low `spec-draft-n-max`, to stay on the FlashAttention vector kernel | refuted: `n-max 1` gives 9.8 t/s at 93.6k, against 13.0 with no drafter |
-| Vulkan instead of ROCm | Vulkan won both prefill and decode on v0.4.0, before #28102. Re-measure before switching |
+| Vulkan instead of ROCm | slower on both halves since #28102: prefill -27% at 2.6k and -25% at 93.6k, decode -18% and -15%, per-step cost +20-24% despite a slightly higher draft acceptance. Its only edge is a compute buffer ~690 MiB smaller. (On v0.4.0, before #28102, Vulkan had won both.) |
 
 ## 6. Checking a configuration
 
@@ -82,7 +82,6 @@ llama.cpp v0.5.0.
 
 | parameter | current value | question | result |
 | --- | --- | --- | --- |
-| ROCm vs Vulkan after #28102 | ROCm | does ROCm now win prefill, and does Vulkan still win decode? | TBD |
 | `ROCBLAS_USE_HIPBLASLT` with the staged runtime | unset | is hipBLASLt (`1`) faster than Tensile (`0`) for BF16/F16 models? | TBD |
 | `batch-size` | default (2048) | does a larger logical batch help prefill at `ubatch 512`? | TBD |
 | `cache-type-k/-v` `f16` | `q8_0` | speed gained versus twice the KV memory | TBD |
