@@ -44,16 +44,6 @@ build\pcie-bench\pcie-bench-cuda.exe 4070
 
 The argument is a substring of the device name.
 
-**From an IDE** (VS Code CMake Tools, Visual Studio), select the `windows-x64` preset in
-`CMakePresets.json`. It configures the way `build.ps1` does: Ninja, x64, ROCm's clang++,
-the HIP compile variables scoped to the configure/build process, and output in
-`build\pcie-bench`. Do not let the IDE pick a kit of its own. VS Code's default configured
-this folder with the Visual Studio generator on **Win32** into the repo's `build\` root,
-and ROCm's `hip-config-version.cmake` then rejected the 64-bit package with a misleading
-"not compatible with requested version". The CMakeLists now stops a non-64-bit configure
-with a message that says so. It applies the patched HIP wrapper itself when the configure
-did not pass it, and it skips the HIP target, with a warning, under a non-Clang compiler.
-
 `build.ps1` configures the build the same way `02-build.ps1` configures llama.cpp:
 
 - ROCm's clang is the CXX compiler, with `hip::device` turning the source into HIP;
