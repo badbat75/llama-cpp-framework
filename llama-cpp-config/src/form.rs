@@ -153,6 +153,8 @@ pub fn preset_to_form(p: &presets::Preset) -> PresetForm {
         },
         spec_draft_n_max: itxt(p.spec_draft_n_max, HINT_SPEC_DRAFT_N_MAX),
         spec_draft_n_max_default: p.spec_draft_n_max.is_none(),
+        spec_draft_p_min: txt(p.spec_draft_p_min),
+        spec_draft_p_min_default: p.spec_draft_p_min.is_none(),
         spec_draft_type_k: enum_or_default(&p.spec_draft_type_k),
         spec_draft_type_v: enum_or_default(&p.spec_draft_type_v),
         n_gpu_layers_draft: p.n_gpu_layers_draft.unwrap_or(ALL_LAYERS),
@@ -263,6 +265,11 @@ pub fn form_to_preset(f: &PresetForm) -> presets::Preset {
             None
         } else {
             ini::parse_int_in(f.spec_draft_n_max.as_str(), &ini::INT_POSITIVE)
+        },
+        spec_draft_p_min: if f.spec_draft_p_min_default {
+            None
+        } else {
+            ini::parse_float(f.spec_draft_p_min.as_str())
         },
         spec_draft_type_k: enum_or_empty(f.spec_draft_type_k.as_str()),
         spec_draft_type_v: enum_or_empty(f.spec_draft_type_v.as_str()),
@@ -490,6 +497,8 @@ pub fn prune_inactive_draft_fields(f: &mut PresetForm, embeds_mtp: bool) -> Vec<
         f.spec_type = pruned.spec_type;
         f.spec_draft_n_max = pruned.spec_draft_n_max;
         f.spec_draft_n_max_default = pruned.spec_draft_n_max_default;
+        f.spec_draft_p_min = pruned.spec_draft_p_min;
+        f.spec_draft_p_min_default = pruned.spec_draft_p_min_default;
         f.spec_draft_type_k = pruned.spec_draft_type_k;
         f.spec_draft_type_v = pruned.spec_draft_type_v;
         f.n_gpu_layers_draft = pruned.n_gpu_layers_draft;
@@ -636,6 +645,7 @@ mod tests {
             .and_then(|rest| rest.split("\n}").next())
             .expect("PresetForm in ui/types.slint");
         let floats = [
+            "spec_draft_p_min",
             "temp",
             "top_p",
             "min_p",
@@ -741,6 +751,7 @@ mod tests {
             model_draft: r"E:\mtps\model-mtp.gguf".into(),
             spec_type: "draft-mtp".into(),
             spec_draft_n_max: Some(10),
+            spec_draft_p_min: Some(0.25),
             // Not the cache_type_k/-v below: the draft cache is its own setting.
             spec_draft_type_k: "q4_0".into(),
             spec_draft_type_v: "q4_1".into(),

@@ -764,6 +764,17 @@ export component ModelsPage inherits HorizontalLayout {
                         value <=> AppState.form.spec_draft_n_max;
                     }
                 }
+                LabeledField {
+                    label: "Draft p-min";
+                    hint: "Confidence floor for drafted tokens (--spec-draft-p-min), 0 to 1.\nDrafting stops at the first token below it, so the model verifies a shorter batch instead of tokens it would reject.\nDFlash2 reads its selector, DSpark its confidence head.\ndefault = omit the flag → llama.cpp default: 0 (never truncate).";
+                    DefaultLineEdit {
+                        enabled: AppState.draft_active;
+                        input_type: InputType.decimal;
+                        default <=> AppState.form.spec_draft_p_min_default;
+                        value <=> AppState.form.spec_draft_p_min;
+                        placeholder: "e.g. 0.5";
+                    }
+                }
                 Text {
                     text: "The draft context keeps its OWN KV cache, and it does not follow the model's: llama.cpp overwrites the inherited types with the draft default, f16. Quantize it here to reclaim the VRAM; unlike the placement flags above, these two also apply to MTP heads embedded in the main model.";
                     wrap: word-wrap;

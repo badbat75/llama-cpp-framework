@@ -114,6 +114,10 @@ pub const SWEEPABLE: &[(&str, Setter)] = &[
         p.spec_draft_n_max = int(v)?;
         Ok(())
     }),
+    ("spec-draft-p-min", |p, v| {
+        p.spec_draft_p_min = float(v)?;
+        Ok(())
+    }),
     ("spec-type", |p, v| {
         p.spec_type = text(v)?;
         Ok(())
@@ -238,6 +242,17 @@ fn int(v: &str) -> Result<Option<i32>, String> {
     v.parse::<i32>()
         .map(Some)
         .map_err(|_| format!("`{v}` is not a whole number (or `{UNSET}`)"))
+}
+
+fn float(v: &str) -> Result<Option<f64>, String> {
+    if v.eq_ignore_ascii_case(UNSET) {
+        return Ok(None);
+    }
+    v.parse::<f64>()
+        .ok()
+        .filter(|x| x.is_finite())
+        .map(Some)
+        .ok_or_else(|| format!("`{v}` is not a number (or `{UNSET}`)"))
 }
 
 fn boolean(v: &str) -> Result<Option<bool>, String> {
@@ -1190,6 +1205,7 @@ mod tests {
                 "spec-type" => "draft-mtp",
                 "model-draft" => "C:\\d.gguf",
                 "device-draft" => "CUDA0",
+                "spec-draft-p-min" => "0.5",
                 _ => "7",
             };
             set(&mut p, value).unwrap_or_else(|e| panic!("{key}: {e}"));

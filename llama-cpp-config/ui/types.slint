@@ -32,6 +32,9 @@ export struct PresetForm {
     spec_type: string,
     spec_draft_n_max: string,
     spec_draft_n_max_default: bool,
+    // --spec-draft-p-min: a float, so it rides as a string like the sampling ones.
+    spec_draft_p_min: string,
+    spec_draft_p_min_default: bool,
     // --spec-draft-type-k/-v (-ctkd/-ctvd): the DRAFT context's KV cache types.
     // EnumComboBox over Options.cache_types with the same empty↔"default"
     // spelling as cache_type_k/-v below, but "default" here means f16, NOT

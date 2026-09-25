@@ -128,6 +128,15 @@ pub struct Preset {
     pub model_draft: String,
     pub spec_type: String,
     pub spec_draft_n_max: Option<i32>,
+    /// Confidence floor for drafted tokens (--spec-draft-p-min, alias
+    /// --draft-p-min; llama.cpp's default 0 = never truncate). Drafting stops at
+    /// the first token whose probability falls below it, so an unsure drafter
+    /// hands the target a SHORTER verify batch instead of tokens it will reject.
+    /// DFlash2 reads it from its selector's softmax, DSpark from its confidence
+    /// head (a DSpark GGUF without one refuses a non-zero value at load), plain
+    /// DFlash and MTP from the sampled token's probability. It lives with the
+    /// other speculative keys and dies with them (`prune_inactive_draft_keys`).
+    pub spec_draft_p_min: Option<f64>,
     /// KV-cache quantization for the DRAFT context's K and V
     /// (--spec-draft-type-k / --spec-draft-type-v, aliases -ctkd / -ctvd).
     /// Empty = omit the flag, the same empty↔"default" shape as `cache_type_k`
@@ -402,6 +411,7 @@ impl Default for Preset {
             model_draft: String::new(),
             spec_type: String::new(),
             spec_draft_n_max: None,
+            spec_draft_p_min: None,
             spec_draft_type_k: String::new(),
             spec_draft_type_v: String::new(),
             n_gpu_layers_draft: None,
@@ -465,6 +475,7 @@ impl Preset {
             model_draft: get("model-draft"),
             spec_type: get("spec-type"),
             spec_draft_n_max: k.get("spec-draft-n-max").and_then(|v| ini::parse_int(v)),
+            spec_draft_p_min: k.get("spec-draft-p-min").and_then(|v| ini::parse_float(v)),
             spec_draft_type_k: get("spec-draft-type-k"),
             spec_draft_type_v: get("spec-draft-type-v"),
             n_gpu_layers_draft: k.get("n-gpu-layers-draft").and_then(|v| ini::parse_int(v)),
@@ -546,6 +557,9 @@ pub fn prune_inactive_draft_keys(p: &mut Preset, embeds_mtp: bool) -> Vec<&'stat
         }
         if p.spec_draft_n_max.take().is_some() {
             dropped.push("spec-draft-n-max");
+        }
+        if p.spec_draft_p_min.take().is_some() {
+            dropped.push("spec-draft-p-min");
         }
         // The draft KV types belong to THIS group, not the placement one below:
         // llama.cpp applies them whenever a draft context exists, embedded MTP
@@ -921,6 +935,10 @@ pub fn render_section(p: &Preset) -> String {
         "; model's trained block_size - 1 (e.g. 15); also applies to draft-mtp/simple.\r\n",
     );
     emit_i32(&mut out, "spec-draft-n-max", p.spec_draft_n_max);
+    out.push_str("; spec-draft-p-min = confidence floor: drafting stops at the first token\r\n");
+    out.push_str("; below it, so the target verifies a shorter batch. Omit = llama.cpp's 0\r\n");
+    out.push_str("; (never truncate). DFlash2 reads its selector, DSpark its confidence head.\r\n");
+    emit_f64(&mut out, "spec-draft-p-min", p.spec_draft_p_min);
     out.push_str("; spec-draft-type-k / -v quantize the DRAFT context's KV cache (-ctkd /\r\n");
     out.push_str("; -ctvd). Omitting them is NOT 'follow the model': llama.cpp copies\r\n");
     out.push_str("; cache-type-k/-v into the draft params and then overwrites both with the\r\n");
@@ -1103,13 +1121,14 @@ mod tests {
     use super::*;
     use std::collections::BTreeMap;
 
-    // All six speculative keys set, with no draft FILE: the shape a Clone (or a
+    // All seven speculative keys set, with no draft FILE: the shape a Clone (or a
     // re-pointed model) leaves behind on a model that can't use them.
     fn preset_with_dead_draft_keys() -> Preset {
         Preset {
             model_draft: String::new(),
             spec_type: "draft-mtp".into(),
             spec_draft_n_max: Some(2),
+            spec_draft_p_min: Some(0.5),
             spec_draft_type_k: "q8_0".into(),
             spec_draft_type_v: "q8_0".into(),
             n_gpu_layers_draft: Some(99),
@@ -1118,7 +1137,7 @@ mod tests {
         }
     }
 
-    // No draft file and no embedded heads: all six go, and the reported list is
+    // No draft file and no embedded heads: all seven go, and the reported list is
     // the INI key names in file order.
     #[test]
     fn prune_drops_every_speculative_key_without_a_draft() {
@@ -1129,6 +1148,7 @@ mod tests {
             vec![
                 "spec-type",
                 "spec-draft-n-max",
+                "spec-draft-p-min",
                 "spec-draft-type-k",
                 "spec-draft-type-v",
                 "n-gpu-layers-draft",
@@ -1137,6 +1157,7 @@ mod tests {
         );
         assert_eq!(p.spec_type, "");
         assert_eq!(p.spec_draft_n_max, None);
+        assert_eq!(p.spec_draft_p_min, None);
         assert_eq!(p.spec_draft_type_k, "");
         assert_eq!(p.spec_draft_type_v, "");
         assert_eq!(p.n_gpu_layers_draft, None);
@@ -1154,6 +1175,7 @@ mod tests {
         assert_eq!(dropped, vec!["n-gpu-layers-draft", "device-draft"]);
         assert_eq!(p.spec_type, "draft-mtp");
         assert_eq!(p.spec_draft_n_max, Some(2));
+        assert_eq!(p.spec_draft_p_min, Some(0.5));
         assert_eq!(p.spec_draft_type_k, "q8_0");
         assert_eq!(p.spec_draft_type_v, "q8_0");
         assert_eq!(p.n_gpu_layers_draft, None);
@@ -1280,6 +1302,7 @@ mod tests {
             model_draft: r"C:\dflash\m-dflash.gguf".into(),
             spec_type: "draft-dflash".into(),
             spec_draft_n_max: Some(15),
+            spec_draft_p_min: Some(0.4),
             spec_draft_type_k: "q8_0".into(),
             spec_draft_type_v: "q5_0".into(),
             n_gpu_layers_draft: Some(99),
@@ -1291,6 +1314,7 @@ mod tests {
         assert!(ini.contains("model-draft = C:\\dflash\\m-dflash.gguf\r\n"));
         assert!(ini.contains("spec-type = draft-dflash\r\n"));
         assert!(ini.contains("spec-draft-n-max = 15\r\n"));
+        assert!(ini.contains("spec-draft-p-min = 0.4\r\n"));
         assert!(ini.contains("spec-draft-type-k = q8_0\r\n"));
         assert!(ini.contains("spec-draft-type-v = q5_0\r\n"));
         assert!(ini.contains("n-gpu-layers-draft = 99\r\n"));
@@ -1317,6 +1341,9 @@ mod tests {
         assert!(!value_lines
             .iter()
             .any(|l| l.starts_with("spec-draft-n-max =")));
+        assert!(!value_lines
+            .iter()
+            .any(|l| l.starts_with("spec-draft-p-min =")));
         assert!(!value_lines
             .iter()
             .any(|l| l.starts_with("spec-draft-type-k =")));
@@ -1364,12 +1391,14 @@ mod tests {
         k.insert("model-draft".into(), r"C:\dflash\m-dflash.gguf".into());
         k.insert("spec-type".into(), "draft-dflash".into());
         k.insert("spec-draft-n-max".into(), "15".into());
+        k.insert("spec-draft-p-min".into(), "0.4".into());
         k.insert("spec-draft-type-k".into(), "q8_0".into());
         k.insert("spec-draft-type-v".into(), "q5_0".into());
         let p = Preset::from_keys("m", &k);
         assert_eq!(p.model_draft, r"C:\dflash\m-dflash.gguf");
         assert_eq!(p.spec_type, "draft-dflash");
         assert_eq!(p.spec_draft_n_max, Some(15));
+        assert_eq!(p.spec_draft_p_min, Some(0.4));
         assert_eq!(p.spec_draft_type_k, "q8_0");
         assert_eq!(p.spec_draft_type_v, "q5_0");
     }
@@ -1392,6 +1421,7 @@ mod tests {
             model_draft: r"E:\dflashs\model-dflash.gguf".into(),
             spec_type: "draft-dflash".into(),
             spec_draft_n_max: Some(15),
+            spec_draft_p_min: Some(0.35),
             // Deliberately NOT the cache_type_k/-v below: the draft cache is a
             // separate setting, and matching values would make the round-trip
             // blind to the two being crossed.
