@@ -34,6 +34,18 @@ llama.cpp v0.5.0.
 | `backend-sampling` | `true` when this card holds the logits | the sampler runs on the GPU instead of copying the logits to the host every token |
 | `ubatch-size` | `512` | each ubatch token costs ~0.53 MiB of model compute buffer, plus a drafter's logits (ubatch x vocab) where they land. `1024` rarely fits in 12 GB next to a large model |
 
+### Embedded MTP head (runs entirely on the last device)
+
+With a layer split, the MTP head is the model's last block, so its weights, its draft
+KV and its compute all land on the last device. Measured with this card last (Qwen3.8-27B
+Q8_0, 3 reps, temp 0):
+
+| key | value | evidence |
+| --- | --- | --- |
+| `spec-draft-n-max` | `4` as a compromise (`3` at long context) | decode at 2.6k: n-max 2/3/4 = 38.0 / 45.9 / **50.6**; at 93.6k: 23.9 / **30.1** / 29.3 (3 and 4 tie within the text difference). `2` costs 21-25% |
+| `spec-draft-type-k/-v` | `q8_0` | the draft KV spans the FULL context: ~2 MiB per 1k cells in q8_0, ~4 MiB in f16 (416 against 832 MiB at 212k cells). f16 gives identical text and acceptance and +1% decode at 93.6k only |
+| memory | draft KV + ~1 GiB of draft compute on this card | at a context of ~200k, move about two blocks of a 27B Q8_0 model off this card to make room |
+
 ## 4. Multi-GPU
 
 - **As the last device in `device`, the card receives the output head, a drafter's
@@ -41,7 +53,8 @@ llama.cpp v0.5.0.
   27B Q8_0 model, a DFlash2 drafter and ctx 196608 that is ~1 GiB of model compute,
   ~0.5 GiB of drafter compute and the KV of its own layers.
 - **An embedded MTP head adds its own draft context on the last device** (a full-context
-  KV plus ~1 GiB of compute), which a 12 GB card rarely has room for next to its layers.
+  KV plus ~1 GiB of compute): budget for it by giving the card fewer layers (see
+  section 3).
 - **`split-mode tensor`** needs NCCL (not on Windows) or two devices of the same backend
   for its internal AllReduce; paired with a card of another backend it takes the slow
   generic path.
@@ -51,6 +64,7 @@ llama.cpp v0.5.0.
 | option | result |
 | --- | --- |
 | this card first in a split | llama-bench prefill improves (up to 1500 t/s) while live decode drops by 22%: llama-bench placement wins do not carry over to live |
+| handing the last-device role (MTP head, output head, sampling) to a HIP card to free this one | with an embedded MTP head, decode -23% at 2.6k and -15% at 93.6k, +21 ms per speculative step. Not the sampler (host sampling is worse) and barely the output head (2.7 ms of the 21): the MTP draft loop, three batch-1 passes with a sync each, is latency-bound and runs faster on this card |
 
 ## 6. Checking a configuration
 
