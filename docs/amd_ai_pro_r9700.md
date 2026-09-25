@@ -50,8 +50,8 @@ llama.cpp v0.5.0.
 
 | quant | result |
 | --- | --- |
-| Q8_0 | fastest prefill of the 27B files measured |
-| Q5_K_M | close to Q8_0 at ~60% of the size |
+| Q8_0 | fastest of the 27B files measured, prefill and decode |
+| Q5_K_M | ~70% of the size; prefill -13% / -10% and decode -7% / -15% against Q8_0 (2.6k / 93.6k). Worth it only where Q8_0 does not fit |
 | Q6_K (any Q6_K-based mix) | slow: prefill -33% against Q5_K_M |
 
 ## 4. Multi-GPU
@@ -68,7 +68,7 @@ llama.cpp v0.5.0.
 | option | result |
 | --- | --- |
 | a low `spec-draft-n-max`, to stay on the FlashAttention vector kernel | refuted: `n-max 1` gives 9.8 t/s at 93.6k, against 13.0 with no drafter |
-| Vulkan instead of ROCm | slower on both halves since #28102: prefill -27% at 2.6k and -25% at 93.6k, decode -18% and -15%, per-step cost +20-24% despite a slightly higher draft acceptance. Its only edge is a compute buffer ~690 MiB smaller. (On v0.4.0, before #28102, Vulkan had won both.) |
+| Vulkan instead of ROCm | slower on both halves since #28102: with Q8_0, prefill -27% / -25% and decode -18% / -15% (2.6k / 93.6k), per-step cost +20-24% despite a slightly higher draft acceptance. With Q5_K_M the gap widens: prefill -22% / -23%, decode -41% / -30%, per-step cost +50-55%. Its only edge is a compute buffer ~690 MiB smaller. (On v0.4.0, before #28102, Vulkan had won both.) |
 
 ## 6. Checking a configuration
 
