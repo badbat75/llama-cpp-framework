@@ -41,7 +41,7 @@ llama.cpp v0.5.0.
 | --- | --- | --- |
 | `flash-attn` | omit (`auto` resolves to on) | the #28102 WMMA path; a quantized KV cache needs FlashAttention |
 | `cache-type-k/-v` | `q8_0` | `q5_1` saves ~30% of the KV but decodes 6% slower; `iq4_nl` has no HIP FlashAttention kernel |
-| `ubatch-size` | `512`; `1024` when VRAM allows | `1024` gives +5% prefill, `256` costs 20%. Decode is unaffected. Each ubatch token costs ~0.53 MiB of compute buffer per device |
+| `ubatch-size` | the largest that fits: `768` or `1024` | against `512`: `768` gives +5.8% prefill at 2.6k and nothing at 93.6k, `1024` +5% at both depths, `256` costs 20%. Decode is unaffected (identical per-step cost). Each ubatch token costs ~0.53 MiB of compute buffer per device |
 | `split-mode` (multi-GPU) | `layer` | see section 4 |
 | `spec-draft-n-max` (DFlash2) | `7` | best at 2.6k and 93.6k; `1` is slower than no drafter |
 | `spec-draft-type-k/-v` | `f16` | a DFlash draft KV is a small window (50 MiB in f16, 27 MiB in q8_0). No measured speed or acceptance difference |
@@ -83,7 +83,7 @@ llama.cpp v0.5.0.
 | parameter | current value | question | result |
 | --- | --- | --- | --- |
 | `ROCBLAS_USE_HIPBLASLT` with the staged runtime | unset | is hipBLASLt (`1`) faster than Tensile (`0`) for BF16/F16 models? | TBD |
-| `batch-size` | default (2048) | does a larger logical batch help prefill at `ubatch 512`? | TBD |
+| `batch-size` | default (2048) | does a larger logical batch help prefill at the chosen `ubatch-size`? | TBD |
 | `cache-type-k/-v` `f16` | `q8_0` | speed gained versus twice the KV memory | TBD |
 | `cache-ram` | 20480 | restore time of the prompt cache over the card's link | TBD |
 | `parallel` > 1 | 1 | aggregate throughput versus the context divided per slot | TBD |

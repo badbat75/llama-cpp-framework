@@ -18,11 +18,19 @@ llama.cpp v0.5.0.
 - **The card is enumerated twice**, once by CUDA and once by Vulkan. Pin the CUDA id.
   An unselected device still holds ~160 MiB per llama-server child, because every child
   opens a driver context on each device it enumerates.
-- **Usable VRAM is about 11.5 GiB dedicated.** The CUDA driver keeps 290 to 360 MiB of
+- **Usable VRAM is about 11.9 GiB dedicated** (measured at 11.93 GiB with no paging, the
+  driver trimming other processes to make room); that leaves nothing for any other
+  application on the card. The CUDA driver keeps 290 to 360 MiB of
   non-local (shared) memory in every configuration, even with 1.5 GiB free. That memory
   is not a spill; a spill is real only above ~512 MiB beyond the pinned buffers.
 
 ## 3. Settings
+
+### server.ini
+
+| key | value | evidence |
+| --- | --- | --- |
+| `MmprojDevice` | off this card, when it is the VRAM constraint | the image encoder (~1.14 GiB with its compute buffer for a BF16 Qwen3.8 mmproj) only computes on image requests. Moving it off and giving this card two more blocks: neutral at 2.6k, +2.4% decode at 93.6k |
 
 ### Preset (presets.ini)
 
@@ -32,7 +40,7 @@ llama.cpp v0.5.0.
 | `cache-type-k/-v` | `q8_0` | `q5_1` decodes 6% slower; `iq4_nl` has no CUDA FlashAttention kernel |
 | `override-tensor` | `token_embd\.weight=<this card>` | moves the table (~1.26 GiB at Q8_0) out of pinned host RAM, where Windows reports it as shared GPU memory: +1-2% decode. The quant must have a CUDA `get_rows` kernel (all K/IQ quants do since b10089) |
 | `backend-sampling` | `true` when this card holds the logits | the sampler runs on the GPU instead of copying the logits to the host every token |
-| `ubatch-size` | `512` | each ubatch token costs ~0.53 MiB of model compute buffer, plus a drafter's logits (ubatch x vocab) where they land. `1024` rarely fits in 12 GB next to a large model |
+| `ubatch-size` | the largest that fits: `768` | each ubatch token costs ~0.53 MiB of model compute buffer, plus a drafter's logits (ubatch x vocab) where they land: `768` adds ~400 MiB over `512` on a last device carrying a DFlash2 drafter. Against `512`: +5.8% prefill at 2.6k, nothing at 93.6k, decode unchanged. `1024` did not fit next to a 27B Q8_0 at ctx 196608 |
 
 ### Embedded MTP head (runs entirely on the last device)
 
@@ -79,9 +87,8 @@ Q8_0, 3 reps, temp 0):
 | --- | --- | --- | --- |
 | Vulkan instead of CUDA | CUDA | does the Vulkan backend lose anything on this card? | TBD |
 | `backend-sampling` on vs off | on | the measured gain at 2.6k and 93.6k | TBD |
-| `GGML_CUDA_FORCE_MMQ` / cuBLAS path | default | prefill at `ubatch 512` | TBD |
+| `GGML_CUDA_FORCE_MMQ` / cuBLAS path | default | prefill at the chosen `ubatch-size` | TBD |
 | CUDA graphs (`GGML_CUDA_DISABLE_GRAPHS`) | default (on) | decode cost or gain with a drafter's variable batch | TBD |
 | `token_embd` left in host RAM | on the card | the cost of freeing ~1.26 GiB of VRAM | TBD |
-| image encoder (mmproj) on this card | on the card | VRAM taken versus image-encode speed | TBD |
 | power limit | stock (220 W) | decode per watt | TBD |
 | single-card models that fit in 12 GB | n/a | reference prefill/decode per quant | TBD |
