@@ -30,6 +30,14 @@ vocabulary** from a standalone MTP head GGUF, which is what HauhauCS's
 - sha256 `981285400b59dc45cf99936b6ff66d4b3aa0f1b532f85fa51418cb407e51d615`
 - published against upstream `4df29be4f4c3673f428170fda944a5b19f743bb8`;
   verified to apply and compile clean on tag **b10488** (2026-08-20)
+- **refreshed locally for v0.6.0** (2026-10-05), so the checked-in file is no
+  longer the publisher's bytes: v0.6.0 inserted an optional `cls_out`
+  projection between `output` and its NULL fallback in `load_arch_tensors`,
+  which broke the first hunk's context. The publisher had not re-cut the patch
+  (the URL above still served the sha256 above), upstream still has no `d2t`
+  in `qwen35.cpp`, and `git apply --3way` re-applied it with every added and
+  removed line unchanged; only offsets and context moved. Checked-in sha256:
+  `955f5313ad6f0e00a979ff412b576c5a9948e945c15f53625d37cc48dbc9dca6`
 
 **What it changes.** A FastMTP sidecar is an MTP-only GGUF (no trunk blocks)
 whose LM head covers **32,768** rows instead of the target's 248,320, plus a

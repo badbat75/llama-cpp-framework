@@ -195,10 +195,9 @@ pub struct ServerConfig {
     pub webui_mcp_proxy: Option<bool>,
     /// Let llama.cpp auto-shrink unset args to fit device memory (-fit on|off).
     /// None = the framework default (off): the GUI's "default" n-gpu-layers means
-    /// "offload every layer", which -fit on would silently override. Since
-    /// llama.cpp v0.5.0 (#28849), with `ctx-size` absent and `parallel` on auto
-    /// (4 slots, unified KV), the fit may grow the KV pool up to 4x the trained
-    /// context to fill VRAM; each slot is still capped at the trained context.
+    /// "offload every layer", which -fit on would silently override. v0.5.0
+    /// (#28849) let the fit grow the KV pool up to 4x the trained context under
+    /// auto `parallel` (4 slots, unified KV); v0.6.0 reverted that (#29437).
     pub fit: Option<bool>,
     /// Continue a TRAILING assistant message instead of answering it
     /// (--prefill-assistant / --no-prefill-assistant). None = llama.cpp's own

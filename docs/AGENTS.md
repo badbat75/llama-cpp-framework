@@ -1,0 +1,4 @@
+# docs\
+
+- `amd_ai_pro_r9700.md`, `nvidia_rtx4070_super.md`: per-GPU configuration reference guides: the measured optimum per llama.cpp/server/preset parameter on that card, the evidence, options that measured worse than they look, and a `TBD` table for parameters not yet measured. Terse: a reference, not a narrative. Each guide covers ITS card only: no machine-specific device ids (`ROCm1`, `CUDA0`), no split vector of one pairing, no mention of the other card. Every value traces to a measurement in the local benchmark archive; no absolute paths; when a campaign changes a result, update the row (and fill or retire its placeholder) in the same change.
+- `build-pipeline.md`: developer reference for the root-level build scripts and build conventions (not a GPU guide; the rules above do not apply to it).
