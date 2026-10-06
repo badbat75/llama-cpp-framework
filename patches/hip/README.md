@@ -8,6 +8,13 @@ matching copy exists**, because force-including a wrapper generated from a
 different clang's headers means silently drifting from the toolchain (clang 23
 added `__cluster_dims__`/`__no_cluster__` that the 7.1-era copy lacked).
 
+**Not needed from clang 24 on** (TheRock ROCm 10.1.0): upstream now includes
+`__clang_cuda_math_forward_declares.h` before `<cmath>` in the stock wrapper
+(llvm/llvm-project#201563, which cites this exact MSVC clash), and the stock
+header passes the step 4 validation TU (2026-10-06). `02-build.ps1` therefore
+force-includes nothing on clang >= 24 and keeps `23\` only for the 10.0.0
+fallback dist; delete it once no supported dist ships clang 23.
+
 ## Why the patch exists
 
 MSVC's `<cmath>` (`_CLANG_BUILTIN2`, first seen in MSVC 14.51 / VS 18) declares

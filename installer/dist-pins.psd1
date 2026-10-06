@@ -54,7 +54,7 @@
     # removes as a failure mode: it finds the URL instead of composing it.
     # Prerelease indexes stay out for the same reason they stay out of Dists.
     Rocm = @{
-        Pin     = '10.0.0'
+        Pin     = '10.1.0'
         Root    = 'C:\TheRock'         # dists install as <Root>\<Version>; the active one is HIP_PATH
         Marker  = '.therock-version'   # written only after a successful extract
         Indexes = @(
@@ -62,10 +62,10 @@
             'https://repo.amd.com/rocm/tarball-multi-arch/'     # up to 7.14
         )
         Dists  = @(
+            @{ Version = '10.1.0'     # 4.5 GiB, published 2026-10-05 (AMD clang 24)
+               Url = 'https://stable.repo.amd.com/rocm/core/tarball/therock-dist-windows-multiarch-10.1.0.tar.gz' }
             @{ Version = '10.0.0'     # 4.5 GB, published 2026-08-26
                Url = 'https://stable.repo.amd.com/rocm/core/tarball/therock-dist-windows-multiarch-10.0.0.tar.gz' }
-            @{ Version = '7.14.0'     # legacy index: everything before 10.0 stayed there
-               Url = 'https://repo.amd.com/rocm/tarball-multi-arch/therock-dist-windows-multiarch-7.14.0.tar.gz' }
         )
     }
 
