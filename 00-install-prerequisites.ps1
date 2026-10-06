@@ -607,14 +607,23 @@ if ($rocmBlocked) {
 $blocks = @()
 # A downloaded installer runs elevated only when Authenticode says it is
 # intact AND signed by its vendor (the sources' Signer, matched against the
-# certificate's O=): a valid signature by anyone else is not enough.
+# certificate's O=): a valid signature by anyone else is not enough. The file
+# sits in the user-writable TEMP, so it is held open (share = Read only: no
+# write, rename or delete by anyone) from BEFORE the check until the installer
+# exits; what was verified is what runs. Returns the exit code, $null when the
+# installer was refused.
 $blocks += @'
-function Test-Signer([string]$File, [string]$Org) {
-    $sig = Get-AuthenticodeSignature $File
-    $subject = if ($sig.SignerCertificate) { $sig.SignerCertificate.Subject } else { '' }
-    if ($sig.Status -eq 'Valid' -and $subject -match ('(^|, )O="?' + [regex]::Escape($Org) + '"?(, |$)')) { return $true }
-    Write-Host "  [!!] $(Split-Path $File -Leaf): signature $($sig.Status), signer '$subject' (expected O=$Org); NOT run" -ForegroundColor Red
-    return $false
+function Invoke-SignedInstaller([string]$File, [string]$Org, [string]$Arguments) {
+    $lock = [IO.File]::Open($File, 'Open', 'Read', 'Read')
+    try {
+        $sig = Get-AuthenticodeSignature $File
+        $subject = if ($sig.SignerCertificate) { $sig.SignerCertificate.Subject } else { '' }
+        if ($sig.Status -ne 'Valid' -or $subject -notmatch ('(^|, )O="?' + [regex]::Escape($Org) + '"?(, |$)')) {
+            Write-Host "  [!!] $(Split-Path $File -Leaf): signature $($sig.Status), signer '$subject' (expected O=$Org); NOT run" -ForegroundColor Red
+            return $null
+        }
+        return (Start-Process $File -ArgumentList $Arguments -Wait -PassThru).ExitCode
+    } finally { $lock.Dispose() }
 }
 '@
 foreach ($p in $missing) {
@@ -779,14 +788,12 @@ $cudaExe = Join-Path $env:TEMP (Split-Path $cudaUrl -Leaf)
 curl.exe --fail -L --retry 3 --retry-delay 5 -o $cudaExe $cudaUrl
 if ($LASTEXITCODE -ne 0) {
     Write-Host "  download failed (curl exit $LASTEXITCODE)" -ForegroundColor Red
-} elseif (-not (Test-Signer $cudaExe $cudaSigner)) {
-    Remove-Item $cudaExe -Force -ErrorAction SilentlyContinue
 } else {
-    Write-Host "  the network installer fetches the subpackages itself (takes a while)..." -ForegroundColor DarkGray
-    $p = Start-Process $cudaExe -ArgumentList "-s $cudaSubs" -Wait -PassThru
-    if ($p.ExitCode -ne 0) { Write-Host "  CUDA installer exit code $($p.ExitCode)" -ForegroundColor Red }
-    Remove-Item $cudaExe -Force -ErrorAction SilentlyContinue
+    Write-Host "  the network installer fetches the subpackages itself (takes a while, no progress shown)..." -ForegroundColor DarkGray
+    $rc = Invoke-SignedInstaller $cudaExe $cudaSigner "-s $cudaSubs"
+    if ($null -ne $rc -and $rc -ne 0) { Write-Host "  CUDA installer exit code $rc" -ForegroundColor Red }
 }
+Remove-Item $cudaExe -Force -ErrorAction SilentlyContinue
 '@
 }
 # Vulkan SDK: LunarG's Qt installer, headless, into its own version directory
@@ -801,11 +808,9 @@ $vkExe = Join-Path $env:TEMP (Split-Path $vkUrl -Leaf)
 curl.exe --fail -L --retry 3 --retry-delay 5 -o $vkExe $vkUrl
 if ($LASTEXITCODE -ne 0 -or (Get-Item $vkExe -ErrorAction SilentlyContinue).Length -ne $vkSize) {
     Write-Host "  download failed or incomplete (curl exit $LASTEXITCODE)" -ForegroundColor Red
-} elseif (-not (Test-Signer $vkExe $vkSigner)) {
-    # removed below
 } else {
-    $p = Start-Process $vkExe -ArgumentList "--root `"$vkDir`" --accept-licenses --default-answer --confirm-command install" -Wait -PassThru
-    if ($p.ExitCode -ne 0) { Write-Host "  Vulkan SDK installer exit code $($p.ExitCode)" -ForegroundColor Red }
+    $rc = Invoke-SignedInstaller $vkExe $vkSigner "--root `"$vkDir`" --accept-licenses --default-answer --confirm-command install"
+    if ($null -ne $rc -and $rc -ne 0) { Write-Host "  Vulkan SDK installer exit code $rc" -ForegroundColor Red }
 }
 Remove-Item $vkExe -Force -ErrorAction SilentlyContinue
 '@
