@@ -66,6 +66,7 @@
             'https://developer.download.nvidia.com/compute/cuda/{0}/network_installers/cuda_{0}_windows_network.exe'
         )
         Root        = 'C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA'   # toolkits install as <Root>\v<X.Y>
+        Signer      = 'NVIDIA Corporation'   # Authenticode O= the installer must carry before it runs elevated
         Subpackages = @(
             'nvcc', 'crt', 'nvvm', 'nvptxcompiler', 'nvfatbin', 'nvjitlink',
             'cudart', 'cublas', 'cublas_dev', 'thrust', 'nvrtc', 'nvrtc_dev',
@@ -83,6 +84,7 @@
         LatestUrl   = 'https://vulkan.lunarg.com/sdk/latest/windows.txt'
         Installer   = 'https://sdk.lunarg.com/sdk/download/{0}/windows/vulkansdk-windows-X64-{0}.exe'
         Root        = 'C:\VulkanSDK'
+        Signer      = 'LunarG, Inc.'         # Authenticode O= the installer must carry before it runs elevated
     }
 
     # Microsoft Visual C++ Redistributable x64 - required by every shipped

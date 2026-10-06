@@ -605,6 +605,18 @@ if ($rocmBlocked) {
 # ── Build the elevated batch (winget, symlinks, ROCm, CUDA, Vulkan) ─
 
 $blocks = @()
+# A downloaded installer runs elevated only when Authenticode says it is
+# intact AND signed by its vendor (the sources' Signer, matched against the
+# certificate's O=): a valid signature by anyone else is not enough.
+$blocks += @'
+function Test-Signer([string]$File, [string]$Org) {
+    $sig = Get-AuthenticodeSignature $File
+    $subject = if ($sig.SignerCertificate) { $sig.SignerCertificate.Subject } else { '' }
+    if ($sig.Status -eq 'Valid' -and $subject -match ('(^|, )O="?' + [regex]::Escape($Org) + '"?(, |$)')) { return $true }
+    Write-Host "  [!!] $(Split-Path $File -Leaf): signature $($sig.Status), signer '$subject' (expected O=$Org); NOT run" -ForegroundColor Red
+    return $false
+}
+'@
 foreach ($p in $missing) {
     $blocks += "Write-Host 'Installing $($p.Name)...' -ForegroundColor Cyan"
     $blocks += "winget install --id $($p.Id) --exact --silent --accept-source-agreements --accept-package-agreements"
@@ -759,7 +771,7 @@ if ($rocmActiveDir -and (Test-Path (Join-Path $rocmActiveDir $rocmMarker))) {
 if ($cudaTarget) {
     $mm = '{0}.{1}' -f $cudaTarget.Parsed.Major, $cudaTarget.Parsed.Minor
     $subs = ($cuda.Subpackages | ForEach-Object { "${_}_$mm" }) -join ' '
-    $blocks += "`$cudaVer = '$($cudaTarget.Version)'; `$cudaUrl = '$($cudaTarget.Url)'; `$cudaSubs = '$subs'"
+    $blocks += "`$cudaVer = '$($cudaTarget.Version)'; `$cudaUrl = '$($cudaTarget.Url)'; `$cudaSubs = '$subs'; `$cudaSigner = '$($cuda.Signer)'"
     $blocks += @'
 
 Write-Host "Installing CUDA Toolkit $cudaVer (no driver)..." -ForegroundColor Cyan
@@ -767,6 +779,8 @@ $cudaExe = Join-Path $env:TEMP (Split-Path $cudaUrl -Leaf)
 curl.exe --fail -L --retry 3 --retry-delay 5 -o $cudaExe $cudaUrl
 if ($LASTEXITCODE -ne 0) {
     Write-Host "  download failed (curl exit $LASTEXITCODE)" -ForegroundColor Red
+} elseif (-not (Test-Signer $cudaExe $cudaSigner)) {
+    Remove-Item $cudaExe -Force -ErrorAction SilentlyContinue
 } else {
     Write-Host "  the network installer fetches the subpackages itself (takes a while)..." -ForegroundColor DarkGray
     $p = Start-Process $cudaExe -ArgumentList "-s $cudaSubs" -Wait -PassThru
@@ -779,7 +793,7 @@ if ($LASTEXITCODE -ne 0) {
 # (it sets VULKAN_SDK and PATH itself). Checked against the expected size
 # first, so a truncated download never runs.
 if ($vulkanTarget) {
-    $blocks += "`$vkVer = '$($vulkanTarget.Version)'; `$vkUrl = '$($vulkanTarget.Url)'; `$vkSize = $($vulkanTarget.Size); `$vkDir = '$(Join-Path $vulkan.Root $vulkanTarget.Version)'"
+    $blocks += "`$vkVer = '$($vulkanTarget.Version)'; `$vkUrl = '$($vulkanTarget.Url)'; `$vkSize = $($vulkanTarget.Size); `$vkDir = '$(Join-Path $vulkan.Root $vulkanTarget.Version)'; `$vkSigner = '$($vulkan.Signer)'"
     $blocks += @'
 
 Write-Host "Installing Vulkan SDK $vkVer..." -ForegroundColor Cyan
@@ -787,6 +801,8 @@ $vkExe = Join-Path $env:TEMP (Split-Path $vkUrl -Leaf)
 curl.exe --fail -L --retry 3 --retry-delay 5 -o $vkExe $vkUrl
 if ($LASTEXITCODE -ne 0 -or (Get-Item $vkExe -ErrorAction SilentlyContinue).Length -ne $vkSize) {
     Write-Host "  download failed or incomplete (curl exit $LASTEXITCODE)" -ForegroundColor Red
+} elseif (-not (Test-Signer $vkExe $vkSigner)) {
+    # removed below
 } else {
     $p = Start-Process $vkExe -ArgumentList "--root `"$vkDir`" --accept-licenses --default-answer --confirm-command install" -Wait -PassThru
     if ($p.ExitCode -ne 0) { Write-Host "  Vulkan SDK installer exit code $($p.ExitCode)" -ForegroundColor Red }
@@ -802,13 +818,23 @@ if (Test-IsAdmin) {
     Write-Host "Requesting administrator privileges for winget + ROCm + CUDA + Vulkan..." -ForegroundColor Yellow
     # Through a file, not -EncodedCommand: base64 of UTF-16 inflates the batch
     # ~2.7x, and with the ROCm, CUDA and Vulkan legs together it no longer
-    # fits Windows' 32,767-character command line. Written WITH a BOM, or
-    # Windows PowerShell 5.1 decodes it as ANSI.
+    # fits Windows' 32,767-character command line. The file sits in the
+    # user-writable TEMP, so it is never run by path: the elevated side reads
+    # its bytes ONCE, checks them against the SHA256 on its own command line
+    # (which nothing unelevated can alter after the UAC prompt) and runs the
+    # verified bytes from memory, so a swap after the write is refused, not
+    # executed. Decoded as UTF-8 explicitly, so no BOM is needed.
     $elevated = Join-Path $env:TEMP "llama-cpp-framework-elevated-$PID.ps1"
-    [IO.File]::WriteAllText($elevated, $script, [Text.UTF8Encoding]::new($true))
+    $bytes = [Text.UTF8Encoding]::new($false).GetBytes($script)
+    [IO.File]::WriteAllBytes($elevated, $bytes)
+    $hash = [BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash($bytes)) -replace '-', ''
+    $loader = "`$b = [IO.File]::ReadAllBytes('$($elevated -replace "'", "''")'); " +
+        "if (([BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash(`$b)) -replace '-', '') -ne '$hash') " +
+        "{ Write-Host 'Elevated batch was modified after it was written; refusing to run it.' -ForegroundColor Red; Start-Sleep 10; exit 3 }; " +
+        "& ([scriptblock]::Create([Text.Encoding]::UTF8.GetString(`$b)))"
     try {
         $proc = Start-Process powershell -Verb RunAs -Wait -PassThru `
-            -ArgumentList "-ExecutionPolicy Bypass -File `"$elevated`""
+            -ArgumentList "-ExecutionPolicy Bypass -NoProfile -Command `"$($loader -replace '"', '\"')`""
         if ($proc.ExitCode -ne 0) {
             Write-Host "Elevated session exited with code $($proc.ExitCode)" -ForegroundColor Red
         }
