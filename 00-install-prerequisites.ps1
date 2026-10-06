@@ -4,13 +4,15 @@
 # upgraded if present, in a single self-elevated session (which also symlinks
 # OpenSSL's lib\VC\x64\MD\*.lib up to lib\ so cmake's find_package(OpenSSL)
 # resolves). ROCm/HIP is installed from AMD's TheRock dist tarball (the classic
-# HIP SDK installer is discontinued): the pinned multiarch tarball is downloaded
+# HIP SDK installer is discontinued): the newest stable multiarch tarball is downloaded
 # and extracted into its own version directory (C:\TheRock\<version>) in the
 # same elevated session, which also sets the machine environment (HIP_PATH on
 # the ACTIVE version + PATH, pruned of the others). Dists therefore sit side
 # by side, and converging to a version already on disk costs a HIP_PATH move
-# instead of a download. The remaining manual SDKs (CUDA, Vulkan) are only
-# probed and their install URLs printed.
+# instead of a download. The CUDA Toolkit and the Vulkan SDK are installed in
+# the same elevated session. Nothing is pinned: ROCm, CUDA and Vulkan all
+# converge to the newest STABLE release their vendor publishes
+# (installer\dist-sources.psd1 says where each one is looked up).
 #
 # sccache comes straight from its GitHub releases (user scope, no elevation)
 # rather than winget, whose manifest lags upstream by days; a winget copy left
@@ -80,21 +82,15 @@ $wingetPackages = @(
     @{ Id = 'NSIS.NSIS'               ; Name = 'NSIS' }
 )
 
-$manualSdks = @(
-    @{ Name = 'CUDA Toolkit'; Url = 'https://developer.nvidia.com/cuda-downloads'
-       Probe = { Test-Path "${env:ProgramFiles}\NVIDIA GPU Computing Toolkit\CUDA\*\bin\nvcc.exe" } }
-    @{ Name = 'Vulkan SDK'  ; Url = 'https://vulkan.lunarg.com/sdk/home'
-       Probe = { ($env:VULKAN_SDK -and (Test-Path $env:VULKAN_SDK)) -or (Test-Path "${env:ProgramFiles}\VulkanSDK\*\Bin\glslc.exe") } }
-)
+$sources = Import-PowerShellDataFile (Join-Path $PSScriptRoot 'installer\dist-sources.psd1')
 
 # ── ROCm (TheRock) dist ─────────────────────────────────────────────
 # AMD now distributes Windows ROCm/HIP as TheRock dist tarballs (the classic
-# HIP SDK installer is discontinued). The version is PINNED in
-# installer\dist-pins.psd1: the single source of truth shared with the
-# end-user runtime-deps script that 03-package.ps1 bundles into the installer.
-# Bump it THERE, deliberately, and re-run; this script converges the install
-# to the pin (rationale for the multiarch tarball and the candidate list
-# lives next to the data).
+# HIP SDK installer is discontinued). Not pinned: every run scans AMD's
+# tarball indexes (installer\dist-sources.psd1, shared with the end-user
+# runtime-deps script that 03-package.ps1 bundles into the installer) and
+# converges the install to the newest STABLE dist (rationale for the
+# multiarch tarball and the index scan lives next to the data).
 #
 # Dists install SIDE BY SIDE, one directory per version under Root, and
 # HIP_PATH names the active one. So converging to a version already extracted
@@ -105,7 +101,7 @@ $manualSdks = @(
 # crash), and the pre-versioning single-directory layout (C:\TheRock\build,
 # what every install before 1.11.4 wrote) is RENAMED into its version dir
 # rather than re-downloaded: same bytes, 4.6 GB cheaper.
-$rocm = (Import-PowerShellDataFile (Join-Path $PSScriptRoot 'installer\dist-pins.psd1')).Rocm
+$rocm = $sources.Rocm
 $rocmLegacyDir = Join-Path $rocm.Root 'build'   # pre-versioning layout
 
 function Get-RocmVersionDir([string]$Version) { Join-Path $rocm.Root $Version }
@@ -113,8 +109,8 @@ function Get-RocmVersionDir([string]$Version) { Join-Path $rocm.Root $Version }
 # The version a dist directory holds: the marker our install step writes;
 # else the dist's own .info\version (covers a manual install; note it says
 # "7.14.0" even for an rc build, which is why our marker takes precedence);
-# else 'unknown' for an interrupted/unversioned tree ('unknown' never equals
-# Pin, so the next run converges it to the pin).
+# else 'unknown' for an interrupted/unversioned tree ('unknown' never parses
+# as a version, so the next run converges it to the newest stable).
 function Get-RocmDirVersion([string]$Dir) {
     if (-not $Dir -or -not (Test-Path $Dir)) { return $null }
     $marker = Join-Path $Dir $rocm.Marker
@@ -165,9 +161,7 @@ function Get-RemoteFileSize {
 }
 
 # The newest STABLE dist AMD has published, scanned from the tarball indexes,
-# or $null when none is reachable. Purely informational: it feeds a report row
-# recommending a Pin bump, never the install decision (why that split is the
-# pins file's call, not this script's: see installer\dist-pins.psd1).
+# or $null when none is reachable. It is what this run installs.
 #
 # Both indexes are HTML pages that carry their listing as a JS `files` array
 # ({"name": ..., "mtime": ...}), so the names are matched with a regex rather
@@ -203,13 +197,99 @@ function Get-RocmLatestPublished {
     return $best
 }
 
+# ── CUDA Toolkit + Vulkan SDK ───────────────────────────────────────
+# Both converge to the newest stable release, each version in its own
+# directory (CUDA as <Root>\v<X.Y>, a patch release over its own X.Y; Vulkan
+# as <Root>\<version>). 02-build.ps1 picks the newest COMPLETE install of each
+# by version, so a new one is used by the next build with no reconfigure; an
+# old one that survives is a fallback for the user to delete. Detection here applies the same completeness tests 02-build.ps1
+# does, so "installed" means "buildable".
+$cuda   = $sources.Cuda
+$vulkan = $sources.Vulkan
+
+# The newest installed CUDA toolkit as Parsed/Version/Dir, versioned by its
+# own version.json ("cuda": X.Y.Z; the directory name only says X.Y), or $null.
+function Get-CudaInstalled {
+    $best = $null
+    foreach ($d in @(Get-ChildItem $cuda.Root -Directory -ErrorAction SilentlyContinue)) {
+        if ($d.Name -notmatch '^v\d+\.\d+$') { continue }
+        if (-not (Test-Path (Join-Path $d.FullName 'bin\nvcc.exe'))) { continue }
+        if (-not (Test-Path (Join-Path $d.FullName 'lib\x64\cudart_static.lib'))) { continue }
+        if (-not (Test-Path (Join-Path $d.FullName 'lib\x64\cublas.lib'))) { continue }
+        $v = $null
+        try {
+            $text = Get-Content (Join-Path $d.FullName 'version.json') -Raw -ErrorAction Stop
+            $v = [version](ConvertFrom-Json $text).cuda.version
+        } catch { continue }
+        if (-not $best -or $v -gt $best.Parsed) { $best = @{ Parsed = $v; Version = "$v"; Dir = $d.FullName } }
+    }
+    return $best
+}
+
+# The newest CUDA release NVIDIA publishes as Parsed/Version/Url, or $null.
+# The redist index carries one redistrib_<X.Y.Z>.json per release (the same
+# strict X.Y.Z match as the ROCm scan); the network installer is then FOUND
+# among the known name patterns rather than assumed, so a release whose
+# Windows installer is not up yet is simply not taken this run.
+function Get-CudaLatestPublished {
+    # Same PS 5.1 redirected-stderr rationale as Get-WingetVersion.
+    $ErrorActionPreference = 'Continue'
+    $page = curl.exe -sL --fail --connect-timeout 5 --max-time 20 $cuda.RedistIndex 2>$null | Out-String
+    if ($LASTEXITCODE -ne 0 -or -not $page) { return $null }
+    $best = $null
+    foreach ($m in [regex]::Matches($page, 'redistrib_(\d+\.\d+\.\d+)\.json')) {
+        $v = [version]$m.Groups[1].Value
+        if (-not $best -or $v -gt $best) { $best = $v }
+    }
+    if (-not $best) { return $null }
+    foreach ($tpl in $cuda.Installers) {
+        $url = $tpl -f "$best"
+        if (Get-RemoteFileSize $url) { return @{ Parsed = $best; Version = "$best"; Url = $url } }
+    }
+    return $null
+}
+
+# The newest installed Vulkan SDK as Parsed/Version/Dir, or $null: the same
+# roots and completeness test as Find-VulkanSdk in 02-build.ps1.
+function Get-VulkanInstalled {
+    $roots = @()
+    foreach ($sdk in @($env:VULKAN_SDK, [Environment]::GetEnvironmentVariable('VULKAN_SDK', 'Machine'))) {
+        if ($sdk) { $roots += (Split-Path $sdk.TrimEnd('\') -Parent) }
+    }
+    $roots += @($vulkan.Root, "${env:ProgramFiles}\VulkanSDK", "${env:ProgramFiles(x86)}\VulkanSDK")
+    $best = $null
+    foreach ($root in ($roots | Where-Object { $_ } | Select-Object -Unique)) {
+        foreach ($d in @(Get-ChildItem $root -Directory -ErrorAction SilentlyContinue)) {
+            $v = $null
+            if (-not [version]::TryParse($d.Name, [ref]$v)) { continue }
+            if (-not (Test-Path (Join-Path $d.FullName 'Lib\vulkan-1.lib'))) { continue }
+            if (-not (Test-Path (Join-Path $d.FullName 'Bin\glslc.exe'))) { continue }
+            if (-not $best -or $v -gt $best.Parsed) { $best = @{ Parsed = $v; Version = $d.Name; Dir = $d.FullName } }
+        }
+    }
+    return $best
+}
+
+# The newest Vulkan SDK LunarG publishes for Windows as Parsed/Version/Url/
+# Size, or $null (offline, or the installer not downloadable yet).
+function Get-VulkanLatestPublished {
+    # Same PS 5.1 redirected-stderr rationale as Get-WingetVersion.
+    $ErrorActionPreference = 'Continue'
+    $text = curl.exe -sL --fail --connect-timeout 5 --max-time 20 $vulkan.LatestUrl 2>$null | Out-String
+    if ($LASTEXITCODE -ne 0 -or $text.Trim() -notmatch '^(\d+\.\d+\.\d+\.\d+)$') { return $null }
+    $ver  = $Matches[1]
+    $url  = $vulkan.Installer -f $ver
+    $size = Get-RemoteFileSize $url
+    if (-not $size) { return $null }
+    return @{ Parsed = [version]$ver; Version = $ver; Url = $url; Size = $size }
+}
+
 # ── sccache (GitHub release) ────────────────────────────────────────
 # Installed from mozilla/sccache's own release assets, not winget: the winget
 # manifest lags upstream by days (0.18.0 was published 2026-09-14 and winget
 # still served 0.17.0 four days later), and sccache is the tool whose releases
 # the nvcc wrapping in 02-build.ps1 waits on. It tracks the LATEST release,
-# unlike ROCm's pin: a compiler cache that misbehaves costs a cold build, not
-# a broken runtime, and latest is what `winget upgrade` gave it before.
+# like everything else here.
 #
 # The directory is fixed and versionless on purpose. winget's portable layout
 # puts the version in the path (...\sccache-v0.17.0-x86_64-pc-windows-msvc\),
@@ -393,11 +473,36 @@ if ($rocmBefore) {
 } else {
     Write-Host "  [..] ROCm (TheRock) not installed" -ForegroundColor Yellow
 }
-foreach ($s in $manualSdks) {
-    if (& $s.Probe) { Write-Host "  [OK] $($s.Name)" -ForegroundColor Green }
-    else            { Write-Host "  [--] $($s.Name) not found (manual install)" -ForegroundColor Yellow }
-}
+$cudaBefore   = Get-CudaInstalled
+$vulkanBefore = Get-VulkanInstalled
+if ($cudaBefore) { Write-Host "  [OK] CUDA Toolkit $($cudaBefore.Version) ($($cudaBefore.Dir))" -ForegroundColor Green }
+else             { Write-Host "  [..] CUDA Toolkit not installed" -ForegroundColor Yellow }
+if ($vulkanBefore) { Write-Host "  [OK] Vulkan SDK $($vulkanBefore.Version) ($($vulkanBefore.Dir))" -ForegroundColor Green }
+else               { Write-Host "  [..] Vulkan SDK not installed" -ForegroundColor Yellow }
 Write-Host ""
+
+# ── Resolve the newest stable releases ──────────────────────────────
+# Best effort: an unreachable source keeps what is installed and says so in
+# the report; it never uninstalls or downgrades anything.
+
+Write-Host "Checking AMD, NVIDIA and LunarG for the newest stable releases..." -ForegroundColor DarkGray
+$rocmLatest   = Get-RocmLatestPublished
+$cudaLatest   = Get-CudaLatestPublished
+$vulkanLatest = Get-VulkanLatestPublished
+
+$cudaTarget = $null
+if ($cudaLatest -and (-not $cudaBefore -or $cudaBefore.Parsed -lt $cudaLatest.Parsed)) {
+    $cudaTarget = $cudaLatest
+    $from = if ($cudaBefore) { "$($cudaBefore.Version) -> " } else { '' }
+    Write-Host "CUDA Toolkit $from$($cudaTarget.Version) will be installed (toolkit subpackages only, the display driver is left alone)" -ForegroundColor Cyan
+}
+$vulkanTarget = $null
+if ($vulkanLatest -and (-not $vulkanBefore -or $vulkanBefore.Parsed -lt $vulkanLatest.Parsed)) {
+    $vulkanTarget = $vulkanLatest
+    $from = if ($vulkanBefore) { "$($vulkanBefore.Version) -> " } else { '' }
+    $mb = [math]::Round($vulkanTarget.Size / 1MB)
+    Write-Host "Vulkan SDK $from$($vulkanTarget.Version) will be installed to $(Join-Path $vulkan.Root $vulkanTarget.Version) ($mb MB download)" -ForegroundColor Cyan
+}
 
 # ── Decide the ROCm action ──────────────────────────────────────────
 # Cheapest convergence first, which is what the version directories buy: a
@@ -408,7 +513,7 @@ Write-Host ""
 $rocmTarget  = $null   # dist to download and extract this run (Version/Url/Size)
 $rocmSwitch  = $null   # version dir already on disk to point HIP_PATH at
 $rocmRename  = $null   # pre-versioning tree to move into its version dir
-$rocmBlocked = $null   # why the machine cannot converge to the pin this run
+$rocmBlocked = $null   # why the machine cannot converge to the newest stable this run
 
 # Migrate C:\TheRock\build, but only when it holds a version we can NAME (an
 # interrupted tree reads 'unknown', and guessing a name for it would be worse
@@ -436,29 +541,23 @@ if ($rocmBefore -and $rocmOnDisk.Contains($rocmBefore) -and $rocmOnDisk[$rocmBef
     $rocmSwitch = $rocmOnDisk[$rocmBefore]
 }
 
-if ($rocmBefore -ne $rocm.Pin) {
-    $pinDir = Resolve-RocmDir $rocm.Pin
-    if ($pinDir) {
-        $rocmSwitch = $pinDir
+# Converge to the newest stable, never AWAY from a newer one: a version that
+# does not parse ('unknown', a hand-installed nightly such as 10.2.0a2026...)
+# is replaced, a parsed one only when it is older.
+$rocmBeforeParsed = $null
+if ($rocmBefore) { [void][version]::TryParse($rocmBefore, [ref]$rocmBeforeParsed) }
+if (-not $rocmLatest) {
+    $rocmBlocked = 'newest stable not resolved (offline? index unreachable?)'
+} elseif (-not $rocmBeforeParsed -or $rocmBeforeParsed -lt $rocmLatest.Parsed) {
+    $latestDir = Resolve-RocmDir $rocmLatest.Version   # extracted earlier, never activated
+    if ($latestDir) {
+        $rocmSwitch = $latestDir
     } else {
-        foreach ($d in $rocm.Dists) {
-            $size = Get-RemoteFileSize $d.Url
-            if ($size) { $rocmTarget = @{ Version = $d.Version; Url = $d.Url; Size = $size }; break }
-        }
-        if (-not $rocmTarget) {
-            $rocmBlocked = 'no dist URL reachable (offline? not yet published?)'
+        $size = Get-RemoteFileSize $rocmLatest.Url
+        if ($size) {
+            $rocmTarget = @{ Version = $rocmLatest.Version; Url = $rocmLatest.Url; Size = $size }
         } else {
-            # A reachable candidate that is NOT the pin means the pin is not
-            # published yet. Those entries are there for a machine that has
-            # nothing; one already serving a dist keeps it and waits.
-            if ($rocmTarget.Version -ne $rocm.Pin) {
-                $rocmBlocked = "pinned $($rocm.Pin) not published yet"
-                if ($rocmBefore) { $rocmTarget = $null }
-            }
-            if ($rocmTarget) {
-                $alt = Resolve-RocmDir $rocmTarget.Version   # extracted, never activated
-                if ($alt) { $rocmSwitch = $alt; $rocmTarget = $null }
-            }
+            $rocmBlocked = "$($rocmLatest.Version) is listed but its tarball is not downloadable yet"
         }
     }
 }
@@ -503,7 +602,7 @@ if ($rocmBlocked) {
     Write-Host "ROCm (TheRock): $rocmBlocked" -ForegroundColor Yellow
 }
 
-# ── Build the elevated batch (winget + symlinks + ROCm dist) ────────
+# ── Build the elevated batch (winget, symlinks, ROCm, CUDA, Vulkan) ─
 
 $blocks = @()
 foreach ($p in $missing) {
@@ -531,7 +630,7 @@ if (Test-Path "$d\lib\VC\x64\MD\libcrypto.lib") {
 }
 '@
 # ROCm: migrate the pre-versioning tree, download + extract when converging to
-# the pin, and set the machine env every run (idempotent, and it self-heals a
+# the newest stable, and set the machine env every run (idempotent, and it self-heals a
 # previously declined elevation).
 if ($rocmTarget -or $rocmRename -or $rocmActiveDir) {
     $blocks += "`$rocmRoot = '$($rocm.Root)'; `$rocmMarker = '$($rocm.Marker)'; `$rocmActiveDir = '$rocmActiveDir'"
@@ -651,17 +750,70 @@ if ($rocmActiveDir -and (Test-Path (Join-Path $rocmActiveDir $rocmMarker))) {
 }
 '@
 }
+# CUDA Toolkit: the network installer, silent, with an EXPLICIT subpackage
+# list. A bare -s installs every subpackage, the display driver included, and
+# the driver is the user's to manage (a toolkit's bundled driver can be older
+# than the one installed). The installer sets CUDA_PATH / CUDA_PATH_V<X>_<Y>
+# and PATH itself. Success is judged by the report (the toolkit's own
+# version.json), not by the exit code.
+if ($cudaTarget) {
+    $mm = '{0}.{1}' -f $cudaTarget.Parsed.Major, $cudaTarget.Parsed.Minor
+    $subs = ($cuda.Subpackages | ForEach-Object { "${_}_$mm" }) -join ' '
+    $blocks += "`$cudaVer = '$($cudaTarget.Version)'; `$cudaUrl = '$($cudaTarget.Url)'; `$cudaSubs = '$subs'"
+    $blocks += @'
+
+Write-Host "Installing CUDA Toolkit $cudaVer (no driver)..." -ForegroundColor Cyan
+$cudaExe = Join-Path $env:TEMP (Split-Path $cudaUrl -Leaf)
+curl.exe --fail -L --retry 3 --retry-delay 5 -o $cudaExe $cudaUrl
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "  download failed (curl exit $LASTEXITCODE)" -ForegroundColor Red
+} else {
+    Write-Host "  the network installer fetches the subpackages itself (takes a while)..." -ForegroundColor DarkGray
+    $p = Start-Process $cudaExe -ArgumentList "-s $cudaSubs" -Wait -PassThru
+    if ($p.ExitCode -ne 0) { Write-Host "  CUDA installer exit code $($p.ExitCode)" -ForegroundColor Red }
+    Remove-Item $cudaExe -Force -ErrorAction SilentlyContinue
+}
+'@
+}
+# Vulkan SDK: LunarG's Qt installer, headless, into its own version directory
+# (it sets VULKAN_SDK and PATH itself). Checked against the expected size
+# first, so a truncated download never runs.
+if ($vulkanTarget) {
+    $blocks += "`$vkVer = '$($vulkanTarget.Version)'; `$vkUrl = '$($vulkanTarget.Url)'; `$vkSize = $($vulkanTarget.Size); `$vkDir = '$(Join-Path $vulkan.Root $vulkanTarget.Version)'"
+    $blocks += @'
+
+Write-Host "Installing Vulkan SDK $vkVer..." -ForegroundColor Cyan
+$vkExe = Join-Path $env:TEMP (Split-Path $vkUrl -Leaf)
+curl.exe --fail -L --retry 3 --retry-delay 5 -o $vkExe $vkUrl
+if ($LASTEXITCODE -ne 0 -or (Get-Item $vkExe -ErrorAction SilentlyContinue).Length -ne $vkSize) {
+    Write-Host "  download failed or incomplete (curl exit $LASTEXITCODE)" -ForegroundColor Red
+} else {
+    $p = Start-Process $vkExe -ArgumentList "--root `"$vkDir`" --accept-licenses --default-answer --confirm-command install" -Wait -PassThru
+    if ($p.ExitCode -ne 0) { Write-Host "  Vulkan SDK installer exit code $($p.ExitCode)" -ForegroundColor Red }
+}
+Remove-Item $vkExe -Force -ErrorAction SilentlyContinue
+'@
+}
 $script = $blocks -join "`n"
 
 if (Test-IsAdmin) {
     & ([scriptblock]::Create($script))
 } else {
-    Write-Host "Requesting administrator privileges for winget + ROCm..." -ForegroundColor Yellow
-    $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($script))
-    $proc = Start-Process powershell -Verb RunAs -Wait -PassThru `
-        -ArgumentList "-ExecutionPolicy Bypass -EncodedCommand $encoded"
-    if ($proc.ExitCode -ne 0) {
-        Write-Host "Elevated session exited with code $($proc.ExitCode)" -ForegroundColor Red
+    Write-Host "Requesting administrator privileges for winget + ROCm + CUDA + Vulkan..." -ForegroundColor Yellow
+    # Through a file, not -EncodedCommand: base64 of UTF-16 inflates the batch
+    # ~2.7x, and with the ROCm, CUDA and Vulkan legs together it no longer
+    # fits Windows' 32,767-character command line. Written WITH a BOM, or
+    # Windows PowerShell 5.1 decodes it as ANSI.
+    $elevated = Join-Path $env:TEMP "llama-cpp-framework-elevated-$PID.ps1"
+    [IO.File]::WriteAllText($elevated, $script, [Text.UTF8Encoding]::new($true))
+    try {
+        $proc = Start-Process powershell -Verb RunAs -Wait -PassThru `
+            -ArgumentList "-ExecutionPolicy Bypass -File `"$elevated`""
+        if ($proc.ExitCode -ne 0) {
+            Write-Host "Elevated session exited with code $($proc.ExitCode)" -ForegroundColor Red
+        }
+    } finally {
+        Remove-Item $elevated -Force -ErrorAction SilentlyContinue
     }
 }
 
@@ -700,17 +852,6 @@ if (Get-SccacheVersion $sccacheExe) {
         }
     }
 }
-
-# ── Check AMD for a stable newer than the pin ───────────────────────
-# Report-only, and deliberately so (installer\dist-pins.psd1 carries the why).
-# Best effort: an unreachable index is not a failure, it just leaves the row
-# out, so an offline run reports the same as it always did.
-
-Write-Host ""
-Write-Host "Checking AMD for a newer ROCm stable..." -ForegroundColor Cyan
-$rocmPublished = Get-RocmLatestPublished
-$rocmNewer = $null
-if ($rocmPublished -and [version]$rocm.Pin -lt $rocmPublished.Parsed) { $rocmNewer = $rocmPublished }
 
 # ── Check llama.cpp source for a newer release tag ──────────────────
 # The clone sits on a detached HEAD (02-build.ps1 pins it to a vX.Y.Z release
@@ -752,6 +893,8 @@ $rocmAfterDir = [Environment]::GetEnvironmentVariable('HIP_PATH', 'Machine')
 if ($rocmAfterDir) { $rocmAfterDir = $rocmAfterDir.TrimEnd('\') }
 $rocmAfter    = Get-RocmDirVersion $rocmAfterDir
 $rocmOnDisk   = Get-RocmInstalled
+$cudaAfter    = Get-CudaInstalled
+$vulkanAfter  = Get-VulkanInstalled
 
 # Make the dist visible to THIS session too (a 01-configure.ps1 run in the
 # same console). HIP_PATH/PATH reach new terminals via the machine env; the
@@ -834,11 +977,10 @@ if (-not $rocmBefore -and $rocmAfter) {
     Write-ReportRow "[++]" Green "ROCm (TheRock)" "$rocmBefore -> $rocmAfter ($rocmAfterDir)"
 } elseif ($rocmChanged) {
     Write-ReportRow "[++]" Green "ROCm (TheRock)" "$rocmAfter moved to $rocmAfterDir"
-} elseif ($rocmAfter -eq $rocm.Pin) {
-    Write-ReportRow "[OK]" DarkGray "ROCm (TheRock)" $rocmAfter
+} elseif ($rocmBlocked) {
+    Write-ReportRow "[..]" Yellow "ROCm (TheRock)" "$rocmAfter ($rocmBlocked)"
 } else {
-    $detail = if ($rocmBlocked) { "$rocmAfter ($rocmBlocked)" } else { "$rocmAfter (pin $($rocm.Pin))" }
-    Write-ReportRow "[..]" Yellow "ROCm (TheRock)" $detail
+    Write-ReportRow "[OK]" DarkGray "ROCm (TheRock)" $rocmAfter
 }
 $rocmOther = @($rocmOnDisk.Keys | Where-Object { $rocmOnDisk[$_] -ne $rocmAfterDir })
 if ($rocmOther.Count) {
@@ -846,11 +988,34 @@ if ($rocmOther.Count) {
     # back is a HIP_PATH move), and 25 GB is the user's call, not the script's.
     Write-ReportRow "    " DarkGray "" "inactive dists in $($rocm.Root): $($rocmOther -join ', ') (~25 GB each, delete the directory to reclaim)"
 }
-if ($rocmNewer) {
-    # Names the version and stops: converging is an edit of the pin, not
-    # something this run did or is about to do (Recommendations says how).
-    Write-ReportRow "    " Yellow "" "newer stable published: $($rocmNewer.Version) (pin is $($rocm.Pin))"
+
+# CUDA Toolkit and Vulkan SDK: the same verdicts, keyed on the newest
+# complete install (what 02-build.ps1 will use), before vs after this run.
+function Write-SdkRows([string]$Name, $Before, $After, $Latest, $Target) {
+    if (-not $After) {
+        $detail = if ($Target) { "install of $($Target.Version) failed" }
+                  elseif (-not $Latest) { 'not installed: newest release not resolved (offline?)' }
+                  else { 'not installed' }
+        Write-ReportRow "[!!]" Red $Name $detail
+    } elseif (-not $Before) {
+        Write-ReportRow "[++]" Green $Name "installed $($After.Version) in $($After.Dir)"
+    } elseif ($Before.Parsed -ne $After.Parsed) {
+        Write-ReportRow "[++]" Green $Name "$($Before.Version) -> $($After.Version) ($($After.Dir))"
+    } elseif ($Target) {
+        Write-ReportRow "[!!]" Red $Name "$($After.Version) (install of $($Target.Version) failed)"
+    } elseif (-not $Latest) {
+        Write-ReportRow "[..]" Yellow $Name "$($After.Version) (newest release not resolved: offline?)"
+    } else {
+        Write-ReportRow "[OK]" DarkGray $Name $After.Version
+    }
+    if ($After -and $Before -and $Before.Dir -ne $After.Dir -and (Test-Path $Before.Dir)) {
+        # Never deleted here, like an inactive ROCm dist: it is a fallback.
+        Write-ReportRow "    " DarkGray "" "previous install kept in $($Before.Dir) (delete it to reclaim the space)"
+    }
 }
+Write-SdkRows 'CUDA Toolkit' $cudaBefore $cudaAfter $cudaLatest $cudaTarget
+Write-SdkRows 'Vulkan SDK' $vulkanBefore $vulkanAfter $vulkanLatest $vulkanTarget
+$sdkChanged = ($cudaBefore.Version -ne $cudaAfter.Version) -or ($vulkanBefore.Version -ne $vulkanAfter.Version)
 
 $rebuildLlama = $false
 if (-not $beforeLlama) {
@@ -932,12 +1097,6 @@ if ($envWarnings.Count) {
     foreach ($w in $envWarnings) { Write-Host "  [!!] $w" -ForegroundColor Yellow }
 }
 
-Write-Host ""
-Write-Host "  Manual SDKs (not auto-updated):" -ForegroundColor DarkGray
-foreach ($s in $manualSdks) {
-    Write-Host ("    {0,-15} - {1}" -f $s.Name, $s.Url) -ForegroundColor DarkGray
-}
-
 # ── Recommendations ─────────────────────────────────────────────────
 
 Write-Host ""
@@ -947,27 +1106,20 @@ if ($rocmChanged) {
     Write-Host "    dir $rocmAfterDir\.kpack\blas_lib_gfx*.kpack" -ForegroundColor DarkGray
     Write-Host ""
 }
-if ($rocmNewer) {
-    Write-Host "  ROCm $($rocmNewer.Version) is published (pin $($rocm.Pin)). Taking it is a deliberate edit of" -ForegroundColor DarkGray
-    Write-Host "  installer\dist-pins.psd1: set Rocm.Pin and add the dist above the current one, then re-run" -ForegroundColor DarkGray
-    Write-Host "    @{ Version = '$($rocmNewer.Version)'" -ForegroundColor DarkGray
-    Write-Host "       Url = '$($rocmNewer.Url)' }" -ForegroundColor DarkGray
-    Write-Host "  Check patches\hip\ first: a clang resource major with no patched wrapper fails 02-build.ps1" -ForegroundColor DarkGray
-    Write-Host "  by design (patches\hip\README.md has the regeneration recipe)." -ForegroundColor DarkGray
-    Write-Host ""
-}
 if (-not $cfg) {
     Write-Host "  Next: .\01-configure.ps1   # detect paths and generate build\config-build.psd1" -ForegroundColor Cyan
-} elseif ($rocmChanged -or $rebuildLlama) {
-    Write-Host "  Recommended actions:" -ForegroundColor Yellow
+} elseif ($rocmChanged -or $rebuildLlama -or $sdkChanged) {
+    # 01-configure.ps1 records HipPath (and the clang inside it), nothing of
+    # CUDA or Vulkan: 02-build.ps1 finds the newest of those itself.
+    Write-Host "  Recommended actions (open a NEW terminal first: the installers changed the machine env):" -ForegroundColor Yellow
     if ($rocmChanged) {
         Write-Host "    .\01-configure.ps1        # HipPath is now $rocmAfterDir" -ForegroundColor Yellow
     }
-    if ($rebuildLlama) {
-        Write-Host "    .\02-build.ps1            # newer llama.cpp release available" -ForegroundColor Yellow
-    } else {
-        Write-Host "    .\02-build.ps1            # rebuild against the new ROCm" -ForegroundColor Yellow
-    }
+    $why = @()
+    if ($rebuildLlama) { $why += 'newer llama.cpp release available' }
+    if ($rocmChanged)  { $why += 'new ROCm' }
+    if ($sdkChanged)   { $why += 'new CUDA/Vulkan SDK' }
+    Write-Host "    .\02-build.ps1            # $($why -join ', ')" -ForegroundColor Yellow
     Write-Host "    .\03-package.ps1          # rebuild installer afterwards" -ForegroundColor Yellow
 } else {
     Write-Host "  Toolchain up to date." -ForegroundColor Green

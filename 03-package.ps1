@@ -190,13 +190,14 @@ foreach ($name in ($sslSources.Keys | Sort-Object)) {
     Write-Host "Staged $name (OpenSSL runtime, imported by $($sslSources[$name] -join ', '))" -ForegroundColor DarkGray
 }
 
-# ── Stage the runtime-deps helper + shared dist pins ────────────────
+# ── Stage the runtime-deps helper + shared dist sources ─────────────
 # install-runtime-deps.ps1 installs on END-USER machines what we deliberately
 # do not bundle (VC++ redist; ROCm/TheRock for AMD; cuBLAS redist for NVIDIA).
 # The installer's finish page offers to run it; it stays in bin\ for later
-# re-runs. dist-pins.psd1 is the same pins file 00-install-prerequisites.ps1
-# reads: one source of truth for the pinned dist versions/URLs.
-foreach ($f in 'installer\install-runtime-deps.ps1', 'installer\dist-pins.psd1') {
+# re-runs. dist-sources.psd1 is the same sources file
+# 00-install-prerequisites.ps1 reads: where each dist is looked up, no
+# versions (the helper resolves the newest stable when it runs).
+foreach ($f in 'installer\install-runtime-deps.ps1', 'installer\dist-sources.psd1') {
     Copy-Item (Join-Path $PSScriptRoot $f) -Destination (Join-Path $stageDir 'bin') -Force
     Write-Host "Staged $(Split-Path $f -Leaf)" -ForegroundColor DarkGray
 }

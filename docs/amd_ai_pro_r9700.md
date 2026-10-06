@@ -8,7 +8,7 @@ llama.cpp v0.5.0.
 
 | item | requirement | why |
 | --- | --- | --- |
-| ROCm | TheRock dist (`installer\dist-pins.psd1`), `HIP_PATH` machine-wide | rocBLAS/Tensile kernels |
+| ROCm | TheRock dist, newest stable (`installer\dist-sources.psd1`), `HIP_PATH` machine-wide | rocBLAS/Tensile kernels |
 | HIP runtime | the dist's `amdhip64_7.dll`, `amd_comgr.dll`, `rocm_kpack.dll` next to `llama-server.exe` (the installer's hidden `-StageHipRuntime` step) | against the runtime bundled with the display driver, BF16/F16 GEMMs abort at the first prefill, and with a Ryzen iGPU visible no HIP device enumerates |
 | GPU targets | `gfx1201` plus the arch of any visible Ryzen iGPU | one visible device without code objects makes every device fail with "device kernel image is invalid" |
 | `LLVM_PATH`, `HIP_DEVICE_LIB_PATH` | never machine-wide | the driver's HIP runtime reads `LLVM_PATH`: devices report 0 MiB and children crash |

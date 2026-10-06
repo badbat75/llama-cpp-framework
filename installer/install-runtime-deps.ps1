@@ -5,7 +5,9 @@
 # tools assumed. Idempotent - detects what is present and only offers what is
 # missing for the GPUs actually in the machine.
 #
-# Components (pins in dist-pins.psd1, staged next to this script):
+# Components (sources in dist-sources.psd1, staged next to this script; no
+# versions are pinned, each leg resolves the newest STABLE release when it
+# runs):
 #   - VC++ Redistributable x64  - required by every shipped binary (~19 MB)
 #   - ROCm/TheRock (AMD GPUs)   - HIP backend user-space: hipblas/rocblas +
 #     kernels (~4.3 GB download, ~25 GB on disk). Requires the Adrenalin
@@ -20,7 +22,8 @@
 #     nothing and is what the installer's hidden always-run section calls, so
 #     a machine that already has ROCm gets it without ticking a 4.3 GB box.
 #   - cuBLAS runtime (NVIDIA)   - CUDA backend math libs, official NVIDIA
-#     per-component redist (~400 MB); the two DLLs land next to
+#     per-component redist (~400 MB), the newest release of the cuBLAS major
+#     ggml-cuda.dll links against; the two DLLs land next to
 #     llama-server.exe. Requires the NVIDIA driver. Without it NVIDIA GPUs
 #     run on Vulkan.
 #
@@ -66,7 +69,7 @@ if (-not $Report -and -not (Test-IsAdmin)) {
     exit
 }
 
-$pins = Import-PowerShellDataFile (Join-Path $PSScriptRoot 'dist-pins.psd1')
+$sources = Import-PowerShellDataFile (Join-Path $PSScriptRoot 'dist-sources.psd1')
 
 function Ask([string]$Question) {
     if ($Unattended) { return $true }
@@ -82,6 +85,83 @@ function Get-RemoteFileSize([string]$Url) {
     if ($LASTEXITCODE -ne 0) { return $null }
     if ($head -match '(?im)^Content-Length:\s*(\d+)') { return [long]$Matches[1] }
     return $null
+}
+
+# The newest STABLE ROCm dist as Parsed/Version/Url, or $null: the same scan
+# 00-install-prerequisites.ps1 makes on the build machine (dist-sources.psd1
+# explains the strict match and why the URL is found, never composed).
+function Get-RocmLatest($Rocm) {
+    $prevEap = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+    $best = $null
+    foreach ($index in $Rocm.Indexes) {
+        $page = curl.exe -sL --fail --connect-timeout 5 --max-time 20 $index 2>$null | Out-String
+        if ($LASTEXITCODE -ne 0 -or -not $page) { continue }
+        foreach ($m in [regex]::Matches($page, 'therock-dist-windows-multiarch-(\d+\.\d+\.\d+)\.tar\.gz')) {
+            $v = [version]$m.Groups[1].Value
+            if (-not $best -or $v -gt $best.Parsed) {
+                $best = @{ Parsed = $v; Version = $m.Groups[1].Value
+                           Url = ([uri]::new([uri]$index, $m.Value)).AbsoluteUri }
+            }
+        }
+    }
+    $ErrorActionPreference = $prevEap
+    return $best
+}
+
+# The cuBLAS major the shipped ggml-cuda.dll imports (cublas64_<major>.dll),
+# or $null when there is no ggml-cuda.dll beside this script. The build
+# decides, so a CUDA major bump on the build machine needs no edit here. The
+# DLL is ~150 MB of mostly GPU code, so it is scanned in blocks (with an
+# overlap, so a name straddling two blocks is still seen) instead of loaded.
+function Get-CublasMajor {
+    $dll = Join-Path $PSScriptRoot 'ggml-cuda.dll'
+    if (-not (Test-Path $dll)) { return $null }
+    $fs = [IO.File]::OpenRead($dll)
+    try {
+        $buf = New-Object byte[] (8MB)
+        $overlap = 64
+        $carry = ''
+        while (($n = $fs.Read($buf, 0, $buf.Length)) -gt 0) {
+            $text = $carry + [Text.Encoding]::ASCII.GetString($buf, 0, $n)
+            # Ordinal IndexOf first: the regex over every 8 MB block is the slow part.
+            if ($text.IndexOf('cublas64_', [StringComparison]::Ordinal) -ge 0 -and
+                $text -match 'cublas64_(\d+)\.dll') { return [int]$Matches[1] }
+            $carry = $text.Substring([math]::Max(0, $text.Length - $overlap))
+        }
+    } finally {
+        $fs.Close()
+    }
+    return $null
+}
+
+# The newest cuBLAS redist of a given major as Version/Url/Sha256, or $null.
+# NVIDIA publishes one redistrib_<X.Y.Z>.json per CUDA release naming each
+# component's version, archive path and sha256; walked newest first, and the
+# first whose libcublas major matches wins (normally the newest one; after a
+# CUDA major bump that this build has not followed yet, the newest of ITS
+# major).
+function Get-CublasLatest($Cuda, [int]$Major) {
+    $prevEap = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+    try {
+        $page = curl.exe -sL --fail --connect-timeout 5 --max-time 20 $Cuda.RedistIndex 2>$null | Out-String
+        if ($LASTEXITCODE -ne 0 -or -not $page) { return $null }
+        $versions = @([regex]::Matches($page, 'redistrib_(\d+\.\d+\.\d+)\.json') |
+            ForEach-Object { [version]$_.Groups[1].Value } | Sort-Object -Unique -Descending)
+        foreach ($v in ($versions | Select-Object -First 40)) {
+            $json = curl.exe -sL --fail --max-time 30 ($Cuda.RedistIndex + "redistrib_$v.json") 2>$null | Out-String
+            if ($LASTEXITCODE -ne 0 -or -not $json) { continue }
+            try { $r = ConvertFrom-Json $json } catch { continue }
+            $lib = $r.libcublas
+            if (-not $lib -or -not $lib.'windows-x86_64') { continue }
+            if ([int](($lib.version -split '\.')[0]) -ne $Major) { continue }
+            return @{ Version = $lib.version
+                      Url     = $Cuda.RedistIndex + $lib.'windows-x86_64'.relative_path
+                      Sha256  = $lib.'windows-x86_64'.sha256 }
+        }
+        return $null
+    } finally {
+        $ErrorActionPreference = $prevEap
+    }
 }
 
 # The dist's own HIP runtime, staged next to llama-server.exe. This is what
@@ -209,7 +289,7 @@ if ($doVc) {
     } elseif (Ask "  VC++ Redistributable x64 is MISSING (required, ~19 MB). Install?") {
         $exe = Join-Path $env:TEMP 'vc_redist.x64.exe'
         Write-Host "  downloading vc_redist.x64.exe..." -ForegroundColor DarkGray
-        curl.exe --fail -L --retry 3 -o $exe $pins.VcRedist.Url
+        curl.exe --fail -L --retry 3 -o $exe $sources.VcRedist.Url
         if ($LASTEXITCODE -ne 0) { Write-Host "  download failed (curl exit $LASTEXITCODE)" -ForegroundColor Red }
         else {
             # 0 = ok, 3010 = ok + reboot required, 1638 = newer version already present
@@ -225,7 +305,7 @@ if ($doVc) {
 
 # -- 2) ROCm/TheRock (AMD GPUs - HIP backend) ------------------------
 if ($doAmd) {
-    $rocm = $pins.Rocm
+    $rocm = $sources.Rocm
     if (-not (Test-Path "$env:windir\System32\amdhip64_7.dll")) {
         Write-Host "  [!!] AMD GPU present but no Adrenalin driver (amdhip64_7.dll) - install it first:" -ForegroundColor Yellow
         Write-Host "       https://www.amd.com/en/support" -ForegroundColor Yellow
@@ -242,26 +322,46 @@ if ($doAmd) {
         # exists only from 10.0, so a fuller check would report a healthy 7.14
         # install as broken.
         $rocmOk = $hp -and (Test-Path "$hp\bin\hipblas.dll") -and (Test-Path "$hp\bin\rocblas\library")
+        # Nothing is pinned: a complete dist OLDER than the newest stable is
+        # offered the upgrade too (side by side, like a fresh install). The
+        # version comes from our marker, else the dist's own .info\version; one
+        # that does not parse counts as outdated. Offline, an installed dist
+        # simply stays.
+        $latest = Get-RocmLatest $rocm
+        $hpVer = $null
         if ($rocmOk) {
-            Write-Host "  [OK] ROCm/TheRock at $hp" -ForegroundColor Green
+            foreach ($f in @((Join-Path $hp $rocm.Marker), (Join-Path $hp '.info\version'))) {
+                if (Test-Path $f) { $hpVer = (Get-Content $f -TotalCount 1).Trim(); break }
+            }
+        }
+        $hpParsed = $null
+        if ($hpVer) { [void][version]::TryParse($hpVer, [ref]$hpParsed) }
+        $outdated = $rocmOk -and $latest -and (-not $hpParsed -or $hpParsed -lt $latest.Parsed)
+        if ($rocmOk -and -not $outdated) {
+            Write-Host "  [OK] ROCm/TheRock $hpVer at $hp" -ForegroundColor Green
         } elseif ($Report) {
-            Write-Host "  [--] ROCm/TheRock MISSING - AMD GPUs will run on Vulkan, not HIP" -ForegroundColor Yellow
+            if ($outdated) {
+                Write-Host "  [--] ROCm/TheRock $hpVer at $hp - newer stable $($latest.Version) available" -ForegroundColor Yellow
+            } else {
+                Write-Host "  [--] ROCm/TheRock MISSING - AMD GPUs will run on Vulkan, not HIP" -ForegroundColor Yellow
+            }
         } else {
-            if ($hp -and (Test-Path "$hp\bin\hipblas.dll")) {
+            if (-not $rocmOk -and $hp -and (Test-Path "$hp\bin\hipblas.dll")) {
                 Write-Host "  [!!] ROCm/TheRock at $hp is INCOMPLETE (bin\rocblas\library absent) - reinstalling" -ForegroundColor Yellow
             }
             $dist = $null
-            foreach ($d in $rocm.Dists) {
-                $size = Get-RemoteFileSize $d.Url
-                if ($size) { $dist = @{ Version = $d.Version; Url = $d.Url; Size = $size }; break }
+            if ($latest) {
+                $size = Get-RemoteFileSize $latest.Url
+                if ($size) { $dist = @{ Version = $latest.Version; Url = $latest.Url; Size = $size } }
             }
             # One directory per version under Root, the same layout the build
             # machine uses: HIP_PATH names the active one, so a later version
             # installs beside this one instead of over it.
             $distDir = if ($dist) { Join-Path $rocm.Root $dist.Version } else { $null }
+            $state = if ($outdated) { "is available (installed: $hpVer, kept beside it)" } else { 'is MISSING' }
             if (-not $dist) {
                 Write-Host "  [!!] ROCm dist not reachable (offline?)" -ForegroundColor Red
-            } elseif (Ask "  ROCm/TheRock $($dist.Version) is MISSING (HIP backend for AMD GPUs; $([math]::Round($dist.Size/1GB,1)) GB download, ~25 GB on disk). Install to $distDir?") {
+            } elseif (Ask "  ROCm/TheRock $($dist.Version) $state (HIP backend for AMD GPUs; $([math]::Round($dist.Size/1GB,1)) GB download, ~25 GB on disk). Install to $distDir?") {
                 $tar = Join-Path $env:TEMP (Split-Path $dist.Url -Leaf)
                 $haveTar = (Test-Path $tar) -and ((Get-Item $tar).Length -eq $dist.Size)
                 if (-not $haveTar) {
@@ -328,7 +428,7 @@ if ($doAmd) {
 # delivered it announces a 4.3 GB download, i.e. it is exactly the one such a
 # user never ticks. So the installer runs this on every install and upgrade
 # (hidden section, nothing to choose) and the component keeps its own job,
-# installing ROCm when it is missing. Silent when there is nothing to do (no
+# installing ROCm when it is missing or older than the newest stable. Silent when there is nothing to do (no
 # HIP_PATH, an incomplete dist): it also runs on NVIDIA-only machines.
 if ($doStageOnly) {
     $hp = [Environment]::GetEnvironmentVariable('HIP_PATH', 'Machine')
@@ -342,23 +442,31 @@ if ($doNvidia) {
     if (-not (Test-Path "$env:windir\System32\nvcuda.dll")) {
         Write-Host "  [!!] NVIDIA GPU present but no NVIDIA driver (nvcuda.dll) - install it first:" -ForegroundColor Yellow
         Write-Host "       https://www.nvidia.com/drivers" -ForegroundColor Yellow
+    } elseif (-not ($major = Get-CublasMajor)) {
+        Write-Host "  [!!] no ggml-cuda.dll next to this script: this build has no CUDA backend to install cuBLAS for" -ForegroundColor Yellow
     } else {
         # Resolvable if next to llama-server.exe (this script's dir), in
         # System32, or anywhere on the machine PATH (e.g. a CUDA Toolkit).
-        $found = Test-Path (Join-Path $PSScriptRoot 'cublas64_13.dll')
+        # Only a MISSING runtime is installed: a copy already present is left
+        # as it is (cuBLAS keeps its ABI within a major, and its VERSIONINFO
+        # does not carry the release version to compare against).
+        $names = @("cublas64_$major.dll", "cublasLt64_$major.dll")
+        $found = Test-Path (Join-Path $PSScriptRoot $names[0])
         if (-not $found) {
             $dirs = @("$env:windir\System32") + (([Environment]::GetEnvironmentVariable('Path', 'Machine') -split ';') | Where-Object { $_ })
-            foreach ($d in $dirs) { if (Test-Path (Join-Path $d.Trim() 'cublas64_13.dll')) { $found = $true; break } }
+            foreach ($d in $dirs) { if (Test-Path (Join-Path $d.Trim() $names[0])) { $found = $true; break } }
         }
         if ($found) {
-            Write-Host "  [OK] cuBLAS runtime (cublas64_13.dll) found" -ForegroundColor Green
+            Write-Host "  [OK] cuBLAS runtime ($($names[0])) found" -ForegroundColor Green
         } elseif ($Report) {
             Write-Host "  [--] cuBLAS runtime MISSING - NVIDIA GPUs will run on Vulkan, not CUDA" -ForegroundColor Yellow
-        } elseif (Ask "  cuBLAS runtime is MISSING (CUDA backend for NVIDIA GPUs, ~400 MB). Install next to llama-server.exe?") {
-            $zip = Join-Path $env:TEMP (Split-Path $pins.CudaBlas.Url -Leaf)
-            curl.exe --fail -L -C - --retry 3 -o $zip $pins.CudaBlas.Url
+        } elseif (-not ($cublas = Get-CublasLatest $sources.Cuda $major)) {
+            Write-Host "  [!!] cuBLAS $major.x redist not resolved (offline?)" -ForegroundColor Red
+        } elseif (Ask "  cuBLAS runtime is MISSING (CUDA backend for NVIDIA GPUs, cuBLAS $($cublas.Version), ~400 MB). Install next to llama-server.exe?") {
+            $zip = Join-Path $env:TEMP (Split-Path $cublas.Url -Leaf)
+            curl.exe --fail -L -C - --retry 3 -o $zip $cublas.Url
             if ($LASTEXITCODE -ne 0) { Write-Host "  download failed (curl exit $LASTEXITCODE)" -ForegroundColor Red }
-            elseif ((Get-FileHash $zip -Algorithm SHA256).Hash -ne $pins.CudaBlas.Sha256) {
+            elseif ((Get-FileHash $zip -Algorithm SHA256).Hash -ne $cublas.Sha256) {
                 Write-Host "  [!!] SHA256 mismatch - corrupt download, removing" -ForegroundColor Red
                 Remove-Item $zip -Force
             } else {
@@ -366,7 +474,7 @@ if ($doNvidia) {
                 if (Test-Path $tmp) { Remove-Item $tmp -Recurse -Force }
                 Expand-Archive $zip -DestinationPath $tmp
                 $staged = 0
-                foreach ($name in 'cublas64_13.dll', 'cublasLt64_13.dll') {
+                foreach ($name in $names) {
                     $src = Get-ChildItem $tmp -Recurse -Filter $name | Select-Object -First 1
                     if ($src) { Copy-Item $src.FullName -Destination $PSScriptRoot -Force; $staged++ }
                     else { Write-Host "  [!!] $name not found in the redist archive" -ForegroundColor Red }
@@ -374,7 +482,7 @@ if ($doNvidia) {
                 Remove-Item $tmp -Recurse -Force
                 Remove-Item $zip -Force
                 if ($staged -eq 2) {
-                    $actions += "cuBLAS runtime installed next to llama-server.exe"
+                    $actions += "cuBLAS runtime $($cublas.Version) installed next to llama-server.exe"
                     Write-Host "  [OK] cuBLAS runtime installed" -ForegroundColor Green
                 }
             }

@@ -11,14 +11,14 @@ A companion Rust binary (`llama-cpp-config`) provides a GUI + CLI configurator f
 This file is the map; the details of each area live in the guide named beside it. **Read that guide before changing the area.** Subdirectory `AGENTS.md` files are scoped to their folder.
 
 - **Build pipeline** → [docs\build-pipeline.md](docs/build-pipeline.md) (scripts, configure line, sccache, LTO, lld, HIP targets, build parallelism):
-  - `00-install-prerequisites.ps1`: idempotent toolchain bootstrapper (winget packages, sccache from its GitHub release, the ROCm/TheRock dist pinned in `installer\dist-pins.psd1`, llama.cpp release check, environment report). Safe to re-run.
+  - `00-install-prerequisites.ps1`: idempotent toolchain bootstrapper (winget packages, sccache from its GitHub release, and the **newest stable** ROCm/TheRock dist, CUDA Toolkit and Vulkan SDK: nothing is pinned, `installer\dist-sources.psd1` says where each is looked up; llama.cpp release check, environment report). Safe to re-run.
   - `01-configure.ps1`: detects paths and tools, writes `build\config-build.psd1` and the generated `.cargo\config.toml`.
   - `02-build.ps1`: checks out the latest llama.cpp **release** tag (never a `bNNNN` nightly), applies `patches\llama.cpp\`, builds llama.cpp (CMake + Ninja) and `llama-cpp-config` (cargo).
   - `03-package.ps1`: stages into `build\staging\`, builds the NSIS installer into `.\dist\`.
   - `common.ps1`: shared bootstrap dot-sourced by 02 and 03 (`$cfg`, ROCm PATH, the compile-time HIP vars, `Enable-VsDevShell`). The HIP vars (`LLVM_PATH` above all) must NEVER be set machine-wide: they break the driver's HIP runtime.
   - `cmake-options.psd1`: the machine-independent cmake `-D` options, each with its reason. `build\config-build.psd1`: the machine-derived half, generated.
   - `patches\hip\<major>\` (HIP header workaround) and `patches\llama.cpp\` (provisional out-of-tree patches): each has its own README.
-- **Installer** → [installer\AGENTS.md](installer/AGENTS.md): NSIS template, `dist-pins.psd1` (the single source of truth for external distributions), `install-runtime-deps.ps1` (end-user helper, including the HIP runtime staging that makes BF16/F16 run on RDNA4).
+- **Installer** → [installer\AGENTS.md](installer/AGENTS.md): NSIS template, `dist-sources.psd1` (where every external distribution is looked up; no versions), `install-runtime-deps.ps1` (end-user helper, including the HIP runtime staging that makes BF16/F16 run on RDNA4).
 - **Configurator** → [llama-cpp-config\AGENTS.md](llama-cpp-config/AGENTS.md) (tabs, common-change checklists, footguns) and [llama-cpp-config\README.md](llama-cpp-config/README.md) (architecture, conventions, tests).
 - **Diagnostics** → [tools\AGENTS.md](tools/AGENTS.md): `report-memory.ps1` (requested vs actual GPU memory of the running server) and `pcie-bench\` (host <-> GPU transfer benchmark).
 - **Per-GPU guides** → [docs\AGENTS.md](docs/AGENTS.md): rules for the `docs\*.md` configuration references.

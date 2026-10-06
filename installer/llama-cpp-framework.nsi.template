@@ -302,7 +302,7 @@ SectionEnd
 ; download progress (curl) and blocks the installer until the leg completes.
 ; The helper is idempotent (components already present are skipped) and
 ; runs elevated because the installer is. These sections must come after
-; SecMain: the script and dist-pins.psd1 are staged into $INSTDIR\bin by it,
+; SecMain: the script and dist-sources.psd1 are staged into $INSTDIR\bin by it,
 ; and the cuBLAS DLLs land next to llama-server.exe there.
 Section /o "Base requirements (VC++ runtime, ~19 MB)" SecDepsBase
     DetailPrint "Runtime deps: VC++ redistributable (skipped if present)..."
