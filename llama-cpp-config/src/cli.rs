@@ -23,7 +23,7 @@ pub enum Command {
     /// Force-launch the GUI (default when no subcommand is given).
     Gui {
         /// Start hidden in the system tray instead of opening the window.
-        /// This is what the "Start with Windows" logon entry launches
+        /// This is what the "Start at login" entry launches
         /// (see src/startup.rs).
         #[arg(long)]
         minimized: bool,

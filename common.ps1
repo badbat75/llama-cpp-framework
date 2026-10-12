@@ -15,6 +15,13 @@ if (-not (Test-Path $cfgPath)) {
 }
 $cfg = Import-PowerShellDataFile $cfgPath
 
+# cargo's target dir for llama-cpp-config: under build\ like every other build
+# artifact, in a per-OS directory (the Linux scripts use build/linux/cargo-target)
+# so the two systems never share one on a drive both mount. 02-build.ps1 passes
+# it to cargo as CARGO_TARGET_DIR, 03-package.ps1 stages the exe from it. A bare
+# `cargo build` outside the scripts still writes llama-cpp-config\target\.
+$cargoTargetDir = Join-Path $PSScriptRoot 'build\windows\cargo-target'
+
 if ($cfg.HipPath -and (Test-Path $cfg.HipPath)) {
     $env:HIP_PATH = $cfg.HipPath
     if ($env:PATH -notlike "*$($env:HIP_PATH)\bin*") {

@@ -449,9 +449,11 @@ fn run_synthetic(
     emit: &impl Fn(Event),
 ) -> Result<(), String> {
     let exe = paths::llama_bench_exe().ok_or_else(|| {
-        "llama-bench.exe not found next to llama-server. Build llama.cpp first, or \
-         reinstall: the installer stages it into bin\\."
-            .to_string()
+        format!(
+            "{} not found next to llama-server. Build llama.cpp first, or \
+             reinstall: the installer stages it into bin\\.",
+            paths::binary_name("llama-bench")
+        )
     })?;
     let plan = run.plan.clone();
 

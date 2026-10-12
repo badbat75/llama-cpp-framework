@@ -554,6 +554,9 @@ Write-Host "cargo: $($cargo.Source)" -ForegroundColor DarkGray
 
 $rustProjectDir = Join-Path $PSScriptRoot "llama-cpp-config"
 
+# Process scope only: the target dir is the scripts' choice, not the machine's.
+$env:CARGO_TARGET_DIR = $cargoTargetDir
+
 Push-Location $rustProjectDir
 try {
     # Cap cargo at the same job count as the C++ build (0 = cargo's default,
@@ -567,8 +570,8 @@ finally {
     Pop-Location
 }
 
-# 03-package.ps1 stages the binary straight from cargo's target\release dir: no
-# intermediate copy under build\.
-$exe = Join-Path $rustProjectDir "target\release\llama-cpp-config.exe"
+# 03-package.ps1 stages the binary straight from cargo's release dir
+# ($cargoTargetDir, set in common.ps1): no intermediate copy.
+$exe = Join-Path $cargoTargetDir "release\llama-cpp-config.exe"
 Write-Host "llama-cpp-config build complete: $exe" -ForegroundColor Green
 Write-Host ""

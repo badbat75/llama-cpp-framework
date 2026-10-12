@@ -442,15 +442,15 @@ export global AppState {
     // the two-way binding flipped the property, and Rust persists that value
     // immediately, or pushes the real state back on a failed write, which
     // reaches the checkbox precisely because the binding is two-way.
-    // `start_with_windows` + `start_minimized_to_tray` together mirror the
-    // HKCU Run registry entry (the registry IS the state; src/startup.rs:
+    // `start_at_login` + `start_minimized_to_tray` together mirror the
+    // platform login entry, HKCU Run or XDG autostart (the entry IS the state; src/startup.rs:
     // presence, and whether the stored command carries `--minimized`);
     // `start_server_on_launch` lives in settings.ini (src/settings.rs). All
     // re-read on Refresh/F5. The tray toggle only means anything while
-    // start_with_windows is on (there is no Run entry to shape otherwise),
+    // start_at_login is on (there is no login entry to shape otherwise),
     // so the page disables it; the kept value is what a fresh enable writes.
     in-out property <bool> startup_supported: true;
-    in-out property <bool> start_with_windows: false;
+    in-out property <bool> start_at_login: false;
     in-out property <bool> start_minimized_to_tray: true;
     in-out property <bool> start_server_on_launch: false;
     // Log rotation (settings.ini `LogRotate` / `LogRotateKb`, src/settings.rs):
@@ -604,7 +604,7 @@ export global AppState {
 
     // Settings tab: fired AFTER the two-way binding flipped the property (see
     // the state block above); Rust reads the new value and persists it.
-    callback toggle_start_with_windows();
+    callback toggle_start_at_login();
     callback toggle_start_minimized();
     callback toggle_start_server_on_launch();
     callback toggle_log_rotate();

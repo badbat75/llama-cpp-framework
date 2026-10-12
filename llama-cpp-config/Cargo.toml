@@ -1,6 +1,6 @@
 [package]
 name = "llama-cpp-config"
-version = "1.16.5"
+version = "1.17.0"
 edition = "2021"
 build = "build.rs"
 description = "GUI + CLI configurator for llama.cpp-framework"
@@ -17,6 +17,15 @@ serde_json = { version = "1", features = ["preserve_order"] }
 anyhow = "1"
 rfd = { version = "0.17", default-features = false }
 if-addrs = "0.15"
+
+# rfd has no file-dialog backend without a feature on Linux, and its build
+# script refuses to compile with none chosen. xdg-portal talks to the desktop
+# portal over D-Bus, so it needs no GTK development packages (the gtk3
+# alternative does); `wayland` is the other half of rfd's own default pair.
+# Cargo unions features across tables, so this only ADDS to the line above on
+# Linux and the Windows build is unchanged.
+[target.'cfg(target_os = "linux")'.dependencies]
+rfd = { version = "0.17", default-features = false, features = ["xdg-portal", "wayland"] }
 
 [dev-dependencies]
 tempfile = "3"

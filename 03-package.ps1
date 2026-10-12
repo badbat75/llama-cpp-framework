@@ -204,7 +204,7 @@ foreach ($f in 'installer\install-runtime-deps.ps1', 'installer\dist-sources.psd
 
 # ── Stage llama-cpp-config (Rust binary) ────────────────────────────
 # Straight from cargo's release output; 02-build.ps1 leaves it there, no copy.
-$configExe = Join-Path $PSScriptRoot "llama-cpp-config\target\release\llama-cpp-config.exe"
+$configExe = Join-Path $cargoTargetDir "release\llama-cpp-config.exe"
 if (-not (Test-Path $configExe)) {
     throw "llama-cpp-config.exe not found at $configExe. Run 02-build.ps1 first."
 }

@@ -1,50 +1,61 @@
-//! "Start with Windows": the per-user logon Run registry entry.
+//! "Start at login": launch the configurator when the user's session starts.
 //!
-//! The Settings tab's startup toggles ARE this entry
-//! (`HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, value
-//! `llama-cpp-config`): its presence is "start with Windows", and whether the
-//! stored command carries `gui --minimized` (start in the tray) or plain `gui`
-//! (open the window) is "start minimized". Both are READ BACK from the entry,
-//! with no INI mirror that Task Manager's Startup panel (which edits the same
-//! key) could silently desync, and re-enabling the toggle after the install
-//! moved is what refreshes the stored exe path.
+//! The Settings tab's startup toggles ARE the platform's own login entry, with
+//! no INI mirror the system's own startup panel could silently desync:
+//!
+//! - **Windows**: the per-user Run registry entry
+//!   (`HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, value
+//!   `llama-cpp-config`), the one Task Manager's Startup panel edits.
+//! - **Linux**: an XDG autostart entry,
+//!   `~/.config/autostart/llama-cpp-config.desktop`, which GNOME (and every
+//!   other desktop following the spec) runs at login and which GNOME Tweaks'
+//!   Startup Applications edits.
+//!
+//! On both, the entry's presence is "start at login", and whether the stored
+//! command carries `gui --minimized` (start in the tray) or plain `gui` (open
+//! the window) is "start minimized". Both are READ BACK from the entry, and
+//! re-enabling the toggle after the install moved is what refreshes the stored
+//! exe path.
 //!
 //! The entry registers the INSTALLED copy, not `current_exe()`: `set_enabled`
-//! prefers the exe under `HKLM\Software\llama.cpp\InstallDir\bin`
+//! prefers the exe under `HKLM\Software\llama.cpp\InstallDir\bin` on Windows
+//! and `/usr/bin/llama-cpp-config` (the deb/rpm's symlink) on Linux
 //! (`installed_exe`), falling back to `current_exe()` only when no install is
-//! recorded (portable / dev use). `current_exe()` alone is a footgun: toggling
+//! found (portable / dev use). `current_exe()` alone is a footgun: toggling
 //! the setting from a second, non-installed build (e.g. a `cargo run` debug exe)
-//! would persist THAT path into logon startup, and the debug build is
-//! console-subsystem (see `main.rs`), so every logon then flashes an empty
-//! console window that owns the app (closing it kills the app). Preferring the
-//! installed copy makes the toggle write the Program Files GUI build regardless
-//! of which build flipped it.
+//! would persist THAT path into the login startup, and on Windows the debug
+//! build is console-subsystem (see `main.rs`), so every logon then flashes an
+//! empty console window that owns the app (closing it kills the app).
+//! Preferring the installed copy makes the toggle write the installed GUI
+//! build regardless of which build flipped it.
 //!
-//! Raw Win32 FFI (no extra crates), matching `single_instance.rs`. On
-//! non-Windows the toggles are unsupported: `is_enabled` is `false` and the UI
-//! disables the checkboxes (`AppState.startup_supported`).
+//! Windows: raw Win32 FFI (no extra crates), matching `single_instance.rs`.
+//! Linux: a plain file. Elsewhere the toggles are unsupported: `is_enabled` is
+//! `false` and the UI disables the checkboxes (`AppState.startup_supported`).
 
 use std::io;
 
 /// Whether this platform has a startup mechanism to toggle.
 pub fn is_supported() -> bool {
-    cfg!(windows)
+    cfg!(any(windows, target_os = "linux"))
 }
 
-/// The command line the Run entry launches: the quoted exe plus `gui`, with
-/// `--minimized` when the logon launch should land in the tray instead of
-/// opening the window. Pure; the registry write is `set_enabled`.
+/// The command line the Windows Run entry launches: the quoted exe plus `gui`,
+/// with `--minimized` when the logon launch should land in the tray instead of
+/// opening the window. Pure; the registry write is `set_enabled`. (The Linux
+/// entry quotes by the Desktop Entry rules instead: `linux::exec_line`.)
 #[cfg_attr(not(windows), allow(dead_code))] // non-Windows keeps only the test caller
 fn run_command(exe: &std::path::Path, minimized: bool) -> String {
     let flag = if minimized { " --minimized" } else { "" };
     format!("\"{}\" gui{flag}", exe.display())
 }
 
-/// The exe to register in logon startup: the installed copy when one is
-/// recorded (`HKLM InstallDir`), else the running exe. Pure so the precedence is
-/// testable without touching the registry; `set_enabled` supplies `installed`
-/// from `installed_exe()` and `current` from `std::env::current_exe()`.
-#[cfg_attr(not(windows), allow(dead_code))] // non-Windows keeps only the test caller
+/// The exe to register in the login startup: the installed copy when one is
+/// found (`HKLM InstallDir` on Windows, `/usr/bin` on Linux), else the running
+/// exe. Pure so the precedence is testable without touching the registry;
+/// `set_enabled` supplies `installed` from `installed_exe()` and `current` from
+/// `std::env::current_exe()`.
+#[cfg_attr(not(any(windows, target_os = "linux")), allow(dead_code))]
 fn choose_autostart_exe(
     installed: Option<std::path::PathBuf>,
     current: std::path::PathBuf,
@@ -62,22 +73,157 @@ pub fn machine_reg_sz(_subkey: &str, _value: &str) -> Option<String> {
     None
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
+pub use linux::{is_enabled, set_enabled, starts_minimized};
+
+#[cfg(not(any(windows, target_os = "linux")))]
 pub fn is_enabled() -> bool {
     false
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
 pub fn starts_minimized() -> bool {
     false
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
 pub fn set_enabled(_on: bool, _minimized: bool) -> io::Result<()> {
     Err(io::Error::new(
         io::ErrorKind::Unsupported,
-        "start-with-Windows is only available on Windows",
+        "start at login is not available on this platform",
     ))
+}
+
+/// The XDG autostart entry (freedesktop.org Desktop Application Autostart
+/// Specification): a `.desktop` file in `$XDG_CONFIG_HOME/autostart`, run by
+/// the desktop session at login.
+#[cfg(target_os = "linux")]
+mod linux {
+    use super::io;
+    use std::path::{Path, PathBuf};
+
+    const ENTRY_NAME: &str = "llama-cpp-config.desktop";
+
+    /// Where the deb/rpm put the command: a symlink into `/opt/llama.cpp/bin`.
+    /// Registered as-is rather than resolved, so the entry survives a package
+    /// that moves the real file.
+    const INSTALLED_EXE: &str = "/usr/bin/llama-cpp-config";
+
+    /// `$XDG_CONFIG_HOME/autostart/llama-cpp-config.desktop`, with the spec's
+    /// `~/.config` default. Under the e2e redirect `home_dir()` is the temp
+    /// tree and `XDG_CONFIG_HOME` is ignored, so a test can never write the
+    /// developer's real autostart directory.
+    fn entry_path() -> PathBuf {
+        let redirected = std::env::var_os("LLAMA_CPP_CONFIG_DATA_ROOT").is_some();
+        let config = std::env::var_os("XDG_CONFIG_HOME")
+            .filter(|v| !redirected && !v.is_empty())
+            .map(PathBuf::from)
+            .filter(|p| p.is_absolute())
+            .unwrap_or_else(|| crate::paths::home_dir().join(".config"));
+        config.join("autostart").join(ENTRY_NAME)
+    }
+
+    fn installed_exe() -> Option<PathBuf> {
+        let exe = PathBuf::from(INSTALLED_EXE);
+        exe.is_file().then_some(exe)
+    }
+
+    /// The `Exec` value: the exe quoted by the Desktop Entry rules (inside
+    /// double quotes, `"`, `` ` ``, `$` and `\` take a backslash, and the
+    /// backslash is doubled once more by the string escaping of the file
+    /// format; `%` is a field code and is doubled), then `gui`, with
+    /// `--minimized` when the login launch should land in the tray.
+    pub(super) fn exec_line(exe: &Path, minimized: bool) -> String {
+        let mut quoted = String::new();
+        for c in exe.to_string_lossy().chars() {
+            match c {
+                '"' | '`' | '$' => {
+                    quoted.push_str("\\\\");
+                    quoted.push(c);
+                }
+                '\\' => quoted.push_str("\\\\\\\\"),
+                '%' => quoted.push_str("%%"),
+                _ => quoted.push(c),
+            }
+        }
+        let flag = if minimized { " --minimized" } else { "" };
+        format!("\"{quoted}\" gui{flag}")
+    }
+
+    /// The whole entry. `X-GNOME-Autostart-enabled` is written explicitly
+    /// because it is the key GNOME's own startup panel flips to switch an
+    /// entry off without deleting it.
+    pub(super) fn entry_text(exe: &Path, minimized: bool) -> String {
+        format!(
+            "[Desktop Entry]\n\
+             Type=Application\n\
+             Name=llama.cpp Config\n\
+             Comment=Configure and run llama-server and its model presets\n\
+             Exec={}\n\
+             Icon=llama-cpp-config\n\
+             Terminal=false\n\
+             X-GNOME-Autostart-enabled=true\n",
+            exec_line(exe, minimized)
+        )
+    }
+
+    /// `(enabled, minimized)` as an entry's text states them. An entry the
+    /// desktop was told to skip (`Hidden=true`, or GNOME's
+    /// `X-GNOME-Autostart-enabled=false`) is NOT enabled, although the file is
+    /// there: the checkbox shows what will happen at the next login.
+    pub(super) fn parse_entry(text: &str) -> (bool, bool) {
+        let value = |key: &str| {
+            text.lines().find_map(|l| {
+                let (k, v) = l.split_once('=')?;
+                (k.trim() == key).then(|| v.trim().to_string())
+            })
+        };
+        let Some(exec) = value("Exec") else {
+            return (false, false);
+        };
+        let hidden = value("Hidden").is_some_and(|v| v.eq_ignore_ascii_case("true"));
+        let gnome_off =
+            value("X-GNOME-Autostart-enabled").is_some_and(|v| v.eq_ignore_ascii_case("false"));
+        (!hidden && !gnome_off, exec.contains("--minimized"))
+    }
+
+    fn stored() -> (bool, bool) {
+        std::fs::read_to_string(entry_path())
+            .map(|t| parse_entry(&t))
+            .unwrap_or((false, false))
+    }
+
+    /// Whether the autostart entry exists and is active.
+    pub fn is_enabled() -> bool {
+        stored().0
+    }
+
+    /// Whether the stored command starts in the tray (`--minimized`).
+    pub fn starts_minimized() -> bool {
+        stored().1
+    }
+
+    /// Write (an enable also refreshes a stale exe path and applies the
+    /// current `minimized` choice) or delete the entry. Deleting an absent
+    /// file is a success, as on Windows: the goal state is what was asked.
+    pub fn set_enabled(on: bool, minimized: bool) -> io::Result<()> {
+        write_entry(&entry_path(), on, minimized)
+    }
+
+    pub(super) fn write_entry(path: &Path, on: bool, minimized: bool) -> io::Result<()> {
+        if on {
+            let exe = super::choose_autostart_exe(installed_exe(), std::env::current_exe()?);
+            if let Some(dir) = path.parent() {
+                std::fs::create_dir_all(dir)?;
+            }
+            std::fs::write(path, entry_text(&exe, minimized))
+        } else {
+            match std::fs::remove_file(path) {
+                Err(e) if e.kind() != io::ErrorKind::NotFound => Err(e),
+                _ => Ok(()),
+            }
+        }
+    }
 }
 
 #[cfg(windows)]
@@ -319,6 +465,63 @@ mod tests {
             run_command(exe, false),
             r#""C:\Program Files\llama.cpp\bin\llama-cpp-config.exe" gui"#
         );
+    }
+
+    // The Linux autostart entry: the Exec line quotes the exe by the Desktop
+    // Entry rules and carries the minimized choice, and what is read back is
+    // what was written.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn autostart_entry_round_trips_through_its_text() {
+        use super::linux::{entry_text, exec_line, parse_entry};
+        let exe = std::path::Path::new("/usr/bin/llama-cpp-config");
+        assert_eq!(
+            exec_line(exe, true),
+            r#""/usr/bin/llama-cpp-config" gui --minimized"#
+        );
+        assert_eq!(
+            exec_line(std::path::Path::new("/opt/my $apps/100%/x"), false),
+            r#""/opt/my \\$apps/100%%/x" gui"#
+        );
+        assert_eq!(parse_entry(&entry_text(exe, true)), (true, true));
+        assert_eq!(parse_entry(&entry_text(exe, false)), (true, false));
+    }
+
+    // An entry GNOME's startup panel switched off (or one marked Hidden) reads
+    // as disabled although the file exists; a file with no Exec is no entry.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn autostart_entry_switched_off_by_the_desktop_reads_as_disabled() {
+        use super::linux::{entry_text, parse_entry};
+        let on = entry_text(std::path::Path::new("/usr/bin/llama-cpp-config"), true);
+        let gnome_off = on.replace(
+            "X-GNOME-Autostart-enabled=true",
+            "X-GNOME-Autostart-enabled=false",
+        );
+        assert_eq!(parse_entry(&gnome_off), (false, true));
+        assert_eq!(parse_entry(&format!("{on}Hidden=true\n")), (false, true));
+        assert_eq!(parse_entry("[Desktop Entry]\nType=Application\n"), (false, false));
+    }
+
+    // The file legs, against a temp path (never the real ~/.config/autostart):
+    // enable writes, a second enable rewrites, disable removes, and disabling
+    // what is already gone stays Ok.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn autostart_entry_file_is_written_rewritten_and_removed() {
+        use super::linux::{parse_entry, write_entry};
+        let dir = std::env::temp_dir().join(format!("llama-cpp-config-autostart-{}", std::process::id()));
+        let path = dir.join("autostart").join("llama-cpp-config.desktop");
+        let read = || parse_entry(&std::fs::read_to_string(&path).unwrap());
+
+        write_entry(&path, true, true).expect("enable minimized");
+        assert_eq!(read(), (true, true));
+        write_entry(&path, true, false).expect("rewrite without --minimized");
+        assert_eq!(read(), (true, false));
+        write_entry(&path, false, false).expect("disable");
+        assert!(!path.exists());
+        write_entry(&path, false, false).expect("disable when already absent");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     // MANUAL-ONLY (`cargo test startup -- --ignored`): drives the real FFI

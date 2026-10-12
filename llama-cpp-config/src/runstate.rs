@@ -300,7 +300,10 @@ pub fn start() -> io::Result<Option<crate::server_cfg::ServerConfig>> {
     let exe = crate::paths::llama_server_exe().ok_or_else(|| {
         io::Error::new(
             io::ErrorKind::NotFound,
-            "llama-server.exe not found. Build llama.cpp first.",
+            format!(
+                "{} not found. Build llama.cpp first.",
+                crate::paths::binary_name("llama-server")
+            ),
         )
     })?;
 

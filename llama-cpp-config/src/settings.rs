@@ -6,10 +6,10 @@
 //! configure llama-cpp-config itself (they never reach a llama-server command
 //! line), so they live in their own file with none of that machinery.
 //!
-//! Note the one Settings-tab toggle that is deliberately NOT here: "Start with
-//! Windows" is the HKCU Run registry entry itself (`startup.rs`); mirroring it
-//! into this file would only add a copy that Task Manager's Startup panel can
-//! silently desync.
+//! Note the one Settings-tab toggle that is deliberately NOT here: "Start at
+//! login" is the platform's own login entry (the HKCU Run registry value, or
+//! the XDG autostart file on Linux: `startup.rs`); mirroring it into this file
+//! would only add a copy that the system's startup panel can silently desync.
 
 use std::fs;
 use std::io;

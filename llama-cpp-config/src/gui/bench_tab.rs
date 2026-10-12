@@ -289,9 +289,11 @@ pub(super) fn refresh_preview(app: &AppWindow, state: &Rc<RefCell<State>>) {
                 }
                 blocks.join("\n\n")
             }
-            None => "llama-bench.exe not found next to llama-server. Build llama.cpp first, \
-                     or reinstall: the installer stages it into bin\\."
-                .to_string(),
+            None => format!(
+                "{} not found next to llama-server. Build llama.cpp first, \
+                 or reinstall: the installer stages it into bin\\.",
+                crate::paths::binary_name("llama-bench")
+            ),
         },
         Mode::Live => {
             let port = u16::try_from(cfg.port_or_default()).unwrap_or(8080);
