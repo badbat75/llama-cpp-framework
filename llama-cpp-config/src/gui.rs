@@ -171,7 +171,16 @@ pub fn run(start_minimized: bool) -> anyhow::Result<()> {
         crate::single_instance::Acquire::Primary(guard) => guard,
     };
 
+    // The Wayland app id (and X11 WM_CLASS) of every window: the name of the
+    // desktop entry the deb/rpm install (`llama-cpp-config.desktop`), which is
+    // how GNOME's dock finds the icon and the name. Without it the windows
+    // belong to no known application and the dock shows a generic gear. Set
+    // AFTER the first component exists (before that there is no platform to
+    // hold it and the call fails) and before the event loop runs, which is
+    // when the native windows are created.
     let app = AppWindow::new()?;
+    #[cfg(target_os = "linux")]
+    let _ = slint::set_xdg_app_id("llama-cpp-config");
     let s = app.global::<AppState>();
     s.set_app_version(SharedString::from(env!("CARGO_PKG_VERSION")));
     // Upper bound for the Server tab's CPU-thread sliders: this machine's logical
@@ -269,6 +278,9 @@ pub fn run(start_minimized: bool) -> anyhow::Result<()> {
     // (The timer only RUNS while the window is open: armed on View logs,
     // stopped on close.)
     let (_log_window, _log_timer) = log_window::wire(&app)?;
+    // The log window starts hidden on every launch.
+    #[cfg(target_os = "linux")]
+    discard_unshown_wayland_window(&_log_window);
 
     // Closing the window hides it to the tray instead of quitting; the visible
     // tray icon keeps the event loop alive. Use the tray's "Quit" to exit.
@@ -288,12 +300,65 @@ pub fn run(start_minimized: bool) -> anyhow::Result<()> {
     if !start_minimized {
         app.show()?;
     }
+    #[cfg(target_os = "linux")]
+    if start_minimized {
+        discard_unshown_wayland_window(&app);
+    }
     tray.show()?;
     slint::run_event_loop()?;
     Ok(())
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────
+
+/// Make a window that was never shown really absent on Wayland.
+///
+/// Slint's winit backend creates the native window of EVERY component once the
+/// event loop runs, shown or not, and Wayland has no hidden windows: winit
+/// cannot create one invisible, so the toplevel exists from then on. Nothing is
+/// drawn, but the compositor knows the application has a window, and GNOME's
+/// dock lists it as running: a tray-only login launch (`gui --minimized`) sat in
+/// the dock all the same. The one way the backend gives a window up on Wayland
+/// is `hide()` after a `show()` (it destroys the toplevel instead of hiding
+/// it), and `hide()` alone is a no-op on a window that was never shown. So:
+/// wait for the native window to exist, then show and hide it in the same
+/// event-loop turn, before any frame is rendered; no buffer is ever attached,
+/// so nothing appears on screen. A later `show()` creates it afresh.
+///
+/// The wait is a poll because the creation is not at a fixed point (the
+/// backend defers it until the desktop's appearance query answers). X11 is left
+/// alone: there a hidden window is simply unmapped. Gives up after ~5 s, and at
+/// once if the window became visible meanwhile (the user opened it).
+#[cfg(target_os = "linux")]
+fn discard_unshown_wayland_window<T: ComponentHandle + 'static>(component: &T) {
+    fn poll<T: ComponentHandle + 'static>(weak: slint::Weak<T>, tries_left: u32) {
+        slint::Timer::single_shot(std::time::Duration::from_millis(50), move || {
+            use slint::winit_030::winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
+            use slint::winit_030::WinitWindowAccessor;
+            let Some(component) = weak.upgrade() else {
+                return;
+            };
+            let window = component.window();
+            if window.is_visible() {
+                return;
+            }
+            let on_wayland = window.with_winit_window(|w| {
+                w.window_handle()
+                    .is_ok_and(|h| matches!(h.as_raw(), RawWindowHandle::Wayland(_)))
+            });
+            match on_wayland {
+                Some(true) => {
+                    let _ = component.show();
+                    let _ = component.hide();
+                }
+                Some(false) => {}
+                None if tries_left > 0 => poll(weak, tries_left - 1),
+                None => {}
+            }
+        });
+    }
+    poll(component.as_weak(), 100);
+}
 
 /// Bring the running instance's window to the front: re-show it if it was hidden
 /// to the tray, un-minimize, and take focus. Called when a second launch pokes
