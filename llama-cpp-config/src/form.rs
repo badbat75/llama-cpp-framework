@@ -211,6 +211,9 @@ pub fn preset_to_form(p: &presets::Preset) -> PresetForm {
         n_cpu_moe_auto: p.n_cpu_moe.is_none(),
         n_cpu_ffn: p.n_cpu_ffn.unwrap_or(0),
         n_cpu_ffn_auto: p.n_cpu_ffn.is_none(),
+        // Tri-state like reasoning_preserve: None is "omit the flag" (on), a
+        // value of its own, so no fallback to `d`.
+        op_offload: tri_state(p.op_offload),
         temp: txt(p.temp),
         temp_default: p.temp.is_none(),
         top_k: itxt(p.top_k, HINT_TOP_K),
@@ -353,6 +356,10 @@ pub fn form_to_preset(f: &PresetForm) -> presets::Preset {
         } else {
             Some(f.n_cpu_ffn)
         },
+        // "default" → None: omit the key. Never `Some(s == "on")`: that would
+        // write `op-offload = false` into every preset left on default, and
+        // unlike backend-sampling's, that `false` is a real flag.
+        op_offload: tri_bool(f.op_offload.as_str()),
         temp: if f.temp_default {
             None
         } else {
@@ -780,6 +787,7 @@ mod tests {
             n_predict: Some(24576),
             n_cpu_moe: Some(12),
             n_cpu_ffn: Some(4),
+            op_offload: Some(false),
             temp: Some(0.7),
             top_k: Some(40),
             top_p: Some(0.95),
@@ -813,6 +821,31 @@ mod tests {
                 ..Preset::default()
             })
             .backend_sampling
+            .to_string()
+        };
+        assert_eq!(spelling(None), "default");
+        assert_eq!(spelling(Some(true)), "on");
+        assert_eq!(spelling(Some(false)), "off");
+    }
+
+    // op-offload is the tri-state where the collapse would COST something:
+    // `Some(false)` is a real flag (--no-op-offload), so a form that turned
+    // "default" into "off" would switch the offload off in every preset saved.
+    #[test]
+    fn op_offload_keeps_all_three_states_apart() {
+        for state in [None, Some(true), Some(false)] {
+            let p = Preset {
+                op_offload: state,
+                ..Preset::default()
+            };
+            assert_eq!(round_trip(&p).op_offload, state, "state {state:?}");
+        }
+        let spelling = |state| {
+            preset_to_form(&Preset {
+                op_offload: state,
+                ..Preset::default()
+            })
+            .op_offload
             .to_string()
         };
         assert_eq!(spelling(None), "default");

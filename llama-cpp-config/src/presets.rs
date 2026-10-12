@@ -339,6 +339,24 @@ pub struct Preset {
     /// `-ot` rules llama.cpp would (`bench::synthetic_argv`), where a preset
     /// carrying `n_cpu_moe` rides the tool's own `-ncmoe`.
     pub n_cpu_ffn: Option<i32>,
+    /// Run an operation on the GPU even though its WEIGHTS sit in host memory
+    /// (--op-offload / --no-op-offload). `None` = omit the flag, llama.cpp's own
+    /// default (on); a tri-state like `reasoning_preserve`, since `Some(false)`
+    /// is a real flag (`--no-op-offload`) and the one value that changes
+    /// anything, while `Some(true)` only pins today's default.
+    ///
+    /// It pairs with the two keys above and with `override_tensor`: those are
+    /// what leave weights in RAM (MoE experts under `n_cpu_moe`, any tensor a
+    /// rule sends to `CPU`). With the offload on, such an operation still goes
+    /// to the card for batches of 32+ tokens, and its host weights are copied
+    /// there on EVERY prefill batch. On a card behind a narrow PCIe link that
+    /// copy dominates the batch. Measured 2026-10-12 on a 116.5 B-param MoE
+    /// (Q4_K_M, 8 blocks of experts in RAM, R9700 on a Gen4 x4 chipset link):
+    /// `false` took prefill from 385 to 608 tok/s at 93.7k tokens and from ~360
+    /// to ~600 at 2.6k. Decode did not move: only batches offload, a
+    /// single-token step never does. With every weight in VRAM there is nothing
+    /// to copy and the key is a no-op.
+    pub op_offload: Option<bool>,
     pub temp: Option<f64>,
     /// Integer sampler (--top-k): backed by an int SpinBox, not the float editor
     /// the other samplers use: a decimal field would let `40,5` slip the int parse.
@@ -439,6 +457,7 @@ impl Default for Preset {
             n_predict: None,
             n_cpu_moe: None,
             n_cpu_ffn: None,
+            op_offload: None,
             temp: None,
             top_k: None,
             top_p: None,
@@ -503,6 +522,7 @@ impl Preset {
             n_predict: k.get("n-predict").and_then(|v| ini::parse_int(v)),
             n_cpu_moe: k.get("n-cpu-moe").and_then(|v| ini::parse_int(v)),
             n_cpu_ffn: k.get("n-cpu-ffn").and_then(|v| ini::parse_int(v)),
+            op_offload: getb("op-offload"),
             temp: k.get("temp").and_then(|v| ini::parse_float(v)),
             top_k: k.get("top-k").and_then(|v| ini::parse_int(v)),
             top_p: k.get("top-p").and_then(|v| ini::parse_float(v)),
@@ -1064,6 +1084,15 @@ pub fn render_section(p: &Preset) -> String {
     out.push_str("; model and only the dense layers of a MoE one.\r\n");
     emit_i32(&mut out, "n-cpu-moe", p.n_cpu_moe);
     emit_i32(&mut out, "n-cpu-ffn", p.n_cpu_ffn);
+    out.push_str("; op-offload = false stops llama.cpp from running an operation on the GPU when\r\n");
+    out.push_str("; its weights sit in host memory (experts kept in RAM by n-cpu-moe, tensors an\r\n");
+    out.push_str("; override-tensor rule sends to CPU). On (omit the key = llama.cpp's default)\r\n");
+    out.push_str("; those weights are copied to the card on every prefill batch of 32+ tokens,\r\n");
+    out.push_str("; which dominates on a narrow PCIe link: false measured 385 -> 608 tok/s of\r\n");
+    out.push_str("; prefill at 93.7k tokens on a MoE with 8 blocks of experts in RAM, card on a\r\n");
+    out.push_str("; Gen4 x4 link. Decode is unchanged, and it is a no-op when every weight is in\r\n");
+    out.push_str("; VRAM.\r\n");
+    emit_bool(&mut out, "op-offload", p.op_offload);
 
     out.push_str("\r\n; Sampling overrides\r\n");
     emit_f64(&mut out, "temp", p.temp);
@@ -1462,6 +1491,9 @@ mod tests {
             n_predict: Some(-1),
             n_cpu_moe: Some(12),
             n_cpu_ffn: Some(4),
+            // Some(false): the one value that changes the launch
+            // (--no-op-offload), so the one that must not collapse into "absent".
+            op_offload: Some(false),
             temp: Some(0.7),
             top_k: Some(40),
             top_p: Some(0.95),

@@ -118,6 +118,11 @@ export struct PresetForm {
     // AutoSlider shape (int + an `_auto` "omit the flag" bool).
     n_cpu_ffn: int,
     n_cpu_ffn_auto: bool,
+    // --op-offload / --no-op-offload, a TRI-state carried as a string like
+    // flash_attn and reasoning_preserve: "default" (omit the flag; llama.cpp's
+    // default is on), "on", "off". "off" (--no-op-offload) is the one value that
+    // changes the launch.
+    op_offload: string,
     // Sampling knobs, each paired with a `*_default` bool (checkbox omits the
     // flag, same shape as the integer fields above). Top-K is integer-valued, so
     // its field is digits-only (`input_type: number`); the rest are floats

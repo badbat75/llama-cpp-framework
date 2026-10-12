@@ -171,6 +171,10 @@ pub const SWEEPABLE: &[(&str, Setter)] = &[
         p.n_cpu_ffn = int(v)?;
         Ok(())
     }),
+    ("op-offload", |p, v| {
+        p.op_offload = boolean(v)?;
+        Ok(())
+    }),
     // Context, batching and cache.
     ("ctx-size", |p, v| {
         p.ctx_size = int(v)?;
@@ -1194,7 +1198,7 @@ mod tests {
                 ..Default::default()
             };
             let value = match *key {
-                "flash-attn" | "mmproj-offload" | "backend-sampling" => "true",
+                "flash-attn" | "mmproj-offload" | "backend-sampling" | "op-offload" => "true",
                 "device" => "CUDA0",
                 "tensor-split" => "3,1",
                 "split-mode" => "layer",

@@ -384,6 +384,17 @@ export component ModelsPage inherits HorizontalLayout {
                         maximum: AppState.gpu_layers_max;  // = the model's layer count
                     }
                 }
+                LabeledField {
+                    label: "Op offload";
+                    hint: "--op-offload / --no-op-offload: whether an operation whose weights sit in HOST memory is still run on the GPU.\ndefault = omit the flag → llama.cpp default: on. off = --no-op-offload, the one value that changes anything; on pins today's default.\nIt pairs with the two rows above and with Tensor placement: those are what leave weights in RAM (MoE experts, any tensor sent to CPU). On, such an operation goes to the card for batches of 32+ tokens, and its weights are copied there on EVERY prefill batch; on a card behind a narrow PCIe link that copy dominates.\nMeasured on a 116.5 B-param MoE (Q4_K_M, 8 blocks of experts in RAM, card on a Gen4 x4 link): off took prefill from 385 to 608 tok/s at 93.7k tokens. Decode is unchanged: a single-token step never offloads.\nA no-op when every weight is in VRAM.";
+                    // Not gated on has_moe: a dense model reaches the same state
+                    // through 'Dense FFN CPU layers' or a Tensor placement rule.
+                    SegmentedControl {
+                        options: ["default", "on", "off"];
+                        current: AppState.form.op_offload == "" ? "default" : AppState.form.op_offload;
+                        activated(value) => { AppState.form.op_offload = value; }
+                    }
+                }
                 // The two draft-PLACEMENT knobs below need a separate draft FILE,
                 // not merely a draft: llama.cpp reads --device-draft and
                 // --n-gpu-layers-draft only inside `if (has_dft())`, which is

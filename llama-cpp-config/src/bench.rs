@@ -599,6 +599,12 @@ pub fn synthetic_argv(p: &Preset, cfg: &ServerConfig, plan: &Plan, sweep: &Sweep
     if let Some(n) = p.n_cpu_moe {
         push("-ncmoe", n.to_string());
     }
+    // llama-bench spells it inverted, as a 0|1 value: `-nopo 1` is
+    // `op-offload = false`. An unset key leaves the tool's default (0, offload
+    // on), which is llama-server's too.
+    if let Some(on) = p.op_offload {
+        push("-nopo", if on { "0".into() } else { "1".into() });
+    }
     if !p.cache_type_k.is_empty() {
         push("-ctk", p.cache_type_k.clone());
     }
@@ -1825,6 +1831,24 @@ mod tests {
         );
         assert!(n_cpu_ffn_rules(Some(0)).is_empty());
         assert!(n_cpu_ffn_rules(None).is_empty());
+    }
+
+    // `op-offload` reaches llama-bench as `-nopo`, whose sense is INVERTED and
+    // whose value is 0|1: a straight copy of the bool would benchmark the
+    // opposite of the preset.
+    #[test]
+    fn op_offload_rides_the_inverted_nopo_flag() {
+        let plan = Plan::default();
+        let argv = |state| {
+            let p = Preset {
+                op_offload: state,
+                ..preset("a")
+            };
+            synthetic_argv(&p, &ServerConfig::default(), &plan, &first_sweep(&plan))
+        };
+        assert_eq!(argv_of(&argv(Some(false)), "-nopo").as_deref(), Some("1"));
+        assert_eq!(argv_of(&argv(Some(true)), "-nopo").as_deref(), Some("0"));
+        assert!(!argv(None).iter().any(|x| x == "-nopo"));
     }
 
     // The router copies the server's own CLI over every preset, so a benchmark
