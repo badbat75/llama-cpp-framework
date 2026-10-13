@@ -1,12 +1,19 @@
 // llama-server log viewer: an independent second root window (like AppTray),
 // shown non-modally beside the main configurator: while it is open the main
 // window stays fully interactive. Rust (src/gui/log_window.rs) tails
-// logs\llama-server.log on a timer and pushes the retained text into
-// `log_text`; after each push it invokes `scroll-to-end` so the view follows
+// logs\llama-server.log on a worker thread and appends the new lines to
+// `lines`; after each append it invokes `scroll-to-end` so the view follows
 // the file like `tail -f`, unless the user unticks Auto-scroll to read
 // scrolled-back output while the server keeps writing.
+//
+// The log is a ListView with one row per line, NOT one TextEdit: a text
+// widget lays its WHOLE content out again on every change and on every frame
+// (measured: ~320 ms per append and ~150 ms per frame at 70 KB, i.e. the
+// window frozen for most of each poll). A list lays out the visible rows
+// only, and an append touches nothing above it, which is also what keeps the
+// view still while Auto-scroll is off.
 
-import { TextEdit, CheckBox, Palette } from "std-widgets.slint";
+import { ListView, CheckBox, Button, Palette } from "std-widgets.slint";
 import { Tokens } from "components.slint";
 
 export component LogWindow inherits Window {
@@ -18,9 +25,9 @@ export component LogWindow inherits Window {
     preferred-height: 600px;
     background: Palette.background;
 
-    // The retained tail of the log file, pushed from Rust on every poll that
-    // found new bytes (never edited UI-side: the TextEdit below is read-only).
-    in property <string> log_text;
+    // The retained tail of the log file, one row per line (an overlong line
+    // is cut into several). Owned and appended to by Rust.
+    in property <[string]> lines;
     // The tailed file's path (display only, so the user can find the full file).
     in property <string> log_path;
     // Liveness readout, refreshed on every poll: file size + how long ago the
@@ -31,11 +38,58 @@ export component LogWindow inherits Window {
     // Owned by this window; Rust reads it to decide whether to follow the tail.
     in-out property <bool> auto_scroll: true;
 
-    // Rust invokes this after pushing new text, passing the new text's UTF-8
-    // length: parking the cursor at the very end makes the TextEdit scroll it
-    // into view (there is no direct viewport control on the std TextEdit).
-    public function scroll-to-end(len: int) {
-        log-view.set-selection-offsets(len, len);
+    // The Copy all button: Rust answers with `copy-text` and the retained
+    // lines (a row's own selection stops at the row).
+    callback copy_all();
+
+    // Rust invokes this after appending. The end is not reachable in one
+    // step: a ListView only ESTIMATES the height of the rows it has not laid
+    // out (the ones just appended, and with word-wrap no two rows are alike),
+    // and it does not clamp a viewport set past its end. So `pin` runs for a
+    // few frames, each one starting from what the previous layout measured;
+    // once the last rows are laid out it lands on the exact end.
+    public function scroll-to-end() {
+        root.pin-passes = 6;
+        root.pin();
+    }
+    property <int> pin-passes;
+    function pin() {
+        log-view.viewport-y = min(0px, log-view.visible-height - log-view.viewport-height);
+    }
+    Timer {
+        interval: 16ms;
+        running: root.pin-passes > 0;
+        triggered => {
+            root.pin-passes -= 1;
+            // Unticked while a pin was settling: the view is the user's now.
+            if root.auto_scroll {
+                root.pin();
+            }
+        }
+    }
+
+    // Put `text` on the clipboard, through the one clipboard door a .slint
+    // has: a TextInput's copy(). It has no size, so it is never laid out.
+    public function copy-text(text: string) {
+        clipboard.text = text;
+        clipboard.select-all();
+        clipboard.copy();
+        clipboard.text = "";
+    }
+
+    // Ticking Auto-scroll back on jumps to the end at once, not at the next
+    // line the server happens to write.
+    changed auto_scroll => {
+        if root.auto_scroll {
+            root.scroll-to-end();
+        }
+    }
+
+    clipboard := TextInput {
+        single-line: false;
+        width: 0px;
+        height: 0px;
+        visible: false;
     }
 
     VerticalLayout {
@@ -63,18 +117,38 @@ export component LogWindow inherits Window {
                 text: "Auto-scroll";
                 checked <=> root.auto_scroll;
             }
+            Button {
+                text: "Copy all";
+                clicked => { root.copy_all(); }
+            }
         }
 
-        // Read-only so the log stays selectable/copyable (Ctrl+C) but can't be
-        // edited, same pattern as the chat-template preview and the Command
-        // Line card.
-        log-view := TextEdit {
-            text: root.log_text;
-            read-only: true;
-            wrap: word-wrap;
-            font-family: "Consolas";
-            font-size: 12px;
+        Rectangle {
             vertical-stretch: 1;
+            border-radius: 4px;
+            border-width: 1px;
+            border-color: Palette.border;
+            background: Palette.alternate-background;
+            clip: true;
+
+            log-view := ListView {
+                x: 6px;
+                y: 4px;
+                width: parent.width - 12px;
+                height: parent.height - 8px;
+
+                // A read-only TextInput, not a Text, so a line (or part of
+                // one) can still be selected and copied with Ctrl+C.
+                for line in root.lines : TextInput {
+                    text: line;
+                    read-only: true;
+                    single-line: false;
+                    wrap: word-wrap;
+                    font-family: "Consolas";
+                    font-size: 12px;
+                    color: Palette.foreground;
+                }
+            }
         }
     }
 }

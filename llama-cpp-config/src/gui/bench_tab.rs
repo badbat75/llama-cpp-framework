@@ -15,8 +15,8 @@
 //! CACHE, which is fine for a preview and would not be for a measurement; and
 //! `on_bench_run` therefore re-reads the file itself before validating. Editing
 //! in a window of ours was the first design and was dropped: a Slint TextEdit
-//! is already sluggish at a few hundred KB (`log_window.rs` caps its tail at
-//! 256 KB for exactly that), and the prompts worth putting in a file are the
+//! is already sluggish at a few hundred KB (`log_window.rs` shows its tail as a
+//! list of rows for exactly that), and the prompts worth putting in a file are the
 //! long ones.
 //!
 //! **The selection is an ORDERED list of preset ids, kept Rust-side**

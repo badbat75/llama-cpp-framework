@@ -160,6 +160,12 @@ pub(crate) fn wire_tabs_for_tests(app: &AppWindow) {
     wire_discard_confirm(app, &state);
 }
 
+/// The log window's e2e phase, for the shared UI test to call.
+#[cfg(test)]
+pub(crate) fn log_window_e2e() {
+    log_window::e2e();
+}
+
 /// The HW Monitor window's e2e phase, for the shared UI test to call.
 #[cfg(all(test, target_os = "linux"))]
 pub(crate) fn hw_window_e2e() {
@@ -282,11 +288,10 @@ pub fn run(start_minimized: bool) -> anyhow::Result<()> {
     integrations_tab::wire(&app);
     settings_tab::wire(&app);
     tray::wire(&app, &tray);
-    // Independent log-tail window (View logs). Both halves must outlive the
-    // event loop like status_timer above: dropping the Timer stops the tail.
-    // (The timer only RUNS while the window is open: armed on View logs,
-    // stopped on close.)
-    let (_log_window, _log_timer) = log_window::wire(&app)?;
+    // Independent log-tail window (View logs). It must outlive the event
+    // loop like status_timer above. (Its tail thread only RUNS while the
+    // window is open: started on View logs, retired on close.)
+    let _log_window = log_window::wire(&app)?;
     // The log window starts hidden on every launch.
     #[cfg(target_os = "linux")]
     discard_unshown_wayland_window(&_log_window);

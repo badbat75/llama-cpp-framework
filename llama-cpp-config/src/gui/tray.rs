@@ -5,7 +5,7 @@
 //! is in app.slint's `AppTray`). "Open log" is the one item that reaches back
 //! into `AppState`: it invokes `view_logs`, the same callback the Server tab's
 //! View logs button fires, so the tray opens the SAME `LogWindow` (one tail,
-//! one timer; `log_window::wire`) rather than a second viewer, and does so
+//! one thread; `log_window::wire`) rather than a second viewer, and does so
 //! without surfacing the configurator window. Helpers live in the parent `gui`
 //! module (`use super::*`).
 

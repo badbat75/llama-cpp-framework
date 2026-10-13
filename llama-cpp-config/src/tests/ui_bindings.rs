@@ -379,6 +379,9 @@ fn editable_widgets_track_model_after_edit() {
     // process-global, single-threaded platform (see the header note).
     super::save_flow::run(&app);
 
+    // ── View-logs window (src/gui/log_window.rs) ─────────────────────────
+    crate::gui::log_window_e2e();
+
     // ── HW Monitor window (src/gui/hw_window.rs) ─────────────────────────
     // Its own root window, on the same backend for the same reason.
     #[cfg(target_os = "linux")]

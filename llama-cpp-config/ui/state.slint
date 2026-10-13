@@ -600,7 +600,7 @@ export global AppState {
     //
     // Editing happens THERE and not in a window of ours on purpose: a Slint
     // TextEdit is already sluggish at a few hundred KB (see log_window.slint,
-    // which caps its tail at 256 KB for that reason), and the prompts worth
+    // which shows its tail as a list of rows for that reason), and the prompts worth
     // keeping in a file are the long ones. The file is re-read when it changes
     // and again when Run starts, so an external editor is a live editor.
     callback bench_pick_prompt(string) -> string;
