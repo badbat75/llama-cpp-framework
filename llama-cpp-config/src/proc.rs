@@ -31,9 +31,19 @@ use std::sync::Mutex;
 /// `runstate::is_running` subtracts these from the tasklist match.
 static PROBE_PIDS: Mutex<Vec<u32>> = Mutex::new(Vec::new());
 
-/// A snapshot of the live probe PIDs (see `PROBE_PIDS`).
-pub fn probe_pids() -> Vec<u32> {
-    PROBE_PIDS.lock().expect("PROBE_PIDS lock").clone()
+/// Run `scan` (a look at the process table: `/proc` on Linux, `tasklist` on
+/// Windows) with the probe list (see `PROBE_PIDS`) HELD, and hand
+/// it the probes to subtract. A snapshot taken before or after the scan is not
+/// enough: a probe that starts between the two, or one that ends and
+/// deregisters between them, is seen by the scan and missing from the list, so
+/// it counts as a server. The GUI fires both probes and the run-status poll
+/// together at startup and on every Refresh, which is exactly that overlap:
+/// the footer read "Running" with nothing running, and the next tick reported
+/// the server as gone, in red. `run_hidden_probe` spawns and registers under
+/// the same lock, so for the length of a scan the list cannot change.
+pub fn with_probe_pids<R>(scan: impl FnOnce(&[u32]) -> R) -> R {
+    let guard = PROBE_PIDS.lock().expect("PROBE_PIDS lock");
+    scan(&guard)
 }
 
 /// Apply `CREATE_NO_WINDOW` to `cmd` on Windows so no console window pops up for
@@ -107,9 +117,15 @@ where
     cmd.args(args).stdout(Stdio::piped()).stderr(Stdio::piped());
     hide_console(&mut cmd);
     prepend_rocm_path(&mut cmd);
-    let child = cmd.spawn().ok()?;
-    let pid = child.id();
-    PROBE_PIDS.lock().expect("PROBE_PIDS lock").push(pid);
+    // Spawned and registered under ONE lock: a process-table scan holding it
+    // (`with_probe_pids`) never sees this child without its PID on the list.
+    let (child, pid) = {
+        let mut guard = PROBE_PIDS.lock().expect("PROBE_PIDS lock");
+        let child = cmd.spawn().ok()?;
+        let pid = child.id();
+        guard.push(pid);
+        (child, pid)
+    };
     let output = child.wait_with_output().ok();
     let mut guard = PROBE_PIDS.lock().expect("PROBE_PIDS lock");
     if let Some(i) = guard.iter().position(|&p| p == pid) {

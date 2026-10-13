@@ -34,25 +34,71 @@ use std::io;
 pub fn is_running() -> bool {
     #[cfg(windows)]
     {
-        let Some(output) = crate::proc::run_hidden(
-            std::path::Path::new("tasklist"),
-            ["/fi", "IMAGENAME eq llama-server.exe", "/fo", "csv", "/nh"],
-        ) else {
-            return false;
-        };
-        running_from_tasklist(
-            &String::from_utf8_lossy(&output.stdout),
-            &crate::proc::probe_pids(),
-        )
+        // tasklist runs with the probe list HELD, not snapshotted afterwards:
+        // see `proc::with_probe_pids`.
+        crate::proc::with_probe_pids(|probes| {
+            let Some(output) = crate::proc::run_hidden(
+                std::path::Path::new("tasklist"),
+                ["/fi", "IMAGENAME eq llama-server.exe", "/fo", "csv", "/nh"],
+            ) else {
+                return false;
+            };
+            running_from_tasklist(&String::from_utf8_lossy(&output.stdout), probes)
+        })
     }
 
     #[cfg(not(windows))]
     {
-        std::process::Command::new("pgrep")
-            .args(["-f", "llama-server"])
-            .output()
-            .is_ok_and(|o| o.status.success())
+        !live_server_pids().is_empty()
     }
+}
+
+/// The PID of a `/proc/<pid>/stat` line when it describes a LIVE llama-server:
+/// the process name (the `comm` between the first `(` and the LAST `)`, since
+/// a name may itself hold parentheses) is exactly `llama-server` and the state
+/// after it is neither `Z` (zombie) nor `X` (dead).
+///
+/// The state is the point. A killed child stays in the process table as a
+/// zombie until its parent waits for it, and the parent here is the
+/// configurator: `pgrep -f llama-server`, which this replaces, matched that
+/// `[llama-server] <defunct>` entry by name, so after the first Stop the server
+/// read as running for as long as the GUI lived ("Stop timed out", then
+/// "already running" on every Start). It also matched any command line merely
+/// MENTIONING llama-server (a `tail -f llama-server.log`, an editor on the
+/// log), which `pkill -f` then killed.
+#[cfg(not(windows))]
+fn live_server_pid(stat: &str) -> Option<u32> {
+    let open = stat.find('(')?;
+    let close = stat.rfind(')')?;
+    if stat.get(open + 1..close)? != "llama-server" {
+        return None;
+    }
+    let state = stat.get(close + 1..)?.split_whitespace().next()?;
+    if state == "Z" || state == "X" {
+        return None;
+    }
+    stat.get(..open)?.trim().parse().ok()
+}
+
+/// Every live llama-server on the machine (the router and its per-model
+/// children are the same executable), minus our own transient probes (as on
+/// Windows), with the probe list held for the whole scan
+/// (`proc::with_probe_pids` says why a snapshot is not enough). Read straight
+/// from `/proc`: no `pgrep` to depend on, and the zombie filter of
+/// `live_server_pid` has no portable spelling there.
+#[cfg(not(windows))]
+fn live_server_pids() -> Vec<u32> {
+    crate::proc::with_probe_pids(|probes| {
+        let Ok(entries) = std::fs::read_dir("/proc") else {
+            return Vec::new();
+        };
+        entries
+            .flatten()
+            .filter_map(|e| std::fs::read_to_string(e.path().join("stat")).ok())
+            .filter_map(|stat| live_server_pid(&stat))
+            .filter(|pid| !probes.contains(pid))
+            .collect()
+    })
 }
 
 /// The PID (2nd CSV field) of a `tasklist /fo csv /nh` row like
@@ -398,12 +444,22 @@ pub fn start() -> io::Result<Option<crate::server_cfg::ServerConfig>> {
 
     // Dropping `child` here does NOT kill the process on Windows (std leaves it
     // detached): the server keeps running; we just stop watching it.
+    //
+    // On Linux it must still be WAITED for: an exited child nobody waits for
+    // stays a zombie for the life of its parent, which for the GUI is hours. A
+    // parked thread reaps it whenever it ends (a stop, a crash); under the CLI
+    // the process exits first and init inherits the server, which is fine.
+    #[cfg(not(windows))]
+    std::thread::spawn(move || {
+        let _ = child.wait();
+    });
     Ok(Some(cfg))
 }
 
 /// Force-kill all llama-server.exe processes (taskkill /f: llama-server has
-/// no graceful shutdown channel when running detached without a console), then
-/// close the run's log (module header) once the process is gone.
+/// no graceful shutdown channel when running detached without a console; on
+/// Linux a SIGTERM to every `live_server_pids` entry), then close the run's log
+/// (module header) once the process is gone.
 ///
 /// Infallible by design: a missing/failed kill is not surfaced here. The caller
 /// (`stop_server_async`) re-polls `is_running()` and reports "still running" if
@@ -426,10 +482,15 @@ pub fn stop() {
     }
     #[cfg(not(windows))]
     {
-        let _ = std::process::Command::new("pkill")
-            .arg("-f")
-            .arg("llama-server")
-            .output();
+        // SIGTERM to exactly the processes `is_running` counts, so the two
+        // cannot disagree about what a llama-server is.
+        let pids = live_server_pids();
+        if !pids.is_empty() {
+            let _ = std::process::Command::new("kill")
+                .arg("-TERM")
+                .args(pids.iter().map(u32::to_string))
+                .output();
+        }
     }
 
     let step = std::time::Duration::from_millis(250);
@@ -823,6 +884,39 @@ mod tests {
             !running_from_tasklist(two, &[1234, 5678]),
             "both are probes"
         );
+    }
+
+    // The Linux probe reads /proc/<pid>/stat. A zombie is the regression: the
+    // killed server stays listed under its name until the configurator reaps
+    // it, and counting it made every Stop time out.
+    #[cfg(not(windows))]
+    #[test]
+    fn live_server_pid_skips_zombies_and_other_names() {
+        use super::live_server_pid;
+        assert_eq!(
+            live_server_pid("29023 (llama-server) S 28855 29023 5495 0 -1"),
+            Some(29023)
+        );
+        assert_eq!(live_server_pid("29023 (llama-server) R 1 2 3"), Some(29023));
+        assert_eq!(
+            live_server_pid("29023 (llama-server) Z 28855 29023 5495 0 -1"),
+            None,
+            "a zombie is not a running server"
+        );
+        assert_eq!(live_server_pid("29023 (llama-server) X 1 2 3"), None);
+        assert_eq!(
+            live_server_pid("28855 (llama-cpp-confi) S 5495 1 2"),
+            None,
+            "the configurator itself"
+        );
+        assert_eq!(
+            live_server_pid("31 (tail) S 1 2 3"),
+            None,
+            "a command line naming llama-server.log is not a server"
+        );
+        // The name is everything up to the LAST ')': it may hold parentheses.
+        assert_eq!(live_server_pid("7 (a) (llama-server) S 1 2 3"), None);
+        assert_eq!(live_server_pid("garbage"), None);
     }
 
     // "auto" (unset / non-positive) MUST omit the flag entirely so llama.cpp
