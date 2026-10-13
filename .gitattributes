@@ -8,6 +8,9 @@
 # identifies the prompt by, hence the tokenization. Pin them to LF.
 llama-cpp-config/assets/*.txt text eol=lf
 
+# The icon font is compiled into the binary as is: never a text conversion.
+*.ttf binary
+
 # The Linux build scripts are run by bash straight from the checkout, also
 # when the same working tree was checked out by Git for Windows on a drive
 # both systems mount: a CRLF shebang line does not execute.

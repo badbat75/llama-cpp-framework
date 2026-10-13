@@ -304,10 +304,11 @@ fn enum_combo_box_index_chain_covers_every_option_list() {
 /// over `segoeui.ttf`), which is the only thing that settles coverage. Nothing
 /// falls back: a codepoint Segoe UI lacks draws as an empty box, full stop.
 ///
-/// An ICON does not belong here. It goes through the icon font with its family
-/// named at the call site: `text: "\u{E711}"; font-family: "Segoe Fluent Icons";`
-/// is the idiom `LabeledField`'s hint glyph already uses. The scan skips `\u{…}`
-/// escapes for exactly that reason, so that path stays open.
+/// An ICON does not belong here. It goes through the embedded icon font (the
+/// `Icons` global in `components.slint`) with its family named at the call site:
+/// `text: Icons.info; font-family: Icons.font;` is the idiom `LabeledField`'s
+/// hint glyph already uses. The scan skips `\u{…}` escapes for exactly that
+/// reason, so `Icons` can declare its codepoints.
 ///
 /// Deliberately absent: `ⓘ` and `─`, which appear in this codebase only inside
 /// COMMENTS. Segoe UI has neither, so neither is proven; listing them would
@@ -437,11 +438,10 @@ fn glyph_scan_reads_ui_text_and_ignores_comments_and_urls() {
     assert_eq!(lits.len(), 1, "escaped quote split the literal: {lits:?}");
     assert!(lits[0].1.ends_with('≡'), "tail lost: {:?}", lits[0].1);
 
-    // The sanctioned way to draw an icon (a `\u{…}` escape under an explicitly
-    // named icon font) must stay open: the escape is skipped, so no bare glyph
+    // The sanctioned way to declare an icon (a `\u{…}` escape, drawn under the
+    // embedded icon font) must stay open: the escape is skipped, so no bare glyph
     // reaches the allowlist check and the lint has nothing to say about it.
-    let lits =
-        string_literals(r#"Button { text: "\u{E711}"; font-family: "Segoe Fluent Icons"; }"#);
+    let lits = string_literals(r#"out property <string> info: "\u{F4A2}";"#);
     assert!(
         lits.iter()
             .flat_map(|(_, t)| t.chars())

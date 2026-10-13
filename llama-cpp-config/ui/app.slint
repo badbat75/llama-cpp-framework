@@ -13,7 +13,7 @@
 
 import { LineEdit, TextEdit, Button, ListView, Palette } from "std-widgets.slint";
 import { AppState } from "state.slint";
-import { Tokens, Options, ModalOverlay, AccentBar, SelectableRow, ListPanel } from "components.slint";
+import { Tokens, Icons, Options, ModalOverlay, AccentBar, SelectableRow, ListPanel } from "components.slint";
 // Re-export so Slint generates the Rust accessors (`app.global::<AppState>()`);
 // a bare import wouldn't surface them to Rust. `Options` is exported only so
 // the e2e test can assert `Options.all_layers == form::ALL_LAYERS`.
@@ -59,7 +59,7 @@ component NavItem inherits Rectangle {
 
         Text {
             text: root.glyph;
-            font-family: "Segoe Fluent Icons";
+            font-family: Icons.font;
             font-size: 16px;
             color: root.selected ? Palette.accent-background : Palette.foreground;
             vertical-alignment: center;
@@ -176,34 +176,31 @@ export component AppWindow inherits Window {
                     spacing: 4px;
 
                     NavItem {
-                        glyph: "\u{E713}";
+                        glyph: Icons.server;
                         label: "Server";
                         selected: AppState.current_tab == 0;
                         clicked => { AppState.current_tab = 0; }
                     }
                     NavItem {
-                        glyph: "\u{EB9F}";
+                        glyph: Icons.models;
                         label: "Models";
                         selected: AppState.current_tab == 1;
                         clicked => { AppState.current_tab = 1; }
                     }
                     NavItem {
-                        // U+E9D9 "Speed high" (a gauge): the tab times things.
-                        glyph: "\u{E9D9}";
+                        glyph: Icons.benchmark;
                         label: "Benchmark";
                         selected: AppState.current_tab == 2;
                         clicked => { AppState.current_tab = 2; }
                     }
                     NavItem {
-                        glyph: "\u{E943}";
+                        glyph: Icons.integrations;
                         label: "Integrations";
                         selected: AppState.current_tab == 3;
                         clicked => { AppState.current_tab = 3; }
                     }
                     NavItem {
-                        // U+E9E9 "Equalizer" (preference sliders); E713, the
-                        // canonical gear, already means the Server tab here.
-                        glyph: "\u{E9E9}";
+                        glyph: Icons.settings;
                         label: "Settings";
                         selected: AppState.current_tab == 4;
                         clicked => { AppState.current_tab = 4; }

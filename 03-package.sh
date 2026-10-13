@@ -289,6 +289,8 @@ fi
     printf '(TheRock) distribution, the NVIDIA CUDA redistributable archives and the\n'
     printf 'LunarG Vulkan SDK, each under its own licence.\n\n'
     cat "$CFG_LLAMA_CPP_DIR/LICENSE"
+    printf '\nllama-cpp-config embeds the Fluent UI System Icons font, whose licence follows.\n\n'
+    cat "$REPO_ROOT/llama-cpp-config/ui/fonts/LICENSE"
 } > "$STAGE_DIR/usr/share/doc/$PKG_NAME/copyright"
 
 # The repo may sit on a filesystem that hands out group-writable modes; a

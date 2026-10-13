@@ -1,6 +1,7 @@
 // Reusable visual pieces shared by the page components. Inventory:
-// - globals: `Tokens` (canonical alpha levels), `Options` (shared option lists
-//   + the `all_layers` slider bound)
+// - globals: `Tokens` (canonical alpha levels), `Icons` (the embedded icon font
+//   and its glyphs), `Options` (shared option lists + the `all_layers` slider
+//   bound)
 // - layout/chrome: `SectionCard`, `LabeledField`, `InfoRow`, `FormActions`,
 //   `ModalOverlay` (backdrop + card shared by all five app.slint modals),
 //   `WrapText` (word-wrapped text that reports its REAL height, the one to use
@@ -20,6 +21,8 @@
 
 import { ComboBox, LineEdit, CheckBox, Slider, Button, Palette } from "std-widgets.slint";
 import { GpuRow, TensorOverrideRow } from "types.slint";
+// The icon font, compiled into the binary: see `Icons` below.
+import "fonts/FluentSystemIcons-Regular.ttf";
 
 // Canonical transparency levels for muted text and selection tints, so every
 // page pulls from the same handful of values instead of eyeballing a new alpha.
@@ -47,6 +50,24 @@ export global Tokens {
     out property <color> backdrop: #000000.transparentize(0.45);
     out property <color> shadow-card: #00000022;
     out property <color> shadow-modal: #00000066;
+}
+
+// Every icon the UI draws, and the font that draws them: Fluent UI System
+// Icons (MIT, `fonts\README.md`), embedded by the `import` above so the same
+// glyphs render on Windows and on Linux. They used to come from "Segoe Fluent
+// Icons", which only Windows 11 ships: on Linux each one drew as an empty box.
+// Draw one with a `Text` that names the family: `text: Icons.info;
+// font-family: Icons.font;`. The codepoints are this font's own (its
+// `FluentSystemIcons-Regular.json` maps icon name to codepoint), NOT Segoe's.
+export global Icons {
+    out property <string> font: "FluentSystemIcons-Regular";
+    out property <string> info: "\u{F4A2}";         // info_16: LabeledField's hover hint
+    out property <string> server: "\u{F6A9}";       // settings_20 (the gear)
+    out property <string> models: "\u{F335}";       // cube_20
+    out property <string> benchmark: "\u{ED9B}";    // top_speed_20 (a gauge): the tab times things
+    out property <string> integrations: "\u{E1D5}"; // braces_20
+    // options_20 (preference sliders); the gear already means the Server tab.
+    out property <string> settings: "\u{F587}";
 }
 
 // Canonical option lists reused by more than one page, so a new llama.cpp cache
@@ -508,8 +529,8 @@ export component LabeledField inherits HorizontalLayout {
             horizontal-stretch: 1;
         }
         if root.hint != "" : Text {
-            text: "\u{E946}";
-            font-family: "Segoe Fluent Icons";
+            text: Icons.info;
+            font-family: Icons.font;
             font-size: 13px;
             // Fixed-width cell so the glyph is always visible and gives the
             // Tooltip a reliable hover target: inside a 130px label row a
@@ -1295,8 +1316,8 @@ export component TensorOverrideTable inherits VerticalLayout {
                     // U+00D7, which Segoe UI HAS. It shipped once as "✕" (U+2715,
                     // Dingbats), which Segoe UI does not have and nothing falls back
                     // for: a correctly laid out, perfectly empty box. The icon-font
-                    // escape LabeledField's hint uses (`\u{E711}` +
-                    // `font-family: "Segoe Fluent Icons"`) is NOT available here
+                    // escape LabeledField's hint uses (an `Icons` glyph +
+                    // `font-family: Icons.font`) is NOT available here
                     // (std Button has no font-family property, only Text does), so a
                     // button's label is stuck with the default font, and its glyph
                     // must be one that font covers. Guarded by
