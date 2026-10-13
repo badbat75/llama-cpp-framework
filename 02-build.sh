@@ -298,8 +298,8 @@ export PATH="$(dirname "$CARGO"):$PATH"
 say_dim "cargo: $CARGO"
 
 # The icon is generated, not checked in (build.rs bootstraps it the same way,
-# but from the Windows clone location, build/llama.cpp): done here first, from
-# the Linux clone. sharp ships one native package per platform, so the npm
+# but from the default clone location, build/linux/llama.cpp): done here first,
+# from the configured clone. sharp ships one native package per platform, so the npm
 # install also completes a node_modules that the Windows side created.
 ICO="$REPO_ROOT/resources/llama.ico"
 if [[ ! -f "$ICO" ]]; then
@@ -317,8 +317,8 @@ CARGO_ARGS=(build --release)
 ( cd "$REPO_ROOT/llama-cpp-config" && "$CARGO" "${CARGO_ARGS[@]}" )
 
 # Copied next to llama-server: the configurator looks for llama.cpp's binaries
-# in its OWN directory first (the installer layout on Windows), and its
-# dev-layout fallbacks name the Windows build tree, not build/linux.
+# in its OWN directory first (the installer layout on Windows), ahead of its
+# dev-layout fallbacks, so this copy is the one to launch.
 install -m 755 "$CARGO_TARGET_DIR/release/llama-cpp-config" "$BUILD_DIR/bin/llama-cpp-config"
 say_ok "llama-cpp-config build complete: $BUILD_DIR/bin/llama-cpp-config"
 "$BUILD_DIR/bin/llama-cpp-config" --version | sed 's/^/  /'

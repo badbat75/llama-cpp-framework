@@ -84,8 +84,8 @@ if (-not $nsisExe) {
 Write-Host "NSIS: $nsisExe" -ForegroundColor Cyan
 
 # ── Stage llama.cpp binaries with cmake --install ───────────────────
-$buildDir  = Join-Path $PSScriptRoot "build\llama.cpp-cmake"
-$stageDir  = Join-Path $PSScriptRoot "build\staging"
+$buildDir  = Join-Path $buildRoot "llama.cpp-cmake"
+$stageDir  = Join-Path $buildRoot "staging"
 $outputDir = Join-Path $PSScriptRoot "dist"
 
 if (Test-Path $stageDir) { Remove-Item $stageDir -Recurse -Force }
@@ -223,7 +223,7 @@ if (-not (Test-Path $iconPath)) {
             npm install --no-save sharp sharp-ico | Out-Null
             if ($LASTEXITCODE -ne 0) { throw "npm install failed" }
         }
-        node generate-llama-ico.mjs
+        node generate-llama-ico.mjs $cfg.LlamaCppDir
         if ($LASTEXITCODE -ne 0) { throw "generate-llama-ico.mjs failed" }
     } finally { Pop-Location }
 }
@@ -231,7 +231,7 @@ Copy-Item $iconPath -Destination $stageDir -Force
 
 # ── Generate .nsi from template ─────────────────────────────────────
 $templatePath = Join-Path $PSScriptRoot "installer\llama-cpp-framework.nsi.template"
-$nsiPath      = Join-Path $PSScriptRoot "build\llama-cpp.nsi"
+$nsiPath      = Join-Path $buildRoot "llama-cpp.nsi"
 # e.g. llama-cpp-framework-v1.11.2-v0.2.0-x64-setup.exe. Two vX.Y.Z tokens, and
 # the order names them: the framework's own version first, the bundled llama.cpp
 # release second.

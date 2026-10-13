@@ -34,12 +34,12 @@ across both variables.
 
 ## Build and run
 
-Run `01-configure.ps1` once first, so that `build\config-build.psd1` exists. Then:
+Run `01-configure.ps1` once first, so that `build\windows\config-build.psd1` exists. Then:
 
 ```powershell
 tools\pcie-bench\build.ps1              # both binaries; -NoHip / -NoCuda to skip one
-build\pcie-bench\pcie-bench-hip.exe R9700
-build\pcie-bench\pcie-bench-cuda.exe 4070
+build\windows\pcie-bench\pcie-bench-hip.exe R9700
+build\windows\pcie-bench\pcie-bench-cuda.exe 4070
 ```
 
 The argument is a substring of the device name.

@@ -1,26 +1,31 @@
 # Shared bootstrap for the BUILD scripts (02-build.ps1 / 03-package.ps1), which
 # dot-source it: . "$PSScriptRoot\common.ps1"
 # 00-install-prerequisites.ps1 and 01-configure.ps1 deliberately do NOT: they
-# read build\config-build.psd1 directly so they work on a fresh machine before
-# (or while) that file exists.
+# read build\windows\config-build.psd1 directly so they work on a fresh machine
+# before (or while) that file exists.
 #
-# - Loads $cfg from build\config-build.psd1 (build-time paths, GPU targets, compiler).
+# - Sets $buildRoot, the per-OS directory everything Windows generates lives in.
+# - Loads $cfg from build\windows\config-build.psd1 (build-time paths, GPU targets, compiler).
 # - Adds ROCm/HIP\bin to PATH so HIP DLLs are loadable at both build and run time.
 # - Exposes Enable-VsDevShell as a function; both dot-sourcers call it (the
 #   activation stays opt-in so a future non-build consumer isn't forced into it).
 
-$cfgPath = Join-Path $PSScriptRoot 'build\config-build.psd1'
+# Everything the Windows scripts generate (config, source clone, cmake binary
+# dir, sccache cache, cargo target dir, NSIS staging) lives under build\windows\;
+# the Linux scripts use build/linux/ the same way, so the two systems never
+# share an artifact on a drive both mount.
+$buildRoot = Join-Path $PSScriptRoot 'build\windows'
+
+$cfgPath = Join-Path $buildRoot 'config-build.psd1'
 if (-not (Test-Path $cfgPath)) {
-    throw "build\config-build.psd1 not found. Run 01-configure.ps1 first."
+    throw "build\windows\config-build.psd1 not found. Run 01-configure.ps1 first."
 }
 $cfg = Import-PowerShellDataFile $cfgPath
 
-# cargo's target dir for llama-cpp-config: under build\ like every other build
-# artifact, in a per-OS directory (the Linux scripts use build/linux/cargo-target)
-# so the two systems never share one on a drive both mount. 02-build.ps1 passes
-# it to cargo as CARGO_TARGET_DIR, 03-package.ps1 stages the exe from it. A bare
-# `cargo build` outside the scripts still writes llama-cpp-config\target\.
-$cargoTargetDir = Join-Path $PSScriptRoot 'build\windows\cargo-target'
+# cargo's target dir for llama-cpp-config. 02-build.ps1 passes it to cargo as
+# CARGO_TARGET_DIR, 03-package.ps1 stages the exe from it. A bare `cargo build`
+# outside the scripts still writes llama-cpp-config\target\.
+$cargoTargetDir = Join-Path $buildRoot 'cargo-target'
 
 if ($cfg.HipPath -and (Test-Path $cfg.HipPath)) {
     $env:HIP_PATH = $cfg.HipPath

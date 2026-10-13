@@ -14,8 +14,9 @@
 //   npm install --no-save sharp sharp-ico
 //   node generate-llama-ico.mjs [path-to-llama.cpp-clone] [output.ico]
 //
-// Defaults: clone = ..\build\llama.cpp, output = .\llama.ico. The transient
-// node_modules\ / package*.json in resources\ are gitignored.
+// Defaults: clone = ..\build\windows\llama.cpp (..\build\linux\llama.cpp off
+// Windows), output = .\llama.ico. The transient node_modules\ / package*.json
+// in resources\ are gitignored.
 import { readFileSync, existsSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -23,7 +24,8 @@ import sharp from 'sharp';
 import ico from 'sharp-ico';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const CLONE = resolve(process.argv[2] ?? resolve(HERE, '..', 'build', 'llama.cpp'));
+const OS_DIR = process.platform === 'win32' ? 'windows' : 'linux';
+const CLONE = resolve(process.argv[2] ?? resolve(HERE, '..', 'build', OS_DIR, 'llama.cpp'));
 const SRC = resolve(CLONE, 'tools', 'ui', 'src', 'lib', 'assets', 'logo.svg');
 const OUT = resolve(process.argv[3] ?? resolve(HERE, 'llama.ico'));
 

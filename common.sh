@@ -4,7 +4,7 @@
 # share nothing generated with them: the repo may sit on a drive both systems
 # mount, so everything Linux writes lives under build/linux/ (source clone,
 # cmake binary dir, sccache cache, config-build.sh), next to the Windows
-# artifacts under build/ and never inside them.
+# artifacts under build/windows/ and never inside them.
 #
 # - Sets strict mode, REPO_ROOT, BUILD_ROOT and the say_* helpers.
 # - Sources installer/dist-sources.sh (roots and sources of the dists).

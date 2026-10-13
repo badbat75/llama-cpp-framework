@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Builds pcie-bench (HIP and/or CUDA) into build\pcie-bench\.
+    Builds pcie-bench (HIP and/or CUDA) into build\windows\pcie-bench\.
 
 .DESCRIPTION
     Supplies the machine-derived half of the configure line the same way
@@ -8,7 +8,7 @@
     process-scoped HIP compile vars from common.ps1, and the patched
     __clang_hip_runtime_wrapper.h for the dist's clang resource major (without
     it MSVC's <cmath> clashes with the HIP device math declarations). Needs
-    build\config-build.psd1, i.e. 01-configure.ps1 run once.
+    build\windows\config-build.psd1, i.e. 01-configure.ps1 run once.
 
 .PARAMETER NoHip
     Skip pcie-bench-hip.exe.
@@ -26,7 +26,7 @@ $repo = Resolve-Path (Join-Path $PSScriptRoot '..\..')
 . (Join-Path $repo 'common.ps1')
 Enable-VsDevShell
 
-$buildDir = Join-Path $repo 'build\pcie-bench'
+$buildDir = Join-Path $buildRoot 'pcie-bench'
 $cmakeArgs = @('-G', 'Ninja', '-S', $PSScriptRoot, '-B', $buildDir, '-DCMAKE_BUILD_TYPE=Release',
                "-DPCIE_BENCH_HIP=$(if ($NoHip) { 'OFF' } else { 'ON' })",
                "-DPCIE_BENCH_CUDA=$(if ($NoCuda) { 'OFF' } else { 'ON' })")

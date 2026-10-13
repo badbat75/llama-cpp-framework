@@ -18,8 +18,8 @@
 # rather than winget, whose manifest lags upstream by days; a winget copy left
 # by an earlier setup is uninstalled once the release copy is in place.
 #
-# When build\config-build.psd1 + llama.cpp clone exist, also fetches the source
-# and flags a rebuild when a newer release tag (vX.Y.Z) is available. (No `git
+# When build\windows\config-build.psd1 + llama.cpp clone exist, also fetches the
+# source and flags a rebuild when a newer release tag (vX.Y.Z) is available. (No `git
 # pull`: 02-build.ps1 pins the clone to a tag on a detached HEAD, so a pull
 # would always fail; the checkout onto the new tag is 02-build.ps1's job.)
 #
@@ -451,7 +451,7 @@ if (-not $sccacheBefore -and $sccacheOnPath) {
     $sccacheBeforeFrom = if ($sccacheWinget) { 'winget' } else { Split-Path $sccacheOnPath }
 }
 
-$cfgPath = Join-Path $PSScriptRoot 'build\config-build.psd1'
+$cfgPath = Join-Path $PSScriptRoot 'build\windows\config-build.psd1'
 $cfg = if (Test-Path $cfgPath) { Import-PowerShellDataFile $cfgPath } else { $null }
 $beforeLlama = if ($cfg) { Get-GitDescribe $cfg.LlamaCppDir } else { $null }
 
@@ -994,7 +994,7 @@ if ($sccacheWingetRemoved) {
     Write-ReportRow "    " DarkGray "" "winget copy removed; consoles opened earlier still have its PATH entry"
 }
 
-# HipPath is what build\config-build.psd1 pins (compiler path included), so
+# HipPath is what build\windows\config-build.psd1 pins (compiler path included), so
 # the "re-run 01-configure" verdict follows the DIRECTORY, not the version:
 # migrating the pre-versioning tree moves HIP_PATH without changing a digit.
 $rocmChanged = ($rocmBeforeDir -ne $rocmAfterDir)
@@ -1138,7 +1138,7 @@ if ($rocmChanged) {
     Write-Host ""
 }
 if (-not $cfg) {
-    Write-Host "  Next: .\01-configure.ps1   # detect paths and generate build\config-build.psd1" -ForegroundColor Cyan
+    Write-Host "  Next: .\01-configure.ps1   # detect paths and generate build\windows\config-build.psd1" -ForegroundColor Cyan
 } elseif ($rocmChanged -or $rebuildLlama -or $sdkChanged) {
     # 01-configure.ps1 records HipPath (and the clang inside it), nothing of
     # CUDA or Vulkan: 02-build.ps1 finds the newest of those itself.

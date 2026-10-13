@@ -1,7 +1,7 @@
 # Out-of-tree patches applied to the llama.cpp working tree
 
 `02-build.ps1` applies every `*.patch` in this directory to `$cfg.LlamaCppDir`
-(`build\llama.cpp`) in file-name order, right after it detaches the clone onto
+(`build\windows\llama.cpp`) in file-name order, right after it detaches the clone onto
 the newest `vX.Y.Z` release tag, and **reverts them again before the next
 fetch/checkout** so the checkout always runs on a clean tree (a tag bump that
 touches a patched file would otherwise abort with "local changes would be

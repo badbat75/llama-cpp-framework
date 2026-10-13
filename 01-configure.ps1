@@ -7,7 +7,7 @@
 # and are written by llama-cpp-config on first launch.
 
 param(
-    [string]$LlamaCppDir  # path to llama.cpp source. If omitted, defaults to .\build\llama.cpp
+    [string]$LlamaCppDir  # path to llama.cpp source. If omitted, defaults to .\build\windows\llama.cpp
 )
 
 # ── Detection functions ──────────────────────────────────────────────
@@ -156,7 +156,7 @@ else      { Write-Host "  [!!] VsDevShell     : NOT FOUND" -ForegroundColor Red;
 
 # Activate VS Dev Shell early so tool detection (cmake, clang, ninja) works.
 # This duplicates common.ps1's Enable-VsDevShell on purpose: common.ps1 throws
-# before build\config-build.psd1 exists, which is exactly when this script runs.
+# before build\windows\config-build.psd1 exists, which is exactly when this script runs.
 # Keep the vswhere PATH fixup in step with it.
 if ($val) {
     Write-Host ""
@@ -193,9 +193,9 @@ if ($gpuTargets) {
     Write-Host "  [--] GpuTargets     : no kernel list found in the dist, using the 7.14.0 snapshot" -ForegroundColor Yellow
 }
 
-# LlamaCppDir (source clone): CLI param → default .\build\llama.cpp
+# LlamaCppDir (source clone): CLI param → default .\build\windows\llama.cpp
 if (-not $LlamaCppDir) {
-    $LlamaCppDir = "$PSScriptRoot\build\llama.cpp"
+    $LlamaCppDir = "$PSScriptRoot\build\windows\llama.cpp"
 }
 $val = (Resolve-Path $LlamaCppDir -ErrorAction SilentlyContinue)?.Path ?? $LlamaCppDir
 $detected.LlamaCppDir = $val
@@ -312,11 +312,13 @@ $buildLines.Add('    # least one stays free for interactive use during a long CU
 $buildLines.Add('    # compile (0 = use all cores).')
 $buildLines.Add("    BuildJobs   = [int]$buildJobs")
 $buildLines.Add('}')
-$buildDir = Join-Path $PSScriptRoot 'build'
+# build\windows\, the per-OS directory common.ps1 calls $buildRoot (not
+# dot-sourced here: it throws until this file exists).
+$buildDir = Join-Path $PSScriptRoot 'build\windows'
 New-Item -ItemType Directory -Path $buildDir -Force | Out-Null
 $buildLines | Set-Content -Path (Join-Path $buildDir 'config-build.psd1') -Encoding utf8NoBOM
 
-Write-Host "  build\config-build.psd1 written." -ForegroundColor Green
+Write-Host "  build\windows\config-build.psd1 written." -ForegroundColor Green
 
 # The same job count for CARGO, as a config file rather than a flag, so a bare
 # `cargo build` / `cargo test` typed by hand or fired by an IDE obeys the policy

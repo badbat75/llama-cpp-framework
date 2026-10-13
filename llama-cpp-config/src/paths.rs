@@ -225,13 +225,18 @@ pub fn llama_bench_exe() -> Option<PathBuf> {
 /// Locate one of llama.cpp's binaries by stem. Tries (in order):
 /// 1. `<exe-dir>\<binary>`: installer layout
 /// 2. `<exe-dir>\..\..\llama.cpp-cmake\bin\<binary>`: the build scripts'
-///    layout on Linux (exe in `build/linux/cargo-target/release`)
-/// 3. `<exe-dir>\..\..\..\llama.cpp-cmake\bin\<binary>`: the build scripts'
-///    layout on Windows (exe in `build\windows\cargo-target\release`)
-/// 4. `<exe-dir>\..\..\..\build\llama.cpp-cmake\bin\<binary>`: a bare
+///    layout (exe in `build\<os>\cargo-target\release`, `<os>` being
+///    `windows` or `linux`)
+/// 3. `<exe-dir>\..\..\..\build\<os>\llama.cpp-cmake\bin\<binary>`: a bare
 ///    `cargo build` (exe in `llama-cpp-config\target\release`)
-/// 5. `<exe-dir>\..\build\llama.cpp-cmake\bin\<binary>`: alt dev layout
+/// 4. `<exe-dir>\..\build\<os>\llama.cpp-cmake\bin\<binary>`: alt dev layout
 pub fn llama_bin(stem: &str) -> Option<PathBuf> {
+    // The per-OS directory the build scripts generate everything into.
+    #[cfg(windows)]
+    const BUILD_OS_DIR: &str = "windows";
+    #[cfg(not(windows))]
+    const BUILD_OS_DIR: &str = "linux";
+
     let exe = std::env::current_exe().ok()?;
     let exe_dir = exe.parent()?;
     let name = binary_name(stem);
@@ -248,20 +253,15 @@ pub fn llama_bin(stem: &str) -> Option<PathBuf> {
             .join("..")
             .join("..")
             .join("..")
-            .join("llama.cpp-cmake")
-            .join("bin")
-            .join(name),
-        exe_dir
-            .join("..")
-            .join("..")
-            .join("..")
             .join("build")
+            .join(BUILD_OS_DIR)
             .join("llama.cpp-cmake")
             .join("bin")
             .join(name),
         exe_dir
             .join("..")
             .join("build")
+            .join(BUILD_OS_DIR)
             .join("llama.cpp-cmake")
             .join("bin")
             .join(name),

@@ -132,7 +132,7 @@ foreach ($patch in $llamaPatches) {
     }
 }
 
-$buildDir = Join-Path $PSScriptRoot "build\llama.cpp-cmake"
+$buildDir = Join-Path $buildRoot "llama.cpp-cmake"
 New-Item -ItemType Directory -Path $buildDir -Force | Out-Null
 
 # A CMakeCache.txt written by a previous toolchain pins the old compiler path
@@ -147,6 +147,21 @@ if ((Test-Path $cacheFile) -and [System.IO.Path]::IsPathRooted($cfg.CCompiler)) 
     if ($cachedCc -and (($cachedCc -replace '/', '\') -ne ($cfg.CCompiler -replace '/', '\'))) {
         Write-Host "Cached compiler changed:" -ForegroundColor Yellow
         Write-Host "  $cachedCc -> $($cfg.CCompiler)" -ForegroundColor Yellow
+        Write-Host "  wiping $buildDir for a clean configure" -ForegroundColor Yellow
+        Remove-Item $buildDir -Recurse -Force
+        New-Item -ItemType Directory -Path $buildDir -Force | Out-Null
+    }
+}
+# Same for a cache written somewhere else: a build dir that was moved (or a
+# repo that was) still names its old location, and cmake refuses to configure
+# it ("CMakeCache.txt directory ... is different than the directory ... where
+# CMakeCache.txt was created"). Nothing in it is reusable from the new path.
+if (Test-Path $cacheFile) {
+    $cachedDir = Select-String -Path $cacheFile -Pattern '^CMAKE_CACHEFILE_DIR:[^=]+=(.+)$' |
+        Select-Object -First 1 | ForEach-Object { $_.Matches[0].Groups[1].Value }
+    if ($cachedDir -and (($cachedDir -replace '/', '\').TrimEnd('\') -ne $buildDir.TrimEnd('\'))) {
+        Write-Host "Build dir was relocated:" -ForegroundColor Yellow
+        Write-Host "  $cachedDir -> $buildDir" -ForegroundColor Yellow
         Write-Host "  wiping $buildDir for a clean configure" -ForegroundColor Yellow
         Remove-Item $buildDir -Recurse -Force
         New-Item -ItemType Directory -Path $buildDir -Force | Out-Null
@@ -315,7 +330,7 @@ if (-not (Test-Path $sccachePath)) {
     $sccachePath = Get-Command sccache -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty Source
 }
 if ($sccachePath) {
-    $sccacheDir = Join-Path $PSScriptRoot "build\.sccache"
+    $sccacheDir = Join-Path $buildRoot ".sccache"
     New-Item -ItemType Directory -Path $sccacheDir -Force | Out-Null
     $env:SCCACHE_DIR = $sccacheDir
     $env:SCCACHE_CACHE_SIZE = "10G"
