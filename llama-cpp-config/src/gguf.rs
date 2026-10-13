@@ -1166,7 +1166,10 @@ mod tests {
             ("qwen35.nextn_predict_layers", Tv::U(1)),
         ]);
         let info = ModelInfo::from_kv(&m).unwrap();
-        let picked = draft_line(&info, r"C:\models\mtps\qwen-mtp.gguf");
+        let picked = draft_line(
+            &info,
+            &crate::paths::os_path(r"C:\models\mtps\qwen-mtp.gguf"),
+        );
         assert!(picked.contains("MTP: 1 nextn layer"));
         assert!(picked.contains("draft file: qwen-mtp.gguf"));
         assert_eq!(
@@ -1369,7 +1372,13 @@ mod tests {
         assert!(info("deepseek2").sm_tensor_warning().contains("deepseek2"));
         // The three spellings upstream mixes: hyphen, underscore, neither; plus
         // the v0.4.1 (hy_v4) and v0.6.0 (glm5-next) additions.
-        for arch in ["falcon-h1", "nemotron_h", "granitehybrid", "hy_v4", "glm5-next"] {
+        for arch in [
+            "falcon-h1",
+            "nemotron_h",
+            "granitehybrid",
+            "hy_v4",
+            "glm5-next",
+        ] {
             assert!(!arch_supports_sm_tensor(arch), "{arch} is deny-listed");
         }
         // Re-enabled upstream in v0.6.0 (#28569).

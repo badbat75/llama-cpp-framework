@@ -63,9 +63,13 @@ Q8_0, 3 reps, temp 0):
 - **An embedded MTP head adds its own draft context on the last device** (a full-context
   KV plus ~1 GiB of compute): budget for it by giving the card fewer layers (see
   section 3).
-- **`split-mode tensor`** needs NCCL (not on Windows, and not linked by the Linux build)
-  or two devices of the same backend for its internal AllReduce; paired with a card of
-  another backend it takes the slow generic path.
+- **`split-mode tensor`** needs NCCL (Linux only, linked when its dist is installed)
+  or two devices of the same backend for its internal AllReduce. Paired with a card of
+  another backend (measured on Linux, llama.cpp v0.6.0) the model aborts while loading
+  unless Server tab, SDK Tuning, Tensor-split AllReduce is `none`; with `none`, on a 27B
+  Q8_0 at ctx 16384 with KV `f16`, 2.7k tokens, against the layer split: prefill 599
+  against 1290 t/s and decode 17.6 against 17.8 without a drafter, prefill 577 against
+  1232 and decode 44.7 against 45.0 with the embedded MTP head.
 
 ## 5. Choices that look better than they measure
 

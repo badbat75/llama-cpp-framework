@@ -258,6 +258,22 @@ fn editable_widgets_track_model_after_edit() {
         "Options.load_modes (ui/components.slint) drifted from server_cfg::LOAD_MODES"
     );
 
+    // And for the AllReduce dropdown: its entries after "default" are exported
+    // verbatim as GGML_CUDA_ALLREDUCE, and `normalize_allreduce` drops a word
+    // the Rust list lacks, so an entry only the combo has would save as unset.
+    let slint_allreduce: Vec<String> = app
+        .global::<crate::gui::Options>()
+        .get_allreduce_modes()
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    assert_eq!(slint_allreduce[0], "default");
+    assert_eq!(
+        slint_allreduce[1..],
+        crate::server_cfg::ALLREDUCE_MODES,
+        "Options.allreduce_modes (ui/components.slint) drifted from server_cfg::ALLREDUCE_MODES"
+    );
+
     // And for the KV-cache dropdowns: `kv_cache::warning` judges the types the
     // combo offers, so a type added to one list and not the other is either
     // unselectable or selectable with no kernel check behind it.

@@ -2,9 +2,8 @@
 //!
 //! Four jobs: (1) the user runtime tree, %LOCALAPPDATA%\llama.cpp\ on Windows
 //! (config\server.ini, config\presets.ini, config\bench-prompt.txt,
-//! logs\llama-server.log) and ~/.local/share/llama.cpp elsewhere, where a
-//! packaged install keeps the config files in /etc/llama.cpp instead
-//! (`config_dir`), overridable
+//! logs\llama-server.log) and ~/.local/share/llama.cpp elsewhere, where the
+//! config files live in ~/.config/llama.cpp instead (`config_dir`), overridable
 //! for tests via LLAMA_CPP_CONFIG_DATA_ROOT; (2) locating llama.cpp's binaries
 //! across the installer and dev layouts (`llama_bin`, with `llama_server_exe` /
 //! `llama_bench_exe` as its two callers; it also strips canonicalize()'s \\?\
@@ -61,23 +60,21 @@ pub fn data_root() -> PathBuf {
     }
 }
 
-/// Where a packaged Linux install keeps the config files: the deb/rpm built by
-/// `03-package.sh` ship this directory (group `llama-cpp`, group-writable).
-#[cfg(not(windows))]
-const SYSTEM_CONFIG_DIR: &str = "/etc/llama.cpp";
-
-/// `<data_root>\config` on Windows. On Linux `/etc/llama.cpp` WHEN IT EXISTS
-/// (a packaged install; one config per machine), else `<data_root>/config` (a
-/// build run from the tree). Only the config files move: logs, bench runs and
-/// saved states stay per-user under `data_root()`. The test override wins over
-/// the system dir, so the e2e tests never touch a real install's config.
+/// `<data_root>\config` on Windows. On Linux `$XDG_CONFIG_HOME/llama.cpp`,
+/// i.e. `~/.config/llama.cpp` unless the variable names another ABSOLUTE path
+/// (the XDG spec says a relative one is to be ignored): per user, as
+/// `%LOCALAPPDATA%` is, and the directory llama.cpp itself reads a
+/// `config.ini` from (`common/arg.cpp`), which is not a name this tool writes.
+/// Only the config files live there: logs, bench runs and saved states stay
+/// under `data_root()`. Under the test override it is `<data_root>/config` on
+/// every OS, so the e2e tests never touch a real config.
 pub fn config_dir() -> PathBuf {
     #[cfg(not(windows))]
     if env_path("LLAMA_CPP_CONFIG_DATA_ROOT").is_none() {
-        let system = PathBuf::from(SYSTEM_CONFIG_DIR);
-        if system.is_dir() {
-            return system;
-        }
+        let base = env_path("XDG_CONFIG_HOME")
+            .filter(|p| p.is_absolute())
+            .unwrap_or_else(|| home_dir().join(".config"));
+        return base.join("llama.cpp");
     }
     data_root().join("config")
 }
@@ -292,6 +289,23 @@ fn strip_extended_prefix(p: PathBuf) -> PathBuf {
         }
     }
     p
+}
+
+/// A Windows path literal as the path of the OS the tests run on: unchanged on
+/// Windows; elsewhere the drive is dropped and `\` becomes `/`
+/// (`C:\m\x.gguf` -> `/m/x.gguf`), because `std::path` only splits on the
+/// host's separator. For the tests that take a file name, a stem or a parent
+/// out of a path: written once, they then hold on both OSes.
+#[cfg(test)]
+pub fn os_path(win: &str) -> String {
+    if cfg!(windows) {
+        return win.to_string();
+    }
+    let rest = match win.as_bytes() {
+        [d, b':', ..] if d.is_ascii_alphabetic() => &win[2..],
+        _ => win,
+    };
+    rest.replace('\\', "/")
 }
 
 #[cfg(test)]

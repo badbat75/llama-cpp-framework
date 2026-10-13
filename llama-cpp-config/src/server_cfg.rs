@@ -188,6 +188,34 @@ pub struct ServerConfig {
     /// faster path everywhere it works, and the runtime finding rests on one
     /// driver (32.0.22042.14002) on one box.
     pub rocblas_use_hipblaslt: Option<bool>,
+    /// Which AllReduce `--split-mode tensor` reduces through, exported as
+    /// `GGML_CUDA_ALLREDUCE`: one of [`ALLREDUCE_MODES`]. None = never export
+    /// the variable, which is the backend's own default: on Linux the
+    /// collective library when one is linked (RCCL in ggml-hip; NCCL in
+    /// ggml-cuda only on a build that found it), then ggml's internal
+    /// AllReduce; elsewhere the internal one. Not a llama-server flag: ggml-cuda
+    /// reads it with `getenv` when a tensor split is set up (`ggml-cuda.cu`
+    /// `ggml_backend_cuda_comm_init`), hence `env_vars`, like the knob above.
+    ///
+    /// ONE name for both backends: ggml-hip is the same source, so it reads
+    /// `GGML_CUDA_ALLREDUCE` too, and a value cannot be given to CUDA and
+    /// another to ROCm. Server-wide for the same reason the env is: it reaches
+    /// every router child. Inert outside the tensor mode.
+    ///
+    /// `none` is not only a slower choice, it is the one value under which a
+    /// split MIXING the two backends loads at all. ggml-cuda and ggml-hip
+    /// declare the same backend guid, so each takes the other's device for one
+    /// of its own, brings its direct AllReduce up over the pair and aborts on
+    /// the first reduction (`ROCm error: invalid argument` in
+    /// `ggml_cuda_ar_allreduce`, measured 2026-10-13 on v0.6.0 with an R9700 +
+    /// an RTX 4070 Super, under the default and under `internal` alike). With
+    /// `none` the meta backend's generic reduction runs instead: on that pair
+    /// prefill 599 t/s against 1290 for the layer split, decode unchanged.
+    ///
+    /// An unknown value is NOT refused by the backend: it warns and behaves as
+    /// `none`, so a typo would silently cost the fast path. Hence the closed
+    /// list here and `normalize_allreduce` on read.
+    pub cuda_allreduce: Option<String>,
     /// Enable the built-in web UI's MCP CORS proxy (--webui-mcp-proxy).
     /// None = the framework default (on): the bundled chat UI needs it to call
     /// MCP tools. Experimental upstream (llama.cpp defaults it OFF); don't enable
@@ -290,6 +318,22 @@ pub const DEFAULT_LOAD_MODE: &str = LOAD_MODES[0];
 pub fn normalize_load_mode(v: &str) -> Option<&'static str> {
     let v = v.trim();
     LOAD_MODES.into_iter().find(|m| m.eq_ignore_ascii_case(v))
+}
+
+/// The values `GGML_CUDA_ALLREDUCE` takes (`ggml_backend_cuda_comm_init`,
+/// ggml-cuda.cu), passed verbatim. Mirrors `Options.allreduce_modes` in
+/// ui/components.slint after its leading "default" (the unset state); the e2e
+/// (`src/tests/ui_bindings.rs`) asserts the two lists agree.
+pub const ALLREDUCE_MODES: [&str; 3] = ["nccl", "internal", "none"];
+
+/// `v` as one of [`ALLREDUCE_MODES`], ignoring case and surrounding space; `None`
+/// for anything else, "default" and a blank included: unset is the only other
+/// state, and the backend would read an unknown word as `none`.
+pub fn normalize_allreduce(v: &str) -> Option<&'static str> {
+    let v = v.trim();
+    ALLREDUCE_MODES
+        .into_iter()
+        .find(|m| m.eq_ignore_ascii_case(v))
 }
 
 /// Default ModelsDir when server.ini leaves it unset. ModelsDir is the *root*
@@ -454,6 +498,10 @@ fn from_keys(keys: &std::collections::BTreeMap<String, String>) -> ServerConfig 
         rocblas_use_hipblaslt: keys
             .get("RocblasUseHipblaslt")
             .and_then(|v| ini::parse_bool(v)),
+        cuda_allreduce: keys
+            .get("CudaAllreduce")
+            .and_then(|v| normalize_allreduce(v))
+            .map(str::to_string),
         webui_mcp_proxy: keys.get("WebuiMcpProxy").and_then(|v| ini::parse_bool(v)),
         fit: keys.get("Fit").and_then(|v| ini::parse_bool(v)),
         prefill_assistant: keys
@@ -662,6 +710,11 @@ fn render(cfg: &ServerConfig) -> String {
         "RocblasUseHipblaslt",
         "; RocblasUseHipblaslt = false  ; rocBLAS GEMM backend (env ROCBLAS_USE_HIPBLASLT): false = Tensile, true = hipBLASLt; commented = rocBLAS decides",
     );
+    let cuda_allreduce_line = str_line_or_hint(
+        cfg.cuda_allreduce.as_deref(),
+        "CudaAllreduce",
+        "; CudaAllreduce = none  ; AllReduce of split-mode tensor (env GGML_CUDA_ALLREDUCE): nccl|internal|none; commented = the backend decides",
+    );
     let opencode_base_url_line = str_line_or_hint(
         cfg.opencode_base_url.as_deref(),
         "OpencodeBaseUrl",
@@ -770,6 +823,14 @@ LogVerbosity = {log_verbosity}
 ; the second 16-bit GEMM of a process there, so every BF16/F16 model aborts on
 ; its first prefill batch (ROCm issue #6461). Inert on CUDA / Vulkan builds.
 {rocblas_hipblaslt_line}
+; CudaAllreduce picks the AllReduce split-mode tensor reduces through (env
+; GGML_CUDA_ALLREDUCE, read by the CUDA and the ROCm backend alike; inert in
+; the other split modes): nccl = the collective library (RCCL on ROCm, NCCL on
+; CUDA where the build links it), internal = ggml's own, staged through pinned
+; host memory, none = the generic reduction. Commented leaves the choice to
+; the backend. Set it to none for a tensor split that MIXES a CUDA and a ROCm
+; device: under any other value that model aborts while loading.
+{cuda_allreduce_line}
 ; SaveStateOnShutdown: dump each loaded model's KV cache to StateDir when the
 ; server stops (--slot-save-path + a /slots save call), and push the newest one
 ; back on the next start. It buys back the one cost VRAM tuning cannot touch:
@@ -865,6 +926,8 @@ mod tests {
             // Non-default (unset is the framework default): the state that
             // matters, and the one a `keep`-style collapse would swallow.
             rocblas_use_hipblaslt: Some(false),
+            // Non-default (unset is the default), like the knob above.
+            cuda_allreduce: Some("none".into()),
             webui_mcp_proxy: Some(false),
             fit: Some(true),
             // Non-default (llama.cpp prefills by default), so the round-trip is
@@ -912,6 +975,7 @@ mod tests {
         // The one bool that stays None: unset means the env var is never
         // exported, so materializing a default would BE a decision.
         assert_eq!(reloaded.rocblas_use_hipblaslt, None);
+        assert_eq!(reloaded.cuda_allreduce, None);
         assert_eq!(reloaded.models_dir, Some(default_models_dir()));
         // Snapshots are off until asked for, and StateDir materializes like
         // ModelsDir: an 8 GiB-per-dump directory has to be visible in the file.
@@ -935,6 +999,31 @@ mod tests {
             };
             assert_eq!(round_trip(&cfg).rocblas_use_hipblaslt, state, "{state:?}");
         }
+    }
+
+    /// `CudaAllreduce` is a closed list: every member round-trips, a hand-edit
+    /// in another case comes back canonical, and a word the backend does not
+    /// know (it would run it as `none` behind a warning) is dropped on read
+    /// rather than kept and exported.
+    #[test]
+    fn cuda_allreduce_round_trips_its_modes_and_drops_unknown_words() {
+        for mode in ALLREDUCE_MODES {
+            let cfg = ServerConfig {
+                cuda_allreduce: Some(mode.into()),
+                ..Default::default()
+            };
+            assert_eq!(round_trip(&cfg).cuda_allreduce.as_deref(), Some(mode));
+        }
+        let read = |v: &str| {
+            from_keys(&std::collections::BTreeMap::from([(
+                "CudaAllreduce".to_string(),
+                v.to_string(),
+            )]))
+            .cuda_allreduce
+        };
+        assert_eq!(read(" Internal ").as_deref(), Some("internal"));
+        assert_eq!(read("default"), None);
+        assert_eq!(read("butterfly"), None);
     }
 
     /// A server.ini written before b10105 carries `Mlock` / `NoMmap` and no

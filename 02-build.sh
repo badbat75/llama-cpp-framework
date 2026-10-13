@@ -242,6 +242,27 @@ else
     CMAKE_ARGS+=(-UCMAKE_BUILD_RPATH)
 fi
 
+# ── NCCL: the newest installed dist, pinned explicitly ─────────────
+# The CUDA counterpart of RCCL above: what `--split-mode tensor` reduces
+# through between two or more CUDA devices. GGML_CUDA_NCCL is ON by upstream
+# default and only needs the library to be FOUND, which ggml's FindNCCL does
+# from two cache paths; both are passed on every configure so they follow the
+# newest dist, and are cleared when there is none, so a dist that was removed
+# cannot leave the build pointing at it (the backend then says "NCCL not
+# found" and uses its internal AllReduce). Like RCCL it is a default:
+# GGML_CUDA_ALLREDUCE picks at run time.
+NCCL_DIR="$(find_nccl)"
+if [[ -n "$NCCL_DIR" ]]; then
+    say_head "NCCL: $NCCL_DIR"
+    CMAKE_ARGS+=(
+        "-DNCCL_INCLUDE_DIR:PATH=$NCCL_DIR/include"
+        "-DNCCL_LIBRARY:FILEPATH=$NCCL_DIR/lib/libnccl.so"
+    )
+else
+    say_dim "NCCL: none under $NCCL_ROOT, split-mode tensor between CUDA cards uses the internal AllReduce"
+    CMAKE_ARGS+=(-UNCCL_INCLUDE_DIR -UNCCL_LIBRARY)
+fi
+
 # ── sccache: use local cache if available ──────────────────────────
 # The fixed path 00-install-prerequisites.sh installs to comes first (it is
 # part of every compile command, so it must not move), PATH second. nvcc is

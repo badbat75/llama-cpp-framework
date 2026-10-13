@@ -508,12 +508,12 @@ mod tests {
     fn friendly_model_name_cases() {
         // Title-cases the filename stem, separators become spaces.
         assert_eq!(
-            friendly_model_name("id", r"C:\m\gemma-4-12b_q6.gguf"),
+            friendly_model_name("id", &crate::paths::os_path(r"C:\m\gemma-4-12b_q6.gguf")),
             "Gemma 4 12b Q6"
         );
         // Caps at 6 words.
         assert_eq!(
-            friendly_model_name("id", r"C:\m\a-b-c-d-e-f-g-h.gguf"),
+            friendly_model_name("id", &crate::paths::os_path(r"C:\m\a-b-c-d-e-f-g-h.gguf")),
             "A B C D E F"
         );
         // No usable stem falls back to the preset id.

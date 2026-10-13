@@ -439,8 +439,7 @@ pub(super) fn run(app: &AppWindow) {
     // `tensor` is a ratio too (weights and KV are cut along a tensor axis by
     // the same vector), so the block cut retires there as well, the combo
     // lands on its own entry rather than collapsing onto layer as it did while
-    // the mode was not offered, and with two GPUs checked, flash attention
-    // untouched and a supported arch the mode strip stays quiet.
+    // the mode was not offered.
     st.invoke_preset_split_mode_picked("tensor".into());
     assert_eq!(st.get_form().split_mode.as_str(), "tensor");
     assert_eq!(st.get_preset_gpu_mode().as_str(), "tensor");
@@ -450,6 +449,21 @@ pub(super) fn run(app: &AppWindow) {
         0,
         "tensor mode has no block cut"
     );
+    // The two checked GPUs are a ROCm and a CUDA device, the pair that aborts
+    // at load under every AllReduce but `none`: the strip says so until the
+    // Server tab's SDK Tuning knob is on `none`, and with that set, flash
+    // attention untouched and a supported arch it stays quiet.
+    assert!(
+        st.get_preset_split_mode_warning()
+            .as_str()
+            .contains("Tensor-split AllReduce"),
+        "tensor across CUDA + ROCm must point at the AllReduce knob"
+    );
+    {
+        let mut f = st.get_server_form();
+        f.cuda_allreduce = "none".into();
+        st.set_server_form(f);
+    }
     assert_eq!(st.get_preset_split_mode_warning().as_str(), "");
     // ...and speaks up on the one precondition the form itself can break:
     // flash attention off is a load failure under tensor mode. Computed in

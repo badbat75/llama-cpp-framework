@@ -192,6 +192,12 @@ pub struct ServerSet {
     /// unset. A tri-state word rather than a bool, so `default` can clear it back.
     #[arg(long, value_parser = clap::builder::PossibleValuesParser::new(["default", "on", "off"]))]
     pub rocblas_use_hipblaslt: Option<String>,
+    /// AllReduce of split-mode tensor (env GGML_CUDA_ALLREDUCE, CUDA and ROCm
+    /// alike): nccl = the collective library, internal = ggml's own, none = the
+    /// generic reduction (the one a split mixing CUDA and ROCm loads under),
+    /// default = leave the variable unset.
+    #[arg(long, value_parser = clap::builder::PossibleValuesParser::new(["default", "nccl", "internal", "none"]))]
+    pub cuda_allreduce: Option<String>,
     /// Enable the web UI's MCP CORS proxy (--webui-mcp-proxy). true = on.
     #[arg(long)]
     pub webui_mcp_proxy: Option<bool>,
@@ -280,6 +286,10 @@ impl ServerSet {
         // clap's PossibleValuesParser already refused anything else.
         if let Some(hb) = &self.rocblas_use_hipblaslt {
             cfg.rocblas_use_hipblaslt = crate::form::tri_bool(hb);
+        }
+        // Same clearing rule: `default` normalizes to None, the unset state.
+        if let Some(ar) = &self.cuda_allreduce {
+            cfg.cuda_allreduce = server_cfg::normalize_allreduce(ar).map(str::to_string);
         }
         if let Some(w) = self.webui_mcp_proxy {
             cfg.webui_mcp_proxy = Some(w);
@@ -500,6 +510,12 @@ fn show_lines(cfg: &server_cfg::ServerConfig) -> String {
                 }
             },
         ),
+    );
+    row(
+        "CudaAllreduce:",
+        cfg.cuda_allreduce
+            .clone()
+            .unwrap_or_else(|| "default (the backend decides)".into()),
     );
     row(
         "WebuiMcpProxy:",
@@ -812,6 +828,7 @@ mod tests {
             // The tri-state arrives as its WORD (clap refuses anything else) and
             // must land as the matching Option<bool>.
             rocblas_use_hipblaslt: Some("off".into()),
+            cuda_allreduce: Some("none".into()),
             webui_mcp_proxy: Some(false),
             fit: Some(true),
             prefill_assistant: Some(false),
@@ -842,6 +859,7 @@ mod tests {
             override_tensor: Some(r"token_embd\.weight=ROCm1".into()),
             mmproj_device: Some("ROCm1".into()),
             rocblas_use_hipblaslt: Some(false),
+            cuda_allreduce: Some("none".into()),
             webui_mcp_proxy: Some(false),
             fit: Some(true),
             prefill_assistant: Some(false),
@@ -874,6 +892,7 @@ mod tests {
             override_tensor: Some(r"token_embd\.weight=ROCm1".into()),
             mmproj_device: Some("ROCm1".into()),
             rocblas_use_hipblaslt: Some(false),
+            cuda_allreduce: Some("none".into()),
             webui_mcp_proxy: Some(false),
             fit: Some(true),
             prefill_assistant: Some(false),
@@ -903,6 +922,7 @@ mod tests {
             override_tensor,
             mmproj_device,
             rocblas_use_hipblaslt,
+            cuda_allreduce,
             webui_mcp_proxy,
             fit,
             prefill_assistant,
@@ -936,6 +956,7 @@ mod tests {
                     "off".to_string()
                 },
             ),
+            ("CudaAllreduce:", cuda_allreduce.unwrap()),
             ("WebuiMcpProxy:", webui_mcp_proxy.unwrap().to_string()),
             ("Fit:", fit.unwrap().to_string()),
             ("PrefillAssistant:", prefill_assistant.unwrap().to_string()),

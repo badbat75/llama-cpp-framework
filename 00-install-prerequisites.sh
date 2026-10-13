@@ -6,7 +6,8 @@
 #     the one leg that needs root, through sudo, and only when one is missing.
 #   - sccache from its GitHub release into ~/.local/bin.
 #   - Rust through rustup, when missing (for llama-cpp-config).
-#   - the newest STABLE ROCm/TheRock dist, CUDA Toolkit and Vulkan SDK, each
+#   - the newest STABLE ROCm/TheRock dist, CUDA Toolkit, NCCL (optional, the
+#     one matching that toolkit's CUDA major) and Vulkan SDK, each
 #     into <Root>/<Version>/linux (installer/dist-sources.sh says where each
 #     is looked up and installed; nothing is pinned). User scope, no root: the
 #     roots must be writable by the current user.
@@ -20,7 +21,7 @@
 # the one 01-configure.sh recorded, else the default in dist-sources.sh.
 #
 # Usage: ./00-install-prerequisites.sh [--dist-root <path>]
-#                                      [--skip apt,sccache,rust,rocm,cuda,vulkan]
+#                                      [--skip apt,sccache,rust,rocm,cuda,nccl,vulkan]
 
 . "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/common.sh"
 
@@ -306,6 +307,68 @@ else
     say ''
 fi
 
+# ── NCCL (PyPI wheel) ───────────────────────────────────────────────
+# After the CUDA leg on purpose: the wheel is chosen by the CUDA major of the
+# toolkit that is installed NOW. A dist built for another major (its marker
+# says which) does not count as installed.
+if skipped nccl; then
+    note 'NCCL           : skipped'
+else
+    say_head '  NCCL'
+    cuda_dir="$(find_cuda)"
+    if [[ -z "$cuda_dir" ]]; then
+        note 'NCCL           : no CUDA Toolkit to match, nothing done'
+    else
+        cuda_major="$(dist_version "$cuda_dir")"; cuda_major="${cuda_major%%.*}"
+        have_dir="$(find_nccl)"; have=''
+        if [[ -n "$have_dir" ]] && grep -q " cu$cuda_major\$" "$have_dir/$NCCL_MARKER"; then
+            have="$(dist_version "$have_dir")"
+        fi
+        # shellcheck disable=SC2059
+        meta="$(fetch "$(printf "$NCCL_PYPI_JSON" "$cuda_major")" 2>/dev/null)" || meta=''
+        latest="$(jq -r '.info.version // empty' <<<"$meta" 2>/dev/null)" || latest=''
+        wheel="$(jq -r --arg p "$NCCL_WHEEL_PLATFORM" \
+                 '[.urls[] | select(.packagetype == "bdist_wheel" and (.filename | endswith("_" + $p + ".whl")))][0]
+                  | "\(.url) \(.digests.sha256)"' <<<"$meta" 2>/dev/null)" || wheel=''
+        if [[ ! "$latest" =~ ^[0-9]+(\.[0-9]+)+$ || "$wheel" != http* ]]; then
+            note "NCCL           : ${have:-not installed} (PyPI unreachable or no cu$cuda_major wheel, kept)"
+        elif [[ -n "$have" ]] && ! version_gt "$latest" "$have"; then
+            say_ok "    $have is current ($have_dir)"
+            note "NCCL           : $have (current)"
+        else
+            dest="$NCCL_ROOT/$latest/$DIST_OS"
+            url="${wheel%% *}"; sha="${wheel##* }"
+            whl="$NCCL_ROOT/.downloads/$(basename "$url")"
+            tmp="$NCCL_ROOT/.downloads/unpack-$latest"
+            say "    ${have:-none} -> $latest (cu$cuda_major), into $dest"
+            ok=0
+            # The wheel keeps everything under nvidia/nccl/{lib,include}; only
+            # that subtree is a dist. libnccl.so is the name the linker asks
+            # for and the wheel does not carry: aliased to the soname.
+            if need_space "$NCCL_ROOT" 2 && download "$url" "$whl" "$sha" &&
+               rm -rf "$tmp" "$dest" && mkdir -p "$tmp" "$dest" &&
+               unzip -q "$whl" -d "$tmp" && [[ -f "$tmp/nvidia/nccl/lib/libnccl.so.2" ]] &&
+               mv "$tmp/nvidia/nccl/lib" "$tmp/nvidia/nccl/include" "$dest/" &&
+               ln -sfn libnccl.so.2 "$dest/lib/libnccl.so" &&
+               printf '%s cu%s\n' "$latest" "$cuda_major" > "$dest/$NCCL_MARKER" &&
+               [[ "$(find_nccl)" == "$dest" ]]; then
+                ok=1
+            fi
+            rm -rf "$tmp"
+            if (( ok )); then
+                rm -f "$whl"
+                say_ok "    installed $latest"
+                note "NCCL           : ${have:-none} -> $latest (re-run 02-build.sh)"
+            else
+                # Not a gap: the build goes on without it, and tensor mode
+                # between CUDA cards falls back to the internal AllReduce.
+                note "NCCL           : install of $latest FAILED, ${have:-nothing} kept (optional)"
+            fi
+        fi
+    fi
+    say ''
+fi
+
 # ── Vulkan SDK ──────────────────────────────────────────────────────
 if skipped vulkan; then
     note 'Vulkan SDK     : skipped'
@@ -376,7 +439,7 @@ say_head '  ------'
 for line in "${REPORT[@]}"; do say "  $line"; done
 # Inactive dists are listed, never deleted: a working rollback is the user's
 # to keep or remove.
-for root in "$ROCM_ROOT" "$CUDA_ROOT" "$VULKAN_ROOT"; do
+for root in "$ROCM_ROOT" "$CUDA_ROOT" "$NCCL_ROOT" "$VULKAN_ROOT"; do
     [[ -d "$root" ]] || continue
     n="$(find "$root" -mindepth 2 -maxdepth 2 -type d -name "$DIST_OS" | wc -l)"
     (( n > 1 )) && say_dim "  $root holds $n $DIST_OS dists; older ones are kept until you delete them"

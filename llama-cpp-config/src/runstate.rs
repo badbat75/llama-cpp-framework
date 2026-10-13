@@ -301,6 +301,17 @@ pub fn env_vars(cfg: &crate::server_cfg::ServerConfig) -> Vec<(String, String)> 
             if on { "1" } else { "0" }.into(),
         ));
     }
+    // GGML_CUDA_ALLREDUCE: the AllReduce of `--split-mode tensor`, read by
+    // ggml-cuda and ggml-hip alike (one source, one name). Normalized here as
+    // well as on read: the backend runs an unknown word as `none` behind a
+    // warning (see server_cfg::cuda_allreduce). Unset exports nothing.
+    if let Some(mode) = cfg
+        .cuda_allreduce
+        .as_deref()
+        .and_then(crate::server_cfg::normalize_allreduce)
+    {
+        env.push(("GGML_CUDA_ALLREDUCE".into(), mode.into()));
+    }
     env
 }
 
@@ -1002,6 +1013,7 @@ mod tests {
             override_tensor: Some(r"token_embd\.weight=ROCm1,^output\.weight=CPU".into()),
             mmproj_device: Some("ROCm1".into()),
             rocblas_use_hipblaslt: Some(false),
+            cuda_allreduce: Some("none".into()),
             webui_mcp_proxy: Some(false),
             fit: Some(true),
             // The NEGATIVE presence flag: Some(false) is the state that emits one.
@@ -1035,6 +1047,10 @@ mod tests {
             // Also not a llama-server flag: rocBLAS reads it itself, below
             // llama.cpp. Its own assertions live in the env test further down.
             rocblas_use_hipblaslt: _,
+            // launch env only: `env_vars` exports it as GGML_CUDA_ALLREDUCE,
+            // which ggml-cuda / ggml-hip read themselves. Asserted in the env
+            // test further down.
+            cuda_allreduce: _,
             webui_mcp_proxy,
             fit,
             prefill_assistant,
@@ -1245,6 +1261,25 @@ mod tests {
     // workaround is exactly what the tri-state exists to avoid), and it reaches
     // the pasteable command line; a block that dropped it would run the backend
     // this setting exists to steer away from.
+    // The AllReduce choice rides the env verbatim, an unset one exports
+    // nothing, and a word the backend does not know is not exported either (it
+    // would be run as `none`).
+    #[test]
+    fn cuda_allreduce_rides_the_env_and_unset_exports_nothing() {
+        let with = |v: Option<&str>| ServerConfig {
+            cuda_allreduce: v.map(str::to_string),
+            ..Default::default()
+        };
+        for mode in crate::server_cfg::ALLREDUCE_MODES {
+            assert_eq!(
+                env_vars(&with(Some(mode))),
+                [("GGML_CUDA_ALLREDUCE".to_string(), mode.to_string())]
+            );
+        }
+        assert!(env_vars(&with(None)).is_empty());
+        assert!(env_vars(&with(Some("butterfly"))).is_empty());
+    }
+
     #[test]
     fn rocblas_hipblaslt_rides_the_env_as_zero_or_one() {
         let with = |v: Option<bool>| ServerConfig {

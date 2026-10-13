@@ -87,6 +87,7 @@ newest_dist() {
 # 00-install-prerequisites.sh applies before calling a version installed.
 find_rocm()   { newest_dist "$ROCM_ROOT" "$ROCM_MARKER" lib/llvm/bin/clang++ lib/cmake/hip/hip-config.cmake; }
 find_cuda()   { newest_dist "$CUDA_ROOT" "$CUDA_MARKER" bin/nvcc lib64/libcudart.so lib64/libcublas.so; }
+find_nccl()   { newest_dist "$NCCL_ROOT" "$NCCL_MARKER" lib/libnccl.so include/nccl.h; }
 # Prints the SDK proper (the x86_64 dir), which is what VULKAN_SDK names.
 find_vulkan() {
     local d

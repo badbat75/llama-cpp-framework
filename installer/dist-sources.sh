@@ -61,6 +61,20 @@ CUDA_COMPONENTS=(
     cuda_nvprune cuda_nvml_dev
 )
 
+# NVIDIA NCCL, the collective library `--split-mode tensor` reduces through
+# between two or more CUDA devices (Linux only: there is no NCCL for Windows).
+# NVIDIA keeps it OUT of the toolkit redist above and publishes no archive
+# index for it; the forms it ships in are an apt repo per distro release and
+# the PyPI wheel, and the wheel is the one that needs no root and no distro
+# match: a zip holding libnccl.so.2 and the headers, with its version and
+# sha256 in PyPI's JSON API. The project is named after the CUDA MAJOR it is
+# built for (nvidia-nccl-cu13), so NCCL_PYPI_JSON takes that major, read from
+# the installed toolkit. Unpacked to <Root>/<X.Y.Z>/linux/{lib,include}.
+NCCL_ROOT="$DIST_ROOT/NCCL"
+NCCL_MARKER='.nccl-version'         # "<X.Y.Z> cu<major>", written last
+NCCL_PYPI_JSON='https://pypi.org/pypi/nvidia-nccl-cu%s/json'
+NCCL_WHEEL_PLATFORM='x86_64'
+
 # LunarG Vulkan SDK. VULKAN_LATEST_URL answers the newest Linux SDK version as
 # plain text, VULKAN_FILES_JSON carries its sha256. The tarball unpacks as
 # <version>/x86_64/{bin,include,lib,share}; its top directory is stripped, so

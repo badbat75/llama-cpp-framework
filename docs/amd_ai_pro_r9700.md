@@ -63,8 +63,14 @@ llama.cpp v0.5.0. Section 7 holds what was measured again on Linux, with llama.c
   ~3 GB/s link that costs ~200 ms per 512-token ubatch, which cancels the prefill gain. It
   only has a fast path between two devices of the same backend. The Linux build links
   RCCL, which replaces that AllReduce when every device of the split is a ROCm one
-  (`GGML_CUDA_ALLREDUCE=internal` in the server's environment switches back): not yet
+  (Server tab, SDK Tuning, Tensor-split AllReduce `internal` switches back): not yet
   measured (section 8).
+- **`split-mode tensor` with a card of the other backend** (measured on Linux, llama.cpp
+  v0.6.0): the model aborts while loading unless Tensor-split AllReduce is `none`. With
+  `none`, on a 27B Q8_0 at ctx 16384 with KV `f16` and a 3:1 ratio, 2.7k tokens, against
+  the layer split: prefill 599 against 1290 t/s and decode 17.6 against 17.8 without a
+  drafter, prefill 577 against 1232 and decode 44.7 against 45.0 with the embedded MTP
+  head.
 
 ## 5. Choices that look better than they measure
 

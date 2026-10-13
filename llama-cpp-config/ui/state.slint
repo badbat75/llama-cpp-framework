@@ -172,14 +172,22 @@ export global AppState {
     // device pinned in EITHER scope llama.cpp pools EVERY detected device into
     // the meta device, the duplicate Vulkan views of a card and the iGPU
     // included (`llama_prepare_model_devices` dedups by device id only in the
-    // other modes). First wins: each one alone spoils the launch.
+    // other modes). Last, a split mixing CUDA and ROCm devices, which aborts at
+    // load under every AllReduce but `none` (server_cfg.rs `cuda_allreduce`).
+    // First wins: each one alone spoils the launch.
     out property <string> preset_split_mode_warning: preset_gpu_mode != "tensor" ? ""
         : model_info_tensor_arch_warning != "" ? model_info_tensor_arch_warning
         : form.flash_attn == "off"
         ? "Split mode tensor requires flash attention: with Flash attention off, llama.cpp refuses to create the context and the model does not load. Set it to on or default."
         : (form.device == "" && server_form.device == "")
         ? "Split mode tensor with no GPU checked here or on the Server tab: llama.cpp then pools EVERY detected device into the split, duplicate Vulkan views of the same card and the iGPU included. Check the GPUs to run on."
+        : (preset_mixes_cuda_rocm && server_form.cuda_allreduce != "none")
+        ? "Split mode tensor across a CUDA and a ROCm device: the model aborts while loading unless Server tab > SDK Tuning > Tensor-split AllReduce is set to none. Even then, expect about half the prefill speed of the layer split."
         : "";
+    // Whether the EFFECTIVE device list (the Server tab's when set, else this
+    // preset's) names both a CUDA and a ROCm device: gpu_split::mixes_cuda_and_rocm,
+    // pushed by refresh_gpu_rows. Slint has no substring test to derive it here.
+    in-out property <bool> preset_mixes_cuda_rocm;
 
     // Per-preset tensor-placement table (TensorOverrideTable), over the single
     // `form.override_tensor` string. Rows and BOTH dropdown models are built in

@@ -144,11 +144,20 @@ pub fn config_to_form(cfg: &server_cfg::ServerConfig) -> ServerForm {
         // string; no second copy of the rules exists (see src/tensor_override.rs).
         override_tensor: cfg.override_tensor.clone().unwrap_or_default().into(),
         mmproj_device: cfg.mmproj_device.clone().unwrap_or_default().into(),
-        // The SDK Tuning card's one knob: a TRI-state over the same
-        // SegmentedControl (and the same helper pair) as the preset tab's
-        // flash-attn, because "never export ROCBLAS_USE_HIPBLASLT" is a third
-        // instruction and the framework's default.
+        // The SDK Tuning card's ROCm knob: a TRI-state through the same helper
+        // pair as the preset tab's flash-attn, because "never export
+        // ROCBLAS_USE_HIPBLASLT" is a third instruction and the framework's
+        // default. Shown as a dropdown (Options.tri_states).
         rocblas_use_hipblaslt: crate::form::tri_state(cfg.rocblas_use_hipblaslt),
+        // "default" is the dropdown's entry for "never export
+        // GGML_CUDA_ALLREDUCE"; it two-way-binds to this, so the sentinel is
+        // stored rather than "".
+        cuda_allreduce: cfg
+            .cuda_allreduce
+            .as_deref()
+            .and_then(server_cfg::normalize_allreduce)
+            .unwrap_or("default")
+            .into(),
         // Plain bool toggles (framework defaults materialized when unset), same
         // shape as `mlock`.
         webui_mcp_proxy: cfg.webui_mcp_proxy_or_default(),
@@ -248,6 +257,10 @@ pub fn form_to_config(f: &ServerForm) -> server_cfg::ServerConfig {
         // explicit `ROCBLAS_USE_HIPBLASLT=0`, i.e. into the Tensile workaround
         // for everyone who never asked for it.
         rocblas_use_hipblaslt: crate::form::tri_bool(f.rocblas_use_hipblaslt.as_str()),
+        // "default" (and anything that is not a mode) is None: exporting an
+        // unknown word would run every tensor split as `none`.
+        cuda_allreduce: server_cfg::normalize_allreduce(f.cuda_allreduce.as_str())
+            .map(str::to_string),
         webui_mcp_proxy: Some(f.webui_mcp_proxy),
         fit: Some(f.fit),
         prefill_assistant: Some(f.prefill_assistant),
@@ -307,6 +320,7 @@ mod tests {
             // Non-default (None is the framework default), so the tri-state's
             // round-trip through the form's string spelling isn't vacuous.
             rocblas_use_hipblaslt: Some(false),
+            cuda_allreduce: Some("none".into()),
             webui_mcp_proxy: Some(false),
             fit: Some(true),
             // Non-default, so the round-trip is not vacuous for it.
@@ -439,6 +453,23 @@ mod tests {
             });
             assert_eq!(form.rocblas_use_hipblaslt.as_str(), word, "{state:?}");
             assert_eq!(form_to_config(&form).rocblas_use_hipblaslt, state, "{word}");
+        }
+    }
+
+    /// The AllReduce dropdown, every entry in both directions. "default" must
+    /// come back as `None`: the difference is whether `GGML_CUDA_ALLREDUCE`
+    /// reaches the child at all.
+    #[test]
+    fn cuda_allreduce_round_trips_with_default_as_unset() {
+        let states = [None, Some("nccl"), Some("internal"), Some("none")];
+        for state in states {
+            let form = config_to_form(&ServerConfig {
+                cuda_allreduce: state.map(str::to_string),
+                models_dir: Some(r"E:\models".into()),
+                ..Default::default()
+            });
+            assert_eq!(form.cuda_allreduce.as_str(), state.unwrap_or("default"));
+            assert_eq!(form_to_config(&form).cuda_allreduce.as_deref(), state);
         }
     }
 

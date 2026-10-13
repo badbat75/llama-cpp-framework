@@ -1621,11 +1621,13 @@ mod tests {
     #[test]
     fn make_id_sanitizes_stems() {
         assert_eq!(
-            make_id(r"C:\llm\models\Qwen 3 (v2)-00001-of-00003.gguf"),
+            make_id(&crate::paths::os_path(
+                r"C:\llm\models\Qwen 3 (v2)-00001-of-00003.gguf"
+            )),
             "Qwen_3_v2"
         );
         assert_eq!(
-            make_id(r"C:\m\gemma-3-12b-it-Q6_K.gguf"),
+            make_id(&crate::paths::os_path(r"C:\m\gemma-3-12b-it-Q6_K.gguf")),
             "gemma-3-12b-it-Q6_K"
         );
         assert_eq!(make_id("weird  ~~name~~ .gguf"), "weird_name");
@@ -1637,16 +1639,16 @@ mod tests {
     #[test]
     fn infer_models_dir_prefers_models_grandparent() {
         assert_eq!(
-            infer_models_dir(r"E:\llm\models\m.gguf").as_deref(),
-            Some(r"E:\llm")
+            infer_models_dir(&crate::paths::os_path(r"E:\llm\models\m.gguf")),
+            Some(crate::paths::os_path(r"E:\llm"))
         );
         assert_eq!(
-            infer_models_dir(r"E:\llm\MODELS\m.gguf").as_deref(),
-            Some(r"E:\llm")
+            infer_models_dir(&crate::paths::os_path(r"E:\llm\MODELS\m.gguf")),
+            Some(crate::paths::os_path(r"E:\llm"))
         );
         assert_eq!(
-            infer_models_dir(r"E:\other\m.gguf").as_deref(),
-            Some(r"E:\other")
+            infer_models_dir(&crate::paths::os_path(r"E:\other\m.gguf")),
+            Some(crate::paths::os_path(r"E:\other"))
         );
     }
 

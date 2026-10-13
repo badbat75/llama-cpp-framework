@@ -16,10 +16,11 @@
 #                         Vulkan loader. Self-contained: nothing else has to
 #                         be installed but the GPU drivers.
 #   /usr/bin/             a symlink per executable into /opt/llama.cpp/bin
-#   /etc/llama.cpp/       the config files (server.ini, presets.ini,
-#                         presets.ini.disabled, settings.ini, the bench
-#                         prompts), written by llama-cpp-config on first use
 #   /usr/share/           the desktop entry, its icon, the licence
+#
+# The config files (server.ini, presets.ini, presets.ini.disabled, settings.ini,
+# the bench prompts) are NOT in the package: llama-cpp-config writes them per
+# user, in ~/.config/llama.cpp, on first use.
 #
 # Usage: ./03-package.sh [--deb] [--rpm] [--keep-staging]
 #   --deb / --rpm    build only that format (default: both)
@@ -42,11 +43,9 @@ if (( ! WANT_DEB && ! WANT_RPM )); then WANT_DEB=1; WANT_RPM=1; fi
 load_build_config
 
 PKG_NAME='llama-cpp-framework'
-PKG_GROUP='llama-cpp'           # owns /etc/llama.cpp, see the scriptlets below
 OPT_DIR='opt/llama.cpp'         # relative to the package root
 BIN_DIR="$OPT_DIR/bin"          # llama.cpp + llama-cpp-config
 RT_DIR="$OPT_DIR/lib"           # the bundled GPU runtimes
-ETC_DIR='etc/llama.cpp'
 
 BUILD_DIR="$BUILD_ROOT/llama.cpp-cmake"
 STAGE_DIR="$BUILD_ROOT/staging"
@@ -101,7 +100,7 @@ fi
 
 # ── Stage ───────────────────────────────────────────────────────────
 rm -rf "$STAGE_DIR" "$PKG_WORK"
-mkdir -p "$STAGE_DIR/$BIN_DIR" "$STAGE_DIR/$RT_DIR" "$STAGE_DIR/usr/bin" "$STAGE_DIR/$ETC_DIR" "$PKG_WORK" "$OUT_DIR"
+mkdir -p "$STAGE_DIR/$BIN_DIR" "$STAGE_DIR/$RT_DIR" "$STAGE_DIR/usr/bin" "$PKG_WORK" "$OUT_DIR"
 
 say_head 'Staging binaries...'
 # Straight from the build's bin/, where 02-build.sh leaves executables,
@@ -135,9 +134,10 @@ is_elf() { [[ -f "$1" && ! -L "$1" && "$(head -c4 "$1" | od -An -c | tr -d ' ')"
 # mirrors the dist needs no patching of anything AMD shipped. That is also
 # where the compiler's own runtime comes from: the CPU backends are built with
 # the dist's clang and link ITS OpenMP runtime (lib/llvm/lib/libomp.so).
-# CUDA and Vulkan libraries have no such structure and go flat into lib/.
+# CUDA, NCCL and Vulkan libraries have no such structure and go flat into lib/.
 HIP_ROOT="${CFG_HIP_PATH:-}"
 CUDA_DIR="$(find_cuda)"
+NCCL_DIR="$(find_nccl)"
 VULKAN_DIR="$(find_vulkan)"
 VULKAN_LIB_DIR=''
 if [[ -n "$VULKAN_DIR" ]]; then VULKAN_LIB_DIR="$(dirname "$(readlink -f "$(vulkan_loader "$VULKAN_DIR")")")"; fi
@@ -150,6 +150,7 @@ while read -r soname path; do
         rel="${path#"$HIP_ROOT"/lib/}"
         dest="$STAGE_DIR/$RT_DIR/$(dirname "$rel")/$soname"
     elif [[ ( -n "$CUDA_DIR" && "$real" == "$(readlink -f "$CUDA_DIR")"/* ) ||
+            ( -n "$NCCL_DIR" && "$real" == "$(readlink -f "$NCCL_DIR")"/* ) ||
             ( -n "$VULKAN_LIB_DIR" && "$real" == "$VULKAN_LIB_DIR"/* ) ]]; then
         dest="$STAGE_DIR/$RT_DIR/$soname"
     else
@@ -300,28 +301,8 @@ find "$STAGE_DIR/$RT_DIR" "$STAGE_DIR/$OPT_DIR/.kpack" -type f -name '*.so*' -ex
 find "$STAGE_DIR/$RT_DIR" "$STAGE_DIR/$OPT_DIR/.kpack" -type f ! -name '*.so*' -exec chmod 644 {} + 2>/dev/null || true
 find "$STAGE_DIR/usr/share" -type f -exec chmod 644 {} +
 
-# ── Maintainer scripts ──────────────────────────────────────────────
-# /etc/llama.cpp is edited by llama-cpp-config, which runs as the desktop
-# user, not as root. So the directory belongs to a system group and is
-# group-writable + setgid (files created in it inherit the group), and the
-# user who installs the package is added to that group. Membership takes
-# effect at the next login; other users are added with
-#   sudo usermod -aG llama-cpp <user>
-# The same script serves both formats: neither depends on its arguments.
-POST_SCRIPT="$(cat <<EOF
-getent group $PKG_GROUP >/dev/null || groupadd --system $PKG_GROUP
-chgrp $PKG_GROUP /$ETC_DIR
-chmod 2775 /$ETC_DIR
-user="\${SUDO_USER:-}"
-if [ -z "\$user" ] && [ -n "\${PKEXEC_UID:-}" ]; then
-    user="\$(getent passwd "\$PKEXEC_UID" | cut -d: -f1)"
-fi
-if [ -n "\$user" ] && [ "\$user" != root ] && ! id -nG "\$user" | tr ' ' '\n' | grep -qx $PKG_GROUP; then
-    usermod -aG $PKG_GROUP "\$user"
-    echo "$PKG_NAME: added \$user to the $PKG_GROUP group (owner of /$ETC_DIR); log out and back in for it to take effect."
-fi
-EOF
-)"
+# No maintainer scripts: the package ships no config directory,
+# llama-cpp-config writes ~/.config/llama.cpp as whoever runs it.
 
 DESCRIPTION_SHORT='llama.cpp with CUDA, Vulkan and ROCm backends, plus its configurator'
 HOMEPAGE="$(git -C "$REPO_ROOT" remote get-url origin 2>/dev/null | sed -E 's/\.git$//' || true)"
@@ -386,24 +367,12 @@ ${HOMEPAGE:+Homepage: $HOMEPAGE
 }Description: $DESCRIPTION_SHORT
  llama.cpp $LLAMA_BUILD built with the CUDA, Vulkan and ROCm (HIP) backends,
  and llama-cpp-config, the GUI + CLI configurator for server.ini and the
- per-model presets.ini (kept in /etc/llama.cpp).
+ per-model presets.ini (kept per user, in ~/.config/llama.cpp).
  .
  The ROCm, CUDA and Vulkan runtime libraries are bundled in /opt/llama.cpp/lib:
  only the GPU drivers have to be installed. A backend whose GPU or driver is
  missing is skipped when llama-server starts.
 EOF
-    printf '#!/bin/sh\nset -e\n%s\n' "$POST_SCRIPT" > "$DEB_ROOT/DEBIAN/postinst"
-    # purge removes the config files llama-cpp-config wrote: dpkg does not
-    # know them (they are not shipped), so nothing else would. A plain remove
-    # keeps them, which is what survives an upgrade or a reinstall.
-    cat > "$DEB_ROOT/DEBIAN/postrm" <<EOF
-#!/bin/sh
-set -e
-if [ "\$1" = purge ]; then
-    rm -rf /$ETC_DIR
-fi
-EOF
-    chmod 755 "$DEB_ROOT/DEBIAN/postinst" "$DEB_ROOT/DEBIAN/postrm"
     # zstd: the tree is several GiB of GPU kernels and xz would take many minutes.
     dpkg-deb --root-owner-group -Zzstd --build "$DEB_ROOT" "$DEB_FILE" >/dev/null
     rm -rf "$DEB_ROOT"
@@ -425,8 +394,7 @@ Release:        1
 Summary:        $DESCRIPTION_SHORT
 License:        MIT (bundled llama.cpp)
 ${HOMEPAGE:+URL:            $HOMEPAGE
-}Requires(post): shadow-utils
-Conflicts:      llama-cpp
+}Conflicts:      llama-cpp
 
 # The staged files are final: no stripping, no debuginfo, no build-id links,
 # no brp post-processing of a tree this script already prepared.
@@ -441,7 +409,7 @@ Conflicts:      llama-cpp
 %description
 llama.cpp $LLAMA_BUILD built with the CUDA, Vulkan and ROCm (HIP) backends,
 and llama-cpp-config, the GUI + CLI configurator for server.ini and the
-per-model presets.ini (kept in /etc/llama.cpp).
+per-model presets.ini (kept per user, in ~/.config/llama.cpp).
 
 The ROCm, CUDA and Vulkan runtime libraries are bundled in /opt/llama.cpp/lib:
 only the GPU drivers have to be installed. A backend whose GPU or driver is
@@ -450,9 +418,6 @@ missing is skipped when llama-server starts.
 %install
 cp -a "$STAGE_DIR/." "%{buildroot}/"
 
-%post
-$POST_SCRIPT
-
 %files
 %defattr(-,root,root,-)
 /$OPT_DIR
@@ -460,7 +425,6 @@ $POST_SCRIPT
 /usr/share/applications/llama-cpp-config.desktop
 /usr/share/icons/hicolor/*/apps/llama-cpp-config.png
 /usr/share/doc/$PKG_NAME
-%dir /$ETC_DIR
 EOF
     [[ -n "$icon_png" ]] || sed -i '\|/usr/share/icons/|d' "$spec"
     rpmbuild -bb --quiet --target "$RPM_ARCH" \

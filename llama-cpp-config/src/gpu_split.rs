@@ -239,6 +239,18 @@ pub fn parse_device_list(s: &str) -> Vec<String> {
         .collect()
 }
 
+/// Whether a `device` list names both a CUDA and a ROCm device. Under split
+/// mode `tensor` that pair does not load unless `GGML_CUDA_ALLREDUCE=none`:
+/// ggml-cuda and ggml-hip share one backend guid, so each brings its direct
+/// AllReduce up over the other's device and aborts on the first reduction
+/// (`server_cfg::cuda_allreduce` has the measurement). Vulkan devices are not
+/// part of it: they never pass either backend's check.
+pub fn mixes_cuda_and_rocm(device_list: &str) -> bool {
+    let devs = parse_device_list(device_list);
+    let has = |prefix: &str| devs.iter().any(|d| d.starts_with(prefix));
+    has("CUDA") && has("ROCm")
+}
+
 /// `"3,1"` → `[3, 1]`. A part that isn't a non-negative integer reads as 0 (the
 /// same thing llama.cpp's own `std::stof` fallback would end up with), so a
 /// malformed hand-edit degrades to "auto" rather than being rejected.
@@ -673,6 +685,15 @@ fn share(count: usize, weight: i32, total: i32) -> String {
 mod tests {
     use super::*;
     use crate::devices;
+
+    #[test]
+    fn a_cuda_and_a_rocm_device_in_one_list_is_a_mixed_split() {
+        assert!(mixes_cuda_and_rocm("ROCm0,CUDA0"));
+        assert!(mixes_cuda_and_rocm("CUDA0, Vulkan1, ROCm1"));
+        assert!(!mixes_cuda_and_rocm("ROCm0,ROCm1"));
+        assert!(!mixes_cuda_and_rocm("CUDA0,Vulkan2"));
+        assert!(!mixes_cuda_and_rocm(""));
+    }
 
     // A real mixed box, trimmed. ROCm0 is the discrete R9700 and ROCm1 an iGPU
     // that cannot run inference: adjacent rows, one mis-click apart. (And that

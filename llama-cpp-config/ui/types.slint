@@ -202,9 +202,13 @@ export struct ServerForm {
     // (never export the variable: rocBLAS routes as it sees fit), "on" (=1,
     // force hipBLASLt), "off" (=0, force Tensile). Not a bool: "default" and
     // "on" are different instructions, and only "off" cures the gfx1201 16-bit
-    // GEMM failure (see src/server_cfg.rs). A SegmentedControl, and the same
-    // form::tri_state / tri_bool pair the preset tri-states use.
+    // GEMM failure (see src/server_cfg.rs). A dropdown over Options.tri_states,
+    // and the same form::tri_state / tri_bool pair the preset tri-states use.
     rocblas_use_hipblaslt: string,
+    // GGML_CUDA_ALLREDUCE (the SDK Tuning card's multi-GPU half): "default"
+    // (never export the variable) or one of server_cfg::ALLREDUCE_MODES, a
+    // dropdown over Options.allreduce_modes.
+    cuda_allreduce: string,
     // Plain bool toggles (CheckBox, two-way <=>), the same shape as `mlock`:
     // webui_mcp_proxy enables the web UI's MCP proxy (--webui-mcp-proxy); fit is
     // llama.cpp's -fit on|off VRAM auto-fitting (checked = on); prefill_assistant

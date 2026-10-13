@@ -95,6 +95,9 @@ row_ok DistRoot "$DIST_ROOT (<Name>/<Version>/$DIST_OS)"
 cuda_dir="$(find_cuda)"
 if [[ -n "$cuda_dir" ]]; then row_ok 'CUDA Toolkit' "$cuda_dir"
 else row_opt 'CUDA Toolkit' "none under $CUDA_ROOT (needed for CUDA)"; fi
+nccl_dir="$(find_nccl)"
+if [[ -n "$nccl_dir" ]]; then row_ok 'NCCL' "$nccl_dir"
+else row_opt 'NCCL' "none under $NCCL_ROOT (optional: split-mode tensor between CUDA cards)"; fi
 vk_dir="$(find_vulkan)"
 if [[ -n "$vk_dir" ]]; then row_ok 'Vulkan SDK' "$vk_dir"
 else row_opt 'Vulkan SDK' "none under $VULKAN_ROOT (needed for Vulkan)"; fi

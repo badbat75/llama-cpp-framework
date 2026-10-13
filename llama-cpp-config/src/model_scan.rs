@@ -305,11 +305,15 @@ mod tests {
 
     #[test]
     fn draft_options_preserve_custom_path_and_spec() {
-        let (labels, values, specs, idx) =
-            build_draft_options(vec![], vec![], r"D:\stray\draft.gguf", "draft-dflash");
+        let (labels, values, specs, idx) = build_draft_options(
+            vec![],
+            vec![],
+            &crate::paths::os_path(r"D:\stray\draft.gguf"),
+            "draft-dflash",
+        );
         assert_eq!(idx, 1);
         assert_eq!(labels[1], "(custom) draft.gguf");
-        assert_eq!(values[1], r"D:\stray\draft.gguf");
+        assert_eq!(values[1], crate::paths::os_path(r"D:\stray\draft.gguf"));
         assert_eq!(specs[1], "draft-dflash");
     }
 
@@ -341,12 +345,18 @@ mod tests {
     #[test]
     fn build_options_stale_value_inserts_after_fixed_rows() {
         // Required: the (custom) row lands at 0; optional: after the (none) row.
-        let (labels, _, idx) =
-            build_options(Category::Model, vec![opt("a", r"C:\a")], r"D:\gone\x.gguf");
+        let (labels, _, idx) = build_options(
+            Category::Model,
+            vec![opt("a", r"C:\a")],
+            &crate::paths::os_path(r"D:\gone\x.gguf"),
+        );
         assert_eq!(idx, 0);
         assert_eq!(labels[0], "(custom) x.gguf");
-        let (labels, _, idx) =
-            build_options(Category::Mmproj, vec![opt("a", r"C:\a")], r"D:\gone\x.gguf");
+        let (labels, _, idx) = build_options(
+            Category::Mmproj,
+            vec![opt("a", r"C:\a")],
+            &crate::paths::os_path(r"D:\gone\x.gguf"),
+        );
         assert_eq!(idx, 1);
         assert_eq!(labels[1], "(custom) x.gguf");
     }

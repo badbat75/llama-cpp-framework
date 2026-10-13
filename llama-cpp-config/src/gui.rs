@@ -946,6 +946,16 @@ fn refresh_gpu_rows(app: &AppWindow) {
         preset_split_layout(app),
         preset_mode,
     )));
+    // Feeds the mode strip under split mode `tensor` (state.slint
+    // `preset_split_mode_warning`). The EFFECTIVE list: a server-wide Device
+    // rides the router's command line and replaces the preset's.
+    let server_device = s.get_server_form().device;
+    let device = if server_device.trim().is_empty() {
+        s.get_form().device
+    } else {
+        server_device
+    };
+    s.set_preset_mixes_cuda_rocm(gpu_split::mixes_cuda_and_rocm(device.as_str()));
     refresh_gpu_scalars(app);
     refresh_tensor_rows(app);
 }
