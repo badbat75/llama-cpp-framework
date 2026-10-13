@@ -379,6 +379,9 @@ fn editable_widgets_track_model_after_edit() {
     // process-global, single-threaded platform (see the header note).
     super::save_flow::run(&app);
 
+    // ── Remembered window sizes (gui.rs `remember_window_size`) ──────────
+    crate::gui::window_size_e2e();
+
     // ── View-logs window (src/gui/log_window.rs) ─────────────────────────
     crate::gui::log_window_e2e();
 

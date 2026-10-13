@@ -135,6 +135,7 @@ fn persist(off: &Off) {
 pub(super) fn wire(app: &AppWindow) -> Result<HwWindow, slint::PlatformError> {
     let win = HwWindow::new()?;
     let live = Arc::new(AtomicU64::new(0));
+    restore_window_size(&win);
     let off: Off = Arc::new(Mutex::new(
         settings::load().hw_monitor_hidden.into_iter().collect(),
     ));
@@ -142,8 +143,12 @@ pub(super) fn wire(app: &AppWindow) -> Result<HwWindow, slint::PlatformError> {
     // Closing hides (not destroys) and retires the sampler thread.
     {
         let live = live.clone();
+        let win_weak = win.as_weak();
         win.window().on_close_requested(move || {
             live.store(0, Ordering::Relaxed);
+            if let Some(win) = win_weak.upgrade() {
+                remember_window_size(&win);
+            }
             slint::CloseRequestResponse::HideWindow
         });
     }

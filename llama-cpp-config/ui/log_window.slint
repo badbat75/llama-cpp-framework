@@ -21,8 +21,14 @@ export component LogWindow inherits Window {
     icon: @image-url("llama.png");
     min-width: 480px;
     min-height: 320px;
-    preferred-width: 920px;
-    preferred-height: 600px;
+    // The size the window opens at: the default below, or the size it was
+    // last closed with, which Rust writes here (gui.rs `RememberedSize`). It
+    // goes through the PREFERRED size because that is what the backend sizes
+    // a window from every time it is shown.
+    in property <length> initial_width: 920px;
+    in property <length> initial_height: 600px;
+    preferred-width: root.initial_width;
+    preferred-height: root.initial_height;
     background: Palette.background;
 
     // The retained tail of the log file, one row per line (an overlong line

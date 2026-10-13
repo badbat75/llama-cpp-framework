@@ -160,6 +160,38 @@ pub(crate) fn wire_tabs_for_tests(app: &AppWindow) {
     wire_discard_confirm(app, &state);
 }
 
+/// E2E phase for the remembered window sizes, for the shared UI test to call:
+/// a size recorded on close comes back in a window built afterwards, and a
+/// hidden window records nothing. Config IO goes to its own temp dir, through
+/// the same process-wide redirect `save_flow` uses.
+#[cfg(test)]
+pub(crate) fn window_size_e2e() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::env::set_var("LLAMA_CPP_CONFIG_DATA_ROOT", dir.path());
+
+    let win = LogWindow::new().expect("build LogWindow");
+    win.window()
+        .set_size(slint::LogicalSize::new(1000.0, 640.0));
+    remember_window_size(&win);
+    assert_eq!(settings::load().log_window_size, None, "never shown");
+
+    win.show().expect("realize window");
+    remember_window_size(&win);
+    let cfg = settings::load();
+    assert_eq!(cfg.log_window_size, Some((1000, 640)));
+    assert_eq!(cfg.main_window_size, None, "one key per window");
+    win.hide().ok();
+
+    assert_eq!(win.get_initial_width(), 1000.0, "kept for a reopen");
+    let again = LogWindow::new().expect("build LogWindow");
+    assert_eq!(again.get_initial_width(), 920.0, "the .slint default");
+    restore_window_size(&again);
+    assert_eq!(
+        (again.get_initial_width(), again.get_initial_height()),
+        (1000.0, 640.0)
+    );
+}
+
 /// The log window's e2e phase, for the shared UI test to call.
 #[cfg(test)]
 pub(crate) fn log_window_e2e() {
@@ -193,6 +225,10 @@ pub fn run(start_minimized: bool) -> anyhow::Result<()> {
     // AFTER the first component exists (before that there is no platform to
     // hold it and the call fails) and before the event loop runs, which is
     // when the native windows are created.
+    #[cfg(target_os = "linux")]
+    let _ = slint::BackendSelector::new()
+        .with_winit_custom_application_handler(DiscardTrayWindow)
+        .select();
     let app = AppWindow::new()?;
     #[cfg(target_os = "linux")]
     let _ = slint::set_xdg_app_id("llama-cpp-config");
@@ -307,8 +343,16 @@ pub fn run(start_minimized: bool) -> anyhow::Result<()> {
 
     // Closing the window hides it to the tray instead of quitting; the visible
     // tray icon keeps the event loop alive. Use the tray's "Quit" to exit.
-    app.window()
-        .on_close_requested(|| slint::CloseRequestResponse::HideWindow);
+    restore_window_size(&app);
+    {
+        let app_weak = app.as_weak();
+        app.window().on_close_requested(move || {
+            if let Some(app) = app_weak.upgrade() {
+                remember_window_size(&app);
+            }
+            slint::CloseRequestResponse::HideWindow
+        });
+    }
 
     // Auto-start llama-server when the Settings tab asks for it, on EVERY GUI
     // launch, not just the login one (that's the toggle's contract). The shared
@@ -329,6 +373,11 @@ pub fn run(start_minimized: bool) -> anyhow::Result<()> {
     }
     tray.show()?;
     slint::run_event_loop()?;
+    // Quit from the tray closes nothing first: record the windows still open.
+    remember_window_size(&app);
+    remember_window_size(&_log_window);
+    #[cfg(target_os = "linux")]
+    remember_window_size(&_hw_window);
     Ok(())
 }
 
@@ -381,6 +430,124 @@ fn discard_unshown_wayland_window<T: ComponentHandle + 'static>(component: &T) {
         });
     }
     poll(component.as_weak(), 100);
+}
+
+/// The tray icon's own phantom window, discarded on Wayland.
+///
+/// `AppTray` is a root like the windows, so the backend builds a window
+/// adapter for it too (its init registers the embedded icon font on one) and,
+/// once the event loop runs, a native window that nothing ever shows. On
+/// Wayland that is a toplevel all the same: GNOME's Alt+Tab listed an empty
+/// "Slint Window" beside the real windows. The cure is the one
+/// `discard_unshown_wayland_window` applies, show + hide in one turn, but a
+/// tray component has no `window()` to call it on: the only place the backend
+/// hands that window out is this hook, with the first event the compositor
+/// sends it. It is told from ours by its title: the backend's default, which
+/// only a root without a `title` keeps.
+#[cfg(target_os = "linux")]
+struct DiscardTrayWindow;
+
+#[cfg(target_os = "linux")]
+impl slint::winit_030::CustomApplicationHandler for DiscardTrayWindow {
+    fn window_event(
+        &mut self,
+        _event_loop: &slint::winit_030::winit::event_loop::ActiveEventLoop,
+        _window_id: slint::winit_030::winit::window::WindowId,
+        winit_window: Option<&slint::winit_030::winit::window::Window>,
+        slint_window: Option<&slint::Window>,
+        _event: &slint::winit_030::winit::event::WindowEvent,
+    ) -> slint::winit_030::EventResult {
+        use slint::winit_030::winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
+        use slint::winit_030::EventResult;
+        let (Some(native), Some(window)) = (winit_window, slint_window) else {
+            return EventResult::Propagate;
+        };
+        let on_wayland = native
+            .window_handle()
+            .is_ok_and(|h| matches!(h.as_raw(), RawWindowHandle::Wayland(_)));
+        if !on_wayland || native.title() != "Slint Window" {
+            return EventResult::Propagate;
+        }
+        let _ = window.show();
+        let _ = window.hide();
+        // The native window is gone: nothing is left to handle the event.
+        EventResult::PreventDefault
+    }
+}
+
+/// A window whose size settings.ini remembers (`MainWindowSize`,
+/// `LogWindowSize`, `HwMonitorWindowSize`).
+///
+/// The size travels through the window's `initial_width`/`initial_height`
+/// properties, which its .slint binds its PREFERRED size to, and not through
+/// `Window::set_size`: every time a window is shown the winit backend writes
+/// the preferred width over the window's own, so a size set by hand comes up
+/// with the right height and the default width.
+trait RememberedSize: ComponentHandle {
+    fn slot(cfg: &mut settings::Settings) -> &mut Option<(u32, u32)>;
+    fn set_initial_size(&self, width: f32, height: f32);
+}
+
+impl RememberedSize for AppWindow {
+    fn slot(cfg: &mut settings::Settings) -> &mut Option<(u32, u32)> {
+        &mut cfg.main_window_size
+    }
+    fn set_initial_size(&self, width: f32, height: f32) {
+        self.set_initial_width(width);
+        self.set_initial_height(height);
+    }
+}
+
+impl RememberedSize for LogWindow {
+    fn slot(cfg: &mut settings::Settings) -> &mut Option<(u32, u32)> {
+        &mut cfg.log_window_size
+    }
+    fn set_initial_size(&self, width: f32, height: f32) {
+        self.set_initial_width(width);
+        self.set_initial_height(height);
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl RememberedSize for HwWindow {
+    fn slot(cfg: &mut settings::Settings) -> &mut Option<(u32, u32)> {
+        &mut cfg.hw_monitor_window_size
+    }
+    fn set_initial_size(&self, width: f32, height: f32) {
+        self.set_initial_width(width);
+        self.set_initial_height(height);
+    }
+}
+
+/// Give a window the size it had when it was last closed, if one is on
+/// record. Called once, when the window is built and before it is shown.
+fn restore_window_size<T: RememberedSize>(win: &T) {
+    if let Some((w, h)) = *T::slot(&mut settings::load()) {
+        win.set_initial_size(w as f32, h as f32);
+    }
+}
+
+/// Record a window's size: in the window itself, so that reopening it in this
+/// session brings the same size back, and in settings.ini (read-modify-write,
+/// so no other key is touched) for the next launch. Called when the window
+/// closes and again at Quit. A hidden window has no size worth keeping (it
+/// was recorded when it closed), and a maximized or fullscreen one would come
+/// back as a huge plain window. A failed write costs only the memory of the
+/// size.
+fn remember_window_size<T: RememberedSize>(win: &T) {
+    let window = win.window();
+    if !window.is_visible() || window.is_maximized() || window.is_fullscreen() {
+        return;
+    }
+    let size = window.size().to_logical(window.scale_factor());
+    let (w, h) = (size.width.round(), size.height.round());
+    win.set_initial_size(w, h);
+    let size = Some((w as u32, h as u32));
+    let mut cfg = settings::load();
+    if *T::slot(&mut cfg) != size {
+        *T::slot(&mut cfg) = size;
+        let _ = settings::save(&cfg);
+    }
 }
 
 /// Bring the running instance's window to the front: re-show it if it was hidden
@@ -723,7 +890,8 @@ fn refresh_device_options(app: &AppWindow) {
         devices::rocm_health().unwrap_or_default(),
     ));
 
-    let (lbl, val, idx) = device_options(&devs, mmproj_device.as_str(), "(default: follows device)");
+    let (lbl, val, idx) =
+        device_options(&devs, mmproj_device.as_str(), "(default: follows device)");
     s.set_mmproj_dev_labels(lbl);
     s.set_mmproj_dev_values(val);
     s.set_mmproj_dev_index(idx);

@@ -287,13 +287,18 @@ pub(super) fn wire(app: &AppWindow) -> Result<LogWindow, slint::PlatformError> {
     ));
     win.set_lines(model(Vec::<SharedString>::new()));
     let live = Arc::new(AtomicU64::new(0));
+    restore_window_size(&win);
 
     // Closing hides (not destroys) and retires the tail thread. The rows
     // stay, so a reopen shows the old tail until its first poll replaces it.
     {
         let live = live.clone();
+        let win_weak = win.as_weak();
         win.window().on_close_requested(move || {
             live.store(0, Ordering::Relaxed);
+            if let Some(win) = win_weak.upgrade() {
+                remember_window_size(&win);
+            }
             slint::CloseRequestResponse::HideWindow
         });
     }

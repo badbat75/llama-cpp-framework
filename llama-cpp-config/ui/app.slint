@@ -98,8 +98,14 @@ export component AppWindow inherits Window {
     // without) is what gets squeezed out.
     min-width: 888px;
     min-height: 520px;
-    preferred-width: 1148px;
-    preferred-height: 760px;
+    // The size the window opens at: the default below, or the size it was
+    // last closed with, which Rust writes here (gui.rs `RememberedSize`). It
+    // goes through the PREFERRED size because that is what the backend sizes
+    // a window from every time it is shown.
+    in property <length> initial_width: 1148px;
+    in property <length> initial_height: 760px;
+    preferred-width: root.initial_width;
+    preferred-height: root.initial_height;
     background: Palette.background;
     // Give the shortcut FocusScope focus on startup so KeyBindings fire before
     // the user clicks into any widget.
