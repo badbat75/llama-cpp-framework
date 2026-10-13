@@ -7,7 +7,8 @@
 # artifacts under build/windows/ and never inside them.
 #
 # - Sets strict mode, REPO_ROOT, BUILD_ROOT and the say_* helpers.
-# - Sources installer/dist-sources.sh (roots and sources of the dists).
+# - Sources installer/dist-sources.sh (roots and sources of the dists) and
+#   provides use_dist_root, which moves them to another base.
 # - Finders for the newest complete ROCm / CUDA / Vulkan dist.
 # - load_build_config: reads build/linux/config-build.sh and sets the ROCm
 #   build environment. Only 02-build.sh calls it; 00 and 01 run before the
@@ -19,8 +20,26 @@ REPO_ROOT="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")"
 BUILD_ROOT="$REPO_ROOT/build/linux"
 CONFIG_FILE="$BUILD_ROOT/config-build.sh"
 
+# The dist root a previous 01-configure.sh recorded, read in a subshell so no
+# other CFG_* leaks into 00 and 01: dist-sources.sh falls back to it when
+# neither --dist-root nor LLAMA_FW_DIST_ROOT says otherwise.
+CFG_DIST_ROOT=''
+if [[ -f "$CONFIG_FILE" ]]; then
+    # shellcheck disable=SC1090
+    CFG_DIST_ROOT="$( . "$CONFIG_FILE"; printf '%s' "${CFG_DIST_ROOT:-}" )"
+fi
+
 # shellcheck source=installer/dist-sources.sh
 . "$REPO_ROOT/installer/dist-sources.sh"
+
+# Switches every dist root (ROCM_ROOT, CUDA_ROOT, VULKAN_ROOT) to another base:
+# the --dist-root of 00 and 01, and the recorded root in load_build_config.
+use_dist_root() {
+    [[ -n "$1" ]] || die '--dist-root needs a path'
+    DIST_ROOT_OVERRIDE="$(readlink -m "$1")"
+    # shellcheck source=installer/dist-sources.sh
+    . "$REPO_ROOT/installer/dist-sources.sh"
+}
 
 if [[ -t 1 ]]; then
     _c_red=$'\e[31m'; _c_grn=$'\e[32m'; _c_yel=$'\e[33m'; _c_cyn=$'\e[36m'; _c_dim=$'\e[90m'; _c_off=$'\e[0m'
@@ -112,6 +131,9 @@ load_build_config() {
     [[ -f "$CONFIG_FILE" ]] || die "build/linux/config-build.sh not found. Run 01-configure.sh first."
     # shellcheck disable=SC1090
     . "$CONFIG_FILE"
+    # The root 01-configure.sh recorded, so the CUDA Toolkit and the Vulkan
+    # SDK resolved at build time come from the same root as CFG_HIP_PATH.
+    if [[ -n "${CFG_DIST_ROOT:-}" ]]; then use_dist_root "$CFG_DIST_ROOT"; fi
     if [[ -n "${CFG_HIP_PATH:-}" && -d "$CFG_HIP_PATH" ]]; then
         export HIP_PATH="$CFG_HIP_PATH" ROCM_PATH="$CFG_HIP_PATH"
         local llvm_bin="$CFG_HIP_PATH/lib/llvm/bin"

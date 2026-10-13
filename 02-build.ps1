@@ -168,6 +168,20 @@ if (Test-Path $cacheFile) {
     }
 }
 $opensslPath = $cfg.OpenSSLDir -replace '\\', '/'
+# FindOpenSSL caches what it found (OPENSSL_INCLUDE_DIR, LIB_EAY*, SSL_EAY*)
+# and, like FindVulkan below, reuses those paths without checking they still
+# exist or still sit under OPENSSL_ROOT_DIR: after OpenSSLDir moves, the
+# configure "finds" the old one and then fails on a missing OpenSSL::SSL target
+# (found 2026-10-13). When the cached include dir is not under the configured
+# OpenSSL, drop those entries so the search runs again; no build-dir wipe.
+$opensslResetArgs = @()
+if (Test-Path $cacheFile) {
+    $cachedSsl = Select-String -Path $cacheFile -Pattern '^OPENSSL_INCLUDE_DIR:[A-Z]+=(.+)$' | Select-Object -First 1
+    if ($cachedSsl -and -not $cachedSsl.Matches[0].Groups[1].Value.StartsWith("$opensslPath/", [StringComparison]::OrdinalIgnoreCase)) {
+        Write-Host "OpenSSL moved to $($cfg.OpenSSLDir) (cache had $($cachedSsl.Matches[0].Groups[1].Value)): searching again" -ForegroundColor Yellow
+        $opensslResetArgs = @('-UOPENSSL_INCLUDE_DIR', '-ULIB_EAY*', '-USSL_EAY*', '-UOPENSSL_APPLINK_SOURCE')
+    }
+}
 
 # ── Vulkan SDK: resolve the newest installed version ──────────────
 # Each SDK version has its own directory in the dist layout
@@ -355,6 +369,8 @@ $cmakeArgs = @(
 # Pinned Vulkan SDK paths (see the Vulkan SDK section above), empty when the
 # layout holds none, in which case FindVulkan does its own search.
 $cmakeArgs += $vulkanArgs
+# Stale FindOpenSSL results (see $opensslResetArgs above), empty normally.
+$cmakeArgs += $opensslResetArgs
 
 # Pinned CUDA toolkit (see the CUDA toolkit section above), plus the -U reset when the
 # build dir was configured against another one.

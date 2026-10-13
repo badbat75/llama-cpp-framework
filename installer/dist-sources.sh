@@ -16,9 +16,15 @@
 # The build scripts resolve the newest complete dist under each root on every
 # run, so a version bump needs no environment change.
 
-# The mountpoint that plays the role of C:\ on Windows. Override with
-# LLAMA_FW_DIST_ROOT for a machine laid out differently.
-DIST_ROOT="${LLAMA_FW_DIST_ROOT:-/mnt/data}"
+# The dist root, the counterpart of DistRoot in dist-sources.psd1. /mnt/data
+# is the DEFAULT; it is overridden, in this order, by --dist-root on
+# 00-install-prerequisites.sh or 01-configure.sh (DIST_ROOT_OVERRIDE, set by
+# use_dist_root in common.sh, which sources this file again), by the
+# LLAMA_FW_DIST_ROOT environment variable, and by the CFG_DIST_ROOT that
+# 01-configure.sh recorded in build/linux/config-build.sh. 02-build.sh and
+# 03-package.sh use the recorded one. Assignments only, so sourcing it twice
+# is safe.
+DIST_ROOT="${DIST_ROOT_OVERRIDE:-${LLAMA_FW_DIST_ROOT:-${CFG_DIST_ROOT:-/mnt/data}}}"
 DIST_OS='linux'
 
 # AMD ROCm/HIP: TheRock dist tarball. Multiarch on purpose, as on Windows:

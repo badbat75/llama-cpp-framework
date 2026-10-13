@@ -16,7 +16,11 @@
 # so; nothing is ever downgraded or deleted. Downloads resume: an interrupted
 # run picks the partial file up from <Root>/.downloads.
 #
-# Usage: ./00-install-prerequisites.sh [--skip apt,sccache,rust,rocm,cuda,vulkan]
+# The dists go under the dist root: --dist-root, else LLAMA_FW_DIST_ROOT, else
+# the one 01-configure.sh recorded, else the default in dist-sources.sh.
+#
+# Usage: ./00-install-prerequisites.sh [--dist-root <path>]
+#                                      [--skip apt,sccache,rust,rocm,cuda,vulkan]
 
 . "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/common.sh"
 
@@ -25,6 +29,8 @@ while (( $# )); do
     case "$1" in
         --skip)   SKIP=",${2:?--skip needs a list},"; shift 2 ;;
         --skip=*) SKIP=",${1#--skip=},"; shift ;;
+        --dist-root)   use_dist_root "${2:?--dist-root needs a path}"; shift 2 ;;
+        --dist-root=*) use_dist_root "${1#--dist-root=}"; shift ;;
         -h|--help) sed -n '2,/^$/s/^# \{0,1\}//p' "${BASH_SOURCE[0]}"; exit 0 ;;
         *) die "unknown argument: $1" ;;
     esac
@@ -382,5 +388,11 @@ if (( ${#GAPS[@]} )); then
     say ''
     exit 1
 fi
-say_ok '  All prerequisites in place. Next: ./01-configure.sh, then ./02-build.sh'
+# 01-configure.sh has to be told the dist root only when it would not resolve
+# this one by itself (a --dist-root given here and recorded nowhere yet).
+configure='./01-configure.sh'
+if [[ -n "${DIST_ROOT_OVERRIDE:-}" && -z "${LLAMA_FW_DIST_ROOT:-}" && "$DIST_ROOT" != "$CFG_DIST_ROOT" ]]; then
+    configure+=" --dist-root $DIST_ROOT"
+fi
+say_ok "  All prerequisites in place. Next: $configure, then ./02-build.sh"
 say ''

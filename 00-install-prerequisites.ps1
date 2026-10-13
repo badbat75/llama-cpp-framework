@@ -443,6 +443,58 @@ if (-not $sccacheBefore -and $sccacheOnPath) {
 $beforeLlama = if ($cfg) { Get-GitDescribe $cfg.LlamaCppDir } else { $null }
 
 Write-Host "  SDK dists under $distRoot (<Name>\<Version>\$distOs)" -ForegroundColor DarkGray
+# The layout is trusted: the build runs the compiler found there, the elevated
+# session unpacks into it, and the active ROCm dist goes on the machine PATH.
+# A dist every account can write lets any of them swap a compiler or a DLL, so
+# the elevated session LOCKS each Windows dist (Protect-DistDir: administrators
+# and SYSTEM full control, everyone else read + execute) and nothing else: the
+# roots above them also hold the other OS's dists and keep the ACL their owner
+# gave them. Get-DistBroadWriters names who else can write a directory; it is
+# shared with the elevated batch, hence a string.
+$distAclFunctions = @'
+function Get-DistBroadWriters([string]$Dir) {
+    $broad = @('S-1-1-0', 'S-1-5-11', 'S-1-5-32-545')   # Everyone, Authenticated Users, Users
+    $writeBits = [Security.AccessControl.FileSystemRights]'WriteData, AppendData, Delete, DeleteSubdirectoriesAndFiles, ChangePermissions, TakeOwnership'
+    try {
+        return @((Get-Acl -LiteralPath $Dir).Access | Where-Object {
+            $_.AccessControlType -eq 'Allow' -and ($_.FileSystemRights -band $writeBits) -and
+            ($broad -contains $_.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value)
+        } | ForEach-Object { $_.IdentityReference.Value } | Select-Object -Unique)
+    } catch { return @() }
+}
+function Protect-DistDir([string]$Dir) {
+    if (-not (Test-Path -LiteralPath $Dir) -or -not @(Get-DistBroadWriters $Dir).Count) { return }
+    # Owner first: a tree an unelevated account created is OWNED by it, and an
+    # owner can always rewrite the ACL below. Then inheritance off at the dist
+    # directory and three explicit entries that its whole tree inherits (the
+    # files carry no ACL of their own).
+    icacls.exe $Dir /setowner '*S-1-5-32-544' /T /C /Q | Out-Null
+    $owned = ($LASTEXITCODE -eq 0)
+    icacls.exe $Dir /inheritance:r /grant:r '*S-1-5-32-544:(OI)(CI)F' '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-545:(OI)(CI)RX' /Q | Out-Null
+    if ($LASTEXITCODE -ne 0) { Write-Host "  could not lock $Dir (icacls exit $LASTEXITCODE)" -ForegroundColor Red }
+    elseif (-not $owned)     { Write-Host "  locked $Dir, but its owner could not be changed to Administrators" -ForegroundColor Yellow }
+    else                     { Write-Host "  locked $Dir (write access: administrators only)" -ForegroundColor DarkGray }
+}
+'@
+. ([scriptblock]::Create($distAclFunctions))
+# Every Windows dist of the layout, complete or not. Only directories named
+# like a version, the ones Find-Dist can ever return: anything else under a
+# root other accounts may write is not ours to touch.
+function Get-LayoutDistDirs {
+    foreach ($name in 'Rocm', 'Cuda', 'Vulkan') {
+        $distHome = Get-DistHome $name $sources $distRoot
+        if (-not (Test-Path $distHome)) { continue }
+        foreach ($v in (Get-ChildItem $distHome -Directory -ErrorAction SilentlyContinue)) {
+            if ($v.Name -notmatch '^\d+(\.\d+){1,3}$') { continue }
+            $d = Join-Path $v.FullName $distOs
+            if (Test-Path $d) { $d }
+        }
+    }
+}
+$distUnlocked = @(Get-LayoutDistDirs | Where-Object { @(Get-DistBroadWriters $_).Count })
+foreach ($d in $distUnlocked) {
+    Write-Host "  [..] $d is writable by $((Get-DistBroadWriters $d) -join ', '): will be locked" -ForegroundColor Yellow
+}
 foreach ($p in $wingetPackages) {
     $v = $before[$p.Id]
     if ($v) { Write-Host "  [OK] $($p.Name) $v" -ForegroundColor Green }
@@ -554,6 +606,17 @@ if ($rocmBlocked) {
 
 # ── Build the elevated batch (winget, ROCm, CUDA, Vulkan, symlinks) ─
 
+# The batch is GENERATED code that runs elevated, and some of what goes into
+# it was read from places this account does not control alone: directory names
+# under a root other accounts may write, HIP_PATH, URLs out of a vendor's
+# index. Every such value enters as a single-quoted literal built by Lit, with
+# the quotes inside it doubled, so it can only ever be data. PowerShell's own
+# escaper, because the parser also closes a string on the typographic quotes
+# (U+2018 to U+201B), which a plain -replace "'" would let through.
+function Lit([string]$Value) {
+    return "'" + [System.Management.Automation.Language.CodeGeneration]::EscapeSingleQuotedStringContent($Value) + "'"
+}
+
 $blocks = @()
 # A downloaded installer runs elevated only when Authenticode says it is
 # intact AND signed by its vendor (the sources' Signer, matched against the
@@ -589,10 +652,10 @@ foreach ($p in $present) {
 # elevation). $rocmPrevDir is the dist HIP_PATH named before this run: its
 # PATH entries are pruned with the layout's, wherever it sits.
 if ($rocmTarget -or $rocmActiveDir) {
-    $blocks += "`$rocmRoot = '$rocmRoot'; `$rocmMarker = '$($rocm.Marker)'; `$rocmActiveDir = '$rocmActiveDir'; `$rocmPrevDir = '$rocmBeforeDir'"
+    $blocks += "`$rocmRoot = $(Lit $rocmRoot); `$rocmMarker = $(Lit $rocm.Marker); `$rocmActiveDir = $(Lit $rocmActiveDir); `$rocmPrevDir = $(Lit $rocmBeforeDir)"
     if ($rocmTarget) {
-        $blocks += "`$rocmDir = '$(Get-RocmVersionDir $rocmTarget.Version)'"
-        $blocks += "`$rocmVer = '$($rocmTarget.Version)'; `$rocmUrl = '$($rocmTarget.Url)'; `$rocmSize = $($rocmTarget.Size)"
+        $blocks += "`$rocmDir = $(Lit (Get-RocmVersionDir $rocmTarget.Version))"
+        $blocks += "`$rocmVer = $(Lit $rocmTarget.Version); `$rocmUrl = $(Lit $rocmTarget.Url); `$rocmSize = $([long]$rocmTarget.Size)"
         $blocks += @'
 
 Write-Host "Installing ROCm (TheRock) $rocmVer..." -ForegroundColor Cyan
@@ -706,9 +769,9 @@ if ($rocmActiveDir -and (Test-Path (Join-Path $rocmActiveDir $rocmMarker))) {
 # is cleared first.
 if ($cudaTarget) {
     $cudaHome = Get-DistHome 'Cuda' $sources $distRoot
-    $blocks += "`$cudaVer = '$($cudaTarget.Version)'; `$cudaDir = '$(Get-DistDir 'Cuda' $cudaTarget.Version $sources $distRoot)'; `$cudaMarker = '$($cuda.Marker)'"
-    $blocks += "`$cudaDl = '$(Join-Path (Join-Path $cudaHome '.downloads') $cudaTarget.Version)'"
-    $blocks += "`$cudaParts = @(" + (($cudaTarget.Parts | ForEach-Object { "@{ Url = '$($_.Url)'; Sha256 = '$($_.Sha256)' }" }) -join ', ') + ')'
+    $blocks += "`$cudaVer = $(Lit $cudaTarget.Version); `$cudaDir = $(Lit (Get-DistDir 'Cuda' $cudaTarget.Version $sources $distRoot)); `$cudaMarker = $(Lit $cuda.Marker)"
+    $blocks += "`$cudaDl = $(Lit (Join-Path (Join-Path $cudaHome '.downloads') $cudaTarget.Version))"
+    $blocks += "`$cudaParts = @(" + (($cudaTarget.Parts | ForEach-Object { "@{ Url = $(Lit $_.Url); Sha256 = $(Lit $_.Sha256) }" }) -join ', ') + ')'
     $blocks += @'
 
 Write-Host "Installing CUDA Toolkit $cudaVer (redist archives, no driver)..." -ForegroundColor Cyan
@@ -721,21 +784,31 @@ if (Test-Path $cudaDir) {
     $cudaOk = $true
     foreach ($part in $cudaParts) {
         $zip = Join-Path $cudaDl (Split-Path $part.Url -Leaf)
-        $have = (Test-Path $zip) -and ((Get-FileHash $zip -Algorithm SHA256).Hash -eq $part.Sha256)
-        if (-not $have) {
+        # The archive sits in a .downloads directory other accounts may be
+        # able to write, and this session is elevated: it is held open (share
+        # = Read only, as Invoke-SignedInstaller does) from BEFORE the hash
+        # until tar is done, so the bytes that matched are the bytes
+        # unpacked. A leftover that does not match is fetched once more.
+        $state = 'missing'
+        foreach ($attempt in 1, 2) {
+            if (-not (Test-Path $zip)) {
+                Write-Host "  $(Split-Path $zip -Leaf)" -ForegroundColor DarkGray
+                curl.exe --fail -sSL --retry 3 --retry-delay 5 -o $zip $part.Url
+                if ($LASTEXITCODE -ne 0) { $state = 'download'; break }
+            }
+            $lock = [IO.File]::Open($zip, 'Open', 'Read', 'Read')
+            try {
+                $hash = [BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash($lock)) -replace '-', ''
+                if ($hash -eq $part.Sha256) {
+                    tar.exe -xf $zip -C $cudaDir --strip-components=1
+                    $state = if ($LASTEXITCODE -eq 0) { 'ok' } else { "tar exit $LASTEXITCODE" }
+                } else { $state = 'sha256' }
+            } finally { $lock.Dispose() }
+            if ($state -ne 'sha256') { break }
             Remove-Item $zip -Force -ErrorAction SilentlyContinue
-            Write-Host "  $(Split-Path $zip -Leaf)" -ForegroundColor DarkGray
-            curl.exe --fail -sSL --retry 3 --retry-delay 5 -o $zip $part.Url
-            $have = ($LASTEXITCODE -eq 0) -and ((Get-FileHash $zip -Algorithm SHA256).Hash -eq $part.Sha256)
         }
-        if (-not $have) {
-            Remove-Item $zip -Force -ErrorAction SilentlyContinue
-            Write-Host "  download failed or sha256 mismatch on $(Split-Path $zip -Leaf)" -ForegroundColor Red
-            $cudaOk = $false; break
-        }
-        tar.exe -xf $zip -C $cudaDir --strip-components=1
-        if ($LASTEXITCODE -ne 0) {
-            Write-Host "  extraction of $(Split-Path $zip -Leaf) failed (tar exit $LASTEXITCODE)" -ForegroundColor Red
+        if ($state -ne 'ok') {
+            Write-Host "  $(Split-Path $zip -Leaf): failed ($state)" -ForegroundColor Red
             $cudaOk = $false; break
         }
     }
@@ -755,8 +828,8 @@ if (Test-Path $cudaDir) {
 # marker is written only when the installer left an SDK the build can use.
 if ($vulkanTarget) {
     $vkHome = Get-DistHome 'Vulkan' $sources $distRoot
-    $blocks += "`$vkVer = '$($vulkanTarget.Version)'; `$vkUrl = '$($vulkanTarget.Url)'; `$vkSize = $($vulkanTarget.Size); `$vkDir = '$(Get-DistDir 'Vulkan' $vulkanTarget.Version $sources $distRoot)'; `$vkSigner = '$($vulkan.Signer)'"
-    $blocks += "`$vkDl = '$(Join-Path $vkHome '.downloads')'; `$vkMarker = '$($vulkan.Marker)'"
+    $blocks += "`$vkVer = $(Lit $vulkanTarget.Version); `$vkUrl = $(Lit $vulkanTarget.Url); `$vkSize = $([long]$vulkanTarget.Size); `$vkDir = $(Lit (Get-DistDir 'Vulkan' $vulkanTarget.Version $sources $distRoot)); `$vkSigner = $(Lit $vulkan.Signer)"
+    $blocks += "`$vkDl = $(Lit (Join-Path $vkHome '.downloads')); `$vkMarker = $(Lit $vulkan.Marker)"
     $blocks += @'
 
 Write-Host "Installing Vulkan SDK $vkVer..." -ForegroundColor Cyan
@@ -792,6 +865,17 @@ if (Test-Path "$d\lib\VC\x64\MD\libcrypto.lib") {
     }
 }
 '@
+# Lock the Windows dists: the ones found unlocked above and the ones this run
+# installs (a tree extracted under a root everyone can write inherits that).
+$lockDirs = @($distUnlocked)
+if ($rocmTarget)   { $lockDirs += Get-RocmVersionDir $rocmTarget.Version }
+if ($cudaTarget)   { $lockDirs += Get-DistDir 'Cuda' $cudaTarget.Version $sources $distRoot }
+if ($vulkanTarget) { $lockDirs += Get-DistDir 'Vulkan' $vulkanTarget.Version $sources $distRoot }
+$lockDirs = @($lockDirs | Select-Object -Unique)
+if ($lockDirs.Count) {
+    $blocks += $distAclFunctions
+    $blocks += "foreach (`$d in @(" + (($lockDirs | ForEach-Object { Lit $_ }) -join ', ') + ")) { Protect-DistDir `$d }"
+}
 $script = $blocks -join "`n"
 
 if (Test-IsAdmin) {
@@ -810,7 +894,7 @@ if (Test-IsAdmin) {
     $bytes = [Text.UTF8Encoding]::new($false).GetBytes($script)
     [IO.File]::WriteAllBytes($elevated, $bytes)
     $hash = [BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash($bytes)) -replace '-', ''
-    $loader = "`$b = [IO.File]::ReadAllBytes('$($elevated -replace "'", "''")'); " +
+    $loader = "`$b = [IO.File]::ReadAllBytes($(Lit $elevated)); " +
         "if (([BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash(`$b)) -replace '-', '') -ne '$hash') " +
         "{ Write-Host 'Elevated batch was modified after it was written; refusing to run it.' -ForegroundColor Red; Start-Sleep 10; exit 3 }; " +
         "& ([scriptblock]::Create([Text.Encoding]::UTF8.GetString(`$b)))"
@@ -1030,6 +1114,12 @@ function Write-SdkRows([string]$Name, $Before, $After, $Latest, $Target) {
 Write-SdkRows 'CUDA Toolkit' $cudaBefore $cudaAfter $cudaLatest $cudaTarget
 Write-SdkRows 'Vulkan SDK' $vulkanBefore $vulkanAfter $vulkanLatest $vulkanTarget
 $sdkChanged = ($cudaBefore.Version -ne $cudaAfter.Version) -or ($vulkanBefore.Version -ne $vulkanAfter.Version)
+# A dist still writable by everyone after the elevated session (declined
+# elevation, icacls failure) is a compiler any account can replace: say so.
+foreach ($d in @(Get-LayoutDistDirs)) {
+    $writers = @(Get-DistBroadWriters $d)
+    if ($writers.Count) { Write-ReportRow "[!!]" Yellow "SDK dist" "$d is writable by $($writers -join ', '); re-run this script and accept the elevation to lock it" }
+}
 
 $rebuildLlama = $false
 if (-not $beforeLlama) {
