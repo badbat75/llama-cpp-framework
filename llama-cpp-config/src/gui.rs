@@ -53,11 +53,12 @@
 //! (`server_tab::pick_dir`) is a modal OS dialog; blocking its caller is the
 //! conventional behavior, not a stall to fix.
 //!
-//! `AppTray` and `LogWindow` are SEPARATE Slint roots: they do NOT use
-//! `AppState`; Rust pushes state to them directly (`tray.set_server_running` /
-//! `tray.on_*`; the log tail in `gui/log_window.rs`). `LogWindow` is a real
-//! second window on the same event loop: non-modal, so the main window stays
-//! interactive while it is open.
+//! `AppTray`, `LogWindow` and `HwWindow` are SEPARATE Slint roots: they do NOT
+//! use `AppState`; Rust pushes state to them directly (`tray.set_server_running`
+//! / `tray.on_*`; the log tail in `gui/log_window.rs`; the hardware samples in
+//! `gui/hw_window.rs`). `LogWindow` and `HwWindow` are real windows on the same
+//! event loop: non-modal, so the main window stays interactive while they are
+//! open.
 
 use std::cell::RefCell;
 use std::path::PathBuf;
@@ -76,6 +77,8 @@ slint::include_modules!();
 // Per-tab callback wiring: one file each under `gui/`. Each `wire()` reaches the
 // shared helpers, the `State` cache, and the generated Slint types via `use super::*`.
 mod bench_tab;
+#[cfg(target_os = "linux")]
+mod hw_window;
 mod integrations_tab;
 mod log_window;
 mod models_tab;
@@ -155,6 +158,12 @@ pub(crate) fn wire_tabs_for_tests(app: &AppWindow) {
         });
     }
     wire_discard_confirm(app, &state);
+}
+
+/// The HW Monitor window's e2e phase, for the shared UI test to call.
+#[cfg(all(test, target_os = "linux"))]
+pub(crate) fn hw_window_e2e() {
+    hw_window::e2e();
 }
 
 /// Build and run the GUI. `start_minimized` (the `gui --minimized` flag, used
@@ -281,6 +290,15 @@ pub fn run(start_minimized: bool) -> anyhow::Result<()> {
     // The log window starts hidden on every launch.
     #[cfg(target_os = "linux")]
     discard_unshown_wayland_window(&_log_window);
+    // Independent HW Monitor window: Linux only for now, and the button that
+    // opens it shows only where this ran. Hidden at launch like the log window.
+    #[cfg(target_os = "linux")]
+    let _hw_window = {
+        let win = hw_window::wire(&app)?;
+        discard_unshown_wayland_window(&win);
+        app.global::<AppState>().set_hw_monitor_available(true);
+        win
+    };
 
     // Closing the window hides it to the tray instead of quitting; the visible
     // tray icon keeps the event loop alive. Use the tray's "Quit" to exit.

@@ -16,6 +16,8 @@ mod gguf;
 mod gpu_split;
 mod gui;
 mod http;
+#[cfg(target_os = "linux")]
+mod hwmon;
 mod ini;
 mod integrations;
 mod kv_cache;

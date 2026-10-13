@@ -378,4 +378,9 @@ fn editable_widgets_track_model_after_edit() {
     // Shares this single #[test] and window: the testing backend is a
     // process-global, single-threaded platform (see the header note).
     super::save_flow::run(&app);
+
+    // ── HW Monitor window (src/gui/hw_window.rs) ─────────────────────────
+    // Its own root window, on the same backend for the same reason.
+    #[cfg(target_os = "linux")]
+    crate::gui::hw_window_e2e();
 }

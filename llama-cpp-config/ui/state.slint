@@ -565,6 +565,13 @@ export global AppState {
     // log_window.slint), a separate non-modal root, so the main window stays
     // interactive while it is up. Wired in gui/log_window.rs.
     callback view_logs();
+    // Open (or re-focus) the independent HW Monitor window (HwWindow in
+    // hw_window.slint): live bars for every GPU, the CPU, memory and the
+    // models directory's disk. Wired in gui/hw_window.rs, which exists on
+    // Linux only for now; `hw_monitor_available` is set where it was wired, so
+    // the button does not show where it would do nothing.
+    callback open_hw_monitor();
+    in property <bool> hw_monitor_available;
     // Re-read server.ini / presets.ini and re-scan the models directory.
     // Picks up files added on disk or config files edited by hand outside
     // the GUI, without restarting the app.

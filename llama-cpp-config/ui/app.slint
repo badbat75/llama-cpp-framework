@@ -22,6 +22,9 @@ export { AppState, Options }
 // re-exported so gui.rs can instantiate it (`LogWindow::new()`).
 import { LogWindow } from "log_window.slint";
 export { LogWindow }
+// The HW Monitor: a fourth root, re-exported for the same reason.
+import { HwWindow } from "hw_window.slint";
+export { HwWindow }
 import { ServerPage } from "server_page.slint";
 import { ModelsPage } from "models_page.slint";
 import { BenchPage } from "bench_page.slint";
@@ -210,8 +213,8 @@ export component AppWindow inherits Window {
                     Rectangle { vertical-stretch: 1; }
 
                     // ── Server controls ──────────────────────────────
-                    // Start/Stop stacked over Open chat UI over View logs over
-                    // Refresh. Live status drives which of Start/Stop shows;
+                    // Start/Stop stacked over Open chat UI over HW Monitor over
+                    // View logs over Refresh. Live status drives which of Start/Stop shows;
                     // Open chat UI is enabled only while the server is running.
                     VerticalLayout {
                         spacing: 8px;
@@ -243,6 +246,13 @@ export component AppWindow inherits Window {
                             // (a save while running changes the file, not the
                             // listening process); see state.slint.
                             clicked => { Platform.open-url(AppState.open_chat_url); }
+                        }
+                        // Live hardware bars in an independent, non-modal
+                        // window (HwWindow). Always enabled: what the GPUs
+                        // hold while the server is DOWN is worth seeing too.
+                        if AppState.hw_monitor_available : Button {
+                            text: "HW Monitor";
+                            clicked => { AppState.open_hw_monitor(); }
                         }
                         // Tail logs\llama-server.log in an independent,
                         // non-modal window (LogWindow). Always enabled: the

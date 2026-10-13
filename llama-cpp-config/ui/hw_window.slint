@@ -1,0 +1,115 @@
+// HW Monitor: an independent root window (like LogWindow), shown non-modally
+// beside the main configurator. One card per device (each GPU, then the CPU,
+// memory, and the disk holding the models directory), one horizontal bar per
+// metric. Rust (src/gui/hw_window.rs) samples once a second on a worker thread
+// and pushes the result into `groups`; every readout arrives pre-formatted so
+// no unit math lives in the .slint. The one control is the checkbox that heads
+// each device: unticked, the device's card is hidden and Rust stops reading
+// its metrics until it is ticked again.
+
+import { ScrollView, CheckBox, Palette } from "std-widgets.slint";
+import { Tokens, SectionCard } from "components.slint";
+import { HwBar, HwGroup } from "types.slint";
+
+// One metric: label, a track filled to `bar.fraction`, and the readout.
+component MeterBar inherits HorizontalLayout {
+    in property <HwBar> bar;
+    spacing: 12px;
+
+    Text {
+        text: root.bar.label;
+        width: 120px;
+        font-size: 13px;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+    Rectangle {
+        horizontal-stretch: 1;
+        min-width: 120px;
+        min-height: 20px;
+
+        Rectangle {
+            y: (parent.height - self.height) / 2;
+            width: parent.width;
+            height: 12px;
+            border-radius: 3px;
+            background: Palette.border;
+
+            Rectangle {
+                x: 0;
+                width: parent.width * clamp(root.bar.fraction, 0, 1);
+                height: parent.height;
+                border-radius: 3px;
+                background: Tokens.led;
+                // A faint halo of the same green, so the fill reads as lit
+                // (Skia renderer only).
+                drop-shadow-color: Tokens.led.transparentize(0.55);
+                drop-shadow-blur: 6px;
+                // Rust updates a bar's row in place, so the fill glides to its
+                // new value instead of jumping once a second.
+                animate width { duration: 250ms; easing: ease-out; }
+            }
+        }
+    }
+    Text {
+        text: root.bar.text;
+        width: 220px;
+        font-size: 13px;
+        horizontal-alignment: right;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+}
+
+export component HwWindow inherits Window {
+    title: "HW Monitor";
+    icon: @image-url("llama.png");
+    min-width: 520px;
+    min-height: 320px;
+    preferred-width: 760px;
+    preferred-height: 720px;
+    background: Palette.background;
+
+    // Pushed from Rust on every sample; empty until the first one lands.
+    in property <[HwGroup]> groups;
+    // A device's checkbox was clicked: its row index and the new state. Rust
+    // rewrites the row (a `for`-row checkbox binds one-way, like the GPU
+    // table's) and tells the sampler.
+    callback group_toggled(int, bool);
+
+    if root.groups.length == 0 : Text {
+        text: "Sampling…";
+        color: Palette.foreground.transparentize(Tokens.muted);
+    }
+
+    ScrollView {
+        VerticalLayout {
+            padding: 16px;
+            spacing: 16px;
+            alignment: start;
+
+            for group[i] in root.groups : VerticalLayout {
+                spacing: 8px;
+
+                HorizontalLayout {
+                    alignment: start;
+                    CheckBox {
+                        text: group.title;
+                        checked: group.enabled;
+                        toggled => { root.group_toggled(i, self.checked); }
+                    }
+                }
+                if group.enabled : SectionCard {
+                    if group.detail != "" : Text {
+                        text: group.detail;
+                        font-size: 12px;
+                        color: Palette.foreground.transparentize(Tokens.faint);
+                    }
+                    for bar in group.bars : MeterBar {
+                        bar: bar;
+                    }
+                }
+            }
+        }
+    }
+}

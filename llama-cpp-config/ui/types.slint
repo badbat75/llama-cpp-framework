@@ -339,3 +339,22 @@ export struct TensorOverrideRow {
     // This row's own complaint, or "" when it is fine.
     problem: string,
 }
+
+// HW Monitor (hw_window.slint). Built entirely in Rust (src/hwmon.rs) and
+// read-only to Slint: `text` arrives pre-formatted and `fraction` (0 to 1) is
+// the bar's fill. A group is one device: a GPU, the CPU, memory, the disk.
+export struct HwBar {
+    label: string,
+    text: string,
+    fraction: float,
+}
+
+export struct HwGroup {
+    // The device's identity (hwmon::Group::id): what its checkbox acts on.
+    id: string,
+    title: string,
+    detail: string,
+    // The device's checkbox. Off: no bars, and Rust reads nothing for it.
+    enabled: bool,
+    bars: [HwBar],
+}
