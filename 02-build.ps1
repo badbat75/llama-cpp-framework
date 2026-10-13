@@ -170,9 +170,10 @@ if (Test-Path $cacheFile) {
 $opensslPath = $cfg.OpenSSLDir -replace '\\', '/'
 
 # ── Vulkan SDK: resolve the newest installed version ──────────────
-# The LunarG SDK installs into a VERSIONED dir (C:\VulkanSDK\<x.y.z.w>) and an
-# upgrade removes the old tree, so every absolute path into it dies with it.
-# Two things then keep pointing at the dead version:
+# Each SDK version has its own directory in the dist layout
+# (<DistRoot>\VulkanSDK\<x.y.z.w>\windows), so every absolute path into one is
+# tied to that version. Two things keep pointing at a version that is no
+# longer the newest, or no longer there:
 #   - VULKAN_SDK in a console opened before the upgrade (and CMake's FindVulkan
 #     searches that env var first; it is also what ggml-vulkan appends to
 #     CMAKE_PREFIX_PATH for find_package(SPIRV-Headers));
@@ -180,41 +181,14 @@ $opensslPath = $cfg.OpenSSLDir -replace '\\', '/'
 #     Vulkan_LIBRARY / Vulkan_GLSLC_EXECUTABLE / Vulkan_GLSLANG_VALIDATOR_
 #     EXECUTABLE), which CMake reuses WITHOUT checking the files still exist,
 #     unlike a config-package <pkg>_DIR, which is re-searched when it vanishes.
-# So the fix is to scan the PARENT dir and pin the highest version ourselves:
-# set VULKAN_SDK for this process and pass the four cached paths explicitly, so
+# So the fix is to take the newest complete SDK of the layout (Find-Dist in
+# dists.ps1, which reads no environment variable) and pin it ourselves: set
+# VULKAN_SDK for this process and pass the four cached paths explicitly, so
 # they override whatever the cache holds. Deliberately NOT a build-dir wipe like
 # the compiler-mismatch check above: only the Vulkan backend needs recompiling,
 # and a wipe would cost a full CUDA + HIP rebuild.
-function Find-VulkanSdk {
-    # The parent of whatever VULKAN_SDK names (process env, then machine env:
-    # a stale console has an old value but still the right root), then the
-    # default install roots.
-    $roots = @()
-    foreach ($sdk in @($env:VULKAN_SDK, [Environment]::GetEnvironmentVariable('VULKAN_SDK', 'Machine'))) {
-        if ($sdk) { $roots += (Split-Path $sdk -Parent) }
-    }
-    $roots += @('C:\VulkanSDK', "${env:ProgramFiles}\VulkanSDK", "${env:ProgramFiles(x86)}\VulkanSDK")
-
-    $best = $null
-    $bestVer = $null
-    foreach ($root in ($roots | Where-Object { $_ } | Select-Object -Unique)) {
-        if (-not (Test-Path $root)) { continue }
-        foreach ($d in (Get-ChildItem $root -Directory -ErrorAction SilentlyContinue)) {
-            # Compare numerically ([version]): a string sort ranks 1.4.9 above
-            # 1.4.10. Skip anything the build cannot actually consume: the
-            # import lib and the shader compiler ggml-vulkan invokes.
-            $v = $null
-            if (-not [version]::TryParse($d.Name, [ref]$v)) { continue }
-            if (-not (Test-Path (Join-Path $d.FullName 'Lib\vulkan-1.lib'))) { continue }
-            if (-not (Test-Path (Join-Path $d.FullName 'Bin\glslc.exe'))) { continue }
-            if (-not $bestVer -or $v -gt $bestVer) { $bestVer = $v; $best = $d.FullName }
-        }
-    }
-    return $best
-}
-
 $vulkanArgs = @()
-$vulkanSdk = Find-VulkanSdk
+$vulkanSdk = (Find-Dist 'Vulkan' $sources $distRoot).Dir
 if ($vulkanSdk) {
     Write-Host "Vulkan SDK: $vulkanSdk" -ForegroundColor Cyan
     if ($env:VULKAN_SDK -ne $vulkanSdk) {
@@ -231,16 +205,16 @@ if ($vulkanSdk) {
         $vulkanArgs += "-DVulkan_GLSLANG_VALIDATOR_EXECUTABLE:FILEPATH=$vk/Bin/glslangValidator.exe"
     }
 } else {
-    # Non-standard layout (unversioned dir, custom root): leave FindVulkan to its
-    # own search rather than guessing; it fails loudly enough if nothing is there.
-    Write-Host "Vulkan SDK: no versioned install found, leaving detection to CMake" -ForegroundColor Yellow
+    # Nothing in the layout: leave FindVulkan to its own search rather than
+    # guessing; it fails loudly enough if nothing is there.
+    Write-Host "Vulkan SDK: none under $(Get-DistHome 'Vulkan' $sources $distRoot), leaving detection to CMake (00-install-prerequisites.ps1 installs it)" -ForegroundColor Yellow
 }
 
 # ── CUDA toolkit: build with the newest installed version ─────────
-# Each CUDA toolkit installs into its own versioned dir (...\CUDA\v13.4) and an
-# upgrade leaves the older ones in place, so nothing breaks the way a Vulkan
-# SDK upgrade does: the old toolkit merely stops being the newest and the build
-# goes on using it. CMake picks nvcc ONCE, at the first configure of a build
+# Each CUDA toolkit has its own directory in the dist layout
+# (<DistRoot>\CUDA\<X.Y.Z>\windows) and an upgrade leaves the older ones in
+# place, so nothing breaks: the old toolkit merely stops being the newest and
+# the build goes on using it. CMake picks nvcc ONCE, at the first configure of a build
 # dir, caches it as CMAKE_CUDA_COMPILER and never looks again, and
 # FindCUDAToolkit caches ~40 library paths from the same tree next to it (found
 # 2026-09-18: still compiling with 13.3 while 13.4 was installed and CUDA_PATH
@@ -256,37 +230,12 @@ if ($vulkanSdk) {
 # cache entries (-U, re-found on this configure). Only the CUDA objects
 # recompile, their command line naming the new nvcc; the C/C++ and HIP
 # targets are untouched. Verified on a scratch project mixing CXX and CUDA.
-function Find-CudaToolkit {
-    # The parent of whatever CUDA_PATH names (process env, then machine env),
-    # then the default install root. The newest by VERSION, not the one
-    # CUDA_PATH names: that is whichever toolkit was installed LAST.
-    $roots = @()
-    foreach ($p in @($env:CUDA_PATH, [Environment]::GetEnvironmentVariable('CUDA_PATH', 'Machine'))) {
-        if ($p) { $roots += (Split-Path $p.TrimEnd('\') -Parent) }
-    }
-    $roots += "${env:ProgramFiles}\NVIDIA GPU Computing Toolkit\CUDA"
-
-    $best = $null
-    $bestVer = $null
-    foreach ($root in ($roots | Where-Object { $_ } | Select-Object -Unique)) {
-        if (-not (Test-Path $root)) { continue }
-        foreach ($d in (Get-ChildItem $root -Directory -ErrorAction SilentlyContinue)) {
-            # v13.4 -> [version] 13.4, compared numerically (v13.10 > v13.9).
-            # Skip a tree the build cannot consume: nvcc, the static runtime
-            # ggml-cuda links, and cuBLAS.
-            $v = $null
-            if ($d.Name -notmatch '^v(\d+\.\d+)$' -or -not [version]::TryParse($Matches[1], [ref]$v)) { continue }
-            if (-not (Test-Path (Join-Path $d.FullName 'bin\nvcc.exe'))) { continue }
-            if (-not (Test-Path (Join-Path $d.FullName 'lib\x64\cudart_static.lib'))) { continue }
-            if (-not (Test-Path (Join-Path $d.FullName 'lib\x64\cublas.lib'))) { continue }
-            if (-not $bestVer -or $v -gt $bestVer) { $bestVer = $v; $best = $d.FullName }
-        }
-    }
-    return $best
-}
-
+#
+# The toolkit is the newest complete one of the layout (Find-Dist in
+# dists.ps1), by VERSION and never by CUDA_PATH: that variable names whichever
+# toolkit NVIDIA's installer set up last, on a machine that has one.
 $cudaArgs = @()
-$cudaToolkit = Find-CudaToolkit
+$cudaToolkit = (Find-Dist 'Cuda' $sources $distRoot).Dir
 if ($cudaToolkit) {
     Write-Host "CUDA toolkit: $cudaToolkit" -ForegroundColor Cyan
     if ($env:CUDA_PATH -and ($env:CUDA_PATH.TrimEnd('\') -ne $cudaToolkit)) {
@@ -314,8 +263,8 @@ if ($cudaToolkit) {
     }
     $cudaArgs += "-DCMAKE_CUDA_COMPILER:FILEPATH=$nvcc"
 } else {
-    # Non-standard layout: leave nvcc to CMake's own search (PATH, CUDA_PATH).
-    Write-Host "CUDA toolkit: no versioned install found, leaving detection to CMake" -ForegroundColor Yellow
+    # Nothing in the layout: leave nvcc to CMake's own search (PATH, CUDA_PATH).
+    Write-Host "CUDA toolkit: none under $(Get-DistHome 'Cuda' $sources $distRoot), leaving detection to CMake (00-install-prerequisites.ps1 installs it)" -ForegroundColor Yellow
 }
 
 # ── sccache: use local cache if available ─────────────────────────
@@ -403,11 +352,11 @@ $cmakeArgs = @(
     "-DCMAKE_CUDA_FLAGS=-w"
 )
 
-# Pinned Vulkan SDK paths (see Find-VulkanSdk above), empty when no versioned
-# install was found, in which case FindVulkan does its own search.
+# Pinned Vulkan SDK paths (see the Vulkan SDK section above), empty when the
+# layout holds none, in which case FindVulkan does its own search.
 $cmakeArgs += $vulkanArgs
 
-# Pinned CUDA toolkit (see Find-CudaToolkit above), plus the -U reset when the
+# Pinned CUDA toolkit (see the CUDA toolkit section above), plus the -U reset when the
 # build dir was configured against another one.
 $cmakeArgs += $cudaArgs
 

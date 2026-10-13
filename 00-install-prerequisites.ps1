@@ -3,16 +3,22 @@
 # winget packages (PowerShell 7+, OpenSSL, NSIS) are installed if missing and
 # upgraded if present, in a single self-elevated session (which also symlinks
 # OpenSSL's lib\VC\x64\MD\*.lib up to lib\ so cmake's find_package(OpenSSL)
-# resolves). ROCm/HIP is installed from AMD's TheRock dist tarball (the classic
-# HIP SDK installer is discontinued): the newest stable multiarch tarball is downloaded
-# and extracted into its own version directory (C:\TheRock\<version>) in the
-# same elevated session, which also sets the machine environment (HIP_PATH on
-# the ACTIVE version + PATH, pruned of the others). Dists therefore sit side
-# by side, and converging to a version already on disk costs a HIP_PATH move
-# instead of a download. The CUDA Toolkit and the Vulkan SDK are installed in
-# the same elevated session. Nothing is pinned: ROCm, CUDA and Vulkan all
-# converge to the newest STABLE release their vendor publishes
-# (installer\dist-sources.psd1 says where each one is looked up).
+# resolves). OpenSSL is treated as a system library and stays where winget
+# puts it.
+#
+# The GPU SDKs the build links against (ROCm/HIP, the CUDA Toolkit, the Vulkan
+# SDK) are installed in that same session, every one of them as
+#   <DistRoot>\<Name>\<Version>\windows      e.g. E:\TheRock\10.1.0\windows
+# DistRoot defaults to the one in installer\dist-sources.psd1 and is
+# overridden by -DistRoot, by LLAMA_FW_DIST_ROOT, or by what 01-configure.ps1
+# recorded (dists.ps1). Versions sit side by side, and nothing is ever
+# deleted. Nothing is pinned either: all three converge to the newest STABLE
+# release their vendor publishes (dist-sources.psd1 says where each one is
+# looked up). ROCm comes from AMD's TheRock dist tarball (the classic HIP SDK
+# installer is discontinued) and is the only one with a machine environment:
+# HIP_PATH on the ACTIVE version + PATH, pruned of the others, because the
+# installed llama-server finds rocBLAS through it. CUDA is assembled from
+# NVIDIA's redist archives, Vulkan comes from LunarG's installer.
 #
 # sccache comes straight from its GitHub releases (user scope, no elevation)
 # rather than winget, whose manifest lags upstream by days; a winget copy left
@@ -26,7 +32,9 @@
 # Safe to run any time: idempotent.
 
 [CmdletBinding()]
-param()
+param(
+    [string]$DistRoot  # where the SDK dists live (<DistRoot>\<Name>\<Version>\windows). If omitted: LLAMA_FW_DIST_ROOT, config-build.psd1, dist-sources.psd1
+)
 
 $ErrorActionPreference = 'Stop'
 
@@ -79,10 +87,20 @@ function Get-GitDescribe {
 $wingetPackages = @(
     @{ Id = 'Microsoft.PowerShell'    ; Name = 'PowerShell 7+' }
     @{ Id = 'ShiningLight.OpenSSL.Dev'; Name = 'OpenSSL' }
-    @{ Id = 'NSIS.NSIS'               ; Name = 'NSIS' }
+    @{ Id = 'NSIS.NSIS'              ; Name = 'NSIS' }
 )
 
 $sources = Import-PowerShellDataFile (Join-Path $PSScriptRoot 'installer\dist-sources.psd1')
+. (Join-Path $PSScriptRoot 'dists.ps1')
+
+# Read directly, not through common.ps1, which throws until 01-configure.ps1
+# has written the file: this script is the one that runs before it.
+$cfgPath = Join-Path $PSScriptRoot 'build\windows\config-build.psd1'
+$cfg = if (Test-Path $cfgPath) { Import-PowerShellDataFile $cfgPath } else { $null }
+
+# Every SDK dist below installs as <DistRoot>\<Dir>\<Version>\<DistOs>.
+$distRoot = Resolve-DistRoot $DistRoot $cfg $sources
+$distOs   = $sources.DistOs
 
 # ── ROCm (TheRock) dist ─────────────────────────────────────────────
 # AMD now distributes Windows ROCm/HIP as TheRock dist tarballs (the classic
@@ -92,19 +110,23 @@ $sources = Import-PowerShellDataFile (Join-Path $PSScriptRoot 'installer\dist-so
 # converges the install to the newest STABLE dist (rationale for the
 # multiarch tarball and the index scan lives next to the data).
 #
-# Dists install SIDE BY SIDE, one directory per version under Root, and
-# HIP_PATH names the active one. So converging to a version already extracted
-# by an earlier run costs a HIP_PATH move and nothing else, and an upgrade
-# never destroys the dist the machine is currently building against. Two
-# things follow, both handled below: the machine PATH must be PRUNED of the
-# other version dirs (two amdhip64_*.dll dirs on PATH is the classic silent
-# crash), and the pre-versioning single-directory layout (C:\TheRock\build,
-# what every install before 1.11.4 wrote) is RENAMED into its version dir
-# rather than re-downloaded: same bytes, 4.6 GB cheaper.
+# Dists install SIDE BY SIDE, one directory per version, and HIP_PATH names
+# the active one. So converging to a version already extracted by an earlier
+# run costs a HIP_PATH move and nothing else, and an upgrade never destroys
+# the dist the machine is currently building against. One thing follows,
+# handled below: the machine PATH must be PRUNED of the other dists' dirs (two
+# amdhip64_*.dll dirs on PATH is the classic silent crash).
+#
+# A dist OUTSIDE the layout (HIP_PATH on C:\TheRock\<version>, what every
+# install before 1.17.1 wrote) is not adopted: the run converges to the
+# newest stable inside the layout, by a HIP_PATH move when that version is
+# already there, by a download otherwise, and leaves the old tree where it
+# is. Copy it to <DistRoot>\TheRock\<version>\windows first (its marker comes
+# along) to save the 4.6 GB.
 $rocm = $sources.Rocm
-$rocmLegacyDir = Join-Path $rocm.Root 'build'   # pre-versioning layout
+$rocmRoot = Get-DistHome 'Rocm' $sources $distRoot
 
-function Get-RocmVersionDir([string]$Version) { Join-Path $rocm.Root $Version }
+function Get-RocmVersionDir([string]$Version) { Get-DistDir 'Rocm' $Version $sources $distRoot }
 
 # The version a dist directory holds: the marker our install step writes;
 # else the dist's own .info\version (covers a manual install; note it says
@@ -124,8 +146,8 @@ function Get-RocmDirVersion([string]$Dir) {
 
 # The dist the machine is actually using: whatever HIP_PATH points at. Process
 # env first, then machine (a console opened before an earlier run has a stale
-# copy); a HIP_PATH outside Root is honoured too, it is still what builds and
-# llama-server load.
+# copy); a HIP_PATH outside the layout is reported too, it is still what the
+# installed llama-server loads until this run moves it.
 function Get-RocmActiveDir {
     foreach ($hp in @($env:HIP_PATH, [Environment]::GetEnvironmentVariable('HIP_PATH', 'Machine'))) {
         if ($hp -and (Get-RocmDirVersion $hp.TrimEnd('\'))) { return $hp.TrimEnd('\') }
@@ -133,15 +155,16 @@ function Get-RocmActiveDir {
     return $null
 }
 
-# Every dist directory under Root, version -> path. The legacy unversioned
-# directory is included under the version it holds, but only when no proper
-# version dir already claims it (after a migration both exist for as long as
-# the user keeps the old one).
+# Every COMPLETE dist in the layout, version -> path. Complete means the
+# marker is there: a tree without it is an interrupted extract, which the
+# install leg clears and redoes, never something to point HIP_PATH at.
 function Get-RocmInstalled {
     $found = [ordered]@{}
-    foreach ($dir in @(Get-ChildItem $rocm.Root -Directory -ErrorAction SilentlyContinue | Sort-Object Name)) {
-        $v = Get-RocmDirVersion $dir.FullName
-        if ($v -and -not $found.Contains($v)) { $found[$v] = $dir.FullName }
+    foreach ($dir in @(Get-ChildItem $rocmRoot -Directory -ErrorAction SilentlyContinue | Sort-Object Name)) {
+        $d = Join-Path $dir.FullName $distOs
+        if (-not (Test-Path (Join-Path $d $rocm.Marker))) { continue }
+        $v = Get-RocmDirVersion $d
+        if ($v -and -not $found.Contains($v)) { $found[$v] = $d }
     }
     return $found
 }
@@ -197,40 +220,22 @@ function Get-RocmLatestPublished {
     return $best
 }
 
-# ── CUDA Toolkit + Vulkan SDK ───────────────────────────────────────
+# ── CUDA Toolkit, Vulkan SDK ────────────────────────────────────────
 # Both converge to the newest stable release, each version in its own
-# directory (CUDA as <Root>\v<X.Y>, a patch release over its own X.Y; Vulkan
-# as <Root>\<version>). 02-build.ps1 picks the newest COMPLETE install of each
-# by version, so a new one is used by the next build with no reconfigure; an
-# old one that survives is a fallback for the user to delete. Detection here applies the same completeness tests 02-build.ps1
-# does, so "installed" means "buildable".
+# directory of the layout. 02-build.ps1 picks the newest COMPLETE dist by
+# version, so a new one is used by the next build with no reconfigure; an old
+# one stays as a fallback for the user to delete. "Installed" here is
+# Find-Dist (dists.ps1), the same test the build applies, so it means
+# "buildable"; an SDK anywhere else on the machine does not count.
 $cuda   = $sources.Cuda
 $vulkan = $sources.Vulkan
 
-# The newest installed CUDA toolkit as Parsed/Version/Dir, versioned by its
-# own version.json ("cuda": X.Y.Z; the directory name only says X.Y), or $null.
-function Get-CudaInstalled {
-    $best = $null
-    foreach ($d in @(Get-ChildItem $cuda.Root -Directory -ErrorAction SilentlyContinue)) {
-        if ($d.Name -notmatch '^v\d+\.\d+$') { continue }
-        if (-not (Test-Path (Join-Path $d.FullName 'bin\nvcc.exe'))) { continue }
-        if (-not (Test-Path (Join-Path $d.FullName 'lib\x64\cudart_static.lib'))) { continue }
-        if (-not (Test-Path (Join-Path $d.FullName 'lib\x64\cublas.lib'))) { continue }
-        $v = $null
-        try {
-            $text = Get-Content (Join-Path $d.FullName 'version.json') -Raw -ErrorAction Stop
-            $v = [version](ConvertFrom-Json $text).cuda.version
-        } catch { continue }
-        if (-not $best -or $v -gt $best.Parsed) { $best = @{ Parsed = $v; Version = "$v"; Dir = $d.FullName } }
-    }
-    return $best
-}
-
-# The newest CUDA release NVIDIA publishes as Parsed/Version/Url, or $null.
+# The newest CUDA release NVIDIA publishes as Parsed/Version/Parts, or $null.
 # The redist index carries one redistrib_<X.Y.Z>.json per release (the same
-# strict X.Y.Z match as the ROCm scan); the network installer is then FOUND
-# among the known name patterns rather than assumed, so a release whose
-# Windows installer is not up yet is simply not taken this run.
+# strict X.Y.Z match as the ROCm scan), and that manifest names every
+# component's archive and sha256. Parts is the archive (Url/Sha256) of each of
+# the sources' Components: all of them are FOUND in the manifest, so a release
+# that lacks one for Windows is simply not taken this run.
 function Get-CudaLatestPublished {
     # Same PS 5.1 redirected-stderr rationale as Get-WingetVersion.
     $ErrorActionPreference = 'Continue'
@@ -242,32 +247,16 @@ function Get-CudaLatestPublished {
         if (-not $best -or $v -gt $best) { $best = $v }
     }
     if (-not $best) { return $null }
-    foreach ($tpl in $cuda.Installers) {
-        $url = $tpl -f "$best"
-        if (Get-RemoteFileSize $url) { return @{ Parsed = $best; Version = "$best"; Url = $url } }
+    $json = curl.exe -sL --fail --max-time 30 ($cuda.RedistIndex + "redistrib_$best.json") 2>$null | Out-String
+    if ($LASTEXITCODE -ne 0 -or -not $json) { return $null }
+    try { $manifest = ConvertFrom-Json $json } catch { return $null }
+    $parts = @()
+    foreach ($name in $cuda.Components) {
+        $entry = $manifest.$name.($cuda.Platform)
+        if (-not $entry -or -not $entry.relative_path -or $entry.sha256 -notmatch '^[0-9a-fA-F]{64}$') { return $null }
+        $parts += @{ Url = $cuda.RedistIndex + $entry.relative_path; Sha256 = $entry.sha256 }
     }
-    return $null
-}
-
-# The newest installed Vulkan SDK as Parsed/Version/Dir, or $null: the same
-# roots and completeness test as Find-VulkanSdk in 02-build.ps1.
-function Get-VulkanInstalled {
-    $roots = @()
-    foreach ($sdk in @($env:VULKAN_SDK, [Environment]::GetEnvironmentVariable('VULKAN_SDK', 'Machine'))) {
-        if ($sdk) { $roots += (Split-Path $sdk.TrimEnd('\') -Parent) }
-    }
-    $roots += @($vulkan.Root, "${env:ProgramFiles}\VulkanSDK", "${env:ProgramFiles(x86)}\VulkanSDK")
-    $best = $null
-    foreach ($root in ($roots | Where-Object { $_ } | Select-Object -Unique)) {
-        foreach ($d in @(Get-ChildItem $root -Directory -ErrorAction SilentlyContinue)) {
-            $v = $null
-            if (-not [version]::TryParse($d.Name, [ref]$v)) { continue }
-            if (-not (Test-Path (Join-Path $d.FullName 'Lib\vulkan-1.lib'))) { continue }
-            if (-not (Test-Path (Join-Path $d.FullName 'Bin\glslc.exe'))) { continue }
-            if (-not $best -or $v -gt $best.Parsed) { $best = @{ Parsed = $v; Version = $d.Name; Dir = $d.FullName } }
-        }
-    }
-    return $best
+    return @{ Parsed = $best; Version = "$best"; Parts = $parts }
 }
 
 # The newest Vulkan SDK LunarG publishes for Windows as Parsed/Version/Url/
@@ -451,10 +440,9 @@ if (-not $sccacheBefore -and $sccacheOnPath) {
     $sccacheBeforeFrom = if ($sccacheWinget) { 'winget' } else { Split-Path $sccacheOnPath }
 }
 
-$cfgPath = Join-Path $PSScriptRoot 'build\windows\config-build.psd1'
-$cfg = if (Test-Path $cfgPath) { Import-PowerShellDataFile $cfgPath } else { $null }
 $beforeLlama = if ($cfg) { Get-GitDescribe $cfg.LlamaCppDir } else { $null }
 
+Write-Host "  SDK dists under $distRoot (<Name>\<Version>\$distOs)" -ForegroundColor DarkGray
 foreach ($p in $wingetPackages) {
     $v = $before[$p.Id]
     if ($v) { Write-Host "  [OK] $($p.Name) $v" -ForegroundColor Green }
@@ -473,8 +461,8 @@ if ($rocmBefore) {
 } else {
     Write-Host "  [..] ROCm (TheRock) not installed" -ForegroundColor Yellow
 }
-$cudaBefore   = Get-CudaInstalled
-$vulkanBefore = Get-VulkanInstalled
+$cudaBefore   = Find-Dist 'Cuda' $sources $distRoot
+$vulkanBefore = Find-Dist 'Vulkan' $sources $distRoot
 if ($cudaBefore) { Write-Host "  [OK] CUDA Toolkit $($cudaBefore.Version) ($($cudaBefore.Dir))" -ForegroundColor Green }
 else             { Write-Host "  [..] CUDA Toolkit not installed" -ForegroundColor Yellow }
 if ($vulkanBefore) { Write-Host "  [OK] Vulkan SDK $($vulkanBefore.Version) ($($vulkanBefore.Dir))" -ForegroundColor Green }
@@ -494,64 +482,37 @@ $cudaTarget = $null
 if ($cudaLatest -and (-not $cudaBefore -or $cudaBefore.Parsed -lt $cudaLatest.Parsed)) {
     $cudaTarget = $cudaLatest
     $from = if ($cudaBefore) { "$($cudaBefore.Version) -> " } else { '' }
-    Write-Host "CUDA Toolkit $from$($cudaTarget.Version) will be installed (toolkit subpackages only, the display driver is left alone)" -ForegroundColor Cyan
+    Write-Host "CUDA Toolkit $from$($cudaTarget.Version) will be installed to $(Get-DistDir 'Cuda' $cudaTarget.Version $sources $distRoot) ($($cudaTarget.Parts.Count) redist archives, the display driver is left alone)" -ForegroundColor Cyan
 }
 $vulkanTarget = $null
 if ($vulkanLatest -and (-not $vulkanBefore -or $vulkanBefore.Parsed -lt $vulkanLatest.Parsed)) {
     $vulkanTarget = $vulkanLatest
     $from = if ($vulkanBefore) { "$($vulkanBefore.Version) -> " } else { '' }
     $mb = [math]::Round($vulkanTarget.Size / 1MB)
-    Write-Host "Vulkan SDK $from$($vulkanTarget.Version) will be installed to $(Join-Path $vulkan.Root $vulkanTarget.Version) ($mb MB download)" -ForegroundColor Cyan
+    Write-Host "Vulkan SDK $from$($vulkanTarget.Version) will be installed to $(Get-DistDir 'Vulkan' $vulkanTarget.Version $sources $distRoot) ($mb MB download)" -ForegroundColor Cyan
 }
 
 # ── Decide the ROCm action ──────────────────────────────────────────
 # Cheapest convergence first, which is what the version directories buy: a
-# dist an earlier run already extracted only needs HIP_PATH moved onto it,
-# and the pre-versioning tree is migrated by a rename. Downloading 4.6 GB is
-# the last resort, not the first.
+# dist an earlier run already extracted only needs HIP_PATH moved onto it.
+# Downloading 4.6 GB is the last resort, not the first.
 
 $rocmTarget  = $null   # dist to download and extract this run (Version/Url/Size)
 $rocmSwitch  = $null   # version dir already on disk to point HIP_PATH at
-$rocmRename  = $null   # pre-versioning tree to move into its version dir
 $rocmBlocked = $null   # why the machine cannot converge to the newest stable this run
-
-# Migrate C:\TheRock\build, but only when it holds a version we can NAME (an
-# interrupted tree reads 'unknown', and guessing a name for it would be worse
-# than leaving it alone) and nothing already occupies the destination.
-$rocmLegacyVer = Get-RocmDirVersion $rocmLegacyDir
-if ($rocmLegacyVer -and $rocmLegacyVer -ne 'unknown' -and
-    -not (Test-Path (Get-RocmVersionDir $rocmLegacyVer))) {
-    $rocmRename = @{ Version = $rocmLegacyVer
-                     From    = $rocmLegacyDir
-                     To      = (Get-RocmVersionDir $rocmLegacyVer) }
-}
-
-# Where a version sits once this run's rename has happened.
-function Resolve-RocmDir([string]$Version) {
-    if ($rocmRename -and $rocmRename.Version -eq $Version) { return $rocmRename.To }
-    if ($rocmOnDisk.Contains($Version)) { return $rocmOnDisk[$Version] }
-    return $null
-}
-
-# HIP_PATH on a tree that is not the version's own directory (the legacy one,
-# with the migrated copy already beside it): prefer the version dir, so the
-# leftover is inactive and free to delete. Get-RocmInstalled ranks a proper
-# version dir above the legacy one for the same version.
-if ($rocmBefore -and $rocmOnDisk.Contains($rocmBefore) -and $rocmOnDisk[$rocmBefore] -ne $rocmBeforeDir) {
-    $rocmSwitch = $rocmOnDisk[$rocmBefore]
-}
 
 # Converge to the newest stable, never AWAY from a newer one: a version that
 # does not parse ('unknown', a hand-installed nightly such as 10.2.0a2026...)
-# is replaced, a parsed one only when it is older.
+# is replaced, a parsed one only when it is older. An active dist OUTSIDE the
+# layout is replaced whatever its version: the layout is where dists live.
 $rocmBeforeParsed = $null
 if ($rocmBefore) { [void][version]::TryParse($rocmBefore, [ref]$rocmBeforeParsed) }
+$rocmInLayout = $rocmBeforeDir -and (@($rocmOnDisk.Values) -contains $rocmBeforeDir)
 if (-not $rocmLatest) {
     $rocmBlocked = 'newest stable not resolved (offline? index unreachable?)'
-} elseif (-not $rocmBeforeParsed -or $rocmBeforeParsed -lt $rocmLatest.Parsed) {
-    $latestDir = Resolve-RocmDir $rocmLatest.Version   # extracted earlier, never activated
-    if ($latestDir) {
-        $rocmSwitch = $latestDir
+} elseif (-not $rocmInLayout -or -not $rocmBeforeParsed -or $rocmBeforeParsed -lt $rocmLatest.Parsed) {
+    if ($rocmOnDisk.Contains($rocmLatest.Version)) {
+        $rocmSwitch = $rocmOnDisk[$rocmLatest.Version]   # extracted earlier, never activated
     } else {
         $size = Get-RemoteFileSize $rocmLatest.Url
         if ($size) {
@@ -561,36 +522,25 @@ if (-not $rocmLatest) {
         }
     }
 }
-if (Get-Process llama-server -ErrorAction SilentlyContinue) {
-    # A rename moves the tree a running llama-server loaded its ROCm DLLs
-    # from, and an install into an EXISTING version dir wipes it first;
-    # never yank either out from under it. Extracting a version the machine
+if ($rocmTarget -and (Test-Path (Get-RocmVersionDir $rocmTarget.Version)) -and
+    (Get-Process llama-server -ErrorAction SilentlyContinue)) {
+    # An install into an EXISTING version dir wipes it first; never yank it
+    # out from under a running llama-server. Extracting a version the machine
     # does not have is safe while it runs: side by side is the whole point.
-    if ($rocmRename) {
-        $rocmBlocked = 'llama-server is running - stop it and re-run (the dist directory has to be renamed)'
-        if ($rocmSwitch -eq $rocmRename.To) { $rocmSwitch = $null }
-        $rocmRename = $null
-    }
-    if ($rocmTarget -and (Test-Path (Get-RocmVersionDir $rocmTarget.Version))) {
-        $rocmBlocked = 'llama-server is running - stop it and re-run'
-        $rocmTarget  = $null
-    }
+    $rocmBlocked = 'llama-server is running - stop it and re-run'
+    $rocmTarget  = $null
 }
 
 # The directory HIP_PATH names after this run. The elevated env leg gates it
 # on the marker, so a failed download leaves the machine exactly where it was.
 $rocmActiveDir = $rocmBeforeDir
-if ($rocmRename -and $rocmActiveDir -eq $rocmRename.From) { $rocmActiveDir = $rocmRename.To }
 if ($rocmSwitch) { $rocmActiveDir = $rocmSwitch }
 if ($rocmTarget) { $rocmActiveDir = Get-RocmVersionDir $rocmTarget.Version }
 
-if ($rocmRename) {
-    Write-Host "ROCm (TheRock) $($rocmRename.Version): $($rocmRename.From) -> $($rocmRename.To) (version directories)" -ForegroundColor Cyan
-}
 if ($rocmTarget) {
     $gb = [math]::Round($rocmTarget.Size / 1GB, 1)
     Write-Host "ROCm (TheRock) $($rocmTarget.Version) will be installed to $(Get-RocmVersionDir $rocmTarget.Version) ($gb GB download)" -ForegroundColor Cyan
-    $drive  = (Split-Path -Qualifier $rocm.Root).TrimEnd(':')
+    $drive  = (Split-Path -Qualifier $rocmRoot).TrimEnd(':')
     $freeGB = [math]::Round((Get-PSDrive $drive).Free / 1GB, 1)
     if ($freeGB -lt 40) {
         Write-Host "  warning: only $freeGB GB free on ${drive}: (download + extract want ~40 GB)" -ForegroundColor Yellow
@@ -602,16 +552,16 @@ if ($rocmBlocked) {
     Write-Host "ROCm (TheRock): $rocmBlocked" -ForegroundColor Yellow
 }
 
-# ── Build the elevated batch (winget, symlinks, ROCm, CUDA, Vulkan) ─
+# ── Build the elevated batch (winget, ROCm, CUDA, Vulkan, symlinks) ─
 
 $blocks = @()
 # A downloaded installer runs elevated only when Authenticode says it is
 # intact AND signed by its vendor (the sources' Signer, matched against the
 # certificate's O=): a valid signature by anyone else is not enough. The file
-# sits in the user-writable TEMP, so it is held open (share = Read only: no
-# write, rename or delete by anyone) from BEFORE the check until the installer
-# exits; what was verified is what runs. Returns the exit code, $null when the
-# installer was refused.
+# sits in a user-writable .downloads directory, so it is held open (share =
+# Read only: no write, rename or delete by anyone) from BEFORE the check until
+# the installer exits; what was verified is what runs. Returns the exit code,
+# $null when the installer was refused.
 $blocks += @'
 function Invoke-SignedInstaller([string]$File, [string]$Org, [string]$Arguments) {
     $lock = [IO.File]::Open($File, 'Open', 'Read', 'Read')
@@ -634,51 +584,21 @@ foreach ($p in $present) {
     $blocks += "Write-Host 'Upgrading $($p.Name)...' -ForegroundColor Cyan"
     $blocks += "winget upgrade --id $($p.Id) --exact --silent --accept-source-agreements --accept-package-agreements"
 }
-# OpenSSL ships libs under lib\VC\x64\MD\ but cmake/find_package expects them
-# directly under lib\. Idempotent: safe to re-run after any OpenSSL touch.
-$blocks += @'
-
-$d = "${env:ProgramFiles}\OpenSSL-Win64"
-if (Test-Path "$d\lib\VC\x64\MD\libcrypto.lib") {
-    if (-not (Test-Path "$d\lib\libcrypto.lib")) {
-        New-Item -ItemType SymbolicLink -Path "$d\lib\libcrypto.lib" -Target "$d\lib\VC\x64\MD\libcrypto.lib" | Out-Null
-        Write-Host "  Created symlink: libcrypto.lib" -ForegroundColor DarkGray
-    }
-    if (-not (Test-Path "$d\lib\libssl.lib")) {
-        New-Item -ItemType SymbolicLink -Path "$d\lib\libssl.lib" -Target "$d\lib\VC\x64\MD\libssl.lib" | Out-Null
-        Write-Host "  Created symlink: libssl.lib" -ForegroundColor DarkGray
-    }
-}
-'@
-# ROCm: migrate the pre-versioning tree, download + extract when converging to
-# the newest stable, and set the machine env every run (idempotent, and it self-heals a
-# previously declined elevation).
-if ($rocmTarget -or $rocmRename -or $rocmActiveDir) {
-    $blocks += "`$rocmRoot = '$($rocm.Root)'; `$rocmMarker = '$($rocm.Marker)'; `$rocmActiveDir = '$rocmActiveDir'"
-    if ($rocmRename) {
-        # Same bytes, new name: a rename converts the pre-versioning layout in
-        # a second, where a re-download costs 4.6 GB and half an hour.
-        $blocks += "`$rocmFrom = '$($rocmRename.From)'; `$rocmTo = '$($rocmRename.To)'"
-        $blocks += @'
-
-Write-Host "Moving the ROCm dist into its version directory..." -ForegroundColor Cyan
-if ((Test-Path $rocmFrom) -and -not (Test-Path $rocmTo)) {
-    Move-Item -LiteralPath $rocmFrom -Destination $rocmTo -ErrorAction SilentlyContinue
-    if (Test-Path $rocmTo) {
-        Write-Host "  $rocmFrom -> $rocmTo" -ForegroundColor Green
-    } else {
-        Write-Host "  move failed (files in use?); close whatever uses ROCm and re-run" -ForegroundColor Red
-    }
-}
-'@
-    }
+# ROCm: download + extract when converging to the newest stable, and set the
+# machine env every run (idempotent, and it self-heals a previously declined
+# elevation). $rocmPrevDir is the dist HIP_PATH named before this run: its
+# PATH entries are pruned with the layout's, wherever it sits.
+if ($rocmTarget -or $rocmActiveDir) {
+    $blocks += "`$rocmRoot = '$rocmRoot'; `$rocmMarker = '$($rocm.Marker)'; `$rocmActiveDir = '$rocmActiveDir'; `$rocmPrevDir = '$rocmBeforeDir'"
     if ($rocmTarget) {
         $blocks += "`$rocmDir = '$(Get-RocmVersionDir $rocmTarget.Version)'"
         $blocks += "`$rocmVer = '$($rocmTarget.Version)'; `$rocmUrl = '$($rocmTarget.Url)'; `$rocmSize = $($rocmTarget.Size)"
         $blocks += @'
 
 Write-Host "Installing ROCm (TheRock) $rocmVer..." -ForegroundColor Cyan
-$rocmTar = Join-Path $env:TEMP (Split-Path $rocmUrl -Leaf)
+$rocmDl = Join-Path $rocmRoot '.downloads'
+New-Item -ItemType Directory -Force -Path $rocmDl | Out-Null
+$rocmTar = Join-Path $rocmDl (Split-Path $rocmUrl -Leaf)
 $haveTar = $false
 if (Test-Path $rocmTar) {
     $len = (Get-Item $rocmTar).Length
@@ -744,18 +664,22 @@ if ($rocmActiveDir -and (Test-Path (Join-Path $rocmActiveDir $rocmMarker))) {
     # PATH goes through the raw registry: setx /M truncates PATH at 1024 chars,
     # and [Environment]::SetEnvironmentVariable rewrites REG_EXPAND_SZ as
     # REG_SZ, breaking %SystemRoot%-style entries other software put there.
-    # Every OTHER version dir is pruned out of it, and that is not tidiness:
-    # amdhip64_*.dll reachable from two PATH directories is an ambiguous load
-    # order, the classic cause of silent crashes in a multi-backend build.
+    # Every OTHER dist's dir is pruned out of it (the layout's other versions
+    # and the dist that was active before this run, which may sit outside
+    # the layout), and that is not tidiness: amdhip64_*.dll reachable from
+    # two PATH directories is an ambiguous load order, the classic cause of
+    # silent crashes in a multi-backend build.
     $key = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey('SYSTEM\CurrentControlSet\Control\Session Manager\Environment', $true)
     $path = [string]$key.GetValue('Path', '', [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
     $keep  = @("$rocmActiveDir\bin", "$rocmActiveDir\lib\llvm\bin")
-    $under = $rocmRoot.TrimEnd('\') + '\'
+    $under = @($rocmRoot.TrimEnd('\') + '\')
+    if ($rocmPrevDir) { $under += $rocmPrevDir.TrimEnd('\') + '\' }
     $parts = @()
     foreach ($p in @($path -split ';' | Where-Object { $_ })) {
         $t = $p.TrimEnd('\')
-        if ($t.StartsWith($under, [StringComparison]::OrdinalIgnoreCase) -and ($keep -notcontains $t)) {
-            Write-Host "  PATH -= $p (other ROCm version)" -ForegroundColor DarkGray
+        $other = @($under | Where-Object { $t.StartsWith($_, [StringComparison]::OrdinalIgnoreCase) }).Count -gt 0
+        if ($other -and ($keep -notcontains $t)) {
+            Write-Host "  PATH -= $p (other ROCm dist)" -ForegroundColor DarkGray
             continue
         }
         $parts += $p
@@ -771,50 +695,103 @@ if ($rocmActiveDir -and (Test-Path (Join-Path $rocmActiveDir $rocmMarker))) {
 }
 '@
 }
-# CUDA Toolkit: the network installer, silent, with an EXPLICIT subpackage
-# list. A bare -s installs every subpackage, the display driver included, and
-# the driver is the user's to manage (a toolkit's bundled driver can be older
-# than the one installed). The installer sets CUDA_PATH / CUDA_PATH_V<X>_<Y>
-# and PATH itself. Success is judged by the report (the toolkit's own
-# version.json), not by the exit code.
+# CUDA Toolkit: assembled from NVIDIA's redist archives, not its installer
+# (dist-sources.psd1 says why). Each archive is checked against the manifest's
+# sha256 before it is unpacked, and unpacks as <name>-archive\{bin,include,
+# lib,...}: stripping that one level merges them into a single toolkit
+# prefix. Nothing is registered machine-wide (no CUDA_PATH, no PATH entry, no
+# driver): 02-build.ps1 finds the toolkit in the layout. A finished download
+# is reused by a re-run; the marker is written only once every component is
+# in, so a tree without it is an interrupted install of this same version and
+# is cleared first.
 if ($cudaTarget) {
-    $mm = '{0}.{1}' -f $cudaTarget.Parsed.Major, $cudaTarget.Parsed.Minor
-    $subs = ($cuda.Subpackages | ForEach-Object { "${_}_$mm" }) -join ' '
-    $blocks += "`$cudaVer = '$($cudaTarget.Version)'; `$cudaUrl = '$($cudaTarget.Url)'; `$cudaSubs = '$subs'; `$cudaSigner = '$($cuda.Signer)'"
+    $cudaHome = Get-DistHome 'Cuda' $sources $distRoot
+    $blocks += "`$cudaVer = '$($cudaTarget.Version)'; `$cudaDir = '$(Get-DistDir 'Cuda' $cudaTarget.Version $sources $distRoot)'; `$cudaMarker = '$($cuda.Marker)'"
+    $blocks += "`$cudaDl = '$(Join-Path (Join-Path $cudaHome '.downloads') $cudaTarget.Version)'"
+    $blocks += "`$cudaParts = @(" + (($cudaTarget.Parts | ForEach-Object { "@{ Url = '$($_.Url)'; Sha256 = '$($_.Sha256)' }" }) -join ', ') + ')'
     $blocks += @'
 
-Write-Host "Installing CUDA Toolkit $cudaVer (no driver)..." -ForegroundColor Cyan
-$cudaExe = Join-Path $env:TEMP (Split-Path $cudaUrl -Leaf)
-curl.exe --fail -L --retry 3 --retry-delay 5 -o $cudaExe $cudaUrl
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "  download failed (curl exit $LASTEXITCODE)" -ForegroundColor Red
+Write-Host "Installing CUDA Toolkit $cudaVer (redist archives, no driver)..." -ForegroundColor Cyan
+New-Item -ItemType Directory -Force -Path $cudaDl | Out-Null
+if (Test-Path $cudaDir) { Remove-Item $cudaDir -Recurse -Force -ErrorAction SilentlyContinue }
+if (Test-Path $cudaDir) {
+    Write-Host "  cannot clear $cudaDir (files in use?); close whatever uses it and re-run" -ForegroundColor Red
 } else {
-    Write-Host "  the network installer fetches the subpackages itself (takes a while, no progress shown)..." -ForegroundColor DarkGray
-    $rc = Invoke-SignedInstaller $cudaExe $cudaSigner "-s $cudaSubs"
-    if ($null -ne $rc -and $rc -ne 0) { Write-Host "  CUDA installer exit code $rc" -ForegroundColor Red }
+    New-Item -ItemType Directory -Force -Path $cudaDir | Out-Null
+    $cudaOk = $true
+    foreach ($part in $cudaParts) {
+        $zip = Join-Path $cudaDl (Split-Path $part.Url -Leaf)
+        $have = (Test-Path $zip) -and ((Get-FileHash $zip -Algorithm SHA256).Hash -eq $part.Sha256)
+        if (-not $have) {
+            Remove-Item $zip -Force -ErrorAction SilentlyContinue
+            Write-Host "  $(Split-Path $zip -Leaf)" -ForegroundColor DarkGray
+            curl.exe --fail -sSL --retry 3 --retry-delay 5 -o $zip $part.Url
+            $have = ($LASTEXITCODE -eq 0) -and ((Get-FileHash $zip -Algorithm SHA256).Hash -eq $part.Sha256)
+        }
+        if (-not $have) {
+            Remove-Item $zip -Force -ErrorAction SilentlyContinue
+            Write-Host "  download failed or sha256 mismatch on $(Split-Path $zip -Leaf)" -ForegroundColor Red
+            $cudaOk = $false; break
+        }
+        tar.exe -xf $zip -C $cudaDir --strip-components=1
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "  extraction of $(Split-Path $zip -Leaf) failed (tar exit $LASTEXITCODE)" -ForegroundColor Red
+            $cudaOk = $false; break
+        }
+    }
+    if ($cudaOk) {
+        Set-Content -Path (Join-Path $cudaDir $cudaMarker) -Value $cudaVer
+        Remove-Item $cudaDl -Recurse -Force -ErrorAction SilentlyContinue
+        Write-Host "  CUDA Toolkit $cudaVer installed" -ForegroundColor Green
+    } else {
+        Write-Host "  CUDA Toolkit $cudaVer NOT installed; a re-run reuses the finished downloads" -ForegroundColor Red
+    }
 }
-Remove-Item $cudaExe -Force -ErrorAction SilentlyContinue
 '@
 }
 # Vulkan SDK: LunarG's Qt installer, headless, into its own version directory
-# (it sets VULKAN_SDK and PATH itself). Checked against the expected size
-# first, so a truncated download never runs.
+# (it sets VULKAN_SDK and PATH itself; the build reads neither). Checked
+# against the expected size first, so a truncated download never runs. The
+# marker is written only when the installer left an SDK the build can use.
 if ($vulkanTarget) {
-    $blocks += "`$vkVer = '$($vulkanTarget.Version)'; `$vkUrl = '$($vulkanTarget.Url)'; `$vkSize = $($vulkanTarget.Size); `$vkDir = '$(Join-Path $vulkan.Root $vulkanTarget.Version)'; `$vkSigner = '$($vulkan.Signer)'"
+    $vkHome = Get-DistHome 'Vulkan' $sources $distRoot
+    $blocks += "`$vkVer = '$($vulkanTarget.Version)'; `$vkUrl = '$($vulkanTarget.Url)'; `$vkSize = $($vulkanTarget.Size); `$vkDir = '$(Get-DistDir 'Vulkan' $vulkanTarget.Version $sources $distRoot)'; `$vkSigner = '$($vulkan.Signer)'"
+    $blocks += "`$vkDl = '$(Join-Path $vkHome '.downloads')'; `$vkMarker = '$($vulkan.Marker)'"
     $blocks += @'
 
 Write-Host "Installing Vulkan SDK $vkVer..." -ForegroundColor Cyan
-$vkExe = Join-Path $env:TEMP (Split-Path $vkUrl -Leaf)
+New-Item -ItemType Directory -Force -Path $vkDl | Out-Null
+$vkExe = Join-Path $vkDl (Split-Path $vkUrl -Leaf)
 curl.exe --fail -L --retry 3 --retry-delay 5 -o $vkExe $vkUrl
 if ($LASTEXITCODE -ne 0 -or (Get-Item $vkExe -ErrorAction SilentlyContinue).Length -ne $vkSize) {
     Write-Host "  download failed or incomplete (curl exit $LASTEXITCODE)" -ForegroundColor Red
 } else {
     $rc = Invoke-SignedInstaller $vkExe $vkSigner "--root `"$vkDir`" --accept-licenses --default-answer --confirm-command install"
     if ($null -ne $rc -and $rc -ne 0) { Write-Host "  Vulkan SDK installer exit code $rc" -ForegroundColor Red }
+    if ((Test-Path (Join-Path $vkDir 'Lib\vulkan-1.lib')) -and (Test-Path (Join-Path $vkDir 'Bin\glslc.exe'))) {
+        Set-Content -Path (Join-Path $vkDir $vkMarker) -Value $vkVer
+        Write-Host "  Vulkan SDK $vkVer installed" -ForegroundColor Green
+    }
 }
 Remove-Item $vkExe -Force -ErrorAction SilentlyContinue
 '@
 }
+# OpenSSL ships libs under lib\VC\x64\MD\ but cmake/find_package expects them
+# directly under lib\. Idempotent: safe to re-run after any OpenSSL touch.
+$blocks += @'
+
+$d = "${env:ProgramFiles}\OpenSSL-Win64"
+if (Test-Path "$d\lib\VC\x64\MD\libcrypto.lib") {
+    if (-not (Test-Path "$d\lib\libcrypto.lib")) {
+        New-Item -ItemType SymbolicLink -Path "$d\lib\libcrypto.lib" -Target "$d\lib\VC\x64\MD\libcrypto.lib" | Out-Null
+        Write-Host "  Created symlink: libcrypto.lib" -ForegroundColor DarkGray
+    }
+    if (-not (Test-Path "$d\lib\libssl.lib")) {
+        New-Item -ItemType SymbolicLink -Path "$d\lib\libssl.lib" -Target "$d\lib\VC\x64\MD\libssl.lib" | Out-Null
+        Write-Host "  Created symlink: libssl.lib" -ForegroundColor DarkGray
+    }
+}
+'@
 $script = $blocks -join "`n"
 
 if (Test-IsAdmin) {
@@ -924,8 +901,8 @@ $rocmAfterDir = [Environment]::GetEnvironmentVariable('HIP_PATH', 'Machine')
 if ($rocmAfterDir) { $rocmAfterDir = $rocmAfterDir.TrimEnd('\') }
 $rocmAfter    = Get-RocmDirVersion $rocmAfterDir
 $rocmOnDisk   = Get-RocmInstalled
-$cudaAfter    = Get-CudaInstalled
-$vulkanAfter  = Get-VulkanInstalled
+$cudaAfter    = Find-Dist 'Cuda' $sources $distRoot
+$vulkanAfter  = Find-Dist 'Vulkan' $sources $distRoot
 
 # Make the dist visible to THIS session too (a 01-configure.ps1 run in the
 # same console). HIP_PATH/PATH reach new terminals via the machine env; the
@@ -937,14 +914,16 @@ if ($rocmAfter -and $rocmAfter -ne 'unknown') {
     $env:HIP_DEVICE_LIB_PATH = "$rocmAfterDir\lib\llvm\amdgcn\bitcode"
     $env:HIP_PLATFORM        = 'amd'
     $env:LLVM_PATH           = "$rocmAfterDir\lib\llvm"
-    # Drop the previous version's entries first: two amdhip64_*.dll dirs on
+    # Drop the previous dist's entries first: two amdhip64_*.dll dirs on
     # PATH is an ambiguous load order (the machine PATH is pruned the same
     # way in the elevated leg).
-    $under = $rocm.Root.TrimEnd('\') + '\'
+    $under = @($rocmRoot.TrimEnd('\') + '\')
+    if ($rocmBeforeDir) { $under += $rocmBeforeDir.TrimEnd('\') + '\' }
     $keep  = @("$rocmAfterDir\bin", "$rocmAfterDir\lib\llvm\bin")
     $env:PATH = (@($env:PATH -split ';' | Where-Object {
-        $_ -and (-not $_.TrimEnd('\').StartsWith($under, [StringComparison]::OrdinalIgnoreCase) -or
-                 $keep -contains $_.TrimEnd('\'))
+        $t = $_.TrimEnd('\')
+        $_ -and (@($under | Where-Object { $t.StartsWith($_, [StringComparison]::OrdinalIgnoreCase) }).Count -eq 0 -or
+                 $keep -contains $t)
     }) -join ';')
     foreach ($add in $keep) {
         if (@($env:PATH -split ';') -notcontains $add) { $env:PATH = "$add;$env:PATH" }
@@ -996,7 +975,7 @@ if ($sccacheWingetRemoved) {
 
 # HipPath is what build\windows\config-build.psd1 pins (compiler path included), so
 # the "re-run 01-configure" verdict follows the DIRECTORY, not the version:
-# migrating the pre-versioning tree moves HIP_PATH without changing a digit.
+# moving into the layout changes HIP_PATH without changing a digit.
 $rocmChanged = ($rocmBeforeDir -ne $rocmAfterDir)
 if (-not $rocmBefore -and $rocmAfter) {
     Write-ReportRow "[++]" Green "ROCm (TheRock)" "installed $rocmAfter in $rocmAfterDir"
@@ -1017,11 +996,15 @@ $rocmOther = @($rocmOnDisk.Keys | Where-Object { $rocmOnDisk[$_] -ne $rocmAfterD
 if ($rocmOther.Count) {
     # Never deleted here: an inactive dist is a working rollback (switching
     # back is a HIP_PATH move), and 25 GB is the user's call, not the script's.
-    Write-ReportRow "    " DarkGray "" "inactive dists in $($rocm.Root): $($rocmOther -join ', ') (~25 GB each, delete the directory to reclaim)"
+    Write-ReportRow "    " DarkGray "" "inactive dists in ${rocmRoot}: $($rocmOther -join ', ') (~25 GB each, delete the directory to reclaim)"
+}
+if ($rocmBeforeDir -and $rocmBeforeDir -ne $rocmAfterDir -and (Test-Path $rocmBeforeDir) -and
+    @($rocmOnDisk.Values) -notcontains $rocmBeforeDir) {
+    Write-ReportRow "    " DarkGray "" "previous dist kept in $rocmBeforeDir, outside the layout (delete it to reclaim the space)"
 }
 
 # CUDA Toolkit and Vulkan SDK: the same verdicts, keyed on the newest
-# complete install (what 02-build.ps1 will use), before vs after this run.
+# complete dist in the layout (what the build will use), before vs after.
 function Write-SdkRows([string]$Name, $Before, $After, $Latest, $Target) {
     if (-not $After) {
         $detail = if ($Target) { "install of $($Target.Version) failed" }
@@ -1137,19 +1120,26 @@ if ($rocmChanged) {
     Write-Host "    dir $rocmAfterDir\.kpack\blas_lib_gfx*.kpack" -ForegroundColor DarkGray
     Write-Host ""
 }
+# 01-configure.ps1 has to be told the dist root only when it would not resolve
+# this one by itself (a -DistRoot given here and recorded nowhere yet).
+$configure = '.\01-configure.ps1'
+if ($distRoot -ne (Resolve-DistRoot $null $cfg $sources)) { $configure += " -DistRoot `"$distRoot`"" }
+$configStale = $cfg -and (($cfg.DistRoot -ne $distRoot) -or ($rocmAfterDir -and $cfg.HipPath -ne $rocmAfterDir))
 if (-not $cfg) {
-    Write-Host "  Next: .\01-configure.ps1   # detect paths and generate build\windows\config-build.psd1" -ForegroundColor Cyan
-} elseif ($rocmChanged -or $rebuildLlama -or $sdkChanged) {
-    # 01-configure.ps1 records HipPath (and the clang inside it), nothing of
-    # CUDA or Vulkan: 02-build.ps1 finds the newest of those itself.
+    Write-Host "  Next: $configure   # detect paths and generate build\windows\config-build.psd1" -ForegroundColor Cyan
+} elseif ($rocmChanged -or $rebuildLlama -or $sdkChanged -or $configStale) {
+    # 01-configure.ps1 records the dist root and HipPath (and the clang inside
+    # it), nothing of CUDA or Vulkan: 02-build.ps1 finds the newest of those
+    # itself.
     Write-Host "  Recommended actions (open a NEW terminal first: the installers changed the machine env):" -ForegroundColor Yellow
-    if ($rocmChanged) {
-        Write-Host "    .\01-configure.ps1        # HipPath is now $rocmAfterDir" -ForegroundColor Yellow
+    if ($rocmChanged -or $configStale) {
+        Write-Host "    $configure        # config-build.psd1 names other SDK paths" -ForegroundColor Yellow
     }
     $why = @()
     if ($rebuildLlama) { $why += 'newer llama.cpp release available' }
     if ($rocmChanged)  { $why += 'new ROCm' }
     if ($sdkChanged)   { $why += 'new CUDA/Vulkan SDK' }
+    if (-not $why.Count) { $why += 'SDK paths changed' }
     Write-Host "    .\02-build.ps1            # $($why -join ', ')" -ForegroundColor Yellow
     Write-Host "    .\03-package.ps1          # rebuild installer afterwards" -ForegroundColor Yellow
 } else {

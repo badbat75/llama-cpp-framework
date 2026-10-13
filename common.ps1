@@ -6,6 +6,7 @@
 #
 # - Sets $buildRoot, the per-OS directory everything Windows generates lives in.
 # - Loads $cfg from build\windows\config-build.psd1 (build-time paths, GPU targets, compiler).
+# - Loads $sources + dists.ps1 and sets $distRoot, the root of the SDK dist layout.
 # - Adds ROCm/HIP\bin to PATH so HIP DLLs are loadable at both build and run time.
 # - Exposes Enable-VsDevShell as a function; both dot-sourcers call it (the
 #   activation stays opt-in so a future non-build consumer isn't forced into it).
@@ -21,6 +22,15 @@ if (-not (Test-Path $cfgPath)) {
     throw "build\windows\config-build.psd1 not found. Run 01-configure.ps1 first."
 }
 $cfg = Import-PowerShellDataFile $cfgPath
+
+# The SDK dist layout (dists.ps1): $sources says how dists are named, and
+# $distRoot is the root 01-configure.ps1 RECORDED, so the CUDA Toolkit and the
+# Vulkan SDK that 02-build.ps1 resolves come from the same root as the HipPath
+# in the config. A config written before the key existed falls
+# back to LLAMA_FW_DIST_ROOT, then to the default in dist-sources.psd1.
+$sources = Import-PowerShellDataFile (Join-Path $PSScriptRoot 'installer\dist-sources.psd1')
+. (Join-Path $PSScriptRoot 'dists.ps1')
+$distRoot = if ($cfg.DistRoot) { $cfg.DistRoot } else { Resolve-DistRoot $null $null $sources }
 
 # cargo's target dir for llama-cpp-config. 02-build.ps1 passes it to cargo as
 # CARGO_TARGET_DIR, 03-package.ps1 stages the exe from it. A bare `cargo build`

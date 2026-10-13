@@ -18,10 +18,12 @@ Installed/updated via winget by `00-install-prerequisites.ps1`:
 Installed/updated from its GitHub release (winget lags upstream by days) into `%LOCALAPPDATA%\Programs\sccache`, also by `00-install-prerequisites.ps1`:
 - [sccache](https://github.com/mozilla/sccache) (compiler cache for the C/C++ and HIP compiles)
 
-GPU SDKs (manual install; `00-install-prerequisites.ps1` only probes for them and prints the download URLs):
-- [CUDA Toolkit](https://developer.nvidia.com/cuda-toolkit)
-- [Vulkan SDK](https://vulkan.lunarg.com/)
-- [AMD HIP SDK (ROCm)](https://rocm.docs.amd.com/)
+GPU SDKs, installed/updated to their newest stable release by `00-install-prerequisites.ps1`, side by side as `<DistRoot>\<Name>\<Version>\windows` (e.g. `E:\TheRock\10.1.0\windows`):
+- [AMD ROCm (TheRock dist)](https://rocm.docs.amd.com/) in `TheRock`
+- [CUDA Toolkit](https://developer.nvidia.com/cuda-toolkit) in `CUDA` (assembled from NVIDIA's redist archives; no driver touched)
+- [Vulkan SDK](https://vulkan.lunarg.com/) in `VulkanSDK`
+
+`DistRoot` defaults to `E:\` (`installer\dist-sources.psd1`). Pass `-DistRoot <path>` to `00-install-prerequisites.ps1` and `01-configure.ps1`, or set `LLAMA_FW_DIST_ROOT`, to keep them elsewhere; `01-configure.ps1` records the root, so the later steps need nothing. The build takes its GPU SDKs from this layout only.
 
 ## Quick start
 
@@ -36,6 +38,9 @@ GPU SDKs (manual install; `00-install-prerequisites.ps1` only probes for them an
 
 # Or override the llama.cpp source clone location:
 .\01-configure.ps1 -LlamaCppDir "C:\path\to\my\llama.cpp"
+
+# Or keep the SDKs on another drive (give 00 the same -DistRoot):
+.\01-configure.ps1 -DistRoot "D:\sdk"
 
 # 3. Build llama.cpp
 .\02-build.ps1
@@ -107,7 +112,7 @@ Settings are split between build-time and runtime so the same scripts work both 
 
 | Section | Keys |
 |---------|------|
-| Paths | `LlamaCppDir`, `OpenSSLDir`, `HipPath`, `VsDevShell` |
+| Paths | `DistRoot`, `LlamaCppDir`, `OpenSSLDir`, `HipPath`, `VsDevShell` |
 | Build | `GpuTargets`, `BuildType`, `CCompiler`, `CxxCompiler`, `Linker`, `BuildJobs` |
 
 Runtime configs are created and edited with `llama-cpp-config` (GUI when launched with no arguments, headless CLI via `server` / `preset` subcommands). The installer ships it in `bin\` next to `llama-server.exe`, with an optional Start Menu shortcut ("llama.cpp Config"). See [llama-cpp-config\README.md](llama-cpp-config/README.md).
@@ -116,8 +121,9 @@ Runtime configs are created and edited with `llama-cpp-config` (GUI when launche
 
 | Script | Description |
 |--------|-------------|
-| `00-install-prerequisites.ps1` | Idempotent toolchain bootstrapper. Installs missing winget packages (PowerShell 7+, OpenSSL, NSIS) and upgrades present ones in a single UAC-elevated session; installs or updates sccache from its latest GitHub release (sha256-verified, user scope) and removes a winget copy left by an earlier setup; fetches the llama.cpp clone and flags a rebuild when a newer release tag is available; flags CUDA / Vulkan / HIP SDKs for manual install; reports version changes. |
-| `01-configure.ps1` | Detects environment, verifies tools, writes `config-build.psd1`. Accepts `-LlamaCppDir`. |
+| `00-install-prerequisites.ps1` | Idempotent toolchain bootstrapper. Installs missing winget packages (PowerShell 7+, OpenSSL, NSIS) and upgrades present ones in a single UAC-elevated session, which also installs the newest stable ROCm/TheRock dist, CUDA Toolkit and Vulkan SDK into `<DistRoot>\<Name>\<Version>\windows`; installs or updates sccache from its latest GitHub release (sha256-verified, user scope) and removes a winget copy left by an earlier setup; fetches the llama.cpp clone and flags a rebuild when a newer release tag is available; reports version changes. Accepts `-DistRoot`. |
+| `dists.ps1` | The SDK dist layout shared by the scripts: resolves `DistRoot` and finds the newest complete dist of each SDK. Not run directly. |
+| `01-configure.ps1` | Detects environment, verifies tools, writes `config-build.psd1`. Accepts `-LlamaCppDir` and `-DistRoot`. |
 | `02-build.ps1` | Builds **both** llama.cpp (CMake configure out-of-source into `build\windows\llama.cpp-cmake\` + Ninja, checked out at the newest `vX.Y.Z` release tag: upstream also tags every merge to master `bNNNN`, and those nightlies are not candidates) **and** `llama-cpp-config` (`cargo build --release`; no intermediate copy: packaging stages it straight from cargo's target dir). Auto-clones llama.cpp into `build\windows\llama.cpp\`. Uses sccache when available. |
 | `03-package.ps1` | Stages from `build\windows\llama.cpp-cmake\` + `build\windows\cargo-target\release\` into `build\windows\staging\`, then runs NSIS to produce `dist\llama-cpp-framework-v<version>-<llamaBuild>-<arch>-setup.exe`. |
 | `common.ps1` | Shared bootstrap: loads `$cfg` from `config-build.psd1`, prepends ROCm `bin\` to PATH, exposes `Enable-VsDevShell` as a function. VS Dev Shell activation is **opt-in**: only build/package scripts call it. |

@@ -354,10 +354,12 @@ if ($doAmd) {
                 $size = Get-RemoteFileSize $latest.Url
                 if ($size) { $dist = @{ Version = $latest.Version; Url = $latest.Url; Size = $size } }
             }
-            # One directory per version under Root, the same layout the build
-            # machine uses: HIP_PATH names the active one, so a later version
-            # installs beside this one instead of over it.
-            $distDir = if ($dist) { Join-Path $rocm.Root $dist.Version } else { $null }
+            # One directory per version under EndUserRoot: HIP_PATH names the
+            # active one, so a later version installs beside this one instead
+            # of over it. (The build machine keeps its dists elsewhere, under
+            # the sources' DistRoot; a dist found there through HIP_PATH is
+            # used as it is.)
+            $distDir = if ($dist) { Join-Path $rocm.EndUserRoot $dist.Version } else { $null }
             $state = if ($outdated) { "is available (installed: $hpVer, kept beside it)" } else { 'is MISSING' }
             if (-not $dist) {
                 Write-Host "  [!!] ROCm dist not reachable (offline?)" -ForegroundColor Red
@@ -394,15 +396,19 @@ if ($doAmd) {
                             [Environment]::SetEnvironmentVariable('HIP_PATH', $distDir, 'Machine')
                             $key = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey('SYSTEM\CurrentControlSet\Control\Session Manager\Environment', $true)
                             $path = [string]$key.GetValue('Path', '', [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
-                            # Any other version dir left on PATH goes: two
+                            # Any other dist's dir left on PATH goes (another
+                            # version under EndUserRoot, or the dist HIP_PATH
+                            # named until now, wherever it sits): two
                             # amdhip64_*.dll directories are an ambiguous load
                             # order, the classic silent-crash cause.
                             $add = Join-Path $distDir 'bin'
-                            $under = $rocm.Root.TrimEnd('\') + '\'
+                            $under = @($rocm.EndUserRoot.TrimEnd('\') + '\')
+                            if ($hp) { $under += $hp.TrimEnd('\') + '\' }
                             $parts = @()
                             foreach ($p in @($path -split ';' | Where-Object { $_ })) {
                                 $t = $p.TrimEnd('\')
-                                if ($t.StartsWith($under, [StringComparison]::OrdinalIgnoreCase) -and $t -ne $add) { continue }
+                                $other = @($under | Where-Object { $t.StartsWith($_, [StringComparison]::OrdinalIgnoreCase) }).Count -gt 0
+                                if ($other -and $t -ne $add) { continue }
                                 $parts += $p
                             }
                             if ($parts -notcontains $add) { $parts += $add }

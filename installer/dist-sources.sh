@@ -7,7 +7,8 @@
 # directory per OS, <Root>/<Version>/<DIST_OS>, e.g.
 # /mnt/data/TheRock/10.1.0/linux. The drive is shared with the Windows side of
 # the same machine, so a Windows dist of the same version sits beside it as
-# <Root>/<Version>/win and neither build ever sees the other's files. Dists
+# <Root>/<Version>/windows (dist-sources.psd1 DistOs, installed by
+# 00-install-prerequisites.ps1) and neither build ever sees the other's files. Dists
 # live side by side: an upgrade lands next to its predecessor, and nothing
 # here ever deletes one (that call is the user's).
 #
@@ -41,7 +42,7 @@ ROCM_INDEXES=(
 # archive path and sha256; the highest X.Y.Z is the newest toolkit. The
 # components are what ggml-cuda and CMake's FindCUDAToolkit use (compiler,
 # cudart, cuBLAS, CCCL) plus the small tools around them, the same selection
-# as the Windows Subpackages list. They are merged into ONE prefix,
+# as the Windows Components list. They are merged into ONE prefix,
 # <Root>/<X.Y.Z>/linux, which then looks like a regular toolkit tree.
 CUDA_ROOT="$DIST_ROOT/CUDA"
 CUDA_MARKER='.cuda-version'

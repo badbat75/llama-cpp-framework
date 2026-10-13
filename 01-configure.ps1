@@ -7,8 +7,20 @@
 # and are written by llama-cpp-config on first launch.
 
 param(
-    [string]$LlamaCppDir  # path to llama.cpp source. If omitted, defaults to .\build\windows\llama.cpp
+    [string]$LlamaCppDir,  # path to llama.cpp source. If omitted, defaults to .\build\windows\llama.cpp
+    [string]$DistRoot      # where the SDK dists live (<DistRoot>\<Name>\<Version>\windows). If omitted: LLAMA_FW_DIST_ROOT, the previous config-build.psd1, dist-sources.psd1
 )
+
+# The GPU SDKs (ROCm, CUDA, Vulkan) are taken from the dist layout and
+# nowhere else: the newest complete <DistRoot>\<Name>\<Version>\windows of each
+# (dists.ps1), which is where 00-install-prerequisites.ps1 puts them. The root
+# resolved here is RECORDED in config-build.psd1, so 02-build.ps1 and the next
+# run of this script use the same one without being told again.
+$sources = Import-PowerShellDataFile (Join-Path $PSScriptRoot 'installer\dist-sources.psd1')
+. (Join-Path $PSScriptRoot 'dists.ps1')
+$prevCfgPath = Join-Path $PSScriptRoot 'build\windows\config-build.psd1'
+$prevCfg = if (Test-Path $prevCfgPath) { Import-PowerShellDataFile $prevCfgPath } else { $null }
+$distRoot = Resolve-DistRoot $DistRoot $prevCfg $sources
 
 # ── Detection functions ──────────────────────────────────────────────
 
@@ -51,6 +63,8 @@ function Find-VsDevShell {
     return $null
 }
 
+# OpenSSL is a system library, not a dist of the layout: it is looked up where
+# winget's ShiningLight.OpenSSL.Dev installs it (00-install-prerequisites.ps1).
 function Find-OpenSSL {
     $candidates = @(
         "${env:ProgramFiles}\OpenSSL-Win64"
@@ -68,27 +82,6 @@ function Find-OpenSSL {
     }
     return $null
 }
-
-function Find-ROCm {
-    # Check HIP_PATH env first: process env, then machine env (a console opened
-    # before 00-install-prerequisites.ps1 set the machine vars has a stale copy).
-    foreach ($hp in @($env:HIP_PATH, [Environment]::GetEnvironmentVariable('HIP_PATH', 'Machine'))) {
-        if ($hp -and (Test-Path "$hp\bin\hipcc.exe")) { return $hp }
-    }
-    # Legacy HIP SDK installs (pre-TheRock).
-    $base = "${env:ProgramFiles}\AMD\ROCm"
-    if (-not (Test-Path $base)) { return $null }
-    # Pick the latest version folder numerically ([version]), not as strings:
-    # a string sort would rank "7.1" above a future "10.0".
-    $latest = Get-ChildItem $base -Directory |
-        Sort-Object -Descending { $v = $null; if ([version]::TryParse($_.Name, [ref]$v)) { $v } else { [version]'0.0' } } |
-        Select-Object -First 1
-    if ($latest -and (Test-Path "$($latest.FullName)\bin")) {
-        return $latest.FullName
-    }
-    return $null
-}
-
 
 # GPU targets are DERIVED from the installed ROCm dist, not hand-maintained:
 # the archs the dist ships Windows BLAS kernels for are exactly the ones worth
@@ -137,6 +130,17 @@ function Find-Tool([string]$Name) {
     return $null
 }
 
+# The compiler: the ROCm dist's own clang BEFORE the PATH search. PATH names
+# whichever dist the machine env pointed at when the console opened, possibly
+# another one than the HipPath resolved here.
+function Find-Clang {
+    if ($detected.HipPath) {
+        $exe = Join-Path $detected.HipPath 'lib\llvm\bin\clang.exe'
+        if (Test-Path -LiteralPath $exe) { return $exe }
+    }
+    return Find-Tool 'clang'
+}
+
 # ── Run detection ────────────────────────────────────────────────────
 
 Write-Host ""
@@ -174,15 +178,27 @@ if ($val) {
     Set-Location $prevDir
 }
 
+$detected.DistRoot = $distRoot
+Write-Host "  [OK] DistRoot       : $distRoot (<Name>\<Version>\$($sources.DistOs))" -ForegroundColor Green
+
 $val = Find-OpenSSL
 $detected.OpenSSLDir = $val
 if ($val) { Write-Host "  [OK] OpenSSLDir     : $val" -ForegroundColor Green }
 else      { Write-Host "  [!!] OpenSSLDir     : NOT FOUND" -ForegroundColor Red; $gaps += "OpenSSLDir: run winget install OpenSSL" }
 
-$val = Find-ROCm
+$val = (Find-Dist 'Rocm' $sources $distRoot).Dir
 $detected.HipPath = $val
 if ($val) { Write-Host "  [OK] HipPath        : $val" -ForegroundColor Green }
-else      { Write-Host "  [--] HipPath        : not found (optional, needed for HIP/ROCm)" -ForegroundColor Yellow }
+else      { Write-Host "  [--] HipPath        : not found under $(Get-DistHome 'Rocm' $sources $distRoot) (optional, needed for HIP/ROCm)" -ForegroundColor Yellow }
+
+# Not recorded: 02-build.ps1 resolves the newest CUDA and Vulkan dist on every
+# run, so an upgrade of either needs no reconfigure. Shown so a missing one is
+# seen here rather than as a backend silently left to CMake's own search.
+foreach ($sdk in @(@{ Name = 'Cuda'; Label = 'CUDA Toolkit' }, @{ Name = 'Vulkan'; Label = 'Vulkan SDK' })) {
+    $val = (Find-Dist $sdk.Name $sources $distRoot).Dir
+    if ($val) { Write-Host "  [OK] $($sdk.Label.PadRight(14)) : $val" -ForegroundColor Green }
+    else      { Write-Host "  [--] $($sdk.Label.PadRight(14)) : not found under $(Get-DistHome $sdk.Name $sources $distRoot) (optional)" -ForegroundColor Yellow }
+}
 
 $gpuTargets = Get-GpuTargets $detected.HipPath
 if ($gpuTargets) {
@@ -216,15 +232,10 @@ $tools = [ordered]@{
 }
 
 foreach ($tool in $tools.Keys) {
-    $found = Find-Tool $tool
+    $found = if ($tool -eq 'clang') { Find-Clang } else { Find-Tool $tool }
     if ($found) { Write-Host "  [OK] $($tool.PadRight(14)): $found" -ForegroundColor Green }
     else        { Write-Host "  [!!] $($tool.PadRight(14)): NOT FOUND" -ForegroundColor Red; $gaps += "$tool : $($tools[$tool])" }
 }
-
-# Check CUDA (nvcc)
-$nvcc = Find-Tool "nvcc"
-if ($nvcc) { Write-Host "  [OK] nvcc (CUDA)    : $nvcc" -ForegroundColor Green }
-else       { Write-Host "  [--] nvcc (CUDA)    : not found (optional, needed for CUDA)" -ForegroundColor Yellow }
 
 Write-Host ""
 
@@ -255,6 +266,12 @@ function Fmt($val) {
 $buildLines = [System.Collections.Generic.List[string]]::new()
 $buildLines.Add('@{')
 $buildLines.Add('    # Paths')
+$buildLines.Add('    # DistRoot: where the GPU SDK dists live, <DistRoot>\<Name>\<Version>\windows.')
+$buildLines.Add('    # HipPath is the newest ROCm dist under it at configure time; 02-build.ps1')
+$buildLines.Add('    # resolves the CUDA Toolkit and the Vulkan SDK there itself. OpenSSL is a')
+$buildLines.Add('    # system library, outside the layout.')
+$buildLines.Add('    # Change it with 01-configure.ps1 -DistRoot <path>, not by hand.')
+$buildLines.Add("    DistRoot     = $(Fmt $detected.DistRoot)")
 $buildLines.Add("    LlamaCppDir  = $(Fmt $detected.LlamaCppDir)")
 $buildLines.Add("    OpenSSLDir   = $(Fmt $detected.OpenSSLDir)")
 $buildLines.Add("    HipPath      = $(Fmt $detected.HipPath)")
@@ -275,7 +292,7 @@ $buildLines.Add("    BuildType   = 'Release'")
 # Full path to the resolved clang (bare 'clang' as a last resort): with the
 # TheRock dist the compiler lives in HIP_PATH\lib\llvm\bin, which is not on a
 # stale console's PATH; a bare name in the config then fails at cmake time.
-$clangPath = Find-Tool 'clang'
+$clangPath = Find-Clang
 if (-not $clangPath) { $clangPath = 'clang' }
 $buildLines.Add("    CCompiler   = $(Fmt $clangPath)")
 $buildLines.Add("    CxxCompiler = $(Fmt $clangPath)")
