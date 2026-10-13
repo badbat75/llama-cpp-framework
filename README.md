@@ -88,8 +88,7 @@ All build artifacts live under `build\`, in a per-OS directory (`build\windows\`
 │       ├── llama.cpp-cmake/    ← cmake binary dir (out-of-source build)
 │       └── staging/            ← cmake --install staging area for NSIS
 ├── dist/                    ← final installer .exe
-├── installer/               ← NSIS template, dist-sources.psd1 (where external dists come from) and
-│                              install-runtime-deps.ps1 (end-user deps helper, bundled)
+├── installer/               ← NSIS template and dist-sources.psd1 (where external dists come from)
 ├── llama-cpp-config/        ← Rust GUI + CLI configurator (source)
 ├── patches/                 ← checked-in build workarounds (HIP clang runtime wrapper, per clang major)
 ├── resources/               ← icon generator (llama.ico is built on demand, gitignored)
@@ -134,6 +133,7 @@ Runtime configs are created and edited with `llama-cpp-config` (GUI when launche
 `03-package.ps1` produces a Windows installer at `dist\llama-cpp-framework-v<version>-<llamaRelease>-<arch>-setup.exe` (e.g. `llama-cpp-framework-v1.11.2-v0.2.0-x64-setup.exe`: the framework version first, the bundled llama.cpp release second). The installer:
 
 - Installs llama.cpp binaries to `C:\Program Files\llama.cpp\` (`llama-cpp-config.exe` and `llama.ico` go into `bin\` next to `llama-server.exe`).
+- Is self-contained for the GPU backends: the ROCm and CUDA runtime libraries the backends load (with rocBLAS's and hipBLASLt's kernels for the targeted GPU architectures) are copied out of the dists the build linked against, into `bin\` and `.kpack\`. The target machine needs the GPU drivers, which also bring the Vulkan loader, and the Visual C++ Redistributable; nothing is downloaded at install time.
 - Optionally adds `bin\` to the system PATH.
 - Optionally creates a Start Menu shortcut ("llama.cpp Config" → `llama-cpp-config.exe`).
 - No install-time configuration page: all runtime configuration (server settings and per-model presets) is done post-install with `llama-cpp-config`.

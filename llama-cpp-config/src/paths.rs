@@ -155,7 +155,9 @@ pub fn opencode_user_config() -> PathBuf {
 /// machine-wide `HIP_PATH` env var but does NOT add this dir to the system
 /// PATH, and ggml loads backends dynamically, silently dropping ggml-hip.dll
 /// when its imports don't resolve, so HIP GPUs then enumerate as Vulkan-only.
-/// `proc::prepend_rocm_path` feeds this to every llama-server child. Primary
+/// `proc::prepend_rocm_path` feeds this to every llama-server child. It is what
+/// a build from source runs on; an installed tree bundles the runtime next to
+/// llama-server.exe, which precedes PATH, so this dir is then not consulted. Primary
 /// signal is `HIP_PATH`; fallback scans `%ProgramFiles%\AMD\ROCm` for the
 /// newest versioned install. `None` when no ROCm is found, and on non-Windows
 /// (there the loader resolves the runtime without PATH).

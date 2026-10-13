@@ -14,7 +14,12 @@ OutFile "@OUTPUT_FILE@"
 InstallDir "$PROGRAMFILES64\llama.cpp"
 InstallDirRegKey HKLM "Software\llama.cpp" "InstallDir"
 RequestExecutionLevel admin
-SetCompressor /SOLID lzma
+; NOT /SOLID: a solid datablock is assembled uncompressed, and with the GPU
+; runtimes the payload is ~2.9 GB, past the 2 GB an NSIS datablock can hold
+; (makensis dies with "error mmapping datablock"). Per-file compression keeps
+; the COMPRESSED total under that limit instead (~1.2 GB), which is also what
+; a GitHub release asset allows.
+SetCompressor lzma
 
 ; Write to the native 64-bit registry view, not Wow6432Node; otherwise
 ; PowerShell reading HKLM:\Software\llama.cpp can't find our keys. Must be
@@ -31,14 +36,14 @@ FunctionEnd
 !define MUI_UNICON "@STAGING_DIR@\llama.ico"
 
 ; Welcome page doubles as the runtime-requirements notice: the installer
-; bundles llama.cpp + configurator + OpenSSL runtime, but GPU backends need
-; system-side components we deliberately do not ship (drivers can't be
-; bundled; ROCm/cuBLAS are hundreds of MB and GPU-specific). Backends whose
-; dependencies are missing are skipped silently at runtime; the GPU then
-; falls back to Vulkan, which ships with every driver. Say it HERE, because
+; bundles llama.cpp + configurator + the OpenSSL, ROCm and CUDA runtimes
+; (03-package.ps1 copies them out of the dists the build linked against), so
+; what is left to the machine is what cannot be bundled: the GPU drivers,
+; which also bring the Vulkan loader, and the VC++ runtime. A backend whose
+; driver is missing is skipped silently at runtime. Say it HERE, because
 ; nothing says it later.
 !define MUI_WELCOMEPAGE_TITLE "llama.cpp-framework v@VERSION@"
-!define MUI_WELCOMEPAGE_TEXT "This installs llama.cpp-framework (llama.cpp @LLAMA_BUILD@) with the llama-cpp-config configurator. OpenSSL is bundled.$\r$\n$\r$\nNot bundled - needed at runtime:$\r$\n$\r$\n- Visual C++ Redistributable x64: always required$\r$\n$\r$\n- AMD GPU: Adrenalin driver required. For the ROCm backend, also AMD ROCm / TheRock; without it the GPU runs on Vulkan$\r$\n$\r$\n- NVIDIA GPU: NVIDIA driver required. For the CUDA backend, also the cuBLAS runtime; without it the GPU runs on Vulkan$\r$\n$\r$\n- Vulkan: nothing to install (ships with GPU drivers)$\r$\n$\r$\nThe optional components on the next pages can install the missing pieces for you (drivers excluded)."
+!define MUI_WELCOMEPAGE_TEXT "This installs llama.cpp-framework (llama.cpp @LLAMA_BUILD@) with the llama-cpp-config configurator. The AMD ROCm, NVIDIA CUDA and OpenSSL runtime libraries are bundled.$\r$\n$\r$\nNot bundled - needed at runtime:$\r$\n$\r$\n- Visual C++ Redistributable x64: always required$\r$\n$\r$\n- AMD GPU: the Adrenalin driver$\r$\n$\r$\n- NVIDIA GPU: the NVIDIA driver$\r$\n$\r$\n- Vulkan: nothing to install (ships with GPU drivers)$\r$\n$\r$\nA backend whose driver is missing is skipped when llama-server starts."
 
 !insertmacro MUI_PAGE_WELCOME
 Page custom CheckAndStopProcesses
@@ -46,10 +51,6 @@ Page custom CheckPreviousInstall
 !insertmacro MUI_PAGE_DIRECTORY
 !insertmacro MUI_PAGE_COMPONENTS
 !insertmacro MUI_PAGE_INSTFILES
-; Runtime dependencies are installed via the three optional component
-; sections below (SecDeps*), not from the finish page; the finish text only
-; points at the helper for later re-runs.
-!define MUI_FINISHPAGE_TEXT "llama.cpp-framework v@VERSION@ (llama @LLAMA_BUILD@) has been installed on your computer.$\r$\n$\r$\nRuntime dependencies (VC++ runtime, AMD ROCm, NVIDIA cuBLAS) can be installed or repaired any time by running bin\install-runtime-deps.ps1 from the install folder.$\r$\n$\r$\nClick Finish to close Setup."
 !insertmacro MUI_PAGE_FINISH
 
 !insertmacro MUI_UNPAGE_CONFIRM
@@ -79,58 +80,6 @@ Page custom CheckPreviousInstall
     Delete "$INSTDIR\uninstall.exe"
 !macroend
 
-; ── The cuBLAS runtime survives an upgrade ──────────────────────────
-; cublas64_13.dll + cublasLt64_13.dll (~550 MB) sit in bin\ next to
-; llama-server.exe but are NOT part of the package: install-runtime-deps.ps1
-; downloads them when the NVIDIA box is ticked. An upgrade runs the OLD
-; uninstaller first, whose `RMDir /r "$INSTDIR\bin"` takes them along, and
-; that box is unchecked by default, so every upgrade silently dropped NVIDIA
-; GPUs from CUDA to Vulkan (the HIP runtime is restaged by -StageHipRuntime
-; below; nothing did the same for cuBLAS). So the pair is PARKED beside bin\
-; before the old uninstaller runs, and SecMain moves it back.
-;
-; Both halves live in the installer, for the reason CleanLegacyRoot gives: a
-; fix in the uninstaller would arrive one generation late. And no uninstaller
-; may ever remove the park dir: the NEXT version's installer parks there before
-; running THIS one's uninstaller. The copy kept is whatever the machine had,
-; not the current pin: the helper treats any cublas64_13.dll as present, and
-; this keeps to that.
-!define CUBLAS_PARK "cublas-parked"
-Var ParkedCublas
-
-!macro ParkCublas NAME
-    ${If} ${FileExists} "$INSTDIR\bin\${NAME}"
-        CreateDirectory "$INSTDIR\${CUBLAS_PARK}"
-        Delete "$INSTDIR\${CUBLAS_PARK}\${NAME}"
-        Rename "$INSTDIR\bin\${NAME}" "$INSTDIR\${CUBLAS_PARK}\${NAME}"
-    ${EndIf}
-!macroend
-
-; Expects bin\ to exist (SecMain's SetOutPath has created it). A copy already
-; in bin\ wins over the parked one. Rename fails across volumes, which is what
-; a directory page pointing the upgrade elsewhere means, hence the copy
-; fallback; the parked file goes only once it landed.
-!macro RestoreCublas NAME
-    ${If} ${FileExists} "$ParkedCublas\${NAME}"
-        ${If} ${FileExists} "$INSTDIR\bin\${NAME}"
-            Delete "$ParkedCublas\${NAME}"
-        ${Else}
-            ClearErrors
-            Rename "$ParkedCublas\${NAME}" "$INSTDIR\bin\${NAME}"
-            ${If} ${Errors}
-                ClearErrors
-                CopyFiles /SILENT "$ParkedCublas\${NAME}" "$INSTDIR\bin"
-                ${IfNot} ${Errors}
-                    Delete "$ParkedCublas\${NAME}"
-                ${EndIf}
-            ${EndIf}
-            ${If} ${FileExists} "$INSTDIR\bin\${NAME}"
-                DetailPrint "Kept the installed cuBLAS runtime: ${NAME}"
-            ${EndIf}
-        ${EndIf}
-    ${EndIf}
-!macroend
-
 ; ── Upgrade: remove previous installation silently ──────────────────
 Function CheckPreviousInstall
     ReadRegStr $0 HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\llama.cpp" "UninstallString"
@@ -155,12 +104,6 @@ Function CheckPreviousInstall
         ; itself: that is finished here, once ExecWait has returned and the
         ; image is no longer locked. Both layouts are cleared, because the
         ; installer being replaced may predate the move into bin\.
-        ;
-        ; The cuBLAS runtime is parked first, or the old uninstaller deletes
-        ; it with bin\ (see ParkCublas).
-        StrCpy $ParkedCublas "$INSTDIR\${CUBLAS_PARK}"
-        !insertmacro ParkCublas "cublas64_13.dll"
-        !insertmacro ParkCublas "cublasLt64_13.dll"
         ExecWait '"$2" /S _?=$INSTDIR'
         Delete "$INSTDIR\bin\llama-cpp-uninstall.exe"
         !insertmacro CleanLegacyRoot
@@ -223,21 +166,21 @@ Section "llama.cpp binaries (required)" SecMain
     File "@STAGING_DIR@\llama-cpp-config.exe"
     File "@STAGING_DIR@\llama.ico"
 
-    ; The cuBLAS runtime CheckPreviousInstall parked goes back next to
-    ; llama-server.exe, BEFORE the SecDeps* sections, so a ticked NVIDIA box
-    ; finds it present and skips the download. With no upgrade this run, look
-    ; in this directory anyway: an upgrade cancelled after the old uninstaller
-    ; ran leaves the pair parked, and reinstalling into the same place must
-    ; pick it up.
-    ${If} $ParkedCublas == ""
-        StrCpy $ParkedCublas "$INSTDIR\${CUBLAS_PARK}"
-    ${EndIf}
-    !insertmacro RestoreCublas "cublas64_13.dll"
-    !insertmacro RestoreCublas "cublasLt64_13.dll"
-    RMDir "$ParkedCublas"
+    ; The ROCm kpack archives. Beside bin\, not in it: the dist's libraries
+    ; look for them at <their own dir>\..\.kpack. Absent from a build without
+    ; the HIP backend, hence /nonfatal.
+    SetOutPath "$INSTDIR\.kpack"
+    File /nonfatal /r "@STAGING_DIR@\.kpack\*.*"
+    SetOutPath "$INSTDIR\bin"
 
-    ; Uninstaller. Lives in bin\ so the install root holds nothing but bin\ and
-    ; lib\: a file at the root outlives every uninstall, because the Uninstall
+    ; Installers up to 1.16 did not carry cuBLAS: a helper downloaded it into
+    ; bin\, and an upgrade parked the pair here while the old uninstaller
+    ; removed bin\. An upgrade cancelled halfway left it parked; the package
+    ; ships its own copy now.
+    RMDir /r "$INSTDIR\cublas-parked"
+
+    ; Uninstaller. Lives in bin\ so the install root holds no FILE, only bin\,
+    ; lib\ and .kpack\: a file at the root outlives every uninstall, because the Uninstall
     ; section's closing RMDir is non-recursive on purpose (see there).
     ;
     ; The name is namespaced rather than a bare `uninstall.exe` because bin\ is
@@ -295,58 +238,11 @@ Section "Add to system PATH" SecPath
     SendMessage ${HWND_BROADCAST} ${WM_SETTINGCHANGE} 0 "STR:Environment" /TIMEOUT=5000
 SectionEnd
 
-; ── Optional: runtime dependencies (bundled helper) ─────────────────
-; Each section runs install-runtime-deps.ps1 with an explicit component
-; switch plus -Unattended: the choice was made HERE via the checkbox, so the
-; helper must not prompt again. ExecWait shows a PowerShell console with the
-; download progress (curl) and blocks the installer until the leg completes.
-; The helper is idempotent (components already present are skipped) and
-; runs elevated because the installer is. These sections must come after
-; SecMain: the script and dist-sources.psd1 are staged into $INSTDIR\bin by it,
-; and the cuBLAS DLLs land next to llama-server.exe there.
-Section /o "Base requirements (VC++ runtime, ~19 MB)" SecDepsBase
-    DetailPrint "Runtime deps: VC++ redistributable (skipped if present)..."
-    ExecWait 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$INSTDIR\bin\install-runtime-deps.ps1" -Unattended -VcRedist'
-SectionEnd
-
-Section /o "AMD ROCm runtime (~4.3 GB download)" SecDepsAmd
-    DetailPrint "Runtime deps: AMD ROCm/TheRock (skipped if present)..."
-    ExecWait 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$INSTDIR\bin\install-runtime-deps.ps1" -Unattended -Amd'
-SectionEnd
-
-Section /o "NVIDIA cuBLAS runtime (~400 MB download)" SecDepsNvidia
-    DetailPrint "Runtime deps: NVIDIA cuBLAS (skipped if present)..."
-    ExecWait 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$INSTDIR\bin\install-runtime-deps.ps1" -Unattended -Nvidia'
-SectionEnd
-
-; Hidden and always run (the leading '-' in the name), which is the whole
-; point: on a machine that already has ROCm this copies the dist's own
-; ~17 MB HIP runtime (plus its ~122 MB amd_comgr.dll, without which HIP
-; enumeration dies once an iGPU is visible, and its ~180 KB rocm_kpack.dll,
-; the runtime's own direct import) next to llama-server.exe, and
-; that copy is what makes BF16/F16 models run on RDNA4 (without it they run
-; the dist's rocBLAS against the DRIVER's HIP runtime out of System32, and
-; abort at the first prefill batch). Leaving it to SecDepsAmd would hide the
-; fix behind a checkbox announcing 4.3 GB, i.e. behind the one box a user who
-; already has ROCm never ticks. Downloads nothing, prompts nothing, and stays
-; silent when there is no ROCm to copy from, so it is harmless on
-; NVIDIA-only machines.
-; Runs LAST so an install that did tick SecDepsAmd is staged from the dist it
-; just installed. nsExec (not ExecWait) to keep it out of the user's face: it
-; needs no console, and its output lands in the details view.
-Section "-StageHipRuntime"
-    DetailPrint "Runtime deps: HIP runtime next to llama-server.exe (AMD only)..."
-    nsExec::ExecToLog 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$INSTDIR\bin\install-runtime-deps.ps1" -Unattended -StageHipRuntime'
-SectionEnd
-
 ; ── Section descriptions ────────────────────────────────────────────
 !insertmacro MUI_FUNCTION_DESCRIPTION_BEGIN
-    !insertmacro MUI_DESCRIPTION_TEXT ${SecMain} "Core llama.cpp binaries and llama-cpp-config configurator."
+    !insertmacro MUI_DESCRIPTION_TEXT ${SecMain} "llama.cpp binaries, the llama-cpp-config configurator and the bundled AMD ROCm and NVIDIA CUDA runtime libraries."
     !insertmacro MUI_DESCRIPTION_TEXT ${SecStartMenu} "Create a Start Menu shortcut to llama-cpp-config."
     !insertmacro MUI_DESCRIPTION_TEXT ${SecPath} "Add llama.cpp bin directory to system PATH."
-    !insertmacro MUI_DESCRIPTION_TEXT ${SecDepsBase} "Microsoft Visual C++ runtime - required to run anything in this package. Skipped if already installed."
-    !insertmacro MUI_DESCRIPTION_TEXT ${SecDepsAmd} "AMD ROCm/TheRock libraries for the HIP backend (~4.3 GB download, ~25 GB on disk; requires the Adrenalin driver). Without it AMD GPUs run on Vulkan. Tick it also when ROCm is already installed: the download is then skipped and it only stages the dist's HIP runtime here, which is what BF16/F16 models on RDNA4 need."
-    !insertmacro MUI_DESCRIPTION_TEXT ${SecDepsNvidia} "NVIDIA cuBLAS runtime for the CUDA backend (~400 MB download; requires the NVIDIA driver). Without it NVIDIA GPUs run on Vulkan. An upgrade keeps the copy already installed, so there is no need to tick it again."
 !insertmacro MUI_FUNCTION_DESCRIPTION_END
 
 ; ── Uninstaller ─────────────────────────────────────────────────────
@@ -365,6 +261,7 @@ Section "Uninstall"
     ; Files
     RMDir /r "$INSTDIR\bin"
     RMDir /r "$INSTDIR\lib"
+    RMDir /r "$INSTDIR\.kpack"
 
     ; Root-level leftovers from older layouts (see the macro for the why).
     !insertmacro CleanLegacyRoot

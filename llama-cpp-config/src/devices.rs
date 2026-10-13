@@ -210,7 +210,8 @@ pub fn build_options(
 // in TheRock 10.0.0 and NOT in 7.14.0, so requiring it would report a healthy
 // 7.14 install as broken.
 //
-// The HINT is best effort and says so: it looks at the dist `HIP_PATH` names to
+// The HINT is best effort and says so: it looks at the runtime beside
+// llama-server (what the installer bundles), else at the dist `HIP_PATH` names, to
 // guess which of the three usual causes it is, and falls back to "the tree
 // looks complete, so the launch is not reaching it" rather than inventing one.
 
@@ -235,8 +236,8 @@ pub fn rocm_present(devs: &[DeviceOption]) -> bool {
         .any(|d| d.id.to_ascii_lowercase().starts_with("rocm"))
 }
 
-/// What the ROCm dist at `dist` (the `bin` directory `HIP_PATH` resolves to)
-/// looks like, for the HINT half of the message only.
+/// What the ROCm runtime at `dist` (llama-server's own directory, or the `bin`
+/// directory `HIP_PATH` resolves to) looks like, for the HINT half of the message only.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DistState {
     /// No ROCm install found at all.
@@ -285,31 +286,37 @@ pub fn rocm_warning(devs: &[DeviceOption], state: DistState) -> Option<String> {
                 Vulkan instead of HIP.";
     Some(match state {
         DistState::Absent => format!(
-            "{head} No ROCm runtime was found. Install it with the bundled helper \
-             (bin\\install-runtime-deps.ps1 -Amd), or through the installer's \
-             \"AMD ROCm runtime\" component."
+            "{head} No ROCm runtime was found. The installer puts it next to llama-server: \
+             reinstall llama.cpp-framework. A build from source finds it through HIP_PATH."
         ),
         DistState::NoRuntime => format!(
-            "{head} HIP_PATH names a directory with no hipblas.dll, so the extraction is \
-             incomplete. Re-run bin\\install-runtime-deps.ps1 -Amd."
+            "{head} HIP_PATH names a directory with no hipblas.dll, so the ROCm dist is \
+             incomplete. Re-run 00-install-prerequisites.ps1."
         ),
         DistState::NoKernels => format!(
             "{head} The runtime is there but rocBLAS's kernel store (rocblas\\library) is \
              not, so even a loaded backend would fail on the first matrix multiply. \
-             Re-run bin\\install-runtime-deps.ps1 -Amd."
+             Reinstall llama.cpp-framework (a build from source: re-run \
+             00-install-prerequisites.ps1)."
         ),
         DistState::Complete => format!(
             "{head} The ROCm runtime looks complete, so the backend is failing to load \
-             rather than to install: most often a console whose PATH still names an older \
-             dist directory. Restart the app from a fresh session."
+             rather than to install: most often a missing or outdated AMD Adrenalin driver, \
+             or, on a build from source, a console whose PATH still names an older dist \
+             directory."
         ),
     })
 }
 
 /// `rocm_warning` against the live machine: the cached probe crossed with the
-/// dist `paths::rocm_bin_dir()` resolves.
+/// ROCm runtime llama-server would load. That is its own directory when the
+/// runtime is there (the installer bundles it), else the dist
+/// `paths::rocm_bin_dir()` resolves (a build from source).
 pub fn rocm_health() -> Option<String> {
-    let dist = paths::rocm_bin_dir();
+    let bundled = paths::llama_server_exe()
+        .and_then(|exe| exe.parent().map(std::path::Path::to_path_buf))
+        .filter(|dir| dir.join("hipblas.dll").exists());
+    let dist = bundled.or_else(paths::rocm_bin_dir);
     rocm_warning(&probed(), dist_state(dist.as_deref()))
 }
 
@@ -336,7 +343,7 @@ mod tests {
         // "installed but incomplete" and "complete, so it is the launch" are
         // three different things for the user to do.
         let absent = rocm_warning(&devs, DistState::Absent).expect("warned");
-        assert!(absent.contains("install-runtime-deps"), "{absent}");
+        assert!(absent.contains("reinstall"), "{absent}");
         let no_kernels = rocm_warning(&devs, DistState::NoKernels).expect("warned");
         assert!(no_kernels.contains("rocblas\\library"), "{no_kernels}");
         let complete = rocm_warning(&devs, DistState::Complete).expect("warned");

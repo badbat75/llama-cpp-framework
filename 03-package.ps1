@@ -3,6 +3,9 @@
 # Requires: a successful build (02-build.ps1) and NSIS
 # (PowerShell 7 pin: under 5.1 `Set-Content -Encoding UTF8` would BOM the
 # generated .nsi, and the shared scripts assume pwsh semantics throughout.)
+#
+# -KeepStaging leaves build\windows\staging\ in place for inspection.
+param([switch]$KeepStaging)
 
 . "$PSScriptRoot\common.ps1"  # loads $cfg, adds ROCm to PATH
 Enable-VsDevShell             # cmake --install needs the VS env
@@ -190,16 +193,166 @@ foreach ($name in ($sslSources.Keys | Sort-Object)) {
     Write-Host "Staged $name (OpenSSL runtime, imported by $($sslSources[$name] -join ', '))" -ForegroundColor DarkGray
 }
 
-# ── Stage the runtime-deps helper + shared dist sources ─────────────
-# install-runtime-deps.ps1 installs on END-USER machines what we deliberately
-# do not bundle (VC++ redist; ROCm/TheRock for AMD; cuBLAS redist for NVIDIA).
-# The installer's finish page offers to run it; it stays in bin\ for later
-# re-runs. dist-sources.psd1 is the same sources file
-# 00-install-prerequisites.ps1 reads: where each dist is looked up, no
-# versions (the helper resolves the newest stable when it runs).
-foreach ($f in 'installer\install-runtime-deps.ps1', 'installer\dist-sources.psd1') {
-    Copy-Item (Join-Path $PSScriptRoot $f) -Destination (Join-Path $stageDir 'bin') -Force
-    Write-Host "Staged $(Split-Path $f -Leaf)" -ForegroundColor DarkGray
+# ── Bundle the GPU runtimes ─────────────────────────────────────────
+# What the backends load is copied out of the dists this build linked against,
+# so the installed tree runs on a machine that has the GPU drivers and nothing
+# else: no ROCm dist, no HIP_PATH, no cuBLAS download. The counterpart of the
+# same section in 03-package.sh.
+#
+# WHICH libraries is not a list kept here: it is the import closure of the
+# staged binaries, restricted to what resolves inside a dist (ROCm, CUDA,
+# Vulkan SDK). Everything else an import names is a system library and stays
+# one: Windows' own DLLs, the VC++ runtime, the driver's vulkan-1.dll (the
+# Vulkan SDK carries the loader only as an installer, Helpers\VulkanRT.exe, so
+# nothing resolves there today).
+#
+# Everything lands flat in bin\, next to llama-server.exe, which is both where
+# Windows looks first and what the ROCm dist's own bin\ looks like: its
+# libraries find each other and their kernel files relative to themselves.
+# The application directory precedes System32 in the search order, so the
+# bundled amdhip64_*.dll also wins over the copy the AMD driver keeps there,
+# and the dist's rocBLAS never runs against the DRIVER's HIP runtime (the mix
+# that aborts BF16/F16 models on gfx1201 at the first prefill batch).
+
+# The DLL names a PE image imports, normal and delay-load, read from its
+# import directories. Headers only: ggml-hip.dll is ~1 GB.
+function Get-PeImports {
+    param([Parameter(Mandatory)][string] $Path)
+    $names = [System.Collections.Generic.List[string]]::new()
+    $stream = [System.IO.File]::OpenRead($Path)
+    $reader = [System.IO.BinaryReader]::new($stream)
+    try {
+        $stream.Position = 0x3C
+        $pe = $reader.ReadInt32()
+        $stream.Position = $pe + 6
+        $sectionCount = $reader.ReadUInt16()
+        $stream.Position = $pe + 20
+        $optSize = $reader.ReadUInt16()
+        $opt = $pe + 24
+        $stream.Position = $opt
+        if ($reader.ReadUInt16() -ne 0x20B) { return $names }   # PE32+ only
+
+        $sections = for ($i = 0; $i -lt $sectionCount; $i++) {
+            $stream.Position = $opt + $optSize + 40 * $i + 8
+            [pscustomobject]@{ VSize = $reader.ReadUInt32(); VAddr = $reader.ReadUInt32()
+                               RawSize = $reader.ReadUInt32(); RawPtr = $reader.ReadUInt32() }
+        }
+        $toOffset = {
+            param([uint32] $rva)
+            foreach ($s in $sections) {
+                if ($rva -ge $s.VAddr -and $rva -lt $s.VAddr + [math]::Max($s.VSize, $s.RawSize)) {
+                    return [long]$rva - $s.VAddr + $s.RawPtr
+                }
+            }
+            return -1
+        }
+        $readName = {
+            param([uint32] $rva)
+            $stream.Position = & $toOffset $rva
+            $bytes = [System.Collections.Generic.List[byte]]::new()
+            while (($b = $reader.ReadByte()) -ne 0) { $bytes.Add($b) }
+            [System.Text.Encoding]::ASCII.GetString($bytes.ToArray())
+        }
+        # Data directory 1 = imports (20-byte descriptors, name RVA at +12),
+        # 13 = delay imports (32-byte descriptors, name RVA at +4); each table
+        # ends at a descriptor with no name.
+        foreach ($dir in @{ Index = 1; Size = 20; Name = 12 }, @{ Index = 13; Size = 32; Name = 4 }) {
+            $stream.Position = $opt + 112 + 8 * $dir.Index
+            $rva = $reader.ReadUInt32()
+            if (-not $rva) { continue }
+            $table = & $toOffset $rva
+            for ($i = 0; $table -ge 0; $i++) {
+                $stream.Position = $table + $dir.Size * $i + $dir.Name
+                $nameRva = $reader.ReadUInt32()
+                if (-not $nameRva) { break }
+                $names.Add((& $readName $nameRva))
+            }
+        }
+    } finally { $reader.Dispose() }
+    return $names
+}
+
+$stageBin = Join-Path $stageDir 'bin'
+$hipRoot  = if ($cfg.HipPath -and (Test-Path $cfg.HipPath)) { $cfg.HipPath } else { $null }
+$cudaDist = Find-Dist 'Cuda' $sources $distRoot
+$vkDist   = Find-Dist 'Vulkan' $sources $distRoot
+$runtimeDirs = [ordered]@{}
+if ($hipRoot)  { $runtimeDirs['ROCm'] = @(Join-Path $hipRoot 'bin') }
+if ($cudaDist) { $runtimeDirs['CUDA'] = @((Join-Path $cudaDist.Dir 'bin\x64'), (Join-Path $cudaDist.Dir 'bin')) }
+if ($vkDist)   { $runtimeDirs['Vulkan'] = @(Join-Path $vkDist.Dir 'Bin') }
+
+Write-Host "Bundling the GPU runtimes..." -ForegroundColor Cyan
+$bundled = @{}
+$pending = [System.Collections.Generic.Queue[string]]::new()
+Get-ChildItem $stageBin -File | Where-Object { $_.Extension -in '.exe', '.dll' } |
+    ForEach-Object { $pending.Enqueue($_.FullName) }
+while ($pending.Count) {
+    foreach ($name in Get-PeImports $pending.Dequeue()) {
+        $dest = Join-Path $stageBin $name
+        if (Test-Path $dest) { continue }
+        foreach ($dist in $runtimeDirs.Keys) {
+            $src = $runtimeDirs[$dist] | ForEach-Object { Join-Path $_ $name } | Where-Object { Test-Path $_ } |
+                Select-Object -First 1
+            if (-not $src) { continue }
+            Copy-Item $src -Destination $dest
+            $pending.Enqueue($dest)
+            $bundled[$dist] = @($bundled[$dist]) + $name
+            break
+        }
+    }
+}
+
+# A backend whose runtime did not resolve would be dropped silently by ggml on
+# every machine that lacks the SDK, which is every machine but this one.
+foreach ($need in @{ Backend = 'ggml-hip.dll'; Runtime = 'hipblas.dll' }, @{ Backend = 'ggml-cuda.dll'; Runtime = 'cublas64_*.dll' }) {
+    if ((Test-Path (Join-Path $stageBin $need.Backend)) -and -not (Test-Path (Join-Path $stageBin $need.Runtime))) {
+        throw "$($need.Backend) is staged but $($need.Runtime) was not found in its dist under $distRoot; refusing to package a backend that cannot load"
+    }
+}
+
+# What no import table shows, ROCm only:
+#   - amd_comgr*.dll: the HIP runtime asks for it by bare name at run time,
+#     and System32 holds the DRIVER's build, which the dist's runtime was never
+#     tested against (with a Ryzen iGPU visible that mix makes
+#     hipGetDeviceCount fail and the whole HIP backend disappears).
+#   - the kernel stores: rocBLAS and hipBLASLt load their precompiled kernels
+#     per GPU architecture from rocblas\library and hipblaslt\library beside
+#     the DLLs, and the kpack archives sit in <dist>\.kpack, which is
+#     <bin>\..\.kpack here as there. Only the BLAS archives, and only the
+#     architectures this build targets ($cfg.GpuTargets): the rest could never
+#     be used by a ggml-hip.dll that has no code for them. Entries that name
+#     no architecture are shared and always copied.
+if ($hipRoot -and (Test-Path (Join-Path $stageBin 'amdhip64_*.dll'))) {
+    $hipBin = Join-Path $hipRoot 'bin'
+    foreach ($comgr in Get-ChildItem $hipBin -Filter 'amd_comgr*.dll' -File) {
+        Copy-Item $comgr.FullName -Destination $stageBin
+        $bundled['ROCm'] = @($bundled['ROCm']) + $comgr.Name
+    }
+
+    $targets = @($cfg.GpuTargets -split ';' | Where-Object { $_ })
+    $wanted = { param($Name) $Name -notmatch 'gfx[0-9a-zA-Z]+' -or $Matches[0] -in $targets }
+    $sizeMiB = { param($Dir) [math]::Round((Get-ChildItem $Dir -Recurse -File -Force | Measure-Object Length -Sum).Sum / 1MB) }
+    foreach ($sub in 'rocblas\library', 'hipblaslt\library') {
+        $from = Join-Path $hipBin $sub
+        if (-not (Test-Path $from)) { continue }
+        $to = New-Item -ItemType Directory -Path (Join-Path $stageBin $sub) -Force
+        # Entries are files named after their architecture, or a directory
+        # per architecture.
+        Get-ChildItem $from | Where-Object { & $wanted $_.Name } | Copy-Item -Destination $to -Recurse
+        Write-Host "  ${sub}: $(& $sizeMiB $to) MiB" -ForegroundColor DarkGray
+    }
+    $kpack = Join-Path $hipRoot '.kpack'
+    if (Test-Path $kpack) {
+        $to = New-Item -ItemType Directory -Path (Join-Path $stageDir '.kpack') -Force
+        Get-ChildItem $kpack -Filter 'blas_lib_*.kpack' -File | Where-Object { & $wanted $_.Name } |
+            Copy-Item -Destination $to
+        Write-Host "  .kpack: $(& $sizeMiB $to) MiB" -ForegroundColor DarkGray
+    }
+}
+foreach ($dist in $runtimeDirs.Keys) {
+    $names = @($bundled[$dist] | Sort-Object)
+    $what = if ($names) { $names -join ', ' } else { 'nothing to bundle (its runtime is a system library)' }
+    Write-Host "  ${dist}: $what" -ForegroundColor DarkGray
 }
 
 # ── Stage llama-cpp-config (Rust binary) ────────────────────────────
@@ -259,7 +412,7 @@ if ($LASTEXITCODE -ne 0) { throw "makensis failed (exit code $LASTEXITCODE)" }
 
 # ── Cleanup ─────────────────────────────────────────────────────────
 Remove-Item $nsiPath -Force
-Remove-Item $stageDir -Recurse -Force
+if (-not $KeepStaging) { Remove-Item $stageDir -Recurse -Force }
 
 $size = [math]::Round((Get-Item $outputFile).Length / 1MB, 1)
 Write-Host ""

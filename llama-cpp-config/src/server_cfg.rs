@@ -175,10 +175,10 @@ pub struct ServerConfig {
     /// `=1` forced as well, so hipBLASLt itself is healthy (measured 2026-09-01
     /// as a same-directory A/B with that file as the only variable, and
     /// end-to-end on `test-backend-ops test -o MUL_MAT -b ROCm0 -p type_a=bf16`).
-    /// Hence `installer\install-runtime-deps.ps1` stages `amdhip64_*.dll` from
-    /// `HIP_PATH\bin` into `bin\`, from a hidden always-run installer section
-    /// as well as from its AMD leg, so an install or upgrade carrying that
-    /// helper needs no knob here at all. The staging also carries the dist's
+    /// Hence `03-package.ps1` bundles the dist's whole runtime into `bin\`,
+    /// `amdhip64_*.dll` included, so an installed tree needs no knob here at
+    /// all (a build from source still runs against `HIP_PATH\bin` over PATH,
+    /// i.e. the driver's runtime). The bundle also carries the dist's
     /// `amd_comgr*.dll`: the runtime asks for it by bare name and System32
     /// keeps the DRIVER's own (a different build that precedes PATH), a mix
     /// that stood until an iGPU appeared and then killed `hipGetDeviceCount`

@@ -16,8 +16,9 @@
 # release their vendor publishes (dist-sources.psd1 says where each one is
 # looked up). ROCm comes from AMD's TheRock dist tarball (the classic HIP SDK
 # installer is discontinued) and is the only one with a machine environment:
-# HIP_PATH on the ACTIVE version + PATH, pruned of the others, because the
-# installed llama-server finds rocBLAS through it. CUDA is assembled from
+# HIP_PATH on the ACTIVE version + PATH, pruned of the others, because a
+# llama-server run from the build tree finds rocBLAS through it (the installed
+# one carries its own runtime, bundled by 03-package.ps1). CUDA is assembled from
 # NVIDIA's redist archives, Vulkan comes from LunarG's installer.
 #
 # sccache comes straight from its GitHub releases (user scope, no elevation)
@@ -105,8 +106,7 @@ $distOs   = $sources.DistOs
 # ── ROCm (TheRock) dist ─────────────────────────────────────────────
 # AMD now distributes Windows ROCm/HIP as TheRock dist tarballs (the classic
 # HIP SDK installer is discontinued). Not pinned: every run scans AMD's
-# tarball indexes (installer\dist-sources.psd1, shared with the end-user
-# runtime-deps script that 03-package.ps1 bundles into the installer) and
+# tarball indexes (installer\dist-sources.psd1) and
 # converges the install to the newest STABLE dist (rationale for the
 # multiarch tarball and the index scan lives next to the data).
 #
@@ -146,8 +146,8 @@ function Get-RocmDirVersion([string]$Dir) {
 
 # The dist the machine is actually using: whatever HIP_PATH points at. Process
 # env first, then machine (a console opened before an earlier run has a stale
-# copy); a HIP_PATH outside the layout is reported too, it is still what the
-# installed llama-server loads until this run moves it.
+# copy); a HIP_PATH outside the layout is reported too, it is still what a
+# llama-server run from the build tree loads until this run moves it.
 function Get-RocmActiveDir {
     foreach ($hp in @($env:HIP_PATH, [Environment]::GetEnvironmentVariable('HIP_PATH', 'Machine'))) {
         if ($hp -and (Get-RocmDirVersion $hp.TrimEnd('\'))) { return $hp.TrimEnd('\') }
@@ -1159,37 +1159,21 @@ foreach ($scope in 'Machine', 'User') {
 }
 # The installed framework's bin\ is NOT a second dist, although it carries
 # amdhip64_*.dll and its optional PATH component puts it on the system PATH:
-# install-runtime-deps.ps1 stages the active dist's runtime there on purpose
-# (with amd_comgr*.dll and rocm_kpack*.dll; see that script), it holds no
-# rocblas/hipblaslt, and PATH never decides amdhip64_7.dll for any other exe
-# (its own dir, then the driver's System32 copy, both precede PATH). What can
-# go wrong with it is STALENESS: this script moves HIP_PATH, the staged copy
-# does not follow, and the installed llama-server then runs one dist's runtime
-# against another's rocBLAS. Compared by content, as the helper does (every
-# dist stamps the same FileVersion into these DLLs).
+# the installer bundles there the whole runtime of the dist it was BUILT
+# against (03-package.ps1), a self-contained set that an exe resolves from its
+# own directory before PATH is consulted, and PATH never decides
+# amdhip64_7.dll for any other exe (its own dir, then the driver's System32
+# copy, both precede PATH). It does not follow a HIP_PATH move and does not
+# have to: it changes with the next installer.
 # Doubled separators collapsed for comparison only: the installer writes its
 # PATH entry as ...\llama.cpp\\bin.
 function Get-NormalizedDir([string]$Dir) { ($Dir -replace '(?<!^)\\{2,}', '\').TrimEnd('\') }
 $fwBin = $null
 $fwDir = (Get-ItemProperty 'HKLM:\Software\llama.cpp' -ErrorAction SilentlyContinue).InstallDir
 if ($fwDir -and (Test-Path (Join-Path $fwDir 'bin'))) { $fwBin = Get-NormalizedDir (Join-Path $fwDir 'bin') }
-if ($fwBin -and $rocmAfterDir -and (Test-Path (Join-Path $rocmAfterDir 'bin'))) {
-    $unstaged = @()
-    foreach ($src in @(Get-ChildItem (Join-Path $rocmAfterDir 'bin') -File | Where-Object {
-            $_.Name -like 'amdhip64_*.dll' -or $_.Name -like 'amd_comgr*.dll' -or $_.Name -like 'rocm_kpack*.dll' })) {
-        $dst = Get-Item (Join-Path $fwBin $src.Name) -ErrorAction SilentlyContinue
-        if (-not $dst -or $dst.Length -ne $src.Length -or
-            (Get-FileHash $dst.FullName -Algorithm SHA256).Hash -ne (Get-FileHash $src.FullName -Algorithm SHA256).Hash) {
-            $unstaged += $src.Name
-        }
-    }
-    if ($unstaged.Count) {
-        $envWarnings += "$fwBin does not carry the active dist's HIP runtime ($($unstaged -join ', ')), so the installed llama-server mixes runtimes; re-stage it: powershell -ExecutionPolicy Bypass -File `"$fwBin\install-runtime-deps.ps1`" -StageHipRuntime"
-    }
-}
 # amdhip64_*.dll in more than one PATH dir: a second DIST (legacy SDK, a
 # hand-added TheRock), whose rocblas.dll/libhipblaslt.dll then resolve by
-# PATH order. The driver's System32 copy and our staged one are set aside.
+# PATH order. The driver's System32 copy and the installed one are set aside.
 $pathAll = ([Environment]::GetEnvironmentVariable('Path', 'Machine'), [Environment]::GetEnvironmentVariable('Path', 'User')) -join ';'
 $hipDllDirs = @($pathAll -split ';' | Where-Object { $_ } | ForEach-Object { Get-NormalizedDir $_ } | Select-Object -Unique |
     Where-Object { ($_ -notlike "$env:windir*") -and ($_ -ne $fwBin) -and (Test-Path (Join-Path $_ 'amdhip64*.dll')) })

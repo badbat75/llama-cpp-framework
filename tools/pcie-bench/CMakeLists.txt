@@ -23,7 +23,7 @@ if (PCIE_BENCH_HIP)
     # Stage the dist's own HIP runtime beside the exe, as the installer does
     # beside llama-server.exe: the driver's amdhip64_7.dll in System32 would
     # otherwise win the load order, and with the iGPU visible it enumerates no
-    # device at all without the dist's comgr (AGENTS.md, install-runtime-deps).
+    # device at all without the dist's comgr (installer\AGENTS.md).
     foreach (dll amdhip64_7.dll amd_comgr.dll rocm_kpack.dll)
         if (EXISTS "$ENV{HIP_PATH}/bin/${dll}")
             add_custom_command(TARGET pcie-bench-hip POST_BUILD

@@ -3,9 +3,9 @@
 # the newest STABLE release at run time and takes it, so a new ROCm, CUDA or
 # Vulkan SDK lands on the next run.
 # Read by 00-install-prerequisites.ps1, 01-configure.ps1 and common.ps1 (build
-# machine: ROCm dist, CUDA Toolkit, Vulkan SDK) AND by
-# installer\install-runtime-deps.ps1 (bundled into the installer, runs on
-# end-user machines: ROCm dist, cuBLAS redist, VC++ redist).
+# machine: ROCm dist, CUDA Toolkit, Vulkan SDK). End users never see it:
+# 03-package.ps1 copies the runtime libraries the backends load out of these
+# dists into the installer.
 @{
     # Build-machine layout: <DistRoot>\<Dir>\<Version>\<DistOs>, e.g.
     # E:\TheRock\10.1.0\windows. One directory per version, and under it one
@@ -22,8 +22,7 @@
     # overridden, in this order, by -DistRoot on 00-install-prerequisites.ps1
     # or 01-configure.ps1, by the LLAMA_FW_DIST_ROOT environment variable, and
     # by the DistRoot that 01-configure.ps1 recorded in
-    # build\windows\config-build.psd1 (Resolve-DistRoot in dists.ps1). The
-    # end-user helper ignores it: see Rocm.EndUserRoot.
+    # build\windows\config-build.psd1 (Resolve-DistRoot in dists.ps1).
     DistRoot = 'E:\'
     DistOs   = 'windows'
 
@@ -55,8 +54,7 @@
     # below 24 it also needs patches\hip\<major>\ (clang 24 fixed the header
     # clash upstream).
     Rocm = @{
-        Dir         = 'TheRock'            # build machine: <DistRoot>\TheRock\<Version>\<DistOs>
-        EndUserRoot = 'C:\TheRock'         # end users (install-runtime-deps.ps1): <EndUserRoot>\<Version>
+        Dir         = 'TheRock'            # <DistRoot>\TheRock\<Version>\<DistOs>
         Marker      = '.therock-version'   # written only after a successful extract
         Indexes = @(
             'https://stable.repo.amd.com/rocm/core/tarball/'    # 10.0 onwards
@@ -67,20 +65,17 @@
     # NVIDIA CUDA. RedistIndex lists one redistrib_<X.Y.Z>.json per toolkit
     # release, each naming every component's version, archive path and
     # sha256; the highest X.Y.Z is the newest toolkit.
-    #   - Build machine: the toolkit, assembled from the REDIST archives (the
-    #     windows-x86_64 entries of that manifest, each sha256-verified) rather
-    #     than NVIDIA's installer, as on Linux: plain zips, any install prefix,
-    #     no display driver touched, nothing registered machine-wide. The
-    #     Components are what ggml-cuda and CMake's FindCUDAToolkit use
-    #     (compiler, cudart, cuBLAS, CCCL) plus the small tools around them.
-    #     Each archive unpacks as <name>-archive\{bin,include,lib,...}; with
-    #     that level stripped they merge into ONE prefix,
-    #     <DistRoot>\CUDA\<X.Y.Z>\<DistOs>, which then looks like a regular
-    #     toolkit tree (bin\nvcc.exe, lib\x64\*.lib, nvvm\).
-    #   - End users: the cuBLAS runtime only (cublas64_<major> +
-    #     cublasLt64_<major>, ~400 MB), the libcublas archive of the newest
-    #     release whose cuBLAS major matches the one ggml-cuda.dll imports.
-    #     cudart is linked statically, so nothing else is needed.
+    # The toolkit is assembled from the REDIST archives (the windows-x86_64
+    # entries of that manifest, each sha256-verified) rather than NVIDIA's
+    # installer, as on Linux: plain zips, any install prefix, no display
+    # driver touched, nothing registered machine-wide. The Components are what
+    # ggml-cuda and CMake's FindCUDAToolkit use (compiler, cudart, cuBLAS,
+    # CCCL) plus the small tools around them. Each archive unpacks as
+    # <name>-archive\{bin,include,lib,...}; with that level stripped they
+    # merge into ONE prefix, <DistRoot>\CUDA\<X.Y.Z>\<DistOs>, which then
+    # looks like a regular toolkit tree (bin\nvcc.exe, lib\x64\*.lib, nvvm\).
+    # The installer carries its cuBLAS runtime (cublas64_<major> +
+    # cublasLt64_<major>, in bin\x64); cudart is linked statically.
     Cuda = @{
         Dir         = 'CUDA'
         Marker      = '.cuda-version'      # written only after every component is extracted
@@ -104,12 +99,5 @@
         LatestUrl   = 'https://vulkan.lunarg.com/sdk/latest/windows.txt'
         Installer   = 'https://sdk.lunarg.com/sdk/download/{0}/windows/vulkansdk-windows-X64-{0}.exe'
         Signer      = 'LunarG, Inc.'         # Authenticode O= the installer must carry before it runs elevated
-    }
-
-    # Microsoft Visual C++ Redistributable x64 - required by every shipped
-    # binary (VCRUNTIME140/MSVCP140). aka.ms permalink follows the latest
-    # release of the VS 18 toolset line (which the build uses).
-    VcRedist = @{
-        Url = 'https://aka.ms/vs/18/release/vc_redist.x64.exe'
     }
 }
