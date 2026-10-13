@@ -2,7 +2,7 @@
 
 Reference settings for running llama.cpp on the R9700 (RDNA4, `gfx1201`, 32 GB) under
 Windows, through the ROCm (HIP) backend. Values were measured on this framework with
-llama.cpp v0.5.0.
+llama.cpp v0.5.0. Section 7 holds what was measured again on Linux, with llama.cpp v0.6.0.
 
 ## 1. Runtime prerequisites
 
@@ -61,7 +61,10 @@ llama.cpp v0.5.0.
 - **`split-mode tensor`** reduces through the internal AllReduce on Windows (no RCCL),
   staged through pinned host memory, so the slowest card's PCIe link bounds it. Over a
   ~3 GB/s link that costs ~200 ms per 512-token ubatch, which cancels the prefill gain. It
-  only has a fast path between two devices of the same backend.
+  only has a fast path between two devices of the same backend. The Linux build links
+  RCCL, which replaces that AllReduce when every device of the split is a ROCm one
+  (`GGML_CUDA_ALLREDUCE=internal` in the server's environment switches back): not yet
+  measured (section 8).
 
 ## 5. Choices that look better than they measure
 
@@ -78,7 +81,25 @@ llama.cpp v0.5.0.
 - Benchmark tab / `llama-cpp-config bench sweep`: measure at 2.6k and ~90k context, with
   temp 0 and 3 repetitions.
 
-## 7. Not yet measured (placeholders)
+## 7. Linux
+
+Measured with llama.cpp v0.6.0 and the TheRock 10.1.0 dist on the `amdgpu` kernel
+driver, with the desktop drawn by another adapter (nothing else on the card). llama.cpp
+and ROCm are both newer than in the Windows campaign above: a figure that differs from
+sections 2 to 5 is not the OS alone. Model: Qwen3.8-27B Q8_0 with its embedded MTP head,
+KV `q8_0`, layer split with a CUDA card. Decode figures are 3 reps of 400 tokens at
+temp 0.
+
+| subject | result |
+| --- | --- |
+| VRAM | 32624 MiB total (`mem_info_vram_total` in the card's DRM sysfs directory). The figures below ran at 32442 MiB used, 182 MiB free, with `mem_info_gtt_used` at its idle 24 MiB throughout |
+| run-time growth | 85 to 170 MiB over the idle figure at the first prefill (ubatch `1024`), the same at 2.5k and 43.6k tokens |
+| `ubatch-size` | `1024` fits at ctx 262144. Model compute buffer on this card: 1176 MiB at `768` and ctx 196608; at `1024`, 1312 (196608), 1504 (229376) and 1696 to 1736 (262144): it grows with the context as well as with the ubatch |
+| prefill, card first with most of the layers | 1122 t/s at 2.4k tokens, 1045 at 43.6k (ubatch `1024`, ctx 262144) |
+| last-device role (MTP head, output head, sampling) on this card | costs 1288 MiB of output head, 1024 MiB of draft KV (f16) and 648 MiB of draft compute at ctx 262144. Against the same role on a CUDA card: decode 36.3 -> 38.9 t/s at 2.5k tokens (+7%) and 28.5 -> 29.8 at 43.6k (+4.5%), draft acceptance unchanged; prefill at 43.6k 1045 -> 1010 t/s (-3%) |
+| checking a configuration | `tools\report-memory.ps1` is Windows-only: read `mem_info_vram_used` and `mem_info_gtt_used` after a prefill |
+
+## 8. Not yet measured (placeholders)
 
 | parameter | current value | question | result |
 | --- | --- | --- | --- |
@@ -91,3 +112,6 @@ llama.cpp v0.5.0.
 | embedded MTP vs DFlash2 | DFlash2 | speed and memory of each on this card | TBD |
 | power limit | stock (300 W) | prefill and decode per watt | TBD |
 | `split-mode tensor` on two R9700 | n/a | real AllReduce cost; `GGML_CUDA_AR_COPY_THRESHOLD` / `_CHUNK_BYTES` (seeds: 1-2 MiB, 2 MiB) | TBD |
+| Linux: `split-mode tensor` through RCCL | n/a | prefill and decode against `GGML_CUDA_ALLREDUCE=internal` and against the layer split | TBD |
+| Linux: over-allocation | n/a | does it fail the load or move buffers to GTT, and at what cost? | TBD |
+| Linux: `ubatch-size` `1024` against `768` | `1024` | the prefill gain at 2.6k and ~90k | TBD |

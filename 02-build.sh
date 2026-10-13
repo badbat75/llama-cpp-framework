@@ -161,6 +161,26 @@ if [[ -n "$CFG_HIP_PATH" ]]; then
         "-DCMAKE_HIP_COMPILER_ROCM_ROOT=$CFG_HIP_PATH"
         '-DCMAKE_HIP_FLAGS=-w'
     )
+    # RCCL, AMD's NCCL: the collective library `--split-mode tensor` reduces
+    # through between two or more ROCm devices. Linux only (the Windows dist
+    # ships none, so there the reduction is ggml's internal AllReduce, staged
+    # through pinned host memory), hence passed here and not in the shared
+    # cmake-options.psd1. Upstream leaves it OFF because it "was not
+    # universally beneficial during testing"; it is a default, not a lock:
+    # GGML_CUDA_ALLREDUCE=internal in llama-server's environment selects the
+    # internal AllReduce again at run time, with no rebuild. It costs nothing
+    # outside the tensor mode: the communicators are created only when a model
+    # loads with every device of the split on ROCm. Passed either way, since a
+    # cached ON would outlive a dist that lost the library and fail the
+    # configure in find_package(rccl REQUIRED). 03-package.sh needs no list
+    # for it: librccl.so and what it loads are in the ldd closure it bundles.
+    if [[ -f "$CFG_HIP_PATH/lib/cmake/rccl/rccl-config.cmake" ]]; then
+        CMAKE_ARGS+=('-DGGML_HIP_RCCL=ON')
+        say_dim 'RCCL: found in the ROCm dist, split-mode tensor reduces through it'
+    else
+        CMAKE_ARGS+=('-DGGML_HIP_RCCL=OFF')
+        say_warn "RCCL: not in $CFG_HIP_PATH, split-mode tensor falls back to the internal AllReduce"
+    fi
 else
     die "no ROCm dist configured (CFG_HIP_PATH is empty) but cmake-options.psd1 builds GGML_HIP. Run 00-install-prerequisites.sh, then 01-configure.sh."
 fi
