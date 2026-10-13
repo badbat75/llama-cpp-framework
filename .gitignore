@@ -13,4 +13,7 @@ resources/package.json
 resources/package-lock.json
 
 .claude/
-.vscode/
+# settings.json is shared (paths in it are relative, so it holds on any
+# checkout and on both OSes); everything else under .vscode stays local
+.vscode/*
+!.vscode/settings.json
