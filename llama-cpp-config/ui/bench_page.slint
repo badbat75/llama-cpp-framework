@@ -20,7 +20,7 @@
 // other change rebuilds the whole model.
 
 import { LineEdit, TextEdit, CheckBox, Button, ComboBox, ScrollView, Palette } from "std-widgets.slint";
-import { SectionCard, LabeledField, SegmentedControl, MappedComboBox, DefaultLineEdit, WrapText, Tokens } from "components.slint";
+import { SectionCard, LabeledField, SegmentedControl, MappedComboBox, DefaultLineEdit, WrapText, LabelColumn, Tokens } from "components.slint";
 import { AppState } from "state.slint";
 
 export component BenchPage inherits ScrollView {
@@ -45,6 +45,7 @@ export component BenchPage inherits ScrollView {
         SectionCard {
             heading: "Engine";
             LabeledField {
+                label_width <=> LabelColumn.bench;
                 label: "Mode";
                 hint: "live: real requests to the RUNNING llama-server, with your prompt and a temperature override. Measures what the preset actually does, speculative drafter and chat template included.\nsynthetic: llama-bench over token counts. It takes no prompt and never samples, so it is perfectly reproducible, but it cannot load the preset's drafter and ignores the mmproj, the template and the reasoning flags.\nlive needs llama-server running; synthetic needs it stopped, and stops it for you.";
                 SegmentedControl {
@@ -127,6 +128,7 @@ export component BenchPage inherits ScrollView {
 
             // ── live half ────────────────────────────────────────────
             if AppState.bench_is_live : LabeledField {
+                label_width <=> LabelColumn.bench;
                 label: "Prompt file";
                 hint: "The file whose text is sent verbatim as a single user message. It is re-sent whole on every repetition with the prefix cache disabled, so each one is a cold prefill, which is what the prefill row measures.\nTwo prompts ship, side by side in config\\: bench-prompt.txt (230 chars, the default) and bench-prompt-long.txt (~40k tokens). Use the long one when the question is whether a setting still wins at the context you actually work at: the ranking of a knob can differ from what the short prompt says.\nRead fresh when Run starts, so editing it while this window is open is enough: Edit opens it in your default text editor, which is also what makes a very long prompt practical.\nSame file the CLI uses with no --prompt-file, so a scripted `bench sweep` and this tab measure the same thing.";
                 LineEdit {
@@ -152,6 +154,7 @@ export component BenchPage inherits ScrollView {
             // is the answer to "is that the prompt I think it is", which is a
             // question you ask right before pressing Run.
             if AppState.bench_is_live : LabeledField {
+                label_width <=> LabelColumn.bench;
                 label: "";
                 Text {
                     text: AppState.bench_prompt_info;
@@ -162,6 +165,7 @@ export component BenchPage inherits ScrollView {
                 }
             }
             if AppState.bench_is_live : LabeledField {
+                label_width <=> LabelColumn.bench;
                 label: "Temperature";
                 hint: "Overrides the preset's own --temp for this run. 0 is greedy sampling, which is what makes two runs of the same prompt comparable; tick 'default' to leave the preset's value alone and accept the variance.";
                 DefaultLineEdit {
@@ -174,6 +178,7 @@ export component BenchPage inherits ScrollView {
                 }
             }
             if AppState.bench_is_live : LabeledField {
+                label_width <=> LabelColumn.bench;
                 label: "Max output tokens";
                 hint: "Cap on the generated answer (--max_tokens on the request). Long enough that the decode rate settles, short enough that a slow model does not turn one repetition into minutes.";
                 LineEdit {
@@ -186,6 +191,7 @@ export component BenchPage inherits ScrollView {
 
             // ── synthetic half ───────────────────────────────────────
             if !AppState.bench_is_live : LabeledField {
+                label_width <=> LabelColumn.bench;
                 label: "Prompt lengths";
                 hint: "llama-bench's -p: how many TOKENS to prefill, comma separated. Not a text: this engine never tokenizes a prompt of yours and never samples. One pp row per length.";
                 LineEdit {
@@ -195,6 +201,7 @@ export component BenchPage inherits ScrollView {
                 }
             }
             if !AppState.bench_is_live : LabeledField {
+                label_width <=> LabelColumn.bench;
                 label: "Generate";
                 hint: "llama-bench's -n: how many tokens to generate per decode test.";
                 LineEdit {
@@ -205,6 +212,7 @@ export component BenchPage inherits ScrollView {
                 }
             }
             if !AppState.bench_is_live : LabeledField {
+                label_width <=> LabelColumn.bench;
                 label: "Depths";
                 hint: "llama-bench's -d: how many tokens of KV cache to prefill before each decode test, comma separated. Decode slows down with context, so a single depth of 0 measures only the best case.";
                 LineEdit {
@@ -215,6 +223,7 @@ export component BenchPage inherits ScrollView {
             }
 
             LabeledField {
+                label_width <=> LabelColumn.bench;
                 label: "Repetitions";
                 hint: "Samples per measurement. The results table reports the mean and the sample standard deviation across them, which is what says whether a difference between two presets is real.";
                 LineEdit {
@@ -418,6 +427,7 @@ export component BenchPage inherits ScrollView {
         SectionCard {
             heading: "Saved runs";
             LabeledField {
+                label_width <=> LabelColumn.bench;
                 label: "Run";
                 hint: "Every run writes three files to the bench folder as it goes: a .jsonl of the measurements (appended per test, so a run killed by a driver reset keeps what it had), a .md report, and a .log of the engine's own output. Picking one here reloads its table.";
                 MappedComboBox {

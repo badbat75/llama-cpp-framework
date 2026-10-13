@@ -13,11 +13,11 @@
 
 import { LineEdit, TextEdit, Button, ListView, Palette } from "std-widgets.slint";
 import { AppState } from "state.slint";
-import { Tokens, Icons, Options, ModalOverlay, AccentBar, SelectableRow, ListPanel } from "components.slint";
+import { Tokens, Icons, Options, LabelColumn, ModalOverlay, AccentBar, SelectableRow, ListPanel } from "components.slint";
 // Re-export so Slint generates the Rust accessors (`app.global::<AppState>()`);
 // a bare import wouldn't surface them to Rust. `Options` is exported only so
 // the e2e test can assert `Options.all_layers == form::ALL_LAYERS`.
-export { AppState, Options }
+export { AppState, Options, LabelColumn }
 // The log-tail viewer: a third root component beside AppWindow/AppTray,
 // re-exported so gui.rs can instantiate it (`LogWindow::new()`).
 import { LogWindow } from "log_window.slint";

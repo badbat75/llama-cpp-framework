@@ -55,6 +55,65 @@ fn realized_app() -> AppWindow {
     app
 }
 
+/// Each page's label column is computed from its own rows when the page is
+/// built: showing a page must leave its `LabelColumn` entry wider than the
+/// bare glyph-plus-air a row adds to an EMPTY label (28px), i.e. some label
+/// was measured and raised it. Nothing is asserted about the exact width: it
+/// is the font's, and the testing backend's font is not the platform's.
+fn assert_label_columns_are_computed(app: &AppWindow, st: &AppState) {
+    let columns = app.global::<crate::gui::LabelColumn>();
+    let tab_before = st.get_current_tab();
+    for (tab, page) in [(0, "server"), (1, "models"), (2, "bench"), (4, "settings")] {
+        st.set_current_tab(tab);
+        itest::mock_elapsed_time(std::time::Duration::from_millis(1));
+        let width = match page {
+            "server" => columns.get_server(),
+            "models" => columns.get_models(),
+            "bench" => columns.get_bench(),
+            _ => columns.get_settings(),
+        };
+        assert!(
+            width > 28.0,
+            "LabelColumn.{page} is {width}px after showing its page: no row raised it"
+        );
+    }
+    st.set_current_tab(tab_before);
+    itest::mock_elapsed_time(std::time::Duration::from_millis(1));
+}
+
+/// A row left off its page's `LabelColumn` entry keeps LabeledField's default
+/// width and falls out of line with the rest of the page. Source scan: in each
+/// page, every `LabeledField {` / `InfoRow {` / `GpuSplitTable {` is followed
+/// by the two-way binding to that page's entry.
+#[test]
+fn every_labeled_row_binds_its_pages_label_column() {
+    let ui = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("ui");
+    for page in ["server", "models", "bench", "settings"] {
+        let file = ui.join(format!("{page}_page.slint"));
+        let text = std::fs::read_to_string(&file).expect("read page");
+        let binding = format!("label_width <=> LabelColumn.{page};");
+        let lines: Vec<&str> = text.lines().collect();
+        let mut rows = 0;
+        for (i, line) in lines.iter().enumerate() {
+            let opens = ["LabeledField {", "InfoRow {", "GpuSplitTable {"]
+                .iter()
+                .any(|open| line.trim_end().ends_with(open));
+            if !opens || line.trim_start().starts_with("//") {
+                continue;
+            }
+            rows += 1;
+            assert_eq!(
+                lines.get(i + 1).map(|l| l.trim()),
+                Some(binding.as_str()),
+                "{}:{}: this row does not bind {binding}",
+                file.display(),
+                i + 1
+            );
+        }
+        assert!(rows > 0, "{}: no labeled row found", file.display());
+    }
+}
+
 /// Locate a widget by its `accessible-label`. Uses the accessibility tree, which
 /// is always present (unlike element ids, which additionally need the id kept in
 /// debug info). Panics with the label if nothing matches: a renamed/removed
@@ -389,6 +448,9 @@ fn editable_widgets_track_model_after_edit() {
         "0.7",
         "0.2",
     );
+
+    // ── Label columns (components.slint `LabelColumn`) ───────────────────
+    assert_label_columns_are_computed(&app, &st);
 
     // ── E2E save/revert/delete flow (src/tests/save_flow.rs) ─────────────
     // Shares this single #[test] and window: the testing backend is a

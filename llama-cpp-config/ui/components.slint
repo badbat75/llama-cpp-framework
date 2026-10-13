@@ -28,7 +28,7 @@ import "fonts/FluentSystemIcons-Regular.ttf";
 // page pulls from the same handful of values instead of eyeballing a new alpha.
 // Used as `Palette.foreground.transparentize(Tokens.muted)` etc.
 // Scope note: `Tokens` holds only cross-cutting alpha/color values. Layout
-// metrics (body font-size 13px, the 130px label column, 8px card radius, 16px
+// metrics (body font-size 13px, the label column of `LabelColumn`, 8px card radius, 16px
 // card padding) are deliberately kept inline at each use site, not tokenized,
 // so this stays a color/alpha vocabulary, not a half-built design system.
 export global Tokens {
@@ -514,7 +514,24 @@ export component WrapText {
     }
 }
 
-// The two-column form row every labeled input sits in: a fixed 130px `label`
+// The width of LabeledField's label column, one per page, COMPUTED when the
+// page is built: every LabeledField / InfoRow / GpuSplitTable of a page binds
+// its `label_width` two-way to that page's entry (`label_width <=>
+// LabelColumn.server;`) and raises it to its own label's width (LabeledField's
+// `init` and `changed natural`). The entry ends at the page's WIDEST label
+// with its help glyph plus a little air, in whatever font the platform draws:
+// no label is elided, no page gives the column more than it needs, and no
+// width is written by hand. A row that forgets the binding stays at
+// LabeledField's 130px default and falls out of line (`ui_bindings.rs` checks
+// that none does).
+export global LabelColumn {
+    in-out property <length> server;
+    in-out property <length> models;
+    in-out property <length> bench;
+    in-out property <length> settings;
+}
+
+// The two-column form row every labeled input sits in: a fixed-width `label`
 // column (with an optional ⓘ hover `hint`) on the left, the stretched field
 // `@children` on the right.
 export component LabeledField inherits HorizontalLayout {
@@ -523,13 +540,32 @@ export component LabeledField inherits HorizontalLayout {
     // carries a Tooltip, which keeps long explanations out of the input
     // placeholders.
     in property <string> hint;
+    // The label column: bound two-way to the hosting page's entry in
+    // `LabelColumn`, the same on every row of the page so its inputs line up.
+    in-out property <length> label_width: 130px;
+    // What this row's own label needs: the text, the help glyph's 16px cell
+    // with its 4px gap when there is one, and 8px of air before the input.
+    out property <length> natural: label_text.preferred-width + (root.hint != "" ? 20px : 0px) + 8px;
+    // Only ever widens the column: the widest row of the page decides. `init`
+    // covers a row built with the page, `changed` a label whose width is only
+    // known later (the font or the scale factor arriving with the window).
+    init => {
+        if (self.natural > self.label_width) {
+            self.label_width = self.natural;
+        }
+    }
+    changed natural => {
+        if (self.natural > self.label_width) {
+            self.label_width = self.natural;
+        }
+    }
     spacing: 8px;
     alignment: stretch;
     HorizontalLayout {
-        width: 130px;
+        width: root.label_width;
         spacing: 4px;
         alignment: start;
-        Text {
+        label_text := Text {
             text: root.label;
             vertical-alignment: center;
             font-size: 13px;
@@ -543,7 +579,7 @@ export component LabeledField inherits HorizontalLayout {
             font-family: Icons.font;
             font-size: 13px;
             // Fixed-width cell so the glyph is always visible and gives the
-            // Tooltip a reliable hover target: inside a 130px label row a
+            // Tooltip a reliable hover target: inside the label row a
             // stretched/0-width cell would collapse and never trigger hover.
             width: 16px;
             horizontal-stretch: 0;
@@ -730,6 +766,10 @@ export component FormActions inherits HorizontalLayout {
 // it keeps up with a broken-binding delegate.
 export component GpuSplitTable inherits VerticalLayout {
     in property <[GpuRow]> rows;
+    // The label column of the "GPU split mode" row: bound two-way to the
+    // hosting page's `LabelColumn` entry, so the combo lines up with the
+    // page's other inputs.
+    in-out property <length> label_width: 130px;
     // Checked devices, and the sum of their weights (0 = Auto: a blank
     // --tensor-split, which llama.cpp fills in from each device's FREE VRAM at
     // load time, not an even split).
@@ -874,6 +914,7 @@ export component GpuSplitTable inherits VerticalLayout {
     // (and editing) top to bottom follows the dependency.
     LabeledField {
         label: "GPU split mode";
+        label_width <=> root.label_width;
         hint: root.split_mode_hint;
         MappedComboBox {
             // One device has nothing to split. Zero means "all detected

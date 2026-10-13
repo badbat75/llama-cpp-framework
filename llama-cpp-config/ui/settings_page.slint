@@ -7,7 +7,7 @@
 // state back through that same binding (src/gui/settings_tab.rs).
 
 import { CheckBox, LineEdit, ScrollView, Palette } from "std-widgets.slint";
-import { SectionCard, LabeledField, Tokens } from "components.slint";
+import { SectionCard, LabeledField, LabelColumn, Tokens } from "components.slint";
 import { AppState } from "state.slint";
 
 export component SettingsPage inherits ScrollView {
@@ -32,6 +32,7 @@ export component SettingsPage inherits ScrollView {
         SectionCard {
             heading: "Startup";
             LabeledField {
+                label_width <=> LabelColumn.settings;
                 label: "Start at login";
                 hint: "Launches llama-cpp-config automatically when you log in.\nWindows: the per-user Run registry entry, the same one Task Manager's Startup apps panel manages. Linux: an autostart entry in ~/.config/autostart, which GNOME and the other desktops run at login.\nCombine it with the llama-server toggle below to bring the server up at login too.\nIf the app is moved or updated to a new location, re-tick this to refresh the stored path.";
                 CheckBox {
@@ -42,6 +43,7 @@ export component SettingsPage inherits ScrollView {
                 }
             }
             LabeledField {
+                label_width <=> LabelColumn.settings;
                 label: "Start minimized";
                 hint: "How the login launch above comes up: minimized to the system tray (recommended: nothing opens over your session, the tray icon is the handle), or as the open configurator window.\nOnly applies to the 'Start at login' launch; starting the app yourself always opens the window.";
                 CheckBox {
@@ -53,6 +55,7 @@ export component SettingsPage inherits ScrollView {
                 }
             }
             LabeledField {
+                label_width <=> LabelColumn.settings;
                 label: "Start llama-server";
                 hint: "Starts llama-server automatically whenever llama-cpp-config launches: any launch, not just the login one.\nUses the same start path as the Start button (a failure shows in the footer, and View logs has the details). Does nothing when the server is already running.";
                 CheckBox {
@@ -66,6 +69,7 @@ export component SettingsPage inherits ScrollView {
         SectionCard {
             heading: "Logging";
             LabeledField {
+                label_width <=> LabelColumn.settings;
                 label: "Rotate the log";
                 hint: "When llama-server stops, logs\\llama-server.log is filed away as llama-server-<date>-<time>.log (the closing instant, UTC) and the next run starts in a clean file. The newest 10 closed logs are kept.\nA run that ended without a Stop (a crash, a driver reset, an external kill) is filed at the next start under its last-write time instead.\nOff = one file growing forever, the behaviour before 1.15.1.";
                 CheckBox {
@@ -75,6 +79,7 @@ export component SettingsPage inherits ScrollView {
                 }
             }
             LabeledField {
+                label_width <=> LabelColumn.settings;
                 label: "Only above";
                 hint: "Only a log LARGER than this many KB is filed; a shorter one stays and the next run appends below it, so a handful of short runs share one file instead of leaving one file each.\n0 files every non-empty log. Applies on Enter or when the field loses focus.";
                 LineEdit {
