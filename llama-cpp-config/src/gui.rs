@@ -77,7 +77,7 @@ slint::include_modules!();
 // Per-tab callback wiring: one file each under `gui/`. Each `wire()` reaches the
 // shared helpers, the `State` cache, and the generated Slint types via `use super::*`.
 mod bench_tab;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", windows))]
 mod hw_window;
 mod integrations_tab;
 mod log_window;
@@ -199,7 +199,7 @@ pub(crate) fn log_window_e2e() {
 }
 
 /// The HW Monitor window's e2e phase, for the shared UI test to call.
-#[cfg(all(test, target_os = "linux"))]
+#[cfg(all(test, any(target_os = "linux", windows)))]
 pub(crate) fn hw_window_e2e() {
     hw_window::e2e();
 }
@@ -331,11 +331,13 @@ pub fn run(start_minimized: bool) -> anyhow::Result<()> {
     // The log window starts hidden on every launch.
     #[cfg(target_os = "linux")]
     discard_unshown_wayland_window(&_log_window);
-    // Independent HW Monitor window: Linux only for now, and the button that
-    // opens it shows only where this ran. Hidden at launch like the log window.
-    #[cfg(target_os = "linux")]
+    // Independent HW Monitor window: on Linux and Windows, where `hwmon` has a
+    // sampler, and the button that opens it shows only where this ran. Hidden
+    // at launch like the log window.
+    #[cfg(any(target_os = "linux", windows))]
     let _hw_window = {
         let win = hw_window::wire(&app)?;
+        #[cfg(target_os = "linux")]
         discard_unshown_wayland_window(&win);
         app.global::<AppState>().set_hw_monitor_available(true);
         win
@@ -376,7 +378,7 @@ pub fn run(start_minimized: bool) -> anyhow::Result<()> {
     // Quit from the tray closes nothing first: record the windows still open.
     remember_window_size(&app);
     remember_window_size(&_log_window);
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", windows))]
     remember_window_size(&_hw_window);
     Ok(())
 }
@@ -508,7 +510,7 @@ impl RememberedSize for LogWindow {
     }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", windows))]
 impl RememberedSize for HwWindow {
     fn slot(cfg: &mut settings::Settings) -> &mut Option<(u32, u32)> {
         &mut cfg.hw_monitor_window_size

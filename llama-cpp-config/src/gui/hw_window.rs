@@ -5,7 +5,8 @@
 //! The sampling (`hwmon::Sampler`) runs on a worker thread, not on a
 //! `slint::Timer` as the log tail does: NVML measures PCIe throughput over
 //! 20 ms per call, which would stall the event loop once a second per NVIDIA
-//! card. The thread exists only while the window is open: the click that
+//! card (and on Windows the first reading of the GPU counters takes its time
+//! too). The thread exists only while the window is open: the click that
 //! opens the window starts it, and it leaves at its next wakeup once the
 //! window closes, so a closed window costs nothing.
 //!

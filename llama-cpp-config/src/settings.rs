@@ -47,8 +47,9 @@ pub struct Settings {
     /// per run, while which prompt file you use is a decision per machine.
     pub bench_prompt_file: String,
     /// The HW Monitor devices whose checkbox is unticked, by `hwmon::Group::id`
-    /// (`cpu`, `memory`, `disk`, `amdgpu-<PCI address>`, an NVIDIA card's
-    /// UUID), sorted. Empty = every device shown, the default. An id no
+    /// (`cpu`, `memory`, `disk`, an NVIDIA card's UUID, `amdgpu-<PCI address>`
+    /// on Linux, `gpu-<PCI address>` on Windows), sorted. Empty = every device
+    /// shown, the default. An id no
     /// current device answers to is kept: the card may only be unplugged.
     pub hw_monitor_hidden: Vec<String>,
     /// The size each window had when it was last closed, in logical pixels

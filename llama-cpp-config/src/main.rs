@@ -16,7 +16,7 @@ mod gguf;
 mod gpu_split;
 mod gui;
 mod http;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", windows))]
 mod hwmon;
 mod ini;
 mod integrations;

@@ -576,7 +576,7 @@ export global AppState {
     // Open (or re-focus) the independent HW Monitor window (HwWindow in
     // hw_window.slint): live bars for every GPU, the CPU, memory and the
     // models directory's disk. Wired in gui/hw_window.rs, which exists on
-    // Linux only for now; `hw_monitor_available` is set where it was wired, so
+    // Linux and Windows; `hw_monitor_available` is set where it was wired, so
     // the button does not show where it would do nothing.
     callback open_hw_monitor();
     in property <bool> hw_monitor_available;
