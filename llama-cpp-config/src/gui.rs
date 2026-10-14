@@ -64,12 +64,13 @@ use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
 
-use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
+use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel};
 
 use crate::form::{form_to_preset, preset_to_form, prune_inactive_draft_fields};
 use crate::{
-    devices, gpu_split, integrations, kv_cache, model_scan, net_ifaces, paths, presets, runstate,
-    server_cfg, server_form, server_version, settings, startup, tensor_override,
+    devices, gguf, gpu_split, integrations, kv_cache, model_scan, net_ifaces, paths, presets,
+    runstate, server_cfg, server_form, server_version, settings, startup, tensor_override,
+    tensor_picker,
 };
 
 slint::include_modules!();
@@ -557,9 +558,35 @@ fn remember_window_size<T: RememberedSize>(win: &T) {
 /// the single-instance activation event, and by the tray's "Open window" item
 /// (a bare `show()` would leave a minimized window minimized).
 fn activate_window(app: AppWindow) {
+    raise_window(app.window());
+}
+
+/// Show a window, restore it from minimized and bring it to the front, whether
+/// it was closed, minimized or open behind another window. Shared by the main
+/// window, the log viewer and the HW Monitor.
+///
+/// On Wayland winit's `focus_window` does nothing (raising needs an
+/// xdg-activation token, and neither a click inside the app nor the tray hands
+/// winit one it can use), so a window that is ALREADY open is hidden and shown
+/// again: Slint destroys the surface on a Wayland hide and creates a new one on
+/// show, keeping the component and its size, and the compositor puts the new
+/// window on top. Everywhere else the plain activation works and the window is
+/// left in place.
+pub(crate) fn raise_window(window: &slint::Window) {
+    use slint::winit_030::winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
     use slint::winit_030::WinitWindowAccessor;
-    app.show().ok();
-    app.window().with_winit_window(|w| {
+    let open_on_wayland = window.is_visible()
+        && window
+            .with_winit_window(|w| {
+                w.window_handle()
+                    .is_ok_and(|h| matches!(h.as_raw(), RawWindowHandle::Wayland(..)))
+            })
+            .unwrap_or(false);
+    if open_on_wayland {
+        window.hide().ok();
+    }
+    window.show().ok();
+    window.with_winit_window(|w| {
         w.set_visible(true);
         w.set_minimized(false);
         w.focus_window();
@@ -1005,7 +1032,72 @@ fn refresh_tensor_rows(app: &AppWindow) {
     ));
 
     s.set_preset_tensor_rows(model(tensor_override::build_rows(&devs, &preset)));
+    s.set_preset_tensor_can_pick(MODEL_TENSORS.with(|t| !t.borrow().is_empty()));
     refresh_tensor_scalars(app);
+}
+
+thread_local! {
+    /// The selected model's tensors (`gguf::read_tensors`), read with its Model
+    /// info; empty when no model is selected or its GGUF cannot be read. The
+    /// tensor table's coverage lines and its picker read them from here rather
+    /// than re-opening the file on every keystroke.
+    static MODEL_TENSORS: RefCell<Vec<gguf::TensorInfo>> = const { RefCell::new(Vec::new()) };
+    /// The open tensor picker, or None.
+    static TENSOR_PICKER: RefCell<Option<tensor_picker::Picker>> = const { RefCell::new(None) };
+}
+
+/// Replace the selected model's tensor list (see `MODEL_TENSORS`). The caller
+/// refreshes the table.
+fn set_model_tensors(tensors: Vec<gguf::TensorInfo>) {
+    MODEL_TENSORS.with(|t| *t.borrow_mut() = tensors);
+}
+
+fn model_tensors() -> Vec<gguf::TensorInfo> {
+    MODEL_TENSORS.with(|t| t.borrow().clone())
+}
+
+/// Push the open picker's list and summary into AppState (or close it).
+fn refresh_tensor_picker(app: &AppWindow) {
+    let s = app.global::<AppState>();
+    TENSOR_PICKER.with(|p| {
+        let mut p = p.borrow_mut();
+        let Some(p) = p.as_mut() else {
+            s.set_tensor_picker_open(false);
+            return;
+        };
+        let rows: Vec<TensorPickRow> = p
+            .lines()
+            .into_iter()
+            .map(|l| TensorPickRow {
+                label: l.label.into(),
+                detail: l.detail.into(),
+                checked: l.checked,
+                partial: l.partial,
+                header: l.header,
+                expanded: l.expanded,
+                taken: l.taken,
+            })
+            .collect();
+        // Updated in place when the model is already there: a fresh model would
+        // send the ListView back to the top on every tick of a long list.
+        let current = s.get_tensor_picker_rows();
+        match current.as_any().downcast_ref::<VecModel<TensorPickRow>>() {
+            Some(vm) if vm.row_count() == rows.len() => {
+                for (i, r) in rows.into_iter().enumerate() {
+                    if vm.row_data(i).as_ref() != Some(&r) {
+                        vm.set_row_data(i, r);
+                    }
+                }
+            }
+            Some(vm) => vm.set_vec(rows),
+            None => s.set_tensor_picker_rows(model(rows)),
+        }
+        s.set_tensor_picker_summary(p.summary().into());
+        s.set_tensor_picker_pattern(p.pattern().into());
+        s.set_tensor_picker_can_apply(p.any_selected());
+        s.set_tensor_picker_title(format!("Tensors of override {}", p.rule + 1).into());
+        s.set_tensor_picker_open(true);
+    });
 }
 
 /// The tensor table's derived strings: the flag line, and the warning for a value
@@ -1016,6 +1108,10 @@ fn refresh_tensor_scalars(app: &AppWindow) {
 
     let preset = preset_overrides(app);
     s.set_preset_tensor_summary(tensor_override::summary(&preset).into());
+    // Per rule, what it places on this model. A separate model from the rows,
+    // so a regex keystroke refreshes it without recreating the field.
+    let coverage = MODEL_TENSORS.with(|t| tensor_picker::coverage(&preset, &t.borrow()));
+    s.set_preset_tensor_coverage(string_model(coverage));
     // Two warnings share this strip, and the order is deliberate. `validate`'s is
     // a value llama-server would REFUSE (no device after the `=`), so it outranks
     // the model-dependent one, which is a rule llama.cpp accepts and then executes

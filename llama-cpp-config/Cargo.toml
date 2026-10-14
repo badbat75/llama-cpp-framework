@@ -11,12 +11,15 @@ name = "llama-cpp-config"
 path = "src/main.rs"
 
 [dependencies]
-slint = { version = "1.17", default-features = false, features = ["std", "compat-1-2", "backend-winit", "renderer-skia", "accessibility", "unstable-winit-030", "system-tray"] }
+slint = { version = "1.18", default-features = false, features = ["std", "compat-1-2", "backend-winit", "renderer-skia", "accessibility", "unstable-winit-030", "system-tray"] }
 clap = { version = "4.6", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 anyhow = "1"
 rfd = { version = "0.17", default-features = false }
 if-addrs = "0.15"
+# The Tensor placement picker reads which tensors a rule's regex matches
+# (tensor_picker.rs). Already in the lock as a transitive dependency.
+regex = "1.13"
 
 # rfd has no file-dialog backend without a feature on Linux, and its build
 # script refuses to compile with none chosen. xdg-portal talks to the desktop
@@ -31,11 +34,11 @@ rfd = { version = "0.17", default-features = false, features = ["xdg-portal", "w
 tempfile = "3"
 # Headless Slint backend for the UI regression tests (src/tests/ui_bindings.rs).
 # Already in the tree as an optional dep of slint; pinned to the same version.
-i-slint-backend-testing = "1.17"
+i-slint-backend-testing = "1.18"
 
 [build-dependencies]
-slint-build = "1.17"
-ico = "0.5"
+slint-build = "1.18"
+ico = "0.6"
 
 [target.'cfg(windows)'.build-dependencies]
 winresource = "0.1"

@@ -33,7 +33,7 @@ llama.cpp v0.5.0. Section 7 holds what was measured again on Linux, with llama.c
 | `mmproj-device` | off this card, when it is the VRAM constraint | the image encoder (~1.14 GiB with its compute buffer for a BF16 Qwen3.8 mmproj) only computes on image requests. Moving it off and giving this card two more blocks: neutral at 2.6k, +2.4% decode at 93.6k |
 | `flash-attn` | omit (`auto` resolves to on) | a quantized KV cache needs FlashAttention |
 | `cache-type-k/-v` | `q8_0` | `q5_1` decodes 6% slower; `iq4_nl` has no CUDA FlashAttention kernel |
-| `override-tensor` | `token_embd\.weight=<this card>` | moves the table (~1.26 GiB at Q8_0) out of pinned host RAM, where Windows reports it as shared GPU memory: +1-2% decode. The quant must have a CUDA `get_rows` kernel (all K/IQ quants do since b10089) |
+| `override-tensor` | `^token_embd\.weight=<this card>` | moves the table (~1.26 GiB at Q8_0) out of pinned host RAM, where Windows reports it as shared GPU memory: +1-2% decode. The quant must have a CUDA `get_rows` kernel (all K/IQ quants do since b10089) |
 | `backend-sampling` | `true` when this card holds the logits | the sampler runs on the GPU instead of copying the logits to the host every token |
 | `ubatch-size` | the largest that fits: `768` | each ubatch token costs ~0.53 MiB of model compute buffer, plus a drafter's logits (ubatch x vocab) where they land: `768` adds ~400 MiB over `512` on a last device carrying a DFlash2 drafter. Against `512`: +5.8% prefill at 2.6k, nothing at 93.6k, decode unchanged. `1024` did not fit next to a 27B Q8_0 at ctx 196608 (on Linux it does: section 7) |
 

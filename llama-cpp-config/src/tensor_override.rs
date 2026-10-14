@@ -26,10 +26,12 @@
 //! which is exactly what `sanitize_pattern` enforces (below), and the device is
 //! a dropdown of real device ids, not a string to spell.
 //!
-//! ## The four canned patterns
-//! `KINDS` is the discoverable part: the regexes worth knowing, named. `Custom`
-//! is the escape hatch and keeps whatever pattern is already there, so switching
-//! a row to Custom never wipes the text you were about to edit. Two of the four
+//! ## The canned patterns
+//! `KINDS` is the discoverable part: every tensor family worth placing, named,
+//! and for the ones inside the blocks a Layers field (`10-12, 15`) that limits
+//! the rule to those blocks by writing `blk\.(10|11|12|15)` in front of the
+//! family's regex, so a placement by layer needs no regex either. `Custom` is
+//! the escape hatch for the rest. Two of them
 //! are llama.cpp's own regexes verbatim (`LLM_FFN_EXPS_REGEX` and, since v0.4.0,
 //! `LLM_FFN_DENSE_REGEX` in common/common.h): a rule with one of them pointed at
 //! CPU is what `--cpu-moe` / `--n-cpu-moe` / `--n-cpu-ffn` expand into, so the
@@ -65,57 +67,279 @@ pub struct Kind {
     /// Stable id, round-tripped through the Slint combo's `values` model.
     pub id: &'static str,
     pub label: &'static str,
-    /// The regex this kind writes into the rule. Empty for `CUSTOM`.
+    /// The regex this kind writes into the rule over ALL layers. Empty for
+    /// `CUSTOM`.
     pub pattern: &'static str,
+    /// For a kind that lives inside the blocks (`blk.<n>.…`), what follows the
+    /// block number: a rule limited to some layers is `blk\.<n><block>` or
+    /// `blk\.(<n>|<m>|…)<block>`. Empty for a tensor outside the blocks
+    /// (embeddings, output head), which has no layer to pick.
+    pub block: &'static str,
 }
 
 /// The `Custom regex…` kind's id: the one that keeps the row's existing pattern
 /// and lets the user edit it.
 pub const CUSTOM: &str = "custom";
 
-/// The canned patterns, in dropdown order. `exps` is llama.cpp's own expert
-/// regex verbatim (`LLM_FFN_EXPS_REGEX` in `common/common.h`), the one
-/// `--cpu-moe` installs, so "MoE experts → CPU" here is exactly `-cmoe`.
+/// The canned patterns, in dropdown order: every tensor family llama.cpp's
+/// loaders name (`llama-arch.cpp`), outside the blocks first, then inside them.
+/// None of them carries a `,` or an `=` (see the module header).
+///
+/// The tensors outside the blocks are anchored with `^`: regex_search matches
+/// anywhere in the name, and an unanchored `output\.weight` also takes every
+/// `blk.<n>.attn_output.weight`, as `token_embd\.weight` takes Gemma 3n's
+/// `per_layer_token_embd.weight`.
+///
+/// `exps` and `ffn` are llama.cpp's own regexes verbatim (`LLM_FFN_EXPS_REGEX`
+/// and `LLM_FFN_DENSE_REGEX` in `common/common.h`), the ones `--cpu-moe` /
+/// `--n-cpu-ffn` install, so "MoE experts → CPU" here is exactly `-cmoe`.
 pub const KINDS: &[Kind] = &[
     Kind {
         id: "embd",
         label: "Embedding table (token_embd)",
-        pattern: r"token_embd\.weight",
+        pattern: r"^token_embd\.weight",
+        block: "",
+    },
+    Kind {
+        id: "ple",
+        label: "Per-layer embeddings (per_layer_token_embd)",
+        pattern: r"^per_layer_token_embd\.weight",
+        block: "",
     },
     Kind {
         id: "output",
         label: "Output head (output)",
         pattern: r"^output\.weight",
+        block: "",
+    },
+    Kind {
+        id: "layer",
+        label: "Whole layer (blk.N.*)",
+        pattern: r"^blk\.\d+\.",
+        block: r"\.",
+    },
+    // `\.attn_`, so the dot keeps the hyper-connection `hc_attn_*` out.
+    Kind {
+        id: "attn",
+        label: "Attention (attn_*)",
+        pattern: r"\.attn_",
+        block: r"\.attn_",
+    },
+    Kind {
+        id: "ssm",
+        label: "Linear attention / SSM (ssm_*)",
+        pattern: r"\.ssm_",
+        block: r"\.ssm_",
+    },
+    // `LLM_FFN_DENSE_REGEX` verbatim (v0.4.0), what `--n-cpu-ffn` expands into
+    // per layer. The trailing `\.` is load-bearing: it is what keeps
+    // `ffn_up_exps` / `ffn_up_shexp` OUT, so on a MoE model this reaches only
+    // the dense layers it may carry. The three single projections below keep it.
+    Kind {
+        id: "ffn",
+        label: "Dense FFN (ffn_up/down/gate)",
+        pattern: r"\.ffn_(up|down|gate)\.",
+        block: r"\.ffn_(up|down|gate)\.",
+    },
+    Kind {
+        id: "ffn_up",
+        label: "Dense FFN up (ffn_up)",
+        pattern: r"\.ffn_up\.",
+        block: r"\.ffn_up\.",
+    },
+    Kind {
+        id: "ffn_gate",
+        label: "Dense FFN gate (ffn_gate)",
+        pattern: r"\.ffn_gate\.",
+        block: r"\.ffn_gate\.",
+    },
+    Kind {
+        id: "ffn_down",
+        label: "Dense FFN down (ffn_down)",
+        pattern: r"\.ffn_down\.",
+        block: r"\.ffn_down\.",
     },
     Kind {
         id: "exps",
-        label: "MoE experts, all layers (ffn_*_exps)",
+        label: "MoE experts (ffn_*_exps)",
         pattern: r"\.ffn_(up|down|gate|gate_up)_(ch|)exps",
+        block: r"\.ffn_(up|down|gate|gate_up)_(ch|)exps",
     },
-    // llama.cpp's `LLM_FFN_DENSE_REGEX` verbatim (v0.4.0), what `--n-cpu-ffn`
-    // expands into per layer. The trailing `\.` is load-bearing: it is what
-    // keeps `ffn_up_exps` / `ffn_up_shexp` OUT, so on a MoE model this reaches
-    // only the dense layers it may carry.
+    // `gate_` + `(ch|)exps` does not reach the fused `ffn_gate_up_exps`, which
+    // only the all-experts kind above names.
     Kind {
-        id: "ffn",
-        label: "Dense FFN, all layers (ffn_up/down/gate)",
-        pattern: r"\.ffn_(up|down|gate)\.",
+        id: "exps_up",
+        label: "MoE experts up (ffn_up_exps)",
+        pattern: r"\.ffn_up_(ch|)exps",
+        block: r"\.ffn_up_(ch|)exps",
+    },
+    Kind {
+        id: "exps_gate",
+        label: "MoE experts gate (ffn_gate_exps)",
+        pattern: r"\.ffn_gate_(ch|)exps",
+        block: r"\.ffn_gate_(ch|)exps",
+    },
+    Kind {
+        id: "exps_down",
+        label: "MoE experts down (ffn_down_exps)",
+        pattern: r"\.ffn_down_(ch|)exps",
+        block: r"\.ffn_down_(ch|)exps",
+    },
+    Kind {
+        id: "shexp",
+        label: "MoE shared expert (ffn_*_shexp)",
+        pattern: r"\.ffn_(up|down|gate)_shexp",
+        block: r"\.ffn_(up|down|gate)_shexp",
+    },
+    // `ffn_gate_inp` and, on models with a gated shared expert, its
+    // `ffn_gate_inp_shexp`: both are the router's small matrices.
+    Kind {
+        id: "router",
+        label: "MoE router (ffn_gate_inp)",
+        pattern: r"\.ffn_gate_inp",
+        block: r"\.ffn_gate_inp",
     },
     Kind {
         id: CUSTOM,
         label: "Custom regex…",
         pattern: "",
+        block: "",
     },
 ];
 
-/// The kind a pattern belongs to: the canned entry it matches verbatim, else
-/// `CUSTOM` (always the last index, so an unrecognised, i.e. hand-written,
-/// pattern lands on the free-text row).
-fn kind_index(pattern: &str) -> usize {
-    KINDS
+/// Patterns this table once wrote, unanchored, read as the anchored kind they
+/// meant (and written back anchored on the next save). Only where the two match
+/// the same tensors on every model the old one was offered for:
+/// `token_embd\.weight` differs from `^token_embd\.weight` only on a model with
+/// per-layer embeddings, where the anchored one is what "Embedding table" means.
+const ALIASES: &[(&str, &str)] = &[(r"token_embd\.weight", r"^token_embd\.weight")];
+
+/// The largest layer number a range may name, and the most layers one rule may
+/// list: each becomes an alternative of the regex, and no model has more.
+const MAX_LAYER: u32 = 999;
+const MAX_LAYERS: usize = 256;
+
+/// A pattern taken apart: its kind and, for a rule limited to some layers, the
+/// layer numbers (ascending, no repeats). `None` = every layer (or a kind with
+/// none). An unrecognised pattern is `CUSTOM` with no layers.
+fn split_pattern(pattern: &str) -> (usize, Option<Vec<u32>>) {
+    let custom = KINDS.len() - 1;
+    if let Some(i) = KINDS
         .iter()
         .position(|k| k.id != CUSTOM && k.pattern == pattern)
-        .unwrap_or(KINDS.len() - 1)
+    {
+        return (i, None);
+    }
+    let Some(rest) = pattern.strip_prefix(r"blk\.") else {
+        return (custom, None);
+    };
+    let (nums, block) = if let Some(inner) = rest.strip_prefix('(') {
+        let Some((list, block)) = inner.split_once(')') else {
+            return (custom, None);
+        };
+        (list, block)
+    } else {
+        let end = rest
+            .find(|c: char| !c.is_ascii_digit())
+            .unwrap_or(rest.len());
+        (&rest[..end], &rest[end..])
+    };
+    let Some(kind) = KINDS
+        .iter()
+        .position(|k| !k.block.is_empty() && k.block == block)
+    else {
+        return (custom, None);
+    };
+    let mut layers = Vec::new();
+    for n in nums.split('|') {
+        let ok = !n.is_empty() && n.len() <= 3 && n.bytes().all(|b| b.is_ascii_digit());
+        match n.parse::<u32>() {
+            Ok(v) if ok => layers.push(v),
+            _ => return (custom, None),
+        }
+    }
+    // Only the form `compose` writes reads back as a kind: ascending, no repeats,
+    // no leading zeros (`blk\.07\.` matches no tensor). Anything else stays the
+    // hand-written regex it is.
+    let canonical = layers
+        .iter()
+        .zip(nums.split('|'))
+        .all(|(v, n)| v.to_string() == n);
+    if !canonical || layers.windows(2).any(|w| w[0] >= w[1]) {
+        return (custom, None);
+    }
+    (kind, Some(layers))
+}
+
+/// The pattern for `kind` limited to `layers` (`None` = every layer).
+pub(crate) fn compose(kind: &Kind, layers: Option<&[u32]>) -> String {
+    match layers {
+        Some(l) if !kind.block.is_empty() && !l.is_empty() => {
+            let nums: Vec<String> = l.iter().map(u32::to_string).collect();
+            if nums.len() == 1 {
+                format!(r"blk\.{}{}", nums[0], kind.block)
+            } else {
+                format!(r"blk\.({}){}", nums.join("|"), kind.block)
+            }
+        }
+        _ => kind.pattern.to_string(),
+    }
+}
+
+/// The Layers field's text: `10-12, 15`; empty = every layer.
+fn layers_text(layers: Option<&[u32]>) -> String {
+    let Some(l) = layers else {
+        return String::new();
+    };
+    let mut parts = Vec::new();
+    let mut i = 0;
+    while i < l.len() {
+        let mut j = i;
+        while j + 1 < l.len() && l[j + 1] == l[j] + 1 {
+            j += 1;
+        }
+        parts.push(if j == i {
+            l[i].to_string()
+        } else {
+            format!("{}-{}", l[i], l[j])
+        });
+        i = j + 1;
+    }
+    parts.join(", ")
+}
+
+/// The Layers field → layer numbers. `10-12, 15` (commas or spaces) gives
+/// `[10, 11, 12, 15]`; blank gives `None` (every layer). `Err` for anything
+/// else, a range out of order or past `MAX_LAYER`, or more than `MAX_LAYERS`.
+fn parse_layers(text: &str) -> Result<Option<Vec<u32>>, ()> {
+    let mut set = std::collections::BTreeSet::new();
+    for part in text.split([',', ' ']).filter(|p| !p.is_empty()) {
+        let (a, b) = match part.split_once('-') {
+            Some((a, b)) => (a.trim(), b.trim()),
+            None => (part, part),
+        };
+        let a: u32 = a.parse().map_err(|_| ())?;
+        let b: u32 = b.parse().map_err(|_| ())?;
+        if a > b || b > MAX_LAYER || (b - a) as usize >= MAX_LAYERS {
+            return Err(());
+        }
+        set.extend(a..=b);
+        if set.len() > MAX_LAYERS {
+            return Err(());
+        }
+    }
+    Ok(if set.is_empty() {
+        None
+    } else {
+        Some(set.into_iter().collect())
+    })
+}
+
+/// The kind a pattern belongs to: the canned entry it matches (over every layer
+/// or some), else `CUSTOM` (always the last index, so an unrecognised, i.e.
+/// hand-written, pattern lands on the free-text row).
+fn kind_index(pattern: &str) -> usize {
+    split_pattern(pattern).0
 }
 
 fn is_custom(pattern: &str) -> bool {
@@ -134,15 +358,24 @@ pub fn parse(s: &str) -> Vec<Rule> {
         .filter(|p| !p.is_empty())
         .map(|piece| match piece.split_once('=') {
             Some((pattern, device)) => Rule {
-                pattern: pattern.trim().to_string(),
+                pattern: unalias(pattern.trim()),
                 device: device.trim().to_string(),
             },
             None => Rule {
-                pattern: piece.to_string(),
+                pattern: unalias(piece),
                 device: String::new(),
             },
         })
         .collect()
+}
+
+/// A pattern as the table reads it: an `ALIASES` entry becomes its kind's.
+fn unalias(pattern: &str) -> String {
+    ALIASES
+        .iter()
+        .find(|(old, _)| *old == pattern)
+        .map_or(pattern, |(_, new)| new)
+        .to_string()
 }
 
 /// Rules → the INI value. The inverse of `parse` for every rule the table can
@@ -195,7 +428,8 @@ pub fn remove(s: &str, index: usize) -> String {
 }
 
 /// Switch a row to another named pattern: the kind writes its canned regex over
-/// whatever was there, and `CUSTOM` (whose canned regex is the empty string)
+/// whatever was there, keeping the row's layers when both kinds have them, and
+/// `CUSTOM` (whose canned regex is the empty string)
 /// therefore CLEARS it, handing the user an empty field to type into.
 ///
 /// That is not a choice so much as a consequence: a row's kind is DERIVED from
@@ -213,7 +447,28 @@ pub fn set_kind(s: &str, index: usize, kind_id: &str) -> String {
     let Some(rule) = rules.get_mut(index) else {
         return s.to_string();
     };
-    rule.pattern = kind.pattern.to_string();
+    let (_, layers) = split_pattern(&rule.pattern);
+    rule.pattern = compose(kind, layers.as_deref());
+    render(&rules)
+}
+
+/// Limit a row to some layers (the Layers field; see `parse_layers`), or blank
+/// for every layer. A no-op on a kind without layers, and on text that is not a
+/// layer list yet (a half-typed `10-`): the INI keeps the last good value, which
+/// the summary line under the table shows.
+pub fn set_layers(s: &str, index: usize, text: &str) -> String {
+    let Ok(layers) = parse_layers(text) else {
+        return s.to_string();
+    };
+    let mut rules = parse(s);
+    let Some(rule) = rules.get_mut(index) else {
+        return s.to_string();
+    };
+    let kind = &KINDS[kind_index(&rule.pattern)];
+    if kind.block.is_empty() {
+        return s.to_string();
+    }
+    rule.pattern = compose(kind, layers.as_deref());
     render(&rules)
 }
 
@@ -274,6 +529,7 @@ pub fn validate(s: &str) -> Result<(), String> {
 pub fn pins_embeddings_to_gpu(s: &str) -> bool {
     parse(s).iter().any(|r| {
         r.pattern.contains("token_embd")
+            && !r.pattern.contains("per_layer_token_embd")
             && !r.device.is_empty()
             && !r.device.eq_ignore_ascii_case("CPU")
     })
@@ -307,6 +563,7 @@ pub fn build_rows(devices: &[DeviceOption], s: &str) -> Vec<TensorOverrideRow> {
     parse(s)
         .into_iter()
         .map(|rule| {
+            let (kind, layers) = split_pattern(&rule.pattern);
             let device_index = values
                 .iter()
                 .position(|v| v.eq_ignore_ascii_case(&rule.device))
@@ -316,8 +573,10 @@ pub fn build_rows(devices: &[DeviceOption], s: &str) -> Vec<TensorOverrideRow> {
                 .iter()
                 .any(|d| d.id.eq_ignore_ascii_case(&rule.device));
             TensorOverrideRow {
-                kind_index: i32::try_from(kind_index(&rule.pattern)).unwrap_or(0),
+                kind_index: i32::try_from(kind).unwrap_or(0),
                 custom: is_custom(&rule.pattern),
+                per_layer: !KINDS[kind].block.is_empty(),
+                layers: layers_text(layers.as_deref()).into(),
                 problem: row_problem(&rule, detected).into(),
                 device_index,
                 detected,
@@ -366,7 +625,7 @@ mod tests {
         devices::parse(SAMPLE)
     }
 
-    const EMBD: &str = r"token_embd\.weight";
+    const EMBD: &str = r"^token_embd\.weight";
     const EXPS: &str = r"\.ffn_(up|down|gate|gate_up)_(ch|)exps";
 
     fn rule(pattern: &str, device: &str) -> Rule {
@@ -540,7 +799,7 @@ mod tests {
         assert_eq!(rows[0].device_index, 0);
         assert!(rows[0].detected);
         assert_eq!(rows[0].problem, "");
-        assert_eq!(rows[1].kind_index, 2, "MoE experts");
+        assert_eq!(rows[1].kind_index as usize, idx("exps"), "MoE experts");
         assert_eq!(
             rows[1].device_index, 2,
             "CPU is offered, unlike in gpu_split"
@@ -592,15 +851,108 @@ mod tests {
     // tensors, these are the lines that have to move. Checked against v0.4.0.
     #[test]
     fn the_ffn_kinds_are_llama_cpps_own_regexes() {
-        assert_eq!(KINDS[2].pattern, r"\.ffn_(up|down|gate|gate_up)_(ch|)exps");
-        assert_eq!(KINDS[3].pattern, r"\.ffn_(up|down|gate)\.");
+        let exps = &KINDS[idx("exps")];
+        let ffn = &KINDS[idx("ffn")];
+        assert_eq!(exps.pattern, r"\.ffn_(up|down|gate|gate_up)_(ch|)exps");
+        assert_eq!(ffn.pattern, r"\.ffn_(up|down|gate)\.");
         assert_eq!(KINDS.last().unwrap().id, CUSTOM);
         assert!(KINDS.last().unwrap().pattern.is_empty());
         // The dense regex must not swallow the expert or shared-expert tensors
         // (`ffn_up_exps`, `ffn_up_shexp`): the trailing `\.` is the whole
         // difference between the two kinds, so pin that character (this crate
         // carries no regex engine to match against).
-        assert!(KINDS[3].pattern.ends_with(r"\."));
-        assert!(!KINDS[3].pattern.contains("exps"));
+        assert!(ffn.pattern.ends_with(r"\."));
+        assert!(!ffn.pattern.contains("exps"));
+    }
+
+    fn idx(id: &str) -> usize {
+        KINDS.iter().position(|k| k.id == id).unwrap()
+    }
+
+    // ── Layers ────────────────────────────────────────────────────────────
+
+    // No canned pattern may hold what llama.cpp splits on, and a per-layer
+    // kind's block part must be what follows the number in its all-layers form
+    // (or a ranged rule would match other tensors than the unranged one).
+    #[test]
+    fn every_kind_is_splittable_and_its_block_agrees_with_its_pattern() {
+        for k in KINDS {
+            assert!(!k.pattern.contains([',', '=']), "{}", k.id);
+            if !k.block.is_empty() && k.id != "layer" {
+                assert_eq!(k.pattern, k.block, "{}", k.id);
+            }
+            if k.id != CUSTOM {
+                assert_eq!(split_pattern(k.pattern), (idx(k.id), None), "{}", k.id);
+            }
+        }
+    }
+
+    #[test]
+    fn layers_text_round_trips_through_the_pattern() {
+        let s = format!(r"{}=ROCm0", KINDS[idx("ffn")].pattern);
+        let s = set_layers(&s, 0, "10-12, 15");
+        assert_eq!(
+            parse(&s),
+            [rule(r"blk\.(10|11|12|15)\.ffn_(up|down|gate)\.", "ROCm0")]
+        );
+        let rows = build_rows(&devs(), &s);
+        assert_eq!(rows[0].kind_index as usize, idx("ffn"));
+        assert!(rows[0].per_layer && !rows[0].custom);
+        assert_eq!(rows[0].layers, "10-12, 15");
+
+        let one = set_layers(&s, 0, "15");
+        assert_eq!(parse(&one)[0].pattern, r"blk\.15\.ffn_(up|down|gate)\.");
+        assert_eq!(build_rows(&devs(), &one)[0].layers, "15");
+
+        let all = set_layers(&s, 0, "  ");
+        assert_eq!(parse(&all)[0].pattern, KINDS[idx("ffn")].pattern);
+        assert_eq!(build_rows(&devs(), &all)[0].layers, "");
+    }
+
+    #[test]
+    fn half_typed_or_bad_layers_leave_the_value_alone() {
+        let s = format!(r"{}=CPU", KINDS[idx("exps")].pattern);
+        for bad in ["10-", "x", "5-3", "1000", "0-999"] {
+            assert_eq!(set_layers(&s, 0, bad), s, "{bad:?}");
+        }
+        let embd = format!("{EMBD}=ROCm0");
+        assert_eq!(
+            set_layers(&embd, 0, "3"),
+            embd,
+            "no layers outside the blocks"
+        );
+    }
+
+    #[test]
+    fn a_new_kind_keeps_the_rows_layers() {
+        let s = set_layers(&format!(r"{}=CPU", KINDS[idx("exps")].pattern), 0, "0-2");
+        let s = set_kind(&s, 0, "exps_down");
+        assert_eq!(parse(&s)[0].pattern, r"blk\.(0|1|2)\.ffn_down_(ch|)exps");
+        let s = set_kind(&s, 0, "layer");
+        assert_eq!(parse(&s)[0].pattern, r"blk\.(0|1|2)\.");
+        let s = set_kind(&s, 0, "output");
+        assert_eq!(parse(&s)[0].pattern, r"^output\.weight");
+    }
+
+    // A block list in any other shape than the one `compose` writes is a
+    // hand-written regex, kept verbatim on the Custom row.
+    #[test]
+    fn only_the_composed_layer_form_reads_back_as_a_kind() {
+        for p in [
+            r"blk\.(3|1)\.ffn_up\.",
+            r"blk\.(1|1)\.ffn_up\.",
+            r"blk\.07\.ffn_up\.",
+            r"blk\.15\.ffn_(up|down)\.weight",
+            r"blk\.1[0-9]\.ffn_up\.",
+        ] {
+            assert_eq!(kind_index(p), KINDS.len() - 1, "{p}");
+        }
+    }
+
+    // The unanchored embedding regex this table used to write also took Gemma
+    // 3n's per_layer_token_embd; it reads as the anchored kind it meant.
+    #[test]
+    fn the_old_unanchored_embedding_pattern_reads_as_the_kind() {
+        assert_eq!(parse(r"token_embd\.weight=CUDA0"), [rule(EMBD, "CUDA0")]);
     }
 }

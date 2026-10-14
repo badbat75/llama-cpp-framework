@@ -11,9 +11,9 @@
 // Chat-template preview).
 // Rust drives everything via `app.global::<AppState>()`.
 
-import { LineEdit, TextEdit, Button, ListView, Palette } from "std-widgets.slint";
+import { LineEdit, TextEdit, Button, CheckBox, ListView, Palette } from "std-widgets.slint";
 import { AppState } from "state.slint";
-import { Tokens, Icons, Options, LabelColumn, ModalOverlay, AccentBar, SelectableRow, ListPanel } from "components.slint";
+import { Tokens, Icons, Options, LabelColumn, ModalOverlay, AccentBar, SelectableRow, ListPanel, WrapText } from "components.slint";
 // Re-export so Slint generates the Rust accessors (`app.global::<AppState>()`);
 // a bare import wouldn't surface them to Rust. `Options` is exported only so
 // the e2e test can assert `Options.all_layers == form::ALL_LAYERS`.
@@ -447,6 +447,126 @@ export component AppWindow inherits Window {
                 primary: true;
                 enabled: AppState.dialog_model_index >= 0;
                 clicked => { confirm-pick(); }
+            }
+        }
+    }
+
+    // The tensor picker: one Tensor placement rule as a tick per tensor of the
+    // model (src/tensor_picker.rs). Every click goes to Rust, which rebuilds the
+    // list, so no tick here is ever self-assigned: each CheckBox sits under a
+    // TouchArea that takes its clicks.
+    if AppState.tensor_picker_open: ModalOverlay {
+        title: AppState.tensor_picker_title;
+        description: "Tick the tensors this rule sends to its device. llama.cpp applies the first rule that matches a tensor, so a tensor an earlier rule takes stays where that rule puts it.";
+        card_width: 780px;
+        card_height: 640px;
+        dismissed => { AppState.tensor_picker_close(); }
+
+        HorizontalLayout {
+            spacing: 8px;
+            Button {
+                text: "Tick all";
+                clicked => { AppState.tensor_picker_all(true); }
+            }
+            Button {
+                text: "Clear all";
+                clicked => { AppState.tensor_picker_all(false); }
+            }
+            Rectangle { horizontal-stretch: 1; }
+            Button {
+                text: "Unfold all";
+                clicked => { AppState.tensor_picker_expand_all(true); }
+            }
+            Button {
+                text: "Fold all";
+                clicked => { AppState.tensor_picker_expand_all(false); }
+            }
+        }
+        ListPanel {
+            is_empty: AppState.tensor_picker_rows.length == 0;
+            empty_text: "The model's tensor list could not be read.";
+            vertical-stretch: 1;
+            ListView {
+                for row[i] in AppState.tensor_picker_rows : Rectangle {
+                    height: 30px;
+                    background: row.header ? Palette.background.transparentize(Tokens.zebra) : transparent;
+                    // A click anywhere on the line ticks it; the fold box and the
+                    // CheckBox below sit on top of this with their own.
+                    TouchArea {
+                        clicked => { AppState.tensor_picker_toggle(i); }
+                    }
+                    HorizontalLayout {
+                        padding-left: row.header ? 6px : 34px;
+                        padding-right: 10px;
+                        spacing: 8px;
+                        Rectangle {
+                            width: 20px;
+                            if row.header : Text {
+                                text: row.expanded ? "-" : "+";
+                                font-size: 15px;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                                color: Palette.foreground;
+                            }
+                            if row.header : TouchArea {
+                                accessible-role: button;
+                                accessible-label: "tp-fold-" + i;
+                                clicked => { AppState.tensor_picker_expand(i); }
+                            }
+                        }
+                        Rectangle {
+                            width: 24px;
+                            CheckBox {
+                                checked: row.checked;
+                            }
+                            TouchArea {
+                                accessible-role: button;
+                                accessible-label: "tp-tick-" + i;
+                                clicked => { AppState.tensor_picker_toggle(i); }
+                            }
+                        }
+                        Text {
+                            text: row.partial ? row.label + "  (some)" : row.label;
+                            horizontal-stretch: 1;
+                            vertical-alignment: center;
+                            overflow: elide;
+                            font-size: 13px;
+                            font-weight: row.header ? 600 : 400;
+                            color: row.taken ? Palette.foreground.transparentize(Tokens.faint) : Palette.foreground;
+                        }
+                        Text {
+                            text: row.detail;
+                            vertical-alignment: center;
+                            font-size: 12px;
+                            color: Palette.foreground.transparentize(Tokens.muted);
+                        }
+                    }
+                }
+            }
+        }
+        WrapText {
+            text: AppState.tensor_picker_summary;
+            font_size: 12px;
+            color: Palette.foreground.transparentize(Tokens.subtle);
+        }
+        Text {
+            text: AppState.tensor_picker_pattern == "" ? "" : "Writes: " + AppState.tensor_picker_pattern;
+            font-size: 11px;
+            overflow: elide;
+            color: Palette.foreground.transparentize(Tokens.faint);
+        }
+        HorizontalLayout {
+            spacing: 8px;
+            alignment: end;
+            Button {
+                text: "Cancel";
+                clicked => { AppState.tensor_picker_close(); }
+            }
+            Button {
+                text: "Apply";
+                primary: true;
+                enabled: AppState.tensor_picker_can_apply;
+                clicked => { AppState.tensor_picker_apply(); }
             }
         }
     }

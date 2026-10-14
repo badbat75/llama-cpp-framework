@@ -108,6 +108,8 @@ pub struct Preset {
     // `model_draft` is the draft GGUF (--model-draft): an MTP head, a DFlash
     // drafter, or a small standalone draft model. `spec_type` selects the
     // speculator (--spec-type, e.g. "draft-mtp" or "draft-dflash"). Empty = unset.
+    // The `ngram-*` speculators draft from the tokens already in the context, so
+    // they need neither a draft file nor MTP heads (`spec_type_is_draftless`).
     // `spec_draft_n_max` (--spec-draft-n-max) caps drafted tokens per step;
     // DFlash clamps it to the trained block_size-1 (e.g. 15).
     //
@@ -167,6 +169,25 @@ pub struct Preset {
     /// placement pair.
     pub spec_draft_type_k: String,
     pub spec_draft_type_v: String,
+    /// The n-gram speculators' own tuning (`--spec-ngram-<type>-<param>`), one
+    /// group per `ngram-*` spec type: ngram-mod reads `n-match` / `n-min` /
+    /// `n-max`, ngram-simple, ngram-map-k and ngram-map-k4v each read `size-n` /
+    /// `size-m` / `min-hits`. `--spec-draft-*` does not reach them. `None` =
+    /// omit the key (llama.cpp's defaults: common/common.h). A group whose type
+    /// is not in `spec_type` is inert and dropped on save
+    /// (`prune_unused_ngram_keys`). ngram-cache has no numeric keys.
+    pub spec_ngram_mod_n_match: Option<i32>,
+    pub spec_ngram_mod_n_min: Option<i32>,
+    pub spec_ngram_mod_n_max: Option<i32>,
+    pub spec_ngram_simple_size_n: Option<i32>,
+    pub spec_ngram_simple_size_m: Option<i32>,
+    pub spec_ngram_simple_min_hits: Option<i32>,
+    pub spec_ngram_map_k_size_n: Option<i32>,
+    pub spec_ngram_map_k_size_m: Option<i32>,
+    pub spec_ngram_map_k_min_hits: Option<i32>,
+    pub spec_ngram_map_k4v_size_n: Option<i32>,
+    pub spec_ngram_map_k4v_size_m: Option<i32>,
+    pub spec_ngram_map_k4v_min_hits: Option<i32>,
     pub n_gpu_layers_draft: Option<i32>,
     pub device_draft: String,
     /// The GPUs THIS model runs on (--device): one id ("ROCm1") or a comma-
@@ -497,6 +518,18 @@ impl Default for Preset {
             spec_draft_p_min: None,
             spec_draft_type_k: String::new(),
             spec_draft_type_v: String::new(),
+            spec_ngram_mod_n_match: None,
+            spec_ngram_mod_n_min: None,
+            spec_ngram_mod_n_max: None,
+            spec_ngram_simple_size_n: None,
+            spec_ngram_simple_size_m: None,
+            spec_ngram_simple_min_hits: None,
+            spec_ngram_map_k_size_n: None,
+            spec_ngram_map_k_size_m: None,
+            spec_ngram_map_k_min_hits: None,
+            spec_ngram_map_k4v_size_n: None,
+            spec_ngram_map_k4v_size_m: None,
+            spec_ngram_map_k4v_min_hits: None,
             n_gpu_layers_draft: None,
             device_draft: String::new(),
             device: String::new(),
@@ -568,6 +601,42 @@ impl Preset {
             spec_draft_p_min: k.get("spec-draft-p-min").and_then(|v| ini::parse_float(v)),
             spec_draft_type_k: get("spec-draft-type-k"),
             spec_draft_type_v: get("spec-draft-type-v"),
+            spec_ngram_mod_n_match: k
+                .get("spec-ngram-mod-n-match")
+                .and_then(|v| ini::parse_int(v)),
+            spec_ngram_mod_n_min: k
+                .get("spec-ngram-mod-n-min")
+                .and_then(|v| ini::parse_int(v)),
+            spec_ngram_mod_n_max: k
+                .get("spec-ngram-mod-n-max")
+                .and_then(|v| ini::parse_int(v)),
+            spec_ngram_simple_size_n: k
+                .get("spec-ngram-simple-size-n")
+                .and_then(|v| ini::parse_int(v)),
+            spec_ngram_simple_size_m: k
+                .get("spec-ngram-simple-size-m")
+                .and_then(|v| ini::parse_int(v)),
+            spec_ngram_simple_min_hits: k
+                .get("spec-ngram-simple-min-hits")
+                .and_then(|v| ini::parse_int(v)),
+            spec_ngram_map_k_size_n: k
+                .get("spec-ngram-map-k-size-n")
+                .and_then(|v| ini::parse_int(v)),
+            spec_ngram_map_k_size_m: k
+                .get("spec-ngram-map-k-size-m")
+                .and_then(|v| ini::parse_int(v)),
+            spec_ngram_map_k_min_hits: k
+                .get("spec-ngram-map-k-min-hits")
+                .and_then(|v| ini::parse_int(v)),
+            spec_ngram_map_k4v_size_n: k
+                .get("spec-ngram-map-k4v-size-n")
+                .and_then(|v| ini::parse_int(v)),
+            spec_ngram_map_k4v_size_m: k
+                .get("spec-ngram-map-k4v-size-m")
+                .and_then(|v| ini::parse_int(v)),
+            spec_ngram_map_k4v_min_hits: k
+                .get("spec-ngram-map-k4v-min-hits")
+                .and_then(|v| ini::parse_int(v)),
             n_gpu_layers_draft: k.get("n-gpu-layers-draft").and_then(|v| ini::parse_int(v)),
             device_draft: get("device-draft"),
             device: get("device"),
@@ -621,6 +690,16 @@ impl Preset {
 
 // ── Dead speculative keys (prune at the write boundary) ──────────────────
 
+/// Whether a `--spec-type` value drafts without a draft model: the n-gram
+/// speculators (`ngram-simple`, `ngram-map-k`, `ngram-map-k4v`, `ngram-mod`,
+/// `ngram-cache`) look their drafts up in the tokens already in the context, so
+/// llama.cpp builds them with no draft file and no MTP heads
+/// (`common_speculative_init`, common/speculative.cpp). Every `draft-*` type
+/// needs one or the other.
+pub fn spec_type_is_draftless(spec_type: &str) -> bool {
+    spec_type.trim().starts_with("ngram-")
+}
+
 /// Drop the speculative-decoding keys this model cannot act on, returning the
 /// INI names of the ones removed (for the caller's status line).
 ///
@@ -634,12 +713,15 @@ impl Preset {
 /// - Without a draft FILE, `--device-draft` / `--n-gpu-layers-draft` are read
 ///   inside llama.cpp's `if (has_dft())` and silently ignored (field docs above).
 /// - Without a draft file AND without embedded MTP heads there is nothing to
-///   draft with at all, so `--spec-type` / `--spec-draft-n-max` and the draft
-///   KV types (`--spec-draft-type-k/-v`, which DO survive embedded MTP) go too. A
-///   surviving `spec-type = draft-mtp` is NOT inert: llama-server builds an MTP
-///   draft context against the target model, `llama_init_from_model` rejects it
-///   ("context type MTP requested but model doesn't contain MTP layers") and the
-///   model fails to load entirely.
+///   draft with at all, so the `draft-*` entries of `--spec-type`,
+///   `--spec-draft-n-max` and the draft KV types (`--spec-draft-type-k/-v`,
+///   which DO survive embedded MTP) go too. A surviving `spec-type = draft-mtp`
+///   is NOT inert: llama-server builds an MTP draft context against the target
+///   model, `llama_init_from_model` rejects it ("context type MTP requested but
+///   model doesn't contain MTP layers") and the model fails to load entirely.
+///   The `ngram-*` entries stay (`spec_type_is_draftless`): they draft from the
+///   context, and `--spec-draft-*` does not tune them (they read their own
+///   `--spec-ngram-*` keys).
 ///
 /// Why this is a write-boundary chore and not something the UI already prevents:
 /// the widgets are `enabled: draft_active`, i.e. DISABLED, not cleared. A value
@@ -655,8 +737,15 @@ pub fn prune_inactive_draft_keys(p: &mut Preset, embeds_mtp: bool) -> Vec<&'stat
         return dropped;
     }
     if !embeds_mtp {
-        if !p.spec_type.is_empty() {
-            p.spec_type.clear();
+        // `--spec-type` is a comma-separated list: keep its n-gram entries.
+        let kept = p
+            .spec_type
+            .split(',')
+            .filter(|t| spec_type_is_draftless(t))
+            .collect::<Vec<_>>()
+            .join(",");
+        if kept != p.spec_type {
+            p.spec_type = kept;
             dropped.push("spec-type");
         }
         if p.spec_draft_n_max.take().is_some() {
@@ -685,6 +774,87 @@ pub fn prune_inactive_draft_keys(p: &mut Preset, embeds_mtp: bool) -> Vec<&'stat
         p.device_draft.clear();
         dropped.push("device-draft");
     }
+    dropped
+}
+
+/// Drop the `--spec-ngram-*` keys of every n-gram type that `spec-type` does not
+/// name, returning their INI names. Those keys only tune their own speculator,
+/// so with the type off they are inert, and the form shows only the selected
+/// type's fields: a value left behind by a type switch would sit hidden in the
+/// INI. Needs no GGUF, unlike `prune_inactive_draft_keys`: it runs on every save.
+pub fn prune_unused_ngram_keys(p: &mut Preset) -> Vec<&'static str> {
+    let types: Vec<String> = p
+        .spec_type
+        .split(',')
+        .map(|t| t.trim().to_string())
+        .collect();
+    let on = |t: &str| types.iter().any(|x| x == t);
+    let mut dropped = Vec::new();
+    let mut clear = |keep: bool, key: &'static str, v: &mut Option<i32>| {
+        if !keep && v.take().is_some() {
+            dropped.push(key);
+        }
+    };
+    clear(
+        on("ngram-mod"),
+        "spec-ngram-mod-n-match",
+        &mut p.spec_ngram_mod_n_match,
+    );
+    clear(
+        on("ngram-mod"),
+        "spec-ngram-mod-n-min",
+        &mut p.spec_ngram_mod_n_min,
+    );
+    clear(
+        on("ngram-mod"),
+        "spec-ngram-mod-n-max",
+        &mut p.spec_ngram_mod_n_max,
+    );
+    clear(
+        on("ngram-simple"),
+        "spec-ngram-simple-size-n",
+        &mut p.spec_ngram_simple_size_n,
+    );
+    clear(
+        on("ngram-simple"),
+        "spec-ngram-simple-size-m",
+        &mut p.spec_ngram_simple_size_m,
+    );
+    clear(
+        on("ngram-simple"),
+        "spec-ngram-simple-min-hits",
+        &mut p.spec_ngram_simple_min_hits,
+    );
+    clear(
+        on("ngram-map-k"),
+        "spec-ngram-map-k-size-n",
+        &mut p.spec_ngram_map_k_size_n,
+    );
+    clear(
+        on("ngram-map-k"),
+        "spec-ngram-map-k-size-m",
+        &mut p.spec_ngram_map_k_size_m,
+    );
+    clear(
+        on("ngram-map-k"),
+        "spec-ngram-map-k-min-hits",
+        &mut p.spec_ngram_map_k_min_hits,
+    );
+    clear(
+        on("ngram-map-k4v"),
+        "spec-ngram-map-k4v-size-n",
+        &mut p.spec_ngram_map_k4v_size_n,
+    );
+    clear(
+        on("ngram-map-k4v"),
+        "spec-ngram-map-k4v-size-m",
+        &mut p.spec_ngram_map_k4v_size_m,
+    );
+    clear(
+        on("ngram-map-k4v"),
+        "spec-ngram-map-k4v-min-hits",
+        &mut p.spec_ngram_map_k4v_min_hits,
+    );
     dropped
 }
 
@@ -1051,6 +1221,60 @@ pub fn render_section(p: &Preset) -> String {
     out.push_str("; apply to MTP heads embedded in the main GGUF.\r\n");
     emit_str(&mut out, "spec-draft-type-k", &p.spec_draft_type_k);
     emit_str(&mut out, "spec-draft-type-v", &p.spec_draft_type_v);
+    out.push_str(
+        "; spec-ngram-<type>-* tune the n-gram speculators (spec-type ngram-*), which\r\n",
+    );
+    out.push_str("; draft from the tokens already in the context and need no draft model:\r\n");
+    out.push_str("; ngram-mod takes n-match / n-min / n-max, ngram-simple, ngram-map-k and\r\n");
+    out.push_str("; ngram-map-k4v take size-n / size-m / min-hits. Only the selected type's.\r\n");
+    emit_i32(&mut out, "spec-ngram-mod-n-match", p.spec_ngram_mod_n_match);
+    emit_i32(&mut out, "spec-ngram-mod-n-min", p.spec_ngram_mod_n_min);
+    emit_i32(&mut out, "spec-ngram-mod-n-max", p.spec_ngram_mod_n_max);
+    emit_i32(
+        &mut out,
+        "spec-ngram-simple-size-n",
+        p.spec_ngram_simple_size_n,
+    );
+    emit_i32(
+        &mut out,
+        "spec-ngram-simple-size-m",
+        p.spec_ngram_simple_size_m,
+    );
+    emit_i32(
+        &mut out,
+        "spec-ngram-simple-min-hits",
+        p.spec_ngram_simple_min_hits,
+    );
+    emit_i32(
+        &mut out,
+        "spec-ngram-map-k-size-n",
+        p.spec_ngram_map_k_size_n,
+    );
+    emit_i32(
+        &mut out,
+        "spec-ngram-map-k-size-m",
+        p.spec_ngram_map_k_size_m,
+    );
+    emit_i32(
+        &mut out,
+        "spec-ngram-map-k-min-hits",
+        p.spec_ngram_map_k_min_hits,
+    );
+    emit_i32(
+        &mut out,
+        "spec-ngram-map-k4v-size-n",
+        p.spec_ngram_map_k4v_size_n,
+    );
+    emit_i32(
+        &mut out,
+        "spec-ngram-map-k4v-size-m",
+        p.spec_ngram_map_k4v_size_m,
+    );
+    emit_i32(
+        &mut out,
+        "spec-ngram-map-k4v-min-hits",
+        p.spec_ngram_map_k4v_min_hits,
+    );
     out.push_str("; The next two place a SEPARATE draft file and are ignored without\r\n");
     out.push_str("; model-draft: with EMBEDDED MTP heads the draft context is built against\r\n");
     out.push_str("; the target model and runs on the model's own device. With a separate MTP\r\n");
@@ -1085,7 +1309,7 @@ pub fn render_section(p: &Preset) -> String {
         "; layer is offloaded (that is the ROCm_Host/CUDA_Host buffer in the log, and\r\n",
     );
     out.push_str(
-        "; the \"Shared GPU memory\" Windows reports); token_embd\\.weight=ROCm0 moves it\r\n",
+        "; the \"Shared GPU memory\" Windows reports); ^token_embd\\.weight=ROCm0 moves it\r\n",
     );
     out.push_str("; onto the GPU. No escaping exists: a pattern cannot contain `,` or `=`.\r\n");
     emit_str(&mut out, "override-tensor", &p.override_tensor);
@@ -1326,6 +1550,94 @@ mod tests {
         assert_eq!(p, before);
     }
 
+    // An n-gram speculator drafts from the context: without a draft file or MTP
+    // heads it stays, while the draft-model keys around it still go.
+    #[test]
+    fn prune_keeps_an_ngram_speculator_without_a_draft() {
+        let mut p = Preset {
+            spec_type: "ngram-mod".into(),
+            ..preset_with_dead_draft_keys()
+        };
+        let dropped = prune_inactive_draft_keys(&mut p, false);
+        assert!(!dropped.contains(&"spec-type"), "{dropped:?}");
+        assert!(dropped.contains(&"spec-draft-n-max"), "{dropped:?}");
+        assert_eq!(p.spec_type, "ngram-mod");
+    }
+
+    // A list mixing both kinds loses only the entries that need a draft.
+    #[test]
+    fn prune_keeps_the_ngram_entries_of_a_mixed_list() {
+        let mut p = Preset {
+            spec_type: "draft-mtp,ngram-mod".into(),
+            ..Default::default()
+        };
+        assert_eq!(prune_inactive_draft_keys(&mut p, false), vec!["spec-type"]);
+        assert_eq!(p.spec_type, "ngram-mod");
+    }
+
+    #[test]
+    fn only_ngram_spec_types_are_draftless() {
+        for t in [
+            "ngram-simple",
+            "ngram-map-k",
+            "ngram-map-k4v",
+            "ngram-mod",
+            "ngram-cache",
+        ] {
+            assert!(spec_type_is_draftless(t), "{t}");
+        }
+        for t in ["draft-mtp", "draft-dflash", "draft-dspark", "draft-simple", ""] {
+            assert!(!spec_type_is_draftless(t), "{t}");
+        }
+    }
+
+    // Only the selected n-gram type keeps its tuning keys; the others are
+    // dropped, and a list naming two types keeps both groups.
+    #[test]
+    fn prune_drops_the_ngram_keys_of_unselected_types() {
+        let mut p = Preset {
+            spec_type: "ngram-mod".into(),
+            spec_ngram_mod_n_match: Some(32),
+            spec_ngram_simple_size_n: Some(8),
+            spec_ngram_map_k4v_min_hits: Some(2),
+            ..Default::default()
+        };
+        assert_eq!(
+            prune_unused_ngram_keys(&mut p),
+            vec!["spec-ngram-simple-size-n", "spec-ngram-map-k4v-min-hits"]
+        );
+        assert_eq!(p.spec_ngram_mod_n_match, Some(32));
+        assert_eq!(p.spec_ngram_simple_size_n, None);
+        let mut p = Preset {
+            spec_type: "ngram-simple, ngram-mod".into(),
+            spec_ngram_mod_n_match: Some(32),
+            spec_ngram_simple_size_n: Some(8),
+            ..Default::default()
+        };
+        assert!(prune_unused_ngram_keys(&mut p).is_empty());
+    }
+
+    // The n-gram keys round-trip through the INI under their llama.cpp names.
+    #[test]
+    fn ngram_keys_round_trip() {
+        let p = Preset {
+            id: "n".into(),
+            spec_type: "ngram-map-k".into(),
+            spec_ngram_map_k_size_n: Some(16),
+            spec_ngram_map_k_size_m: Some(32),
+            spec_ngram_map_k_min_hits: Some(2),
+            ..Default::default()
+        };
+        let ini = render_section(&p);
+        assert!(ini.contains("spec-ngram-map-k-size-n = 16\r\n"), "{ini}");
+        let mut k = BTreeMap::new();
+        k.insert("spec-ngram-map-k-min-hits".to_string(), "2".to_string());
+        k.insert("spec-ngram-mod-n-max".to_string(), "80".to_string());
+        let back = Preset::from_keys("n", &k);
+        assert_eq!(back.spec_ngram_map_k_min_hits, Some(2));
+        assert_eq!(back.spec_ngram_mod_n_max, Some(80));
+    }
+
     // Nothing set = nothing dropped: the status line must stay silent on the
     // overwhelmingly common preset, not announce a no-op on every save.
     #[test]
@@ -1560,6 +1872,18 @@ mod tests {
             // blind to the two being crossed.
             spec_draft_type_k: "q4_0".into(),
             spec_draft_type_v: "q4_1".into(),
+            spec_ngram_mod_n_match: Some(2),
+            spec_ngram_mod_n_min: Some(3),
+            spec_ngram_mod_n_max: Some(4),
+            spec_ngram_simple_size_n: Some(5),
+            spec_ngram_simple_size_m: Some(6),
+            spec_ngram_simple_min_hits: Some(7),
+            spec_ngram_map_k_size_n: Some(8),
+            spec_ngram_map_k_size_m: Some(9),
+            spec_ngram_map_k_min_hits: Some(10),
+            spec_ngram_map_k4v_size_n: Some(11),
+            spec_ngram_map_k4v_size_m: Some(12),
+            spec_ngram_map_k4v_min_hits: Some(13),
             n_gpu_layers_draft: Some(99),
             device_draft: "CUDA0".into(),
             device: "CUDA0,ROCm1".into(),

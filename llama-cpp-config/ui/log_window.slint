@@ -60,7 +60,7 @@ export component LogWindow inherits Window {
     }
     property <int> pin-passes;
     function pin() {
-        log-view.viewport-y = min(0px, log-view.visible-height - log-view.viewport-height);
+        log-view.content-y = min(0px, log-view.visible-height - log-view.content-height);
     }
     Timer {
         interval: 16ms;

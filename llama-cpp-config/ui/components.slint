@@ -1230,9 +1230,10 @@ export component GpuSplitTable inherits VerticalLayout {
 // Why the pattern is a dropdown and not just a text field: llama.cpp splits the
 // value on `,` and each rule at its FIRST `=` BEFORE it parses anything, and
 // neither is escapable, so a hand-typed regex with a `{1,2}` quantifier tears
-// its own rule in half and the model fails to load. The three canned patterns
-// cover what people actually reach for; `Custom regex…` reveals the text field,
-// which strips those two characters on the Rust side.
+// its own rule in half and the model fails to load. The canned patterns name
+// every tensor family, and the Layers field limits one inside the blocks to some
+// of them; `Custom regex…` reveals the text field, which strips those two
+// characters on the Rust side.
 //
 // BINDING NOTE (the sanctioned one-way `for`-row exception, as in GpuSplitTable):
 // `index: row.kind_index` / `index: row.device_index` / `text: row.pattern` are
@@ -1240,7 +1241,7 @@ export component GpuSplitTable inherits VerticalLayout {
 // delegate's binding. Two rules keep that invisible:
 //   1. add / remove / kind / device REBUILD the whole row model, so every
 //      delegate gets a fresh binding (gui::refresh_tensor_rows).
-//   2. a pattern edit changes no OTHER row, so it needs no rebuild at all, and
+//   2. a pattern or layers edit changes no OTHER row, so it needs no rebuild, and
 //      MUST not do one, or the LineEdit being typed into would be recreated and
 //      drop the caret. Its handler refreshes the derived strings only.
 export component TensorOverrideTable inherits VerticalLayout {
@@ -1261,6 +1262,12 @@ export component TensorOverrideTable inherits VerticalLayout {
     callback kind_picked(int, string);
     callback device_picked(int, string);
     callback pattern_edited(int, string);
+    callback layers_edited(int, string);
+    // Per rule, what it places on the model (empty when unknown), and whether
+    // the model's tensor list is there to open the picker on.
+    in property <[string]> coverage;
+    in property <bool> can_pick;
+    callback pick(int);
 
     spacing: 10px;
 
@@ -1286,12 +1293,18 @@ export component TensorOverrideTable inherits VerticalLayout {
             color: Palette.foreground.transparentize(Tokens.muted);
         }
         Text {
+            width: 120px;
+            text: "Layers";
+            font-size: 12px;
+            color: Palette.foreground.transparentize(Tokens.muted);
+        }
+        Text {
             width: 260px;
             text: "Goes on";
             font-size: 12px;
             color: Palette.foreground.transparentize(Tokens.muted);
         }
-        Rectangle { width: 36px; }
+        Rectangle { width: 36px + 8px + 96px; }
     }
 
     for row[i] in root.rows : Rectangle {
@@ -1323,6 +1336,21 @@ export component TensorOverrideTable inherits VerticalLayout {
                     }
                 }
 
+                // The blocks the rule is limited to, for a kind inside them;
+                // blank = every layer. Like the regex field it commits per
+                // keystroke without a rebuild, and Rust ignores a text that is
+                // not a layer list yet (`10-`), keeping the last good value.
+                if row.per_layer : LineEdit {
+                    width: 120px;
+                    accessible-label: "ot-layers-" + i;
+                    placeholder-text: "all, or 10-12, 15";
+                    text: row.layers;
+                    edited(t) => {
+                        root.layers_edited(i, t);
+                    }
+                }
+                if !row.per_layer : Rectangle { width: 120px; }
+
                 MappedComboBox {
                     width: 260px;
                     accessible-label: "ot-device-" + i;
@@ -1333,6 +1361,18 @@ export component TensorOverrideTable inherits VerticalLayout {
                     index: row.device_index;
                     picked(v) => {
                         root.device_picked(i, v);
+                    }
+                }
+
+                // The tensor list of the model, a tick per tensor: what it ticks
+                // is written back into this rule's regex.
+                Button {
+                    width: 96px;
+                    accessible-label: "ot-pick-" + i;
+                    text: "Choose…";
+                    enabled: root.can_pick;
+                    clicked => {
+                        root.pick(i);
                     }
                 }
 
@@ -1370,6 +1410,11 @@ export component TensorOverrideTable inherits VerticalLayout {
                 text: row.problem;
                 font-size: 12px;
                 color: Tokens.err;
+            }
+            if row.problem == "" && i < root.coverage.length && root.coverage[i] != "" : Text {
+                text: root.coverage[i];
+                font-size: 12px;
+                color: Palette.foreground.transparentize(Tokens.faint);
             }
         }
     }

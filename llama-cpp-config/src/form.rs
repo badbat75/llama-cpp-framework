@@ -117,6 +117,25 @@ const HINT_CACHE_RAM: i32 = 8192;
 const HINT_CACHE_REUSE: i32 = 256;
 const HINT_TOP_K: i32 = 40;
 const HINT_SPEC_DRAFT_N_MAX: i32 = 3;
+// The n-gram speculators' defaults (common_params_speculative_ngram_mod / _map).
+const HINT_SPEC_NGRAM_MOD_N_MATCH: i32 = 24;
+const HINT_SPEC_NGRAM_MOD_N_MIN: i32 = 48;
+const HINT_SPEC_NGRAM_MOD_N_MAX: i32 = 64;
+const HINT_SPEC_NGRAM_SIMPLE_SIZE_N: i32 = 12;
+const HINT_SPEC_NGRAM_SIMPLE_SIZE_M: i32 = 48;
+const HINT_SPEC_NGRAM_SIMPLE_MIN_HITS: i32 = 1;
+const HINT_SPEC_NGRAM_MAP_K_SIZE_N: i32 = 12;
+const HINT_SPEC_NGRAM_MAP_K_SIZE_M: i32 = 48;
+const HINT_SPEC_NGRAM_MAP_K_MIN_HITS: i32 = 1;
+const HINT_SPEC_NGRAM_MAP_K4V_SIZE_N: i32 = 12;
+const HINT_SPEC_NGRAM_MAP_K4V_SIZE_M: i32 = 48;
+const HINT_SPEC_NGRAM_MAP_K4V_MIN_HITS: i32 = 1;
+/// The ranges llama.cpp's argument parser accepts for the `--spec-ngram-*`
+/// keys (common/arg.cpp): a lookup or draft length, a draft-count bound (0 is
+/// valid) and a hit count (stored as a `uint16_t`).
+const NGRAM_SIZE: RangeInclusive<i32> = 1..=1024;
+const NGRAM_DRAFT: RangeInclusive<i32> = 0..=1024;
+const NGRAM_HITS: RangeInclusive<i32> = 1..=u16::MAX as i32;
 // --image-min/max-tokens have no fixed llama.cpp numeric default (their -1 = read
 // from the model), so the box parks on a sane value the way --ctx-size does: the
 // 1024 llama.cpp itself suggests for Qwen-VL grounding, and a matching upper bound.
@@ -168,6 +187,45 @@ pub fn preset_to_form(p: &presets::Preset) -> PresetForm {
         spec_draft_p_min_default: p.spec_draft_p_min.is_none(),
         spec_draft_type_k: enum_or_default(&p.spec_draft_type_k),
         spec_draft_type_v: enum_or_default(&p.spec_draft_type_v),
+        spec_ngram_mod_n_match: itxt(p.spec_ngram_mod_n_match, HINT_SPEC_NGRAM_MOD_N_MATCH),
+        spec_ngram_mod_n_match_default: p.spec_ngram_mod_n_match.is_none(),
+        spec_ngram_mod_n_min: itxt(p.spec_ngram_mod_n_min, HINT_SPEC_NGRAM_MOD_N_MIN),
+        spec_ngram_mod_n_min_default: p.spec_ngram_mod_n_min.is_none(),
+        spec_ngram_mod_n_max: itxt(p.spec_ngram_mod_n_max, HINT_SPEC_NGRAM_MOD_N_MAX),
+        spec_ngram_mod_n_max_default: p.spec_ngram_mod_n_max.is_none(),
+        spec_ngram_simple_size_n: itxt(p.spec_ngram_simple_size_n, HINT_SPEC_NGRAM_SIMPLE_SIZE_N),
+        spec_ngram_simple_size_n_default: p.spec_ngram_simple_size_n.is_none(),
+        spec_ngram_simple_size_m: itxt(p.spec_ngram_simple_size_m, HINT_SPEC_NGRAM_SIMPLE_SIZE_M),
+        spec_ngram_simple_size_m_default: p.spec_ngram_simple_size_m.is_none(),
+        spec_ngram_simple_min_hits: itxt(
+            p.spec_ngram_simple_min_hits,
+            HINT_SPEC_NGRAM_SIMPLE_MIN_HITS,
+        ),
+        spec_ngram_simple_min_hits_default: p.spec_ngram_simple_min_hits.is_none(),
+        spec_ngram_map_k_size_n: itxt(p.spec_ngram_map_k_size_n, HINT_SPEC_NGRAM_MAP_K_SIZE_N),
+        spec_ngram_map_k_size_n_default: p.spec_ngram_map_k_size_n.is_none(),
+        spec_ngram_map_k_size_m: itxt(p.spec_ngram_map_k_size_m, HINT_SPEC_NGRAM_MAP_K_SIZE_M),
+        spec_ngram_map_k_size_m_default: p.spec_ngram_map_k_size_m.is_none(),
+        spec_ngram_map_k_min_hits: itxt(
+            p.spec_ngram_map_k_min_hits,
+            HINT_SPEC_NGRAM_MAP_K_MIN_HITS,
+        ),
+        spec_ngram_map_k_min_hits_default: p.spec_ngram_map_k_min_hits.is_none(),
+        spec_ngram_map_k4v_size_n: itxt(
+            p.spec_ngram_map_k4v_size_n,
+            HINT_SPEC_NGRAM_MAP_K4V_SIZE_N,
+        ),
+        spec_ngram_map_k4v_size_n_default: p.spec_ngram_map_k4v_size_n.is_none(),
+        spec_ngram_map_k4v_size_m: itxt(
+            p.spec_ngram_map_k4v_size_m,
+            HINT_SPEC_NGRAM_MAP_K4V_SIZE_M,
+        ),
+        spec_ngram_map_k4v_size_m_default: p.spec_ngram_map_k4v_size_m.is_none(),
+        spec_ngram_map_k4v_min_hits: itxt(
+            p.spec_ngram_map_k4v_min_hits,
+            HINT_SPEC_NGRAM_MAP_K4V_MIN_HITS,
+        ),
+        spec_ngram_map_k4v_min_hits_default: p.spec_ngram_map_k4v_min_hits.is_none(),
         n_gpu_layers_draft: p.n_gpu_layers_draft.unwrap_or(ALL_LAYERS),
         n_gpu_layers_draft_auto: p.n_gpu_layers_draft.is_none(),
         device_draft: p.device_draft.clone().into(),
@@ -298,6 +356,66 @@ pub fn form_to_preset(f: &PresetForm) -> presets::Preset {
         },
         spec_draft_type_k: enum_or_empty(f.spec_draft_type_k.as_str()),
         spec_draft_type_v: enum_or_empty(f.spec_draft_type_v.as_str()),
+        spec_ngram_mod_n_match: if f.spec_ngram_mod_n_match_default {
+            None
+        } else {
+            ini::parse_int_in(f.spec_ngram_mod_n_match.as_str(), &NGRAM_SIZE)
+        },
+        spec_ngram_mod_n_min: if f.spec_ngram_mod_n_min_default {
+            None
+        } else {
+            ini::parse_int_in(f.spec_ngram_mod_n_min.as_str(), &NGRAM_DRAFT)
+        },
+        spec_ngram_mod_n_max: if f.spec_ngram_mod_n_max_default {
+            None
+        } else {
+            ini::parse_int_in(f.spec_ngram_mod_n_max.as_str(), &NGRAM_DRAFT)
+        },
+        spec_ngram_simple_size_n: if f.spec_ngram_simple_size_n_default {
+            None
+        } else {
+            ini::parse_int_in(f.spec_ngram_simple_size_n.as_str(), &NGRAM_SIZE)
+        },
+        spec_ngram_simple_size_m: if f.spec_ngram_simple_size_m_default {
+            None
+        } else {
+            ini::parse_int_in(f.spec_ngram_simple_size_m.as_str(), &NGRAM_SIZE)
+        },
+        spec_ngram_simple_min_hits: if f.spec_ngram_simple_min_hits_default {
+            None
+        } else {
+            ini::parse_int_in(f.spec_ngram_simple_min_hits.as_str(), &NGRAM_HITS)
+        },
+        spec_ngram_map_k_size_n: if f.spec_ngram_map_k_size_n_default {
+            None
+        } else {
+            ini::parse_int_in(f.spec_ngram_map_k_size_n.as_str(), &NGRAM_SIZE)
+        },
+        spec_ngram_map_k_size_m: if f.spec_ngram_map_k_size_m_default {
+            None
+        } else {
+            ini::parse_int_in(f.spec_ngram_map_k_size_m.as_str(), &NGRAM_SIZE)
+        },
+        spec_ngram_map_k_min_hits: if f.spec_ngram_map_k_min_hits_default {
+            None
+        } else {
+            ini::parse_int_in(f.spec_ngram_map_k_min_hits.as_str(), &NGRAM_HITS)
+        },
+        spec_ngram_map_k4v_size_n: if f.spec_ngram_map_k4v_size_n_default {
+            None
+        } else {
+            ini::parse_int_in(f.spec_ngram_map_k4v_size_n.as_str(), &NGRAM_SIZE)
+        },
+        spec_ngram_map_k4v_size_m: if f.spec_ngram_map_k4v_size_m_default {
+            None
+        } else {
+            ini::parse_int_in(f.spec_ngram_map_k4v_size_m.as_str(), &NGRAM_SIZE)
+        },
+        spec_ngram_map_k4v_min_hits: if f.spec_ngram_map_k4v_min_hits_default {
+            None
+        } else {
+            ini::parse_int_in(f.spec_ngram_map_k4v_min_hits.as_str(), &NGRAM_HITS)
+        },
         n_gpu_layers_draft: if f.n_gpu_layers_draft_auto {
             None
         } else {
@@ -443,7 +561,7 @@ pub fn form_to_preset(f: &PresetForm) -> presets::Preset {
 /// the two together, and `every_integer_field_is_checked` holds this list to the
 /// `PresetForm` struct in ui/types.slint, so a new integer field that skips it
 /// fails a test instead of saving a mistyped number as an absent key.
-fn int_fields(f: &PresetForm) -> [(&'static str, bool, &str, RangeInclusive<i32>); 12] {
+fn int_fields(f: &PresetForm) -> [(&'static str, bool, &str, RangeInclusive<i32>); 24] {
     [
         (
             "image-min-tokens",
@@ -512,6 +630,78 @@ fn int_fields(f: &PresetForm) -> [(&'static str, bool, &str, RangeInclusive<i32>
             ini::INT_ANY,
         ),
         ("top-k", f.top_k_default, f.top_k.as_str(), ini::INT_ANY),
+        (
+            "spec-ngram-mod-n-match",
+            f.spec_ngram_mod_n_match_default,
+            f.spec_ngram_mod_n_match.as_str(),
+            NGRAM_SIZE,
+        ),
+        (
+            "spec-ngram-mod-n-min",
+            f.spec_ngram_mod_n_min_default,
+            f.spec_ngram_mod_n_min.as_str(),
+            NGRAM_DRAFT,
+        ),
+        (
+            "spec-ngram-mod-n-max",
+            f.spec_ngram_mod_n_max_default,
+            f.spec_ngram_mod_n_max.as_str(),
+            NGRAM_DRAFT,
+        ),
+        (
+            "spec-ngram-simple-size-n",
+            f.spec_ngram_simple_size_n_default,
+            f.spec_ngram_simple_size_n.as_str(),
+            NGRAM_SIZE,
+        ),
+        (
+            "spec-ngram-simple-size-m",
+            f.spec_ngram_simple_size_m_default,
+            f.spec_ngram_simple_size_m.as_str(),
+            NGRAM_SIZE,
+        ),
+        (
+            "spec-ngram-simple-min-hits",
+            f.spec_ngram_simple_min_hits_default,
+            f.spec_ngram_simple_min_hits.as_str(),
+            NGRAM_HITS,
+        ),
+        (
+            "spec-ngram-map-k-size-n",
+            f.spec_ngram_map_k_size_n_default,
+            f.spec_ngram_map_k_size_n.as_str(),
+            NGRAM_SIZE,
+        ),
+        (
+            "spec-ngram-map-k-size-m",
+            f.spec_ngram_map_k_size_m_default,
+            f.spec_ngram_map_k_size_m.as_str(),
+            NGRAM_SIZE,
+        ),
+        (
+            "spec-ngram-map-k-min-hits",
+            f.spec_ngram_map_k_min_hits_default,
+            f.spec_ngram_map_k_min_hits.as_str(),
+            NGRAM_HITS,
+        ),
+        (
+            "spec-ngram-map-k4v-size-n",
+            f.spec_ngram_map_k4v_size_n_default,
+            f.spec_ngram_map_k4v_size_n.as_str(),
+            NGRAM_SIZE,
+        ),
+        (
+            "spec-ngram-map-k4v-size-m",
+            f.spec_ngram_map_k4v_size_m_default,
+            f.spec_ngram_map_k4v_size_m.as_str(),
+            NGRAM_SIZE,
+        ),
+        (
+            "spec-ngram-map-k4v-min-hits",
+            f.spec_ngram_map_k4v_min_hits_default,
+            f.spec_ngram_map_k4v_min_hits.as_str(),
+            NGRAM_HITS,
+        ),
     ]
 }
 
@@ -664,6 +854,54 @@ mod tests {
             (&mut f.reasoning_budget, &mut f.reasoning_budget_default),
             (&mut f.n_predict, &mut f.n_predict_default),
             (&mut f.top_k, &mut f.top_k_default),
+            (
+                &mut f.spec_ngram_mod_n_match,
+                &mut f.spec_ngram_mod_n_match_default,
+            ),
+            (
+                &mut f.spec_ngram_mod_n_min,
+                &mut f.spec_ngram_mod_n_min_default,
+            ),
+            (
+                &mut f.spec_ngram_mod_n_max,
+                &mut f.spec_ngram_mod_n_max_default,
+            ),
+            (
+                &mut f.spec_ngram_simple_size_n,
+                &mut f.spec_ngram_simple_size_n_default,
+            ),
+            (
+                &mut f.spec_ngram_simple_size_m,
+                &mut f.spec_ngram_simple_size_m_default,
+            ),
+            (
+                &mut f.spec_ngram_simple_min_hits,
+                &mut f.spec_ngram_simple_min_hits_default,
+            ),
+            (
+                &mut f.spec_ngram_map_k_size_n,
+                &mut f.spec_ngram_map_k_size_n_default,
+            ),
+            (
+                &mut f.spec_ngram_map_k_size_m,
+                &mut f.spec_ngram_map_k_size_m_default,
+            ),
+            (
+                &mut f.spec_ngram_map_k_min_hits,
+                &mut f.spec_ngram_map_k_min_hits_default,
+            ),
+            (
+                &mut f.spec_ngram_map_k4v_size_n,
+                &mut f.spec_ngram_map_k4v_size_n_default,
+            ),
+            (
+                &mut f.spec_ngram_map_k4v_size_m,
+                &mut f.spec_ngram_map_k4v_size_m_default,
+            ),
+            (
+                &mut f.spec_ngram_map_k4v_min_hits,
+                &mut f.spec_ngram_map_k4v_min_hits_default,
+            ),
         ] {
             *field = text.into();
             *default = false;
@@ -829,6 +1067,18 @@ mod tests {
             // Not the cache_type_k/-v below: the draft cache is its own setting.
             spec_draft_type_k: "q4_0".into(),
             spec_draft_type_v: "q4_1".into(),
+            spec_ngram_mod_n_match: Some(2),
+            spec_ngram_mod_n_min: Some(3),
+            spec_ngram_mod_n_max: Some(4),
+            spec_ngram_simple_size_n: Some(5),
+            spec_ngram_simple_size_m: Some(6),
+            spec_ngram_simple_min_hits: Some(7),
+            spec_ngram_map_k_size_n: Some(8),
+            spec_ngram_map_k_size_m: Some(9),
+            spec_ngram_map_k_min_hits: Some(10),
+            spec_ngram_map_k4v_size_n: Some(11),
+            spec_ngram_map_k4v_size_m: Some(12),
+            spec_ngram_map_k4v_min_hits: Some(13),
             n_gpu_layers_draft: Some(99),
             device_draft: "CUDA0".into(),
             device: "CUDA0,ROCm1".into(),

@@ -1,4 +1,5 @@
-//! ggml-base.dll glue: the `KvSource` backed by llama.cpp's own gguf reader.
+//! ggml-base glue: the `KvSource` backed by llama.cpp's own gguf reader, loaded
+//! at run time (`ggml-base.dll` on Windows, `libggml-base.so.0` on Linux).
 //!
 //! Split out of gguf.rs so the field-extraction logic (`ModelInfo::from_kv` &
 //! friends) reads without the ~230 lines of Win32 FFI below. The module's public
@@ -8,20 +9,21 @@
 // Only `open` is re-exported: callers use the returned `Ctx` (a `KvSource`) by
 // value/ref without ever naming its type, so re-exporting `Ctx` too would be an
 // unused import.
-#[cfg(not(windows))]
+#[cfg(any(windows, target_os = "linux"))]
+pub use loaded_impl::open;
+#[cfg(not(any(windows, target_os = "linux")))]
 pub use stub_impl::open;
-#[cfg(windows)]
-pub use windows_impl::open;
 
-/// Windows: dynamically load `ggml-base.dll` and expose a `KvSource` over a live
-/// `gguf_context`. The DLL ships next to `llama-cpp-config.exe` in `bin\`.
-#[cfg(windows)]
-mod windows_impl {
-    use crate::gguf::KvSource;
+/// Dynamically load ggml-base and expose a `KvSource` over a live
+/// `gguf_context`. On Windows the DLL ships next to `llama-cpp-config.exe` in
+/// `bin\`; on Linux the package puts `libggml-base.so.0` in `lib/` beside
+/// `bin/`, and a build tree keeps it beside llama-server.
+#[cfg(any(windows, target_os = "linux"))]
+mod loaded_impl {
+    use crate::gguf::{KvSource, TensorInfo};
     use core::ffi::c_void;
     use std::ffi::{CStr, CString};
     use std::os::raw::c_char;
-    use std::os::windows::ffi::OsStrExt;
     use std::path::Path;
     use std::sync::OnceLock;
 
@@ -56,6 +58,8 @@ mod windows_impl {
     type FnFindTensor = unsafe extern "C" fn(GgufCtx, *const c_char) -> i64;
     type FnTensorType = unsafe extern "C" fn(GgufCtx, i64) -> i32;
     type FnTensorSize = unsafe extern "C" fn(GgufCtx, i64) -> usize;
+    type FnNTensors = unsafe extern "C" fn(GgufCtx) -> i64;
+    type FnTensorName = unsafe extern "C" fn(GgufCtx, i64) -> *const c_char;
     type FnU8 = unsafe extern "C" fn(GgufCtx, i64) -> u8;
     type FnI8 = unsafe extern "C" fn(GgufCtx, i64) -> i8;
     type FnU16 = unsafe extern "C" fn(GgufCtx, i64) -> u16;
@@ -85,66 +89,129 @@ mod windows_impl {
         find_tensor: FnFindTensor,
         tensor_type: FnTensorType,
         tensor_size: FnTensorSize,
+        n_tensors: FnNTensors,
+        tensor_name: FnTensorName,
     }
     // `Api` holds only C function pointers (Send + Sync), so it is safe to cache
     // in a `static OnceLock`. Only SUCCESS is cached; see `api()`.
 
-    #[link(name = "kernel32")]
-    extern "system" {
-        fn LoadLibraryW(name: *const u16) -> HModule;
-        fn GetProcAddress(module: HModule, name: *const u8) -> *const c_void;
-    }
-
     static API: OnceLock<Api> = OnceLock::new();
 
-    fn wide(p: &Path) -> Vec<u16> {
-        p.as_os_str()
-            .encode_wide()
-            .chain(std::iter::once(0))
-            .collect()
-    }
+    #[cfg(windows)]
+    mod os {
+        use super::HModule;
+        use core::ffi::c_void;
+        use std::os::windows::ffi::OsStrExt;
+        use std::path::{Path, PathBuf};
 
-    fn load_dll() -> Option<HModule> {
-        // Prefer the DLL next to our own exe (installed `bin\`); fall back to the
-        // default search order.
-        let mut candidates: Vec<std::path::PathBuf> = Vec::new();
-        if let Ok(exe) = std::env::current_exe() {
-            if let Some(dir) = exe.parent() {
-                candidates.push(dir.join("ggml-base.dll"));
-            }
+        #[link(name = "kernel32")]
+        extern "system" {
+            fn LoadLibraryW(name: *const u16) -> HModule;
+            fn GetProcAddress(module: HModule, name: *const u8) -> *const c_void;
         }
-        candidates.push(std::path::PathBuf::from("ggml-base.dll"));
-        for cand in candidates {
-            let w = wide(&cand);
-            let h = unsafe { LoadLibraryW(w.as_ptr()) };
-            if !h.is_null() {
-                return Some(h);
-            }
-        }
-        None
-    }
 
-    fn proc(h: HModule, name: &[u8]) -> Option<*const c_void> {
-        let p = unsafe { GetProcAddress(h, name.as_ptr()) };
-        if p.is_null() {
+        fn wide(p: &Path) -> Vec<u16> {
+            p.as_os_str()
+                .encode_wide()
+                .chain(std::iter::once(0))
+                .collect()
+        }
+
+        pub(super) fn load_lib() -> Option<HModule> {
+            // Prefer the DLL next to our own exe (installed `bin\`); fall back to
+            // the default search order.
+            let mut candidates: Vec<PathBuf> = Vec::new();
+            if let Ok(exe) = std::env::current_exe() {
+                if let Some(dir) = exe.parent() {
+                    candidates.push(dir.join("ggml-base.dll"));
+                }
+            }
+            candidates.push(PathBuf::from("ggml-base.dll"));
+            for cand in candidates {
+                let w = wide(&cand);
+                let h = unsafe { LoadLibraryW(w.as_ptr()) };
+                if !h.is_null() {
+                    return Some(h);
+                }
+            }
             None
-        } else {
-            Some(p)
+        }
+
+        pub(super) fn proc(h: HModule, name: &[u8]) -> Option<*const c_void> {
+            let p = unsafe { GetProcAddress(h, name.as_ptr()) };
+            (!p.is_null()).then_some(p)
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    mod os {
+        use super::HModule;
+        use core::ffi::c_void;
+        use std::ffi::CString;
+        use std::os::raw::{c_char, c_int};
+        use std::path::PathBuf;
+
+        // libc's own (glibc 2.34+ carries them; older ones through libdl, which
+        // std already links). Declared as in hwmon/linux.rs.
+        extern "C" {
+            fn dlopen(filename: *const c_char, flags: c_int) -> *mut c_void;
+            fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *mut c_void;
+        }
+        const RTLD_NOW: c_int = 2;
+        const LIB: &str = "libggml-base.so.0";
+
+        pub(super) fn load_lib() -> Option<HModule> {
+            // The package: `<prefix>/bin/llama-cpp-config` and
+            // `<prefix>/lib/libggml-base.so.0`. A build tree: beside llama-server
+            // (`llama.cpp-cmake/bin`). Last, the loader's own search path.
+            let mut candidates: Vec<PathBuf> = Vec::new();
+            if let Some(dir) = std::env::current_exe()
+                .ok()
+                .and_then(|e| e.parent().map(|d| d.to_path_buf()))
+            {
+                candidates.push(dir.join("..").join("lib").join(LIB));
+                candidates.push(dir.join(LIB));
+            }
+            if let Some(dir) =
+                crate::paths::llama_server_exe().and_then(|e| e.parent().map(|d| d.to_path_buf()))
+            {
+                candidates.push(dir.join(LIB));
+            }
+            candidates.push(PathBuf::from(LIB));
+            for cand in candidates {
+                // A bare name goes to the loader's search; a path is opened as is.
+                if cand.components().count() > 1 && !cand.exists() {
+                    continue;
+                }
+                let Ok(c) = CString::new(cand.to_string_lossy().as_bytes()) else {
+                    continue;
+                };
+                let h = unsafe { dlopen(c.as_ptr(), RTLD_NOW) };
+                if !h.is_null() {
+                    return Some(h);
+                }
+            }
+            None
+        }
+
+        pub(super) fn proc(h: HModule, name: &[u8]) -> Option<*const c_void> {
+            let p = unsafe { dlsym(h, name.as_ptr().cast()) };
+            (!p.is_null()).then_some(p.cast_const())
         }
     }
 
     fn load() -> Option<Api> {
-        let h = load_dll()?;
+        let h = os::load_lib()?;
         // Resolve a symbol and transmute it to its declared fn-pointer alias.
         // A macro (not a fn) so each symbol name stays a plain, greppable literal
         // and the target type is explicit at the call site; `?` propagates a
         // missing symbol as `None`.
         macro_rules! sym {
             ($ty:ty, $name:literal) => {
-                std::mem::transmute::<*const c_void, $ty>(proc(h, $name)?)
+                std::mem::transmute::<*const c_void, $ty>(os::proc(h, $name)?)
             };
         }
-        // SAFETY: symbols resolved from ggml-base.dll have the C signatures
+        // SAFETY: symbols resolved from ggml-base have the C signatures
         // declared in `gguf.h`; each is transmuted to its matching fn pointer.
         unsafe {
             Some(Api {
@@ -165,6 +232,8 @@ mod windows_impl {
                 find_tensor: sym!(FnFindTensor, b"gguf_find_tensor\0"),
                 tensor_type: sym!(FnTensorType, b"gguf_get_tensor_type\0"),
                 tensor_size: sym!(FnTensorSize, b"gguf_get_tensor_size\0"),
+                n_tensors: sym!(FnNTensors, b"gguf_get_n_tensors\0"),
+                tensor_name: sym!(FnTensorName, b"gguf_get_tensor_name\0"),
             })
         }
     }
@@ -191,8 +260,8 @@ mod windows_impl {
     /// Open a GGUF file's metadata (header + tensor infos only; `no_alloc`).
     pub fn open(path: &Path) -> Option<Ctx> {
         let api = api()?;
-        // ggml_fopen converts this UTF-8 path back to wide (`_wfopen`), so
-        // Unicode paths are fine.
+        // ggml_fopen converts this UTF-8 path back to wide (`_wfopen`) on
+        // Windows, so Unicode paths are fine; Linux takes the bytes as they are.
         let c = CString::new(path.to_string_lossy().as_bytes()).ok()?;
         let params = InitParams {
             no_alloc: true,
@@ -206,6 +275,28 @@ mod windows_impl {
     }
 
     impl Ctx {
+        /// Every tensor this file holds (one shard's worth for a split model),
+        /// in file order, with its size in bytes.
+        pub fn tensors(&self) -> Vec<TensorInfo> {
+            // SAFETY: ids run 0..n_tensors on this ctx; the name pointer is
+            // owned by the ctx and copied out before it is freed.
+            unsafe {
+                let n = (self.api.n_tensors)(self.ptr).max(0);
+                (0..n)
+                    .filter_map(|id| {
+                        let p = (self.api.tensor_name)(self.ptr, id);
+                        if p.is_null() {
+                            return None;
+                        }
+                        Some(TensorInfo {
+                            name: CStr::from_ptr(p).to_string_lossy().into_owned(),
+                            bytes: (self.api.tensor_size)(self.ptr, id) as u64,
+                        })
+                    })
+                    .collect()
+            }
+        }
+
         fn find(&self, key: &str) -> Option<i64> {
             let c = CString::new(key).ok()?;
             let id = unsafe { (self.api.find_key)(self.ptr, c.as_ptr()) };
@@ -284,17 +375,23 @@ mod windows_impl {
     }
 }
 
-/// Non-Windows: no ggml-base.dll to load, so reads yield `None` (the info box
+/// Any other OS: no ggml-base to load, so reads yield `None` (the info box
 /// shows "unavailable"). The stub keeps `from_kv` referenced on every platform.
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
 mod stub_impl {
-    use crate::gguf::KvSource;
+    use crate::gguf::{KvSource, TensorInfo};
     use std::path::Path;
 
     pub struct Ctx;
 
     pub fn open(_path: &Path) -> Option<Ctx> {
         None
+    }
+
+    impl Ctx {
+        pub fn tensors(&self) -> Vec<TensorInfo> {
+            Vec::new()
+        }
     }
 
     impl KvSource for Ctx {

@@ -112,6 +112,63 @@ pub(super) fn run(app: &AppWindow) {
         "save must re-baseline the form (Save/Revert disabled)"
     );
 
+    // ── An n-gram speculator survives the save without a draft ──
+    // The save prunes the speculative keys a model cannot act on
+    // (`presets::prune_inactive_draft_keys`). `ngram-mod` drafts from the
+    // context, so on a model with no draft file and no MTP heads it must reach
+    // the INI, while the draft-model key beside it (`spec-draft-n-max`) and a
+    // `draft-mtp` that would fail the load are still dropped.
+    st.set_model_info_ready(true);
+    st.set_model_info_embeds_mtp(false);
+    let mut form = st.get_form();
+    form.spec_type = "ngram-mod".into();
+    form.spec_draft_n_max = "8".into();
+    form.spec_draft_n_max_default = false;
+    form.spec_ngram_mod_n_match = "32".into();
+    form.spec_ngram_mod_n_match_default = false;
+    form.spec_ngram_simple_size_n = "8".into();
+    form.spec_ngram_simple_size_n_default = false;
+    st.set_form(form);
+    st.invoke_save_preset();
+    assert!(!st.get_status_is_error(), "{}", st.get_status_text());
+    let saved = std::fs::read_to_string(crate::paths::presets_ini()).expect("presets.ini");
+    assert!(
+        saved.contains("spec-type = ngram-mod"),
+        "an n-gram spec-type needs no draft and must be saved:\n{saved}"
+    );
+    assert!(
+        !saved.contains("\nspec-draft-n-max ="),
+        "the draft-model keys still go without a draft:\n{saved}"
+    );
+    assert!(
+        saved.contains("spec-ngram-mod-n-match = 32"),
+        "the selected n-gram type keeps its tuning:\n{saved}"
+    );
+    assert!(
+        !saved.contains("\nspec-ngram-simple-size-n ="),
+        "an unselected n-gram type's tuning is dropped:\n{saved}"
+    );
+    // The save reselects the preset, and its model (no file here) cannot be
+    // read, which clears `model_info_ready`: stand in for the header again.
+    st.set_model_info_ready(true);
+    st.set_model_info_embeds_mtp(false);
+    let mut form = st.get_form();
+    form.spec_type = "draft-mtp".into();
+    st.set_form(form);
+    st.invoke_save_preset();
+    assert!(!st.get_status_is_error(), "{}", st.get_status_text());
+    let saved = std::fs::read_to_string(crate::paths::presets_ini()).expect("presets.ini");
+    assert!(
+        !saved.contains("\nspec-type ="),
+        "draft-mtp without MTP heads must not reach the INI:\n{saved}"
+    );
+    assert!(
+        !saved.contains("\nspec-ngram-mod-n-match ="),
+        "with ngram-mod off its tuning goes too:\n{saved}"
+    );
+    st.set_model_info_ready(false);
+    let ini = saved;
+
     // ── A mistyped integer refuses the save instead of dropping the key ──
     // `form_to_preset` reads unparseable text as unset, and an unset ctx-size is
     // the model's TRAINED context: a preset saved that way loads at 262144 and
@@ -591,7 +648,7 @@ pub(super) fn run(app: &AppWindow) {
     assert!(row.detected && row.problem.is_empty());
     assert_eq!(
         st.get_form().override_tensor.as_str(),
-        r"token_embd\.weight=CUDA0",
+        r"^token_embd\.weight=CUDA0",
         "the one rule that pays for this table: the embedding table off pinned host RAM"
     );
     assert!(st.get_preset_tensor_warning().is_empty());
@@ -616,7 +673,7 @@ pub(super) fn run(app: &AppWindow) {
     st.invoke_preset_tensor_device(1, "CPU".into());
     assert_eq!(
         st.get_form().override_tensor.as_str(),
-        r"token_embd\.weight=CUDA0,\.ffn_(up|down|gate|gate_up)_(ch|)exps=CPU",
+        r"^token_embd\.weight=CUDA0,\.ffn_(up|down|gate|gate_up)_(ch|)exps=CPU",
         "two rules, comma-joined: `,` and `=` ARE the grammar"
     );
 
@@ -631,7 +688,7 @@ pub(super) fn run(app: &AppWindow) {
     st.invoke_preset_tensor_pattern(1, r"blk\.{1,2}\.attn=x".into());
     assert_eq!(
         st.get_form().override_tensor.as_str(),
-        r"token_embd\.weight=CUDA0,blk\.{12}\.attnx=CPU",
+        r"^token_embd\.weight=CUDA0,blk\.{12}\.attnx=CPU",
         "the two separators are stripped, so the value is still TWO rules"
     );
 
@@ -639,7 +696,7 @@ pub(super) fn run(app: &AppWindow) {
     assert!(!st.get_status_is_error(), "{}", st.get_status_text());
     let ini = std::fs::read_to_string(crate::paths::presets_ini()).expect("presets.ini");
     assert!(
-        ini.contains(r"override-tensor = token_embd\.weight=CUDA0,blk\.{12}\.attnx=CPU"),
+        ini.contains(r"override-tensor = ^token_embd\.weight=CUDA0,blk\.{12}\.attnx=CPU"),
         "the table's rules must reach the INI:\n{ini}"
     );
 
@@ -660,7 +717,7 @@ pub(super) fn run(app: &AppWindow) {
     ot_pattern().set_accessible_value(r"attn_norm"); // the edit that breaks the binding
     assert_eq!(
         st.get_form().override_tensor.as_str(),
-        r"token_embd\.weight=CUDA0,attn_norm=CPU",
+        r"^token_embd\.weight=CUDA0,attn_norm=CPU",
         "a keystroke in the regex field must reach the form"
     );
     st.invoke_revert_preset();
@@ -676,7 +733,7 @@ pub(super) fn run(app: &AppWindow) {
     // answer: the table explains it, and the save refuses to write it back.
     let ini = std::fs::read_to_string(crate::paths::presets_ini()).expect("presets.ini");
     let hand_edited = ini.replace(
-        r"override-tensor = token_embd\.weight=CUDA0,blk\.{12}\.attnx=CPU",
+        r"override-tensor = ^token_embd\.weight=CUDA0,blk\.{12}\.attnx=CPU",
         r"override-tensor = token_embd\.weight",
     );
     assert_ne!(hand_edited, ini, "the line to hand-edit must be there");

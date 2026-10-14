@@ -11,7 +11,7 @@
 // The tray (`AppTray` in app.slint) is a separate root and does NOT use this
 // global; it keeps its own pushed-in state.
 
-import { PresetSummary, PresetForm, ServerForm, GpuRow, TensorOverrideRow, BenchPresetRow, BenchResultRow, BindRow } from "types.slint";
+import { PresetSummary, PresetForm, ServerForm, GpuRow, TensorOverrideRow, TensorPickRow, BenchPresetRow, BenchResultRow, BindRow } from "types.slint";
 import { Options } from "components.slint";
 
 export global AppState {
@@ -160,6 +160,23 @@ export global AppState {
     // everything it writes), but that value would fail the model's LOAD, so it
     // is worth saying out loud rather than at the next launch.
     in-out property <string> preset_tensor_warning;
+    // Per rule, what it places on the selected model ("12 tensors, 1.21 GiB"),
+    // counting first-match-wins; empty strings when the model's tensors are
+    // unknown. Its own model, not a row field, so a regex keystroke updates it
+    // without recreating the field being typed into.
+    in-out property <[string]> preset_tensor_coverage;
+    // The model's tensor list is known, so the rows' "Choose…" can open.
+    in-out property <bool> preset_tensor_can_pick;
+
+    // The tensor picker modal (app.slint), over one rule: built in Rust
+    // (src/tensor_picker.rs) and read-only here.
+    in-out property <bool> tensor_picker_open;
+    in-out property <string> tensor_picker_title;
+    in-out property <[TensorPickRow]> tensor_picker_rows;
+    in-out property <string> tensor_picker_summary;
+    // The regex Apply would write.
+    in-out property <string> tensor_picker_pattern;
+    in-out property <bool> tensor_picker_can_apply;
     // Non-empty when a KV cache the preset builds (the model's, or the draft's)
     // has no FlashAttention kernel on a backend it runs on, has none compiled
     // natively for its K-V pair, or cannot load at all (quantized V with flash
@@ -477,6 +494,16 @@ export global AppState {
     callback preset_tensor_kind(int, string);
     callback preset_tensor_device(int, string);
     callback preset_tensor_pattern(int, string);
+    callback preset_tensor_layers(int, string);
+    // The tensor picker: open on a rule; tick / fold one list line; tick or
+    // clear everything; fold or unfold everything; write it back; close.
+    callback preset_tensor_pick(int);
+    callback tensor_picker_toggle(int);
+    callback tensor_picker_expand(int);
+    callback tensor_picker_all(bool);
+    callback tensor_picker_expand_all(bool);
+    callback tensor_picker_apply();
+    callback tensor_picker_close();
 
     callback select_preset(int);
     // A row's on/off switch: (id, the state it was switched TO). Moves the

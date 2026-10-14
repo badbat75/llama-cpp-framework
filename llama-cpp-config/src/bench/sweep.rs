@@ -122,6 +122,54 @@ pub const SWEEPABLE: &[(&str, Setter)] = &[
         p.spec_type = text(v)?;
         Ok(())
     }),
+    ("spec-ngram-mod-n-match", |p, v| {
+        p.spec_ngram_mod_n_match = int(v)?;
+        Ok(())
+    }),
+    ("spec-ngram-mod-n-min", |p, v| {
+        p.spec_ngram_mod_n_min = int(v)?;
+        Ok(())
+    }),
+    ("spec-ngram-mod-n-max", |p, v| {
+        p.spec_ngram_mod_n_max = int(v)?;
+        Ok(())
+    }),
+    ("spec-ngram-simple-size-n", |p, v| {
+        p.spec_ngram_simple_size_n = int(v)?;
+        Ok(())
+    }),
+    ("spec-ngram-simple-size-m", |p, v| {
+        p.spec_ngram_simple_size_m = int(v)?;
+        Ok(())
+    }),
+    ("spec-ngram-simple-min-hits", |p, v| {
+        p.spec_ngram_simple_min_hits = int(v)?;
+        Ok(())
+    }),
+    ("spec-ngram-map-k-size-n", |p, v| {
+        p.spec_ngram_map_k_size_n = int(v)?;
+        Ok(())
+    }),
+    ("spec-ngram-map-k-size-m", |p, v| {
+        p.spec_ngram_map_k_size_m = int(v)?;
+        Ok(())
+    }),
+    ("spec-ngram-map-k-min-hits", |p, v| {
+        p.spec_ngram_map_k_min_hits = int(v)?;
+        Ok(())
+    }),
+    ("spec-ngram-map-k4v-size-n", |p, v| {
+        p.spec_ngram_map_k4v_size_n = int(v)?;
+        Ok(())
+    }),
+    ("spec-ngram-map-k4v-size-m", |p, v| {
+        p.spec_ngram_map_k4v_size_m = int(v)?;
+        Ok(())
+    }),
+    ("spec-ngram-map-k4v-min-hits", |p, v| {
+        p.spec_ngram_map_k4v_min_hits = int(v)?;
+        Ok(())
+    }),
     ("model-draft", |p, v| {
         p.model_draft = text(v)?;
         Ok(())

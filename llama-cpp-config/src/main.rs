@@ -37,6 +37,7 @@ mod single_instance;
 mod slot_state;
 mod startup;
 mod tensor_override;
+mod tensor_picker;
 // Cross-cutting end-to-end tests (e.g. the Slint UI regression test) live under
 // src/tests/; per-module unit tests stay inline in their own files.
 #[cfg(test)]

@@ -64,6 +64,9 @@ pub(super) fn wire(app: &AppWindow, state: &Rc<RefCell<State>>) {
             if s.get_model_info_ready() {
                 presets::prune_inactive_draft_keys(&mut p, s.get_model_info_embeds_mtp());
             }
+            // The form shows only the selected n-gram type's tuning, so the other
+            // types' keys would sit hidden in the INI (needs no GGUF).
+            presets::prune_unused_ngram_keys(&mut p);
             if p.id.is_empty() {
                 set_status(&app, "Preset id is empty.".into(), true);
                 return;
@@ -387,14 +390,14 @@ pub(super) fn wire(app: &AppWindow, state: &Rc<RefCell<State>>) {
     wire_tensor_table(app);
 }
 
-/// The tensor-placement table's five callbacks, over `form.override_tensor`. Same
+/// The tensor-placement table's callbacks, and the tensor picker's, over `form.override_tensor`. Same
 /// two-step shape as `wire_gpu_table`: derive the new value with `tensor_override`,
 /// write it back, refresh.
 ///
-/// The exception is `pattern`: the Custom row's text field. It refreshes the
+/// The exceptions are `pattern` and `layers`, the two text fields. They refresh the
 /// derived strings ONLY: a row rebuild would recreate the LineEdit mid-keystroke
 /// and drop the caret. It can afford to, for the same reason the GPU table's
-/// weight edit can: a pattern edit changes no other row (see TensorOverrideTable's
+/// weight edit can: neither edit changes another row (see TensorOverrideTable's
 /// binding note).
 fn wire_tensor_table(app: &AppWindow) {
     let s = app.global::<AppState>();
@@ -460,6 +463,116 @@ fn wire_tensor_table(app: &AppWindow) {
             );
             set_preset_overrides(&app, &rules);
             refresh_tensor_scalars(&app);
+        });
+    }
+    {
+        let app_weak = app.as_weak();
+        s.on_preset_tensor_layers(move |index, layers| {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let rules = tensor_override::set_layers(
+                &preset_overrides(&app),
+                row_index(index),
+                layers.as_str(),
+            );
+            set_preset_overrides(&app, &rules);
+            refresh_tensor_scalars(&app);
+        });
+    }
+    wire_tensor_picker(app);
+}
+
+/// The tensor picker (`tensor_picker.rs`): opened on one rule, it lists the
+/// model's tensors with a tick each; Apply writes the ticked set back into that
+/// rule as a regex and rebuilds the table. The picker itself lives in
+/// `TENSOR_PICKER`; every callback edits it and re-pushes the list.
+fn wire_tensor_picker(app: &AppWindow) {
+    let s = app.global::<AppState>();
+    {
+        let app_weak = app.as_weak();
+        s.on_preset_tensor_pick(move |index| {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let tensors = model_tensors();
+            if tensors.is_empty() {
+                return;
+            }
+            let picker =
+                tensor_picker::Picker::open(&preset_overrides(&app), row_index(index), tensors);
+            TENSOR_PICKER.with(|p| *p.borrow_mut() = Some(picker));
+            refresh_tensor_picker(&app);
+        });
+    }
+    // One shape for the four list edits: change the picker, re-push the list.
+    fn on_edit(app: &AppWindow, edit: impl Fn(&mut tensor_picker::Picker)) {
+        TENSOR_PICKER.with(|p| {
+            if let Some(p) = p.borrow_mut().as_mut() {
+                edit(p);
+            }
+        });
+        refresh_tensor_picker(app);
+    }
+    {
+        let app_weak = app.as_weak();
+        s.on_tensor_picker_toggle(move |line| {
+            if let Some(app) = app_weak.upgrade() {
+                on_edit(&app, |p| p.toggle(row_index(line)));
+            }
+        });
+    }
+    {
+        let app_weak = app.as_weak();
+        s.on_tensor_picker_expand(move |line| {
+            if let Some(app) = app_weak.upgrade() {
+                on_edit(&app, |p| p.expand(row_index(line)));
+            }
+        });
+    }
+    {
+        let app_weak = app.as_weak();
+        s.on_tensor_picker_all(move |on| {
+            if let Some(app) = app_weak.upgrade() {
+                on_edit(&app, |p| p.set_all(on));
+            }
+        });
+    }
+    {
+        let app_weak = app.as_weak();
+        s.on_tensor_picker_expand_all(move |on| {
+            if let Some(app) = app_weak.upgrade() {
+                on_edit(&app, |p| p.expand_all(on));
+            }
+        });
+    }
+    {
+        let app_weak = app.as_weak();
+        s.on_tensor_picker_apply(move || {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let Some(picker) = TENSOR_PICKER.with(|p| p.borrow_mut().take()) else {
+                return;
+            };
+            let pattern = picker.pattern();
+            if !pattern.is_empty() {
+                let rules =
+                    tensor_override::set_pattern(&preset_overrides(&app), picker.rule, &pattern);
+                set_preset_overrides(&app, &rules);
+            }
+            refresh_tensor_picker(&app);
+            refresh_tensor_rows(&app);
+        });
+    }
+    {
+        let app_weak = app.as_weak();
+        s.on_tensor_picker_close(move || {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            TENSOR_PICKER.with(|p| *p.borrow_mut() = None);
+            refresh_tensor_picker(&app);
         });
     }
 }
@@ -743,6 +856,7 @@ pub(super) fn update_model_info(app: &AppWindow) {
         s.set_model_info_note(SharedString::from(
             "Select a model to see its GGUF details.",
         ));
+        set_model_tensors(Vec::new());
         refresh_gpu_rows(app);
         return;
     }
@@ -750,12 +864,16 @@ pub(super) fn update_model_info(app: &AppWindow) {
     let Some(info) = gguf::read_model_info(std::path::Path::new(&model)) else {
         s.set_model_info_ready(false);
         s.set_model_info_note(SharedString::from(
-            "Metadata unavailable: is ggml-base.dll beside the app, and the file a valid GGUF?",
+            "Metadata unavailable: is llama.cpp's ggml-base library beside the app, and the file a valid GGUF?",
         ));
+        set_model_tensors(Vec::new());
         refresh_gpu_rows(app);
         return;
     };
 
+    // The Tensor placement table's coverage lines and picker. Every shard is
+    // read; a split model with a shard missing gets no list rather than half.
+    set_model_tensors(gguf::read_tensors(std::path::Path::new(&model)).unwrap_or_default());
     s.set_model_info_kind(SharedString::from(info.kind_line()));
     s.set_model_info_n_layer(info.n_layer as i32);
     s.set_model_info_has_moe(info.is_moe);

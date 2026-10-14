@@ -322,15 +322,8 @@ pub(super) fn wire(app: &AppWindow) -> Result<LogWindow, slint::PlatformError> {
                 return;
             };
             // Full activation, not a bare show(): a second click while the
-            // window sits minimized/behind must surface it (same rationale as
-            // gui::activate_window, which is AppWindow-typed).
-            use slint::winit_030::WinitWindowAccessor;
-            win.show().ok();
-            win.window().with_winit_window(|w| {
-                w.set_visible(true);
-                w.set_minimized(false);
-                w.focus_window();
-            });
+            // window sits minimized/behind must surface it (gui::raise_window).
+            raise_window(win.window());
             if live.load(Ordering::Relaxed) != 0 {
                 return; // already open and tailing
             }

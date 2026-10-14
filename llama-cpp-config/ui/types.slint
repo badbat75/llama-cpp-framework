@@ -46,6 +46,33 @@ export struct PresetForm {
     // the draft's own default. See the field docs in src/presets.rs.
     spec_draft_type_k: string,
     spec_draft_type_v: string,
+    // --spec-ngram-<type>-<param>: each n-gram speculator's tuning, text +
+    // "default" box like the other integer fields. Shown only for the selected
+    // spec type (models_page.slint); presets.rs field docs.
+    spec_ngram_mod_n_match: string,
+    spec_ngram_mod_n_match_default: bool,
+    spec_ngram_mod_n_min: string,
+    spec_ngram_mod_n_min_default: bool,
+    spec_ngram_mod_n_max: string,
+    spec_ngram_mod_n_max_default: bool,
+    spec_ngram_simple_size_n: string,
+    spec_ngram_simple_size_n_default: bool,
+    spec_ngram_simple_size_m: string,
+    spec_ngram_simple_size_m_default: bool,
+    spec_ngram_simple_min_hits: string,
+    spec_ngram_simple_min_hits_default: bool,
+    spec_ngram_map_k_size_n: string,
+    spec_ngram_map_k_size_n_default: bool,
+    spec_ngram_map_k_size_m: string,
+    spec_ngram_map_k_size_m_default: bool,
+    spec_ngram_map_k_min_hits: string,
+    spec_ngram_map_k_min_hits_default: bool,
+    spec_ngram_map_k4v_size_n: string,
+    spec_ngram_map_k4v_size_n_default: bool,
+    spec_ngram_map_k4v_size_m: string,
+    spec_ngram_map_k4v_size_m_default: bool,
+    spec_ngram_map_k4v_min_hits: string,
+    spec_ngram_map_k4v_min_hits_default: bool,
     n_gpu_layers_draft: int,
     n_gpu_layers_draft_auto: bool,
     device_draft: string,
@@ -321,6 +348,10 @@ export struct TensorOverrideRow {
     // that shows the pattern's text field.
     kind_index: int,
     custom: bool,
+    // True for a kind inside the blocks, which shows the Layers field; `layers`
+    // is its text (`10-12, 15`), empty for every layer.
+    per_layer: bool,
+    layers: string,
     // The target buffer type (a device id, or CPU) and its position in the
     // shared AppState.tensor_dev_values model. -1 when the rule names none.
     device: string,
@@ -330,6 +361,24 @@ export struct TensorOverrideRow {
     detected: bool,
     // This row's own complaint, or "" when it is fine.
     problem: string,
+}
+
+// One line of the tensor picker (the modal in app.slint), built in Rust
+// (src/tensor_picker.rs `Line`): a group header (a tensor family, or the
+// tensors outside the blocks) or one tensor under an unfolded header. The ticks
+// are drawn from `checked`/`partial` and never self-assigned: a click goes to
+// Rust, which rebuilds the list.
+export struct TensorPickRow {
+    label: string,
+    // Size, member count, and the earlier rule that already takes the tensor.
+    detail: string,
+    checked: bool,
+    // A header with some but not all members ticked.
+    partial: bool,
+    header: bool,
+    expanded: bool,
+    // Matched by an earlier rule, which llama.cpp applies first.
+    taken: bool,
 }
 
 // HW Monitor (hw_window.slint). Built entirely in Rust (src/hwmon.rs) and

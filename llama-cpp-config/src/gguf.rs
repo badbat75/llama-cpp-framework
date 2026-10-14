@@ -10,7 +10,8 @@
 //! a claim about the running config (see `draft_line`).
 //!
 //! Metadata is read with llama.cpp's OWN gguf reader: we runtime-load
-//! `ggml-base.dll` (shipped next to `llama-cpp-config.exe` in `bin\`) and call
+//! `ggml-base.dll` (shipped next to `llama-cpp-config.exe` in `bin\`; on Linux
+//! `libggml-base.so.0`, in the package's `lib/`) and call
 //! `gguf_init_from_file` with `no_alloc = true`, so only the header + tensor
 //! infos are read, never the multi-GB weights. No GGUF parsing is reimplemented
 //! here. If the DLL can't be loaded (e.g. a bare `cargo run` with no llama.cpp
@@ -578,6 +579,34 @@ pub fn read_model_info(path: &Path) -> Option<ModelInfo> {
 pub fn read_mmproj_info(path: &Path) -> Option<MmprojInfo> {
     let ctx = ffi::open(path)?;
     MmprojInfo::from_kv(&ctx)
+}
+
+// ── The tensor list (the Tensor placement picker) ────────────────────────
+
+/// One tensor of a model: its GGUF name (`blk.12.ffn_up_exps.weight`) and its
+/// size in the file, which is what it takes on the device it lands on.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TensorInfo {
+    pub name: String,
+    pub bytes: u64,
+}
+
+/// Every tensor of the model at `path`, in file order. A split model
+/// (`-00001-of-00003.gguf`) keeps each shard's tensors in that shard, so every
+/// shard is read; one that is missing or unreadable makes the whole list `None`
+/// rather than a partial list that would read as the model's.
+pub fn read_tensors(path: &Path) -> Option<Vec<TensorInfo>> {
+    let mut out = ffi::open(path)?.tensors();
+    let stem = path.file_stem()?.to_str()?;
+    if let Some((base, "00001")) = crate::model_scan::split_shard_suffix(stem) {
+        let total: u32 = stem.rsplit_once("-of-")?.1.parse().ok()?;
+        let ext = path.extension()?.to_str()?;
+        for i in 2..=total {
+            let shard = path.with_file_name(format!("{base}-{i:05}-of-{total:05}.{ext}"));
+            out.extend(ffi::open(&shard)?.tensors());
+        }
+    }
+    (!out.is_empty()).then_some(out)
 }
 
 // ── Which speculator a draft file calls for ──────────────────────────────

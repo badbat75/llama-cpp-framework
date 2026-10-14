@@ -891,7 +891,7 @@ if ($hostRows) {
         } elseif ($rules) {
             Write-Host '  No --override-tensor rule of yours claimed it; check the patterns against the names above.'
         } elseif ($target) {
-            Write-Host ("  Reclaim it with a Tensor placement rule:  token_embd\.weight={0}" -f $target.Device)
+            Write-Host ("  Reclaim it with a Tensor placement rule:  ^token_embd\.weight={0}" -f $target.Device)
         }
     }
 }
