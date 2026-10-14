@@ -446,7 +446,10 @@ fn discard_unshown_wayland_window<T: ComponentHandle + 'static>(component: &T) {
 /// tray component has no `window()` to call it on: the only place the backend
 /// hands that window out is this hook, with the first event the compositor
 /// sends it. It is told from ours by its title: the backend's default, which
-/// only a root without a `title` keeps.
+/// only a root without a `title` keeps. Since Slint 1.18 that default is the
+/// program's name (argument zero without its directory, `application_name` in
+/// i-slint-core), no longer "Slint Window": GNOME lists it as
+/// "llama-cpp-config". Every window of ours sets a title of its own.
 #[cfg(target_os = "linux")]
 struct DiscardTrayWindow;
 
@@ -468,7 +471,7 @@ impl slint::winit_030::CustomApplicationHandler for DiscardTrayWindow {
         let on_wayland = native
             .window_handle()
             .is_ok_and(|h| matches!(h.as_raw(), RawWindowHandle::Wayland(_)));
-        if !on_wayland || native.title() != "Slint Window" {
+        if !on_wayland || native.title() != default_window_title() {
             return EventResult::Propagate;
         }
         let _ = window.show();
@@ -476,6 +479,26 @@ impl slint::winit_030::CustomApplicationHandler for DiscardTrayWindow {
         // The native window is gone: nothing is left to handle the event.
         EventResult::PreventDefault
     }
+}
+
+/// The title Slint gives a root that sets none: the program's name, read the way
+/// i-slint-core's `application_name` reads it (argument zero's file name,
+/// falling back to the executable's), which is not public API.
+#[cfg(target_os = "linux")]
+fn default_window_title() -> &'static str {
+    static NAME: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
+        let name = |p: &std::path::Path| {
+            p.file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .filter(|n| !n.is_empty())
+        };
+        std::env::args_os()
+            .next()
+            .and_then(|a| name(std::path::Path::new(&a)))
+            .or_else(|| std::env::current_exe().ok().as_deref().and_then(name))
+            .unwrap_or_default()
+    });
+    &NAME
 }
 
 /// A window whose size settings.ini remembers (`MainWindowSize`,
