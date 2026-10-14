@@ -5,9 +5,10 @@
 .DESCRIPTION
     Supplies the machine-derived half of the configure line the same way
     02-build.ps1 does for llama.cpp: ROCm's clang as the CXX compiler, the
-    process-scoped HIP compile vars from common.ps1, and the patched
-    __clang_hip_runtime_wrapper.h for the dist's clang resource major (without
-    it MSVC's <cmath> clashes with the HIP device math declarations). Needs
+    process-scoped HIP compile vars from common.ps1, and, below clang 24, the
+    patched __clang_hip_runtime_wrapper.h for the dist's clang resource major
+    (without it MSVC's <cmath> clashes with the HIP device math declarations).
+    Writes compile_commands.json for VS Code's IntelliSense. Needs
     build\windows\config-build.psd1, i.e. 01-configure.ps1 run once.
 
 .PARAMETER NoHip
@@ -28,6 +29,7 @@ Enable-VsDevShell
 
 $buildDir = Join-Path $buildRoot 'pcie-bench'
 $cmakeArgs = @('-G', 'Ninja', '-S', $PSScriptRoot, '-B', $buildDir, '-DCMAKE_BUILD_TYPE=Release',
+               '-DCMAKE_EXPORT_COMPILE_COMMANDS=ON',
                "-DPCIE_BENCH_HIP=$(if ($NoHip) { 'OFF' } else { 'ON' })",
                "-DPCIE_BENCH_CUDA=$(if ($NoCuda) { 'OFF' } else { 'ON' })")
 
@@ -44,12 +46,29 @@ if (-not $NoHip) {
         if ($clangMajor) { break }
     }
     $wrapper = Join-Path $repo "patches\hip\$clangMajor\__clang_hip_runtime_wrapper.h"
-    if (-not (Test-Path $wrapper)) {
+    $cmakeArgs += "-DCMAKE_CXX_COMPILER=$($clang -replace '\\', '/')"
+    if (Test-Path $wrapper) {
+        $wrapper = $wrapper -replace '\\', '/'
+        $cmakeArgs += "-DCMAKE_CXX_FLAGS=-w -D__CLANG_HIP_RUNTIME_WRAPPER_H__ -include `"$wrapper`""
+    } elseif ($clangMajor -ge 24) {
+        # Fixed upstream from clang 24 on, as in 02-build.ps1: the stock
+        # wrapper is used. Still passed so a cache built with the patch drops it.
+        $cmakeArgs += "-DCMAKE_CXX_FLAGS=-w"
+    } else {
         throw "no patched HIP runtime wrapper for clang $clangMajor (expected $wrapper): see patches\hip\README.md"
     }
-    $wrapper = $wrapper -replace '\\', '/'
-    $cmakeArgs += "-DCMAKE_CXX_COMPILER=$($clang -replace '\\', '/')"
-    $cmakeArgs += "-DCMAKE_CXX_FLAGS=-w -D__CLANG_HIP_RUNTIME_WRAPPER_H__ -include `"$wrapper`""
+}
+
+if (-not $NoCuda) {
+    # The newest toolkit of the dist layout, as in 02-build.ps1. A toolkit
+    # change on an existing build dir needs that script's cache reset; here
+    # deleting build\windows\pcie-bench is cheaper.
+    $cudaToolkit = (Find-Dist 'Cuda' $sources $distRoot).Dir
+    if (-not $cudaToolkit) {
+        throw "no CUDA toolkit under $(Get-DistHome 'Cuda' $sources $distRoot) (00-install-prerequisites.ps1 installs it; -NoCuda skips it)"
+    }
+    $env:CUDA_PATH = $cudaToolkit
+    $cmakeArgs += "-DCMAKE_CUDA_COMPILER:FILEPATH=$((Join-Path $cudaToolkit 'bin\nvcc.exe') -replace '\\', '/')"
 }
 
 cmake @cmakeArgs
