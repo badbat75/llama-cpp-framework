@@ -82,11 +82,18 @@ pub struct Preset {
     /// (offloaded). Note WHICH GPU is not this flag's business: since v0.4.1
     /// (#28390) the encoder follows the FIRST device of `device` (`--device`), and
     /// with no device pinned it grabs the first GPU backend it finds, as it always
-    /// did up to v0.4.0; server.ini `MmprojDevice` (`-mmdev`, ridden as the env
-    /// `MTMD_BACKEND_DEVICE`) overrides both. Turn this off to keep the encoder on
+    /// did up to v0.4.0; `mmproj_device` below overrides both. Turn this off to keep the encoder on
     /// CPU entirely: it only runs on image requests, so a text-mostly workload
     /// pays nothing but the VRAM it was holding.
     pub mmproj_offload: Option<bool>,
+    /// The GPU the image encoder runs on (-mmdev / --mmproj-device; `none` keeps
+    /// it on CPU). Empty = omit the key, llama.cpp's default: the FIRST entry of
+    /// `device`, and with no device pinned the first GPU backend it finds, where
+    /// the encoder holds VRAM for the model's whole lifetime while computing only
+    /// on image requests. Before framework 2.0.0 this was server.ini
+    /// `MmprojDevice`, exported as the env `MTMD_BACKEND_DEVICE` (the flag's env
+    /// name); a key here reaches the child as a flag, which wins over that env.
+    pub mmproj_device: String,
     /// Minimum / maximum tokens a single image may take on vision models with
     /// DYNAMIC resolution (--image-min-tokens / --image-max-tokens). `None` = omit
     /// the flag → llama.cpp reads the bound from the model's metadata (its own -1
@@ -163,11 +170,10 @@ pub struct Preset {
     pub n_gpu_layers_draft: Option<i32>,
     pub device_draft: String,
     /// The GPUs THIS model runs on (--device): one id ("ROCm1") or a comma-
-    /// separated list in split order ("ROCm1,CUDA0"). Per-preset override of
-    /// server.ini Device, but a server-wide Device WINS over it at launch, since
-    /// llama-server's router passes its own CLI args on top of every preset.
-    /// Empty = inherit the server default. Written by the GPU distribution table
-    /// (src/gpu_split.rs), never typed by hand.
+    /// separated list in split order ("ROCm1,CUDA0"). Per preset only: set on
+    /// the router's command line it would override every preset's. Empty = every
+    /// detected device. Written by the GPU distribution table (src/gpu_split.rs),
+    /// never typed by hand.
     pub device: String,
     /// Multi-GPU split for THIS model. `split_mode` (--split-mode):
     /// none|layer|tensor|row. `none` keeps ONLY the first `device` entry
@@ -177,13 +183,12 @@ pub struct Preset {
     /// llama.cpp implements it for, and skips `--fit`; see gpu_split.rs); `row`
     /// (deprecated upstream, superseded by `tensor`) splits the weight matrices
     /// row-wise by the vector (backend split buffer type, CUDA/ROCm only; Vulkan
-    /// falls back to the layer cut). A server-wide SplitMode OVERRIDES this key
-    /// at launch (the router's CLI wins the merge), `layer` spelled out included.
+    /// falls back to the layer cut).
     /// `tensor_split` (--tensor-split): per-GPU weight proportions like "3,1",
     /// positional over the `device` list ABOVE, in that order. Empty tensor_split
     /// with 2+ devices = llama.cpp splits by free VRAM at load (NOT evenly),
     /// except under `tensor`, where empty IS an even cut.
-    /// Empty = inherit the server.ini default. Identical on CUDA and HIP.
+    /// Empty = layer. Identical on CUDA and HIP. All three are per preset only.
     pub split_mode: String,
     pub tensor_split: String,
     /// Per-tensor placement (--override-tensor): `<regex>=<buffer type>` rules,
@@ -218,6 +223,13 @@ pub struct Preset {
     pub flash_attn: Option<bool>,
     /// KV-cache RAM budget in MiB (--cache-ram): `-1` = no limit, `0` disables.
     pub cache_ram: Option<i32>,
+    /// Minimum chunk, in tokens, that a new prompt may reuse from the cached one
+    /// by shifting the KV cache (--cache-reuse); `None` = omit the key,
+    /// llama.cpp's default 0 (off). Per model because llama.cpp turns it off on
+    /// its own where it cannot work: a model loaded with an mmproj ("not
+    /// supported by multimodal") and a context whose memory cannot shift
+    /// (`llama_memory_can_shift`), both logged once at load.
+    pub cache_reuse: Option<i32>,
     pub jinja: Option<bool>,
     pub reasoning: String,
     pub reasoning_format: String,
@@ -357,6 +369,44 @@ pub struct Preset {
     /// single-token step never does. With every weight in VRAM there is nothing
     /// to copy and the key is a no-op.
     pub op_offload: Option<bool>,
+    /// On-demand reading of the tensors the ARCH marks for it (--lazy-mode,
+    /// `-lzm`: `on|auto|off`). Empty = omit the key, llama.cpp's default `auto`.
+    /// A lazy tensor stays memory-mapped from the GGUF and only the rows a token
+    /// looks up are paged in, instead of the whole table becoming resident. Today
+    /// the marked tensors are per-layer token-embedding tables
+    /// (`TENSOR_READ_LAZY` in `src/models/`: gemma4's `per_layer_token_embd`,
+    /// qwen4exp's n-gram table, the 28.8 GB second shard of
+    /// Qwen3.8-Flash-Next-GSQ-RCO), so on any other model every value is a no-op.
+    ///
+    /// `auto` is lazy only for a marked tensor LARGER than 4 GiB, and it falls
+    /// back to `off` when any of the model's devices lacks mmap support
+    /// (`llama-model.cpp`: a CUDA or Vulkan iGPU, OpenCL), which is where `on`
+    /// makes the difference, together with a quant whose table is under 4 GiB.
+    /// `off` keeps the table resident (no paging cost, all of its RAM). Lazy
+    /// reading maps the file whatever `load_mode` says, and `mlock` skips the lazy
+    /// ranges (locking them would fault the whole table in), so the load mode
+    /// does not have to be `mmap`. Keep the GGUF on an SSD: every
+    /// decode step reads one row per token from it.
+    pub lazy_mode: String,
+    /// How the weights are brought in (-lm / --load-mode): one of
+    /// `server_cfg::LOAD_MODES`. Empty = omit the key, llama.cpp's default
+    /// `auto` (mmap unless a device can't). ONE enum, not two flags: `mlock`
+    /// alone is mlock WITHOUT mmap (`use_mmap` is true only for `mmap`,
+    /// `mmap+mlock` and `auto`, `llama-model-loader.cpp`), and the old `--mlock`
+    /// / `--no-mmap` flags are gone upstream since v0.4.1. Before framework 2.0.0
+    /// this was server.ini `LoadMode`, always on the router's command line and
+    /// so overriding every preset.
+    pub load_mode: String,
+    /// Let llama.cpp auto-shrink the arguments left unset to fit device memory
+    /// (`fit = on|off`, the `-fit` flag). ALWAYS written, as `off` unless turned
+    /// on, because llama.cpp's own default is ON and a "default" n-gpu-layers
+    /// here means "offload every layer", which the fit would silently cut. A key
+    /// missing on read is therefore `false`. The child applies it when it loads
+    /// the model (`params_base.fit_params`, `server-context.cpp`).
+    ///
+    /// The form allows it only with `ctx_size` and `n_gpu_layers` unset
+    /// (`form::fit_allowed`): those are what it sizes.
+    pub fit: bool,
     pub temp: Option<f64>,
     /// Integer sampler (--top-k): backed by an int SpinBox, not the float editor
     /// the other samplers use: a decimal field would let `40,5` slip the int parse.
@@ -399,6 +449,16 @@ pub struct Preset {
     /// drafter already samples on the backend whatever this key says.
     pub backend_sampling: Option<bool>,
     pub chat_template_kwargs: String,
+    /// Continue a TRAILING assistant message instead of answering it
+    /// (`prefill-assistant`, --prefill-assistant / --no-prefill-assistant).
+    /// `None` = omit the key, llama.cpp's default (on): when a request's last
+    /// message is an assistant message, it is the START of the reply and the model
+    /// continues it. `Some(false)` is the one value written: the preset reader
+    /// turns `prefill-assistant = false` into `--no-prefill-assistant`
+    /// (`common_preset::to_args` takes a bool arg's negated form). Turn it off
+    /// when a client legitimately ends on an assistant turn and the model resumes
+    /// mid-sentence rather than replying.
+    pub prefill_assistant: Option<bool>,
 }
 
 /// A new preset (`new_default`) leaves EVERY tunable unset, so the model runs on
@@ -417,6 +477,10 @@ pub struct Preset {
 /// written, and each is set to exactly what llama.cpp would have done anyway
 /// (`use_jinja = true` for the server, mmproj offloaded, both reasoning knobs on
 /// `auto`), which keeps writing them a no-op.
+///
+/// `fit` is the exception that is NOT llama.cpp's own value: it is always
+/// written as `off` (see the field), because llama.cpp's default `on` would cut
+/// the "every layer" that an omitted n-gpu-layers stands for.
 impl Default for Preset {
     fn default() -> Self {
         Self {
@@ -424,6 +488,7 @@ impl Default for Preset {
             model: String::new(),
             mmproj: String::new(),
             mmproj_offload: Some(true),
+            mmproj_device: String::new(),
             image_min_tokens: None,
             image_max_tokens: None,
             model_draft: String::new(),
@@ -447,6 +512,7 @@ impl Default for Preset {
             cache_type_v: String::new(),
             flash_attn: None,
             cache_ram: None,
+            cache_reuse: None,
             jinja: Some(true),
             reasoning: "auto".into(),
             reasoning_format: "auto".into(),
@@ -458,6 +524,9 @@ impl Default for Preset {
             n_cpu_moe: None,
             n_cpu_ffn: None,
             op_offload: None,
+            lazy_mode: String::new(),
+            load_mode: String::new(),
+            fit: false,
             temp: None,
             top_k: None,
             top_p: None,
@@ -466,6 +535,7 @@ impl Default for Preset {
             presence_penalty: None,
             backend_sampling: None,
             chat_template_kwargs: String::new(),
+            prefill_assistant: None,
         }
     }
 }
@@ -489,6 +559,7 @@ impl Preset {
             model: get("model"),
             mmproj: get("mmproj"),
             mmproj_offload: getb("mmproj-offload"),
+            mmproj_device: get("mmproj-device"),
             image_min_tokens: k.get("image-min-tokens").and_then(|v| ini::parse_int(v)),
             image_max_tokens: k.get("image-max-tokens").and_then(|v| ini::parse_int(v)),
             model_draft: get("model-draft"),
@@ -512,6 +583,7 @@ impl Preset {
             cache_type_v: get("cache-type-v"),
             flash_attn: getb("flash-attn"),
             cache_ram: k.get("cache-ram").and_then(|v| ini::parse_int(v)),
+            cache_reuse: k.get("cache-reuse").and_then(|v| ini::parse_int(v)),
             jinja: getb("jinja"),
             reasoning: get("reasoning"),
             reasoning_format: get("reasoning-format"),
@@ -523,6 +595,17 @@ impl Preset {
             n_cpu_moe: k.get("n-cpu-moe").and_then(|v| ini::parse_int(v)),
             n_cpu_ffn: k.get("n-cpu-ffn").and_then(|v| ini::parse_int(v)),
             op_offload: getb("op-offload"),
+            lazy_mode: get("lazy-mode"),
+            // Canonicalized like the server field it replaced: a hand-written
+            // `MMAP+MLOCK` shows as the dropdown's entry instead of "default".
+            load_mode: server_cfg::normalize_load_mode(&get("load-mode"))
+                .map(str::to_string)
+                .unwrap_or_default(),
+            // `on`/`off` is llama.cpp's spelling; `true`/`false` are read too.
+            fit: matches!(
+                k.get("fit").map(|v| v.trim().to_ascii_lowercase()).as_deref(),
+                Some("on" | "true")
+            ),
             temp: k.get("temp").and_then(|v| ini::parse_float(v)),
             top_k: k.get("top-k").and_then(|v| ini::parse_int(v)),
             top_p: k.get("top-p").and_then(|v| ini::parse_float(v)),
@@ -531,6 +614,7 @@ impl Preset {
             presence_penalty: k.get("presence-penalty").and_then(|v| ini::parse_float(v)),
             backend_sampling: getb("backend-sampling"),
             chat_template_kwargs: get("chat-template-kwargs"),
+            prefill_assistant: getb("prefill-assistant"),
         }
     }
 }
@@ -932,9 +1016,10 @@ pub fn render_section(p: &Preset) -> String {
         "; mmproj-offload = false keeps the image encoder on CPU. It is NOT placed by\r\n",
     );
     out.push_str("; this key: since v0.4.1 the encoder follows the FIRST entry of `device`, and\r\n");
-    out.push_str("; with no device pinned it takes the first GPU backend found; server.ini\r\n");
-    out.push_str("; MmprojDevice (env MTMD_BACKEND_DEVICE) overrides both.\r\n");
+    out.push_str("; with no device pinned it takes the first GPU backend found; mmproj-device\r\n");
+    out.push_str("; names the one it runs on (e.g. ROCm1, or none for CPU) and overrides both.\r\n");
     emit_bool(&mut out, "mmproj-offload", p.mmproj_offload);
+    emit_str(&mut out, "mmproj-device", &p.mmproj_device);
     out.push_str("; image-min-tokens / image-max-tokens bound the tokens ONE image takes on\r\n");
     out.push_str("; DYNAMIC-resolution vision models (Qwen-VL wants >= 1024 for grounding\r\n");
     out.push_str("; accuracy). Omit = read the bound from the model; needs an mmproj.\r\n");
@@ -978,17 +1063,12 @@ pub fn render_section(p: &Preset) -> String {
     out.push_str("\r\n; Resource / context\r\n");
     emit_i32(&mut out, "ctx-size", p.ctx_size);
     emit_i32(&mut out, "n-gpu-layers", p.n_gpu_layers);
-    out.push_str("; GPU distribution for this model (overrides server.ini, but a server-wide\r\n");
-    out.push_str("; Device wins at launch; same on CUDA and HIP). device = the GPUs it runs\r\n");
-    out.push_str("; on, e.g. ROCm1 or ROCm1,CUDA0. tensor-split = how much each one holds,\r\n");
+    out.push_str("; GPU distribution for this model (same on CUDA and HIP). device = the\r\n");
+    out.push_str("; GPUs it runs on, e.g. ROCm1 or ROCm1,CUDA0; blank = every detected one.\r\n");
+    out.push_str("; tensor-split = how much each one holds,\r\n");
     out.push_str("; e.g. 3,1 (positional over `device`, IN THAT ORDER). Blank tensor-split\r\n");
     out.push_str("; with 2+ devices = llama.cpp splits by free VRAM (not evenly).\r\n");
-    out.push_str(
-        "; split-mode = none|layer|row. Blank = layer, or the server-wide mode, which\r\n",
-    );
-    out.push_str(
-        "; also OVERRIDES this key whenever it is set (the router's CLI wins the merge).\r\n",
-    );
+    out.push_str("; split-mode = none|layer|tensor|row. Blank = layer.\r\n");
     out.push_str("; none = only the first device runs (tensor-split is ignored); row = weight\r\n");
     out.push_str("; matrices split row-wise by the vector (CUDA/ROCm only).\r\n");
     emit_str(&mut out, "device", &p.device);
@@ -1027,9 +1107,18 @@ pub fn render_section(p: &Preset) -> String {
 
     out.push_str("\r\n; Prompt cache RAM limit in MiB (--cache-ram)\r\n");
     emit_i32(&mut out, "cache-ram", p.cache_ram);
+    out.push_str("; cache-reuse = minimum chunk (tokens) a new prompt may reuse from the cached\r\n");
+    out.push_str("; one by shifting the KV cache. Omit the key = llama.cpp's default 0 (off).\r\n");
+    out.push_str("; llama.cpp turns it off on a model with an mmproj, and on one whose cache\r\n");
+    out.push_str("; cannot shift, saying so once in the log.\r\n");
+    emit_i32(&mut out, "cache-reuse", p.cache_reuse);
 
     out.push_str("\r\n; Chat template\r\n");
     emit_bool(&mut out, "jinja", p.jinja);
+    out.push_str("; prefill-assistant = false answers a request whose LAST message is an\r\n");
+    out.push_str("; assistant message as a finished turn. Omit the key = llama.cpp's default:\r\n");
+    out.push_str("; that message is the start of the reply and the model continues it.\r\n");
+    emit_bool(&mut out, "prefill-assistant", p.prefill_assistant);
 
     out.push_str("\r\n; Reasoning / thinking\r\n");
     emit_str(&mut out, "reasoning", &p.reasoning);
@@ -1093,6 +1182,20 @@ pub fn render_section(p: &Preset) -> String {
     out.push_str("; Gen4 x4 link. Decode is unchanged, and it is a no-op when every weight is in\r\n");
     out.push_str("; VRAM.\r\n");
     emit_bool(&mut out, "op-offload", p.op_offload);
+    out.push_str("; lazy-mode = on|auto|off reads the tensors the architecture marks for it\r\n");
+    out.push_str("; (per-layer token-embedding tables: gemma4, qwen4exp) from disk on demand\r\n");
+    out.push_str("; instead of keeping them resident. Omit the key = auto: lazy only for a\r\n");
+    out.push_str("; table over 4 GiB, and off when a device lacks mmap support (an iGPU).\r\n");
+    out.push_str("; A no-op on every other model.\r\n");
+    emit_str(&mut out, "lazy-mode", &p.lazy_mode);
+    out.push_str("; load-mode = how the weights are brought in (-lm): auto|none|mmap|mlock|\r\n");
+    out.push_str("; mmap+mlock|dio. ONE enum: mlock alone is mlock WITHOUT mmap. Omit the key =\r\n");
+    out.push_str("; auto (llama.cpp's default: mmap unless a device can't).\r\n");
+    emit_str(&mut out, "load-mode", &p.load_mode);
+    out.push_str("; fit = on lets llama.cpp shrink the arguments left unset (layers, context)\r\n");
+    out.push_str("; to fit device memory. Always written: llama.cpp's own default is on, and\r\n");
+    out.push_str("; an omitted n-gpu-layers here means every layer, which the fit would cut.\r\n");
+    out.push_str(&format!("fit = {}\r\n", if p.fit { "on" } else { "off" }));
 
     out.push_str("\r\n; Sampling overrides\r\n");
     emit_f64(&mut out, "temp", p.temp);
@@ -1445,6 +1548,7 @@ mod tests {
             model: r"E:\m\model.gguf".into(),
             mmproj: r"E:\mmprojs\clip.gguf".into(),
             mmproj_offload: Some(false),
+            mmproj_device: "ROCm1".into(),
             image_min_tokens: Some(1024),
             image_max_tokens: Some(2048),
             model_draft: r"E:\dflashs\model-dflash.gguf".into(),
@@ -1475,6 +1579,7 @@ mod tests {
             cache_type_v: "q8_0".into(),
             flash_attn: Some(false),
             cache_ram: Some(4096),
+            cache_reuse: Some(256),
             jinja: Some(false),
             reasoning: "on".into(),
             reasoning_format: "deepseek".into(),
@@ -1494,6 +1599,11 @@ mod tests {
             // Some(false): the one value that changes the launch
             // (--no-op-offload), so the one that must not collapse into "absent".
             op_offload: Some(false),
+            // `on`, not `auto`: the value that differs from the default.
+            lazy_mode: "on".into(),
+            load_mode: "mmap+mlock".into(),
+            // true: the value that differs from the always-written default.
+            fit: true,
             temp: Some(0.7),
             top_k: Some(40),
             top_p: Some(0.95),
@@ -1505,6 +1615,8 @@ mod tests {
             // launch identically today (the flag has no negated form).
             backend_sampling: Some(false),
             chat_template_kwargs: r#"{"enable_thinking":true}"#.into(),
+            // Some(false): the one value that changes the launch.
+            prefill_assistant: Some(false),
         };
 
         let dir = tempfile::tempdir().unwrap();
@@ -1544,6 +1656,44 @@ mod tests {
         assert!(!value_lines
             .iter()
             .any(|l| l.starts_with("override-tensor =")));
+    }
+
+    // `fit` is always written because llama.cpp's own default is ON: a preset
+    // without the key would launch with the fit cutting a "default" (all
+    // layers) n-gpu-layers. So a missing key reads as off, and off is written
+    // out. `prefill-assistant` is the opposite: omitted at llama.cpp's default,
+    // written only as `false`, which the preset reader turns into
+    // --no-prefill-assistant.
+    #[test]
+    fn fit_is_always_written_and_prefill_assistant_only_when_off() {
+        let p = Preset {
+            id: "f".into(),
+            model: r"E:\m\model.gguf".into(),
+            ..Default::default()
+        };
+        let ini = render_section(&p);
+        assert!(ini.contains("\r\nfit = off\r\n"), "{ini}");
+        assert!(!ini.lines().any(|l| l.starts_with("prefill-assistant =")));
+
+        let on = Preset {
+            fit: true,
+            prefill_assistant: Some(false),
+            ..p
+        };
+        let ini = render_section(&on);
+        assert!(ini.contains("\r\nfit = on\r\n"));
+        assert!(ini.contains("\r\nprefill-assistant = false\r\n"));
+
+        let read = |v: Option<&str>| {
+            let mut k = std::collections::BTreeMap::new();
+            if let Some(v) = v {
+                k.insert("fit".to_string(), v.to_string());
+            }
+            Preset::from_keys("f", &k).fit
+        };
+        assert!(!read(None), "a missing key is the framework default, off");
+        assert!(read(Some("on")) && read(Some("true")) && read(Some("ON")));
+        assert!(!read(Some("off")) && !read(Some("false")));
     }
 
     // Same reason as the test above, for the output-budget trio: these are

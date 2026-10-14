@@ -186,10 +186,7 @@ fn run(plan: &Plan, cancel: &Arc<AtomicBool>, emit: &impl Fn(Event)) -> Result<P
     let devs = crate::devices::probed();
     let resolved: Vec<(String, Vec<(String, String)>)> = chosen
         .iter()
-        .map(|p| {
-            let eff = super::effective(p, &cfg);
-            (p.id.clone(), super::device_names(&eff.device, &devs))
-        })
+        .map(|p| (p.id.clone(), super::device_names(p.device.trim(), &devs)))
         .collect();
     let mut warnings = Vec::new();
     if let Some(w) = super::unknown_device_warning(&resolved) {

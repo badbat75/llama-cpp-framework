@@ -10,7 +10,7 @@ use std::ops::RangeInclusive;
 use slint::SharedString;
 
 use crate::gui::PresetForm;
-use crate::{ini, presets};
+use crate::{ini, presets, server_cfg};
 
 /// The preset's string value, or the schema default when it's empty, so the
 /// form's text defaults track `Preset::default()` instead of being re-hardcoded.
@@ -114,6 +114,7 @@ const HINT_PARALLEL: i32 = 4;
 const HINT_BATCH_SIZE: i32 = 2048;
 const HINT_UBATCH_SIZE: i32 = 512;
 const HINT_CACHE_RAM: i32 = 8192;
+const HINT_CACHE_REUSE: i32 = 256;
 const HINT_TOP_K: i32 = 40;
 const HINT_SPEC_DRAFT_N_MAX: i32 = 3;
 // --image-min/max-tokens have no fixed llama.cpp numeric default (their -1 = read
@@ -129,6 +130,15 @@ const HINT_IMAGE_MAX_TOKENS: i32 = 2048;
 const HINT_REASONING_BUDGET: i32 = -1;
 const HINT_N_PREDICT: i32 = -1;
 
+/// Whether `fit` may be on: only with the context and the GPU layers both left
+/// at default, the two things the fit sizes. Set by hand, either one leaves the
+/// fit nothing to decide there (it keeps a user's context, and gives up on the
+/// layer placement altogether, `common/fit.cpp`), so the key is written `off`.
+/// `AppState.fit_allowed` is the same rule for the checkbox.
+pub fn fit_allowed(ctx_size_default: bool, n_gpu_layers_default: bool) -> bool {
+    ctx_size_default && n_gpu_layers_default
+}
+
 pub fn preset_to_form(p: &presets::Preset) -> PresetForm {
     // String/bool domain defaults are pulled from `Preset::default()` so the form
     // and the INI can't drift apart. The literals that remain are UI-only choices
@@ -141,6 +151,7 @@ pub fn preset_to_form(p: &presets::Preset) -> PresetForm {
         model: p.model.clone().into(),
         mmproj: p.mmproj.clone().into(),
         mmproj_offload: p.mmproj_offload.or(d.mmproj_offload).unwrap_or_default(),
+        mmproj_device: p.mmproj_device.clone().into(),
         image_min_tokens: itxt(p.image_min_tokens, HINT_IMAGE_MIN_TOKENS),
         image_min_tokens_default: p.image_min_tokens.is_none(),
         image_max_tokens: itxt(p.image_max_tokens, HINT_IMAGE_MAX_TOKENS),
@@ -190,6 +201,8 @@ pub fn preset_to_form(p: &presets::Preset) -> PresetForm {
         flash_attn: tri_state(p.flash_attn),
         cache_ram: itxt(p.cache_ram, HINT_CACHE_RAM),
         cache_ram_default: p.cache_ram.is_none(),
+        cache_reuse: itxt(p.cache_reuse, HINT_CACHE_REUSE),
+        cache_reuse_default: p.cache_reuse.is_none(),
         jinja: p.jinja.or(d.jinja).unwrap_or_default(),
         reasoning: str_or(&p.reasoning, &d.reasoning),
         reasoning_format: str_or(&p.reasoning_format, &d.reasoning_format),
@@ -214,6 +227,14 @@ pub fn preset_to_form(p: &presets::Preset) -> PresetForm {
         // Tri-state like reasoning_preserve: None is "omit the flag" (on), a
         // value of its own, so no fallback to `d`.
         op_offload: tri_state(p.op_offload),
+        // Empty IS the "omit the flag" state (auto), shown as "default" like
+        // reasoning-effort.
+        lazy_mode: enum_or_default(&p.lazy_mode),
+        // Empty IS llama.cpp's auto, shown as "default"; an explicit `auto`
+        // keeps its own entry (Options.load_modes lists both).
+        load_mode: enum_or_default(&p.load_mode),
+        fit: fit_allowed(p.ctx_size.is_none(), p.n_gpu_layers.is_none()) && p.fit,
+        prefill_assistant: p.prefill_assistant.unwrap_or(true),
         temp: txt(p.temp),
         temp_default: p.temp.is_none(),
         top_k: itxt(p.top_k, HINT_TOP_K),
@@ -239,6 +260,7 @@ pub fn form_to_preset(f: &PresetForm) -> presets::Preset {
         model: f.model.to_string(),
         mmproj: f.mmproj.to_string(),
         mmproj_offload: Some(f.mmproj_offload),
+        mmproj_device: f.mmproj_device.trim().to_string(),
         // Vision-token bounds: positive only (llama.cpp's -1 = "read from model" is
         // exactly our omit-the-flag/None), so `> 0` collapses 0 or a stray sign to
         // unset, same rule as ctx-size above.
@@ -326,6 +348,11 @@ pub fn form_to_preset(f: &PresetForm) -> presets::Preset {
         } else {
             ini::parse_int_in(f.cache_ram.as_str(), &ini::INT_ANY)
         },
+        cache_reuse: if f.cache_reuse_default {
+            None
+        } else {
+            ini::parse_int_in(f.cache_reuse.as_str(), &ini::INT_POSITIVE)
+        },
         jinja: Some(f.jinja),
         reasoning: f.reasoning.to_string(),
         reasoning_format: f.reasoning_format.to_string(),
@@ -360,6 +387,16 @@ pub fn form_to_preset(f: &PresetForm) -> presets::Preset {
         // write `op-offload = false` into every preset left on default, and
         // unlike backend-sampling's, that `false` is a real flag.
         op_offload: tri_bool(f.op_offload.as_str()),
+        lazy_mode: enum_or_empty(f.lazy_mode.as_str()),
+        // Canonicalized, never trusted: a value llama.cpp rejects would stop
+        // the model from loading.
+        load_mode: server_cfg::normalize_load_mode(f.load_mode.as_str())
+            .map(str::to_string)
+            .unwrap_or_default(),
+        fit: fit_allowed(f.ctx_size_default, f.n_gpu_layers_auto) && f.fit,
+        // Checked = llama.cpp's own default, so the key is omitted; only the
+        // unchecked box is written.
+        prefill_assistant: (!f.prefill_assistant).then_some(false),
         temp: if f.temp_default {
             None
         } else {
@@ -406,7 +443,7 @@ pub fn form_to_preset(f: &PresetForm) -> presets::Preset {
 /// the two together, and `every_integer_field_is_checked` holds this list to the
 /// `PresetForm` struct in ui/types.slint, so a new integer field that skips it
 /// fails a test instead of saving a mistyped number as an absent key.
-fn int_fields(f: &PresetForm) -> [(&'static str, bool, &str, RangeInclusive<i32>); 11] {
+fn int_fields(f: &PresetForm) -> [(&'static str, bool, &str, RangeInclusive<i32>); 12] {
     [
         (
             "image-min-tokens",
@@ -455,6 +492,12 @@ fn int_fields(f: &PresetForm) -> [(&'static str, bool, &str, RangeInclusive<i32>
             f.cache_ram_default,
             f.cache_ram.as_str(),
             ini::INT_ANY,
+        ),
+        (
+            "cache-reuse",
+            f.cache_reuse_default,
+            f.cache_reuse.as_str(),
+            ini::INT_POSITIVE,
         ),
         (
             "reasoning-budget",
@@ -584,6 +627,28 @@ mod tests {
         assert_eq!(round_trip(&p), p);
     }
 
+    // Fit sizes the context and the GPU layers, so it is allowed only with both
+    // unset; with either one set by hand the form drops it, on load and on save.
+    #[test]
+    fn fit_needs_context_and_gpu_layers_at_default() {
+        let base = Preset {
+            id: "f".into(),
+            fit: true,
+            ..Default::default()
+        };
+        assert!(round_trip(&base).fit);
+        let ctx = Preset {
+            ctx_size: Some(32768),
+            ..base.clone()
+        };
+        assert!(!round_trip(&ctx).fit);
+        let ngl = Preset {
+            n_gpu_layers: Some(40),
+            ..base
+        };
+        assert!(!round_trip(&ngl).fit);
+    }
+
     /// Put `text` in every integer field and untick every "default" box.
     fn set_all_int_texts(f: &mut PresetForm, text: &str) {
         for (field, default) in [
@@ -595,6 +660,7 @@ mod tests {
             (&mut f.batch_size, &mut f.batch_size_default),
             (&mut f.ubatch_size, &mut f.ubatch_size_default),
             (&mut f.cache_ram, &mut f.cache_ram_default),
+            (&mut f.cache_reuse, &mut f.cache_reuse_default),
             (&mut f.reasoning_budget, &mut f.reasoning_budget_default),
             (&mut f.n_predict, &mut f.n_predict_default),
             (&mut f.top_k, &mut f.top_k_default),
@@ -753,6 +819,7 @@ mod tests {
             model: r"E:\m\model.gguf".into(),
             mmproj: r"E:\mmprojs\clip.gguf".into(),
             mmproj_offload: Some(false),
+            mmproj_device: "CUDA0".into(),
             image_min_tokens: Some(1024),
             image_max_tokens: Some(2048),
             model_draft: r"E:\mtps\model-mtp.gguf".into(),
@@ -777,6 +844,7 @@ mod tests {
             cache_type_v: "q8_0".into(),
             flash_attn: Some(false),
             cache_ram: Some(4096),
+            cache_reuse: Some(256),
             jinja: Some(false),
             reasoning: "on".into(),
             reasoning_format: "deepseek".into(),
@@ -788,6 +856,11 @@ mod tests {
             n_cpu_moe: Some(12),
             n_cpu_ffn: Some(4),
             op_offload: Some(false),
+            lazy_mode: "off".into(),
+            load_mode: "none".into(),
+            // false: this preset sets ctx-size and n-gpu-layers, which rule the fit out
+            // (fit_needs_context_and_gpu_layers_at_default covers true).
+            fit: false,
             temp: Some(0.7),
             top_k: Some(40),
             top_p: Some(0.95),
@@ -796,6 +869,7 @@ mod tests {
             presence_penalty: Some(0.5),
             backend_sampling: Some(true),
             chat_template_kwargs: r#"{"enable_thinking":true}"#.into(),
+            prefill_assistant: Some(false),
         };
         assert_eq!(round_trip(&p), p);
     }

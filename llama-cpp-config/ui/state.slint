@@ -76,38 +76,12 @@ export global AppState {
     in-out property <[BindRow]> bind_rows;
     callback bind_toggle(string);
 
-    // Server-wide GPU distribution table (GpuSplitTable). Rows come from the
-    // async `--list-devices` probe crossed with `server_form.device` /
-    // `.tensor_split`; Rust owns both the row model and the strings it renders
-    // back into (src/gpu_split.rs). The per-preset twin lives under "Models tab
-    // state" below; the raw device list stays Rust-only (`devices::probed()`).
-    in-out property <[GpuRow]> server_gpu_rows;
-    // The split-mode combo model, shared by BOTH tables (gpu_split::MODE_LABELS
-    // / MODE_VALUES, pushed once per row refresh); the index is per-scope and
-    // two-way: Rust recomputes it from the form value on every refresh, a pick
-    // reports back through *_split_mode_picked. The effective mode ("layer" /
-    // "none" / "tensor" / "row", gpu_split::effective_mode; the server-wide
-    // flag rides the router's CLI, so it shadows every preset's key) is what
-    // actually bends each table's columns.
+    // The split-mode combo model of the PRESET table (gpu_split::MODE_LABELS /
+    // MODE_VALUES, pushed once per row refresh); the index is two-way: Rust
+    // recomputes it from the form value on every refresh, a pick reports back
+    // through preset_split_mode_picked.
     in-out property <[string]> split_mode_labels;
     in-out property <[string]> split_mode_values;
-    in-out property <int> server_split_mode_index: 0;
-    in-out property <string> server_gpu_mode: "layer";
-    // How many devices are checked. Drives the split-mode combo (one device has
-    // nothing to split) and the weight column (so does zero).
-    in-out property <int> server_gpu_selected: 0;
-    // Sum of the checked devices' weights. 0 = Auto (blank --tensor-split →
-    // llama.cpp splits by free VRAM); any positive value means explicit weights,
-    // and is the denominator behind the table's Share column.
-    in-out property <int> server_gpu_total: 0;
-
-    // Server-wide tensor-placement table (TensorOverrideTable), the twin of the
-    // per-preset one below, over `server_form.override_tensor`.
-    in-out property <[TensorOverrideRow]> server_tensor_rows;
-    in-out property <string> server_tensor_summary;
-    in-out property <string> server_tensor_warning;
-    in-out property <[string]> server_tensor_dev_labels;
-    in-out property <[string]> server_tensor_dev_values;
 
     // Non-empty when an AMD GPU was detected but no ROCm device beside it, i.e.
     // llama.cpp is driving that card through Vulkan instead of HIP. It is the
@@ -117,14 +91,6 @@ export global AppState {
     // (devices::rocm_health) and refreshed with the device dropdowns.
     in-out property <string> rocm_warning: "";
 
-    // Vision-encoder (mmproj) device dropdown triple. Its own list because the
-    // encoder is placed separately: unset, llama.cpp follows the first entry of
-    // --device (v0.4.1) or grabs the first GPU backend it finds, and
-    // MTMD_BACKEND_DEVICE overrides both (see runstate::start).
-    in-out property <[string]> mmproj_dev_labels;
-    in-out property <[string]> mmproj_dev_values;
-    in-out property <int> mmproj_dev_index: 0;
-
     // ── Models tab state ─────────────────────────────────────────────
     in-out property <[PresetSummary]> presets;
     in-out property <int> selected_preset_index: -1;
@@ -132,6 +98,10 @@ export global AppState {
     // Baseline snapshot of the loaded preset (set by Rust whenever the form is
     // (re)loaded or saved). Struct inequality drives Save/Revert enabled.
     in-out property <PresetForm> form_base;
+    // The Fit checkbox is live only with Context and GPU layers both at
+    // default, the two things the fit sizes (form::fit_allowed, the same rule
+    // on save, which writes `fit = off` otherwise).
+    out property <bool> fit_allowed: form.ctx_size_default && form.n_gpu_layers_auto;
     out property <bool> preset_dirty: form != form_base;
     // Save gating shared by the Models tab's Save button and the Ctrl+S
     // shortcut (app.slint): single source so the two can't drift.
@@ -139,10 +109,9 @@ export global AppState {
     in-out property <string> presets_path: "";
     in-out property <string> presets_filter: "";
 
-    // Per-preset GPU distribution table, the twin of the server-wide one above,
-    // over `form.device` / `form.tensor_split`. Overridden at launch by a
-    // server-wide selection (llama-server's router copies its OWN CLI args over
-    // every preset key), which is what `gpu_override_warning` says out loud.
+    // Per-preset GPU distribution table, over `form.device` / `form.tensor_split`.
+    // The distribution is per preset only: server.ini has none, since the
+    // router's own CLI args would override every preset's.
     in-out property <[GpuRow]> preset_gpu_rows;
     in-out property <int> preset_split_mode_index: 0;
     in-out property <string> preset_gpu_mode: "layer";
@@ -151,42 +120,31 @@ export global AppState {
     // Positions this model's split is cut over: its block count plus one for the
     // output layer, minus whatever stays on the CPU (gpu_split::Layout). It is
     // what lets the table edit BLOCKS instead of ratios; 0 = no model read, so the
-    // table falls back to raw weights the way the server-wide one always does.
+    // table falls back to raw weights.
     in-out property <int> preset_split_positions: 0;
-    out property <string> gpu_override_warning: server_form.device != ""
-        ? "The Server tab pins GPUs (" + server_form.device + "). llama-server passes that on its own command line, which overrides every preset's selection; this table won't apply until the server-wide one is cleared."
-        // Same shadowing, split-mode edition: the server-wide mode rides the
-        // router's CLI too, so a differing preset pick is dead on arrival.
-        : (server_form.split_mode != "default" && server_form.split_mode != ""
-            && form.split_mode != "default" && form.split_mode != ""
-            && form.split_mode != server_form.split_mode)
-        ? "The Server tab sets GPU split mode '" + server_form.split_mode + "', which llama-server passes on its own command line; it overrides this preset's split mode."
-        : "";
     // The preconditions of split mode `tensor` this form can see, each a LOAD
-    // failure llama.cpp reports only in its log, checked against the EFFECTIVE
-    // mode (a server-wide `tensor` raises them on every preset): the arch must
-    // be one upstream's tensor parallelism implements
-    // (`model_info_tensor_arch_warning`, read from the GGUF by Rust), flash
-    // attention must not be `off` (`llama_init_from_model` returns null; `auto`
-    // is promoted to on), and, the one with no error message at all, with no
-    // device pinned in EITHER scope llama.cpp pools EVERY detected device into
-    // the meta device, the duplicate Vulkan views of a card and the iGPU
-    // included (`llama_prepare_model_devices` dedups by device id only in the
-    // other modes). Last, a split mixing CUDA and ROCm devices, which aborts at
-    // load under every AllReduce but `none` (server_cfg.rs `cuda_allreduce`).
-    // First wins: each one alone spoils the launch.
+    // failure llama.cpp reports only in its log: the arch must be one upstream's
+    // tensor parallelism implements (`model_info_tensor_arch_warning`, read from
+    // the GGUF by Rust), flash attention must not be `off`
+    // (`llama_init_from_model` returns null; `auto` is promoted to on), and, the
+    // one with no error message at all, with no device pinned llama.cpp pools
+    // EVERY detected device into the meta device, the duplicate Vulkan views of a
+    // card and the iGPU included (`llama_prepare_model_devices` dedups by device
+    // id only in the other modes). Last, a split mixing CUDA and ROCm devices,
+    // which aborts at load under every AllReduce but `none` (server_cfg.rs
+    // `cuda_allreduce`). First wins: each one alone spoils the launch.
     out property <string> preset_split_mode_warning: preset_gpu_mode != "tensor" ? ""
         : model_info_tensor_arch_warning != "" ? model_info_tensor_arch_warning
         : form.flash_attn == "off"
         ? "Split mode tensor requires flash attention: with Flash attention off, llama.cpp refuses to create the context and the model does not load. Set it to on or default."
-        : (form.device == "" && server_form.device == "")
-        ? "Split mode tensor with no GPU checked here or on the Server tab: llama.cpp then pools EVERY detected device into the split, duplicate Vulkan views of the same card and the iGPU included. Check the GPUs to run on."
+        : form.device == ""
+        ? "Split mode tensor with no GPU checked: llama.cpp then pools EVERY detected device into the split, duplicate Vulkan views of the same card and the iGPU included. Check the GPUs to run on."
         : (preset_mixes_cuda_rocm && server_form.cuda_allreduce != "none")
         ? "Split mode tensor across a CUDA and a ROCm device: the model aborts while loading unless Server tab > SDK Tuning > Tensor-split AllReduce is set to none. Even then, expect about half the prefill speed of the layer split."
         : "";
-    // Whether the EFFECTIVE device list (the Server tab's when set, else this
-    // preset's) names both a CUDA and a ROCm device: gpu_split::mixes_cuda_and_rocm,
-    // pushed by refresh_gpu_rows. Slint has no substring test to derive it here.
+    // Whether this preset's device list names both a CUDA and a ROCm device:
+    // gpu_split::mixes_cuda_and_rocm, pushed by refresh_gpu_rows. Slint has no
+    // substring test to derive it here.
     in-out property <bool> preset_mixes_cuda_rocm;
 
     // Per-preset tensor-placement table (TensorOverrideTable), over the single
@@ -197,14 +155,6 @@ export global AppState {
     // model), unlike the GPU table's unique device ids.
     in-out property <[TensorOverrideRow]> preset_tensor_rows;
     in-out property <string> preset_tensor_summary;
-    // The exact twin of `gpu_override_warning`: a server-wide value shadows this
-    // table. And it shadows it WHOLESALE; `-ot` is a vector inside llama.cpp, so
-    // "the two lists get concatenated" is the natural guess and it is wrong: the
-    // router merges its own CLI args into every preset as a key→value map, so the
-    // server's `--override-tensor` overwrites the preset's key and only one flag
-    // ever reaches the child. Verified against b9976; see server_cfg.rs.
-    out property <string> tensor_override_warning: server_form.override_tensor == "" ? ""
-        : "The Server tab sets a tensor placement (" + server_form.override_tensor + "). llama-server passes that on its own command line, which REPLACES every preset's rules; these ones won't apply at all until the server-wide table is cleared.";
     // Non-empty when the value is one llama.cpp would refuse (a rule with no
     // device). Only a hand-edited presets.ini reaches it (the table sanitizes
     // everything it writes), but that value would fail the model's LOAD, so it
@@ -232,6 +182,13 @@ export global AppState {
     // Draft-model GPU-device dropdown triple, fed from the same
     // `devices::probed()` cache as the tables above. Still a dropdown, not a
     // table: --device-draft takes ONE device (a draft is never split).
+    // Vision-encoder (mmproj) device dropdown triple, over form.mmproj_device.
+    // Its own list because the encoder is placed separately: unset, llama.cpp
+    // follows the first entry of --device (v0.4.1) or grabs the first GPU
+    // backend it finds; --mmproj-device overrides both.
+    in-out property <[string]> preset_mmproj_dev_labels;
+    in-out property <[string]> preset_mmproj_dev_values;
+    in-out property <int> preset_mmproj_dev_index: 0;
     in-out property <[string]> preset_draft_dev_labels;
     in-out property <[string]> preset_draft_dev_values;
     in-out property <int> preset_draft_dev_index: 0;
@@ -483,25 +440,19 @@ export global AppState {
     // callback per field.
     callback browse_dir(string) -> string;
 
-    // GPU distribution table, one set per scope (server-wide / per-preset). Every
+    // The (per-preset) GPU distribution table. Every
     // edit is a whole-selection rewrite in Rust (src/gpu_split.rs): the handler
     // rewrites the form's `device` + `tensor_split` strings, then REBUILDS the row
     // model. Devices are addressed by id, never by row index. See GpuSplitTable's
     // binding note (and why the row ORDER is fixed to the probe's).
-    // `*_gpu_move(id, delta)` is the drag handle: move a checked device `delta`
+    // `preset_gpu_move(id, delta)` is the drag handle: move a checked device `delta`
     // places within the split (negative = towards the head). Position 0 is
     // llama.cpp's main_gpu, so this is the only way to choose which GPU leads.
-    // `*_split_mode_picked(value)`: the mode combo's pick, as a MODE_VALUES
-    // spelling ("default"/"none"/"tensor"/"row"). Rust writes it into the scope's form
+    // `preset_split_mode_picked(value)`: the mode combo's pick, as a MODE_VALUES
+    // spelling ("default"/"none"/"tensor"/"row"). Rust writes it into the form
     // and rebuilds the rows: the mode decides what the columns mean, so a
     // pick is a full re-projection, not a scalar update.
-    callback server_split_mode_picked(string);
     callback preset_split_mode_picked(string);
-    callback server_gpu_toggle(string);
-    callback server_gpu_move(string, int);
-    callback server_gpu_weight(string, int);
-    callback server_gpu_auto();
-    callback server_gpu_even();
     callback preset_gpu_toggle(string);
     callback preset_gpu_move(string, int);
     callback preset_gpu_weight(string, int);
@@ -514,19 +465,13 @@ export global AppState {
     callback preset_gpu_auto();
     callback preset_gpu_even();
 
-    // Tensor-placement table, one set per scope (server-wide / per-preset). Same
-    // shape as the GPU table's: each one rewrites the scope's `override_tensor`
+    // Tensor-placement table. Same shape as the GPU table's: each one rewrites
+    // the preset's `override_tensor`
     // string in Rust (src/tensor_override.rs) and rebuilds the row model, except
-    // `*_tensor_pattern`, the text field, which must NOT rebuild (that would
+    // `preset_tensor_pattern`, the text field, which must NOT rebuild (that would
     // recreate the LineEdit being typed into and drop the caret), so it refreshes
     // only the derived strings. The int is the ROW INDEX; the string is the picked
     // kind id / device id / regex.
-    callback server_tensor_add();
-    callback server_tensor_remove(int);
-    callback server_tensor_kind(int, string);
-    callback server_tensor_device(int, string);
-    callback server_tensor_pattern(int, string);
-
     callback preset_tensor_add();
     callback preset_tensor_remove(int);
     callback preset_tensor_kind(int, string);

@@ -375,11 +375,7 @@ pub(super) fn wire(app: &AppWindow, state: &Rc<RefCell<State>>) {
                     .unwrap_or(spec)
             };
             let mut form = s.get_form();
-            // The server-wide fallback is the SAVED device (where the model will
-            // actually run at launch), not the live, possibly-unsaved Server
-            // form, which would leak an edited-then-reverted device into a save.
-            let server_device = crate::server_cfg::load().device.unwrap_or_default();
-            apply_draft_pick(&mut form, &value, &spec, &server_device);
+            apply_draft_pick(&mut form, &value, &spec);
             s.set_form(form);
             // The draft-device dropdown may have been changed programmatically.
             refresh_device_options(&app);
@@ -639,31 +635,24 @@ use crate::form::ALL_LAYERS;
 /// auto-pin an unconfigured draft to ONE device: the multi-device "auto" split
 /// crashes gemma4 MTP heads. Pin to the SAME GPU the
 /// model runs on so both land together: the preset's own `device` selection
-/// wins, else the server-wide default (`server_device`, all layers on it);
-/// otherwise fall back to CPU, which always works. A draft the user already
+/// (all layers on it); otherwise fall back to CPU, which always works. A draft the user already
 /// configured (auto off or a device pinned) is left alone.
 ///
-/// Both device fields can now name SEVERAL GPUs ("ROCm1,CUDA0"; the distribution
-/// table writes them in split order), but `--device-draft` pins one drafter, and
-/// the whole point here is to avoid the multi-device split. So the pin is the
-/// FIRST device of whichever list applies: the one llama.cpp's split starts from.
+/// `device` can name SEVERAL GPUs ("ROCm1,CUDA0"; the distribution table writes
+/// them in split order), but `--device-draft` pins one drafter, and the whole
+/// point here is to avoid the multi-device split. So the pin is the FIRST device
+/// of the list: the one llama.cpp's split starts from.
 ///
 /// This only fires for a draft FILE. Embedded MTP heads (spec-type alone) never
 /// reach it: llama.cpp ignores both keys for them and the UI disables both fields.
-fn apply_draft_pick(form: &mut PresetForm, value: &str, spec: &str, server_device: &str) {
+fn apply_draft_pick(form: &mut PresetForm, value: &str, spec: &str) {
     form.model_draft = value.into();
     form.spec_type = spec.into();
     if !value.is_empty() && form.n_gpu_layers_draft_auto && form.device_draft.is_empty() {
         form.n_gpu_layers_draft_auto = false;
-        // The model's own selection wins over the server default: pinning the
-        // draft to a different device than the model is the exact split this
-        // heuristic exists to avoid.
-        let list = if form.device.is_empty() {
-            server_device
-        } else {
-            form.device.as_str()
-        };
-        match gpu_split::parse_device_list(list).first() {
+        // Pinning the draft to a different device than the model is the exact
+        // split this heuristic exists to avoid.
+        match gpu_split::parse_device_list(form.device.as_str()).first() {
             Some(pin) => {
                 form.device_draft = pin.as_str().into();
                 form.n_gpu_layers_draft = ALL_LAYERS;
@@ -1012,34 +1001,23 @@ mod tests {
     }
 
     #[test]
-    fn pick_pins_draft_to_server_gpu_when_set() {
-        let mut f = form_with_auto_draft();
-        apply_draft_pick(&mut f, r"C:\m\mtps\head.gguf", "draft-mtp", "CUDA0");
-        assert_eq!(f.model_draft, r"C:\m\mtps\head.gguf");
-        assert_eq!(f.spec_type, "draft-mtp");
-        assert!(!f.n_gpu_layers_draft_auto);
-        assert_eq!(f.device_draft, "CUDA0");
-        assert_eq!(f.n_gpu_layers_draft, 99);
-    }
-
-    #[test]
-    fn pick_prefers_the_presets_own_device_over_the_server_default() {
-        // The model is pinned to CUDA1; the draft must follow it there, not to
-        // the server-wide CUDA0: model and draft must share ONE device.
+    fn pick_pins_the_draft_to_the_presets_first_device() {
+        // The model runs on CUDA1 then CUDA0; the draft must land on the head
+        // of that list: model and draft must share ONE device.
         let mut f = PresetForm {
             n_gpu_layers_draft_auto: true,
-            device: "CUDA1".into(),
+            device: "CUDA1,CUDA0".into(),
             ..Default::default()
         };
-        apply_draft_pick(&mut f, r"C:\m\mtps\head.gguf", "draft-mtp", "CUDA0");
+        apply_draft_pick(&mut f, r"C:\m\mtps\head.gguf", "draft-mtp");
         assert_eq!(f.device_draft, "CUDA1");
         assert_eq!(f.n_gpu_layers_draft, 99);
     }
 
     #[test]
-    fn pick_falls_back_to_cpu_without_a_server_device() {
+    fn pick_falls_back_to_cpu_without_a_device() {
         let mut f = form_with_auto_draft();
-        apply_draft_pick(&mut f, r"C:\m\dflashs\d.gguf", "draft-dflash", "");
+        apply_draft_pick(&mut f, r"C:\m\dflashs\d.gguf", "draft-dflash");
         assert_eq!(f.spec_type, "draft-dflash");
         assert!(!f.n_gpu_layers_draft_auto);
         assert_eq!(f.device_draft, "");
@@ -1054,7 +1032,7 @@ mod tests {
             n_gpu_layers_draft: 7,
             ..Default::default()
         };
-        apply_draft_pick(&mut f, r"C:\m\mtps\head.gguf", "draft-mtp", "CUDA0");
+        apply_draft_pick(&mut f, r"C:\m\mtps\head.gguf", "draft-mtp");
         assert_eq!(f.n_gpu_layers_draft, 7);
         assert_eq!(f.device_draft, "");
 
@@ -1064,7 +1042,7 @@ mod tests {
             device_draft: "CUDA1".into(),
             ..Default::default()
         };
-        apply_draft_pick(&mut f, r"C:\m\mtps\head.gguf", "draft-mtp", "CUDA0");
+        apply_draft_pick(&mut f, r"C:\m\mtps\head.gguf", "draft-mtp");
         assert!(f.n_gpu_layers_draft_auto);
         assert_eq!(f.device_draft, "CUDA1");
     }
@@ -1072,7 +1050,7 @@ mod tests {
     #[test]
     fn picking_none_clears_without_pinning() {
         let mut f = form_with_auto_draft();
-        apply_draft_pick(&mut f, "", "", "CUDA0");
+        apply_draft_pick(&mut f, "", "");
         assert_eq!(f.model_draft, "");
         assert_eq!(f.spec_type, "");
         assert!(f.n_gpu_layers_draft_auto, "(none) must not flip auto off");

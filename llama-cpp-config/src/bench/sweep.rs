@@ -80,7 +80,7 @@ const POLL: Duration = Duration::from_millis(500);
 /// buffer, while `--list-devices` moments later reported 31 GiB free on that
 /// same card; an earlier run failed differently for the same reason (ROCm
 /// reporting "no ROCm-capable device is detected" mid-teardown, which then made
-/// an `MTMD_BACKEND_DEVICE=ROCm0` invalid and stopped the server from starting
+/// a vision-encoder device of `ROCm0` invalid and stopped the server from starting
 /// at all). Both are the previous child still being torn down. The wait costs
 /// seconds against a leg that runs for minutes.
 const GPU_SETTLE: Duration = Duration::from_secs(15);
@@ -173,6 +173,14 @@ pub const SWEEPABLE: &[(&str, Setter)] = &[
     }),
     ("op-offload", |p, v| {
         p.op_offload = boolean(v)?;
+        Ok(())
+    }),
+    ("lazy-mode", |p, v| {
+        p.lazy_mode = text(v)?;
+        Ok(())
+    }),
+    ("load-mode", |p, v| {
+        p.load_mode = text(v)?;
         Ok(())
     }),
     // Context, batching and cache.
@@ -1202,6 +1210,8 @@ mod tests {
                 "device" => "CUDA0",
                 "tensor-split" => "3,1",
                 "split-mode" => "layer",
+                "lazy-mode" => "on",
+                "load-mode" => "mmap",
                 "override-tensor" => "token_embd\\.weight=CUDA0",
                 "cache-type-k" | "cache-type-v" | "spec-draft-type-k" | "spec-draft-type-v" => {
                     "q8_0"

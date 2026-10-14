@@ -71,15 +71,9 @@ const PORT: RangeInclusive<i32> = 1..=65535;
 /// box, its text, the values it takes): the server twin of `form::int_fields`,
 /// with the ranges `form_to_config` reads the same fields with (the
 /// thread counts are sliders, and LogVerbosity a dropdown, so neither is here).
-fn int_fields(f: &ServerForm) -> [(&'static str, bool, &str, RangeInclusive<i32>); 3] {
+fn int_fields(f: &ServerForm) -> [(&'static str, bool, &str, RangeInclusive<i32>); 2] {
     [
         ("Port", f.port_default, f.port.as_str(), PORT),
-        (
-            "CacheReuse",
-            f.cache_reuse_default,
-            f.cache_reuse.as_str(),
-            ini::INT_POSITIVE,
-        ),
         (
             "ModelsMax",
             f.models_max_default,
@@ -103,7 +97,7 @@ pub fn invalid_numbers(f: &ServerForm) -> Vec<String> {
 
 /// `ServerConfig` → the editable form. Materializes the display defaults the UI
 /// needs for always-present controls (the models dir, and the split-mode combo's
-/// "default" sentinel); the port / cache-reuse / models-max carry a `*_default`
+/// "default" sentinel); the port / models-max carry a `*_default`
 /// checkbox (checked = omit the flag → fall back to llama.cpp's own default), with
 /// the text seeded from that same default so the disabled field shows a hint; the
 /// thread counts map `None` → the slider's "auto" flag. `form_to_config` reverses
@@ -113,15 +107,9 @@ pub fn config_to_form(cfg: &server_cfg::ServerConfig) -> ServerForm {
         port: itxt(cfg.port, 8080),
         port_default: cfg.port.is_none(),
         hostname: cfg.hostname_or_default().into(),
-        // Always has a value (framework default "auto" when unset or unknown),
-        // and it IS the dropdown's entry, unlike the -lv combo below, whose
-        // form value is a label that has to be mapped back.
-        load_mode: cfg.load_mode_or_default().into(),
         // Thread counts are auto-flagged sliders: unset ⇒ "auto" (omit the flag).
         threads: cfg.threads.unwrap_or(0),
         threads_auto: cfg.threads.is_none(),
-        cache_reuse: itxt(cfg.cache_reuse, 0),
-        cache_reuse_default: cfg.cache_reuse.is_none(),
         threads_batch: cfg.threads_batch.unwrap_or(0),
         threads_batch_auto: cfg.threads_batch.is_none(),
         // Seed the disabled field with llama.cpp's own default (4) so the
@@ -131,19 +119,8 @@ pub fn config_to_form(cfg: &server_cfg::ServerConfig) -> ServerForm {
         // Same "blank ⇒ default dir" rule as save()/start(), so a hand-edited
         // blank ModelsDir shows the default it will actually resolve to.
         models_dir: cfg.models_dir_or_default().into(),
-        device: cfg.device.clone().unwrap_or_default().into(),
-        // "default" is the combo's sentinel for "inherit / layer"; it two-way-
-        // binds to this, so store the sentinel rather than "".
-        split_mode: cfg
-            .split_mode
-            .clone()
-            .unwrap_or_else(|| "default".into())
-            .into(),
-        tensor_split: cfg.tensor_split.clone().unwrap_or_default().into(),
         // Driven by the tensor-placement table, which reads and rewrites this one
         // string; no second copy of the rules exists (see src/tensor_override.rs).
-        override_tensor: cfg.override_tensor.clone().unwrap_or_default().into(),
-        mmproj_device: cfg.mmproj_device.clone().unwrap_or_default().into(),
         // The SDK Tuning card's ROCm knob: a TRI-state through the same helper
         // pair as the preset tab's flash-attn, because "never export
         // ROCBLAS_USE_HIPBLASLT" is a third instruction and the framework's
@@ -161,8 +138,6 @@ pub fn config_to_form(cfg: &server_cfg::ServerConfig) -> ServerForm {
         // Plain bool toggles (framework defaults materialized when unset), same
         // shape as `mlock`.
         webui_mcp_proxy: cfg.webui_mcp_proxy_or_default(),
-        fit: cfg.fit_or_default(),
-        prefill_assistant: cfg.prefill_assistant_or_default(),
         // Always has a value (framework default 4 when unset); a dropdown, no
         // "default" checkbox: the launch always passes -lv. The form carries the
         // LABEL ("TRACE:4"), which is what the EnumComboBox matches on.
@@ -186,7 +161,7 @@ pub fn config_to_form(cfg: &server_cfg::ServerConfig) -> ServerForm {
 }
 
 /// The editable form → `ServerConfig`. The `*_default` checkbox decides
-/// None/Some for port / cache-reuse / models-max (checked ⇒ None); the thread
+/// None/Some for port / models-max (checked ⇒ None); the thread
 /// counts use their existing `_auto` flags; blank / sentinel string fields
 /// collapse back to `None` (server.ini's `save` renders those as commented
 /// hint lines).
@@ -207,24 +182,11 @@ pub fn form_to_config(f: &ServerForm) -> server_cfg::ServerConfig {
         // here would only diverge the in-memory config, since every consumer
         // re-blanks it through `hostname_or_default`.
         hostname: server_cfg::opt_nonblank(Some(f.hostname.to_string())),
-        // Canonicalized rather than trusted: the combo can only produce one of
-        // Options.load_modes, but a stale/hand-built form must not put a value
-        // llama-server would reject onto the launch line.
-        load_mode: Some(
-            server_cfg::normalize_load_mode(f.load_mode.as_str())
-                .unwrap_or(server_cfg::DEFAULT_LOAD_MODE)
-                .to_string(),
-        ),
         // "auto" ⇒ omit the flag; otherwise the slider's value.
         threads: if f.threads_auto {
             None
         } else {
             Some(f.threads)
-        },
-        cache_reuse: if f.cache_reuse_default {
-            None
-        } else {
-            ini::parse_int_in(f.cache_reuse.as_str(), &ini::INT_POSITIVE)
         },
         threads_batch: if f.threads_batch_auto {
             None
@@ -239,19 +201,6 @@ pub fn form_to_config(f: &ServerForm) -> server_cfg::ServerConfig {
         },
         // Blank ⇒ None (fall back to the default dir), same rule as hostname.
         models_dir: server_cfg::opt_nonblank(Some(f.models_dir.to_string())),
-        device: server_cfg::opt_nonblank(Some(f.device.to_string())),
-        // "" and the combo sentinel "default" both mean "no explicit split",
-        // and so does "layer", which the combo merges into that same entry and
-        // `server_cfg::server_split_mode` drops on read (an explicit layer only
-        // ever blocked every preset's own mode). Kept here too so the invariant
-        // holds for a value that never went through a load.
-        split_mode: match f.split_mode.as_str() {
-            "" | "default" | "layer" => None,
-            other => Some(other.to_string()),
-        },
-        tensor_split: server_cfg::opt_nonblank(Some(f.tensor_split.to_string())),
-        override_tensor: server_cfg::opt_nonblank(Some(f.override_tensor.to_string())),
-        mmproj_device: server_cfg::opt_nonblank(Some(f.mmproj_device.to_string())),
         // "default" (and anything unrecognised) collapses to None: the natural
         // `Some(s == "on")` would turn "leave the variable alone" into an
         // explicit `ROCBLAS_USE_HIPBLASLT=0`, i.e. into the Tensile workaround
@@ -262,8 +211,6 @@ pub fn form_to_config(f: &ServerForm) -> server_cfg::ServerConfig {
         cuda_allreduce: server_cfg::normalize_allreduce(f.cuda_allreduce.as_str())
             .map(str::to_string),
         webui_mcp_proxy: Some(f.webui_mcp_proxy),
-        fit: Some(f.fit),
-        prefill_assistant: Some(f.prefill_assistant),
         // The one field with no "unset" state (the launch always passes -lv): the
         // form carries the dropdown's label, and `parse_log_level` maps it back.
         log_verbosity: Some(parse_log_level(f.log_verbosity.as_str())),
@@ -305,26 +252,15 @@ mod tests {
         let cfg = ServerConfig {
             port: Some(9090),
             hostname: Some("0.0.0.0".into()),
-            // Non-default, so the round-trip is not vacuous for it.
-            load_mode: Some("mmap+mlock".into()),
             threads: Some(8),
-            cache_reuse: Some(256),
             threads_batch: Some(12),
             models_max: Some(2),
             models_dir: Some(r"E:\models".into()),
-            device: Some("ROCm1,CUDA0".into()),
-            split_mode: Some("row".into()),
-            tensor_split: Some("3,1".into()),
-            override_tensor: Some(r"token_embd\.weight=ROCm1".into()),
-            mmproj_device: Some("ROCm1".into()),
             // Non-default (None is the framework default), so the tri-state's
             // round-trip through the form's string spelling isn't vacuous.
             rocblas_use_hipblaslt: Some(false),
             cuda_allreduce: Some("none".into()),
             webui_mcp_proxy: Some(false),
-            fit: Some(true),
-            // Non-default, so the round-trip is not vacuous for it.
-            prefill_assistant: Some(false),
             log_verbosity: Some(2),
             // Non-default toggle, and a StateDir off the system drive: the path
             // is only overridable because 8 GiB dumps do not belong on C:.
@@ -338,8 +274,8 @@ mod tests {
 
     // The Save button's refusal and `form_to_config` agree on each integer field:
     // refused exactly when the conversion would read the text as unset. Also
-    // pins the three ranges, `0` being a real ModelsMax (unlimited) and not a
-    // real Port or CacheReuse.
+    // pins the two ranges, `0` being a real ModelsMax (unlimited) and not a
+    // real Port.
     #[test]
     fn invalid_numbers_match_what_the_conversion_drops() {
         for text in [
@@ -355,7 +291,6 @@ mod tests {
         ] {
             let form = ServerForm {
                 port: text.into(),
-                cache_reuse: text.into(),
                 models_max: text.into(),
                 models_dir: r"E:\models".into(),
                 ..Default::default()
@@ -363,7 +298,6 @@ mod tests {
             let cfg = form_to_config(&form);
             let dropped: Vec<&str> = [
                 ("Port", cfg.port),
-                ("CacheReuse", cfg.cache_reuse),
                 ("ModelsMax", cfg.models_max),
             ]
             .into_iter()
@@ -381,7 +315,6 @@ mod tests {
         }
         let ticked = ServerForm {
             port_default: true,
-            cache_reuse_default: true,
             models_max_default: true,
             ..Default::default()
         };
@@ -391,7 +324,6 @@ mod tests {
         );
         let zero = ServerForm {
             port: "8080".into(),
-            cache_reuse: "256".into(),
             models_max: "0".into(),
             ..Default::default()
         };
@@ -414,26 +346,6 @@ mod tests {
         // A label the dropdown can't produce falls back to the framework default,
         // never to 0: losing the log entirely is the one outcome nobody wants.
         assert_eq!(parse_log_level("nonsense"), 4);
-    }
-
-    /// The load-mode combo carries the raw `-lm` value, so the only thing that
-    /// can go wrong is a value outside the six, which must land on the default
-    /// rather than on the launch line, where llama-server would refuse it and
-    /// nothing would start.
-    #[test]
-    fn load_mode_falls_back_to_default() {
-        for mode in server_cfg::LOAD_MODES {
-            let form = ServerForm {
-                load_mode: mode.into(),
-                ..Default::default()
-            };
-            assert_eq!(form_to_config(&form).load_mode.as_deref(), Some(mode));
-        }
-        let form = ServerForm {
-            load_mode: "--mlock".into(),
-            ..Default::default()
-        };
-        assert_eq!(form_to_config(&form).load_mode.as_deref(), Some("auto"));
     }
 
     /// The SDK Tuning tri-state, all three states in both directions. "default"
@@ -471,19 +383,6 @@ mod tests {
             assert_eq!(form.cuda_allreduce.as_str(), state.unwrap_or("default"));
             assert_eq!(form_to_config(&form).cuda_allreduce.as_deref(), state);
         }
-    }
-
-    // The "default"/None ⇄ sentinel mapping specifically: an unset split-mode
-    // becomes the "default" sentinel in the form and collapses back to None.
-    #[test]
-    fn split_mode_sentinel_round_trips() {
-        let form = config_to_form(&ServerConfig {
-            port: Some(8080),
-            models_dir: Some(r"E:\models".into()),
-            ..Default::default()
-        });
-        assert_eq!(form.split_mode.as_str(), "default");
-        assert_eq!(form_to_config(&form).split_mode, None);
     }
 
     // Unset thread counts ⇄ the slider's "auto" flag: `None` becomes `*_auto` in

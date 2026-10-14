@@ -127,8 +127,8 @@ struct State {
 /// probes, no single-instance, no event loop). The caller must have redirected
 /// config IO first (see `paths::data_root`).
 ///
-/// The Server tab is wired only as far as its two DEVICE TABLES
-/// (`server_tab::wire_tables`); they need nothing but the window. Its Save /
+/// The Server tab is wired only as far as its DEVICE TABLE
+/// (`server_tab::wire_tables`, the tensor-placement one); they need nothing but the window. Its Save /
 /// Revert / Start / Stop callbacks need a tray and the async run-state machinery,
 /// so they stay out, and the test drives the save through `server_cfg::save`.
 #[cfg(test)]
@@ -849,16 +849,14 @@ fn refresh_file_options(app: &AppWindow, state: &Rc<RefCell<State>>) {
     models_tab::update_model_info(app);
 }
 
-/// Recompute the Models tab's KV-cache strip from the form, the server-wide
-/// device pin and the device probe (`kv_cache::warning`).
+/// Recompute the Models tab's KV-cache strip from the form and the device probe
+/// (`kv_cache::warning`).
 fn refresh_kv_cache_warning(app: &AppWindow) {
     let s = app.global::<AppState>();
     let form = s.get_form();
-    let server_device = s.get_server_form().device;
     let probed = devices::probed();
     let warning = kv_cache::warning(&kv_cache::Input {
         device: form.device.as_str(),
-        server_device: server_device.as_str(),
         probed: &probed,
         cache_type_k: form.cache_type_k.as_str(),
         cache_type_v: form.cache_type_v.as_str(),
@@ -875,14 +873,13 @@ fn refresh_kv_cache_warning(app: &AppWindow) {
 
 /// Rebuild the two GPU-device dropdowns (the draft device and the image
 /// encoder's) from the cached `--list-devices` result (`devices::probed()`),
-/// recomputing each selected index against the current server.ini / form values.
+/// recomputing each selected index against the current form values.
 /// The MAIN device is not a dropdown: it can name several GPUs in split order, so
 /// it rides the GPU distribution table instead (`refresh_gpu_rows`).
 fn refresh_device_options(app: &AppWindow) {
     let s = app.global::<AppState>();
     let devs = devices::probed();
     let form = s.get_form();
-    let mmproj_device = s.get_server_form().mmproj_device;
 
     // Rides with the dropdowns because it is derived from the same probe: an
     // AMD GPU with no ROCm device beside it means ggml silently dropped
@@ -892,11 +889,14 @@ fn refresh_device_options(app: &AppWindow) {
         devices::rocm_health().unwrap_or_default(),
     ));
 
-    let (lbl, val, idx) =
-        device_options(&devs, mmproj_device.as_str(), "(default: follows device)");
-    s.set_mmproj_dev_labels(lbl);
-    s.set_mmproj_dev_values(val);
-    s.set_mmproj_dev_index(idx);
+    let (lbl, val, idx) = device_options(
+        &devs,
+        form.mmproj_device.as_str(),
+        "(default: follows device)",
+    );
+    s.set_preset_mmproj_dev_labels(lbl);
+    s.set_preset_mmproj_dev_values(val);
+    s.set_preset_mmproj_dev_index(idx);
 
     let (lbl, val, idx) =
         device_options(&devs, form.device_draft.as_str(), "(auto / same as model)");
@@ -907,8 +907,8 @@ fn refresh_device_options(app: &AppWindow) {
     refresh_gpu_rows(app);
 }
 
-/// Rebuild BOTH GPU distribution tables (server-wide + per-preset) from the
-/// device probe crossed with each form's `device` / `tensor_split` strings.
+/// Rebuild the GPU distribution table from the device probe crossed with the
+/// form's `device` / `tensor_split` strings.
 ///
 /// Always a full rebuild of the row model, never an in-place row edit: the
 /// delegates bind one-way (`checked: row.enabled`, `value: row.weight`) and a
@@ -923,7 +923,7 @@ fn refresh_gpu_rows(app: &AppWindow) {
     refresh_kv_cache_warning(app);
     let s = app.global::<AppState>();
     let devs = devices::probed();
-    let (server_mode, preset_mode) = gpu_modes(app);
+    let preset_mode = preset_mode(app);
     // The combo model is static, but pushed from here rather than kept in the
     // .slint so the labels/values pair has ONE owner next to the code that
     // interprets a pick (gpu_split::MODE_*).
@@ -933,15 +933,6 @@ fn refresh_gpu_rows(app: &AppWindow) {
     s.set_split_mode_values(string_model(
         gpu_split::MODE_VALUES.iter().map(|v| (*v).into()).collect(),
     ));
-    // The server-wide table gets no layout on purpose: it applies to EVERY preset,
-    // so there is no single `n_layer_all` to project its weights onto. It stays a
-    // ratio table; only the per-preset one, which knows its model, shows blocks.
-    s.set_server_gpu_rows(model(gpu_split::build_rows(
-        &devs,
-        &server_selection(app),
-        None,
-        server_mode,
-    )));
     s.set_preset_gpu_rows(model(gpu_split::build_rows(
         &devs,
         &preset_selection(app),
@@ -949,31 +940,18 @@ fn refresh_gpu_rows(app: &AppWindow) {
         preset_mode,
     )));
     // Feeds the mode strip under split mode `tensor` (state.slint
-    // `preset_split_mode_warning`). The EFFECTIVE list: a server-wide Device
-    // rides the router's command line and replaces the preset's.
-    let server_device = s.get_server_form().device;
-    let device = if server_device.trim().is_empty() {
-        s.get_form().device
-    } else {
-        server_device
-    };
-    s.set_preset_mixes_cuda_rocm(gpu_split::mixes_cuda_and_rocm(device.as_str()));
+    // `preset_split_mode_warning`).
+    s.set_preset_mixes_cuda_rocm(gpu_split::mixes_cuda_and_rocm(
+        s.get_form().device.as_str(),
+    ));
     refresh_gpu_scalars(app);
     refresh_tensor_rows(app);
 }
 
-/// The two tables' EFFECTIVE split modes, `(server, preset)`: the server-wide
-/// value rides the router's own command line (`runstate::server_args`), which
-/// the router copies over every preset key, so whenever it is set it shadows
-/// the preset's, an explicit value included (gpu_split::effective_mode).
-fn gpu_modes(app: &AppWindow) -> (gpu_split::SplitMode, gpu_split::SplitMode) {
-    let s = app.global::<AppState>();
-    let server = s.get_server_form().split_mode;
-    let preset = s.get_form().split_mode;
-    (
-        gpu_split::effective_mode(server.as_str(), None),
-        gpu_split::effective_mode(server.as_str(), Some(preset.as_str())),
-    )
+/// The preset table's split mode. Per preset only: nothing server-wide can
+/// shadow it, since the router's command line carries no `--split-mode`.
+fn preset_mode(app: &AppWindow) -> gpu_split::SplitMode {
+    gpu_split::SplitMode::parse(app.global::<AppState>().get_form().split_mode.as_str())
 }
 
 /// The per-preset split's `Layout`: the selected model's block count crossed with
@@ -993,11 +971,10 @@ pub(crate) fn preset_split_layout(app: &AppWindow) -> Option<gpu_split::Layout> 
     gpu_split::Layout::new(s.get_model_info_n_layer(), ngl)
 }
 
-/// Rebuild BOTH tensor-placement tables (server-wide + per-preset) from the
-/// device probe crossed with each form's `override_tensor` string: rows, the
-/// shared dropdown models, and the derived strings. The twin of
-/// `refresh_gpu_rows` (and called from it, so a preset switch / Revert / probe
-/// landing re-projects all four tables in one go).
+/// Rebuild the tensor-placement table from the device probe crossed with the
+/// preset's `override_tensor` string: rows, the dropdown models, and the derived
+/// strings. The twin of `refresh_gpu_rows` (and called from it, so a preset
+/// switch / Revert / probe landing re-projects both tables in one go).
 ///
 /// Always a full rebuild, for the same reason: the delegates bind one-way
 /// (`index: row.kind_index`, `text: row.pattern`) and an edit self-assigns them,
@@ -1007,19 +984,12 @@ pub(crate) fn preset_split_layout(app: &AppWindow) -> Option<gpu_split::Layout> 
 fn refresh_tensor_rows(app: &AppWindow) {
     let s = app.global::<AppState>();
     let devs = devices::probed();
-    let server = server_overrides(app);
     let preset = preset_overrides(app);
 
-    // The KIND dropdown is shared (a static list), but the DEVICE dropdown is
-    // per-scope and must stay that way: `device_options` appends a `(custom)`
-    // entry for every device id the probe doesn't know, so its length, and hence
-    // every row's `device_index`, depends on the rules of THAT table. One shared
-    // model would alias the indices the moment the two scopes named two different
-    // unknown devices (a config carried over from another machine), and a row
-    // would render pointing at the other table's device.
-    let (labels, values) = tensor_override::device_options(&devs, &server);
-    s.set_server_tensor_dev_labels(string_model(labels));
-    s.set_server_tensor_dev_values(string_model(values));
+    // The KIND dropdown is a static list; the DEVICE one is built from the rules:
+    // `device_options` appends a `(custom)` entry for every device id the probe
+    // doesn't know, so its length, and hence every row's `device_index`, depends
+    // on this preset's rules.
     let (labels, values) = tensor_override::device_options(&devs, &preset);
     s.set_preset_tensor_dev_labels(string_model(labels));
     s.set_preset_tensor_dev_values(string_model(values));
@@ -1034,7 +1004,6 @@ fn refresh_tensor_rows(app: &AppWindow) {
         tensor_override::KINDS.iter().map(|k| k.id.into()).collect(),
     ));
 
-    s.set_server_tensor_rows(model(tensor_override::build_rows(&devs, &server)));
     s.set_preset_tensor_rows(model(tensor_override::build_rows(&devs, &preset)));
     refresh_tensor_scalars(app);
 }
@@ -1044,15 +1013,6 @@ fn refresh_tensor_rows(app: &AppWindow) {
 /// path needs THESE without recreating the LineEdit being typed into.
 fn refresh_tensor_scalars(app: &AppWindow) {
     let s = app.global::<AppState>();
-
-    let server = server_overrides(app);
-    s.set_server_tensor_summary(tensor_override::summary(&server).into());
-    s.set_server_tensor_warning(
-        tensor_override::validate(&server)
-            .err()
-            .unwrap_or_default()
-            .into(),
-    );
 
     let preset = preset_overrides(app);
     s.set_preset_tensor_summary(tensor_override::summary(&preset).into());
@@ -1078,21 +1038,13 @@ fn refresh_tensor_scalars(app: &AppWindow) {
     s.set_preset_tensor_warning(warning.into());
 }
 
-/// The derived numbers the tables render off: how many devices are checked, the
+/// The derived numbers the table renders off: how many devices are checked, the
 /// weight sum (0 = Auto, and the Share column's denominator), and the flags line.
 /// Separate from `refresh_gpu_rows` because the weight-edit path needs THESE
 /// without the row rebuild that would recreate the SpinBox being typed into.
 fn refresh_gpu_scalars(app: &AppWindow) {
     let s = app.global::<AppState>();
-    let (server_mode, preset_mode) = gpu_modes(app);
-
-    let server = server_selection(app);
-    s.set_server_gpu_selected(gpu_count(&server));
-    s.set_server_gpu_total(gpu_weight_total(&server));
-    s.set_server_gpu_mode(server_mode.as_str().into());
-    s.set_server_split_mode_index(gpu_split::mode_index(
-        s.get_server_form().split_mode.as_str(),
-    ));
+    let preset_mode = preset_mode(app);
 
     let preset = preset_selection(app);
     s.set_preset_gpu_selected(gpu_count(&preset));
@@ -1121,16 +1073,8 @@ fn gpu_weight_total(sel: &gpu_split::GpuSelection) -> i32 {
 
 // The selection IS the form's `device` + `tensor_split` pair; there is no third
 // copy of it, so a hand-edited INI stays authoritative and nothing can desync.
-// The four `*_gpu_*` callbacks per tab all follow the same two steps: derive the
-// new selection with `gpu_split`, then `set_*_selection` + a refresh.
-
-pub(crate) fn server_selection(app: &AppWindow) -> gpu_split::GpuSelection {
-    let f = app.global::<AppState>().get_server_form();
-    gpu_split::GpuSelection {
-        device: f.device.to_string(),
-        tensor_split: f.tensor_split.to_string(),
-    }
-}
+// The `preset_gpu_*` callbacks all follow the same two steps: derive the new
+// selection with `gpu_split`, then `set_preset_selection` + a refresh.
 
 pub(crate) fn preset_selection(app: &AppWindow) -> gpu_split::GpuSelection {
     let f = app.global::<AppState>().get_form();
@@ -1138,14 +1082,6 @@ pub(crate) fn preset_selection(app: &AppWindow) -> gpu_split::GpuSelection {
         device: f.device.to_string(),
         tensor_split: f.tensor_split.to_string(),
     }
-}
-
-pub(crate) fn set_server_selection(app: &AppWindow, sel: &gpu_split::GpuSelection) {
-    let s = app.global::<AppState>();
-    let mut f = s.get_server_form();
-    f.device = sel.device.clone().into();
-    f.tensor_split = sel.tensor_split.clone().into();
-    s.set_server_form(f);
 }
 
 pub(crate) fn set_preset_selection(app: &AppWindow, sel: &gpu_split::GpuSelection) {
@@ -1156,29 +1092,14 @@ pub(crate) fn set_preset_selection(app: &AppWindow, sel: &gpu_split::GpuSelectio
     s.set_form(f);
 }
 
-// Same contract for the tensor-placement tables: the rules ARE the scope's
+// Same contract for the tensor-placement table: the rules ARE the preset's
 // `override_tensor` string, with no second copy, so a hand-edited INI stays
-// authoritative. Every `*_tensor_*` callback derives the new string with
+// authoritative. Every `preset_tensor_*` callback derives the new string with
 // `tensor_override`, writes it back here, then refreshes.
-
-pub(crate) fn server_overrides(app: &AppWindow) -> String {
-    app.global::<AppState>()
-        .get_server_form()
-        .override_tensor
-        .to_string()
-}
-
-pub(crate) fn set_server_overrides(app: &AppWindow, rules: &str) {
-    let s = app.global::<AppState>();
-    let mut f = s.get_server_form();
-    f.override_tensor = rules.into();
-    s.set_server_form(f);
-}
 
 /// A Slint row index (`int`) as a Rust one. A negative index can't address a row,
 /// so it maps to an out-of-range one; every `tensor_override` edit treats that as
-/// a no-op rather than panicking or hitting the wrong rule. Shared by both tables'
-/// callbacks (server_tab / models_tab).
+/// a no-op rather than panicking or hitting the wrong rule.
 pub(crate) fn row_index(i: i32) -> usize {
     usize::try_from(i).unwrap_or(usize::MAX)
 }

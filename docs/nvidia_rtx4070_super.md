@@ -26,16 +26,11 @@ llama.cpp v0.5.0. Section 7 holds what was measured again on Linux, with llama.c
 
 ## 3. Settings
 
-### server.ini
-
-| key | value | evidence |
-| --- | --- | --- |
-| `MmprojDevice` | off this card, when it is the VRAM constraint | the image encoder (~1.14 GiB with its compute buffer for a BF16 Qwen3.8 mmproj) only computes on image requests. Moving it off and giving this card two more blocks: neutral at 2.6k, +2.4% decode at 93.6k |
-
 ### Preset (presets.ini)
 
 | key | value | evidence |
 | --- | --- | --- |
+| `mmproj-device` | off this card, when it is the VRAM constraint | the image encoder (~1.14 GiB with its compute buffer for a BF16 Qwen3.8 mmproj) only computes on image requests. Moving it off and giving this card two more blocks: neutral at 2.6k, +2.4% decode at 93.6k |
 | `flash-attn` | omit (`auto` resolves to on) | a quantized KV cache needs FlashAttention |
 | `cache-type-k/-v` | `q8_0` | `q5_1` decodes 6% slower; `iq4_nl` has no CUDA FlashAttention kernel |
 | `override-tensor` | `token_embd\.weight=<this card>` | moves the table (~1.26 GiB at Q8_0) out of pinned host RAM, where Windows reports it as shared GPU memory: +1-2% decode. The quant must have a CUDA `get_rows` kernel (all K/IQ quants do since b10089) |

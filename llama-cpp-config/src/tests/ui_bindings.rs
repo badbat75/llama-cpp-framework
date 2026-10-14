@@ -300,20 +300,21 @@ fn editable_widgets_track_model_after_edit() {
         "Options.log_levels (ui/components.slint) drifted from server_form::LOG_LEVELS"
     );
 
-    // Same drift guard for the -lm dropdown, where the stakes are one step
-    // higher: its entries are passed to llama-server VERBATIM, so a mode the
-    // Rust list has and the combo doesn't leaves the combo on "auto" and saves
-    // that over the user's choice, while the reverse puts a value on the launch
-    // line that llama-server rejects outright ("invalid value"); nothing starts.
+    // Same drift guard for the preset's load-mode dropdown, where the stakes
+    // are one step higher: its entries after "default" (the omitted key) are
+    // passed to llama-server VERBATIM, so a mode the Rust list has and the combo
+    // doesn't leaves the combo on "default" and drops the user's choice on the
+    // next save, while the reverse is canonicalized away by `form_to_preset`.
     let slint_modes: Vec<String> = app
         .global::<crate::gui::Options>()
         .get_load_modes()
         .iter()
         .map(|s| s.to_string())
         .collect();
+    assert_eq!(slint_modes.first().map(String::as_str), Some("default"));
     assert_eq!(
-        slint_modes,
-        crate::server_cfg::LOAD_MODES.to_vec(),
+        slint_modes[1..],
+        crate::server_cfg::LOAD_MODES.map(String::from),
         "Options.load_modes (ui/components.slint) drifted from server_cfg::LOAD_MODES"
     );
 

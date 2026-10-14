@@ -150,18 +150,9 @@ pub struct ServerSet {
     /// (llama.cpp v0.5.0+). 0.0.0.0 = all interfaces.
     #[arg(long)]
     pub hostname: Option<String>,
-    /// How the weights are brought in (-lm / --load-mode). Replaces the removed
-    /// --mlock / --no-mmap pair, which llama.cpp deprecated in b10105 and dropped
-    /// in v0.4.1 (they are mutually exclusive states of one enum, not two
-    /// independent bools).
-    #[arg(long, value_parser = clap::builder::PossibleValuesParser::new(server_cfg::LOAD_MODES))]
-    pub load_mode: Option<String>,
     /// CPU threads for generation. 0 or negative clears the override (auto).
     #[arg(long)]
     pub threads: Option<i32>,
-    /// Minimum prompt-cache reuse chunk. 0 or negative clears the override.
-    #[arg(long)]
-    pub cache_reuse: Option<i32>,
     /// CPU threads for prompt processing. 0 or negative clears the override (auto).
     #[arg(long)]
     pub threads_batch: Option<i32>,
@@ -170,23 +161,6 @@ pub struct ServerSet {
     pub models_max: Option<i32>,
     #[arg(long)]
     pub models_dir: Option<String>,
-    /// GPUs models run on, in split order, e.g. "ROCm1,CUDA0" (empty = all detected).
-    #[arg(long)]
-    pub device: Option<String>,
-    /// Multi-GPU split mode (--split-mode): none|row (empty, or layer, = default:
-    /// llama.cpp splits by layer and each preset may pick its own mode).
-    #[arg(long)]
-    pub split_mode: Option<String>,
-    /// How much each --device holds (--tensor-split), e.g. "3,1" (empty = by free VRAM).
-    #[arg(long)]
-    pub tensor_split: Option<String>,
-    /// Pin tensors to a device (--override-tensor), e.g. "token_embd\.weight=ROCm0"
-    /// (empty = none). REPLACES every preset's own rules; an unknown device stops the server.
-    #[arg(long)]
-    pub override_tensor: Option<String>,
-    /// GPU for the image encoder, e.g. "ROCm1" (empty = the first GPU llama.cpp finds).
-    #[arg(long)]
-    pub mmproj_device: Option<String>,
     /// rocBLAS GEMM backend (env ROCBLAS_USE_HIPBLASLT): off = Tensile (the
     /// gfx1201 BF16/F16 workaround), on = hipBLASLt, default = leave the variable
     /// unset. A tri-state word rather than a bool, so `default` can clear it back.
@@ -201,13 +175,6 @@ pub struct ServerSet {
     /// Enable the web UI's MCP CORS proxy (--webui-mcp-proxy). true = on.
     #[arg(long)]
     pub webui_mcp_proxy: Option<bool>,
-    /// Auto-fit unset args to device memory (-fit): true = on, false = off.
-    #[arg(long)]
-    pub fit: Option<bool>,
-    /// Continue a trailing assistant message instead of answering it
-    /// (--prefill-assistant / --no-prefill-assistant). true = llama.cpp's default.
-    #[arg(long)]
-    pub prefill_assistant: Option<bool>,
     /// llama-server log verbosity threshold (-lv / --log-verbosity): 0 output,
     /// 1 error, 2 warning, 3 info, 4 trace, 5 debug.
     #[arg(long)]
@@ -242,17 +209,8 @@ impl ServerSet {
         if let Some(h) = &self.hostname {
             cfg.hostname = server_cfg::opt_nonblank(Some(h.clone()));
         }
-        // clap's PossibleValuesParser already refused anything outside
-        // LOAD_MODES, so this is a straight copy, no clearing rule (there is no
-        // "unset" state: the launch always passes -lm).
-        if let Some(lm) = &self.load_mode {
-            cfg.load_mode = Some(lm.clone());
-        }
         if let Some(t) = self.threads {
             cfg.threads = if t > 0 { Some(t) } else { None };
-        }
-        if let Some(cr) = self.cache_reuse {
-            cfg.cache_reuse = if cr > 0 { Some(cr) } else { None };
         }
         if let Some(tb) = self.threads_batch {
             cfg.threads_batch = if tb > 0 { Some(tb) } else { None };
@@ -262,24 +220,6 @@ impl ServerSet {
         }
         if let Some(d) = &self.models_dir {
             cfg.models_dir = server_cfg::opt_nonblank(Some(d.clone()));
-        }
-        if let Some(dev) = &self.device {
-            cfg.device = server_cfg::opt_nonblank(Some(dev.clone()));
-        }
-        if let Some(sm) = &self.split_mode {
-            // Same collapse as the INI read and the GUI save: an explicit
-            // server-wide `layer` only ever blocked every preset's own mode
-            // (see server_cfg::server_split_mode), so it stores as unset.
-            cfg.split_mode = server_cfg::server_split_mode(Some(sm));
-        }
-        if let Some(ts) = &self.tensor_split {
-            cfg.tensor_split = server_cfg::opt_nonblank(Some(ts.clone()));
-        }
-        if let Some(ot) = &self.override_tensor {
-            cfg.override_tensor = server_cfg::opt_nonblank(Some(ot.clone()));
-        }
-        if let Some(md) = &self.mmproj_device {
-            cfg.mmproj_device = server_cfg::opt_nonblank(Some(md.clone()));
         }
         // The tri-state's clearing rule: `default` is how the CLI reaches the
         // unset state (a bool flag could only ever set one of the other two).
@@ -293,12 +233,6 @@ impl ServerSet {
         }
         if let Some(w) = self.webui_mcp_proxy {
             cfg.webui_mcp_proxy = Some(w);
-        }
-        if let Some(f) = self.fit {
-            cfg.fit = Some(f);
-        }
-        if let Some(p) = self.prefill_assistant {
-            cfg.prefill_assistant = Some(p);
         }
         if let Some(lv) = self.log_verbosity {
             cfg.log_verbosity = Some(lv);
@@ -445,18 +379,8 @@ fn show_lines(cfg: &server_cfg::ServerConfig) -> String {
         cfg.hostname.clone().unwrap_or_else(|| "-".into()),
     );
     row(
-        "LoadMode:",
-        cfg.load_mode
-            .clone()
-            .unwrap_or_else(|| "auto (default)".into()),
-    );
-    row(
         "Threads:",
         cfg.threads.map_or_else(|| "auto".into(), |v| v.to_string()),
-    );
-    row(
-        "CacheReuse:",
-        cfg.cache_reuse.map_or("-".into(), |v| v.to_string()),
     );
     row(
         "ThreadsBatch:",
@@ -471,32 +395,6 @@ fn show_lines(cfg: &server_cfg::ServerConfig) -> String {
     row(
         "ModelsDir:",
         cfg.models_dir.clone().unwrap_or_else(|| "-".into()),
-    );
-    row(
-        "Device:",
-        cfg.device.clone().unwrap_or_else(|| "auto (all)".into()),
-    );
-    row(
-        "SplitMode:",
-        cfg.split_mode
-            .clone()
-            .unwrap_or_else(|| "layer (default)".into()),
-    );
-    row(
-        "TensorSplit:",
-        cfg.tensor_split
-            .clone()
-            .unwrap_or_else(|| "auto (by free VRAM)".into()),
-    );
-    row(
-        "OverrideTensor:",
-        cfg.override_tensor.clone().unwrap_or_else(|| "none".into()),
-    );
-    row(
-        "MmprojDevice:",
-        cfg.mmproj_device
-            .clone()
-            .unwrap_or_else(|| "auto (first GPU)".into()),
     );
     row(
         "RocblasUseHipblaslt:",
@@ -520,16 +418,6 @@ fn show_lines(cfg: &server_cfg::ServerConfig) -> String {
     row(
         "WebuiMcpProxy:",
         cfg.webui_mcp_proxy
-            .map_or_else(|| "true (default)".into(), |v| v.to_string()),
-    );
-    row(
-        "Fit:",
-        cfg.fit
-            .map_or_else(|| "false (default)".into(), |v| v.to_string()),
-    );
-    row(
-        "PrefillAssistant:",
-        cfg.prefill_assistant
             .map_or_else(|| "true (default)".into(), |v| v.to_string()),
     );
     row(
@@ -814,24 +702,15 @@ mod tests {
         let set = ServerSet {
             port: Some(9000),
             hostname: Some("0.0.0.0".into()),
-            load_mode: Some("mmap+mlock".into()),
             threads: Some(8),
-            cache_reuse: Some(256),
             threads_batch: Some(16),
             models_max: Some(3),
             models_dir: Some("D:\\models".into()),
-            device: Some("ROCm1,CUDA0".into()),
-            split_mode: Some("row".into()),
-            tensor_split: Some("3,1".into()),
-            override_tensor: Some(r"token_embd\.weight=ROCm1".into()),
-            mmproj_device: Some("ROCm1".into()),
             // The tri-state arrives as its WORD (clap refuses anything else) and
             // must land as the matching Option<bool>.
             rocblas_use_hipblaslt: Some("off".into()),
             cuda_allreduce: Some("none".into()),
             webui_mcp_proxy: Some(false),
-            fit: Some(true),
-            prefill_assistant: Some(false),
             log_verbosity: Some(2),
             save_state_on_shutdown: Some(true),
             state_dir: Some(r"E:\llama-state".into()),
@@ -847,22 +726,13 @@ mod tests {
         let expected = ServerConfig {
             port: Some(9000),
             hostname: Some("0.0.0.0".into()),
-            load_mode: Some("mmap+mlock".into()),
             threads: Some(8),
-            cache_reuse: Some(256),
             threads_batch: Some(16),
             models_max: Some(3),
             models_dir: Some("D:\\models".into()),
-            device: Some("ROCm1,CUDA0".into()),
-            split_mode: Some("row".into()),
-            tensor_split: Some("3,1".into()),
-            override_tensor: Some(r"token_embd\.weight=ROCm1".into()),
-            mmproj_device: Some("ROCm1".into()),
             rocblas_use_hipblaslt: Some(false),
             cuda_allreduce: Some("none".into()),
             webui_mcp_proxy: Some(false),
-            fit: Some(true),
-            prefill_assistant: Some(false),
             log_verbosity: Some(2),
             save_state_on_shutdown: Some(true),
             state_dir: Some(r"E:\llama-state".into()),
@@ -880,22 +750,13 @@ mod tests {
         let cfg = ServerConfig {
             port: Some(9000),
             hostname: Some("0.0.0.0".into()),
-            load_mode: Some("mmap+mlock".into()),
             threads: Some(8),
-            cache_reuse: Some(256),
             threads_batch: Some(16),
             models_max: Some(3),
             models_dir: Some(r"D:\models".into()),
-            device: Some("ROCm1,CUDA0".into()),
-            split_mode: Some("row".into()),
-            tensor_split: Some("3,1".into()),
-            override_tensor: Some(r"token_embd\.weight=ROCm1".into()),
-            mmproj_device: Some("ROCm1".into()),
             rocblas_use_hipblaslt: Some(false),
             cuda_allreduce: Some("none".into()),
             webui_mcp_proxy: Some(false),
-            fit: Some(true),
-            prefill_assistant: Some(false),
             log_verbosity: Some(2),
             save_state_on_shutdown: Some(true),
             state_dir: Some(r"E:\llama-state".into()),
@@ -910,22 +771,13 @@ mod tests {
         let ServerConfig {
             port,
             hostname,
-            load_mode,
             threads,
-            cache_reuse,
             threads_batch,
             models_max,
             models_dir,
-            device,
-            split_mode,
-            tensor_split,
-            override_tensor,
-            mmproj_device,
             rocblas_use_hipblaslt,
             cuda_allreduce,
             webui_mcp_proxy,
-            fit,
-            prefill_assistant,
             log_verbosity,
             save_state_on_shutdown,
             state_dir,
@@ -935,17 +787,10 @@ mod tests {
         let needles = [
             ("Port:", port.unwrap().to_string()),
             ("Hostname:", hostname.unwrap()),
-            ("LoadMode:", load_mode.unwrap()),
             ("Threads:", threads.unwrap().to_string()),
-            ("CacheReuse:", cache_reuse.unwrap().to_string()),
             ("ThreadsBatch:", threads_batch.unwrap().to_string()),
             ("ModelsMax:", models_max.unwrap().to_string()),
             ("ModelsDir:", models_dir.unwrap()),
-            ("Device:", device.unwrap()),
-            ("SplitMode:", split_mode.unwrap()),
-            ("TensorSplit:", tensor_split.unwrap()),
-            ("OverrideTensor:", override_tensor.unwrap()),
-            ("MmprojDevice:", mmproj_device.unwrap()),
             // The row prints the tri-state's WORD, not the bool's `to_string()`:
             // "false" would read as a value the CLI can't even be given.
             (
@@ -958,8 +803,6 @@ mod tests {
             ),
             ("CudaAllreduce:", cuda_allreduce.unwrap()),
             ("WebuiMcpProxy:", webui_mcp_proxy.unwrap().to_string()),
-            ("Fit:", fit.unwrap().to_string()),
-            ("PrefillAssistant:", prefill_assistant.unwrap().to_string()),
             ("LogVerbosity:", log_verbosity.unwrap().to_string()),
             (
                 "SaveStateOnShutdown:",
@@ -1018,36 +861,21 @@ mod tests {
         let mut cfg = ServerConfig {
             hostname: Some("0.0.0.0".into()),
             threads: Some(8),
-            cache_reuse: Some(64),
             threads_batch: Some(4),
             models_dir: Some(r"D:\models".into()),
-            device: Some("CUDA0".into()),
-            split_mode: Some("row".into()),
-            tensor_split: Some("3,1".into()),
-            override_tensor: Some(r"token_embd\.weight=CUDA0".into()),
             ..Default::default()
         };
         let set = ServerSet {
             hostname: Some("  ".into()),
             threads: Some(0),
-            cache_reuse: Some(-1),
             threads_batch: Some(0),
             models_dir: Some(String::new()),
-            device: Some(String::new()),
-            split_mode: Some("  ".into()),
-            tensor_split: Some(String::new()),
-            override_tensor: Some(String::new()),
             ..Default::default()
         };
         set.apply(&mut cfg);
         assert_eq!(cfg.hostname, None);
         assert_eq!(cfg.threads, None);
-        assert_eq!(cfg.cache_reuse, None);
         assert_eq!(cfg.threads_batch, None);
         assert_eq!(cfg.models_dir, None);
-        assert_eq!(cfg.device, None);
-        assert_eq!(cfg.split_mode, None);
-        assert_eq!(cfg.tensor_split, None);
-        assert_eq!(cfg.override_tensor, None);
     }
 }

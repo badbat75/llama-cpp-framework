@@ -107,8 +107,6 @@ fn has_native_vec_kernel(k: &str, v: &str) -> bool {
 pub struct Input<'a> {
     /// The preset's `device` list (comma-separated ids, empty = not pinned).
     pub device: &'a str,
-    /// server.ini's `Device`, which overrides every preset's at launch.
-    pub server_device: &'a str,
     /// `--list-devices`, standing in for "every device" when nothing is pinned.
     pub probed: &'a [DeviceOption],
     pub cache_type_k: &'a str,
@@ -120,14 +118,10 @@ pub struct Input<'a> {
     pub draft: Option<(&'a str, &'a str)>,
 }
 
-/// The backends the model will run on: the server-wide pin wins, then the
-/// preset's, then every probed GPU (llama.cpp's own default).
+/// The backends the model will run on: the preset's pin, else every probed GPU
+/// (llama.cpp's own default).
 fn backends(input: &Input) -> Vec<Backend> {
-    let pinned = if !input.server_device.trim().is_empty() {
-        input.server_device
-    } else {
-        input.device
-    };
+    let pinned = input.device;
     let ids: Vec<String> = if pinned.trim().is_empty() {
         input.probed.iter().map(|d| d.id.clone()).collect()
     } else {
@@ -242,7 +236,6 @@ mod tests {
     fn input<'a>(device: &'a str, k: &'a str, v: &'a str) -> Input<'a> {
         Input {
             device,
-            server_device: "",
             probed: &[],
             cache_type_k: k,
             cache_type_v: v,
@@ -310,11 +303,7 @@ mod tests {
     }
 
     #[test]
-    fn the_server_pin_wins_and_nothing_pinned_means_every_probed_gpu() {
-        let mut i = input("Vulkan1", "iq4_nl", "iq4_nl");
-        i.server_device = "ROCm1";
-        assert!(warning(&i).contains("on the CPU"));
-
+    fn nothing_pinned_means_every_probed_gpu() {
         let probed = [dev("CUDA0"), dev("Vulkan1"), dev("CPU")];
         let mut none = input("", "iq4_nl", "iq4_nl");
         none.probed = &probed;

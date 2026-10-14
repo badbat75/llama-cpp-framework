@@ -115,14 +115,24 @@ export component AppWindow inherits Window {
     // without a Rust callback of its own (the cache combos bind two-way, flash
     // attention is a SegmentedControl writing the form). Here, not on
     // ModelsPage, because that page only exists while its tab is shown and a
-    // `changed` handler that is not instantiated never fires. The device pins are
-    // in the key too, although the GPU tables' own callbacks already recompute.
+    // `changed` handler that is not instantiated never fires. The device pin is
+    // in the key too, although the GPU table's own callbacks already recompute.
     property <string> kv_cache_inputs: AppState.form.cache_type_k + "|" + AppState.form.cache_type_v
         + "|" + AppState.form.spec_draft_type_k + "|" + AppState.form.spec_draft_type_v
         + "|" + AppState.form.flash_attn + "|" + (AppState.draft_active ? "draft" : "")
-        + "|" + AppState.form.device + "|" + AppState.server_form.device;
+        + "|" + AppState.form.device;
     changed kv_cache_inputs => {
         AppState.kv_cache_inputs_changed();
+    }
+
+    // Setting Context or GPU layers by hand switches the fit off rather than
+    // leaving a checked box nobody can untick (it is disabled then, and the save
+    // would write `off` anyway). Here for the same reason as kv_cache_inputs.
+    property <bool> fit_allowed: AppState.fit_allowed;
+    changed fit_allowed => {
+        if (!fit_allowed && AppState.form.fit) {
+            AppState.form.fit = false;
+        }
     }
 
     shortcuts := FocusScope {

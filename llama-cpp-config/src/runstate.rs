@@ -167,27 +167,8 @@ fn server_args(
 
     // --webui-mcp-proxy : serve the built-in web UI's MCP proxy endpoint. A
     //   presence flag, omitted when off (llama.cpp then defaults it disabled).
-    // -fit on|off       : llama.cpp's auto-fit-to-VRAM. Always passed with an
-    //   explicit value; defaults off because the GUI's "default" n-gpu-layers
-    //   means "offload ALL layers", which -fit on would silently override.
-    // Both were fixed framework policy; the Server tab's Advanced card now
-    // exposes them (they still keep those framework defaults when untouched).
     if cfg.webui_mcp_proxy_or_default() {
         args.push("--webui-mcp-proxy".into());
-    }
-    args.push("-fit".into());
-    args.push(if cfg.fit_or_default() {
-        "on".into()
-    } else {
-        "off".into()
-    });
-
-    // --no-prefill-assistant : only when turned OFF. This is a NEGATIVE presence
-    //   flag: llama.cpp prefills a trailing assistant message by default, and
-    //   `--prefill-assistant` is merely the (redundant) affirmative, so passing
-    //   nothing is what keeps the default behaviour.
-    if !cfg.prefill_assistant_or_default() {
-        args.push("--no-prefill-assistant".into());
     }
 
     // -lv N : log verbosity threshold into the captured llama-server.log.
@@ -208,53 +189,12 @@ fn server_args(
         args.push(tb.to_string());
     }
 
-    // -lm MODE : how the weights are brought in. Always passed with an explicit
-    //   value (framework default "auto", which is llama.cpp's own), the same way
-    //   -fit and -lv are; this is what the Command Line card has to show, and
-    //   `load_mode_or_default` guarantees the value is one llama.cpp accepts.
-    //
-    //   NEVER emit the old --mlock / --no-mmap here. Deprecated in b10105, where
-    //   they stopped composing (each overwrote the whole mode, so the pair this
-    //   used to send, `--mlock --no-mmap`, was last-one-wins and dropped the
-    //   mlock, while a lone `--mlock` also turned mmap OFF), and REMOVED in
-    //   v0.4.1 (#28334), where any of them fails the parse and nothing starts;
-    //   see `server_cfg::load_mode`.
-    args.push("-lm".into());
-    args.push(cfg.load_mode_or_default().into());
-    if let Some(cr) = cfg.cache_reuse {
-        if cr > 0 {
-            args.push("--cache-reuse".into());
-            args.push(cr.to_string());
-        }
-    }
-    if let Some(dev) = cfg.device.as_deref().map(str::trim) {
-        if !dev.is_empty() {
-            args.push("--device".into());
-            args.push(dev.to_string());
-        }
-    }
-    if let Some(sm) = cfg.split_mode.as_deref().map(str::trim) {
-        if !sm.is_empty() {
-            args.push("--split-mode".into());
-            args.push(sm.to_string());
-        }
-    }
-    if let Some(ts) = cfg.tensor_split.as_deref().map(str::trim) {
-        if !ts.is_empty() {
-            args.push("--tensor-split".into());
-            args.push(ts.to_string());
-        }
-    }
-    // One flag carrying every rule, comma-joined: llama.cpp splits it itself. It
-    // lands on the ROUTER's command line, which is exactly why it wins: the router
-    // merges its own args into each preset as a key→value map, so this REPLACES a
-    // preset's `override-tensor` rather than adding to it (see server_cfg).
-    if let Some(ot) = cfg.override_tensor.as_deref().map(str::trim) {
-        if !ot.is_empty() {
-            args.push("--override-tensor".into());
-            args.push(ot.to_string());
-        }
-    }
+    // NO --device, --tensor-split, --split-mode, --override-tensor, -lm, -fit,
+    //   --prefill-assistant, --cache-reuse or --mmproj-device here: those are
+    //   per-preset keys (the GPU distribution, the tensor placement, load-mode,
+    //   fit, prefill-assistant, cache-reuse, mmproj-device). The router copies its own args
+    //   over every preset (`preset.merge(base_preset)`), so any of them on this
+    //   line would override each model's own value.
     // --slot-save-path DIR : turns on the /slots save|restore endpoints, which is
     //   what `slot_state` calls around a stop and a start. Emitted only when the
     //   feature is on, because the flag is not free: llama.cpp validates the
@@ -284,11 +224,6 @@ fn server_args(
 /// ONLY as env vars, so `start()` and `command_line()` render the same launch.
 pub fn env_vars(cfg: &crate::server_cfg::ServerConfig) -> Vec<(String, String)> {
     let mut env: Vec<(String, String)> = Vec::new();
-    if let Some(dev) = cfg.mmproj_device.as_deref().map(str::trim) {
-        if !dev.is_empty() {
-            env.push(("MTMD_BACKEND_DEVICE".into(), dev.to_string()));
-        }
-    }
     // ROCBLAS_USE_HIPBLASLT: rocBLAS's switch between its two GEMM backends. Read
     // by rocBLAS itself (llama.cpp has no flag for it and never sees it) and
     // parsed as an INT, so the value is "1"/"0", never "true"/"false". `0` forces
@@ -400,14 +335,8 @@ pub fn start() -> io::Result<Option<crate::server_cfg::ServerConfig>> {
 
     cmd.current_dir(&data_root);
     cmd.env("LLAMA_CACHE", &models_dir);
-    // Put the image encoder (mmproj/CLIP) on a chosen GPU. MTMD_BACKEND_DEVICE
-    // is the env name of `-mmdev` / `--mmproj-device` (v0.2.0; `clip_ctx` read
-    // the variable itself before that), and unset it follows the first entry of
-    // --device since v0.4.1, or, with no device pinned, takes the FIRST GPU
-    // backend the registry offers, which up to v0.4.0 it did regardless. On a
-    // mixed box that strands the encoder on the wrong card, where it holds VRAM
-    // for the model's whole life and computes only when an image arrives.
-    // Inherited by the router's per-model children, so it covers every preset.
+    // Settings llama.cpp exposes only as env vars; inherited by the router's
+    // per-model children, so they cover every preset.
     for dev in env_vars(&cfg) {
         cmd.env(dev.0, dev.1);
     }
@@ -941,8 +870,6 @@ mod tests {
         for flag in [
             "-t",
             "--threads-batch",
-            "--cache-reuse",
-            "--device",
             "--port",
             "--models-max",
         ] {
@@ -954,13 +881,28 @@ mod tests {
         for flag in ["--mlock", "--no-mmap", "--mmap", "-dio"] {
             assert!(!a.contains(&flag.to_string()), "{flag} is deprecated");
         }
+        // Per-preset keys never ride the router's line: the router would copy
+        // them over every preset's own value.
+        for flag in [
+            "--device",
+            "--tensor-split",
+            "-ts",
+            "--override-tensor",
+            "-ot",
+            "-fit",
+            "--fit",
+            "--prefill-assistant",
+            "--no-prefill-assistant",
+            "--cache-reuse",
+            "-lm",
+            "--load-mode",
+            "--split-mode",
+            "-mmdev",
+            "--mmproj-device",
+        ] {
+            assert!(!a.contains(&flag.to_string()), "{flag} is per preset");
+        }
         // Framework policy flags and always-written fields remain present.
-        assert!(
-            a.iter()
-                .position(|x| x == "-lm")
-                .is_some_and(|i| a.get(i + 1).is_some_and(|v| v == "auto")),
-            "load mode defaults to auto"
-        );
         assert!(
             a.contains(&"localhost".to_string()),
             "host is always written"
@@ -973,8 +915,6 @@ mod tests {
         let cfg = ServerConfig {
             threads: Some(12),
             threads_batch: Some(24),
-            cache_reuse: Some(256),
-            load_mode: Some("mmap+mlock".into()),
             ..Default::default()
         };
         let a = args_for(&cfg);
@@ -985,8 +925,6 @@ mod tests {
         };
         assert!(pair("-t", "12"));
         assert!(pair("--threads-batch", "24"));
-        assert!(pair("--cache-reuse", "256"));
-        assert!(pair("-lm", "mmap+mlock"));
     }
 
     // Step-8 guard of the server-field recipe (top of server_cfg.rs): every
@@ -999,25 +937,15 @@ mod tests {
         let cfg = ServerConfig {
             port: Some(9090),
             hostname: Some("0.0.0.0".into()),
-            load_mode: Some("mlock".into()),
             threads: Some(6),
-            cache_reuse: Some(64),
             threads_batch: Some(12),
             models_max: Some(3),
             models_dir: Some(r"D:\models".into()),
-            device: Some("ROCm1,CUDA0".into()),
-            split_mode: Some("row".into()),
-            tensor_split: Some("3,1".into()),
             // Two rules: the `,` that joins them must reach llama-server as ONE
             // argument (it does its own splitting), not as two.
-            override_tensor: Some(r"token_embd\.weight=ROCm1,^output\.weight=CPU".into()),
-            mmproj_device: Some("ROCm1".into()),
             rocblas_use_hipblaslt: Some(false),
             cuda_allreduce: Some("none".into()),
             webui_mcp_proxy: Some(false),
-            fit: Some(true),
-            // The NEGATIVE presence flag: Some(false) is the state that emits one.
-            prefill_assistant: Some(false),
             log_verbosity: Some(2),
             // On, with an EXPLICIT dir: resolving the default would reach into
             // `paths::`, which unit tests must not touch (src/tests/mod.rs).
@@ -1029,20 +957,10 @@ mod tests {
         let ServerConfig {
             port,
             hostname,
-            load_mode,
             threads,
-            cache_reuse,
             threads_batch,
             models_max,
             models_dir: _, // launch env only: start() exports it as LLAMA_CACHE
-            device,
-            split_mode,
-            tensor_split,
-            override_tensor,
-            // launch env only: start() exports it as MTMD_BACKEND_DEVICE, the
-            // env name of `-mmdev`; the env reaches every router child with
-            // nothing to merge, where the flag would ride the router's argv.
-            mmproj_device: _,
             // launch env only: `env_vars` exports it as ROCBLAS_USE_HIPBLASLT.
             // Also not a llama-server flag: rocBLAS reads it itself, below
             // llama.cpp. Its own assertions live in the env test further down.
@@ -1052,8 +970,6 @@ mod tests {
             // test further down.
             cuda_allreduce: _,
             webui_mcp_proxy,
-            fit,
-            prefill_assistant,
             log_verbosity,
             save_state_on_shutdown,
             state_dir,
@@ -1073,35 +989,14 @@ mod tests {
         };
         assert!(pair("--port", port.unwrap().to_string()));
         assert!(pair("--host", hostname.unwrap()));
-        assert!(pair("-lm", load_mode.unwrap()));
         assert!(pair("-t", threads.unwrap().to_string()));
-        assert!(pair("--cache-reuse", cache_reuse.unwrap().to_string()));
         assert!(pair("--threads-batch", threads_batch.unwrap().to_string()));
         assert!(pair("--models-max", models_max.unwrap().to_string()));
-        assert!(pair("--device", device.unwrap()));
-        assert!(pair("--split-mode", split_mode.unwrap()));
-        assert!(pair("--tensor-split", tensor_split.unwrap()));
-        assert!(pair("--override-tensor", override_tensor.unwrap()));
         // webui-mcp-proxy is a presence flag: Some(false) here ⇒ omitted.
         assert_eq!(
             a.contains(&"--webui-mcp-proxy".to_string()),
             webui_mcp_proxy.unwrap()
         );
-        // fit is always passed with an explicit on|off value.
-        assert!(pair("-fit", if fit.unwrap() { "on" } else { "off" }.into()));
-        // prefill-assistant is a NEGATIVE presence flag: it exists to turn
-        // llama.cpp's default OFF, so Some(false) emits it and Some(true) emits
-        // nothing. Asserting the emitted case AND the silent one, because "no flag"
-        // is the state a `!` typo would produce for both.
-        assert_eq!(
-            a.contains(&"--no-prefill-assistant".to_string()),
-            !prefill_assistant.unwrap()
-        );
-        assert!(!args_for(&ServerConfig {
-            prefill_assistant: Some(true),
-            ..Default::default()
-        })
-        .contains(&"--no-prefill-assistant".to_string()));
         // log verbosity is always passed (framework default 4 when unset).
         assert!(pair("-lv", log_verbosity.unwrap().to_string()));
         // The two snapshot fields ride ONE flag: the toggle decides whether it
@@ -1157,29 +1052,12 @@ mod tests {
         let cfg = ServerConfig {
             threads: Some(0),
             threads_batch: Some(-1),
-            cache_reuse: Some(0),
             ..Default::default()
         };
         let a = args_for(&cfg);
-        for flag in ["-t", "--threads-batch", "--cache-reuse"] {
+        for flag in ["-t", "--threads-batch"] {
             assert!(!a.contains(&flag.to_string()), "{flag} must be omitted");
         }
-    }
-
-    #[test]
-    fn blank_strings_are_omitted_and_padded_ones_trimmed() {
-        let cfg = ServerConfig {
-            device: Some("  ".into()),
-            split_mode: Some(" row ".into()),
-            tensor_split: Some("3,1".into()),
-            ..Default::default()
-        };
-        let a = args_for(&cfg);
-        assert!(!a.contains(&"--device".to_string()));
-        let i = a.iter().position(|x| x == "--split-mode").unwrap();
-        assert_eq!(a[i + 1], "row");
-        let i = a.iter().position(|x| x == "--tensor-split").unwrap();
-        assert_eq!(a[i + 1], "3,1");
     }
 
     // The Command Line card's grouping: values share their flag's line, each
@@ -1227,35 +1105,7 @@ mod tests {
         );
     }
 
-    // MmprojDevice rides the env (MTMD_BACKEND_DEVICE, the env name of `-mmdev`),
-    // never the args. Both launch surfaces must carry it: `start()` sets it on
-    // the child, and the pasted command line has to as well, or the block a user
-    // copies out of the GUI runs a differently-placed encoder.
-    #[test]
-    fn mmproj_device_rides_the_env_not_the_args() {
-        let cfg = ServerConfig {
-            mmproj_device: Some("ROCm1".into()),
-            ..Default::default()
-        };
-        assert!(!args_for(&cfg).iter().any(|a| a.contains("ROCm1")));
-        assert_eq!(
-            env_vars(&cfg),
-            [("MTMD_BACKEND_DEVICE".to_string(), "ROCm1".to_string())]
-        );
-        assert!(env_vars(&ServerConfig::default()).is_empty());
-
-        let out = render_command_line(r"C:\bin\llama-server.exe", &[], &env_vars(&cfg));
-        assert!(
-            out.contains("MTMD_BACKEND_DEVICE"),
-            "no env line in:\n{out}"
-        );
-        assert!(out.contains("ROCm1"));
-        // The env assignment is its own statement: continuing it into the
-        // command would make the paste a syntax error.
-        assert!(!out.lines().next().unwrap().ends_with(LINE_CONTINUATION));
-    }
-
-    // The SDK-tuning tri-state, on the same env-only path as MmprojDevice above.
+    // The SDK-tuning tri-state, on the env-only path.
     // Three things it pins: the value is the INT rocBLAS parses ("0"/"1", never
     // "false"/"true"), `None` exports NOTHING (a default-on-every-machine
     // workaround is exactly what the tri-state exists to avoid), and it reaches

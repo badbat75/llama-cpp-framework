@@ -13,7 +13,7 @@
 //! weight vector typed by hand is indexed against a list the user can't see and
 //! didn't choose. The two fields only make sense together, which is what this
 //! module models: one selection, rendered into the `device` + `tensor_split`
-//! strings that both `server.ini` and `presets.ini` already store.
+//! strings a preset stores in `presets.ini`.
 //!
 //! ## The four states (mirroring llama.cpp exactly)
 //! | selected | `device`        | `tensor_split` | meaning                                       |
@@ -89,9 +89,9 @@
 //! (`llama_meta_device_get_split_state`, `llama-model.cpp`), so it is a ratio
 //! there too, with one difference the share column has to state: a BLANK
 //! vector is an EVEN cut, not the free-VRAM weighting the other modes fall back
-//! to. `SplitMode` is that verdict; `effective_mode` resolves the scope
-//! inheritance: the server-wide mode rides the router's own command line, so
-//! whenever it is set it shadows every preset's key.
+//! to. `SplitMode` is that verdict. The whole distribution (device,
+//! tensor-split, split-mode) is per preset only: server-wide it would ride the
+//! router's own command line and shadow every preset's.
 
 use slint::SharedString;
 
@@ -183,25 +183,10 @@ impl SplitMode {
     }
 }
 
-/// The mode a table actually runs under, scope inheritance resolved. The
-/// server-wide mode rides the ROUTER's command line (`runstate::server_args`),
-/// and the router copies its CLI args over every preset key, so whenever it is
-/// set it WINS, an explicit `layer` included. A preset's own key matters only
-/// while the server-wide one is absent. Pass `None` for the server table
-/// itself.
-pub fn effective_mode(server_mode: &str, preset_mode: Option<&str>) -> SplitMode {
-    let server = server_mode.trim();
-    if !(server.is_empty() || server == "default") {
-        return SplitMode::parse(server);
-    }
-    preset_mode.map_or(SplitMode::Layer, SplitMode::parse)
-}
-
 /// The split-mode combo as label/value/index rows rather than an enum list: the
 /// old list spelled "default" and "layer" as two entries, which for a preset are
 /// the SAME launch in every reachable configuration (an absent key falls back to
-/// layer, or to the server-wide mode, which when set overrides an explicit key
-/// too), so the duplicate entry was pure ambiguity. One entry now carries both;
+/// layer), so the duplicate entry was pure ambiguity. One entry now carries both;
 /// picking it stores "default", which the form conversions drop from the INI.
 /// `row` sits LAST and says so: deprecated upstream (superseded by `tensor`),
 /// it stays listed because the flag still accepts it and an INI that carries it
@@ -588,12 +573,11 @@ pub fn set_even(sel: &GpuSelection) -> GpuSelection {
 /// next save can't silently drop it.
 ///
 /// `layout` is the model to project the weights onto (`Layout`), and it is what
-/// turns the ratio column into a block column. `None` (the server-wide table,
-/// which applies to every preset and so has no single `n_layer_all`, or a model
-/// whose header hasn't been read) leaves `blocks`/`blocks_label` empty and the
+/// turns the ratio column into a block column. `None` (a model whose header
+/// hasn't been read) leaves `blocks`/`blocks_label` empty and the
 /// table falls back to editing raw weights.
 ///
-/// `mode` is the EFFECTIVE split mode (`effective_mode`). It bends the rows the
+/// `mode` is the preset's split mode (`SplitMode::parse`). It bends the rows the
 /// way llama.cpp will bend the launch: `Row` and `Tensor` discard the layout
 /// (the bytes follow row fractions, or a tensor-axis cut, so a block cut would
 /// misreport the placement), `Tensor` additionally names a blank vector "even"
@@ -1176,7 +1160,7 @@ mod tests {
     }
 
     // The rows carry the projection only when a model is there to project onto:
-    // the server-wide table passes None and stays a ratio table.
+    // without a header read, None keeps it a ratio table.
     #[test]
     fn rows_carry_blocks_only_when_a_layout_is_given() {
         let s = sel("ROCm0,CUDA0", "85,15");
@@ -1232,24 +1216,6 @@ mod tests {
         assert_eq!(SplitMode::parse("bogus"), SplitMode::Row);
         assert_eq!(SplitMode::Single.as_str(), "none");
         assert_eq!(SplitMode::Tensor.as_str(), "tensor");
-    }
-
-    // The server-wide mode rides the router's CLI, which the router copies over
-    // every preset key, so a set server mode wins even against an explicit
-    // preset value, and the preset's own key matters only while it is absent.
-    #[test]
-    fn effective_mode_lets_the_server_wide_flag_shadow_the_preset() {
-        assert_eq!(effective_mode("", None), SplitMode::Layer);
-        assert_eq!(effective_mode("default", Some("row")), SplitMode::Row);
-        assert_eq!(effective_mode("", Some("none")), SplitMode::Single);
-        assert_eq!(effective_mode("", Some("tensor")), SplitMode::Tensor);
-        assert_eq!(effective_mode("none", Some("row")), SplitMode::Single);
-        assert_eq!(effective_mode("tensor", Some("row")), SplitMode::Tensor);
-        assert_eq!(
-            effective_mode("layer", Some("row")),
-            SplitMode::Layer,
-            "an explicit server-wide layer forces layer"
-        );
     }
 
     // One combo entry for default+layer: for a preset they are the same launch

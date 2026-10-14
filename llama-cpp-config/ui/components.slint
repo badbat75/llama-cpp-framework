@@ -96,7 +96,7 @@ export global Options {
     // independent --mlock / --no-mmap bools it replaced in b10105. Mirrors
     // LOAD_MODES in src/server_cfg.rs (equality asserted by the e2e test,
     // src/tests/ui_bindings.rs), and the values are passed to -lm verbatim.
-    out property <[string]> load_modes: ["auto", "none", "mmap", "mlock", "mmap+mlock", "dio"];
+    out property <[string]> load_modes: ["default", "auto", "none", "mmap", "mlock", "mmap+mlock", "dio"];
     // The words form.rs's tri_state / tri_bool pair speaks, for a tri-state shown
     // as a dropdown (SDK Tuning's hipBLASLt): "default" passes nothing.
     out property <[string]> tri_states: ["default", "on", "off"];
@@ -719,11 +719,9 @@ export component FormActions inherits HorizontalLayout {
     }
 }
 
-// The GPU distribution table: which devices a model runs on and in what
-// proportion, shared by the Server tab (server-wide default) and the Models tab
-// (per-preset override). It replaces what used to be a single-select "GPU device"
-// ComboBox plus a free-text "Tensor split" LineEdit: two fields that only make
-// sense read together, because `--tensor-split` is a positional vector indexed
+// The GPU distribution table (Models tab): which devices a model runs on and in
+// what proportion. A table rather than a device ComboBox plus a free-text
+// "Tensor split" LineEdit, because those two only make sense read together, because `--tensor-split` is a positional vector indexed
 // over the devices named by `--device`, in `--device` order. Typing `3,1` against
 // an unseen, unchosen device list (six entries on a CUDA+ROCm box, half of them
 // duplicate Vulkan views) is guesswork; a table isn't.
@@ -735,9 +733,8 @@ export component FormActions inherits HorizontalLayout {
 // and it addresses devices BY ID, never by row index.
 //
 // The MODE selector sits ABOVE the rows because it decides what they mean, and
-// `effective_mode`, scope inheritance resolved in Rust (gpu_split::
-// effective_mode; the server-wide flag rides the router's CLI and shadows every
-// preset), bends the columns to match: `layer` edits blocks where a model is
+// `effective_mode`, the preset's mode as Rust parsed it (gpu_split::SplitMode),
+// bends the columns to match: `layer` edits blocks where a model is
 // known, `row` edits the raw ratio (the bytes follow row fractions, so a block
 // cut would lie), `tensor` the same ratio (weights AND KV are cut along a
 // tensor axis by it, and a blank vector is an EVEN cut there, which the Share
@@ -777,18 +774,14 @@ export component GpuSplitTable inherits VerticalLayout {
     in property <int> weight_total;
     // Positions the split is cut over for the model in hand; > 0 switches the
     // editable column from the raw ratio to the BLOCK count, the unit llama.cpp
-    // actually resolves in (gpu_split::Layout). 0 wherever no single model
-    // applies: the server-wide table always, and every mode but layer (Rust
-    // gates it: blocks are a layer-mode projection only).
+    // actually resolves in (gpu_split::Layout). 0 while no model has been read,
+    // and under every mode but layer (Rust gates it: blocks are a layer-mode
+    // projection only).
     in property <int> positions: 0;
-    // Non-empty to show a warning strip above the table (the Models tab uses it
-    // for "a server-wide selection overrides this one at launch").
-    in property <string> warning;
-    // A SECOND, independent strip, right under the mode combo: what the
-    // EFFECTIVE mode will make the launch do that no row can show (the Models
-    // tab passes AppState.preset_split_mode_warning: split mode tensor's
-    // load-time refusals). Independent of `warning` because a table can be both
-    // shadowed and misconfigured, and the two say different things.
+    // A strip right under the mode combo: what the mode will make the launch do
+    // that no row can show (the Models tab passes
+    // AppState.preset_split_mode_warning: split mode tensor's load-time
+    // refusals).
     in property <string> mode_warning;
     in property <string> split_mode_hint;
     // The split-mode combo model, pushed from Rust (gpu_split::MODE_LABELS /
@@ -798,10 +791,10 @@ export component GpuSplitTable inherits VerticalLayout {
     in property <[string]> mode_labels;
     in property <[string]> mode_values;
     in-out property <int> mode_index;
-    // The mode the launch will actually run under ("layer"/"none"/"tensor"/"row"),
-    // inheritance resolved in Rust (gpu_split::effective_mode), NOT the raw
-    // combo value: a preset on "layer (default)" under a server-wide `none`
-    // effectively runs single-GPU, and the columns must say so.
+    // The mode the launch will run under ("layer"/"none"/"tensor"/"row"), as
+    // Rust parsed it (gpu_split::SplitMode::parse), NOT the raw combo value: a
+    // hand-written value outside the list reads as row, and the columns must
+    // say so.
     in property <string> effective_mode: "layer";
     callback mode_picked(string);
     callback toggled(string);
@@ -904,12 +897,6 @@ export component GpuSplitTable inherits VerticalLayout {
     // WrapText, not Text: this table is a component, so a warning long enough
     // to wrap would be published one line tall and paint over the mode row
     // below it (see WrapText).
-    if root.warning != "" : WrapText {
-        text: root.warning;
-        font_size: 12px;
-        color: Tokens.err;
-    }
-
     // The mode comes FIRST: it decides what the columns below mean, so reading
     // (and editing) top to bottom follows the dependency.
     LabeledField {
@@ -1268,12 +1255,6 @@ export component TensorOverrideTable inherits VerticalLayout {
     // Non-empty to show a warning strip above the table (a value llama.cpp would
     // refuse to parse; only a hand-edited INI can produce one).
     in property <string> warning;
-    // A SECOND, independent strip: these rules are shadowed at launch by a
-    // server-wide value (the Models tab's copy passes AppState.tensor_override_warning).
-    // Independent because a table can be both invalid AND shadowed, and the two
-    // say different things: one is "llama.cpp will refuse this", the other is
-    // "llama.cpp will never see this".
-    in property <string> override_warning;
 
     callback added();
     callback removed(int);
@@ -1283,16 +1264,9 @@ export component TensorOverrideTable inherits VerticalLayout {
 
     spacing: 10px;
 
-    // Both strips are WrapText, not Text: this table is a component, so a
-    // warning long enough to wrap (the shadowed-by-the-server one always is)
-    // would be published one line tall and paint over the table header below
-    // it (see WrapText).
-    if root.override_warning != "" : WrapText {
-        text: root.override_warning;
-        font_size: 12px;
-        color: Tokens.err;
-    }
-
+    // WrapText, not Text: this table is a component, so a warning long enough
+    // to wrap would be published one line tall and paint over the table header
+    // below it (see WrapText).
     if root.warning != "" : WrapText {
         text: root.warning;
         font_size: 12px;

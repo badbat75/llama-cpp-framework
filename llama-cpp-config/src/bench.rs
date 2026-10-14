@@ -78,14 +78,11 @@
 //!  * `--device` is `/`-separated for llama-bench, `,`-separated in the INI, with
 //!    the same "separate configurations" meaning for a comma.
 //!
-//! ## The server-wide keys shadow the preset's, here as at launch
+//! ## The placement is the preset's own
 //!
-//! llama-server's router merges its own CLI args over every preset
-//! (`preset.merge(base_preset)`), so a server-wide `device` / `split-mode` /
-//! `override-tensor` is what a model really runs with. `effective` applies that
-//! same shadowing, or the synthetic mode would benchmark a placement the machine
-//! never uses. The live mode needs no equivalent: it asks the real server, which
-//! has already done the merge.
+//! `device`, `tensor-split`, `split-mode` and `override-tensor` are per-preset
+//! keys and the router's command line carries none of them, so the preset alone
+//! says where a model runs, here as at launch.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -430,48 +427,6 @@ pub fn validate(plan: &Plan) -> Option<String> {
     None
 }
 
-// ── Effective placement (server-wide shadows the preset) ─────────────────
-
-/// The placement keys as a launch really sees them: the server-wide value when
-/// it is set, the preset's otherwise. See the module header for why.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct Effective {
-    pub device: String,
-    pub tensor_split: String,
-    pub split_mode: String,
-    pub override_tensor: String,
-}
-
-fn shadow(server: Option<&String>, preset: &str) -> String {
-    match server {
-        Some(v) if !v.trim().is_empty() => v.trim().to_string(),
-        _ => preset.trim().to_string(),
-    }
-}
-
-pub fn effective(p: &Preset, cfg: &ServerConfig) -> Effective {
-    // `device` and `tensor_split` are one selection (the vector is positional
-    // over the device list), so they shadow TOGETHER: taking the server's
-    // devices with the preset's weights would index a ratio into the wrong
-    // devices. The server-wide device list winning means its split wins too,
-    // blank included, which is exactly what the router does.
-    let server_devices = cfg
-        .device
-        .as_ref()
-        .filter(|v| !v.trim().is_empty())
-        .is_some();
-    Effective {
-        device: shadow(cfg.device.as_ref(), &p.device),
-        tensor_split: if server_devices {
-            cfg.tensor_split.clone().unwrap_or_default().trim().into()
-        } else {
-            p.tensor_split.trim().to_string()
-        },
-        split_mode: shadow(cfg.split_mode.as_ref(), &p.split_mode),
-        override_tensor: shadow(cfg.override_tensor.as_ref(), &p.override_tensor),
-    }
-}
-
 /// `a,b` as llama-bench's `a/b`. See the module header: a comma there means
 /// "benchmark these as separate configurations", not "these values together".
 fn slashed(csv: &str) -> String {
@@ -505,6 +460,7 @@ fn n_cpu_ffn_rules(n: Option<i32>) -> Vec<String> {
         .map(|i| format!(r"blk\.{i}\.ffn_(up|down|gate)\.=CPU"))
         .collect()
 }
+
 
 // ── Synthetic: the llama-bench command line ──────────────────────────────
 
@@ -561,7 +517,6 @@ pub fn synthetic_sweeps(plan: &Plan) -> Vec<Sweep> {
 /// `--cache-ram`, and every chat / reasoning / sampling key. `caveats()` is what
 /// says so in the report.
 pub fn synthetic_argv(p: &Preset, cfg: &ServerConfig, plan: &Plan, sweep: &Sweep) -> Vec<String> {
-    let eff = effective(p, cfg);
     let mut a: Vec<String> = Vec::new();
     let mut push = |flag: &str, value: String| {
         a.push(flag.to_string());
@@ -569,14 +524,17 @@ pub fn synthetic_argv(p: &Preset, cfg: &ServerConfig, plan: &Plan, sweep: &Sweep
     };
 
     push("-m", p.model.clone());
-    if !eff.device.is_empty() {
-        push("-dev", slashed(&eff.device));
+    let device = p.device.trim();
+    if !device.is_empty() {
+        push("-dev", slashed(device));
     }
-    if !eff.tensor_split.is_empty() {
-        push("-ts", slashed(&eff.tensor_split));
+    let tensor_split = p.tensor_split.trim();
+    if !tensor_split.is_empty() {
+        push("-ts", slashed(tensor_split));
     }
-    if !eff.split_mode.is_empty() && eff.split_mode != "default" {
-        push("-sm", eff.split_mode.clone());
+    let split_mode = p.split_mode.trim();
+    if !split_mode.is_empty() && split_mode != "default" {
+        push("-sm", split_mode.to_string());
     }
     // ONE `-ot`, never two: a second `-ot` flag is a second configuration GROUP
     // to llama-bench, i.e. a separate benchmark, so the `--n-cpu-ffn` expansion
@@ -587,8 +545,9 @@ pub fn synthetic_argv(p: &Preset, cfg: &ServerConfig, plan: &Plan, sweep: &Sweep
     // matching rule, so the order only matters where a hand-written rule names
     // one of the same tensors.
     let mut ot: Vec<String> = n_cpu_ffn_rules(p.n_cpu_ffn);
-    if !eff.override_tensor.is_empty() {
-        ot.push(semicoloned(&eff.override_tensor));
+    let override_tensor = p.override_tensor.trim();
+    if !override_tensor.is_empty() {
+        ot.push(semicoloned(override_tensor));
     }
     if !ot.is_empty() {
         push("-ot", ot.join(";"));
@@ -604,6 +563,11 @@ pub fn synthetic_argv(p: &Preset, cfg: &ServerConfig, plan: &Plan, sweep: &Sweep
     // on), which is llama-server's too.
     if let Some(on) = p.op_offload {
         push("-nopo", if on { "0".into() } else { "1".into() });
+    }
+    // Same spelling and values as llama-server's; an unset key leaves the tool
+    // at auto, llama.cpp's default on both sides.
+    if !p.lazy_mode.is_empty() {
+        push("-lzm", p.lazy_mode.clone());
     }
     if !p.cache_type_k.is_empty() {
         push("-ctk", p.cache_type_k.clone());
@@ -624,11 +588,11 @@ pub fn synthetic_argv(p: &Preset, cfg: &ServerConfig, plan: &Plan, sweep: &Sweep
     if let Some(n) = p.ubatch_size {
         push("-ub", n.to_string());
     }
-    // Server-scope keys that still change the numbers: the load mode decides
-    // whether the weights are mmap'd, the thread count drives every CPU-side op.
-    let lm = cfg.load_mode_or_default();
-    if lm != "auto" {
-        push("-lm", lm.to_string());
+    // The load mode decides whether the weights are mmap'd; an unset key is
+    // auto on both sides. The thread count (server scope) drives every CPU-side
+    // op.
+    if !p.load_mode.is_empty() && p.load_mode != "auto" {
+        push("-lm", p.load_mode.clone());
     }
     if let Some(t) = cfg.threads {
         push("-t", t.to_string());
@@ -1849,39 +1813,6 @@ mod tests {
         assert_eq!(argv_of(&argv(Some(false)), "-nopo").as_deref(), Some("1"));
         assert_eq!(argv_of(&argv(Some(true)), "-nopo").as_deref(), Some("0"));
         assert!(!argv(None).iter().any(|x| x == "-nopo"));
-    }
-
-    // The router copies the server's own CLI over every preset, so a benchmark
-    // that used the preset's placement would measure something the machine never
-    // runs. Devices and split travel together: taking the server's devices with
-    // the preset's weights would index a ratio into the wrong cards.
-    #[test]
-    fn server_wide_placement_shadows_the_preset() {
-        let p = Preset {
-            device: "CUDA0".into(),
-            tensor_split: "1".into(),
-            override_tensor: "a=CPU".into(),
-            ..preset("a")
-        };
-        let cfg = ServerConfig {
-            device: Some("ROCm0,CUDA0".into()),
-            tensor_split: Some("3,1".into()),
-            override_tensor: Some("b=ROCm0".into()),
-            ..Default::default()
-        };
-        let eff = effective(&p, &cfg);
-        assert_eq!(eff.device, "ROCm0,CUDA0");
-        assert_eq!(eff.tensor_split, "3,1");
-        assert_eq!(eff.override_tensor, "b=ROCm0");
-
-        // A server-wide device list with a BLANK split means auto-by-free-VRAM,
-        // and that blank must win too: keeping the preset's weights here would
-        // apply a two-device ratio the user did not ask for.
-        let cfg = ServerConfig {
-            device: Some("ROCm0,CUDA0".into()),
-            ..Default::default()
-        };
-        assert_eq!(effective(&p, &cfg).tensor_split, "");
     }
 
     #[test]

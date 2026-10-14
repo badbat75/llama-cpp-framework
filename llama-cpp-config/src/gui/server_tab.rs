@@ -110,14 +110,11 @@ pub(super) fn wire(app: &AppWindow, tray: &AppTray, state: &Rc<RefCell<State>>) 
     }
 }
 
-/// The Server tab's two device tables (GPU distribution + tensor placement).
-/// Split out of `wire` because these need nothing but the window (no tray, no
+/// The Server tab's bind-address table. Split out of `wire` because it needs nothing but the window (no tray, no
 /// shared `State`), which is what lets the e2e harness wire them without
 /// fabricating a tray (`gui::wire_tabs_for_tests`). The rest of `wire` (Save,
 /// Revert, Start/Stop) does need both, and stays there.
 pub(super) fn wire_tables(app: &AppWindow) {
-    wire_gpu_table(app);
-    wire_tensor_table(app);
     wire_bind_rows(app);
 }
 
@@ -138,169 +135,6 @@ fn wire_bind_rows(app: &AppWindow) {
         s.set_server_form(f);
         populate_bind_options(&app, &hosts);
     });
-}
-
-/// The server-wide tensor-placement table's five callbacks, over
-/// `server_form.override_tensor`: the twin of `models_tab::wire_tensor_table`,
-/// which documents why `set_pattern` refreshes only the scalars (rebuilding would
-/// recreate the LineEdit being typed into and drop the caret).
-///
-/// What differs is only the blast radius of what they write: this string lands on
-/// the ROUTER's command line, so it replaces every preset's rules rather than
-/// adding to them (see `server_cfg::ServerConfig::override_tensor`).
-fn wire_tensor_table(app: &AppWindow) {
-    let s = app.global::<AppState>();
-    {
-        let app_weak = app.as_weak();
-        s.on_server_tensor_add(move || {
-            let Some(app) = app_weak.upgrade() else {
-                return;
-            };
-            let rules = tensor_override::add(&server_overrides(&app), &devices::probed());
-            set_server_overrides(&app, &rules);
-            refresh_tensor_rows(&app);
-        });
-    }
-    {
-        let app_weak = app.as_weak();
-        s.on_server_tensor_remove(move |index| {
-            let Some(app) = app_weak.upgrade() else {
-                return;
-            };
-            let rules = tensor_override::remove(&server_overrides(&app), row_index(index));
-            set_server_overrides(&app, &rules);
-            refresh_tensor_rows(&app);
-        });
-    }
-    {
-        let app_weak = app.as_weak();
-        s.on_server_tensor_kind(move |index, kind| {
-            let Some(app) = app_weak.upgrade() else {
-                return;
-            };
-            let rules =
-                tensor_override::set_kind(&server_overrides(&app), row_index(index), kind.as_str());
-            set_server_overrides(&app, &rules);
-            refresh_tensor_rows(&app);
-        });
-    }
-    {
-        let app_weak = app.as_weak();
-        s.on_server_tensor_device(move |index, device| {
-            let Some(app) = app_weak.upgrade() else {
-                return;
-            };
-            let rules = tensor_override::set_device(
-                &server_overrides(&app),
-                row_index(index),
-                device.as_str(),
-            );
-            set_server_overrides(&app, &rules);
-            refresh_tensor_rows(&app);
-        });
-    }
-    {
-        let app_weak = app.as_weak();
-        s.on_server_tensor_pattern(move |index, pattern| {
-            let Some(app) = app_weak.upgrade() else {
-                return;
-            };
-            let rules = tensor_override::set_pattern(
-                &server_overrides(&app),
-                row_index(index),
-                pattern.as_str(),
-            );
-            set_server_overrides(&app, &rules);
-            refresh_tensor_scalars(&app);
-        });
-    }
-}
-
-/// The server-wide GPU distribution table's four callbacks. Each one derives a
-/// new selection with `gpu_split` (the pure rules live there, unit-tested) and
-/// writes it back into `server_form.device` + `.tensor_split`: those two strings
-/// ARE the state; the table holds no copy.
-///
-/// Note which refresh each one ends with. Toggle / Auto / Even REBUILD the row
-/// model, because they change rows the user didn't click and the delegates' one-
-/// way bindings only survive a rebuild. A weight edit deliberately does NOT: it
-/// changes no other row's weight (the SpinBoxes are disabled in Auto mode, so
-/// there is never a seed-the-others step), and rebuilding would recreate the very
-/// SpinBox being typed into; multi-digit weights would be impossible. See
-/// GpuSplitTable's binding note in ui/components.slint.
-fn wire_gpu_table(app: &AppWindow) {
-    let s = app.global::<AppState>();
-    {
-        let app_weak = app.as_weak();
-        s.on_server_gpu_toggle(move |id| {
-            let Some(app) = app_weak.upgrade() else {
-                return;
-            };
-            let sel = gpu_split::toggle(&server_selection(&app), id.as_str());
-            set_server_selection(&app, &sel);
-            refresh_gpu_rows(&app);
-        });
-    }
-    {
-        let app_weak = app.as_weak();
-        s.on_server_gpu_move(move |id, delta| {
-            let Some(app) = app_weak.upgrade() else {
-                return;
-            };
-            let sel = gpu_split::move_by(&server_selection(&app), id.as_str(), delta);
-            set_server_selection(&app, &sel);
-            refresh_gpu_rows(&app);
-        });
-    }
-    {
-        let app_weak = app.as_weak();
-        s.on_server_gpu_weight(move |id, weight| {
-            let Some(app) = app_weak.upgrade() else {
-                return;
-            };
-            let sel = gpu_split::set_weight(&server_selection(&app), id.as_str(), weight);
-            set_server_selection(&app, &sel);
-            refresh_gpu_scalars(&app);
-        });
-    }
-    {
-        let app_weak = app.as_weak();
-        s.on_server_gpu_auto(move || {
-            let Some(app) = app_weak.upgrade() else {
-                return;
-            };
-            let sel = gpu_split::set_auto(&server_selection(&app));
-            set_server_selection(&app, &sel);
-            refresh_gpu_rows(&app);
-        });
-    }
-    {
-        let app_weak = app.as_weak();
-        s.on_server_gpu_even(move || {
-            let Some(app) = app_weak.upgrade() else {
-                return;
-            };
-            let sel = gpu_split::set_even(&server_selection(&app));
-            set_server_selection(&app, &sel);
-            refresh_gpu_rows(&app);
-        });
-    }
-    {
-        let app_weak = app.as_weak();
-        s.on_server_split_mode_picked(move |v| {
-            let Some(app) = app_weak.upgrade() else {
-                return;
-            };
-            let st = app.global::<AppState>();
-            let mut f = st.get_server_form();
-            f.split_mode = v;
-            st.set_server_form(f);
-            // The mode decides what every column means (and the server-wide
-            // value shadows the preset table too), so a pick re-projects BOTH
-            // tables, not just this tab's scalars.
-            refresh_gpu_rows(&app);
-        });
-    }
 }
 
 /// Native folder picker for the "Browse…" button, seeded at `start`. Server-tab

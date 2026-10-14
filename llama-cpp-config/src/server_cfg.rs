@@ -60,86 +60,10 @@ use crate::paths;
 pub struct ServerConfig {
     pub port: Option<i32>,
     pub hostname: Option<String>,
-    /// How llama.cpp brings the weights in (-lm / --load-mode): one of
-    /// [`LOAD_MODES`]. None = the framework default ("auto", which is also
-    /// llama.cpp's: mmap unless a device can't do it).
-    ///
-    /// It replaced the `Mlock` + `NoMmap` bools in b10105 (upstream PR #20834),
-    /// and the swap is NOT cosmetic. From b10105 to v0.4.0 the old flags still
-    /// parsed, but each OVERWROTE the whole mode instead of setting one bool of
-    /// two, so they stopped composing: `--mlock --no-mmap` was last-one-wins
-    /// (the mlock silently lost), and a lone `--mlock` selected MLOCK, which is
-    /// mlock WITHOUT mmap: `use_mmap` is true only for mmap / mmap+mlock / auto
-    /// (`llama-model-loader.cpp`), while mlock itself is on for mlock /
-    /// mmap+mlock (`llama-model.cpp`). Two independent checkboxes cannot express
-    /// that, which is why this is one enum. v0.4.1 (#28334) then REMOVED
-    /// `--mlock` / `--mmap` / `--no-mmap` / `-dio` outright: a launch line still
-    /// carrying one fails to parse, so `-lm` is the only spelling left.
-    ///
-    /// A server.ini predating the change is migrated on read; see
-    /// `migrated_load_mode`.
-    pub load_mode: Option<String>,
     pub threads: Option<i32>,
-    pub cache_reuse: Option<i32>,
     pub threads_batch: Option<i32>,
     pub models_max: Option<i32>,
     pub models_dir: Option<String>,
-    /// The GPUs every model runs on by default (--device): one id ("CUDA0") or a
-    /// comma-separated list in split order ("ROCm1,CUDA0"). Empty/None = let
-    /// llama.cpp use all detected devices, which on a mixed box means an iGPU and
-    /// duplicate Vulkan views of the same cards. Set here, this OVERRIDES every
-    /// preset's own `device`: llama-server's router passes its CLI args on top of
-    /// each preset. Written by the GPU distribution table (src/gpu_split.rs).
-    pub device: Option<String>,
-    /// Multi-GPU split strategy (--split-mode / -sm): "none" | "tensor" | "row"
-    /// (`row` deprecated upstream, superseded by `tensor`; see gpu_split.rs).
-    /// Empty/None = llama.cpp's default (layer) AND every preset free to pick its
-    /// own. An explicit `"layer"` is dropped on read; see `server_split_mode`.
-    pub split_mode: Option<String>,
-    /// Per-GPU weight proportions (--tensor-split / -ts), e.g. "3,1" for 75/25,
-    /// positional over `device` above, in that order. Empty/None with 2+ devices =
-    /// llama.cpp splits by each device's FREE memory at load (not evenly).
-    pub tensor_split: Option<String>,
-    /// Tensor-placement rules applied to EVERY model (--override-tensor / -ot):
-    /// `<regex>=<buffer type>` rules joined by `,`, e.g. `token_embd\.weight=ROCm0`.
-    /// None/blank = no rules (every tensor goes wherever its layer went). Written
-    /// by the tensor-placement table (src/tensor_override.rs), same schema as the
-    /// per-preset `override-tensor`.
-    ///
-    /// Set here, this REPLACES every preset's own rules; it does not add to them.
-    /// `-ot` is a `push_back` onto a vector inside llama.cpp, so accumulating would
-    /// be the natural guess, but the router never lets two reach the child: it
-    /// merges its own CLI args into each preset as a KEY→VALUE map
-    /// (`common_preset::merge`, `options[opt] = val`), with the CLI as the writer.
-    /// Verified against b9976: a preset asking for `token_embd\.weight=CPU` under a
-    /// server-wide `token_embd\.weight=CUDA0` spawns its child with the CUDA0 rule
-    /// and no trace of the CPU one. `AppState.tensor_override_warning` says so in
-    /// the Models tab, the same way the GPU table's does.
-    ///
-    /// One asymmetry with the per-preset field: the buffer type is validated by the
-    /// ROUTER at startup, against its own device registry. A rule naming a device
-    /// this machine doesn't have ("unknown buffer type") therefore kills the whole
-    /// SERVER, not just the model that would have used it.
-    pub override_tensor: Option<String>,
-    /// The GPU the multimodal projector (the mmproj/CLIP image encoder) runs on.
-    /// Exported as the `MTMD_BACKEND_DEVICE` env var on the child in
-    /// `runstate::start`, which is the env name of llama.cpp's `-mmdev` /
-    /// `--mmproj-device` flag (#23255, v0.2.0; before that `clip_ctx` read the
-    /// variable itself, and the framework has ridden the env since, so the same
-    /// setting works on both). Env rather than flag because the router inherits
-    /// it to every per-model child with nothing to merge.
-    ///
-    /// What "unset" means moved in v0.4.1 (#28390): the encoder now FOLLOWS
-    /// `--device` (the first device of the list, resolved in `common_params_parse`
-    /// after the CLI is read; `--device none` keeps it on CPU). Up to v0.4.0 it
-    /// ignored `--device` entirely and took the FIRST GPU backend the registry
-    /// offers, which on a CUDA+ROCm box is the NVIDIA card even when the model is
-    /// on the AMD one, holding that card's VRAM for the model's whole lifetime
-    /// while computing only on image requests. That first-GPU fallback is still
-    /// what a preset with no `device` key gets, so the knob stays: it is the only
-    /// way to place the encoder when no device is pinned, or on a card other than
-    /// the model's first. None = leave llama.cpp to it.
-    pub mmproj_device: Option<String>,
     /// Which GEMM backend rocBLAS uses under the HIP build (env var
     /// `ROCBLAS_USE_HIPBLASLT`): `Some(false)` exports `0` (force Tensile),
     /// `Some(true)` exports `1` (force hipBLASLt), `None` leaves the variable
@@ -147,7 +71,7 @@ pub struct ServerConfig {
     /// same reason `--flash-attn` is one: "don't set it" is a third instruction,
     /// and it is the one the framework defaults to.
     ///
-    /// Unlike `mmproj_device` this has no llama-server flag at all: it is read by
+    /// It has no llama-server flag at all: it is read by
     /// rocBLAS itself, so it can only ride the environment (`runstate::env_vars`,
     /// exported by `start()` and shown in the Command Line card; the router's
     /// per-model children inherit it). Nothing else reads it, so it is inert on a
@@ -221,25 +145,6 @@ pub struct ServerConfig {
     /// MCP tools. Experimental upstream (llama.cpp defaults it OFF); don't enable
     /// on an untrusted network.
     pub webui_mcp_proxy: Option<bool>,
-    /// Let llama.cpp auto-shrink unset args to fit device memory (-fit on|off).
-    /// None = the framework default (off): the GUI's "default" n-gpu-layers means
-    /// "offload every layer", which -fit on would silently override. v0.5.0
-    /// (#28849) let the fit grow the KV pool up to 4x the trained context under
-    /// auto `parallel` (4 slots, unified KV); v0.6.0 reverted that (#29437).
-    pub fit: Option<bool>,
-    /// Continue a TRAILING assistant message instead of answering it
-    /// (--prefill-assistant / --no-prefill-assistant). None = llama.cpp's own
-    /// default, which is ON: when the last message of a request is an assistant
-    /// message, the server treats it as the START of the reply and generates the
-    /// continuation, rather than as a finished turn to answer.
-    ///
-    /// It is a SERVER-scope flag upstream (`set_examples({LLAMA_EXAMPLE_SERVER})`)
-    /// and read from the child's `params_base` (`server-context.cpp` →
-    /// `chat_params.prefill_assistant`), not from anything model-specific, which
-    /// is why it lives here and not in `presets.ini`. Turn it OFF when a client
-    /// legitimately ends a conversation on an assistant turn and expects a fresh
-    /// reply, and the model instead resumes mid-sentence.
-    pub prefill_assistant: Option<bool>,
     /// llama-server log verbosity threshold (-lv / --log-verbosity N): messages
     /// above this level are dropped. None = the framework default (4, per-request
     /// logging into the captured llama-server.log). Always passed to the launch.
@@ -300,19 +205,17 @@ pub struct ServerConfig {
 // ── Defaults & accessors ─────────────────────────────────────────────────
 
 /// Every value `-lm` accepts, in the dropdown's order (`common/arg.cpp`'s
-/// `--load-mode` help; `enum llama_load_mode` in include/llama.h). Mirrors
-/// `Options.load_modes` in ui/components.slint: the e2e (`src/tests/ui_bindings.rs`)
-/// asserts the two lists are equal, because a value the dropdown does not contain
-/// leaves the combo showing its first entry ("auto") and quietly SAVES that on the
-/// next write.
+/// `--load-mode` help; `enum llama_load_mode` in include/llama.h), read by the
+/// per-preset `load-mode` key. Mirrors `Options.load_modes` in
+/// ui/components.slint after its leading "default" (the omitted key): the e2e
+/// (`src/tests/ui_bindings.rs`) asserts the two lists agree, because a value the
+/// dropdown does not contain leaves the combo showing its first entry and
+/// quietly drops the key on the next save.
 pub const LOAD_MODES: [&str; 6] = ["auto", "none", "mmap", "mlock", "mmap+mlock", "dio"];
-
-/// The framework default when `LoadMode` is unset: llama.cpp's own default.
-pub const DEFAULT_LOAD_MODE: &str = LOAD_MODES[0];
 
 /// `v` as one of [`LOAD_MODES`], ignoring case and surrounding space; `None` when
 /// it names no mode llama.cpp has. Handing back the CANONICAL `&'static str` is the
-/// point: a hand-edited `LoadMode = MMAP+MLOCK` then shows and re-saves as the
+/// point: a hand-edited `load-mode = MMAP+MLOCK` then shows and re-saves as the
 /// dropdown's own entry instead of falling back to "auto" and silently rewriting a
 /// setting the user did choose.
 pub fn normalize_load_mode(v: &str) -> Option<&'static str> {
@@ -358,7 +261,7 @@ impl ServerConfig {
             .map_or_else(default_models_dir, str::to_string)
     }
 
-    // The always-written trio's defaults (Port / Hostname / LoadMode render as
+    // The always-written fields' defaults (Port / Hostname render as
     // real lines even when unset). ONE home each: `render()`, `server_form`,
     // `runstate::server_args`, and the GUI all pull from here, so changing a
     // default is a one-line edit instead of a four-file hunt.
@@ -379,30 +282,9 @@ impl ServerConfig {
             .map_or_else(|| "localhost".into(), str::to_string)
     }
 
-    /// The configured load mode, or `"auto"` (the framework default) when unset
-    /// or unrecognised. Always one of [`LOAD_MODES`], so the launch line can pass
-    /// it to `-lm` unchecked.
-    pub fn load_mode_or_default(&self) -> &'static str {
-        self.load_mode
-            .as_deref()
-            .and_then(normalize_load_mode)
-            .unwrap_or(DEFAULT_LOAD_MODE)
-    }
-
     /// The web-UI MCP proxy flag, or `true` (the framework default) when unset.
     pub fn webui_mcp_proxy_or_default(&self) -> bool {
         self.webui_mcp_proxy.unwrap_or(true)
-    }
-
-    /// The -fit flag, or `false` (the framework default: off) when unset.
-    pub fn fit_or_default(&self) -> bool {
-        self.fit.unwrap_or(false)
-    }
-
-    /// Prefill a trailing assistant message, or `true` (llama.cpp's own default)
-    /// when unset.
-    pub fn prefill_assistant_or_default(&self) -> bool {
-        self.prefill_assistant.unwrap_or(true)
     }
 
     /// The log verbosity (-lv), or `4` (the framework default) when unset.
@@ -478,21 +360,10 @@ fn from_keys(keys: &std::collections::BTreeMap<String, String>) -> ServerConfig 
     ServerConfig {
         port: keys.get("Port").and_then(|v| ini::parse_int(v)),
         hostname: opt_nonblank(keys.get("Hostname").cloned()),
-        load_mode: keys
-            .get("LoadMode")
-            .and_then(|v| normalize_load_mode(v))
-            .or_else(|| migrated_load_mode(keys))
-            .map(str::to_string),
         threads: keys.get("Threads").and_then(|v| ini::parse_int(v)),
-        cache_reuse: keys.get("CacheReuse").and_then(|v| ini::parse_int(v)),
         threads_batch: keys.get("ThreadsBatch").and_then(|v| ini::parse_int(v)),
         models_max: keys.get("ModelsMax").and_then(|v| ini::parse_int(v)),
         models_dir: opt_nonblank(keys.get("ModelsDir").cloned()),
-        device: opt_nonblank(keys.get("Device").cloned()),
-        split_mode: server_split_mode(keys.get("SplitMode")),
-        tensor_split: opt_nonblank(keys.get("TensorSplit").cloned()),
-        override_tensor: opt_nonblank(keys.get("OverrideTensor").cloned()),
-        mmproj_device: opt_nonblank(keys.get("MmprojDevice").cloned()),
         // Absent (or unparseable) stays None: "leave the env var alone" is a
         // real third state here, not a stand-in for a framework default.
         rocblas_use_hipblaslt: keys
@@ -503,10 +374,6 @@ fn from_keys(keys: &std::collections::BTreeMap<String, String>) -> ServerConfig 
             .and_then(|v| normalize_allreduce(v))
             .map(str::to_string),
         webui_mcp_proxy: keys.get("WebuiMcpProxy").and_then(|v| ini::parse_bool(v)),
-        fit: keys.get("Fit").and_then(|v| ini::parse_bool(v)),
-        prefill_assistant: keys
-            .get("PrefillAssistant")
-            .and_then(|v| ini::parse_bool(v)),
         log_verbosity: keys.get("LogVerbosity").and_then(|v| ini::parse_int(v)),
         save_state_on_shutdown: keys
             .get("SaveStateOnShutdown")
@@ -514,50 +381,6 @@ fn from_keys(keys: &std::collections::BTreeMap<String, String>) -> ServerConfig 
         state_dir: opt_nonblank(keys.get("StateDir").cloned()),
         opencode_base_url: opt_nonblank(keys.get("OpencodeBaseUrl").cloned()),
         opencode_api_key: opt_nonblank(keys.get("OpencodeApiKey").cloned()),
-    }
-}
-
-/// The pre-b10105 `Mlock` / `NoMmap` pair as a `LoadMode`, for a server.ini
-/// written before the two collapsed into one enum. Consulted only when `LoadMode`
-/// is absent; the old keys then disappear on the next save, since `render`
-/// rewrites the whole file.
-///
-/// Only a `NoMmap` the user actually turned ON carries over. `Mlock = true` was
-/// the framework default and every save materialized it whether or not anyone
-/// chose it, so there is no way to tell an intent from a default; honouring it
-/// would hand the old default to every existing install and make the new one
-/// ("auto", llama.cpp's own) reachable for nobody. `Mlock = true` + `NoMmap = true`
-/// is the exception because it is unambiguous, and it is precisely the pair the
-/// old launch line got WRONG: it emitted `--mlock --no-mmap`, and under b10105
-/// the second flag overwrote the mode and dropped the mlock.
-/// The server-wide `--split-mode`, with an explicit `layer` collapsed to None.
-///
-/// The two spellings are not merely redundant here, and the difference is
-/// invisible in the wrong direction: llama.cpp already defaults to layer, so the
-/// flag changes nothing about how a model is split, but the ROUTER copies its
-/// own CLI args over every preset (`preset.merge(base_preset)`,
-/// `server-models.cpp`, and `unset_reserved_args` does NOT prune
-/// `--split-mode`), so emitting it silently neuters each preset's own mode. The
-/// Models tab then shows a live combo that cannot change anything, which is
-/// exactly the trap this collapse removes.
-///
-/// Nobody chooses `layer` to mean "forbid every preset from picking row/none";
-/// it is what the old two-entry combo ("default" and "layer", one and the same
-/// launch) wrote when either entry was picked. So it is dropped on read: the
-/// server's own launch is unchanged, presets get their mode back, and the next
-/// save drops the key from the file. `none` / `tensor` / `row` are kept: those
-/// DO change the launch, and overriding every preset with them is a deliberate
-/// choice the combo makes visible.
-pub fn server_split_mode(raw: Option<&String>) -> Option<String> {
-    opt_nonblank(raw.cloned()).filter(|v| !v.trim().eq_ignore_ascii_case("layer"))
-}
-
-fn migrated_load_mode(keys: &std::collections::BTreeMap<String, String>) -> Option<&'static str> {
-    let flag = |k: &str| keys.get(k).and_then(|v| ini::parse_bool(v));
-    match (flag("Mlock"), flag("NoMmap")) {
-        (Some(true), Some(true)) => Some("mlock"),
-        (_, Some(true)) => Some("none"),
-        _ => None,
     }
 }
 
@@ -588,12 +411,7 @@ pub fn save(cfg: &ServerConfig) -> io::Result<()> {
 /// Save-boundary validation, pure so the unit test never touches `paths::`,
 /// the mirror of `presets::validate_for_save`. The INI format can't escape
 /// `;`/`#`, so a ModelsDir containing one would silently reload truncated
-/// (see `ini::reject_comment_markers`). OverrideTensor gets the same treatment
-/// (a custom regex is free-text, so it CAN hold a `#`) plus its own grammar
-/// check, for the reason spelled out on `presets::validate_for_save`: a rule
-/// with no device is a `throw` during llama.cpp's arg parsing. Here it is worse
-/// than there: the router parses `-ot` for the whole SERVER, so a bad value
-/// means nothing starts at all, not just one model.
+/// (see `ini::reject_comment_markers`).
 fn validate_for_save(cfg: &ServerConfig) -> io::Result<()> {
     ini::reject_comment_markers("ModelsDir", &cfg.models_dir_or_default())?;
     // Same rule as ModelsDir, and with a second bite here: a truncated StateDir
@@ -606,10 +424,6 @@ fn validate_for_save(cfg: &ServerConfig) -> io::Result<()> {
     // the user cannot edit from here. It also keeps this function free of
     // `paths::`, which unit tests must not touch (see src/tests/mod.rs).
     ini::reject_comment_markers("StateDir", cfg.state_dir.as_deref().unwrap_or(""))?;
-    let overrides = cfg.override_tensor.clone().unwrap_or_default();
-    ini::reject_comment_markers("OverrideTensor", &overrides)?;
-    crate::tensor_override::validate(&overrides)
-        .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
     ini::reject_comment_markers(
         "OpencodeBaseUrl",
         cfg.opencode_base_url.as_deref().unwrap_or(""),
@@ -629,10 +443,6 @@ fn render(cfg: &ServerConfig) -> String {
     // trims each entry the same way).
     let hostname =
         crate::net_ifaces::join_hosts(&crate::net_ifaces::parse_hosts(&cfg.hostname_or_default()));
-    // Canonicalized on the way out (`load_mode_or_default`), so a hand-edited
-    // value that is not a mode is corrected here rather than silently ignored
-    // at every read.
-    let load_mode = cfg.load_mode_or_default();
 
     let models_dir = cfg.models_dir_or_default();
 
@@ -656,12 +466,6 @@ fn render(cfg: &ServerConfig) -> String {
         "; Threads = 12  ; optional override; auto-detected if commented",
         |n| n > 0,
     );
-    let cache_reuse_line = int_line_or_hint(
-        cfg.cache_reuse,
-        "CacheReuse",
-        "; CacheReuse = 256  ; minimum chunk size for prompt cache reuse (--cache-reuse)",
-        |n| n > 0,
-    );
     let threads_batch_line = int_line_or_hint(
         cfg.threads_batch,
         "ThreadsBatch",
@@ -677,31 +481,6 @@ fn render(cfg: &ServerConfig) -> String {
         "ModelsMax",
         "; ModelsMax = 2  ; cap resident models (0 = unlimited); commented = llama.cpp default 4",
         |n| n >= 0,
-    );
-    let device_line = str_line_or_hint(
-        cfg.device.as_deref(),
-        "Device",
-        "; Device = ROCm1,CUDA0  ; the GPUs models run on (--device), in split order; blank = all detected",
-    );
-    let split_mode_line = str_line_or_hint(
-        cfg.split_mode.as_deref(),
-        "SplitMode",
-        "; SplitMode = layer  ; multi-GPU split (--split-mode): none|layer|tensor|row; blank = layer (default)",
-    );
-    let tensor_split_line = str_line_or_hint(
-        cfg.tensor_split.as_deref(),
-        "TensorSplit",
-        "; TensorSplit = 3,1  ; how much of the model each Device holds (--tensor-split), same order; blank = by free VRAM",
-    );
-    let override_tensor_line = str_line_or_hint(
-        cfg.override_tensor.as_deref(),
-        "OverrideTensor",
-        r"; OverrideTensor = token_embd\.weight=ROCm0  ; put matching tensors on a named device (--override-tensor); blank = none",
-    );
-    let mmproj_device_line = str_line_or_hint(
-        cfg.mmproj_device.as_deref(),
-        "MmprojDevice",
-        "; MmprojDevice = ROCm1  ; GPU for the image encoder (env MTMD_BACKEND_DEVICE); blank = the preset's first device, or the first GPU found",
     );
     // The one bool with a real unset state (see the field's doc): unset means the
     // env var is never exported, which is neither `true` nor `false`.
@@ -733,16 +512,6 @@ fn render(cfg: &ServerConfig) -> String {
     } else {
         "false"
     };
-    let fit_lit = if cfg.fit_or_default() {
-        "true"
-    } else {
-        "false"
-    };
-    let prefill_lit = if cfg.prefill_assistant_or_default() {
-        "true"
-    } else {
-        "false"
-    };
     let log_verbosity = cfg.log_verbosity_or_default();
 
     // Like ModelsDir, StateDir is always written with its RESOLVED value rather
@@ -759,7 +528,10 @@ fn render(cfg: &ServerConfig) -> String {
         "; Generated by llama-cpp-config.
 ;
 ; llama-server runtime configuration (machine-wide).
-; Per-model knobs live in presets.ini.
+; Per-model knobs live in presets.ini, the GPU distribution (device,
+; tensor-split, split-mode), the tensor placement (override-tensor), the load
+; mode (load-mode), the VRAM auto-fit (fit), prefill-assistant and the image
+; encoder's GPU (mmproj-device) among them.
 
 [Server]
 {port_line}
@@ -767,54 +539,17 @@ fn render(cfg: &ServerConfig) -> String {
 ; bind several (llama.cpp v0.5.0+); 0.0.0.0 = all interfaces, never combined with
 ; another address (they would overlap).
 Hostname = {hostname}
-; LoadMode: how the weights are brought in (-lm / --load-mode). ONE enum, not two
-; flags: llama.cpp folded --mlock / --no-mmap / -dio into it in b10105 and its
-; values are mutually exclusive.
-;   auto        memory-map the GGUF unless a device can't (llama.cpp's default)
-;   none        neither mmap nor mlock: read the weights into RAM up front
-;   mmap        memory-map, always
-;   mlock       lock the weights in physical RAM, WITHOUT mmap
-;   mmap+mlock  memory-map and lock what it maps
-;   dio         Direct I/O where available
-LoadMode = {load_mode}
 ; WebuiMcpProxy: enable the built-in web UI's MCP CORS proxy (--webui-mcp-proxy).
 ; The bundled chat UI needs it to call MCP tools; disable on an untrusted network.
 WebuiMcpProxy = {webui_lit}
-; Fit: let llama.cpp auto-shrink unset args to fit device memory (-fit on|off).
-; Off by default: a per-preset offload-all-layers choice would be overridden.
-Fit = {fit_lit}
-; PrefillAssistant: when a request's LAST message is an assistant message, treat
-; it as the start of the reply and continue it (--prefill-assistant, llama.cpp's
-; default) instead of answering it as a finished turn (--no-prefill-assistant).
-PrefillAssistant = {prefill_lit}
 ; LogVerbosity: llama-server log threshold (-lv). llama.cpp defines six levels:
 ; 0 output, 1 error, 2 warning, 3 info, 4 trace, 5 debug; a message is printed
 ; when its level is <= this. Framework default 4 captures per-request logging
 ; into logs/llama-server.log; 5 also logs the per-tensor override lines.
 LogVerbosity = {log_verbosity}
 {threads_line}
-{cache_reuse_line}
 {threads_batch_line}
 {models_max_line}
-; GPU distribution. Device = the GPUs models run on; TensorSplit = how much of
-; the model each of them holds, positional over Device IN THAT ORDER. Set here,
-; both OVERRIDE every preset's own values: llama-server's router passes its own
-; command line on top of each preset.
-{device_line}
-{split_mode_line}
-{tensor_split_line}
-; OverrideTensor: pin tensors matching a regex to a named device, whatever their
-; layer got (--override-tensor). `token_embd\\.weight=ROCm0` is the one that pays:
-; llama.cpp parks the embedding table in PINNED host RAM even at 'offloaded N/N
-; layers', which Windows counts as Shared GPU memory. Set here, this REPLACES
-; every preset's own rules (it does not add to them), and an unknown device name
-; stops the SERVER from starting, not just one model.
-{override_tensor_line}
-; MmprojDevice places the image encoder. Blank = llama.cpp's own default, which
-; since v0.4.1 is the FIRST device of the preset's (or this file's) Device list,
-; and, when neither pins one, the first GPU backend found, where it holds VRAM
-; but only computes on image requests. Name a device here to override both.
-{mmproj_device_line}
 ; SDK tuning: vendor-library environment variables, not llama-server flags;
 ; llama.cpp never sees them, so nothing validates them and each only bites the
 ; backend it belongs to. RocblasUseHipblaslt picks rocBLAS's GEMM backend:
@@ -869,7 +604,7 @@ fn int_line_or_hint(v: Option<i32>, key: &str, hint: &str, keep: impl Fn(i32) ->
 /// `Key = true|false` for a set bool, else the commented `hint`. The bool twin of
 /// `str_line_or_hint`, for the one bool whose unset state is a real third
 /// instruction (never export the variable) rather than a framework default; the
-/// always-written bools above (WebuiMcpProxy / Fit / PrefillAssistant) render
+/// always-written bools above (WebuiMcpProxy, LogVerbosity) render
 /// their default instead of a hint, which is why they don't use this.
 fn bool_line_or_hint(v: Option<bool>, key: &str, hint: &str) -> String {
     match v {
@@ -907,32 +642,16 @@ mod tests {
         let original = ServerConfig {
             port: Some(8081),
             hostname: Some("0.0.0.0".into()),
-            // Non-default, and the one value carrying a `+`, which the INI
-            // reader must not treat as anything special.
-            load_mode: Some("mmap+mlock".into()),
             threads: Some(12),
-            cache_reuse: Some(256),
             threads_batch: Some(24),
             models_max: Some(2),
             models_dir: Some(r"E:\llm".into()),
-            device: Some("ROCm1,CUDA0".into()),
-            split_mode: Some("row".into()),
-            tensor_split: Some("3,1".into()),
-            // Two rules, so the `,` that joins them has to survive the INI
-            // reader: the value's own grammar, not just the key name, is under
-            // test.
-            override_tensor: Some(r"token_embd\.weight=ROCm1,^output\.weight=CPU".into()),
-            mmproj_device: Some("ROCm1".into()),
             // Non-default (unset is the framework default): the state that
             // matters, and the one a `keep`-style collapse would swallow.
             rocblas_use_hipblaslt: Some(false),
             // Non-default (unset is the default), like the knob above.
             cuda_allreduce: Some("none".into()),
             webui_mcp_proxy: Some(false),
-            fit: Some(true),
-            // Non-default (llama.cpp prefills by default), so the round-trip is
-            // not vacuous for it.
-            prefill_assistant: Some(false),
             log_verbosity: Some(2),
             // Non-default (off is the framework default), and a StateDir off the
             // system drive, which is the whole reason the path is overridable.
@@ -945,9 +664,9 @@ mod tests {
     }
 
     // The writer's DELIBERATE collapses, pinned as documented behavior:
-    // - Hostname/LoadMode/WebuiMcpProxy/Fit/LogVerbosity are always written,
-    //   so an unset one reloads as the framework default (localhost / auto /
-    //   true / false / 4) rather than None.
+    // - Hostname/WebuiMcpProxy/LogVerbosity are always written, so an
+    //   unset one reloads as the framework default (localhost / true / 4)
+    //   rather than None.
     // - `keep` predicates turn unset/"not worth writing" values into commented
     //   hint lines: port <= 0, threads/threads_batch <= 0, models_max unset.
     //   An unset port reloads as None (not a forced 8080), so the UI "default"
@@ -958,20 +677,11 @@ mod tests {
         let reloaded = round_trip(&ServerConfig::default());
         assert_eq!(reloaded.port, None);
         assert_eq!(reloaded.hostname.as_deref(), Some("localhost"));
-        assert_eq!(reloaded.load_mode.as_deref(), Some("auto"));
         assert_eq!(reloaded.webui_mcp_proxy, Some(true));
-        assert_eq!(reloaded.fit, Some(false));
-        assert_eq!(reloaded.prefill_assistant, Some(true));
         assert_eq!(reloaded.log_verbosity, Some(4));
         assert_eq!(reloaded.threads, None);
         assert_eq!(reloaded.threads_batch, None);
-        assert_eq!(reloaded.cache_reuse, None);
         assert_eq!(reloaded.models_max, None);
-        assert_eq!(reloaded.device, None);
-        assert_eq!(reloaded.split_mode, None);
-        assert_eq!(reloaded.tensor_split, None);
-        assert_eq!(reloaded.override_tensor, None);
-        assert_eq!(reloaded.mmproj_device, None);
         // The one bool that stays None: unset means the env var is never
         // exported, so materializing a default would BE a decision.
         assert_eq!(reloaded.rocblas_use_hipblaslt, None);
@@ -1026,50 +736,11 @@ mod tests {
         assert_eq!(read("butterfly"), None);
     }
 
-    /// A server.ini written before b10105 carries `Mlock` / `NoMmap` and no
-    /// `LoadMode`. Only an explicit `NoMmap = true` survives the collapse; see
-    /// `migrated_load_mode` for why an `Mlock = true` alone cannot.
+    /// A hand-edited `load-mode` is canonicalized rather than silently dropped,
+    /// and a value that names no mode is refused, never handed to llama.cpp,
+    /// which exits on an argument it rejects.
     #[test]
-    fn pre_load_mode_ini_migrates() {
-        let cases = [
-            // The old framework default, materialized into every file: no intent
-            // to read, so it lands on the NEW framework default.
-            (Some("true"), Some("false"), None),
-            (Some("false"), Some("false"), None),
-            (None, None, None),
-            // Unambiguous, and exactly the pair the old launch line got wrong
-            // (`--mlock --no-mmap` = last one wins = mlock silently dropped).
-            (Some("true"), Some("true"), Some("mlock")),
-            (Some("false"), Some("true"), Some("none")),
-        ];
-        for (mlock, no_mmap, expected) in cases {
-            let mut keys = std::collections::BTreeMap::new();
-            keys.insert("Hostname".to_string(), "localhost".to_string());
-            for (k, v) in [("Mlock", mlock), ("NoMmap", no_mmap)] {
-                if let Some(v) = v {
-                    keys.insert(k.to_string(), v.to_string());
-                }
-            }
-            assert_eq!(
-                from_keys(&keys).load_mode.as_deref(),
-                expected,
-                "Mlock={mlock:?} NoMmap={no_mmap:?}"
-            );
-        }
-        // An explicit LoadMode wins over both legacy keys, whatever they say.
-        let keys = std::collections::BTreeMap::from([
-            ("LoadMode".to_string(), "dio".to_string()),
-            ("Mlock".to_string(), "true".to_string()),
-            ("NoMmap".to_string(), "true".to_string()),
-        ]);
-        assert_eq!(from_keys(&keys).load_mode.as_deref(), Some("dio"));
-    }
-
-    /// A hand-edited LoadMode is canonicalized rather than silently dropped, and
-    /// a value that names no mode falls back to the default, never to whatever
-    /// llama.cpp would do with an argument it rejects (it exits).
-    #[test]
-    fn load_mode_normalizes_and_falls_back() {
+    fn load_mode_normalizes() {
         for (input, expected) in [
             ("MMAP+MLOCK", Some("mmap+mlock")),
             ("  mlock  ", Some("mlock")),
@@ -1079,42 +750,6 @@ mod tests {
         ] {
             assert_eq!(normalize_load_mode(input), expected, "input {input:?}");
         }
-        let cfg = ServerConfig {
-            load_mode: Some("nonsense".into()),
-            ..Default::default()
-        };
-        assert_eq!(cfg.load_mode_or_default(), "auto");
-        // …and the corrected value is what the next save writes.
-        assert_eq!(round_trip(&cfg).load_mode.as_deref(), Some("auto"));
-    }
-
-    /// A server-wide `SplitMode = layer` is dropped on read. It changes nothing
-    /// about the server's own launch (llama.cpp already defaults to layer) and
-    /// its only real effect was to override every preset's mode, since the
-    /// router merges its CLI args into each preset, a choice nobody makes on
-    /// purpose, and one the merged combo entry can no longer express. `none`,
-    /// `tensor` and `row` DO change the launch, so they survive and keep
-    /// overriding.
-    #[test]
-    fn an_explicit_server_wide_layer_split_mode_is_dropped_on_read() {
-        let read = |v: &str| {
-            from_keys(&std::collections::BTreeMap::from([(
-                "SplitMode".to_string(),
-                v.to_string(),
-            )]))
-            .split_mode
-        };
-        assert_eq!(read("layer"), None);
-        assert_eq!(read("  LAYER  "), None, "trimmed and case-insensitive");
-        assert_eq!(read("row"), Some("row".into()));
-        assert_eq!(read("tensor"), Some("tensor".into()));
-        assert_eq!(read("none"), Some("none".into()));
-        // …and the dropped key is gone from the file the next save writes.
-        let cfg = ServerConfig {
-            split_mode: Some("layer".into()),
-            ..Default::default()
-        };
-        assert_eq!(round_trip(&cfg).split_mode, None);
     }
 
     #[test]
@@ -1122,9 +757,7 @@ mod tests {
         let cfg = ServerConfig {
             port: Some(0),
             threads: Some(0),
-            cache_reuse: Some(-3),
             threads_batch: Some(-4),
-            device: Some("   ".into()),
             ..Default::default()
         };
         let reloaded = round_trip(&cfg);
@@ -1133,12 +766,7 @@ mod tests {
             "port <= 0 is unset (llama.cpp default)"
         );
         assert_eq!(reloaded.threads, None, "threads <= 0 is auto");
-        assert_eq!(
-            reloaded.cache_reuse, None,
-            "cache_reuse <= 0 clears the override (same rule as the CLI set)"
-        );
         assert_eq!(reloaded.threads_batch, None, "threads_batch <= 0 is auto");
-        assert_eq!(reloaded.device, None, "blank device is unset");
     }
 
     // The "default" checkbox carries the unset state now, so every non-negative
@@ -1205,34 +833,6 @@ mod tests {
         .is_ok());
     }
 
-    // OverrideTensor is refused on the same two grounds as the per-preset one,
-    // and the stakes are higher here: the ROUTER parses this `-ot`, so a value
-    // llama.cpp throws on takes down the whole server, not one model. The regex
-    // is free text, so `#`/`;` really can reach it (they'd truncate the INI line
-    // on reload); a rule with no device is what a hand-edited `,` leaves behind.
-    #[test]
-    fn save_validation_rejects_a_broken_override_tensor() {
-        let with = |ot: &str| ServerConfig {
-            models_dir: Some(r"E:\llm".into()),
-            override_tensor: Some(ot.into()),
-            ..Default::default()
-        };
-        assert!(validate_for_save(&with(r"token_embd\.weight=ROCm0")).is_ok());
-        assert!(validate_for_save(&with("")).is_ok(), "unset is fine");
-
-        let err = validate_for_save(&with(r"token_embd\.weight=ROCm0,dangling")).expect_err("rule");
-        assert!(
-            err.to_string().contains("dangling"),
-            "quotes the rule: {err}"
-        );
-
-        let err = validate_for_save(&with("blk#1=CPU")).expect_err("comment marker");
-        assert!(
-            err.to_string().contains("OverrideTensor"),
-            "error names the field: {err}"
-        );
-    }
-
     // client_host is what the Open-chat button and the Integrations base URL
     // use: a concrete bind address passes through, but the all-interfaces
     // listen address 0.0.0.0 is not client-connectable and maps to localhost.
@@ -1254,7 +854,7 @@ mod tests {
     }
 
     // OpencodeBaseUrl and OpencodeApiKey are free-text fields written to
-    // server.ini; like OverrideTensor, a comment marker would reload truncated.
+    // server.ini; a comment marker would reload truncated.
     #[test]
     fn save_validation_rejects_comment_markers_in_integration_fields() {
         let with_key = |k: &str| ServerConfig {

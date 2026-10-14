@@ -106,18 +106,6 @@ export component ServerPage inherits ScrollView {
             heading: "Resources";
             LabeledField {
                 label_width <=> LabelColumn.server;
-                label: "Load mode";
-                hint: "How llama.cpp brings the weights in (-lm / --load-mode). One setting, not two: mlock, mmap and Direct I/O are mutually exclusive states of the same enum since llama.cpp b10105.\nauto (default) memory-maps the GGUF unless a device can't; llama.cpp's own default, fastest to load.\nnone reads the weights into RAM up front: slower, costs the model's size in RAM, but nothing can be dropped back to the file.\nmmap always memory-maps.\nmlock locks the weights in physical RAM WITHOUT mmapping: keeps latency stable, needs room for the whole model.\nmmap+mlock memory-maps and locks what it maps.\ndio uses Direct I/O where the platform offers it.";
-                // A dropdown, not two checkboxes: --mlock and --no-mmap each
-                // OVERWRITE this enum in llama.cpp, so the pair they used to
-                // emit was last-one-wins (see src/server_cfg.rs `load_mode`).
-                EnumComboBox {
-                    options: Options.load_modes;
-                    value <=> AppState.server_form.load_mode;
-                }
-            }
-            LabeledField {
-                label_width <=> LabelColumn.server;
                 label: "CPU threads";
                 hint: "--threads: CPU threads for generation.\ndefault = omit the flag → llama.cpp auto-detects the physical-core count. More won't help once GPU-bound. Max = logical processors.";
                 AutoSlider {
@@ -125,16 +113,6 @@ export component ServerPage inherits ScrollView {
                     value <=> AppState.server_form.threads;
                     maximum: AppState.cpu_threads_max;
                     slider_label: "server-threads";
-                }
-            }
-            LabeledField {
-                label_width <=> LabelColumn.server;
-                label: "Cache reuse";
-                hint: "--cache-reuse: minimum prefix length (tokens) the server reuses from the KV cache across requests, skipping re-prefill.\nHigher saves compute on shared prefixes.\ndefault = omit the flag → llama.cpp default: 0 (disabled).";
-                DefaultLineEdit {
-                    input_type: InputType.number;
-                    default <=> AppState.server_form.cache_reuse_default;
-                    value <=> AppState.server_form.cache_reuse;
                 }
             }
             LabeledField {
@@ -175,68 +153,6 @@ export component ServerPage inherits ScrollView {
         }
 
         SectionCard {
-            heading: "GPU distribution";
-            Text {
-                text: "Default for every preset (--split-mode / --device / --tensor-split). Check the GPUs a model may use and, if they differ in VRAM, how much of it each takes; nothing checked = all detected GPUs, split by free VRAM at load. The checked rows, top to bottom, are the split order: drag ≡ to reorder; the first one is llama.cpp's main GPU (the only one used with split mode 'none'). A preset can override each of these, unless it is set here, in which case the server-wide choice wins at launch.";
-                wrap: word-wrap;
-                font-size: 12px;
-                color: Palette.foreground.transparentize(Tokens.muted);
-            }
-            GpuSplitTable {
-                label_width <=> LabelColumn.server;
-                rows: AppState.server_gpu_rows;
-                selected: AppState.server_gpu_selected;
-                weight_total: AppState.server_gpu_total;
-                mode_labels: AppState.split_mode_labels;
-                mode_values: AppState.split_mode_values;
-                mode_index <=> AppState.server_split_mode_index;
-                effective_mode: AppState.server_gpu_mode;
-                mode_picked(v) => { AppState.server_split_mode_picked(v); }
-                split_mode_hint: "How a model is split across the checked GPUs (--split-mode), same on CUDA and HIP.\nlayer (default): each GPU takes a consecutive run of blocks; the table edits the cut. Fastest prefill, tolerates a slow GPU link.\nnone: single GPU, the first checked row; the other checked rows go unused.\ntensor (experimental): tensor parallelism. The checked GPUs become one device and every weight AND the KV cache are cut across them by the ratio (blank = even). Fastest decode, needs a fast GPU link. Flash attention must be on (auto is promoted), fit is skipped (size ctx-size per preset), some architectures are refused at load, and llama.cpp tunes it for CUDA with no guarantees on other backends. With no GPU checked here or in a preset, llama.cpp pools EVERY detected device, duplicate Vulkan views included.\nrow (deprecated, superseded by tensor): weight matrices are split row-wise by the ratio (needs CUDA/ROCm; Vulkan falls back to the layer cut); the KV cache still follows the layer cut.\nSet here it overrides every preset's mode. Irrelevant with one GPU checked.";
-                toggled(id) => { AppState.server_gpu_toggle(id); }
-                reordered(id, delta) => { AppState.server_gpu_move(id, delta); }
-                weight_edited(id, w) => { AppState.server_gpu_weight(id, w); }
-                auto_split() => { AppState.server_gpu_auto(); }
-                even_split() => { AppState.server_gpu_even(); }
-            }
-            LabeledField {
-                label_width <=> LabelColumn.server;
-                label: "Vision encoder";
-                hint: "GPU for the multimodal projector, the mmproj/CLIP image encoder (MTMD_BACKEND_DEVICE, the env name of --mmproj-device).\ndefault = llama.cpp's own placement: since v0.4.1 the FIRST entry of the preset's (or this tab's) device list; with no device pinned, the FIRST GPU backend it finds, which on a mixed box is often not the one running the model. It then holds VRAM there and stays idle until an image arrives.\nName a device here to override both.";
-                MappedComboBox {
-                    labels: AppState.mmproj_dev_labels;
-                    values: AppState.mmproj_dev_values;
-                    index <=> AppState.mmproj_dev_index;
-                    picked(v) => { AppState.server_form.mmproj_device = v; }
-                }
-            }
-        }
-
-        SectionCard {
-            heading: "Tensor placement";
-            Text {
-                text: "Pin tensors to a device for EVERY model, whatever layer they landed on (--override-tensor). The one that pays: llama.cpp leaves the embedding table in pinned host RAM even when it reports 'offloaded N/N layers to GPU'; Windows counts that as Shared GPU memory. Setting anything here REPLACES each preset's own rules, it does not add to them; leave it empty to let every preset keep its own. A device this machine doesn't have stops the server from starting at all.";
-                wrap: word-wrap;
-                font-size: 12px;
-                color: Palette.foreground.transparentize(Tokens.muted);
-            }
-            TensorOverrideTable {
-                rows: AppState.server_tensor_rows;
-                summary: AppState.server_tensor_summary;
-                warning: AppState.server_tensor_warning;
-                kind_labels: AppState.tensor_kind_labels;
-                kind_values: AppState.tensor_kind_values;
-                dev_labels: AppState.server_tensor_dev_labels;
-                dev_values: AppState.server_tensor_dev_values;
-                added() => { AppState.server_tensor_add(); }
-                removed(i) => { AppState.server_tensor_remove(i); }
-                kind_picked(i, kind) => { AppState.server_tensor_kind(i, kind); }
-                device_picked(i, dev) => { AppState.server_tensor_device(i, dev); }
-                pattern_edited(i, p) => { AppState.server_tensor_pattern(i, p); }
-            }
-        }
-
-        SectionCard {
             heading: "Advanced";
             LabeledField {
                 label_width <=> LabelColumn.server;
@@ -245,24 +161,6 @@ export component ServerPage inherits ScrollView {
                 CheckBox {
                     text: "serve the web UI's MCP proxy endpoint";
                     checked <=> AppState.server_form.webui_mcp_proxy;
-                }
-            }
-            LabeledField {
-                label_width <=> LabelColumn.server;
-                label: "Fit to VRAM";
-                hint: "Let llama.cpp auto-shrink unset arguments to fit device memory (-fit on|off).\nOff by default: a preset's 'default' n-gpu-layers means 'offload every layer', which -fit on would silently override.\ndefault = off.";
-                CheckBox {
-                    text: "auto-fit unset args to device memory (-fit on)";
-                    checked <=> AppState.server_form.fit;
-                }
-            }
-            LabeledField {
-                label_width <=> LabelColumn.server;
-                label: "Prefill assistant";
-                hint: "--prefill-assistant / --no-prefill-assistant: what to do when a request's LAST message is an assistant message.\nOn (llama.cpp's default): treat it as the START of the reply and continue it; this is what lets a client seed the answer's opening.\nOff: treat it as a finished turn and answer it instead. Turn it off if a client legitimately ends on an assistant turn and the model resumes mid-sentence rather than replying.";
-                CheckBox {
-                    text: "continue a trailing assistant message (--prefill-assistant)";
-                    checked <=> AppState.server_form.prefill_assistant;
                 }
             }
             LabeledField {

@@ -382,7 +382,7 @@ pub(super) fn run(app: &AppWindow) {
 
     // The same table in BLOCKS: the unit the split is actually cut in. It only
     // appears once a model header has been read (`preset_split_positions` is 0
-    // until then, which is also what keeps the server-wide table on ratios), so
+    // until then), so
     // stand one in: 33 blocks is Ornith-1.0-9B (32 trunk + 1 nextn), i.e. 34
     // positions once the output layer is counted.
     st.set_model_info_n_layer(33);
@@ -703,60 +703,6 @@ pub(super) fn run(app: &AppWindow) {
     assert!(st.get_preset_tensor_warning().is_empty());
     st.invoke_save_preset();
     assert!(!st.get_status_is_error(), "{}", st.get_status_text());
-
-    // ── The SERVER-wide tensor table: same widget, different blast radius ──
-    // The two tables are independent state, and the server's does not merely
-    // out-rank the preset's; it ERASES it. llama-server's router merges its own
-    // CLI args into every preset as a key→value map, so only ONE --override-tensor
-    // ever reaches a child: the server's. (`-ot` push_backs onto a vector inside
-    // llama.cpp, which makes "they concatenate" the natural guess and a wrong one;
-    // verified against b9976.) Hence the warning, and hence this test.
-    assert_eq!(st.get_server_tensor_rows().row_count(), 0);
-    assert!(
-        st.get_tensor_override_warning().is_empty(),
-        "no server-wide rules ⇒ the preset's table applies, so nothing to warn about"
-    );
-
-    st.invoke_server_tensor_add();
-    st.invoke_server_tensor_device(0, "ROCm1".into());
-    assert_eq!(
-        st.get_server_form().override_tensor.as_str(),
-        r"token_embd\.weight=ROCm1",
-        "the server table writes server_form, NOT the preset's form"
-    );
-    assert_eq!(
-        st.get_form().override_tensor.as_str(),
-        r"token_embd\.weight=CUDA0",
-        "…and the preset's rules stay exactly where they were"
-    );
-    assert!(st
-        .get_server_tensor_summary()
-        .contains(r"--override-tensor token_embd\.weight=ROCm1"));
-    // The Models tab must now say, out loud, that its own table is dead.
-    let warn = st.get_tensor_override_warning();
-    assert!(
-        warn.contains("REPLACES") && warn.contains(r"token_embd\.weight=ROCm1"),
-        "the preset table must announce it is shadowed, and by what: {warn}"
-    );
-
-    // Save through the same conversion the Save button uses. (The button itself
-    // is not wired here: it needs the tray and the run-state machinery (see
-    // gui::wire_tabs_for_tests), so this covers the form → config → INI leg.)
-    let cfg = crate::server_form::form_to_config(&st.get_server_form());
-    crate::server_cfg::save(&cfg).expect("save server.ini");
-    let ini = std::fs::read_to_string(crate::paths::server_ini()).expect("server.ini");
-    assert!(
-        ini.contains(r"OverrideTensor = token_embd\.weight=ROCm1"),
-        "the server table's rules must reach server.ini:\n{ini}"
-    );
-    // (That it then reaches llama-server's command line, the step that makes it
-    // win over the presets, is pinned by runstate's own
-    // `server_args_covers_every_config_field`.)
-
-    // Clearing it hands the presets back their own rules, and the warning goes.
-    st.invoke_server_tensor_remove(0);
-    assert_eq!(st.get_server_form().override_tensor.as_str(), "");
-    assert!(st.get_tensor_override_warning().is_empty());
 
     // ── Bind to: one checkbox per address, `server_form.hostname` IS the list ──
     // The rows are one-way; each click must rewrite the comma-separated list AND

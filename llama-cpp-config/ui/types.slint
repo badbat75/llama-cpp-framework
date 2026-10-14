@@ -21,6 +21,10 @@ export struct PresetForm {
     // --mmproj-offload: run the image encoder on GPU (llama.cpp's default) or
     // keep it on CPU. Plain bool (CheckBox, two-way <=>), same shape as jinja.
     mmproj_offload: bool,
+    // --mmproj-device: the GPU the encoder runs on, "" = omit the key (it
+    // follows the first `device` entry). A MappedComboBox over the probed
+    // devices, like device_draft.
+    mmproj_device: string,
     // --image-min-tokens / --image-max-tokens: per-image token bounds for
     // dynamic-resolution vision models. Numeric DefaultLineEdit fields (string +
     // `_default` checkbox), same shape as ctx-size; gated on an mmproj being set.
@@ -90,6 +94,9 @@ export struct PresetForm {
     // integers are digits-only `number`. See DefaultLineEdit.
     cache_ram: string,
     cache_ram_default: bool,
+    // --cache-reuse, a positive token count like ctx_size.
+    cache_reuse: string,
+    cache_reuse_default: bool,
     jinja: bool,
     reasoning: string,
     reasoning_format: string,
@@ -123,6 +130,19 @@ export struct PresetForm {
     // default is on), "on", "off". "off" (--no-op-offload) is the one value that
     // changes the launch.
     op_offload: string,
+    // --lazy-mode, an enum-valued string like reasoning_effort: "default" (omit
+    // the flag; llama.cpp's default is auto), "on", "auto", "off".
+    lazy_mode: string,
+    // -lm / --load-mode, an EnumComboBox over Options.load_modes, whose first
+    // entry "default" omits the key (llama.cpp's auto). One enum, not two
+    // checkboxes: mlock and mmap are mutually exclusive states of it.
+    load_mode: string,
+    // -fit on|off (checked = on). Always written to the preset, off by default:
+    // llama.cpp's own default is on, and it would cut a "default" n-gpu-layers.
+    fit: bool,
+    // prefill-assistant (checked = llama.cpp's default, the key omitted;
+    // unchecked writes `prefill-assistant = false`).
+    prefill_assistant: bool,
     // Sampling knobs, each paired with a `*_default` bool (checkbox omits the
     // flag, same shape as the integer fields above). Top-K is integer-valued, so
     // its field is digits-only (`input_type: number`); the rest are floats
@@ -163,40 +183,13 @@ export struct ServerForm {
     port: string,
     port_default: bool,
     hostname: string,
-    // -lm / --load-mode, carried as the RAW value ("auto", "mmap+mlock", …),
-    // unlike log_verbosity below, whose combo entries are labels needing a map.
-    // An EnumComboBox over Options.load_modes; the Rust list (server_cfg::LOAD_MODES)
-    // is asserted against the Slint one in the e2e so they can't drift.
-    //
-    // It was two CheckBoxes (mlock + no_mmap) until llama.cpp folded --mlock /
-    // --no-mmap / -dio into this one enum in b10105: they are mutually exclusive
-    // states, so two independent toggles could express combinations that do not
-    // exist, and did so silently (see src/server_cfg.rs `load_mode`).
-    load_mode: string,
     threads: int,
     threads_auto: bool,
-    cache_reuse: string,
-    cache_reuse_default: bool,
     threads_batch: int,
     threads_batch_auto: bool,
     models_max: string,
     models_max_default: bool,
     models_dir: string,
-    // `device` + `tensor_split` are written by the GPU distribution table
-    // (GpuSplitTable), not typed: --tensor-split is positional over --device, so
-    // the two only make sense edited together. `mmproj_device` is separate on
-    // purpose: the image encoder is placed on its own, following the first
-    // --device entry only since v0.4.1 (see server_cfg.rs).
-    device: string,
-    split_mode: string,
-    tensor_split: string,
-    // --override-tensor, the server-wide twin of PresetForm's field above (same
-    // TensorOverrideTable, same `<regex>=<device>,…` grammar). Set here it
-    // REPLACES every preset's rules rather than adding to them: the router merges
-    // its own CLI args into each preset as a key→value map, so only one
-    // --override-tensor ever reaches a child (verified; see server_cfg.rs).
-    override_tensor: string,
-    mmproj_device: string,
     // ROCBLAS_USE_HIPBLASLT (the SDK Tuning card's ROCm half), a TRI-state
     // carried as a string exactly like PresetForm's `flash_attn`: "default"
     // (never export the variable: rocBLAS routes as it sees fit), "on" (=1,
@@ -209,14 +202,9 @@ export struct ServerForm {
     // (never export the variable) or one of server_cfg::ALLREDUCE_MODES, a
     // dropdown over Options.allreduce_modes.
     cuda_allreduce: string,
-    // Plain bool toggles (CheckBox, two-way <=>), the same shape as `mlock`:
-    // webui_mcp_proxy enables the web UI's MCP proxy (--webui-mcp-proxy); fit is
-    // llama.cpp's -fit on|off VRAM auto-fitting (checked = on); prefill_assistant
-    // continues a TRAILING assistant message instead of answering it
-    // (--no-prefill-assistant turns it off; checked = llama.cpp's own default).
+    // Plain bool toggle (CheckBox, two-way <=>): enables the web UI's MCP proxy
+    // (--webui-mcp-proxy).
     webui_mcp_proxy: bool,
-    fit: bool,
-    prefill_assistant: bool,
     // Log verbosity threshold (-lv), carried as the DROPDOWN LABEL ("DEBUG:5",
     // "TRACE:4", …), not as the bare number. llama.cpp defines exactly six levels
     // and nothing else is meaningful (`common/arg.cpp`), so the widget is an
@@ -312,7 +300,7 @@ export struct GpuRow {
     // the model's positions this device ends up with, and which ones. Both are
     // a PROJECTION of `weight` under the model in hand (Rust recomputes them
     // from the weight vector on every rebuild), so they are empty/0 wherever
-    // there is no model to project onto (the server-wide table) or the split is
+    // there is no model to project onto (no header read yet) or the split is
     // auto (llama.cpp decides by free VRAM at load, which is not knowable here).
     // See `Layout` in src/gpu_split.rs for why the count is n_layer_all + 1.
     blocks: int,
