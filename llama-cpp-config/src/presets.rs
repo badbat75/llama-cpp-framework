@@ -668,7 +668,9 @@ impl Preset {
                 .unwrap_or_default(),
             // `on`/`off` is llama.cpp's spelling; `true`/`false` are read too.
             fit: matches!(
-                k.get("fit").map(|v| v.trim().to_ascii_lowercase()).as_deref(),
+                k.get("fit")
+                    .map(|v| v.trim().to_ascii_lowercase())
+                    .as_deref(),
                 Some("on" | "true")
             ),
             temp: k.get("temp").and_then(|v| ini::parse_float(v)),
@@ -1171,9 +1173,13 @@ pub fn render_section(p: &Preset) -> String {
     out.push_str(
         "; mmproj-offload = false keeps the image encoder on CPU. It is NOT placed by\r\n",
     );
-    out.push_str("; this key: since v0.4.1 the encoder follows the FIRST entry of `device`, and\r\n");
+    out.push_str(
+        "; this key: since v0.4.1 the encoder follows the FIRST entry of `device`, and\r\n",
+    );
     out.push_str("; with no device pinned it takes the first GPU backend found; mmproj-device\r\n");
-    out.push_str("; names the one it runs on (e.g. ROCm1, or none for CPU) and overrides both.\r\n");
+    out.push_str(
+        "; names the one it runs on (e.g. ROCm1, or none for CPU) and overrides both.\r\n",
+    );
     emit_bool(&mut out, "mmproj-offload", p.mmproj_offload);
     emit_str(&mut out, "mmproj-device", &p.mmproj_device);
     out.push_str("; image-min-tokens / image-max-tokens bound the tokens ONE image takes on\r\n");
@@ -1308,7 +1314,9 @@ pub fn render_section(p: &Preset) -> String {
 
     out.push_str("\r\n; Prompt cache RAM limit in MiB (--cache-ram)\r\n");
     emit_i32(&mut out, "cache-ram", p.cache_ram);
-    out.push_str("; cache-reuse = minimum chunk (tokens) a new prompt may reuse from the cached\r\n");
+    out.push_str(
+        "; cache-reuse = minimum chunk (tokens) a new prompt may reuse from the cached\r\n",
+    );
     out.push_str("; one by shifting the KV cache. Omit the key = llama.cpp's default 0 (off).\r\n");
     out.push_str("; llama.cpp turns it off on a model with an mmproj, and on one whose cache\r\n");
     out.push_str("; cannot shift, saying so once in the log.\r\n");
@@ -1367,20 +1375,40 @@ pub fn render_section(p: &Preset) -> String {
     out.push_str("; request's own max_tokens wins whenever the client sends one.\r\n");
     emit_i32(&mut out, "n-predict", p.n_predict);
 
-    out.push_str("\r\n; FFN offload: both expand into per-layer override-tensor rules that keep\r\n");
-    out.push_str("; the first N layers' feed-forward weights on the CPU. n-cpu-moe matches the\r\n");
-    out.push_str("; EXPERT tensors (ffn_*_exps: a no-op on a dense model); n-cpu-ffn (llama.cpp\r\n");
-    out.push_str("; v0.4.0+) matches the DENSE ffn_up/down/gate, i.e. the whole FFN of a dense\r\n");
+    out.push_str(
+        "\r\n; FFN offload: both expand into per-layer override-tensor rules that keep\r\n",
+    );
+    out.push_str(
+        "; the first N layers' feed-forward weights on the CPU. n-cpu-moe matches the\r\n",
+    );
+    out.push_str(
+        "; EXPERT tensors (ffn_*_exps: a no-op on a dense model); n-cpu-ffn (llama.cpp\r\n",
+    );
+    out.push_str(
+        "; v0.4.0+) matches the DENSE ffn_up/down/gate, i.e. the whole FFN of a dense\r\n",
+    );
     out.push_str("; model and only the dense layers of a MoE one.\r\n");
     emit_i32(&mut out, "n-cpu-moe", p.n_cpu_moe);
     emit_i32(&mut out, "n-cpu-ffn", p.n_cpu_ffn);
-    out.push_str("; op-offload = false stops llama.cpp from running an operation on the GPU when\r\n");
-    out.push_str("; its weights sit in host memory (experts kept in RAM by n-cpu-moe, tensors an\r\n");
-    out.push_str("; override-tensor rule sends to CPU). On (omit the key = llama.cpp's default)\r\n");
-    out.push_str("; those weights are copied to the card on every prefill batch of 32+ tokens,\r\n");
+    out.push_str(
+        "; op-offload = false stops llama.cpp from running an operation on the GPU when\r\n",
+    );
+    out.push_str(
+        "; its weights sit in host memory (experts kept in RAM by n-cpu-moe, tensors an\r\n",
+    );
+    out.push_str(
+        "; override-tensor rule sends to CPU). On (omit the key = llama.cpp's default)\r\n",
+    );
+    out.push_str(
+        "; those weights are copied to the card on every prefill batch of 32+ tokens,\r\n",
+    );
     out.push_str("; which dominates on a narrow PCIe link: false measured 385 -> 608 tok/s of\r\n");
-    out.push_str("; prefill at 93.7k tokens on a MoE with 8 blocks of experts in RAM, card on a\r\n");
-    out.push_str("; Gen4 x4 link. Decode is unchanged, and it is a no-op when every weight is in\r\n");
+    out.push_str(
+        "; prefill at 93.7k tokens on a MoE with 8 blocks of experts in RAM, card on a\r\n",
+    );
+    out.push_str(
+        "; Gen4 x4 link. Decode is unchanged, and it is a no-op when every weight is in\r\n",
+    );
     out.push_str("; VRAM.\r\n");
     emit_bool(&mut out, "op-offload", p.op_offload);
     out.push_str("; lazy-mode = on|auto|off reads the tensors the architecture marks for it\r\n");
@@ -1390,7 +1418,9 @@ pub fn render_section(p: &Preset) -> String {
     out.push_str("; A no-op on every other model.\r\n");
     emit_str(&mut out, "lazy-mode", &p.lazy_mode);
     out.push_str("; load-mode = how the weights are brought in (-lm): auto|none|mmap|mlock|\r\n");
-    out.push_str("; mmap+mlock|dio. ONE enum: mlock alone is mlock WITHOUT mmap. Omit the key =\r\n");
+    out.push_str(
+        "; mmap+mlock|dio. ONE enum: mlock alone is mlock WITHOUT mmap. Omit the key =\r\n",
+    );
     out.push_str("; auto (llama.cpp's default: mmap unless a device can't).\r\n");
     emit_str(&mut out, "load-mode", &p.load_mode);
     out.push_str("; fit = on lets llama.cpp shrink the arguments left unset (layers, context)\r\n");
@@ -1563,7 +1593,13 @@ mod tests {
         ] {
             assert!(spec_type_is_draftless(t), "{t}");
         }
-        for t in ["draft-mtp", "draft-dflash", "draft-dspark", "draft-simple", ""] {
+        for t in [
+            "draft-mtp",
+            "draft-dflash",
+            "draft-dspark",
+            "draft-simple",
+            "",
+        ] {
             assert!(!spec_type_is_draftless(t), "{t}");
         }
     }

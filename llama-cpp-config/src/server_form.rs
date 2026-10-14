@@ -296,14 +296,11 @@ mod tests {
                 ..Default::default()
             };
             let cfg = form_to_config(&form);
-            let dropped: Vec<&str> = [
-                ("Port", cfg.port),
-                ("ModelsMax", cfg.models_max),
-            ]
-            .into_iter()
-            .filter(|(_, v)| v.is_none())
-            .map(|(key, _)| key)
-            .collect();
+            let dropped: Vec<&str> = [("Port", cfg.port), ("ModelsMax", cfg.models_max)]
+                .into_iter()
+                .filter(|(_, v)| v.is_none())
+                .map(|(key, _)| key)
+                .collect();
             let refused: Vec<String> = invalid_numbers(&form);
             assert_eq!(refused.len(), dropped.len(), "text {text:?}: {refused:?}");
             for key in dropped {

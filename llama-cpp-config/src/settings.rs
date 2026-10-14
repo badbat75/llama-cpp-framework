@@ -92,7 +92,8 @@ impl Settings {
     /// rotation is off. The one place the two keys combine, so `runstate`
     /// never reads them apart.
     pub fn log_rotate_threshold(&self) -> Option<u64> {
-        self.log_rotate.then_some(u64::from(self.log_rotate_kb) * 1024)
+        self.log_rotate
+            .then_some(u64::from(self.log_rotate_kb) * 1024)
     }
 }
 

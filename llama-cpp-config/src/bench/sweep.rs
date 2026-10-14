@@ -275,7 +275,12 @@ pub fn setter(key: &str) -> Result<Setter, String> {
         .iter()
         .find(|(k, _)| *k == key)
         .map(|(_, f)| *f)
-        .ok_or_else(|| format!("`{key}` is not a sweepable preset key. Sweepable: {}", keys()))
+        .ok_or_else(|| {
+            format!(
+                "`{key}` is not a sweepable preset key. Sweepable: {}",
+                keys()
+            )
+        })
 }
 
 /// The sweepable keys, comma-separated, for help and error text.
@@ -549,7 +554,10 @@ pub fn render_summary(s: &Summary) -> String {
             md.push_str(&format!("| {label} | {value} |\n"));
         }
     }
-    md.push_str(&format!("| {} before the sweep | {} |\n", opts.key, s.original));
+    md.push_str(&format!(
+        "| {} before the sweep | {} |\n",
+        opts.key, s.original
+    ));
     md.push_str(&format!("| {} after it | {} |\n", opts.key, s.applied));
     if !s.server_version.is_empty() {
         md.push_str(&format!("| llama-server | {} |\n", s.server_version));
@@ -873,12 +881,7 @@ pub fn run(opts: &Opts) -> Result<PathBuf, String> {
 
     let mut legs: Vec<Leg> = Vec::new();
     for (i, value) in opts.values.iter().enumerate() {
-        println!(
-            "\n[{}/{}] {} = {value}",
-            i + 1,
-            opts.values.len(),
-            opts.key
-        );
+        println!("\n[{}/{}] {} = {value}", i + 1, opts.values.len(), opts.key);
         let started = Instant::now();
         let leg = match write_value(&opts.preset, set, value)
             .and_then(|()| prepare_server(opts.plan.mode, port))
@@ -971,27 +974,24 @@ fn leg_plan(opts: &Opts, preset: &str) -> Plan {
 
 fn load_one(id: &str) -> Result<presets::Preset, String> {
     let all = presets::load_all();
-    all.iter()
-        .find(|p| p.id == id)
-        .cloned()
-        .ok_or_else(|| {
-            // A switched-off preset is still listed everywhere else, so say why
-            // this one cannot be swept rather than pretend it does not exist.
-            if presets::load_listed()
-                .iter()
-                .any(|l| !l.enabled && l.preset.id == id)
-            {
-                return format!(
-                    "preset `{id}` is switched off, so llama-server does not offer it: \
+    all.iter().find(|p| p.id == id).cloned().ok_or_else(|| {
+        // A switched-off preset is still listed everywhere else, so say why
+        // this one cannot be swept rather than pretend it does not exist.
+        if presets::load_listed()
+            .iter()
+            .any(|l| !l.enabled && l.preset.id == id)
+        {
+            return format!(
+                "preset `{id}` is switched off, so llama-server does not offer it: \
                      `llama-cpp-config preset enable {id}` first"
-                );
-            }
-            let known: Vec<&str> = all.iter().map(|p| p.id.as_str()).collect();
-            format!(
-                "no preset `{id}` in presets.ini. Known presets: {}",
-                known.join(", ")
-            )
-        })
+            );
+        }
+        let known: Vec<&str> = all.iter().map(|p| p.id.as_str()).collect();
+        format!(
+            "no preset `{id}` in presets.ini. Known presets: {}",
+            known.join(", ")
+        )
+    })
 }
 
 /// The key's value as the file has it right now, or `unset` when the section
@@ -1224,7 +1224,10 @@ mod tests {
     /// value, not half of a range.
     #[test]
     fn non_range_tokens_stay_literal() {
-        assert_eq!(parse_values("1.5,q8_0,a..b").unwrap(), ["1.5", "q8_0", "a..b"]);
+        assert_eq!(
+            parse_values("1.5,q8_0,a..b").unwrap(),
+            ["1.5", "q8_0", "a..b"]
+        );
     }
 
     #[test]
@@ -1288,7 +1291,9 @@ mod tests {
 
     #[test]
     fn bad_values_fail_before_the_gpu_time() {
-        assert!(setter("spec-draft-n-max").unwrap()(&mut presets::Preset::default(), "six").is_err());
+        assert!(
+            setter("spec-draft-n-max").unwrap()(&mut presets::Preset::default(), "six").is_err()
+        );
         assert!(setter("flash-attn").unwrap()(&mut presets::Preset::default(), "maybe").is_err());
         // A `;` or `#` in a text value reloads truncated, so it is refused here
         // exactly as `presets::save` refuses it.
@@ -1325,17 +1330,28 @@ mod tests {
             stamp: "2026-09-01 18:00:00 UTC",
             server_version: "0.3.0 · b10621",
         });
-        assert!(md.contains("| spec-draft-n-max | decode | +- | vs 2 |"), "{md}");
+        assert!(
+            md.contains("| spec-draft-n-max | decode | +- | vs 2 |"),
+            "{md}"
+        );
         assert!(md.contains("| 2 | 39.2 | 0.5 | 1.00x |"), "{md}");
         assert!(md.contains("| 5 | 59.3 | 0.5 | 1.51x |"), "{md}");
-        assert!(md.contains("FAILED: llama-server answered HTTP 500"), "{md}");
+        assert!(
+            md.contains("FAILED: llama-server answered HTTP 500"),
+            "{md}"
+        );
         assert!(md.contains("1 of 3 legs failed"), "{md}");
         assert!(
-            md.contains("**Best: spec-draft-n-max = 5** at 59.3 t/s decode, 1.51x the first value."),
+            md.contains(
+                "**Best: spec-draft-n-max = 5** at 59.3 t/s decode, 1.51x the first value."
+            ),
             "{md}"
         );
         // The value to put back is in the table, not only in the jsonl.
-        assert!(md.contains("| spec-draft-n-max before the sweep | 6 |"), "{md}");
+        assert!(
+            md.contains("| spec-draft-n-max before the sweep | 6 |"),
+            "{md}"
+        );
     }
 
     #[test]

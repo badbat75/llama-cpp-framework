@@ -249,8 +249,14 @@ mod tests {
 
     #[test]
     fn toggle_adds_and_removes_addresses() {
-        assert_eq!(toggle("localhost", "192.168.1.10"), "localhost,192.168.1.10");
-        assert_eq!(toggle("localhost,192.168.1.10", "localhost"), "192.168.1.10");
+        assert_eq!(
+            toggle("localhost", "192.168.1.10"),
+            "localhost,192.168.1.10"
+        );
+        assert_eq!(
+            toggle("localhost,192.168.1.10", "localhost"),
+            "192.168.1.10"
+        );
         // Unchecking the last address falls back to the default.
         assert_eq!(toggle("192.168.1.10", "192.168.1.10"), "localhost");
         assert_eq!(toggle("Localhost", "localhost"), "localhost");
@@ -258,7 +264,10 @@ mod tests {
 
     #[test]
     fn toggle_keeps_all_interfaces_exclusive() {
-        assert_eq!(toggle("localhost,192.168.1.10", ALL_INTERFACES), ALL_INTERFACES);
+        assert_eq!(
+            toggle("localhost,192.168.1.10", ALL_INTERFACES),
+            ALL_INTERFACES
+        );
         assert_eq!(toggle(ALL_INTERFACES, "localhost"), "localhost");
         assert_eq!(toggle(ALL_INTERFACES, ALL_INTERFACES), "localhost");
     }

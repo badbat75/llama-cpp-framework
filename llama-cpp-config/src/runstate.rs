@@ -669,7 +669,9 @@ mod tests {
         let log = dir.path().join("llama-server.log");
         std::fs::write(&log, "run one\n").unwrap();
 
-        let closed = close_log(&log, LogStamp::Now, 0).unwrap().expect("a run to close");
+        let closed = close_log(&log, LogStamp::Now, 0)
+            .unwrap()
+            .expect("a run to close");
         let name = closed.file_name().unwrap().to_string_lossy().into_owned();
         assert!(
             name.starts_with("llama-server-")
@@ -690,7 +692,11 @@ mod tests {
         let log = dir.path().join("llama-server.log");
         std::fs::write(&log, "x".repeat(1024)).unwrap();
         assert_eq!(close_log(&log, LogStamp::Now, 1024).unwrap(), None);
-        assert_eq!(std::fs::metadata(&log).unwrap().len(), 1024, "left in place");
+        assert_eq!(
+            std::fs::metadata(&log).unwrap().len(),
+            1024,
+            "left in place"
+        );
         assert!(closed_logs(dir.path()).is_empty());
         std::fs::write(&log, "x".repeat(1025)).unwrap();
         assert!(close_log(&log, LogStamp::Now, 1024).unwrap().is_some());
@@ -706,7 +712,10 @@ mod tests {
 
         std::fs::write(&log, "").unwrap();
         assert_eq!(close_log(&log, LogStamp::LastWrite, 0).unwrap(), None);
-        assert!(closed_logs(dir.path()).is_empty(), "an empty log is never filed");
+        assert!(
+            closed_logs(dir.path()).is_empty(),
+            "an empty log is never filed"
+        );
     }
 
     #[test]
@@ -738,7 +747,9 @@ mod tests {
         f.set_modified(past).unwrap();
         drop(f);
         let expected = crate::bench::stamp(
-            past.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs(),
+            past.duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
         );
         let closed = close_log(&log, LogStamp::LastWrite, 0).unwrap().unwrap();
         assert_eq!(
@@ -782,7 +793,10 @@ mod tests {
         close_log(&log, LogStamp::Now, 0).unwrap().unwrap();
         let kept = closed_logs(dir.path());
         assert_eq!(kept.len(), ROTATED_LOGS_KEPT);
-        assert!(!kept.contains(&"llama-server-20260101-000000.log".to_string()), "oldest goes");
+        assert!(
+            !kept.contains(&"llama-server-20260101-000000.log".to_string()),
+            "oldest goes"
+        );
     }
 
     #[cfg(windows)]
@@ -867,12 +881,7 @@ mod tests {
         // port / models-max join the unset-omits-the-flag group: the UI
         // "default" checkbox stores None, and a forced value here is what left
         // "default" still showing --port 8080 / --models-max 1.
-        for flag in [
-            "-t",
-            "--threads-batch",
-            "--port",
-            "--models-max",
-        ] {
+        for flag in ["-t", "--threads-batch", "--port", "--models-max"] {
             assert!(!a.contains(&flag.to_string()), "{flag} must be omitted");
         }
         // The deprecated pair must never reappear: each overwrites the whole

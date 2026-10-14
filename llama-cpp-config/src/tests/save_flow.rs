@@ -561,7 +561,9 @@ pub(super) fn run(app: &AppWindow) {
         st.set_form(f);
         itest::mock_elapsed_time(std::time::Duration::from_millis(16));
         assert!(
-            st.get_preset_kv_cache_warning().as_str().contains("on the CPU"),
+            st.get_preset_kv_cache_warning()
+                .as_str()
+                .contains("on the CPU"),
             "iq4_nl on CUDA/ROCm must warn, got {:?}",
             st.get_preset_kv_cache_warning()
         );

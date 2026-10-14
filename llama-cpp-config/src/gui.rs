@@ -991,9 +991,7 @@ fn refresh_gpu_rows(app: &AppWindow) {
     )));
     // Feeds the mode strip under split mode `tensor` (state.slint
     // `preset_split_mode_warning`).
-    s.set_preset_mixes_cuda_rocm(gpu_split::mixes_cuda_and_rocm(
-        s.get_form().device.as_str(),
-    ));
+    s.set_preset_mixes_cuda_rocm(gpu_split::mixes_cuda_and_rocm(s.get_form().device.as_str()));
     refresh_gpu_scalars(app);
     refresh_tensor_rows(app);
 }

@@ -500,7 +500,10 @@ mod tests {
         );
         assert_eq!(parse_entry(&gnome_off), (false, true));
         assert_eq!(parse_entry(&format!("{on}Hidden=true\n")), (false, true));
-        assert_eq!(parse_entry("[Desktop Entry]\nType=Application\n"), (false, false));
+        assert_eq!(
+            parse_entry("[Desktop Entry]\nType=Application\n"),
+            (false, false)
+        );
     }
 
     // The file legs, against a temp path (never the real ~/.config/autostart):
@@ -510,7 +513,8 @@ mod tests {
     #[test]
     fn autostart_entry_file_is_written_rewritten_and_removed() {
         use super::linux::{parse_entry, write_entry};
-        let dir = std::env::temp_dir().join(format!("llama-cpp-config-autostart-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("llama-cpp-config-autostart-{}", std::process::id()));
         let path = dir.join("autostart").join("llama-cpp-config.desktop");
         let read = || parse_entry(&std::fs::read_to_string(&path).unwrap());
 

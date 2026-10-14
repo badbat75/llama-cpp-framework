@@ -461,7 +461,6 @@ fn n_cpu_ffn_rules(n: Option<i32>) -> Vec<String> {
         .collect()
 }
 
-
 // ── Synthetic: the llama-bench command line ──────────────────────────────
 
 /// One llama-bench invocation's workload half.
@@ -839,12 +838,18 @@ pub fn parse_stream(body: &str) -> Result<Streamed, String> {
         if saw_reasoning && !answering {
             at_boundary = Some(t.clone());
         }
-        let n = t.get("predicted_n").and_then(serde_json::Value::as_i64).unwrap_or(0);
+        let n = t
+            .get("predicted_n")
+            .and_then(serde_json::Value::as_i64)
+            .unwrap_or(0);
         if n >= next_trace {
             let tt = timings_from(t);
             trace.push(TracePoint {
                 tokens: n,
-                ms: t.get("predicted_ms").and_then(serde_json::Value::as_f64).unwrap_or(0.0),
+                ms: t
+                    .get("predicted_ms")
+                    .and_then(serde_json::Value::as_f64)
+                    .unwrap_or(0.0),
                 draft_n: tt.draft_n,
                 draft_accepted: tt.draft_accepted,
                 reasoning: !answering,
@@ -854,9 +859,14 @@ pub fn parse_stream(body: &str) -> Result<Streamed, String> {
         last = Some(t.clone());
     }
 
-    let last = last.ok_or_else(|| "no timings in the stream (is this llama-server?)".to_string())?;
+    let last =
+        last.ok_or_else(|| "no timings in the stream (is this llama-server?)".to_string())?;
     let timings = timings_from(&last);
-    let ms = |t: &serde_json::Value| t.get("predicted_ms").and_then(serde_json::Value::as_f64).unwrap_or(0.0);
+    let ms = |t: &serde_json::Value| {
+        t.get("predicted_ms")
+            .and_then(serde_json::Value::as_f64)
+            .unwrap_or(0.0)
+    };
     let split = at_boundary.map(|b| {
         let r = timings_from(&b);
         let r_ms = ms(&b);
@@ -1426,7 +1436,10 @@ pub fn phase_point(preset: &str, test: &str, spans: &[(f64, Phase)]) -> Option<P
     let da: i64 = spans.iter().map(|(_, p)| p.draft_accepted).sum();
     let mut note = format!("{tokens} tokens");
     if dn > 0 {
-        note.push_str(&format!(", draft accepted {:.0}%", 100.0 * da as f64 / dn as f64));
+        note.push_str(&format!(
+            ", draft accepted {:.0}%",
+            100.0 * da as f64 / dn as f64
+        ));
     }
     Some(Point {
         preset: preset.into(),
@@ -1778,7 +1791,9 @@ mod tests {
         assert_eq!(a.iter().filter(|x| *x == "-ot").count(), 1);
         assert_eq!(
             argv_of(&a, "-ot").as_deref(),
-            Some(r"blk\.0\.ffn_(up|down|gate)\.=CPU;blk\.1\.ffn_(up|down|gate)\.=CPU;token_embd\.weight=ROCm0")
+            Some(
+                r"blk\.0\.ffn_(up|down|gate)\.=CPU;blk\.1\.ffn_(up|down|gate)\.=CPU;token_embd\.weight=ROCm0"
+            )
         );
         assert!(!a.iter().any(|x| x == "-ncffn"));
 
@@ -1955,7 +1970,11 @@ mod tests {
     fn a_stream_traces_every_n_tokens_and_marks_the_phase() {
         let mut body = String::new();
         for n in 1..=200 {
-            let kind = if n <= 100 { "reasoning_content" } else { "content" };
+            let kind = if n <= 100 {
+                "reasoning_content"
+            } else {
+                "content"
+            };
             body += &event(kind, "x", n, n as f64 * 10.0, n, n / 2);
         }
         let trace = parse_stream(&body).unwrap().trace;

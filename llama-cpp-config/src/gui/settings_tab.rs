@@ -48,7 +48,11 @@ pub(super) fn refresh(app: &AppWindow) {
 /// Persist one settings.ini change read-modify-write (so no toggle's save can
 /// wipe another key), reporting the outcome in the footer; on a failed write
 /// the caller gets `false` and pushes the real state back into the property.
-fn persist_settings(app: &AppWindow, edit: impl FnOnce(&mut settings::Settings), ok: String) -> bool {
+fn persist_settings(
+    app: &AppWindow,
+    edit: impl FnOnce(&mut settings::Settings),
+    ok: String,
+) -> bool {
     let mut cfg = settings::load();
     edit(&mut cfg);
     match settings::save(&cfg) {
@@ -85,18 +89,17 @@ fn apply_startup_entry(app: &AppWindow, ok_message: String) {
 pub(super) fn wire(app: &AppWindow) {
     {
         let app_weak = app.as_weak();
-        app.global::<AppState>()
-            .on_toggle_start_at_login(move || {
-                let Some(app) = app_weak.upgrade() else {
-                    return;
-                };
-                let message = if app.global::<AppState>().get_start_at_login() {
-                    "llama-cpp-config will start at login.".into()
-                } else {
-                    "llama-cpp-config will no longer start at login.".into()
-                };
-                apply_startup_entry(&app, message);
-            });
+        app.global::<AppState>().on_toggle_start_at_login(move || {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let message = if app.global::<AppState>().get_start_at_login() {
+                "llama-cpp-config will start at login.".into()
+            } else {
+                "llama-cpp-config will no longer start at login.".into()
+            };
+            apply_startup_entry(&app, message);
+        });
     }
     {
         let app_weak = app.as_weak();
