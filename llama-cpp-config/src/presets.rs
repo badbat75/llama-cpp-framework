@@ -171,8 +171,14 @@ pub struct Preset {
     pub spec_draft_type_v: String,
     /// The n-gram speculators' own tuning (`--spec-ngram-<type>-<param>`), one
     /// group per `ngram-*` spec type: ngram-mod reads `n-match` / `n-min` /
-    /// `n-max`, ngram-simple, ngram-map-k and ngram-map-k4v each read `size-n` /
-    /// `size-m` / `min-hits`. `--spec-draft-*` does not reach them. `None` =
+    /// `n-max`; ngram-simple, ngram-map-k and ngram-map-k4v read `size-n` /
+    /// `size-m`, and ngram-map-k4v alone `min-hits` too. llama.cpp also parses
+    /// `--spec-ngram-simple-min-hits` and `--spec-ngram-map-k-min-hits` but acts
+    /// on neither (v0.6.0: `common_ngram_simple_config` has no such field, and
+    /// the key-only map drafts and returns before `common_ngram_map_draft`'s
+    /// one `min_hits` test), so they are not fields: a hand-written one is
+    /// dropped when the section is rewritten. `--spec-draft-*` does not reach
+    /// them. `None` =
     /// omit the key (llama.cpp's defaults: common/common.h). A group whose type
     /// is not in `spec_type` is inert and dropped on save
     /// (`prune_unused_ngram_keys`). ngram-cache has no numeric keys.
@@ -181,10 +187,8 @@ pub struct Preset {
     pub spec_ngram_mod_n_max: Option<i32>,
     pub spec_ngram_simple_size_n: Option<i32>,
     pub spec_ngram_simple_size_m: Option<i32>,
-    pub spec_ngram_simple_min_hits: Option<i32>,
     pub spec_ngram_map_k_size_n: Option<i32>,
     pub spec_ngram_map_k_size_m: Option<i32>,
-    pub spec_ngram_map_k_min_hits: Option<i32>,
     pub spec_ngram_map_k4v_size_n: Option<i32>,
     pub spec_ngram_map_k4v_size_m: Option<i32>,
     pub spec_ngram_map_k4v_min_hits: Option<i32>,
@@ -523,10 +527,8 @@ impl Default for Preset {
             spec_ngram_mod_n_max: None,
             spec_ngram_simple_size_n: None,
             spec_ngram_simple_size_m: None,
-            spec_ngram_simple_min_hits: None,
             spec_ngram_map_k_size_n: None,
             spec_ngram_map_k_size_m: None,
-            spec_ngram_map_k_min_hits: None,
             spec_ngram_map_k4v_size_n: None,
             spec_ngram_map_k4v_size_m: None,
             spec_ngram_map_k4v_min_hits: None,
@@ -616,17 +618,11 @@ impl Preset {
             spec_ngram_simple_size_m: k
                 .get("spec-ngram-simple-size-m")
                 .and_then(|v| ini::parse_int(v)),
-            spec_ngram_simple_min_hits: k
-                .get("spec-ngram-simple-min-hits")
-                .and_then(|v| ini::parse_int(v)),
             spec_ngram_map_k_size_n: k
                 .get("spec-ngram-map-k-size-n")
                 .and_then(|v| ini::parse_int(v)),
             spec_ngram_map_k_size_m: k
                 .get("spec-ngram-map-k-size-m")
-                .and_then(|v| ini::parse_int(v)),
-            spec_ngram_map_k_min_hits: k
-                .get("spec-ngram-map-k-min-hits")
                 .and_then(|v| ini::parse_int(v)),
             spec_ngram_map_k4v_size_n: k
                 .get("spec-ngram-map-k4v-size-n")
@@ -779,8 +775,8 @@ pub fn prune_inactive_draft_keys(p: &mut Preset, embeds_mtp: bool) -> Vec<&'stat
 
 /// Drop the `--spec-ngram-*` keys of every n-gram type that `spec-type` does not
 /// name, returning their INI names. Those keys only tune their own speculator,
-/// so with the type off they are inert, and the form shows only the selected
-/// type's fields: a value left behind by a type switch would sit hidden in the
+/// so with the type off they are inert, and the form greys out every other
+/// type's group: a value left behind by a type switch would sit dead in the
 /// INI. Needs no GGUF, unlike `prune_inactive_draft_keys`: it runs on every save.
 pub fn prune_unused_ngram_keys(p: &mut Preset) -> Vec<&'static str> {
     let types: Vec<String> = p
@@ -821,11 +817,6 @@ pub fn prune_unused_ngram_keys(p: &mut Preset) -> Vec<&'static str> {
         &mut p.spec_ngram_simple_size_m,
     );
     clear(
-        on("ngram-simple"),
-        "spec-ngram-simple-min-hits",
-        &mut p.spec_ngram_simple_min_hits,
-    );
-    clear(
         on("ngram-map-k"),
         "spec-ngram-map-k-size-n",
         &mut p.spec_ngram_map_k_size_n,
@@ -834,11 +825,6 @@ pub fn prune_unused_ngram_keys(p: &mut Preset) -> Vec<&'static str> {
         on("ngram-map-k"),
         "spec-ngram-map-k-size-m",
         &mut p.spec_ngram_map_k_size_m,
-    );
-    clear(
-        on("ngram-map-k"),
-        "spec-ngram-map-k-min-hits",
-        &mut p.spec_ngram_map_k_min_hits,
     );
     clear(
         on("ngram-map-k4v"),
@@ -1225,8 +1211,9 @@ pub fn render_section(p: &Preset) -> String {
         "; spec-ngram-<type>-* tune the n-gram speculators (spec-type ngram-*), which\r\n",
     );
     out.push_str("; draft from the tokens already in the context and need no draft model:\r\n");
-    out.push_str("; ngram-mod takes n-match / n-min / n-max, ngram-simple, ngram-map-k and\r\n");
-    out.push_str("; ngram-map-k4v take size-n / size-m / min-hits. Only the selected type's.\r\n");
+    out.push_str("; ngram-mod takes n-match / n-min / n-max; ngram-simple, ngram-map-k and\r\n");
+    out.push_str("; ngram-map-k4v take size-n / size-m, and ngram-map-k4v alone min-hits.\r\n");
+    out.push_str("; Only the selected type's.\r\n");
     emit_i32(&mut out, "spec-ngram-mod-n-match", p.spec_ngram_mod_n_match);
     emit_i32(&mut out, "spec-ngram-mod-n-min", p.spec_ngram_mod_n_min);
     emit_i32(&mut out, "spec-ngram-mod-n-max", p.spec_ngram_mod_n_max);
@@ -1242,11 +1229,6 @@ pub fn render_section(p: &Preset) -> String {
     );
     emit_i32(
         &mut out,
-        "spec-ngram-simple-min-hits",
-        p.spec_ngram_simple_min_hits,
-    );
-    emit_i32(
-        &mut out,
         "spec-ngram-map-k-size-n",
         p.spec_ngram_map_k_size_n,
     );
@@ -1254,11 +1236,6 @@ pub fn render_section(p: &Preset) -> String {
         &mut out,
         "spec-ngram-map-k-size-m",
         p.spec_ngram_map_k_size_m,
-    );
-    emit_i32(
-        &mut out,
-        "spec-ngram-map-k-min-hits",
-        p.spec_ngram_map_k_min_hits,
     );
     emit_i32(
         &mut out,
@@ -1617,25 +1594,33 @@ mod tests {
         assert!(prune_unused_ngram_keys(&mut p).is_empty());
     }
 
-    // The n-gram keys round-trip through the INI under their llama.cpp names.
+    // The n-gram keys round-trip through the INI under their llama.cpp names;
+    // the two min-hits keys llama.cpp parses but never acts on (ngram-simple,
+    // ngram-map-k) are not read, so a hand-written one is not written back.
     #[test]
     fn ngram_keys_round_trip() {
         let p = Preset {
             id: "n".into(),
-            spec_type: "ngram-map-k".into(),
-            spec_ngram_map_k_size_n: Some(16),
-            spec_ngram_map_k_size_m: Some(32),
-            spec_ngram_map_k_min_hits: Some(2),
+            spec_type: "ngram-map-k4v".into(),
+            spec_ngram_map_k4v_size_n: Some(16),
+            spec_ngram_map_k4v_size_m: Some(32),
+            spec_ngram_map_k4v_min_hits: Some(2),
             ..Default::default()
         };
         let ini = render_section(&p);
-        assert!(ini.contains("spec-ngram-map-k-size-n = 16\r\n"), "{ini}");
+        assert!(ini.contains("spec-ngram-map-k4v-size-n = 16\r\n"), "{ini}");
+        assert!(ini.contains("spec-ngram-map-k4v-min-hits = 2\r\n"), "{ini}");
         let mut k = BTreeMap::new();
-        k.insert("spec-ngram-map-k-min-hits".to_string(), "2".to_string());
+        k.insert("spec-ngram-map-k4v-min-hits".to_string(), "2".to_string());
+        k.insert("spec-ngram-map-k-min-hits".to_string(), "3".to_string());
+        k.insert("spec-ngram-simple-min-hits".to_string(), "4".to_string());
         k.insert("spec-ngram-mod-n-max".to_string(), "80".to_string());
         let back = Preset::from_keys("n", &k);
-        assert_eq!(back.spec_ngram_map_k_min_hits, Some(2));
+        assert_eq!(back.spec_ngram_map_k4v_min_hits, Some(2));
         assert_eq!(back.spec_ngram_mod_n_max, Some(80));
+        let ini = render_section(&back);
+        assert!(!ini.contains("spec-ngram-map-k-min-hits"), "{ini}");
+        assert!(!ini.contains("spec-ngram-simple-min-hits"), "{ini}");
     }
 
     // Nothing set = nothing dropped: the status line must stay silent on the
@@ -1877,10 +1862,8 @@ mod tests {
             spec_ngram_mod_n_max: Some(4),
             spec_ngram_simple_size_n: Some(5),
             spec_ngram_simple_size_m: Some(6),
-            spec_ngram_simple_min_hits: Some(7),
             spec_ngram_map_k_size_n: Some(8),
             spec_ngram_map_k_size_m: Some(9),
-            spec_ngram_map_k_min_hits: Some(10),
             spec_ngram_map_k4v_size_n: Some(11),
             spec_ngram_map_k4v_size_m: Some(12),
             spec_ngram_map_k4v_min_hits: Some(13),

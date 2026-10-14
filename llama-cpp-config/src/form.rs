@@ -123,10 +123,8 @@ const HINT_SPEC_NGRAM_MOD_N_MIN: i32 = 48;
 const HINT_SPEC_NGRAM_MOD_N_MAX: i32 = 64;
 const HINT_SPEC_NGRAM_SIMPLE_SIZE_N: i32 = 12;
 const HINT_SPEC_NGRAM_SIMPLE_SIZE_M: i32 = 48;
-const HINT_SPEC_NGRAM_SIMPLE_MIN_HITS: i32 = 1;
 const HINT_SPEC_NGRAM_MAP_K_SIZE_N: i32 = 12;
 const HINT_SPEC_NGRAM_MAP_K_SIZE_M: i32 = 48;
-const HINT_SPEC_NGRAM_MAP_K_MIN_HITS: i32 = 1;
 const HINT_SPEC_NGRAM_MAP_K4V_SIZE_N: i32 = 12;
 const HINT_SPEC_NGRAM_MAP_K4V_SIZE_M: i32 = 48;
 const HINT_SPEC_NGRAM_MAP_K4V_MIN_HITS: i32 = 1;
@@ -197,20 +195,10 @@ pub fn preset_to_form(p: &presets::Preset) -> PresetForm {
         spec_ngram_simple_size_n_default: p.spec_ngram_simple_size_n.is_none(),
         spec_ngram_simple_size_m: itxt(p.spec_ngram_simple_size_m, HINT_SPEC_NGRAM_SIMPLE_SIZE_M),
         spec_ngram_simple_size_m_default: p.spec_ngram_simple_size_m.is_none(),
-        spec_ngram_simple_min_hits: itxt(
-            p.spec_ngram_simple_min_hits,
-            HINT_SPEC_NGRAM_SIMPLE_MIN_HITS,
-        ),
-        spec_ngram_simple_min_hits_default: p.spec_ngram_simple_min_hits.is_none(),
         spec_ngram_map_k_size_n: itxt(p.spec_ngram_map_k_size_n, HINT_SPEC_NGRAM_MAP_K_SIZE_N),
         spec_ngram_map_k_size_n_default: p.spec_ngram_map_k_size_n.is_none(),
         spec_ngram_map_k_size_m: itxt(p.spec_ngram_map_k_size_m, HINT_SPEC_NGRAM_MAP_K_SIZE_M),
         spec_ngram_map_k_size_m_default: p.spec_ngram_map_k_size_m.is_none(),
-        spec_ngram_map_k_min_hits: itxt(
-            p.spec_ngram_map_k_min_hits,
-            HINT_SPEC_NGRAM_MAP_K_MIN_HITS,
-        ),
-        spec_ngram_map_k_min_hits_default: p.spec_ngram_map_k_min_hits.is_none(),
         spec_ngram_map_k4v_size_n: itxt(
             p.spec_ngram_map_k4v_size_n,
             HINT_SPEC_NGRAM_MAP_K4V_SIZE_N,
@@ -381,11 +369,6 @@ pub fn form_to_preset(f: &PresetForm) -> presets::Preset {
         } else {
             ini::parse_int_in(f.spec_ngram_simple_size_m.as_str(), &NGRAM_SIZE)
         },
-        spec_ngram_simple_min_hits: if f.spec_ngram_simple_min_hits_default {
-            None
-        } else {
-            ini::parse_int_in(f.spec_ngram_simple_min_hits.as_str(), &NGRAM_HITS)
-        },
         spec_ngram_map_k_size_n: if f.spec_ngram_map_k_size_n_default {
             None
         } else {
@@ -395,11 +378,6 @@ pub fn form_to_preset(f: &PresetForm) -> presets::Preset {
             None
         } else {
             ini::parse_int_in(f.spec_ngram_map_k_size_m.as_str(), &NGRAM_SIZE)
-        },
-        spec_ngram_map_k_min_hits: if f.spec_ngram_map_k_min_hits_default {
-            None
-        } else {
-            ini::parse_int_in(f.spec_ngram_map_k_min_hits.as_str(), &NGRAM_HITS)
         },
         spec_ngram_map_k4v_size_n: if f.spec_ngram_map_k4v_size_n_default {
             None
@@ -561,7 +539,7 @@ pub fn form_to_preset(f: &PresetForm) -> presets::Preset {
 /// the two together, and `every_integer_field_is_checked` holds this list to the
 /// `PresetForm` struct in ui/types.slint, so a new integer field that skips it
 /// fails a test instead of saving a mistyped number as an absent key.
-fn int_fields(f: &PresetForm) -> [(&'static str, bool, &str, RangeInclusive<i32>); 24] {
+fn int_fields(f: &PresetForm) -> [(&'static str, bool, &str, RangeInclusive<i32>); 22] {
     [
         (
             "image-min-tokens",
@@ -661,12 +639,6 @@ fn int_fields(f: &PresetForm) -> [(&'static str, bool, &str, RangeInclusive<i32>
             NGRAM_SIZE,
         ),
         (
-            "spec-ngram-simple-min-hits",
-            f.spec_ngram_simple_min_hits_default,
-            f.spec_ngram_simple_min_hits.as_str(),
-            NGRAM_HITS,
-        ),
-        (
             "spec-ngram-map-k-size-n",
             f.spec_ngram_map_k_size_n_default,
             f.spec_ngram_map_k_size_n.as_str(),
@@ -677,12 +649,6 @@ fn int_fields(f: &PresetForm) -> [(&'static str, bool, &str, RangeInclusive<i32>
             f.spec_ngram_map_k_size_m_default,
             f.spec_ngram_map_k_size_m.as_str(),
             NGRAM_SIZE,
-        ),
-        (
-            "spec-ngram-map-k-min-hits",
-            f.spec_ngram_map_k_min_hits_default,
-            f.spec_ngram_map_k_min_hits.as_str(),
-            NGRAM_HITS,
         ),
         (
             "spec-ngram-map-k4v-size-n",
@@ -875,20 +841,12 @@ mod tests {
                 &mut f.spec_ngram_simple_size_m_default,
             ),
             (
-                &mut f.spec_ngram_simple_min_hits,
-                &mut f.spec_ngram_simple_min_hits_default,
-            ),
-            (
                 &mut f.spec_ngram_map_k_size_n,
                 &mut f.spec_ngram_map_k_size_n_default,
             ),
             (
                 &mut f.spec_ngram_map_k_size_m,
                 &mut f.spec_ngram_map_k_size_m_default,
-            ),
-            (
-                &mut f.spec_ngram_map_k_min_hits,
-                &mut f.spec_ngram_map_k_min_hits_default,
             ),
             (
                 &mut f.spec_ngram_map_k4v_size_n,
@@ -1072,10 +1030,8 @@ mod tests {
             spec_ngram_mod_n_max: Some(4),
             spec_ngram_simple_size_n: Some(5),
             spec_ngram_simple_size_m: Some(6),
-            spec_ngram_simple_min_hits: Some(7),
             spec_ngram_map_k_size_n: Some(8),
             spec_ngram_map_k_size_m: Some(9),
-            spec_ngram_map_k_min_hits: Some(10),
             spec_ngram_map_k4v_size_n: Some(11),
             spec_ngram_map_k4v_size_m: Some(12),
             spec_ngram_map_k4v_min_hits: Some(13),

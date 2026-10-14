@@ -197,9 +197,13 @@ export component ModelsPage inherits HorizontalLayout {
                         // draft-* types need a draft (selected or embedded MTP).
                         // draft-dspark sits next to draft-dflash: same arch, same
                         // dflashs\ folder, told apart only by the Markov head.
+                        // llama.cpp's ngram-cache is left out: its draft length
+                        // is fixed at 8 and the server never saves its lookup
+                        // caches. A preset naming it shows "none"; the key
+                        // round-trips untouched.
                         options: AppState.draft_active
-                            ? ["none", "draft-mtp", "draft-dflash", "draft-dspark", "draft-simple", "ngram-mod", "ngram-simple", "ngram-map-k", "ngram-map-k4v", "ngram-cache"]
-                            : ["none", "ngram-mod", "ngram-simple", "ngram-map-k", "ngram-map-k4v", "ngram-cache"];
+                            ? ["none", "draft-mtp", "draft-dflash", "draft-dspark", "draft-simple", "ngram-mod", "ngram-simple", "ngram-map-k", "ngram-map-k4v"]
+                            : ["none", "ngram-mod", "ngram-simple", "ngram-map-k", "ngram-map-k4v"];
                         // form.spec_type is never "" (preset_to_form maps empty → "none").
                         value <=> AppState.form.spec_type;
                     }
@@ -878,141 +882,20 @@ export component ModelsPage inherits HorizontalLayout {
 
             SectionCard {
                 heading: "Speculative decoding";
-                // The selected n-gram speculator's own tuning: these need no
-                // draft, so they are shown (not just enabled) for the spec type
-                // that reads them. A hand-written list (`ngram-mod,ngram-simple`)
-                // shows none of them; the keys still round-trip.
-                if AppState.form.spec_type == "ngram-mod" : VerticalLayout {
-                    spacing: 8px;
-                    LabeledField {
-                        label_width <=> LabelColumn.models;
-                        label: "Match length";
-                        hint: "Tokens of context the lookup matches before it proposes a draft (--spec-ngram-mod-n-match).\nBelow 16 llama.cpp warns of poor drafts.\ndefault = omit the flag → llama.cpp default: 24.";
-                        DefaultLineEdit {
-                            input_type: InputType.number;
-                            default <=> AppState.form.spec_ngram_mod_n_match_default;
-                            value <=> AppState.form.spec_ngram_mod_n_match;
-                        }
-                    }
-                    LabeledField {
-                        label_width <=> LabelColumn.models;
-                        label: "Min draft";
-                        hint: "Fewest tokens a draft must have to be proposed (--spec-ngram-mod-n-min), 0 to 1024.\ndefault = omit the flag → llama.cpp default: 48.";
-                        DefaultLineEdit {
-                            input_type: InputType.number;
-                            default <=> AppState.form.spec_ngram_mod_n_min_default;
-                            value <=> AppState.form.spec_ngram_mod_n_min;
-                        }
-                    }
-                    LabeledField {
-                        label_width <=> LabelColumn.models;
-                        label: "Max draft";
-                        hint: "Most tokens drafted per step (--spec-ngram-mod-n-max), 0 to 1024.\ndefault = omit the flag → llama.cpp default: 64.";
-                        DefaultLineEdit {
-                            input_type: InputType.number;
-                            default <=> AppState.form.spec_ngram_mod_n_max_default;
-                            value <=> AppState.form.spec_ngram_mod_n_max;
-                        }
-                    }
-                }
-                if AppState.form.spec_type == "ngram-simple" : VerticalLayout {
-                    spacing: 8px;
-                    LabeledField {
-                        label_width <=> LabelColumn.models;
-                        label: "Lookup n-gram";
-                        hint: "Length of the n-gram looked up in the context (--spec-ngram-simple-size-n), 1 to 1024.\ndefault = omit the flag → llama.cpp default: 12.";
-                        DefaultLineEdit {
-                            input_type: InputType.number;
-                            default <=> AppState.form.spec_ngram_simple_size_n_default;
-                            value <=> AppState.form.spec_ngram_simple_size_n;
-                        }
-                    }
-                    LabeledField {
-                        label_width <=> LabelColumn.models;
-                        label: "Draft m-gram";
-                        hint: "Length of the m-gram drafted after a match (--spec-ngram-simple-size-m), 1 to 1024.\ndefault = omit the flag → llama.cpp default: 48.";
-                        DefaultLineEdit {
-                            input_type: InputType.number;
-                            default <=> AppState.form.spec_ngram_simple_size_m_default;
-                            value <=> AppState.form.spec_ngram_simple_size_m;
-                        }
-                    }
-                    LabeledField {
-                        label_width <=> LabelColumn.models;
-                        label: "Min hits";
-                        hint: "Times an n-gram must have been seen before its continuation is proposed (--spec-ngram-simple-min-hits).\nHigher drafts less often but more reliably.\ndefault = omit the flag → llama.cpp default: 1.";
-                        DefaultLineEdit {
-                            input_type: InputType.number;
-                            default <=> AppState.form.spec_ngram_simple_min_hits_default;
-                            value <=> AppState.form.spec_ngram_simple_min_hits;
-                        }
-                    }
-                }
-                if AppState.form.spec_type == "ngram-map-k" : VerticalLayout {
-                    spacing: 8px;
-                    LabeledField {
-                        label_width <=> LabelColumn.models;
-                        label: "Lookup n-gram";
-                        hint: "Length of the n-gram looked up in the context (--spec-ngram-map-k-size-n), 1 to 1024.\ndefault = omit the flag → llama.cpp default: 12.";
-                        DefaultLineEdit {
-                            input_type: InputType.number;
-                            default <=> AppState.form.spec_ngram_map_k_size_n_default;
-                            value <=> AppState.form.spec_ngram_map_k_size_n;
-                        }
-                    }
-                    LabeledField {
-                        label_width <=> LabelColumn.models;
-                        label: "Draft m-gram";
-                        hint: "Length of the m-gram drafted after a match (--spec-ngram-map-k-size-m), 1 to 1024.\ndefault = omit the flag → llama.cpp default: 48.";
-                        DefaultLineEdit {
-                            input_type: InputType.number;
-                            default <=> AppState.form.spec_ngram_map_k_size_m_default;
-                            value <=> AppState.form.spec_ngram_map_k_size_m;
-                        }
-                    }
-                    LabeledField {
-                        label_width <=> LabelColumn.models;
-                        label: "Min hits";
-                        hint: "Times an n-gram must have been seen before its continuation is proposed (--spec-ngram-map-k-min-hits).\nHigher drafts less often but more reliably.\ndefault = omit the flag → llama.cpp default: 1.";
-                        DefaultLineEdit {
-                            input_type: InputType.number;
-                            default <=> AppState.form.spec_ngram_map_k_min_hits_default;
-                            value <=> AppState.form.spec_ngram_map_k_min_hits;
-                        }
-                    }
-                }
-                if AppState.form.spec_type == "ngram-map-k4v" : VerticalLayout {
-                    spacing: 8px;
-                    LabeledField {
-                        label_width <=> LabelColumn.models;
-                        label: "Lookup n-gram";
-                        hint: "Length of the n-gram looked up in the context (--spec-ngram-map-k4v-size-n), 1 to 1024.\ndefault = omit the flag → llama.cpp default: 12.";
-                        DefaultLineEdit {
-                            input_type: InputType.number;
-                            default <=> AppState.form.spec_ngram_map_k4v_size_n_default;
-                            value <=> AppState.form.spec_ngram_map_k4v_size_n;
-                        }
-                    }
-                    LabeledField {
-                        label_width <=> LabelColumn.models;
-                        label: "Draft m-gram";
-                        hint: "Length of the m-gram drafted after a match (--spec-ngram-map-k4v-size-m), 1 to 1024.\ndefault = omit the flag → llama.cpp default: 48.";
-                        DefaultLineEdit {
-                            input_type: InputType.number;
-                            default <=> AppState.form.spec_ngram_map_k4v_size_m_default;
-                            value <=> AppState.form.spec_ngram_map_k4v_size_m;
-                        }
-                    }
-                    LabeledField {
-                        label_width <=> LabelColumn.models;
-                        label: "Min hits";
-                        hint: "Times an n-gram must have been seen before its continuation is proposed (--spec-ngram-map-k4v-min-hits).\nHigher drafts less often but more reliably.\ndefault = omit the flag → llama.cpp default: 1.";
-                        DefaultLineEdit {
-                            input_type: InputType.number;
-                            default <=> AppState.form.spec_ngram_map_k4v_min_hits_default;
-                            value <=> AppState.form.spec_ngram_map_k4v_min_hits;
-                        }
-                    }
+                // One group per speculator, each under its own sub-heading. The
+                // draft group needs a draft (a picked file or embedded MTP heads:
+                // draft_active); the ngram-* groups draft from the context and
+                // are enabled for the spec type that reads them. Greyed out, not
+                // hidden, so every speculator's knobs are in view; the save drops
+                // the keys of the ngram types spec-type does not name
+                // (presets::prune_unused_ngram_keys). A hand-written list
+                // (`ngram-mod,ngram-simple`) enables none of the ngram groups,
+                // though the listed types' keys still round-trip.
+                Text {
+                    text: "Draft model (draft-mtp, draft-dflash, draft-dspark, draft-simple)";
+                    font-size: 12px;
+                    font-weight: 600;
+                    color: Palette.foreground;
                 }
                 LabeledField {
                     label_width <=> LabelColumn.models;
@@ -1065,6 +948,140 @@ export component ModelsPage inherits HorizontalLayout {
                         enabled: AppState.draft_active;
                         options: Options.cache_types;
                         value <=> AppState.form.spec_draft_type_v;
+                    }
+                }
+                Text {
+                    text: "ngram-mod";
+                    font-size: 12px;
+                    font-weight: 600;
+                    color: Palette.foreground;
+                }
+                LabeledField {
+                    label_width <=> LabelColumn.models;
+                    label: "Match length";
+                    hint: "Tokens of context the lookup matches before it proposes a draft (--spec-ngram-mod-n-match).\nBelow 16 llama.cpp warns of poor drafts.\ndefault = omit the flag → llama.cpp default: 24.";
+                    DefaultLineEdit {
+                        enabled: AppState.form.spec_type == "ngram-mod";
+                        input_type: InputType.number;
+                        default <=> AppState.form.spec_ngram_mod_n_match_default;
+                        value <=> AppState.form.spec_ngram_mod_n_match;
+                    }
+                }
+                LabeledField {
+                    label_width <=> LabelColumn.models;
+                    label: "Min draft";
+                    hint: "Fewest tokens a draft must have to be proposed (--spec-ngram-mod-n-min), 0 to 1024.\ndefault = omit the flag → llama.cpp default: 48.";
+                    DefaultLineEdit {
+                        enabled: AppState.form.spec_type == "ngram-mod";
+                        input_type: InputType.number;
+                        default <=> AppState.form.spec_ngram_mod_n_min_default;
+                        value <=> AppState.form.spec_ngram_mod_n_min;
+                    }
+                }
+                LabeledField {
+                    label_width <=> LabelColumn.models;
+                    label: "Max draft";
+                    hint: "Most tokens drafted per step (--spec-ngram-mod-n-max), 0 to 1024.\ndefault = omit the flag → llama.cpp default: 64.";
+                    DefaultLineEdit {
+                        enabled: AppState.form.spec_type == "ngram-mod";
+                        input_type: InputType.number;
+                        default <=> AppState.form.spec_ngram_mod_n_max_default;
+                        value <=> AppState.form.spec_ngram_mod_n_max;
+                    }
+                }
+                Text {
+                    text: "ngram-simple";
+                    font-size: 12px;
+                    font-weight: 600;
+                    color: Palette.foreground;
+                }
+                LabeledField {
+                    label_width <=> LabelColumn.models;
+                    label: "Lookup n-gram";
+                    hint: "Length of the n-gram looked up in the context (--spec-ngram-simple-size-n), 1 to 1024.\ndefault = omit the flag → llama.cpp default: 12.";
+                    DefaultLineEdit {
+                        enabled: AppState.form.spec_type == "ngram-simple";
+                        input_type: InputType.number;
+                        default <=> AppState.form.spec_ngram_simple_size_n_default;
+                        value <=> AppState.form.spec_ngram_simple_size_n;
+                    }
+                }
+                LabeledField {
+                    label_width <=> LabelColumn.models;
+                    label: "Draft m-gram";
+                    hint: "Length of the m-gram drafted after a match (--spec-ngram-simple-size-m), 1 to 1024.\ndefault = omit the flag → llama.cpp default: 48.";
+                    DefaultLineEdit {
+                        enabled: AppState.form.spec_type == "ngram-simple";
+                        input_type: InputType.number;
+                        default <=> AppState.form.spec_ngram_simple_size_m_default;
+                        value <=> AppState.form.spec_ngram_simple_size_m;
+                    }
+                }
+                Text {
+                    text: "ngram-map-k";
+                    font-size: 12px;
+                    font-weight: 600;
+                    color: Palette.foreground;
+                }
+                LabeledField {
+                    label_width <=> LabelColumn.models;
+                    label: "Lookup n-gram";
+                    hint: "Length of the n-gram looked up in the context (--spec-ngram-map-k-size-n), 1 to 1024.\ndefault = omit the flag → llama.cpp default: 12.";
+                    DefaultLineEdit {
+                        enabled: AppState.form.spec_type == "ngram-map-k";
+                        input_type: InputType.number;
+                        default <=> AppState.form.spec_ngram_map_k_size_n_default;
+                        value <=> AppState.form.spec_ngram_map_k_size_n;
+                    }
+                }
+                LabeledField {
+                    label_width <=> LabelColumn.models;
+                    label: "Draft m-gram";
+                    hint: "Length of the m-gram drafted after a match (--spec-ngram-map-k-size-m), 1 to 1024.\ndefault = omit the flag → llama.cpp default: 48.";
+                    DefaultLineEdit {
+                        enabled: AppState.form.spec_type == "ngram-map-k";
+                        input_type: InputType.number;
+                        default <=> AppState.form.spec_ngram_map_k_size_m_default;
+                        value <=> AppState.form.spec_ngram_map_k_size_m;
+                    }
+                }
+                Text {
+                    text: "ngram-map-k4v";
+                    font-size: 12px;
+                    font-weight: 600;
+                    color: Palette.foreground;
+                }
+                LabeledField {
+                    label_width <=> LabelColumn.models;
+                    label: "Lookup n-gram";
+                    hint: "Length of the n-gram looked up in the context (--spec-ngram-map-k4v-size-n), 1 to 1024.\ndefault = omit the flag → llama.cpp default: 12.";
+                    DefaultLineEdit {
+                        enabled: AppState.form.spec_type == "ngram-map-k4v";
+                        input_type: InputType.number;
+                        default <=> AppState.form.spec_ngram_map_k4v_size_n_default;
+                        value <=> AppState.form.spec_ngram_map_k4v_size_n;
+                    }
+                }
+                LabeledField {
+                    label_width <=> LabelColumn.models;
+                    label: "Draft m-gram";
+                    hint: "Length of the m-gram drafted after a match (--spec-ngram-map-k4v-size-m), 1 to 1024.\ndefault = omit the flag → llama.cpp default: 48.";
+                    DefaultLineEdit {
+                        enabled: AppState.form.spec_type == "ngram-map-k4v";
+                        input_type: InputType.number;
+                        default <=> AppState.form.spec_ngram_map_k4v_size_m_default;
+                        value <=> AppState.form.spec_ngram_map_k4v_size_m;
+                    }
+                }
+                LabeledField {
+                    label_width <=> LabelColumn.models;
+                    label: "Min hits";
+                    hint: "Times an n-gram must have been seen before its continuation is proposed (--spec-ngram-map-k4v-min-hits).\nHigher drafts less often but more reliably.\ndefault = omit the flag → llama.cpp default: 1.";
+                    DefaultLineEdit {
+                        enabled: AppState.form.spec_type == "ngram-map-k4v";
+                        input_type: InputType.number;
+                        default <=> AppState.form.spec_ngram_map_k4v_min_hits_default;
+                        value <=> AppState.form.spec_ngram_map_k4v_min_hits;
                     }
                 }
             }

@@ -142,20 +142,12 @@ pub const SWEEPABLE: &[(&str, Setter)] = &[
         p.spec_ngram_simple_size_m = int(v)?;
         Ok(())
     }),
-    ("spec-ngram-simple-min-hits", |p, v| {
-        p.spec_ngram_simple_min_hits = int(v)?;
-        Ok(())
-    }),
     ("spec-ngram-map-k-size-n", |p, v| {
         p.spec_ngram_map_k_size_n = int(v)?;
         Ok(())
     }),
     ("spec-ngram-map-k-size-m", |p, v| {
         p.spec_ngram_map_k_size_m = int(v)?;
-        Ok(())
-    }),
-    ("spec-ngram-map-k-min-hits", |p, v| {
-        p.spec_ngram_map_k_min_hits = int(v)?;
         Ok(())
     }),
     ("spec-ngram-map-k4v-size-n", |p, v| {
