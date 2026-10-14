@@ -48,6 +48,12 @@ export global AppState {
     in-out property <string> launched_url: "";
     out property <string> open_chat_url: !server_form.base_url_default ? chat_url
         : (server_running && launched_url != "" ? launched_url : chat_url);
+    // Open the chat UI in the browser: the Server rail's "Open chat UI" button
+    // and the tray's item (gui/tray.rs) both come through here, so they open
+    // the same URL.
+    public function open_chat() {
+        Platform.open-url(open_chat_url);
+    }
 
     // ── Server tab state ─────────────────────────────────────────────
     // All editable server.ini fields live in one struct (ServerForm), like the

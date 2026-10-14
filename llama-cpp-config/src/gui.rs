@@ -341,6 +341,7 @@ pub fn run(start_minimized: bool) -> anyhow::Result<()> {
         #[cfg(target_os = "linux")]
         discard_unshown_wayland_window(&win);
         app.global::<AppState>().set_hw_monitor_available(true);
+        tray.set_hw_monitor_available(true);
         win
     };
 

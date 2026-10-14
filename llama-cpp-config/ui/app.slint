@@ -261,7 +261,7 @@ export component AppWindow inherits Window {
                             // was launched with over the saved server.ini one
                             // (a save while running changes the file, not the
                             // listening process); see state.slint.
-                            clicked => { Platform.open-url(AppState.open_chat_url); }
+                            clicked => { AppState.open_chat(); }
                         }
                         // Live hardware bars in an independent, non-modal
                         // window (HwWindow). Always enabled: what the GPUs
@@ -697,9 +697,16 @@ export component AppTray inherits SystemTrayIcon {
     // updates the tray live as the status flips.
     icon: root.server_running ? @image-url("llama-on.png") : @image-url("llama.png");
     tooltip: root.server_running ? "llama.cpp: server running" : "llama.cpp: server stopped";
+    // Mirrors AppState.hw_monitor_available: the HW Monitor item shows only
+    // where the window was wired (gui.rs).
+    in property <bool> hw_monitor_available;
     callback open_window();
-    // The same View-logs window the Server tab opens (AppState.view_logs,
-    // wired in gui/tray.rs), reachable without surfacing the configurator.
+    // The chat UI, the HW Monitor and the View-logs window, each the same one
+    // the Server rail's button opens (AppState.open_chat / open_hw_monitor /
+    // view_logs, wired in gui/tray.rs), reachable without surfacing the
+    // configurator. Listed in the rail's order.
+    callback open_chat();
+    callback open_hw_monitor();
     callback open_log();
     callback start_server();
     callback stop_server();
@@ -707,6 +714,9 @@ export component AppTray inherits SystemTrayIcon {
     clicked => { root.open_window(); }
     Menu {
         MenuItem { title: "Open configurator"; activated => { root.open_window(); } }
+        // Enabled only while the server is up, like the rail's button.
+        MenuItem { title: "Open chat UI"; enabled: root.server_running; activated => { root.open_chat(); } }
+        if root.hw_monitor_available : MenuItem { title: "Open HW Monitor"; activated => { root.open_hw_monitor(); } }
         MenuItem { title: "Open log"; activated => { root.open_log(); } }
         MenuSeparator { }
         // Start only when stopped; Stop only when running. The menu tree is
