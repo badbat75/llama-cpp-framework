@@ -167,6 +167,16 @@ done < <(for f in "$BUILD_DIR/bin"/*; do
          done | awk '$2 == "=>" && $3 ~ /^\// { print $1, $3 }' | sort -u)
 say_dim "$bundled runtime libraries"
 
+# A backend whose runtime did not resolve inside a dist (ldd answered from a
+# system ROCm, or the dist is gone from under the dist root) would be dropped
+# silently by ggml on every machine but this one.
+for need in 'libggml-hip.so:libhipblas.so.*' 'libggml-cuda.so:libcublas.so.*'; do
+    backend="${need%%:*}"; runtime="${need#*:}"
+    if [[ -e "$STAGE_DIR/$BIN_DIR/$backend" ]] && ! compgen -G "$STAGE_DIR/$RT_DIR/$runtime" >/dev/null; then
+        die "$backend is staged but $runtime was not found in its dist under $CFG_DIST_ROOT; refusing to package a backend that cannot load"
+    fi
+done
+
 # The Vulkan backend links the loader of the SDK it was built with only if
 # ldd resolved it there; when the system loader answered instead, take the
 # SDK's by name so the package still carries one.
