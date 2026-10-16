@@ -135,6 +135,8 @@ pub fn config_to_form(cfg: &server_cfg::ServerConfig) -> ServerForm {
             .and_then(server_cfg::normalize_allreduce)
             .unwrap_or("default")
             .into(),
+        cuda_disable_graphs: cfg.cuda_disable_graphs,
+        attn_rot_disable: cfg.attn_rot_disable,
         // Plain bool toggles (framework defaults materialized when unset), same
         // shape as `mlock`.
         webui_mcp_proxy: cfg.webui_mcp_proxy_or_default(),
@@ -210,6 +212,8 @@ pub fn form_to_config(f: &ServerForm) -> server_cfg::ServerConfig {
         // unknown word would run every tensor split as `none`.
         cuda_allreduce: server_cfg::normalize_allreduce(f.cuda_allreduce.as_str())
             .map(str::to_string),
+        cuda_disable_graphs: f.cuda_disable_graphs,
+        attn_rot_disable: f.attn_rot_disable,
         webui_mcp_proxy: Some(f.webui_mcp_proxy),
         // The one field with no "unset" state (the launch always passes -lv): the
         // form carries the dropdown's label, and `parse_log_level` maps it back.
@@ -260,6 +264,8 @@ mod tests {
             // round-trip through the form's string spelling isn't vacuous.
             rocblas_use_hipblaslt: Some(false),
             cuda_allreduce: Some("none".into()),
+            cuda_disable_graphs: true,
+            attn_rot_disable: true,
             webui_mcp_proxy: Some(false),
             log_verbosity: Some(2),
             // Non-default toggle, and a StateDir off the system drive: the path

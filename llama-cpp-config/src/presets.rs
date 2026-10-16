@@ -146,6 +146,18 @@ pub struct Preset {
     /// DFlash and MTP from the sampled token's probability. It lives with the
     /// other speculative keys and dies with them (`prune_inactive_draft_keys`).
     pub spec_draft_p_min: Option<f64>,
+    /// Shortest draft worth verifying (--spec-draft-n-min; llama.cpp's default 0
+    /// = keep any length). A draft that comes out shorter, typically because
+    /// `spec_draft_p_min` cut it, is THROWN AWAY rather than truncated further:
+    /// that step decodes one token without speculation (`common/speculative.cpp`,
+    /// `result.clear()` after the `n_min` test). So it is the floor under p-min,
+    /// trading the cost of verifying a short draft against the step it saves.
+    /// Lives and dies with the other draft keys (`prune_inactive_draft_keys`).
+    ///
+    /// Its sibling `--spec-draft-p-split` is NOT a field: v0.6.0 parses it into
+    /// `params.speculative.draft.p_split` and nothing reads that member, the
+    /// same dead end as the two ngram min-hits keys below.
+    pub spec_draft_n_min: Option<i32>,
     /// KV-cache quantization for the DRAFT context's K and V
     /// (--spec-draft-type-k / --spec-draft-type-v, aliases -ctkd / -ctvd).
     /// Empty = omit the flag, the same empty↔"default" shape as `cache_type_k`
@@ -229,6 +241,26 @@ pub struct Preset {
     pub ctx_size: Option<i32>,
     pub n_gpu_layers: Option<i32>,
     pub parallel: Option<i32>,
+    /// One KV buffer shared by every slot (--kv-unified / --no-kv-unified). A
+    /// TRI-state like `flash_attn`: `None` = omit the key, and what that means
+    /// depends on `parallel`. With `parallel` omitted (auto) llama-server forces
+    /// it ON whatever this says (`tools/server/server.cpp`: auto picks 4 slots
+    /// "and kv_unified = true"), so the form disables the control there; with
+    /// `parallel` pinned the default is OFF and each slot owns `ctx-size /
+    /// parallel` cells. On, every slot may grow into the whole context (the
+    /// pool is shared first come first served), which is what keeps a pinned
+    /// `parallel` from dividing the context a single request may use
+    /// (`integrations::effective_ctx`).
+    pub kv_unified: Option<bool>,
+    /// Per-slot context cap (--kv-unified-per-slot N, server only, v0.4.0
+    /// #24124). `None` = omit the key, no cap. Two effects, both in
+    /// `tools/server/`: every slot is capped at `min(n_ctx_seq, N)`
+    /// (`n_ctx_slot()`), and with `ctx_size` omitted the KV pool is SIZED to
+    /// `parallel * N` instead of the model's trained context (`server.cpp`; an
+    /// explicit `ctx-size = 0` opts out of that sizing). Despite the name it
+    /// does not need `kv_unified`: without it each slot's share is already
+    /// `n_ctx / parallel`, and the pool sizing makes that share exactly N.
+    pub kv_unified_per_slot: Option<i32>,
     pub batch_size: Option<i32>,
     pub ubatch_size: Option<i32>,
     /// KV-cache quantization for K and V (--cache-type-k / --cache-type-v).
@@ -255,6 +287,34 @@ pub struct Preset {
     /// supported by multimodal") and a context whose memory cannot shift
     /// (`llama_memory_can_shift`), both logged once at load.
     pub cache_reuse: Option<i32>,
+    /// Context checkpoints, the prompt cache of a model whose memory cannot be
+    /// rolled back token by token. `ctx_checkpoints` (--ctx-checkpoints, alias
+    /// --swa-checkpoints) caps how many a slot keeps (llama.cpp's default 32, 0
+    /// disables them); `checkpoint_min_step` (--checkpoint-min-step) is the
+    /// minimum spacing between two of them in tokens (default 8192, 0 = none).
+    /// `None` = omit the key.
+    ///
+    /// The server makes them only where a plain KV prefix cannot be reused
+    /// (`server-context.cpp`, `do_checkpoint`): a recurrent or hybrid model
+    /// (the per-layer recurrent state of qwen35/qwen4exp, mamba, jamba...), an
+    /// SWA model without `--swa-full`, and a memory whose rollback is bounded.
+    /// There a new request whose prompt diverges from the cached one before its
+    /// end cannot just truncate the cache to the common prefix (the state holds
+    /// no per-token history to roll back), so it resumes from the newest
+    /// checkpoint at or before that prefix, and with none the whole prompt is
+    /// read again. A pure-attention model never makes one and both keys are
+    /// inert there. They do not replace `cache_reuse` on a hybrid: its memory
+    /// shifts whenever its attention half does (`llama-memory-hybrid.cpp`), so
+    /// llama.cpp leaves that flag on.
+    ///
+    /// Each checkpoint is a copy of that non-rollbackable state, held per slot
+    /// in host RAM, and the ones of a slot saved to the prompt cache count
+    /// against `cache_ram` (`server-task.cpp` adds their size to the entry's).
+    /// The oldest is erased once a slot holds `ctx_checkpoints`, and one closer
+    /// than `checkpoint_min_step` to the previous is skipped: a smaller step
+    /// resumes closer to where a conversation diverged and costs more RAM.
+    pub ctx_checkpoints: Option<i32>,
+    pub checkpoint_min_step: Option<i32>,
     pub jinja: Option<bool>,
     pub reasoning: String,
     pub reasoning_format: String,
@@ -432,6 +492,15 @@ pub struct Preset {
     /// The form allows it only with `ctx_size` and `n_gpu_layers` unset
     /// (`form::fit_allowed`): those are what it sizes.
     pub fit: bool,
+    /// The fit's two bounds, read only with `fit` on (the form disables them
+    /// otherwise). `fit_ctx` (--fit-ctx): the smallest context the fit may cut
+    /// down to (llama.cpp's default 4096); `None` = omit the key.
+    /// `fit_target` (--fit-target): the VRAM the fit leaves free, in MiB, as
+    /// one value for every device or a comma-separated list in device order
+    /// (llama.cpp's default 1024 each); empty = omit the key. A free-text
+    /// field, held to digits and commas by `validate_for_save`.
+    pub fit_ctx: Option<i32>,
+    pub fit_target: String,
     pub temp: Option<f64>,
     /// Integer sampler (--top-k): backed by an int SpinBox, not the float editor
     /// the other samplers use: a decimal field would let `40,5` slip the int parse.
@@ -520,6 +589,7 @@ impl Default for Preset {
             spec_type: String::new(),
             spec_draft_n_max: None,
             spec_draft_p_min: None,
+            spec_draft_n_min: None,
             spec_draft_type_k: String::new(),
             spec_draft_type_v: String::new(),
             spec_ngram_mod_n_match: None,
@@ -541,6 +611,8 @@ impl Default for Preset {
             ctx_size: None,
             n_gpu_layers: None,
             parallel: None,
+            kv_unified: None,
+            kv_unified_per_slot: None,
             batch_size: None,
             ubatch_size: None,
             cache_type_k: String::new(),
@@ -548,6 +620,8 @@ impl Default for Preset {
             flash_attn: None,
             cache_ram: None,
             cache_reuse: None,
+            ctx_checkpoints: None,
+            checkpoint_min_step: None,
             jinja: Some(true),
             reasoning: "auto".into(),
             reasoning_format: "auto".into(),
@@ -562,6 +636,8 @@ impl Default for Preset {
             lazy_mode: String::new(),
             load_mode: String::new(),
             fit: false,
+            fit_ctx: None,
+            fit_target: String::new(),
             temp: None,
             top_k: None,
             top_p: None,
@@ -601,6 +677,7 @@ impl Preset {
             spec_type: get("spec-type"),
             spec_draft_n_max: k.get("spec-draft-n-max").and_then(|v| ini::parse_int(v)),
             spec_draft_p_min: k.get("spec-draft-p-min").and_then(|v| ini::parse_float(v)),
+            spec_draft_n_min: k.get("spec-draft-n-min").and_then(|v| ini::parse_int(v)),
             spec_draft_type_k: get("spec-draft-type-k"),
             spec_draft_type_v: get("spec-draft-type-v"),
             spec_ngram_mod_n_match: k
@@ -642,6 +719,8 @@ impl Preset {
             ctx_size: k.get("ctx-size").and_then(|v| ini::parse_int(v)),
             n_gpu_layers: k.get("n-gpu-layers").and_then(|v| ini::parse_int(v)),
             parallel: k.get("parallel").and_then(|v| ini::parse_int(v)),
+            kv_unified: getb("kv-unified"),
+            kv_unified_per_slot: k.get("kv-unified-per-slot").and_then(|v| ini::parse_int(v)),
             batch_size: k.get("batch-size").and_then(|v| ini::parse_int(v)),
             ubatch_size: k.get("ubatch-size").and_then(|v| ini::parse_int(v)),
             cache_type_k: get("cache-type-k"),
@@ -649,6 +728,8 @@ impl Preset {
             flash_attn: getb("flash-attn"),
             cache_ram: k.get("cache-ram").and_then(|v| ini::parse_int(v)),
             cache_reuse: k.get("cache-reuse").and_then(|v| ini::parse_int(v)),
+            ctx_checkpoints: k.get("ctx-checkpoints").and_then(|v| ini::parse_int(v)),
+            checkpoint_min_step: k.get("checkpoint-min-step").and_then(|v| ini::parse_int(v)),
             jinja: getb("jinja"),
             reasoning: get("reasoning"),
             reasoning_format: get("reasoning-format"),
@@ -673,6 +754,8 @@ impl Preset {
                     .as_deref(),
                 Some("on" | "true")
             ),
+            fit_ctx: k.get("fit-ctx").and_then(|v| ini::parse_int(v)),
+            fit_target: get("fit-target"),
             temp: k.get("temp").and_then(|v| ini::parse_float(v)),
             top_k: k.get("top-k").and_then(|v| ini::parse_int(v)),
             top_p: k.get("top-p").and_then(|v| ini::parse_float(v)),
@@ -751,6 +834,9 @@ pub fn prune_inactive_draft_keys(p: &mut Preset, embeds_mtp: bool) -> Vec<&'stat
         }
         if p.spec_draft_p_min.take().is_some() {
             dropped.push("spec-draft-p-min");
+        }
+        if p.spec_draft_n_min.take().is_some() {
+            dropped.push("spec-draft-n-min");
         }
         // The draft KV types belong to THIS group, not the placement one below:
         // llama.cpp applies them whenever a draft context exists, embedded MTP
@@ -1034,12 +1120,34 @@ fn validate_for_save(preset: &Preset) -> io::Result<()> {
         ("chat-template-kwargs", &preset.chat_template_kwargs),
         ("override-tensor", &preset.override_tensor),
         ("reasoning-budget-message", &preset.reasoning_budget_message),
+        ("fit-target", &preset.fit_target),
     ] {
         ini::reject_comment_markers(field, value)?;
     }
+    validate_fit_target(&preset.fit_target)
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
     crate::tensor_override::validate(&preset.override_tensor)
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
     Ok(())
+}
+
+/// `fit-target` as llama.cpp takes it: MiB as whole numbers, one for every
+/// device or one per device separated by `,` (`common/arg.cpp` also splits on
+/// `/`; the INI keeps the comma). Empty = the key is omitted. Refused rather
+/// than passed through because llama.cpp's `std::stoull` throws on a stray
+/// word and the server then refuses to load the model.
+pub fn validate_fit_target(v: &str) -> Result<(), String> {
+    let v = v.trim();
+    if v.is_empty()
+        || v.split(',')
+            .all(|n| !n.trim().is_empty() && n.trim().bytes().all(|b| b.is_ascii_digit()))
+    {
+        Ok(())
+    } else {
+        Err(format!(
+            "fit-target `{v}`: MiB as whole numbers, one value or a comma-separated list per device"
+        ))
+    }
 }
 
 /// Remove a preset from whichever file holds it (both, for the twin an
@@ -1206,6 +1314,10 @@ pub fn render_section(p: &Preset) -> String {
     out.push_str("; below it, so the target verifies a shorter batch. Omit = llama.cpp's 0\r\n");
     out.push_str("; (never truncate). DFlash2 reads its selector, DSpark its confidence head.\r\n");
     emit_f64(&mut out, "spec-draft-p-min", p.spec_draft_p_min);
+    out.push_str("; spec-draft-n-min = shortest draft worth verifying: a shorter one (e.g.\r\n");
+    out.push_str("; cut by p-min) is DISCARDED and that step decodes without speculation.\r\n");
+    out.push_str("; Omit = llama.cpp's 0 (keep any length).\r\n");
+    emit_i32(&mut out, "spec-draft-n-min", p.spec_draft_n_min);
     out.push_str("; spec-draft-type-k / -v quantize the DRAFT context's KV cache (-ctkd /\r\n");
     out.push_str("; -ctvd). Omitting them is NOT 'follow the model': llama.cpp copies\r\n");
     out.push_str("; cache-type-k/-v into the draft params and then overwrites both with the\r\n");
@@ -1297,6 +1409,15 @@ pub fn render_section(p: &Preset) -> String {
     out.push_str("; onto the GPU. No escaping exists: a pattern cannot contain `,` or `=`.\r\n");
     emit_str(&mut out, "override-tensor", &p.override_tensor);
     emit_i32(&mut out, "parallel", p.parallel);
+    out.push_str("; kv-unified = true shares ONE KV buffer among the parallel slots, so each\r\n");
+    out.push_str("; may use the whole context instead of ctx-size / parallel. Omit the key =\r\n");
+    out.push_str("; off with parallel pinned; with parallel omitted (auto) llama-server turns\r\n");
+    out.push_str(
+        "; it on regardless. kv-unified-per-slot = N caps every slot at N tokens and,\r\n",
+    );
+    out.push_str("; with ctx-size omitted, sizes the KV pool to parallel * N.\r\n");
+    emit_bool(&mut out, "kv-unified", p.kv_unified);
+    emit_i32(&mut out, "kv-unified-per-slot", p.kv_unified_per_slot);
     emit_i32(&mut out, "batch-size", p.batch_size);
     emit_i32(&mut out, "ubatch-size", p.ubatch_size);
 
@@ -1312,7 +1433,10 @@ pub fn render_section(p: &Preset) -> String {
     emit_str(&mut out, "cache-type-v", &p.cache_type_v);
     emit_bool(&mut out, "flash-attn", p.flash_attn);
 
-    out.push_str("\r\n; Prompt cache RAM limit in MiB (--cache-ram)\r\n");
+    out.push_str(
+        "\r\n; Prompt cache RAM limit in MiB (--cache-ram). The context checkpoints of\r\n",
+    );
+    out.push_str("; a cached prompt count against it too.\r\n");
     emit_i32(&mut out, "cache-ram", p.cache_ram);
     out.push_str(
         "; cache-reuse = minimum chunk (tokens) a new prompt may reuse from the cached\r\n",
@@ -1321,6 +1445,14 @@ pub fn render_section(p: &Preset) -> String {
     out.push_str("; llama.cpp turns it off on a model with an mmproj, and on one whose cache\r\n");
     out.push_str("; cannot shift, saying so once in the log.\r\n");
     emit_i32(&mut out, "cache-reuse", p.cache_reuse);
+    out.push_str("; Context checkpoints: what a recurrent / hybrid model (or an SWA one\r\n");
+    out.push_str("; without swa-full) resumes a diverging prompt from, since its state cannot\r\n");
+    out.push_str("; be truncated to the common prefix. ctx-checkpoints = max per slot (omit =\r\n");
+    out.push_str("; 32, 0 disables), checkpoint-min-step = min tokens between two (omit =\r\n");
+    out.push_str("; 8192, 0 = none). Each one copies that state into host RAM; inert on a\r\n");
+    out.push_str("; pure-attention model.\r\n");
+    emit_i32(&mut out, "ctx-checkpoints", p.ctx_checkpoints);
+    emit_i32(&mut out, "checkpoint-min-step", p.checkpoint_min_step);
 
     out.push_str("\r\n; Chat template\r\n");
     emit_bool(&mut out, "jinja", p.jinja);
@@ -1427,6 +1559,11 @@ pub fn render_section(p: &Preset) -> String {
     out.push_str("; to fit device memory. Always written: llama.cpp's own default is on, and\r\n");
     out.push_str("; an omitted n-gpu-layers here means every layer, which the fit would cut.\r\n");
     out.push_str(&format!("fit = {}\r\n", if p.fit { "on" } else { "off" }));
+    out.push_str("; fit-ctx = the smallest context the fit may cut down to (omit = 4096);\r\n");
+    out.push_str("; fit-target = MiB the fit leaves free per device, one value or a list in\r\n");
+    out.push_str("; device order (omit = 1024). Both are read only with fit = on.\r\n");
+    emit_i32(&mut out, "fit-ctx", p.fit_ctx);
+    emit_str(&mut out, "fit-target", &p.fit_target);
 
     out.push_str("\r\n; Sampling overrides\r\n");
     emit_f64(&mut out, "temp", p.temp);
@@ -1700,6 +1837,7 @@ mod tests {
             chat_template_kwargs: r#"{"enable_thinking":true}"#.into(),
             override_tensor: r"token_embd\.weight=ROCm0".into(),
             reasoning_budget_message: "Budget reached, write the final answer now.".into(),
+            fit_target: "2048,1024".into(),
             ..Default::default()
         };
         assert!(validate_for_save(&clean).is_ok());
@@ -1719,10 +1857,12 @@ mod tests {
                 "reasoning-budget-message",
                 "Stop now; write the final answer.",
             ),
+            ("fit-target", "2048 ; per GPU"),
         ] {
             let mut p = clean.clone();
             match field {
                 "model" => p.model = hostile.into(),
+                "fit-target" => p.fit_target = hostile.into(),
                 "mmproj" => p.mmproj = hostile.into(),
                 "chat-template-kwargs" => p.chat_template_kwargs = hostile.into(),
                 "override-tensor" => p.override_tensor = hostile.into(),
@@ -1888,6 +2028,7 @@ mod tests {
             spec_type: "draft-dflash".into(),
             spec_draft_n_max: Some(15),
             spec_draft_p_min: Some(0.35),
+            spec_draft_n_min: Some(2),
             // Deliberately NOT the cache_type_k/-v below: the draft cache is a
             // separate setting, and matching values would make the round-trip
             // blind to the two being crossed.
@@ -1916,6 +2057,10 @@ mod tests {
             ctx_size: Some(65536),
             n_gpu_layers: Some(40),
             parallel: Some(2),
+            // Some(false): `--no-kv-unified`, the one that must not read back
+            // as "key absent".
+            kv_unified: Some(false),
+            kv_unified_per_slot: Some(32768),
             batch_size: Some(1024),
             ubatch_size: Some(256),
             cache_type_k: "f16".into(),
@@ -1923,6 +2068,9 @@ mod tests {
             flash_attn: Some(false),
             cache_ram: Some(4096),
             cache_reuse: Some(256),
+            // 0 on purpose: it disables checkpoints, a value and not an absence.
+            ctx_checkpoints: Some(0),
+            checkpoint_min_step: Some(2048),
             jinja: Some(false),
             reasoning: "on".into(),
             reasoning_format: "deepseek".into(),
@@ -1947,6 +2095,9 @@ mod tests {
             load_mode: "mmap+mlock".into(),
             // true: the value that differs from the always-written default.
             fit: true,
+            fit_ctx: Some(16384),
+            // A per-device list: the `,` has to cross the INI reader.
+            fit_target: "2048,512".into(),
             temp: Some(0.7),
             top_k: Some(40),
             top_p: Some(0.95),

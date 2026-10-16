@@ -172,6 +172,14 @@ pub struct ServerSet {
     /// default = leave the variable unset.
     #[arg(long, value_parser = clap::builder::PossibleValuesParser::new(["default", "nccl", "internal", "none"]))]
     pub cuda_allreduce: Option<String>,
+    /// Export GGML_CUDA_DISABLE_GRAPHS=1 (no CUDA/HIP graphs; diagnostic, slower
+    /// decode). false = leave the variable unset.
+    #[arg(long)]
+    pub cuda_disable_graphs: Option<bool>,
+    /// Export LLAMA_ATTN_ROT_DISABLE=1 (no Hadamard rotation of a quantized KV
+    /// cache). false = leave the variable unset.
+    #[arg(long)]
+    pub attn_rot_disable: Option<bool>,
     /// Enable the web UI's MCP CORS proxy (--webui-mcp-proxy). true = on.
     #[arg(long)]
     pub webui_mcp_proxy: Option<bool>,
@@ -230,6 +238,12 @@ impl ServerSet {
         // Same clearing rule: `default` normalizes to None, the unset state.
         if let Some(ar) = &self.cuda_allreduce {
             cfg.cuda_allreduce = server_cfg::normalize_allreduce(ar).map(str::to_string);
+        }
+        if let Some(g) = self.cuda_disable_graphs {
+            cfg.cuda_disable_graphs = g;
+        }
+        if let Some(r) = self.attn_rot_disable {
+            cfg.attn_rot_disable = r;
         }
         if let Some(w) = self.webui_mcp_proxy {
             cfg.webui_mcp_proxy = Some(w);
@@ -415,6 +429,8 @@ fn show_lines(cfg: &server_cfg::ServerConfig) -> String {
             .clone()
             .unwrap_or_else(|| "default (the backend decides)".into()),
     );
+    row("CudaDisableGraphs:", cfg.cuda_disable_graphs.to_string());
+    row("AttnRotDisable:", cfg.attn_rot_disable.to_string());
     row(
         "WebuiMcpProxy:",
         cfg.webui_mcp_proxy
@@ -710,6 +726,8 @@ mod tests {
             // must land as the matching Option<bool>.
             rocblas_use_hipblaslt: Some("off".into()),
             cuda_allreduce: Some("none".into()),
+            cuda_disable_graphs: Some(true),
+            attn_rot_disable: Some(true),
             webui_mcp_proxy: Some(false),
             log_verbosity: Some(2),
             save_state_on_shutdown: Some(true),
@@ -732,6 +750,8 @@ mod tests {
             models_dir: Some("D:\\models".into()),
             rocblas_use_hipblaslt: Some(false),
             cuda_allreduce: Some("none".into()),
+            cuda_disable_graphs: true,
+            attn_rot_disable: true,
             webui_mcp_proxy: Some(false),
             log_verbosity: Some(2),
             save_state_on_shutdown: Some(true),
@@ -756,6 +776,8 @@ mod tests {
             models_dir: Some(r"D:\models".into()),
             rocblas_use_hipblaslt: Some(false),
             cuda_allreduce: Some("none".into()),
+            cuda_disable_graphs: true,
+            attn_rot_disable: true,
             webui_mcp_proxy: Some(false),
             log_verbosity: Some(2),
             save_state_on_shutdown: Some(true),
@@ -777,6 +799,8 @@ mod tests {
             models_dir,
             rocblas_use_hipblaslt,
             cuda_allreduce,
+            cuda_disable_graphs,
+            attn_rot_disable,
             webui_mcp_proxy,
             log_verbosity,
             save_state_on_shutdown,
@@ -802,6 +826,8 @@ mod tests {
                 },
             ),
             ("CudaAllreduce:", cuda_allreduce.unwrap()),
+            ("CudaDisableGraphs:", cuda_disable_graphs.to_string()),
+            ("AttnRotDisable:", attn_rot_disable.to_string()),
             ("WebuiMcpProxy:", webui_mcp_proxy.unwrap().to_string()),
             ("LogVerbosity:", log_verbosity.unwrap().to_string()),
             (

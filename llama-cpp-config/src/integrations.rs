@@ -267,7 +267,7 @@ fn preset_to_opencode_model(p: &presets::Preset, n_ctx_train: Option<u32>) -> Va
         entry["reasoning"] = json!(p.reasoning == "on");
     }
 
-    let context = effective_ctx(p.ctx_size, p.parallel, n_ctx_train);
+    let context = effective_ctx(p, n_ctx_train);
     let output = std::cmp::max(context / 4, 32000);
     entry["limit"] = json!({
         "context": context,
@@ -296,44 +296,59 @@ fn preset_to_opencode_model(p: &presets::Preset, n_ctx_train: Option<u32>) -> Va
 ///    128k per request. This is the half that makes the naive "just use the trained
 ///    context" fix WORSE than the bug: it would promise a context the server
 ///    refuses.
-/// 3. **…unless `parallel` is omitted.** llama-server defaults `n_parallel` to
+/// 3. **…unless the KV cache is unified.** llama-server defaults `n_parallel` to
 ///    `-1` = auto (common/arg.cpp, server-only), and auto picks 4 slots *and a
 ///    unified KV cache* (tools/server/server.cpp), under which `n_ctx_seq = n_ctx`,
 ///    i.e. every slot sees the whole context. Omitting the key is thus the way to
 ///    get the model's full trained context per request, and pinning `parallel` is
-///    what silently divides it.
+///    what silently divides it, unless the preset also sets `kv-unified = true`.
+///    (`kv-unified = false` under auto parallel changes nothing: the server
+///    overwrites it.)
+/// 4. **`kv-unified-per-slot N` caps a slot at N** (`n_ctx_slot()`), and with
+///    `ctx-size` ABSENT it sizes the pool to `n_parallel * N` instead of the
+///    trained context (`server.cpp`); an explicit `ctx-size = 0` opts out of
+///    that sizing (it sets `fit_params_min_ctx = UINT32_MAX`, which the sizing
+///    checks).
 ///
 /// Finally the server caps a slot at the trained context
 /// (`server-context.cpp` `n_ctx_slot()`: `min(llama_n_ctx_seq, n_ctx_train)`),
 /// so a `ctx-size` above what the model was trained for buys nothing here either.
 ///
-/// Two v0.4.0 caps this deliberately does NOT model, because neither has a
-/// field to read from: `--kv-unified-per-slot N` (#24124, server-only) lowers
-/// the per-slot figure to `min(n_ctx_seq, N)` and, with no `-c`, sizes the pool
-/// to `n_parallel * N`; and a preset pinning custom YaRN scaling (`rope-scaling
-/// yarn` + a `rope-freq-scale` off the trained one) makes llama.cpp REWRITE
-/// `n_ctx_train` to `n_ctx_orig_yarn / freq_scale` at context creation (#28030),
-/// which raises the cap this function reads from the header. Add the field
-/// first, then the rule, in that order.
-fn effective_ctx(ctx_size: Option<i32>, parallel: Option<i32>, n_ctx_train: Option<u32>) -> i64 {
+/// One v0.4.0 cap this deliberately does NOT model, because it has no field to
+/// read from: a preset pinning custom YaRN scaling (`rope-scaling yarn` + a
+/// `rope-freq-scale` off the trained one) makes llama.cpp REWRITE `n_ctx_train`
+/// to `n_ctx_orig_yarn / freq_scale` at context creation (#28030), which raises
+/// the cap this function reads from the header. Add the field first, then the
+/// rule, in that order.
+fn effective_ctx(p: &presets::Preset, n_ctx_train: Option<u32>) -> i64 {
     let trained = n_ctx_train.map(i64::from);
-    // Rule 1. `ctx-size = 0` is llama.cpp's own spelling of "from the model", and
-    // `Preset::from_keys` keeps it as Some(0); treat it like the absent key.
-    let n_ctx = match ctx_size.map(i64::from).filter(|c| *c > 0) {
-        Some(c) => c,
-        None => match trained {
+    let pinned = p.parallel.filter(|n| *n > 0).map(i64::from);
+    // Auto parallel is 4 slots (tools/server/server.cpp).
+    let n_parallel = pinned.unwrap_or(4);
+    let per_slot_cap = p.kv_unified_per_slot.filter(|n| *n > 0).map(i64::from);
+    // Rules 1 and 4. `ctx-size = 0` is llama.cpp's own spelling of "from the
+    // model", and `Preset::from_keys` keeps it as Some(0); it loads like the
+    // absent key, but only the ABSENT key lets the per-slot cap size the pool.
+    let n_ctx = match (p.ctx_size.map(i64::from), per_slot_cap) {
+        (Some(c), _) if c > 0 => c,
+        (None, Some(n)) => n_parallel * n,
+        _ => match trained {
             Some(t) => t,
             None => return CTX_FALLBACK,
         },
     };
     let n_ctx = pad_256(n_ctx);
 
-    // Rules 2 and 3. A slot gets the whole context under the unified KV cache that
-    // auto-parallel turns on, and a `1 / n_seq_max` share otherwise.
-    let per_slot = match parallel.filter(|n| *n > 0) {
-        None => n_ctx, // auto → unified KV
-        Some(n) => pad_256(n_ctx / i64::from(n)),
+    // Rules 2 and 3. A slot gets the whole context under a unified KV cache
+    // (auto parallel forces one), and a `1 / n_seq_max` share otherwise.
+    let unified = pinned.is_none() || p.kv_unified == Some(true);
+    let per_slot = if unified {
+        n_ctx
+    } else {
+        pad_256(n_ctx / n_parallel)
     };
+    // Rule 4's cap.
+    let per_slot = per_slot_cap.map_or(per_slot, |n| per_slot.min(n));
 
     // The server's own cap. Only bites when a preset asks for more context than the
     // model was trained on, which llama.cpp honours for the KV cache but not per slot.
@@ -467,6 +482,16 @@ mod tests {
     fn advertised_context_follows_llama_cpps_slot_math() {
         const TRAINED: Option<u32> = Some(262_144); // Qwen3.6-27B
         const NONE: Option<u32> = None;
+        let effective_ctx = |ctx_size, parallel, trained| {
+            effective_ctx(
+                &presets::Preset {
+                    ctx_size,
+                    parallel,
+                    ..Default::default()
+                },
+                trained,
+            )
+        };
 
         // No ctx-size, no parallel: llama-server auto-parallels (4 slots) with a
         // UNIFIED KV cache, so every slot sees the model's whole trained context.
@@ -488,6 +513,44 @@ mod tests {
         assert_eq!(effective_ctx(None, Some(2), NONE), 131_072);
         // …but an explicit ctx-size still works without the header.
         assert_eq!(effective_ctx(Some(32_768), Some(2), NONE), 16_384);
+    }
+
+    /// Rules 3 and 4: the two KV keys that change the per-slot share.
+    #[test]
+    fn advertised_context_follows_the_kv_unified_keys() {
+        const TRAINED: Option<u32> = Some(262_144);
+        let ctx = |ctx_size, parallel, kv_unified, per_slot| {
+            effective_ctx(
+                &presets::Preset {
+                    ctx_size,
+                    parallel,
+                    kv_unified,
+                    kv_unified_per_slot: per_slot,
+                    ..Default::default()
+                },
+                TRAINED,
+            )
+        };
+        // Unified KV with parallel pinned: every slot sees the whole context.
+        assert_eq!(ctx(Some(65_536), Some(4), Some(true), None), 65_536);
+        // Explicitly off is the pinned-parallel default: split.
+        assert_eq!(ctx(Some(65_536), Some(4), Some(false), None), 16_384);
+        // Off under auto parallel is overwritten by the server: still unified.
+        assert_eq!(ctx(None, None, Some(false), None), 262_144);
+        // The per-slot cap bites on a unified pool...
+        assert_eq!(
+            ctx(Some(131_072), Some(2), Some(true), Some(32_768)),
+            32_768
+        );
+        // ...and is a no-op when the split share is already smaller.
+        assert_eq!(ctx(Some(65_536), Some(4), None, Some(32_768)), 16_384);
+        // ctx-size absent: the pool is sized to parallel * N (auto = 4 slots),
+        // so each slot gets N (the cap applies after the padding).
+        assert_eq!(ctx(None, Some(2), None, Some(40_000)), 40_000);
+        assert_eq!(ctx(None, None, None, Some(32_768)), 32_768);
+        // An explicit ctx-size 0 opts out of that sizing: trained context,
+        // still capped per slot.
+        assert_eq!(ctx(Some(0), Some(2), None, Some(200_000)), 131_072);
     }
 
     #[test]

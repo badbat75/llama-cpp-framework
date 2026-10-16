@@ -282,6 +282,31 @@ export component ServerPage inherits ScrollView {
                     value <=> AppState.server_form.cuda_allreduce;
                 }
             }
+            LabeledField {
+                label_width <=> LabelColumn.server;
+                label: "Disable GPU graphs";
+                hint: "GGML_CUDA_DISABLE_GRAPHS=1: the CUDA and the ROCm backend stop replaying the decode step as a CUDA / HIP graph and launch its kernels one by one.\nA diagnostic switch: decode gets slower (graphs exist to amortize the launch overhead). Try it when decode crashes or produces garbage while prefill is fine, since only small batches take the graph path.\nUnchecked = don't set the variable (ggml tests its presence, so any value would disable graphs).\nNo effect on Vulkan builds.";
+                CheckBox {
+                    text: "launch kernels one by one";
+                    checked <=> AppState.server_form.cuda_disable_graphs;
+                }
+            }
+
+            Text {
+                text: "llama.cpp";
+                font-size: 12px;
+                font-weight: 600;
+                color: Palette.foreground;
+            }
+            LabeledField {
+                label_width <=> LabelColumn.server;
+                label: "KV rotation";
+                hint: "LLAMA_ATTN_ROT_DISABLE=1: llama.cpp stops applying the Hadamard rotation it puts on a QUANTIZED K/V cache (the load logs a warning when it is off).\nThe rotation spreads outliers before quantizing, which is what keeps a q8_0 or q4_0 cache close to f16 quality. Turn it off only for a quality or speed A/B, or on a backend where it misbehaves.\nNo effect with an f16 / bf16 cache or with a head size that is not a multiple of 64; the DeepSeek-3.2/4, GLM-DSA and dots3note indexers rotate regardless.\nUnchecked = don't set the variable (rotation on).";
+                CheckBox {
+                    text: "disable the KV-cache rotation";
+                    checked <=> AppState.server_form.attn_rot_disable;
+                }
+            }
         }
 
         FormActions {

@@ -118,6 +118,10 @@ pub const SWEEPABLE: &[(&str, Setter)] = &[
         p.spec_draft_p_min = float(v)?;
         Ok(())
     }),
+    ("spec-draft-n-min", |p, v| {
+        p.spec_draft_n_min = int(v)?;
+        Ok(())
+    }),
     ("spec-type", |p, v| {
         p.spec_type = text(v)?;
         Ok(())
@@ -240,9 +244,36 @@ pub const SWEEPABLE: &[(&str, Setter)] = &[
         p.parallel = int(v)?;
         Ok(())
     }),
+    ("kv-unified", |p, v| {
+        p.kv_unified = boolean(v)?;
+        Ok(())
+    }),
+    ("kv-unified-per-slot", |p, v| {
+        p.kv_unified_per_slot = int(v)?;
+        Ok(())
+    }),
     ("cache-ram", |p, v| {
         p.cache_ram = int(v)?;
         Ok(())
+    }),
+    // Only a multi-turn workload sees these: the live engine sends
+    // `cache_prompt: false`, so a sweep over them measures the RAM side and
+    // the per-request cost of making a checkpoint, not the reuse they buy.
+    ("ctx-checkpoints", |p, v| {
+        p.ctx_checkpoints = int(v)?;
+        Ok(())
+    }),
+    ("checkpoint-min-step", |p, v| {
+        p.checkpoint_min_step = int(v)?;
+        Ok(())
+    }),
+    ("fit-ctx", |p, v| {
+        p.fit_ctx = int(v)?;
+        Ok(())
+    }),
+    ("fit-target", |p, v| {
+        p.fit_target = text(v)?;
+        crate::presets::validate_fit_target(&p.fit_target)
     }),
     ("cache-type-k", |p, v| {
         p.cache_type_k = text(v)?;
@@ -1249,7 +1280,8 @@ mod tests {
                 ..Default::default()
             };
             let value = match *key {
-                "flash-attn" | "mmproj-offload" | "backend-sampling" | "op-offload" => "true",
+                "flash-attn" | "mmproj-offload" | "backend-sampling" | "op-offload"
+                | "kv-unified" => "true",
                 "device" => "CUDA0",
                 "tensor-split" => "3,1",
                 "split-mode" => "layer",

@@ -117,6 +117,13 @@ const HINT_CACHE_RAM: i32 = 8192;
 const HINT_CACHE_REUSE: i32 = 256;
 const HINT_TOP_K: i32 = 40;
 const HINT_SPEC_DRAFT_N_MAX: i32 = 3;
+const HINT_SPEC_DRAFT_N_MIN: i32 = 0;
+const HINT_CTX_CHECKPOINTS: i32 = 32;
+const HINT_CHECKPOINT_MIN_STEP: i32 = 8192;
+const HINT_FIT_CTX: i32 = 4096;
+// --kv-unified-per-slot has no numeric default (unset = no cap), so the box parks
+// on a round per-slot context the way --ctx-size parks on 32k.
+const HINT_KV_UNIFIED_PER_SLOT: i32 = 32768;
 // The n-gram speculators' defaults (common_params_speculative_ngram_mod / _map).
 const HINT_SPEC_NGRAM_MOD_N_MATCH: i32 = 24;
 const HINT_SPEC_NGRAM_MOD_N_MIN: i32 = 48;
@@ -183,6 +190,8 @@ pub fn preset_to_form(p: &presets::Preset) -> PresetForm {
         spec_draft_n_max_default: p.spec_draft_n_max.is_none(),
         spec_draft_p_min: txt(p.spec_draft_p_min),
         spec_draft_p_min_default: p.spec_draft_p_min.is_none(),
+        spec_draft_n_min: itxt(p.spec_draft_n_min, HINT_SPEC_DRAFT_N_MIN),
+        spec_draft_n_min_default: p.spec_draft_n_min.is_none(),
         spec_draft_type_k: enum_or_default(&p.spec_draft_type_k),
         spec_draft_type_v: enum_or_default(&p.spec_draft_type_v),
         spec_ngram_mod_n_match: itxt(p.spec_ngram_mod_n_match, HINT_SPEC_NGRAM_MOD_N_MATCH),
@@ -231,6 +240,10 @@ pub fn preset_to_form(p: &presets::Preset) -> PresetForm {
         n_gpu_layers_auto: p.n_gpu_layers.is_none(),
         parallel: itxt(p.parallel, HINT_PARALLEL),
         parallel_default: p.parallel.is_none(),
+        // Tri-state like flash_attn: None (omit the key) is its own instruction.
+        kv_unified: tri_state(p.kv_unified),
+        kv_unified_per_slot: itxt(p.kv_unified_per_slot, HINT_KV_UNIFIED_PER_SLOT),
+        kv_unified_per_slot_default: p.kv_unified_per_slot.is_none(),
         batch_size: itxt(p.batch_size, HINT_BATCH_SIZE),
         batch_size_default: p.batch_size.is_none(),
         ubatch_size: itxt(p.ubatch_size, HINT_UBATCH_SIZE),
@@ -249,6 +262,10 @@ pub fn preset_to_form(p: &presets::Preset) -> PresetForm {
         cache_ram_default: p.cache_ram.is_none(),
         cache_reuse: itxt(p.cache_reuse, HINT_CACHE_REUSE),
         cache_reuse_default: p.cache_reuse.is_none(),
+        ctx_checkpoints: itxt(p.ctx_checkpoints, HINT_CTX_CHECKPOINTS),
+        ctx_checkpoints_default: p.ctx_checkpoints.is_none(),
+        checkpoint_min_step: itxt(p.checkpoint_min_step, HINT_CHECKPOINT_MIN_STEP),
+        checkpoint_min_step_default: p.checkpoint_min_step.is_none(),
         jinja: p.jinja.or(d.jinja).unwrap_or_default(),
         reasoning: str_or(&p.reasoning, &d.reasoning),
         reasoning_format: str_or(&p.reasoning_format, &d.reasoning_format),
@@ -280,6 +297,9 @@ pub fn preset_to_form(p: &presets::Preset) -> PresetForm {
         // keeps its own entry (Options.load_modes lists both).
         load_mode: enum_or_default(&p.load_mode),
         fit: fit_allowed(p.ctx_size.is_none(), p.n_gpu_layers.is_none()) && p.fit,
+        fit_ctx: itxt(p.fit_ctx, HINT_FIT_CTX),
+        fit_ctx_default: p.fit_ctx.is_none(),
+        fit_target: p.fit_target.clone().into(),
         prefill_assistant: p.prefill_assistant.unwrap_or(true),
         temp: txt(p.temp),
         temp_default: p.temp.is_none(),
@@ -341,6 +361,12 @@ pub fn form_to_preset(f: &PresetForm) -> presets::Preset {
             None
         } else {
             ini::parse_float(f.spec_draft_p_min.as_str())
+        },
+        // 0 is llama.cpp's own default (keep any length), so it is a value.
+        spec_draft_n_min: if f.spec_draft_n_min_default {
+            None
+        } else {
+            ini::parse_int_in(f.spec_draft_n_min.as_str(), &ini::INT_NON_NEGATIVE)
         },
         spec_draft_type_k: enum_or_empty(f.spec_draft_type_k.as_str()),
         spec_draft_type_v: enum_or_empty(f.spec_draft_type_v.as_str()),
@@ -422,6 +448,12 @@ pub fn form_to_preset(f: &PresetForm) -> presets::Preset {
         } else {
             ini::parse_int_in(f.parallel.as_str(), &ini::INT_POSITIVE)
         },
+        kv_unified: tri_bool(f.kv_unified.as_str()),
+        kv_unified_per_slot: if f.kv_unified_per_slot_default {
+            None
+        } else {
+            ini::parse_int_in(f.kv_unified_per_slot.as_str(), &ini::INT_POSITIVE)
+        },
         batch_size: if f.batch_size_default {
             None
         } else {
@@ -448,6 +480,17 @@ pub fn form_to_preset(f: &PresetForm) -> presets::Preset {
             None
         } else {
             ini::parse_int_in(f.cache_reuse.as_str(), &ini::INT_POSITIVE)
+        },
+        // 0 is meaningful to both (no checkpoints / no minimum spacing).
+        ctx_checkpoints: if f.ctx_checkpoints_default {
+            None
+        } else {
+            ini::parse_int_in(f.ctx_checkpoints.as_str(), &ini::INT_NON_NEGATIVE)
+        },
+        checkpoint_min_step: if f.checkpoint_min_step_default {
+            None
+        } else {
+            ini::parse_int_in(f.checkpoint_min_step.as_str(), &ini::INT_NON_NEGATIVE)
         },
         jinja: Some(f.jinja),
         reasoning: f.reasoning.to_string(),
@@ -490,6 +533,12 @@ pub fn form_to_preset(f: &PresetForm) -> presets::Preset {
             .map(str::to_string)
             .unwrap_or_default(),
         fit: fit_allowed(f.ctx_size_default, f.n_gpu_layers_auto) && f.fit,
+        fit_ctx: if f.fit_ctx_default {
+            None
+        } else {
+            ini::parse_int_in(f.fit_ctx.as_str(), &ini::INT_POSITIVE)
+        },
+        fit_target: f.fit_target.trim().to_string(),
         // Checked = llama.cpp's own default, so the key is omitted; only the
         // unchecked box is written.
         prefill_assistant: (!f.prefill_assistant).then_some(false),
@@ -539,7 +588,7 @@ pub fn form_to_preset(f: &PresetForm) -> presets::Preset {
 /// the two together, and `every_integer_field_is_checked` holds this list to the
 /// `PresetForm` struct in ui/types.slint, so a new integer field that skips it
 /// fails a test instead of saving a mistyped number as an absent key.
-fn int_fields(f: &PresetForm) -> [(&'static str, bool, &str, RangeInclusive<i32>); 22] {
+fn int_fields(f: &PresetForm) -> [(&'static str, bool, &str, RangeInclusive<i32>); 27] {
     [
         (
             "image-min-tokens",
@@ -560,6 +609,12 @@ fn int_fields(f: &PresetForm) -> [(&'static str, bool, &str, RangeInclusive<i32>
             ini::INT_POSITIVE,
         ),
         (
+            "spec-draft-n-min",
+            f.spec_draft_n_min_default,
+            f.spec_draft_n_min.as_str(),
+            ini::INT_NON_NEGATIVE,
+        ),
+        (
             "ctx-size",
             f.ctx_size_default,
             f.ctx_size.as_str(),
@@ -569,6 +624,12 @@ fn int_fields(f: &PresetForm) -> [(&'static str, bool, &str, RangeInclusive<i32>
             "parallel",
             f.parallel_default,
             f.parallel.as_str(),
+            ini::INT_POSITIVE,
+        ),
+        (
+            "kv-unified-per-slot",
+            f.kv_unified_per_slot_default,
+            f.kv_unified_per_slot.as_str(),
             ini::INT_POSITIVE,
         ),
         (
@@ -593,6 +654,24 @@ fn int_fields(f: &PresetForm) -> [(&'static str, bool, &str, RangeInclusive<i32>
             "cache-reuse",
             f.cache_reuse_default,
             f.cache_reuse.as_str(),
+            ini::INT_POSITIVE,
+        ),
+        (
+            "ctx-checkpoints",
+            f.ctx_checkpoints_default,
+            f.ctx_checkpoints.as_str(),
+            ini::INT_NON_NEGATIVE,
+        ),
+        (
+            "checkpoint-min-step",
+            f.checkpoint_min_step_default,
+            f.checkpoint_min_step.as_str(),
+            ini::INT_NON_NEGATIVE,
+        ),
+        (
+            "fit-ctx",
+            f.fit_ctx_default,
+            f.fit_ctx.as_str(),
             ini::INT_POSITIVE,
         ),
         (
@@ -705,6 +784,8 @@ pub fn prune_inactive_draft_fields(f: &mut PresetForm, embeds_mtp: bool) -> Vec<
         f.spec_draft_n_max_default = pruned.spec_draft_n_max_default;
         f.spec_draft_p_min = pruned.spec_draft_p_min;
         f.spec_draft_p_min_default = pruned.spec_draft_p_min_default;
+        f.spec_draft_n_min = pruned.spec_draft_n_min;
+        f.spec_draft_n_min_default = pruned.spec_draft_n_min_default;
         f.spec_draft_type_k = pruned.spec_draft_type_k;
         f.spec_draft_type_v = pruned.spec_draft_type_v;
         f.n_gpu_layers_draft = pruned.n_gpu_layers_draft;
@@ -811,12 +892,23 @@ mod tests {
             (&mut f.image_min_tokens, &mut f.image_min_tokens_default),
             (&mut f.image_max_tokens, &mut f.image_max_tokens_default),
             (&mut f.spec_draft_n_max, &mut f.spec_draft_n_max_default),
+            (&mut f.spec_draft_n_min, &mut f.spec_draft_n_min_default),
             (&mut f.ctx_size, &mut f.ctx_size_default),
             (&mut f.parallel, &mut f.parallel_default),
+            (
+                &mut f.kv_unified_per_slot,
+                &mut f.kv_unified_per_slot_default,
+            ),
             (&mut f.batch_size, &mut f.batch_size_default),
             (&mut f.ubatch_size, &mut f.ubatch_size_default),
             (&mut f.cache_ram, &mut f.cache_ram_default),
             (&mut f.cache_reuse, &mut f.cache_reuse_default),
+            (&mut f.ctx_checkpoints, &mut f.ctx_checkpoints_default),
+            (
+                &mut f.checkpoint_min_step,
+                &mut f.checkpoint_min_step_default,
+            ),
+            (&mut f.fit_ctx, &mut f.fit_ctx_default),
             (&mut f.reasoning_budget, &mut f.reasoning_budget_default),
             (&mut f.n_predict, &mut f.n_predict_default),
             (&mut f.top_k, &mut f.top_k_default),
@@ -1022,6 +1114,7 @@ mod tests {
             spec_type: "draft-mtp".into(),
             spec_draft_n_max: Some(10),
             spec_draft_p_min: Some(0.25),
+            spec_draft_n_min: Some(2),
             // Not the cache_type_k/-v below: the draft cache is its own setting.
             spec_draft_type_k: "q4_0".into(),
             spec_draft_type_v: "q4_1".into(),
@@ -1044,6 +1137,8 @@ mod tests {
             ctx_size: Some(65536),
             n_gpu_layers: Some(40),
             parallel: Some(2),
+            kv_unified: Some(true),
+            kv_unified_per_slot: Some(65536),
             batch_size: Some(1024),
             ubatch_size: Some(256),
             cache_type_k: "f16".into(),
@@ -1051,6 +1146,9 @@ mod tests {
             flash_attn: Some(false),
             cache_ram: Some(4096),
             cache_reuse: Some(256),
+            // 0 disables checkpoints: a value, so it must not read as unset.
+            ctx_checkpoints: Some(0),
+            checkpoint_min_step: Some(1024),
             jinja: Some(false),
             reasoning: "on".into(),
             reasoning_format: "deepseek".into(),
@@ -1067,6 +1165,8 @@ mod tests {
             // false: this preset sets ctx-size and n-gpu-layers, which rule the fit out
             // (fit_needs_context_and_gpu_layers_at_default covers true).
             fit: false,
+            fit_ctx: Some(8192),
+            fit_target: "1536,768".into(),
             temp: Some(0.7),
             top_k: Some(40),
             top_p: Some(0.95),
@@ -1131,6 +1231,35 @@ mod tests {
         assert_eq!(spelling(None), "default");
         assert_eq!(spelling(Some(true)), "on");
         assert_eq!(spelling(Some(false)), "off");
+    }
+
+    // kv-unified's "default" depends on `parallel` (auto forces it on, a pinned
+    // count leaves it off), so neither explicit value is a stand-in for it: a
+    // collapse into "off" would write --no-kv-unified into every preset saved.
+    #[test]
+    fn kv_unified_keeps_all_three_states_apart() {
+        for state in [None, Some(true), Some(false)] {
+            let p = Preset {
+                parallel: Some(2),
+                kv_unified: state,
+                ..Preset::default()
+            };
+            assert_eq!(round_trip(&p).kv_unified, state, "state {state:?}");
+        }
+    }
+
+    // The checkpoint keys and spec-draft-n-min take 0 as a real value (no
+    // checkpoints, no minimum spacing, keep any draft length), unlike the
+    // `INT_POSITIVE` counts beside them.
+    #[test]
+    fn zero_survives_the_form_where_it_is_a_value() {
+        let p = Preset {
+            ctx_checkpoints: Some(0),
+            checkpoint_min_step: Some(0),
+            spec_draft_n_min: Some(0),
+            ..Preset::default()
+        };
+        assert_eq!(round_trip(&p), p);
     }
 
     // "0 disables, -1 = no limit": the documented --cache-ram sentinels must

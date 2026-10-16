@@ -453,6 +453,27 @@ export component ModelsPage inherits HorizontalLayout {
                         checked <=> AppState.form.fit;
                     }
                 }
+                LabeledField {
+                    label_width <=> LabelColumn.models;
+                    label: "Fit min context";
+                    hint: "--fit-ctx: the smallest context the fit may cut down to while making the model fit device memory.\nRead only with Fit to VRAM on.\ndefault = omit the flag → llama.cpp default: 4096.";
+                    DefaultLineEdit {
+                        enabled: AppState.form.fit;
+                        input_type: InputType.number;
+                        default <=> AppState.form.fit_ctx_default;
+                        value <=> AppState.form.fit_ctx;
+                    }
+                }
+                LabeledField {
+                    label_width <=> LabelColumn.models;
+                    label: "Fit free VRAM (MiB)";
+                    hint: "--fit-target: the VRAM the fit leaves free on each device, in MiB. One number for every device, or a comma-separated list in device order (e.g. 2048,1024).\nRead only with Fit to VRAM on.\nBlank = omit the flag → llama.cpp default: 1024 per device.";
+                    LineEdit {
+                        enabled: AppState.form.fit;
+                        text <=> AppState.form.fit_target;
+                        placeholder-text: "e.g. 1024 or 2048,1024";
+                    }
+                }
                 // The two draft-PLACEMENT knobs below need a separate draft FILE,
                 // not merely a draft: llama.cpp reads --device-draft and
                 // --n-gpu-layers-draft only inside `if (has_dft())`, which is
@@ -540,6 +561,29 @@ export component ModelsPage inherits HorizontalLayout {
                 }
                 LabeledField {
                     label_width <=> LabelColumn.models;
+                    label: "Unified KV";
+                    hint: "--kv-unified / --no-kv-unified: one KV buffer shared by every parallel slot, so each request may grow into the WHOLE context instead of ctx-size / parallel.\ndefault = omit the flag → off with Parallel seqs pinned. With Parallel seqs at default (auto) llama-server turns it on whatever this says, hence disabled there.\non pays when requests are uneven (one long, others short); off gives each slot a fixed share, so one long request cannot starve the others of cells.";
+                    // TRI-state like Flash Attention: "default" is its own
+                    // instruction (mapped to Option<bool> in form.rs).
+                    SegmentedControl {
+                        enabled: !AppState.form.parallel_default;
+                        options: ["default", "on", "off"];
+                        current: AppState.form.kv_unified == "" ? "default" : AppState.form.kv_unified;
+                        activated(value) => { AppState.form.kv_unified = value; }
+                    }
+                }
+                LabeledField {
+                    label_width <=> LabelColumn.models;
+                    label: "Per-slot context";
+                    hint: "--kv-unified-per-slot: caps every slot at this many tokens.\nWith Context size at default it also SIZES the KV pool to Parallel seqs × this value instead of the model's trained context, so a 4-slot preset at 32768 allocates 128k cells.\nWorks with Unified KV on or off.\ndefault = omit the flag → no cap.";
+                    DefaultLineEdit {
+                        input_type: InputType.number;
+                        default <=> AppState.form.kv_unified_per_slot_default;
+                        value <=> AppState.form.kv_unified_per_slot;
+                    }
+                }
+                LabeledField {
+                    label_width <=> LabelColumn.models;
                     label: "Batch size";
                     hint: "--batch-size: logical batch (tokens prefilled per step).\nHigher speeds prefill, uses more VRAM.\ndefault = omit the flag → llama.cpp default: 2048.";
                     DefaultLineEdit {
@@ -607,7 +651,7 @@ export component ModelsPage inherits HorizontalLayout {
                 LabeledField {
                     label_width <=> LabelColumn.models;
                     label: "Cache RAM (MiB)";
-                    hint: "--cache-ram: RAM limit (MiB) for the prompt cache (past-prompt KV kept for reuse).\ndefault = omit the flag → llama.cpp default: 8192 MiB.\n0 disables; -1 = no limit.";
+                    hint: "--cache-ram: RAM limit (MiB) for the prompt cache (past-prompt KV kept for reuse).\nA cached prompt carries its context checkpoints with it, and they count against this limit: on a large hybrid model with long prompts, many checkpoints and several slots, the oldest entries get evicted sooner than the KV size alone suggests.\ndefault = omit the flag → llama.cpp default: 8192 MiB.\n0 disables; -1 = no limit.";
                     // `decimal`, not `number`: this is the one integer field whose
                     // value may start with a `-` (the -1 sentinel), and `number`
                     // accepts digits only. Rust still parses it as an int.
@@ -625,6 +669,26 @@ export component ModelsPage inherits HorizontalLayout {
                         input_type: InputType.number;
                         default <=> AppState.form.cache_reuse_default;
                         value <=> AppState.form.cache_reuse;
+                    }
+                }
+                LabeledField {
+                    label_width <=> LabelColumn.models;
+                    label: "Context checkpoints";
+                    hint: "--ctx-checkpoints: how many context checkpoints a slot keeps.\nA recurrent or hybrid model (Qwen3.5/3.8, qwen4exp, Mamba, Jamba...) and an SWA model cannot truncate their state back to an earlier token, so a new request whose prompt diverges from the cached one resumes from the newest checkpoint before that point; with none, the whole prompt is read again.\nEach checkpoint is a copy of that state in host RAM; the oldest is dropped once the slot holds this many. Inert on a pure-attention model.\ndefault = omit the flag → llama.cpp default: 32. 0 disables them.";
+                    DefaultLineEdit {
+                        input_type: InputType.number;
+                        default <=> AppState.form.ctx_checkpoints_default;
+                        value <=> AppState.form.ctx_checkpoints;
+                    }
+                }
+                LabeledField {
+                    label_width <=> LabelColumn.models;
+                    label: "Checkpoint step";
+                    hint: "--checkpoint-min-step: the minimum distance, in tokens, between two context checkpoints.\nSmaller = a diverging prompt resumes closer to where it diverged, at the cost of more checkpoints, i.e. more RAM (the ones of a cached prompt also count against Cache RAM).\ndefault = omit the flag → llama.cpp default: 8192. 0 = no minimum.";
+                    DefaultLineEdit {
+                        input_type: InputType.number;
+                        default <=> AppState.form.checkpoint_min_step_default;
+                        value <=> AppState.form.checkpoint_min_step;
                     }
                 }
             }
@@ -919,6 +983,17 @@ export component ModelsPage inherits HorizontalLayout {
                         default <=> AppState.form.spec_draft_p_min_default;
                         value <=> AppState.form.spec_draft_p_min;
                         placeholder: "e.g. 0.5";
+                    }
+                }
+                LabeledField {
+                    label_width <=> LabelColumn.models;
+                    label: "Draft n-min";
+                    hint: "Shortest draft worth verifying (--spec-draft-n-min).\nA draft that comes out shorter, typically because Draft p-min cut it, is DISCARDED: that step decodes one token without speculation.\nRaise it when short drafts cost more to verify than they save.\ndefault = omit the flag → llama.cpp default: 0 (keep any length).";
+                    DefaultLineEdit {
+                        enabled: AppState.draft_active;
+                        input_type: InputType.number;
+                        default <=> AppState.form.spec_draft_n_min_default;
+                        value <=> AppState.form.spec_draft_n_min;
                     }
                 }
                 Text {

@@ -189,10 +189,12 @@ fn server_args(
         args.push(tb.to_string());
     }
 
-    // NO --device, --tensor-split, --split-mode, --override-tensor, -lm, -fit,
-    //   --prefill-assistant, --cache-reuse or --mmproj-device here: those are
-    //   per-preset keys (the GPU distribution, the tensor placement, load-mode,
-    //   fit, prefill-assistant, cache-reuse, mmproj-device). The router copies its own args
+    // NO --device, --tensor-split, --split-mode, --override-tensor, -lm, -fit
+    //   (nor its --fit-ctx / --fit-target), --prefill-assistant, --cache-reuse,
+    //   --ctx-checkpoints, --checkpoint-min-step, --kv-unified,
+    //   --kv-unified-per-slot or --mmproj-device here: those are per-preset keys
+    //   (the GPU distribution, the tensor placement, load-mode, fit,
+    //   prefill-assistant, the prompt cache, the KV layout, mmproj-device). The router copies its own args
     //   over every preset (`preset.merge(base_preset)`), so any of them on this
     //   line would override each model's own value.
     // --slot-save-path DIR : turns on the /slots save|restore endpoints, which is
@@ -246,6 +248,15 @@ pub fn env_vars(cfg: &crate::server_cfg::ServerConfig) -> Vec<(String, String)> 
         .and_then(crate::server_cfg::normalize_allreduce)
     {
         env.push(("GGML_CUDA_ALLREDUCE".into(), mode.into()));
+    }
+    // GGML_CUDA_DISABLE_GRAPHS: ggml tests PRESENCE, not value, so off must
+    // export nothing (an `=0` would disable graphs all the same).
+    if cfg.cuda_disable_graphs {
+        env.push(("GGML_CUDA_DISABLE_GRAPHS".into(), "1".into()));
+    }
+    // LLAMA_ATTN_ROT_DISABLE: read by llama.cpp with `atoi`.
+    if cfg.attn_rot_disable {
+        env.push(("LLAMA_ATTN_ROT_DISABLE".into(), "1".into()));
     }
     env
 }
@@ -903,6 +914,18 @@ mod tests {
             "--prefill-assistant",
             "--no-prefill-assistant",
             "--cache-reuse",
+            "--ctx-checkpoints",
+            "-ctxcp",
+            "--checkpoint-min-step",
+            "-cms",
+            "--kv-unified",
+            "-kvu",
+            "--no-kv-unified",
+            "--kv-unified-per-slot",
+            "--fit-ctx",
+            "-fitc",
+            "--fit-target",
+            "-fitt",
             "-lm",
             "--load-mode",
             "--split-mode",
@@ -954,6 +977,8 @@ mod tests {
             // argument (it does its own splitting), not as two.
             rocblas_use_hipblaslt: Some(false),
             cuda_allreduce: Some("none".into()),
+            cuda_disable_graphs: true,
+            attn_rot_disable: true,
             webui_mcp_proxy: Some(false),
             log_verbosity: Some(2),
             // On, with an EXPLICIT dir: resolving the default would reach into
@@ -978,6 +1003,10 @@ mod tests {
             // which ggml-cuda / ggml-hip read themselves. Asserted in the env
             // test further down.
             cuda_allreduce: _,
+            // launch env only (GGML_CUDA_DISABLE_GRAPHS / LLAMA_ATTN_ROT_DISABLE),
+            // asserted in the env test further down.
+            cuda_disable_graphs: _,
+            attn_rot_disable: _,
             webui_mcp_proxy,
             log_verbosity,
             save_state_on_shutdown,
@@ -1137,6 +1166,26 @@ mod tests {
         }
         assert!(env_vars(&with(None)).is_empty());
         assert!(env_vars(&with(Some("butterfly"))).is_empty());
+    }
+
+    // Off must export NOTHING: ggml checks GGML_CUDA_DISABLE_GRAPHS for
+    // presence, so a `=0` would still switch the graphs off.
+    #[test]
+    fn diagnostic_toggles_export_one_or_nothing() {
+        assert!(env_vars(&ServerConfig::default()).is_empty());
+        let cfg = ServerConfig {
+            cuda_disable_graphs: true,
+            attn_rot_disable: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            env_vars(&cfg),
+            [
+                ("GGML_CUDA_DISABLE_GRAPHS".to_string(), "1".to_string()),
+                ("LLAMA_ATTN_ROT_DISABLE".to_string(), "1".to_string()),
+            ]
+        );
+        assert!(!args_for(&cfg).iter().any(|a| a.contains("GRAPHS")));
     }
 
     #[test]

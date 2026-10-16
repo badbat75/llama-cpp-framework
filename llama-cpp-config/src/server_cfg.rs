@@ -140,6 +140,26 @@ pub struct ServerConfig {
     /// `none`, so a typo would silently cost the fast path. Hence the closed
     /// list here and `normalize_allreduce` on read.
     pub cuda_allreduce: Option<String>,
+    /// Export `GGML_CUDA_DISABLE_GRAPHS=1`: the CUDA and the ROCm backend stop
+    /// capturing the decode step into a CUDA / HIP graph and launch every kernel
+    /// one by one. A DIAGNOSTIC switch, never a tuning one: it costs decode speed
+    /// (graphs exist to amortize the launch overhead), and it is what to try
+    /// first when decode crashes or misbehaves while prefill is fine, since the
+    /// graph path is only taken for small batches. ggml tests the variable's
+    /// PRESENCE (`getenv(...) != nullptr`, ggml-cuda/common.cuh), so even `=0`
+    /// would disable graphs: hence a plain bool that exports `1` or nothing,
+    /// never a tri-state. Inert on a Vulkan build.
+    pub cuda_disable_graphs: bool,
+    /// Export `LLAMA_ATTN_ROT_DISABLE=1`: llama.cpp stops applying the Hadamard
+    /// rotation it puts on a QUANTIZED K/V cache (`llama-kv-cache.cpp`, logged
+    /// as a warning at load). The rotation spreads outliers before quantizing,
+    /// which is what keeps a q8_0 / q4_0 cache close to f16 quality; switching it
+    /// off is for an A/B on quality or speed, or for a backend where the rotation
+    /// misbehaves. Inert with an f16/bf16 cache and on heads not a multiple of
+    /// 64; the DeepSeek-3.2/4, GLM-DSA and dots3note indexers rotate regardless.
+    /// Read by llama.cpp itself with `atoi`, hence the `1`, and an env var
+    /// because no flag reaches it.
+    pub attn_rot_disable: bool,
     /// Enable the built-in web UI's MCP CORS proxy (--webui-mcp-proxy).
     /// None = the framework default (on): the bundled chat UI needs it to call
     /// MCP tools. Experimental upstream (llama.cpp defaults it OFF); don't enable
@@ -373,6 +393,14 @@ fn from_keys(keys: &std::collections::BTreeMap<String, String>) -> ServerConfig 
             .get("CudaAllreduce")
             .and_then(|v| normalize_allreduce(v))
             .map(str::to_string),
+        cuda_disable_graphs: keys
+            .get("CudaDisableGraphs")
+            .and_then(|v| ini::parse_bool(v))
+            .unwrap_or(false),
+        attn_rot_disable: keys
+            .get("AttnRotDisable")
+            .and_then(|v| ini::parse_bool(v))
+            .unwrap_or(false),
         webui_mcp_proxy: keys.get("WebuiMcpProxy").and_then(|v| ini::parse_bool(v)),
         log_verbosity: keys.get("LogVerbosity").and_then(|v| ini::parse_int(v)),
         save_state_on_shutdown: keys
@@ -494,6 +522,17 @@ fn render(cfg: &ServerConfig) -> String {
         "CudaAllreduce",
         "; CudaAllreduce = none  ; AllReduce of split-mode tensor (env GGML_CUDA_ALLREDUCE): nccl|internal|none; commented = the backend decides",
     );
+    // Off is the state that exports nothing, so it collapses to the hint.
+    let cuda_disable_graphs_line = if cfg.cuda_disable_graphs {
+        "CudaDisableGraphs = true".to_string()
+    } else {
+        "; CudaDisableGraphs = true  ; env GGML_CUDA_DISABLE_GRAPHS=1: no CUDA/HIP graphs (diagnostic, slower decode); commented = graphs on".to_string()
+    };
+    let attn_rot_disable_line = if cfg.attn_rot_disable {
+        "AttnRotDisable = true".to_string()
+    } else {
+        "; AttnRotDisable = true  ; env LLAMA_ATTN_ROT_DISABLE=1: no Hadamard rotation of a quantized KV cache; commented = rotation on".to_string()
+    };
     let opencode_base_url_line = str_line_or_hint(
         cfg.opencode_base_url.as_deref(),
         "OpencodeBaseUrl",
@@ -566,6 +605,14 @@ LogVerbosity = {log_verbosity}
 ; the backend. Set it to none for a tensor split that MIXES a CUDA and a ROCm
 ; device: under any other value that model aborts while loading.
 {cuda_allreduce_line}
+; CudaDisableGraphs exports GGML_CUDA_DISABLE_GRAPHS=1: the CUDA and the ROCm
+; backend launch the decode kernels one by one instead of replaying a graph.
+; Diagnostic only (decode gets slower): try it when decode crashes or
+; misbehaves while prefill is fine. AttnRotDisable exports
+; LLAMA_ATTN_ROT_DISABLE=1, read by llama.cpp itself: no Hadamard rotation of a
+; quantized K/V cache, for a quality or speed A/B. Both: commented = unset.
+{cuda_disable_graphs_line}
+{attn_rot_disable_line}
 ; SaveStateOnShutdown: dump each loaded model's KV cache to StateDir when the
 ; server stops (--slot-save-path + a /slots save call), and push the newest one
 ; back on the next start. It buys back the one cost VRAM tuning cannot touch:
@@ -651,6 +698,9 @@ mod tests {
             rocblas_use_hipblaslt: Some(false),
             // Non-default (unset is the default), like the knob above.
             cuda_allreduce: Some("none".into()),
+            // true: false is the default and the hint line.
+            cuda_disable_graphs: true,
+            attn_rot_disable: true,
             webui_mcp_proxy: Some(false),
             log_verbosity: Some(2),
             // Non-default (off is the framework default), and a StateDir off the

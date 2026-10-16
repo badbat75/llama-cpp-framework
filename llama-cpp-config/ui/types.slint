@@ -39,6 +39,10 @@ export struct PresetForm {
     // --spec-draft-p-min: a float, so it rides as a string like the sampling ones.
     spec_draft_p_min: string,
     spec_draft_p_min_default: bool,
+    // --spec-draft-n-min: integer text + "default" box; 0 is a value (keep any
+    // draft length), hence INT_NON_NEGATIVE in form.rs.
+    spec_draft_n_min: string,
+    spec_draft_n_min_default: bool,
     // --spec-draft-type-k/-v (-ctkd/-ctvd): the DRAFT context's KV cache types.
     // EnumComboBox over Options.cache_types with the same empty↔"default"
     // spelling as cache_type_k/-v below, but "default" here means f16, NOT
@@ -98,6 +102,13 @@ export struct PresetForm {
     n_gpu_layers_auto: bool,
     parallel: string,
     parallel_default: bool,
+    // --kv-unified / --no-kv-unified, a TRI-state string like flash_attn:
+    // "default" (omit the key; llama-server forces it on under auto parallel),
+    // "on", "off".
+    kv_unified: string,
+    // --kv-unified-per-slot, a positive token count like ctx_size.
+    kv_unified_per_slot: string,
+    kv_unified_per_slot_default: bool,
     batch_size: string,
     batch_size_default: bool,
     ubatch_size: string,
@@ -120,6 +131,12 @@ export struct PresetForm {
     // --cache-reuse, a positive token count like ctx_size.
     cache_reuse: string,
     cache_reuse_default: bool,
+    // --ctx-checkpoints / --checkpoint-min-step: integer text + "default" box,
+    // 0 a value for both (disabled / no minimum spacing).
+    ctx_checkpoints: string,
+    ctx_checkpoints_default: bool,
+    checkpoint_min_step: string,
+    checkpoint_min_step_default: bool,
     jinja: bool,
     reasoning: string,
     reasoning_format: string,
@@ -163,6 +180,12 @@ export struct PresetForm {
     // -fit on|off (checked = on). Always written to the preset, off by default:
     // llama.cpp's own default is on, and it would cut a "default" n-gpu-layers.
     fit: bool,
+    // --fit-ctx (integer text + "default" box) and --fit-target (free text, MiB
+    // per device; empty = omit the key, so no `_default` twin). Both are read
+    // only with `fit` on.
+    fit_ctx: string,
+    fit_ctx_default: bool,
+    fit_target: string,
     // prefill-assistant (checked = llama.cpp's default, the key omitted;
     // unchecked writes `prefill-assistant = false`).
     prefill_assistant: bool,
@@ -225,6 +248,10 @@ export struct ServerForm {
     // (never export the variable) or one of server_cfg::ALLREDUCE_MODES, a
     // dropdown over Options.allreduce_modes.
     cuda_allreduce: string,
+    // GGML_CUDA_DISABLE_GRAPHS / LLAMA_ATTN_ROT_DISABLE: plain bool toggles
+    // (CheckBox, two-way <=>); checked exports `1`, unchecked exports nothing.
+    cuda_disable_graphs: bool,
+    attn_rot_disable: bool,
     // Plain bool toggle (CheckBox, two-way <=>): enables the web UI's MCP proxy
     // (--webui-mcp-proxy).
     webui_mcp_proxy: bool,
