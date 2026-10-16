@@ -33,7 +33,7 @@ llama.cpp v0.5.0. Section 7 holds what was measured again on Linux, with llama.c
 
 | key | value | evidence |
 | --- | --- | --- |
-| `load-mode` | `none` | `mmap` leaves ~1 GiB of weights `CPU_Mapped`, which cross PCIe on every batch: prefill 98 vs 571 t/s at 43.7k |
+| `load-mode` | `none`; on a MoE model with only part of the experts on the card (`n-cpu-moe` above 0 and below the layer count), `auto` (mmap) | `mmap` leaves ~1 GiB of weights `CPU_Mapped`, which cross PCIe on every batch: prefill 98 vs 571 t/s at 43.7k. With a partial `n-cpu-moe`, `none` aborts right after the weight upload (`ROCm error: unspecified launch failure` in `ggml_cuda_set_device`, 4 of 4 runs, llama.cpp v0.7.0); with every expert in RAM it loads |
 | `flash-attn` | omit (`auto` resolves to on) | the #28102 WMMA path; a quantized KV cache needs FlashAttention |
 | `cache-type-k/-v` | `q8_0` | `q5_1` saves ~30% of the KV but decodes 6% slower; `iq4_nl` has no HIP FlashAttention kernel |
 | `ubatch-size` | the largest that fits: `768` or `1024` | against `512`: `768` gives +5.8% prefill at 2.6k and nothing at 93.6k, `1024` +5% at both depths, `256` costs 20%. Decode is unaffected (identical per-step cost). Each ubatch token costs ~0.53 MiB of compute buffer per device |
