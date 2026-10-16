@@ -28,7 +28,7 @@ too short to stand for prefill (section 6).
 | --- | --- | --- |
 | `lazy-mode` | `auto` (the default) | the 26.8 GiB n-gram table is above the 4 GiB threshold and stays mapped; no run read it into memory |
 | `n-cpu-moe` | the lowest that fits; on a 32 GB card at ctx 32768, `26` (27170 MiB of weights on the card, 1017 MiB compute buffer, ~3 GiB left) | decode 17.8 t/s at `26` against 12.3 at `48` (both `mmap`) |
-| `moe-cache-mib` | `0` (off): on ROCm in every measured case; on CUDA not advised with every expert in RAM; to re-measure with a partial `n-cpu-moe` (section 6) | R9700: a loss of 3-4x (14.1 to 3.0-4.0 t/s). RTX 4070 SUPER: noise with `load-mode none` (22.7 to 23.2-23.9), a loss with `mmap` (section 3) |
+| `moe-cache-mib` | `0` (off), with no condition, on llama.cpp v0.7.0 (`620d2225c`; the cache dates from #29887, 2026-10-07): a cache policy upstream changes would reopen it | R9700: a loss of 3-4x (14.1 to 3.0-4.0 t/s). RTX 4070 SUPER: at equal VRAM, experts kept on the card beat the cache at every split (25.6 t/s against 19.5-23.6), and with every expert in RAM it is noise (section 3) |
 | `load-mode` | `none` with every expert in RAM; on ROCm with experts on the GPU, `auto` (mmap) until the abort of section 4 is fixed | `n-cpu-moe 48`, decode with `none` against `mmap`: R9700 11.6 to 14.1 against 12.3; RTX 4070 SUPER 22.7 to 22.9 against 14.0 to 17.1. `none` loads slower (25 to 43 s against 10 to 11 s). `n-cpu-moe 26` with `none` aborts on the R9700. (That AMD advises against `mmap` on ROCm is a reported recommendation with no primary source linked here.) |
 | `repack` | leave unset | without `--no-host` the GPU's pinned host buffer type is picked before `CPU_REPACK`, so nothing is repacked: the MoE cache layout is identical with and without `--no-repack` (section 3) |
 | `reasoning-preserve` | TBD | the template reads `preserve_thinking`; not yet measured |
@@ -60,18 +60,30 @@ With `mmap` (the default) the cache is a loss on both cards. RTX 4070 SUPER: 17.
 14.0 t/s without the cache, 13.4 (50%) at 2048 MiB, 10.4 (62%) at 4096. R9700: 12.3
 without, 2.8 at 2048 MiB.
 
-On the R9700 the cache moves ~1.3 GB/s at 2.8 t/s, on the RTX 4070 SUPER ~10.7 GB/s at
-23 t/s. Two readings, neither verified yet (section 6):
+**The same VRAM as layers or as cache** (RTX 4070 SUPER, `load-mode none`, ctx 32768,
+two runs each; a layer of experts is ~1.1 GiB on the card):
 
-- **Worst case by design.** At `n-cpu-moe 48` no expert sits in VRAM, so 2-4 GiB of slots
-  must serve all 10 experts per token of every layer, out of 24576; with a working set
-  that wide the hit rate stays low and each miss is a synchronous upload. The cache is
-  meant for a partial `n-cpu-moe`, where it covers only the layers left in RAM: on ROCm
-  that is the configuration blocked by the abort of section 4.
-- **A backend-specific cost per miss.** The HIP upload path (the copy callback over the
-  slot map, `ggml_backend_tensor_set_async` from pinned memory) may be far slower than
-  CUDA's: a 3-4x loss against a tie at the same hit rate points to a per-miss cost of the
-  backend, or of the card's host link (`tools\pcie-bench\`), more than to the hit rate.
+| configuration | projected VRAM | decode t/s | hit rate |
+| --- | --- | --- | --- |
+| `n-cpu-moe 45`, no cache | 9572 MiB | 25.8, 25.4 | n/a |
+| `n-cpu-moe 46`, 1024 MiB | 9453 MiB | 19.7, 19.4 | 39% |
+| `n-cpu-moe 47`, 2048 MiB | 9416 MiB | 21.8, 21.6 | 50% |
+| `n-cpu-moe 48`, 3072 MiB | 9136 MiB | 23.8, 23.4 | 59% |
+
+The smallest cache is the worst, so no "one hot layer in cache" sweet spot exists here.
+The cache's log has no per-layer statistics (`log_stats` prints two totals), so how the
+hits spread over the layers is not visible without instrumenting it.
+
+**The hit rate is high; serving the misses is what costs.** 4.2% of the experts as slots
+gives 50% hits, 8.5% gives 62-64%: the routing is skewed. Each miss is served per layer
+(`llama-moe-cache.cpp`, v0.7.0): the router's ids are read back with a
+`ggml_backend_synchronize` (48 stalls per token), then one `ggml_backend_tensor_set_async`
+per run of consecutive experts and per tensor, ~15 small transfers per layer and ~720 per
+token at 0.3-1 MB each. On the R9700 the cache moves ~1.3 GB/s, far below any PCIe
+link, so bandwidth is not the limit: (330 - 70) ms per token over ~720 transfers is
+~0.36 ms each, a fixed cost per transfer on the HIP path on Windows. On the RTX 4070
+SUPER the same count fits within 44 ms per token. A hypothesis with that figure behind it,
+until a profile confirms it (section 6).
 
 ## 4. Known failures
 
@@ -84,7 +96,7 @@ On the R9700 the cache moves ~1.3 GB/s at 2.8 t/s, on the RTX 4070 SUPER ~10.7 G
 
 | option | result |
 | --- | --- |
-| the MoE cache, to keep hot experts in VRAM | refuted: 3 to 4.6x slower decode on the R9700, no gain beyond noise on the RTX 4070 SUPER with `load-mode none` and a loss with `mmap` (section 3) |
+| the MoE cache, to keep hot experts in VRAM | refuted: 3 to 4.6x slower decode on the R9700; on the RTX 4070 SUPER the same VRAM as resident layers is 8-31% faster, and with every expert in RAM the cache is noise (`none`) or a loss (`mmap`) (section 3) |
 | `--no-repack`, to let repacked layers into the MoE cache | inert: nothing is repacked unless `--no-host` is set |
 
 ## 6. Not yet measured (placeholders)
@@ -95,10 +107,9 @@ On the R9700 the cache moves ~1.3 GB/s at 2.8 t/s, on the RTX 4070 SUPER ~10.7 G
 | `n-cpu-moe` | 26 | the lowest that fits at ctx 131072 and 262144 | TBD |
 | `cache-type-k/-v` | f16 | does `q8_0` let `n-cpu-moe` drop, and at what decode cost? | TBD |
 | `ubatch-size` | default (512) | prefill gain against the compute buffer it costs | TBD |
-| `moe-cache-mib` with 3 repetitions | 0 | is the RTX 4070 SUPER's +3-5% at 2048-4096 MiB real? | TBD |
-| `moe-cache-mib` with experts on the GPU | 0 | does the cache help once `n-cpu-moe` is below 48? (on ROCm, after the section 4 abort is fixed) | TBD |
-| R9700 host link | n/a | measured bandwidth, against the 1.3 GB/s the cache moved | TBD |
-| HIP upload cost per miss | n/a | the cache's upload time per expert on ROCm against CUDA, at the same hit rate | TBD |
+| `moe-cache-mib` with experts on the GPU, on ROCm | 0 | the equal-VRAM comparison of section 3 on the R9700, after the section 4 abort is fixed | TBD |
+| HIP upload cost per miss | n/a | a profile of the miss path (sync per layer, transfers per token) on ROCm against CUDA | TBD |
+| per-layer hit rate | n/a | needs instrumenting `log_stats`: is the skew spread over the layers or in a few? | TBD |
 | `moe-cache-mib` with `--no-host` | n/a | 9 cacheable layers at ~29% slots: decode against no cache | TBD |
 | `lazy-mode on` / `off` | auto | decode and RAM use of reading the n-gram table into memory | TBD |
 | `ctx-checkpoints` | default | restore cost after an edited turn on the hybrid memory | TBD |
