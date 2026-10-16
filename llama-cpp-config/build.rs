@@ -1,4 +1,4 @@
-// Build script, four jobs:
+// Build script, five jobs:
 // - Icon bootstrap: resources/llama.ico is generated, not checked in; when
 //   it's missing, run resources/generate-llama-ico.mjs to rasterize it from
 //   the llama.cpp clone's webui logo.
@@ -9,6 +9,12 @@
 //   profiles only: the e2e tests (src/tests/) need it to find widgets, so
 //   they must run under `cargo test`, not `--release`.
 // - Windows only: embed the ICO as the EXE resource (winresource).
+// - Windows (MSVC) only: reserve an 8 MiB stack for the main thread. The
+//   PE default is 1 MiB, and the GUI outgrew it in 2.0.0: building
+//   AppWindow on the main thread overflowed it at launch ("thread 'main' has
+//   overflowed its stack", exit 0xC00000FD) while the CLI kept working.
+//   2 MiB was measured to suffice; 8 MiB matches Linux's default main
+//   stack, so both platforms keep the same headroom.
 
 use std::path::Path;
 
@@ -59,6 +65,12 @@ fn main() {
 
     #[cfg(windows)]
     embed_windows_resources();
+
+    // The TARGET's env, not the host's cfg: /STACK is an MSVC (and lld-link)
+    // linker flag. Bins only, so the test harness keeps its own thread stacks.
+    if std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc") {
+        println!("cargo:rustc-link-arg-bins=/STACK:8388608");
+    }
 }
 
 /// Generate the icon when it's absent (fresh checkout, or deleted on purpose

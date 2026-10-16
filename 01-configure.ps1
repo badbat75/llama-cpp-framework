@@ -349,6 +349,10 @@ Write-Host "  build\windows\config-build.psd1 written." -ForegroundColor Green
 #     build scripts, rustc, `cargo run` and `cargo test` binaries, and does NOT
 #     force it over a value already in the environment, so `RUST_TEST_THREADS=1
 #     cargo test` still wins when someone needs a serial run to read a failure.
+#   [env] RUST_MIN_STACK  is not a pool but rides the same table: libtest runs
+#     every test on a spawned thread, 2 MiB by default, and the e2e tests build
+#     AppWindow there. The GUI needs just over 1 MiB for that, so the test
+#     threads get the 8 MiB the shipped exe's main thread has (build.rs).
 #
 # Machine-specific (a 24-core box writes 18, an 8-core one writes 6), hence
 # generated here and gitignored, exactly like config-build.psd1 itself.
@@ -371,6 +375,9 @@ New-Item -ItemType Directory -Path $cargoDir -Force | Out-Null
     '# thread per logical core, independently of [build] jobs above.'
     '[env]'
     "RUST_TEST_THREADS = `"$buildJobs`""
+    '# Each test thread''s stack: the e2e tests build AppWindow on one, and the'
+    '# 2 MiB default leaves under 1 MiB of headroom (build.rs gives the exe 8).'
+    'RUST_MIN_STACK = "8388608"'
     ''
     '# Link with lld, always; unlike the C++ side (config-build.psd1 Linker),'
     '# which only uses it when the compiler is an LLVM one, this needs no'
