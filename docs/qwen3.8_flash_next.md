@@ -3,9 +3,17 @@
 Reference settings for Qwen3.8-Flash-Next-GSQ-RCO (architecture `qwen4exp`) on this
 framework. Measured with llama.cpp v0.7.0 on Windows, on the AMD Radeon AI PRO R9700
 (32 GB, ROCm backend, `ROCBLAS_USE_HIPBLASLT=0`) and, for the MoE cache, the RTX 4070
-SUPER (12 GB, CUDA backend), with a 12-core AVX-512 host and 64 GB of RAM. Run logs: `bench\qwen-next-moe-20261016\` under `%LOCALAPPDATA%\llama.cpp\`.
+SUPER (12 GB, CUDA backend), with a 12-core AVX-512 host and 64 GB of RAM.
 Decode figures are one run of 200 tokens after a 25-token prompt; the prompt figures are
-too short to stand for prefill (section 6).
+too short to stand for prefill (section 2, prefill row).
+
+**Linux rows** (marked *Linux*) come from the same host booted into Linux (kernel 7.0,
+TheRock 10.1.0, CUDA 13.4.2) with BOTH cards in one model, layer split, the IQ3_S at ctx
+131072, `q8_0` KV cache, ubatch 512, `op-offload false`, the experts of 14 layers in RAM
+(`n-cpu-moe 14`) and `spec-type ngram-map-k`: three runs per value of 200 tokens after a
+25-token prompt (72 with the chat template) unless stated, `Threads` = `ThreadsBatch` = 22 up
+to the `threads` row and 12 from it on. llama.cpp v0.7.0 unless marked v0.6.0. This is the
+layout the campaign started from; the recommended one (`f16`, `n-cpu-moe 16`) is in section 9.
 
 ## 1. Model facts
 
@@ -26,13 +34,37 @@ too short to stand for prefill (section 6).
 
 | key | value | evidence |
 | --- | --- | --- |
-| `lazy-mode` | `auto` (the default) | the 26.8 GiB n-gram table is above the 4 GiB threshold and stays mapped; no run read it into memory |
-| `n-cpu-moe` | the lowest that fits; on a 32 GB card at ctx 32768, `26` (27170 MiB of weights on the card, 1017 MiB compute buffer, ~3 GiB left) | decode 17.8 t/s at `26` against 12.3 at `48` (both `mmap`) |
-| `moe-cache-mib` | `0` (off), with no condition, on llama.cpp v0.7.0 (`620d2225c`; the cache dates from #29887, 2026-10-07): a cache policy upstream changes would reopen it | R9700: a loss of 3-4x (14.1 to 3.0-4.0 t/s). RTX 4070 SUPER: at equal VRAM, experts kept on the card beat the cache at every split (25.6 t/s against 19.5-23.6), and with every expert in RAM it is noise (section 3) |
-| `load-mode` | `none` with every expert in RAM; on ROCm with experts on the GPU, `mmap`, set explicitly (`auto` resolves to `none` when any device of the model reports no mmap support, as a Ryzen iGPU visible to HIP does), until the abort of section 4 is fixed | `n-cpu-moe 48`, decode with `none` against `mmap`: R9700 11.6 to 14.1 against 12.3; RTX 4070 SUPER 22.7 to 22.9 against 14.0 to 17.1. `none` loads slower (25 to 43 s against 10 to 11 s). `n-cpu-moe 26` with `none` aborts on the R9700. (That AMD advises against `mmap` on ROCm is a reported recommendation with no primary source linked here.) |
-| `repack` | leave unset | without `--no-host` the GPU's pinned host buffer type is picked before `CPU_REPACK`, so nothing is repacked: the MoE cache layout is identical with and without `--no-repack` (section 3) |
-| `reasoning-preserve` | TBD | the template reads `preserve_thinking`; not yet measured |
-| `ctx-checkpoints` | TBD | hybrid memory: a cache reuse past an edited turn needs a checkpoint |
+| `lazy-mode` | `auto` (the default) | the 26.8 GiB n-gram table is above the 4 GiB threshold and stays mapped; no run read it into memory. *Linux*: `on`, `auto` and `off` decode 25.1 ±1.2, 25.4 ±0.4 and 25.9 ±0.4 t/s, noise; `on` and `auto` both print "lazy read enabled" and map the table (`CPU_Mapped`), `off` reads it into 27466 MiB of RAM for no gain |
+| `n-cpu-moe` | the lowest that leaves ~500 MB free on each card (below that, hipBLASLt's workspace runs out on the first real prompt and the process hangs in the driver; a 5-token test does not show it). On a 32 GB card at ctx 32768, `26` (27170 MiB of weights on the card, 1017 MiB compute buffer, ~3 GiB left) | decode 17.8 t/s at `26` against 12.3 at `48` (both `mmap`). *Linux*, ubatch 512, the lowest with >= 512 MB free on the R9700 after a 2.9k-token prompt, decode on the 25-token prompt (two runs): see the table below |
+| `moe-cache-mib` | `0` (off), with no condition, on llama.cpp v0.7.0 (`620d2225c`; the cache dates from #29887, 2026-10-07): a cache policy upstream changes would reopen it | R9700: a loss of 3-4x (14.1 to 3.0-4.0 t/s). RTX 4070 SUPER: at equal VRAM, experts kept on the card beat the cache at every split (25.6 t/s against 19.5-23.6), and with every expert in RAM it is noise (section 3). *Linux*, two cards, the cache on the R9700 in place of resident layers: 17.8 to 22.5 t/s against 27.4 (section 3) |
+| `load-mode` | `none` whenever experts sit in RAM. On Windows/ROCm with experts on the GPU, `mmap`, set explicitly, until the abort of section 4 is fixed; on Linux `none` there too (no abort). `auto` resolves to `none` only when a device THE MODEL RUNS ON reports no mmap support (`llama-model.cpp`, `load_tensors`): a Ryzen iGPU visible to HIP counts only when `device` is left blank; with `device` pinned to the discrete cards `auto` is `mmap` | `n-cpu-moe 48`, decode with `none` against `mmap`: R9700 11.6 to 14.1 against 12.3; RTX 4070 SUPER 22.7 to 22.9 against 14.0 to 17.1. `none` loads slower (25 to 43 s against 10 to 11 s). `n-cpu-moe 26` with `none` aborts on the R9700 on Windows. *Linux*: `none` 25.6 ±0.1 t/s; `mmap` 23.9 ±2.6 (21.0 on the first run after the load, 24.9 and 25.9 after); `auto` resolved to `mmap` (log), 24.7 ±1.7. (That AMD advises against `mmap` on ROCm is a reported recommendation with no primary source linked here.) |
+| `repack` | leave unset | without `--no-host` the GPU's pinned host buffer type is picked before `CPU_REPACK`, so nothing is repacked: the MoE cache layout is identical with and without `--no-repack` (section 3). *Linux*, `n-cpu-moe 14`, `moe-cache-mib 512`: the same 4 groups and 508.50 MiB with and without `--no-repack`, no `CPU_REPACK` buffer in either log |
+| `spec-type` | `ngram-map-k`, `spec-ngram-map-k-size-m 64` (`size-n` left at 12) | no MTP head in the GGUF, so the n-gram drafters are the only speculators. *Linux*, v0.6.0, IQ3_XXS (section 7): code rewrite 61-65 t/s (`size-m` 48 and 64) against 28.6 with none; prose reasoning 40.0 ±1.6 against 29.4 ±1.3 |
+| prefill | (measured) | *Linux*, ubatch 512: 368 and 372 t/s at 2.9k tokens, 364 and 370 at 43.7k, 340 and 341 at 87.4k; decode right after: 24.5, 20.5 and 17.5 t/s. v0.6.0 gave 342 and 338 at 43.7k |
+| `threads` | one per physical core (12 on the 12-core host), `ThreadsBatch` the same | *Linux*, 43.7k-token prompt, two runs of 128 tokens: prefill 410 and 405 t/s at 12, 363 and 368 at 16, 371 and 377 at 22, 364 and 368 at 24; decode 21.8, 21.5, 21.1 and 17.6 |
+| `ubatch-size` | 512 at the lowest `n-cpu-moe` that fits, with `op-offload false`; for long prompts, 8192 with `op-offload true` (section 8) | with `op-offload false` a larger ubatch is paid in experts moved to RAM (section 5). *Linux*: the R9700's compute buffer is 877 MiB at 512, 1496 at 1024 and 2125 at 2048, so at `n-cpu-moe 14` neither 1024 nor 2048 loads |
+| `cache-type-k/-v` | `f16` | `q8_0` halves the KV buffers but raises the compute buffers, so it saves only one layer of experts at 131072 and two at 262144 (table below), and it costs decode as the context fills: *Linux*, 43.7k-token prompt, 21.8 t/s in `q8_0` at `n-cpu-moe 14` against 24.9 in `f16` at `16`, 20.8 against 23.4 at 262144 (section 9) |
+| `reasoning-preserve` | leave unset (on since v0.4.0) | *Linux*, turn 2 of a chat that sends turn 1's thinking back: on, the history is replayed unchanged and only the new 19 tokens are processed (prompt 204); `false` strips the old thinking, so the prompt is shorter (118) but diverges inside turn 1 and 60 tokens are reprocessed from a checkpoint. `false` is worth it only when long thinking fills the context |
+| `ctx-checkpoints` | leave unset (32, at least 8192 tokens apart) | the recurrent state cannot be rolled back, so a prompt that diverges from the cached one resumes from the last checkpoint before the divergence or from zero: *Linux*, the `reasoning-preserve false` turn above reprocesses 60 of 118 tokens with checkpoints and all 118 with `0`. A checkpoint is 112.6 MiB of host memory, up to 3.5 GiB at 32 |
+
+*Linux* `n-cpu-moe` per context and KV type (`override-tensor = output\.weight=ROCm0` only;
+VRAM free on the R9700 at that value; decode t/s):
+
+| context, KV | both cards | R9700 alone (`device = ROCm0`) |
+| --- | --- | --- |
+| 131072, `q8_0` | `15`, split 40,9: 843 MB, 25.7 ±2.3 | `25`: 861 MB, 21.3 ±2.6 |
+| 131072, `f16` | `16`, split 40,9: 645 MB, 26.9 ±0.2 | `26`: 545 MB, 21.8 ±1.5 |
+| 262144, `q8_0` | `18`, split 41,8: 368 MB, 25.8 ±0.1 | `28`: 1318 MB, 21.1 ±1.5 |
+| 262144, `f16` | `21`, split 41,8: 839 MB, 23.3 ±2.8 | `30`: 650 MB, 21.3 ±0.1 |
+
+At 262144 the RTX 4070 SUPER's compute buffer
+(1601 MiB with `q8_0`) no longer fits at split 40,9 however many experts go to RAM, since
+`n-cpu-moe` frees the first layers, which sit on the R9700: the split must give the small
+card a layer less. The `q8_0` KV cache halves the KV buffers but raises the compute
+buffers (877 against 533 MiB on the R9700 at 131072), so it saves one layer at 131072 and
+two at 262144. The second card is worth ten layers of experts and 20-25% of decode. The
+`n-cpu-moe 14` of the *Linux* rows at 131072 `q8_0` comes from also moving
+`blk\.38\.ffn_down_exps` to the RTX 4070 SUPER.
 
 ## 3. MoE cache and repack (what the init prints)
 
@@ -45,6 +77,11 @@ too short to stand for prefill (section 6).
   default and `--no-repack` print the same 48-layer cache.
 - **Each miss uploads the expert over the host link**: at 50% hits that is ~470 MiB per
   token, so the result follows the card's real link more than its compute.
+- **On two cards the cache sits with the layers it serves.** *Linux*, `n-cpu-moe 14`,
+  `moe-cache-mib 512`: the 14 host-expert layers belong to the R9700's share of the layer
+  split, and the whole cache (508.50 MiB for 12650 MiB of host experts, 4 groups at
+  3.7-4.0% slots) went to the R9700, none to the RTX 4070 SUPER. Size the cache against
+  the free VRAM of the card holding the first layers, not by the split proportions.
 
 Decode at `n-cpu-moe 48`, ctx 32768, `load-mode none`, 200 tokens (t/s; hit rate at
 ubatch <= 8):
@@ -69,6 +106,16 @@ two runs each; a layer of experts is ~1.1 GiB on the card):
 | `n-cpu-moe 46`, 1024 MiB | 9453 MiB | 19.7, 19.4 | 39% |
 | `n-cpu-moe 47`, 2048 MiB | 9416 MiB | 21.8, 21.6 | 50% |
 | `n-cpu-moe 48`, 3072 MiB | 9136 MiB | 23.8, 23.4 | 59% |
+
+*Linux*, both cards, the preset of the *Linux* rows with 12 threads, the cache on the R9700
+(three runs each):
+
+| configuration | cache | decode t/s | hit rate |
+| --- | --- | --- | --- |
+| `n-cpu-moe 14`, no cache | n/a | 27.4 ±0.2 | n/a |
+| `n-cpu-moe 15`, `moe-cache-mib 896` | 892.97 MiB for 13712.50 MiB of host experts | 17.8 ±0.0 | 45% |
+| `n-cpu-moe 16`, `moe-cache-mib 1792` | 1789.53 MiB for 14675.00 MiB | 19.9 ±1.4 | 65% |
+| `n-cpu-moe 17`, `moe-cache-mib 2688` | 2683.30 MiB for 15737.50 MiB | 22.5 ±0.1 | 74% |
 
 The smallest cache is the worst, so no "one hot layer in cache" sweet spot exists here.
 The cache's log has no per-layer statistics (`log_stats` prints two totals); the
@@ -100,30 +147,110 @@ Two changes that would target the cost, for an upstream issue:
 
 | configuration | result |
 | --- | --- |
-| `load-mode none` with experts on the GPU (`n-cpu-moe 26`) | aborts right after the weight upload: `ROCm error: unspecified launch failure` in `ggml_cuda_set_device`, at ctx 4096 and 32768, with and without the MoE cache (4 of 4 runs). It fails at load, not at decode, which points to a host buffer `none` leaves unpinned or an allocation it does not expect; worth a minimal upstream reproduction |
+| `load-mode none` with experts on the GPU (`n-cpu-moe 26`) | aborts right after the weight upload: `ROCm error: unspecified launch failure` in `ggml_cuda_set_device`, at ctx 4096 and 32768, with and without the MoE cache (4 of 4 runs). It fails at load, not at decode, which points to a host buffer `none` leaves unpinned or an allocation it does not expect; worth a minimal upstream reproduction. Windows only: on *Linux* the same mode with the experts of 34 layers on the GPUs (R9700 and RTX 4070 SUPER in one model) loads and runs in every run since 2026-10-14, v0.6.0 and v0.7.0 |
 | `mmap` with experts in RAM | llama.cpp warns "tensor overrides to CPU are used with mmap enabled - consider using --load-mode none"; at `n-cpu-moe 48` decode drops by up to 12.5% on the R9700 and by 25 to 39% on the RTX 4070 SUPER |
 
 ## 5. Choices that look better than they measure
 
 | option | result |
 | --- | --- |
-| the MoE cache, to keep hot experts in VRAM | refuted: 3 to 4.6x slower decode on the R9700; on the RTX 4070 SUPER the same VRAM as resident layers is 8-31% faster, and with every expert in RAM the cache is noise (`none`) or a loss (`mmap`) (section 3) |
+| the MoE cache, to keep hot experts in VRAM | refuted: 3 to 4.6x slower decode on the R9700; on the RTX 4070 SUPER the same VRAM as resident layers is 8-31% faster, on Linux with two cards 22-54% faster, and with every expert in RAM the cache is noise (`none`) or a loss (`mmap`) (section 3) |
 | `--no-repack`, to let repacked layers into the MoE cache | inert: nothing is repacked unless `--no-host` is set |
+| a larger `ubatch-size`, paid for with experts in RAM, with `op-offload false` | refuted for prefill (with `op-offload true` it wins, section 8). *Linux*, `n-cpu-moe 26`, ctx 262144, `f16`, 43.7k-token prompt: 248 and 244 t/s at 512, 281 and 282 at 1024, 305 and 308 at 2048; with the preset's ctx 131072 and `q8_0` at 2048, 319 and 313; `n-cpu-moe 14` at 512 gives 364 and 370. `n-cpu-moe 26` holds more experts in RAM than 2048 needs at ctx 131072 (512 needs 15 there, section 2), so the true loss is smaller than this |
 
 ## 6. Not yet measured (placeholders)
 
 | parameter | current value | question | result |
 | --- | --- | --- | --- |
-| prefill | n/a | t/s at 2.6k and ~90k tokens at the chosen `n-cpu-moe` | TBD |
-| `n-cpu-moe` | 26 | the lowest that fits at ctx 131072 and 262144 | TBD |
-| `cache-type-k/-v` | f16 | does `q8_0` let `n-cpu-moe` drop, and at what decode cost? | TBD |
-| `ubatch-size` | default (512) | prefill gain against the compute buffer it costs | TBD |
-| `moe-cache-mib` with experts on the GPU, on ROCm | 0 | the equal-VRAM comparison of section 3 on the R9700, after the section 4 abort is fixed | TBD |
-| HIP upload cost per miss | n/a | a profile of the miss path (sync per layer, transfers per token) on ROCm against CUDA | TBD |
-| `moe-cache-mib` with `--no-host` | n/a | 9 cacheable layers at ~29% slots: decode against no cache | TBD |
-| `lazy-mode on` / `off` | auto | decode and RAM use of reading the n-gram table into memory | TBD |
-| `ctx-checkpoints` | default | restore cost after an edited turn on the hybrid memory | TBD |
-| `threads` | 12 of 24 | does the logical-core count help the CPU experts? | TBD |
-| IQ3_XXS against IQ3_S | IQ3_S | decode and quality at the `n-cpu-moe` each one allows | TBD |
-| speculative decoding | none | any drafter for `qwen4exp` | TBD |
-| `load-mode none` abort | n/a | minimal reproduction for upstream; ROCm only, or also CUDA/Vulkan? | TBD |
+| HIP upload cost per miss | n/a | a profile of the miss path (sync per layer, transfers per token) on ROCm against CUDA | TBD: needs a trace (rocprofv3, nsys), not a bench run |
+| `moe-cache-mib` with `--no-host` | n/a | 9 cacheable layers at ~29% slots: decode against no cache | TBD: the framework emits no `--no-host`, so this is an upstream question, not a setting |
+| `load-mode none` abort | n/a | minimal reproduction for upstream; Windows only (not on Linux ROCm, section 4), but also CUDA/Vulkan on Windows? | TBD |
+
+## 7. Two cards on Linux: quant and n-gram drafters (v0.6.0)
+
+Both cards in one model as in the *Linux* rows above, each quant with the lowest
+`n-cpu-moe` that fits (IQ3_S 14, IQ3_XXS 7; the drafter sweeps below ran at IQ3_XXS `n-cpu-moe` 7 and 8), the same other keys. The drafters change the
+greedy path (the verify batches differ numerically), so two runs of one setting can
+produce different texts: read the per-run figures, and compare settings on runs that
+produced the same kind of output.
+
+| | IQ3_XXS | IQ3_S |
+| --- | --- | --- |
+| prefill at 43.7k tokens | 478, 485 | 342, 338 |
+| decode at 43.7k tokens | 24.0 ±0.2 | 20.9 ±0.1 |
+| code rewrite (3.8k-token prompt, ngram-map-k) | 49.9, 56.6, 64.1 | 47.0 ±2.0 |
+| prose reasoning (ngram-map-k) | 40.0 ±1.6 (at `n-cpu-moe 8`) | 31.8 ±1.0 |
+| quality, model card (BF16 = 93.12) | 92.57 | 93.26 |
+
+The prose gap is partly the drafter's: the IQ3_S text gave it 576
+drafts against 1058.
+
+N-gram drafters on the code-rewrite prompt (IQ3_XXS, 8000 tokens max, two runs; decode t/s):
+
+| setting | decode | note |
+| --- | --- | --- |
+| none | 28.6 | |
+| `ngram-mod` | 52.9 | the second run aborted: `CUDA error: out of memory` in `cudaGraphInstantiate` with ~400 MiB free on the 12 GB card |
+| `ngram-simple` | 52.3 ±1.3 | |
+| `ngram-map-k` | 61.0 ±2.7 | answer 124 t/s at 87-92% accepted, reasoning 35 t/s |
+| `ngram-map-k`, `size-n` 4 / 8 / 12 / 16 | 35.0 / 51.5 / 61.3 / 56.0 | 12, the default, is best |
+| `ngram-map-k`, `size-m` 16 / 32 / 48 / 64 | 48.2 / 49.7 / 59.8 / 63.6 | the answer (copied text) rises with the draft length: 97, 113, 132, 156 t/s |
+| `min-hits` | inert | read only by `ngram-map-k4v` (`common/ngram-map.cpp`); `ngram-simple` and `ngram-map-k` ignore it |
+
+## 8. Long prompts: experts in RAM, uploaded per ubatch (Strata-style)
+
+The layout of Strata (https://github.com/niko1221/strata, which builds on ggml): experts in
+RAM, the hot ones in VRAM, prompts read in ubatches of up to 8192 tokens.
+
+*Linux*, both cards, 12 threads, ctx 131072, `q8_0`, `load-mode none`, `op-offload true`,
+`cache-ram 2048` (the pinned experts leave little RAM), placement by `override-tensor`
+(`blk\.(...)\.ffn_.*_exps=CPU`) rather than `n-cpu-moe`. With `op-offload true` each ubatch
+uploads the host experts and the GPUs compute them, so a large ubatch amortizes the upload;
+the compute buffer grows with it (4.8 GiB per card at 4096, 9.5 GiB at 8192). Prefill on the
+43.7k-token prompt, decode right after it, and decode on three different prompts after a
+warm-up (code, prose, math; 400 tokens each, temperature 0):
+
+| layout | prefill t/s | decode at 43.7k | decode, three prompts |
+| --- | --- | --- | --- |
+| the *Linux* rows: `n-cpu-moe 14`, ubatch 512, `op-offload false` | 410, 405 | 21.8 | 27.4 |
+| experts of layers 25-38 on the R9700, 34 in RAM, ubatch 8192 | 669, 674 | 17.4, 17.5 | 21.6 |
+| layers 19-38 on the R9700, 28 in RAM, ubatch 4096 | 578, 581 | 18.4, 18.5 | 22.5 |
+| layers 25-38 on the R9700, ubatch 4096, the same VRAM as `moe-cache-mib 8704` (75% hits) | 524, 586 | 15.5, 17.3 | 21.1 |
+| every expert in RAM, `moe-cache-mib 28672`, ubatch 512, `op-offload false` | n/a | n/a | 24.8 |
+
+A large ubatch buys 40-65% of prefill for 15-20% of decode: worth it where long prompts
+dominate, not for chat. The VRAM a smaller ubatch frees is worth more as resident layers
+than as MoE cache. The cache cannot reproduce Strata's decode: a miss is uploaded to the
+GPU (section 3), where Strata computes the missing experts on the CPU alongside the GPU.
+Every expert in RAM pins ~47 GiB (48284 MiB `ROCm_Host`) and, with a 2964 MiB host compute buffer at ubatch 8192,
+ran a 59 GiB host into swap: keep part of the experts in VRAM.
+
+## 9. Two cards on Linux: the preset (v0.7.0)
+
+Both cards, 12 threads, ubatch 512, `op-offload false`, `ngram-map-k`; the 43.7k-token
+prompt (two runs of 128 tokens) and three different prompts after a warm-up (code, prose,
+math; 400 tokens, temperature 0):
+
+| context, KV | `n-cpu-moe`, split | prefill t/s | decode at 43.7k | decode, three prompts |
+| --- | --- | --- | --- | --- |
+| 131072, `q8_0` | 14 (+ `blk\.38\.ffn_down_exps=CUDA0`), 40,9 | 397, 414 | 21.8 | 27.1 |
+| **131072, `f16`** | **16, 40,9** | 381, 382 | **24.7, 25.1** | **27.4** |
+| 262144, `q8_0` | 18, 41,8 | 349, 351 | 20.9, 20.7 | 26.0 |
+| 262144, `f16` | 21, 41,8 | 311, 319 | 23.3, 23.4 | 25.2 |
+
+The recommended preset is the
+second row: even on short prompts, 6% less prefill for 14% more decode deep in the context.
+After a 2.9k-token prompt it leaves 475 MB free on the R9700 (the drafter included); one
+layer more in RAM if hipBLASLt runs out. 262144 costs 14-17% of prefill and 4-8% of
+short-prompt decode against 131072 with the same KV type.
+
+**Decode is mostly a fixed cost per token.** At 131072 `q8_0`, decode on the three prompts
+with the experts of the first 15 layers on the CPU, of 16 layers with IQ2_S `gate`/`up`, of
+14 layers with IQ3_XXS/IQ3_S `gate`/`up` (13.7 to 14.7 GiB each) and of the first 24 layers:
+27.3, 27.3, 26.9 and 23.9 t/s. A layer of experts moved to the CPU costs ~1.3% of decode,
+whichever quant type it holds, so one or two layers more or less do not show. During decode
+the R9700 is ~75% busy and the RTX 4070 SUPER ~5% (`amd-smi`, `nvidia-smi`); the CPU
+threads spin, so their load says nothing. Without the drafter, the preset decodes 27.5 t/s
+on prose and math and `n-cpu-moe 24` 23.9 on all three, the same as with it: these
+400-token reasoning openings give the n-gram drafter nothing to copy (its gain is on
+repeated text, section 7).
