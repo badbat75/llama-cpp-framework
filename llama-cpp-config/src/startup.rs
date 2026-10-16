@@ -66,13 +66,6 @@ fn choose_autostart_exe(
 #[cfg(windows)]
 pub use win::{is_enabled, machine_reg_sz, set_enabled, starts_minimized};
 
-/// Read one `REG_SZ` under `HKLM`; `None` off Windows, where there is no
-/// registry to read. See the Windows implementation for why it lives here.
-#[cfg(not(windows))]
-pub fn machine_reg_sz(_subkey: &str, _value: &str) -> Option<String> {
-    None
-}
-
 #[cfg(target_os = "linux")]
 pub use linux::{is_enabled, set_enabled, starts_minimized};
 

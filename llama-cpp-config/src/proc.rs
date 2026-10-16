@@ -90,6 +90,8 @@ fn prepend_path_var(dir: &Path, current: Option<std::ffi::OsString>) -> Option<s
 /// Run `exe` with `args`, capturing stdout/stderr. Returns `None` if the process
 /// can't be spawned. On Windows the child gets `CREATE_NO_WINDOW` (via
 /// `hide_console`) so no console window pops up for these background probes.
+/// Windows only: its callers are `tasklist` and `taskkill`.
+#[cfg(windows)]
 pub fn run_hidden<I, S>(exe: &Path, args: I) -> Option<Output>
 where
     I: IntoIterator<Item = S>,
