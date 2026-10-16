@@ -77,8 +77,17 @@ case "$(uname -m)" in
     *) die "unsupported architecture: $(uname -m)" ;;
 esac
 
+# The package version carries the bundled llama.cpp too, as a "+" suffix:
+# a rebuild on a newer llama.cpp is then an UPGRADE to the package manager
+# (dpkg and rpm both order 2.0.0 < 2.0.0+llama.cpp.v0.7.0 < ...v0.10.0, and
+# the next framework version above all of them), and `apt policy`/`rpm -q`
+# name what is installed. "-" is not allowed in an rpm Version: the b0-<sha>
+# fallback gets "." instead.
+PKG_VERSION="$FW_VERSION+llama.cpp.${LLAMA_BUILD//-/.}"
+
 say_head "Framework version: $FW_VERSION"
 say_head "llama.cpp release: $LLAMA_BUILD"
+say_head "Package version:   $PKG_VERSION"
 say_head "Architecture:      $RPM_ARCH"
 
 # ── Preconditions ───────────────────────────────────────────────────
@@ -364,7 +373,7 @@ if (( WANT_DEB )); then
     # time by dlopen, which no link-time scan sees.
     cat > "$DEB_ROOT/DEBIAN/control" <<EOF
 Package: $PKG_NAME
-Version: $FW_VERSION
+Version: $PKG_VERSION
 Architecture: $DEB_ARCH
 Maintainer: $MAINTAINER
 Installed-Size: $(du -sk --exclude=DEBIAN "$DEB_ROOT" | cut -f1)
@@ -399,7 +408,7 @@ if (( WANT_RPM )); then
     spec="$PKG_WORK/$PKG_NAME.spec"
     cat > "$spec" <<EOF
 Name:           $PKG_NAME
-Version:        $FW_VERSION
+Version:        $PKG_VERSION
 Release:        1
 Summary:        $DESCRIPTION_SHORT
 License:        MIT (bundled llama.cpp)

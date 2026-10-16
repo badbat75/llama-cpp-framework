@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Install the newest package 03-package.sh left in ./dist/ on this machine:
-# a first install, an upgrade, a reinstall of the same version (a rebuild
-# against a newer llama.cpp keeps the framework version, so the package
-# manager would otherwise call it "already installed") or a downgrade, all
-# the same command. Linux only; the Windows installer is run by hand.
+# a first install, an upgrade (a newer framework or a newer bundled llama.cpp:
+# the package version is <framework>+llama.cpp.<tag>), a reinstall of the
+# same version (a repackage, which the package manager would otherwise call
+# "already installed") or a downgrade, all the same command. Linux only; the Windows installer is run by hand.
 #
 # The format follows the distribution (/etc/os-release, then the package
 # managers on PATH): the .deb through apt-get (which also pulls the Depends),
@@ -153,7 +153,7 @@ fi
 
 # ── Check ───────────────────────────────────────────────────────────
 version="$("$OPT_DIR/bin/llama-cpp-config" --version 2>/dev/null | awk '{print $NF}' || true)"
-[[ "$new_version" == "$version"* ]] ||
+[[ "$new_version" == "$version"[+-]* ]] ||
     die "$OPT_DIR/bin/llama-cpp-config reports '${version:-nothing}', the package is $new_version"
 say ''
 say_ok "$PKG_NAME $new_version installed in $OPT_DIR ($action)"
