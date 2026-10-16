@@ -240,6 +240,18 @@ export global AppState {
     // dense models (`model_info_has_moe`).
     in-out property <bool> model_info_has_moe: false;
     in-out property <string> model_info_moe;
+    // The tail of the MoE cache hint: this preset's --moe-cache-mib floors on the
+    // selected model (moe_cache::Floor::hint), "" when there is none to quote.
+    // A pure callback over the form, so the text follows every placement edit
+    // (n-gpu-layers, n-cpu-moe, override-tensor, device, tensor-split) without a
+    // refresh hook per field. The Models tab's Save refuses below the first number.
+    // The int is `model_info_serial`: the model's tensors live in Rust, where
+    // Slint's dependency tracking cannot see them, so the binding passes the
+    // serial to be re-evaluated when they change.
+    pure callback moe_cache_floor_hint(PresetForm, int) -> string;
+    // Bumped by every `update_model_info`, i.e. whenever the Rust-side model
+    // facts (its tensor list above all) may have changed.
+    in-out property <int> model_info_serial: 0;
     in-out property <string> model_info_arch_quant;
     // token_embd's OWN quant + size, not implied by the file's name or by
     // `model_info_arch_quant`: Unsloth's Q6_K_XL keeps the embedding table at
@@ -261,6 +273,8 @@ export global AppState {
     in-out property <string> model_info_tensor_arch_warning;
     in-out property <string> model_info_layers_ctx;
     in-out property <string> model_info_attn;
+    // gguf.rs `memory_line`: attention / recurrent / hybrid, per architecture.
+    in-out property <string> model_info_memory;
     in-out property <string> model_info_draft;
     // Chat template detection (read from GGUF `tokenizer.chat_template`).
     // `model_info_chat_template` is the short status text ("Jinja (embedded)" /

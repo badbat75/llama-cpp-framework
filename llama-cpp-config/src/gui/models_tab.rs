@@ -47,6 +47,15 @@ pub(super) fn wire(app: &AppWindow, state: &Rc<RefCell<State>>) {
             confirm_discard_then(&app, &state, dirty, action);
         });
     }
+    // The MoE cache hint's floors, recomputed by Slint whenever the form (or
+    // `model_info_serial`) changes; see `moe_cache_floor_hint` in state.slint.
+    app.global::<AppState>()
+        .on_moe_cache_floor_hint(|form, _serial| {
+            preset_moe_floor(&form_to_preset(&form))
+                .map(|f| f.hint())
+                .unwrap_or_default()
+                .into()
+        });
     {
         let app_weak = app.as_weak();
         let state = state.clone();
@@ -63,6 +72,24 @@ pub(super) fn wire(app: &AppWindow, state: &Rc<RefCell<State>>) {
             // read, where "no MTP metadata" is not evidence of no MTP.
             if s.get_model_info_ready() {
                 presets::prune_inactive_draft_keys(&mut p, s.get_model_info_embeds_mtp());
+                presets::prune_inactive_moe_cache(&mut p, s.get_model_info_has_moe());
+                // The cache's one model-dependent refusal: below one token's
+                // experts in every layer group the context throws and the model
+                // never loads. The LOAD floor is a true lower bound
+                // (`moe_cache::floor`), so this never refuses a value that could
+                // have worked. 0 is "no cache" and passes.
+                let floor = preset_moe_floor(&p)
+                    .map_or(0, |f| crate::moe_cache::mib(f.load_bytes()));
+                if let Some(v) = p.moe_cache_mib.filter(|&v| v > 0 && (v as u64) < floor) {
+                    set_status(
+                        &app,
+                        format!(
+                            "Not saved: MoE cache {v} MiB is below this preset's {floor} MiB floor, the experts of one token in every group of layers; llama.cpp would refuse to load it. Raise it, set 0, or tick default."
+                        ),
+                        true,
+                    );
+                    return;
+                }
             }
             // The form shows only the selected n-gram type's tuning, so the other
             // types' keys would sit hidden in the INI (needs no GGUF).
@@ -816,6 +843,10 @@ pub(super) fn update_model_info(app: &AppWindow) {
 
     // Reset the optional rows; the success path re-enables the ones that apply.
     s.set_model_info_has_moe(false);
+    set_model_experts(0, 0, 0);
+    // Every path below may change the Rust-side model facts the MoE cache hint
+    // reads (`moe_cache_floor_hint`), so its binding is told to re-run.
+    s.set_model_info_serial(s.get_model_info_serial().wrapping_add(1));
     s.set_model_info_has_mmproj(false);
     s.set_model_info_has_draft_file(false);
     s.set_model_info_embeds_mtp(false);
@@ -874,6 +905,9 @@ pub(super) fn update_model_info(app: &AppWindow) {
     // The Tensor placement table's coverage lines and picker. Every shard is
     // read; a split model with a shard missing gets no list rather than half.
     set_model_tensors(gguf::read_tensors(std::path::Path::new(&model)).unwrap_or_default());
+    // With the every-shard list above, what the MoE cache floor reads: the first
+    // shard alone would judge a split model on a subset of its layers.
+    set_model_experts(info.expert_count, info.expert_used, info.n_layer);
     s.set_model_info_kind(SharedString::from(info.kind_line()));
     s.set_model_info_n_layer(info.n_layer as i32);
     s.set_model_info_has_moe(info.is_moe);
@@ -890,6 +924,7 @@ pub(super) fn update_model_info(app: &AppWindow) {
     s.set_model_info_embd_warning(SharedString::from(info.embd_pin_warning()));
     s.set_model_info_layers_ctx(SharedString::from(info.layers_ctx_line()));
     s.set_model_info_attn(SharedString::from(info.attn_line()));
+    s.set_model_info_memory(SharedString::from(info.memory_line()));
     // The row reports only what this preset LOADS: the model's own MTP heads
     // plus the picked draft file, hence the preset's `--model-draft` here. It
     // used to also advertise the best filename match in `mtps\`, which is what
@@ -920,20 +955,29 @@ pub(super) fn update_model_info(app: &AppWindow) {
     // lives, and a preset the user only OPENS is never re-saved otherwise.
     let mut pruned_form = form.clone();
     let dropped = prune_inactive_draft_fields(&mut pruned_form, embeds_mtp);
-    if !dropped.is_empty() {
+    // Same reasoning for the MoE cache, whose widget is disabled on a dense
+    // model: a positive value there fails the load (`prune_inactive_moe_cache`).
+    let moe_cache_dropped = !info.is_moe && !pruned_form.moe_cache_mib_default;
+    if moe_cache_dropped {
+        pruned_form.moe_cache_mib_default = true;
+    }
+    if !dropped.is_empty() || moe_cache_dropped {
         s.set_form(pruned_form);
-        // Two different reasons, and naming the wrong one would teach the user
-        // the wrong lesson: with embedded MTP heads only the PLACEMENT keys die.
-        let why = if embeds_mtp {
-            "they place a separate draft FILE, and this preset has none"
-        } else {
-            "this model has no MTP heads and no draft file"
-        };
-        set_status(
-            app,
-            format!("Dropped {}: {why}. Save to persist.", dropped.join(", ")),
-            false,
-        );
+        // Different reasons, and naming the wrong one would teach the user the
+        // wrong lesson: with embedded MTP heads only the PLACEMENT keys die.
+        let mut parts = Vec::new();
+        if !dropped.is_empty() {
+            let why = if embeds_mtp {
+                "they place a separate draft FILE, and this preset has none"
+            } else {
+                "this model has no MTP heads and no draft file"
+            };
+            parts.push(format!("Dropped {}: {why}.", dropped.join(", ")));
+        }
+        if moe_cache_dropped {
+            parts.push("Dropped moe-cache-mib: this model has no experts.".to_string());
+        }
+        set_status(app, format!("{} Save to persist.", parts.join(" ")), false);
     }
     // Two tables depend on BOTH their own rules and the model, and only the model
     // changed here: the Tensor-placement warning (its embd verdict) and the GPU
@@ -1065,9 +1109,35 @@ fn run_new_clone(
     // refuses to load the model at all. This path never passes through the form,
     // so it prunes against the target's own header. Unreadable GGUF = keep
     // everything: see `prune_inactive_draft_keys` on why absence isn't evidence.
+    // The MoE cache rides the same rule: dead (and fatal) on a dense model, and
+    // fatal below the target's own one-token floor, which a base on a different
+    // model says nothing about.
     let dropped = match gguf::read_model_info(&path) {
         Some(info) => {
-            presets::prune_inactive_draft_keys(&mut cloned, info.nextn_predict_layers > 0)
+            let mut dropped =
+                presets::prune_inactive_draft_keys(&mut cloned, info.nextn_predict_layers > 0);
+            let below_floor = cloned.moe_cache_mib.is_some_and(|v| {
+                let floor = gguf::read_tensors(&path)
+                    .and_then(|t| {
+                        crate::moe_cache::floor(
+                            &crate::moe_cache::Model {
+                                tensors: &t,
+                                expert_count: info.expert_count,
+                                expert_used: info.expert_used,
+                                n_layer: info.n_layer,
+                                isa: crate::moe_cache::Isa::host(),
+                            },
+                            &cloned,
+                        )
+                    })
+                    .map_or(0, |f| crate::moe_cache::mib(f.load_bytes()));
+                v > 0 && (v as u64) < floor
+            });
+            if presets::prune_inactive_moe_cache(&mut cloned, info.is_moe) || below_floor {
+                cloned.moe_cache_mib = None;
+                dropped.push("moe-cache-mib");
+            }
+            dropped
         }
         None => Vec::new(),
     };

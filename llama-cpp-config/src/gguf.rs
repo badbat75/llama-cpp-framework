@@ -387,6 +387,12 @@ impl ModelInfo {
         }
     }
 
+    /// The "Memory" row: what llama.cpp keeps of past tokens for this arch
+    /// (`arch_memory`).
+    pub fn memory_line(&self) -> String {
+        arch_memory(&self.arch).to_string()
+    }
+
     /// The "Thinking" row: does this model reason, and can `--reasoning on|off`
     /// switch it?
     pub fn thinking_line(&self) -> String {
@@ -589,6 +595,10 @@ pub fn read_mmproj_info(path: &Path) -> Option<MmprojInfo> {
 pub struct TensorInfo {
     pub name: String,
     pub bytes: u64,
+    /// The `ggml_type` id (ggml.h), not the LLAMA_FTYPE of `general.file_type`.
+    pub ty: u32,
+    /// `ne[1]`, the extent the CPU repack's divisibility test reads.
+    pub ne1: u64,
 }
 
 /// Every tensor of the model at `path`, in file order. A split model
@@ -800,6 +810,28 @@ fn gpu_has_get_rows(ggml_type: u32, n_embd: u32) -> bool {
         // 32-value sub-blocks: the row must tile into QK_K super-blocks.
         20 | 39 => n_embd > 0 && n_embd.is_multiple_of(256), // IQ4_NL, MXFP4
         _ => false,
+    }
+}
+
+/// The memory llama.cpp builds for a `general.architecture`: a KV cache
+/// ("attention"), a fixed-size recurrent state ("recurrent"), or both
+/// ("hybrid"). Mirrors `llm_arch_is_recurrent` and `llm_arch_is_hybrid`
+/// (`src/llama-arch.cpp`), whose arches get `llama_memory_recurrent` /
+/// `llama_memory_hybrid` instead of the plain KV cache: a state that cannot be
+/// rewound, which is what context checkpoints exist for. Spellings are
+/// `LLM_ARCH_NAMES`' own. Verified against v0.7.0; keep it in sync with both
+/// switches when bumping llama.cpp (an arch missing here reads as "attention",
+/// a fact the row then gets wrong without any error).
+fn arch_memory(arch: &str) -> &'static str {
+    match arch {
+        "mamba" | "mamba2" | "rwkv6" | "rwkv6qwen2" | "rwkv7" | "arwkv7" => "recurrent",
+        "jamba" | "falcon-h1" | "plamo2" | "granitehybrid" | "lfm2" | "lfm2moe" | "nemotron_h"
+        | "nemotron_h_moe" | "qwen3next" | "kimi-linear" | "bailingmoe3" | "kimi-k3"
+        | "glm5-next" | "qwen35" | "qwen35moe" | "qwen4exp" | "deepseek4" | "minimax-01" => {
+            "hybrid (attention + recurrent)"
+        }
+        "" => "unknown",
+        _ => "attention",
     }
 }
 
@@ -1387,6 +1419,26 @@ mod tests {
                 "type {no_kernel} must not be pinnable"
             );
         }
+    }
+
+    /// The Memory row follows upstream's two switches, with their spellings
+    /// (hyphen, underscore and neither), and reads an unlisted arch as attention.
+    #[test]
+    fn memory_kind_follows_upstreams_recurrent_and_hybrid_lists() {
+        assert_eq!(arch_memory("rwkv7"), "recurrent");
+        assert_eq!(arch_memory("mamba2"), "recurrent");
+        for a in [
+            "qwen35moe",
+            "qwen4exp",
+            "falcon-h1",
+            "nemotron_h",
+            "granitehybrid",
+        ] {
+            assert_eq!(arch_memory(a), "hybrid (attention + recurrent)", "{a}");
+        }
+        assert_eq!(arch_memory("llama"), "attention");
+        assert_eq!(arch_memory("falcon_h1"), "attention");
+        assert_eq!(arch_memory(""), "unknown");
     }
 
     /// `--split-mode tensor` is refused at load for the archs upstream's

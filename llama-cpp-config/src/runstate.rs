@@ -193,10 +193,11 @@ fn server_args(
     // NO --device, --tensor-split, --split-mode, --override-tensor, -lm, -fit
     //   (nor its --fit-ctx / --fit-target), --prefill-assistant, --cache-reuse,
     //   --ctx-checkpoints, --checkpoint-min-step, --kv-unified,
-    //   --kv-unified-per-slot or --mmproj-device here: those are per-preset keys
-    //   (the GPU distribution, the tensor placement, load-mode, fit,
-    //   prefill-assistant, the prompt cache, the KV layout, mmproj-device). The router copies its own args
-    //   over every preset (`preset.merge(base_preset)`), so any of them on this
+    //   --kv-unified-per-slot, --moe-cache-mib, --repack, --spec-draft-n-ubatch
+    //   or --mmproj-device here: those are per-preset keys (the GPU
+    //   distribution, the tensor placement, load-mode, fit, prefill-assistant,
+    //   the prompt cache, the KV layout, the expert cache and repacking, the
+    //   drafter, mmproj-device). The router copies its own args over every preset (`preset.merge(base_preset)`), so any of them on this
     //   line would override each model's own value.
     // --slot-save-path DIR : turns on the /slots save|restore endpoints, which is
     //   what `slot_state` calls around a stop and a start. Emitted only when the
@@ -923,6 +924,11 @@ mod tests {
             "-kvu",
             "--no-kv-unified",
             "--kv-unified-per-slot",
+            "--moe-cache-mib",
+            "--repack",
+            "--no-repack",
+            "-nr",
+            "--spec-draft-n-ubatch",
             "--fit-ctx",
             "-fitc",
             "--fit-target",

@@ -22,6 +22,7 @@ mod ini;
 mod integrations;
 mod kv_cache;
 mod model_scan;
+mod moe_cache;
 mod net_ifaces;
 mod paths;
 mod presets;

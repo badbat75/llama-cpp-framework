@@ -122,6 +122,10 @@ pub const SWEEPABLE: &[(&str, Setter)] = &[
         p.spec_draft_n_min = int(v)?;
         Ok(())
     }),
+    ("spec-draft-n-ubatch", |p, v| {
+        p.spec_draft_n_ubatch = int(v)?;
+        Ok(())
+    }),
     ("spec-type", |p, v| {
         p.spec_type = text(v)?;
         Ok(())
@@ -215,8 +219,17 @@ pub const SWEEPABLE: &[(&str, Setter)] = &[
         p.n_cpu_ffn = int(v)?;
         Ok(())
     }),
+    // Live engine only: llama-bench has no such option (`bench::caveats`).
+    ("moe-cache-mib", |p, v| {
+        p.moe_cache_mib = int(v)?;
+        Ok(())
+    }),
     ("op-offload", |p, v| {
         p.op_offload = boolean(v)?;
+        Ok(())
+    }),
+    ("repack", |p, v| {
+        p.repack = boolean(v)?;
         Ok(())
     }),
     ("lazy-mode", |p, v| {
@@ -1280,7 +1293,7 @@ mod tests {
                 ..Default::default()
             };
             let value = match *key {
-                "flash-attn" | "mmproj-offload" | "backend-sampling" | "op-offload"
+                "flash-attn" | "mmproj-offload" | "backend-sampling" | "op-offload" | "repack"
                 | "kv-unified" => "true",
                 "device" => "CUDA0",
                 "tensor-split" => "3,1",

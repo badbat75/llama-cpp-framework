@@ -158,6 +158,15 @@ pub struct Preset {
     /// `params.speculative.draft.p_split` and nothing reads that member, the
     /// same dead end as the two ngram min-hits keys below.
     pub spec_draft_n_min: Option<i32>,
+    /// Physical batch of the DRAFT context (--spec-draft-n-ubatch, llama.cpp
+    /// v0.7.0; its default 0 = the target's own `ubatch-size`). A smaller value
+    /// shrinks the draft context's compute buffer, i.e. spares VRAM, at the cost
+    /// of more passes when the drafter catches up on a long prompt. Applied in
+    /// `common_base_params_to_speculative` OUTSIDE the `has_dft()` branch, so,
+    /// unlike the placement keys below, it reaches MTP heads embedded in the main
+    /// GGUF too: it lives and dies with the other draft keys
+    /// (`prune_inactive_draft_keys`), gated like `spec_draft_n_max`.
+    pub spec_draft_n_ubatch: Option<i32>,
     /// KV-cache quantization for the DRAFT context's K and V
     /// (--spec-draft-type-k / --spec-draft-type-v, aliases -ctkd / -ctvd).
     /// Empty = omit the flag, the same empty↔"default" shape as `cache_type_k`
@@ -436,6 +445,25 @@ pub struct Preset {
     /// `-ot` rules llama.cpp would (`bench::synthetic_argv`), where a preset
     /// carrying `n_cpu_moe` rides the tool's own `-ncmoe`.
     pub n_cpu_ffn: Option<i32>,
+    /// VRAM cache, in MiB, for the MoE experts kept in HOST memory
+    /// (--moe-cache-mib, llama.cpp v0.7.0, EXPERIMENTAL upstream). `None` = omit
+    /// the flag; 0 is llama.cpp's own default, no cache. The cache holds the
+    /// experts the router picked recently, so a decode step that hits it reads
+    /// them from VRAM instead of over PCIe (`src/llama-moe-cache.cpp`).
+    ///
+    /// Only the layers whose experts ALL sit in host memory on a GPU-assigned
+    /// layer are cached (`n_cpu_moe`, an `exps=CPU` rule); with none, llama.cpp
+    /// warns and runs without a cache. Over several GPUs the budget is split like
+    /// the layers (`tensor_split`, or free VRAM when it is blank). Three cases
+    /// make the MODEL FAIL TO LOAD, all thrown at context creation: a model with
+    /// no experts (hence the prune where the model is known,
+    /// `prune_inactive_moe_cache`), `split_mode = tensor` (refused by
+    /// `validate_for_save`), and a budget too small for the experts of one token
+    /// in every group of layers (`moe_cache::floor`, refused
+    /// by the Models tab's Save). The drafter's context never uses it
+    /// (`common_base_params_to_speculative` forces its size to 0), and llama-bench
+    /// has no such option.
+    pub moe_cache_mib: Option<i32>,
     /// Run an operation on the GPU even though its WEIGHTS sit in host memory
     /// (--op-offload / --no-op-offload). `None` = omit the flag, llama.cpp's own
     /// default (on); a tri-state like `reasoning_preserve`, since `Some(false)`
@@ -454,6 +482,20 @@ pub struct Preset {
     /// single-token step never does. With every weight in VRAM there is nothing
     /// to copy and the key is a no-op.
     pub op_offload: Option<bool>,
+    /// CPU weight repacking (`--repack` / `--no-repack`). None = omit the key,
+    /// llama.cpp's default on: a weight left in host RAM whose type the CPU has
+    /// an interleaved kernel for (on x86 AVX2: Q4_0, Q4_K, IQ4_NL, MXFP4; Q2_K
+    /// with AVX-512; NEON adds Q5_K, Q6_K, Q8_0; never the other IQ types) is
+    /// rewritten into the `CPU_REPACK` buffer type at load. That buffer is not
+    /// a host buffer (`is_host` is null in `ggml-cpu/repack.cpp`), so such
+    /// experts are invisible to `--moe-cache-mib`, which only caches layers
+    /// whose experts ALL sit in host buffers: with every host layer repacked
+    /// the cache logs "no layer has all of its experts in host memory" and
+    /// stays off; one repacked tensor is enough to take a layer out
+    /// (`moe_cache::repacks`). `false` keeps them plain host weights, the fix
+    /// for that case, and is needed only while the cache is on: it costs the
+    /// uncached CPU layers the interleaved kernels' decode speed.
+    pub repack: Option<bool>,
     /// On-demand reading of the tensors the ARCH marks for it (--lazy-mode,
     /// `-lzm`: `on|auto|off`). Empty = omit the key, llama.cpp's default `auto`.
     /// A lazy tensor stays memory-mapped from the GGUF and only the rows a token
@@ -590,6 +632,7 @@ impl Default for Preset {
             spec_draft_n_max: None,
             spec_draft_p_min: None,
             spec_draft_n_min: None,
+            spec_draft_n_ubatch: None,
             spec_draft_type_k: String::new(),
             spec_draft_type_v: String::new(),
             spec_ngram_mod_n_match: None,
@@ -632,7 +675,9 @@ impl Default for Preset {
             n_predict: None,
             n_cpu_moe: None,
             n_cpu_ffn: None,
+            moe_cache_mib: None,
             op_offload: None,
+            repack: None,
             lazy_mode: String::new(),
             load_mode: String::new(),
             fit: false,
@@ -678,6 +723,7 @@ impl Preset {
             spec_draft_n_max: k.get("spec-draft-n-max").and_then(|v| ini::parse_int(v)),
             spec_draft_p_min: k.get("spec-draft-p-min").and_then(|v| ini::parse_float(v)),
             spec_draft_n_min: k.get("spec-draft-n-min").and_then(|v| ini::parse_int(v)),
+            spec_draft_n_ubatch: k.get("spec-draft-n-ubatch").and_then(|v| ini::parse_int(v)),
             spec_draft_type_k: get("spec-draft-type-k"),
             spec_draft_type_v: get("spec-draft-type-v"),
             spec_ngram_mod_n_match: k
@@ -740,7 +786,9 @@ impl Preset {
             n_predict: k.get("n-predict").and_then(|v| ini::parse_int(v)),
             n_cpu_moe: k.get("n-cpu-moe").and_then(|v| ini::parse_int(v)),
             n_cpu_ffn: k.get("n-cpu-ffn").and_then(|v| ini::parse_int(v)),
+            moe_cache_mib: k.get("moe-cache-mib").and_then(|v| ini::parse_int(v)),
             op_offload: getb("op-offload"),
+            repack: getb("repack"),
             lazy_mode: get("lazy-mode"),
             // Canonicalized like the server field it replaced: a hand-written
             // `MMAP+MLOCK` shows as the dropdown's entry instead of "default".
@@ -795,7 +843,7 @@ pub fn spec_type_is_draftless(spec_type: &str) -> bool {
 ///   inside llama.cpp's `if (has_dft())` and silently ignored (field docs above).
 /// - Without a draft file AND without embedded MTP heads there is nothing to
 ///   draft with at all, so the `draft-*` entries of `--spec-type`,
-///   `--spec-draft-n-max` and the draft KV types (`--spec-draft-type-k/-v`,
+///   `--spec-draft-n-max` (with its p-min / n-min / n-ubatch siblings) and the draft KV types (`--spec-draft-type-k/-v`,
 ///   which DO survive embedded MTP) go too. A surviving `spec-type = draft-mtp`
 ///   is NOT inert: llama-server builds an MTP draft context against the target
 ///   model, `llama_init_from_model` rejects it ("context type MTP requested but
@@ -838,6 +886,9 @@ pub fn prune_inactive_draft_keys(p: &mut Preset, embeds_mtp: bool) -> Vec<&'stat
         if p.spec_draft_n_min.take().is_some() {
             dropped.push("spec-draft-n-min");
         }
+        if p.spec_draft_n_ubatch.take().is_some() {
+            dropped.push("spec-draft-n-ubatch");
+        }
         // The draft KV types belong to THIS group, not the placement one below:
         // llama.cpp applies them whenever a draft context exists, embedded MTP
         // heads included (see the field docs), so they only die when there is no
@@ -859,6 +910,18 @@ pub fn prune_inactive_draft_keys(p: &mut Preset, embeds_mtp: bool) -> Vec<&'stat
         dropped.push("device-draft");
     }
     dropped
+}
+
+/// Drop `moe-cache-mib` from a preset whose model has no experts, returning
+/// whether it was there. Same contract as `prune_inactive_draft_keys`: `is_moe`
+/// must have been READ from the GGUF (`<arch>.expert_count > 0`), so callers
+/// skip the prune on an unreadable file. Same reason for existing too: the
+/// widget is disabled on a dense model, not cleared, and a positive value there
+/// is not inert: `llama_moe_cache` throws "MoE cache requires a MoE model" at
+/// context creation and the model fails to load. A 0 is llama.cpp's own
+/// "disabled", harmless, but dead on a dense model all the same, so it goes too.
+pub fn prune_inactive_moe_cache(p: &mut Preset, is_moe: bool) -> bool {
+    !is_moe && p.moe_cache_mib.take().is_some()
 }
 
 /// Drop the `--spec-ngram-*` keys of every n-gram type that `spec-type` does not
@@ -1128,7 +1191,21 @@ fn validate_for_save(preset: &Preset) -> io::Result<()> {
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
     crate::tensor_override::validate(&preset.override_tensor)
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
+    validate_moe_cache_split(preset).map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
     Ok(())
+}
+
+/// A positive `moe-cache-mib` under `split-mode = tensor` is a model that never
+/// loads: `llama_moe_cache` throws "MoE cache does not support tensor
+/// parallelism" at context creation. Model-independent, unlike the cache's other
+/// two refusals (a dense model, a budget below one token's experts), so it lives
+/// at the save boundary every writer goes through. 0 is "no cache" and passes.
+pub fn validate_moe_cache_split(p: &Preset) -> Result<(), String> {
+    if p.moe_cache_mib.is_some_and(|v| v > 0) && p.split_mode.trim() == "tensor" {
+        Err("moe-cache-mib with split-mode tensor: llama.cpp's MoE cache does not support tensor parallelism and the model would not load. Clear the MoE cache or pick another split mode".into())
+    } else {
+        Ok(())
+    }
 }
 
 /// `fit-target` as llama.cpp takes it: MiB as whole numbers, one for every
@@ -1318,6 +1395,10 @@ pub fn render_section(p: &Preset) -> String {
     out.push_str("; cut by p-min) is DISCARDED and that step decodes without speculation.\r\n");
     out.push_str("; Omit = llama.cpp's 0 (keep any length).\r\n");
     emit_i32(&mut out, "spec-draft-n-min", p.spec_draft_n_min);
+    out.push_str("; spec-draft-n-ubatch = the draft context's physical batch (llama.cpp\r\n");
+    out.push_str("; v0.7.0+): smaller spares the draft's compute buffer in VRAM. Omit = 0,\r\n");
+    out.push_str("; the model's own ubatch-size. Embedded MTP heads read it too.\r\n");
+    emit_i32(&mut out, "spec-draft-n-ubatch", p.spec_draft_n_ubatch);
     out.push_str("; spec-draft-type-k / -v quantize the DRAFT context's KV cache (-ctkd /\r\n");
     out.push_str("; -ctvd). Omitting them is NOT 'follow the model': llama.cpp copies\r\n");
     out.push_str("; cache-type-k/-v into the draft params and then overwrites both with the\r\n");
@@ -1522,6 +1603,15 @@ pub fn render_section(p: &Preset) -> String {
     out.push_str("; model and only the dense layers of a MoE one.\r\n");
     emit_i32(&mut out, "n-cpu-moe", p.n_cpu_moe);
     emit_i32(&mut out, "n-cpu-ffn", p.n_cpu_ffn);
+    out.push_str("; moe-cache-mib (llama.cpp v0.7.0+, experimental) = MiB of VRAM caching the\r\n");
+    out.push_str(
+        "; experts kept in host memory (n-cpu-moe or an exps=CPU rule). Omit = 0, off.\r\n",
+    );
+    out.push_str(
+        "; The model fails to load on a dense model, under split-mode tensor, or below\r\n",
+    );
+    out.push_str("; the experts of one token (the Models tab names that minimum).\r\n");
+    emit_i32(&mut out, "moe-cache-mib", p.moe_cache_mib);
     out.push_str(
         "; op-offload = false stops llama.cpp from running an operation on the GPU when\r\n",
     );
@@ -1543,6 +1633,17 @@ pub fn render_section(p: &Preset) -> String {
     );
     out.push_str("; VRAM.\r\n");
     emit_bool(&mut out, "op-offload", p.op_offload);
+    out.push_str(
+        "; repack = false keeps host weights in their file layout instead of the CPU's\r\n",
+    );
+    out.push_str(
+        "; interleaved one (on by default). Repacked experts are not host memory to the\r\n",
+    );
+    out.push_str(
+        "; MoE cache: if the log says \"no layer has all of its experts in host memory\",\r\n",
+    );
+    out.push_str("; set it to false; it is needed only while moe-cache-mib is on.\r\n");
+    emit_bool(&mut out, "repack", p.repack);
     out.push_str("; lazy-mode = on|auto|off reads the tensors the architecture marks for it\r\n");
     out.push_str("; (per-layer token-embedding tables: gemma4, qwen4exp) from disk on demand\r\n");
     out.push_str("; instead of keeping them resident. Omit the key = auto: lazy only for a\r\n");
@@ -1629,6 +1730,7 @@ mod tests {
             spec_type: "draft-mtp".into(),
             spec_draft_n_max: Some(2),
             spec_draft_p_min: Some(0.5),
+            spec_draft_n_ubatch: Some(64),
             spec_draft_type_k: "q8_0".into(),
             spec_draft_type_v: "q8_0".into(),
             n_gpu_layers_draft: Some(99),
@@ -1637,7 +1739,7 @@ mod tests {
         }
     }
 
-    // No draft file and no embedded heads: all seven go, and the reported list is
+    // No draft file and no embedded heads: all eight go, and the reported list is
     // the INI key names in file order.
     #[test]
     fn prune_drops_every_speculative_key_without_a_draft() {
@@ -1649,6 +1751,7 @@ mod tests {
                 "spec-type",
                 "spec-draft-n-max",
                 "spec-draft-p-min",
+                "spec-draft-n-ubatch",
                 "spec-draft-type-k",
                 "spec-draft-type-v",
                 "n-gpu-layers-draft",
@@ -1658,6 +1761,7 @@ mod tests {
         assert_eq!(p.spec_type, "");
         assert_eq!(p.spec_draft_n_max, None);
         assert_eq!(p.spec_draft_p_min, None);
+        assert_eq!(p.spec_draft_n_ubatch, None);
         assert_eq!(p.spec_draft_type_k, "");
         assert_eq!(p.spec_draft_type_v, "");
         assert_eq!(p.n_gpu_layers_draft, None);
@@ -1676,10 +1780,49 @@ mod tests {
         assert_eq!(p.spec_type, "draft-mtp");
         assert_eq!(p.spec_draft_n_max, Some(2));
         assert_eq!(p.spec_draft_p_min, Some(0.5));
+        // Applied outside `has_dft()`: the embedded heads' context reads it.
+        assert_eq!(p.spec_draft_n_ubatch, Some(64));
         assert_eq!(p.spec_draft_type_k, "q8_0");
         assert_eq!(p.spec_draft_type_v, "q8_0");
         assert_eq!(p.n_gpu_layers_draft, None);
         assert_eq!(p.device_draft, "");
+    }
+
+    // A dense model throws on any positive cache, and a 0 is dead weight there;
+    // a MoE model keeps whatever it has, 0 included.
+    #[test]
+    fn moe_cache_is_pruned_on_a_dense_model_only() {
+        for v in [0, 4096] {
+            let mut p = Preset {
+                moe_cache_mib: Some(v),
+                ..Default::default()
+            };
+            assert!(!prune_inactive_moe_cache(&mut p, true));
+            assert_eq!(p.moe_cache_mib, Some(v));
+            assert!(prune_inactive_moe_cache(&mut p, false));
+            assert_eq!(p.moe_cache_mib, None);
+        }
+        assert!(!prune_inactive_moe_cache(&mut Preset::default(), false));
+    }
+
+    // Tensor parallelism refuses the cache at load; 0 (no cache) and every other
+    // split mode pass.
+    #[test]
+    fn moe_cache_is_refused_under_split_mode_tensor() {
+        let p = |mib, mode: &str| Preset {
+            moe_cache_mib: mib,
+            split_mode: mode.into(),
+            ..Default::default()
+        };
+        assert!(validate_moe_cache_split(&p(Some(4096), "tensor")).is_err());
+        assert!(validate_moe_cache_split(&p(Some(0), "tensor")).is_ok());
+        assert!(validate_moe_cache_split(&p(None, "tensor")).is_ok());
+        for mode in ["", "layer", "row", "none"] {
+            assert!(
+                validate_moe_cache_split(&p(Some(4096), mode)).is_ok(),
+                "{mode}"
+            );
+        }
     }
 
     // A draft FILE makes all four live, on any model; prune must not touch them.
@@ -2029,6 +2172,7 @@ mod tests {
             spec_draft_n_max: Some(15),
             spec_draft_p_min: Some(0.35),
             spec_draft_n_min: Some(2),
+            spec_draft_n_ubatch: Some(128),
             // Deliberately NOT the cache_type_k/-v below: the draft cache is a
             // separate setting, and matching values would make the round-trip
             // blind to the two being crossed.
@@ -2087,9 +2231,12 @@ mod tests {
             n_predict: Some(-1),
             n_cpu_moe: Some(12),
             n_cpu_ffn: Some(4),
+            moe_cache_mib: Some(6144),
             // Some(false): the one value that changes the launch
             // (--no-op-offload), so the one that must not collapse into "absent".
             op_offload: Some(false),
+            // Some(false) for the same reason: --no-repack is the value that acts.
+            repack: Some(false),
             // `on`, not `auto`: the value that differs from the default.
             lazy_mode: "on".into(),
             load_mode: "mmap+mlock".into(),

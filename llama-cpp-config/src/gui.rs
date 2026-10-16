@@ -1066,12 +1066,40 @@ thread_local! {
     static MODEL_TENSORS: RefCell<Vec<gguf::TensorInfo>> = const { RefCell::new(Vec::new()) };
     /// The open tensor picker, or None.
     static TENSOR_PICKER: RefCell<Option<tensor_picker::Picker>> = const { RefCell::new(None) };
+    /// The selected model's `(expert_count, expert_used, block_count)`, read with
+    /// `MODEL_TENSORS`; all 0 when no model is read. What `moe_cache::floor`
+    /// needs beside the tensors.
+    static MODEL_EXPERTS: std::cell::Cell<(u32, u32, u32)> = const { std::cell::Cell::new((0, 0, 0)) };
 }
 
 /// Replace the selected model's tensor list (see `MODEL_TENSORS`). The caller
 /// refreshes the table.
 fn set_model_tensors(tensors: Vec<gguf::TensorInfo>) {
     MODEL_TENSORS.with(|t| *t.borrow_mut() = tensors);
+}
+
+/// Record the selected model's expert counts (see `MODEL_EXPERTS`).
+fn set_model_experts(expert_count: u32, expert_used: u32, n_layer: u32) {
+    MODEL_EXPERTS.with(|e| e.set((expert_count, expert_used, n_layer)));
+}
+
+/// The `--moe-cache-mib` verdict of `p` on the selected model, on this
+/// machine's CPU (`moe_cache::floor`), `None` when it has no experts or was not
+/// read.
+fn preset_moe_floor(p: &presets::Preset) -> Option<crate::moe_cache::Verdict> {
+    let (expert_count, expert_used, n_layer) = MODEL_EXPERTS.with(|e| e.get());
+    MODEL_TENSORS.with(|t| {
+        crate::moe_cache::floor(
+            &crate::moe_cache::Model {
+                tensors: &t.borrow(),
+                expert_count,
+                expert_used,
+                n_layer,
+                isa: crate::moe_cache::Isa::host(),
+            },
+            p,
+        )
+    })
 }
 
 fn model_tensors() -> Vec<gguf::TensorInfo> {

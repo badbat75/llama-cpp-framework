@@ -118,6 +118,10 @@ const HINT_CACHE_REUSE: i32 = 256;
 const HINT_TOP_K: i32 = 40;
 const HINT_SPEC_DRAFT_N_MAX: i32 = 3;
 const HINT_SPEC_DRAFT_N_MIN: i32 = 0;
+// 0 = the target's own n_ubatch (v0.7.0's default), so unticking changes nothing.
+const HINT_SPEC_DRAFT_N_UBATCH: i32 = 0;
+// 0 = no MoE cache (v0.7.0's default), the same reasoning.
+const HINT_MOE_CACHE_MIB: i32 = 0;
 const HINT_CTX_CHECKPOINTS: i32 = 32;
 const HINT_CHECKPOINT_MIN_STEP: i32 = 8192;
 const HINT_FIT_CTX: i32 = 4096;
@@ -192,6 +196,8 @@ pub fn preset_to_form(p: &presets::Preset) -> PresetForm {
         spec_draft_p_min_default: p.spec_draft_p_min.is_none(),
         spec_draft_n_min: itxt(p.spec_draft_n_min, HINT_SPEC_DRAFT_N_MIN),
         spec_draft_n_min_default: p.spec_draft_n_min.is_none(),
+        spec_draft_n_ubatch: itxt(p.spec_draft_n_ubatch, HINT_SPEC_DRAFT_N_UBATCH),
+        spec_draft_n_ubatch_default: p.spec_draft_n_ubatch.is_none(),
         spec_draft_type_k: enum_or_default(&p.spec_draft_type_k),
         spec_draft_type_v: enum_or_default(&p.spec_draft_type_v),
         spec_ngram_mod_n_match: itxt(p.spec_ngram_mod_n_match, HINT_SPEC_NGRAM_MOD_N_MATCH),
@@ -287,9 +293,12 @@ pub fn preset_to_form(p: &presets::Preset) -> PresetForm {
         n_cpu_moe_auto: p.n_cpu_moe.is_none(),
         n_cpu_ffn: p.n_cpu_ffn.unwrap_or(0),
         n_cpu_ffn_auto: p.n_cpu_ffn.is_none(),
+        moe_cache_mib: itxt(p.moe_cache_mib, HINT_MOE_CACHE_MIB),
+        moe_cache_mib_default: p.moe_cache_mib.is_none(),
         // Tri-state like reasoning_preserve: None is "omit the flag" (on), a
         // value of its own, so no fallback to `d`.
         op_offload: tri_state(p.op_offload),
+        repack: tri_state(p.repack),
         // Empty IS the "omit the flag" state (auto), shown as "default" like
         // reasoning-effort.
         lazy_mode: enum_or_default(&p.lazy_mode),
@@ -367,6 +376,12 @@ pub fn form_to_preset(f: &PresetForm) -> presets::Preset {
             None
         } else {
             ini::parse_int_in(f.spec_draft_n_min.as_str(), &ini::INT_NON_NEGATIVE)
+        },
+        // 0 is llama.cpp's own default (the target's n_ubatch), so it is a value.
+        spec_draft_n_ubatch: if f.spec_draft_n_ubatch_default {
+            None
+        } else {
+            ini::parse_int_in(f.spec_draft_n_ubatch.as_str(), &ini::INT_NON_NEGATIVE)
         },
         spec_draft_type_k: enum_or_empty(f.spec_draft_type_k.as_str()),
         spec_draft_type_v: enum_or_empty(f.spec_draft_type_v.as_str()),
@@ -522,10 +537,17 @@ pub fn form_to_preset(f: &PresetForm) -> presets::Preset {
         } else {
             Some(f.n_cpu_ffn)
         },
+        // 0 is llama.cpp's own default (no cache), so it is a value.
+        moe_cache_mib: if f.moe_cache_mib_default {
+            None
+        } else {
+            ini::parse_int_in(f.moe_cache_mib.as_str(), &ini::INT_NON_NEGATIVE)
+        },
         // "default" → None: omit the key. Never `Some(s == "on")`: that would
         // write `op-offload = false` into every preset left on default, and
         // unlike backend-sampling's, that `false` is a real flag.
         op_offload: tri_bool(f.op_offload.as_str()),
+        repack: tri_bool(f.repack.as_str()),
         lazy_mode: enum_or_empty(f.lazy_mode.as_str()),
         // Canonicalized, never trusted: a value llama.cpp rejects would stop
         // the model from loading.
@@ -588,7 +610,7 @@ pub fn form_to_preset(f: &PresetForm) -> presets::Preset {
 /// the two together, and `every_integer_field_is_checked` holds this list to the
 /// `PresetForm` struct in ui/types.slint, so a new integer field that skips it
 /// fails a test instead of saving a mistyped number as an absent key.
-fn int_fields(f: &PresetForm) -> [(&'static str, bool, &str, RangeInclusive<i32>); 27] {
+fn int_fields(f: &PresetForm) -> [(&'static str, bool, &str, RangeInclusive<i32>); 29] {
     [
         (
             "image-min-tokens",
@@ -612,6 +634,18 @@ fn int_fields(f: &PresetForm) -> [(&'static str, bool, &str, RangeInclusive<i32>
             "spec-draft-n-min",
             f.spec_draft_n_min_default,
             f.spec_draft_n_min.as_str(),
+            ini::INT_NON_NEGATIVE,
+        ),
+        (
+            "spec-draft-n-ubatch",
+            f.spec_draft_n_ubatch_default,
+            f.spec_draft_n_ubatch.as_str(),
+            ini::INT_NON_NEGATIVE,
+        ),
+        (
+            "moe-cache-mib",
+            f.moe_cache_mib_default,
+            f.moe_cache_mib.as_str(),
             ini::INT_NON_NEGATIVE,
         ),
         (
@@ -786,6 +820,8 @@ pub fn prune_inactive_draft_fields(f: &mut PresetForm, embeds_mtp: bool) -> Vec<
         f.spec_draft_p_min_default = pruned.spec_draft_p_min_default;
         f.spec_draft_n_min = pruned.spec_draft_n_min;
         f.spec_draft_n_min_default = pruned.spec_draft_n_min_default;
+        f.spec_draft_n_ubatch = pruned.spec_draft_n_ubatch;
+        f.spec_draft_n_ubatch_default = pruned.spec_draft_n_ubatch_default;
         f.spec_draft_type_k = pruned.spec_draft_type_k;
         f.spec_draft_type_v = pruned.spec_draft_type_v;
         f.n_gpu_layers_draft = pruned.n_gpu_layers_draft;
@@ -893,6 +929,11 @@ mod tests {
             (&mut f.image_max_tokens, &mut f.image_max_tokens_default),
             (&mut f.spec_draft_n_max, &mut f.spec_draft_n_max_default),
             (&mut f.spec_draft_n_min, &mut f.spec_draft_n_min_default),
+            (
+                &mut f.spec_draft_n_ubatch,
+                &mut f.spec_draft_n_ubatch_default,
+            ),
+            (&mut f.moe_cache_mib, &mut f.moe_cache_mib_default),
             (&mut f.ctx_size, &mut f.ctx_size_default),
             (&mut f.parallel, &mut f.parallel_default),
             (
@@ -1115,6 +1156,7 @@ mod tests {
             spec_draft_n_max: Some(10),
             spec_draft_p_min: Some(0.25),
             spec_draft_n_min: Some(2),
+            spec_draft_n_ubatch: Some(128),
             // Not the cache_type_k/-v below: the draft cache is its own setting.
             spec_draft_type_k: "q4_0".into(),
             spec_draft_type_v: "q4_1".into(),
@@ -1159,7 +1201,9 @@ mod tests {
             n_predict: Some(24576),
             n_cpu_moe: Some(12),
             n_cpu_ffn: Some(4),
+            moe_cache_mib: Some(6144),
             op_offload: Some(false),
+            repack: Some(false),
             lazy_mode: "off".into(),
             load_mode: "none".into(),
             // false: this preset sets ctx-size and n-gpu-layers, which rule the fit out
@@ -1248,8 +1292,9 @@ mod tests {
         }
     }
 
-    // The checkpoint keys and spec-draft-n-min take 0 as a real value (no
-    // checkpoints, no minimum spacing, keep any draft length), unlike the
+    // The checkpoint keys, spec-draft-n-min, spec-draft-n-ubatch and
+    // moe-cache-mib take 0 as a real value (no checkpoints, no minimum spacing,
+    // keep any draft length, the target's ubatch, no cache), unlike the
     // `INT_POSITIVE` counts beside them.
     #[test]
     fn zero_survives_the_form_where_it_is_a_value() {
@@ -1257,6 +1302,8 @@ mod tests {
             ctx_checkpoints: Some(0),
             checkpoint_min_step: Some(0),
             spec_draft_n_min: Some(0),
+            spec_draft_n_ubatch: Some(0),
+            moe_cache_mib: Some(0),
             ..Preset::default()
         };
         assert_eq!(round_trip(&p), p);

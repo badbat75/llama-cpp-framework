@@ -60,6 +60,8 @@ mod loaded_impl {
     type FnTensorSize = unsafe extern "C" fn(GgufCtx, i64) -> usize;
     type FnNTensors = unsafe extern "C" fn(GgufCtx) -> i64;
     type FnTensorName = unsafe extern "C" fn(GgufCtx, i64) -> *const c_char;
+    // `GGML_MAX_DIMS` (4) int64 extents, owned by the ctx; 1 past `n_dims`.
+    type FnTensorNe = unsafe extern "C" fn(GgufCtx, i64) -> *const i64;
     type FnU8 = unsafe extern "C" fn(GgufCtx, i64) -> u8;
     type FnI8 = unsafe extern "C" fn(GgufCtx, i64) -> i8;
     type FnU16 = unsafe extern "C" fn(GgufCtx, i64) -> u16;
@@ -91,6 +93,7 @@ mod loaded_impl {
         tensor_size: FnTensorSize,
         n_tensors: FnNTensors,
         tensor_name: FnTensorName,
+        tensor_ne: FnTensorNe,
     }
     // `Api` holds only C function pointers (Send + Sync), so it is safe to cache
     // in a `static OnceLock`. Only SUCCESS is cached; see `api()`.
@@ -234,6 +237,7 @@ mod loaded_impl {
                 tensor_size: sym!(FnTensorSize, b"gguf_get_tensor_size\0"),
                 n_tensors: sym!(FnNTensors, b"gguf_get_n_tensors\0"),
                 tensor_name: sym!(FnTensorName, b"gguf_get_tensor_name\0"),
+                tensor_ne: sym!(FnTensorNe, b"gguf_get_tensor_ne\0"),
             })
         }
     }
@@ -276,10 +280,11 @@ mod loaded_impl {
 
     impl Ctx {
         /// Every tensor this file holds (one shard's worth for a split model),
-        /// in file order, with its size in bytes.
+        /// in file order, with its size in bytes, its `ggml_type` and `ne[1]`.
         pub fn tensors(&self) -> Vec<TensorInfo> {
             // SAFETY: ids run 0..n_tensors on this ctx; the name pointer is
-            // owned by the ctx and copied out before it is freed.
+            // owned by the ctx and copied out before it is freed, and the ne
+            // array holds GGML_MAX_DIMS (4) entries, so index 1 is in bounds.
             unsafe {
                 let n = (self.api.n_tensors)(self.ptr).max(0);
                 (0..n)
@@ -288,9 +293,18 @@ mod loaded_impl {
                         if p.is_null() {
                             return None;
                         }
+                        let ne = (self.api.tensor_ne)(self.ptr, id);
+                        let ne1 = if ne.is_null() {
+                            0
+                        } else {
+                            u64::try_from(*ne.add(1)).unwrap_or(0)
+                        };
                         Some(TensorInfo {
                             name: CStr::from_ptr(p).to_string_lossy().into_owned(),
                             bytes: (self.api.tensor_size)(self.ptr, id) as u64,
+                            ty: u32::try_from((self.api.tensor_type)(self.ptr, id))
+                                .unwrap_or(u32::MAX),
+                            ne1,
                         })
                     })
                     .collect()

@@ -43,6 +43,9 @@ export struct PresetForm {
     // draft length), hence INT_NON_NEGATIVE in form.rs.
     spec_draft_n_min: string,
     spec_draft_n_min_default: bool,
+    // --spec-draft-n-ubatch (llama.cpp v0.7.0): the draft context's physical batch.
+    spec_draft_n_ubatch: string,
+    spec_draft_n_ubatch_default: bool,
     // --spec-draft-type-k/-v (-ctkd/-ctvd): the DRAFT context's KV cache types.
     // EnumComboBox over Options.cache_types with the same empty↔"default"
     // spelling as cache_type_k/-v below, but "default" here means f16, NOT
@@ -165,11 +168,18 @@ export struct PresetForm {
     // AutoSlider shape (int + an `_auto` "omit the flag" bool).
     n_cpu_ffn: int,
     n_cpu_ffn_auto: bool,
+    // --moe-cache-mib (llama.cpp v0.7.0, experimental): VRAM cache for the
+    // experts kept in host memory, in MiB.
+    moe_cache_mib: string,
+    moe_cache_mib_default: bool,
     // --op-offload / --no-op-offload, a TRI-state carried as a string like
     // flash_attn and reasoning_preserve: "default" (omit the flag; llama.cpp's
     // default is on), "on", "off". "off" (--no-op-offload) is the one value that
     // changes the launch.
     op_offload: string,
+    // --repack / --no-repack, the same tri-state: "default" (omit; llama.cpp's
+    // default is on), "on", "off". "off" is the value that acts.
+    repack: string,
     // --lazy-mode, an enum-valued string like reasoning_effort: "default" (omit
     // the flag; llama.cpp's default is auto), "on", "auto", "off".
     lazy_mode: string,

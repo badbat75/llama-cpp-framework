@@ -563,6 +563,10 @@ pub fn synthetic_argv(p: &Preset, cfg: &ServerConfig, plan: &Plan, sweep: &Sweep
     if let Some(on) = p.op_offload {
         push("-nopo", if on { "0".into() } else { "1".into() });
     }
+    // Same sense as the preset's, as a 0|1 value (llama-bench's `--repack`).
+    if let Some(on) = p.repack {
+        push("--repack", if on { "1".into() } else { "0".into() });
+    }
     // Same spelling and values as llama-server's; an unset key leaves the tool
     // at auto, llama.cpp's default on both sides.
     if !p.lazy_mode.is_empty() {
@@ -1164,6 +1168,7 @@ pub fn caveats(mode: Mode) -> Vec<&'static str> {
             "`pp` is batch prefill throughput, not time to first token.",
             "`--ctx-size` is not honoured: llama-bench sizes the context as prompt + generated + depth.",
             "`--n-cpu-ffn` has no llama-bench flag: it is replayed as the per-layer `blk\\.<i>\\.ffn_(up|down|gate)\\.=CPU` override-tensor rules llama.cpp expands it into, ahead of the preset's own rules.",
+            "`--moe-cache-mib` is ignored: llama-bench has no such option, so a preset carrying it runs here without the expert cache.",
             "llama-server must be stopped: benching alongside it does not fail cleanly, it spills into shared memory and reads as a backend regression.",
         ],
     }
@@ -1828,6 +1833,24 @@ mod tests {
         assert_eq!(argv_of(&argv(Some(false)), "-nopo").as_deref(), Some("1"));
         assert_eq!(argv_of(&argv(Some(true)), "-nopo").as_deref(), Some("0"));
         assert!(!argv(None).iter().any(|x| x == "-nopo"));
+    }
+
+    #[test]
+    fn repack_rides_llama_bench_repack_as_0_or_1() {
+        let plan = Plan::default();
+        let argv = |state| {
+            let p = Preset {
+                repack: state,
+                ..preset("a")
+            };
+            synthetic_argv(&p, &ServerConfig::default(), &plan, &first_sweep(&plan))
+        };
+        assert_eq!(
+            argv_of(&argv(Some(false)), "--repack").as_deref(),
+            Some("0")
+        );
+        assert_eq!(argv_of(&argv(Some(true)), "--repack").as_deref(), Some("1"));
+        assert!(!argv(None).iter().any(|x| x == "--repack"));
     }
 
     #[test]
