@@ -96,12 +96,28 @@ if (-not $llamaTag) {
 # holds.) Only then are the patches in the way.
 $headSha = (git -C $cfg.LlamaCppDir rev-parse HEAD).Trim()
 $tagSha  = (git -C $cfg.LlamaCppDir rev-parse "$llamaTag^{commit}").Trim()
-if ($headSha -ne $tagSha) {
+# A patch that applies in neither direction means the clone holds an OLDER
+# revision of it (the patch file changed since the last build): that also needs
+# the clean tree, or the apply leg below fails on a tag that did not move.
+$needsClean = $headSha -ne $tagSha
+foreach ($patch in $llamaPatches) {
+    if (-not (Test-GitApply $patch.FullName) -and -not (Test-GitApply $patch.FullName -Reverse)) {
+        $needsClean = $true
+    }
+}
+if ($needsClean) {
     foreach ($patch in $llamaPatches) {
         if (-not (Test-GitApply $patch.FullName -Reverse)) { continue }
         git -C $cfg.LlamaCppDir apply --reverse -- $patch.FullName
         if ($LASTEXITCODE -ne 0) { throw "git apply --reverse $($patch.Name) failed" }
         Write-Host "Reverted patch for a clean checkout: $($patch.Name)" -ForegroundColor DarkGray
+    }
+    # Whatever the reverts left behind (a stale patch revision, a hand edit) is
+    # STASHED, never discarded: `git stash list` in the clone has it back.
+    if (git -C $cfg.LlamaCppDir status --porcelain --untracked-files=no) {
+        git -C $cfg.LlamaCppDir stash push --quiet --message "02-build.ps1: local changes before checking out $llamaTag"
+        if ($LASTEXITCODE -ne 0) { throw "git stash in $($cfg.LlamaCppDir) failed" }
+        Write-Host "Stashed local changes in the llama.cpp clone (git -C $($cfg.LlamaCppDir) stash list)" -ForegroundColor Yellow
     }
 }
 

@@ -44,14 +44,26 @@ LLAMA_TAG="$(git_l tag --list 'v[0-9]*' --merged origin/master --sort=-v:refname
              grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -n1 || true)"
 [[ -n "$LLAMA_TAG" ]] || die "could not resolve a llama.cpp release tag (vX.Y.Z) reachable from origin/master in $CFG_LLAMA_CPP_DIR"
 
-# Revert the patches only when the checkout actually moves HEAD: rewriting a
-# patched file on a re-run would bump its mtime and cost a needless recompile.
-if [[ "$(git_l rev-parse HEAD)" != "$(git_l rev-parse "$LLAMA_TAG^{commit}")" ]]; then
+# Clean the tree only when the checkout actually moves HEAD, or when a patch
+# applies in neither direction (the clone holds an older revision of it):
+# rewriting a patched file on a re-run would bump its mtime and cost a needless
+# recompile. Whatever the reverts leave behind (a stale patch revision, a hand
+# edit) is stashed, never discarded: `git stash list` in the clone has it back.
+needs_clean=0
+[[ "$(git_l rev-parse HEAD)" != "$(git_l rev-parse "$LLAMA_TAG^{commit}")" ]] && needs_clean=1
+for patch in "${LLAMA_PATCHES[@]}"; do
+    can_apply -- "$patch" || can_apply --reverse -- "$patch" || needs_clean=1
+done
+if (( needs_clean )); then
     for patch in "${LLAMA_PATCHES[@]}"; do
         can_apply --reverse -- "$patch" || continue
         git_l apply --reverse -- "$patch"
         say_dim "Reverted patch for a clean checkout: $(basename "$patch")"
     done
+    if [[ -n "$(git_l status --porcelain --untracked-files=no)" ]]; then
+        git_l stash push --quiet --message "02-build.sh: local changes before checking out $LLAMA_TAG"
+        say_warn "Stashed local changes in the llama.cpp clone (git -C $CFG_LLAMA_CPP_DIR stash list)"
+    fi
 fi
 
 say_head "Checking out llama.cpp release tag: $LLAMA_TAG"

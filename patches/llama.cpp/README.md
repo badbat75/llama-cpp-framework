@@ -5,7 +5,9 @@
 the newest `vX.Y.Z` release tag, and **reverts them again before the next
 fetch/checkout** so the checkout always runs on a clean tree (a tag bump that
 touches a patched file would otherwise abort with "local changes would be
-overwritten"). Both legs probe with `git apply --check` first, so re-running
+overwritten"). Anything the reverts leave behind (an older revision of a
+patch that has since changed, a hand edit) is **stashed** in the clone, never
+discarded: `git stash list` there has it back. Both legs probe with `git apply --check` first, so re-running
 the build is a no-op rather than an error, and a patch that no longer applies
 **fails the build fast** instead of being skipped silently: an out-of-tree
 change that quietly stops being applied is a binary that behaves differently
