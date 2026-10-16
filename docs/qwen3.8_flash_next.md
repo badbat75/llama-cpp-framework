@@ -38,7 +38,8 @@ layout the campaign started from; the recommended one (`f16`, `n-cpu-moe 16`) is
 | `n-cpu-moe` | the lowest that leaves ~500 MB free on each card (below that, hipBLASLt's workspace runs out on the first real prompt and the process hangs in the driver; a 5-token test does not show it). On a 32 GB card at ctx 32768, `26` (27170 MiB of weights on the card, 1017 MiB compute buffer, ~3 GiB left) | decode 17.8 t/s at `26` against 12.3 at `48` (both `mmap`). *Linux*, ubatch 512, the lowest with >= 512 MB free on the R9700 after a 2.9k-token prompt, decode on the 25-token prompt (two runs): see the table below |
 | `moe-cache-mib` | `0` (off), with no condition, on llama.cpp v0.7.0 (`620d2225c`; the cache dates from #29887, 2026-10-07): a cache policy upstream changes would reopen it | R9700: a loss of 3-4x (14.1 to 3.0-4.0 t/s). RTX 4070 SUPER: at equal VRAM, experts kept on the card beat the cache at every split (25.6 t/s against 19.5-23.6), and with every expert in RAM it is noise (section 3). *Linux*, two cards, the cache on the R9700 in place of resident layers: 17.8 to 22.5 t/s against 27.4 (section 3) |
 | `load-mode` | `none` whenever experts sit in RAM. On Windows/ROCm with experts on the GPU, `mmap`, set explicitly, until the abort of section 4 is fixed; on Linux `none` there too (no abort). `auto` resolves to `none` only when a device THE MODEL RUNS ON reports no mmap support (`llama-model.cpp`, `load_tensors`): a Ryzen iGPU visible to HIP counts only when `device` is left blank; with `device` pinned to the discrete cards `auto` is `mmap` | `n-cpu-moe 48`, decode with `none` against `mmap`: R9700 11.6 to 14.1 against 12.3; RTX 4070 SUPER 22.7 to 22.9 against 14.0 to 17.1. `none` loads slower (25 to 43 s against 10 to 11 s). `n-cpu-moe 26` with `none` aborts on the R9700 on Windows. *Linux*: `none` 25.6 ±0.1 t/s; `mmap` 23.9 ±2.6 (21.0 on the first run after the load, 24.9 and 25.9 after); `auto` resolved to `mmap` (log), 24.7 ±1.7. (That AMD advises against `mmap` on ROCm is a reported recommendation with no primary source linked here.) |
-| `repack` | leave unset | without `--no-host` the GPU's pinned host buffer type is picked before `CPU_REPACK`, so nothing is repacked: the MoE cache layout is identical with and without `--no-repack` (section 3). *Linux*, `n-cpu-moe 14`, `moe-cache-mib 512`: the same 4 groups and 508.50 MiB with and without `--no-repack`, no `CPU_REPACK` buffer in either log |
+| `repack` | leave unset | it acts only with `no-host` (next row): without it the GPU's pinned host buffer type is picked before `CPU_REPACK`, so nothing is repacked: the MoE cache layout is identical with and without `--no-repack` (section 3). *Linux*, `n-cpu-moe 14`, `moe-cache-mib 512`: the same 4 groups and 508.50 MiB with and without `--no-repack`, no `CPU_REPACK` buffer in either log |
+| `no-host` | `true` with `op-offload false` | weights kept in RAM skip the GPU's pinned host buffer (`ROCm_Host`), so the CPU repacks the types it has interleaved kernels for: here `ffn_down_exps` in IQ4_NL (4950 MiB of the 14997 MiB in RAM at `n-cpu-moe 16`; `gate`/`up` in IQ2_S/IQ3 stay as they are, 10047 MiB of ordinary RAM). The pinned buffer only speeds the per-batch copies of `op-offload true`, which `false` never makes. *Linux*, the recommended preset (section 9), 43.7k-token prompt: prefill 416 and 419 t/s against 383 and 382, decode 25.0 against 24.9, three prompts 27.3 both. With `op-offload true` (section 8) the copies would come from pageable memory: not measured |
 | `spec-type` | `ngram-map-k`, `spec-ngram-map-k-size-m 64` (`size-n` left at 12) | no MTP head in the GGUF, so the n-gram drafters are the only speculators. *Linux*, v0.6.0, IQ3_XXS (section 7): code rewrite 61-65 t/s (`size-m` 48 and 64) against 28.6 with none; prose reasoning 40.0 ±1.6 against 29.4 ±1.3 |
 | prefill | (measured) | *Linux*, ubatch 512: 368 and 372 t/s at 2.9k tokens, 364 and 370 at 43.7k, 340 and 341 at 87.4k; decode right after: 24.5, 20.5 and 17.5 t/s. v0.6.0 gave 342 and 338 at 43.7k |
 | `threads` | one per physical core (12 on the 12-core host), `ThreadsBatch` the same | *Linux*, 43.7k-token prompt, two runs of 128 tokens: prefill 410 and 405 t/s at 12, 363 and 368 at 16, 371 and 377 at 22, 364 and 368 at 24; decode 21.8, 21.5, 21.1 and 17.6 |
@@ -71,7 +72,7 @@ two at 262144. The second card is worth ten layers of experts and 20-25% of deco
 - **The cache groups layers by expert tensor types.** At `n-cpu-moe 48` the IQ3_S file
   gives seven groups (IQ4_NL `ffn_down_exps` on some layers, Q2_0 on the others), each at
   ~4.2% of its experts as slots in 2048 MiB, for 47962.50 MiB of host experts.
-- **Repack happens only with `--no-host`**, which the framework does not emit. With it,
+- **Repack happens only with `--no-host`** (the preset's `no-host`). With it,
   `CPU_REPACK` takes 17550 MiB of experts, those layers leave the cache, and 9 layers stay
   cacheable (7112.50 MiB of host experts, ~28.7% as slots in 2048 MiB). Without it, the
   default and `--no-repack` print the same 48-layer cache.
@@ -118,6 +119,21 @@ two runs each; a layer of experts is ~1.1 GiB on the card):
 | `n-cpu-moe 17`, `moe-cache-mib 2688` | 2683.30 MiB for 15737.50 MiB | 22.5 ±0.1 | 74% |
 
 The smallest cache is the worst, so no "one hot layer in cache" sweet spot exists here.
+
+*Linux*, the same with `no-host` (section 2): the CPU repacks the IQ4_NL `ffn_down_exps`, so
+only the five host layers with Q2_0 ones (1, 8, 10, 12, 13; 3787.50 MiB) stay cacheable,
+and the cache spends far fewer synchronizations per token:
+
+| configuration | decode t/s, three prompts | hit rate |
+| --- | --- | --- |
+| `n-cpu-moe 16`, no cache | 27.0 (26.7, 27.2, 27.2) | n/a |
+| `n-cpu-moe 17`, `moe-cache-mib 1024` | 26.0 (25.9, 26.2, 25.8) | 80% |
+| `n-cpu-moe 18`, `moe-cache-mib 2048` | 26.6 (26.8, 26.4, 26.5) | 93% |
+
+Close to even, no longer a loss of 18-35%, but still no gain: at 93% hits the cache still trails
+the two resident layers it replaced. A large cache does no better: without `no-host`, `n-cpu-moe 28` and
+`moe-cache-mib 12000` (11993.90 MiB for 26875.00 MiB of host experts, every host layer
+cacheable) decode 25.8 t/s on the three prompts (25.7, 26.6, 25.0) at 92% hits.
 The cache's log has no per-layer statistics (`log_stats` prints two totals); the
 aggregate is enough for the verdict, and the per-layer spread would only steer a manual
 `override-tensor`, which is worth it only if an upstream fix still leaves the cache losing.
@@ -163,7 +179,6 @@ Two changes that would target the cost, for an upstream issue:
 | parameter | current value | question | result |
 | --- | --- | --- | --- |
 | HIP upload cost per miss | n/a | a profile of the miss path (sync per layer, transfers per token) on ROCm against CUDA | TBD: needs a trace (rocprofv3, nsys), not a bench run |
-| `moe-cache-mib` with `--no-host` | n/a | 9 cacheable layers at ~29% slots: decode against no cache | TBD: the framework emits no `--no-host`, so this is an upstream question, not a setting |
 | `load-mode none` abort | n/a | minimal reproduction for upstream; Windows only (not on Linux ROCm, section 4), but also CUDA/Vulkan on Windows? | TBD |
 
 ## 7. Two cards on Linux: quant and n-gram drafters (v0.6.0)
@@ -239,8 +254,10 @@ math; 400 tokens, temperature 0):
 | 262144, `f16` | 21, 41,8 | 311, 319 | 23.3, 23.4 | 25.2 |
 
 The recommended preset is the
-second row: even on short prompts, 6% less prefill for 14% more decode deep in the context.
-After a 2.9k-token prompt it leaves 475 MB free on the R9700 (the drafter included); one
+second row plus `no-host = true` (section 2: prefill 416 and 419 instead of 381 and 382, the
+rest unchanged). Against the first row: 3% more prefill, the same decode on short prompts,
+and 14% more deep in the context.
+After a 2.9k-token prompt it leaves ~500 MB free on the R9700 (the drafter included); one
 layer more in RAM if hipBLASLt runs out. 262144 costs 14-17% of prefill and 4-8% of
 short-prompt decode against 131072 with the same KV type.
 
