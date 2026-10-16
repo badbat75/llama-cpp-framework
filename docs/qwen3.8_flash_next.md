@@ -173,6 +173,7 @@ Two changes that would target the cost, for an upstream issue:
 | the MoE cache, to keep hot experts in VRAM | refuted: 3 to 4.6x slower decode on the R9700; on the RTX 4070 SUPER the same VRAM as resident layers is 8-31% faster, on Linux with two cards 22-54% faster, and with every expert in RAM the cache is noise (`none`) or a loss (`mmap`) (section 3) |
 | `--no-repack`, to let repacked layers into the MoE cache | inert: nothing is repacked unless `--no-host` is set |
 | a larger `ubatch-size`, paid for with experts in RAM, with `op-offload false` | refuted for prefill (with `op-offload true` it wins, section 8). *Linux*, `n-cpu-moe 26`, ctx 262144, `f16`, 43.7k-token prompt: 248 and 244 t/s at 512, 281 and 282 at 1024, 305 and 308 at 2048; with the preset's ctx 131072 and `q8_0` at 2048, 319 and 313; `n-cpu-moe 14` at 512 gives 364 and 370. `n-cpu-moe 26` holds more experts in RAM than 2048 needs at ctx 131072 (512 needs 15 there, section 2), so the true loss is smaller than this |
+| Vulkan (RADV) on the R9700 instead of ROCm, for the IQ expert kernels | refuted. *Linux*, the recommended preset with the R9700 as `Vulkan2` (the RTX 4070 SUPER stays on CUDA): prefill 330 and 336 t/s at 43.7k tokens against 416 and 419, decode right after 7.6 and 9.6 against 25.0, 5.1 on a short prompt |
 
 ## 6. Not yet measured (placeholders)
 
