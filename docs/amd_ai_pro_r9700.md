@@ -2,7 +2,7 @@
 
 Reference settings for running llama.cpp on the R9700 (RDNA4, `gfx1201`, 32 GB) under
 Windows, through the ROCm (HIP) backend. Values were measured on this framework with
-llama.cpp v0.5.0. Section 7 holds what was measured again on Linux, with llama.cpp v0.6.0.
+llama.cpp v0.5.0. Section 7 holds what was measured again on Linux, with llama.cpp v0.6.0 unless a row says v0.7.0.
 
 ## 1. Runtime prerequisites
 
@@ -35,7 +35,7 @@ llama.cpp v0.5.0. Section 7 holds what was measured again on Linux, with llama.c
 | --- | --- | --- |
 | `load-mode` | `none`; on a MoE model with only part of the experts on the card (`n-cpu-moe` above 0 and below the layer count), `mmap`, set explicitly: `auto` resolves to `none` when any device of the model reports no mmap support, as a Ryzen iGPU visible to HIP does | `mmap` leaves ~1 GiB of weights `CPU_Mapped`, which cross PCIe on every batch: prefill 98 vs 571 t/s at 43.7k. With a partial `n-cpu-moe`, `none` aborts right after the weight upload (`ROCm error: unspecified launch failure` in `ggml_cuda_set_device`, 4 of 4 runs, llama.cpp v0.7.0); with every expert in RAM it loads |
 | `flash-attn` | omit (`auto` resolves to on) | the #28102 WMMA path; a quantized KV cache needs FlashAttention |
-| `cache-type-k/-v` | `q8_0` | `q5_1` saves ~30% of the KV but decodes 6% slower; `iq4_nl` has no HIP FlashAttention kernel |
+| `cache-type-k/-v` | `f16` at the context you need; `q8_0` only to fit a longer one | *Linux* (section 7): `f16` decodes 11% faster deep in the context, and its compute buffer is smaller. `q5_1` saves ~30% of the KV against `q8_0` but decodes 6% slower; `iq4_nl` has no HIP FlashAttention kernel |
 | `ubatch-size` | the largest that fits: `768` or `1024` | against `512`: `768` gives +5.8% prefill at 2.6k and nothing at 93.6k, `1024` +5% at both depths, `256` costs 20%. Decode is unaffected (identical per-step cost). Each ubatch token costs ~0.53 MiB of compute buffer per device |
 | `split-mode` (multi-GPU) | `layer` | see section 4 |
 | `spec-draft-n-max` (DFlash2) | `7` | best at 2.6k and 93.6k; `1` is slower than no drafter |
@@ -84,7 +84,7 @@ llama.cpp v0.5.0. Section 7 holds what was measured again on Linux, with llama.c
 
 ## 7. Linux
 
-Measured with llama.cpp v0.6.0 and the TheRock 10.1.0 dist on the `amdgpu` kernel
+Measured with llama.cpp v0.6.0 (v0.7.0 where a row says so) and the TheRock 10.1.0 dist on the `amdgpu` kernel
 driver, with the desktop drawn by another adapter (nothing else on the card). llama.cpp
 and ROCm are both newer than in the Windows campaign above: a figure that differs from
 sections 2 to 5 is not the OS alone. Model: Qwen3.8-27B Q8_0 with its embedded MTP head,
@@ -98,6 +98,7 @@ temp 0.
 | `ubatch-size` | `1024` fits at ctx 262144. Model compute buffer on this card: 1176 MiB at `768` and ctx 196608; at `1024`, 1312 (196608), 1504 (229376) and 1696 to 1736 (262144): it grows with the context as well as with the ubatch |
 | prefill, card first with most of the layers | 1122 t/s at 2.4k tokens, 1045 at 43.6k (ubatch `1024`, ctx 262144) |
 | last-device role (MTP head, output head, sampling) on this card | costs 1288 MiB of output head, 1024 MiB of draft KV (f16) and 648 MiB of draft compute at ctx 262144. Against the same role on a CUDA card: decode 36.3 -> 38.9 t/s at 2.5k tokens (+7%) and 28.5 -> 29.8 at 43.6k (+4.5%), draft acceptance unchanged; prefill at 43.6k 1045 -> 1010 t/s (-3%) |
+| `cache-type-k/-v` `f16` against `q8_0` (llama.cpp v0.7.0) | decode at a 43.7k-token prompt 35.2 and 34.5 t/s against 31.5 and 31.5 (+11%), prefill 1161 against 1164 t/s, short prompts within noise. The KV doubles (64 against 34 KiB per token over 16 layers), but the `q8_0` compute buffer grows with the context: on this card 1712 MiB at 262144 in `q8_0`, 456 MiB at 163840 and 620 at 172032 in `f16`. So `f16` fits ~66% of the context `q8_0` does, not half |
 | checking a configuration | `tools\report-memory.ps1` is Windows-only: read `mem_info_vram_used` and `mem_info_gtt_used` after a prefill |
 
 ## 8. Not yet measured (placeholders)
@@ -106,7 +107,6 @@ temp 0.
 | --- | --- | --- | --- |
 | `ROCBLAS_USE_HIPBLASLT` with the staged runtime | unset | is hipBLASLt (`1`) faster than Tensile (`0`) for BF16/F16 models? | TBD |
 | `batch-size` | default (2048) | does a larger logical batch help prefill at the chosen `ubatch-size`? | TBD |
-| `cache-type-k/-v` `f16` | `q8_0` | speed gained versus twice the KV memory | TBD |
 | `cache-ram` | 20480 | restore time of the prompt cache over the card's link | TBD |
 | `parallel` > 1 | 1 | aggregate throughput versus the context divided per slot | TBD |
 | `spec-draft-p-min` | default | does a confidence floor lift acceptance on the reasoning phase? | TBD |

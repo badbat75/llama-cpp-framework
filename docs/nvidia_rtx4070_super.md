@@ -2,7 +2,7 @@
 
 Reference settings for running llama.cpp on the RTX 4070 Super (Ada, `sm_89`, 12 GB)
 under Windows, through the CUDA backend. Values were measured on this framework with
-llama.cpp v0.5.0. Section 7 holds what was measured again on Linux, with llama.cpp v0.6.0.
+llama.cpp v0.5.0. Section 7 holds what was measured again on Linux, with llama.cpp v0.6.0 unless a row says v0.7.0.
 
 ## 1. Runtime prerequisites
 
@@ -32,7 +32,7 @@ llama.cpp v0.5.0. Section 7 holds what was measured again on Linux, with llama.c
 | --- | --- | --- |
 | `mmproj-device` | off this card, when it is the VRAM constraint | the image encoder (~1.14 GiB with its compute buffer for a BF16 Qwen3.8 mmproj) only computes on image requests. Moving it off and giving this card two more blocks: neutral at 2.6k, +2.4% decode at 93.6k |
 | `flash-attn` | omit (`auto` resolves to on) | a quantized KV cache needs FlashAttention |
-| `cache-type-k/-v` | `q8_0` | `q5_1` decodes 6% slower; `iq4_nl` has no CUDA FlashAttention kernel |
+| `cache-type-k/-v` | `f16` at the context you need; `q8_0` only to fit a longer one | *Linux* (section 7): `f16` decodes 11% faster deep in the context, and its compute buffer is smaller. `q5_1` decodes 6% slower than `q8_0`; `iq4_nl` has no CUDA FlashAttention kernel |
 | `override-tensor` | `^token_embd\.weight=<this card>` | moves the table (~1.26 GiB at Q8_0) out of pinned host RAM, where Windows reports it as shared GPU memory: +1-2% decode. The quant must have a CUDA `get_rows` kernel (all K/IQ quants do since b10089) |
 | `backend-sampling` | `true` when this card holds the logits | the sampler runs on the GPU instead of copying the logits to the host every token |
 | `ubatch-size` | the largest that fits: `768` | each ubatch token costs ~0.53 MiB of model compute buffer, plus a drafter's logits (ubatch x vocab) where they land: `768` adds ~400 MiB over `512` on a last device carrying a DFlash2 drafter. Against `512`: +5.8% prefill at 2.6k, nothing at 93.6k, decode unchanged. `1024` did not fit next to a 27B Q8_0 at ctx 196608 (on Linux it does: section 7) |
@@ -82,7 +82,7 @@ Q8_0, 3 reps, temp 0):
 
 ## 7. Linux
 
-Measured with llama.cpp v0.6.0, CUDA 13.4.2 and driver 595.99.02, with the desktop drawn
+Measured with llama.cpp v0.6.0 (v0.7.0 where a row says so), CUDA 13.4.2 and driver 595.99.02, with the desktop drawn
 by another adapter (nothing else on the card). llama.cpp is newer than in the Windows
 campaign above, and so is the ROCm dist of the HIP card this one was paired with: a
 figure that differs from sections 2 to 5 is not the OS alone. Model: Qwen3.8-27B Q8_0
@@ -97,6 +97,7 @@ with its embedded MTP head, KV `q8_0`, layer split with a HIP card. Decode figur
 | MTP draft context, card last | KV in f16: 768 / 896 / 1024 MiB at 196608 / 229376 / 262144 cells. Compute at ctx 196608: 390 MiB at ubatch `768`, 520 at `1024`; 648 at `1024` and ctx 262144 |
 | `spec-draft-type-k/-v` | `f16`. `q8_0` halves the draft KV (544 MiB at 262144 cells) but the draft compute buffer goes from 648 to 1696 MiB: a net +568 MiB |
 | last-device role (MTP head, output head, sampling) on a HIP card, this card first | decode 36.3 -> 38.9 t/s at 2.5k tokens (+7%) and 28.5 -> 29.8 at 43.6k (+4.5%), draft acceptance unchanged; prefill at 43.6k 1045 -> 1010 t/s (-3%). The opposite sign of both rows of section 5 |
+| `cache-type-k/-v` `f16` against `q8_0` (llama.cpp v0.7.0) | decode at a 43.7k-token prompt 35.2 and 34.5 t/s against 31.5 and 31.5 (+11%), prefill unchanged, short prompts within noise. The KV doubles (64 against 34 KiB per token over 16 layers), but the `q8_0` model compute buffer grows with the context: on this card 1736 MiB at 262144 in `q8_0` (ubatch `1024`), 604 at 163840 and 620 at 172032 in `f16`. So `f16` fits ~66% of the context `q8_0` does, not half |
 | checking a configuration | `tools\report-memory.ps1` is Windows-only: read `nvidia-smi --query-gpu=memory.used,memory.free,memory.reserved` after a prefill |
 
 ## 8. Not yet measured (placeholders)
