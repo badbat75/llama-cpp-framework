@@ -58,7 +58,7 @@ fn uptime_secs() -> Option<u64> {
 
 /// The display adapters as `(description, version, date)`, in registry order.
 #[cfg(windows)]
-fn adapters() -> Vec<(String, String, String)> {
+pub(crate) fn adapters() -> Vec<(String, String, String)> {
     let mut out = Vec::new();
     for i in 0..MAX_ADAPTERS {
         let sub = format!("{DISPLAY_CLASS}\\{i:04}");

@@ -420,11 +420,12 @@ export global AppState {
     in-out property <string> bench_progress: "";
     in-out property <[BenchResultRow]> bench_rows;
     // Which run the table is showing: "" while a run is live or when it shows
-    // the run just finished, otherwise the stamp of the reloaded past run.
+    // the run just finished, otherwise the bench.db campaign reloaded.
     in-out property <string> bench_showing: "";
-    in-out property <string> bench_report_path: "";
-    // Past runs from %LOCALAPPDATA%\llama.cpp\bench\, newest first
-    // (label = the human date, value = the stamp).
+    // The bench.db campaign whose report "Open report" opens; "" for none.
+    in-out property <string> bench_report_campaign: "";
+    // The campaigns in bench.db, newest first (label = name, date and engine,
+    // value = the campaign's name).
     in-out property <[string]> bench_run_labels;
     in-out property <[string]> bench_run_values;
     in-out property <int> bench_run_index: -1;
@@ -590,9 +591,7 @@ export global AppState {
     callback bench_run();
     callback bench_cancel();
     callback bench_run_picked(string);
-    // Open the run folder (%LOCALAPPDATA%\llama.cpp\bench) in the file manager,
-    // and the current run's markdown report in the default editor.
-    callback bench_open_folder();
+    // Open the current campaign's markdown report in the default editor.
     callback bench_open_report();
     // The prompt file: pick one (returns the picked path, or the argument back
     // when the dialog is cancelled, exactly like `browse_dir`), and open the

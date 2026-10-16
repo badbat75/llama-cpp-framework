@@ -46,6 +46,11 @@ pub struct Settings {
     /// persists across launches, and deliberately so: a workload is a decision
     /// per run, while which prompt file you use is a decision per machine.
     pub bench_prompt_file: String,
+    /// The benchmark database every finished run is written to. Empty = the
+    /// working one under the data root (`bench::db::default_path`); read
+    /// through `bench_db_path`. Point it at a clone's `benchmarks/bench.db` and
+    /// the runs land straight in the repo's database, with no `bench publish`.
+    pub bench_db: String,
     /// The HW Monitor devices whose checkbox is unticked, by `hwmon::Group::id`
     /// (`cpu`, `memory`, `disk`, an NVIDIA card's UUID, `amdgpu-<PCI address>`
     /// on Linux, `gpu-<PCI address>` on Windows), sorted. Empty = every device
@@ -70,6 +75,7 @@ impl Default for Settings {
             log_rotate: true,
             log_rotate_kb: LOG_ROTATE_KB_DEFAULT,
             bench_prompt_file: String::new(),
+            bench_db: String::new(),
             hw_monitor_hidden: Vec::new(),
             main_window_size: None,
             log_window_size: None,
@@ -85,6 +91,16 @@ impl Settings {
             paths::bench_prompt_file()
         } else {
             std::path::PathBuf::from(self.bench_prompt_file.trim())
+        }
+    }
+
+    /// The configured benchmark database, or the working one when nothing is
+    /// set.
+    pub fn bench_db_path(&self) -> std::path::PathBuf {
+        if self.bench_db.trim().is_empty() {
+            crate::bench::db::default_path()
+        } else {
+            std::path::PathBuf::from(self.bench_db.trim())
         }
     }
 
@@ -123,6 +139,7 @@ fn from_keys(keys: &std::collections::BTreeMap<String, String>) -> Settings {
             .and_then(|n| u32::try_from(n).ok())
             .unwrap_or(defaults.log_rotate_kb),
         bench_prompt_file: keys.get("BenchPromptFile").cloned().unwrap_or_default(),
+        bench_db: keys.get("BenchDb").cloned().unwrap_or_default(),
         hw_monitor_hidden: hidden_list(keys.get("HwMonitorHidden").map_or("", |v| v.as_str())),
         main_window_size: keys.get("MainWindowSize").and_then(|v| window_size(v)),
         log_window_size: keys.get("LogWindowSize").and_then(|v| window_size(v)),
@@ -164,6 +181,7 @@ pub fn save(cfg: &Settings) -> io::Result<()> {
     // escape, so such a path would write fine and reload pointing somewhere
     // else (`ini::reject_comment_markers`).
     ini::reject_comment_markers("BenchPromptFile", &cfg.bench_prompt_file)?;
+    ini::reject_comment_markers("BenchDb", &cfg.bench_db)?;
     let path = paths::settings_ini();
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
@@ -183,6 +201,7 @@ fn render(cfg: &Settings) -> String {
     let log_rotate_kb = cfg.log_rotate_kb;
     let kept = crate::runstate::ROTATED_LOGS_KEPT;
     let prompt_file = cfg.bench_prompt_file.trim();
+    let bench_db = cfg.bench_db.trim();
     let hw_hidden = hidden_list(&cfg.hw_monitor_hidden.join(",")).join(", ");
     let main_size = window_size_lit(cfg.main_window_size);
     let log_size = window_size_lit(cfg.log_window_size);
@@ -214,6 +233,13 @@ LogRotateKb = {log_rotate_kb}
 ; prompt the first time a benchmark needs one. Point it at a longer file to
 ; measure the regime a long conversation actually runs in.
 BenchPromptFile = {prompt_file}
+
+; BenchDb: the SQLite database every finished benchmark run is written to
+; (Benchmark tab, bench sweep, and what bench query/answer read by default).
+; Empty = bench\\bench.db under the data folder. Point it at a clone's
+; benchmarks\\bench.db to record straight into the repo's database; paths are
+; cut to file names and secret-like values dropped either way.
+BenchDb = {bench_db}
 
 ; HwMonitorHidden: the HW Monitor devices whose checkbox is unticked, comma
 ; separated: their card is hidden and nothing is read for them. Written by the
@@ -305,6 +331,21 @@ mod tests {
             ..Settings::default()
         };
         assert_eq!(round_trip(&cfg), cfg);
+    }
+
+    #[test]
+    fn bench_db_round_trips_and_defaults_to_the_working_file() {
+        let cfg = Settings {
+            bench_db: "/mnt/data/git/llama.cpp-framework/benchmarks/bench.db".into(),
+            ..Settings::default()
+        };
+        assert_eq!(round_trip(&cfg), cfg);
+        assert_eq!(
+            cfg.bench_db_path(),
+            std::path::PathBuf::from("/mnt/data/git/llama.cpp-framework/benchmarks/bench.db")
+        );
+        let unset = Settings::default();
+        assert_eq!(unset.bench_db_path().file_name().unwrap(), "bench.db");
     }
 
     /// The list is stored sorted and deduplicated whatever order the boxes

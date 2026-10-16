@@ -5,7 +5,8 @@ PRAGMA foreign_keys = ON;
 -- The hardware and OS a run ran on; a new driver or kernel is a new row.
 CREATE TABLE IF NOT EXISTS machine (
   id            INTEGER PRIMARY KEY,
-  fingerprint   TEXT NOT NULL UNIQUE,   -- sha256 of every column below and of the gpu rows
+  fingerprint   TEXT NOT NULL UNIQUE,   -- sha256 of the canonical text of the columns below and the gpu rows
+                                        -- (bench/db.rs Machine::canonical)
   cpu           TEXT NOT NULL,          -- lscpu "Model name"
   cores         INTEGER NOT NULL,       -- physical
   threads       INTEGER NOT NULL,       -- logical
@@ -69,26 +70,36 @@ CREATE TABLE IF NOT EXISTS campaign (
   name      TEXT NOT NULL UNIQUE,       -- "27b-kv-f16-20261016"
   question  TEXT NOT NULL,
   started   TEXT NOT NULL,              -- ISO date
-  answer    TEXT                        -- the conclusion, once drawn
+  answer    TEXT,                       -- the conclusion, once drawn
+  notes     TEXT,                       -- what the tool knows about it: a sweep's key, values and outcome
+  report    TEXT                        -- the configurator's markdown report (a tab run's, a sweep's digest);
+                                        -- local: publish leaves it behind, like run.log
 );
 
 CREATE TABLE IF NOT EXISTS run (
   id           INTEGER PRIMARY KEY,
   campaign_id  INTEGER NOT NULL REFERENCES campaign(id),
   label        TEXT NOT NULL,           -- "K1 f16 163840"
-  started_utc  TEXT NOT NULL,
+  started_utc  TEXT NOT NULL,           -- "2026-10-16 18:15:00 UTC" (a date alone on older hand-recorded runs)
+  ended_utc    TEXT,                    -- the same, when the run's last measurement landed
   machine_id   INTEGER NOT NULL REFERENCES machine(id),
   software_id  INTEGER NOT NULL REFERENCES software(id),
   model_id     INTEGER NOT NULL REFERENCES model(id),
   tool         TEXT NOT NULL,           -- live (llama-server requests), llama-bench, load-only
-  status       TEXT NOT NULL,           -- ok, load-oom, run-oom, crash, interrupted
+  status       TEXT NOT NULL,           -- ok, load-oom, run-oom, crash, error, interrupted
+                                        -- (the configurator records only ok runs: a failed or
+                                        -- cancelled one is dropped; the rest are for hand records)
   error        TEXT,                    -- the first error line, when status is not ok
   notes        TEXT,
+  log          TEXT,                    -- the engine's own output (llama-bench stderr, HTTP errors)
+  points       TEXT,                    -- JSON: the means the Benchmark tab shows, [{test, mean, sd, n, note}]
   UNIQUE (campaign_id, label)
 );
 
 -- Every parameter of the run, not only the varied ones. scope: preset (presets.ini keys),
--- server (server.ini [Server]), env (environment variables), cli (extra flags).
+-- server (server.ini [Server]), env (environment variables), cli (extra flags),
+-- bench (the configurator's plan: mode, reps, temp, max-tokens, prompt-lens, depths, n-gen).
+-- Credentials and service URLs are never stored: the file is public with the repo.
 CREATE TABLE IF NOT EXISTS run_param (
   run_id  INTEGER NOT NULL REFERENCES run(id) ON DELETE CASCADE,
   scope   TEXT NOT NULL,
@@ -117,7 +128,7 @@ CREATE TABLE IF NOT EXISTS run_device (
   PRIMARY KEY (run_id, device)
 );
 
--- One request (or one llama-bench test) of a run.
+-- One request (or one llama-bench repetition of one test) of a run.
 CREATE TABLE IF NOT EXISTS result (
   id             INTEGER PRIMARY KEY,
   run_id         INTEGER NOT NULL REFERENCES run(id) ON DELETE CASCADE,
@@ -131,7 +142,11 @@ CREATE TABLE IF NOT EXISTS result (
   gen_tokens     INTEGER,
   decode_tps     REAL,
   draft_gen      INTEGER,
-  draft_acc      INTEGER
+  draft_acc      INTEGER,
+  cache_n        INTEGER,               -- prompt tokens served from the cache (0 on a cold prefill)
+  reasoning_tps  REAL,                  -- decode rate of the reasoning span, when the reply had one
+  answer_tps     REAL,                  -- decode rate of the answer span
+  detail         TEXT                   -- JSON: a live request's phases and rate trace, llama-bench's row verbatim
 );
 
 CREATE VIEW IF NOT EXISTS v_result AS
@@ -146,3 +161,8 @@ LEFT JOIN prompt p ON p.id = x.prompt_id;
 CREATE VIEW IF NOT EXISTS v_run_params AS
 SELECT run_id, scope, group_concat(key || '=' || value, '; ') AS params
 FROM (SELECT * FROM run_param ORDER BY run_id, scope, key) GROUP BY run_id, scope;
+
+-- Columns added after the first release of this file; bench/db.rs adds them to
+-- an older database (ALTER TABLE ... ADD COLUMN, when missing):
+--   campaign.notes, campaign.report, run.ended_utc, run.log, run.points, result.cache_n,
+--   result.reasoning_tps, result.answer_tps, result.detail

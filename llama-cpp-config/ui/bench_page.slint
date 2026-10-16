@@ -429,7 +429,7 @@ export component BenchPage inherits ScrollView {
             LabeledField {
                 label_width <=> LabelColumn.bench;
                 label: "Run";
-                hint: "Every run writes three files to the bench folder as it goes: a .jsonl of the measurements (appended per test, so a run killed by a driver reset keeps what it had), a .md report, and a .log of the engine's own output. Picking one here reloads its table.";
+                hint: "Every run is a campaign in bench.db (the bench folder, or the file settings.ini BenchDb names, e.g. a clone's benchmarks/bench.db): each preset is written when it has been measured to the end, with its parameters, every repetition and the engine's output; a preset that fails or is cancelled is not recorded. Picking one here reloads its table; bench sweep campaigns are listed too, one column per value.";
                 MappedComboBox {
                     enabled: !AppState.bench_running && AppState.bench_run_labels.length > 0;
                     labels: AppState.bench_run_labels;
@@ -443,12 +443,8 @@ export component BenchPage inherits ScrollView {
                 alignment: start;
                 Button {
                     text: "Open report";
-                    enabled: AppState.bench_report_path != "";
+                    enabled: AppState.bench_report_campaign != "";
                     clicked => { AppState.bench_open_report(); }
-                }
-                Button {
-                    text: "Open folder";
-                    clicked => { AppState.bench_open_folder(); }
                 }
             }
         }

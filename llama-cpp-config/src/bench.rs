@@ -91,8 +91,12 @@ use crate::ini;
 use crate::presets::Preset;
 use crate::server_cfg::ServerConfig;
 
+pub mod db;
 pub mod env;
 pub mod exec;
+pub mod host;
+pub mod query;
+pub mod record;
 pub mod sweep;
 
 // ── Defaults ─────────────────────────────────────────────────────────────
@@ -331,6 +335,8 @@ pub struct Plan {
     /// `-n`, llama-bench's generation length. Not named `gen`: that is a
     /// keyword from edition 2024 on.
     pub n_gen: i32,
+    /// The bench.db campaign the run lands in; `None` gives it one of its own.
+    pub campaign: Option<record::Campaign>,
 }
 
 impl Default for Plan {
@@ -350,6 +356,7 @@ impl Default for Plan {
             prompt_lens: parse_int_list(DEFAULT_PROMPT_LENS),
             depths: parse_int_list(DEFAULT_DEPTHS),
             n_gen: DEFAULT_GEN,
+            campaign: None,
         }
     }
 }
@@ -703,16 +710,6 @@ pub struct Timings {
     pub draft_accepted: i64,
 }
 
-impl Timings {
-    /// Accepted draft tokens as a percentage, or `None` when nothing drafted.
-    /// Reported next to the rate, never instead of it: acceptance is not the
-    /// metric, throughput is (a lower acceptance on fast steps beats a higher
-    /// one on slow steps).
-    pub fn acceptance(&self) -> Option<f64> {
-        (self.draft_n > 0).then(|| 100.0 * self.draft_accepted as f64 / self.draft_n as f64)
-    }
-}
-
 /// One `timings` object (`server_slot_stats::to_json`).
 fn timings_from(t: &serde_json::Value) -> Timings {
     let num = |k: &str| t.get(k).and_then(serde_json::Value::as_f64).unwrap_or(0.0);
@@ -794,7 +791,7 @@ pub struct Streamed {
     /// answer).
     pub split: Option<PhaseSplit>,
     /// Cumulative timings every [`TRACE_EVERY`] tokens: the rate curve of the
-    /// repetition, for analysis from the jsonl rather than from the server log.
+    /// repetition, for analysis from bench.db rather than from the server log.
     pub trace: Vec<TracePoint>,
 }
 
@@ -1321,84 +1318,9 @@ pub fn bench_dir() -> PathBuf {
     crate::paths::data_root().join("bench")
 }
 
-/// The three files one run writes, by stamp: the machine-readable stream, the
-/// report, and the engine's own chatter.
-pub fn run_paths(stamp: &str) -> (PathBuf, PathBuf, PathBuf) {
-    let dir = bench_dir();
-    (
-        dir.join(format!("bench-{stamp}.jsonl")),
-        dir.join(format!("bench-{stamp}.md")),
-        dir.join(format!("bench-{stamp}.log")),
-    )
-}
+// ── What a live repetition stores beside its rates (`result.detail`) ──
 
-// ── The jsonl stream ─────────────────────────────────────────────────────
-//
-// APPEND-ONLY, and written as each point lands rather than at the end. That is
-// the whole design: a benchmark is minutes of sustained GPU load, which is
-// exactly when a driver reset or a bugcheck happens, and results written only
-// at the end are results lost on the first crash (a full day of measurements
-// went that way here on 2026-08-24). A live point is REVISED as its repetitions accumulate,
-// so the same key is written several times and the LAST line wins on reload:
-// a run killed halfway therefore reloads with the means it had reached.
-
-/// The first line of every run file: the plan, so a reload knows the preset
-/// order (which is what the ratio column is measured against) and the mode.
-pub fn run_header_json(plan: &Plan, meta: &RunMeta) -> String {
-    let mut header = serde_json::json!({
-        "kind": "run",
-        "mode": plan.mode.as_str(),
-        "stamp": meta.stamp,
-        "presets": plan.presets,
-        "reps": plan.reps,
-        "server_version": meta.server_version,
-    });
-    // The prompt's identity, in the machine-readable stream and not only in the
-    // markdown: comparing two old runs is a question about this line, and until
-    // the prompt moved into a file the jsonl carried nothing about it at all.
-    if plan.mode == Mode::Live {
-        let info = prompt_info(&plan.prompt);
-        header["prompt_file"] = match &plan.prompt_file {
-            Some(p) => serde_json::json!(p.to_string_lossy()),
-            None => serde_json::Value::Null,
-        };
-        header["prompt_chars"] = serde_json::json!(info.chars);
-        header["prompt_sha256"] = serde_json::json!(info.sha256);
-    }
-    header.to_string()
-}
-
-/// One point as a jsonl line.
-pub fn point_json(p: &Point) -> String {
-    serde_json::json!({
-        "kind": "point",
-        "preset": p.preset,
-        "test": p.test,
-        "mean": p.mean,
-        "sd": p.sd,
-        "n": p.n,
-        "note": p.note,
-    })
-    .to_string()
-}
-
-/// llama-bench's own row, kept verbatim beside the point derived from it.
-///
-/// The point keeps mean, spread and count; the row carries everything else
-/// llama-bench measured and this app throws away, `flash_attn`, `n_batch`,
-/// `n_threads`, `backends`, `gpu_info` among them. Storing it costs a line and
-/// buys the ability to answer, months later, a question nobody thought to ask
-/// during the run. Skipping it is how a comparison ends up unfalsifiable: the
-/// first version of this file kept only the aggregate, and the resolved
-/// flash-attention setting of a finished ROCm-versus-Vulkan run was simply not
-/// recoverable.
-pub fn bench_row_json(preset: &str, row: &str) -> String {
-    let parsed: serde_json::Value =
-        serde_json::from_str(row.trim()).unwrap_or(serde_json::Value::Null);
-    serde_json::json!({ "kind": "bench_row", "preset": preset, "row": parsed }).to_string()
-}
-
-/// The reasoning/answer split of one repetition, for its sample line.
+/// The reasoning/answer split of one repetition, for its sample's detail.
 pub fn phases_json(split: &PhaseSplit) -> serde_json::Value {
     let one = |p: &Phase| {
         serde_json::json!({
@@ -1460,126 +1382,6 @@ pub fn phase_point(preset: &str, test: &str, spans: &[(f64, Phase)]) -> Option<P
     })
 }
 
-/// One raw repetition, kept beside the points it feeds. Nothing reads it back;
-/// it is the audit trail for a number that looks wrong later.
-pub fn sample_json(
-    preset: &str,
-    test: &str,
-    rep: i32,
-    tps: f64,
-    detail: serde_json::Value,
-) -> String {
-    serde_json::json!({
-        "kind": "sample",
-        "preset": preset,
-        "test": test,
-        "rep": rep,
-        "tps": tps,
-        "detail": detail,
-    })
-    .to_string()
-}
-
-/// A run read back from its jsonl.
-#[derive(Clone, Debug, Default)]
-pub struct Loaded {
-    pub mode_label: String,
-    pub presets: Vec<String>,
-    pub points: Vec<Point>,
-}
-
-/// Reload a past run. Unreadable lines are skipped rather than fatal: the file
-/// is append-only and a run killed mid-write can end in half a line.
-pub fn load_run(path: &std::path::Path) -> Result<Loaded, String> {
-    let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
-    let mut out = Loaded::default();
-    // Keyed by (preset, test): the last line for a key is the final value.
-    let mut latest: Vec<Point> = Vec::new();
-    for line in text.lines() {
-        let Ok(v) = serde_json::from_str::<serde_json::Value>(line.trim()) else {
-            continue;
-        };
-        match v.get("kind").and_then(serde_json::Value::as_str) {
-            Some("run") => {
-                out.mode_label = v
-                    .get("mode")
-                    .and_then(serde_json::Value::as_str)
-                    .unwrap_or_default()
-                    .to_string();
-                out.presets = v
-                    .get("presets")
-                    .and_then(serde_json::Value::as_array)
-                    .map(|a| {
-                        a.iter()
-                            .filter_map(|x| x.as_str().map(str::to_string))
-                            .collect()
-                    })
-                    .unwrap_or_default();
-            }
-            Some("point") => {
-                let str_of = |k: &str| {
-                    v.get(k)
-                        .and_then(serde_json::Value::as_str)
-                        .unwrap_or_default()
-                        .to_string()
-                };
-                let p = Point {
-                    preset: str_of("preset"),
-                    test: str_of("test"),
-                    mean: v
-                        .get("mean")
-                        .and_then(serde_json::Value::as_f64)
-                        .unwrap_or(0.0),
-                    sd: v
-                        .get("sd")
-                        .and_then(serde_json::Value::as_f64)
-                        .unwrap_or(0.0),
-                    n: v.get("n").and_then(serde_json::Value::as_i64).unwrap_or(0) as i32,
-                    note: str_of("note"),
-                };
-                match latest
-                    .iter_mut()
-                    .find(|q| q.preset == p.preset && q.test == p.test)
-                {
-                    Some(slot) => *slot = p,
-                    None => latest.push(p),
-                }
-            }
-            _ => {}
-        }
-    }
-    // A preset that only appears in the points (a hand-edited file, or a header
-    // that never made it to disk) still needs a column order.
-    for p in &latest {
-        if !out.presets.contains(&p.preset) {
-            out.presets.push(p.preset.clone());
-        }
-    }
-    out.points = latest;
-    Ok(out)
-}
-
-/// Past runs, newest first, as (stamp, report path). Read from the directory
-/// listing rather than from an index file: a run killed mid-flight still leaves
-/// its jsonl, and the list has to show it.
-pub fn past_runs() -> Vec<(String, PathBuf)> {
-    let Ok(entries) = std::fs::read_dir(bench_dir()) else {
-        return Vec::new();
-    };
-    let mut out: Vec<(String, PathBuf)> = entries
-        .flatten()
-        .filter_map(|e| {
-            let path = e.path();
-            let name = path.file_name()?.to_str()?.to_string();
-            let stamp = name.strip_prefix("bench-")?.strip_suffix(".jsonl")?;
-            Some((stamp.to_string(), path))
-        })
-        .collect();
-    // The stamp is `yyyymmdd-hhmmss`, so a lexical sort IS chronological.
-    out.sort_by(|a, b| b.0.cmp(&a.0));
-    out
-}
-
 // ── Timestamps (no time crate in this tree) ──────────────────────────────
 
 /// Seconds since the Unix epoch, or 0 if the clock is before it.
@@ -1590,10 +1392,10 @@ pub fn now_secs() -> u64 {
         .unwrap_or(0)
 }
 
-/// `yyyymmdd-hhmmss` in UTC. UTC and not local time on purpose: this crate has
-/// no time-zone database and the stamp is also the file name, so a value that
-/// silently jumped an hour twice a year would break the ordering `past_runs`
-/// relies on. The report spells the zone out.
+/// `yyyymmdd-hhmmss` in UTC, the default campaign's name. UTC and not local
+/// time on purpose: this crate has no time-zone database, and a value that
+/// silently jumped an hour twice a year would break the ordering of names that
+/// sort as times. The report spells the zone out.
 pub fn stamp(secs: u64) -> String {
     let (y, mo, d, h, mi, s) = civil(secs);
     format!("{y:04}{mo:02}{d:02}-{h:02}{mi:02}{s:02}")
@@ -1605,34 +1407,6 @@ pub fn stamp_human(secs: u64) -> String {
     format!("{y:04}-{mo:02}-{d:02} {h:02}:{mi:02}:{s:02} UTC")
 }
 
-/// A stamp back into a human-readable date, for the saved-runs list. Anything
-/// not stamp-shaped is handed back unchanged: a file the user renamed is still
-/// worth listing.
-pub fn stamp_label(stamp: &str) -> String {
-    let b = stamp.as_bytes();
-    if b.len() != 15
-        || b[8] != b'-'
-        || !stamp
-            .chars()
-            .enumerate()
-            .all(|(i, c)| i == 8 || c.is_ascii_digit())
-    {
-        return stamp.to_string();
-    }
-    format!(
-        "{}-{}-{} {}:{}:{} UTC",
-        &stamp[0..4],
-        &stamp[4..6],
-        &stamp[6..8],
-        &stamp[9..11],
-        &stamp[11..13],
-        &stamp[13..15]
-    )
-}
-
-/// Civil date and time (UTC) from a Unix timestamp. Howard Hinnant's
-/// `civil_from_days`, which is exact for every date this will ever see and needs
-/// no table.
 fn civil(secs: u64) -> (i64, u32, u32, u32, u32, u32) {
     let days = (secs / 86_400) as i64;
     let rem = secs % 86_400;
@@ -1917,14 +1691,7 @@ mod tests {
         assert!((t.prompt_tps - 900.5).abs() < 1e-9);
         assert!((t.predicted_tps - 35.25).abs() < 1e-9);
         assert_eq!(t.cache_n, 7);
-        assert_eq!(t.acceptance().map(|a| a.round()), Some(74.0));
-
-        // No drafter: no acceptance figure at all, rather than a 0% that would
-        // read as "it drafted and everything was rejected".
-        let t = parse_stream(r#"data: {"timings":{"predicted_per_second":10}}"#)
-            .unwrap()
-            .timings;
-        assert_eq!(t.acceptance(), None);
+        assert_eq!((t.draft_n, t.draft_accepted), (100, 74));
     }
 
     /// One SSE event the way llama-server writes it with `timings_per_token`:
@@ -2179,21 +1946,6 @@ mod tests {
     // The raw row is the audit trail; wrapping it must not lose it, and a row
     // that is not JSON must not take the run down with it.
     #[test]
-    fn the_raw_bench_row_is_kept_verbatim() {
-        let row = r#"{"n_prompt":2048,"avg_ts":900.0,"flash_attn":true,"n_threads":18}"#;
-        let v: serde_json::Value = serde_json::from_str(&bench_row_json("qwen", row)).unwrap();
-        assert_eq!(v["kind"], "bench_row");
-        assert_eq!(v["preset"], "qwen");
-        assert_eq!(v["row"]["n_threads"], serde_json::json!(18));
-        assert_eq!(v["row"]["flash_attn"], serde_json::json!(true));
-
-        let v: serde_json::Value = serde_json::from_str(&bench_row_json("q", "junk")).unwrap();
-        assert!(v["row"].is_null(), "unparseable rows degrade, not panic");
-    }
-
-    // Warnings go ABOVE the table: a reader who stops at the numbers must
-    // already have seen why they may not mean what they look like.
-    #[test]
     fn warnings_precede_the_results_and_the_environment_is_recorded() {
         let plan = Plan {
             presets: vec!["a".into()],
@@ -2410,48 +2162,12 @@ mod tests {
         assert!(md.contains(&crate::sha256::hex(long.prompt.as_bytes())));
     }
 
-    /// The jsonl header carries the prompt's identity too: comparing two old
-    /// runs is a machine-readable question, and until the prompt became a file
-    /// this stream said nothing about it at all.
-    #[test]
-    fn the_run_header_carries_the_prompt_digest_for_live_runs_only() {
-        let plan = Plan {
-            presets: vec!["a".into()],
-            prompt: DEFAULT_PROMPT.into(),
-            prompt_file: Some(PathBuf::from("p.txt")),
-            ..Plan::default()
-        };
-        let header: serde_json::Value =
-            serde_json::from_str(&run_header_json(&plan, &RunMeta::default())).unwrap();
-        assert_eq!(header["prompt_file"], serde_json::json!("p.txt"));
-        assert_eq!(
-            header["prompt_sha256"],
-            serde_json::json!(crate::sha256::hex(DEFAULT_PROMPT.as_bytes()))
-        );
-        assert_eq!(
-            header["prompt_chars"],
-            serde_json::json!(DEFAULT_PROMPT.chars().count())
-        );
-
-        // The synthetic engine has no prompt to identify, so claiming one would
-        // be a lie in the machine-readable half of the record.
-        let synthetic = Plan {
-            mode: Mode::Synthetic,
-            ..plan
-        };
-        let header: serde_json::Value =
-            serde_json::from_str(&run_header_json(&synthetic, &RunMeta::default())).unwrap();
-        assert!(header.get("prompt_sha256").is_none());
-    }
-
     #[test]
     fn stamps_are_utc_and_sort_chronologically() {
         // 2026-08-31 12:34:56 UTC.
         let secs = 1_788_179_696;
         assert_eq!(stamp(secs), "20260831-123456");
         assert_eq!(stamp_human(secs), "2026-08-31 12:34:56 UTC");
-        assert_eq!(stamp_label("20260831-123456"), "2026-08-31 12:34:56 UTC");
-        assert_eq!(stamp_label("whatever"), "whatever");
         assert!(stamp(secs) > stamp(secs - 1));
         assert_eq!(stamp(0), "19700101-000000");
     }

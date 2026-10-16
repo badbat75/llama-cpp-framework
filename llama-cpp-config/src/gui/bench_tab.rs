@@ -315,23 +315,62 @@ pub(super) fn refresh_preview(app: &AppWindow, state: &Rc<RefCell<State>>) {
     s.set_bench_preview(SharedString::from(text));
 }
 
-/// Re-list the saved runs, newest first, keeping the current pick if it is still
-/// there.
+/// The campaigns in bench.db, newest first; empty when there is no database
+/// yet (a machine that has never benched).
+fn saved_campaigns() -> Vec<bench::db::CampaignRow> {
+    let path = bench::db::work_path();
+    if !path.is_file() {
+        return Vec::new();
+    }
+    bench::db::open_ro(&path)
+        .ok()
+        .and_then(|c| bench::db::campaigns(&c).ok())
+        .unwrap_or_default()
+}
+
+/// Re-list the saved campaigns, newest first, keeping the current pick if it
+/// is still there.
 fn refresh_runs(app: &AppWindow) {
     let s = app.global::<AppState>();
-    let runs = bench::past_runs();
+    let runs = saved_campaigns();
     let showing = s.get_bench_showing().to_string();
     let idx = runs
         .iter()
-        .position(|(stamp, _)| stamp == &showing)
+        .position(|c| c.name == showing)
         .map_or(-1, |i| i as i32);
     s.set_bench_run_labels(string_model(
-        runs.iter().map(|(st, _)| bench::stamp_label(st)).collect(),
+        runs.iter()
+            .map(|c| {
+                format!(
+                    "{}  ({}, {}, {} run{})",
+                    c.name,
+                    c.started,
+                    c.tools,
+                    c.runs,
+                    if c.runs == 1 { "" } else { "s" }
+                )
+            })
+            .collect(),
     ));
-    s.set_bench_run_values(string_model(
-        runs.iter().map(|(st, _)| st.clone()).collect(),
-    ));
+    s.set_bench_run_values(string_model(runs.iter().map(|c| c.name.clone()).collect()));
     s.set_bench_run_index(idx);
+}
+
+/// A campaign's table: every run's points under the run's label, in run
+/// order (a tab run's labels are its preset ids, a sweep's `key=value`).
+fn load_campaign(name: &str) -> Result<(Vec<bench::Point>, Vec<String>, bool), String> {
+    let conn = bench::db::open_ro(&bench::db::work_path())?;
+    let (runs, report) = bench::db::campaign_runs(&conn, name).map_err(|e| e.to_string())?;
+    if runs.is_empty() {
+        return Err(format!("no runs in campaign {name}"));
+    }
+    let mut points = Vec::new();
+    let mut order = Vec::new();
+    for (label, _tool, json) in &runs {
+        points.extend(bench::record::points_from_json(label, json));
+        order.push(label.clone());
+    }
+    Ok((points, order, report.is_some()))
 }
 
 /// The integer fields THIS mode reads whose text is not a number the run takes,
@@ -407,6 +446,7 @@ fn plan_from_ui(app: &AppWindow, state: &Rc<RefCell<State>>) -> Plan {
         prompt_lens: bench::parse_int_list(s.get_bench_prompt_lens().as_str()),
         depths: bench::parse_int_list(s.get_bench_depths().as_str()),
         n_gen: int(s.get_bench_n_gen(), bench::DEFAULT_GEN),
+        campaign: None,
     }
 }
 
@@ -434,7 +474,7 @@ fn start_run(app: &AppWindow, state: &Rc<RefCell<State>>, plan: Plan) {
     s.set_bench_running(true);
     s.set_bench_rows(model(Vec::<BenchResultRow>::new()));
     s.set_bench_showing(SharedString::default());
-    s.set_bench_report_path(SharedString::default());
+    s.set_bench_report_campaign(SharedString::default());
     s.set_bench_progress(SharedString::from("Starting…"));
     set_status(app, "Benchmark running…".into(), false);
 
@@ -458,10 +498,8 @@ fn start_run(app: &AppWindow, state: &Rc<RefCell<State>>, plan: Plan) {
                     s.set_bench_running(false);
                     s.set_bench_progress(SharedString::default());
                     match result {
-                        Ok(report) => {
-                            s.set_bench_report_path(SharedString::from(
-                                report.to_string_lossy().into_owned(),
-                            ));
+                        Ok(campaign) => {
+                            s.set_bench_report_campaign(SharedString::from(campaign.as_str()));
                             let tail = if mode == Mode::Synthetic {
                                 " llama-server is still stopped; start it when you need it."
                             } else {
@@ -469,7 +507,9 @@ fn start_run(app: &AppWindow, state: &Rc<RefCell<State>>, plan: Plan) {
                             };
                             set_status(
                                 &app,
-                                format!("Benchmark finished. Report: {}.{tail}", report.display()),
+                                format!(
+                                    "Benchmark finished: campaign {campaign} in bench.db.{tail}"
+                                ),
                                 false,
                             );
                         }
@@ -577,10 +617,10 @@ pub(super) fn wire(
             // prompt not written yet must open something, and the framework's
             // own prompt is a better starting point than an empty buffer.
             bench::ensure_prompt_file(&path);
-            // The system's default .txt handler, the same one-liner the report
-            // and folder buttons use. Deliberately not a window of ours: see
+            // The system's default .txt handler (`paths::open_in_desktop`, as
+            // for the report and the Integrations folder). Deliberately not a window of ours: see
             // the callback's declaration in state.slint.
-            match std::process::Command::new("explorer").arg(&path).spawn() {
+            match paths::open_in_desktop(&path) {
                 Ok(_) => set_status(
                     &app,
                     format!(
@@ -671,41 +711,27 @@ pub(super) fn wire(
     }
     {
         let app_weak = app.as_weak();
-        app.global::<AppState>().on_bench_run_picked(move |stamp| {
+        app.global::<AppState>().on_bench_run_picked(move |name| {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
             let s = app.global::<AppState>();
-            let (jsonl, md, _log) = bench::run_paths(stamp.as_str());
-            match bench::load_run(&jsonl) {
-                Ok(loaded) => {
-                    s.set_bench_showing(stamp.clone());
+            match load_campaign(name.as_str()) {
+                Ok((points, order, has_report)) => {
+                    s.set_bench_showing(name.clone());
                     s.set_bench_baseline(SharedString::from(
-                        loaded.presets.first().cloned().unwrap_or_default(),
+                        order.first().cloned().unwrap_or_default(),
                     ));
-                    s.set_bench_report_path(SharedString::from(md.to_string_lossy().into_owned()));
-                    apply_points(&app, &loaded.points, &loaded.presets);
-                    set_status(
-                        &app,
-                        format!(
-                            "Showing the {} run of {}.",
-                            loaded.mode_label,
-                            bench::stamp_label(stamp.as_str())
-                        ),
-                        false,
-                    );
+                    s.set_bench_report_campaign(if has_report {
+                        name.clone()
+                    } else {
+                        SharedString::default()
+                    });
+                    apply_points(&app, &points, &order);
+                    set_status(&app, format!("Showing campaign {name}."), false);
                 }
-                Err(e) => set_status(&app, format!("Cannot read that run: {e}"), true),
+                Err(e) => set_status(&app, format!("Cannot read that campaign: {e}"), true),
             }
-        });
-    }
-    {
-        app.global::<AppState>().on_bench_open_folder(|| {
-            let dir = bench::bench_dir();
-            // Created on demand by a run, so a machine that has never benched
-            // has no folder to open yet.
-            let _ = std::fs::create_dir_all(&dir);
-            let _ = std::process::Command::new("explorer").arg(dir).spawn();
         });
     }
     {
@@ -714,13 +740,24 @@ pub(super) fn wire(
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
-            let path = app.global::<AppState>().get_bench_report_path();
-            if !path.is_empty() {
-                // `explorer <file>` hands it to the default handler, the same
-                // one-liner the Integrations tab uses for its folder.
-                let _ = std::process::Command::new("explorer")
-                    .arg(path.as_str())
-                    .spawn();
+            let name = app.global::<AppState>().get_bench_report_campaign();
+            if name.is_empty() {
+                return;
+            }
+            // The report lives in bench.db; the editor gets a copy in the temp
+            // directory, rewritten on every open so it never goes stale.
+            let report = bench::db::open_ro(&bench::db::work_path()).and_then(|c| {
+                bench::db::campaign_runs(&c, name.as_str())
+                    .map_err(|e| e.to_string())
+                    .and_then(|(_, r)| r.ok_or_else(|| "no report".to_string()))
+            });
+            let path = std::env::temp_dir().join(format!("llama-cpp-config-{name}.md"));
+            match report.and_then(|r| std::fs::write(&path, r).map_err(|e| e.to_string())) {
+                // The default .md handler, as for the prompt file.
+                Ok(()) => {
+                    let _ = paths::open_in_desktop(&path);
+                }
+                Err(e) => set_status(&app, format!("Cannot open the report: {e}"), true),
             }
         });
     }

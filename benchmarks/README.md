@@ -9,55 +9,51 @@ preset keys, `server.ini`, environment variables) and the prompts, stored in ful
 
 `schema.sql` is the data model, with a comment per column. The unit is the **run**: one
 model load with one configuration, inside a **campaign** (the question a set of runs
-answers, and its answer). A run that failed is recorded too (`status` `load-oom`,
-`run-oom`, `crash`, `interrupted`): what does not fit is a result. Its **results** are
-the requests sent to it; `run_device` holds the memory per device.
+answers, and its answer). Its **results** are the requests sent to it (or the llama-bench
+repetitions); `run_device` holds the memory per device. Only runs that finished are
+recorded: a run that failed to load, crashed or was cancelled is left out. A run carries
+its start and end as `YYYY-MM-DD HH:MM:SS UTC`; the first campaigns, recorded by hand,
+have the start date only.
 
 ## Recording
 
-`benchdb.py record <campaign.json>` (Linux) detects the machine and the software itself,
-reads the run's preset from `presets.ini` and overlays its `overrides`, so every key is
-stored, not only the varied ones. Credentials and service URLs are never stored
-(`SECRET` in `benchdb.py`): the file is public with the repo.
+The configurator compiles `schema.sql` in and records every finished run of its
+Benchmark tab and of `bench sweep` into a WORKING database under its data directory
+(`~/.local/share/llama.cpp/bench/bench.db`, `%LOCALAPPDATA%\llama.cpp\bench\bench.db`):
+one campaign per tab run or sweep, machine and software detected (the ROCm, CUDA and
+Vulkan SDK dist versions are the ones llama.cpp was built against). Credentials and
+service URLs are never stored, and an absolute path is stored as its file name, in the
+logs and reports too: the file is public with the repo. A campaign the docs cite is
+copied here, with its answer:
 
-```json
-{
-  "campaign": {"name": "27b-kv-f16-20261016", "started": "2026-10-16",
-               "question": "...", "answer": "..."},
-  "preset": "Swift-1.5-Qwen3.8-27B",
-  "model": {"path": "<models dir>/Swift-1.5-Qwen3.8-27B-Q8_0.gguf", "name": "Qwen3.8-27B (Swift-1.5)",
-            "arch": "qwen35", "quant": "Q8_0", "params_b": 27.32, "layers": 64, "mtp": 1},
-  "prompts": {"long-43k": {"file": "<path>", "tokens": 43730}, "code": {"text": "...", "tokens": 43}},
-  "runs": [{
-    "label": "K1 f16 163840", "started_utc": "2026-10-16",
-    "overrides": {"ctx-size": "163840"}, "env": {}, "status": "ok",
-    "devices": [{"device": "ROCm0", "free_mib": 878, "kv_mib": 7680, "compute_mib": 456.03}],
-    "results": [{"prompt": "long-43k", "rep": 1, "temperature": 0, "cache_prompt": 0,
-                 "prompt_tokens": 43730, "prefill_tps": 1160.9, "gen_tokens": 128, "decode_tps": 35.2}]
-  }]
-}
+```sh
+llama-cpp-config bench answer sweep-20261016-181500 "4 wins up to 40k, 3 beyond"
+llama-cpp-config bench publish sweep-20261016-181500 --to benchmarks/bench.db
 ```
 
-An override `"unset"` removes the key. A run label already recorded in the campaign is
-skipped, so a file can be recorded again after adding runs.
+`publish` copies whole campaigns and everything their runs point at (the machine matched
+by a fingerprint over its description, not by id), the engine's logs and the report
+included, and refuses a campaign already here. To record straight into this file instead,
+point the configurator at it: `BenchDb = <clone>/benchmarks/bench.db` in its
+`settings.ini`. Before committing, check the file for credentials (`strings bench.db`).
 
 ## Querying
 
-`benchq.py` (any OS, standard library only; opens the file read-only):
+`llama-cpp-config bench query` reads the working database, or this one with
+`--db benchmarks/bench.db`, read-only:
 
 ```sh
-benchq.py campaigns                                  # question, answer, runs per campaign
-benchq.py models                                     # models tested, runs and campaigns each
-benchq.py machines                                   # CPU, RAM (size, type, speed), GPUs, OS
-benchq.py summary --model 27b --show ctx-size,cache-type-k
-                                                     # per run: long-prompt prefill and decode,
-                                                     # short-prompt decode, draft acceptance, free VRAM
-benchq.py runs --gpu r9700 --param no-host=true      # runs that computed on the R9700 with no-host
-benchq.py results --prompt long-43k --llama v0.7.0   # one line per request
-benchq.py runs --status load-oom                     # what did not fit
-benchq.py run 3                                      # everything about one run
-benchq.py diff 1 3                                   # the parameters that differ
-benchq.py sql "SELECT ..."                           # anything else
+bench query campaigns                                  # question, answer, runs per campaign
+bench query models                                     # models tested, runs and campaigns each
+bench query machines                                   # CPU, RAM (size, type, speed), GPUs, OS
+bench query summary --model 27b --show ctx-size,cache-type-k
+                                                       # per run and prompt (or llama-bench test):
+                                                       # prefill and decode mean +- sd, draft acceptance, free VRAM
+bench query runs --gpu r9700 --param no-host=true      # runs that computed on the R9700 with no-host
+bench query results --prompt long-43k --llama v0.7.0   # one line per request
+bench query run 3                                      # everything about one run
+bench query diff 1 3                                   # the parameters that differ
+bench query sql "SELECT ..."                           # anything else
 ```
 
 Filters: `--campaign`, `--model` (name, file or quant), `--gpu` (a GPU the run computed on,

@@ -294,7 +294,25 @@ Three blocks exist so that a comparison can be falsified rather than merely beli
 
 **An Environment table**, because two runs that disagree are only interpretable if you can tell whether the machine was the same machine. It records the boot time (with uptime), each display adapter's driver version and date, what each preset's device ids resolved to by NAME, and the resolved flash-attn per preset. The reason is specific: on 2026-08-24 a full day of measurements here was invalidated by Windows Update installing display drivers underneath them, and nothing in the numbers said so. The Windows Update event log is deliberately *not* scanned (see `bench\env.rs`): the pair (boot time, driver version) answers the same question when two reports are diffed, and recording facts beats recording an inference about them.
 
-Every run writes three files to `%LOCALAPPDATA%\llama.cpp\bench\` **as it goes**, not at the end: `bench-<stamp>.jsonl` (one appended line per measurement, flushed immediately, plus llama-bench's own row kept **verbatim** beside each point: the point keeps mean, spread and count, the row carries everything else it measured, and the first version of this file kept only the aggregate, which is how the resolved flash-attention of a finished comparison turned out to be unrecoverable), `bench-<stamp>.md` (the report), and `bench-<stamp>.log` (the engine's own output, tee'd while it runs). That is not belt-and-braces: a benchmark is minutes of sustained GPU load, which is exactly when a driver reset or a bugcheck arrives, and results written only at the end are results lost on the first crash. A run that dies is a partial result, never an empty file, and **Saved runs** reloads any of them (a live point is revised as its repetitions accumulate, so the same key is appended several times and the last line wins). Stamps are UTC: this crate has no time-zone database and the stamp is also the file name, so a value that jumped an hour twice a year would break the ordering. Cancel takes effect at the next repetition or test boundary; a request already in flight is not interrupted.
+Every run goes into one SQLite file, `%LOCALAPPDATA%\llama.cpp\bench\bench.db`, **preset by preset**, not at the end: a benchmark is minutes of sustained GPU load, which is exactly when a driver reset or a bugcheck arrives, so each preset's run is committed as soon as the engine moves past it, and a run that dies at its third preset keeps the first two. llama-bench's own row is kept **verbatim** beside each repetition (the point keeps mean, spread and count, the row carries everything else it measured; the first version of this tab kept only the aggregate, which is how the resolved flash-attention of a finished comparison turned out to be unrecoverable), and so is the engine's output. **Saved runs** reloads any campaign, and **Open report** opens the markdown report stored with it. Cancel takes effect at the next repetition or test boundary; a request already in flight is not interrupted.
+
+#### bench.db: every finished run, queryable
+
+The file (`~/.local/share/llama.cpp/bench/bench.db` on Linux, or whatever settings.ini `BenchDb` names: a clone's `benchmarks/bench.db` records straight into the repo's database) has the same SQLite schema as the repo's `benchmarks\bench.db` (`benchmarks\schema.sql`, compiled in). A tab run is a **campaign** (`bench-<stamp>`) with one **run** per preset; a sweep is a campaign (`sweep-<stamp>`, or `--campaign`) with one run per value, labelled `key=value`. Each run stores the machine (CPU, RAM amount, type, speed and modules, the discrete GPUs with VRAM and driver, OS and kernel), the software (llama.cpp tag, build and commit, the framework version, the TheRock, CUDA and Vulkan SDK dist versions it was built against, the patches applied), the model file, the preset's whole section, `server.ini`'s `[Server]`, the environment llama-server gets, the plan, and one result row per request (live) or per llama-bench repetition (synthetic), with the phases, the rate trace and llama-bench's row verbatim in `detail`.
+
+**Only finished runs are recorded.** A run is held in memory while its preset is measured and written in one transaction when the preset is done; a failed or cancelled run is dropped (its error message carries the engine's last lines instead), and a process that dies leaves nothing behind. A sweep's failed values are named in the campaign's notes instead. Credentials and service URLs are dropped and absolute paths cut to file names on the way in (in the engine's log, the notes and the report too: `db::public_text`, which also blanks the value after an `--api-key` or an `Authorization` header), because the file may be, or become, the public one:
+
+```
+llama-cpp-config bench query campaigns
+llama-cpp-config bench query summary --model 27b --show ctx-size,cache-type-k
+llama-cpp-config bench query runs --gpu r9700 --param no-host=true
+llama-cpp-config bench query run 12          # everything about one run
+llama-cpp-config bench query diff 11 12      # the parameters that differ
+llama-cpp-config bench answer sweep-20261016-181500 "4 wins up to 40k, 3 beyond"
+llama-cpp-config bench publish sweep-20261016-181500 --to benchmarks/bench.db
+```
+
+`--db <file>` points `query` at another database (the repo's); `publish` copies whole campaigns with everything their runs point at, the logs and the report included, and refuses one the target already has.
 
 #### Sweeping one key, unattended: `bench sweep`
 
@@ -306,7 +324,7 @@ llama-cpp-config bench sweep --preset Qwen3.8-27B-UD --key device --values "Vulk
 llama-cpp-config bench sweep --preset Qwen3.8-27B-UD --key ubatch-size --values 256,384,512 --mode synthetic
 ```
 
-It is a CLI command and not a button because of what a leg costs: a model load plus `reps` cold prefills, so seven values is half an hour during which nothing else may touch the machine. That is a thing to start from a terminal and walk away from. Each leg writes the ordinary `bench-<stamp>.{jsonl,md,log}` trio described above, so a sweep killed at the fourth value leaves four finished, openable runs in **Saved runs**, not one truncated file; only the cross-leg digest is added, as `sweep-<stamp>.{jsonl,md}`, named so it stays *out* of that listing (which globs `bench-*.jsonl` and would fail to parse it).
+It is a CLI command and not a button because of what a leg costs: a model load plus `reps` cold prefills, so seven values is half an hour during which nothing else may touch the machine. That is a thing to start from a terminal and walk away from. The sweep is one bench.db campaign and each leg a run of it labelled `key=value`, committed when the leg finishes, so a sweep killed at the fourth value leaves three finished runs that **Saved runs** shows side by side, not one truncated file; the cross-leg digest is printed and stored as the campaign's report. The one file it writes is `sweep-pending-<stamp>.json`, the value to restore, deleted once the key is back.
 
 Five things it has to get right, each of which is a way the naive version would lie:
 
@@ -357,8 +375,8 @@ A flat number would be right for one model at one `parallel` and wrong everywher
 | `presets.ini` | `%LOCALAPPDATA%\llama.cpp\config\` | INI, one `[model-id]` section per model |
 | `presets.ini.disabled` | `%LOCALAPPDATA%\llama.cpp\config\` | Same format: the presets switched off in the Models tab, which llama-server never reads |
 | `<model>.llamastate` | `%LOCALAPPDATA%\llama.cpp\state\` (overridable) | Binary KV-cache dump, written only when **SaveStateOnShutdown** is on |
-| `bench-<stamp>.{jsonl,md,log}` | `%LOCALAPPDATA%\llama.cpp\bench\` | One benchmark run: the appended measurement stream, its markdown report, and the engine's output |
-| `sweep-<stamp>.{jsonl,md}` | `%LOCALAPPDATA%\llama.cpp\bench\` | One `bench sweep`: the value to restore plus one line per leg, and the cross-leg summary |
+| `bench.db` | `%LOCALAPPDATA%\llama.cpp\bench\` | SQLite (`benchmarks\schema.sql`): every finished benchmark run, its report, the sweeps' digests |
+| `sweep-pending-<stamp>.json` | `%LOCALAPPDATA%\llama.cpp\bench\` | Only while a `bench sweep` has not put its key back: the value to restore |
 
 On Linux / macOS, `%LOCALAPPDATA%\llama.cpp` maps to `$HOME/.local/share/llama.cpp`; on Linux the `config\` directory is `${XDG_CONFIG_HOME:-$HOME/.config}/llama.cpp` instead (`paths::config_dir`).
 

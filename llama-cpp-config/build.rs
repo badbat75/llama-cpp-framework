@@ -1,4 +1,4 @@
-// Build script, five jobs:
+// Build script, six jobs:
 // - Icon bootstrap: resources/llama.ico is generated, not checked in; when
 //   it's missing, run resources/generate-llama-ico.mjs to rasterize it from
 //   the llama.cpp clone's webui logo.
@@ -15,6 +15,10 @@
 //   overflowed its stack", exit 0xC00000FD) while the CLI kept working.
 //   2 MiB was measured to suffice; 8 MiB matches Linux's default main
 //   stack, so both platforms keep the same headroom.
+// - The SDK stack llama.cpp was built against (TheRock, CUDA, Vulkan SDK
+//   dist versions, the patches applied), read off its CMake cache into
+//   LLAMA_FW_* env vars for bench.db's software row: an installed machine
+//   has no build tree to read them from at run time.
 
 use std::path::Path;
 
@@ -71,6 +75,50 @@ fn main() {
     if std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc") {
         println!("cargo:rustc-link-arg-bins=/STACK:8388608");
     }
+
+    emit_build_stack();
+}
+
+/// `LLAMA_FW_ROCM`, `LLAMA_FW_CUDA`, `LLAMA_FW_VULKAN_SDK` and
+/// `LLAMA_FW_PATCHES`, each empty when unknown (a bare `cargo build` before
+/// 02-build has configured llama.cpp). The dist layout puts the version in the
+/// path (`<DistRoot>/<Name>/<Version>/<os>`), so the first cache line naming
+/// a dist directory is enough. The patches are the ones 02-build applies: every
+/// `.patch` under patches/llama.cpp.
+fn emit_build_stack() {
+    let os = if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
+        "windows"
+    } else {
+        "linux"
+    };
+    let cache = format!("../build/{os}/llama.cpp-cmake/CMakeCache.txt");
+    println!("cargo:rerun-if-changed={cache}");
+    println!("cargo:rerun-if-changed=../patches/llama.cpp");
+    let text = std::fs::read_to_string(&cache)
+        .unwrap_or_default()
+        .replace('\\', "/");
+    for (var, dist) in [
+        ("LLAMA_FW_ROCM", "/TheRock/"),
+        ("LLAMA_FW_CUDA", "/CUDA/"),
+        ("LLAMA_FW_VULKAN_SDK", "/VulkanSDK/"),
+    ] {
+        let version = text
+            .split(dist)
+            .nth(1)
+            .and_then(|rest| rest.split('/').next())
+            .unwrap_or_default();
+        println!("cargo:rustc-env={var}={version}");
+    }
+    let mut patches: Vec<String> = std::fs::read_dir("../patches/llama.cpp")
+        .map(|d| {
+            d.flatten()
+                .filter_map(|e| e.file_name().into_string().ok())
+                .filter(|n| n.ends_with(".patch"))
+                .collect()
+        })
+        .unwrap_or_default();
+    patches.sort();
+    println!("cargo:rustc-env=LLAMA_FW_PATCHES={}", patches.join(","));
 }
 
 /// Generate the icon when it's absent (fresh checkout, or deleted on purpose

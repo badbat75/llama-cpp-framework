@@ -13,7 +13,7 @@
 //! the ROCm/HIP runtime (`rocm_bin_dir`) so `proc` can make ggml-hip.dll
 //! loadable in the llama-server children we spawn.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 fn env_path(var: &str) -> Option<PathBuf> {
     std::env::var_os(var).map(PathBuf::from)
@@ -104,8 +104,8 @@ pub fn settings_ini() -> PathBuf {
 
 /// The live benchmark's prompt, as a plain UTF-8 text file the user owns.
 ///
-/// Under `config\` and not under `bench\` on purpose: `bench\` is output (one
-/// jsonl + md + log per run, listed by a `bench-*.jsonl` glob), this is input,
+/// Under `config\` and not under `bench\` on purpose: `bench\` is output (bench.db),
+/// this is input,
 /// and it is edited like the other three files in `config\`. Under
 /// %LOCALAPPDATA% and not next to the binaries because `bin\` lives in
 /// `$PROGRAMFILES64\llama.cpp`: a prompt shipped there could not be saved
@@ -291,6 +291,17 @@ fn strip_extended_prefix(p: PathBuf) -> PathBuf {
         }
     }
     p
+}
+
+/// Hand a file or folder to the desktop's default handler: `explorer` on
+/// Windows, `xdg-open` elsewhere.
+pub fn open_in_desktop(path: &Path) -> std::io::Result<std::process::Child> {
+    let opener = if cfg!(windows) {
+        "explorer"
+    } else {
+        "xdg-open"
+    };
+    std::process::Command::new(opener).arg(path).spawn()
 }
 
 /// A Windows path literal as the path of the OS the tests run on: unchanged on

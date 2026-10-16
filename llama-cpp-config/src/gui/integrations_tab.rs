@@ -36,7 +36,7 @@ pub(super) fn wire(app: &AppWindow) {
         app.global::<AppState>().on_open_opencode_folder(|| {
             let path = paths::opencode_user_config();
             if let Some(parent) = path.parent() {
-                let _ = std::process::Command::new("explorer").arg(parent).spawn();
+                let _ = paths::open_in_desktop(parent);
             }
         });
     }

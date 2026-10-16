@@ -1655,7 +1655,9 @@ pub fn render_section(p: &Preset) -> String {
     out.push_str("; unless no-host = true.\r\n");
     emit_bool(&mut out, "repack", p.repack);
     out.push_str("; no-host = true keeps host weights in ordinary RAM instead of the GPU's\r\n");
-    out.push_str("; pinned host buffer, so the CPU repacks what it can; repacked experts leave\r\n");
+    out.push_str(
+        "; pinned host buffer, so the CPU repacks what it can; repacked experts leave\r\n",
+    );
     out.push_str("; the MoE cache. Omit the key = pinned (no negative form).\r\n");
     if p.no_host {
         out.push_str("no-host = true\r\n");

@@ -47,13 +47,110 @@ pub enum BenchCmd {
     /// Benchmark one preset once per value of ONE of its keys.
     ///
     /// Each value is written to presets.ini, measured by the same engine the
-    /// Benchmark tab uses (so each leg leaves an ordinary bench-<stamp> report),
+    /// Benchmark tab uses (each finished leg is a run of one bench.db campaign),
     /// and the key is put back afterwards. A live sweep restarts llama-server
     /// per value, because the key rides the child's launch args.
     // Boxed for the reason `ServerSet` is: one payload-carrying variant next to
     // the small ones would otherwise blow clippy's size threshold as the flags
     // grow. clap unwraps the Box itself, so the CLI surface is unchanged.
     Sweep(Box<BenchSweep>),
+    /// Read bench.db: campaigns, models, machines, prompts, runs, summary,
+    /// results, one run, the parameters two runs differ in, or any SELECT.
+    Query(Box<BenchQuery>),
+    /// Record a campaign's answer, the conclusion its runs support.
+    Answer {
+        /// The campaign's name (as `bench query campaigns` lists it).
+        campaign: String,
+        /// The answer, as it should read in the database.
+        text: String,
+        /// The database; default the working one under the data directory.
+        #[arg(long)]
+        db: Option<std::path::PathBuf>,
+    },
+    /// Copy campaigns, with everything their runs point at, into another
+    /// bench.db (the repo's benchmarks/bench.db). The run logs stay behind.
+    Publish {
+        /// Campaign names.
+        #[arg(required = true)]
+        campaigns: Vec<String>,
+        /// The database to copy into.
+        #[arg(long)]
+        to: std::path::PathBuf,
+        /// The database to copy from; default the working one.
+        #[arg(long)]
+        from: Option<std::path::PathBuf>,
+    },
+}
+
+#[derive(Args, Debug)]
+pub struct BenchQuery {
+    #[command(subcommand)]
+    pub what: QueryWhat,
+    /// The database; default the working one under the data directory (the
+    /// repo's is benchmarks/bench.db).
+    #[arg(long, global = true)]
+    pub db: Option<std::path::PathBuf>,
+    /// table, csv or json.
+    #[arg(long, global = true, default_value = "table", value_parser = ["table", "csv", "json"])]
+    pub format: String,
+    /// Keep long text cells whole.
+    #[arg(long, global = true)]
+    pub full: bool,
+    /// Parameter columns to add to runs and summary, comma-separated
+    /// (ctx-size,cache-type-k).
+    #[arg(long, global = true, value_delimiter = ',')]
+    pub show: Vec<String>,
+    /// Campaign name contains TEXT.
+    #[arg(long, global = true)]
+    pub campaign: Option<String>,
+    /// Model name, file or quant contains TEXT.
+    #[arg(long, global = true)]
+    pub model: Option<String>,
+    /// The run computed on a GPU named like TEXT (r9700, 4070).
+    #[arg(long, global = true)]
+    pub gpu: Option<String>,
+    /// The preset's device contains TEXT (ROCm0, Vulkan).
+    #[arg(long, global = true)]
+    pub device: Option<String>,
+    /// llama.cpp tag (v0.7.0).
+    #[arg(long, global = true)]
+    pub llama: Option<String>,
+    /// ok, load-oom, run-oom, crash, error, interrupted.
+    #[arg(long, global = true)]
+    pub status: Option<String>,
+    /// Runs started on or after DATE (2026-10-16).
+    #[arg(long, global = true)]
+    pub since: Option<String>,
+    /// K=V (equals) or K~V (contains), any scope; repeatable.
+    #[arg(long, global = true)]
+    pub param: Vec<String>,
+    /// results only: one prompt or llama-bench test.
+    #[arg(long, global = true)]
+    pub prompt: Option<String>,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum QueryWhat {
+    /// The campaigns: question, answer, runs.
+    Campaigns,
+    /// The models tested, with runs and campaigns.
+    Models,
+    /// The machines: CPU, RAM, GPUs, OS.
+    Machines,
+    /// The prompts, with their token counts.
+    Prompts,
+    /// One line per run.
+    Runs,
+    /// One line per run and prompt (or test): mean +- sd of prefill and decode.
+    Summary,
+    /// One line per request (or llama-bench repetition).
+    Results,
+    /// Everything about one run.
+    Run { id: i64 },
+    /// The parameters that differ between two runs.
+    Diff { a: i64, b: i64 },
+    /// Any read-only query.
+    Sql { query: String },
 }
 
 #[derive(Args, Debug)]
@@ -81,8 +178,8 @@ pub struct BenchSweep {
     pub apply: String,
     /// Treat this as the value the key had before the sweep, instead of reading
     /// it from presets.ini. For after an interrupted sweep, which leaves the key
-    /// on one of its leg values (the value to pass is in its jsonl header, and
-    /// the sweep warns naming both).
+    /// on one of its leg values (the value to pass is in its pending marker,
+    /// and the sweep warns naming both).
     #[arg(long)]
     pub restore_to: Option<String>,
     /// Live only: the prompt to send, inline. The one source that is not a
@@ -116,6 +213,14 @@ pub struct BenchSweep {
     /// Synthetic only: generation length.
     #[arg(long)]
     pub n_gen: Option<i32>,
+    /// The bench.db campaign the legs are recorded in (created when new,
+    /// added to when it exists). Default: `sweep-<stamp>`.
+    #[arg(long)]
+    pub campaign: Option<String>,
+    /// The question the sweep answers, stored with the campaign. Default: one
+    /// spelled from the key, the preset and the values.
+    #[arg(long)]
+    pub question: Option<String>,
 }
 
 #[derive(Subcommand, Debug)]
@@ -299,7 +404,29 @@ pub fn run(cli: Cli) -> Result<()> {
 /// flag left out falls back to the Benchmark tab's own default, so a sweep and a
 /// run started from the GUI measure the same thing.
 fn run_bench(c: BenchCmd) -> Result<()> {
-    let BenchCmd::Sweep(a) = c;
+    let a = match c {
+        BenchCmd::Sweep(a) => a,
+        BenchCmd::Query(q) => return run_bench_query(*q),
+        BenchCmd::Answer { campaign, text, db } => {
+            let path = db.unwrap_or_else(bench::db::work_path);
+            bench::query::answer(&path, &campaign, &text).map_err(|e| anyhow::anyhow!(e))?;
+            println!("{campaign}: answer recorded in {}", path.display());
+            return Ok(());
+        }
+        BenchCmd::Publish {
+            campaigns,
+            to,
+            from,
+        } => {
+            let from = from.unwrap_or_else(bench::db::work_path);
+            for (name, runs) in
+                bench::query::publish(&from, &to, &campaigns).map_err(|e| anyhow::anyhow!(e))?
+            {
+                println!("{name}: {runs} run(s) copied to {}", to.display());
+            }
+            return Ok(());
+        }
+    };
     let values = bench::sweep::parse_values(&a.values).map_err(|e| anyhow::anyhow!(e))?;
 
     let mut plan = bench::Plan {
@@ -373,8 +500,48 @@ fn run_bench(c: BenchCmd) -> Result<()> {
         plan,
         apply: bench::sweep::Apply::from_str(&a.apply),
         restore_to: a.restore_to,
+        campaign: a.campaign.unwrap_or_default(),
+        question: a.question.unwrap_or_default(),
     };
     bench::sweep::run(&opts).map_err(|e| anyhow::anyhow!(e))?;
+    Ok(())
+}
+
+fn run_bench_query(q: BenchQuery) -> Result<()> {
+    use bench::query::{Cmd, Filters, Format, Opts};
+    let path = q.db.unwrap_or_else(bench::db::work_path);
+    let conn = bench::db::open_ro(&path).map_err(|e| anyhow::anyhow!(e))?;
+    let cmd = match q.what {
+        QueryWhat::Campaigns => Cmd::Campaigns,
+        QueryWhat::Models => Cmd::Models,
+        QueryWhat::Machines => Cmd::Machines,
+        QueryWhat::Prompts => Cmd::Prompts,
+        QueryWhat::Runs => Cmd::Runs,
+        QueryWhat::Summary => Cmd::Summary,
+        QueryWhat::Results => Cmd::Results,
+        QueryWhat::Run { id } => Cmd::Run(id),
+        QueryWhat::Diff { a, b } => Cmd::Diff(a, b),
+        QueryWhat::Sql { query } => Cmd::Sql(query),
+    };
+    let filters = Filters {
+        run_id: None,
+        campaign: q.campaign,
+        model: q.model,
+        gpu: q.gpu,
+        device: q.device,
+        llama: q.llama,
+        status: q.status,
+        since: q.since,
+        params: q.param,
+        prompt: q.prompt,
+    };
+    let opts = Opts {
+        format: Format::from_str(&q.format),
+        full: q.full,
+        show: q.show,
+    };
+    let table = bench::query::run(&conn, &cmd, &filters, &opts).map_err(|e| anyhow::anyhow!(e))?;
+    println!("{}", bench::query::render(&table, &opts));
     Ok(())
 }
 

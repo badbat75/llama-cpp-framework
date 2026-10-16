@@ -7,12 +7,12 @@
 //! so a seven-value sweep is half an hour during which nothing else may touch
 //! the machine. That is a thing to start from a terminal and walk away from.
 //!
-//! It is also why every leg writes the ordinary `bench-<stamp>.{jsonl,md,log}`
-//! files the tab already produces and lists, with only the cross-leg summary
-//! added on top: a sweep killed at the fourth value leaves four finished,
-//! openable runs behind, not one truncated file. The summary is named
-//! `sweep-<stamp>.*` precisely so it stays OUT of that listing, since
-//! `bench::past_runs` matches `bench-*.jsonl` and `load_run` could not parse it.
+//! A sweep is ONE bench.db campaign (`sweep-<stamp>`, or `--campaign`) and
+//! every leg is a run of it labelled `key=value`, committed when the leg
+//! finishes: a sweep killed at the fourth value leaves three finished runs the
+//! tab reloads side by side, not one truncated file. A leg that fails is not a
+//! run (only finished runs are recorded); the campaign's notes name it. The
+//! cross-leg digest is the campaign's report.
 //!
 //! ## The key rides the CHILD's launch args, so a live leg must restart
 //!
@@ -42,11 +42,12 @@
 //!
 //! A sweep writes the key it sweeps, so an interrupted sweep leaves the preset
 //! on whatever value it was measuring. The original is written into the
-//! summary's FIRST jsonl line before any leg runs, which is why that line exists
-//! at all: a machine that reboots mid-sweep still has the value to put back
-//! recorded on disk.
+//! sweep's PENDING marker (`bench/sweep-pending-<stamp>.json`) before any leg
+//! runs, and the marker is deleted only once the key is put back: a machine
+//! that reboots mid-sweep still has the value to restore on disk, and the next
+//! sweep of the same preset and key warns about it. The marker is the one file
+//! a sweep writes, and it exists only while the preset is not as it was.
 
-use std::io::Write;
 use std::path::PathBuf;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
@@ -476,20 +477,21 @@ pub struct Opts {
     /// What `--apply original` puts back, when the value in presets.ini is not
     /// it. The case this exists for: an interrupted sweep left the key on one of
     /// its leg values, so "the value it had before" is no longer readable from
-    /// the file (it is in that sweep's jsonl header, which the warning names).
+    /// the file (it is in that sweep's pending marker, which the warning names).
     pub restore_to: Option<String>,
+    /// The bench.db campaign; empty for `sweep-<stamp>`.
+    pub campaign: String,
+    /// What the sweep asks; empty for one spelled from the key and preset.
+    pub question: String,
 }
 
-/// One measured value: the leg's points, where its report landed, and what went
-/// wrong if something did. A failed leg is kept rather than dropped: "this value
+/// One measured value: the leg's points, and what went wrong if something did. A failed leg is kept rather than dropped: "this value
 /// does not load" is a result, and a summary that omits it reads as if the value
 /// was never tried.
 #[derive(Clone, Debug, Default)]
 pub struct Leg {
     pub value: String,
     pub points: Vec<Point>,
-    /// File name (not path) of the leg's own report, empty when it wrote none.
-    pub report: String,
     pub error: String,
     pub secs: u64,
 }
@@ -643,8 +645,8 @@ pub fn render_summary(s: &Summary) -> String {
             sep.push_str("---:|");
         }
     }
-    head.push_str(" note | run |");
-    sep.push_str("---|---|");
+    head.push_str(" note |");
+    sep.push_str("---|");
     md.push_str(&head);
     md.push('\n');
     md.push_str(&sep);
@@ -672,12 +674,7 @@ pub fn render_summary(s: &Summary) -> String {
         } else {
             format!("FAILED: {}", leg.error)
         };
-        let run = if leg.report.is_empty() {
-            "-".to_string()
-        } else {
-            format!("`{}`", leg.report)
-        };
-        row.push_str(&format!(" {note} | {run} |"));
+        row.push_str(&format!(" {note} |"));
         md.push_str(&row);
         md.push('\n');
     }
@@ -712,7 +709,7 @@ pub fn sweep_caveats(mode: Mode) -> Vec<&'static str> {
     let mut out = vec![
         "Legs ran in the order listed, so a card that heats up over a long sweep charges the drift to the LAST values. Re-run with the order reversed when two values are close.",
         "Only the swept key moved; every other key came from presets.ini as it stood when the sweep started, and a hand edit made while it ran is not reflected in the rows above it.",
-        "Each leg's own report (the `run` column) carries the full environment block, the device ids resolved by name and the raw repetitions. This table is a digest of them, not a replacement.",
+        "Each leg's run in bench.db (`bench query runs --campaign <this sweep>`) carries the environment, the device ids resolved by name, every parameter and the raw repetitions. This table is a digest of them, not a replacement.",
     ];
     if mode == Mode::Live {
         out.push(
@@ -722,21 +719,16 @@ pub fn sweep_caveats(mode: Mode) -> Vec<&'static str> {
     out
 }
 
-// ── Where a sweep writes ─────────────────────────────────────────────────
+// ── The pending marker ───────────────────────────────────────────────────
 
-/// The two files a sweep writes on top of its legs'. Named `sweep-` and not
-/// `bench-` so the Benchmark tab's saved-runs list (which globs `bench-*.jsonl`
-/// and parses every line) never tries to load one.
-pub fn sweep_paths(stamp: &str) -> (PathBuf, PathBuf) {
-    let dir = super::bench_dir();
-    (
-        dir.join(format!("sweep-{stamp}.jsonl")),
-        dir.join(format!("sweep-{stamp}.md")),
-    )
+/// The marker of a sweep that has not put its key back yet. One per sweep,
+/// named by stamp, so two sweeps of different keys never share one.
+pub fn pending_path(stamp: &str) -> PathBuf {
+    super::bench_dir().join(format!("sweep-pending-{stamp}.json"))
 }
 
-/// The first line written, BEFORE any leg runs: it carries the value to restore
-/// if the sweep never reaches its own cleanup.
+/// The marker's content, written BEFORE any leg runs: it carries the value to
+/// restore if the sweep never reaches its own cleanup.
 pub fn header_json(opts: &Opts, original: &str, stamp: &str) -> String {
     serde_json::json!({
         "kind": "sweep",
@@ -752,34 +744,17 @@ pub fn header_json(opts: &Opts, original: &str, stamp: &str) -> String {
     .to_string()
 }
 
-/// The line that CLOSES a sweep file, written after the key is put back.
-///
-/// Its absence is the signal: a file with a header and no end line is a sweep
-/// that was interrupted, which means presets.ini is still on one of its leg
-/// values. `interrupted` reads exactly that, because the next sweep would
-/// otherwise record the leftover as the value to restore and put THAT back,
-/// quietly promoting a half-measured configuration to the permanent one.
-pub fn end_json(applied: &str, legs: usize) -> String {
-    serde_json::json!({ "kind": "end", "applied": applied, "legs": legs }).to_string()
-}
-
-/// What a sweep file says about itself.
+/// What a marker says about its sweep.
 pub struct State {
     pub preset: String,
     pub key: String,
     pub restore: String,
-    /// The end line is there. It is the primary signal and the only one this
-    /// pure half can see; `interrupted` adds a second, the summary report next
-    /// to the file, which is the last thing a sweep writes and so covers a file
-    /// written before the end line existed.
-    pub closed_line: bool,
 }
 
-/// Read a sweep file's header and whether it was closed. `None` when the first
-/// line is not a sweep header (an empty or truncated file).
+/// Read a marker. `None` when it is not a sweep header (an empty or truncated
+/// file).
 pub fn sweep_state(content: &str) -> Option<State> {
-    let mut lines = content.lines();
-    let header: serde_json::Value = serde_json::from_str(lines.next()?.trim()).ok()?;
+    let header: serde_json::Value = serde_json::from_str(content.trim()).ok()?;
     if header.get("kind")?.as_str()? != "sweep" {
         return None;
     }
@@ -787,78 +762,49 @@ pub fn sweep_state(content: &str) -> Option<State> {
         preset: header["preset"].as_str().unwrap_or_default().to_string(),
         key: header["key"].as_str().unwrap_or_default().to_string(),
         restore: header["restore"].as_str().unwrap_or_default().to_string(),
-        closed_line: lines.any(|l| l.contains("\"kind\":\"end\"")),
     })
 }
 
-/// The newest sweep of this preset and key, when it was interrupted: its file
-/// and the value it recorded to restore. A newer FINISHED sweep of the same pair
-/// clears the warning, which is why the newest match decides rather than the
-/// newest unfinished one.
-fn interrupted(preset: &str, key: &str) -> Option<(PathBuf, String)> {
-    let mut files: Vec<PathBuf> = std::fs::read_dir(super::bench_dir())
-        .ok()?
+/// The markers left for this preset and key, oldest first.
+fn markers(preset: &str, key: &str) -> Vec<(PathBuf, State)> {
+    let Ok(dir) = std::fs::read_dir(super::bench_dir()) else {
+        return Vec::new();
+    };
+    let mut files: Vec<PathBuf> = dir
         .flatten()
         .map(|e| e.path())
         .filter(|p| {
             p.file_name()
                 .and_then(|n| n.to_str())
-                .is_some_and(|n| n.starts_with("sweep-") && n.ends_with(".jsonl"))
+                .is_some_and(|n| n.starts_with("sweep-pending-") && n.ends_with(".json"))
         })
         .collect();
     // The stamp is `yyyymmdd-hhmmss`, so a lexical sort IS chronological.
     files.sort();
-    for path in files.iter().rev() {
-        let Ok(content) = std::fs::read_to_string(path) else {
-            continue;
-        };
-        let Some(state) = sweep_state(&content) else {
-            continue;
-        };
-        if state.preset != preset || state.key != key {
-            continue;
-        }
-        // The report is written last, after the key is put back, so its
-        // presence closes a file whose end line is missing because the build
-        // that wrote it did not have one yet.
-        let closed = state.closed_line || path.with_extension("md").is_file();
-        return (!closed).then(|| (path.clone(), state.restore));
-    }
-    None
+    files
+        .into_iter()
+        .filter_map(|p| {
+            let state = sweep_state(&std::fs::read_to_string(&p).ok()?)?;
+            (state.preset == preset && state.key == key).then_some((p, state))
+        })
+        .collect()
 }
 
-/// One finished leg, appended as it lands.
-pub fn leg_json(leg: &Leg) -> String {
-    let points: Vec<serde_json::Value> = leg
-        .points
-        .iter()
-        .map(|p| {
-            serde_json::json!({
-                "test": p.test,
-                "mean": p.mean,
-                "sd": p.sd,
-                "n": p.n,
-                "note": p.note,
-            })
-        })
-        .collect();
-    serde_json::json!({
-        "kind": "leg",
-        "value": leg.value,
-        "points": points,
-        "report": leg.report,
-        "error": leg.error,
-        "secs": leg.secs,
-    })
-    .to_string()
+/// The newest unfinished sweep of this preset and key: its marker and the
+/// value it recorded to restore.
+fn interrupted(preset: &str, key: &str) -> Option<(PathBuf, String)> {
+    markers(preset, key)
+        .pop()
+        .map(|(path, state)| (path, state.restore))
 }
 
 // ── The run ──────────────────────────────────────────────────────────────
 
-/// Run the sweep, writing each leg's report as it finishes and the summary at
-/// the end. Returns the summary's path; an `Err` still means the summary was
-/// written (its message says where), the way a partial benchmark run does.
-pub fn run(opts: &Opts) -> Result<PathBuf, String> {
+/// Run the sweep, committing each leg to bench.db as it finishes and the
+/// digest at the end. Returns the campaign's name; an `Err` lists the legs and
+/// the cleanup steps that failed (the finished legs are in the database all
+/// the same).
+pub fn run(opts: &Opts) -> Result<String, String> {
     let set = setter(&opts.key)?;
     let base = load_one(&opts.preset)?;
     // Every value is applied to a throwaway copy up front: a typo in the last of
@@ -879,25 +825,41 @@ pub fn run(opts: &Opts) -> Result<PathBuf, String> {
     let port = u16::try_from(server_cfg::load().port_or_default())
         .map_err(|_| "invalid port in server.ini".to_string())?;
 
-    // BEFORE this run's own file exists, and that ordering is the whole
-    // correctness of the check: `interrupted` answers with the NEWEST sweep of
-    // this preset and key, which the moment the file below is created is this
-    // one, carrying neither its end line nor its report yet. Scanning after
-    // creating it therefore reports every sweep as interrupted (v1.13.0 did)
-    // and, worse, hides a real leftover behind the current file.
+    // BEFORE this sweep's own marker exists, and that ordering is the whole
+    // correctness of the check: `interrupted` answers with the NEWEST marker of
+    // this preset and key, which the moment the one below is created is this
+    // sweep's. Scanning after creating it therefore reports every sweep as
+    // interrupted (v1.13.0 did) and, worse, hides a real leftover.
     let leftover = match opts.restore_to {
         Some(_) => None,
         None => interrupted(&opts.preset, &opts.key),
     };
 
     let stamp = super::stamp(super::now_secs());
+    let campaign = super::record::Campaign {
+        name: if opts.campaign.is_empty() {
+            format!("sweep-{stamp}")
+        } else {
+            opts.campaign.clone()
+        },
+        question: if opts.question.is_empty() {
+            format!(
+                "How does `{}` change {} on preset {}? Values: {}.",
+                opts.key,
+                primary_label(opts.plan.mode),
+                opts.preset,
+                opts.values.join(", ")
+            )
+        } else {
+            opts.question.clone()
+        },
+        label: None,
+    };
     let dir = super::bench_dir();
     std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
-    let (jsonl_path, md_path) = sweep_paths(&stamp);
-    let mut jsonl = std::fs::File::create(&jsonl_path)
-        .map_err(|e| format!("cannot write {}: {e}", jsonl_path.display()))?;
-    let _ = writeln!(jsonl, "{}", header_json(opts, &original, &stamp));
-    let _ = jsonl.flush();
+    let marker = pending_path(&stamp);
+    std::fs::write(&marker, header_json(opts, &original, &stamp))
+        .map_err(|e| format!("cannot write {}: {e}", marker.display()))?;
 
     println!(
         "Sweeping {} = {} on preset {} ({} engine, {} repetition{}).",
@@ -912,7 +874,7 @@ pub fn run(opts: &Opts) -> Result<PathBuf, String> {
         "presets.ini is being edited; `{} = {original}` is restored at the end \
          (also recorded in {}).",
         opts.key,
-        jsonl_path.display()
+        marker.display()
     );
     // An interrupted sweep left the key on one of ITS leg values, so the value
     // read out of presets.ini above is that leftover and not the configuration
@@ -935,7 +897,7 @@ pub fn run(opts: &Opts) -> Result<PathBuf, String> {
         let leg = match write_value(&opts.preset, set, value)
             .and_then(|()| prepare_server(opts.plan.mode, port))
         {
-            Ok(()) => measure(opts, value),
+            Ok(()) => measure(opts, value, &campaign),
             Err(e) => {
                 println!("    failed: {e}");
                 Leg {
@@ -949,8 +911,6 @@ pub fn run(opts: &Opts) -> Result<PathBuf, String> {
             secs: started.elapsed().as_secs(),
             ..leg
         };
-        let _ = writeln!(jsonl, "{}", leg_json(&leg));
-        let _ = jsonl.flush();
         report_leg(&leg, opts.plan.mode);
         legs.push(leg);
     }
@@ -970,12 +930,14 @@ pub fn run(opts: &Opts) -> Result<PathBuf, String> {
     };
     let restore = write_value(&opts.preset, set, &applied);
     let server = restore_server(was_running);
-    // Closes the file, which is what tells the NEXT sweep that presets.ini is
-    // not holding a leg value of this one. Written only after the restore, so
-    // a sweep that died putting the key back still reads as interrupted.
+    // The key is back: this sweep's marker goes, and so do older ones of the
+    // same preset and key, whose leftover this restore has overwritten (the
+    // newest sweep of a pair decides). Only after the restore, so a sweep that
+    // died putting the key back still reads as interrupted.
     if restore.is_ok() {
-        let _ = writeln!(jsonl, "{}", end_json(&applied, legs.len()));
-        let _ = jsonl.flush();
+        for (path, _) in markers(&opts.preset, &opts.key) {
+            let _ = std::fs::remove_file(path);
+        }
     }
     println!("\n{} = {applied} (presets.ini).", opts.key);
 
@@ -987,9 +949,19 @@ pub fn run(opts: &Opts) -> Result<PathBuf, String> {
         stamp: &super::stamp_human(super::now_secs()),
         server_version: &crate::server_version::probe().unwrap_or_default(),
     });
-    std::fs::write(&md_path, &summary)
-        .map_err(|e| format!("cannot write {}: {e}", md_path.display()))?;
-    println!("Summary: {}", md_path.display());
+    println!("\n{summary}");
+    if record_digest(
+        &campaign.name,
+        &campaign_notes(opts, &legs, &original, &applied),
+        &summary,
+    ) {
+        println!(
+            "Campaign {} in bench.db: `llama-cpp-config bench query runs --campaign {}`.",
+            campaign.name, campaign.name
+        );
+    } else {
+        println!("No leg finished, so bench.db has no campaign for this sweep.");
+    }
 
     let mut problems: Vec<String> = legs
         .iter()
@@ -1003,13 +975,9 @@ pub fn run(opts: &Opts) -> Result<PathBuf, String> {
         problems.push(e);
     }
     if problems.is_empty() {
-        Ok(md_path)
+        Ok(campaign.name)
     } else {
-        Err(format!(
-            "{} (summary written to {})",
-            problems.join("; "),
-            md_path.display()
-        ))
+        Err(problems.join("; "))
     }
 }
 
@@ -1135,17 +1103,66 @@ fn wait_ready(port: u16) -> Result<(), String> {
     }
 }
 
+/// What the primary test is called before any leg has run.
+fn primary_label(mode: Mode) -> &'static str {
+    match mode {
+        Mode::Live => "live decode",
+        Mode::Synthetic => "llama-bench decode",
+    }
+}
+
+/// The campaign's notes in bench.db: what was swept, what the preset was left
+/// on, and the values that did not finish, which have no run of their own
+/// (only finished runs are recorded) but are a result all the same.
+pub fn campaign_notes(opts: &Opts, legs: &[Leg], original: &str, applied: &str) -> String {
+    let mut out = format!(
+        "sweep of `{}` on preset {} ({}, {} repetition{}): {}\n\
+         before: {original}; left on: {applied} (--apply {})",
+        opts.key,
+        opts.preset,
+        opts.plan.mode.as_str(),
+        opts.plan.reps,
+        if opts.plan.reps == 1 { "" } else { "s" },
+        opts.values.join(", "),
+        opts.apply.as_str()
+    );
+    for leg in legs.iter().filter(|l| !l.error.is_empty()) {
+        out.push_str(&format!(
+            "\nnot finished: {} = {}: {}",
+            opts.key, leg.value, leg.error
+        ));
+    }
+    out
+}
+
+/// The campaign's notes and report. `false` when there is no campaign, i.e.
+/// no leg finished.
+fn record_digest(campaign: &str, notes: &str, report: &str) -> bool {
+    let Ok(conn) = super::db::open(&super::db::work_path()) else {
+        return false;
+    };
+    super::db::set_notes(&conn, campaign, notes).unwrap_or(false)
+        && super::db::set_report(&conn, campaign, report).unwrap_or(false)
+}
+
 /// Run one leg through the ordinary benchmark engine and collect what it
 /// produced. Blocks until the worker thread is done: the sweep is sequential by
 /// nature, two legs at once would measure each other.
-fn measure(opts: &Opts, value: &str) -> Leg {
+fn measure(opts: &Opts, value: &str, campaign: &super::record::Campaign) -> Leg {
     let (tx, rx) = mpsc::channel();
-    let _handle = super::exec::spawn(leg_plan(opts, &opts.preset), move |ev| {
+    let plan = Plan {
+        campaign: Some(super::record::Campaign {
+            label: Some(format!("{}={value}", opts.key)),
+            ..campaign.clone()
+        }),
+        ..leg_plan(opts, &opts.preset)
+    };
+    let _handle = super::exec::spawn(plan, move |ev| {
         let _ = tx.send(ev);
     });
 
     let mut points: Vec<Point> = Vec::new();
-    let mut outcome: Option<Result<PathBuf, String>> = None;
+    let mut outcome: Option<Result<String, String>> = None;
     // Ends when the worker drops its sender, which it does after emitting Done.
     for ev in rx {
         match ev {
@@ -1155,25 +1172,17 @@ fn measure(opts: &Opts, value: &str) -> Leg {
         }
     }
 
-    let (report, error) = match outcome {
-        Some(Ok(path)) => (file_name(&path), String::new()),
-        // A failed run still writes its partial report, and the message says so.
-        Some(Err(e)) => (String::new(), e),
-        None => (String::new(), "the benchmark worker ended silently".into()),
+    let error = match outcome {
+        Some(Ok(_)) => String::new(),
+        Some(Err(e)) => e,
+        None => "the benchmark worker ended silently".into(),
     };
     Leg {
         value: value.to_string(),
         points,
-        report,
         error,
         secs: 0,
     }
-}
-
-fn file_name(path: &std::path::Path) -> String {
-    path.file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_default()
 }
 
 fn report_leg(leg: &Leg, mode: Mode) {
@@ -1214,7 +1223,6 @@ mod tests {
                 n: 3,
                 note: note.into(),
             }],
-            report: format!("bench-{value}.md"),
             error: String::new(),
             secs: 300,
         }
@@ -1241,6 +1249,8 @@ mod tests {
             plan: Plan::default(),
             apply: Apply::Original,
             restore_to: None,
+            campaign: String::new(),
+            question: String::new(),
         }
     }
 
@@ -1397,7 +1407,7 @@ mod tests {
             ),
             "{md}"
         );
-        // The value to put back is in the table, not only in the jsonl.
+        // The value to put back is in the table, not only in the marker.
         assert!(
             md.contains("| spec-draft-n-max before the sweep | 6 |"),
             "{md}"
@@ -1415,50 +1425,18 @@ mod tests {
         assert_eq!(v["values"][1], "3");
     }
 
+    /// A marker that is not a sweep header is not a sweep: a truncated file,
+    /// an empty one, or anything else that got the name.
     #[test]
-    fn leg_json_carries_the_points() {
-        let v: serde_json::Value =
-            serde_json::from_str(&leg_json(&leg("5", 59.3, "draft accepted 80%"))).unwrap();
-        assert_eq!(v["kind"], "leg");
-        assert_eq!(v["value"], "5");
-        assert_eq!(v["points"][0]["test"], "decode");
-        assert_eq!(v["points"][0]["mean"], 59.3);
-        assert_eq!(v["report"], "bench-5.md");
-    }
-
-    /// A file with a header and no end line is the signal that presets.ini is
-    /// still holding one of that sweep's leg values.
-    #[test]
-    fn a_sweep_file_is_closed_only_by_its_end_line() {
+    fn sweep_state_reads_a_marker_and_ignores_anything_else() {
         let o = opts(&["3", "4"]);
-        let header = header_json(&o, "6", "20260901-192445");
-        let open = sweep_state(&format!("{header}\n{}\n", leg_json(&leg("3", 47.3, "")))).unwrap();
-        assert!(!open.closed_line);
-        assert_eq!(open.restore, "6");
-        assert_eq!(open.key, "spec-draft-n-max");
-        assert_eq!(open.preset, "Qwen");
-
-        let closed = sweep_state(&format!("{header}\n{}\n", end_json("6", 2))).unwrap();
-        assert!(closed.closed_line);
-    }
-
-    /// Anything that is not a sweep header is not a sweep: a truncated file, an
-    /// empty one, or a `bench-` run that somehow got here.
-    #[test]
-    fn sweep_state_ignores_files_that_are_not_sweeps() {
+        let state = sweep_state(&header_json(&o, "6", "20260901-192445")).unwrap();
+        assert_eq!(state.restore, "6");
+        assert_eq!(state.key, "spec-draft-n-max");
+        assert_eq!(state.preset, "Qwen");
         assert!(sweep_state("").is_none());
         assert!(sweep_state("{\"kind\":\"run\",\"mode\":\"live\"}").is_none());
         assert!(sweep_state("not json at all").is_none());
-    }
-
-    /// The summary must never land in the tab's saved-runs list: `past_runs`
-    /// globs `bench-*.jsonl` and `load_run` would choke on these lines.
-    #[test]
-    fn summary_files_are_not_named_like_runs() {
-        let (jsonl, md) = sweep_paths("20260901-180000");
-        assert!(file_name(&jsonl).starts_with("sweep-"));
-        assert!(file_name(&md).starts_with("sweep-"));
-        assert!(!file_name(&jsonl).starts_with("bench-"));
     }
 
     #[test]

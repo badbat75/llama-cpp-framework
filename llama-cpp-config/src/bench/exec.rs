@@ -10,14 +10,15 @@
 //! shared memory over PCIe and the numbers read as a backend regression rather
 //! than as a mistake, which is why this is a hard stop and not a warning.
 //!
-//! ## Everything is written as it lands
+//! ## A preset is written when it is done, and only then
 //!
-//! A run is minutes of sustained GPU load, which on this class of machine is
-//! precisely when a TDR or a bugcheck arrives. So each point is appended to the
-//! jsonl the moment it is computed, llama-bench's stderr is tee'd to the run's
-//! `.log` while it runs, and the markdown report is rendered from whatever was
-//! collected, cancellation and failure included. A run that dies is a partial
-//! result, never an empty file.
+//! Everything a run produces goes into bench.db (`db` module header): each
+//! preset's run is committed, points, samples, parameters and the engine's log
+//! together, when the engine moves past it, so a run that dies at its third
+//! preset keeps the first two. A preset that fails or is cancelled is dropped
+//! (the database holds measurements, not attempts); its error message carries
+//! the tail of the engine's output instead. The markdown report is rendered at
+//! the end of a successful run and stored with its campaign.
 //!
 //! ## Why the live mode warms up, and why it groups by preset
 //!
@@ -30,14 +31,15 @@
 //! of grouping is that a thermal drift is charged to the last preset, which the
 //! report says out loud.
 
-use std::io::{BufRead, BufReader, Write};
-use std::path::PathBuf;
+use std::io::{BufRead, BufReader};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::Arc;
 use std::time::Duration;
 
+use super::db::Sample;
+use super::record::Recorder;
 use super::{Mode, Plan, Point, RunMeta};
 use crate::{http, paths, presets, proc, runstate, server_cfg};
 
@@ -58,8 +60,8 @@ pub enum Event {
     /// The whole current result set. The UI replaces its table with it rather
     /// than patching rows: a live point is revised as its repetitions land.
     Points(Vec<Point>),
-    /// The run ended: the report path, or why it did not.
-    Done(Result<PathBuf, String>),
+    /// The run ended: its bench.db campaign, or why it did not.
+    Done(Result<String, String>),
 }
 
 /// A running benchmark. Dropping it does NOT stop the run (the worker owns its
@@ -85,13 +87,10 @@ pub fn spawn(plan: Plan, emit: impl Fn(Event) + Send + 'static) -> Handle {
     Handle { cancel }
 }
 
-/// Everything one run owns on disk, plus the accumulating results.
+/// Everything one run owns, plus the accumulating results.
 struct Run {
     plan: Plan,
     meta: RunMeta,
-    jsonl: std::fs::File,
-    log_path: PathBuf,
-    md_path: PathBuf,
     points: Vec<Point>,
     /// The flash-attention setting each preset RESOLVED to, read back off
     /// llama-bench's rows. A preset that pins nothing runs at `auto`, which
@@ -99,13 +98,16 @@ struct Run {
     /// different kernels; `flash_attn_mismatch` turns that into a warning at the
     /// top of the report.
     flash_attn: std::collections::BTreeMap<String, String>,
+    /// bench.db: where every finished preset goes. An `Option` only so a
+    /// failed preset can be dropped through the same path.
+    rec: Option<Recorder>,
+    /// What each preset's device ids resolved to, for its db run.
+    resolved: Vec<(String, Vec<(String, String)>)>,
 }
 
 impl Run {
-    /// Record (or revise) one point: into memory, onto disk, and out to the UI.
+    /// Record (or revise) one point: into memory and out to the UI.
     fn put(&mut self, point: Point, emit: &impl Fn(Event)) {
-        let _ = writeln!(self.jsonl, "{}", super::point_json(&point));
-        let _ = self.jsonl.flush();
         match self
             .points
             .iter_mut()
@@ -117,26 +119,97 @@ impl Run {
         emit(Event::Points(self.points.clone()));
     }
 
-    fn raw(&mut self, line: &str) {
-        let _ = writeln!(self.jsonl, "{line}");
-    }
-
     fn note(&self, text: &str) {
-        append_log(&self.log_path, text);
+        if let Some(rec) = &self.rec {
+            rec.log(text);
+        }
+    }
+
+    /// Hold the db run for the preset about to be measured, committing the one
+    /// before it: the engine only moves on after a preset is done.
+    fn begin_preset(&mut self, preset: &presets::Preset, cfg: &server_cfg::ServerConfig) {
+        self.commit_preset();
+        let devices = self
+            .resolved
+            .iter()
+            .find(|(id, _)| *id == preset.id)
+            .map(|(_, d)| d.clone())
+            .unwrap_or_default();
+        let started = super::stamp_human(super::now_secs());
+        if let Some(rec) = &mut self.rec {
+            rec.start(preset, cfg, &devices, &started);
+        }
+    }
+
+    fn commit_preset(&mut self) {
+        let Some(preset) = self
+            .rec
+            .as_ref()
+            .and_then(|r| r.current_preset().map(str::to_string))
+        else {
+            return;
+        };
+        let notes = self.db_notes(&preset);
+        let points: Vec<Point> = self
+            .points
+            .iter()
+            .filter(|p| p.preset == preset)
+            .cloned()
+            .collect();
+        if let Some(Err(e)) = self.rec.as_mut().map(|r| r.commit(&notes, &points)) {
+            self.meta
+                .warnings
+                .push(format!("bench.db: {e}; this run is not in the database."));
+        }
+    }
+
+    fn sample(&mut self, s: Sample) {
+        if let Some(rec) = &mut self.rec {
+            rec.sample(s);
+        }
+    }
+
+    /// A db run's notes: the run's warnings, the machine state the report's
+    /// Environment table carries, and what flash-attention resolved to.
+    fn db_notes(&self, preset: &str) -> String {
+        let mut lines: Vec<String> = self.meta.warnings.clone();
+        for (label, value) in &self.meta.env {
+            if !label.starts_with("devices (") {
+                lines.push(format!("{label}: {value}"));
+            }
+        }
+        if let Some(fa) = self.flash_attn.get(preset) {
+            lines.push(format!("flash-attn: {fa}"));
+        }
+        lines.join("\n")
+    }
+
+    /// The last preset is committed only when the run as a whole succeeded;
+    /// a failed or cancelled one is dropped (`db` module header).
+    fn close_db(&mut self, outcome: &Result<(), String>) {
+        match outcome {
+            Ok(()) => self.commit_preset(),
+            Err(_) => {
+                if let Some(rec) = &mut self.rec {
+                    rec.discard();
+                }
+            }
+        }
     }
 }
 
-fn append_log(path: &PathBuf, text: &str) {
-    if let Ok(mut f) = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)
-    {
-        let _ = writeln!(f, "{text}");
-    }
+/// The last lines of the held run's log, for an error message: a failed
+/// preset is not recorded, so this is where its evidence goes.
+fn log_tail(run: &Run, lines: usize) -> String {
+    let Some(sink) = run.rec.as_ref().and_then(Recorder::log_sink) else {
+        return String::new();
+    };
+    let log = sink.lock().map(|l| l.clone()).unwrap_or_default();
+    let tail: Vec<&str> = log.lines().filter(|l| !l.trim().is_empty()).collect();
+    tail[tail.len().saturating_sub(lines)..].join("\n")
 }
 
-fn run(plan: &Plan, cancel: &Arc<AtomicBool>, emit: &impl Fn(Event)) -> Result<PathBuf, String> {
+fn run(plan: &Plan, cancel: &Arc<AtomicBool>, emit: &impl Fn(Event)) -> Result<String, String> {
     if let Some(problem) = super::validate(plan) {
         return Err(problem);
     }
@@ -178,7 +251,10 @@ fn run(plan: &Plan, cancel: &Arc<AtomicBool>, emit: &impl Fn(Event)) -> Result<P
     let dir = super::bench_dir();
     std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
     let stamp = super::stamp(super::now_secs());
-    let (jsonl_path, md_path, log_path) = super::run_paths(&stamp);
+    // Opened BEFORE anything is measured: a database that cannot be written is
+    // a run whose results would have nowhere to go.
+    let rec = Recorder::begin(&super::db::work_path(), plan, &stamp)
+        .map_err(|e| format!("bench.db: {e}"))?;
 
     // What each preset's device ids point at RIGHT NOW. Recorded because the ids
     // move with driver state, so "ROCm0" in a six-week-old report is not
@@ -226,23 +302,16 @@ fn run(plan: &Plan, cancel: &Arc<AtomicBool>, emit: &impl Fn(Event)) -> Result<P
         warnings,
     };
 
-    let jsonl = std::fs::File::create(&jsonl_path)
-        .map_err(|e| format!("cannot write {}: {e}", jsonl_path.display()))?;
+    let campaign = rec.campaign().to_string();
     let mut run = Run {
         plan: plan.clone(),
         meta,
-        jsonl,
-        log_path,
-        md_path,
         points: Vec::new(),
         flash_attn: std::collections::BTreeMap::new(),
+        rec: Some(rec),
+        resolved,
     };
-    let header = super::run_header_json(plan, &run.meta);
-    run.raw(&header);
-    run.note(&format!("=== {} ===", run.meta.stamp));
 
-    // A failure past this point still writes the report: the rows already
-    // collected are the result, and the message is what says the run is partial.
     let outcome = match plan.mode {
         Mode::Live => run_live(&mut run, &cfg, &chosen, cancel, emit),
         Mode::Synthetic => run_synthetic(&mut run, &cfg, &chosen, cancel, emit),
@@ -254,23 +323,21 @@ fn run(plan: &Plan, cancel: &Arc<AtomicBool>, emit: &impl Fn(Event)) -> Result<P
     if let Some(w) = super::flash_attn_mismatch(&run.flash_attn) {
         run.meta.warnings.push(w);
     }
+    run.close_db(&outcome);
     for (preset, fa) in &run.flash_attn {
         run.meta
             .env
             .push((format!("flash-attn ({preset})"), fa.clone()));
     }
 
-    let report = super::render_report(&run.plan, &run.points, &run.meta);
-    std::fs::write(&run.md_path, &report)
-        .map_err(|e| format!("cannot write {}: {e}", run.md_path.display()))?;
-
-    match outcome {
-        Ok(()) => Ok(run.md_path.clone()),
-        Err(e) => Err(format!(
-            "{e} (partial results saved to {})",
-            run.md_path.display()
-        )),
+    outcome?;
+    // A sweep leg's campaign is the sweep's, whose report is the sweep digest.
+    if plan.campaign.is_none() {
+        let report = super::render_report(&run.plan, &run.points, &run.meta);
+        let conn = super::db::open(&super::db::work_path())?;
+        super::db::set_report(&conn, &campaign, &report).map_err(|e| format!("bench.db: {e}"))?;
     }
+    Ok(campaign)
 }
 
 fn cancelled(cancel: &Arc<AtomicBool>) -> bool {
@@ -293,6 +360,7 @@ fn run_live(
         if cancelled(cancel) {
             return Err("Cancelled.".into());
         }
+        run.begin_preset(preset, cfg);
         emit(Event::Progress(format!(
             "{}: loading the model (warm-up request)",
             preset.id
@@ -325,9 +393,9 @@ fn run_live(
             let res = http::request(port, "POST", super::LIVE_PATH, Some(&body), LIVE_TIMEOUT)
                 .map_err(|e| format!("{}: {e}", preset.id))?;
             if res.status != 200 {
-                run.note(&format!("{} HTTP {}: {}", preset.id, res.status, res.body));
+                let body: String = res.body.chars().take(600).collect();
                 return Err(format!(
-                    "{}: llama-server answered HTTP {}. See the run log.",
+                    "{}: llama-server answered HTTP {}: {body}",
                     preset.id, res.status
                 ));
             }
@@ -347,29 +415,28 @@ fn run_live(
                 }
             }
 
-            let mut detail = serde_json::json!({
-                "prompt_n": t.prompt_n,
-                "predicted_n": t.predicted_n,
-                "cache_n": t.cache_n,
-                "draft_n": t.draft_n,
-                "draft_n_accepted": t.draft_accepted,
-                "draft_acceptance_pct": t.acceptance(),
+            run.sample(Sample {
+                rep: rep as i64,
+                temperature: plan.temp,
+                cache_prompt: Some(false),
+                prompt_tokens: Some(t.prompt_n),
+                prefill_tps: Some(t.prompt_tps),
+                gen_tokens: Some(t.predicted_n),
+                decode_tps: Some(t.predicted_tps),
+                draft_gen: (t.draft_n > 0).then_some(t.draft_n),
+                draft_acc: (t.draft_n > 0).then_some(t.draft_accepted),
+                cache_n: Some(t.cache_n),
+                reasoning_tps: s.split.as_ref().and_then(|p| p.reasoning.tps()),
+                answer_tps: s.split.as_ref().and_then(|p| p.answer.tps()),
+                detail: Some(
+                    serde_json::json!({
+                        "phases": s.split.as_ref().map(super::phases_json),
+                        "trace": super::trace_json(&s.trace),
+                    })
+                    .to_string(),
+                ),
+                ..Default::default()
             });
-            if let Some(split) = &s.split {
-                detail["phases"] = super::phases_json(split);
-            }
-            detail["trace"] = super::trace_json(&s.trace);
-            let prefill_line = super::sample_json(
-                &preset.id,
-                super::LIVE_PREFILL,
-                rep,
-                t.prompt_tps,
-                detail.clone(),
-            );
-            run.raw(&prefill_line);
-            let decode_line =
-                super::sample_json(&preset.id, super::LIVE_DECODE, rep, t.predicted_tps, detail);
-            run.raw(&decode_line);
 
             let (mean, sd) = super::mean_sd(&prefill);
             run.put(
@@ -458,6 +525,7 @@ fn run_synthetic(
     // `bench::synthetic_sweeps` for why they are not one.
     let sweeps = super::synthetic_sweeps(&plan);
     for preset in chosen {
+        run.begin_preset(preset, cfg);
         for sweep in &sweeps {
             if cancelled(cancel) {
                 return Err("Cancelled.".into());
@@ -514,10 +582,13 @@ fn run_one(
     // --progress ticks). Tee'd to the run log on its own thread so a run in
     // progress can be watched and a run that dies leaves evidence.
     if let Some(err) = child.stderr.take() {
-        let path = run.log_path.clone();
+        // Into the held run's log, which travels with it into bench.db.
+        let sink = run.rec.as_ref().and_then(Recorder::log_sink);
         std::thread::spawn(move || {
             for line in BufReader::new(err).lines().map_while(Result::ok) {
-                append_log(&path, &line);
+                if let Some(sink) = &sink {
+                    super::record::push_line(sink, &line);
+                }
             }
         });
     }
@@ -543,12 +614,14 @@ fn run_one(
                     run.meta.bench_build = super::parse_bench_build(&line);
                 }
                 if let Some(point) = super::parse_bench_line(&line, &preset.id, reps) {
-                    // The row goes to disk VERBATIM beside the point derived
-                    // from it: everything llama-bench measured that the point
-                    // drops (flash_attn, n_batch, n_threads, backends, gpu_info)
-                    // is unrecoverable otherwise.
-                    let raw = super::bench_row_json(&preset.id, &line);
-                    run.raw(&raw);
+                    // The row goes into bench.db VERBATIM beside the point
+                    // derived from it (`record::bench_samples`): everything
+                    // llama-bench measured that the point drops (flash_attn,
+                    // n_batch, n_threads, backends, gpu_info) is unrecoverable
+                    // otherwise.
+                    for sample in super::record::bench_samples(&line) {
+                        run.sample(sample);
+                    }
                     if let Some(fa) = super::parse_bench_flash_attn(&line) {
                         run.flash_attn.insert(preset.id.clone(), fa);
                     }
@@ -572,9 +645,9 @@ fn run_one(
     }
     if !status.success() {
         return Err(format!(
-            "llama-bench exited with {status} on preset '{}'. See the run log ({}).",
+            "llama-bench exited with {status} on preset '{}'. Its last output:\n{}",
             preset.id,
-            run.log_path.display()
+            log_tail(run, 8)
         ));
     }
     Ok(())

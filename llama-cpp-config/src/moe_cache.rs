@@ -402,7 +402,14 @@ mod tests {
             no_host: true,
             ..Default::default()
         };
-        let full = floor(&model(&ts, 9), &Preset { no_host: false, ..p.clone() }).unwrap();
+        let full = floor(
+            &model(&ts, 9),
+            &Preset {
+                no_host: false,
+                ..p.clone()
+            },
+        )
+        .unwrap();
         let repack = floor(&model(&ts, 9), &p).unwrap();
         assert!(matches!(repack, Floor::Repack(_)), "{repack:?}");
         assert_eq!(repack.load_bytes(), full.load_bytes());
