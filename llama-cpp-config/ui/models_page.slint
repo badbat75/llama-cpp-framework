@@ -446,7 +446,7 @@ export component ModelsPage inherits HorizontalLayout {
                 LabeledField {
                     label_width <=> LabelColumn.models;
                     label: "Repack";
-                    hint: "--repack / --no-repack: rewrite weights kept in host RAM into the CPU's interleaved layout at load, for the types it has kernels for (x86 AVX2: Q4_0, Q4_K, IQ4_NL, MXFP4; Q2_K with AVX-512; never the other IQ types).\ndefault = omit the flag → llama.cpp default: on. off = --no-repack, the one value that changes anything.\nIt acts only without a GPU: with one, weights kept in RAM go to that GPU's pinned host buffer, which llama.cpp picks before the repacked layout, so the flag is a no-op there (the MoE cache sees every expert in RAM whatever it says).\nA no-op when no weight is in RAM.";
+                    hint: "--repack / --no-repack: rewrite weights kept in host RAM into the CPU's interleaved layout at load, for the types it has kernels for (x86 AVX2: Q4_0, Q4_K, IQ4_NL, MXFP4; Q2_K with AVX-512; never the other IQ types).\ndefault = omit the flag → llama.cpp default: on. off = --no-repack, the one value that changes anything.\nIt acts only without a GPU: with one (CUDA, ROCm and Vulkan alike), weights kept in RAM go to that GPU's pinned host buffer, which llama.cpp picks before the repacked layout, so the flag is a no-op there (the MoE cache sees every expert in RAM whatever it says).\nA no-op when no weight is in RAM.";
                     SegmentedControl {
                         options: ["default", "on", "off"];
                         current: AppState.form.repack == "" ? "default" : AppState.form.repack;

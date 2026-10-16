@@ -43,10 +43,17 @@
 //! `ggml-cuda.cu`). Only `--no-host` drops it, and the framework never emits
 //! that flag. The cache
 //! needs a GPU anyway, so every host layer counts, whatever `repack` says.
+//! The host type is there only when the backend returns one
+//! (`ggml_backend_dev_host_buffer_type`): all three the framework builds do
+//! (CUDA, HIP, and Vulkan's `ggml_backend_vk_host_buffer_type`, whose
+//! `is_host` is the CPU type's too).
 //! Measured on Qwen3.8-Flash-Next IQ3_S (IQ4_NL `ffn_down_exps` in 39 of 48
-//! layers, an AVX-512 host, v0.7.0): the default and `--no-repack` print the
-//! same 48-layer cache; `--no-host` repacks 17550 MiB and leaves 9 layers.
-//! Re-check the list's order on a llama.cpp bump.
+//! layers, an AVX-512 host, v0.7.0): on ROCm the default and `--no-repack`
+//! print the same 48-layer cache, and `--no-host` repacks 17550 MiB and
+//! leaves 9 layers; on CUDA and on Vulkan (`Vulkan_Host`, 48284 MiB) the
+//! default caches all 48 as well. Those logs are the first place a change of
+//! order shows: re-check `make_cpu_buft_list` and each backend's host type on
+//! a llama.cpp bump.
 
 use std::collections::BTreeMap;
 
