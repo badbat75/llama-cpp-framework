@@ -36,7 +36,7 @@ changes the greedy path, so read the per-run figures beside the mean.
 | key | value | evidence |
 | --- | --- | --- |
 | quant | Q8_0 | on the R9700 (*Windows*) the fastest of the 27B files measured, prefill and decode; Q5_K_M -13%/-10% prefill and -7%/-15% decode, Q6_K mixes slower still |
-| `cache-type-k/-v` | `f16`, at the largest context that fits: `172032` | *Linux*: decode at 43.7k tokens 35.2 and 34.5 t/s against 31.5 and 31.5 in `q8_0` at 262144 (+11%), prefill 1161 and 1162 against 1158 and 1169, three prompts 37.7 against 38.9 (36.4/33.4/43.4 against 37.3/34.9/44.4, the same draft acceptance). `q8_0` halves the KV but the compute buffers grow with it: 1712 and 1736 MiB on the two cards at 262144, against 456 and 604 in `f16` at 163840, so `f16` reaches 172032, not 131072 (section 3) |
+| `cache-type-k/-v` | `f16`, at the largest context that fits: `172032` | *Linux*: decode at 43.7k tokens 35.2 and 34.5 t/s against 31.5 and 31.5 in `q8_0` at 262144 (+11%), prefill 1161 and 1162 against 1158 and 1169, three prompts 37.7 against 38.9 (36.4/33.4/43.4 against 37.3/34.9/44.4, the same draft acceptance). `q8_0` halves the KV but the compute buffers grow with it: 1712 and 1736 MiB on the two cards at 262144, against 456 and 604 in `f16` at 163840, so `f16` reaches 172032, not 131072 (section 3) (campaign `27b-kv-f16-20261016`) |
 | `ctx-size` | `172032` with `f16` | 180224 and 196608 do not load (`cudaMalloc failed: out of memory`); 172032 leaves 281 MB free on the R9700 and 829 MiB on the RTX 4070 SUPER after a 2.9k-token prompt, prefill 1165 and decode 35.2 at 43.7k |
 | `device` | the R9700 last | the last device takes the MTP head, the output head and the sampling: *Linux*, v0.6.0, decode +7% at 2.5k tokens and +4.5% at 43.6k against the RTX 4070 SUPER last, prefill -3% (the sign is reversed on *Windows*) |
 | `tensor-split` | most layers on the R9700, the RTX 4070 SUPER keeping ~800 MiB free | the split that fits 172032 `f16` with `blk\.15\.ffn_(up|down)` pinned to the R9700 |
@@ -50,7 +50,8 @@ changes the greedy path, so read the per-run figures beside the mean.
 
 ## 3. KV cache type and context (*Linux*, v0.7.0)
 
-Both cards, the R9700 last, `ubatch-size 1024`, `draft-mtp` with an `f16` draft KV:
+Both cards, the R9700 last, `ubatch-size 1024`, `draft-mtp` with an `f16` draft KV (campaign
+`27b-kv-f16-20261016`):
 
 | KV, context | free after a 2.9k prompt (R9700 / RTX 4070 SUPER) | prefill t/s at 43.7k | decode at 43.7k | decode, three prompts |
 | --- | --- | --- | --- | --- |
