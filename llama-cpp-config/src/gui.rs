@@ -1083,10 +1083,9 @@ fn set_model_experts(expert_count: u32, expert_used: u32, n_layer: u32) {
     MODEL_EXPERTS.with(|e| e.set((expert_count, expert_used, n_layer)));
 }
 
-/// The `--moe-cache-mib` verdict of `p` on the selected model, on this
-/// machine's CPU (`moe_cache::floor`), `None` when it has no experts or was not
-/// read.
-fn preset_moe_floor(p: &presets::Preset) -> Option<crate::moe_cache::Verdict> {
+/// The `--moe-cache-mib` floor of `p` on the selected model
+/// (`moe_cache::floor`), `None` when it has no experts or was not read.
+fn preset_moe_floor(p: &presets::Preset) -> Option<crate::moe_cache::Floor> {
     let (expert_count, expert_used, n_layer) = MODEL_EXPERTS.with(|e| e.get());
     MODEL_TENSORS.with(|t| {
         crate::moe_cache::floor(
@@ -1095,7 +1094,6 @@ fn preset_moe_floor(p: &presets::Preset) -> Option<crate::moe_cache::Verdict> {
                 expert_count,
                 expert_used,
                 n_layer,
-                isa: crate::moe_cache::Isa::host(),
             },
             p,
         )

@@ -486,15 +486,14 @@ pub struct Preset {
     /// llama.cpp's default on: a weight left in host RAM whose type the CPU has
     /// an interleaved kernel for (on x86 AVX2: Q4_0, Q4_K, IQ4_NL, MXFP4; Q2_K
     /// with AVX-512; NEON adds Q5_K, Q6_K, Q8_0; never the other IQ types) is
-    /// rewritten into the `CPU_REPACK` buffer type at load. That buffer is not
-    /// a host buffer (`is_host` is null in `ggml-cpu/repack.cpp`), so such
-    /// experts are invisible to `--moe-cache-mib`, which only caches layers
-    /// whose experts ALL sit in host buffers: with every host layer repacked
-    /// the cache logs "no layer has all of its experts in host memory" and
-    /// stays off; one repacked tensor is enough to take a layer out
-    /// (`moe_cache::repacks`). `false` keeps them plain host weights, the fix
-    /// for that case, and is needed only while the cache is on: it costs the
-    /// uncached CPU layers the interleaved kernels' decode speed.
+    /// rewritten into the `CPU_REPACK` buffer type at load. Only WITHOUT a GPU:
+    /// `make_cpu_buft_list` (`src/llama-model.cpp`) puts the first GPU's pinned
+    /// host type (`ROCm_Host`, `CUDA_Host`) ahead of the repack types and a CPU
+    /// weight takes the first that fits, so with a GPU nothing repacks unless
+    /// `--no-host` drops that type, a flag the framework never emits. Hence the
+    /// key cannot take a layer out of `--moe-cache-mib` either (a repacked
+    /// expert would not be host memory to it): `moe_cache.rs` module header,
+    /// with the measurement.
     pub repack: Option<bool>,
     /// On-demand reading of the tensors the ARCH marks for it (--lazy-mode,
     /// `-lzm`: `on|auto|off`). Empty = omit the key, llama.cpp's default `auto`.
@@ -1637,12 +1636,9 @@ pub fn render_section(p: &Preset) -> String {
         "; repack = false keeps host weights in their file layout instead of the CPU's\r\n",
     );
     out.push_str(
-        "; interleaved one (on by default). Repacked experts are not host memory to the\r\n",
+        "; interleaved one (on by default). It acts only without a GPU: with one, host\r\n",
     );
-    out.push_str(
-        "; MoE cache: if the log says \"no layer has all of its experts in host memory\",\r\n",
-    );
-    out.push_str("; set it to false; it is needed only while moe-cache-mib is on.\r\n");
+    out.push_str("; weights go to the GPU's pinned host buffer, which llama.cpp picks first.\r\n");
     emit_bool(&mut out, "repack", p.repack);
     out.push_str("; lazy-mode = on|auto|off reads the tensors the architecture marks for it\r\n");
     out.push_str("; (per-layer token-embedding tables: gemma4, qwen4exp) from disk on demand\r\n");

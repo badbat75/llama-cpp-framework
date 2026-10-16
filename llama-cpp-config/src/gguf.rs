@@ -595,10 +595,6 @@ pub fn read_mmproj_info(path: &Path) -> Option<MmprojInfo> {
 pub struct TensorInfo {
     pub name: String,
     pub bytes: u64,
-    /// The `ggml_type` id (ggml.h), not the LLAMA_FTYPE of `general.file_type`.
-    pub ty: u32,
-    /// `ne[1]`, the extent the CPU repack's divisibility test reads.
-    pub ne1: u64,
 }
 
 /// Every tensor of the model at `path`, in file order. A split model

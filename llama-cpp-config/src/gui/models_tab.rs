@@ -1125,7 +1125,6 @@ fn run_new_clone(
                                 expert_count: info.expert_count,
                                 expert_used: info.expert_used,
                                 n_layer: info.n_layer,
-                                isa: crate::moe_cache::Isa::host(),
                             },
                             &cloned,
                         )

@@ -32,31 +32,21 @@
 //! gets under (a group's share never exceeds the whole budget, and its need is
 //! at least that of its cheapest layer): [`Floor::Load`] carries that one alone.
 //!
-//! ## CPU repack takes layers out
+//! ## CPU repack takes no layer out
 //! The cache only counts a weight in a HOST buffer
-//! (`llama_moe_cache_is_host_weight`). An expert the CPU backend repacks lands
-//! in `CPU_REPACK`, whose `is_host` is null (`ggml-cpu/repack.cpp`), so it is
-//! not one, and ONE repacked tensor takes its whole layer out of every group.
-//! That holds for experts sent to the CPU by `n-cpu-moe` and by an `exps=CPU`
-//! rule alike: both are CPU overrides, and those consider the extra buffer types
-//! (`select_weight_buft(..., buft_list_cpu)` in `llama-model-loader.cpp`).
-//! Imatrix mixes trip it: Qwen3.8-Flash-Next at IQ3_S keeps `ffn_down_exps` at
-//! IQ4_NL in 39 of its 48 layers, so on AVX2 only 9 could be cached. Hence
-//! [`repacks`], a mirror of `ggml_repack_get_optimal_repack_type` for x86
-//! (type x ISA x `ne[1] % 8`), applied unless the preset says `repack = false`.
-//! Assumptions, to re-check on a llama.cpp bump like the other upstream
-//! mirrors:
-//! - the repack rule itself (`ggml_repack_get_optimal_repack_type`);
-//! - the ISA is that of THIS machine: the configurator and the server run on
-//!   the same one, and `ggml_cpu_has_avx2/avx512` are build flags of the CPU
-//!   variant the server loaded, which `cpu-feats.cpp` picks as the best one
-//!   this CPU passes, scored as in [`Isa::host`]. That holds only while the
-//!   bundle ships EVERY variant (`GGML_BACKEND_DL` + `GGML_CPU_ALL_VARIANTS`,
-//!   `cmake-options.psd1`) and nothing builds with `GGML_NATIVE=ON` or a
-//!   subset of them: a missing AVX-512 variant would load the AVX2 one and
-//!   leave Q2_K unrepacked, which this module would count as repacked;
-//! - ARM's own list (NEON, SVE, i8mm: Q5_K, Q6_K, Q8_0 and more) is not
-//!   modelled, since the framework builds for x86-64 only.
+//! (`llama_moe_cache_is_host_weight`), and a repacked expert (`CPU_REPACK`,
+//! whose `is_host` is null) is not one. But a CPU override (`n-cpu-moe`, an
+//! `exps=CPU` rule) takes the FIRST type of the CPU list that fits, and
+//! `make_cpu_buft_list` (`src/llama-model.cpp`) puts the first GPU's pinned
+//! host type (`ROCm_Host`, `CUDA_Host`) ahead of the repack types, and that
+//! pinned type is host memory to the cache (its `is_host` is the CPU type's,
+//! `ggml-cuda.cu`). Only `--no-host` drops it, and the framework never emits
+//! that flag. The cache
+//! needs a GPU anyway, so every host layer counts, whatever `repack` says.
+//! Measured on Qwen3.8-Flash-Next IQ3_S (IQ4_NL `ffn_down_exps` in 39 of 48
+//! layers, an AVX-512 host, v0.7.0): the default and `--no-repack` print the
+//! same 48-layer cache; `--no-host` repacks 17550 MiB and leaves 9 layers.
+//! Re-check the list's order on a llama.cpp bump.
 
 use std::collections::BTreeMap;
 
@@ -85,97 +75,12 @@ const EXPERT_KINDS: [&str; 4] = [
 
 /// What the model's header says about its experts: the tensors (every shard's,
 /// `gguf::read_tensors`), `<arch>.expert_count`, `<arch>.expert_used_count` and
-/// `<arch>.block_count`; plus the CPU the server will repack on.
+/// `<arch>.block_count`.
 pub struct Model<'a> {
     pub tensors: &'a [TensorInfo],
     pub expert_count: u32,
     pub expert_used: u32,
     pub n_layer: u32,
-    pub isa: Isa,
-}
-
-/// The two x86 features the CPU repack's x86 branches test
-/// (`ggml_cpu_has_avx2` / `ggml_cpu_has_avx512`). Both are COMPILE-time flags of
-/// the CPU variant the server loaded, so they are true when that variant was
-/// built with them; `Default` (all false) means no repack at all.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct Isa {
-    pub avx2: bool,
-    pub avx512: bool,
-}
-
-impl Isa {
-    /// This machine's, as `GGML_CPU_ALL_VARIANTS` would pick: a variant built
-    /// with AVX2 (haswell and up) also needs FMA, F16C and BMI2, one with
-    /// AVX-512 (skylakex and up) F, CD, VL, DQ and BW
-    /// (`ggml-cpu/arch/x86/cpu-feats.cpp`), so the flags require the same.
-    pub fn host() -> Isa {
-        #[cfg(target_arch = "x86_64")]
-        {
-            use std::arch::is_x86_feature_detected as has;
-            let avx2 = has!("avx2") && has!("fma") && has!("f16c") && has!("bmi2");
-            let avx512 = avx2
-                && has!("avx512f")
-                && has!("avx512cd")
-                && has!("avx512vl")
-                && has!("avx512dq")
-                && has!("avx512bw");
-            Isa { avx2, avx512 }
-        }
-        #[cfg(not(target_arch = "x86_64"))]
-        {
-            Isa::default()
-        }
-    }
-}
-
-/// Whether the CPU backend repacks `t` on `isa` (llama.cpp v0.7.0,
-/// `ggml_repack_get_optimal_repack_type`, x86 branches only): Q4_0, Q4_K,
-/// IQ4_NL and MXFP4 under AVX2, Q2_K under AVX-512, each when `ne[1] % 8 == 0`.
-/// Q5_K, Q6_K, Q8_0 and Q1_0 repack on ARM only.
-pub fn repacks(t: &TensorInfo, isa: Isa) -> bool {
-    const Q4_0: u32 = 2;
-    const Q2_K: u32 = 10;
-    const Q4_K: u32 = 12;
-    const IQ4_NL: u32 = 20;
-    const MXFP4: u32 = 39;
-    let by_isa = match t.ty {
-        Q4_0 | Q4_K | IQ4_NL | MXFP4 => isa.avx2,
-        Q2_K => isa.avx512,
-        _ => false,
-    };
-    by_isa && t.ne1.is_multiple_of(8)
-}
-
-/// The verdict for one preset on one model: the floor, plus how many of the
-/// layers the cache could take (on a GPU position, every expert in RAM) the CPU
-/// repack takes out of it again. `floor` counts only the remaining ones.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Verdict {
-    pub floor: Floor,
-    pub repacked: u32,
-    pub host_layers: u32,
-}
-
-impl Verdict {
-    pub fn load_bytes(self) -> u64 {
-        self.floor.load_bytes()
-    }
-
-    /// The floor's hint, with what the repack costs when it costs anything.
-    pub fn hint(self) -> String {
-        match (self.floor, self.repacked) {
-            (_, 0) => self.floor.hint(),
-            (Floor::NoHostExperts, r) => format!(
-                ": every GPU layer of this preset with its experts in RAM ({r}) holds a type this CPU repacks, which the cache cannot read, so llama.cpp would run without one. Set Repack below to off."
-            ),
-            (f, r) => format!(
-                "{} {r} of the {} GPU layers with their experts in RAM hold a type this CPU repacks and stay uncached (the numbers count the rest); Repack off adds them.",
-                f.hint(),
-                self.host_layers
-            ),
-        }
-    }
 }
 
 /// The verdict for one preset on one model, in bytes.
@@ -228,9 +133,9 @@ pub fn mib(bytes: u64) -> u64 {
     bytes.div_ceil(1 << 20)
 }
 
-/// The verdict of `p` on `m`; `None` when the model has no experts to cache
+/// The floor of `p` on `m`; `None` when the model has no experts to cache
 /// (not MoE, or no `_exps` tensor in the list, e.g. an unread GGUF).
-pub fn floor(m: &Model, p: &Preset) -> Option<Verdict> {
+pub fn floor(m: &Model, p: &Preset) -> Option<Floor> {
     if m.expert_count == 0 || m.expert_used == 0 {
         return None;
     }
@@ -241,44 +146,23 @@ pub fn floor(m: &Model, p: &Preset) -> Option<Verdict> {
     let slots = u64::from(m.expert_used) + 1;
     let n_expert = u64::from(m.expert_count);
 
-    let none = |repacked: u32, host_layers: u32| {
-        Some(Verdict {
-            floor: Floor::NoHostExperts,
-            repacked,
-            host_layers,
-        })
-    };
     let Some(layout) = Layout::new(m.n_layer as i32, p.n_gpu_layers.unwrap_or(-1)) else {
-        return none(0, 0);
+        return Some(Floor::NoHostExperts);
     };
     let rules = host_rules(&p.override_tensor);
     let host = |il: u32, names: &[&TensorInfo]| {
         p.n_cpu_moe.is_some_and(|n| (il as i32) < n)
             || names.iter().all(|t| first_rule_is_cpu(&rules, &t.name))
     };
-    // Layers the cache could take: on a GPU position, every expert in RAM...
-    let host_layers: Vec<(u32, &Vec<&TensorInfo>)> = layers
+    // Layers the cache takes: on a GPU position, every expert in RAM.
+    let cached: Vec<(u32, &Vec<&TensorInfo>)> = layers
         .iter()
         .filter(|(il, ts)| (**il as i32) >= layout.start && host(**il, ts))
         .map(|(il, ts)| (*il, ts))
         .collect();
-    // ...and of those, the ones whose experts all stay plain host weights.
-    let repack_on = p.repack != Some(false);
-    let (repacked, cached): (Vec<_>, Vec<_>) = host_layers
-        .iter()
-        .partition(|(_, ts)| repack_on && ts.iter().any(|t| repacks(t, m.isa)));
-    let repacked = repacked.len() as u32;
-    let n_host = host_layers.len() as u32;
     if cached.is_empty() {
-        return none(repacked, n_host);
+        return Some(Floor::NoHostExperts);
     }
-    let verdict = |floor| {
-        Some(Verdict {
-            floor,
-            repacked,
-            host_layers: n_host,
-        })
-    };
     // One expert's bytes per layer: nb[2] summed over its tensors.
     let one_expert = |ts: &[&TensorInfo]| ts.iter().map(|t| t.bytes / n_expert).sum::<u64>();
 
@@ -288,7 +172,7 @@ pub fn floor(m: &Model, p: &Preset) -> Option<Verdict> {
             .map(|(_, ts)| one_expert(ts))
             .min()
             .unwrap_or(0);
-        return verdict(Floor::Load(cheapest * slots));
+        return Some(Floor::Load(cheapest * slots));
     };
 
     // Groups: (device, layout signature) → (one expert's bytes, host bytes).
@@ -328,7 +212,7 @@ pub fn floor(m: &Model, p: &Preset) -> Option<Verdict> {
         .collect();
     let load = needs.iter().copied().min().unwrap_or(0);
     let every = needs.iter().copied().max().unwrap_or(0);
-    verdict(Floor::Split { load, every })
+    Some(Floor::Split { load, every })
 }
 
 /// Every block holding expert tensors, with them, in layer order.
@@ -406,36 +290,8 @@ mod tests {
 
     const MIB: u64 = 1 << 20;
 
-    const IQ3_XXS: u32 = 18;
-    const IQ4_NL: u32 = 20;
-    const Q2_K: u32 = 10;
-    const AVX2: Isa = Isa {
-        avx2: true,
-        avx512: false,
-    };
-
-    /// A tensor of a type no CPU repacks, 4096 rows.
     fn t(name: String, bytes: u64) -> TensorInfo {
-        TensorInfo {
-            name,
-            bytes,
-            ty: IQ3_XXS,
-            ne1: 4096,
-        }
-    }
-
-    /// Re-type the `ffn_down_exps` of layers `from..=to`, as imatrix mixes do.
-    fn retype_down(ts: &mut [TensorInfo], from: u32, to: u32, ty: u32, ne1: u64) {
-        for il in from..=to {
-            let name = format!("blk.{il}.ffn_down_exps.weight");
-            let t = ts.iter_mut().find(|t| t.name == name).unwrap();
-            t.ty = ty;
-            t.ne1 = ne1;
-        }
-    }
-
-    fn split(v: Option<Verdict>) -> Option<Floor> {
-        v.map(|v| v.floor)
+        TensorInfo { name, bytes }
     }
 
     /// `n` uniform MoE layers of 128 experts, 1 MiB per expert per tensor over
@@ -457,7 +313,6 @@ mod tests {
             expert_count: 128,
             expert_used: 8,
             n_layer,
-            isa: AVX2,
         }
     }
 
@@ -472,7 +327,7 @@ mod tests {
         };
         let f = floor(&model(&ts, 9), &p).unwrap();
         assert_eq!(
-            f.floor,
+            f,
             Floor::Split {
                 load: 27 * MIB,
                 every: 27 * MIB
@@ -493,7 +348,7 @@ mod tests {
             n_cpu_moe: Some(99),
             ..Default::default()
         };
-        let Some(Floor::Split { load, every }) = split(floor(&model(&ts, 9), &p)) else {
+        let Some(Floor::Split { load, every }) = floor(&model(&ts, 9), &p) else {
             panic!("expected a split floor");
         };
         assert_eq!(load, (27.0 * MIB as f64 / 0.75).ceil() as u64);
@@ -510,10 +365,7 @@ mod tests {
             n_cpu_moe: Some(99),
             ..Default::default()
         };
-        assert_eq!(
-            split(floor(&model(&ts, 9), &p)),
-            Some(Floor::Load(27 * MIB))
-        );
+        assert_eq!(floor(&model(&ts, 9), &p), Some(Floor::Load(27 * MIB)));
     }
 
     // Experts all on the GPU (no n-cpu-moe, no CPU rule), or a GPU rule ahead of
@@ -525,24 +377,18 @@ mod tests {
             device: "ROCm0".into(),
             ..Default::default()
         };
-        assert_eq!(
-            split(floor(&model(&ts, 9), &gpu)),
-            Some(Floor::NoHostExperts)
-        );
+        assert_eq!(floor(&model(&ts, 9), &gpu), Some(Floor::NoHostExperts));
         let shadowed = Preset {
             override_tensor: r"exps=ROCm0,\.ffn_(up|down|gate)_exps=CPU".into(),
             ..gpu.clone()
         };
-        assert_eq!(
-            split(floor(&model(&ts, 9), &shadowed)),
-            Some(Floor::NoHostExperts)
-        );
+        assert_eq!(floor(&model(&ts, 9), &shadowed), Some(Floor::NoHostExperts));
         let cpu_rule = Preset {
             override_tensor: r"\.ffn_(up|down|gate)_exps=CPU".into(),
             ..gpu
         };
         assert_eq!(
-            floor(&model(&ts, 9), &cpu_rule).map(Verdict::load_bytes),
+            floor(&model(&ts, 9), &cpu_rule).map(Floor::load_bytes),
             Some(27 * MIB)
         );
     }
@@ -560,20 +406,18 @@ mod tests {
             n_cpu_moe: Some(99),
             ..Default::default()
         };
-        assert_eq!(
-            split(floor(&model(&ts, 3), &p)),
-            Some(Floor::Load(27 * MIB))
-        );
+        assert_eq!(floor(&model(&ts, 3), &p), Some(Floor::Load(27 * MIB)));
     }
 
-    // The Qwen3.8-Flash-Next IQ3_S shape: `ffn_down_exps` at IQ4_NL in some
-    // layers. On AVX2 those repack and leave the cache, so the floors count the
-    // rest; `repack = false` brings them back.
+    // Two expert layouts on one GPU (an imatrix mix keeping some layers'
+    // `ffn_down_exps` at a wider type) share the budget by host bytes. `repack`
+    // changes nothing here: with a GPU, host experts never repack.
     #[test]
-    fn repacked_layers_leave_the_cache_unless_repack_is_off() {
+    fn mixed_layouts_share_the_budget_and_repack_is_inert() {
         let mut ts = tensors(8);
-        // Layers 1-4 cost 3.5 MiB per expert at IQ4_NL: the cheapest left is 3.
-        retype_down(&mut ts, 1, 4, IQ4_NL, 4096);
+        // Layers 1-4 cost 3.5 MiB per expert: 1792 and 1536 of 3328 MiB of
+        // host bytes, 31.5 MiB over 0.538 and 27 over 0.462, both 58.5 MiB,
+        // since with four layers each a group's need and share scale alike.
         for il in 1..=4 {
             let name = format!("blk.{il}.ffn_down_exps.weight");
             ts.iter_mut().find(|t| t.name == name).unwrap().bytes = 192 * MIB;
@@ -583,67 +427,18 @@ mod tests {
             n_cpu_moe: Some(99),
             ..Default::default()
         };
-        let v = floor(&model(&ts, 9), &p).unwrap();
-        assert_eq!((v.repacked, v.host_layers), (4, 8));
-        assert_eq!(
-            v.floor,
-            Floor::Split {
-                load: 27 * MIB,
-                every: 27 * MIB
-            }
-        );
-        assert!(v.hint().contains("4 of the 8 GPU layers"), "{}", v.hint());
-
-        let off = Preset {
-            repack: Some(false),
-            ..p.clone()
-        };
-        let v = floor(&model(&ts, 9), &off).unwrap();
-        assert_eq!(v.repacked, 0);
-        // Two layouts now, sharing the budget by host bytes (1792 and 1536 of
-        // 3328 MiB): 31.5 MiB over 0.538 and 27 over 0.462, both 58.5 MiB, since
-        // with four layers each a group's need and share scale alike.
-        let Floor::Split { load, every } = v.floor else {
+        let f = floor(&model(&ts, 9), &p);
+        let Some(Floor::Split { load, every }) = f else {
             panic!("expected a split floor");
         };
         assert_eq!((mib(load), mib(every)), (59, 59));
-    }
-
-    // Every host layer repacked: llama.cpp runs without a cache, and the hint
-    // says why. A CPU without AVX2 repacks none of it, and neither does a type
-    // whose ISA is missing (Q2_K wants AVX-512) or a row count not divisible
-    // by 8.
-    #[test]
-    fn repack_depends_on_type_isa_and_rows() {
-        let mut ts = tensors(2);
-        retype_down(&mut ts, 1, 2, IQ4_NL, 4096);
-        let p = Preset {
-            n_cpu_moe: Some(99),
-            ..Default::default()
-        };
-        let v = floor(&model(&ts, 3), &p).unwrap();
-        assert_eq!((v.floor, v.repacked), (Floor::NoHostExperts, 2));
-        assert!(v.hint().contains("Set Repack below to off"), "{}", v.hint());
-
-        let old_cpu = Model {
-            isa: Isa::default(),
-            ..model(&ts, 3)
-        };
-        assert_eq!(floor(&old_cpu, &p).unwrap().repacked, 0);
-
-        retype_down(&mut ts, 1, 2, Q2_K, 4096);
-        assert_eq!(floor(&model(&ts, 3), &p).unwrap().repacked, 0);
-        let avx512 = Model {
-            isa: Isa {
-                avx2: true,
-                avx512: true,
-            },
-            ..model(&ts, 3)
-        };
-        assert_eq!(floor(&avx512, &p).unwrap().repacked, 2);
-
-        retype_down(&mut ts, 1, 2, IQ4_NL, 4100);
-        assert_eq!(floor(&model(&ts, 3), &p).unwrap().repacked, 0);
+        for repack in [Some(true), Some(false)] {
+            let r = Preset {
+                repack,
+                ..p.clone()
+            };
+            assert_eq!(floor(&model(&ts, 9), &r), f);
+        }
     }
 
     // A dense model, or a list without expert tensors, has no floor at all.

@@ -488,8 +488,6 @@ mod tests {
         TensorInfo {
             name: name.into(),
             bytes,
-            ty: 0,
-            ne1: 0,
         }
     }
 
