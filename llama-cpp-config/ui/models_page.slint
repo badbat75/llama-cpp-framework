@@ -446,11 +446,21 @@ export component ModelsPage inherits HorizontalLayout {
                 LabeledField {
                     label_width <=> LabelColumn.models;
                     label: "Repack";
-                    hint: "--repack / --no-repack: rewrite weights kept in host RAM into the CPU's interleaved layout at load, for the types it has kernels for (x86 AVX2: Q4_0, Q4_K, IQ4_NL, MXFP4; Q2_K with AVX-512; never the other IQ types).\ndefault = omit the flag → llama.cpp default: on. off = --no-repack, the one value that changes anything.\nIt acts only without a GPU: with one (CUDA, ROCm and Vulkan alike), weights kept in RAM go to that GPU's pinned host buffer, which llama.cpp picks before the repacked layout, so the flag is a no-op there (the MoE cache sees every expert in RAM whatever it says).\nA no-op when no weight is in RAM.";
+                    hint: "--repack / --no-repack: rewrite weights kept in host RAM into the CPU's interleaved layout at load, for the types it has kernels for (x86 AVX2: Q4_0, Q4_K, IQ4_NL, MXFP4; Q2_K with AVX-512; never the other IQ types).\ndefault = omit the flag → llama.cpp default: on. off = --no-repack, the one value that changes anything.\nIt acts only without a GPU: with one (CUDA, ROCm and Vulkan alike), weights kept in RAM go to that GPU's pinned host buffer, which llama.cpp picks before the repacked layout, so the flag is a no-op there (the MoE cache sees every expert in RAM whatever it says) unless No host buffer is on.\nA no-op when no weight is in RAM.";
                     SegmentedControl {
                         options: ["default", "on", "off"];
                         current: AppState.form.repack == "" ? "default" : AppState.form.repack;
                         activated(value) => { AppState.form.repack = value; }
+                    }
+                }
+                LabeledField {
+                    label_width <=> LabelColumn.models;
+                    label: "No host buffer";
+                    hint: "--no-host: keep the weights left in RAM in ordinary memory instead of the GPU's pinned host buffer.\noff = omit the flag → llama.cpp default: pinned (ROCm_Host / CUDA_Host), which the GPU reads directly.\non = ordinary RAM, so the CPU repacks the types it has kernels for (see Repack) and the RAM stays pageable. The copies op-offload makes per batch then come from pageable memory, and repacked experts leave the MoE cache.\nA no-op when no weight is in RAM.";
+                    SegmentedControl {
+                        options: ["off", "on"];
+                        current: AppState.form.no_host ? "on" : "off";
+                        activated(value) => { AppState.form.no_host = value == "on"; }
                     }
                 }
                 LabeledField {

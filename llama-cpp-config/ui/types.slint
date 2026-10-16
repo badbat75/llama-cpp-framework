@@ -180,6 +180,8 @@ export struct PresetForm {
     // --repack / --no-repack, the same tri-state: "default" (omit; llama.cpp's
     // default is on), "on", "off". "off" is the value that acts.
     repack: string,
+    // --no-host (checked = on): no negative form, so a plain bool; off omits the key.
+    no_host: bool,
     // --lazy-mode, an enum-valued string like reasoning_effort: "default" (omit
     // the flag; llama.cpp's default is auto), "on", "auto", "off".
     lazy_mode: string,

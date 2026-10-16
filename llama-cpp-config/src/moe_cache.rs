@@ -40,9 +40,11 @@
 //! `make_cpu_buft_list` (`src/llama-model.cpp`) puts the first GPU's pinned
 //! host type (`ROCm_Host`, `CUDA_Host`) ahead of the repack types, and that
 //! pinned type is host memory to the cache (its `is_host` is the CPU type's,
-//! `ggml-cuda.cu`). Only `--no-host` drops it, and the framework never emits
-//! that flag. The cache
-//! needs a GPU anyway, so every host layer counts, whatever `repack` says.
+//! `ggml-cuda.cu`). Only `--no-host` (the preset's `no-host`) drops it. Without
+//! it every host layer counts, whatever `repack` says (the cache needs a GPU
+//! anyway). With it, which layers repack depends on the HOST CPU's kernels and
+//! each tensor's type, which a header read here cannot settle, so the floor
+//! falls back to the cheapest layer's need ([`Floor::Repack`]).
 //! The host type is there only when the backend returns one
 //! (`ggml_backend_dev_host_buffer_type`): all three the framework builds do
 //! (CUDA, HIP, and Vulkan's `ggml_backend_vk_host_buffer_type`, whose
@@ -102,6 +104,10 @@ pub enum Floor {
     /// Placement fully known: the load floor and the size at which every group
     /// caches.
     Split { load: u64, every: u64 },
+    /// `no-host` with repacking on: the layers the CPU repacks leave the cache,
+    /// and which they are depends on the host CPU, so only the floor no subset
+    /// gets under is known (the cheapest host layer's need).
+    Repack(u64),
 }
 
 impl Floor {
@@ -109,7 +115,7 @@ impl Floor {
     pub fn load_bytes(self) -> u64 {
         match self {
             Floor::NoHostExperts => 0,
-            Floor::Load(b) | Floor::Split { load: b, .. } => b,
+            Floor::Load(b) | Floor::Split { load: b, .. } | Floor::Repack(b) => b,
         }
     }
 
@@ -120,6 +126,10 @@ impl Floor {
             Floor::NoHostExperts => ": with this preset no GPU layer keeps all of its experts in RAM, so llama.cpp would run without a cache.".into(),
             Floor::Load(b) => format!(
                 ": for this model at least {} MiB (Save refuses less). With the GPUs weighed by free VRAM, which of them end up caching is decided at load.",
+                mib(b)
+            ),
+            Floor::Repack(b) => format!(
+                ": for this model at least {} MiB (Save refuses less). With no-host the CPU repacks the experts it has kernels for, and those layers leave the cache.",
                 mib(b)
             ),
             Floor::Split { load, every } if mib(load) == mib(every) => {
@@ -172,14 +182,19 @@ pub fn floor(m: &Model, p: &Preset) -> Option<Floor> {
     }
     // One expert's bytes per layer: nb[2] summed over its tensors.
     let one_expert = |ts: &[&TensorInfo]| ts.iter().map(|t| t.bytes / n_expert).sum::<u64>();
-
-    let Some((weights, device_of)) = device_map(p, layout) else {
-        let cheapest = cached
+    let cheapest = || {
+        cached
             .iter()
             .map(|(_, ts)| one_expert(ts))
             .min()
-            .unwrap_or(0);
-        return Some(Floor::Load(cheapest * slots));
+            .unwrap_or(0)
+    };
+    if p.no_host && p.repack != Some(false) {
+        return Some(Floor::Repack(cheapest() * slots));
+    }
+
+    let Some((weights, device_of)) = device_map(p, layout) else {
+        return Some(Floor::Load(cheapest() * slots));
     };
 
     // Groups: (device, layout signature) → (one expert's bytes, host bytes).
@@ -373,6 +388,29 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(floor(&model(&ts, 9), &p), Some(Floor::Load(27 * MIB)));
+    }
+
+    // no-host lets the CPU repack host experts out of the cache, by kernels this
+    // cannot see: only the cheapest layer's need is left, and `repack = false`
+    // restores the full answer.
+    #[test]
+    fn no_host_with_repack_falls_back_to_the_cheapest_layer() {
+        let ts = tensors(8);
+        let p = Preset {
+            device: "ROCm0".into(),
+            n_cpu_moe: Some(99),
+            no_host: true,
+            ..Default::default()
+        };
+        let full = floor(&model(&ts, 9), &Preset { no_host: false, ..p.clone() }).unwrap();
+        let repack = floor(&model(&ts, 9), &p).unwrap();
+        assert!(matches!(repack, Floor::Repack(_)), "{repack:?}");
+        assert_eq!(repack.load_bytes(), full.load_bytes());
+        let kept = Preset {
+            repack: Some(false),
+            ..p
+        };
+        assert_eq!(floor(&model(&ts, 9), &kept), Some(full));
     }
 
     // Experts all on the GPU (no n-cpu-moe, no CPU rule), or a GPU rule ahead of

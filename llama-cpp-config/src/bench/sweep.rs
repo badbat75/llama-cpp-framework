@@ -232,6 +232,11 @@ pub const SWEEPABLE: &[(&str, Setter)] = &[
         p.repack = boolean(v)?;
         Ok(())
     }),
+    // `false` and `unset` are one state: the key has no negative form.
+    ("no-host", |p, v| {
+        p.no_host = boolean(v)? == Some(true);
+        Ok(())
+    }),
     ("lazy-mode", |p, v| {
         p.lazy_mode = text(v)?;
         Ok(())
@@ -1294,7 +1299,7 @@ mod tests {
             };
             let value = match *key {
                 "flash-attn" | "mmproj-offload" | "backend-sampling" | "op-offload" | "repack"
-                | "kv-unified" => "true",
+                | "no-host" | "kv-unified" => "true",
                 "device" => "CUDA0",
                 "tensor-split" => "3,1",
                 "split-mode" => "layer",

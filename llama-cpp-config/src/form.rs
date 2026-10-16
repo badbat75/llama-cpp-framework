@@ -299,6 +299,7 @@ pub fn preset_to_form(p: &presets::Preset) -> PresetForm {
         // value of its own, so no fallback to `d`.
         op_offload: tri_state(p.op_offload),
         repack: tri_state(p.repack),
+        no_host: p.no_host,
         // Empty IS the "omit the flag" state (auto), shown as "default" like
         // reasoning-effort.
         lazy_mode: enum_or_default(&p.lazy_mode),
@@ -548,6 +549,7 @@ pub fn form_to_preset(f: &PresetForm) -> presets::Preset {
         // unlike backend-sampling's, that `false` is a real flag.
         op_offload: tri_bool(f.op_offload.as_str()),
         repack: tri_bool(f.repack.as_str()),
+        no_host: f.no_host,
         lazy_mode: enum_or_empty(f.lazy_mode.as_str()),
         // Canonicalized, never trusted: a value llama.cpp rejects would stop
         // the model from loading.
@@ -1204,6 +1206,7 @@ mod tests {
             moe_cache_mib: Some(6144),
             op_offload: Some(false),
             repack: Some(false),
+            no_host: true,
             lazy_mode: "off".into(),
             load_mode: "none".into(),
             // false: this preset sets ctx-size and n-gpu-layers, which rule the fit out

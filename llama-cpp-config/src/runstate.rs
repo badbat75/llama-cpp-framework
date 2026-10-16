@@ -193,7 +193,7 @@ fn server_args(
     // NO --device, --tensor-split, --split-mode, --override-tensor, -lm, -fit
     //   (nor its --fit-ctx / --fit-target), --prefill-assistant, --cache-reuse,
     //   --ctx-checkpoints, --checkpoint-min-step, --kv-unified,
-    //   --kv-unified-per-slot, --moe-cache-mib, --repack, --spec-draft-n-ubatch
+    //   --kv-unified-per-slot, --moe-cache-mib, --repack, --no-host, --spec-draft-n-ubatch
     //   or --mmproj-device here: those are per-preset keys (the GPU
     //   distribution, the tensor placement, load-mode, fit, prefill-assistant,
     //   the prompt cache, the KV layout, the expert cache and repacking, the
@@ -928,6 +928,7 @@ mod tests {
             "--repack",
             "--no-repack",
             "-nr",
+            "--no-host",
             "--spec-draft-n-ubatch",
             "--fit-ctx",
             "-fitc",

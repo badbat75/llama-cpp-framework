@@ -490,11 +490,22 @@ pub struct Preset {
     /// `make_cpu_buft_list` (`src/llama-model.cpp`) puts the first GPU's pinned
     /// host type (`ROCm_Host`, `CUDA_Host`) ahead of the repack types and a CPU
     /// weight takes the first that fits, so with a GPU nothing repacks unless
-    /// `--no-host` drops that type, a flag the framework never emits. Hence the
-    /// key cannot take a layer out of `--moe-cache-mib` either (a repacked
-    /// expert would not be host memory to it): `moe_cache.rs` module header,
-    /// with the measurement.
+    /// `--no-host` (`no_host`, below) drops that type. Only then can the key
+    /// take a layer out of `--moe-cache-mib` (a repacked expert is not host
+    /// memory to it): `moe_cache.rs` module header, with the measurement.
     pub repack: Option<bool>,
+    /// Skip the GPU's pinned host buffer for the weights kept in RAM
+    /// (`--no-host`, no negative form). false = omit the key, llama.cpp's
+    /// default: those weights go to `ROCm_Host`/`CUDA_Host`, page-locked RAM
+    /// the GPU can read directly, ahead of `CPU_REPACK` in `make_cpu_buft_list`.
+    /// true puts them in ordinary CPU buffers, so the CPU repacks the types it
+    /// has interleaved kernels for (unless `repack = false`) and the RAM stays
+    /// pageable. What it trades: the host-to-GPU copies `op-offload` makes per
+    /// batch come from pageable memory, and a repacked expert leaves the MoE
+    /// cache. On Qwen3.8-Flash-Next IQ3_S (IQ4_NL `ffn_down_exps` in 39 of 48
+    /// layers, AVX-512) it repacked 17550 MiB. Written only when true: a
+    /// `no-host = false` would launch the same as no key.
+    pub no_host: bool,
     /// On-demand reading of the tensors the ARCH marks for it (--lazy-mode,
     /// `-lzm`: `on|auto|off`). Empty = omit the key, llama.cpp's default `auto`.
     /// A lazy tensor stays memory-mapped from the GGUF and only the rows a token
@@ -677,6 +688,7 @@ impl Default for Preset {
             moe_cache_mib: None,
             op_offload: None,
             repack: None,
+            no_host: false,
             lazy_mode: String::new(),
             load_mode: String::new(),
             fit: false,
@@ -788,6 +800,7 @@ impl Preset {
             moe_cache_mib: k.get("moe-cache-mib").and_then(|v| ini::parse_int(v)),
             op_offload: getb("op-offload"),
             repack: getb("repack"),
+            no_host: getb("no-host") == Some(true),
             lazy_mode: get("lazy-mode"),
             // Canonicalized like the server field it replaced: a hand-written
             // `MMAP+MLOCK` shows as the dropdown's entry instead of "default".
@@ -1638,8 +1651,15 @@ pub fn render_section(p: &Preset) -> String {
     out.push_str(
         "; interleaved one (on by default). It acts only without a GPU: with one, host\r\n",
     );
-    out.push_str("; weights go to the GPU's pinned host buffer, which llama.cpp picks first.\r\n");
+    out.push_str("; weights go to the GPU's pinned host buffer, which llama.cpp picks first,\r\n");
+    out.push_str("; unless no-host = true.\r\n");
     emit_bool(&mut out, "repack", p.repack);
+    out.push_str("; no-host = true keeps host weights in ordinary RAM instead of the GPU's\r\n");
+    out.push_str("; pinned host buffer, so the CPU repacks what it can; repacked experts leave\r\n");
+    out.push_str("; the MoE cache. Omit the key = pinned (no negative form).\r\n");
+    if p.no_host {
+        out.push_str("no-host = true\r\n");
+    }
     out.push_str("; lazy-mode = on|auto|off reads the tensors the architecture marks for it\r\n");
     out.push_str("; (per-layer token-embedding tables: gemma4, qwen4exp) from disk on demand\r\n");
     out.push_str("; instead of keeping them resident. Omit the key = auto: lazy only for a\r\n");
@@ -2233,6 +2253,8 @@ mod tests {
             op_offload: Some(false),
             // Some(false) for the same reason: --no-repack is the value that acts.
             repack: Some(false),
+            // true: the only value that is written.
+            no_host: true,
             // `on`, not `auto`: the value that differs from the default.
             lazy_mode: "on".into(),
             load_mode: "mmap+mlock".into(),

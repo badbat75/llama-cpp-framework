@@ -567,6 +567,10 @@ pub fn synthetic_argv(p: &Preset, cfg: &ServerConfig, plan: &Plan, sweep: &Sweep
     if let Some(on) = p.repack {
         push("--repack", if on { "1".into() } else { "0".into() });
     }
+    // llama-bench takes it as a 0|1 value; off is its default, so only on is sent.
+    if p.no_host {
+        push("--no-host", "1".into());
+    }
     // Same spelling and values as llama-server's; an unset key leaves the tool
     // at auto, llama.cpp's default on both sides.
     if !p.lazy_mode.is_empty() {
