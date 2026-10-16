@@ -377,24 +377,17 @@ $cmakeArgs += $opensslResetArgs
 $cmakeArgs += $cudaArgs
 
 # ── HIP workaround for MSVC 14.51 (VS 18) <cmath> include order ──
-# The stock __clang_hip_runtime_wrapper.h includes <cmath> before the HIP
-# device math headers, causing MSVC's _CLANG_BUILTIN2 constexpr overloads
-# (implicitly __host__ __device__) to conflict with __device__ declarations
-# in __clang_cuda_math_forward_declares.h and __clang_hip_cmath.h.
-# First hit with ROCm 7.1; re-verified 2026-07-16 against TheRock ROCm 7.14
-# (AMD clang 23) + MSVC 14.51.36231: the stock headers still trip the same
-# isgreater/_CLANG_BUILTIN2 conflict and the patched wrapper still compiles
-# clean. Clang 24 (TheRock ROCm 10.1.0) fixed it upstream, so the patch only
-# applies to clang 23 and older (the 10.0.0 fallback dist).
-# A patched wrapper reverses the include order; we suppress the stock one via
-# -D__CLANG_HIP_RUNTIME_WRAPPER_H__ and force-include the patched copy. The
-# copy is a modified snapshot of the toolchain's OWN header, so it is
-# versioned per clang resource major (patches\hip\<major>\) and selected from
-# the installed dist; a ROCm bump that changes the clang major fails fast
-# with regeneration instructions (patches\hip\README.md) instead of silently
-# force-including a stale wrapper. Flags go through both CMAKE_CXX_FLAGS and
-# CMAKE_HIP_FLAGS because CMake on Windows treats HIP sources as CXX when
-# enable_language(HIP) is not called.
+# Up to AMD clang 23 the stock __clang_hip_runtime_wrapper.h included <cmath>
+# before the HIP device math headers, so MSVC 14.51's _CLANG_BUILTIN2
+# constexpr overloads (implicitly __host__ __device__) clashed with the
+# __device__ isgreater/isless declarations; the repo carried a patched
+# wrapper for it (patches\hip\, in git history). Clang 24 (TheRock ROCm
+# 10.1.0) fixed it upstream (llvm/llvm-project#201563, which cites this exact
+# MSVC clash), so clang 24 is the floor: an older dist fails here rather
+# than at the first HIP TU. Both flag sets are still passed (HIP's empty) so
+# reconfiguring a cache that was built with the patch drops its -include;
+# they go through CMAKE_CXX_FLAGS and CMAKE_HIP_FLAGS because CMake on
+# Windows treats HIP sources as CXX when enable_language(HIP) is not called.
 $clangMajor = $null
 foreach ($resRoot in @('lib\llvm\lib\clang', 'lib\clang')) {   # TheRock dist, legacy HIP SDK
     $d = Join-Path $cfg.HipPath $resRoot
@@ -407,26 +400,11 @@ foreach ($resRoot in @('lib\llvm\lib\clang', 'lib\clang')) {   # TheRock dist, l
 if (-not $clangMajor) {
     throw "could not detect the ROCm clang resource version under $($cfg.HipPath) (probed lib\llvm\lib\clang and lib\clang)"
 }
-$hipPatchedInc = Join-Path $PSScriptRoot "patches\hip\$clangMajor\__clang_hip_runtime_wrapper.h"
-if (Test-Path $hipPatchedInc) {
-    Write-Host "HIP wrapper patch: patches\hip\$clangMajor (clang resource major $clangMajor)" -ForegroundColor DarkGray
-    $hipPatchedInc = $hipPatchedInc -replace '\\', '/'
-    $hipWorkaroundFlags = "-D__CLANG_HIP_RUNTIME_WRAPPER_H__ -include `"$hipPatchedInc`""
-    $cmakeArgs += "-DCMAKE_CXX_FLAGS=-w $hipWorkaroundFlags"
-    $cmakeArgs += "-DCMAKE_HIP_FLAGS=$hipWorkaroundFlags"
-} elseif ($clangMajor -ge 24) {
-    # Fixed upstream: clang 24 (TheRock ROCm 10.1.0) includes
-    # __clang_cuda_math_forward_declares.h before <cmath> in its own wrapper
-    # (llvm/llvm-project#201563, which cites this exact MSVC 14.51 clash), and
-    # the stock header compiles the validation TU clean (2026-10-06). Both
-    # flag sets are still passed (HIP's empty) so reconfiguring a cache that
-    # was built with the patch drops its -include.
-    Write-Host "HIP wrapper patch: none (clang $clangMajor carries the upstream fix)" -ForegroundColor DarkGray
-    $cmakeArgs += "-DCMAKE_CXX_FLAGS=-w"
-    $cmakeArgs += "-DCMAKE_HIP_FLAGS="
-} else {
-    throw "no patched HIP runtime wrapper for clang $clangMajor (expected $hipPatchedInc). Older toolchain: regenerate and validate it per patches\hip\README.md."
+if ($clangMajor -lt 24) {
+    throw "ROCm clang $clangMajor under $($cfg.HipPath) is below 24: its HIP runtime wrapper clashes with MSVC's <cmath>. Install a newer dist (00-install-prerequisites.ps1 takes the newest stable) and re-run 01-configure.ps1."
 }
+$cmakeArgs += "-DCMAKE_CXX_FLAGS=-w"
+$cmakeArgs += "-DCMAKE_HIP_FLAGS="
 
 # lld, when the compiler is an LLVM one that ships it (01-configure resolves it
 # next to the clang it picked, and leaves Linker empty otherwise; an MSVC

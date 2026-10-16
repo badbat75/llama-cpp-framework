@@ -50,9 +50,9 @@
     # "Installing multi-arch releases". Prerelease indexes stay out.
     #
     # A dist bump costs a full rebuild (02-build.ps1 wipes the cmake dir when
-    # the compiler path changes) and re-derives GpuTargets; on a clang major
-    # below 24 it also needs patches\hip\<major>\ (clang 24 fixed the header
-    # clash upstream).
+    # the compiler path changes) and re-derives GpuTargets. A dist whose clang
+    # is below 24 is refused by 02-build.ps1 (its HIP runtime wrapper clashes
+    # with MSVC's <cmath>; clang 24 fixed it upstream).
     Rocm = @{
         Dir         = 'TheRock'            # <DistRoot>\TheRock\<Version>\<DistOs>
         Marker      = '.therock-version'   # written only after a successful extract

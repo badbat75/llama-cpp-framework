@@ -45,18 +45,14 @@ if (-not $NoHip) {
             Sort-Object -Descending | Select-Object -First 1
         if ($clangMajor) { break }
     }
-    $wrapper = Join-Path $repo "patches\hip\$clangMajor\__clang_hip_runtime_wrapper.h"
-    $cmakeArgs += "-DCMAKE_CXX_COMPILER=$($clang -replace '\\', '/')"
-    if (Test-Path $wrapper) {
-        $wrapper = $wrapper -replace '\\', '/'
-        $cmakeArgs += "-DCMAKE_CXX_FLAGS=-w -D__CLANG_HIP_RUNTIME_WRAPPER_H__ -include `"$wrapper`""
-    } elseif ($clangMajor -ge 24) {
-        # Fixed upstream from clang 24 on, as in 02-build.ps1: the stock
-        # wrapper is used. Still passed so a cache built with the patch drops it.
-        $cmakeArgs += "-DCMAKE_CXX_FLAGS=-w"
-    } else {
-        throw "no patched HIP runtime wrapper for clang $clangMajor (expected $wrapper): see patches\hip\README.md"
+    # Clang 24 is the floor, as in 02-build.ps1: older HIP runtime wrappers
+    # clash with MSVC's <cmath>. -w is still passed so a cache built with the
+    # old patched wrapper drops its -include.
+    if ($clangMajor -lt 24) {
+        throw "ROCm clang $clangMajor under $($cfg.HipPath) is below 24 (its HIP runtime wrapper clashes with MSVC's <cmath>); -NoHip skips the HIP build"
     }
+    $cmakeArgs += "-DCMAKE_CXX_COMPILER=$($clang -replace '\\', '/')"
+    $cmakeArgs += "-DCMAKE_CXX_FLAGS=-w"
 }
 
 if (-not $NoCuda) {
