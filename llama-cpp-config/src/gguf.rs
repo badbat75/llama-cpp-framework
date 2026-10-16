@@ -750,7 +750,8 @@ fn ggml_type_name(t: u32) -> String {
 /// tensor of this `ggml_type` with rows `n_embd` long. Mirrors the
 /// `case GGML_OP_GET_ROWS` arm of `ggml_backend_cuda_device_supports_op`
 /// (`ggml/src/ggml-cuda/ggml-cuda.cu`), which whitelists exactly these and
-/// returns false for everything else. Verified against v0.5.0; ggml-hip
+/// returns false for everything else. Verified against v0.7.0 (the whitelist
+/// is unchanged since v0.5.0); ggml-hip
 /// compiles the same source. ggml-vulkan's own arm is a SUPERSET of this one
 /// (IQ4_NL and MXFP4 at any width, plus NVFP4, TQ1_0 and TQ2_0), so on a Vulkan
 /// device this mirror errs toward a needless warning, the safe direction.
@@ -807,7 +808,8 @@ fn gpu_has_get_rows(ggml_type: u32, n_embd: u32) -> bool {
 /// (`src/llama-arch.cpp`), which is a DENY-list: every arch not named there
 /// returns true, so the spellings are `LLM_ARCH_NAMES`' own (`falcon-h1`,
 /// `nemotron_h`, `granitehybrid`: hyphen, underscore and neither, exactly as
-/// upstream writes them). Verified against v0.6.0, which added `glm5-next`
+/// upstream writes them). Verified against v0.7.0, unchanged from v0.6.0,
+/// which added `glm5-next`
 /// (GLM-5.3-Flash, #27773) and took `qwen4exp` back OUT (#28569: added in
 /// v0.4.0 by #27742 with a "TODO: fix test-llama-archs" beside it). v0.4.1
 /// added `hy_v4` (Tencent Hy 4 preview, #28127); its `hrm_text` arch (#27625)

@@ -59,7 +59,7 @@ pub fn opencode_model_ids() -> Vec<String> {
 
 /// Ensures the provider entry exists and rebuilds its models list: one entry per
 /// ENABLED preset (see the module header).
-/// `base_url` comes from the current server.ini (e.g. "http://127.0.0.1:8080/v1").
+/// `base_url` comes from the current server.ini (e.g. "http://127.0.0.1:9931/v1").
 /// `api_key` is the optional API key for proxy/gateway authentication.
 ///
 /// A rebuild that comes out identical to the file is not written: every preset

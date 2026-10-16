@@ -296,7 +296,8 @@ pub(super) fn refresh_preview(app: &AppWindow, state: &Rc<RefCell<State>>) {
             ),
         },
         Mode::Live => {
-            let port = u16::try_from(cfg.port_or_default()).unwrap_or(8080);
+            let port = u16::try_from(cfg.port_or_default())
+                .unwrap_or(crate::server_cfg::DEFAULT_PORT as u16);
             let first = bench::live_preview(port, &chosen[0].id, &plan);
             if chosen.len() == 1 {
                 first

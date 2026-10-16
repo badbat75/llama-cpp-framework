@@ -45,7 +45,7 @@ export component ServerPage inherits ScrollView {
             LabeledField {
                 label_width <=> LabelColumn.server;
                 label: "Port";
-                hint: "TCP port llama-server listens on (--port).\ndefault = omit the flag → llama.cpp default: 8080. The chat UI and integrations connect here.";
+                hint: "TCP port llama-server listens on (--port).\ndefault = omit the flag → llama.cpp default: 9931 (8080 before llama.cpp v0.7.0). The chat UI and integrations connect here.";
                 DefaultLineEdit {
                     edit_label: "server-port";
                     input_type: InputType.number;
@@ -196,7 +196,7 @@ export component ServerPage inherits ScrollView {
             LabeledField {
                 label_width <=> LabelColumn.server;
                 label: "Snapshot folder";
-                hint: "Where the dumps go. A snapshot is roughly one byte per byte of KV cache, and it scales with the tokens actually in the conversation, NOT with ctx-size: measured 4.4 GiB for a 127k-token conversation on a 27B model, where a full 262k context would be about 8.3 GiB.\nThe default sits under %LOCALAPPDATA%, on the system drive; point it at a data disk if C: is tight.\nThe folder is created at launch: llama.cpp refuses to start on a --slot-save-path it cannot find.";
+                hint: "Where the dumps go. A snapshot is roughly one byte per byte of KV cache, and it scales with the tokens actually in the conversation, NOT with ctx-size: measured 4.4 GiB for a 127k-token conversation on a 27B model, where a full 262k context would be about 8.3 GiB. Since llama.cpp v0.7.0 the file also holds the context checkpoints and the draft model's state, so expect more on a hybrid model or with a drafter.\nThe default sits under %LOCALAPPDATA%, on the system drive; point it at a data disk if C: is tight.\nThe folder is created at launch: llama.cpp refuses to start on a --slot-save-path it cannot find.";
                 LineEdit {
                     text <=> AppState.server_form.state_dir;
                     enabled: AppState.server_form.save_state_on_shutdown;

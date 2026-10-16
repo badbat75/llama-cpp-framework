@@ -36,8 +36,17 @@ vocabulary** from a standalone MTP head GGUF, which is what HauhauCS's
   which broke the first hunk's context. The publisher had not re-cut the patch
   (the URL above still served the sha256 above), upstream still has no `d2t`
   in `qwen35.cpp`, and `git apply --3way` re-applied it with every added and
-  removed line unchanged; only offsets and context moved. Checked-in sha256:
-  `955f5313ad6f0e00a979ff412b576c5a9948e945c15f53625d37cc48dbc9dca6`
+  removed line unchanged; only offsets and context moved.
+- **refreshed again for v0.7.0** (2026-10-16), and this time ONE added line
+  changed: #30097 replaced the file's local `mtp_only` with the shared
+  `nextn_flags()` helper, so the `d2t` gate reads
+  `(nf.trunk & TENSOR_NOT_REQUIRED)` instead of `mtp_only`. Same condition
+  (the helper probes the same `blk.0.attn_norm.weight` under the same
+  `n_layer_nextn > 0`). The last hunk also lost its trailing
+  `ggml_build_forward_expand(gf, cur)` context line: #30445 dropped that call
+  from `graph_mtp` (the caller expands `t_logits`), which the patch never
+  touched. Upstream still has no `d2t` in `qwen35.cpp`. Checked-in sha256:
+  `272539d8b846ec636223d6941dc9cf2083516c0219f425ace1c5a730cc23b990`
 
 **What it changes.** A FastMTP sidecar is an MTP-only GGUF (no trunk blocks)
 whose LM head covers **32,768** rows instead of the target's 248,320, plus a

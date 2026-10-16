@@ -2334,7 +2334,7 @@ mod tests {
             prompt: long.clone(),
             ..Plan::default()
         };
-        let preview = live_preview(8080, "a", &plan);
+        let preview = live_preview(crate::server_cfg::DEFAULT_PORT as u16, "a", &plan);
         assert!(preview.contains("chars shown]"), "the preview says it cut");
         assert!(preview.len() < long.len(), "and actually cut");
 

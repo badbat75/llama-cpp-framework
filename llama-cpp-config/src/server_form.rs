@@ -104,7 +104,7 @@ pub fn invalid_numbers(f: &ServerForm) -> Vec<String> {
 /// each of these.
 pub fn config_to_form(cfg: &server_cfg::ServerConfig) -> ServerForm {
     ServerForm {
-        port: itxt(cfg.port, 8080),
+        port: itxt(cfg.port, server_cfg::DEFAULT_PORT),
         port_default: cfg.port.is_none(),
         hostname: cfg.hostname_or_default().into(),
         // Thread counts are auto-flagged sliders: unset ⇒ "auto" (omit the flag).

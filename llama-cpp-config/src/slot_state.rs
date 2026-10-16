@@ -12,7 +12,12 @@
 //! IO, seconds on an NVMe: the file holds the KV cache of the tokens actually in
 //! the conversation (so it tracks the conversation, not `ctx-size`), which for
 //! this arch is 36 KiB per token, i.e. 4.38 GiB measured at 127,579 tokens and
-//! ~8.3 GiB for a full 262k context.
+//! ~8.3 GiB for a full 262k context. Those figures are v0.6.0's: since v0.7.0
+//! the file also carries the slot's context checkpoints (#26004, so a restored
+//! hybrid / SWA slot can still roll back to one instead of re-reading the
+//! prompt) and the draft context's state (#30574, so a restored slot does not
+//! draft from an empty KV). Expect it larger by up to `ctx-checkpoints` copies
+//! of the recurrent state plus the draft's KV; not re-measured yet.
 //!
 //! HOW IT REACHES THE CHILD, which is the part that nearly killed the feature.
 //! The endpoints only exist on a server started with `--slot-save-path`, and the
@@ -20,9 +25,9 @@
 //! children are separate processes with their own command lines. Two facts make
 //! it work anyway:
 //!
-//!  * `--slot-save-path` has NO env name (`common/arg.cpp` gives it only
-//!    `set_examples`), so it cannot ride a preset key like `LLAMA_ARG_*`. But
-//!    `get_map_key_opt` (`common/preset.cpp`) maps every option by its FLAG name
+//!  * `--slot-save-path` had NO env name until v0.7.0 added
+//!    `LLAMA_ARG_SLOT_SAVE_PATH` (#30272); the framework never needed one,
+//!    because `get_map_key_opt` (`common/preset.cpp`) maps every option by its FLAG name
 //!    with the dashes stripped as well as by its env name, so the router parses
 //!    its own `--slot-save-path` into `base_preset` (`load_from_args`) and
 //!    `preset.merge(base_preset)` copies it onto every model. `unset_reserved_args`

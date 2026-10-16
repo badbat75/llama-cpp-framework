@@ -199,6 +199,8 @@ pub struct ServerConfig {
     /// conversation, not for the allocated context, so a 127,579-token
     /// conversation on Qwen3.8-27B measured 4,703,061,864 bytes (4.38 GiB, i.e.
     /// the arch's 36 KiB per token) where a full 262k context would be ~8.3 GiB.
+    /// Measured on v0.6.0; since v0.7.0 the file also carries the context
+    /// checkpoints and the draft state (`slot_state` module header), so more.
     /// That is a ceiling to plan disk against, never a fixed cost of enabling
     /// the feature.
     /// A user whose models already live on another disk will want the dumps
@@ -259,6 +261,14 @@ pub fn normalize_allreduce(v: &str) -> Option<&'static str> {
         .find(|m| m.eq_ignore_ascii_case(v))
 }
 
+/// llama-server's own `--port` default (`common_params::port`, common/common.h),
+/// which is what it binds when `Port` is unset and the launch omits the flag.
+/// It MUST track the bundled llama.cpp: every client URL the configurator
+/// builds (health check, Open chat, the live benchmark, opencode.json, the
+/// Claude Code snippet) reads it, so a stale value points them all at a port
+/// nothing listens on. v0.7.0 moved it from 8080 to 9931 (#30159).
+pub const DEFAULT_PORT: i32 = 9931;
+
 /// Default ModelsDir when server.ini leaves it unset. ModelsDir is the *root*
 /// the four fixed subfolders hang off (models\, mmprojs\, mtps\, dflashs\;
 /// see `model_scan`), so this is a bare `~\.llama.cpp`, not `…\models`.
@@ -286,9 +296,9 @@ impl ServerConfig {
     // `runstate::server_args`, and the GUI all pull from here, so changing a
     // default is a one-line edit instead of a four-file hunt.
 
-    /// The configured port, or 8080 when unset.
+    /// The configured port, or [`DEFAULT_PORT`] when unset.
     pub fn port_or_default(&self) -> i32 {
-        self.port.unwrap_or(8080)
+        self.port.unwrap_or(DEFAULT_PORT)
     }
 
     /// The configured bind host, or "localhost" when unset/blank. This is what
@@ -479,13 +489,15 @@ fn render(cfg: &ServerConfig) -> String {
     // str_line_or_hint). The `keep` predicate is where the per-field "is this
     // worth writing?" rule lives (n > 0, n != 1, …).
     // Port collapses to a commented hint when unset (the UI "default" checkbox),
-    // so None round-trips as None instead of a forced 8080; otherwise "default"
-    // would silently re-materialize as an explicit port on the next reload, and
-    // the launch line would keep passing --port 8080.
+    // so None round-trips as None instead of a forced DEFAULT_PORT; otherwise
+    // "default" would silently re-materialize as an explicit port on the next
+    // reload, and the launch line would keep passing --port.
     let port_line = int_line_or_hint(
         cfg.port,
         "Port",
-        "; Port = 8080  ; TCP port llama-server binds (--port); commented = llama.cpp default 8080",
+        &format!(
+            "; Port = {DEFAULT_PORT}  ; TCP port llama-server binds (--port); commented = llama.cpp default {DEFAULT_PORT}"
+        ),
         |n| n > 0,
     );
     let threads_line = int_line_or_hint(
@@ -624,7 +636,8 @@ LogVerbosity = {log_verbosity}
 SaveStateOnShutdown = {save_state_lit}
 ; StateDir: where those snapshots go. One file per model, overwritten each time,
 ; and dumps of models that are no longer loaded are pruned on save. Point it at a
-; data disk if the system drive is tight: a 262k-context snapshot is ~8.3 GiB.
+; data disk if the system drive is tight: a 262k-context snapshot is ~8.3 GiB
+; of KV cache, plus the context checkpoints and the draft state it also holds.
 StateDir = {state_dir}
 ; OpencodeBaseUrl overrides the auto-derived integration URL (host:port/v1).
 ; OpencodeApiKey is the provider's API key for authentication.
@@ -719,7 +732,7 @@ mod tests {
     //   rather than None.
     // - `keep` predicates turn unset/"not worth writing" values into commented
     //   hint lines: port <= 0, threads/threads_batch <= 0, models_max unset.
-    //   An unset port reloads as None (not a forced 8080), so the UI "default"
+    //   An unset port reloads as None (not a forced DEFAULT_PORT), so the UI "default"
     //   checkbox round-trips and the launch line omits --port.
     // - ModelsDir falls back to default_models_dir() when unset.
     #[test]

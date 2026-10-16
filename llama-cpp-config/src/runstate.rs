@@ -149,8 +149,9 @@ fn server_args(
 
     // --port / --models-max are omitted when unset (the UI's "default" checkbox
     // stores None). Forcing a value here is exactly what made "default" still
-    // emit `--port 8080` / `--models-max 1`; omitting the flag lets llama.cpp
-    // apply its own default (port 8080; 4 resident models). A 0 port is never
+    // emit `--port` / `--models-max 1`; omitting the flag lets llama.cpp apply
+    // its own default (port `server_cfg::DEFAULT_PORT`; 4 resident models), which
+    // is why that constant must track the bundled release. A 0 port is never
     // valid so it counts as unset, but models-max 0 (= unlimited) IS a real
     // value and is passed through.
     if let Some(p) = cfg.port.filter(|&n| n > 0) {
@@ -891,7 +892,7 @@ mod tests {
         let a = args_for(&ServerConfig::default());
         // port / models-max join the unset-omits-the-flag group: the UI
         // "default" checkbox stores None, and a forced value here is what left
-        // "default" still showing --port 8080 / --models-max 1.
+        // "default" still showing --port / --models-max 1.
         for flag in ["-t", "--threads-batch", "--port", "--models-max"] {
             assert!(!a.contains(&flag.to_string()), "{flag} must be omitted");
         }

@@ -154,7 +154,7 @@ pub struct Preset {
     /// trading the cost of verifying a short draft against the step it saves.
     /// Lives and dies with the other draft keys (`prune_inactive_draft_keys`).
     ///
-    /// Its sibling `--spec-draft-p-split` is NOT a field: v0.6.0 parses it into
+    /// Its sibling `--spec-draft-p-split` is NOT a field: v0.6.0 and v0.7.0 parse it into
     /// `params.speculative.draft.p_split` and nothing reads that member, the
     /// same dead end as the two ngram min-hits keys below.
     pub spec_draft_n_min: Option<i32>,
