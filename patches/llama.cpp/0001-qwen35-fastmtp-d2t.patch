@@ -1,8 +1,56 @@
+diff --git a/src/models/models.h b/src/models/models.h
+index 88fd07d97..824ebadd7 100644
+--- a/src/models/models.h
++++ b/src/models/models.h
+@@ -2426,6 +2426,7 @@ struct llama_model_qwen3next : public llama_model_base {
+ 
+ struct llama_model_qwen35 : public llama_model_base {
+     llama_model_qwen35(const struct llama_model_params & params) : llama_model_base(params) {}
++    bool load_tensors(llama_model_loader & ml) override; // validates d2t once its data is loaded
+     void load_arch_hparams(llama_model_loader & ml) override;
+     void load_arch_tensors(llama_model_loader & ml) override;
+ 
 diff --git a/src/models/qwen35.cpp b/src/models/qwen35.cpp
-index 802f2e2f1..8e4d0b0cd 100644
+index 802f2e2f1..0200727b7 100644
 --- a/src/models/qwen35.cpp
 +++ b/src/models/qwen35.cpp
-@@ -37,11 +37,20 @@ void llama_model_qwen35::load_arch_tensors(llama_model_loader & ml) {
+@@ -30,6 +30,35 @@ void llama_model_qwen35::load_arch_hparams(llama_model_loader & ml) {
+     }
+ }
+ 
++bool llama_model_qwen35::load_tensors(llama_model_loader & ml) {
++    if (!llama_model_base::load_tensors(ml)) {
++        return false;
++    }
++    if (d2t) {
++        // graph_mtp scatters the draft logits through d2t with ggml_set_rows: an
++        // entry outside the vocabulary would write past the logits, so refuse it
++        const int64_t n_vocab_full = vocab.n_tokens();
++        const int64_t n            = ggml_nelements(d2t);
++        std::vector<int64_t> idx(n);
++        if (d2t->type == GGML_TYPE_I64) {
++            ggml_backend_tensor_get(d2t, idx.data(), 0, ggml_nbytes(d2t));
++        } else {
++            std::vector<int32_t> idx32(n);
++            ggml_backend_tensor_get(d2t, idx32.data(), 0, ggml_nbytes(d2t));
++            for (int64_t i = 0; i < n; ++i) {
++                idx[i] = idx32[i];
++            }
++        }
++        for (int64_t i = 0; i < n; ++i) {
++            if (idx[i] < 0 || idx[i] >= n_vocab_full) {
++                throw std::runtime_error(format("d2t[%lld] = %lld is outside the vocabulary (%lld tokens)",
++                        (long long) i, (long long) idx[i], (long long) n_vocab_full));
++            }
++        }
++    }
++    return true;
++}
++
+ void llama_model_qwen35::load_arch_tensors(llama_model_loader & ml) {
+     LLAMA_LOAD_LOCALS;
+ 
+@@ -37,11 +66,27 @@ void llama_model_qwen35::load_arch_tensors(llama_model_loader & ml) {
      const int trunk_flags = nf.trunk;
      const int mtp_flags   = nf.mtp;
  
@@ -10,6 +58,13 @@ index 802f2e2f1..8e4d0b0cd 100644
 +    const ggml_tensor * d2t_meta = ml.get_tensor_meta("d2t");
 +    if ((nf.trunk & TENSOR_NOT_REQUIRED) && d2t_meta) {
 +        n_vocab_out = d2t_meta->ne[0];
++        if (d2t_meta->type != GGML_TYPE_I32 && d2t_meta->type != GGML_TYPE_I64) {
++            throw std::runtime_error(format("d2t must be I32 or I64, got %s", ggml_type_name(d2t_meta->type)));
++        }
++        if (n_vocab_out <= 0 || n_vocab_out > n_vocab) {
++            throw std::runtime_error(format("d2t has %lld entries, expected 1 to %lld",
++                    (long long) n_vocab_out, (long long) n_vocab));
++        }
 +        d2t = create_tensor(tn(LLM_TENSOR_D2T), { n_vocab_out }, 0);
 +        LLAMA_LOG_INFO("%s: QWEN35 MTP using d2t draft-vocab trim (n_vocab_out = %lld)\n",
 +                __func__, (long long) n_vocab_out);
@@ -24,7 +79,7 @@ index 802f2e2f1..8e4d0b0cd 100644
  
      // optional projection of the embeddings output
      cls_out   = create_tensor(tn(LLM_TENSOR_CLS_OUT, "weight"), { n_embd, hparams.n_embd_out() }, TENSOR_NOT_REQUIRED);
-@@ -49,6 +58,7 @@ void llama_model_qwen35::load_arch_tensors(llama_model_loader & ml) {
+@@ -49,6 +94,7 @@ void llama_model_qwen35::load_arch_tensors(llama_model_loader & ml) {
  
      // if output is NULL, init from the input tok embed
      if (output == NULL) {
@@ -32,7 +87,7 @@ index 802f2e2f1..8e4d0b0cd 100644
          output = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD, "weight"), { n_embd, n_vocab }, TENSOR_DUPLICATED);
      }
  
-@@ -662,5 +672,21 @@ llama_model_qwen35::graph_mtp::graph_mtp(const llama_model & model, const llm_gr
+@@ -662,5 +708,21 @@ llama_model_qwen35::graph_mtp::graph_mtp(const llama_model & model, const llm_gr
      cur = build_lora_mm(head_w, cur, head_s);
      cb(cur, "result_output", -1);
  

@@ -45,8 +45,14 @@ vocabulary** from a standalone MTP head GGUF, which is what HauhauCS's
   `n_layer_nextn > 0`). The last hunk also lost its trailing
   `ggml_build_forward_expand(gf, cur)` context line: #30445 dropped that call
   from `graph_mtp` (the caller expands `t_logits`), which the patch never
-  touched. Upstream still has no `d2t` in `qwen35.cpp`. Checked-in sha256:
-  `272539d8b846ec636223d6941dc9cf2083516c0219f425ace1c5a730cc23b990`
+  touched. Upstream still has no `d2t` in `qwen35.cpp`.
+- **hardened locally** (2026-10-16): the publisher's patch trusts `d2t`, and
+  `ggml_set_rows` writes wherever an index points, so a crafted sidecar could
+  write past the logits tensor. The patch now refuses at load a `d2t` that is
+  not I32/I64, has no entries or more than the vocabulary, and, through a
+  `load_tensors` override (`models.h`) that runs once the data is in, any entry
+  outside `[0, n_vocab)`. Checked-in sha256:
+  `34db7d82eeb458a6c1e31ec80c2a83c047b484c7b6d2792be32cf75a109c5c91`
 
 **What it changes.** A FastMTP sidecar is an MTP-only GGUF (no trunk blocks)
 whose LM head covers **32,768** rows instead of the target's 248,320, plus a
@@ -67,12 +73,13 @@ is that same code on the third arch that needed it.
 
 **The one divergence from the upstream copies is load-bearing, not sloppiness.**
 `dflash.cpp` and `eagle3.cpp` both assert `model.d2t->type == GGML_TYPE_I64`
-before the scatter; this patch asserts only the length, and it has to. The
+before the scatter; this patch accepts I32 as well, and it has to. The
 FastMTP sidecar ships `d2t` as **I32** (it is the file's single `i32` tensor),
 which `ggml_set_rows` accepts (`ggml.c`: `c->type == GGML_TYPE_I64 ||
 c->type == GGML_TYPE_I32`) but the upstream assert would reject. So do not
 "restore" that assert when refreshing the patch: it would turn the one file this
-exists for into a hard failure.
+exists for into a hard failure. The load-time checks above (type, length, every
+index in range) replace it.
 
 **Confirming it is live** (rather than assuming): the loader logs
 `QWEN35 MTP using d2t draft-vocab trim (n_vocab_out = 32768)`, at llama.cpp's
@@ -102,4 +109,5 @@ has no preset field; llama.cpp's default applies.
 starts failing and the build stops with a message pointing here: delete the
 file (git history keeps it) and rebuild. Re-verify at every llama.cpp tag bump
 that touches `src\models\qwen35.cpp`; a refreshed patch from the publisher
-replaces this one wholesale, and the sha256 above with it.
+replaces this one only with the `d2t` validation carried over (or present in
+it), and the sha256 above changes with it.
