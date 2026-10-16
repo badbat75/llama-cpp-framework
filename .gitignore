@@ -17,3 +17,7 @@ resources/package-lock.json
 # checkout and on both OSes); everything else under .vscode stays local
 .vscode/*
 !.vscode/settings.json
+
+# Python bytecode (benchmarks/*.py imported by each other or by a test)
+__pycache__/
+*.pyc
