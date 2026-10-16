@@ -71,8 +71,9 @@ two runs each; a layer of experts is ~1.1 GiB on the card):
 | `n-cpu-moe 48`, 3072 MiB | 9136 MiB | 23.8, 23.4 | 59% |
 
 The smallest cache is the worst, so no "one hot layer in cache" sweet spot exists here.
-The cache's log has no per-layer statistics (`log_stats` prints two totals), so how the
-hits spread over the layers is not visible without instrumenting it.
+The cache's log has no per-layer statistics (`log_stats` prints two totals); the
+aggregate is enough for the verdict, and the per-layer spread would only steer a manual
+`override-tensor`, which is worth it only if an upstream fix still leaves the cache losing.
 
 **The hit rate is high; serving the misses is what costs.** 4.2% of the experts as slots
 gives 50% hits, 8.5% gives 62-64%: the routing is skewed. Each miss is served per layer
@@ -80,10 +81,20 @@ gives 50% hits, 8.5% gives 62-64%: the routing is skewed. Each miss is served pe
 `ggml_backend_synchronize` (48 stalls per token), then one `ggml_backend_tensor_set_async`
 per run of consecutive experts and per tensor, ~15 small transfers per layer and ~720 per
 token at 0.3-1 MB each. On the R9700 the cache moves ~1.3 GB/s, far below any PCIe
-link, so bandwidth is not the limit: (330 - 70) ms per token over ~720 transfers is
-~0.36 ms each, a fixed cost per transfer on the HIP path on Windows. On the RTX 4070
-SUPER the same count fits within 44 ms per token. A hypothesis with that figure behind it,
-until a profile confirms it (section 6).
+link, so bandwidth is not the limit. (330 - 70) ms per token over ~720 transfers gives
+~0.36 ms each, a fixed cost per transfer on the HIP path on Windows (WDDM submission);
+on the RTX 4070 SUPER the same count fits within 44 ms per token. **That 0.36 ms is a
+derived estimate, not a measurement**: the difference of two mean token times over an
+estimated count of transfers, with no trace behind it (section 6).
+
+Two changes that would target the cost, for an upstream issue:
+
+- **Defer the router read by one layer.** Read layer l's ids while layer l+1 computes
+  and start its uploads a layer late: one layer of latency on the first token, no
+  synchronous stall per layer.
+- **Stage the misses contiguously.** Copy a layer's missing experts host-side into one
+  pinned staging area, then one `tensor_set_async` per tensor: 3 transfers per layer
+  instead of ~15, which matters where the cost is per call.
 
 ## 4. Known failures
 
@@ -109,7 +120,6 @@ until a profile confirms it (section 6).
 | `ubatch-size` | default (512) | prefill gain against the compute buffer it costs | TBD |
 | `moe-cache-mib` with experts on the GPU, on ROCm | 0 | the equal-VRAM comparison of section 3 on the R9700, after the section 4 abort is fixed | TBD |
 | HIP upload cost per miss | n/a | a profile of the miss path (sync per layer, transfers per token) on ROCm against CUDA | TBD |
-| per-layer hit rate | n/a | needs instrumenting `log_stats`: is the skew spread over the layers or in a few? | TBD |
 | `moe-cache-mib` with `--no-host` | n/a | 9 cacheable layers at ~29% slots: decode against no cache | TBD |
 | `lazy-mode on` / `off` | auto | decode and RAM use of reading the n-gram table into memory | TBD |
 | `ctx-checkpoints` | default | restore cost after an edited turn on the hybrid memory | TBD |
