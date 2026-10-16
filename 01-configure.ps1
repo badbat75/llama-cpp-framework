@@ -361,6 +361,11 @@ New-Item -ItemType Directory -Path $cargoDir -Force | Out-Null
     ''
     '[build]'
     "jobs = $buildJobs"
+    '# The target dir the build scripts set through CARGO_TARGET_DIR, so a bare'
+    '# `cargo build` / `cargo test` reuses the same artifacts instead of filling'
+    '# llama-cpp-config\target\. Relative to the repo root (the parent of this'
+    '# .cargo\); the environment variable still wins where it is set.'
+    'target-dir = "build/windows/cargo-target"'
     ''
     '# Exported to test binaries: the libtest harness would otherwise open one'
     '# thread per logical core, independently of [build] jobs above.'
@@ -395,7 +400,7 @@ New-Item -ItemType Directory -Path $cargoDir -Force | Out-Null
     'rustflags = ["-Clink-arg=/force:multiple"]'
 ) | Set-Content -Path (Join-Path $cargoDir 'config.toml') -Encoding utf8NoBOM
 
-Write-Host "  .cargo\config.toml written (cargo jobs + test threads = $buildJobs of $([Environment]::ProcessorCount) cores; linker = rust-lld)." -ForegroundColor Green
+Write-Host "  .cargo\config.toml written (cargo jobs + test threads = $buildJobs of $([Environment]::ProcessorCount) cores; linker = rust-lld; target-dir = build\windows\cargo-target)." -ForegroundColor Green
 Write-Host "  Runtime / per-model settings are written on first launch (or by the installer)." -ForegroundColor DarkGray
 Write-Host ""
 

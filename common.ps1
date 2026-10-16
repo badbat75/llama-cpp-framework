@@ -34,7 +34,8 @@ $distRoot = if ($cfg.DistRoot) { $cfg.DistRoot } else { Resolve-DistRoot $null $
 
 # cargo's target dir for llama-cpp-config. 02-build.ps1 passes it to cargo as
 # CARGO_TARGET_DIR, 03-package.ps1 stages the exe from it. A bare `cargo build`
-# outside the scripts still writes llama-cpp-config\target\.
+# outside the scripts lands here too, through the `[build] target-dir` that
+# 01-configure.ps1 writes into .cargo\config.toml (keep the two in step).
 $cargoTargetDir = Join-Path $buildRoot 'cargo-target'
 
 if ($cfg.HipPath -and (Test-Path $cfg.HipPath)) {
