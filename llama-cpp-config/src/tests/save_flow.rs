@@ -1241,6 +1241,50 @@ pub(super) fn run(app: &AppWindow) {
     std::fs::write(&prompt_path, crate::bench::DEFAULT_PROMPT).expect("restore the prompt file");
     st.invoke_reload_all();
 
+    // ── Benchmark: the Database field is settings.ini `BenchDb` ──────────────
+    // Empty is the default and must STAY empty (seeding the resolved path would
+    // pin today's data folder into settings.ini); Enter saves a typed path, a
+    // missing file is announced rather than an error, and a path the INI would
+    // truncate is refused by name instead of saved.
+    assert_eq!(st.get_bench_db().as_str(), "", "unset reads as the default");
+    assert!(
+        st.get_bench_db_info()
+            .contains(&*crate::bench::db::default_path().to_string_lossy()),
+        "the readout resolves the default: {}",
+        st.get_bench_db_info()
+    );
+    let other_db = crate::bench::db::default_path().with_file_name("other.db");
+    st.set_bench_db(other_db.to_string_lossy().as_ref().into());
+    st.invoke_bench_db_accepted();
+    assert_eq!(
+        crate::settings::load().bench_db_path(),
+        other_db,
+        "Enter saves the typed database"
+    );
+    assert!(
+        st.get_bench_db_info().contains("not there yet"),
+        "a new database is announced, not refused: {}",
+        st.get_bench_db_info()
+    );
+    st.set_bench_db(r"D:\bench #2.db".into());
+    st.invoke_bench_db_accepted();
+    assert!(
+        st.get_status_is_error() && st.get_status_text().contains("BenchDb"),
+        "a '#' in the path is refused by name: {}",
+        st.get_status_text()
+    );
+    assert_eq!(
+        crate::settings::load().bench_db_path(),
+        other_db,
+        "and not saved"
+    );
+    st.set_bench_db("".into());
+    st.invoke_bench_db_accepted();
+    assert!(
+        crate::settings::load().bench_db.is_empty(),
+        "cleared = default again"
+    );
+
     // ── CLI: `preset delete <typo>` errors instead of a false "Removed" ─────
     // The v1.2.13 lookup-before-delete guard; the redirect keeps cli::run on
     // the temp tree. (`load_all` resolves real paths, so this can't be an

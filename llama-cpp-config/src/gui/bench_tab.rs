@@ -155,6 +155,51 @@ fn persist_prompt_path(app: &AppWindow) {
     }
 }
 
+/// The benchmark database the field names, or the default when it is empty:
+/// what the Saved runs list reads. A run reads settings.ini instead
+/// (`db::work_path`), which is why Run persists the field first.
+fn configured_db_path(s: &AppState) -> std::path::PathBuf {
+    settings::Settings {
+        bench_db: s.get_bench_db().to_string(),
+        ..settings::Settings::default()
+    }
+    .bench_db_path()
+}
+
+/// Native file picker for the database, seeded at the current file. Picks an
+/// EXISTING file: a new database is a typed path, created by the first run.
+fn pick_db_file(start: &Path) -> Option<std::path::PathBuf> {
+    let mut dialog = rfd::FileDialog::new()
+        .set_title("Pick a benchmark database")
+        .add_filter("SQLite databases", &["db", "sqlite", "sqlite3"])
+        .add_filter("All files", &["*"]);
+    if let Some(parent) = start.parent().filter(|p| p.is_dir()) {
+        dialog = dialog.set_directory(parent);
+    }
+    dialog.pick_file()
+}
+
+/// Persist the database path into settings.ini, read-modify-write. Returns
+/// false (with the reason on the status line) when it cannot be saved: the
+/// only reachable failure is a `;`/`#` in the path, which would reload
+/// truncated, and a run must then not start, or it would land in the database
+/// settings.ini still names rather than the one on screen.
+fn persist_db_path(app: &AppWindow) -> bool {
+    let field = app.global::<AppState>().get_bench_db().trim().to_string();
+    let mut cfg = settings::load();
+    if cfg.bench_db.trim() == field {
+        return true;
+    }
+    cfg.bench_db = field;
+    match settings::save(&cfg) {
+        Ok(()) => true,
+        Err(e) => {
+            set_status(app, format!("Benchmark database not saved: {e}"), true);
+            false
+        }
+    }
+}
+
 /// Seed / re-seed everything the tab reads from disk: the preset rows, the list
 /// of past runs, and the derived preview. Part of the `reload_all_from_disk` hub
 /// (startup seed + Refresh/F5).
@@ -174,6 +219,9 @@ pub(super) fn refresh(app: &AppWindow, state: &Rc<RefCell<State>>) {
         s.set_bench_prompt_file(SharedString::from(
             configured.to_string_lossy().into_owned(),
         ));
+        // As stored, not resolved: empty stays empty (the default), so saving
+        // the field back never pins today's data folder into settings.ini.
+        s.set_bench_db(SharedString::from(settings::load().bench_db.trim()));
         s.set_bench_temp(SharedString::from("0"));
         s.set_bench_max_tokens(SharedString::from(bench::DEFAULT_MAX_TOKENS.to_string()));
         s.set_bench_reps(SharedString::from(bench::DEFAULT_REPS.to_string()));
@@ -315,24 +363,41 @@ pub(super) fn refresh_preview(app: &AppWindow, state: &Rc<RefCell<State>>) {
     s.set_bench_preview(SharedString::from(text));
 }
 
-/// The campaigns in bench.db, newest first; empty when there is no database
-/// yet (a machine that has never benched).
-fn saved_campaigns() -> Vec<bench::db::CampaignRow> {
-    let path = bench::db::work_path();
+/// The campaigns in the database at `path`, newest first, with the readout
+/// under the Database field. A missing file is not an error: it is a machine
+/// that has never benched, or a new database the next run creates.
+fn saved_campaigns(path: &Path) -> (Vec<bench::db::CampaignRow>, String) {
     if !path.is_file() {
-        return Vec::new();
+        return (
+            Vec::new(),
+            format!(
+                "{} (not there yet: the first finished run creates it)",
+                path.display()
+            ),
+        );
     }
-    bench::db::open_ro(&path)
-        .ok()
-        .and_then(|c| bench::db::campaigns(&c).ok())
-        .unwrap_or_default()
+    let read =
+        bench::db::open_ro(path).and_then(|c| bench::db::campaigns(&c).map_err(|e| e.to_string()));
+    match read {
+        Ok(runs) => {
+            let info = format!(
+                "{} ({} campaign{})",
+                path.display(),
+                runs.len(),
+                if runs.len() == 1 { "" } else { "s" }
+            );
+            (runs, info)
+        }
+        Err(e) => (Vec::new(), format!("cannot read: {e}")),
+    }
 }
 
 /// Re-list the saved campaigns, newest first, keeping the current pick if it
 /// is still there.
 fn refresh_runs(app: &AppWindow) {
     let s = app.global::<AppState>();
-    let runs = saved_campaigns();
+    let (runs, info) = saved_campaigns(&configured_db_path(&s));
+    s.set_bench_db_info(SharedString::from(info));
     let showing = s.get_bench_showing().to_string();
     let idx = runs
         .iter()
@@ -358,8 +423,8 @@ fn refresh_runs(app: &AppWindow) {
 
 /// A campaign's table: every run's points under the run's label, in run
 /// order (a tab run's labels are its preset ids, a sweep's `key=value`).
-fn load_campaign(name: &str) -> Result<(Vec<bench::Point>, Vec<String>, bool), String> {
-    let conn = bench::db::open_ro(&bench::db::work_path())?;
+fn load_campaign(db: &Path, name: &str) -> Result<(Vec<bench::Point>, Vec<String>, bool), String> {
+    let conn = bench::db::open_ro(db)?;
     let (runs, report) = bench::db::campaign_runs(&conn, name).map_err(|e| e.to_string())?;
     if runs.is_empty() {
         return Err(format!("no runs in campaign {name}"));
@@ -636,6 +701,48 @@ pub(super) fn wire(
     }
     {
         let app_weak = app.as_weak();
+        app.global::<AppState>().on_bench_db_changed(move || {
+            if let Some(app) = app_weak.upgrade() {
+                refresh_runs(&app);
+            }
+        });
+    }
+    {
+        let app_weak = app.as_weak();
+        app.global::<AppState>().on_bench_db_accepted(move || {
+            if let Some(app) = app_weak.upgrade() {
+                if persist_db_path(&app) {
+                    set_status(
+                        &app,
+                        "Benchmark database saved to settings.ini.".into(),
+                        false,
+                    );
+                }
+                refresh_runs(&app);
+            }
+        });
+    }
+    {
+        let app_weak = app.as_weak();
+        app.global::<AppState>().on_bench_pick_db(move |current| {
+            let Some(app) = app_weak.upgrade() else {
+                return current;
+            };
+            let s = app.global::<AppState>();
+            let Some(picked) = pick_db_file(&configured_db_path(&s)) else {
+                return current;
+            };
+            let picked = SharedString::from(picked.to_string_lossy().into_owned());
+            // Set here, as for the prompt: the persist and the re-list read
+            // the property, not the caller's pending assignment.
+            s.set_bench_db(picked.clone());
+            persist_db_path(&app);
+            refresh_runs(&app);
+            picked
+        });
+    }
+    {
+        let app_weak = app.as_weak();
         let tray_weak = tray.clone();
         let state = state.clone();
         app.global::<AppState>().on_bench_run(move || {
@@ -649,6 +756,12 @@ pub(super) fn wire(
             let bad = invalid_numbers(&app.global::<AppState>(), mode);
             if !bad.is_empty() {
                 set_status(&app, format!("Not run: {}.", bad.join("; ")), true);
+                return;
+            }
+            // The run writes where settings.ini points (`db::work_path`, as
+            // `bench sweep` does), so the field the list is reading goes there
+            // first, typed but never confirmed with Enter included.
+            if !persist_db_path(&app) {
                 return;
             }
             let mut plan = plan_from_ui(&app, &state);
@@ -716,7 +829,7 @@ pub(super) fn wire(
                 return;
             };
             let s = app.global::<AppState>();
-            match load_campaign(name.as_str()) {
+            match load_campaign(&configured_db_path(&s), name.as_str()) {
                 Ok((points, order, has_report)) => {
                     s.set_bench_showing(name.clone());
                     s.set_bench_baseline(SharedString::from(
@@ -740,13 +853,14 @@ pub(super) fn wire(
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
-            let name = app.global::<AppState>().get_bench_report_campaign();
+            let s = app.global::<AppState>();
+            let name = s.get_bench_report_campaign();
             if name.is_empty() {
                 return;
             }
             // The report lives in bench.db; the editor gets a copy in the temp
             // directory, rewritten on every open so it never goes stale.
-            let report = bench::db::open_ro(&bench::db::work_path()).and_then(|c| {
+            let report = bench::db::open_ro(&configured_db_path(&s)).and_then(|c| {
                 bench::db::campaign_runs(&c, name.as_str())
                     .map_err(|e| e.to_string())
                     .and_then(|(_, r)| r.ok_or_else(|| "no report".to_string()))

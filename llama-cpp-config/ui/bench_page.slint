@@ -428,8 +428,39 @@ export component BenchPage inherits ScrollView {
             heading: "Saved runs";
             LabeledField {
                 label_width <=> LabelColumn.bench;
+                label: "Database";
+                hint: "The SQLite file every finished run is written to, and the one listed below. Empty = bench\\bench.db under the data folder. Point it at a clone's benchmarks\\bench.db to record straight into the repo's database, with no bench publish; absolute paths are cut to file names and secret-like values dropped either way.\nA file that is not there yet is created by the first finished run. Enter, Browse… or Run saves the path to settings.ini (BenchDb), where bench sweep and bench query read it too.";
+                LineEdit {
+                    accessible-label: "bench-db";
+                    text <=> AppState.bench_db;
+                    placeholder-text: "bench\\bench.db";
+                    enabled: !AppState.bench_running;
+                    edited => { AppState.bench_db_changed(); }
+                    accepted => { AppState.bench_db_accepted(); }
+                }
+                Button {
+                    text: "Browse…";
+                    enabled: !AppState.bench_running;
+                    clicked => {
+                        AppState.bench_db = AppState.bench_pick_db(AppState.bench_db);
+                    }
+                }
+            }
+            LabeledField {
+                label_width <=> LabelColumn.bench;
+                label: "";
+                Text {
+                    text: AppState.bench_db_info;
+                    font-size: 12px;
+                    color: Palette.foreground.transparentize(Tokens.muted);
+                    vertical-alignment: center;
+                    overflow: elide;
+                }
+            }
+            LabeledField {
+                label_width <=> LabelColumn.bench;
                 label: "Run";
-                hint: "Every run is a campaign in bench.db (the bench folder, or the file settings.ini BenchDb names, e.g. a clone's benchmarks/bench.db): each preset is written when it has been measured to the end, with its parameters, every repetition and the engine's output; a preset that fails or is cancelled is not recorded. Picking one here reloads its table; bench sweep campaigns are listed too, one column per value.";
+                hint: "Every run is a campaign in the database above: each preset is written when it has been measured to the end, with its parameters, every repetition and the engine's output; a preset that fails or is cancelled is not recorded. Picking one here reloads its table; bench sweep campaigns are listed too, one column per value.";
                 MappedComboBox {
                     enabled: !AppState.bench_running && AppState.bench_run_labels.length > 0;
                     labels: AppState.bench_run_labels;

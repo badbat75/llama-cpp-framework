@@ -20,8 +20,13 @@
 //! A run is written in ONE transaction, when its preset has been measured to
 //! the end (`record::Recorder::commit`). A run that failed or was cancelled is
 //! dropped, and a process that dies mid-run leaves nothing: the database holds
-//! measurements, not attempts. (`status` is therefore always `ok` here; the
-//! column stays so an older database still opens.)
+//! measurements, not attempts. (`status` is therefore always `ok` here.)
+//!
+//! ## No migrations
+//!
+//! `schema.sql` is created with `IF NOT EXISTS` and nothing else: no column is
+//! added to an existing file. A schema change before a release rebuilds the
+//! repo's database by hand; after one it needs a migration written for it.
 //!
 //! ## Nothing secret, ever
 //!
@@ -34,20 +39,6 @@ use std::path::{Path, PathBuf};
 use rusqlite::{params, Connection, OptionalExtension};
 
 pub const SCHEMA: &str = include_str!("../../../benchmarks/schema.sql");
-
-/// Columns newer than the first schema, added to an older database on open.
-/// `schema.sql` lists them at its end.
-const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
-    ("campaign", "notes", "TEXT"),
-    ("campaign", "report", "TEXT"),
-    ("run", "points", "TEXT"),
-    ("run", "ended_utc", "TEXT"),
-    ("run", "log", "TEXT"),
-    ("result", "cache_n", "INTEGER"),
-    ("result", "reasoning_tps", "REAL"),
-    ("result", "answer_tps", "REAL"),
-    ("result", "detail", "TEXT"),
-];
 
 /// The database runs are written to and read from: settings.ini `BenchDb`,
 /// or `default_path` when that is unset.
@@ -64,7 +55,7 @@ fn err(path: &Path, e: impl std::fmt::Display) -> String {
     format!("{}: {e}", path.display())
 }
 
-/// Open (creating it when missing) and bring the schema up to date.
+/// Open, creating it when missing.
 pub fn open(path: &Path) -> Result<Connection, String> {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).map_err(|e| err(dir, e))?;
@@ -86,18 +77,7 @@ pub fn open_ro(path: &Path) -> Result<Connection, String> {
 pub fn init(conn: &Connection) -> rusqlite::Result<()> {
     // A second writer (the tab while a sweep runs) waits instead of failing.
     conn.busy_timeout(std::time::Duration::from_secs(10))?;
-    conn.execute_batch(SCHEMA)?;
-    for (table, column, decl) in ADDED_COLUMNS {
-        let has: bool = conn
-            .prepare(&format!(
-                "SELECT 1 FROM pragma_table_info('{table}') WHERE name = ?1"
-            ))?
-            .exists([column])?;
-        if !has {
-            conn.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {column} {decl}"))?;
-        }
-    }
-    Ok(())
+    conn.execute_batch(SCHEMA)
 }
 
 /// Keys never stored: credentials and the endpoints of other services.
@@ -492,9 +472,10 @@ pub fn insert_run(conn: &Connection, r: &NewRun) -> rusqlite::Result<i64> {
 pub fn public_value(v: &str) -> String {
     let v = v.trim();
     let p = Path::new(v);
+    // Either OS's form on either OS: `Path` on Windows calls `/mnt/x` relative.
     let windows_abs =
         v.len() > 2 && v.as_bytes()[1] == b':' && matches!(v.as_bytes()[2], b'\\' | b'/');
-    if p.is_absolute() || windows_abs {
+    if p.is_absolute() || windows_abs || v.starts_with('/') {
         if let Some(name) = v.rsplit(['/', '\\']).next().filter(|n| !n.is_empty()) {
             return name.to_string();
         }
@@ -658,38 +639,45 @@ mod tests {
     }
 
     #[test]
-    fn the_schema_initialises_twice_and_has_the_added_columns() {
+    fn the_schema_initialises_twice() {
         let c = mem();
         init(&c).unwrap();
-        for (table, column, _) in ADDED_COLUMNS {
-            let has = c
-                .prepare(&format!(
-                    "SELECT 1 FROM pragma_table_info('{table}') WHERE name = ?1"
-                ))
-                .unwrap()
-                .exists([column])
-                .unwrap();
-            assert!(has, "{table}.{column}");
-        }
     }
 
-    /// An older database gets the new columns without losing its rows.
-    #[test]
-    fn an_old_database_is_migrated() {
-        let c = Connection::open_in_memory().unwrap();
-        c.execute_batch(
-            "CREATE TABLE campaign (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE, \
-             question TEXT NOT NULL, started TEXT NOT NULL, answer TEXT);
-             INSERT INTO campaign (name, question, started) VALUES ('old', 'q', '2026-10-16');",
-        )
-        .unwrap();
-        init(&c).unwrap();
-        let notes: Option<String> = c
-            .query_row("SELECT notes FROM campaign WHERE name = 'old'", [], |r| {
-                r.get(0)
-            })
+    /// The table columns of every table, in order.
+    fn columns(c: &Connection) -> Vec<(String, Vec<String>)> {
+        let tables: Vec<String> = c
+            .prepare(
+                "SELECT name FROM sqlite_master WHERE type = 'table' \
+                 AND name NOT LIKE 'sqlite_%' ORDER BY name",
+            )
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
             .unwrap();
-        assert_eq!(notes, None);
+        tables
+            .into_iter()
+            .map(|t| {
+                let cols = c
+                    .prepare(&format!("SELECT name FROM pragma_table_info('{t}')"))
+                    .unwrap()
+                    .query_map([], |r| r.get(0))
+                    .unwrap()
+                    .collect::<rusqlite::Result<_>>()
+                    .unwrap();
+                (t, cols)
+            })
+            .collect()
+    }
+
+    /// Nothing migrates (module header), so the committed database must have
+    /// exactly the schema a fresh one gets: a `schema.sql` change without a
+    /// rebuild of `benchmarks/bench.db` fails here instead of in the tab.
+    #[test]
+    fn the_repo_database_matches_the_schema() {
+        let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../benchmarks/bench.db");
+        assert_eq!(columns(&open_ro(&repo).unwrap()), columns(&mem()));
     }
 
     /// The fingerprint ignores the order the GPUs were detected in, and the

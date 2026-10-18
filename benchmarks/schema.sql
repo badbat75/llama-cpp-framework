@@ -162,7 +162,5 @@ CREATE VIEW IF NOT EXISTS v_run_params AS
 SELECT run_id, scope, group_concat(key || '=' || value, '; ') AS params
 FROM (SELECT * FROM run_param ORDER BY run_id, scope, key) GROUP BY run_id, scope;
 
--- Columns added after the first release of this file; bench/db.rs adds them to
--- an older database (ALTER TABLE ... ADD COLUMN, when missing):
---   campaign.notes, campaign.report, run.ended_utc, run.log, run.points, result.cache_n,
---   result.reasoning_tps, result.answer_tps, result.detail
+-- Nothing migrates: a change to this file rebuilds benchmarks/bench.db to match
+-- (bench/db.rs `the_repo_database_matches_the_schema` fails until it does).

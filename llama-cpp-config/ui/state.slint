@@ -424,6 +424,14 @@ export global AppState {
     in-out property <string> bench_showing: "";
     // The bench.db campaign whose report "Open report" opens; "" for none.
     in-out property <string> bench_report_campaign: "";
+    // settings.ini `BenchDb` as typed: the database runs are written to and
+    // the Saved runs list reads. Empty = bench\bench.db under the data folder.
+    // The list follows the field as it is typed; settings.ini follows on Enter,
+    // Browse… and Run, so the run lands where the list was reading.
+    in-out property <string> bench_db;
+    // Read-only readout: the resolved path and its campaign count, or that it
+    // is not there yet, or why it cannot be read. Pushed from Rust.
+    in-out property <string> bench_db_info: "";
     // The campaigns in bench.db, newest first (label = name, date and engine,
     // value = the campaign's name).
     in-out property <[string]> bench_run_labels;
@@ -604,6 +612,12 @@ export global AppState {
     // and again when Run starts, so an external editor is a live editor.
     callback bench_pick_prompt(string) -> string;
     callback bench_edit_prompt();
+    // The benchmark database: `bench_db_changed` re-lists the campaigns at the
+    // typed path (no write), `bench_db_accepted` also saves it to settings.ini,
+    // `bench_pick_db` is the picker (same contract as `bench_pick_prompt`).
+    callback bench_db_changed();
+    callback bench_db_accepted();
+    callback bench_pick_db(string) -> string;
 
     callback save_integrations();
     callback open_opencode_folder();

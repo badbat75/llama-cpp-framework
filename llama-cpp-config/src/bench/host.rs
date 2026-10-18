@@ -197,6 +197,7 @@ fn dmi_memory() -> (Option<String>, Option<i64>, Option<String>) {
     parse_udev_memory(&out)
 }
 
+#[cfg(any(not(windows), test))]
 pub fn parse_udev_memory(props: &str) -> (Option<String>, Option<i64>, Option<String>) {
     let mut by_dev: std::collections::BTreeMap<u32, std::collections::HashMap<String, String>> =
         Default::default();
@@ -383,7 +384,7 @@ fn amd_gpus() -> Vec<Gpu> {
     let adapters = super::env::adapters();
     crate::devices::list()
         .into_iter()
-        .filter(|d| (d.id.starts_with("ROCm") || d.id.starts_with("HIP")))
+        .filter(|d| d.id.starts_with("ROCm") || d.id.starts_with("HIP"))
         .filter(|d| d.total_mib >= MIN_DISCRETE_MIB)
         .map(|d| Gpu {
             driver: adapters
