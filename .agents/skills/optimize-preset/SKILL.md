@@ -103,8 +103,9 @@ llama-cpp-config bench sweep --preset <id> --key <key> --values '<a>,<b>,<c>' \
   --campaign <model>-<key>-<yyyymmdd> --question "<what this answers>"
 ```
 
-- `--values` with commas inside a value (`device`, `tensor-split`): separate with `;`.
-  `unset` removes the key for a leg. Ranges: `2..8`.
+- `--values` with commas inside a value (`device`, `tensor-split`): separate with `;`,
+  and end a single such value with one (`'16,50;'`): without a `;` the spec splits on
+  `,` and sweeps `16` and `50`. `unset` removes the key for a leg. Ranges: `2..8`.
 - Live mode restarts llama-server per leg and sends `cache_prompt: false`, temp 0.
   Synthetic mode (llama-bench) needs the server DOWN and cannot model the drafter,
   `ctx-size` or `parallel`: use it only for raw prefill/decode of placement or quant.
@@ -119,6 +120,12 @@ llama-cpp-config bench sweep --preset <id> --key <key> --values '<a>,<b>,<c>' \
   (thermal drift lands on the last leg).
 - A leg that does not load or OOMs is a result too: note the boundary (e.g. "180224 f16
   does not load").
+- Swapping `device` order changes which card takes the output head, MTP head and
+  sampling, so the mirrored `tensor-split` usually does not fit: sweep a few splits per
+  order (one campaign) and compare each order at its best split with a safe margin.
+- A sweep restarts the server per leg, so one readout after it shows only the last leg:
+  run a background sampler of free memory per card (the section 3 commands every 2 s,
+  into a file) and take each leg's minimum after its load phase.
 
 Read results:
 
