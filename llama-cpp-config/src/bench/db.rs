@@ -491,14 +491,15 @@ pub fn public_value(v: &str) -> String {
 /// be the repo's (settings.ini `BenchDb`).
 pub fn public_text(text: &str) -> String {
     use std::sync::LazyLock;
-    // A path starts at the beginning of a line or after a separator, so the
+    // A path starts at the beginning of a line or after a separator (a
+    // backtick included: the report quotes paths as markdown code), so the
     // `/v1/...` of a URL stays as it is; its directory part is everything up
     // to the last separator. A directory with a space in it is cut at the
     // space: the home directory, the one most likely to have one, is
-    // replaced as a whole first.
+    // replaced as a whole first, in both separator forms on Windows.
     static PATH: LazyLock<regex::Regex> = LazyLock::new(|| {
         regex::Regex::new(
-            r#"(^|[\s"'=(\[,<>|])((?:[A-Za-z]:[\\/]|/)(?:[^\s\\/"'`;,()\[\]<>|]+[\\/])+)"#,
+            r#"(^|[\s"'`=(\[,<>|])((?:[A-Za-z]:[\\/]|/)(?:[^\s\\/"'`;,()\[\]<>|]+[\\/])+)"#,
         )
         .unwrap()
     });
@@ -514,6 +515,9 @@ pub fn public_text(text: &str) -> String {
             let h = h.trim_end_matches(['/', '\\']);
             if h.len() > 1 {
                 out = out.replace(h, "~");
+                if h.contains('\\') {
+                    out = out.replace(&h.replace('\\', "/"), "~");
+                }
             }
         }
     }
@@ -819,6 +823,10 @@ mod tests {
              llama-bench.exe -m \"x.gguf\" --api-key <redacted>\n\
              POST http://127.0.0.1:8080/v1/chat/completions n_tokens = 512\n\
              Authorization: Bearer <redacted>"
+        );
+        assert_eq!(
+            public_text("| prompt | `C:/Temp/scratchpad/x/bench-prompt.txt` |"),
+            "| prompt | `bench-prompt.txt` |"
         );
     }
 }
