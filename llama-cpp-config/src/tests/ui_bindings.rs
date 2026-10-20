@@ -334,6 +334,26 @@ fn editable_widgets_track_model_after_edit() {
         "Options.allreduce_modes (ui/components.slint) drifted from server_cfg::ALLREDUCE_MODES"
     );
 
+    // And for the FlashAttention band dropdown: the form carries its LABEL, so a
+    // label `server_form` produces that the combo lacks leaves it on "default"
+    // and saves that on the next write.
+    let slint_bands: Vec<String> = app
+        .global::<crate::gui::Options>()
+        .get_hip_fa_bands()
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    let rust_bands: Vec<String> = crate::server_cfg::HIP_FA_BANDS
+        .iter()
+        .map(|n| crate::server_form::hip_fa_band_label(*n).to_string())
+        .collect();
+    assert_eq!(slint_bands[0], "default");
+    assert_eq!(
+        slint_bands[1..],
+        rust_bands,
+        "Options.hip_fa_bands (ui/components.slint) drifted from server_cfg::HIP_FA_BANDS"
+    );
+
     // And for the KV-cache dropdowns: `kv_cache::warning` judges the types the
     // combo offers, so a type added to one list and not the other is either
     // unselectable or selectable with no kernel check behind it.

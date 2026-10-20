@@ -260,6 +260,19 @@ pub fn env_vars(cfg: &crate::server_cfg::ServerConfig) -> Vec<(String, String)> 
     if cfg.attn_rot_disable {
         env.push(("LLAMA_ATTN_ROT_DISABLE".into(), "1".into()));
     }
+    // GGML_HIP_FA_BAND_WMMA: read with `getenv` by the framework's patched
+    // libggml-hip at the first attention call (see server_cfg::hip_fa_band).
+    // 0 is off and exports nothing; the default (4) DOES export, so a bare
+    // config is not an empty environment.
+    let band = cfg.hip_fa_band_or_default();
+    if band != 0 {
+        env.push(("GGML_HIP_FA_BAND_WMMA".into(), band.to_string()));
+    }
+    // ROCP_TOOL_ATTACH: what rocprofiler-sdk requires of a process before
+    // `rocprofv3 --attach` may trace it. Off exports nothing.
+    if cfg.rocprof_attach {
+        env.push(("ROCP_TOOL_ATTACH".into(), "1".into()));
+    }
     env
 }
 
@@ -987,6 +1000,8 @@ mod tests {
             cuda_allreduce: Some("none".into()),
             cuda_disable_graphs: true,
             attn_rot_disable: true,
+            hip_fa_band: Some(2),
+            rocprof_attach: true,
             webui_mcp_proxy: Some(false),
             log_verbosity: Some(2),
             // On, with an EXPLICIT dir: resolving the default would reach into
@@ -1015,6 +1030,10 @@ mod tests {
             // asserted in the env test further down.
             cuda_disable_graphs: _,
             attn_rot_disable: _,
+            // launch env only (GGML_HIP_FA_BAND_WMMA / ROCP_TOOL_ATTACH), read
+            // below llama.cpp. Asserted in the env tests further down.
+            hip_fa_band: _,
+            rocprof_attach: _,
             webui_mcp_proxy,
             log_verbosity,
             save_state_on_shutdown,
@@ -1151,6 +1170,36 @@ mod tests {
         );
     }
 
+    /// A default config with the FlashAttention band OFF: the one SDK knob
+    /// whose default exports something, switched off so the env tests of the
+    /// others can pin "unset exports nothing".
+    fn band_off() -> ServerConfig {
+        ServerConfig {
+            hip_fa_band: Some(0),
+            ..Default::default()
+        }
+    }
+
+    // The FlashAttention band: the DEFAULT exports `4` (the framework's
+    // choice), 2 and 4 ride verbatim, and 0 (off) exports nothing.
+    #[test]
+    fn hip_fa_band_rides_the_env_and_off_exports_nothing() {
+        let band = |v: Option<i32>| {
+            env_vars(&ServerConfig {
+                hip_fa_band: v,
+                ..Default::default()
+            })
+        };
+        let exported = |n: &str| [("GGML_HIP_FA_BAND_WMMA".to_string(), n.to_string())];
+        assert_eq!(band(None), exported("4"));
+        assert_eq!(band(Some(4)), exported("4"));
+        assert_eq!(band(Some(2)), exported("2"));
+        assert!(band(Some(0)).is_empty());
+        assert!(!args_for(&ServerConfig::default())
+            .iter()
+            .any(|a| a.contains("FA_BAND")));
+    }
+
     // The SDK-tuning tri-state, on the env-only path.
     // Three things it pins: the value is the INT rocBLAS parses ("0"/"1", never
     // "false"/"true"), `None` exports NOTHING (a default-on-every-machine
@@ -1164,7 +1213,7 @@ mod tests {
     fn cuda_allreduce_rides_the_env_and_unset_exports_nothing() {
         let with = |v: Option<&str>| ServerConfig {
             cuda_allreduce: v.map(str::to_string),
-            ..Default::default()
+            ..band_off()
         };
         for mode in crate::server_cfg::ALLREDUCE_MODES {
             assert_eq!(
@@ -1180,17 +1229,19 @@ mod tests {
     // presence, so a `=0` would still switch the graphs off.
     #[test]
     fn diagnostic_toggles_export_one_or_nothing() {
-        assert!(env_vars(&ServerConfig::default()).is_empty());
+        assert!(env_vars(&band_off()).is_empty());
         let cfg = ServerConfig {
             cuda_disable_graphs: true,
             attn_rot_disable: true,
-            ..Default::default()
+            rocprof_attach: true,
+            ..band_off()
         };
         assert_eq!(
             env_vars(&cfg),
             [
                 ("GGML_CUDA_DISABLE_GRAPHS".to_string(), "1".to_string()),
                 ("LLAMA_ATTN_ROT_DISABLE".to_string(), "1".to_string()),
+                ("ROCP_TOOL_ATTACH".to_string(), "1".to_string()),
             ]
         );
         assert!(!args_for(&cfg).iter().any(|a| a.contains("GRAPHS")));
@@ -1200,7 +1251,7 @@ mod tests {
     fn rocblas_hipblaslt_rides_the_env_as_zero_or_one() {
         let with = |v: Option<bool>| ServerConfig {
             rocblas_use_hipblaslt: v,
-            ..Default::default()
+            ..band_off()
         };
         assert_eq!(
             env_vars(&with(Some(false))),

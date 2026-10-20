@@ -264,6 +264,14 @@ export struct ServerForm {
     // (CheckBox, two-way <=>); checked exports `1`, unchecked exports nothing.
     cuda_disable_graphs: bool,
     attn_rot_disable: bool,
+    // GGML_HIP_FA_BAND_WMMA (the patched ROCm backend's FlashAttention band),
+    // carried as the DROPDOWN LABEL over Options.hip_fa_bands: "default" (key
+    // unset; the tool's default, 4, is still exported), "off", "2", "4"
+    // (server_form::hip_fa_band_label / parse_hip_fa_band).
+    hip_fa_band: string,
+    // ROCP_TOOL_ATTACH: a plain bool toggle; checked exports `1`, unchecked
+    // exports nothing.
+    rocprof_attach: bool,
     // Plain bool toggle (CheckBox, two-way <=>): enables the web UI's MCP proxy
     // (--webui-mcp-proxy).
     webui_mcp_proxy: bool,

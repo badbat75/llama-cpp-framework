@@ -104,6 +104,12 @@ export global Options {
     // passed verbatim. Mirrors ALLREDUCE_MODES in src/server_cfg.rs after
     // "default" (equality asserted by the e2e test, src/tests/ui_bindings.rs).
     out property <[string]> allreduce_modes: ["default", "nccl", "internal", "none"];
+    // GGML_HIP_FA_BAND_WMMA: "default" leaves the key unset (the tool's
+    // default, 4, is exported), "off" never exports the variable, a number is
+    // exported verbatim. Mirrors HIP_FA_BANDS in src/server_cfg.rs after
+    // "default", through server_form::hip_fa_band_label (equality asserted by
+    // the e2e test, src/tests/ui_bindings.rs).
+    out property <[string]> hip_fa_bands: ["default", "off", "2", "4"];
     // The -lv threshold, as "<name>:<level>". llama.cpp defines exactly these six
     // and a message prints when its own level is <= the threshold, so DEBUG:5 shows
     // everything and OUTPUT:0 almost nothing (`common/arg.cpp`, `common/log.h`).

@@ -285,6 +285,15 @@ pub struct ServerSet {
     /// cache). false = leave the variable unset.
     #[arg(long)]
     pub attn_rot_disable: Option<bool>,
+    /// FlashAttention band of the patched ROCm backend (env
+    /// GGML_HIP_FA_BAND_WMMA): 4 or 2; 0 = off (the variable is not exported);
+    /// default = clear the key, which exports the tool's default, 4.
+    #[arg(long, value_parser = clap::builder::PossibleValuesParser::new(["default", "0", "2", "4"]))]
+    pub hip_fa_band: Option<String>,
+    /// Export ROCP_TOOL_ATTACH=1 (lets rocprofv3 --attach trace the running
+    /// server). false = leave the variable unset.
+    #[arg(long)]
+    pub rocprof_attach: Option<bool>,
     /// Enable the web UI's MCP CORS proxy (--webui-mcp-proxy). true = on.
     #[arg(long)]
     pub webui_mcp_proxy: Option<bool>,
@@ -349,6 +358,14 @@ impl ServerSet {
         }
         if let Some(r) = self.attn_rot_disable {
             cfg.attn_rot_disable = r;
+        }
+        // Same clearing rule as the tri-states: `default` normalizes to None,
+        // the unset state; clap already refused anything but default/0/2/4.
+        if let Some(b) = &self.hip_fa_band {
+            cfg.hip_fa_band = server_cfg::normalize_hip_fa_band(b);
+        }
+        if let Some(a) = self.rocprof_attach {
+            cfg.rocprof_attach = a;
         }
         if let Some(w) = self.webui_mcp_proxy {
             cfg.webui_mcp_proxy = Some(w);
@@ -598,6 +615,12 @@ fn show_lines(cfg: &server_cfg::ServerConfig) -> String {
     );
     row("CudaDisableGraphs:", cfg.cuda_disable_graphs.to_string());
     row("AttnRotDisable:", cfg.attn_rot_disable.to_string());
+    row(
+        "HipFaBand:",
+        cfg.hip_fa_band
+            .map_or_else(|| "4 (default)".into(), |v| v.to_string()),
+    );
+    row("RocprofAttach:", cfg.rocprof_attach.to_string());
     row(
         "WebuiMcpProxy:",
         cfg.webui_mcp_proxy
@@ -895,6 +918,8 @@ mod tests {
             cuda_allreduce: Some("none".into()),
             cuda_disable_graphs: Some(true),
             attn_rot_disable: Some(true),
+            hip_fa_band: Some("2".into()),
+            rocprof_attach: Some(true),
             webui_mcp_proxy: Some(false),
             log_verbosity: Some(2),
             save_state_on_shutdown: Some(true),
@@ -919,6 +944,8 @@ mod tests {
             cuda_allreduce: Some("none".into()),
             cuda_disable_graphs: true,
             attn_rot_disable: true,
+            hip_fa_band: Some(2),
+            rocprof_attach: true,
             webui_mcp_proxy: Some(false),
             log_verbosity: Some(2),
             save_state_on_shutdown: Some(true),
@@ -945,6 +972,8 @@ mod tests {
             cuda_allreduce: Some("none".into()),
             cuda_disable_graphs: true,
             attn_rot_disable: true,
+            hip_fa_band: Some(2),
+            rocprof_attach: true,
             webui_mcp_proxy: Some(false),
             log_verbosity: Some(2),
             save_state_on_shutdown: Some(true),
@@ -968,6 +997,8 @@ mod tests {
             cuda_allreduce,
             cuda_disable_graphs,
             attn_rot_disable,
+            hip_fa_band,
+            rocprof_attach,
             webui_mcp_proxy,
             log_verbosity,
             save_state_on_shutdown,
@@ -995,6 +1026,8 @@ mod tests {
             ("CudaAllreduce:", cuda_allreduce.unwrap()),
             ("CudaDisableGraphs:", cuda_disable_graphs.to_string()),
             ("AttnRotDisable:", attn_rot_disable.to_string()),
+            ("HipFaBand:", hip_fa_band.unwrap().to_string()),
+            ("RocprofAttach:", rocprof_attach.to_string()),
             ("WebuiMcpProxy:", webui_mcp_proxy.unwrap().to_string()),
             ("LogVerbosity:", log_verbosity.unwrap().to_string()),
             (
@@ -1033,6 +1066,29 @@ mod tests {
             }
             .apply(&mut cfg);
             assert_eq!(cfg.rocblas_use_hipblaslt, expected, "{word}");
+        }
+    }
+
+    // `--hip-fa-band default` clears the key back to unset (the tool's default
+    // stays in the code); 0 is an explicit off, not a clear.
+    #[test]
+    fn server_set_hip_fa_band_takes_values_and_default() {
+        for (word, expected) in [
+            ("0", Some(0)),
+            ("2", Some(2)),
+            ("4", Some(4)),
+            ("default", None),
+        ] {
+            let mut cfg = ServerConfig {
+                hip_fa_band: Some(2),
+                ..Default::default()
+            };
+            ServerSet {
+                hip_fa_band: Some(word.into()),
+                ..Default::default()
+            }
+            .apply(&mut cfg);
+            assert_eq!(cfg.hip_fa_band, expected, "{word}");
         }
     }
 

@@ -64,6 +64,28 @@ fn parse_log_level(label: &str) -> i32 {
         .unwrap_or_else(|| server_cfg::ServerConfig::default().log_verbosity_or_default())
 }
 
+/// A `HipFaBand` value as its dropdown label: `off` for 0, the number itself
+/// otherwise. Mapped over `server_cfg::HIP_FA_BANDS`, it is `Options.hip_fa_bands`
+/// in ui/components.slint after its leading "default" (the unset state), which
+/// the e2e (`src/tests/ui_bindings.rs`) asserts.
+pub(crate) fn hip_fa_band_label(v: i32) -> SharedString {
+    if v == 0 {
+        "off".into()
+    } else {
+        v.to_string().into()
+    }
+}
+
+/// The dropdown label back to the `HipFaBand` value, the inverse of
+/// `hip_fa_band_label`. "default" (and a label the dropdown cannot produce) is
+/// None, the unset state, which still exports the tool's default (4).
+fn parse_hip_fa_band(label: &str) -> Option<i32> {
+    if label == "off" {
+        return Some(0);
+    }
+    server_cfg::normalize_hip_fa_band(label)
+}
+
 /// The ports a listener can bind.
 const PORT: RangeInclusive<i32> = 1..=65535;
 
@@ -137,6 +159,13 @@ pub fn config_to_form(cfg: &server_cfg::ServerConfig) -> ServerForm {
             .into(),
         cuda_disable_graphs: cfg.cuda_disable_graphs,
         attn_rot_disable: cfg.attn_rot_disable,
+        // A dropdown carrying the LABEL ("off", "2", "4"); "default" is its
+        // entry for unset (the tool's default, 4, still exported), stored as
+        // the sentinel like `cuda_allreduce`'s.
+        hip_fa_band: cfg
+            .hip_fa_band
+            .map_or_else(|| "default".into(), hip_fa_band_label),
+        rocprof_attach: cfg.rocprof_attach,
         // Plain bool toggles (framework defaults materialized when unset), same
         // shape as `mlock`.
         webui_mcp_proxy: cfg.webui_mcp_proxy_or_default(),
@@ -214,6 +243,9 @@ pub fn form_to_config(f: &ServerForm) -> server_cfg::ServerConfig {
             .map(str::to_string),
         cuda_disable_graphs: f.cuda_disable_graphs,
         attn_rot_disable: f.attn_rot_disable,
+        // "default" is None: the default stays in the code, not in server.ini.
+        hip_fa_band: parse_hip_fa_band(f.hip_fa_band.as_str()),
+        rocprof_attach: f.rocprof_attach,
         webui_mcp_proxy: Some(f.webui_mcp_proxy),
         // The one field with no "unset" state (the launch always passes -lv): the
         // form carries the dropdown's label, and `parse_log_level` maps it back.
@@ -266,6 +298,8 @@ mod tests {
             cuda_allreduce: Some("none".into()),
             cuda_disable_graphs: true,
             attn_rot_disable: true,
+            hip_fa_band: Some(2),
+            rocprof_attach: true,
             webui_mcp_proxy: Some(false),
             log_verbosity: Some(2),
             // Non-default toggle, and a StateDir off the system drive: the path
@@ -349,6 +383,33 @@ mod tests {
         // A label the dropdown can't produce falls back to the framework default,
         // never to 0: losing the log entirely is the one outcome nobody wants.
         assert_eq!(parse_log_level("nonsense"), 4);
+    }
+
+    /// The FlashAttention band dropdown, every entry in both directions: 0 must
+    /// come back as an explicit `Some(0)` (off), and "default" as `None`, never
+    /// as an explicit 4 (the default belongs to the code, not to server.ini).
+    #[test]
+    fn hip_fa_band_labels_round_trip() {
+        let states = server_cfg::HIP_FA_BANDS.map(Some);
+        for band in states.into_iter().chain([None]) {
+            let form = config_to_form(&ServerConfig {
+                hip_fa_band: band,
+                models_dir: Some(r"E:\models".into()),
+                ..Default::default()
+            });
+            assert_eq!(form_to_config(&form).hip_fa_band, band);
+        }
+        assert_eq!(
+            config_to_form(&ServerConfig {
+                models_dir: Some(r"E:\models".into()),
+                ..Default::default()
+            })
+            .hip_fa_band
+            .as_str(),
+            "default"
+        );
+        assert_eq!(hip_fa_band_label(0).as_str(), "off");
+        assert_eq!(parse_hip_fa_band("nonsense"), None);
     }
 
     /// The SDK Tuning tri-state, all three states in both directions. "default"

@@ -266,6 +266,27 @@ export component ServerPage inherits ScrollView {
                     value <=> AppState.server_form.rocblas_use_hipblaslt;
                 }
             }
+            LabeledField {
+                label_width <=> LabelColumn.server;
+                label: "FlashAttention band";
+                hint: "GGML_HIP_FA_BAND_WMMA: an opt-in path of the framework's PATCHED ROCm backend. The 1-8 query FlashAttention (single-token decode and the MTP verify batch) of a head-256 / GQA 6 model (Qwen3.8-27B) runs on the WMMA kernel, with the KV cache split round-robin over the compute units.\nMeasured on a Radeon AI PRO R9700: FLASH_ATTN_EXT -15% at 1 query and -38% at 3-4 queries, decode at a 110k context -5%, greedy output identical between MTP and plain decode.\ndefault = 4, the one to use; 2 only helps at 1-2 queries and falls back at 3-4; off = don't set the variable.\nNo effect on an unpatched llama.cpp, on GPUs other than RDNA4, on other head sizes or GQA ratios, or on CUDA.";
+                // The label, not the number: "off" reads better than 0.
+                // "default" leaves the key unset, and the tool's default (4)
+                // is what gets exported then.
+                EnumComboBox {
+                    options: Options.hip_fa_bands;
+                    value <=> AppState.server_form.hip_fa_band;
+                }
+            }
+            LabeledField {
+                label_width <=> LabelColumn.server;
+                label: "Profiler attach";
+                hint: "ROCP_TOOL_ATTACH=1: lets rocprofv3 --attach <pid> (ROCm's profiler, in the TheRock dist) attach a kernel trace to the running llama-server. rocprofiler-sdk requires it of the process being profiled; without it the attach is refused.\nUnchecked = don't set the variable.\nNo effect on CUDA or Vulkan builds.";
+                CheckBox {
+                    text: "allow rocprofv3 --attach";
+                    checked <=> AppState.server_form.rocprof_attach;
+                }
+            }
 
             Text {
                 text: "CUDA and ROCm";
