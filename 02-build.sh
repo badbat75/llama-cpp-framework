@@ -285,6 +285,11 @@ fi
 # pending sccache PR #2809); -U clears a stale launcher left in the cache.
 # Adding or removing a launcher changes every HIP compile command, so the
 # first build after the switch rebuilds all of ggml-hip once.
+# The build gets its own daemon on SCCACHE_SERVER_PORT, started here with the
+# settings below: a daemon already running on the default port would otherwise
+# serve every compile with ITS cache dir and settings, which win over the
+# client's. A leftover on that port (a killed run) is stopped first, and the
+# EXIT trap stops ours however the script ends.
 SCCACHE=''
 if [[ -x "$SCCACHE_BIN" ]]; then SCCACHE="$SCCACHE_BIN"
 elif command -v sccache >/dev/null; then SCCACHE="$(command -v sccache)"; fi
@@ -293,8 +298,12 @@ if [[ -n "$SCCACHE" ]]; then
     export SCCACHE_CACHE_SIZE='10G' SCCACHE_IDLE_TIMEOUT='0'
     export SCCACHE_MAX_FRAME_LENGTH='104857600'   # 100MB: GPU multi-arch objects are large
     export SCCACHE_CLIENT_SIDE='1'
+    export SCCACHE_SERVER_PORT='4227'
     mkdir -p "$SCCACHE_DIR"
-    say_head "sccache: $SCCACHE (cache: $SCCACHE_DIR)"
+    say_head "sccache: $SCCACHE (cache: $SCCACHE_DIR, port $SCCACHE_SERVER_PORT)"
+    "$SCCACHE" --stop-server >/dev/null 2>&1 || true
+    "$SCCACHE" --start-server >/dev/null || die "sccache could not start its server on port $SCCACHE_SERVER_PORT"
+    trap '"$SCCACHE" --stop-server >/dev/null 2>&1 || true' EXIT
     CMAKE_ARGS+=(
         "-DCMAKE_C_COMPILER_LAUNCHER=$SCCACHE"
         "-DCMAKE_CXX_COMPILER_LAUNCHER=$SCCACHE"
@@ -334,7 +343,6 @@ if [[ -n "$SCCACHE" ]]; then
     say ''
     say_head 'sccache stats:'
     "$SCCACHE" --show-stats || true
-    "$SCCACHE" --stop-server >/dev/null 2>&1 || true
 fi
 
 say ''

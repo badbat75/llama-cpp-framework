@@ -304,6 +304,11 @@ if ($cudaToolkit) {
 # every compile command via the launcher below, so it must not move between
 # builds or ninja re-runs every C/C++ compile. PATH second, for an sccache
 # installed any other way.
+# The build gets its own daemon on SCCACHE_SERVER_PORT, started here with the
+# settings below: a daemon already running on the default port would otherwise
+# serve every compile with ITS cache dir and settings, which win over the
+# client's. A leftover on that port (a killed run) is stopped first, and the
+# finally after the build stops ours however the build ends.
 $sccachePath = Join-Path $env:LOCALAPPDATA 'Programs\sccache\sccache.exe'
 if (-not (Test-Path $sccachePath)) {
     $sccachePath = Get-Command sccache -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty Source
@@ -321,7 +326,11 @@ if ($sccachePath) {
     # or distributed compilation (neither used here); stats stay server-side, so
     # --show-stats below still aggregates the whole build.
     $env:SCCACHE_CLIENT_SIDE = "1"
-    Write-Host "sccache: $sccachePath (cache: $sccacheDir)" -ForegroundColor Cyan
+    $env:SCCACHE_SERVER_PORT = "4227"
+    Write-Host "sccache: $sccachePath (cache: $sccacheDir, port $env:SCCACHE_SERVER_PORT)" -ForegroundColor Cyan
+    & $sccachePath --stop-server 2>$null | Out-Null
+    & $sccachePath --start-server | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "sccache could not start its server on port $env:SCCACHE_SERVER_PORT" }
 } else {
     Write-Host "sccache not found, building without compiler cache" -ForegroundColor DarkGray
 }
@@ -467,16 +476,26 @@ if ($sccachePath) {
     $cmakeArgs += "-UCMAKE_CUDA_COMPILER_LAUNCHER"
 }
 
-Write-Host "Configuring..." -ForegroundColor Cyan
-cmake @cmakeArgs
-if ($LASTEXITCODE -ne 0) { throw "CMake configure failed" }
+try {
+    Write-Host "Configuring..." -ForegroundColor Cyan
+    cmake @cmakeArgs
+    if ($LASTEXITCODE -ne 0) { throw "CMake configure failed" }
 
-$cmakeBuildArgs = @("--build", $buildDir)
-if ($cfg.BuildJobs -gt 0) { $cmakeBuildArgs += "-j", $cfg.BuildJobs } else { $cmakeBuildArgs += "-j" }
+    $cmakeBuildArgs = @("--build", $buildDir)
+    if ($cfg.BuildJobs -gt 0) { $cmakeBuildArgs += "-j", $cfg.BuildJobs } else { $cmakeBuildArgs += "-j" }
 
-Write-Host "Building..." -ForegroundColor Cyan
-cmake @cmakeBuildArgs
-if ($LASTEXITCODE -ne 0) { throw "CMake build failed" }
+    Write-Host "Building..." -ForegroundColor Cyan
+    cmake @cmakeBuildArgs
+    if ($LASTEXITCODE -ne 0) { throw "CMake build failed" }
+}
+finally {
+    if ($sccachePath) {
+        Write-Host ""
+        Write-Host "sccache stats:" -ForegroundColor Cyan
+        & $sccachePath --show-stats
+        & $sccachePath --stop-server 2>$null | Out-Null
+    }
+}
 
 # ── The chat UI must be IN the binary ─────────────────────────────
 # llama.cpp's scripts/ui-assets.cmake never fails: when neither the npm build
@@ -505,13 +524,6 @@ if (Test-Path $uiStamp) {
     Write-Host "Web UI: built from the checked-out sources (npm)" -ForegroundColor DarkGray
 } else {
     Write-Host "Web UI: pre-built assets found in the source tree ($uiSrcDist)" -ForegroundColor DarkGray
-}
-
-if ($sccachePath) {
-    Write-Host ""
-    Write-Host "sccache stats:" -ForegroundColor Cyan
-    & $sccachePath --show-stats
-    & $sccachePath --stop-server 2>$null | Out-Null
 }
 
 Write-Host "llama.cpp build complete: $buildDir\bin\" -ForegroundColor Green
