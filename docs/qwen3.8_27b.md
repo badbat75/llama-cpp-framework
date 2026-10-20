@@ -29,7 +29,7 @@ changes the greedy path, so read the per-run figures beside the mean.
 | MTP draft context | its own KV over the full context, `f16`: 672 MiB at 172032 cells, 1024 at 262144 | `llama_kv_cache: ... 1 layers` |
 | prefill cost by position | v0.6.0, 234k-token prompt: 0.95 ms plus 0.0287 ms per 1k of context per token, 984 t/s at 4k against 142 t/s at 218k | marginal cost per token over one long prompt |
 | saved state (`SaveStateOnShutdown`) | ~36 KiB per token held in `q8_0` (4.38 GiB for 127,579 tokens, v0.6.0) | the snapshot file |
-| `split-mode tensor` with a card of the other backend | aborts at load unless Tensor-split AllReduce is `none`; with `none` it loses (section 4) | v0.6.0 |
+| `split-mode tensor` with a card of the other backend | aborts at load unless Tensor-split AllReduce is `none`; with `none` it loses (section 5) | v0.6.0 |
 
 ## 2. Recommended settings (two cards)
 
@@ -66,7 +66,26 @@ and does not show on short prompts. The same holds on Qwen3.8-Flash-Next
 deep in the context is what every turn pays; `q8_0` stays the choice only where a context
 above 172032 is needed.
 
-## 4. Choices that look better than they measure
+## 4. Linux against Windows (v0.7.0)
+
+The same machine and preset on both systems: the Coder390 Q8_0 MTP file, 172032 `f16`,
+the R9700 last, `ubatch-size 1024`, the same llama.cpp build and prompts, three
+repetitions of 256 tokens at temperature 0 (campaigns `coder390-device-order-20261019`
+for *Linux*, `coder390-windows-vs-linux-20261020` for *Windows*):
+
+| prompt | prefill t/s *Linux* / *Windows* | decode t/s *Linux* / *Windows* | draft acceptance |
+| --- | --- | --- | --- |
+| 43.7k tokens | 1133, 1123 / 1030 (-9%) | 31.2, 31.2 / 25.3 (-19%) | 53% / 51% |
+| 100 tokens | 225, 226 / 209 (-7%) | 38.1, 38.1 / 31.0 (-19%) | 61% / 59% |
+
+Weights and KV per card are the same to the MiB and the draft acceptance is within two
+points, so the gap is the time of each step (39.6 against ~32 ms per token at 43.7k), not
+the placement or the drafter. `Threads` was 18 on *Windows* against 12, inert with every
+layer on a GPU. *Windows* lists the CPU's integrated GPU as a ROCm device too, ahead of
+the R9700, so a preset copied from *Linux* names the wrong card until its device ids are
+renumbered.
+
+## 5. Choices that look better than they measure
 
 | option | result |
 | --- | --- |
@@ -76,7 +95,7 @@ above 172032 is needed.
 | a low `spec-draft-n-max`, to stay on the FlashAttention vector kernel | *Windows*: `n-max 1` gives 9.8 t/s at 93.6k, against 13.0 with no drafter; `2` costs 21-25% against `4` |
 | `q8_0` draft KV | larger, not smaller, on v0.6.0 and later (section 2) |
 
-## 5. Not yet measured (placeholders)
+## 6. Not yet measured (placeholders)
 
 | parameter | current value | question | result |
 | --- | --- | --- | --- |
