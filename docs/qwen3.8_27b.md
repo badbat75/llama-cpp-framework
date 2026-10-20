@@ -29,6 +29,9 @@ changes the greedy path, so read the per-run figures beside the mean.
 | MTP draft context | its own KV over the full context, `f16`: 672 MiB at 172032 cells, 1024 at 262144 | `llama_kv_cache: ... 1 layers` |
 | prefill cost by position | v0.6.0, 234k-token prompt: 0.95 ms plus 0.0287 ms per 1k of context per token, 984 t/s at 4k against 142 t/s at 218k | marginal cost per token over one long prompt |
 | saved state (`SaveStateOnShutdown`) | ~36 KiB per token held in `q8_0` (4.38 GiB for 127,579 tokens, v0.6.0) | the snapshot file |
+| context checkpoint | 149.6 MiB each, in host RAM; one at every user-message start and one at the end of each prompt; at the cap the server first drops those within `checkpoint-min-step` of an earlier one, then the oldest | `slot create_check` log lines; `tools/server/server-context.cpp` (v0.7.0) |
+| MTP head in the prefill | the draft head processes the prompt too: 1065 t/s without a speculator against 882 with `draft-mtp` (*Linux*, v0.7.0, 115k-token prompt, same binary); it is paid back in decode | `prompt eval time` of the same request with `--spec-type none` |
+| `draft-mtp` in greedy decoding | not lossless on the stock HIP FlashAttention tile kernel: at 115k tokens, temperature 0, the output diverges from unassisted decoding after ~100 tokens; with the FlashAttention band (section 2) the two are identical over 278 tokens, as are band and stock without a drafter | four hand-launched runs, same prompt and seed (*Linux*, v0.7.0) |
 | `split-mode tensor` with a card of the other backend | aborts at load unless Tensor-split AllReduce is `none`; with `none` it loses (section 5) | v0.6.0 |
 
 ## 2. Recommended settings (two cards)
@@ -37,16 +40,19 @@ changes the greedy path, so read the per-run figures beside the mean.
 | --- | --- | --- |
 | quant | Q8_0 | on the R9700 (*Windows*) the fastest of the 27B files measured, prefill and decode; Q5_K_M -13%/-10% prefill and -7%/-15% decode, Q6_K mixes slower still |
 | `cache-type-k/-v` | `f16`, at the largest context that fits: `172032` | *Linux*: decode at 43.7k tokens 35.2 and 34.5 t/s against 31.5 and 31.5 in `q8_0` at 262144 (+11%), prefill 1161 and 1162 against 1158 and 1169, three prompts 37.7 against 38.9 (36.4/33.4/43.4 against 37.3/34.9/44.4, the same draft acceptance). `q8_0` halves the KV but the compute buffers grow with it: 1712 and 1736 MiB on the two cards at 262144, against 456 and 604 in `f16` at 163840, so `f16` reaches 172032, not 131072 (section 3) (campaign `27b-kv-f16-20261016`) |
-| `ctx-size` | `172032` with `f16` | 180224 and 196608 do not load (`cudaMalloc failed: out of memory`); 172032 leaves 281 MB free on the R9700 and 829 MiB on the RTX 4070 SUPER after a 2.9k-token prompt, prefill 1165 and decode 35.2 at 43.7k |
+| `ctx-size` | `180224` with `f16`, once the embedding table and the image encoder are off the cards' critical paths (the `override-tensor` and `mmproj-device` rows) | with the embedding table on the RTX 4070 SUPER, 180224 and 196608 did not load (`cudaMalloc failed: out of memory`) and 172032 left 281 MB free on the R9700. With the table in host RAM and the encoder on the RTX 4070 SUPER: free after a 115k prefill (R9700 / RTX 4070 SUPER) 1232 / 1274 MiB at 172032, 638 / 1026 at 180224, 339 / 986 at 188416, prefill 902, 889 and 893 t/s, decode the same within the draft's noise. 188416 runs but is under the 500 MB margin this card needs for its pools. At 180224 a 3840x2160 image appended to a 115k conversation (119,406 prompt tokens) succeeds and leaves 801 / 716 MiB (campaign `coder390-ctx-20261020`) |
 | `device` | the R9700 last | the last device takes the MTP head, the output head and the sampling: *Linux*, v0.6.0, decode +7% at 2.5k tokens and +4.5% at 43.6k against the RTX 4070 SUPER last, prefill -3% (the sign is reversed on *Windows*). Repeated on v0.7.0 with the Coder390 Q8_0 MTP file at 172032 `f16`: at 43.7k decode 31.2 t/s (twice) against 31.3 with the RTX 4070 SUPER last at split 52,14, which leaves it 28 MiB free, and 29.8 at 53,13 (430 MiB free); prefill 1133 and 1123 against 1069 and 1071; short prompt 38.1 against 36.5 and 36.6. With the RTX 4070 SUPER last, 50,16 and 48,18 do not load (its compute buffer finds no room) (campaign `coder390-device-order-20261019`) |
-| `tensor-split` | most layers on the R9700, the RTX 4070 SUPER keeping ~800 MiB free | the split that fits 172032 `f16` with `blk\.15\.ffn_(up|down)` pinned to the R9700 |
-| `override-tensor` | `token_embd\.weight` on the RTX 4070 SUPER | keeps the embedding table (~1.26 GiB) out of pinned host RAM: +1-2% decode (*Windows*) |
+| `tensor-split` | most layers on the R9700, the RTX 4070 SUPER keeping ~800 MiB free | the split that fits 172032 `f16` with `blk\.15\.ffn_(up|down)` pinned to the R9700. Attention sits on blocks 3, 7, 11, 15, ... (`(i + 1) % 4 == 0`, `models/qwen35.cpp`), each with 672 MiB of KV at 172032 `f16`, so the boundary block of a split moves its KV slice with it: moving block 15 to the R9700 costs 1061 MiB there, a linear block 389 |
+| `override-tensor` | no `token_embd` rule: the embedding table (1288 MiB) stays in host RAM, llama.cpp's default | *Linux*, v0.7.0: with the table on the RTX 4070 SUPER against in host RAM, decode 31.2 against 31.2 t/s at 43.7k and 29.3 against 29.3 at 115k, prefill 1178 against 1164 and 897 against 899 (campaign `coder390-placement-20261020`, runs 22 and 28, 25 and 29). The *Windows* +1-2% of v0.5.0 does not repeat. The 1288 MiB freed on the card is what lets the image encoder move there (`mmproj-device`) |
+| `override-tensor`, output head | `output.weight` left on the last device | `^output\.weight$` on the RTX 4070 SUPER (its GEMV would be faster there) costs prefill 1026 against 1139 and 779 against 890 t/s, decode 29.9 against 29.7 and 28.2 against 29.2 at 43.7k and 115k: the MTP draft on the other card hops devices for every drafted token (campaign `coder390-placement-20261020`) |
 | `split-mode` | `layer` | `tensor` with `none` AllReduce: prefill 599 against 1290 t/s, decode 17.6 against 17.8 without a drafter, 44.7 against 45.0 with MTP (v0.6.0, ctx 16384) |
-| `ubatch-size` | `1024` | fits at ctx 262144 in `q8_0` (v0.6.0); against `512`, +5% prefill at 2.6k and 93.6k on the R9700 (*Windows*); decode unaffected |
+| `ubatch-size` | `1024` | fits at ctx 262144 in `q8_0` (v0.6.0); against `512`, +5% prefill at 2.6k and 93.6k on the R9700 (*Windows*); decode unaffected. *Linux*, v0.7.0, 115k-token prompt: prefill 895 t/s at `768`, 902 at `1024`, 837 at `1536`, 809 at `2048`; decode 28.5, 29.3, 29.3, 29.0 (draft acceptance 54 to 57%). Above `1024` the compute buffers also eat the margin (R9700 free after the prefill 1232, 659 and 75 MiB at `1024`, `1536`, `2048`) (campaign `coder390-ubatch-20261020`) |
 | `spec-type` | `draft-mtp` | the head is in the GGUF. *Windows*, `spec-draft-n-max 4`: 50.6 t/s at 2.6k tokens; *Linux*, v0.6.0, unassisted (llama-bench `tg2048`): 17.9 |
 | `spec-draft-type-k/-v` | `f16` | *Linux*, v0.6.0: `q8_0` halves the draft KV (544 MiB at 262144) but raises the draft compute buffer from 648 to 1696 MiB |
 | `load-mode` | `none` | every weight is on a GPU: nothing to map |
-| `mmproj-device` | the R9700 | the image encoder (~1.14 GiB with its compute buffer) only computes on image requests; off the smaller card it frees room for two blocks (*Windows*: +2.4% decode at 93.6k) |
+| `mmproj-device` | the RTX 4070 SUPER, once the embedding table is off it | the image encoder (600 MiB of weights; its compute buffer, ~418 MiB for a 3840x2160 image, is allocated at the first image) only computes on image requests. *Linux*, v0.7.0, 172032 `f16`: on the R9700, with 342 MiB free after a 115k prefill, a 3840x2160 image aborts the server (`ROCm error: out of memory` in `clip_encode`); on the RTX 4070 SUPER the same request succeeds (612 t/s image prefill) and leaves 856 MiB free there and 1239 on the R9700. Text speed identical to the R9700 placement (campaign `coder390-placement-20261020`, runs 28 and 29). The *Windows* +2.4% of v0.5.0 came from the two blocks the encoder displaced on the smaller card |
+| `ctx-checkpoints` | `12` (`checkpoint-min-step` at its default 8192) | the client compacts a long conversation into a shorter prompt (observed: a 154.9k-token turn followed by a 95.8k one); the server resumes from the newest checkpoint under the common prefix, or reprocesses the whole prompt. With `4` no checkpoint survived under 95.1k ("forcing full prompt re-processing": 95,814 tokens in 101.7 s). With the eviction rule of section 1, 12 checkpoints spaced 8192 apart cover ~98k tokens of history, so the reprocessing is bounded by 8192 tokens; cost 1.8 GiB of host RAM, no VRAM (*Linux*, v0.7.0; first compaction with `12` still to be observed, section 6) |
+| `HipFaBand` (Server tab, SDK Tuning) | default (`4`) | the framework's FlashAttention band on RDNA4 (`patches\llama.cpp\0003`, `amd_ai_pro_r9700.md` section 3), covering the attention layers on the R9700: *Linux*, v0.7.0, 115k-token prompt, decode 25.9 against 24.5 t/s with `draft-mtp` at temperature 1.0 and 14.4 against 13.9 unassisted at temperature 0; prefill unchanged |
 
 ## 3. KV cache type and context (*Linux*, v0.7.0)
 
@@ -57,9 +63,12 @@ Both cards, the R9700 last, `ubatch-size 1024`, `draft-mtp` with an `f16` draft 
 | --- | --- | --- | --- | --- |
 | `q8_0`, 262144 | 196 MB / 223 MiB | 1158, 1169 | 31.5, 31.5 | 38.9 |
 | `f16`, 163840 | 878 MB / 989 MiB | 1161, 1162 | 35.2, 34.5 | 37.7 |
-| **`f16`, 172032** | 281 MB / 829 MiB | 1165 | **35.2** | n/a |
-| `f16`, 180224 and 196608 | do not load | | | |
+| `f16`, 172032 | 281 MB / 829 MiB | 1165 | 35.2 | n/a |
+| `f16`, 180224 and 196608 | do not load with the embedding table on the RTX 4070 SUPER | | | |
+| **`f16`, 180224**, table in host RAM, encoder on the RTX 4070 SUPER | 638 / 1026 MiB after a 115k prefill | 889 at 115k | 28.5 at 115k | n/a |
+| `f16`, 188416, same placement | 339 / 986 MiB after a 115k prefill: runs, under the margin | 893 at 115k | 29.3 at 115k | n/a |
 
+The last two rows are campaign `coder390-ctx-20261020`, the others `27b-kv-f16-20261016`.
 The gap grows with the tokens held, as an attention that reads a quantized KV would,
 and does not show on short prompts. The same holds on Qwen3.8-Flash-Next
 (`qwen3.8_flash_next.md`, section 9). For conversations that grow turn by turn, decode
@@ -94,6 +103,7 @@ renumbered.
 | Vulkan on the R9700 instead of ROCm | *Windows*, Q8_0: prefill -27% / -25% and decode -18% / -15% at 2.6k / 93.6k |
 | a low `spec-draft-n-max`, to stay on the FlashAttention vector kernel | *Windows*: `n-max 1` gives 9.8 t/s at 93.6k, against 13.0 with no drafter; `2` costs 21-25% against `4` |
 | `q8_0` draft KV | larger, not smaller, on v0.6.0 and later (section 2) |
+| moving the whole sampling chain onto the GPU (`top-p` 1.0, or the probe patch `patches\llama.cpp\0002`) | no measurable decode change at 115k tokens (40.7 against 40.6 to 41.5 ms per token): after `top-k 20` the CPU side of the chain handles 20 candidates. And a request with a tool-call grammar disables backend sampling altogether (`common_sampler_init: backend sampling is not compatible with grammar`), at ~1 ms per token of CPU work (*Linux*, v0.7.0) |
 
 ## 6. Not yet measured (placeholders)
 
@@ -102,4 +112,6 @@ renumbered.
 | `spec-draft-n-max` on *Linux*, v0.7.0 | default | does `4` (`3` at long context) still win with the R9700 last? | TBD |
 | decode at 87k+ tokens in `f16` | n/a | does the gap over `q8_0` keep growing with the context? | TBD |
 | the IQ3_S file with its MTP head | `q8_0`, 393216, `parallel 2` | the same `f16` question at a context it can afford | TBD |
-| `reasoning-preserve`, `ctx-checkpoints` | default | the hybrid model reprocesses from a checkpoint on a divergent prompt: the cost on this model's 598.5 MiB recurrent state | TBD |
+| `ctx-checkpoints` `12` | `12` | tokens reprocessed at the first client compaction (expected under 8192, section 2) | TBD |
+| `reasoning-preserve` | default | the hybrid model reprocesses from a checkpoint on a divergent prompt: the cost on this model's 598.5 MiB recurrent state | TBD |
+| `spec-draft-n-max` 2 to 5 at 100k+ tokens | `3` | the draft phase is ~20% of a decode step and acceptance moves decode by 20-30% between tasks (0.49 to 0.65 observed) | TBD |

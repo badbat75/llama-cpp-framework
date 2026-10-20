@@ -106,6 +106,10 @@ llama-cpp-config bench sweep --preset <id> --key <key> --values '<a>,<b>,<c>' \
 - `--values` with commas inside a value (`device`, `tensor-split`): separate with `;`,
   and end a single such value with one (`'16,50;'`): without a `;` the spec splits on
   `,` and sweeps `16` and `50`. `unset` removes the key for a leg. Ranges: `2..8`.
+- Not every preset key is sweepable (`mmproj-device` is refused, `mmproj-offload` is
+  not): set the key in presets.ini, then run a one-leg sweep of a sweepable key (its
+  current value) into the same campaign; the run records every key, so `bench query
+  runs --show <key>` tells the legs apart even though their labels look alike.
 - Live mode restarts llama-server per leg and sends `cache_prompt: false`, temp 0.
   Synthetic mode (llama-bench) needs the server DOWN and cannot model the drafter,
   `ctx-size` or `parallel`: use it only for raw prefill/decode of placement or quant.

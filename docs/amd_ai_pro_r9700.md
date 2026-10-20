@@ -41,6 +41,13 @@ llama.cpp v0.5.0. Section 7 holds what was measured again on Linux, with llama.c
 | `spec-draft-n-max` (DFlash2) | `7` | best at 2.6k and 93.6k; `1` is slower than no drafter |
 | `spec-draft-type-k/-v` | `f16` | a DFlash draft KV is a small window (50 MiB in f16, 27 MiB in q8_0). No measured speed or acceptance difference |
 
+### Server (SDK Tuning, ROCm)
+
+| key | value | evidence |
+| --- | --- | --- |
+| `HipFaBand` (env `GGML_HIP_FA_BAND_WMMA`) | default (`4`); `0` only to compare | the framework's FlashAttention band (`patches\llama.cpp\0003`): for head size 256, GQA 6 and up to 8 queries (an MTP verify batch), the KV is split across all CUs in one launch instead of the tile kernel upstream picks. `test-backend-ops perf`, f16 KV of 131072 cells, us per call (*Linux*, v0.7.0): 1 query 1085 -> 922 (1.18x), 3 to 4 queries 1494 -> 928 (1.6x); 65536 cells, 4 queries 752 -> 494. 41/41 correctness cases against the CPU reference. `2` helps only at 1 or 2 queries. A `q8_0` KV stays far slower (2895 -> 2388 against 930 in `f16`): the band is an `f16` win. End to end on the 27B: `qwen3.8_27b.md` section 2. Nothing in the log says it is active: a kernel trace shows `flash_attn_ext_f16` in place of `flash_attn_tile` |
+| `RocprofAttach` (env `ROCP_TOOL_ATTACH=1`) | off; on while diagnosing | lets `rocprofv3 --attach <pid>` trace the running server (kernel names and durations per step); no measured cost when nothing is attached |
+
 ### Quantization on RDNA4
 
 | quant | result |
@@ -99,6 +106,9 @@ temp 0.
 | prefill, card first with most of the layers | 1122 t/s at 2.4k tokens, 1045 at 43.6k (ubatch `1024`, ctx 262144) |
 | last-device role (MTP head, output head, sampling) on this card | costs 1288 MiB of output head, 1024 MiB of draft KV (f16) and 648 MiB of draft compute at ctx 262144. Against the same role on a CUDA card: decode 36.3 -> 38.9 t/s at 2.5k tokens (+7%) and 28.5 -> 29.8 at 43.6k (+4.5%), draft acceptance unchanged; prefill at 43.6k 1045 -> 1010 t/s (-3%) |
 | `cache-type-k/-v` `f16` against `q8_0` (llama.cpp v0.7.0) | decode at a 43.7k-token prompt 35.2 and 34.5 t/s against 31.5 and 31.5 (+11%), prefill 1161 against 1164 t/s, short prompts within noise. The KV doubles (64 against 34 KiB per token over 16 layers), but the `q8_0` compute buffer grows with the context: on this card 1712 MiB at 262144 in `q8_0`, 456 MiB at 163840 and 620 at 172032 in `f16`. So `f16` fits ~66% of the context `q8_0` does, not half (campaign `27b-kv-f16-20261016`) |
+| decode step anatomy (llama.cpp v0.7.0, kernel trace of the 27B Q8_0 at 72k and 150k tokens, `f16` KV) | the Q8_0 GEMV (`mul_mat_vec_q`) is 61 to 73% of the card's kernel time and reads the weights at ~372 GB/s, 58% of the card's 640 GB/s; FlashAttention is the rest and grows linearly with the context (19% at 72k, 33% at 150k on the tile kernel, before the band). Power 212 to 216 W of 300 with the memory clock at its maximum: the headroom is in the kernels, not the power limit |
+| `ubatch-size` (llama.cpp v0.7.0, the 27B Q8_0 at a 115k-token prompt, `f16` KV, layer split with most blocks on this card) | `1024` stays the optimum: prefill 895 t/s at `768`, 902 at `1024`, 837 at `1536`, 809 at `2048`, decode unchanged within the draft's noise. Free VRAM on this card after the prefill: 1232 MiB at `1024`, 659 at `1536`, 75 at `2048` (campaign `coder390-ubatch-20261020`) |
+| FlashAttention band, end to end | with the band (`HipFaBand` 4) the 27B at a 115k-token prompt decodes 25.9 against 24.5 t/s with its MTP drafter, prefill unchanged; the MTP verify batch and single-token decode then agree in greedy decoding, where the stock tile kernel diverges (`qwen3.8_27b.md` section 1) |
 | checking a configuration | `tools\report-memory.ps1` is Windows-only: read `mem_info_vram_used` and `mem_info_gtt_used` after a prefill |
 
 ## 8. Not yet measured (placeholders)
@@ -115,4 +125,5 @@ temp 0.
 | `split-mode tensor` on two R9700 | n/a | real AllReduce cost; `GGML_CUDA_AR_COPY_THRESHOLD` / `_CHUNK_BYTES` (seeds: 1-2 MiB, 2 MiB) | TBD |
 | Linux: `split-mode tensor` through RCCL | n/a | prefill and decode against `GGML_CUDA_ALLREDUCE=internal` and against the layer split | TBD |
 | Linux: over-allocation | n/a | does it fail the load or move buffers to GTT, and at what cost? | TBD |
-| Linux: `ubatch-size` `1024` against `768` | `1024` | the prefill gain at 2.6k and ~90k | TBD |
+| `GGML_HIP_FA_BAND_WMMA_SPLIT` | default (one block per CU) | 32, 48, 96 or 128 KV blocks against the default, at 65k and 131k cells | TBD |
+| Q8_0 GEMV ceiling | n/a | `llama-bench` on this card alone at depth 0 and 131072 against the 58% of bandwidth seen in the trace (section 7): how much the `mmvq` RDNA4 tuning leaves | TBD |
