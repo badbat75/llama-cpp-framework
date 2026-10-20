@@ -277,10 +277,14 @@ fi
 
 # ── sccache: use local cache if available ──────────────────────────
 # The fixed path 00-install-prerequisites.sh installs to comes first (it is
-# part of every compile command, so it must not move), PATH second. nvcc is
-# intentionally NOT wrapped, for the reason given in 02-build.ps1 (the
-# PTX-only compute_90 step, pending sccache PR #2809); -U clears a stale
-# launcher left in the cache.
+# part of every compile command, so it must not move), PATH second. HIP is
+# wrapped too: it is clang with `-x hip`, which sccache caches as the HIP
+# language, --offload-arch list included (checked on 0.18.0: a repeat
+# compile of one ggml-cuda object was a cache hit). nvcc is intentionally NOT
+# wrapped, for the reason given in 02-build.ps1 (the PTX-only compute_90 step,
+# pending sccache PR #2809); -U clears a stale launcher left in the cache.
+# Adding or removing a launcher changes every HIP compile command, so the
+# first build after the switch rebuilds all of ggml-hip once.
 SCCACHE=''
 if [[ -x "$SCCACHE_BIN" ]]; then SCCACHE="$SCCACHE_BIN"
 elif command -v sccache >/dev/null; then SCCACHE="$(command -v sccache)"; fi
@@ -294,11 +298,12 @@ if [[ -n "$SCCACHE" ]]; then
     CMAKE_ARGS+=(
         "-DCMAKE_C_COMPILER_LAUNCHER=$SCCACHE"
         "-DCMAKE_CXX_COMPILER_LAUNCHER=$SCCACHE"
+        "-DCMAKE_HIP_COMPILER_LAUNCHER=$SCCACHE"
         -UCMAKE_CUDA_COMPILER_LAUNCHER
     )
 else
     say_dim 'sccache not found, building without compiler cache'
-    CMAKE_ARGS+=(-UCMAKE_C_COMPILER_LAUNCHER -UCMAKE_CXX_COMPILER_LAUNCHER -UCMAKE_CUDA_COMPILER_LAUNCHER)
+    CMAKE_ARGS+=(-UCMAKE_C_COMPILER_LAUNCHER -UCMAKE_CXX_COMPILER_LAUNCHER -UCMAKE_HIP_COMPILER_LAUNCHER -UCMAKE_CUDA_COMPILER_LAUNCHER)
 fi
 
 say_head 'Configuring...'
