@@ -1,0 +1,114 @@
+diff --git a/src/llama-sampler.cpp b/src/llama-sampler.cpp
+index 521c5718e..29628ad74 100644
+--- a/src/llama-sampler.cpp
++++ b/src/llama-sampler.cpp
+@@ -634,6 +634,11 @@ static uint32_t llama_sampler_backend_probe_n_nodes(const llama_sampler_backend_
+     return std::max<uint32_t>(ggml_graph_n_nodes(probe.gf), n_tensors);
+ }
+ 
++// number of candidates the sampler being probed receives: a chain sets it to the width
++// its backend prefix hands over (a top-k before a top-p leaves k rows, not the vocabulary),
++// so the probe below reflects the ops the sampler will actually run
++static thread_local int64_t g_backend_probe_n_candidates = 128*1024;
++
+ // check if all ggml ops used by the sampler are supported by the backend
+ static bool llama_sampler_backend_support(
+         llama_sampler              * smpl,
+@@ -644,7 +649,7 @@ static bool llama_sampler_backend_support(
+         return true;
+     }
+ 
+-    auto probe = llama_sampler_backend_probe_graph(smpl, 128*1024, GGML_DEFAULT_GRAPH_SIZE, true);
++    auto probe = llama_sampler_backend_probe_graph(smpl, g_backend_probe_n_candidates, GGML_DEFAULT_GRAPH_SIZE, true);
+ 
+     for (int i = 0; i < ggml_graph_n_nodes(probe.gf); i++) {
+         struct ggml_tensor * op = ggml_graph_node(probe.gf, i);
+@@ -730,6 +735,59 @@ static void llama_sampler_chain_free(struct llama_sampler * smpl) {
+     delete chain;
+ }
+ 
++// width of the candidate tensor after the first n_prefix samplers of a chain ran on the
++// backend, found by applying them to a probe graph of n_candidates logits
++static int64_t llama_sampler_chain_probe_width(
++        const std::vector<llama_sampler_chain::info> & samplers,
++        size_t                                         n_prefix,
++        int64_t                                        n_candidates) {
++    if (n_prefix == 0) {
++        return n_candidates;
++    }
++
++    const uint32_t max_nodes = GGML_DEFAULT_GRAPH_SIZE;
++
++    ggml_init_params params = {
++        /*.mem_size   =*/ max_nodes * ggml_tensor_overhead() + ggml_graph_overhead_custom(max_nodes, false),
++        /*.mem_buffer =*/ nullptr,
++        /*.no_alloc   =*/ true,
++    };
++
++    ggml_context_ptr ctx_ptr { ggml_init(params) };
++    if (!ctx_ptr) {
++        return n_candidates;
++    }
++
++    auto * ctx = ctx_ptr.get();
++    auto * gf = ggml_new_graph_custom(ctx, max_nodes, false);
++
++    // no candidates on input, as in the chain's own probe: the first sampler that narrows
++    // the set creates them (a top-p after a top-k expects the 1-D candidates top-k leaves)
++    llama_sampler_data data = {
++        /*.logits       =*/ ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_candidates),
++        /*.probs        =*/ nullptr,
++        /*.sampled      =*/ nullptr,
++        /*.candidates   =*/ nullptr,
++    };
++
++    for (size_t i = 0; i < n_prefix; i++) {
++        if (!samplers[i].is_backend) {
++            break;
++        }
++
++        auto * sampler = samplers[i].ptr;
++
++        if (sampler->iface->backend_reset) {
++            sampler->iface->backend_reset(sampler);
++        }
++        if (sampler->iface->backend_apply) {
++            sampler->iface->backend_apply(sampler, ctx, gf, &data);
++        }
++    }
++
++    return data.logits ? ggml_nelements(data.logits) : n_candidates;
++}
++
+ static bool llama_sampler_chain_backend_init(
+         struct llama_sampler       * smpl,
+         ggml_backend_buffer_type_t   buft,
+@@ -743,6 +801,7 @@ static bool llama_sampler_chain_backend_init(
+     bool res = true;
+     bool backend_prefix = true;
+ 
++    size_t idx = 0;
+     for (auto & smpl : chain->samplers) {
+         bool cur_prefix = backend_prefix;
+ 
+@@ -751,7 +810,11 @@ static bool llama_sampler_chain_backend_init(
+         // - return true during .backend_init()
+         // - support the requested per-sequence output limit
+         if (cur_prefix && smpl.ptr->iface->backend_init) {
+-            if (!smpl.ptr->iface->backend_init(smpl.ptr, buft, n_outputs_max_per_seq)) {
++            // probe it on the candidate width the backend samplers before it hand over
++            g_backend_probe_n_candidates = llama_sampler_chain_probe_width(chain->samplers, idx, 128*1024);
++            const bool ok = smpl.ptr->iface->backend_init(smpl.ptr, buft, n_outputs_max_per_seq);
++            g_backend_probe_n_candidates = 128*1024;
++            if (!ok) {
+                 cur_prefix = false;
+             }
+         } else {
+@@ -762,6 +825,7 @@ static bool llama_sampler_chain_backend_init(
+         backend_prefix = cur_prefix;
+ 
+         res = res && cur_prefix;
++        idx++;
+     }
+ 
+     auto probe = llama_sampler_backend_probe_graph(smpl, 128*1024, GGML_DEFAULT_GRAPH_SIZE, false);

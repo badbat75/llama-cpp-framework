@@ -113,3 +113,103 @@ file (git history keeps it) and rebuild. Re-verify at every llama.cpp tag bump
 that touches `src\models\qwen35.cpp`; a refreshed patch from the publisher
 replaces this one only with the `d2t` validation carried over (or present in
 it), and the sha256 above changes with it.
+
+## `0002-sampler-backend-probe-chain-width.patch`
+
+Local patch (2026-10-20, written against v0.7.0, no upstream source), 114 lines in
+`src/llama-sampler.cpp` only. Checked-in sha256: `644c45d800011f097ab0226dab016838476b9e2ff6a7008dababd6bfef03a6be`
+
+**What it changes.** `llama_sampler_chain_backend_init` probes every sampler of the
+chain on its own, on a fixed 131072-wide logits tensor, to decide whether it can run on
+the backend. On the HIP backend, which has no CUB, `ARGSORT` over a row that wide is
+unsupported (the bitonic kernel needs the padded row in LDS), so a `top-p` is refused
+even when a `top-k 20` before it leaves 20 candidates, and the whole suffix of the chain
+(`dist` included) falls back to the CPU: llama-server logs `does not have support for op
+ARGSORT needed for sampler 'top-p'` on every request, the chain line reads
+`+top-k -> -top-p -> dist`. The patch adds `llama_sampler_chain_probe_width`, which
+applies the backend samplers before the one being probed to a probe graph and reads the
+width they hand over, and `llama_sampler_backend_support` probes on that width
+(`g_backend_probe_n_candidates`, thread-local, 131072 outside a chain). The probe starts
+without `candidates`, as the chain's own probe does: a `top-p` after a `top-k` asserts on
+2-D candidates. Upstream issue: <https://github.com/ggml-org/llama.cpp/issues/28513>.
+
+**Measured (R9700 + RTX 4070 SUPER, Qwen3.8-27B-Coder390 Q8_0 MTP, 115k-token prompt,
+temp 1.0, top-k 20, top-p 0.95, seed 42).** Chain on the backend end to end
+(`+top-k -> +top-p -> +dist`), warning gone, identical output. Decode unchanged: 40.6-41.5
+ms per token before, 40.7-40.8 after. Upstream `test-backend-sampler`
+`test_multi_output_sampling_chain` (top-k -> top-p -> min-p -> temp -> dist against the
+CPU reference) fails on ROCm without the patch and passes with it; `test_top_p` and
+`test_penalties` (a top-p with no top-k before it: ARGSORT over the vocabulary) fail
+either way and need hipCUB (<https://github.com/ggml-org/llama.cpp/pull/26592>). Kept for
+the correctness, not for speed.
+
+**When to drop it.** At the next llama.cpp release, if #28513 or #26592 is merged, or if
+`test_multi_output_sampling_chain` passes on ROCm without it
+(`LLAMACPP_TEST_MODELFILE=<gguf> test-backend-sampler --test=test_multi_output_sampling_chain`
+with the server down). Note that upstream's own HIP skip list in that test is behind
+`#ifdef GGML_USE_HIP`, which a `GGML_BACKEND_DL` build never defines for the test binary,
+so the test does run on ROCm here.
+
+## `0003-fa-band-wmma-rdna4.patch`
+
+Local port (2026-10-20, against v0.7.0) of overdoingism's "FA band WMMA" patch for RDNA4
+(<https://github.com/overdoingism/rdna4-fa-band-wmma>, commit `c59ecd60`, 2026-10-15; also
+merged into <https://github.com/stew675/llama-cpp-rdna-boosts>). The original is written
+against that fork and does not apply to upstream (its hunks lean on fork-only plumbing:
+`kq_derived_t`, `fattn_kv_native_t`, `wmma_256`); this is the band mechanism alone, re-cut
+on upstream's `fattn-mma-f16.cuh`, extended to **f16 K/V** (the original took q8_0 only),
+plus its `test-backend-ops` cases. 375 lines: `ggml/src/ggml-cuda/fattn-common.cuh`,
+`fattn-mma-f16.cuh`, `fattn.cu`, `tests/test-backend-ops.cpp`. Checked-in sha256:
+`390f0ab2564b46c646cc53a14d456ef0a531cbf22d907e7b6e74c78f9989feb2`
+
+**What it changes.** Upstream sends head-256 FlashAttention to the WMMA (matrix core)
+kernel on RDNA4 only when `n_queries * gqa_ratio > 16` (#28102); below that, i.e. for
+every single-token decode and every MTP verify batch of Qwen3.8-27B (GQA 6, 1 to 4
+queries), it runs the scalar `flash_attn_tile` kernel, which reads each KV head up to
+three times per step and reaches ~180 GB/s of the R9700's 640 (upstream issue
+<https://github.com/ggml-org/llama.cpp/issues/28867>). The band runs those calls on the
+MMA kernel with the KV sequence split round-robin over one block per CU and the GQA group
+folded into the tile (`ncols2 = 8`), reading each K/V once; the partials are combined by
+upstream's own stream-k fixup, untouched. **Opt-in through the environment**:
+`GGML_HIP_FA_BAND_WMMA=4` (or `2`; unset or `0` = off), read by `getenv` at the first
+attention call, so a change needs a server restart; `GGML_HIP_FA_BAND_WMMA_SPLIT=N`
+overrides the number of blocks (default: the CU count). `llama-cpp-config` exports it from
+`server.ini` (SDK Tuning). Gate (`ggml_cuda_fattn_band_wmma_applies`, one function for
+kernel selection, dispatch and launch): RDNA4 with WMMA, K and V head 256, GQA in (4, 8],
+at most 8 queries, one sequence, mask present, no softcap, no ALiBi, K/V both f16 or both
+q8_0. Everything else, CUDA included (the files compile into `libggml-cuda.so` too, the
+kernel branch sits under `AMD_WMMA_AVAILABLE`), takes the upstream path unchanged. The
+original's launch gate enabled the 2-D grid for any WMMA launch with 8 or fewer queries
+while the kernel handles it only for head 256 / `ncols2 8`; the port gates all three
+places on the same predicate. On AMD `nstages` is 0 (no cp.async), which the round-robin
+stride relies on: a `static_assert` pins it.
+
+**Measured (R9700, gfx1201, ROCm 10.1.0, 2026-10-20).** `test-backend-ops perf
+FLASH_ATTN_EXT` f16, head 256, 4 KV heads x 6, mask, us per call, tile vs band 4: kv
+131072 at 1 query 1085 -> 922 (-15%), at 2: 1075 -> 924, at 3: 1494 -> 928, at 4:
+1497 -> 930 (**-38%**); kv 65536 at 4 queries 752 -> 494. The band's cost is flat in the
+query count (one KV read); band 2 helps at 1-2 queries only and falls back to the tile at
+3-4, so **4 is the value to use**. q8_0 K/V stays far slower than f16 even with the band
+(2388 vs 930 us at kv 131072, 4 queries): upstream converts quantized K/V to f16 on every
+call of the MMA kernel, so quantized types gain nothing from this path. Server
+(Qwen3.8-27B-Coder390 Q8_0 MTP, 115k-token prompt): decode 40.7 -> 38.7 ms per token at
+temp 1.0 (-5%); at temp 0 without MTP, same 278 tokens, 71.7 -> 69.4 (-3%).
+**Correctness**: `test-backend-ops test -o FLASH_ATTN_EXT -p 'nr23=\[6,1\]'` on ROCm0,
+41/41 against the CPU reference with band 4 and with band 2 (kv 512 to 16384, 1 to 8
+queries, f16 and q8_0; kv 512 covers blocks that own no KV iteration). **Greedy purity**:
+at temp 0 the band's output with MTP, the band's without, and upstream's plain decode are
+the same 278 tokens; upstream's tile WITH MTP diverges from all three after ~100 tokens
+(its split and column count change with the query count), so the band also removes a
+reproducibility defect of upstream between verify and decode.
+
+**Confirming it is live.** Nothing is logged. With the variable set, a kernel trace
+(`rocprofv3 --kernel-trace --stats`, see `ROCP_TOOL_ATTACH` in SDK Tuning) shows
+`flash_attn_ext_f16` instances where an unpatched build shows `flash_attn_tile`; without a
+profiler, `test-backend-ops perf` at the shape above with and without the variable differs
+by the numbers above. A build without the patch ignores the variable silently.
+
+**When to drop it.** When upstream routes small-batch head-256 FlashAttention to WMMA on
+RDNA4 (#28867, or a PR that makes #28102's `> 16` gate go away), or when the fork's
+version lands upstream: `git apply --check` then fails and the build stops with a message
+pointing here. Re-verify at every tag bump that touches `fattn-mma-f16.cuh` or `fattn.cu`
+with the `test` and `perf` commands above (GPU idle, server down).
