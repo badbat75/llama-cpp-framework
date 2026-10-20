@@ -304,7 +304,9 @@ fi
 [[ -n "$icon_png" ]] || say_warn 'No PNG frame in resources/llama.ico: the desktop entry ships without an icon'
 
 {
-    printf '%s %s bundles llama.cpp %s, whose licence follows.\n' "$PKG_NAME" "$FW_VERSION" "$LLAMA_BUILD"
+    printf '%s %s is distributed under the MIT licence:\n\n' "$PKG_NAME" "$FW_VERSION"
+    cat "$REPO_ROOT/LICENSE"
+    printf '\nIt bundles llama.cpp %s, whose licence follows.\n' "$LLAMA_BUILD"
     printf 'The libraries under /%s are redistributed unmodified from the AMD ROCm\n' "$RT_DIR"
     printf '(TheRock) distribution, the NVIDIA CUDA redistributable archives and the\n'
     printf 'LunarG Vulkan SDK, each under its own licence.\n\n'
@@ -411,7 +413,7 @@ Name:           $PKG_NAME
 Version:        $PKG_VERSION
 Release:        1
 Summary:        $DESCRIPTION_SHORT
-License:        MIT (bundled llama.cpp)
+License:        MIT
 ${HOMEPAGE:+URL:            $HOMEPAGE
 }Conflicts:      llama-cpp
 
