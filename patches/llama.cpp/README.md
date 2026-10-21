@@ -158,9 +158,11 @@ merged into <https://github.com/stew675/llama-cpp-rdna-boosts>). The original is
 against that fork and does not apply to upstream (its hunks lean on fork-only plumbing:
 `kq_derived_t`, `fattn_kv_native_t`, `wmma_256`); this is the band mechanism alone, re-cut
 on upstream's `fattn-mma-f16.cuh`, extended to **f16 K/V** (the original took q8_0 only),
-plus its `test-backend-ops` cases. 375 lines: `ggml/src/ggml-cuda/fattn-common.cuh`,
+plus its `test-backend-ops` cases. Extended on 2026-10-21 with the fork's fix for its issue
+#133 (release r46, <https://github.com/overdoingism/llama-cpp-rdna-boosts>): GQA ratios
+above 8, for Qwen3.8-Flash-Next (GQA 12). 412 lines: `ggml/src/ggml-cuda/fattn-common.cuh`,
 `fattn-mma-f16.cuh`, `fattn.cu`, `tests/test-backend-ops.cpp`. Checked-in sha256:
-`390f0ab2564b46c646cc53a14d456ef0a531cbf22d907e7b6e74c78f9989feb2`
+`d9af3fae48c02c3eefb39aaf380b7d10f6cc66051adc04bf3ad377924c1776f5`
 
 **What it changes.** Upstream sends head-256 FlashAttention to the WMMA (matrix core)
 kernel on RDNA4 only when `n_queries * gqa_ratio > 16` (#28102); below that, i.e. for
@@ -175,14 +177,21 @@ upstream's own stream-k fixup, untouched. **Opt-in through the environment**:
 attention call, so a change needs a server restart; `GGML_HIP_FA_BAND_WMMA_SPLIT=N`
 overrides the number of blocks (default: the CU count). `llama-cpp-config` exports it from
 `server.ini` (SDK Tuning). Gate (`ggml_cuda_fattn_band_wmma_applies`, one function for
-kernel selection, dispatch and launch): RDNA4 with WMMA, K and V head 256, GQA in (4, 8],
-at most 8 queries, one sequence, mask present, no softcap, no ALiBi, K/V both f16 or both
-q8_0. Everything else, CUDA included (the files compile into `libggml-cuda.so` too, the
-kernel branch sits under `AMD_WMMA_AVAILABLE`), takes the upstream path unchanged. The
+kernel selection, dispatch and launch): RDNA4 with WMMA, K and V head 256, GQA in (4,
+`GGML_HIP_FA_BAND_WMMA_GQA_MAX`] (default 12; 8 or below restores the whole-group fold
+alone), at most 8 queries, one sequence, mask present, no softcap, no ALiBi, K/V both f16
+or both q8_0. Everything else, CUDA included (the files compile into `libggml-cuda.so` too,
+the kernel branch sits under `AMD_WMMA_AVAILABLE`), takes the upstream path unchanged. The
 original's launch gate enabled the 2-D grid for any WMMA launch with 8 or fewer queries
 while the kernel handles it only for head 256 / `ncols2 8`; the port gates all three
 places on the same predicate. On AMD `nstages` is 0 (no cp.async), which the round-robin
-stride relies on: a `static_assert` pins it.
+stride relies on: a `static_assert` pins it. **A ratio above 8** is nothing new to the
+kernel: upstream's `fattn-mma-f16.cuh` already tiles the ratio in groups of `ncols2`
+(`ceil(gqa_ratio / ncols2)` passes, `iter_z_gqa`) and masks the unused columns of a
+partial final group on the Q load and on the dst write, and `launch_fattn` and the fixup
+tile it with the same ceil; the predicate's cap was the only thing stopping it. GQA 12
+takes 2 passes of 8 (4 columns unused on the second) where the tile kernel folds 4 heads
+and takes 3; the price is a wider tile per query at a short context (below).
 
 **Measured (R9700, gfx1201, ROCm 10.1.0, 2026-10-20).** `test-backend-ops perf
 FLASH_ATTN_EXT` f16, head 256, 4 KV heads x 6, mask, us per call, tile vs band 4: kv
@@ -202,23 +211,42 @@ the same 278 tokens; upstream's tile WITH MTP diverges from all three after ~100
 (its split and column count change with the query count), so the band also removes a
 reproducibility defect of upstream between verify and decode.
 
-**Confirming it is live.** Nothing is logged. With the variable set, a kernel trace
+**Measured, GQA 12 (R9700, gfx1201, ROCm 10.1.0, 2026-10-21, the Flash-Next shape: 2 KV
+heads x 12, head 256, f16, mask).** `test-backend-ops perf`, us per call, cap 8 (tile
+kernel) vs cap 12 (band 4): kv 131072 at 1 query 610 -> 536 (-12%), at 2: 796 -> 540
+(-32%), at 3: 1348 -> 548, at 4: 1355 -> 550 (**-59%**); kv 65536 at 1: 308 -> 292, at 4:
+677 -> 300 (-56%); kv 16384 at 1: 74.5 -> 73.4 (even). The regression at a short context:
+kv 4096 at 1 query 21.4 -> 37.4 us (+16 us per attention layer, 12 layers: ~0.2 ms per
+decoded token, under 1% at the model's decode rate). **Correctness**: `test-backend-ops
+test -o FLASH_ATTN_EXT -p 'nr23=\[12,1\]'` on ROCm1, 135/135 against the CPU reference
+(kv 512 and 4096, 1/3/5/8 queries, f16 and q8_0 among upstream's own GQA 12 cases), plus
+the GQA 6 set above, 41/41, unchanged. **Server** (Qwen3.8-Flash-Next preset, Windows, 3
+runs each at temp 0, cap 8 vs cap 12): 43.7k-token prompt, decode 20.1 ±0.2 vs 20.5 ±0.5
+t/s; 2.6k, 19.2 ±0.1 vs 19.0 ±0.2; prefill unchanged: noise both ways, because the n-gram
+drafter drafted nothing on those prompts (1-query decode, where attention is ~5% of the
+token at 43.7k) and the model's decode is dominated by its 16 layers of experts in RAM.
+Output identical in every pair, with and without drafting. Kept on, the default:
+`docs\qwen3.8_flash_next.md` section 10.
+
+**Confirming it is live.** The first head-256 attention call on RDNA4 with the variable set
+logs one line at info level, `RDNA4 FA band enabled: ncols1 = 4, GQA ratios up to 12`
+(`llama-server.log`, right after the model load). With the variable set, a kernel trace
 (`rocprofv3 --kernel-trace --stats`, see `ROCP_TOOL_ATTACH` in SDK Tuning) shows
 `flash_attn_ext_f16` instances where an unpatched build shows `flash_attn_tile`; without a
-profiler, `test-backend-ops perf` at the shape above with and without the variable differs
+profiler, `test-backend-ops perf` at the shapes above with and without the variable differs
 by the numbers above. A build without the patch ignores the variable silently.
 
 **When to drop it.** When upstream routes small-batch head-256 FlashAttention to WMMA on
 RDNA4 (#28867, or a PR that makes #28102's `> 16` gate go away), or when the fork's
 version lands upstream: `git apply --check` then fails and the build stops with a message
 pointing here. Re-verify at every tag bump that touches `fattn-mma-f16.cuh` or `fattn.cu`
-with the `test` and `perf` commands above (GPU idle, server down).
+with the `test` and `perf` commands above, both `nr23` sets (GPU idle, server down).
 
 ## `0004-sched-host-buffers-pinned-all-runtimes.patch`
 
-Local (2026-10-21, against v0.7.0). 217 lines: `ggml/include/ggml-cuda.h`,
+Local (2026-10-21, against v0.7.0). 230 lines: `ggml/include/ggml-cuda.h`,
 `ggml/src/ggml-cuda/ggml-cuda.cu`, `src/llama-context.h`, `src/llama-context.cpp`.
-Checked-in sha256: `fd7426c31a79dd93271e204996fd7d2f23e5143778a85bb9c74751fd9132d65c`
+Checked-in sha256: `da10650573614419556267af491bc7633a051d95e9fa8d1b894ea4d0c1882851`
 
 **What it changes.** llama allocates the scheduler's host compute buffers (where the graph
 inputs live: token ids, positions, the attention masks, the host copies of cross-backend
@@ -229,8 +257,16 @@ runtime does so at ~2 GB/s (the Linux one pins pageable memory on the fly and th
 never showed there). After every graph reserve or reallocation, `llama_context` collects
 the distinct host compute buffers the graph touches and registers them, through the
 backend registry's proc address, with every runtime of the model's devices
-(`sched_host_buffers_register`; unregistered in the destructor, re-done when the buffers
-move). The backend side adds `ggml_backend_cuda_register_host_buffer_rw` and its
+(`sched_host_buffers_register`; unregistered in the destructor and **before every explicit
+reserve** (`graph_reserve`), re-done when the buffers move). The order matters on Windows:
+the HIP runtime refuses to free host memory another runtime still has registered
+(`hipHostFree: invalid argument` in `ggml_backend_cuda_host_buffer_free_buffer`, which
+aborts the child at the second prompt of a different shape, when llama re-reserves the
+graph; found on the Flash-Next preset on 2026-10-21, the first version of the patch
+unregistered only after the reserve had freed the buffers). The reallocation the scheduler
+can do on its own inside `ggml_backend_sched_alloc_graph` (a graph larger than the
+reserve, which llama's reserve of the worst case is there to prevent) is not covered: it
+would abort with that same message. The backend side adds `ggml_backend_cuda_register_host_buffer_rw` and its
 unregister, exposed as `ggml_backend_register_host_buffer_rw` /
 `ggml_backend_unregister_host_buffer_rw`: `cudaHostRegisterPortable` alone, not gated by
 `GGML_CUDA_REGISTER_HOST`, because upstream's gated variant is read-only (meant for mmap'd

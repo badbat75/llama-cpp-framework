@@ -272,3 +272,53 @@ threads spin, so their load says nothing. Without the drafter, the preset decode
 on prose and math and `n-cpu-moe 24` 23.9 on all three, the same as with it: these
 400-token reasoning openings give the n-gram drafter nothing to copy (its gain is on
 repeated text, section 7).
+
+## 10. Windows: the band kernel on GQA 12, and the prefill gap (v0.7.0)
+
+Measured on 2026-10-21 on the Windows machine of section 9's hardware (R9700 as `ROCm1`,
+RTX 4070 SUPER as `CUDA0`, Ryzen 9 9900X, 12 threads), the preset of section 9 with
+`device = ROCm1,CUDA0` and `override-tensor = output\.weight=ROCm1` (the device names
+differ from Linux, nothing else), the build tree's `llama-server` launched exactly as the
+configurator launches it (`--models-preset`, port 8599, `-t 12 --threads-batch 12`,
+`GGML_HIP_FA_BAND_WMMA=4`, hipBLASLt off), temperature 0, `cache_prompt false`, 3 runs
+per cell. Not in `bench.db`: the installed server was not the one under test.
+
+**The band on GQA 12.** Patch 0003 (`patches\llama.cpp\README.md`) now sends GQA ratios
+above 8 to the band WMMA kernel, so on the R9700 this model's 24-over-2 attention runs the
+MMA kernel in two passes instead of the tile kernel. Cap 8 (the tile kernel, the behaviour
+before) against cap 12 (the band, the default now), through `GGML_HIP_FA_BAND_WMMA_GQA_MAX`:
+
+| prompt | tokens out | prefill t/s, cap 8 | cap 12 | decode t/s, cap 8 | cap 12 |
+| --- | --- | --- | --- | --- | --- |
+| 43,730 tokens | 128 | 258 ±3 | 256 ±6 | 20.1 ±0.2 | 20.5 ±0.5 |
+| 2,620 tokens | 400 | 252 ±6 | 258 ±2 | 19.2 ±0.1 | 19.0 ±0.2 |
+
+Noise both ways, and the output is byte-identical in every pair, with the drafter and
+without it. That is what the kernel figures predict: with one query per step the band is
+12% faster than the tile at 131k and 5% at 65k (`test-backend-ops perf`, the README),
+and attention is ~5% of a decode step at 43.7k; its real gain, 55-59% at 65k-131k, is on
+2 to 4 queries per step, which only an accepted draft produces, and the n-gram drafter
+drafted nothing on these prompts. The small-context cost (+16 us per call at 4k, ~0.4% of a
+step) does not show either. The band stays on for GQA 12 for the long-context,
+accepted-draft case; nothing to tune in the preset.
+
+**Windows is 36% behind Linux on prefill, 20% on decode.** Same preset, same model files,
+same llama.cpp (v0.7.0, patches 0001 and 0003/0004 make no difference here), same cards:
+
+| system | prefill t/s at 43.7k | decode t/s, 128 tokens at 43.7k |
+| --- | --- | --- |
+| Linux (section 9, `bench.db` campaign 2) | 416, 419 | 25.0, 25.1 |
+| Windows (this section, cap 12) | 250-262 | 20.4 ±0.5 |
+
+The 27B, with every expert on the GPUs, loses 5% of its long-prompt prefill to Windows
+(`docs\qwen3.8_27b.md` section 4, chipset link of the second card); this model loses 36%,
+and what it has that the 27B has not is 16 layers of experts on the CPU (`n-cpu-moe 16`,
+`op-offload false`): during prefill the experts of those layers run on the 12 CPU threads,
+and during decode their weights stream from RAM. So the gap is the CPU side on Windows,
+not the cards. The Windows build runs `ggml-cpu-zen4.dll` (AVX-512, REPACK, LLAMAFILE,
+OpenMP through `libomp140`), the same feature set as Linux. Not yet measured, in the order
+to try: `--threads-batch 24` (the CPU has 24 logical cores, prefill is compute-bound),
+`--poll 0` against the default 50 and `--cpu-strict 1` (Windows scheduling of the spinning
+threads across the two CCDs), `--prio-batch 2`, and the `op-offload true` row (the GPUs do
+the expert matmuls of a 512-token ubatch and the CPU only streams weights). On Linux none
+of these was needed; the first that closes the gap goes into the Windows preset.

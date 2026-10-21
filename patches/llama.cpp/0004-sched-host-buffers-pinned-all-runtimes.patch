@@ -66,7 +66,7 @@ index 7c45d0d1f..aca83700d 100644
          return (void *)ggml_backend_cuda_get_features;
      }
 diff --git a/src/llama-context.cpp b/src/llama-context.cpp
-index 9ee64b566..7ced3c68f 100644
+index 9ee64b566..cb725c220 100644
 --- a/src/llama-context.cpp
 +++ b/src/llama-context.cpp
 @@ -14,6 +14,7 @@
@@ -97,14 +97,27 @@ index 9ee64b566..7ced3c68f 100644
          gf_res_prev_active = res;
      }
  
-@@ -2679,9 +2686,97 @@ ggml_cgraph * llama_context::graph_reserve(
-         return nullptr;
+@@ -2673,15 +2680,106 @@ ggml_cgraph * llama_context::graph_reserve(
+         } else {
+             ggml_backend_sched_split_graph(sched.get(), gf);
+         }
+-    } else if (!ggml_backend_sched_reserve(sched.get(), gf)) {
+-        GGML_ASSERT(!sizes);
+-        LLAMA_LOG_ERROR("%s: failed to allocate compute buffers\n", __func__);
+-        return nullptr;
++    } else {
++        // the reserve frees the host compute buffers the registrations point at, and on Windows the HIP runtime
++        // refuses to free host memory another runtime still has registered (hipHostFree: invalid argument, which
++        // aborts the process at the second prompt of a different shape): drop the registrations first
++        sched_host_buffers_unregister();
++        if (!ggml_backend_sched_reserve(sched.get(), gf)) {
++            GGML_ASSERT(!sizes);
++            LLAMA_LOG_ERROR("%s: failed to allocate compute buffers\n", __func__);
++            return nullptr;
++        }
++        sched_host_buffers_register(gf);
      }
  
-+    if (!split_only) {
-+        sched_host_buffers_register(gf);
-+    }
-+
      return gf;
  }
  
