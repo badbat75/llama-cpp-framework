@@ -458,6 +458,13 @@ $cmakeArgs += "-UCMAKE_EXE_LINKER_FLAGS", "-UCMAKE_SHARED_LINKER_FLAGS", "-UCMAK
 if ($sccachePath) {
     $cmakeArgs += "-DCMAKE_C_COMPILER_LAUNCHER=$sccachePath"
     $cmakeArgs += "-DCMAKE_CXX_COMPILER_LAUNCHER=$sccachePath"
+    # HIP is wrapped too, by the CXX launcher: CMake on Windows compiles the
+    # ggml-hip sources as CXX (no enable_language(HIP), see the <cmath> section
+    # above), clang with `-x hip`, which sccache caches as the HIP language,
+    # --offload-arch list included (checked on 0.18.0: a repeat compile of one
+    # ggml-cuda object was a cache hit). 02-build.sh passes
+    # CMAKE_HIP_COMPILER_LAUNCHER for the same compiles; here it would be an
+    # unused variable.
     # nvcc is intentionally NOT wrapped with sccache (no CMAKE_CUDA_COMPILER_LAUNCHER).
     # Through 0.17.0 sccache mis-grouped nvcc's device steps on CUDA 13.3+, so
     # fatbinary failed with "Could not open input file '<tu>.compute_75.ptx'" on every
@@ -474,6 +481,10 @@ if ($sccachePath) {
     # CMakeCache.txt: an existing cache keeps the value even when it's no longer
     # passed, silently re-wrapping nvcc and breaking the CUDA build.
     $cmakeArgs += "-UCMAKE_CUDA_COMPILER_LAUNCHER"
+} else {
+    # Without sccache every launcher goes: a cache configured while it was
+    # installed keeps pointing at it otherwise, and every compile fails.
+    $cmakeArgs += "-UCMAKE_C_COMPILER_LAUNCHER", "-UCMAKE_CXX_COMPILER_LAUNCHER", "-UCMAKE_HIP_COMPILER_LAUNCHER", "-UCMAKE_CUDA_COMPILER_LAUNCHER"
 }
 
 try {

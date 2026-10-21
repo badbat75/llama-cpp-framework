@@ -288,8 +288,9 @@ fi
 # The build gets its own daemon on SCCACHE_SERVER_PORT, started here with the
 # settings below: a daemon already running on the default port would otherwise
 # serve every compile with ITS cache dir and settings, which win over the
-# client's. A leftover on that port (a killed run) is stopped first, and the
-# EXIT trap stops ours however the script ends.
+# client's. A leftover on that port (a killed run) is stopped first. Ours
+# prints its stats and stops right after the build, or from the EXIT trap when
+# the configure or the build fails (02-build.ps1 does both in a finally).
 SCCACHE=''
 if [[ -x "$SCCACHE_BIN" ]]; then SCCACHE="$SCCACHE_BIN"
 elif command -v sccache >/dev/null; then SCCACHE="$(command -v sccache)"; fi
@@ -303,7 +304,13 @@ if [[ -n "$SCCACHE" ]]; then
     say_head "sccache: $SCCACHE (cache: $SCCACHE_DIR, port $SCCACHE_SERVER_PORT)"
     "$SCCACHE" --stop-server >/dev/null 2>&1 || true
     "$SCCACHE" --start-server >/dev/null || die "sccache could not start its server on port $SCCACHE_SERVER_PORT"
-    trap '"$SCCACHE" --stop-server >/dev/null 2>&1 || true' EXIT
+    sccache_done() {
+        say ''
+        say_head 'sccache stats:'
+        "$SCCACHE" --show-stats || true
+        "$SCCACHE" --stop-server >/dev/null 2>&1 || true
+    }
+    trap sccache_done EXIT
     CMAKE_ARGS+=(
         "-DCMAKE_C_COMPILER_LAUNCHER=$SCCACHE"
         "-DCMAKE_CXX_COMPILER_LAUNCHER=$SCCACHE"
@@ -321,6 +328,10 @@ cmake "${CMAKE_ARGS[@]}"
 say_head 'Building...'
 if (( CFG_BUILD_JOBS > 0 )); then cmake --build "$BUILD_DIR" -j "$CFG_BUILD_JOBS"
 else cmake --build "$BUILD_DIR" -j; fi
+if [[ -n "$SCCACHE" ]]; then
+    trap - EXIT
+    sccache_done
+fi
 
 # ── The chat UI must be IN the binary ──────────────────────────────
 # llama.cpp never fails for a missing UI (a cmake WARNING and an empty page),
@@ -337,12 +348,6 @@ elif [[ -f "$UI_DIST" ]]; then
     say_dim 'Web UI: built from the checked-out sources (npm)'
 else
     say_dim "Web UI: pre-built assets found in the source tree ($UI_SRC_DIST)"
-fi
-
-if [[ -n "$SCCACHE" ]]; then
-    say ''
-    say_head 'sccache stats:'
-    "$SCCACHE" --show-stats || true
 fi
 
 say ''
