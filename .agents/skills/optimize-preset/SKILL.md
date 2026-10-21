@@ -86,7 +86,10 @@ grep -E 'model buffer size|KV buffer size|RS buffer size|compute buffer size' \
   ~/.local/share/llama.cpp/logs/llama-server.log | tail -30
 ```
 
-Windows: `tools\report-memory.ps1` (requested vs actual, spill into shared memory).
+Windows: `tools\report-memory.ps1` (requested vs actual, spill into shared memory). For
+the background sampler of section 4: `nvidia-smi --query-gpu=memory.free` for the NVIDIA
+card and `Get-Counter '\GPU Adapter Memory(*)\Dedicated Usage'` for the AMD ones (one
+instance per adapter LUID; free = the card's total minus it).
 
 Margins to keep (free memory after the prefill):
 - R9700 / ROCm: >= ~500 MB. Below ~50 MB hipBLASLt runs out and the child hangs (kill -9).
@@ -122,6 +125,10 @@ llama-cpp-config bench sweep --preset <id> --key <key> --values '<a>,<b>,<c>' \
   value is in `~/.local/share/llama.cpp/bench/sweep-pending-*.json`).
 - Differences under ~3% are noise unless sd says otherwise; re-run in reversed order
   (thermal drift lands on the last leg).
+- Never re-measure a configuration bench.db already holds (same key values, build and
+  prompt: `bench query runs --campaign <earlier>`): sweep only the untested values and
+  cite the existing run as the baseline in the question and the guide. A repeat is only
+  for a stated purpose (noise check, drift, a new build).
 - A leg that does not load or OOMs is a result too: note the boundary (e.g. "180224 f16
   does not load").
 - Swapping `device` order changes which card takes the output head, MTP head and
@@ -130,6 +137,35 @@ llama-cpp-config bench sweep --preset <id> --key <key> --values '<a>,<b>,<c>' \
 - A sweep restarts the server per leg, so one readout after it shows only the last leg:
   run a background sampler of free memory per card (the section 3 commands every 2 s,
   into a file) and take each leg's minimum after its load phase.
+- On Windows `llama-cpp-config.exe` is a GUI-subsystem binary: a shell does not wait for
+  it (`&` returns at once, bash loses it after a minute) and a sweep started twice runs
+  both at once and wrecks both. Run it from PowerShell with `Start-Process -FilePath
+  <exe> -ArgumentList @(...) -NoNewWindow -PassThru -RedirectStandardOutput <out>
+  -RedirectStandardError <err>` and wait with `$p.WaitForExit()` (not `-Wait`, which
+  also waits for the llama-server the sweep leaves running). `-ArgumentList` does not
+  quote an element with spaces: wrap the `--question` text in literal double quotes, or
+  the sweep dies at once with `unexpected argument`. Before starting one, check
+  `Get-CimInstance Win32_Process` for a running `bench sweep`.
+- Where a prefill step goes (when a lever's effect needs explaining, not for every
+  run): stop the server, start a standalone llama-server with the child's argument list
+  from the router's log (`spawning server instance ... with args`, without
+  `--slot-save-path`) and send one `cache_prompt: false` request of the long prompt.
+  CUDA side: `nsys launch -t cuda`, then `nsys start` / `stop` around the request and
+  `nsys stats --report cuda_gpu_kern_sum,cuda_gpu_mem_time_sum,cuda_api_sum` (CPU
+  sampling needs an elevated shell; `nsys` cannot attach on Windows). HIP side on
+  Windows (the TheRock dist ships no rocprofiler): `AMD_LOG_LEVEL=3` makes the runtime
+  log every HIP call with entry and return stamps on stderr (~120 MB per 43k prefill, no
+  measurable slowdown): the `hipStreamSynchronize` pairs are the GPU time the thread
+  waits for, the `hipMemcpyAsync` durations the blocking host-to-device copies. Each
+  card's busy share: `Get-Counter '\GPU Engine(pid_<pid>_*)\Utilization Percentage'`.
+  Read the copies by size: a size that repeats once per ubatch names its tensor
+  (`n_ubatch x n_embd x 4` bytes is a hidden state crossing between cards, `x n_ff` a
+  gate or up output split by an `override-tensor` rule, a size growing with the context
+  the attention mask), and a blocking copy of tens of ms per 20 MiB is pageable memory
+  on a HIP runtime (the Windows one stages at ~2 GB/s): llama pins its input buffers for
+  the FIRST device only, and cross-card hops go through `malloc`. Both show up as time
+  only on Windows; on Linux the runtime pins pageable memory on the fly.
+  Example of what it finds: `docs/qwen3.8_27b.md` section 4.
 
 Read results:
 

@@ -213,3 +213,50 @@ RDNA4 (#28867, or a PR that makes #28102's `> 16` gate go away), or when the for
 version lands upstream: `git apply --check` then fails and the build stops with a message
 pointing here. Re-verify at every tag bump that touches `fattn-mma-f16.cuh` or `fattn.cu`
 with the `test` and `perf` commands above (GPU idle, server down).
+
+## `0004-sched-host-buffers-pinned-all-runtimes.patch`
+
+Local (2026-10-21, against v0.7.0). 217 lines: `ggml/include/ggml-cuda.h`,
+`ggml/src/ggml-cuda/ggml-cuda.cu`, `src/llama-context.h`, `src/llama-context.cpp`.
+Checked-in sha256: `fd7426c31a79dd93271e204996fd7d2f23e5143778a85bb9c74751fd9132d65c`
+
+**What it changes.** llama allocates the scheduler's host compute buffers (where the graph
+inputs live: token ids, positions, the attention masks, the host copies of cross-backend
+tensors) from the host buffer type of the FIRST device in `device`, so only that device's
+runtime has them pinned. Every other GPU runtime sees pageable memory and stages each
+input copy through its own bounce buffer, blocking the calling thread: the Windows HIP
+runtime does so at ~2 GB/s (the Linux one pins pageable memory on the fly and the cost
+never showed there). After every graph reserve or reallocation, `llama_context` collects
+the distinct host compute buffers the graph touches and registers them, through the
+backend registry's proc address, with every runtime of the model's devices
+(`sched_host_buffers_register`; unregistered in the destructor, re-done when the buffers
+move). The backend side adds `ggml_backend_cuda_register_host_buffer_rw` and its
+unregister, exposed as `ggml_backend_register_host_buffer_rw` /
+`ggml_backend_unregister_host_buffer_rw`: `cudaHostRegisterPortable` alone, not gated by
+`GGML_CUDA_REGISTER_HOST`, because upstream's gated variant is read-only (meant for mmap'd
+weights) and these buffers receive device-to-host copies. The runtime that allocated a
+buffer refuses to register it again; that failure is expected and ignored. Compiles into
+both `ggml-cuda.dll` and `ggml-hip.dll`; a backend without the proc (Vulkan) is skipped.
+
+**Measured (R9700 + RTX 4070 SUPER, Qwen3.8-27B-Coder390 Q8_0 MTP, 43.7k-token prompt,
+one request per placement, 2026-10-21; `docs\qwen3.8_27b.md` section 4).** With the
+R9700 second (`CUDA0,ROCm1`, `16,50`): the blocking HIP copies of the prefill 5.24 s to
+2.50 s, prefill 1029 to 1058 t/s (+2-3%); the masks now stream asynchronously, what
+remains is the cross-card hops llama stages through `malloc` (the 68 MiB block-15 gate
+output and 20 MiB hidden states), a ggml change not made. With the R9700 first (the
+Windows setting): 1105 to 1113 t/s, noise: the 4070's pageable copies cost 0.3 s in all
+on the CUDA runtime. The registrations: 416 MiB (the main context's `CUDA_Host` compute
+buffer) and 376 MiB (the draft context's).
+
+**Confirming it is live.** Nothing is logged at the server's default verbosity. With
+`AMD_LOG_LEVEL=3` (SDK Tuning, or the environment of a standalone server) the HIP API log
+shows `hipHostRegister` calls of the `*_Host compute buffer size` values the server logs
+at startup, returning `hipSuccess`, right after each `sched_reserve` block; an unpatched
+build never calls `hipHostRegister`.
+
+**When to drop it.** When upstream pins the scheduler's host buffers for every runtime
+(or registers them itself), or allocates the inputs from a buffer type the patch's
+`USAGE_COMPUTE` filter no longer matches (then `hipHostRegister` disappears from the log
+with the patch still applying: re-check after every tag bump that touches
+`llama-context.cpp`). A `git apply --check` failure stops the build with a message
+pointing here.
