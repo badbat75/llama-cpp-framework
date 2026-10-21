@@ -61,9 +61,12 @@ apply.
 2. **KV cache type.** `f16` decodes faster deep in context and has smaller compute
    buffers; `q8_0` only to reach a context `f16` cannot fit. It fits ~66% of q8_0's
    context, not half: measure, do not compute.
-3. **`ubatch-size`.** Prefill only (+5% from 512 to 1024 on dense), decode unaffected; it
-   costs compute buffer (~0.5 MiB per ubatch token per device). On MoE with experts in
-   RAM a larger ubatch is paid in experts moved off the GPU: usually not worth it.
+3. **`ubatch-size`.** Prefill only (+5% from 512 to 1024 on dense, +3% from 512 to 768 on
+   Flash-Next), decode unaffected; it costs compute buffer on EVERY card, and the slope
+   depends on the model (~0.5 MiB per ubatch token per device on the dense 27B, ~1.0 to
+   1.15 on Flash-Next): take it from the `compute buffer size` lines of the last load,
+   not from a constant. On MoE with experts in RAM a larger ubatch is paid in experts
+   moved off the GPU: usually not worth it (`docs/qwen3.8_flash_next.md` section 2).
 4. **Speculator.** `draft-mtp` if the GGUF has MTP heads; otherwise `ngram-map-k`
    (size-m 64, size-n 12 measured best). Sweep `spec-draft-n-max`. Read per-rep numbers:
    a speculator changes the output path.
@@ -74,9 +77,10 @@ apply.
 
 ## 3. Measuring VRAM (do this for every candidate)
 
-A load-only check is not enough: the CUDA/HIP pools grow at the first real prefill
-(~40 MiB on the 4070, ~85-170 MiB on the R9700). Read memory **after a long-prompt
-prefill**:
+A load-only check is not enough: the CUDA/HIP pools grow at the first real prefill,
+and by an amount that depends on the model (~40 MiB on the 4070 and ~85-170 on the R9700
+with the dense 27B, ~320 and ~510 with Flash-Next-XXS at `q8_0` KV). Read memory **after
+a long-prompt prefill**:
 
 ```bash
 nvidia-smi --query-gpu=index,name,memory.used,memory.free --format=csv   # use memory.free: ~406 MiB is driver-reserved
@@ -144,8 +148,25 @@ llama-cpp-config bench sweep --preset <id> --key <key> --values '<a>,<b>,<c>' \
 - A leg that does not load or OOMs is a result too: note the boundary (e.g. "180224 f16
   does not load").
 - Swapping `device` order changes which card takes the output head, MTP head and
-  sampling, so the mirrored `tensor-split` usually does not fit: sweep a few splits per
-  order (one campaign) and compare each order at its best split with a safe margin.
+  sampling, so the mirrored `tensor-split` usually does not fit: size the split from the
+  per-layer weights before sweeping. `llama-gguf <first shard> r` (in the build tree's
+  `bin/`) lists every tensor with its bytes (each tensor twice: dedupe by name); sum per
+  block, experts (`_exps`) apart, and add the output head. A split `a,b` over 48 blocks
+  gives the first device blocks `0..a-1` and the second the rest plus the output layer
+  (`a + b = 49`); with `n-cpu-moe N` the first N blocks weigh only their attention. Check
+  the sums against the last load's `model buffer size` lines (within ~2%), then budget each
+  card: weights + KV (per attention layer it holds) + RS + the compute buffer + the pool
+  growth, against total minus the driver's reserve. Take the compute buffer from a load
+  with the SAME KV type (`q8_0` KV makes it 874 MiB per card where `f16` takes 531 to 592,
+  Flash-Next at `ubatch 512`) and the pool growth from the sampler of an earlier run of
+  the same model (section 3), or the projection lands hundreds of MiB optimistic; the
+  weight sums themselves came within 1 % of the log. Sweep the computed split and the next
+  block up (one campaign): the one that fails to load fixes the boundary at the cost of
+  one leg. Expert sizes vary per layer in mixed-precision quants, so an average misleads.
+- A live run now records `run_device` (free MiB per card after the first measured prompt,
+  from a `--list-devices` probe beside the running server, shown in `bench query summary`'s
+  "free MiB" column): enough to rank legs, but the probe's own contexts make it read
+  ~190 MiB low on CUDA and ~25 on ROCm, so near a margin threshold keep the sampler below.
 - A sweep restarts the server per leg, so one readout after it shows only the last leg:
   run a background sampler of free memory per card (the section 3 commands every 2 s,
   into a file) and take each leg's minimum after its load phase.

@@ -229,7 +229,10 @@ Output identical in every pair, with and without drafting. Linux, the installed 
 rebuilt with patches 0001-0004 against the run of 2026-10-16 with 0001 only (`bench.db`
 campaign `flash-next-patches-linux-20261021`): prefill 422.7 ±2.6 against 417.9 ±2.2 t/s
 at 43.7k, decode 25.0 both, the band line in the log. Kept on, the default:
-`docs\qwen3.8_flash_next.md` section 10.
+`docs\qwen3.8_flash_next.md` section 10. The same Linux build on Qwen3.8-27B-Coder390
+(GQA 12, `draft-mtp`), against the runs before 0003 and 0004: prefill +5% at 43.7k and
++8% on a 100-token prompt, flat at 115k, decode unchanged (campaign
+`coder390-patches-linux-20261021`, `docs\qwen3.8_27b.md` section 4).
 
 **Confirming it is live.** The first head-256 attention call on RDNA4 with the variable set
 logs one line at info level, `RDNA4 FA band enabled: ncols1 = 4, GQA ratios up to 12`

@@ -161,6 +161,19 @@ with the R9700 second and nothing measurable with it first, the setting of secti
 placement that keeps the R9700 second still pays the staged hops, a ggml change (section
 6).
 
+The installed *Linux* server with 0001 to 0004, the preset as configured (R9700 second,
+`16,50`, 180224 `f16`, `ubatch 1024`, `draft-mtp`), through the configurator, against
+the runs before 0003 and 0004 (at 172032 where noted): 43.7k-token prompt prefill
+1185.6 ±12.6 against 1132.6 ±12.7 and 1123.3 ±6.7 t/s (+5%), decode 31.2 both;
+100-token prompt prefill 244.8 ±1.1 against 224.9 and 226.2 (+8%), decode 36.7 ±0.2
+against 38.1 with the acceptance at 58% against 61% (the band's numerics change the
+greedy text and the drafter's luck with it, section 2; the step itself is not slower);
+115k prompt prefill 894.7 ±1.2 against 889.2 at the same context and 902.2 ±6.9 at
+172032, decode 29.2 against 28.5 and 29.3: within noise. Free after the prefills 948 to
+960 MiB on the 4070, 854 to 910 on the R9700 (campaign `coder390-patches-linux-20261021`
+against `coder390-device-order-20261019`, `coder390-ubatch-20261020` and
+`coder390-ctx-20261020`).
+
 ## 5. Choices that look better than they measure
 
 | option | result |
