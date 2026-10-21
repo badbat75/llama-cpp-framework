@@ -890,6 +890,12 @@ pub fn run(opts: &Opts) -> Result<String, String> {
         );
     }
 
+    // The engine resolves the preset's device ids to card names through the
+    // probe cache, which only the GUI fills on its own; without this every leg
+    // records the ids as unknown. Once, before the first leg: the ids name the
+    // same cards for the whole sweep.
+    crate::devices::set_probed(crate::devices::list());
+
     let mut legs: Vec<Leg> = Vec::new();
     for (i, value) in opts.values.iter().enumerate() {
         println!("\n[{}/{}] {} = {value}", i + 1, opts.values.len(), opts.key);

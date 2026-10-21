@@ -110,9 +110,21 @@ llama-cpp-config bench sweep --preset <id> --key <key> --values '<a>,<b>,<c>' \
   and end a single such value with one (`'16,50;'`): without a `;` the spec splits on
   `,` and sweeps `16` and `50`. `unset` removes the key for a leg. Ranges: `2..8`.
 - Not every preset key is sweepable (`mmproj-device` is refused, `mmproj-offload` is
-  not): set the key in presets.ini, then run a one-leg sweep of a sweepable key (its
-  current value) into the same campaign; the run records every key, so `bench query
-  runs --show <key>` tells the legs apart even though their labels look alike.
+  not; the refusal lists the sweepable keys): set the key in presets.ini, then run a
+  one-leg sweep of a sweepable key (its current value) into the same campaign; the run
+  records every key, so `bench query runs --show <key>` tells the legs apart even though
+  their labels look alike. Launch-line levers are not preset keys at all: `Threads` and
+  `ThreadsBatch` go through `server set --threads-batch N` (server-wide, every preset: ask
+  first), then the same one-leg sweep records them (`ThreadsBatch` is a run parameter);
+  `--poll`, `--cpu-strict`, `--prio-batch` have no configurator setting, so they can only
+  be screened by hand on a standalone llama-server (the "where a prefill step goes" launch
+  below, plus the flag), unrecorded, and only a winner is worth adding to the configurator.
+- Before a leg that moves experts to RAM, size the RAM: `CPU model buffer size` (plus
+  `CPU_REPACK`) from a previous load, or the layer count times the per-layer size, against
+  the machine's free RAM; a leg that pages (free RAM near zero, single-digit t/s on the
+  warm-up) is not a measurement, stop it. A MoE cache only holds non-repacked experts, so
+  with `no-host` it needs `repack = false`, and the pinned host buffer (`no-host` off) is
+  impossible at tens of GB.
 - Live mode restarts llama-server per leg and sends `cache_prompt: false`, temp 0.
   Synthetic mode (llama-bench) needs the server DOWN and cannot model the drafter,
   `ctx-size` or `parallel`: use it only for raw prefill/decode of placement or quant.

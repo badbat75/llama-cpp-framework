@@ -42,7 +42,7 @@ layout the campaign started from; the recommended one (`f16`, `n-cpu-moe 16`) is
 | `no-host` | `true` with `op-offload false` | weights kept in RAM skip the GPU's pinned host buffer (`ROCm_Host`), so the CPU repacks the types it has interleaved kernels for: here `ffn_down_exps` in IQ4_NL (4950 MiB of the 14997 MiB in RAM at `n-cpu-moe 16`; `gate`/`up` in IQ2_S/IQ3 stay as they are, 10047 MiB of ordinary RAM). The pinned buffer only speeds the per-batch copies of `op-offload true`, which `false` never makes. *Linux*, the recommended preset (section 9), 43.7k-token prompt: prefill 416 and 419 t/s against 383 and 382, decode 25.0 against 24.9, three prompts 27.3 both. With `op-offload true` (section 8) the copies would come from pageable memory: not measured (campaign `flash-next-no-host-20261016`) |
 | `spec-type` | `ngram-map-k`, `spec-ngram-map-k-size-m 64` (`size-n` left at 12) | no MTP head in the GGUF, so the n-gram drafters are the only speculators. *Linux*, v0.6.0, IQ3_XXS (section 7): code rewrite 61-65 t/s (`size-m` 48 and 64) against 28.6 with none; prose reasoning 40.0 ±1.6 against 29.4 ±1.3 |
 | prefill | (measured) | *Linux*, ubatch 512: 368 and 372 t/s at 2.9k tokens, 364 and 370 at 43.7k, 340 and 341 at 87.4k; decode right after: 24.5, 20.5 and 17.5 t/s. v0.6.0 gave 342 and 338 at 43.7k |
-| `threads` | one per physical core (12 on the 12-core host), `ThreadsBatch` the same | *Linux*, 43.7k-token prompt, two runs of 128 tokens: prefill 410 and 405 t/s at 12, 363 and 368 at 16, 371 and 377 at 22, 364 and 368 at 24; decode 21.8, 21.5, 21.1 and 17.6 |
+| `threads` | one per physical core (12 on the 12-core host); `ThreadsBatch` the same on Linux, 24 (every logical core) on Windows | *Linux*, 43.7k-token prompt, two runs of 128 tokens: prefill 410 and 405 t/s at 12, 363 and 368 at 16, 371 and 377 at 22, 364 and 368 at 24; decode 21.8, 21.5, 21.1 and 17.6. *Windows*: prefill 275.7 and 279.0 at 24 against 250-262 at 12, decode unchanged (section 10, campaign `flash-next-cpu-prefill-windows-20261021`) |
 | `ubatch-size` | 512 at the lowest `n-cpu-moe` that fits, with `op-offload false`; for long prompts, 8192 with `op-offload true` (section 8) | with `op-offload false` a larger ubatch is paid in experts moved to RAM (section 5). *Linux*: the R9700's compute buffer is 877 MiB at 512, 1496 at 1024 and 2125 at 2048, so at `n-cpu-moe 14` neither 1024 nor 2048 loads |
 | `cache-type-k/-v` | `f16` | `q8_0` halves the KV buffers but raises the compute buffers, so it saves only one layer of experts at 131072 and two at 262144 (table below), and it costs decode as the context fills: *Linux*, 43.7k-token prompt, 21.8 t/s in `q8_0` at `n-cpu-moe 14` against 24.9 in `f16` at `16`, 20.8 against 23.4 at 262144 (section 9) |
 | `reasoning-preserve` | leave unset (on since v0.4.0) | *Linux*, turn 2 of a chat that sends turn 1's thinking back: on, the history is replayed unchanged and only the new 19 tokens are processed (prompt 204); `false` strips the old thinking, so the prompt is shorter (118) but diverges inside turn 1 and 60 tokens are reprocessed from a checkpoint. `false` is worth it only when long thinking fills the context |
@@ -300,7 +300,14 @@ and attention is ~5% of a decode step at 43.7k; its real gain, 55-59% at 65k-131
 2 to 4 queries per step, which only an accepted draft produces, and the n-gram drafter
 drafted nothing on these prompts. The small-context cost (+16 us per call at 4k, ~0.4% of a
 step) does not show either. The band stays on for GQA 12 for the long-context,
-accepted-draft case; nothing to tune in the preset.
+accepted-draft case; nothing to tune in the preset. **Linux says the same** (campaign
+`flash-next-patches-linux-20261021`, the installed server rebuilt with patches 0001-0004
+against run 6 of `flash-next-no-host-20261016`, patch 0001 only, same preset and prompts):
+43.7k-token prompt prefill 422.7 ±2.6 against 417.9 ±2.2 t/s, decode 25.0 against 25.0-25.1;
+the code, prose and math prompts decode 27.3 both times. The band is live (the server logs
+its enable line), `test-backend-ops` passes 135/135 GQA 12 cases on `ROCm0`, and patch
+0004's pinned buffers survive the prompts of different shape that aborted its first version
+on Windows. Free memory after the prefill: 474 MiB on the R9700, 828 on the RTX 4070 SUPER.
 
 **Windows is 36% behind Linux on prefill, 20% on decode.** Same preset, same model files,
 same llama.cpp (v0.7.0, patches 0001 and 0003/0004 make no difference here), same cards:
@@ -316,9 +323,50 @@ and what it has that the 27B has not is 16 layers of experts on the CPU (`n-cpu-
 `op-offload false`): during prefill the experts of those layers run on the 12 CPU threads,
 and during decode their weights stream from RAM. So the gap is the CPU side on Windows,
 not the cards. The Windows build runs `ggml-cpu-zen4.dll` (AVX-512, REPACK, LLAMAFILE,
-OpenMP through `libomp140`), the same feature set as Linux. Not yet measured, in the order
-to try: `--threads-batch 24` (the CPU has 24 logical cores, prefill is compute-bound),
-`--poll 0` against the default 50 and `--cpu-strict 1` (Windows scheduling of the spinning
-threads across the two CCDs), `--prio-batch 2`, and the `op-offload true` row (the GPUs do
-the expert matmuls of a 512-token ubatch and the CPU only streams weights). On Linux none
-of these was needed; the first that closes the gap goes into the Windows preset.
+OpenMP through `libomp140`), the same feature set as Linux.
+
+**The CPU launch levers** (same day, the tree build on port 8599 with the launch line above
+plus the lever, one 43.7k run each, temperature 0; the one that pays confirmed on the
+installed server in campaign `flash-next-cpu-prefill-windows-20261021`):
+
+| lever | prefill t/s at 43.7k | decode t/s, 128 tokens |
+| --- | --- | --- |
+| none (above) | 250-262 | 20.4 ±0.5 |
+| `--threads-batch 24` (the 24 logical cores for prefill, 12 for decode) | 273.2; installed server: 275.7, 279.0 | 20.6; 20.8, 20.8 |
+| `--poll 0` | 266.0 | 21.1 |
+| `--cpu-strict 1` | 268.7 | 21.2 |
+| `--prio-batch 2` | 256.4 | 21.2 |
+| the first three together | 274.6, 280.5 | 19.6, 20.8 |
+| `--threads-batch 24 --cpu-mask 555555 --cpu-mask-batch FFFFFF --cpu-strict 1` (one decode thread per physical core, the batch on every logical one) | 278.5 | 20.7 |
+| `--threads-batch 24` on a `ggml-cpu-zen4.dll` built with `GGML_OPENMP=OFF` (ggml's own threadpool) | 178.6 | 20.5 |
+
+Only the batch threads pay, +6-9% prefill with decode unchanged, and the three together add
+nothing over them: Windows is not losing the prefill to how it schedules the spinning
+threads, and pinning one decode thread per physical core (without a mask, strict placement
+puts thread i on logical CPU i, two per core on Windows) changes nothing either.
+`ThreadsBatch = 24` is now the Windows `server.ini` value (server-wide; on Linux 12 measured
+best, the settings table). The OpenMP runtime is not the culprit: without it prefill loses a
+third, so the build keeps cmake's default `GGML_OPENMP=ON`. The gap to Linux stays at 33%.
+
+**Every expert in RAM with the VRAM as MoE cache does not fit this machine.** `n-cpu-moe
+48`, `moe-cache-mib 29000` (sized on the free VRAM after a load without the cache: 23.7 GB
+on the R9700 for 39 GB of host experts, 5.3 GB on the RTX 4070 SUPER for 9 GB; `no-host`
+with `repack false`, since the cache cannot hold repacked experts and a pinned buffer of
+that size is impossible): the experts alone are 48.3 GB of RAM (`CPU model buffer size`)
+on a 61.6 GB machine, free RAM fell to 0.6 GB and the 55-token warm-up ran at 10 t/s
+prefill, 6 t/s decode, paging. Stopped before the long prompt; a speed figure would need
+~128 GB of RAM.
+
+**`op-offload true` at ubatch 512 is a loss on Windows**: the installed server, the
+preset otherwise unchanged, prefilled the 43.7k prompt at 108 t/s (steady from 70% to
+89% of the prompt, where the run was cancelled; not in `bench.db`), against 277 with
+`op-offload false`. On Linux the same switch pays only with ubatch 4096-8192 and more
+experts in RAM (section 8); on Windows the per-ubatch upload of the host experts costs
+more than the CPU matmuls it replaces, so the large-ubatch variant was not tried.
+
+Not pursued (the gap is too large for preset levers to close, and the model is not the
+daily one on Windows): `llama-bench` on the CPU backend alone, Windows against Linux (is
+the CPU backend itself a third slower here: the clang build of the zen4 variant, page
+faults under `load-mode none`), which would decide whether the fix is in the build or in
+the preset; which 16 layers to keep in RAM; a requant of the host layers to a repackable
+type (Q4_0, Q8_0).

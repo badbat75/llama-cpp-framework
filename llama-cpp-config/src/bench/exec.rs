@@ -437,6 +437,13 @@ fn run_live(
                 ),
                 ..Default::default()
             });
+            // After a REAL prefill, not the warm-up: the free memory the
+            // probe reads then includes what the first long prompt grew.
+            if rep == 1 {
+                if let Some(rec) = &mut run.rec {
+                    rec.read_memory();
+                }
+            }
 
             let (mean, sd) = super::mean_sd(&prefill);
             run.put(

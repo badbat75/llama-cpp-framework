@@ -225,7 +225,10 @@ runs each at temp 0, cap 8 vs cap 12): 43.7k-token prompt, decode 20.1 ±0.2 vs 
 t/s; 2.6k, 19.2 ±0.1 vs 19.0 ±0.2; prefill unchanged: noise both ways, because the n-gram
 drafter drafted nothing on those prompts (1-query decode, where attention is ~5% of the
 token at 43.7k) and the model's decode is dominated by its 16 layers of experts in RAM.
-Output identical in every pair, with and without drafting. Kept on, the default:
+Output identical in every pair, with and without drafting. Linux, the installed server
+rebuilt with patches 0001-0004 against the run of 2026-10-16 with 0001 only (`bench.db`
+campaign `flash-next-patches-linux-20261021`): prefill 422.7 ±2.6 against 417.9 ±2.2 t/s
+at 43.7k, decode 25.0 both, the band line in the log. Kept on, the default:
 `docs\qwen3.8_flash_next.md` section 10.
 
 **Confirming it is live.** The first head-256 attention call on RDNA4 with the variable set

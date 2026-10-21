@@ -53,6 +53,11 @@ struct Pending {
     gpus: Vec<(String, String)>,
     samples: Vec<Sample>,
     log: Arc<Mutex<String>>,
+    /// The preset's `device` ids: recorded in `run_device` even when no
+    /// buffer line names them.
+    pinned: Vec<String>,
+    /// `run_device`, read once after the first measured prompt (`read_memory`).
+    devices: Vec<db::DeviceMemory>,
 }
 
 impl Recorder {
@@ -123,6 +128,8 @@ impl Recorder {
             gpus,
             samples: Vec::new(),
             log: Arc::new(Mutex::new(String::new())),
+            pinned: devices.iter().map(|(id, _)| id.clone()).collect(),
+            devices: Vec::new(),
         });
     }
 
@@ -147,6 +154,23 @@ impl Recorder {
         if let Some(sink) = self.log_sink() {
             push_line(&sink, text);
         }
+    }
+
+    /// The held run's memory per device, read once, after its first measured
+    /// prompt: the buffers of the preset's latest load off llama-server's log
+    /// (`buffer_sizes`), and the free memory a fresh device probe reports now,
+    /// a real prefill after the load. The live engine calls it; llama-bench
+    /// is its own process and its output carries no load lines to read.
+    pub fn read_memory(&mut self) {
+        let Some(p) = &mut self.current else {
+            return;
+        };
+        if !p.devices.is_empty() {
+            return;
+        }
+        let log = std::fs::read(paths::server_log()).unwrap_or_default();
+        let buffers = buffer_sizes(&String::from_utf8_lossy(&log), &p.preset);
+        p.devices = device_rows(buffers, &p.pinned, &crate::devices::list());
     }
 
     /// Drop the held run: it failed or was cancelled.
@@ -203,6 +227,7 @@ impl Recorder {
             db::add_params(&tx, run, scope, kv).map_err(e)?;
         }
         db::add_gpus(&tx, run, &p.gpus).map_err(e)?;
+        db::add_devices(&tx, run, &p.devices).map_err(e)?;
         for s in &p.samples {
             let s = Sample {
                 prompt,
@@ -220,6 +245,137 @@ impl Recorder {
     pub fn campaign(&self) -> &str {
         &self.spec.name
     }
+}
+
+/// The buffers the preset's LATEST load allocated, per backend, off
+/// llama-server's log. The router logs `spawning server instance with
+/// name=<preset> on port <port>` and hands the child's lines back prefixed
+/// `[<port>] `; the load ends at the child's `llama_server: model loaded`, so
+/// the reserves a request triggers later are not read. Per device:
+///
+/// - `model`: every `model buffer` (`load_tensors`: the weights, a separate
+///   draft file's included).
+/// - `kv`: every `KV buffer` (`llama_kv_cache`, one line per cache: the main
+///   one, an iSWA cache's two halves, the MTP draft context's) plus every `RS
+///   buffer` (`llama_memory_recurrent`, the recurrent state): all cache state.
+/// - `compute`: one `compute buffer` per context, summed over the contexts
+///   (`sched_reserve` after each `constructing llama_context`, plus the image
+///   encoder's `reserve_compute_meta`). A context's later reserve REPLACES its
+///   earlier one: it reports the same scheduler's buffer again.
+///
+/// `output buffer` (the logits, a few MiB of host memory) is left out.
+pub fn buffer_sizes(log: &str, preset: &str) -> Vec<db::DeviceMemory> {
+    let spawn = format!("spawning server instance with name={preset} on port ");
+    let mut prefix = String::new();
+    let mut done = true;
+    let mut ctx = 0usize;
+    let mut rows: Vec<db::DeviceMemory> = Vec::new();
+    let mut compute: Vec<((usize, String), f64)> = Vec::new();
+    for line in log.lines() {
+        if let Some((_, port)) = line.split_once(&spawn) {
+            prefix = format!("[{}] ", port.trim());
+            (done, ctx) = (false, 0);
+            rows.clear();
+            compute.clear();
+            continue;
+        }
+        let Some(body) = line.strip_prefix(prefix.as_str()).filter(|_| !done) else {
+            continue;
+        };
+        if body.contains("llama_server: model loaded") {
+            done = true;
+        } else if body.contains("constructing llama_context") {
+            ctx += 1;
+        }
+        let Some((head, tail)) = body.split_once(" buffer size =") else {
+            continue;
+        };
+        let Some(mib) = tail
+            .trim()
+            .strip_suffix("MiB")
+            .and_then(|v| v.trim().parse::<f64>().ok())
+        else {
+            continue;
+        };
+        let mut words = head.split_whitespace().rev();
+        let (Some(kind), Some(device), Some(func)) = (words.next(), words.next(), words.next())
+        else {
+            continue;
+        };
+        match kind {
+            "model" => *row(&mut rows, device).model_mib.get_or_insert(0.0) += mib,
+            "KV" | "RS" => *row(&mut rows, device).kv_mib.get_or_insert(0.0) += mib,
+            "compute" => {
+                row(&mut rows, device);
+                // The image encoder is a context of its own, never constructed
+                // through llama_context.
+                let owner = if func == "reserve_compute_meta:" {
+                    usize::MAX
+                } else {
+                    ctx
+                };
+                let key = (owner, device.to_string());
+                match compute.iter_mut().find(|(k, _)| *k == key) {
+                    Some(slot) => slot.1 = mib,
+                    None => compute.push((key, mib)),
+                }
+            }
+            _ => {}
+        }
+    }
+    for ((_, device), mib) in compute {
+        if let Some(r) = rows.iter_mut().find(|r| r.device == device) {
+            *r.compute_mib.get_or_insert(0.0) += mib;
+        }
+    }
+    let round = |v: &mut Option<f64>| *v = v.map(|x| (x * 100.0).round() / 100.0);
+    for r in &mut rows {
+        round(&mut r.model_mib);
+        round(&mut r.kv_mib);
+        round(&mut r.compute_mib);
+    }
+    rows
+}
+
+/// The device's row, appended on first sight so the rows keep the log's order.
+fn row<'a>(rows: &'a mut Vec<db::DeviceMemory>, device: &str) -> &'a mut db::DeviceMemory {
+    let i = match rows.iter().position(|r| r.device == device) {
+        Some(i) => i,
+        None => {
+            rows.push(db::DeviceMemory {
+                device: device.to_string(),
+                ..Default::default()
+            });
+            rows.len() - 1
+        }
+    };
+    &mut rows[i]
+}
+
+/// `run_device`'s rows: the devices the buffers name, then the preset's pinned
+/// ones no buffer line named, each with the free memory the probe reports for
+/// that id (none for a host buffer such as `CPU_Mapped` or `ROCm_Host`, which
+/// the probe does not list).
+pub fn device_rows(
+    mut rows: Vec<db::DeviceMemory>,
+    pinned: &[String],
+    probe: &[crate::devices::DeviceOption],
+) -> Vec<db::DeviceMemory> {
+    for id in pinned {
+        if !rows.iter().any(|r| &r.device == id) {
+            rows.push(db::DeviceMemory {
+                device: id.clone(),
+                ..Default::default()
+            });
+        }
+    }
+    for r in &mut rows {
+        r.free_mib = probe
+            .iter()
+            .find(|d| d.id == r.device && d.total_mib > 0)
+            .map(|d| d.free_mib as i64);
+    }
+    rows
 }
 
 /// The tab's means of one run, as stored in `run.points`; the preset is the
@@ -473,6 +629,97 @@ mod tests {
         assert_eq!(s[0].gen_tokens, Some(128));
         assert!(bench_samples("not json").is_empty());
         assert!(bench_samples(r#"{"build_number":11669}"#).is_empty());
+    }
+
+    /// Real lines (llama.cpp v0.7.0, Qwen3.8-27B with MTP heads and an mmproj),
+    /// trimmed: an earlier load of the same preset, another model's child, the
+    /// draft context's re-reserve and a request's reserve after the load.
+    const LOAD_LOG: &str = "\
+0.00.200.000 I srv          load: spawning server instance with name=Qwen3.8-27B on port 40001
+[40001] 0.00.615.092 I load_tensors:        ROCm0 model buffer size = 99999.00 MiB
+0.02.549.361 I srv          load: spawning server instance with name=Qwen3.8-Flash-Next on port 57115
+0.02.549.361 I srv          load: spawning server instance with name=Qwen3.8-27B on port 52043
+[57115] 0.00.555.535 I load_tensors:          CPU model buffer size = 10047.07 MiB
+[52043] 0.00.615.092 I load_tensors:        CUDA0 model buffer size =  5995.64 MiB
+[52043] 0.00.615.093 I load_tensors:    CUDA_Host model buffer size =  1288.28 MiB
+[52043] 0.00.615.093 I load_tensors:        ROCm0 model buffer size = 20428.15 MiB
+[52043] 0.07.459.188 I llama_context: constructing llama_context
+[52043] 0.07.460.048 I llama_context:  ROCm_Host  output buffer size =     3.79 MiB
+[52043] 0.07.461.022 I llama_kv_cache:      CUDA0 KV buffer size =  2688.00 MiB
+[52043] 0.07.467.479 I llama_kv_cache:      ROCm0 KV buffer size =  8064.00 MiB
+[52043] 0.07.484.154 I llama_kv_cache: size = 10752.00 MiB (172032 cells,  16 layers,  1/1 seqs), K (f16): 5376.00 MiB, V (f16): 5376.00 MiB
+[52043] 0.07.484.845 I llama_memory_recurrent:      CUDA0 RS buffer size =   149.62 MiB
+[52043] 0.07.485.744 I llama_memory_recurrent:      ROCm0 RS buffer size =   448.88 MiB
+[52043] 0.07.485.756 I sched_reserve: reserving ...
+[52043] 0.07.560.383 I sched_reserve:      CUDA0 compute buffer size =   620.05 MiB
+[52043] 0.07.560.386 I sched_reserve:      ROCm0 compute buffer size =   620.03 MiB
+[52043] 0.07.560.386 I sched_reserve:  CUDA_Host compute buffer size =   376.05 MiB
+[52043] 0.07.747.736 I llama_context: constructing llama_context
+[52043] 0.07.749.658 I llama_kv_cache:      ROCm0 KV buffer size =   672.00 MiB
+[52043] 0.07.811.618 I sched_reserve:      CUDA0 compute buffer size =    20.00 MiB
+[52043] 0.07.811.621 I sched_reserve:      ROCm0 compute buffer size =   472.03 MiB
+[52043] 0.07.811.622 I sched_reserve:  CUDA_Host compute buffer size =   356.04 MiB
+[52043] 0.08.211.732 I reserve_compute_meta:      ROCm0 compute buffer size =   248.10 MiB
+[52043] 0.08.211.734 I reserve_compute_meta:        CPU compute buffer size =    24.93 MiB
+[52043] 0.08.214.904 I sched_reserve: reserving ...
+[52043] 0.08.291.800 I sched_reserve:      CUDA0 compute buffer size =    20.00 MiB
+[52043] 0.08.291.804 I sched_reserve:      ROCm0 compute buffer size =   472.03 MiB
+[52043] 0.08.291.805 I sched_reserve:  CUDA_Host compute buffer size =   356.04 MiB
+[52043] 0.08.301.600 I srv  llama_server: model loaded
+[52043] 0.14.447.694 I sched_reserve:      ROCm0 compute buffer size =  9999.00 MiB
+";
+
+    #[test]
+    fn buffer_sizes_sum_the_latest_load_per_device() {
+        let rows = buffer_sizes(LOAD_LOG, "Qwen3.8-27B");
+        let got: Vec<_> = rows
+            .iter()
+            .map(|r| (r.device.as_str(), r.model_mib, r.kv_mib, r.compute_mib))
+            .collect();
+        assert_eq!(
+            got,
+            vec![
+                ("CUDA0", Some(5995.64), Some(2837.62), Some(640.05)),
+                ("CUDA_Host", Some(1288.28), None, Some(732.09)),
+                ("ROCm0", Some(20428.15), Some(9184.88), Some(1340.16)),
+                ("CPU", None, None, Some(24.93)),
+            ]
+        );
+        assert!(rows.iter().all(|r| r.free_mib.is_none()));
+        assert!(buffer_sizes(LOAD_LOG, "Qwen3.8").is_empty());
+        assert!(buffer_sizes("", "Qwen3.8-27B").is_empty());
+    }
+
+    #[test]
+    fn device_rows_add_pinned_ids_and_the_probe_free_memory() {
+        let dev = |id: &str, total: u64, free: u64| crate::devices::DeviceOption {
+            id: id.into(),
+            label: String::new(),
+            name: String::new(),
+            total_mib: total,
+            free_mib: free,
+        };
+        let buffers = buffer_sizes(LOAD_LOG, "Qwen3.8-27B");
+        let probe = [
+            dev("CUDA0", 11876, 1200),
+            dev("ROCm0", 32624, 900),
+            dev("CPU", 60857, 30000),
+        ];
+        let rows = device_rows(buffers, &["ROCm0".into(), "Vulkan2".into()], &probe);
+        let free: Vec<(&str, Option<i64>)> = rows
+            .iter()
+            .map(|r| (r.device.as_str(), r.free_mib))
+            .collect();
+        assert_eq!(
+            free,
+            vec![
+                ("CUDA0", Some(1200)),
+                ("CUDA_Host", None),
+                ("ROCm0", Some(900)),
+                ("CPU", Some(30000)),
+                ("Vulkan2", None),
+            ]
+        );
     }
 
     #[test]

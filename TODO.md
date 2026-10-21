@@ -57,29 +57,62 @@ for `GGML_CUDA_CC_IS_RDNA3_5` at `n_tokens >= 2048`; its HIP tile types
 `launch_gated_delta_net` path on every prefill ubatch. Opening the gate is not a flag flip:
 it needs a bf16 16x16x16 WMMA tile for gfx12 in `mma.cuh` and the matching loads.
 
+**Ported to RDNA4 and measured: the chunked kernel loses to the sequential path (Linux,
+R9700, 2026-10-21).** The gfx12 pieces are in fact already in v0.7.0's `mma.cuh` (the
+`tile<16, 8, nv_bfloat162, DATA_LAYOUT_I_MAJOR>` operand and the
+`__builtin_amdgcn_wmma_f32_16x16x16_bf16_w32_gfx12` product), so the port is nine lines of
+`gated-delta-net-mma.cu`: the compile gate opened to `AMD_WMMA_AVAILABLE`, the operand
+layout picked by `get_input_data_layout()`, the dispatch opened to `GGML_CUDA_CC_IS_RDNA4`.
+`test-backend-ops test -o GATED_DELTA_NET` on `ROCm0`: 43/43, the 16-K-head cases at 64 to
+2048 tokens on the new path. `perf` at the shape llama builds for Qwen3.8-27B and
+Flash-Next (16 K heads x 48 V heads, d 128; cases added locally as
+`test_gated_delta_net(GGML_TYPE_F32, 16, 128, n, 1, 3)`), us per call at 64 / 256 / 512 /
+1024 / 2048 / 4096 tokens: sequential 69 / 233 / 449 / 925 / 1902 / 3949; chunked with
+upstream's HIP schedule (`slice64`, two blocks per head) 95 / 337 / 665 / 1371 / 2755 /
+5468, +48 %; with the CUDA schedule (`slice32`, one or two blocks per SM, same numbers
+either way) 89 / 304 / 600 / 1222 / 2426 / 4861, +33 %. Slower at every size, so no
+threshold saves it. The HIP arm of the kernel reads every operand element out of shared
+memory with a scalar load and a float round trip (the CUDA arm uses `ldmatrix`) and issues
+three WMMA per k-step for the bf16 hi/lo split; making it fast on RDNA4 is kernel work,
+the fork's 1015-line gfx12 file. The RTX 4070 SUPER runs the same cases on the chunked
+kernel at 33 / 115 / 225 / 492 / 966 / 1917. The prize was bounded anyway: 36 layers x
+449 us per 512-token ubatch is 32 us per token, 1.3 % of Flash-Next's 2.4 ms prefill step
+at 43.7k, and 36 x 925 us per 1024 tokens is 3.5 % of the 27B's 0.9 ms. Reverted; the tree
+is v0.7.0 + 0001-0004 again. Revisit only if upstream ships an RDNA4 arm of its own
+(check `gated-delta-net-mma.cu` at every tag bump).
+
+**KV-split width determinism (`upstream/UPSTREAM-PR-fa-kv-split-width.patch`): measured and
+not applicable (Linux, 2026-10-21; was priority 1).** The patch pins the KV split of
+`launch_fattn`'s non-stream-k branch for `Q->ne[1] <= 8`, so a verify batch reduces the KV
+like plain decode. That branch is the tile and vec kernels, which no decode path of ours
+takes: the R9700 runs the band of 0003 (one fixed grid for 1 to 4 queries, width-pure by
+construction, `docs\qwen3.8_27b.md` section 2) and the RTX 4070 SUPER runs the stream-k MMA
+kernel, where `switch_ncols1` picks a different kernel instance per verify width (1, 4 or 8
+query columns, each with its own KV batch and rounding order). Measured on the installed
+v0.7.0 + 0001-0004, band on, Coder390 preset as configured (`CUDA0,ROCm0`, 16 layers on the
+4070), 43.7k-token prompt, temperature 0, seed 42, 300 tokens: `spec-draft-n-max` 2, 4 and
+no drafter give three different texts (first flips at token ~120 and ~250), each run
+byte-identical when repeated, so the dependence is deterministic and sits in the paths the
+patch leaves alone. Width purity on this placement would need the MMA kernel pinned to one
+`ncols1` for every small width (what the band does on RDNA4: a kernel change, not this
+patch), or every layer on the R9700. Not added; it still applies clean to v0.7.0 should a
+preset ever run the tile kernel at decode (band off).
+
 ## Priorities
 
-1. **Chunked GDN prefill on RDNA4 (27B and Flash-Next prefill).** Block 02's gfx12 bf16
-   WMMA kernel measured +7.5 to +7.9 % prefill at pp512 to pp4096 on gfx1201 for the 27B
-   Q8_0 against the sequential path we still run. Two routes: (a) port upstream's own
-   `gated-delta-net-mma.cu` to RDNA4 (add the gfx12 bf16 tile and `mma` to `mma.cuh`, open
-   the arch gate; smaller, stays close to upstream, which may do it itself: check every tag
-   bump), or (b) re-cut block 02 (198 KB, also touches `llama-memory-recurrent` and the
-   state snapshots: avoid unless (a) fails). Before either, size the prize: `test-backend-ops
-   perf -o GATED_DELTA_NET` at `n_tokens 1024` on ROCm1, times 36 layers, against the
-   ~0.9 ms per token prefill step at 43.7k.
-2. **KV-split width determinism** (`upstream/UPSTREAM-PR-fa-kv-split-width.patch`, +9/-1
-   in `fattn-common.cuh`): the MMA kernel's stream-k split no longer changes with the query
-   width at `Q->ne[1] <= 8`, so a greedy verify batch reproduces plain decode. Applies clean
-   on v0.7.0 (`git apply --check`), numerics only, no measurable cost. The 27B is already
-   width-pure on the R9700 through 0003's band; this covers the other paths, the 4070's
-   layers included. Add it as `0005` the next time the pipeline is touched, with the
-   README entry and the greedy-purity check of 0003 as its test.
-3. **Adaptive MTP depth** (block 01, `draft-mtp-adaptive`, 84 KB, host side, built on
-   upstream PR #27210): a decode lever for Coder390, where the guide records acceptance
-   moving between 0.49 and 0.65 across tasks and decode with it by 20-30 %. Their figure:
-   +13.6 % overall on the 27B Q8_0 with `ngram-mod` combined. Not in v0.7.0; portable in
-   principle (no kernel code). Measure with the sweep at 43.7k and 115k, both temperatures.
+Nothing left to port from the list of 2026-10-21: the two kernel items were measured out
+(above) and the host-side one is parked (below).
+
+## Parked (not now, by decision)
+
+- **Adaptive MTP depth** (block 01, `draft-mtp-adaptive`, 84 KB, host side, built on
+  upstream PR #27210): a decode lever for Coder390, where the guide records acceptance
+  moving between 0.49 and 0.65 across tasks and decode with it by 20-30 %. Their figure:
+  +13.6 % overall on the 27B Q8_0 with `ngram-mod` combined. Not in v0.7.0; portable in
+  principle (no kernel code). Parked on 2026-10-21 as too invasive for its expected gain
+  (84 KB of speculative-decoding plumbing to re-cut at every tag bump); revisit if upstream
+  merges #27210 or something like it, when the measurement becomes a sweep at 43.7k and
+  115k, both temperatures, rather than a port.
 
 ## Watch items (no action unless the symptom appears)
 
@@ -117,8 +150,3 @@ it needs a bf16 16x16x16 WMMA tile for gfx12 in `mma.cuh` and the matching loads
 - A pinned staging buffer in `ggml_backend_tensor_copy`'s slow path (the cross-card hops
   still staged through `malloc`: 2.5 s per 43.7k prefill with the R9700 second).
 - The Swift preset's device order on Windows.
-- **Flash-Next prefill on Windows: 36 % behind Linux** (250-262 against 416-419 t/s at
-  43.7k, decode 20.4 against 25.0; `docs\qwen3.8_flash_next.md` section 10). The 27B, all
-  on the GPUs, loses 5 %; this model has 16 layers of experts on the CPU, so the gap is the
-  CPU side. In order: `--threads-batch 24`, `--poll 0`, `--cpu-strict 1`, `--prio-batch 2`,
-  `op-offload true`. The Windows preset of this model was never tuned.

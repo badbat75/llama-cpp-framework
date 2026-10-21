@@ -555,6 +555,29 @@ pub fn add_gpus(conn: &Connection, run: i64, devices: &[(String, String)]) -> ru
     Ok(())
 }
 
+/// One `run_device` row: a backend's memory after the load (`record::buffer_sizes`)
+/// and its free memory after the first prefill (the device probe).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct DeviceMemory {
+    /// The backend name the log uses: ROCm0, CUDA0, CPU, CPU_Mapped, ROCm_Host...
+    pub device: String,
+    pub free_mib: Option<i64>,
+    pub model_mib: Option<f64>,
+    pub kv_mib: Option<f64>,
+    pub compute_mib: Option<f64>,
+}
+
+pub fn add_devices(conn: &Connection, run: i64, devices: &[DeviceMemory]) -> rusqlite::Result<()> {
+    for d in devices {
+        conn.execute(
+            "INSERT OR IGNORE INTO run_device (run_id, device, free_mib, model_mib, kv_mib, compute_mib) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![run, d.device, d.free_mib, d.model_mib, d.kv_mib, d.compute_mib],
+        )?;
+    }
+    Ok(())
+}
+
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Sample {
     pub prompt: Option<i64>,
