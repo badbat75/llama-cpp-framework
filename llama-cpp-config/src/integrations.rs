@@ -43,12 +43,14 @@ const PROVIDER_NAME: &str = "llama-server (local)";
 /// other case.
 const CTX_FALLBACK: i64 = 131_072;
 
-/// Share of a model's context kept free for the client's auto-compaction: the
-/// summary the client asks for, and the turn that tripped it, have to fit in what
-/// is left. Both harnesses reserve a fixed amount on their own (opencode 20k
-/// tokens, `OPENCODE_COMPACTION_BUFFER`), which on a 172k or 262k context is too
-/// little, so both are told to compact at `compact_at` instead.
-const COMPACT_RESERVE_PCT: i64 = 25;
+/// Context kept free for the client's auto-compaction, as a share of the context
+/// plus a fixed amount: the summary the client asks for, and the turn that tripped
+/// it, have to fit in what is left. opencode reserves a fixed 20k tokens on its own
+/// (`OPENCODE_COMPACTION_BUFFER`, 7.6% of 262k), and Claude Code assumes a 200k
+/// window for an id it does not know, so both are told to compact at `compact_at`,
+/// or at opencode's own point when that comes earlier.
+const COMPACT_RESERVE_PCT: i64 = 15;
+const COMPACT_RESERVE_TOKENS: i64 = 10_000;
 
 /// opencode's own compaction reserve: it compacts at `limit.input - reserved`,
 /// with `reserved = compaction.reserved ?? min(20000, limit.output)`
@@ -174,28 +176,28 @@ pub fn detect_opencode_provider() -> bool {
 /// Claude Code does not know a preset id, so it assumes a 200k window and compacts
 /// there: `CLAUDE_CODE_MAX_CONTEXT_TOKENS` gives it the real one (it applies on its
 /// own to an unrecognized id that does not start with `claude-`), and
-/// `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` moves the compaction to `COMPACT_RESERVE_PCT`
-/// short of it (it can only lower the default threshold, never raise it).
+/// `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` moves the compaction to `compact_at` (it takes a
+/// percentage, so it follows the example's context like the window does, and it
+/// can only lower the default threshold, never raise it).
 pub fn claude_code_env_script(
     base_url: &str,
     api_key: Option<&str>,
     example: Option<(&str, i64)>,
 ) -> String {
-    let (example_id, example_ctx) = match example {
-        Some((id, ctx)) => (id, ctx.to_string()),
-        None => ("<preset-id>", "<context>".to_string()),
+    let (example_id, example_ctx, example_pct) = match example {
+        Some((id, ctx)) => (id, ctx.to_string(), compact_pct(ctx).to_string()),
+        None => ("<preset-id>", "<context>".to_string(), "<percent>".to_string()),
     };
     let api_key_val = api_key.unwrap_or("not-needed");
-    let compact_pct = 100 - COMPACT_RESERVE_PCT;
     format!(
         "# Run this in PowerShell before launching Claude Code to use your local llama-server.\r\n\
          $env:ANTHROPIC_BASE_URL = \"{base_url}\"\r\n\
          $env:ANTHROPIC_API_KEY = \"{api_key_val}\"\r\n\
-         # Compact at {compact_pct}% of the context, leaving room for the summary.\r\n\
-         $env:CLAUDE_AUTOCOMPACT_PCT_OVERRIDE = \"{compact_pct}\"\r\n\
-         # Pick a preset id from your presets.ini as the model name, with its context, e.g.:\r\n\
+         # Pick a preset id from your presets.ini as the model name, with its context and\r\n\
+         # where to compact ({COMPACT_RESERVE_PCT}% + {COMPACT_RESERVE_TOKENS} tokens short of it), e.g.:\r\n\
          # $env:ANTHROPIC_DEFAULT_SONNET_MODEL = \"{example_id}\"\r\n\
          # $env:CLAUDE_CODE_MAX_CONTEXT_TOKENS = \"{example_ctx}\"\r\n\
+         # $env:CLAUDE_AUTOCOMPACT_PCT_OVERRIDE = \"{example_pct}\"\r\n\
          # Then launch: claude\r\n",
     )
 }
@@ -290,7 +292,7 @@ fn preset_to_opencode_model(p: &presets::Preset, n_ctx_train: Option<u32>) -> Va
     let context = effective_ctx(p, n_ctx_train);
     let output = std::cmp::max(context / 4, 32000);
     // opencode compacts at `input` minus its own buffer, so `input` is set to put
-    // that point at `compact_at`. Never above `context`: under ~80k tokens the
+    // that point at `compact_at`. Never above `context`: under ~67k tokens the
     // buffer alone already exceeds the reserve.
     let input = std::cmp::min(context, compact_at(context) + OPENCODE_COMPACTION_BUFFER);
     entry["limit"] = json!({
@@ -303,9 +305,18 @@ fn preset_to_opencode_model(p: &presets::Preset, n_ctx_train: Option<u32>) -> Va
 }
 
 /// Where a client should compact a conversation in a `context`-token window:
-/// `COMPACT_RESERVE_PCT` short of it.
+/// `COMPACT_RESERVE_PCT` percent plus `COMPACT_RESERVE_TOKENS` short of it.
 fn compact_at(context: i64) -> i64 {
-    context * (100 - COMPACT_RESERVE_PCT) / 100
+    std::cmp::max(0, context * (100 - COMPACT_RESERVE_PCT) / 100 - COMPACT_RESERVE_TOKENS)
+}
+
+/// `compact_at` as the percentage Claude Code takes, rounded down so it never
+/// compacts later than that; at least 1, the variable's floor.
+fn compact_pct(context: i64) -> i64 {
+    if context <= 0 {
+        return 1;
+    }
+    std::cmp::max(1, compact_at(context) * 100 / context)
 }
 
 /// The model's TRAINED context: the only source for what a preset that names no
@@ -513,17 +524,18 @@ mod tests {
         let e = preset_to_opencode_model(&p, None);
         assert_eq!(e["limit"]["context"], 131_072);
         assert_eq!(e["limit"]["output"], 32_768);
-        // …and opencode compacts at `input` minus its 20k buffer, i.e. at 75%.
-        assert_eq!(e["limit"]["input"], 98_304 + 20_000);
+        // …and opencode compacts at `input` minus its 20k buffer, i.e. 15% + 10k short.
+        assert_eq!(e["limit"]["input"], 101_411 + 20_000);
         p.ctx_size = Some(262_144);
         let e = preset_to_opencode_model(&p, None);
-        assert_eq!(e["limit"]["input"], 196_608 + 20_000);
+        assert_eq!(e["limit"]["input"], 212_822 + 20_000);
+        assert_eq!(compact_pct(262_144), 81);
         // …with a 32k floor, so a small context still advertises a usable reply.
         p.ctx_size = Some(8192);
         let e = preset_to_opencode_model(&p, None);
         assert_eq!(e["limit"]["context"], 8192);
         assert_eq!(e["limit"]["output"], 32_000);
-        // Below ~80k the buffer alone exceeds the reserve: `input` stays `context`.
+        // Under ~67k the buffer alone exceeds the reserve: `input` stays `context`.
         assert_eq!(e["limit"]["input"], 8192);
     }
 
