@@ -43,6 +43,19 @@ const PROVIDER_NAME: &str = "llama-server (local)";
 /// other case.
 const CTX_FALLBACK: i64 = 131_072;
 
+/// Share of a model's context kept free for the client's auto-compaction: the
+/// summary the client asks for, and the turn that tripped it, have to fit in what
+/// is left. Both harnesses reserve a fixed amount on their own (opencode 20k
+/// tokens, `OPENCODE_COMPACTION_BUFFER`), which on a 172k or 262k context is too
+/// little, so both are told to compact at `compact_at` instead.
+const COMPACT_RESERVE_PCT: i64 = 25;
+
+/// opencode's own compaction reserve: it compacts at `limit.input - reserved`,
+/// with `reserved = compaction.reserved ?? min(20000, limit.output)`
+/// (`packages/opencode/src/session/overflow.ts`, `COMPACTION_BUFFER`), and
+/// `limit.output` is never under 32000 here, so the 20000 is what it subtracts.
+const OPENCODE_COMPACTION_BUFFER: i64 = 20_000;
+
 // ── opencode.json ──────────────────────────────────────────────────────
 
 /// Returns the preset IDs currently registered as models in opencode.json.
@@ -81,14 +94,7 @@ pub fn save_opencode_models(base_url: &str, api_key: Option<&str>) -> Result<()>
     models.clear();
 
     for p in presets::load_all() {
-        // The model's TRAINED context: the only source for what a preset that
-        // names no `ctx-size` will actually load (see `effective_ctx`). A header
-        // read, so it costs nothing next to the file it describes; `None` when
-        // the GGUF (or ggml-base.dll) can't be read, and then the fallback bites.
-        let trained = gguf::read_model_info(Path::new(&p.model))
-            .map(|i| i.n_ctx_train)
-            .filter(|c| *c > 0);
-        let entry = preset_to_opencode_model(&p, trained);
+        let entry = preset_to_opencode_model(&p, trained_ctx(&p));
         models.insert(p.id.clone(), entry);
     }
 
@@ -159,23 +165,37 @@ pub fn detect_opencode_provider() -> bool {
 // ── Claude Code ────────────────────────────────────────────────────────
 
 /// Generates a PowerShell snippet that sets the env vars needed for
-/// Claude Code to use llama-server as a custom model provider. `example_id` is
-/// a preset id to show in the commented model line (the caller already holds
-/// the loaded presets; this stays a pure string builder, no hidden disk IO).
+/// Claude Code to use llama-server as a custom model provider. `example` is
+/// a preset id to show in the commented model line, with its advertised context
+/// (`advertised_ctx`; the caller already holds the loaded presets, so this stays
+/// a pure string builder, no hidden disk IO).
 /// `api_key` is the optional API key for proxy/gateway authentication.
+///
+/// Claude Code does not know a preset id, so it assumes a 200k window and compacts
+/// there: `CLAUDE_CODE_MAX_CONTEXT_TOKENS` gives it the real one (it applies on its
+/// own to an unrecognized id that does not start with `claude-`), and
+/// `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` moves the compaction to `COMPACT_RESERVE_PCT`
+/// short of it (it can only lower the default threshold, never raise it).
 pub fn claude_code_env_script(
     base_url: &str,
     api_key: Option<&str>,
-    example_id: Option<&str>,
+    example: Option<(&str, i64)>,
 ) -> String {
-    let example = example_id.unwrap_or("<preset-id>");
+    let (example_id, example_ctx) = match example {
+        Some((id, ctx)) => (id, ctx.to_string()),
+        None => ("<preset-id>", "<context>".to_string()),
+    };
     let api_key_val = api_key.unwrap_or("not-needed");
+    let compact_pct = 100 - COMPACT_RESERVE_PCT;
     format!(
         "# Run this in PowerShell before launching Claude Code to use your local llama-server.\r\n\
          $env:ANTHROPIC_BASE_URL = \"{base_url}\"\r\n\
          $env:ANTHROPIC_API_KEY = \"{api_key_val}\"\r\n\
-         # Pick a preset id from your presets.ini as the model name, e.g.:\r\n\
-         # $env:ANTHROPIC_DEFAULT_SONNET_MODEL = \"{example}\"\r\n\
+         # Compact at {compact_pct}% of the context, leaving room for the summary.\r\n\
+         $env:CLAUDE_AUTOCOMPACT_PCT_OVERRIDE = \"{compact_pct}\"\r\n\
+         # Pick a preset id from your presets.ini as the model name, with its context, e.g.:\r\n\
+         # $env:ANTHROPIC_DEFAULT_SONNET_MODEL = \"{example_id}\"\r\n\
+         # $env:CLAUDE_CODE_MAX_CONTEXT_TOKENS = \"{example_ctx}\"\r\n\
          # Then launch: claude\r\n",
     )
 }
@@ -269,13 +289,39 @@ fn preset_to_opencode_model(p: &presets::Preset, n_ctx_train: Option<u32>) -> Va
 
     let context = effective_ctx(p, n_ctx_train);
     let output = std::cmp::max(context / 4, 32000);
+    // opencode compacts at `input` minus its own buffer, so `input` is set to put
+    // that point at `compact_at`. Never above `context`: under ~80k tokens the
+    // buffer alone already exceeds the reserve.
+    let input = std::cmp::min(context, compact_at(context) + OPENCODE_COMPACTION_BUFFER);
     entry["limit"] = json!({
         "context": context,
-        "input": context,
+        "input": input,
         "output": output,
     });
 
     entry
+}
+
+/// Where a client should compact a conversation in a `context`-token window:
+/// `COMPACT_RESERVE_PCT` short of it.
+fn compact_at(context: i64) -> i64 {
+    context * (100 - COMPACT_RESERVE_PCT) / 100
+}
+
+/// The model's TRAINED context: the only source for what a preset that names no
+/// `ctx-size` will actually load (see `effective_ctx`). A header read, so it costs
+/// nothing next to the file it describes; `None` when the GGUF (or ggml-base.dll)
+/// can't be read, and then the fallback bites.
+fn trained_ctx(p: &presets::Preset) -> Option<u32> {
+    gguf::read_model_info(Path::new(&p.model))
+        .map(|i| i.n_ctx_train)
+        .filter(|c| *c > 0)
+}
+
+/// The context one request to `p` may use, as opencode's `limit.context` and
+/// Claude Code's `CLAUDE_CODE_MAX_CONTEXT_TOKENS` advertise it.
+pub fn advertised_ctx(p: &presets::Preset) -> i64 {
+    effective_ctx(p, trained_ctx(p))
 }
 
 /// The context ONE request may actually use, which is what an opencode model
@@ -466,13 +512,19 @@ mod tests {
         p.ctx_size = Some(131_072);
         let e = preset_to_opencode_model(&p, None);
         assert_eq!(e["limit"]["context"], 131_072);
-        assert_eq!(e["limit"]["input"], 131_072);
         assert_eq!(e["limit"]["output"], 32_768);
+        // …and opencode compacts at `input` minus its 20k buffer, i.e. at 75%.
+        assert_eq!(e["limit"]["input"], 98_304 + 20_000);
+        p.ctx_size = Some(262_144);
+        let e = preset_to_opencode_model(&p, None);
+        assert_eq!(e["limit"]["input"], 196_608 + 20_000);
         // …with a 32k floor, so a small context still advertises a usable reply.
         p.ctx_size = Some(8192);
         let e = preset_to_opencode_model(&p, None);
         assert_eq!(e["limit"]["context"], 8192);
         assert_eq!(e["limit"]["output"], 32_000);
+        // Below ~80k the buffer alone exceeds the reserve: `input` stays `context`.
+        assert_eq!(e["limit"]["input"], 8192);
     }
 
     /// The advertised context is what ONE request may use, and llama.cpp derives

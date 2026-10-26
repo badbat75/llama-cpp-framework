@@ -1710,7 +1710,9 @@ fn refresh_integrations(app: &AppWindow) {
     let api_key = cfg.opencode_api_key.as_deref();
 
     let enabled = presets::load_all();
-    let example = enabled.first().map(|p| p.id.as_str());
+    let example = enabled
+        .first()
+        .map(|p| (p.id.as_str(), integrations::advertised_ctx(p)));
     let claude_env = integrations::claude_code_env_script(&base_url, api_key, example);
     s.set_integration_claude_env(SharedString::from(claude_env));
 

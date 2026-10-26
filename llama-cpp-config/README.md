@@ -357,7 +357,7 @@ Two sections: **OpenCode** (status line + buttons) and **Claude Code** (env-vari
 
 The status line says which of three states the file is in: no provider yet, in step with the enabled presets, or **out of step**, in which case it names the ids on each side (`enabled but not listed`, `listed but not enabled`). That last state is what a hand-edit or a failed write leaves behind; a refresh (F5) only reports it, and Save repairs it.
 
-The **Claude Code** snippet includes the API key from server.ini when set (otherwise `not-needed`).
+The **Claude Code** snippet includes the API key from server.ini when set (otherwise `not-needed`), and the compaction variables described below.
 
 The one field that is not a straight copy is each model's **`limit.context`**, and it is not the preset's `ctx-size`. opencode fills a prompt up to whatever ceiling it is handed, so the number has to be the context **one request** can actually use, which llama.cpp derives from three things at once (`integrations::effective_ctx`):
 
@@ -366,6 +366,8 @@ The one field that is not a straight copy is each model's **`limit.context`**, a
 3. **…unless `parallel` is omitted.** llama-server defaults it to `-1` = auto, and auto picks 4 slots **and a unified KV cache** (`tools/server/server.cpp`), under which every slot sees the whole context.
 
 A flat number would be right for one model at one `parallel` and wrong everywhere else. Note the trap in the "obvious" fix: publishing the trained context while a preset pins `parallel` would promise a context llama-server rejects. **Leaving `parallel` at `default` is what buys a model its full trained context per request**; pinning it is what quietly divides it.
+
+**Both clients are told to compact at 75% of that context** (`COMPACT_RESERVE_PCT`), so the summary and the turn that triggered it fit in what is left. On their own both reserve too little: opencode compacts at `limit.input` minus a fixed 20k buffer (`packages/opencode/src/session/overflow.ts`), 7.6% of a 262k context, and Claude Code assumes a 200k window for a model id it does not know. So each opencode model's **`limit.input`** is `0.75 × context + 20000` (never above `limit.context`; under ~80k the buffer alone already exceeds the reserve), and the Claude Code snippet sets `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE = 75` plus, beside the example model line, `CLAUDE_CODE_MAX_CONTEXT_TOKENS` with that preset's context.
 
 ## Config files
 
