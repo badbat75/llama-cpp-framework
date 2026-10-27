@@ -1,6 +1,6 @@
 ﻿# Install & update the llama.cpp build toolchain in one shot.
 #
-# winget packages (PowerShell 7+, OpenSSL, NSIS) are installed if missing and
+# winget packages (PowerShell 7+, OpenSSL, the .NET SDK) are installed if missing and
 # upgraded if present, in a single self-elevated session (which also symlinks
 # OpenSSL's lib\VC\x64\MD\*.lib up to lib\ so cmake's find_package(OpenSSL)
 # resolves). OpenSSL is treated as a system library and stays where winget
@@ -24,6 +24,12 @@
 # sccache comes straight from its GitHub releases (user scope, no elevation)
 # rather than winget, whose manifest lags upstream by days; a winget copy left
 # by an earlier setup is uninstalled once the release copy is in place.
+#
+# The WiX Toolset that builds the MSI (03-package.ps1) is a .NET global tool,
+# PINNED to the version in installer\wix-toolset.psd1 (user scope, no
+# elevation), with the extensions the .wxs uses. WiX v7 needs its EULA accepted
+# once per user (`wix eula accept wix7`): this script never does that on the
+# user's behalf, it reports it.
 #
 # When build\windows\config-build.psd1 + llama.cpp clone exist, also fetches the
 # source and flags a rebuild when a newer release tag (vX.Y.Z) is available. (No `git
@@ -85,10 +91,13 @@ function Get-GitDescribe {
 
 # ── Tracked packages and SDKs ───────────────────────────────────────
 
+# The WiX pin (version, extensions, EULA id) and the .NET SDK that hosts it.
+$wixPin = Import-PowerShellDataFile (Join-Path $PSScriptRoot 'installer\wix-toolset.psd1')
+
 $wingetPackages = @(
     @{ Id = 'Microsoft.PowerShell'    ; Name = 'PowerShell 7+' }
     @{ Id = 'ShiningLight.OpenSSL.Dev'; Name = 'OpenSSL' }
-    @{ Id = 'NSIS.NSIS'              ; Name = 'NSIS' }
+    @{ Id = $wixPin.DotNetSdkWingetId ; Name = '.NET SDK' }
 )
 
 $sources = Import-PowerShellDataFile (Join-Path $PSScriptRoot 'installer\dist-sources.psd1')
@@ -409,6 +418,66 @@ public static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint msg, UIntPtr wP
     return $true
 }
 
+# ── WiX Toolset (dotnet global tool) ────────────────────────────────
+# The tool lands in %USERPROFILE%\.dotnet\tools, which the .NET SDK puts on the
+# user PATH at its first run; a console opened before the SDK install has
+# neither on PATH, hence the fixed fallbacks.
+$wixExe = Join-Path $env:USERPROFILE '.dotnet\tools\wix.exe'
+
+function Get-DotnetExe {
+    $cmd = Get-Command dotnet -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty Source
+    if ($cmd) { return $cmd }
+    $fixed = Join-Path $env:ProgramFiles 'dotnet\dotnet.exe'
+    if (Test-Path $fixed) { return $fixed }
+    return $null
+}
+
+# "7.0.1+b3f3403" -> "7.0.1"; $null when the tool is missing or unreadable.
+function Get-WixVersion {
+    if (-not (Test-Path $wixExe)) { return $null }
+    $ErrorActionPreference = 'Continue'   # PS 5.1 + redirected stderr: see Get-WingetVersion
+    $out = & $wixExe --version 2>$null | Out-String
+    if ($out -match '(\d+\.\d+\.\d+)') { return $Matches[1] }
+    return $null
+}
+
+# Install or move the tool to the pinned version, then add the extensions the
+# .wxs uses. Returns $null when WiX is ready to build, else what is missing
+# (the report prints it). Never accepts the EULA.
+function Install-Wix {
+    $ErrorActionPreference = 'Continue'
+    $dotnet = Get-DotnetExe
+    if (-not $dotnet) { return '.NET SDK not found (winget leg failed?); re-run this script' }
+    $current = Get-WixVersion
+    if ($current -ne $wixPin.Version) {
+        Write-Host "  installing WiX $($wixPin.Version) (dotnet global tool)" -ForegroundColor Cyan
+        if ($current) {
+            # --allow-downgrade: the pin is the version, newer is not better here.
+            & $dotnet tool update --global wix --version $wixPin.Version --allow-downgrade 2>&1 | Out-Host
+        } else {
+            & $dotnet tool install --global wix --version $wixPin.Version 2>&1 | Out-Host
+        }
+        if ($LASTEXITCODE -ne 0) { return "dotnet tool install wix $($wixPin.Version) failed (exit $LASTEXITCODE)" }
+    }
+    $toolsDir = Split-Path $wixExe
+    if (@($env:PATH -split ';') -notcontains $toolsDir) { $env:PATH = "$toolsDir;$env:PATH" }
+    # Any command but --version doubles as the EULA check (WIX7015 until accepted).
+    $list = & $wixExe extension list -g 2>&1 | Out-String
+    if ($LASTEXITCODE -ne 0) {
+        if ($list -match 'WIX7015') {
+            return "EULA not accepted: read https://opensourcemaintenancefee.org, then run: wix eula accept $($wixPin.EulaId) (and re-run this script for the extensions)"
+        }
+        return "wix extension list failed: $($list.Trim())"
+    }
+    foreach ($ext in $wixPin.Extensions) {
+        if ($list -match "(?m)^$([regex]::Escape($ext)) $([regex]::Escape($wixPin.Version))\b") { continue }
+        Write-Host "  adding WiX extension $ext/$($wixPin.Version)" -ForegroundColor Cyan
+        & $wixExe extension add -g "$ext/$($wixPin.Version)" 2>&1 | Out-Host
+        if ($LASTEXITCODE -ne 0) { return "wix extension add $ext/$($wixPin.Version) failed (exit $LASTEXITCODE)" }
+    }
+    return $null
+}
+
 # ── Banner ──────────────────────────────────────────────────────────
 
 Write-Host ""
@@ -439,6 +508,8 @@ if (-not $sccacheBefore -and $sccacheOnPath) {
     $sccacheBefore     = Get-SccacheVersion $sccacheOnPath
     $sccacheBeforeFrom = if ($sccacheWinget) { 'winget' } else { Split-Path $sccacheOnPath }
 }
+
+$wixBefore = Get-WixVersion
 
 $beforeLlama = if ($cfg) { Get-GitDescribe $cfg.LlamaCppDir } else { $null }
 
@@ -502,6 +573,8 @@ foreach ($p in $wingetPackages) {
 }
 if ($sccacheBefore) { Write-Host "  [OK] sccache $sccacheBefore ($sccacheBeforeFrom)" -ForegroundColor Green }
 else                { Write-Host "  [..] sccache not installed" -ForegroundColor Yellow }
+if ($wixBefore) { Write-Host "  [OK] WiX Toolset $wixBefore" -ForegroundColor Green }
+else            { Write-Host "  [..] WiX Toolset not installed" -ForegroundColor Yellow }
 if ($rocmBefore) {
     Write-Host "  [OK] ROCm (TheRock) $rocmBefore ($rocmBeforeDir)" -ForegroundColor Green
     $others = @($rocmOnDisk.Keys | Where-Object { $rocmOnDisk[$_] -ne $rocmBeforeDir })
@@ -945,6 +1018,14 @@ if (Get-SccacheVersion $sccacheExe) {
     }
 }
 
+# ── WiX Toolset: install / pin / extensions ─────────────────────────
+# User scope like sccache, after the elevated batch (which installs the .NET
+# SDK the tool runs on).
+
+Write-Host ""
+Write-Host "Checking the WiX Toolset ($($wixPin.Version))..." -ForegroundColor Cyan
+$wixIssue = Install-Wix
+
 # ── Check llama.cpp source for a newer release tag ──────────────────
 # The clone sits on a detached HEAD (02-build.ps1 pins it to a vX.Y.Z release
 # tag), so no pull here, just fetch and compare against the newest RELEASE tag
@@ -1057,6 +1138,21 @@ if ($sccacheWingetRemoved) {
     Write-ReportRow "    " DarkGray "" "winget copy removed; consoles opened earlier still have its PATH entry"
 }
 
+$wixAfter = Get-WixVersion
+if (-not $wixAfter) {
+    Write-ReportRow "[!!]" Red "WiX Toolset" "not installed"
+} elseif ($wixIssue) {
+    Write-ReportRow "[..]" Yellow "WiX Toolset" $wixAfter
+} elseif ($wixBefore -ne $wixAfter) {
+    $from = if ($wixBefore) { "$wixBefore -> " } else { 'installed ' }
+    Write-ReportRow "[++]" Green "WiX Toolset" "$from$wixAfter (+ $($wixPin.Extensions -join ', '))"
+} else {
+    Write-ReportRow "[OK]" DarkGray "WiX Toolset" "$wixAfter (+ $($wixPin.Extensions -join ', '))"
+}
+if ($wixIssue) {
+    Write-ReportRow "    " Yellow "" $wixIssue
+}
+
 # HipPath is what build\windows\config-build.psd1 pins (compiler path included), so
 # the "re-run 01-configure" verdict follows the DIRECTORY, not the version:
 # moving into the layout changes HIP_PATH without changing a digit.
@@ -1165,8 +1261,9 @@ foreach ($scope in 'Machine', 'User') {
 # amdhip64_7.dll for any other exe (its own dir, then the driver's System32
 # copy, both precede PATH). It does not follow a HIP_PATH move and does not
 # have to: it changes with the next installer.
-# Doubled separators collapsed for comparison only: the installer writes its
-# PATH entry as ...\llama.cpp\\bin.
+# Doubled separators collapsed and a trailing one dropped, for comparison only:
+# the MSI writes its PATH entry as ...\llama.cpp\bin\, and a hand-edited entry
+# may differ in either.
 function Get-NormalizedDir([string]$Dir) { ($Dir -replace '(?<!^)\\{2,}', '\').TrimEnd('\') }
 $fwBin = $null
 $fwDir = (Get-ItemProperty 'HKLM:\Software\llama.cpp' -ErrorAction SilentlyContinue).InstallDir

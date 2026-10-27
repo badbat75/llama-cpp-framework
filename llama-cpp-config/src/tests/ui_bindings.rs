@@ -409,6 +409,42 @@ fn editable_widgets_track_model_after_edit() {
         "true",
     );
 
+    // Web UI off greys the MCP proxy checkbox out WITHOUT clearing it (the
+    // crate's "disabled, not cleared" rule): the value must come back intact
+    // when the UI is switched on again. The "Web UI" checkbox itself is the
+    // same CheckBox kind as the case above, so it needs no reload case.
+    let proxy = by_label(&app, "serve the web UI's MCP proxy endpoint");
+    set_server_form(&st, |f| {
+        f.webui = true;
+        f.webui_mcp_proxy = true;
+    });
+    assert_eq!(proxy.accessible_enabled(), Some(true), "UI on: proxy editable");
+    set_server_form(&st, |f| f.webui = false);
+    assert_eq!(proxy.accessible_enabled(), Some(false), "UI off: proxy greyed out");
+    assert_eq!(proxy.accessible_checked(), Some(true), "UI off: proxy value kept");
+    assert!(st.get_server_form().webui_mcp_proxy);
+    set_server_form(&st, |f| f.webui = true);
+    assert_eq!(proxy.accessible_enabled(), Some(true));
+
+    // The rail's Open chat UI follows the RUNNING server's UI switch, never
+    // the unsaved form: with the GUI's own launch pinned (launched_url set),
+    // `launched_ui` decides; the label names the reason when it is off.
+    st.set_server_running(true);
+    st.set_launched_url("http://localhost:9931".into());
+    st.set_launched_ui(false);
+    st.set_chat_ui_saved(true);
+    assert!(!st.get_chat_ui_enabled() && !st.get_can_open_chat());
+    assert_eq!(by_label(&app, "Web UI off").accessible_enabled(), Some(false));
+    st.set_launched_ui(true);
+    assert!(st.get_can_open_chat());
+    assert_eq!(by_label(&app, "Open chat UI").accessible_enabled(), Some(true));
+    // A server the GUI did not launch: the saved server.ini decides.
+    st.set_launched_url("".into());
+    st.set_chat_ui_saved(false);
+    assert!(!st.get_can_open_chat());
+    st.set_chat_ui_saved(true);
+    st.set_server_running(false);
+
     // Slider: the thumb inside the CPU-threads AutoSlider. The std Slider
     // self-assigns `value` on every user set (drag, keys, this accessibility
     // set-value), which killed the component's old one-way `value:` binding,
@@ -483,6 +519,10 @@ fn editable_widgets_track_model_after_edit() {
 
     // ── View-logs window (src/gui/log_window.rs) ─────────────────────────
     crate::gui::log_window_e2e();
+
+    // ── Downloads window (src/gui/downloads.rs) ──────────────────────────
+    // Its own root window too; the wiring is driven in save_flow.
+    crate::gui::downloads_window_e2e();
 
     // ── HW Monitor window (src/gui/hw_window.rs) ─────────────────────────
     // Its own root window, on the same backend for the same reason.

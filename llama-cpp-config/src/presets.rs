@@ -84,6 +84,13 @@ pub struct Preset {
     /// verbatim to the end of the line, so a `#` fragment survives; it rides the
     /// section's raw text through enable/disable and rename like any comment.
     pub project_url: String,
+    /// Where the placement keys (`device`, `tensor-split`, `n-cpu-moe`,
+    /// `n-gpu-layers`, `ctx-size`) came from, when a download derived them
+    /// (`hf_fit::placement`): one line saying they are an estimate to tune.
+    /// Empty = no line. A comment like `project_url`
+    /// (`; placement = <text>`, `PLACEMENT_MARKER`), for the same reason;
+    /// the Models tab shows it beside the GPU table and clears it on request.
+    pub placement_note: String,
     pub mmproj: String,
     /// GPU-offload the multimodal projector, the mmproj/CLIP image encoder
     /// (--mmproj-offload / --no-mmproj-offload). None/true = llama.cpp's default
@@ -641,6 +648,7 @@ impl Default for Preset {
             id: String::new(),
             model: String::new(),
             project_url: String::new(),
+            placement_note: String::new(),
             mmproj: String::new(),
             mmproj_offload: Some(true),
             mmproj_device: String::new(),
@@ -733,8 +741,9 @@ impl Preset {
         Self {
             id: id.to_string(),
             model: get("model"),
-            // A comment, not a key: `from_section` fills it.
+            // Comments, not keys: `from_section` fills them.
             project_url: String::new(),
+            placement_note: String::new(),
             mmproj: get("mmproj"),
             mmproj_offload: getb("mmproj-offload"),
             mmproj_device: get("mmproj-device"),
@@ -840,10 +849,11 @@ impl Preset {
     }
 
     /// A preset as a section of the file holds it: the keys plus the
-    /// comment-borne `project_url`.
+    /// comment-borne `project_url` and `placement_note`.
     fn from_section(s: &ini::Section) -> Self {
         Self {
             project_url: project_url_of(&s.comments),
+            placement_note: comment_value(&s.comments, "placement"),
             ..Self::from_keys(&s.id, &s.keys)
         }
     }
@@ -851,15 +861,23 @@ impl Preset {
 
 /// The comment line that carries `Preset::project_url`, up to the value.
 const PROJECT_URL_MARKER: &str = "; url = ";
+/// The comment line that carries `Preset::placement_note`, up to the value.
+const PLACEMENT_MARKER: &str = "; placement = ";
 
 /// The value of the first `url` comment among a section's comments, or empty.
-/// Read leniently (`;` or `#`, any spacing around `=`), so a hand-written line
-/// counts; `url` must be the whole word, so `; urls ...` is prose.
 fn project_url_of(comments: &[String]) -> String {
+    comment_value(comments, "url")
+}
+
+/// The value of the first `<word> = value` comment among a section's
+/// comments, or empty. Read leniently (`;` or `#`, any spacing around `=`),
+/// so a hand-written line counts; `word` must be the whole word, so
+/// `; urls ...` is prose.
+fn comment_value(comments: &[String], word: &str) -> String {
     comments
         .iter()
         .find_map(|c| {
-            let rest = c.strip_prefix([';', '#'])?.trim_start().strip_prefix("url")?;
+            let rest = c.strip_prefix([';', '#'])?.trim_start().strip_prefix(word)?;
             Some(rest.trim_start().strip_prefix('=')?.trim().to_string())
         })
         .unwrap_or_default()
@@ -1053,7 +1071,7 @@ pub fn load_all() -> Vec<Preset> {
     read_presets(&paths::presets_ini())
 }
 
-fn read_presets(path: &Path) -> Vec<Preset> {
+pub(crate) fn read_presets(path: &Path) -> Vec<Preset> {
     ini::read_all(path)
         .into_iter()
         .map(|s| Preset::from_section(&s))
@@ -1243,6 +1261,12 @@ pub(crate) fn validate_for_save(preset: &Preset) -> io::Result<()> {
             "project URL must be a single line",
         ));
     }
+    if preset.placement_note.contains(['\r', '\n']) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "placement note must be a single line",
+        ));
+    }
     validate_fit_target(&preset.fit_target)
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
     crate::tensor_override::validate(&preset.override_tensor)
@@ -1430,6 +1454,10 @@ pub fn render_section(p: &Preset) -> String {
     if !p.project_url.trim().is_empty() {
         out.push_str("; The model's project page: a comment, llama-server has no such key.\r\n");
         out.push_str(&format!("{PROJECT_URL_MARKER}{}\r\n", p.project_url.trim()));
+    }
+    if !p.placement_note.trim().is_empty() {
+        out.push_str("; Where device, tensor-split, n-cpu-moe, n-gpu-layers and ctx-size came from.\r\n");
+        out.push_str(&format!("{PLACEMENT_MARKER}{}\r\n", p.placement_note.trim()));
     }
     out.push_str("; Model: local path (-m).\r\n");
     out.push_str(&format!("model = {}\r\n", p.model.trim()));
@@ -2251,6 +2279,8 @@ mod tests {
             // A `#` fragment and a `;`: a key's value would lose both to the
             // inline-comment rule, a comment line keeps them.
             project_url: "https://huggingface.co/org/repo?a=1;b=2#files".into(),
+            // `;` and `=` inside the note: a comment line keeps both.
+            placement_note: "estimated at download for a 32k context; a = b".into(),
             mmproj: r"E:\mmprojs\clip.gguf".into(),
             mmproj_offload: Some(false),
             mmproj_device: "ROCm1".into(),
@@ -2360,8 +2390,8 @@ mod tests {
         let parsed = Preset::from_section(&sections[0]);
         assert_eq!(parsed, original);
         assert!(
-            !sections[0].keys.keys().any(|k| k.contains("url")),
-            "the project URL must never become a key llama-server would refuse"
+            !sections[0].keys.keys().any(|k| k.contains("url") || k.contains("placement")),
+            "the project URL and the placement note must never become keys llama-server would refuse"
         );
     }
 

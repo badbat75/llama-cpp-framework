@@ -69,6 +69,14 @@ use windows as os;
 
 pub use os::Sampler;
 
+/// Total and available physical memory in bytes, from the same source the
+/// RAM bar reads (`GetPerformanceInfo` / `/proc/meminfo`): one cheap call, no
+/// sampler. `None` when the source fails. The Hugging Face placement estimate
+/// (`hf_fit`) is its other reader.
+pub fn system_ram() -> Option<(u64, u64)> {
+    os::system_ram()
+}
+
 const GIB: f64 = (1u64 << 30) as f64;
 const MIB: f64 = (1u64 << 20) as f64;
 /// Lowest full-scale value of a rate bar, in bytes per second.

@@ -1,11 +1,13 @@
 ﻿#requires -Version 7
-# Package llama.cpp binaries + llama-cpp-config into an NSIS installer
-# Requires: a successful build (02-build.ps1) and NSIS
-# (PowerShell 7 pin: under 5.1 `Set-Content -Encoding UTF8` would BOM the
-# generated .nsi, and the shared scripts assume pwsh semantics throughout.)
+# Package llama.cpp binaries + llama-cpp-config into an MSI (WiX Toolset)
+# Requires: a successful build (02-build.ps1) and the WiX Toolset pinned in
+# installer\wix-toolset.psd1 (00-install-prerequisites.ps1 installs it).
+# (PowerShell 7 pin: the shared scripts assume pwsh semantics throughout.)
 #
 # -KeepStaging leaves build\windows\staging\ in place for inspection.
-param([switch]$KeepStaging)
+# -Wix <path to wix.exe> builds with that WiX instead of the one 01-configure.ps1
+#  recorded (a version other than the pinned one is accepted with a warning).
+param([switch]$KeepStaging, [string]$Wix)
 
 . "$PSScriptRoot\common.ps1"  # loads $cfg, adds ROCm to PATH
 Enable-VsDevShell             # cmake --install needs the VS env
@@ -65,26 +67,41 @@ Write-Host "Framework version: $frameworkVersion" -ForegroundColor Cyan
 Write-Host "llama.cpp release: $llamaBuild" -ForegroundColor Cyan
 Write-Host "Architecture:      $arch" -ForegroundColor Cyan
 
-# ── Ensure NSIS is installed ────────────────────────────────────────
-$nsisExe = $null
-$nsisSearchPaths = @(
-    "${env:ProgramFiles}\NSIS\makensis.exe"
-    "${env:ProgramFiles(x86)}\NSIS\makensis.exe"
-)
-foreach ($p in $nsisSearchPaths) {
-    if (Test-Path $p) { $nsisExe = $p; break }
+# ── Ensure the WiX Toolset is usable ────────────────────────────────
+# Checked BEFORE staging, so a missing tool or an unaccepted EULA costs seconds,
+# not a staging run. Resolution: -Wix, then what 01-configure.ps1 recorded, then
+# the dotnet global tool on PATH or in its default directory.
+$wixPin = Import-PowerShellDataFile (Join-Path $PSScriptRoot 'installer\wix-toolset.psd1')
+$wixExe = @($Wix, $cfg.WixExe, (Get-Command wix -ErrorAction SilentlyContinue).Source,
+            (Join-Path $env:USERPROFILE '.dotnet\tools\wix.exe')) |
+    Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
+if (-not $wixExe) {
+    throw "WiX Toolset not found. Run 00-install-prerequisites.ps1 (it installs WiX $($wixPin.Version) as a dotnet tool), then 01-configure.ps1."
 }
-
-if (-not $nsisExe) {
-    Write-Host "NSIS not found. Installing via winget..." -ForegroundColor Yellow
-    winget install --id NSIS.NSIS --accept-source-agreements --accept-package-agreements
-    if ($LASTEXITCODE -ne 0) { throw "Failed to install NSIS" }
-    foreach ($p in $nsisSearchPaths) {
-        if (Test-Path $p) { $nsisExe = $p; break }
+# `wix --version` prints e.g. 7.0.1+b3f3403: the part before '+' is the version
+# the extensions must match.
+$wixVersion = ((& $wixExe --version) -split '\+')[0].Trim()
+if ($wixVersion -ne $wixPin.Version) {
+    Write-Host "WiX $wixVersion at $wixExe is not the pinned $($wixPin.Version) (installer\wix-toolset.psd1)" -ForegroundColor Yellow
+}
+# Any command but --version doubles as the EULA check (v7+: WIX7015 until
+# `wix eula accept wix7`); the scripts never accept it on the user's behalf.
+$wixExtensions = & $wixExe extension list -g 2>&1
+if ($LASTEXITCODE -ne 0) {
+    if ("$wixExtensions" -match 'WIX7015') {
+        throw ("WiX $wixVersion needs its EULA accepted once per user before it builds anything. " +
+               "Read it (https://opensourcemaintenancefee.org), then run: wix eula accept $($wixPin.EulaId)")
     }
-    if (-not $nsisExe) { throw "NSIS installed but makensis.exe not found. Try restarting the shell." }
+    throw "wix extension list failed: $wixExtensions"
 }
-Write-Host "NSIS: $nsisExe" -ForegroundColor Cyan
+foreach ($ext in $wixPin.Extensions) {
+    if (-not ($wixExtensions | Where-Object { "$_" -match "^$([regex]::Escape($ext)) $([regex]::Escape($wixVersion))\b" })) {
+        Write-Host "Adding WiX extension $ext/$wixVersion..." -ForegroundColor Yellow
+        & $wixExe extension add -g "$ext/$wixVersion"
+        if ($LASTEXITCODE -ne 0) { throw "wix extension add $ext/$wixVersion failed" }
+    }
+}
+Write-Host "WiX:               $wixVersion ($wixExe)" -ForegroundColor Cyan
 
 # ── Stage llama.cpp binaries with cmake --install ───────────────────
 $buildDir  = Join-Path $buildRoot "llama.cpp-cmake"
@@ -105,7 +122,7 @@ if ($LASTEXITCODE -ne 0) { throw "cmake --install failed" }
 # and friends. They are llama.cpp's unit tests, useless to an end user and
 # actively unwanted here, because the installer offers to put `bin\` on the
 # SYSTEM PATH: shipping them puts 26 generically-named `test-*` commands in
-# every shell on the machine. Pruned here rather than filtered in the .nsi so
+# every shell on the machine. Pruned here rather than filtered in the .wxs so
 # the staging tree is exactly what ships, which is also what the OpenSSL import
 # scan below then has to read.
 $testBins = @(Get-ChildItem (Join-Path $stageDir 'bin') -Filter 'test*.exe' -File)
@@ -114,6 +131,10 @@ if ($testBins) {
     Write-Host ("Pruned {0} llama.cpp test binaries ({1:N1} MB)" -f
         $testBins.Count, (($testBins | Measure-Object Length -Sum).Sum / 1MB)) -ForegroundColor DarkGray
 }
+# The C headers `cmake --install` also stages: the installer does not ship
+# them, and the MSI harvests the staging tree whole, so they go here with the
+# test binaries.
+Remove-Item (Join-Path $stageDir 'include') -Recurse -Force -ErrorAction SilentlyContinue
 
 # ── Stage the OpenSSL runtime next to llama-server.exe ──────────────
 # llama-server links OpenSSL dynamically as NORMAL imports (libcrypto-N-x64 /
@@ -361,10 +382,14 @@ $configExe = Join-Path $cargoTargetDir "release\llama-cpp-config.exe"
 if (-not (Test-Path $configExe)) {
     throw "llama-cpp-config.exe not found at $configExe. Run 02-build.ps1 first."
 }
-Copy-Item $configExe -Destination $stageDir -Force
+# Into bin\, where it is installed: the staging tree is the installed tree, file
+# for file, which is what the .wxs harvests and what an administrative image
+# (msiexec /a) is compared against.
+Copy-Item $configExe -Destination $stageBin -Force
 Write-Host "Staged llama-cpp-config.exe" -ForegroundColor DarkGray
 
-# Copy the icon for the installer. llama.ico is generated, not checked in:
+# The icon: the Apps list entry, the Start Menu shortcut and the MSI's own
+# icon. llama.ico is generated, not checked in:
 # 02-build.ps1's cargo leg (build.rs) normally creates it; regenerate here if
 # it has since gone missing.
 $iconPath = Join-Path $PSScriptRoot "resources\llama.ico"
@@ -380,41 +405,71 @@ if (-not (Test-Path $iconPath)) {
         if ($LASTEXITCODE -ne 0) { throw "generate-llama-ico.mjs failed" }
     } finally { Pop-Location }
 }
-Copy-Item $iconPath -Destination $stageDir -Force
+Copy-Item $iconPath -Destination $stageBin -Force
 
-# ── Generate .nsi from template ─────────────────────────────────────
-$templatePath = Join-Path $PSScriptRoot "installer\llama-cpp-framework.nsi.template"
-$nsiPath      = Join-Path $buildRoot "llama-cpp.nsi"
-# e.g. llama-cpp-framework-v1.11.2-v0.2.0-x64-setup.exe. Two vX.Y.Z tokens, and
-# the order names them: the framework's own version first, the bundled llama.cpp
+# ── Build the MSI ───────────────────────────────────────────────────
+# e.g. llama-cpp-framework-v2.2.0-v0.7.0-x64.msi. Two vX.Y.Z tokens, and the
+# order names them: the framework's own version first, the bundled llama.cpp
 # release second.
-$installerName = "llama-cpp-framework-v$frameworkVersion-$llamaBuild-$arch-setup.exe"
-$outputFile   = Join-Path $outputDir $installerName
+$installerName = "llama-cpp-framework-v$frameworkVersion-$llamaBuild-$arch.msi"
+$outputFile    = Join-Path $outputDir $installerName
+$wxsPath       = Join-Path $PSScriptRoot 'installer\llama-cpp-framework.wxs'
+$wixObjDir     = Join-Path $buildRoot 'wix-obj'
 
-$stageDirNsis = $stageDir -replace '/', '\'
-$outputFileNsis = $outputFile -replace '/', '\'
+# The custom actions' scripts travel inside the MSI as -EncodedCommand values
+# (base64 of UTF-16LE, what powershell.exe decodes): no script file to extract
+# at install time, no quoting of a script body. Comment-only lines are dropped
+# to keep the command line short; the scripts themselves stay readable.
+function ConvertTo-EncodedCommand {
+    param([Parameter(Mandatory)][string] $Path)
+    $body = (Get-Content $Path | Where-Object { $_ -notmatch '^\s*(#|$)' }) -join "`n"
+    [Convert]::ToBase64String([System.Text.Encoding]::Unicode.GetBytes($body))
+}
 
-# .Replace(): literal substitution; -replace would treat the pattern as a
-# regex and expand $ sequences in the replacement (paths, versions).
-$nsiContent = (Get-Content $templatePath -Raw).
-    Replace('@VERSION@',     [string]$frameworkVersion).
-    Replace('@LLAMA_BUILD@', [string]$llamaBuild).
-    Replace('@STAGING_DIR@', [string]$stageDirNsis).
-    Replace('@OUTPUT_FILE@', [string]$outputFileNsis)
+$payloadBytes = (Get-ChildItem $stageDir -Recurse -File -Force | Measure-Object Length -Sum).Sum
+$defines = [ordered]@{
+    Version          = $frameworkVersion
+    LlamaBuild       = $llamaBuild
+    StagingDir       = $stageDir
+    HasLib           = [int](Test-Path (Join-Path $stageDir 'lib'))
+    HasKpack         = [int](Test-Path (Join-Path $stageDir '.kpack'))
+    EstimatedSizeKb  = [long][math]::Ceiling($payloadBytes / 1KB)
+    StopProcessesCmd = ConvertTo-EncodedCommand (Join-Path $PSScriptRoot 'installer\msi-stop-processes.ps1')
+}
+# The .wixpdb (debug symbols of the package) goes with the intermediates, not
+# beside the .msi in dist\.
+$wixArgs = @('build', '-arch', 'x64', '-intermediatefolder', $wixObjDir, '-pdb', (Join-Path $wixObjDir 'package.wixpdb'), '-o', $outputFile)
+foreach ($ext in $wixPin.Extensions) { $wixArgs += '-ext', "$ext/$wixVersion" }
+foreach ($k in $defines.Keys) { $wixArgs += '-d', "$k=$($defines[$k])" }
+$wixArgs += $wxsPath
 
-Set-Content -Path $nsiPath -Value $nsiContent -Encoding UTF8
-Write-Host "Generated: $nsiPath" -ForegroundColor Cyan
+Write-Host ("Building the MSI ({0:N2} GB of payload, {1} files)..." -f ($payloadBytes / 1GB),
+    @(Get-ChildItem $stageDir -Recurse -File -Force).Count) -ForegroundColor Cyan
+if (Test-Path $outputFile) { Remove-Item $outputFile -Force }
+$sw = [System.Diagnostics.Stopwatch]::StartNew()
+& $wixExe @wixArgs
+if ($LASTEXITCODE -ne 0) { throw "wix build failed (exit code $LASTEXITCODE)" }
+Write-Host ("wix build: {0:mm\:ss}" -f $sw.Elapsed) -ForegroundColor DarkGray
 
-# ── Build installer ─────────────────────────────────────────────────
-Write-Host "Building installer..." -ForegroundColor Cyan
-& $nsisExe $nsiPath
-if ($LASTEXITCODE -ne 0) { throw "makensis failed (exit code $LASTEXITCODE)" }
+# GitHub refuses release assets of 2 GiB or more, and the package must stay ONE
+# file (embedded cabinets): fail loudly rather than publish what cannot upload.
+$msiBytes = (Get-Item $outputFile).Length
+if ($msiBytes -ge 2GB) {
+    throw ("{0} is {1:N2} GiB, over GitHub's 2 GiB release-asset limit. Options: fewer HIP targets " +
+           "(GpuTargets), a higher compression level, or splitting the ROCm kernel stores into a separate package." -f
+           $installerName, ($msiBytes / 1GB))
+}
+
+# ICE validation (Windows Installer's internal consistency evaluators).
+# Suppressed ICEs, and why, are listed in installer\AGENTS.md.
+Write-Host "Validating the MSI (ICE)..." -ForegroundColor Cyan
+& $wixExe msi validate -sice ICE61 $outputFile
+if ($LASTEXITCODE -ne 0) { throw "wix msi validate failed (exit code $LASTEXITCODE)" }
 
 # ── Cleanup ─────────────────────────────────────────────────────────
-Remove-Item $nsiPath -Force
+Remove-Item $wixObjDir -Recurse -Force -ErrorAction SilentlyContinue
 if (-not $KeepStaging) { Remove-Item $stageDir -Recurse -Force }
 
-$size = [math]::Round((Get-Item $outputFile).Length / 1MB, 1)
 Write-Host ""
-Write-Host "Installer created: $outputFile ($size MB)" -ForegroundColor Green
+Write-Host ("Installer created: $outputFile ({0:N1} MB, {1:mm\:ss})" -f ($msiBytes / 1MB), $sw.Elapsed) -ForegroundColor Green
 Write-Host ""

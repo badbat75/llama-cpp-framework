@@ -58,6 +58,12 @@ struct Mem {
     swap_free: u64,
 }
 
+/// `hwmon::system_ram`: `MemTotal` and `MemAvailable`, in bytes.
+pub fn system_ram() -> Option<(u64, u64)> {
+    let m = parse_meminfo(&std::fs::read_to_string("/proc/meminfo").ok()?);
+    (m.total > 0).then_some((m.total, m.available))
+}
+
 fn parse_meminfo(s: &str) -> Mem {
     let mut m = Mem::default();
     for line in s.lines() {

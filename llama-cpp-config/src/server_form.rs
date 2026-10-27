@@ -167,7 +167,9 @@ pub fn config_to_form(cfg: &server_cfg::ServerConfig) -> ServerForm {
             .map_or_else(|| "default".into(), hip_fa_band_label),
         rocprof_attach: cfg.rocprof_attach,
         // Plain bool toggles (framework defaults materialized when unset), same
-        // shape as `mlock`.
+        // shape as `mlock`. The proxy keeps its own value with the UI off: the
+        // widget is greyed out, never cleared (server_page.slint).
+        webui: cfg.webui_or_default(),
         webui_mcp_proxy: cfg.webui_mcp_proxy_or_default(),
         // Always has a value (framework default 4 when unset); a dropdown, no
         // "default" checkbox: the launch always passes -lv. The form carries the
@@ -246,6 +248,7 @@ pub fn form_to_config(f: &ServerForm) -> server_cfg::ServerConfig {
         // "default" is None: the default stays in the code, not in server.ini.
         hip_fa_band: parse_hip_fa_band(f.hip_fa_band.as_str()),
         rocprof_attach: f.rocprof_attach,
+        webui: Some(f.webui),
         webui_mcp_proxy: Some(f.webui_mcp_proxy),
         // The one field with no "unset" state (the launch always passes -lv): the
         // form carries the dropdown's label, and `parse_log_level` maps it back.
@@ -300,6 +303,7 @@ mod tests {
             attn_rot_disable: true,
             hip_fa_band: Some(2),
             rocprof_attach: true,
+            webui: Some(false),
             webui_mcp_proxy: Some(false),
             log_verbosity: Some(2),
             // Non-default toggle, and a StateDir off the system drive: the path

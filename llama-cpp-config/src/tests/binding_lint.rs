@@ -146,7 +146,8 @@ fn no_one_way_appstate_bindings_on_self_assigning_widgets() {
             scanned += 1;
         }
     }
-    assert!(scanned >= 7, "expected the full ui/ set, scanned {scanned}");
+    // 12: every ui/*.slint, downloads_window.slint the latest.
+    assert!(scanned >= 12, "expected the full ui/ set, scanned {scanned}");
     assert!(
         violations.is_empty(),
         "one-way AppState bindings on self-assigning widgets (use `<=>`, or a \
@@ -400,7 +401,8 @@ fn slint_string_literals_only_use_glyphs_proven_to_render() {
             scanned += 1;
         }
     }
-    assert!(scanned >= 7, "expected the full ui/ set, scanned {scanned}");
+    // 12: every ui/*.slint, downloads_window.slint the latest.
+    assert!(scanned >= 12, "expected the full ui/ set, scanned {scanned}");
     assert!(
         hits.is_empty(),
         "glyph(s) not known to render in the GUI's font stack: they draw as an \

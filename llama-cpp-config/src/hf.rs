@@ -28,15 +28,17 @@
 //! `slint::invoke_from_event_loop`: the GUI's threading rule (`gui.rs`
 //! header). Nothing here touches Slint. The two callers are the CLI's
 //! `preset download` (`cli.rs`) and the Models tab's From Hugging Face dialog
-//! (`gui/hf_dialog.rs`), which also reads `Progress`'s per-file bytes and asks
-//! `has_partial` whether its button should read "Resume download".
+//! (`gui/hf_dialog.rs`), which asks `has_partial` whether its button should
+//! read "Resume download" and hands the job to the GUI's background downloads
+//! (`gui/downloads.rs`), which read `Progress`'s per-file bytes and run
+//! `preset_from_download` off the event loop.
 //!
 //! ## The search: one request, every row's file names included
 //!
 //! `GET /api/models?search=<query>&filter=gguf&sort=downloads&direction=-1
 //! &limit=<n>&expand[]=downloads&expand[]=gated&expand[]=private
-//! &expand[]=siblings` (`search_url`). Verified against huggingface.co with
-//! curl (2026-10-27):
+//! &expand[]=siblings&expand[]=gguf` (`search_url`). Verified against
+//! huggingface.co with curl (2026-10-27):
 //! - `search` matches the words of the query against the repo id, org
 //!   included, in any order: `qwen3 8b` finds `Qwen/Qwen3-8B-GGUF`, `unsloth
 //!   qwen3 8b` finds `unsloth/Qwen3-8B-GGUF`; an `org/name` fragment matches too.
@@ -49,8 +51,18 @@
 //!   `"manual"`), `private`, and `siblings`, the repo's FULL file list as
 //!   `{"rfilename": "<path>"}` (no sizes). So the quantizations of every row
 //!   come with the search itself: no request per row. Sizes need the tree,
-//!   which is the listing's job once a row is picked. (`expand[]=gguf` would
-//!   add the parameter count, but also each repo's whole chat template.)
+//!   which is the listing's job once a row is picked.
+//! - `gguf` is the header summary of the repo's GGUFs: `total` (the parameter
+//!   count), `architecture`, `context_length`, `totalFileSize`, and the whole
+//!   chat template (a few KB per row: still a ~20 KB answer for 30 rows). Only
+//!   `total` and `architecture` are read, into the row's model marker
+//!   (`model_kind`, `kind_label`: `MoE 30.5B`, `dense 8.2B`). The architecture
+//!   alone does not always tell: Mixtral is `llama`, so an arch that serves
+//!   both reads as "dense/MoE unknown" unless the repo name carries an MoE
+//!   size pattern (`30B-A3B`, `8x7B`). A row without `gguf` shows no marker.
+//! - Every `id` is held to `valid_repo_id` (the rule `parse_spec` enforces)
+//!   before it becomes a row: the answer is the remote's data, and a row's id
+//!   becomes a `RepoSpec`, a URL and a folder name. A hit that fails is dropped.
 //! - The brackets are sent percent-encoded (`expand%5B%5D`): curl would
 //!   otherwise read `[]` as its own URL glob. The API takes both spellings.
 //! - A token is sent when there is one, so the account's private repos can
@@ -93,8 +105,24 @@
 //! options from curl 7.55 (the oldest Windows copy) are used: no `--fail-with-body`,
 //! the status comes back through `-w`. The url and the headers go through a
 //! config on STDIN (`-K -`), never argv, because another process can read a
-//! command line and the token rides a header. A missing curl is
-//! `HfError::MissingTool`, naming it.
+//! command line and the token rides a header. Every value in that config is
+//! quoted by `curl_value`, which escapes `"` and `\` and REFUSES a control
+//! character, so no value (a URL built from remote data included) can end
+//! its line and add an option. A missing curl is `HfError::MissingTool`,
+//! naming it. `Fetch::get_range` is the one binary request: the first MiBs
+//! of a candidate's GGUF for the placement estimate (`hf_fit`), sent with a
+//! `range` and a `max-filesize` so a server that ignores the range is refused
+//! instead of streaming a whole model into memory.
+//!
+//! ## Remote paths are data
+//!
+//! The tree's file paths are the remote's data and end up joined under
+//! ModelsDir: `safe_repo_path` keeps only plain relative `/`-separated paths
+//! (no `\`, `:`, control character, empty, `.` or `..` segment), in
+//! `files_from_tree`, `build_listing` and again in `DownloadJob::placements`,
+//! which also checks that every joined target stays under its subfolder;
+//! `move_real_data` refuses a staged entry (or the blob a link points to) that
+//! lies outside the staging directory.
 //!
 //! ## The transfer: llama-server's router download child
 //!
@@ -143,14 +171,30 @@
 //! The ModelsDir layout does not change: the model (and its shards) lands in
 //! `models\`, the mmproj in `mmprojs\`, an MTP head in `mtps\`, a DFlash or
 //! DSpark drafter in `dflashs\` (`model_scan::Category::subdir`), each under
-//! `<org>\<repo>` (`models\unsloth\Qwen3-8B-GGUF\Qwen3-8B-Q4_K_M.gguf`), with
-//! its Hugging Face file name. The org is part of it on purpose: `Qwen/` and
-//! `unsloth/` both publish a `Qwen3-8B-GGUF` with a `Qwen3-8B-Q4_K_M.gguf`, and
-//! with the repo name alone one org's file (at an equal size) would be taken as
-//! the other's, already downloaded. The per-repo directory is also what keeps
-//! two repos' `mmproj-F16.gguf` (Unsloth names every projector that) apart, and
-//! what makes a picker label recognizable; the scans are recursive, so the
-//! pickers see the files unchanged.
+//! `<org>\<repo>` (`models\unsloth\Qwen3-8B-GGUF\Qwen3-8B-Q4_K_M.gguf`). The
+//! org is part of it on purpose: `Qwen/` and `unsloth/` both publish a
+//! `Qwen3-8B-GGUF` with a `Qwen3-8B-Q4_K_M.gguf`, and with the repo name alone
+//! one org's file (at an equal size) would be taken as the other's, already
+//! downloaded. The per-repo directory also keeps two repos' projectors apart;
+//! the scans are recursive, so the pickers see the files unchanged.
+//!
+//! The model and its drafters keep their Hugging Face file names. The mmproj
+//! does not: on Hugging Face it is usually generic (`mmproj-F16.gguf`, which
+//! Unsloth names every projector; `mmproj-model-f16.gguf`), and the mmproj
+//! picker shows file names, so it would say nothing about which model it
+//! serves. It is named after the model instead (`mmproj_target_name`): the
+//! model's first shard's name without `.gguf`, its shard suffix and its quant
+//! tag (`UD-` included), then `-mmproj`, then the projector's own quant tag
+//! when its HF name carries one: `Qwen3-VL-8B-Instruct-Q4_K_M.gguf` +
+//! `mmproj-F16.gguf` lands as `Qwen3-VL-8B-Instruct-mmproj-F16.gguf`. With the
+//! quant cut off, every quant of one repo maps a shared projector to the SAME
+//! name, so the second quant's download finds it in place (the same-size rule
+//! below) instead of storing a copy per quant. Drafters (MTP, DFlash, DSpark)
+//! are left alone: they are models in their own right, published under names
+//! of their own that the drafter picker shows as they are. Everything
+//! downstream (the preset's `mmproj` key, the status line, the delete
+//! dialog's linked files, the skip/conflict rule) reads the placement's
+//! target, so it sees the new name.
 //!
 //! llama.cpp's downloader needs its own cache layout to download and resume
 //! (`models--<org>--<repo>\blobs\<oid>` + `.downloadInProgress`, a
@@ -215,6 +259,7 @@ use std::time::{Duration, Instant};
 use serde_json::Value;
 
 use crate::gguf;
+use crate::hf_fit;
 use crate::presets::{self, Preset};
 
 /// `CMD_CHILD_TO_ROUTER_STATE` in llama.cpp's `tools/server/server-models.cpp`:
@@ -503,13 +548,19 @@ fn redact(text: &str, token: Option<&Token>) -> String {
 /// against canned answers instead of the network.
 pub trait Fetch {
     fn get(&self, url: &str, token: Option<&Token>) -> Result<(u16, String), HfError>;
+    /// The bytes `start..start + len` of a file (a GGUF header,
+    /// `hf_fit::fetch_shape`), following redirects: `(status, bytes)`, 206 for
+    /// an honoured range. The body is BINARY, so it is never decoded.
+    fn get_range(&self, url: &str, token: Option<&Token>, start: u64, len: u64) -> Result<(u16, Vec<u8>), HfError>;
 }
 
 /// The real `Fetch`: the system's `curl` (see the module header).
 pub struct Curl;
 
-impl Fetch for Curl {
-    fn get(&self, url: &str, token: Option<&Token>) -> Result<(u16, String), HfError> {
+impl Curl {
+    /// Run curl over `config` (on its stdin) and return its stdout.
+    fn run(config: Result<String, HfError>, token: Option<&Token>) -> Result<Vec<u8>, HfError> {
+        let config = config?;
         let exe = curl_exe();
         let mut cmd = Command::new(&exe);
         cmd.args(["-sS", "-L", "--connect-timeout", "20", "--max-time", "120", "-K", "-"])
@@ -524,7 +575,7 @@ impl Fetch for Curl {
         })?;
         if let Some(mut stdin) = child.stdin.take() {
             // A write error surfaces as curl's own "no URL" failure below.
-            let _ = stdin.write_all(curl_config(url, token).as_bytes());
+            let _ = stdin.write_all(config.as_bytes());
         }
         let out = child.wait_with_output().map_err(|e| HfError::Io(format!("curl: {e}")))?;
         if !out.status.success() {
@@ -532,8 +583,41 @@ impl Fetch for Curl {
             let err = redact(String::from_utf8_lossy(&out.stderr).trim(), token);
             return Err(curl_failure(code, &err));
         }
-        parse_curl_output(&String::from_utf8_lossy(&out.stdout))
+        Ok(out.stdout)
     }
+}
+
+impl Fetch for Curl {
+    fn get(&self, url: &str, token: Option<&Token>) -> Result<(u16, String), HfError> {
+        let out = Curl::run(curl_config(url, token), token)?;
+        parse_curl_output(&String::from_utf8_lossy(&out))
+    }
+
+    fn get_range(&self, url: &str, token: Option<&Token>, start: u64, len: u64) -> Result<(u16, Vec<u8>), HfError> {
+        let end = start + len.max(1) - 1;
+        let out = Curl::run(curl_config_with(url, token, "*/*", Some((start, end))), token)?;
+        parse_curl_bytes(out)
+    }
+}
+
+/// `parse_curl_output` for a binary body: the status is what follows the
+/// LAST newline (the write-out appends `\n<code>`), the body everything
+/// before it, newlines inside it included.
+fn parse_curl_bytes(mut stdout: Vec<u8>) -> Result<(u16, Vec<u8>), HfError> {
+    let (cut, code_start) = match stdout.iter().rposition(|&b| b == b'\n') {
+        Some(i) => (i, i + 1),
+        None => (0, 0),
+    };
+    let code = String::from_utf8_lossy(&stdout[code_start..]).to_string();
+    let status = code
+        .trim()
+        .parse::<u16>()
+        .map_err(|_| HfError::Network(format!("curl returned no HTTP status: {}", code.trim())))?;
+    if status == 0 {
+        return Err(HfError::Network("no answer from the server".into()));
+    }
+    stdout.truncate(cut);
+    Ok((status, stdout))
 }
 
 /// `System32\curl.exe` on Windows when it is there (the OS's own copy, not
@@ -551,19 +635,55 @@ fn curl_exe() -> PathBuf {
     PathBuf::from("curl")
 }
 
-/// The curl config read from stdin: url, headers and the status write-out.
-/// Values are double-quoted, so only `"` and `\` would need escaping, and
-/// neither can reach here (a repo id and a `Token` refuse both, a search query
-/// is percent-encoded).
-fn curl_config(url: &str, token: Option<&Token>) -> String {
-    let mut c = format!(
-        "url = \"{url}\"\nheader = \"Accept: application/json\"\nuser-agent = \"llama-cpp-config/{}\"\nwrite-out = \"\\n%{{http_code}}\"\n",
-        env!("CARGO_PKG_VERSION")
-    );
-    if let Some(t) = token {
-        c.push_str(&format!("header = \"Authorization: Bearer {}\"\n", t.0));
+/// One value of the curl config, double-quoted as curl's config parser reads
+/// it: `\` and `"` are escaped, and a control character (a newline above
+/// all, which would end the line and start an option of the caller's
+/// choosing) is refused outright rather than escaped. Every value goes
+/// through here, whatever its source: a repo id, a file path from the tree,
+/// a `Token` and a percent-encoded query are all held to safe characters
+/// upstream, but the config must not depend on every caller getting that
+/// right.
+fn curl_value(v: &str) -> Result<String, HfError> {
+    if v.chars().any(char::is_control) {
+        return Err(HfError::InvalidSpec("a request value contains a control character".into()));
     }
-    c
+    let mut out = String::with_capacity(v.len() + 2);
+    out.push('"');
+    for c in v.chars() {
+        if matches!(c, '"' | '\\') {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out.push('"');
+    Ok(out)
+}
+
+/// The curl config read from stdin: url, headers and the status write-out
+/// (`curl_value` quotes each value). `accept` is the `Accept` header (JSON for
+/// the API, anything for a header read); `range` adds a byte range
+/// (`start-end`, inclusive) and a `max-filesize` just above it, so a server
+/// that ignores the range and answers the WHOLE file is refused by its
+/// `Content-Length` instead of streamed into memory.
+fn curl_config_with(url: &str, token: Option<&Token>, accept: &str, range: Option<(u64, u64)>) -> Result<String, HfError> {
+    let mut c = format!(
+        "url = {}\nheader = {}\nuser-agent = {}\nwrite-out = \"\\n%{{http_code}}\"\n",
+        curl_value(url)?,
+        curl_value(&format!("Accept: {accept}"))?,
+        curl_value(&format!("llama-cpp-config/{}", env!("CARGO_PKG_VERSION")))?,
+    );
+    if let Some((start, end)) = range {
+        c.push_str(&format!("range = \"{start}-{end}\"\nmax-filesize = {}\n", end - start + 1 + 65536));
+    }
+    if let Some(t) = token {
+        c.push_str(&format!("header = {}\n", curl_value(&format!("Authorization: Bearer {}", t.0))?));
+    }
+    Ok(c)
+}
+
+/// The API's config: JSON, no range.
+fn curl_config(url: &str, token: Option<&Token>) -> Result<String, HfError> {
+    curl_config_with(url, token, "application/json", None)
 }
 
 /// Split curl's stdout into the body and the status the write-out appended.
@@ -597,7 +717,7 @@ fn curl_failure(code: i32, stderr: &str) -> HfError {
 
 /// An API status other than 200, as an error. `body` is the API's JSON
 /// (`{"error": "..."}`) when it has one.
-fn api_error(status: u16, body: &str, had_token: bool, repo: &str) -> HfError {
+pub(crate) fn api_error(status: u16, body: &str, had_token: bool, repo: &str) -> HfError {
     let repo = repo.to_string();
     match status {
         401 if had_token => HfError::TokenRejected { repo },
@@ -640,6 +760,21 @@ impl RepoFile {
     pub fn name(&self) -> &str {
         self.path.rsplit('/').next().unwrap_or(&self.path)
     }
+}
+
+/// Whether a repo file path from the API is safe to join under a local
+/// directory and to put in a URL. The tree listing is the REMOTE's data, so a
+/// path is taken only as a plain relative `/`-separated path: no backslash
+/// (a separator on Windows), no empty segment (which also refuses a leading
+/// `/` and `//`), no `.` or `..` segment, no `:` (a drive prefix, or an NTFS
+/// stream), no control character. Hugging Face itself never lists such a
+/// path; one that does is dropped from the listing (`files_from_tree`,
+/// `build_listing`) and refused by `DownloadJob::placements`.
+pub fn safe_repo_path(path: &str) -> bool {
+    !path.is_empty()
+        && !path.contains(['\\', ':'])
+        && !path.chars().any(char::is_control)
+        && path.split('/').all(|seg| !seg.is_empty() && seg != "." && seg != "..")
 }
 
 /// A drafter that can come with a model, by its file-name prefix (llama.cpp's
@@ -792,7 +927,7 @@ fn commit_from_refs(refs: &Value) -> Option<String> {
 
 /// The `type: file` entries of a recursive tree answer, in API order (the
 /// order llama.cpp's first-match rules see). LFS files carry their real size
-/// and oid under `lfs`.
+/// and oid under `lfs`. A path `safe_repo_path` refuses is dropped.
 fn files_from_tree(tree: &Value) -> Vec<RepoFile> {
     let Some(items) = tree.as_array() else {
         return Vec::new();
@@ -801,7 +936,7 @@ fn files_from_tree(tree: &Value) -> Vec<RepoFile> {
         .iter()
         .filter(|i| i.get("type").and_then(Value::as_str) == Some("file"))
         .filter_map(|i| {
-            let path = i.get("path")?.as_str()?.to_string();
+            let path = i.get("path")?.as_str().filter(|p| safe_repo_path(p))?.to_string();
             let lfs = i.get("lfs").filter(|l| l.is_object());
             let size = lfs
                 .and_then(|l| l.get("size"))
@@ -819,8 +954,10 @@ fn files_from_tree(tree: &Value) -> Vec<RepoFile> {
         .collect()
 }
 
-/// Group a file list into candidates (pure; see `Listing`).
+/// Group a file list into candidates (pure; see `Listing`). A path
+/// `safe_repo_path` refuses is dropped here too, whoever built the list.
 fn build_listing(repo: &str, commit: &str, files: Vec<RepoFile>, spec: &RepoSpec, endpoint: &str) -> Result<Listing, HfError> {
+    let files: Vec<RepoFile> = files.into_iter().filter(|f| safe_repo_path(&f.path)).collect();
     if files.iter().any(|f| f.path == "preset.ini") {
         return Err(HfError::PresetRepo { repo: repo.into() });
     }
@@ -936,6 +1073,147 @@ pub struct SearchHit {
     /// The drafter kinds its file names show (a separate MTP / DFlash / DSpark
     /// file; MTP heads embedded in the model are not visible from a name).
     pub drafters: Vec<Sidecar>,
+    /// Dense or MoE, when the API's `gguf.architecture` (or the repo name)
+    /// actually tells (`model_kind`).
+    pub kind: ModelKind,
+    /// `gguf.total`: the parameter count of the model the repo's GGUFs hold.
+    pub params: Option<u64>,
+}
+
+/// Whether a model is a mixture of experts, as far as the search answer can
+/// tell without a GGUF header. See `model_kind` for what is trusted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModelKind {
+    Dense,
+    Moe,
+    /// The architecture name serves both (`llama` also carries Mixtral), or is
+    /// one this build does not know, and the repo name has no MoE pattern.
+    Unknown,
+}
+
+/// The architectures (`general.architecture`) llama.cpp implements as
+/// mixtures of experts and that carry no `moe` in their name, which already
+/// counts (`qwen3moe`, `glm4moe`, `bailingmoe2`, ...). From `src/llama-arch.cpp`
+/// (v0.7.0): each of these sets `expert_count`. Re-check on a bump; a missing
+/// one only reads as "unknown".
+const MOE_ARCHS: [&str; 14] = [
+    "deepseek",
+    "deepseek2",
+    "dbrx",
+    "arctic",
+    "grok",
+    "gpt-oss",
+    "llama4",
+    "jamba",
+    "qwen3next",
+    "minimax-m2",
+    "dots1",
+    "smallthinker",
+    "kimi-linear",
+    "step35",
+];
+
+/// The architectures llama.cpp implements as DENSE only (their MoE siblings
+/// are separate archs, `qwen3` vs `qwen3moe`), so the name alone settles it.
+/// `llama`, `mistral3`, `minicpm`, `granite` and the like are NOT here: one
+/// arch name serves both a dense and an MoE model there (Mixtral is `llama`,
+/// MiniCPM-MoE is `minicpm`), so they read as unknown unless the repo name
+/// says more.
+const DENSE_ARCHS: [&str; 24] = [
+    "qwen2",
+    "qwen3",
+    "qwen2vl",
+    "qwen3vl",
+    "gemma",
+    "gemma2",
+    "gemma3",
+    "gemma3n",
+    "gemma-embedding",
+    "phi2",
+    "phi3",
+    "starcoder2",
+    "falcon",
+    "gpt2",
+    "stablelm",
+    "command-r",
+    "cohere2",
+    "internlm2",
+    "exaone",
+    "exaone4",
+    "olmo2",
+    "smollm3",
+    "seed_oss",
+    "glm4",
+];
+
+/// Dense or MoE from the search answer's `gguf.architecture` and the repo
+/// name (pure). In order: an arch with `moe` in its name, or in `MOE_ARCHS`,
+/// is MoE; a repo name with an MoE size pattern (`30B-A3B`, an active-
+/// parameter `A<n>B` token, or `8x7B`) is MoE; an arch in `DENSE_ARCHS` is
+/// dense; everything else is `Unknown`, shown as such rather than guessed.
+pub fn model_kind(arch: Option<&str>, repo: &str) -> ModelKind {
+    let arch = arch.map(str::to_ascii_lowercase).unwrap_or_default();
+    if arch.contains("moe") || MOE_ARCHS.contains(&arch.as_str()) {
+        return ModelKind::Moe;
+    }
+    if name_says_moe(repo) {
+        return ModelKind::Moe;
+    }
+    if DENSE_ARCHS.contains(&arch.as_str()) {
+        return ModelKind::Dense;
+    }
+    ModelKind::Unknown
+}
+
+/// The repo NAME's MoE size patterns: a token `a<digits>[.<digits>]b` (the
+/// active parameters, `Qwen3-30B-A3B`) or `<n>x<m>b` (`Mixtral-8x7B`), the
+/// name split into tokens at `-` and `_` (a `.` stays inside, `A1.5B`).
+fn name_says_moe(repo: &str) -> bool {
+    let name = repo.rsplit('/').next().unwrap_or(repo).to_ascii_lowercase();
+    name.split(['-', '_']).any(|tok| {
+        let active = tok
+            .strip_prefix('a')
+            .and_then(|r| r.strip_suffix('b'))
+            .is_some_and(|n| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit() || c == '.') && n.starts_with(|c: char| c.is_ascii_digit()));
+        let experts = tok.strip_suffix('b').and_then(|r| r.split_once('x')).is_some_and(|(a, b)| {
+            !a.is_empty()
+                && !b.is_empty()
+                && a.chars().all(|c| c.is_ascii_digit())
+                && b.chars().all(|c| c.is_ascii_digit() || c == '.')
+        });
+        active || experts
+    })
+}
+
+/// `30.5B` / `8.2B` / `596M` / `1.0T`: a parameter count for a search row.
+pub fn format_params(n: u64) -> String {
+    let f = n as f64;
+    if f >= 1e12 {
+        format!("{:.1}T", f / 1e12)
+    } else if f >= 100e9 {
+        format!("{:.0}B", f / 1e9)
+    } else if f >= 1e9 {
+        format!("{:.1}B", f / 1e9)
+    } else if f >= 1e6 {
+        format!("{:.0}M", f / 1e6)
+    } else {
+        n.to_string()
+    }
+}
+
+/// The search row's model marker: `MoE 30.5B`, `dense 8.2B`, or for an
+/// unknown kind the count alone with `dense/MoE unknown`; `None` when the
+/// answer says nothing at all (no count, no kind).
+pub fn kind_label(kind: ModelKind, params: Option<u64>) -> Option<String> {
+    let p = params.map(format_params);
+    match (kind, p) {
+        (ModelKind::Moe, Some(p)) => Some(format!("MoE {p}")),
+        (ModelKind::Moe, None) => Some("MoE".into()),
+        (ModelKind::Dense, Some(p)) => Some(format!("dense {p}")),
+        (ModelKind::Dense, None) => Some("dense".into()),
+        (ModelKind::Unknown, Some(p)) => Some(format!("{p}, dense/MoE unknown")),
+        (ModelKind::Unknown, None) => None,
+    }
 }
 
 /// Search the GGUF repositories (blocking; run it off the UI thread).
@@ -968,7 +1246,7 @@ fn search_url(endpoint: &str, query: &str, limit: usize) -> String {
         percent_encode(query),
         limit.max(1)
     );
-    for field in ["downloads", "gated", "private", "siblings"] {
+    for field in ["downloads", "gated", "private", "siblings", "gguf"] {
         url.push_str("&expand%5B%5D=");
         url.push_str(field);
     }
@@ -977,7 +1255,7 @@ fn search_url(endpoint: &str, query: &str, limit: usize) -> String {
 
 /// RFC 3986 percent-encoding of everything but the unreserved characters
 /// (so a space is `%20`, never `+`).
-fn percent_encode(s: &str) -> String {
+pub(crate) fn percent_encode(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for b in s.bytes() {
         if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'_' | b'~') {
@@ -1002,7 +1280,11 @@ fn search_error(status: u16, body: &str, had_token: bool) -> HfError {
 
 /// The rows of a search answer, in its order (most downloaded first). An
 /// answer that is not an array is a protocol change, reported as such; an
-/// entry without an `id` is skipped.
+/// entry without an `id`, or with one `valid_repo_id` refuses (the id is the
+/// remote's data and becomes a `RepoSpec`, a URL and a folder name), is
+/// skipped. `gguf.total` and `gguf.architecture` give the model marker; only
+/// those two fields of the (large: it carries the whole chat template)
+/// `gguf` object are read.
 fn hits_from_search(v: &Value) -> Result<Vec<SearchHit>, HfError> {
     let items = v.as_array().ok_or_else(|| HfError::Http {
         status: 200,
@@ -1011,7 +1293,11 @@ fn hits_from_search(v: &Value) -> Result<Vec<SearchHit>, HfError> {
     Ok(items
         .iter()
         .filter_map(|m| {
-            let repo = m.get("id")?.as_str()?.to_string();
+            let repo = m.get("id")?.as_str().filter(|id| valid_repo_id(id))?.to_string();
+            let gguf = m.get("gguf");
+            let arch = gguf.and_then(|g| g.get("architecture")).and_then(Value::as_str);
+            let kind = model_kind(arch, &repo);
+            let params = gguf.and_then(|g| g.get("total")).and_then(Value::as_u64).filter(|&n| n > 0);
             let files: Vec<&str> = m
                 .get("siblings")
                 .and_then(Value::as_array)
@@ -1029,6 +1315,8 @@ fn hits_from_search(v: &Value) -> Result<Vec<SearchHit>, HfError> {
                     .into_iter()
                     .filter(|s| ggufs().any(|f| f.contains(s.keyword())))
                     .collect(),
+                kind,
+                params,
                 repo,
             })
         })
@@ -1112,7 +1400,7 @@ fn quant_bits(path: &str) -> i64 {
     bits_of_tag(&split_info(path).tag)
 }
 
-fn bits_of_tag(tag: &str) -> i64 {
+pub(crate) fn bits_of_tag(tag: &str) -> i64 {
     let Some(pos) = tag.find(|c: char| c.is_ascii_digit()) else {
         return 0;
     };
@@ -1128,6 +1416,50 @@ fn is_model_file(path: &str) -> bool {
     }
     let name = path.rsplit('/').next().unwrap_or(path);
     !NOT_A_MODEL.iter().any(|m| name.contains(m))
+}
+
+/// The file name a downloaded mmproj gets (pure), from the model's first
+/// shard's file name and the mmproj's Hugging Face file name: the model's
+/// `split_info` prefix (no `.gguf`, no `-NNNNN-of-NNNNN`) with its quant tag
+/// cut off (the `-`/`.` before it included, and an Unsloth `-UD` left before
+/// it), then `-mmproj`, then `-<TAG>` when the mmproj's own `split_info` tag
+/// is a quant, then `.gguf`. `tinygemma3-Q8_0.gguf` + `mmproj-tinygemma3.gguf`
+/// is `tinygemma3-mmproj.gguf`; `Qwen3-VL-8B-Instruct-Q4_K_M.gguf` +
+/// `mmproj-F16.gguf` is `Qwen3-VL-8B-Instruct-mmproj-F16.gguf`. Every quant of
+/// one repo maps a shared projector to ONE name, so a second quant's download
+/// finds it in place and skips it (module header). A model name whose tag
+/// cut leaves nothing keeps the mmproj's own name.
+fn mmproj_target_name(model_file: &str, mmproj_file: &str) -> String {
+    let model = split_info(model_file);
+    let mut base = model.prefix.as_str();
+    if is_quant_tag(&model.tag) {
+        // The tag is the prefix's tail, upper-cased: cut by length.
+        let cut = base.len() - model.tag.len();
+        base = base[..cut].strip_suffix(['-', '.']).unwrap_or(&base[..cut]);
+        if let Some(b) = base.strip_suffix("-UD").or_else(|| base.strip_suffix("-ud")) {
+            base = b;
+        }
+    }
+    if base.is_empty() {
+        return mmproj_file.to_string();
+    }
+    let tag = split_info(mmproj_file).tag;
+    if is_quant_tag(&tag) {
+        format!("{base}-mmproj-{tag}.gguf")
+    } else {
+        format!("{base}-mmproj.gguf")
+    }
+}
+
+/// Whether a `split_info` tag names a quantization (`Q4_K_M`, `IQ2_XXS`,
+/// `TQ1_0`, `F16`, `BF16`, `MXFP4`, `NVFP4`, `Q4_K_XL`) rather than whatever
+/// else ends a file name (`8B`, `A3B`, `TINYGEMMA3`, `INSTRUCT`): a type
+/// prefix followed by a digit.
+fn is_quant_tag(tag: &str) -> bool {
+    ["MXFP", "NVFP", "BF", "IQ", "TQ", "Q", "F"]
+        .iter()
+        .find_map(|p| tag.strip_prefix(p))
+        .is_some_and(|rest| rest.starts_with(|c: char| c.is_ascii_digit()))
 }
 
 /// `get_split_files`: every shard of `file`'s split (same prefix and count).
@@ -1266,6 +1598,23 @@ impl DownloadJob {
         models_dir: PathBuf,
         token: Option<Token>,
     ) -> Result<DownloadJob, HfError> {
+        let server_exe = crate::paths::llama_server_exe()
+            .ok_or_else(|| HfError::MissingTool("llama-server was not found beside the configurator or in the build tree".into()))?;
+        DownloadJob::for_server(listing, index, mmproj, sidecar, models_dir, token, server_exe)
+    }
+
+    /// `new` with the child's executable given: the GUI's background download
+    /// (`gui/downloads.rs`) passes the one it found, and its e2e test a
+    /// stand-in, since no test starts a child.
+    pub fn for_server(
+        listing: &Listing,
+        index: usize,
+        mmproj: bool,
+        sidecar: Option<Sidecar>,
+        models_dir: PathBuf,
+        token: Option<Token>,
+        server_exe: PathBuf,
+    ) -> Result<DownloadJob, HfError> {
         let candidate = listing
             .candidates
             .get(index)
@@ -1276,8 +1625,6 @@ impl DownloadJob {
                 return Err(HfError::SidecarMissing { what: s.label() });
             }
         }
-        let server_exe = crate::paths::llama_server_exe()
-            .ok_or_else(|| HfError::MissingTool("llama-server was not found beside the configurator or in the build tree".into()))?;
         Ok(DownloadJob {
             repo: listing.repo.clone(),
             commit: listing.commit.clone(),
@@ -1293,33 +1640,66 @@ impl DownloadJob {
 
     /// Where each file of the job lands (pure): `<ModelsDir>\<subfolder>\<org>\
     /// <repo>\<file name>`, the subfolder by role. The org is kept so two orgs'
-    /// same-named repos never share a folder (module header).
-    pub fn placements(&self) -> Vec<Placement> {
+    /// same-named repos never share a folder (module header). The file name is
+    /// the Hugging Face one, except the mmproj's, which is named after the
+    /// model (`mmproj_target_name`).
+    ///
+    /// The repo id and every file path are the remote's data, so they are
+    /// held to `valid_repo_id` / `safe_repo_path` again here (whoever built
+    /// the job), and each joined target must stay under its subfolder
+    /// (`lexically_under`): `HfError::InvalidSpec` otherwise, before any file
+    /// is touched.
+    pub fn placements(&self) -> Result<Vec<Placement>, HfError> {
+        if !valid_repo_id(&self.repo) {
+            return Err(HfError::InvalidSpec(format!("not a repository id: {}", self.repo)));
+        }
         let (org, name) = self.repo.split_once('/').unwrap_or(("", &self.repo));
-        let place = |role: Role, file: &RepoFile| {
+        let place = |role: Role, file: &RepoFile| -> Result<Placement, HfError> {
             let sub = match role {
                 Role::Model => crate::model_scan::Category::Model.subdir(),
                 Role::Mmproj => crate::model_scan::Category::Mmproj.subdir(),
                 Role::Draft(s) => s.subdir(),
             };
-            Placement {
-                role,
-                target: self.models_dir.join(sub).join(org).join(name).join(file.name()),
-                file: file.clone(),
+            let refused = || HfError::InvalidSpec(format!("refusing the repository file path {:?}", file.path));
+            if !safe_repo_path(&file.path) {
+                return Err(refused());
             }
+            let file_name = match role {
+                Role::Mmproj => match self.candidate.shards.first() {
+                    Some(model) => mmproj_target_name(model.name(), file.name()),
+                    None => file.name().to_string(),
+                },
+                _ => file.name().to_string(),
+            };
+            // Derived from two checked paths, held to the same rule anyway:
+            // one plain segment.
+            if !safe_repo_path(&file_name) || file_name.contains('/') {
+                return Err(refused());
+            }
+            let root = self.models_dir.join(sub);
+            let target = root.join(org).join(name).join(&file_name);
+            if !lexically_under(&target, &root) || target == root {
+                return Err(refused());
+            }
+            Ok(Placement { role, target, file: file.clone() })
         };
-        let mut out: Vec<Placement> = self.candidate.shards.iter().map(|f| place(Role::Model, f)).collect();
+        let mut out: Vec<Placement> = self
+            .candidate
+            .shards
+            .iter()
+            .map(|f| place(Role::Model, f))
+            .collect::<Result<_, _>>()?;
         if self.mmproj {
             if let Some(m) = &self.candidate.mmproj {
-                out.push(place(Role::Mmproj, m));
+                out.push(place(Role::Mmproj, m)?);
             }
         }
         if let Some(s) = self.sidecar {
             if let Some(f) = self.candidate.sidecar(s) {
-                out.push(place(Role::Draft(s), f));
+                out.push(place(Role::Draft(s), f)?);
             }
         }
-        out
+        Ok(out)
     }
 
     fn staging(&self) -> PathBuf {
@@ -1806,6 +2186,43 @@ fn find_staged(repo_dir: &Path, listing_commit: &str, repo_path: &str) -> Option
         .find(|p| std::fs::symlink_metadata(p).is_ok())
 }
 
+/// `path` with its `.` and `..` components folded away, by text alone (no
+/// filesystem access, so no link is followed). `None` when a `..` would climb
+/// above the start.
+fn lexical_normal(path: &Path) -> Option<PathBuf> {
+    use std::path::Component;
+    let mut out = PathBuf::new();
+    let mut depth = 0usize;
+    for c in path.components() {
+        match c {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if depth == 0 {
+                    return None;
+                }
+                out.pop();
+                depth -= 1;
+            }
+            Component::Normal(n) => {
+                out.push(n);
+                depth += 1;
+            }
+            other => out.push(other.as_os_str()),
+        }
+    }
+    Some(out)
+}
+
+/// Whether `path` stays under `root` once both are folded (`lexical_normal`):
+/// the guard between a remote-supplied name and the place a file is moved
+/// from or to.
+fn lexically_under(path: &Path, root: &Path) -> bool {
+    match (lexical_normal(path), lexical_normal(root)) {
+        (Some(p), Some(r)) => p.starts_with(&r),
+        _ => false,
+    }
+}
+
 /// Move a staged snapshot entry's DATA to `dst`: a symlink is resolved to its
 /// blob and the blob moved (the link would dangle once staging is removed); a
 /// plain file is moved as is. Rename first; across volumes, a copy to a
@@ -1813,7 +2230,20 @@ fn find_staged(repo_dir: &Path, listing_commit: &str, repo_path: &str) -> Option
 /// complete, so a failed copy never leaves a truncated file at the target
 /// (where the next attempt would refuse it as a `TargetConflict`). The source
 /// is removed after the target exists.
-fn move_real_data(src: &Path, dst: &Path) -> std::io::Result<()> {
+///
+/// The entry and the data it resolves to must both stay under `staging`
+/// (`lexically_under`), or nothing is moved: a link pointing out of the
+/// staging tree would otherwise move (and then delete) a file of the user's.
+fn move_real_data(src: &Path, dst: &Path, staging: &Path) -> std::io::Result<()> {
+    let outside = |p: &Path| {
+        std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            format!("{} is outside the staging directory {}", p.display(), staging.display()),
+        )
+    };
+    if !lexically_under(src, staging) {
+        return Err(outside(src));
+    }
     let data = if std::fs::symlink_metadata(src)?.file_type().is_symlink() {
         let link = std::fs::read_link(src)?;
         if link.is_absolute() {
@@ -1824,6 +2254,9 @@ fn move_real_data(src: &Path, dst: &Path) -> std::io::Result<()> {
     } else {
         src.to_path_buf()
     };
+    if !lexically_under(&data, staging) {
+        return Err(outside(&data));
+    }
     if let Some(parent) = dst.parent() {
         std::fs::create_dir_all(parent)?;
     }
@@ -1867,7 +2300,7 @@ fn place_group(job: &DownloadJob, group: &[&Placement], child_log: &[String], tr
                 e => e,
             });
         };
-        move_real_data(&src, &p.target)
+        move_real_data(&src, &p.target, &repo_dir)
             .map_err(|e| HfError::Io(format!("moving {} to {}: {e}", p.file.path, p.target.display())))?;
         let got = std::fs::metadata(&p.target).map(|m| m.len()).unwrap_or(0);
         if p.file.size > 0 && got != p.file.size {
@@ -1908,7 +2341,7 @@ pub fn run_download(
     cancel: &AtomicBool,
     on_progress: &mut dyn FnMut(&Progress),
 ) -> Result<Downloaded, HfError> {
-    let placements = job.placements();
+    let placements = job.placements()?;
     let present = placements
         .iter()
         .map(|p| target_present(&p.target, p.file.size))
@@ -2005,30 +2438,32 @@ where
 /// | `model_draft` + `spec_type` | the drafter's path; its HEADER's verdict, else the sidecar's prefix | the user asked for it; the header tells DSpark from DFlash, which a name cannot (`gguf::draft_spec_type`) |
 /// | `temp`, `top_k`, `top_p`, `min_p`, `repeat_penalty` | `general.sampling.*` | llama-server already applies these from the file (`common_init_sampler_from_model`); written, they show in the form as the values in force instead of "default" |
 /// | `jinja` | `off` for an embedded NON-Jinja template, else `on` | `--jinja` is upstream's default, and with it a legacy template string would be rendered as Jinja text; only the legacy route reads it |
-/// | `fit` | `on` | llama.cpp's own default, and the one setting that makes an untuned preset load: context and GPU layers stay unset (`form::fit_allowed`), so without it the model's TRAINED context (often 128k-256k) and every layer would be allocated on whatever card this is |
+/// | `fit` | `on` unless the placement sets the context | llama.cpp's own default, and the one setting that makes an untuned preset load: context and GPU layers stay unset (`form::fit_allowed`), so without it the model's TRAINED context (often 128k-256k) and every layer would be allocated on whatever card this is |
+/// | `device`, `tensor_split`, `n_cpu_moe`, `n_gpu_layers`, `ctx_size`, `device_draft`, `mmproj_device`, `mmproj_offload`, `placement_note` | `placement`: `hf_fit::placement` of the downloaded files' estimate on this machine, the mmproj and the drafter fetched counted (`local_extras`), `None` without a GPU estimate | the split per card, or the CPU part, the dialog showed for this quantization with these extras (the table in `hf_fit`'s header says which keys in which case); `fit` turns off with `ctx_size` set, as the form would make it, so the cut is not resized against the TOTAL memory (`common/fit.cpp`); the mmproj keys only with an mmproj, `device_draft` only with a drafter |
 ///
 /// And what the header could justify but is left alone, on purpose:
 /// - `reasoning` stays `auto` whatever the thinking verdict (`gguf` `Thinking`):
 ///   `auto` is the template's own default for a switchable one, `off` is inert
 ///   on one that thinks unconditionally, and on a template with no marker it
 ///   would only cost the parser on a model that thinks without one (MiMo-VL).
-/// - `ctx_size`, `n_gpu_layers`, `n_cpu_moe`, `n_cpu_ffn`, `moe_cache_mib`,
-///   `tensor_split`: the fit sizes context and placement for the machine (any
-///   of the last four would make it skip the placement, `common/fit.cpp`); the
-///   MoE shape and the trained context are hardware questions the Models tab's
-///   tuning answers, not facts of the file.
+/// - Without a placement (no GPU estimate, a one-card machine the model fits,
+///   or one it cannot be placed on at all): `ctx_size`, `n_gpu_layers`,
+///   `n_cpu_moe`, `tensor_split` stay unset and the fit sizes context and
+///   placement for the machine. `n_cpu_ffn` and `moe_cache_mib` are never
+///   set: tuning levers, not estimates.
 /// - Embedded MTP heads (`nextn_predict_layers`) do not switch `spec-type` on:
 ///   llama.cpp's default is no speculation, the MTP context costs VRAM, and
 ///   the user can pick it in one click.
 /// - `image_min_tokens`: llama.cpp only WARNS (Qwen-VL grounding) and the bound
 ///   costs tokens on every image; a per-use choice.
-/// - A SEPARATE MTP head gets no `device_draft` / `n_gpu_layers_draft` pin,
-///   although a multi-device auto fit crashes those heads (AGENTS.md, "Draft
-///   placement needs a draft FILE"): the pin names a device, which this pure
-///   function cannot know, on one GPU there is nothing to split, and the CPU
-///   fallback (`0`) would throw away the speedup the user asked for. A known
-///   gap on a multi-GPU machine: the user pins it in the Assets drafter
-///   picker (README, "Assets"), and nothing here tells them to.
+/// - A separate drafter gets a `device_draft` pin only from a placement that
+///   splits the model over several cards (the last one: an empty pin would
+///   inherit the whole list, and a multi-device auto fit crashes separate MTP
+///   heads, AGENTS.md "Draft placement needs a draft FILE"), or that keeps
+///   the model alone on one card by counting the drafter on another. With
+///   the model and the drafter on one card, the inherited single device is
+///   already the pin; `n_gpu_layers_draft` stays unset, the CPU fallback
+///   (`0`) would throw away the speedup the user asked for.
 ///
 /// The result passes `prune_inactive_draft_keys` / `prune_inactive_moe_cache`
 /// unchanged (they run here too, against the header, so a future field cannot
@@ -2038,6 +2473,7 @@ pub fn derive_preset(
     d: &Downloaded,
     model: Option<&gguf::ModelInfo>,
     draft_header_spec: Option<&str>,
+    placement: Option<&hf_fit::Placement>,
 ) -> Preset {
     let s = |p: &Path| p.to_string_lossy().into_owned();
     let mut p = Preset::new_default(id, s(&d.model));
@@ -2046,6 +2482,23 @@ pub fn derive_preset(
     if let Some((kind, path)) = &d.draft {
         p.model_draft = s(path);
         p.spec_type = draft_header_spec.unwrap_or(kind.spec_type()).to_string();
+    }
+    if let Some(pl) = placement {
+        p.device = pl.device.clone();
+        p.tensor_split = pl.tensor_split.clone();
+        p.n_cpu_moe = pl.n_cpu_moe;
+        p.n_gpu_layers = pl.n_gpu_layers;
+        p.ctx_size = pl.ctx_size;
+        if d.draft.is_some() {
+            p.device_draft = pl.device_draft.clone();
+        }
+        if d.mmproj.is_some() {
+            p.mmproj_device = pl.mmproj_device.clone();
+            if let Some(off) = pl.mmproj_offload {
+                p.mmproj_offload = Some(off);
+            }
+        }
+        p.placement_note = pl.note.clone();
     }
     p.fit = crate::form::fit_allowed(p.ctx_size.is_none(), p.n_gpu_layers.is_none());
     if let Some(m) = model {
@@ -2068,11 +2521,32 @@ pub fn derive_preset(
 /// Models tab's New would give the file (`presets::new_preset_id`: the file
 /// name, `preset` when it sanitizes to nothing, made unique ignoring case
 /// against `existing_ids`; pass every listed preset, the parked ones included).
-pub fn preset_from_download(d: &Downloaded, existing_ids: &[String]) -> Preset {
+/// `budget` is the machine the dialog or `--list` estimated against
+/// (`hf_fit::budget`), `None` without a GPU: the placement is then left out,
+/// as it is when the downloaded header cannot be read.
+pub fn preset_from_download(d: &Downloaded, existing_ids: &[String], budget: Option<&hf_fit::Budget>) -> Preset {
     let id = presets::new_preset_id(&d.model.to_string_lossy(), existing_ids);
     let info = gguf::read_model_info(&d.model);
     let spec = d.draft.as_ref().and_then(|(_, p)| gguf::draft_spec_type(p));
-    derive_preset(id, d, info.as_ref(), spec)
+    let placement = budget.and_then(|b| {
+        let shape = hf_fit::local_shape(&d.model).ok()?;
+        hf_fit::placement(&hf_fit::estimate_with(&shape, b, &local_extras(d)), &shape)
+    });
+    derive_preset(id, d, info.as_ref(), spec, placement.as_ref())
+}
+
+/// The extras of a download as the estimate counts them (`hf_fit::Extras`):
+/// the mmproj's size on disk, the drafter's own header (its size alone when
+/// unreadable). A file that cannot be stat'ed counts nothing.
+pub fn local_extras(d: &Downloaded) -> hf_fit::Extras {
+    let size = |p: &Path| std::fs::metadata(p).map_or(0, |m| m.len());
+    hf_fit::Extras {
+        mmproj: d.mmproj.as_deref().map_or(0, size),
+        drafter: d.draft.as_ref().map(|(kind, path)| {
+            let shape = hf_fit::local_draft_shape(path).unwrap_or_else(|_| hf_fit::DraftShape::from_size(size(path)));
+            (format!("{} drafter", kind.label()), shape)
+        }),
+    }
 }
 
 /// Save a derived preset, first pinning server.ini's ModelsDir to the one the
@@ -2202,11 +2676,35 @@ mod tests {
     #[test]
     fn curl_config_carries_url_and_token_and_the_status_writeout() {
         let t = Token::new("hf_secret").unwrap();
-        let c = curl_config("https://h/api/models/o/r/refs", Some(&t));
+        let c = curl_config("https://h/api/models/o/r/refs", Some(&t)).unwrap();
         assert!(c.contains("url = \"https://h/api/models/o/r/refs\"\n"));
         assert!(c.contains("header = \"Authorization: Bearer hf_secret\"\n"));
         assert!(c.contains("write-out = \"\\n%{http_code}\"\n"));
-        assert!(!curl_config("u", None).contains("Authorization"));
+        assert!(!c.contains("range"));
+        assert!(!curl_config("u", None).unwrap().contains("Authorization"));
+        let r = curl_config_with("https://h/o/r/resolve/c/m.gguf", None, "*/*", Some((0, 1023))).unwrap();
+        assert!(r.contains("range = \"0-1023\"\nmax-filesize = 66560\n"), "{r}");
+    }
+
+    #[test]
+    fn curl_config_values_cannot_break_out_of_their_quotes() {
+        assert_eq!(curl_value(r#"a"b\c"#).unwrap(), r#""a\"b\\c""#);
+        // A newline would end the line and start an option of its own.
+        for bad in ["u\nurl = \"https://evil\"", "u\r", "u\0", "u\u{1b}"] {
+            assert!(matches!(curl_config(bad, None), Err(HfError::InvalidSpec(_))), "{bad:?}");
+        }
+        let c = curl_config("https://h/x\"y", None).unwrap();
+        assert!(c.starts_with("url = \"https://h/x\\\"y\"\n"), "{c}");
+        assert_eq!(c.lines().count(), 4, "one line per option, nothing smuggled");
+    }
+
+    #[test]
+    fn binary_curl_output_splits_at_the_last_newline() {
+        let mut out = b"GGUF\n\x00\x01\n".to_vec();
+        out.extend_from_slice(b"\n206");
+        assert_eq!(parse_curl_bytes(out).unwrap(), (206, b"GGUF\n\x00\x01\n".to_vec()));
+        assert!(matches!(parse_curl_bytes(b"\n000".to_vec()), Err(HfError::Network(_))));
+        assert!(parse_curl_bytes(b"junk".to_vec()).is_err());
     }
 
     #[test]
@@ -2302,6 +2800,9 @@ mod tests {
     impl Fetch for Canned {
         fn get(&self, url: &str, _token: Option<&Token>) -> Result<(u16, String), HfError> {
             self.0.get(url).cloned().ok_or_else(|| HfError::Network(format!("unexpected url {url}")))
+        }
+        fn get_range(&self, url: &str, _token: Option<&Token>, _start: u64, _len: u64) -> Result<(u16, Vec<u8>), HfError> {
+            Err(HfError::Network(format!("unexpected range request {url}")))
         }
     }
 
@@ -2431,7 +2932,8 @@ mod tests {
         assert_eq!(
             u,
             "https://hf.test/api/models?search=qwen3%208b%2F%C3%BC%26x&filter=gguf&sort=downloads&direction=-1\
-             &limit=30&expand%5B%5D=downloads&expand%5B%5D=gated&expand%5B%5D=private&expand%5B%5D=siblings"
+             &limit=30&expand%5B%5D=downloads&expand%5B%5D=gated&expand%5B%5D=private&expand%5B%5D=siblings\
+             &expand%5B%5D=gguf"
         );
         assert!(!u.contains('[') && !u.contains(' ') && !u.contains('"'), "nothing curl globs or the config quotes");
         assert!(search_url("e/", "q", 0).contains("&limit=1&"));
@@ -2469,10 +2971,75 @@ mod tests {
         assert_eq!(h[0].drafters, [Sidecar::Mtp, Sidecar::Dflash]);
         assert_eq!((h[0].downloads, h[0].gated, h[0].quants.as_slice()), (0, false, &["Q4_K_M".to_string()][..]));
 
+        // Ids are the remote's data: one `parse_spec` would refuse is dropped.
+        let v = serde_json::json!([
+            {"id": "../evil", "siblings": [{"rfilename": "m-Q4_K_M.gguf"}]},
+            {"id": "o/r\nx", "siblings": []},
+            {"id": "a/b/c", "siblings": []},
+            {"id": "o/ok", "siblings": []}
+        ]);
+        let h = hits_from_search(&v).unwrap();
+        assert_eq!(h.iter().map(|h| h.repo.as_str()).collect::<Vec<_>>(), ["o/ok"]);
+
         let empty = Canned(HashMap::from([(search_url(e, "zzz", 5), (200, "[]".to_string()))]));
         assert_eq!(search_with(&empty, e, "zzz", 5, None).unwrap(), []);
         let odd = Canned(HashMap::from([(search_url(e, "zzz", 5), (200, "{\"error\":\"x\"}".to_string()))]));
         assert!(matches!(search_with(&odd, e, "zzz", 5, None), Err(HfError::Http { status: 200, .. })));
+    }
+
+    #[test]
+    fn the_gguf_summary_gives_kind_and_parameter_count() {
+        // Shapes of real `expand[]=gguf` answers (2026-10-27), template cut.
+        let v = serde_json::json!([
+            {"id": "unsloth/Qwen3-30B-A3B-GGUF", "gguf": {"total": 30532122624u64, "architecture": "qwen3moe", "context_length": 40960, "chat_template": "{%...%}"}},
+            {"id": "Qwen/Qwen3-8B-GGUF", "gguf": {"total": 8190735360u64, "architecture": "qwen3"}},
+            {"id": "TheBloke/Mixtral-8x7B-v0.1-GGUF", "gguf": {"total": 46702792704u64, "architecture": "llama"}},
+            {"id": "bartowski/Meta-Llama-3.1-8B-Instruct-GGUF", "gguf": {"total": 8030261312u64, "architecture": "llama"}},
+            {"id": "o/no-summary"}
+        ]);
+        let h = hits_from_search(&v).unwrap();
+        let labels: Vec<Option<String>> = h.iter().map(|h| kind_label(h.kind, h.params)).collect();
+        assert_eq!(
+            labels,
+            [
+                Some("MoE 30.5B".to_string()),
+                Some("dense 8.2B".to_string()),
+                Some("MoE 46.7B".to_string()),
+                Some("8.0B, dense/MoE unknown".to_string()),
+                None
+            ]
+        );
+    }
+
+    #[test]
+    fn model_kind_trusts_the_arch_then_the_name_and_never_guesses() {
+        assert_eq!(model_kind(Some("qwen3moe"), "o/x"), ModelKind::Moe);
+        assert_eq!(model_kind(Some("deepseek2"), "o/x"), ModelKind::Moe);
+        assert_eq!(model_kind(Some("gpt-oss"), "o/x"), ModelKind::Moe);
+        assert_eq!(model_kind(Some("qwen3"), "o/Qwen3-8B"), ModelKind::Dense);
+        assert_eq!(model_kind(Some("gemma3"), "o/x"), ModelKind::Dense);
+        // `llama` serves Mixtral too: only the name can tell.
+        assert_eq!(model_kind(Some("llama"), "o/Llama-3.1-8B"), ModelKind::Unknown);
+        assert_eq!(model_kind(Some("llama"), "o/Mixtral-8x22B-v0.1"), ModelKind::Moe);
+        assert_eq!(model_kind(None, "o/Qwen3-Coder-30B-A3B-Instruct-GGUF"), ModelKind::Moe);
+        assert_eq!(model_kind(None, "o/Ling-A1.5B"), ModelKind::Moe);
+        assert_eq!(model_kind(None, "o/Qwen3-8B"), ModelKind::Unknown);
+        // Words that merely look alike are not size patterns.
+        for name in ["o/alpha-b", "o/ab", "o/AWQ-8B", "o/x-7b", "o/max-8b"] {
+            assert_eq!(model_kind(Some("llama"), name), ModelKind::Unknown, "{name}");
+        }
+    }
+
+    #[test]
+    fn parameter_counts_read_short() {
+        assert_eq!(format_params(30_532_122_624), "30.5B");
+        assert_eq!(format_params(8_190_735_360), "8.2B");
+        assert_eq!(format_params(235_093_634_560), "235B");
+        assert_eq!(format_params(1_026_000_000_000), "1.0T");
+        assert_eq!(format_params(596_049_920), "596M");
+        assert_eq!(format_params(5_000), "5000");
+        assert_eq!(kind_label(ModelKind::Moe, None).as_deref(), Some("MoE"));
+        assert_eq!(kind_label(ModelKind::Dense, None).as_deref(), Some("dense"));
     }
 
     #[test]
@@ -2538,27 +3105,118 @@ mod tests {
         let root = Path::new("M");
         let j = job(root, 2, true, Some(Sidecar::Dspark));
         // BF16 has no dspark sidecar: only the shards and the mmproj.
-        let t: Vec<PathBuf> = j.placements().into_iter().map(|p| p.target).collect();
+        let t: Vec<PathBuf> = j.placements().unwrap().into_iter().map(|p| p.target).collect();
         // `<org>\<repo>`: two orgs' same-named repos never share a folder.
         assert_eq!(
             t,
             [
                 root.join("models").join("o").join("r").join("Q-8B-BF16-00001-of-00002.gguf"),
                 root.join("models").join("o").join("r").join("Q-8B-BF16-00002-of-00002.gguf"),
-                root.join("mmprojs").join("o").join("r").join("mmproj-F16.gguf"),
+                // Named after the model, not the generic HF name.
+                root.join("mmprojs").join("o").join("r").join("Q-8B-mmproj-F16.gguf"),
             ]
         );
+        // Every quant of the repo puts the shared projector at ONE target, so
+        // the second download finds it in place.
+        let mm = |idx| job(root, idx, true, None).placements().unwrap().pop().unwrap();
+        assert_eq!(mm(0).role, Role::Mmproj);
+        assert_eq!(mm(0).target, mm(1).target);
+        assert_eq!(mm(1).target, t[2]);
         let mut other_org = job(root, 2, true, None);
         other_org.repo = "p/r".into();
-        assert_ne!(other_org.placements()[0].target, t[0]);
+        assert_ne!(other_org.placements().unwrap()[0].target, t[0]);
         let j = job(root, 1, false, Some(Sidecar::Dflash));
-        let p = j.placements();
+        let p = j.placements().unwrap();
         assert_eq!(p.len(), 2);
         assert_eq!(p[1].role, Role::Draft(Sidecar::Dflash));
         assert_eq!(p[1].target, root.join("dflashs").join("o").join("r").join("dflash-Q4_K_M.gguf"));
-        let g = groups(&j.placements()).into_iter().map(|g| g.len()).collect::<Vec<_>>();
+        let g = groups(&j.placements().unwrap()).into_iter().map(|g| g.len()).collect::<Vec<_>>();
         assert_eq!(g, [1, 1]);
-        assert_eq!(groups(&job(root, 2, true, None).placements()).len(), 2, "shards share one child");
+        assert_eq!(groups(&job(root, 2, true, None).placements().unwrap()).len(), 2, "shards share one child");
+    }
+
+    #[test]
+    fn the_mmproj_is_named_after_the_model() {
+        let n = mmproj_target_name;
+        // No quant tag on the mmproj; one on it (lower-case read upper).
+        assert_eq!(n("tinygemma3-Q8_0.gguf", "mmproj-tinygemma3.gguf"), "tinygemma3-mmproj.gguf");
+        assert_eq!(n("Qwen3-VL-8B-Instruct-Q4_K_M.gguf", "mmproj-F16.gguf"), "Qwen3-VL-8B-Instruct-mmproj-F16.gguf");
+        assert_eq!(n("gemma-3-4b-it-q4_0.gguf", "mmproj-model-f16.gguf"), "gemma-3-4b-it-mmproj-F16.gguf");
+        assert_eq!(n("m-Q8_0.gguf", "BF16/mmproj-BF16.gguf"), "m-mmproj-BF16.gguf");
+        // A tail that is not a quant is not a tag (the size, the model's name).
+        assert_eq!(n("gemma-3-4b-it-q4_0.gguf", "mmproj-model-f16-4B.gguf"), "gemma-3-4b-it-mmproj.gguf");
+        assert_eq!(n("Qwen3-30B-A3B.gguf", "mmproj-F16.gguf"), "Qwen3-30B-A3B-mmproj-F16.gguf");
+        // A split's first shard: the shard suffix and the tag both go.
+        assert_eq!(n("Qwen3-VL-32B-BF16-00001-of-00002.gguf", "mmproj-BF16.gguf"), "Qwen3-VL-32B-mmproj-BF16.gguf");
+        // Dots and spaces in the stem are part of the name.
+        assert_eq!(n("Llama-3.2-11B-Vision.Q4_K_M.gguf", "mmproj-F16.gguf"), "Llama-3.2-11B-Vision-mmproj-F16.gguf");
+        assert_eq!(n("My Vision Model v1.5-Q6_K.gguf", "mmproj.gguf"), "My Vision Model v1.5-mmproj.gguf");
+        // Unusual tags: Unsloth's `UD-` goes with its tag, IQ and ternary quants.
+        assert_eq!(n("Qwen3-VL-30B-A3B-UD-Q4_K_XL.gguf", "mmproj-F16.gguf"), "Qwen3-VL-30B-A3B-mmproj-F16.gguf");
+        assert_eq!(n("Qwen3-VL-30B-A3B-UD-IQ2_XXS.gguf", "mmproj-F16.gguf"), "Qwen3-VL-30B-A3B-mmproj-F16.gguf");
+        assert_eq!(n("m-IQ2_XXS.gguf", "mmproj-Q8_0.gguf"), "m-mmproj-Q8_0.gguf");
+        assert_eq!(n("m-TQ1_0.gguf", "mmproj-MXFP4.gguf"), "m-mmproj-MXFP4.gguf");
+        // Two quants of one repo share their projector's name.
+        for model in ["Qwen3-VL-8B-Instruct-Q4_K_M.gguf", "Qwen3-VL-8B-Instruct-Q8_0.gguf", "Qwen3-VL-8B-Instruct-UD-Q6_K_XL.gguf"] {
+            assert_eq!(n(model, "mmproj-F16.gguf"), "Qwen3-VL-8B-Instruct-mmproj-F16.gguf", "{model}");
+        }
+        // A name with no `-`/`.` has no tag to cut; one that is nothing but
+        // its tag keeps the HF name.
+        assert_eq!(n("Q4_K_M.gguf", "mmproj-F16.gguf"), "Q4_K_M-mmproj-F16.gguf");
+        assert_eq!(n("-Q4_K_M.gguf", "mmproj-F16.gguf"), "mmproj-F16.gguf");
+    }
+
+    #[test]
+    fn quant_tags_are_told_from_other_name_tails() {
+        for q in ["Q4_K_M", "Q8_0", "IQ2_XXS", "IQ4_NL", "TQ2_0", "F16", "F32", "BF16", "MXFP4", "NVFP4", "Q4_K_XL"] {
+            assert!(is_quant_tag(q), "{q}");
+        }
+        for t in ["", "8B", "A3B", "TINYGEMMA3", "INSTRUCT", "FP8X", "QAT", "UD"] {
+            assert!(!is_quant_tag(t), "{t}");
+        }
+    }
+
+    #[test]
+    fn placements_refuse_remote_paths_and_ids_that_escape_the_models_dir() {
+        let root = Path::new("M");
+        for bad in ["../x.gguf", "a/../../x.gguf", "./x.gguf", "a//x.gguf", "/x.gguf", "a\\..\\x.gguf", "C:x.gguf", "c:/x.gguf", "x\n.gguf", ""] {
+            assert!(!safe_repo_path(bad), "{bad:?}");
+            let mut j = job(root, 1, false, None);
+            j.candidate.shards[0].path = bad.to_string();
+            assert!(matches!(j.placements(), Err(HfError::InvalidSpec(_))), "{bad:?}");
+        }
+        assert!(safe_repo_path("BF16/m-BF16-00001-of-00002.gguf"));
+        assert!(safe_repo_path("a..b/x.gguf"), "dots inside a name are a name");
+        let mut j = job(root, 1, false, None);
+        j.repo = "../r".into();
+        assert!(matches!(j.placements(), Err(HfError::InvalidSpec(_))));
+        // A sidecar is checked like a shard.
+        let mut j = job(root, 1, true, None);
+        j.candidate.mmproj.as_mut().unwrap().path = "../../evil.gguf".into();
+        assert!(j.placements().is_err());
+    }
+
+    #[test]
+    fn the_listing_drops_unsafe_tree_paths() {
+        let tree = serde_json::json!([
+            {"type": "file", "path": "../evil-Q4_K_M.gguf", "size": 1},
+            {"type": "file", "path": "a\\b-Q8_0.gguf", "size": 1},
+            {"type": "file", "path": "ok-Q4_K_M.gguf", "size": 1}
+        ]);
+        let files = files_from_tree(&tree);
+        assert_eq!(files.iter().map(|f| f.path.as_str()).collect::<Vec<_>>(), ["ok-Q4_K_M.gguf"]);
+        let l = build_listing("o/r", COMMIT, vec![f("/abs-Q8_0.gguf", 1), f("m-Q4_K_M.gguf", 1)], &spec("o/r", None), "e/").unwrap();
+        assert_eq!(l.candidates.len(), 1);
+        assert_eq!(l.candidates[0].primary().path, "m-Q4_K_M.gguf");
+    }
+
+    #[test]
+    fn lexical_containment_folds_dots_and_refuses_climbing_out() {
+        let root = Path::new("S").join("repo");
+        assert!(lexically_under(&root.join("snapshots").join("c").join("..").join("..").join("blobs").join("x"), &root));
+        assert!(!lexically_under(&root.join("..").join("other"), &root));
+        assert!(!lexically_under(&root.join("..").join("..").join("..").join("x"), &root));
+        assert!(!lexically_under(Path::new("elsewhere"), &root));
     }
 
     #[test]
@@ -2658,7 +3316,7 @@ mod tests {
     #[test]
     fn tracker_follows_parallel_files_by_url_suffix() {
         let j = job(Path::new("M"), 2, true, None);
-        let p = j.placements();
+        let p = j.placements().unwrap();
         let mut t = Tracker::new(&p, &[false, false, true]);
         assert_eq!(
             t.progress(),
@@ -2721,7 +3379,7 @@ mod tests {
     fn a_wrong_sized_move_is_removed_so_a_retry_is_not_a_conflict() {
         let dir = tempfile::tempdir().unwrap();
         let j = job(dir.path(), 1, false, None);
-        let p = j.placements();
+        let p = j.placements().unwrap();
         let snap = j.staging().join(repo_folder("o/r")).join("snapshots").join(COMMIT);
         std::fs::create_dir_all(&snap).unwrap();
         std::fs::write(snap.join("Q-8B-Q4_K_M.gguf"), vec![0u8; 10]).unwrap();
@@ -2792,7 +3450,7 @@ mod tests {
     fn staged_files_move_out_and_existing_ones_are_reused_or_refused() {
         let dir = tempfile::tempdir().unwrap();
         let j = job(dir.path(), 1, true, None);
-        let placements = j.placements();
+        let placements = j.placements().unwrap();
         // Fake what the child leaves: refs/main, a snapshot entry per file.
         let repo_dir = j.staging().join(repo_folder("o/r"));
         std::fs::create_dir_all(repo_dir.join("refs")).unwrap();
@@ -2825,7 +3483,7 @@ mod tests {
     fn a_success_with_nothing_staged_reads_as_the_swallowed_error() {
         let dir = tempfile::tempdir().unwrap();
         let j = job(dir.path(), 1, false, None);
-        let p = j.placements();
+        let p = j.placements().unwrap();
         let mut t = Tracker::new(&p, &[false]);
         let log = vec!["get_repo_commit: error: GET failed (401): nope".to_string()];
         assert_eq!(
@@ -2847,10 +3505,37 @@ mod tests {
         std::fs::write(blobs.join("oid"), b"data").unwrap();
         std::os::unix::fs::symlink(Path::new("../../blobs/oid"), snap.join("m.gguf")).unwrap();
         let dst = dir.path().join("out").join("m.gguf");
-        move_real_data(&snap.join("m.gguf"), &dst).unwrap();
+        move_real_data(&snap.join("m.gguf"), &dst, dir.path()).unwrap();
         assert!(!std::fs::symlink_metadata(&dst).unwrap().file_type().is_symlink());
         assert_eq!(std::fs::read(&dst).unwrap(), b"data");
         assert!(!blobs.join("oid").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_snapshot_symlink_out_of_the_staging_tree_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        std::fs::write(outside.path().join("precious"), b"mine").unwrap();
+        let snap = dir.path().join("snapshots").join(COMMIT);
+        std::fs::create_dir_all(&snap).unwrap();
+        std::os::unix::fs::symlink(outside.path().join("precious"), snap.join("m.gguf")).unwrap();
+        let dst = dir.path().join("out").join("m.gguf");
+        assert!(move_real_data(&snap.join("m.gguf"), &dst, dir.path()).is_err());
+        assert_eq!(std::fs::read(outside.path().join("precious")).unwrap(), b"mine");
+        assert!(!dst.exists());
+    }
+
+    #[test]
+    fn a_staged_entry_outside_the_staging_tree_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let staging = dir.path().join("staging");
+        std::fs::create_dir_all(&staging).unwrap();
+        std::fs::write(dir.path().join("precious"), b"mine").unwrap();
+        let src = staging.join("..").join("precious");
+        let dst = dir.path().join("out.gguf");
+        assert!(move_real_data(&src, &dst, &staging).is_err());
+        assert_eq!(std::fs::read(dir.path().join("precious")).unwrap(), b"mine");
     }
 
     #[test]
@@ -2907,7 +3592,7 @@ mod tests {
             repo: "o/r".into(),
             project_url: "https://huggingface.co/o/r".into(),
             model: PathBuf::from("M/models/r/m-Q4_K_M.gguf"),
-            mmproj: mmproj.then(|| PathBuf::from("M/mmprojs/r/mmproj-F16.gguf")),
+            mmproj: mmproj.then(|| PathBuf::from("M/mmprojs/r/m-mmproj-F16.gguf")),
             draft: draft.map(|s| (s, PathBuf::from("M/dflashs/r/dflash-Q4_K_M.gguf"))),
         }
     }
@@ -2915,7 +3600,7 @@ mod tests {
     #[test]
     fn derived_preset_fills_paths_url_sampling_and_fit() {
         let d = downloaded(true, None);
-        let p = derive_preset("m-Q4_K_M".into(), &d, Some(&info(Some("{% if x %}{{ y }}{% endif %}"), 0, false)), None);
+        let p = derive_preset("m-Q4_K_M".into(), &d, Some(&info(Some("{% if x %}{{ y }}{% endif %}"), 0, false)), None, None);
         assert_eq!(p.model, d.model.to_string_lossy());
         assert_eq!(p.mmproj, d.mmproj.as_ref().unwrap().to_string_lossy());
         assert_eq!(p.project_url, "https://huggingface.co/o/r");
@@ -2944,10 +3629,10 @@ mod tests {
     fn derived_drafter_takes_the_header_verdict_over_the_prefix() {
         let d = downloaded(false, Some(Sidecar::Dflash));
         let m = info(None, 0, true);
-        let header = derive_preset("x".into(), &d, Some(&m), Some("draft-dspark"));
+        let header = derive_preset("x".into(), &d, Some(&m), Some("draft-dspark"), None);
         assert_eq!(header.spec_type, "draft-dspark");
         assert_eq!(header.model_draft, "M/dflashs/r/dflash-Q4_K_M.gguf");
-        let silent = derive_preset("x".into(), &d, Some(&m), None);
+        let silent = derive_preset("x".into(), &d, Some(&m), None, None);
         assert_eq!(silent.spec_type, "draft-dflash");
         // The prunes leave a drafter-backed preset alone (they are idempotent here).
         let mut again = silent.clone();
@@ -2959,15 +3644,129 @@ mod tests {
     #[test]
     fn derived_jinja_and_the_unreadable_header() {
         let d = downloaded(false, None);
-        let legacy = derive_preset("x".into(), &d, Some(&info(Some("chatml"), 0, false)), None);
+        let legacy = derive_preset("x".into(), &d, Some(&info(Some("chatml"), 0, false)), None, None);
         assert_eq!(legacy.jinja, Some(false));
-        let none = derive_preset("x".into(), &d, Some(&info(None, 2, false)), None);
+        let none = derive_preset("x".into(), &d, Some(&info(None, 2, false)), None, None);
         assert_eq!(none.jinja, Some(true));
         assert_eq!(none.spec_type, "", "embedded MTP heads are not switched on");
         // No header: paths, URL and fit only.
-        let blind = derive_preset("x".into(), &d, None, None);
+        let blind = derive_preset("x".into(), &d, None, None, None);
         assert_eq!((blind.temp, blind.top_k, blind.jinja), (None, None, Some(true)));
         assert!(blind.fit);
+    }
+
+    /// A small MoE on disk (4 blocks of 2 MiB attention and 16 MiB experts,
+    /// 4 MiB of KV at its 4096-token context, a 4 MiB output head) and a
+    /// pair of cards of 48 and 24 MiB usable: 80 MiB does not fit 72. With
+    /// `extras`, a 1 MiB mmproj and a 2 MiB drafter on disk too, and the
+    /// second card larger by exactly what they take (their compute
+    /// allowances included): neither fits the first card, so both land on the
+    /// second, pinned, and the model's cut stays the same.
+    fn placed_download(dir: &Path, extras: bool) -> (Downloaded, hf_fit::Budget) {
+        use crate::hf_fit::tests::{gguf, write_sparse, W};
+        let mut tensors = vec![("token_embd.weight".to_string(), 8 * MIB)];
+        for b in 0..4 {
+            tensors.push((format!("blk.{b}.attn_q.weight"), 2 * MIB));
+            tensors.push((format!("blk.{b}.ffn_up_exps.weight"), 16 * MIB));
+        }
+        tensors.push(("output.weight".into(), 4 * MIB));
+        let t: Vec<(&str, u64)> = tensors.iter().map(|(n, s)| (n.as_str(), *s)).collect();
+        let (h, size) = gguf(
+            &[
+                ("general.architecture", W::Str("qwen3moe")),
+                ("qwen3moe.block_count", W::U32(4)),
+                ("qwen3moe.context_length", W::U32(4096)),
+                ("qwen3moe.embedding_length", W::U32(256)),
+                ("qwen3moe.attention.head_count", W::U32(4)),
+                ("qwen3moe.attention.head_count_kv", W::U32(1)),
+                ("qwen3moe.attention.key_length", W::U32(64)),
+                ("qwen3moe.attention.value_length", W::U32(64)),
+            ],
+            &t,
+        );
+        let model = dir.join("m-Q4_K_M.gguf");
+        write_sparse(&model, &h, size);
+        let mut d = downloaded(false, None);
+        d.model = model;
+        let mut room = 0;
+        if extras {
+            let mmproj = dir.join("mmproj-F16.gguf");
+            std::fs::write(&mmproj, vec![0u8; MIB as usize]).unwrap();
+            d.mmproj = Some(mmproj);
+            let (h, size) = gguf(&[("general.architecture", W::Str("qwen3"))], &[("blk.0.attn_q.weight", 2 * MIB)]);
+            let draft = dir.join("m-MTP-Q8_0.gguf");
+            write_sparse(&draft, &h, size);
+            d.draft = Some((Sidecar::Mtp, draft));
+            room = (MIB + hf_fit::MMPROJ_COMPUTE + 2 * MIB + hf_fit::DRAFT_COMPUTE) / MIB;
+        }
+        let card = |id: &str, name: &str, usable_mib: u64| hf_fit::Gpu {
+            id: id.into(),
+            name: name.into(),
+            total_mib: usable_mib + hf_fit::GPU_RESERVE / MIB,
+        };
+        let b = hf_fit::Budget {
+            gpus: vec![card("ROCm1", "AMD Radeon AI PRO R9700", 48), card("CUDA0", "NVIDIA GeForce RTX 4070 SUPER", 24 + room)],
+            ram: Some(60 << 30),
+            ram_total: Some(64 << 30),
+        };
+        (d, b)
+    }
+
+    const MIB: u64 = 1 << 20;
+
+    #[test]
+    fn a_download_is_placed_per_card_and_survives_the_ini_and_the_form() {
+        let dir = tempfile::tempdir().unwrap();
+        let (d, b) = placed_download(dir.path(), true);
+        let p = preset_from_download(&d, &[], Some(&b));
+        // Block 0's experts in RAM; blocks 0-2 on the R9700 (41 of 48 MiB),
+        // block 3 and the output head on the 4070 (23 of 24 MiB).
+        assert_eq!(
+            (p.device.as_str(), p.tensor_split.as_str(), p.n_cpu_moe, p.n_gpu_layers, p.ctx_size),
+            ("ROCm1,CUDA0", "3,2", Some(1), None, Some(4096))
+        );
+        assert!(!p.fit, "the context is set, so the fit is off (form::fit_allowed)");
+        assert_eq!(p.device_draft, "CUDA0", "a separate drafter on the last card of the split");
+        // The encoder does not fit the first device (its default): moved to
+        // the second, where the room was left for it.
+        assert_eq!((p.mmproj_device.as_str(), p.mmproj_offload), ("CUDA0", Some(true)));
+        assert!(p.placement_note.starts_with("estimated at download for a 4k context"), "{}", p.placement_note);
+        assert!(
+            p.placement_note.contains("; counting the image encoder (0.5 GiB) on CUDA0 and the MTP drafter (0.8 GiB) on CUDA0;"),
+            "{}",
+            p.placement_note
+        );
+        presets::validate_for_save(&p).unwrap();
+
+        // Through the INI: the note is a comment, never a key, and reads back.
+        let path = dir.path().join("presets.ini");
+        std::fs::write(&path, presets::render_section(&p)).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains(&format!("\r\n; placement = {}\r\n", p.placement_note)), "{text}");
+        assert!(text.contains("\r\nmmproj-device = CUDA0\r\n") && text.contains("\r\ndevice-draft = CUDA0\r\n"), "{text}");
+        let back = presets::read_presets(&path);
+        assert_eq!(back, std::slice::from_ref(&p));
+        // Through the form, as a GUI save does: unchanged, so not dirty either.
+        let f = crate::form::preset_to_form(&p);
+        assert_eq!(crate::form::form_to_preset(&f), p);
+        assert!(!f.fit, "the form agrees the fit is off");
+    }
+
+    #[test]
+    fn without_a_gpu_estimate_the_download_keeps_the_defaults() {
+        let dir = tempfile::tempdir().unwrap();
+        let (d, b) = placed_download(dir.path(), false);
+        let p = preset_from_download(&d, &[], None);
+        assert_eq!((p.device.as_str(), p.tensor_split.as_str(), p.n_cpu_moe, p.ctx_size), ("", "", None, None));
+        assert!(p.fit && p.placement_note.is_empty());
+        // One card that holds it all: nothing to write either.
+        let big = hf_fit::Budget { gpus: vec![hf_fit::Gpu { id: "CUDA0".into(), name: "G".into(), total_mib: 4096 }], ..b };
+        let one = preset_from_download(&d, &[], Some(&big));
+        assert_eq!(one, p);
+        // An unreadable file: no placement, no failure.
+        let mut gone = d.clone();
+        gone.model = dir.path().join("missing.gguf");
+        assert!(preset_from_download(&gone, &[], Some(&big)).placement_note.is_empty());
     }
 
     #[test]

@@ -5,9 +5,10 @@
 //! them in. The Models-tab-only helper families live HERE next to their callers
 //! instead of in the shared hub:
 //! - `update_model_info`: the GGUF "Model info" box;
-//! - the New / Clone dialog funnel (`populate_dialog_models` … `commit_new_preset`,
-//!   and `commit_downloaded_preset`, the same end for the Hugging Face source
-//!   that `gui/hf_dialog.rs` drives);
+//! - the New / Clone dialog funnel (`populate_dialog_models` … `commit_new_preset`;
+//!   the Hugging Face source ends elsewhere: its preset is created in the
+//!   background by `gui/downloads.rs`, which leaves the editor alone and only
+//!   refreshes the list, the pickers and `presets_moved`);
 //! - the discard-guarded navigation bodies (`do_select_preset`,
 //!   `open_new_dialog`, `open_clone_dialog`, and the Rename seed behind
 //!   `request_rename`): the actions `confirm_discard_then` parks;
@@ -42,6 +43,16 @@ pub(super) fn wire(app: &AppWindow, state: &Rc<RefCell<State>>) {
             // Switching presets replaces the form; unsaved edits need the
             // discard confirmation first.
             let dirty = app.global::<AppState>().get_preset_dirty();
+            // The action may run later (after the discard dialog), and the
+            // list can be re-read meanwhile (a background download creating
+            // its preset, gui/downloads.rs): park the preset's ID, not its
+            // index, and resolve it when the action runs.
+            let Some(id) = usize::try_from(index)
+                .ok()
+                .and_then(|i| Some(state.borrow().presets.get(i)?.preset.id.clone()))
+            else {
+                return;
+            };
             let action: Box<dyn Fn()> = {
                 let app_weak = app_weak.clone();
                 let state = state.clone();
@@ -49,7 +60,10 @@ pub(super) fn wire(app: &AppWindow, state: &Rc<RefCell<State>>) {
                     let Some(app) = app_weak.upgrade() else {
                         return;
                     };
-                    do_select_preset(&app, &state, index);
+                    let index = state.borrow().presets.iter().position(|l| l.preset.id == id);
+                    if let Some(index) = index {
+                        do_select_preset(&app, &state, i32::try_from(index).unwrap_or(-1));
+                    }
                 })
             };
             confirm_discard_then(&app, &state, dirty, action);
@@ -870,7 +884,7 @@ fn preset_written(app: &AppWindow, state: &Rc<RefCell<State>>, want: Option<&str
 /// the provider (`follow_integrations`), and the Benchmark tab re-lists, since a
 /// preset that is off, renamed or gone can no longer be run (its refresh also
 /// drops it from the selection).
-fn presets_moved(app: &AppWindow, state: &Rc<RefCell<State>>) {
+pub(super) fn presets_moved(app: &AppWindow, state: &Rc<RefCell<State>>) {
     follow_integrations(app);
     bench_tab::refresh(app, state);
 }
@@ -1314,21 +1328,6 @@ fn commit_new_preset(
     success_status: String,
 ) {
     let saved = presets::save(&p);
-    finish_new_preset(app, state, &p, saved, success_status);
-}
-
-/// `commit_new_preset` for a preset made from a Hugging Face download
-/// (gui/hf_dialog.rs): saved through `hf::save_preset`, which first pins an
-/// unset ModelsDir to the one the files went under (`presets::save` would
-/// guess it from the per-repo folder and get it wrong), then the same tail.
-pub(super) fn commit_downloaded_preset(
-    app: &AppWindow,
-    state: &Rc<RefCell<State>>,
-    p: presets::Preset,
-    models_dir: &std::path::Path,
-    success_status: String,
-) {
-    let saved = crate::hf::save_preset(&p, models_dir);
     finish_new_preset(app, state, &p, saved, success_status);
 }
 

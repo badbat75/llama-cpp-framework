@@ -166,9 +166,24 @@ fn server_args(
     args.push("--host".into());
     args.push(hostname);
 
+    // --no-ui : no built-in chat UI. Only the OFF state is spelled out: on is
+    //   llama.cpp's default, so on and unset both pass nothing. It belongs on
+    //   THIS line because the router serves the page itself
+    //   (`server_http_context::init` on the router's params, server.cpp main);
+    //   the children inherit it through `base_preset`, harmlessly. The API
+    //   routes are registered regardless, so every client but the browser page
+    //   is unaffected.
+    let ui = cfg.webui_or_default();
+    if !ui {
+        args.push("--no-ui".into());
+    }
+
     // --webui-mcp-proxy : serve the built-in web UI's MCP proxy endpoint. A
-    //   presence flag, omitted when off (llama.cpp then defaults it disabled).
-    if cfg.webui_mcp_proxy_or_default() {
+    //   presence flag, omitted when off (llama.cpp then defaults it disabled),
+    //   and omitted with the UI off: upstream registers `/cors-proxy` whatever
+    //   `--no-ui` says, and nothing but the UI calls it, so the stored choice
+    //   would only open an experimental endpoint for nobody.
+    if ui && cfg.webui_mcp_proxy_or_default() {
         args.push("--webui-mcp-proxy".into());
     }
 
@@ -1002,6 +1017,7 @@ mod tests {
             attn_rot_disable: true,
             hip_fa_band: Some(2),
             rocprof_attach: true,
+            webui: Some(false),
             webui_mcp_proxy: Some(false),
             log_verbosity: Some(2),
             // On, with an EXPLICIT dir: resolving the default would reach into
@@ -1034,6 +1050,7 @@ mod tests {
             // below llama.cpp. Asserted in the env tests further down.
             hip_fa_band: _,
             rocprof_attach: _,
+            webui,
             webui_mcp_proxy,
             log_verbosity,
             save_state_on_shutdown,
@@ -1057,6 +1074,8 @@ mod tests {
         assert!(pair("-t", threads.unwrap().to_string()));
         assert!(pair("--threads-batch", threads_batch.unwrap().to_string()));
         assert!(pair("--models-max", models_max.unwrap().to_string()));
+        // The UI is off here, so --no-ui is passed.
+        assert_eq!(a.contains(&"--no-ui".to_string()), !webui.unwrap());
         // webui-mcp-proxy is a presence flag: Some(false) here ⇒ omitted.
         assert_eq!(
             a.contains(&"--webui-mcp-proxy".to_string()),
@@ -1094,6 +1113,30 @@ mod tests {
             .iter()
             .position(|x| x == "--slot-save-path")
             .is_some_and(|i| on.get(i + 1).is_some_and(|v| v == r"E:\llama-state")));
+    }
+
+    /// The web UI switch: only OFF reaches the line (`--no-ui`), since on is
+    /// llama.cpp's default; neither `--ui` nor the deprecated `--webui` spelling
+    /// is ever passed. With the UI off the MCP proxy flag goes too, while its
+    /// stored choice stays (the next enable brings it back).
+    #[test]
+    fn no_ui_only_when_the_web_ui_is_off() {
+        for (webui, no_ui) in [(None, false), (Some(true), false), (Some(false), true)] {
+            let a = args_for(&ServerConfig {
+                webui,
+                webui_mcp_proxy: Some(true),
+                ..Default::default()
+            });
+            assert_eq!(a.contains(&"--no-ui".to_string()), no_ui, "{webui:?}");
+            for never in ["--ui", "--webui", "--no-webui"] {
+                assert!(!a.contains(&never.to_string()), "{webui:?}: {never}");
+            }
+            assert_eq!(
+                a.contains(&"--webui-mcp-proxy".to_string()),
+                !no_ui,
+                "{webui:?}: the proxy follows the UI"
+            );
+        }
     }
 
     // Unlike the thread/port fields (where <= 0 means "unset"), models-max 0 is
@@ -1153,7 +1196,7 @@ mod tests {
         assert!(!lines[lines.len() - 1].ends_with(LINE_CONTINUATION));
     }
 
-    // The default NSIS install dir has a space ("C:\Program Files\llama.cpp"),
+    // The default install dir has a space ("C:\Program Files\llama.cpp"),
     // so the pasted line must survive PowerShell's expression-vs-command
     // parsing: a bare quoted path at command position is an error there.
     #[cfg(windows)]

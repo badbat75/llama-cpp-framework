@@ -294,7 +294,12 @@ pub struct ServerSet {
     /// server). false = leave the variable unset.
     #[arg(long)]
     pub rocprof_attach: Option<bool>,
+    /// Serve the built-in chat UI. false = launch with --no-ui (the API keeps
+    /// working). true = on, llama.cpp's default.
+    #[arg(long)]
+    pub webui: Option<bool>,
     /// Enable the web UI's MCP CORS proxy (--webui-mcp-proxy). true = on.
+    /// Not passed while --webui is false; the value is kept.
     #[arg(long)]
     pub webui_mcp_proxy: Option<bool>,
     /// llama-server log verbosity threshold (-lv / --log-verbosity): 0 output,
@@ -366,6 +371,9 @@ impl ServerSet {
         }
         if let Some(a) = self.rocprof_attach {
             cfg.rocprof_attach = a;
+        }
+        if let Some(u) = self.webui {
+            cfg.webui = Some(u);
         }
         if let Some(w) = self.webui_mcp_proxy {
             cfg.webui_mcp_proxy = Some(w);
@@ -735,6 +743,11 @@ fn show_lines(cfg: &server_cfg::ServerConfig) -> String {
     );
     row("RocprofAttach:", cfg.rocprof_attach.to_string());
     row(
+        "Webui:",
+        cfg.webui
+            .map_or_else(|| "true (default)".into(), |v| v.to_string()),
+    );
+    row(
         "WebuiMcpProxy:",
         cfg.webui_mcp_proxy
             .map_or_else(|| "true (default)".into(), |v| v.to_string()),
@@ -971,32 +984,63 @@ fn run_preset_download(a: PresetDownload) -> Result<()> {
         }
     }
     let listing = hf::list_repo(&spec, token.as_ref())?;
-    println!("{} @ {}", listing.repo, &listing.commit[..12.min(listing.commit.len())]);
-    for (i, c) in listing.candidates.iter().enumerate() {
-        let mark = if i == listing.default { "*" } else { " " };
-        let mut extra: Vec<String> = Vec::new();
-        if c.shards.len() > 1 {
-            extra.push(format!("{} shards", c.shards.len()));
-        }
-        if c.mmproj.is_some() {
-            extra.push("mmproj".into());
-        }
-        for s in hf::Sidecar::ALL {
-            if c.sidecar(s).is_some() {
-                extra.push(s.label().into());
-            }
-        }
-        let extra = if extra.is_empty() { String::new() } else { format!("  [{}]", extra.join(", ")) };
-        println!("{mark} {:<12} {:>10}  {}{extra}", c.tag, hf::format_size(c.size), c.primary().path);
-    }
-    if a.list {
-        return Ok(());
-    }
-
     let sidecar = match a.draft.as_deref() {
         Some(d) => Some(hf::Sidecar::parse(d).ok_or_else(|| anyhow::anyhow!("--draft takes mtp, dflash or dspark, not {d}"))?),
         None => None,
     };
+    if a.list {
+        // The placement estimate per quantization (`hf_fit`): every header
+        // read in parallel, against this machine's GPUs and RAM.
+        let fit = crate::hf_fit::budget(&crate::devices::list(), crate::hf_fit::system_ram_total());
+        let shapes = match &fit {
+            Some(_) => {
+                eprintln!("Reading the GGUF headers of {} quantizations...", listing.candidates.len());
+                let got: std::sync::Mutex<Vec<crate::hf_fit::ShapeResult>> =
+                    std::sync::Mutex::new(vec![Err("not read".into()); listing.candidates.len()]);
+                crate::hf_fit::fetch_shapes(
+                    &hf::Curl,
+                    &hf::endpoint(),
+                    &listing.repo,
+                    &listing.commit,
+                    &listing.candidates,
+                    token.as_ref(),
+                    &|| true,
+                    &|i, r| got.lock().unwrap()[i] = r.map_err(|e| e.to_string()),
+                );
+                got.into_inner().unwrap()
+            }
+            None => Vec::new(),
+        };
+        // The extras each row counts: its mmproj unless --no-mmproj, the
+        // --draft drafter where the row has one (its header read once per
+        // file; unreadable, its size alone).
+        let mut drafts: std::collections::HashMap<String, Result<std::sync::Arc<crate::hf_fit::DraftShape>, String>> =
+            std::collections::HashMap::new();
+        if let (Some(_), Some(kind)) = (&fit, sidecar) {
+            for f in listing.candidates.iter().filter_map(|c| c.sidecar(kind)) {
+                if !drafts.contains_key(&f.path) {
+                    let r = crate::hf_fit::fetch_draft_shape(&hf::Curl, &hf::endpoint(), &listing.repo, &listing.commit, f, token.as_ref());
+                    drafts.insert(f.path.clone(), r.map_err(|e| e.to_string()));
+                }
+            }
+        }
+        let extras: Vec<crate::hf_fit::Extras> = listing
+            .candidates
+            .iter()
+            .map(|c| crate::hf_fit::extras_of(c, !a.no_mmproj, sidecar, &|f| drafts.get(&f.path).cloned()).unwrap_or_default())
+            .collect();
+        for line in list_report(&listing, fit.as_ref().map(|b| (b, shapes.as_slice(), extras.as_slice()))) {
+            println!("{line}");
+        }
+        if fit.is_none() {
+            println!("Placement estimate unavailable: {}.", crate::hf_fit::NO_GPU);
+        }
+        return Ok(());
+    }
+    for line in list_report(&listing, None) {
+        println!("{line}");
+    }
+
     let models_dir = std::path::PathBuf::from(server_cfg::load().models_dir_or_default());
     let job = hf::DownloadJob::new(&listing, listing.default, !a.no_mmproj, sidecar, models_dir.clone(), token)?;
     println!("Downloading {} into {}", job.candidate.primary().path, models_dir.display());
@@ -1031,19 +1075,125 @@ fn run_preset_download(a: PresetDownload) -> Result<()> {
 
     // Re-read: another process may have added a preset during the transfer.
     let existing: Vec<String> = presets::load_listed().into_iter().map(|l| l.preset.id).collect();
-    let mut preset = hf::preset_from_download(&d, &existing);
+    // The placement the --list rows show, from the downloaded headers on this
+    // machine (`hf_fit::placement`); left to the fit without a GPU estimate.
+    let budget = crate::hf_fit::budget(&crate::devices::list(), crate::hf_fit::system_ram_total());
+    let mut preset = hf::preset_from_download(&d, &existing, budget.as_ref());
     if let Some(id) = a.id {
         check_download_id(&id, &existing)?;
         preset.id = id;
     }
     hf::save_preset(&preset, &models_dir).context("save preset")?;
     println!("Created [{}] in {}", preset.id, paths::presets_ini().display());
+    if let Some(line) = placement_line(&preset) {
+        println!("{line}");
+    }
     follow_opencode();
     Ok(())
 }
 
+/// `Placement: device = ROCm1,CUDA0, tensor-split = 26,23, ctx-size = 32768
+/// (estimated at download ...)`: the placement keys a derived preset got, and
+/// its note (pure); `None` when the download left them to the fit.
+fn placement_line(p: &presets::Preset) -> Option<String> {
+    if p.placement_note.is_empty() {
+        return None;
+    }
+    let num = |k: &str, v: Option<i32>| v.map(|v| format!("{k} = {v}"));
+    let text = |k: &str, v: &str| (!v.is_empty()).then(|| format!("{k} = {v}"));
+    let keys: Vec<String> = [
+        text("device", &p.device),
+        text("tensor-split", &p.tensor_split),
+        num("n-cpu-moe", p.n_cpu_moe),
+        num("n-gpu-layers", p.n_gpu_layers),
+        num("ctx-size", p.ctx_size),
+        text("device-draft", &p.device_draft),
+        text("mmproj-device", &p.mmproj_device),
+        (p.mmproj_offload == Some(false) && !p.mmproj.is_empty()).then(|| "mmproj-offload = false".to_string()),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    Some(format!("Placement: {} ({})", keys.join(", "), p.placement_note))
+}
+
+/// The listing as `preset download` prints it (pure): `repo @ commit`, then
+/// one row per quantization (`*` on llama.cpp's default: tag, size, path,
+/// sidecars). With `fit` (the `--list` estimate: the machine's budget, each
+/// row's shape, or why it is missing, and the extras each row counts, the
+/// mmproj and drafter the download would bring; a missing one counts
+/// nothing) every row gets its placement line under it, and the report ends
+/// with what the estimates assume and the recommended quantization
+/// (`hf_fit::recommend`).
+fn list_report(
+    l: &crate::hf::Listing,
+    fit: Option<(&crate::hf_fit::Budget, &[crate::hf_fit::ShapeResult], &[crate::hf_fit::Extras])>,
+) -> Vec<String> {
+    use crate::{hf, hf_fit};
+    let none = hf_fit::Extras::default();
+    let estimates: Vec<Option<(hf_fit::Estimate, u64)>> = match fit {
+        Some((b, shapes, extras)) => (0..l.candidates.len())
+            .map(|i| match shapes.get(i) {
+                Some(Ok(s)) => Some((hf_fit::estimate_with(s, b, extras.get(i).unwrap_or(&none)), s.ctx)),
+                _ => None,
+            })
+            .collect(),
+        None => Vec::new(),
+    };
+    let rows: Vec<hf_fit::Row> = l
+        .candidates
+        .iter()
+        .enumerate()
+        .map(|(i, c)| hf_fit::Row {
+            tag: &c.tag,
+            size: c.size,
+            estimate: estimates.get(i).and_then(|e| e.as_ref().map(|e| &e.0)),
+        })
+        .collect();
+    let rec = if fit.is_some() { hf_fit::recommend(&rows) } else { None };
+    let mut out = vec![format!("{} @ {}", l.repo, &l.commit[..12.min(l.commit.len())])];
+    for (i, c) in l.candidates.iter().enumerate() {
+        let mark = if i == l.default { "*" } else { " " };
+        let mut extra: Vec<String> = Vec::new();
+        if c.shards.len() > 1 {
+            extra.push(format!("{} shards", c.shards.len()));
+        }
+        if c.mmproj.is_some() {
+            extra.push("mmproj".into());
+        }
+        for s in hf::Sidecar::ALL {
+            if c.sidecar(s).is_some() {
+                extra.push(s.label().into());
+            }
+        }
+        let extra = if extra.is_empty() { String::new() } else { format!("  [{}]", extra.join(", ")) };
+        out.push(format!("{mark} {:<12} {:>10}  {}{extra}", c.tag, hf::format_size(c.size), c.primary().path));
+        if let Some((_, shapes, _)) = fit {
+            let label = match (&estimates[i], shapes.get(i)) {
+                (Some((e, ctx)), _) => hf_fit::estimate_label(e, *ctx),
+                (None, Some(Err(m))) => format!("estimate unavailable: {m}"),
+                (None, _) => "estimate unavailable".to_string(),
+            };
+            let reason = rec.as_ref().filter(|r| r.index == i).map(|r| r.reason);
+            out.push(format!("    {}", hf_fit::detail_line(&label, reason)));
+        }
+    }
+    if let Some((b, _, _)) = fit {
+        out.push(format!("{}.", hf_fit::basis_label(b)));
+        out.push(match &rec {
+            Some(r) => format!(
+                "Recommended here: {} ({}); download it with --quant {}",
+                l.candidates[r.index].tag, r.reason, l.candidates[r.index].tag
+            ),
+            None => hf_fit::NONE_RECOMMENDED.to_string(),
+        });
+    }
+    out
+}
+
 /// What `preset download <words>` prints (pure): a header, one aligned row
-/// per repository (`org/repo`, downloads over the last 30 days, the quant
+/// per repository (`org/repo`, downloads over the last 30 days, the model
+/// marker when the search knows it (`MoE 30.5B`, `dense 8.2B`), the quant
 /// tags, the sidecars, gated/private), and how to go on.
 fn search_report(query: &str, hits: &[crate::hf::SearchHit]) -> Vec<String> {
     use crate::hf;
@@ -1054,7 +1204,9 @@ fn search_report(query: &str, hits: &[crate::hf::SearchHit]) -> Vec<String> {
         "GGUF repositories for \"{query}\", most downloaded first (downloads over the last 30 days):"
     )];
     let width = hits.iter().map(|h| h.repo.len()).max().unwrap_or(0);
-    for h in hits {
+    let kinds: Vec<String> = hits.iter().map(|h| hf::kind_label(h.kind, h.params).unwrap_or_default()).collect();
+    let kind_width = kinds.iter().map(String::len).max().unwrap_or(0);
+    for (h, kind) in hits.iter().zip(&kinds) {
         let quants = if h.quants.is_empty() { "no GGUF model file".to_string() } else { h.quants.join(" ") };
         let mut extra: Vec<&str> = Vec::new();
         if h.mmproj {
@@ -1068,8 +1220,9 @@ fn search_report(query: &str, hits: &[crate::hf::SearchHit]) -> Vec<String> {
             (false, true) => "  private",
             (false, false) => "",
         };
+        let kind = if kind_width == 0 { String::new() } else { format!("{kind:<kind_width$}  ") };
         out.push(format!(
-            "  {:<width$}  {:>7}  {quants}{extra}{access}",
+            "  {:<width$}  {:>7}  {kind}{quants}{extra}{access}",
             h.repo,
             hf::format_count(h.downloads)
         ));
@@ -1312,6 +1465,8 @@ mod tests {
             quants: quants.iter().map(|q| q.to_string()).collect(),
             mmproj,
             drafters: Vec::new(),
+            kind: crate::hf::ModelKind::Unknown,
+            params: None,
         };
         let lines = search_report(
             "gemma 3",
@@ -1328,6 +1483,140 @@ mod tests {
         assert_eq!(lines[3], format!("  {:<34}  {:>7}  no GGUF model file", "o/r", "5"));
         assert!(lines[4].starts_with("Pick one: llama-cpp-config preset download <org/repo>"));
         assert_eq!(search_report("zzz", &[]), ["No GGUF repository matches \"zzz\"."]);
+
+        // With the search's gguf summary: an aligned model column.
+        let with_kind = |repo: &str, kind, params| crate::hf::SearchHit {
+            kind,
+            params,
+            ..hit(repo, 10, &["Q4_K_M"], false, false)
+        };
+        let lines = search_report(
+            "qwen3",
+            &[
+                with_kind("o/Qwen3-30B-A3B-GGUF", crate::hf::ModelKind::Moe, Some(30_532_122_624)),
+                with_kind("o/Qwen3-8B-GGUF", crate::hf::ModelKind::Dense, Some(8_190_735_360)),
+                with_kind("o/Llama-GGUF", crate::hf::ModelKind::Unknown, Some(8_030_261_312)),
+                with_kind("o/x", crate::hf::ModelKind::Unknown, None),
+            ],
+        );
+        assert_eq!(lines[1], "  o/Qwen3-30B-A3B-GGUF       10  MoE 30.5B                Q4_K_M");
+        assert_eq!(lines[2], "  o/Qwen3-8B-GGUF            10  dense 8.2B               Q4_K_M");
+        assert_eq!(lines[3], "  o/Llama-GGUF               10  8.0B, dense/MoE unknown  Q4_K_M");
+        assert_eq!(lines[4], "  o/x                        10                           Q4_K_M");
+    }
+
+    /// `--list`: a placement line under every row, the basis, and the
+    /// recommendation; without an estimate, the plain rows.
+    #[test]
+    fn list_report_adds_the_estimate_and_the_recommendation() {
+        use crate::hf::{Candidate, Listing, RepoFile};
+        use crate::hf_fit::{Budget, Gpu, Layer, Shape};
+        use std::sync::Arc;
+        const GIB: u64 = 1 << 30;
+        let cand = |tag: &str, size: u64| Candidate {
+            tag: tag.into(),
+            shards: vec![RepoFile { path: format!("m-{tag}.gguf"), size, oid: String::new() }],
+            size,
+            mmproj: None,
+            mtp: None,
+            dflash: None,
+            dspark: None,
+        };
+        let l = Listing {
+            repo: "o/r".into(),
+            commit: "c".repeat(40),
+            project_url: String::new(),
+            candidates: vec![cand("Q4_K_M", 5 * GIB), cand("Q8_0", 9 * GIB), cand("BF16", 17 * GIB)],
+            default: 0,
+        };
+        let shape = |gib: u64| {
+            Arc::new(Shape {
+                arch: "qwen3".into(),
+                moe: false,
+                total: gib * GIB,
+                token_embd: 0,
+                globals: 0,
+                layers: vec![Layer { experts: 0, other: gib * GIB / 4 }; 4],
+                kv: GIB,
+                ctx: 32768,
+            })
+        };
+        let b = Budget { gpus: vec![Gpu { id: "CUDA0".into(), name: "G".into(), total_mib: 14 << 10 }], ram: Some(28 * GIB), ram_total: Some(32 * GIB) };
+        let shapes = vec![Ok(shape(5)), Ok(shape(9)), Err("network error: boom".to_string())];
+        let lines = list_report(&l, Some((&b, &shapes, &[])));
+        assert_eq!(lines[0], format!("o/r @ {}", "c".repeat(12)));
+        assert!(lines[1].starts_with("* Q4_K_M"));
+        assert_eq!(lines[2], "    all on GPU: 6.0 of 12.0 GiB with a 32k context");
+        assert_eq!(lines[4], "    recommended, the best quality that fits in GPU memory: all on GPU: 10.0 of 12.0 GiB with a 32k context");
+        assert_eq!(lines[6], "    estimate unavailable: network error: boom");
+        assert!(lines[7].starts_with("Estimated for G (12.0 GiB usable) and 32.0 GiB of RAM"), "{}", lines[7]);
+        assert_eq!(lines[8], "Recommended here: Q8_0 (the best quality that fits in GPU memory); download it with --quant Q8_0");
+        assert_eq!(lines.len(), 9);
+        // A 2 GiB image encoder taken with every row (2.5 GiB with its
+        // compute): the Q8_0 no longer fits beside it, so its encoder goes to
+        // the CPU and the recommendation falls back to the Q4_K_M, which
+        // keeps it on the card.
+        let mmproj = hf_fit_extras(2 * GIB);
+        let lines = list_report(&l, Some((&b, &shapes, &[mmproj.clone(), mmproj.clone(), mmproj])));
+        assert_eq!(
+            lines[2],
+            "    recommended, the best quality that fits in GPU memory: all on GPU: 8.5 of 12.0 GiB with a 32k context; \
+             with the image encoder (2.5 GiB) on CUDA0"
+        );
+        assert_eq!(lines[4], "    all on GPU: 10.0 of 12.0 GiB with a 32k context; with the image encoder (2.0 GiB) on the CPU");
+        assert_eq!(lines[8], "Recommended here: Q4_K_M (the best quality that fits in GPU memory); download it with --quant Q4_K_M");
+        // Two cards of 7 and 5 GiB usable: every row names the card or the
+        // cut it would write. 6 GiB fits the first alone; the 9 GiB file (four
+        // blocks of 2.25 GiB plus 0.25 of KV) fits neither, so it is cut 2 + 3
+        // (the output layer on the last card).
+        let pair = Budget {
+            gpus: vec![
+                Gpu { id: "ROCm1".into(), name: "AMD Radeon AI PRO R9700".into(), total_mib: 9 << 10 },
+                Gpu { id: "CUDA0".into(), name: "NVIDIA GeForce RTX 4070 SUPER".into(), total_mib: 7 << 10 },
+            ],
+            ram: Some(28 * GIB),
+            ram_total: Some(32 * GIB),
+        };
+        let lines = list_report(&l, Some((&pair, &shapes, &[])));
+        assert_eq!(lines[2], "    all on GPU with a 32k context: AI PRO R9700 (ROCm1) 6.0 GiB");
+        assert_eq!(
+            lines[4],
+            "    recommended, the best quality that fits in GPU memory: all on GPU with a 32k context: \
+             AI PRO R9700 (ROCm1) 5.0 GiB + RTX 4070 SUPER (CUDA0) 5.0 GiB, tensor-split 2,3"
+        );
+        assert!(lines[7].starts_with("Estimated for 2 GPUs in split order, AMD Radeon AI PRO R9700 (ROCm1, 7.0 GiB usable) then "), "{}", lines[7]);
+
+        // What a download prints once the preset is saved.
+        let mut p = presets::Preset::new_default("m".into(), "m.gguf".into());
+        assert_eq!(placement_line(&p), None, "left to the fit: nothing to say");
+        p.device = "ROCm1,CUDA0".into();
+        p.tensor_split = "2,3".into();
+        p.n_cpu_moe = Some(18);
+        p.ctx_size = Some(32768);
+        p.placement_note = "estimated at download".into();
+        assert_eq!(
+            placement_line(&p).unwrap(),
+            "Placement: device = ROCm1,CUDA0, tensor-split = 2,3, n-cpu-moe = 18, ctx-size = 32768 (estimated at download)"
+        );
+        let plain = list_report(&l, None);
+        assert_eq!(plain.len(), 4, "no estimate lines without --list");
+        // The encoder moved by the placement shows too.
+        p.mmproj = "mm.gguf".into();
+        p.mmproj_device = "CUDA0".into();
+        p.device_draft = "CUDA0".into();
+        assert_eq!(
+            placement_line(&p).unwrap(),
+            "Placement: device = ROCm1,CUDA0, tensor-split = 2,3, n-cpu-moe = 18, ctx-size = 32768, device-draft = CUDA0, \
+             mmproj-device = CUDA0 (estimated at download)"
+        );
+        p.mmproj_device.clear();
+        p.mmproj_offload = Some(false);
+        assert!(placement_line(&p).unwrap().contains(", device-draft = CUDA0, mmproj-offload = false ("));
+    }
+
+    /// The extras of an image encoder of `size` bytes alone.
+    fn hf_fit_extras(size: u64) -> crate::hf_fit::Extras {
+        crate::hf_fit::Extras { mmproj: size, drafter: None }
     }
 
     /// A `--id` is refused BEFORE the download when it is not a valid section
@@ -1385,6 +1674,7 @@ mod tests {
             attn_rot_disable: Some(true),
             hip_fa_band: Some("2".into()),
             rocprof_attach: Some(true),
+            webui: Some(false),
             webui_mcp_proxy: Some(false),
             log_verbosity: Some(2),
             save_state_on_shutdown: Some(true),
@@ -1411,6 +1701,7 @@ mod tests {
             attn_rot_disable: true,
             hip_fa_band: Some(2),
             rocprof_attach: true,
+            webui: Some(false),
             webui_mcp_proxy: Some(false),
             log_verbosity: Some(2),
             save_state_on_shutdown: Some(true),
@@ -1439,6 +1730,7 @@ mod tests {
             attn_rot_disable: true,
             hip_fa_band: Some(2),
             rocprof_attach: true,
+            webui: Some(false),
             webui_mcp_proxy: Some(false),
             log_verbosity: Some(2),
             save_state_on_shutdown: Some(true),
@@ -1464,6 +1756,7 @@ mod tests {
             attn_rot_disable,
             hip_fa_band,
             rocprof_attach,
+            webui,
             webui_mcp_proxy,
             log_verbosity,
             save_state_on_shutdown,
@@ -1493,6 +1786,7 @@ mod tests {
             ("AttnRotDisable:", attn_rot_disable.to_string()),
             ("HipFaBand:", hip_fa_band.unwrap().to_string()),
             ("RocprofAttach:", rocprof_attach.to_string()),
+            ("Webui:", webui.unwrap().to_string()),
             ("WebuiMcpProxy:", webui_mcp_proxy.unwrap().to_string()),
             ("LogVerbosity:", log_verbosity.unwrap().to_string()),
             (

@@ -16,6 +16,7 @@ mod gguf;
 mod gpu_split;
 mod gui;
 mod hf;
+mod hf_fit;
 mod http;
 #[cfg(any(target_os = "linux", windows))]
 mod hwmon;

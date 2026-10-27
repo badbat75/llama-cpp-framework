@@ -1,0 +1,193 @@
+// Downloads: an independent root window (like HwWindow and LogWindow), shown
+// non-modally beside the main configurator. It lists the Hugging Face downloads
+// the New preset dialog handed to the background (src/gui/downloads.rs): one
+// card per job, with its state, the overall and per-file progress while bytes
+// flow, the outcome (the preset created, the cancel note, the error), and the
+// buttons that act on it by id: Cancel (while downloading), Resume (after a
+// failure or a cancel), Show (selects the created preset in the Models tab,
+// through the discard guard) and Dismiss (a finished row). Closing the window
+// cancels nothing. Rust pushes every row pre-formatted and rewrites a row in
+// place on progress, so no unit math and no state lives here.
+//
+// The strip at the top is the tray's Quit asking first while a download runs:
+// quitting stops the transfers (cooperatively, so the partial files stay for a
+// resume) and Rust ends the process once every child is gone.
+
+import { ScrollView, Button, Palette, ProgressIndicator } from "std-widgets.slint";
+import { Tokens, SectionCard, WrapText } from "components.slint";
+import { DownloadRow } from "types.slint";
+
+export component DownloadsWindow inherits Window {
+    // A title of its own: the Wayland tray-window discard tells windows apart
+    // by it (gui.rs `DiscardTrayWindow`).
+    title: "Downloads";
+    icon: @image-url("llama.png");
+    min-width: 480px;
+    min-height: 260px;
+    // The size the window opens at: the default below, or the size it was
+    // last closed with, which Rust writes here (gui.rs `RememberedSize`).
+    in property <length> initial_width: 680px;
+    in property <length> initial_height: 520px;
+    preferred-width: root.initial_width;
+    preferred-height: root.initial_height;
+    background: Palette.background;
+
+    in property <[DownloadRow]> rows;
+    // The tray's Quit is waiting for an answer, and how many downloads it
+    // would stop.
+    in property <bool> quit_pending;
+    in property <int> quit_active;
+    // Quitting was confirmed: the transfers are stopping, the process ends
+    // when they have.
+    in property <bool> quitting;
+
+    callback cancel(int);
+    callback resume(int);
+    callback show_preset(int);
+    callback dismiss(int);
+    callback clear_finished();
+    callback confirm_quit();
+    callback keep_running();
+
+    VerticalLayout {
+        padding: 16px;
+        spacing: 12px;
+
+        Text {
+            text: "Hugging Face downloads run here in the background. Closing this window stops nothing; reopen it from the footer of the main window or the tray.";
+            wrap: word-wrap;
+            font-size: 12px;
+            color: Palette.foreground.transparentize(Tokens.muted);
+        }
+
+        if root.quit_pending || root.quitting : Rectangle {
+            border-radius: 6px;
+            border-width: 1px;
+            border-color: Tokens.err;
+            background: Tokens.err.transparentize(0.9);
+            VerticalLayout {
+                padding: 12px;
+                spacing: 8px;
+                Text {
+                    text: root.quitting
+                        ? "Stopping the downloads, then quitting…"
+                        : root.quit_active == 1
+                            ? "A download is running. Quitting stops it; what is fetched so far is kept, and downloading the same quantization again resumes it."
+                            : root.quit_active + " downloads are running. Quitting stops them; what is fetched so far is kept, and downloading the same quantizations again resumes them.";
+                    wrap: word-wrap;
+                    font-size: 13px;
+                    color: Palette.foreground;
+                }
+                if root.quit_pending && !root.quitting : HorizontalLayout {
+                    spacing: 8px;
+                    alignment: end;
+                    Button {
+                        text: "Keep running";
+                        clicked => { root.keep_running(); }
+                    }
+                    Button {
+                        text: "Stop downloads and quit";
+                        primary: true;
+                        clicked => { root.confirm_quit(); }
+                    }
+                }
+            }
+        }
+
+        if root.rows.length == 0 : Text {
+            vertical-stretch: 1;
+            text: "No downloads. Start one from Models, New…, From Hugging Face.";
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            color: Palette.foreground.transparentize(Tokens.muted);
+        }
+
+        if root.rows.length > 0 : ScrollView {
+            vertical-stretch: 1;
+            VerticalLayout {
+                spacing: 12px;
+                alignment: start;
+
+                for row in root.rows : SectionCard {
+                    HorizontalLayout {
+                        spacing: 12px;
+                        Text {
+                            text: row.title;
+                            horizontal-stretch: 1;
+                            font-size: 13px;
+                            font-weight: 600;
+                            overflow: elide;
+                            color: Palette.foreground;
+                        }
+                        Text {
+                            text: row.state;
+                            font-size: 12px;
+                            color: row.is_error ? Tokens.err : Palette.foreground.transparentize(Tokens.muted);
+                        }
+                    }
+                    if row.detail != "" : WrapText {
+                        text: row.detail;
+                        font_size: 12px;
+                        color: Palette.foreground.transparentize(Tokens.subtle);
+                    }
+                    if row.show_progress : VerticalLayout {
+                        spacing: 4px;
+                        Text {
+                            text: row.overall;
+                            font-size: 12px;
+                            overflow: elide;
+                            color: Palette.foreground;
+                        }
+                        ProgressIndicator { progress: row.overall_fraction; }
+                        Text {
+                            text: row.file;
+                            font-size: 12px;
+                            overflow: elide;
+                            color: Palette.foreground.transparentize(Tokens.subtle);
+                        }
+                        ProgressIndicator { progress: row.file_fraction; }
+                    }
+                    if row.message != "" : WrapText {
+                        text: row.message;
+                        font_size: 12px;
+                        color: row.is_error ? Tokens.err : Palette.foreground;
+                    }
+                    if row.note != "" : WrapText {
+                        text: row.note;
+                        font_size: 12px;
+                        color: Palette.foreground.transparentize(Tokens.subtle);
+                    }
+                    if row.can_cancel || row.can_resume || row.can_show || row.can_dismiss : HorizontalLayout {
+                        spacing: 8px;
+                        alignment: end;
+                        if row.can_dismiss : Button {
+                            text: "Dismiss";
+                            clicked => { root.dismiss(row.id); }
+                        }
+                        if row.can_resume : Button {
+                            text: "Resume";
+                            clicked => { root.resume(row.id); }
+                        }
+                        if row.can_cancel : Button {
+                            text: "Cancel download";
+                            clicked => { root.cancel(row.id); }
+                        }
+                        if row.can_show : Button {
+                            text: "Show preset";
+                            primary: true;
+                            clicked => { root.show_preset(row.id); }
+                        }
+                    }
+                }
+            }
+        }
+
+        if root.rows.length > 0 : HorizontalLayout {
+            alignment: end;
+            Button {
+                text: "Clear finished";
+                clicked => { root.clear_finished(); }
+            }
+        }
+    }
+}

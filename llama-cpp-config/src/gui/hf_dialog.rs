@@ -4,10 +4,11 @@
 //! The user types a model name and searches (`hf::search`: GGUF repositories
 //! by downloads, each row with its quantizations), picks a repository, or
 //! types one directly (a spec or its URL); its GGUF quantizations are listed
-//! (`hf::list_repo`), the user picks one with its sidecars, downloads it
-//! (`hf::spawn_download`) and gets the preset created from the files
-//! (`hf::preset_from_download` + `hf::save_preset`, then the same tail every
-//! new preset takes: `models_tab::commit_downloaded_preset`).
+//! (`hf::list_repo`), the user picks one with its sidecars and the token, and
+//! Download hands the job to the background (`downloads::start`) and closes
+//! the dialog: the transfer, the preset's creation from the files and the
+//! progress all live in `gui/downloads.rs` and its window, so the main window
+//! is usable again at once.
 //!
 //! ## One field, two requests
 //! `AppState.hf_input` holds either a search or a repository, told apart by
@@ -19,19 +20,20 @@
 //! ## Phases (`Phase`, mirrored in `AppState.hf_phase`)
 //! `Idle` (typing) → Search → `Searching` → `Searched` (result rows shown) →
 //! click a row → `Listing` → `Listed` (candidates shown, one picked) →
-//! Download → `Downloading` → Cancel → `Cancelling`. A typed spec skips the
+//! Download, which closes the dialog (back to `Idle`). A typed spec skips the
 //! first two: `Idle` → List → `Listing`. Picking a row puts its `org/repo` in
 //! the field and keeps the results (`Session::results`): **Back to results**
 //! returns to `Searched` with the query back in the field, from `Listing` too
 //! (the listing in flight is dropped by the generation). A typed List or a new
-//! Search drops them. A finished download closes the dialog and selects the
-//! new preset; a failed or cancelled one returns to `Listed` with the error
-//! (or the note) IN the dialog, the listing kept so a retry is one click. The
-//! button reads "Resume download" only when the PICKED candidate has a real
-//! partial to resume (`hf::has_partial`: a `.downloadInProgress` of one of its
-//! own files, re-checked on every pick and after every failure); a partial of
-//! another quant of the repo does not count, since this job would not read
-//! it. A failed search returns to `Idle`, a failed listing to `Searched` when
+//! Search drops them. Download is refused IN the dialog (the listing kept)
+//! when the job cannot be built (a sidecar the pick lacks, no llama-server, a
+//! token that cannot be one) or when the same repository is already
+//! downloading (`downloads::Downloads::busy_with`: one staging tree per
+//! repository). The button reads "Resume download" only when the PICKED
+//! candidate has a real partial to resume (`hf::has_partial`: a
+//! `.downloadInProgress` of one of its own files, re-checked on every pick); a
+//! partial of another quant of the repo does not count, since this job would
+//! not read it. A failed search returns to `Idle`, a failed listing to `Searched` when
 //! it came from a row (the results stay) and to `Idle` otherwise. One request
 //! runs at a time: the button is disabled while a search or a listing runs
 //! (`Phase::can_request`). Every request still carries a generation, bumped by
@@ -39,21 +41,46 @@
 //! closed (and perhaps reopened) is dropped (the curl it ran finishes on its
 //! own thread, bounded by its own `--max-time`).
 //!
-//! ## Dismissing during a transfer is REFUSED
-//! Esc and the backdrop go to `hf_dismiss`, which closes the dialog in every
-//! phase but `Downloading` / `Cancelling`; there it only says why (Close is
-//! disabled too). An accidental Esc must not throw away gigabytes, and since
-//! the modal also keeps the form untouchable, the finished download can
-//! replace the editor's selection safely. No orphan child either way:
-//! - Cancel (`DownloadHandle::cancel`) closes the child's stdin, a kill
-//!   following 10 s later; NOT the router's exit line, on which llama.cpp
-//!   deletes its partial (`hf.rs` module header). The bytes fetched so far stay
-//!   in the staging tree and the next download of the same files resumes.
-//! - Closing the WINDOW hides it to the tray: the download carries on and
-//!   still creates its preset.
-//! - The tray's Quit ends the process, which closes the child's stdin pipe:
-//!   llama-server's router child treats EOF on stdin as a hard stop
-//!   (`hf.rs` module header), so it exits with the configurator.
+//! ## The model marker, the placement estimate, the recommendation
+//! A search row's first line carries `MoE 30.5B` / `dense 8.2B` when the
+//! search's `gguf` summary tells (`hf::kind_label`; nothing is guessed). Once
+//! a repository is listed, every candidate row gets a second line: its
+//! placement on THIS machine (`hf_fit`: all on GPU, an MoE split with its
+//! `--n-cpu-moe`, a dense split, too big, and whether the RAM part pages from
+//! disk; with several cards, the card or the per-card cut and its
+//! `tensor-split`), and a basis line under the title says what that is
+//! measured against (each card in split order, the RAM, the margins). The
+//! download's preset gets that placement as keys (`hf_fit::placement`,
+//! against the same `Session::budget`, so the preset holds the cut the picked
+//! row showed) and the status line says it is an estimate. The estimates come
+//! from each candidate's GGUF header, read remotely by `hf_fit::fetch_shapes`
+//! on its own threads (`spawn_estimates`), so the listing is usable at once:
+//! rows read "estimating" and fill in one by one (`estimated`), stale answers
+//! dropped by the same generation as every other request, and a superseded
+//! listing stops its reads early (`ESTIMATE_RUN`). Once every row has its
+//! answer, `hf_fit::recommend` marks one row "recommended" with its reason,
+//! and the pick moves to it unless the user already clicked a row (`select`
+//! sets `Session::user_picked`; `pick` is the move itself): while estimates
+//! load or when none can be made, llama.cpp's default stays the pick. No GPU
+//! in the device probe: every row says the estimate is unavailable and
+//! nothing is fetched.
+//!
+//! The estimates count the extras the download would bring (`hf_fit`'s
+//! header, "The extras"): the mmproj tick and the drafter pill are WISHES
+//! applied to every row that has the file (`Session::wish_mmproj`,
+//! `wish_drafter`), kept across picks (a row without the file shows the
+//! tick off or the pill on none, and the wish comes back on a row that has
+//! it). Toggling either (`choices_changed`) re-estimates every row and the
+//! recommendation from the headers already read (`recompute`, no fetch);
+//! only a drafter kind not read yet fetches its headers (`spawn_drafts`,
+//! one per file), its rows "estimating" until they land (`drafted`).
+//!
+//! ## No transfer runs IN the dialog
+//! Esc, the backdrop and Close go to `hf_dismiss`, which closes the dialog in
+//! every phase: once Download is clicked the job belongs to `gui/downloads.rs`
+//! (Cancel, Resume, the progress, the preset, Quit asking first), so closing
+//! the dialog can never drop gigabytes. The dialog's Downloads button opens
+//! that window (the modal backdrop covers the footer's indicator).
 //!
 //! ## The token
 //! `AppState.hf_token` holds only what the user TYPES (masked). Empty means
@@ -63,26 +90,24 @@
 //! preset: `hf::Token` has no `Display` and `HfError` never carries it.
 //!
 //! ## Threading
-//! The three slow calls run on their own thread and come back through
-//! `slint::invoke_from_event_loop` + `Weak::upgrade` (the `spawn_device_probe`
-//! pattern). The landing closure must be `Send`, so it cannot carry the
-//! `Rc<RefCell<State>>`: it reaches it through `STATE`, a thread-local weak
-//! handle `wire` sets on the UI thread (the only thread those closures run
-//! on). Progress is coalesced on the worker (`Coalescer`: at most one update
-//! per `PROGRESS_INTERVAL`, plus every file boundary and the last byte), so
-//! the child's ten-per-second-per-file lines never flood the event loop.
+//! The slow calls (search, listing, header reads) run on their own threads
+//! and come back through `slint::invoke_from_event_loop` + `Weak::upgrade`
+//! (the `spawn_device_probe` pattern). The landing closure must be `Send`, so
+//! it cannot carry the `Rc<RefCell<State>>`: it reaches it through `STATE`, a
+//! thread-local weak handle `wire` sets on the UI thread (the only thread those
+//! closures run on), which `gui/downloads.rs` uses too (`shared_state`).
 //!
-//! The pure parts (phases, input check, result and candidate labels, summary,
-//! progress text, the coalescer, the outcome of a failure) are unit-tested
-//! below; the e2e flow
-//! test (`src/tests/save_flow.rs`) drives the wiring that needs no network.
+//! The pure parts (phases, input check, result and candidate labels, summary)
+//! are unit-tested below; the e2e flow test (`src/tests/save_flow.rs`) drives
+//! the wiring that needs no network, the hand-over to the background included.
 
 use super::*;
 
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
-use std::time::{Duration, Instant};
 
 use crate::hf;
+use crate::hf_fit;
 
 /// The dialog's phase. Its `i32` is `AppState.hf_phase` (state.slint reads it
 /// for the button gates), so the numbering is part of the UI contract.
@@ -93,8 +118,6 @@ pub(super) enum Phase {
     Searched = 2,
     Listing = 3,
     Listed = 4,
-    Downloading = 5,
-    Cancelling = 6,
 }
 
 impl Phase {
@@ -104,16 +127,8 @@ impl Phase {
             2 => Phase::Searched,
             3 => Phase::Listing,
             4 => Phase::Listed,
-            5 => Phase::Downloading,
-            6 => Phase::Cancelling,
             _ => Phase::Idle,
         }
-    }
-
-    /// A child is (still) running: the dialog cannot be dismissed, the inputs
-    /// are frozen.
-    fn transfer_running(self) -> bool {
-        matches!(self, Phase::Downloading | Phase::Cancelling)
     }
 
     /// A search or a listing is in flight (`AppState.hf_busy`).
@@ -122,10 +137,9 @@ impl Phase {
     }
 
     /// Search, List and a result pick are open in every phase but a request
-    /// in flight (app.slint disables the button then, and this mirrors it)
-    /// and a running transfer.
+    /// in flight (app.slint disables the button then, and this mirrors it).
     fn can_request(self) -> bool {
-        !self.transfer_running() && !self.busy()
+        !self.busy()
     }
 
     /// The result rows show instead of the candidates (`AppState.hf_show_results`).
@@ -145,9 +159,37 @@ pub(super) struct Session {
     query: String,
     results: Vec<hf::SearchHit>,
     listing: Option<hf::Listing>,
-    /// The transfer in flight, for Cancel.
-    handle: Option<hf::DownloadHandle>,
+    /// What the listing's estimates are measured against; `None` without a
+    /// GPU (every row then says so, and nothing is fetched).
+    budget: Option<hf_fit::Budget>,
+    /// Per candidate: `None` while its header is being read, then its shape
+    /// or why not. Kept, so a change of choices re-estimates without a fetch.
+    shapes: Vec<Option<Result<std::sync::Arc<hf_fit::Shape>, String>>>,
+    /// The drafter files' shapes read so far, by repository path (this
+    /// listing's), and the ones being read.
+    drafts: HashMap<String, Result<std::sync::Arc<hf_fit::DraftShape>, String>>,
+    drafts_pending: HashSet<String>,
+    /// The extras the user asked for, applied to every row: the mmproj
+    /// (where a row has one) and the drafter kind (where a row has it). Set
+    /// by the tick and the pills (`choices_changed`) and kept across picks,
+    /// so the estimates, the recommendation and the pick agree.
+    wish_mmproj: bool,
+    wish_drafter: Option<hf::Sidecar>,
+    /// Per candidate: `None` while its header (or its drafter's) is being
+    /// read, then its estimate with the extras wished for (with the context
+    /// the KV cache was counted for) or why not (`recompute`).
+    estimates: Vec<Option<Result<(hf_fit::Estimate, u64), String>>>,
+    /// The recommended candidate, once every row has its answer.
+    recommended: Option<hf_fit::Recommendation>,
+    /// The user clicked a candidate in this listing: the recommendation
+    /// then marks its row but no longer moves the pick.
+    user_picked: bool,
 }
+
+/// The listing whose header reads may go on: bumped by every new listing
+/// and every clear, read by the workers (`hf_fit::fetch_shapes`'s
+/// `keep_going`) so a superseded listing stops fetching early.
+static ESTIMATE_RUN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 thread_local! {
     /// The shared `State`, for the worker results landing on the event loop
@@ -155,12 +197,11 @@ thread_local! {
     static STATE: RefCell<std::rc::Weak<RefCell<State>>> = const { RefCell::new(std::rc::Weak::new()) };
 }
 
-fn shared_state() -> Option<Rc<RefCell<State>>> {
+/// The shared `State` from a worker's landing closure (`gui/downloads.rs`
+/// lands through it too); `None` once the GUI is gone.
+pub(super) fn shared_state() -> Option<Rc<RefCell<State>>> {
     STATE.with(|s| s.borrow().upgrade())
 }
-
-/// How often the progress readout may change while bytes flow.
-const PROGRESS_INTERVAL: Duration = Duration::from_millis(250);
 
 // ── Pure parts ───────────────────────────────────────────────────────────
 
@@ -178,10 +219,14 @@ fn input_is_query(text: &str) -> bool {
     matches!(hf::classify_input(text), Ok(Some(hf::Input::Query(_))))
 }
 
-/// A search row's first line: the repository, its downloads, and whether it
-/// is gated or private (both need a token to download).
+/// A search row's first line: the repository, the model marker when the
+/// search knows it (`MoE 30.5B`, `dense 8.2B`, `hf::kind_label`), its
+/// downloads, and whether it is gated or private (both need a token to
+/// download).
 fn result_label(h: &hf::SearchHit) -> String {
-    let mut parts = vec![h.repo.clone(), format!("{} downloads", hf::format_count(h.downloads))];
+    let mut parts = vec![h.repo.clone()];
+    parts.extend(hf::kind_label(h.kind, h.params));
+    parts.push(format!("{} downloads", hf::format_count(h.downloads)));
     if h.gated {
         parts.push("gated".into());
     }
@@ -220,8 +265,8 @@ fn results_title(query: &str, n: usize, limit: usize) -> String {
 }
 
 /// Upper-case the first letter: `HfError`'s lines are written to follow a
-/// prefix, the dialog shows them on their own.
-fn sentence(s: &str) -> String {
+/// prefix, the dialog (and a Downloads row) shows them on their own.
+pub(super) fn sentence(s: &str) -> String {
     let mut c = s.chars();
     match c.next() {
         Some(f) => f.to_uppercase().chain(c).collect(),
@@ -254,9 +299,10 @@ fn request_token(
     }
 }
 
-/// One row of the candidate list: quant, size, shards, sidecars, and a mark on
-/// the one `llama-server -hf` would pick.
-fn candidate_label(c: &hf::Candidate, is_default: bool) -> String {
+/// One row of the candidate list: quant, size, shards, sidecars, and marks on
+/// the one `llama-server -hf` would pick and on the one recommended for this
+/// machine (`hf_fit::recommend`).
+fn candidate_label(c: &hf::Candidate, is_default: bool, is_recommended: bool) -> String {
     let name = if c.tag.is_empty() { c.primary().name().to_string() } else { c.tag.clone() };
     let mut parts = vec![name, hf::format_size(c.size)];
     if c.shards.len() > 1 {
@@ -277,7 +323,24 @@ fn candidate_label(c: &hf::Candidate, is_default: bool) -> String {
     if is_default {
         parts.push("default".into());
     }
+    if is_recommended {
+        parts.push("recommended".into());
+    }
     parts.join("  ·  ")
+}
+
+/// What the estimate line of a candidate row says while it has no estimate.
+const ESTIMATING: &str = "estimating: reading the GGUF header…";
+
+/// A candidate row's second line: its placement estimate (or why there is
+/// none), led by the recommendation when it is the one.
+fn candidate_detail(slot: &Option<Result<(hf_fit::Estimate, u64), String>>, recommended: Option<&str>) -> String {
+    let label = match slot {
+        None => ESTIMATING.to_string(),
+        Some(Ok((e, ctx))) => hf_fit::estimate_label(e, *ctx),
+        Some(Err(m)) => format!("estimate unavailable: {m}"),
+    };
+    hf_fit::detail_line(&label, recommended)
 }
 
 /// The drafter pills for a candidate: "none" plus each sidecar it has, or
@@ -334,119 +397,18 @@ fn listing_title(l: &hf::Listing) -> String {
     format!("{} @ {commit}: {n} {noun}", l.repo)
 }
 
-fn percent(done: u64, total: u64) -> u64 {
-    if total == 0 {
-        0
-    } else {
-        (done.min(total) as u128 * 100 / total as u128) as u64
-    }
+/// The refusal of a second download of a repository already downloading.
+fn busy_refusal(repo: &str) -> String {
+    format!(
+        "{repo} is already downloading (Downloads window): one download per repository at a time, \
+         since both would write its staging folder. Start this one when that one ends."
+    )
 }
 
-fn fraction(done: u64, total: u64) -> f32 {
-    if total == 0 {
-        0.0
-    } else {
-        (done.min(total) as f64 / total as f64) as f32
-    }
-}
-
-/// The progress readout: the overall line and bar, the current file's line
-/// and bar.
-#[derive(Debug, Clone, PartialEq)]
-struct ProgressView {
-    overall: String,
-    file: String,
-    overall_fraction: f32,
-    file_fraction: f32,
-}
-
-fn progress_view(p: &hf::Progress) -> ProgressView {
-    let current = (p.files_done + 1).min(p.files_total.max(1));
-    let overall = format!(
-        "{} of {} ({}%), file {current} of {}",
-        hf::format_size(p.done),
-        hf::format_size(p.total),
-        percent(p.done, p.total),
-        p.files_total
-    );
-    let file = if p.file.is_empty() {
-        "Waiting for llama-server to start the transfer…".to_string()
-    } else {
-        let name = p.file.rsplit('/').next().unwrap_or(&p.file);
-        format!(
-            "{name}: {} of {} ({}%)",
-            hf::format_size(p.file_done),
-            hf::format_size(p.file_total),
-            percent(p.file_done, p.file_total)
-        )
-    };
-    ProgressView {
-        overall,
-        file,
-        overall_fraction: fraction(p.done, p.total),
-        file_fraction: fraction(p.file_done, p.file_total),
-    }
-}
-
-/// The worker-side throttle for progress updates: the first one, every file
-/// boundary (a new current file or one more done), the last byte, and
-/// otherwise at most one per `interval`.
-struct Coalescer {
-    interval: Duration,
-    last: Option<(Instant, String, usize)>,
-}
-
-impl Coalescer {
-    fn new(interval: Duration) -> Coalescer {
-        Coalescer { interval, last: None }
-    }
-
-    fn admit(&mut self, p: &hf::Progress, now: Instant) -> bool {
-        let pass = match &self.last {
-            None => true,
-            Some((at, file, files_done)) => {
-                *file != p.file
-                    || *files_done != p.files_done
-                    || (p.total > 0 && p.done >= p.total)
-                    || now.duration_since(*at) >= self.interval
-            }
-        };
-        if pass {
-            self.last = Some((now, p.file.clone(), p.files_done));
-        }
-        pass
-    }
-}
-
-/// What a failed (or cancelled) transfer leaves in the dialog: (error, note).
-fn after_failure(e: &hf::HfError) -> (String, String) {
-    match e {
-        hf::HfError::Cancelled => (
-            String::new(),
-            "Download cancelled. What was fetched so far is kept: Resume download picks up where it stopped."
-                .to_string(),
-        ),
-        _ => (dialog_error(e), String::new()),
-    }
-}
-
-/// The note a refused dismiss shows.
-const DISMISS_REFUSED: &str = "A download is running: Cancel download stops it (what is fetched is kept \
-     for a resume). Closing the window instead leaves it running in the background.";
-
-/// The footer line for a created preset (no token, no path: the id and what
-/// came with it).
-fn created_status(d: &hf::Downloaded, id: &str) -> String {
-    let mut with: Vec<&str> = Vec::new();
-    if d.mmproj.is_some() {
-        with.push("mmproj");
-    }
-    if let Some((s, _)) = &d.draft {
-        with.push(s.label());
-    }
-    let with = if with.is_empty() { String::new() } else { format!(" with {}", with.join(" and ")) };
-    let name = d.model.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-    format!("Downloaded {name}{with} from {}: created [{id}], selected. Tweak parameters and Save.", d.repo)
+/// A Downloads row's title: the repository and the quantization.
+fn job_title(repo: &str, c: &hf::Candidate) -> String {
+    let quant = if c.tag.is_empty() { c.primary().name().to_string() } else { c.tag.clone() };
+    format!("{repo}  ·  {quant}")
 }
 
 // ── Wiring ───────────────────────────────────────────────────────────────
@@ -462,8 +424,11 @@ fn set_phase(app: &AppWindow, p: Phase) {
 /// Empty every listing-derived property (a new List, a failed one, a reopen).
 fn clear_listing(app: &AppWindow) {
     let s = app.global::<AppState>();
+    ESTIMATE_RUN.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     s.set_hf_listing_title(SharedString::default());
+    s.set_hf_estimate_basis(SharedString::default());
     s.set_hf_candidate_labels(string_model(Vec::new()));
+    s.set_hf_candidate_details(string_model(Vec::new()));
     s.set_hf_candidate_index(-1);
     s.set_hf_mmproj_available(false);
     s.set_hf_drafter_options(string_model(Vec::new()));
@@ -489,26 +454,175 @@ fn refresh_summary(app: &AppWindow, state: &Rc<RefCell<State>>) {
     s.set_hf_selection_summary(SharedString::from(text));
 }
 
-/// Pick candidate `index`: its sidecar choices (mmproj on when it has one, no
-/// drafter, as `llama-server -hf` does) and the summary.
+/// The user clicked candidate `index`: from now on the recommendation no
+/// longer moves the pick.
 fn select(app: &AppWindow, state: &Rc<RefCell<State>>, index: i32) {
-    if phase(app).transfer_running() {
-        return;
-    }
+    state.borrow_mut().hf.user_picked = true;
+    pick(app, state, index);
+}
+
+/// Pick candidate `index`: its sidecar choices (the wishes where it has the
+/// files: on a fresh listing the mmproj on when it has one and no drafter,
+/// as `llama-server -hf` does) and the summary.
+fn pick(app: &AppWindow, state: &Rc<RefCell<State>>, index: i32) {
     let s = app.global::<AppState>();
-    let picked = usize::try_from(index)
-        .ok()
-        .and_then(|i| state.borrow().hf.listing.as_ref()?.candidates.get(i).cloned());
+    let (picked, wish_mmproj, wish_drafter) = {
+        let st = state.borrow();
+        let c = usize::try_from(index).ok().and_then(|i| st.hf.listing.as_ref()?.candidates.get(i).cloned());
+        (c, st.hf.wish_mmproj, st.hf.wish_drafter)
+    };
     let Some(c) = picked else {
         return;
     };
     s.set_hf_candidate_index(index);
     s.set_hf_mmproj_available(c.mmproj.is_some());
-    s.set_hf_take_mmproj(c.mmproj.is_some());
+    s.set_hf_take_mmproj(c.mmproj.is_some() && wish_mmproj);
     s.set_hf_drafter_options(string_model(drafter_options(&c)));
-    s.set_hf_drafter(SharedString::from("none"));
+    let drafter = wish_drafter.filter(|k| c.sidecar(*k).is_some()).map_or("none", |k| k.label());
+    s.set_hf_drafter(SharedString::from(drafter));
     refresh_summary(app, state);
     refresh_resume(app, state, &models_dir());
+}
+
+/// The tick or a pill changed: the summary, the wishes (from a pick that
+/// offers the choice), and every row's estimate and the recommendation
+/// again (`recompute`, fetching only drafter headers not read yet).
+fn choices_changed(app: &AppWindow, state: &Rc<RefCell<State>>) {
+    refresh_summary(app, state);
+    let s = app.global::<AppState>();
+    {
+        let mut st = state.borrow_mut();
+        let c = usize::try_from(s.get_hf_candidate_index())
+            .ok()
+            .and_then(|i| st.hf.listing.as_ref()?.candidates.get(i).cloned());
+        let Some(c) = c else {
+            return;
+        };
+        if c.mmproj.is_some() {
+            st.hf.wish_mmproj = s.get_hf_take_mmproj();
+        }
+        if !drafter_options(&c).is_empty() {
+            st.hf.wish_drafter = drafter_choice(s.get_hf_drafter().as_str());
+        }
+    }
+    spawn_drafts(app, state);
+    reestimate(app, state);
+}
+
+/// `recompute`, then the rows, then the pick moved to a new recommendation
+/// unless the user chose a row.
+fn reestimate(app: &AppWindow, state: &Rc<RefCell<State>>) {
+    let move_to = recompute(&mut state.borrow_mut().hf);
+    refresh_rows(app, state);
+    if let Some(i) = move_to {
+        let s = app.global::<AppState>();
+        if phase(app) == Phase::Listed && s.get_hf_candidate_index() != i {
+            pick(app, state, i);
+        }
+    }
+}
+
+/// Every row's estimate from the shapes read so far and the wishes, then
+/// the recommendation once every row has its answer (pure over the
+/// session). Returns where the pick should move: the recommendation, unless
+/// the user already chose a row.
+fn recompute(h: &mut Session) -> Option<i32> {
+    let (Some(l), Some(b)) = (h.listing.as_ref(), h.budget.as_ref()) else {
+        return None;
+    };
+    let drafts = &h.drafts;
+    let lookup = |f: &hf::RepoFile| drafts.get(&f.path).cloned();
+    h.estimates = l
+        .candidates
+        .iter()
+        .enumerate()
+        .map(|(i, c)| match h.shapes.get(i).cloned().flatten() {
+            None => None,
+            Some(Err(m)) => Some(Err(m)),
+            Some(Ok(s)) => hf_fit::extras_of(c, h.wish_mmproj, h.wish_drafter, &lookup)
+                .map(|x| Ok((hf_fit::estimate_with(&s, b, &x), s.ctx))),
+        })
+        .collect();
+    if h.estimates.iter().any(Option::is_none) {
+        h.recommended = None;
+        return None;
+    }
+    let rows: Vec<hf_fit::Row> = l
+        .candidates
+        .iter()
+        .zip(&h.estimates)
+        .map(|(c, e)| hf_fit::Row {
+            tag: &c.tag,
+            size: c.size,
+            estimate: e.as_ref().and_then(|r| r.as_ref().ok()).map(|(e, _)| e),
+        })
+        .collect();
+    let rec = hf_fit::recommend(&rows);
+    let to = rec.as_ref().filter(|_| !h.user_picked).map(|r| r.index as i32);
+    h.recommended = rec;
+    to
+}
+
+/// Read the headers of the wished drafter's files not read yet, off the
+/// event loop, each landing in `drafted`. Nothing is spawned under
+/// `cfg(test)` (`spawn_request`): the e2e test lands them by hand.
+fn spawn_drafts(app: &AppWindow, state: &Rc<RefCell<State>>) {
+    let job = {
+        let mut st = state.borrow_mut();
+        let h = &mut st.hf;
+        let (Some(kind), Some(l), Some(_)) = (h.wish_drafter, h.listing.as_ref(), h.budget.as_ref()) else {
+            return;
+        };
+        let mut files: Vec<hf::RepoFile> = Vec::new();
+        for f in l.candidates.iter().filter_map(|c| c.sidecar(kind)) {
+            if !h.drafts.contains_key(&f.path) && !h.drafts_pending.contains(&f.path) && !files.iter().any(|x| x.path == f.path) {
+                files.push(f.clone());
+            }
+        }
+        if files.is_empty() {
+            return;
+        }
+        h.drafts_pending.extend(files.iter().map(|f| f.path.clone()));
+        (l.repo.clone(), l.commit.clone(), files, h.generation)
+    };
+    let token: Option<hf::Token> =
+        request_token(app.global::<AppState>().get_hf_token().as_str(), hf::token_from_env).unwrap_or_default();
+    let app_weak = app.as_weak();
+    spawn_request(move || {
+        let (repo, commit, files, generation) = job;
+        let endpoint = hf::endpoint();
+        for f in files {
+            let result = hf_fit::fetch_draft_shape(&hf::Curl, &endpoint, &repo, &commit, &f, token.as_ref()).map_err(|e| e.to_string());
+            let weak = app_weak.clone();
+            slint::invoke_from_event_loop(move || {
+                let (Some(app), Some(state)) = (weak.upgrade(), shared_state()) else {
+                    return;
+                };
+                if state.borrow().hf.generation != generation {
+                    return;
+                }
+                drafted(&app, &state, f.path, result);
+            })
+            .ok();
+        }
+    });
+}
+
+/// A drafter file's header landed (current generation): its rows again.
+fn drafted(app: &AppWindow, state: &Rc<RefCell<State>>, path: String, result: Result<std::sync::Arc<hf_fit::DraftShape>, String>) {
+    {
+        let mut st = state.borrow_mut();
+        st.hf.drafts_pending.remove(&path);
+        st.hf.drafts.insert(path, result);
+    }
+    reestimate(app, state);
+}
+
+/// TEST-ONLY seam: land a drafter header read as the worker does.
+#[cfg(test)]
+pub(crate) fn land_draft_for_tests(app: &AppWindow, path: &str, result: Result<std::sync::Arc<hf_fit::DraftShape>, String>) {
+    let state = shared_state().expect("hf_dialog::wire ran");
+    drafted(app, &state, path.to_string(), result);
 }
 
 /// "Resume download" or "Download": whether the picked candidate has a partial
@@ -543,30 +657,25 @@ fn clear_results(app: &AppWindow, state: &Rc<RefCell<State>>) {
 
 fn open(app: &AppWindow, state: &Rc<RefCell<State>>) {
     let s = app.global::<AppState>();
-    if !phase(app).transfer_running() {
-        {
-            let mut st = state.borrow_mut();
-            st.hf.generation += 1;
-            st.hf.listing = None;
-        }
-        clear_listing(app);
-        clear_results(app, state);
-        set_phase(app, Phase::Idle);
-        s.set_hf_error(SharedString::default());
-        s.set_hf_note(SharedString::default());
+    {
+        let mut st = state.borrow_mut();
+        st.hf.generation += 1;
+        st.hf.listing = None;
     }
+    clear_listing(app);
+    clear_results(app, state);
+    set_phase(app, Phase::Idle);
+    s.set_hf_error(SharedString::default());
+    s.set_hf_note(SharedString::default());
     s.set_hf_env_token(hf::token_from_env().is_some());
     s.set_show_hf_dialog(true);
 }
 
 fn dismiss(app: &AppWindow, state: &Rc<RefCell<State>>) {
     let s = app.global::<AppState>();
-    if phase(app).transfer_running() {
-        s.set_hf_note(SharedString::from(DISMISS_REFUSED));
-        return;
-    }
     // A search or a listing still in flight lands on a closed dialog: drop it.
     state.borrow_mut().hf.generation += 1;
+    ESTIMATE_RUN.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     set_phase(app, Phase::Idle);
     s.set_show_hf_dialog(false);
 }
@@ -689,7 +798,7 @@ fn pick_result(app: &AppWindow, state: &Rc<RefCell<State>>, index: i32) {
 /// Back from a picked row's listing to the results, the query back in the
 /// field. A listing still in flight is dropped (generation).
 fn back_to_results(app: &AppWindow, state: &Rc<RefCell<State>>) {
-    if phase(app).transfer_running() || phase(app).shows_results() || state.borrow().hf.results.is_empty() {
+    if phase(app).shows_results() || state.borrow().hf.results.is_empty() {
         return;
     }
     let query = {
@@ -743,23 +852,54 @@ fn list(app: &AppWindow, state: &Rc<RefCell<State>>, spec: hf::RepoSpec, from_re
     });
 }
 
+/// The estimates' budget: the probed GPUs and the system RAM.
+fn machine_budget() -> Option<hf_fit::Budget> {
+    hf_fit::budget(&devices::probed(), hf_fit::system_ram_total())
+}
+
 /// A listing landed (current generation).
 fn listed(app: &AppWindow, state: &Rc<RefCell<State>>, result: Result<hf::Listing, hf::HfError>) {
+    listed_with(app, state, result, machine_budget());
+}
+
+/// `listed`, against `budget`: rows, then the default pick, then the header
+/// reads for the estimates (none without a GPU: every row says why).
+fn listed_with(
+    app: &AppWindow,
+    state: &Rc<RefCell<State>>,
+    result: Result<hf::Listing, hf::HfError>,
+    budget: Option<hf_fit::Budget>,
+) {
     let s = app.global::<AppState>();
     match result {
         Ok(l) => {
-            let labels: Vec<String> = l
-                .candidates
-                .iter()
-                .enumerate()
-                .map(|(i, c)| candidate_label(c, i == l.default))
-                .collect();
             s.set_hf_listing_title(SharedString::from(listing_title(&l)));
-            s.set_hf_candidate_labels(string_model(labels));
+            s.set_hf_estimate_basis(SharedString::from(budget.as_ref().map(hf_fit::basis_label).unwrap_or_default()));
+            let n = l.candidates.len();
             let default = l.default as i32;
-            state.borrow_mut().hf.listing = Some(l);
+            let job = (l.repo.clone(), l.commit.clone(), l.candidates.clone());
+            {
+                let mut st = state.borrow_mut();
+                st.hf.listing = Some(l);
+                st.hf.shapes = vec![None; n];
+                st.hf.drafts.clear();
+                st.hf.drafts_pending.clear();
+                st.hf.wish_mmproj = true;
+                st.hf.wish_drafter = None;
+                st.hf.estimates = match budget {
+                    Some(_) => vec![None; n],
+                    None => vec![Some(Err(hf_fit::NO_GPU.to_string())); n],
+                };
+                st.hf.recommended = None;
+                st.hf.user_picked = false;
+                st.hf.budget = budget.clone();
+            }
+            refresh_rows(app, state);
             set_phase(app, Phase::Listed);
-            select(app, state, default);
+            pick(app, state, default);
+            if budget.is_some() {
+                spawn_estimates(app, state, job);
+            }
         }
         Err(e) => {
             // From a picked row the results stay on screen, the error under them.
@@ -768,6 +908,100 @@ fn listed(app: &AppWindow, state: &Rc<RefCell<State>>, result: Result<hf::Listin
             s.set_hf_error(SharedString::from(dialog_error(&e)));
         }
     }
+}
+
+/// Rewrite every candidate row (label and estimate line) from the session.
+fn refresh_rows(app: &AppWindow, state: &Rc<RefCell<State>>) {
+    let st = state.borrow();
+    let Some(l) = st.hf.listing.as_ref() else {
+        return;
+    };
+    let rec = st.hf.recommended.as_ref();
+    let is_rec = |i: usize| rec.is_some_and(|r| r.index == i);
+    let labels: Vec<String> =
+        l.candidates.iter().enumerate().map(|(i, c)| candidate_label(c, i == l.default, is_rec(i))).collect();
+    let details: Vec<String> = (0..l.candidates.len())
+        .map(|i| {
+            let slot = st.hf.estimates.get(i).cloned().flatten();
+            candidate_detail(&slot, rec.filter(|r| r.index == i).map(|r| r.reason))
+        })
+        .collect();
+    let s = app.global::<AppState>();
+    s.set_hf_candidate_labels(string_model(labels));
+    s.set_hf_candidate_details(string_model(details));
+}
+
+/// Read every candidate's GGUF header off the event loop
+/// (`hf_fit::fetch_shapes`, `WORKERS` at a time), each answer landing in
+/// `estimated` as it comes. Stops early once the listing is superseded
+/// (`ESTIMATE_RUN`). Nothing is spawned under `cfg(test)` (`spawn_request`).
+fn spawn_estimates(app: &AppWindow, state: &Rc<RefCell<State>>, job: (String, String, Vec<hf::Candidate>)) {
+    use std::sync::atomic::Ordering;
+    // The listing's own token rule; a typed token that cannot be one already
+    // stopped the listing, so this falls back to none only in theory.
+    let token: Option<hf::Token> =
+        request_token(app.global::<AppState>().get_hf_token().as_str(), hf::token_from_env).unwrap_or_default();
+    let generation = state.borrow().hf.generation;
+    let run = ESTIMATE_RUN.fetch_add(1, Ordering::Relaxed) + 1;
+    let app_weak = app.as_weak();
+    spawn_request(move || {
+        let (repo, commit, candidates) = job;
+        let endpoint = hf::endpoint();
+        hf_fit::fetch_shapes(
+            &hf::Curl,
+            &endpoint,
+            &repo,
+            &commit,
+            &candidates,
+            token.as_ref(),
+            &|| ESTIMATE_RUN.load(Ordering::Relaxed) == run,
+            &|index, result| {
+                let weak = app_weak.clone();
+                slint::invoke_from_event_loop(move || {
+                    let (Some(app), Some(state)) = (weak.upgrade(), shared_state()) else {
+                        return;
+                    };
+                    if state.borrow().hf.generation != generation {
+                        return; // another listing, a search, Back or a dismiss came first
+                    }
+                    estimated(&app, &state, index, result);
+                })
+                .ok();
+            },
+        );
+    });
+}
+
+/// One candidate's header landed (current generation): its estimate, and
+/// once every row has its answer the recommendation, which also moves the
+/// pick unless the user already chose a row (`reestimate`).
+fn estimated(app: &AppWindow, state: &Rc<RefCell<State>>, index: usize, result: Result<std::sync::Arc<hf_fit::Shape>, hf::HfError>) {
+    {
+        let mut st = state.borrow_mut();
+        if st.hf.budget.is_none() {
+            return;
+        }
+        let Some(slot) = st.hf.shapes.get_mut(index) else {
+            return;
+        };
+        *slot = Some(result.map_err(|e| e.to_string()));
+    }
+    reestimate(app, state);
+}
+
+/// TEST-ONLY seam: land a listing measured against `budget` (the probe is
+/// empty under test), as `listed` does.
+#[cfg(test)]
+pub(crate) fn land_listing_with_budget_for_tests(app: &AppWindow, result: Result<hf::Listing, hf::HfError>, budget: Option<hf_fit::Budget>) {
+    let state = shared_state().expect("hf_dialog::wire ran");
+    listed_with(app, &state, result, budget);
+}
+
+/// TEST-ONLY seam: land one candidate's header read as the worker does.
+#[cfg(test)]
+pub(crate) fn land_estimate_for_tests(app: &AppWindow, index: usize, result: Result<std::sync::Arc<hf_fit::Shape>, hf::HfError>) {
+    let state = shared_state().expect("hf_dialog::wire ran");
+    estimated(app, &state, index, result);
 }
 
 fn download(app: &AppWindow, state: &Rc<RefCell<State>>) {
@@ -785,132 +1019,57 @@ fn download(app: &AppWindow, state: &Rc<RefCell<State>>) {
             return;
         }
     };
-    let models_dir = models_dir();
-    let job = {
+    let Some(server_exe) = server_exe() else {
+        s.set_hf_error(SharedString::from(dialog_error(&hf::HfError::MissingTool(
+            "llama-server was not found beside the configurator or in the build tree".into(),
+        ))));
+        return;
+    };
+    let mmproj = s.get_hf_take_mmproj();
+    let drafter = drafter_choice(s.get_hf_drafter().as_str());
+    let built = {
         let st = state.borrow();
         let Some(listing) = st.hf.listing.as_ref() else {
             return;
         };
-        hf::DownloadJob::new(
-            listing,
-            index,
-            s.get_hf_take_mmproj(),
-            drafter_choice(s.get_hf_drafter().as_str()),
-            models_dir.clone(),
-            token,
-        )
+        if st.downloads.busy_with(&listing.repo) {
+            Err(busy_refusal(&listing.repo))
+        } else {
+            let detail = listing.candidates.get(index).map(|c| selection_summary(c, mmproj, drafter)).unwrap_or_default();
+            hf::DownloadJob::for_server(listing, index, mmproj, drafter, models_dir(), token, server_exe)
+                .map(|job| {
+                    let title = job_title(&job.repo, &job.candidate);
+                    (job, title, detail)
+                })
+                .map_err(|e| dialog_error(&e))
+        }
     };
-    let job = match job {
-        Ok(j) => j,
+    let (job, title, detail) = match built {
+        Ok(b) => b,
         Err(e) => {
-            s.set_hf_error(SharedString::from(dialog_error(&e)));
+            s.set_hf_error(SharedString::from(e));
             return;
         }
     };
-    s.set_hf_error(SharedString::default());
-    s.set_hf_note(SharedString::default());
-    s.set_hf_progress_overall(SharedString::from("Starting…"));
-    s.set_hf_progress_file(SharedString::default());
-    s.set_hf_progress_fraction(0.0);
-    s.set_hf_file_fraction(0.0);
-    set_phase(app, Phase::Downloading);
-    set_status(app, format!("Downloading {} from Hugging Face…", job.candidate.primary().name()), false);
-
-    let progress_weak = app.as_weak();
-    let done_weak = app.as_weak();
-    let mut coalescer = Coalescer::new(PROGRESS_INTERVAL);
-    let handle = hf::spawn_download(
-        job,
-        move |p| {
-            if !coalescer.admit(&p, Instant::now()) {
-                return;
-            }
-            let view = progress_view(&p);
-            let weak = progress_weak.clone();
-            slint::invoke_from_event_loop(move || {
-                let Some(app) = weak.upgrade() else {
-                    return;
-                };
-                let s = app.global::<AppState>();
-                if !phase(&app).transfer_running() {
-                    return; // a late update after the end
-                }
-                s.set_hf_progress_overall(SharedString::from(view.overall));
-                s.set_hf_progress_file(SharedString::from(view.file));
-                s.set_hf_progress_fraction(view.overall_fraction);
-                s.set_hf_file_fraction(view.file_fraction);
-            })
-            .ok();
-        },
-        move |result| {
-            slint::invoke_from_event_loop(move || {
-                let (Some(app), Some(state)) = (done_weak.upgrade(), shared_state()) else {
-                    return;
-                };
-                downloaded(&app, &state, &models_dir, result);
-            })
-            .ok();
-        },
-    );
-    state.borrow_mut().hf.handle = Some(handle);
+    // Against the budget the rows were estimated with, so the preset gets the
+    // split the picked row showed.
+    let budget = state.borrow().hf.budget.clone();
+    set_status(app, format!("Downloading {title} in the background: the Downloads window shows its progress."), false);
+    // The dialog's part ends here: close it as a dismiss does (a header read
+    // still in flight lands on nothing), then hand the job over.
+    dismiss(app, state);
+    downloads::start(app, state, job, title, detail, budget);
 }
 
-/// The transfer ended.
-fn downloaded(
-    app: &AppWindow,
-    state: &Rc<RefCell<State>>,
-    models_dir: &Path,
-    result: Result<hf::Downloaded, hf::HfError>,
-) {
-    let s = app.global::<AppState>();
-    state.borrow_mut().hf.handle = None;
-    match result {
-        Ok(d) => {
-            set_phase(app, Phase::Idle);
-            s.set_show_hf_dialog(false);
-            let existing: Vec<String> = presets::load_listed().into_iter().map(|l| l.preset.id).collect();
-            let p = hf::preset_from_download(&d, &existing);
-            let status = created_status(&d, &p.id);
-            models_tab::commit_downloaded_preset(app, state, p, models_dir, status);
-        }
-        Err(e) => {
-            let (error, note) = after_failure(&e);
-            set_phase(app, Phase::Listed);
-            s.set_hf_error(SharedString::from(error));
-            s.set_hf_note(SharedString::from(note));
-            refresh_resume(app, state, models_dir);
-            let footer = if e == hf::HfError::Cancelled {
-                ("Hugging Face download cancelled.".to_string(), false)
-            } else {
-                (format!("Hugging Face download failed: {e}"), true)
-            };
-            set_status(app, footer.0, footer.1);
-        }
+/// The llama-server the download's child runs. Under `cfg(test)` a stand-in:
+/// no test starts a child (`downloads::spawn`), and the build tree may hold
+/// no server.
+fn server_exe() -> Option<PathBuf> {
+    if cfg!(test) {
+        Some(PathBuf::from("llama-server"))
+    } else {
+        crate::paths::llama_server_exe()
     }
-}
-
-/// TEST-ONLY seam for the e2e flow (src/tests/save_flow.rs): land a transfer's
-/// result exactly as the worker's closure does, without a network or a child.
-#[cfg(test)]
-pub(crate) fn land_download_for_tests(
-    app: &AppWindow,
-    models_dir: &Path,
-    result: Result<hf::Downloaded, hf::HfError>,
-) {
-    let state = shared_state().expect("hf_dialog::wire ran");
-    downloaded(app, &state, models_dir, result);
-}
-
-fn cancel(app: &AppWindow, state: &Rc<RefCell<State>>) {
-    if phase(app) != Phase::Downloading {
-        return;
-    }
-    if let Some(h) = state.borrow().hf.handle.as_ref() {
-        h.cancel();
-    }
-    set_phase(app, Phase::Cancelling);
-    app.global::<AppState>()
-        .set_hf_note(SharedString::from("Stopping the download…"));
 }
 
 pub(super) fn wire(app: &AppWindow, state: &Rc<RefCell<State>>) {
@@ -938,8 +1097,7 @@ pub(super) fn wire(app: &AppWindow, state: &Rc<RefCell<State>>) {
     s.on_hf_submit(hook(app, state, submit));
     s.on_hf_back_to_results(hook(app, state, back_to_results));
     s.on_hf_download(hook(app, state, download));
-    s.on_hf_cancel(hook(app, state, cancel));
-    s.on_hf_choices_changed(hook(app, state, refresh_summary));
+    s.on_hf_choices_changed(hook(app, state, choices_changed));
 
     // The same shape, for the handlers that take a row index.
     fn hook_index(
@@ -977,7 +1135,7 @@ pub(crate) fn land_listing_for_tests(app: &AppWindow, result: Result<hf::Listing
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hf::{Candidate, HfError, Progress, RepoFile, Sidecar};
+    use hf::{Candidate, HfError, RepoFile, Sidecar};
 
     fn file(path: &str, size: u64) -> RepoFile {
         RepoFile { path: path.into(), size, oid: String::new() }
@@ -995,15 +1153,7 @@ mod tests {
         Candidate { tag: tag.into(), shards, size, mmproj: None, mtp: None, dflash: None, dspark: None }
     }
 
-    const ALL: [Phase; 7] = [
-        Phase::Idle,
-        Phase::Searching,
-        Phase::Searched,
-        Phase::Listing,
-        Phase::Listed,
-        Phase::Downloading,
-        Phase::Cancelling,
-    ];
+    const ALL: [Phase; 5] = [Phase::Idle, Phase::Searching, Phase::Searched, Phase::Listing, Phase::Listed];
 
     #[test]
     fn phase_numbering_is_the_ui_contract() {
@@ -1011,18 +1161,17 @@ mod tests {
             assert_eq!(Phase::from_int(p as i32), p);
         }
         assert_eq!(Phase::from_int(99), Phase::Idle);
+        assert_eq!(Phase::from_int(5), Phase::Idle, "the old transfer phases are gone: no transfer runs in the dialog");
         for p in ALL {
             let n = p as i32;
-            // state.slint: `hf_transfer_running: hf_phase >= 5`,
-            // `hf_busy: hf_phase == 1 || hf_phase == 3`, `hf_show_results: hf_phase <= 2`.
-            assert_eq!(p.transfer_running(), n >= 5, "{p:?}");
+            // state.slint: `hf_busy: hf_phase == 1 || hf_phase == 3`, `hf_show_results: hf_phase <= 2`.
             assert_eq!(p.busy(), n == 1 || n == 3, "{p:?}");
             assert_eq!(p.shows_results(), n <= 2, "{p:?}");
         }
     }
 
-    /// Which phase accepts which step: one request at a time, nothing during
-    /// a transfer, and the result rows only up to `Searched`.
+    /// Which phase accepts which step: one request at a time, and the result
+    /// rows only up to `Searched`.
     #[test]
     fn phase_transitions_allow_one_request_at_a_time() {
         let can: Vec<Phase> = ALL.into_iter().filter(|p| p.can_request()).collect();
@@ -1066,13 +1215,25 @@ mod tests {
             quants: quants.iter().map(|q| q.to_string()).collect(),
             mmproj: false,
             drafters: Vec::new(),
+            kind: hf::ModelKind::Unknown,
+            params: None,
         }
     }
 
     #[test]
     fn result_rows_carry_repo_downloads_access_and_quants() {
         let mut h = hit("Qwen/Qwen3-8B-GGUF", 644_587, &["Q4_K_M", "Q5_K_M", "Q8_0"]);
-        assert_eq!(result_label(&h), "Qwen/Qwen3-8B-GGUF  ·  644.6k downloads");
+        assert_eq!(result_label(&h), "Qwen/Qwen3-8B-GGUF  ·  644.6k downloads", "no gguf summary, no marker");
+        h.kind = hf::ModelKind::Dense;
+        h.params = Some(8_190_735_360);
+        assert_eq!(result_label(&h), "Qwen/Qwen3-8B-GGUF  ·  dense 8.2B  ·  644.6k downloads");
+        h.kind = hf::ModelKind::Unknown;
+        assert_eq!(result_label(&h), "Qwen/Qwen3-8B-GGUF  ·  8.2B, dense/MoE unknown  ·  644.6k downloads");
+        h.kind = hf::ModelKind::Moe;
+        h.params = Some(30_532_122_624);
+        assert_eq!(result_label(&h), "Qwen/Qwen3-8B-GGUF  ·  MoE 30.5B  ·  644.6k downloads");
+        h.kind = hf::ModelKind::Unknown;
+        h.params = None;
         assert_eq!(result_detail(&h), "Q4_K_M, Q5_K_M, Q8_0");
         h.gated = true;
         h.private = true;
@@ -1116,15 +1277,34 @@ mod tests {
     #[test]
     fn candidate_labels_carry_size_shards_sidecars_and_the_default_mark() {
         let mut c = candidate("Q4_K_M", 1);
-        assert_eq!(candidate_label(&c, false), "Q4_K_M  ·  4.00 GiB");
+        assert_eq!(candidate_label(&c, false, false), "Q4_K_M  ·  4.00 GiB");
         c.mmproj = Some(file("mmproj-F16.gguf", 600 << 20));
         c.mtp = Some(file("mtp-Q8_0.gguf", 300 << 20));
-        assert_eq!(candidate_label(&c, true), "Q4_K_M  ·  4.00 GiB  ·  with mmproj, MTP  ·  default");
+        assert_eq!(candidate_label(&c, true, false), "Q4_K_M  ·  4.00 GiB  ·  with mmproj, MTP  ·  default");
+        assert_eq!(
+            candidate_label(&c, true, true),
+            "Q4_K_M  ·  4.00 GiB  ·  with mmproj, MTP  ·  default  ·  recommended"
+        );
         let c = candidate("BF16", 2);
-        assert_eq!(candidate_label(&c, false), "BF16  ·  4.00 GiB  ·  2 shards");
+        assert_eq!(candidate_label(&c, false, false), "BF16  ·  4.00 GiB  ·  2 shards");
         let mut c = candidate("", 1);
         c.shards[0].path = "dir/model.gguf".into();
-        assert!(candidate_label(&c, false).starts_with("model.gguf  ·  "));
+        assert!(candidate_label(&c, false, false).starts_with("model.gguf  ·  "));
+    }
+
+    #[test]
+    fn candidate_details_say_estimating_the_estimate_or_why_not() {
+        assert_eq!(candidate_detail(&None, None), ESTIMATING);
+        let e = hf_fit::Estimate::plain(hf_fit::Fit::Gpu { need: 6 << 30, budget: 12 << 30 }, Some(0), vec![]);
+        assert_eq!(candidate_detail(&Some(Ok((e.clone(), 32768))), None), "all on GPU: 6.0 of 12.0 GiB with a 32k context");
+        assert_eq!(
+            candidate_detail(&Some(Ok((e, 32768))), Some("the best quality that fits in GPU memory")),
+            "recommended, the best quality that fits in GPU memory: all on GPU: 6.0 of 12.0 GiB with a 32k context"
+        );
+        assert_eq!(
+            candidate_detail(&Some(Err(hf_fit::NO_GPU.into())), None),
+            "estimate unavailable: llama-server --list-devices reports no GPU"
+        );
     }
 
     #[test]
@@ -1160,75 +1340,14 @@ mod tests {
         assert_eq!(selection_summary(&c, true, None), "Fetches 1 file, 4.00 GiB: M-Q4_K_M.gguf");
     }
 
-    fn progress(done: u64, total: u64, file: &str, fd: u64, ft: u64, files: (usize, usize)) -> Progress {
-        Progress {
-            done,
-            total,
-            file: file.into(),
-            file_done: fd,
-            file_total: ft,
-            files_done: files.0,
-            files_total: files.1,
-        }
-    }
-
     #[test]
-    fn the_progress_readout_shows_overall_and_per_file_bytes() {
-        let v = progress_view(&progress(0, 0, "", 0, 0, (0, 2)));
-        assert_eq!(v.overall, "0.0 MiB of 0.0 MiB (0%), file 1 of 2");
-        assert!(v.file.starts_with("Waiting"));
-        assert_eq!((v.overall_fraction, v.file_fraction), (0.0, 0.0));
-
-        let gib = 1u64 << 30;
-        let v = progress_view(&progress(gib, 4 * gib, "sub/a.gguf", gib / 2, 2 * gib, (1, 3)));
-        assert_eq!(v.overall, "1.00 GiB of 4.00 GiB (25%), file 2 of 3");
-        assert_eq!(v.file, "a.gguf: 512.0 MiB of 2.00 GiB (25%)");
-        assert_eq!((v.overall_fraction, v.file_fraction), (0.25, 0.25));
-
-        // The end: never "file 4 of 3", never past 100%.
-        let v = progress_view(&progress(5 * gib, 4 * gib, "a.gguf", 2 * gib, 2 * gib, (3, 3)));
-        assert!(v.overall.ends_with("(100%), file 3 of 3"), "{}", v.overall);
-        assert_eq!(v.overall_fraction, 1.0);
-    }
-
-    #[test]
-    fn the_coalescer_passes_boundaries_and_throttles_the_rest() {
-        let t0 = Instant::now();
-        let ms = |n| t0 + Duration::from_millis(n);
-        let mut c = Coalescer::new(Duration::from_millis(250));
-        assert!(c.admit(&progress(0, 100, "", 0, 0, (0, 2)), ms(0)), "the first one");
-        assert!(c.admit(&progress(1, 100, "a", 1, 50, (0, 2)), ms(10)), "a new current file");
-        assert!(!c.admit(&progress(2, 100, "a", 2, 50, (0, 2)), ms(20)), "throttled");
-        assert!(!c.admit(&progress(3, 100, "a", 3, 50, (0, 2)), ms(259)), "still inside the interval");
-        assert!(c.admit(&progress(4, 100, "a", 4, 50, (0, 2)), ms(260)), "the interval passed");
-        assert!(c.admit(&progress(50, 100, "a", 50, 50, (1, 2)), ms(270)), "one more file done");
-        assert!(c.admit(&progress(100, 100, "b", 50, 50, (1, 2)), ms(280)), "new file");
-        assert!(c.admit(&progress(100, 100, "b", 50, 50, (2, 2)), ms(281)), "the end always passes");
-        assert!(c.admit(&progress(100, 100, "b", 50, 50, (2, 2)), ms(282)), "the last byte always passes");
-    }
-
-    #[test]
-    fn a_cancel_is_a_note_and_a_failure_an_error() {
-        let (error, note) = after_failure(&HfError::Cancelled);
-        assert!(error.is_empty() && note.contains("Resume download"), "{note}");
-        let (error, note) = after_failure(&HfError::DiskFull("no space".into()));
-        assert_eq!((error.as_str(), note.as_str()), ("The disk is probably full: no space", ""));
-    }
-
-    #[test]
-    fn the_created_status_names_the_file_the_extras_and_the_id() {
-        let d = hf::Downloaded {
-            repo: "org/Repo-GGUF".into(),
-            project_url: "https://huggingface.co/org/Repo-GGUF".into(),
-            model: PathBuf::from("M").join("models").join("Repo-GGUF").join("m-Q4_K_M.gguf"),
-            mmproj: Some(PathBuf::from("mm.gguf")),
-            draft: Some((Sidecar::Mtp, PathBuf::from("mtp.gguf"))),
-        };
-        assert_eq!(
-            created_status(&d, "m-Q4_K_M"),
-            "Downloaded m-Q4_K_M.gguf with mmproj and MTP from org/Repo-GGUF: created [m-Q4_K_M], selected. \
-             Tweak parameters and Save."
-        );
+    fn a_downloads_row_is_titled_by_repository_and_quantization() {
+        assert_eq!(job_title("o/r", &candidate("Q4_K_M", 1)), "o/r  ·  Q4_K_M");
+        let mut c = candidate("", 1);
+        c.shards[0].path = "dir/model.gguf".into();
+        assert_eq!(job_title("o/r", &c), "o/r  ·  model.gguf", "no tag: the file");
+        let refused = busy_refusal("o/r");
+        assert!(refused.starts_with("o/r is already downloading") && refused.contains("one download per repository"), "{refused}");
     }
 
     #[test]

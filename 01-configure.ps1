@@ -237,6 +237,23 @@ foreach ($tool in $tools.Keys) {
     else        { Write-Host "  [!!] $($tool.PadRight(14)): NOT FOUND" -ForegroundColor Red; $gaps += "$tool : $($tools[$tool])" }
 }
 
+# WiX Toolset (the MSI, 03-package.ps1 only: a gap for packaging, not for the
+# build). The dotnet global tool 00-install-prerequisites.ps1 installs, found on
+# PATH or in its default directory (a console opened before the .NET SDK
+# install has neither on PATH), and checked against installer\wix-toolset.psd1.
+$wixPin = Import-PowerShellDataFile (Join-Path $PSScriptRoot 'installer\wix-toolset.psd1')
+$val = @((Get-Command wix -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty Source),
+         (Join-Path $env:USERPROFILE '.dotnet\tools\wix.exe')) |
+    Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
+$detected.WixExe = $val
+if ($val) {
+    $wixVersion = ((& $val --version) -split '\+')[0].Trim()
+    if ($wixVersion -eq $wixPin.Version) { Write-Host "  [OK] $('wix'.PadRight(14)): $val ($wixVersion)" -ForegroundColor Green }
+    else { Write-Host "  [--] $('wix'.PadRight(14)): $val ($wixVersion, pinned $($wixPin.Version): run 00-install-prerequisites.ps1)" -ForegroundColor Yellow }
+} else {
+    Write-Host "  [--] $('wix'.PadRight(14)): not found (needed by 03-package.ps1 only: run 00-install-prerequisites.ps1)" -ForegroundColor Yellow
+}
+
 Write-Host ""
 
 # ── Summary ──────────────────────────────────────────────────────────
@@ -276,6 +293,9 @@ $buildLines.Add("    LlamaCppDir  = $(Fmt $detected.LlamaCppDir)")
 $buildLines.Add("    OpenSSLDir   = $(Fmt $detected.OpenSSLDir)")
 $buildLines.Add("    HipPath      = $(Fmt $detected.HipPath)")
 $buildLines.Add("    VsDevShell   = $(Fmt $detected.VsDevShell)")
+$buildLines.Add('    # WixExe: the WiX Toolset 03-package.ps1 builds the MSI with (version pinned')
+$buildLines.Add('    # in installer\wix-toolset.psd1); empty when not installed yet.')
+$buildLines.Add("    WixExe       = $(Fmt $detected.WixExe)")
 $buildLines.Add('')
 $buildLines.Add('    # Build settings')
 $buildLines.Add('    # GpuTargets: DERIVED from the installed ROCm dist by 01-configure.ps1, i.e.')

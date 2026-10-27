@@ -9,8 +9,10 @@
 //! that no pure-Rust unit test can reach), the Integrations row-checkbox
 //! contract (in-place toggle from the widget itself, full model rebuild for
 //! everything else), and the Hugging Face dialog's network-free wiring (its
-//! refusals, the dismiss rule during a transfer, and a landed download through
-//! `commit_downloaded_preset`), and the Delete dialog's linked files
+//! refusals, the hand-over at Download to the background downloads and their
+//! window, a landed download creating its preset without disturbing a dirty
+//! editor, cancel, failure, Show preset, Quit asking first), and the Delete
+//! dialog's linked files
 //! (`delete_with_files_phase`: the rows, the in-use lock, the ticks the
 //! confirm acts on, the folder cleanup, a failed delete reported) with the
 //! CLI's `preset delete --delete-files` under the same rules.
@@ -1339,12 +1341,15 @@ pub(super) fn run(app: &AppWindow) {
     // ── New preset from Hugging Face: the dialog wiring that needs no network ──
     // gui/hf_dialog.rs. The search, the listing and the transfer need Hugging
     // Face and a llama-server, so this drives everything around them (under
-    // cfg(test) the request workers are not even spawned): the modal gate,
-    // the one field that searches or lists, the refusals that must hold before
-    // any request leaves, the search rows handing over to the listing and
-    // Back, the dismiss rule during a transfer, and the landing of a finished
-    // (or cancelled) download through the real funnel
-    // (`commit_downloaded_preset`).
+    // cfg(test) the request workers and the child are not even spawned): the
+    // modal gate, the one field that searches or lists, the refusals that must
+    // hold before any request leaves, the search rows handing over to the
+    // listing and Back, and the hand-over to the background downloads
+    // (gui/downloads.rs): the modal closing at Download, the Downloads
+    // window's rows (progress, cancel, resume, failure, a second download of
+    // the same repository refused), the preset created without touching a
+    // dirty editor, Show preset through the discard guard, and Quit asking
+    // first.
     // The New dialog's "From Hugging Face" button hides the picker, then opens
     // this one: mirror both (an earlier phase may have left the picker up).
     st.set_show_new_kind_picker(false);
@@ -1393,12 +1398,18 @@ pub(super) fn run(app: &AppWindow) {
         quants: quants.iter().map(|q| q.to_string()).collect(),
         mmproj: true,
         drafters: Vec::new(),
+        kind: crate::hf::ModelKind::Unknown,
+        params: None,
     };
     crate::gui::land_search_for_tests(
         app,
         "qwen3 8b",
         Ok(vec![
-            hit("Qwen/Qwen3-8B-GGUF", 644_587, &["Q4_K_M", "Q8_0"]),
+            crate::hf::SearchHit {
+                kind: crate::hf::ModelKind::Dense,
+                params: Some(8_190_735_360),
+                ..hit("Qwen/Qwen3-8B-GGUF", 644_587, &["Q4_K_M", "Q8_0"])
+            },
             hit("unsloth/Qwen3-8B-GGUF", 131_220, &["Q2_K", "Q4_K_M", "BF16"]),
         ]),
     );
@@ -1406,7 +1417,11 @@ pub(super) fn run(app: &AppWindow) {
     assert!(st.get_hf_has_results() && st.get_hf_show_results());
     assert!(st.get_hf_results_title().contains("\"qwen3 8b\""), "{}", st.get_hf_results_title());
     let labels: Vec<String> = st.get_hf_result_labels().iter().map(|s| s.to_string()).collect();
-    assert_eq!(labels, ["Qwen/Qwen3-8B-GGUF  ·  644.6k downloads", "unsloth/Qwen3-8B-GGUF  ·  131.2k downloads"]);
+    assert_eq!(
+        labels,
+        ["Qwen/Qwen3-8B-GGUF  ·  dense 8.2B  ·  644.6k downloads", "unsloth/Qwen3-8B-GGUF  ·  131.2k downloads"],
+        "the model marker only where the search knows it"
+    );
     assert_eq!(st.get_hf_result_details().row_data(1).unwrap().as_str(), "Q2_K, Q4_K_M, BF16  ·  with mmproj");
     // Picking a row lists that repository: its id in the field, results kept.
     st.invoke_hf_pick_result(1);
@@ -1438,7 +1453,8 @@ pub(super) fn run(app: &AppWindow) {
         dflash: None,
         dspark: None,
     };
-    crate::gui::land_listing_for_tests(
+    // Measured against no GPU (the machine's own probe must not matter here).
+    crate::gui::land_listing_with_budget_for_tests(
         app,
         Ok(crate::hf::Listing {
             repo: "Qwen/Qwen3-8B-GGUF".into(),
@@ -1447,12 +1463,133 @@ pub(super) fn run(app: &AppWindow) {
             candidates: vec![candidate("Q8_0"), candidate("Q4_K_M")],
             default: 1,
         }),
+        None,
     );
     assert_eq!(st.get_hf_phase(), 4, "listed");
     assert_eq!(st.get_hf_candidate_labels().row_count(), 2);
     assert_eq!(st.get_hf_candidate_index(), 1, "the default quantization starts picked");
     assert!(st.get_hf_selection_summary().contains("Qwen3-8B-Q4_K_M.gguf"));
     assert!(st.get_hf_has_results(), "Back is still offered from the listing");
+    // No GPU probed (none under test): every row says the estimate is
+    // unavailable, no basis line, no recommendation.
+    let details: Vec<String> = st.get_hf_candidate_details().iter().map(|s| s.to_string()).collect();
+    assert_eq!(details, vec![format!("estimate unavailable: {}", crate::hf_fit::NO_GPU); 2]);
+    assert!(st.get_hf_estimate_basis().is_empty());
+
+    // With a GPU: rows read "estimating" until their header lands; once all
+    // have, the recommended one is marked and the pick moves to it (the
+    // user had not chosen), here Q8_0 over the default Q4_K_M.
+    let listing = || crate::hf::Listing {
+        repo: "Qwen/Qwen3-8B-GGUF".into(),
+        commit: "0123456789abcdef0123456789abcdef01234567".into(),
+        project_url: "https://huggingface.co/Qwen/Qwen3-8B-GGUF".into(),
+        candidates: vec![candidate("Q8_0"), candidate("Q4_K_M")],
+        default: 1,
+    };
+    let budget = || crate::hf_fit::Budget {
+        gpus: vec![crate::hf_fit::Gpu { id: "CUDA0".into(), name: "Test GPU".into(), total_mib: 24 << 10 }],
+        ram: Some(28 << 30),
+        ram_total: Some(32 << 30),
+    };
+    let shape = |gib: u64| {
+        std::sync::Arc::new(crate::hf_fit::Shape {
+            arch: "qwen3".into(),
+            moe: false,
+            total: gib << 30,
+            token_embd: 0,
+            globals: 0,
+            layers: vec![crate::hf_fit::Layer { experts: 0, other: (gib << 30) / 4 }; 4],
+            kv: 1 << 30,
+            ctx: 32768,
+        })
+    };
+    st.invoke_hf_pick_result(0);
+    crate::gui::land_listing_with_budget_for_tests(app, Ok(listing()), Some(budget()));
+    assert_eq!(st.get_hf_phase(), 4);
+    assert!(st.get_hf_estimate_basis().starts_with("Estimated for Test GPU"), "{}", st.get_hf_estimate_basis());
+    assert!(st.get_hf_candidate_details().iter().all(|d| d.starts_with("estimating")));
+    assert_eq!(st.get_hf_candidate_index(), 1, "the default while estimates load");
+    crate::gui::land_estimate_for_tests(app, 1, Ok(shape(5)));
+    assert_eq!(st.get_hf_candidate_details().row_data(1).unwrap().as_str(), "all on GPU: 6.0 of 22.0 GiB with a 32k context");
+    assert!(st.get_hf_candidate_details().row_data(0).unwrap().starts_with("estimating"), "rows fill in one by one");
+    assert_eq!(st.get_hf_candidate_index(), 1, "no recommendation before every row has its answer");
+    crate::gui::land_estimate_for_tests(app, 0, Ok(shape(9)));
+    assert_eq!(st.get_hf_candidate_index(), 0, "the pick moved to the recommendation");
+    assert!(st.get_hf_candidate_labels().row_data(0).unwrap().ends_with("recommended"));
+    assert!(st.get_hf_candidate_details().row_data(0).unwrap().starts_with("recommended, the best quality that fits in GPU memory: "));
+    assert!(st.get_hf_selection_summary().contains("Qwen3-8B-Q8_0.gguf"));
+    // A row the user clicked stays picked: the recommendation only marks.
+    st.invoke_hf_pick_result(0);
+    crate::gui::land_listing_with_budget_for_tests(app, Ok(listing()), Some(budget()));
+    st.invoke_hf_select(1);
+    crate::gui::land_estimate_for_tests(app, 0, Ok(shape(9)));
+    crate::gui::land_estimate_for_tests(app, 1, Err(crate::hf::HfError::Network("boom".into())));
+    assert_eq!(st.get_hf_candidate_index(), 1, "the user's pick is kept");
+    assert!(st.get_hf_candidate_labels().row_data(0).unwrap().ends_with("recommended"));
+    assert_eq!(st.get_hf_candidate_details().row_data(1).unwrap().as_str(), "estimate unavailable: network error: boom");
+
+    // The extras count, and the choices drive them: every row has a 12 GiB
+    // mmproj (12.5 with its compute) and a DFlash drafter. Taken (the
+    // default), the Q8_0 (10 GiB) only fits with its encoder on the CPU, so
+    // the Q4_K_M (6 + 12.5 of 22) is recommended and stays picked.
+    let with_extras = |tag: &str| crate::hf::Candidate {
+        mmproj: Some(file("mmproj-F16.gguf", 12 << 30)),
+        dflash: Some(file("Qwen3-8B-DFlash-Q8_0.gguf", 1 << 30)),
+        ..candidate(tag)
+    };
+    let listing_x = || crate::hf::Listing { candidates: vec![with_extras("Q8_0"), with_extras("Q4_K_M")], ..listing() };
+    st.invoke_hf_pick_result(0);
+    crate::gui::land_listing_with_budget_for_tests(app, Ok(listing_x()), Some(budget()));
+    crate::gui::land_estimate_for_tests(app, 0, Ok(shape(9)));
+    crate::gui::land_estimate_for_tests(app, 1, Ok(shape(5)));
+    let detail = |i: usize| st.get_hf_candidate_details().row_data(i).unwrap().to_string();
+    assert_eq!(st.get_hf_candidate_index(), 1);
+    assert!(st.get_hf_take_mmproj());
+    assert_eq!(
+        detail(1),
+        "recommended, the best quality that fits in GPU memory: all on GPU: 18.5 of 22.0 GiB with a 32k context; \
+         with the image encoder (12.5 GiB) on CUDA0"
+    );
+    assert_eq!(detail(0), "all on GPU: 10.0 of 22.0 GiB with a 32k context; with the image encoder (12.0 GiB) on the CPU");
+    // Untick the mmproj: every row re-estimated without it (no fetch), the
+    // Q8_0 recommended again and picked, the tick still off on it.
+    st.set_hf_take_mmproj(false);
+    st.invoke_hf_choices_changed();
+    assert_eq!(detail(1), "all on GPU: 6.0 of 22.0 GiB with a 32k context");
+    assert!(detail(0).starts_with("recommended, the best quality that fits in GPU memory: all on GPU: 10.0 of 22.0 GiB"), "{}", detail(0));
+    assert_eq!(st.get_hf_candidate_index(), 0, "the pick follows the recommendation");
+    assert!(!st.get_hf_take_mmproj(), "the choice survives the move");
+    assert!(st.get_hf_selection_summary().starts_with("Fetches 1 file"), "{}", st.get_hf_selection_summary());
+    // Pick the drafter: its header is read first (rows estimating), then
+    // counted on the card beside the model.
+    st.set_hf_drafter("DFlash".into());
+    st.invoke_hf_choices_changed();
+    assert!(detail(0).starts_with("estimating") && detail(1).starts_with("estimating"));
+    crate::gui::land_draft_for_tests(app, "Qwen3-8B-DFlash-Q8_0.gguf", Ok(std::sync::Arc::new(crate::hf_fit::DraftShape::from_size(1 << 30))));
+    assert!(
+        detail(0).ends_with("all on GPU: 11.8 of 22.0 GiB with a 32k context; with the DFlash drafter (1.8 GiB) on CUDA0"),
+        "{}",
+        detail(0)
+    );
+    assert_eq!(st.get_hf_drafter().as_str(), "DFlash");
+    // Tick the mmproj back: the Q4_K_M again, both extras on its row.
+    st.set_hf_take_mmproj(true);
+    st.invoke_hf_choices_changed();
+    assert_eq!(st.get_hf_candidate_index(), 1);
+    assert!(st.get_hf_take_mmproj() && st.get_hf_drafter().as_str() == "DFlash", "both wishes kept on the new pick");
+    assert!(
+        detail(1).ends_with("all on GPU: 20.2 of 22.0 GiB with a 32k context; with the image encoder (12.5 GiB) on CUDA0 and the DFlash drafter (1.8 GiB) on CUDA0"),
+        "{}",
+        detail(1)
+    );
+    // A row the user clicked stays picked through a toggle.
+    st.invoke_hf_select(0);
+    st.set_hf_take_mmproj(false);
+    st.invoke_hf_choices_changed();
+    st.set_hf_take_mmproj(true);
+    st.invoke_hf_choices_changed();
+    assert_eq!(st.get_hf_candidate_index(), 0, "the user's pick is kept");
+
     // A typed spec lists directly and drops the results; its failure returns
     // to the empty start.
     st.set_hf_input("org/repo".into());
@@ -1465,40 +1602,168 @@ pub(super) fn run(app: &AppWindow) {
     st.invoke_hf_back_to_results();
     assert_eq!(st.get_hf_phase(), 0, "no results to go back to");
 
-    // While a transfer runs, Esc / the backdrop / Close are refused, with a
-    // reason; Cancel moves it to Cancelling (there is no child to stop here).
-    st.set_hf_phase(5);
+    // ── Download: the job goes to the background (gui/downloads.rs) ──
+    // The modal closes at once, the Downloads window takes the job, and the
+    // editor, even with an unsaved edit, is never touched by what lands.
     st.invoke_hf_dismiss();
-    assert!(st.get_show_hf_dialog(), "a running download must not be dismissed");
-    assert!(!st.get_hf_note().is_empty(), "the refusal says why");
-    st.invoke_hf_submit();
-    st.invoke_hf_pick_result(0);
-    assert_eq!(st.get_hf_phase(), 5, "no request during a transfer");
-    st.invoke_hf_cancel();
-    assert_eq!(st.get_hf_phase(), 6);
-    // A cancelled transfer lands back on the listing, the dialog still open.
+    assert!(!st.get_show_hf_dialog());
     let models_dir = dir.path().to_path_buf();
-    crate::gui::land_download_for_tests(app, &models_dir, Err(crate::hf::HfError::Cancelled));
-    assert_eq!(st.get_hf_phase(), 4);
-    assert!(st.get_show_hf_dialog());
-    assert!(st.get_hf_error().is_empty() && st.get_hf_note().contains("Resume"));
-    assert!(!st.get_status_is_error(), "a cancel is not an error");
-    // A failure shows in the dialog AND in the footer.
-    st.set_hf_phase(5);
-    crate::gui::land_download_for_tests(
+    {
+        let mut cfg = crate::server_cfg::load();
+        cfg.models_dir = Some(models_dir.to_string_lossy().into_owned());
+        crate::server_cfg::save(&cfg).expect("save server.ini");
+    }
+    let win = crate::gui::downloads_window_for_tests();
+    let rows = || win.get_rows().iter().collect::<Vec<_>>();
+    assert!(rows().is_empty() && st.get_downloads_summary().is_empty(), "no download: no footer indicator");
+    assert!(!crate::gui::quit_called_for_tests());
+    // A dirty editor first.
+    let first = st.get_presets().row_data(0).expect("a preset is listed");
+    st.invoke_select_preset(first.orig_index);
+    let edited_id = st.get_form().id.to_string();
+    let mut form = st.get_form();
+    form.ctx_size = "8192".into();
+    form.ctx_size_default = false;
+    st.set_form(form);
+    assert!(st.get_preset_dirty());
+    let editor_kept = |why: &str| {
+        assert_eq!(st.get_form().id.as_str(), edited_id, "{why}: the editor keeps its preset");
+        assert!(st.get_preset_dirty(), "{why}: and its unsaved edit");
+        let sel = st.get_selected_preset_index();
+        let row = st.get_presets().iter().find(|p| p.orig_index == sel).expect("the selection is listed");
+        assert_eq!(row.id.as_str(), edited_id, "{why}: the selection stays on it");
+    };
+    let open_listing = |l: crate::hf::Listing, budget: Option<crate::hf_fit::Budget>| {
+        st.set_show_new_kind_picker(false);
+        st.invoke_hf_open();
+        st.set_hf_input(l.repo.as_str().into());
+        st.invoke_hf_submit();
+        assert_eq!(st.get_hf_phase(), 3);
+        crate::gui::land_listing_with_budget_for_tests(app, Ok(l), budget);
+        assert_eq!(st.get_hf_phase(), 4);
+    };
+    open_listing(listing(), None);
+    st.set_hf_token("hf_e2esecret".into());
+    st.invoke_hf_download();
+    assert!(!st.get_show_hf_dialog() && !st.get_modal_open(), "Download closes the modal: the main window is free");
+    assert_eq!(st.get_hf_phase(), 0);
+    assert!(st.get_status_text().contains("in the background"), "{}", st.get_status_text());
+    let r = rows();
+    assert_eq!(r.len(), 1, "the window has the job");
+    assert_eq!(r[0].title.as_str(), "Qwen/Qwen3-8B-GGUF  ·  Q4_K_M", "the default pick");
+    assert!(r[0].detail.contains("Qwen3-8B-Q4_K_M.gguf"), "{}", r[0].detail);
+    assert_eq!((r[0].state.as_str(), r[0].overall.as_str()), ("Downloading", "Starting…"));
+    assert!(r[0].can_cancel && r[0].show_progress && !r[0].can_dismiss);
+    assert_eq!(st.get_downloads_summary().as_str(), "1 download running");
+    assert!(win.window().is_visible(), "the window comes up with the job");
+    editor_kept("a started download");
+    let qwen = r[0].id;
+    for text in [st.get_status_text(), r[0].title.clone(), r[0].detail.clone(), r[0].message.clone()] {
+        assert!(!text.contains("hf_e2esecret"), "the token leaked into {text:?}");
+    }
+    st.set_hf_token("".into());
+    // A second download of the same repository (any case) is refused in the
+    // dialog: both would write its staging folder.
+    open_listing(crate::hf::Listing { repo: "qwen/qwen3-8b-gguf".into(), ..listing() }, None);
+    st.invoke_hf_download();
+    assert!(st.get_show_hf_dialog(), "refused: the dialog stays");
+    assert!(st.get_hf_error().contains("already downloading"), "{}", st.get_hf_error());
+    assert_eq!(rows().len(), 1);
+    // The dialog closes while a download runs: nothing runs IN it.
+    st.invoke_hf_dismiss();
+    assert!(!st.get_show_hf_dialog());
+    // Progress lands in the row.
+    crate::gui::land_progress_for_tests(
         app,
-        &models_dir,
-        Err(crate::hf::HfError::DiskFull("no space left".into())),
+        qwen,
+        &crate::hf::Progress {
+            done: 1 << 30,
+            total: 5 << 30,
+            file: "Qwen3-8B-Q4_K_M.gguf".into(),
+            file_done: 1 << 30,
+            file_total: 5 << 30,
+            files_done: 0,
+            files_total: 1,
+        },
     );
-    assert!(st.get_hf_error().contains("no space left") && st.get_status_is_error());
-    // A finished one closes the dialog and creates, selects and lists the preset.
+    let r = rows();
+    assert!(r[0].overall.starts_with("1.00 GiB of 5.00 GiB (20%)"), "{}", r[0].overall);
+    assert!(r[0].file.starts_with("Qwen3-8B-Q4_K_M.gguf: "), "{}", r[0].file);
+    assert_eq!(r[0].overall_fraction, 0.2);
+    // Quit asks first while it runs; Keep running takes it back.
+    crate::gui::request_quit_for_tests(app);
+    assert!(!crate::gui::quit_called_for_tests(), "a running download makes Quit ask");
+    assert!(win.get_quit_pending() && win.get_quit_active() == 1);
+    win.invoke_keep_running();
+    assert!(!win.get_quit_pending());
+    // Cancel: the row says so, and the partial is kept for Resume.
+    win.invoke_cancel(qwen);
+    assert_eq!(rows()[0].state.as_str(), "Cancelling…");
+    crate::gui::land_transfer_for_tests(app, qwen, Err(crate::hf::HfError::Cancelled));
+    let r = rows();
+    assert_eq!(r[0].state.as_str(), "Cancelled");
+    assert!(r[0].message.contains("kept") && r[0].can_resume && r[0].can_dismiss && !r[0].is_error);
+    assert!(!st.get_status_is_error(), "a cancel is not an error");
+    assert_eq!(st.get_downloads_summary().as_str(), "Downloads: 1 cancelled");
+    // Resume, then a failure: in the row AND in the footer.
+    win.invoke_resume(qwen);
+    assert_eq!(rows()[0].state.as_str(), "Downloading");
+    crate::gui::land_transfer_for_tests(app, qwen, Err(crate::hf::HfError::DiskFull("no space left".into())));
+    let r = rows();
+    assert_eq!(r[0].state.as_str(), "Failed");
+    assert!(r[0].is_error && r[0].message.contains("no space left"), "{}", r[0].message);
+    assert!(st.get_status_is_error());
+    editor_kept("a cancel and a failure");
+    // A finished one creates and lists the preset WITHOUT selecting it,
+    // placed per card against the budget the listing was estimated with: a
+    // 4-block MoE of 80 MiB on cards of 48 and 24 MiB usable keeps block 0's
+    // experts in RAM and cuts the rest 3 + 2 (hf.rs has the same fixture,
+    // `placed_download`).
     let model = models_dir.join("models").join("Hf-GGUF").join("hfmodel-Q4_K_M.gguf");
     std::fs::create_dir_all(model.parent().unwrap()).expect("repo folder");
-    std::fs::write(&model, b"").expect("model file");
-    st.set_hf_phase(5);
-    crate::gui::land_download_for_tests(
+    {
+        use crate::hf_fit::tests::{gguf, write_sparse, W};
+        const MIB: u64 = 1 << 20;
+        let mut tensors = vec![("token_embd.weight".to_string(), 8 * MIB)];
+        for b in 0..4 {
+            tensors.push((format!("blk.{b}.attn_q.weight"), 2 * MIB));
+            tensors.push((format!("blk.{b}.ffn_up_exps.weight"), 16 * MIB));
+        }
+        tensors.push(("output.weight".into(), 4 * MIB));
+        let t: Vec<(&str, u64)> = tensors.iter().map(|(n, s)| (n.as_str(), *s)).collect();
+        let (h, size) = gguf(
+            &[
+                ("general.architecture", W::Str("qwen3moe")),
+                ("qwen3moe.block_count", W::U32(4)),
+                ("qwen3moe.context_length", W::U32(4096)),
+                ("qwen3moe.embedding_length", W::U32(256)),
+                ("qwen3moe.attention.head_count", W::U32(4)),
+                ("qwen3moe.attention.head_count_kv", W::U32(1)),
+                ("qwen3moe.attention.key_length", W::U32(64)),
+                ("qwen3moe.attention.value_length", W::U32(64)),
+            ],
+            &t,
+        );
+        write_sparse(&model, &h, size);
+    }
+    let card = |id: &str, name: &str, usable_mib: u64| crate::hf_fit::Gpu {
+        id: id.into(),
+        name: name.into(),
+        total_mib: usable_mib + (crate::hf_fit::GPU_RESERVE >> 20),
+    };
+    let pair = crate::hf_fit::Budget {
+        gpus: vec![card("ROCm1", "AMD Radeon AI PRO R9700", 48), card("CUDA0", "NVIDIA GeForce RTX 4070 SUPER", 24)],
+        ram: Some(28 << 30),
+        ram_total: Some(32 << 30),
+    };
+    open_listing(crate::hf::Listing { repo: "org/Hf-GGUF".into(), ..listing() }, Some(pair));
+    st.invoke_hf_download();
+    assert!(!st.get_show_hf_dialog(), "another repository downloads beside the failed one");
+    let hf_job = rows()[0].id;
+    assert_ne!(hf_job, qwen, "newest first");
+    crate::gui::land_transfer_for_tests(
         app,
-        &models_dir,
+        hf_job,
         Ok(crate::hf::Downloaded {
             repo: "org/Hf-GGUF".into(),
             project_url: "https://huggingface.co/org/Hf-GGUF".into(),
@@ -1507,25 +1772,69 @@ pub(super) fn run(app: &AppWindow) {
             draft: None,
         }),
     );
-    assert!(!st.get_show_hf_dialog() && !st.get_modal_open(), "success closes the dialog");
-    assert_eq!(st.get_hf_phase(), 0);
+    let r = rows();
+    assert_eq!(r[0].state.as_str(), "Done", "{}", r[0].message);
+    assert!(r[0].message.contains("[hfmodel-Q4_K_M]") && r[0].message.contains("as estimated"), "{}", r[0].message);
+    assert!(r[0].can_show && r[0].can_dismiss && !r[0].can_resume);
+    assert_eq!(st.get_downloads_summary().as_str(), "Downloads: 1 done, 1 failed");
     assert!(!st.get_status_is_error(), "{}", st.get_status_text());
     assert!(st.get_status_text().contains("[hfmodel-Q4_K_M]"), "{}", st.get_status_text());
-    assert_eq!(st.get_form().id.as_str(), "hfmodel-Q4_K_M", "the new preset is selected");
-    assert_eq!(st.get_form().model.as_str(), model.to_string_lossy());
+    assert!(st.get_status_text().contains("placed on the GPUs as estimated"), "{}", st.get_status_text());
+    editor_kept("a created preset");
+    assert!(st.get_presets().iter().any(|p| p.id.as_str() == "hfmodel-Q4_K_M"), "the new preset is listed");
     let ini = std::fs::read_to_string(crate::paths::presets_ini()).expect("presets.ini");
     assert!(
         ini.contains("[hfmodel-Q4_K_M]") && ini.contains("https://huggingface.co/org/Hf-GGUF"),
         "the derived preset is saved with its project URL:\n{ini}"
     );
+    for line in ["device = ROCm1,CUDA0", "tensor-split = 3,2", "n-cpu-moe = 1", "ctx-size = 4096", "; placement = estimated at download"] {
+        assert!(ini.contains(line), "the placement is written ({line}):\n{ini}");
+    }
     assert!(
         st.get_model_labels().iter().any(|l| l.contains("hfmodel-Q4_K_M")),
         "the pickers were rescanned and list the new file"
     );
-    // Closing normally works again once nothing runs.
+    // Show preset: refused (with a note) while a dialog is open in the main
+    // window; else on the Models tab, through the discard guard.
     st.invoke_hf_open();
+    win.invoke_show_preset(hf_job);
+    assert!(rows()[0].note.contains("close it"), "{}", rows()[0].note);
+    editor_kept("a Show under a modal");
     st.invoke_hf_dismiss();
-    assert!(!st.get_show_hf_dialog());
+    st.set_current_tab(0);
+    win.invoke_show_preset(hf_job);
+    assert_eq!(st.get_current_tab(), 1, "Show goes to the Models tab");
+    assert!(rows()[0].note.is_empty(), "the note goes with the next Show");
+    assert!(st.get_show_discard_dialog(), "a dirty form asks before Show replaces it");
+    st.invoke_cancel_discard();
+    editor_kept("a Show whose discard was cancelled");
+    win.invoke_show_preset(hf_job);
+    st.invoke_confirm_discard();
+    assert_eq!(st.get_form().id.as_str(), "hfmodel-Q4_K_M", "Show selects the new preset");
+    assert_eq!(st.get_form().model.as_str(), model.to_string_lossy());
+    let f = st.get_form();
+    assert!(f.placement_note.starts_with("estimated at download for a 4k context"), "{}", f.placement_note);
+    assert_eq!((f.device.as_str(), f.tensor_split.as_str(), f.n_cpu_moe, f.fit), ("ROCm1,CUDA0", "3,2", 1, false));
+    assert!(!st.get_preset_dirty(), "the derived preset loads clean: the form round-trips it");
+    win.invoke_show_preset(hf_job);
+    assert!(!st.get_show_discard_dialog(), "already in the editor: nothing to ask");
+    // Dismiss takes a finished row; a confirmed Quit stops what runs and
+    // quits once it has landed.
+    win.invoke_dismiss(hf_job);
+    assert_eq!(rows().len(), 1);
+    win.invoke_resume(qwen);
+    crate::gui::request_quit_for_tests(app);
+    win.invoke_confirm_quit();
+    assert!(win.get_quitting());
+    assert_eq!(rows()[0].state.as_str(), "Cancelling…", "Quit cancels cooperatively");
+    assert!(!crate::gui::quit_called_for_tests(), "not before the child has stopped");
+    crate::gui::land_transfer_for_tests(app, qwen, Err(crate::hf::HfError::Cancelled));
+    assert!(crate::gui::quit_called_for_tests(), "the last transfer landed: the loop ends");
+    win.invoke_clear_finished();
+    assert!(rows().is_empty() && st.get_downloads_summary().is_empty());
+    crate::gui::request_quit_for_tests(app);
+    assert!(crate::gui::quit_called_for_tests(), "nothing runs: Quit quits at once");
+    win.hide().ok();
 
     delete_with_files_phase(app, &models_dir, &model);
 }

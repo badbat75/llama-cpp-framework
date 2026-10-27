@@ -8,10 +8,11 @@
 // window shell and the tray, PLUS the app-wide pieces that must sit above the
 // pages: the keyboard shortcuts (Ctrl+S/1/2/3/4/5/N, F5, in the KeyBindings
 // block) and the overlay modals (New/Clone picker, the Hugging Face download,
-// the tensor picker, Discard, Delete, Rename, Chat-template preview).
+// the tensor picker, Discard, Delete, Rename, Chat-template preview), and the
+// footer's downloads indicator, which opens the separate DownloadsWindow.
 // Rust drives everything via `app.global::<AppState>()`.
 
-import { LineEdit, TextEdit, Button, CheckBox, ListView, Palette, ProgressIndicator } from "std-widgets.slint";
+import { LineEdit, TextEdit, Button, CheckBox, ListView, Palette } from "std-widgets.slint";
 import { AppState } from "state.slint";
 import { Tokens, Icons, Options, LabelColumn, ModalOverlay, AccentBar, SelectableRow, ListPanel, WrapText, SegmentedControl } from "components.slint";
 // Re-export so Slint generates the Rust accessors (`app.global::<AppState>()`);
@@ -25,6 +26,10 @@ export { LogWindow }
 // The HW Monitor: a fourth root, re-exported for the same reason.
 import { HwWindow } from "hw_window.slint";
 export { HwWindow }
+// The Hugging Face downloads running in the background: a fifth root,
+// re-exported for the same reason.
+import { DownloadsWindow } from "downloads_window.slint";
+export { DownloadsWindow }
 import { ServerPage } from "server_page.slint";
 import { ModelsPage } from "models_page.slint";
 import { BenchPage } from "bench_page.slint";
@@ -231,7 +236,8 @@ export component AppWindow inherits Window {
                     // ── Server controls ──────────────────────────────
                     // Start/Stop stacked over Open chat UI over HW Monitor over
                     // View logs over Refresh. Live status drives which of Start/Stop shows;
-                    // Open chat UI is enabled only while the server is running.
+                    // Open chat UI is enabled only while the server is running
+                    // with its web UI on (AppState.can_open_chat).
                     VerticalLayout {
                         spacing: 8px;
                         // Transitional states: a Start/Stop was triggered and
@@ -254,9 +260,11 @@ export component AppWindow inherits Window {
                             primary: true;
                             clicked => { AppState.start_server(); }
                         }
+                        // With the web UI off the label says why the button
+                        // is disabled (server.ini Webui = false: --no-ui).
                         Button {
-                            text: "Open chat UI";
-                            enabled: AppState.server_running && !AppState.server_stopping;
+                            text: AppState.chat_ui_enabled ? "Open chat UI" : "Web UI off";
+                            enabled: AppState.can_open_chat;
                             // open_chat_url prefers the URL the RUNNING server
                             // was launched with over the saved server.ini one
                             // (a save while running changes the file, not the
@@ -330,6 +338,29 @@ export component AppWindow inherits Window {
                     vertical-alignment: center;
                     horizontal-stretch: 1;
                     overflow: elide;
+                }
+
+                // The Hugging Face downloads (DownloadsWindow, src/gui/downloads.rs):
+                // shown while the window has a row, running or finished, and a
+                // click opens (or raises) that window. The one way back to it
+                // from the main window once it is closed, beside the tray.
+                if AppState.downloads_summary != "" : Rectangle {
+                    accessible-role: button;
+                    accessible-label: AppState.downloads_summary;
+                    accessible-action-default => { AppState.open_downloads(); }
+                    width: downloads-text.preferred-width + 16px;
+                    border-radius: 4px;
+                    background: downloads-touch.has-hover ? Palette.background : transparent;
+                    downloads-text := Text {
+                        text: AppState.downloads_summary;
+                        font-size: 12px;
+                        vertical-alignment: center;
+                        color: Palette.accent-background;
+                    }
+                    downloads-touch := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => { AppState.open_downloads(); }
+                    }
                 }
 
                 // llama-server version (left of the run state).
@@ -463,12 +494,13 @@ export component AppWindow inherits Window {
     }
 
     // The Hugging Face download: the New preset dialog's second source
-    // (src/gui/hf_dialog.rs holds the phases and why). While the transfer runs,
-    // Esc / the backdrop go to `hf_dismiss`, which refuses and says why, and
-    // Close is disabled: only Cancel download stops it.
+    // (src/gui/hf_dialog.rs holds the phases and why). It ends at Download:
+    // the job goes to the background (src/gui/downloads.rs) and this modal
+    // closes, so the main window is free again while the bytes flow; the
+    // Downloads window shows the progress and creates the preset.
     if AppState.show_hf_dialog: ModalOverlay {
         title: "New preset from Hugging Face";
-        description: "Search by model name (qwen3 8b), or type a repository (org/repo or org/repo:QUANT) or paste its URL to list it directly. The files go under your ModelsDir, one folder per repository, and the preset is created from them.";
+        description: "Search by model name (qwen3 8b), or type a repository (org/repo or org/repo:QUANT) or paste its URL to list it directly. The files go under your ModelsDir, one folder per repository; the download runs in the background (Downloads window) and creates the preset when it ends.";
         card_width: 700px;
         card_height: 640px;
         dismissed => { AppState.hf_dismiss(); }
@@ -483,7 +515,6 @@ export component AppWindow inherits Window {
                 horizontal-stretch: 1;
                 placeholder-text: "Model name to search (qwen3 8b), or org/repo[:Q4_K_M] or its URL";
                 text <=> AppState.hf_input;
-                enabled: !AppState.hf_transfer_running;
                 init => { self.focus(); }
                 accepted => {
                     if (submit-btn.enabled) { AppState.hf_submit(); }
@@ -493,8 +524,7 @@ export component AppWindow inherits Window {
                 text: AppState.hf_phase == 1 ? "Searching…"
                     : AppState.hf_phase == 3 ? "Listing…"
                     : is_query ? "Search" : "List";
-                enabled: AppState.hf_input != "" && input_problem == ""
-                    && !AppState.hf_busy && !AppState.hf_transfer_running;
+                enabled: AppState.hf_input != "" && input_problem == "" && !AppState.hf_busy;
                 clicked => { AppState.hf_submit(); }
             }
         }
@@ -511,7 +541,6 @@ export component AppWindow inherits Window {
                 ? "Access token: the one from HF_TOKEN or the Hugging Face login is used; type one to override"
                 : "Access token, only for a gated or private repository (kept in memory, never saved)";
             text <=> AppState.hf_token;
-            enabled: !AppState.hf_transfer_running;
         }
         // Phases 0-2: the search results. Clicking a row lists that repository.
         if AppState.hf_show_results && AppState.hf_results_title != "" : Text {
@@ -538,12 +567,18 @@ export component AppWindow inherits Window {
                 }
             }
         }
-        // Phases 3-6: the picked repository's quantizations.
+        // Phases 3-4: the picked repository's quantizations.
         if !AppState.hf_show_results && AppState.hf_listing_title != "" : Text {
             text: AppState.hf_listing_title;
             font-size: 12px;
             overflow: elide;
             color: Palette.foreground.transparentize(Tokens.muted);
+        }
+        if !AppState.hf_show_results && AppState.hf_estimate_basis != "" : Text {
+            text: AppState.hf_estimate_basis;
+            font-size: 11px;
+            wrap: word-wrap;
+            color: Palette.foreground.transparentize(Tokens.subtle);
         }
         if !AppState.hf_show_results : ListPanel {
             is_empty: AppState.hf_candidate_labels.length == 0;
@@ -553,8 +588,9 @@ export component AppWindow inherits Window {
             vertical-stretch: 1;
             ListView {
                 for label[i] in AppState.hf_candidate_labels : SelectableRow {
-                    height: 32px;
+                    height: 44px;
                     label: label;
+                    detail: AppState.hf_candidate_details[i];
                     selected: i == AppState.hf_candidate_index;
                     clicked => { AppState.hf_select(i); }
                 }
@@ -565,7 +601,6 @@ export component AppWindow inherits Window {
             if AppState.hf_mmproj_available : CheckBox {
                 text: "Take the mmproj (vision projector)";
                 checked <=> AppState.hf_take_mmproj;
-                enabled: !AppState.hf_transfer_running;
                 toggled => { AppState.hf_choices_changed(); }
             }
             if AppState.hf_drafter_options.length > 1 : HorizontalLayout {
@@ -579,7 +614,6 @@ export component AppWindow inherits Window {
                 SegmentedControl {
                     options: AppState.hf_drafter_options;
                     current: AppState.hf_drafter;
-                    enabled: !AppState.hf_transfer_running;
                     activated(v) => {
                         AppState.hf_drafter = v;
                         AppState.hf_choices_changed();
@@ -592,23 +626,6 @@ export component AppWindow inherits Window {
             text: AppState.hf_selection_summary;
             font_size: 12px;
             color: Palette.foreground.transparentize(Tokens.subtle);
-        }
-        if AppState.hf_transfer_running : VerticalLayout {
-            spacing: 4px;
-            Text {
-                text: AppState.hf_progress_overall;
-                font-size: 12px;
-                overflow: elide;
-                color: Palette.foreground;
-            }
-            ProgressIndicator { progress: AppState.hf_progress_fraction; }
-            Text {
-                text: AppState.hf_progress_file;
-                font-size: 12px;
-                overflow: elide;
-                color: Palette.foreground.transparentize(Tokens.subtle);
-            }
-            ProgressIndicator { progress: AppState.hf_file_fraction; }
         }
         if AppState.hf_error != "" : WrapText {
             text: AppState.hf_error;
@@ -625,21 +642,20 @@ export component AppWindow inherits Window {
             // Only while a picked search row is listed (or being listed).
             if AppState.hf_has_results && !AppState.hf_show_results : Button {
                 text: "Back to results";
-                enabled: !AppState.hf_transfer_running;
                 clicked => { AppState.hf_back_to_results(); }
+            }
+            // The backdrop covers the footer's downloads indicator: the same
+            // way to the Downloads window from inside the modal.
+            if AppState.downloads_summary != "" : Button {
+                text: "Downloads";
+                clicked => { AppState.open_downloads(); }
             }
             Rectangle { horizontal-stretch: 1; }
             Button {
                 text: "Close";
-                enabled: !AppState.hf_transfer_running;
                 clicked => { AppState.hf_dismiss(); }
             }
-            if AppState.hf_transfer_running : Button {
-                text: AppState.hf_phase == 6 ? "Cancelling…" : "Cancel download";
-                enabled: AppState.hf_phase == 5;
-                clicked => { AppState.hf_cancel(); }
-            }
-            if !AppState.hf_transfer_running : Button {
+            Button {
                 text: AppState.hf_resume ? "Resume download" : "Download";
                 primary: true;
                 enabled: AppState.hf_phase == 4 && AppState.hf_candidate_index >= 0;
@@ -941,6 +957,9 @@ export component AppTray inherits SystemTrayIcon {
     // Mirrors AppState.hw_monitor_available: the HW Monitor item shows only
     // where the window was wired (gui.rs).
     in property <bool> hw_monitor_available;
+    // Mirrors AppState.chat_ui_enabled (pushed with server_running, gui.rs
+    // `push_tray_status`): false while the running server has no web UI.
+    in property <bool> chat_ui_enabled: true;
     callback open_window();
     // The chat UI, the HW Monitor and the View-logs window, each the same one
     // the Server rail's button opens (AppState.open_chat / open_hw_monitor /
@@ -949,22 +968,34 @@ export component AppTray inherits SystemTrayIcon {
     callback open_chat();
     callback open_hw_monitor();
     callback open_log();
+    // The Downloads window (AppState.open_downloads, gui/downloads.rs): the
+    // Hugging Face downloads keep running while the configurator sits in the
+    // tray, and this is where to watch them from there.
+    callback open_downloads();
     callback start_server();
     callback stop_server();
     callback quit_app();
     clicked => { root.open_window(); }
     Menu {
         MenuItem { title: "Open configurator"; activated => { root.open_window(); } }
-        // Enabled only while the server is up, like the rail's button.
-        MenuItem { title: "Open chat UI"; enabled: root.server_running; activated => { root.open_chat(); } }
+        // Enabled only while the server is up with its web UI, like the
+        // rail's button, whose label it borrows when the UI is off.
+        MenuItem {
+            title: root.chat_ui_enabled ? "Open chat UI" : "Open chat UI (web UI off)";
+            enabled: root.server_running && root.chat_ui_enabled;
+            activated => { root.open_chat(); }
+        }
         if root.hw_monitor_available : MenuItem { title: "Open HW Monitor"; activated => { root.open_hw_monitor(); } }
         MenuItem { title: "Open log"; activated => { root.open_log(); } }
+        MenuItem { title: "Open downloads"; activated => { root.open_downloads(); } }
         MenuSeparator { }
         // Start only when stopped; Stop only when running. The menu tree is
         // reactive, so it rebuilds when server_running changes.
         if !root.server_running : MenuItem { title: "Start server"; activated => { root.start_server(); } }
         if root.server_running : MenuItem { title: "Stop server"; activated => { root.stop_server(); } }
         MenuSeparator { }
+        // While a download runs, Quit asks first, in the Downloads window
+        // (gui/downloads.rs `request_quit`).
         MenuItem { title: "Quit"; activated => { root.quit_app(); } }
     }
 }

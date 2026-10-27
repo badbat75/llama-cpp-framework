@@ -185,6 +185,27 @@ pub struct ServerConfig {
     /// ROCm runtime, so inert on CUDA and Vulkan. Off (nothing exported) by
     /// default: it is a profiling switch, not a tuning one.
     pub rocprof_attach: bool,
+    /// Serve the built-in web UI (the chat page at `/`): `Some(false)` launches
+    /// with `--no-ui`, `Some(true)` and None pass nothing, since upstream's
+    /// default is enabled (`common/arg.cpp`, `--ui` / `--no-ui`, env
+    /// `LLAMA_ARG_UI`). A plain bool with a materialized default like
+    /// `webui_mcp_proxy`, not a tri-state: "default" and "on" would launch the
+    /// same line, so a third entry would name no third behavior.
+    ///
+    /// The ROUTER serves the page: `server_http_context::init` (server-http.cpp)
+    /// registers `/` and the embedded assets only when `params.ui` holds, and
+    /// main() runs it on the router's own params before any model loads, so the
+    /// flag belongs on the router's line. It also reaches every child through
+    /// `base_preset` (`LLAMA_ARG_UI` is not in `unset_reserved_args`), which is
+    /// harmless: a child listens on a loopback port nobody browses. Off, `/`
+    /// answers 404 and upstream serves a `sw.js` that unregisters the browser's
+    /// cached UI; the API (`/v1/*`, `/models`, `/health`, `/slots`) is untouched,
+    /// so the Integrations tab, the benchmark and the snapshots keep working.
+    ///
+    /// Off also drops `--webui-mcp-proxy` from the launch (the proxy exists only
+    /// for the UI's MCP calls) without clearing `webui_mcp_proxy`, and the GUI
+    /// greys out every Open chat UI entry while the RUNNING server has no UI.
+    pub webui: Option<bool>,
     /// Enable the built-in web UI's MCP CORS proxy (--webui-mcp-proxy).
     /// None = the framework default (on): the bundled chat UI needs it to call
     /// MCP tools. Experimental upstream (llama.cpp defaults it OFF); don't enable
@@ -351,7 +372,14 @@ impl ServerConfig {
             .map_or_else(|| "localhost".into(), str::to_string)
     }
 
+    /// The web UI switch, or `true` (llama.cpp's default: enabled) when unset.
+    pub fn webui_or_default(&self) -> bool {
+        self.webui.unwrap_or(true)
+    }
+
     /// The web-UI MCP proxy flag, or `true` (the framework default) when unset.
+    /// The STORED choice: whether the launch passes the flag also depends on
+    /// [`Self::webui_or_default`] (`runstate::server_args`).
     pub fn webui_mcp_proxy_or_default(&self) -> bool {
         self.webui_mcp_proxy.unwrap_or(true)
     }
@@ -461,6 +489,7 @@ fn from_keys(keys: &std::collections::BTreeMap<String, String>) -> ServerConfig 
             .get("RocprofAttach")
             .and_then(|v| ini::parse_bool(v))
             .unwrap_or(false),
+        webui: keys.get("Webui").and_then(|v| ini::parse_bool(v)),
         webui_mcp_proxy: keys.get("WebuiMcpProxy").and_then(|v| ini::parse_bool(v)),
         log_verbosity: keys.get("LogVerbosity").and_then(|v| ini::parse_int(v)),
         save_state_on_shutdown: keys
@@ -623,6 +652,11 @@ fn render(cfg: &ServerConfig) -> String {
 
     // Always written like Hostname (a value with a framework default), so an
     // unset one reloads as the explicit default rather than None.
+    let ui_lit = if cfg.webui_or_default() {
+        "true"
+    } else {
+        "false"
+    };
     let webui_lit = if cfg.webui_mcp_proxy_or_default() {
         "true"
     } else {
@@ -655,8 +689,12 @@ fn render(cfg: &ServerConfig) -> String {
 ; bind several (llama.cpp v0.5.0+); 0.0.0.0 = all interfaces, never combined with
 ; another address (they would overlap).
 Hostname = {hostname}
+; Webui: serve the built-in chat UI at / (false launches with --no-ui). The
+; OpenAI-compatible API keeps working either way.
+Webui = {ui_lit}
 ; WebuiMcpProxy: enable the built-in web UI's MCP CORS proxy (--webui-mcp-proxy).
 ; The bundled chat UI needs it to call MCP tools; disable on an untrusted network.
+; Ignored while Webui = false (the flag is not passed).
 WebuiMcpProxy = {webui_lit}
 ; LogVerbosity: llama-server log threshold (-lv). llama.cpp defines six levels:
 ; 0 output, 1 error, 2 warning, 3 info, 4 trace, 5 debug; a message is printed
@@ -742,7 +780,7 @@ fn int_line_or_hint(v: Option<i32>, key: &str, hint: &str, keep: impl Fn(i32) ->
 /// `Key = true|false` for a set bool, else the commented `hint`. The bool twin of
 /// `str_line_or_hint`, for the one bool whose unset state is a real third
 /// instruction (never export the variable) rather than a framework default; the
-/// always-written bools above (WebuiMcpProxy, LogVerbosity) render
+/// always-written bools above (Webui, WebuiMcpProxy, LogVerbosity) render
 /// their default instead of a hint, which is why they don't use this.
 fn bool_line_or_hint(v: Option<bool>, key: &str, hint: &str) -> String {
     match v {
@@ -796,6 +834,8 @@ mod tests {
             // reason as the toggles above.
             hip_fa_band: Some(2),
             rocprof_attach: true,
+            // Non-default (on is llama.cpp's default).
+            webui: Some(false),
             webui_mcp_proxy: Some(false),
             log_verbosity: Some(2),
             // Non-default (off is the framework default), and a StateDir off the
@@ -809,9 +849,9 @@ mod tests {
     }
 
     // The writer's DELIBERATE collapses, pinned as documented behavior:
-    // - Hostname/WebuiMcpProxy/LogVerbosity are always written, so an
-    //   unset one reloads as the framework default (localhost / true / 4)
-    //   rather than None.
+    // - Hostname/Webui/WebuiMcpProxy/LogVerbosity are always written, so an
+    //   unset one reloads as the framework default (localhost / true / true /
+    //   4) rather than None.
     // - `keep` predicates turn unset/"not worth writing" values into commented
     //   hint lines: port <= 0, threads/threads_batch <= 0, models_max unset.
     //   An unset port reloads as None (not a forced DEFAULT_PORT), so the UI "default"
@@ -822,6 +862,7 @@ mod tests {
         let reloaded = round_trip(&ServerConfig::default());
         assert_eq!(reloaded.port, None);
         assert_eq!(reloaded.hostname.as_deref(), Some("localhost"));
+        assert_eq!(reloaded.webui, Some(true));
         assert_eq!(reloaded.webui_mcp_proxy, Some(true));
         assert_eq!(reloaded.log_verbosity, Some(4));
         // Unset renders as a commented line and stays unset: the default (4)

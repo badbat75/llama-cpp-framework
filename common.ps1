@@ -12,7 +12,7 @@
 #   activation stays opt-in so a future non-build consumer isn't forced into it).
 
 # Everything the Windows scripts generate (config, source clone, cmake binary
-# dir, sccache cache, cargo target dir, NSIS staging) lives under build\windows\;
+# dir, sccache cache, cargo target dir, MSI staging) lives under build\windows\;
 # the Linux scripts use build/linux/ the same way, so the two systems never
 # share an artifact on a drive both mount.
 $buildRoot = Join-Path $PSScriptRoot 'build\windows'

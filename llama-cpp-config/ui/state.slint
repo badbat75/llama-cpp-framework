@@ -48,11 +48,27 @@ export global AppState {
     in-out property <string> launched_url: "";
     out property <string> open_chat_url: !server_form.base_url_default ? chat_url
         : (server_running && launched_url != "" ? launched_url : chat_url);
+    // Whether the web UI is served (server.ini Webui), the same two sources as
+    // the URL above: `chat_ui_saved` is the SAVED file (pushed with chat_url by
+    // gui::refresh_server_snapshot), `launched_ui` the config the GUI launched
+    // with (pushed with launched_url, meaningful only while that is non-empty).
+    // The running process keeps what it was launched with, so a save turning
+    // the UI off (or on) while it runs changes nothing until a restart.
+    in-out property <bool> chat_ui_saved: true;
+    in-out property <bool> launched_ui: true;
+    out property <bool> chat_ui_enabled: server_running && launched_url != "" ? launched_ui : chat_ui_saved;
+    // The Server rail's button and the tray's item (pushed from Rust, AppTray
+    // has no AppState) are enabled on this: a server without its UI answers /
+    // with a 404.
+    out property <bool> can_open_chat: server_running && !server_stopping && chat_ui_enabled;
     // Open the chat UI in the browser: the Server rail's "Open chat UI" button
     // and the tray's item (gui/tray.rs) both come through here, so they open
-    // the same URL.
+    // the same URL. Guarded as well: the tray's copy of the state can lag a
+    // status tick behind.
     public function open_chat() {
-        Platform.open-url(open_chat_url);
+        if (chat_ui_enabled) {
+            Platform.open-url(open_chat_url);
+        }
     }
 
     // ── Server tab state ─────────────────────────────────────────────
@@ -337,15 +353,16 @@ export global AppState {
     // ── Hugging Face download dialog state (src/gui/hf_dialog.rs) ───
     // The New preset dialog's second source: search GGUF repositories by name
     // (or type one), list a repo's GGUF quantizations, pick one and its
-    // sidecars, download it, and get its preset. Rust drives the phase
-    // (`hf_dialog::Phase`, the int below) and every list and readout; the
-    // widgets bind two-way only to what the user edits (`hf_input`,
-    // `hf_token`, `hf_take_mmproj`) plus the drafter pill, a SegmentedControl.
+    // sidecars, and start its download, which closes the dialog: the transfer
+    // and the preset's creation run in the background (src/gui/downloads.rs,
+    // the Downloads window). Rust drives the phase (`hf_dialog::Phase`, the
+    // int below) and every list and readout; the widgets bind two-way only to
+    // what the user edits (`hf_input`, `hf_token`, `hf_take_mmproj`) plus the
+    // drafter pill, a SegmentedControl.
     in-out property <bool> show_hf_dialog: false;
     // 0 idle (typing), 1 searching, 2 searched (results shown), 3 listing,
-    // 4 listed, 5 downloading, 6 cancelling.
+    // 4 listed.
     in-out property <int> hf_phase: 0;
-    out property <bool> hf_transfer_running: hf_phase >= 5;
     // A search or a listing is in flight (one request at a time).
     out property <bool> hf_busy: hf_phase == 1 || hf_phase == 3;
     // The results list shows in phases 0-2, the quantization list from 3 on.
@@ -371,7 +388,14 @@ export global AppState {
     in-out property <bool> hf_has_results: false;
     // "repo @ commit" over the candidate list, once listed.
     in-out property <string> hf_listing_title: "";
+    // What the placement estimates are measured against (GPUs, RAM, the
+    // margins), under the title; empty without a GPU.
+    in-out property <string> hf_estimate_basis: "";
     in-out property <[string]> hf_candidate_labels;
+    // Per candidate, its second line: the placement estimate on this machine
+    // (filled in as each GGUF header is read), led by "recommended, <why>"
+    // on the recommended one.
+    in-out property <[string]> hf_candidate_details;
     in-out property <int> hf_candidate_index: -1;
     // The chosen candidate's sidecars: the mmproj tick shows only when it has
     // one, the drafter pills only when it has a drafter ("none" + each kind).
@@ -384,15 +408,16 @@ export global AppState {
     // A partial download of the listed repo is waiting (its staging tree):
     // the download button reads "Resume download".
     in-out property <bool> hf_resume: false;
-    // The in-dialog error (an `HfError`), and a muted note (cancel, a dismiss
-    // refused while the transfer runs).
+    // The in-dialog error (an `HfError`, or a download refused because the
+    // same repository is already downloading), and a muted note.
     in-out property <string> hf_error: "";
     in-out property <string> hf_note: "";
-    // The progress readout: overall and current-file lines, and both bars.
-    in-out property <string> hf_progress_overall: "";
-    in-out property <string> hf_progress_file: "";
-    in-out property <float> hf_progress_fraction: 0;
-    in-out property <float> hf_file_fraction: 0;
+
+    // ── Background downloads (src/gui/downloads.rs) ─────────────────
+    // The footer's indicator (and the modal's Downloads button): "" while the
+    // Downloads window has no row, else how many run or how they ended. A
+    // click fires `open_downloads`.
+    in-out property <string> downloads_summary: "";
 
     // ── Rename-preset dialog state ──────────────────────────────────
     in-out property <bool> show_rename_dialog: false;
@@ -642,9 +667,10 @@ export global AppState {
     // The Hugging Face dialog (src/gui/hf_dialog.rs). `hf_open` comes from the
     // New preset dialog's "From Hugging Face" button (so it inherits New…'s
     // discard guard); `hf_submit` (Search or List, by what the field holds),
-    // `hf_pick_result` and `hf_download` run off the event loop; `hf_dismiss`
-    // is Esc, the backdrop and Close, which Rust REFUSES while a transfer runs
-    // (Cancel first: an accidental Esc must not drop gigabytes).
+    // and `hf_pick_result` run off the event loop; `hf_download` hands the job
+    // to the background downloads and closes the dialog; `hf_dismiss` is Esc,
+    // the backdrop and Close (no transfer ever runs IN the dialog, so it always
+    // closes).
     // `hf_input_problem` and `hf_input_is_query` are pure: the field's error
     // ("" when it is a good spec, a query, or empty) and whether it searches,
     // so the button's label and the hint follow every keystroke.
@@ -658,8 +684,12 @@ export global AppState {
     // The mmproj tick or the drafter pill moved: recompute the summary line.
     callback hf_choices_changed();
     callback hf_download();
-    callback hf_cancel();
     callback hf_dismiss();
+    // Open (or raise) the Downloads window (DownloadsWindow in
+    // downloads_window.slint), a separate non-modal root wired in
+    // gui/downloads.rs: the footer indicator, the modal's Downloads button and
+    // the tray fire it.
+    callback open_downloads();
     pure callback hf_input_problem(string) -> string;
     pure callback hf_input_is_query(string) -> bool;
     // Recompute the "Model info" box from the currently selected model file.

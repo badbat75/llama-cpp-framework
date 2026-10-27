@@ -156,11 +156,22 @@ export component ServerPage inherits ScrollView {
             heading: "Advanced";
             LabeledField {
                 label_width <=> LabelColumn.server;
+                label: "Web UI";
+                hint: "Serve the built-in chat UI at / (off = --no-ui).\nThe OpenAI-compatible API, the Integrations tab and the benchmark keep working with it off; Open chat UI is disabled while the running server has no UI.\ndefault = on (llama.cpp's default).";
+                CheckBox {
+                    text: "serve the built-in chat UI";
+                    checked <=> AppState.server_form.webui;
+                }
+            }
+            LabeledField {
+                label_width <=> LabelColumn.server;
                 label: "Web UI MCP proxy";
-                hint: "Enable the built-in chat UI's MCP CORS proxy (--webui-mcp-proxy).\nThe bundled chat UI needs it to call MCP tools. Experimental upstream; don't enable on an untrusted network.\ndefault = on.";
+                hint: "Enable the built-in chat UI's MCP CORS proxy (--webui-mcp-proxy).\nThe bundled chat UI needs it to call MCP tools. Experimental upstream; don't enable on an untrusted network.\nNot passed while the web UI is off; the choice is kept.\ndefault = on.";
                 CheckBox {
                     text: "serve the web UI's MCP proxy endpoint";
                     checked <=> AppState.server_form.webui_mcp_proxy;
+                    // Greyed out, never cleared: the value comes back with the UI.
+                    enabled: AppState.server_form.webui;
                 }
             }
             LabeledField {

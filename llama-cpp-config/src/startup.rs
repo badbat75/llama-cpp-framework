@@ -356,8 +356,8 @@ mod win {
     const INSTALL_VALUE: &str = "InstallDir";
 
     /// The exe of the INSTALLED copy (`InstallDir\bin\llama-cpp-config.exe`) as
-    /// recorded by the NSIS installer, or `None` when no install is registered
-    /// (portable / dev use) or the recorded exe is missing. `set_enabled`
+    /// recorded by the installer, or `None` when no
+    /// install is registered (portable / dev use) or the recorded exe is missing. `set_enabled`
     /// prefers this over `current_exe()` so the logon entry always launches the
     /// installed GUI build, never a debug build that happens to flip the toggle.
     fn installed_exe() -> Option<std::path::PathBuf> {

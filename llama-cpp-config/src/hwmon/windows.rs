@@ -741,6 +741,11 @@ fn memory() -> Option<Mem> {
     })
 }
 
+/// `hwmon::system_ram`: total and available physical memory, in bytes.
+pub fn system_ram() -> Option<(u64, u64)> {
+    memory().map(|m| (m.total, m.available))
+}
+
 // ── Disk ────────────────────────────────────────────────────────────
 
 const FILE_SHARE_READ_WRITE: u32 = 0x1 | 0x2;

@@ -38,9 +38,10 @@
 //! Tab-specific helpers live next to their only callers in `gui/`: the New / Clone
 //! dialog funnel (`populate_dialog_models` … `commit_new_preset`) and the
 //! Model-info box (`update_model_info`) are in `gui/models_tab.rs`; the New
-//! dialog's Hugging Face source (search, list, download, create) is
-//! `gui/hf_dialog.rs`, its search results, listing and transfer handle in
-//! `State.hf`.
+//! dialog's Hugging Face source (search, list, pick) is `gui/hf_dialog.rs`,
+//! its search results and listing in `State.hf`; the downloads it hands to
+//! the background (transfer, preset creation, the Downloads window, Quit
+//! asking first) are `gui/downloads.rs`, in `State.downloads`.
 //!
 //! ## Dirty tracking
 //! Save/Revert enable off `*_dirty` in state.slint, each computed as
@@ -56,12 +57,14 @@
 //! (`server_tab::pick_dir`) is a modal OS dialog; blocking its caller is the
 //! conventional behavior, not a stall to fix.
 //!
-//! `AppTray`, `LogWindow` and `HwWindow` are SEPARATE Slint roots: they do NOT
-//! use `AppState`; Rust pushes state to them directly (`tray.set_server_running`
-//! / `tray.on_*`; the log tail in `gui/log_window.rs`; the hardware samples in
-//! `gui/hw_window.rs`). `LogWindow` and `HwWindow` are real windows on the same
-//! event loop: non-modal, so the main window stays interactive while they are
-//! open.
+//! `AppTray`, `LogWindow`, `HwWindow` and `DownloadsWindow` are SEPARATE Slint
+//! roots: they do NOT use `AppState`; Rust pushes state to them directly
+//! (`push_tray_status`, which sets the tray's `server_running` and
+//! `chat_ui_enabled`, and `tray.on_*`; the log tail in
+//! `gui/log_window.rs`; the hardware samples in `gui/hw_window.rs`; the
+//! download rows in `gui/downloads.rs`). The three windows are real windows on
+//! the same event loop: non-modal, so the main window stays interactive while
+//! they are open.
 
 use std::cell::RefCell;
 use std::path::PathBuf;
@@ -81,6 +84,7 @@ slint::include_modules!();
 // Per-tab callback wiring: one file each under `gui/`. Each `wire()` reaches the
 // shared helpers, the `State` cache, and the generated Slint types via `use super::*`.
 mod bench_tab;
+mod downloads;
 mod hf_dialog;
 #[cfg(any(target_os = "linux", windows))]
 mod hw_window;
@@ -124,9 +128,12 @@ struct State {
     // The run in flight, so Cancel can reach it. Only the cancel flag inside it
     // crosses to the worker thread.
     bench_handle: Option<crate::bench::exec::Handle>,
-    // The Hugging Face dialog's search results, listing, request generation
-    // and the transfer in flight (gui/hf_dialog.rs).
+    // The Hugging Face dialog's search results, listing and request
+    // generation (gui/hf_dialog.rs).
     hf: hf_dialog::Session,
+    // The Hugging Face downloads handed to the background: their jobs, the
+    // transfers' handles and the Downloads window (gui/downloads.rs).
+    downloads: downloads::Downloads,
     // The Delete dialog's preset, the files it links and their ticks
     // (gui/models_tab.rs); the Slint rows are a projection of it.
     delete_dialog: models_tab::DeleteDialog,
@@ -149,6 +156,9 @@ pub(crate) fn wire_tabs_for_tests(app: &AppWindow) {
     server_tab::wire_tables(app);
     models_tab::wire(app, &state);
     hf_dialog::wire(app, &state);
+    // The window is kept by `State.downloads` (the test reaches it through
+    // `downloads_window_for_tests`).
+    downloads::wire(app, &state).expect("build DownloadsWindow");
     integrations_tab::wire(app);
     // No tray here: the only thing it gates is the automatic llama-server stop
     // before a synthetic run, and the test never starts one.
@@ -173,7 +183,15 @@ pub(crate) fn wire_tabs_for_tests(app: &AppWindow) {
 }
 
 #[cfg(test)]
-pub(crate) use hf_dialog::{land_download_for_tests, land_listing_for_tests, land_search_for_tests};
+pub(crate) use hf_dialog::{
+    land_draft_for_tests, land_estimate_for_tests, land_listing_for_tests, land_listing_with_budget_for_tests,
+    land_search_for_tests,
+};
+#[cfg(test)]
+pub(crate) use downloads::{
+    land_progress_for_tests, land_transfer_for_tests, quit_called_for_tests, request_quit_for_tests,
+    window_for_tests as downloads_window_for_tests,
+};
 
 /// E2E phase for the remembered window sizes, for the shared UI test to call:
 /// a size recorded on close comes back in a window built afterwards, and a
@@ -211,6 +229,12 @@ pub(crate) fn window_size_e2e() {
 #[cfg(test)]
 pub(crate) fn log_window_e2e() {
     log_window::e2e();
+}
+
+/// The Downloads window's e2e phase, for the shared UI test to call.
+#[cfg(test)]
+pub(crate) fn downloads_window_e2e() {
+    downloads::e2e();
 }
 
 /// The HW Monitor window's e2e phase, for the shared UI test to call.
@@ -339,7 +363,13 @@ pub fn run(start_minimized: bool) -> anyhow::Result<()> {
     bench_tab::wire(&app, &state, Some(tray.as_weak()));
     integrations_tab::wire(&app);
     settings_tab::wire(&app);
-    tray::wire(&app, &tray);
+    tray::wire(&app, &tray, &state);
+    // Independent Downloads window (the Hugging Face downloads running in the
+    // background): hidden until a download starts or the footer / the tray
+    // opens it. `State.downloads` keeps it too, to push the rows.
+    let downloads_window = downloads::wire(&app, &state)?;
+    #[cfg(target_os = "linux")]
+    discard_unshown_wayland_window(&downloads_window);
     // Independent log-tail window (View logs). It must outlive the event
     // loop like status_timer above. (Its tail thread only RUNS while the
     // window is open: started on View logs, retired on close.)
@@ -397,6 +427,7 @@ pub fn run(start_minimized: bool) -> anyhow::Result<()> {
     remember_window_size(&_log_window);
     #[cfg(any(target_os = "linux", windows))]
     remember_window_size(&_hw_window);
+    remember_window_size(&downloads_window);
     Ok(())
 }
 
@@ -518,7 +549,7 @@ fn default_window_title() -> &'static str {
 }
 
 /// A window whose size settings.ini remembers (`MainWindowSize`,
-/// `LogWindowSize`, `HwMonitorWindowSize`).
+/// `LogWindowSize`, `HwMonitorWindowSize`, `DownloadsWindowSize`).
 ///
 /// The size travels through the window's `initial_width`/`initial_height`
 /// properties, which its .slint binds its PREFERRED size to, and not through
@@ -554,6 +585,16 @@ impl RememberedSize for LogWindow {
 impl RememberedSize for HwWindow {
     fn slot(cfg: &mut settings::Settings) -> &mut Option<(u32, u32)> {
         &mut cfg.hw_monitor_window_size
+    }
+    fn set_initial_size(&self, width: f32, height: f32) {
+        self.set_initial_width(width);
+        self.set_initial_height(height);
+    }
+}
+
+impl RememberedSize for DownloadsWindow {
+    fn slot(cfg: &mut settings::Settings) -> &mut Option<(u32, u32)> {
+        &mut cfg.downloads_window_size
     }
     fn set_initial_size(&self, width: f32, height: f32) {
         self.set_initial_width(width);
@@ -659,7 +700,9 @@ fn load_server_into_ui(app: &AppWindow) {
 }
 
 /// Recompute the read-only projections of the SAVED server.ini: the Command
-/// Line card and the chat-UI URL. Both must track the file, not the form: the
+/// Line card, the chat-UI URL and whether that UI is served (`Webui`, read by
+/// `AppState.chat_ui_enabled` when the GUI did not launch the running server).
+/// All must track the file, not the form: the
 /// running server listens on what was saved, not on an unsaved edit. Shared by
 /// `load_server_into_ui` and the Server tab's save handler. The URL uses
 /// `client_host()`, so an all-interfaces bind (0.0.0.0) opens localhost instead
@@ -670,6 +713,7 @@ fn refresh_server_snapshot(app: &AppWindow) {
     s.set_server_command_line(SharedString::from(cmdline));
     let cfg = server_cfg::load();
     s.set_chat_url(SharedString::from(cfg.opencode_base_url_or_default()));
+    s.set_chat_ui_saved(cfg.webui_or_default());
 }
 
 /// The client-facing base URL for a config: `client_host()` (0.0.0.0 →
@@ -1426,6 +1470,13 @@ fn start_server_async(app_weak: slint::Weak<AppWindow>, tray_weak: slint::Weak<A
             .ok()
             .and_then(|launched| launched.as_ref())
             .map(client_base_url);
+        // Whether that launch serves the web UI, pinned with the URL for the
+        // same reason: a save while running does not change the process.
+        let launched_ui = result
+            .as_ref()
+            .ok()
+            .and_then(|launched| launched.as_ref())
+            .map(server_cfg::ServerConfig::webui_or_default);
         // The config WE launched with, kept for the snapshot restore below.
         // `Ok(None)` (already running) deliberately yields None: that server's
         // slot is whatever it has been doing since, and pushing an old
@@ -1446,6 +1497,9 @@ fn start_server_async(app_weak: slint::Weak<AppWindow>, tray_weak: slint::Weak<A
                 if let Some(url) = &launched_url {
                     s.set_launched_url(SharedString::from(url.as_str()));
                 }
+                if let Some(ui) = launched_ui {
+                    s.set_launched_ui(ui);
+                }
                 match &result {
                     Ok(Some(_)) => {
                         s.set_server_status_is_error(false);
@@ -1461,9 +1515,7 @@ fn start_server_async(app_weak: slint::Weak<AppWindow>, tray_weak: slint::Weak<A
                     }
                 }
             }
-            if let Some(tray) = tray_weak.upgrade() {
-                tray.set_server_running(running);
-            }
+            push_tray_status(&tray_weak, &app_weak, running);
         })
         .ok();
 
@@ -1614,9 +1666,7 @@ fn stop_server_async_with(
                     set_status(&app, msg, false);
                 }
             }
-            if let Some(tray) = tray_weak.upgrade() {
-                tray.set_server_running(running);
-            }
+            push_tray_status(&tray_weak, &app_weak, running);
             // Last, so the continuation's own status line replaces the stop's
             // rather than being replaced by it. A stop that TIMED OUT drops it
             // instead of running it: the server still holds the GPU, which is
@@ -1686,12 +1736,31 @@ fn refresh_run_status(
                     );
                 }
             }
-            if let Some(tray) = tray_weak.upgrade() {
-                tray.set_server_running(running);
-            }
+            push_tray_status(&tray_weak, &app_weak, running);
         })
         .ok();
     });
+}
+
+/// Push the run state to the tray, which is a separate Slint root without
+/// `AppState`: `server_running` (icon, tooltip, Start/Stop) and
+/// `chat_ui_enabled`, copied from `AppState.chat_ui_enabled` (the running
+/// server's web UI switch, falling back to the saved server.ini), so the tray's
+/// Open chat UI is disabled exactly when the rail's button is. Called by
+/// every run-state transition and by the 5 s status tick, which is also what
+/// carries a Server-tab save to the tray (`open_chat` guards the gap).
+fn push_tray_status(
+    tray_weak: &slint::Weak<AppTray>,
+    app_weak: &slint::Weak<AppWindow>,
+    running: bool,
+) {
+    let Some(tray) = tray_weak.upgrade() else {
+        return;
+    };
+    tray.set_server_running(running);
+    if let Some(app) = app_weak.upgrade() {
+        tray.set_chat_ui_enabled(app.global::<AppState>().get_chat_ui_enabled());
+    }
 }
 
 // ── Form <-> Preset conversion ───────────────────────────────────────
@@ -1725,9 +1794,7 @@ fn refresh_integrations(app: &AppWindow) {
     let api_key = cfg.opencode_api_key.as_deref();
 
     let enabled = presets::load_all();
-    let example = enabled
-        .first()
-        .map(|p| (p.id.as_str(), integrations::advertised_ctx(p)));
+    let example = integrations::claude_code_example(&enabled);
     let claude_env = integrations::claude_code_env_script(&base_url, api_key, example);
     s.set_integration_claude_env(SharedString::from(claude_env));
 

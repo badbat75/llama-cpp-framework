@@ -342,6 +342,21 @@ export component ModelsPage inherits HorizontalLayout {
                     font-size: 12px;
                     color: Palette.foreground.transparentize(Tokens.muted);
                 }
+                // The download's estimate behind this placement (a `; placement =`
+                // comment): read-only, Clear drops it once the values are tuned.
+                if AppState.form.placement_note != "": HorizontalLayout {
+                    spacing: 8px;
+                    WrapText {
+                        text: "Placement " + AppState.form.placement_note;
+                        font_size: 12px;
+                        color: Palette.foreground.transparentize(Tokens.muted);
+                    }
+                    Button {
+                        text: "Clear";
+                        vertical-stretch: 0;
+                        clicked => { AppState.form.placement_note = ""; }
+                    }
+                }
                 GpuSplitTable {
                     label_width <=> LabelColumn.models;
                     rows: AppState.preset_gpu_rows;

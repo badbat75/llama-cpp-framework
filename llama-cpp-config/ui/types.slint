@@ -20,6 +20,10 @@ export struct PresetForm {
     // The model's project page, "" = none: a `; url =` comment in the INI, the
     // Assets card's Open button opens it.
     project_url: string,
+    // Where a download's placement keys came from, "" = none: a
+    // `; placement =` comment in the INI, shown read-only on the GPU
+    // distribution card, whose Clear button empties it.
+    placement_note: string,
     mmproj: string,
     // --mmproj-offload: run the image encoder on GPU (llama.cpp's default) or
     // keep it on CPU. Plain bool (CheckBox, two-way <=>), same shape as jinja.
@@ -275,8 +279,11 @@ export struct ServerForm {
     // ROCP_TOOL_ATTACH: a plain bool toggle; checked exports `1`, unchecked
     // exports nothing.
     rocprof_attach: bool,
+    // Plain bool toggle (CheckBox, two-way <=>): serves the built-in web UI;
+    // unchecked launches with --no-ui.
+    webui: bool,
     // Plain bool toggle (CheckBox, two-way <=>): enables the web UI's MCP proxy
-    // (--webui-mcp-proxy).
+    // (--webui-mcp-proxy). Greyed out, not cleared, while `webui` is off.
     webui_mcp_proxy: bool,
     // Log verbosity threshold (-lv), carried as the DROPDOWN LABEL ("DEBUG:5",
     // "TRACE:4", …), not as the bare number. llama.cpp defines exactly six levels
@@ -459,4 +466,32 @@ export struct HwGroup {
     // The device's checkbox. Off: no bars, and Rust reads nothing for it.
     enabled: bool,
     bars: [HwBar],
+}
+
+// One Hugging Face download in the Downloads window (downloads_window.slint).
+// Built entirely in Rust (src/gui/downloads.rs `Jobs::rows`) and read-only to
+// Slint: every text arrives pre-formatted, the buttons fire with `id`.
+export struct DownloadRow {
+    // The job's id (not its position): what the buttons act on.
+    id: int,
+    // `org/repo  ·  Q4_K_M`, and what the pick fetches.
+    title: string,
+    detail: string,
+    // Downloading, Cancelling, Creating the preset, Done, Failed, Cancelled.
+    state: string,
+    // The transfer's readout: shown while bytes flow.
+    show_progress: bool,
+    overall: string,
+    file: string,
+    overall_fraction: float,
+    file_fraction: float,
+    // The outcome (the preset created, the cancel note, the error) and a note
+    // (a Show that could not run yet). `is_error` paints `message` red.
+    message: string,
+    is_error: bool,
+    note: string,
+    can_cancel: bool,
+    can_resume: bool,
+    can_show: bool,
+    can_dismiss: bool,
 }
