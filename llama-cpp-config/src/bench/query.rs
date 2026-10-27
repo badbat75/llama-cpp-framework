@@ -282,7 +282,7 @@ pub fn run(conn: &Connection, cmd: &Cmd, f: &Filters, o: &Opts) -> Result<Table,
         Cmd::Diff(x, y) => diff(conn, *x, *y).map_err(e)?,
         Cmd::Sql(q) => {
             let mut st = conn.prepare(q).map_err(|e| format!("sql: {e}"))?;
-            let head: Vec<String> = st.column_names().iter().map(|s| s.to_string()).collect();
+            let head: Vec<String> = st.column_names().map(|s| s.to_string()).collect();
             let n = head.len();
             let data = st
                 .query_map([], |r| (0..n).map(|i| r.get::<_, Value>(i)).collect())
@@ -519,7 +519,7 @@ fn run_detail(conn: &Connection, id: i64, o: &Opts) -> Result<Table, String> {
     let e = |e: rusqlite::Error| e.to_string();
     let one = |sql: &str, id: i64| -> Result<Option<Vec<(String, Value)>>, String> {
         let mut st = conn.prepare(sql).map_err(e)?;
-        let names: Vec<String> = st.column_names().iter().map(|s| s.to_string()).collect();
+        let names: Vec<String> = st.column_names().map(|s| s.to_string()).collect();
         let mut q = st.query([id]).map_err(e)?;
         let Some(r) = q.next().map_err(e)? else {
             return Ok(None);
