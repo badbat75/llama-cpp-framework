@@ -409,6 +409,21 @@ export struct TensorOverrideRow {
     problem: string,
 }
 
+// One file the preset being deleted links (the Delete preset modal in
+// app.slint), built in Rust (src/linked_files.rs `LinkedFile`, pushed by
+// gui/models_tab.rs). Like the tensor picker's ticks, `checked` is never
+// self-assigned: a click goes to Rust, which rebuilds the list.
+export struct DeleteFileRow {
+    // `Model: name.gguf (2 shards)`.
+    label: string,
+    // The size, then the folder, or the other presets that use the file.
+    detail: string,
+    // Ticked: deleted from disk with the preset. Starts false.
+    checked: bool,
+    // Another preset references it: cannot be ticked.
+    in_use: bool,
+}
+
 // One line of the tensor picker (the modal in app.slint), built in Rust
 // (src/tensor_picker.rs `Line`): a group header (a tensor family, or the
 // tensors outside the blocks) or one tensor under an unfolded header. The ticks

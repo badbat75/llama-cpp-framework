@@ -11,7 +11,7 @@
 // The tray (`AppTray` in app.slint) is a separate root and does NOT use this
 // global; it keeps its own pushed-in state.
 
-import { PresetSummary, PresetForm, ServerForm, GpuRow, TensorOverrideRow, TensorPickRow, BenchPresetRow, BenchResultRow, BindRow } from "types.slint";
+import { PresetSummary, PresetForm, ServerForm, GpuRow, TensorOverrideRow, TensorPickRow, DeleteFileRow, BenchPresetRow, BenchResultRow, BindRow } from "types.slint";
 import { Options } from "components.slint";
 
 export global AppState {
@@ -334,6 +334,66 @@ export global AppState {
     in-out property <int> dialog_model_index: -1;
     in-out property <string> dialog_filter: "";
 
+    // ── Hugging Face download dialog state (src/gui/hf_dialog.rs) ───
+    // The New preset dialog's second source: search GGUF repositories by name
+    // (or type one), list a repo's GGUF quantizations, pick one and its
+    // sidecars, download it, and get its preset. Rust drives the phase
+    // (`hf_dialog::Phase`, the int below) and every list and readout; the
+    // widgets bind two-way only to what the user edits (`hf_input`,
+    // `hf_token`, `hf_take_mmproj`) plus the drafter pill, a SegmentedControl.
+    in-out property <bool> show_hf_dialog: false;
+    // 0 idle (typing), 1 searching, 2 searched (results shown), 3 listing,
+    // 4 listed, 5 downloading, 6 cancelling.
+    in-out property <int> hf_phase: 0;
+    out property <bool> hf_transfer_running: hf_phase >= 5;
+    // A search or a listing is in flight (one request at a time).
+    out property <bool> hf_busy: hf_phase == 1 || hf_phase == 3;
+    // The results list shows in phases 0-2, the quantization list from 3 on.
+    out property <bool> hf_show_results: hf_phase <= 2;
+    // The one field: a free-text search (`qwen3 8b`) or a repository spec
+    // (`org/repo`, `org/repo:QUANT`, its URL), told apart by `hf_input_is_query`.
+    in-out property <string> hf_input: "";
+    // Typed by the user only: never prefilled, never saved, never logged. An
+    // EMPTY field means "the token the environment has" (`hf::token_from_env`,
+    // read by Rust at request time), which `hf_env_token` advertises in the
+    // field's placeholder, so the token itself never enters the UI.
+    in-out property <string> hf_token: "";
+    in-out property <bool> hf_env_token: false;
+    // The search results: a title line, then one row per repository
+    // (`org/repo · downloads · gated`), its second line the quantizations and
+    // sidecars its file names show. `hf_result_index` marks the row picked.
+    // `hf_has_results` (kept while a picked row is listed) offers "Back to
+    // results".
+    in-out property <string> hf_results_title: "";
+    in-out property <[string]> hf_result_labels;
+    in-out property <[string]> hf_result_details;
+    in-out property <int> hf_result_index: -1;
+    in-out property <bool> hf_has_results: false;
+    // "repo @ commit" over the candidate list, once listed.
+    in-out property <string> hf_listing_title: "";
+    in-out property <[string]> hf_candidate_labels;
+    in-out property <int> hf_candidate_index: -1;
+    // The chosen candidate's sidecars: the mmproj tick shows only when it has
+    // one, the drafter pills only when it has a drafter ("none" + each kind).
+    in-out property <bool> hf_mmproj_available: false;
+    in-out property <bool> hf_take_mmproj: true;
+    in-out property <[string]> hf_drafter_options;
+    in-out property <string> hf_drafter: "none";
+    // What the pick would fetch, and where to (one line).
+    in-out property <string> hf_selection_summary: "";
+    // A partial download of the listed repo is waiting (its staging tree):
+    // the download button reads "Resume download".
+    in-out property <bool> hf_resume: false;
+    // The in-dialog error (an `HfError`), and a muted note (cancel, a dismiss
+    // refused while the transfer runs).
+    in-out property <string> hf_error: "";
+    in-out property <string> hf_note: "";
+    // The progress readout: overall and current-file lines, and both bars.
+    in-out property <string> hf_progress_overall: "";
+    in-out property <string> hf_progress_file: "";
+    in-out property <float> hf_progress_fraction: 0;
+    in-out property <float> hf_file_fraction: 0;
+
     // ── Rename-preset dialog state ──────────────────────────────────
     in-out property <bool> show_rename_dialog: false;
     in-out property <string> rename_old_id: "";
@@ -347,10 +407,25 @@ export global AppState {
     in-out property <bool> show_discard_dialog: false;
 
     // ── Delete-confirm dialog state ──────────────────────────────────
-    // Purely Slint-side: the Models page's Delete button seeds the target id
-    // and shows this; the modal's Delete button fires the real delete_preset.
+    // Rust-driven (gui/models_tab.rs): the Models page's Delete button fires
+    // `request_delete`, which seeds the target, lists the model files the
+    // preset links (src/linked_files.rs: the model with all its shards, the
+    // mmproj, the drafter; only those on disk) and shows this. Every file
+    // starts UNticked (keep is the default); one another preset references,
+    // in either INI file, is shown in use and cannot be ticked. The modal's
+    // Delete button fires the real delete_preset, which removes the section,
+    // then the ticked files and the per-repository folders they leave empty.
+    // The ticks live Rust-side; the rows are a read-only projection rebuilt on
+    // every `delete_file_toggle`.
     in-out property <bool> show_delete_dialog: false;
     in-out property <string> delete_target_id: "";
+    // The file the section is removed from: presets.ini or presets.ini.disabled.
+    in-out property <string> delete_target_file: "presets.ini";
+    in-out property <[DeleteFileRow]> delete_file_rows;
+    // How many rows are ticked (the Delete button's label follows it), and one
+    // line naming what a confirm removes from disk.
+    in-out property <int> delete_files_ticked: 0;
+    in-out property <string> delete_files_summary: "";
 
     // ── Chat-template preview dialog state ──────────────────────────
     // Purely Slint-side: the Models-page "Chat template" row's Preview button
@@ -362,7 +437,8 @@ export global AppState {
     // (app.slint) gate on this so Ctrl+S / Ctrl+N / tab switches can't act on
     // the page hidden behind the backdrop.
     out property <bool> modal_open: show_new_kind_picker || show_rename_dialog
-        || show_discard_dialog || show_delete_dialog || show_chat_template_dialog;
+        || show_discard_dialog || show_delete_dialog || show_chat_template_dialog
+        || show_hf_dialog;
 
     // ── Benchmark tab state ─────────────────────────────────────────
     // Two engines behind one tab, and the mode decides which half of the
@@ -541,6 +617,12 @@ export global AppState {
     callback toggle_preset_enabled(string, bool);
     callback save_preset();
     callback revert_preset();
+    // The Delete dialog (its state block above): open it on the selected
+    // preset; tick or untick one file row; dismiss it (Cancel, Esc, the
+    // backdrop), which drops the ticks; and confirm, `delete_preset(id)`.
+    callback request_delete();
+    callback delete_file_toggle(int);
+    callback delete_cancel();
     callback delete_preset(string);
     callback new_preset();
     callback clone_preset();
@@ -557,6 +639,29 @@ export global AppState {
     callback cancel_discard();
     callback filter_presets(string);
     callback filter_dialog_models(string);
+    // The Hugging Face dialog (src/gui/hf_dialog.rs). `hf_open` comes from the
+    // New preset dialog's "From Hugging Face" button (so it inherits New…'s
+    // discard guard); `hf_submit` (Search or List, by what the field holds),
+    // `hf_pick_result` and `hf_download` run off the event loop; `hf_dismiss`
+    // is Esc, the backdrop and Close, which Rust REFUSES while a transfer runs
+    // (Cancel first: an accidental Esc must not drop gigabytes).
+    // `hf_input_problem` and `hf_input_is_query` are pure: the field's error
+    // ("" when it is a good spec, a query, or empty) and whether it searches,
+    // so the button's label and the hint follow every keystroke.
+    callback hf_open();
+    callback hf_submit();
+    // A search row was clicked: list that repository.
+    callback hf_pick_result(int);
+    // Leave the listing of a picked row for the search results again.
+    callback hf_back_to_results();
+    callback hf_select(int);
+    // The mmproj tick or the drafter pill moved: recompute the summary line.
+    callback hf_choices_changed();
+    callback hf_download();
+    callback hf_cancel();
+    callback hf_dismiss();
+    pure callback hf_input_problem(string) -> string;
+    pure callback hf_input_is_query(string) -> bool;
     // Recompute the "Model info" box from the currently selected model file.
     callback model_changed();
     // Recompute `preset_kv_cache_warning`: fired by AppWindow when a cache type,

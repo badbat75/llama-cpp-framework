@@ -15,12 +15,14 @@ mod form;
 mod gguf;
 mod gpu_split;
 mod gui;
+mod hf;
 mod http;
 #[cfg(any(target_os = "linux", windows))]
 mod hwmon;
 mod ini;
 mod integrations;
 mod kv_cache;
+mod linked_files;
 mod model_scan;
 mod moe_cache;
 mod net_ifaces;

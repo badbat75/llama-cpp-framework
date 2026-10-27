@@ -39,9 +39,26 @@ trait KvSource {
     fn u32(&self, key: &str) -> Option<u32>;
     fn string(&self, key: &str) -> Option<String>;
     fn boolean(&self, key: &str) -> Option<bool>;
+    /// A number of any stored width (float32/float64 or any integer) as `f64`.
+    /// The stored type is not a contract for the keys this reads: llama.cpp
+    /// takes the `general.sampling.*` values through their STRING form
+    /// (`llama_model_meta_val_str` + `strtof`, `common_init_sampler_from_model`),
+    /// so a converter writing a float as an int still reaches it, and must reach
+    /// us too. A float32 comes back as its shortest decimal (`f32_decimal`), so
+    /// `0.6` reads `0.6` and not `0.6000000238418579`.
+    fn f64(&self, key: &str) -> Option<f64>;
+    /// A signed integer of any stored integer width.
+    fn i64(&self, key: &str) -> Option<i64>;
     /// A tensor's `(ggml_type, size_in_bytes)` by name, from the GGUF's tensor
     /// infos, not its KV block. `None` when the tensor is absent.
     fn tensor(&self, name: &str) -> Option<(u32, u64)>;
+}
+
+/// A float32 widened through its shortest decimal form, the value a human (and
+/// the converter's `generation_config.json`) wrote: `0.95f32 as f64` is
+/// `0.949999988079071`, which would land in `presets.ini` verbatim.
+fn f32_decimal(v: f32) -> f64 {
+    v.to_string().parse().unwrap_or(v as f64)
 }
 
 // ── Public descriptions ──────────────────────────────────────────────────
@@ -89,6 +106,41 @@ pub struct ModelInfo {
     /// embedding table to a GPU is a win or a catastrophe; see `embd_line`.
     /// None when the GGUF names its embedding tensor something else.
     pub embd: Option<(u32, u64)>,
+    /// The sampler defaults the converter copied from the model's
+    /// `generation_config.json` (`general.sampling.*`), which llama-server
+    /// applies to every parameter the command line leaves unset.
+    pub sampling: Sampling,
+}
+
+/// The `general.sampling.*` values a GGUF carries that a preset has a field
+/// for (`gguf-py/gguf/metadata.py` writes them; `common_init_sampler_from_model`
+/// applies them). The rest of that family (`penalty_last_n`, `xtc_*`,
+/// `mirostat*`, `sequence`) has no preset key, and needs none to take effect:
+/// llama-server reads them from the file whenever the launch leaves them unset.
+/// `None` = the file does not say.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Sampling {
+    pub temp: Option<f64>,
+    pub top_k: Option<i32>,
+    pub top_p: Option<f64>,
+    pub min_p: Option<f64>,
+    /// `general.sampling.penalty_repeat`, the preset's `repeat-penalty`.
+    pub penalty_repeat: Option<f64>,
+}
+
+impl Sampling {
+    fn from_kv<S: KvSource>(s: &S) -> Sampling {
+        let f = |k: &str| s.f64(&format!("general.sampling.{k}"));
+        Sampling {
+            temp: f("temp"),
+            top_k: s
+                .i64("general.sampling.top_k")
+                .and_then(|v| i32::try_from(v).ok()),
+            top_p: f("top_p"),
+            min_p: f("min_p"),
+            penalty_repeat: f("penalty_repeat"),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -206,8 +258,20 @@ impl ModelInfo {
                 .string("tokenizer.chat_template")
                 .filter(|t| !t.is_empty()),
             embd: s.tensor("token_embd.weight"),
+            sampling: Sampling::from_kv(s),
             arch,
         })
+    }
+
+    /// Whether the embedded chat template is Jinja (`Some(true)`), a legacy
+    /// non-Jinja one (`Some(false)`), or absent (`None`). The `{%`/`{{`
+    /// heuristic mirrors llama.cpp's own `common_chat_verify_template`; the
+    /// "Chat template" row and the preset derivation (`hf::derive_preset`) share
+    /// it so they cannot disagree.
+    pub fn chat_template_is_jinja(&self) -> Option<bool> {
+        self.chat_template
+            .as_deref()
+            .map(|t| t.contains("{%") || t.contains("{{"))
     }
 
     // ── Display strings for the GUI ──────────────────────────────────────
@@ -446,15 +510,10 @@ impl ModelInfo {
     /// builtin-name) template, or `none` when the metadata is absent. The
     /// `{%`/`{{}` heuristic mirrors llama.cpp's own `common_chat_verify_template`.
     pub fn chat_template_line(&self) -> String {
-        match &self.chat_template {
+        match self.chat_template_is_jinja() {
             None => "none".to_string(),
-            Some(t) => {
-                if t.contains("{%") || t.contains("{{") {
-                    "Jinja (embedded)".to_string()
-                } else {
-                    "embedded (non-Jinja)".to_string()
-                }
-            }
+            Some(true) => "Jinja (embedded)".to_string(),
+            Some(false) => "embedded (non-Jinja)".to_string(),
         }
     }
 
@@ -948,6 +1007,8 @@ mod tests {
         U(u32),
         S(&'static str),
         B(bool),
+        F(f32),
+        I(i32),
     }
     struct Map {
         kv: HashMap<&'static str, Tv>,
@@ -973,9 +1034,62 @@ mod tests {
                 _ => None,
             }
         }
+        // Same widening as the ffi source: floats through `f32_decimal`,
+        // integers of either sign as numbers.
+        fn f64(&self, key: &str) -> Option<f64> {
+            match self.kv.get(key) {
+                Some(Tv::F(v)) => Some(f32_decimal(*v)),
+                Some(Tv::I(v)) => Some(*v as f64),
+                Some(Tv::U(v)) => Some(*v as f64),
+                _ => None,
+            }
+        }
+        fn i64(&self, key: &str) -> Option<i64> {
+            match self.kv.get(key) {
+                Some(Tv::I(v)) => Some(*v as i64),
+                Some(Tv::U(v)) => Some(*v as i64),
+                _ => None,
+            }
+        }
         fn tensor(&self, name: &str) -> Option<(u32, u64)> {
             self.tensors.get(name).copied()
         }
+    }
+
+    /// The `general.sampling.*` block: floats come back as the decimal the
+    /// converter wrote (not the float32's binary expansion), integers of any
+    /// width are read, and an absent key stays `None` so the preset leaves
+    /// that sampler to llama.cpp.
+    #[test]
+    fn sampling_block_reads_the_converter_values() {
+        let info = ModelInfo::from_kv(&map(vec![
+            ("general.architecture", Tv::S("qwen3")),
+            ("general.sampling.temp", Tv::F(0.6)),
+            ("general.sampling.top_k", Tv::I(20)),
+            ("general.sampling.top_p", Tv::F(0.95)),
+            // A converter that wrote a float as an int still reaches us.
+            ("general.sampling.penalty_repeat", Tv::U(1)),
+        ]))
+        .unwrap();
+        assert_eq!(
+            info.sampling,
+            Sampling {
+                temp: Some(0.6),
+                top_k: Some(20),
+                top_p: Some(0.95),
+                min_p: None,
+                penalty_repeat: Some(1.0),
+            }
+        );
+        let bare = ModelInfo::from_kv(&map(vec![("general.architecture", Tv::S("llama"))])).unwrap();
+        assert_eq!(bare.sampling, Sampling::default());
+    }
+
+    #[test]
+    fn f32_decimal_keeps_the_written_value() {
+        assert_eq!(f32_decimal(0.95), 0.95);
+        assert_eq!(f32_decimal(0.6), 0.6);
+        assert_eq!(f32_decimal(1.0), 1.0);
     }
 
     fn map(pairs: Vec<(&'static str, Tv)>) -> Map {

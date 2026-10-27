@@ -7,13 +7,13 @@
 // All shared data/callbacks live in `AppState` (state.slint); this file is the
 // window shell and the tray, PLUS the app-wide pieces that must sit above the
 // pages: the keyboard shortcuts (Ctrl+S/1/2/3/4/5/N, F5, in the KeyBindings
-// block) and the five overlay modals (New/Clone picker, Discard, Delete, Rename,
-// Chat-template preview).
+// block) and the overlay modals (New/Clone picker, the Hugging Face download,
+// the tensor picker, Discard, Delete, Rename, Chat-template preview).
 // Rust drives everything via `app.global::<AppState>()`.
 
-import { LineEdit, TextEdit, Button, CheckBox, ListView, Palette } from "std-widgets.slint";
+import { LineEdit, TextEdit, Button, CheckBox, ListView, Palette, ProgressIndicator } from "std-widgets.slint";
 import { AppState } from "state.slint";
-import { Tokens, Icons, Options, LabelColumn, ModalOverlay, AccentBar, SelectableRow, ListPanel, WrapText } from "components.slint";
+import { Tokens, Icons, Options, LabelColumn, ModalOverlay, AccentBar, SelectableRow, ListPanel, WrapText, SegmentedControl } from "components.slint";
 // Re-export so Slint generates the Rust accessors (`app.global::<AppState>()`);
 // a bare import wouldn't surface them to Rust. `Options` is exported only so
 // the e2e test can assert `Options.all_layers == form::ALL_LAYERS`.
@@ -380,7 +380,7 @@ export component AppWindow inherits Window {
     if AppState.show_new_kind_picker: ModalOverlay {
         title: AppState.new_dialog_source_id == "" ? "New preset" : "Clone preset";
         description: AppState.new_dialog_source_id == ""
-            ? "Pick the model for the new preset from your ModelsDir. It is created with default parameters."
+            ? "Pick the model for the new preset from your ModelsDir, or download one from Hugging Face. It is created with default parameters."
             : "Cloning [" + AppState.new_dialog_source_id + "] → pick the target model from your ModelsDir. The new preset copies every parameter from [" + AppState.new_dialog_source_id + "] onto the model you pick.";
         card_width: 520px;
         card_height: 480px;
@@ -437,7 +437,18 @@ export component AppWindow inherits Window {
         }
         HorizontalLayout {
             spacing: 8px;
-            alignment: end;
+            // The second source of a NEW preset (not of a clone, whose
+            // parameters come from another preset): this picker closes and
+            // the Hugging Face dialog takes over. New… already passed the
+            // discard guard, so the hand-over needs none of its own.
+            if AppState.new_dialog_source_id == "" : Button {
+                text: "From Hugging Face…";
+                clicked => {
+                    AppState.show_new_kind_picker = false;
+                    AppState.hf_open();
+                }
+            }
+            Rectangle { horizontal-stretch: 1; }
             Button {
                 text: "Cancel";
                 clicked => { AppState.show_new_kind_picker = false; }
@@ -447,6 +458,192 @@ export component AppWindow inherits Window {
                 primary: true;
                 enabled: AppState.dialog_model_index >= 0;
                 clicked => { confirm-pick(); }
+            }
+        }
+    }
+
+    // The Hugging Face download: the New preset dialog's second source
+    // (src/gui/hf_dialog.rs holds the phases and why). While the transfer runs,
+    // Esc / the backdrop go to `hf_dismiss`, which refuses and says why, and
+    // Close is disabled: only Cancel download stops it.
+    if AppState.show_hf_dialog: ModalOverlay {
+        title: "New preset from Hugging Face";
+        description: "Search by model name (qwen3 8b), or type a repository (org/repo or org/repo:QUANT) or paste its URL to list it directly. The files go under your ModelsDir, one folder per repository, and the preset is created from them.";
+        card_width: 700px;
+        card_height: 640px;
+        dismissed => { AppState.hf_dismiss(); }
+
+        // The field's error and its kind, recomputed on every keystroke (pure).
+        property <string> input_problem: AppState.hf_input_problem(AppState.hf_input);
+        property <bool> is_query: AppState.hf_input_is_query(AppState.hf_input);
+
+        HorizontalLayout {
+            spacing: 8px;
+            LineEdit {
+                horizontal-stretch: 1;
+                placeholder-text: "Model name to search (qwen3 8b), or org/repo[:Q4_K_M] or its URL";
+                text <=> AppState.hf_input;
+                enabled: !AppState.hf_transfer_running;
+                init => { self.focus(); }
+                accepted => {
+                    if (submit-btn.enabled) { AppState.hf_submit(); }
+                }
+            }
+            submit-btn := Button {
+                text: AppState.hf_phase == 1 ? "Searching…"
+                    : AppState.hf_phase == 3 ? "Listing…"
+                    : is_query ? "Search" : "List";
+                enabled: AppState.hf_input != "" && input_problem == ""
+                    && !AppState.hf_busy && !AppState.hf_transfer_running;
+                clicked => { AppState.hf_submit(); }
+            }
+        }
+        if input_problem != "" : WrapText {
+            text: input_problem;
+            font_size: 12px;
+            color: Tokens.err;
+        }
+        // Masked, in memory only: Rust reads it at request time and never
+        // writes it anywhere. Empty = the environment's token, if any.
+        LineEdit {
+            input-type: password;
+            placeholder-text: AppState.hf_env_token
+                ? "Access token: the one from HF_TOKEN or the Hugging Face login is used; type one to override"
+                : "Access token, only for a gated or private repository (kept in memory, never saved)";
+            text <=> AppState.hf_token;
+            enabled: !AppState.hf_transfer_running;
+        }
+        // Phases 0-2: the search results. Clicking a row lists that repository.
+        if AppState.hf_show_results && AppState.hf_results_title != "" : Text {
+            text: AppState.hf_results_title;
+            font-size: 12px;
+            overflow: elide;
+            color: Palette.foreground.transparentize(Tokens.muted);
+        }
+        if AppState.hf_show_results : ListPanel {
+            is_empty: AppState.hf_result_labels.length == 0;
+            empty_text: AppState.hf_phase == 1
+                ? "Searching Hugging Face…"
+                : AppState.hf_results_title != ""
+                    ? "Try fewer or other words (a model name, a size such as 8b), or type the repository itself."
+                    : "Type a model name and Search to find GGUF repositories (each row shows its downloads and the quantizations it offers), or type org/repo and List to go straight to its quantizations.";
+            vertical-stretch: 1;
+            ListView {
+                for label[i] in AppState.hf_result_labels : SelectableRow {
+                    height: 44px;
+                    label: label;
+                    detail: AppState.hf_result_details[i];
+                    selected: i == AppState.hf_result_index;
+                    clicked => { AppState.hf_pick_result(i); }
+                }
+            }
+        }
+        // Phases 3-6: the picked repository's quantizations.
+        if !AppState.hf_show_results && AppState.hf_listing_title != "" : Text {
+            text: AppState.hf_listing_title;
+            font-size: 12px;
+            overflow: elide;
+            color: Palette.foreground.transparentize(Tokens.muted);
+        }
+        if !AppState.hf_show_results : ListPanel {
+            is_empty: AppState.hf_candidate_labels.length == 0;
+            empty_text: AppState.hf_phase == 3
+                ? "Listing the repository…"
+                : "List a repository to see its GGUF quantizations, with their sizes and the sidecars each brings.";
+            vertical-stretch: 1;
+            ListView {
+                for label[i] in AppState.hf_candidate_labels : SelectableRow {
+                    height: 32px;
+                    label: label;
+                    selected: i == AppState.hf_candidate_index;
+                    clicked => { AppState.hf_select(i); }
+                }
+            }
+        }
+        if AppState.hf_mmproj_available || AppState.hf_drafter_options.length > 1 : HorizontalLayout {
+            spacing: 16px;
+            if AppState.hf_mmproj_available : CheckBox {
+                text: "Take the mmproj (vision projector)";
+                checked <=> AppState.hf_take_mmproj;
+                enabled: !AppState.hf_transfer_running;
+                toggled => { AppState.hf_choices_changed(); }
+            }
+            if AppState.hf_drafter_options.length > 1 : HorizontalLayout {
+                spacing: 8px;
+                Text {
+                    text: "Drafter";
+                    font-size: 13px;
+                    vertical-alignment: center;
+                    color: Palette.foreground;
+                }
+                SegmentedControl {
+                    options: AppState.hf_drafter_options;
+                    current: AppState.hf_drafter;
+                    enabled: !AppState.hf_transfer_running;
+                    activated(v) => {
+                        AppState.hf_drafter = v;
+                        AppState.hf_choices_changed();
+                    }
+                }
+            }
+            Rectangle { horizontal-stretch: 1; }
+        }
+        if AppState.hf_selection_summary != "" : WrapText {
+            text: AppState.hf_selection_summary;
+            font_size: 12px;
+            color: Palette.foreground.transparentize(Tokens.subtle);
+        }
+        if AppState.hf_transfer_running : VerticalLayout {
+            spacing: 4px;
+            Text {
+                text: AppState.hf_progress_overall;
+                font-size: 12px;
+                overflow: elide;
+                color: Palette.foreground;
+            }
+            ProgressIndicator { progress: AppState.hf_progress_fraction; }
+            Text {
+                text: AppState.hf_progress_file;
+                font-size: 12px;
+                overflow: elide;
+                color: Palette.foreground.transparentize(Tokens.subtle);
+            }
+            ProgressIndicator { progress: AppState.hf_file_fraction; }
+        }
+        if AppState.hf_error != "" : WrapText {
+            text: AppState.hf_error;
+            font_size: 12px;
+            color: Tokens.err;
+        }
+        if AppState.hf_note != "" : WrapText {
+            text: AppState.hf_note;
+            font_size: 12px;
+            color: Palette.foreground.transparentize(Tokens.subtle);
+        }
+        HorizontalLayout {
+            spacing: 8px;
+            // Only while a picked search row is listed (or being listed).
+            if AppState.hf_has_results && !AppState.hf_show_results : Button {
+                text: "Back to results";
+                enabled: !AppState.hf_transfer_running;
+                clicked => { AppState.hf_back_to_results(); }
+            }
+            Rectangle { horizontal-stretch: 1; }
+            Button {
+                text: "Close";
+                enabled: !AppState.hf_transfer_running;
+                clicked => { AppState.hf_dismiss(); }
+            }
+            if AppState.hf_transfer_running : Button {
+                text: AppState.hf_phase == 6 ? "Cancelling…" : "Cancel download";
+                enabled: AppState.hf_phase == 5;
+                clicked => { AppState.hf_cancel(); }
+            }
+            if !AppState.hf_transfer_running : Button {
+                text: AppState.hf_resume ? "Resume download" : "Download";
+                primary: true;
+                enabled: AppState.hf_phase == 4 && AppState.hf_candidate_index >= 0;
+                clicked => { AppState.hf_download(); }
             }
         }
     }
@@ -593,27 +790,71 @@ export component AppWindow inherits Window {
         }
     }
 
+    // Delete preset, and optionally the model files it links (one row each,
+    // every tick cleared at open: keeping the files is the default). Rust
+    // builds the rows (gui/models_tab.rs over src/linked_files.rs) and owns the
+    // ticks: a click on a row or its box goes to `delete_file_toggle`, which
+    // rebuilds the list, so no CheckBox here is self-assigned (the TouchArea
+    // over each box takes its clicks, as in the tensor picker). A ticked row
+    // is drawn selected and the line under the list names what will go.
     if AppState.show_delete_dialog: ModalOverlay {
+        property <bool> has_files: AppState.delete_file_rows.length > 0;
         title: "Delete preset";
-        description: "Delete [" + AppState.delete_target_id + "] from presets.ini? This cannot be undone.";
-        card_height: 160px;
-        dismissed => { AppState.show_delete_dialog = false; }
+        description: "Delete [" + AppState.delete_target_id + "] from " + AppState.delete_target_file + "? This cannot be undone. "
+            + (has_files
+                ? "The model files it links stay on disk unless you tick them below; a file another preset uses cannot be ticked."
+                : "None of the model files it links is on disk.");
+        card_width: has_files ? 640px : 440px;
+        card_height: has_files ? 440px : 200px;
+        dismissed => { AppState.delete_cancel(); }
 
-        Rectangle { vertical-stretch: 1; }
+        if has_files : ListPanel {
+            is_empty: false;
+            vertical-stretch: 1;
+            ListView {
+                for row[i] in AppState.delete_file_rows : SelectableRow {
+                    height: 44px;
+                    label: row.label;
+                    detail: row.detail;
+                    selected: row.checked;
+                    muted: row.in_use;
+                    clicked => { AppState.delete_file_toggle(i); }
+                    Rectangle {
+                        width: 24px;
+                        CheckBox {
+                            checked: row.checked;
+                            enabled: !row.in_use;
+                        }
+                        TouchArea {
+                            accessible-role: button;
+                            accessible-label: "delete-file-" + i;
+                            // A TouchArea has no default action of its own:
+                            // this one lets assistive tech (and the e2e test)
+                            // tick the box.
+                            accessible-action-default => { AppState.delete_file_toggle(i); }
+                            clicked => { AppState.delete_file_toggle(i); }
+                        }
+                    }
+                }
+            }
+        }
+        if has_files : WrapText {
+            text: AppState.delete_files_summary;
+            font_size: 12px;
+            color: AppState.delete_files_ticked > 0 ? Tokens.err : Palette.foreground.transparentize(Tokens.subtle);
+        }
+        if !has_files : Rectangle { vertical-stretch: 1; }
         HorizontalLayout {
             spacing: 8px;
             alignment: end;
             Button {
                 text: "Cancel";
-                clicked => { AppState.show_delete_dialog = false; }
+                clicked => { AppState.delete_cancel(); }
             }
             Button {
-                text: "Delete";
+                text: AppState.delete_files_ticked > 0 ? "Delete preset and files" : "Delete preset";
                 primary: true;
-                clicked => {
-                    AppState.show_delete_dialog = false;
-                    AppState.delete_preset(AppState.delete_target_id);
-                }
+                clicked => { AppState.delete_preset(AppState.delete_target_id); }
             }
         }
     }

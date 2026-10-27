@@ -98,12 +98,11 @@ export component ModelsPage inherits HorizontalLayout {
                 Button {
                     text: "Delete";
                     enabled: AppState.selected_preset_index >= 0;
-                    // Confirmation modal (app.slint): the delete itself is
-                    // one presets.ini rewrite with no undo.
-                    clicked => {
-                        AppState.delete_target_id = AppState.form.id;
-                        AppState.show_delete_dialog = true;
-                    }
+                    // Confirmation modal (app.slint), opened by Rust because
+                    // it lists the model files the preset links, which the
+                    // user may delete with it (gui/models_tab.rs). The
+                    // delete is one INI rewrite (plus those files) with no undo.
+                    clicked => { AppState.request_delete(); }
                 }
             }
         }

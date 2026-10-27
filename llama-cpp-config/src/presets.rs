@@ -1196,7 +1196,7 @@ pub fn save(preset: &Preset) -> io::Result<()> {
 /// boundary), so a hand-authored id (a future `preset set`/import, or an
 /// editable-id GUI change) can't corrupt the file. Emptiness is a separate
 /// check so `rename` can keep its own "…is empty" message.
-fn valid_id(id: &str) -> bool {
+pub(crate) fn valid_id(id: &str) -> bool {
     id.chars()
         .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_'))
 }
@@ -1214,7 +1214,7 @@ fn valid_id(id: &str) -> bool {
 /// `throw` during arg parsing; the model simply never loads, and the reason is
 /// buried in a child process's log. The table can't produce one; a hand-edited
 /// INI can, which is exactly why the check lives at the save boundary too.
-fn validate_for_save(preset: &Preset) -> io::Result<()> {
+pub(crate) fn validate_for_save(preset: &Preset) -> io::Result<()> {
     if preset.id.is_empty() || !valid_id(&preset.id) {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -1341,15 +1341,35 @@ fn rename_in(enabled: &Path, parked: &Path, old_id: &str, new: &str) -> io::Resu
 
 /// First of `base`, `base-2`, `base-3`, … that isn't already in `existing`.
 /// De-conflicts an id derived by `make_id`: Clone must never overwrite an
-/// existing preset when the picked model already has one.
+/// existing preset when the picked model already has one. "Already in" is
+/// `id_taken`, case-insensitive like the section lookup itself.
 pub(crate) fn unique_id(base: &str, existing: &[String]) -> String {
-    if !existing.iter().any(|e| e == base) {
+    if !id_taken(base, existing) {
         return base.to_string();
     }
     (2..)
         .map(|n| format!("{base}-{n}"))
-        .find(|cand| !existing.iter().any(|e| e == cand))
+        .find(|cand| !id_taken(cand, existing))
         .expect("(2..) is unbounded, so find always yields")
+}
+
+/// Whether `id` names a section among `existing`, compared IGNORING ASCII
+/// case: `ini::find_section_header` (and so `save`'s replace) matches headers
+/// case-insensitively, so a new `Qwen3-8B-Q4_K_M` saved next to a tuned
+/// `[qwen3-8b-q4_k_m]` would replace it wholesale.
+pub(crate) fn id_taken(id: &str, existing: &[String]) -> bool {
+    existing.iter().any(|e| e.eq_ignore_ascii_case(id))
+}
+
+/// The id a NEW preset for `model_path` gets: `make_id`'s stem, `preset` when
+/// that sanitizes to nothing (a file named entirely in a non-ASCII script;
+/// an empty id is a `[]` section `save` refuses), de-conflicted by `unique_id`.
+/// Shared by the Models tab's New / Clone and the Hugging Face download, so
+/// the three can never disagree on it.
+pub(crate) fn new_preset_id(model_path: &str, existing: &[String]) -> String {
+    let base = make_id(model_path);
+    let base = if base.is_empty() { "preset".to_string() } else { base };
+    unique_id(&base, existing)
 }
 
 pub fn make_id(model_path: &str) -> String {
@@ -2554,6 +2574,21 @@ mod tests {
     fn unique_id_base_free_returns_base() {
         assert_eq!(unique_id("m", &["other".to_string()]), "m");
         assert_eq!(unique_id("m", &[]), "m");
+    }
+
+    /// Section headers match case-insensitively, so must the uniqueness check:
+    /// a derived `Qwen3-8B-Q4_K_M` must not replace a tuned `[qwen3-8b-q4_k_m]`.
+    #[test]
+    fn unique_id_ignores_case_and_new_ids_never_come_out_empty() {
+        let existing = vec!["qwen3-8b-q4_k_m".to_string(), "QWEN3-8B-Q4_K_M-2".to_string()];
+        assert!(id_taken("Qwen3-8B-Q4_K_M", &existing));
+        assert_eq!(unique_id("Qwen3-8B-Q4_K_M", &existing), "Qwen3-8B-Q4_K_M-3");
+        assert_eq!(
+            new_preset_id(&crate::paths::os_path(r"E:\m\Qwen3-8B-Q4_K_M.gguf"), &existing),
+            "Qwen3-8B-Q4_K_M-3"
+        );
+        assert_eq!(new_preset_id(&crate::paths::os_path(r"E:\m\模型.gguf"), &[]), "preset");
+        assert_eq!(new_preset_id(&crate::paths::os_path(r"E:\m\模型.gguf"), &["Preset".into()]), "preset-2");
     }
 
     // The writer trims (emit_str + the model line) because the reader trims on

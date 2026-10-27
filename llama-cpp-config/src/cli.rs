@@ -395,14 +395,127 @@ pub enum PresetCmd {
     List,
     /// Dump one preset as INI.
     Show { id: String },
-    /// Delete a preset section.
-    Delete { id: String },
+    /// Delete a preset section; with --delete-files, the model files it links
+    /// too. Without that flag every file stays on disk.
+    Delete {
+        id: String,
+        /// Also delete these files the preset links, when they are on disk:
+        /// `all`, or a comma-separated list of `model` (every shard of a split
+        /// model), `mmproj` and `draft`. The folders a Hugging Face download
+        /// leaves empty under ModelsDir's models / mmprojs / mtps / dflashs go
+        /// too; nothing outside them, and never a folder with content. A file
+        /// another preset references (in presets.ini or presets.ini.disabled)
+        /// is refused, before anything is deleted, unless --even-if-shared.
+        #[arg(long, value_name = "WHICH", value_delimiter = ',')]
+        delete_files: Vec<FileKind>,
+        /// Delete a picked file even when another preset references it (that
+        /// preset then points at a missing file).
+        #[arg(long, requires = "delete_files")]
+        even_if_shared: bool,
+    },
     /// Switch a preset on: move it back into presets.ini, so llama-server
     /// (after a restart) and OpenCode offer it again.
     Enable { id: String },
     /// Switch a preset off: park it in presets.ini.disabled, unchanged, where
     /// llama-server and OpenCode no longer see it.
     Disable { id: String },
+    /// Download a GGUF from Hugging Face with llama.cpp's own downloader and
+    /// create a preset for it. Lists the repo's quantizations first; the files
+    /// land in ModelsDir's models / mmprojs / mtps / dflashs subfolders.
+    ///
+    /// Given words instead of a repository (`"qwen3 8b"`), it SEARCHES: one
+    /// row per GGUF repository, most downloaded first, with its downloads and
+    /// the quantizations it offers, and exits; run it again with the chosen
+    /// `org/repo`.
+    Download(Box<PresetDownload>),
+}
+
+/// Which linked files `preset delete --delete-files` takes (`linked_files::Role`).
+#[derive(clap::ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FileKind {
+    /// Every file the preset links.
+    All,
+    /// The GGUF model, every shard of a split one.
+    Model,
+    /// The multimodal projector.
+    Mmproj,
+    /// The speculative drafter (`model-draft`: MTP, DFlash or DSpark).
+    Draft,
+}
+
+impl FileKind {
+    fn covers(self, role: crate::linked_files::Role) -> bool {
+        use crate::linked_files::Role;
+        matches!(
+            (self, role),
+            (FileKind::All, _)
+                | (FileKind::Model, Role::Model)
+                | (FileKind::Mmproj, Role::Mmproj)
+                | (FileKind::Draft, Role::Draft)
+        )
+    }
+}
+
+/// The entries of `linked` that `which` asks for, in `linked`'s order.
+fn pick_files(
+    linked: &[crate::linked_files::LinkedFile],
+    which: &[FileKind],
+) -> Vec<crate::linked_files::LinkedFile> {
+    linked
+        .iter()
+        .filter(|f| which.iter().any(|k| k.covers(f.role)))
+        .cloned()
+        .collect()
+}
+
+/// The refusal `preset delete` stops on when a picked file is in use, naming
+/// each such file and the presets holding it; `None` when nothing is shared.
+fn shared_refusal(chosen: &[crate::linked_files::LinkedFile]) -> Option<String> {
+    let shared: Vec<String> = chosen
+        .iter()
+        .filter(|f| f.in_use())
+        .map(|f| {
+            let ids: Vec<String> = f.used_by.iter().map(|id| format!("[{id}]")).collect();
+            format!("{} is used by {}", f.path.display(), ids.join(", "))
+        })
+        .collect();
+    (!shared.is_empty()).then(|| {
+        format!(
+            "nothing deleted: {}. Leave it out of --delete-files, or pass --even-if-shared to delete it anyway.",
+            shared.join("; ")
+        )
+    })
+}
+
+#[derive(Args, Debug)]
+pub struct PresetDownload {
+    /// `org/repo`, `org/repo:QUANT`, the repo's huggingface.co URL, or words
+    /// to search for (`"qwen3 8b"`: anything that is not a repository spec).
+    pub spec: String,
+    /// Search even when the text would parse as a repository (`unsloth/Qwen3`
+    /// is a valid repo id; with --search it is a search for those words).
+    #[arg(long)]
+    pub search: bool,
+    /// How many repositories a search prints.
+    #[arg(long, default_value_t = crate::hf::SEARCH_LIMIT, value_name = "N")]
+    pub limit: usize,
+    /// Only list the quantizations (size, sidecars) and exit.
+    #[arg(long)]
+    pub list: bool,
+    /// The quantization to fetch, by tag (`Q4_K_M`) or by its file path in the
+    /// repo. Default: the spec's tag, else llama.cpp's own pick (Q4_K_M, then
+    /// Q8_0, then the first).
+    #[arg(long)]
+    pub quant: Option<String>,
+    /// Skip the multimodal projector even when the repo has one.
+    #[arg(long)]
+    pub no_mmproj: bool,
+    /// Also fetch a speculative drafter: mtp, dflash or dspark.
+    #[arg(long, value_name = "KIND")]
+    pub draft: Option<String>,
+    /// The preset id. Default: derived from the model's file name.
+    #[arg(long)]
+    pub id: Option<String>,
 }
 
 // ── Dispatch & rendering ─────────────────────────────────────────────────
@@ -727,25 +840,244 @@ fn run_preset(c: PresetCmd) -> Result<()> {
             println!("{}", presets::render_section(&l.preset));
             Ok(())
         }
-        PresetCmd::Delete { id } => {
-            // ini::delete_section is a documented no-op for a missing section,
-            // so look the id up first (mirroring Show), or a typo'd id gets a
-            // "Removed" message for a preset that never existed.
-            let l = find_listed(&id)?;
-            let real_id = l.preset.id;
-            presets::delete(&real_id).context("delete preset")?;
-            let file = if l.enabled {
-                paths::presets_ini()
-            } else {
-                paths::presets_disabled_ini()
-            };
-            println!("Removed [{real_id}] from {}", file.display());
-            follow_opencode();
-            Ok(())
-        }
+        PresetCmd::Delete {
+            id,
+            delete_files,
+            even_if_shared,
+        } => run_preset_delete(&id, &delete_files, even_if_shared),
         PresetCmd::Enable { id } => set_preset_enabled(&id, true),
         PresetCmd::Disable { id } => set_preset_enabled(&id, false),
+        PresetCmd::Download(a) => run_preset_download(*a),
     }
+}
+
+/// `preset delete`: the section, then the linked files `which` names (none by
+/// default). Everything that can refuse is checked BEFORE the section goes: an
+/// unknown id, and a picked file another preset references (`shared_refusal`,
+/// lifted by `even_if_shared`). A file that then fails to delete does not undo
+/// the rest; it is reported and the command exits with an error.
+fn run_preset_delete(id: &str, which: &[FileKind], even_if_shared: bool) -> Result<()> {
+    use crate::linked_files;
+    // ini::delete_section is a documented no-op for a missing section,
+    // so look the id up first (mirroring Show), or a typo'd id gets a
+    // "Removed" message for a preset that never existed.
+    let listed = presets::load_listed();
+    let l = find_listed(id)?;
+    let real_id = l.preset.id.clone();
+    let all: Vec<presets::Preset> = listed.into_iter().map(|l| l.preset).collect();
+    let linked = linked_files::linked_files(&l.preset, &all);
+    let chosen = pick_files(&linked, which);
+    for kind in which.iter().filter(|k| **k != FileKind::All) {
+        if !linked.iter().any(|f| kind.covers(f.role)) {
+            let word = clap::ValueEnum::to_possible_value(kind)
+                .map(|v| v.get_name().to_string())
+                .unwrap_or_default();
+            eprintln!("No {word} file of [{real_id}] is on disk: nothing to delete there.");
+        }
+    }
+    if !even_if_shared {
+        if let Some(refusal) = shared_refusal(&chosen) {
+            anyhow::bail!(refusal);
+        }
+    }
+    presets::delete(&real_id).context("delete preset")?;
+    let file = if l.enabled {
+        paths::presets_ini()
+    } else {
+        paths::presets_disabled_ini()
+    };
+    println!("Removed [{real_id}] from {}", file.display());
+    let mut failed = 0;
+    if chosen.is_empty() {
+        if !linked.is_empty() {
+            let names: Vec<String> = linked.iter().map(|f| f.name()).collect();
+            println!(
+                "Kept its files: {} (--delete-files removes them).",
+                names.join(", ")
+            );
+        }
+    } else {
+        let models_dir = server_cfg::load().models_dir_or_default();
+        let out = linked_files::delete(&chosen, &models_dir, even_if_shared);
+        for (f, size) in &out.removed {
+            println!("Deleted {} ({})", f.display(), crate::hf::format_size(*size));
+        }
+        for d in &out.dirs_removed {
+            println!("Removed the empty folder {}", d.display());
+        }
+        for (f, e) in &out.failed {
+            eprintln!("Could not delete {}: {e}", f.display());
+        }
+        failed = out.failed.len();
+    }
+    follow_opencode();
+    if failed > 0 {
+        anyhow::bail!("the preset is deleted, but {failed} file(s) could not be");
+    }
+    Ok(())
+}
+
+/// A `--id` for `preset download`, checked before anything is fetched: a
+/// valid section name (`presets::valid_id`) that no preset holds in ANY case
+/// (`presets::id_taken`; headers match case-insensitively, so a namesake
+/// would be replaced wholesale).
+fn check_download_id(id: &str, existing: &[String]) -> Result<()> {
+    if id.is_empty() || !presets::valid_id(id) {
+        anyhow::bail!("invalid --id `{id}`: use letters, digits, '.', '-', '_'");
+    }
+    if presets::id_taken(id, existing) {
+        anyhow::bail!("a preset [{id}] already exists (ids ignore case): pick another --id");
+    }
+    Ok(())
+}
+
+/// `preset download`: words are a search (`search_report`, then exit);
+/// a repository is listed, picked, downloaded (progress on stderr, one line
+/// rewritten in place), derive the preset, save it. Ctrl+C ends this process;
+/// the child, which has no console of its own (`CREATE_NO_WINDOW`), then reads
+/// EOF on its stdin pipe and exits, leaving its partial in the staging tree,
+/// so the next run of the same download resumes it.
+fn run_preset_download(a: PresetDownload) -> Result<()> {
+    use crate::hf;
+    let token = hf::token_from_env();
+    // The dialog's rule (`hf::classify_input`): a spec lists, words search.
+    let input = if a.search {
+        hf::Input::Query(hf::parse_query(&a.spec)?)
+    } else {
+        hf::classify_input(&a.spec)?
+            .ok_or_else(|| anyhow::anyhow!("enter a model name to search for, or a repository: org/repo"))?
+    };
+    let mut spec = match input {
+        hf::Input::Spec(spec) => spec,
+        hf::Input::Query(query) => {
+            let hits = hf::search(&query, a.limit, token.as_ref())?;
+            for line in search_report(&query, &hits) {
+                println!("{line}");
+            }
+            return Ok(());
+        }
+    };
+    let existing: Vec<String> = presets::load_listed().into_iter().map(|l| l.preset.id).collect();
+    if let Some(id) = &a.id {
+        check_download_id(id, &existing)?;
+    }
+    // `--quant` overrides the spec's own tag or file.
+    if let Some(q) = &a.quant {
+        if q.ends_with(".gguf") {
+            spec.file = Some(q.clone());
+        } else {
+            spec.tag = Some(q.clone());
+            spec.file = None;
+        }
+    }
+    let listing = hf::list_repo(&spec, token.as_ref())?;
+    println!("{} @ {}", listing.repo, &listing.commit[..12.min(listing.commit.len())]);
+    for (i, c) in listing.candidates.iter().enumerate() {
+        let mark = if i == listing.default { "*" } else { " " };
+        let mut extra: Vec<String> = Vec::new();
+        if c.shards.len() > 1 {
+            extra.push(format!("{} shards", c.shards.len()));
+        }
+        if c.mmproj.is_some() {
+            extra.push("mmproj".into());
+        }
+        for s in hf::Sidecar::ALL {
+            if c.sidecar(s).is_some() {
+                extra.push(s.label().into());
+            }
+        }
+        let extra = if extra.is_empty() { String::new() } else { format!("  [{}]", extra.join(", ")) };
+        println!("{mark} {:<12} {:>10}  {}{extra}", c.tag, hf::format_size(c.size), c.primary().path);
+    }
+    if a.list {
+        return Ok(());
+    }
+
+    let sidecar = match a.draft.as_deref() {
+        Some(d) => Some(hf::Sidecar::parse(d).ok_or_else(|| anyhow::anyhow!("--draft takes mtp, dflash or dspark, not {d}"))?),
+        None => None,
+    };
+    let models_dir = std::path::PathBuf::from(server_cfg::load().models_dir_or_default());
+    let job = hf::DownloadJob::new(&listing, listing.default, !a.no_mmproj, sidecar, models_dir.clone(), token)?;
+    println!("Downloading {} into {}", job.candidate.primary().path, models_dir.display());
+
+    let (tx, rx) = std::sync::mpsc::channel();
+    let _handle = hf::spawn_download(
+        job,
+        |p| {
+            eprint!(
+                "\r  {} / {}  ({}/{} files)  {:<60}",
+                hf::format_size(p.done),
+                hf::format_size(p.total),
+                p.files_done,
+                p.files_total,
+                p.file
+            );
+        },
+        move |r| {
+            let _ = tx.send(r);
+        },
+    );
+    let done = rx.recv().context("download thread ended without a result")?;
+    eprintln!();
+    let d = done?;
+    println!("Model:  {}", d.model.display());
+    if let Some(m) = &d.mmproj {
+        println!("mmproj: {}", m.display());
+    }
+    if let Some((k, p)) = &d.draft {
+        println!("{}: {}", k.label(), p.display());
+    }
+
+    // Re-read: another process may have added a preset during the transfer.
+    let existing: Vec<String> = presets::load_listed().into_iter().map(|l| l.preset.id).collect();
+    let mut preset = hf::preset_from_download(&d, &existing);
+    if let Some(id) = a.id {
+        check_download_id(&id, &existing)?;
+        preset.id = id;
+    }
+    hf::save_preset(&preset, &models_dir).context("save preset")?;
+    println!("Created [{}] in {}", preset.id, paths::presets_ini().display());
+    follow_opencode();
+    Ok(())
+}
+
+/// What `preset download <words>` prints (pure): a header, one aligned row
+/// per repository (`org/repo`, downloads over the last 30 days, the quant
+/// tags, the sidecars, gated/private), and how to go on.
+fn search_report(query: &str, hits: &[crate::hf::SearchHit]) -> Vec<String> {
+    use crate::hf;
+    if hits.is_empty() {
+        return vec![format!("No GGUF repository matches \"{query}\".")];
+    }
+    let mut out = vec![format!(
+        "GGUF repositories for \"{query}\", most downloaded first (downloads over the last 30 days):"
+    )];
+    let width = hits.iter().map(|h| h.repo.len()).max().unwrap_or(0);
+    for h in hits {
+        let quants = if h.quants.is_empty() { "no GGUF model file".to_string() } else { h.quants.join(" ") };
+        let mut extra: Vec<&str> = Vec::new();
+        if h.mmproj {
+            extra.push("mmproj");
+        }
+        extra.extend(h.drafters.iter().map(|s| s.label()));
+        let extra = if extra.is_empty() { String::new() } else { format!("  [{}]", extra.join(", ")) };
+        let access = match (h.gated, h.private) {
+            (true, true) => "  gated, private",
+            (true, false) => "  gated",
+            (false, true) => "  private",
+            (false, false) => "",
+        };
+        out.push(format!(
+            "  {:<width$}  {:>7}  {quants}{extra}{access}",
+            h.repo,
+            hf::format_count(h.downloads)
+        ));
+    }
+    out.push(
+        "Pick one: llama-cpp-config preset download <org/repo>[:QUANT] (add --list to see the sizes first)".into(),
+    );
+    out
 }
 
 fn set_preset_enabled(id: &str, enabled: bool) -> Result<()> {
@@ -876,6 +1208,139 @@ mod tests {
     // The only guard on `server set`'s schema mirror: every other server-field
     // spot (server_cfg load/save, the form conversions) has a round-trip test,
     // but `apply` is the CLI-only copy; an omitted field here is silent.
+
+    /// `preset delete` keeps every file unless asked, takes the files as a
+    /// comma list, and the shared override only beside a file list.
+    #[test]
+    fn preset_delete_parses_its_file_flags() {
+        let parse = |args: &[&str]| {
+            let mut argv = vec!["llama-cpp-config", "preset", "delete", "p"];
+            argv.extend_from_slice(args);
+            Cli::try_parse_from(argv).map(|c| match c.command {
+                Command::Preset(PresetCmd::Delete {
+                    delete_files,
+                    even_if_shared,
+                    ..
+                }) => (delete_files, even_if_shared),
+                _ => panic!("not a preset delete"),
+            })
+        };
+        assert_eq!(parse(&[]).unwrap(), (vec![], false), "keep is the default");
+        assert_eq!(
+            parse(&["--delete-files", "model,draft"]).unwrap(),
+            (vec![FileKind::Model, FileKind::Draft], false)
+        );
+        assert_eq!(
+            parse(&["--delete-files", "all", "--even-if-shared"]).unwrap(),
+            (vec![FileKind::All], true)
+        );
+        assert!(parse(&["--even-if-shared"]).is_err(), "the override needs a file list");
+        assert!(parse(&["--delete-files", "weights"]).is_err(), "an unknown kind");
+    }
+
+    #[test]
+    fn preset_delete_picks_by_kind_and_refuses_shared_files() {
+        use crate::linked_files::{LinkedFile, Role};
+        let lf = |role: Role, name: &str, used: &[&str]| LinkedFile {
+            role,
+            path: name.into(),
+            files: vec![name.into()],
+            size: 1,
+            used_by: used.iter().map(|u| u.to_string()).collect(),
+        };
+        let linked = vec![
+            lf(Role::Model, "m.gguf", &[]),
+            lf(Role::Mmproj, "p.gguf", &["vision", "other"]),
+            lf(Role::Draft, "d.gguf", &[]),
+        ];
+        let roles = |which: &[FileKind]| -> Vec<Role> {
+            pick_files(&linked, which).iter().map(|f| f.role).collect()
+        };
+        assert!(roles(&[]).is_empty());
+        assert_eq!(roles(&[FileKind::All]), [Role::Model, Role::Mmproj, Role::Draft]);
+        assert_eq!(roles(&[FileKind::Draft, FileKind::Model]), [Role::Model, Role::Draft]);
+        assert_eq!(shared_refusal(&pick_files(&linked, &[FileKind::Model, FileKind::Draft])), None);
+        let refusal = shared_refusal(&pick_files(&linked, &[FileKind::All])).expect("refused");
+        assert!(
+            refusal.contains("p.gguf is used by [vision], [other]") && refusal.contains("--even-if-shared"),
+            "{refusal}"
+        );
+    }
+
+    /// `preset download` takes the spec positionally and every choice as a
+    /// flag, so a script can run it end to end without a prompt.
+    #[test]
+    fn preset_download_parses_its_flags() {
+        let cli = Cli::try_parse_from([
+            "llama-cpp-config",
+            "preset",
+            "download",
+            "unsloth/Qwen3-8B-GGUF:Q4_K_M",
+            "--no-mmproj",
+            "--draft",
+            "mtp",
+            "--id",
+            "q3",
+        ])
+        .unwrap();
+        let Command::Preset(PresetCmd::Download(a)) = cli.command else {
+            panic!("not a preset download");
+        };
+        assert_eq!(a.spec, "unsloth/Qwen3-8B-GGUF:Q4_K_M");
+        assert!(a.no_mmproj && !a.list);
+        assert_eq!((a.draft.as_deref(), a.id.as_deref(), a.quant.as_deref()), (Some("mtp"), Some("q3"), None));
+        assert!(!a.search && a.limit == crate::hf::SEARCH_LIMIT);
+        assert!(Cli::try_parse_from(["llama-cpp-config", "preset", "download"]).is_err());
+        // Words search; --search forces it, --limit caps the rows.
+        let cli = Cli::try_parse_from(["llama-cpp-config", "preset", "download", "unsloth/Qwen3", "--search", "--limit", "5"])
+            .unwrap();
+        let Command::Preset(PresetCmd::Download(a)) = cli.command else {
+            panic!("not a preset download");
+        };
+        assert!(a.search && a.limit == 5 && a.spec == "unsloth/Qwen3");
+    }
+
+    /// The search rows: aligned repo column, downloads, quant tags, sidecars,
+    /// access; a hint to go on, or one line when nothing matched.
+    #[test]
+    fn search_report_prints_repo_downloads_and_quants_per_row() {
+        let hit = |repo: &str, downloads: u64, quants: &[&str], mmproj: bool, gated: bool| crate::hf::SearchHit {
+            repo: repo.into(),
+            downloads,
+            gated,
+            private: false,
+            quants: quants.iter().map(|q| q.to_string()).collect(),
+            mmproj,
+            drafters: Vec::new(),
+        };
+        let lines = search_report(
+            "gemma 3",
+            &[
+                hit("ggml-org/tinygemma3-GGUF", 73_988, &["Q8_0"], true, false),
+                hit("google/gemma-3-4b-it-qat-q4_0-gguf", 3_330, &["Q4_0"], true, true),
+                hit("o/r", 5, &[], false, false),
+            ],
+        );
+        assert_eq!(lines.len(), 5);
+        assert!(lines[0].contains("\"gemma 3\""));
+        assert_eq!(lines[1], "  ggml-org/tinygemma3-GGUF              74.0k  Q8_0  [mmproj]");
+        assert_eq!(lines[2], "  google/gemma-3-4b-it-qat-q4_0-gguf     3.3k  Q4_0  [mmproj]  gated");
+        assert_eq!(lines[3], format!("  {:<34}  {:>7}  no GGUF model file", "o/r", "5"));
+        assert!(lines[4].starts_with("Pick one: llama-cpp-config preset download <org/repo>"));
+        assert_eq!(search_report("zzz", &[]), ["No GGUF repository matches \"zzz\"."]);
+    }
+
+    /// A `--id` is refused BEFORE the download when it is not a valid section
+    /// name or names an existing preset in any case (headers match
+    /// case-insensitively): a multi-GB transfer must not end in a save error.
+    #[test]
+    fn download_id_is_checked_up_front() {
+        let existing = vec!["qwen3-8b".to_string()];
+        assert!(check_download_id("q3", &existing).is_ok());
+        assert!(check_download_id("Qwen3-8B", &existing).unwrap_err().to_string().contains("already exists"));
+        assert!(check_download_id("bad id", &existing).is_err());
+        assert!(check_download_id("", &existing).is_err());
+    }
 
     /// `--prompt` and `--prompt-file` are two ways to set one field, so clap
     /// has to refuse both at once rather than letting the later assignment win

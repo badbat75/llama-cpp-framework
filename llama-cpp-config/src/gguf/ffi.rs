@@ -41,6 +41,8 @@ mod loaded_impl {
     const T_STRING: i32 = 8;
     const T_U64: i32 = 10;
     const T_I64: i32 = 11;
+    const T_F32: i32 = 6;
+    const T_F64: i32 = 12;
 
     #[repr(C)]
     struct InitParams {
@@ -70,6 +72,8 @@ mod loaded_impl {
     type FnI64 = unsafe extern "C" fn(GgufCtx, i64) -> i64;
     type FnBool = unsafe extern "C" fn(GgufCtx, i64) -> bool;
     type FnStr = unsafe extern "C" fn(GgufCtx, i64) -> *const c_char;
+    type FnF32 = unsafe extern "C" fn(GgufCtx, i64) -> f32;
+    type FnF64 = unsafe extern "C" fn(GgufCtx, i64) -> f64;
 
     struct Api {
         init: FnInit,
@@ -86,6 +90,8 @@ mod loaded_impl {
         v_i64: FnI64,
         v_bool: FnBool,
         v_str: FnStr,
+        v_f32: FnF32,
+        v_f64: FnF64,
         find_tensor: FnFindTensor,
         tensor_type: FnTensorType,
         tensor_size: FnTensorSize,
@@ -229,6 +235,8 @@ mod loaded_impl {
                 v_i64: sym!(FnI64, b"gguf_get_val_i64\0"),
                 v_bool: sym!(FnBool, b"gguf_get_val_bool\0"),
                 v_str: sym!(FnStr, b"gguf_get_val_str\0"),
+                v_f32: sym!(FnF32, b"gguf_get_val_f32\0"),
+                v_f64: sym!(FnF64, b"gguf_get_val_f64\0"),
                 find_tensor: sym!(FnFindTensor, b"gguf_find_tensor\0"),
                 tensor_type: sym!(FnTensorType, b"gguf_get_tensor_type\0"),
                 tensor_size: sym!(FnTensorSize, b"gguf_get_tensor_size\0"),
@@ -357,6 +365,36 @@ mod loaded_impl {
             }
         }
 
+        fn f64(&self, key: &str) -> Option<f64> {
+            let id = self.find(key)?;
+            // SAFETY: each getter is called only for its own stored type.
+            unsafe {
+                match (self.api.kv_type)(self.ptr, id) {
+                    T_F32 => Some(crate::gguf::f32_decimal((self.api.v_f32)(self.ptr, id))),
+                    T_F64 => Some((self.api.v_f64)(self.ptr, id)),
+                    _ => self.i64(key).map(|v| v as f64),
+                }
+            }
+        }
+
+        fn i64(&self, key: &str) -> Option<i64> {
+            let id = self.find(key)?;
+            // SAFETY: each getter is called only for its own stored type.
+            unsafe {
+                match (self.api.kv_type)(self.ptr, id) {
+                    T_I64 => Some((self.api.v_i64)(self.ptr, id)),
+                    T_I32 => Some((self.api.v_i32)(self.ptr, id) as i64),
+                    T_I16 => Some((self.api.v_i16)(self.ptr, id) as i64),
+                    T_I8 => Some((self.api.v_i8)(self.ptr, id) as i64),
+                    T_U64 => i64::try_from((self.api.v_u64)(self.ptr, id)).ok(),
+                    T_U32 => Some((self.api.v_u32)(self.ptr, id) as i64),
+                    T_U16 => Some((self.api.v_u16)(self.ptr, id) as i64),
+                    T_U8 => Some((self.api.v_u8)(self.ptr, id) as i64),
+                    _ => None,
+                }
+            }
+        }
+
         fn tensor(&self, name: &str) -> Option<(u32, u64)> {
             let c = CString::new(name).ok()?;
             // SAFETY: find_tensor returns -1 for an absent name; the getters are
@@ -402,6 +440,12 @@ mod stub_impl {
             None
         }
         fn boolean(&self, _key: &str) -> Option<bool> {
+            None
+        }
+        fn f64(&self, _key: &str) -> Option<f64> {
+            None
+        }
+        fn i64(&self, _key: &str) -> Option<i64> {
             None
         }
         fn tensor(&self, _name: &str) -> Option<(u32, u64)> {

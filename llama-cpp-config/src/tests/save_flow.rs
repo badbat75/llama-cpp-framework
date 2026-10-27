@@ -6,9 +6,14 @@
 //! Revert path, delete's deliberate clear-selection sequence, the New…
 //! dialog's id de-conflict guard, the rename + clone funnels, the
 //! discard-confirm guard on a dirty form (the wiring in `gui/models_tab.rs`
-//! that no pure-Rust unit test can reach), and the Integrations row-checkbox
+//! that no pure-Rust unit test can reach), the Integrations row-checkbox
 //! contract (in-place toggle from the widget itself, full model rebuild for
-//! everything else).
+//! everything else), and the Hugging Face dialog's network-free wiring (its
+//! refusals, the dismiss rule during a transfer, and a landed download through
+//! `commit_downloaded_preset`), and the Delete dialog's linked files
+//! (`delete_with_files_phase`: the rows, the in-use lock, the ticks the
+//! confirm acts on, the folder cleanup, a failed delete reported) with the
+//! CLI's `preset delete --delete-files` under the same rules.
 //!
 //! Config IO is redirected at a temp dir through `LLAMA_CPP_CONFIG_DATA_ROOT`
 //! (see `paths::data_root`), set here BEFORE the tabs are wired, so the flow
@@ -1294,6 +1299,8 @@ pub(super) fn run(app: &AppWindow) {
         crate::cli::run(Cli {
             command: Command::Preset(PresetCmd::Delete {
                 id: "no-such-preset".into(),
+                delete_files: Vec::new(),
+                even_if_shared: false,
             }),
         })
         .is_err(),
@@ -1328,4 +1335,386 @@ pub(super) fn run(app: &AppWindow) {
         .is_err(),
         "an unknown id must error"
     );
+
+    // ── New preset from Hugging Face: the dialog wiring that needs no network ──
+    // gui/hf_dialog.rs. The search, the listing and the transfer need Hugging
+    // Face and a llama-server, so this drives everything around them (under
+    // cfg(test) the request workers are not even spawned): the modal gate,
+    // the one field that searches or lists, the refusals that must hold before
+    // any request leaves, the search rows handing over to the listing and
+    // Back, the dismiss rule during a transfer, and the landing of a finished
+    // (or cancelled) download through the real funnel
+    // (`commit_downloaded_preset`).
+    // The New dialog's "From Hugging Face" button hides the picker, then opens
+    // this one: mirror both (an earlier phase may have left the picker up).
+    st.set_show_new_kind_picker(false);
+    st.invoke_hf_open();
+    assert!(st.get_show_hf_dialog() && st.get_modal_open(), "the dialog is a modal");
+    assert_eq!(st.get_hf_phase(), 0);
+    assert!(st.get_hf_show_results() && !st.get_hf_has_results(), "an empty results panel first");
+    assert!(st.get_hf_token().is_empty(), "the token field is never prefilled");
+    assert_eq!(st.invoke_hf_input_problem("org/repo:Q4_K_M".into()).as_str(), "");
+    assert_eq!(st.invoke_hf_input_problem("".into()).as_str(), "");
+    assert_eq!(st.invoke_hf_input_problem("qwen3 8b".into()).as_str(), "", "words are a search");
+    assert!(!st.invoke_hf_input_problem("a/b/c".into()).is_empty());
+    assert!(st.invoke_hf_input_is_query("qwen3 8b".into()));
+    assert!(!st.invoke_hf_input_is_query("org/repo".into()), "a spec lists without searching");
+    // A token that cannot be one is refused IN the dialog before any request
+    // (a listing or a search alike), and echoed nowhere.
+    let status_before = st.get_status_text();
+    st.set_hf_token("hf_secret with space".into());
+    for input in ["org/repo", "qwen3 8b"] {
+        st.set_hf_input(input.into());
+        st.set_hf_error("".into());
+        st.invoke_hf_submit();
+        assert_eq!(st.get_hf_phase(), 0, "a refused token starts no request ({input})");
+        assert!(!st.get_hf_error().is_empty(), "the refusal shows in the dialog");
+        for text in [st.get_hf_error(), st.get_hf_note(), st.get_status_text()] {
+            assert!(!text.contains("hf_secret"), "the token leaked into {text:?}");
+        }
+    }
+    assert_eq!(st.get_status_text(), status_before);
+    st.set_hf_token("".into());
+    st.invoke_hf_download();
+    assert_eq!(st.get_hf_phase(), 0, "nothing to download before a listing");
+
+    // Search: words go to the search, one request at a time.
+    st.set_hf_input("qwen3 8b".into());
+    st.invoke_hf_submit();
+    assert_eq!(st.get_hf_phase(), 1, "searching");
+    assert!(st.get_hf_busy() && st.get_hf_error().is_empty());
+    st.invoke_hf_pick_result(0);
+    assert_eq!(st.get_hf_phase(), 1, "no row to pick while searching");
+    let hit = |repo: &str, downloads: u64, quants: &[&str]| crate::hf::SearchHit {
+        repo: repo.into(),
+        downloads,
+        gated: false,
+        private: false,
+        quants: quants.iter().map(|q| q.to_string()).collect(),
+        mmproj: true,
+        drafters: Vec::new(),
+    };
+    crate::gui::land_search_for_tests(
+        app,
+        "qwen3 8b",
+        Ok(vec![
+            hit("Qwen/Qwen3-8B-GGUF", 644_587, &["Q4_K_M", "Q8_0"]),
+            hit("unsloth/Qwen3-8B-GGUF", 131_220, &["Q2_K", "Q4_K_M", "BF16"]),
+        ]),
+    );
+    assert_eq!(st.get_hf_phase(), 2, "searched");
+    assert!(st.get_hf_has_results() && st.get_hf_show_results());
+    assert!(st.get_hf_results_title().contains("\"qwen3 8b\""), "{}", st.get_hf_results_title());
+    let labels: Vec<String> = st.get_hf_result_labels().iter().map(|s| s.to_string()).collect();
+    assert_eq!(labels, ["Qwen/Qwen3-8B-GGUF  ·  644.6k downloads", "unsloth/Qwen3-8B-GGUF  ·  131.2k downloads"]);
+    assert_eq!(st.get_hf_result_details().row_data(1).unwrap().as_str(), "Q2_K, Q4_K_M, BF16  ·  with mmproj");
+    // Picking a row lists that repository: its id in the field, results kept.
+    st.invoke_hf_pick_result(1);
+    assert_eq!(st.get_hf_phase(), 3, "listing the picked repository");
+    assert_eq!(st.get_hf_input().as_str(), "unsloth/Qwen3-8B-GGUF");
+    assert_eq!(st.get_hf_result_index(), 1);
+    assert!(st.get_hf_has_results() && !st.get_hf_show_results(), "Back is offered, the candidates show");
+    // Back drops the listing in flight and restores the query.
+    st.invoke_hf_back_to_results();
+    assert_eq!(st.get_hf_phase(), 2);
+    assert_eq!(st.get_hf_input().as_str(), "qwen3 8b");
+    assert_eq!(st.get_hf_result_labels().row_count(), 2, "the rows survive Back");
+    // A failed listing of a picked row falls back to the results, error shown.
+    st.invoke_hf_pick_result(0);
+    crate::gui::land_listing_for_tests(app, Err(crate::hf::HfError::NotFoundOrPrivate { repo: "Qwen/Qwen3-8B-GGUF".into() }));
+    assert_eq!(st.get_hf_phase(), 2);
+    assert!(st.get_hf_error().contains("Access token field"), "{}", st.get_hf_error());
+    assert_eq!(st.get_hf_result_labels().row_count(), 2);
+    // A listing that lands shows the candidates, the default one picked.
+    st.invoke_hf_pick_result(0);
+    assert!(st.get_hf_error().is_empty(), "a new request clears the old error");
+    let file = |path: &str, size: u64| crate::hf::RepoFile { path: path.into(), size, oid: String::new() };
+    let candidate = |tag: &str| crate::hf::Candidate {
+        tag: tag.into(),
+        shards: vec![file(&format!("Qwen3-8B-{tag}.gguf"), 5 << 30)],
+        size: 5 << 30,
+        mmproj: None,
+        mtp: None,
+        dflash: None,
+        dspark: None,
+    };
+    crate::gui::land_listing_for_tests(
+        app,
+        Ok(crate::hf::Listing {
+            repo: "Qwen/Qwen3-8B-GGUF".into(),
+            commit: "0123456789abcdef0123456789abcdef01234567".into(),
+            project_url: "https://huggingface.co/Qwen/Qwen3-8B-GGUF".into(),
+            candidates: vec![candidate("Q8_0"), candidate("Q4_K_M")],
+            default: 1,
+        }),
+    );
+    assert_eq!(st.get_hf_phase(), 4, "listed");
+    assert_eq!(st.get_hf_candidate_labels().row_count(), 2);
+    assert_eq!(st.get_hf_candidate_index(), 1, "the default quantization starts picked");
+    assert!(st.get_hf_selection_summary().contains("Qwen3-8B-Q4_K_M.gguf"));
+    assert!(st.get_hf_has_results(), "Back is still offered from the listing");
+    // A typed spec lists directly and drops the results; its failure returns
+    // to the empty start.
+    st.set_hf_input("org/repo".into());
+    st.invoke_hf_submit();
+    assert_eq!(st.get_hf_phase(), 3, "a spec skips the search");
+    assert!(!st.get_hf_has_results() && st.get_hf_result_labels().row_count() == 0);
+    crate::gui::land_listing_for_tests(app, Err(crate::hf::HfError::NoGguf { repo: "org/repo".into() }));
+    assert_eq!(st.get_hf_phase(), 0);
+    assert!(st.get_hf_error().contains("no GGUF"), "{}", st.get_hf_error());
+    st.invoke_hf_back_to_results();
+    assert_eq!(st.get_hf_phase(), 0, "no results to go back to");
+
+    // While a transfer runs, Esc / the backdrop / Close are refused, with a
+    // reason; Cancel moves it to Cancelling (there is no child to stop here).
+    st.set_hf_phase(5);
+    st.invoke_hf_dismiss();
+    assert!(st.get_show_hf_dialog(), "a running download must not be dismissed");
+    assert!(!st.get_hf_note().is_empty(), "the refusal says why");
+    st.invoke_hf_submit();
+    st.invoke_hf_pick_result(0);
+    assert_eq!(st.get_hf_phase(), 5, "no request during a transfer");
+    st.invoke_hf_cancel();
+    assert_eq!(st.get_hf_phase(), 6);
+    // A cancelled transfer lands back on the listing, the dialog still open.
+    let models_dir = dir.path().to_path_buf();
+    crate::gui::land_download_for_tests(app, &models_dir, Err(crate::hf::HfError::Cancelled));
+    assert_eq!(st.get_hf_phase(), 4);
+    assert!(st.get_show_hf_dialog());
+    assert!(st.get_hf_error().is_empty() && st.get_hf_note().contains("Resume"));
+    assert!(!st.get_status_is_error(), "a cancel is not an error");
+    // A failure shows in the dialog AND in the footer.
+    st.set_hf_phase(5);
+    crate::gui::land_download_for_tests(
+        app,
+        &models_dir,
+        Err(crate::hf::HfError::DiskFull("no space left".into())),
+    );
+    assert!(st.get_hf_error().contains("no space left") && st.get_status_is_error());
+    // A finished one closes the dialog and creates, selects and lists the preset.
+    let model = models_dir.join("models").join("Hf-GGUF").join("hfmodel-Q4_K_M.gguf");
+    std::fs::create_dir_all(model.parent().unwrap()).expect("repo folder");
+    std::fs::write(&model, b"").expect("model file");
+    st.set_hf_phase(5);
+    crate::gui::land_download_for_tests(
+        app,
+        &models_dir,
+        Ok(crate::hf::Downloaded {
+            repo: "org/Hf-GGUF".into(),
+            project_url: "https://huggingface.co/org/Hf-GGUF".into(),
+            model: model.clone(),
+            mmproj: None,
+            draft: None,
+        }),
+    );
+    assert!(!st.get_show_hf_dialog() && !st.get_modal_open(), "success closes the dialog");
+    assert_eq!(st.get_hf_phase(), 0);
+    assert!(!st.get_status_is_error(), "{}", st.get_status_text());
+    assert!(st.get_status_text().contains("[hfmodel-Q4_K_M]"), "{}", st.get_status_text());
+    assert_eq!(st.get_form().id.as_str(), "hfmodel-Q4_K_M", "the new preset is selected");
+    assert_eq!(st.get_form().model.as_str(), model.to_string_lossy());
+    let ini = std::fs::read_to_string(crate::paths::presets_ini()).expect("presets.ini");
+    assert!(
+        ini.contains("[hfmodel-Q4_K_M]") && ini.contains("https://huggingface.co/org/Hf-GGUF"),
+        "the derived preset is saved with its project URL:\n{ini}"
+    );
+    assert!(
+        st.get_model_labels().iter().any(|l| l.contains("hfmodel-Q4_K_M")),
+        "the pickers were rescanned and list the new file"
+    );
+    // Closing normally works again once nothing runs.
+    st.invoke_hf_open();
+    st.invoke_hf_dismiss();
+    assert!(!st.get_show_hf_dialog());
+
+    delete_with_files_phase(app, &models_dir, &model);
+}
+
+/// Deleting a preset together with the model files it links (gui/models_tab.rs
+/// `DeleteDialog` over src/linked_files.rs), then the CLI's `--delete-files`:
+/// the rows list what is on disk, every tick starts cleared, a file another
+/// preset uses (in either INI file) cannot be ticked, the confirm removes the
+/// section and then the ticked files and their emptied repo folders, the
+/// pickers are rescanned, and a file that fails to delete is reported without
+/// blocking the preset's deletion.
+fn delete_with_files_phase(app: &AppWindow, models_dir: &std::path::Path, hf_model: &std::path::Path) {
+    use crate::presets::Preset;
+    let st = app.global::<AppState>();
+    let mut cfg = crate::server_cfg::load();
+    cfg.models_dir = Some(models_dir.to_string_lossy().into_owned());
+    crate::server_cfg::save(&cfg).expect("save server.ini");
+    let path = |p: &std::path::Path| p.to_string_lossy().into_owned();
+    let touch = |p: &std::path::Path, n: usize| {
+        std::fs::create_dir_all(p.parent().unwrap()).expect("folder");
+        std::fs::write(p, vec![0u8; n]).expect("file");
+    };
+    let repo = |sub: &str, name: &str| models_dir.join(sub).join("org").join(name);
+    let shard1 = repo("models", "Split-GGUF").join("split-00001-of-00002.gguf");
+    let shard2 = repo("models", "Split-GGUF").join("split-00002-of-00002.gguf");
+    let mmproj = repo("mmprojs", "Split-GGUF").join("mmproj-F16.gguf");
+    let drafter = repo("mtps", "Split-GGUF").join("split-mtp.gguf");
+    for (f, n) in [(&shard1, 3), (&shard2, 4), (&mmproj, 2), (&drafter, 1)] {
+        touch(f, n);
+    }
+    crate::presets::save(&Preset {
+        id: "split".into(),
+        model: path(&shard1),
+        mmproj: path(&mmproj),
+        model_draft: path(&drafter),
+        spec_type: "draft-mtp".into(),
+        ..Preset::default()
+    })
+    .expect("save split");
+    // Shares the mmproj, and is switched OFF: the in-use check reads both files.
+    crate::presets::save(&Preset {
+        id: "sharer".into(),
+        model: path(hf_model),
+        mmproj: path(&mmproj),
+        ..Preset::default()
+    })
+    .expect("save sharer");
+    crate::presets::set_enabled("sharer", false).expect("park sharer");
+    st.invoke_reload_all();
+    let select = |id: &str| {
+        let row = st
+            .get_presets()
+            .iter()
+            .find(|p| p.id.as_str() == id)
+            .unwrap_or_else(|| panic!("{id} is not listed"));
+        st.invoke_select_preset(row.orig_index);
+        assert_eq!(st.get_form().id.as_str(), id);
+    };
+    select("split");
+    assert!(
+        st.get_model_labels().iter().any(|l| l.contains("split-00001")),
+        "the split model is in the picker before the delete"
+    );
+
+    // Opening lists the three files, none ticked, the shared mmproj locked.
+    st.invoke_request_delete();
+    assert!(st.get_show_delete_dialog() && st.get_modal_open(), "the dialog is a modal");
+    assert_eq!(st.get_delete_target_id().as_str(), "split");
+    assert_eq!(st.get_delete_target_file().as_str(), "presets.ini");
+    let rows = || st.get_delete_file_rows().iter().collect::<Vec<_>>();
+    let r = rows();
+    assert_eq!(r.len(), 3, "model, mmproj, drafter");
+    assert_eq!(r[0].label.as_str(), "Model: split-00001-of-00002.gguf (2 shards)");
+    assert!(r.iter().all(|r| !r.checked), "keeping the files is the default");
+    assert!(!r[0].in_use && r[1].in_use && !r[2].in_use);
+    assert!(r[1].detail.contains("in use by [sharer]"), "{}", r[1].detail);
+    assert_eq!(st.get_delete_files_ticked(), 0);
+    assert!(st.get_delete_files_summary().starts_with("Only the preset"));
+    // Cancel drops the ticks: a reopen starts cleared again.
+    st.invoke_delete_file_toggle(0);
+    assert_eq!(st.get_delete_files_ticked(), 1);
+    st.invoke_delete_cancel();
+    assert!(!st.get_show_delete_dialog());
+    st.invoke_request_delete();
+    assert_eq!(st.get_delete_files_ticked(), 0, "ticks never outlive their dialog");
+    // The shared mmproj cannot be ticked; the model and the drafter can, the
+    // drafter through the row's own box (the .slint wiring).
+    st.invoke_delete_file_toggle(1);
+    assert!(!rows()[1].checked, "an in-use file cannot be ticked");
+    st.invoke_delete_file_toggle(0);
+    ElementHandle::find_by_accessible_label(app, "delete-file-2")
+        .next()
+        .expect("the drafter row's box")
+        .invoke_accessible_default_action();
+    let r = rows();
+    assert!(r[0].checked && !r[1].checked && r[2].checked);
+    assert_eq!(st.get_delete_files_ticked(), 2);
+    let summary = st.get_delete_files_summary();
+    assert!(
+        summary.contains("split-00001-of-00002.gguf (2 shards)") && summary.contains("split-mtp.gguf"),
+        "the summary names what goes: {summary}"
+    );
+
+    // Confirm: the section, then the files, then the emptied repo folders.
+    st.invoke_delete_preset("split".into());
+    assert!(!st.get_show_delete_dialog());
+    assert!(!st.get_status_is_error(), "{}", st.get_status_text());
+    let status = st.get_status_text();
+    assert!(
+        status.starts_with("Deleted [split]; removed 3 files") && status.contains("empty folders removed"),
+        "{status}"
+    );
+    assert!(crate::presets::load_listed().iter().all(|l| l.preset.id != "split"));
+    assert!(!shard1.exists() && !shard2.exists() && !drafter.exists());
+    assert!(mmproj.exists(), "the shared mmproj stays");
+    assert!(!repo("models", "Split-GGUF").exists() && !repo("mtps", "Split-GGUF").exists());
+    assert!(repo("mmprojs", "Split-GGUF").is_dir(), "a folder with content stays");
+    assert!(
+        models_dir.join("models").is_dir() && models_dir.join("mtps").is_dir(),
+        "the subfolders themselves stay"
+    );
+    assert!(
+        st.get_model_labels().iter().all(|l| !l.contains("split-00001")),
+        "the pickers were rescanned"
+    );
+    assert_eq!(st.get_selected_preset_index(), -1, "delete still clears the selection");
+
+    // A file that fails to delete (a folder now stands at its path) is
+    // reported, and the preset is deleted anyway. `sharer` is parked, and its
+    // model is in use by the Hugging Face preset, its mmproj no longer.
+    select("sharer");
+    st.invoke_request_delete();
+    assert_eq!(st.get_delete_target_file().as_str(), "presets.ini.disabled");
+    let r = rows();
+    assert_eq!(r.len(), 2);
+    assert!(r[0].in_use && r[0].detail.contains("[hfmodel-Q4_K_M]"), "{}", r[0].detail);
+    assert!(!r[1].in_use, "nobody else uses the mmproj now");
+    st.invoke_delete_file_toggle(1);
+    std::fs::remove_file(&mmproj).expect("remove the mmproj");
+    std::fs::create_dir(&mmproj).expect("a folder in its place");
+    st.invoke_delete_preset("sharer".into());
+    assert!(
+        st.get_status_is_error() && st.get_status_text().contains("could not delete"),
+        "{}",
+        st.get_status_text()
+    );
+    assert!(st.get_status_text().starts_with("Deleted [sharer]"));
+    assert!(crate::presets::load_listed().iter().all(|l| l.preset.id != "sharer"));
+    assert!(hf_model.exists(), "the in-use model was never offered");
+    assert!(mmproj.is_dir(), "the folder that refused is still there");
+    std::fs::remove_dir(&mmproj).expect("tidy up");
+
+    // ── CLI: `preset delete --delete-files`, the same rules ───────────────
+    use crate::cli::{Cli, Command, FileKind, PresetCmd};
+    let delete = |id: &str, which: &[FileKind], even_if_shared: bool| {
+        crate::cli::run(Cli {
+            command: Command::Preset(PresetCmd::Delete {
+                id: id.into(),
+                delete_files: which.to_vec(),
+                even_if_shared,
+            }),
+        })
+    };
+    let cli_model = repo("models", "Cli-GGUF").join("cli.gguf");
+    let cli_draft = repo("mtps", "Cli-GGUF").join("cli-mtp.gguf");
+    touch(&cli_model, 2);
+    touch(&cli_draft, 1);
+    crate::presets::save(&Preset {
+        id: "cli-del".into(),
+        model: path(&cli_model),
+        model_draft: path(&cli_draft),
+        ..Preset::default()
+    })
+    .expect("save cli-del");
+    crate::presets::save(&Preset {
+        id: "cli-other".into(),
+        model: path(hf_model),
+        model_draft: path(&cli_draft),
+        ..Preset::default()
+    })
+    .expect("save cli-other");
+    let listed = |id: &str| crate::presets::load_listed().iter().any(|l| l.preset.id == id);
+    let err = delete("cli-del", &[FileKind::All], false).expect_err("a shared drafter is refused");
+    assert!(err.to_string().contains("[cli-other]"), "{err}");
+    assert!(listed("cli-del") && cli_model.exists() && cli_draft.exists(), "a refusal changes nothing");
+    delete("cli-del", &[FileKind::All], true).expect("forced");
+    assert!(!listed("cli-del") && !cli_model.exists() && !cli_draft.exists());
+    assert!(!repo("models", "Cli-GGUF").exists() && !repo("mtps", "Cli-GGUF").exists());
+    // Without the flag, every file stays.
+    delete("cli-other", &[], false).expect("plain delete");
+    assert!(!listed("cli-other") && hf_model.exists());
 }

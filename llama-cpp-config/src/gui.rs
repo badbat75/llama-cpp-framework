@@ -37,7 +37,10 @@
 //!
 //! Tab-specific helpers live next to their only callers in `gui/`: the New / Clone
 //! dialog funnel (`populate_dialog_models` … `commit_new_preset`) and the
-//! Model-info box (`update_model_info`) are in `gui/models_tab.rs`.
+//! Model-info box (`update_model_info`) are in `gui/models_tab.rs`; the New
+//! dialog's Hugging Face source (search, list, download, create) is
+//! `gui/hf_dialog.rs`, its search results, listing and transfer handle in
+//! `State.hf`.
 //!
 //! ## Dirty tracking
 //! Save/Revert enable off `*_dirty` in state.slint, each computed as
@@ -78,6 +81,7 @@ slint::include_modules!();
 // Per-tab callback wiring: one file each under `gui/`. Each `wire()` reaches the
 // shared helpers, the `State` cache, and the generated Slint types via `use super::*`.
 mod bench_tab;
+mod hf_dialog;
 #[cfg(any(target_os = "linux", windows))]
 mod hw_window;
 mod integrations_tab;
@@ -120,6 +124,12 @@ struct State {
     // The run in flight, so Cancel can reach it. Only the cancel flag inside it
     // crosses to the worker thread.
     bench_handle: Option<crate::bench::exec::Handle>,
+    // The Hugging Face dialog's search results, listing, request generation
+    // and the transfer in flight (gui/hf_dialog.rs).
+    hf: hf_dialog::Session,
+    // The Delete dialog's preset, the files it links and their ticks
+    // (gui/models_tab.rs); the Slint rows are a projection of it.
+    delete_dialog: models_tab::DeleteDialog,
 }
 
 /// TEST-ONLY seam for the e2e flow test (src/tests/save_flow.rs): build the
@@ -138,6 +148,7 @@ pub(crate) fn wire_tabs_for_tests(app: &AppWindow) {
     reload_presets(app, &state, None);
     server_tab::wire_tables(app);
     models_tab::wire(app, &state);
+    hf_dialog::wire(app, &state);
     integrations_tab::wire(app);
     // No tray here: the only thing it gates is the automatic llama-server stop
     // before a synthetic run, and the test never starts one.
@@ -160,6 +171,9 @@ pub(crate) fn wire_tabs_for_tests(app: &AppWindow) {
     }
     wire_discard_confirm(app, &state);
 }
+
+#[cfg(test)]
+pub(crate) use hf_dialog::{land_download_for_tests, land_listing_for_tests, land_search_for_tests};
 
 /// E2E phase for the remembered window sizes, for the shared UI test to call:
 /// a size recorded on close comes back in a window built afterwards, and a
@@ -321,6 +335,7 @@ pub fn run(start_minimized: bool) -> anyhow::Result<()> {
 
     server_tab::wire(&app, &tray, &state);
     models_tab::wire(&app, &state);
+    hf_dialog::wire(&app, &state);
     bench_tab::wire(&app, &state, Some(tray.as_weak()));
     integrations_tab::wire(&app);
     settings_tab::wire(&app);

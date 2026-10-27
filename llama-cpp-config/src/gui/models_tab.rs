@@ -1,16 +1,24 @@
-//! Models-tab callback wiring (the preset editor + New / Clone / Rename dialogs).
+//! Models-tab callback wiring (the preset editor + New / Clone / Rename / Delete dialogs).
 //!
 //! Shared state, generated Slint types, and the `refresh_*` / `reload_presets` /
 //! `apply_form` helpers live in the parent `gui` module; `use super::*` pulls
 //! them in. The Models-tab-only helper families live HERE next to their callers
 //! instead of in the shared hub:
 //! - `update_model_info`: the GGUF "Model info" box;
-//! - the New / Clone dialog funnel (`populate_dialog_models` … `commit_new_preset`);
+//! - the New / Clone dialog funnel (`populate_dialog_models` … `commit_new_preset`,
+//!   and `commit_downloaded_preset`, the same end for the Hugging Face source
+//!   that `gui/hf_dialog.rs` drives);
 //! - the discard-guarded navigation bodies (`do_select_preset`,
 //!   `open_new_dialog`, `open_clone_dialog`, and the Rename seed behind
 //!   `request_rename`): the actions `confirm_discard_then` parks;
 //! - `preset_written`: the reload + reselect + re-baseline invariant every
 //!   write path (save / rename / clone / New…) funnels through;
+//! - the Delete dialog (`DeleteDialog`, `open_delete_dialog`,
+//!   `delete_ticked_files`): the preset's linked model files, each with a
+//!   tick that starts cleared and cannot be set on a file another preset
+//!   uses; the confirm removes the section FIRST, then the ticked files
+//!   (in-use re-checked against the presets as they stand then) and the
+//!   folders they leave empty, through `linked_files.rs`;
 //! - `apply_draft_pick`: the merged MTP/DFlash draft-pick policy (incl. the
 //!   gemma4 auto-pin), unit-tested below.
 
@@ -145,28 +153,67 @@ pub(super) fn wire(app: &AppWindow, state: &Rc<RefCell<State>>) {
     {
         let app_weak = app.as_weak();
         let state = state.clone();
+        app.global::<AppState>().on_request_delete(move || {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            open_delete_dialog(&app, &state);
+        });
+    }
+    {
+        let app_weak = app.as_weak();
+        let state = state.clone();
+        app.global::<AppState>().on_delete_file_toggle(move |i| {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            state.borrow_mut().delete_dialog.toggle(i);
+            push_delete_rows(&app, &state.borrow().delete_dialog);
+        });
+    }
+    {
+        let app_weak = app.as_weak();
+        let state = state.clone();
+        app.global::<AppState>().on_delete_cancel(move || {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            state.borrow_mut().delete_dialog = DeleteDialog::default();
+            app.global::<AppState>().set_show_delete_dialog(false);
+        });
+    }
+    {
+        let app_weak = app.as_weak();
+        let state = state.clone();
         app.global::<AppState>().on_delete_preset(move |id| {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
+            app.global::<AppState>().set_show_delete_dialog(false);
+            // Taken whatever happens next: ticks never outlive their dialog.
+            let dialog = std::mem::take(&mut state.borrow_mut().delete_dialog);
             if id.is_empty() {
                 return;
             }
-            match presets::delete(id.as_str()) {
-                Ok(()) => {
-                    set_status(&app, format!("Deleted [{id}]"), false);
-                    // Not preset_written(): after a delete we clear the selection
-                    // and show an empty editor, so the file/integration refreshes
-                    // must run AFTER the form is blanked, not against the neighbour
-                    // reload_presets would otherwise select.
-                    reload_presets(&app, &state, None);
-                    app.global::<AppState>().set_selected_preset_index(-1);
-                    apply_form(&app, PresetForm::default());
-                    refresh_file_options(&app, &state);
-                    presets_moved(&app, &state);
-                }
-                Err(e) => set_status(&app, format!("Delete failed: {e}"), true),
+            // The section first: a preset that cannot be removed keeps its
+            // files too (they would be the files it still loads).
+            if let Err(e) = presets::delete(id.as_str()) {
+                set_status(&app, format!("Delete failed: {e}"), true);
+                return;
             }
+            let outcome = delete_ticked_files(&dialog, id.as_str());
+            let (text, is_error) = crate::linked_files::report(id.as_str(), &outcome);
+            set_status(&app, text, is_error);
+            // Not preset_written(): after a delete we clear the selection
+            // and show an empty editor, so the file/integration refreshes
+            // must run AFTER the form is blanked, not against the neighbour
+            // reload_presets would otherwise select. refresh_file_options is
+            // also the rescan that drops deleted files from the pickers.
+            reload_presets(&app, &state, None);
+            app.global::<AppState>().set_selected_preset_index(-1);
+            apply_form(&app, PresetForm::default());
+            refresh_file_options(&app, &state);
+            presets_moved(&app, &state);
         });
     }
 
@@ -828,6 +875,116 @@ fn presets_moved(app: &AppWindow, state: &Rc<RefCell<State>>) {
     bench_tab::refresh(app, state);
 }
 
+// ── Delete dialog: the preset, and the files it links ─────────────────
+
+/// The Delete dialog's Rust half (`State.delete_dialog`): the preset it is
+/// about, the files it links (`linked_files::linked_files`, in-use check
+/// included) and one tick per file, all cleared at open. The Slint rows are
+/// rebuilt from this on every change (`push_delete_rows`).
+#[derive(Default)]
+pub(super) struct DeleteDialog {
+    id: String,
+    files: Vec<crate::linked_files::LinkedFile>,
+    ticked: Vec<bool>,
+}
+
+impl DeleteDialog {
+    /// Flip one tick; a file in use (or an index out of range) stays as it is.
+    fn toggle(&mut self, i: i32) {
+        let Ok(i) = usize::try_from(i) else {
+            return;
+        };
+        if let (Some(f), Some(t)) = (self.files.get(i), self.ticked.get_mut(i)) {
+            if !f.in_use() {
+                *t = !*t;
+            }
+        }
+    }
+
+    fn ticked_count(&self) -> usize {
+        self.files
+            .iter()
+            .zip(&self.ticked)
+            .filter(|(f, t)| **t && !f.in_use())
+            .count()
+    }
+}
+
+/// Open the Delete dialog on the selected preset: look it up in both INI files,
+/// list the files it links that are on disk, every tick cleared.
+fn open_delete_dialog(app: &AppWindow, state: &Rc<RefCell<State>>) {
+    let s = app.global::<AppState>();
+    let id = s.get_form().id.to_string();
+    if id.is_empty() {
+        return;
+    }
+    let listed = presets::load_listed();
+    let Some(target) = listed.iter().find(|l| l.preset.id.eq_ignore_ascii_case(&id)) else {
+        set_status(app, format!("No preset [{id}] on disk to delete."), true);
+        return;
+    };
+    let all: Vec<presets::Preset> = listed.iter().map(|l| l.preset.clone()).collect();
+    let files = crate::linked_files::linked_files(&target.preset, &all);
+    let dialog = DeleteDialog {
+        id: target.preset.id.clone(),
+        ticked: vec![false; files.len()],
+        files,
+    };
+    s.set_delete_target_id(dialog.id.as_str().into());
+    s.set_delete_target_file(if target.enabled { "presets.ini" } else { "presets.ini.disabled" }.into());
+    push_delete_rows(app, &dialog);
+    state.borrow_mut().delete_dialog = dialog;
+    s.set_show_delete_dialog(true);
+}
+
+/// Project the dialog's Rust half onto its rows, its count and its summary.
+fn push_delete_rows(app: &AppWindow, dialog: &DeleteDialog) {
+    let s = app.global::<AppState>();
+    let rows: Vec<DeleteFileRow> = dialog
+        .files
+        .iter()
+        .zip(&dialog.ticked)
+        .map(|(f, &t)| DeleteFileRow {
+            label: f.row_label().into(),
+            detail: f.row_detail().into(),
+            checked: t && !f.in_use(),
+            in_use: f.in_use(),
+        })
+        .collect();
+    s.set_delete_file_rows(model(rows));
+    s.set_delete_files_ticked(dialog.ticked_count() as i32);
+    s.set_delete_files_summary(
+        crate::linked_files::selection_summary(&dialog.files, &dialog.ticked).into(),
+    );
+}
+
+/// After the section is gone: delete the files ticked in `dialog`, when it was
+/// opened on `id`. The in-use check is run AGAIN against the presets as they
+/// stand now, so a file that became shared since the dialog opened (by a hand
+/// edit or the CLI) is kept, not deleted. The empty-folder cleanup is bounded
+/// by the SAVED ModelsDir, the one the pickers scan.
+fn delete_ticked_files(dialog: &DeleteDialog, id: &str) -> crate::linked_files::Outcome {
+    if !dialog.id.eq_ignore_ascii_case(id) {
+        return Default::default();
+    }
+    let all: Vec<presets::Preset> = presets::load_listed().into_iter().map(|l| l.preset).collect();
+    let chosen: Vec<crate::linked_files::LinkedFile> = dialog
+        .files
+        .iter()
+        .zip(&dialog.ticked)
+        .filter(|(_, t)| **t)
+        .map(|(f, _)| crate::linked_files::LinkedFile {
+            used_by: crate::linked_files::users(&f.files, id, &all),
+            ..f.clone()
+        })
+        .collect();
+    if chosen.is_empty() {
+        return Default::default();
+    }
+    let models_dir = server_cfg::load().models_dir_or_default();
+    crate::linked_files::delete(&chosen, &models_dir, false)
+}
+
 // ── Model-info box (GGUF reads) ───────────────────────────────────────
 
 /// Fill the read-only "Model info" box from the selected model's GGUF header
@@ -1059,22 +1216,16 @@ fn picked_dialog_model_path(app: &AppWindow, state: &Rc<RefCell<State>>) -> Opti
 /// so picking a model that already has a preset (or a different file that
 /// sanitizes to the same id) would otherwise make `presets::save`
 /// wholesale-replace the tuned section. Both New and Clone must route through
-/// this: first free `<id>`, `<id>-2`, ….
+/// this: first free `<id>`, `<id>-2`, …, compared ignoring case, with the
+/// `preset` fallback for a name that sanitizes to nothing (an empty id would
+/// also be undeletable: on_delete_preset early-returns on one). The rule
+/// itself is `presets::new_preset_id`, shared with the Hugging Face download.
 fn deconflicted_id(path_str: &str) -> String {
-    let mut base_id = presets::make_id(path_str);
-    if base_id.is_empty() {
-        // make_id keeps only [A-Za-z0-9.\-_]; a model file named entirely in a
-        // non-ASCII script (CJK, Cyrillic, …) sanitizes to "" → unique_id("")
-        // stays "" → a `[]` section save() would then reject (and the GUI
-        // couldn't delete, on_delete_preset early-returns on an empty id).
-        // Fall back to a usable stem before de-conflicting.
-        base_id = "preset".to_string();
-    }
     let existing: Vec<String> = presets::load_listed()
         .into_iter()
         .map(|l| l.preset.id)
         .collect();
-    presets::unique_id(&base_id, &existing)
+    presets::new_preset_id(path_str, &existing)
 }
 
 fn run_new_empty(app: &AppWindow, state: &Rc<RefCell<State>>, path: PathBuf) {
@@ -1162,7 +1313,35 @@ fn commit_new_preset(
     p: presets::Preset,
     success_status: String,
 ) {
-    match presets::save(&p) {
+    let saved = presets::save(&p);
+    finish_new_preset(app, state, &p, saved, success_status);
+}
+
+/// `commit_new_preset` for a preset made from a Hugging Face download
+/// (gui/hf_dialog.rs): saved through `hf::save_preset`, which first pins an
+/// unset ModelsDir to the one the files went under (`presets::save` would
+/// guess it from the per-repo folder and get it wrong), then the same tail.
+pub(super) fn commit_downloaded_preset(
+    app: &AppWindow,
+    state: &Rc<RefCell<State>>,
+    p: presets::Preset,
+    models_dir: &std::path::Path,
+    success_status: String,
+) {
+    let saved = crate::hf::save_preset(&p, models_dir);
+    finish_new_preset(app, state, &p, saved, success_status);
+}
+
+/// The shared end of every new preset: the status, then `preset_written`
+/// (reload + select the new id + rescan the pickers + the integrations).
+fn finish_new_preset(
+    app: &AppWindow,
+    state: &Rc<RefCell<State>>,
+    p: &presets::Preset,
+    saved: std::io::Result<()>,
+    success_status: String,
+) {
+    match saved {
         Ok(()) => {
             // Status first, like the other write paths, so a failed opencode.json
             // follow-up inside preset_written is not papered over by the success.
@@ -1242,5 +1421,33 @@ mod tests {
         assert_eq!(f.spec_type, "");
         assert!(f.n_gpu_layers_draft_auto, "(none) must not flip auto off");
         assert_eq!(f.device_draft, "");
+    }
+
+    #[test]
+    fn delete_dialog_ticks_only_files_nobody_else_uses() {
+        let lf = |name: &str, used: &[&str]| crate::linked_files::LinkedFile {
+            role: crate::linked_files::Role::Model,
+            path: name.into(),
+            files: vec![name.into()],
+            size: 1,
+            used_by: used.iter().map(|u| u.to_string()).collect(),
+        };
+        let mut d = DeleteDialog {
+            id: "p".into(),
+            files: vec![lf("a.gguf", &[]), lf("b.gguf", &["other"])],
+            ticked: vec![false, false],
+        };
+        d.toggle(1);
+        assert_eq!(d.ticked, [false, false], "an in-use file cannot be ticked");
+        d.toggle(0);
+        d.toggle(5);
+        d.toggle(-1);
+        assert_eq!(d.ticked, [true, false]);
+        assert_eq!(d.ticked_count(), 1);
+        d.toggle(0);
+        assert_eq!(d.ticked_count(), 0, "a second click unticks");
+        // A dialog opened on another preset deletes nothing.
+        d.toggle(0);
+        assert_eq!(delete_ticked_files(&d, "someone-else"), Default::default());
     }
 }
