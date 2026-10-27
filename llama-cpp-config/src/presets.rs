@@ -76,6 +76,14 @@ use crate::server_cfg;
 pub struct Preset {
     pub id: String,
     pub model: String,
+    /// The model's project page (e.g. its Hugging Face repository), for the
+    /// Models tab's Open button. Empty = no line. It is stored as a COMMENT
+    /// (`; url = <value>`, `PROJECT_URL_MARKER`), never as a key: llama-server
+    /// has no such option and refuses to start on a preset holding an unknown
+    /// key (`common_preset_context::load`). Being a comment, the value is taken
+    /// verbatim to the end of the line, so a `#` fragment survives; it rides the
+    /// section's raw text through enable/disable and rename like any comment.
+    pub project_url: String,
     pub mmproj: String,
     /// GPU-offload the multimodal projector, the mmproj/CLIP image encoder
     /// (--mmproj-offload / --no-mmproj-offload). None/true = llama.cpp's default
@@ -632,6 +640,7 @@ impl Default for Preset {
         Self {
             id: String::new(),
             model: String::new(),
+            project_url: String::new(),
             mmproj: String::new(),
             mmproj_offload: Some(true),
             mmproj_device: String::new(),
@@ -724,6 +733,8 @@ impl Preset {
         Self {
             id: id.to_string(),
             model: get("model"),
+            // A comment, not a key: `from_section` fills it.
+            project_url: String::new(),
             mmproj: get("mmproj"),
             mmproj_offload: getb("mmproj-offload"),
             mmproj_device: get("mmproj-device"),
@@ -827,6 +838,31 @@ impl Preset {
             prefill_assistant: getb("prefill-assistant"),
         }
     }
+
+    /// A preset as a section of the file holds it: the keys plus the
+    /// comment-borne `project_url`.
+    fn from_section(s: &ini::Section) -> Self {
+        Self {
+            project_url: project_url_of(&s.comments),
+            ..Self::from_keys(&s.id, &s.keys)
+        }
+    }
+}
+
+/// The comment line that carries `Preset::project_url`, up to the value.
+const PROJECT_URL_MARKER: &str = "; url = ";
+
+/// The value of the first `url` comment among a section's comments, or empty.
+/// Read leniently (`;` or `#`, any spacing around `=`), so a hand-written line
+/// counts; `url` must be the whole word, so `; urls ...` is prose.
+fn project_url_of(comments: &[String]) -> String {
+    comments
+        .iter()
+        .find_map(|c| {
+            let rest = c.strip_prefix([';', '#'])?.trim_start().strip_prefix("url")?;
+            Some(rest.trim_start().strip_prefix('=')?.trim().to_string())
+        })
+        .unwrap_or_default()
 }
 
 // ── Dead speculative keys (prune at the write boundary) ──────────────────
@@ -1020,7 +1056,7 @@ pub fn load_all() -> Vec<Preset> {
 fn read_presets(path: &Path) -> Vec<Preset> {
     ini::read_all(path)
         .into_iter()
-        .map(|s| Preset::from_keys(&s.id, &s.keys))
+        .map(|s| Preset::from_section(&s))
         .collect()
 }
 
@@ -1199,6 +1235,14 @@ fn validate_for_save(preset: &Preset) -> io::Result<()> {
     ] {
         ini::reject_comment_markers(field, value)?;
     }
+    // A comment line, so `;`/`#` are fine; a line break would end it and spill
+    // the rest into the section as a key llama-server refuses.
+    if preset.project_url.contains(['\r', '\n']) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "project URL must be a single line",
+        ));
+    }
     validate_fit_target(&preset.fit_target)
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
     crate::tensor_override::validate(&preset.override_tensor)
@@ -1363,6 +1407,10 @@ pub fn render_section(p: &Preset) -> String {
     out.push_str("; Saving this preset in llama-cpp-config rewrites this whole section;\r\n");
     out.push_str("; hand-edits to OTHER sections in this file are preserved.\r\n\r\n");
 
+    if !p.project_url.trim().is_empty() {
+        out.push_str("; The model's project page: a comment, llama-server has no such key.\r\n");
+        out.push_str(&format!("{PROJECT_URL_MARKER}{}\r\n", p.project_url.trim()));
+    }
     out.push_str("; Model: local path (-m).\r\n");
     out.push_str(&format!("model = {}\r\n", p.model.trim()));
     out.push_str("\r\n; Sub-model paths\r\n");
@@ -2180,6 +2228,9 @@ mod tests {
         let original = Preset {
             id: "full".into(),
             model: r"E:\m\model.gguf".into(),
+            // A `#` fragment and a `;`: a key's value would lose both to the
+            // inline-comment rule, a comment line keeps them.
+            project_url: "https://huggingface.co/org/repo?a=1;b=2#files".into(),
             mmproj: r"E:\mmprojs\clip.gguf".into(),
             mmproj_offload: Some(false),
             mmproj_device: "ROCm1".into(),
@@ -2286,8 +2337,38 @@ mod tests {
 
         let sections = ini::read_all(&path);
         assert_eq!(sections.len(), 1, "one section written");
-        let parsed = Preset::from_keys(&sections[0].id, &sections[0].keys);
+        let parsed = Preset::from_section(&sections[0]);
         assert_eq!(parsed, original);
+        assert!(
+            !sections[0].keys.keys().any(|k| k.contains("url")),
+            "the project URL must never become a key llama-server would refuse"
+        );
+    }
+
+    #[test]
+    fn project_url_is_read_from_its_comment_only() {
+        let c = |lines: &[&str]| -> Vec<String> { lines.iter().map(|s| s.to_string()).collect() };
+        assert_eq!(project_url_of(&c(&["; url = https://a.b/c"])), "https://a.b/c");
+        assert_eq!(project_url_of(&c(&["#url=https://a.b/c#x"])), "https://a.b/c#x");
+        assert_eq!(project_url_of(&c(&["; urls are listed below", "; Model: x"])), "");
+        assert_eq!(project_url_of(&c(&["; url-ish = no"])), "");
+        assert_eq!(project_url_of(&c(&["; url = first", "; url = second"])), "first");
+        assert_eq!(project_url_of(&[]), "");
+    }
+
+    #[test]
+    fn empty_project_url_writes_no_line_and_a_multiline_one_is_refused() {
+        let p = Preset {
+            id: "u".into(),
+            model: r"E:\m\model.gguf".into(),
+            ..Default::default()
+        };
+        assert!(!render_section(&p).contains(PROJECT_URL_MARKER));
+        let bad = Preset {
+            project_url: "https://a.b\nctx-size = 1".into(),
+            ..p
+        };
+        assert!(validate_for_save(&bad).is_err());
     }
 
     // The key name is pinned here (the round-trip above proves it parses back).
@@ -2483,6 +2564,7 @@ mod tests {
         let p = Preset {
             id: "pad".into(),
             model: "  E:\\m\\model.gguf ".into(),
+            project_url: " https://x.y/z  ".into(),
             device: " CUDA0  ".into(),
             ..Default::default()
         };
@@ -2491,9 +2573,10 @@ mod tests {
         fs::write(&path, render_section(&p)).unwrap();
 
         let sections = ini::read_all(&path);
-        let parsed = Preset::from_keys(&sections[0].id, &sections[0].keys);
+        let parsed = Preset::from_section(&sections[0]);
         assert_eq!(parsed.model, "E:\\m\\model.gguf");
         assert_eq!(parsed.device, "CUDA0");
+        assert_eq!(parsed.project_url, "https://x.y/z");
     }
 
     /// The two files of the on/off switch, in a temp dir: `(dir, enabled, parked)`.

@@ -17,6 +17,9 @@ export struct PresetSummary {
 export struct PresetForm {
     id: string,
     model: string,
+    // The model's project page, "" = none: a `; url =` comment in the INI, the
+    // Assets card's Open button opens it.
+    project_url: string,
     mmproj: string,
     // --mmproj-offload: run the image encoder on GPU (llama.cpp's default) or
     // keep it on CPU. Plain bool (CheckBox, two-way <=>), same shape as jinja.

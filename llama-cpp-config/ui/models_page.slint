@@ -158,6 +158,24 @@ export component ModelsPage inherits HorizontalLayout {
                 }
                 LabeledField {
                     label_width <=> LabelColumn.models;
+                    label: "Project URL";
+                    hint: "The model's project page, e.g. its Hugging Face repository.\nSaved as a `; url =` comment in the preset's section: llama-server has no such option and would refuse a key it does not know.\nOpen shows it in the browser.";
+                    LineEdit {
+                        text <=> AppState.form.project_url;
+                        placeholder-text: "e.g. https://huggingface.co/<org>/<repo>";
+                        horizontal-stretch: 1;
+                    }
+                    Button {
+                        text: "Open";
+                        // Web pages only: the value is free text, and the desktop
+                        // opener would run anything else it is handed.
+                        enabled: AppState.form.project_url.starts-with("https://")
+                            || AppState.form.project_url.starts-with("http://");
+                        clicked => { Platform.open-url(AppState.form.project_url); }
+                    }
+                }
+                LabeledField {
+                    label_width <=> LabelColumn.models;
                     label: "MMProj";
                     hint: "Multimodal projector (--mmproj) for vision models, so the server can read images.\nBlank for text-only models.";
                     MappedComboBox {

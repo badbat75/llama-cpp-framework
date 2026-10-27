@@ -41,6 +41,10 @@ use std::path::Path;
 pub struct Section {
     pub id: String,
     pub keys: BTreeMap<String, String>,
+    /// The section's whole-line comments, trimmed, marker included, in file
+    /// order. They carry data llama-server must never see as a key (it refuses
+    /// a preset holding an unknown one): `presets::project_url_of` reads one.
+    pub comments: Vec<String>,
 }
 
 /// Parse all sections of an INI file. Returns sections in declaration order.
@@ -62,12 +66,15 @@ pub fn read_all(path: &Path) -> Vec<Section> {
                 }
                 cur = Some(Section {
                     id: name.trim().to_string(),
-                    keys: BTreeMap::new(),
+                    ..Default::default()
                 });
                 continue;
             }
         }
         if t.starts_with(';') || t.starts_with('#') {
+            if let Some(s) = cur.as_mut() {
+                s.comments.push(t.to_string());
+            }
             continue;
         }
         let Some(s) = cur.as_mut() else { continue };
