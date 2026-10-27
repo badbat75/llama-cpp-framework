@@ -123,6 +123,12 @@ export struct PresetForm {
     batch_size_default: bool,
     ubatch_size: string,
     ubatch_size_default: bool,
+    // --embeddings (checked = on): no negative form, so a plain bool like
+    // no_host; off omits the key.
+    embeddings: bool,
+    // --pooling, an enum-valued string like lazy_mode: "default" (omit the flag;
+    // the model's own pooling), "none", "mean", "cls", "last", "rank".
+    pooling: string,
     // --cache-type-k/-v: an EnumComboBox over Options.cache_types, whose FIRST
     // entry is "default", the spelling this string carries for the empty INI
     // value (omit the flag). Same empty↔"default" mapping as `split_mode` above.

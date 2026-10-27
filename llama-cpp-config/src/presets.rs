@@ -287,6 +287,20 @@ pub struct Preset {
     pub kv_unified_per_slot: Option<i32>,
     pub batch_size: Option<i32>,
     pub ubatch_size: Option<i32>,
+    /// Serve the model as an EMBEDDING model (`--embeddings`): turns on
+    /// `/v1/embeddings` (without it llama-server answers 501 "This server does
+    /// not support embeddings") and restricts the model to that use. No negative
+    /// form, so false = omit the key, like `no_host`. An embedding input is
+    /// processed in ONE ubatch, so `batch_size` and `ubatch_size` must be at
+    /// least the longest text sent, or the request fails with "input is too
+    /// large" (llama.cpp's default ubatch is 512 tokens).
+    pub embeddings: bool,
+    /// How token vectors are pooled into the one embedding (`--pooling`:
+    /// `none|mean|cls|last|rank`). Empty = omit the key, the model's own
+    /// default from its GGUF. A wrong pooling still yields vectors of the right
+    /// size, only worse ones, so nothing fails: Qwen3-Embedding wants `last`.
+    /// Read only in embedding (or rerank) mode.
+    pub pooling: String,
     /// KV-cache quantization for K and V (--cache-type-k / --cache-type-v).
     /// EMPTY = omit the flag → llama.cpp's own default, f16. Empty is not a
     /// synonym for `"f16"`: the literal pins f16 forever, the empty string follows
@@ -685,6 +699,8 @@ impl Default for Preset {
             kv_unified_per_slot: None,
             batch_size: None,
             ubatch_size: None,
+            embeddings: false,
+            pooling: String::new(),
             cache_type_k: String::new(),
             cache_type_v: String::new(),
             flash_attn: None,
@@ -800,6 +816,8 @@ impl Preset {
             kv_unified_per_slot: k.get("kv-unified-per-slot").and_then(|v| ini::parse_int(v)),
             batch_size: k.get("batch-size").and_then(|v| ini::parse_int(v)),
             ubatch_size: k.get("ubatch-size").and_then(|v| ini::parse_int(v)),
+            embeddings: getb("embeddings") == Some(true),
+            pooling: get("pooling"),
             cache_type_k: get("cache-type-k"),
             cache_type_v: get("cache-type-v"),
             flash_attn: getb("flash-attn"),
@@ -1610,6 +1628,17 @@ pub fn render_section(p: &Preset) -> String {
     emit_i32(&mut out, "batch-size", p.batch_size);
     emit_i32(&mut out, "ubatch-size", p.ubatch_size);
 
+    out.push_str("\r\n; Embeddings\r\n");
+    out.push_str("; embeddings = true serves /v1/embeddings (llama-server answers 501\r\n");
+    out.push_str("; without it). Each input must fit ONE ubatch: set batch-size and\r\n");
+    out.push_str("; ubatch-size to at least the longest text sent (default 512 tokens).\r\n");
+    out.push_str("; pooling = none|mean|cls|last|rank; omit = the model's own default.\r\n");
+    out.push_str("; A wrong one gives worse vectors, not an error (Qwen3-Embedding: last).\r\n");
+    if p.embeddings {
+        out.push_str("embeddings = true\r\n");
+    }
+    emit_str(&mut out, "pooling", &p.pooling);
+
     out.push_str("\r\n; KV cache\r\n");
     out.push_str("; Omit cache-type-k/-v to get llama.cpp's own default (f16) rather than\r\n");
     out.push_str(
@@ -2326,6 +2355,9 @@ mod tests {
             kv_unified_per_slot: Some(32768),
             batch_size: Some(1024),
             ubatch_size: Some(256),
+            // true: the only value that is written.
+            embeddings: true,
+            pooling: "last".into(),
             cache_type_k: "f16".into(),
             cache_type_v: "q8_0".into(),
             flash_attn: Some(false),

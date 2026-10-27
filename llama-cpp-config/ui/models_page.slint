@@ -678,6 +678,32 @@ export component ModelsPage inherits HorizontalLayout {
             }
 
             SectionCard {
+                heading: "Embeddings";
+                LabeledField {
+                    label_width <=> LabelColumn.models;
+                    label: "Embedding mode";
+                    hint: "--embeddings: serve this model as an embedding model, i.e. turn on /v1/embeddings (without it llama-server answers 501 \"This server does not support embeddings\"). Only for dedicated embedding models.\noff = omit the flag → llama.cpp default: off.\nEvery input is processed in ONE micro-batch, so set Batch size and U-Batch size above to at least the longest text you send, or the request fails with \"input is too large\" (the default micro-batch is 512 tokens).";
+                    SegmentedControl {
+                        options: ["off", "on"];
+                        current: AppState.form.embeddings ? "on" : "off";
+                        activated(value) => { AppState.form.embeddings = value == "on"; }
+                    }
+                }
+                LabeledField {
+                    label_width <=> LabelColumn.models;
+                    label: "Pooling";
+                    hint: "--pooling: how the token vectors become ONE embedding.\ndefault = omit the flag → the model's own pooling, read from its GGUF.\nnone = one vector per token; mean = their average; cls = the first token's; last = the last token's (Qwen3-Embedding); rank = the reranker head.\nA wrong pooling still yields vectors of the right size, only worse ones: search quality drops without an error.\nRead only in embedding mode.";
+                    // Six entries, the first the "omit the flag" state: an enum
+                    // string like lazy-mode, mapped in form.rs.
+                    SegmentedControl {
+                        options: ["default", "none", "mean", "cls", "last", "rank"];
+                        current: AppState.form.pooling == "" ? "default" : AppState.form.pooling;
+                        activated(value) => { AppState.form.pooling = value; }
+                    }
+                }
+            }
+
+            SectionCard {
                 heading: "KV cache";
                 if AppState.preset_kv_cache_warning != "" : WrapText {
                     text: AppState.preset_kv_cache_warning;

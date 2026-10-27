@@ -967,6 +967,8 @@ mod tests {
             "--split-mode",
             "-mmdev",
             "--mmproj-device",
+            "--embeddings",
+            "--pooling",
         ] {
             assert!(!a.contains(&flag.to_string()), "{flag} is per preset");
         }

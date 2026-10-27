@@ -256,6 +256,10 @@ pub fn preset_to_form(p: &presets::Preset) -> PresetForm {
         batch_size_default: p.batch_size.is_none(),
         ubatch_size: itxt(p.ubatch_size, HINT_UBATCH_SIZE),
         ubatch_size_default: p.ubatch_size.is_none(),
+        embeddings: p.embeddings,
+        // Empty IS the "omit the flag" state (the model's own pooling), shown as
+        // "default" like lazy-mode.
+        pooling: enum_or_default(&p.pooling),
         // The KV-cache trio carries its "unset" into the WIDGET (the "default"
         // entry / pill) instead of parking on a hint the way the numeric fields
         // above do, because here the displayed value IS the saved one. An omitted
@@ -484,6 +488,8 @@ pub fn form_to_preset(f: &PresetForm) -> presets::Preset {
         } else {
             ini::parse_int_in(f.ubatch_size.as_str(), &ini::INT_POSITIVE)
         },
+        embeddings: f.embeddings,
+        pooling: enum_or_empty(f.pooling.as_str()),
         cache_type_k: enum_or_empty(f.cache_type_k.as_str()),
         cache_type_v: enum_or_empty(f.cache_type_v.as_str()),
         flash_attn: tri_bool(f.flash_attn.as_str()),
@@ -1191,6 +1197,8 @@ mod tests {
             kv_unified_per_slot: Some(65536),
             batch_size: Some(1024),
             ubatch_size: Some(256),
+            embeddings: true,
+            pooling: "mean".into(),
             cache_type_k: "f16".into(),
             cache_type_v: "q8_0".into(),
             flash_attn: Some(false),
