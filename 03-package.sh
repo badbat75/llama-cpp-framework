@@ -197,7 +197,8 @@ fi
 # ROCm kernel data, which no ldd shows: rocBLAS and hipBLASLt load their
 # precompiled kernels per GPU architecture from <lib>/rocblas/library and
 # <lib>/hipblaslt/library, and the kpack archives sit in <dist>/.kpack, which
-# is <lib>/../.kpack here as there. Only the architectures this build targets
+# is <lib>/../.kpack here as there: hipBLASLt's (blas_lib) and RCCL's
+# (rccl_lib, the collective kernels --split-mode tensor reduces through). Only the architectures this build targets
 # (CFG_GPU_TARGETS) are taken: the rest could never be used by a
 # libggml-hip.so that has no code for them, and they are most of the size.
 # Files that name no architecture are shared and always copied.
@@ -221,7 +222,7 @@ if [[ -n "$HIP_ROOT" && -e "$STAGE_DIR/$RT_DIR/libamdhip64.so.7" ]]; then
     done
     if [[ -d "$HIP_ROOT/.kpack" ]]; then
         mkdir -p "$STAGE_DIR/$OPT_DIR/.kpack"
-        for f in "$HIP_ROOT/.kpack"/blas_lib_*.kpack; do
+        for f in "$HIP_ROOT/.kpack"/{blas,rccl}_lib_*.kpack; do
             wanted "$(basename "$f")" || continue
             cp -L "$f" "$STAGE_DIR/$OPT_DIR/.kpack/"
         done
