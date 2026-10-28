@@ -139,6 +139,9 @@ llama-cpp-config bench sweep --preset <id> --key <key> --values '<a>,<b>,<c>' \
 - `--apply original` (default) leaves the preset as it was; apply the winner yourself
   after the memory check. After an interrupted sweep, restore with `--restore-to` (the
   value is in `~/.local/share/llama.cpp/bench/sweep-pending-*.json`).
+- A speculator's first repetition after a restart can take another output path and read
+  several t/s low (DFlash: on every leg): with a drafter, compare the later repetitions
+  and use `--reps 4` when two legs are within a few percent.
 - Differences under ~3% are noise unless sd says otherwise; re-run in reversed order
   (thermal drift lands on the last leg).
 - Never re-measure a configuration bench.db already holds (same key values, build and
@@ -198,6 +201,14 @@ llama-cpp-config bench sweep --preset <id> --key <key> --values '<a>,<b>,<c>' \
   on a HIP runtime (the Windows one stages at ~2 GB/s): llama pins its input buffers for
   the FIRST device only, and cross-card hops go through `malloc`. Both show up as time
   only on Windows; on Linux the runtime pins pageable memory on the fly.
+  HIP side on Linux: `rocprofv3 --attach` fails (status 5) under the default
+  `kernel.yama.ptrace_scope = 1`; launch the standalone server under the profiler instead
+  (`rocprofv3 --kernel-trace --memory-copy-trace --output-format csv -d <dir> -- llama-server
+  ...`), prefill once with `cache_prompt: true`, send the decode request, stop the server
+  with SIGINT so the trace is written, and analyse the window of the decode request from
+  the trace's end: per card the union of kernel intervals over the wall time (on a layer
+  split the cards run in series, so their shares add up), the top kernels, the copies by
+  direction. The profiler slows decode ~12%; scale the shares before quoting them.
   Example of what it finds: `docs/qwen3.8_27b.md` section 4.
 
 Read results:
@@ -220,6 +231,10 @@ the repo's database; on this machine it does.)
 - Never drop or reorder `device` on a multi-GPU preset without meaning to.
 - `spec-type = draft-mtp` on a model without MTP layers fails to load.
 - One preset at a time; do not touch other presets or server.ini without asking.
+- When another session may use the GPUs, wrap every GPU job (sweep, standalone server,
+  profiler) in `flock` on one agreed lock file and, after taking it, wait until no other
+  process holds `/dev/kfd` open (`ls -l /proc/*/fd` lists it): an unwrapped job still
+  shares the cards and wrecks both measurements. A live sweep owns server.ini's `Port`.
 
 ## 6. Apply and record
 
