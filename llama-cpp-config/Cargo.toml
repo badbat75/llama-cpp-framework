@@ -34,6 +34,29 @@ rusqlite = { version = "0.41", features = ["bundled"] }
 [target.'cfg(target_os = "linux")'.dependencies]
 rfd = { version = "0.17", default-features = false, features = ["xdg-portal", "wayland"] }
 
+# Every Win32 call the crate makes (registry, single instance, console, HW
+# Monitor, process handles), with the signatures and constants Microsoft's
+# metadata declares instead of hand-written ones. 0.61 is the version slint's
+# winit already compiles, so it adds nothing to the build. Each module is a
+# feature: a new call may need one more.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Wdk_Graphics_Direct3D",
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Console",
+    "Win32_System_IO",
+    "Win32_System_Ioctl",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Performance",
+    "Win32_System_ProcessStatus",
+    "Win32_System_Registry",
+    "Win32_System_SystemInformation",
+    "Win32_System_Threading",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
 [dev-dependencies]
 tempfile = "3"
 # Headless Slint backend for the UI regression tests (src/tests/ui_bindings.rs).

@@ -390,10 +390,16 @@ pub fn start() -> io::Result<Option<crate::server_cfg::ServerConfig>> {
     let log_file_err = log_file.try_clone()?;
     cmd.stdout(log_file);
     cmd.stderr(log_file_err);
+    // The router reads nothing from stdin (only its per-model children watch
+    // theirs, a pipe the router makes), so it gets none of ours.
+    cmd.stdin(std::process::Stdio::null());
 
     // No console flash: same CREATE_NO_WINDOW as the fire-and-forget probes, but
     // applied to a Command we spawn with custom stdio/env (so not run_hidden).
     crate::proc::hide_console(&mut cmd);
+    // Nor any of our other standard handles, which Windows would hand it
+    // anyway: a server holding the CLI's stdout hung whoever read it.
+    crate::proc::keep_std_handles_private();
 
     let mut child = cmd.spawn()?;
 

@@ -109,12 +109,7 @@ mod loaded_impl {
         use core::ffi::c_void;
         use std::os::windows::ffi::OsStrExt;
         use std::path::{Path, PathBuf};
-
-        #[link(name = "kernel32")]
-        extern "system" {
-            fn LoadLibraryW(name: *const u16) -> HModule;
-            fn GetProcAddress(module: HModule, name: *const u8) -> *const c_void;
-        }
+        use windows_sys::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryW};
 
         fn wide(p: &Path) -> Vec<u16> {
             p.as_os_str()
@@ -145,7 +140,7 @@ mod loaded_impl {
 
         pub(super) fn proc(h: HModule, name: &[u8]) -> Option<*const c_void> {
             let p = unsafe { GetProcAddress(h, name.as_ptr()) };
-            (!p.is_null()).then_some(p)
+            p.map(|f| f as *const c_void)
         }
     }
 

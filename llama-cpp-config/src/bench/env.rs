@@ -42,10 +42,7 @@ const MAX_ADAPTERS: u32 = 8;
 /// Seconds since the machine booted, or `None` when the call is unavailable.
 #[cfg(windows)]
 fn uptime_secs() -> Option<u64> {
-    #[link(name = "kernel32")]
-    extern "system" {
-        fn GetTickCount64() -> u64;
-    }
+    use windows_sys::Win32::System::SystemInformation::GetTickCount64;
     // Milliseconds since boot, monotonic and unaffected by clock changes, which
     // is exactly what makes it a better boot marker than a wall-clock reading.
     Some(unsafe { GetTickCount64() } / 1000)

@@ -29,7 +29,7 @@
 //! Preferring the installed copy makes the toggle write the installed GUI
 //! build regardless of which build flipped it.
 //!
-//! Windows: raw Win32 FFI (no extra crates), matching `single_instance.rs`.
+//! Windows: the registry through `windows-sys`.
 //! Linux: a plain file. Elsewhere the toggles are unsupported: `is_enabled` is
 //! `false` and the UI disables the checkboxes (`AppState.startup_supported`).
 
@@ -222,47 +222,13 @@ mod linux {
 #[cfg(windows)]
 mod win {
     use super::{io, run_command};
-    use core::ffi::c_void;
-
-    type Hkey = *mut c_void;
-
+    use windows_sys::Win32::Foundation::{ERROR_FILE_NOT_FOUND, ERROR_SUCCESS};
     // Predefined key handles are sentinel values, not real handles; no close.
-    const HKEY_CURRENT_USER: Hkey = 0x8000_0001_u32 as usize as Hkey;
-    const HKEY_LOCAL_MACHINE: Hkey = 0x8000_0002_u32 as usize as Hkey;
-    const KEY_QUERY_VALUE: u32 = 0x0001;
-    const KEY_SET_VALUE: u32 = 0x0002;
-    const REG_SZ: u32 = 1;
-    const ERROR_SUCCESS: i32 = 0;
-    const ERROR_FILE_NOT_FOUND: i32 = 2;
-
-    #[link(name = "advapi32")]
-    extern "system" {
-        fn RegOpenKeyExW(
-            key: Hkey,
-            sub_key: *const u16,
-            options: u32,
-            desired: u32,
-            result: *mut Hkey,
-        ) -> i32;
-        fn RegQueryValueExW(
-            key: Hkey,
-            value_name: *const u16,
-            reserved: *mut u32,
-            kind: *mut u32,
-            data: *mut u8,
-            data_len: *mut u32,
-        ) -> i32;
-        fn RegSetValueExW(
-            key: Hkey,
-            value_name: *const u16,
-            reserved: u32,
-            kind: u32,
-            data: *const u8,
-            data_len: u32,
-        ) -> i32;
-        fn RegDeleteValueW(key: Hkey, value_name: *const u16) -> i32;
-        fn RegCloseKey(key: Hkey) -> i32;
-    }
+    use windows_sys::Win32::System::Registry::{
+        RegCloseKey, RegDeleteValueW, RegOpenKeyExW, RegQueryValueExW, RegSetValueExW,
+        HKEY as Hkey, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, KEY_QUERY_VALUE, KEY_SET_VALUE,
+        REG_SAM_FLAGS, REG_SZ,
+    };
 
     const RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
     const VALUE_NAME: &str = "llama-cpp-config";
@@ -272,7 +238,7 @@ mod win {
     }
 
     /// Open the per-user Run key (it always exists on a working profile).
-    fn open_run_key(desired: u32) -> io::Result<Hkey> {
+    fn open_run_key(desired: REG_SAM_FLAGS) -> io::Result<Hkey> {
         let sub_key = wide(RUN_KEY);
         let mut key: Hkey = std::ptr::null_mut();
         let ret =
@@ -280,7 +246,7 @@ mod win {
         if ret == ERROR_SUCCESS {
             Ok(key)
         } else {
-            Err(io::Error::from_raw_os_error(ret))
+            Err(io::Error::from_raw_os_error(ret as i32))
         }
     }
 
@@ -345,9 +311,8 @@ mod win {
 
     /// Read one `REG_SZ` under `HKLM`, for callers outside this module. Exposed
     /// so the benchmark's environment stamp (`bench::env`) can read the display
-    /// adapters' driver versions without a second copy of the registry FFI: this
-    /// module already owns it, and one `advapi32` binding is enough for the
-    /// crate.
+    /// adapters' driver versions without a second copy of the registry code:
+    /// this module already owns it.
     pub fn machine_reg_sz(subkey: &str, value: &str) -> Option<String> {
         read_reg_sz(HKEY_LOCAL_MACHINE, subkey, value)
     }
@@ -419,7 +384,7 @@ mod win {
         if ret == ERROR_SUCCESS {
             Ok(())
         } else {
-            Err(io::Error::from_raw_os_error(ret))
+            Err(io::Error::from_raw_os_error(ret as i32))
         }
     }
 }

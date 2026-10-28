@@ -3,8 +3,7 @@
 //! the CPU and memory, `IOCTL_DISK_PERFORMANCE` for the disk. The table of
 //! what each bar reads is in the parent module's header.
 //!
-//! Raw Win32 FFI, no extra crates (as `single_instance.rs`). What decided the
-//! sources:
+//! Win32 and D3DKMT through `windows-sys`. What decided the sources:
 //!
 //! - **The GPU counters are the ones Task Manager shows**, for every vendor,
 //!   which is why they are the base and NVML only an addition: no AMD or
@@ -30,8 +29,35 @@ use super::*;
 use std::collections::HashMap;
 use std::os::windows::ffi::OsStrExt;
 use std::path::Path;
-
-type Handle = *mut c_void;
+use windows_sys::Wdk::Graphics::Direct3D::{
+    D3DKMTCloseAdapter, D3DKMTEnumAdapters2, D3DKMTQueryAdapterInfo, D3DKMT_ADAPTERADDRESS,
+    D3DKMT_ADAPTERINFO, D3DKMT_ADAPTERREGISTRYINFO, D3DKMT_ADAPTERTYPE, D3DKMT_CLOSEADAPTER,
+    D3DKMT_ENUMADAPTERS2, D3DKMT_QUERYADAPTERINFO, D3DKMT_QUERY_DEVICE_IDS, D3DKMT_SEGMENTSIZEINFO,
+    KMTQAITYPE_ADAPTERADDRESS, KMTQAITYPE_ADAPTERREGISTRYINFO, KMTQAITYPE_ADAPTERTYPE,
+    KMTQAITYPE_GETSEGMENTSIZE, KMTQAITYPE_PHYSICALADAPTERDEVICEIDS, KMTQUERYADAPTERINFOTYPE,
+};
+use windows_sys::Win32::Foundation::{
+    CloseHandle, FILETIME, HANDLE as Handle, INVALID_HANDLE_VALUE,
+};
+use windows_sys::Win32::Storage::FileSystem::{
+    CreateFileW, GetVolumeNameForVolumeMountPointW, GetVolumePathNameW, FILE_SHARE_READ,
+    FILE_SHARE_WRITE, OPEN_EXISTING,
+};
+use windows_sys::Win32::System::Ioctl::{
+    DISK_PERFORMANCE, IOCTL_DISK_PERFORMANCE, IOCTL_STORAGE_GET_DEVICE_NUMBER,
+    IOCTL_STORAGE_QUERY_PROPERTY, STORAGE_DEVICE_NUMBER,
+};
+use windows_sys::Win32::System::LibraryLoader::{
+    GetProcAddress, LoadLibraryExA, LOAD_LIBRARY_SEARCH_SYSTEM32,
+};
+use windows_sys::Win32::System::Performance::{
+    PdhAddEnglishCounterW, PdhCloseQuery, PdhCollectQueryData, PdhGetFormattedCounterArrayW,
+    PdhGetFormattedCounterValue, PdhOpenQueryW, PDH_CSTATUS_NEW_DATA, PDH_FMT_COUNTERVALUE,
+    PDH_FMT_COUNTERVALUE_ITEM_W, PDH_FMT_DOUBLE, PDH_MORE_DATA,
+};
+use windows_sys::Win32::System::ProcessStatus::{K32GetPerformanceInfo, PERFORMANCE_INFORMATION};
+use windows_sys::Win32::System::Threading::GetSystemTimes;
+use windows_sys::Win32::System::IO::DeviceIoControl;
 
 fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
@@ -44,123 +70,27 @@ fn from_wide(s: &[u16]) -> String {
 
 // ── Runtime library loading (NVML) ──────────────────────────────────
 
-/// `PERFORMANCE_INFORMATION`: every size is in pages.
-#[repr(C)]
-#[derive(Default)]
-struct PerformanceInformation {
-    cb: u32,
-    commit_total: usize,
-    commit_limit: usize,
-    commit_peak: usize,
-    physical_total: usize,
-    physical_available: usize,
-    system_cache: usize,
-    kernel_total: usize,
-    kernel_paged: usize,
-    kernel_nonpaged: usize,
-    page_size: usize,
-    handle_count: u32,
-    process_count: u32,
-    thread_count: u32,
-}
-
-#[link(name = "kernel32")]
-extern "system" {
-    fn LoadLibraryExA(name: *const c_char, file: Handle, flags: u32) -> *mut c_void;
-    // Declared as in `gguf\ffi.rs`: one symbol, one signature.
-    fn GetProcAddress(module: *mut c_void, name: *const u8) -> *const c_void;
-    // Each out-parameter is a FILETIME, which is a u64 in two halves.
-    fn GetSystemTimes(idle: *mut u64, kernel: *mut u64, user: *mut u64) -> i32;
-    fn K32GetPerformanceInfo(info: *mut PerformanceInformation, cb: u32) -> i32;
-    fn GetVolumePathNameW(path: *const u16, volume: *mut u16, len: u32) -> i32;
-    fn GetVolumeNameForVolumeMountPointW(mount: *const u16, name: *mut u16, len: u32) -> i32;
-    fn CreateFileW(
-        name: *const u16,
-        access: u32,
-        share: u32,
-        security: *const c_void,
-        disposition: u32,
-        flags: u32,
-        template: Handle,
-    ) -> Handle;
-    fn DeviceIoControl(
-        device: Handle,
-        code: u32,
-        input: *const c_void,
-        input_len: u32,
-        output: *mut c_void,
-        output_len: u32,
-        returned: *mut u32,
-        overlapped: *mut c_void,
-    ) -> i32;
-    fn CloseHandle(handle: Handle) -> i32;
-}
-
-const LOAD_LIBRARY_SEARCH_SYSTEM32: u32 = 0x800;
-
 pub(super) const NVML_LIBRARY: &CStr = c"nvml.dll";
 
 /// From System32 only, where the driver installs it: a bare name would look
 /// beside the exe and through the PATH first.
 pub(super) unsafe fn open_library(name: &CStr) -> *mut c_void {
     LoadLibraryExA(
-        name.as_ptr(),
+        name.as_ptr().cast(),
         std::ptr::null_mut(),
         LOAD_LIBRARY_SEARCH_SYSTEM32,
     )
 }
 
 pub(super) unsafe fn library_symbol(lib: *mut c_void, name: &CStr) -> *mut c_void {
-    GetProcAddress(lib, name.as_ptr().cast()).cast_mut()
+    GetProcAddress(lib, name.as_ptr().cast()).map_or(std::ptr::null_mut(), |f| f as *mut c_void)
 }
 
 // ── Performance counters (PDH) ──────────────────────────────────────
 
-/// `PDH_FMT_COUNTERVALUE` formatted as a double.
-#[repr(C)]
-struct CounterValue {
-    status: u32,
-    value: f64,
-}
-
-/// `PDH_FMT_COUNTERVALUE_ITEM_W`: one instance of a wildcard counter.
-#[repr(C)]
-struct CounterItem {
-    name: *const u16,
-    value: CounterValue,
-}
-
-#[link(name = "pdh")]
-extern "system" {
-    fn PdhOpenQueryW(source: *const u16, user: usize, query: *mut Handle) -> u32;
-    fn PdhAddEnglishCounterW(
-        query: Handle,
-        path: *const u16,
-        user: usize,
-        counter: *mut Handle,
-    ) -> u32;
-    fn PdhCollectQueryData(query: Handle) -> u32;
-    fn PdhGetFormattedCounterValue(
-        counter: Handle,
-        format: u32,
-        kind: *mut u32,
-        value: *mut CounterValue,
-    ) -> u32;
-    fn PdhGetFormattedCounterArrayW(
-        counter: Handle,
-        format: u32,
-        size: *mut u32,
-        count: *mut u32,
-        items: *mut CounterItem,
-    ) -> u32;
-    fn PdhCloseQuery(query: Handle) -> u32;
-}
-
-const PDH_FMT_DOUBLE: u32 = 0x200;
-const PDH_MORE_DATA: u32 = 0x8000_07D2;
-/// `PDH_CSTATUS_VALID_DATA` is 0 and `PDH_CSTATUS_NEW_DATA` is 1; anything
-/// above is a value that cannot be used (a rate with one reading, for one).
-const PDH_CSTATUS_NEW_DATA: u32 = 1;
+// A value's `CStatus` of `PDH_CSTATUS_VALID_DATA` (0) or `PDH_CSTATUS_NEW_DATA`
+// (1) is usable; anything above is a value that cannot be used (a rate with one
+// reading, for one).
 
 /// A PDH query: the counters added to it are read together by `collect` and
 /// die with it.
@@ -193,15 +123,15 @@ impl Drop for Query {
 
 /// The value of a single-instance counter, as of the last `collect`.
 fn counter_value(counter: Handle) -> Option<f64> {
-    let mut value = CounterValue {
-        status: 0,
-        value: 0.0,
-    };
+    let mut value = PDH_FMT_COUNTERVALUE::default();
     // SAFETY: `counter` belongs to a live query; the out-pointer is a local.
     let status = unsafe {
         PdhGetFormattedCounterValue(counter, PDH_FMT_DOUBLE, std::ptr::null_mut(), &mut value)
     };
-    (status == 0 && value.status <= PDH_CSTATUS_NEW_DATA).then_some(value.value)
+    // SAFETY: PDH_FMT_DOUBLE fills the union's double, and `default()` zeroed
+    // it when the call did not.
+    (status == 0 && value.CStatus <= PDH_CSTATUS_NEW_DATA)
+        .then_some(unsafe { value.Anonymous.doubleValue })
 }
 
 /// Every instance of a wildcard counter as `(instance name, value)`, as of
@@ -227,7 +157,7 @@ fn counter_values(counter: Handle) -> Option<Vec<(String, f64)>> {
         // The items come first and the names they point at behind them, in
         // the same buffer; u64 storage keeps the items aligned.
         let mut buf = vec![0u64; (size as usize).div_ceil(8)];
-        let items = buf.as_mut_ptr() as *mut CounterItem;
+        let items = buf.as_mut_ptr() as *mut PDH_FMT_COUNTERVALUE_ITEM_W;
         // SAFETY: `buf` holds at least the `size` bytes the sizing call asked for.
         let status = unsafe {
             PdhGetFormattedCounterArrayW(counter, PDH_FMT_DOUBLE, &mut size, &mut count, items)
@@ -244,13 +174,15 @@ fn counter_values(counter: Handle) -> Option<Vec<(String, f64)>> {
         return Some(
             items
                 .iter()
-                .filter(|item| item.value.status <= PDH_CSTATUS_NEW_DATA)
+                .filter(|item| item.FmtValue.CStatus <= PDH_CSTATUS_NEW_DATA)
                 .map(|item| {
                     let len = (0..)
-                        .take_while(|i| unsafe { *item.name.add(*i) } != 0)
+                        .take_while(|i| unsafe { *item.szName.add(*i) } != 0)
                         .count();
-                    let name = unsafe { std::slice::from_raw_parts(item.name, len) };
-                    (String::from_utf16_lossy(name), item.value.value)
+                    let name = unsafe { std::slice::from_raw_parts(item.szName, len) };
+                    // SAFETY: PDH_FMT_DOUBLE fills the union's double.
+                    let value = unsafe { item.FmtValue.Anonymous.doubleValue };
+                    (String::from_utf16_lossy(name), value)
                 })
                 .collect(),
         );
@@ -404,111 +336,19 @@ impl CachedCounters {
 
 // ── Adapters (D3DKMT) ───────────────────────────────────────────────
 
-#[repr(C)]
-#[derive(Default, Clone, Copy)]
-struct Luid {
-    low: u32,
-    high: i32,
-}
-
-/// `D3DKMT_ADAPTERINFO`.
-#[repr(C)]
-#[derive(Default, Clone, Copy)]
-struct AdapterInfo {
-    handle: u32,
-    luid: Luid,
-    sources: u32,
-    precise_present_regions: i32,
-}
-
-/// `D3DKMT_ENUMADAPTERS2`.
-#[repr(C)]
-struct EnumAdapters {
-    count: u32,
-    adapters: *mut AdapterInfo,
-}
-
-/// `D3DKMT_QUERYADAPTERINFO`.
-#[repr(C)]
-struct QueryAdapterInfo {
-    handle: u32,
-    kind: u32,
-    data: *mut c_void,
-    size: u32,
-}
-
-/// `D3DKMT_CLOSEADAPTER`.
-#[repr(C)]
-struct CloseAdapter {
-    handle: u32,
-}
-
-/// `D3DKMT_SEGMENTSIZEINFO`: the totals behind Task Manager's "Dedicated GPU
-/// memory" and "Shared GPU memory".
-#[repr(C)]
-#[derive(Default)]
-struct SegmentSize {
-    dedicated_video: u64,
-    dedicated_system: u64,
-    shared_system: u64,
-}
-
-/// `D3DKMT_ADAPTERADDRESS`.
-#[repr(C)]
-#[derive(Default)]
-struct AdapterAddress {
-    bus: u32,
-    device: u32,
-    function: u32,
-}
-
-/// `D3DKMT_ADAPTERREGISTRYINFO`: four `MAX_PATH` strings.
-#[repr(C)]
-struct RegistryInfo {
-    adapter: [u16; 260],
-    bios: [u16; 260],
-    dac: [u16; 260],
-    chip: [u16; 260],
-}
-
-/// `D3DKMT_QUERY_DEVICE_IDS`.
-#[repr(C)]
-#[derive(Default)]
-struct DeviceIds {
-    physical_adapter: u32,
-    vendor: u32,
-    device: u32,
-    sub_vendor: u32,
-    sub_system: u32,
-    revision: u32,
-    bus_type: u32,
-}
-
-// KMTQUERYADAPTERINFOTYPE.
-const KMTQAITYPE_GETSEGMENTSIZE: u32 = 3;
-const KMTQAITYPE_ADAPTERADDRESS: u32 = 6;
-const KMTQAITYPE_ADAPTERREGISTRYINFO: u32 = 8;
-const KMTQAITYPE_ADAPTERTYPE: u32 = 15;
-const KMTQAITYPE_PHYSICALADAPTERDEVICEIDS: u32 = 31;
-/// `D3DKMT_ADAPTERTYPE.SoftwareDevice`: the Microsoft Basic Render Driver.
+/// `D3DKMT_ADAPTERTYPE.SoftwareDevice`, the Microsoft Basic Render Driver: a
+/// bit of a C bitfield, which `windows-sys` exposes only as the whole `Value`.
 const ADAPTERTYPE_SOFTWARE: u32 = 1 << 2;
-
-#[link(name = "gdi32")]
-extern "system" {
-    fn D3DKMTEnumAdapters2(arg: *mut EnumAdapters) -> i32;
-    fn D3DKMTQueryAdapterInfo(arg: *mut QueryAdapterInfo) -> i32;
-    fn D3DKMTCloseAdapter(arg: *const CloseAdapter) -> i32;
-}
 
 /// Ask D3DKMT for one fact about an adapter.
 ///
 /// SAFETY: the caller guarantees `T` is the struct `kind` fills.
-unsafe fn adapter_info<T>(handle: u32, kind: u32, out: &mut T) -> bool {
-    let mut query = QueryAdapterInfo {
-        handle,
-        kind,
-        data: out as *mut T as *mut c_void,
-        size: std::mem::size_of::<T>() as u32,
+unsafe fn adapter_info<T>(handle: u32, kind: KMTQUERYADAPTERINFOTYPE, out: &mut T) -> bool {
+    let mut query = D3DKMT_QUERYADAPTERINFO {
+        hAdapter: handle,
+        Type: kind,
+        pPrivateDriverData: out as *mut T as *mut c_void,
+        PrivateDriverDataSize: std::mem::size_of::<T>() as u32,
     };
     D3DKMTQueryAdapterInfo(&mut query) >= 0
 }
@@ -534,46 +374,50 @@ fn enumerate_adapters() -> Vec<AdapterFacts> {
     // SAFETY: the first call only counts; the second fills a buffer of the
     // size it was told, and every out-struct is the one its query fills.
     unsafe {
-        let mut request = EnumAdapters {
-            count: 0,
-            adapters: std::ptr::null_mut(),
+        let mut request = D3DKMT_ENUMADAPTERS2 {
+            NumAdapters: 0,
+            pAdapters: std::ptr::null_mut(),
         };
-        if D3DKMTEnumAdapters2(&mut request) < 0 || request.count == 0 {
+        if D3DKMTEnumAdapters2(&mut request) < 0 || request.NumAdapters == 0 {
             return list;
         }
-        let mut infos = vec![AdapterInfo::default(); request.count as usize];
-        request.adapters = infos.as_mut_ptr();
+        let mut infos = vec![D3DKMT_ADAPTERINFO::default(); request.NumAdapters as usize];
+        request.pAdapters = infos.as_mut_ptr();
         if D3DKMTEnumAdapters2(&mut request) < 0 {
             return list;
         }
-        for info in &infos[..(request.count as usize).min(infos.len())] {
-            let mut kind = 0u32;
-            let mut segments = SegmentSize::default();
-            let mut address = AdapterAddress::default();
-            let mut ids = DeviceIds::default();
-            let mut registry: RegistryInfo = std::mem::zeroed();
-            let hardware = adapter_info(info.handle, KMTQAITYPE_ADAPTERTYPE, &mut kind)
-                && kind & ADAPTERTYPE_SOFTWARE == 0;
+        for info in &infos[..(request.NumAdapters as usize).min(infos.len())] {
+            let handle = info.hAdapter;
+            let mut kind = D3DKMT_ADAPTERTYPE::default();
+            let mut segments = D3DKMT_SEGMENTSIZEINFO::default();
+            let mut address = D3DKMT_ADAPTERADDRESS::default();
+            let mut ids = D3DKMT_QUERY_DEVICE_IDS::default();
+            let mut registry = D3DKMT_ADAPTERREGISTRYINFO::default();
+            let hardware = adapter_info(handle, KMTQAITYPE_ADAPTERTYPE, &mut kind)
+                && kind.Anonymous.Value & ADAPTERTYPE_SOFTWARE == 0;
             if hardware {
-                adapter_info(info.handle, KMTQAITYPE_GETSEGMENTSIZE, &mut segments);
-                adapter_info(info.handle, KMTQAITYPE_PHYSICALADAPTERDEVICEIDS, &mut ids);
-                adapter_info(info.handle, KMTQAITYPE_ADAPTERREGISTRYINFO, &mut registry);
+                adapter_info(handle, KMTQAITYPE_GETSEGMENTSIZE, &mut segments);
+                adapter_info(handle, KMTQAITYPE_PHYSICALADAPTERDEVICEIDS, &mut ids);
+                adapter_info(handle, KMTQAITYPE_ADAPTERREGISTRYINFO, &mut registry);
                 // An adapter that is not on a PCI bus answers with all ones.
-                let located = adapter_info(info.handle, KMTQAITYPE_ADAPTERADDRESS, &mut address)
-                    && address.bus <= 0xff;
+                let located = adapter_info(handle, KMTQAITYPE_ADAPTERADDRESS, &mut address)
+                    && address.BusNumber <= 0xff;
+                let luid = info.AdapterLuid;
                 list.push(AdapterFacts {
-                    luid: ((info.luid.high as u32 as u64) << 32) | info.luid.low as u64,
-                    name: from_wide(&registry.adapter).trim().to_string(),
-                    vendor: ids.vendor,
-                    device: ids.device,
-                    address: located.then_some((address.bus, address.device, address.function)),
-                    dedicated: segments.dedicated_video,
-                    shared: segments.shared_system,
+                    luid: ((luid.HighPart as u32 as u64) << 32) | luid.LowPart as u64,
+                    name: from_wide(&registry.AdapterString).trim().to_string(),
+                    vendor: ids.DeviceIds.VendorID,
+                    device: ids.DeviceIds.DeviceID,
+                    address: located.then_some((
+                        address.BusNumber,
+                        address.DeviceNumber,
+                        address.FunctionNumber,
+                    )),
+                    dedicated: segments.DedicatedVideoMemorySize,
+                    shared: segments.SharedSystemMemorySize,
                 });
             }
-            D3DKMTCloseAdapter(&CloseAdapter {
-                handle: info.handle,
-            });
+            D3DKMTCloseAdapter(&D3DKMT_CLOSEADAPTER { hAdapter: handle });
         }
     }
     list.sort_by_key(|a| (a.address.is_none(), a.address, a.vendor, a.device));
@@ -704,11 +548,14 @@ fn find_adapters() -> Vec<Adapter> {
 /// `(busy, total)` processor time, in 100 ns units summed over every core.
 /// Kernel time includes the idle time.
 fn cpu_times() -> Option<(u64, u64)> {
-    let (mut idle, mut kernel, mut user) = (0u64, 0u64, 0u64);
-    // SAFETY: three live locals of FILETIME's size and layout.
+    let (mut idle, mut kernel, mut user) = Default::default();
+    // SAFETY: three live FILETIME locals.
     if unsafe { GetSystemTimes(&mut idle, &mut kernel, &mut user) } == 0 {
         return None;
     }
+    // A FILETIME is a u64 in two halves.
+    let ticks = |t: FILETIME| ((t.dwHighDateTime as u64) << 32) | t.dwLowDateTime as u64;
+    let (idle, kernel, user) = (ticks(idle), ticks(kernel), ticks(user));
     let total = kernel + user;
     Some((total.saturating_sub(idle), total))
 }
@@ -724,20 +571,21 @@ struct Mem {
 }
 
 fn memory() -> Option<Mem> {
-    let mut info = PerformanceInformation {
-        cb: std::mem::size_of::<PerformanceInformation>() as u32,
+    // Every size in it is in pages.
+    let mut info = PERFORMANCE_INFORMATION {
+        cb: std::mem::size_of::<PERFORMANCE_INFORMATION>() as u32,
         ..Default::default()
     };
     // SAFETY: `info` is the struct the call fills, and `cb` its size.
     if unsafe { K32GetPerformanceInfo(&mut info, info.cb) } == 0 {
         return None;
     }
-    let bytes = |pages: usize| pages as u64 * info.page_size as u64;
+    let bytes = |pages: usize| pages as u64 * info.PageSize as u64;
     Some(Mem {
-        total: bytes(info.physical_total),
-        available: bytes(info.physical_available),
-        committed: bytes(info.commit_total),
-        commit_limit: bytes(info.commit_limit),
+        total: bytes(info.PhysicalTotal),
+        available: bytes(info.PhysicalAvailable),
+        committed: bytes(info.CommitTotal),
+        commit_limit: bytes(info.CommitLimit),
     })
 }
 
@@ -747,39 +595,6 @@ pub fn system_ram() -> Option<(u64, u64)> {
 }
 
 // ── Disk ────────────────────────────────────────────────────────────
-
-const FILE_SHARE_READ_WRITE: u32 = 0x1 | 0x2;
-const OPEN_EXISTING: u32 = 3;
-const IOCTL_STORAGE_GET_DEVICE_NUMBER: u32 = 0x002D_1080;
-const IOCTL_STORAGE_QUERY_PROPERTY: u32 = 0x002D_1400;
-const IOCTL_DISK_PERFORMANCE: u32 = 0x0007_0020;
-
-/// `STORAGE_DEVICE_NUMBER`.
-#[repr(C)]
-#[derive(Default)]
-struct DeviceNumber {
-    device_type: u32,
-    number: u32,
-    partition: u32,
-}
-
-/// `DISK_PERFORMANCE`. The times are in 100 ns units.
-#[repr(C)]
-#[derive(Default)]
-struct DiskPerformance {
-    bytes_read: i64,
-    bytes_written: i64,
-    read_time: i64,
-    write_time: i64,
-    idle_time: i64,
-    read_count: u32,
-    write_count: u32,
-    queue_depth: u32,
-    split_count: u32,
-    query_time: i64,
-    storage_device_number: u32,
-    storage_manager_name: [u16; 8],
-}
 
 /// An open volume or drive, closed on drop.
 struct Device(Handle);
@@ -791,15 +606,14 @@ impl Device {
             CreateFileW(
                 wide(name).as_ptr(),
                 0,
-                FILE_SHARE_READ_WRITE,
+                FILE_SHARE_READ | FILE_SHARE_WRITE,
                 std::ptr::null(),
                 OPEN_EXISTING,
                 0,
                 std::ptr::null_mut(),
             )
         };
-        // INVALID_HANDLE_VALUE is -1.
-        (handle as isize != -1).then_some(Device(handle))
+        (handle != INVALID_HANDLE_VALUE).then_some(Device(handle))
     }
 
     /// An IOCTL that takes `input` and fills `output`.
@@ -896,14 +710,17 @@ fn disk_for(path: &Path) -> Option<Disk> {
 
     // The drive under the volume. A volume that spans several has no single
     // drive number: its own counters are read instead.
-    let mut number = DeviceNumber::default();
+    let mut number = STORAGE_DEVICE_NUMBER::default();
     // SAFETY: STORAGE_DEVICE_NUMBER is what this IOCTL fills.
     let drive =
         unsafe { volume.control(IOCTL_STORAGE_GET_DEVICE_NUMBER, None::<&u32>, &mut number) }
-            .then(|| Device::open(&format!(r"\\.\PhysicalDrive{}", number.number)))
+            .then(|| Device::open(&format!(r"\\.\PhysicalDrive{}", number.DeviceNumber)))
             .flatten();
     let (device, name) = match drive {
-        Some(drive) => (drive, format!("PhysicalDrive{} · {mount}", number.number)),
+        Some(drive) => (
+            drive,
+            format!("PhysicalDrive{} · {mount}", number.DeviceNumber),
+        ),
         None => (volume, mount.to_string()),
     };
 
@@ -932,17 +749,18 @@ fn disk_for(path: &Path) -> Option<Disk> {
 
 impl Disk {
     fn stat(&self) -> Option<DiskStat> {
-        let mut perf = DiskPerformance::default();
-        // SAFETY: DISK_PERFORMANCE is what this IOCTL fills.
+        let mut perf = DISK_PERFORMANCE::default();
+        // SAFETY: DISK_PERFORMANCE is what this IOCTL fills; its times are in
+        // 100 ns units.
         unsafe {
             self.device
                 .control(IOCTL_DISK_PERFORMANCE, None::<&u32>, &mut perf)
         }
         .then_some(DiskStat {
-            read_bytes: perf.bytes_read,
-            written_bytes: perf.bytes_written,
-            idle: perf.idle_time,
-            at: perf.query_time,
+            read_bytes: perf.BytesRead,
+            written_bytes: perf.BytesWritten,
+            idle: perf.IdleTime,
+            at: perf.QueryTime,
         })
     }
 }

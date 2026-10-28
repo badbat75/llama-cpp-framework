@@ -77,10 +77,6 @@ fn main() {
 
 #[cfg(all(not(debug_assertions), target_os = "windows"))]
 unsafe fn attach_parent_console() {
-    #[link(name = "kernel32")]
-    extern "system" {
-        fn AttachConsole(dw_process_id: u32) -> i32;
-    }
-    const ATTACH_PARENT_PROCESS: u32 = u32::MAX;
+    use windows_sys::Win32::System::Console::{AttachConsole, ATTACH_PARENT_PROCESS};
     AttachConsole(ATTACH_PARENT_PROCESS);
 }

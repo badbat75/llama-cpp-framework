@@ -7,6 +7,8 @@
 //! stdio/env then `spawn()` (`runstate::start`). On non-Windows both are no-ops
 //! beyond the plain command, so callers that differ only by that flag collapse.
 //! `combined_output` joins a probe's stdout+stderr; parse that, not one stream.
+//! `keep_std_handles_private` stops a long-lived child (the server) from
+//! holding our own stdout open, which hung any caller reading the CLI's output.
 //!
 //! `run_hidden_probe` is the variant for the transient `llama-server.exe` probes
 //! (`devices --list-devices`, `server_version --version`): it registers the child
@@ -59,6 +61,39 @@ pub fn hide_console(cmd: &mut Command) {
     #[cfg(not(windows))]
     {
         let _ = cmd;
+    }
+}
+
+/// Keep this process's own standard handles out of the children it spawns
+/// from now on; a no-op elsewhere. Call before spawning a child that outlives
+/// us (`runstate::start`).
+///
+/// Windows hands a child EVERY inheritable handle of its parent, not only the
+/// three it is given as stdio, and the handles a shell passes us are
+/// inheritable. So a llama-server spawned by `control start` / `restart` kept
+/// the CLI's stdout open for its whole life, and a caller reading that output
+/// to its end (`... | tail`, a script capturing it) hung although the restart
+/// had succeeded. Clearing the flag costs nothing: `std` duplicates a handle it
+/// passes as a child's stdio into an inheritable copy of its own.
+pub fn keep_std_handles_private() {
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::Foundation::{
+            SetHandleInformation, HANDLE_FLAG_INHERIT, INVALID_HANDLE_VALUE,
+        };
+        use windows_sys::Win32::System::Console::{
+            GetStdHandle, STD_ERROR_HANDLE, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE,
+        };
+        for which in [STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE] {
+            // SAFETY: no pointers; a missing handle (a GUI launch has none) is
+            // skipped, and a failed call only leaves the flag as it was.
+            unsafe {
+                let handle = GetStdHandle(which);
+                if !handle.is_null() && handle != INVALID_HANDLE_VALUE {
+                    SetHandleInformation(handle, HANDLE_FLAG_INHERIT, 0);
+                }
+            }
+        }
     }
 }
 

@@ -7,46 +7,19 @@
 //! event for its whole lifetime and runs a tiny background thread that waits on
 //! the event and calls back into the UI thread.
 //!
-//! Implemented with raw Win32 FFI (no extra crates), matching the style of
-//! `main.rs`'s `attach_parent_console`.
+//! Win32 through `windows-sys`.
 
 #![cfg(windows)]
 
-use core::ffi::c_void;
-
-type Handle = *mut c_void;
-
-const ERROR_ALREADY_EXISTS: u32 = 183;
-const WAIT_OBJECT_0: u32 = 0;
-const INFINITE: u32 = 0xFFFF_FFFF;
+use windows_sys::Win32::Foundation::{
+    CloseHandle, GetLastError, ERROR_ALREADY_EXISTS, HANDLE as Handle, WAIT_OBJECT_0,
+};
+use windows_sys::Win32::System::Threading::{
+    CreateEventW, CreateMutexW, SetEvent, WaitForMultipleObjects, INFINITE,
+};
 // AllowSetForegroundWindow(ASFW_ANY): let *any* process steal the foreground,
 // so the already-running instance can raise itself when we poke it.
-const ASFW_ANY: u32 = 0xFFFF_FFFF;
-
-#[link(name = "kernel32")]
-extern "system" {
-    fn CreateMutexW(attr: *const c_void, initial_owner: i32, name: *const u16) -> Handle;
-    fn CreateEventW(
-        attr: *const c_void,
-        manual_reset: i32,
-        initial_state: i32,
-        name: *const u16,
-    ) -> Handle;
-    fn SetEvent(handle: Handle) -> i32;
-    fn WaitForMultipleObjects(
-        count: u32,
-        handles: *const Handle,
-        wait_all: u32,
-        millis: u32,
-    ) -> u32;
-    fn CloseHandle(handle: Handle) -> i32;
-    fn GetLastError() -> u32;
-}
-
-#[link(name = "user32")]
-extern "system" {
-    fn AllowSetForegroundWindow(process_id: u32) -> i32;
-}
+use windows_sys::Win32::UI::WindowsAndMessaging::{AllowSetForegroundWindow, ASFW_ANY};
 
 // Per-session names (`Local\`): the goal is one running instance per user
 // session, which is also what survives fast-user-switching / RDP cleanly.
