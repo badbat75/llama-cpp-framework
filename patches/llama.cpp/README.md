@@ -305,27 +305,3 @@ build never calls `hipHostRegister`.
 with the patch still applying: re-check after every tag bump that touches
 `llama-context.cpp`). A `git apply --check` failure stops the build with a message
 pointing here.
-
-## `0005-hip-rccl-pcie-atomics-fallback.patch`
-
-Local (2026-10-28, against v0.8.0). 15 lines in `ggml/src/ggml-cuda/ggml-cuda.cu`
-(`ggml_backend_cuda_comm_init_nccl`), compiled into the HIP backend only (`#ifdef GGML_USE_HIP`).
-
-**What it fixes.** `--split-mode tensor` reduces through RCCL by default on Linux, and
-RCCL's collective kernels (TheRock 10.1.0, RCCL 2.30.7, gfx1201: `ncclDevKernel_Generic_1/2/4`)
-declare a `hidden_hostcall_buffer`. HIP refuses to dispatch such a kernel on a GPU whose PCIe
-link has no atomics (`rocvirtual.cpp`: "Pcie atomics not enabled, hostcall not supported"),
-so the first allreduce aborts the server with `HIP failure: 'the operation cannot be
-performed in the present state'` in `ncclGroupEnd`. That is any R9700 behind the AMD
-600-series chipset (the kernel logs "PCIE atomic ops is not supported" for it at boot); the
-CPU-attached slot is fine. `ncclCommInitAll` succeeds on such a card, so upstream's
-nccl → internal fallback never triggers. The patch asks HIP
-(`hipDeviceAttributeHostNativeAtomicSupported`, 0 exactly on the chipset card here) before
-initializing RCCL and, if any device of the split lacks atomics, warns
-`RCCL disabled: device N has no PCIe atomics` and takes upstream's internal AllReduce, the
-same path as `GGML_CUDA_ALLREDUCE=internal`. An explicit `GGML_CUDA_ALLREDUCE=nccl` still
-goes through the check. Forcing `RCCL_UNROLL_FACTOR` 3 to 5 (the unroll 8/16/32 kernels,
-which carry no hostcall buffer) does not help: the allreduce hangs.
-
-**When to drop it.** When RCCL ships gfx12 kernels without hostcall, or upstream checks
-PCIe atomics itself before choosing RCCL.
