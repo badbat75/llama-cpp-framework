@@ -376,3 +376,30 @@ the CPU backend itself a third slower here: the clang build of the zen4 variant,
 faults under `load-mode none`), which would decide whether the fix is in the build or in
 the preset; which 16 layers to keep in RAM; a requant of the host layers to a repackable
 type (Q4_0, Q8_0).
+
+## 11. Two R9700s on Linux (v0.8.0)
+
+The host now carries two R9700s and no RTX 4070 SUPER: one in the CPU's Gen5 x16 slot
+(`ROCm0`), one behind the chipset at Gen4 x4 (`ROCm1`) with no PCIe AtomicOps, so RCCL does
+not run and `split-mode tensor` is left out (layer split only). IQ3_S, `f16` KV, 43.7k-token
+prompt with the prompt cache off, 128 tokens out, `Threads` 12. This replaces section 9 on
+this hardware.
+
+| key | value | evidence |
+| --- | --- | --- |
+| `n-cpu-moe` | unset: every expert in VRAM | prefill 1978.8 ±5.7 against 570 t/s at `n-cpu-moe 16`, decode 33.9 against 26.2 (campaign `flash-next-2xr9700-linux-ncm-20261028`) |
+| `device`, `tensor-split` | the x16 card first, `1,1` | the x16 card last: prefill 2046.6 ±23.7 (+3%), decode 33.3 (-2%); the decode wins (campaign `flash-next-2xr9700-linux-device-20261028`) |
+| `ctx-size` | `262144` | at ubatch 512 it runs at the speed of 131072: prefill 1962.3 ±17.7, decode 34.0; free after the prefill 1872 and 772 MiB (campaign `flash-next-2xr9700-linux-ctx-20261028`) |
+| `ubatch-size` | `512` at 262144 | `1024` prefills 2273.1 ±3.8 (+15%) and `2048` 2312.8 ±0.8 at 131072 (campaign `flash-next-2xr9700-linux-ubatch-20261028`), but at 262144 the larger compute buffer leaves no margin on the second card; moving `blk.25`'s `gate`/`up` experts to the first card to make room for `1024` gave 2044 / 33.0, not taken |
+| `spec-type` | `ngram-map-k` (unchanged) | live, on a coding agent's turns at 130k-160k tokens (server log, not in `bench.db`): 30.3 t/s over 28 turns with it against 28.1 over 11 without, although it accepts only 5 to 15% of the drafted tokens there |
+
+Against the RTX 4070 SUPER + R9700 preset of section 9 (v0.7.0): prefill 558 to 1962 t/s
+(x3.5), decode 28.2 to 34.0 (+21%).
+
+Where the decode time goes (live, a coding agent at ~75k tokens, 31.5 t/s): per decode pass
+(~1.3 tokens with the drafter) ~41 ms, of which 12.5 ms of kernels on the first card and 12.9
+on the second (`rocprofv3 --attach`); the host thread sits at 100% CPU, ~75% of it inside the
+HSA runtime waiting on the GPUs (`perf`), under 0.5% in `libggml-hip`. The gaps are the hand-off
+between the two cards of a layer split, not host work: no preset key reaches them. A
+tool-call grammar (it disables backend sampling) costs nothing measurable: 37.5 / 37.9 / 38.0
+t/s without tools against 37.7 / 36.8 / 37.9 with two tools, same short prompt, temperature 0.

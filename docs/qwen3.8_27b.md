@@ -198,3 +198,24 @@ against `coder390-device-order-20261019`, `coder390-ubatch-20261020` and
 | the R9700 first on *Windows* at `53,13` | `52,14` (section 4) | does `53,13` buy margin on the 4070 (527 MiB free after a 115k prefill at `180224`) for free? | TBD |
 | the same HIP API log on *Linux* | n/a | is the Linux lead on the R9700-last placement the copy rate alone (section 4), or the kernels too? | TBD |
 | a pinned staging buffer in ggml's cross-runtime tensor copy | `malloc` staging (section 4) | with the R9700 second on *Windows*, the 2.5 s of staged hops left after patch 0004 (~5% of the prefill); with it first, the 0.3 s copies out of the R9700 | TBD |
+
+## 7. Two R9700s on Linux (v0.8.0)
+
+The host now carries two R9700s and no RTX 4070 SUPER: one in the CPU's Gen5 x16 slot
+(`ROCm0`), one behind the chipset at Gen4 x4 (`ROCm1`) with no PCIe AtomicOps, so RCCL does
+not run and `split-mode tensor` is left out (layer split only). `f16` KV, 43.7k-token prompt
+with the prompt cache off, 128 tokens out. Two presets: the Swift-1.5 fine-tune of this model
+with `draft-mtp`, and the Q8_0 with the `draft-dflash` drafter on the second card.
+
+| preset, key | value | evidence |
+| --- | --- | --- |
+| Swift, `device` | the x16 card first, `1,1` | prefill 1491 / decode 33.5 against 1476 / 32.2 with the order reversed (campaign `swift27b-2xr9700-linux-device-20261028`) |
+| Swift, `ctx-size` | `262144` (was 180224) | same speed: 1472.3 / 33.4; free after the prefill 7322 and 4086 MiB (campaign `swift27b-2xr9700-linux-ctx-20261028`) |
+| Swift, `ubatch-size` | `1024` | `2048` prefills 1118.3 ±5.8, -24% (campaign `swift27b-2xr9700-linux-ubatch-20261028`) |
+| Swift, `spec-draft-n-max` | default | `2` / `4` / `5`: 31.6 / 33.6 / 32.9 decode, none better than the default (campaign `swift27b-2xr9700-linux-draft-n-max-20261028`) |
+| DFlash, `ctx-size` | `262144` (was 172032) | 1396.9 / 31.5 against 1405 / 31.1 (campaign `qwen27b-dflash-2xr9700-linux-ctx-20261028`) |
+| DFlash, `spec-draft-n-max` | `5` (was 7) | 34.1 ±2.0 against 32.2 ±1.4 over 4 repetitions (35.1 against 32.9 without the first, which always reads ~3 t/s low after a restart); `3` 32.4, `10` 31.3 (campaign `qwen27b-dflash-2xr9700-linux-draft-n-max-20261028`) |
+
+Swift's decode under `rocprofv3` (43.7k tokens): the two cards busy ~75% of the time combined
+(~84% estimated without the profiler), `mul_mat_vec_q` 67% of the GPU time, cross-card copies
+under 0.4%: the x4 link does not limit a layer-split decode.
