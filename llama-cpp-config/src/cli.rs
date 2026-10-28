@@ -1329,12 +1329,13 @@ fn run_control(c: ControlCmd) -> Result<()> {
         }
         ControlCmd::Stop => {
             snapshot_before_stop();
-            runstate::stop();
-            if runstate::is_running() {
-                anyhow::bail!("Failed to stop llama-server.");
-            } else {
-                println!("llama-server stopped.");
+            if !runstate::stop() {
+                anyhow::bail!(
+                    "Failed to stop llama-server: still running {} s after the stop.",
+                    runstate::STOP_GRACE.as_secs()
+                );
             }
+            println!("llama-server stopped.");
             Ok(())
         }
         ControlCmd::Restart => {
@@ -1342,7 +1343,16 @@ fn run_control(c: ControlCmd) -> Result<()> {
             // below puts back, which is what makes a restart cheap on a long
             // conversation instead of a fresh multi-minute prefill.
             snapshot_before_stop();
-            runstate::stop();
+            // `stop()` returns only once the old router and its children are
+            // gone (a child that held a large KV cache takes tens of seconds
+            // to exit): starting earlier saw the old process, launched nothing,
+            // and left no server once it exited.
+            if !runstate::stop() {
+                anyhow::bail!(
+                    "Failed to restart llama-server: the old one is still running {} s after the stop.",
+                    runstate::STOP_GRACE.as_secs()
+                );
+            }
             std::thread::sleep(std::time::Duration::from_millis(1000));
             match runstate::start() {
                 Ok(Some(cfg)) => {

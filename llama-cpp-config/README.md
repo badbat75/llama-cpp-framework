@@ -433,7 +433,7 @@ llama-cpp-config control stop-and-close → stop llama-server and close the conf
 
 The `stop-and-close` command is Windows-only and uses a named event to signal the running GUI instance to exit gracefully.
 
-With **SaveStateOnShutdown** on, every stopping command snapshots the loaded models first and `start` restores the newest dump afterwards, so `restart` is the full round trip: it is what turns a restart on a long conversation from a multi-minute prefill into a disk read. Neither leg is ever fatal, in either direction: a snapshot that cannot be written must not block a stop the user asked for, and a server that started is started whether or not its cache came back.
+With **SaveStateOnShutdown** on, every stopping command snapshots the loaded models first and `start` restores the newest dump afterwards, so `restart` is the full round trip: it is what turns a restart on a long conversation from a multi-minute prefill into a disk read. Neither leg is ever fatal, in either direction: a snapshot that cannot be written must not block a stop the user asked for, and a server that started is started whether or not its cache came back. `stop` and `restart` wait for the old router and its children to exit (on Linux a child that held a large KV cache takes tens of seconds) for up to `runstate::STOP_GRACE` (120 s); one still running then fails the command, and `restart` does not start.
 
 ## Build
 

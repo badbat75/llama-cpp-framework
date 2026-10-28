@@ -1596,7 +1596,7 @@ fn stop_server_async_with(
     if let Some(app) = app_weak.upgrade() {
         let s = app.global::<AppState>();
         // Same re-entry guard as start: the tray menu keeps offering "Stop
-        // server" for the whole (up to 15 s) stop wait; without it, each
+        // server" for the whole stop wait (up to `runstate::STOP_GRACE`); without it, each
         // extra click spawns another taskkill + wait thread and double-bumps
         // the status generation.
         if s.get_server_starting() || s.get_server_stopping() {
@@ -1626,16 +1626,8 @@ fn stop_server_async_with(
             None
         };
 
-        runstate::stop();
-        let mut running = runstate::is_running();
-        let step = std::time::Duration::from_millis(300);
-        let cap = std::time::Duration::from_secs(15);
-        let mut waited = std::time::Duration::ZERO;
-        while running && waited < cap {
-            std::thread::sleep(step);
-            waited += step;
-            running = runstate::is_running();
-        }
+        // `stop()` waits for the exit itself, up to `runstate::STOP_GRACE`.
+        let running = !runstate::stop();
         slint::invoke_from_event_loop(move || {
             bump_run_status_gen();
             if let Some(app) = app_weak.upgrade() {

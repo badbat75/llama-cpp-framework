@@ -454,20 +454,23 @@ pub fn start() -> io::Result<Option<crate::server_cfg::ServerConfig>> {
 /// Linux a SIGTERM to every `live_server_pids` entry), then close the run's log
 /// (module header) once the process is gone.
 ///
-/// Infallible by design: a missing/failed kill is not surfaced here. The caller
-/// (`stop_server_async`) re-polls `is_running()` and reports "still running" if
-/// the kill didn't land; that re-check is the source of truth for the outcome.
-/// The log is closed only after `is_running()` reads false, waited for up to
-/// `STOP_GRACE`: renaming the file while the process still holds it as stdout
-/// would carry its last lines into the closed log and, on a kill that never
-/// lands, would file a live run under a closing stamp. A wait that runs out
-/// skips the close; the next `start()` picks the file up by its mtime.
-pub fn stop() {
+/// Returns `true` once no llama-server is left, `false` when one is still
+/// alive after `STOP_GRACE`; the caller reports that as "still running", and a
+/// restart must not go on to `start()`, which would see the old process and
+/// launch nothing. The wait matters on Linux, where SIGTERM is a GRACEFUL stop:
+/// the router waits for its children, and a child that held a 5.6 GiB KV cache
+/// took ~40 s to exit after logging "cleaning up before exit".
+/// The log is closed only after `is_running()` reads false: renaming the file
+/// while the process still holds it as stdout would carry its last lines into
+/// the closed log and, on a kill that never lands, would file a live run under
+/// a closing stamp. A wait that runs out skips the close; the next `start()`
+/// picks the file up by its mtime.
+pub fn stop() -> bool {
     #[cfg(windows)]
     {
         // Spawn failure (taskkill missing) is effectively impossible on Windows;
-        // if the kill doesn't land, the caller's re-check of the run state
-        // surfaces it as "still running".
+        // if the kill doesn't land, the wait below returns false and the
+        // caller surfaces it as "still running".
         crate::proc::run_hidden(
             std::path::Path::new("taskkill"),
             ["/f", "/im", "llama-server.exe"],
@@ -486,22 +489,41 @@ pub fn stop() {
         }
     }
 
-    let step = std::time::Duration::from_millis(250);
-    let mut waited = std::time::Duration::ZERO;
-    while is_running() {
-        if waited >= STOP_GRACE {
-            return;
-        }
-        std::thread::sleep(step);
-        waited += step;
+    let gone = wait_gone(
+        is_running,
+        STOP_GRACE,
+        std::time::Duration::from_millis(250),
+    );
+    if gone {
+        close_log_per_settings(LogStamp::Now);
     }
-    close_log_per_settings(LogStamp::Now);
+    gone
 }
 
-/// How long `stop()` waits for the killed process to disappear before giving
-/// up on closing the log. `taskkill /f` is synchronous in practice (the GUI's
-/// own 15 s re-poll almost never loops), so this is a ceiling, not a delay.
-const STOP_GRACE: std::time::Duration = std::time::Duration::from_secs(5);
+/// How long `stop()` waits for the stopped process to disappear before it
+/// reports failure. `taskkill /f` is synchronous in practice, so on Windows
+/// this is a ceiling, not a delay; on Linux the graceful exit of a router whose
+/// child held a 5.6 GiB KV cache took about a minute, so the ceiling is twice
+/// that.
+pub const STOP_GRACE: std::time::Duration = std::time::Duration::from_secs(120);
+
+/// Poll `running` every `step` until it reads false (`true`), or until `grace`
+/// has passed with it still true (`false`). Split out of `stop()` so a process
+/// that takes long to exit can be simulated in a test.
+fn wait_gone(
+    mut running: impl FnMut() -> bool,
+    grace: std::time::Duration,
+    step: std::time::Duration,
+) -> bool {
+    let deadline = std::time::Instant::now() + grace;
+    while running() {
+        if std::time::Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(step);
+    }
+    true
+}
 
 // ── Log rotation ─────────────────────────────────────────────────────────
 
@@ -701,6 +723,50 @@ mod tests {
 
     fn args_for(cfg: &ServerConfig) -> Vec<String> {
         server_args(cfg, Path::new("presets.ini"))
+    }
+
+    // ── Stop wait ────────────────────────────────────────────────────────
+
+    /// A process that outlives several polls (the router waiting for a child
+    /// to write out its KV cache) is waited for, not reported gone at once.
+    #[test]
+    fn wait_gone_waits_for_a_slow_exit() {
+        use std::time::{Duration, Instant};
+        let exits_at = Instant::now() + Duration::from_millis(400);
+        let mut polls = 0;
+        let gone = wait_gone(
+            || {
+                polls += 1;
+                Instant::now() < exits_at
+            },
+            Duration::from_secs(5),
+            Duration::from_millis(20),
+        );
+        assert!(gone);
+        assert!(Instant::now() >= exits_at);
+        assert!(polls > 1);
+    }
+
+    /// One that never exits is reported still running once the grace is up.
+    #[test]
+    fn wait_gone_gives_up_after_the_grace() {
+        use std::time::{Duration, Instant};
+        let began = Instant::now();
+        let gone = wait_gone(
+            || true,
+            Duration::from_millis(200),
+            Duration::from_millis(20),
+        );
+        assert!(!gone);
+        assert!(began.elapsed() >= Duration::from_millis(200));
+        assert!(began.elapsed() < Duration::from_secs(5));
+    }
+
+    /// Nothing left to wait for: no sleep at all.
+    #[test]
+    fn wait_gone_returns_at_once_when_nothing_runs() {
+        use std::time::Duration;
+        assert!(wait_gone(|| false, Duration::ZERO, Duration::from_secs(60)));
     }
 
     // ── Log rotation ─────────────────────────────────────────────────────
