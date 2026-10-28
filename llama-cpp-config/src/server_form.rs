@@ -93,7 +93,7 @@ const PORT: RangeInclusive<i32> = 1..=65535;
 /// box, its text, the values it takes): the server twin of `form::int_fields`,
 /// with the ranges `form_to_config` reads the same fields with (the
 /// thread counts are sliders, and LogVerbosity a dropdown, so neither is here).
-fn int_fields(f: &ServerForm) -> [(&'static str, bool, &str, RangeInclusive<i32>); 2] {
+fn int_fields(f: &ServerForm) -> [(&'static str, bool, &str, RangeInclusive<i32>); 3] {
     [
         ("Port", f.port_default, f.port.as_str(), PORT),
         (
@@ -101,6 +101,12 @@ fn int_fields(f: &ServerForm) -> [(&'static str, bool, &str, RangeInclusive<i32>
             f.models_max_default,
             f.models_max.as_str(),
             ini::INT_ANY,
+        ),
+        (
+            "ModelsMemoryMargin",
+            f.models_memory_margin_default,
+            f.models_memory_margin.as_str(),
+            ini::INT_NON_NEGATIVE,
         ),
     ]
 }
@@ -138,6 +144,9 @@ pub fn config_to_form(cfg: &server_cfg::ServerConfig) -> ServerForm {
         // "default" hint the user sees matches what omitting the flag yields.
         models_max: itxt(cfg.models_max, 4),
         models_max_default: cfg.models_max.is_none(),
+        // Seeded with llama.cpp's default (0 = off), like models_max above.
+        models_memory_margin: itxt(cfg.models_memory_margin, 0),
+        models_memory_margin_default: cfg.models_memory_margin.is_none(),
         // Same "blank ⇒ default dir" rule as save()/start(), so a hand-edited
         // blank ModelsDir shows the default it will actually resolve to.
         models_dir: cfg.models_dir_or_default().into(),
@@ -232,6 +241,11 @@ pub fn form_to_config(f: &ServerForm) -> server_cfg::ServerConfig {
         } else {
             ini::parse_int_in(f.models_max.as_str(), &ini::INT_ANY)
         },
+        models_memory_margin: if f.models_memory_margin_default {
+            None
+        } else {
+            ini::parse_int_in(f.models_memory_margin.as_str(), &ini::INT_NON_NEGATIVE)
+        },
         // Blank ⇒ None (fall back to the default dir), same rule as hostname.
         models_dir: server_cfg::opt_nonblank(Some(f.models_dir.to_string())),
         // "default" (and anything unrecognised) collapses to None: the natural
@@ -294,6 +308,7 @@ mod tests {
             threads: Some(8),
             threads_batch: Some(12),
             models_max: Some(2),
+            models_memory_margin: Some(2048),
             models_dir: Some(r"E:\models".into()),
             // Non-default (None is the framework default), so the tri-state's
             // round-trip through the form's string spelling isn't vacuous.
@@ -318,8 +333,8 @@ mod tests {
 
     // The Save button's refusal and `form_to_config` agree on each integer field:
     // refused exactly when the conversion would read the text as unset. Also
-    // pins the two ranges, `0` being a real ModelsMax (unlimited) and not a
-    // real Port.
+    // pins the three ranges, `0` being a real ModelsMax (unlimited) and
+    // ModelsMemoryMargin (off) and not a real Port, and `-1` no margin.
     #[test]
     fn invalid_numbers_match_what_the_conversion_drops() {
         for text in [
@@ -336,15 +351,20 @@ mod tests {
             let form = ServerForm {
                 port: text.into(),
                 models_max: text.into(),
+                models_memory_margin: text.into(),
                 models_dir: r"E:\models".into(),
                 ..Default::default()
             };
             let cfg = form_to_config(&form);
-            let dropped: Vec<&str> = [("Port", cfg.port), ("ModelsMax", cfg.models_max)]
-                .into_iter()
-                .filter(|(_, v)| v.is_none())
-                .map(|(key, _)| key)
-                .collect();
+            let dropped: Vec<&str> = [
+                ("Port", cfg.port),
+                ("ModelsMax", cfg.models_max),
+                ("ModelsMemoryMargin", cfg.models_memory_margin),
+            ]
+            .into_iter()
+            .filter(|(_, v)| v.is_none())
+            .map(|(key, _)| key)
+            .collect();
             let refused: Vec<String> = invalid_numbers(&form);
             assert_eq!(refused.len(), dropped.len(), "text {text:?}: {refused:?}");
             for key in dropped {
@@ -357,6 +377,7 @@ mod tests {
         let ticked = ServerForm {
             port_default: true,
             models_max_default: true,
+            models_memory_margin_default: true,
             ..Default::default()
         };
         assert!(
@@ -366,9 +387,13 @@ mod tests {
         let zero = ServerForm {
             port: "8080".into(),
             models_max: "0".into(),
+            models_memory_margin: "0".into(),
             ..Default::default()
         };
-        assert!(invalid_numbers(&zero).is_empty(), "ModelsMax 0 = unlimited");
+        assert!(
+            invalid_numbers(&zero).is_empty(),
+            "ModelsMax 0 = unlimited, ModelsMemoryMargin 0 = off"
+        );
     }
 
     /// The log level is the one field the form carries as a LABEL rather than as

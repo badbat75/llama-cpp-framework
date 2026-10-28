@@ -162,6 +162,12 @@ fn server_args(
         args.push("--models-max".into());
         args.push(mm.to_string());
     }
+    // Same omit-when-unset rule; an explicit 0 (off, llama.cpp's default) is
+    // passed as written.
+    if let Some(mm) = cfg.models_memory_margin {
+        args.push("--models-memory-margin".into());
+        args.push(mm.to_string());
+    }
 
     args.push("--host".into());
     args.push(hostname);
@@ -928,7 +934,13 @@ mod tests {
         // port / models-max join the unset-omits-the-flag group: the UI
         // "default" checkbox stores None, and a forced value here is what left
         // "default" still showing --port / --models-max 1.
-        for flag in ["-t", "--threads-batch", "--port", "--models-max"] {
+        for flag in [
+            "-t",
+            "--threads-batch",
+            "--port",
+            "--models-max",
+            "--models-memory-margin",
+        ] {
             assert!(!a.contains(&flag.to_string()), "{flag} must be omitted");
         }
         // The deprecated pair must never reappear: each overwrites the whole
@@ -1016,6 +1028,7 @@ mod tests {
             threads: Some(6),
             threads_batch: Some(12),
             models_max: Some(3),
+            models_memory_margin: Some(1024),
             models_dir: Some(r"D:\models".into()),
             // Two rules: the `,` that joins them must reach llama-server as ONE
             // argument (it does its own splitting), not as two.
@@ -1041,6 +1054,7 @@ mod tests {
             threads,
             threads_batch,
             models_max,
+            models_memory_margin,
             models_dir: _, // launch env only: start() exports it as LLAMA_CACHE
             // launch env only: `env_vars` exports it as ROCBLAS_USE_HIPBLASLT.
             // Also not a llama-server flag: rocBLAS reads it itself, below
@@ -1082,6 +1096,10 @@ mod tests {
         assert!(pair("-t", threads.unwrap().to_string()));
         assert!(pair("--threads-batch", threads_batch.unwrap().to_string()));
         assert!(pair("--models-max", models_max.unwrap().to_string()));
+        assert!(pair(
+            "--models-memory-margin",
+            models_memory_margin.unwrap().to_string()
+        ));
         // The UI is off here, so --no-ui is passed.
         assert_eq!(a.contains(&"--no-ui".to_string()), !webui.unwrap());
         // webui-mcp-proxy is a presence flag: Some(false) here ⇒ omitted.

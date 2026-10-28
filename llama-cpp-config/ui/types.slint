@@ -260,6 +260,8 @@ export struct ServerForm {
     threads_batch_auto: bool,
     models_max: string,
     models_max_default: bool,
+    models_memory_margin: string,
+    models_memory_margin_default: bool,
     models_dir: string,
     // ROCBLAS_USE_HIPBLASLT (the SDK Tuning card's ROCm half), a TRI-state
     // carried as a string exactly like PresetForm's `flash_attn`: "default"

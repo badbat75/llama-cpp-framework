@@ -252,7 +252,10 @@ with the `test` and `perf` commands above, both `nr23` sets (GPU idle, server do
 
 Local (2026-10-21, against v0.7.0). 230 lines: `ggml/include/ggml-cuda.h`,
 `ggml/src/ggml-cuda/ggml-cuda.cu`, `src/llama-context.h`, `src/llama-context.cpp`.
-Checked-in sha256: `da10650573614419556267af491bc7633a051d95e9fa8d1b894ea4d0c1882851`
+**Refreshed for v0.8.0** (2026-10-28): #31141 moved `no_alloc` out of `llama_hparams`, so
+the destructor's context line now reads `model.no_alloc()`; every added and removed line is
+unchanged, only offsets and that context moved. Checked-in sha256:
+`23144b7f69c42ac30ab934eeb960f4a218b5d71fa8f8360cc1ef39d7bed20424`
 
 **What it changes.** llama allocates the scheduler's host compute buffers (where the graph
 inputs live: token ids, positions, the attention masks, the host copies of cross-backend

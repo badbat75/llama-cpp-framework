@@ -264,6 +264,11 @@ pub struct ServerSet {
     /// Models kept resident at once. Stored as-is (0 = unlimited); NOT cleared by 0.
     #[arg(long)]
     pub models_max: Option<i32>,
+    /// MiB kept free per device; the router unloads its least recently used
+    /// models until a new one fits. 0 = off; negative clears the key (llama.cpp
+    /// default, also off).
+    #[arg(long, allow_hyphen_values = true)]
+    pub models_memory_margin: Option<i32>,
     #[arg(long)]
     pub models_dir: Option<String>,
     /// rocBLAS GEMM backend (env ROCBLAS_USE_HIPBLASLT): off = Tensile (the
@@ -344,6 +349,9 @@ impl ServerSet {
         }
         if let Some(m) = self.models_max {
             cfg.models_max = Some(m);
+        }
+        if let Some(m) = self.models_memory_margin {
+            cfg.models_memory_margin = if m >= 0 { Some(m) } else { None };
         }
         if let Some(d) = &self.models_dir {
             cfg.models_dir = server_cfg::opt_nonblank(Some(d.clone()));
@@ -710,6 +718,11 @@ fn show_lines(cfg: &server_cfg::ServerConfig) -> String {
         "ModelsMax:",
         cfg.models_max
             .map_or_else(|| "auto (default: 4)".into(), |v| v.to_string()),
+    );
+    row(
+        "ModelsMemoryMargin:",
+        cfg.models_memory_margin
+            .map_or_else(|| "off (default)".into(), |v| format!("{v} MiB")),
     );
     row(
         "ModelsDir:",
@@ -1665,6 +1678,7 @@ mod tests {
             threads: Some(8),
             threads_batch: Some(16),
             models_max: Some(3),
+            models_memory_margin: Some(1024),
             models_dir: Some("D:\\models".into()),
             // The tri-state arrives as its WORD (clap refuses anything else) and
             // must land as the matching Option<bool>.
@@ -1694,6 +1708,7 @@ mod tests {
             threads: Some(8),
             threads_batch: Some(16),
             models_max: Some(3),
+            models_memory_margin: Some(1024),
             models_dir: Some("D:\\models".into()),
             rocblas_use_hipblaslt: Some(false),
             cuda_allreduce: Some("none".into()),
@@ -1723,6 +1738,7 @@ mod tests {
             threads: Some(8),
             threads_batch: Some(16),
             models_max: Some(3),
+            models_memory_margin: Some(1024),
             models_dir: Some(r"D:\models".into()),
             rocblas_use_hipblaslt: Some(false),
             cuda_allreduce: Some("none".into()),
@@ -1749,6 +1765,7 @@ mod tests {
             threads,
             threads_batch,
             models_max,
+            models_memory_margin,
             models_dir,
             rocblas_use_hipblaslt,
             cuda_allreduce,
@@ -1770,6 +1787,10 @@ mod tests {
             ("Threads:", threads.unwrap().to_string()),
             ("ThreadsBatch:", threads_batch.unwrap().to_string()),
             ("ModelsMax:", models_max.unwrap().to_string()),
+            (
+                "ModelsMemoryMargin:",
+                format!("{} MiB", models_memory_margin.unwrap()),
+            ),
             ("ModelsDir:", models_dir.unwrap()),
             // The row prints the tri-state's WORD, not the bool's `to_string()`:
             // "false" would read as a value the CLI can't even be given.

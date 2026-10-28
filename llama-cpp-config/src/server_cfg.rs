@@ -63,6 +63,12 @@ pub struct ServerConfig {
     pub threads: Option<i32>,
     pub threads_batch: Option<i32>,
     pub models_max: Option<i32>,
+    /// MiB of memory the router keeps free on every device
+    /// (`--models-memory-margin`, llama.cpp v0.8.0): before loading a model it
+    /// unloads the least recently used ones until the new one fits. `None` omits
+    /// the flag, i.e. llama.cpp's default 0, which disables the accounting and
+    /// leaves `models_max` as the only cap.
+    pub models_memory_margin: Option<i32>,
     pub models_dir: Option<String>,
     /// Which GEMM backend rocBLAS uses under the HIP build (env var
     /// `ROCBLAS_USE_HIPBLASLT`): `Some(false)` exports `0` (force Tensile),
@@ -466,6 +472,9 @@ fn from_keys(keys: &std::collections::BTreeMap<String, String>) -> ServerConfig 
         threads: keys.get("Threads").and_then(|v| ini::parse_int(v)),
         threads_batch: keys.get("ThreadsBatch").and_then(|v| ini::parse_int(v)),
         models_max: keys.get("ModelsMax").and_then(|v| ini::parse_int(v)),
+        models_memory_margin: keys
+            .get("ModelsMemoryMargin")
+            .and_then(|v| ini::parse_int(v)),
         models_dir: opt_nonblank(keys.get("ModelsDir").cloned()),
         // Absent (or unparseable) stays None: "leave the env var alone" is a
         // real third state here, not a stand-in for a framework default.
@@ -601,6 +610,14 @@ fn render(cfg: &ServerConfig) -> String {
         "; ModelsMax = 2  ; cap resident models (0 = unlimited); commented = llama.cpp default 4",
         |n| n >= 0,
     );
+    // Same rule as ModelsMax: the "default" checkbox carries the unset state, so
+    // any non-negative value (0 = off, as llama.cpp's own default) is explicit.
+    let models_memory_margin_line = int_line_or_hint(
+        cfg.models_memory_margin,
+        "ModelsMemoryMargin",
+        "; ModelsMemoryMargin = 1024  ; MiB kept free per device, unloading LRU models until a new one fits (--models-memory-margin); commented = llama.cpp default 0 (off)",
+        |n| n >= 0,
+    );
     // The one bool with a real unset state (see the field's doc): unset means the
     // env var is never exported, which is neither `true` nor `false`.
     let rocblas_hipblaslt_line = bool_line_or_hint(
@@ -704,6 +721,7 @@ LogVerbosity = {log_verbosity}
 {threads_line}
 {threads_batch_line}
 {models_max_line}
+{models_memory_margin_line}
 ; SDK tuning: vendor-library environment variables, not llama-server flags;
 ; llama.cpp never sees them, so nothing validates them and each only bites the
 ; backend it belongs to. RocblasUseHipblaslt picks rocBLAS's GEMM backend:
@@ -821,6 +839,7 @@ mod tests {
             threads: Some(12),
             threads_batch: Some(24),
             models_max: Some(2),
+            models_memory_margin: Some(1536),
             models_dir: Some(r"E:\llm".into()),
             // Non-default (unset is the framework default): the state that
             // matters, and the one a `keep`-style collapse would swallow.
@@ -872,6 +891,7 @@ mod tests {
         assert_eq!(reloaded.threads, None);
         assert_eq!(reloaded.threads_batch, None);
         assert_eq!(reloaded.models_max, None);
+        assert_eq!(reloaded.models_memory_margin, None);
         // The one bool that stays None: unset means the env var is never
         // exported, so materializing a default would BE a decision.
         assert_eq!(reloaded.rocblas_use_hipblaslt, None);

@@ -137,6 +137,16 @@ export component ServerPage inherits ScrollView {
             }
             LabeledField {
                 label_width <=> LabelColumn.server;
+                label: "Memory margin";
+                hint: "--models-memory-margin: MiB of memory llama-server keeps free on every GPU.\nBefore loading a model it unloads the least recently used ones until the new one fits, on top of Max models.\ndefault = omit the flag → llama.cpp default: 0 (off: only Max models limits what stays loaded).";
+                DefaultLineEdit {
+                    input_type: InputType.number;
+                    default <=> AppState.server_form.models_memory_margin_default;
+                    value <=> AppState.server_form.models_memory_margin;
+                }
+            }
+            LabeledField {
+                label_width <=> LabelColumn.server;
                 label: "Models folder";
                 hint: "Root folder scanned for GGUFs.\nPickers read its subfolders: models\\, mmprojs\\, mtps\\, dflashs\\.";
                 LineEdit {
