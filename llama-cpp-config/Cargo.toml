@@ -1,6 +1,6 @@
 [package]
 name = "llama-cpp-config"
-version = "2.1.0"
+version = "2.1.1"
 edition = "2021"
 build = "build.rs"
 description = "GUI + CLI configurator for llama.cpp-framework"
