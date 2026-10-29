@@ -28,7 +28,7 @@ layout the campaign started from; the recommended one (`f16`, `n-cpu-moe 16`) is
 | files (IQ3_S) | shard 1: 51.05 GiB of weights; shard 2: 26.82 GiB, the n-gram table `per_layer_token_embd` (27465 MiB) | file sizes; `add: tensor per_layer_token_embd.weight ... lazy read enabled` |
 | non-expert weights on the GPU | 3983 MiB (every expert in RAM, `n-cpu-moe 48`) | `model buffer size` |
 | fixed state at one slot | recurrent 112.57 MiB; KV 24 + 96 MiB per 4096 tokens of context (f16) | `RS buffer size`, `KV buffer size` at ctx 4096 and 32768 |
-| `split-mode tensor` | not supported for `qwen4exp` (#28569) | `gguf::arch_supports_sm_tensor` |
+| `split-mode tensor` | supported for `qwen4exp` since #28569 took it off llama.cpp's deny-list (v0.8.0 `llm_arch_supports_sm_tensor` does not name it); measured in section 11 | `src/llama-arch.cpp`, `gguf::arch_supports_sm_tensor` |
 
 ## 2. Recommended settings
 
@@ -381,7 +381,7 @@ type (Q4_0, Q8_0).
 
 The host now carries two R9700s and no RTX 4070 SUPER: one in the CPU's Gen5 x16 slot
 (`ROCm0`), one behind the chipset at Gen4 x4 (`ROCm1`) with no PCIe AtomicOps, so RCCL does
-not run and `split-mode tensor` is left out (layer split only). IQ3_S, `f16` KV, 43.7k-token
+not run; `split-mode tensor` needs the internal AllReduce (`CudaAllreduce = internal`), last table of this section. IQ3_S, `f16` KV, 43.7k-token
 prompt with the prompt cache off, 128 tokens out, `Threads` 12. This replaces section 9 on
 this hardware.
 
@@ -403,3 +403,19 @@ HSA runtime waiting on the GPUs (`perf`), under 0.5% in `libggml-hip`. The gaps 
 between the two cards of a layer split, not host work: no preset key reaches them. A
 tool-call grammar (it disables backend sampling) costs nothing measurable: 37.5 / 37.9 / 38.0
 t/s without tools against 37.7 / 36.8 / 37.9 with two tools, same short prompt, temperature 0.
+
+`split-mode tensor` with the internal AllReduce (`CudaAllreduce = internal`, the second card has
+no PCIe AtomicOps so RCCL is out), same preset otherwise (`ngram-map-k4v`, 262144, ubatch 512),
+live on the same coding agent's turns (server log, not in `bench.db`):
+
+| | layer split | `split-mode tensor` |
+| --- | --- | --- |
+| decode at 160k+ tokens | 28.1 t/s (42 turns; drafter 16% of the output) | 31.5 t/s (20 turns; drafter 11%) |
+| prompt read | 1773 t/s re-reading 71k tokens | 933 t/s re-reading 166k tokens (not the same depth) |
+| free VRAM | 1872 and 772 MiB after a 43.7k prefill | down to 9 MiB on the second card during the agent's turns |
+
+Decode +12% at the same depth with a weaker drafter share; the prompt read drops (the 27B
+lost 15% at 115k with the same AllReduce). Flash attention is forced on and backend sampling
+falls back to the CPU (`backend sampling not supported with SPLIT_MODE_TENSOR`), which the
+agent's tool grammar already did. The margin is the open problem: a smaller `ubatch-size`
+or context is needed before this is a safe default.
