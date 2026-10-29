@@ -72,6 +72,23 @@ const TRANSFER_TIMEOUT: Duration = Duration::from_secs(900);
 /// is not answering in five seconds it is not going to save anything either.
 const CONTROL_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// How long a restore waits for the router to open its port after a start.
+///
+/// The router listens only once it has measured the memory of every preset it
+/// does not have a figure for (`server_run_measure`, one short-lived child per
+/// preset, run before `ctx_http.start()` in `server.cpp`), and until
+/// `ctx_http.is_ready` it answers 503 to everything. Observed: a few seconds on
+/// a warm machine, long enough on 2026-10-29 that a fixed 3 s look found the
+/// port closed and threw the snapshot away. Five minutes is an order of
+/// magnitude above a slow measurement pass yet still bounded, and the wait
+/// ends at once if the server process exits. The model load that follows is
+/// NOT counted here: the restore request itself waits for it (see
+/// [`slot_action`]), under [`TRANSFER_TIMEOUT`].
+const LISTEN_TIMEOUT: Duration = Duration::from_secs(300);
+
+/// Pause between two probes of a router that is not answering yet.
+const LISTEN_POLL: Duration = Duration::from_millis(500);
+
 /// The slot to snapshot. The framework runs `parallel = 1`, so slot 0 is the
 /// only one a child has, and it is the one holding the conversation.
 const SLOT_ID: u32 = 0;
@@ -232,6 +249,40 @@ fn gib(bytes: u64) -> String {
     }
 }
 
+/// Wait until the router answers `GET /health` with 200, i.e. it is listening
+/// and past `is_ready` (before that its middleware answers 503 "Loading model").
+///
+/// `alive` is asked between probes so a server that died during startup ends
+/// the wait at once instead of after `timeout`; it is a parameter so a test can
+/// run without a llama-server process.
+fn wait_listening(
+    port: u16,
+    timeout: Duration,
+    step: Duration,
+    mut alive: impl FnMut() -> bool,
+) -> Result<(), String> {
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        if let Ok(res) = request(port, "GET", "/health", None, CONTROL_TIMEOUT) {
+            if res.status == 200 {
+                return Ok(());
+            }
+        }
+        if !alive() {
+            return Err(format!(
+                "llama-server exited before it answered on port {port}; see its log"
+            ));
+        }
+        if std::time::Instant::now() >= deadline {
+            return Err(format!(
+                "llama-server did not answer on port {port} within {} s; the snapshot stays on disk",
+                timeout.as_secs()
+            ));
+        }
+        std::thread::sleep(step);
+    }
+}
+
 /// POST one slot action through the ROUTER, which proxies it to the child that
 /// owns the model.
 ///
@@ -240,7 +291,13 @@ fn gib(bytes: u64) -> String {
 /// same body and the action from the query string, which the proxy forwards
 /// verbatim. One request therefore carries both routing and payload, and on
 /// restore it also makes the router LOAD the model if it is not up, which is
-/// exactly what a cold start needs.
+/// exactly what a cold start needs: the router's `proxy_post` runs
+/// `ensure_model_ready` (`server-models.cpp`), which loads the model (through
+/// the scheduler's queue) and holds the request until the child reports
+/// `loaded`, so the restore never reaches a child that is still loading. That
+/// wait counts against [`TRANSFER_TIMEOUT`], which a 30 s load leaves ample.
+/// What it cannot cover is a router that is not listening yet: the caller of a
+/// restore after a start waits for that first ([`wait_listening`]).
 fn slot_action(port: u16, action: &str, model: &str, filename: &str) -> Result<Transfer, String> {
     let body = serde_json::json!({ "filename": filename, "model": model }).to_string();
     let path = format!("/slots/{SLOT_ID}?action={action}");
@@ -345,8 +402,11 @@ pub fn save_all(cfg: &crate::server_cfg::ServerConfig) -> (Vec<Transfer>, Vec<St
 /// name, so it must round-trip through [`state_file_name`]: the candidate list
 /// comes from the presets, and the one whose sanitized name matches wins.
 ///
-/// The router loads the model as a side effect of the proxied request, so this
-/// is slow (a full model load plus an 8 GiB read) and belongs on a worker
+/// Called right after a start, so it first waits (up to [`LISTEN_TIMEOUT`]) for
+/// the router to open its port: sent at once, the request met a router still
+/// measuring its presets and failed with "connection refused".
+/// The router then loads the model as a side effect of the proxied request, so
+/// this is slow (a full model load plus an 8 GiB read) and belongs on a worker
 /// thread, never on the UI thread.
 pub fn restore_newest(
     cfg: &crate::server_cfg::ServerConfig,
@@ -370,6 +430,12 @@ pub fn restore_newest(
             format!("{filename} does not match any configured model; ignoring the snapshot")
         })?;
 
+    wait_listening(
+        port,
+        LISTEN_TIMEOUT,
+        LISTEN_POLL,
+        crate::runstate::is_running,
+    )?;
     slot_action(port, "restore", model, &filename).map(Some)
 }
 
@@ -461,5 +527,128 @@ mod tests {
             .filter_map(|m| m["id"].as_str())
             .collect();
         assert_eq!(names, vec!["up"]);
+    }
+
+    // ── Waiting for the router after a start ─────────────────────────────
+
+    /// A port nothing listens on yet: bound to learn a free number, then
+    /// released, so a connect is refused as it was on 2026-10-29.
+    fn free_port() -> u16 {
+        let l = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        l.local_addr().unwrap().port()
+    }
+
+    /// A stand-in router that starts listening on `port` after `delay` and
+    /// answers its connections in order with `replies` (status, body), then
+    /// stops. Returns the request lines it saw.
+    fn fake_router(
+        port: u16,
+        delay: Duration,
+        replies: Vec<(u16, &'static str)>,
+    ) -> std::thread::JoinHandle<Vec<String>> {
+        use std::io::{BufRead, BufReader, Read, Write};
+        std::thread::spawn(move || {
+            std::thread::sleep(delay);
+            let l = std::net::TcpListener::bind(("127.0.0.1", port)).unwrap();
+            let mut seen = Vec::new();
+            for (status, body) in replies {
+                let (mut s, _) = l.accept().unwrap();
+                let mut r = BufReader::new(s.try_clone().unwrap());
+                let mut line = String::new();
+                r.read_line(&mut line).unwrap();
+                seen.push(line.trim().to_string());
+                let mut len = 0;
+                loop {
+                    let mut h = String::new();
+                    r.read_line(&mut h).unwrap();
+                    if h.trim().is_empty() {
+                        break;
+                    }
+                    if let Some(v) = h.to_ascii_lowercase().strip_prefix("content-length:") {
+                        len = v.trim().parse().unwrap();
+                    }
+                }
+                let mut req_body = vec![0; len];
+                r.read_exact(&mut req_body).unwrap();
+                write!(
+                    s,
+                    "HTTP/1.1 {status} X\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                )
+                .unwrap();
+            }
+            seen
+        })
+    }
+
+    /// The 2026-10-29 failure: the router opens its port seconds after the
+    /// launch, then answers 503 until it is ready. The restore must wait it
+    /// out and only then send the slot request.
+    #[test]
+    fn restore_waits_for_a_router_that_listens_late() {
+        let port = free_port();
+        let began = std::time::Instant::now();
+        let router = fake_router(
+            port,
+            Duration::from_millis(800),
+            vec![
+                (503, r#"{"error":{"message":"Loading model"}}"#),
+                (200, r#"{"status":"ok"}"#),
+                (200, r#"{"n_restored":166000,"n_read":5000000000}"#),
+            ],
+        );
+        wait_listening(
+            port,
+            Duration::from_secs(10),
+            Duration::from_millis(50),
+            || true,
+        )
+        .unwrap();
+        assert!(began.elapsed() >= Duration::from_millis(800));
+        let t = slot_action(port, "restore", "M", "M.llamastate").unwrap();
+        assert_eq!(t.tokens, 166_000);
+        let seen = router.join().unwrap();
+        assert_eq!(
+            seen,
+            vec![
+                "GET /health HTTP/1.1",
+                "GET /health HTTP/1.1",
+                "POST /slots/0?action=restore HTTP/1.1",
+            ]
+        );
+    }
+
+    /// Nobody ever listens: the wait gives up once the timeout is past, with
+    /// a message that names the port.
+    #[test]
+    fn wait_gives_up_after_the_timeout() {
+        let port = free_port();
+        let began = std::time::Instant::now();
+        let err = wait_listening(
+            port,
+            Duration::from_millis(300),
+            Duration::from_millis(50),
+            || true,
+        )
+        .unwrap_err();
+        assert!(began.elapsed() >= Duration::from_millis(300));
+        assert!(err.contains(&format!("port {port} within")), "{err}");
+    }
+
+    /// A server that died during startup ends the wait at once instead of
+    /// after the full timeout.
+    #[test]
+    fn wait_stops_when_the_server_exits() {
+        let port = free_port();
+        let began = std::time::Instant::now();
+        let err = wait_listening(
+            port,
+            Duration::from_secs(60),
+            Duration::from_secs(60),
+            || false,
+        )
+        .unwrap_err();
+        assert!(began.elapsed() < Duration::from_secs(10));
+        assert!(err.contains("exited"), "{err}");
     }
 }
