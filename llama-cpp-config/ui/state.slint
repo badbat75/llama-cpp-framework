@@ -265,6 +265,14 @@ export global AppState {
     // Slint's dependency tracking cannot see them, so the binding passes the
     // serial to be re-evaluated when they change.
     pure callback moe_cache_floor_hint(PresetForm, int) -> string;
+    // `form.spec_type` is a comma-separated --spec-type list: at most one
+    // draft-* entry (the "Drafter" combo) plus any ngram-* entries (one
+    // checkbox each). These read and rewrite ONE entry of it, keeping the
+    // rest; the list itself stays the only state (presets.rs `spec_type_*`).
+    pure callback spec_type_drafter(string) -> string;
+    pure callback spec_type_has(string, string) -> bool;
+    pure callback spec_type_with_drafter(string, string) -> string;
+    pure callback spec_type_with_ngram(string, string, bool) -> string;
     // Bumped by every `update_model_info`, i.e. whenever the Rust-side model
     // facts (its tensor list above all) may have changed.
     in-out property <int> model_info_serial: 0;

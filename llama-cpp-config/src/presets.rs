@@ -913,6 +913,61 @@ pub fn spec_type_is_draftless(spec_type: &str) -> bool {
     spec_type.trim().starts_with("ngram-")
 }
 
+// ── The `--spec-type` list, entry by entry (the Models tab's drafter widgets) ──
+//
+// `--spec-type` is a comma-separated list and llama.cpp runs every entry: the
+// n-gram types first, then the draft model (`common_speculative_init`, whose
+// fixed priority order makes the order of the list irrelevant). There is one
+// draft context, so the list holds at most ONE `draft-*` entry beside any
+// number of `ngram-*` ones. "none" (the form's spelling of empty) and blank
+// entries are not entries.
+
+fn spec_type_entries(spec_type: &str) -> impl Iterator<Item = &str> {
+    spec_type
+        .split(',')
+        .map(str::trim)
+        .filter(|t| !t.is_empty() && *t != "none")
+}
+
+/// The draft-model entry of a `--spec-type` list, "" when there is none.
+pub fn spec_type_drafter(spec_type: &str) -> &str {
+    spec_type_entries(spec_type)
+        .find(|t| !spec_type_is_draftless(t))
+        .unwrap_or("")
+}
+
+/// Whether a `--spec-type` list names `entry`.
+pub fn spec_type_has(spec_type: &str, entry: &str) -> bool {
+    spec_type_entries(spec_type).any(|t| t == entry)
+}
+
+/// `spec_type` with its draft-model entry replaced by `drafter` ("" or "none"
+/// removes it). The n-gram entries are kept, in their order, ahead of it.
+pub fn spec_type_with_drafter(spec_type: &str, drafter: &str) -> String {
+    spec_type_entries(spec_type)
+        .filter(|t| spec_type_is_draftless(t))
+        .chain(spec_type_entries(drafter).take(1))
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+/// `spec_type` with the n-gram `entry` listed (`on`) or not, the rest kept. A
+/// newly listed n-gram goes after the other n-grams, ahead of the drafter.
+pub fn spec_type_with_ngram(spec_type: &str, entry: &str, on: bool) -> String {
+    let mut ngrams: Vec<&str> = spec_type_entries(spec_type)
+        .filter(|t| spec_type_is_draftless(t) && *t != entry)
+        .collect();
+    if on {
+        ngrams.push(entry);
+    }
+    let drafter = spec_type_drafter(spec_type);
+    ngrams
+        .into_iter()
+        .chain((!drafter.is_empty()).then_some(drafter))
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
 /// Drop the speculative-decoding keys this model cannot act on, returning the
 /// INI names of the ones removed (for the caller's status line).
 ///
@@ -1507,6 +1562,8 @@ pub fn render_section(p: &Preset) -> String {
     out.push_str(
         "; MTP heads embedded in the main GGUF need spec-type ALONE (no model-draft).\r\n",
     );
+    out.push_str("; It is a list: one draft-* entry plus any ngram-* ones, which llama.cpp\r\n");
+    out.push_str("; tries first (e.g. ngram-map-k4v,draft-dflash).\r\n");
     emit_str(&mut out, "spec-type", &p.spec_type);
     out.push_str("; spec-draft-n-max = max drafted tokens per step. DFlash clamps this to the\r\n");
     out.push_str(
@@ -1538,7 +1595,7 @@ pub fn render_section(p: &Preset) -> String {
     out.push_str("; draft from the tokens already in the context and need no draft model:\r\n");
     out.push_str("; ngram-mod takes n-match / n-min / n-max; ngram-simple, ngram-map-k and\r\n");
     out.push_str("; ngram-map-k4v take size-n / size-m, and ngram-map-k4v alone min-hits.\r\n");
-    out.push_str("; Only the selected type's.\r\n");
+    out.push_str("; Only the listed types' keys are kept.\r\n");
     emit_i32(&mut out, "spec-ngram-mod-n-match", p.spec_ngram_mod_n_match);
     emit_i32(&mut out, "spec-ngram-mod-n-min", p.spec_ngram_mod_n_min);
     emit_i32(&mut out, "spec-ngram-mod-n-max", p.spec_ngram_mod_n_max);
@@ -2025,6 +2082,37 @@ mod tests {
         ] {
             assert!(!spec_type_is_draftless(t), "{t}");
         }
+    }
+
+    // The drafter widgets edit one entry of the list and leave the others
+    // alone: picking a drafter keeps the ticked n-grams, ticking an n-gram
+    // keeps the drafter, and "none" is no entry at all.
+    #[test]
+    fn spec_type_list_edits_touch_one_entry() {
+        assert_eq!(spec_type_drafter("ngram-map-k4v,draft-mtp"), "draft-mtp");
+        assert_eq!(spec_type_drafter("ngram-mod"), "");
+        assert_eq!(spec_type_drafter("none"), "");
+        assert!(spec_type_has("ngram-mod, draft-dflash", "ngram-mod"));
+        assert!(!spec_type_has("ngram-mod", "ngram-map-k"));
+
+        assert_eq!(
+            spec_type_with_drafter("ngram-map-k4v,draft-mtp", "draft-dflash"),
+            "ngram-map-k4v,draft-dflash"
+        );
+        assert_eq!(spec_type_with_drafter("ngram-mod,draft-mtp", "none"), "ngram-mod");
+        assert_eq!(spec_type_with_drafter("none", "draft-dflash"), "draft-dflash");
+
+        assert_eq!(
+            spec_type_with_ngram("draft-dflash", "ngram-map-k4v", true),
+            "ngram-map-k4v,draft-dflash"
+        );
+        assert_eq!(
+            spec_type_with_ngram("ngram-mod,ngram-map-k4v,draft-dflash", "ngram-mod", false),
+            "ngram-map-k4v,draft-dflash"
+        );
+        assert_eq!(spec_type_with_ngram("ngram-mod", "ngram-mod", false), "");
+        // Ticking twice lists it once.
+        assert_eq!(spec_type_with_ngram("ngram-mod", "ngram-mod", true), "ngram-mod");
     }
 
     // Only the selected n-gram type keeps its tuning keys; the others are

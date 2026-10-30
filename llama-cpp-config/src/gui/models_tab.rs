@@ -78,6 +78,20 @@ pub(super) fn wire(app: &AppWindow, state: &Rc<RefCell<State>>) {
                 .unwrap_or_default()
                 .into()
         });
+    // The drafter widgets' view of the `--spec-type` list (presets.rs), pure
+    // over `form.spec_type` so Slint re-reads them on every change of it.
+    {
+        let s = app.global::<AppState>();
+        s.on_spec_type_drafter(|t| match presets::spec_type_drafter(&t) {
+            "" => "none".into(),
+            d => d.into(),
+        });
+        s.on_spec_type_has(|t, entry| presets::spec_type_has(&t, &entry));
+        s.on_spec_type_with_drafter(|t, d| form_spec_type(presets::spec_type_with_drafter(&t, &d)));
+        s.on_spec_type_with_ngram(|t, entry, on| {
+            form_spec_type(presets::spec_type_with_ngram(&t, &entry, on))
+        });
+    }
     {
         let app_weak = app.as_weak();
         let state = state.clone();
@@ -828,11 +842,18 @@ fn open_clone_dialog(
 // fallbacks that share it (and its Slint mirror is test-asserted there).
 use crate::form::ALL_LAYERS;
 
+/// A `--spec-type` list in the form's spelling: empty is "none" (`preset_to_form`).
+fn form_spec_type(spec_type: String) -> SharedString {
+    if spec_type.is_empty() { "none".into() } else { spec_type.into() }
+}
+
 // ── Draft-pick policy ─────────────────────────────────────────────────
 
-/// Apply a draft-picker selection to the form: set `model_draft` + `spec_type`
-/// from the picked row (`spec` already resolved by the caller from the drafter's
-/// own GGUF header, with its folder as the fallback; "(none)" → empty), then
+/// Apply a draft-picker selection to the form: set `model_draft` and the
+/// drafter entry of `spec_type` from the picked row (`spec` already resolved by
+/// the caller from the drafter's own GGUF header, with its folder as the
+/// fallback; "(none)" removes it). The `ngram-*` entries stay listed: they draft
+/// from the context, whatever the draft file. Then
 /// auto-pin an unconfigured draft to ONE device: the multi-device "auto" split
 /// crashes gemma4 MTP heads. Pin to the SAME GPU the
 /// model runs on so both land together: the preset's own `device` selection
@@ -841,26 +862,56 @@ use crate::form::ALL_LAYERS;
 ///
 /// `device` can name SEVERAL GPUs ("ROCm1,CUDA0"; the distribution table writes
 /// them in split order), but `--device-draft` pins one drafter, and the whole
-/// point here is to avoid the multi-device split. So the pin is the FIRST device
-/// of the list: the one llama.cpp's split starts from.
+/// point here is to avoid the multi-device split. Which one is
+/// `draft_pin_device`'s call.
 ///
 /// This only fires for a draft FILE. Embedded MTP heads (spec-type alone) never
 /// reach it: llama.cpp ignores both keys for them and the UI disables both fields.
 fn apply_draft_pick(form: &mut PresetForm, value: &str, spec: &str) {
     form.model_draft = value.into();
-    form.spec_type = spec.into();
+    form.spec_type = form_spec_type(presets::spec_type_with_drafter(&form.spec_type, spec));
     if !value.is_empty() && form.n_gpu_layers_draft_auto && form.device_draft.is_empty() {
         form.n_gpu_layers_draft_auto = false;
         // Pinning the draft to a different device than the model is the exact
         // split this heuristic exists to avoid.
-        match gpu_split::parse_device_list(form.device.as_str()).first() {
+        match draft_pin_device(form, spec) {
             Some(pin) => {
-                form.device_draft = pin.as_str().into();
+                form.device_draft = pin.into();
                 form.n_gpu_layers_draft = ALL_LAYERS;
             }
             None => form.n_gpu_layers_draft = 0,
         }
     }
+}
+
+/// The one device `apply_draft_pick` pins a draft file to, `None` when the
+/// preset names none. Normally the FIRST of `device`: the one llama.cpp's split
+/// starts from, and the only one that runs under split-mode none.
+///
+/// A DFlash / DSpark drafter is the exception under a layer split: with the
+/// full vocabulary it has no lm head of its own and runs the TARGET's
+/// `output.weight` (`src/models/dflash.cpp`), which the layer split leaves on
+/// the device holding the last layers, i.e. the LAST of the list with a share
+/// (a blank `tensor-split` gives every device one). Pinned anywhere else, the
+/// draft context aborts at load: "pre-allocated tensor (output.weight) in a
+/// buffer (ROCm1) that cannot run the operation". Measured on 2x R9700 with
+/// Qwen3.8-27B + DFlash2; a reduced-vocab drafter ships its own head and runs
+/// on either card, so the last one is safe for both.
+fn draft_pin_device(form: &PresetForm, spec: &str) -> Option<String> {
+    let devices = gpu_split::parse_device_list(form.device.as_str());
+    let shares_target_head = matches!(spec, "draft-dflash" | "draft-dspark");
+    if shares_target_head
+        && gpu_split::SplitMode::parse(form.split_mode.as_str()) == gpu_split::SplitMode::Layer
+    {
+        let weights = gpu_split::parse_weights(form.tensor_split.as_str());
+        return devices
+            .iter()
+            .enumerate()
+            .rev()
+            .find(|(i, _)| weights.is_empty() || weights.get(*i).is_some_and(|w| *w > 0))
+            .map(|(_, d)| d.clone());
+    }
+    devices.into_iter().next()
 }
 
 // ── Write invariant: reload + reselect + re-baseline ──────────────────
@@ -1379,6 +1430,41 @@ mod tests {
         assert_eq!(f.n_gpu_layers_draft, 99);
     }
 
+    // A full-vocab DFlash drafter runs the target's output head, which a
+    // layer split leaves on the last device with a share: pinned to the first,
+    // the draft context aborts at load (2x R9700, Qwen3.8-27B + DFlash2).
+    #[test]
+    fn pick_pins_a_dflash_draft_to_the_device_holding_the_output_head() {
+        let mut f = PresetForm {
+            n_gpu_layers_draft_auto: true,
+            device: "ROCm0,ROCm1".into(),
+            tensor_split: "1,1".into(),
+            ..Default::default()
+        };
+        apply_draft_pick(&mut f, "/m/dflashs/d.gguf", "draft-dflash");
+        assert_eq!(f.device_draft, "ROCm1");
+
+        // A device with no share holds no layers, so not the head either.
+        let mut f = PresetForm {
+            n_gpu_layers_draft_auto: true,
+            device: "ROCm0,ROCm1".into(),
+            tensor_split: "1,0".into(),
+            ..Default::default()
+        };
+        apply_draft_pick(&mut f, "/m/dflashs/d.gguf", "draft-dspark");
+        assert_eq!(f.device_draft, "ROCm0");
+
+        // Split-mode none runs only the first device: everything is there.
+        let mut f = PresetForm {
+            n_gpu_layers_draft_auto: true,
+            device: "ROCm0,ROCm1".into(),
+            split_mode: "none".into(),
+            ..Default::default()
+        };
+        apply_draft_pick(&mut f, "/m/dflashs/d.gguf", "draft-dflash");
+        assert_eq!(f.device_draft, "ROCm0");
+    }
+
     #[test]
     fn pick_falls_back_to_cpu_without_a_device() {
         let mut f = form_with_auto_draft();
@@ -1412,12 +1498,23 @@ mod tests {
         assert_eq!(f.device_draft, "CUDA1");
     }
 
+    // A draft file swaps the drafter entry of a chain; the ticked n-grams stay.
+    #[test]
+    fn pick_keeps_the_ngram_entries() {
+        let mut f = form_with_auto_draft();
+        f.spec_type = "ngram-map-k4v,draft-mtp".into();
+        apply_draft_pick(&mut f, r"C:\m\dflashs\d.gguf", "draft-dflash");
+        assert_eq!(f.spec_type, "ngram-map-k4v,draft-dflash");
+        apply_draft_pick(&mut f, "", "none");
+        assert_eq!(f.spec_type, "ngram-map-k4v");
+    }
+
     #[test]
     fn picking_none_clears_without_pinning() {
         let mut f = form_with_auto_draft();
         apply_draft_pick(&mut f, "", "");
         assert_eq!(f.model_draft, "");
-        assert_eq!(f.spec_type, "");
+        assert_eq!(f.spec_type, "none");
         assert!(f.n_gpu_layers_draft_auto, "(none) must not flip auto off");
         assert_eq!(f.device_draft, "");
     }

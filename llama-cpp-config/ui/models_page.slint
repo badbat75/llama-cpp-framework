@@ -10,6 +10,51 @@ import { LineEdit, ComboBox, CheckBox, Button, ListView, ScrollView, Switch, Pal
 import { SectionCard, LabeledField, InfoRow, SegmentedControl, MappedComboBox, EnumComboBox, AutoSlider, DefaultLineEdit, FormActions, SelectableRow, ListPanel, GpuSplitTable, TensorOverrideTable, LabelColumn, Tokens, Options, WrapText } from "components.slint";
 import { AppState } from "state.slint";
 
+// The draft-model entry of `form.spec_type` (AppState.spec_type_drafter): a
+// one-way read of the list, written back through `spec_type_with_drafter` so
+// the ngram-* entries survive. Same index sync as EnumComboBox: the click
+// self-assigns `current-index`, and `changed shown` puts it back whenever the
+// list changes from elsewhere (preset switch, Revert, the draft-file picker).
+// A drafter not in `options` (draft-eagle3) shows "none" and round-trips
+// until another one is picked.
+component SpecDrafterComboBox inherits ComboBox {
+    in property <[string]> options;
+    property <string> drafter: AppState.spec_type_drafter(AppState.form.spec_type);
+    property <int> shown: root.drafter == root.options[1] ? 1
+        : root.drafter == root.options[2] ? 2
+        : root.drafter == root.options[3] ? 3
+        : root.drafter == root.options[4] ? 4
+        : 0;
+    model: root.options;
+    current-index: root.shown;
+    selected => {
+        AppState.form.spec_type = AppState.spec_type_with_drafter(AppState.form.spec_type, self.current-value);
+    }
+    changed shown => {
+        if (self.current-index != root.shown) {
+            self.current-index = root.shown;
+        }
+    }
+}
+
+// One ngram-* entry of `form.spec_type`, ticked when the list names it. The
+// click self-assigns `checked` and breaks a plain binding, so `changed listed`
+// pushes the list's verdict back instead.
+component SpecNgramCheckBox inherits CheckBox {
+    in property <string> entry;
+    property <bool> listed: AppState.spec_type_has(AppState.form.spec_type, root.entry);
+    text: root.entry;
+    checked: root.listed;
+    toggled => {
+        AppState.form.spec_type = AppState.spec_type_with_ngram(AppState.form.spec_type, root.entry, self.checked);
+    }
+    changed listed => {
+        if (self.checked != root.listed) {
+            self.checked = root.listed;
+        }
+    }
+}
+
 export component ModelsPage inherits HorizontalLayout {
     padding: 24px;
     spacing: 16px;
@@ -190,7 +235,7 @@ export component ModelsPage inherits HorizontalLayout {
                 LabeledField {
                     label_width <=> LabelColumn.models;
                     label: "Draft model";
-                    hint: "Optional speculator (feeds --model-draft).\nPicking one sets Spec type from the file's own GGUF header (DFlash vs DSpark vs MTP), falling back to the folder it came from (mtps\\ → draft-mtp, dflashs\\ → draft-dflash).\nPicking one auto-pins the draft to the server GPU, or CPU if none.\n(none) = no speculation.\nLeave at (none) when the MAIN model already embeds MTP heads: those need only Spec type.";
+                    hint: "Optional speculator (feeds --model-draft).\nPicking one sets Drafter from the file's own GGUF header (DFlash vs DSpark vs MTP), falling back to the folder it came from (mtps\\ → draft-mtp, dflashs\\ → draft-dflash); the ticked N-gram drafters stay.\nPicking one auto-pins the draft to the server GPU, or CPU if none.\n(none) = no draft model.\nLeave at (none) when the MAIN model already embeds MTP heads: those need only Drafter.";
                     // A raw ComboBox (not MappedComboBox): the handler needs the
                     // selected INDEX to read the Rust-side `State.draft_rows`
                     // cache (the per-row --model-draft/--spec-type pairs), not
@@ -205,24 +250,32 @@ export component ModelsPage inherits HorizontalLayout {
                 }
                 LabeledField {
                     label_width <=> LabelColumn.models;
-                    label: "Spec type";
-                    hint: "Speculative decoding mode (--spec-type).\nAuto-set when you pick a draft model above, read from that file's header: a DFlash drafter carrying a Markov head is draft-dspark, one without it draft-dflash, a nextn head draft-mtp.\nThe ngram-* types need no draft: they draft from the tokens already in the context, which pays off when the output repeats it (code edits, quoting, refactors). Without a draft model or MTP heads they are the only choices.\nOverride only if you know what you need.";
-                    EnumComboBox {
-                        // Always active: the ngram-* types draft from the context,
-                        // so a model with no draft file and no MTP heads offers
-                        // those alone (presets::spec_type_is_draftless). The
-                        // draft-* types need a draft (selected or embedded MTP).
-                        // draft-dspark sits next to draft-dflash: same arch, same
-                        // dflashs\ folder, told apart only by the Markov head.
-                        // llama.cpp's ngram-cache is left out: its draft length
-                        // is fixed at 8 and the server never saves its lookup
-                        // caches. A preset naming it shows "none"; the key
-                        // round-trips untouched.
+                    label: "Drafter";
+                    hint: "The draft-model speculator (the draft-* entry of --spec-type).\nAuto-set when you pick a draft model above, read from that file's header: a DFlash drafter carrying a Markov head is draft-dspark, one without it draft-dflash, a nextn head draft-mtp.\nNeeds a draft model or MTP heads in the main model; without either only none is offered.\nOverride only if you know what you need.";
+                    SpecDrafterComboBox {
+                        // draft-dspark sits next to draft-dflash: same arch,
+                        // same dflashs\ folder, told apart only by the Markov head.
+                        enabled: AppState.draft_active;
                         options: AppState.draft_active
-                            ? ["none", "draft-mtp", "draft-dflash", "draft-dspark", "draft-simple", "ngram-mod", "ngram-simple", "ngram-map-k", "ngram-map-k4v"]
-                            : ["none", "ngram-mod", "ngram-simple", "ngram-map-k", "ngram-map-k4v"];
-                        // form.spec_type is never "" (preset_to_form maps empty → "none").
-                        value <=> AppState.form.spec_type;
+                            ? ["none", "draft-mtp", "draft-dflash", "draft-dspark", "draft-simple"]
+                            : ["none"];
+                    }
+                }
+                LabeledField {
+                    label_width <=> LabelColumn.models;
+                    label: "N-gram drafters";
+                    hint: "The ngram-* entries of --spec-type, any number of them, beside the drafter above: llama.cpp tries the n-grams first and falls back to the draft model when none of them matches.\nThey need no draft: they draft from the tokens already in the context, which pays off when the output repeats it (code edits, quoting, refactors).\nEach one's tuning is under Speculative decoding below.";
+                    // Always active (presets::spec_type_is_draftless). llama.cpp's
+                    // ngram-cache is left out: its draft length is fixed at 8 and
+                    // the server never saves its lookup caches. A preset naming it
+                    // keeps it in the list, untouched.
+                    HorizontalLayout {
+                        spacing: 12px;
+                        alignment: start;
+                        SpecNgramCheckBox { entry: "ngram-mod"; }
+                        SpecNgramCheckBox { entry: "ngram-simple"; }
+                        SpecNgramCheckBox { entry: "ngram-map-k"; }
+                        SpecNgramCheckBox { entry: "ngram-map-k4v"; }
                     }
                 }
             }
@@ -1048,12 +1101,10 @@ export component ModelsPage inherits HorizontalLayout {
                 // One group per speculator, each under its own sub-heading. The
                 // draft group needs a draft (a picked file or embedded MTP heads:
                 // draft_active); the ngram-* groups draft from the context and
-                // are enabled for the spec type that reads them. Greyed out, not
+                // are enabled while spec-type lists their type. Greyed out, not
                 // hidden, so every speculator's knobs are in view; the save drops
                 // the keys of the ngram types spec-type does not name
-                // (presets::prune_unused_ngram_keys). A hand-written list
-                // (`ngram-mod,ngram-simple`) enables none of the ngram groups,
-                // though the listed types' keys still round-trip.
+                // (presets::prune_unused_ngram_keys).
                 Text {
                     text: "Draft model (draft-mtp, draft-dflash, draft-dspark, draft-simple)";
                     font-size: 12px;
@@ -1146,7 +1197,7 @@ export component ModelsPage inherits HorizontalLayout {
                     label: "Match length";
                     hint: "Tokens of context the lookup matches before it proposes a draft (--spec-ngram-mod-n-match).\nBelow 16 llama.cpp warns of poor drafts.\ndefault = omit the flag → llama.cpp default: 24.";
                     DefaultLineEdit {
-                        enabled: AppState.form.spec_type == "ngram-mod";
+                        enabled: AppState.spec_type_has(AppState.form.spec_type, "ngram-mod");
                         input_type: InputType.number;
                         default <=> AppState.form.spec_ngram_mod_n_match_default;
                         value <=> AppState.form.spec_ngram_mod_n_match;
@@ -1157,7 +1208,7 @@ export component ModelsPage inherits HorizontalLayout {
                     label: "Min draft";
                     hint: "Fewest tokens a draft must have to be proposed (--spec-ngram-mod-n-min), 0 to 1024.\ndefault = omit the flag → llama.cpp default: 48.";
                     DefaultLineEdit {
-                        enabled: AppState.form.spec_type == "ngram-mod";
+                        enabled: AppState.spec_type_has(AppState.form.spec_type, "ngram-mod");
                         input_type: InputType.number;
                         default <=> AppState.form.spec_ngram_mod_n_min_default;
                         value <=> AppState.form.spec_ngram_mod_n_min;
@@ -1168,7 +1219,7 @@ export component ModelsPage inherits HorizontalLayout {
                     label: "Max draft";
                     hint: "Most tokens drafted per step (--spec-ngram-mod-n-max), 0 to 1024.\ndefault = omit the flag → llama.cpp default: 64.";
                     DefaultLineEdit {
-                        enabled: AppState.form.spec_type == "ngram-mod";
+                        enabled: AppState.spec_type_has(AppState.form.spec_type, "ngram-mod");
                         input_type: InputType.number;
                         default <=> AppState.form.spec_ngram_mod_n_max_default;
                         value <=> AppState.form.spec_ngram_mod_n_max;
@@ -1185,7 +1236,7 @@ export component ModelsPage inherits HorizontalLayout {
                     label: "Lookup n-gram";
                     hint: "Length of the n-gram looked up in the context (--spec-ngram-simple-size-n), 1 to 1024.\ndefault = omit the flag → llama.cpp default: 12.";
                     DefaultLineEdit {
-                        enabled: AppState.form.spec_type == "ngram-simple";
+                        enabled: AppState.spec_type_has(AppState.form.spec_type, "ngram-simple");
                         input_type: InputType.number;
                         default <=> AppState.form.spec_ngram_simple_size_n_default;
                         value <=> AppState.form.spec_ngram_simple_size_n;
@@ -1196,7 +1247,7 @@ export component ModelsPage inherits HorizontalLayout {
                     label: "Draft m-gram";
                     hint: "Length of the m-gram drafted after a match (--spec-ngram-simple-size-m), 1 to 1024.\ndefault = omit the flag → llama.cpp default: 48.";
                     DefaultLineEdit {
-                        enabled: AppState.form.spec_type == "ngram-simple";
+                        enabled: AppState.spec_type_has(AppState.form.spec_type, "ngram-simple");
                         input_type: InputType.number;
                         default <=> AppState.form.spec_ngram_simple_size_m_default;
                         value <=> AppState.form.spec_ngram_simple_size_m;
@@ -1213,7 +1264,7 @@ export component ModelsPage inherits HorizontalLayout {
                     label: "Lookup n-gram";
                     hint: "Length of the n-gram looked up in the context (--spec-ngram-map-k-size-n), 1 to 1024.\ndefault = omit the flag → llama.cpp default: 12.";
                     DefaultLineEdit {
-                        enabled: AppState.form.spec_type == "ngram-map-k";
+                        enabled: AppState.spec_type_has(AppState.form.spec_type, "ngram-map-k");
                         input_type: InputType.number;
                         default <=> AppState.form.spec_ngram_map_k_size_n_default;
                         value <=> AppState.form.spec_ngram_map_k_size_n;
@@ -1224,7 +1275,7 @@ export component ModelsPage inherits HorizontalLayout {
                     label: "Draft m-gram";
                     hint: "Length of the m-gram drafted after a match (--spec-ngram-map-k-size-m), 1 to 1024.\ndefault = omit the flag → llama.cpp default: 48.";
                     DefaultLineEdit {
-                        enabled: AppState.form.spec_type == "ngram-map-k";
+                        enabled: AppState.spec_type_has(AppState.form.spec_type, "ngram-map-k");
                         input_type: InputType.number;
                         default <=> AppState.form.spec_ngram_map_k_size_m_default;
                         value <=> AppState.form.spec_ngram_map_k_size_m;
@@ -1241,7 +1292,7 @@ export component ModelsPage inherits HorizontalLayout {
                     label: "Lookup n-gram";
                     hint: "Length of the n-gram looked up in the context (--spec-ngram-map-k4v-size-n), 1 to 1024.\ndefault = omit the flag → llama.cpp default: 12.";
                     DefaultLineEdit {
-                        enabled: AppState.form.spec_type == "ngram-map-k4v";
+                        enabled: AppState.spec_type_has(AppState.form.spec_type, "ngram-map-k4v");
                         input_type: InputType.number;
                         default <=> AppState.form.spec_ngram_map_k4v_size_n_default;
                         value <=> AppState.form.spec_ngram_map_k4v_size_n;
@@ -1252,7 +1303,7 @@ export component ModelsPage inherits HorizontalLayout {
                     label: "Draft m-gram";
                     hint: "Length of the m-gram drafted after a match (--spec-ngram-map-k4v-size-m), 1 to 1024.\ndefault = omit the flag → llama.cpp default: 48.";
                     DefaultLineEdit {
-                        enabled: AppState.form.spec_type == "ngram-map-k4v";
+                        enabled: AppState.spec_type_has(AppState.form.spec_type, "ngram-map-k4v");
                         input_type: InputType.number;
                         default <=> AppState.form.spec_ngram_map_k4v_size_m_default;
                         value <=> AppState.form.spec_ngram_map_k4v_size_m;
@@ -1263,7 +1314,7 @@ export component ModelsPage inherits HorizontalLayout {
                     label: "Min hits";
                     hint: "Times an n-gram must have been seen before its continuation is proposed (--spec-ngram-map-k4v-min-hits).\nHigher drafts less often but more reliably.\ndefault = omit the flag → llama.cpp default: 1.";
                     DefaultLineEdit {
-                        enabled: AppState.form.spec_type == "ngram-map-k4v";
+                        enabled: AppState.spec_type_has(AppState.form.spec_type, "ngram-map-k4v");
                         input_type: InputType.number;
                         default <=> AppState.form.spec_ngram_map_k4v_min_hits_default;
                         value <=> AppState.form.spec_ngram_map_k4v_min_hits;
