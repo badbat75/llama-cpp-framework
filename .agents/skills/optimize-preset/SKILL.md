@@ -67,9 +67,17 @@ apply.
    1.15 on Flash-Next): take it from the `compute buffer size` lines of the last load,
    not from a constant. On MoE with experts in RAM a larger ubatch is paid in experts
    moved off the GPU: usually not worth it (`docs/qwen3.8_flash_next.md` section 2).
-4. **Speculator.** `draft-mtp` if the GGUF has MTP heads; otherwise `ngram-map-k`
-   (size-m 64, size-n 12 measured best). Sweep `spec-draft-n-max`. Read per-rep numbers:
-   a speculator changes the output path.
+4. **Speculator.** `draft-mtp` if the GGUF has MTP heads or a separate MTP head file
+   exists (`model-draft`); otherwise `ngram-map-k` (size-m 64, size-n 12 measured best).
+   Sweep `spec-draft-n-max`. Read per-rep numbers: a speculator changes the output path.
+   `spec-type` takes a comma list and the n-gram types are always tried first, the draft
+   model only on a step with no n-gram match: chain `ngram-map-k4v,draft-mtp` and measure
+   it on a code-rewrite prompt as well as the prose one (the n-gram gain shows only where
+   the output repeats the context). A separate MTP file's context is the TARGET's
+   (`ctx-size`, not a draft size), so budget its weights, its KV at the full context and
+   its compute buffer on `device-draft` before the first load. For a no-drafter baseline
+   remove `model-draft` too: with `spec-type` unset llama.cpp reads the type from the draft
+   GGUF's header and turns the drafter back on.
 5. **MoE extras.** `no-host = true` with `op-offload false` (+9% prefill), `load-mode`
    per the guides, `moe-cache-mib` off.
 6. **Server-wide** (`server set`, affects every preset; ask first): `Threads` =
@@ -227,7 +235,8 @@ the repo's database; on this machine it does.)
   conversation, and the next restart with `SaveStateOnShutdown` on overwrites that
   model's `.llamastate` snapshot. Get an OK.
 - Never `pkill -f <pattern>` with a pattern that appears in your own command line; use
-  `llama-cpp-config control stop|restart`.
+  `llama-cpp-config control stop|restart`, or kill by PID. The same self-match makes a
+  `while pgrep -f <pattern>` wait loop spin forever.
 - Never drop or reorder `device` on a multi-GPU preset without meaning to.
 - `spec-type = draft-mtp` on a model without MTP layers fails to load.
 - One preset at a time; do not touch other presets or server.ini without asking.
@@ -235,6 +244,9 @@ the repo's database; on this machine it does.)
   profiler) in `flock` on one agreed lock file and, after taking it, wait until no other
   process holds `/dev/kfd` open (`ls -l /proc/*/fd` lists it): an unwrapped job still
   shares the cards and wrecks both measurements. A live sweep owns server.ini's `Port`.
+  Use `flock -o`: a live sweep leaves the router running, and without `-o` the router
+  inherits the lock's descriptor and holds the lock after the sweep exits, so the next
+  `flock` waits forever (`lslocks` names the holder).
 
 ## 6. Apply and record
 

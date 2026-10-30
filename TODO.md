@@ -150,3 +150,22 @@ Nothing left to port from the list of 2026-10-21: the two kernel items were meas
 - A pinned staging buffer in `ggml_backend_tensor_copy`'s slow path (the cross-card hops
   still staged through `malloc`: 2.5 s per 43.7k prefill with the R9700 second).
 - The Swift preset's device order on Windows.
+
+## Drafter benchmarks look too favorable (2026-10-30, `docs/qwen3.8_flash_next.md` section 11, MTP)
+
+The live sweeps rank Flash-Next's drafters far above what the coding agent showed live
+(n-gram alone 274.5 t/s and the MTP chain 280.1 on the code prompt, MTP +77% on prose, against
++8% for the n-gram drafter measured on real agent turns at 130-160k). Not yet explained; check
+before trusting the size of the gains (the ranking itself may hold):
+
+- Temperature 0 (greedy) against the preset's temp 1 / top-k 20: greedy output is what the
+  drafters predict best, so acceptance (98% on the code prompt) may be far above real sampling.
+- The code prompt is a pure copy task (rename one function, output the file): the best case
+  for an n-gram drafter, not an agent turn. Replay recorded agent turns instead.
+- What the "decode" rate counts: the answer phase reads 348-375 t/s, above what a verify
+  batch per token can run on this model; check the engine's timing against wall time and the
+  server's own `timings` (`predicted_per_second`, drafted / accepted counts).
+- Cold start per leg and a 128 to 6000-token output cap: the rate may be taken over a short
+  window that favors the drafter.
+- Depth: the prose prompt is 43.7k; the agent runs at 100-180k, where the MTP head's own
+  attention and the verify batches cost more.
