@@ -305,3 +305,38 @@ build never calls `hipHostRegister`.
 with the patch still applying: re-check after every tag bump that touches
 `llama-context.cpp`). A `git apply --check` failure stops the build with a message
 pointing here.
+
+## `0005-qwen35-mtp-graph-realloc-pr31415.patch`
+
+Upstream PR **#31415** (o7si, open), fixing our issue
+<https://github.com/ggml-org/llama.cpp/issues/31302>. Stored verbatim as GitHub serves it
+(<https://github.com/ggml-org/llama.cpp/pull/31415.patch>, commit `dc704b74`), 36 lines changed
+in `src/models/qwen35.cpp` only. sha256
+`a3cf439f9b813b352a0832fd8c30b4c3a1c170adab4b924c01376de6e4bb3d16`. Applies on v0.8.0 after
+0001 (both touch `graph_mtp`, different hunks).
+
+**What it changes.** The dense `qwen35` MTP draft graph picked its input with an `if` on
+`ubatch.token`: the token path (`get_rows` on the embedding) and the embedding path (the
+target's image rows) built two different graphs. After the first multimodal request the draft
+context alternates between the two on every draft cycle, and each switch re-reserves the
+scheduler (`sched_graph_realloc: nodes = 7x (changed = 0)`, twice per cycle, for the rest of
+the server's life). The patch builds both inputs and picks one with
+`ggml_build_forward_select`, so the topology no longer changes; when the embedding table is
+off the host it adds a `ggml_dup` of the embedding input.
+
+**Measured (Linux, 2x R9700, Swift-1.5-Qwen3.8-27B Q8_0 + BF16 mmproj, `draft-mtp`, ctx
+32768, temp 0, 2026-10-30).** Draft reallocations on 2 text requests, an image request (256
+tokens) and 3 more text requests: 0 / 38 / 267 without the patch, 0 / 0 / 0 with it, with the
+embedding in RAM and with `token_embd` on ROCm0 (the `ggml_dup` branch). Decode unchanged
+(34.3-34.4 t/s on text, 38.4-38.6 on the image request), response text and draft acceptance
+byte-identical: no gain at this length, no regression. Reported on the PR
+(<https://github.com/ggml-org/llama.cpp/pull/31415#issuecomment-6529273443>). CPU-only it
+cannot be observed: with one buffer `ggml_gallocr_alloc_graph` re-reserves silently and the
+realloc callback never fires.
+
+**Confirming it is live.** At `-lv 4`, an image request on an MTP preset followed by a text
+request logs no `sched_graph_realloc` line with a two-digit node count (the draft graph).
+
+**When to drop it.** As soon as the bundled llama.cpp release contains #31415: `git apply
+--check` then fails and the build stops with a message pointing here; delete the file and
+rebuild. If the PR changes before it is merged, re-download it (the sha256 above changes).
