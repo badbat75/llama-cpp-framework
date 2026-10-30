@@ -73,7 +73,16 @@ apply.
    `spec-type` takes a comma list and the n-gram types are always tried first, the draft
    model only on a step with no n-gram match: chain `ngram-map-k4v,draft-mtp` and measure
    it on a code-rewrite prompt as well as the prose one (the n-gram gain shows only where
-   the output repeats the context). A separate MTP file's context is the TARGET's
+   the output repeats the context). On a reasoning model give the code leg
+   `--max-tokens` large enough to get past the reasoning into the rewritten code (1536 on
+   Qwen3.8-27B; at the default 256 every leg ends inside the reasoning and the n-gram stage
+   reads as worthless). The n-gram draft length is its own key
+   (`spec-ngram-map-k4v-size-m`), not `spec-draft-n-max`, which only sizes the model
+   drafter. At temperature 1 a code leg's mean follows how much of the prompt the sampled
+   reply copies (sd of 20-35 t/s on ~130): read the n-gram acceptance and the copied
+   tokens per leg before calling a draft length a winner. An embedded MTP head keeps its
+   KV and compute buffer on the output head's card: it can cost that card MORE than a
+   separate drafter file. A separate MTP file's context is the TARGET's
    (`ctx-size`, not a draft size), so budget its weights, its KV at the full context and
    its compute buffer on `device-draft` before the first load. For a no-drafter baseline
    remove `model-draft` too: with `spec-type` unset llama.cpp reads the type from the draft
@@ -240,7 +249,11 @@ the repo's database; on this machine it does.)
 
 - **Warn before the first live run**: a benchmark request replaces the slot's
   conversation, and the next restart with `SaveStateOnShutdown` on overwrites that
-  model's `.llamastate` snapshot. Get an OK.
+  model's `.llamastate` snapshot. Get an OK. Applying a new KV type (`q8_0` to `f16`) or
+  drafter makes the saved snapshot unloadable ("incompatible key rotation", "draft state
+  ... dropped"): say so when applying; the client re-prefills the conversation once.
+- When watching a sweep with a log pipeline (Monitor), `mawk` buffers piped input: use
+  `mawk -W interactive` or `grep --line-buffered`, or the events arrive at the end.
 - Never `pkill -f <pattern>` with a pattern that appears in your own command line; use
   `llama-cpp-config control stop|restart`, or kill by PID. The same self-match makes a
   `while pgrep -f <pattern>` wait loop spin forever.
