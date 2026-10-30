@@ -138,6 +138,13 @@ llama-cpp-config bench sweep --preset <id> --key <key> --values '<a>,<b>,<c>' \
   with `no-host` it needs `repack = false`, and the pinned host buffer (`no-host` off) is
   impossible at tens of GB.
 - Live mode restarts llama-server per leg and sends `cache_prompt: false`, temp 0.
+  Temp 0 is right for every lever that leaves the drafter alone (placement, KV type,
+  ubatch, threads, graphs): the output is the same text on every leg, so only speed
+  differs. It is wrong for drafter levers (`spec-type`, `spec-draft-*`, `spec-ngram-*`,
+  `model-draft`): greedy output is what a drafter predicts best and inflates acceptance
+  far above the preset's own sampling. Sweep those with `--temp preset` and `--reps 5` or
+  more, compare means (no seed is sent, so each repetition writes a different text), and
+  confirm a winner on replayed real turns at the workload's depth.
   Synthetic mode (llama-bench) needs the server DOWN and cannot model the drafter,
   `ctx-size` or `parallel`: use it only for raw prefill/decode of placement or quant.
 - Two keys that must move together (e.g. `n-cpu-moe` + `tensor-split`): set one by
