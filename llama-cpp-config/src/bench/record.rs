@@ -463,7 +463,15 @@ pub fn plan_params(plan: &Plan) -> Vec<(String, String)> {
                     .map(|t| t.to_string())
                     .unwrap_or_else(|| "preset".into()),
             ));
-            out.push(("max-tokens".into(), plan.max_tokens.to_string()));
+            out.push((
+                "max-tokens".into(),
+                if plan.max_tokens > 0 {
+                    plan.max_tokens.to_string()
+                } else {
+                    "none".into()
+                },
+            ));
+            out.push(("concurrency".into(), plan.concurrency.as_str().into()));
             out.push(("prompt".into(), prompt_name(plan)));
         }
         Mode::Synthetic => {

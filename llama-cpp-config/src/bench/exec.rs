@@ -371,6 +371,11 @@ fn run_live(
         let warm = warmup_body(&preset.id);
         let _ = http::request(port, "POST", super::LIVE_PATH, Some(&warm), LIVE_TIMEOUT);
 
+        if plan.concurrency != super::Concurrency::Single {
+            run_concurrent(run, port, preset, &plan, cancel, emit)?;
+            continue;
+        }
+
         let body = super::live_body(&preset.id, &plan);
         let mut prefill: Vec<f64> = Vec::new();
         let mut decode: Vec<f64> = Vec::new();
@@ -390,8 +395,14 @@ fn run_live(
                 "{}: repetition {rep}/{}",
                 preset.id, plan.reps
             )));
-            let res = http::request(port, "POST", super::LIVE_PATH, Some(&body), LIVE_TIMEOUT)
-                .map_err(|e| format!("{}: {e}", preset.id))?;
+            let res = http::request(
+                port,
+                "POST",
+                super::LIVE_PATH,
+                Some(&body),
+                live_timeout(&plan),
+            )
+            .map_err(|e| format!("{}: {e}", preset.id))?;
             if res.status != 200 {
                 let body: String = res.body.chars().take(600).collect();
                 return Err(format!(
@@ -491,6 +502,227 @@ fn run_live(
                     run.put(point, emit);
                 }
             }
+        }
+    }
+    Ok(())
+}
+
+/// How long one live request may take: the fixed budget plus 0.1 s per
+/// allowed output token (a 10 t/s floor), so an output cap set high to let the
+/// model stop on its own is not cut by the clock instead; with no cap, the
+/// budget of 100k tokens (a runaway reply still ends at the slot's context).
+fn live_timeout(plan: &Plan) -> Duration {
+    let tokens = if plan.max_tokens > 0 {
+        plan.max_tokens
+    } else {
+        100_000
+    };
+    LIVE_TIMEOUT + Duration::from_millis(100 * tokens as u64)
+}
+
+/// One request of a concurrent repetition, as it came back.
+struct SlotReply {
+    slot: usize,
+    warm: bool,
+    /// Seconds from the repetition's common start to this request's send.
+    sent: f64,
+    /// Seconds from its send to the last byte of its reply.
+    wall: f64,
+    streamed: super::Streamed,
+}
+
+/// The repetitions of a `--concurrency` scenario on one preset: the warm slots
+/// are primed once (the prompt, 1 token out, cache on), then every repetition
+/// sends one request per slot from its own thread at the same instant. Each
+/// reply is a sample of its own (`detail` names slot, role and timing); the
+/// points are the per-request means of the role the scenario is about (the
+/// cold prefill, the decode, the warm slot's decode in `prefill+decode`) and
+/// the totals of `concurrent_totals`.
+fn run_concurrent(
+    run: &mut Run,
+    port: u16,
+    preset: &presets::Preset,
+    plan: &Plan,
+    cancel: &Arc<AtomicBool>,
+    emit: &impl Fn(Event),
+) -> Result<(), String> {
+    let scenario = plan.concurrency;
+    // One request per slot: with a single slot nothing runs concurrently.
+    let n = preset.parallel.unwrap_or(super::AUTO_PARALLEL);
+    if n < 2 {
+        return Err(format!(
+            "{}: --concurrency {} needs parallel >= 2, the preset has {n}",
+            preset.id,
+            scenario.as_str()
+        ));
+    }
+    let warm = scenario.warm_slots(n as usize);
+    let timeout = live_timeout(plan);
+    let post = |body: &str| -> Result<super::Streamed, String> {
+        let res = http::request(port, "POST", super::LIVE_PATH, Some(body), timeout)
+            .map_err(|e| format!("{}: {e}", preset.id))?;
+        if res.status != 200 {
+            let body: String = res.body.chars().take(600).collect();
+            return Err(format!(
+                "{}: llama-server answered HTTP {}: {body}",
+                preset.id, res.status
+            ));
+        }
+        super::parse_stream(&res.body).map_err(|e| format!("{}: {e}", preset.id))
+    };
+
+    for (slot, &w) in warm.iter().enumerate() {
+        if w {
+            emit(Event::Progress(format!(
+                "{}: priming slot {slot} with the prompt",
+                preset.id
+            )));
+            post(&super::live_body_slot(&preset.id, plan, slot, true, 1))?;
+        }
+    }
+
+    let mut prefill: Vec<f64> = Vec::new();
+    let mut decode: Vec<f64> = Vec::new();
+    let mut prefill_total: Vec<f64> = Vec::new();
+    let mut decode_total: Vec<f64> = Vec::new();
+    let (mut draft_n, mut draft_ok, mut cold_cache) = (0i64, 0i64, 0i64);
+
+    for rep in 1..=plan.reps {
+        if cancelled(cancel) {
+            return Err("Cancelled.".into());
+        }
+        emit(Event::Progress(format!(
+            "{}: repetition {rep}/{} ({}, {} requests at once)",
+            preset.id,
+            plan.reps,
+            scenario.as_str(),
+            warm.len()
+        )));
+        let t0 = std::time::Instant::now();
+        let replies: Vec<Result<SlotReply, String>> = std::thread::scope(|sc| {
+            let handles: Vec<_> = warm
+                .iter()
+                .enumerate()
+                .map(|(slot, &w)| {
+                    let body = super::live_body_slot(&preset.id, plan, slot, w, plan.max_tokens);
+                    let post = &post;
+                    sc.spawn(move || {
+                        let sent = t0.elapsed().as_secs_f64();
+                        let streamed = post(&body)?;
+                        Ok(SlotReply {
+                            slot,
+                            warm: w,
+                            sent,
+                            wall: t0.elapsed().as_secs_f64() - sent,
+                            streamed,
+                        })
+                    })
+                })
+                .collect();
+            handles
+                .into_iter()
+                .map(|h| {
+                    h.join()
+                        .unwrap_or_else(|_| Err("request thread panicked".into()))
+                })
+                .collect()
+        });
+        let replies: Vec<SlotReply> = replies.into_iter().collect::<Result<_, _>>()?;
+
+        for r in &replies {
+            let t = &r.streamed.timings;
+            let split = r.streamed.split.as_ref();
+            // The role the scenario measures: a cold slot's prefill, and the
+            // decode of every slot except, in prefill+decode, the cold one
+            // (its decode starts after the overlap the scenario is about).
+            if !r.warm {
+                prefill.push(t.prompt_tps);
+                cold_cache = cold_cache.max(t.cache_n);
+            }
+            if scenario != super::Concurrency::PrefillDecode || r.warm {
+                decode.push(t.predicted_tps);
+            }
+            draft_n += t.draft_n;
+            draft_ok += t.draft_accepted;
+            run.sample(Sample {
+                rep: rep as i64,
+                temperature: plan.temp,
+                cache_prompt: Some(r.warm),
+                prompt_tokens: Some(t.prompt_n),
+                prefill_tps: Some(t.prompt_tps),
+                gen_tokens: Some(t.predicted_n),
+                decode_tps: Some(t.predicted_tps),
+                draft_gen: (t.draft_n > 0).then_some(t.draft_n),
+                draft_acc: (t.draft_n > 0).then_some(t.draft_accepted),
+                cache_n: Some(t.cache_n),
+                reasoning_tps: split.and_then(|p| p.reasoning.tps()),
+                answer_tps: split.and_then(|p| p.answer.tps()),
+                detail: Some(
+                    serde_json::json!({
+                        "concurrency": scenario.as_str(),
+                        "slot": r.slot,
+                        "role": if r.warm { "warm" } else { "cold" },
+                        "sent_s": r.sent,
+                        "wall_s": r.wall,
+                        "phases": split.map(super::phases_json),
+                        "trace": super::trace_json(&r.streamed.trace),
+                    })
+                    .to_string(),
+                ),
+                ..Default::default()
+            });
+        }
+        let reqs: Vec<(f64, &super::Timings, bool)> = replies
+            .iter()
+            .map(|r| (r.sent, &r.streamed.timings, r.warm))
+            .collect();
+        let (p_total, d_total) = super::concurrent_totals(&reqs);
+        prefill_total.extend(p_total);
+        decode_total.extend(d_total);
+        if rep == 1 {
+            if let Some(rec) = &mut run.rec {
+                rec.read_memory();
+            }
+        }
+
+        let draft_note = if draft_n > 0 {
+            format!(
+                "draft accepted {:.0}%",
+                100.0 * draft_ok as f64 / draft_n as f64
+            )
+        } else {
+            String::new()
+        };
+        let series = [
+            (
+                super::LIVE_PREFILL,
+                &prefill,
+                if cold_cache > 0 {
+                    format!("{cold_cache} prompt tokens of a cold slot came from the cache")
+                } else {
+                    String::new()
+                },
+            ),
+            (super::LIVE_DECODE, &decode, draft_note),
+            (super::LIVE_PREFILL_TOTAL, &prefill_total, String::new()),
+            (super::LIVE_DECODE_TOTAL, &decode_total, String::new()),
+        ];
+        for (test, values, note) in series {
+            if values.is_empty() {
+                continue;
+            }
+            let (mean, sd) = super::mean_sd(values);
+            run.put(
+                Point {
+                    preset: preset.id.clone(),
+                    test: test.into(),
+                    mean,
+                    sd,
+                    n: values.len() as i32,
+                    note,
+                },
+                emit,
+            );
         }
     }
     Ok(())

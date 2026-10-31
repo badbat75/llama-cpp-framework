@@ -596,7 +596,15 @@ pub fn render_summary(s: &Summary) -> String {
         ));
         md.push_str(&format!(
             "| max output tokens | {} |\n",
-            opts.plan.max_tokens
+            if opts.plan.max_tokens > 0 {
+                opts.plan.max_tokens.to_string()
+            } else {
+                "no cap (the model stops on its own)".into()
+            }
+        ));
+        md.push_str(&format!(
+            "| concurrency | {} |\n",
+            opts.plan.concurrency.as_str()
         ));
         // Same three rows the single-run report carries, from the same builder:
         // a sweep is a comparison too, and "which prompt was this" has to be
@@ -987,6 +995,15 @@ pub fn run(opts: &Opts) -> Result<String, String> {
     }
 }
 
+/// A leg's run label: `key=value`, plus the concurrency scenario when it is
+/// not `single`, so one campaign can hold the same value under several.
+fn leg_label(opts: &Opts, value: &str) -> String {
+    match opts.plan.concurrency {
+        super::Concurrency::Single => format!("{}={value}", opts.key),
+        c => format!("{}={value} concurrency={}", opts.key, c.as_str()),
+    }
+}
+
 /// The plan one leg runs: the caller's, pinned to the swept preset.
 fn leg_plan(opts: &Opts, preset: &str) -> Plan {
     Plan {
@@ -1158,7 +1175,7 @@ fn measure(opts: &Opts, value: &str, campaign: &super::record::Campaign) -> Leg 
     let (tx, rx) = mpsc::channel();
     let plan = Plan {
         campaign: Some(super::record::Campaign {
-            label: Some(format!("{}={value}", opts.key)),
+            label: Some(leg_label(opts, value)),
             ..campaign.clone()
         }),
         ..leg_plan(opts, &opts.preset)

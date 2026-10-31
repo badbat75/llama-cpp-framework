@@ -201,9 +201,20 @@ pub struct BenchSweep {
     /// Defaults to 0, which is what makes two legs comparable.
     #[arg(long)]
     pub temp: Option<String>,
-    /// Live only: output cap per repetition.
+    /// Live only: output cap per repetition. Omitted (or 0) = no cap: the
+    /// request carries no `max_tokens` and the model stops on its own (or at
+    /// the preset's `n-predict`), so the output length is part of the result.
     #[arg(long)]
     pub max_tokens: Option<i32>,
+    /// Live only: requests per repetition. `single` (default) sends one;
+    /// the others send one per slot of the preset at once (N = `parallel`,
+    /// absent = 4; N >= 2), each pinned with `id_slot`: `prefill` (all N
+    /// prefill the whole prompt), `decode` (every slot primed with the prompt
+    /// first, so all N only decode), `prefill+decode` (N-1 primed slots decode
+    /// while the last one prefills). The leg's run label ends in
+    /// `concurrency=<scenario>`.
+    #[arg(long, value_parser = ["single", "prefill", "decode", "prefill+decode"])]
+    pub concurrency: Option<String>,
     /// Synthetic only: prompt lengths, comma-separated.
     #[arg(long)]
     pub prompt_lens: Option<String>,
@@ -618,8 +629,12 @@ fn run_bench(c: BenchCmd) -> Result<()> {
             )
         };
     }
-    if let Some(max_tokens) = a.max_tokens {
-        plan.max_tokens = max_tokens;
+    // No flag = no cap (unlike the tab, whose field always holds a number):
+    // how long the model talks under a setting is part of what a sweep shows.
+    plan.max_tokens = a.max_tokens.unwrap_or(0);
+    if let Some(c) = a.concurrency.as_deref() {
+        plan.concurrency = bench::Concurrency::from_str(c)
+            .ok_or_else(|| anyhow::anyhow!("--concurrency {c}: unknown scenario"))?;
     }
     // Refused by value rather than parsed leniently: an entry the parser drops
     // is a length or a depth the sweep silently never measures.

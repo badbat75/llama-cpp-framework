@@ -98,7 +98,8 @@ CREATE TABLE IF NOT EXISTS run (
 
 -- Every parameter of the run, not only the varied ones. scope: preset (presets.ini keys),
 -- server (server.ini [Server]), env (environment variables), cli (extra flags),
--- bench (the configurator's plan: mode, reps, temp, max-tokens, prompt-lens, depths, n-gen).
+-- bench (the configurator's plan: mode, reps, temp, max-tokens, concurrency, prompt-lens, depths,
+-- n-gen).
 -- Credentials and service URLs are never stored: the file is public with the repo.
 CREATE TABLE IF NOT EXISTS run_param (
   run_id  INTEGER NOT NULL REFERENCES run(id) ON DELETE CASCADE,

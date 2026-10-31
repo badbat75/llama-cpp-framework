@@ -193,6 +193,106 @@ impl Mode {
     }
 }
 
+// ── Concurrency: one request per slot of the preset, at once ─────────────
+
+/// How many requests a live repetition sends, and in what state their slots
+/// are. Every scenario but `Single` sends N requests at the same instant, N =
+/// the preset's `parallel` (absent = llama-server's auto 4 slots), each pinned
+/// to its own slot with `id_slot`; N must be at least 2. A slot is WARM when it
+/// was primed with the prompt before the repetitions (`cache_prompt: true`, so
+/// its request only decodes) and COLD when its request prefills the whole
+/// prompt (`cache_prompt: false`, as in `Single`).
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum Concurrency {
+    /// One request per repetition: the classic live run.
+    #[default]
+    Single,
+    /// N cold requests: N prefills together, then N decodes.
+    Prefill,
+    /// N warm requests: N decodes together.
+    Decode,
+    /// N-1 warm slots decode while the last one prefills.
+    PrefillDecode,
+}
+
+impl Concurrency {
+    pub const ALL: [Concurrency; 4] = [
+        Concurrency::Single,
+        Concurrency::Prefill,
+        Concurrency::Decode,
+        Concurrency::PrefillDecode,
+    ];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Concurrency::Single => "single",
+            Concurrency::Prefill => "prefill",
+            Concurrency::Decode => "decode",
+            Concurrency::PrefillDecode => "prefill+decode",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Option<Concurrency> {
+        Concurrency::ALL.into_iter().find(|c| c.as_str() == s)
+    }
+
+    /// Which of `n` slots are warm, per request (index = slot). Empty for
+    /// `Single`.
+    pub fn warm_slots(self, n: usize) -> Vec<bool> {
+        match self {
+            Concurrency::Single => Vec::new(),
+            Concurrency::Prefill => vec![false; n],
+            Concurrency::Decode => vec![true; n],
+            Concurrency::PrefillDecode => (0..n).map(|i| i + 1 < n).collect(),
+        }
+    }
+}
+
+/// Slots of a preset: its `parallel`, or llama-server's auto 4 when absent.
+pub const AUTO_PARALLEL: i32 = 4;
+
+/// Throughput of requests that ran together, from each one's client send
+/// offset (seconds from the common start) and llama-server's own timings:
+/// `prompt_n / prompt_tps` is its prefill time and `predicted_n /
+/// predicted_tps` its decode time, the decode starting where the prefill
+/// ends. Prefill total = prompt tokens of the COLD requests over the window
+/// from the first send to the last cold prefill's end; decode total = every
+/// generated token over the window from the first decode start to the last
+/// decode end (a request that finishes early leaves the other decoding alone,
+/// and that tail is part of the window, as it is of the client's wait).
+pub fn concurrent_totals(reqs: &[(f64, &Timings, bool)]) -> (Option<f64>, Option<f64>) {
+    let secs = |n: i64, tps: f64| if tps > 0.0 { n as f64 / tps } else { 0.0 };
+    let t0 = reqs.iter().map(|r| r.0).fold(f64::INFINITY, f64::min);
+    let cold: Vec<_> = reqs.iter().filter(|r| !r.2).collect();
+    let prefill = if cold.is_empty() {
+        None
+    } else {
+        let tokens: i64 = cold.iter().map(|r| r.1.prompt_n).sum();
+        let end = cold
+            .iter()
+            .map(|r| r.0 + secs(r.1.prompt_n, r.1.prompt_tps))
+            .fold(f64::NEG_INFINITY, f64::max);
+        (end > t0).then(|| tokens as f64 / (end - t0))
+    };
+    let starts = reqs
+        .iter()
+        .map(|r| r.0 + secs(r.1.prompt_n, r.1.prompt_tps));
+    let start = starts.clone().fold(f64::INFINITY, f64::min);
+    let end = reqs
+        .iter()
+        .map(|r| {
+            r.0 + secs(r.1.prompt_n, r.1.prompt_tps) + secs(r.1.predicted_n, r.1.predicted_tps)
+        })
+        .fold(f64::NEG_INFINITY, f64::max);
+    let generated: i64 = reqs.iter().map(|r| r.1.predicted_n).sum();
+    let decode = (generated > 0 && end > start).then(|| generated as f64 / (end - start));
+    (prefill, decode)
+}
+
+/// The test labels a concurrent repetition adds (see [`concurrent_totals`]).
+pub const LIVE_PREFILL_TOTAL: &str = "prefill total";
+pub const LIVE_DECODE_TOTAL: &str = "decode total";
+
 // ── The live prompt lives in a FILE ──────────────────────────────────────
 
 /// Fold a prompt file's raw contents into the text that will be sent.
@@ -328,7 +428,13 @@ pub struct Plan {
     /// `None` leaves the preset's own `--temp` alone. The default is `Some(0.0)`:
     /// greedy sampling is what makes two runs of the same prompt comparable.
     pub temp: Option<f64>,
+    /// `0` = no cap: the request carries no `max_tokens`, so the model stops
+    /// on its own (or at the preset's `n-predict`, or the slot's context).
+    /// The CLI's default; the Benchmark tab sends its field's value.
     pub max_tokens: i32,
+    /// Live only: one request per repetition, or two at once (see
+    /// [`Concurrency`]).
+    pub concurrency: Concurrency,
     // Synthetic half.
     pub prompt_lens: Vec<i32>,
     pub depths: Vec<i32>,
@@ -353,6 +459,7 @@ impl Default for Plan {
             prompt_file: Some(crate::paths::bench_prompt_file()),
             temp: Some(0.0),
             max_tokens: DEFAULT_MAX_TOKENS,
+            concurrency: Concurrency::Single,
             prompt_lens: parse_int_list(DEFAULT_PROMPT_LENS),
             depths: parse_int_list(DEFAULT_DEPTHS),
             n_gen: DEFAULT_GEN,
@@ -419,11 +526,14 @@ pub fn validate(plan: &Plan) -> Option<String> {
                     None => "The live mode needs a prompt.".into(),
                 });
             }
-            if plan.max_tokens < 1 {
-                return Some("Max output tokens must be at least 1.".into());
+            if plan.max_tokens < 0 {
+                return Some("Max output tokens must be 0 (no cap) or more.".into());
             }
         }
         Mode::Synthetic => {
+            if plan.concurrency != Concurrency::Single {
+                return Some("Concurrent requests need the live mode.".into());
+            }
             if synthetic_sweeps(plan).is_empty() {
                 return Some(
                     "Give at least one prompt length, or a non-zero generation length.".into(),
@@ -651,6 +761,28 @@ pub fn live_body(preset_id: &str, plan: &Plan) -> String {
     live_body_with(preset_id, plan, &plan.prompt)
 }
 
+/// The body of one request of a concurrent repetition: pinned to `slot`, and
+/// with the prefix cache ON for a warm slot (its prompt was primed, so the
+/// request only decodes). `max_tokens` overrides the plan's (1 to prime, 0 =
+/// no cap).
+pub fn live_body_slot(
+    preset_id: &str,
+    plan: &Plan,
+    slot: usize,
+    warm: bool,
+    max_tokens: i32,
+) -> String {
+    let plan = Plan {
+        max_tokens,
+        ..plan.clone()
+    };
+    let mut body: serde_json::Value =
+        serde_json::from_str(&live_body_with(preset_id, &plan, &plan.prompt)).unwrap_or_default();
+    body["id_slot"] = serde_json::json!(slot);
+    body["cache_prompt"] = serde_json::json!(warm);
+    body.to_string()
+}
+
 /// The body with the message content substituted. One formatter for the real
 /// request and for the preview: the preview shows an ELIDED prompt (a prompt
 /// file can be 100k characters, and a request body nobody can read is not a
@@ -660,11 +792,13 @@ fn live_body_with(preset_id: &str, plan: &Plan, content: &str) -> String {
     let mut body = serde_json::json!({
         "model": preset_id,
         "messages": [{ "role": "user", "content": content }],
-        "max_tokens": plan.max_tokens,
         "stream": true,
         "timings_per_token": true,
         "cache_prompt": false,
     });
+    if plan.max_tokens > 0 {
+        body["max_tokens"] = serde_json::json!(plan.max_tokens);
+    }
     if let Some(t) = plan.temp {
         body["temperature"] = serde_json::json!(t);
     }
@@ -1652,6 +1786,84 @@ mod tests {
         assert_eq!(argv_of(&a, "-o").as_deref(), Some("jsonl"));
     }
 
+    #[test]
+    fn concurrency_round_trips_and_names_its_slots() {
+        for c in Concurrency::ALL {
+            assert_eq!(Concurrency::from_str(c.as_str()), Some(c));
+        }
+        assert_eq!(Concurrency::from_str("2-decode"), None);
+        assert!(Concurrency::Single.warm_slots(4).is_empty());
+        assert_eq!(Concurrency::Prefill.warm_slots(3), vec![false; 3]);
+        assert_eq!(Concurrency::Decode.warm_slots(2), vec![true; 2]);
+        // The last slot prefills while the others decode.
+        assert_eq!(Concurrency::PrefillDecode.warm_slots(2), vec![true, false]);
+        assert_eq!(
+            Concurrency::PrefillDecode.warm_slots(4),
+            vec![true, true, true, false]
+        );
+    }
+
+    // A warm slot reuses its primed prompt, a cold one prefills it all; both
+    // pinned, since an unpinned pair may land on one slot and queue.
+    #[test]
+    fn a_slot_body_is_pinned_and_caches_only_when_warm() {
+        let plan = Plan {
+            prompt: "hi".into(),
+            ..Plan::default()
+        };
+        let warm: serde_json::Value =
+            serde_json::from_str(&live_body_slot("q", &plan, 0, true, 1)).unwrap();
+        assert_eq!(warm["id_slot"], serde_json::json!(0));
+        assert_eq!(warm["cache_prompt"], serde_json::json!(true));
+        assert_eq!(warm["max_tokens"], serde_json::json!(1));
+        let cold: serde_json::Value =
+            serde_json::from_str(&live_body_slot("q", &plan, 1, false, 99)).unwrap();
+        assert_eq!(cold["id_slot"], serde_json::json!(1));
+        assert_eq!(cold["cache_prompt"], serde_json::json!(false));
+        assert_eq!(cold["max_tokens"], serde_json::json!(99));
+        let open: serde_json::Value =
+            serde_json::from_str(&live_body_slot("q", &plan, 1, false, 0)).unwrap();
+        assert!(open.get("max_tokens").is_none());
+    }
+
+    #[test]
+    fn concurrent_totals_span_the_shared_window() {
+        let t = |prompt_n, prompt_tps, predicted_n, predicted_tps| Timings {
+            prompt_n,
+            prompt_tps,
+            predicted_n,
+            predicted_tps,
+            ..Timings::default()
+        };
+        // Two cold requests sent together: 1000 tokens each in 2 s and 4 s,
+        // then 100 tokens each in 10 s and 5 s.
+        let a = t(1000, 500.0, 100, 10.0);
+        let b = t(1000, 250.0, 100, 20.0);
+        let (p, d) = concurrent_totals(&[(0.0, &a, false), (0.0, &b, false)]);
+        // 2000 tokens by the end of the slower prefill (4 s).
+        assert!((p.unwrap() - 500.0).abs() < 1e-9);
+        // Decode from 2 s (first start) to 12 s (a's end): 200 tokens in 10 s.
+        assert!((d.unwrap() - 20.0).abs() < 1e-9);
+        // A warm slot adds no prefill tokens; with no cold one there is no total.
+        let w = t(1, 100.0, 50, 25.0);
+        let (p, _) = concurrent_totals(&[(0.0, &w, true), (0.0, &w, true)]);
+        assert_eq!(p, None);
+        let (p, _) = concurrent_totals(&[(0.0, &w, true), (0.5, &a, false)]);
+        // 1000 cold tokens over 0 .. 0.5 + 2 s.
+        assert!((p.unwrap() - 400.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn concurrency_needs_the_live_mode() {
+        let plan = Plan {
+            mode: Mode::Synthetic,
+            presets: vec!["q".into()],
+            concurrency: Concurrency::Decode,
+            ..Plan::default()
+        };
+        assert!(validate(&plan).unwrap().contains("live"));
+    }
+
     // cache_prompt is what keeps every repetition a cold prefill; without it the
     // second one reports the prefix cache's speed and the mean is a fiction.
     #[test]
@@ -1677,6 +1889,14 @@ mod tests {
         let plan = Plan { temp: None, ..plan };
         let body: serde_json::Value = serde_json::from_str(&live_body("qwen", &plan)).unwrap();
         assert!(body.get("temperature").is_none());
+
+        // 0 = no cap: the key is OMITTED, so the model stops on its own.
+        let plan = Plan {
+            max_tokens: 0,
+            ..plan
+        };
+        let body: serde_json::Value = serde_json::from_str(&live_body("qwen", &plan)).unwrap();
+        assert!(body.get("max_tokens").is_none());
     }
 
     #[test]

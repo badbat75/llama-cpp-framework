@@ -508,6 +508,7 @@ fn plan_from_ui(app: &AppWindow, state: &Rc<RefCell<State>>) -> Plan {
             Some(ini::parse_float(s.get_bench_temp().as_str()).unwrap_or(0.0))
         },
         max_tokens: int(s.get_bench_max_tokens(), bench::DEFAULT_MAX_TOKENS),
+        concurrency: bench::Concurrency::Single,
         prompt_lens: bench::parse_int_list(s.get_bench_prompt_lens().as_str()),
         depths: bench::parse_int_list(s.get_bench_depths().as_str()),
         n_gen: int(s.get_bench_n_gen(), bench::DEFAULT_GEN),
