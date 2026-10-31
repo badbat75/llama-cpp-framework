@@ -213,6 +213,11 @@ pub struct BenchSweep {
     /// `standard`'s `ImageSize`. A prompt without an image ignores it.
     #[arg(long)]
     pub image_size: Option<String>,
+    /// Live only: an image file sent in place of every image prompt's own
+    /// (JPEG or PNG), fitted into `--image-size`. Recorded as `image` and
+    /// `image-sha256`; beside `--spec` the runs are derived from it.
+    #[arg(long)]
+    pub image: Option<std::path::PathBuf>,
     /// Live only: requests per repetition. `single` (default) sends one;
     /// the others send one per slot of the preset at once (N = `parallel`,
     /// absent = 4; N >= 2), each pinned with `id_slot`: `prefill` (all N
@@ -651,6 +656,13 @@ fn run_bench(c: BenchCmd) -> Result<()> {
     if let Some(v) = a.image_size.as_deref() {
         plan.image_size = bench::parse_image_size(v).map_err(|e| anyhow::anyhow!("--image-size: {e}"))?;
     }
+    if let Some(img) = a.image.as_deref() {
+        // Refused now, not after the first restart: an unreadable image.
+        std::fs::read(img)
+            .map_err(|e| anyhow::anyhow!("--image {}: {e}", img.display()))
+            .and_then(|b| image::guess_format(&b).map_err(|e| anyhow::anyhow!("--image {}: {e}", img.display())))?;
+        plan.image = Some(img.to_path_buf());
+    }
     let concurrency_all = a.concurrency.as_deref() == Some("all");
     if let Some(c) = a.concurrency.as_deref().filter(|c| *c != "all") {
         plan.concurrency = bench::Concurrency::from_str(c)
@@ -680,6 +692,7 @@ fn run_bench(c: BenchCmd) -> Result<()> {
         temp: a.temp.is_some().then_some(plan.temp),
         max_tokens: a.max_tokens,
         image_size: a.image_size.is_some().then_some(plan.image_size),
+        image: a.image.is_some().then(|| plan.image.clone()),
         reps: a.reps,
         concurrency: a
             .concurrency

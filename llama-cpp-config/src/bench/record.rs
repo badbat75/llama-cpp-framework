@@ -491,6 +491,14 @@ pub fn plan_params(plan: &Plan) -> Vec<(String, String)> {
             ));
             if super::prompt_has_image(&plan.prompt) {
                 out.push(("image-size".into(), super::image_size_str(plan.image_size)));
+                // An image of the user's in place of the prompt's: no pin
+                // covers it, so its name and digest identify it.
+                if let Some(img) = &plan.image {
+                    out.push(("image".into(), img.file_name().unwrap_or_default().to_string_lossy().into_owned()));
+                    if let Ok(bytes) = std::fs::read(img) {
+                        out.push(("image-sha256".into(), crate::sha256::hex(&bytes)));
+                    }
+                }
             }
             out.push(("concurrency".into(), plan.concurrency.as_str().into()));
             out.push(("prompt".into(), prompt_name(plan)));

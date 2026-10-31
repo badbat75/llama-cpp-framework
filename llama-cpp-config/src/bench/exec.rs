@@ -342,7 +342,7 @@ fn run(plan: &Plan, cancel: &Arc<AtomicBool>, emit: &impl Fn(Event)) -> Result<S
             .and_then(std::path::Path::parent)
             .map_or_else(paths::config_dir, std::path::Path::to_path_buf);
         resolved = Plan {
-            prompt: super::resolve_images(&plan.prompt, &dir, plan.image_size)?,
+            prompt: super::resolve_images(&plan.prompt, &dir, plan.image_size, plan.image.as_deref())?,
             ..plan.clone()
         };
         &resolved

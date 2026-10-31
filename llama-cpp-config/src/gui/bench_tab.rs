@@ -81,6 +81,103 @@ fn file_stamp(path: &Path) -> Option<(Option<SystemTime>, u64)> {
     Some((meta.modified().ok(), meta.len()))
 }
 
+/// The Image row's cached thumbnail (`State::bench_image_thumb`): the decode,
+/// keyed by the file and its stamp. The readout is rebuilt from `dims` on every
+/// refresh, so it follows the Image size field without a new decode.
+pub(crate) struct ImageThumb {
+    path: std::path::PathBuf,
+    stamp: Option<(Option<SystemTime>, u64)>,
+    image: slint::Image,
+    /// The image's size, or why it cannot be read.
+    dims: Result<(u32, u32), String>,
+}
+
+/// The largest thumbnail side, in pixels: twice the row's box, for HiDPI.
+const THUMB_W: u32 = 360;
+const THUMB_H: u32 = 240;
+
+/// The image the Image row shows and whether it is the user's: the chosen
+/// file, else the first ticked image prompt's own. `None` when neither exists.
+fn shown_image(s: &AppState, state: &Rc<RefCell<State>>) -> Option<(std::path::PathBuf, bool)> {
+    let chosen = s.get_bench_image();
+    if !chosen.trim().is_empty() {
+        return Some((std::path::PathBuf::from(chosen.trim()), true));
+    }
+    state.borrow().bench_prompts.iter().filter(|r| r.on).find_map(|r| {
+        let text = &r.read.as_ref()?.text;
+        bench::prompt_image_file(text, r.path.parent()?).map(|p| (p, false))
+    })
+}
+
+/// The readout: name, size, what is sent at `size`, and whose image it is.
+fn image_info(t: &ImageThumb, mine: bool, size: Option<(u32, u32)>) -> String {
+    let name = path_name(&t.path);
+    let (w, h) = match &t.dims {
+        Ok(d) => *d,
+        Err(e) => return format!("{name}: cannot be read ({e})"),
+    };
+    let sent = match size {
+        Some((bw, bh)) if w > bw || h > bh => {
+            let f = (f64::from(bw) / f64::from(w)).min(f64::from(bh) / f64::from(h));
+            format!("sent at {}x{}", (f64::from(w) * f).round(), (f64::from(h) * f).round())
+        }
+        _ => "sent as is".into(),
+    };
+    let whose = if mine { "yours, in place of the prompts' own" } else { "the prompt's own" };
+    format!("{name}: {w}x{h}, {sent} ({whose})")
+}
+
+/// Refresh the Image row, decoding only when the file or its stamp changed.
+fn refresh_image_preview(app: &AppWindow, state: &Rc<RefCell<State>>, size: Option<(u32, u32)>) {
+    let s = app.global::<AppState>();
+    let Some((path, mine)) = shown_image(&s, state) else {
+        state.borrow_mut().bench_image_thumb = None;
+        s.set_bench_image_preview(slint::Image::default());
+        s.set_bench_image_info(SharedString::from(
+            "No image prompt ticked: tick bench-prompt-image-1.0.json (or a prompt of yours with an image_file part) to send an image.",
+        ));
+        return;
+    };
+    let stamp = file_stamp(&path);
+    let fresh = state
+        .borrow()
+        .bench_image_thumb
+        .as_ref()
+        .is_some_and(|t| t.path == path && t.stamp == stamp);
+    if !fresh {
+        let (image, dims) = match image::open(&path) {
+            Ok(img) => {
+                let t = img.thumbnail(THUMB_W, THUMB_H).to_rgba8();
+                let buf = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::clone_from_slice(
+                    t.as_raw(),
+                    t.width(),
+                    t.height(),
+                );
+                (slint::Image::from_rgba8(buf), Ok((img.width(), img.height())))
+            }
+            Err(e) => (slint::Image::default(), Err(e.to_string())),
+        };
+        state.borrow_mut().bench_image_thumb = Some(ImageThumb { path, stamp, image, dims });
+    }
+    let st = state.borrow();
+    let Some(t) = st.bench_image_thumb.as_ref() else {
+        return;
+    };
+    s.set_bench_image_preview(t.image.clone());
+    s.set_bench_image_info(SharedString::from(image_info(t, mine, size)));
+}
+
+fn pick_image_file(start: Option<&Path>) -> Option<std::path::PathBuf> {
+    let mut dialog = rfd::FileDialog::new()
+        .set_title("Pick an image")
+        .add_filter("Images", &["jpg", "jpeg", "png"])
+        .add_filter("All files", &["*"]);
+    if let Some(parent) = start.and_then(Path::parent).filter(|p| p.is_dir()) {
+        dialog = dialog.set_directory(parent);
+    }
+    dialog.pick_file()
+}
+
 /// Seed the prompt list once: every shipped prompt (installed, read in
 /// place), then the configured one when it is not one of them, ticked.
 fn seed_prompt_list(state: &Rc<RefCell<State>>) {
@@ -369,6 +466,7 @@ fn file_name(path: &str) -> String {
 pub(super) fn refresh_preview(app: &AppWindow, state: &Rc<RefCell<State>>) {
     let s = app.global::<AppState>();
     let plan = plan_from_ui(app, state);
+    refresh_image_preview(app, state, plan.image_size);
     s.set_bench_caveats(SharedString::from(
         bench::caveats(plan.mode)
             .iter()
@@ -560,6 +658,10 @@ fn invalid_numbers(s: &AppState, mode: Mode) -> Vec<String> {
                 &ini::INT_NON_NEGATIVE,
             ));
             out.extend(bench::parse_image_size(s.get_bench_image_size().as_str()).err());
+            let image = s.get_bench_image();
+            if !image.trim().is_empty() && !Path::new(image.trim()).is_file() {
+                out.push(format!("Image: {} is not a file", image.trim()));
+            }
         }
         Mode::Synthetic => {
             out.extend(bench::int_list_problem(
@@ -622,6 +724,9 @@ fn plan_from_ui(app: &AppWindow, state: &Rc<RefCell<State>>) -> Plan {
         max_tokens: int(s.get_bench_max_tokens(), bench::DEFAULT_MAX_TOKENS),
         image_size: bench::parse_image_size(s.get_bench_image_size().as_str())
             .unwrap_or_else(|_| bench::parse_image_size(bench::DEFAULT_IMAGE_SIZE).unwrap_or(None)),
+        image: Some(s.get_bench_image().trim().to_string())
+            .filter(|p| !p.is_empty())
+            .map(std::path::PathBuf::from),
         concurrency: bench::Concurrency::from_str(s.get_bench_concurrency().as_str())
             .unwrap_or_default(),
         prompt_lens: bench::parse_int_list(s.get_bench_prompt_lens().as_str()),
@@ -690,6 +795,11 @@ fn save_spec(app: &AppWindow, state: &Rc<RefCell<State>>, path: &Path) -> Result
         mode: Mode::Live,
         ..plan_from_ui(app, state)
     };
+    if plan.image.is_some() && (chosen_spec(&s).is_none() || overridden(&s, state).contains(&"image")) {
+        return Err("an image of yours is not a spec rule: make it an image prompt (an image_file \
+                    part naming it with its sha256), add that with + Browse…, and save again"
+            .into());
+    }
     let pin = |prompts: Vec<bench::spec::Prompt>| -> Vec<(std::path::PathBuf, String)> {
         prompts
             .into_iter()
@@ -789,7 +899,7 @@ fn chosen_spec(s: &AppState) -> Option<Result<bench::spec::Spec, String>> {
 
 /// The Workload fields Override can take over besides the prompts, by the
 /// name `Derive::fields` records, with their values as the card shows them.
-fn workload_values(s: &AppState) -> [(&'static str, String); 5] {
+fn workload_values(s: &AppState) -> [(&'static str, String); 6] {
     [
         (
             "temp",
@@ -801,6 +911,7 @@ fn workload_values(s: &AppState) -> [(&'static str, String); 5] {
         ),
         ("max-tokens", s.get_bench_max_tokens().to_string()),
         ("image-size", s.get_bench_image_size().to_string()),
+        ("image", s.get_bench_image().to_string()),
         ("concurrency", s.get_bench_concurrency().to_string()),
         ("reps", s.get_bench_reps().to_string()),
     ]
@@ -853,6 +964,7 @@ fn derive_from_ui(
         temp: on("temp").then_some(plan.temp),
         max_tokens: on("max-tokens").then_some(plan.max_tokens),
         image_size: on("image-size").then_some(plan.image_size),
+        image: on("image").then(|| plan.image.clone()),
         reps: on("reps").then_some(plan.reps),
         concurrency: on("concurrency")
             .then(|| (s.get_bench_concurrency() != "all").then_some(plan.concurrency)),
@@ -1317,6 +1429,33 @@ pub(super) fn wire(
     {
         let app_weak = app.as_weak();
         let state = state.clone();
+        app.global::<AppState>().on_bench_image_pick(move || {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let s = app.global::<AppState>();
+            let start = shown_image(&s, &state).map(|(p, _)| p);
+            let Some(picked) = pick_image_file(start.as_deref()) else {
+                return;
+            };
+            s.set_bench_image(SharedString::from(picked.to_string_lossy().into_owned()));
+            s.invoke_bench_changed();
+        });
+    }
+    {
+        let app_weak = app.as_weak();
+        app.global::<AppState>().on_bench_image_clear(move || {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let s = app.global::<AppState>();
+            s.set_bench_image(SharedString::default());
+            s.invoke_bench_changed();
+        });
+    }
+    {
+        let app_weak = app.as_weak();
+        let state = state.clone();
         app.global::<AppState>().on_bench_prompt_remove(move |i| {
             let Some(app) = app_weak.upgrade() else {
                 return;
@@ -1637,5 +1776,31 @@ pub(super) fn wire(
                 Err(e) => set_status(&app, format!("Cannot open the report: {e}"), true),
             }
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The Image row's readout: the shipped photo's size, and the size it is
+    /// sent at under the default Image size, recomputed per size without a
+    /// new decode.
+    #[test]
+    fn the_image_readout_says_what_is_sent() {
+        let path = crate::paths::bench_prompts_dir().join("bench-image-zebras-1.0.jpg");
+        let dims = image::image_dimensions(&path).map_err(|e| e.to_string());
+        let t = ImageThumb {
+            path,
+            stamp: None,
+            image: slint::Image::default(),
+            dims,
+        };
+        let size = bench::parse_image_size(bench::DEFAULT_IMAGE_SIZE).unwrap();
+        assert_eq!(
+            image_info(&t, false, size),
+            "bench-image-zebras-1.0.jpg: 6000x4000, sent at 1344x896 (the prompt's own)"
+        );
+        assert!(image_info(&t, true, None).ends_with("6000x4000, sent as is (yours, in place of the prompts' own)"));
     }
 }

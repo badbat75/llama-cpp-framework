@@ -85,6 +85,8 @@ pub struct Derive {
     pub max_tokens: Option<i32>,
     /// `Some(None)` = the image file as is.
     pub image_size: Option<Option<(u32, u32)>>,
+    /// An image in place of the image prompts' own (`Some(None)` = theirs).
+    pub image: Option<Option<PathBuf>>,
     pub reps: Option<i32>,
     /// `Some(None)` = all.
     pub concurrency: Option<Option<Concurrency>>,
@@ -98,6 +100,7 @@ impl Derive {
             ("temp", self.temp.is_some()),
             ("max-tokens", self.max_tokens.is_some()),
             ("image-size", self.image_size.is_some()),
+            ("image", self.image.is_some()),
             ("concurrency", self.concurrency.is_some()),
             ("reps", self.reps.is_some()),
         ]
@@ -518,6 +521,7 @@ fn pass_plan(
         reps: derive.reps.unwrap_or(pass.reps),
         max_tokens: derive.max_tokens.unwrap_or(spec.max_tokens),
         image_size: derive.image_size.unwrap_or(spec.image_size),
+        image: derive.image.clone().unwrap_or(None),
         concurrency: c,
         spec: Some(Tag {
             name: spec.name.clone(),

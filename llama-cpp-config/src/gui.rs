@@ -129,6 +129,9 @@ struct State {
     // Spec files of the user's loaded or saved this session: the Spec combo
     // lists them after the published versions.
     bench_spec_files: Vec<std::path::PathBuf>,
+    // The Image row's thumbnail and readout, keyed by the file and its stamp:
+    // decoding a 6000x4000 JPEG on every 5 s tick is not a preview.
+    bench_image_thumb: Option<bench_tab::ImageThumb>,
     // The run in flight, so Cancel can reach it. Only the cancel flag inside it
     // crosses to the worker thread.
     bench_handle: Option<crate::bench::exec::Handle>,

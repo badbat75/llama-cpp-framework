@@ -130,7 +130,7 @@ export component BenchPage inherits ScrollView {
             if AppState.bench_is_live : LabeledField {
                 label_width <=> LabelColumn.bench;
                 label: "Prompts";
-                hint: "The files sent as the request, each ticked one in turn: a .txt as a single user message, a .json as the conversation it holds (messages and tools, like a coding agent's request) (one step per prompt, into one campaign). Each is re-sent whole on every repetition with the prefix cache disabled, so each one is a cold prefill, which is what the prefill row measures.\nThree prompts ship, installed read-only beside the program (share/benchmarks/prompts) and pinned by the standard spec: bench-prompt-43k-1.0.txt (the default, 43.7k tokens), bench-prompt-110k-1.0.txt (110k tokens) and bench-prompt-code-1.0.json (a coding-agent turn with tools, ~42k tokens); + adds a file of your own (a custom run, or with a spec a derived one). The ranking of a knob can differ with the context you actually work at, which is why neither is short.\nRead fresh when Run starts, so editing one of yours while this window is open is enough: Edit opens it in your default editor (a shipped one is read-only: change a copy). The first ticked one is also what `bench sweep` reads with no --prompt-file.";
+                hint: "The files sent as the request, each ticked one in turn: a .txt as a single user message, a .json as the conversation it holds (messages and tools, like a coding agent's request) (one step per prompt, into one campaign). Each is re-sent whole on every repetition with the prefix cache disabled, so each one is a cold prefill, which is what the prefill row measures.\nFour prompts ship, installed read-only beside the program (share/benchmarks/prompts) and pinned by the standard spec: bench-prompt-43k-1.0.txt (the default, 43.7k tokens), bench-prompt-110k-1.0.txt (110k tokens), bench-prompt-code-1.0.json (a coding-agent turn with tools, ~42k tokens) and bench-prompt-image-1.0.json (a photograph to describe; run only on presets with an mmproj, its picture shown and replaceable in the Image row); + adds a file of your own (a custom run, or with a spec a derived one). The ranking of a knob can differ with the context you actually work at, which is why neither is short.\nRead fresh when Run starts, so editing one of yours while this window is open is enough: Edit opens it in your default editor (a shipped one is read-only: change a copy). The first ticked one is also what `bench sweep` reads with no --prompt-file.";
                 VerticalLayout {
                     spacing: 4px;
                     for row[i] in AppState.bench_prompts : HorizontalLayout {
@@ -197,6 +197,53 @@ export component BenchPage inherits ScrollView {
                     text <=> AppState.bench_max_tokens;
                     input-type: InputType.number;
                     edited => { AppState.bench_changed(); }
+                }
+            }
+            if AppState.bench_is_live : LabeledField {
+                label_width <=> LabelColumn.bench;
+                label: "Image";
+                hint: "The picture an image prompt sends (a prompt whose message holds an image_file part, like the shipped bench-prompt-image-1.0.json). By default each image prompt sends its own, shown here for the first one ticked; Choose… sends a JPEG or PNG of yours in place of every image prompt's own, fitted into Image size like theirs. Under a spec that is an Override: the runs record spec = custom, derived from it, with image and image-sha256 naming the file. Prompt's goes back to the prompts' own.\nAn image prompt runs only on presets that load an mmproj.";
+                HorizontalLayout {
+                    spacing: 8px;
+                    alignment: start;
+                    Rectangle {
+                        width: 180px;
+                        height: 120px;
+                        border-width: 1px;
+                        border-color: Palette.border;
+                        Image {
+                            accessible-label: "bench-image-preview";
+                            width: parent.width - 2px;
+                            height: parent.height - 2px;
+                            source: AppState.bench_image_preview;
+                            image-fit: contain;
+                        }
+                    }
+                    VerticalLayout {
+                        spacing: 4px;
+                        alignment: start;
+                        Text {
+                            text: AppState.bench_image_info;
+                            font-size: 12px;
+                            color: Palette.foreground.transparentize(Tokens.muted);
+                            wrap: word-wrap;
+                            max-width: 360px;
+                        }
+                        HorizontalLayout {
+                            spacing: 8px;
+                            alignment: start;
+                            Button {
+                                text: "Choose…";
+                                enabled: AppState.bench_spec == "custom" || AppState.bench_spec_override;
+                                clicked => { AppState.bench_image_pick(); }
+                            }
+                            if AppState.bench_image != "" : Button {
+                                text: "Prompt's";
+                                enabled: AppState.bench_spec == "custom" || AppState.bench_spec_override;
+                                clicked => { AppState.bench_image_clear(); }
+                            }
+                        }
+                    }
                 }
             }
             if AppState.bench_is_live : LabeledField {

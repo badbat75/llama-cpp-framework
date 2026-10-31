@@ -423,6 +423,9 @@ pub struct Plan {
     /// sent (`resolve_images`); `None` sends the file as is. Ignored by a
     /// prompt without an image.
     pub image_size: Option<(u32, u32)>,
+    /// Live only: an image of the user's sent in place of every image
+    /// prompt's own (`resolve_images`); `None` keeps the prompt's.
+    pub image: Option<PathBuf>,
     /// Live only: one request per repetition, or two at once (see
     /// [`Concurrency`]).
     pub concurrency: Concurrency,
@@ -454,6 +457,7 @@ impl Default for Plan {
             temp: Some(0.0),
             max_tokens: DEFAULT_MAX_TOKENS,
             image_size: parse_image_size(DEFAULT_IMAGE_SIZE).unwrap_or(None),
+            image: None,
             concurrency: Concurrency::Single,
             prompt_lens: parse_int_list(DEFAULT_PROMPT_LENS),
             depths: parse_int_list(DEFAULT_DEPTHS),
@@ -818,10 +822,13 @@ pub fn prompt_has_image(text: &str) -> bool {
 /// re-encoded as JPEG at a fixed quality; one that fits, or `size = None`, is
 /// sent byte for byte. A prompt without `image_file` parts comes back
 /// unchanged, so a text prompt's digest is the same before and after.
+/// `image` replaces every part's file with one of the user's, sent unchecked
+/// (it has no pin: the run records its sha256 instead).
 pub fn resolve_images(
     text: &str,
     dir: &std::path::Path,
     size: Option<(u32, u32)>,
+    image: Option<&std::path::Path>,
 ) -> Result<String, String> {
     if !text.contains("\"image_file\"") {
         return Ok(text.to_string());
@@ -840,11 +847,11 @@ pub fn resolve_images(
             if name.is_empty() || pinned.is_empty() {
                 return Err("an image_file part needs `file` and `sha256`".into());
             }
-            let path = dir.join(name);
+            let path = image.map_or_else(|| dir.join(name), std::path::Path::to_path_buf);
             let bytes = std::fs::read(&path)
                 .map_err(|e| format!("cannot read the image {}: {e}", path.display()))?;
             let actual = crate::sha256::hex(&bytes);
-            if !actual.eq_ignore_ascii_case(pinned) {
+            if image.is_none() && !actual.eq_ignore_ascii_case(pinned) {
                 return Err(format!(
                     "{} has sha256 {actual}, the prompt pins {pinned}: the image is part of the prompt",
                     path.display()
@@ -856,6 +863,20 @@ pub fn resolve_images(
         }
     }
     Ok(if changed { v.to_string() } else { text.to_string() })
+}
+
+/// The image a prompt sends of its own: its first `image_file` part's file,
+/// relative to `dir`. `None` for a prompt without one.
+pub fn prompt_image_file(text: &str, dir: &std::path::Path) -> Option<PathBuf> {
+    let (messages, _) = prompt_request(text, None);
+    messages.as_array()?.iter().find_map(|m| {
+        m.get("content")?.as_array()?.iter().find_map(|p| {
+            if p.get("type")?.as_str()? != "image_file" {
+                return None;
+            }
+            Some(dir.join(p.get("file")?.as_str()?))
+        })
+    })
 }
 
 /// `bytes` as a `data:` URL, fitted into `size` first when larger.
@@ -2460,11 +2481,11 @@ mod tests {
                 // Its image is shipped beside it, matches its pin, and is
                 // sent fitted into the default size.
                 let size = parse_image_size(DEFAULT_IMAGE_SIZE).unwrap();
-                let sent = resolve_images(&raw, p.parent().unwrap(), size).expect(&name);
+                let sent = resolve_images(&raw, p.parent().unwrap(), size, None).expect(&name);
                 let (messages, _) = prompt_request(&sent, None);
                 let url = messages[0]["content"][0]["image_url"]["url"].as_str().unwrap();
                 assert!(url.starts_with("data:image/jpeg;base64,"), "{name}: the image inline");
-                assert_eq!(resolve_images(&sent, p.parent().unwrap(), size).unwrap(), sent);
+                assert_eq!(resolve_images(&sent, p.parent().unwrap(), size, None).unwrap(), sent);
             } else if p.extension().unwrap() == "json" {
                 let (messages, tools) = prompt_request(&raw, None);
                 assert!(messages.as_array().unwrap().len() > 1, "{name}: a conversation");
@@ -2538,18 +2559,29 @@ mod tests {
             let bytes = base64::engine::general_purpose::STANDARD.decode(data).unwrap();
             (mime.to_string(), bytes)
         };
-        let (mime, bytes) = decoded(&resolve_images(&good, dir.path(), Some((300, 300))).unwrap());
+        let (mime, bytes) = decoded(&resolve_images(&good, dir.path(), Some((300, 300)), None).unwrap());
         let img = image::load_from_memory(&bytes).unwrap();
         assert_eq!((mime.as_str(), img.width(), img.height()), ("image/jpeg", 300, 200));
         // Already inside the box, or original: the file's own bytes.
         for size in [Some((1344, 896)), None] {
-            let (mime, bytes) = decoded(&resolve_images(&good, dir.path(), size).unwrap());
+            let (mime, bytes) = decoded(&resolve_images(&good, dir.path(), size, None).unwrap());
             assert_eq!((mime.as_str(), &bytes), ("image/png", &png));
         }
         let bad = prompt(&"0".repeat(64));
-        assert!(resolve_images(&bad, dir.path(), None).unwrap_err().contains("the prompt pins"));
+        assert!(resolve_images(&bad, dir.path(), None, None).unwrap_err().contains("the prompt pins"));
+        // An image of the user's replaces the prompt's, with no pin to match.
+        let mine = dir.path().join("mine.png");
+        let mut other = Vec::new();
+        image::RgbImage::from_pixel(10, 10, image::Rgb([0, 0, 0]))
+            .write_to(&mut std::io::Cursor::new(&mut other), image::ImageFormat::Png)
+            .unwrap();
+        std::fs::write(&mine, &other).unwrap();
+        let (_, bytes) = decoded(&resolve_images(&bad, dir.path(), None, Some(&mine)).unwrap());
+        assert_eq!(bytes, other);
+        assert_eq!(prompt_image_file(&good, dir.path()), Some(dir.path().join("i.png")));
+        assert_eq!(prompt_image_file("hello", dir.path()), None);
         // A prompt without an image_file comes back as it was.
-        assert_eq!(resolve_images("hello", dir.path(), None).unwrap(), "hello");
+        assert_eq!(resolve_images("hello", dir.path(), None, None).unwrap(), "hello");
         assert_eq!(parse_image_size("1344x896").unwrap(), Some((1344, 896)));
         assert_eq!(parse_image_size("original").unwrap(), None);
         assert!(parse_image_size("0x5").is_err() && parse_image_size("big").is_err());
