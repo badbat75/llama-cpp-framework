@@ -169,13 +169,3 @@ before trusting the size of the gains (the ranking itself may hold):
   window that favors the drafter.
 - Depth: the prose prompt is 43.7k; the agent runs at 100-180k, where the MTP head's own
   attention and the verify batches cost more.
-
-## Benchmark tab: run a versioned spec (2026-10-31)
-
-`bench sweep --spec standard|<file>` runs a spec from the CLI only (`bench/spec.rs`). The
-tab still sets temperature, repetitions, concurrency and prompt by hand (recorded as
-`spec = custom`). Open design question, not started: how a spec fits the tab, which measures
-the selected presets as they are while a spec runs on the sweep machinery (pass overrides
-written to presets.ini, a server restart per pass, progress printed to a terminal). Likely
-pieces: a key-less sweep (one leg, the preset as it is), progress events to the window instead
-of stdout, and a Spec picker that makes the fields a spec defines read-only.

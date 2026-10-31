@@ -11,7 +11,7 @@
 // The tray (`AppTray` in app.slint) is a separate root and does NOT use this
 // global; it keeps its own pushed-in state.
 
-import { PresetSummary, PresetForm, ServerForm, GpuRow, TensorOverrideRow, TensorPickRow, DeleteFileRow, BenchPresetRow, BenchResultRow, BindRow } from "types.slint";
+import { PresetSummary, PresetForm, ServerForm, GpuRow, TensorOverrideRow, TensorPickRow, DeleteFileRow, BenchPresetRow, BenchPromptRow, BenchResultRow, BindRow } from "types.slint";
 import { Options } from "components.slint";
 
 export global AppState {
@@ -500,11 +500,9 @@ export global AppState {
     // picked up, and a prompt of any size is editable in a real editor. See the
     // src/bench.rs header for why the framework's own prompt is a SEED for this
     // file rather than something the installer writes.
-    in-out property <string> bench_prompt_file;
-    // Read-only readout of the file as it stands ("230 chars, 230 bytes,
-    // sha256 8f3c…"), or why it cannot be read. Pushed from Rust, which re-reads
-    // the file when it changes on disk.
-    in-out property <string> bench_prompt_info: "";
+    // The prompts a run sends, each ticked one in turn (bench_tab.rs). Rust
+    // rebuilds the list when a file changes on disk.
+    in property <[BenchPromptRow]> bench_prompts;
     // "default" here means "leave the preset's own --temp alone", which is a
     // third instruction, not a missing one. Unchecked with a 0 is the default:
     // greedy sampling is what makes two runs of one prompt comparable.
@@ -512,8 +510,32 @@ export global AppState {
     in-out property <string> bench_temp: "0";
     in-out property <string> bench_max_tokens;
     // Live only: "single", or one request per slot of the preset at once
-    // ("prefill", "decode", "prefill+decode"): bench::Concurrency.
+    // ("prefill", "decode", "prefill+decode"): bench::Concurrency; "all" runs
+    // each of them in turn, as `bench sweep --concurrency all`.
     in-out property <string> bench_concurrency: "single";
+    // The CLI's --campaign and --question; empty campaign = one named after
+    // the run's stamp. bench_spec is "custom" (the Workload fields, recorded as
+    // spec = custom) or "standard v<N>", one of bench_spec_options: custom plus
+    // the published versions in benchmarks/specs/standard.versions.
+    in-out property <string> bench_campaign;
+    in-out property <string> bench_question;
+    in-out property <string> bench_spec: "custom";
+    in property <[string]> bench_spec_options: ["custom"];
+    // With a spec chosen, Override re-enables the Workload fields: each one
+    // changed after ticking it replaces the spec's value in every step, and
+    // every run is recorded as custom, derived from the spec.
+    // bench_override_base is the fields' values at the tick (Rust's), what
+    // "changed" is measured against.
+    in-out property <bool> bench_spec_override;
+    // A/B: one preset key (`none`, or one of the sweepable keys, the same list
+    // as `bench sweep --key`) and its values, `bench sweep --values` syntax.
+    // Every step runs once per value, the value written to the selected
+    // presets for it and put back after.
+    in-out property <string> bench_ab_key: "none";
+    in property <[string]> bench_ab_keys: ["none"];
+    in-out property <string> bench_ab_values;
+    in-out property <string> bench_override_base;
+    callback bench_override_toggled();
     in-out property <string> bench_reps;
     in-out property <string> bench_prompt_lens;
     in-out property <string> bench_depths;
@@ -747,17 +769,24 @@ export global AppState {
     callback bench_run_picked(string);
     // Open the current campaign's markdown report in the default editor.
     callback bench_open_report();
-    // The prompt file: pick one (returns the picked path, or the argument back
-    // when the dialog is cancelled, exactly like `browse_dir`), and open the
-    // current one in the system's default text editor.
+    // The prompt list: tick or untick one, add a file (a native picker) or
+    // remove an added one, and open one in the system's default text editor.
     //
     // Editing happens THERE and not in a window of ours on purpose: a Slint
     // TextEdit is already sluggish at a few hundred KB (see log_window.slint,
     // which shows its tail as a list of rows for that reason), and the prompts worth
     // keeping in a file are the long ones. The file is re-read when it changes
     // and again when Run starts, so an external editor is a live editor.
-    callback bench_pick_prompt(string) -> string;
-    callback bench_edit_prompt();
+    callback bench_prompt_toggle(int);
+    callback bench_prompt_add();
+    callback bench_prompt_remove(int);
+    callback bench_prompt_edit(int);
+    // The Spec combo moved (Rust ticks that spec's prompts and drops
+    // Override), and a spec file of the user's loaded or saved: never the
+    // official one, and its runs record spec = custom, derived from it.
+    callback bench_spec_changed();
+    callback bench_spec_load();
+    callback bench_spec_save();
     // The benchmark database: `bench_db_changed` re-lists the campaigns at the
     // typed path (no write), `bench_db_accepted` also saves it to settings.ini,
     // `bench_pick_db` is the picker (same contract as `bench_pick_prompt`).

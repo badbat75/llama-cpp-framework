@@ -44,7 +44,12 @@ Reps = 3
   `Concurrency` is `single`, `prefill`, `decode`, `prefill+decode` or `all`.
 
 Comments are whole lines (`;`), never after a value. `bench sweep --spec standard` runs the
-compiled-in copy of `standard.ini`; `--spec <file>` runs any other.
+compiled-in copy of `standard.ini`; `--spec <file>` runs any other, but only a published
+`standard` version is a spec run: a file whose rules are not one, a method flag beside `--spec`,
+or a swept key a pass overrides records every run as `spec = custom` with `spec-derived-from`,
+`spec-derived-sha256` and `spec-derived-fields`.
+The Benchmark tab's Save as… writes such a file of the user's (never named `standard`); it is
+a personal method, not a version: to make it the framework's, follow section 4.
 
 ## 2. Decide what kind of change it is
 
@@ -65,8 +70,9 @@ and in bench.db, and its runs stay valid as version-1 runs.
    (`Override = spec-type=none`); a pass that keeps the speculator uses `Temp = preset` and
    at least 5 repetitions (each one writes a different text: means, not single numbers).
    With `model-draft` in a preset, `spec-type` unset re-enables the drafter from the GGUF
-   header: the override must say `none`, not `unset`. A sweep cannot vary a key a pass
-   overrides (`run` refuses `--key spec-type` under `standard`): the leg's value would win.
+   header: the override must say `none`, not `unset`. A sweep that varies a key a pass
+   overrides (`--key spec-type` under `standard`) puts the leg's value over the pass's: it
+   runs, recorded as derived (`spec-derived-fields = override`), never as the spec.
 2. **It can run everywhere it claims.** `Concurrency` other than `single` needs a preset with
    `parallel` >= 2 (`all` falls back to single alone). Each prompt needs a slot context of
    its tokens plus the longest uncapped answer (~5k): the 110k prompt needs ~116k per slot,

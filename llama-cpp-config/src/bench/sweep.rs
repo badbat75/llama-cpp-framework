@@ -333,6 +333,18 @@ pub fn setter(key: &str) -> Result<Setter, String> {
         })
 }
 
+/// Every value of `key` applied to a throwaway copy of `preset`: the Benchmark
+/// tab's A/B check, the same one `run` makes before its first leg.
+pub fn check_values(preset: &str, key: &str, values: &[String]) -> Result<(), String> {
+    let set = setter(key)?;
+    let base = load_one(preset)?;
+    for v in values {
+        let mut probe = base.clone();
+        set(&mut probe, v).map_err(|e| format!("{key} value `{v}`: {e}"))?;
+    }
+    Ok(())
+}
+
 /// The sweepable keys, comma-separated, for help and error text.
 pub fn keys() -> String {
     SWEEPABLE
@@ -1104,7 +1116,7 @@ fn write_value(preset: &str, set: Setter, value: &str) -> Result<(), String> {
 
 /// Put llama-server into the state this engine needs: up (and freshly started,
 /// so it reads the value just written) for live, down for synthetic.
-fn prepare_server(mode: Mode, port: u16) -> Result<(), String> {
+pub(super) fn prepare_server(mode: Mode, port: u16) -> Result<(), String> {
     match mode {
         Mode::Live => {
             runstate::stop();
@@ -1130,7 +1142,7 @@ fn prepare_server(mode: Mode, port: u16) -> Result<(), String> {
 
 /// Leave the machine as the sweep found it: llama-server running (on the value
 /// presets.ini now names) when it was running before, stopped when it was not.
-fn restore_server(was_running: bool) -> Result<(), String> {
+pub(super) fn restore_server(was_running: bool) -> Result<(), String> {
     if was_running {
         runstate::stop();
         wait_gone()?;

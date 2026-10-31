@@ -4,15 +4,16 @@ Files compiled into `llama-cpp-config.exe` with `include_str!` and written to
 `%LOCALAPPDATA%\llama.cpp\config\` the first time the Benchmark tab runs. They
 are seeds: an existing file on disk is never overwritten, so a user's edits
 survive every upgrade. See `src\bench.rs` for why the installer does not place
-them in `bin\` instead.
+them in `bin\` instead. Only the prompts the `standard` spec pins ship: a prompt
+no spec pins measures nothing another machine can compare with.
 
 ## `bench-prompt-43k.txt`
 
-The long-context prompt for the live benchmark: **169,289 characters, roughly
-40k tokens** (43,730 on Qwen3.8), seeded as `config\bench-prompt-43k.txt` beside the short default.
+The default prompt of the live benchmark: **169,289 characters, roughly
+40k tokens** (43,730 on Qwen3.8), seeded as `config\bench-prompt-43k.txt`.
 
 It exists because a benchmark ranks settings **in the regime it measured**, and
-the default prompt is 230 characters, i.e. a regime nobody works in. On this
+a prompt of a few hundred characters is a regime nobody works in. On this
 machine a real agentic session sits at 40k tokens of context, where the same
 preset that benchmarks at 57 t/s serves at 24 to 40, and, more importantly,
 where the *ranking* of a knob can move: at depth a verify pass costs far more
@@ -43,7 +44,7 @@ timing barely cares about content, but decode does, and speculative acceptance
 cares a great deal (it is dominated by how predictable the text is). Filler
 would benchmark a workload the machine never runs.
 
-## `bench-prompt-110k.txt` and `bench-prompt-code.txt`
+## `bench-prompt-110k.txt`
 
 `bench-prompt-110k.txt` (404,098 characters, 110k tokens on Qwen3.8) is the same
 kind of frozen snapshot, taken on 2026-10-20 and larger: the agent guides, the
@@ -51,7 +52,3 @@ per-GPU and per-model references, the build pipeline guide, the configurator's
 README and some of its sources, then one question. It measures the regime where a
 setting's cost grows with the context, which 43k only hints at. It also holds the
 one sanctioned em-dash, quoted inside `AGENTS.md`, and the same three rules apply.
-
-`bench-prompt-code.txt` (14,251 characters) asks for a Rust file back with one
-rename: the output copies the context, which is where an n-gram drafter pays and
-prose shows nothing.

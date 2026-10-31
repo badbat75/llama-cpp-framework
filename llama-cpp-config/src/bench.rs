@@ -29,7 +29,7 @@
 //!
 //! `Plan.prompt` is the resolved TEXT, but nothing stores it: the GUI and the
 //! CLI both carry a PATH (`Plan.prompt_file`, default
-//! `config\bench-prompt.txt`) and read it once, when the run starts. Three
+//! `config\bench-prompt-43k.txt`) and read it once, when the run starts. Three
 //! things follow, and each one was a defect of the field-in-the-window it
 //! replaced.
 //!
@@ -40,8 +40,8 @@
 //! reach, so the two would measure different things without saying so. Now
 //! `bench sweep` with no flag and the tab's Run button read the same bytes.
 //!
-//! *The prompt SHIPS without being installed.* `DEFAULT_PROMPT` is a seed:
-//! `ensure_prompt_file` writes it on first use. Installing the file into
+//! *The prompts SHIP without being installed.* `SHIPPED_PROMPTS` are seeds:
+//! `ensure_prompt_file` writes one on first use. Installing the file into
 //! `bin\` instead would put it under `$PROGRAMFILES64\llama.cpp`, where the
 //! editor could not save it without elevation and the next upgrade's `File`
 //! directive would overwrite the user's edit.
@@ -125,35 +125,19 @@ pub const DEFAULT_DELAY_SECS: i32 = 2;
 /// short enough that a slow model does not turn one repetition into minutes.
 pub const DEFAULT_MAX_TOKENS: i32 = 256;
 
-/// The live mode's default prompt. The synthetic engine has no equivalent to
-/// inherit (its prompt parameter is a length, not a text), so this is the
-/// framework's own: fixed, self-contained, and phrased to pull a few hundred
-/// tokens of ordinary prose out of any instruct model, since a prompt that some
-/// models answer in one line and others in twenty is not a benchmark.
+/// The default prompt, seeded as `config\bench-prompt-43k.txt`: ~169k
+/// characters, 43.7k tokens on Qwen3.8, one of the two the `standard` spec pins.
 ///
-/// It is a SEED, not the prompt: `ensure_prompt_file` writes it to
-/// `config\bench-prompt.txt` the first time anything asks for a prompt, and
-/// every reader goes to the file from then on. That is what makes the shipped
-/// prompt editable (and replaceable) without an installer that writes into
-/// `$PROGRAMFILES64` and overwrites the edit on the next upgrade.
-pub const DEFAULT_PROMPT: &str = "Explain how a transformer decoder's key-value cache works, \
-why the cost of processing a prompt grows with its length, and what a speculative decoding \
-draft model changes about the decode step. Write about 200 words of plain prose.";
-
-/// The long-context prompt, shipped beside the short one and seeded as
-/// `config\bench-prompt-43k.txt`: ~169k characters, 43.7k tokens on Qwen3.8.
-///
-/// It is here because the default prompt measures a regime nobody works in. A
-/// benchmark ranks settings in the regime it measured, and 230 characters is
+/// A benchmark ranks settings in the regime it measured, and a short prompt is
 /// the shallow end: at 40k of context the same preset that benchmarks at 57
-/// t/s serves at 24 to 40, and the RANKING moves too (a verify pass costs more
-/// relative to a draft iteration at depth, so `spec-draft-n-max` peaks at 5
-/// near the start of a conversation and at 3 at 43k). Shipping only the short
-/// prompt would mean shipping the tab's least useful measurement.
+/// t/s on a 230-character prompt serves at 24 to 40, and the RANKING moves too
+/// (a verify pass costs more relative to a draft iteration at depth, so
+/// `spec-draft-n-max` peaks at 5 near the start of a conversation and at 3 at
+/// 43k).
 ///
-/// Compiled in rather than installed, for the same reason `DEFAULT_PROMPT` is:
-/// see the module header. It is a frozen snapshot of this repo's own docs;
-/// `assets\README.md` says why it must not be regenerated when they change.
+/// Compiled in rather than installed: see the module header. It is a frozen
+/// snapshot of this repo's own docs; `assets\README.md` says why it must not be
+/// regenerated when they change.
 pub const LONG_PROMPT: &str = include_str!("../assets/bench-prompt-43k.txt");
 
 /// The deep-context prompt (~404k characters, 110k tokens on Qwen3.8): a
@@ -162,17 +146,13 @@ pub const LONG_PROMPT: &str = include_str!("../assets/bench-prompt-43k.txt");
 /// (`split-mode tensor` gains +46% decode at 43k and +69% at 110k).
 pub const PROMPT_110K: &str = include_str!("../assets/bench-prompt-110k.txt");
 
-/// The code-rewrite prompt (~14k characters): a Rust file to reproduce with
-/// one rename, the leg where an n-gram drafter's gain shows (the output copies
-/// the context).
-pub const CODE_PROMPT: &str = include_str!("../assets/bench-prompt-code.txt");
-
-/// Every prompt the binary seeds by FILE NAME (see `seed_for`), beside the
-/// short default. Files in `config\`, never rewritten once they exist.
-pub const SHIPPED_PROMPTS: [(&str, &str); 3] = [
+/// Every prompt the binary seeds by FILE NAME (see `seed_for`): the ones the
+/// `standard` spec pins and nothing else, since a prompt no spec pins measures
+/// nothing another machine can compare with. Files in `config\`, never
+/// rewritten once they exist.
+pub const SHIPPED_PROMPTS: [(&str, &str); 2] = [
     ("bench-prompt-43k.txt", LONG_PROMPT),
     ("bench-prompt-110k.txt", PROMPT_110K),
-    ("bench-prompt-code.txt", CODE_PROMPT),
 ];
 
 /// How much of the prompt the pasteable preview shows before eliding. The
@@ -180,8 +160,8 @@ pub const SHIPPED_PROMPTS: [(&str, &str); 3] = [
 /// `curl`; a 100k-character prompt inlined there is neither.
 const PREVIEW_PROMPT_CHARS: usize = 400;
 
-/// How much of the prompt the saved report embeds verbatim. Short prompts (the
-/// shipped one is 230 characters) stay wholly readable in the report, which is
+/// How much of the prompt the saved report embeds verbatim. A short prompt of
+/// the user's stays wholly readable in the report, which is
 /// what made an old comparison checkable; a long one would otherwise turn a
 /// 4 KB report into a 400 KB one, so past that the sha256 in the settings block
 /// is what identifies it.
@@ -350,19 +330,16 @@ pub fn load_prompt_file(path: &std::path::Path) -> Result<String, String> {
     Ok(text)
 }
 
-/// Which shipped prompt seeds this path, decided by FILE NAME.
-///
-/// A shipped prompt has to be restorable: delete `bench-prompt-43k.txt` and the
-/// next seed must put the long text back, not quietly fill the file with the
-/// 230-character default and leave a benchmark measuring the shallow regime
-/// under a name that promises the deep one. Any other name is a file the user
-/// named, and the short prompt is the better thing to start it from.
-fn seed_for(path: &std::path::Path) -> &'static str {
+/// Which shipped prompt seeds this path, decided by FILE NAME: delete
+/// `bench-prompt-43k.txt` and the next seed puts the same text back. Any other
+/// name is a file the user named, never seeded: a missing one is reported by
+/// the read that follows, not filled with a prompt of ours under their name.
+fn seed_for(path: &std::path::Path) -> Option<&'static str> {
     let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
     SHIPPED_PROMPTS
         .iter()
         .find(|(file, _)| *file == name)
-        .map_or(DEFAULT_PROMPT, |(_, text)| text)
+        .map(|(_, text)| *text)
 }
 
 /// The configured prompt file, seeded from the binary when it does not exist
@@ -374,23 +351,19 @@ fn seed_for(path: &std::path::Path) -> &'static str {
 /// reports the read failure that follows with a better message than a write
 /// error nobody asked for.
 pub fn ensure_prompt_file(path: &std::path::Path) -> &std::path::Path {
-    if !path.exists() {
+    if let (false, Some(seed)) = (path.exists(), seed_for(path)) {
         if let Some(parent) = path.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
-        let _ = crate::ini::atomic_write(path, seed_for(path));
+        let _ = crate::ini::atomic_write(path, seed);
     }
     path
 }
 
-/// Put BOTH shipped prompts on disk: the short default and the long one.
-///
-/// The long one is seeded even though nothing points at it yet, because a file
-/// nobody can find is a file nobody uses: Browse… opens on the configured
-/// prompt's own folder, so the two sit side by side and choosing the deep
-/// regime is one click rather than a documentation lookup.
+/// Put every shipped prompt on disk, the ones nothing points at yet too: a
+/// file nobody can find is a file nobody uses, and Browse… opens on the
+/// configured prompt's own folder, so they sit side by side.
 pub fn ensure_shipped_prompt_files() {
-    ensure_prompt_file(&crate::paths::bench_prompt_file());
     for (file, _) in SHIPPED_PROMPTS {
         ensure_prompt_file(&crate::paths::config_dir().join(file));
     }
@@ -478,7 +451,7 @@ impl Default for Plan {
             presets: Vec::new(),
             reps: DEFAULT_REPS,
             // Unresolved: the caller reads `prompt_file` into it. Defaulting to
-            // DEFAULT_PROMPT here would make a plan whose prompt disagrees with
+            // a shipped prompt here would make a plan whose prompt disagrees with
             // the file every reader is pointed at, silently, whenever the read
             // step is forgotten.
             prompt: String::new(),
@@ -1595,6 +1568,9 @@ fn civil(secs: u64) -> (i64, u32, u32, u32, u32, u32) {
 mod tests {
     use super::*;
 
+    /// A short prompt of the user's, for what a long one would hide.
+    const SHORT: &str = "Explain how a transformer decoder's key-value cache works.";
+
     fn preset(id: &str) -> Preset {
         Preset {
             id: id.into(),
@@ -2233,12 +2209,12 @@ mod tests {
         };
         let problem = validate(&unresolved).expect("an unresolved prompt is not a plan");
         assert!(
-            problem.contains("bench-prompt.txt"),
+            problem.contains("bench-prompt-43k.txt"),
             "the message names the file: {problem}"
         );
 
         let base = Plan {
-            prompt: DEFAULT_PROMPT.into(),
+            prompt: SHORT.into(),
             ..unresolved
         };
         assert!(validate(&base).is_none());
@@ -2302,9 +2278,9 @@ mod tests {
     #[test]
     fn ensure_prompt_file_seeds_once() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("nested").join("bench-prompt.txt");
+        let path = dir.path().join("nested").join("bench-prompt-43k.txt");
         ensure_prompt_file(&path);
-        assert_eq!(std::fs::read_to_string(&path).unwrap(), DEFAULT_PROMPT);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), LONG_PROMPT);
 
         std::fs::write(&path, "mine").unwrap();
         ensure_prompt_file(&path);
@@ -2315,10 +2291,8 @@ mod tests {
         );
     }
 
-    /// The seed follows the FILE NAME, or deleting the long prompt would bring
-    /// back a 230-character one under a name promising 40k tokens, and a sweep
-    /// would then rank settings in the shallow regime while the report named
-    /// the deep file.
+    /// The seed follows the FILE NAME, and only a shipped name is seeded: a
+    /// file the user named is theirs to write, never filled with ours.
     #[test]
     fn the_long_prompts_name_seeds_the_long_prompt() {
         let dir = tempfile::tempdir().unwrap();
@@ -2330,7 +2304,7 @@ mod tests {
 
         let other = dir.path().join("my-own.txt");
         ensure_prompt_file(&other);
-        assert_eq!(std::fs::read_to_string(&other).unwrap(), DEFAULT_PROMPT);
+        assert!(!other.exists(), "a name of the user's is not seeded");
     }
 
     /// The shipped long prompt is only worth shipping if it is actually long,
@@ -2381,15 +2355,15 @@ mod tests {
     fn the_report_identifies_the_prompt_by_path_and_digest() {
         let plan = Plan {
             presets: vec!["a".into()],
-            prompt: DEFAULT_PROMPT.into(),
+            prompt: SHORT.into(),
             prompt_file: Some(PathBuf::from(r"D:\prompts\short.txt")),
             ..Plan::default()
         };
         let md = render_report(&plan, &[], &RunMeta::default());
         assert!(md.contains(r"short.txt"), "the path is in the report");
-        assert!(md.contains(&crate::sha256::hex(DEFAULT_PROMPT.as_bytes())));
+        assert!(md.contains(&crate::sha256::hex(SHORT.as_bytes())));
         assert!(
-            md.contains(DEFAULT_PROMPT),
+            md.contains(SHORT),
             "a short prompt is embedded whole"
         );
 

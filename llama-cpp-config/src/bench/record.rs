@@ -457,6 +457,15 @@ pub fn plan_params(plan: &Plan) -> Vec<(String, String)> {
     ];
     match &plan.spec {
         None => out.push(("spec".into(), "custom".into())),
+        // Overridden from the tab: not the spec's method, so custom, with
+        // what it started from and what it changed.
+        Some(t) if !t.derived.is_empty() => {
+            out.push(("spec".into(), "custom".into()));
+            out.push(("spec-derived-from".into(), format!("{} v{}", t.name, t.version)));
+            out.push(("spec-derived-sha256".into(), t.sha256.clone()));
+            out.push(("spec-derived-fields".into(), t.derived.join(",")));
+            out.push(("spec-pass".into(), t.pass.clone()));
+        }
         Some(t) => {
             out.push(("spec".into(), t.name.clone()));
             out.push(("spec-version".into(), t.version.clone()));
@@ -755,6 +764,7 @@ mod tests {
                 version: "1".into(),
                 sha256: "abc".into(),
                 pass: "engine".into(),
+                derived: Vec::new(),
             }),
             ..live.clone()
         };
@@ -763,6 +773,13 @@ mod tests {
         assert!(p.contains(&("spec-version".into(), "1".into())));
         assert!(p.contains(&("spec-pass".into(), "engine".into())));
         assert!(!p.iter().any(|(k, _)| k == "depths"));
+        let mut derived = tagged.clone();
+        derived.spec.as_mut().unwrap().derived = vec!["reps".into()];
+        let p = plan_params(&derived);
+        assert!(p.contains(&("spec".into(), "custom".into())));
+        assert!(p.contains(&("spec-derived-from".into(), "standard v1".into())));
+        assert!(p.contains(&("spec-derived-fields".into(), "reps".into())));
+        assert!(!p.iter().any(|(k, _)| k == "spec-version"));
         let syn = Plan {
             mode: Mode::Synthetic,
             ..Plan::default()

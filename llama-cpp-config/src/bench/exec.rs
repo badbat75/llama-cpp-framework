@@ -87,6 +87,122 @@ pub fn spawn(plan: Plan, emit: impl Fn(Event) + Send + 'static) -> Handle {
     Handle { cancel }
 }
 
+/// One plan of a run made of several (a spec's prompt x pass x scenario, or
+/// `concurrency all`), with the preset keys it needs written for its length.
+pub struct Step {
+    /// Prefixed to every result row of the step, so the table tells them apart.
+    pub label: String,
+    /// Written to every preset of the plan before the step, put back after it.
+    pub overrides: Vec<(String, String)>,
+    pub plan: Plan,
+}
+
+/// Run `steps` one after another on their own thread, all into one campaign
+/// (each plan names it). A step with overrides restarts llama-server before it
+/// (the router reads presets.ini only at start), and so does the first step
+/// after one; the server is left as it was found. `Done` carries the campaign,
+/// or every step's error joined.
+pub fn spawn_steps(steps: Vec<Step>, campaign: String, emit: impl Fn(Event) + Send + 'static) -> Handle {
+    let cancel = Arc::new(AtomicBool::new(false));
+    let flag = cancel.clone();
+    std::thread::spawn(move || {
+        let result = run_steps(steps, &campaign, &flag, &emit);
+        emit(Event::Done(result));
+    });
+    Handle { cancel }
+}
+
+fn run_steps(
+    steps: Vec<Step>,
+    campaign: &str,
+    cancel: &Arc<AtomicBool>,
+    emit: &impl Fn(Event),
+) -> Result<String, String> {
+    let port = u16::try_from(server_cfg::load().port_or_default())
+        .map_err(|_| "invalid port in server.ini")?;
+    let was_running = runstate::is_running();
+    // presets.ini differs from what the running router read.
+    let mut dirty = false;
+    let mut shown: Vec<Point> = Vec::new();
+    let mut problems = Vec::new();
+    let total = steps.len();
+    for (i, step) in steps.into_iter().enumerate() {
+        if cancelled(cancel) {
+            problems.push("Cancelled.".to_string());
+            break;
+        }
+        emit(Event::Progress(format!("Step {}/{total}: {}", i + 1, step.label)));
+        let mut held = Vec::new();
+        for preset in &step.plan.presets {
+            match super::spec::apply_overrides(preset, &step.overrides) {
+                Ok(r) => held.push((preset.clone(), r)),
+                Err(e) => problems.push(e),
+            }
+        }
+        if !step.overrides.is_empty() {
+            dirty = true;
+        }
+        let ran = if !problems.is_empty() {
+            Err("not run: an override could not be written".to_string())
+        } else if dirty {
+            super::sweep::prepare_server(Mode::Live, port).map(|()| dirty = false)
+        } else {
+            Ok(())
+        }
+        .and_then(|()| {
+            let base = shown.clone();
+            let last = std::cell::RefCell::new(Vec::new());
+            let label = step.label.clone();
+            let relabel = |points: Vec<Point>| -> Vec<Point> {
+                points
+                    .into_iter()
+                    .map(|p| Point {
+                        test: format!("{label} · {}", p.test),
+                        ..p
+                    })
+                    .collect()
+            };
+            let r = run(&step.plan, cancel, &|ev| match ev {
+                Event::Points(p) => {
+                    let p = relabel(p);
+                    *last.borrow_mut() = p.clone();
+                    emit(Event::Points(base.iter().cloned().chain(p).collect()));
+                }
+                other => emit(other),
+            });
+            shown.extend(last.into_inner());
+            r.map(|_| ())
+        });
+        if let Err(e) = ran {
+            problems.push(format!("{}: {e}", step.label));
+        }
+        for (preset, restore) in held {
+            if let Err(e) = super::spec::restore_overrides(&preset, restore) {
+                // A key not put back is a preset left measuring something
+                // else: stop rather than run the next step on top of it.
+                problems.push(e);
+                return Err(problems.join("; "));
+            }
+        }
+        if !step.overrides.is_empty() {
+            dirty = true;
+        }
+        if problems.iter().any(|p| p.ends_with("Cancelled.")) {
+            break;
+        }
+    }
+    if dirty {
+        if let Err(e) = super::sweep::restore_server(was_running) {
+            problems.push(e);
+        }
+    }
+    if problems.is_empty() {
+        Ok(campaign.to_string())
+    } else {
+        Err(problems.join("; "))
+    }
+}
+
 /// Everything one run owns, plus the accumulating results.
 struct Run {
     plan: Plan,

@@ -1,7 +1,7 @@
 //! Paths for the llama.cpp-framework configuration tool.
 //!
 //! Four jobs: (1) the user runtime tree, %LOCALAPPDATA%\llama.cpp\ on Windows
-//! (config\server.ini, config\presets.ini, config\bench-prompt.txt,
+//! (config\server.ini, config\presets.ini, config\bench-prompt-43k.txt,
 //! logs\llama-server.log) and ~/.local/share/llama.cpp elsewhere, where the
 //! config files live in ~/.config/llama.cpp instead (`config_dir`), overridable
 //! for tests via LLAMA_CPP_CONFIG_DATA_ROOT; (2) locating llama.cpp's binaries
@@ -117,7 +117,7 @@ pub fn settings_ini() -> PathBuf {
 /// Benchmark tab and the CLI at any other file (a 32k-token prompt for
 /// measuring the regime a long conversation runs in, say).
 pub fn bench_prompt_file() -> PathBuf {
-    config_dir().join("bench-prompt.txt")
+    config_dir().join("bench-prompt-43k.txt")
 }
 
 /// The llama-server log file. ONE home for the path: `runstate::start()`

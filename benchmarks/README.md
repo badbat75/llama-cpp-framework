@@ -60,7 +60,9 @@ llama-cpp-config bench sweep --spec standard --preset <id> --key split-mode --va
 ```
 
 `standard` is compiled into the configurator from `specs/standard.ini`, so an installed
-machine needs no checkout; `--spec <file>` runs a spec of your own. Every benchmark (a
+machine needs no checkout. Only a published version of `standard` is a spec run: `--spec <file>`
+runs a spec of your own, and a method flag beside `--spec` (`--prompt-file`, `--temp`, `--reps`...)
+replaces the spec's value, but their runs record `spec = custom`, derived from the spec. Every benchmark (a
 sweep with or without a spec, and the Benchmark tab) holds the GPU lock for its whole
 length: an exclusive lock on `$LLAMA_FW_GPU_LOCK`, default `gpu.lock` in the bench
 directory (`flock` on Linux, so `flock -o <same file> <job>` keeps other GPU jobs out),
@@ -68,7 +70,9 @@ and on Linux it also waits until nothing but llama-server holds `/dev/kfd` or
 `/dev/nvidia*`. The tab refuses instead of waiting. Every run
 records `spec` (the Name), `spec-version`, `spec-sha256` (of its rules in canonical form,
 `bench::spec::canonical`: comments and layout do not count, a changed rule does) and `spec-pass`; the leg label adds
-`pass=<name>`. A sweep without `--spec` records `spec = custom`.
+`pass=<name>`. A sweep without `--spec` records `spec = custom`. So does a Benchmark tab run whose Spec has **Override** ticked and a Workload field or the prompt set changed, one of a spec file saved from the tab (never named `standard`), or one whose A/B key is a key a pass overrides: it records
+`spec-derived-from` (e.g. `standard v1`), `spec-derived-sha256` and `spec-derived-fields` instead of `spec-version`, since
+it is not that version's method. Only the prompts a spec pins ship with the configurator.
 
 **Changing a rule means bumping `Version`**, never editing version 1 in place: runs of two
 versions are two methods. The prompts are part of the method: each is listed as
@@ -77,8 +81,9 @@ matches is refused before the first leg, and a test pins `standard.ini` to the p
 binary ships. A new prompt is a new spec version. `standard` needs a slot context of about
 116k tokens (the 110k prompt plus an uncapped answer: `ctx-size` about 232k at `parallel = 2`)
 and takes about 4 to 8 hours for a two-value sweep on two R9700s with the dense 27B: an
-overnight job, not a quick screen (a screen is a spec of its own). A sweep cannot vary a key
-a pass overrides (`--key spec-type` is refused). `specs/standard.versions` lists every
+overnight job, not a quick screen (a screen is a spec of its own). A sweep that varies a key
+a pass overrides (`--key spec-type`) puts the leg's value over the pass's, so it is recorded
+as derived too (`spec-derived-fields = override`). `specs/standard.versions` lists every
 published version with its digest, and a test fails when `standard.ini`'s rules do not match
 the line of its `Version`: a rule changed without a bump, or a published version edited in
 place, cannot reach a build. The procedure for changing a spec, and what to check, is the

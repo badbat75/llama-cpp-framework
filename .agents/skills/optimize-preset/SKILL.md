@@ -73,7 +73,8 @@ apply.
    `spec-type` takes a comma list and the n-gram types are always tried first, the draft
    model only on a step with no n-gram match: chain `ngram-map-k4v,draft-mtp` and measure
    it on a code-rewrite prompt as well as the prose one (the n-gram gain shows only where
-   the output repeats the context). On a reasoning model give the code leg
+   the output repeats the context). No code prompt ships (only the two `standard` pins):
+   use a file of your own with `--prompt-file`, a `custom` run, and say so in the guide. On a reasoning model give the code leg
    `--max-tokens` large enough to get past the reasoning into the rewritten code (1536 on
    Qwen3.8-27B; at the default 256 every leg ends inside the reasoning and the n-gram stage
    reads as worthless). The n-gram draft length is its own key

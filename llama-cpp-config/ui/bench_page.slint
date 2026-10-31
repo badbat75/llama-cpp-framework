@@ -1,8 +1,8 @@
 // BenchPage: the benchmark tab. All state lives in AppState (state.slint); this
 // component just lays out the widgets against it.
 //
-// Layout (grep `heading:`): Engine -> Presets -> Workload -> Preview (+ the Run
-// row) -> Results -> Saved runs.
+// Layout (grep `heading:`): Engine -> Presets -> Workload -> Campaign -> Preview
+// (+ the Run row) -> Results -> Saved runs.
 //
 // The ENGINE selector comes first because it decides everything below it: which
 // half of the Workload card is live, what the preview shows, and which
@@ -20,7 +20,7 @@
 // other change rebuilds the whole model.
 
 import { LineEdit, TextEdit, CheckBox, Button, ComboBox, ScrollView, Palette } from "std-widgets.slint";
-import { SectionCard, LabeledField, SegmentedControl, MappedComboBox, DefaultLineEdit, WrapText, LabelColumn, Tokens } from "components.slint";
+import { SectionCard, LabeledField, SegmentedControl, MappedComboBox, EnumComboBox, DefaultLineEdit, WrapText, LabelColumn, Tokens } from "components.slint";
 import { AppState } from "state.slint";
 
 export component BenchPage inherits ScrollView {
@@ -129,39 +129,48 @@ export component BenchPage inherits ScrollView {
             // ── live half ────────────────────────────────────────────
             if AppState.bench_is_live : LabeledField {
                 label_width <=> LabelColumn.bench;
-                label: "Prompt file";
-                hint: "The file whose text is sent verbatim as a single user message. It is re-sent whole on every repetition with the prefix cache disabled, so each one is a cold prefill, which is what the prefill row measures.\nFour prompts ship, side by side in config\\: bench-prompt.txt (230 chars, the default), bench-prompt-43k.txt and bench-prompt-110k.txt (43.7k and 110k tokens) and bench-prompt-code.txt (a code rewrite, where an n-gram drafter's gain shows). Use a long one when the question is whether a setting still wins at the context you actually work at: the ranking of a knob can differ from what the short prompt says.\nRead fresh when Run starts, so editing it while this window is open is enough: Edit opens it in your default text editor, which is also what makes a very long prompt practical.\nSame file the CLI uses with no --prompt-file, so a scripted `bench sweep` and this tab measure the same thing.";
-                LineEdit {
-                    accessible-label: "bench-prompt-file";
-                    text <=> AppState.bench_prompt_file;
-                    placeholder-text: "config\\bench-prompt.txt";
-                    edited => { AppState.bench_changed(); }
-                }
-                Button {
-                    text: "Browse…";
-                    clicked => {
-                        AppState.bench_prompt_file = AppState.bench_pick_prompt(AppState.bench_prompt_file);
-                        AppState.bench_changed();
+                label: "Prompts";
+                hint: "The files whose text is sent verbatim as a single user message, each ticked one in turn (one step per prompt, into one campaign). Each is re-sent whole on every repetition with the prefix cache disabled, so each one is a cold prefill, which is what the prefill row measures.\nTwo prompts ship, side by side in config\\: bench-prompt-43k.txt (the default, 43.7k tokens) and bench-prompt-110k.txt (110k tokens), the two the standard spec pins; + adds a file of your own (a custom run, or with a spec a derived one). The ranking of a knob can differ with the context you actually work at, which is why neither is short.\nRead fresh when Run starts, so editing one while this window is open is enough: Edit opens it in your default text editor. The first ticked one is also what `bench sweep` reads with no --prompt-file.";
+                VerticalLayout {
+                    spacing: 4px;
+                    for row[i] in AppState.bench_prompts : HorizontalLayout {
+                        spacing: 8px;
+                        CheckBox {
+                            accessible-label: "bench-prompt-" + row.name;
+                            text: row.name;
+                            checked: row.on;
+                            enabled: AppState.bench_spec == "custom" || AppState.bench_spec_override;
+                            toggled => { AppState.bench_prompt_toggle(i); }
+                        }
+                        // The file as it stands on disk: size and digest, or the
+                        // reason it cannot be read, the answer to "is that the
+                        // prompt I think it is" right before Run.
+                        Text {
+                            text: row.info;
+                            font-size: 12px;
+                            color: Palette.foreground.transparentize(Tokens.muted);
+                            vertical-alignment: center;
+                            overflow: elide;
+                            horizontal-stretch: 1;
+                        }
+                        Button {
+                            text: "Edit";
+                            clicked => { AppState.bench_prompt_edit(i); }
+                        }
+                        if !row.shipped : Button {
+                            text: "Remove";
+                            enabled: AppState.bench_spec == "custom" || AppState.bench_spec_override;
+                            clicked => { AppState.bench_prompt_remove(i); }
+                        }
                     }
-                }
-                Button {
-                    text: "Edit";
-                    clicked => { AppState.bench_edit_prompt(); }
-                }
-            }
-            // The file as it stands on disk: size and digest, or the reason it
-            // cannot be read. Under the field rather than in the hint because it
-            // is the answer to "is that the prompt I think it is", which is a
-            // question you ask right before pressing Run.
-            if AppState.bench_is_live : LabeledField {
-                label_width <=> LabelColumn.bench;
-                label: "";
-                Text {
-                    text: AppState.bench_prompt_info;
-                    font-size: 12px;
-                    color: Palette.foreground.transparentize(Tokens.muted);
-                    vertical-alignment: center;
-                    overflow: elide;
+                    HorizontalLayout {
+                        alignment: start;
+                        Button {
+                            text: "+ Browse…";
+                            enabled: AppState.bench_spec == "custom" || AppState.bench_spec_override;
+                            clicked => { AppState.bench_prompt_add(); }
+                        }
+                    }
                 }
             }
             if AppState.bench_is_live : LabeledField {
@@ -170,6 +179,7 @@ export component BenchPage inherits ScrollView {
                 hint: "Overrides the preset's own --temp for this run. 0 is greedy sampling, which is what makes two runs of the same prompt comparable; tick 'default' to leave the preset's value alone and accept the variance.";
                 DefaultLineEdit {
                     edit_label: "bench-temp";
+                    enabled: AppState.bench_spec == "custom" || AppState.bench_spec_override;
                     default <=> AppState.bench_temp_default;
                     value <=> AppState.bench_temp;
                     input_type: InputType.decimal;
@@ -183,6 +193,7 @@ export component BenchPage inherits ScrollView {
                 hint: "Cap on the generated answer (--max_tokens on the request). Long enough that the decode rate settles, short enough that a slow model does not turn one repetition into minutes.\n0 = no cap: the request carries no max_tokens and the model stops on its own (or at the preset's n-predict), so how long it talks is part of the result.";
                 LineEdit {
                     accessible-label: "bench-max-tokens";
+                    enabled: AppState.bench_spec == "custom" || AppState.bench_spec_override;
                     text <=> AppState.bench_max_tokens;
                     input-type: InputType.number;
                     edited => { AppState.bench_changed(); }
@@ -191,9 +202,10 @@ export component BenchPage inherits ScrollView {
             if AppState.bench_is_live : LabeledField {
                 label_width <=> LabelColumn.bench;
                 label: "Concurrency";
-                hint: "single: one request per repetition.\nThe others send one request per slot of the preset AT ONCE, N = the preset's parallel (absent = llama-server's auto 4; it must be at least 2), each pinned to its slot:\nprefill: all N prefill the whole prompt, then decode together.\ndecode: every slot is primed with the prompt first, so all N only decode.\nprefill+decode: N-1 primed slots decode while the last one prefills.\nThe table adds prefill total and decode total, the throughput of the N requests together.";
+                hint: "single: one request per repetition.\nThe others send one request per slot of the preset AT ONCE, N = the preset's parallel (absent = llama-server's auto 4; it must be at least 2), each pinned to its slot:\nprefill: all N prefill the whole prompt, then decode together.\ndecode: every slot is primed with the prompt first, so all N only decode.\nprefill+decode: N-1 primed slots decode while the last one prefills.\nThe table adds prefill total and decode total, the throughput of the N requests together.\nall: each of the four in turn, into one campaign (single alone when a selected preset has parallel below 2), as `bench sweep --concurrency all`.";
                 SegmentedControl {
-                    options: ["single", "prefill", "decode", "prefill+decode"];
+                    options: ["single", "prefill", "decode", "prefill+decode", "all"];
+                    enabled: AppState.bench_spec == "custom" || AppState.bench_spec_override;
                     current: AppState.bench_concurrency;
                     activated(v) => {
                         AppState.bench_concurrency = v;
@@ -241,8 +253,93 @@ export component BenchPage inherits ScrollView {
                 hint: "Samples per measurement. The results table reports the mean and the sample standard deviation across them, which is what says whether a difference between two presets is real.";
                 LineEdit {
                     accessible-label: "bench-reps";
+                    enabled: AppState.bench_spec == "custom" || AppState.bench_spec_override;
                     text <=> AppState.bench_reps;
                     input-type: InputType.number;
+                    edited => { AppState.bench_changed(); }
+                }
+            }
+        }
+
+        SectionCard {
+            heading: "Campaign";
+            LabeledField {
+                label_width <=> LabelColumn.bench;
+                label: "Spec";
+                hint: "The method: custom runs the Workload fields above and records spec = custom; standard v<N> runs that published version of the framework's method (benchmarks/specs/standard.ini, its versions frozen in standard.versions), the version this binary carries. Load… opens a spec file of yours and Save as… writes what the card describes as one (never the official one: the name standard is refused); a spec of yours runs like the official one but records every run as spec = custom, derived from it. A spec fixes the prompts, temperature, output cap, concurrency and repetitions, so those fields are greyed out; it records spec, spec-version, spec-sha256 and spec-pass with every run, which is what makes runs of two machines comparable. Live only. A pass that overrides a preset key (the engine pass sets spec-type = none) writes it to the selected presets for its steps, restarting llama-server around them, and puts it back.";
+                EnumComboBox {
+                    accessible-label: "bench-spec";
+                    enabled: !AppState.bench_running;
+                    options: AppState.bench_spec_options;
+                    value <=> AppState.bench_spec;
+                    changed value => { AppState.bench_spec_changed(); }
+                }
+                Button {
+                    text: "Load…";
+                    enabled: !AppState.bench_running;
+                    clicked => { AppState.bench_spec_load(); }
+                }
+                Button {
+                    text: "Save as…";
+                    enabled: !AppState.bench_running;
+                    clicked => { AppState.bench_spec_save(); }
+                }
+            }
+            if AppState.bench_spec != "custom" : LabeledField {
+                label_width <=> LabelColumn.bench;
+                label: "";
+                hint: "Re-enables the Workload fields. Each one you change after ticking this replaces the spec's value in every step (the prompt replaces its prompt list, a concurrency its scenarios); the rest stays the spec's. The runs are then not of the spec: they record spec = custom, with spec-derived-from naming the version and spec-derived-fields what changed.";
+                CheckBox {
+                    text: "Override (custom, derived from the spec)";
+                    enabled: !AppState.bench_running;
+                    checked <=> AppState.bench_spec_override;
+                    toggled => { AppState.bench_override_toggled(); }
+                }
+            }
+            LabeledField {
+                label_width <=> LabelColumn.bench;
+                label: "Name";
+                hint: "The bench.db campaign the runs go into, as `--campaign`: an existing name adds to it. Empty: a campaign of its own, named after the run's stamp (spec-<name>-v<version>-<stamp> for a spec).";
+                LineEdit {
+                    accessible-label: "bench-campaign";
+                    enabled: !AppState.bench_running;
+                    text <=> AppState.bench_campaign;
+                    placeholder-text: "<stamp>";
+                    edited => { AppState.bench_changed(); }
+                }
+            }
+            LabeledField {
+                label_width <=> LabelColumn.bench;
+                label: "Question";
+                hint: "What the campaign is meant to answer, as `--question`: stored with it, and what `bench answer` later answers.";
+                LineEdit {
+                    accessible-label: "bench-question";
+                    enabled: !AppState.bench_running;
+                    text <=> AppState.bench_question;
+                    edited => { AppState.bench_changed(); }
+                }
+            }
+            LabeledField {
+                label_width <=> LabelColumn.bench;
+                label: "A/B key";
+                hint: "A preset key to compare values of, as bench sweep --key: every step of the run (each prompt, scenario and spec pass) runs once per value, with the value written to the selected presets and llama-server restarted around it; the key is put back afterwards. The list is the preset keys that change how the model is launched (placement, KV cache, batch sizes, speculator...). none = no A/B.\nUnder a spec, a key its passes do not touch keeps the runs spec runs; a key a pass overrides (spec-type under standard) records them as custom, derived from the spec.";
+                EnumComboBox {
+                    accessible-label: "bench-ab-key";
+                    enabled: !AppState.bench_running;
+                    options: AppState.bench_ab_keys;
+                    value <=> AppState.bench_ab_key;
+                    changed value => { AppState.bench_changed(); }
+                }
+            }
+            if AppState.bench_ab_key != "none" : LabeledField {
+                label_width <=> LabelColumn.bench;
+                label: "Values";
+                hint: "The values to compare, as bench sweep --values: comma-separated, a range 2..8, `unset` to remove the key for one leg; separate with ; when a value holds commas (tensor-split, device), and end a single such value with ;. Each value is checked against the presets before Run starts.";
+                LineEdit {
+                    accessible-label: "bench-ab-values";
+                    enabled: !AppState.bench_running;
+                    placeholder-text: "e.g. 512,1024";
+                    text <=> AppState.bench_ab_values;
                     edited => { AppState.bench_changed(); }
                 }
             }

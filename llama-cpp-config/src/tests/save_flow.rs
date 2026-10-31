@@ -1188,27 +1188,27 @@ pub(super) fn run(app: &AppWindow) {
     let prompt_path = crate::paths::bench_prompt_file();
     assert_eq!(
         std::fs::read_to_string(&prompt_path).expect("the tab seeds the prompt file"),
-        crate::bench::DEFAULT_PROMPT,
+        crate::bench::LONG_PROMPT,
         "a fresh machine starts from the framework's own prompt"
     );
+    // The list names the files, not the text: both shipped prompts, the 43k
+    // one ticked by default.
+    let row = |i: usize| st.get_bench_prompts().row_data(i).expect("a prompt row");
+    assert_eq!(st.get_bench_prompts().row_count(), 2, "the two shipped prompts");
+    assert_eq!(row(0).path.as_str(), prompt_path.to_string_lossy());
+    assert!(row(0).on && row(0).shipped);
+    assert!(!row(1).on && row(1).name.as_str() == crate::bench::SHIPPED_PROMPTS[1].0);
+    // The deeper prompt is seeded too, though it is not ticked: its row reads
+    // a file.
     assert_eq!(
-        st.get_bench_prompt_file().as_str(),
-        prompt_path.to_string_lossy(),
-        "the field names the file, not the text"
+        std::fs::read_to_string(crate::paths::config_dir().join(crate::bench::SHIPPED_PROMPTS[1].0))
+            .expect("the tab seeds the 110k prompt too"),
+        crate::bench::PROMPT_110K
     );
-    // The long-context prompt is seeded too, though nothing points at it: it
-    // has to be on disk beside the default for Browse… to reach it, and a
-    // benchmark that can only measure the 230-character regime is the tab's
-    // least useful one.
-    assert_eq!(
-        std::fs::read_to_string(crate::paths::config_dir().join(crate::bench::SHIPPED_PROMPTS[0].0))
-            .expect("the tab seeds the long prompt too"),
-        crate::bench::LONG_PROMPT
-    );
-    let seeded_info = st.get_bench_prompt_info().to_string();
+    let seeded_info = row(0).info.to_string();
     assert!(
         seeded_info.contains(&crate::sha256::short(
-            crate::bench::DEFAULT_PROMPT.as_bytes()
+            crate::bench::LONG_PROMPT.as_bytes()
         )),
         "the readout carries the digest of what is on disk: {seeded_info}"
     );
@@ -1220,7 +1220,7 @@ pub(super) fn run(app: &AppWindow) {
     std::fs::write(&prompt_path, "\u{feff}Explain flash attention.\r\n")
         .expect("edit the prompt file out of process");
     st.invoke_reload_all();
-    let edited_info = st.get_bench_prompt_info().to_string();
+    let edited_info = row(0).info.to_string();
     assert_ne!(edited_info, seeded_info, "an external edit must be noticed");
     assert!(
         edited_info.contains(&crate::sha256::short(b"Explain flash attention.\n")),
@@ -1232,6 +1232,14 @@ pub(super) fn run(app: &AppWindow) {
         "the request preview follows the file too: {}",
         st.get_bench_preview()
     );
+    // Ticking the second prompt makes the run one step per prompt.
+    st.invoke_bench_prompt_toggle(1);
+    assert!(
+        st.get_bench_preview().contains("prompts bench-prompt-43k.txt, bench-prompt-110k.txt"),
+        "two ticked prompts run in turn: {}",
+        st.get_bench_preview()
+    );
+    st.invoke_bench_prompt_toggle(1);
 
     // An empty prompt file is refused BY NAME: with the text out in a file,
     // "the live mode needs a prompt" does not say where to put one.
@@ -1239,13 +1247,13 @@ pub(super) fn run(app: &AppWindow) {
     st.invoke_reload_all();
     st.invoke_bench_run();
     assert!(
-        st.get_status_is_error() && st.get_status_text().contains("bench-prompt.txt"),
+        st.get_status_is_error() && st.get_status_text().contains("bench-prompt-43k.txt"),
         "a blank prompt file must be reported by name: {}",
         st.get_status_text()
     );
     assert!(!st.get_bench_running(), "and must not arm the tab");
     st.invoke_bench_toggle_preset("bench-a".into());
-    std::fs::write(&prompt_path, crate::bench::DEFAULT_PROMPT).expect("restore the prompt file");
+    std::fs::write(&prompt_path, crate::bench::LONG_PROMPT).expect("restore the prompt file");
     st.invoke_reload_all();
 
     // ── Benchmark: the Database field is settings.ini `BenchDb` ──────────────

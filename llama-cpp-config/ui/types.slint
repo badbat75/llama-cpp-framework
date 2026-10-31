@@ -325,6 +325,18 @@ export struct ServerForm {
 // a mistake. Built entirely in Rust (gui/bench_tab.rs) and read-only to Slint:
 // the row checkbox reports through a callback that rebuilds the model, the same
 // contract as GpuRow.
+// One prompt of the Benchmark tab's list: a shipped one (the two the standard
+// spec pins, always listed) or a file added with "+". `info` is the readout of
+// the file as it stands ("169289 chars, ... sha256 96d8fb..."), or why it
+// cannot be read.
+export struct BenchPromptRow {
+    path: string,
+    name: string,
+    info: string,
+    on: bool,
+    shipped: bool,
+}
+
 export struct BenchPresetRow {
     id: string,
     model: string,

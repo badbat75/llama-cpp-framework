@@ -192,8 +192,8 @@ pub struct BenchSweep {
     /// prompt that size does not fit on a command line.
     ///
     /// With neither flag, the file the Benchmark tab uses (settings.ini
-    /// `BenchPromptFile`, default `config\bench-prompt.txt`, created from the
-    /// framework's own prompt when missing), so a scripted sweep and a run
+    /// `BenchPromptFile`, default `config\bench-prompt-43k.txt`, created from
+    /// the shipped prompt when missing), so a scripted sweep and a run
     /// from the GUI measure the same text.
     #[arg(long)]
     pub prompt_file: Option<std::path::PathBuf>,
@@ -221,8 +221,14 @@ pub struct BenchSweep {
     /// your own. Its prompts (pinned by sha256), passes (temperature,
     /// repetitions, concurrency, preset keys overridden for the pass) and
     /// output cap, all in one campaign. Every run records the spec's name,
-    /// version and sha256; a sweep without it records `spec = custom`.
-    #[arg(long, conflicts_with_all = ["prompt", "prompt_file", "temp", "max_tokens", "concurrency", "reps"])]
+    /// version and sha256; a sweep without it records `spec = custom`, and so
+    /// does a file that is not a published version of standard (its runs carry
+    /// `spec-derived-from` and `spec-derived-fields = spec-file`).
+    ///
+    /// --prompt, --prompt-file, --temp, --max-tokens, --concurrency and --reps
+    /// beside it replace the spec's value in every run, and so does a --key
+    /// that a pass sets: the runs are then custom, derived from the spec.
+    #[arg(long)]
     pub spec: Option<String>,
     /// Synthetic only: prompt lengths, comma-separated.
     #[arg(long)]
@@ -610,10 +616,11 @@ fn run_bench(c: BenchCmd) -> Result<()> {
     // seeded with the framework's own prompt when it does not exist yet: the
     // same bytes the Benchmark tab runs, so a sweep from a script and a run
     // from the GUI are comparable by construction.
+    let prompt_given = a.prompt.is_some() || a.prompt_file.is_some();
     if let Some(prompt) = a.prompt {
         plan.prompt = bench::normalize_prompt(&prompt);
         plan.prompt_file = None;
-    } else if plan.mode == bench::Mode::Live {
+    } else if plan.mode == bench::Mode::Live && (a.spec.is_none() || a.prompt_file.is_some()) {
         let path = match a.prompt_file.as_deref() {
             Some(p) => p.to_path_buf(),
             None => {
@@ -664,6 +671,17 @@ fn run_bench(c: BenchCmd) -> Result<()> {
         plan.n_gen = n_gen;
     }
 
+    // Beside --spec, every method flag given replaces the spec's value.
+    let derive = bench::spec::Derive {
+        prompt: prompt_given.then(|| vec![(plan.prompt_file.clone(), plan.prompt.clone())]),
+        temp: a.temp.is_some().then_some(plan.temp),
+        max_tokens: a.max_tokens,
+        reps: a.reps,
+        concurrency: a
+            .concurrency
+            .as_deref()
+            .map(|_| (!concurrency_all).then_some(plan.concurrency)),
+    };
     let opts = bench::sweep::Opts {
         preset: a.preset,
         key: a.key,
@@ -684,7 +702,7 @@ fn run_bench(c: BenchCmd) -> Result<()> {
     // benchmark on the same cards would be measured as this one's.
     let _gpu = bench::gpu_lock::acquire(|m| println!("{m}")).map_err(|e| anyhow::anyhow!(e))?;
     if let Some(spec) = &spec {
-        bench::spec::run(spec, &opts).map_err(|e| anyhow::anyhow!(e))?;
+        bench::spec::run(spec, &opts, &derive).map_err(|e| anyhow::anyhow!(e))?;
         return Ok(());
     }
     if !concurrency_all {

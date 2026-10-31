@@ -121,10 +121,14 @@ struct State {
     // not a set, and it cannot be derived from the row model (which is rebuilt
     // from it). Rust-only, like `draft_rows` above.
     bench_selection: Vec<String>,
-    // Last read of the live prompt FILE, kept so the readout and the preview do
-    // not re-read a possibly huge file on every keystroke and every 5 s tick.
-    // A display cache only: the run re-reads the file (see bench_tab).
-    bench_prompt: Option<bench_tab::PromptRead>,
+    // The Benchmark tab's prompt list, each with the last read of its FILE,
+    // kept so the readout and the preview do not re-read a possibly huge file
+    // on every keystroke and every 5 s tick. A display cache only: the run
+    // re-reads the files (see bench_tab).
+    bench_prompts: Vec<bench_tab::PromptEntry>,
+    // Spec files of the user's loaded or saved this session: the Spec combo
+    // lists them after the published versions.
+    bench_spec_files: Vec<std::path::PathBuf>,
     // The run in flight, so Cancel can reach it. Only the cancel flag inside it
     // crosses to the worker thread.
     bench_handle: Option<crate::bench::exec::Handle>,
@@ -1716,7 +1720,14 @@ fn refresh_run_status(
                 // instead of silently flipping the footer to "Stopped" under a
                 // status line still saying "llama-server started.". Neutral
                 // wording: a crash and an external taskkill look the same here.
-                if was_running && !running && !s.get_server_starting() && !s.get_server_stopping() {
+                // A benchmark restarts the server itself (a spec pass that
+                // overrides a preset key): not a crash.
+                if was_running
+                    && !running
+                    && !s.get_server_starting()
+                    && !s.get_server_stopping()
+                    && !s.get_bench_running()
+                {
                     s.set_server_status_is_error(true);
                     set_status(
                         &app,
