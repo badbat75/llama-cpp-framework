@@ -439,7 +439,7 @@ pub(super) fn refresh_preview(app: &AppWindow, state: &Rc<RefCell<State>>) {
             let head = match steps_preview(&s, state, &plan.presets) {
                 Some(Ok(text)) => format!("{text}\n\nThe first request:\n"),
                 Some(Err(e)) => {
-                    s.set_bench_preview(SharedString::from(format!("Run will refuse: {e}.")));
+                    s.set_bench_preview(SharedString::from(format!("Run will refuse: {}.", e.trim_end_matches('.'))));
                     return;
                 }
                 None => String::new(),
@@ -968,7 +968,11 @@ fn ab_from_ui(s: &AppState, presets: &[String]) -> Result<Option<(String, Vec<St
     if key.is_empty() || key == "none" {
         return Ok(None);
     }
-    let values = bench::sweep::parse_values(s.get_bench_ab_values().as_str())?;
+    let text = s.get_bench_ab_values();
+    if text.trim().is_empty() {
+        return Err(format!("A/B on {key}: type the values to compare"));
+    }
+    let values = bench::sweep::parse_values(text.as_str())?;
     if values.len() < 2 {
         return Err(format!("A/B on {key} needs two or more values"));
     }

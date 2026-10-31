@@ -4,6 +4,50 @@
 
 A build orchestrator, run with cargo (`cargo run -p xtask -- <phase>`, the crate in `xtask/`), that builds and packages [llama.cpp](https://github.com/ggerganov/llama.cpp) with multi-GPU backend support (CUDA, Vulkan, ROCm/HIP on Windows and Linux; Metal and Vulkan on macOS) and MSI packaging (WiX Toolset) on Windows. The chat UI built into `llama-server` is used as the frontend; no separate web UI is bundled.
 
+Beside llama.cpp it ships **`llama-cpp-config`**, a GUI + CLI configurator (Rust, [Slint](https://slint.dev)) that writes `llama-server`'s `server.ini` and per-model `presets.ini`, starts and stops the server, and benchmarks presets into a public SQLite database (`benchmarks/bench.db`) with a versioned method, so numbers from two machines compare like with like.
+
+## Screenshots
+
+| | |
+|---|---|
+| ![Server tab](docs/assets/screenshots/server.png) | ![Models tab](docs/assets/screenshots/models.png) |
+| **Server**: machine-wide `server.ini` (network, threads, models folder, conversation snapshots, GPU SDK tuning). | **Models**: one preset per model, with the GGUF header read in place (layers, attention, MTP head, vision encoder) and the GPU distribution as a table of detected devices. |
+| ![Benchmark tab, standard spec](docs/assets/screenshots/benchmark-spec.png) | ![Benchmark tab, A/B](docs/assets/screenshots/benchmark-ab.png) |
+| **Benchmark** with the `standard v1` spec chosen: the spec ticks its two pinned prompts and fixes the workload fields. | **Benchmark** A/B: one preset key (`spec-draft-n-max`) at three values, each one written to the preset with a restart, put back afterwards. |
+
+<p align="center"><img src="docs/assets/screenshots/hw-monitor.png" alt="HW Monitor" width="480"><br><b>HW Monitor</b>: VRAM, GTT spill, GPU, CPU and memory per device, once a second.</p>
+
+## Features
+
+**Build and packaging** ([docs/build-pipeline.md](docs/build-pipeline.md))
+
+- One cargo orchestrator for every OS: `cargo run -p xtask -- prereq | configure | build | package | install`; the only non-cargo step is the bootstrap that installs Rust and the system packages.
+- Always the newest llama.cpp **release** tag (`vX.Y.Z`, never a `bNNNN` nightly), CMake + Ninja, sccache, the machine-independent CMake options in `xtask/cmake/*.toml` with a reason for each.
+- Backends: CUDA, Vulkan and ROCm/HIP on Windows and Linux (RCCL/NCCL for `--split-mode tensor` on Linux); Metal and Vulkan through MoltenVK on Apple Silicon.
+- GPU SDKs (ROCm TheRock, CUDA, Vulkan SDK) installed side by side as `<root>/<Name>/<Version>/<os>`, newest stable, found there and nowhere else; no machine-wide SDK variables.
+- Self-contained packages: an MSI (WiX, upgrades, downgrade refused, ICE-validated), a `.deb` and an `.rpm` under `/opt/llama.cpp`, a `.pkg` on macOS; the ROCm, CUDA and Vulkan runtimes the backends load are bundled, so a target machine needs only the GPU driver.
+- Out-of-tree llama.cpp patches in `patches/llama.cpp/`, applied on every build and reverted before the next checkout, each with its source, digest and the condition to drop it: a trimmed MTP draft vocabulary for Qwen3.5/3.8, an RDNA4 WMMA FlashAttention kernel for small query batches, pinned host buffers on every runtime, and an upstream MTP fix.
+
+**Configurator** ([llama-cpp-config/README.md](llama-cpp-config/README.md))
+
+- Five tabs (Server, Models, Benchmark, Integrations, Settings), a tray icon, a live log viewer, and the HW Monitor window (GPU, VRAM and its spill into system memory, PCIe traffic on NVIDIA, CPU, memory, disk).
+- Presets edited as forms with every llama-server knob explained in place; GPU distribution (`device`, `split-mode`, `tensor-split`) as a table of detected GPUs, tensor placement (`override-tensor`) as ordered rules, the vision encoder's GPU on its own.
+- Hugging Face search and download that creates the preset and recommends a quantization that fits this machine's GPUs.
+- Conversation snapshots: each model's KV cache saved on stop and restored on the next start, so a restart does not re-read a long conversation.
+- Integrations: the OpenCode provider (one model per enabled preset) and a Claude Code environment snippet; log rotation; start at login.
+- The same operations headless: `llama-cpp-config server|preset|control|bench ...`.
+
+**Benchmarks** ([benchmarks/README.md](benchmarks/README.md))
+
+- Two engines: **live** (real `llama-server` requests, cold prefill every repetition, the preset's drafter and sampler included) and **synthetic** (`llama-bench`, raw prefill and decode).
+- Concurrency scenarios at the preset's `parallel`: single, N prefills at once, N decodes at once, prefill and decode mixed.
+- **Versioned specs** (`benchmarks/specs/standard.ini`, compiled into the binary): prompts pinned by sha256, temperature, repetitions, concurrency and per-pass overrides; every run records the spec, its version and digest, and anything changed from it is recorded as a derivation, never as the spec.
+- A/B of one preset key (`bench sweep --key ... --values ...`, or the tab's A/B field) with the key put back afterwards; an interrupted run leaves a marker with the value to restore.
+- Every finished run in SQLite with the machine, the software stack (llama.cpp, ROCm, CUDA, Vulkan SDK), the model and every parameter; `bench query` to read it; absolute paths and secrets dropped on the way in, so the database can be public.
+- A GPU lock every benchmark holds, plus a check that no other process has the GPUs open.
+
+**Measured guides** ([docs/](docs/AGENTS.md)): the per-card settings for the Radeon AI PRO R9700 and the RTX 4070 SUPER, and per-model guides for Qwen3.8-Flash-Next and Qwen3.8-27B, each value citing the bench.db campaign it comes from.
+
 ## Prerequisites
 
 - Windows 10/11
