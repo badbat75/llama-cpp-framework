@@ -44,16 +44,18 @@ pub enum Command {
 
 #[derive(Subcommand, Debug)]
 pub enum BenchCmd {
-    /// Benchmark one preset once per value of ONE of its keys.
+    /// Benchmark one preset as it is, or once per value of ONE of its keys.
     ///
-    /// Each value is written to presets.ini, measured by the same engine the
-    /// Benchmark tab uses (each finished leg is a run of one bench.db campaign),
-    /// and the key is put back afterwards. A live sweep restarts llama-server
-    /// per value, because the key rides the child's launch args.
+    /// Measured by the same engine the Benchmark tab uses, each finished leg a
+    /// run of one bench.db campaign. Without --key the preset is measured as
+    /// presets.ini has it, and the file is not touched. With --key and
+    /// --values each value is written to presets.ini and the key is put back
+    /// afterwards; a live sweep restarts llama-server per value, because the
+    /// key rides the child's launch args.
     // Boxed for the reason `ServerSet` is: one payload-carrying variant next to
     // the small ones would otherwise blow clippy's size threshold as the flags
     // grow. clap unwraps the Box itself, so the CLI surface is unchanged.
-    Sweep(Box<BenchSweep>),
+    Run(Box<BenchRun>),
     /// Read bench.db: campaigns, models, machines, prompts, runs, summary,
     /// results, one run, the parameters two runs differ in, or any SELECT.
     Query(Box<BenchQuery>),
@@ -154,18 +156,19 @@ pub enum QueryWhat {
 }
 
 #[derive(Args, Debug)]
-pub struct BenchSweep {
+pub struct BenchRun {
     /// Preset id to benchmark (as in `preset list`).
     #[arg(long)]
     pub preset: String,
-    /// The presets.ini key to vary, e.g. spec-draft-n-max.
-    #[arg(long)]
-    pub key: String,
+    /// The presets.ini key to vary, e.g. spec-draft-n-max. Omitted (with
+    /// --values) = the preset as it is, one leg.
+    #[arg(long, requires = "values")]
+    pub key: Option<String>,
     /// Values to measure: `2,3,4`, the inclusive range `2..8`, or, when a value
     /// itself contains a comma (device, tensor-split), `;`-separated:
     /// `Vulkan1,CUDA0;CUDA0`. `unset` removes the key for that leg.
-    #[arg(long)]
-    pub values: String,
+    #[arg(long, requires = "key")]
+    pub values: Option<String>,
     /// live = the running llama-server (real prompt, the preset's drafter);
     /// synthetic = llama-bench (no prompt, no sampler, llama-server must be down).
     #[arg(long, default_value = "live", value_parser = ["live", "synthetic"])]
@@ -180,7 +183,7 @@ pub struct BenchSweep {
     /// it from presets.ini. For after an interrupted sweep, which leaves the key
     /// on one of its leg values (the value to pass is in its pending marker,
     /// and the sweep warns naming both).
-    #[arg(long)]
+    #[arg(long, requires = "key")]
     pub restore_to: Option<String>,
     /// Live only: the prompt to send, inline. The one source that is not a
     /// file, and the report says so rather than naming one.
@@ -585,12 +588,12 @@ pub fn run(cli: Cli) -> Result<()> {
     }
 }
 
-/// The `bench sweep` leg: turn the flags into a `sweep::Opts` and run it. Every
+/// The `bench run` leg: turn the flags into a `sweep::Opts` and run it. Every
 /// flag left out falls back to the Benchmark tab's own default, so a sweep and a
 /// run started from the GUI measure the same thing.
 fn run_bench(c: BenchCmd) -> Result<()> {
     let a = match c {
-        BenchCmd::Sweep(a) => a,
+        BenchCmd::Run(a) => a,
         BenchCmd::Query(q) => return run_bench_query(*q),
         BenchCmd::Answer { campaign, text, db } => {
             let path = db.unwrap_or_else(bench::db::work_path);
@@ -612,7 +615,10 @@ fn run_bench(c: BenchCmd) -> Result<()> {
             return Ok(());
         }
     };
-    let values = bench::sweep::parse_values(&a.values).map_err(|e| anyhow::anyhow!(e))?;
+    let values = match a.values.as_deref() {
+        Some(v) => bench::sweep::parse_values(v).map_err(|e| anyhow::anyhow!(e))?,
+        None => Vec::new(),
+    };
 
     let mut plan = bench::Plan {
         mode: bench::Mode::from_str(&a.mode),
@@ -1763,7 +1769,7 @@ mod tests {
         let base = [
             "llama-cpp-config",
             "bench",
-            "sweep",
+            "run",
             "--preset",
             "P",
             "--key",
@@ -1778,6 +1784,23 @@ mod tests {
         let mut with_file = base.to_vec();
         with_file.extend(["--prompt-file", "p.txt"]);
         assert!(Cli::try_parse_from(with_file).is_ok());
+    }
+
+    /// `--key` and `--values` come together or not at all: neither is the
+    /// preset as it is, one without the other is a sweep with half its axis.
+    #[test]
+    fn key_and_values_come_together() {
+        let base = ["llama-cpp-config", "bench", "run", "--preset", "P"];
+        assert!(Cli::try_parse_from(base).is_ok());
+        let mut key_only = base.to_vec();
+        key_only.extend(["--key", "spec-draft-n-max"]);
+        assert!(Cli::try_parse_from(key_only).is_err());
+        let mut values_only = base.to_vec();
+        values_only.extend(["--values", "2,3"]);
+        assert!(Cli::try_parse_from(values_only).is_err());
+        let mut restore_only = base.to_vec();
+        restore_only.extend(["--restore-to", "3"]);
+        assert!(Cli::try_parse_from(restore_only).is_err());
     }
 
     #[test]

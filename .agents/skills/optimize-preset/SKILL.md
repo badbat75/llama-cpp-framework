@@ -1,6 +1,6 @@
 ---
 name: optimize-preset
-description: Tune one model's section of presets.ini for speed (prefill and decode t/s) and GPU memory (VRAM used, headroom), measuring every change with llama-cpp-config bench sweep and recording it in bench.db. Use when asked to optimize, tune, speed up, fit, or shrink a preset, to raise its context, to rebalance tensor-split / n-cpu-moe / override-tensor across GPUs, or to pick KV cache type, ubatch-size or a speculator for a model.
+description: Tune one model's section of presets.ini for speed (prefill and decode t/s) and GPU memory (VRAM used, headroom), measuring every change with llama-cpp-config bench run and recording it in bench.db. Use when asked to optimize, tune, speed up, fit, or shrink a preset, to raise its context, to rebalance tensor-split / n-cpu-moe / override-tensor across GPUs, or to pick KV cache type, ubatch-size or a speculator for a model.
 ---
 
 # Optimize a preset (speed and VRAM)
@@ -134,7 +134,7 @@ Margins to keep (free memory after the prefill):
 ## 4. Measuring speed: one key per sweep
 
 ```bash
-llama-cpp-config bench sweep --preset <id> --key <key> --values '<a>,<b>,<c>' \
+llama-cpp-config bench run --preset <id> --key <key> --values '<a>,<b>,<c>' \
   --reps 3 --prompt-file /opt/llama.cpp/share/benchmarks/prompts/bench-prompt-43k-1.0.txt \
   --campaign <model>-<key>-<yyyymmdd> --question "<what this answers>"
 ```
@@ -218,7 +218,7 @@ llama-cpp-config bench sweep --preset <id> --key <key> --values '<a>,<b>,<c>' \
   also waits for the llama-server the sweep leaves running). `-ArgumentList` does not
   quote an element with spaces: wrap the `--question` text in literal double quotes, or
   the sweep dies at once with `unexpected argument`. Before starting one, check
-  `Get-CimInstance Win32_Process` for a running `bench sweep`.
+  `Get-CimInstance Win32_Process` for a running `bench run`.
 - Where a prefill step goes (when a lever's effect needs explaining, not for every
   run): stop the server, start a standalone llama-server with the child's argument list
   from the router's log (`spawning server instance ... with args`, without

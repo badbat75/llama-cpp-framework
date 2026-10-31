@@ -1,4 +1,4 @@
-//! The GPU lock every benchmark takes: `bench sweep` (spec or not) and the
+//! The GPU lock every benchmark takes: `bench run` (spec or not) and the
 //! Benchmark tab.
 //!
 //! Two jobs on the same cards wreck both measurements, and nothing in a

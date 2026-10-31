@@ -18,7 +18,7 @@ have the start date only.
 ## Recording
 
 The configurator compiles `schema.sql` in and records every finished run of its
-Benchmark tab and of `bench sweep` into a WORKING database under its data directory
+Benchmark tab and of `bench run` into a WORKING database under its data directory
 (`~/.local/share/llama.cpp/bench/bench.db`, `%LOCALAPPDATA%\llama.cpp\bench\bench.db`):
 one campaign per tab run or sweep, machine and software detected (the ROCm, CUDA and
 Vulkan SDK dist versions are the ones llama.cpp was built against). Credentials and
@@ -62,7 +62,7 @@ keeps the preset's sampling. The off switch is for the benchmark only; the prese
 its speculator.
 
 ```sh
-llama-cpp-config bench sweep --spec standard --preset <id> --key split-mode --values 'unset,tensor'
+llama-cpp-config bench run --spec standard --preset <id> --key split-mode --values 'unset,tensor'
 ```
 
 `--spec standard` runs the newest published version, `--spec standard-1.0` that one: every

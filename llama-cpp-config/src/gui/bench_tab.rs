@@ -96,21 +96,47 @@ pub(crate) struct ImageThumb {
 const THUMB_W: u32 = 360;
 const THUMB_H: u32 = 240;
 
-/// The image the Image row shows and whether it is the user's: the chosen
-/// file, else the first ticked image prompt's own. `None` when neither exists.
-fn shown_image(s: &AppState, state: &Rc<RefCell<State>>) -> Option<(std::path::PathBuf, bool)> {
+/// Whose image the Image row shows.
+#[derive(Clone, Debug, PartialEq)]
+enum Whose {
+    /// The file the user chose.
+    Mine,
+    /// A ticked image prompt's own.
+    Prompt,
+    /// No image prompt ticked: the shipped image prompt's (named), the one
+    /// the standard spec pins, so the row is never empty on a fresh install.
+    Shipped(String),
+}
+
+/// The image the Image row shows and whose it is: the chosen file, else the
+/// first ticked image prompt's own, else the shipped image prompt's. `None`
+/// only when none of them exists.
+fn shown_image(s: &AppState, state: &Rc<RefCell<State>>) -> Option<(std::path::PathBuf, Whose)> {
     let chosen = s.get_bench_image();
     if !chosen.trim().is_empty() {
-        return Some((std::path::PathBuf::from(chosen.trim()), true));
+        return Some((std::path::PathBuf::from(chosen.trim()), Whose::Mine));
     }
-    state.borrow().bench_prompts.iter().filter(|r| r.on).find_map(|r| {
+    let ticked = state.borrow().bench_prompts.iter().filter(|r| r.on).find_map(|r| {
         let text = &r.read.as_ref()?.text;
-        bench::prompt_image_file(text, r.path.parent()?).map(|p| (p, false))
-    })
+        bench::prompt_image_file(text, r.path.parent()?)
+    });
+    if let Some(p) = ticked {
+        return Some((p, Whose::Prompt));
+    }
+    // Only the .json ones can hold an image part, and they are small: read
+    // per refresh rather than cached.
+    bench::shipped_prompts()
+        .into_iter()
+        .filter(|p| p.extension().is_some_and(|e| e == "json"))
+        .find_map(|p| {
+            let text = std::fs::read_to_string(&p).ok()?;
+            let image = bench::prompt_image_file(&text, p.parent()?)?;
+            Some((image, Whose::Shipped(path_name(&p))))
+        })
 }
 
 /// The readout: name, size, what is sent at `size`, and whose image it is.
-fn image_info(t: &ImageThumb, mine: bool, size: Option<(u32, u32)>) -> String {
+fn image_info(t: &ImageThumb, whose: &Whose, size: Option<(u32, u32)>) -> String {
     let name = path_name(&t.path);
     let (w, h) = match &t.dims {
         Ok(d) => *d,
@@ -123,18 +149,22 @@ fn image_info(t: &ImageThumb, mine: bool, size: Option<(u32, u32)>) -> String {
         }
         _ => "sent as is".into(),
     };
-    let whose = if mine { "yours, in place of the prompts' own" } else { "the prompt's own" };
+    let whose = match whose {
+        Whose::Mine => "yours, in place of the prompts' own".to_string(),
+        Whose::Prompt => "the prompt's own".to_string(),
+        Whose::Shipped(prompt) => format!("the standard spec's, sent when {prompt} runs"),
+    };
     format!("{name}: {w}x{h}, {sent} ({whose})")
 }
 
 /// Refresh the Image row, decoding only when the file or its stamp changed.
 fn refresh_image_preview(app: &AppWindow, state: &Rc<RefCell<State>>, size: Option<(u32, u32)>) {
     let s = app.global::<AppState>();
-    let Some((path, mine)) = shown_image(&s, state) else {
+    let Some((path, whose)) = shown_image(&s, state) else {
         state.borrow_mut().bench_image_thumb = None;
         s.set_bench_image_preview(slint::Image::default());
         s.set_bench_image_info(SharedString::from(
-            "No image prompt ticked: tick bench-prompt-image-1.0.json (or a prompt of yours with an image_file part) to send an image.",
+            "No image prompt found: the shipped bench-prompt-image-1.0.json is missing from share/benchmarks/prompts.",
         ));
         return;
     };
@@ -164,7 +194,7 @@ fn refresh_image_preview(app: &AppWindow, state: &Rc<RefCell<State>>, size: Opti
         return;
     };
     s.set_bench_image_preview(t.image.clone());
-    s.set_bench_image_info(SharedString::from(image_info(t, mine, size)));
+    s.set_bench_image_info(SharedString::from(image_info(t, &whose, size)));
 }
 
 fn pick_image_file(start: Option<&Path>) -> Option<std::path::PathBuf> {
@@ -320,7 +350,7 @@ fn pick_prompt_file(start: &Path) -> Option<std::path::PathBuf> {
 }
 
 /// Persist the first ticked prompt into settings.ini (`BenchPromptFile`, what
-/// `bench sweep` reads with no --prompt-file), read-modify-write so this
+/// `bench run` reads with no --prompt-file), read-modify-write so this
 /// cannot wipe another key. Called when a run starts.
 fn persist_prompt_path(app: &AppWindow, path: &Path) {
     // The default stays empty, so the setting never pins today's data folder.
@@ -851,7 +881,7 @@ fn save_spec(app: &AppWindow, state: &Rc<RefCell<State>>, path: &Path) -> Result
 }
 
 /// What Run starts: one plan, or several into one campaign (a spec, several
-/// prompts, or concurrency `all`), the same split as `bench sweep`.
+/// prompts, or concurrency `all`), the same split as `bench run`.
 enum Job {
     One(Box<Plan>),
     Steps(Vec<exec::Step>, String),
@@ -1629,7 +1659,7 @@ pub(super) fn wire(
                 return;
             }
             // The run writes where settings.ini points (`db::work_path`, as
-            // `bench sweep` does), so the field the list is reading goes there
+            // `bench run` does), so the field the list is reading goes there
             // first, typed but never confirmed with Enter included.
             if !persist_db_path(&app) {
                 return;
@@ -1798,9 +1828,11 @@ mod tests {
         };
         let size = bench::parse_image_size(bench::DEFAULT_IMAGE_SIZE).unwrap();
         assert_eq!(
-            image_info(&t, false, size),
+            image_info(&t, &Whose::Prompt, size),
             "bench-image-zebras-1.0.jpg: 6000x4000, sent at 1344x896 (the prompt's own)"
         );
-        assert!(image_info(&t, true, None).ends_with("6000x4000, sent as is (yours, in place of the prompts' own)"));
+        assert!(image_info(&t, &Whose::Shipped("bench-prompt-image-1.0.json".into()), size)
+            .ends_with("(the standard spec's, sent when bench-prompt-image-1.0.json runs)"));
+        assert!(image_info(&t, &Whose::Mine, None).ends_with("6000x4000, sent as is (yours, in place of the prompts' own)"));
     }
 }

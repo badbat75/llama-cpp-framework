@@ -1,6 +1,6 @@
 ---
 name: bench-spec
-description: Create, change or review a versioned benchmark spec (benchmarks/specs/*.ini, run by llama-cpp-config bench sweep --spec) or one of the prompts a spec pins. Use when asked to add or edit a spec, a pass, a prompt, a temperature, repetition or concurrency rule of the benchmark method, to bump a spec version, or to judge whether a measurement follows a spec.
+description: Create, change or review a versioned benchmark spec (benchmarks/specs/*.ini, run by llama-cpp-config bench run --spec) or one of the prompts a spec pins. Use when asked to add or edit a spec, a pass, a prompt, a temperature, repetition or concurrency rule of the benchmark method, to bump a spec version, or to judge whether a measurement follows a spec.
 ---
 
 # Benchmark specs: the method, versioned
@@ -54,7 +54,7 @@ Reps = 3
   `preset`; `Override` keys are written to the preset for the pass and put back after it;
   `Concurrency` is `single`, `prefill`, `decode`, `prefill+decode` or `all`.
 
-Comments are whole lines (`;`), never after a value. `bench sweep --spec standard` runs the
+Comments are whole lines (`;`), never after a value. `bench run --spec standard` runs the
 newest published version and `--spec standard-<X.Y>` that one (every version stays installed,
 read in place from `share/benchmarks/specs/`, never copied into the user's config; the binary
 carries only `standard.versions`); `--spec <file>` runs any other, but only a published

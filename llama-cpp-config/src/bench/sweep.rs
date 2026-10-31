@@ -61,6 +61,9 @@ use crate::{http, ini, paths, presets, runstate, server_cfg};
 /// and reads as a deliberate choice in the summary table.
 pub const UNSET: &str = "unset";
 
+/// The one leg's value when no key is varied: the preset as presets.ini has it.
+pub const AS_IS: &str = "as is";
+
 /// How long to wait for llama-server to vanish after a stop, and to answer after
 /// a start. The stop is a `taskkill /f`, so the wait is only for the handles to
 /// close; the start binds the router's socket before any model is loaded, which
@@ -482,7 +485,10 @@ impl Apply {
 #[derive(Clone, Debug)]
 pub struct Opts {
     pub preset: String,
-    pub key: String,
+    /// The key to vary; `None` measures the preset as it is: one leg, and
+    /// presets.ini is not touched (no write, no marker, nothing to restore).
+    pub key: Option<String>,
+    /// The key's values; ignored without a key.
     pub values: Vec<String>,
     pub plan: Plan,
     pub apply: Apply,
@@ -587,15 +593,23 @@ pub fn render_summary(s: &Summary) -> String {
         Mode::Synthetic => "synthetic (llama-bench)",
     };
 
-    let mut md = format!(
-        "# Benchmark sweep: {} on {}\n\nGenerated {}.\n\n",
-        opts.key, opts.preset, s.stamp
-    );
+    let mut md = match &opts.key {
+        Some(key) => format!(
+            "# Benchmark sweep: {key} on {}\n\nGenerated {}.\n\n",
+            opts.preset, s.stamp
+        ),
+        None => format!(
+            "# Benchmark: {} as it is\n\nGenerated {}.\n\n",
+            opts.preset, s.stamp
+        ),
+    };
 
     md.push_str("| setting | value |\n|---|---|\n");
     md.push_str(&format!("| preset | {} |\n", opts.preset));
-    md.push_str(&format!("| key | {} |\n", opts.key));
-    md.push_str(&format!("| values | {} |\n", opts.values.join(", ")));
+    if let Some(key) = &opts.key {
+        md.push_str(&format!("| key | {key} |\n"));
+        md.push_str(&format!("| values | {} |\n", opts.values.join(", ")));
+    }
     md.push_str(&format!("| engine | {engine} |\n"));
     md.push_str(&format!("| repetitions | {} |\n", opts.plan.reps));
     if opts.plan.mode == Mode::Live {
@@ -625,11 +639,10 @@ pub fn render_summary(s: &Summary) -> String {
             md.push_str(&format!("| {label} | {value} |\n"));
         }
     }
-    md.push_str(&format!(
-        "| {} before the sweep | {} |\n",
-        opts.key, s.original
-    ));
-    md.push_str(&format!("| {} after it | {} |\n", opts.key, s.applied));
+    if let Some(key) = &opts.key {
+        md.push_str(&format!("| {key} before the sweep | {} |\n", s.original));
+        md.push_str(&format!("| {key} after it | {} |\n", s.applied));
+    }
     if !s.server_version.is_empty() {
         md.push_str(&format!("| llama-server | {} |\n", s.server_version));
     }
@@ -655,12 +668,12 @@ pub fn render_summary(s: &Summary) -> String {
         .and_then(|l| l.point(&primary))
         .map(|p| p.mean);
 
-    let mut head = format!("| {} |", opts.key);
+    let mut head = format!("| {} |", opts.key.as_deref().unwrap_or("preset"));
     let mut sep = String::from("|---|");
     for (i, label) in labels.iter().enumerate() {
         head.push_str(&format!(" {label} | +- |"));
         sep.push_str("---:|---:|");
-        if i == 0 {
+        if i == 0 && opts.key.is_some() {
             head.push_str(&format!(" vs {} |", s.legs[0].value));
             sep.push_str("---:|");
         }
@@ -679,7 +692,7 @@ pub fn render_summary(s: &Summary) -> String {
                 Some(p) => row.push_str(&format!(" {:.1} | {:.1} |", p.mean, p.sd)),
                 None => row.push_str(" - | - |"),
             }
-            if i == 0 {
+            if i == 0 && opts.key.is_some() {
                 let ratio = match (baseline, leg.point(label)) {
                     (Some(b), Some(p)) if b > 0.0 => format!("{:.2}x", p.mean / b),
                     _ => "-".to_string(),
@@ -700,7 +713,7 @@ pub fn render_summary(s: &Summary) -> String {
     }
     md.push('\n');
 
-    if let Some(i) = best(s.legs, &primary) {
+    if let (Some(key), Some(i)) = (&opts.key, best(s.legs, &primary)) {
         let leg = &s.legs[i];
         let mean = leg.point(&primary).map(|p| p.mean).unwrap_or_default();
         let gain = match baseline {
@@ -708,13 +721,13 @@ pub fn render_summary(s: &Summary) -> String {
             _ => String::new(),
         };
         md.push_str(&format!(
-            "**Best: {} = {}** at {mean:.1} t/s {primary}{gain}.\n\n",
-            opts.key, leg.value
+            "**Best: {key} = {}** at {mean:.1} t/s {primary}{gain}.\n\n",
+            leg.value
         ));
     }
 
     md.push_str("## Caveats\n\n");
-    for c in sweep_caveats(opts.plan.mode) {
+    for c in sweep_caveats(opts.plan.mode, opts.key.is_some()) {
         md.push_str(&format!("- {c}\n"));
     }
     for c in super::caveats(opts.plan.mode) {
@@ -724,13 +737,17 @@ pub fn render_summary(s: &Summary) -> String {
 }
 
 /// What a sweep adds to the mode's own caveats: everything about measuring one
-/// key by moving it that a single run cannot mislead you about.
-pub fn sweep_caveats(mode: Mode) -> Vec<&'static str> {
-    let mut out = vec![
-        "Legs ran in the order listed, so a card that heats up over a long sweep charges the drift to the LAST values. Re-run with the order reversed when two values are close.",
-        "Only the swept key moved; every other key came from presets.ini as it stood when the sweep started, and a hand edit made while it ran is not reflected in the rows above it.",
+/// key by moving it that a single run cannot mislead you about; without a key
+/// (`swept` false) only the ones that hold for a single leg.
+pub fn sweep_caveats(mode: Mode, swept: bool) -> Vec<&'static str> {
+    let mut out = Vec::new();
+    if swept {
+        out.push("Legs ran in the order listed, so a card that heats up over a long sweep charges the drift to the LAST values. Re-run with the order reversed when two values are close.");
+        out.push("Only the swept key moved; every other key came from presets.ini as it stood when the sweep started, and a hand edit made while it ran is not reflected in the rows above it.");
+    }
+    out.extend([
         "Each leg's run in bench.db (`bench query runs --campaign <this sweep>`) carries the environment, the device ids resolved by name, every parameter and the raw repetitions. This table is a digest of them, not a replacement.",
-    ];
+    ]);
     if mode == Mode::Live {
         out.push(
             "Every leg restarted llama-server without saving or restoring the conversation snapshot, so the numbers are cold-start numbers and no leg inherited another's KV cache.",
@@ -825,21 +842,24 @@ fn interrupted(preset: &str, key: &str) -> Option<(PathBuf, String)> {
 /// the cleanup steps that failed (the finished legs are in the database all
 /// the same).
 pub fn run(opts: &Opts) -> Result<String, String> {
-    let set = setter(&opts.key)?;
+    let set = opts.key.as_deref().map(setter).transpose()?;
     let base = load_one(&opts.preset)?;
     // Every value is applied to a throwaway copy up front: a typo in the last of
     // seven values is worth catching now, not forty minutes from now.
-    for v in &opts.values {
-        let mut probe = base.clone();
-        set(&mut probe, v).map_err(|e| format!("value `{v}`: {e}"))?;
+    if let Some(set) = set {
+        for v in &opts.values {
+            let mut probe = base.clone();
+            set(&mut probe, v).map_err(|e| format!("value `{v}`: {e}"))?;
+        }
     }
     if let Some(problem) = super::validate(&leg_plan(opts, &opts.preset)) {
         return Err(problem);
     }
 
-    let original = match &opts.restore_to {
-        Some(v) => v.clone(),
-        None => current_value(&opts.preset, &opts.key),
+    let original = match (&opts.key, &opts.restore_to) {
+        (None, _) => String::new(),
+        (Some(_), Some(v)) => v.clone(),
+        (Some(key), None) => current_value(&opts.preset, key),
     };
     let was_running = runstate::is_running();
     let port = u16::try_from(server_cfg::load().port_or_default())
@@ -850,9 +870,9 @@ pub fn run(opts: &Opts) -> Result<String, String> {
     // this preset and key, which the moment the one below is created is this
     // sweep's. Scanning after creating it therefore reports every sweep as
     // interrupted (v1.13.0 did) and, worse, hides a real leftover.
-    let leftover = match opts.restore_to {
-        Some(_) => None,
-        None => interrupted(&opts.preset, &opts.key),
+    let leftover = match (&opts.key, &opts.restore_to) {
+        (Some(key), None) => interrupted(&opts.preset, key),
+        _ => None,
     };
 
     let stamp = super::stamp(super::now_secs());
@@ -862,51 +882,57 @@ pub fn run(opts: &Opts) -> Result<String, String> {
         } else {
             opts.campaign.clone()
         },
-        question: if opts.question.is_empty() {
-            format!(
-                "How does `{}` change {} on preset {}? Values: {}.",
-                opts.key,
+        question: match (&opts.key, opts.question.is_empty()) {
+            (_, false) => opts.question.clone(),
+            (Some(key), true) => format!(
+                "How does `{key}` change {} on preset {}? Values: {}.",
                 primary_label(opts.plan.mode),
                 opts.preset,
                 opts.values.join(", ")
-            )
-        } else {
-            opts.question.clone()
+            ),
+            (None, true) => format!(
+                "What {} does preset {} reach as it is?",
+                primary_label(opts.plan.mode),
+                opts.preset
+            ),
         },
         label: None,
     };
     let dir = super::bench_dir();
     std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
-    let marker = pending_path(&stamp);
-    std::fs::write(&marker, header_json(opts, &original, &stamp))
-        .map_err(|e| format!("cannot write {}: {e}", marker.display()))?;
-
-    println!(
-        "Sweeping {} = {} on preset {} ({} engine, {} repetition{}).",
-        opts.key,
-        opts.values.join(", "),
-        opts.preset,
+    let reps = format!(
+        "{} engine, {} repetition{}",
         opts.plan.mode.as_str(),
         opts.plan.reps,
         if opts.plan.reps == 1 { "" } else { "s" }
     );
-    println!(
-        "presets.ini is being edited; `{} = {original}` is restored at the end \
-         (also recorded in {}).",
-        opts.key,
-        marker.display()
-    );
+    if let Some(key) = &opts.key {
+        let marker = pending_path(&stamp);
+        std::fs::write(&marker, header_json(opts, &original, &stamp))
+            .map_err(|e| format!("cannot write {}: {e}", marker.display()))?;
+        println!(
+            "Sweeping {key} = {} on preset {} ({reps}).",
+            opts.values.join(", "),
+            opts.preset
+        );
+        println!(
+            "presets.ini is being edited; `{key} = {original}` is restored at the end \
+             (also recorded in {}).",
+            marker.display()
+        );
+    } else {
+        println!("Measuring preset {} as it is ({reps}).", opts.preset);
+    }
     // An interrupted sweep left the key on one of ITS leg values, so the value
     // read out of presets.ini above is that leftover and not the configuration
     // this machine ran. Restoring it would quietly promote a half-measured
     // value to the permanent one, so say so while there is still time to stop.
-    if let Some((path, restore)) = &leftover {
+    if let (Some(key), Some((path, restore))) = (&opts.key, &leftover) {
         println!(
-            "WARNING: {} never finished, so `{} = {original}` may be ITS leftover. \
+            "WARNING: {} never finished, so `{key} = {original}` may be ITS leftover. \
              That sweep recorded `{restore}` as the value to put back; \
              pass --restore-to {restore} to restore that instead.",
-            path.display(),
-            opts.key
+            path.display()
         );
     }
 
@@ -916,13 +942,23 @@ pub fn run(opts: &Opts) -> Result<String, String> {
     // same cards for the whole sweep.
     crate::devices::set_probed(crate::devices::list());
 
+    // Without a key there is one leg, on the preset as it is.
+    let as_is = [AS_IS.to_string()];
+    let values: &[String] = match set {
+        Some(_) => &opts.values,
+        None => &as_is,
+    };
     let mut legs: Vec<Leg> = Vec::new();
-    for (i, value) in opts.values.iter().enumerate() {
-        println!("\n[{}/{}] {} = {value}", i + 1, opts.values.len(), opts.key);
+    for (i, value) in values.iter().enumerate() {
+        if let Some(key) = &opts.key {
+            println!("\n[{}/{}] {key} = {value}", i + 1, values.len());
+        }
         let started = Instant::now();
-        let leg = match write_value(&opts.preset, set, value)
-            .and_then(|()| prepare_server(opts.plan.mode, port))
-        {
+        let written = match set {
+            Some(set) => write_value(&opts.preset, set, value),
+            None => Ok(()),
+        };
+        let leg = match written.and_then(|()| prepare_server(opts.plan.mode, port)) {
             Ok(()) => measure(opts, value, &campaign),
             Err(e) => {
                 println!("    failed: {e}");
@@ -945,6 +981,7 @@ pub fn run(opts: &Opts) -> Result<String, String> {
     // never left on a value presets.ini no longer names.
     let primary = primary_test(opts.plan.mode, &legs);
     let applied = match opts.apply {
+        _ if set.is_none() => String::new(),
         Apply::Original => original.clone(),
         Apply::Last => legs
             .last()
@@ -954,18 +991,23 @@ pub fn run(opts: &Opts) -> Result<String, String> {
             .map(|i| legs[i].value.clone())
             .unwrap_or_else(|| original.clone()),
     };
-    let restore = write_value(&opts.preset, set, &applied);
+    let restore = match set {
+        Some(set) => write_value(&opts.preset, set, &applied),
+        None => Ok(()),
+    };
     let server = restore_server(was_running);
     // The key is back: this sweep's marker goes, and so do older ones of the
     // same preset and key, whose leftover this restore has overwritten (the
     // newest sweep of a pair decides). Only after the restore, so a sweep that
     // died putting the key back still reads as interrupted.
-    if restore.is_ok() {
-        for (path, _) in markers(&opts.preset, &opts.key) {
-            let _ = std::fs::remove_file(path);
+    if let Some(key) = &opts.key {
+        if restore.is_ok() {
+            for (path, _) in markers(&opts.preset, key) {
+                let _ = std::fs::remove_file(path);
+            }
         }
+        println!("\n{key} = {applied} (presets.ini).");
     }
-    println!("\n{} = {applied} (presets.ini).", opts.key);
 
     let summary = render_summary(&Summary {
         opts,
@@ -986,16 +1028,19 @@ pub fn run(opts: &Opts) -> Result<String, String> {
             campaign.name, campaign.name
         );
     } else {
-        println!("No leg finished, so bench.db has no campaign for this sweep.");
+        println!("No leg finished, so bench.db has no campaign for this run.");
     }
 
     let mut problems: Vec<String> = legs
         .iter()
         .filter(|l| !l.error.is_empty())
-        .map(|l| format!("{} = {}: {}", opts.key, l.value, l.error))
+        .map(|l| match &opts.key {
+            Some(key) => format!("{key} = {}: {}", l.value, l.error),
+            None => l.error.clone(),
+        })
         .collect();
-    if let Err(e) = restore {
-        problems.push(format!("could not restore {}: {e}", opts.key));
+    if let (Some(key), Err(e)) = (&opts.key, restore) {
+        problems.push(format!("could not restore {key}: {e}"));
     }
     if let Err(e) = server {
         problems.push(e);
@@ -1007,17 +1052,22 @@ pub fn run(opts: &Opts) -> Result<String, String> {
     }
 }
 
-/// A leg's run label: `key=value`, plus the concurrency scenario when it is
-/// not `single`, so one campaign can hold the same value under several.
-fn leg_label(opts: &Opts, value: &str) -> String {
-    let mut label = format!("{}={value}", opts.key);
+/// A leg's run label: `key=value`, the spec pass, and the concurrency scenario
+/// when it is not `single`, so one campaign can hold the same value under
+/// several. `None` when there is nothing to tell (no key, no spec, single):
+/// the run is then labelled by its preset.
+fn leg_label(opts: &Opts, value: &str) -> Option<String> {
+    let mut parts = Vec::new();
+    if let Some(key) = &opts.key {
+        parts.push(format!("{key}={value}"));
+    }
     if let Some(tag) = &opts.plan.spec {
-        label.push_str(&format!(" pass={}", tag.pass));
+        parts.push(format!("pass={}", tag.pass));
     }
     if opts.plan.concurrency != super::Concurrency::Single {
-        label.push_str(&format!(" concurrency={}", opts.plan.concurrency.as_str()));
+        parts.push(format!("concurrency={}", opts.plan.concurrency.as_str()));
     }
-    label
+    (!parts.is_empty()).then(|| parts.join(" "))
 }
 
 /// Hold `key` of `preset` for a temporary write (a spec pass's override): a
@@ -1204,21 +1254,33 @@ fn primary_label(mode: Mode) -> &'static str {
 /// on, and the values that did not finish, which have no run of their own
 /// (only finished runs are recorded) but are a result all the same.
 pub fn campaign_notes(opts: &Opts, legs: &[Leg], original: &str, applied: &str) -> String {
-    let mut out = format!(
-        "sweep of `{}` on preset {} ({}, {} repetition{}): {}\n\
-         before: {original}; left on: {applied} (--apply {})",
-        opts.key,
-        opts.preset,
+    let reps = format!(
+        "{}, {} repetition{}",
         opts.plan.mode.as_str(),
         opts.plan.reps,
-        if opts.plan.reps == 1 { "" } else { "s" },
+        if opts.plan.reps == 1 { "" } else { "s" }
+    );
+    let Some(key) = &opts.key else {
+        let mut out = format!(
+            "run of preset {} as it is ({reps}); presets.ini not changed",
+            opts.preset
+        );
+        for leg in legs.iter().filter(|l| !l.error.is_empty()) {
+            out.push_str(&format!("\nnot finished: {}", leg.error));
+        }
+        return out;
+    };
+    let mut out = format!(
+        "sweep of `{key}` on preset {} ({reps}): {}\n\
+         before: {original}; left on: {applied} (--apply {})",
+        opts.preset,
         opts.values.join(", "),
         opts.apply.as_str()
     );
     for leg in legs.iter().filter(|l| !l.error.is_empty()) {
         out.push_str(&format!(
-            "\nnot finished: {} = {}: {}",
-            opts.key, leg.value, leg.error
+            "\nnot finished: {key} = {}: {}",
+            leg.value, leg.error
         ));
     }
     out
@@ -1241,7 +1303,7 @@ fn measure(opts: &Opts, value: &str, campaign: &super::record::Campaign) -> Leg 
     let (tx, rx) = mpsc::channel();
     let plan = Plan {
         campaign: Some(super::record::Campaign {
-            label: Some(leg_label(opts, value)),
+            label: leg_label(opts, value),
             ..campaign.clone()
         }),
         ..leg_plan(opts, &opts.preset)
@@ -1333,7 +1395,7 @@ mod tests {
     fn opts(values: &[&str]) -> Opts {
         Opts {
             preset: "Qwen".into(),
-            key: "spec-draft-n-max".into(),
+            key: Some("spec-draft-n-max".into()),
             values: values.iter().map(|v| (*v).to_string()).collect(),
             plan: Plan::default(),
             apply: Apply::Original,

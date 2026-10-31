@@ -42,7 +42,7 @@ Beside llama.cpp it ships **`llama-cpp-config`**, a GUI + CLI configurator (Rust
 - Two engines: **live** (real `llama-server` requests, cold prefill every repetition, the preset's drafter and sampler included) and **synthetic** (`llama-bench`, raw prefill and decode).
 - Concurrency scenarios at the preset's `parallel`: single, N prefills at once, N decodes at once, prefill and decode mixed.
 - **Versioned specs** (`benchmarks/specs/standard-<X.Y>.ini`, every version installed beside the binaries and runnable; only their digests are compiled in): prompts pinned by sha256 (43k and 110k tokens of prose, and a coding-agent turn with tool definitions and tool results), temperature, repetitions, concurrency and per-pass overrides; every run records the spec, its version and digest, and anything changed from it is recorded as a derivation, never as the spec.
-- A/B of one preset key (`bench sweep --key ... --values ...`, or the tab's A/B field) with the key put back afterwards; an interrupted run leaves a marker with the value to restore.
+- A/B of one preset key (`bench run --key ... --values ...`, or the tab's A/B field) with the key put back afterwards; an interrupted run leaves a marker with the value to restore.
 - Every finished run in SQLite with the machine, the software stack (llama.cpp, ROCm, CUDA, Vulkan SDK), the model and every parameter; `bench query` to read it; absolute paths and secrets dropped on the way in, so the database can be public.
 - A GPU lock every benchmark holds, plus a check that no other process has the GPUs open.
 

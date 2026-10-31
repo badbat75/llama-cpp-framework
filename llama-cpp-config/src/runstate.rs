@@ -564,7 +564,7 @@ fn close_log_per_settings(stamp: LogStamp) {
 /// this function itself leaves behind, so a stop after a failed launch and a
 /// start after a stop are both no-ops rather than a growing pile of empties).
 ///
-/// A stamp collision (two closes within the same second, e.g. a `bench sweep`
+/// A stamp collision (two closes within the same second, e.g. a `bench run`
 /// leg that dies at once) gets a `-2`, `-3`... suffix rather than overwriting
 /// the earlier run. The empty replacement is created here and not left to
 /// `start()` so the Log window, which shows a "not found" placeholder for a

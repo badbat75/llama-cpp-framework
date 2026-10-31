@@ -88,7 +88,7 @@ Q8_0, 3 reps, temp 0):
 
 - `tools\report-memory.ps1`: requested vs actual VRAM, and spill into shared memory.
 - `tools\pcie-bench\`: the card's real host link.
-- Benchmark tab / `llama-cpp-config bench sweep`: measure at 2.6k and ~90k context, with
+- Benchmark tab / `llama-cpp-config bench run`: measure at 2.6k and ~90k context, with
   temp 0 and 3 repetitions.
 
 ## 7. Linux

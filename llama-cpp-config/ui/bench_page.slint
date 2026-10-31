@@ -130,7 +130,7 @@ export component BenchPage inherits ScrollView {
             if AppState.bench_is_live : LabeledField {
                 label_width <=> LabelColumn.bench;
                 label: "Prompts";
-                hint: "The files sent as the request, each ticked one in turn: a .txt as a single user message, a .json as the conversation it holds (messages and tools, like a coding agent's request) (one step per prompt, into one campaign). Each is re-sent whole on every repetition with the prefix cache disabled, so each one is a cold prefill, which is what the prefill row measures.\nFour prompts ship, installed read-only beside the program (share/benchmarks/prompts) and pinned by the standard spec: bench-prompt-43k-1.0.txt (the default, 43.7k tokens), bench-prompt-110k-1.0.txt (110k tokens), bench-prompt-code-1.0.json (a coding-agent turn with tools, ~42k tokens) and bench-prompt-image-1.0.json (a photograph to describe; run only on presets with an mmproj, its picture shown and replaceable in the Image row); + adds a file of your own (a custom run, or with a spec a derived one). The ranking of a knob can differ with the context you actually work at, which is why neither is short.\nRead fresh when Run starts, so editing one of yours while this window is open is enough: Edit opens it in your default editor (a shipped one is read-only: change a copy). The first ticked one is also what `bench sweep` reads with no --prompt-file.";
+                hint: "The files sent as the request, each ticked one in turn: a .txt as a single user message, a .json as the conversation it holds (messages and tools, like a coding agent's request) (one step per prompt, into one campaign). Each is re-sent whole on every repetition with the prefix cache disabled, so each one is a cold prefill, which is what the prefill row measures.\nFour prompts ship, installed read-only beside the program (share/benchmarks/prompts) and pinned by the standard spec: bench-prompt-43k-1.0.txt (the default, 43.7k tokens), bench-prompt-110k-1.0.txt (110k tokens), bench-prompt-code-1.0.json (a coding-agent turn with tools, ~42k tokens) and bench-prompt-image-1.0.json (a photograph to describe; run only on presets with an mmproj, its picture shown and replaceable in the Image row); + adds a file of your own (a custom run, or with a spec a derived one). The ranking of a knob can differ with the context you actually work at, which is why neither is short.\nRead fresh when Run starts, so editing one of yours while this window is open is enough: Edit opens it in your default editor (a shipped one is read-only: change a copy). The first ticked one is also what `bench run` reads with no --prompt-file.";
                 VerticalLayout {
                     spacing: 4px;
                     for row[i] in AppState.bench_prompts : HorizontalLayout {
@@ -202,7 +202,7 @@ export component BenchPage inherits ScrollView {
             if AppState.bench_is_live : LabeledField {
                 label_width <=> LabelColumn.bench;
                 label: "Image";
-                hint: "The picture an image prompt sends (a prompt whose message holds an image_file part, like the shipped bench-prompt-image-1.0.json). By default each image prompt sends its own, shown here for the first one ticked; Choose… sends a JPEG or PNG of yours in place of every image prompt's own, fitted into Image size like theirs. Under a spec that is an Override: the runs record spec = custom, derived from it, with image and image-sha256 naming the file. Prompt's goes back to the prompts' own.\nAn image prompt runs only on presets that load an mmproj.";
+                hint: "The picture an image prompt sends (a prompt whose message holds an image_file part, like the shipped bench-prompt-image-1.0.json). By default each image prompt sends its own, shown here for the first one ticked (with none ticked, the shipped bench-prompt-image-1.0.json's, the one the standard spec sends); Choose… sends a JPEG or PNG of yours in place of every image prompt's own, fitted into Image size like theirs. Under a spec that is an Override: the runs record spec = custom, derived from it, with image and image-sha256 naming the file. Prompt's goes back to the prompts' own.\nAn image prompt runs only on presets that load an mmproj.";
                 HorizontalLayout {
                     spacing: 8px;
                     alignment: start;
@@ -261,7 +261,7 @@ export component BenchPage inherits ScrollView {
             if AppState.bench_is_live : LabeledField {
                 label_width <=> LabelColumn.bench;
                 label: "Concurrency";
-                hint: "single: one request per repetition.\nThe others send one request per slot of the preset AT ONCE, N = the preset's parallel (absent = llama-server's auto 4; it must be at least 2), each pinned to its slot:\nprefill: all N prefill the whole prompt, then decode together.\ndecode: every slot is primed with the prompt first, so all N only decode.\nprefill+decode: N-1 primed slots decode while the last one prefills.\nThe table adds prefill total and decode total, the throughput of the N requests together.\nall: each of the four in turn, into one campaign (single alone when a selected preset has parallel below 2), as `bench sweep --concurrency all`.";
+                hint: "single: one request per repetition.\nThe others send one request per slot of the preset AT ONCE, N = the preset's parallel (absent = llama-server's auto 4; it must be at least 2), each pinned to its slot:\nprefill: all N prefill the whole prompt, then decode together.\ndecode: every slot is primed with the prompt first, so all N only decode.\nprefill+decode: N-1 primed slots decode while the last one prefills.\nThe table adds prefill total and decode total, the throughput of the N requests together.\nall: each of the four in turn, into one campaign (single alone when a selected preset has parallel below 2), as `bench run --concurrency all`.";
                 SegmentedControl {
                     options: ["single", "prefill", "decode", "prefill+decode", "all"];
                     enabled: AppState.bench_spec == "custom" || AppState.bench_spec_override;
@@ -381,7 +381,7 @@ export component BenchPage inherits ScrollView {
             LabeledField {
                 label_width <=> LabelColumn.bench;
                 label: "A/B key";
-                hint: "A preset key to compare values of, as bench sweep --key: every step of the run (each prompt, scenario and spec pass) runs once per value, with the value written to the selected presets and llama-server restarted around it; the key is put back afterwards. The list is the preset keys that change how the model is launched (placement, KV cache, batch sizes, speculator...). none = no A/B.\nUnder a spec, a key its passes do not touch keeps the runs spec runs; a key a pass overrides (spec-type under standard) records them as custom, derived from the spec.";
+                hint: "A preset key to compare values of, as bench run --key: every step of the run (each prompt, scenario and spec pass) runs once per value, with the value written to the selected presets and llama-server restarted around it; the key is put back afterwards. The list is the preset keys that change how the model is launched (placement, KV cache, batch sizes, speculator...). none = no A/B.\nUnder a spec, a key its passes do not touch keeps the runs spec runs; a key a pass overrides (spec-type under standard) records them as custom, derived from the spec.";
                 EnumComboBox {
                     accessible-label: "bench-ab-key";
                     enabled: !AppState.bench_running;
@@ -393,7 +393,7 @@ export component BenchPage inherits ScrollView {
             if AppState.bench_ab_key != "none" : LabeledField {
                 label_width <=> LabelColumn.bench;
                 label: "Values";
-                hint: "The values to compare, as bench sweep --values: comma-separated, a range 2..8, `unset` to remove the key for one leg; separate with ; when a value holds commas (tensor-split, device), and end a single such value with ;. Each value is checked against the presets before Run starts.";
+                hint: "The values to compare, as bench run --values: comma-separated, a range 2..8, `unset` to remove the key for one leg; separate with ; when a value holds commas (tensor-split, device), and end a single such value with ;. Each value is checked against the presets before Run starts.";
                 LineEdit {
                     accessible-label: "bench-ab-values";
                     enabled: !AppState.bench_running;
@@ -598,7 +598,7 @@ export component BenchPage inherits ScrollView {
             LabeledField {
                 label_width <=> LabelColumn.bench;
                 label: "Database";
-                hint: "The SQLite file every finished run is written to, and the one listed below. Empty = bench\\bench.db under the data folder. Point it at a clone's benchmarks\\bench.db to record straight into the repo's database, with no bench publish; absolute paths are cut to file names and secret-like values dropped either way.\nA file that is not there yet is created by the first finished run. Enter, Browse… or Run saves the path to settings.ini (BenchDb), where bench sweep and bench query read it too.";
+                hint: "The SQLite file every finished run is written to, and the one listed below. Empty = bench\\bench.db under the data folder. Point it at a clone's benchmarks\\bench.db to record straight into the repo's database, with no bench publish; absolute paths are cut to file names and secret-like values dropped either way.\nA file that is not there yet is created by the first finished run. Enter, Browse… or Run saves the path to settings.ini (BenchDb), where bench run and bench query read it too.";
                 LineEdit {
                     accessible-label: "bench-db";
                     text <=> AppState.bench_db;
@@ -629,7 +629,7 @@ export component BenchPage inherits ScrollView {
             LabeledField {
                 label_width <=> LabelColumn.bench;
                 label: "Run";
-                hint: "Every run is a campaign in the database above: each preset is written when it has been measured to the end, with its parameters, every repetition and the engine's output; a preset that fails or is cancelled is not recorded. Picking one here reloads its table; bench sweep campaigns are listed too, one column per value.";
+                hint: "Every run is a campaign in the database above: each preset is written when it has been measured to the end, with its parameters, every repetition and the engine's output; a preset that fails or is cancelled is not recorded. Picking one here reloads its table; bench run campaigns are listed too, one column per value.";
                 MappedComboBox {
                     enabled: !AppState.bench_running && AppState.bench_run_labels.length > 0;
                     labels: AppState.bench_run_labels;

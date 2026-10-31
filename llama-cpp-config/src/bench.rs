@@ -38,7 +38,7 @@
 //! different number from the same setting's at 2k) and that does not fit on a
 //! command line. A GUI text box next to it is a second prompt that no flag can
 //! reach, so the two would measure different things without saying so. Now
-//! `bench sweep` with no flag and the tab's Run button read the same bytes.
+//! `bench run` with no flag and the tab's Run button read the same bytes.
 //!
 //! *The shipped prompts are INSTALLED, read-only, and versioned.* They live
 //! in `paths::bench_prompts_dir()` (`share\benchmarks\prompts` beside the
@@ -437,7 +437,7 @@ pub struct Plan {
     pub n_gen: i32,
     /// The bench.db campaign the run lands in; `None` gives it one of its own.
     pub campaign: Option<record::Campaign>,
-    /// The versioned spec the run follows (`bench sweep --spec`); `None` is
+    /// The versioned spec the run follows (`bench run --spec`); `None` is
     /// recorded as `spec = custom`.
     pub spec: Option<spec::Tag>,
 }

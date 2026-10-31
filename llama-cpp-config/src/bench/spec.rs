@@ -1,4 +1,4 @@
-//! Versioned benchmark specifications (`bench sweep --spec
+//! Versioned benchmark specifications (`bench run --spec
 //! standard|standard-<X.Y>|<file>`). Only a published version of `standard`
 //! (`standard.versions`) is a spec run;
 //! a file whose rules are not one runs the same way but records every run as
@@ -429,7 +429,7 @@ pub fn run(spec: &Spec, base: &Opts, derive: &Derive) -> Result<String, String> 
     // derived from it: a flag given beside --spec, a swept key that a pass
     // sets (the leg's value goes over the pass's), a file that is no
     // published version.
-    let (prompts, derived) = prompts_and_derived(spec, derive, Some(&base.key))?;
+    let (prompts, derived) = prompts_and_derived(spec, derive, base.key.as_deref())?;
     if !derived.is_empty() {
         println!(
             "Not spec {}-{} as published ({}): every run records spec = custom, derived from it.",

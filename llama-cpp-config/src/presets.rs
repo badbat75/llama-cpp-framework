@@ -33,7 +33,7 @@
 //!      TRUNCATED. Nothing fails if you skip this.
 //!   9. LAUNCH-AFFECTING field only (one that changes what the child process
 //!      does: placement, batching, the cache, the drafter): add it to
-//!      `bench::sweep::SWEEPABLE` with the matching parser, so `bench sweep
+//!      `bench::sweep::SWEEPABLE` with the matching parser, so `bench run
 //!      --key <it>` can measure it. Nothing fails if you skip this either: the
 //!      key is simply refused, naming the ones that do work.
 //!
@@ -51,7 +51,7 @@
 //! makes it the set of ENABLED presets, and `presets.ini.disabled`
 //! (`paths::presets_disabled_ini`), the ones switched off in the Models tab.
 //! `load_all` is the enabled set, and it is what everything that talks to
-//! llama-server reads (the Benchmark tab, the snapshot restore, `bench sweep`,
+//! llama-server reads (the Benchmark tab, the snapshot restore, `bench run`,
 //! the opencode.json model list); only the Models tab and the CLI's `preset`
 //! commands see both (`load_listed`). The switch MOVES the section's raw text
 //! (`set_enabled`), comments and hand-edits included, instead of re-rendering
