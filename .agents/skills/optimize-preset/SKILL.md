@@ -43,6 +43,14 @@ Ask the user (once, only what is unknown):
   rank by **decode deep in the context** (the long prompt, ~40k tokens) and short-increment
   prefill; cold full-prompt prefill is secondary.
 
+Before any measurement after a reboot, check every GPU's host link: `journalctl -k -b | grep
+'available PCIe bandwidth'` names the narrowest link upstream of each device, and a bridge
+that trained below its width (e.g. a chipset uplink at x2 instead of x4) halves the bandwidth
+of everything behind it. It reads like a driver or build regression (a tensor split's prefill
+follows the slow card's host link); a full power-off retrains it. `tools/pcie-bench` measures
+the link (on Linux: `hipcc -O2 -x hip --offload-arch=gfx1201 pcie-bench.cpp`, one card per run
+with `HIP_VISIBLE_DEVICES`). Before blaming the software, repeat a run bench.db already holds.
+
 Record the baseline: one live run with the long prompt and one with the short prompt,
 plus the memory readout of section 3. Without a baseline there is no "faster".
 
@@ -54,7 +62,10 @@ apply.
 
 1. **Placement (VRAM, biggest decode effect).** Everything on the GPUs beats anything in
    RAM. Dense: `device` + `tensor-split` (layer split; the last device gets output head,
-   drafter logits and sampling: give it the card with spare VRAM). MoE: lowest
+   drafter logits and sampling: give it the card with spare VRAM). Under `split-mode tensor`
+   every matrix is cut by the vector and an uneven one inflates the buffers (model and KV,
+   several GiB over two cards) besides loading one card more: start from `1,1`; the load
+   log's `Meta()` lines sum both cards, so read each card's share from free memory. MoE: lowest
    `n-cpu-moe` that fits, then fine balance with partial `override-tensor` moves
    (`^output\.weight$=<dev>`, single `blk\.N\.ffn_*_exps` tensors). Keep the device order
    explicit; dropping `device` can reorder the cards.
@@ -194,7 +205,8 @@ llama-cpp-config bench sweep --preset <id> --key <key> --values '<a>,<b>,<c>' \
 - A live run now records `run_device` (free MiB per card after the first measured prompt,
   from a `--list-devices` probe beside the running server, shown in `bench query summary`'s
   "free MiB" column): enough to rank legs, but the probe's own contexts make it read
-  ~190 MiB low on CUDA and ~25 on ROCm, so near a margin threshold keep the sampler below.
+  ~190 MiB low on CUDA and ~25 on ROCm (~400 on each ROCm card under `split-mode tensor`), so
+  near a margin threshold keep the sampler below.
 - A sweep restarts the server per leg, so one readout after it shows only the last leg:
   run a background sampler of free memory per card (the section 3 commands every 2 s,
   into a file) and take each leg's minimum after its load phase.
@@ -230,7 +242,8 @@ llama-cpp-config bench sweep --preset <id> --key <key> --values '<a>,<b>,<c>' \
   `kernel.yama.ptrace_scope = 1`; launch the standalone server under the profiler instead
   (`rocprofv3 --kernel-trace --memory-copy-trace --output-format csv -d <dir> -- llama-server
   ...`), prefill once with `cache_prompt: true`, send the decode request, stop the server
-  with SIGINT so the trace is written, and analyse the window of the decode request from
+  with SIGINT so the trace is written (start it from a scratch directory: it leaves a
+  `.rocprofv3/` in the cwd), and analyse the window of the decode request from
   the trace's end: per card the union of kernel intervals over the wall time (on a layer
   split the cards run in series, so their shares add up), the top kernels, the copies by
   direction. The profiler slows decode ~12%; scale the shares before quoting them.

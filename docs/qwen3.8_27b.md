@@ -208,7 +208,6 @@ against `coder390-device-order-20261019`, `coder390-ubatch-20261020` and
 | `spec-draft-n-max` 2 to 5 at 100k+ tokens | `3` | the draft phase is ~20% of a decode step and acceptance moves decode by 20-30% between tasks (0.49 to 0.65 observed) | TBD |
 | the R9700 first on *Windows* at `53,13` | `52,14` (section 4) | does `53,13` buy margin on the 4070 (527 MiB free after a 115k prefill at `180224`) for free? | TBD |
 | the same HIP API log on *Linux* | n/a | is the Linux lead on the R9700-last placement the copy rate alone (section 4), or the kernels too? | TBD |
-| `tensor-split` under `split-mode tensor` on two R9700s | `35,31` (section 8) | the split that leaves ~500 MiB free on the x16 card with two 110k contexts at once, and its decode cost | TBD |
 | a pinned staging buffer in ggml's cross-runtime tensor copy | `malloc` staging (section 4) | with the R9700 second on *Windows*, the 2.5 s of staged hops left after patch 0004 (~5% of the prefill); with it first, the 0.3 s copies out of the R9700 | TBD |
 
 ## 7. Two R9700s on Linux (v0.8.0)
@@ -293,5 +292,28 @@ rename   = unset=layer, bench-prompt-long=43.7k tokens, bench-prompt-110k=110k t
   (layer split: 3906 MiB, and 1042 on the x4 card), so two 110k contexts at once run it out of
   memory in the HIP graph update (`prefill` and `prefill+decode`, three times; once the driver
   also moved 14 GB to GTT). Those legs are not recorded. The preset keeps `split-mode tensor`;
-  its `tensor-split` needs rebalancing for ~500 MiB free on the x16 card before two long
-  conversations can share it (a placeholder in section 6).
+  its `tensor-split` needed rebalancing before two long conversations could share it:
+  `1,1` does it (section 9).
+
+## 9. Two R9700s: tensor split balanced, image encoder and context (v0.8.0)
+
+The Swift preset of section 8 (`split-mode tensor`, internal AllReduce, `f16` KV,
+`parallel 2`, `ngram-map-k4v,draft-mtp` with `spec-draft-n-max 2`, `ubatch-size 1024`).
+Recorded without a spec (`custom`): temperature 0, 3 repetitions at 43.7k and 2 at 110k,
+output uncapped, prompt cache off. Free memory is the run's probe after the first prefill.
+
+| key | value | evidence |
+| --- | --- | --- |
+| `tensor-split` | `1,1` (was `35,31`) | under `split-mode tensor` an uneven split inflates the buffers: at 393216 the log reads 14238 MiB of model and 15360 of KV at `35,31` against 13229 and 12288 at `1,1`. Free after a 43.7k prefill: 0 / 7766 MiB at `35,31` (the x16 card full: two 110k prefills at once ran it out of memory, section 8) against 3624 / 2486 at `1,1` with the image encoder on the x4 card. Prefill 1126.4 ±1.9 against 1136.1 ±2.3, decode 59.3 ±0.1 against 59.8 ±0.2 (campaigns `swift27b-balance-mmproj-2xr9700-linux-20261031`, run 149, and `swift27b-driver-check-2xr9700-linux-20261031`, run 148) |
+| `mmproj-device` | the x4 card (was the CPU) | loads under the tensor split (on the x16 card it did not, section 8). At 425984, with one slot holding 115k tokens, a 3840x2160 image (4080 tokens) appended to a 115k prompt on the other slot succeeds; minimum free 2877 / 1032 MiB during it (by hand, sysfs sampler, not recorded) |
+| `ctx-size` | `425984` (212992 per slot, was 393216) | after a 115k prefill, alone and with both slots prefilling at once: 2476 / 1378 and 2460 / 1366 MiB free at 425984, 1364 / 226 and 1308 / 214 at 458752 (under the 500 MB margin); 524288 (262144 per slot) would need ~4 GiB more per card. Prefill 961.6 ±2.3 against 962.0 ±1.4, decode 51.4 at both (campaign `swift27b-ctx-tensor-2xr9700-linux-20261031`) |
+
+The tensor split stages every AllReduce through host memory, so its prefill follows the
+x4 card's host link. On one boot the CPU-to-chipset link trained at Gen4 x2: the x4 card
+moved 3.5 GB/s each way instead of 7.0, and the same preset prefilled 785.6 ±0.5 against
+1136.1 ±2.3 after a power cycle restored x4 (decode 58.0 against 59.8; campaign
+`swift27b-driver-check-2xr9700-linux-20261031`, runs 147 and 148). Under `rocprofv3` at x2,
+the cards computed for 21 to 26% of the prefill's wall time and ~35 s of its 67 s went to
+host copies of the x4 card. The kernel's boot log names the link width (`available PCIe
+bandwidth ... limited by ... x4 link`): read it before measuring a tensor split.
+
