@@ -511,6 +511,9 @@ export global AppState {
     in-out property <bool> bench_temp_default: false;
     in-out property <string> bench_temp: "0";
     in-out property <string> bench_max_tokens;
+    // Live only: "single", or one request per slot of the preset at once
+    // ("prefill", "decode", "prefill+decode"): bench::Concurrency.
+    in-out property <string> bench_concurrency: "single";
     in-out property <string> bench_reps;
     in-out property <string> bench_prompt_lens;
     in-out property <string> bench_depths;

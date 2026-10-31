@@ -52,6 +52,11 @@ pub fn read_all(path: &Path) -> Vec<Section> {
     let Ok(text) = fs::read_to_string(path) else {
         return Vec::new();
     };
+    parse_sections(&text)
+}
+
+/// `read_all` over text already in memory.
+pub fn parse_sections(text: &str) -> Vec<Section> {
     let mut out: Vec<Section> = Vec::new();
     let mut cur: Option<Section> = None;
     for line in text.lines() {

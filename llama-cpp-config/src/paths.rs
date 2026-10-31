@@ -126,7 +126,7 @@ pub fn bench_prompt_file() -> PathBuf {
 /// "does this setting still win where I actually work", which is a different
 /// question from the one the default answers, and usually the one that matters.
 pub fn bench_long_prompt_file() -> PathBuf {
-    config_dir().join("bench-prompt-long.txt")
+    config_dir().join(crate::bench::SHIPPED_PROMPTS[0].0)
 }
 
 /// The llama-server log file. ONE home for the path: `runstate::start()`

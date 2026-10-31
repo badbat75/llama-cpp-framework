@@ -998,10 +998,43 @@ pub fn run(opts: &Opts) -> Result<String, String> {
 /// A leg's run label: `key=value`, plus the concurrency scenario when it is
 /// not `single`, so one campaign can hold the same value under several.
 fn leg_label(opts: &Opts, value: &str) -> String {
-    match opts.plan.concurrency {
-        super::Concurrency::Single => format!("{}={value}", opts.key),
-        c => format!("{}={value} concurrency={}", opts.key, c.as_str()),
+    let mut label = format!("{}={value}", opts.key);
+    if let Some(tag) = &opts.plan.spec {
+        label.push_str(&format!(" pass={}", tag.pass));
     }
+    if opts.plan.concurrency != super::Concurrency::Single {
+        label.push_str(&format!(" concurrency={}", opts.plan.concurrency.as_str()));
+    }
+    label
+}
+
+/// Hold `key` of `preset` for a temporary write (a spec pass's override): a
+/// pending marker carrying the value to put back, written BEFORE the change,
+/// so an interrupted run is reported (and restorable) like an interrupted
+/// sweep of that key. Returns the current value and the marker.
+pub fn hold_key(preset: &str, key: &str) -> Result<(String, PathBuf), String> {
+    setter(key)?;
+    let original = current_value(preset, key);
+    let stamp = format!("{}-{key}", super::stamp(super::now_secs()));
+    let dir = super::bench_dir();
+    std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
+    let marker = pending_path(&stamp);
+    let header = serde_json::json!({
+        "kind": "sweep",
+        "stamp": stamp,
+        "preset": preset,
+        "key": key,
+        "restore": original,
+        "override": true,
+    });
+    std::fs::write(&marker, header.to_string())
+        .map_err(|e| format!("cannot write {}: {e}", marker.display()))?;
+    Ok((original, marker))
+}
+
+/// Write one key of `preset` (`unset` removes it).
+pub fn set_key(preset: &str, key: &str, value: &str) -> Result<(), String> {
+    write_value(preset, setter(key)?, value)
 }
 
 /// The plan one leg runs: the caller's, pinned to the swept preset.
@@ -1009,6 +1042,22 @@ fn leg_plan(opts: &Opts, preset: &str) -> Plan {
     Plan {
         presets: vec![preset.to_string()],
         ..opts.plan.clone()
+    }
+}
+
+/// What `--concurrency all` runs for `preset`: one request, then, when the
+/// preset has two slots or more (absent `parallel` = llama-server's auto 4),
+/// every concurrent scenario at N = its `parallel`.
+pub fn all_scenarios(preset: &str) -> Result<Vec<Concurrency>, String> {
+    let n = load_one(preset)?.parallel.unwrap_or(super::AUTO_PARALLEL);
+    Ok(scenarios_for(n))
+}
+
+fn scenarios_for(parallel: i32) -> Vec<Concurrency> {
+    if parallel >= 2 {
+        Concurrency::ALL.to_vec()
+    } else {
+        vec![Concurrency::Single]
     }
 }
 

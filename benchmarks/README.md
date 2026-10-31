@@ -37,6 +37,59 @@ included, and refuses a campaign already here. To record straight into this file
 point the configurator at it: `BenchDb = <clone>/benchmarks/bench.db` in its
 `settings.ini`. Before committing, check the file for credentials (`strings bench.db`).
 
+## Specs: the method, versioned
+
+A number is only comparable with another measured the same way. `specs\` holds that way
+written down: `standard.ini` is the framework's method, an INI file with the prompts (the
+shipped `bench-prompt-43k.txt` and `bench-prompt-110k.txt`), the output cap (none) and
+the passes, each with its temperature, repetitions, concurrency and the preset keys it
+overrides for every leg. Version 1 has two passes:
+
+| pass | temperature | speculator | concurrency | reps | measures |
+|---|---|---|---|---:|---|
+| `engine` | 0 | off (`spec-type=none`) | single | 3 | the bare engine: deterministic text, so only speed differs between legs |
+| `real` | the preset's | the preset's | `all`: single, then every concurrent scenario at N = `parallel` | 5 | what the preset serves; each repetition writes a different text, so compare means |
+
+Greedy text is what a drafter predicts best: a temp-0 run with the speculator on reads
+far faster than the preset ever serves, which is why `engine` turns it off and `real`
+keeps the preset's sampling. The off switch is for the benchmark only; the preset keeps
+its speculator.
+
+```sh
+llama-cpp-config bench sweep --spec standard --preset <id> --key split-mode --values 'unset,tensor'
+```
+
+`standard` is compiled into the configurator from `specs/standard.ini`, so an installed
+machine needs no checkout; `--spec <file>` runs a spec of your own. Every benchmark (a
+sweep with or without a spec, and the Benchmark tab) holds the GPU lock for its whole
+length: an exclusive lock on `$LLAMA_FW_GPU_LOCK`, default `gpu.lock` in the bench
+directory (`flock` on Linux, so `flock -o <same file> <job>` keeps other GPU jobs out),
+and on Linux it also waits until nothing but llama-server holds `/dev/kfd` or
+`/dev/nvidia*`. The tab refuses instead of waiting. Every run
+records `spec` (the Name), `spec-version`, `spec-sha256` (of its rules in canonical form,
+`bench::spec::canonical`: comments and layout do not count, a changed rule does) and `spec-pass`; the leg label adds
+`pass=<name>`. A sweep without `--spec` records `spec = custom`.
+
+**Changing a rule means bumping `Version`**, never editing version 1 in place: runs of two
+versions are two methods. The prompts are part of the method: each is listed as
+`<file>@<sha256 of its text>` (the digest `bench query prompts` shows), a prompt that no longer
+matches is refused before the first leg, and a test pins `standard.ini` to the prompts the
+binary ships. A new prompt is a new spec version. `standard` needs a slot context of about
+116k tokens (the 110k prompt plus an uncapped answer: `ctx-size` about 232k at `parallel = 2`)
+and takes about 4 to 8 hours for a two-value sweep on two R9700s with the dense 27B: an
+overnight job, not a quick screen (a screen is a spec of its own). A sweep cannot vary a key
+a pass overrides (`--key spec-type` is refused). `specs/standard.versions` lists every
+published version with its digest, and a test fails when `standard.ini`'s rules do not match
+the line of its `Version`: a rule changed without a bump, or a published version edited in
+place, cannot reach a build. The procedure for changing a spec, and what to check, is the
+`bench-spec` skill (`.agents/skills/bench-spec/SKILL.md`); its section 5 is the review every change gets before it is
+committed (the `spec-reviewer` subagent of Claude Code and OpenCode runs it). A spec of your own is a file with its own `Name` (anything but
+`custom`). Compare like with like:
+
+```sh
+llama-cpp-config bench query summary --db benchmarks/bench.db --param spec-version=1 --param spec-pass=real
+```
+
 ## Querying
 
 `llama-cpp-config bench query` reads the working database, or this one with

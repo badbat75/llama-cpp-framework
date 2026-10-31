@@ -94,9 +94,11 @@ use crate::server_cfg::ServerConfig;
 pub mod db;
 pub mod env;
 pub mod exec;
+pub mod gpu_lock;
 pub mod host;
 pub mod query;
 pub mod record;
+pub mod spec;
 pub mod sweep;
 
 // ── Defaults ─────────────────────────────────────────────────────────────
@@ -139,7 +141,7 @@ why the cost of processing a prompt grows with its length, and what a speculativ
 draft model changes about the decode step. Write about 200 words of plain prose.";
 
 /// The long-context prompt, shipped beside the short one and seeded as
-/// `config\bench-prompt-long.txt`: ~169k characters, roughly 40k tokens.
+/// `config\bench-prompt-43k.txt`: ~169k characters, 43.7k tokens on Qwen3.8.
 ///
 /// It is here because the default prompt measures a regime nobody works in. A
 /// benchmark ranks settings in the regime it measured, and 230 characters is
@@ -152,7 +154,26 @@ draft model changes about the decode step. Write about 200 words of plain prose.
 /// Compiled in rather than installed, for the same reason `DEFAULT_PROMPT` is:
 /// see the module header. It is a frozen snapshot of this repo's own docs;
 /// `assets\README.md` says why it must not be regenerated when they change.
-pub const LONG_PROMPT: &str = include_str!("../assets/bench-prompt-long.txt");
+pub const LONG_PROMPT: &str = include_str!("../assets/bench-prompt-43k.txt");
+
+/// The deep-context prompt (~404k characters, 110k tokens on Qwen3.8): a
+/// larger frozen snapshot of the same docs plus some of the configurator's
+/// sources, for the regime where a setting's cost grows with the context
+/// (`split-mode tensor` gains +46% decode at 43k and +69% at 110k).
+pub const PROMPT_110K: &str = include_str!("../assets/bench-prompt-110k.txt");
+
+/// The code-rewrite prompt (~14k characters): a Rust file to reproduce with
+/// one rename, the leg where an n-gram drafter's gain shows (the output copies
+/// the context).
+pub const CODE_PROMPT: &str = include_str!("../assets/bench-prompt-code.txt");
+
+/// Every prompt the binary seeds by FILE NAME (see `seed_for`), beside the
+/// short default. Files in `config\`, never rewritten once they exist.
+pub const SHIPPED_PROMPTS: [(&str, &str); 3] = [
+    ("bench-prompt-43k.txt", LONG_PROMPT),
+    ("bench-prompt-110k.txt", PROMPT_110K),
+    ("bench-prompt-code.txt", CODE_PROMPT),
+];
 
 /// How much of the prompt the pasteable preview shows before eliding. The
 /// preview is a request body meant to be read at a glance and pasted into
@@ -331,17 +352,17 @@ pub fn load_prompt_file(path: &std::path::Path) -> Result<String, String> {
 
 /// Which shipped prompt seeds this path, decided by FILE NAME.
 ///
-/// The long prompt has to be restorable: delete `bench-prompt-long.txt` and the
+/// A shipped prompt has to be restorable: delete `bench-prompt-43k.txt` and the
 /// next seed must put the long text back, not quietly fill the file with the
 /// 230-character default and leave a benchmark measuring the shallow regime
 /// under a name that promises the deep one. Any other name is a file the user
 /// named, and the short prompt is the better thing to start it from.
 fn seed_for(path: &std::path::Path) -> &'static str {
-    let long = crate::paths::bench_long_prompt_file();
-    match (path.file_name(), long.file_name()) {
-        (Some(a), Some(b)) if a == b => LONG_PROMPT,
-        _ => DEFAULT_PROMPT,
-    }
+    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+    SHIPPED_PROMPTS
+        .iter()
+        .find(|(file, _)| *file == name)
+        .map_or(DEFAULT_PROMPT, |(_, text)| text)
 }
 
 /// The configured prompt file, seeded from the binary when it does not exist
@@ -370,7 +391,9 @@ pub fn ensure_prompt_file(path: &std::path::Path) -> &std::path::Path {
 /// regime is one click rather than a documentation lookup.
 pub fn ensure_shipped_prompt_files() {
     ensure_prompt_file(&crate::paths::bench_prompt_file());
-    ensure_prompt_file(&crate::paths::bench_long_prompt_file());
+    for (file, _) in SHIPPED_PROMPTS {
+        ensure_prompt_file(&crate::paths::config_dir().join(file));
+    }
 }
 
 /// The prompt's identity, for the report and for the tab's readout.
@@ -443,6 +466,9 @@ pub struct Plan {
     pub n_gen: i32,
     /// The bench.db campaign the run lands in; `None` gives it one of its own.
     pub campaign: Option<record::Campaign>,
+    /// The versioned spec the run follows (`bench sweep --spec`); `None` is
+    /// recorded as `spec = custom`.
+    pub spec: Option<spec::Tag>,
 }
 
 impl Default for Plan {
@@ -464,6 +490,7 @@ impl Default for Plan {
             depths: parse_int_list(DEFAULT_DEPTHS),
             n_gen: DEFAULT_GEN,
             campaign: None,
+            spec: None,
         }
     }
 }
@@ -2295,9 +2322,11 @@ mod tests {
     #[test]
     fn the_long_prompts_name_seeds_the_long_prompt() {
         let dir = tempfile::tempdir().unwrap();
-        let long = dir.path().join("bench-prompt-long.txt");
-        ensure_prompt_file(&long);
-        assert_eq!(std::fs::read_to_string(&long).unwrap(), LONG_PROMPT);
+        for (file, text) in SHIPPED_PROMPTS {
+            let shipped = dir.path().join(file);
+            ensure_prompt_file(&shipped);
+            assert_eq!(std::fs::read_to_string(&shipped).unwrap(), text);
+        }
 
         let other = dir.path().join("my-own.txt");
         ensure_prompt_file(&other);
@@ -2316,11 +2345,14 @@ mod tests {
             "the long prompt is meant to be tens of thousands of tokens, got {}",
             LONG_PROMPT.chars().count()
         );
-        assert_eq!(
-            normalize_prompt(LONG_PROMPT),
-            LONG_PROMPT,
-            "the checked-in asset must already be LF and BOM-free"
-        );
+        assert!(PROMPT_110K.chars().count() > LONG_PROMPT.chars().count() * 2);
+        for (file, text) in SHIPPED_PROMPTS {
+            assert_eq!(
+                normalize_prompt(text),
+                text,
+                "the checked-in asset {file} must already be LF and BOM-free"
+            );
+        }
     }
 
     /// The preview elides a long prompt; the REQUEST never does. One formatter

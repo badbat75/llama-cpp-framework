@@ -130,7 +130,7 @@ export component BenchPage inherits ScrollView {
             if AppState.bench_is_live : LabeledField {
                 label_width <=> LabelColumn.bench;
                 label: "Prompt file";
-                hint: "The file whose text is sent verbatim as a single user message. It is re-sent whole on every repetition with the prefix cache disabled, so each one is a cold prefill, which is what the prefill row measures.\nTwo prompts ship, side by side in config\\: bench-prompt.txt (230 chars, the default) and bench-prompt-long.txt (~40k tokens). Use the long one when the question is whether a setting still wins at the context you actually work at: the ranking of a knob can differ from what the short prompt says.\nRead fresh when Run starts, so editing it while this window is open is enough: Edit opens it in your default text editor, which is also what makes a very long prompt practical.\nSame file the CLI uses with no --prompt-file, so a scripted `bench sweep` and this tab measure the same thing.";
+                hint: "The file whose text is sent verbatim as a single user message. It is re-sent whole on every repetition with the prefix cache disabled, so each one is a cold prefill, which is what the prefill row measures.\nFour prompts ship, side by side in config\\: bench-prompt.txt (230 chars, the default), bench-prompt-43k.txt and bench-prompt-110k.txt (43.7k and 110k tokens) and bench-prompt-code.txt (a code rewrite, where an n-gram drafter's gain shows). Use a long one when the question is whether a setting still wins at the context you actually work at: the ranking of a knob can differ from what the short prompt says.\nRead fresh when Run starts, so editing it while this window is open is enough: Edit opens it in your default text editor, which is also what makes a very long prompt practical.\nSame file the CLI uses with no --prompt-file, so a scripted `bench sweep` and this tab measure the same thing.";
                 LineEdit {
                     accessible-label: "bench-prompt-file";
                     text <=> AppState.bench_prompt_file;
@@ -180,12 +180,25 @@ export component BenchPage inherits ScrollView {
             if AppState.bench_is_live : LabeledField {
                 label_width <=> LabelColumn.bench;
                 label: "Max output tokens";
-                hint: "Cap on the generated answer (--max_tokens on the request). Long enough that the decode rate settles, short enough that a slow model does not turn one repetition into minutes.";
+                hint: "Cap on the generated answer (--max_tokens on the request). Long enough that the decode rate settles, short enough that a slow model does not turn one repetition into minutes.\n0 = no cap: the request carries no max_tokens and the model stops on its own (or at the preset's n-predict), so how long it talks is part of the result.";
                 LineEdit {
                     accessible-label: "bench-max-tokens";
                     text <=> AppState.bench_max_tokens;
                     input-type: InputType.number;
                     edited => { AppState.bench_changed(); }
+                }
+            }
+            if AppState.bench_is_live : LabeledField {
+                label_width <=> LabelColumn.bench;
+                label: "Concurrency";
+                hint: "single: one request per repetition.\nThe others send one request per slot of the preset AT ONCE, N = the preset's parallel (absent = llama-server's auto 4; it must be at least 2), each pinned to its slot:\nprefill: all N prefill the whole prompt, then decode together.\ndecode: every slot is primed with the prompt first, so all N only decode.\nprefill+decode: N-1 primed slots decode while the last one prefills.\nThe table adds prefill total and decode total, the throughput of the N requests together.";
+                SegmentedControl {
+                    options: ["single", "prefill", "decode", "prefill+decode"];
+                    current: AppState.bench_concurrency;
+                    activated(v) => {
+                        AppState.bench_concurrency = v;
+                        AppState.bench_changed();
+                    }
                 }
             }
 

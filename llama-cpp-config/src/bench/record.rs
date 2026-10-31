@@ -455,6 +455,15 @@ pub fn plan_params(plan: &Plan) -> Vec<(String, String)> {
         ("mode".to_string(), plan.mode.as_str().to_string()),
         ("reps".to_string(), plan.reps.to_string()),
     ];
+    match &plan.spec {
+        None => out.push(("spec".into(), "custom".into())),
+        Some(t) => {
+            out.push(("spec".into(), t.name.clone()));
+            out.push(("spec-version".into(), t.version.clone()));
+            out.push(("spec-sha256".into(), t.sha256.clone()));
+            out.push(("spec-pass".into(), t.pass.clone()));
+        }
+    }
     match plan.mode {
         Mode::Live => {
             out.push((
@@ -733,12 +742,26 @@ mod tests {
     #[test]
     fn plan_params_follow_the_mode() {
         let live = Plan {
-            prompt_file: Some(PathBuf::from("bench-prompt-long.txt")),
+            prompt_file: Some(PathBuf::from("bench-prompt-43k.txt")),
             ..Plan::default()
         };
         let p = plan_params(&live);
-        assert!(p.contains(&("prompt".into(), "bench-prompt-long".into())));
+        assert!(p.contains(&("prompt".into(), "bench-prompt-43k".into())));
         assert!(p.contains(&("temp".into(), "0".into())));
+        assert!(p.contains(&("spec".into(), "custom".into())));
+        let tagged = Plan {
+            spec: Some(super::super::spec::Tag {
+                name: "standard".into(),
+                version: "1".into(),
+                sha256: "abc".into(),
+                pass: "engine".into(),
+            }),
+            ..live.clone()
+        };
+        let p = plan_params(&tagged);
+        assert!(p.contains(&("spec".into(), "standard".into())));
+        assert!(p.contains(&("spec-version".into(), "1".into())));
+        assert!(p.contains(&("spec-pass".into(), "engine".into())));
         assert!(!p.iter().any(|(k, _)| k == "depths"));
         let syn = Plan {
             mode: Mode::Synthetic,

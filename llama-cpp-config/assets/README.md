@@ -6,10 +6,10 @@ are seeds: an existing file on disk is never overwritten, so a user's edits
 survive every upgrade. See `src\bench.rs` for why the installer does not place
 them in `bin\` instead.
 
-## `bench-prompt-long.txt`
+## `bench-prompt-43k.txt`
 
 The long-context prompt for the live benchmark: **169,289 characters, roughly
-40k tokens**, seeded as `config\bench-prompt-long.txt` beside the short default.
+40k tokens** (43,730 on Qwen3.8), seeded as `config\bench-prompt-43k.txt` beside the short default.
 
 It exists because a benchmark ranks settings **in the regime it measured**, and
 the default prompt is 230 characters, i.e. a regime nobody works in. On this
@@ -42,3 +42,16 @@ Realistic technical prose was chosen over generated filler on purpose: prefill
 timing barely cares about content, but decode does, and speculative acceptance
 cares a great deal (it is dominated by how predictable the text is). Filler
 would benchmark a workload the machine never runs.
+
+## `bench-prompt-110k.txt` and `bench-prompt-code.txt`
+
+`bench-prompt-110k.txt` (404,098 characters, 110k tokens on Qwen3.8) is the same
+kind of frozen snapshot, taken on 2026-10-20 and larger: the agent guides, the
+per-GPU and per-model references, the build pipeline guide, the configurator's
+README and some of its sources, then one question. It measures the regime where a
+setting's cost grows with the context, which 43k only hints at. It also holds the
+one sanctioned em-dash, quoted inside `AGENTS.md`, and the same three rules apply.
+
+`bench-prompt-code.txt` (14,251 characters) asks for a Rust file back with one
+rename: the output copies the context, which is where an n-gram drafter pays and
+prose shows nothing.

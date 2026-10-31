@@ -212,9 +212,18 @@ pub struct BenchSweep {
     /// prefill the whole prompt), `decode` (every slot primed with the prompt
     /// first, so all N only decode), `prefill+decode` (N-1 primed slots decode
     /// while the last one prefills). The leg's run label ends in
-    /// `concurrency=<scenario>`.
-    #[arg(long, value_parser = ["single", "prefill", "decode", "prefill+decode"])]
+    /// `concurrency=<scenario>`. `all` = single, then every concurrent
+    /// scenario when the preset has two slots or more, one campaign.
+    #[arg(long, value_parser = ["single", "prefill", "decode", "prefill+decode", "all"])]
     pub concurrency: Option<String>,
+    /// Live only: run a versioned benchmark spec: `standard` (the framework's,
+    /// built in; source `benchmarks/specs/standard.ini`) or an INI file of
+    /// your own. Its prompts (pinned by sha256), passes (temperature,
+    /// repetitions, concurrency, preset keys overridden for the pass) and
+    /// output cap, all in one campaign. Every run records the spec's name,
+    /// version and sha256; a sweep without it records `spec = custom`.
+    #[arg(long, conflicts_with_all = ["prompt", "prompt_file", "temp", "max_tokens", "concurrency", "reps"])]
+    pub spec: Option<String>,
     /// Synthetic only: prompt lengths, comma-separated.
     #[arg(long)]
     pub prompt_lens: Option<String>,
@@ -632,7 +641,8 @@ fn run_bench(c: BenchCmd) -> Result<()> {
     // No flag = no cap (unlike the tab, whose field always holds a number):
     // how long the model talks under a setting is part of what a sweep shows.
     plan.max_tokens = a.max_tokens.unwrap_or(0);
-    if let Some(c) = a.concurrency.as_deref() {
+    let concurrency_all = a.concurrency.as_deref() == Some("all");
+    if let Some(c) = a.concurrency.as_deref().filter(|c| *c != "all") {
         plan.concurrency = bench::Concurrency::from_str(c)
             .ok_or_else(|| anyhow::anyhow!("--concurrency {c}: unknown scenario"))?;
     }
@@ -664,7 +674,47 @@ fn run_bench(c: BenchCmd) -> Result<()> {
         campaign: a.campaign.unwrap_or_default(),
         question: a.question.unwrap_or_default(),
     };
-    bench::sweep::run(&opts).map_err(|e| anyhow::anyhow!(e))?;
+    // Loaded before the lock, so a broken spec fails at once instead of after
+    // a wait for the cards.
+    let spec = match a.spec.as_deref() {
+        Some(s) => Some(bench::spec::load(s).map_err(|e| anyhow::anyhow!(e))?),
+        None => None,
+    };
+    // For the whole sweep, every pass and scenario included: another
+    // benchmark on the same cards would be measured as this one's.
+    let _gpu = bench::gpu_lock::acquire(|m| println!("{m}")).map_err(|e| anyhow::anyhow!(e))?;
+    if let Some(spec) = &spec {
+        bench::spec::run(spec, &opts).map_err(|e| anyhow::anyhow!(e))?;
+        return Ok(());
+    }
+    if !concurrency_all {
+        bench::sweep::run(&opts).map_err(|e| anyhow::anyhow!(e))?;
+        return Ok(());
+    }
+    // One campaign for every scenario: name it now, or each sweep would
+    // stamp its own.
+    let campaign = if opts.campaign.is_empty() {
+        format!("sweep-{}", bench::stamp(bench::now_secs()))
+    } else {
+        opts.campaign.clone()
+    };
+    let mut problems = Vec::new();
+    for c in bench::sweep::all_scenarios(&opts.preset).map_err(|e| anyhow::anyhow!(e))? {
+        let o = bench::sweep::Opts {
+            plan: bench::Plan {
+                concurrency: c,
+                ..opts.plan.clone()
+            },
+            campaign: campaign.clone(),
+            ..opts.clone()
+        };
+        if let Err(e) = bench::sweep::run(&o) {
+            problems.push(format!("concurrency {}: {e}", c.as_str()));
+        }
+    }
+    if !problems.is_empty() {
+        anyhow::bail!(problems.join("; "));
+    }
     Ok(())
 }
 

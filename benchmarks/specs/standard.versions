@@ -1,0 +1,9 @@
+# Published versions of standard.ini: <Version> <sha256 of its canonical form>.
+#
+# One line per version, appended when a version is published and never edited:
+# a test (bench::spec) fails when standard.ini's rules do not match the line of
+# its Version, so a rule changed without a new Version, or a published version
+# changed in place, cannot reach a build. The digest covers the rules
+# (bench::spec::canonical), not comments or layout. Procedure:
+# .agents/skills/bench-spec/SKILL.md.
+1 44b67049aefe9f7cca2ffbc33b85b882f7325575e0abef93fcc2f2b1d3684da4

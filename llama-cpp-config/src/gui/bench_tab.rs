@@ -455,7 +455,7 @@ fn invalid_numbers(s: &AppState, mode: Mode) -> Vec<String> {
         Mode::Live => out.extend(ini::int_problem(
             "Max output tokens",
             s.get_bench_max_tokens().as_str(),
-            &ini::INT_POSITIVE,
+            &ini::INT_NON_NEGATIVE,
         )),
         Mode::Synthetic => {
             out.extend(bench::int_list_problem(
@@ -508,11 +508,13 @@ fn plan_from_ui(app: &AppWindow, state: &Rc<RefCell<State>>) -> Plan {
             Some(ini::parse_float(s.get_bench_temp().as_str()).unwrap_or(0.0))
         },
         max_tokens: int(s.get_bench_max_tokens(), bench::DEFAULT_MAX_TOKENS),
-        concurrency: bench::Concurrency::Single,
+        concurrency: bench::Concurrency::from_str(s.get_bench_concurrency().as_str())
+            .unwrap_or_default(),
         prompt_lens: bench::parse_int_list(s.get_bench_prompt_lens().as_str()),
         depths: bench::parse_int_list(s.get_bench_depths().as_str()),
         n_gen: int(s.get_bench_n_gen(), bench::DEFAULT_GEN),
         campaign: None,
+        spec: None,
     }
 }
 
@@ -544,10 +546,24 @@ fn start_run(app: &AppWindow, state: &Rc<RefCell<State>>, plan: Plan) {
     s.set_bench_progress(SharedString::from("Starting…"));
     set_status(app, "Benchmark running…".into(), false);
 
+    // Held until the run is done; refused rather than waited for, so the
+    // window never hangs on a sweep running in a terminal.
+    let gpu = match bench::gpu_lock::try_acquire() {
+        Ok(g) => std::sync::Arc::new(std::sync::Mutex::new(Some(g))),
+        Err(e) => {
+            s.set_bench_running(false);
+            s.set_bench_progress(SharedString::default());
+            set_status(app, format!("Not run: {e}."), true);
+            return;
+        }
+    };
     let order = plan.presets.clone();
     let mode = plan.mode;
     let app_weak = app.as_weak();
     let handle = exec::spawn(plan, move |event| {
+        if matches!(event, exec::Event::Done(_)) {
+            gpu.lock().map(|mut g| g.take()).ok();
+        }
         let app_weak = app_weak.clone();
         let order = order.clone();
         slint::invoke_from_event_loop(move || {
