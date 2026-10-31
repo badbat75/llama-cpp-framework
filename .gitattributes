@@ -2,11 +2,12 @@
 # checkout of one does not apply. Keep them byte-identical to upstream.
 *.patch text eol=lf
 
-# The shipped benchmark prompts are compiled INTO the binary (`include_str!`),
-# and a benchmark prompt that differs between two checkouts is two prompts. A
-# CRLF checkout would change every line ending, hence the digest the report
-# identifies the prompt by, hence the tokenization. Pin them to LF.
-llama-cpp-config/assets/*.txt text eol=lf
+# The benchmark prompts and specs are pinned by sha256 (a spec pins its
+# prompts, standard.versions pins the spec), and a benchmark prompt that
+# differs between two checkouts is two prompts. A CRLF checkout would change
+# every line ending, hence the digest, hence the tokenization. Pin them to LF.
+benchmarks/prompts/* text eol=lf
+benchmarks/specs/* text eol=lf
 
 # The icon font is compiled into the binary as is: never a text conversion.
 *.ttf binary

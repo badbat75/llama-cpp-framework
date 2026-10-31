@@ -124,7 +124,7 @@ Margins to keep (free memory after the prefill):
 
 ```bash
 llama-cpp-config bench sweep --preset <id> --key <key> --values '<a>,<b>,<c>' \
-  --reps 3 --prompt-file ~/.config/llama.cpp/bench-prompt-43k.txt \
+  --reps 3 --prompt-file /opt/llama.cpp/share/benchmarks/prompts/bench-prompt-43k-1.0.txt \
   --campaign <model>-<key>-<yyyymmdd> --question "<what this answers>"
 ```
 

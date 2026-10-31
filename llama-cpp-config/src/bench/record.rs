@@ -461,7 +461,7 @@ pub fn plan_params(plan: &Plan) -> Vec<(String, String)> {
         // what it started from and what it changed.
         Some(t) if !t.derived.is_empty() => {
             out.push(("spec".into(), "custom".into()));
-            out.push(("spec-derived-from".into(), format!("{} v{}", t.name, t.version)));
+            out.push(("spec-derived-from".into(), format!("{}-{}", t.name, t.version)));
             out.push(("spec-derived-sha256".into(), t.sha256.clone()));
             out.push(("spec-derived-fields".into(), t.derived.join(",")));
             out.push(("spec-pass".into(), t.pass.clone()));
@@ -777,7 +777,7 @@ mod tests {
         derived.spec.as_mut().unwrap().derived = vec!["reps".into()];
         let p = plan_params(&derived);
         assert!(p.contains(&("spec".into(), "custom".into())));
-        assert!(p.contains(&("spec-derived-from".into(), "standard v1".into())));
+        assert!(p.contains(&("spec-derived-from".into(), "standard-1".into())));
         assert!(p.contains(&("spec-derived-fields".into(), "reps".into())));
         assert!(!p.iter().any(|(k, _)| k == "spec-version"));
         let syn = Plan {

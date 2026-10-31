@@ -16,8 +16,9 @@ published version means.
 - `benchmarks/README.md`, "Specs: the method, versioned": the passes of `standard` and why.
 - `llama-cpp-config/src/bench/spec.rs`: the format, what `parse` refuses, `canonical` (what
   the digest covers), and the tests that freeze the repo's spec.
-- `benchmarks/specs/standard.ini` and `standard.versions`.
-- `llama-cpp-config/assets/README.md`: why a shipped prompt is a frozen snapshot.
+- `benchmarks/specs/standard-<X.Y>.ini` (one file per published version) and
+  `standard.versions`.
+- `benchmarks/prompts/README.md`: what each shipped prompt is, and why it is a frozen snapshot.
 - The `optimize-preset` skill, section 4: the measurement rules a spec encodes.
 
 ## 1. The format
@@ -25,7 +26,7 @@ published version means.
 ```ini
 [Spec]
 Name = standard
-Version = 1
+Version = 1.0
 Prompts = <file>@<sha256 of its text>, <file>@<sha256>
 MaxTokens = 0
 
@@ -37,14 +38,20 @@ Reps = 3
 ```
 
 - `Name`: anything but `custom` (what a sweep without `--spec` records).
-- `Prompts`: a bare name is a file in the config directory, seeded when it is a shipped one.
+- `Version`: `X.Y`, the same as the file name's (`standard-1.0.ini`).
+- `Prompts`: a bare name is a shipped prompt (`benchmarks/prompts/`, installed as
+  `share/benchmarks/prompts/`), else a file in the config directory. A shipped prompt's name
+  ends in its version (`bench-prompt-code-1.0.json`); `.txt` is one user message, `.json` a
+  conversation with tools (`{"messages": [...], "tools": [...]}`).
 - `MaxTokens`: 0 = no cap.
 - One `[Pass.<name>]` per pass, run in file order, once per prompt. `Temp` is a number or
   `preset`; `Override` keys are written to the preset for the pass and put back after it;
   `Concurrency` is `single`, `prefill`, `decode`, `prefill+decode` or `all`.
 
 Comments are whole lines (`;`), never after a value. `bench sweep --spec standard` runs the
-compiled-in copy of `standard.ini`; `--spec <file>` runs any other, but only a published
+newest published version and `--spec standard-<X.Y>` that one (every version stays installed,
+read in place from `share/benchmarks/specs/`, never copied into the user's config; the binary
+carries only `standard.versions`); `--spec <file>` runs any other, but only a published
 `standard` version is a spec run: a file whose rules are not one, a method flag beside `--spec`,
 or a swept key a pass overrides records every run as `spec = custom` with `spec-derived-from`,
 `spec-derived-sha256` and `spec-derived-fields`.
@@ -56,12 +63,14 @@ a personal method, not a version: to make it the framework's, follow section 4.
 | change | what it takes |
 |---|---|
 | a comment, wording, layout | nothing: the digest ignores them (check that `cargo test` still passes) |
-| any rule: a pass, `Temp`, `Reps`, `Concurrency`, `Override`, `MaxTokens`, the prompt list or a pinned digest | a **new Version** of the same spec |
-| a different purpose (another workload, a quick screen, a drafter-only method) | a **new spec** (new `Name`, Version 1), not a version of `standard` |
-| a prompt's text | a **new prompt file** (new name) and a new spec version pinning it; never edit or regenerate a shipped prompt in place |
+| any rule: a pass, `Temp`, `Reps`, `Concurrency`, `Override`, `MaxTokens`, the prompt list or a pinned digest | a **new version**: a new file `standard-<X.Y>.ini` beside the old one, which stays |
+| a different purpose (another workload, a quick screen, a drafter-only method) | a **new spec** (new `Name`, Version 1.0), not a version of `standard` |
+| a prompt's text | a **new prompt file** (`<name>-<X.Y>` with the next version) and a new spec version pinning it; never edit or regenerate a shipped prompt in place, never delete one a published version pins |
 
-A version bump never replaces the old one's meaning: version 1 stays in `standard.versions`
-and in bench.db, and its runs stay valid as version-1 runs.
+A version bump never replaces the old one's meaning: version 1.0 stays in `standard.versions`,
+in `specs/` and in bench.db, and its runs stay valid as version-1.0 runs. The one exception
+on record: `1` was renamed `1.0` with the code prompt added (2026-10-31) because no run had
+used it yet; a version some run recorded is never touched.
 
 ## 3. Checks before accepting a change
 
@@ -91,19 +100,24 @@ and in bench.db, and its runs stay valid as version-1 runs.
 
 ## 4. Apply a new version
 
-1. Edit `benchmarks/specs/<name>.ini`: the rules, and `Version = <n+1>`.
+1. Copy the newest `benchmarks/specs/standard-<X.Y>.ini` to `standard-<X.Y+1>.ini` (or
+   `<X+1>.0` for a change of purpose within `standard`), change the rules and `Version`.
+   Never edit or delete a published version's file.
 2. Run `cargo test the_standard_spec_is_a_published_version` (in `llama-cpp-config/`): it
-   fails and prints the line to add, `<n+1> <sha256>`. Append that line to
-   `<name>.versions`; never edit an existing line.
-3. A new prompt: add the file to `llama-cpp-config/assets/`, to `SHIPPED_PROMPTS` in
-   `bench.rs` and to `assets/README.md`; pin its digest (`sha256sum`, the files are LF and
-   BOM-free) in the spec. `the_standard_spec_pins_the_shipped_prompts` checks the pin.
+   fails and prints the line to add, `<X.Y> <sha256>`. Append that line to
+   `standard.versions`; never edit an existing line.
+3. A new prompt: add the file to `benchmarks/prompts/` as `<name>-<X.Y>.txt|json` and describe
+   it in `benchmarks/prompts/README.md`; pin its digest in the spec (`sha256sum`, the files are
+   LF and BOM-free). The packages install the whole directory and the Benchmark tab lists it,
+   with no code change. `the_standard_spec_pins_the_shipped_prompts` checks every pin.
 4. Update `benchmarks/README.md` (the pass table) and the `optimize-preset` skill when the
    measurement rules changed.
 5. `cargo test`, then one short real run (`--values` with one value, the cheapest preset)
    to see every pass start, and `bench query runs --campaign <it> --show spec-version,spec-pass`.
+   An installed build reads the spec from `share/benchmarks/`, so check that `xtask package`
+   staged the new files.
 6. Commit the spec, its `.versions` line and the docs together; the subject names the spec
-   and the version (`bench spec standard v2: ...`).
+   and the version (`bench spec standard-1.1: ...`).
 
 ## 5. Reviewing a change
 

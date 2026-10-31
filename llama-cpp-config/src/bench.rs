@@ -28,8 +28,8 @@
 //! ## The live prompt is a FILE, and the GUI edits that file
 //!
 //! `Plan.prompt` is the resolved TEXT, but nothing stores it: the GUI and the
-//! CLI both carry a PATH (`Plan.prompt_file`, default
-//! `config\bench-prompt-43k.txt`) and read it once, when the run starts. Three
+//! CLI both carry a PATH (`Plan.prompt_file`, default the shipped
+//! `bench-prompt-43k-1.0.txt`) and read it once, when the run starts. Three
 //! things follow, and each one was a defect of the field-in-the-window it
 //! replaced.
 //!
@@ -40,11 +40,20 @@
 //! reach, so the two would measure different things without saying so. Now
 //! `bench sweep` with no flag and the tab's Run button read the same bytes.
 //!
-//! *The prompts SHIP without being installed.* `SHIPPED_PROMPTS` are seeds:
-//! `ensure_prompt_file` writes one on first use. Installing the file into
-//! `bin\` instead would put it under `$PROGRAMFILES64\llama.cpp`, where the
-//! editor could not save it without elevation and the next upgrade's `File`
-//! directive would overwrite the user's edit.
+//! *The shipped prompts are INSTALLED, read-only, and versioned.* They live
+//! in `paths::bench_prompts_dir()` (`share\benchmarks\prompts` beside the
+//! binaries, the repo's `benchmarks\prompts` for a tree build) as
+//! `<name>-<X.Y>.<ext>`: a changed text is a new file with a new version, never
+//! an edit, so a spec of an older version still finds the prompts it pins. The
+//! binary keeps no text, only the spec digests (`spec::STANDARD_VERSIONS`),
+//! and each spec pins its prompts' sha256. A prompt of your own is any other
+//! file, anywhere.
+//!
+//! *Two formats.* A `.txt` prompt is sent as one user message. A `.json` one is
+//! a conversation, `{"messages": [...], "tools": [...]}` in the OpenAI chat
+//! format (`prompt_request`): an agent turn with tool definitions and earlier
+//! tool calls and results, rendered by the model's own chat template the way a
+//! coding agent's request is, so a tool call is a possible answer.
 //!
 //! *Identity, not a copy.* The prompt was previously embedded verbatim in the
 //! report, which is what let an old comparison be checked. A file that anyone
@@ -125,35 +134,24 @@ pub const DEFAULT_DELAY_SECS: i32 = 2;
 /// short enough that a slow model does not turn one repetition into minutes.
 pub const DEFAULT_MAX_TOKENS: i32 = 256;
 
-/// The default prompt, seeded as `config\bench-prompt-43k.txt`: ~169k
-/// characters, 43.7k tokens on Qwen3.8, one of the two the `standard` spec pins.
-///
-/// A benchmark ranks settings in the regime it measured, and a short prompt is
-/// the shallow end: at 40k of context the same preset that benchmarks at 57
-/// t/s on a 230-character prompt serves at 24 to 40, and the RANKING moves too
-/// (a verify pass costs more relative to a draft iteration at depth, so
-/// `spec-draft-n-max` peaks at 5 near the start of a conversation and at 3 at
-/// 43k).
-///
-/// Compiled in rather than installed: see the module header. It is a frozen
-/// snapshot of this repo's own docs; `assets\README.md` says why it must not be
-/// regenerated when they change.
-pub const LONG_PROMPT: &str = include_str!("../assets/bench-prompt-43k.txt");
-
-/// The deep-context prompt (~404k characters, 110k tokens on Qwen3.8): a
-/// larger frozen snapshot of the same docs plus some of the configurator's
-/// sources, for the regime where a setting's cost grows with the context
-/// (`split-mode tensor` gains +46% decode at 43k and +69% at 110k).
-pub const PROMPT_110K: &str = include_str!("../assets/bench-prompt-110k.txt");
-
-/// Every prompt the binary seeds by FILE NAME (see `seed_for`): the ones the
-/// `standard` spec pins and nothing else, since a prompt no spec pins measures
-/// nothing another machine can compare with. Files in `config\`, never
-/// rewritten once they exist.
-pub const SHIPPED_PROMPTS: [(&str, &str); 2] = [
-    ("bench-prompt-43k.txt", LONG_PROMPT),
-    ("bench-prompt-110k.txt", PROMPT_110K),
-];
+/// Every shipped prompt (`paths::bench_prompts_dir()`), by file name: the
+/// prompts the published `standard` versions pin, each `<name>-<X.Y>`. Read
+/// from disk, so a version added there is listed without a new binary.
+pub fn shipped_prompts() -> Vec<std::path::PathBuf> {
+    let mut out: Vec<std::path::PathBuf> = std::fs::read_dir(crate::paths::bench_prompts_dir())
+        .map(|d| {
+            d.flatten()
+                .map(|e| e.path())
+                .filter(|p| {
+                    p.is_file()
+                        && matches!(p.extension().and_then(|e| e.to_str()), Some("txt" | "json"))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    out.sort();
+    out
+}
 
 /// How much of the prompt the pasteable preview shows before eliding. The
 /// preview is a request body meant to be read at a glance and pasted into
@@ -328,45 +326,6 @@ pub fn load_prompt_file(path: &std::path::Path) -> Result<String, String> {
         return Err(format!("the prompt file {} is empty", path.display()));
     }
     Ok(text)
-}
-
-/// Which shipped prompt seeds this path, decided by FILE NAME: delete
-/// `bench-prompt-43k.txt` and the next seed puts the same text back. Any other
-/// name is a file the user named, never seeded: a missing one is reported by
-/// the read that follows, not filled with a prompt of ours under their name.
-fn seed_for(path: &std::path::Path) -> Option<&'static str> {
-    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-    SHIPPED_PROMPTS
-        .iter()
-        .find(|(file, _)| *file == name)
-        .map(|(_, text)| *text)
-}
-
-/// The configured prompt file, seeded from the binary when it does not exist
-/// yet, so a fresh install has a prompt to run and to edit without the
-/// installer having placed one anywhere.
-///
-/// Seeding only ever CREATES: an existing file is never rewritten (the user's
-/// edits are the point), and a failed write is not fatal here, since the caller
-/// reports the read failure that follows with a better message than a write
-/// error nobody asked for.
-pub fn ensure_prompt_file(path: &std::path::Path) -> &std::path::Path {
-    if let (false, Some(seed)) = (path.exists(), seed_for(path)) {
-        if let Some(parent) = path.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        let _ = crate::ini::atomic_write(path, seed);
-    }
-    path
-}
-
-/// Put every shipped prompt on disk, the ones nothing points at yet too: a
-/// file nobody can find is a file nobody uses, and Browse… opens on the
-/// configured prompt's own folder, so they sit side by side.
-pub fn ensure_shipped_prompt_files() {
-    for (file, _) in SHIPPED_PROMPTS {
-        ensure_prompt_file(&crate::paths::config_dir().join(file));
-    }
 }
 
 /// The prompt's identity, for the report and for the tab's readout.
@@ -758,7 +717,35 @@ pub const LIVE_PATH: &str = "/v1/chat/completions";
 /// whole: the split comes from the server's cumulative timings on each event,
 /// not from when the events arrive, so nothing is timed on our side.
 pub fn live_body(preset_id: &str, plan: &Plan) -> String {
-    live_body_with(preset_id, plan, &plan.prompt)
+    live_body_with(preset_id, plan, None)
+}
+
+/// The request's `messages` and `tools` for a prompt text: a JSON object with
+/// a `messages` array is a conversation (its `tools` passed on as given), any
+/// other text one user message. `cap` elides every message's text for the
+/// preview, so a conversation previews as a conversation.
+pub fn prompt_request(
+    text: &str,
+    cap: Option<usize>,
+) -> (serde_json::Value, Option<serde_json::Value>) {
+    let shorten = |t: &str| cap.map_or_else(|| t.to_string(), |c| elide(t, c));
+    let conversation = text
+        .trim_start()
+        .starts_with('{')
+        .then(|| serde_json::from_str::<serde_json::Value>(text).ok())
+        .flatten()
+        .filter(|v| v.get("messages").is_some_and(serde_json::Value::is_array));
+    let Some(mut v) = conversation else {
+        return (serde_json::json!([{ "role": "user", "content": shorten(text) }]), None);
+    };
+    if cap.is_some() {
+        for m in v["messages"].as_array_mut().into_iter().flatten() {
+            if let Some(c) = m.get("content").and_then(serde_json::Value::as_str) {
+                m["content"] = serde_json::json!(shorten(c));
+            }
+        }
+    }
+    (v["messages"].take(), v.get("tools").cloned())
 }
 
 /// The body of one request of a concurrent repetition: pinned to `slot`, and
@@ -777,7 +764,7 @@ pub fn live_body_slot(
         ..plan.clone()
     };
     let mut body: serde_json::Value =
-        serde_json::from_str(&live_body_with(preset_id, &plan, &plan.prompt)).unwrap_or_default();
+        serde_json::from_str(&live_body_with(preset_id, &plan, None)).unwrap_or_default();
     body["id_slot"] = serde_json::json!(slot);
     body["cache_prompt"] = serde_json::json!(warm);
     body.to_string()
@@ -788,14 +775,18 @@ pub fn live_body_slot(
 /// file can be 100k characters, and a request body nobody can read is not a
 /// preview), and routing both through here is what keeps that the only
 /// difference between them, instead of a second formatter that drifts.
-fn live_body_with(preset_id: &str, plan: &Plan, content: &str) -> String {
+fn live_body_with(preset_id: &str, plan: &Plan, cap: Option<usize>) -> String {
+    let (messages, tools) = prompt_request(&plan.prompt, cap);
     let mut body = serde_json::json!({
         "model": preset_id,
-        "messages": [{ "role": "user", "content": content }],
+        "messages": messages,
         "stream": true,
         "timings_per_token": true,
         "cache_prompt": false,
     });
+    if let Some(tools) = tools {
+        body["tools"] = tools;
+    }
     if plan.max_tokens > 0 {
         body["max_tokens"] = serde_json::json!(plan.max_tokens);
     }
@@ -820,10 +811,9 @@ fn elide(text: &str, cap: usize) -> String {
 /// The pasteable preview of a live request: what `curl` would send, with the
 /// prompt elided past `PREVIEW_PROMPT_CHARS`.
 pub fn live_preview(port: u16, preset_id: &str, plan: &Plan) -> String {
-    let shown = elide(&plan.prompt, PREVIEW_PROMPT_CHARS);
     format!(
         "POST http://127.0.0.1:{port}{LIVE_PATH}\n{}",
-        live_body_with(preset_id, plan, &shown)
+        live_body_with(preset_id, plan, Some(PREVIEW_PROMPT_CHARS))
     )
 }
 
@@ -966,7 +956,12 @@ pub fn parse_stream(body: &str) -> Result<Streamed, String> {
                 .and_then(serde_json::Value::as_str)
                 .is_some_and(|s| !s.is_empty())
         };
-        if has("content") && !answering {
+        // A tool call is the answer of an agent turn, as content is of a chat one.
+        let calls = delta
+            .and_then(|d| d.get("tool_calls"))
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|a| !a.is_empty());
+        if (has("content") || calls) && !answering {
             answering = true;
         } else if has("reasoning_content") && !answering {
             saw_reasoning = true;
@@ -1963,6 +1958,30 @@ mod tests {
         assert_eq!(split.answer.acceptance().map(f64::round), Some(96.0));
     }
 
+    // An agent turn answers with a tool call, which streams no content: the
+    // call is the answer, or the whole decode would read as reasoning.
+    #[test]
+    fn a_tool_call_is_the_answer_after_the_reasoning() {
+        let call = |n: i64, ms: f64| {
+            let v = serde_json::json!({
+                "choices": [{ "delta": { "tool_calls": [{ "index": 0, "function": { "arguments": "{\"pa" } }] } }],
+                "timings": {
+                    "prompt_n": 1000, "prompt_per_second": 800.0, "cache_n": 0,
+                    "predicted_n": n, "predicted_ms": ms, "predicted_per_second": 0.0,
+                    "draft_n": 0, "draft_n_accepted": 0,
+                },
+            });
+            format!("data: {v}\n\n")
+        };
+        let body = event("reasoning_content", "Let", 1, 0.0, 0, 0)
+            + &event("reasoning_content", " me", 101, 5000.0, 0, 0)
+            + &call(102, 5010.0)
+            + &call(301, 9000.0);
+        let split = parse_stream(&body).unwrap().split.expect("the model reasoned");
+        assert_eq!(split.reasoning.tokens, 101);
+        assert_eq!(split.answer.tokens, 200);
+    }
+
     #[test]
     fn a_stream_without_reasoning_has_no_split() {
         let body = event("content", "Hi", 1, 0.0, 0, 0) + &event("content", "!", 2, 30.0, 0, 0);
@@ -2209,7 +2228,7 @@ mod tests {
         };
         let problem = validate(&unresolved).expect("an unresolved prompt is not a plan");
         assert!(
-            problem.contains("bench-prompt-43k.txt"),
+            problem.contains("bench-prompt-43k-1.0.txt"),
             "the message names the file: {problem}"
         );
 
@@ -2273,60 +2292,76 @@ mod tests {
         assert_eq!(load_prompt_file(&good).unwrap(), "line one\nline two");
     }
 
-    /// Seeding CREATES and never overwrites: the file is the user's, and the
-    /// framework's prompt is only what a fresh machine starts from.
+    /// The shipped prompts are only worth shipping if the long ones are long,
+    /// and only comparable if they survive normalization unchanged: a CRLF
+    /// checkout (or a BOM) would make one a different prompt on a different
+    /// machine. `.gitattributes` pins that; this notices if the pin is lost.
+    /// Each is `<name>-<X.Y>`, and a `.json` one is a conversation.
     #[test]
-    fn ensure_prompt_file_seeds_once() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("nested").join("bench-prompt-43k.txt");
-        ensure_prompt_file(&path);
-        assert_eq!(std::fs::read_to_string(&path).unwrap(), LONG_PROMPT);
-
-        std::fs::write(&path, "mine").unwrap();
-        ensure_prompt_file(&path);
-        assert_eq!(
-            std::fs::read_to_string(&path).unwrap(),
-            "mine",
-            "an existing prompt must survive a re-seed"
-        );
-    }
-
-    /// The seed follows the FILE NAME, and only a shipped name is seeded: a
-    /// file the user named is theirs to write, never filled with ours.
-    #[test]
-    fn the_long_prompts_name_seeds_the_long_prompt() {
-        let dir = tempfile::tempdir().unwrap();
-        for (file, text) in SHIPPED_PROMPTS {
-            let shipped = dir.path().join(file);
-            ensure_prompt_file(&shipped);
-            assert_eq!(std::fs::read_to_string(&shipped).unwrap(), text);
-        }
-
-        let other = dir.path().join("my-own.txt");
-        ensure_prompt_file(&other);
-        assert!(!other.exists(), "a name of the user's is not seeded");
-    }
-
-    /// The shipped long prompt is only worth shipping if it is actually long,
-    /// and only usable if it survives normalization unchanged: it is compiled
-    /// in as bytes, so a CRLF checkout (or a BOM) would make it a different
-    /// prompt on a different machine. `.gitattributes` pins that; this notices
-    /// if the pin is ever lost.
-    #[test]
-    fn the_shipped_long_prompt_is_long_and_already_normalized() {
-        assert!(
-            LONG_PROMPT.chars().count() > 100_000,
-            "the long prompt is meant to be tens of thousands of tokens, got {}",
-            LONG_PROMPT.chars().count()
-        );
-        assert!(PROMPT_110K.chars().count() > LONG_PROMPT.chars().count() * 2);
-        for (file, text) in SHIPPED_PROMPTS {
-            assert_eq!(
-                normalize_prompt(text),
-                text,
-                "the checked-in asset {file} must already be LF and BOM-free"
+    fn the_shipped_prompts_are_versioned_normalized_and_long() {
+        let shipped = shipped_prompts();
+        let text = |name: &str| {
+            let p = shipped.iter().find(|p| p.file_name().unwrap() == name);
+            std::fs::read_to_string(p.unwrap_or_else(|| panic!("{name} is shipped"))).unwrap()
+        };
+        let p43 = text("bench-prompt-43k-1.0.txt");
+        let p110 = text("bench-prompt-110k-1.0.txt");
+        assert!(p43.chars().count() > 100_000, "got {}", p43.chars().count());
+        assert!(p110.chars().count() > p43.chars().count() * 2);
+        for p in &shipped {
+            let name = p.file_stem().unwrap().to_string_lossy().into_owned();
+            let (_, version) = name.rsplit_once('-').expect("<name>-<X.Y>");
+            assert!(
+                version.split('.').count() == 2
+                    && version.split('.').all(|n| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit())),
+                "{name}: the file name ends in -<X.Y>"
             );
+            let raw = std::fs::read_to_string(p).unwrap();
+            assert_eq!(normalize_prompt(&raw), raw, "{name} must already be LF and BOM-free");
+            if p.extension().unwrap() == "json" {
+                let (messages, tools) = prompt_request(&raw, None);
+                assert!(messages.as_array().unwrap().len() > 1, "{name}: a conversation");
+                assert!(tools.is_some(), "{name}: with its tools");
+            }
         }
+    }
+
+    /// A JSON prompt is a conversation: its messages and tools go into the
+    /// request as given; any other text is one user message, a JSON-looking
+    /// one included when it has no `messages`.
+    #[test]
+    fn a_json_prompt_is_a_conversation_with_tools() {
+        let conv = serde_json::json!({
+            "messages": [
+                { "role": "system", "content": "You are an agent." },
+                { "role": "user", "content": "Fix it." },
+            ],
+            "tools": [{ "type": "function", "function": { "name": "read_file", "parameters": {} } }],
+        })
+        .to_string();
+        let plan = Plan {
+            presets: vec!["a".into()],
+            prompt: conv,
+            ..Plan::default()
+        };
+        let body: serde_json::Value = serde_json::from_str(&live_body("a", &plan)).unwrap();
+        assert_eq!(body["messages"].as_array().unwrap().len(), 2);
+        assert_eq!(body["messages"][1]["content"], "Fix it.");
+        assert_eq!(body["tools"][0]["function"]["name"], "read_file");
+
+        let (m, t) = prompt_request("{\"not\": \"a conversation\"}", None);
+        assert_eq!(m[0]["role"], "user");
+        assert_eq!(m[0]["content"], "{\"not\": \"a conversation\"}");
+        assert_eq!(t, None);
+
+        // The preview elides each message, and stays a conversation.
+        let long = serde_json::json!({
+            "messages": [{ "role": "user", "content": "z".repeat(PREVIEW_PROMPT_CHARS * 3) }],
+            "tools": [],
+        })
+        .to_string();
+        let (m, _) = prompt_request(&long, Some(PREVIEW_PROMPT_CHARS));
+        assert!(m[0]["content"].as_str().unwrap().contains("chars shown]"));
     }
 
     /// The preview elides a long prompt; the REQUEST never does. One formatter

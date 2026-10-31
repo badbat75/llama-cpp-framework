@@ -3,6 +3,7 @@
 //! configurator build, the configure report, the ROCm GPU targets and the
 //! package names.
 
+pub mod bench_share;
 pub mod cmake_options;
 pub mod configurator;
 pub mod dists;

@@ -5,8 +5,8 @@
 //! Four things worth knowing before editing here.
 //!
 //! **The prompt is a FILE and this tab never holds it**. The workload card
-//! carries a PATH (settings.ini `BenchPromptFile`, defaulting to
-//! `config\bench-prompt-43k.txt`), Edit hands that file to the system's default
+//! carries a PATH (settings.ini `BenchPromptFile`, defaulting to the shipped
+//! `bench-prompt-43k-1.0.txt`), Edit hands that file to the system's default
 //! text editor, and the text is read at Run. Three consequences live in this
 //! file: `refresh_prompt_info` is the only reader and caches its result
 //! `(path, mtime, len)`-gated, because it is called from every keystroke AND
@@ -81,16 +81,15 @@ fn file_stamp(path: &Path) -> Option<(Option<SystemTime>, u64)> {
     Some((meta.modified().ok(), meta.len()))
 }
 
-/// Seed the prompt list once: the two shipped prompts, then the configured
-/// one when it is not one of them, ticked; the 43k one when nothing is.
+/// Seed the prompt list once: every shipped prompt (installed, read in
+/// place), then the configured one when it is not one of them, ticked.
 fn seed_prompt_list(state: &Rc<RefCell<State>>) {
     if !state.borrow().bench_prompts.is_empty() {
         return;
     }
     let configured = settings::load().bench_prompt_path();
-    let mut rows: Vec<PromptEntry> = bench::SHIPPED_PROMPTS
-        .iter()
-        .map(|(file, _)| paths::config_dir().join(file))
+    let mut rows: Vec<PromptEntry> = bench::shipped_prompts()
+        .into_iter()
         .map(|path| PromptEntry {
             on: path == configured,
             path,
@@ -212,7 +211,7 @@ fn read_ticked_prompts(state: &Rc<RefCell<State>>) -> Result<Vec<bench::spec::Pr
 fn pick_prompt_file(start: &Path) -> Option<std::path::PathBuf> {
     let mut dialog = rfd::FileDialog::new()
         .set_title("Pick a prompt file")
-        .add_filter("Text files", &["txt", "md", "prompt"])
+        .add_filter("Prompts", &["txt", "json", "md", "prompt"])
         .add_filter("All files", &["*"]);
     if let Some(parent) = start.parent().filter(|p| p.is_dir()) {
         dialog = dialog.set_directory(parent);
@@ -302,8 +301,6 @@ pub(super) fn refresh(app: &AppWindow, state: &Rc<RefCell<State>>) {
     // must not throw away a path typed but not yet run. Its FILE is re-read on
     // every refresh below, which is the half that matters.
     if s.get_bench_reps().is_empty() {
-        // Both shipped prompts, so both rows of the list read a file.
-        bench::ensure_shipped_prompt_files();
         // As stored, not resolved: empty stays empty (the default), so saving
         // the field back never pins today's data folder into settings.ini.
         s.set_bench_db(SharedString::from(settings::load().bench_db.trim()));
@@ -656,9 +653,6 @@ fn spec_changed(app: &AppWindow, state: &Rc<RefCell<State>>) {
     let s = app.global::<AppState>();
     if let Some(Ok(spec)) = chosen_spec(&s) {
         let paths: Vec<std::path::PathBuf> = spec.prompts.iter().map(|(p, _)| p.clone()).collect();
-        for p in &paths {
-            bench::ensure_prompt_file(p);
-        }
         tick_only(state, &paths);
     }
     s.set_bench_spec_override(false);
@@ -753,11 +747,12 @@ const SPEC_FILE: &str = "file: ";
 /// The Spec combo: custom, every published version of `standard`
 /// (`standard.versions`, newest first), then the user's spec files.
 fn spec_options(state: &Rc<RefCell<State>>) -> Vec<String> {
-    let mut out: Vec<String> = bench::spec::published_versions(bench::spec::STANDARD_VERSIONS)
+    let mut versions: Vec<String> = bench::spec::published_versions(bench::spec::STANDARD_VERSIONS)
         .into_iter()
-        .map(|(v, _)| format!("standard v{v}"))
+        .map(|(v, _)| v)
         .collect();
-    out.reverse();
+    versions.sort_by_key(|v| std::cmp::Reverse(bench::spec::version_key(v)));
+    let mut out: Vec<String> = versions.iter().map(|v| format!("standard-{v}")).collect();
     out.insert(0, SPEC_CUSTOM.into());
     out.extend(
         state
@@ -775,7 +770,7 @@ fn chosen_spec(s: &AppState) -> Option<Result<bench::spec::Spec, String>> {
     if v.is_empty() || v == SPEC_CUSTOM {
         return None;
     }
-    Some(if let Some(n) = v.strip_prefix("standard v") {
+    Some(if let Some(n) = v.strip_prefix("standard-") {
         bench::spec::standard_version(n)
     } else if let Some(path) = v.strip_prefix(SPEC_FILE) {
         bench::spec::load(path)
@@ -1035,20 +1030,20 @@ fn runs_preview(
                 spec.max_tokens
             };
             let mut lines = vec![format!(
-                "Spec {} v{}, every request at its rules (output cap {}):",
+                "Spec {}-{}, every request at its rules (output cap {}):",
                 spec.name,
                 spec.version,
                 if cap > 0 { cap.to_string() } else { "none".into() }
             )];
             if !spec.published {
                 lines.push(format!(
-                    "A spec of yours, not a published version of standard: recorded as spec = custom, derived from {} v{}.",
+                    "A spec of yours, not a published version of standard: recorded as spec = custom, derived from {}-{}.",
                     spec.name, spec.version
                 ));
             }
             if !changed.is_empty() {
                 lines.push(format!(
-                    "Override: {} from the Workload card in every step; recorded as spec = custom, derived from {} v{}.",
+                    "Override: {} from the Workload card in every step; recorded as spec = custom, derived from {}-{}.",
                     changed.join(", "),
                     spec.name,
                     spec.version
@@ -1336,8 +1331,6 @@ pub(super) fn wire(
             let Some(path) = state.borrow().bench_prompts.get(i as usize).map(|r| r.path.clone()) else {
                 return;
             };
-            // A shipped prompt deleted on disk comes back from the binary.
-            bench::ensure_prompt_file(&path);
             // The system's default .txt handler (`paths::open_in_desktop`, as
             // for the report and the Integrations folder). Deliberately not a
             // window of ours: see the callback's declaration in state.slint.
@@ -1384,7 +1377,7 @@ pub(super) fn wire(
                 Ok(spec) => {
                     // The same rules as a published version ARE that version.
                     let pick = if spec.published {
-                        format!("standard v{}", spec.version)
+                        format!("standard-{}", spec.version)
                     } else {
                         remember_spec_file(&state, &path);
                         format!("{SPEC_FILE}{}", path.display())
@@ -1393,7 +1386,7 @@ pub(super) fn wire(
                     s.set_bench_spec_options(string_model(spec_options(&state)));
                     s.set_bench_spec(SharedString::from(pick));
                     spec_changed(&app, &state);
-                    set_status(&app, format!("Loaded spec {} v{}.", spec.name, spec.version), false);
+                    set_status(&app, format!("Loaded spec {}-{}.", spec.name, spec.version), false);
                 }
                 Err(e) => set_status(&app, format!("Spec not loaded: {e}"), true),
             }

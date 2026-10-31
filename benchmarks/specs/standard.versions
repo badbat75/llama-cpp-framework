@@ -1,9 +1,13 @@
-# Published versions of standard.ini: <Version> <sha256 of its canonical form>.
+# Published versions of standard: <X.Y> <sha256 of the canonical form of
+# standard-<X.Y>.ini>.
 #
 # One line per version, appended when a version is published and never edited:
-# a test (bench::spec) fails when standard.ini's rules do not match the line of
+# a test (bench::spec) fails when a standard-<X.Y>.ini's rules do not match the line of
 # its Version, so a rule changed without a new Version, or a published version
 # changed in place, cannot reach a build. The digest covers the rules
 # (bench::spec::canonical), not comments or layout. Procedure:
 # .agents/skills/bench-spec/SKILL.md.
-1 44b67049aefe9f7cca2ffbc33b85b882f7325575e0abef93fcc2f2b1d3684da4
+# 1.0 replaced the line `1 44b670...` on 2026-10-31, before any run recorded
+# it (bench.db held no spec run; 1 had been pushed in 19d324e, never tagged or
+# released): the code prompt added, the version renamed.
+1.0 e616dc716ecf5b0c51bb86bfda76c30bd1077781d37708fe595f3a9c17b62d67

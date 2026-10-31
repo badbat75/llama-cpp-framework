@@ -1,7 +1,7 @@
 //! Paths for the llama.cpp-framework configuration tool.
 //!
 //! Four jobs: (1) the user runtime tree, %LOCALAPPDATA%\llama.cpp\ on Windows
-//! (config\server.ini, config\presets.ini, config\bench-prompt-43k.txt,
+//! (config\server.ini, config\presets.ini, config\settings.ini,
 //! logs\llama-server.log) and ~/.local/share/llama.cpp elsewhere, where the
 //! config files live in ~/.config/llama.cpp instead (`config_dir`), overridable
 //! for tests via LLAMA_CPP_CONFIG_DATA_ROOT; (2) locating llama.cpp's binaries
@@ -102,22 +102,38 @@ pub fn settings_ini() -> PathBuf {
     config_dir().join("settings.ini")
 }
 
-/// The live benchmark's prompt, as a plain UTF-8 text file the user owns.
-///
-/// Under `config\` and not under `bench\` on purpose: `bench\` is output (bench.db),
-/// this is input,
-/// and it is edited like the other three files in `config\`. Under
-/// %LOCALAPPDATA% and not next to the binaries because `bin\` lives in
-/// `$PROGRAMFILES64\llama.cpp`: a prompt shipped there could not be saved
-/// without elevation and would be overwritten by the next upgrade's `File`
-/// directive. The framework's own default text seeds this file on first use
-/// (`bench::ensure_prompt_file`), which is how it ships without being installed.
-///
-/// This is only the DEFAULT: settings.ini's `BenchPromptFile` can point the
-/// Benchmark tab and the CLI at any other file (a 32k-token prompt for
-/// measuring the regime a long conversation runs in, say).
+/// The framework's benchmark method as installed: `specs\` (every published
+/// version of `standard`, `standard-<X.Y>.ini`, and `standard.versions`) and
+/// `prompts\` (every prompt a version pins, `<name>-<X.Y>.txt|json`).
+/// Read-only, beside the binaries: `<root>\share\benchmarks` where the exe is
+/// `<root>\bin\llama-cpp-config` (every package installs that layout), else
+/// the repo's own `benchmarks\` for a tree build. The binary carries only
+/// `standard.versions` (the digest of every published spec, and each spec
+/// pins its prompts' digests), so an edited file here is refused, not run.
+pub fn bench_share_dir() -> PathBuf {
+    let installed = std::env::current_exe()
+        .ok()
+        .and_then(|exe| Some(exe.parent()?.parent()?.join("share").join("benchmarks")));
+    match installed {
+        Some(dir) if dir.join("specs").is_dir() => dir,
+        _ => Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap_or(Path::new("."))
+            .join("benchmarks"),
+    }
+}
+
+/// The shipped prompts: `bench_share_dir()\prompts`.
+pub fn bench_prompts_dir() -> PathBuf {
+    bench_share_dir().join("prompts")
+}
+
+/// The live benchmark's DEFAULT prompt: the shipped 43k one, read in place
+/// (it is installed read-only and never edited: a prompt of your own is a file
+/// of your own, anywhere). settings.ini's `BenchPromptFile` can point the
+/// Benchmark tab and the CLI at any other file.
 pub fn bench_prompt_file() -> PathBuf {
-    config_dir().join("bench-prompt-43k.txt")
+    bench_prompts_dir().join("bench-prompt-43k-1.0.txt")
 }
 
 /// The llama-server log file. ONE home for the path: `runstate::start()`

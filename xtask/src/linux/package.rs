@@ -14,11 +14,14 @@
 //!                         with its kernel libraries, the CUDA libraries, the
 //!                         Vulkan loader. Self-contained: nothing else has to
 //!                         be installed but the GPU drivers.
+//!   /opt/llama.cpp/share/benchmarks/
+//!                         the benchmark method, read-only: every published
+//!                         standard-<X.Y>.ini and the prompts they pin
 //!   /usr/bin/             a symlink per executable into /opt/llama.cpp/bin
 //!   /usr/share/           the desktop entry, its icon, the licence
 //!
 //! The config files (server.ini, presets.ini, presets.ini.disabled,
-//! settings.ini, the bench prompts) are NOT in the package: llama-cpp-config
+//! settings.ini) are NOT in the package: llama-cpp-config
 //! writes them per user, in ~/.config/llama.cpp, on first use.
 
 use crate::common::configurator::set_mode;
@@ -166,6 +169,7 @@ pub fn run(want_deb: bool, want_rpm: bool, keep_staging: bool) -> Result<()> {
     let (tests, keep): (Vec<PathBuf>, Vec<PathBuf>) =
         entries(&bin).into_iter().partition(|p| name_of(p).starts_with("test-"));
     cp("-a", &keep, &stage.join(BIN_DIR))?;
+    crate::common::bench_share::stage(&stage.join(OPT_DIR))?;
     if !tests.is_empty() {
         ui::dim(format!("Pruned {} llama.cpp test binaries", tests.len()));
     }

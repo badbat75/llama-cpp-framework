@@ -233,9 +233,9 @@ LogRotateKb = {log_rotate_kb}
 
 ; BenchPromptFile: the text file the live benchmark sends (Benchmark tab, and
 ; `bench sweep` with no --prompt / --prompt-file). Empty = the
-; default, config\\bench-prompt-43k.txt, which is created from the framework's
-; own prompt the first time a benchmark needs one (bench-prompt-110k.txt beside
-; it is the deeper one; both are the prompts the standard spec pins).
+; default, the framework's own bench-prompt-43k-1.0.txt, installed read-only
+; under share\\benchmarks\\prompts beside the other prompts the standard spec
+; pins (a 110k-token one, a coding-agent turn as .json).
 BenchPromptFile = {prompt_file}
 
 ; BenchDb: the SQLite database every finished benchmark run is written to
@@ -409,7 +409,7 @@ mod tests {
         assert!(cfg.bench_prompt_file.is_empty());
         assert_eq!(
             cfg.bench_prompt_path().file_name().unwrap(),
-            "bench-prompt-43k.txt"
+            "bench-prompt-43k-1.0.txt"
         );
     }
 

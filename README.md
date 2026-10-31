@@ -13,7 +13,7 @@ Beside llama.cpp it ships **`llama-cpp-config`**, a GUI + CLI configurator (Rust
 | ![Server tab](docs/assets/screenshots/server.png) | ![Models tab](docs/assets/screenshots/models.png) |
 | **Server**: machine-wide `server.ini` (network, threads, models folder, conversation snapshots, GPU SDK tuning). | **Models**: one preset per model, with the GGUF header read in place (layers, attention, MTP head, vision encoder) and the GPU distribution as a table of detected devices. |
 | ![Benchmark tab, standard spec](docs/assets/screenshots/benchmark-spec.png) | ![Benchmark tab, A/B](docs/assets/screenshots/benchmark-ab.png) |
-| **Benchmark** with the `standard v1` spec chosen: the spec ticks its two pinned prompts and fixes the workload fields. | **Benchmark** A/B: one preset key (`spec-draft-n-max`) at three values, each one written to the preset with a restart, put back afterwards. |
+| **Benchmark** with the `standard` spec chosen: the spec ticks its pinned prompts and fixes the workload fields. | **Benchmark** A/B: one preset key (`spec-draft-n-max`) at three values, each one written to the preset with a restart, put back afterwards. |
 
 <p align="center"><img src="docs/assets/screenshots/hw-monitor.png" alt="HW Monitor" width="480"><br><b>HW Monitor</b>: VRAM, GTT spill, GPU, CPU and memory per device, once a second.</p>
 
@@ -41,7 +41,7 @@ Beside llama.cpp it ships **`llama-cpp-config`**, a GUI + CLI configurator (Rust
 
 - Two engines: **live** (real `llama-server` requests, cold prefill every repetition, the preset's drafter and sampler included) and **synthetic** (`llama-bench`, raw prefill and decode).
 - Concurrency scenarios at the preset's `parallel`: single, N prefills at once, N decodes at once, prefill and decode mixed.
-- **Versioned specs** (`benchmarks/specs/standard.ini`, compiled into the binary): prompts pinned by sha256, temperature, repetitions, concurrency and per-pass overrides; every run records the spec, its version and digest, and anything changed from it is recorded as a derivation, never as the spec.
+- **Versioned specs** (`benchmarks/specs/standard-<X.Y>.ini`, every version installed beside the binaries and runnable; only their digests are compiled in): prompts pinned by sha256 (43k and 110k tokens of prose, and a coding-agent turn with tool definitions and tool results), temperature, repetitions, concurrency and per-pass overrides; every run records the spec, its version and digest, and anything changed from it is recorded as a derivation, never as the spec.
 - A/B of one preset key (`bench sweep --key ... --values ...`, or the tab's A/B field) with the key put back afterwards; an interrupted run leaves a marker with the value to restore.
 - Every finished run in SQLite with the machine, the software stack (llama.cpp, ROCm, CUDA, Vulkan SDK), the model and every parameter; `bench query` to read it; absolute paths and secrets dropped on the way in, so the database can be public.
 - A GPU lock every benchmark holds, plus a check that no other process has the GPUs open.

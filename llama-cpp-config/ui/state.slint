@@ -515,8 +515,8 @@ export global AppState {
     in-out property <string> bench_concurrency: "single";
     // The CLI's --campaign and --question; empty campaign = one named after
     // the run's stamp. bench_spec is "custom" (the Workload fields, recorded as
-    // spec = custom) or "standard v<N>", one of bench_spec_options: custom plus
-    // the published versions in benchmarks/specs/standard.versions.
+    // spec = custom) or "standard-<X.Y>", one of bench_spec_options: custom
+    // plus the published versions in benchmarks/specs/standard.versions.
     in-out property <string> bench_campaign;
     in-out property <string> bench_question;
     in-out property <string> bench_spec: "custom";

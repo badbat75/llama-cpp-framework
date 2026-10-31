@@ -192,9 +192,10 @@ pub struct BenchSweep {
     /// prompt that size does not fit on a command line.
     ///
     /// With neither flag, the file the Benchmark tab uses (settings.ini
-    /// `BenchPromptFile`, default `config\bench-prompt-43k.txt`, created from
-    /// the shipped prompt when missing), so a scripted sweep and a run
-    /// from the GUI measure the same text.
+    /// `BenchPromptFile`, default the shipped `bench-prompt-43k-1.0.txt` in
+    /// share/benchmarks/prompts), so a scripted sweep and a run from the GUI
+    /// measure the same text. A `.json` prompt is a conversation with tools
+    /// (`{"messages": [...], "tools": [...]}`), sent as given.
     #[arg(long)]
     pub prompt_file: Option<std::path::PathBuf>,
     /// Live only: sampling temperature, or `preset` to leave the preset's alone.
@@ -216,9 +217,10 @@ pub struct BenchSweep {
     /// scenario when the preset has two slots or more, one campaign.
     #[arg(long, value_parser = ["single", "prefill", "decode", "prefill+decode", "all"])]
     pub concurrency: Option<String>,
-    /// Live only: run a versioned benchmark spec: `standard` (the framework's,
-    /// built in; source `benchmarks/specs/standard.ini`) or an INI file of
-    /// your own. Its prompts (pinned by sha256), passes (temperature,
+    /// Live only: run a versioned benchmark spec: `standard` (the framework's
+    /// newest published version), `standard-<X.Y>` (that version: every one
+    /// stays installed, in share/benchmarks/specs, the repo's
+    /// benchmarks/specs for a tree build) or an INI file of your own. Its prompts (pinned by sha256), passes (temperature,
     /// repetitions, concurrency, preset keys overridden for the pass) and
     /// output cap, all in one campaign. Every run records the spec's name,
     /// version and sha256; a sweep without it records `spec = custom`, and so
@@ -612,9 +614,8 @@ fn run_bench(c: BenchCmd) -> Result<()> {
     // rather than in the sweep so a missing or unreadable one fails before
     // anything restarts llama-server. `--prompt` is the single escape hatch and
     // the only source that is not a file (hence the `None` provenance, which is
-    // what the report prints). With neither flag the configured file is used,
-    // seeded with the framework's own prompt when it does not exist yet: the
-    // same bytes the Benchmark tab runs, so a sweep from a script and a run
+    // what the report prints). With neither flag the configured file is used
+    // (the shipped 43k prompt when none is): the same bytes the Benchmark tab runs, so a sweep from a script and a run
     // from the GUI are comparable by construction.
     let prompt_given = a.prompt.is_some() || a.prompt_file.is_some();
     if let Some(prompt) = a.prompt {
@@ -623,14 +624,7 @@ fn run_bench(c: BenchCmd) -> Result<()> {
     } else if plan.mode == bench::Mode::Live && (a.spec.is_none() || a.prompt_file.is_some()) {
         let path = match a.prompt_file.as_deref() {
             Some(p) => p.to_path_buf(),
-            None => {
-                // Both, so a machine driven only from the CLI still gets the
-                // long-context prompt on disk to point `--prompt-file` at.
-                bench::ensure_shipped_prompt_files();
-                let p = crate::settings::load().bench_prompt_path();
-                bench::ensure_prompt_file(&p);
-                p
-            }
+            None => crate::settings::load().bench_prompt_path(),
         };
         plan.prompt = bench::load_prompt_file(&path).map_err(|e| anyhow::anyhow!(e))?;
         plan.prompt_file = Some(path);

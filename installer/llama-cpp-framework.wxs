@@ -105,6 +105,7 @@
       <Directory Id="INSTALLFOLDER" Name="llama.cpp">
         <Directory Id="BINFOLDER" Name="bin" />
         <Directory Id="LIBFOLDER" Name="lib" />
+        <Directory Id="SHAREFOLDER" Name="share" />
         <Directory Id="KPACKFOLDER" Name=".kpack" />
       </Directory>
     </StandardDirectory>
@@ -121,6 +122,10 @@
     -->
     <ComponentGroup Id="Payload">
       <Files Directory="BINFOLDER" Include="$(var.StagingDir)\bin\**" />
+      <!-- The benchmark method, read-only: share\benchmarks\specs (every
+           published standard-<X.Y>.ini) and share\benchmarks\prompts.
+           llama-cpp-config finds it from its own path, bin\..\share. -->
+      <Files Directory="SHAREFOLDER" Include="$(var.StagingDir)\share\**" />
 <?if $(var.HasLib) = 1 ?>
       <Files Directory="LIBFOLDER" Include="$(var.StagingDir)\lib\**" />
 <?endif?>

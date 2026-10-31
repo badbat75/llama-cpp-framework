@@ -137,6 +137,7 @@ pub fn run(keep_staging: bool) -> Result<()> {
     for d in [&opt_bin, &opt_lib, &links, &icd_dir, &out_dir] {
         std::fs::create_dir_all(d)?;
     }
+    crate::common::bench_share::stage(&under(&stage, OPT_DIR))?;
 
     ui::head("Staging binaries...");
     // The build's bin/ as is (executables, the backend dylibs and

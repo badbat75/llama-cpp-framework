@@ -1,5 +1,6 @@
-//! Versioned benchmark specifications (`bench sweep --spec standard|<file>`).
-//! Only a published version of `standard` (`standard.versions`) is a spec run;
+//! Versioned benchmark specifications (`bench sweep --spec
+//! standard|standard-<X.Y>|<file>`). Only a published version of `standard`
+//! (`standard.versions`) is a spec run;
 //! a file whose rules are not one runs the same way but records every run as
 //! `spec = custom`, derived from it (`Spec::published`).
 //!
@@ -17,8 +18,8 @@
 //! ```ini
 //! [Spec]
 //! Name = standard
-//! Version = 1
-//! Prompts = bench-prompt-43k.txt@96d8fb4f..., bench-prompt-110k.txt@2623e49a...
+//! Version = 1.0
+//! Prompts = bench-prompt-43k-1.0.txt@96d8fb4f..., bench-prompt-code-1.0.json@...
 //! MaxTokens = 0
 //!
 //! [Pass.engine]
@@ -28,8 +29,13 @@
 //! Reps = 3
 //! ```
 //!
-//! A bare prompt name is a file in the config directory, seeded from the
-//! binary when it is one of the shipped prompts; a path is used as is. Each
+//! Every published version is installed beside the binaries as
+//! `specs\standard-<X.Y>.ini` (`paths::bench_share_dir()`) and stays there, so
+//! a run can follow an older version as well as the newest; the binary carries
+//! only `standard.versions`, the digest of each, so a file that no longer
+//! matches its line runs as custom, never as the version it claims.
+//! A bare prompt name is a shipped prompt (`paths::bench_prompts_dir()`), else
+//! a file in the config directory; a path is used as is. Each
 //! carries `@<sha256>` of its text (as `bench query prompts` shows it): the
 //! prompts are part of the method, so a prompt that no longer matches is
 //! refused before anything restarts, and changing one means a new spec
@@ -124,17 +130,31 @@ pub struct Spec {
     pub published: bool,
 }
 
-/// The framework's own method, compiled in from the repo's
-/// `benchmarks/specs/standard.ini`: `--spec standard` needs no file.
-pub const STANDARD: &str = include_str!("../../../benchmarks/specs/standard.ini");
+/// Where the published versions of `standard` are installed.
+pub fn specs_dir() -> PathBuf {
+    crate::paths::bench_share_dir().join("specs")
+}
 
-/// `standard` = the compiled-in spec; anything else is a file.
+/// `standard` = its newest published version, `standard-<X.Y>` that version;
+/// anything else is a file.
 pub fn load(arg: &str) -> Result<Spec, String> {
     if arg == "standard" {
-        return parse(STANDARD, &crate::paths::config_dir())
-        .map_err(|e| format!("the built-in standard spec: {e}"));
+        let newest = published_versions(STANDARD_VERSIONS)
+            .into_iter()
+            .map(|(v, _)| v)
+            .max_by_key(|v| version_key(v))
+            .ok_or("standard.versions lists no version")?;
+        return standard_version(&newest);
+    }
+    if let Some(v) = arg.strip_prefix("standard-") {
+        return standard_version(v);
     }
     load_file(Path::new(arg))
+}
+
+/// `1.10` after `1.9`: a version's numbers, compared as numbers.
+pub fn version_key(v: &str) -> Vec<u64> {
+    v.split('.').map(|n| n.parse().unwrap_or(0)).collect()
 }
 
 fn load_file(path: &Path) -> Result<Spec, String> {
@@ -168,7 +188,12 @@ pub fn parse(text: &str, config: &Path) -> Result<Spec, String> {
             .ok_or_else(|| format!("Prompts `{entry}`: <file>@<sha256 of its text>"))?;
         let path = PathBuf::from(p.trim());
         let path = if path.components().count() == 1 {
-            config.join(path)
+            let shipped = crate::paths::bench_prompts_dir().join(&path);
+            if shipped.is_file() {
+                shipped
+            } else {
+                config.join(path)
+            }
         } else {
             path
         };
@@ -275,42 +300,50 @@ pub fn canonical(spec: &Spec) -> String {
     out
 }
 
-/// `standard.versions`: every published version of `standard` with its digest.
+/// `standard.versions`: every published version of `standard` with its
+/// digest. The only part of the method compiled in: the spec files and the
+/// prompts are installed, and each is checked against this (the spec's digest
+/// covers its prompt pins).
 pub const STANDARD_VERSIONS: &str = include_str!("../../../benchmarks/specs/standard.versions");
 
-/// `standard` at a published `version`: the compiled-in rules, refused unless
-/// they are that version and match its digest in `standard.versions`. The
-/// Benchmark tab's only specs (besides custom).
+/// `standard` at a published `version`: its installed file
+/// (`specs\standard-<version>.ini`), refused unless it IS that version and
+/// matches its digest in `standard.versions`.
 pub fn standard_version(version: &str) -> Result<Spec, String> {
     let published = published_versions(STANDARD_VERSIONS);
-    let Some((_, pinned)) = published.iter().find(|(v, _)| v == version) else {
-        return Err(format!("standard v{version} is not a published version (standard.versions)"));
-    };
-    let spec = load("standard")?;
-    if spec.version != version {
+    if !published.iter().any(|(v, _)| v == version) {
+        return Err(format!("standard {version} is not a published version (standard.versions)"));
+    }
+    let path = specs_dir().join(format!("standard-{version}.ini"));
+    let spec = load_file(&path)?;
+    if spec.name != "standard" || spec.version != version {
         return Err(format!(
-            "this build carries the rules of standard v{} only, not v{version}",
+            "{} is spec {} {}, not standard {version}",
+            path.display(),
+            spec.name,
             spec.version
         ));
     }
-    if &spec.sha256 != pinned {
+    if !spec.published {
         return Err(format!(
-            "the built-in standard v{version} does not match its digest in standard.versions"
+            "{} does not match the digest of standard {version} in standard.versions: \
+             the installed file was changed (reinstall it)",
+            path.display()
         ));
     }
     Ok(spec)
 }
 
 /// `spec` as a spec file: what the Benchmark tab's Save as… writes. A prompt
-/// in `config` is written as a bare name, so the file reads on another
-/// machine.
+/// in `config` or a shipped one is written as a bare name, so the file reads
+/// on another machine.
 pub fn to_ini(spec: &Spec, config: &Path) -> String {
     let prompts: Vec<String> = spec
         .prompts
         .iter()
         .map(|(p, sha)| {
             let shown = match p.parent() {
-                Some(dir) if dir == config => p.file_name().unwrap_or_default().to_string_lossy().into_owned(),
+                Some(dir) if dir == config || dir == crate::paths::bench_prompts_dir() => p.file_name().unwrap_or_default().to_string_lossy().into_owned(),
                 _ => p.to_string_lossy().into_owned(),
             };
             format!("{shown}@{sha}")
@@ -375,7 +408,7 @@ pub fn run(spec: &Spec, base: &Opts, derive: &Derive) -> Result<String, String> 
     let (prompts, derived) = prompts_and_derived(spec, derive, Some(&base.key))?;
     if !derived.is_empty() {
         println!(
-            "Not spec {} v{} as published ({}): every run records spec = custom, derived from it.",
+            "Not spec {}-{} as published ({}): every run records spec = custom, derived from it.",
             spec.name,
             spec.version,
             derived.join(", ")
@@ -396,7 +429,7 @@ pub fn run(spec: &Spec, base: &Opts, derive: &Derive) -> Result<String, String> 
             let restore = apply_overrides(&base.preset, &pass.overrides)?;
             for c in scenarios {
                 println!(
-                    "\n=== spec {} v{} · pass {} · {} · concurrency {} ===",
+                    "\n=== spec {}-{} · pass {} · {} · concurrency {} ===",
                     spec.name,
                     spec.version,
                     pass.name,
@@ -427,10 +460,10 @@ pub fn run(spec: &Spec, base: &Opts, derive: &Derive) -> Result<String, String> 
     }
 }
 
-/// `spec-<name>-v<version>-<stamp>`: a spec run's campaign when none is named.
+/// `spec-<name>-<version>-<stamp>`: a spec run's campaign when none is named.
 pub fn default_campaign(spec: &Spec) -> String {
     format!(
-        "spec-{}-v{}-{}",
+        "spec-{}-{}-{}",
         spec.name,
         spec.version,
         super::stamp(super::now_secs())
@@ -571,12 +604,11 @@ pub fn ab_expand(steps: Vec<super::exec::Step>, key: &str, values: &[String]) ->
 fn checked_prompts(spec: &Spec) -> Result<Vec<(PathBuf, String)>, String> {
     let mut prompts = Vec::new();
     for (p, pinned) in &spec.prompts {
-        super::ensure_prompt_file(p);
         let text = super::load_prompt_file(p)?;
         let actual = super::prompt_info(&text).sha256;
         if &actual != pinned {
             return Err(format!(
-                "{} has sha256 {actual}, spec {} v{} pins {pinned}: the prompt is part of \
+                "{} has sha256 {actual}, spec {}-{} pins {pinned}: the prompt is part of \
                  the method, so a changed prompt is a new spec version (restore the file, \
                  or bump Version and pin the new digest)",
                 p.display(),
@@ -684,9 +716,7 @@ mod tests {
     /// field, a swept key a pass sets, rules that are no published version.
     #[test]
     fn a_run_off_the_spec_says_what_it_changed() {
-        // The shipped prompts, seeded by name into a config of its own.
-        let dir = tempfile::tempdir().unwrap();
-        let std = parse(super::STANDARD, dir.path()).unwrap();
+        let std = load("standard").unwrap();
         let none = Derive::default();
         let (_, d) = prompts_and_derived(&std, &none, Some("split-mode")).unwrap();
         assert!(d.is_empty(), "standard as published, a key no pass sets");
@@ -706,7 +736,7 @@ mod tests {
     #[test]
     fn a_saved_spec_reads_back_as_the_same_rules() {
         let cfg = Path::new("/cfg");
-        let std = parse(super::STANDARD, cfg).unwrap();
+        let std = load("standard").unwrap();
         let mine = Spec {
             name: "mine".into(),
             ..std.clone()
@@ -720,35 +750,59 @@ mod tests {
         assert!(parse(&to_ini(&std, cfg), cfg).unwrap().published);
     }
 
-    /// The tab picks standard by version: the compiled one runs, any other
-    /// (published or not) is refused with the reason.
+    /// Every published version runs by name, the newest as `standard`; a
+    /// version that is not published is refused with the reason.
     #[test]
-    fn only_the_compiled_published_standard_version_runs() {
-        let s = parse(super::STANDARD, Path::new("/cfg")).unwrap();
-        assert_eq!(standard_version(&s.version).unwrap().sha256, s.sha256);
-        assert!(s.published, "the compiled standard is a published version");
-        assert!(standard_version("999").unwrap_err().contains("not a published version"));
+    fn every_published_standard_version_runs() {
+        let published = published_versions(STANDARD_VERSIONS);
+        for (v, sha) in &published {
+            let s = standard_version(v).unwrap();
+            assert_eq!(&s.sha256, sha);
+            assert!(s.published);
+            assert_eq!(load(&format!("standard-{v}")).unwrap(), s);
+        }
+        let newest = published.iter().map(|(v, _)| v).max_by_key(|v| version_key(v)).unwrap();
+        assert_eq!(&load("standard").unwrap().version, newest);
+        assert!(standard_version("999.0").unwrap_err().contains("not a published version"));
+        assert!(version_key("1.10") > version_key("1.9"));
     }
 
+    /// Every installed `standard-<X.Y>.ini` is frozen: it is the version its
+    /// name says, and its digest is that version's line in
+    /// `standard.versions`, so a rule changed without a new version, or a
+    /// published version edited in place, fails here. And every published
+    /// version is still installed, so an older one can still be run.
     #[test]
     fn the_standard_spec_is_a_published_version() {
-        let s = parse(super::STANDARD, Path::new("/cfg")).unwrap();
         let published = published_versions(STANDARD_VERSIONS);
         let mut seen = std::collections::HashSet::new();
         for (v, _) in &published {
             assert!(seen.insert(v.clone()), "version {v} is listed twice");
+            assert!(
+                specs_dir().join(format!("standard-{v}.ini")).is_file(),
+                "standard {v} is published but standard-{v}.ini is gone: keep every version"
+            );
         }
-        let pinned = published.iter().find(|(v, _)| *v == s.version).unwrap_or_else(|| {
-            panic!(
-                "standard.ini Version {} is not in standard.versions: add `{} {}`",
-                s.version, s.version, s.sha256
-            )
-        });
-        assert_eq!(
-            pinned.1, s.sha256,
-            "standard.ini changed its rules but kept Version {}: bump Version and add `<new> {}`",
-            s.version, s.sha256
-        );
+        let mut files = 0;
+        for e in std::fs::read_dir(specs_dir()).unwrap().flatten() {
+            let name = e.file_name().to_string_lossy().into_owned();
+            let Some(v) = name.strip_prefix("standard-").and_then(|n| n.strip_suffix(".ini")) else {
+                continue;
+            };
+            files += 1;
+            let s = load_file(&e.path()).unwrap();
+            assert_eq!(s.version, v, "{name} says Version {}", s.version);
+            let pinned = published.iter().find(|(pv, _)| pv == v).unwrap_or_else(|| {
+                panic!("{name}: {v} is not in standard.versions: add `{v} {}`", s.sha256)
+            });
+            assert_eq!(
+                pinned.1, s.sha256,
+                "{name} changed its rules but kept Version {v}: add a new standard-<X.Y>.ini \
+                 and the line `<X.Y> {}`",
+                s.sha256
+            );
+        }
+        assert!(files > 0, "no standard-<X.Y>.ini in {}", specs_dir().display());
     }
 
     /// The tab's steps: prompt x pass x scenario, each pass's overrides on its
@@ -818,8 +872,7 @@ mod tests {
     /// the value over the pass's own, and the runs recorded as derived.
     #[test]
     fn an_ab_key_runs_every_step_per_value() {
-        let dir = tempfile::tempdir().unwrap();
-        let spec = parse(super::STANDARD, dir.path()).unwrap();
+        let spec = load("standard").unwrap();
         let base = Plan {
             mode: super::super::Mode::Live,
             presets: vec![],
@@ -839,19 +892,19 @@ mod tests {
         assert!(ab[n].plan.spec.as_ref().unwrap().derived.contains(&"override".to_string()));
     }
 
-    /// The repo's own spec pins the prompts the binary ships: a shipped prompt
-    /// edited without a new spec version fails here, not on someone's machine.
+    /// Every published version pins prompts that are shipped, with the
+    /// digest they have: a shipped prompt edited in place fails here, not on
+    /// someone's machine.
     #[test]
     fn the_standard_spec_pins_the_shipped_prompts() {
-        let s = parse(super::STANDARD, Path::new("/cfg")).unwrap();
-        assert!(!s.prompts.is_empty());
-        for (path, pinned) in &s.prompts {
-            let name = path.file_name().unwrap().to_str().unwrap();
-            let (_, shipped) = super::super::SHIPPED_PROMPTS
-                .iter()
-                .find(|(f, _)| *f == name)
-                .unwrap_or_else(|| panic!("{name} is not a shipped prompt"));
-            assert_eq!(&super::super::prompt_info(shipped).sha256, pinned, "{name}");
+        for (v, _) in published_versions(STANDARD_VERSIONS) {
+            let s = standard_version(&v).unwrap();
+            assert!(!s.prompts.is_empty());
+            for (path, pinned) in &s.prompts {
+                assert_eq!(path.parent(), Some(crate::paths::bench_prompts_dir().as_path()));
+                let text = super::super::load_prompt_file(path).unwrap();
+                assert_eq!(&super::super::prompt_info(&text).sha256, pinned, "{}", path.display());
+            }
         }
     }
 }
