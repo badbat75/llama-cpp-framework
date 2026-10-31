@@ -1201,7 +1201,7 @@ pub(super) fn run(app: &AppWindow) {
     // benchmark that can only measure the 230-character regime is the tab's
     // least useful one.
     assert_eq!(
-        std::fs::read_to_string(crate::paths::bench_long_prompt_file())
+        std::fs::read_to_string(crate::paths::config_dir().join(crate::bench::SHIPPED_PROMPTS[0].0))
             .expect("the tab seeds the long prompt too"),
         crate::bench::LONG_PROMPT
     );

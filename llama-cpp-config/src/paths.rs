@@ -120,15 +120,6 @@ pub fn bench_prompt_file() -> PathBuf {
     config_dir().join("bench-prompt.txt")
 }
 
-/// The long-context prompt shipped beside the short one (~40k tokens), seeded
-/// from the binary like it. Not the default, because a repetition of it is a
-/// 40k-token cold prefill: it is the file you point at when the question is
-/// "does this setting still win where I actually work", which is a different
-/// question from the one the default answers, and usually the one that matters.
-pub fn bench_long_prompt_file() -> PathBuf {
-    config_dir().join(crate::bench::SHIPPED_PROMPTS[0].0)
-}
-
 /// The llama-server log file. ONE home for the path: `runstate::start()`
 /// writes it, the GUI's "no longer running" message points at it.
 pub fn server_log() -> PathBuf {

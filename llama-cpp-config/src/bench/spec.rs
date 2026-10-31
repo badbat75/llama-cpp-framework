@@ -225,7 +225,8 @@ pub fn canonical(spec: &Spec) -> String {
 }
 
 /// The `<version> <sha256>` lines of a `.versions` file, comments and blanks
-/// skipped.
+/// skipped. Read by the test that freezes the published versions.
+#[cfg(test)]
 pub fn published_versions(text: &str) -> Vec<(String, String)> {
     text.lines()
         .map(str::trim)

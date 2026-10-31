@@ -53,7 +53,7 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use super::exec::Event;
-use super::{Mode, Plan, Point};
+use super::{Concurrency, Mode, Plan, Point};
 use crate::{http, ini, paths, presets, runstate, server_cfg};
 
 /// The value that means "the key is absent from the section". Spelled rather
