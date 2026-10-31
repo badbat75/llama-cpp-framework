@@ -29,6 +29,7 @@ Name = standard
 Version = 1.0
 Prompts = <file>@<sha256 of its text>, <file>@<sha256>
 MaxTokens = 0
+ImageSize = 1344x896
 
 [Pass.<name>]
 Temp = 0
@@ -44,6 +45,11 @@ Reps = 3
   ends in its version (`bench-prompt-code-1.0.json`); `.txt` is one user message, `.json` a
   conversation with tools (`{"messages": [...], "tools": [...]}`).
 - `MaxTokens`: 0 = no cap.
+- `ImageSize`: `WxH` (or `original`), the box an image prompt's image is fitted into when
+  sent (aspect kept, never enlarged). In the digest only when set. An image prompt is a
+  `.json` whose message holds `{"type": "image_file", "file": ..., "sha256": ...}`, the
+  image shipped beside it (`bench-image-<name>-<X.Y>.jpg`) at full size: the resolution is
+  the spec's setting, not baked into the file. It runs only on presets with an `mmproj`.
 - One `[Pass.<name>]` per pass, run in file order, once per prompt. `Temp` is a number or
   `preset`; `Override` keys are written to the preset for the pass and put back after it;
   `Concurrency` is `single`, `prefill`, `decode`, `prefill+decode` or `all`.
@@ -68,9 +74,12 @@ a personal method, not a version: to make it the framework's, follow section 4.
 | a prompt's text | a **new prompt file** (`<name>-<X.Y>` with the next version) and a new spec version pinning it; never edit or regenerate a shipped prompt in place, never delete one a published version pins |
 
 A version bump never replaces the old one's meaning: version 1.0 stays in `standard.versions`,
-in `specs/` and in bench.db, and its runs stay valid as version-1.0 runs. The one exception
-on record: `1` was renamed `1.0` with the code prompt added (2026-10-31) because no run had
-used it yet; a version some run recorded is never touched.
+in `specs/` and in bench.db, and its runs stay valid as version-1.0 runs. The exceptions on
+record, both on 2026-10-31 and both because no run had recorded the version yet: `1` was
+renamed `1.0` with the code prompt added, then 1.0 gained the image prompt and `ImageSize`
+(its `.versions` line replaced, the reason noted above it). A version may change in place
+only while no run has recorded it AND no tagged release ships it; after that it is frozen,
+and a change is the next version.
 
 ## 3. Checks before accepting a change
 

@@ -53,7 +53,12 @@
 //! a conversation, `{"messages": [...], "tools": [...]}` in the OpenAI chat
 //! format (`prompt_request`): an agent turn with tool definitions and earlier
 //! tool calls and results, rendered by the model's own chat template the way a
-//! coding agent's request is, so a tool call is a possible answer.
+//! coding agent's request is, so a tool call is a possible answer. A message's
+//! content may hold an image: an `image_file` part naming a file beside the
+//! prompt and its sha256 (so the prompt's own digest pins the image too),
+//! resized at send time to the run's `image_size` (`resolve_images`), or an
+//! `image_url` part sent as given. An image prompt runs only on presets with
+//! an mmproj (`prompt_has_image`).
 //!
 //! *Identity, not a copy.* The prompt was previously embedded verbatim in the
 //! report, which is what let an old comparison be checked. A file that anyone
@@ -133,6 +138,33 @@ pub const DEFAULT_DELAY_SECS: i32 = 2;
 /// Output cap for the live request. Long enough that the decode rate settles,
 /// short enough that a slow model does not turn one repetition into minutes.
 pub const DEFAULT_MAX_TOKENS: i32 = 256;
+
+/// The box an image prompt's image is fitted into before it is sent (`WxH`,
+/// aspect kept, never enlarged): `standard`'s `ImageSize`, and the Workload
+/// card's and `--image-size`'s default, so a run outside a spec sends the
+/// same image as one inside it.
+pub const DEFAULT_IMAGE_SIZE: &str = "1344x896";
+
+/// JPEG quality of a resized image. Fixed: it is part of what is sent.
+const IMAGE_JPEG_QUALITY: u8 = 90;
+
+/// `WxH` (both 1 or more) as a box, `original` as `None` (the file as is).
+pub fn parse_image_size(v: &str) -> Result<Option<(u32, u32)>, String> {
+    let v = v.trim();
+    if v.eq_ignore_ascii_case("original") {
+        return Ok(None);
+    }
+    v.split_once(['x', 'X'])
+        .and_then(|(w, h)| Some((w.trim().parse::<u32>().ok()?, h.trim().parse::<u32>().ok()?)))
+        .filter(|(w, h)| *w > 0 && *h > 0)
+        .map(Some)
+        .ok_or_else(|| format!("image size `{v}`: WxH (e.g. {DEFAULT_IMAGE_SIZE}) or `original`"))
+}
+
+/// The inverse of `parse_image_size`.
+pub fn image_size_str(size: Option<(u32, u32)>) -> String {
+    size.map_or_else(|| "original".into(), |(w, h)| format!("{w}x{h}"))
+}
 
 /// Every shipped prompt (`paths::bench_prompts_dir()`), by file name: the
 /// prompts the published `standard` versions pin, each `<name>-<X.Y>`. Read
@@ -387,6 +419,10 @@ pub struct Plan {
     /// on its own (or at the preset's `n-predict`, or the slot's context).
     /// The CLI's default; the Benchmark tab sends its field's value.
     pub max_tokens: i32,
+    /// Live only: the box an image prompt's image is fitted into when it is
+    /// sent (`resolve_images`); `None` sends the file as is. Ignored by a
+    /// prompt without an image.
+    pub image_size: Option<(u32, u32)>,
     /// Live only: one request per repetition, or two at once (see
     /// [`Concurrency`]).
     pub concurrency: Concurrency,
@@ -417,6 +453,7 @@ impl Default for Plan {
             prompt_file: Some(crate::paths::bench_prompt_file()),
             temp: Some(0.0),
             max_tokens: DEFAULT_MAX_TOKENS,
+            image_size: parse_image_size(DEFAULT_IMAGE_SIZE).unwrap_or(None),
             concurrency: Concurrency::Single,
             prompt_lens: parse_int_list(DEFAULT_PROMPT_LENS),
             depths: parse_int_list(DEFAULT_DEPTHS),
@@ -743,9 +780,107 @@ pub fn prompt_request(
             if let Some(c) = m.get("content").and_then(serde_json::Value::as_str) {
                 m["content"] = serde_json::json!(shorten(c));
             }
+            // A content array: its text parts, and an image's data URL (a
+            // few hundred kilobytes of base64 nobody reads in a preview).
+            for part in m.get_mut("content").and_then(serde_json::Value::as_array_mut).into_iter().flatten() {
+                if let Some(t) = part.get("text").and_then(serde_json::Value::as_str) {
+                    part["text"] = serde_json::json!(shorten(t));
+                }
+                if let Some(u) = part.pointer("/image_url/url").and_then(serde_json::Value::as_str) {
+                    part["image_url"]["url"] = serde_json::json!(shorten(u));
+                }
+            }
         }
     }
     (v["messages"].take(), v.get("tools").cloned())
+}
+
+/// Whether a prompt holds an image: a conversation with an `image_url`
+/// content part. Only a model loaded with an mmproj can read one, so a spec
+/// runs such a prompt on the presets that have one and skips it on the rest.
+pub fn prompt_has_image(text: &str) -> bool {
+    let (messages, _) = prompt_request(text, None);
+    messages.as_array().into_iter().flatten().any(|m| {
+        m.get("content")
+            .and_then(serde_json::Value::as_array)
+            .into_iter()
+            .flatten()
+            .any(|p| matches!(p.get("type").and_then(serde_json::Value::as_str), Some("image_url" | "image_file")))
+    })
+}
+
+/// The prompt as sent: every `image_file` part
+/// (`{"type": "image_file", "file": "<name>", "sha256": "<of its bytes>"}`,
+/// the file relative to `dir`, the prompt's directory) replaced by an
+/// `image_url` part with the image as a `data:` URL. The file must match its
+/// sha256: the prompt's digest covers that pin, so it covers the image. An
+/// image larger than `size` is fitted into it (aspect kept, Lanczos3) and
+/// re-encoded as JPEG at a fixed quality; one that fits, or `size = None`, is
+/// sent byte for byte. A prompt without `image_file` parts comes back
+/// unchanged, so a text prompt's digest is the same before and after.
+pub fn resolve_images(
+    text: &str,
+    dir: &std::path::Path,
+    size: Option<(u32, u32)>,
+) -> Result<String, String> {
+    if !text.contains("\"image_file\"") {
+        return Ok(text.to_string());
+    }
+    let Ok(mut v) = serde_json::from_str::<serde_json::Value>(text) else {
+        return Ok(text.to_string());
+    };
+    let mut changed = false;
+    for m in v.get_mut("messages").and_then(serde_json::Value::as_array_mut).into_iter().flatten() {
+        for part in m.get_mut("content").and_then(serde_json::Value::as_array_mut).into_iter().flatten() {
+            if part.get("type").and_then(serde_json::Value::as_str) != Some("image_file") {
+                continue;
+            }
+            let name = part.get("file").and_then(serde_json::Value::as_str).unwrap_or_default();
+            let pinned = part.get("sha256").and_then(serde_json::Value::as_str).unwrap_or_default();
+            if name.is_empty() || pinned.is_empty() {
+                return Err("an image_file part needs `file` and `sha256`".into());
+            }
+            let path = dir.join(name);
+            let bytes = std::fs::read(&path)
+                .map_err(|e| format!("cannot read the image {}: {e}", path.display()))?;
+            let actual = crate::sha256::hex(&bytes);
+            if !actual.eq_ignore_ascii_case(pinned) {
+                return Err(format!(
+                    "{} has sha256 {actual}, the prompt pins {pinned}: the image is part of the prompt",
+                    path.display()
+                ));
+            }
+            let url = image_data_url(&bytes, size).map_err(|e| format!("{}: {e}", path.display()))?;
+            *part = serde_json::json!({ "type": "image_url", "image_url": { "url": url } });
+            changed = true;
+        }
+    }
+    Ok(if changed { v.to_string() } else { text.to_string() })
+}
+
+/// `bytes` as a `data:` URL, fitted into `size` first when larger.
+fn image_data_url(bytes: &[u8], size: Option<(u32, u32)>) -> Result<String, String> {
+    use base64::Engine as _;
+    let format = image::guess_format(bytes).map_err(|e| format!("not an image: {e}"))?;
+    let img = image::load_from_memory_with_format(bytes, format).map_err(|e| format!("unreadable image: {e}"))?;
+    let (w, h) = (img.width(), img.height());
+    let (data, mime) = match size {
+        Some((bw, bh)) if w > bw || h > bh => {
+            let fitted = img
+                .resize(bw, bh, image::imageops::FilterType::Lanczos3)
+                .to_rgb8();
+            let mut out = Vec::new();
+            image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, IMAGE_JPEG_QUALITY)
+                .encode_image(&fitted)
+                .map_err(|e| format!("cannot encode the resized image: {e}"))?;
+            (out, "image/jpeg")
+        }
+        _ => (bytes.to_vec(), format.to_mime_type()),
+    };
+    Ok(format!(
+        "data:{mime};base64,{}",
+        base64::engine::general_purpose::STANDARD.encode(data)
+    ))
 }
 
 /// The body of one request of a concurrent repetition: pinned to `slot`, and
@@ -1354,6 +1489,9 @@ pub fn render_report(plan: &Plan, points: &[Point], meta: &RunMeta) -> String {
                 }
             ));
             md.push_str(&format!("| max output tokens | {} |\n", plan.max_tokens));
+            if prompt_has_image(&plan.prompt) {
+                md.push_str(&format!("| image size | {} |\n", image_size_str(plan.image_size)));
+            }
             for (label, value) in prompt_report_rows(plan) {
                 md.push_str(&format!("| {label} | {value} |\n"));
             }
@@ -2318,7 +2456,16 @@ mod tests {
             );
             let raw = std::fs::read_to_string(p).unwrap();
             assert_eq!(normalize_prompt(&raw), raw, "{name} must already be LF and BOM-free");
-            if p.extension().unwrap() == "json" {
+            if p.extension().unwrap() == "json" && prompt_has_image(&raw) {
+                // Its image is shipped beside it, matches its pin, and is
+                // sent fitted into the default size.
+                let size = parse_image_size(DEFAULT_IMAGE_SIZE).unwrap();
+                let sent = resolve_images(&raw, p.parent().unwrap(), size).expect(&name);
+                let (messages, _) = prompt_request(&sent, None);
+                let url = messages[0]["content"][0]["image_url"]["url"].as_str().unwrap();
+                assert!(url.starts_with("data:image/jpeg;base64,"), "{name}: the image inline");
+                assert_eq!(resolve_images(&sent, p.parent().unwrap(), size).unwrap(), sent);
+            } else if p.extension().unwrap() == "json" {
                 let (messages, tools) = prompt_request(&raw, None);
                 assert!(messages.as_array().unwrap().len() > 1, "{name}: a conversation");
                 assert!(tools.is_some(), "{name}: with its tools");
@@ -2362,6 +2509,73 @@ mod tests {
         .to_string();
         let (m, _) = prompt_request(&long, Some(PREVIEW_PROMPT_CHARS));
         assert!(m[0]["content"].as_str().unwrap().contains("chars shown]"));
+    }
+
+    /// An `image_file` part is read, checked against its sha256 and fitted
+    /// into the size (never enlarged); `original` sends the bytes as they are.
+    #[test]
+    fn an_image_file_is_checked_and_fitted_into_the_size() {
+        use base64::Engine as _;
+        let dir = tempfile::tempdir().unwrap();
+        let mut png = Vec::new();
+        image::RgbImage::from_pixel(600, 400, image::Rgb([200, 100, 50]))
+            .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+            .unwrap();
+        std::fs::write(dir.path().join("i.png"), &png).unwrap();
+        let prompt = |sha: &str| {
+            serde_json::json!({ "messages": [{ "role": "user", "content": [
+                { "type": "image_file", "file": "i.png", "sha256": sha },
+                { "type": "text", "text": "Describe it." },
+            ]}]})
+            .to_string()
+        };
+        let good = prompt(&crate::sha256::hex(&png));
+        assert!(prompt_has_image(&good));
+        let decoded = |sent: &str| {
+            let (m, _) = prompt_request(sent, None);
+            let url = m[0]["content"][0]["image_url"]["url"].as_str().unwrap().to_string();
+            let (mime, data) = url.strip_prefix("data:").unwrap().split_once(";base64,").unwrap();
+            let bytes = base64::engine::general_purpose::STANDARD.decode(data).unwrap();
+            (mime.to_string(), bytes)
+        };
+        let (mime, bytes) = decoded(&resolve_images(&good, dir.path(), Some((300, 300))).unwrap());
+        let img = image::load_from_memory(&bytes).unwrap();
+        assert_eq!((mime.as_str(), img.width(), img.height()), ("image/jpeg", 300, 200));
+        // Already inside the box, or original: the file's own bytes.
+        for size in [Some((1344, 896)), None] {
+            let (mime, bytes) = decoded(&resolve_images(&good, dir.path(), size).unwrap());
+            assert_eq!((mime.as_str(), &bytes), ("image/png", &png));
+        }
+        let bad = prompt(&"0".repeat(64));
+        assert!(resolve_images(&bad, dir.path(), None).unwrap_err().contains("the prompt pins"));
+        // A prompt without an image_file comes back as it was.
+        assert_eq!(resolve_images("hello", dir.path(), None).unwrap(), "hello");
+        assert_eq!(parse_image_size("1344x896").unwrap(), Some((1344, 896)));
+        assert_eq!(parse_image_size("original").unwrap(), None);
+        assert!(parse_image_size("0x5").is_err() && parse_image_size("big").is_err());
+        assert_eq!(image_size_str(Some((1344, 896))), "1344x896");
+    }
+
+    /// An image prompt: a content part of type `image_url`. The preview
+    /// elides its data URL; the request sends it whole.
+    #[test]
+    fn an_image_prompt_is_recognized_and_its_data_url_elided_in_the_preview() {
+        let url = format!("data:image/jpeg;base64,{}", "A".repeat(PREVIEW_PROMPT_CHARS * 3));
+        let image = serde_json::json!({
+            "messages": [{ "role": "user", "content": [
+                { "type": "image_url", "image_url": { "url": url } },
+                { "type": "text", "text": "Describe it." },
+            ]}],
+        })
+        .to_string();
+        assert!(prompt_has_image(&image));
+        assert!(!prompt_has_image("Describe it."));
+        assert!(!prompt_has_image(r#"{"messages": [{"role": "user", "content": "hi"}]}"#));
+        let (m, _) = prompt_request(&image, Some(PREVIEW_PROMPT_CHARS));
+        assert!(m[0]["content"][0]["image_url"]["url"].as_str().unwrap().contains("chars shown]"));
+        assert_eq!(m[0]["content"][1]["text"], "Describe it.");
+        let (m, _) = prompt_request(&image, None);
+        assert_eq!(m[0]["content"][0]["image_url"]["url"], url.as_str());
     }
 
     /// The preview elides a long prompt; the REQUEST never does. One formatter

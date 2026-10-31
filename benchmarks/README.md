@@ -43,11 +43,13 @@ A number is only comparable with another measured the same way. `specs\` holds t
 written down: `standard-<X.Y>.ini` is the framework's method at version X.Y, an INI file
 with the prompts, the output cap (none) and the passes, each with its temperature,
 repetitions, concurrency and the preset keys it overrides for every leg. Version 1.0 pins
-three prompts from `prompts\` (each file versioned in its name too, `prompts/README.md` says
+four prompts from `prompts\` (each file versioned in its name too, `prompts/README.md` says
 what each one is): `bench-prompt-43k-1.0.txt` (technical prose, 43.7k tokens on Qwen3.8),
-`bench-prompt-110k-1.0.txt` (the same kind, 110k) and `bench-prompt-code-1.0.json` (a
+`bench-prompt-110k-1.0.txt` (the same kind, 110k), `bench-prompt-code-1.0.json` (a
 coding-agent turn at ~42k tokens: tool definitions, earlier tool calls with the source files
-they read, then the model's next step), and has two passes:
+they read, then the model's next step) and `bench-prompt-image-1.0.json` (image to text: a
+photograph to describe, fitted into `ImageSize = 1344x896` when sent; run only on a preset
+that loads an `mmproj`, skipped on the rest), and has two passes:
 
 | pass | temperature | speculator | concurrency | reps | measures |
 |---|---|---|---|---:|---|

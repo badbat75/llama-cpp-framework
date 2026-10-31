@@ -1065,6 +1065,11 @@ pub fn all_scenarios(preset: &str) -> Result<Vec<Concurrency>, String> {
     Ok(scenarios_for(n))
 }
 
+/// Whether the preset loads an mmproj, so it can read an image prompt.
+pub fn has_mmproj(preset: &str) -> Result<bool, String> {
+    Ok(!load_one(preset)?.mmproj.trim().is_empty())
+}
+
 fn scenarios_for(parallel: i32) -> Vec<Concurrency> {
     if parallel >= 2 {
         Concurrency::ALL.to_vec()

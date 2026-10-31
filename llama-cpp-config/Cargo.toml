@@ -24,6 +24,11 @@ regex = "1.13"
 # bench.db (bench/db.rs): the benchmark store, one schema shared with the
 # repo's benchmarks/. `bundled` compiles SQLite in, so Windows needs no DLL.
 rusqlite = { version = "0.41", features = ["bundled"] }
+# Image prompts (bench::resolve_images): the image a prompt names is decoded,
+# fitted into the run's image size and re-encoded as JPEG at send time. Both
+# are already in the lock (slint's own image loading).
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
+base64 = "0.23"
 
 # rfd has no file-dialog backend without a feature on Linux, and its build
 # script refuses to compile with none chosen. xdg-portal talks to the desktop

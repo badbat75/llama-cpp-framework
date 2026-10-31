@@ -509,6 +509,9 @@ export global AppState {
     in-out property <bool> bench_temp_default: false;
     in-out property <string> bench_temp: "0";
     in-out property <string> bench_max_tokens;
+    // Live only: the box an image prompt's image is fitted into, "WxH" or
+    // "original" (bench::parse_image_size).
+    in-out property <string> bench_image_size;
     // Live only: "single", or one request per slot of the preset at once
     // ("prefill", "decode", "prefill+decode"): bench::Concurrency; "all" runs
     // each of them in turn, as `bench sweep --concurrency all`.

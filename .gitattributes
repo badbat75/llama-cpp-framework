@@ -7,6 +7,8 @@
 # differs between two checkouts is two prompts. A CRLF checkout would change
 # every line ending, hence the digest, hence the tokenization. Pin them to LF.
 benchmarks/prompts/* text eol=lf
+# The images an image prompt names are pinned by the sha256 of their bytes.
+benchmarks/prompts/*.jpg binary
 benchmarks/specs/* text eol=lf
 
 # The icon font is compiled into the binary as is: never a text conversion.

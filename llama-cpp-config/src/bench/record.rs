@@ -489,6 +489,9 @@ pub fn plan_params(plan: &Plan) -> Vec<(String, String)> {
                     "none".into()
                 },
             ));
+            if super::prompt_has_image(&plan.prompt) {
+                out.push(("image-size".into(), super::image_size_str(plan.image_size)));
+            }
             out.push(("concurrency".into(), plan.concurrency.as_str().into()));
             out.push(("prompt".into(), prompt_name(plan)));
         }

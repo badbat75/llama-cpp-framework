@@ -195,7 +195,8 @@ pub struct BenchSweep {
     /// `BenchPromptFile`, default the shipped `bench-prompt-43k-1.0.txt` in
     /// share/benchmarks/prompts), so a scripted sweep and a run from the GUI
     /// measure the same text. A `.json` prompt is a conversation with tools
-    /// (`{"messages": [...], "tools": [...]}`), sent as given.
+    /// (`{"messages": [...], "tools": [...]}`), sent as given; an `image_file`
+    /// part in it is an image, fitted into `--image-size` when sent.
     #[arg(long)]
     pub prompt_file: Option<std::path::PathBuf>,
     /// Live only: sampling temperature, or `preset` to leave the preset's alone.
@@ -207,6 +208,11 @@ pub struct BenchSweep {
     /// the preset's `n-predict`), so the output length is part of the result.
     #[arg(long)]
     pub max_tokens: Option<i32>,
+    /// Live only: the box an image prompt's image is fitted into when sent,
+    /// `WxH` (aspect kept, never enlarged) or `original`. Default 1344x896,
+    /// `standard`'s `ImageSize`. A prompt without an image ignores it.
+    #[arg(long)]
+    pub image_size: Option<String>,
     /// Live only: requests per repetition. `single` (default) sends one;
     /// the others send one per slot of the preset at once (N = `parallel`,
     /// absent = 4; N >= 2), each pinned with `id_slot`: `prefill` (all N
@@ -642,6 +648,9 @@ fn run_bench(c: BenchCmd) -> Result<()> {
     // No flag = no cap (unlike the tab, whose field always holds a number):
     // how long the model talks under a setting is part of what a sweep shows.
     plan.max_tokens = a.max_tokens.unwrap_or(0);
+    if let Some(v) = a.image_size.as_deref() {
+        plan.image_size = bench::parse_image_size(v).map_err(|e| anyhow::anyhow!("--image-size: {e}"))?;
+    }
     let concurrency_all = a.concurrency.as_deref() == Some("all");
     if let Some(c) = a.concurrency.as_deref().filter(|c| *c != "all") {
         plan.concurrency = bench::Concurrency::from_str(c)
@@ -670,6 +679,7 @@ fn run_bench(c: BenchCmd) -> Result<()> {
         prompt: prompt_given.then(|| vec![(plan.prompt_file.clone(), plan.prompt.clone())]),
         temp: a.temp.is_some().then_some(plan.temp),
         max_tokens: a.max_tokens,
+        image_size: a.image_size.is_some().then_some(plan.image_size),
         reps: a.reps,
         concurrency: a
             .concurrency

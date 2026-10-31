@@ -201,6 +201,18 @@ export component BenchPage inherits ScrollView {
             }
             if AppState.bench_is_live : LabeledField {
                 label_width <=> LabelColumn.bench;
+                label: "Image size";
+                hint: "An image prompt's image is fitted into this box when it is sent (WxH, aspect kept, never enlarged; re-encoded as JPEG), so every model reads the same picture whatever the file's size.\noriginal = the file as is.\nA prompt without an image ignores it, and an image prompt runs only on presets that load an mmproj.";
+                LineEdit {
+                    accessible-label: "bench-image-size";
+                    enabled: AppState.bench_spec == "custom" || AppState.bench_spec_override;
+                    text <=> AppState.bench_image_size;
+                    placeholder-text: "1344x896";
+                    edited => { AppState.bench_changed(); }
+                }
+            }
+            if AppState.bench_is_live : LabeledField {
+                label_width <=> LabelColumn.bench;
                 label: "Concurrency";
                 hint: "single: one request per repetition.\nThe others send one request per slot of the preset AT ONCE, N = the preset's parallel (absent = llama-server's auto 4; it must be at least 2), each pinned to its slot:\nprefill: all N prefill the whole prompt, then decode together.\ndecode: every slot is primed with the prompt first, so all N only decode.\nprefill+decode: N-1 primed slots decode while the last one prefills.\nThe table adds prefill total and decode total, the throughput of the N requests together.\nall: each of the four in turn, into one campaign (single alone when a selected preset has parallel below 2), as `bench sweep --concurrency all`.";
                 SegmentedControl {

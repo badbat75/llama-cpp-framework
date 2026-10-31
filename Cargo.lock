@@ -2695,10 +2695,12 @@ name = "llama-cpp-config"
 version = "2.2.0"
 dependencies = [
  "anyhow",
+ "base64",
  "clap",
  "i-slint-backend-testing",
  "ico",
  "if-addrs",
+ "image",
  "regex",
  "rfd",
  "rusqlite",

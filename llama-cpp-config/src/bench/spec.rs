@@ -21,6 +21,7 @@
 //! Version = 1.0
 //! Prompts = bench-prompt-43k-1.0.txt@96d8fb4f..., bench-prompt-code-1.0.json@...
 //! MaxTokens = 0
+//! ImageSize = 1344x896
 //!
 //! [Pass.engine]
 //! Temp = 0
@@ -43,7 +44,9 @@
 //! `Override` is a `;`-separated list of `key=value` (a value may hold commas),
 //! each written to the preset for the pass and put back after it, with a
 //! pending marker like a sweep's own key. `Concurrency = all` is single, then
-//! every concurrent scenario when the preset has two slots or more.
+//! every concurrent scenario when the preset has two slots or more. A prompt
+//! with an image (`bench::prompt_has_image`) runs only on presets that load an
+//! mmproj and is skipped on the rest, so one spec covers text-only models too.
 
 use std::path::{Path, PathBuf};
 
@@ -80,6 +83,8 @@ pub struct Derive {
     /// `Some(None)` = the preset's own temperature.
     pub temp: Option<Option<f64>>,
     pub max_tokens: Option<i32>,
+    /// `Some(None)` = the image file as is.
+    pub image_size: Option<Option<(u32, u32)>>,
     pub reps: Option<i32>,
     /// `Some(None)` = all.
     pub concurrency: Option<Option<Concurrency>>,
@@ -92,6 +97,7 @@ impl Derive {
             ("prompt", self.prompt.is_some()),
             ("temp", self.temp.is_some()),
             ("max-tokens", self.max_tokens.is_some()),
+            ("image-size", self.image_size.is_some()),
             ("concurrency", self.concurrency.is_some()),
             ("reps", self.reps.is_some()),
         ]
@@ -122,6 +128,9 @@ pub struct Spec {
     /// Each prompt with the sha256 its text must have.
     pub prompts: Vec<(PathBuf, String)>,
     pub max_tokens: i32,
+    /// `ImageSize`: the box an image prompt's image is fitted into when sent;
+    /// `None` (absent, or `original`) sends the file as is.
+    pub image_size: Option<(u32, u32)>,
     pub passes: Vec<Pass>,
     /// Its rules are a published version of `standard` (name, version and
     /// digest in `standard.versions`). Anything else, a file of your own
@@ -207,6 +216,10 @@ pub fn parse(text: &str, config: &Path) -> Result<Spec, String> {
         Some(v) => ini::parse_int_in(&v, &ini::INT_NON_NEGATIVE)
             .ok_or_else(|| format!("MaxTokens = {v}: 0 (no cap) or more"))?,
     };
+    let image_size = match get("ImageSize") {
+        None => None,
+        Some(v) => super::parse_image_size(&v).map_err(|e| format!("ImageSize: {e}"))?,
+    };
     let mut passes = Vec::new();
     for s in &sections {
         let Some(pass) = s.id.strip_prefix("Pass.") else {
@@ -263,6 +276,7 @@ pub fn parse(text: &str, config: &Path) -> Result<Spec, String> {
         sha256: String::new(),
         prompts,
         max_tokens,
+        image_size,
         passes,
         published: false,
     };
@@ -276,12 +290,16 @@ pub fn parse(text: &str, config: &Path) -> Result<Spec, String> {
 
 /// The rules of a spec, one per line, comments and layout left out: what its
 /// digest covers. A prompt counts by file name and pinned digest, not by the
-/// directory it resolves to on this machine.
+/// directory it resolves to on this machine. `image-size` only when set, so
+/// a spec without one keeps the digest it had before the key existed.
 pub fn canonical(spec: &Spec) -> String {
     let mut out = format!(
         "name={}\nversion={}\nmax-tokens={}\n",
         spec.name, spec.version, spec.max_tokens
     );
+    if let Some(size) = spec.image_size {
+        out.push_str(&format!("image-size={}\n", super::image_size_str(Some(size))));
+    }
     for (path, sha) in &spec.prompts {
         let file = path.file_name().unwrap_or_default().to_string_lossy();
         out.push_str(&format!("prompt={file}@{sha}\n"));
@@ -359,6 +377,9 @@ pub fn to_ini(spec: &Spec, config: &Path) -> String {
         prompts.join(", "),
         spec.max_tokens
     );
+    if spec.image_size.is_some() {
+        out.push_str(&format!("ImageSize = {}\n", super::image_size_str(spec.image_size)));
+    }
     for p in &spec.passes {
         out.push_str(&format!(
             "\n[Pass.{}]\nTemp = {}\n",
@@ -421,6 +442,14 @@ pub fn run(spec: &Spec, base: &Opts, derive: &Derive) -> Result<String, String> 
     };
     let mut problems = Vec::new();
     for prompt in &prompts {
+        if super::prompt_has_image(&prompt.1) && !sweep::has_mmproj(&base.preset)? {
+            println!(
+                "\nSkipping {}: an image prompt, and preset `{}` loads no mmproj.",
+                prompt_name(prompt),
+                base.preset
+            );
+            continue;
+        }
         for pass in &spec.passes {
             let scenarios = match derive.concurrency.unwrap_or(pass.concurrency) {
                 Some(c) => vec![c],
@@ -488,6 +517,7 @@ fn pass_plan(
         temp: derive.temp.unwrap_or(pass.temp),
         reps: derive.reps.unwrap_or(pass.reps),
         max_tokens: derive.max_tokens.unwrap_or(spec.max_tokens),
+        image_size: derive.image_size.unwrap_or(spec.image_size),
         concurrency: c,
         spec: Some(Tag {
             name: spec.name.clone(),
@@ -538,8 +568,10 @@ fn prompt_name(p: &Prompt) -> String {
 /// tab's presets (`base.presets`, its live mode and campaign), each pass's
 /// overrides written to every preset for its steps. `Concurrency = all` runs the
 /// scenarios every selected preset supports (single alone when one has
-/// `parallel` < 2). `derive` replaces spec values in every step (Override);
-/// any at all makes every run custom, derived from the spec.
+/// `parallel` < 2). An image prompt's steps run only the selected presets
+/// that load an mmproj, and none when no preset does. `derive` replaces spec
+/// values in every step (Override); any at all makes every run custom, derived
+/// from the spec.
 pub fn tab_steps(
     spec: &Spec,
     base: &Plan,
@@ -550,14 +582,30 @@ pub fn tab_steps(
         return Err("a spec runs the live engine: pick live".into());
     }
     let (prompts, derived) = prompts_and_derived(spec, derive, ab_key)?;
-    let mut all = Concurrency::ALL.to_vec();
-    for p in &base.presets {
-        let mine = sweep::all_scenarios(p)?;
-        all.retain(|c| mine.contains(c));
-    }
     let mut steps = Vec::new();
     for prompt in &prompts {
         let name = prompt_name(prompt);
+        // An image prompt runs on the presets with an mmproj, and not at all
+        // when none has one.
+        let mut base = base.clone();
+        if super::prompt_has_image(&prompt.1) {
+            let mut with = Vec::new();
+            for p in &base.presets {
+                if sweep::has_mmproj(p)? {
+                    with.push(p.clone());
+                }
+            }
+            base.presets = with;
+            if base.presets.is_empty() {
+                continue;
+            }
+        }
+        let base = &base;
+        let mut all = Concurrency::ALL.to_vec();
+        for p in &base.presets {
+            let mine = sweep::all_scenarios(p)?;
+            all.retain(|c| mine.contains(c));
+        }
         for pass in &spec.passes {
             let scenarios = match derive.concurrency.unwrap_or(pass.concurrency) {
                 Some(c) => vec![c],
@@ -866,6 +914,33 @@ mod tests {
             ["concurrency", "reps", "spec-file"],
             "a spec that is no published standard version is a derivation too"
         );
+    }
+
+    /// An image prompt runs only on presets with an mmproj: with none
+    /// selected, its steps are left out and the text prompt's stay.
+    #[test]
+    fn an_image_prompt_needs_a_preset_with_an_mmproj() {
+        let dir = tempfile::tempdir().unwrap();
+        let image = r#"{"messages": [{"role": "user", "content": [
+            {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,AAAA"}},
+            {"type": "text", "text": "Describe it."}]}]}"#;
+        std::fs::write(dir.path().join("t.txt"), "hello").unwrap();
+        std::fs::write(dir.path().join("i.json"), image).unwrap();
+        let sha = |t: &str| super::super::prompt_info(t).sha256;
+        let text = format!(
+            "[Spec]\nName = t\nVersion = 2\nPrompts = t.txt@{}, i.json@{}\nMaxTokens = 0\n\n\
+             [Pass.engine]\nTemp = 0\nConcurrency = single\nReps = 3\n",
+            sha("hello"),
+            sha(image)
+        );
+        let spec = parse(&text, dir.path()).unwrap();
+        let base = Plan {
+            mode: super::super::Mode::Live,
+            ..Plan::default()
+        };
+        let steps = tab_steps(&spec, &base, &Derive::default(), None).unwrap();
+        let labels: Vec<&str> = steps.iter().map(|s| s.label.as_str()).collect();
+        assert_eq!(labels, ["engine · t.txt · single"]);
     }
 
     /// A/B over a key the engine pass overrides: every step once per value,

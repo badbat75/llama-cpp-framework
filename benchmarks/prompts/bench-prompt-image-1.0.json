@@ -1,0 +1,18 @@
+{
+ "messages": [
+  {
+   "role": "user",
+   "content": [
+    {
+     "type": "image_file",
+     "file": "bench-image-zebras-1.0.jpg",
+     "sha256": "d546bf99a8527e35be27ad99b7e526735cb6a2a9535eda96ec7cc1c2e1dfc76e"
+    },
+    {
+     "type": "text",
+     "text": "Describe this photograph in detail: what it shows, how many animals you can count, what they are doing, and the setting and the light."
+    }
+   ]
+  }
+ ]
+}

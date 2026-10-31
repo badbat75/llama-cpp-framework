@@ -329,6 +329,26 @@ fn run(plan: &Plan, cancel: &Arc<AtomicBool>, emit: &impl Fn(Event)) -> Result<S
     if let Some(problem) = super::validate(plan) {
         return Err(problem);
     }
+    // An image prompt's images, read, checked and fitted into the run's size
+    // once, before anything is measured, so every request sends the same
+    // bytes. bench.db records the prompt as pinned (`as_pinned`), the image
+    // by its sha256 inside it, and the size as the run's `image-size`.
+    let as_pinned = plan;
+    let resolved;
+    let plan = if plan.mode == Mode::Live {
+        let dir = plan
+            .prompt_file
+            .as_deref()
+            .and_then(std::path::Path::parent)
+            .map_or_else(paths::config_dir, std::path::Path::to_path_buf);
+        resolved = Plan {
+            prompt: super::resolve_images(&plan.prompt, &dir, plan.image_size)?,
+            ..plan.clone()
+        };
+        &resolved
+    } else {
+        plan
+    };
     let cfg = server_cfg::load();
     let running = runstate::is_running();
     match plan.mode {
@@ -369,7 +389,7 @@ fn run(plan: &Plan, cancel: &Arc<AtomicBool>, emit: &impl Fn(Event)) -> Result<S
     let stamp = super::stamp(super::now_secs());
     // Opened BEFORE anything is measured: a database that cannot be written is
     // a run whose results would have nowhere to go.
-    let rec = Recorder::begin(&super::db::work_path(), plan, &stamp)
+    let rec = Recorder::begin(&super::db::work_path(), as_pinned, &stamp)
         .map_err(|e| format!("bench.db: {e}"))?;
 
     // What each preset's device ids point at RIGHT NOW. Recorded because the ids

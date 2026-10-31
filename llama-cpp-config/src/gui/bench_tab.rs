@@ -306,6 +306,7 @@ pub(super) fn refresh(app: &AppWindow, state: &Rc<RefCell<State>>) {
         s.set_bench_db(SharedString::from(settings::load().bench_db.trim()));
         s.set_bench_temp(SharedString::from("0"));
         s.set_bench_max_tokens(SharedString::from(bench::DEFAULT_MAX_TOKENS.to_string()));
+        s.set_bench_image_size(SharedString::from(bench::DEFAULT_IMAGE_SIZE));
         s.set_bench_reps(SharedString::from(bench::DEFAULT_REPS.to_string()));
         s.set_bench_prompt_lens(SharedString::from(bench::DEFAULT_PROMPT_LENS));
         s.set_bench_depths(SharedString::from(bench::DEFAULT_DEPTHS));
@@ -552,11 +553,14 @@ fn invalid_numbers(s: &AppState, mode: Mode) -> Vec<String> {
         &ini::INT_POSITIVE,
     ));
     match mode {
-        Mode::Live => out.extend(ini::int_problem(
-            "Max output tokens",
-            s.get_bench_max_tokens().as_str(),
-            &ini::INT_NON_NEGATIVE,
-        )),
+        Mode::Live => {
+            out.extend(ini::int_problem(
+                "Max output tokens",
+                s.get_bench_max_tokens().as_str(),
+                &ini::INT_NON_NEGATIVE,
+            ));
+            out.extend(bench::parse_image_size(s.get_bench_image_size().as_str()).err());
+        }
         Mode::Synthetic => {
             out.extend(bench::int_list_problem(
                 "Prompt lengths",
@@ -616,6 +620,8 @@ fn plan_from_ui(app: &AppWindow, state: &Rc<RefCell<State>>) -> Plan {
             Some(ini::parse_float(s.get_bench_temp().as_str()).unwrap_or(0.0))
         },
         max_tokens: int(s.get_bench_max_tokens(), bench::DEFAULT_MAX_TOKENS),
+        image_size: bench::parse_image_size(s.get_bench_image_size().as_str())
+            .unwrap_or_else(|_| bench::parse_image_size(bench::DEFAULT_IMAGE_SIZE).unwrap_or(None)),
         concurrency: bench::Concurrency::from_str(s.get_bench_concurrency().as_str())
             .unwrap_or_default(),
         prompt_lens: bench::parse_int_list(s.get_bench_prompt_lens().as_str()),
@@ -699,6 +705,7 @@ fn save_spec(app: &AppWindow, state: &Rc<RefCell<State>>, path: &Path) -> Result
             }
             let derive = derive_from_ui(&s, state, &plan, &[]);
             spec.max_tokens = derive.max_tokens.unwrap_or(spec.max_tokens);
+            spec.image_size = derive.image_size.unwrap_or(spec.image_size);
             for p in spec.passes.iter_mut() {
                 p.temp = derive.temp.unwrap_or(p.temp);
                 p.reps = derive.reps.unwrap_or(p.reps);
@@ -712,6 +719,7 @@ fn save_spec(app: &AppWindow, state: &Rc<RefCell<State>>, path: &Path) -> Result
             sha256: String::new(),
             prompts: pin(read_ticked_prompts(state)?),
             max_tokens: plan.max_tokens,
+            image_size: plan.image_size,
             passes: vec![bench::spec::Pass {
                 name: "main".into(),
                 temp: plan.temp,
@@ -781,7 +789,7 @@ fn chosen_spec(s: &AppState) -> Option<Result<bench::spec::Spec, String>> {
 
 /// The Workload fields Override can take over besides the prompts, by the
 /// name `Derive::fields` records, with their values as the card shows them.
-fn workload_values(s: &AppState) -> [(&'static str, String); 4] {
+fn workload_values(s: &AppState) -> [(&'static str, String); 5] {
     [
         (
             "temp",
@@ -792,6 +800,7 @@ fn workload_values(s: &AppState) -> [(&'static str, String); 4] {
             },
         ),
         ("max-tokens", s.get_bench_max_tokens().to_string()),
+        ("image-size", s.get_bench_image_size().to_string()),
         ("concurrency", s.get_bench_concurrency().to_string()),
         ("reps", s.get_bench_reps().to_string()),
     ]
@@ -843,6 +852,7 @@ fn derive_from_ui(
         prompt: on("prompt").then(|| prompts.to_vec()),
         temp: on("temp").then_some(plan.temp),
         max_tokens: on("max-tokens").then_some(plan.max_tokens),
+        image_size: on("image-size").then_some(plan.image_size),
         reps: on("reps").then_some(plan.reps),
         concurrency: on("concurrency")
             .then(|| (s.get_bench_concurrency() != "all").then_some(plan.concurrency)),

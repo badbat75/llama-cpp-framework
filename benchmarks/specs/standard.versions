@@ -9,5 +9,7 @@
 # .agents/skills/bench-spec/SKILL.md.
 # 1.0 replaced the line `1 44b670...` on 2026-10-31, before any run recorded
 # it (bench.db held no spec run; 1 had been pushed in 19d324e, never tagged or
-# released): the code prompt added, the version renamed.
-1.0 e616dc716ecf5b0c51bb86bfda76c30bd1077781d37708fe595f3a9c17b62d67
+# released): the code prompt added, the version renamed. Its line was
+# replaced again on 2026-10-31, still before any run recorded it: the image
+# prompt and ImageSize added.
+1.0 b42974fa79c455cc2d0be0794e85487bdd790dab550672ec58ce242a2c32cb21

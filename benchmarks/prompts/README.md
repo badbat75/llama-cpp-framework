@@ -12,7 +12,13 @@ a spec pins ship: a prompt no spec pins measures nothing another machine can com
 
 A `.txt` prompt is sent as one user message. A `.json` one is a conversation,
 `{"messages": [...], "tools": [...]}` in the OpenAI chat format, sent as given
-(`bench::prompt_request`), so the model's own chat template renders it.
+(`bench::prompt_request`), so the model's own chat template renders it. A message's
+content may hold an image as `{"type": "image_file", "file": "<name>", "sha256": "<of
+its bytes>"}`, the file beside the prompt: at send time it is checked against that digest,
+fitted into the run's image size (the spec's `ImageSize`) and sent as an `image_url` data
+URL (`bench::resolve_images`). The image ships as is and the size is a setting, so one
+image serves every resolution; the prompt's digest covers the image's, so the spec's pin
+covers both.
 
 ## `bench-prompt-43k-1.0.txt`
 
@@ -89,3 +95,19 @@ script that read those files with `git show 87cda04:<path>`. The same rules as
 above apply: never regenerate it when the sources change (a new snapshot is
 `bench-prompt-code-1.1.json` and a new spec version), keep it LF and BOM-free.
 It contains no em-dash.
+
+## `bench-prompt-image-1.0.json`
+
+Image to text: one user message holding a photograph and a request to describe it
+(what it shows, how many animals, what they do, the setting and the light). It measures
+what the text prompts cannot: the mmproj's image encoder (its prefill share, its device,
+`mmproj-offload`) and a short multimodal turn. `standard` runs it only on a preset that
+loads an `mmproj` and skips it on the rest, so one spec covers text and vision models.
+
+The image is `bench-image-zebras-1.0.jpg`: the original 6000x4000 JPEG (6.1 MB, no
+EXIF, GPS or XMP; only an ICC colour profile, which the decoder ignores), a herd of plains zebras drinking at a waterhole, photo by Rafael Peier on
+Unsplash (Unsplash License: free to use, copy and modify). The prompt names it with its
+sha256; `standard-1.0` sends it fitted into `ImageSize = 1344x896` (exactly 3:2, the
+photo's own ratio, so nothing is cropped or padded; how many image tokens that makes
+depends on the model's encoder). Never re-encode or replace the file: a new image is
+`bench-image-<name>-<X.Y>.jpg`, a new prompt naming it, and a new spec version.

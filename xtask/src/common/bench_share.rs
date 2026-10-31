@@ -1,6 +1,7 @@
 //! The benchmark method the packages install read-only beside the binaries,
 //! `<root>/share/benchmarks/`: every published `standard-<X.Y>.ini` with
-//! `standard.versions`, and every prompt in `benchmarks/prompts/`. The
+//! `standard.versions`, and every prompt in `benchmarks/prompts/` with the
+//! images the image prompts name. The
 //! configurator finds it from its own path (`<root>/bin/llama-cpp-config`,
 //! `paths::bench_share_dir`) and checks each file against the digests built
 //! into it, so every installed version stays runnable.
@@ -16,7 +17,10 @@ pub fn stage(root: &Path) -> Result<()> {
     let mut n = 0;
     for (dir, keep) in [
         ("specs", (|name: &str| name == "standard.versions" || (name.starts_with("standard-") && name.ends_with(".ini"))) as fn(&str) -> bool),
-        ("prompts", |name: &str| name.ends_with(".txt") || name.ends_with(".json") || name == "README.md"),
+        // The images an image prompt names (`bench-image-*.jpg`) beside it.
+        ("prompts", |name: &str| {
+            name.ends_with(".txt") || name.ends_with(".json") || name.ends_with(".jpg") || name == "README.md"
+        }),
     ] {
         let to = dest.join(dir);
         std::fs::create_dir_all(&to)?;
