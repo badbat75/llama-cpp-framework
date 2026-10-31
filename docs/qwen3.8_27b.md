@@ -219,6 +219,8 @@ section 8). `f16` KV, 43.7k-token prompt
 with the prompt cache off, 128 tokens out. Two presets: the Swift-1.5 fine-tune of this model
 with `draft-mtp`, and the Q8_0 with the `draft-dflash` drafter on the second card.
 
+![Two R9700s: the x16 card in the CPU slot, the x4 card behind the chipset without AtomicOps; the tensor split stages its AllReduce through host memory](assets/diagrams/two-r9700-topology.svg)
+
 | preset, key | value | evidence |
 | --- | --- | --- |
 | Swift, `device` | the x16 card first, `1,1` | prefill 1491 / decode 33.5 against 1476 / 32.2 with the order reversed (campaign `swift27b-2xr9700-linux-device-20261028`) |
@@ -230,6 +232,34 @@ with `draft-mtp`, and the Q8_0 with the `draft-dflash` drafter on the second car
 | Swift, `cache-type-k/-v`, `ctx-size` | `f16`, `393216` with `parallel 2` (was `q8_0`, 514288) | with MTP: decode at 43.7k 30.8 against 27.5 ±0.4 (+12%), prefill 1431 against 1412; free after the prefill 2768 / 1172 MiB at 393216, 3920 / 2580 at 360448, 464 / 0 at 458752; 425984 runs out of memory in the prefill. A `q8_0` slot snapshot does not restore into an `f16` cache (campaign `swift27b-kv-f16-mtp-2xr9700-linux-20261031`) |
 | DFlash, `ctx-size` | `262144` (was 172032) | 1396.9 / 31.5 against 1405 / 31.1 (campaign `qwen27b-dflash-2xr9700-linux-ctx-20261028`) |
 | DFlash, `spec-draft-n-max` | `5` (was 7) | 34.1 ±2.0 against 32.2 ±1.4 over 4 repetitions (35.1 against 32.9 without the first, which always reads ~3 t/s low after a restart); `3` 32.4, `10` 31.3 (campaign `qwen27b-dflash-2xr9700-linux-draft-n-max-20261028`) |
+
+```bench-chart
+title    = Swift: decode by drafter at the preset's sampling, 43.7k-token prose
+campaign = swift27b-drafter-2xr9700-linux-20261030
+metric   = decode
+x        = spec-type
+series   = prompt
+where    = prompt=bench-prompt-long
+rename   = unset=none, ngram-map-k4v,draft-dflash=k4v + dflash, ngram-map-k4v,draft-mtp=k4v + mtp, bench-prompt-long=43.7k prose
+```
+
+```bench-chart
+title    = Swift: decode by drafter, code rewrite with 1536 tokens out
+campaign = swift27b-drafter-code1536-2xr9700-linux-20261030
+metric   = decode
+x        = spec-type
+series   = prompt
+rename   = unset=none, ngram-map-k4v,draft-dflash=k4v + dflash, ngram-map-k4v,draft-mtp=k4v + mtp, bench-prompt-code=code rewrite
+```
+
+```bench-chart
+title    = Swift: free memory per card after a 43.7k prefill, f16 KV, by context
+campaign = swift27b-kv-f16-mtp-2xr9700-linux-20261031
+metric   = free-mib
+x        = ctx-size
+series   = ctx-size
+where    = cache-type-k=f16
+```
 
 Swift's decode under `rocprofv3` (43.7k tokens): the two cards busy ~75% of the time combined
 (~84% estimated without the profiler), `mul_mat_vec_q` 67% of the GPU time, cross-card copies
@@ -307,6 +337,15 @@ output uncapped, prompt cache off. Free memory is the run's probe after the firs
 | `tensor-split` | `1,1` (was `35,31`) | under `split-mode tensor` an uneven split inflates the buffers: at 393216 the log reads 14238 MiB of model and 15360 of KV at `35,31` against 13229 and 12288 at `1,1`. Free after a 43.7k prefill: 0 / 7766 MiB at `35,31` (the x16 card full: two 110k prefills at once ran it out of memory, section 8) against 3624 / 2486 at `1,1` with the image encoder on the x4 card. Prefill 1126.4 ±1.9 against 1136.1 ±2.3, decode 59.3 ±0.1 against 59.8 ±0.2 (campaigns `swift27b-balance-mmproj-2xr9700-linux-20261031`, run 149, and `swift27b-driver-check-2xr9700-linux-20261031`, run 148) |
 | `mmproj-device` | the x4 card (was the CPU) | loads under the tensor split (on the x16 card it did not, section 8). At 425984, with one slot holding 115k tokens, a 3840x2160 image (4080 tokens) appended to a 115k prompt on the other slot succeeds; minimum free 2877 / 1032 MiB during it (by hand, sysfs sampler, not recorded) |
 | `ctx-size` | `425984` (212992 per slot, was 393216) | after a 115k prefill, alone and with both slots prefilling at once: 2476 / 1378 and 2460 / 1366 MiB free at 425984, 1364 / 226 and 1308 / 214 at 458752 (under the 500 MB margin); 524288 (262144 per slot) would need ~4 GiB more per card. Prefill 961.6 ±2.3 against 962.0 ±1.4, decode 51.4 at both (campaign `swift27b-ctx-tensor-2xr9700-linux-20261031`) |
+
+```bench-chart
+title    = Free memory per card after a 115k prefill, both slots prefilling at once
+campaign = swift27b-ctx-tensor-2xr9700-linux-20261031
+metric   = free-mib
+x        = ctx-size
+series   = ctx-size
+where    = concurrency=prefill
+```
 
 The tensor split stages every AllReduce through host memory, so its prefill follows the
 x4 card's host link. On one boot the CPU-to-chipset link trained at Gen4 x2: the x4 card

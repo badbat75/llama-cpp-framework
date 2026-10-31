@@ -5,15 +5,15 @@ status: reference
 gpus: [AMD Radeon AI PRO R9700]
 models: []
 platforms: [windows, linux]
-llama-cpp: v0.5.0 to v0.7.0
-updated: 2026-10-20
+llama-cpp: v0.5.0 to v0.8.0
+updated: 2026-10-31
 ---
 
 # AMD Radeon AI PRO R9700: configuration reference
 
 Reference settings for running llama.cpp on the R9700 (RDNA4, `gfx1201`, 32 GB) under
 Windows, through the ROCm (HIP) backend. Values were measured on this framework with
-llama.cpp v0.5.0. Section 7 holds what was measured again on Linux, with llama.cpp v0.6.0 unless a row says v0.7.0.
+llama.cpp v0.5.0. Section 7 holds what was measured again on Linux, with llama.cpp v0.6.0 unless a row says v0.7.0; section 9 two of these cards together on Linux (v0.8.0).
 
 ## 1. Runtime prerequisites
 
@@ -76,8 +76,8 @@ llama.cpp v0.5.0. Section 7 holds what was measured again on Linux, with llama.c
   ~3 GB/s link that costs ~200 ms per 512-token ubatch, which cancels the prefill gain. It
   only has a fast path between two devices of the same backend. The Linux build links
   RCCL, which replaces that AllReduce when every device of the split is a ROCm one
-  (Server tab, SDK Tuning, Tensor-split AllReduce `internal` switches back): not yet
-  measured (section 8).
+  (Server tab, SDK Tuning, Tensor-split AllReduce `internal` switches back). On a pair with
+  one card behind a chipset slot without PCIe AtomicOps RCCL does not run: section 9.
 - **`split-mode tensor` with a card of the other backend** (measured on Linux, llama.cpp
   v0.6.0): the model aborts while loading unless Tensor-split AllReduce is `none`. With
   `none`, on a 27B Q8_0 at ctx 16384 with KV `f16` and a 3:1 ratio, 2.7k tokens, against
@@ -129,12 +129,25 @@ temp 0.
 | `ROCBLAS_USE_HIPBLASLT` with the staged runtime | unset | is hipBLASLt (`1`) faster than Tensile (`0`) for BF16/F16 models? | TBD |
 | `batch-size` | default (2048) | does a larger logical batch help prefill at the chosen `ubatch-size`? | TBD |
 | `cache-ram` | 20480 | restore time of the prompt cache over the card's link | TBD |
-| `parallel` > 1 | 1 | aggregate throughput versus the context divided per slot | TBD |
 | `spec-draft-p-min` | default | does a confidence floor lift acceptance on the reasoning phase? | TBD |
-| embedded MTP vs DFlash2 | DFlash2 | speed and memory of each on this card | TBD |
 | power limit | stock (300 W) | prefill and decode per watt | TBD |
-| `split-mode tensor` on two R9700 | n/a | real AllReduce cost; `GGML_CUDA_AR_COPY_THRESHOLD` / `_CHUNK_BYTES` (seeds: 1-2 MiB, 2 MiB) | TBD |
-| Linux: `split-mode tensor` through RCCL | n/a | prefill and decode against `GGML_CUDA_ALLREDUCE=internal` and against the layer split | TBD |
+| `GGML_CUDA_AR_COPY_THRESHOLD` / `_CHUNK_BYTES` on two R9700 | default | the internal AllReduce's staging sizes (seeds: 1-2 MiB, 2 MiB) against the default; its cost is in section 9 | TBD |
 | Linux: over-allocation | n/a | does it fail the load or move buffers to GTT, and at what cost? | TBD |
 | `GGML_HIP_FA_BAND_WMMA_SPLIT` | default (one block per CU) | 32, 48, 96 or 128 KV blocks against the default, at 65k and 131k cells | TBD |
 | Q8_0 GEMV ceiling | n/a | `llama-bench` on this card alone at depth 0 and 131072 against the 58% of bandwidth seen in the trace (section 7): how much the `mmvq` RDNA4 tuning leaves | TBD |
+
+## 9. Two R9700s on Linux (v0.8.0)
+
+Two of these cards, one in the CPU's Gen5 x16 slot (the x16 card) and one behind the chipset
+at Gen4 x4 with no PCIe AtomicOps (the x4 card). Model: the Swift-1.5 fine-tune of
+Qwen3.8-27B Q8_0, `f16` KV, `parallel 2`, `ngram-map-k4v,draft-mtp`; per-model detail is in
+`qwen3.8_27b.md` sections 7 to 9.
+
+![Two R9700s: the x16 card in the CPU slot, the x4 card behind the chipset without AtomicOps; the tensor split stages its AllReduce through host memory](assets/diagrams/two-r9700-topology.svg)
+
+| key | value | evidence |
+| --- | --- | --- |
+| `split-mode` | `tensor`, an even `tensor-split` | against the layer split, one request, temperature 0: decode 59.6 against 40.4 t/s at 43.7k tokens (+48%) and 55.4 against 33.5 at 110k (+65%); cold prefill 1114.7 against 1433.6 (-22%) and 924.8 against 1098.6 (-16%) (campaign `swift27b-concurrency-2xr9700-linux-20261031`). An uneven `tensor-split` inflates the buffers under the tensor split and left the x16 card at 0 MiB free after a 43.7k prefill; an even one leaves 3624 / 2486 MiB at the same speed (campaign `swift27b-balance-mmproj-2xr9700-linux-20261031`) |
+| Tensor-split AllReduce (`CudaAllreduce`) | `internal` | RCCL does not run without PCIe AtomicOps on the x4 card's slot, so RCCL against the internal AllReduce cannot be measured on this pair. The internal one stages every reduction through host memory and its prefill follows the x4 card's host link: 785.6 against 1136.1 t/s at 43.7k on a boot where the CPU-to-chipset uplink trained at x2 (3.5 GB/s instead of 7.0), decode 58.0 against 59.8 (campaign `swift27b-driver-check-2xr9700-linux-20261031`) |
+| `parallel` | `2` | two decodes at once, total 64.3 (layer) and 82.5 (tensor) t/s at 43.7k against 40.4 and 59.6 for one request; two cold prefills are served one after the other (the total is one request's rate); a request decoding while the other prefills drops to 20.2 (layer) and 37.1 (tensor). The context is divided per slot: `425984` gives each 212992 (campaigns `swift27b-concurrency-2xr9700-linux-20261031`, `swift27b-ctx-tensor-2xr9700-linux-20261031`) |
+| drafter: embedded MTP or DFlash2 | either; MTP in the n-gram chain | temperature 1, 5 repetitions, layer split: decode at 43.7k 30.9 (MTP) against 28.8 (DFlash2 Q8_0 on the second card, `spec-draft-n-max 5`), on a code rewrite with 1536 tokens out 49.8 against 58.2: within noise of each other. MTP takes ~1.3 GB more on the last card (its KV and compute buffer sit with the output head) (campaigns `swift27b-drafter-2xr9700-linux-20261030`, `swift27b-drafter-code1536-2xr9700-linux-20261030`) |

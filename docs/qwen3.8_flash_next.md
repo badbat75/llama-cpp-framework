@@ -396,12 +396,24 @@ not run; `split-mode tensor` needs the internal AllReduce (`CudaAllreduce = inte
 prompt with the prompt cache off, 128 tokens out, `Threads` 12. This replaces section 9 on
 this hardware.
 
+![Two R9700s: the x16 card in the CPU slot, the x4 card behind the chipset without AtomicOps; the tensor split stages its AllReduce through host memory](assets/diagrams/two-r9700-topology.svg)
+
 | key | value | evidence |
 | --- | --- | --- |
 | `n-cpu-moe` | unset: every expert in VRAM | prefill 1978.8 ±5.7 against 570 t/s at `n-cpu-moe 16`, decode 33.9 against 26.2 (campaign `flash-next-2xr9700-linux-ncm-20261028`) |
 | `device`, `tensor-split` | the x16 card first, `1,1`; `24,25` with the MTP head (section 11, MTP) | the x16 card last: prefill 2046.6 ±23.7 (+3%), decode 33.3 (-2%); the decode wins (campaign `flash-next-2xr9700-linux-device-20261028`) |
 | `ctx-size` | `262144` | at ubatch 512 it runs at the speed of 131072: prefill 1962.3 ±17.7, decode 34.0; free after the prefill 1872 and 772 MiB (campaign `flash-next-2xr9700-linux-ctx-20261028`) |
 | `ubatch-size` | `512` at 262144 | `1024` prefills 2273.1 ±3.8 (+15%) and `2048` 2312.8 ±0.8 at 131072 (campaign `flash-next-2xr9700-linux-ubatch-20261028`), but at 262144 the larger compute buffer leaves no margin on the second card; moving `blk.25`'s `gate`/`up` experts to the first card to make room for `1024` gave 2044 / 33.0, not taken |
+
+```bench-chart
+title    = Prefill at 43.7k by ubatch-size, every expert in VRAM, 131072
+campaign = flash-next-2xr9700-linux-ncm-20261028, flash-next-2xr9700-linux-ubatch-20261028
+metric   = prefill
+x        = ubatch-size
+series   = n-cpu-moe
+where    = n-cpu-moe=unset
+rename   = unset=all experts in VRAM
+```
 | `spec-type` | `ngram-map-k4v,draft-mtp` with the MTP head, `spec-draft-n-max 3`, `spec-ngram-map-k4v-size-m 64` | section 11, MTP. Before the MTP head, n-gram drafters alone, live on a coding agent's turns (server log, not in `bench.db`), decode t/s per 20k-token depth band, turns in brackets: `ngram-map-k` 30.5 (4) at 80k, 30.5 (6) at 100k, 31.0 (20) at 120k, 28.3 (18) at 140k; `ngram-map-k4v` 35.2 (19), 41.6 (3), 29.0 (12), 27.7 (9); `ngram-map-k4v,ngram-mod` 34.3 (16) at 100k, 28.8 (6) at 120k; no drafter 28.0 (12) at 140k |
 
 Against the RTX 4070 SUPER + R9700 preset of section 9 (v0.7.0): prefill 558 to 1962 t/s
@@ -429,6 +441,15 @@ At `q8_0`, `24,25`, 262144, 43.7k-token prompt, temperature 0:
 | 3 | 54.9 +-0.4 | 50.1 +-1.0 | 59% |
 | 4 | 45.1 +-1.2 | 46.1 +-1.0 | 44% |
 
+```bench-chart
+title    = MTP head: decode at 43.7k by spec-draft-n-max, HIP graphs on and off
+campaign = flash-next-mtp-graphs-2xr9700-linux-20261030, flash-next-mtp-2xr9700-linux-20261030
+metric   = decode
+x        = spec-draft-n-max
+series   = CudaDisableGraphs
+rename   = unset=graphs on, true=graphs off
+```
+
 Prefill 1514 to 1542 t/s on every leg (campaigns `flash-next-mtp-graphs-2xr9700-linux-20261030`
 and, graphs off through `CudaDisableGraphs = true`, `flash-next-mtp-2xr9700-linux-20261030`).
 Against the `f16`, `1,1`, n-gram preset above: decode 34.0 to 54.9 (+61%), prefill 1962 to 1520
@@ -443,6 +464,8 @@ drafts from the context (up to `size-m` tokens), the others fall back to the MTP
 (answer 374.7 against 96.2, reasoning 72.0 against 73.8); on the 43.7k prose prompt 56.3 +-1.4
 against 54.9 +-0.4, no loss (campaign `flash-next-mtp-ngram-2xr9700-linux-20261030`).
 
+![spec-type ngram-map-k4v,draft-mtp: the n-gram drafter is tried first and copies from the context on a match; otherwise the MTP head drafts; the target verifies the draft in one batch](assets/diagrams/drafter-chain.svg)
+
 Each drafter against none, same preset (`q8_0`, `24,25`, 262144, HIP graphs on; the two legs
 without the MTP head also drop `model-draft`, or llama.cpp reads `draft-mtp` back from its
 header), decode t/s:
@@ -453,6 +476,16 @@ header), decode t/s:
 | `ngram-map-k4v` | 31.2 +-0.0 | 274.5 +-16.4 (answer 348.1) | 2030.2 +-10.0 |
 | `draft-mtp`, `n-max 3` | 54.9 +-0.4 | 95.3 +-0.2 (answer 96.2) | 1520.3 +-1.4 |
 | `ngram-map-k4v,draft-mtp` | 56.3 +-1.4 | 280.1 +-37.6 (answer 374.7) | 1531.2 +-4.1 |
+
+```bench-chart
+title    = Decode by drafter, 43.7k prose and code rewrite
+campaign = flash-next-mtp-base-2xr9700-linux-20261030, flash-next-mtp-ngram-2xr9700-linux-20261030, flash-next-mtp-graphs-2xr9700-linux-20261030
+metric   = decode
+x        = spec-type
+series   = prompt
+where    = spec-draft-n-max=3
+rename   = unset=none, ngram-map-k4v,draft-mtp=k4v + mtp, bench-prompt-long=43.7k prose, bench-prompt-code=code rewrite
+```
 
 The two drafters cover each other's gap: the n-gram finds nothing to copy in prose (31.2
 against 31.1) and the MTP head lifts it by 77%; on a rewrite the n-gram drafts whole runs of

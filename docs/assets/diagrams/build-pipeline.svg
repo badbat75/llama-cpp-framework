@@ -1,0 +1,88 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 330" role="img" aria-label="Build pipeline: the bootstrap script, then the xtask phases prereq, configure, build, package and install, with what each writes">
+<title>Build pipeline</title>
+<style>
+  svg { --bg: #ffffff; --fg: #1d2127; --muted: #5d6673; --line: #9aa3ae; --box: #f3f5f8; --acc: #2f6fd0; --accbox: #e8f0fb; }
+  @media (prefers-color-scheme: dark) {
+    svg { --bg: #15181c; --fg: #e3e6ea; --muted: #9aa3ae; --line: #6b7480; --box: #1e2227; --acc: #6fa2f0; --accbox: #1b2738; }
+  }
+  .bg { fill: var(--bg); }
+  .box { fill: var(--box); stroke: var(--line); stroke-width: 1; }
+  .phase { fill: var(--accbox); stroke: var(--acc); stroke-width: 1.5; }
+  .t { fill: var(--fg); font: 600 13px system-ui, -apple-system, "Segoe UI", sans-serif; }
+  .s { fill: var(--muted); font: 11.5px system-ui, -apple-system, "Segoe UI", sans-serif; }
+  .m { fill: var(--fg); font: 11.5px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  .arrow { stroke: var(--fg); stroke-width: 1.4; fill: none; marker-end: url(#a); }
+  .feed { stroke: var(--muted); stroke-width: 1.2; stroke-dasharray: 4 3; fill: none; marker-end: url(#b); }
+</style>
+<defs>
+  <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="var(--fg)"/></marker>
+  <marker id="b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="var(--muted)"/></marker>
+</defs>
+<rect class="bg" width="760" height="330"/>
+
+<!-- bootstrap -->
+<rect class="box" x="11" y="12" width="738" height="50" rx="6"/>
+<text class="t" x="24" y="32">Bootstrap (not cargo)</text>
+<text class="m" x="190" y="32">scripts/00-install-prerequisites.ps1 | .sh</text>
+<text class="s" x="24" y="51">Rust and the system packages; on Windows also the GPU dists (TheRock, CUDA, Vulkan SDK) and WiX</text>
+<path class="arrow" d="M80 62 V96"/>
+
+<!-- phases -->
+<g>
+  <rect class="phase" x="11" y="98" width="134" height="44" rx="6"/>
+  <text class="t" x="78" y="118" text-anchor="middle">xtask prereq</text>
+  <text class="s" x="78" y="134" text-anchor="middle">Linux, macOS</text>
+  <rect class="phase" x="162" y="98" width="134" height="44" rx="6"/>
+  <text class="t" x="229" y="125" text-anchor="middle">xtask configure</text>
+  <rect class="phase" x="313" y="98" width="134" height="44" rx="6"/>
+  <text class="t" x="380" y="125" text-anchor="middle">xtask build</text>
+  <rect class="phase" x="464" y="98" width="134" height="44" rx="6"/>
+  <text class="t" x="531" y="125" text-anchor="middle">xtask package</text>
+  <rect class="phase" x="615" y="98" width="134" height="44" rx="6"/>
+  <text class="t" x="682" y="125" text-anchor="middle">xtask install</text>
+  <path class="arrow" d="M145 120 H160"/>
+  <path class="arrow" d="M296 120 H311"/>
+  <path class="arrow" d="M447 120 H462"/>
+  <path class="arrow" d="M598 120 H613"/>
+</g>
+
+<!-- what each writes -->
+<g>
+  <text class="s" x="18" y="166">GPU dists into the</text>
+  <text class="s" x="18" y="181">dist root</text>
+
+  <text class="s" x="169" y="166">detects paths, tools,</text>
+  <text class="s" x="169" y="181">GPU targets; writes</text>
+  <text class="m" x="169" y="198">build/&lt;os&gt;/</text>
+  <text class="m" x="169" y="213">config-build.*</text>
+  <text class="m" x="169" y="228">.cargo/config.toml</text>
+
+  <text class="s" x="320" y="166">latest llama.cpp</text>
+  <text class="s" x="320" y="181">release tag (never a</text>
+  <text class="s" x="320" y="196">bNNNN nightly), applies</text>
+  <text class="m" x="320" y="213">patches/llama.cpp/</text>
+  <text class="s" x="320" y="230">CMake + Ninja, then</text>
+  <text class="m" x="320" y="245">llama-cpp-config</text>
+
+  <text class="s" x="471" y="166">stages binaries and</text>
+  <text class="s" x="471" y="181">the GPU runtimes;</text>
+  <text class="s" x="471" y="196">into dist/:</text>
+  <text class="m" x="471" y="213">.msi (Windows)</text>
+  <text class="m" x="471" y="228">.deb .rpm (Linux)</text>
+  <text class="m" x="471" y="243">.pkg (macOS)</text>
+
+  <text class="s" x="622" y="166">installs the newest</text>
+  <text class="s" x="622" y="181">package in dist/</text>
+  <text class="s" x="622" y="196">(upgrade, reinstall</text>
+  <text class="s" x="622" y="211">or downgrade)</text>
+</g>
+
+<!-- dist root -->
+<rect class="box" x="162" y="272" width="436" height="46" rx="6"/>
+<text class="t" x="176" y="291">Dist root</text>
+<text class="m" x="252" y="291">&lt;Root&gt;/&lt;Name&gt;/&lt;Version&gt;/&lt;os&gt;</text>
+<text class="s" x="176" y="309">TheRock, CUDA, VulkanSDK (NCCL on Linux): found there and nowhere else</text>
+<path class="feed" d="M229 272 V240"/>
+<path class="feed" d="M440 272 V256"/>
+<path class="feed" d="M531 272 V252"/>
+</svg>

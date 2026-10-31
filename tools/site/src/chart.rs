@@ -1,6 +1,8 @@
 //! `bench-chart` blocks (docs\AGENTS.md, "Charts"): parsed, checked against
-//! bench.db, drawn as an inline SVG bar chart (no script: each bar's value,
-//! sd and sample count are in its `<title>`, shown on hover).
+//! bench.db, drawn as an inline SVG bar chart with its numbers in a table
+//! beside it. Readable without script (each bar's value, sd and sample count
+//! are in its `<title>`); the page's site.js adds the tooltip and the series
+//! toggles on top.
 
 use crate::data::{stat, Db, Run};
 use crate::esc;
@@ -51,10 +53,22 @@ impl Spec {
             return Err(format!("unknown metric `{metric}` (one of {})", METRICS.join(", ")));
         }
         let pairs = |key: &str| -> Result<Vec<(String, String)>, String> {
+            // A segment without `=` belongs to the next one: a value may hold a
+            // comma (`ngram-map-k4v,draft-mtp=k4v + mtp`).
             let mut out = Vec::new();
+            let mut held = String::new();
             for f in get(key).unwrap_or_default().split(',').map(str::trim).filter(|f| !f.is_empty()) {
-                let (k, v) = f.split_once('=').ok_or_else(|| format!("`{key}` needs a=b pairs: {f}"))?;
+                if !f.contains('=') {
+                    held += f;
+                    held.push(',');
+                    continue;
+                }
+                let f = std::mem::take(&mut held) + f;
+                let (k, v) = f.split_once('=').unwrap();
                 out.push((k.trim().to_string(), v.trim().to_string()));
+            }
+            if !held.is_empty() {
+                return Err(format!("`{key}` needs a=b pairs: {}", held.trim_end_matches(',')));
             }
             Ok(out)
         };
@@ -133,9 +147,15 @@ pub fn build(spec: &Spec, db: &Db) -> Result<Data, String> {
     if pools.is_empty() {
         return Err(format!("no `{}` data in {} after the filter", spec.metric, spec.campaigns.join(", ")));
     }
+    // Numeric x values (ctx-size, ubatch-size...) read left to right ascending.
+    let mut order: Vec<usize> = (0..xs.len()).collect();
+    if xs.iter().all(|x| x.parse::<f64>().is_ok()) {
+        order.sort_by(|a, b| xs[*a].parse::<f64>().unwrap().total_cmp(&xs[*b].parse::<f64>().unwrap()));
+    }
+    let mut xs: Vec<String> = order.iter().map(|i| xs[*i].clone()).collect();
     let mut cells = vec![vec![None; xs.len()]; series.len()];
     for (si, xi, v) in pools {
-        cells[si][xi] = stat(&v);
+        cells[si][order.iter().position(|o| *o == xi).unwrap()] = stat(&v);
     }
     let shown = |v: &mut Vec<String>| {
         for s in v.iter_mut() {
@@ -185,7 +205,9 @@ pub fn svg(spec: &Spec, d: &Data, campaign_href: &dyn Fn(&str) -> String) -> Str
     let ymax = (top * 1.05 / step).ceil() * step;
     let y = |v: f64| t + ph - v / ymax * ph;
     let mut o = format!(
-        "<figure class=\"chart\"><svg viewBox=\"0 0 {w} {h}\" role=\"img\" aria-label=\"{}\">",
+        "<figure class=\"chart\" data-unit=\"{}\"><figcaption class=\"chart-title\">{}</figcaption><svg viewBox=\"0 0 {w} {h}\" role=\"img\" aria-label=\"{}\">",
+        esc(&unit),
+        esc(&title),
         esc(&title)
     );
     // grid and y axis
@@ -202,11 +224,11 @@ pub fn svg(spec: &Spec, d: &Data, campaign_href: &dyn Fn(&str) -> String) -> Str
         v += step;
     }
     o += &format!("<text class=\"tick\" x=\"{l}\" y=\"{}\">{}</text>", t - 26.0, esc(&unit));
-    // legend
+    // legend: each entry a button the page script turns into a series toggle
     let mut lx = l + 40.0;
     for (si, s) in d.series.iter().enumerate() {
         o += &format!(
-            "<rect class=\"s{}\" x=\"{lx:.1}\" y=\"{}\" width=\"12\" height=\"12\" rx=\"2\"/><text class=\"legend\" x=\"{:.1}\" y=\"{}\">{}</text>",
+            "<g class=\"leg\" data-si=\"{si}\"><rect class=\"s{}\" x=\"{lx:.1}\" y=\"{}\" width=\"12\" height=\"12\" rx=\"2\"/><text class=\"legend\" x=\"{:.1}\" y=\"{}\">{}</text></g>",
             si % 6,
             t - 36.0,
             lx + 17.0,
@@ -215,7 +237,7 @@ pub fn svg(spec: &Spec, d: &Data, campaign_href: &dyn Fn(&str) -> String) -> Str
         );
         lx += 30.0 + 7.0 * s.chars().count() as f64;
     }
-    // bars
+    // bars: one group per bar (rect, error line, value), tagged with its series
     let gw = pw / d.xs.len() as f64;
     let bw = (gw * 0.8 / d.series.len() as f64).min(64.0);
     for (xi, x) in d.xs.iter().enumerate() {
@@ -226,7 +248,10 @@ pub fn svg(spec: &Spec, d: &Data, campaign_href: &dyn Fn(&str) -> String) -> Str
             let bx = x0 + bw * si as f64;
             let sdt = sd.map(|s| format!(" ±{}", num(s))).unwrap_or_default();
             o += &format!(
-                "<rect class=\"s{}\" x=\"{:.1}\" y=\"{:.1}\" width=\"{:.1}\" height=\"{:.1}\"><title>{}, {}: {}{sdt} {} (n = {n})</title></rect>",
+                "<g class=\"bar\" data-si=\"{si}\" data-s=\"{}\" data-x=\"{}\" data-v=\"{}{sdt}\" data-n=\"{n}\"><rect class=\"s{}\" x=\"{:.1}\" y=\"{:.1}\" width=\"{:.1}\" height=\"{:.1}\"><title>{}, {}: {}{sdt} {} (n = {n})</title></rect>",
+                esc(s),
+                esc(x),
+                num(m),
                 si % 6,
                 bx + 1.0,
                 y(m),
@@ -246,7 +271,7 @@ pub fn svg(spec: &Spec, d: &Data, campaign_href: &dyn Fn(&str) -> String) -> Str
                 );
             }
             o += &format!(
-                "<text class=\"val\" x=\"{:.1}\" y=\"{:.1}\" text-anchor=\"middle\">{}</text>",
+                "<text class=\"val\" x=\"{:.1}\" y=\"{:.1}\" text-anchor=\"middle\">{}</text></g>",
                 bx + bw / 2.0,
                 y(m + sd.unwrap_or(0.0)) - 4.0,
                 num(m)
@@ -259,9 +284,29 @@ pub fn svg(spec: &Spec, d: &Data, campaign_href: &dyn Fn(&str) -> String) -> Str
         );
     }
     o += &format!("<line class=\"axis\" x1=\"{l}\" x2=\"{}\" y1=\"{:.1}\" y2=\"{:.1}\"/>", l + pw, y(0.0), y(0.0));
-    o += "</svg><figcaption>";
-    o += &esc(&title);
-    o += ". Mean of each bar's samples, ± one sample standard deviation; ";
+    o += "</svg>";
+    // the numbers drawn, as a table: readable without the script and without colour
+    o += "<details class=\"chart-data\"><summary>Data</summary><table><thead><tr><th></th>";
+    for s in &d.series {
+        o += &format!("<th>{}</th>", esc(s));
+    }
+    o += "</tr></thead><tbody>";
+    for (xi, x) in d.xs.iter().enumerate() {
+        o += &format!("<tr><th>{}</th>", esc(x));
+        for si in 0..d.series.len() {
+            o += &match d.cells[si][xi] {
+                Some((m, sd, n)) => format!(
+                    "<td>{}{} <span class=\"muted\">n = {n}</span></td>",
+                    num(m),
+                    sd.map(|s| format!(" ±{}", num(s))).unwrap_or_default()
+                ),
+                None => "<td></td>".to_string(),
+            };
+        }
+        o += "</tr>";
+    }
+    o += &format!("</tbody></table></details><figcaption>{}", esc(&unit));
+    o += ": mean of each bar's samples, ± one sample standard deviation; ";
     o += &spec.campaigns.iter().map(|c| format!("campaign <a href=\"{}\"><code>{}</code></a>", campaign_href(c), esc(c))).collect::<Vec<_>>().join(", ");
     if !spec.filter.is_empty() {
         o += &format!(
@@ -282,6 +327,9 @@ mod tests {
         let s = Spec::parse("campaign = a, b\nmetric = decode ; per request\nx = prompt\nseries = split-mode\nwhere = concurrency=single, temp=0\n").unwrap();
         assert_eq!(s.campaigns, ["a", "b"]);
         assert_eq!(s.filter, [("concurrency".into(), "single".into()), ("temp".into(), "0".into())]);
+        let r = Spec::parse("campaign = a\nmetric = decode\nx = a\nseries = b\nrename = unset=none, k4v,mtp=k4v + mtp").unwrap();
+        assert_eq!(r.rename, [("unset".into(), "none".into()), ("k4v,mtp".into(), "k4v + mtp".into())]);
+        assert!(Spec::parse("campaign = a\nmetric = decode\nx = a\nseries = b\nrename = a=b, c").is_err());
         assert!(Spec::parse("campaign = a\nmetric = speed\nx = a\nseries = b").is_err());
         assert!(Spec::parse("campaign = a\nmetric = decode\nx = a").is_err());
         assert!(Spec::parse("campaign = a\nmetric = decode\nx = a\nseries = b\ncolour = red").is_err());

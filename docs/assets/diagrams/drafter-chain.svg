@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 250" role="img" aria-label="spec-type ngram-map-k4v,draft-mtp: at each decode step the n-gram drafter is tried first; on a match it drafts up to size-m tokens copied from the context, otherwise the MTP head drafts up to spec-draft-n-max tokens; the target model verifies the draft in one batch">
+<title>Drafter chain: n-gram first, MTP head as fallback</title>
+<style>
+  svg { --bg: #ffffff; --fg: #1d2127; --muted: #5d6673; --line: #9aa3ae; --box: #f3f5f8; --a: #2e9a6a; --abox: #e7f5ee; --b: #a34fc2; --bbox: #f4eaf8; --c: #2f6fd0; --cbox: #e8f0fb; }
+  @media (prefers-color-scheme: dark) {
+    svg { --bg: #15181c; --fg: #e3e6ea; --muted: #9aa3ae; --line: #6b7480; --box: #1e2227; --a: #5cc595; --abox: #17291f; --b: #c88ae0; --bbox: #271d2d; --c: #6fa2f0; --cbox: #1b2738; }
+  }
+  .bg { fill: var(--bg); }
+  .box { fill: var(--box); stroke: var(--line); stroke-width: 1; }
+  .ng { fill: var(--abox); stroke: var(--a); stroke-width: 1.5; }
+  .mtp { fill: var(--bbox); stroke: var(--b); stroke-width: 1.5; }
+  .ver { fill: var(--cbox); stroke: var(--c); stroke-width: 1.5; }
+  .t { fill: var(--fg); font: 600 13px system-ui, -apple-system, "Segoe UI", sans-serif; }
+  .s { fill: var(--muted); font: 11.5px system-ui, -apple-system, "Segoe UI", sans-serif; }
+  .arrow { stroke: var(--fg); stroke-width: 1.4; fill: none; marker-end: url(#a); }
+</style>
+<defs>
+  <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="var(--fg)"/></marker>
+</defs>
+<rect class="bg" width="760" height="250"/>
+
+<rect class="box" x="12" y="96" width="120" height="50" rx="6"/>
+<text class="t" x="72" y="117" text-anchor="middle">decode step</text>
+<text class="s" x="72" y="134" text-anchor="middle">last tokens</text>
+
+<polygon class="ng" points="250,76 330,121 250,166 170,121"/>
+<text class="t" x="250" y="117" text-anchor="middle">n-gram</text>
+<text class="s" x="250" y="134" text-anchor="middle">match in context?</text>
+
+<rect class="ng" x="380" y="16" width="200" height="62" rx="6"/>
+<text class="t" x="480" y="38" text-anchor="middle">copy from the context</text>
+<text class="s" x="480" y="56" text-anchor="middle">up to spec-ngram-map-k4v-size-m</text>
+<text class="s" x="480" y="71" text-anchor="middle">tokens (whole runs on a rewrite)</text>
+
+<rect class="mtp" x="380" y="164" width="200" height="62" rx="6"/>
+<text class="t" x="480" y="186" text-anchor="middle">MTP head drafts</text>
+<text class="s" x="480" y="204" text-anchor="middle">up to spec-draft-n-max tokens</text>
+<text class="s" x="480" y="219" text-anchor="middle">(what lifts prose)</text>
+
+<rect class="ver" x="620" y="92" width="128" height="58" rx="6"/>
+<text class="t" x="684" y="114" text-anchor="middle">target verifies</text>
+<text class="s" x="684" y="131" text-anchor="middle">one batch: accepted</text>
+<text class="s" x="684" y="145" text-anchor="middle">prefix + 1 token</text>
+
+<path class="arrow" d="M132 121 H168"/>
+<path class="arrow" d="M290 98 L 378 52"/>
+<text class="s" x="318" y="62">yes</text>
+<path class="arrow" d="M290 144 L 378 192"/>
+<text class="s" x="318" y="190">no</text>
+<path class="arrow" d="M580 47 L 640 92"/>
+<path class="arrow" d="M580 195 L 640 150"/>
+<path class="arrow" d="M684 150 V 238 H 72 V 148"/>
+<text class="s" x="350" y="232">next step</text>
+</svg>

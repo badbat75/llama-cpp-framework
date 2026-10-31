@@ -7,8 +7,9 @@
 //! bench-chart block drawable) and fails on the first build with a problem.
 //! Without `--check` it then writes the site: one page per guide, a page per
 //! campaign (question, answer, runs, the guides citing it), docs\assets\ and
-//! the stylesheet, into DIR or `build/<os>/site/`. Static HTML, no script:
-//! GitHub Pages serves it (.github\workflows\docs-site.yml).
+//! the stylesheet and site.js, into DIR or `build/<os>/site/`. Static HTML
+//! that GitHub Pages serves (.github\workflows\docs-site.yml); site.js only
+//! adds chart tooltips and series toggles, everything reads without it.
 
 mod chart;
 mod data;
@@ -21,6 +22,7 @@ use std::path::{Path, PathBuf};
 pub const REPO: &str = "https://github.com/badbat75/llama-cpp-framework";
 
 const CSS: &str = include_str!("style.css");
+const JS: &str = include_str!("site.js");
 
 fn main() {
     if let Err(e) = run() {
@@ -68,9 +70,10 @@ fn run() -> Result<(), String> {
         std::fs::write(&p, text).map_err(|e| format!("{}: {e}", p.display()))
     };
     w("style.css", CSS)?;
+    w("site.js", JS)?;
     copy_dir(&root.join("docs/assets"), &out.join("assets"))?;
     for p in &pages {
-        let mut body = meta_line(p);
+        let mut body = if p.stem == "index" { hero(&pages, &db) } else { meta_line(p) };
         body += &page::render(p, &pages, &db, "");
         let cited = p.citations();
         if !cited.is_empty() {
@@ -116,7 +119,7 @@ fn shell(title: &str, base: &str, body: &str) -> String {
     });
     format!(
         "<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\
-<title>{t} | llama.cpp-framework</title><link rel=\"stylesheet\" href=\"{base}style.css\"></head><body>\
+<title>{t} | llama.cpp-framework</title><link rel=\"stylesheet\" href=\"{base}style.css\"><script src=\"{base}site.js\" defer></script></head><body>\
 <header><a class=\"home\" href=\"{base}index.html\">llama.cpp-framework</a><nav><a href=\"{base}index.html\">Guides</a><a href=\"{base}campaigns/index.html\">Campaigns</a><a href=\"{REPO}\">GitHub</a></nav></header>\
 <main>{body}</main><footer>Generated from <code>docs/</code> and <code>benchmarks/bench.db</code>{c}. Every number traces to a campaign; the markdown on GitHub is the source.</footer></body></html>\n",
         t = esc(title),
@@ -128,13 +131,30 @@ fn meta_line(p: &Page) -> String {
     let mut parts: Vec<String> = Vec::new();
     for (k, label) in [("type", ""), ("status", ""), ("platforms", ""), ("llama-cpp", "llama.cpp "), ("updated", "updated ")] {
         if let Some(v) = p.get(k).filter(|v| !v.is_empty()) {
-            parts.push(format!("{label}{}", esc(v.trim_start_matches('[').trim_end_matches(']'))));
+            let class = if k == "status" { format!(" status-{}", esc(v)) } else { String::new() };
+            parts.push(format!("<span class=\"pill{class}\">{label}{}</span>", esc(v.trim_start_matches('[').trim_end_matches(']'))));
         }
     }
-    if parts.is_empty() || p.stem == "index" {
+    if parts.is_empty() {
         return String::new();
     }
-    format!("<p class=\"meta\">{}</p>", parts.join(" · "))
+    format!("<p class=\"meta\">{}</p>", parts.join(""))
+}
+
+/// The home page's banner: what the site is and how much bench.db holds.
+fn hero(pages: &[Page], db: &Db) -> String {
+    let guides = pages.iter().filter(|p| matches!(p.get("type"), Some("gpu" | "model"))).count();
+    let runs = db.runs.iter().filter(|r| r.status == "ok").count();
+    let reqs: usize = db.runs.iter().map(|r| r.reqs.len()).sum();
+    let stat = |n: usize, what: &str| format!("<div class=\"stat\"><b>{n}</b><span>{what}</span></div>");
+    format!(
+        "<section class=\"hero\"><h1>llama.cpp-framework</h1><p>Measured configuration guides for llama.cpp on AMD and NVIDIA cards: every value traces to a benchmark campaign in <code>benchmarks/bench.db</code>.</p><div class=\"stats\">{}{}{}{}{}</div></section>",
+        stat(guides, "card and model guides"),
+        stat(db.campaigns.len(), "campaigns"),
+        stat(runs, "runs"),
+        stat(reqs, "requests measured"),
+        stat(db.gpus.len(), "GPU models")
+    )
 }
 
 fn campaign_index(db: &Db) -> String {

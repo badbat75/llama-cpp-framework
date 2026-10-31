@@ -14,7 +14,7 @@ written is in [AGENTS.md](AGENTS.md).
 
 | page | covers | measured with |
 | --- | --- | --- |
-| [AMD Radeon AI PRO R9700](amd_ai_pro_r9700.md) | RDNA4, 32 GB, ROCm (HIP); Windows and Linux | llama.cpp v0.5.0 to v0.7.0 |
+| [AMD Radeon AI PRO R9700](amd_ai_pro_r9700.md) | RDNA4, 32 GB, ROCm (HIP); Windows and Linux, two cards on Linux | llama.cpp v0.5.0 to v0.8.0 |
 | [NVIDIA GeForce RTX 4070 SUPER](nvidia_rtx4070_super.md) | Ada, 12 GB, CUDA; Windows and Linux | llama.cpp v0.5.0 to v0.7.0 |
 
 ## Models (`type: model`)

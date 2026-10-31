@@ -95,15 +95,18 @@ where    = prompt=bench-prompt-long   ; optional filter
   - `decode-warm`, `decode-cold`: per request, by the request's role in a concurrency scenario;
   - `acceptance`: drafted tokens accepted, %;
   - `free-mib`: free memory per device after the first prefill (`run_device`), one bar per device.
-- `x`, `series`: a run parameter key (`concurrency`, `prompt`, `split-mode`, `ctx-size`...) or `label`. A key a run lacks reads as `unset` (the llama.cpp default).
+- `x`, `series`: a run parameter key (`concurrency`, `prompt`, `split-mode`, `ctx-size`...) or `label`. A key a run lacks reads as `unset` (the llama.cpp default). Numeric `x` values are drawn in ascending order, others in run order.
 - `where`: `key=value` pairs separated by `,`, all required to match.
-- Optional: `title` (else the metric and campaign), `unit` (else from the metric), `rename` (display names of values, `a=b` pairs separated by `,`, e.g. `unset=layer`: labels only, `where` still matches the raw value).
+- Optional: `title` (else the metric and campaign), `unit` (else from the metric), `rename` (display names of values, `a=b` pairs separated by `,`, e.g. `unset=layer`: labels only, `where` still matches the raw value; a value holding a comma is written as is, `ngram-map-k4v,draft-mtp=k4v + mtp`).
 
 A block that names a missing campaign, metric or key, or finds no data after `where`, fails
-`--check` and the site build.
+`--check` and the site build. On the site each chart carries its numbers in a "Data" table, and
+`tools\site\src\site.js` adds a tooltip and legend toggles (the page reads the same without it).
+Check that a chart's bars match its table: a run holding several prompts pools them.
 
 ## Other rules
 
 - No em-dashes (the repo rule): the glyph appears only as a not-applicable table cell, where it is data.
-- Images go in `assets\` (screenshots in `assets\screenshots\`), referenced by relative path.
+- Images go in `assets\` (screenshots in `assets\screenshots\`), referenced by relative path. Diagrams are hand-written SVG in `assets\diagrams\` (GitHub and the site show the same file): colours as CSS variables with a `prefers-color-scheme: dark` block, no script, no external font, and only what the page's text states.
+- The site puts an index of the `##` and `###` headings under each page's title (GitHub's anchors); nothing to write for it.
 - `build-pipeline.md`: developer reference for the build phases and conventions; only the front matter and the em-dash rule apply.

@@ -160,12 +160,17 @@ before trusting the size of the gains (the ranking itself may hold):
 
 - Temperature 0 (greedy) against the preset's temp 1 / top-k 20: greedy output is what the
   drafters predict best, so acceptance (98% on the code prompt) may be far above real sampling.
+  Checked on Swift-1.5-Qwen3.8-27B at its temperature 1 (2026-10-30, campaigns
+  `swift27b-drafter-2xr9700-linux-20261030` and `-code1536-`): the drafters still double prose
+  decode (15.4 to 28.8-32.2 t/s) and the n-gram chain gives 120-127 against 18.6 on the code
+  rewrite, so sampling alone does not explain the gap; not yet repeated on Flash-Next.
 - The code prompt is a pure copy task (rename one function, output the file): the best case
   for an n-gram drafter, not an agent turn. Replay recorded agent turns instead.
 - What the "decode" rate counts: the answer phase reads 348-375 t/s, above what a verify
   batch per token can run on this model; check the engine's timing against wall time and the
   server's own `timings` (`predicted_per_second`, drafted / accepted counts).
 - Cold start per leg and a 128 to 6000-token output cap: the rate may be taken over a short
-  window that favors the drafter.
+  window that favors the drafter. Partly checked on Swift (same campaigns): with 256 tokens out the code
+  reply ends inside the reasoning and the n-gram stage shows no gain; with 1536 it does.
 - Depth: the prose prompt is 43.7k; the agent runs at 100-180k, where the MTP head's own
   attention and the verify batches cost more.

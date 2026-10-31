@@ -1,0 +1,58 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 300" role="img" aria-label="Two R9700s: one in the CPU's Gen5 x16 slot, one behind the chipset at Gen4 x4 without PCIe AtomicOps; the tensor split's AllReduce is staged through host memory over both links">
+<title>Two R9700s: PCIe topology</title>
+<style>
+  svg { --bg: #ffffff; --fg: #1d2127; --muted: #5d6673; --line: #9aa3ae; --box: #f3f5f8; --gpu: #c8423f; --gpubox: #fbecec; --host: #2f6fd0; --hostbox: #e8f0fb; --warn: #b45309; }
+  @media (prefers-color-scheme: dark) {
+    svg { --bg: #15181c; --fg: #e3e6ea; --muted: #9aa3ae; --line: #6b7480; --box: #1e2227; --gpu: #ef7a76; --gpubox: #2d1c1c; --host: #6fa2f0; --hostbox: #1b2738; --warn: #f2a25e; }
+  }
+  .bg { fill: var(--bg); }
+  .box { fill: var(--box); stroke: var(--line); stroke-width: 1; }
+  .gpu { fill: var(--gpubox); stroke: var(--gpu); stroke-width: 1.5; }
+  .host { fill: var(--hostbox); stroke: var(--host); stroke-width: 1.5; }
+  .t { fill: var(--fg); font: 600 13px system-ui, -apple-system, "Segoe UI", sans-serif; }
+  .s { fill: var(--muted); font: 11.5px system-ui, -apple-system, "Segoe UI", sans-serif; }
+  .w { fill: var(--warn); font: 11.5px system-ui, -apple-system, "Segoe UI", sans-serif; }
+  .fast { stroke: var(--fg); stroke-width: 5; }
+  .slow { stroke: var(--fg); stroke-width: 2.5; }
+  .ar { stroke: var(--host); stroke-width: 1.4; stroke-dasharray: 5 3; fill: none; }
+</style>
+<rect class="bg" width="760" height="300"/>
+
+<!-- host -->
+<rect class="host" x="270" y="16" width="220" height="74" rx="6"/>
+<text class="t" x="380" y="38" text-anchor="middle">CPU and host memory</text>
+<text class="s" x="380" y="56" text-anchor="middle">tensor split: every AllReduce</text>
+<text class="s" x="380" y="72" text-anchor="middle">is staged here (internal AllReduce)</text>
+
+<!-- chipset -->
+<rect class="box" x="540" y="120" width="180" height="46" rx="6"/>
+<text class="t" x="630" y="140" text-anchor="middle">Chipset</text>
+<text class="s" x="630" y="157" text-anchor="middle">CPU uplink: x4</text>
+
+<!-- cards -->
+<rect class="gpu" x="40" y="200" width="240" height="84" rx="6"/>
+<text class="t" x="160" y="222" text-anchor="middle">R9700, the x16 card</text>
+<text class="s" x="160" y="240" text-anchor="middle">CPU slot, PCIe Gen5 x16</text>
+<text class="s" x="160" y="256" text-anchor="middle">first in device in both presets</text>
+
+<rect class="gpu" x="480" y="200" width="260" height="84" rx="6"/>
+<text class="t" x="610" y="222" text-anchor="middle">R9700, the x4 card</text>
+<text class="s" x="610" y="240" text-anchor="middle">chipset slot, PCIe Gen4 x4, 7.0 GB/s</text>
+<text class="w" x="610" y="256" text-anchor="middle">no PCIe AtomicOps: RCCL does not run</text>
+<text class="w" x="610" y="272" text-anchor="middle">uplink trained at x2 on one boot: 3.5 GB/s</text>
+
+<!-- links -->
+<line class="fast" x1="300" y1="90" x2="190" y2="200"/>
+<text class="s" x="150" y="140">Gen5 x16</text>
+<line class="slow" x1="460" y1="90" x2="590" y2="120"/>
+<line class="slow" x1="630" y1="166" x2="630" y2="200"/>
+
+<!-- AllReduce path -->
+<path class="ar" d="M235 200 C 300 140, 330 110, 340 92"/>
+<path class="ar" d="M440 92 C 480 108, 515 125, 538 140"/>
+<text class="s" x="300" y="176">tensor split: partial sums</text>
+<text class="s" x="300" y="192">cross both links every layer</text>
+
+<text class="s" x="300" y="128">layer split: only the</text>
+<text class="s" x="300" y="144">activations at the cut cross</text>
+</svg>

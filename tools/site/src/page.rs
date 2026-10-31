@@ -227,8 +227,103 @@ pub fn render(p: &Page, pages: &[Page], db: &Db, base: &str) -> String {
         }
         after_campaign = next;
     }
+    contents(&mut out);
     let mut s = String::new();
     html::push_html(&mut s, out.into_iter());
+    s
+}
+
+/// Gives every `##` and `###` heading the anchor GitHub gives it and inserts
+/// the page index (those headings, nested) after the `#` title, or on top
+/// when the page has none. A page with fewer than two `##` gets no index.
+fn contents(out: &mut Vec<Event>) {
+    let mut heads: Vec<(usize, u8, String)> = Vec::new(); // (event index, level, text)
+    let mut cur: Option<(usize, u8, String)> = None;
+    let mut title_end: Option<usize> = None;
+    for (i, ev) in out.iter().enumerate() {
+        match ev {
+            Event::Start(Tag::Heading { level, .. }) if (*level as u8) == 2 || (*level as u8) == 3 => {
+                cur = Some((i, *level as u8, String::new()))
+            }
+            Event::Text(t) | Event::Code(t) if cur.is_some() => cur.as_mut().unwrap().2.push_str(t),
+            Event::Html(h) if cur.is_some() => cur.as_mut().unwrap().2.push_str(&strip_tags(h)),
+            Event::End(TagEnd::Heading(l)) => match cur.take() {
+                Some(h) => heads.push(h),
+                None if (*l as u8) == 1 && title_end.is_none() => title_end = Some(i + 1),
+                None => {}
+            },
+            _ => {}
+        }
+    }
+    let mut used: Vec<String> = Vec::new();
+    let mut items = String::new();
+    let mut open_sub = false;
+    for (i, level, text) in &heads {
+        let base = slug(text);
+        let mut id = base.clone();
+        let mut n = 1;
+        while used.contains(&id) {
+            id = format!("{base}-{n}");
+            n += 1;
+        }
+        used.push(id.clone());
+        if let Event::Start(Tag::Heading { id: hid, .. }) = &mut out[*i] {
+            *hid = Some(id.clone().into());
+        }
+        let link = format!("<a href=\"#{id}\">{}</a>", esc(text));
+        if *level == 2 {
+            if open_sub {
+                items += "</ol>";
+                open_sub = false;
+            }
+            if !items.is_empty() {
+                items += "</li>";
+            }
+            items += &format!("<li>{link}");
+        } else {
+            if !open_sub {
+                items += "<ol>";
+                open_sub = true;
+            }
+            items += &format!("<li>{link}</li>");
+        }
+    }
+    if heads.iter().filter(|h| h.1 == 2).count() < 2 {
+        return;
+    }
+    if open_sub {
+        items += "</ol>";
+    }
+    items += "</li>";
+    let nav = format!("<nav class=\"toc\" aria-label=\"Contents\"><p class=\"toc-title\">Contents</p><ol>{items}</ol></nav>");
+    out.insert(title_end.unwrap_or(0), Event::Html(nav.into()));
+}
+
+/// GitHub's heading anchor: lowercase, letters, digits, `-` and `_` kept,
+/// spaces to `-`, everything else dropped.
+fn slug(text: &str) -> String {
+    text.trim()
+        .chars()
+        .filter_map(|c| match c {
+            ' ' => Some('-'),
+            c if c.is_alphanumeric() || c == '-' || c == '_' => Some(c),
+            _ => None,
+        })
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+fn strip_tags(h: &str) -> String {
+    let mut s = String::new();
+    let mut tag = false;
+    for c in h.chars() {
+        match c {
+            '<' => tag = true,
+            '>' => tag = false,
+            c if !tag => s.push(c),
+            _ => {}
+        }
+    }
     s
 }
 
