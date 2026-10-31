@@ -5,11 +5,11 @@
 // script mirrors how upstream renders its own PWA/apple-touch app icons:
 // dark #111111 glyph on a white rounded tile, so the icon reads on both dark
 // taskbars and light Explorer backgrounds. llama.ico is gitignored;
-// llama-cpp-config's build.rs (and, belt-and-braces, 03-package.ps1) runs
+// llama-cpp-config's build.rs (and, belt-and-braces, xtask package) runs
 // this script automatically whenever the file is missing — delete llama.ico
 // to force a regeneration after an upstream logo change.
 //
-// Manual usage (Node 18+; the clone must exist — 02-build.ps1 creates it):
+// Manual usage (Node 18+; the clone must exist: xtask build creates it):
 //   cd resources
 //   npm install --no-save sharp sharp-ico
 //   node generate-llama-ico.mjs [path-to-llama.cpp-clone] [output.ico]
@@ -38,7 +38,7 @@ const SIZES = [256, 128, 64, 48, 32, 24, 16];
 
 if (!existsSync(SRC)) {
 	console.error(`Logo SVG not found: ${SRC}`);
-	console.error('Clone llama.cpp first (02-build.ps1 does), or pass the clone path as argument.');
+	console.error('Clone llama.cpp first (xtask build does), or pass the clone path as argument.');
 	process.exit(1);
 }
 

@@ -4,12 +4,12 @@
 
 .DESCRIPTION
     Supplies the machine-derived half of the configure line the same way
-    02-build.ps1 does for llama.cpp: ROCm's clang as the CXX compiler, the
-    process-scoped HIP compile vars from common.ps1, and, below clang 24, the
+    xtask build does for llama.cpp: ROCm's clang as the CXX compiler, the
+    process-scoped HIP compile vars from scripts\common.ps1, and, below clang 24, the
     patched __clang_hip_runtime_wrapper.h for the dist's clang resource major
     (without it MSVC's <cmath> clashes with the HIP device math declarations).
     Writes compile_commands.json for VS Code's IntelliSense. Needs
-    build\windows\config-build.psd1, i.e. 01-configure.ps1 run once.
+    build\windows\config-build.psd1, i.e. xtask configure run once.
 
 .PARAMETER NoHip
     Skip pcie-bench-hip.exe.
@@ -24,7 +24,7 @@ param(
 $ErrorActionPreference = 'Stop'
 
 $repo = Resolve-Path (Join-Path $PSScriptRoot '..\..')
-. (Join-Path $repo 'common.ps1')
+. (Join-Path $repo 'scripts\common.ps1')
 Enable-VsDevShell
 
 $buildDir = Join-Path $buildRoot 'pcie-bench'
@@ -45,7 +45,7 @@ if (-not $NoHip) {
             Sort-Object -Descending | Select-Object -First 1
         if ($clangMajor) { break }
     }
-    # Clang 24 is the floor, as in 02-build.ps1: older HIP runtime wrappers
+    # Clang 24 is the floor, as in xtask build: older HIP runtime wrappers
     # clash with MSVC's <cmath>. -w is still passed so a cache built with the
     # old patched wrapper drops its -include.
     if ($clangMajor -lt 24) {
@@ -56,12 +56,12 @@ if (-not $NoHip) {
 }
 
 if (-not $NoCuda) {
-    # The newest toolkit of the dist layout, as in 02-build.ps1. A toolkit
+    # The newest toolkit of the dist layout, as in xtask build. A toolkit
     # change on an existing build dir needs that script's cache reset; here
     # deleting build\windows\pcie-bench is cheaper.
     $cudaToolkit = (Find-Dist 'Cuda' $sources $distRoot).Dir
     if (-not $cudaToolkit) {
-        throw "no CUDA toolkit under $(Get-DistHome 'Cuda' $sources $distRoot) (00-install-prerequisites.ps1 installs it; -NoCuda skips it)"
+        throw "no CUDA toolkit under $(Get-DistHome 'Cuda' $sources $distRoot) (scripts\00-install-prerequisites.ps1 installs it; -NoCuda skips it)"
     }
     $env:CUDA_PATH = $cudaToolkit
     $cmakeArgs += "-DCMAKE_CUDA_COMPILER:FILEPATH=$((Join-Path $cudaToolkit 'bin\nvcc.exe') -replace '\\', '/')"

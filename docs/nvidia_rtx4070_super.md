@@ -10,8 +10,8 @@ llama.cpp v0.5.0. Section 7 holds what was measured again on Linux, with llama.c
 | --- | --- | --- |
 | cuBLAS | CUDA 13 `cublas64_13.dll` + `cublasLt64_13.dll` next to `llama-server.exe` (pinned: 13.8.0.4) | without them the CUDA backend is skipped silently and the card falls back to Vulkan. The installer keeps the pair across upgrades |
 | cudart | linked statically | nothing to install |
-| CUDA toolkit (build) | newest installed version, picked by `02-build.ps1` | |
-| `GGML_CUDA_FA_QUANTS` (build) | q5_0/q5_1 pairs added (`cmake-options.psd1`) | without them a q5 KV cache converts to f16 on every short decode step |
+| CUDA toolkit (build) | newest installed version, picked by `xtask build` | |
+| `GGML_CUDA_FA_QUANTS` (build) | q5_0/q5_1 pairs added (`xtask/cmake/common.toml`) | without them a q5 KV cache converts to f16 on every short decode step |
 
 ## 2. Device facts
 

@@ -291,13 +291,13 @@ pub fn rocm_warning(devs: &[DeviceOption], state: DistState) -> Option<String> {
         ),
         DistState::NoRuntime => format!(
             "{head} HIP_PATH names a directory with no hipblas.dll, so the ROCm dist is \
-             incomplete. Re-run 00-install-prerequisites.ps1."
+             incomplete. Re-run scripts\\00-install-prerequisites.ps1."
         ),
         DistState::NoKernels => format!(
             "{head} The runtime is there but rocBLAS's kernel store (rocblas\\library) is \
              not, so even a loaded backend would fail on the first matrix multiply. \
              Reinstall llama.cpp-framework (a build from source: re-run \
-             00-install-prerequisites.ps1)."
+             scripts\\00-install-prerequisites.ps1)."
         ),
         DistState::Complete => format!(
             "{head} The ROCm runtime looks complete, so the backend is failing to load \

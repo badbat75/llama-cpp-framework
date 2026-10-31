@@ -10,22 +10,22 @@
 # SDK) are installed in that same session, every one of them as
 #   <DistRoot>\<Name>\<Version>\windows      e.g. E:\TheRock\10.1.0\windows
 # DistRoot defaults to the one in installer\dist-sources.psd1 and is
-# overridden by -DistRoot, by LLAMA_FW_DIST_ROOT, or by what 01-configure.ps1
-# recorded (dists.ps1). Versions sit side by side, and nothing is ever
+# overridden by -DistRoot, by LLAMA_FW_DIST_ROOT, or by what xtask configure
+# recorded (scripts\dists.ps1). Versions sit side by side, and nothing is ever
 # deleted. Nothing is pinned either: all three converge to the newest STABLE
 # release their vendor publishes (dist-sources.psd1 says where each one is
 # looked up). ROCm comes from AMD's TheRock dist tarball (the classic HIP SDK
 # installer is discontinued) and is the only one with a machine environment:
 # HIP_PATH on the ACTIVE version + PATH, pruned of the others, because a
 # llama-server run from the build tree finds rocBLAS through it (the installed
-# one carries its own runtime, bundled by 03-package.ps1). CUDA is assembled from
+# one carries its own runtime, bundled by xtask package). CUDA is assembled from
 # NVIDIA's redist archives, Vulkan comes from LunarG's installer.
 #
 # sccache comes straight from its GitHub releases (user scope, no elevation)
 # rather than winget, whose manifest lags upstream by days; a winget copy left
 # by an earlier setup is uninstalled once the release copy is in place.
 #
-# The WiX Toolset that builds the MSI (03-package.ps1) is a .NET global tool,
+# The WiX Toolset that builds the MSI (xtask package) is a .NET global tool,
 # PINNED to the version in installer\wix-toolset.psd1 (user scope, no
 # elevation), with the extensions the .wxs uses. WiX v7 needs its EULA accepted
 # once per user (`wix eula accept wix7`): this script never does that on the
@@ -33,8 +33,8 @@
 #
 # When build\windows\config-build.psd1 + llama.cpp clone exist, also fetches the
 # source and flags a rebuild when a newer release tag (vX.Y.Z) is available. (No `git
-# pull`: 02-build.ps1 pins the clone to a tag on a detached HEAD, so a pull
-# would always fail; the checkout onto the new tag is 02-build.ps1's job.)
+# pull`: xtask build pins the clone to a tag on a detached HEAD, so a pull
+# would always fail; the checkout onto the new tag is xtask build's job.)
 #
 # Safe to run any time: idempotent.
 
@@ -74,7 +74,7 @@ function Get-WingetVersion {
     return $null
 }
 
-# The checked-out llama.cpp tag (02-build.ps1 detaches onto the newest vX.Y.Z
+# The checked-out llama.cpp tag (xtask build detaches onto the newest vX.Y.Z
 # RELEASE tag, so `git describe --tags` is e.g. "v0.2.0"; on a commit tagged both
 # ways describe prefers the annotated release tag over the lightweight bNNNN).
 function Get-GitDescribe {
@@ -91,8 +91,11 @@ function Get-GitDescribe {
 
 # ── Tracked packages and SDKs ───────────────────────────────────────
 
+# The repository root: this script lives in its scripts\ directory.
+$repoRoot = Split-Path $PSScriptRoot -Parent
+
 # The WiX pin (version, extensions, EULA id) and the .NET SDK that hosts it.
-$wixPin = Import-PowerShellDataFile (Join-Path $PSScriptRoot 'installer\wix-toolset.psd1')
+$wixPin = Import-PowerShellDataFile (Join-Path $repoRoot 'installer\wix-toolset.psd1')
 
 $wingetPackages = @(
     @{ Id = 'Microsoft.PowerShell'    ; Name = 'PowerShell 7+' }
@@ -100,12 +103,12 @@ $wingetPackages = @(
     @{ Id = $wixPin.DotNetSdkWingetId ; Name = '.NET SDK' }
 )
 
-$sources = Import-PowerShellDataFile (Join-Path $PSScriptRoot 'installer\dist-sources.psd1')
+$sources = Import-PowerShellDataFile (Join-Path $repoRoot 'installer\dist-sources.psd1')
 . (Join-Path $PSScriptRoot 'dists.ps1')
 
-# Read directly, not through common.ps1, which throws until 01-configure.ps1
+# Read directly, not through scripts\common.ps1, which throws until xtask configure
 # has written the file: this script is the one that runs before it.
-$cfgPath = Join-Path $PSScriptRoot 'build\windows\config-build.psd1'
+$cfgPath = Join-Path $repoRoot 'build\windows\config-build.psd1'
 $cfg = if (Test-Path $cfgPath) { Import-PowerShellDataFile $cfgPath } else { $null }
 
 # Every SDK dist below installs as <DistRoot>\<Dir>\<Version>\<DistOs>.
@@ -199,7 +202,7 @@ function Get-RemoteFileSize {
 # ({"name": ..., "mtime": ...}), so the names are matched with a regex rather
 # than parsed: no contract to depend on beyond the file names themselves,
 # which are the thing that has stayed stable while the HOST moved. The regex
-# is strict for the reason 02-build.ps1's tag regex is: `-tests-` builds sit
+# is strict for the reason xtask build's tag regex is: `-tests-` builds sit
 # in the same listing, and a nightly is a version with a date glued on
 # (10.1.0a20260831), so anything but `\d+\.\d+\.\d+` right before the
 # extension is not a stable release. Scanning both hosts and taking the
@@ -231,10 +234,10 @@ function Get-RocmLatestPublished {
 
 # ── CUDA Toolkit, Vulkan SDK ────────────────────────────────────────
 # Both converge to the newest stable release, each version in its own
-# directory of the layout. 02-build.ps1 picks the newest COMPLETE dist by
+# directory of the layout. xtask build picks the newest COMPLETE dist by
 # version, so a new one is used by the next build with no reconfigure; an old
 # one stays as a fallback for the user to delete. "Installed" here is
-# Find-Dist (dists.ps1), the same test the build applies, so it means
+# Find-Dist (scripts\dists.ps1), the same test the build applies, so it means
 # "buildable"; an SDK anywhere else on the machine does not count.
 $cuda   = $sources.Cuda
 $vulkan = $sources.Vulkan
@@ -286,14 +289,14 @@ function Get-VulkanLatestPublished {
 # Installed from mozilla/sccache's own release assets, not winget: the winget
 # manifest lags upstream by days (0.18.0 was published 2026-09-14 and winget
 # still served 0.17.0 four days later), and sccache is the tool whose releases
-# the nvcc wrapping in 02-build.ps1 waits on. It tracks the LATEST release,
+# the nvcc wrapping in xtask build waits on. It tracks the LATEST release,
 # like everything else here.
 #
 # The directory is fixed and versionless on purpose. winget's portable layout
 # puts the version in the path (...\sccache-v0.17.0-x86_64-pc-windows-msvc\),
-# and 02-build.ps1 hands that full path to CMake as the compiler launcher, so
+# and xtask build hands that full path to CMake as the compiler launcher, so
 # every upgrade changed the command line of every C/C++ object and ninja re-ran
-# all of them. 02-build.ps1 looks here before PATH for the same reason: a
+# all of them. xtask build looks here before PATH for the same reason: a
 # console opened before this run can still resolve the old copy from PATH.
 $sccacheHome = Join-Path $env:LOCALAPPDATA 'Programs\sccache'
 $sccacheExe  = Join-Path $sccacheHome 'sccache.exe'
@@ -478,6 +481,34 @@ function Install-Wix {
     return $null
 }
 
+# ── Rust (rustup) ───────────────────────────────────────────────────
+# Every phase after this script is a cargo command (cargo run -p xtask), so
+# Rust is installed when missing: winget's Rustlang.Rustup runs rustup-init -y
+# (stable MSVC toolchain, ~\.cargo\bin on the user PATH). User scope and NOT
+# in the elevated batch: an elevation with another account's credentials
+# would install it into that account's profile. An existing toolchain is left
+# alone, as on Linux: a rustc upgrade recompiles the whole dependency tree, so
+# `rustup update` stays the user's call.
+$cargoHome = Join-Path $env:USERPROFILE '.cargo\bin'
+function Get-CargoExe {
+    $c = Get-Command cargo -ErrorAction SilentlyContinue
+    if ($c) { return $c.Source }
+    $exe = Join-Path $cargoHome 'cargo.exe'
+    if (Test-Path $exe) { return $exe }
+    return $null
+}
+function Install-Rust {
+    $ErrorActionPreference = 'Continue'
+    if (Get-CargoExe) { return $null }
+    Write-Host "  installing Rust (winget Rustlang.Rustup, user scope)" -ForegroundColor Cyan
+    winget install --id Rustlang.Rustup --exact --silent --accept-source-agreements --accept-package-agreements 2>&1 | Out-Host
+    if (-not (Test-Path (Join-Path $cargoHome 'cargo.exe'))) {
+        return "rustup install failed (winget exit $LASTEXITCODE): install it from https://rustup.rs"
+    }
+    if (@($env:PATH -split ';') -notcontains $cargoHome) { $env:PATH = "$cargoHome;$env:PATH" }
+    return $null
+}
+
 # ── Banner ──────────────────────────────────────────────────────────
 
 Write-Host ""
@@ -499,7 +530,7 @@ foreach ($p in $wingetPackages) {
 $rocmBeforeDir = Get-RocmActiveDir
 $rocmBefore    = Get-RocmDirVersion $rocmBeforeDir
 $rocmOnDisk    = Get-RocmInstalled
-# sccache as 02-build.ps1 resolves it: our directory first, then PATH.
+# sccache as xtask build resolves it: our directory first, then PATH.
 $sccacheOnPath = Get-Command sccache -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty Source
 $sccacheWinget = Get-WingetVersion 'Mozilla.sccache'
 $sccacheBefore = Get-SccacheVersion $sccacheExe
@@ -785,7 +816,7 @@ if ($haveTar) {
 # it at TheRock's newer LLVM half-breaks it: hipMemGetInfo starts returning
 # "invalid argument" (devices report 0 MiB) and every llama-server dies with
 # an access violation (0xC0000005) mid weight-upload. Found 2026-07-16 with
-# Adrenalin + TheRock 7.14; builds get all three per-process from common.ps1.
+# Adrenalin + TheRock 7.14; builds get all three per-process from scripts\common.ps1.
 # The removal below self-heals machines poisoned by earlier versions of this
 # script.
 if ($rocmActiveDir -and (Test-Path (Join-Path $rocmActiveDir $rocmMarker))) {
@@ -836,7 +867,7 @@ if ($rocmActiveDir -and (Test-Path (Join-Path $rocmActiveDir $rocmMarker))) {
 # sha256 before it is unpacked, and unpacks as <name>-archive\{bin,include,
 # lib,...}: stripping that one level merges them into a single toolkit
 # prefix. Nothing is registered machine-wide (no CUDA_PATH, no PATH entry, no
-# driver): 02-build.ps1 finds the toolkit in the layout. A finished download
+# driver): xtask build finds the toolkit in the layout. A finished download
 # is reused by a re-run; the marker is written only once every component is
 # in, so a tree without it is an interrupted install of this same version and
 # is cleared first.
@@ -1026,14 +1057,20 @@ Write-Host ""
 Write-Host "Checking the WiX Toolset ($($wixPin.Version))..." -ForegroundColor Cyan
 $wixIssue = Install-Wix
 
+# ── Rust ────────────────────────────────────────────────────────────
+Write-Host ""
+Write-Host "Checking Rust..." -ForegroundColor Cyan
+$rustBefore = Get-CargoExe
+$rustIssue = Install-Rust
+
 # ── Check llama.cpp source for a newer release tag ──────────────────
-# The clone sits on a detached HEAD (02-build.ps1 pins it to a vX.Y.Z release
+# The clone sits on a detached HEAD (xtask build pins it to a vX.Y.Z release
 # tag), so no pull here, just fetch and compare against the newest RELEASE tag
 # reachable from origin/master. The selection has to be the same one
-# 02-build.ps1 makes, or this report recommends a rebuild for a nightly that
+# xtask build makes, or this report recommends a rebuild for a nightly that
 # build would never check out: highest `^v\d+\.\d+\.\d+$` among the tags merged
 # into master, version-sorted, nightlies and pre-releases ignored. The rationale
-# for each half of that lives at the selection in 02-build.ps1.
+# for each half of that lives at the selection in xtask build.
 
 $latestLlama = $null
 if ($cfg -and $beforeLlama) {
@@ -1069,11 +1106,11 @@ $rocmOnDisk   = Get-RocmInstalled
 $cudaAfter    = Find-Dist 'Cuda' $sources $distRoot
 $vulkanAfter  = Find-Dist 'Vulkan' $sources $distRoot
 
-# Make the dist visible to THIS session too (a 01-configure.ps1 run in the
+# Make the dist visible to THIS session too (a xtask configure run in the
 # same console). HIP_PATH/PATH reach new terminals via the machine env; the
 # three compile-time vars are PROCESS-scoped on purpose (machine-wide
 # LLVM_PATH breaks the driver HIP runtime; see the elevated block) and
-# build consoles get them from common.ps1.
+# build consoles get them from scripts\common.ps1.
 if ($rocmAfter -and $rocmAfter -ne 'unknown') {
     $env:HIP_PATH            = $rocmAfterDir
     $env:HIP_DEVICE_LIB_PATH = "$rocmAfterDir\lib\llvm\amdgcn\bitcode"
@@ -1117,7 +1154,7 @@ foreach ($p in $wingetPackages) {
     else                           { Write-ReportRow "[OK]" DarkGray $p.Name $a }
 }
 
-# The copy 02-build.ps1 will pick: ours, else whatever PATH still offers.
+# The copy xtask build will pick: ours, else whatever PATH still offers.
 $sccacheAfter = Get-SccacheVersion $sccacheExe
 if (-not $sccacheAfter) { $sccacheAfter = Get-SccacheVersion $sccacheOnPath }
 if (-not $sccacheAfter) {
@@ -1153,8 +1190,19 @@ if ($wixIssue) {
     Write-ReportRow "    " Yellow "" $wixIssue
 }
 
+$cargoExe = Get-CargoExe
+$cargoVersion = if ($cargoExe) { ((& $cargoExe --version) -split ' ')[1] } else { $null }
+if (-not $cargoExe) {
+    Write-ReportRow "[!!]" Red "Rust (cargo)" "not installed"
+    Write-ReportRow "    " Yellow "" $rustIssue
+} elseif (-not $rustBefore) {
+    Write-ReportRow "[++]" Green "Rust (cargo)" "installed $cargoVersion (open a NEW terminal for the PATH entry)"
+} else {
+    Write-ReportRow "[OK]" DarkGray "Rust (cargo)" "$cargoVersion ($cargoExe)"
+}
+
 # HipPath is what build\windows\config-build.psd1 pins (compiler path included), so
-# the "re-run 01-configure" verdict follows the DIRECTORY, not the version:
+# the "re-run xtask configure" verdict follows the DIRECTORY, not the version:
 # moving into the layout changes HIP_PATH without changing a digit.
 $rocmChanged = ($rocmBeforeDir -ne $rocmAfterDir)
 if (-not $rocmBefore -and $rocmAfter) {
@@ -1221,7 +1269,7 @@ $rebuildLlama = $false
 if (-not $beforeLlama) {
     Write-ReportRow "[--]" DarkGray "llama.cpp" "(not cloned)"
 } elseif ($latestLlama -and $latestLlama -ne $beforeLlama) {
-    # 02-build.ps1 performs the actual checkout onto the new tag.
+    # xtask build performs the actual checkout onto the new tag.
     Write-ReportRow "[++]" Green "llama.cpp" "$beforeLlama -> $latestLlama available"
     $rebuildLlama = $true
 } else {
@@ -1249,14 +1297,14 @@ foreach ($scope in 'Machine', 'User') {
     foreach ($name in 'LLVM_PATH', 'HIP_DEVICE_LIB_PATH', 'HIP_PLATFORM') {
         $v = [Environment]::GetEnvironmentVariable($name, $scope)
         if ($v) {
-            $envWarnings += "$scope-level $name ($v) breaks the driver HIP runtime (0xC0000005 at model load): remove it; builds set it per-process via common.ps1"
+            $envWarnings += "$scope-level $name ($v) breaks the driver HIP runtime (0xC0000005 at model load): remove it; builds set it per-process via scripts\common.ps1"
         }
     }
 }
 # The installed framework's bin\ is NOT a second dist, although it carries
 # amdhip64_*.dll and its optional PATH component puts it on the system PATH:
 # the installer bundles there the whole runtime of the dist it was BUILT
-# against (03-package.ps1), a self-contained set that an exe resolves from its
+# against (xtask package), a self-contained set that an exe resolves from its
 # own directory before PATH is consulted, and PATH never decides
 # amdhip64_7.dll for any other exe (its own dir, then the driver's System32
 # copy, both precede PATH). It does not follow a HIP_PATH move and does not
@@ -1287,32 +1335,32 @@ if ($envWarnings.Count) {
 Write-Host ""
 if ($rocmChanged) {
     Write-Host "  ROCm dist changed: verify with hipInfo.exe in a NEW terminal (all GPUs should list)." -ForegroundColor DarkGray
-    Write-Host "  01-configure.ps1 re-derives GpuTargets from the dist itself; the kernel set is:" -ForegroundColor DarkGray
+    Write-Host "  The configure phase re-derives GpuTargets from the dist itself; the kernel set is:" -ForegroundColor DarkGray
     Write-Host "    dir $rocmAfterDir\.kpack\blas_lib_gfx*.kpack" -ForegroundColor DarkGray
     Write-Host ""
 }
-# 01-configure.ps1 has to be told the dist root only when it would not resolve
-# this one by itself (a -DistRoot given here and recorded nowhere yet).
-$configure = '.\01-configure.ps1'
-if ($distRoot -ne (Resolve-DistRoot $null $cfg $sources)) { $configure += " -DistRoot `"$distRoot`"" }
+# The configure phase has to be told the dist root only when it would not
+# resolve this one by itself (a -DistRoot given here and recorded nowhere yet).
+$configure = 'cargo run -p xtask -- configure'
+if ($distRoot -ne (Resolve-DistRoot $null $cfg $sources)) { $configure += " --dist-root `"$distRoot`"" }
 $configStale = $cfg -and (($cfg.DistRoot -ne $distRoot) -or ($rocmAfterDir -and $cfg.HipPath -ne $rocmAfterDir))
 if (-not $cfg) {
     Write-Host "  Next: $configure   # detect paths and generate build\windows\config-build.psd1" -ForegroundColor Cyan
 } elseif ($rocmChanged -or $rebuildLlama -or $sdkChanged -or $configStale) {
-    # 01-configure.ps1 records the dist root and HipPath (and the clang inside
-    # it), nothing of CUDA or Vulkan: 02-build.ps1 finds the newest of those
+    # xtask configure records the dist root and HipPath (and the clang inside
+    # it), nothing of CUDA or Vulkan: xtask build finds the newest of those
     # itself.
     Write-Host "  Recommended actions (open a NEW terminal first: the installers changed the machine env):" -ForegroundColor Yellow
     if ($rocmChanged -or $configStale) {
-        Write-Host "    $configure        # config-build.psd1 names other SDK paths" -ForegroundColor Yellow
+        Write-Host "    $configure # config-build.psd1 names other SDK paths" -ForegroundColor Yellow
     }
     $why = @()
     if ($rebuildLlama) { $why += 'newer llama.cpp release available' }
     if ($rocmChanged)  { $why += 'new ROCm' }
     if ($sdkChanged)   { $why += 'new CUDA/Vulkan SDK' }
     if (-not $why.Count) { $why += 'SDK paths changed' }
-    Write-Host "    .\02-build.ps1            # $($why -join ', ')" -ForegroundColor Yellow
-    Write-Host "    .\03-package.ps1          # rebuild installer afterwards" -ForegroundColor Yellow
+    Write-Host "    cargo run -p xtask -- build     # $($why -join ', ')" -ForegroundColor Yellow
+    Write-Host "    cargo run -p xtask -- package   # rebuild installer afterwards" -ForegroundColor Yellow
 } else {
     Write-Host "  Toolchain up to date." -ForegroundColor Green
 }

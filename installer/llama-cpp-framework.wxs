@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
   llama.cpp-framework MSI (WiX Toolset; the version and the extensions are
-  pinned in installer\wix-toolset.psd1). Built by 03-package.ps1, which passes:
+  pinned in installer\wix-toolset.psd1). Built by xtask package, which passes:
     Version          framework version (llama-cpp-config\Cargo.toml), X.Y.Z
     LlamaBuild       the bundled llama.cpp release tag (v0.7.0; a bNNNN build
                      number only when the checkout was not on a release)
@@ -132,7 +132,7 @@
     <!--
       HKLM\Software\llama.cpp (64-bit view, as the package is x64): InstallDir
       and LlamaBuild, read by the configurator (startup.rs) and by
-      00-install-prerequisites.ps1. InstallDir carries a trailing backslash
+      scripts\00-install-prerequisites.ps1. InstallDir carries a trailing backslash
       here (an MSI directory property always does); every reader joins paths
       onto it.
     -->

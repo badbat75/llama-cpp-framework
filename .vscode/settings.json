@@ -3,5 +3,5 @@
     "cmake.configureOnOpen": false,
     "cmake.automaticReconfigure": false,
     "C_Cpp.default.compileCommands": "${workspaceFolder}/build/windows/pcie-bench/compile_commands.json",
-    "rust-analyzer.cargo.targetDir": "../build/rust-analyzer"
+    "rust-analyzer.cargo.targetDir": "build/rust-analyzer"
 }

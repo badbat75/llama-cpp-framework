@@ -1,0 +1,113 @@
+# Where the external toolchain distributions come from and where the build
+# machine keeps them, read by xtask (`cargo run -p xtask -- <phase>`, on every OS). Sources only, NO versions: every
+# reader resolves the newest STABLE release at run time and takes it.
+# scripts\00-install-prerequisites.ps1, which installs the Windows dists, still reads
+# dist-sources.psd1, the same data for that side: the dirs, the markers and
+# dist_root.windows below must match it.
+#
+# Layout: <dist root>/<dir>/<version>/<os>, e.g. /mnt/data/TheRock/10.1.0/linux.
+# The drive is shared with the Windows side of the same machine, so a Windows
+# dist of the same version sits beside it as <version>/windows and neither
+# build ever sees the other's files. Dists live side by side: an upgrade lands
+# next to its predecessor, and nothing ever deletes one (that call is the
+# user's). Each dist carries its marker, written only after a successful
+# install, so an interrupted one is never taken. Downloads go to
+# <dist root>/<dir>/.downloads, resume, and are deleted after the install.
+#
+# Nothing is exported machine-wide: no profile script, no /etc/environment.
+# The build resolves the newest complete dist under each root on every run,
+# so a version bump needs no environment change.
+
+# The DEFAULT dist root. Overridden, in this order, by --dist-root on the
+# prerequisites and configure phases, by the LLAMA_FW_DIST_ROOT environment
+# variable, and by the dist root the configure phase recorded in
+# build/<os>/config-build.* (which build and package use).
+# A leading ~/ is the user's home.
+[dist_root]
+linux = "/mnt/data"
+windows = 'E:\'
+macos = "~/dists"
+
+# AMD ROCm/HIP: TheRock dist tarball. Multiarch on purpose: kernels for every
+# gfx family, so one install serves whatever GPU the machine has. The newest
+# stable is FOUND in the indexes, never composed (the host depends on the
+# version: up to 7.14 the legacy index, from 10.0 the stable repo), matched
+# strictly as therock-dist-<os>-<flavor>-<X.Y.Z>.tar.gz so `-tests-` builds and
+# dated nightlies are never taken as releases. ~9.5 GB download, ~22 GB on disk.
+[rocm]
+dir = "TheRock"
+marker = ".therock-version"
+flavor = "multiarch"
+indexes = [
+    "https://stable.repo.amd.com/rocm/core/tarball/",   # 10.0 onwards
+    "https://repo.amd.com/rocm/tarball-multi-arch/",    # up to 7.14
+]
+
+# NVIDIA CUDA Toolkit, assembled from the REDIST archives rather than the
+# .run installer or the apt repo: plain tarballs, no root, no display driver
+# touched, any install prefix. redist_index lists one redistrib_<X.Y.Z>.json
+# per toolkit release, each naming every component's archive path and sha256;
+# the highest X.Y.Z is the newest toolkit. The components are what ggml-cuda
+# and CMake's FindCUDAToolkit use (compiler, cudart, cuBLAS, CCCL) plus the
+# small tools around them. They are merged into ONE prefix,
+# <root>/<X.Y.Z>/<os>, which then looks like a regular toolkit tree.
+[cuda]
+dir = "CUDA"
+marker = ".cuda-version"
+redist_index = "https://developer.download.nvidia.com/compute/cuda/redist/"
+
+[cuda.linux]
+platform = "linux-x86_64"
+components = [
+    "cuda_nvcc", "cuda_crt", "libnvvm", "libnvptxcompiler", "libnvfatbin", "libnvjitlink",
+    "cuda_cudart", "cuda_culibos", "libcublas", "cccl", "cuda_nvrtc", "cuda_nvtx",
+    "cuda_profiler_api", "cuda_cuobjdump", "cuda_nvdisasm", "cuda_cuxxfilt",
+    "cuda_nvprune", "cuda_nvml_dev",
+]
+
+# NVIDIA NCCL, the collective library `--split-mode tensor` reduces through
+# between two or more CUDA devices (Linux only: there is no NCCL for Windows).
+# NVIDIA keeps it OUT of the toolkit redist above and publishes no archive
+# index for it; the forms it ships in are an apt repo per distro release and
+# the PyPI wheel, and the wheel is the one that needs no root and no distro
+# match: a zip holding libnccl.so.2 and the headers, with its version and
+# sha256 in PyPI's JSON API. The project is named after the CUDA MAJOR it is
+# built for (nvidia-nccl-cu13), so {major} is that of the installed toolkit.
+# Unpacked to <root>/<X.Y.Z>/linux/{lib,include}; the marker reads
+# "<X.Y.Z> cu<major>".
+[nccl]
+dir = "NCCL"
+marker = ".nccl-version"
+pypi_json = "https://pypi.org/pypi/nvidia-nccl-cu{major}/json"
+wheel_platform = "x86_64"
+
+# LunarG Vulkan SDK. latest_url answers the newest SDK version as plain text,
+# files_json carries its sha256 (no checksum, no install). The tarball unpacks
+# as <version>/x86_64/{bin,include,lib,share}; its top directory is stripped,
+# so the SDK proper (what VULKAN_SDK must name) is <root>/<version>/linux/x86_64.
+[vulkan]
+dir = "VulkanSDK"
+marker = ".vulkan-version"
+
+[vulkan.linux]
+latest_url = "https://vulkan.lunarg.com/sdk/latest/linux.txt"
+files_json = "https://vulkan.lunarg.com/sdk/files.json"
+tarball = "https://sdk.lunarg.com/sdk/download/{version}/linux/vulkansdk-linux-x86_64-{version}.tar.xz"
+
+# macOS (Apple Silicon): the SDK ships as a zip holding an installer app,
+# run unattended with copy_only=1 (no sudo, nothing written to /usr/local:
+# no system-wide loader or MoltenVK). Installed into <root>/<version>/macos;
+# the SDK proper (what VULKAN_SDK must name) is its macOS/ subdirectory. It
+# carries MoltenVK, the Vulkan-on-Metal driver the package bundles. The
+# checksum is files.json's entry for the zip, under "mac".
+[vulkan.macos]
+latest_url = "https://vulkan.lunarg.com/sdk/latest/mac.txt"
+files_json = "https://vulkan.lunarg.com/sdk/files.json"
+zip = "https://sdk.lunarg.com/sdk/download/{version}/mac/vulkansdk-macos-{version}.zip"
+
+# sccache, from its GitHub release (the distro package lags by many versions).
+# Installed to a versionless path, ~/.local/bin/sccache (Linux and macOS): the build passes it
+# to CMake as the compiler launcher, and a moving launcher path changes every
+# compile command.
+[sccache]
+release_api = "https://api.github.com/repos/mozilla/sccache/releases/latest"

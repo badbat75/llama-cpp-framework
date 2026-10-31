@@ -1,11 +1,11 @@
 # Where the build machine keeps its GPU SDK dists (ROCm, CUDA, Vulkan), and
 # which one a build uses. OpenSSL is not one of them: a system library, left
 # where winget installs it.
-# Dot-sourced by 00-install-prerequisites.ps1, 01-configure.ps1 and common.ps1:
+# Dot-sourced by scripts\00-install-prerequisites.ps1, xtask configure and scripts\common.ps1:
 #   . "$PSScriptRoot\dists.ps1"
-# The PowerShell counterpart of the finders in common.sh. Functions only, no
+# The PowerShell counterpart of the finders in xtask\src\<os>\dists.rs. Functions only, no
 # side effects, and Windows PowerShell 5.1-safe and ASCII-only on purpose:
-# 00-install-prerequisites.ps1 is the script that INSTALLS PowerShell 7.
+# scripts\00-install-prerequisites.ps1 is the script that INSTALLS PowerShell 7.
 #
 # Layout (installer\dist-sources.psd1 holds the names, this file the rules):
 #   <DistRoot>\<Dir>\<Version>\<DistOs>      e.g. E:\TheRock\10.1.0\windows
@@ -16,7 +16,7 @@
 # opened before an upgrade, cannot pull a build out of the layout.
 
 # The dist root in use. An explicit -DistRoot wins, then LLAMA_FW_DIST_ROOT,
-# then what 01-configure.ps1 recorded in config-build.psd1, then the default
+# then what xtask configure recorded in config-build.psd1, then the default
 # in dist-sources.psd1. Returned without a trailing separator, except for a
 # bare drive root (E:\), which needs it to stay an absolute path.
 function Resolve-DistRoot {
@@ -44,7 +44,7 @@ function Get-DistDir {
 }
 
 # What each build leg needs from its dist, relative to the dist directory;
-# also the completeness test 00-install-prerequisites.ps1 applies before it
+# also the completeness test scripts\00-install-prerequisites.ps1 applies before it
 # calls a version installed.
 #   Rocm:    the compiler, the HIP CMake package, and rocBLAS's Tensile
 #            kernels (without them the backend loads and the first matmul dies

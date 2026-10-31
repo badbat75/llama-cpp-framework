@@ -1,10 +1,10 @@
-# The WiX Toolset the MSI is built with (03-package.ps1), installed by
-# 00-install-prerequisites.ps1 and detected by 01-configure.ps1. Unlike the GPU
+# The WiX Toolset the MSI is built with (xtask package), installed by
+# scripts\00-install-prerequisites.ps1 and detected by xtask configure. Unlike the GPU
 # dists (dist-sources.psd1, never pinned), this IS pinned: the .wxs is written
 # against one schema and one WixUI dialog set, and a new major has changed
 # both before (v3 to v4) and its licensing (v7). Moving to a new version is a
 # deliberate edit here, followed by a package build and the ICE validation
-# 03-package.ps1 runs.
+# xtask package runs.
 @{
     # `dotnet tool install --global wix --version <Version>`. Needs the .NET SDK
     # (DotNetSdkWingetId below), the only prerequisite of the tool itself.

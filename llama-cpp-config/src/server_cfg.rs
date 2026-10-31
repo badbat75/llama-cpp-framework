@@ -105,7 +105,7 @@ pub struct ServerConfig {
     /// `=1` forced as well, so hipBLASLt itself is healthy (measured 2026-09-01
     /// as a same-directory A/B with that file as the only variable, and
     /// end-to-end on `test-backend-ops test -o MUL_MAT -b ROCm0 -p type_a=bf16`).
-    /// Hence `03-package.ps1` bundles the dist's whole runtime into `bin\`,
+    /// Hence `xtask package` bundles the dist's whole runtime into `bin\`,
     /// `amdhip64_*.dll` included, so an installed tree needs no knob here at
     /// all (a build from source still runs against `HIP_PATH\bin` over PATH,
     /// i.e. the driver's runtime). The bundle also carries the dist's

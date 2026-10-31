@@ -34,7 +34,7 @@ across both variables.
 
 ## Build and run
 
-Run `01-configure.ps1` once first, so that `build\windows\config-build.psd1` exists. Then:
+Run `xtask configure` once first, so that `build\windows\config-build.psd1` exists. Then:
 
 ```powershell
 tools\pcie-bench\build.ps1              # both binaries; -NoHip / -NoCuda to skip one
@@ -44,7 +44,7 @@ build\windows\pcie-bench\pcie-bench-cuda.exe 4070
 
 The argument is a substring of the device name.
 
-`build.ps1` configures the build the same way `02-build.ps1` configures llama.cpp:
+`build.ps1` configures the build the same way `xtask build` configures llama.cpp:
 
 - ROCm's clang is the CXX compiler, with `hip::device` turning the source into HIP;
 - the patched `__clang_hip_runtime_wrapper.h` for the dist's clang major is force-included;

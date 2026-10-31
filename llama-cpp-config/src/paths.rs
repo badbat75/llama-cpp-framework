@@ -226,8 +226,8 @@ pub fn llama_bench_exe() -> Option<PathBuf> {
 /// 2. `<exe-dir>\..\..\llama.cpp-cmake\bin\<binary>`: the build scripts'
 ///    layout (exe in `build\<os>\cargo-target\release`, `<os>` being
 ///    `windows` or `linux`)
-/// 3. `<exe-dir>\..\..\..\build\<os>\llama.cpp-cmake\bin\<binary>`: a bare
-///    `cargo build` (exe in `llama-cpp-config\target\release`)
+/// 3. `<exe-dir>\..\..\build\<os>\llama.cpp-cmake\bin\<binary>`: a bare
+///    `cargo build` at the workspace root (exe in `target\release`)
 /// 4. `<exe-dir>\..\build\<os>\llama.cpp-cmake\bin\<binary>`: alt dev layout
 pub fn llama_bin(stem: &str) -> Option<PathBuf> {
     // The per-OS directory the build scripts generate everything into.
@@ -249,7 +249,6 @@ pub fn llama_bin(stem: &str) -> Option<PathBuf> {
             .join("bin")
             .join(name),
         exe_dir
-            .join("..")
             .join("..")
             .join("..")
             .join("build")

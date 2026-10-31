@@ -1,0 +1,17 @@
+[package]
+name = "xtask"
+version = "0.1.0"
+edition = "2021"
+description = "Build orchestrator: prerequisites, configure, build (llama.cpp and llama-cpp-config), package, install"
+license = "MIT"
+publish = false
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4.6", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "1"
+# sha256 of the downloaded dists (several GiB for the CUDA Toolkit): built
+# optimized even in the dev profile, see the workspace Cargo.toml.
+sha2 = "0.10"

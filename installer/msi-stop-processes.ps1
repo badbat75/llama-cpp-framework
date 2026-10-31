@@ -1,6 +1,6 @@
 # Custom action of the MSI (llama-cpp-framework.wxs, StopProcesses): stop the
 # configurator and llama-server before Windows Installer replaces or removes
-# their files. 03-package.ps1 embeds this file as a -EncodedCommand, so it runs
+# their files. xtask package embeds this file as a -EncodedCommand, so it runs
 # under the target machine's Windows PowerShell 5.1: keep it 5.1-safe and
 # ASCII-only. It takes no arguments and reads what it needs from the registry.
 #

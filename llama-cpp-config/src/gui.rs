@@ -821,7 +821,7 @@ fn preset_summaries(presets: &[presets::Listed], filter: &str) -> Vec<PresetSumm
 /// Seed / re-seed every disk-backed piece of the UI: server.ini, presets.ini,
 /// the ModelsDir scan, the integration state, the live run status, and the
 /// llama-server version + device probes (the exe can change under us, e.g. a
-/// `02-build.ps1` rerun while the configurator is open). The one home shared by
+/// `xtask build` rerun while the configurator is open). The one home shared by
 /// `run()`'s startup seed and Refresh/F5 (`reload_all`), so a newly added
 /// disk-backed `refresh_*` hub is wired in exactly one place.
 fn reload_all_from_disk(

@@ -1,0 +1,29 @@
+# The cargo workspace: the configurator (llama-cpp-config) and the build
+# orchestrator (xtask, run as `cargo run -p xtask -- <phase>`). Two separate
+# crates: xtask drives llama.cpp's CMake build and this workspace's cargo
+# build side by side, and neither depends on the other. Profiles live here
+# because cargo only reads them from the workspace root.
+[workspace]
+members = ["llama-cpp-config", "xtask"]
+resolver = "2"
+
+# Incremental compilation is OFF on purpose: Cargo garbage-collects the sessions
+# *inside* target\debug\incremental\<crate>-<hash>\ but never removes an obsolete
+# <hash> directory, and that hash changes on every version bump, Cargo.lock
+# change and rustc upgrade. With a release-per-week cadence that accumulated ~100
+# dead directories / 73 GB in ten days. Cost: a debug `cargo build`/`cargo test`
+# recompiles this crate whole (dependencies stay cached in target\debug\deps\).
+[profile.dev]
+incremental = false
+
+[profile.release]
+opt-level = "z"
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
+
+# xtask runs in the dev profile (`cargo run -p xtask`), and hashing a
+# multi-GiB download with an unoptimized sha2 takes minutes: only the hasher
+# is optimized, the configurator's debug builds are unchanged.
+[profile.dev.package.sha2]
+opt-level = 3

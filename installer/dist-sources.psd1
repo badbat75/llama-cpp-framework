@@ -2,27 +2,28 @@
 # BUILD machine keeps them. Sources only, NO versions: every reader resolves
 # the newest STABLE release at run time and takes it, so a new ROCm, CUDA or
 # Vulkan SDK lands on the next run.
-# Read by 00-install-prerequisites.ps1, 01-configure.ps1 and common.ps1 (build
+# Read by scripts\00-install-prerequisites.ps1, xtask configure and scripts\common.ps1 (build
 # machine: ROCm dist, CUDA Toolkit, Vulkan SDK). End users never see it:
-# 03-package.ps1 copies the runtime libraries the backends load out of these
+# xtask package copies the runtime libraries the backends load out of these
 # dists into the installer.
 @{
     # Build-machine layout: <DistRoot>\<Dir>\<Version>\<DistOs>, e.g.
     # E:\TheRock\10.1.0\windows. One directory per version, and under it one
     # per OS: the drive is shared with the Linux side of the same machine,
     # whose dist of the same version sits beside it as <Version>\linux
-    # (dist-sources.sh), and neither build ever sees the other's files. Dists
+    # (dist-sources.toml), and neither build ever sees the other's files. Dists
     # live side by side: an upgrade lands next to its predecessor, and nothing
     # here ever deletes one (that call is the user's). Downloads go to
     # <DistRoot>\<Dir>\.downloads and are deleted after a successful install.
     # The layout holds the GPU SDKs only: OpenSSL is a system library, kept
-    # where winget installs it (00-install-prerequisites.ps1).
+    # where winget installs it (scripts\00-install-prerequisites.ps1).
     #
     # DistRoot is the DEFAULT, the counterpart of /mnt/data on Linux. It is
-    # overridden, in this order, by -DistRoot on 00-install-prerequisites.ps1
-    # or 01-configure.ps1, by the LLAMA_FW_DIST_ROOT environment variable, and
-    # by the DistRoot that 01-configure.ps1 recorded in
-    # build\windows\config-build.psd1 (Resolve-DistRoot in dists.ps1).
+    # overridden, in this order, by -DistRoot on scripts\00-install-prerequisites.ps1
+    # or --dist-root on xtask configure, by the LLAMA_FW_DIST_ROOT environment
+    # variable, and by the DistRoot that xtask configure recorded in
+    # build\windows\config-build.psd1 (Resolve-DistRoot in scripts\dists.ps1; xtask reads
+    # the same default from dist-sources.toml).
     DistRoot = 'E:\'
     DistOs   = 'windows'
 
@@ -32,7 +33,7 @@
     #
     # HIP_PATH names the ACTIVE dist. Dists therefore live side by side: an
     # upgrade lands next to its predecessor instead of wiping it, so going
-    # back is a HIP_PATH move (plus 01-configure.ps1 + a rebuild), not a
+    # back is a HIP_PATH move (plus xtask configure + a rebuild), not a
     # 4.6 GB re-download. The cost is disk, ~25 GB each.
     #
     # The newest stable is FOUND, never composed: both scripts scan Indexes
@@ -49,9 +50,9 @@
     # rocm.prereleases.amd.com for its rcs). Source: ROCm/TheRock RELEASES.md,
     # "Installing multi-arch releases". Prerelease indexes stay out.
     #
-    # A dist bump costs a full rebuild (02-build.ps1 wipes the cmake dir when
+    # A dist bump costs a full rebuild (xtask build wipes the cmake dir when
     # the compiler path changes) and re-derives GpuTargets. A dist whose clang
-    # is below 24 is refused by 02-build.ps1 (its HIP runtime wrapper clashes
+    # is below 24 is refused by xtask build (its HIP runtime wrapper clashes
     # with MSVC's <cmath>; clang 24 fixed it upstream).
     Rocm = @{
         Dir         = 'TheRock'            # <DistRoot>\TheRock\<Version>\<DistOs>

@@ -124,7 +124,7 @@ fn emit_build_stack() {
 /// Generate the icon when it's absent (fresh checkout, or deleted on purpose
 /// to pick up an upstream logo change) by running the node script that
 /// rasterizes it from the llama.cpp clone's webui logo. Needs node + npm and
-/// the clone (02-build.ps1 creates it before this cargo leg runs); a missing
+/// the clone (xtask build creates it before this cargo leg runs); a missing
 /// prerequisite fails the build with the script's own error message.
 fn ensure_icon(ico_path: &str) {
     if Path::new(ico_path).exists() {

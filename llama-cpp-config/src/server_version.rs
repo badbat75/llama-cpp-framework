@@ -42,7 +42,7 @@ fn run(exe: &std::path::Path) -> Option<String> {
 /// The `-dev` suffix is llama.cpp's own: `LLAMA_BUILD_IS_DEV` defaults ON and
 /// upstream turns it off only when building from a release tag, so it is a fact
 /// about the binary and is shown as-is rather than trimmed. Since the framework
-/// builds only release tags it passes `OFF` unconditionally (02-build.ps1), so a
+/// builds only release tags it passes `OFF` unconditionally (xtask build), so a
 /// `-dev` in this badge says the server being probed did not come from this
 /// framework's packaging.
 ///

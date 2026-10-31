@@ -243,7 +243,7 @@ mod loaded_impl {
 
     // Memoize SUCCESS only: caching a failed load would leave the Model-info
     // box dead until restart when the configurator started before the DLL
-    // existed (e.g. mid `02-build.ps1`); the exe tree can change under us,
+    // existed (e.g. mid `xtask build`); the exe tree can change under us,
     // and the other probes (version, devices) do re-probe on Refresh. A failed
     // `LoadLibraryW` is cheap, so retrying per read costs nothing.
     fn api() -> Option<&'static Api> {

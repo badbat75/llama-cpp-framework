@@ -1,0 +1,26 @@
+# The llama.cpp CMake options of macOS (Apple Silicon), applied after
+# common.toml: an entry here REPLACES the common entry of the same NAME.
+# No CUDA and no ROCm exist there; the GPU is driven by Metal, and by Vulkan
+# through MoltenVK (GGML_VULKAN stays ON from common.toml). The rest follows
+# upstream's own macOS release build (.github/workflows/release.yml,
+# macos-cpu arm64).
+
+defines = [
+    "GGML_CUDA=OFF",
+    "GGML_HIP=OFF",
+    # Stated rather than inherited (it is ON by default on Apple).
+    "GGML_METAL=ON",
+    # The Metal shader library compiled INTO the backend, so no
+    # default.metallib has to be found beside it at run time.
+    "GGML_METAL_EMBED_LIBRARY=ON",
+    # Apple Silicon only: Metal on Intel Macs is slow enough that upstream
+    # ships those builds with Metal off.
+    "CMAKE_OSX_ARCHITECTURES=arm64",
+    # The oldest macOS the binaries run on, upstream's value.
+    "CMAKE_OSX_DEPLOYMENT_TARGET=13.3",
+    # HTTPS for llama-server through BoringSSL, built from source
+    # (FetchContent at configure time) and linked STATICALLY, as upstream
+    # ships it: no OpenSSL dylib to bundle and no Homebrew path baked
+    # into the binaries.
+    "LLAMA_BUILD_BORINGSSL=ON",
+]

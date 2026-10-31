@@ -17,7 +17,7 @@
 //!   whole used cache to f16 first ("no FlashAttention vector kernel compiled",
 //!   `ggml_cuda_flash_attn_ext_vec`). Which pairs are compiled is a BUILD setting,
 //!   `GGML_CUDA_FA_QUANTS`, and `NATIVE_VEC_PAIRS` mirrors the one this framework
-//!   builds with (`cmake-options.psd1`, pinned by a test below). The configurator
+//!   builds with (`xtask/cmake/common.toml`, pinned by a test below). The configurator
 //!   ships in the same installer as those binaries, so the mirror describes the
 //!   llama-server next to it.
 //! - **A quantized V with flash attention `off` does not load at all**
@@ -39,7 +39,7 @@ pub const TYPES: &[&str] = &[
 ];
 
 /// K-V pairs with a compiled FlashAttention vector kernel on CUDA and HIP in
-/// this framework's build: `GGML_CUDA_FA_QUANTS` in `cmake-options.psd1`, plus
+/// this framework's build: `GGML_CUDA_FA_QUANTS` in `xtask/cmake/common.toml`, plus
 /// `f16-f16`, which ggml's CMake adds whatever the list says.
 pub const NATIVE_VEC_PAIRS: &[(&str, &str)] = &[
     ("q4_0", "q4_0"),
@@ -325,16 +325,16 @@ mod tests {
     }
 
     /// `NATIVE_VEC_PAIRS` must describe the build the installer ships:
-    /// `GGML_CUDA_FA_QUANTS` in the repo's `cmake-options.psd1`, plus f16-f16.
+    /// `GGML_CUDA_FA_QUANTS` in the repo's `xtask/cmake/common.toml`, plus f16-f16.
     #[test]
     fn native_pairs_mirror_the_build_setting() {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../cmake-options.psd1");
-        let text = std::fs::read_to_string(path).expect("read cmake-options.psd1");
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../xtask/cmake/common.toml");
+        let text = std::fs::read_to_string(path).expect("read xtask/cmake/common.toml");
         let value = text
             .lines()
             .map(str::trim)
-            .find_map(|l| l.strip_prefix("'GGML_CUDA_FA_QUANTS="))
-            .and_then(|l| l.strip_suffix('\''))
+            .find_map(|l| l.strip_prefix("\"GGML_CUDA_FA_QUANTS="))
+            .and_then(|l| l.strip_suffix("\","))
             .expect("GGML_CUDA_FA_QUANTS entry");
         let mut built: Vec<(String, String)> = value
             .split([',', ';'])
