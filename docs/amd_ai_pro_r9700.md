@@ -1,3 +1,14 @@
+---
+title: AMD Radeon AI PRO R9700
+type: gpu
+status: reference
+gpus: [AMD Radeon AI PRO R9700]
+models: []
+platforms: [windows, linux]
+llama-cpp: v0.5.0 to v0.7.0
+updated: 2026-10-20
+---
+
 # AMD Radeon AI PRO R9700: configuration reference
 
 Reference settings for running llama.cpp on the R9700 (RDNA4, `gfx1201`, 32 GB) under

@@ -1,3 +1,14 @@
+---
+title: NVIDIA GeForce RTX 4070 SUPER
+type: gpu
+status: reference
+gpus: [NVIDIA GeForce RTX 4070 SUPER]
+models: []
+platforms: [windows, linux]
+llama-cpp: v0.5.0 to v0.7.0
+updated: 2026-10-31
+---
+
 # NVIDIA GeForce RTX 4070 Super: configuration reference
 
 Reference settings for running llama.cpp on the RTX 4070 Super (Ada, `sm_89`, 12 GB)

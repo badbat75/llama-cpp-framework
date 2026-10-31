@@ -1,3 +1,14 @@
+---
+title: Qwen3.8-27B
+type: model
+status: draft
+gpus: [AMD Radeon AI PRO R9700, NVIDIA GeForce RTX 4070 SUPER]
+models: [Qwen3.8-27B]
+platforms: [linux, windows]
+llama-cpp: v0.5.0 to v0.8.0
+updated: 2026-10-31
+---
+
 # Qwen3.8-27B: configuration reference (draft)
 
 Reference settings for Qwen3.8-27B (architecture `qwen35`, dense, with an embedded MTP
@@ -197,13 +208,15 @@ against `coder390-device-order-20261019`, `coder390-ubatch-20261020` and
 | `spec-draft-n-max` 2 to 5 at 100k+ tokens | `3` | the draft phase is ~20% of a decode step and acceptance moves decode by 20-30% between tasks (0.49 to 0.65 observed) | TBD |
 | the R9700 first on *Windows* at `53,13` | `52,14` (section 4) | does `53,13` buy margin on the 4070 (527 MiB free after a 115k prefill at `180224`) for free? | TBD |
 | the same HIP API log on *Linux* | n/a | is the Linux lead on the R9700-last placement the copy rate alone (section 4), or the kernels too? | TBD |
+| `tensor-split` under `split-mode tensor` on two R9700s | `35,31` (section 8) | the split that leaves ~500 MiB free on the x16 card with two 110k contexts at once, and its decode cost | TBD |
 | a pinned staging buffer in ggml's cross-runtime tensor copy | `malloc` staging (section 4) | with the R9700 second on *Windows*, the 2.5 s of staged hops left after patch 0004 (~5% of the prefill); with it first, the 0.3 s copies out of the R9700 | TBD |
 
 ## 7. Two R9700s on Linux (v0.8.0)
 
 The host now carries two R9700s and no RTX 4070 SUPER: one in the CPU's Gen5 x16 slot
 (`ROCm0`), one behind the chipset at Gen4 x4 (`ROCm1`) with no PCIe AtomicOps, so RCCL does
-not run and `split-mode tensor` is left out (layer split only). `f16` KV, 43.7k-token prompt
+not run; this section is the layer split only (the tensor split with the internal AllReduce is
+section 8). `f16` KV, 43.7k-token prompt
 with the prompt cache off, 128 tokens out. Two presets: the Swift-1.5 fine-tune of this model
 with `draft-mtp`, and the Q8_0 with the `draft-dflash` drafter on the second card.
 
@@ -222,3 +235,61 @@ with `draft-mtp`, and the Q8_0 with the `draft-dflash` drafter on the second car
 Swift's decode under `rocprofv3` (43.7k tokens): the two cards busy ~75% of the time combined
 (~84% estimated without the profiler), `mul_mat_vec_q` 67% of the GPU time, cross-card copies
 under 0.4%: the x4 link does not limit a layer-split decode.
+
+## 8. Two R9700s: tensor split and two requests at once (v0.8.0)
+
+The Swift preset of section 7 (`f16` KV at 393216, `parallel 2`, `ngram-map-k4v,draft-mtp`
+with `spec-draft-n-max 2`, `tensor-split 35,31`, `ubatch-size 1024`) with the image
+encoder on the CPU: with it on the x16 card the tensor split does not load (the 888 MiB
+encoder allocation fails). `split-mode tensor` reduces through the internal AllReduce
+(`CudaAllreduce = internal`), RCCL not running without AtomicOps on the chipset slot.
+Recorded without a spec (`custom`): temperature 0, 3 repetitions, output uncapped, every
+cold request with the prompt cache off. With two requests at once: both cold (`prefill`),
+both decoding on a cached prompt (`decode`), one cold while the other decodes
+(`prefill+decode`). A total is the tokens of both requests over the window they share
+(`bench::concurrent_totals`); a single request's total is its own rate. Temperature 0
+with the drafter on writes a different greedy text under each split (110k, two decodes:
+acceptance 84% layer, 76% tensor), so a decode figure is the drafter's rate on that text.
+All figures t/s (campaign `swift27b-concurrency-2xr9700-linux-20261031`).
+
+| scenario | figure | layer, 43.7k | tensor, 43.7k | layer, 110k | tensor, 110k |
+| --- | --- | --- | --- | --- | --- |
+| one request | prefill | 1433.6 ±6.6 | 1114.7 ±33.2 | 1098.6 ±6.2 | 924.8 ±1.0 |
+| one request | decode | 40.4 ±0.8 | 59.6 ±0.1 | 33.5 ±0.0 | 55.4 ±0.0 |
+| `prefill` | prefill total | 1395.9 ±13.9 | 1112.2 ±0.3 | 1060.2 ±8.4 | out of memory |
+| `prefill` | decode total | 42.4 ±3.8 | 45.5 ±0.4 | 20.4 ±0.3 | out of memory |
+| `decode` | decode total | 64.3 ±0.5 | 82.5 ±6.8 | 52.1 ±0.2 | 68.7 ±0.2 |
+| `decode` | decode per request | 32.3 ±0.2 | 49.9 ±4.0 | 26.1 ±0.1 | 34.6 ±0.1 |
+| `prefill+decode` | prefill of the cold request | 1334.5 ±19.8 | 1085.4 ±1.9 | 1012.1 ±3.2 | out of memory |
+| `prefill+decode` | decode of the warm request | 20.2 ±0.1 | 37.1 ±0.2 | 10.4 ±0.3 | out of memory |
+| `prefill+decode` | decode total | 39.5 ±0.2 | 52.1 ±0.2 | 19.5 ±0.2 | out of memory |
+
+```bench-chart
+title    = Decode total by scenario, 43.7k tokens
+campaign = swift27b-concurrency-2xr9700-linux-20261031
+metric   = decode-total
+x        = concurrency
+series   = split-mode
+where    = prompt=bench-prompt-long
+```
+
+```bench-chart
+title    = Decode of one request by context depth
+campaign = swift27b-concurrency-2xr9700-linux-20261031
+metric   = decode
+x        = prompt
+series   = split-mode
+where    = concurrency=single
+```
+
+- **The tensor split decodes faster in every scenario that completed**: +48% for one request
+  at 43.7k, +65% at 110k, +28% / +32% in total with two decodes, and the request that
+  decodes while the other prefills nearly doubles (20.2 against 37.1 at 43.7k). It costs 16 to
+  22% of cold prefill, and two cold prefills are served one after the other under both splits
+  (the totals equal one request's rate).
+- **It fills the x16 card**: the free-memory probe reads 0 MiB on it after the first prefill
+  (layer split: 3906 MiB, and 1042 on the x4 card), so two 110k contexts at once run it out of
+  memory in the HIP graph update (`prefill` and `prefill+decode`, three times; once the driver
+  also moved 14 GB to GTT). Those legs are not recorded. The preset keeps `split-mode tensor`;
+  its `tensor-split` needs rebalancing for ~500 MiB free on the x16 card before two long
+  conversations can share it (a placeholder in section 6).

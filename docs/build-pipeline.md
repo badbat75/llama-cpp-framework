@@ -1,3 +1,9 @@
+---
+title: Build pipeline
+type: reference
+updated: 2026-10-31
+---
+
 # Build pipeline
 
 Details for the build pipeline: the phases (`xtask <phase>`, short for `cargo run -p xtask -- <phase>`; the crate is `xtask\`), the bootstrap scripts (`scripts\00-install-prerequisites.ps1`, `scripts/00-install-prerequisites.sh`), the PowerShell libraries (`scripts\common.ps1`, `scripts\dists.ps1`) and the build configuration (`xtask\cmake\` for the llama.cpp CMake options, `build\windows\config-build.psd1`). The Windows logic described below lives in `xtask\src\windows\` (`configure.rs`, `build_llama.rs`, `package.rs`), the OS-independent half in `xtask\src\common\` (llama.cpp checkout and patches, the loader of `xtask\cmake\`, sccache, the configurator build, versions, GPU targets); see "Linux" below for the crate layout. `scripts\00-install-prerequisites.ps1` stays native PowerShell: it runs under Windows PowerShell 5.1 before Rust exists (it installs it, user scope, through winget's `Rustlang.Rustup` when no cargo is found) and drives the elevated session. The wrappers in `scripts\` (`0N-*.ps1`, `0N-*.sh`) only run the cargo phases with `CARGO_TARGET_DIR` set per OS; a bare `cargo run -p xtask` builds xtask itself into `target\` (or the directory the generated `.cargo\config.toml` pins), and the configurator always into `build\<os>\cargo-target`. Read this before changing any of them. The installer side of packaging (`installer\`) is in [installer\AGENTS.md](../installer/AGENTS.md).
