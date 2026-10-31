@@ -1,8 +1,15 @@
 # docs\
 
 The configuration references and the developer references. The `.md` files are the source:
-read as is on GitHub and by agents; an HTML site with charts will be generated from them
-and from `benchmarks\bench.db` (not written yet). Nothing here may need the site to be read.
+read as is on GitHub and by agents. `tools\site\` (`cargo run -p docs-site`) generates the HTML
+site from them and from `benchmarks\bench.db`: the charts drawn, the citations linked, a page
+per campaign; `.github\workflows\docs-site.yml` publishes it on GitHub Pages at every push to
+`main`. Nothing here may need the site to be read.
+
+`cargo run -p docs-site -- --check` checks every rule below that a program can (front matter,
+required sections, cited campaigns, chart blocks) and the site build fails on the same; run it
+before committing a change to `docs\`. Without `--check` it writes the site to
+`build\<os>\site\` (`--out <dir>` elsewhere).
 
 ## Page types
 
@@ -90,10 +97,10 @@ where    = prompt=bench-prompt-long   ; optional filter
   - `free-mib`: free memory per device after the first prefill (`run_device`), one bar per device.
 - `x`, `series`: a run parameter key (`concurrency`, `prompt`, `split-mode`, `ctx-size`...) or `label`. A key a run lacks reads as `unset` (the llama.cpp default).
 - `where`: `key=value` pairs separated by `,`, all required to match.
-- Optional: `title` (else the metric and campaign), `unit` (else from the metric).
+- Optional: `title` (else the metric and campaign), `unit` (else from the metric), `rename` (display names of values, `a=b` pairs separated by `,`, e.g. `unset=layer`: labels only, `where` still matches the raw value).
 
-A block that names a missing campaign or key will fail the site build; until the generator
-exists, check by hand with `bench query runs --campaign <name> --show <key>`.
+A block that names a missing campaign, metric or key, or finds no data after `where`, fails
+`--check` and the site build.
 
 ## Other rules
 

@@ -271,6 +271,7 @@ metric   = decode-total
 x        = concurrency
 series   = split-mode
 where    = prompt=bench-prompt-long
+rename   = unset=layer
 ```
 
 ```bench-chart
@@ -280,6 +281,7 @@ metric   = decode
 x        = prompt
 series   = split-mode
 where    = concurrency=single
+rename   = unset=layer, bench-prompt-long=43.7k tokens, bench-prompt-110k=110k tokens
 ```
 
 - **The tensor split decodes faster in every scenario that completed**: +48% for one request

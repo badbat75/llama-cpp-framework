@@ -1,0 +1,14 @@
+# The HTML site of docs\ and benchmarks\bench.db (docs\AGENTS.md): every page of
+# docs\ rendered with its bench-chart blocks drawn as SVG, plus a page per
+# campaign. A crate of its own so CI builds it without the configurator's
+# toolchain (Slint, node, the llama.cpp clone).
+[package]
+name = "docs-site"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+pulldown-cmark = { version = "0.13", default-features = false, features = ["html"] }
+rusqlite = { version = "0.41", features = ["bundled"] }
+serde_json = "1"

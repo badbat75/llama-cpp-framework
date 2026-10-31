@@ -1,10 +1,11 @@
-# The cargo workspace: the configurator (llama-cpp-config) and the build
-# orchestrator (xtask, run as `cargo run -p xtask -- <phase>`). Two separate
-# crates: xtask drives llama.cpp's CMake build and this workspace's cargo
-# build side by side, and neither depends on the other. Profiles live here
+# The cargo workspace: the configurator (llama-cpp-config), the build
+# orchestrator (xtask, run as `cargo run -p xtask -- <phase>`) and the docs
+# site generator (tools/site, `cargo run -p docs-site`). Separate crates:
+# xtask drives llama.cpp's CMake build and this workspace's cargo build side
+# by side, none depends on another, and CI builds docs-site alone. Profiles live here
 # because cargo only reads them from the workspace root.
 [workspace]
-members = ["llama-cpp-config", "xtask"]
+members = ["llama-cpp-config", "xtask", "tools/site"]
 resolver = "2"
 
 # Incremental compilation is OFF on purpose: Cargo garbage-collects the sessions
