@@ -6,7 +6,7 @@ gpus: [AMD Radeon AI PRO R9700]
 models: []
 platforms: [windows, linux]
 llama-cpp: v0.5.0 to v0.8.0
-updated: 2026-10-31
+updated: 2026-11-01
 ---
 
 # AMD Radeon AI PRO R9700: configuration reference
@@ -151,3 +151,11 @@ Qwen3.8-27B Q8_0, `f16` KV, `parallel 2`, `ngram-map-k4v,draft-mtp`; per-model d
 | Tensor-split AllReduce (`CudaAllreduce`) | `internal` | RCCL does not run without PCIe AtomicOps on the x4 card's slot, so RCCL against the internal AllReduce cannot be measured on this pair. The internal one stages every reduction through host memory and its prefill follows the x4 card's host link: 785.6 against 1136.1 t/s at 43.7k on a boot where the CPU-to-chipset uplink trained at x2 (3.5 GB/s instead of 7.0), decode 58.0 against 59.8 (campaign `swift27b-driver-check-2xr9700-linux-20261031`) |
 | `parallel` | `2` | two decodes at once, total 64.3 (layer) and 82.5 (tensor) t/s at 43.7k against 40.4 and 59.6 for one request; two cold prefills are served one after the other (the total is one request's rate); a request decoding while the other prefills drops to 20.2 (layer) and 37.1 (tensor). The context is divided per slot: `425984` gives each 212992 (campaigns `swift27b-concurrency-2xr9700-linux-20261031`, `swift27b-ctx-tensor-2xr9700-linux-20261031`) |
 | drafter: embedded MTP or DFlash2 | either; MTP in the n-gram chain | temperature 1, 5 repetitions, layer split: decode at 43.7k 30.9 (MTP) against 28.8 (DFlash2 Q8_0 on the second card, `spec-draft-n-max 5`), on a code rewrite with 1536 tokens out 49.8 against 58.2: within noise of each other. MTP takes ~1.3 GB more on the last card (its KV and compute buffer sit with the output head) (campaigns `swift27b-drafter-2xr9700-linux-20261030`, `swift27b-drafter-code1536-2xr9700-linux-20261030`) |
+
+The baseline of this pair under the versioned method (`standard-1.0`: four prompts, the
+bare engine and the preset's own sampling and speculator, one and two requests at once),
+with the full hardware and software configuration it ran on, is `qwen3.8_27b.md`
+section 10 (campaign `swift27b-standard-1.0-2xr9700-linux-20261031`). Under it each card
+sits at its stock 300 W power cap while prefilling and at 210 to 270 W while decoding (read
+by hand from sysfs, not recorded); `power1_cap_max` equals the default, so the cap can only
+be lowered without the driver's overdrive.
