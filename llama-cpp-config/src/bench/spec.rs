@@ -768,6 +768,20 @@ fn checked_prompts(spec: &Spec) -> Result<Vec<(PathBuf, String)>, String> {
     Ok(prompts)
 }
 
+/// The overrides as they are written: `spec-type = none` also removes
+/// `model-draft`, unless the same list sets it. llama-server loads a draft file
+/// whatever the speculator is, and without `draft-mtp` an MTP head takes a KV
+/// cache for every attention layer of the context, far more than with it, so a pass meant to measure no drafter
+/// can fail to load on a preset that fits with one.
+fn effective_overrides(overrides: &[(String, String)]) -> Vec<(String, String)> {
+    let mut out = overrides.to_vec();
+    let draft_off = overrides.iter().any(|(k, v)| k == "spec-type" && v == "none");
+    if draft_off && !overrides.iter().any(|(k, _)| k == "model-draft") {
+        out.push(("model-draft".to_string(), sweep::UNSET.to_string()));
+    }
+    out
+}
+
 /// Write each override, a pending marker first, so an interrupted run is
 /// reported like an interrupted sweep. Returns what to put back.
 pub(super) fn apply_overrides(
@@ -775,7 +789,7 @@ pub(super) fn apply_overrides(
     overrides: &[(String, String)],
 ) -> Result<Vec<(String, String, PathBuf)>, String> {
     let mut restore = Vec::new();
-    for (key, value) in overrides {
+    for (key, value) in &effective_overrides(overrides) {
         let (original, marker) = sweep::hold_key(preset, key)?;
         if let Err(e) = sweep::set_key(preset, key, value) {
             let _ = restore_overrides(preset, restore);
@@ -807,6 +821,19 @@ mod tests {
         /x/y.txt@96D8FB4F7D56D59EE53AA145394C8F8ADB0122ADBE16421391DCFD5576AAAAE6\nMaxTokens = 0\n\n\
         [Pass.engine]\nTemp = 0\nOverride = spec-type=none\nReps = 3\n\n\
         [Pass.real]\nTemp = preset\nConcurrency = all\nReps = 5\n";
+
+    #[test]
+    fn spec_type_none_also_removes_the_draft_file() {
+        let o = |k: &str, v: &str| (k.to_string(), v.to_string());
+        assert_eq!(
+            effective_overrides(&[o("spec-type", "none")]),
+            vec![o("spec-type", "none"), o("model-draft", sweep::UNSET)]
+        );
+        // Any other speculator keeps the file, and a list that names it wins.
+        assert_eq!(effective_overrides(&[o("spec-type", "draft-mtp")]), vec![o("spec-type", "draft-mtp")]);
+        let named = [o("spec-type", "none"), o("model-draft", "x.gguf")];
+        assert_eq!(effective_overrides(&named), named.to_vec());
+    }
 
     #[test]
     fn a_spec_parses_its_passes_and_resolves_bare_prompt_names() {
