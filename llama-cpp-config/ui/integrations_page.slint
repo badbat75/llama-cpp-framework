@@ -7,6 +7,7 @@
 import { LineEdit, Button, ScrollView, Palette } from "std-widgets.slint";
 import { SectionCard, Tokens } from "components.slint";
 import { AppState } from "state.slint";
+import { Strings } from "strings.slint";
 
 export component IntegrationsPage inherits ScrollView {
     VerticalLayout {
@@ -15,13 +16,13 @@ export component IntegrationsPage inherits ScrollView {
         alignment: start;
 
         Text {
-            text: "Integrations";
+            text: Strings.t("integrations");
             font-size: 22px;
             font-weight: 600;
             color: Palette.foreground;
         }
         Text {
-            text: "Expose presets as models in your AI coding tools. OpenCode is configured directly; Claude Code needs environment variables.";
+            text: Strings.t("integrations-intro");
             color: Palette.foreground.transparentize(Tokens.muted);
             font-size: 12px;
             wrap: word-wrap;
@@ -30,7 +31,7 @@ export component IntegrationsPage inherits ScrollView {
         SectionCard {
             heading: "OpenCode";
             Text {
-                text: "OpenCode lists every enabled preset: switch one off in the Models tab to hide it here too. Save adds the llama-server provider to opencode.json; from then on the list follows every preset change on its own.";
+                text: Strings.t("opencode-intro");
                 font-size: 12px;
                 color: Palette.foreground.transparentize(Tokens.muted);
                 wrap: word-wrap;
@@ -50,11 +51,11 @@ export component IntegrationsPage inherits ScrollView {
             HorizontalLayout {
                 spacing: 8px;
                 Button {
-                    text: "Save";
+                    text: Strings.t("save");
                     clicked => { AppState.save_integrations(); }
                 }
                 Button {
-                    text: "Open";
+                    text: Strings.t("open");
                     clicked => { AppState.open_opencode_folder(); }
                 }
             }
@@ -64,7 +65,7 @@ export component IntegrationsPage inherits ScrollView {
             heading: "Claude Code";
             content_padding: 12px;
             Text {
-                text: "Claude Code uses environment variables to connect to a custom endpoint. Copy the snippet below and run it in PowerShell before launching Claude Code, or add it to your PROFILE.";
+                text: Strings.t("claude-code-intro");
                 wrap: word-wrap;
                 font-size: 12px;
                 color: Palette.foreground.transparentize(Tokens.muted);

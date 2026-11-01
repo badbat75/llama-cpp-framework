@@ -83,7 +83,7 @@ pub fn starts_minimized() -> bool {
 pub fn set_enabled(_on: bool, _minimized: bool) -> io::Result<()> {
     Err(io::Error::new(
         io::ErrorKind::Unsupported,
-        "start at login is not available on this platform",
+        crate::strings::t("login-start-unavailable"),
     ))
 }
 
@@ -363,7 +363,7 @@ mod win {
             let exe = super::choose_autostart_exe(installed_exe(), std::env::current_exe()?);
             let data = wide(&run_command(&exe, minimized));
             let byte_len = u32::try_from(data.len() * 2)
-                .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "command too long"))?;
+                .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, crate::strings::t("command-too-long")))?;
             unsafe {
                 RegSetValueExW(
                     key,

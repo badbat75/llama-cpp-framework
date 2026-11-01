@@ -29,6 +29,7 @@
 //! missing here only costs a needless warning; a type listed here WITHOUT one
 //! hides a CPU fallback.
 
+use crate::strings;
 use crate::devices::DeviceOption;
 
 /// Every type llama.cpp accepts for the KV cache, highest precision first (the
@@ -138,13 +139,11 @@ fn backends(input: &Input) -> Vec<Backend> {
 
 /// What happens to a layer whose backend has no FlashAttention kernel for the
 /// pair: forced flash attention moves the op to the CPU, `auto` turns it off.
-fn fallback(fa_forced: bool) -> &'static str {
+fn fallback(fa_forced: bool) -> String {
     if fa_forced {
-        "flash attention is on (a quantized V cache forces it), so llama.cpp runs this model's \
-         attention on the CPU"
+        strings::t("fa-forced-fallback")
     } else {
-        "with flash attention on default, llama.cpp detects it and runs this model without flash \
-         attention"
+        strings::t("fa-default-fallback")
     }
 }
 
@@ -155,43 +154,24 @@ fn check(label: &str, backends: &[Backend], k: &str, v: &str, flash_attn: &str) 
     // combo then shows "default" for a value it does not list, so the strip is
     // the one place that can say the launch will fail (`Unsupported cache type`).
     if let Some(bad) = [k, v].into_iter().find(|t| !TYPES.contains(t)) {
-        return Some(format!(
-            "{label}: {bad} is not a KV cache type llama.cpp accepts ({}), so the model does \
-             not load.",
-            TYPES.join(", ")
-        ));
+        return Some(strings::fill("kv-type-unknown", &[&label, &bad, &TYPES.join(", ")]));
     }
     if flash_attn == "off" {
         // No flash attention at all: no kernel to miss, one refusal to report.
         return is_quantized(v).then(|| {
-            format!(
-                "{label}: a quantized V cache ({v}) requires flash attention, and Flash Attention \
-                 is off: llama.cpp refuses to create the context and the model does not load."
-            )
+            strings::fill("kv-quantized-needs-fa", &[&label, &v])
         });
     }
     // A quantized V forces flash attention on, whatever `auto` would pick.
     let fa_forced = flash_attn == "on" || is_quantized(v);
     if backends.contains(&Backend::CudaHip) && !has_fa_kernel(Backend::CudaHip, k, v) {
-        return Some(format!(
-            "{label}: CUDA and ROCm have no FlashAttention kernel for K {k} / V {v}, and {}. Use \
-             q4_0 or q5_0 on those cards; Vulkan does have an iq4_nl kernel.",
-            fallback(fa_forced)
-        ));
+        return Some(strings::fill("kv-no-kernel-cuda", &[&label, &k, &v, &fallback(fa_forced)]));
     }
     if backends.contains(&Backend::Vulkan) && !has_fa_kernel(Backend::Vulkan, k, v) {
-        return Some(format!(
-            "{label}: Vulkan's FlashAttention needs bf16 on both K and V or on neither (K {k} / \
-             V {v}), and {}.",
-            fallback(fa_forced)
-        ));
+        return Some(strings::fill("kv-no-kernel-vulkan", &[&label, &k, &v, &fallback(fa_forced)]));
     }
     if backends.contains(&Backend::CudaHip) && !has_native_vec_kernel(k, v) {
-        return Some(format!(
-            "{label}: this build has no native FlashAttention decode kernel for K {k} / V {v} on CUDA and \
-             ROCm, so every decode step of 1-2 tokens converts the whole used cache to f16 first (slower \
-             decode). Native pairs, K and V equal: f16, bf16, q8_0, q5_1, q5_0, q4_0."
-        ));
+        return Some(strings::fill("kv-no-decode-kernel", &[&label, &k, &v]));
     }
     None
 }
@@ -203,7 +183,7 @@ pub fn warning(input: &Input) -> String {
     let backends = backends(input);
     let mut lines = Vec::new();
     if let Some(w) = check(
-        "KV cache",
+        &strings::t("kv-cache"),
         &backends,
         input.cache_type_k,
         input.cache_type_v,
@@ -212,7 +192,7 @@ pub fn warning(input: &Input) -> String {
         lines.push(w);
     }
     if let Some((dk, dv)) = input.draft {
-        if let Some(w) = check("Draft KV cache", &backends, dk, dv, input.flash_attn) {
+        if let Some(w) = check(&strings::t("draft-kv-cache-label"), &backends, dk, dv, input.flash_attn) {
             lines.push(w);
         }
     }

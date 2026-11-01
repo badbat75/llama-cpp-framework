@@ -93,6 +93,7 @@
 //! tensor-split, split-mode) is per preset only: server-wide it would ride the
 //! router's own command line and shadow every preset's.
 
+use crate::strings;
 use slint::SharedString;
 
 use crate::devices::DeviceOption;
@@ -193,10 +194,10 @@ impl SplitMode {
 /// has to show it rather than silently reading as layer.
 pub const MODE_VALUES: [&str; 4] = ["default", "none", "tensor", "row"];
 pub const MODE_LABELS: [&str; 4] = [
-    "layer: split by blocks (default)",
-    "none: single GPU",
-    "tensor: tensor parallel across GPUs (experimental)",
-    "row: split matrices by rows (deprecated)",
+    strings::key("split-layer"),
+    strings::key("split-none"),
+    strings::key("split-tensor"),
+    strings::key("split-row"),
 ];
 
 /// The combo row for a form value, aligned with `MODE_VALUES`. Everything that
@@ -399,14 +400,14 @@ pub fn block_ranges(counts: &[i32], layout: Layout) -> Vec<String> {
             "nothing".to_string()
         } else if last >= layout.output_position() {
             match c {
-                1 => "output layer".to_string(),
-                2 => format!("block {first} + output"),
-                _ => format!("blocks {first}-{} + output", last - 1),
+                1 => strings::t("output-layer"),
+                2 => strings::fill("block-plus-output", &[&first]),
+                _ => strings::fill("blocks-plus-output", &[&first, &(last - 1)]),
             }
         } else if c == 1 {
-            format!("block {first}")
+            strings::fill("block-one", &[&first])
         } else {
-            format!("blocks {first}-{last}")
+            strings::fill("blocks-range", &[&first, &last])
         });
     }
     out
@@ -612,7 +613,7 @@ pub fn build_rows(
             .find(|d| d.id.eq_ignore_ascii_case(id) && !d.is_cpu());
         rows.push(GpuRow {
             id: id.clone().into(),
-            name: dev.map_or("(not detected)", |d| d.name.as_str()).into(),
+            name: dev.map_or_else(|| strings::t("not-detected"), |d| d.name.clone()).into(),
             vram: dev
                 .map(DeviceOption::vram_summary)
                 .map_or_else(SharedString::new, Into::into),
@@ -1236,7 +1237,7 @@ mod tests {
         // The values written back by a pick are the INI/form spellings.
         assert_eq!(MODE_VALUES, ["default", "none", "tensor", "row"]);
         assert!(
-            MODE_LABELS[3].contains("deprecated"),
+            strings::t(MODE_LABELS[3]).contains("deprecated"),
             "row must say it is deprecated"
         );
     }

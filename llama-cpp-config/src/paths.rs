@@ -128,6 +128,20 @@ pub fn bench_prompts_dir() -> PathBuf {
     bench_share_dir().join("prompts")
 }
 
+/// The language files as installed: `<root>\share\strings` where the exe is
+/// `<root>\bin\llama-cpp-config` (every package installs that layout), else
+/// the crate's own `strings\` for a tree build. Read-only, like
+/// `bench_share_dir`.
+pub fn strings_dir() -> PathBuf {
+    let installed = std::env::current_exe()
+        .ok()
+        .and_then(|exe| Some(exe.parent()?.parent()?.join("share").join("strings")));
+    match installed {
+        Some(dir) if dir.is_dir() => dir,
+        _ => Path::new(env!("CARGO_MANIFEST_DIR")).join("strings"),
+    }
+}
+
 /// The live benchmark's DEFAULT prompt: the shipped 43k one, read in place
 /// (it is installed read-only and never edited: a prompt of your own is a file
 /// of your own, anywhere). settings.ini's `BenchPromptFile` can point the

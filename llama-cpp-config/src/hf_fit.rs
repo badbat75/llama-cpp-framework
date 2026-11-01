@@ -230,6 +230,7 @@
 //! fits nowhere, an MoE that pages, or a tie of unknowns: no recommendation,
 //! and the rows say why each one falls short.
 
+use crate::strings;
 use std::collections::HashMap;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
@@ -507,10 +508,10 @@ pub fn shape_of(shards: &[(Header, u64)]) -> Result<Shape, String> {
         .iter()
         .map(|(h, _)| &h.kvs)
         .find(|k| k.contains_key("general.architecture"))
-        .ok_or("no general.architecture in the header")?;
+        .ok_or_else(|| strings::t("gguf-no-arch"))?;
     let arch = match kvs.get("general.architecture") {
         Some(Kv::Str(s)) => s.clone(),
-        _ => return Err("general.architecture is not a string".into()),
+        _ => return Err(strings::t("gguf-arch-not-string")),
     };
     let mut s = Shape {
         arch: arch.clone(),
@@ -646,9 +647,9 @@ fn fetch_header_from(
                 }
             }
             Err(ParseError::Truncated) => {
-                return Err(HfError::Io(format!("the GGUF header is cut short after {} bytes", body.len())));
+                return Err(HfError::Io(strings::fill("gguf-cut-short", &[&body.len()])));
             }
-            Err(ParseError::Invalid(m)) => return Err(HfError::Io(format!("not a readable GGUF header: {m}"))),
+            Err(ParseError::Invalid(m)) => return Err(HfError::Io(strings::fill("gguf-unreadable", &[&m]))),
         }
     }
 }
@@ -669,7 +670,7 @@ pub fn fetch_shape(
     let mut headers = Vec::with_capacity(c.shards.len());
     for f in &c.shards {
         if !hf::safe_repo_path(&f.path) {
-            return Err(HfError::InvalidSpec(format!("refusing the repository file path {:?}", f.path)));
+            return Err(HfError::InvalidSpec(strings::fill("refused-repo-path", &[&format!("{:?}", f.path)])));
         }
         let url = resolve_url(endpoint, repo, commit, &f.path);
         headers.push((fetch_header(fetch, &url, token, repo, f.size)?, f.size));
@@ -726,8 +727,8 @@ fn read_local_header(path: &Path, file_size: u64) -> Result<Header, String> {
             Err(ParseError::Truncated) if len < MAX_HEADER && len < file_size => {
                 len = (len * 4).min(MAX_HEADER).min(file_size);
             }
-            Err(ParseError::Truncated) => return Err(format!("the GGUF header is cut short after {} bytes", buf.len())),
-            Err(ParseError::Invalid(m)) => return Err(format!("not a readable GGUF header: {m}")),
+            Err(ParseError::Truncated) => return Err(strings::fill("gguf-cut-short", &[&buf.len()])),
+            Err(ParseError::Invalid(m)) => return Err(strings::fill("gguf-unreadable", &[&m])),
         }
     }
 }
@@ -952,7 +953,7 @@ pub fn draft_shape_of(shards: &[(Header, u64)]) -> Result<DraftShape, String> {
         .iter()
         .map(|(h, _)| &h.kvs)
         .find(|k| k.contains_key("general.architecture"))
-        .ok_or("no general.architecture in the header")?;
+        .ok_or_else(|| strings::t("gguf-no-arch"))?;
     let key = |k: &str| kvs.get(&format!("{}.{k}", s.arch));
     let int = |k: &str| key(k).and_then(Kv::as_u64);
     let per_token = kv_per_token(&key, s.layers.len() as u64).unwrap_or(0);
@@ -991,7 +992,7 @@ pub fn fetch_draft_shape(
         return Ok(s.clone());
     }
     if !hf::safe_repo_path(&file.path) {
-        return Err(HfError::InvalidSpec(format!("refusing the repository file path {:?}", file.path)));
+        return Err(HfError::InvalidSpec(strings::fill("refused-repo-path", &[&format!("{:?}", file.path)])));
     }
     let url = resolve_url(endpoint, repo, commit, &file.path);
     let header = fetch_header(fetch, &url, token, repo, file.size)?;
@@ -1393,8 +1394,8 @@ fn ctx_label(ctx: u64) -> String {
 fn ram_note(e: &Estimate) -> String {
     match e.ram_short {
         Some(0) => String::new(),
-        Some(x) => format!(", {} over the RAM: the rest pages from disk", gib(x)),
-        None => ", RAM size unknown".into(),
+        Some(x) => strings::fill("over-the-ram", &[&gib(x)]),
+        None => strings::t("ram-size-unknown"),
     }
 }
 
@@ -1404,7 +1405,7 @@ pub fn split_label(shares: &[Share]) -> String {
     let cards: Vec<String> = shares.iter().map(|s| format!("{} ({}) {}", s.gpu.short_name(), s.gpu.id, gib(s.bytes))).collect();
     let mut out = cards.join(" + ");
     if shares.len() > 1 {
-        out.push_str(&format!(", tensor-split {}", tensor_split(shares)));
+        out.push_str(&strings::fill("tensor-split-named", &[&tensor_split(shares)]));
     }
     out
 }
@@ -1418,16 +1419,37 @@ fn tensor_split(shares: &[Share]) -> String {
 fn spot_label(x: &Extra) -> String {
     match &x.spot {
         Spot::Gpu { gpu, .. } => gpu.id.clone(),
-        Spot::Cpu => "the CPU".into(),
+        Spot::Cpu => strings::t("the-cpu"),
     }
+}
+
+/// An extra's `what` as a row shows it. `what` itself stays English: it also goes
+/// into the comment written beside the preset (`extras_note`).
+fn what_label(what: &str) -> String {
+    match what.strip_suffix(" drafter") {
+        Some(kind) => strings::fill("drafter-named", &[&kind]),
+        None if what == ENCODER => strings::t("image-encoder"),
+        None => what.to_string(),
+    }
+}
+
+/// `extras_label` for the comment written into presets.ini: never translated.
+fn extras_note(e: &Estimate) -> String {
+    let spot = |x: &Extra| match &x.spot {
+        Spot::Gpu { gpu, .. } => gpu.id.clone(),
+        Spot::Cpu => "the CPU".to_string(),
+    };
+    let parts: Vec<String> =
+        e.encoder.iter().chain(&e.drafter).map(|x| format!("the {} ({}) on {}", x.what, gib(x.bytes), spot(x))).collect();
+    parts.join(" and ")
 }
 
 /// `the image encoder (1.4 GiB) on ROCm1 and the DFlash drafter (2.7 GiB)
 /// on CUDA0`: the extras an estimate counted; empty without any.
 pub fn extras_label(e: &Estimate) -> String {
     let parts: Vec<String> =
-        e.encoder.iter().chain(&e.drafter).map(|x| format!("the {} ({}) on {}", x.what, gib(x.bytes), spot_label(x))).collect();
-    parts.join(" and ")
+        e.encoder.iter().chain(&e.drafter).map(|x| strings::fill("extra-on", &[&what_label(&x.what), &gib(x.bytes), &spot_label(x)])).collect();
+    parts.join(&strings::t("list-and"))
 }
 
 /// A candidate row's estimate line (pure). On a machine with several cards
@@ -1437,7 +1459,7 @@ pub fn estimate_label(e: &Estimate, ctx: u64) -> String {
     let main = model_label(e, ctx);
     match extras_label(e) {
         x if x.is_empty() || matches!(e.fit, Fit::TooBig { .. }) => main,
-        x => format!("{main}; with {x}"),
+        x => strings::fill("with-then", &[&main, &x]),
     }
 }
 
@@ -1445,67 +1467,70 @@ pub fn estimate_label(e: &Estimate, ctx: u64) -> String {
 fn model_label(e: &Estimate, ctx: u64) -> String {
     let split = split_label(&e.shares);
     match &e.fit {
-        Fit::Gpu { need, budget } if e.shares.is_empty() => format!(
-            "all on GPU: {:.1} of {} with a {} context",
-            *need as f64 / GIB as f64,
-            gib(*budget),
-            ctx_label(ctx)
+        Fit::Gpu { need, budget } if e.shares.is_empty() => strings::fill(
+            "all-on-gpu-of",
+            &[&format!("{:.1}", *need as f64 / GIB as f64), &gib(*budget), &ctx_label(ctx)],
         ),
-        Fit::Gpu { .. } => format!("all on GPU with a {} context: {split}", ctx_label(ctx)),
-        Fit::Moe { gpu_layers: 0, ram, .. } => format!(
-            "MoE split: attention on GPU{}, every expert in RAM ({}), --n-cpu-moe all{}",
-            if split.is_empty() { String::new() } else { format!(" ({split})") },
-            gib(*ram),
-            ram_note(e)
+        Fit::Gpu { .. } => strings::fill("all-on-gpu", &[&ctx_label(ctx), &split]),
+        Fit::Moe { gpu_layers: 0, ram, .. } => strings::fill(
+            "moe-all-in-ram",
+            &[
+                &if split.is_empty() { String::new() } else { format!(" ({split})") },
+                &gib(*ram),
+                &ram_note(e),
+            ],
         ),
-        Fit::Moe { gpu_layers, moe_layers, n_cpu_moe, gpu_experts, ram } => format!(
-            "MoE split: experts of {gpu_layers}/{moe_layers} layers on GPU ({}), {}{} in RAM, --n-cpu-moe {n_cpu_moe}{}",
-            gib(*gpu_experts),
-            if split.is_empty() { String::new() } else { format!("{split}, ") },
-            gib(*ram),
-            ram_note(e)
+        Fit::Moe { gpu_layers, moe_layers, n_cpu_moe, gpu_experts, ram } => strings::fill(
+            "moe-partial",
+            &[
+                &gpu_layers,
+                &moe_layers,
+                &gib(*gpu_experts),
+                &if split.is_empty() { String::new() } else { format!("{split}, ") },
+                &gib(*ram),
+                &n_cpu_moe,
+                &ram_note(e),
+            ],
         ),
-        Fit::Dense { gpu_layers, layers, ram } => format!(
-            "too big for the GPU: {gpu_layers}/{layers} layers on GPU{}, {} in RAM (slow){}",
-            if split.is_empty() { String::new() } else { format!(" ({split})") },
-            gib(*ram),
-            ram_note(e)
+        Fit::Dense { gpu_layers, layers, ram } => strings::fill(
+            "too-big-for-gpu",
+            &[
+                &gpu_layers,
+                &layers,
+                &if split.is_empty() { String::new() } else { format!(" ({split})") },
+                &gib(*ram),
+                &ram_note(e),
+            ],
         ),
-        Fit::TooBig { base, budget } => format!(
-            "too big: attention and shared weights alone need {}, the GPU budget is {}",
-            gib(*base),
-            gib(*budget)
-        ),
+        Fit::TooBig { base, budget } => strings::fill("too-big", &[&gib(*base), &gib(*budget)]),
     }
 }
 
 /// The line that says what the estimates are measured against (pure).
 pub fn basis_label(b: &Budget) -> String {
     let gpus = if let [g] = b.gpus.as_slice() {
-        format!("{} ({} usable)", g.name, gib(g.usable()))
+        strings::fill("gpu-usable", &[&g.name, &gib(g.usable())])
     } else {
-        let cards: Vec<String> = b.gpus.iter().map(|g| format!("{} ({}, {} usable)", g.name, g.id, gib(g.usable()))).collect();
-        format!("{} GPUs in split order, {},", b.gpus.len(), cards.join(" then "))
+        let cards: Vec<String> = b.gpus.iter().map(|g| strings::fill("gpu-id-usable", &[&g.name, &g.id, &gib(g.usable())])).collect();
+        strings::fill("gpus-in-split-order", &[&b.gpus.len(), &cards.join(&strings::t("list-then"))])
     };
     let ram = match b.ram_total {
-        Some(r) => format!("{} of RAM", gib(r)),
-        None => "RAM size unknown".into(),
+        Some(r) => strings::fill("of-ram", &[&gib(r)]),
+        None => strings::t("ram-unknown"),
     };
-    format!(
-        "Estimated for {gpus} and {ram}, keeping {} free per GPU and {} of RAM, KV cache at f16",
-        gib(GPU_RESERVE),
-        gib(RAM_RESERVE)
-    )
+    strings::fill("estimated-for", &[&gpus, &ram, &gib(GPU_RESERVE), &gib(RAM_RESERVE)])
 }
 
 /// Why no estimate can be made without a GPU (after "estimate unavailable: ").
-pub const NO_GPU: &str = "llama-server --list-devices reports no GPU";
+pub fn no_gpu() -> String {
+    strings::t("no-gpu-reported")
+}
 
 /// A row's detail line: the estimate, led by the recommendation and its
 /// reason when this row is the one (pure).
 pub fn detail_line(estimate: &str, recommended: Option<&str>) -> String {
     match recommended {
-        Some(reason) => format!("recommended, {reason}: {estimate}"),
+        Some(reason) => strings::fill("recommended-reason", &[&reason, &estimate]),
         None => estimate.to_string(),
     }
 }
@@ -1578,7 +1603,7 @@ pub fn placement(e: &Estimate, s: &Shape) -> Option<Placement> {
         Some(x) => note.push_str(&format!(", {} over the RAM (the rest pages from disk)", gib(x))),
         None => note.push_str(", RAM size unknown"),
     }
-    let extras = extras_label(e);
+    let extras = extras_note(e);
     if !extras.is_empty() {
         note.push_str(&format!("; counting {extras}"));
     }
@@ -1601,7 +1626,7 @@ pub struct Row<'a> {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Recommendation {
     pub index: usize,
-    pub reason: &'static str,
+    pub reason: String,
 }
 
 /// 1: all on GPU, the extras too; 2: all on GPU but the image encoder, on
@@ -1647,16 +1672,17 @@ pub fn recommend(rows: &[Row]) -> Option<Recommendation> {
         .max_by_key(|(_, r)| quality(r.tag, r.size))?
         .0;
     let reason = match best_tier {
-        1 => "the best quality that fits in GPU memory",
-        2 => "the best quality that fits in GPU memory with the image encoder on the CPU",
-        _ => "the best quality whose experts fit in RAM without paging",
+        1 => strings::t("best-fits-gpu"),
+        2 => strings::t("best-fits-gpu-encoder-cpu"),
+        _ => strings::t("best-experts-in-ram"),
     };
     Some(Recommendation { index, reason })
 }
 
 /// Why nothing is recommended, once every row has its answer.
-pub const NONE_RECOMMENDED: &str =
-    "No quantization runs well here: none fits in GPU memory, and no MoE one keeps its experts in RAM without paging.";
+pub fn none_recommended() -> String {
+    strings::t("none-recommended")
+}
 
 #[cfg(test)]
 pub(crate) mod tests {
@@ -2451,7 +2477,7 @@ pub(crate) mod tests {
         // The Q8_0 keeps the drafter and moves the encoder to the CPU.
         assert_eq!(q8.encoder.as_ref().unwrap().spot, Spot::Cpu);
         let rows = [Row { tag: "Q4_K_M", size: 5, estimate: Some(&q4) }, Row { tag: "Q8_0", size: 9, estimate: Some(&q8) }];
-        assert_eq!(recommend(&rows), Some(Recommendation { index: 0, reason: "the best quality that fits in GPU memory" }));
+        assert_eq!(recommend(&rows), Some(Recommendation { index: 0, reason: "the best quality that fits in GPU memory".to_string() }));
         // Only the Q8_0 listed: tier 2, said so.
         assert_eq!(
             recommend(&rows[1..]).unwrap().reason,
@@ -2479,7 +2505,7 @@ pub(crate) mod tests {
             Row { tag: "IQ4_XS", size: 16, estimate: Some(&g) },
         ];
         let r = recommend(&rows).unwrap();
-        assert_eq!(r, Recommendation { index: 2, reason: "the best quality that fits in GPU memory" }, "GPU tier beats a bigger quant in RAM");
+        assert_eq!(r, Recommendation { index: 2, reason: "the best quality that fits in GPU memory".to_string() }, "GPU tier beats a bigger quant in RAM");
     }
 
     #[test]
@@ -2510,7 +2536,7 @@ pub(crate) mod tests {
         ];
         assert_eq!(
             recommend(&rows),
-            Some(Recommendation { index: 1, reason: "the best quality whose experts fit in RAM without paging" })
+            Some(Recommendation { index: 1, reason: "the best quality whose experts fit in RAM without paging".to_string() })
         );
         let none = [Row { tag: "Q8_0", size: 3, estimate: Some(&pages) }, Row { tag: "Q4_K_M", size: 1, estimate: Some(&dense_split) }];
         assert_eq!(recommend(&none), None);

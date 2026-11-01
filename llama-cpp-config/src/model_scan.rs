@@ -6,6 +6,7 @@
 //! a `current` value missing from the scan is preserved as a "(custom)" row
 //! (`custom_row`) so a stale or hand-edited path never silently disappears.
 
+use crate::strings;
 use std::path::{Component, Path, PathBuf};
 
 #[derive(Debug, Clone)]
@@ -202,7 +203,7 @@ fn custom_row(current: &str) -> (String, String) {
         .file_name()
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_else(|| current.to_string());
-    (format!("(custom) {basename}"), current.to_string())
+    (strings::fill("custom-entry", &[&basename]), current.to_string())
 }
 
 /// Build the unified draft-model dropdown that merges MTP heads (`mtps\`) and

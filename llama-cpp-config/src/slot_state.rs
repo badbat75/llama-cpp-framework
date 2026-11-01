@@ -49,6 +49,7 @@
 //! one model the user was last working on is the predictable choice; the others
 //! stay on disk and are simply overwritten the next time they are live.
 
+use crate::strings;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -181,10 +182,10 @@ fn dumps_newest_first(dir: &Path) -> Vec<PathBuf> {
 pub fn loaded_models(port: u16) -> Result<Vec<String>, String> {
     let res = request(port, "GET", "/models", None, CONTROL_TIMEOUT)?;
     if res.status != 200 {
-        return Err(format!("llama-server answered {} to /models", res.status));
+        return Err(strings::fill("models-status", &[&res.status]));
     }
     let parsed: serde_json::Value =
-        serde_json::from_str(&res.body).map_err(|e| format!("unreadable /models reply: {e}"))?;
+        serde_json::from_str(&res.body).map_err(|e| strings::fill("models-unreadable", &[&e]))?;
     let Some(items) = parsed.get("data").and_then(|d| d.as_array()) else {
         return Ok(Vec::new());
     };
@@ -215,12 +216,7 @@ impl Transfer {
     /// rolled: the crate has no formatting dependency and this is the only place
     /// that wants them.
     pub fn describe(&self) -> String {
-        format!(
-            "{} ({} tokens, {})",
-            self.model,
-            thousands(self.tokens),
-            gib(self.bytes)
-        )
+        strings::fill("snapshot-describe", &[&self.model, &thousands(self.tokens), &gib(self.bytes)])
     }
 }
 
@@ -265,15 +261,10 @@ fn wait_listening(
             }
         }
         if !alive() {
-            return Err(format!(
-                "llama-server exited before it answered on port {port}; see its log"
-            ));
+            return Err(strings::fill("exited-before-answer", &[&port]));
         }
         if std::time::Instant::now() >= deadline {
-            return Err(format!(
-                "llama-server did not answer on port {port} within {} s; the snapshot stays on disk",
-                timeout.as_secs()
-            ));
+            return Err(strings::fill("no-answer-within", &[&port, &timeout.as_secs()]));
         }
         std::thread::sleep(step);
     }
@@ -350,7 +341,7 @@ pub fn save_all(cfg: &crate::server_cfg::ServerConfig) -> (Vec<Transfer>, Vec<St
         Err(e) => {
             return (
                 Vec::new(),
-                vec![format!("cannot create the state directory: {e}")],
+                vec![strings::fill("state-dir-failed", &[&e])],
             )
         }
     };
@@ -416,14 +407,14 @@ pub fn restore_newest(
     let filename = newest
         .file_name()
         .and_then(|n| n.to_str())
-        .ok_or_else(|| "unreadable dump file name".to_string())?
+        .ok_or_else(|| strings::t("dump-name-unreadable"))?
         .to_string();
 
     let model = known_models
         .iter()
         .find(|m| state_file_name(m) == filename)
         .ok_or_else(|| {
-            format!("{filename} does not match any configured model; ignoring the snapshot")
+            strings::fill("dump-no-model", &[&filename])
         })?;
 
     wait_listening(

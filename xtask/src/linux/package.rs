@@ -17,6 +17,8 @@
 //!   /opt/llama.cpp/share/benchmarks/
 //!                         the benchmark method, read-only: every published
 //!                         standard-<X.Y>.ini and the prompts they pin
+//!   /opt/llama.cpp/share/strings/
+//!                         the configurator's language files, read-only
 //!   /usr/bin/             a symlink per executable into /opt/llama.cpp/bin
 //!   /usr/share/           the desktop entry, its icon, the licence
 //!
@@ -170,6 +172,7 @@ pub fn run(want_deb: bool, want_rpm: bool, keep_staging: bool) -> Result<()> {
         entries(&bin).into_iter().partition(|p| name_of(p).starts_with("test-"));
     cp("-a", &keep, &stage.join(BIN_DIR))?;
     crate::common::bench_share::stage(&stage.join(OPT_DIR))?;
+    crate::common::strings_share::stage(&stage.join(OPT_DIR))?;
     if !tests.is_empty() {
         ui::dim(format!("Pruned {} llama.cpp test binaries", tests.len()));
     }

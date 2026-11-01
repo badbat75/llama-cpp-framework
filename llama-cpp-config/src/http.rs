@@ -19,6 +19,7 @@
 //! server that does not accept a loopback connection in five seconds is not
 //! going to answer either.
 
+use crate::strings;
 use std::io::{Read, Write};
 use std::time::Duration;
 
@@ -42,7 +43,7 @@ pub(crate) fn request(
 ) -> Result<Response, String> {
     let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
     let mut stream = std::net::TcpStream::connect_timeout(&addr, CONNECT_TIMEOUT)
-        .map_err(|e| format!("cannot reach llama-server on port {port}: {e}"))?;
+        .map_err(|e| strings::fill("cannot-reach-server", &[&port, &e]))?;
     stream.set_read_timeout(Some(timeout)).map_err(err_str)?;
     stream
         .set_write_timeout(Some(CONNECT_TIMEOUT))
@@ -75,14 +76,14 @@ fn err_str(e: std::io::Error) -> String {
 fn parse_response(raw: &str) -> Result<Response, String> {
     let (head, body) = raw
         .split_once("\r\n\r\n")
-        .ok_or_else(|| "truncated response from llama-server".to_string())?;
+        .ok_or_else(|| strings::t("truncated-response"))?;
 
     let status = head
         .lines()
         .next()
         .and_then(|l| l.split_whitespace().nth(1))
         .and_then(|c| c.parse::<u16>().ok())
-        .ok_or_else(|| "unreadable status line from llama-server".to_string())?;
+        .ok_or_else(|| strings::t("unreadable-status"))?;
 
     let chunked = head
         .lines()

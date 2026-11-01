@@ -23,6 +23,7 @@ import { ComboBox, LineEdit, CheckBox, Slider, Button, Palette } from "std-widge
 import { GpuRow, TensorOverrideRow } from "types.slint";
 // The icon font, compiled into the binary: see `Icons` below.
 import "fonts/FluentSystemIcons-Regular.ttf";
+import { Strings } from "strings.slint";
 
 // Canonical transparency levels for muted text and selection tints, so every
 // page pulls from the same handful of values instead of eyeballing a new alpha.
@@ -91,25 +92,30 @@ export global Options {
     // by the e2e test, src/tests/ui_bindings.rs). There is no 6-bit K-quant cache
     // type: q5_1 (6.0 bits per value) is the closest.
     out property <[string]> cache_types: ["default", "f32", "f16", "bf16", "q8_0", "q5_1", "q5_0", "q4_1", "q4_0", "iq4_nl"];
+    out property <[string]> cache_type_labels: [Strings.t("default"), "f32", "f16", "bf16", "q8_0", "q5_1", "q5_0", "q4_1", "q4_0", "iq4_nl"];
     // -lm / --load-mode: how llama.cpp brings the weights in. These six are the
     // whole domain and they are MUTUALLY EXCLUSIVE: it is one enum, not the two
     // independent --mlock / --no-mmap bools it replaced in b10105. Mirrors
     // LOAD_MODES in src/server_cfg.rs (equality asserted by the e2e test,
     // src/tests/ui_bindings.rs), and the values are passed to -lm verbatim.
     out property <[string]> load_modes: ["default", "auto", "none", "mmap", "mlock", "mmap+mlock", "dio"];
+    out property <[string]> load_mode_labels: [Strings.t("default"), Strings.t("auto"), Strings.t("none"), "mmap", "mlock", "mmap+mlock", "dio"];
     // The words form.rs's tri_state / tri_bool pair speaks, for a tri-state shown
     // as a dropdown (SDK Tuning's hipBLASLt): "default" passes nothing.
     out property <[string]> tri_states: ["default", "on", "off"];
+    out property <[string]> tri_state_labels: [Strings.t("default"), Strings.t("on"), Strings.t("off")];
     // GGML_CUDA_ALLREDUCE: "default" never exports the variable, the rest are
     // passed verbatim. Mirrors ALLREDUCE_MODES in src/server_cfg.rs after
     // "default" (equality asserted by the e2e test, src/tests/ui_bindings.rs).
     out property <[string]> allreduce_modes: ["default", "nccl", "internal", "none"];
+    out property <[string]> allreduce_mode_labels: [Strings.t("default"), "nccl", Strings.t("internal"), Strings.t("none")];
     // GGML_HIP_FA_BAND_WMMA: "default" leaves the key unset (the tool's
     // default, 4, is exported), "off" never exports the variable, a number is
     // exported verbatim. Mirrors HIP_FA_BANDS in src/server_cfg.rs after
     // "default", through server_form::hip_fa_band_label (equality asserted by
     // the e2e test, src/tests/ui_bindings.rs).
     out property <[string]> hip_fa_bands: ["default", "off", "2", "4"];
+    out property <[string]> hip_fa_band_labels: [Strings.t("default"), Strings.t("off"), "2", "4"];
     // The -lv threshold, as "<name>:<level>". llama.cpp defines exactly these six
     // and a message prints when its own level is <= the threshold, so DEBUG:5 shows
     // everything and OUTPUT:0 almost nothing (`common/arg.cpp`, `common/log.h`).
@@ -244,6 +250,9 @@ export component MappedComboBox inherits ComboBox {
 // should be a member of `options` (an unknown value shows the first entry).
 export component EnumComboBox inherits ComboBox {
     in property <[string]> options;
+    // What each row shows when that is not its value: `value` always speaks
+    // `options`. Without it a row shows its value.
+    in property <[string]> labels;
     in-out property <string> value;
     // `value`'s position in `options`. Slint has no array index-of and no loops
     // inside functions, so this is an explicit scan bounded at 12 entries (the
@@ -265,10 +274,10 @@ export component EnumComboBox inherits ComboBox {
         : root.value == root.options[10] ? 10
         : root.value == root.options[11] ? 11
         : 0;
-    model: root.options;
+    model: root.labels.length > 0 ? root.labels : root.options;
     current-index: root.value_index;
     selected => {
-        root.value = self.current-value;
+        root.value = root.options[self.current-index];
     }
     changed value_index => {
         if (self.current-index != root.value_index) {
@@ -302,7 +311,7 @@ export component AutoSlider inherits HorizontalLayout {
     horizontal-stretch: 1;
     spacing: 8px;
     CheckBox {
-        text: "default";
+        text: Strings.t("default");
         enabled: root.usable;
         checked <=> root.auto;
     }
@@ -331,7 +340,7 @@ export component AutoSlider inherits HorizontalLayout {
         min-width: 44px;
         horizontal-alignment: right;
         vertical-alignment: center;
-        text: root.auto ? "default" : "\{root.shown}";
+        text: root.auto ? Strings.t("default") : "\{root.shown}";
     }
 }
 
@@ -383,7 +392,7 @@ export component DefaultLineEdit inherits HorizontalLayout {
     callback edited();
     spacing: 8px;
     CheckBox {
-        text: "default";
+        text: Strings.t("default");
         enabled: root.enabled;
         checked <=> root.default;
         toggled => { root.edited(); }
@@ -445,17 +454,21 @@ export component SectionCard {
 // via `activated`; the caller writes the model.
 export component SegmentedControl inherits HorizontalLayout {
     in property <[string]> options;
+    // What each pill shows when that is not its value: `activated` and `current`
+    // always speak `options`. Without it a pill shows its value.
+    in property <[string]> labels;
     in property <string> current;
     // Grey out + swallow clicks when false (dims like a disabled std widget).
     in property <bool> enabled: true;
     callback activated(string);
     spacing: 6px;
     opacity: root.enabled ? 1.0 : 0.4;
-    for opt in root.options : Rectangle {
+    for opt[i] in root.options : Rectangle {
+        property <string> shown: i < root.labels.length ? root.labels[i] : opt;
         // Surface the pill to assistive tech (and to the headless UI test's
         // accessible-label lookup): a bare Rectangle+TouchArea is invisible.
         accessible-role: button;
-        accessible-label: opt;
+        accessible-label: shown;
         accessible-checkable: true;
         accessible-checked: opt == root.current;
         height: 30px;
@@ -470,7 +483,7 @@ export component SegmentedControl inherits HorizontalLayout {
             padding-left: 12px;
             padding-right: 12px;
             Text {
-                text: opt;
+                text: shown;
                 vertical-alignment: center;
                 horizontal-alignment: center;
                 horizontal-stretch: 1;
@@ -718,7 +731,7 @@ export component ModalOverlay inherits Rectangle {
 // One home so the three tabs' rows can't drift; the save-button text and the
 // two enabled gates are the only per-tab differences.
 export component FormActions inherits HorizontalLayout {
-    in property <string> save_text: "Save";
+    in property <string> save_text: Strings.t("save");
     in property <bool> save_enabled: true;
     in property <bool> revert_enabled: true;
     callback save();
@@ -726,7 +739,7 @@ export component FormActions inherits HorizontalLayout {
     alignment: end;
     spacing: 8px;
     Button {
-        text: "Revert";
+        text: Strings.t("revert");
         enabled: root.revert_enabled;
         clicked => { root.revert(); }
     }
@@ -903,7 +916,7 @@ export component GpuSplitTable inherits VerticalLayout {
             // A blank vector is llama.cpp's free-VRAM weighting in every mode
             // but tensor, where it is an EVEN cut (gpu_split::build_rows says
             // the same in the row model).
-            return root.effective_mode == "tensor" ? "even" : "auto";
+            return root.effective_mode == "tensor" ? Strings.t("even") : Strings.t("auto");
         }
         if (root.blocks_mode) {
             return "\{Math.round(weight * 100 / root.positions)}%";
@@ -919,7 +932,7 @@ export component GpuSplitTable inherits VerticalLayout {
     // The mode comes FIRST: it decides what the columns below mean, so reading
     // (and editing) top to bottom follows the dependency.
     LabeledField {
-        label: "GPU split mode";
+        label: Strings.t("gpu-split-mode");
         label_width <=> root.label_width;
         hint: root.split_mode_hint;
         MappedComboBox {
@@ -952,7 +965,7 @@ export component GpuSplitTable inherits VerticalLayout {
         Rectangle { width: 24px; }
         Rectangle { width: 18px; }
         Text {
-            text: "Device";
+            text: Strings.t("device");
             horizontal-stretch: 1;
             font-size: 12px;
             color: Palette.foreground.transparentize(Tokens.muted);
@@ -966,13 +979,13 @@ export component GpuSplitTable inherits VerticalLayout {
         Text {
             width: root.value_col_width;
             // "Blocks/34" so the column reads as a budget: the cells sum to it.
-            text: root.blocks_mode ? "Blocks/\{root.positions}" : "Weight";
+            text: root.blocks_mode ? Strings.t1("blocks-of-positions", "\{root.positions}") : Strings.t("weight");
             font-size: 12px;
             color: Palette.foreground.transparentize(Tokens.muted);
         }
         Text {
             width: 52px;
-            text: "Share";
+            text: Strings.t("share");
             horizontal-alignment: right;
             font-size: 12px;
             color: Palette.foreground.transparentize(Tokens.muted);
@@ -980,7 +993,7 @@ export component GpuSplitTable inherits VerticalLayout {
     }
 
     if root.rows.length == 0 : Text {
-        text: "Detecting GPUs…";
+        text: Strings.t("detecting-gpus");
         font-size: 13px;
         color: Palette.foreground.transparentize(Tokens.muted);
     }
@@ -1225,14 +1238,14 @@ export component GpuSplitTable inherits VerticalLayout {
         spacing: 8px;
         alignment: start;
         Button {
-            text: "Auto";
+            text: Strings.t("auto-split");
             enabled: root.selected >= 2 && root.weight_total > 0 && !root.single_mode;
             clicked => {
                 root.auto_split();
             }
         }
         Button {
-            text: "Even";
+            text: Strings.t("even-split");
             enabled: root.selected >= 2 && !root.single_mode;
             clicked => {
                 root.even_split();
@@ -1306,20 +1319,20 @@ export component TensorOverrideTable inherits VerticalLayout {
         padding-right: 12px;
         spacing: 8px;
         Text {
-            text: "Tensor";
+            text: Strings.t("tensor");
             horizontal-stretch: 1;
             font-size: 12px;
             color: Palette.foreground.transparentize(Tokens.muted);
         }
         Text {
             width: 120px;
-            text: "Layers";
+            text: Strings.t("layers");
             font-size: 12px;
             color: Palette.foreground.transparentize(Tokens.muted);
         }
         Text {
             width: 260px;
-            text: "Goes on";
+            text: Strings.t("goes-on");
             font-size: 12px;
             color: Palette.foreground.transparentize(Tokens.muted);
         }
@@ -1362,7 +1375,7 @@ export component TensorOverrideTable inherits VerticalLayout {
                 if row.per_layer : LineEdit {
                     width: 120px;
                     accessible-label: "ot-layers-" + i;
-                    placeholder-text: "all, or 10-12, 15";
+                    placeholder-text: Strings.t("tensor-layers-placeholder");
                     text: row.layers;
                     edited(t) => {
                         root.layers_edited(i, t);
@@ -1388,7 +1401,7 @@ export component TensorOverrideTable inherits VerticalLayout {
                 Button {
                     width: 96px;
                     accessible-label: "ot-pick-" + i;
-                    text: "Choose…";
+                    text: Strings.t("choose");
                     enabled: root.can_pick;
                     clicked => {
                         root.pick(i);
@@ -1418,7 +1431,7 @@ export component TensorOverrideTable inherits VerticalLayout {
             // slower way of picking Custom.
             if row.custom : LineEdit {
                 accessible-label: "ot-pattern-" + i;
-                placeholder-text: "regex matched against tensor names, e.g. blk\\.1[0-9]\\..*_exps";
+                placeholder-text: Strings.t("tensor-regex-placeholder");
                 text: row.pattern;
                 edited(t) => {
                     root.pattern_edited(i, t);
@@ -1443,7 +1456,7 @@ export component TensorOverrideTable inherits VerticalLayout {
         padding-right: 12px;
         spacing: 8px;
         Button {
-            text: "+ Add override";
+            text: Strings.t("add-override");
             clicked => {
                 root.added();
             }

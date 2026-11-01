@@ -35,6 +35,10 @@ For example, `llama-cpp-framework-v2.2.0-v0.7.0-x64.msi`.
 **Every OS ships the benchmark method read-only** in `share/benchmarks/`: each `standard-<X.Y>.ini`,
 `standard.versions`, and the prompts with their images. `bench_share.rs` stages it.
 
+**Every OS ships the configurator's text read-only** in `share/strings/`: `en_US.toml`, the GUI's
+language file, and `cli.toml`, the messages the CLI shares with the GUI. `strings_share.rs` stages
+every `*.toml` of `llama-cpp-config/strings/`.
+
 **llama.cpp's test harnesses are pruned on every OS.** On Windows the installer can put `bin\` on
 the system PATH. On Linux and macOS every staged executable gets a command link. Either way,
 shipping them would drop generically named `test-*` commands into every shell. cmake stages every
@@ -112,6 +116,7 @@ rebuild on a newer llama.cpp alone is then an upgrade to apt and dnf. dpkg and r
 | `/opt/llama.cpp/lib/` | The bundled runtimes |
 | `/opt/llama.cpp/.kpack/` | hipBLASLt's `blas_lib_*` and RCCL's `rccl_lib_*` archives |
 | `/opt/llama.cpp/share/benchmarks/` | The benchmark method |
+| `/opt/llama.cpp/share/strings/` | The configurator's text: the GUI's `en_US.toml`, the CLI's `cli.toml` |
 | `/usr/bin/` | One relative symlink per executable; rpm warns on absolute ones |
 | `/usr/share/` | The desktop entry ("llama.cpp Config" in the menu), its icon, the licences |
 

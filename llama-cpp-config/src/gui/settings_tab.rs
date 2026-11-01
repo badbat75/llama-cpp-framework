@@ -22,6 +22,7 @@
 //! default the user never typed. A commit that changes nothing writes nothing,
 //! so tabbing through the field leaves the footer alone.
 
+use crate::strings;
 use super::*;
 
 /// Seed / re-seed the tab from its two sources. Part of the
@@ -61,7 +62,7 @@ fn persist_settings(
             true
         }
         Err(e) => {
-            set_status(app, format!("Saving settings.ini failed: {e}"), true);
+            set_status(app, strings::fill("settings-save-failed", &[&e]), true);
             false
         }
     }
@@ -81,7 +82,7 @@ fn apply_startup_entry(app: &AppWindow, ok_message: String) {
             if startup::is_enabled() {
                 s.set_start_minimized_to_tray(startup::starts_minimized());
             }
-            set_status(app, format!("Startup change failed: {e}"), true);
+            set_status(app, strings::fill("startup-change-failed", &[&e]), true);
         }
     }
 }
@@ -94,9 +95,9 @@ pub(super) fn wire(app: &AppWindow) {
                 return;
             };
             let message = if app.global::<AppState>().get_start_at_login() {
-                "llama-cpp-config will start at login.".into()
+                strings::t("start-at-login-on")
             } else {
-                "llama-cpp-config will no longer start at login.".into()
+                strings::t("start-at-login-off")
             };
             apply_startup_entry(&app, message);
         });
@@ -115,9 +116,9 @@ pub(super) fn wire(app: &AppWindow) {
                 return;
             }
             let message = if app.global::<AppState>().get_start_minimized_to_tray() {
-                "The login launch will start minimized to the tray.".into()
+                strings::t("login-minimized-on")
             } else {
-                "The login launch will open the configurator window.".into()
+                strings::t("login-minimized-off")
             };
             apply_startup_entry(&app, message);
         });
@@ -132,11 +133,11 @@ pub(super) fn wire(app: &AppWindow) {
                 let s = app.global::<AppState>();
                 let want = s.get_start_server_on_launch();
                 let ok = if want {
-                    "llama-server will start when llama-cpp-config launches."
+                    strings::t("server-on-launch-on")
                 } else {
-                    "llama-server will no longer start automatically."
+                    strings::t("server-on-launch-off")
                 };
-                if !persist_settings(&app, |c| c.start_server_on_launch = want, ok.into()) {
+                if !persist_settings(&app, |c| c.start_server_on_launch = want, ok) {
                     s.set_start_server_on_launch(settings::load().start_server_on_launch);
                 }
             });
@@ -150,11 +151,11 @@ pub(super) fn wire(app: &AppWindow) {
             let s = app.global::<AppState>();
             let want = s.get_log_rotate();
             let ok = if want {
-                "llama-server.log will be filed away when the server stops."
+                strings::t("log-rotate-on")
             } else {
-                "llama-server.log will grow across runs."
+                strings::t("log-rotate-off")
             };
-            if !persist_settings(&app, |c| c.log_rotate = want, ok.into()) {
+            if !persist_settings(&app, |c| c.log_rotate = want, ok) {
                 s.set_log_rotate(settings::load().log_rotate);
             }
         });
@@ -175,7 +176,7 @@ pub(super) fn wire(app: &AppWindow) {
             else {
                 s.set_log_rotate_kb(SharedString::from(stored.to_string()));
                 if !text.trim().is_empty() {
-                    set_status(&app, format!("'{text}' is not a size in KB."), true);
+                    set_status(&app, strings::fill("not-a-size-in-kb", &[&text]), true);
                 }
                 return;
             };
@@ -185,9 +186,9 @@ pub(super) fn wire(app: &AppWindow) {
                 return;
             }
             let ok = if kb == 0 {
-                "Every non-empty log will be filed away.".to_string()
+                strings::t("log-rotate-every")
             } else {
-                format!("Logs larger than {kb} KB will be filed away.")
+                strings::fill("log-rotate-larger-than", &[&kb])
             };
             if persist_settings(&app, |c| c.log_rotate_kb = kb, ok) {
                 // Normalize what was typed (leading zeros) to what was stored.

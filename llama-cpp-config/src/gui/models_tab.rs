@@ -23,6 +23,7 @@
 //! - `apply_draft_pick`: the merged MTP/DFlash draft-pick policy (incl. the
 //!   gemma4 auto-pin), unit-tested below.
 
+use crate::strings;
 use super::*;
 
 // The Model-info box and the draft pick's speculator lookup are the only helpers
@@ -119,9 +120,7 @@ pub(super) fn wire(app: &AppWindow, state: &Rc<RefCell<State>>) {
                 if let Some(v) = p.moe_cache_mib.filter(|&v| v > 0 && (v as u64) < floor) {
                     set_status(
                         &app,
-                        format!(
-                            "Not saved: MoE cache {v} MiB is below this preset's {floor} MiB floor, the experts of one token in every group of layers; llama.cpp would refuse to load it. Raise it, set 0, or tick default."
-                        ),
+                        strings::fill("moe-cache-below-floor", &[&v, &floor]),
                         true,
                     );
                     return;
@@ -131,11 +130,11 @@ pub(super) fn wire(app: &AppWindow, state: &Rc<RefCell<State>>) {
             // types' keys would sit hidden in the INI (needs no GGUF).
             presets::prune_unused_ngram_keys(&mut p);
             if p.id.is_empty() {
-                set_status(&app, "Preset id is empty.".into(), true);
+                set_status(&app, strings::t("preset-id-empty"), true);
                 return;
             }
             if p.model.is_empty() {
-                set_status(&app, "Pick a model file before saving.".into(), true);
+                set_status(&app, strings::t("pick-model-before-saving"), true);
                 return;
             }
             // Asked of the FORM, not of `p`: the conversion has already read a
@@ -144,22 +143,19 @@ pub(super) fn wire(app: &AppWindow, state: &Rc<RefCell<State>>) {
             if !bad.is_empty() {
                 set_status(
                     &app,
-                    format!(
-                        "Not saved: {}. Correct it, or tick its default box to leave the key unset.",
-                        bad.join("; ")
-                    ),
+                    strings::fill("not-saved-invalid", &[&bad.join("; ")]),
                     true,
                 );
                 return;
             }
             match presets::save(&p) {
                 Ok(()) => {
-                    set_status(&app, format!("Saved preset [{}]", p.id), false);
+                    set_status(&app, strings::fill("preset-saved", &[&p.id]), false);
                     // Rebuild + re-select the just-saved preset (re-baselining the
                     // form so Save/Revert go disabled) and refresh the dependents.
                     preset_written(&app, &state, Some(&p.id));
                 }
-                Err(e) => set_status(&app, format!("Save failed: {e}"), true),
+                Err(e) => set_status(&app, strings::fill("save-failed", &[&e]), true),
             }
         });
     }
@@ -175,7 +171,7 @@ pub(super) fn wire(app: &AppWindow, state: &Rc<RefCell<State>>) {
             reload_presets(&app, &state, None);
             refresh_file_options(&app, &state);
             let label = app.global::<AppState>().get_form().id;
-            set_status(&app, format!("Reloaded [{label}] from presets.ini"), false);
+            set_status(&app, strings::fill("preset-reloaded", &[&label]), false);
         });
     }
     {
@@ -226,7 +222,7 @@ pub(super) fn wire(app: &AppWindow, state: &Rc<RefCell<State>>) {
             // The section first: a preset that cannot be removed keeps its
             // files too (they would be the files it still loads).
             if let Err(e) = presets::delete(id.as_str()) {
-                set_status(&app, format!("Delete failed: {e}"), true);
+                set_status(&app, strings::fill("delete-failed", &[&e]), true);
                 return;
             }
             let outcome = delete_ticked_files(&dialog, id.as_str());
@@ -310,7 +306,7 @@ pub(super) fn wire(app: &AppWindow, state: &Rc<RefCell<State>>) {
             };
             *pending_clone_base.borrow_mut() = None;
             let Some(path) = picked_dialog_model_path(&app, &state) else {
-                set_status(&app, "Pick a model from the list first.".into(), true);
+                set_status(&app, strings::t("pick-model-first"), true);
                 return;
             };
             run_new_empty(&app, &state, path);
@@ -324,11 +320,11 @@ pub(super) fn wire(app: &AppWindow, state: &Rc<RefCell<State>>) {
                 return;
             };
             let Some(path) = picked_dialog_model_path(&app, &state) else {
-                set_status(&app, "Pick a model from the list first.".into(), true);
+                set_status(&app, strings::t("pick-model-first"), true);
                 return;
             };
             let Some(base) = pending_clone_base.borrow_mut().take() else {
-                set_status(&app, "Clone source no longer available.".into(), true);
+                set_status(&app, strings::t("clone-source-gone"), true);
                 return;
             };
             run_new_clone(&app, &state, base, path);
@@ -370,10 +366,10 @@ pub(super) fn wire(app: &AppWindow, state: &Rc<RefCell<State>>) {
                 };
                 match presets::rename(old_id.as_str(), new_id.as_str()) {
                     Ok(()) => {
-                        set_status(&app, format!("Renamed [{old_id}] -> [{new_id}]"), false);
+                        set_status(&app, strings::fill("preset-renamed", &[&old_id, &new_id]), false);
                         preset_written(&app, &state, Some(new_id.as_str()));
                     }
-                    Err(e) => set_status(&app, format!("Rename failed: {e}"), true),
+                    Err(e) => set_status(&app, strings::fill("rename-failed", &[&e]), true),
                 }
             });
     }
@@ -391,16 +387,16 @@ pub(super) fn wire(app: &AppWindow, state: &Rc<RefCell<State>>) {
                 // follows the preset into whichever file now holds it.
                 match presets::set_enabled(id.as_str(), enabled) {
                     Ok(()) => {
-                        let state_word = if enabled { "Enabled" } else { "Disabled" };
                         // The router reads presets.ini once, at launch.
-                        let tail = match (app.global::<AppState>().get_server_running(), enabled) {
-                            (true, _) => ": restart llama-server to apply.",
-                            (false, true) => ".",
-                            (false, false) => ": llama-server will not offer it.",
+                        let key = match (app.global::<AppState>().get_server_running(), enabled) {
+                            (true, true) => strings::key("preset-enabled-restart"),
+                            (true, false) => strings::key("preset-disabled-restart"),
+                            (false, true) => strings::key("preset-enabled"),
+                            (false, false) => strings::key("preset-disabled"),
                         };
-                        set_status(&app, format!("{state_word} [{id}]{tail}"), false);
+                        set_status(&app, strings::fill(key, &[&id]), false);
                     }
-                    Err(e) => set_status(&app, format!("Could not switch [{id}]: {e}"), true),
+                    Err(e) => set_status(&app, strings::fill("preset-switch-failed", &[&id, &e]), true),
                 }
                 // Rebuilt on failure too: the click already flipped the switch
                 // and broke its one-way binding, and only a fresh row puts it
@@ -829,7 +825,7 @@ fn open_clone_dialog(
             .map(|l| l.preset.clone())
     };
     let Some(p) = selected else {
-        set_status(app, "Select a preset to clone first.".into(), true);
+        set_status(app, strings::t("select-preset-to-clone"), true);
         return;
     };
     populate_dialog_models(app, state);
@@ -985,7 +981,7 @@ fn open_delete_dialog(app: &AppWindow, state: &Rc<RefCell<State>>) {
     }
     let listed = presets::load_listed();
     let Some(target) = listed.iter().find(|l| l.preset.id.eq_ignore_ascii_case(&id)) else {
-        set_status(app, format!("No preset [{id}] on disk to delete."), true);
+        set_status(app, strings::fill("preset-not-on-disk", &[&id]), true);
         return;
     };
     let all: Vec<presets::Preset> = listed.iter().map(|l| l.preset.clone()).collect();
@@ -1080,13 +1076,13 @@ pub(super) fn update_model_info(app: &AppWindow) {
     // lives behind `model_info_ready`, so the value is never shown until the
     // success path below overwrites it; the gate, not this reset, is what keeps
     // a stale template from lingering.
-    s.set_model_info_chat_template(SharedString::from("none"));
+    s.set_model_info_chat_template(SharedString::from(strings::t("none")));
     s.set_chat_template_preview(SharedString::from(""));
     // The two reasoning rows are read from that same template, so they reset with
     // it, and to "unknown", never to "no": an unread GGUF is not evidence that a
     // model cannot think (the same rule the embd warning below follows).
-    s.set_model_info_thinking(SharedString::from("unknown"));
-    s.set_model_info_past_thinking(SharedString::from("unknown"));
+    s.set_model_info_thinking(SharedString::from(strings::t("unknown")));
+    s.set_model_info_past_thinking(SharedString::from(strings::t("unknown")));
     // Unlike the rows above, the embd WARNING is read by the Tensor-placement
     // table, which is NOT behind `model_info_ready`, so a stale one would keep
     // accusing the next model (or an unreadable one) of the previous model's
@@ -1106,9 +1102,7 @@ pub(super) fn update_model_info(app: &AppWindow) {
     // PREVIOUS model. This is not a keystroke path, so the full rebuild is free.
     if model.trim().is_empty() {
         s.set_model_info_ready(false);
-        s.set_model_info_note(SharedString::from(
-            "Select a model to see its GGUF details.",
-        ));
+        s.set_model_info_note(SharedString::from(strings::t("no-model-selected")));
         set_model_tensors(Vec::new());
         refresh_gpu_rows(app);
         return;
@@ -1116,9 +1110,7 @@ pub(super) fn update_model_info(app: &AppWindow) {
 
     let Some(info) = gguf::read_model_info(std::path::Path::new(&model)) else {
         s.set_model_info_ready(false);
-        s.set_model_info_note(SharedString::from(
-            "Metadata unavailable: is llama.cpp's ggml-base library beside the app, and the file a valid GGUF?",
-        ));
+        s.set_model_info_note(SharedString::from(strings::t("metadata-unavailable")));
         set_model_tensors(Vec::new());
         refresh_gpu_rows(app);
         return;
@@ -1189,17 +1181,13 @@ pub(super) fn update_model_info(app: &AppWindow) {
         // wrong lesson: with embedded MTP heads only the PLACEMENT keys die.
         let mut parts = Vec::new();
         if !dropped.is_empty() {
-            let why = if embeds_mtp {
-                "they place a separate draft FILE, and this preset has none"
-            } else {
-                "this model has no MTP heads and no draft file"
-            };
-            parts.push(format!("Dropped {}: {why}.", dropped.join(", ")));
+            let key = if embeds_mtp { strings::key("dropped-no-draft-file") } else { strings::key("dropped-no-mtp") };
+            parts.push(strings::fill(key, &[&dropped.join(", ")]));
         }
         if moe_cache_dropped {
-            parts.push("Dropped moe-cache-mib: this model has no experts.".to_string());
+            parts.push(strings::t("dropped-moe-cache"));
         }
-        set_status(app, format!("{} Save to persist.", parts.join(" ")), false);
+        set_status(app, strings::fill("save-to-persist", &[&parts.join(" ")]), false);
     }
     // Two tables depend on BOTH their own rules and the model, and only the model
     // changed here: the Tensor-placement warning (its embd verdict) and the GPU
@@ -1301,7 +1289,7 @@ fn run_new_empty(app: &AppWindow, state: &Rc<RefCell<State>>, path: PathBuf) {
         app,
         state,
         p,
-        format!("Added [{id}]: tweak parameters and Save."),
+        strings::fill("preset-added", &[&id]),
     );
 }
 
@@ -1359,16 +1347,13 @@ fn run_new_clone(
     let note = if dropped.is_empty() {
         String::new()
     } else {
-        format!(
-            " Dropped {} (not applicable to this model).",
-            dropped.join(", ")
-        )
+        strings::fill("clone-dropped", &[&dropped.join(", ")])
     };
     commit_new_preset(
         app,
         state,
         cloned,
-        format!("Cloned [{}] -> [{id}], saved.{note}", base.id),
+        strings::fill("preset-cloned", &[&base.id, &id, &note]),
     );
 }
 
@@ -1398,7 +1383,7 @@ fn finish_new_preset(
             set_status(app, success_status, false);
             preset_written(app, state, Some(&p.id));
         }
-        Err(e) => set_status(app, format!("Save failed: {e}"), true),
+        Err(e) => set_status(app, strings::fill("save-failed", &[&e]), true),
     }
 }
 

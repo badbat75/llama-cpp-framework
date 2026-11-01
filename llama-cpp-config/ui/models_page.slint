@@ -9,6 +9,7 @@
 import { LineEdit, ComboBox, CheckBox, Button, ListView, ScrollView, Switch, Palette } from "std-widgets.slint";
 import { SectionCard, LabeledField, InfoRow, SegmentedControl, MappedComboBox, EnumComboBox, AutoSlider, DefaultLineEdit, FormActions, SelectableRow, ListPanel, GpuSplitTable, TensorOverrideTable, LabelColumn, Tokens, Options, WrapText } from "components.slint";
 import { AppState } from "state.slint";
+import { Strings } from "strings.slint";
 
 // The draft-model entry of `form.spec_type` (AppState.spec_type_drafter): a
 // one-way read of the list, written back through `spec_type_with_drafter` so
@@ -19,16 +20,17 @@ import { AppState } from "state.slint";
 // until another one is picked.
 component SpecDrafterComboBox inherits ComboBox {
     in property <[string]> options;
+    in property <[string]> labels;
     property <string> drafter: AppState.spec_type_drafter(AppState.form.spec_type);
     property <int> shown: root.drafter == root.options[1] ? 1
         : root.drafter == root.options[2] ? 2
         : root.drafter == root.options[3] ? 3
         : root.drafter == root.options[4] ? 4
         : 0;
-    model: root.options;
+    model: root.labels;
     current-index: root.shown;
     selected => {
-        AppState.form.spec_type = AppState.spec_type_with_drafter(AppState.form.spec_type, self.current-value);
+        AppState.form.spec_type = AppState.spec_type_with_drafter(AppState.form.spec_type, root.options[self.current-index]);
     }
     changed shown => {
         if (self.current-index != root.shown) {
@@ -65,14 +67,14 @@ export component ModelsPage inherits HorizontalLayout {
         spacing: 10px;
 
         Text {
-            text: "Presets";
+            text: Strings.t("presets");
             font-size: 14px;
             font-weight: 600;
             color: Palette.foreground;
         }
 
         LineEdit {
-            placeholder-text: "Filter presets…";
+            placeholder-text: Strings.t("filter-presets");
             input-type: search;
             text <=> AppState.presets_filter;
             edited(t) => { AppState.filter_presets(t); }
@@ -81,8 +83,8 @@ export component ModelsPage inherits HorizontalLayout {
         ListPanel {
             is_empty: AppState.presets.length == 0;
             empty_text: AppState.presets_filter == ""
-                ? "No presets yet: click New… to create one."
-                : "No presets match the filter.";
+                ? Strings.t("no-presets-yet")
+                : Strings.t("no-presets-match");
             // Keep the floor modest so the Models tab still fits a
             // small screen; vertical-stretch grows it on big ones.
             min-height: 160px;
@@ -120,11 +122,11 @@ export component ModelsPage inherits HorizontalLayout {
             HorizontalLayout {
                 spacing: 6px;
                 Button {
-                    text: "New…";
+                    text: Strings.t("new-dialog");
                     clicked => { AppState.new_preset(); }
                 }
                 Button {
-                    text: "Clone…";
+                    text: Strings.t("clone-dialog");
                     enabled: AppState.selected_preset_index >= 0;
                     clicked => { AppState.clone_preset(); }
                 }
@@ -132,7 +134,7 @@ export component ModelsPage inherits HorizontalLayout {
             HorizontalLayout {
                 spacing: 6px;
                 Button {
-                    text: "Rename…";
+                    text: Strings.t("rename-dialog");
                     enabled: AppState.selected_preset_index >= 0;
                     // Routes through Rust like New…/Clone… so a dirty form gets
                     // the discard-confirm guard before the dialog opens; the
@@ -141,7 +143,7 @@ export component ModelsPage inherits HorizontalLayout {
                     clicked => { AppState.request_rename(); }
                 }
                 Button {
-                    text: "Delete";
+                    text: Strings.t("delete");
                     enabled: AppState.selected_preset_index >= 0;
                     // Confirmation modal (app.slint), opened by Rust because
                     // it lists the model files the preset links, which the
@@ -153,7 +155,7 @@ export component ModelsPage inherits HorizontalLayout {
         }
 
         Text {
-            text: "A preset switched off stays editable here, but llama-server and OpenCode no longer offer it.";
+            text: Strings.t("preset-off-note");
             font-size: 10px;
             color: Palette.foreground.transparentize(Tokens.faint);
             wrap: word-wrap;
@@ -177,19 +179,19 @@ export component ModelsPage inherits HorizontalLayout {
 
             Text {
                 text: AppState.selected_preset_index >= 0
-                    ? "Preset id: " + AppState.form.id
-                    : "Select a preset on the left, or click New…";
+                    ? Strings.t1("preset-id-heading", AppState.form.id)
+                    : Strings.t("no-preset-selected");
                 font-size: 14px;
                 font-weight: 600;
                 color: Palette.foreground;
             }
 
             SectionCard {
-                heading: "Assets";
+                heading: Strings.t("assets");
                 LabeledField {
                     label_width <=> LabelColumn.models;
-                    label: "Model file";
-                    hint: "Main model weights for this preset (--model / -m).\nPick a .gguf from models\\.";
+                    label: Strings.t("model-file");
+                    hint: Strings.t("model-file-hint");
                     MappedComboBox {
                         labels: AppState.model_labels;
                         values: AppState.model_values;
@@ -202,15 +204,15 @@ export component ModelsPage inherits HorizontalLayout {
                 }
                 LabeledField {
                     label_width <=> LabelColumn.models;
-                    label: "Project URL";
-                    hint: "The model's project page, e.g. its Hugging Face repository.\nSaved as a `; url =` comment in the preset's section: llama-server has no such option and would refuse a key it does not know.\nOpen shows it in the browser.";
+                    label: Strings.t("project-url");
+                    hint: Strings.t("project-url-hint");
                     LineEdit {
                         text <=> AppState.form.project_url;
                         placeholder-text: "e.g. https://huggingface.co/<org>/<repo>";
                         horizontal-stretch: 1;
                     }
                     Button {
-                        text: "Open";
+                        text: Strings.t("open");
                         // Web pages only: the value is free text, and the desktop
                         // opener would run anything else it is handed.
                         enabled: AppState.form.project_url.starts-with("https://")
@@ -221,7 +223,7 @@ export component ModelsPage inherits HorizontalLayout {
                 LabeledField {
                     label_width <=> LabelColumn.models;
                     label: "MMProj";
-                    hint: "Multimodal projector (--mmproj) for vision models, so the server can read images.\nBlank for text-only models.";
+                    hint: Strings.t("mmproj-hint");
                     MappedComboBox {
                         labels: AppState.mmproj_labels;
                         values: AppState.mmproj_values;
@@ -234,8 +236,8 @@ export component ModelsPage inherits HorizontalLayout {
                 }
                 LabeledField {
                     label_width <=> LabelColumn.models;
-                    label: "Draft model";
-                    hint: "Optional speculator (feeds --model-draft).\nPicking one sets Drafter from the file's own GGUF header (DFlash vs DSpark vs MTP), falling back to the folder it came from (mtps\\ → draft-mtp, dflashs\\ → draft-dflash); the ticked N-gram drafters stay.\nPicking one auto-pins the draft to the server GPU, or CPU if none.\n(none) = no draft model.\nLeave at (none) when the MAIN model already embeds MTP heads: those need only Drafter.";
+                    label: Strings.t("draft-model");
+                    hint: Strings.t("draft-model-hint");
                     // A raw ComboBox (not MappedComboBox): the handler needs the
                     // selected INDEX to read the Rust-side `State.draft_rows`
                     // cache (the per-row --model-draft/--spec-type pairs), not
@@ -250,8 +252,8 @@ export component ModelsPage inherits HorizontalLayout {
                 }
                 LabeledField {
                     label_width <=> LabelColumn.models;
-                    label: "Drafter";
-                    hint: "The draft-model speculator (the draft-* entry of --spec-type).\nAuto-set when you pick a draft model above, read from that file's header: a DFlash drafter carrying a Markov head is draft-dspark, one without it draft-dflash, a nextn head draft-mtp.\nNeeds a draft model or MTP heads in the main model; without either only none is offered.\nOverride only if you know what you need.";
+                    label: Strings.t("drafter");
+                    hint: Strings.t("drafter-hint");
                     SpecDrafterComboBox {
                         // draft-dspark sits next to draft-dflash: same arch,
                         // same dflashs\ folder, told apart only by the Markov head.
@@ -259,12 +261,15 @@ export component ModelsPage inherits HorizontalLayout {
                         options: AppState.draft_active
                             ? ["none", "draft-mtp", "draft-dflash", "draft-dspark", "draft-simple"]
                             : ["none"];
+                        labels: AppState.draft_active
+                            ? [Strings.t("none"), "draft-mtp", "draft-dflash", "draft-dspark", "draft-simple"]
+                            : [Strings.t("none")];
                     }
                 }
                 LabeledField {
                     label_width <=> LabelColumn.models;
-                    label: "N-gram drafters";
-                    hint: "The ngram-* entries of --spec-type, any number of them, beside the drafter above: llama.cpp tries the n-grams first and falls back to the draft model when none of them matches.\nThey need no draft: they draft from the tokens already in the context, which pays off when the output repeats it (code edits, quoting, refactors).\nEach one's tuning is under Speculative decoding below.";
+                    label: Strings.t("n-gram-drafters");
+                    hint: Strings.t("n-gram-drafters-hint");
                     // Always active (presets::spec_type_is_draftless). llama.cpp's
                     // ngram-cache is left out: its draft length is fixed at 8 and
                     // the server never saves its lookup caches. A preset naming it
@@ -281,48 +286,48 @@ export component ModelsPage inherits HorizontalLayout {
             }
 
             SectionCard {
-                heading: "Model info";
+                heading: Strings.t("model-info");
                 if AppState.model_info_ready : VerticalLayout {
                     spacing: 8px;
                     InfoRow {
                         label_width <=> LabelColumn.models;
-                        label: "Type";
-                        hint: "Dense runs every weight each token; MoE activates only a few experts, so VRAM ≈ all weights but compute ≈ active experts.\nMoE is what makes the 'MoE CPU layers' lever below useful; on a dense model the FFN lever is 'Dense FFN CPU layers' (--n-cpu-ffn).";
+                        label: Strings.t("type");
+                        hint: Strings.t("type-hint");
                         value: AppState.model_info_kind;
                     }
                     if AppState.model_info_has_moe : InfoRow {
                         label_width <=> LabelColumn.models;
-                        label: "MoE layers";
-                        hint: "How many layers carry expert (FFN) weights, the useful upper bound for the 'MoE CPU layers' lever (--n-cpu-moe) below (its slider runs to the total layer count).\nRaise it to move more expert layers to CPU: less VRAM, slower generation.";
+                        label: Strings.t("moe-layers");
+                        hint: Strings.t("moe-layers-hint");
                         value: AppState.model_info_moe;
                     }
                     InfoRow {
                         label_width <=> LabelColumn.models;
-                        label: "Arch / quant";
+                        label: Strings.t("arch-quant");
                         value: AppState.model_info_arch_quant;
                     }
                     InfoRow {
                         label_width <=> LabelColumn.models;
-                        label: "Embeddings";
-                        hint: "token_embd.weight's OWN quant and size; the file's name does not tell you this (Unsloth's Q6_K_XL keeps it at Q8_0; its Q4_K_XL/Q5_K_XL drop it to a K-quant).\nIt decides whether the Tensor placement rule below may pin the embedding table to a GPU: the GPU needs a get_rows kernel for that exact type. Since llama.cpp b10089 (#25962, 2026-07-22) CUDA/ROCm/Vulkan cover the float types, the legacy Q4_0..Q8_0 quants, every K-quant and the IQ-quants (IQ4_NL/MXFP4 only when the embedding width is a multiple of 256); what is left out (Q8_1, Q8_K, the ternary TQ types, NVFP4) still round-trips the whole table to host RAM on every token, and decode collapses.\nThe size is the VRAM the pin ADDS to that card: budget it against the KV cache, or the card starts paging.";
+                        label: Strings.t("embeddings");
+                        hint: Strings.t("embeddings-hint");
                         value: AppState.model_info_embd;
                     }
                     InfoRow {
                         label_width <=> LabelColumn.models;
-                        label: "Layers / ctx";
-                        hint: "block_count guides --n-gpu-layers; the trained context is the sane upper bound for --ctx-size (going higher needs RoPE scaling).";
+                        label: Strings.t("layers-ctx");
+                        hint: Strings.t("layers-ctx-hint");
                         value: AppState.model_info_layers_ctx;
                     }
                     InfoRow {
                         label_width <=> LabelColumn.models;
-                        label: "Attention";
-                        hint: "Head counts.\nFewer KV heads (GQA) shrink the KV cache, so a higher --ctx-size fits in the same VRAM.";
+                        label: Strings.t("attention");
+                        hint: Strings.t("attention-hint");
                         value: AppState.model_info_attn;
                     }
                     InfoRow {
                         label_width <=> LabelColumn.models;
-                        label: "Memory";
-                        hint: "What llama.cpp keeps of past tokens: a KV cache (attention), a fixed-size state (recurrent), or both (hybrid).\nA recurrent state cannot be rewound to an earlier token, so on recurrent and hybrid models reusing a prompt prefix needs a context checkpoint (Context checkpoints); with attention alone the KV cache is simply truncated.\nRead from the architecture, per llama.cpp's own lists.";
+                        label: Strings.t("memory");
+                        hint: Strings.t("memory-hint");
                         value: AppState.model_info_memory;
                     }
                     // A LabeledField (not InfoRow) so the body can hold BOTH a
@@ -332,8 +337,8 @@ export component ModelsPage inherits HorizontalLayout {
                     // raw template; it's hidden when no template is embedded.
                     LabeledField {
                         label_width <=> LabelColumn.models;
-                        label: "Chat template";
-                        hint: "Whether the GGUF embeds a Jinja2 chat template (metadata key tokenizer.chat_template).\nJinja (embedded) = llama-server applies it automatically to /v1/chat/completions.\nembedded (non-Jinja) = marker-less/older form; may need --chat-template <name> or --jinja off.\nnone = pass --chat-template / --chat-template-file to supply one.";
+                        label: Strings.t("chat-template");
+                        hint: Strings.t("chat-template-hint");
                         Text {
                             text: AppState.model_info_chat_template;
                             vertical-alignment: center;
@@ -342,44 +347,44 @@ export component ModelsPage inherits HorizontalLayout {
                             color: Palette.foreground;
                         }
                         if AppState.chat_template_preview != "" : Button {
-                            text: "Preview";
+                            text: Strings.t("preview");
                             clicked => { AppState.show_chat_template_dialog = true; }
                         }
                     }
                     InfoRow {
                         label_width <=> LabelColumn.models;
-                        label: "Thinking";
-                        hint: "Whether the embedded chat template does reasoning, and whether the Reasoning field (--reasoning on|off) can switch it: that flag only sets the template variable enable_thinking, so a template that never mentions it thinks no matter what you pick (auto = on, off = on).\nRead from the template's SOURCE: this app has no Jinja engine, while llama.cpp answers the same question by rendering the template. The verdict is therefore about the TEMPLATE, not the model: 'no marker in the chat template' does not prove the model can't think (MiMo-VL's template names nothing, yet the model emits <think> and llama-server parses it out of the output); it proves only that neither --reasoning nor Keep past thinking has anything here to act on.";
+                        label: Strings.t("thinking");
+                        hint: Strings.t("thinking-hint");
                         value: AppState.model_info_thinking;
                     }
                     InfoRow {
                         label_width <=> LabelColumn.models;
-                        label: "Past thinking";
-                        hint: "Whether 'Keep past thinking' (--reasoning-preserve) is a LEVER on this model. The flag sets three template variables at once (preserve_thinking, clear_thinking, truncate_history_thinking), and templates read different ones; a template that names NONE of them cannot see the flag, so setting it there does nothing.\nThis is what llama-server's log cannot tell you: its probe reports 'supports preserving reasoning' by rendering the template and checking a past trace came out, which is equally true of a template that preserves unconditionally and of one you can actually control.";
+                        label: Strings.t("past-thinking");
+                        hint: Strings.t("past-thinking-hint");
                         value: AppState.model_info_past_thinking;
                     }
                     if AppState.model_info_has_mmproj : InfoRow {
                         label_width <=> LabelColumn.models;
                         label: "MMProj";
-                        hint: "The selected multimodal projector: projector type, modality (vision/audio), encoder depth, and native image / patch size.";
+                        hint: Strings.t("selected-mmproj-hint");
                         value: AppState.model_info_mmproj;
                     }
                     InfoRow {
                         label_width <=> LabelColumn.models;
-                        label: "Draft";
-                        hint: "What actually drafts for this preset: the MTP (next-n) layers the model itself embeds, plus the draft file picked in the Assets card above (the row below reads that file's header).\nNothing else appears here. A drafter sitting in mtps\\ / dflashs\\ that this preset does not point at is not part of the config, and naming it made this row read as if it were: it is offered in the Draft model picker above and nowhere else.\nnone = no embedded heads and no draft file: this preset does not speculate.";
+                        label: Strings.t("draft");
+                        hint: Strings.t("draft-hint");
                         value: AppState.model_info_draft;
                     }
                     if AppState.model_info_has_draft_file : InfoRow {
                         label_width <=> LabelColumn.models;
-                        label: "Draft file";
-                        hint: "The selected draft/MTP/DFlash file's own header: arch, quant, layers, and (DFlash) trained block_size with the implied --spec-draft-n-max ceiling.";
+                        label: Strings.t("draft-file");
+                        hint: Strings.t("draft-file-hint");
                         value: AppState.model_info_draft_file;
                     }
                 }
                 if !AppState.model_info_ready : Text {
                     text: AppState.model_info_note == ""
-                        ? "Select a model to see its GGUF details."
+                        ? Strings.t("no-model-selected")
                         : AppState.model_info_note;
                     font-size: 13px;
                     wrap: word-wrap;
@@ -388,9 +393,9 @@ export component ModelsPage inherits HorizontalLayout {
             }
 
             SectionCard {
-                heading: "GPU distribution";
+                heading: Strings.t("gpu-distribution");
                 Text {
-                    text: "How THIS model is split across GPUs (split-mode), which ones it runs on (device) and how much each holds (tensor-split), all saved to presets.ini. Checking nothing inherits the server default. Two GPUs of different sizes? Check both and give the bigger one more. In layer mode, once the model's header is read the column counts BLOCKS instead of ratios: that is what llama.cpp actually cuts, and each row says which ones it gets (the last position is the output layer, not a block). Drag a slider to move the cut; the other rows pay for it when you let go. The checked rows, top to bottom, are the split order: drag ≡ to reorder; the first one is llama.cpp's main GPU.";
+                    text: Strings.t("gpu-distribution-intro");
                     wrap: word-wrap;
                     font-size: 12px;
                     color: Palette.foreground.transparentize(Tokens.muted);
@@ -400,12 +405,12 @@ export component ModelsPage inherits HorizontalLayout {
                 if AppState.form.placement_note != "": HorizontalLayout {
                     spacing: 8px;
                     WrapText {
-                        text: "Placement " + AppState.form.placement_note;
+                        text: Strings.t1("placement-note", AppState.form.placement_note);
                         font_size: 12px;
                         color: Palette.foreground.transparentize(Tokens.muted);
                     }
                     Button {
-                        text: "Clear";
+                        text: Strings.t("clear");
                         vertical-stretch: 0;
                         clicked => { AppState.form.placement_note = ""; }
                     }
@@ -426,7 +431,7 @@ export component ModelsPage inherits HorizontalLayout {
                     mode_index <=> AppState.preset_split_mode_index;
                     effective_mode: AppState.preset_gpu_mode;
                     mode_picked(v) => { AppState.preset_split_mode_picked(v); }
-                    split_mode_hint: "Multi-GPU split for THIS model (split-mode), same on CUDA and HIP.\nlayer (default): each GPU takes a consecutive run of blocks; the table edits the cut. Fastest prefill, tolerates a slow GPU link.\nnone: single GPU, the first checked row; the other checked rows go unused.\ntensor (experimental): tensor parallelism. The checked GPUs become one device and every weight AND the KV cache are cut across them by the ratio (blank = even). Fastest decode, needs a fast GPU link. Flash attention must be on (auto is promoted), fit is skipped (size ctx-size yourself), some architectures are refused at load, and llama.cpp tunes it for CUDA with no guarantees on other backends.\nrow (deprecated, superseded by tensor): weight matrices are split row-wise by the ratio (needs CUDA/ROCm; Vulkan falls back to the layer cut); the KV cache still follows the layer cut.\nIrrelevant with one GPU checked.";
+                    split_mode_hint: Strings.t("split-mode-hint");
                     toggled(id) => { AppState.preset_gpu_toggle(id); }
                     reordered(id, delta) => { AppState.preset_gpu_move(id, delta); }
                     weight_edited(id, w) => { AppState.preset_gpu_weight(id, w); }
@@ -437,9 +442,9 @@ export component ModelsPage inherits HorizontalLayout {
             }
 
             SectionCard {
-                heading: "Tensor placement";
+                heading: Strings.t("tensor-placement");
                 Text {
-                    text: "Exceptions to the table above (--override-tensor): tensors that go on a device of their own, whatever their layer does. The one that usually pays: llama.cpp keeps the EMBEDDING TABLE in pinned host RAM even when it reports every layer offloaded, which is what Windows counts as \"Shared GPU memory\", so a model that fits in VRAM with room to spare still shows GBs of it. Put it on a GPU to reclaim that; send big tensors to CPU to free VRAM instead. Rules apply in order: the first match wins.";
+                    text: Strings.t("tensor-placement-intro");
                     wrap: word-wrap;
                     font-size: 12px;
                     color: Palette.foreground.transparentize(Tokens.muted);
@@ -465,11 +470,11 @@ export component ModelsPage inherits HorizontalLayout {
             }
 
             SectionCard {
-                heading: "Hardware Config";
+                heading: Strings.t("hardware-config");
                 LabeledField {
                     label_width <=> LabelColumn.models;
-                    label: "GPU layers";
-                    hint: "--n-gpu-layers: model layers offloaded to GPU.\nSlider max = the model's layer count (all on GPU); lower keeps layers on CPU to save VRAM.\ndefault = omit the flag → llama.cpp offloads ALL layers to GPU (the framework runs with -fit off, so there is no auto-fit to VRAM; a model too big to fit will fail to load).";
+                    label: Strings.t("gpu-layers");
+                    hint: Strings.t("gpu-layers-hint");
                     AutoSlider {
                         auto <=> AppState.form.n_gpu_layers_auto;
                         value <=> AppState.form.n_gpu_layers;
@@ -478,8 +483,8 @@ export component ModelsPage inherits HorizontalLayout {
                 }
                 LabeledField {
                     label_width <=> LabelColumn.models;
-                    label: "MoE CPU layers";
-                    hint: "Number of Mixture-of-Experts layers whose expert (FFN) weights stay on CPU (--n-cpu-moe) to save VRAM.\nOnly affects MoE models: it expands into one override-tensor rule per layer over the ffn_*_exps tensors, which a dense model does not have; for a dense model use 'Dense FFN CPU layers' below.\nSlider max = the model's layer count.\ndefault = omit the flag → 0: no expert weights are kept on CPU, so every expert stays on GPU with its layer.";
+                    label: Strings.t("moe-cpu-layers");
+                    hint: Strings.t("moe-cpu-layers-hint");
                     // --n-cpu-moe only affects MoE models, so gate the whole row on it.
                     AutoSlider {
                         auto <=> AppState.form.n_cpu_moe_auto;
@@ -490,10 +495,8 @@ export component ModelsPage inherits HorizontalLayout {
                 }
                 LabeledField {
                     label_width <=> LabelColumn.models;
-                    label: "MoE cache (MiB)";
-                    hint: "--moe-cache-mib (llama.cpp v0.7.0+, experimental): VRAM, in MiB, caching the experts kept in host memory, so a token whose experts were used recently reads them from the card instead of over PCIe.\nIt only acts on layers whose experts are ALL in RAM (MoE CPU layers above, or an exps=CPU Tensor placement rule); with none, llama.cpp runs without a cache.\nWith several GPUs the budget is split like the layers: by Tensor split, or by free VRAM when that is blank.\nThe model FAILS TO LOAD under Split mode tensor, and below the experts of one token"
-                        + (AppState.moe_cache_floor_hint(AppState.form, AppState.model_info_serial) != "" ? AppState.moe_cache_floor_hint(AppState.form, AppState.model_info_serial) : ".")
-                        + "\nThe draft model never uses it, and the synthetic benchmark cannot measure it (llama-bench has no such option).\ndefault = omit the flag → llama.cpp default: 0 (no cache).";
+                    label: Strings.t("moe-cache");
+                    hint: Strings.t1("moe-cache-hint", AppState.moe_cache_floor_hint(AppState.form, AppState.model_info_serial) != "" ? AppState.moe_cache_floor_hint(AppState.form, AppState.model_info_serial) : ".");
                     // Gated on has_moe like the row above: on a dense model any
                     // positive value fails the load (and the prune drops it).
                     DefaultLineEdit {
@@ -505,8 +508,8 @@ export component ModelsPage inherits HorizontalLayout {
                 }
                 LabeledField {
                     label_width <=> LabelColumn.models;
-                    label: "Dense FFN CPU layers";
-                    hint: "Number of layers whose DENSE feed-forward weights (ffn_up / ffn_down / ffn_gate) stay on CPU (--n-cpu-ffn, llama.cpp v0.4.0+) to save VRAM.\nThe dense twin of 'MoE CPU layers': on a dense model it is the whole FFN of the first N layers (most of the layer's bytes, attention stays on the GPU); on a MoE model it only reaches the dense layers such a model may carry (a leading dense prefix, every-Nth-layer hybrids), never the experts.\nSlider max = the model's layer count.\ndefault = omit the flag → every FFN stays on the GPU with its layer.\nNote the synthetic benchmark expands this into per-layer override-tensor rules: llama-bench has no -ncffn of its own.";
+                    label: Strings.t("dense-ffn-cpu-layers");
+                    hint: Strings.t("dense-ffn-cpu-layers-hint");
                     // Not gated on has_moe like the row above: the dense FFN exists
                     // on every model (on a MoE one, only in its dense layers), and
                     // llama.cpp accepts the flag for both.
@@ -518,71 +521,76 @@ export component ModelsPage inherits HorizontalLayout {
                 }
                 LabeledField {
                     label_width <=> LabelColumn.models;
-                    label: "Op offload";
-                    hint: "--op-offload / --no-op-offload: whether an operation whose weights sit in HOST memory is still run on the GPU.\ndefault = omit the flag → llama.cpp default: on. off = --no-op-offload, the one value that changes anything; on pins today's default.\nIt pairs with the two rows above and with Tensor placement: those are what leave weights in RAM (MoE experts, any tensor sent to CPU). On, such an operation goes to the card for batches of 32+ tokens, and its weights are copied there on EVERY prefill batch; on a card behind a narrow PCIe link that copy dominates.\nWith experts in RAM on such a link, off prefills faster (the Qwen3.8-Flash-Next guide has the figures). Decode is unchanged: a single-token step never offloads.\nA no-op when every weight is in VRAM.";
+                    label: Strings.t("op-offload");
+                    hint: Strings.t("op-offload-hint");
                     // Not gated on has_moe: a dense model reaches the same state
                     // through 'Dense FFN CPU layers' or a Tensor placement rule.
                     SegmentedControl {
                         options: ["default", "on", "off"];
+                        labels: [Strings.t("default"), Strings.t("on"), Strings.t("off")];
                         current: AppState.form.op_offload == "" ? "default" : AppState.form.op_offload;
                         activated(value) => { AppState.form.op_offload = value; }
                     }
                 }
                 LabeledField {
                     label_width <=> LabelColumn.models;
-                    label: "Repack";
-                    hint: "--repack / --no-repack: rewrite weights kept in host RAM into the CPU's interleaved layout at load, for the types it has kernels for (x86 AVX2: Q4_0, Q4_K, IQ4_NL, MXFP4; Q2_K with AVX-512; never the other IQ types).\ndefault = omit the flag → llama.cpp default: on. off = --no-repack, the one value that changes anything.\nIt acts only without a GPU: with one (CUDA, ROCm and Vulkan alike), weights kept in RAM go to that GPU's pinned host buffer, which llama.cpp picks before the repacked layout, so the flag is a no-op there (the MoE cache sees every expert in RAM whatever it says) unless No host buffer is on.\nA no-op when no weight is in RAM.";
+                    label: Strings.t("repack");
+                    hint: Strings.t("repack-hint");
                     SegmentedControl {
                         options: ["default", "on", "off"];
+                        labels: [Strings.t("default"), Strings.t("on"), Strings.t("off")];
                         current: AppState.form.repack == "" ? "default" : AppState.form.repack;
                         activated(value) => { AppState.form.repack = value; }
                     }
                 }
                 LabeledField {
                     label_width <=> LabelColumn.models;
-                    label: "No host buffer";
-                    hint: "--no-host: keep the weights left in RAM in ordinary memory instead of the GPU's pinned host buffer.\noff = omit the flag → llama.cpp default: pinned (ROCm_Host / CUDA_Host), which the GPU reads directly.\non = ordinary RAM, so the CPU repacks the types it has kernels for (see Repack) and the RAM stays pageable. The copies op-offload makes per batch then come from pageable memory, and repacked experts leave the MoE cache.\nA no-op when no weight is in RAM.";
+                    label: Strings.t("no-host-buffer");
+                    hint: Strings.t("no-host-buffer-hint");
                     SegmentedControl {
                         options: ["off", "on"];
+                        labels: [Strings.t("off"), Strings.t("on")];
                         current: AppState.form.no_host ? "on" : "off";
                         activated(value) => { AppState.form.no_host = value == "on"; }
                     }
                 }
                 LabeledField {
                     label_width <=> LabelColumn.models;
-                    label: "Lazy tensors";
-                    hint: "--lazy-mode: read the tensors the architecture marks for it from disk on demand, one row per token, instead of keeping them resident in RAM.\nToday that is the per-layer token-embedding tables of gemma4 and qwen4exp (e.g. the n-gram table of Qwen3.8-Flash-Next-GSQ-RCO); a no-op on every other model.\ndefault = omit the flag → llama.cpp default: auto, i.e. lazy only for a table over 4 GiB, and off when one of the model's devices cannot mmap (an integrated GPU).\non = lazy whatever the size and the devices; off = always resident (no paging cost, all of the RAM).\nWorks whatever the server's Load mode is. Keep the GGUF on an SSD.";
+                    label: Strings.t("lazy-tensors");
+                    hint: Strings.t("lazy-tensors-hint");
                     // Four entries, the first the "omit the flag" state: an enum
                     // string like reasoning-effort, mapped in form.rs.
                     SegmentedControl {
                         options: ["default", "on", "auto", "off"];
+                        labels: [Strings.t("default"), Strings.t("on"), Strings.t("auto"), Strings.t("off")];
                         current: AppState.form.lazy_mode == "" ? "default" : AppState.form.lazy_mode;
                         activated(value) => { AppState.form.lazy_mode = value; }
                     }
                 }
                 LabeledField {
                     label_width <=> LabelColumn.models;
-                    label: "Load mode";
-                    hint: "How llama.cpp brings THIS model's weights in (-lm / --load-mode). One setting, not two: mlock, mmap and Direct I/O are mutually exclusive states of the same enum.\ndefault = omit the flag → llama.cpp default: auto.\nauto memory-maps the GGUF unless a device can't; fastest to load.\nnone reads the weights into RAM up front: slower, costs the model's size in RAM, but nothing can be dropped back to the file.\nmmap always memory-maps.\nmlock locks the weights in physical RAM WITHOUT mmapping: keeps latency stable, needs room for the whole model.\nmmap+mlock memory-maps and locks what it maps.\ndio uses Direct I/O where the platform offers it.\nLazy tensors are mapped whatever this says.";
+                    label: Strings.t("load-mode");
+                    hint: Strings.t("load-mode-hint");
                     EnumComboBox {
                         options: Options.load_modes;
+                        labels: Options.load_mode_labels;
                         value <=> AppState.form.load_mode;
                     }
                 }
                 LabeledField {
                     label_width <=> LabelColumn.models;
-                    label: "Fit to VRAM";
-                    hint: "Let llama.cpp size the context and the GPU layers to fit device memory (fit = on|off), leaving about 1 GiB free per GPU.\nAvailable only with Context and GPU layers both at default: those are the two things it sizes. Off by default, and always written: llama.cpp's own default is on, and a 'default' GPU layers here means 'offload every layer', which the fit would cut.\nWith it on, also leave tensor-split, Tensor placement, MoE CPU layers and Dense FFN CPU layers empty: any of them makes llama.cpp skip the layer placement (a warning in the log) and fit only the context.";
+                    label: Strings.t("fit-to-vram");
+                    hint: Strings.t("fit-to-vram-hint");
                     CheckBox {
                         enabled: AppState.fit_allowed;
-                        text: AppState.fit_allowed ? "auto-fit context and layers to device memory (-fit on)" : "needs Context and GPU layers at default";
+                        text: AppState.fit_allowed ? Strings.t("fit-allowed") : Strings.t("fit-not-allowed");
                         checked <=> AppState.form.fit;
                     }
                 }
                 LabeledField {
                     label_width <=> LabelColumn.models;
-                    label: "Fit min context";
-                    hint: "--fit-ctx: the smallest context the fit may cut down to while making the model fit device memory.\nRead only with Fit to VRAM on.\ndefault = omit the flag → llama.cpp default: 4096.";
+                    label: Strings.t("fit-min-context");
+                    hint: Strings.t("fit-min-context-hint");
                     DefaultLineEdit {
                         enabled: AppState.form.fit;
                         input_type: InputType.number;
@@ -592,8 +600,8 @@ export component ModelsPage inherits HorizontalLayout {
                 }
                 LabeledField {
                     label_width <=> LabelColumn.models;
-                    label: "Fit free VRAM (MiB)";
-                    hint: "--fit-target: the VRAM the fit leaves free on each device, in MiB. One number for every device, or a comma-separated list in device order (e.g. 2048,1024).\nRead only with Fit to VRAM on.\nBlank = omit the flag → llama.cpp default: 1024 per device.";
+                    label: Strings.t("fit-free-vram");
+                    hint: Strings.t("fit-free-vram-hint");
                     LineEdit {
                         enabled: AppState.form.fit;
                         text <=> AppState.form.fit_target;
@@ -610,15 +618,15 @@ export component ModelsPage inherits HorizontalLayout {
                 // from the vision encoder) while the GPU never drafts a token.
                 // Hence draft_file_active, not draft_active. See state.slint.
                 if AppState.embedded_mtp_note : Text {
-                    text: "Embedded MTP heads: the draft runs inside the main model's context, on the model's own GPU. Draft device and Draft GPU layers apply only to a separate draft model file, so they stay disabled here.";
+                    text: Strings.t("embedded-mtp-note");
                     wrap: word-wrap;
                     font-size: 12px;
                     color: Palette.foreground.transparentize(Tokens.muted);
                 }
                 LabeledField {
                     label_width <=> LabelColumn.models;
-                    label: "Draft device";
-                    hint: "GPU for a separate draft model file (--device-draft).\nPin to ONE device: multi-GPU auto-split crashes MTP heads.\nIgnored (and disabled) with embedded MTP heads: that draft shares the main model's context and device.\nBlank = auto / same as model.";
+                    label: Strings.t("draft-device");
+                    hint: Strings.t("draft-device-hint");
                     MappedComboBox {
                         // Needs a draft FILE; llama.cpp ignores it otherwise.
                         enabled: AppState.draft_file_active;
@@ -630,8 +638,8 @@ export component ModelsPage inherits HorizontalLayout {
                 }
                 LabeledField {
                     label_width <=> LabelColumn.models;
-                    label: "Draft GPU layers";
-                    hint: "Layers of a separate draft model file offloaded to GPU (--n-gpu-layers-draft).\nA drafter with real layers (e.g. DFlash) gets a 0..layer-count slider.\nAn MTP/nextn head file has no transformer layers (block_count 0), so it becomes a plain CPU/GPU switch.\nPin a device above: multi-GPU auto-split crashes MTP heads.\nIgnored (and disabled) with embedded MTP heads.\ndefault = omit the flag → llama.cpp offloads ALL draft layers to GPU.";
+                    label: Strings.t("draft-gpu-layers");
+                    hint: Strings.t("draft-gpu-layers-hint");
                     // Real drafter (block_count > 0): the same auto + slider +
                     // readout row as the other layer knobs, one canonical
                     // implementation (AutoSlider) instead of an inline copy.
@@ -648,7 +656,7 @@ export component ModelsPage inherits HorizontalLayout {
                     // would break its one-way binding (the v1.1.1 staleness
                     // class). on GPU = all draft layers, on CPU = 0.
                     if AppState.model_info_draft_n_layer == 0 : CheckBox {
-                        text: "default";
+                        text: Strings.t("default");
                         enabled: AppState.draft_file_active;
                         checked <=> AppState.form.n_gpu_layers_draft_auto;
                     }
@@ -656,6 +664,7 @@ export component ModelsPage inherits HorizontalLayout {
                         horizontal-stretch: 1;
                         enabled: !AppState.form.n_gpu_layers_draft_auto && AppState.draft_file_active;
                         options: ["on GPU", "on CPU"];
+                        labels: [Strings.t("on-gpu"), Strings.t("on-cpu")];
                         current: AppState.form.n_gpu_layers_draft >= 1 ? "on GPU" : "on CPU";
                         activated(v) => { AppState.form.n_gpu_layers_draft = v == "on GPU" ? Options.all_layers : 0; }
                     }
@@ -663,11 +672,11 @@ export component ModelsPage inherits HorizontalLayout {
             }
 
             SectionCard {
-                heading: "Resource / context";
+                heading: Strings.t("resource-context");
                 LabeledField {
                     label_width <=> LabelColumn.models;
-                    label: "Context size";
-                    hint: "Context window in tokens (--ctx-size).\nBigger = longer history but more KV-cache VRAM; split across parallel slots.\ndefault = omit the flag → llama.cpp default: 0, i.e. load the context the model was TRAINED with (which can be far more than the number shown here).";
+                    label: Strings.t("context-size");
+                    hint: Strings.t("context-size-hint");
                     DefaultLineEdit {
                         edit_label: "preset-ctx-size";
                         input_type: InputType.number;
@@ -677,8 +686,8 @@ export component ModelsPage inherits HorizontalLayout {
                 }
                 LabeledField {
                     label_width <=> LabelColumn.models;
-                    label: "Parallel seqs";
-                    hint: "--parallel: concurrent request slots. The context is DIVIDED among them, so N=2 leaves each request ctx-size / 2 tokens.\ndefault = omit the flag → llama-server's own default is auto (-1), which picks 4 slots AND a unified KV cache, and with a unified cache every slot may use the WHOLE context. So leaving this at default is what gives one request the model's full context; pinning a number is what quietly divides it.";
+                    label: Strings.t("parallel-seqs");
+                    hint: Strings.t("parallel-seqs-hint");
                     DefaultLineEdit {
                         input_type: InputType.number;
                         default <=> AppState.form.parallel_default;
@@ -687,21 +696,22 @@ export component ModelsPage inherits HorizontalLayout {
                 }
                 LabeledField {
                     label_width <=> LabelColumn.models;
-                    label: "Unified KV";
-                    hint: "--kv-unified / --no-kv-unified: one KV buffer shared by every parallel slot, so each request may grow into the WHOLE context instead of ctx-size / parallel.\ndefault = omit the flag → off with Parallel seqs pinned. With Parallel seqs at default (auto) llama-server turns it on whatever this says, hence disabled there.\non pays when requests are uneven (one long, others short); off gives each slot a fixed share, so one long request cannot starve the others of cells.";
+                    label: Strings.t("unified-kv");
+                    hint: Strings.t("unified-kv-hint");
                     // TRI-state like Flash Attention: "default" is its own
                     // instruction (mapped to Option<bool> in form.rs).
                     SegmentedControl {
                         enabled: !AppState.form.parallel_default;
                         options: ["default", "on", "off"];
+                        labels: [Strings.t("default"), Strings.t("on"), Strings.t("off")];
                         current: AppState.form.kv_unified == "" ? "default" : AppState.form.kv_unified;
                         activated(value) => { AppState.form.kv_unified = value; }
                     }
                 }
                 LabeledField {
                     label_width <=> LabelColumn.models;
-                    label: "Per-slot context";
-                    hint: "--kv-unified-per-slot: caps every slot at this many tokens.\nWith Context size at default it also SIZES the KV pool to Parallel seqs × this value instead of the model's trained context, so a 4-slot preset at 32768 allocates 128k cells.\nWorks with Unified KV on or off.\ndefault = omit the flag → no cap.";
+                    label: Strings.t("per-slot-context");
+                    hint: Strings.t("per-slot-context-hint");
                     DefaultLineEdit {
                         input_type: InputType.number;
                         default <=> AppState.form.kv_unified_per_slot_default;
@@ -710,8 +720,8 @@ export component ModelsPage inherits HorizontalLayout {
                 }
                 LabeledField {
                     label_width <=> LabelColumn.models;
-                    label: "Batch size";
-                    hint: "--batch-size: logical batch (tokens prefilled per step).\nHigher speeds prefill, uses more VRAM.\ndefault = omit the flag → llama.cpp default: 2048.";
+                    label: Strings.t("batch-size");
+                    hint: Strings.t("batch-size-hint");
                     DefaultLineEdit {
                         input_type: InputType.number;
                         default <=> AppState.form.batch_size_default;
@@ -720,8 +730,8 @@ export component ModelsPage inherits HorizontalLayout {
                 }
                 LabeledField {
                     label_width <=> LabelColumn.models;
-                    label: "U-Batch size";
-                    hint: "--ubatch-size: physical micro-batch computed at once.\nMust be ≤ batch size.\ndefault = omit the flag → llama.cpp default: 512.";
+                    label: Strings.t("u-batch-size");
+                    hint: Strings.t("u-batch-size-hint");
                     DefaultLineEdit {
                         input_type: InputType.number;
                         default <=> AppState.form.ubatch_size_default;
@@ -731,25 +741,27 @@ export component ModelsPage inherits HorizontalLayout {
             }
 
             SectionCard {
-                heading: "Embeddings";
+                heading: Strings.t("embeddings");
                 LabeledField {
                     label_width <=> LabelColumn.models;
-                    label: "Embedding mode";
-                    hint: "--embeddings: serve this model as an embedding model, i.e. turn on /v1/embeddings (without it llama-server answers 501 \"This server does not support embeddings\"). Only for dedicated embedding models.\noff = omit the flag → llama.cpp default: off.\nEvery input is processed in ONE micro-batch, so set Batch size and U-Batch size above to at least the longest text you send, or the request fails with \"input is too large\" (the default micro-batch is 512 tokens).";
+                    label: Strings.t("embedding-mode");
+                    hint: Strings.t("embedding-mode-hint");
                     SegmentedControl {
                         options: ["off", "on"];
+                        labels: [Strings.t("off"), Strings.t("on")];
                         current: AppState.form.embeddings ? "on" : "off";
                         activated(value) => { AppState.form.embeddings = value == "on"; }
                     }
                 }
                 LabeledField {
                     label_width <=> LabelColumn.models;
-                    label: "Pooling";
-                    hint: "--pooling: how the token vectors become ONE embedding.\ndefault = omit the flag → the model's own pooling, read from its GGUF.\nnone = one vector per token; mean = their average; cls = the first token's; last = the last token's (Qwen3-Embedding); rank = the reranker head.\nA wrong pooling still yields vectors of the right size, only worse ones: search quality drops without an error.\nRead only in embedding mode.";
+                    label: Strings.t("pooling");
+                    hint: Strings.t("pooling-hint");
                     // Six entries, the first the "omit the flag" state: an enum
                     // string like lazy-mode, mapped in form.rs.
                     SegmentedControl {
                         options: ["default", "none", "mean", "cls", "last", "rank"];
+                        labels: [Strings.t("default"), Strings.t("none"), Strings.t("mean"), "cls", Strings.t("last"), Strings.t("rank")];
                         current: AppState.form.pooling == "" ? "default" : AppState.form.pooling;
                         activated(value) => { AppState.form.pooling = value; }
                     }
@@ -757,7 +769,7 @@ export component ModelsPage inherits HorizontalLayout {
             }
 
             SectionCard {
-                heading: "KV cache";
+                heading: Strings.t("kv-cache");
                 if AppState.preset_kv_cache_warning != "" : WrapText {
                     text: AppState.preset_kv_cache_warning;
                     font_size: 12px;
@@ -765,30 +777,32 @@ export component ModelsPage inherits HorizontalLayout {
                 }
                 LabeledField {
                     label_width <=> LabelColumn.models;
-                    label: "K-cache type";
-                    hint: "KV cache quantization for K (--cache-type-k).\nLower = less VRAM but lower quality.\ndefault = omit the flag → llama.cpp default: f16.\nNote: Qwen3-Coder needs q8_0 for reliable tool calling; q4_0 makes it drop the <tool_call> wrapper.";
+                    label: Strings.t("k-cache-type");
+                    hint: Strings.t("k-cache-type-hint");
                     // "default" is the first entry of Options.cache_types and is
                     // NOT the f16 entry: it omits the flag (form.rs maps it to an
                     // empty string, which render_section drops) rather than pinning
                     // today's llama.cpp default as a literal value.
                     EnumComboBox {
                         options: Options.cache_types;
+                        labels: Options.cache_type_labels;
                         value <=> AppState.form.cache_type_k;
                     }
                 }
                 LabeledField {
                     label_width <=> LabelColumn.models;
-                    label: "V-cache type";
-                    hint: "KV cache quantization for V (--cache-type-v).\nLower = less VRAM, lower quality; usually matched to K.\nNeeds flash attention.\ndefault = omit the flag → llama.cpp default: f16.";
+                    label: Strings.t("v-cache-type");
+                    hint: Strings.t("v-cache-type-hint");
                     EnumComboBox {
                         options: Options.cache_types;
+                        labels: Options.cache_type_labels;
                         value <=> AppState.form.cache_type_v;
                     }
                 }
                 LabeledField {
                     label_width <=> LabelColumn.models;
-                    label: "Flash Attention";
-                    hint: "The fused flash-attention kernel (--flash-attn): faster prefill and lower KV memory.\ndefault = omit the flag → llama.cpp default: auto, i.e. on wherever the backend supports it, off where it doesn't.\non forces it (llama.cpp errors out if the backend can't); off disables it, which also takes away most of the gain from a quantized K/V cache.";
+                    label: Strings.t("flash-attention");
+                    hint: Strings.t("flash-attention-hint");
                     // TRI-state, not a checkbox: --flash-attn is [on|off|auto] and
                     // its default is auto, so a bool can only ever say two of the
                     // three things. Same shape (and same reason) as "Keep past
@@ -796,14 +810,15 @@ export component ModelsPage inherits HorizontalLayout {
                     // mapped to Option<bool> in form.rs.
                     SegmentedControl {
                         options: ["default", "on", "off"];
+                        labels: [Strings.t("default"), Strings.t("on"), Strings.t("off")];
                         current: AppState.form.flash_attn == "" ? "default" : AppState.form.flash_attn;
                         activated(value) => { AppState.form.flash_attn = value; }
                     }
                 }
                 LabeledField {
                     label_width <=> LabelColumn.models;
-                    label: "Cache RAM (MiB)";
-                    hint: "--cache-ram: RAM limit (MiB) for the prompt cache (past-prompt KV kept for reuse).\nA cached prompt carries its context checkpoints with it, and they count against this limit: on a large hybrid model with long prompts, many checkpoints and several slots, the oldest entries get evicted sooner than the KV size alone suggests.\ndefault = omit the flag → llama.cpp default: 8192 MiB.\n0 disables; -1 = no limit.";
+                    label: Strings.t("cache-ram");
+                    hint: Strings.t("cache-ram-hint");
                     // `decimal`, not `number`: this is the one integer field whose
                     // value may start with a `-` (the -1 sentinel), and `number`
                     // accepts digits only. Rust still parses it as an int.
@@ -815,8 +830,8 @@ export component ModelsPage inherits HorizontalLayout {
                 }
                 LabeledField {
                     label_width <=> LabelColumn.models;
-                    label: "Cache reuse";
-                    hint: "--cache-reuse: minimum chunk (tokens) a new prompt may reuse from the cached one by shifting the KV cache, skipping its re-prefill.\nHigher saves compute on shared prefixes.\ndefault = omit the flag → llama.cpp default: 0 (disabled).\nllama.cpp turns it off on a model with an mmproj (vision) and on one whose cache cannot shift, with a warning in the log.";
+                    label: Strings.t("cache-reuse");
+                    hint: Strings.t("cache-reuse-hint");
                     DefaultLineEdit {
                         input_type: InputType.number;
                         default <=> AppState.form.cache_reuse_default;
@@ -825,8 +840,8 @@ export component ModelsPage inherits HorizontalLayout {
                 }
                 LabeledField {
                     label_width <=> LabelColumn.models;
-                    label: "Context checkpoints";
-                    hint: "--ctx-checkpoints: how many context checkpoints a slot keeps.\nA recurrent or hybrid model (Qwen3.5/3.8, qwen4exp, Mamba, Jamba...) and an SWA model cannot truncate their state back to an earlier token, so a new request whose prompt diverges from the cached one resumes from the newest checkpoint before that point; with none, the whole prompt is read again.\nEach checkpoint is a copy of that state in host RAM; the oldest is dropped once the slot holds this many. Inert on a pure-attention model.\ndefault = omit the flag → llama.cpp default: 32. 0 disables them.";
+                    label: Strings.t("context-checkpoints");
+                    hint: Strings.t("context-checkpoints-hint");
                     DefaultLineEdit {
                         input_type: InputType.number;
                         default <=> AppState.form.ctx_checkpoints_default;
@@ -835,8 +850,8 @@ export component ModelsPage inherits HorizontalLayout {
                 }
                 LabeledField {
                     label_width <=> LabelColumn.models;
-                    label: "Checkpoint step";
-                    hint: "--checkpoint-min-step: the minimum distance, in tokens, between two context checkpoints.\nSmaller = a diverging prompt resumes closer to where it diverged, at the cost of more checkpoints, i.e. more RAM (the ones of a cached prompt also count against Cache RAM).\ndefault = omit the flag → llama.cpp default: 8192. 0 = no minimum.";
+                    label: Strings.t("checkpoint-step");
+                    hint: Strings.t("checkpoint-step-hint");
                     DefaultLineEdit {
                         input_type: InputType.number;
                         default <=> AppState.form.checkpoint_min_step_default;
@@ -846,81 +861,85 @@ export component ModelsPage inherits HorizontalLayout {
             }
 
             SectionCard {
-                heading: "Chat / reasoning";
+                heading: Strings.t("chat-reasoning");
                 LabeledField {
                     label_width <=> LabelColumn.models;
-                    label: "Chat template";
-                    hint: "--jinja: use the model's embedded Jinja chat template instead of built-in heuristics.\nRecommended on for correct tool-call / role formatting.";
+                    label: Strings.t("chat-template");
+                    hint: Strings.t("use-chat-template-hint");
                     CheckBox {
-                        text: "use embedded chat template (--jinja)";
+                        text: Strings.t("use-chat-template");
                         checked <=> AppState.form.jinja;
                     }
                 }
                 LabeledField {
                     label_width <=> LabelColumn.models;
-                    label: "Prefill assistant";
-                    hint: "--prefill-assistant / --no-prefill-assistant: what to do when a request's LAST message is an assistant message.\nOn (llama.cpp's default, the key omitted): treat it as the START of the reply and continue it; this is what lets a client seed the answer's opening.\nOff: treat it as a finished turn and answer it instead. Turn it off if a client legitimately ends on an assistant turn and the model resumes mid-sentence rather than replying.";
+                    label: Strings.t("prefill-assistant");
+                    hint: Strings.t("prefill-assistant-hint");
                     CheckBox {
-                        text: "continue a trailing assistant message (--prefill-assistant)";
+                        text: Strings.t("prefill-assistant-toggle");
                         checked <=> AppState.form.prefill_assistant;
                     }
                 }
                 LabeledField {
                     label_width <=> LabelColumn.models;
-                    label: "Reasoning";
-                    hint: "Thinking mode (--reasoning).\nauto: model decides (for Gemma auto≡on).\non: force thinking.\noff: disable.\nNote reasoning=on can invalidate the KV cache mid-conversation; prefer auto.";
+                    label: Strings.t("reasoning");
+                    hint: Strings.t("reasoning-hint");
                     // A RadioGroup imperatively sets each button's `checked` on
                     // selection, which breaks the binding and leaves the pick stale
                     // on preset switch. SegmentedControl derives its highlight purely
                     // from `current`, so it stays in sync.
                     SegmentedControl {
                         options: ["auto", "on", "off"];
+                        labels: [Strings.t("auto"), Strings.t("on"), Strings.t("off")];
                         current: AppState.form.reasoning == "" ? "auto" : AppState.form.reasoning;
                         activated(value) => { AppState.form.reasoning = value; }
                     }
                 }
                 LabeledField {
                     label_width <=> LabelColumn.models;
-                    label: "Reason format";
-                    hint: "--reasoning-format: how thinking output is delivered.\nauto = let the template decide; deepseek = parse <think> blocks into a separate reasoning channel; none = inline.";
+                    label: Strings.t("reason-format");
+                    hint: Strings.t("reason-format-hint");
                     SegmentedControl {
                         options: ["auto", "none", "deepseek"];
+                        labels: [Strings.t("auto"), Strings.t("none"), "deepseek"];
                         current: AppState.form.reasoning_format == "" ? "auto" : AppState.form.reasoning_format;
                         activated(value) => { AppState.form.reasoning_format = value; }
                     }
                 }
                 LabeledField {
                     label_width <=> LabelColumn.models;
-                    label: "Reasoning effort";
-                    hint: "--reasoning-effort: how hard the template should ask the model to think.\ndefault = omit the flag → whatever the template does on its own.\nNeither a switch nor a token cap: it is a level handed to the chat template, so a template that reads neither reasoning_effort nor reasoning_strength ignores it in silence. gpt-oss and harmony templates read it; most do not.\nDo NOT hand-write reasoning_effort into 'Template kwargs' below: this ONE flag binds both names at once, and a raw kwarg sets one of the two, a silent no-op on a template keyed to the other.\nllama-server prints nothing about this at startup, unlike 'Keep past thinking', so the Thinking row in Model info is the only place that tells you whether it is a lever here.\nNeeds llama.cpp b10434 or newer: an older server rejects the key outright and refuses to start.";
+                    label: Strings.t("reasoning-effort");
+                    hint: Strings.t("reasoning-effort-hint");
                     // Seven entries is past what a SegmentedControl can carry, and
                     // the first one is the "omit the flag" state, so this follows
                     // the cache-type combos rather than the switches above.
                     EnumComboBox {
                         options: ["default", "minimal", "low", "medium", "high", "xhigh", "max"];
+                        labels: [Strings.t("default"), Strings.t("minimal"), Strings.t("low"), Strings.t("medium"), Strings.t("high"), Strings.t("extra-high"), Strings.t("maximum")];
                         value <=> AppState.form.reasoning_effort;
                     }
                 }
                 LabeledField {
                     label_width <=> LabelColumn.models;
-                    label: "Keep past thinking";
-                    hint: "--reasoning-preserve: replay the thinking of EVERY past assistant turn back to the model, not just the last one.\ndefault = pass no flag and take llama.cpp's default, which is ON since v0.4.0 (up to v0.3.0 it was whatever the chat template did on its own); on = keep it (pinned, whatever the default becomes); off = drop it (--no-reasoning-preserve), the one value that changes anything on a current server.\nThis is the supported lever; do NOT hand-write preserve_thinking (or preserve_reasoning, deprecated there since v0.4.0) into 'Template kwargs' below. llama.cpp expands this ONE flag into preserve_thinking + clear_thinking + truncate_history_thinking, and templates disagree on which of the three they read, so setting the raw kwarg is a silent no-op on most of them.\nIt only works where the template supports it; llama-server says so at startup ('chat template supports preserving reasoning, it is enabled by default' / '…does NOT support').\nCosts prompt tokens: the trace is re-sent every turn.";
+                    label: Strings.t("keep-past-thinking");
+                    hint: Strings.t("keep-past-thinking-hint");
                     SegmentedControl {
                         options: ["default", "on", "off"];
+                        labels: [Strings.t("default"), Strings.t("on"), Strings.t("off")];
                         current: AppState.form.reasoning_preserve == "" ? "default" : AppState.form.reasoning_preserve;
                         activated(value) => { AppState.form.reasoning_preserve = value; }
                     }
                 }
                 Text {
-                    text: "The next three split one output budget in two. --reasoning-budget caps the THINKING alone; nothing caps the answer on its own, because --n-predict bounds thinking + answer together, so the answer gets what the thinking leaves. Do not copy a model card's raw pair in: those are ceilings for the context the card assumes, and a budget larger than your context never fires.";
+                    text: Strings.t("output-budget-note");
                     wrap: word-wrap;
                     font-size: 12px;
                     color: Palette.foreground.transparentize(Tokens.muted);
                 }
                 LabeledField {
                     label_width <=> LabelColumn.models;
-                    label: "Thinking budget";
-                    hint: "Tokens the thinking block may use (--reasoning-budget).\n-1 = unrestricted, 0 = close it immediately, N > 0 = a real budget.\ndefault = omit the flag → llama.cpp default: -1.\nNot a truncation: at the limit the sampler FORCES the template's end-of-thinking tag, so the model still writes a normal answer. It only works where the template declares thinking tags.\nPick it by how long you are willing to wait: at 20 tok/s, 16384 tokens is about 13 minutes of thinking.";
+                    label: Strings.t("thinking-budget");
+                    hint: Strings.t("thinking-budget-hint");
                     DefaultLineEdit {
                         edit_label: "preset-reasoning-budget";
                         // decimal, not number: -1 needs a typeable leading sign.
@@ -931,17 +950,17 @@ export component ModelsPage inherits HorizontalLayout {
                 }
                 LabeledField {
                     label_width <=> LabelColumn.models;
-                    label: "Budget message";
-                    hint: "Text injected just before the forced end-of-thinking tag when the budget runs out (--reasoning-budget-message), to steer the model into wrapping up instead of stopping mid-thought.\nBlank = omit the flag: llama.cpp closes the block with no message.\nWrite it in the language the model answers in: an injection in another language invites language mixing.\nNo ';' or '#': the INI format cannot escape them and the value would reload truncated.";
+                    label: Strings.t("budget-message");
+                    hint: Strings.t("budget-message-hint");
                     LineEdit {
                         text <=> AppState.form.reasoning_budget_message;
-                        placeholder-text: "e.g. Budget reached, write the final answer now.";
+                        placeholder-text: Strings.t("budget-message-placeholder");
                     }
                 }
                 LabeledField {
                     label_width <=> LabelColumn.models;
-                    label: "Max output";
-                    hint: "Total tokens generated per request, thinking AND answer together (--n-predict).\n-1 = keep going until the context is full.\ndefault = omit the flag → llama.cpp default: -1.\nOnly a DEFAULT, never a clamp: the request's own max_tokens wins whenever the client sends one, in either direction, so this bites only clients that send none.";
+                    label: Strings.t("max-output");
+                    hint: Strings.t("max-output-hint");
                     DefaultLineEdit {
                         input_type: InputType.decimal;
                         default <=> AppState.form.n_predict_default;
@@ -951,11 +970,11 @@ export component ModelsPage inherits HorizontalLayout {
             }
 
             SectionCard {
-                heading: "Sampling overrides";
+                heading: Strings.t("sampling-overrides");
                 LabeledField {
                     label_width <=> LabelColumn.models;
-                    label: "Temperature";
-                    hint: "--temp: sampling temperature.\nLower = more deterministic, higher = more creative.\ndefault = omit the flag → llama.cpp default: 0.80.";
+                    label: Strings.t("temperature");
+                    hint: Strings.t("sampling-temperature-hint");
                     DefaultLineEdit {
                         edit_label: "preset-temp";
                         default <=> AppState.form.temp_default;
@@ -966,7 +985,7 @@ export component ModelsPage inherits HorizontalLayout {
                 LabeledField {
                     label_width <=> LabelColumn.models;
                     label: "Top-K";
-                    hint: "--top-k: keep only the K most-likely tokens before sampling.\n0 / default = disabled.\ndefault = omit the flag → llama.cpp default: 40.";
+                    hint: Strings.t("top-k-hint");
                     // Integer-valued, so `number` (digits only) and not the
                     // `decimal` the float knobs below take; a decimal editor
                     // would let `40,5` slip past the int parse.
@@ -979,7 +998,7 @@ export component ModelsPage inherits HorizontalLayout {
                 LabeledField {
                     label_width <=> LabelColumn.models;
                     label: "Top-P";
-                    hint: "--top-p: nucleus sampling, smallest token set whose probabilities sum to P (e.g. 0.95).\ndefault = omit the flag → llama.cpp default: 0.95.";
+                    hint: Strings.t("top-p-hint");
                     DefaultLineEdit {
                         default <=> AppState.form.top_p_default;
                         value <=> AppState.form.top_p;
@@ -989,7 +1008,7 @@ export component ModelsPage inherits HorizontalLayout {
                 LabeledField {
                     label_width <=> LabelColumn.models;
                     label: "Min-P";
-                    hint: "--min-p: drop tokens below this fraction of the top token's probability.\ndefault = omit the flag → llama.cpp default: 0.05.";
+                    hint: Strings.t("min-p-hint");
                     DefaultLineEdit {
                         default <=> AppState.form.min_p_default;
                         value <=> AppState.form.min_p;
@@ -998,8 +1017,8 @@ export component ModelsPage inherits HorizontalLayout {
                 }
                 LabeledField {
                     label_width <=> LabelColumn.models;
-                    label: "Repeat penalty";
-                    hint: "--repeat-penalty: >1 discourages repeating recent tokens (e.g. 1.1).\ndefault = omit the flag → llama.cpp default: 1.0.";
+                    label: Strings.t("repeat-penalty");
+                    hint: Strings.t("repeat-penalty-hint");
                     DefaultLineEdit {
                         default <=> AppState.form.repeat_penalty_default;
                         value <=> AppState.form.repeat_penalty;
@@ -1008,8 +1027,8 @@ export component ModelsPage inherits HorizontalLayout {
                 }
                 LabeledField {
                     label_width <=> LabelColumn.models;
-                    label: "Presence penalty";
-                    hint: "--presence-penalty: positive values discourage reusing any seen token, pushing new topics.\ndefault = omit the flag → llama.cpp default: 0.0.";
+                    label: Strings.t("presence-penalty");
+                    hint: Strings.t("presence-penalty-hint");
                     DefaultLineEdit {
                         default <=> AppState.form.presence_penalty_default;
                         value <=> AppState.form.presence_penalty;
@@ -1018,10 +1037,11 @@ export component ModelsPage inherits HorizontalLayout {
                 }
                 LabeledField {
                     label_width <=> LabelColumn.models;
-                    label: "Backend sampling";
-                    hint: "--backend-sampling (experimental): run the sampler chain on the GPU that holds the logits instead of copying every logit row to the host and sampling there.\ndefault = omit the flag → llama.cpp default: off. off writes the key but launches exactly like default (the flag has no negated form); on is the one value that changes anything.\nOnly some samplers have a GPU kernel (greedy, dist, top-k, top-p, min-p, temp, penalties, logit-bias). Any other sampler in the chain (typical, xtc, mirostat, top-n-sigma, dry, adaptive-p) drops the WHOLE chain back to CPU sampling, silently.\nDisabled outright by a grammar / JSON schema and by a Thinking budget (llama-server warns at startup), and by split mode 'tensor' (one warning per process). A request asking for pre-sampling probabilities takes the CPU path for that request.\nThe draft side is a separate flag that is already ON by default (--spec-draft-backend-sampling): an MTP/DFlash drafter samples on the backend whatever this says.";
+                    label: Strings.t("backend-sampling");
+                    hint: Strings.t("backend-sampling-hint");
                     SegmentedControl {
                         options: ["default", "on", "off"];
+                        labels: [Strings.t("default"), Strings.t("on"), Strings.t("off")];
                         current: AppState.form.backend_sampling == "" ? "default" : AppState.form.backend_sampling;
                         activated(value) => { AppState.form.backend_sampling = value; }
                     }
@@ -1029,11 +1049,11 @@ export component ModelsPage inherits HorizontalLayout {
             }
 
             SectionCard {
-                heading: "Advanced";
+                heading: Strings.t("advanced");
                 LabeledField {
                     label_width <=> LabelColumn.models;
-                    label: "Chat kwargs";
-                    hint: "--chat-template-kwargs: JSON merged into the chat template, e.g. {\"enable_thinking\":true}.\nAdvanced: leave blank unless the model documents kwargs.";
+                    label: Strings.t("chat-kwargs");
+                    hint: Strings.t("chat-kwargs-hint");
                     LineEdit {
                         text <=> AppState.form.chat_template_kwargs;
                         placeholder-text: "e.g. {\"enable_thinking\":true}";
@@ -1042,21 +1062,21 @@ export component ModelsPage inherits HorizontalLayout {
             }
 
             SectionCard {
-                heading: "Vision";
+                heading: Strings.t("vision");
                 LabeledField {
                     label_width <=> LabelColumn.models;
-                    label: "Vision on GPU";
-                    hint: "Offload the multimodal projector, the mmproj/CLIP image encoder, to GPU (--mmproj-offload / --no-mmproj-offload).\nOn (llama.cpp's default) it holds VRAM for as long as the model is loaded but only computes on image requests. Off keeps it on CPU: slower image encoding, no VRAM.\nWHICH GPU it lands on is a separate question; see 'Vision GPU' below.";
+                    label: Strings.t("vision-on-gpu");
+                    hint: Strings.t("vision-on-gpu-hint");
                     CheckBox {
                         enabled: AppState.form.mmproj != "";
-                        text: "offload the image encoder to GPU";
+                        text: Strings.t("vision-offload-toggle");
                         checked <=> AppState.form.mmproj_offload;
                     }
                 }
                 LabeledField {
                     label_width <=> LabelColumn.models;
-                    label: "Vision GPU";
-                    hint: "The GPU the image encoder runs on (--mmproj-device).\ndefault = omit the flag → llama.cpp's own placement: the FIRST entry of this preset's device list; with no device pinned, the FIRST GPU backend it finds, which on a mixed box is often not the one running the model. It then holds VRAM there and stays idle until an image arrives.\nName a device here to override both.";
+                    label: Strings.t("vision-gpu");
+                    hint: Strings.t("vision-gpu-hint");
                     MappedComboBox {
                         enabled: AppState.form.mmproj != "" && AppState.form.mmproj_offload;
                         labels: AppState.preset_mmproj_dev_labels;
@@ -1066,15 +1086,15 @@ export component ModelsPage inherits HorizontalLayout {
                     }
                 }
                 Text {
-                    text: "The two bounds below cap the tokens ONE image takes on dynamic-resolution vision models; only the mmproj/CLIP encoder reads them (pick an MMProj above to enable them). Leave at default to read the bound from the model.";
+                    text: Strings.t("image-tokens-note");
                     wrap: word-wrap;
                     font-size: 12px;
                     color: Palette.foreground.transparentize(Tokens.muted);
                 }
                 LabeledField {
                     label_width <=> LabelColumn.models;
-                    label: "Min image tokens";
-                    hint: "--image-min-tokens: minimum tokens each image is encoded to.\nOnly used by vision models with dynamic resolution.\ndefault = omit the flag → read the bound from the model.\nQwen-VL warns it needs at least 1024 for grounding accuracy (llama.cpp #16842); set 1024 here if you see that warning.";
+                    label: Strings.t("min-image-tokens");
+                    hint: Strings.t("min-image-tokens-hint");
                     DefaultLineEdit {
                         // Vision-only: the encoder is what reads it, so gate on an mmproj.
                         enabled: AppState.form.mmproj != "";
@@ -1085,8 +1105,8 @@ export component ModelsPage inherits HorizontalLayout {
                 }
                 LabeledField {
                     label_width <=> LabelColumn.models;
-                    label: "Max image tokens";
-                    hint: "--image-max-tokens: maximum tokens each image is encoded to.\nOnly used by vision models with dynamic resolution.\ndefault = omit the flag → read the bound from the model.\nLower it to cap the prefill cost (and VRAM) of large images.";
+                    label: Strings.t("max-image-tokens");
+                    hint: Strings.t("max-image-tokens-hint");
                     DefaultLineEdit {
                         enabled: AppState.form.mmproj != "";
                         input_type: InputType.number;
@@ -1097,7 +1117,7 @@ export component ModelsPage inherits HorizontalLayout {
             }
 
             SectionCard {
-                heading: "Speculative decoding";
+                heading: Strings.t("speculative-decoding");
                 // One group per speculator, each under its own sub-heading. The
                 // draft group needs a draft (a picked file or embedded MTP heads:
                 // draft_active); the ngram-* groups draft from the context and
@@ -1106,15 +1126,15 @@ export component ModelsPage inherits HorizontalLayout {
                 // the keys of the ngram types spec-type does not name
                 // (presets::prune_unused_ngram_keys).
                 Text {
-                    text: "Draft model (draft-mtp, draft-dflash, draft-dspark, draft-simple)";
+                    text: Strings.t("draft-model-group");
                     font-size: 12px;
                     font-weight: 600;
                     color: Palette.foreground;
                 }
                 LabeledField {
                     label_width <=> LabelColumn.models;
-                    label: "Draft n-max";
-                    hint: "Max draft tokens proposed per step (--spec-draft-n-max).\nDFlash clamps this to the GGUF's trained block_size-1 (e.g. 15).\ndefault = omit the flag → llama.cpp default: 3.";
+                    label: Strings.t("draft-n-max");
+                    hint: Strings.t("draft-n-max-hint");
                     DefaultLineEdit {
                         // Active only when a draft is available (selected or embedded MTP).
                         enabled: AppState.draft_active;
@@ -1125,8 +1145,8 @@ export component ModelsPage inherits HorizontalLayout {
                 }
                 LabeledField {
                     label_width <=> LabelColumn.models;
-                    label: "Draft p-min";
-                    hint: "Confidence floor for drafted tokens (--spec-draft-p-min), 0 to 1.\nDrafting stops at the first token below it, so the model verifies a shorter batch instead of tokens it would reject.\nDFlash2 reads its selector, DSpark its confidence head.\ndefault = omit the flag → llama.cpp default: 0 (never truncate).";
+                    label: Strings.t("draft-p-min");
+                    hint: Strings.t("draft-p-min-hint");
                     DefaultLineEdit {
                         enabled: AppState.draft_active;
                         input_type: InputType.decimal;
@@ -1137,8 +1157,8 @@ export component ModelsPage inherits HorizontalLayout {
                 }
                 LabeledField {
                     label_width <=> LabelColumn.models;
-                    label: "Draft n-min";
-                    hint: "Shortest draft worth verifying (--spec-draft-n-min).\nA draft that comes out shorter, typically because Draft p-min cut it, is DISCARDED: that step decodes one token without speculation.\nRaise it when short drafts cost more to verify than they save.\ndefault = omit the flag → llama.cpp default: 0 (keep any length).";
+                    label: Strings.t("draft-n-min");
+                    hint: Strings.t("draft-n-min-hint");
                     DefaultLineEdit {
                         enabled: AppState.draft_active;
                         input_type: InputType.number;
@@ -1148,8 +1168,8 @@ export component ModelsPage inherits HorizontalLayout {
                 }
                 LabeledField {
                     label_width <=> LabelColumn.models;
-                    label: "Draft n-ubatch";
-                    hint: "Physical batch of the draft context (--spec-draft-n-ubatch, llama.cpp v0.7.0+).\nSmaller shrinks the draft's compute buffer, i.e. spares VRAM, at the cost of more passes when the drafter catches up on a long prompt.\nApplies to MTP heads embedded in the main model too, not only to a draft file.\ndefault = omit the flag → llama.cpp default: 0 (the model's own U-Batch size).";
+                    label: Strings.t("draft-n-ubatch");
+                    hint: Strings.t("draft-n-ubatch-hint");
                     DefaultLineEdit {
                         enabled: AppState.draft_active;
                         input_type: InputType.number;
@@ -1158,31 +1178,33 @@ export component ModelsPage inherits HorizontalLayout {
                     }
                 }
                 Text {
-                    text: "The draft context keeps its OWN KV cache, and it does not follow the model's: llama.cpp overwrites the inherited types with the draft default, f16. Quantize it here to reclaim the VRAM; unlike the placement flags above, these two also apply to MTP heads embedded in the main model.";
+                    text: Strings.t("draft-cache-note");
                     wrap: word-wrap;
                     font-size: 12px;
                     color: Palette.foreground.transparentize(Tokens.muted);
                 }
                 LabeledField {
                     label_width <=> LabelColumn.models;
-                    label: "Draft K-cache type";
-                    hint: "KV cache quantization for K in the DRAFT context (--spec-draft-type-k, alias -ctkd).\ndefault = omit the flag → llama.cpp's DRAFT default: f16, NOT the model's K-cache type, which llama.cpp copies in and then overwrites.\nA draft context is small, so this matters most on a separate draft model with a large context.";
+                    label: Strings.t("draft-k-cache-type");
+                    hint: Strings.t("draft-k-cache-type-hint");
                     EnumComboBox {
                         // Active whenever a draft context exists: a picked draft
                         // file OR embedded MTP heads (draft_active), since these
                         // apply in both cases.
                         enabled: AppState.draft_active;
                         options: Options.cache_types;
+                        labels: Options.cache_type_labels;
                         value <=> AppState.form.spec_draft_type_k;
                     }
                 }
                 LabeledField {
                     label_width <=> LabelColumn.models;
-                    label: "Draft V-cache type";
-                    hint: "KV cache quantization for V in the DRAFT context (--spec-draft-type-v, alias -ctvd).\ndefault = omit the flag → llama.cpp's DRAFT default: f16, independent of the model's V-cache type.\nUsually matched to the draft K type; quantized V needs flash attention.";
+                    label: Strings.t("draft-v-cache-type");
+                    hint: Strings.t("draft-v-cache-type-hint");
                     EnumComboBox {
                         enabled: AppState.draft_active;
                         options: Options.cache_types;
+                        labels: Options.cache_type_labels;
                         value <=> AppState.form.spec_draft_type_v;
                     }
                 }
@@ -1194,8 +1216,8 @@ export component ModelsPage inherits HorizontalLayout {
                 }
                 LabeledField {
                     label_width <=> LabelColumn.models;
-                    label: "Match length";
-                    hint: "Tokens of context the lookup matches before it proposes a draft (--spec-ngram-mod-n-match).\nBelow 16 llama.cpp warns of poor drafts.\ndefault = omit the flag → llama.cpp default: 24.";
+                    label: Strings.t("match-length");
+                    hint: Strings.t("match-length-hint");
                     DefaultLineEdit {
                         enabled: AppState.spec_type_has(AppState.form.spec_type, "ngram-mod");
                         input_type: InputType.number;
@@ -1205,8 +1227,8 @@ export component ModelsPage inherits HorizontalLayout {
                 }
                 LabeledField {
                     label_width <=> LabelColumn.models;
-                    label: "Min draft";
-                    hint: "Fewest tokens a draft must have to be proposed (--spec-ngram-mod-n-min), 0 to 1024.\ndefault = omit the flag → llama.cpp default: 48.";
+                    label: Strings.t("min-draft");
+                    hint: Strings.t("min-draft-hint");
                     DefaultLineEdit {
                         enabled: AppState.spec_type_has(AppState.form.spec_type, "ngram-mod");
                         input_type: InputType.number;
@@ -1216,8 +1238,8 @@ export component ModelsPage inherits HorizontalLayout {
                 }
                 LabeledField {
                     label_width <=> LabelColumn.models;
-                    label: "Max draft";
-                    hint: "Most tokens drafted per step (--spec-ngram-mod-n-max), 0 to 1024.\ndefault = omit the flag → llama.cpp default: 64.";
+                    label: Strings.t("max-draft");
+                    hint: Strings.t("max-draft-hint");
                     DefaultLineEdit {
                         enabled: AppState.spec_type_has(AppState.form.spec_type, "ngram-mod");
                         input_type: InputType.number;
@@ -1233,8 +1255,8 @@ export component ModelsPage inherits HorizontalLayout {
                 }
                 LabeledField {
                     label_width <=> LabelColumn.models;
-                    label: "Lookup n-gram";
-                    hint: "Length of the n-gram looked up in the context (--spec-ngram-simple-size-n), 1 to 1024.\ndefault = omit the flag → llama.cpp default: 12.";
+                    label: Strings.t("lookup-n-gram");
+                    hint: Strings.t("ngram-simple-lookup-hint");
                     DefaultLineEdit {
                         enabled: AppState.spec_type_has(AppState.form.spec_type, "ngram-simple");
                         input_type: InputType.number;
@@ -1244,8 +1266,8 @@ export component ModelsPage inherits HorizontalLayout {
                 }
                 LabeledField {
                     label_width <=> LabelColumn.models;
-                    label: "Draft m-gram";
-                    hint: "Length of the m-gram drafted after a match (--spec-ngram-simple-size-m), 1 to 1024.\ndefault = omit the flag → llama.cpp default: 48.";
+                    label: Strings.t("draft-m-gram");
+                    hint: Strings.t("ngram-simple-draft-hint");
                     DefaultLineEdit {
                         enabled: AppState.spec_type_has(AppState.form.spec_type, "ngram-simple");
                         input_type: InputType.number;
@@ -1261,8 +1283,8 @@ export component ModelsPage inherits HorizontalLayout {
                 }
                 LabeledField {
                     label_width <=> LabelColumn.models;
-                    label: "Lookup n-gram";
-                    hint: "Length of the n-gram looked up in the context (--spec-ngram-map-k-size-n), 1 to 1024.\ndefault = omit the flag → llama.cpp default: 12.";
+                    label: Strings.t("lookup-n-gram");
+                    hint: Strings.t("ngram-map-lookup-hint");
                     DefaultLineEdit {
                         enabled: AppState.spec_type_has(AppState.form.spec_type, "ngram-map-k");
                         input_type: InputType.number;
@@ -1272,8 +1294,8 @@ export component ModelsPage inherits HorizontalLayout {
                 }
                 LabeledField {
                     label_width <=> LabelColumn.models;
-                    label: "Draft m-gram";
-                    hint: "Length of the m-gram drafted after a match (--spec-ngram-map-k-size-m), 1 to 1024.\ndefault = omit the flag → llama.cpp default: 48.";
+                    label: Strings.t("draft-m-gram");
+                    hint: Strings.t("ngram-map-draft-hint");
                     DefaultLineEdit {
                         enabled: AppState.spec_type_has(AppState.form.spec_type, "ngram-map-k");
                         input_type: InputType.number;
@@ -1289,8 +1311,8 @@ export component ModelsPage inherits HorizontalLayout {
                 }
                 LabeledField {
                     label_width <=> LabelColumn.models;
-                    label: "Lookup n-gram";
-                    hint: "Length of the n-gram looked up in the context (--spec-ngram-map-k4v-size-n), 1 to 1024.\ndefault = omit the flag → llama.cpp default: 12.";
+                    label: Strings.t("lookup-n-gram");
+                    hint: Strings.t("ngram-map-values-lookup-hint");
                     DefaultLineEdit {
                         enabled: AppState.spec_type_has(AppState.form.spec_type, "ngram-map-k4v");
                         input_type: InputType.number;
@@ -1300,8 +1322,8 @@ export component ModelsPage inherits HorizontalLayout {
                 }
                 LabeledField {
                     label_width <=> LabelColumn.models;
-                    label: "Draft m-gram";
-                    hint: "Length of the m-gram drafted after a match (--spec-ngram-map-k4v-size-m), 1 to 1024.\ndefault = omit the flag → llama.cpp default: 48.";
+                    label: Strings.t("draft-m-gram");
+                    hint: Strings.t("ngram-map-values-draft-hint");
                     DefaultLineEdit {
                         enabled: AppState.spec_type_has(AppState.form.spec_type, "ngram-map-k4v");
                         input_type: InputType.number;
@@ -1311,8 +1333,8 @@ export component ModelsPage inherits HorizontalLayout {
                 }
                 LabeledField {
                     label_width <=> LabelColumn.models;
-                    label: "Min hits";
-                    hint: "Times an n-gram must have been seen before its continuation is proposed (--spec-ngram-map-k4v-min-hits).\nHigher drafts less often but more reliably.\ndefault = omit the flag → llama.cpp default: 1.";
+                    label: Strings.t("min-hits");
+                    hint: Strings.t("min-hits-hint");
                     DefaultLineEdit {
                         enabled: AppState.spec_type_has(AppState.form.spec_type, "ngram-map-k4v");
                         input_type: InputType.number;
@@ -1323,7 +1345,7 @@ export component ModelsPage inherits HorizontalLayout {
             }
 
             FormActions {
-                save_text: "Save preset";
+                save_text: Strings.t("save-preset");
                 // Shared with the Ctrl+S shortcut; the gate lives in state.slint.
                 save_enabled: AppState.can_save_preset;
                 revert_enabled: AppState.selected_preset_index >= 0 && AppState.preset_dirty;

@@ -29,6 +29,8 @@ rusqlite = { version = "0.41", features = ["bundled"] }
 # are already in the lock (slint's own image loading).
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 base64 = "0.23"
+# The language files (strings.rs). Already in the lock (xtask's own parser).
+toml = { version = "1", default-features = false, features = ["std", "parse", "serde"] }
 
 # rfd has no file-dialog backend without a feature on Linux, and its build
 # script refuses to compile with none chosen. xdg-portal talks to the desktop

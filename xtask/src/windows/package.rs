@@ -312,6 +312,7 @@ pub fn run(keep_staging: bool, wix_arg: Option<PathBuf>) -> Result<()> {
     std::fs::create_dir_all(&stage)?;
     std::fs::create_dir_all(&out_dir)?;
     crate::common::bench_share::stage(&stage)?;
+    crate::common::strings_share::stage(&stage)?;
 
     ui::head("Staging llama.cpp binaries...");
     run_cmd(cmd("cmake").arg("--install").arg(&build_dir).arg("--prefix").arg(&stage))?;

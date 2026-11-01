@@ -10,6 +10,7 @@
 import { ScrollView, CheckBox, Palette } from "std-widgets.slint";
 import { Tokens, SectionCard } from "components.slint";
 import { HwBar, HwGroup } from "types.slint";
+import { Strings } from "strings.slint";
 
 // One metric: label, a track filled to `bar.fraction`, and the readout.
 component MeterBar inherits HorizontalLayout {
@@ -62,7 +63,7 @@ component MeterBar inherits HorizontalLayout {
 }
 
 export component HwWindow inherits Window {
-    title: "HW Monitor";
+    title: Strings.t("hw-monitor");
     icon: @image-url("llama.png");
     min-width: 520px;
     min-height: 320px;
@@ -84,7 +85,7 @@ export component HwWindow inherits Window {
     callback group_toggled(int, bool);
 
     if root.groups.length == 0 : Text {
-        text: "Sampling…";
+        text: Strings.t("sampling");
         color: Palette.foreground.transparentize(Tokens.muted);
     }
 

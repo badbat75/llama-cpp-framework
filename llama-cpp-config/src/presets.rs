@@ -62,6 +62,7 @@
 //! and ids stay unique ACROSS both files (Rename; New/Clone de-conflict against
 //! `load_listed`), so switching a preset back on can never land on a namesake.
 
+use crate::strings;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -1240,7 +1241,7 @@ fn move_section(id: &str, from: &Path, to: &Path, new_file_header: Option<&str>)
         }
         return Err(io::Error::new(
             io::ErrorKind::NotFound,
-            format!("no preset named `{id}`"),
+            strings::fill("no-preset-named", &[&id]),
         ));
     };
     if let Some(parent) = to.parent() {
@@ -1308,10 +1309,7 @@ pub(crate) fn validate_for_save(preset: &Preset) -> io::Result<()> {
     if preset.id.is_empty() || !valid_id(&preset.id) {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
-            format!(
-                "invalid preset id `{}`: use letters, digits, '.', '-', '_'",
-                preset.id
-            ),
+            strings::fill("invalid-preset-id", &[&preset.id]),
         ));
     }
     for (field, value) in [
@@ -1330,13 +1328,13 @@ pub(crate) fn validate_for_save(preset: &Preset) -> io::Result<()> {
     if preset.project_url.contains(['\r', '\n']) {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
-            "project URL must be a single line",
+            strings::t("project-url-one-line"),
         ));
     }
     if preset.placement_note.contains(['\r', '\n']) {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
-            "placement note must be a single line",
+            strings::t("placement-note-one-line"),
         ));
     }
     validate_fit_target(&preset.fit_target)
@@ -1354,7 +1352,7 @@ pub(crate) fn validate_for_save(preset: &Preset) -> io::Result<()> {
 /// at the save boundary every writer goes through. 0 is "no cache" and passes.
 pub fn validate_moe_cache_split(p: &Preset) -> Result<(), String> {
     if p.moe_cache_mib.is_some_and(|v| v > 0) && p.split_mode.trim() == "tensor" {
-        Err("moe-cache-mib with split-mode tensor: llama.cpp's MoE cache does not support tensor parallelism and the model would not load. Clear the MoE cache or pick another split mode".into())
+        Err(strings::t("moe-cache-with-tensor-split"))
     } else {
         Ok(())
     }
@@ -1373,9 +1371,7 @@ pub fn validate_fit_target(v: &str) -> Result<(), String> {
     {
         Ok(())
     } else {
-        Err(format!(
-            "fit-target `{v}`: MiB as whole numbers, one value or a comma-separated list per device"
-        ))
+        Err(strings::fill("fit-target-format", &[&v, &"MiB"]))
     }
 }
 
@@ -1391,13 +1387,13 @@ pub fn rename(old_id: &str, new_id: &str) -> io::Result<()> {
     if new.is_empty() {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
-            "new preset id is empty",
+            strings::t("new-preset-id-empty"),
         ));
     }
     if new == old_id {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
-            "new preset id is unchanged",
+            strings::t("new-preset-id-unchanged"),
         ));
     }
     // The rename dialog is one free-text way into a section header (the save
@@ -1407,7 +1403,7 @@ pub fn rename(old_id: &str, new_id: &str) -> io::Result<()> {
     if !valid_id(new) {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
-            "preset ids may only use letters, digits, '.', '-' and '_'",
+            strings::t("preset-id-charset"),
         ));
     }
     rename_in(
@@ -1429,7 +1425,7 @@ fn rename_in(enabled: &Path, parked: &Path, old_id: &str, new: &str) -> io::Resu
     if !new.eq_ignore_ascii_case(old_id) && has_section(other, new) {
         return Err(io::Error::new(
             io::ErrorKind::AlreadyExists,
-            format!("a preset named `{new}` already exists"),
+            strings::fill("preset-name-taken", &[&new]),
         ));
     }
     ini::rename_section(&home, old_id, new)

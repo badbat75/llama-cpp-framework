@@ -401,6 +401,14 @@ fn slint_string_literals_only_use_glyphs_proven_to_render() {
             scanned += 1;
         }
     }
+    // The text a page shows through `Strings.t` is drawn just the same.
+    for (key, text) in &language_file() {
+        for c in text.chars().filter(|c| !c.is_ascii()) {
+            if !RENDERABLE.contains(&c) {
+                let _ = writeln!(hits, "en_US.toml: U+{:04X} '{c}' in {key}", c as u32);
+            }
+        }
+    }
     // 12: every ui/*.slint, downloads_window.slint the latest.
     assert!(scanned >= 12, "expected the full ui/ set, scanned {scanned}");
     assert!(
@@ -409,6 +417,386 @@ fn slint_string_literals_only_use_glyphs_proven_to_render() {
          empty box, silently. Run the GUI, look at it, and only then add the char \
          to RENDERABLE:\n{hits}"
     );
+}
+
+// ── Language file ────────────────────────────────────────────────────────
+
+fn language_file() -> std::collections::HashMap<String, String> {
+    let file = Path::new(env!("CARGO_MANIFEST_DIR")).join("strings").join("en_US.toml");
+    crate::strings::parse(&std::fs::read_to_string(file).expect("read en_US.toml"))
+}
+
+/// What each `Strings.t(`, `t1(` or `t2(` in a `.slint` source is given, with the
+/// count of values it passes: the key when it is a string literal, else the text
+/// behind the parenthesis, which `is_key` refuses (a computed key could not be
+/// checked against the file).
+fn strings_t_keys(source: &str) -> Vec<(usize, String)> {
+    const CALL: &str = "Strings.t";
+    let mut keys = Vec::new();
+    for line in source.lines() {
+        let mut rest = strip_line_comment(line);
+        while let Some(at) = rest.find(CALL) {
+            rest = &rest[at + CALL.len()..];
+            let (values, after) = match rest.split_once('(') {
+                Some(("", after)) => (0, after),
+                Some(("1", after)) => (1, after),
+                Some(("2", after)) => (2, after),
+                _ => continue,
+            };
+            let key = after
+                .strip_prefix('"')
+                .and_then(|s| s.split_once('"'))
+                .map_or(after, |(key, _)| key);
+            keys.push((values, key.to_string()));
+        }
+    }
+    keys
+}
+
+/// What each `strings::t(`, `fill(` or `key(` in a Rust source is given: the key
+/// when it is a string literal, with the count of values `fill` passes in its
+/// `&[...]`, 0 for `t`, and `None` where the count is not at the call (`key` marks
+/// a key shown later). A call on a non-literal is skipped: that key is marked with
+/// `key` where it is written.
+fn rust_string_calls(source: &str) -> Vec<(Option<usize>, String)> {
+    let code: String = source.lines().map(|l| format!("{}\n", strip_line_comment(l))).collect();
+    let mut calls = Vec::new();
+    for (call, is_fill) in [("strings::t(", false), ("strings::key(", false), ("strings::fill(", true)] {
+        let mut rest = code.as_str();
+        while let Some(at) = rest.find(call) {
+            rest = &rest[at + call.len()..];
+            let Some((key, after)) = rest.trim_start().strip_prefix('"').and_then(|s| s.split_once('"')) else {
+                continue;
+            };
+            let values = match (call, is_fill) {
+                ("strings::t(", _) => Some(0),
+                (_, true) => after.trim_start().strip_prefix(',').and_then(|s| slice_len(s.trim_start())),
+                _ => None,
+            };
+            calls.push((values, key.to_string()));
+        }
+    }
+    calls
+}
+
+/// The element count of the `&[a, b(c, d), "e,"]` at the start of `s`, a trailing
+/// comma not counted.
+fn slice_len(s: &str) -> Option<usize> {
+    let s = s.strip_prefix("&[")?;
+    let (mut depth, mut commas, mut quoted, mut escaped, mut pending) = (0, 0, false, false, false);
+    for c in s.chars() {
+        if quoted {
+            match c {
+                _ if escaped => escaped = false,
+                '\\' => escaped = true,
+                '"' => quoted = false,
+                _ => {}
+            }
+            continue;
+        }
+        match c {
+            '"' => quoted = true,
+            '(' | '[' | '{' => depth += 1,
+            ']' if depth == 0 => return Some(commas + usize::from(pending)),
+            ')' | ']' | '}' => depth -= 1,
+            ',' if depth == 0 => {
+                commas += 1;
+                pending = false;
+                continue;
+            }
+            _ => {}
+        }
+        pending |= !c.is_whitespace();
+    }
+    None
+}
+
+/// Rust sources whose text is the GUI's unless a source the CLI reaches calls into
+/// them (`reached_gui_only_calls`). Every other source outside `gui/` is shared:
+/// its keys belong in `cli.toml` too.
+const GUI_ONLY: [&str; 12] = [
+    "ini.rs",
+    "tensor_override.rs",
+    "devices.rs",
+    "form.rs",
+    "gguf.rs",
+    "gpu_split.rs",
+    "kv_cache.rs",
+    "model_scan.rs",
+    "moe_cache.rs",
+    "net_ifaces.rs",
+    "server_form.rs",
+    "tensor_picker.rs",
+];
+
+fn gui_only_source(path: &Path) -> bool {
+    path.ancestors().any(|p| p.file_name().is_some_and(|n| n == "gui"))
+        || path.file_name().is_some_and(|n| n == "gui.rs" || GUI_ONLY.iter().any(|g| n == *g))
+}
+
+/// Keys of a source a CLI command does reach, written where it does not:
+/// `linked_files.rs` shows its rows and its deletion report to the GUI alone,
+/// `bench::sweep::check_values` is the tab's A/B check, `presets::rename` and the
+/// `ini::rename_section` under it are the rename dialog's, and `startup::set_enabled`
+/// is the Settings tab's.
+const GUI_ONLY_KEYS: [&str; 19] = [
+    "command-too-long",
+    "could-not-delete",
+    "delete-also-files",
+    "delete-preset-only",
+    "deleted-preset",
+    "empty-folder-many",
+    "empty-folder-one",
+    "in-use-kept",
+    "kept-in-use",
+    "key-value-refused",
+    "login-start-unavailable",
+    "new-preset-id-empty",
+    "new-preset-id-unchanged",
+    "preset-id-charset",
+    "preset-name-taken",
+    "removed-file-many",
+    "removed-file-one",
+    "section-exists",
+    "section-not-found",
+];
+
+/// The functions of a rustfmt-ed source, `(name, indented, text)`, its tests left
+/// out: a body ends at the `}` at its `fn`'s indent. What lies outside every
+/// function comes last, under an empty name.
+fn rust_fns(source: &str) -> Vec<(String, bool, String)> {
+    let mut fns = Vec::new();
+    let mut outside = String::new();
+    let mut lines = source.lines().take_while(|l| l.trim() != "mod tests {");
+    while let Some(raw) = lines.next() {
+        let line = strip_line_comment(raw);
+        let code = line.trim_start();
+        let bare = ["pub(crate) ", "pub(super) ", "pub "].iter().find_map(|p| code.strip_prefix(p)).unwrap_or(code);
+        let bare = bare.strip_prefix("const ").unwrap_or(bare);
+        let Some(rest) = bare.strip_prefix("fn ") else {
+            outside.push_str(line);
+            outside.push('\n');
+            continue;
+        };
+        let name = rest.split(|c: char| !c.is_alphanumeric() && c != '_').next().unwrap_or_default();
+        let indent = &line[..line.len() - code.len()];
+        let mut body = format!("{line}\n");
+        if !line.trim_end().ends_with(['}', ';']) {
+            let close = format!("{indent}}}");
+            for raw in lines.by_ref() {
+                let line = strip_line_comment(raw);
+                body.push_str(line);
+                body.push('\n');
+                if line.trim_end() == close {
+                    break;
+                }
+            }
+        }
+        fns.push((name.to_string(), !indent.is_empty(), body));
+    }
+    fns.push((String::new(), false, outside));
+    fns
+}
+
+/// `name` in `text` as a whole identifier path, not the tail or the head of a longer
+/// one; `then` is what must follow it (`None`: anything but an identifier character).
+fn names(text: &str, name: &str, then: Option<char>) -> bool {
+    let word = |c: Option<char>| c.is_some_and(|c| c.is_alphanumeric() || c == '_');
+    text.match_indices(name).any(|(at, _)| {
+        let next = text[at + name.len()..].chars().next();
+        !word(text[..at].chars().next_back()) && then.map_or(!word(next), |c| next == Some(c))
+    })
+}
+
+/// The string calls of the `GUI_ONLY` functions (`(module, source)`) that the texts
+/// in `reachers` can get to: by `module::function`, through a same-file bare call
+/// once inside, or by a method carrying text, matched by name alone. `lines` is left
+/// out of that match: it is `str::lines` everywhere else.
+fn reached_gui_only_calls(reachers: &[String], gui_only: &[(String, String)]) -> Vec<(Option<usize>, String)> {
+    let fns: Vec<(&str, (String, bool, String))> = gui_only
+        .iter()
+        .flat_map(|(module, source)| rust_fns(source).into_iter().map(move |f| (module.as_str(), f)))
+        .filter(|(_, (name, _, _))| !name.is_empty())
+        .collect();
+    let mut reached = vec![false; fns.len()];
+    let mut work: Vec<(&str, &str)> = reachers.iter().map(|t| ("", t.as_str())).collect();
+    let mut calls = Vec::new();
+    while let Some((from, text)) = work.pop() {
+        for (i, (module, (name, indented, body))) in fns.iter().enumerate() {
+            let method = *indented && name != "lines" && body.contains("strings::") && text.contains(&format!(".{name}("));
+            let bare = *module == from && text.match_indices(&format!("{name}(")).any(|(at, _)| {
+                !text[..at].ends_with(|c: char| c.is_alphanumeric() || "_.:".contains(c))
+            });
+            if !reached[i] && (method || bare || names(text, &format!("{module}::{name}"), None)) {
+                reached[i] = true;
+                calls.extend(rust_string_calls(body));
+                work.push((module, body));
+            }
+        }
+    }
+    calls
+}
+
+/// A key held in a `strings::key` mark is shown later, through a call on a variable.
+/// Its text must take what that call passes: in a function with a `strings::fill` on
+/// a non-literal key, that call's values; anywhere else (a table, a `strings::t` on a
+/// variable) none.
+fn marked_key_calls(source: &str) -> Vec<(Option<usize>, String)> {
+    let mut calls = Vec::new();
+    for (_, _, body) in rust_fns(source) {
+        let passed: Vec<usize> = body
+            .match_indices("strings::fill(")
+            .filter_map(|(at, call)| {
+                let args = body[at + call.len()..].trim_start();
+                let (_, after) = args.split_once(',').filter(|_| !args.starts_with('"'))?;
+                slice_len(after.trim_start())
+            })
+            .collect();
+        let passed = if passed.is_empty() { vec![0] } else { passed };
+        for (at, call) in body.match_indices("strings::key(") {
+            let Some((key, _)) = body[at + call.len()..].trim_start().strip_prefix('"').and_then(|s| s.split_once('"'))
+            else {
+                continue;
+            };
+            calls.extend(passed.iter().map(|n| (Some(*n), key.to_string())));
+        }
+    }
+    calls
+}
+
+/// Every `.rs` under `dir`, the lint's own tests and the loader left out.
+fn rust_sources(dir: &Path, out: &mut Vec<std::path::PathBuf>) {
+    for entry in std::fs::read_dir(dir).expect("src/ dir") {
+        let path = entry.expect("dir entry").path();
+        let name = path.file_name().unwrap_or_default();
+        if path.is_dir() {
+            if name != "tests" {
+                rust_sources(&path, out);
+            }
+        } else if path.extension().is_some_and(|e| e == "rs") && name != "strings.rs" {
+            out.push(path);
+        }
+    }
+}
+
+fn mistuned<'a>(
+    calls: &'a std::collections::BTreeSet<(Option<usize>, String)>,
+    table: &std::collections::HashMap<String, String>,
+) -> Vec<&'a (Option<usize>, String)> {
+    calls
+        .iter()
+        .filter(|(values, key)| {
+            let Some(values) = values else { return false };
+            table.get(key).is_some_and(|text| {
+                (0..9).any(|n| text.contains(&format!("{{{n}}}")) != (n < *values))
+            })
+        })
+        .collect()
+}
+
+/// Lowercase words joined by hyphens: no number, no quoting needed in TOML.
+fn is_key(key: &str) -> bool {
+    key.split('-')
+        .all(|word| !word.is_empty() && word.chars().all(|c| c.is_ascii_lowercase()))
+}
+
+// A key with no entry shows on screen as the key, and nothing else would say so:
+// this scan is what stands between a typo and the window.
+#[test]
+fn strings_t_keys_and_the_language_file_match() {
+    let ui = Path::new(env!("CARGO_MANIFEST_DIR")).join("ui");
+    let mut calls = std::collections::BTreeSet::new();
+    for entry in std::fs::read_dir(&ui).expect("ui/ dir") {
+        let path = entry.expect("dir entry").path();
+        if path.extension().is_some_and(|e| e == "slint") {
+            let source = std::fs::read_to_string(&path).expect("read .slint");
+            calls.extend(strings_t_keys(&source).into_iter().map(|(n, key)| (Some(n), key)));
+        }
+    }
+    let mut sources = Vec::new();
+    rust_sources(&Path::new(env!("CARGO_MANIFEST_DIR")).join("src"), &mut sources);
+    let (mut shared, mut reachers, mut gui_only) = (std::collections::BTreeSet::new(), Vec::new(), Vec::new());
+    for path in &sources {
+        let source = std::fs::read_to_string(path).expect("read .rs");
+        let found = rust_string_calls(&source);
+        calls.extend(marked_key_calls(&source));
+        if !gui_only_source(path) {
+            shared.extend(found.iter().cloned());
+            reachers.push(rust_fns(&source).into_iter().map(|(_, _, text)| text).collect::<String>());
+        } else if path.file_name().is_some_and(|n| GUI_ONLY.iter().any(|g| n == *g)) {
+            let module = path.file_stem().expect("file stem").to_string_lossy().into_owned();
+            gui_only.push((module, source));
+        }
+        calls.extend(found);
+    }
+    shared.extend(reached_gui_only_calls(&reachers, &gui_only));
+    shared.retain(|(_, key)| !GUI_ONLY_KEYS.contains(&key.as_str()));
+    let used: std::collections::BTreeSet<&String> = calls.iter().map(|(_, key)| key).collect();
+    let table = language_file();
+    let bad_values = mistuned(&calls, &table);
+    assert!(bad_values.is_empty(), "values passed do not match the text's {{N}}: {bad_values:?}");
+    let invalid: Vec<_> = used.iter().copied().chain(table.keys()).filter(|k| !is_key(k)).collect();
+    assert!(invalid.is_empty(), "not a literal lowercase-hyphen key: {invalid:?}");
+    let missing: Vec<_> = used.iter().filter(|k| !table.contains_key(**k)).collect();
+    assert!(missing.is_empty(), "used in ui/ or src/ but not in en_US.toml: {missing:?}");
+    let unused: Vec<_> = table.keys().filter(|k| !used.contains(k)).collect();
+    assert!(unused.is_empty(), "in en_US.toml but used nowhere in ui/ or src/: {unused:?}");
+
+    // cli.toml: exactly the keys a CLI command can reach, each also
+    // in the language file, its {N} matching the calls.
+    let file = Path::new(env!("CARGO_MANIFEST_DIR")).join("strings").join("cli.toml");
+    let cli = crate::strings::parse(&std::fs::read_to_string(file).expect("read cli.toml"));
+    let bad_values = mistuned(&shared, &cli);
+    assert!(bad_values.is_empty(), "values passed do not match cli.toml's {{N}}: {bad_values:?}");
+    let shared: std::collections::BTreeSet<&String> = shared.iter().map(|(_, key)| key).collect();
+    let missing: Vec<_> = shared.iter().filter(|k| !cli.contains_key(**k)).collect();
+    assert!(missing.is_empty(), "used by a source the CLI reaches but not in cli.toml: {missing:?}");
+    let unused: Vec<_> = cli.keys().filter(|k| !shared.contains(k)).collect();
+    assert!(unused.is_empty(), "in cli.toml but used by no source the CLI reaches: {unused:?}");
+    let alone: Vec<_> = cli.keys().filter(|k| !table.contains_key(*k)).collect();
+    assert!(alone.is_empty(), "in cli.toml but not in en_US.toml: {alone:?}");
+}
+
+#[test]
+fn reach_follows_calls_out_of_a_shared_source() {
+    let gui_only = [
+        ("alpha".to_string(), "pub fn used() {\n    helper();\n}\nfn helper() {\n    strings::t(\"reached\");\n    beta::far();\n}\nfn idle() {\n    strings::t(\"idle\");\n}\nstruct S;\nimpl S {\n    fn called(&self) {\n        strings::t(\"method\");\n    }\n    fn lines(&self) {\n        strings::t(\"lines\");\n    }\n}\n".to_string()),
+        ("beta".to_string(), "pub fn far() {\n    strings::t(\"far\");\n}\npub fn far_not() {\n    strings::t(\"far-not\");\n}\n".to_string()),
+    ];
+    let reached = reached_gui_only_calls(&["alpha::used(); x.called(); y.lines();".to_string()], &gui_only);
+    let mut keys: Vec<_> = reached.into_iter().map(|(_, key)| key).collect();
+    keys.sort();
+    assert_eq!(keys, ["far", "method", "reached"]);
+}
+
+#[test]
+fn marked_keys_take_what_the_later_call_passes() {
+    let source = "fn a() {\n    let key = strings::key(\"one\");\n    strings::fill(key, &[&x, &y]);\n}\nfn b() {\n    strings::t(strings::key(\"two\"));\n}\nconst T: &str = strings::key(\"three\");\n";
+    let expect = [(Some(2), "one"), (Some(0), "two"), (Some(0), "three")].map(|(n, k)| (n, k.to_string()));
+    assert_eq!(marked_key_calls(source), expect);
+}
+
+#[test]
+fn rust_scan_reads_keys_and_counts_values() {
+    let calls = rust_string_calls(
+        "// strings::t(\"comment\")\nstrings::t(\"one\"); strings::t(key);\nstrings::key(\"two\");\nstrings::fill(\n    \"three\",\n    &[&a(b, c), &\"d,\", &[1, 2],\n],\n);\nstrings::fill(\"four\", args);\n",
+    );
+    let expect = [(Some(0), "one"), (None, "two"), (Some(3), "three"), (None, "four")]
+        .map(|(n, k)| (n, k.to_string()));
+    assert_eq!(calls, expect);
+}
+
+#[test]
+fn strings_t_scan_reads_keys_and_ignores_comments() {
+    let keys = strings_t_keys(
+        "// Strings.t(\"comment\")\ntext: a ? Strings.t(\"one\") : Strings.t2(\"two-three\", a, b);\ntext: Strings.t1(x, y);\n",
+    );
+    let expect = [(0, "one"), (2, "two-three"), (1, "x, y);")].map(|(n, k)| (n, k.to_string()));
+    assert_eq!(keys, expect);
+    assert!(is_key("two-three"));
+    for bad in ["x, y);", "Two", "two words", "two-", "size-32", ""] {
+        assert!(!is_key(bad), "{bad:?} passed as a key");
+    }
 }
 
 #[test]

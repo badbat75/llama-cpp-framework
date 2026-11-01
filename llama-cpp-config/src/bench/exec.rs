@@ -31,6 +31,7 @@
 //! of grouping is that a thermal drift is charged to the last preset, which the
 //! report says out loud.
 
+use crate::strings;
 use std::io::{BufRead, BufReader};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -119,7 +120,7 @@ fn run_steps(
     emit: &impl Fn(Event),
 ) -> Result<String, String> {
     let port = u16::try_from(server_cfg::load().port_or_default())
-        .map_err(|_| "invalid port in server.ini")?;
+        .map_err(|_| strings::t("invalid-port"))?;
     let was_running = runstate::is_running();
     // presets.ini differs from what the running router read.
     let mut dirty = false;
@@ -131,7 +132,7 @@ fn run_steps(
             problems.push("Cancelled.".to_string());
             break;
         }
-        emit(Event::Progress(format!("Step {}/{total}: {}", i + 1, step.label)));
+        emit(Event::Progress(strings::fill("step-progress", &[&(i + 1), &total, &step.label])));
         let mut held = Vec::new();
         for preset in &step.plan.presets {
             match super::spec::apply_overrides(preset, &step.overrides) {
@@ -143,7 +144,7 @@ fn run_steps(
             dirty = true;
         }
         let ran = if !problems.is_empty() {
-            Err("not run: an override could not be written".to_string())
+            Err(strings::t("override-not-written"))
         } else if dirty {
             super::sweep::prepare_server(Mode::Live, port).map(|()| dirty = false)
         } else {
@@ -385,7 +386,7 @@ fn run(plan: &Plan, cancel: &Arc<AtomicBool>, emit: &impl Fn(Event)) -> Result<S
     }
 
     let dir = super::bench_dir();
-    std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
+    std::fs::create_dir_all(&dir).map_err(|e| strings::fill("cannot-create", &[&dir.display(), &e]))?;
     let stamp = super::stamp(super::now_secs());
     // Opened BEFORE anything is measured: a database that cannot be written is
     // a run whose results would have nowhere to go.
@@ -489,7 +490,7 @@ fn run_live(
     cancel: &Arc<AtomicBool>,
     emit: &impl Fn(Event),
 ) -> Result<(), String> {
-    let port = u16::try_from(cfg.port_or_default()).map_err(|_| "invalid port in server.ini")?;
+    let port = u16::try_from(cfg.port_or_default()).map_err(|_| strings::t("invalid-port"))?;
     let plan = run.plan.clone();
 
     for preset in chosen {
@@ -497,10 +498,7 @@ fn run_live(
             return Err("Cancelled.".into());
         }
         run.begin_preset(preset, cfg);
-        emit(Event::Progress(format!(
-            "{}: loading the model (warm-up request)",
-            preset.id
-        )));
+        emit(Event::Progress(strings::fill("loading-warm-up", &[&preset.id])));
         // Discarded on purpose, INCLUDING its error: a router that cannot warm
         // the model will fail the first real repetition too, with a message
         // about the actual request rather than about a warm-up.
@@ -517,7 +515,7 @@ fn run_live(
         // with the cache on and pinned to that slot.
         let prefix = if plan.warm_prefix {
             let text = super::prompt_prefix(&plan.prompt)
-                .ok_or_else(|| format!("{}: Warm = prefix needs a conversation with an assistant turn", preset.id))?;
+                .ok_or_else(|| strings::fill("warm-needs-assistant", &[&preset.id]))?;
             Some(super::live_body_slot(&preset.id, &Plan { prompt: text, ..plan.clone() }, 0, true, 1))
         } else {
             None
@@ -543,19 +541,13 @@ fn run_live(
             if cancelled(cancel) {
                 return Err("Cancelled.".into());
             }
-            emit(Event::Progress(format!(
-                "{}: repetition {rep}/{}",
-                preset.id, plan.reps
-            )));
+            emit(Event::Progress(strings::fill("repetition", &[&preset.id, &rep, &plan.reps])));
             if let Some(prime) = &prefix {
                 let res = http::request(port, "POST", super::LIVE_PATH, Some(prime), live_timeout(&plan))
-                    .map_err(|e| format!("{}: priming the prefix: {e}", preset.id))?;
+                    .map_err(|e| strings::fill("priming-failed", &[&preset.id, &e]))?;
                 if res.status != 200 {
                     let body: String = res.body.chars().take(600).collect();
-                    return Err(format!(
-                        "{}: priming the prefix, llama-server answered HTTP {}: {body}",
-                        preset.id, res.status
-                    ));
+                    return Err(strings::fill("priming-http", &[&preset.id, &res.status, &body]));
                 }
             }
             let sent = std::time::Instant::now();
@@ -569,10 +561,7 @@ fn run_live(
             .map_err(|e| format!("{}: {e}", preset.id))?;
             if res.status != 200 {
                 let body: String = res.body.chars().take(600).collect();
-                return Err(format!(
-                    "{}: llama-server answered HTTP {}: {body}",
-                    preset.id, res.status
-                ));
+                return Err(strings::fill("server-http", &[&preset.id, &res.status, &body]));
             }
             let wall = sent.elapsed().as_secs_f64();
             let s = super::parse_stream(&res.body).map_err(|e| format!("{}: {e}", preset.id))?;
@@ -767,11 +756,7 @@ fn run_concurrent(
     // One request per slot: with a single slot nothing runs concurrently.
     let n = preset.parallel.unwrap_or(super::AUTO_PARALLEL);
     if n < 2 {
-        return Err(format!(
-            "{}: --concurrency {} needs parallel >= 2, the preset has {n}",
-            preset.id,
-            scenario.as_str()
-        ));
+        return Err(strings::fill("concurrency-needs-parallel", &[&preset.id, &scenario.as_str(), &n]));
     }
     let warm = scenario.warm_slots(n as usize);
     let timeout = live_timeout(plan);
@@ -780,10 +765,7 @@ fn run_concurrent(
             .map_err(|e| format!("{}: {e}", preset.id))?;
         if res.status != 200 {
             let body: String = res.body.chars().take(600).collect();
-            return Err(format!(
-                "{}: llama-server answered HTTP {}: {body}",
-                preset.id, res.status
-            ));
+            return Err(strings::fill("server-http", &[&preset.id, &res.status, &body]));
         }
         super::parse_stream(&res.body).map_err(|e| format!("{}: {e}", preset.id))
     };
@@ -793,7 +775,7 @@ fn run_concurrent(
     // since the last one left the whole turn in the slot.
     let prime_plan = if plan.warm_prefix {
         let text = super::prompt_prefix(&plan.prompt)
-            .ok_or_else(|| format!("{}: Warm = prefix needs a conversation with an assistant turn", preset.id))?;
+            .ok_or_else(|| strings::fill("warm-needs-assistant", &[&preset.id]))?;
         Plan { prompt: text, ..plan.clone() }
     } else {
         plan.clone()
@@ -801,7 +783,7 @@ fn run_concurrent(
     let prime = |what: &str| -> Result<(), String> {
         for (slot, &w) in warm.iter().enumerate() {
             if w {
-                emit(Event::Progress(format!("{}: priming slot {slot} with the {what}", preset.id)));
+                emit(Event::Progress(strings::fill("priming-slot", &[&preset.id, &slot, &what])));
                 post(&super::live_body_slot(&preset.id, &prime_plan, slot, true, 1))?;
             }
         }
@@ -826,12 +808,9 @@ fn run_concurrent(
         if plan.warm_prefix {
             prime("prefix")?;
         }
-        emit(Event::Progress(format!(
-            "{}: repetition {rep}/{} ({}, {} requests at once)",
-            preset.id,
-            plan.reps,
-            scenario.as_str(),
-            warm.len()
+        emit(Event::Progress(strings::fill(
+            "repetition-concurrent",
+            &[&preset.id, &rep, &plan.reps, &scenario.as_str(), &warm.len()],
         )));
         let t0 = std::time::Instant::now();
         let replies: Vec<Result<SlotReply, String>> = std::thread::scope(|sc| {
@@ -858,7 +837,7 @@ fn run_concurrent(
                 .into_iter()
                 .map(|h| {
                     h.join()
-                        .unwrap_or_else(|_| Err("request thread panicked".into()))
+                        .unwrap_or_else(|_| Err(strings::t("thread-panicked")))
                 })
                 .collect()
         });
@@ -1016,10 +995,7 @@ fn run_synthetic(
             if cancelled(cancel) {
                 return Err("Cancelled.".into());
             }
-            emit(Event::Progress(format!(
-                "{}: llama-bench, {} sweep",
-                preset.id, sweep.name
-            )));
+            emit(Event::Progress(strings::fill("llama-bench-sweep", &[&preset.id, &sweep.name])));
             let argv = super::synthetic_argv(preset, cfg, &plan, sweep);
             run.note(&format!(
                 "\n--- {} / {} ---\n{} {}",
@@ -1062,7 +1038,7 @@ fn run_one(
 
     let mut child = cmd
         .spawn()
-        .map_err(|e| format!("cannot start llama-bench: {e}"))?;
+        .map_err(|e| strings::fill("cannot-start-llama-bench", &[&e]))?;
 
     // stderr is llama-bench's own chatter (backend init, model load, the
     // --progress ticks). Tee'd to the run log on its own thread so a run in
@@ -1130,11 +1106,7 @@ fn run_one(
         return Err("Cancelled.".into());
     }
     if !status.success() {
-        return Err(format!(
-            "llama-bench exited with {status} on preset '{}'. Its last output:\n{}",
-            preset.id,
-            log_tail(run, 8)
-        ));
+        return Err(strings::fill("llama-bench-exited", &[&status, &preset.id, &log_tail(run, 8)]));
     }
     Ok(())
 }

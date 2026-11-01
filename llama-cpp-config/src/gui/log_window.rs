@@ -29,6 +29,7 @@
 //!
 //! Helpers live in the parent `gui` module (`use super::*`).
 
+use crate::strings;
 use super::*;
 use slint::Model;
 use std::io::{Read, Seek, SeekFrom};
@@ -56,8 +57,6 @@ const CARRY_MAX: usize = 64 * 1024;
 /// the profiler.
 const POLL_EVERY: std::time::Duration = std::time::Duration::from_millis(500);
 
-const MISSING_TEXT: &str = "(log file not found: it is created the first time llama-server starts)";
-
 /// The tail-follower state between polls.
 #[derive(Default)]
 struct Tail {
@@ -69,7 +68,7 @@ struct Tail {
     /// How many rows at the end of the view show `carry`; the next delta
     /// replaces them.
     open_rows: usize,
-    /// The view currently holds `MISSING_TEXT`, not file content.
+    /// The view currently holds the missing-file text, not file content.
     missing: bool,
     /// False until the first poll, which must clear whatever a previous
     /// opening of the window left in the view.
@@ -128,7 +127,7 @@ fn read_increment(t: &mut Tail, path: &Path) -> Delta {
         return Delta {
             reset: true,
             drop_last: 0,
-            rows: vec![MISSING_TEXT.to_string()],
+            rows: vec![strings::t("log-file-missing")],
         };
     };
     let len = file.metadata().map(|m| m.len()).unwrap_or(0);
@@ -239,10 +238,10 @@ fn tail_status(path: &std::path::Path) -> String {
     };
     let age = match meta.modified().ok().and_then(|m| m.elapsed().ok()) {
         None => String::new(),
-        Some(e) if e.as_secs() < 2 => " · updated just now".into(),
-        Some(e) if e.as_secs() < 120 => format!(" · updated {} s ago", e.as_secs()),
-        Some(e) if e.as_secs() < 7200 => format!(" · updated {} min ago", e.as_secs() / 60),
-        Some(e) => format!(" · updated {} h ago", e.as_secs() / 3600),
+        Some(e) if e.as_secs() < 2 => format!(" · {}", strings::t("updated-just-now")),
+        Some(e) if e.as_secs() < 120 => format!(" · {}", strings::fill("updated-seconds-ago", &[&e.as_secs()])),
+        Some(e) if e.as_secs() < 7200 => format!(" · {}", strings::fill("updated-minutes-ago", &[&(e.as_secs() / 60)])),
+        Some(e) => format!(" · {}", strings::fill("updated-hours-ago", &[&(e.as_secs() / 3600)])),
     };
     format!("{size}{age}")
 }
@@ -282,6 +281,7 @@ fn tail_thread(win: slint::Weak<LogWindow>, live: Arc<AtomicU64>, id: u64) {
 /// keep the returned window alive for the whole event loop.
 pub(super) fn wire(app: &AppWindow) -> Result<LogWindow, slint::PlatformError> {
     let win = LogWindow::new()?;
+    install_strings(win.global::<Strings>());
     win.set_log_path(SharedString::from(
         paths::server_log().to_string_lossy().into_owned(),
     ));
@@ -421,7 +421,7 @@ mod tests {
 
         // Missing file → the placeholder replaces whatever was shown, once.
         fold(&mut view, read_increment(&mut t, &log));
-        assert_eq!(view, [MISSING_TEXT]);
+        assert_eq!(view, [strings::t("log-file-missing")]);
         assert!(read_increment(&mut t, &log).is_empty());
 
         // File appears → placeholder replaced by content from offset 0.

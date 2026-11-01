@@ -48,6 +48,7 @@
 //! sweep of the same preset and key warns about it. The marker is the one file
 //! a sweep writes, and it exists only while the preset is not as it was.
 
+use crate::strings;
 use std::path::PathBuf;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
@@ -329,10 +330,7 @@ pub fn setter(key: &str) -> Result<Setter, String> {
         .find(|(k, _)| *k == key)
         .map(|(_, f)| *f)
         .ok_or_else(|| {
-            format!(
-                "`{key}` is not a sweepable preset key. Sweepable: {}",
-                keys()
-            )
+            strings::fill("not-sweepable", &[&key, &keys()])
         })
 }
 
@@ -343,7 +341,7 @@ pub fn check_values(preset: &str, key: &str, values: &[String]) -> Result<(), St
     let base = load_one(preset)?;
     for v in values {
         let mut probe = base.clone();
-        set(&mut probe, v).map_err(|e| format!("{key} value `{v}`: {e}"))?;
+        set(&mut probe, v).map_err(|e| strings::fill("key-value-refused", &[&key, &v, &e]))?;
     }
     Ok(())
 }
@@ -363,7 +361,7 @@ fn int(v: &str) -> Result<Option<i32>, String> {
     }
     v.parse::<i32>()
         .map(Some)
-        .map_err(|_| format!("`{v}` is not a whole number (or `{UNSET}`)"))
+        .map_err(|_| strings::fill("not-whole-number-or", &[&v, &UNSET]))
 }
 
 fn float(v: &str) -> Result<Option<f64>, String> {
@@ -374,7 +372,7 @@ fn float(v: &str) -> Result<Option<f64>, String> {
         .ok()
         .filter(|x| x.is_finite())
         .map(Some)
-        .ok_or_else(|| format!("`{v}` is not a number (or `{UNSET}`)"))
+        .ok_or_else(|| strings::fill("not-number-or", &[&v, &UNSET]))
 }
 
 fn boolean(v: &str) -> Result<Option<bool>, String> {
@@ -384,7 +382,7 @@ fn boolean(v: &str) -> Result<Option<bool>, String> {
     match v.to_ascii_lowercase().as_str() {
         "true" | "on" | "yes" | "1" => Ok(Some(true)),
         "false" | "off" | "no" | "0" => Ok(Some(false)),
-        _ => Err(format!("`{v}` is not a boolean (true/false, or `{UNSET}`)")),
+        _ => Err(strings::fill("not-boolean-or", &[&v, &UNSET])),
     }
 }
 
@@ -416,7 +414,7 @@ pub fn parse_values(spec: &str) -> Result<Vec<String>, String> {
         expand(token, &mut out)?;
     }
     if out.is_empty() {
-        return Err("--values is empty: there is nothing to sweep.".into());
+        return Err(strings::t("values-empty"));
     }
     Ok(out)
 }
@@ -432,11 +430,8 @@ fn expand(token: &str, out: &mut Vec<String>) -> Result<(), String> {
         Some((lo, hi))
     });
     match range {
-        Some((lo, hi)) if lo > hi => Err(format!("range `{token}` runs backwards")),
-        Some((lo, hi)) if hi - lo + 1 > MAX_RANGE => Err(format!(
-            "range `{token}` is {} values; list them explicitly if that is meant",
-            hi - lo + 1
-        )),
+        Some((lo, hi)) if lo > hi => Err(strings::fill("range-backwards", &[&token])),
+        Some((lo, hi)) if hi - lo + 1 > MAX_RANGE => Err(strings::fill("range-too-long", &[&token, &(hi - lo + 1)])),
         Some((lo, hi)) => {
             out.extend((lo..=hi).map(|n| n.to_string()));
             Ok(())
@@ -1079,7 +1074,7 @@ pub fn hold_key(preset: &str, key: &str) -> Result<(String, PathBuf), String> {
     let original = current_value(preset, key);
     let stamp = format!("{}-{key}", super::stamp(super::now_secs()));
     let dir = super::bench_dir();
-    std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
+    std::fs::create_dir_all(&dir).map_err(|e| strings::fill("cannot-create", &[&dir.display(), &e]))?;
     let marker = pending_path(&stamp);
     let header = serde_json::json!({
         "kind": "sweep",
@@ -1090,7 +1085,7 @@ pub fn hold_key(preset: &str, key: &str) -> Result<(String, PathBuf), String> {
         "override": true,
     });
     std::fs::write(&marker, header.to_string())
-        .map_err(|e| format!("cannot write {}: {e}", marker.display()))?;
+        .map_err(|e| strings::fill("cannot-write", &[&marker.display(), &e]))?;
     Ok((original, marker))
 }
 
@@ -1137,16 +1132,10 @@ fn load_one(id: &str) -> Result<presets::Preset, String> {
             .iter()
             .any(|l| !l.enabled && l.preset.id == id)
         {
-            return format!(
-                "preset `{id}` is switched off, so llama-server does not offer it: \
-                     `llama-cpp-config preset enable {id}` first"
-            );
+            return strings::fill("preset-off-cannot-run", &[&id]);
         }
         let known: Vec<&str> = all.iter().map(|p| p.id.as_str()).collect();
-        format!(
-            "no preset `{id}` in presets.ini. Known presets: {}",
-            known.join(", ")
-        )
+        strings::fill("unknown-preset", &[&id, &"presets.ini", &known.join(", ")])
     })
 }
 
@@ -1201,7 +1190,7 @@ pub(super) fn restore_server(was_running: bool) -> Result<(), String> {
     if was_running {
         runstate::stop();
         wait_gone()?;
-        runstate::start().map_err(|e| format!("cannot restart llama-server: {e}"))?;
+        runstate::start().map_err(|e| strings::fill("cannot-restart-server", &[&e]))?;
         return Ok(());
     }
     if runstate::is_running() {

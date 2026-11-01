@@ -30,6 +30,7 @@
 //!   integer field goes through `int_problem` first, so a mistyped number is
 //!   refused instead of being written as an absent key.
 
+use crate::strings;
 use std::collections::BTreeMap;
 use std::fs;
 use std::ops::RangeInclusive;
@@ -115,10 +116,7 @@ pub fn reject_comment_markers(field: &str, value: &str) -> std::io::Result<()> {
     if value.contains([';', '#']) {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
-            format!(
-                "{field} contains ';' or '#', which the INI comment rule would \
-                 truncate on reload; use a path without those characters"
-            ),
+            strings::fill("comment-markers", &[&field]),
         ));
     }
     Ok(())
@@ -282,14 +280,14 @@ pub fn rename_section(path: &Path, old: &str, new: &str) -> std::io::Result<()> 
     let Some((pos, end)) = find_section_header(&content, old) else {
         return Err(std::io::Error::new(
             std::io::ErrorKind::NotFound,
-            format!("section [{old}] not found"),
+            strings::fill("section-not-found", &[&old]),
         ));
     };
     // A case-only rename matches itself; only a *different* section counts.
     if find_section_header(&content, new).is_some_and(|(p, _)| p != pos) {
         return Err(std::io::Error::new(
             std::io::ErrorKind::AlreadyExists,
-            format!("section [{new}] already exists"),
+            strings::fill("section-exists", &[&new]),
         ));
     }
     let mut out = String::with_capacity(content.len() + new.len());
@@ -478,10 +476,10 @@ pub fn int_problem(label: &str, s: &str, range: &RangeInclusive<i32>) -> Option<
     if parse_int_in(s, range).is_some() {
         return None;
     }
-    let wanted = format!("a whole number from {} to {}", range.start(), range.end());
+    let wanted = strings::fill("whole-number-range", &[&range.start(), &range.end()]);
     Some(match s.trim() {
-        "" => format!("{label} is empty, expected {wanted}"),
-        t => format!("{label} = `{t}` is not {wanted}"),
+        "" => strings::fill("number-empty", &[&label, &wanted]),
+        t => strings::fill("number-not", &[&label, &t, &wanted]),
     })
 }
 

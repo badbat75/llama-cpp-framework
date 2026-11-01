@@ -47,12 +47,46 @@ fn realized_app() -> AppWindow {
     static INIT: Once = Once::new();
     INIT.call_once(itest::init_no_event_loop);
     let app = AppWindow::new().expect("build AppWindow");
+    crate::gui::install_strings(app.global::<crate::gui::Strings>());
     // A generous size so the scrolling editor pages lay out their full content:
     // the item tree instantiates only what layout reaches, so a short window
     // leaves the lower cards (and their widgets) un-instantiated and unfindable.
     app.window().set_size(slint::PhysicalSize::new(1400, 3200));
     app.show().expect("realize window");
     app
+}
+
+/// The riskiest claim of `ui/strings.slint`: `AppWindow::new()` builds the Server
+/// tab, tab 0, and its bindings are evaluated before any handler can be set. Read
+/// here before `ready`, which is what caches them: each row's label is blank.
+/// Raising `ready` must reach those same elements with the file's text, not leave
+/// them blank, and widen the label column they measure.
+fn assert_text_built_before_ready_shows_the_file() {
+    let app = AppWindow::new().expect("build AppWindow");
+    let columns = app.global::<crate::gui::LabelColumn>();
+    let labels: Vec<ElementHandle> =
+        ElementHandle::find_by_element_id(&app, "LabeledField::label_text").collect();
+    assert!(!labels.is_empty(), "new() built no Server tab rows");
+    let before: Vec<_> = labels.iter().map(|l| l.accessible_label().unwrap_or_default()).collect();
+    assert!(before.iter().all(|l| l.is_empty()), "text before ready: {before:?}");
+    assert!(columns.get_server() <= 130.0, "a blank label raised the column");
+
+    crate::gui::install_strings(app.global::<crate::gui::Strings>());
+    app.window().set_size(slint::PhysicalSize::new(1400, 3200));
+    app.show().expect("realize window");
+    itest::mock_elapsed_time(std::time::Duration::from_millis(1));
+
+    let after: Vec<_> = labels.iter().map(|l| l.accessible_label().unwrap_or_default()).collect();
+    let port = slint::SharedString::from(crate::strings::t("port"));
+    assert!(!port.is_empty() && port.as_str() != "port", "the file has no text for port");
+    assert!(after.contains(&port), "the same elements after ready: {after:?}");
+    assert!(after.iter().all(|l| !l.is_empty()), "a label stayed blank: {after:?}");
+    assert!(
+        columns.get_server() > 28.0,
+        "LabelColumn.server is {}px: no label measured after ready",
+        columns.get_server()
+    );
+    app.hide().ok();
 }
 
 /// Each page's label column is computed from its own rows when the page is
@@ -273,6 +307,16 @@ fn assert_wrapped_info_row_stays_inside_its_card(app: &AppWindow, st: &AppState)
 fn editable_widgets_track_model_after_edit() {
     let app = realized_app();
     let st = app.global::<AppState>();
+
+    assert_text_built_before_ready_shows_the_file();
+
+    // The language file reaches the global: no handler reads as empty, a miss
+    // as the key.
+    let cancel = app.global::<crate::gui::Strings>().invoke_t("cancel".into());
+    assert!(
+        !cancel.is_empty() && cancel.as_str() != "cancel",
+        "Strings.t does not answer from the language file: {cancel:?}"
+    );
 
     // The two homes of the "all layers on GPU" sentinel must agree: the
     // mirror comments in form.rs / components.slint can't fail a build.

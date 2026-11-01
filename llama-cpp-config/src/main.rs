@@ -40,6 +40,7 @@ mod sha256;
 mod single_instance;
 mod slot_state;
 mod startup;
+mod strings;
 mod tensor_override;
 mod tensor_picker;
 // Cross-cutting end-to-end tests (e.g. the Slint UI regression test) live under
@@ -61,6 +62,7 @@ fn main() {
 
     let argv: Vec<String> = std::env::args().collect();
     if argv.len() <= 1 {
+        strings::set_reader(reader_of(None));
         if let Err(e) = gui::run(false) {
             eprintln!("GUI error: {e:#}");
             std::process::exit(1);
@@ -69,9 +71,18 @@ fn main() {
     }
 
     let cli = cli::Cli::parse();
+    strings::set_reader(reader_of(Some(&cli.command)));
     if let Err(e) = cli::run(cli) {
         eprintln!("Error: {e:#}");
         std::process::exit(1);
+    }
+}
+
+/// Which text file this process reads: `None` is a launch with no arguments.
+fn reader_of(command: Option<&cli::Command>) -> strings::Reader {
+    match command {
+        None | Some(cli::Command::Gui { .. }) => strings::Reader::Gui,
+        Some(_) => strings::Reader::Cli,
     }
 }
 

@@ -66,6 +66,7 @@
 //! the same event loop: non-modal, so the main window stays interactive while
 //! they are open.
 
+use crate::strings;
 use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -80,6 +81,16 @@ use crate::{
 };
 
 slint::include_modules!();
+
+/// Answer `Strings.t` from the language file, for one root's own copy of the
+/// global (`root.global::<Strings>()`, every root in this crate has one):
+/// `ui/strings.slint` says why `ready` comes after the handlers.
+pub(crate) fn install_strings(strings: Strings<'_>) {
+    strings.on_lookup(|key| crate::strings::t(&key).into());
+    strings.on_lookup1(|key, a| crate::strings::fill(&key, &[&a]).into());
+    strings.on_lookup2(|key, a, b| crate::strings::fill(&key, &[&a, &b]).into());
+    strings.set_ready(true);
+}
 
 // Per-tab callback wiring: one file each under `gui/`. Each `wire()` reaches the
 // shared helpers, the `State` cache, and the generated Slint types via `use super::*`.
@@ -276,6 +287,7 @@ pub fn run(start_minimized: bool) -> anyhow::Result<()> {
         .with_winit_custom_application_handler(DiscardTrayWindow)
         .select();
     let app = AppWindow::new()?;
+    install_strings(app.global::<Strings>());
     #[cfg(target_os = "linux")]
     let _ = slint::set_xdg_app_id("llama-cpp-config");
     let s = app.global::<AppState>();
@@ -286,6 +298,7 @@ pub fn run(start_minimized: bool) -> anyhow::Result<()> {
         s.set_cpu_threads_max(i32::try_from(n.get()).unwrap_or(i32::MAX));
     }
     let tray = AppTray::new()?;
+    install_strings(tray.global::<Strings>());
     let state = Rc::new(RefCell::new(State::default()));
 
     // Surface the live window when another launch pokes the activation event,
@@ -330,7 +343,7 @@ pub fn run(start_minimized: bool) -> anyhow::Result<()> {
                         return;
                     };
                     reload_all_from_disk(&app, &state, tray_weak.clone());
-                    set_status(&app, "Reloaded configuration from disk.".into(), false);
+                    set_status(&app, strings::t("reloaded-from-disk"), false);
                 })
             };
             confirm_discard_then(&app, &state, dirty, action);
@@ -1009,14 +1022,14 @@ fn refresh_device_options(app: &AppWindow) {
     let (lbl, val, idx) = device_options(
         &devs,
         form.mmproj_device.as_str(),
-        "(default: follows device)",
+        &strings::t("device-follows-model"),
     );
     s.set_preset_mmproj_dev_labels(lbl);
     s.set_preset_mmproj_dev_values(val);
     s.set_preset_mmproj_dev_index(idx);
 
     let (lbl, val, idx) =
-        device_options(&devs, form.device_draft.as_str(), "(auto / same as model)");
+        device_options(&devs, form.device_draft.as_str(), &strings::t("device-same-as-model"));
     s.set_preset_draft_dev_labels(lbl);
     s.set_preset_draft_dev_values(val);
     s.set_preset_draft_dev_index(idx);
@@ -1045,7 +1058,7 @@ fn refresh_gpu_rows(app: &AppWindow) {
     // .slint so the labels/values pair has ONE owner next to the code that
     // interprets a pick (gpu_split::MODE_*).
     s.set_split_mode_labels(string_model(
-        gpu_split::MODE_LABELS.iter().map(|l| (*l).into()).collect(),
+        gpu_split::MODE_LABELS.iter().map(|l| strings::t(l)).collect(),
     ));
     s.set_split_mode_values(string_model(
         gpu_split::MODE_VALUES.iter().map(|v| (*v).into()).collect(),
@@ -1112,7 +1125,7 @@ fn refresh_tensor_rows(app: &AppWindow) {
     s.set_tensor_kind_labels(string_model(
         tensor_override::KINDS
             .iter()
-            .map(|k| k.label.into())
+            .map(|k| strings::t(k.label))
             .collect(),
     ));
     s.set_tensor_kind_values(string_model(
@@ -1209,7 +1222,7 @@ fn refresh_tensor_picker(app: &AppWindow) {
         s.set_tensor_picker_summary(p.summary().into());
         s.set_tensor_picker_pattern(p.pattern().into());
         s.set_tensor_picker_can_apply(p.any_selected());
-        s.set_tensor_picker_title(format!("Tensors of override {}", p.rule + 1).into());
+        s.set_tensor_picker_title(strings::fill("tensors-of-override", &[&(p.rule + 1)]).into());
         s.set_tensor_picker_open(true);
     });
 }
@@ -1393,10 +1406,10 @@ fn snapshot_summary(saved: &[crate::slot_state::Transfer], errors: &[String]) ->
             .iter()
             .map(crate::slot_state::Transfer::describe)
             .collect();
-        parts.push(format!("Snapshot saved: {}", list.join(", ")));
+        parts.push(strings::fill("snapshot-saved", &[&list.join(", ")]));
     }
     for e in errors {
-        parts.push(format!("Snapshot failed: {e}"));
+        parts.push(strings::fill("snapshot-failed", &[&e]));
     }
     Some(parts.join(". "))
 }
@@ -1460,7 +1473,7 @@ fn start_server_async(app_weak: slint::Weak<AppWindow>, tray_weak: slint::Weak<A
             return;
         }
         s.set_server_starting(true);
-        set_status(&app, "Starting llama-server…".into(), false);
+        set_status(&app, strings::t("server-starting"), false);
     }
     bump_run_status_gen();
     std::thread::spawn(move || {
@@ -1510,15 +1523,15 @@ fn start_server_async(app_weak: slint::Weak<AppWindow>, tray_weak: slint::Weak<A
                 match &result {
                     Ok(Some(_)) => {
                         s.set_server_status_is_error(false);
-                        set_status(&app, "llama-server started.".into(), false);
+                        set_status(&app, strings::t("server-started"), false);
                     }
                     Ok(None) => {
                         s.set_server_status_is_error(false);
-                        set_status(&app, "llama-server is already running.".into(), false);
+                        set_status(&app, strings::t("server-already-running"), false);
                     }
                     Err(e) => {
                         s.set_server_status_is_error(true);
-                        set_status(&app, format!("Failed to start: {e}"), true);
+                        set_status(&app, strings::fill("server-start-failed", &[&e]), true);
                     }
                 }
             }
@@ -1542,19 +1555,19 @@ fn start_server_async(app_weak: slint::Weak<AppWindow>, tray_weak: slint::Weak<A
                 .collect();
             post_status(
                 &restore_weak,
-                "Restoring the conversation snapshot…".into(),
+                strings::t("snapshot-restoring"),
                 false,
             );
             match crate::slot_state::restore_newest(&cfg, &known) {
                 Ok(Some(t)) => post_status(
                     &restore_weak,
-                    format!("llama-server started. Snapshot restored: {}", t.describe()),
+                    strings::fill("server-started-snapshot-restored", &[&t.describe()]),
                     false,
                 ),
-                Ok(None) => post_status(&restore_weak, "llama-server started.".into(), false),
+                Ok(None) => post_status(&restore_weak, strings::t("server-started"), false),
                 Err(e) => post_status(
                     &restore_weak,
-                    format!("llama-server started. Snapshot not restored: {e}"),
+                    strings::fill("server-started-snapshot-not-restored", &[&e]),
                     true,
                 ),
             }
@@ -1610,7 +1623,7 @@ fn stop_server_async_with(
             return;
         }
         s.set_server_stopping(true);
-        set_status(&app, "Stopping llama-server…".into(), false);
+        set_status(&app, strings::t("server-stopping"), false);
     }
     // Parked on the UI thread rather than carried into the worker: the
     // continuation closes over UI-thread data (`Rc<RefCell<State>>`), which is
@@ -1626,7 +1639,7 @@ fn stop_server_async_with(
         // the whole stop path already lives off the UI thread.
         let cfg = server_cfg::load();
         let snapshot = if cfg.save_state_on_shutdown_or_default() {
-            post_status(&app_weak, "Saving the conversation snapshot…".into(), false);
+            post_status(&app_weak, strings::t("snapshot-saving"), false);
             let (saved, errors) = crate::slot_state::save_all(&cfg);
             snapshot_summary(&saved, &errors)
         } else {
@@ -1650,7 +1663,7 @@ fn stop_server_async_with(
                     s.set_server_status_is_error(true);
                     set_status(
                         &app,
-                        "Stop timed out: llama-server is still running.".into(),
+                        strings::t("stop-timed-out"),
                         true,
                     );
                 } else {
@@ -1659,8 +1672,8 @@ fn stop_server_async_with(
                     // outcome: "stopped" is what the user asked about, the
                     // snapshot is what it cost (or failed to do).
                     let msg = snapshot.map_or_else(
-                        || "llama-server stopped.".to_string(),
-                        |s| format!("llama-server stopped. {s}"),
+                        || strings::t("server-stopped"),
+                        |s| strings::fill("server-stopped-with", &[&s]),
                     );
                     set_status(&app, msg, false);
                 }
@@ -1734,10 +1747,7 @@ fn refresh_run_status(
                     s.set_server_status_is_error(true);
                     set_status(
                         &app,
-                        format!(
-                            "llama-server is no longer running; see {}",
-                            crate::paths::server_log().display()
-                        ),
+                        strings::fill("server-gone", &[&crate::paths::server_log().display()]),
                         true,
                     );
                 }
@@ -1825,26 +1835,23 @@ fn integration_status(
     extra: &[String],
 ) -> String {
     let set = match enabled {
-        1 => "the 1 enabled preset".to_string(),
-        n => format!("the {n} enabled presets"),
+        1 => strings::t("enabled-presets-one"),
+        n => strings::fill("enabled-presets-many", &[&n]),
     };
     if !active {
-        return format!("No llama-server provider in opencode.json. Save adds one listing {set}.");
+        return strings::fill("opencode-no-provider", &[&set]);
     }
     if missing.is_empty() && extra.is_empty() {
-        return format!("llama-server provider active in opencode.json, listing {set}.");
+        return strings::fill("opencode-active", &[&set]);
     }
     let mut parts = Vec::new();
     if !missing.is_empty() {
-        parts.push(format!("enabled but not listed: {}", missing.join(", ")));
+        parts.push(strings::fill("opencode-enabled-not-listed", &[&missing.join(", ")]));
     }
     if !extra.is_empty() {
-        parts.push(format!("listed but not enabled: {}", extra.join(", ")));
+        parts.push(strings::fill("opencode-listed-not-enabled", &[&extra.join(", ")]));
     }
-    format!(
-        "opencode.json is out of step with the enabled presets ({}). Save brings it in line.",
-        parts.join("; ")
-    )
+    strings::fill("opencode-out-of-step", &[&parts.join("; ")])
 }
 
 /// After a write that changes what OpenCode should list (a preset switched on or
@@ -1854,7 +1861,7 @@ fn integration_status(
 /// flags the footer, and the status line then names the drift it left.
 fn follow_integrations(app: &AppWindow) {
     if let Err(e) = integrations::follow_presets() {
-        set_status(app, format!("opencode.json update failed: {e}"), true);
+        set_status(app, strings::fill("opencode-update-failed", &[&e]), true);
     }
     refresh_integrations(app);
 }

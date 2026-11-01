@@ -35,6 +35,7 @@
 //! matches are marked: llama.cpp applies the first rule that matches a tensor,
 //! so ticking one of them here changes nothing for it.
 
+use crate::strings;
 use crate::gguf::TensorInfo;
 use crate::tensor_override::{self, KINDS};
 use regex::Regex;
@@ -142,7 +143,7 @@ pub fn coverage(s: &str, tensors: &[TensorInfo]) -> Vec<String> {
                 return String::new();
             }
             let Some(hit) = matches(tensors, &rule.pattern) else {
-                return "this regex cannot be read here, so its tensors are not shown".into();
+                return strings::t("regex-unreadable");
             };
             let (mut n, mut bytes, mut shadowed) = (0usize, 0u64, 0usize);
             for (i, h) in hit.iter().enumerate() {
@@ -158,13 +159,13 @@ pub fn coverage(s: &str, tensors: &[TensorInfo]) -> Vec<String> {
                 }
             }
             let mut line = match n {
-                0 if shadowed == 0 => "matches no tensor of this model".to_string(),
-                0 => "every tensor it matches is taken by an earlier rule".to_string(),
-                1 => format!("1 tensor, {}", fmt_bytes(bytes)),
-                _ => format!("{n} tensors, {}", fmt_bytes(bytes)),
+                0 if shadowed == 0 => strings::t("matches-no-tensor"),
+                0 => strings::t("all-taken-by-earlier"),
+                1 => strings::fill("tensors-one", &[&fmt_bytes(bytes)]),
+                _ => strings::fill("tensors-many", &[&n, &fmt_bytes(bytes)]),
             };
             if n > 0 && shadowed > 0 {
-                line.push_str(&format!("; {shadowed} more taken by an earlier rule"));
+                line.push_str(&strings::fill("more-taken-by-earlier", &[&shadowed]));
             }
             line
         })
@@ -191,7 +192,7 @@ fn group(tensors: &[TensorInfo]) -> Vec<Group> {
     let mut out = Vec::new();
     if !outside.is_empty() {
         out.push(Group {
-            label: "Outside the blocks".into(),
+            label: strings::t("outside-the-blocks"),
             members: outside,
         });
     }
@@ -272,7 +273,7 @@ impl Picker {
                 .count();
             let mut detail = format!("{n}/{}, {}", grp.members.len(), fmt_bytes(bytes));
             if taken > 0 {
-                detail.push_str(&format!(", {taken} taken by an earlier rule"));
+                detail.push_str(&strings::fill("taken-by-earlier", &[&taken]));
             }
             self.entries.push(Entry::Group(g));
             out.push(Line {
@@ -291,7 +292,7 @@ impl Picker {
                 let t = &self.tensors[i];
                 let mut detail = fmt_bytes(t.bytes);
                 if self.taken_by[i] > 0 {
-                    detail.push_str(&format!(", taken by rule {}", self.taken_by[i]));
+                    detail.push_str(&strings::fill("taken-by-rule", &[&self.taken_by[i]]));
                 }
                 self.entries.push(Entry::Tensor(i));
                 out.push(Line {
@@ -367,21 +368,15 @@ impl Picker {
             .filter(|(s, t)| **s && **t > 0)
             .count();
         let mut line = if n == 0 {
-            "nothing ticked".to_string()
+            strings::t("nothing-ticked")
         } else {
-            format!(
-                "{n} of {} tensors ticked, {}",
-                self.tensors.len(),
-                fmt_bytes(bytes)
-            )
+            strings::fill("tensors-ticked", &[&n, &self.tensors.len(), &fmt_bytes(bytes)])
         };
         if shadowed > 0 {
-            line.push_str(&format!(
-                "; {shadowed} of them stay where an earlier rule puts them"
-            ));
+            line.push_str(&strings::fill("ticked-stay", &[&shadowed]));
         }
         if self.unreadable {
-            line.push_str("; the rule's regex could not be read here, so the ticks start empty");
+            line.push_str(&strings::t("ticks-start-empty"));
         }
         line
     }

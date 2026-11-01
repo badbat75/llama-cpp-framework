@@ -22,6 +22,7 @@
 import { LineEdit, TextEdit, CheckBox, Button, ComboBox, ScrollView, Palette } from "std-widgets.slint";
 import { SectionCard, LabeledField, SegmentedControl, MappedComboBox, EnumComboBox, DefaultLineEdit, WrapText, LabelColumn, Tokens } from "components.slint";
 import { AppState } from "state.slint";
+import { Strings } from "strings.slint";
 
 export component BenchPage inherits ScrollView {
     VerticalLayout {
@@ -30,26 +31,27 @@ export component BenchPage inherits ScrollView {
         alignment: start;
 
         Text {
-            text: "Benchmark";
+            text: Strings.t("benchmark");
             font-size: 22px;
             font-weight: 600;
             color: Palette.foreground;
         }
         Text {
-            text: "Measure one preset, or compare several. The unit is the preset, not the model file: two presets over the same .gguf are a legitimate comparison, and usually the interesting one.";
+            text: Strings.t("benchmark-intro");
             color: Palette.foreground.transparentize(Tokens.muted);
             font-size: 12px;
             wrap: word-wrap;
         }
 
         SectionCard {
-            heading: "Engine";
+            heading: Strings.t("engine");
             LabeledField {
                 label_width <=> LabelColumn.bench;
-                label: "Mode";
-                hint: "live: real requests to the RUNNING llama-server, with your prompt and a temperature override. Measures what the preset actually does, speculative drafter and chat template included.\nsynthetic: llama-bench over token counts. It takes no prompt and never samples, so it is perfectly reproducible, but it cannot load the preset's drafter and ignores the mmproj, the template and the reasoning flags.\nlive needs llama-server running; synthetic needs it stopped, and stops it for you.";
+                label: Strings.t("mode");
+                hint: Strings.t("mode-hint");
                 SegmentedControl {
                     options: ["live", "synthetic"];
+                    labels: [Strings.t("live"), Strings.t("synthetic")];
                     current: AppState.bench_mode;
                     activated(v) => { AppState.bench_mode_picked(v); }
                 }
@@ -62,11 +64,11 @@ export component BenchPage inherits ScrollView {
         }
 
         SectionCard {
-            heading: "Presets";
+            heading: Strings.t("presets");
             content_padding: 8px;
 
             if AppState.bench_presets.length == 0 : Text {
-                text: "No presets found. Create one under the Models tab first.";
+                text: Strings.t("no-presets");
                 font-size: 12px;
                 color: Palette.foreground.transparentize(Tokens.muted);
                 wrap: word-wrap;
@@ -124,13 +126,13 @@ export component BenchPage inherits ScrollView {
         }
 
         SectionCard {
-            heading: "Workload";
+            heading: Strings.t("workload");
 
             // ── live half ────────────────────────────────────────────
             if AppState.bench_is_live : LabeledField {
                 label_width <=> LabelColumn.bench;
-                label: "Prompts";
-                hint: "The files sent as the request, each ticked one in turn: a .txt as a single user message, a .json as the conversation it holds (messages and tools, like a coding agent's request) (one step per prompt, into one campaign). Each is re-sent whole on every repetition with the prefix cache disabled, so each one is a cold prefill, which is what the prefill row measures.\nFive prompts ship, installed read-only beside the program (share/benchmarks/prompts) and pinned by the standard spec: bench-prompt-43k-1.0.txt (the default), bench-prompt-110k-1.0.txt (the longer one, for deep context), bench-prompt-code-1.0.json (a coding-agent turn with tools), bench-prompt-code-write-1.1.json (the same task, writing code) and bench-prompt-image-1.0.json (a photograph to describe; run only on presets with an mmproj, its picture shown and replaceable in the Image row); + adds a file of your own (a custom run, or with a spec a derived one). The ranking of a knob can differ with the context you actually work at, which is why the prose and coding prompts are long.\nRead fresh when Run starts, so editing one of yours while this window is open is enough: Edit opens it in your default editor (a shipped one is read-only: change a copy). The first ticked one is also what `bench run` reads with no --prompt-file.";
+                label: Strings.t("prompts");
+                hint: Strings.t("prompts-hint");
                 VerticalLayout {
                     spacing: 4px;
                     for row[i] in AppState.bench_prompts : HorizontalLayout {
@@ -154,11 +156,11 @@ export component BenchPage inherits ScrollView {
                             horizontal-stretch: 1;
                         }
                         Button {
-                            text: "Edit";
+                            text: Strings.t("edit");
                             clicked => { AppState.bench_prompt_edit(i); }
                         }
                         if !row.shipped : Button {
-                            text: "Remove";
+                            text: Strings.t("remove");
                             enabled: AppState.bench_spec == "custom" || AppState.bench_spec_override;
                             clicked => { AppState.bench_prompt_remove(i); }
                         }
@@ -166,7 +168,7 @@ export component BenchPage inherits ScrollView {
                     HorizontalLayout {
                         alignment: start;
                         Button {
-                            text: "+ Browse…";
+                            text: Strings.t("add-file");
                             enabled: AppState.bench_spec == "custom" || AppState.bench_spec_override;
                             clicked => { AppState.bench_prompt_add(); }
                         }
@@ -175,8 +177,8 @@ export component BenchPage inherits ScrollView {
             }
             if AppState.bench_is_live : LabeledField {
                 label_width <=> LabelColumn.bench;
-                label: "Temperature";
-                hint: "Overrides the preset's own --temp for this run. 0 is greedy sampling, which is what makes two runs of the same prompt comparable; tick 'default' to leave the preset's value alone and accept the variance.";
+                label: Strings.t("temperature");
+                hint: Strings.t("temperature-hint");
                 DefaultLineEdit {
                     edit_label: "bench-temp";
                     enabled: AppState.bench_spec == "custom" || AppState.bench_spec_override;
@@ -189,8 +191,8 @@ export component BenchPage inherits ScrollView {
             }
             if AppState.bench_is_live : LabeledField {
                 label_width <=> LabelColumn.bench;
-                label: "Max output tokens";
-                hint: "Cap on the generated answer (--max_tokens on the request). Long enough that the decode rate settles, short enough that a slow model does not turn one repetition into minutes.\n0 = no cap: the request carries no max_tokens and the model stops on its own (or at the preset's n-predict), so how long it talks is part of the result.";
+                label: Strings.t("max-output-tokens");
+                hint: Strings.t("max-output-tokens-hint");
                 LineEdit {
                     accessible-label: "bench-max-tokens";
                     enabled: AppState.bench_spec == "custom" || AppState.bench_spec_override;
@@ -201,8 +203,8 @@ export component BenchPage inherits ScrollView {
             }
             if AppState.bench_is_live : LabeledField {
                 label_width <=> LabelColumn.bench;
-                label: "Image";
-                hint: "The picture an image prompt sends (a prompt whose message holds an image_file part, like the shipped bench-prompt-image-1.0.json). By default each image prompt sends its own, shown here for the first one ticked (with none ticked, the shipped bench-prompt-image-1.0.json's, the one the standard spec sends); Choose… sends a JPEG or PNG of yours in place of every image prompt's own, fitted into Image size like theirs. Under a spec that is an Override: the runs record spec = custom, derived from it, with image and image-sha256 naming the file. Prompt's goes back to the prompts' own.\nAn image prompt runs only on presets that load an mmproj.";
+                label: Strings.t("image");
+                hint: Strings.t("image-hint");
                 HorizontalLayout {
                     spacing: 8px;
                     alignment: start;
@@ -233,12 +235,12 @@ export component BenchPage inherits ScrollView {
                             spacing: 8px;
                             alignment: start;
                             Button {
-                                text: "Choose…";
+                                text: Strings.t("choose");
                                 enabled: AppState.bench_spec == "custom" || AppState.bench_spec_override;
                                 clicked => { AppState.bench_image_pick(); }
                             }
                             if AppState.bench_image != "" : Button {
-                                text: "Prompt's";
+                                text: Strings.t("use-prompt-image");
                                 enabled: AppState.bench_spec == "custom" || AppState.bench_spec_override;
                                 clicked => { AppState.bench_image_clear(); }
                             }
@@ -248,8 +250,8 @@ export component BenchPage inherits ScrollView {
             }
             if AppState.bench_is_live : LabeledField {
                 label_width <=> LabelColumn.bench;
-                label: "Image size";
-                hint: "An image prompt's image is fitted into this box when it is sent (WxH, aspect kept, never enlarged; re-encoded as JPEG), so every model reads the same picture whatever the file's size.\noriginal = the file as is.\nA prompt without an image ignores it, and an image prompt runs only on presets that load an mmproj.";
+                label: Strings.t("image-size");
+                hint: Strings.t("image-size-hint");
                 LineEdit {
                     accessible-label: "bench-image-size";
                     enabled: AppState.bench_spec == "custom" || AppState.bench_spec_override;
@@ -260,10 +262,11 @@ export component BenchPage inherits ScrollView {
             }
             if AppState.bench_is_live : LabeledField {
                 label_width <=> LabelColumn.bench;
-                label: "Concurrency";
-                hint: "single: one request per repetition.\nThe others send one request per slot of the preset AT ONCE, N = the preset's parallel (absent = llama-server's auto 4; it must be at least 2), each pinned to its slot:\nprefill: all N prefill the whole prompt, then decode together.\ndecode: every slot is primed with the prompt first, so all N only decode.\nprefill+decode: N-1 primed slots decode while the last one prefills.\nThe table adds prefill total and decode total, the throughput of the N requests together.\nall: each of the four in turn, into one campaign (single alone when a selected preset has parallel below 2), as `bench run --concurrency all`.";
+                label: Strings.t("concurrency");
+                hint: Strings.t("concurrency-hint");
                 SegmentedControl {
                     options: ["single", "prefill", "decode", "prefill+decode", "all"];
+                    labels: [Strings.t("single"), Strings.t("prefill"), Strings.t("decode"), Strings.t("prefill-decode"), Strings.t("all")];
                     enabled: AppState.bench_spec == "custom" || AppState.bench_spec_override;
                     current: AppState.bench_concurrency;
                     activated(v) => {
@@ -276,8 +279,8 @@ export component BenchPage inherits ScrollView {
             // ── synthetic half ───────────────────────────────────────
             if !AppState.bench_is_live : LabeledField {
                 label_width <=> LabelColumn.bench;
-                label: "Prompt lengths";
-                hint: "llama-bench's -p: how many TOKENS to prefill, comma separated. Not a text: this engine never tokenizes a prompt of yours and never samples. One pp row per length.";
+                label: Strings.t("prompt-lengths");
+                hint: Strings.t("prompt-lengths-hint");
                 LineEdit {
                     accessible-label: "bench-prompt-lens";
                     text <=> AppState.bench_prompt_lens;
@@ -286,8 +289,8 @@ export component BenchPage inherits ScrollView {
             }
             if !AppState.bench_is_live : LabeledField {
                 label_width <=> LabelColumn.bench;
-                label: "Generate";
-                hint: "llama-bench's -n: how many tokens to generate per decode test.";
+                label: Strings.t("generate");
+                hint: Strings.t("generate-hint");
                 LineEdit {
                     accessible-label: "bench-n-gen";
                     text <=> AppState.bench_n_gen;
@@ -297,8 +300,8 @@ export component BenchPage inherits ScrollView {
             }
             if !AppState.bench_is_live : LabeledField {
                 label_width <=> LabelColumn.bench;
-                label: "Depths";
-                hint: "llama-bench's -d: how many tokens of KV cache to prefill before each decode test, comma separated. Decode slows down with context, so a single depth of 0 measures only the best case.";
+                label: Strings.t("depths");
+                hint: Strings.t("depths-hint");
                 LineEdit {
                     accessible-label: "bench-depths";
                     text <=> AppState.bench_depths;
@@ -308,8 +311,8 @@ export component BenchPage inherits ScrollView {
 
             LabeledField {
                 label_width <=> LabelColumn.bench;
-                label: "Repetitions";
-                hint: "Samples per measurement. The results table reports the mean and the sample standard deviation across them, which is what says whether a difference between two presets is real.";
+                label: Strings.t("repetitions");
+                hint: Strings.t("repetitions-hint");
                 LineEdit {
                     accessible-label: "bench-reps";
                     enabled: AppState.bench_spec == "custom" || AppState.bench_spec_override;
@@ -321,25 +324,26 @@ export component BenchPage inherits ScrollView {
         }
 
         SectionCard {
-            heading: "Campaign";
+            heading: Strings.t("campaign");
             LabeledField {
                 label_width <=> LabelColumn.bench;
-                label: "Spec";
-                hint: "The method: custom runs the Workload fields above and records spec = custom; standard-<X.Y> runs that published version of the framework's method (installed with its prompts under share/benchmarks; every version stays runnable, each checked against its digest in standard.versions, built into this binary). Load… opens a spec file of yours and Save as… writes what the card describes as one (never the official one: the name standard is refused); a spec of yours runs like the official one but records every run as spec = custom, derived from it. A spec fixes the prompts, temperature, output cap, concurrency and repetitions, so those fields are greyed out; it records spec, spec-version, spec-sha256 and spec-pass with every run, which is what makes runs of two machines comparable. Live only. A pass that overrides a preset key (the engine pass sets spec-type = none) writes it to the selected presets for its steps, restarting llama-server around them, and puts it back.";
+                label: Strings.t("spec");
+                hint: Strings.t("spec-hint");
                 EnumComboBox {
                     accessible-label: "bench-spec";
                     enabled: !AppState.bench_running;
                     options: AppState.bench_spec_options;
+                    labels: AppState.bench_spec_labels;
                     value <=> AppState.bench_spec;
                     changed value => { AppState.bench_spec_changed(); }
                 }
                 Button {
-                    text: "Load…";
+                    text: Strings.t("load");
                     enabled: !AppState.bench_running;
                     clicked => { AppState.bench_spec_load(); }
                 }
                 Button {
-                    text: "Save as…";
+                    text: Strings.t("save-as");
                     enabled: !AppState.bench_running;
                     clicked => { AppState.bench_spec_save(); }
                 }
@@ -347,9 +351,9 @@ export component BenchPage inherits ScrollView {
             if AppState.bench_spec != "custom" : LabeledField {
                 label_width <=> LabelColumn.bench;
                 label: "";
-                hint: "Re-enables the Workload fields. Each one you change after ticking this replaces the spec's value in every step (the prompt replaces its prompt list, a concurrency its scenarios); the rest stays the spec's. The runs are then not of the spec: they record spec = custom, with spec-derived-from naming the version and spec-derived-fields what changed.";
+                hint: Strings.t("spec-override-hint");
                 CheckBox {
-                    text: "Override (custom, derived from the spec)";
+                    text: Strings.t("spec-override");
                     enabled: !AppState.bench_running;
                     checked <=> AppState.bench_spec_override;
                     toggled => { AppState.bench_override_toggled(); }
@@ -357,8 +361,8 @@ export component BenchPage inherits ScrollView {
             }
             LabeledField {
                 label_width <=> LabelColumn.bench;
-                label: "Name";
-                hint: "The bench.db campaign the runs go into, as `--campaign`: an existing name adds to it. Empty: a campaign of its own, named after the run's stamp (spec-<name>-v<version>-<stamp> for a spec).";
+                label: Strings.t("name");
+                hint: Strings.t("campaign-name-hint");
                 LineEdit {
                     accessible-label: "bench-campaign";
                     enabled: !AppState.bench_running;
@@ -369,8 +373,8 @@ export component BenchPage inherits ScrollView {
             }
             LabeledField {
                 label_width <=> LabelColumn.bench;
-                label: "Question";
-                hint: "What the campaign is meant to answer, as `--question`: stored with it, and what `bench answer` later answers.";
+                label: Strings.t("question");
+                hint: Strings.t("question-hint");
                 LineEdit {
                     accessible-label: "bench-question";
                     enabled: !AppState.bench_running;
@@ -380,20 +384,21 @@ export component BenchPage inherits ScrollView {
             }
             LabeledField {
                 label_width <=> LabelColumn.bench;
-                label: "A/B key";
-                hint: "A preset key to compare values of, as bench run --key: every step of the run (each prompt, scenario and spec pass) runs once per value, with the value written to the selected presets and llama-server restarted around it; the key is put back afterwards. The list is the preset keys that change how the model is launched (placement, KV cache, batch sizes, speculator...). none = no A/B.\nUnder a spec, a key its passes do not touch keeps the runs spec runs; a key a pass overrides (spec-type under standard) records them as custom, derived from the spec.";
+                label: Strings.t("ab-key");
+                hint: Strings.t("ab-key-hint");
                 EnumComboBox {
                     accessible-label: "bench-ab-key";
                     enabled: !AppState.bench_running;
                     options: AppState.bench_ab_keys;
+                    labels: AppState.bench_ab_key_labels;
                     value <=> AppState.bench_ab_key;
                     changed value => { AppState.bench_changed(); }
                 }
             }
             if AppState.bench_ab_key != "none" : LabeledField {
                 label_width <=> LabelColumn.bench;
-                label: "Values";
-                hint: "The values to compare, as bench run --values: comma-separated, a range 2..8, `unset` to remove the key for one leg; separate with ; when a value holds commas (tensor-split, device), and end a single such value with ;. Each value is checked against the presets before Run starts.";
+                label: Strings.t("values");
+                hint: Strings.t("values-hint");
                 LineEdit {
                     accessible-label: "bench-ab-values";
                     enabled: !AppState.bench_running;
@@ -405,10 +410,10 @@ export component BenchPage inherits ScrollView {
         }
 
         SectionCard {
-            heading: "Preview";
+            heading: Strings.t("preview");
             content_padding: 12px;
             Text {
-                text: "Exactly what Run will do, built by the same code that runs it.";
+                text: Strings.t("preview-intro");
                 font-size: 12px;
                 color: Palette.foreground.transparentize(Tokens.muted);
                 wrap: word-wrap;
@@ -441,13 +446,13 @@ export component BenchPage inherits ScrollView {
             spacing: 8px;
             alignment: start;
             Button {
-                text: AppState.bench_running ? "Running…" : "Run benchmark";
+                text: AppState.bench_running ? Strings.t("running") : Strings.t("run-benchmark");
                 primary: true;
                 enabled: !AppState.bench_running && AppState.bench_selected_count > 0;
                 clicked => { AppState.bench_run(); }
             }
             Button {
-                text: "Cancel";
+                text: Strings.t("cancel");
                 enabled: AppState.bench_running;
                 clicked => { AppState.bench_cancel(); }
             }
@@ -462,11 +467,11 @@ export component BenchPage inherits ScrollView {
         }
 
         SectionCard {
-            heading: "Results";
+            heading: Strings.t("results");
             content_padding: 8px;
 
             if AppState.bench_rows.length == 0 : Text {
-                text: "Nothing measured yet. Results appear here as each test completes, and every one is written to disk as it lands, so a run that dies keeps what it had.";
+                text: Strings.t("no-results");
                 font-size: 12px;
                 color: Palette.foreground.transparentize(Tokens.muted);
                 wrap: word-wrap;
@@ -478,12 +483,12 @@ export component BenchPage inherits ScrollView {
                 spacing: 8px;
                 Text {
                     width: 130px;
-                    text: "Test";
+                    text: Strings.t("test");
                     font-size: 12px;
                     color: Palette.foreground.transparentize(Tokens.muted);
                 }
                 Text {
-                    text: "Preset";
+                    text: Strings.t("preset");
                     horizontal-stretch: 1;
                     font-size: 12px;
                     color: Palette.foreground.transparentize(Tokens.muted);
@@ -511,7 +516,7 @@ export component BenchPage inherits ScrollView {
                 }
                 Text {
                     width: 70px;
-                    text: AppState.bench_baseline != "" ? "vs 1." : "ratio";
+                    text: AppState.bench_baseline != "" ? "vs 1." : Strings.t("ratio");
                     horizontal-alignment: right;
                     font-size: 12px;
                     color: Palette.foreground.transparentize(Tokens.muted);
@@ -594,11 +599,11 @@ export component BenchPage inherits ScrollView {
         }
 
         SectionCard {
-            heading: "Saved runs";
+            heading: Strings.t("saved-runs");
             LabeledField {
                 label_width <=> LabelColumn.bench;
-                label: "Database";
-                hint: "The SQLite file every finished run is written to, and the one listed below. Empty = bench\\bench.db under the data folder. Point it at a clone's benchmarks\\bench.db to record straight into the repo's database, with no bench publish; absolute paths are cut to file names and secret-like values dropped either way.\nA file that is not there yet is created by the first finished run. Enter, Browse… or Run saves the path to settings.ini (BenchDb), where bench run and bench query read it too.";
+                label: Strings.t("database");
+                hint: Strings.t("database-hint");
                 LineEdit {
                     accessible-label: "bench-db";
                     text <=> AppState.bench_db;
@@ -608,7 +613,7 @@ export component BenchPage inherits ScrollView {
                     accepted => { AppState.bench_db_accepted(); }
                 }
                 Button {
-                    text: "Browse…";
+                    text: Strings.t("browse");
                     enabled: !AppState.bench_running;
                     clicked => {
                         AppState.bench_db = AppState.bench_pick_db(AppState.bench_db);
@@ -628,8 +633,8 @@ export component BenchPage inherits ScrollView {
             }
             LabeledField {
                 label_width <=> LabelColumn.bench;
-                label: "Run";
-                hint: "Every run is a campaign in the database above: each preset is written when it has been measured to the end, with its parameters, every repetition and the engine's output; a preset that fails or is cancelled is not recorded. Picking one here reloads its table; bench run campaigns are listed too, one column per value.";
+                label: Strings.t("run");
+                hint: Strings.t("run-hint");
                 MappedComboBox {
                     enabled: !AppState.bench_running && AppState.bench_run_labels.length > 0;
                     labels: AppState.bench_run_labels;
@@ -642,7 +647,7 @@ export component BenchPage inherits ScrollView {
                 spacing: 8px;
                 alignment: start;
                 Button {
-                    text: "Open report";
+                    text: Strings.t("open-report");
                     enabled: AppState.bench_report_campaign != "";
                     clicked => { AppState.bench_open_report(); }
                 }

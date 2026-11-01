@@ -101,6 +101,7 @@
 //! are unit-tested below; the e2e flow test (`src/tests/save_flow.rs`) drives
 //! the wiring that needs no network, the hand-over to the background included.
 
+use crate::strings;
 use super::*;
 
 use std::collections::{HashMap, HashSet};
@@ -226,12 +227,12 @@ fn input_is_query(text: &str) -> bool {
 fn result_label(h: &hf::SearchHit) -> String {
     let mut parts = vec![h.repo.clone()];
     parts.extend(hf::kind_label(h.kind, h.params));
-    parts.push(format!("{} downloads", hf::format_count(h.downloads)));
+    parts.push(strings::fill("result-downloads", &[&hf::format_count(h.downloads)]));
     if h.gated {
-        parts.push("gated".into());
+        parts.push(strings::t("gated"));
     }
     if h.private {
-        parts.push("private".into());
+        parts.push(strings::t("private"));
     }
     parts.join("  ·  ")
 }
@@ -239,7 +240,7 @@ fn result_label(h: &hf::SearchHit) -> String {
 /// A search row's second line: the quantizations its file names show, and
 /// the sidecars (the list's own wording, `candidate_label`).
 fn result_detail(h: &hf::SearchHit) -> String {
-    let quants = if h.quants.is_empty() { "no GGUF model file".to_string() } else { h.quants.join(", ") };
+    let quants = if h.quants.is_empty() { strings::t("no-gguf-model-file") } else { h.quants.join(", ") };
     let mut with: Vec<&str> = Vec::new();
     if h.mmproj {
         with.push("mmproj");
@@ -248,19 +249,17 @@ fn result_detail(h: &hf::SearchHit) -> String {
     if with.is_empty() {
         quants
     } else {
-        format!("{quants}  ·  with {}", with.join(", "))
+        format!("{quants}  ·  {}", strings::fill("with-extras", &[&with.join(", ")]))
     }
 }
 
 /// The line over the result rows.
 fn results_title(query: &str, n: usize, limit: usize) -> String {
     match n {
-        0 => format!("No GGUF repository matches \"{query}\"."),
-        _ if n >= limit => format!(
-            "The {n} most downloaded GGUF repositories for \"{query}\" (add words to narrow it); downloads over the last 30 days"
-        ),
-        1 => format!("1 GGUF repository for \"{query}\"; downloads over the last 30 days"),
-        _ => format!("{n} GGUF repositories for \"{query}\", most downloaded first; downloads over the last 30 days"),
+        0 => strings::fill("results-none", &[&query]),
+        _ if n >= limit => strings::fill("results-limited", &[&n, &query]),
+        1 => strings::fill("results-one", &[&query]),
+        _ => strings::fill("results-many", &[&n, &query]),
     }
 }
 
@@ -280,7 +279,7 @@ fn dialog_error(e: &hf::HfError) -> String {
     let text = sentence(&e.to_string());
     match e {
         hf::HfError::NotFoundOrPrivate { .. } | hf::HfError::Gated { had_token: false, .. } => {
-            format!("{text}, or paste a token in the Access token field.")
+            strings::fill("or-paste-a-token", &[&text])
         }
         _ => text,
     }
@@ -306,7 +305,7 @@ fn candidate_label(c: &hf::Candidate, is_default: bool, is_recommended: bool) ->
     let name = if c.tag.is_empty() { c.primary().name().to_string() } else { c.tag.clone() };
     let mut parts = vec![name, hf::format_size(c.size)];
     if c.shards.len() > 1 {
-        parts.push(format!("{} shards", c.shards.len()));
+        parts.push(strings::fill("shards", &[&c.shards.len()]));
     }
     let mut with: Vec<&str> = Vec::new();
     if c.mmproj.is_some() {
@@ -318,27 +317,24 @@ fn candidate_label(c: &hf::Candidate, is_default: bool, is_recommended: bool) ->
         }
     }
     if !with.is_empty() {
-        parts.push(format!("with {}", with.join(", ")));
+        parts.push(strings::fill("with-extras", &[&with.join(", ")]));
     }
     if is_default {
-        parts.push("default".into());
+        parts.push(strings::t("default"));
     }
     if is_recommended {
-        parts.push("recommended".into());
+        parts.push(strings::t("recommended"));
     }
     parts.join("  ·  ")
 }
-
-/// What the estimate line of a candidate row says while it has no estimate.
-const ESTIMATING: &str = "estimating: reading the GGUF header…";
 
 /// A candidate row's second line: its placement estimate (or why there is
 /// none), led by the recommendation when it is the one.
 fn candidate_detail(slot: &Option<Result<(hf_fit::Estimate, u64), String>>, recommended: Option<&str>) -> String {
     let label = match slot {
-        None => ESTIMATING.to_string(),
+        None => strings::t("estimating"),
         Some(Ok((e, ctx))) => hf_fit::estimate_label(e, *ctx),
-        Some(Err(m)) => format!("estimate unavailable: {m}"),
+        Some(Err(m)) => strings::fill("estimate-unavailable", &[&m]),
     };
     hf_fit::detail_line(&label, recommended)
 }
@@ -357,6 +353,14 @@ fn drafter_options(c: &hf::Candidate) -> Vec<String> {
     std::iter::once("none".to_string()).chain(have).collect()
 }
 
+/// What the pills show for `options`: the drafter names stay, "none" is language.
+fn drafter_labels(options: &[String]) -> Vec<String> {
+    options
+        .iter()
+        .map(|o| if o == "none" { strings::t("none") } else { o.clone() })
+        .collect()
+}
+
 /// The pill's value as the job's sidecar ("none", or anything unknown, is no
 /// drafter).
 fn drafter_choice(value: &str) -> Option<hf::Sidecar> {
@@ -369,7 +373,7 @@ fn selection_summary(c: &hf::Candidate, mmproj: bool, drafter: Option<hf::Sideca
     let mut size = c.size;
     let mut count = c.shards.len();
     files.push(if c.shards.len() > 1 {
-        format!("{} ({} shards)", c.primary().name(), c.shards.len())
+        strings::fill("file-with-shards", &[&c.primary().name(), &c.shards.len()])
     } else {
         c.primary().name().to_string()
     });
@@ -385,24 +389,27 @@ fn selection_summary(c: &hf::Candidate, mmproj: bool, drafter: Option<hf::Sideca
         size += f.size;
         count += 1;
     }
-    let noun = if count == 1 { "file" } else { "files" };
-    format!("Fetches {count} {noun}, {}: {}", hf::format_size(size), files.join(", "))
+    if count == 1 {
+        strings::fill("fetches-one", &[&hf::format_size(size), &files.join(", ")])
+    } else {
+        strings::fill("fetches-many", &[&count, &hf::format_size(size), &files.join(", ")])
+    }
 }
 
 /// The line over the candidate list.
 fn listing_title(l: &hf::Listing) -> String {
     let commit = &l.commit[..12.min(l.commit.len())];
     let n = l.candidates.len();
-    let noun = if n == 1 { "quantization" } else { "quantizations" };
-    format!("{} @ {commit}: {n} {noun}", l.repo)
+    if n == 1 {
+        strings::fill("listing-one", &[&l.repo, &commit])
+    } else {
+        strings::fill("listing-many", &[&l.repo, &commit, &n])
+    }
 }
 
 /// The refusal of a second download of a repository already downloading.
 fn busy_refusal(repo: &str) -> String {
-    format!(
-        "{repo} is already downloading (Downloads window): one download per repository at a time, \
-         since both would write its staging folder. Start this one when that one ends."
-    )
+    strings::fill("download-busy", &[&repo])
 }
 
 /// A Downloads row's title: the repository and the quantization.
@@ -432,6 +439,7 @@ fn clear_listing(app: &AppWindow) {
     s.set_hf_candidate_index(-1);
     s.set_hf_mmproj_available(false);
     s.set_hf_drafter_options(string_model(Vec::new()));
+    s.set_hf_drafter_labels(string_model(Vec::new()));
     s.set_hf_drafter(SharedString::from("none"));
     s.set_hf_selection_summary(SharedString::default());
     s.set_hf_resume(false);
@@ -477,7 +485,9 @@ fn pick(app: &AppWindow, state: &Rc<RefCell<State>>, index: i32) {
     s.set_hf_candidate_index(index);
     s.set_hf_mmproj_available(c.mmproj.is_some());
     s.set_hf_take_mmproj(c.mmproj.is_some() && wish_mmproj);
-    s.set_hf_drafter_options(string_model(drafter_options(&c)));
+    let drafters = drafter_options(&c);
+    s.set_hf_drafter_labels(string_model(drafter_labels(&drafters)));
+    s.set_hf_drafter_options(string_model(drafters));
     let drafter = wish_drafter.filter(|k| c.sidecar(*k).is_some()).map_or("none", |k| k.label());
     s.set_hf_drafter(SharedString::from(drafter));
     refresh_summary(app, state);
@@ -888,7 +898,7 @@ fn listed_with(
                 st.hf.wish_drafter = None;
                 st.hf.estimates = match budget {
                     Some(_) => vec![None; n],
-                    None => vec![Some(Err(hf_fit::NO_GPU.to_string())); n],
+                    None => vec![Some(Err(hf_fit::no_gpu())); n],
                 };
                 st.hf.recommended = None;
                 st.hf.user_picked = false;
@@ -923,7 +933,7 @@ fn refresh_rows(app: &AppWindow, state: &Rc<RefCell<State>>) {
     let details: Vec<String> = (0..l.candidates.len())
         .map(|i| {
             let slot = st.hf.estimates.get(i).cloned().flatten();
-            candidate_detail(&slot, rec.filter(|r| r.index == i).map(|r| r.reason))
+            candidate_detail(&slot, rec.as_ref().filter(|r| r.index == i).map(|r| r.reason.as_str()))
         })
         .collect();
     let s = app.global::<AppState>();
@@ -1021,7 +1031,7 @@ fn download(app: &AppWindow, state: &Rc<RefCell<State>>) {
     };
     let Some(server_exe) = server_exe() else {
         s.set_hf_error(SharedString::from(dialog_error(&hf::HfError::MissingTool(
-            "llama-server was not found beside the configurator or in the build tree".into(),
+            strings::t("server-not-found-for-download"),
         ))));
         return;
     };
@@ -1054,7 +1064,7 @@ fn download(app: &AppWindow, state: &Rc<RefCell<State>>) {
     // Against the budget the rows were estimated with, so the preset gets the
     // split the picked row showed.
     let budget = state.borrow().hf.budget.clone();
-    set_status(app, format!("Downloading {title} in the background: the Downloads window shows its progress."), false);
+    set_status(app, strings::fill("downloading-in-background", &[&title]), false);
     // The dialog's part ends here: close it as a dismiss does (a header read
     // still in flight lands on nothing), then hand the job over.
     dismiss(app, state);
@@ -1294,7 +1304,7 @@ mod tests {
 
     #[test]
     fn candidate_details_say_estimating_the_estimate_or_why_not() {
-        assert_eq!(candidate_detail(&None, None), ESTIMATING);
+        assert_eq!(candidate_detail(&None, None), strings::t("estimating"));
         let e = hf_fit::Estimate::plain(hf_fit::Fit::Gpu { need: 6 << 30, budget: 12 << 30 }, Some(0), vec![]);
         assert_eq!(candidate_detail(&Some(Ok((e.clone(), 32768))), None), "all on GPU: 6.0 of 12.0 GiB with a 32k context");
         assert_eq!(
@@ -1302,7 +1312,7 @@ mod tests {
             "recommended, the best quality that fits in GPU memory: all on GPU: 6.0 of 12.0 GiB with a 32k context"
         );
         assert_eq!(
-            candidate_detail(&Some(Err(hf_fit::NO_GPU.into())), None),
+            candidate_detail(&Some(Err(hf_fit::no_gpu())), None),
             "estimate unavailable: llama-server --list-devices reports no GPU"
         );
     }

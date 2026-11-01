@@ -26,6 +26,7 @@
 //! (`src/llama-arch.cpp`, `include/llama.h`, `tools/mtmd/clip-impl.h`); the GGUF
 //! value-type enum mirrors `ggml/include/gguf.h`.
 
+use crate::strings;
 use std::path::Path;
 
 /// Separator between the parts of a Model-info box line ("arch · quant · size").
@@ -278,16 +279,16 @@ impl ModelInfo {
 
     pub fn kind_line(&self) -> String {
         if !self.is_moe {
-            return "Dense".to_string();
+            return strings::t("dense");
         }
-        let mut parts = vec![format!("{} experts", self.expert_count)];
+        let mut parts = vec![strings::fill("experts-count", &[&self.expert_count])];
         if self.expert_used > 0 {
-            parts.push(format!("{} active/tok", self.expert_used));
+            parts.push(strings::fill("experts-active", &[&self.expert_used]));
         }
         if self.expert_shared_count > 0 {
-            parts.push(format!("{} shared", self.expert_shared_count));
+            parts.push(strings::fill("experts-shared", &[&self.expert_shared_count]));
         }
-        format!("MoE: {}", parts.join(", "))
+        strings::fill("moe-kind", &[&parts.join(", ")])
     }
 
     /// How many transformer layers actually carry MoE expert weights: the count
@@ -299,24 +300,18 @@ impl ModelInfo {
         if !self.is_moe || self.n_layer == 0 {
             return String::new();
         }
-        let desc = if self.leading_dense_block_count > 0
+        if self.leading_dense_block_count > 0
             && self.leading_dense_block_count < self.n_layer
         {
-            format!(
-                "{} of {} layers hold experts (first {} dense)",
-                self.n_layer - self.leading_dense_block_count,
-                self.n_layer,
-                self.leading_dense_block_count
+            strings::fill(
+                "moe-layers-after-dense",
+                &[&(self.n_layer - self.leading_dense_block_count), &self.n_layer, &self.leading_dense_block_count],
             )
         } else if self.moe_every_n_layers > 1 {
-            format!(
-                "experts every {} layers of {}",
-                self.moe_every_n_layers, self.n_layer
-            )
+            strings::fill("moe-layers-every", &[&self.moe_every_n_layers, &self.n_layer])
         } else {
-            format!("all {} layers hold experts", self.n_layer)
-        };
-        desc
+            strings::fill("moe-layers-all", &[&self.n_layer])
+        }
     }
 
     pub fn arch_quant_line(&self) -> String {
@@ -366,7 +361,7 @@ impl ModelInfo {
             Some((ty, bytes)) => {
                 format!("{}{SEP}{}", ggml_type_name(ty), format_mib(bytes))
             }
-            None => "n/a".to_string(),
+            None => strings::t("not-available"),
         }
     }
 
@@ -378,13 +373,9 @@ impl ModelInfo {
     /// the warning away. So `!embd_pinnable()` alone must never gate this.
     pub fn embd_pin_warning(&self) -> String {
         match self.embd {
-            Some((ty, _)) if !gpu_has_get_rows(ty, self.n_embd) => format!(
-                "This model stores token_embd as {}: CUDA/ROCm have no get_rows kernel for \
-                 that type, so pinning it to a GPU sends the whole table back to host RAM on \
-                 EVERY token, and decode collapses. Point the rule at CPU, or use a build \
-                 whose embedding table is Q8_0/F16/BF16 or a K-quant.",
-                ggml_type_name(ty)
-            ),
+            Some((ty, _)) if !gpu_has_get_rows(ty, self.n_embd) => {
+                strings::fill("embd-pin-warning", &[&ggml_type_name(ty)])
+            }
             _ => String::new(),
         }
     }
@@ -402,27 +393,20 @@ impl ModelInfo {
         if arch_supports_sm_tensor(&self.arch) {
             String::new()
         } else {
-            format!(
-                "Split mode tensor: llama.cpp's tensor parallelism is not implemented for the \
-                 '{}' architecture, so the model will not load under it. Pick layer.",
-                self.arch
-            )
+            strings::fill("sm-tensor-warning", &[&self.arch])
         }
     }
 
     pub fn layers_ctx_line(&self) -> String {
         let mut parts: Vec<String> = Vec::new();
         if self.n_layer > 0 {
-            parts.push(format!("{} layers", self.n_layer));
+            parts.push(strings::fill("layers-count", &[&self.n_layer]));
         }
         if self.n_ctx_train > 0 {
-            parts.push(format!(
-                "trained ctx {}",
-                group_thousands(self.n_ctx_train as u64)
-            ));
+            parts.push(strings::fill("trained-ctx", &[&group_thousands(self.n_ctx_train as u64)]));
         }
         if parts.is_empty() {
-            "n/a".to_string()
+            strings::t("not-available")
         } else {
             parts.join(SEP)
         }
@@ -433,38 +417,33 @@ impl ModelInfo {
             return "n/a".to_string();
         }
         if self.head_count_kv == 0 || self.head_count_kv == self.head_count {
-            return format!("{} heads (MHA)", self.head_count);
+            return strings::fill("heads-mha", &[&self.head_count]);
         }
         if self.head_count.is_multiple_of(self.head_count_kv) {
-            format!(
-                "{} heads / {} KV (GQA {}×)",
-                self.head_count,
-                self.head_count_kv,
-                self.head_count / self.head_count_kv
+            strings::fill(
+                "heads-gqa-ratio",
+                &[&self.head_count, &self.head_count_kv, &(self.head_count / self.head_count_kv)],
             )
         } else {
-            format!(
-                "{} heads / {} KV (GQA)",
-                self.head_count, self.head_count_kv
-            )
+            strings::fill("heads-gqa", &[&self.head_count, &self.head_count_kv])
         }
     }
 
     /// The "Memory" row: what llama.cpp keeps of past tokens for this arch
     /// (`arch_memory`).
     pub fn memory_line(&self) -> String {
-        arch_memory(&self.arch).to_string()
+        arch_memory(&self.arch)
     }
 
     /// The "Thinking" row: does this model reason, and can `--reasoning on|off`
     /// switch it?
     pub fn thinking_line(&self) -> String {
         match self.thinking() {
-            Thinking::NoTemplate => "unknown (no embedded chat template)".to_string(),
-            Thinking::None => "no marker in the chat template".to_string(),
-            Thinking::Switchable => "yes".to_string(),
-            Thinking::EffortOnly => "yes".to_string(),
-            Thinking::Always => "yes".to_string(),
+            Thinking::NoTemplate => strings::t("no-embedded-template"),
+            Thinking::None => strings::t("no-thinking-marker"),
+            Thinking::Switchable => strings::t("yes"),
+            Thinking::EffortOnly => strings::t("yes"),
+            Thinking::Always => strings::t("yes"),
         }
     }
 
@@ -473,9 +452,9 @@ impl ModelInfo {
     /// sets?
     pub fn past_thinking_line(&self) -> String {
         match (self.thinking(), self.preserve_var()) {
-            (Thinking::NoTemplate, _) => "unknown (no embedded chat template)".to_string(),
-            (_, Some(_)) => "yes".to_string(),
-            (_, None) => "no".to_string(),
+            (Thinking::NoTemplate, _) => strings::t("no-embedded-template"),
+            (_, Some(_)) => strings::t("yes"),
+            (_, None) => strings::t("no"),
         }
     }
 
@@ -510,9 +489,9 @@ impl ModelInfo {
     /// `{%`/`{{}` heuristic mirrors llama.cpp's own `common_chat_verify_template`.
     pub fn chat_template_line(&self) -> String {
         match self.chat_template_is_jinja() {
-            None => "none".to_string(),
-            Some(true) => "Jinja (embedded)".to_string(),
-            Some(false) => "embedded (non-Jinja)".to_string(),
+            None => strings::t("none"),
+            Some(true) => strings::t("template-jinja"),
+            Some(false) => strings::t("template-other"),
         }
     }
 
@@ -524,19 +503,15 @@ impl ModelInfo {
             parts.push(self.quant.clone());
         }
         parts.push(if self.n_layer > 0 {
-            format!("{} layers", self.n_layer)
+            strings::fill("layers-count", &[&self.n_layer])
         } else {
-            "0 layers (head)".to_string()
+            strings::t("layers-head")
         });
         if self.block_size > 0 {
-            parts.push(format!(
-                "block_size {} (n-max ≤ {})",
-                self.block_size,
-                self.block_size.saturating_sub(1)
-            ));
+            parts.push(strings::fill("block-size", &[&self.block_size, &self.block_size.saturating_sub(1)]));
         }
         if self.nextn_predict_layers > 0 {
-            parts.push(format!("nextn {}", self.nextn_predict_layers));
+            parts.push(strings::fill("nextn", &[&self.nextn_predict_layers]));
         }
         parts.join(SEP)
     }
@@ -563,22 +538,22 @@ impl MmprojInfo {
 
     pub fn mmproj_line(&self) -> String {
         let modality = match (self.has_vision, self.has_audio) {
-            (true, true) => "vision + audio",
-            (true, false) => "vision",
-            (false, true) => "audio",
-            (false, false) => "projector",
+            (true, true) => strings::key("vision-and-audio"),
+            (true, false) => strings::key("modality-vision"),
+            (false, true) => strings::key("modality-audio"),
+            (false, false) => strings::key("modality-projector"),
         };
         let mut parts: Vec<String> = Vec::new();
         if !self.projector_type.is_empty() {
             parts.push(self.projector_type.clone());
         }
-        parts.push(modality.to_string());
+        parts.push(strings::t(modality));
         if self.vision_block_count > 0 {
-            parts.push(format!("{} enc. layers", self.vision_block_count));
+            parts.push(strings::fill("encoder-layers", &[&self.vision_block_count]));
         }
         if self.image_size > 0 {
             if self.patch_size > 0 {
-                parts.push(format!("{}px / patch {}", self.image_size, self.patch_size));
+                parts.push(strings::fill("image-patch", &[&self.image_size, &self.patch_size]));
             } else {
                 parts.push(format!("{}px", self.image_size));
             }
@@ -607,10 +582,7 @@ pub fn draft_line(info: &ModelInfo, selected_draft: &str) -> String {
 
     if info.nextn_predict_layers > 0 {
         let n = info.nextn_predict_layers;
-        parts.push(format!(
-            "MTP: {n} nextn layer{}",
-            if n == 1 { "" } else { "s" }
-        ));
+        parts.push(if n == 1 { strings::t("mtp-layers-one") } else { strings::fill("mtp-layers-many", &[&n]) });
     }
 
     let selected = selected_draft.trim();
@@ -621,11 +593,11 @@ pub fn draft_line(info: &ModelInfo, selected_draft: &str) -> String {
             .file_name()
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_else(|| selected.to_string());
-        parts.push(format!("draft file: {name}"));
+        parts.push(strings::fill("draft-file-named", &[&name]));
     }
 
     if parts.is_empty() {
-        return "none".to_string();
+        return strings::t("none");
     }
     parts.join(SEP)
 }
@@ -876,17 +848,17 @@ fn gpu_has_get_rows(ggml_type: u32, n_embd: u32) -> bool {
 /// `LLM_ARCH_NAMES`' own. Verified against v0.7.0; keep it in sync with both
 /// switches when bumping llama.cpp (an arch missing here reads as "attention",
 /// a fact the row then gets wrong without any error).
-fn arch_memory(arch: &str) -> &'static str {
-    match arch {
-        "mamba" | "mamba2" | "rwkv6" | "rwkv6qwen2" | "rwkv7" | "arwkv7" => "recurrent",
+fn arch_memory(arch: &str) -> String {
+    strings::t(match arch {
+        "mamba" | "mamba2" | "rwkv6" | "rwkv6qwen2" | "rwkv7" | "arwkv7" => strings::key("memory-recurrent"),
         "jamba" | "falcon-h1" | "plamo2" | "granitehybrid" | "lfm2" | "lfm2moe" | "nemotron_h"
         | "nemotron_h_moe" | "qwen3next" | "kimi-linear" | "bailingmoe3" | "kimi-k3"
         | "glm5-next" | "qwen35" | "qwen35moe" | "qwen4exp" | "deepseek4" | "minimax-01" => {
-            "hybrid (attention + recurrent)"
+            strings::key("memory-hybrid")
         }
-        "" => "unknown",
-        _ => "attention",
-    }
+        "" => strings::key("unknown"),
+        _ => strings::key("memory-attention"),
+    })
 }
 
 /// Whether llama.cpp's tensor parallelism (`--split-mode tensor`) implements this

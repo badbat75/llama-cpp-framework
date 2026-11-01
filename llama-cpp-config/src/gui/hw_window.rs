@@ -135,6 +135,7 @@ fn persist(off: &Off) {
 /// (gui::run) must keep the returned window alive for the whole event loop.
 pub(super) fn wire(app: &AppWindow) -> Result<HwWindow, slint::PlatformError> {
     let win = HwWindow::new()?;
+    install_strings(win.global::<Strings>());
     let live = Arc::new(AtomicU64::new(0));
     restore_window_size(&win);
     let off: Off = Arc::new(Mutex::new(
@@ -246,6 +247,7 @@ pub(super) fn e2e() {
     let none = HashSet::new();
 
     let win = HwWindow::new().expect("build HwWindow");
+    install_strings(win.global::<Strings>());
     win.window().set_size(slint::PhysicalSize::new(800, 1200));
     win.show().expect("realize window");
     assert_eq!(shown(&win, "Sampling…"), 1, "the empty state");

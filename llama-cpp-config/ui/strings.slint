@@ -1,0 +1,34 @@
+// Strings: the UI's text, looked up by key in the language file
+// (strings/en_US.toml; src/strings.rs loads it). A page writes
+// `Strings.t("key")` wherever it would write a literal, and `Strings.t1("key", a)`
+// or `t2("key", a, b)` for a sentence with values in it, `{0}` and `{1}` in the
+// file's text, so a translation can put them anywhere. A value is a string.
+//
+// `t` is a function over a callback rather than the callback itself, because of
+// `ready`. A window builds its visible page inside its `new()`, and a LabeledField
+// measures its label there, so a text binding is evaluated BEFORE Rust can set
+// any handler on this global. A callback is no dependency: that first answer
+// would stay cached for good. Reading `ready` is one, so raising it once the
+// handler is in re-evaluates every text already built. Empty until then, not the
+// key: nothing is drawn yet, but a label column only ever widens, and it would
+// keep the width of a key measured there.
+//
+// A global is per root component (https://docs.slint.dev guide, Globals): each
+// root whose pages use it needs its own `gui::install_strings`.
+
+export global Strings {
+    in property <bool> ready: false;
+    pure callback lookup(string) -> string;
+    pure callback lookup1(string, string) -> string;
+    pure callback lookup2(string, string, string) -> string;
+
+    public pure function t(key: string) -> string {
+        return ready ? lookup(key) : "";
+    }
+    public pure function t1(key: string, a: string) -> string {
+        return ready ? lookup1(key, a) : "";
+    }
+    public pure function t2(key: string, a: string, b: string) -> string {
+        return ready ? lookup2(key, a, b) : "";
+    }
+}

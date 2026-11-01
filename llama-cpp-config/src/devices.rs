@@ -9,6 +9,7 @@
 //! `parse` also breaks the trailing `(12281 MiB, 10844 MiB free)` out into
 //! `total_mib` / `free_mib` rather than leaving them baked into the label.
 
+use crate::strings;
 use std::sync::RwLock;
 
 use crate::paths;
@@ -42,10 +43,9 @@ impl DeviceOption {
         if self.total_mib == 0 {
             return String::new();
         }
-        format!(
-            "{:.1} GB ({:.1} free)",
-            self.total_mib as f64 / 1024.0,
-            self.free_mib as f64 / 1024.0
+        strings::fill(
+            "vram-summary",
+            &[&format!("{:.1}", self.total_mib as f64 / 1024.0), &format!("{:.1}", self.free_mib as f64 / 1024.0)],
         )
     }
 }
@@ -185,7 +185,7 @@ pub fn build_options(
     if let Some(i) = values.iter().position(|v| v.eq_ignore_ascii_case(cur)) {
         return (labels, values, i as i32);
     }
-    labels.insert(1, format!("(custom) {cur}"));
+    labels.insert(1, strings::fill("custom-entry", &[&cur]));
     values.insert(1, cur.to_string());
     (labels, values, 1)
 }
@@ -283,30 +283,12 @@ pub fn rocm_warning(devs: &[DeviceOption], state: DistState) -> Option<String> {
     if devs.is_empty() || !amd_gpu_present(devs) || rocm_present(devs) {
         return None;
     }
-    let head = "An AMD GPU is detected but no ROCm device is: llama.cpp is running it through \
-                Vulkan instead of HIP.";
-    Some(match state {
-        DistState::Absent => format!(
-            "{head} No ROCm runtime was found. The installer puts it next to llama-server: \
-             reinstall llama.cpp-framework. A build from source finds it through HIP_PATH."
-        ),
-        DistState::NoRuntime => format!(
-            "{head} HIP_PATH names a directory with no hipblas.dll, so the ROCm dist is \
-             incomplete. Re-run scripts\\00-install-prerequisites.ps1."
-        ),
-        DistState::NoKernels => format!(
-            "{head} The runtime is there but rocBLAS's kernel store (rocblas\\library) is \
-             not, so even a loaded backend would fail on the first matrix multiply. \
-             Reinstall llama.cpp-framework (a build from source: re-run \
-             scripts\\00-install-prerequisites.ps1)."
-        ),
-        DistState::Complete => format!(
-            "{head} The ROCm runtime looks complete, so the backend is failing to load \
-             rather than to install: most often a missing or outdated AMD Adrenalin driver, \
-             or, on a build from source, a console whose PATH still names an older dist \
-             directory."
-        ),
-    })
+    Some(strings::t(match state {
+        DistState::Absent => strings::key("rocm-absent"),
+        DistState::NoRuntime => strings::key("rocm-no-runtime"),
+        DistState::NoKernels => strings::key("rocm-no-kernels"),
+        DistState::Complete => strings::key("rocm-complete"),
+    }))
 }
 
 /// `rocm_warning` against the live machine: the cached probe crossed with the

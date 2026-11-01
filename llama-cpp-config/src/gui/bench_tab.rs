@@ -40,6 +40,7 @@
 //! `bench::live_body`), never by a second formatter that could drift from it.
 //! Same rule, and the same reason, as the Server tab's Command Line card.
 
+use crate::strings;
 use super::*;
 
 use std::path::Path;
@@ -140,21 +141,21 @@ fn image_info(t: &ImageThumb, whose: &Whose, size: Option<(u32, u32)>) -> String
     let name = path_name(&t.path);
     let (w, h) = match &t.dims {
         Ok(d) => *d,
-        Err(e) => return format!("{name}: cannot be read ({e})"),
+        Err(e) => return strings::fill("image-unreadable", &[&name, &e]),
     };
     let sent = match size {
         Some((bw, bh)) if w > bw || h > bh => {
             let f = (f64::from(bw) / f64::from(w)).min(f64::from(bh) / f64::from(h));
-            format!("sent at {}x{}", (f64::from(w) * f).round(), (f64::from(h) * f).round())
+            strings::fill("image-sent-at", &[&(f64::from(w) * f).round(), &(f64::from(h) * f).round()])
         }
-        _ => "sent as is".into(),
+        _ => strings::t("image-sent-as-is"),
     };
     let whose = match whose {
-        Whose::Mine => "yours, in place of the prompts' own".to_string(),
-        Whose::Prompt => "the prompt's own".to_string(),
-        Whose::Shipped(prompt) => format!("the standard spec's, sent when {prompt} runs"),
+        Whose::Mine => strings::t("image-yours"),
+        Whose::Prompt => strings::t("image-prompts-own"),
+        Whose::Shipped(prompt) => strings::fill("image-of-spec", &[&prompt]),
     };
-    format!("{name}: {w}x{h}, {sent} ({whose})")
+    strings::fill("image-info", &[&name, &w, &h, &sent, &whose])
 }
 
 /// Refresh the Image row, decoding only when the file or its stamp changed.
@@ -163,9 +164,7 @@ fn refresh_image_preview(app: &AppWindow, state: &Rc<RefCell<State>>, size: Opti
     let Some((path, whose)) = shown_image(&s, state) else {
         state.borrow_mut().bench_image_thumb = None;
         s.set_bench_image_preview(slint::Image::default());
-        s.set_bench_image_info(SharedString::from(
-            "No image prompt found: the shipped bench-prompt-image-1.0.json is missing from share/benchmarks/prompts.",
-        ));
+        s.set_bench_image_info(SharedString::from(strings::t("no-image-prompt")));
         return;
     };
     let stamp = file_stamp(&path);
@@ -199,9 +198,9 @@ fn refresh_image_preview(app: &AppWindow, state: &Rc<RefCell<State>>, size: Opti
 
 fn pick_image_file(start: Option<&Path>) -> Option<std::path::PathBuf> {
     let mut dialog = rfd::FileDialog::new()
-        .set_title("Pick an image")
-        .add_filter("Images", &["jpg", "jpeg", "png"])
-        .add_filter("All files", &["*"]);
+        .set_title(strings::t("pick-an-image"))
+        .add_filter(strings::t("images"), &["jpg", "jpeg", "png"])
+        .add_filter(strings::t("all-files"), &["*"]);
     if let Some(parent) = start.and_then(Path::parent).filter(|p| p.is_dir()) {
         dialog = dialog.set_directory(parent);
     }
@@ -319,12 +318,12 @@ fn read_ticked_prompts(state: &Rc<RefCell<State>>) -> Result<Vec<bench::spec::Pr
     for path in ticked_paths(state) {
         let text = bench::load_prompt_file(&path)?;
         if text.trim().is_empty() {
-            return Err(format!("The live mode needs a prompt: {} is empty.", path.display()));
+            return Err(strings::fill("live-needs-prompt-empty", &[&path.display()]));
         }
         out.push((Some(path), text));
     }
     if out.is_empty() {
-        return Err("Tick at least one prompt.".into());
+        return Err(strings::t("tick-a-prompt"));
     }
     Ok(out)
 }
@@ -337,9 +336,9 @@ fn read_ticked_prompts(state: &Rc<RefCell<State>>) -> Result<Vec<bench::spec::Pr
 /// text but nothing says it has to be named `.txt`.
 fn pick_prompt_file(start: &Path) -> Option<std::path::PathBuf> {
     let mut dialog = rfd::FileDialog::new()
-        .set_title("Pick a prompt file")
-        .add_filter("Prompts", &["txt", "json", "md", "prompt"])
-        .add_filter("All files", &["*"]);
+        .set_title(strings::t("pick-a-prompt-file"))
+        .add_filter(strings::t("prompts"), &["txt", "json", "md", "prompt"])
+        .add_filter(strings::t("all-files"), &["*"]);
     if let Some(parent) = start.parent().filter(|p| p.is_dir()) {
         dialog = dialog.set_directory(parent);
     }
@@ -368,7 +367,7 @@ fn persist_prompt_path(app: &AppWindow, path: &Path) {
         // The only reachable failure is a path carrying ';' or '#', which the
         // INI comment rule would truncate on reload. Say so: the run itself
         // still works, it just will not be remembered.
-        set_status(app, format!("Prompt file not remembered: {e}"), true);
+        set_status(app, strings::fill("prompt-not-remembered", &[&e]), true);
     }
 }
 
@@ -387,9 +386,9 @@ fn configured_db_path(s: &AppState) -> std::path::PathBuf {
 /// EXISTING file: a new database is a typed path, created by the first run.
 fn pick_db_file(start: &Path) -> Option<std::path::PathBuf> {
     let mut dialog = rfd::FileDialog::new()
-        .set_title("Pick a benchmark database")
-        .add_filter("SQLite databases", &["db", "sqlite", "sqlite3"])
-        .add_filter("All files", &["*"]);
+        .set_title(strings::t("pick-a-database"))
+        .add_filter(strings::t("sqlite-databases"), &["db", "sqlite", "sqlite3"])
+        .add_filter(strings::t("all-files"), &["*"]);
     if let Some(parent) = start.parent().filter(|p| p.is_dir()) {
         dialog = dialog.set_directory(parent);
     }
@@ -411,7 +410,7 @@ fn persist_db_path(app: &AppWindow) -> bool {
     match settings::save(&cfg) {
         Ok(()) => true,
         Err(e) => {
-            set_status(app, format!("Benchmark database not saved: {e}"), true);
+            set_status(app, strings::fill("database-not-saved", &[&e]), true);
             false
         }
     }
@@ -438,9 +437,12 @@ pub(super) fn refresh(app: &AppWindow, state: &Rc<RefCell<State>>) {
         s.set_bench_prompt_lens(SharedString::from(bench::DEFAULT_PROMPT_LENS));
         s.set_bench_depths(SharedString::from(bench::DEFAULT_DEPTHS));
         s.set_bench_n_gen(SharedString::from(bench::DEFAULT_GEN.to_string()));
-        s.set_bench_spec_options(string_model(spec_options(state)));
+        set_spec_options(&s, state);
         let mut keys = vec!["none".to_string()];
         keys.extend(bench::sweep::SWEEPABLE.iter().map(|(k, _)| k.to_string()));
+        let mut labels = keys.clone();
+        labels[0] = strings::t("none");
+        s.set_bench_ab_key_labels(string_model(labels));
         s.set_bench_ab_keys(string_model(keys));
         s.set_bench_spec(SharedString::from(SPEC_CUSTOM));
     }
@@ -507,10 +509,7 @@ pub(super) fn refresh_preview(app: &AppWindow, state: &Rc<RefCell<State>>) {
     // The preview is "exactly what Run will do", and Run will refuse.
     let bad = invalid_numbers(&s, plan.mode);
     if !bad.is_empty() {
-        s.set_bench_preview(SharedString::from(format!(
-            "Run will refuse: {}.",
-            bad.join("; ")
-        )));
+        s.set_bench_preview(SharedString::from(strings::fill("run-will-refuse", &[&bad.join("; ")])));
         return;
     }
 
@@ -522,9 +521,7 @@ pub(super) fn refresh_preview(app: &AppWindow, state: &Rc<RefCell<State>>) {
         .filter_map(|id| all.iter().find(|p| &p.id == id).cloned())
         .collect();
     if chosen.is_empty() {
-        s.set_bench_preview(SharedString::from(
-            "Select one or more presets above to see what will run.",
-        ));
+        s.set_bench_preview(SharedString::from(strings::t("select-presets-to-preview")));
         return;
     }
 
@@ -563,9 +560,9 @@ pub(super) fn refresh_preview(app: &AppWindow, state: &Rc<RefCell<State>>) {
             let port = u16::try_from(cfg.port_or_default())
                 .unwrap_or(crate::server_cfg::DEFAULT_PORT as u16);
             let head = match steps_preview(&s, state, &plan.presets) {
-                Some(Ok(text)) => format!("{text}\n\nThe first request:\n"),
+                Some(Ok(text)) => strings::fill("then-first-request", &[&text]),
                 Some(Err(e)) => {
-                    s.set_bench_preview(SharedString::from(format!("Run will refuse: {}.", e.trim_end_matches('.'))));
+                    s.set_bench_preview(SharedString::from(strings::fill("run-will-refuse", &[&e.trim_end_matches('.')])));
                     return;
                 }
                 None => String::new(),
@@ -577,10 +574,7 @@ pub(super) fn refresh_preview(app: &AppWindow, state: &Rc<RefCell<State>>) {
                 // The bodies differ in one field, so repeating them whole would
                 // bury that difference in noise.
                 let rest: Vec<&str> = chosen[1..].iter().map(|p| p.id.as_str()).collect();
-                format!(
-                    "{first}\n\nThen the same request for: {} (only \"model\" differs).",
-                    rest.join(", ")
-                )
+                strings::fill("then-same-request", &[&first, &rest.join(", ")])
             }
         }
     };
@@ -594,25 +588,21 @@ fn saved_campaigns(path: &Path) -> (Vec<bench::db::CampaignRow>, String) {
     if !path.is_file() {
         return (
             Vec::new(),
-            format!(
-                "{} (not there yet: the first finished run creates it)",
-                path.display()
-            ),
+            strings::fill("database-not-there-yet", &[&path.display()]),
         );
     }
     let read =
         bench::db::open_ro(path).and_then(|c| bench::db::campaigns(&c).map_err(|e| e.to_string()));
     match read {
         Ok(runs) => {
-            let info = format!(
-                "{} ({} campaign{})",
-                path.display(),
-                runs.len(),
-                if runs.len() == 1 { "" } else { "s" }
-            );
+            let info = if runs.len() == 1 {
+                strings::fill("database-campaigns-one", &[&path.display()])
+            } else {
+                strings::fill("database-campaigns-many", &[&path.display(), &runs.len()])
+            };
             (runs, info)
         }
-        Err(e) => (Vec::new(), format!("cannot read: {e}")),
+        Err(e) => (Vec::new(), strings::fill("cannot-read", &[&e])),
     }
 }
 
@@ -630,14 +620,11 @@ fn refresh_runs(app: &AppWindow) {
     s.set_bench_run_labels(string_model(
         runs.iter()
             .map(|c| {
-                format!(
-                    "{}  ({}, {}, {} run{})",
-                    c.name,
-                    c.started,
-                    c.tools,
-                    c.runs,
-                    if c.runs == 1 { "" } else { "s" }
-                )
+                if c.runs == 1 {
+                    strings::fill("campaign-label-one", &[&c.name, &c.started, &c.tools])
+                } else {
+                    strings::fill("campaign-label-many", &[&c.name, &c.started, &c.tools, &c.runs])
+                }
             })
             .collect(),
     ));
@@ -651,7 +638,7 @@ fn load_campaign(db: &Path, name: &str) -> Result<(Vec<bench::Point>, Vec<String
     let conn = bench::db::open_ro(db)?;
     let (runs, report) = bench::db::campaign_runs(&conn, name).map_err(|e| e.to_string())?;
     if runs.is_empty() {
-        return Err(format!("no runs in campaign {name}"));
+        return Err(strings::fill("no-runs-in-campaign", &[&name]));
     }
     let mut points = Vec::new();
     let mut order = Vec::new();
@@ -676,35 +663,35 @@ fn invalid_numbers(s: &AppState, mode: Mode) -> Vec<String> {
         return out;
     }
     out.extend(ini::int_problem(
-        "Repetitions",
+        &strings::t("repetitions"),
         s.get_bench_reps().as_str(),
         &ini::INT_POSITIVE,
     ));
     match mode {
         Mode::Live => {
             out.extend(ini::int_problem(
-                "Max output tokens",
+                &strings::t("max-output-tokens"),
                 s.get_bench_max_tokens().as_str(),
                 &ini::INT_NON_NEGATIVE,
             ));
             out.extend(bench::parse_image_size(s.get_bench_image_size().as_str()).err());
             let image = s.get_bench_image();
             if !image.trim().is_empty() && !Path::new(image.trim()).is_file() {
-                out.push(format!("Image: {} is not a file", image.trim()));
+                out.push(strings::fill("image-not-a-file", &[&image.trim()]));
             }
         }
         Mode::Synthetic => {
             out.extend(bench::int_list_problem(
-                "Prompt lengths",
+                &strings::t("prompt-lengths"),
                 s.get_bench_prompt_lens().as_str(),
             ));
             out.extend(ini::int_problem(
-                "Generate",
+                &strings::t("generate"),
                 s.get_bench_n_gen().as_str(),
                 &ini::INT_NON_NEGATIVE,
             ));
             out.extend(bench::int_list_problem(
-                "Depths",
+                &strings::t("depths"),
                 s.get_bench_depths().as_str(),
             ));
         }
@@ -814,9 +801,7 @@ fn save_spec(app: &AppWindow, state: &Rc<RefCell<State>>, path: &Path) -> Result
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
     if name.is_empty() || name == "standard" || name == SPEC_CUSTOM {
-        return Err(format!(
-            "the file name names the spec, and `{name}` is not one of yours: pick another"
-        ));
+        return Err(strings::fill("spec-name-taken", &[&name]));
     }
     let bad = invalid_numbers(&s, Mode::Live);
     if !bad.is_empty() {
@@ -879,7 +864,7 @@ fn save_spec(app: &AppWindow, state: &Rc<RefCell<State>>, path: &Path) -> Result
     // What reads back is what was meant: a spec this tab cannot load again is
     // not saved.
     bench::spec::parse(&text, &paths::config_dir())?;
-    crate::ini::atomic_write(path, &text).map_err(|e| format!("cannot write {}: {e}", path.display()))?;
+    crate::ini::atomic_write(path, &text).map_err(|e| strings::fill("cannot-write", &[&path.display(), &e]))?;
     Ok(name)
 }
 
@@ -897,6 +882,21 @@ const SPEC_FILE: &str = "file: ";
 
 /// The Spec combo: custom, every published version of `standard`
 /// (`standard.versions`, newest first), then the user's spec files.
+/// The spec list, each entry shown as it reads in the current language.
+fn set_spec_options(s: &AppState<'_>, state: &Rc<RefCell<State>>) {
+    let options = spec_options(state);
+    let labels = options
+        .iter()
+        .map(|o| match o.strip_prefix(SPEC_FILE) {
+            _ if o == SPEC_CUSTOM => strings::t("custom"),
+            Some(path) => strings::fill("spec-from-file", &[&path]),
+            None => o.clone(),
+        })
+        .collect();
+    s.set_bench_spec_labels(string_model(labels));
+    s.set_bench_spec_options(string_model(options));
+}
+
 fn spec_options(state: &Rc<RefCell<State>>) -> Vec<String> {
     let mut versions: Vec<String> = bench::spec::published_versions(bench::spec::STANDARD_VERSIONS)
         .into_iter()
@@ -926,7 +926,7 @@ fn chosen_spec(s: &AppState) -> Option<Result<bench::spec::Spec, String>> {
     } else if let Some(path) = v.strip_prefix(SPEC_FILE) {
         bench::spec::load(path)
     } else {
-        Err(format!("unknown spec {v}"))
+        Err(strings::fill("unknown-spec", &[&v]))
     })
 }
 
@@ -1048,7 +1048,7 @@ fn job_from_ui(
     };
     if let Some(spec) = chosen_spec(s) {
         if plan.presets.is_empty() {
-            return Err("select one or more presets".into());
+            return Err(strings::t("select-presets"));
         }
         let spec = spec?;
         let derive = derive_from_ui(s, state, &plan, &prompts);
@@ -1120,11 +1120,11 @@ fn ab_from_ui(s: &AppState, presets: &[String]) -> Result<Option<(String, Vec<St
     }
     let text = s.get_bench_ab_values();
     if text.trim().is_empty() {
-        return Err(format!("A/B on {key}: type the values to compare"));
+        return Err(strings::fill("ab-type-values", &[&key]));
     }
     let values = bench::sweep::parse_values(text.as_str())?;
     if values.len() < 2 {
-        return Err(format!("A/B on {key} needs two or more values"));
+        return Err(strings::fill("ab-needs-values", &[&key]));
     }
     for p in presets {
         bench::sweep::check_values(p, &key, &values)?;
@@ -1156,10 +1156,7 @@ fn steps_preview(
     let head = runs_preview(s, state, presets);
     let ab = match ab_from_ui(s, presets) {
         Ok(None) => return head,
-        Ok(Some((k, vs))) => format!(
-            "A/B on {k}: every step once per value ({}), written to the presets for it and put back after.",
-            vs.join(" | ")
-        ),
+        Ok(Some((k, vs))) => strings::fill("ab-preview", &[&k, &vs.join(" | ")]),
         Err(e) => return Some(Err(e)),
     };
     Some(match head {
@@ -1184,25 +1181,13 @@ fn runs_preview(
             } else {
                 spec.max_tokens
             };
-            let mut lines = vec![format!(
-                "Spec {}-{}, every request at its rules (output cap {}):",
-                spec.name,
-                spec.version,
-                if cap > 0 { cap.to_string() } else { "none".into() }
-            )];
+            let shown_cap = if cap > 0 { cap.to_string() } else { strings::t("none") };
+            let mut lines = vec![strings::fill("spec-preview", &[&spec.name, &spec.version, &shown_cap])];
             if !spec.published {
-                lines.push(format!(
-                    "A spec of yours, not a published version of standard: recorded as spec = custom, derived from {}-{}.",
-                    spec.name, spec.version
-                ));
+                lines.push(strings::fill("spec-of-yours", &[&spec.name, &spec.version]));
             }
             if !changed.is_empty() {
-                lines.push(format!(
-                    "Override: {} from the Workload card in every step; recorded as spec = custom, derived from {}-{}.",
-                    changed.join(", "),
-                    spec.name,
-                    spec.version
-                ));
+                lines.push(strings::fill("spec-overridden", &[&changed.join(", "), &spec.name, &spec.version]));
             }
             let ui = workload_values(s);
             let ui_of = |f: &str| {
@@ -1234,12 +1219,11 @@ fn runs_preview(
                     } else {
                         let o: Vec<String> =
                             pass.overrides.iter().map(|(k, v)| format!("{k} = {v}")).collect();
-                        format!(", presets set {} (llama-server restarted)", o.join(", "))
+                        strings::fill("pass-presets-set", &[&o.join(", ")])
                     };
-                    lines.push(format!(
-                        "- {} · {name}: temp {temp}, {reps} reps, concurrency {}{over}",
-                        pass.name,
-                        cs.join(", ")
+                    lines.push(strings::fill(
+                        "pass-preview",
+                        &[&pass.name, &name, &temp, &reps, &cs.join(", "), &over],
                     ));
                 }
             }
@@ -1256,13 +1240,13 @@ fn runs_preview(
     Some((|| {
         let mut parts = Vec::new();
         if ticked.len() > 1 {
-            parts.push(format!("prompts {}", ticked.join(", ")));
+            parts.push(strings::fill("preview-prompts", &[&ticked.join(", ")]));
         }
         if all {
             let cs: Vec<&str> = common_scenarios(presets)?.iter().map(|c| c.as_str()).collect();
-            parts.push(format!("concurrency {}", cs.join(", ")));
+            parts.push(strings::fill("preview-concurrency", &[&cs.join(", ")]));
         }
-        Ok(format!("In turn, into one campaign: {}.", parts.join(" x ")))
+        Ok(strings::fill("in-turn", &[&parts.join(" x ")]))
     })())
 }
 
@@ -1291,8 +1275,8 @@ fn start_run(app: &AppWindow, state: &Rc<RefCell<State>>, job: Job) {
     s.set_bench_rows(model(Vec::<BenchResultRow>::new()));
     s.set_bench_showing(SharedString::default());
     s.set_bench_report_campaign(SharedString::default());
-    s.set_bench_progress(SharedString::from("Starting…"));
-    set_status(app, "Benchmark running…".into(), false);
+    s.set_bench_progress(SharedString::from(strings::t("starting")));
+    set_status(app, strings::t("benchmark-running"), false);
 
     // Held until the run is done; refused rather than waited for, so the
     // window never hangs on a sweep running in a terminal.
@@ -1301,7 +1285,7 @@ fn start_run(app: &AppWindow, state: &Rc<RefCell<State>>, job: Job) {
         Err(e) => {
             s.set_bench_running(false);
             s.set_bench_progress(SharedString::default());
-            set_status(app, format!("Not run: {e}."), true);
+            set_status(app, strings::fill("not-run", &[&e]), true);
             return;
         }
     };
@@ -1335,20 +1319,14 @@ fn start_run(app: &AppWindow, state: &Rc<RefCell<State>>, job: Job) {
                     match result {
                         Ok(campaign) => {
                             s.set_bench_report_campaign(SharedString::from(campaign.as_str()));
-                            let tail = if mode == Mode::Synthetic {
-                                " llama-server is still stopped; start it when you need it."
+                            let key = if mode == Mode::Synthetic {
+                                strings::key("benchmark-finished-server-stopped")
                             } else {
-                                ""
+                                strings::key("benchmark-finished")
                             };
-                            set_status(
-                                &app,
-                                format!(
-                                    "Benchmark finished: campaign {campaign} in bench.db.{tail}"
-                                ),
-                                false,
-                            );
+                            set_status(&app, strings::fill(key, &[&campaign]), false);
                         }
-                        Err(e) => set_status(&app, format!("Benchmark: {e}"), true),
+                        Err(e) => set_status(&app, strings::fill("benchmark-failed", &[&e]), true),
                     }
                     refresh_runs(&app);
                 }
@@ -1519,13 +1497,10 @@ pub(super) fn wire(
             match paths::open_in_desktop(&path) {
                 Ok(_) => set_status(
                     &app,
-                    format!(
-                        "Opened {}. Save it and the readout follows within a few seconds.",
-                        path.display()
-                    ),
+                    strings::fill("prompt-opened", &[&path.display()]),
                     false,
                 ),
-                Err(e) => set_status(&app, format!("Cannot open {}: {e}", path.display()), true),
+                Err(e) => set_status(&app, strings::fill("cannot-open", &[&path.display(), &e]), true),
             }
             refresh_prompt_info(&app, &state);
         });
@@ -1548,9 +1523,9 @@ pub(super) fn wire(
                 return;
             };
             let Some(path) = rfd::FileDialog::new()
-                .set_title("Load a benchmark spec")
-                .add_filter("Spec files", &["ini"])
-                .add_filter("All files", &["*"])
+                .set_title(strings::t("load-a-spec"))
+                .add_filter(strings::t("spec-files"), &["ini"])
+                .add_filter(strings::t("all-files"), &["*"])
                 .pick_file()
             else {
                 return;
@@ -1565,12 +1540,12 @@ pub(super) fn wire(
                         format!("{SPEC_FILE}{}", path.display())
                     };
                     let s = app.global::<AppState>();
-                    s.set_bench_spec_options(string_model(spec_options(&state)));
+                    set_spec_options(&s, &state);
                     s.set_bench_spec(SharedString::from(pick));
                     spec_changed(&app, &state);
-                    set_status(&app, format!("Loaded spec {}-{}.", spec.name, spec.version), false);
+                    set_status(&app, strings::fill("spec-loaded", &[&spec.name, &spec.version]), false);
                 }
-                Err(e) => set_status(&app, format!("Spec not loaded: {e}"), true),
+                Err(e) => set_status(&app, strings::fill("spec-not-loaded", &[&e]), true),
             }
         });
     }
@@ -1582,8 +1557,8 @@ pub(super) fn wire(
                 return;
             };
             let Some(path) = rfd::FileDialog::new()
-                .set_title("Save the benchmark spec")
-                .add_filter("Spec files", &["ini"])
+                .set_title(strings::t("save-the-spec"))
+                .add_filter(strings::t("spec-files"), &["ini"])
                 .set_file_name("my-spec.ini")
                 .save_file()
             else {
@@ -1593,12 +1568,12 @@ pub(super) fn wire(
                 Ok(name) => {
                     remember_spec_file(&state, &path);
                     let s = app.global::<AppState>();
-                    s.set_bench_spec_options(string_model(spec_options(&state)));
+                    set_spec_options(&s, &state);
                     s.set_bench_spec(SharedString::from(format!("{SPEC_FILE}{}", path.display())));
                     spec_changed(&app, &state);
-                    set_status(&app, format!("Saved spec {name} v1 to {}.", path.display()), false);
+                    set_status(&app, strings::fill("spec-saved", &[&name, &path.display()]), false);
                 }
-                Err(e) => set_status(&app, format!("Spec not saved: {e}"), true),
+                Err(e) => set_status(&app, strings::fill("spec-not-saved", &[&e]), true),
             }
         });
     }
@@ -1617,7 +1592,7 @@ pub(super) fn wire(
                 if persist_db_path(&app) {
                     set_status(
                         &app,
-                        "Benchmark database saved to settings.ini.".into(),
+                        strings::t("database-saved"),
                         false,
                     );
                 }
@@ -1658,7 +1633,7 @@ pub(super) fn wire(
             let mode = Mode::from_str(app.global::<AppState>().get_bench_mode().as_str());
             let bad = invalid_numbers(&app.global::<AppState>(), mode);
             if !bad.is_empty() {
-                set_status(&app, format!("Not run: {}.", bad.join("; ")), true);
+                set_status(&app, strings::fill("not-run", &[&bad.join("; ")]), true);
                 return;
             }
             // The run writes where settings.ini points (`db::work_path`, as
@@ -1700,7 +1675,7 @@ pub(super) fn wire(
             let job = match job_from_ui(&s, &state, plan, prompts) {
                 Ok(job) => job,
                 Err(e) => {
-                    set_status(&app, format!("Not run: {e}."), true);
+                    set_status(&app, strings::fill("not-run", &[&e]), true);
                     return;
                 }
             };
@@ -1723,7 +1698,7 @@ pub(super) fn wire(
                     // No tray only in the test seam, where nothing is running.
                     None => set_status(
                         &app,
-                        "Stop llama-server before a synthetic benchmark.".into(),
+                        strings::t("stop-server-before-synthetic"),
                         true,
                     ),
                 }
@@ -1776,9 +1751,9 @@ pub(super) fn wire(
                         SharedString::default()
                     });
                     apply_points(&app, &points, &order);
-                    set_status(&app, format!("Showing campaign {name}."), false);
+                    set_status(&app, strings::fill("showing-campaign", &[&name]), false);
                 }
-                Err(e) => set_status(&app, format!("Cannot read that campaign: {e}"), true),
+                Err(e) => set_status(&app, strings::fill("cannot-read-campaign", &[&e]), true),
             }
         });
     }
@@ -1798,7 +1773,7 @@ pub(super) fn wire(
             let report = bench::db::open_ro(&configured_db_path(&s)).and_then(|c| {
                 bench::db::campaign_runs(&c, name.as_str())
                     .map_err(|e| e.to_string())
-                    .and_then(|(_, r)| r.ok_or_else(|| "no report".to_string()))
+                    .and_then(|(_, r)| r.ok_or_else(|| strings::t("no-report")))
             });
             let path = std::env::temp_dir().join(format!("llama-cpp-config-{name}.md"));
             match report.and_then(|r| std::fs::write(&path, r).map_err(|e| e.to_string())) {
@@ -1806,7 +1781,7 @@ pub(super) fn wire(
                 Ok(()) => {
                     let _ = paths::open_in_desktop(&path);
                 }
-                Err(e) => set_status(&app, format!("Cannot open the report: {e}"), true),
+                Err(e) => set_status(&app, strings::fill("cannot-open-report", &[&e]), true),
             }
         });
     }

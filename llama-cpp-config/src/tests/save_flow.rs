@@ -1486,7 +1486,7 @@ pub(super) fn run(app: &AppWindow) {
     // No GPU probed (none under test): every row says the estimate is
     // unavailable, no basis line, no recommendation.
     let details: Vec<String> = st.get_hf_candidate_details().iter().map(|s| s.to_string()).collect();
-    assert_eq!(details, vec![format!("estimate unavailable: {}", crate::hf_fit::NO_GPU); 2]);
+    assert_eq!(details, vec![format!("estimate unavailable: {}", crate::hf_fit::no_gpu()); 2]);
     assert!(st.get_hf_estimate_basis().is_empty());
 
     // With a GPU: rows read "estimating" until their header lands; once all

@@ -10,6 +10,7 @@
 //! [`ALL_INTERFACES`] is exclusive here: it already covers every IPv4 address,
 //! so [`toggle`] never lets it share the list with anything else.
 
+use crate::strings;
 use std::net::Ipv4Addr;
 
 /// The all-interfaces IPv4 bind. Exclusive in the list (see the module header).
@@ -76,11 +77,11 @@ pub fn toggle(current: &str, value: &str) -> String {
 fn fixed_rows() -> Vec<BindOption> {
     vec![
         BindOption {
-            label: "localhost (only this machine)".into(),
+            label: strings::t("bind-localhost"),
             value: "localhost".into(),
         },
         BindOption {
-            label: "0.0.0.0 (all interfaces, LAN-reachable)".into(),
+            label: strings::t("bind-all"),
             value: ALL_INTERFACES.into(),
         },
     ]
@@ -151,7 +152,7 @@ pub fn build_rows(ifaces: &[BindOption], current: &str) -> Vec<BindRow> {
         .iter()
         .filter(|h| !opts.iter().any(|o| o.value.eq_ignore_ascii_case(h)))
         .map(|h| BindOption {
-            label: format!("{h} (no longer present)"),
+            label: strings::fill("host-gone", &[&h]),
             value: h.clone(),
         })
         .collect();

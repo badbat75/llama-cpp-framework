@@ -36,6 +36,7 @@
 //! `remove_empty_dirs` is pure; the three filesystem ones are tested on a
 //! tempdir.
 
+use crate::strings;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
@@ -54,11 +55,11 @@ impl Role {
     pub const ALL: [Role; 3] = [Role::Model, Role::Mmproj, Role::Draft];
 
     /// The row label's head in the dialog and the CLI's lines.
-    pub fn label(self) -> &'static str {
+    pub fn label(self) -> String {
         match self {
-            Role::Model => "Model",
-            Role::Mmproj => "MMProj",
-            Role::Draft => "Drafter",
+            Role::Model => strings::t("role-model"),
+            Role::Mmproj => "MMProj".to_string(),
+            Role::Draft => strings::t("drafter"),
         }
     }
 
@@ -97,7 +98,7 @@ impl LinkedFile {
     pub fn name(&self) -> String {
         let name = file_name(&self.path);
         if self.files.len() > 1 {
-            format!("{name} ({} shards)", self.files.len())
+            strings::fill("file-with-shards", &[&name, &self.files.len()])
         } else {
             name
         }
@@ -113,7 +114,7 @@ impl LinkedFile {
     pub fn row_detail(&self) -> String {
         let size = crate::hf::format_size(self.size);
         if self.in_use() {
-            format!("{size}  ·  in use by {}: kept", bracketed(&self.used_by))
+            strings::fill("in-use-kept", &[&size, &bracketed(&self.used_by)])
         } else {
             let dir = self
                 .path
@@ -246,15 +247,11 @@ pub fn selection_summary(files: &[LinkedFile], ticked: &[bool]) -> String {
         .map(|(f, _)| f)
         .collect();
     if chosen.is_empty() {
-        return "Only the preset is deleted: every file stays on disk.".into();
+        return strings::t("delete-preset-only");
     }
     let bytes: u64 = chosen.iter().map(|f| f.size).sum();
     let names: Vec<String> = chosen.iter().map(|f| f.name()).collect();
-    format!(
-        "Also deletes from disk, {}: {}.",
-        crate::hf::format_size(bytes),
-        names.join(", ")
-    )
+    strings::fill("delete-also-files", &[&crate::hf::format_size(bytes), &names.join(", ")])
 }
 
 /// What `delete` did.
@@ -384,30 +381,27 @@ fn component_eq(a: &str, b: &str) -> bool {
 /// file could not be removed; a file kept because another preset uses it is
 /// the rule working, not a failure.
 pub fn report(id: &str, out: &Outcome) -> (String, bool) {
-    let mut parts = vec![format!("Deleted [{id}]")];
+    let mut parts = vec![strings::fill("deleted-preset", &[&id])];
     if !out.removed.is_empty() {
         let bytes: u64 = out.removed.iter().map(|(_, s)| s).sum();
         let names: Vec<String> = out.removed.iter().map(|(f, _)| file_name(f)).collect();
         let n = out.removed.len();
-        parts.push(format!(
-            "removed {n} file{} ({}): {}",
-            if n == 1 { "" } else { "s" },
-            crate::hf::format_size(bytes),
-            names.join(", ")
-        ));
+        let size = crate::hf::format_size(bytes);
+        parts.push(if n == 1 {
+            strings::fill("removed-file-one", &[&size, &names.join(", ")])
+        } else {
+            strings::fill("removed-file-many", &[&n, &size, &names.join(", ")])
+        });
     }
     if !out.dirs_removed.is_empty() {
         let n = out.dirs_removed.len();
-        parts.push(format!(
-            "{n} empty folder{} removed",
-            if n == 1 { "" } else { "s" }
-        ));
+        parts.push(if n == 1 { strings::t("empty-folder-one") } else { strings::fill("empty-folder-many", &[&n]) });
     }
     for (name, ids) in &out.kept {
-        parts.push(format!("kept {name}: in use by {}", bracketed(ids)));
+        parts.push(strings::fill("kept-in-use", &[&name, &bracketed(ids)]));
     }
     for (f, e) in &out.failed {
-        parts.push(format!("could not delete {}: {e}", f.display()));
+        parts.push(strings::fill("could-not-delete", &[&f.display(), &e]));
     }
     (parts.join("; "), !out.failed.is_empty())
 }

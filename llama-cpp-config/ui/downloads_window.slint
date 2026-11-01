@@ -16,11 +16,12 @@
 import { ScrollView, Button, Palette, ProgressIndicator } from "std-widgets.slint";
 import { Tokens, SectionCard, WrapText } from "components.slint";
 import { DownloadRow } from "types.slint";
+import { Strings } from "strings.slint";
 
 export component DownloadsWindow inherits Window {
     // A title of its own: the Wayland tray-window discard tells windows apart
     // by it (gui.rs `DiscardTrayWindow`).
-    title: "Downloads";
+    title: Strings.t("downloads");
     icon: @image-url("llama.png");
     min-width: 480px;
     min-height: 260px;
@@ -54,7 +55,7 @@ export component DownloadsWindow inherits Window {
         spacing: 12px;
 
         Text {
-            text: "Hugging Face downloads run here in the background. Closing this window stops nothing; reopen it from the footer of the main window or the tray.";
+            text: Strings.t("downloads-intro");
             wrap: word-wrap;
             font-size: 12px;
             color: Palette.foreground.transparentize(Tokens.muted);
@@ -70,10 +71,10 @@ export component DownloadsWindow inherits Window {
                 spacing: 8px;
                 Text {
                     text: root.quitting
-                        ? "Stopping the downloads, then quitting…"
+                        ? Strings.t("stopping-downloads")
                         : root.quit_active == 1
-                            ? "A download is running. Quitting stops it; what is fetched so far is kept, and downloading the same quantization again resumes it."
-                            : root.quit_active + " downloads are running. Quitting stops them; what is fetched so far is kept, and downloading the same quantizations again resumes them.";
+                            ? Strings.t("quit-one-download")
+                            : Strings.t1("quit-many-downloads", "\{root.quit_active}");
                     wrap: word-wrap;
                     font-size: 13px;
                     color: Palette.foreground;
@@ -82,11 +83,11 @@ export component DownloadsWindow inherits Window {
                     spacing: 8px;
                     alignment: end;
                     Button {
-                        text: "Keep running";
+                        text: Strings.t("keep-running");
                         clicked => { root.keep_running(); }
                     }
                     Button {
-                        text: "Stop downloads and quit";
+                        text: Strings.t("stop-downloads-and-quit");
                         primary: true;
                         clicked => { root.confirm_quit(); }
                     }
@@ -96,7 +97,7 @@ export component DownloadsWindow inherits Window {
 
         if root.rows.length == 0 : Text {
             vertical-stretch: 1;
-            text: "No downloads. Start one from Models, New…, From Hugging Face.";
+            text: Strings.t("no-downloads");
             horizontal-alignment: center;
             vertical-alignment: center;
             color: Palette.foreground.transparentize(Tokens.muted);
@@ -161,19 +162,19 @@ export component DownloadsWindow inherits Window {
                         spacing: 8px;
                         alignment: end;
                         if row.can_dismiss : Button {
-                            text: "Dismiss";
+                            text: Strings.t("dismiss");
                             clicked => { root.dismiss(row.id); }
                         }
                         if row.can_resume : Button {
-                            text: "Resume";
+                            text: Strings.t("resume");
                             clicked => { root.resume(row.id); }
                         }
                         if row.can_cancel : Button {
-                            text: "Cancel download";
+                            text: Strings.t("cancel-download");
                             clicked => { root.cancel(row.id); }
                         }
                         if row.can_show : Button {
-                            text: "Show preset";
+                            text: Strings.t("show-preset");
                             primary: true;
                             clicked => { root.show_preset(row.id); }
                         }
@@ -185,7 +186,7 @@ export component DownloadsWindow inherits Window {
         if root.rows.length > 0 : HorizontalLayout {
             alignment: end;
             Button {
-                text: "Clear finished";
+                text: Strings.t("clear-finished");
                 clicked => { root.clear_finished(); }
             }
         }

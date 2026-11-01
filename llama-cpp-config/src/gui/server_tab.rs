@@ -5,6 +5,7 @@
 //! Shared state, generated Slint types, and the `load_*` / `refresh_*` / `set_status`
 //! helpers all live in the parent `gui` module; `use super::*` pulls them in.
 
+use crate::strings;
 use super::*;
 
 pub(super) fn wire(app: &AppWindow, tray: &AppTray, state: &Rc<RefCell<State>>) {
@@ -23,10 +24,7 @@ pub(super) fn wire(app: &AppWindow, tray: &AppTray, state: &Rc<RefCell<State>>) 
             if !bad.is_empty() {
                 set_status(
                     &app,
-                    format!(
-                        "Not saved: {}. Correct it, or tick its default box to leave the key unset.",
-                        bad.join("; ")
-                    ),
+                    strings::fill("not-saved-invalid", &[&bad.join("; ")]),
                     true,
                 );
                 return;
@@ -38,12 +36,9 @@ pub(super) fn wire(app: &AppWindow, tray: &AppTray, state: &Rc<RefCell<State>>) 
                     // (the save only changes the file), so surface the restart
                     // step instead of implying the change is live.
                     let msg = if s.get_server_running() {
-                        format!(
-                            "Saved {}: restart llama-server to apply.",
-                            paths::server_ini().display()
-                        )
+                        strings::fill("server-saved-restart", &[&paths::server_ini().display()])
                     } else {
-                        format!("Saved {}", paths::server_ini().display())
+                        strings::fill("server-saved", &[&paths::server_ini().display()])
                     };
                     set_status(&app, msg, false);
                     // Re-derive the saved-config projections (Command Line
@@ -55,7 +50,7 @@ pub(super) fn wire(app: &AppWindow, tray: &AppTray, state: &Rc<RefCell<State>>) 
                     follow_integrations(&app);
                     snapshot_server_base(&app);
                 }
-                Err(e) => set_status(&app, format!("Save failed: {e}"), true),
+                Err(e) => set_status(&app, strings::fill("save-failed", &[&e]), true),
             }
         });
     }
@@ -71,7 +66,7 @@ pub(super) fn wire(app: &AppWindow, tray: &AppTray, state: &Rc<RefCell<State>>) 
             // config, so there is nothing for them to re-derive.
             set_status(
                 &app,
-                format!("Reloaded {}", paths::server_ini().display()),
+                strings::fill("server-reloaded", &[&paths::server_ini().display()]),
                 false,
             );
         });
@@ -145,7 +140,7 @@ fn wire_bind_rows(app: &AppWindow) {
 /// interact with anyway.
 fn pick_dir(start: &std::path::Path) -> Option<PathBuf> {
     rfd::FileDialog::new()
-        .set_title("Pick a folder")
+        .set_title(strings::t("pick-a-folder"))
         .set_directory(start)
         .pick_folder()
 }

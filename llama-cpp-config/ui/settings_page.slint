@@ -9,6 +9,7 @@
 import { CheckBox, LineEdit, ScrollView, Palette } from "std-widgets.slint";
 import { SectionCard, LabeledField, LabelColumn, Tokens } from "components.slint";
 import { AppState } from "state.slint";
+import { Strings } from "strings.slint";
 
 export component SettingsPage inherits ScrollView {
     VerticalLayout {
@@ -17,26 +18,26 @@ export component SettingsPage inherits ScrollView {
         alignment: start;
 
         Text {
-            text: "Settings";
+            text: Strings.t("settings");
             font-size: 22px;
             font-weight: 600;
             color: Palette.foreground;
         }
         Text {
-            text: "Preferences for the configurator itself. Changes apply immediately; there is nothing to save.";
+            text: Strings.t("settings-intro");
             color: Palette.foreground.transparentize(Tokens.muted);
             font-size: 12px;
             wrap: word-wrap;
         }
 
         SectionCard {
-            heading: "Startup";
+            heading: Strings.t("startup");
             LabeledField {
                 label_width <=> LabelColumn.settings;
-                label: "Start at login";
-                hint: "Launches llama-cpp-config automatically when you log in.\nWindows: the per-user Run registry entry, the same one Task Manager's Startup apps panel manages. Linux: an autostart entry in ~/.config/autostart, which GNOME and the other desktops run at login.\nCombine it with the llama-server toggle below to bring the server up at login too.\nIf the app is moved or updated to a new location, re-tick this to refresh the stored path.";
+                label: Strings.t("start-at-login");
+                hint: Strings.t("start-at-login-hint");
                 CheckBox {
-                    text: "launch llama-cpp-config at login";
+                    text: Strings.t("start-at-login-toggle");
                     enabled: AppState.startup_supported;
                     checked <=> AppState.start_at_login;
                     toggled => { AppState.toggle_start_at_login(); }
@@ -44,10 +45,10 @@ export component SettingsPage inherits ScrollView {
             }
             LabeledField {
                 label_width <=> LabelColumn.settings;
-                label: "Start minimized";
-                hint: "How the login launch above comes up: minimized to the system tray (recommended: nothing opens over your session, the tray icon is the handle), or as the open configurator window.\nOnly applies to the 'Start at login' launch; starting the app yourself always opens the window.";
+                label: Strings.t("start-minimized");
+                hint: Strings.t("start-minimized-hint");
                 CheckBox {
-                    text: "start minimized to the system tray at login";
+                    text: Strings.t("start-minimized-toggle");
                     // Shapes the login entry's command, so it needs one to shape.
                     enabled: AppState.startup_supported && AppState.start_at_login;
                     checked <=> AppState.start_minimized_to_tray;
@@ -56,10 +57,10 @@ export component SettingsPage inherits ScrollView {
             }
             LabeledField {
                 label_width <=> LabelColumn.settings;
-                label: "Start llama-server";
-                hint: "Starts llama-server automatically whenever llama-cpp-config launches: any launch, not just the login one.\nUses the same start path as the Start button (a failure shows in the footer, and View logs has the details). Does nothing when the server is already running.";
+                label: Strings.t("start-llama-server");
+                hint: Strings.t("start-llama-server-hint");
                 CheckBox {
-                    text: "start llama-server when llama-cpp-config launches";
+                    text: Strings.t("start-llama-server-toggle");
                     checked <=> AppState.start_server_on_launch;
                     toggled => { AppState.toggle_start_server_on_launch(); }
                 }
@@ -67,21 +68,21 @@ export component SettingsPage inherits ScrollView {
         }
 
         SectionCard {
-            heading: "Logging";
+            heading: Strings.t("logging");
             LabeledField {
                 label_width <=> LabelColumn.settings;
-                label: "Rotate the log";
-                hint: "When llama-server stops, logs\\llama-server.log is filed away as llama-server-<date>-<time>.log (the closing instant, UTC) and the next run starts in a clean file. The newest 10 closed logs are kept.\nA run that ended without a Stop (a crash, a driver reset, an external kill) is filed at the next start under its last-write time instead.\nOff = one file growing forever, the behaviour before 1.15.1.";
+                label: Strings.t("rotate-the-log");
+                hint: Strings.t("rotate-the-log-hint");
                 CheckBox {
-                    text: "file the log away when llama-server stops";
+                    text: Strings.t("rotate-log-toggle");
                     checked <=> AppState.log_rotate;
                     toggled => { AppState.toggle_log_rotate(); }
                 }
             }
             LabeledField {
                 label_width <=> LabelColumn.settings;
-                label: "Only above";
-                hint: "Only a log LARGER than this many KB is filed; a shorter one stays and the next run appends below it, so a handful of short runs share one file instead of leaving one file each.\n0 files every non-empty log. Applies on Enter or when the field loses focus.";
+                label: Strings.t("only-above");
+                hint: Strings.t("only-above-hint");
                 LineEdit {
                     accessible-label: "log-rotate-kb";
                     enabled: AppState.log_rotate;

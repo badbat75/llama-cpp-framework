@@ -247,6 +247,7 @@
 //! passes through `redact` first. Nothing here writes it to a preset, a log or
 //! bench.db.
 
+use crate::strings;
 use std::collections::VecDeque;
 use std::fmt;
 use std::io::{BufRead, BufReader, Write};
@@ -319,42 +320,29 @@ impl fmt::Display for HfError {
         match self {
             HfError::InvalidSpec(m) => write!(f, "{m}"),
             HfError::MissingTool(m) => write!(f, "{m}"),
-            HfError::NotFoundOrPrivate { repo } => write!(
-                f,
-                "repository {repo} not found, or private: check the name, or set HF_TOKEN if it is yours"
-            ),
-            HfError::TokenRejected { repo } => write!(
-                f,
-                "the Hugging Face token was rejected for {repo}: it is invalid, expired, or has no read access"
-            ),
+            HfError::NotFoundOrPrivate { repo } => f.write_str(&strings::fill("hf-not-found", &[&repo])),
+            HfError::TokenRejected { repo } => f.write_str(&strings::fill("hf-token-rejected", &[&repo])),
             HfError::Gated { repo, had_token } => {
                 if *had_token {
-                    write!(f, "{repo} is gated: accept its conditions on the model page with the account the token belongs to, then retry")
+                    f.write_str(&strings::fill("hf-gated-with-token", &[&repo]))
                 } else {
-                    write!(f, "{repo} is gated: accept its conditions on the model page, then set HF_TOKEN and retry")
+                    f.write_str(&strings::fill("hf-gated", &[&repo]))
                 }
             }
-            HfError::Network(m) => write!(f, "network error: {m}"),
-            HfError::Http { status, message } => write!(f, "Hugging Face answered HTTP {status}: {message}"),
-            HfError::NoGguf { repo } => write!(f, "{repo} holds no GGUF model file"),
-            HfError::NoMatch { repo, wanted } => write!(f, "{repo} has no GGUF matching {wanted}"),
-            HfError::PresetRepo { repo } => write!(
-                f,
-                "{repo} is a preset repository (preset.ini), not a model: it cannot become one preset"
-            ),
-            HfError::SidecarMissing { what } => write!(f, "this quantization has no {what} file"),
-            HfError::TargetConflict { path, found, expected } => write!(
-                f,
-                "{} already exists with a different size ({} bytes, the repository's is {} bytes): move or rename it first",
-                path.display(),
-                found,
-                expected
-            ),
-            HfError::DiskFull(m) => write!(f, "the disk is probably full: {m}"),
-            HfError::Protocol(m) => write!(f, "llama-server download protocol error: {m}"),
-            HfError::Download(m) => write!(f, "download failed: {m}"),
+            HfError::Network(m) => f.write_str(&strings::fill("network-error", &[&m])),
+            HfError::Http { status, message } => f.write_str(&strings::fill("hf-http", &[&status, &message])),
+            HfError::NoGguf { repo } => f.write_str(&strings::fill("hf-no-gguf", &[&repo])),
+            HfError::NoMatch { repo, wanted } => f.write_str(&strings::fill("hf-no-match", &[&repo, &wanted])),
+            HfError::PresetRepo { repo } => f.write_str(&strings::fill("hf-preset-repo", &[&repo])),
+            HfError::SidecarMissing { what } => f.write_str(&strings::fill("hf-sidecar-missing", &[&what])),
+            HfError::TargetConflict { path, found, expected } => {
+                f.write_str(&strings::fill("hf-target-conflict", &[&path.display(), &found, &expected]))
+            }
+            HfError::DiskFull(m) => f.write_str(&strings::fill("disk-full", &[&m])),
+            HfError::Protocol(m) => f.write_str(&strings::fill("download-protocol-error", &[&m])),
+            HfError::Download(m) => f.write_str(&strings::fill("download-failed", &[&m])),
             HfError::Io(m) => write!(f, "{m}"),
-            HfError::Cancelled => write!(f, "download cancelled"),
+            HfError::Cancelled => f.write_str(&strings::t("download-cancelled")),
         }
     }
 }
@@ -382,7 +370,7 @@ pub struct RepoSpec {
 pub fn parse_spec(input: &str) -> Result<RepoSpec, HfError> {
     let s = input.trim();
     if s.is_empty() {
-        return Err(HfError::InvalidSpec("enter a repository: org/repo, org/repo:QUANT or its URL".into()));
+        return Err(HfError::InvalidSpec(strings::t("enter-a-repository")));
     }
     let lower = s.to_ascii_lowercase();
     let no_scheme = ["https://", "http://"]
@@ -393,7 +381,7 @@ pub fn parse_spec(input: &str) -> Result<RepoSpec, HfError> {
     let host = no_scheme[..host_end].to_ascii_lowercase();
     let is_url = matches!(host.as_str(), "huggingface.co" | "www.huggingface.co" | "hf.co");
     if !is_url && no_scheme.len() != s.len() {
-        return Err(HfError::InvalidSpec(format!("not a Hugging Face URL: {s}")));
+        return Err(HfError::InvalidSpec(strings::fill("not-a-hf-url", &[&s])));
     }
 
     let (repo_part, file) = if is_url {
@@ -401,10 +389,10 @@ pub fn parse_spec(input: &str) -> Result<RepoSpec, HfError> {
         let path = path.split(['?', '#']).next().unwrap_or("");
         let segs: Vec<&str> = path.split('/').filter(|x| !x.is_empty()).collect();
         if matches!(segs.first(), Some(&("datasets" | "spaces"))) {
-            return Err(HfError::InvalidSpec("that URL is a dataset or a Space, not a model repository".into()));
+            return Err(HfError::InvalidSpec(strings::t("url-not-a-model")));
         }
         if segs.len() < 2 {
-            return Err(HfError::InvalidSpec(format!("no org/repo in the URL: {s}")));
+            return Err(HfError::InvalidSpec(strings::fill("no-repo-in-url", &[&s])));
         }
         let file = match segs.get(2) {
             Some(&("blob" | "resolve")) if segs.len() >= 5 => Some(segs[4..].join("/")),
@@ -420,13 +408,11 @@ pub fn parse_spec(input: &str) -> Result<RepoSpec, HfError> {
         None => (repo_part, None),
     };
     if !valid_repo_id(&repo) {
-        return Err(HfError::InvalidSpec(format!(
-            "not a repository id: {repo} (expected org/repo)"
-        )));
+        return Err(HfError::InvalidSpec(strings::fill("not-a-repo-id-expected", &[&repo])));
     }
     if let Some(t) = &tag {
         if t.is_empty() || !t.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') {
-            return Err(HfError::InvalidSpec(format!("not a quant tag: {t}")));
+            return Err(HfError::InvalidSpec(strings::fill("not-a-quant-tag", &[&t])));
         }
     }
     Ok(RepoSpec { repo, tag, file })
@@ -475,7 +461,7 @@ impl Token {
     pub fn new(raw: &str) -> Result<Token, HfError> {
         let t = raw.trim();
         if t.is_empty() || !t.chars().all(|c| c.is_ascii_graphic() && c != '"' && c != '\\') {
-            return Err(HfError::InvalidSpec("the token contains characters a Hugging Face token never has".into()));
+            return Err(HfError::InvalidSpec(strings::t("token-bad-characters")));
         }
         Ok(Token(t.to_string()))
     }
@@ -569,9 +555,7 @@ impl Curl {
             .stderr(Stdio::piped());
         crate::proc::hide_console(&mut cmd);
         let mut child = cmd.spawn().map_err(|e| {
-            HfError::MissingTool(format!(
-                "curl could not be started ({e}): it is needed to reach Hugging Face; install it or put it on PATH"
-            ))
+            HfError::MissingTool(strings::fill("curl-not-started", &[&e]))
         })?;
         if let Some(mut stdin) = child.stdin.take() {
             // A write error surfaces as curl's own "no URL" failure below.
@@ -612,9 +596,9 @@ fn parse_curl_bytes(mut stdout: Vec<u8>) -> Result<(u16, Vec<u8>), HfError> {
     let status = code
         .trim()
         .parse::<u16>()
-        .map_err(|_| HfError::Network(format!("curl returned no HTTP status: {}", code.trim())))?;
+        .map_err(|_| HfError::Network(strings::fill("curl-no-status", &[&code.trim()])))?;
     if status == 0 {
-        return Err(HfError::Network("no answer from the server".into()));
+        return Err(HfError::Network(strings::t("no-answer")));
     }
     stdout.truncate(cut);
     Ok((status, stdout))
@@ -645,7 +629,7 @@ fn curl_exe() -> PathBuf {
 /// right.
 fn curl_value(v: &str) -> Result<String, HfError> {
     if v.chars().any(char::is_control) {
-        return Err(HfError::InvalidSpec("a request value contains a control character".into()));
+        return Err(HfError::InvalidSpec(strings::t("request-control-character")));
     }
     let mut out = String::with_capacity(v.len() + 2);
     out.push('"');
@@ -692,9 +676,9 @@ fn parse_curl_output(stdout: &str) -> Result<(u16, String), HfError> {
     let status = code
         .trim()
         .parse::<u16>()
-        .map_err(|_| HfError::Network(format!("curl returned no HTTP status: {}", code.trim())))?;
+        .map_err(|_| HfError::Network(strings::fill("curl-no-status", &[&code.trim()])))?;
     if status == 0 {
-        return Err(HfError::Network("no answer from the server".into()));
+        return Err(HfError::Network(strings::t("no-answer")));
     }
     Ok((status, body.to_string()))
 }
@@ -702,14 +686,14 @@ fn parse_curl_output(stdout: &str) -> Result<(u16, String), HfError> {
 /// curl's exit codes worth a sentence of their own (`man curl`, EXIT CODES).
 fn curl_failure(code: i32, stderr: &str) -> HfError {
     let what = match code {
-        5 | 6 => "could not resolve the host (offline, or DNS)",
-        7 => "could not connect",
-        28 => "the request timed out",
-        35 | 51 | 58 | 59 | 60 | 77 => "the TLS handshake failed (proxy or certificate store)",
-        _ => "",
+        5 | 6 => strings::t("curl-no-host"),
+        7 => strings::t("curl-no-connect"),
+        28 => strings::t("curl-timed-out"),
+        35 | 51 | 58 | 59 | 60 | 77 => strings::t("curl-tls"),
+        _ => String::new(),
     };
     if what.is_empty() {
-        HfError::Network(format!("curl failed (exit {code}): {stderr}"))
+        HfError::Network(strings::fill("curl-failed", &[&code, &stderr]))
     } else {
         HfError::Network(format!("{what}: {stderr}"))
     }
@@ -723,7 +707,7 @@ pub(crate) fn api_error(status: u16, body: &str, had_token: bool, repo: &str) ->
         401 if had_token => HfError::TokenRejected { repo },
         401 | 404 => HfError::NotFoundOrPrivate { repo },
         403 => HfError::Gated { repo, had_token },
-        429 => HfError::Network("rate limited by Hugging Face: retry in a minute".into()),
+        429 => HfError::Network(strings::t("hf-rate-limited")),
         _ => HfError::Http { status, message: api_message(body) },
     }
 }
@@ -741,7 +725,7 @@ fn api_json(fetch: &dyn Fetch, url: &str, token: Option<&Token>, repo: &str) -> 
     if status != 200 {
         return Err(api_error(status, &body, token.is_some(), repo));
     }
-    serde_json::from_str(&body).map_err(|e| HfError::Network(format!("unreadable answer from {url}: {e}")))
+    serde_json::from_str(&body).map_err(|e| HfError::Network(strings::fill("unreadable-answer", &[&url, &e])))
 }
 
 // ── The repository listing ───────────────────────────────────────────────
@@ -892,7 +876,7 @@ fn list_repo_with(fetch: &dyn Fetch, endpoint: &str, spec: &RepoSpec, token: Opt
     let repo = &spec.repo;
     let refs = api_json(fetch, &format!("{endpoint}api/models/{repo}/refs"), token, repo)?;
     let commit = commit_from_refs(&refs)
-        .ok_or_else(|| HfError::Http { status: 200, message: format!("{repo} lists no branch") })?;
+        .ok_or_else(|| HfError::Http { status: 200, message: strings::fill("repo-lists-no-branch", &[&repo]) })?;
     let tree = api_json(
         fetch,
         &format!("{endpoint}api/models/{repo}/tree/{commit}?recursive=true"),
@@ -993,7 +977,7 @@ fn build_listing(repo: &str, commit: &str, files: Vec<RepoFile>, spec: &RepoSpec
         let best = find_best_model(&files, tag);
         index_of(&best.path).ok_or_else(|| HfError::NoMatch {
             repo: repo.into(),
-            wanted: format!("the tag {tag}"),
+            wanted: strings::fill("the-tag", &[&tag]),
         })?
     };
     Ok(Listing {
@@ -1044,13 +1028,13 @@ pub fn classify_input(text: &str) -> Result<Option<Input>, HfError> {
 pub fn parse_query(text: &str) -> Result<String, HfError> {
     let q = text.split_whitespace().collect::<Vec<_>>().join(" ");
     if q.is_empty() {
-        return Err(HfError::InvalidSpec("enter a model name to search for, or a repository: org/repo".into()));
+        return Err(HfError::InvalidSpec(strings::t("enter-a-search")));
     }
     if q.chars().any(char::is_control) {
-        return Err(HfError::InvalidSpec("the search contains control characters".into()));
+        return Err(HfError::InvalidSpec(strings::t("search-control-characters")));
     }
     if q.chars().count() > QUERY_MAX {
-        return Err(HfError::InvalidSpec(format!("the search is longer than {QUERY_MAX} characters")));
+        return Err(HfError::InvalidSpec(strings::fill("search-too-long", &[&QUERY_MAX])));
     }
     Ok(q)
 }
@@ -1207,11 +1191,11 @@ pub fn format_params(n: u64) -> String {
 pub fn kind_label(kind: ModelKind, params: Option<u64>) -> Option<String> {
     let p = params.map(format_params);
     match (kind, p) {
-        (ModelKind::Moe, Some(p)) => Some(format!("MoE {p}")),
+        (ModelKind::Moe, Some(p)) => Some(strings::fill("kind-moe-params", &[&p])),
         (ModelKind::Moe, None) => Some("MoE".into()),
-        (ModelKind::Dense, Some(p)) => Some(format!("dense {p}")),
-        (ModelKind::Dense, None) => Some("dense".into()),
-        (ModelKind::Unknown, Some(p)) => Some(format!("{p}, dense/MoE unknown")),
+        (ModelKind::Dense, Some(p)) => Some(strings::fill("kind-dense-params", &[&p])),
+        (ModelKind::Dense, None) => Some(strings::t("modality-dense")),
+        (ModelKind::Unknown, Some(p)) => Some(strings::fill("kind-unknown-params", &[&p])),
         (ModelKind::Unknown, None) => None,
     }
 }
@@ -1235,7 +1219,7 @@ fn search_with(
         return Err(search_error(status, &body, token.is_some()));
     }
     let v: Value = serde_json::from_str(&body)
-        .map_err(|e| HfError::Network(format!("unreadable answer from the Hugging Face search: {e}")))?;
+        .map_err(|e| HfError::Network(strings::fill("search-unreadable", &[&e])))?;
     hits_from_search(&v)
 }
 
@@ -1272,8 +1256,8 @@ pub(crate) fn percent_encode(s: &str) -> String {
 /// token's fault, a 429 a rate limit, anything else the API's own message.
 fn search_error(status: u16, body: &str, had_token: bool) -> HfError {
     match status {
-        401 if had_token => HfError::TokenRejected { repo: "the search".into() },
-        429 => HfError::Network("rate limited by Hugging Face: retry in a minute".into()),
+        401 if had_token => HfError::TokenRejected { repo: strings::t("the-search") },
+        429 => HfError::Network(strings::t("hf-rate-limited")),
         _ => HfError::Http { status, message: api_message(body) },
     }
 }
@@ -1288,7 +1272,7 @@ fn search_error(status: u16, body: &str, had_token: bool) -> HfError {
 fn hits_from_search(v: &Value) -> Result<Vec<SearchHit>, HfError> {
     let items = v.as_array().ok_or_else(|| HfError::Http {
         status: 200,
-        message: "the search answer is not a list of repositories".into(),
+        message: strings::t("search-not-a-list"),
     })?;
     Ok(items
         .iter()
@@ -1599,7 +1583,7 @@ impl DownloadJob {
         token: Option<Token>,
     ) -> Result<DownloadJob, HfError> {
         let server_exe = crate::paths::llama_server_exe()
-            .ok_or_else(|| HfError::MissingTool("llama-server was not found beside the configurator or in the build tree".into()))?;
+            .ok_or_else(|| HfError::MissingTool(strings::t("server-not-found-for-download")))?;
         DownloadJob::for_server(listing, index, mmproj, sidecar, models_dir, token, server_exe)
     }
 
@@ -1619,7 +1603,7 @@ impl DownloadJob {
             .candidates
             .get(index)
             .cloned()
-            .ok_or_else(|| HfError::NoMatch { repo: listing.repo.clone(), wanted: format!("candidate {index}") })?;
+            .ok_or_else(|| HfError::NoMatch { repo: listing.repo.clone(), wanted: strings::fill("candidate-numbered", &[&index]) })?;
         if let Some(s) = sidecar {
             if candidate.sidecar(s).is_none() {
                 return Err(HfError::SidecarMissing { what: s.label() });
@@ -1651,7 +1635,7 @@ impl DownloadJob {
     /// is touched.
     pub fn placements(&self) -> Result<Vec<Placement>, HfError> {
         if !valid_repo_id(&self.repo) {
-            return Err(HfError::InvalidSpec(format!("not a repository id: {}", self.repo)));
+            return Err(HfError::InvalidSpec(strings::fill("not-a-repo-id", &[&self.repo])));
         }
         let (org, name) = self.repo.split_once('/').unwrap_or(("", &self.repo));
         let place = |role: Role, file: &RepoFile| -> Result<Placement, HfError> {
@@ -1660,7 +1644,7 @@ impl DownloadJob {
                 Role::Mmproj => crate::model_scan::Category::Mmproj.subdir(),
                 Role::Draft(s) => s.subdir(),
             };
-            let refused = || HfError::InvalidSpec(format!("refusing the repository file path {:?}", file.path));
+            let refused = || HfError::InvalidSpec(strings::fill("refused-repo-path", &[&format!("{:?}", file.path)]));
             if !safe_repo_path(&file.path) {
                 return Err(refused());
             }
@@ -1815,17 +1799,17 @@ fn parse_child_line(line: &str) -> Result<Option<ChildEvent>, String> {
     let Some(json) = line.trim_end().strip_prefix(CHILD_STATE_PREFIX) else {
         return Ok(None);
     };
-    let v: Value = serde_json::from_str(json).map_err(|e| format!("unreadable state line ({e}): {line}"))?;
+    let v: Value = serde_json::from_str(json).map_err(|e| strings::fill("unreadable-state-line", &[&e, &line]))?;
     let state = v.get("state").and_then(Value::as_str).unwrap_or("");
     if state != "downloading" {
-        return Err(format!("unexpected child state `{state}`: {line}"));
+        return Err(strings::fill("unexpected-child-state", &[&state, &line]));
     }
     let payload = v.get("payload").cloned().unwrap_or(Value::Null);
     if let Some(r) = payload.get("result").and_then(Value::as_str) {
         return match r {
             "download_finished" => Ok(Some(ChildEvent::Finished)),
             "download_failed" => Ok(Some(ChildEvent::Failed)),
-            other => Err(format!("unknown download result `{other}`")),
+            other => Err(strings::fill("unknown-download-result", &[&other])),
         };
     }
     match payload.get("url").and_then(Value::as_str) {
@@ -1834,7 +1818,7 @@ fn parse_child_line(line: &str) -> Result<Option<ChildEvent>, String> {
             downloaded: payload.get("downloaded").and_then(Value::as_u64).unwrap_or(0),
             total: payload.get("total").and_then(Value::as_u64).unwrap_or(0),
         })),
-        _ => Err(format!("state line with neither a url nor a result: {line}")),
+        _ => Err(strings::fill("state-line-no-url", &[&line])),
     }
 }
 
@@ -1909,9 +1893,7 @@ fn classify_failure(lines: &[String], had_token: bool, repo: &str) -> HfError {
     }
     let tail = tail_text(lines);
     if all.contains("error opening local file for writing") {
-        return HfError::Io(format!(
-            "llama-server could not create its download file: no write permission, or (Windows) the path passes 260 characters; a shorter ModelsDir avoids that ({tail})"
-        ));
+        return HfError::Io(strings::fill("cannot-create-download-file", &[&tail]));
     }
     if ["error writing to file", "no space left", "not enough space", "disk full"]
         .iter()
@@ -1933,7 +1915,7 @@ fn tail_text(lines: &[String]) -> String {
     let start = lines.len().saturating_sub(8);
     let t = lines[start..].join(" | ");
     if t.is_empty() {
-        "(no output from llama-server)".into()
+        strings::t("no-output-from-server")
     } else {
         t
     }
@@ -1996,7 +1978,7 @@ fn run_child(
     crate::proc::hide_console(&mut cmd);
     crate::proc::prepend_rocm_path(&mut cmd);
     let mut child = cmd.spawn().map_err(|e| {
-        HfError::MissingTool(format!("llama-server could not be started ({}): {e}", job.server_exe.display()))
+        HfError::MissingTool(strings::fill("server-not-started", &[&job.server_exe.display(), &e]))
     })?;
     let mut stdin = child.stdin.take();
 
@@ -2082,16 +2064,15 @@ fn run_child(
     let cancelled = cancel.load(Ordering::SeqCst);
 
     if let Some(e) = protocol_error {
-        return Err(HfError::Protocol(format!("{e}; llama-server said: {}", tail_text(&lines))));
+        return Err(HfError::Protocol(strings::fill("protocol-server-said", &[&e, &tail_text(&lines)])));
     }
     match result {
         Some(ChildEvent::Finished) => Ok(lines),
         _ if cancelled => Err(HfError::Cancelled),
         Some(_) => Err(classify_failure(&lines, job.token.is_some(), &job.repo)),
-        None => Err(HfError::Protocol(format!(
-            "llama-server ended ({}) without reporting a result; it said: {}",
-            exit.map_or_else(|| "killed".to_string(), |s| s.to_string()),
-            tail_text(&lines)
+        None => Err(HfError::Protocol(strings::fill(
+            "server-ended-no-result",
+            &[&exit.map_or_else(|| strings::t("server-killed"), |s| s.to_string()), &tail_text(&lines)],
         ))),
     }
 }
@@ -2238,7 +2219,7 @@ fn move_real_data(src: &Path, dst: &Path, staging: &Path) -> std::io::Result<()>
     let outside = |p: &Path| {
         std::io::Error::new(
             std::io::ErrorKind::PermissionDenied,
-            format!("{} is outside the staging directory {}", p.display(), staging.display()),
+            strings::fill("outside-staging", &[&p.display(), &staging.display()]),
         )
     };
     if !lexically_under(src, staging) {
@@ -2292,26 +2273,22 @@ fn place_group(job: &DownloadJob, group: &[&Placement], child_log: &[String], tr
         }
         let Some(src) = find_staged(&repo_dir, &job.commit, &p.file.path) else {
             return Err(match classify_failure(child_log, job.token.is_some(), &job.repo) {
-                HfError::Download(tail) => HfError::Download(format!(
-                    "llama-server reported success but {} is not in {}; it said: {tail}",
-                    p.file.path,
-                    repo_dir.display()
+                HfError::Download(tail) => HfError::Download(strings::fill(
+                    "success-but-missing",
+                    &[&p.file.path, &repo_dir.display(), &tail],
                 )),
                 e => e,
             });
         };
         move_real_data(&src, &p.target, &repo_dir)
-            .map_err(|e| HfError::Io(format!("moving {} to {}: {e}", p.file.path, p.target.display())))?;
+            .map_err(|e| HfError::Io(strings::fill("moving-failed", &[&p.file.path, &p.target.display(), &e])))?;
         let got = std::fs::metadata(&p.target).map(|m| m.len()).unwrap_or(0);
         if p.file.size > 0 && got != p.file.size {
             // A wrong-sized file left at the target would be refused as a
             // TargetConflict by every retry: it goes, and the retry fetches
             // it again.
             let _ = std::fs::remove_file(&p.target);
-            return Err(HfError::Io(format!(
-                "{} came out with {got} bytes, the repository lists {}: removed, download it again",
-                p.file.path, p.file.size
-            )));
+            return Err(HfError::Io(strings::fill("size-mismatch-removed", &[&p.file.path, &got, &p.file.size])));
         }
         tracker.complete(&p.file.path);
     }
@@ -3044,7 +3021,7 @@ mod tests {
 
     #[test]
     fn search_errors_name_no_repository() {
-        assert_eq!(search_error(401, "", true), HfError::TokenRejected { repo: "the search".into() });
+        assert_eq!(search_error(401, "", true), HfError::TokenRejected { repo: strings::t("the-search") });
         assert!(matches!(search_error(429, "", false), HfError::Network(m) if m.contains("rate limited")));
         assert_eq!(
             search_error(400, "{\"error\":\"bad expand\"}", false),

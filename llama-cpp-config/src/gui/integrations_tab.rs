@@ -9,6 +9,7 @@
 //! what brings a drifted file back in line; every later preset change follows
 //! on its own (`gui::follow_integrations`).
 
+use crate::strings;
 use super::*;
 
 pub(super) fn wire(app: &AppWindow) {
@@ -24,10 +25,10 @@ pub(super) fn wire(app: &AppWindow) {
             match integrations::save_opencode_models(&base_url, api_key) {
                 Ok(()) => set_status(
                     &app,
-                    "Saved the enabled presets to opencode.json.".into(),
+                    strings::t("opencode-saved"),
                     false,
                 ),
-                Err(e) => set_status(&app, format!("Save failed: {e}"), true),
+                Err(e) => set_status(&app, strings::fill("save-failed", &[&e]), true),
             }
             refresh_integrations(&app);
         });

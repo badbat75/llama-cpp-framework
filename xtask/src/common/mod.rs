@@ -13,6 +13,7 @@ pub mod prereq;
 pub mod report;
 #[cfg(not(target_os = "macos"))]
 pub mod rocm;
+pub mod strings_share;
 pub mod ui;
 pub mod util;
 pub mod version;

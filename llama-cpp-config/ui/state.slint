@@ -13,6 +13,7 @@
 
 import { PresetSummary, PresetForm, ServerForm, GpuRow, TensorOverrideRow, TensorPickRow, DeleteFileRow, BenchPresetRow, BenchPromptRow, BenchResultRow, BindRow } from "types.slint";
 import { Options } from "components.slint";
+import { Strings } from "strings.slint";
 
 export global AppState {
     // Crate version (CARGO_PKG_VERSION), pushed in from Rust at startup so the
@@ -158,11 +159,11 @@ export global AppState {
     out property <string> preset_split_mode_warning: preset_gpu_mode != "tensor" ? ""
         : model_info_tensor_arch_warning != "" ? model_info_tensor_arch_warning
         : form.flash_attn == "off"
-        ? "Split mode tensor requires flash attention: with Flash attention off, llama.cpp refuses to create the context and the model does not load. Set it to on or default."
+        ? Strings.t("split-tensor-needs-flash-attention")
         : form.device == ""
-        ? "Split mode tensor with no GPU checked: llama.cpp then pools EVERY detected device into the split, duplicate Vulkan views of the same card and the iGPU included. Check the GPUs to run on."
+        ? Strings.t("split-tensor-no-gpu")
         : (preset_mixes_cuda_rocm && server_form.cuda_allreduce != "none")
-        ? "Split mode tensor across a CUDA and a ROCm device: the model aborts while loading unless Server tab > SDK Tuning > Tensor-split AllReduce is set to none. Even then, expect about half the prefill speed of the layer split."
+        ? Strings.t("split-tensor-mixed-backends")
         : "";
     // Whether this preset's device list names both a CUDA and a ROCm device:
     // gpu_split::mixes_cuda_and_rocm, pushed by refresh_gpu_rows. Slint has no
@@ -307,7 +308,7 @@ export global AppState {
     // `chat_template_preview` holds the raw template text for the Preview
     // modal, and is empty when no template is embedded, which also gates the
     // Preview button (no point previewing an absent template).
-    in-out property <string> model_info_chat_template: "none";
+    in-out property <string> model_info_chat_template: Strings.t("none");
     in-out property <string> chat_template_preview: "";
     // Reasoning support, read off that same template's SOURCE (no Jinja engine
     // here; see gguf.rs `Thinking`). `model_info_thinking` says whether the model
@@ -317,8 +318,8 @@ export global AppState {
     // the useful half: it means the flag changes nothing on this model, which the
     // llama-server log cannot tell you (its probe reports "supported" for a
     // template that preserves unconditionally too).
-    in-out property <string> model_info_thinking: "unknown";
-    in-out property <string> model_info_past_thinking: "unknown";
+    in-out property <string> model_info_thinking: Strings.t("unknown");
+    in-out property <string> model_info_past_thinking: Strings.t("unknown");
     // Optional rows, shown only when a mmproj / draft file is selected.
     in-out property <bool> model_info_has_mmproj: false;
     in-out property <string> model_info_mmproj;
@@ -410,6 +411,7 @@ export global AppState {
     in-out property <bool> hf_mmproj_available: false;
     in-out property <bool> hf_take_mmproj: true;
     in-out property <[string]> hf_drafter_options;
+    in-out property <[string]> hf_drafter_labels;
     in-out property <string> hf_drafter: "none";
     // What the pick would fetch, and where to (one line).
     in-out property <string> hf_selection_summary: "";
@@ -530,6 +532,7 @@ export global AppState {
     in-out property <string> bench_question;
     in-out property <string> bench_spec: "custom";
     in property <[string]> bench_spec_options: ["custom"];
+    in property <[string]> bench_spec_labels: [Strings.t("custom")];
     // With a spec chosen, Override re-enables the Workload fields: each one
     // changed after ticking it replaces the spec's value in every step, and
     // every run is recorded as custom, derived from the spec.
@@ -542,6 +545,7 @@ export global AppState {
     // presets for it and put back after.
     in-out property <string> bench_ab_key: "none";
     in property <[string]> bench_ab_keys: ["none"];
+    in property <[string]> bench_ab_key_labels: [Strings.t("none")];
     in-out property <string> bench_ab_values;
     in-out property <string> bench_override_base;
     callback bench_override_toggled();

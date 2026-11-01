@@ -26,6 +26,7 @@
 //! to, since a file per short run is clutter, not history); the newest
 //! `ROTATED_LOGS_KEPT` closed logs are kept, older ones deleted.
 
+use crate::strings;
 use std::io;
 
 // ── Run detection (is_running + tasklist) ────────────────────────────────
@@ -329,9 +330,9 @@ pub fn start() -> io::Result<Option<crate::server_cfg::ServerConfig>> {
         // Two different cures: the switched-off presets are still there, in the
         // file llama-server does not read.
         let msg = if crate::presets::load_listed().is_empty() {
-            "No model presets configured: add one on the Models page first."
+            strings::t("presets-none-configured")
         } else {
-            "Every model preset is switched off: switch one on in the Models page first."
+            strings::t("all-presets-off")
         };
         return Err(io::Error::new(io::ErrorKind::NotFound, msg));
     }
@@ -339,10 +340,7 @@ pub fn start() -> io::Result<Option<crate::server_cfg::ServerConfig>> {
     let exe = crate::paths::llama_server_exe().ok_or_else(|| {
         io::Error::new(
             io::ErrorKind::NotFound,
-            format!(
-                "{} not found. Build llama.cpp first.",
-                crate::paths::binary_name("llama-server")
-            ),
+            strings::fill("binary-not-found", &[&crate::paths::binary_name("llama-server")]),
         )
     })?;
 
@@ -421,10 +419,7 @@ pub fn start() -> io::Result<Option<crate::server_cfg::ServerConfig>> {
         match child.try_wait() {
             // Exited during the grace window → a failed launch, not a running server.
             Ok(Some(status)) => {
-                return Err(io::Error::other(format!(
-                    "llama-server exited on launch ({status}). Check the log: {}",
-                    log_path.display()
-                )));
+                return Err(io::Error::other(strings::fill("exited-on-launch", &[&status, &log_path.display()])));
             }
             // Still alive: keep it running and stop watching.
             Ok(None) => {}

@@ -98,6 +98,7 @@
 //! keys and the router's command line carries none of them, so the preset alone
 //! says where a model runs, here as at launch.
 
+use crate::strings;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
@@ -158,7 +159,7 @@ pub fn parse_image_size(v: &str) -> Result<Option<(u32, u32)>, String> {
         .and_then(|(w, h)| Some((w.trim().parse::<u32>().ok()?, h.trim().parse::<u32>().ok()?)))
         .filter(|(w, h)| *w > 0 && *h > 0)
         .map(Some)
-        .ok_or_else(|| format!("image size `{v}`: WxH (e.g. {DEFAULT_IMAGE_SIZE}) or `original`"))
+        .ok_or_else(|| strings::fill("image-size-format", &[&v, &DEFAULT_IMAGE_SIZE]))
 }
 
 /// The inverse of `parse_image_size`.
@@ -352,10 +353,10 @@ pub fn normalize_prompt(raw: &str) -> String {
 /// empty" without saying which file is useless once the path is configurable.
 pub fn load_prompt_file(path: &std::path::Path) -> Result<String, String> {
     let raw = std::fs::read_to_string(path)
-        .map_err(|e| format!("cannot read the prompt file {}: {e}", path.display()))?;
+        .map_err(|e| strings::fill("prompt-unreadable", &[&path.display(), &e]))?;
     let text = normalize_prompt(&raw);
     if text.trim().is_empty() {
-        return Err(format!("the prompt file {} is empty", path.display()));
+        return Err(strings::fill("prompt-empty", &[&path.display()]));
     }
     Ok(text)
 }
@@ -501,11 +502,7 @@ pub fn int_list_problem(label: &str, s: &str) -> Option<String> {
         .map(str::trim)
         .filter(|p| !p.is_empty())
         .find(|p| ini::parse_int_in(p, &ini::INT_NON_NEGATIVE).is_none())?;
-    Some(format!(
-        "{label} = `{}`: `{bad}` is not a whole number from 0 to {}",
-        s.trim(),
-        i32::MAX
-    ))
+    Some(strings::fill("list-entry-not-number", &[&label, &s.trim(), &bad, &i32::MAX]))
 }
 
 /// Render an integer list back for the UI field.
@@ -517,10 +514,10 @@ pub fn render_int_list(v: &[i32]) -> String {
 /// bad workload fails in the UI rather than as an unreadable llama-bench error.
 pub fn validate(plan: &Plan) -> Option<String> {
     if plan.presets.is_empty() {
-        return Some("Select at least one preset to benchmark.".into());
+        return Some(strings::t("select-a-preset"));
     }
     if plan.reps < 1 {
-        return Some("Repetitions must be at least 1.".into());
+        return Some(strings::t("reps-at-least-one"));
     }
     match plan.mode {
         Mode::Live => {
@@ -530,22 +527,20 @@ pub fn validate(plan: &Plan) -> Option<String> {
                 // prompt out in one, "needs a prompt" does not say where to
                 // put it.
                 return Some(match &plan.prompt_file {
-                    Some(p) => format!("The live mode needs a prompt: {} is empty.", p.display()),
-                    None => "The live mode needs a prompt.".into(),
+                    Some(p) => strings::fill("live-needs-prompt-empty", &[&p.display()]),
+                    None => strings::t("live-needs-prompt"),
                 });
             }
             if plan.max_tokens < 0 {
-                return Some("Max output tokens must be 0 (no cap) or more.".into());
+                return Some(strings::t("max-tokens-negative"));
             }
         }
         Mode::Synthetic => {
             if plan.concurrency != Concurrency::Single {
-                return Some("Concurrent requests need the live mode.".into());
+                return Some(strings::t("concurrent-needs-live"));
             }
             if synthetic_sweeps(plan).is_empty() {
-                return Some(
-                    "Give at least one prompt length, or a non-zero generation length.".into(),
-                );
+                return Some(strings::t("give-a-length"));
             }
         }
     }
@@ -1543,7 +1538,9 @@ pub struct RunMeta {
 }
 
 /// The caveats that belong to a mode, spelled out in the report because every
-/// one of them is a way to misread the numbers above them.
+/// one of them is a way to misread the numbers above them. One English list on
+/// purpose: the report stored in bench.db prints these lines, so they stay out of
+/// the language file, and the Benchmark tab shows the same text.
 pub fn caveats(mode: Mode) -> Vec<&'static str> {
     match mode {
         Mode::Live => vec![

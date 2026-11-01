@@ -49,6 +49,7 @@
 //! is huge (`n_vocab × n_embd × 2 B`), which is when
 //! moving it onto a GPU is worth the VRAM.
 
+use crate::strings;
 use crate::devices::DeviceOption;
 use crate::gui::TensorOverrideRow;
 
@@ -96,38 +97,38 @@ pub const CUSTOM: &str = "custom";
 pub const KINDS: &[Kind] = &[
     Kind {
         id: "embd",
-        label: "Embedding table (token_embd)",
+        label: strings::key("kind-embedding-table"),
         pattern: r"^token_embd\.weight",
         block: "",
     },
     Kind {
         id: "ple",
-        label: "Per-layer embeddings (per_layer_token_embd)",
+        label: strings::key("kind-layer-embeddings"),
         pattern: r"^per_layer_token_embd\.weight",
         block: "",
     },
     Kind {
         id: "output",
-        label: "Output head (output)",
+        label: strings::key("kind-output-head"),
         pattern: r"^output\.weight",
         block: "",
     },
     Kind {
         id: "layer",
-        label: "Whole layer (blk.N.*)",
+        label: strings::key("kind-whole-layer"),
         pattern: r"^blk\.\d+\.",
         block: r"\.",
     },
     // `\.attn_`, so the dot keeps the hyper-connection `hc_attn_*` out.
     Kind {
         id: "attn",
-        label: "Attention (attn_*)",
+        label: strings::key("kind-attention"),
         pattern: r"\.attn_",
         block: r"\.attn_",
     },
     Kind {
         id: "ssm",
-        label: "Linear attention / SSM (ssm_*)",
+        label: strings::key("kind-linear-attention"),
         pattern: r"\.ssm_",
         block: r"\.ssm_",
     },
@@ -137,31 +138,31 @@ pub const KINDS: &[Kind] = &[
     // the dense layers it may carry. The three single projections below keep it.
     Kind {
         id: "ffn",
-        label: "Dense FFN (ffn_up/down/gate)",
+        label: strings::key("kind-dense-ffn"),
         pattern: r"\.ffn_(up|down|gate)\.",
         block: r"\.ffn_(up|down|gate)\.",
     },
     Kind {
         id: "ffn_up",
-        label: "Dense FFN up (ffn_up)",
+        label: strings::key("kind-dense-ffn-up"),
         pattern: r"\.ffn_up\.",
         block: r"\.ffn_up\.",
     },
     Kind {
         id: "ffn_gate",
-        label: "Dense FFN gate (ffn_gate)",
+        label: strings::key("kind-dense-ffn-gate"),
         pattern: r"\.ffn_gate\.",
         block: r"\.ffn_gate\.",
     },
     Kind {
         id: "ffn_down",
-        label: "Dense FFN down (ffn_down)",
+        label: strings::key("kind-dense-ffn-down"),
         pattern: r"\.ffn_down\.",
         block: r"\.ffn_down\.",
     },
     Kind {
         id: "exps",
-        label: "MoE experts (ffn_*_exps)",
+        label: strings::key("kind-experts"),
         pattern: r"\.ffn_(up|down|gate|gate_up)_(ch|)exps",
         block: r"\.ffn_(up|down|gate|gate_up)_(ch|)exps",
     },
@@ -169,25 +170,25 @@ pub const KINDS: &[Kind] = &[
     // only the all-experts kind above names.
     Kind {
         id: "exps_up",
-        label: "MoE experts up (ffn_up_exps)",
+        label: strings::key("kind-experts-up"),
         pattern: r"\.ffn_up_(ch|)exps",
         block: r"\.ffn_up_(ch|)exps",
     },
     Kind {
         id: "exps_gate",
-        label: "MoE experts gate (ffn_gate_exps)",
+        label: strings::key("kind-experts-gate"),
         pattern: r"\.ffn_gate_(ch|)exps",
         block: r"\.ffn_gate_(ch|)exps",
     },
     Kind {
         id: "exps_down",
-        label: "MoE experts down (ffn_down_exps)",
+        label: strings::key("kind-experts-down"),
         pattern: r"\.ffn_down_(ch|)exps",
         block: r"\.ffn_down_(ch|)exps",
     },
     Kind {
         id: "shexp",
-        label: "MoE shared expert (ffn_*_shexp)",
+        label: strings::key("kind-shared-expert"),
         pattern: r"\.ffn_(up|down|gate)_shexp",
         block: r"\.ffn_(up|down|gate)_shexp",
     },
@@ -195,13 +196,13 @@ pub const KINDS: &[Kind] = &[
     // `ffn_gate_inp_shexp`: both are the router's small matrices.
     Kind {
         id: "router",
-        label: "MoE router (ffn_gate_inp)",
+        label: strings::key("kind-router"),
         pattern: r"\.ffn_gate_inp",
         block: r"\.ffn_gate_inp",
     },
     Kind {
         id: CUSTOM,
-        label: "Custom regex…",
+        label: strings::key("kind-custom-regex"),
         pattern: "",
         block: "",
     },
@@ -507,14 +508,10 @@ pub fn validate(s: &str) -> Result<(), String> {
     for (i, rule) in parse(s).iter().enumerate() {
         let n = i + 1;
         if rule.pattern.is_empty() {
-            return Err(format!("tensor override {n} has an empty pattern"));
+            return Err(strings::fill("override-no-pattern", &[&n]));
         }
         if rule.device.is_empty() {
-            return Err(format!(
-                "tensor override {n} (`{}`) names no device: a rule is `<pattern>=<device>`, \
-                 and llama.cpp splits it at the first `=`",
-                rule.pattern
-            ));
+            return Err(strings::fill("override-no-device", &[&n, &rule.pattern]));
         }
     }
     Ok(())
@@ -549,7 +546,7 @@ pub fn device_options(devices: &[DeviceOption], s: &str) -> (Vec<String>, Vec<St
         if rule.device.is_empty() || values.iter().any(|v| v.eq_ignore_ascii_case(&rule.device)) {
             continue;
         }
-        labels.push(format!("(custom) {}", rule.device));
+        labels.push(strings::fill("custom-entry", &[&rule.device]));
         values.push(rule.device);
     }
     (labels, values)
@@ -590,13 +587,13 @@ pub fn build_rows(devices: &[DeviceOption], s: &str) -> Vec<TensorOverrideRow> {
 /// A row's own complaint, or empty when it is fine.
 fn row_problem(rule: &Rule, detected: bool) -> String {
     if rule.pattern.is_empty() {
-        return "empty pattern".into();
+        return strings::t("override-empty-pattern");
     }
     if rule.device.is_empty() {
-        return "pick a device".into();
+        return strings::t("pick-a-device");
     }
     if !detected {
-        return format!("{} was not detected", rule.device);
+        return strings::fill("device-not-detected", &[&rule.device]);
     }
     String::new()
 }
@@ -604,7 +601,7 @@ fn row_problem(rule: &Rule, detected: bool) -> String {
 /// The line under the table: the llama-server flag these rules produce.
 pub fn summary(s: &str) -> String {
     if parse(s).is_empty() {
-        return "(no overrides: every tensor goes wherever its layer went)".into();
+        return strings::t("no-overrides");
     }
     format!("--override-tensor {}", render(&parse(s)))
 }

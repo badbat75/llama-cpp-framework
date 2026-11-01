@@ -70,6 +70,7 @@
 //! `land_transfer_for_tests`), and the preset derivation runs inline. The pure
 //! job list (`Jobs`) and the progress text are unit-tested below.
 
+use crate::strings;
 use super::*;
 
 use std::collections::HashMap;
@@ -116,22 +117,17 @@ pub(super) struct ProgressView {
 
 fn progress_view(p: &hf::Progress) -> ProgressView {
     let current = (p.files_done + 1).min(p.files_total.max(1));
-    let overall = format!(
-        "{} of {} ({}%), file {current} of {}",
-        hf::format_size(p.done),
-        hf::format_size(p.total),
-        percent(p.done, p.total),
-        p.files_total
+    let overall = strings::fill(
+        "progress-overall",
+        &[&hf::format_size(p.done), &hf::format_size(p.total), &percent(p.done, p.total), &current, &p.files_total],
     );
     let file = if p.file.is_empty() {
-        "Waiting for llama-server to start the transfer…".to_string()
+        strings::t("waiting-for-transfer")
     } else {
         let name = p.file.rsplit('/').next().unwrap_or(&p.file);
-        format!(
-            "{name}: {} of {} ({}%)",
-            hf::format_size(p.file_done),
-            hf::format_size(p.file_total),
-            percent(p.file_done, p.file_total)
+        strings::fill(
+            "progress-file",
+            &[&name, &hf::format_size(p.file_done), &hf::format_size(p.file_total), &percent(p.file_done, p.file_total)],
         )
     };
     ProgressView {
@@ -182,10 +178,10 @@ fn created_status(d: &hf::Downloaded, id: &str, placed: bool) -> String {
     if let Some((s, _)) = &d.draft {
         with.push(s.label());
     }
-    let with = if with.is_empty() { String::new() } else { format!(" with {}", with.join(" and ")) };
+    let with = if with.is_empty() { String::new() } else { strings::fill("downloaded-with", &[&with.join(&strings::t("list-and"))]) };
     let name = d.model.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-    let placed = if placed { ", placed on the GPUs as estimated" } else { "" };
-    format!("Downloaded {name}{with} from {}: created [{id}]{placed}. Show preset (Downloads) opens it.", d.repo)
+    let key = if placed { strings::key("downloaded-placed") } else { strings::key("downloaded") };
+    strings::fill(key, &[&name, &with, &d.repo, &id])
 }
 
 // ── Pure parts: the job list ─────────────────────────────────────────────
@@ -214,19 +210,17 @@ impl JobState {
         matches!(self, JobState::Downloading | JobState::Cancelling | JobState::Configuring)
     }
 
-    fn label(&self) -> &'static str {
-        match self {
-            JobState::Downloading => "Downloading",
-            JobState::Cancelling => "Cancelling…",
-            JobState::Configuring => "Creating the preset…",
-            JobState::Done { .. } => "Done",
-            JobState::Failed(_) => "Failed",
-            JobState::Cancelled => "Cancelled",
-        }
+    fn label(&self) -> String {
+        strings::t(match self {
+            JobState::Downloading => strings::key("downloading"),
+            JobState::Cancelling => strings::key("cancelling"),
+            JobState::Configuring => strings::key("creating-preset"),
+            JobState::Done { .. } => strings::key("job-done"),
+            JobState::Failed(_) => strings::key("job-failed"),
+            JobState::Cancelled => strings::key("job-cancelled"),
+        })
     }
 }
-
-const CANCELLED: &str = "Cancelled. What was fetched so far is kept: Resume picks up where it stopped.";
 
 #[derive(Debug, Clone)]
 struct Job {
@@ -345,7 +339,7 @@ impl Jobs {
             _ => return Err(String::new()),
         };
         if self.busy_with(&repo) {
-            return Err(format!("{repo} is already downloading: Resume once that download ends."));
+            return Err(strings::fill("resume-busy", &[&repo]));
         }
         if let Some(j) = self.get_mut(id) {
             j.state = JobState::Downloading;
@@ -405,22 +399,22 @@ impl Jobs {
     fn summary(&self) -> String {
         let active = self.active();
         if active > 0 {
-            return if active == 1 { "1 download running".into() } else { format!("{active} downloads running") };
+            return if active == 1 { strings::t("downloads-running-one") } else { strings::fill("downloads-running-many", &[&active]) };
         }
         let count = |f: fn(&JobState) -> bool| self.list.iter().filter(|j| f(&j.state)).count();
         let parts: Vec<String> = [
-            (count(|s| matches!(s, JobState::Done { .. })), "done"),
-            (count(|s| matches!(s, JobState::Failed(_))), "failed"),
-            (count(|s| *s == JobState::Cancelled), "cancelled"),
+            (count(|s| matches!(s, JobState::Done { .. })), strings::key("downloads-done")),
+            (count(|s| matches!(s, JobState::Failed(_))), strings::key("downloads-failed")),
+            (count(|s| *s == JobState::Cancelled), strings::key("downloads-cancelled")),
         ]
         .into_iter()
         .filter(|(n, _)| *n > 0)
-        .map(|(n, what)| format!("{n} {what}"))
+        .map(|(n, key)| strings::fill(key, &[&n]))
         .collect();
         if parts.is_empty() {
             String::new()
         } else {
-            format!("Downloads: {}", parts.join(", "))
+            strings::fill("downloads-summary", &[&parts.join(", ")])
         }
     }
 }
@@ -430,19 +424,19 @@ fn row(j: &Job) -> DownloadRow {
     let transferring = matches!(j.state, JobState::Downloading | JobState::Cancelling);
     let (overall, file, of, ff) = match (&j.progress, transferring) {
         (Some(p), true) => (p.overall.clone(), p.file.clone(), p.overall_fraction, p.file_fraction),
-        (None, true) => ("Starting…".to_string(), String::new(), 0.0, 0.0),
+        (None, true) => (strings::t("starting"), String::new(), 0.0, 0.0),
         _ => (String::new(), String::new(), 0.0, 0.0),
     };
     let (message, is_error) = match &j.state {
         JobState::Done { preset, placed: true } => (
-            format!("Created preset [{preset}], placed on the GPUs as estimated: Show preset opens it to tune it and Save."),
+            strings::fill("created-preset-placed", &[&preset]),
             false,
         ),
         JobState::Done { preset, placed: false } => {
-            (format!("Created preset [{preset}]: Show preset opens it in the Models tab."), false)
+            (strings::fill("created-preset", &[&preset]), false)
         }
         JobState::Failed(e) => (e.clone(), true),
-        JobState::Cancelled => (CANCELLED.to_string(), false),
+        JobState::Cancelled => (strings::t("download-cancelled-kept"), false),
         _ => (String::new(), false),
     };
     DownloadRow {
@@ -637,8 +631,8 @@ fn transfer_ended(app: &AppWindow, state: &Rc<RefCell<State>>, id: u64, result: 
     }
     match result {
         Ok(downloaded) => configure(app, state, id, downloaded),
-        Err(hf::HfError::Cancelled) => set_status(app, format!("Hugging Face download of {title} cancelled."), false),
-        Err(e) => set_status(app, format!("Hugging Face download of {title} failed: {e}"), true),
+        Err(hf::HfError::Cancelled) => set_status(app, strings::fill("hf-download-cancelled", &[&title]), false),
+        Err(e) => set_status(app, strings::fill("hf-download-failed", &[&title, &e]), true),
     }
     push(app, state);
     maybe_quit(state);
@@ -703,8 +697,8 @@ fn configured(app: &AppWindow, state: &Rc<RefCell<State>>, id: u64, d: hf::Downl
                 .borrow_mut()
                 .downloads
                 .jobs
-                .configured(id, Err(format!("The files are in place, but the preset could not be saved: {e}")));
-            set_status(app, format!("Hugging Face download: the preset could not be saved: {e}"), true);
+                .configured(id, Err(strings::fill("files-kept-preset-not-saved", &[&e])));
+            set_status(app, strings::fill("hf-preset-not-saved", &[&e]), true);
         }
     }
     push(app, state);
@@ -747,7 +741,7 @@ fn show_preset(app: &AppWindow, state: &Rc<RefCell<State>>, id: u64) {
     raise_window(app.window());
     let s = app.global::<AppState>();
     let note = if s.get_modal_open() {
-        "A dialog is open in the configurator: close it, then Show preset again.".to_string()
+        strings::t("close-dialog-first")
     } else {
         s.set_current_tab(1);
         String::new()
@@ -755,7 +749,7 @@ fn show_preset(app: &AppWindow, state: &Rc<RefCell<State>>, id: u64) {
     let position = |state: &Rc<RefCell<State>>| state.borrow().presets.iter().position(|l| l.preset.id == target);
     let note = match (note.is_empty(), position(state)) {
         (false, _) => note,
-        (true, None) => format!("[{target}] is no longer listed: renamed or deleted since."),
+        (true, None) => strings::fill("preset-no-longer-listed", &[&target]),
         (true, Some(_)) => String::new(),
     };
     state.borrow_mut().downloads.jobs.set_note(id, &note);
@@ -889,6 +883,7 @@ pub(crate) fn quit_called_for_tests() -> bool {
 /// the remembered size at Quit.
 pub(super) fn wire(app: &AppWindow, state: &Rc<RefCell<State>>) -> Result<DownloadsWindow, slint::PlatformError> {
     let win = DownloadsWindow::new()?;
+    install_strings(win.global::<Strings>());
     restore_window_size(&win);
     {
         let win_weak = win.as_weak();
@@ -989,6 +984,7 @@ pub(super) fn e2e() {
     use i_slint_backend_testing::ElementHandle;
 
     let win = DownloadsWindow::new().expect("build DownloadsWindow");
+    install_strings(win.global::<Strings>());
     win.window().set_size(slint::PhysicalSize::new(900, 1400));
     win.show().expect("realize window");
     let shown = |text: &str| ElementHandle::find_by_accessible_label(&win, text).count();

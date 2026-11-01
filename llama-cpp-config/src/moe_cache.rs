@@ -57,6 +57,7 @@
 //! the first place a change of order shows: re-check `make_cpu_buft_list` and each backend's host type on
 //! a llama.cpp bump.
 
+use crate::strings;
 use std::collections::BTreeMap;
 
 use regex::Regex;
@@ -123,23 +124,13 @@ impl Floor {
     /// sentence. Facts only; the hint around it says what the cache does.
     pub fn hint(self) -> String {
         match self {
-            Floor::NoHostExperts => ": with this preset no GPU layer keeps all of its experts in RAM, so llama.cpp would run without a cache.".into(),
-            Floor::Load(b) => format!(
-                ": for this model at least {} MiB (Save refuses less). With the GPUs weighed by free VRAM, which of them end up caching is decided at load.",
-                mib(b)
-            ),
-            Floor::Repack(b) => format!(
-                ": for this model at least {} MiB (Save refuses less). With no-host the CPU repacks the experts it has kernels for, and those layers leave the cache.",
-                mib(b)
-            ),
+            Floor::NoHostExperts => strings::t("moe-floor-no-host"),
+            Floor::Load(b) => strings::fill("moe-floor-load", &[&mib(b)]),
+            Floor::Repack(b) => strings::fill("moe-floor-repack", &[&mib(b)]),
             Floor::Split { load, every } if mib(load) == mib(every) => {
-                format!(": for this preset at least {} MiB (Save refuses less).", mib(load))
+                strings::fill("moe-floor-split-same", &[&mib(load)])
             }
-            Floor::Split { load, every } => format!(
-                ": for this preset at least {} MiB (Save refuses less), and {} MiB before every group of layers caches; in between, the ones with the smaller share of the budget run uncached.",
-                mib(load),
-                mib(every)
-            ),
+            Floor::Split { load, every } => strings::fill("moe-floor-split", &[&mib(load), &mib(every)]),
         }
     }
 }

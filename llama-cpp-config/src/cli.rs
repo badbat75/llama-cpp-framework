@@ -1158,7 +1158,7 @@ fn run_preset_download(a: PresetDownload) -> Result<()> {
             println!("{line}");
         }
         if fit.is_none() {
-            println!("Placement estimate unavailable: {}.", crate::hf_fit::NO_GPU);
+            println!("Placement estimate unavailable: {}.", crate::hf_fit::no_gpu());
         }
         return Ok(());
     }
@@ -1299,7 +1299,7 @@ fn list_report(
                 (None, Some(Err(m))) => format!("estimate unavailable: {m}"),
                 (None, _) => "estimate unavailable".to_string(),
             };
-            let reason = rec.as_ref().filter(|r| r.index == i).map(|r| r.reason);
+            let reason = rec.as_ref().filter(|r| r.index == i).map(|r| r.reason.as_str());
             out.push(format!("    {}", hf_fit::detail_line(&label, reason)));
         }
     }
@@ -1310,7 +1310,7 @@ fn list_report(
                 "Recommended here: {} ({}); download it with --quant {}",
                 l.candidates[r.index].tag, r.reason, l.candidates[r.index].tag
             ),
-            None => hf_fit::NONE_RECOMMENDED.to_string(),
+            None => hf_fit::none_recommended(),
         });
     }
     out

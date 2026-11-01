@@ -14,9 +14,10 @@
 
 import { ListView, CheckBox, Button, Palette } from "std-widgets.slint";
 import { Tokens } from "components.slint";
+import { Strings } from "strings.slint";
 
 export component LogWindow inherits Window {
-    title: "llama-server log";
+    title: Strings.t("log-window-title");
     icon: @image-url("llama.png");
     min-width: 480px;
     min-height: 320px;
@@ -119,11 +120,11 @@ export component LogWindow inherits Window {
                 vertical-alignment: center;
             }
             CheckBox {
-                text: "Auto-scroll";
+                text: Strings.t("auto-scroll");
                 checked <=> root.auto_scroll;
             }
             Button {
-                text: "Copy all";
+                text: Strings.t("copy-all");
                 clicked => { root.copy_all(); }
             }
         }
