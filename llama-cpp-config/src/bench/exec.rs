@@ -576,6 +576,7 @@ fn run_live(
             }
             let wall = sent.elapsed().as_secs_f64();
             let s = super::parse_stream(&res.body).map_err(|e| format!("{}: {e}", preset.id))?;
+            fail_if_cut(port, preset, &plan, &s)?;
             let t = &s.timings;
             prefill.push(t.prompt_tps);
             decode.push(t.predicted_tps);
@@ -711,6 +712,31 @@ fn live_timeout(plan: &Plan) -> Duration {
     LIVE_TIMEOUT + Duration::from_millis(100 * tokens as u64)
 }
 
+/// Fail the leg on a reply the slot's context cut: its answer is short and its
+/// rates are not the ones of the configuration (`bench::cut_by_context`). The
+/// slot size is asked for only here, so a normal repetition sends nothing extra.
+fn fail_if_cut(
+    port: u16,
+    preset: &presets::Preset,
+    plan: &Plan,
+    s: &super::Streamed,
+) -> Result<(), String> {
+    let cap = super::output_cap(plan, preset);
+    if !super::cut_by_context(s, cap) {
+        return Ok(());
+    }
+    let path = format!("/props?model={}", crate::hf::percent_encode(&preset.id));
+    let n_ctx = http::request(port, "GET", &path, None, http::CONNECT_TIMEOUT)
+        .ok()
+        .filter(|r| r.status == 200)
+        .and_then(|r| super::props_n_ctx(&r.body));
+    Err(format!(
+        "{}: {}",
+        preset.id,
+        super::context_cut_error(s, cap, n_ctx)
+    ))
+}
+
 /// One request of a concurrent repetition, as it came back.
 struct SlotReply {
     slot: usize,
@@ -837,6 +863,9 @@ fn run_concurrent(
                 .collect()
         });
         let replies: Vec<SlotReply> = replies.into_iter().collect::<Result<_, _>>()?;
+        for r in &replies {
+            fail_if_cut(port, preset, plan, &r.streamed)?;
+        }
 
         for r in &replies {
             let t = &r.streamed.timings;

@@ -130,7 +130,7 @@ pub const DEFAULT_GEN: i32 = 128;
 /// live repetition costs a whole cold prefill and a synthetic one does not.
 pub const DEFAULT_REPS: i32 = 3;
 
-/// Seconds between llama-bench tests. Deliberately BELOW the ~9.5 s WDDM idle
+/// Seconds between llama-bench tests. Deliberately BELOW the WDDM idle
 /// threshold that evicts a headless GPU's VRAM on this class of machine: a
 /// longer settle time risks measuring a page-in instead of a kernel.
 pub const DEFAULT_DELAY_SECS: i32 = 2;
@@ -416,7 +416,8 @@ pub struct Plan {
     /// greedy sampling is what makes two runs of the same prompt comparable.
     pub temp: Option<f64>,
     /// `0` = no cap: the request carries no `max_tokens`, so the model stops
-    /// on its own (or at the preset's `n-predict`, or the slot's context).
+    /// on its own (or at the preset's `n-predict`); a reply the slot's context
+    /// cuts fails the leg (`cut_by_context`).
     /// The CLI's default; the Benchmark tab sends its field's value.
     pub max_tokens: i32,
     /// Live only: the box an image prompt's image is fitted into when it is
@@ -1110,6 +1111,8 @@ pub struct Streamed {
     /// Cumulative timings every [`TRACE_EVERY`] tokens: the rate curve of the
     /// repetition, for analysis from bench.db rather than from the server log.
     pub trace: Vec<TracePoint>,
+    /// The final event's `finish_reason`: `stop`, `tool_calls` or `length`.
+    pub finish_reason: Option<String>,
 }
 
 /// Read a streamed (`stream: true`, `timings_per_token: true`) completion.
@@ -1128,6 +1131,7 @@ pub fn parse_stream(body: &str) -> Result<Streamed, String> {
     let mut answering = false;
     let mut trace = Vec::new();
     let mut next_trace = TRACE_EVERY;
+    let mut finish_reason = None;
 
     for line in body.lines() {
         let Some(data) = line.trim().strip_prefix("data:") else {
@@ -1141,6 +1145,9 @@ pub fn parse_stream(body: &str) -> Result<Streamed, String> {
             serde_json::from_str(data).map_err(|e| format!("unreadable stream event: {e}"))?;
         if let Some(msg) = v.pointer("/error/message").and_then(|m| m.as_str()) {
             return Err(msg.to_string());
+        }
+        if let Some(r) = v.pointer("/choices/0/finish_reason").and_then(|r| r.as_str()) {
+            finish_reason = Some(r.to_string());
         }
         let delta = v.pointer("/choices/0/delta");
         let has = |k: &str| {
@@ -1218,7 +1225,68 @@ pub fn parse_stream(body: &str) -> Result<Streamed, String> {
         timings,
         split,
         trace,
+        finish_reason,
     })
+}
+
+/// The output cap the server applied to a live request: the request's own
+/// `max_tokens`, else the preset's `n-predict` (`server-context.cpp` takes the
+/// preset's as the fallback; only `-1` means no limit there).
+pub fn output_cap(plan: &Plan, preset: &Preset) -> Option<i64> {
+    if plan.max_tokens > 0 {
+        return Some(i64::from(plan.max_tokens));
+    }
+    preset.n_predict.filter(|&n| n != -1).map(i64::from)
+}
+
+/// Whether the slot's context cut this reply short.
+///
+/// The chat stream does not say so directly: `truncated` exists only in the
+/// `/completion` shape, or under `__verbose` at a debug server verbosity, and
+/// `finish_reason` reads `length` for a context cut and for a reached cap alike
+/// (`server_task_result_cmpl_final::to_json_oaicompat_chat_stream`). So it is
+/// derived: the budget stop (`process_token`, `server-context.cpp`) fires only
+/// once `n_gen` has reached the cap, which leaves a `length` stop with fewer
+/// tokens than the cap to the context check. The two other limit stops,
+/// `n_indent` and `t_max_predict_ms`, are request fields the bench never sends.
+/// A reply cut exactly at the cap counts as capped: it holds all it was asked for.
+pub fn cut_by_context(s: &Streamed, cap: Option<i64>) -> bool {
+    s.finish_reason.as_deref() == Some("length")
+        && match cap {
+            Some(c) => s.timings.predicted_n < c,
+            None => true,
+        }
+}
+
+/// The slot size out of a `GET /props?model=<id>` answer. Zero is the router's
+/// own placeholder, not a size.
+pub fn props_n_ctx(body: &str) -> Option<i64> {
+    serde_json::from_str::<serde_json::Value>(body)
+        .ok()?
+        .pointer("/default_generation_settings/n_ctx")?
+        .as_i64()
+        .filter(|&n| n > 0)
+}
+
+/// The error of a leg whose reply [`cut_by_context`] caught. The sum can stop
+/// a few tokens short of the slot size: a speculative step enters the slot
+/// whole before its tokens are counted one by one.
+pub fn context_cut_error(s: &Streamed, cap: Option<i64>, n_ctx: Option<i64>) -> String {
+    let t = &s.timings;
+    let slot = match n_ctx {
+        Some(n) => format!("{n} tokens"),
+        None => "unknown (llama-server did not report it)".to_string(),
+    };
+    let limit = match cap {
+        Some(c) => format!("below the output cap of {c}"),
+        None => "with no output cap".to_string(),
+    };
+    format!(
+        "the reply was cut by the context limit: slot size {slot}, {} prompt + {} generated tokens, {limit}. \
+         The leg failed and is not recorded: give each slot more context (a higher ctx-size or a lower parallel), or set a max-tokens cap.",
+        t.prompt_n + t.cache_n,
+        t.predicted_n,
+    )
 }
 
 // ── Results ──────────────────────────────────────────────────────────────
@@ -2209,6 +2277,108 @@ mod tests {
         assert_eq!(split.reasoning.tokens, 50);
         assert_eq!(split.answer.tokens, 0);
         assert_eq!(split.answer.tps(), None);
+    }
+
+    /// A reply ending the way the chat stream ends one: a token event whose
+    /// `finish_reason` is null, then the final event with an empty delta.
+    fn reply(reason: &str, n: i64) -> Streamed {
+        let last = |reason: serde_json::Value, n: i64| {
+            let v = serde_json::json!({
+                "choices": [{ "finish_reason": reason, "index": 0, "delta": {} }],
+                "timings": {
+                    "prompt_n": 1000, "prompt_per_second": 800.0, "cache_n": 24,
+                    "predicted_n": n, "predicted_ms": 1000.0, "predicted_per_second": 40.0,
+                },
+            });
+            format!("data: {v}\n\n")
+        };
+        let body = last(serde_json::Value::Null, n) + &last(serde_json::json!(reason), n);
+        parse_stream(&(body + "data: [DONE]\n\n")).unwrap()
+    }
+
+    #[test]
+    fn a_model_that_stops_on_its_own_is_never_a_context_cut() {
+        for reason in ["stop", "tool_calls"] {
+            let s = reply(reason, 100);
+            assert_eq!(s.finish_reason.as_deref(), Some(reason));
+            assert!(!cut_by_context(&s, None));
+            assert!(!cut_by_context(&s, Some(256)));
+        }
+        // A stream with no final event carries no verdict, so it fails nothing.
+        let partial = parse_stream(&event("content", "Hi", 1, 0.0, 0, 0)).unwrap();
+        assert_eq!(partial.finish_reason, None);
+        assert!(!cut_by_context(&partial, None));
+    }
+
+    // A reached cap reports `length` too, and the count is what tells it apart.
+    #[test]
+    fn an_answer_at_the_requested_cap_stays_valid() {
+        let plan = Plan {
+            max_tokens: 256,
+            ..Default::default()
+        };
+        let cap = output_cap(&plan, &preset("a"));
+        assert_eq!(cap, Some(256));
+        assert!(!cut_by_context(&reply("length", 256), cap));
+
+        // With no cap in the request, the preset's n-predict is the one applied.
+        let plan = Plan {
+            max_tokens: 0,
+            ..Default::default()
+        };
+        let capped = Preset {
+            n_predict: Some(512),
+            ..preset("a")
+        };
+        let cap = output_cap(&plan, &capped);
+        assert_eq!(cap, Some(512));
+        assert!(!cut_by_context(&reply("length", 512), cap));
+
+        // The request's cap wins over the preset's, in either direction.
+        let plan = Plan {
+            max_tokens: 64,
+            ..Default::default()
+        };
+        assert_eq!(output_cap(&plan, &capped), Some(64));
+    }
+
+    #[test]
+    fn a_reply_the_context_cut_fails_and_names_the_numbers() {
+        let plan = Plan {
+            max_tokens: 0,
+            ..Default::default()
+        };
+        // Uncapped: any `length` stop is the context, -1 included.
+        for n_predict in [None, Some(-1)] {
+            let p = Preset {
+                n_predict,
+                ..preset("a")
+            };
+            assert_eq!(output_cap(&plan, &p), None);
+        }
+        let cut = reply("length", 100);
+        assert!(cut_by_context(&cut, None));
+        // Capped, but the slot ran out first.
+        assert!(cut_by_context(&cut, Some(256)));
+
+        let e = context_cut_error(&cut, None, Some(1200));
+        assert!(e.contains("cut by the context limit"), "{e}");
+        assert!(e.contains("slot size 1200 tokens"), "{e}");
+        assert!(e.contains("1024 prompt + 100 generated tokens"), "{e}");
+        assert!(e.contains("with no output cap"), "{e}");
+        let e = context_cut_error(&cut, Some(256), None);
+        assert!(e.contains("slot size unknown"), "{e}");
+        assert!(e.contains("below the output cap of 256"), "{e}");
+    }
+
+    #[test]
+    fn the_slot_size_comes_from_props_and_the_routers_zero_is_none() {
+        let props = |n: i64| {
+            serde_json::json!({ "default_generation_settings": { "n_ctx": n } }).to_string()
+        };
+        assert_eq!(props_n_ctx(&props(124000)), Some(124000));
+        assert_eq!(props_n_ctx(&props(0)), None);
+        assert_eq!(props_n_ctx("not json"), None);
     }
 
     #[test]
