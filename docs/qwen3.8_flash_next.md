@@ -51,10 +51,10 @@ that many tokens, sent with the prompt cache off.
 | key | value | evidence |
 | --- | --- | --- |
 | quant | IQ3_S; IQ3_XXS where memory is short | [section 3](#3-quant-and-where-the-experts-live) |
-| `cache-type-k/-v` | `f16` | `q8_0` saves only 1 or 2 layers of experts and decodes slower: 21.8 t/s against 24.9 at 43.7k |
+| `cache-type-k/-v` | `f16`; `q8_0` with the separate MTP head on two R9700s | `q8_0` saves only 1 or 2 layers of experts and decodes slower: 21.8 t/s against 24.9 at 43.7k |
 | `lazy-mode` | `auto` (the default) | keeps the 26.8 GiB n-gram table mapped; `off` reads it into 27 GiB of RAM and decodes the same |
 | `moe-cache-mib` | `0` (off) | resident layers beat the cache in every setup ([section 4](#4-the-moe-cache)) |
-| `threads` | one per physical core (12); `ThreadsBatch` the same on *Linux*, 24 on *Windows* | *Linux*: prefill 410 and 405 at 12 threads against 364 to 377 at 16 to 24. *Windows*: 275.7 and 279.0 at 24 against 250 to 262 at 12 |
+| `threads` | one per physical core (12); `ThreadsBatch` the same on *Linux*, 24 on *Windows* | *Linux*: prefill 410 and 405 at 12 threads against 363 to 377 at 16 to 24. *Windows*: 275.7 and 279.0 at 24 against 250 to 262 at 12 (by hand, not recorded) |
 | `reasoning-preserve` | unset (on) | a turn sending back the old thinking processes only its 19 new tokens; `false` reprocesses 60 from a checkpoint |
 | `ctx-checkpoints` | unset (32) | a diverging prompt reprocesses 60 of 118 tokens with them, all 118 without; 112.6 MiB each |
 
@@ -67,6 +67,7 @@ Every expert in VRAM (campaign `flash-next-2xr9700-linux-ncm-20261028`). [Sectio
 | `n-cpu-moe` | unset | prefill 1978.8 ±5.7 against 570 at `n-cpu-moe 16`, decode 33.9 against 26.2 |
 | `device` | the x16 card first | decode 33.9 against 33.3, 2% faster; prefill 3% slower (campaign `flash-next-2xr9700-linux-device-20261028`) |
 | `tensor-split` | `24,25` with the MTP head, `1,1` without | makes room for the head on the first card ([section 5](#5-drafters)) |
+| `cache-type-k/-v`, `model-draft`, `device-draft` | `q8_0`, the MTP GGUF, the first card, with the MTP head | `f16` at `1,1` does not load: the draft's KV finds no room on the first card ([section 5](#5-drafters)) |
 | `ctx-size` | `262144` | same speed as 131072: 1962.3 ±17.7 prefill, 34.0 decode; 1872 and 772 MiB free (campaign `flash-next-2xr9700-linux-ctx-20261028`) |
 | `ubatch-size` | `512` | larger is faster but leaves no margin on the second card at 262144 (table below; campaign `flash-next-2xr9700-linux-ubatch-20261028`) |
 | `spec-type` | `ngram-map-k4v,draft-mtp`, `spec-draft-n-max 3`, `size-m 64` | decode 56.3 on prose and 280.1 on a code rewrite, the best measured ([section 5](#5-drafters)) |
@@ -94,18 +95,25 @@ rename   = unset=all experts in VRAM
 | `device`, `tensor-split` | the RTX 4070 SUPER first, `23,26` | prefill 557.8 ±0.3 against 422.7 ±2.6 with the R9700 first at `40,9` (32% faster), decode 28.2 against 25.0 (13% faster; *Linux*) |
 | `n-cpu-moe` | `16`: the lowest that leaves ~500 MB free on each card | below that margin hipBLASLt's workspace runs short on the first real prompt, which a 5-token test does not show |
 | `ctx-size` | `131072` | 262144 prefills 14 to 17% slower and decodes 4 to 8% slower on short prompts ([section 3](#3-quant-and-where-the-experts-live)) |
-| `no-host` | `true`, with `op-offload false` | the CPU repacks what it can: prefill 416 and 419 against 381 and 382, decode the same (campaign `flash-next-no-host-20261016`) |
-| `load-mode` | `none` with experts in RAM (*Linux*); `mmap` with experts on the card on *Windows* | with every expert in RAM `mmap` decodes up to 12.5% (R9700) and 25 to 39% (RTX 4070 SUPER) slower; on *Windows*, a partial `n-cpu-moe` needs `mmap` ([section 8](#8-choices-that-look-better-than-they-measure)) |
-| `ubatch-size` | `512` | `768` buys 3% of prefill, decodes slower and halves the R9700's margin (campaign `flash-next-ubatch768-linux-20261021`) |
+| `no-host` | `true`, with `op-offload false` | the CPU repacks what it can: prefill 416 and 419 against 383 and 382, decode the same (campaign `flash-next-no-host-20261016`) |
+| `load-mode` | `none` whenever experts sit in RAM, set explicitly; on *Windows*, `mmap` with part of the experts on the card | *Windows*, every expert in RAM: `mmap` decodes up to 12.5% (R9700) and 25 to 39% (RTX 4070 SUPER) slower. *Linux*: `none` 25.6 ±0.1, `mmap` 23.9 ±2.6. A partial `n-cpu-moe` needs `mmap` on *Windows* ([section 8](#8-choices-that-look-better-than-they-measure)) |
+| `ubatch-size` | `512` | `768` buys 3% of prefill, decodes slower and halves the R9700's margin (campaign `flash-next-ubatch768-linux-20261021`). With `q8_0` at `n-cpu-moe 14`, `1024` and `2048` do not load |
 | `spec-type` | `ngram-map-k`, `size-m 64` | code 61 to 65 t/s against 28.6 with none; prose reasoning 40.0 ±1.6 against 29.4 ±1.3 (IQ3_XXS, v0.6.0) |
+
+**23 blocks is the RTX 4070 SUPER's limit at `n-cpu-moe 16`.** `24,25` does not load (campaign
+`flash-next-device-order-linux-20261021`), and neither does `n-cpu-moe 15` at `23,26` (not recorded): weights
+and KV fit, the compute buffer does not.
 
 On *Linux* the IQ3_XXS preset (`q8_0` KV, `n-cpu-moe 7`) follows the same order: the RTX 4070 SUPER
 first at `19,30` prefills 776.7 ±15.8 against 580.8 ±10.6 and decodes 27.8 ±0.4 against 26.1 ±0.8,
-but leaves only 72 MiB free on that card (campaign `flash-next-xxs-device-order-linux-20261021`). The
-order comes from where the work runs: the RTX 4070 SUPER takes blocks 0 to 22, among them the 16
+but leaves only 72 MiB free on that card, and `20,29` does not load (campaign
+`flash-next-xxs-device-order-linux-20261021`). The order comes from where the work runs: the RTX 4070 SUPER takes blocks 0 to 22, among them the 16
 host-expert layers, and the R9700 takes blocks 23 to 47, the output head and the sampling. Size the
 split from the per-layer weights, since `llama-gguf <shard> r` shows experts of 738 to 1300 MiB per
 layer, the late layers heavier (campaign `flash-next-device-order-linux-20261021`).
+
+With `device` pinned to the discrete cards, `load-mode auto` resolves to `mmap` (read in the *Linux* log),
+so set `none` explicitly.
 
 ## 3. Quant and where the experts live
 
@@ -122,16 +130,17 @@ Context and KV type at ubatch 512, `op-offload false`, the 43.7k prompt and thre
 
 | context, KV | `n-cpu-moe`, split | prefill | decode at 43.7k | decode, short prompts |
 | --- | --- | --- | --- | --- |
-| 131072, `q8_0` | 14, `40,9` | 397, 414 | 21.8 | 27.1 |
+| 131072, `q8_0` | 14 plus `blk\.38\.ffn_down_exps=CUDA0`, `40,9` | 397, 414 | 21.8 | 27.1 |
 | **131072, `f16`** | **16, `40,9`** | 381, 382 | **24.7, 25.1** | **27.4** |
 | 262144, `q8_0` | 18, `41,8` | 349, 351 | 20.9, 20.7 | 26.0 |
 | 262144, `f16` | 21, `41,8` | 311, 319 | 23.3, 23.4 | 25.2 |
 
 Adding `no-host` and the RTX 4070 SUPER first to the bold row gives the recommended preset. `q8_0`
 halves the KV but its compute buffer grows (877 against 533 MiB on the R9700 at 131072), so it saves
-one layer of experts at 131072 and two at 262144.
+one layer of experts at 131072 (15 against 16; the row's 14 comes from also moving that override's
+tensor to the RTX 4070 SUPER) and two at 262144.
 
-**The second card is worth ten layers of experts and 20 to 25% of decode:**
+**The second card is worth ten layers of experts and decodes 9 to 23% faster:**
 
 | context, KV | both cards | R9700 alone |
 | --- | --- | --- |
@@ -198,7 +207,7 @@ stage a layer's misses contiguously so that it issues 3 transfers rather than ~1
 ggml-org publishes the MTP layer as its own GGUF (`mtp-Qwen3.8-Flash-Next-Q4_0.gguf`, 2.05 GiB), loaded
 with `model-draft`, `spec-type draft-mtp` and `device-draft` on the first card. At 262144 it adds 1746 MiB
 of weights, 640 MiB of `f16` draft KV and a 566 MiB compute buffer there. Making room takes a `q8_0` KV
-and `24,25` (block 24 to the second card): after a 43.7k prefill that leaves 882 / 814 MiB free at
+and `24,25` (block 24 to the second card), since `f16` at `1,1` does not load: after a 43.7k prefill that leaves 882 / 814 MiB free at
 `spec-draft-n-max 3`.
 
 43.7k prose and a code rewrite (rename one function in a 356-line Rust file), `q8_0`, `24,25`, 262144,
@@ -264,7 +273,7 @@ Code rewrite, IQ3_XXS, 8000 tokens at most, two runs, the mixed pair (v0.6.0):
 | --- | --- | --- |
 | none | 28.6 | |
 | `ngram-simple` | 52.3 ±1.3 | |
-| `ngram-mod` | 52.9 | |
+| `ngram-mod` | 52.9 | one run; the second ran out of memory with ~400 MiB free on the RTX 4070 SUPER |
 | `ngram-map-k` | 61.0 ±2.7 | answer 124 t/s at 87 to 92% accepted, reasoning 35 |
 | `ngram-map-k`, `size-n` 4 / 8 / 12 / 16 | 35.0 / 51.5 / 61.3 / 56.0 | 12, the default, is best |
 | `ngram-map-k`, `size-m` 16 / 32 / 48 / 64 | 48.2 / 49.7 / 59.8 / 63.6 | the copied answer rises with the draft length |
@@ -308,7 +317,8 @@ all of them in RAM pin ~47 GiB, which is too much for a 59 GiB host.
 
 ## 7. Windows
 
-The same preset, files, llama.cpp and cards, with `device = ROCm1,CUDA0`, temperature 0, 3 runs per cell:
+The same preset, files, llama.cpp and cards, with `device = ROCm1,CUDA0`, temperature 0. The *Windows* figures
+are 3 runs per cell by hand, not recorded, except the `ThreadsBatch 24` row, two recorded runs:
 
 | system | prefill at 43.7k | decode at 43.7k |
 | --- | --- | --- |
@@ -316,8 +326,9 @@ The same preset, files, llama.cpp and cards, with `device = ROCm1,CUDA0`, temper
 | *Windows* | 250 to 262 | 20.4 ±0.5 |
 | *Windows*, `ThreadsBatch 24` | 275.7, 279.0 | 20.8, 20.8 |
 
-*Windows* prefills 36% slower and decodes 20% slower. The 27B, with every expert on the GPUs, loses 9 to
-17% of its long-prompt prefill to *Windows* ([Qwen3.8-27B, section 6](qwen3.8_27b.md#6-linux-against-windows)); what this model has that the 27B
+*Windows* prefills 37 to 40% slower at 12 batch threads and 34% at 24, and decodes 19% slower. The 27B, with
+every weight on the GPUs, loses 12 to 17% of its long-prompt prefill to *Windows*, the gap
+[Qwen3.8-27B, section 6](qwen3.8_27b.md#6-linux-against-windows) words as *Linux* 14 to 20% faster; what this model has that the 27B
 has not is 16 layers of experts on the CPU, so the gap is the CPU side, not the cards. The build has the
 same CPU feature set as *Linux* (`ggml-cpu-zen4.dll`: AVX-512, REPACK, LLAMAFILE, OpenMP).
 
@@ -328,8 +339,8 @@ prefill falls by a third (178.6 t/s). `op-offload true` at ubatch 512 is also a 
 against 277.
 
 **The band kernel on GQA 12** (`patches\llama.cpp\0003`) changes nothing here on either system: *Windows*
-prefill 256 ±6 against 258 ±3, decode 20.5 ±0.5 against 20.1 ±0.2; *Linux* prefill 422.7 ±2.6 against
-417.9 ±2.2, decode 25.0 both (campaign `flash-next-patches-linux-20261021`). The output is byte-identical,
+prefill 256 ±6 against 258 ±3, decode 20.5 ±0.5 against 20.1 ±0.2 (by hand, not recorded); *Linux* prefill 422.7 ±2.6 against
+417.9 ±2.2, decode 25.0 both (campaign `flash-next-patches-linux-20261021`). On *Windows* the output is byte-identical,
 and the band's gain sits on the 2 to 4 queries per step of an accepted draft, which these prompts do not
 produce. It stays on, with nothing to tune.
 
@@ -339,10 +350,10 @@ produce. It stays on, with nothing to tune.
 | --- | --- |
 | the MoE cache, to keep hot experts in VRAM | 3 to 4.6x slower on the R9700; resident layers are 8 to 31% faster on the RTX 4070 SUPER and 22 to 54% on two cards ([section 4](#4-the-moe-cache)) |
 | `--no-repack`, to let repacked layers into the cache | does nothing unless `no-host` is set |
-| a larger `ubatch-size` paid for with experts in RAM, with `op-offload false` | 305 and 308 t/s at 2048 and `n-cpu-moe 26`, against 364 and 370 at 512 and `n-cpu-moe 14`; `op-offload true` is what pays ([section 6](#6-the-tensor-split-and-long-prompts)) |
+| a larger `ubatch-size` paid for with experts in RAM, with `op-offload false` | 319 and 313 t/s at 2048 and `n-cpu-moe 26` (131072, `q8_0`), against 364 and 370 at 512 and `n-cpu-moe 14`; `op-offload true` is what pays ([section 6](#6-the-tensor-split-and-long-prompts)) |
 | Vulkan (RADV) on the R9700 instead of ROCm | *Linux*: prefill 330 and 336 against 416 and 419; decode 7.6 and 9.6 against 25.0 |
 | `load-mode none` with part of the experts on the card, on *Windows* | aborts right after the weight upload (`ROCm error: unspecified launch failure`, 4 of 4 runs); *Linux* runs it fine. Use `mmap` there |
-| `mmap` with every expert in RAM | llama.cpp warns about it, and decode drops by up to 12.5% on the R9700 and 25 to 39% on the RTX 4070 SUPER |
+| `mmap` with every expert in RAM | llama.cpp warns about it, and on *Windows* decode drops by up to 12.5% on the R9700 and 25 to 39% on the RTX 4070 SUPER |
 
 ## 9. Not yet measured (placeholders)
 

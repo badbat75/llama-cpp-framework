@@ -16,8 +16,10 @@ how to run it for speed on two machines built around a 12-core AVX-512 host with
 
 - **Two R9700s on Linux** (llama.cpp v0.8.0, the Swift-1.5 fine-tune of the Q8_0): one card in
   the CPU's Gen5 x16 slot (the x16 card), one behind the chipset at Gen4 x4 (the x4 card).
-- **An R9700 and an RTX 4070 SUPER in one model** (llama.cpp v0.7.0, the Q8_0), on Linux and
-  on Windows. A row measured on another release names it.
+- **An R9700 and an RTX 4070 SUPER in one model** (llama.cpp v0.7.0, mostly the Coder390 fine-tune
+  `Qwen3.8-27B-Coder390-EfficientThink-Q8_0-MTP.gguf`; the 43.7k rows of
+  [section 4](#4-kv-cache-type-and-context) use the Swift-1.5), on Linux and on Windows. A row
+  measured on another release names it.
 
 **In short.** Use an `f16` KV cache at the largest context that fits: deep in the context it
 decodes 11 to 12% faster than `q8_0`. Put an n-gram drafter in front of the MTP head: it more
@@ -66,8 +68,8 @@ Three behaviours shape how to read every figure below:
 | `cache-type-k/-v` | `f16` | decodes 11 to 12% faster than `q8_0` deep in the context ([section 4](#4-kv-cache-type-and-context)) |
 | `spec-draft-type-k/-v` | `f16` | `q8_0` halves the draft KV but grows the draft compute buffer from 648 to 1696 MiB (v0.6.0) |
 | `load-mode` | `none` | every weight is on a GPU: nothing to map |
-| `ubatch-size` | `1024` | best prefill at 115k: 902 t/s, against 895 at `768`, 837 at `1536`, 809 at `2048`; decode unchanged (campaign `coder390-ubatch-20261020`) |
-| `ctx-checkpoints` | `12` | covers ~98k tokens of history at the default 8192 spacing, for 1.8 GiB of host RAM; a client compaction then reprocesses under 8192 tokens, against 95,814 tokens in 101.7 s at `4` |
+| `ubatch-size` | `1024` | best prefill at 115k: 902 t/s, against 895 at `768`, 837 at `1536`, 809 at `2048`; decode unchanged. Above `1024` the R9700 keeps 659 and 75 MiB, against 1232 (*Linux*, mixed pair; campaign `coder390-ubatch-20261020`) |
+| `ctx-checkpoints` | `12` | covers ~98k tokens of history at the default 8192 spacing, for 1.8 GiB of host RAM; a client compaction should then reprocess under 8192 tokens (not yet observed), against 95,814 tokens in 101.7 s at `4` |
 | `HipFaBand` | default (`4`) | decode 25.9 against 24.5 t/s at 115k on the R9700 with `draft-mtp`, prefill unchanged |
 
 ### Two R9700s on Linux
@@ -77,28 +79,29 @@ Three behaviours shape how to read every figure below:
 | `split-mode`, `tensor-split` | `tensor`, `1,1` | decode 59.3 t/s against 40.4 with the layer split at 43.7k; balanced memory ([section 5](#5-splitting-the-model-across-two-cards)) |
 | `device` | the x16 card first | decode 33.5 against 32.2, prefill 1491 against 1476 (layer split; campaign `swift27b-2xr9700-linux-device-20261028`) |
 | `CudaAllreduce` | `internal` | RCCL cannot run: the x4 card's slot has no PCIe AtomicOps |
-| `ubatch-size` | `1024` | `2048` prefills 24% slower: 1118.3 ±5.8 (campaign `swift27b-2xr9700-linux-ubatch-20261028`) |
+| `ubatch-size` | `1024` | `2048` prefills 24% slower: 1118.3 ±5.8 against 1472.3 ±8.0 (layer split, MTP alone, 262144, `parallel 1`; campaign `swift27b-2xr9700-linux-ubatch-20261028`) |
 | `ctx-size`, `parallel` | `425984`, `2` | 212992 per slot, with 2476 / 1378 MiB free after a 115k prefill ([section 4](#4-kv-cache-type-and-context)) |
 | `spec-type` | `ngram-map-k4v,draft-mtp`, `size-m 32` | code 119.9 t/s against 49.8 with MTP alone; prose 32.2 against 30.9 ([section 3](#3-drafters)) |
 | `spec-draft-n-max` | `2` | code 136.5 t/s, 119.9 at `3`; prose stays near 30 ([section 3](#3-drafters)) |
-| `mmproj-device` | the x4 card | a 3840x2160 image beside a slot holding 115k tokens leaves 2877 / 1032 MiB free |
+| `mmproj-device` | the x4 card | a 3840x2160 image appended to a 115k prompt, the other slot holding 115k tokens: at least 2877 / 1032 MiB free during it (by hand, sysfs sampler, not recorded) |
 
 ### An R9700 and an RTX 4070 SUPER
 
 | key | value | evidence |
 | --- | --- | --- |
 | `device` | the R9700 last on *Linux*, first on *Windows* | the order that wins on each system ([section 5](#5-splitting-the-model-across-two-cards), [section 6](#6-linux-against-windows)) |
-| `tensor-split` | most layers on the R9700; `52,14` on *Windows* | keeps ~800 MiB free on the RTX 4070 SUPER |
-| `ctx-size` | `180224` | the largest with margin: 638 / 1026 MiB free after a 115k prefill ([section 4](#4-kv-cache-type-and-context)) |
-| `split-mode` | `layer` | `tensor` across two backends prefills 599 t/s against 1290, decode the same (v0.6.0) |
+| `tensor-split` | most layers on the R9700: `16,50` on *Linux*, `52,14` on *Windows* | free on the RTX 4070 SUPER: 1026 MiB after a 115k prefill on *Linux*; 687 at 43.7k and 527 at 115k on *Windows* |
+| `ctx-size` | `180224` | the largest with margin: 638 / 1026 MiB free after a 115k prefill, with the embedding table off the RTX 4070 SUPER; with it on, 180224 and 196608 do not load ([section 4](#4-kv-cache-type-and-context)) |
+| `split-mode` | `layer` | `tensor` across two backends aborts at load unless AllReduce is `none`; with `none` it prefills 599 t/s against 1290, decode the same (v0.6.0) |
 | `override-tensor` | no `token_embd` rule; `output.weight` on the last device | [section 5](#5-splitting-the-model-across-two-cards) |
 | `spec-type`, `spec-draft-n-max` | `draft-mtp`, `3` at long context, `4` otherwise | *Windows*: 50.6 t/s at 2.6k tokens at `4`, 30.1 at 93.6k at `3`; 17.9 unassisted (*Linux*, v0.6.0) |
 | `mmproj-device` | the RTX 4070 SUPER | a 3840x2160 image at 115k succeeds, text speed unchanged ([section 5](#5-splitting-the-model-across-two-cards)) |
 
 ## 3. Drafters
 
-Two R9700s, layer split, the preset's sampling (temperature 1), 5 repetitions. The code prompt
-is a rewrite with 1536 tokens out: at 256 tokens the reply ends inside the reasoning and the
+Two R9700s, layer split, the preset's sampling (temperature 1), 5 repetitions, all at `q8_0` KV,
+`ctx-size 514288`, `35,31`, `parallel 2`: compare these figures with each other, not with the `f16`
+preset this page recommends. The code prompt is a rewrite with 1536 tokens out: at 256 tokens the reply ends inside the reasoning and the
 n-gram stage has nothing to copy (campaign `swift27b-drafter-2xr9700-linux-20261030`; campaign
 `swift27b-drafter-code1536-2xr9700-linux-20261030`).
 
@@ -130,8 +133,8 @@ rename   = unset=none, ngram-map-k4v,draft-dflash=k4v + dflash, ngram-map-k4v,dr
 ```
 
 Either speculator doubles decode. The n-gram stage then doubles it again on code, where the reply
-copies the context, and costs nothing on prose. MTP and DFlash2 are within noise of each other;
-MTP needs no second file but takes ~1.3 GB more on the last card, where its KV and compute
+copies the context, and costs nothing on prose. MTP and DFlash2 are within noise on prose and in
+the chains; alone on code DFlash2 is 17% faster, 58.2 ±3.4 against 49.8 ±1.3. MTP needs no second file but takes ~1.3 GB more on the last card, where its KV and compute
 buffer sit with the output head.
 
 The draft length matters less than the text (campaign `swift27b-draft-length-2xr9700-linux-20261030`):
@@ -144,14 +147,21 @@ The draft length matters less than the text (campaign `swift27b-draft-length-2xr
 | 5 | 27.3 | 124.0 ±17.1 |
 
 The code legs swing with how much of the prompt each sampled reply copies. The n-gram stage has
-its own length, `spec-ngram-map-k4v-size-m`: `16`, `32` and `64` give 118.8, 127.1 and 134.9
-±33.6 on code. With MTP alone, `spec-draft-n-max` `2`, `4` and `5` give 31.6, 33.6 and 32.9 on
-prose, none better than the default (campaign `swift27b-2xr9700-linux-draft-n-max-20261028`).
+its own length, `spec-ngram-map-k4v-size-m`: in the n-gram then DFlash2 chain, `16`, `32` and `64`
+give 118.8, 127.1 and 134.9 ±33.6 on code.
 
-If you prefer DFlash2, `spec-draft-n-max 5` is its best on prose: 34.1 ±2.0 against 32.2 ±1.4 at
-`7`, 32.4 at `3` and 31.3 at `10` (campaign `qwen27b-dflash-2xr9700-linux-draft-n-max-20261028`).
-On code it reaches 146.1 ±28.8 at `7`. It holds its speed at `ctx-size 262144`: 1396.9 prefill and
-31.5 decode against 1405 and 31.1 at 172032 (campaign `qwen27b-dflash-2xr9700-linux-ctx-20261028`).
+MTP alone, with `f16` at 262144, `1,1`, `parallel 1`, temperature 0, 2 repetitions and 256 tokens out,
+decodes prose at 33.4 at the default `spec-draft-n-max` (`3`). `2`, `4` and `5` give 31.6, 33.6 and
+32.9: `4` is within noise, none is better (campaign `swift27b-2xr9700-linux-draft-n-max-20261028`).
+
+If you prefer DFlash2, `spec-draft-n-max 5` is its best on prose. DFlash2 alone, on the plain
+`Qwen3.8-27B-Q8_0.gguf` with `f16` at 262144, `parallel 1`, temperature 0 and 256 tokens out, decodes
+34.1 ±2.0 at `5` against 32.2 ±1.4 at `7` (4 repetitions), 32.4 at `3` and 31.3 at `10` (2 repetitions)
+(campaign `qwen27b-dflash-2xr9700-linux-draft-n-max-20261028`). That setup holds its speed at
+`ctx-size 262144`: at `7`, 1396.9 prefill and 31.5 decode against 1405 and 31.1 at 172032 (campaign
+`qwen27b-dflash-2xr9700-linux-ctx-20261028`). On code, in the n-gram then DFlash2 chain on the Swift-1.5
+file, with `q8_0` KV, temperature 1 and 1536 tokens out, it reaches 146.1 ±28.8 at `7` (campaign
+`swift27b-draft-length-2xr9700-linux-20261030`).
 
 ## 4. KV cache type and context
 
@@ -162,7 +172,8 @@ show on short prompts. Conversations that grow turn by turn pay that decode at e
 restore into an `f16` cache.
 
 An R9700 and an RTX 4070 SUPER, *Linux*, the R9700 last, `draft-mtp` (campaign
-`27b-kv-f16-20261016`; campaign `coder390-ctx-20261020`, the rows marked at 115k):
+`27b-kv-f16-20261016`, the 43.7k rows; campaign `coder390-ubatch-20261020`, the 172032 row; campaign
+`coder390-ctx-20261020`, 180224 and 188416):
 
 | KV, context | free, R9700 / RTX 4070 SUPER (MiB) (a) | prefill | decode |
 | --- | --- | --- | --- |
@@ -172,16 +183,22 @@ An R9700 and an RTX 4070 SUPER, *Linux*, the R9700 last, `draft-mtp` (campaign
 | **`f16`, 180224** | 638 / 1026 | 889 at 115k | 28.5 at 115k |
 | `f16`, 188416 | 339 / 986: under the 500 MiB margin this card needs | 893 at 115k | 29.3 at 115k |
 
-(a) After a 2.9k prompt in the 43.7k rows, after a 115k prefill in the others.
+(a) The 43.7k rows ran the Swift-1.5 file with `token_embd` on the RTX 4070 SUPER and the image encoder
+on the R9700, 128 tokens out, free memory read after a 2.9k prompt. The 115k rows ran the Coder390 file
+with the table in host RAM and the encoder on the RTX 4070 SUPER, 256 tokens out, free memory read after
+the 115k prefill. That placement is why the larger contexts show more free memory.
 
 Among the `f16` contexts speed differs only by the draft's noise, so the largest with margin wins.
 Short prompts decode about the same in both types: 37.7 in `f16`, 38.9 in `q8_0`.
 
-Two R9700s, layer split, MTP: `f16` decodes 30.8 t/s against 27.5 ±0.4 in `q8_0` at 43.7k, prefill
-1431 against 1412 (campaign `swift27b-kv-f16-mtp-2xr9700-linux-20261031`). Free memory after that
-prefill (x16 / x4 card) is 3920 / 2580 MiB at 360448, 2768 / 1172 at 393216 and 464 / 0 at 458752.
-Within that range speed does not follow the context: 1472.3 prefill and 33.4 decode at 262144 (campaign
-`swift27b-2xr9700-linux-ctx-20261028`).
+Two R9700s, layer split at `35,31`, `ngram-map-k4v,draft-mtp` at `spec-draft-n-max 2`, `parallel 2`,
+temperature 0, 256 tokens out: `f16` at 393216 decodes 30.8 t/s against 27.5 ±0.4 in `q8_0` at 514288, at
+43.7k, prefill 1431 against 1412 (campaign `swift27b-kv-f16-mtp-2xr9700-linux-20261031`). Free memory after
+that prefill (x16 / x4 card) is 3920 / 2580 MiB at 360448, 2768 / 1172 at 393216 and 464 / 0 at 458752;
+425984 runs out of memory in the prefill, so 393216 is this split's limit. Within that range decode stays
+30.8 to 31.0 and prefill 1425 to 1431. With MTP alone at `1,1` and `parallel 1`, 262144 matches
+180224: 1472.3 / 33.4 against 1491.1 / 33.5 (campaign `swift27b-2xr9700-linux-ctx-20261028`;
+campaign `swift27b-2xr9700-linux-device-20261028`).
 
 ```bench-chart
 title    = Swift: free memory per card after a 43.7k prefill, f16 KV, by context
@@ -238,10 +255,13 @@ both requests over the window they share.
 | `prefill+decode` | decode of the warm request | 20.2 ±0.1 | 37.1 ±0.2 | 10.4 ±0.3 | 15.8 ±5.2 (b) |
 | `prefill+decode` | decode total | 39.5 ±0.2 | 52.1 ±0.2 | 19.5 ±0.2 | 27.5 ±4.9 (b) |
 
-Most tensor columns ran at `tensor-split 35,31`. The three 110k scenarios marked come from
-runs of the same preset at the even split below, which matches `35,31` in speed:
+Most tensor columns ran at `tensor-split 35,31`, `ctx-size 393216`, with the image encoder on the CPU.
+The two 110k scenarios marked, five cells, come from runs of the same preset at the even split below,
+`ctx-size 425984`, with the encoder on the x4 card. The even split matches `35,31` at 43.7k (1126.4 prefill
+and 59.3 decode against 1136.1 and 59.8). At 110k it prefills 4% faster and decodes 7% slower (961.6 and
+51.4 against 924.8 and 55.4), on another text.
 
-- (a) one repetition at `ctx-size 425984` (campaign `swift27b-ctx-tensor-2xr9700-linux-20261031`);
+- (a) one repetition at temperature 0 (campaign `swift27b-ctx-tensor-2xr9700-linux-20261031`);
 - (b) the baseline of [section 7](#7-baseline-under-the-standard-spec-two-r9700s), with the preset's own sampling and 5 repetitions: compare its
   prefill freely, but its decode only loosely with the temperature 0 layer column.
 
@@ -277,7 +297,8 @@ rename   = unset=layer, bench-prompt-long=43.7k tokens, bench-prompt-110k=110k t
 **Split evenly.** Under `split-mode tensor` an uneven split inflates the buffers: `35,31` takes
 14238 MiB of model and 15360 of KV against 13229 and 12288 at `1,1`. After a 43.7k prefill that
 leaves 0 / 7766 MiB free against 3624 / 2486, at the same speed: prefill 1136.1 ±2.3 and 1126.4
-±1.9, decode 59.8 ±0.2 and 59.3 ±0.1 (campaign `swift27b-balance-mmproj-2xr9700-linux-20261031`).
+±1.9, decode 59.8 ±0.2 and 59.3 ±0.1 (campaign `swift27b-balance-mmproj-2xr9700-linux-20261031`). With
+the x16 card that full, two 110k contexts at once run out of memory at `35,31`; `1,1` holds them.
 
 **Check the link before measuring.** The tensor split stages every AllReduce through host memory,
 so its prefill follows the x4 card's host link. On a boot where the CPU-to-chipset link trained at
@@ -288,9 +309,10 @@ kernel's boot log names the width (`available PCIe bandwidth ... limited by ... 
 ### An R9700 and an RTX 4070 SUPER: order and placement
 
 **The last device takes the MTP head, the output head and the sampling.** On *Linux*, the
-R9700 last prefills 1133 and 1123 t/s at 43.7k against 1069 and 1071 with the RTX 4070 SUPER last
-at `52,14`, and decodes 31.2 against 29.8 at `53,13`, the split that leaves that card a usable 430
-MiB (campaign `coder390-device-order-20261019`). *Windows* reverses the order: [section 6](#6-linux-against-windows).
+R9700 last prefills 1133 and 1123 t/s at 43.7k against, with the RTX 4070 SUPER last, 1069 at `52,14`
+(28 MiB free) and 1071 at `53,13`. It decodes 31.2 against 29.8 at `53,13`, the split that leaves that
+card a usable 430 MiB; `52,14` decodes 31.3 with no margin, and `50,16` and `48,18` do not load (campaign
+`coder390-device-order-20261019`). *Windows* reverses the order: [section 6](#6-linux-against-windows).
 
 **Attention blocks decide the split.** Attention sits on blocks 3, 7, 11, 15 and so on, each with
 672 MiB of KV at 172032 `f16`, so the boundary block moves its KV slice with it: block 15 costs
@@ -307,11 +329,12 @@ other card then hops devices for every drafted token.
 
 **The image encoder goes on the RTX 4070 SUPER**, in the room the embedding table left: 600 MiB of
 weights plus ~418 MiB of compute at the first 3840x2160 image. Added to a 115k conversation
-at 180224, that image leaves 801 / 716 MiB free, while the R9700 has only 342 MiB left for it.
+at 180224, that image leaves 801 / 716 MiB free. On the R9700 it aborts the server: at 172032 that card
+has 342 MiB free after a 115k prefill, and the encoder runs it out of memory.
 
 ## 6. Linux against Windows
 
-The same machine and build, an R9700 and an RTX 4070 SUPER, the R9700 last, 172032 `f16`, three
+The same machine and build, the Coder390 file, an R9700 and an RTX 4070 SUPER, the R9700 last, 172032 `f16`, three
 repetitions of 256 tokens at temperature 0 (campaign `coder390-device-order-20261019`; campaign
 `coder390-windows-vs-linux-20261020`; with the [section 5](#5-splitting-the-model-across-two-cards) placement, campaign
 `coder390-placement-20261020` and campaign `coder390-placement-windows-20261021`):
@@ -322,7 +345,7 @@ repetitions of 256 tokens at temperature 0 (campaign `coder390-device-order-2026
 | 43.7k, [section 5](#5-splitting-the-model-across-two-cards) placement | 1164 / 1020 | 31.2 / 26.9 |
 | 115k, [section 5](#5-splitting-the-model-across-two-cards) placement | 899 / 747 | 29.3 / 25.1 |
 
-*Linux* prefills 7 to 17% faster, widening with the context, and decodes 14 to 19% faster. Weights and KV per card match to the
+*Linux* prefills 8 to 20% faster, widening with the context, and decodes 16 to 23% faster. Weights and KV per card match to the
 MiB and draft acceptance within a few points, so the gap is the time of each step.
 
 **On *Windows*, put the R9700 first.** It removes most of that gap (campaign
@@ -330,10 +353,12 @@ MiB and draft acceptance within a few points, so the gap is the time of each ste
 
 | *Windows* | prefill at 43.7k | decode at 43.7k | prefill at 115k | decode at 115k |
 | --- | --- | --- | --- | --- |
-| the R9700 last | 1029 | 27.0 | 747 | 25.1 |
-| **the R9700 first, `52,14`** | 1122 (9% faster) | 32.8 (21% faster) | 846 (13% faster) | 30.9 (23% faster) |
+| the R9700 last | 1029 | 27.1 | 747 | 25.1 |
+| **the R9700 first, `52,14`** | 1122 (9% faster) | 32.8 (21% faster) | 846 (13% faster) (a) | 30.9 (23% faster) (a) |
 
-Decode then passes the *Linux* figure and prefill comes within 3% at 43.7k and 6% at 115k. Free
+(a) At `180224`; the other cells at 172032.
+
+Decode then passes the *Linux* figure and prefill comes within 4% at 43.7k and 6% at 115k. Free
 memory after the 115k prefill at `180224`: 1714 MiB on the R9700, 527 on the RTX 4070 SUPER. *Linux*
 goes the other way ([section 5](#5-splitting-the-model-across-two-cards)). *Windows* also lists the CPU's integrated GPU as a ROCm device
 ahead of the R9700, so a preset copied from *Linux* needs its device ids renumbered.
@@ -348,8 +373,9 @@ blocking copies from 5.24 s to 2.50 s and gains ~2% with the R9700 second and no
 so the order remains the setting. Keeping the R9700 second, moving `blk\.15\.ffn_gate` onto it
 buys 3.8% of prefill (campaign `coder390-gate-windows-20261021`).
 
-On *Linux* the patches reach the installed server too: prefill 1185.6 ±12.6 at 43.7k, 5% above
-1132.6 ±12.7, decode the same (campaign `coder390-patches-linux-20261021`).
+On *Linux*, with patches 0001 to 0004 at `180224`, prefill at 43.7k reads 1185.6 ±12.6 against
+1132.6 ±12.7 with 0001 alone (at 172032, the table on the RTX 4070 SUPER), 5% faster, decode the same
+(campaign `coder390-patches-linux-20261021`).
 
 ## 7. Baseline under the standard spec (two R9700s)
 
@@ -427,8 +453,8 @@ rename   = bench-prompt-43k-1.0=43.7k prose, bench-prompt-110k-1.0=110k prose, b
 ```
 
 - **The speculator doubles decode**: 2.2x at 43.7k, 2.4x at 110k (it barely drops with depth when it
-  drafts), 2.1x on code, 1.9x on the agent turn and 1.75x on the image, following acceptance. It
-  costs 6 to 7% of cold prefill on text and nothing measurable on the image.
+  drafts), 1.9x on the agent turn and 1.75x on the image, following acceptance, and 2.1x writing code
+  despite its 62%. It costs 6 to 7% of cold prefill on text and nothing measurable on the image.
 - **Writing code is not faster than prose**: 55.9 t/s against 59.3. The code itself (61.6 ±8.3)
   drafts better than the reasoning before it (51.4 ±2.7), but at `spec-draft-n-max 2` the copied
   parts lift acceptance little (62% against 79%). The reasoning varies from 3.1k to 7.3k tokens, so a
@@ -470,12 +496,13 @@ rename   = bench-prompt-43k-1.0=43.7k prose, bench-prompt-110k-1.0=110k prose, b
 ```
 
 - **Two decodes at once** total 1.47x one request at 43.7k, 1.18x at 110k, 1.32x on code and 1.66x on
-  the image: the deeper the context, the less the second slot adds.
+  the image. The deeper the prose, the less the second slot adds; code at 42.2k adds less than prose at
+  43.7k, because each request's lower acceptance leaves less room in the batch.
 - **A request decoding beside a prefill almost stops.** Each server batch takes one `batch-size` chunk
   of the cold prompt (2048 tokens, ~1.7 s) and one decode step of the warm slot, so the warm slot runs
   at ~2 t/s until the prefill ends, then at full speed. Its mean depends on how far the reply runs
   past the prefill: 36.2 on code, 25.2 at 43.7k, 15.8 at 110k, 2.9 on the short agent turn. The cold
-  prefill loses only 4 to 5%.
+  prefill loses only 4 to 5% on text and 7.5% on the image.
 - **Two cold prefills run one after the other**, so the total equals one request's rate and the
   per-request mean mixes the first-served request with the waiting one. On the agent turn and on code
   the total reads above one request's rate (1208.8 against 1138.2, 1203.0 against 1135.2); this
@@ -517,7 +544,7 @@ where    = spec-pass=agent
 | option | result |
 | --- | --- |
 | `q8_0` KV to fit the native context | fits 262144 but decodes 11% slower at 43.7k ([section 4](#4-kv-cache-type-and-context)) |
-| `split-mode tensor` across two backends | half the prefill of the layer split, no decode gain (v0.6.0) |
+| `split-mode tensor` across two backends | aborts at load unless AllReduce is `none`; with it, half the prefill of the layer split, no decode gain (v0.6.0) |
 | Vulkan on the R9700 instead of ROCm | *Windows*: prefill 25 to 27% and decode 15 to 18% slower |
 | a low `spec-draft-n-max` with MTP alone | *Windows*: `1` gives 9.8 t/s at 93.6k, against 13.0 with no drafter; `2` gives 21 to 25% less than `4` |
 | `q8_0` draft KV | larger, not smaller (v0.6.0) |

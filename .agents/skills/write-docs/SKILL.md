@@ -47,7 +47,8 @@ layered. Rewrite it.
   figure.
 - **Failed tests.** No legs that did not load, ran out of memory or were cancelled, unless they set
   a limit the reader must respect. Then state the limit ("23 blocks is this card's limit"), not the
-  failure log.
+  failure log. Before dropping a failed leg, ask what limit it set: the limit stays, with the setting
+  or the choice it bounds.
 - **Noise.** Run ids, commit hashes, log excerpts, lists of every value tried when one comparison
   makes the point. `#12345` becomes a worded link to what it is.
 
@@ -60,6 +61,10 @@ Cite both campaigns. Never invent a figure, and never merge across a change of m
 spec without saying so. For a spec's versions, merge the legs a later version added with those it kept
 unchanged, and name which campaign holds which.
 
+**A figure keeps its setup when moved or merged**: OS, release, file, split, sampling. If the section
+intro does not describe it, label it in the row or the note. A value that held on one system or one
+setup gets that tag, not the form of a rule.
+
 ## 5. Tables
 
 - A table compares; prose explains. A settings evidence cell holds one headline comparison, under
@@ -67,6 +72,8 @@ unchanged, and name which campaign holds which.
 - Few columns. Split a table when many cells would be empty; write `n/a` where one remains.
 - Say gains as throughput in words: "21% faster", "prefill 3% slower". Give the two figures
   compared, the better one first. Bold the chosen row.
+- State which side a percentage is based on, and recompute it from the two figures: 1164 against 1020
+  is *Linux* 14% faster or *Windows* 12% slower, and the sentence's subject must match the base.
 - A raw `|` in a table cell breaks the row: reword, or escape it as `\|`.
 - A `bench-chart` follows the table holding its numbers. Check that its bars match the table: a run
   holding several prompts pools them.
