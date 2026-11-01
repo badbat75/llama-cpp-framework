@@ -23,7 +23,7 @@ written is in [AGENTS.md](AGENTS.md). For easier reading, the same pages are on 
 | page | covers | measured with |
 | --- | --- | --- |
 | [Qwen3.8-27B](qwen3.8_27b.md) | dense, embedded MTP head; the R9700 with the RTX 4070 SUPER, two R9700s (layer and tensor split, two requests at once) | llama.cpp v0.5.0 to v0.8.0 |
-| [Qwen3.8-Flash-Next](qwen3.8_flash_next.md) | MoE (`qwen4exp`), experts in RAM, MoE cache, drafters; the same machines | llama.cpp v0.6.0 to v0.8.0 |
+| [Qwen3.8-Flash-Next](qwen3.8_flash_next.md) | MoE (`qwen4exp`), experts in RAM, MoE cache, drafters; the same machines; the Swift fine-tune on two R9700s (layer against tensor split) | llama.cpp v0.6.0 to v0.8.0 |
 
 ## References (`type: reference`)
 

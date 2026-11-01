@@ -3,7 +3,7 @@ title: Qwen3.8-Flash-Next
 type: model
 status: draft
 gpus: [AMD Radeon AI PRO R9700, NVIDIA GeForce RTX 4070 SUPER]
-models: [Qwen3.8-Flash-Next]
+models: [Qwen3.8-Flash-Next, Swift-Qwen3.8-Flash-Next]
 platforms: [windows, linux]
 llama-cpp: v0.6.0 to v0.8.0
 updated: 2026-11-01
@@ -18,11 +18,16 @@ how to run it on two machines built around a 12-core AVX-512 host with 64 GB of 
 - **Two R9700s on Linux** (llama.cpp v0.8.0, IQ3_S): every expert fits in VRAM.
 - **An R9700 and an RTX 4070 SUPER in one model** (llama.cpp v0.7.0), on Linux and on Windows: part
   of the experts stay in RAM. A row measured on another release names it.
+- **The Swift fine-tune on two R9700s on Linux** (llama.cpp v0.8.0): a different file from the one
+  behind every other figure here, so its numbers stand apart and do not merge with them.
 
 **In short.** Keep as many experts as you can on the cards. Moving one layer's experts to the CPU
 costs ~1.3% of decode, and the MoE cache never beats resident layers. With two R9700s all of them
 fit: prefill reaches x3.5 and decode 21% faster than the mixed pair. Then the separate MTP head with
-an n-gram drafter in front decodes 56 t/s on prose and 280 on a code rewrite. With the mixed pair,
+an n-gram drafter in front decodes 56 t/s on prose and 280 on a code rewrite. Keep the layer split there:
+on the Swift fine-tune the tensor split decodes 8 to 12% faster at 115k but prefills about 20% slower and
+holds 41k to 74k tokens less context ([section 6](#6-the-tensor-split-and-long-prompts)); its chosen preset decodes
+66.5 t/s at 43.7k and 44.7 at 115k under the standard spec. With the mixed pair,
 put the RTX 4070 SUPER first and use `f16`, `n-cpu-moe 16` and `no-host`. Windows stays about a third
 behind Linux on prefill, because the host experts run on the CPU.
 
@@ -43,6 +48,7 @@ that many tokens, sent with the prompt cache off.
 | non-expert weights on the GPU | 3983 MiB | `model buffer size` at `n-cpu-moe 48` |
 | fixed state, one slot | recurrent 112.57 MiB; KV 24 + 96 MiB per 4096 tokens (`f16`) | `RS buffer size`, `KV buffer size` |
 | `split-mode tensor` | supported: [upstream enabled it for `qwen4exp`](https://github.com/ggml-org/llama.cpp/pull/28569) | `src/llama-arch.cpp` |
+| Swift fine-tune | UkisAI's, GSQ-RCO IQ3_S, two shards, 77.99 GiB; mmproj `mmproj-Swift-Qwen3.8-Flash-Next-BF16`; ggml-org's MTP head `mtp-Qwen3.8-Flash-Next-Q4_0` | `Swift-Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S` in bench.db |
 
 ## 2. Recommended settings
 
@@ -51,7 +57,7 @@ that many tokens, sent with the prompt cache off.
 | key | value | evidence |
 | --- | --- | --- |
 | quant | IQ3_S; IQ3_XXS where memory is short | [section 3](#3-quant-and-where-the-experts-live) |
-| `cache-type-k/-v` | `f16`; `q8_0` with the separate MTP head on two R9700s | `q8_0` saves only 1 or 2 layers of experts and decodes slower: 21.8 t/s against 24.9 at 43.7k |
+| `cache-type-k/-v` | `f16`; `q8_0` with the separate MTP head on two R9700s at 262144 | `q8_0` saves only 1 or 2 layers of experts and decodes slower: 21.8 t/s against 24.9 at 43.7k |
 | `lazy-mode` | `auto` (the default) | keeps the 26.8 GiB n-gram table mapped; `off` reads it into 27 GiB of RAM and decodes the same |
 | `moe-cache-mib` | `0` (off) | resident layers beat the cache in every setup ([section 4](#4-the-moe-cache)) |
 | `threads` | one per physical core (12); `ThreadsBatch` the same on *Linux*, 24 on *Windows* | *Linux*: prefill 410 and 405 at 12 threads against 363 to 377 at 16 to 24. *Windows*: 275.7 and 279.0 at 24 against 250 to 262 at 12 (by hand, not recorded) |
@@ -60,7 +66,7 @@ that many tokens, sent with the prompt cache off.
 
 ### Two R9700s on Linux
 
-Every expert in VRAM (campaign `flash-next-2xr9700-linux-ncm-20261028`). [Section 5](#5-drafters) has the drafter.
+The base file, every expert in VRAM (campaign `flash-next-2xr9700-linux-ncm-20261028`). [Section 5](#5-drafters) has the drafter.
 
 | key | value | evidence |
 | --- | --- | --- |
@@ -87,6 +93,20 @@ series   = n-cpu-moe
 where    = n-cpu-moe=unset
 rename   = unset=all experts in VRAM
 ```
+
+### The Swift fine-tune on two R9700s
+
+Every expert in VRAM, one slot, the x16 card first. [Section 6](#6-the-tensor-split-and-long-prompts) has the
+method, the campaigns, the full comparison and [this preset's figures](#the-chosen-swift-preset-under-the-standard-spec).
+
+| key | value | evidence |
+| --- | --- | --- |
+| `split-mode`, `tensor-split` | `layer`, `25,24` | tensor decodes 42.0 ±1.2 against 38.9 ±1.7 at 115k (8% faster), prefills 950 against 1171 (19% slower) and holds less context |
+| `ctx-size`, `parallel` | `163840`, `1` | lowest free 496 / 893 MiB over the whole standard spec, right at a ~500 margin; `172032` leaves 418 MiB on the x16 card over a 115k prefill and an image |
+| `mmproj-device` | the x4 card | image prefill 727 against 273 with the encoder on the CPU |
+| `model-draft`, `device-draft` | the MTP head, the x16 card | no other placement measured under the layer split |
+| `spec-type` | `ngram-map-k4v,draft-mtp`, `spec-draft-n-max` unset (default 3), `size-m 32` | not swept on this file |
+| `cache-type-k/-v`, `ubatch-size` | `f16`, `512` | not swept on this file |
 
 ### An R9700 and an RTX 4070 SUPER
 
@@ -262,8 +282,8 @@ Against the n-gram-only `f16` preset, the head decodes 54.9 t/s against 34.0 (61
 1520 against 1962 (23% slower), a good trade for conversations that grow turn by turn.
 
 **Where decode time goes**, live on a coding agent at ~75k tokens, 31.5 t/s: a decode pass takes ~41 ms,
-of which ~25 ms of kernels on the two cards. The rest is the hand-off between the cards of a layer split,
-which no preset key reaches. A tool-call grammar costs nothing measurable.
+of which ~25 ms of kernels on the two cards. No preset key reaches the rest, which falls outside the kernels:
+[the profile of the Swift file](#where-a-decode-step-goes) bounds it. A tool-call grammar costs nothing measurable.
 
 ### N-gram settings
 
@@ -287,7 +307,136 @@ against 28.0 with none.
 
 ## 6. The tensor split and long prompts
 
-**`split-mode tensor`** on two R9700s, with the internal AllReduce (RCCL cannot run without AtomicOps on
+### Layer split or tensor split on two R9700s
+
+**Keep the layer split. On the Swift fine-tune the tensor split decodes 8 to 12% faster at 115k, prefills
+about 20% slower and holds 41k to 74k tokens less context.**
+
+A layer split runs blocks on one card and then on the other, in series. A tensor split cuts every matrix
+across both cards, which compute in parallel, with AllReduces between them through host memory:
+[Qwen3.8-27B, section 5](qwen3.8_27b.md#two-r9700s-the-tensor-split) has that path and how the x4 card's link
+bounds it.
+
+<details>
+<summary>Machine and method</summary>
+
+The Swift file of [section 1](#1-model-facts), not the base file. One card in the CPU's x16 slot, one behind
+the chipset at x4 with no AtomicOps, internal AllReduce. llama.cpp v0.8.0, `f16`, ubatch 512, `ngram-map-k4v`
+(`size-m 32`) then MTP at the default draft length, 3. No spec: temperature 1 (the preset's sampling), 3 repetitions
+of 512 tokens unless marked, cold prompts of 43.7k and 115k tokens and a 1259-token image prompt.
+
+</details>
+
+| split, one slot | `ctx-size` | 43.7k: prefill / decode | 115k: prefill / decode | accepted at 115k | image prefill | lowest free MiB, x16 / x4 |
+| --- | --- | --- | --- | --- | --- | --- |
+| **layer `25,24`, encoder on the x4 card** | **163840** | **1445 / n/a (a)** | **1161 / n/a (a)** | n/a (a) | **727 (a)** | **496 / 893 (a)** |
+| layer `25,24`, encoder on the x4 card | 172032 | 1433 / 48.8 ±1.9 | 1171 / 38.9 ±1.7 | 52% | 711 | 418 / 757 |
+| layer `24,25`, encoder on the CPU | 196608 | 1477 / 44.7 ±0.5 | 1193 / 37.8 ±3.1 | 50% | 273 | 945 / 598 |
+| layer `24,25`, encoder on the CPU | 131072 | 1476 / 49.0 ±4.3 (b) | 1193 / 39.4 ±3.4 | 50% | n/a | 2359 / 1728 |
+| tensor `1,1`, MTP on both cards, encoder on the CPU | 131072 | 1113 / 55.7 ±5.0 | 948 / 44.1 ±5.2 | 56% | n/a | 659 / 441 |
+| tensor `1,1`, MTP on both cards, encoder on the CPU | 122880 | 1111 / 53.9 ±5.7 | 950 / 42.0 ±1.2 | 54% | 261 | 568 / 350 (c) |
+
+Layer rows at 172032 and 196608 (campaign `swift-flash-next-1slot-2xr9700-linux-20261101`); the 131072 rows at
+115k (campaign `swift-flash-next-deep-2xr9700-linux-20261101`) and at 43.7k, with the 98304 and two-slot legs
+quoted below (campaign `swift-flash-next-draft-2xr9700-linux-20261101`); the 122880 row
+(campaign `swift-flash-next-1slot-tensor-2xr9700-linux-20261101`).
+
+- (a) the [standard spec](#the-chosen-swift-preset-under-the-standard-spec), five repetitions. Prefill compares; its
+  decode and acceptance are uncapped, so they do not and stay out of this table. Free is over the whole spec; over
+  the 115k and image legs the other rows ran, one repetition each, it reads 600 / 904.
+- (b) no mmproj loaded on this leg; with the encoder on the CPU it takes no VRAM, so the row holds.
+- (c) the bench.db probe alone, after the first prefill; 546 / 328 on the image leg. No sampler ran for this row.
+
+Free memory is the per-leg minimum of a sysfs sampler read by hand, not recorded, except (c). The bench.db
+probe column differs from it: much lower under the tensor split (356 / 138 against 676 / 458 at 131072 and
+43.7k), a little higher under the layer split (186 / 708 against 180 / 695 at 180224, two slots), with one
+unreliable reading under the chosen preset, below.
+
+**Decode.** At 131072, the one context both splits ran, the tensor split decodes 44.1 ±5.2 against 39.4 ±3.4
+at 115k (12% faster) and the repetitions overlap. At 122880 it decodes 42.0 ±1.2 against 38.9 ±1.7 and 37.8 ±3.1
+for the layer rows at 172032 and 196608 (8 and 11% faster), its repetitions, 40.7 to 43.1, just above theirs,
+34.3 to 40.2. Acceptance differs between the legs, so part of any gap is the drafter on its own text. At 43.7k
+the same pairs read 10 and 21% faster. [Qwen3.8-27B](qwen3.8_27b.md#two-r9700s-the-tensor-split) gains far more
+from this split, 65% at 110k, measured at temperature 0 and ubatch 1024, so the two percentages do not compare.
+[Where a decode step goes](#where-a-decode-step-goes) shows why the gain here is small.
+
+**Prefill.** The tensor split reads 948 against 1193 at 115k (20% slower) and 950 against 1171 (19% slower).
+At 43.7k it is 22 and 25% slower.
+
+**Context is what the tensor split costs.** Its weights take 26911 MiB on each card, read in the load log, which
+leaves ~5.4 GiB for everything else, so these limits hold under it:
+
+- MTP on the x16 card alone is measured at 98304: 1128 / 58.0 ±2.2 at 43.7k, 92 / 1422 MiB free by the probe. At
+  196608, 229376 and 262144 the 1746 MiB head does not fit on that card (sweep
+  `swift-flash-next-ctx-2xr9700-linux-20261101`, which recorded nothing).
+- MTP on both cards needs the encoder on the CPU at 131072: on the x4 card a 248 MiB buffer does not fit.
+- Dropping the head for context gives 1236 / 34.2 at 163840, two slots, `ngram-map-k4v` alone.
+
+**Why `25,24` at 163840.** Moving the encoder to the x4 card lifts image prefill 2.7 times, 727 against 273, for
+33k tokens of context against the `24,25` row at 196608. At 172032 the x16 card keeps only 418 MiB, under a
+~500 MiB margin, hence 163840, which sits right at that margin.
+
+### The chosen Swift preset under the standard spec
+
+**Layer `25,24`, encoder on the x4 card, 163840, one slot: 66.5 t/s at 43.7k and 44.7 at 115k with the drafter.**
+The standard spec 1.1 (campaign `swift-flash-next-standard-1.1-2xr9700-linux-20261101`); its scenarios with two
+requests do not run at `parallel 1`. Real use: the preset as it is, temperature 1, 5 repetitions. Engine: no drafter,
+temperature 0, 3 repetitions. Prefill / decode:
+
+| prompt | real use | accepted | engine |
+| --- | --- | --- | --- |
+| 43.7k | 1444.8 ±2.4 / 66.5 ±3.2 | 68% | 1908.1 ±6.7 / 33.9 ±0.0 |
+| 115k | 1161.2 ±18.8 / 44.7 ±5.1 | 65% | 1565.3 ±3.4 / 29.8 ±0.0 |
+| writing code, 42.2k | 1407.5 ±9.3 / 53.4 ±4.7 | 49% | 1835.8 ±14.7 / 33.8 ±0.0 |
+| image, 1259 tokens | 726.6 ±37.3 / 59.8 ±1.7 | 48% | 799.1 ±50.5 / 37.2 ±0.1 |
+
+The agent step decodes 62.4 ±7.5 at 73% accepted, with the first token at 4.8 s and the turn done at 6.2 s.
+
+**Do not compare these decode figures with the split table's.** Output here is uncapped, so the model writes past
+its reasoning into the answer, which decodes faster: 144.2 against 60.7 at 43.7k, 75.8 against 41.8 at 115k. The
+512 tokens of the split table stay in the reasoning.
+
+**The memory margin is right at ~500 MiB.** The lowest free over the whole spec, by the sysfs sampler, is 496 / 893
+MiB, reached on the writing-code leg. That leg's bench.db probe reads 0 / 500 and is unreliable there.
+
+**The engine pass needs the draft file gone, not only `spec-type none`.** With the file present the head takes
+3840 MiB of KV on the x16 card and this preset does not load, so `bench run` removes it from every run with
+`spec-type none`.
+
+### Where a decode step goes
+
+**Under the tensor split the x16 card spends as long per token as both cards do under the layer split, which is why
+that split gains little here.** Profiled with rocprofv3 on the Swift file (a standalone server, read by hand, not in
+bench.db), in ms per generated token:
+
+| split, drafter | x16 kernels | x4 kernels | token, profiled | token, unprofiled | copies, % of wall |
+| --- | --- | --- | --- | --- | --- |
+| layer, MTP | 10.2 | ~8.3 | 41.5 | 26 to 28 | 0.3 |
+| layer, none | 13.6 | ~14.2 | 43.5 | n/a | 0.4 |
+| tensor, MTP | 18.2, 6.2 of it AllReduce | ~13.9, 1.0 of it AllReduce | 43.3 | 23.8 | ~1.1 |
+
+- **Layer split.** The cards run in series, so each is busy only about a third of the time, and about 30% of a token
+  (7 to 10 ms) goes outside kernels, an estimate that assumes the profiler does not lengthen kernels. The host side
+  was not traced, so that time is not split further; no preset key reaches it. The x4 link's copies are not the limit.
+- **Tensor split.** The x16 card computes about 12 ms and then sits 6 ms in the AllReduce kernel, read as
+  waiting for the x4 card (inference). Its 18.2 ms about equals the layer split's 18.6 ms total on both cards.
+- **Drafter.** It cuts kernel time per token by a third, 27.8 to 18.6 ms (62% accepted in that run). The profile does
+  not measure the unprofiled speed gain; the passes above give it, 44.7 against 29.8 at 115k (50% faster) and 66.5
+  against 33.9 at 43.7k (96% faster), differing also in temperature and output.
+
+<details>
+<summary>Method and caveats</summary>
+
+`rocprofv3 --kernel-trace --memory-copy-trace`, 512 tokens after a 115k prefill. The x4 card's kernel timestamps
+overlap (78 to 95% of kernels), so its figures are sums of durations, an order of magnitude. The profiler takes about
+35% of the speed on the layer split and 45% on the tensor split, from the two token columns. A low-priority `cargo`
+build overlapped the layer leg that ran first.
+
+</details>
+
+### The base file, live
+
+`split-mode tensor` on two R9700s, with the internal AllReduce (RCCL cannot run without AtomicOps on
 the x4 slot), `ngram-map-k4v`, 262144, ubatch 512. Live on a coding agent's turns, server log, not
 recorded:
 
@@ -300,7 +449,14 @@ recorded:
 Decode gains 12%, but the margin is too thin: use a smaller `ubatch-size` or context before making this
 the default.
 
-**A large ubatch for long prompts.** With `op-offload true`, each ubatch uploads the host experts and
+**It has not proved stable on this file.** One day of live use on an older AMD driver gave three segfaults in
+`libamdhip64`, a null write under `hipGraphExecUpdate`, and one silent exit, none of them on the layer split.
+This comes from that live session, not from a campaign. The short bench legs of the Swift file above did not
+crash, which does not clear it.
+
+### A large ubatch for long prompts
+
+With `op-offload true`, each ubatch uploads the host experts and
 the GPUs compute them, so a large ubatch amortizes the upload. This is the layout of
 [Strata](https://github.com/niko1221/strata). Both cards, ctx 131072, `q8_0`, `load-mode none`,
 `cache-ram 2048`:
@@ -348,6 +504,8 @@ produce. It stays on, with nothing to tune.
 
 | option | result |
 | --- | --- |
+| `split-mode tensor` on the Swift file, for decode | 8 to 12% faster at 115k for about 20% of prefill and 41k to 74k tokens of context ([section 6](#6-the-tensor-split-and-long-prompts)) |
+| `parallel 2` on the Swift file | 163840 divides into 81920 per slot, under a 115k prompt: 1440 / 48.9 at 43.7k, 520 / 971 MiB free. 180224 gives 1449 / 49.4 and leaves 180 / 695 |
 | the MoE cache, to keep hot experts in VRAM | 3 to 4.6x slower on the R9700; resident layers are 8 to 31% faster on the RTX 4070 SUPER and 22 to 54% on two cards ([section 4](#4-the-moe-cache)) |
 | `--no-repack`, to let repacked layers into the cache | does nothing unless `no-host` is set |
 | a larger `ubatch-size` paid for with experts in RAM, with `op-offload false` | 319 and 313 t/s at 2048 and `n-cpu-moe 26` (131072, `q8_0`), against 364 and 370 at 512 and `n-cpu-moe 14`; `op-offload true` is what pays ([section 6](#6-the-tensor-split-and-long-prompts)) |
@@ -363,3 +521,5 @@ produce. It stays on, with nothing to tune.
 | `device` order on *Windows* | the R9700 first | does the card on the fast link belong last? | partly: on two R9700s the x16 card last decodes 23.1 ±1.4 against 21.3 ±0.2, prefill 1499.8 against 1524.7 (campaign `flash-next-2xr9700-device-order-20261028`); with the RTX 4070 SUPER, TBD: needs that card in the test machine |
 | `load-mode none` abort | n/a | a minimal reproduction for upstream; does it also hit CUDA or Vulkan on *Windows*? | TBD |
 | the CPU backend alone, *Windows* against *Linux* | n/a | does `llama-bench` show the third lost in prefill, deciding between a build fix and a preset fix? | TBD |
+| `split-mode tensor`, long session on the Swift file | `layer` | does it hold through a long live session on the driver of the bench legs? | TBD |
+| `spec-draft-n-max`, `size-m`, `ubatch-size` on the Swift file | 3, 32, 512 | do other values pay on this file? | TBD |

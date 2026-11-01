@@ -65,7 +65,8 @@ apply.
    drafter logits and sampling: give it the card with spare VRAM). Under `split-mode tensor`
    every matrix is cut by the vector and an uneven one inflates the buffers (model and KV,
    several GiB over two cards) besides loading one card more: start from `1,1`; the load
-   log's `Meta()` lines sum both cards, so read each card's share from free memory. MoE: lowest
+  log's `Meta()` line read per card on Swift Flash-Next (26911 MiB each, confirmed by each card's used
+  memory), so read each card's share from free memory. MoE: lowest
    `n-cpu-moe` that fits, then fine balance with partial `override-tensor` moves
    (`^output\.weight$=<dev>`, single `blk\.N\.ffn_*_exps` tensors). Keep the device order
    explicit; dropping `device` can reorder the cards.
@@ -246,7 +247,7 @@ llama-cpp-config bench run --preset <id> --key <key> --values '<a>,<b>,<c>' \
   `.rocprofv3/` in the cwd), and analyse the window of the decode request from
   the trace's end: per card the union of kernel intervals over the wall time (on a layer
   split the cards run in series, so their shares add up), the top kernels, the copies by
-  direction. The profiler slows decode ~12%; scale the shares before quoting them.
+  direction. The profiler slows decode ~12% on a dense model and 35-40% on a MoE with ~3000 kernels per token: it charges per kernel, so compare kernel time, not its t/s, across legs with different kernel counts. On a card without AtomicOps the kernel timestamps overlap (78-95% of kernels on the x4 R9700): the union of intervals reads far too low, use the sum of durations there and call it an estimate.
   Example of what it finds: `docs/qwen3.8_27b.md` section 6.
 
 Read results:
@@ -266,8 +267,9 @@ the repo's database; on this machine it does.)
   model's `.llamastate` snapshot. Get an OK. Applying a new KV type (`q8_0` to `f16`) or
   drafter makes the saved snapshot unloadable ("incompatible key rotation", "draft state
   ... dropped"): say so when applying; the client re-prefills the conversation once.
-- When watching a sweep with a log pipeline (Monitor), `mawk` buffers piped input: use
-  `mawk -W interactive` or `grep --line-buffered`, or the events arrive at the end.
+- When watching a sweep with a log pipeline (Monitor), `mawk` buffers piped input and so does `cut` behind a `grep --line-buffered`: use a bash `while read` loop, or the events arrive at the end, or never.
+- Ctrl-C or SIGTERM on `bench run` puts the keys and the server back and exits with 130. A `sweep-pending-*.json` left behind means kill -9, a crash or a power cut: put its value back, delete the marker.
+- Check the keys you believe a preset has in the load log's arguments (`spec-draft-n-max` absent means the default 3), not from memory, before writing them in a question or a guide.
 - Never `pkill -f <pattern>` with a pattern that appears in your own command line; use
   `llama-cpp-config control stop|restart`, or kill by PID. The same self-match makes a
   `while pgrep -f <pattern>` wait loop spin forever.
