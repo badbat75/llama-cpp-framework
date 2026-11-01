@@ -455,7 +455,7 @@ workaround does not exist here.
   measure, not a guarantee.
 
 **`GGML_CUDA_ALLREDUCE` picks the path at run time, with no rebuild.** The values are `internal`,
-`nccl` and `none`. The configurator exports it from Server tab, SDK Tuning, Tensor-split AllReduce
+`nccl` and `none`. The configurator exports it from Server tab, SDK tuning, Tensor-split AllReduce
 (`server.ini` `CudaAllreduce`).
 
 **NCCL, the CUDA counterpart, is linked when its dist is installed.** `GGML_CUDA_NCCL` is `ON` by

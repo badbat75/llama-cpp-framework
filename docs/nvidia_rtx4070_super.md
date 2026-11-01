@@ -57,7 +57,7 @@ a configuration: a clean load proves nothing.
 Compute buffers grow with both the ubatch and the context: ~0.53 MiB per ubatch token, and 1206 MiB at `768`
 and ctx 196608 against 1696 to 1736 MiB at `1024` and ctx 262144. `iq4_nl` has no CUDA FlashAttention kernel.
 
-### Server (SDK Tuning, CUDA)
+### Server (SDK tuning, CUDA)
 
 | key | value | evidence |
 | --- | --- | --- |

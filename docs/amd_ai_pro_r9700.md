@@ -67,7 +67,7 @@ visible to HIP does with `device` left blank: hence `mmap`, set explicitly. *Lin
 
 `q5_1` saves ~30% of the KV against `q8_0` but decodes 6% slower; `iq4_nl` has no HIP FlashAttention kernel.
 
-### Server (SDK Tuning, ROCm)
+### Server (SDK tuning, ROCm)
 
 | key | value | evidence |
 | --- | --- | --- |

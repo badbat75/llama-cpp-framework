@@ -215,9 +215,9 @@ pub struct ServerConfig {
     /// greys out every Open chat UI entry while the RUNNING server has no UI.
     pub webui: Option<bool>,
     /// Enable the built-in web UI's MCP CORS proxy (--webui-mcp-proxy).
-    /// None = the framework default (on): the bundled chat UI needs it to call
-    /// MCP tools. Experimental upstream (llama.cpp defaults it OFF); don't enable
-    /// on an untrusted network.
+    /// None = the framework default (on): the bundled chat UI uses it for an MCP
+    /// server the user marks "Use llama-server proxy". Experimental upstream
+    /// (llama.cpp defaults it OFF); don't enable on an untrusted network.
     pub webui_mcp_proxy: Option<bool>,
     /// llama-server log verbosity threshold (-lv / --log-verbosity N): messages
     /// above this level are dropped. None = the framework default (4, per-request

@@ -248,7 +248,7 @@ mod tests {
     #[test]
     fn mixed_pairs_take_the_slow_decode_path_on_cuda_and_rocm_only() {
         let w = warning(&input("ROCm1", "q8_0", "q5_0"));
-        assert!(w.contains("no native FlashAttention decode kernel"), "{w}");
+        assert!(w.contains("no native flash attention decode kernel"), "{w}");
         assert!(w.contains("K q8_0 / V q5_0"), "{w}");
         assert_eq!(warning(&input("Vulkan1", "q8_0", "q5_0")), "");
         // q4_1 is a supported type with no compiled pair of its own.
