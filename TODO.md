@@ -151,6 +151,26 @@ Nothing left to port from the list of 2026-10-21: the two kernel items were meas
   still staged through `malloc`: 2.5 s per 43.7k prefill with the R9700 second).
 - The Swift preset's device order on Windows.
 
+## The band on GQA 12 with accepted drafts (2026-11-01, `docs/qwen3.8_flash_next.md` section 7)
+
+The band's gain at 2 to 4 queries per step on GQA 12 rests only on `test-backend-ops`
+(`patches\llama.cpp\README.md`, patch 0003): the server tests of it, cap 8 against cap 12 on
+Windows and 0001-0004 against 0001 on Linux, accepted no draft. The runs that accept drafts have no
+band-off leg: every run of the four `flash-next-mtp-*` campaigns records
+`GGML_HIP_FA_BAND_WMMA=4`, and so do the `swift-flash-next-*` ones.
+
+- The missing run: Flash-Next on two R9700s with `draft-mtp`, `HipFaBand` default (exports 4)
+  against off (`HipFaBand = 0`, `server set --hip-fa-band 0`: the variable is not exported), at
+  43.7k, same text, temperature 0, 3 repetitions, on the preset of
+  campaign `flash-next-mtp-graphs-2xr9700-linux-20261030` (`spec-draft-n-max` 3: 54.9 t/s, 488 of
+  821 drafts accepted). `HipFaBand` is a `server.ini` key, not a preset key, so this is one `bench run`
+  per value rather than a `--key` sweep.
+- Check that both legs write the same reply before comparing decode: a different reply changes the
+  acceptance, and with it the rate.
+- That preset's KV is q8_0 (MTP does not load at f16 with split 1,1) and the GQA 12 `perf` figures
+  are f16, while at GQA 6 quantized K/V gains nothing on this path: a null result may be the KV
+  type, not the band.
+
 ## Drafter benchmarks look too favorable (2026-10-30, `docs/qwen3.8_flash_next.md` section 5)
 
 The live sweeps rank Flash-Next's drafters far above what the coding agent showed live

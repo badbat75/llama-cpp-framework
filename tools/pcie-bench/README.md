@@ -47,7 +47,7 @@ The argument is a substring of the device name.
 `build.ps1` configures the build the same way `xtask build` configures llama.cpp:
 
 - ROCm's clang is the CXX compiler, with `hip::device` turning the source into HIP;
-- the patched `__clang_hip_runtime_wrapper.h` for the dist's clang major is force-included;
+- a dist's clang major below 24 fails (its stock `__clang_hip_runtime_wrapper.h` clashes with MSVC's `<cmath>`), and nothing is force-included;
 - nvcc builds the CUDA binary from `pcie-bench.cu`, which only includes the `.cpp`.
 
 The HIP build copies the dist's `amdhip64_7.dll`, `amd_comgr.dll` and `rocm_kpack.dll`

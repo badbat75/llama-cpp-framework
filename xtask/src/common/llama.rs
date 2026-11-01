@@ -2,7 +2,7 @@
 //! checkout with the out-of-tree patches, the build's own sccache daemon,
 //! the web UI check (the CMake options are cmake_options.rs's). Each OS's
 //! configure line is its own `build_llama.rs` (linux/, windows/, macos/).
-//! docs/build-pipeline.md explains the decisions the builds share.
+//! docs/build-compiling.md explains the decisions the builds share.
 
 use crate::common::ui;
 use crate::common::util::{self, cmd, run as run_cmd, succeeds};

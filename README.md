@@ -26,7 +26,7 @@ Beside llama.cpp it ships **`llama-cpp-config`**, a GUI + CLI configurator (Rust
 - One cargo orchestrator for every OS: `cargo run -p xtask -- prereq | configure | build | package | install`; the only non-cargo step is the bootstrap that installs Rust and the system packages.
 - Always the newest llama.cpp **release** tag (`vX.Y.Z`, never a `bNNNN` nightly), CMake + Ninja, sccache, the machine-independent CMake options in `xtask/cmake/*.toml` with a reason for each.
 - Backends: CUDA, Vulkan and ROCm/HIP on Windows and Linux (RCCL/NCCL for `--split-mode tensor` on Linux); Metal and Vulkan through MoltenVK on Apple Silicon.
-- GPU SDKs (ROCm TheRock, CUDA, Vulkan SDK) installed side by side as `<root>/<Name>/<Version>/<os>`, newest stable, found there and nowhere else; no machine-wide SDK variables.
+- GPU SDKs (ROCm TheRock, CUDA, Vulkan SDK) installed side by side as `<root>/<Name>/<Version>/<os>`, newest stable, the layout winning over the environment; no machine-wide SDK variables.
 - Self-contained packages: an MSI (WiX, upgrades, downgrade refused, ICE-validated), a `.deb` and an `.rpm` under `/opt/llama.cpp`, a `.pkg` on macOS; the ROCm, CUDA and Vulkan runtimes the backends load are bundled, so a target machine needs only the GPU driver.
 - Out-of-tree llama.cpp patches in `patches/llama.cpp/`, applied on every build and reverted before the next checkout, each with its source, digest and the condition to drop it: a trimmed MTP draft vocabulary for Qwen3.5/3.8, an RDNA4 WMMA FlashAttention kernel for small query batches, pinned host buffers on every runtime, and an upstream MTP fix.
 
@@ -131,7 +131,7 @@ cargo run -p xtask -- install
 
 The packages (about 1.2 GB each, 3.3 GB installed) are self-contained under `/opt/llama.cpp/`: the binaries in `bin/` and, in `lib/`, the ROCm, CUDA and Vulkan runtime libraries the backends need, so the target machine needs the GPU drivers and nothing else. They also install a symlink per executable in `/usr/bin/` (`llama-server`, `llama-cpp-config`, the other llama.cpp tools), a desktop entry that puts the configurator ("llama.cpp Config") in the applications menu, and nothing else: `llama-cpp-config` keeps `server.ini`, `presets.ini`, `presets.ini.disabled` and `settings.ini` per user in `~/.config/llama.cpp/` (logs, benchmark runs and saved states in `~/.local/share/llama.cpp/`). A backend whose GPU or driver is missing is skipped at start.
 
-The dists install side by side as `<root>/<version>/linux` under `/mnt/data` (`TheRock`, `CUDA`, `VulkanSDK`; for another mountpoint pass `--dist-root <path>` to `scripts/00-install-prerequisites.sh` and `xtask configure`, which records it, or set `LLAMA_FW_DIST_ROOT`), about 27 GB in all, and nothing is added to the environment: the scripts find the newest of each on every run. Everything generated lives under `build/linux/`, apart from the Windows artifacts under `build/windows/`. Details: [docs/build-pipeline.md](docs/build-pipeline.md#linux).
+The dists install side by side as `<root>/<version>/linux` under `/mnt/data` (`TheRock`, `CUDA`, `VulkanSDK`; for another mountpoint pass `--dist-root <path>` to `scripts/00-install-prerequisites.sh` and `xtask configure`, which records it, or set `LLAMA_FW_DIST_ROOT`), about 27 GB in all, and nothing is added to the environment: the scripts find the newest of each on every run. Everything generated lives under `build/linux/`, apart from the Windows artifacts under `build/windows/`. Details: [docs/build-prerequisites.md](docs/build-prerequisites.md#dist-layout-and-root).
 
 ## macOS
 
@@ -150,7 +150,7 @@ cargo run -p xtask -- package    # dist/llama-cpp-framework-v<version>-<llamaRel
 cargo run -p xtask -- install    # sudo installer -pkg ... -target /
 ```
 
-The package installs into `/opt/llama.cpp/` with a symlink per executable in `/usr/local/bin/`; it is unsigned and not notarized. Details: [docs/build-pipeline.md](docs/build-pipeline.md#macos).
+The package installs into `/opt/llama.cpp/` with a symlink per executable in `/usr/local/bin/`; it is unsigned and not notarized. Details: [docs/build-macos.md](docs/build-macos.md).
 
 ## Layout
 

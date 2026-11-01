@@ -1,7 +1,7 @@
 # Where the build machine keeps its GPU SDK dists (ROCm, CUDA, Vulkan), and
 # which one a build uses. OpenSSL is not one of them: a system library, left
 # where winget installs it.
-# Dot-sourced by scripts\00-install-prerequisites.ps1, xtask configure and scripts\common.ps1:
+# Dot-sourced by scripts\00-install-prerequisites.ps1 and scripts\common.ps1:
 #   . "$PSScriptRoot\dists.ps1"
 # The PowerShell counterpart of the finders in xtask\src\<os>\dists.rs. Functions only, no
 # side effects, and Windows PowerShell 5.1-safe and ASCII-only on purpose:

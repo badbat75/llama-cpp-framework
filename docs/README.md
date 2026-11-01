@@ -1,7 +1,7 @@
 ---
 title: Documentation
 type: reference
-updated: 2026-10-31
+updated: 2026-11-01
 ---
 
 # Documentation
@@ -29,7 +29,11 @@ written is in [AGENTS.md](AGENTS.md). For easier reading, the same pages are on 
 
 | page | covers |
 | --- | --- |
-| [Build pipeline](build-pipeline.md) | the `xtask` phases, the bootstrap scripts, the configure line, sccache, LTO, HIP targets |
+| [Build pipeline](build-pipeline.md) | the entry page: the `xtask` phases, what to re-run after a change, how the OSes differ, where things land, the footguns |
+| [Build prerequisites](build-prerequisites.md) | the dist layout and root, the bootstrap scripts on Windows and Linux |
+| [Compiling](build-compiling.md) | the configure phase, release tag and patches, CMake options, sccache, LTO, lld, HIP targets, build parallelism, the Windows and Linux specifics, the source map |
+| [Packaging and install](build-packaging.md) | the MSI, the `.deb` and the `.rpm`, `xtask install` |
+| [Building on macOS](build-macos.md) | the whole macOS build, every phase (Apple Silicon, untested) |
 | [Benchmarks](../benchmarks/README.md) | bench.db, the versioned method (`standard-<X.Y>`), the shipped prompts, how to query |
 
 New pages start from [templates/](templates/) (`gpu.md`, `model.md`).

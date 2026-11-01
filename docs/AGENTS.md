@@ -20,7 +20,7 @@ says which rules apply. `README.md` is the index: a new page gets its line there
 | --- | --- | --- |
 | `gpu` | `amd_ai_pro_r9700.md`, `nvidia_rtx4070_super.md` | one card: the measured optimum per llama.cpp/server/preset parameter on it |
 | `model` | `qwen3.8_27b.md`, `qwen3.8_flash_next.md` | one model: the same, on the cards it was measured on |
-| `reference` | `build-pipeline.md` | developer reference; the measurement rules below do not apply |
+| `reference` | `build-pipeline.md`, `build-prerequisites.md`, `build-compiling.md`, `build-packaging.md`, `build-macos.md` | developer reference; the measurement rules below do not apply |
 
 A new `gpu` or `model` page starts from `templates\<type>.md` (a copy, then fill it; `templates\` holds no pages and the site skips it). File
 names stay flat in `docs\` and are never renamed: code, the frozen benchmark prompts and
@@ -111,4 +111,4 @@ Check that a chart's bars match its table: a run holding several prompts pools t
 - No em-dashes (the repo rule): the glyph appears only as a not-applicable table cell, where it is data.
 - Images go in `assets\` (screenshots in `assets\screenshots\`), referenced by relative path. Diagrams are hand-written SVG in `assets\diagrams\` (GitHub and the site show the same file): colours as CSS variables with a `prefers-color-scheme: dark` block, no script, no external font, and only what the page's text states.
 - The site puts an index of the `##` and `###` headings under each page's title (GitHub's anchors); nothing to write for it.
-- `build-pipeline.md`: developer reference for the build phases and conventions; only the front matter and the em-dash rule apply.
+- `build-pipeline.md` (the entry page) and its topic pages `build-prerequisites.md`, `build-compiling.md`, `build-packaging.md`, `build-macos.md`: developer reference for the build phases and conventions; only the front matter and the em-dash rule apply.

@@ -202,7 +202,17 @@ query count (one KV read); band 2 helps at 1-2 queries only and falls back to th
 (2388 vs 930 us at kv 131072, 4 queries): upstream converts quantized K/V to f16 on every
 call of the MMA kernel, so quantized types gain nothing from this path. Server
 (Qwen3.8-27B-Coder390 Q8_0 MTP, 115k-token prompt): decode 40.7 -> 38.7 ms per token at
-temp 1.0 (-5%); at temp 0 without MTP, same 278 tokens, 71.7 -> 69.4 (-3%).
+temp 1.0 (-5%); at temp 0 without MTP, same 278 tokens, 71.7 -> 69.4 (-3%). The Linux
+server rebuilt with patches 0001-0004 on Qwen3.8-27B-Coder390 (GQA 6, `draft-mtp`, R9700 +
+RTX 4070 SUPER, 2026-10-21), against the runs with 0001-0003, the band on in both, and the
+same placement (ctx 172032 against 180224): prefill 1185.6 ±12.6 against 1164.0 ±15.7 t/s
+at 43.7k, within noise, flat at 115k (894.7 against 899.0), decode unchanged at both (31.2;
+29.2 against 29.3). On a 100-token prompt the only earlier runs have 0001 alone and another
+placement, so they isolate no patch: prefill 244.8 against 224.9 and 226.2 (+8 to 9%),
+decode 36.7 against 38.1 with draft acceptance 58% against 61%
+(campaign `coder390-patches-linux-20261021`,
+campaign `coder390-placement-20261020`, campaign `coder390-device-order-20261019`,
+`docs\qwen3.8_27b.md` section 6).
 **Correctness**: `test-backend-ops test -o FLASH_ATTN_EXT -p 'nr23=\[6,1\]'` on ROCm0,
 41/41 against the CPU reference with band 4 and with band 2 (kv 512 to 16384, 1 to 8
 queries, f16 and q8_0; kv 512 covers blocks that own no KV iteration). **Greedy purity**:
@@ -225,19 +235,13 @@ runs each at temp 0, cap 8 vs cap 12): 43.7k-token prompt, decode 20.1 ±0.2 vs 
 t/s; 2.6k, 19.2 ±0.1 vs 19.0 ±0.2; prefill unchanged: noise both ways, because the n-gram
 drafter drafted nothing on those prompts (1-query decode, where attention is ~5% of the
 token at 43.7k) and the model's decode is dominated by its 16 layers of experts in RAM.
-Output identical in every pair, with and without drafting. Linux, the installed server
-rebuilt with patches 0001-0004 against the run of 2026-10-16 with 0001 only (`bench.db`
-campaign `flash-next-patches-linux-20261021`): prefill 422.7 ±2.6 against 417.9 ±2.2 t/s
-at 43.7k, decode 25.0 both, the band line in the log. Kept on, the default:
-`docs\qwen3.8_flash_next.md` section 7. The same Linux build on Qwen3.8-27B-Coder390
-(GQA 6, `draft-mtp`), against the runs with 0001-0003 and the same placement (ctx 172032
-against 180224): prefill 1185.6 ±12.6 against 1164.0 ±15.7 t/s at 43.7k, within noise, flat
-at 115k (894.7 against 899.0), decode unchanged at both (31.2; 29.2 against 29.3). On a
-100-token prompt the only earlier runs have 0001 alone and another placement, so they
-isolate no patch: prefill 244.8 against 224.9 and 226.2 (+8 to 9%), decode 36.7 against
-38.1 with draft acceptance 58% against 61% (campaign `coder390-patches-linux-20261021`,
-campaign `coder390-placement-20261020`, campaign `coder390-device-order-20261019`,
-`docs\qwen3.8_27b.md` section 6).
+Output identical in every pair. Linux, the installed server rebuilt with patches 0001-0004
+against the run of 2026-10-16 with 0001 only
+(`bench.db` campaign `flash-next-patches-linux-20261021`): prefill 422.7 ±2.6 against
+417.9 ±2.2 t/s at 43.7k, decode 25.0 both, the band line in the log. Neither server test
+accepted a draft, so the gain with drafts (2 to 4 queries per step) rests only on the
+`test-backend-ops` figures above; the server run is open in `TODO.md`. Kept on, the default:
+`docs\qwen3.8_flash_next.md` section 7.
 
 **Confirming it is live.** The first head-256 attention call on RDNA4 with the variable set
 logs one line at info level, `RDNA4 FA band enabled: ncols1 = 4, GQA ratios up to 12`

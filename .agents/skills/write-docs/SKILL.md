@@ -98,7 +98,8 @@ live preset.
 ## 8. Check before you finish
 
 1. `cargo run -p docs-site -- --check`, then build the site into the scratchpad with `--out <dir>`.
-2. Every internal `#` link resolves to a generated heading id.
+2. Every internal `#` link resolves to a generated heading id, `page.md#frag` between pages too:
+   `--check` tests neither, so check them against the built site.
 3. Every number you wrote traces to bench.db or the previous page. Recompute means and percentages.
 4. Compare cited campaigns against the previous version; each one dropped is a deliberate choice.
 5. No em-dashes, no absolute paths, front matter `updated` set.
@@ -109,3 +110,11 @@ live preset.
 
 When a page's review teaches something about writing these guides, fold it in here, in the same
 change.
+
+A `reference` page takes the same shape, with one difference: it is the map for changing that area,
+so no operational fact, footgun or reason is dropped. Move, shorten and fold them, keep the reason as
+a fact of today, and check each fact against the code rather than the previous page.
+
+A `reference` page too long to read splits by what the reader is doing: the first page stays the map
+with the footguns, the topics move unchanged. Compare the sorted lines against a copy of the old page
+and account for each one missing, and repoint same-page anchors and every inbound link across the repo.

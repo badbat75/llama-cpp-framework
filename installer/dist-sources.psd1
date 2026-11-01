@@ -2,7 +2,7 @@
 # BUILD machine keeps them. Sources only, NO versions: every reader resolves
 # the newest STABLE release at run time and takes it, so a new ROCm, CUDA or
 # Vulkan SDK lands on the next run.
-# Read by scripts\00-install-prerequisites.ps1, xtask configure and scripts\common.ps1 (build
+# Read by scripts\00-install-prerequisites.ps1 and scripts\common.ps1 (build
 # machine: ROCm dist, CUDA Toolkit, Vulkan SDK). End users never see it:
 # xtask package copies the runtime libraries the backends load out of these
 # dists into the installer.

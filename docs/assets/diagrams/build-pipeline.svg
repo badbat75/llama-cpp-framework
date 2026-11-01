@@ -81,7 +81,7 @@
 <rect class="box" x="162" y="272" width="436" height="46" rx="6"/>
 <text class="t" x="176" y="291">Dist root</text>
 <text class="m" x="252" y="291">&lt;Root&gt;/&lt;Name&gt;/&lt;Version&gt;/&lt;os&gt;</text>
-<text class="s" x="176" y="309">TheRock, CUDA, VulkanSDK (NCCL on Linux): found there and nowhere else</text>
+<text class="s" x="176" y="309">TheRock, CUDA, VulkanSDK (NCCL on Linux): wins over the environment</text>
 <path class="feed" d="M229 272 V240"/>
 <path class="feed" d="M440 272 V256"/>
 <path class="feed" d="M531 272 V252"/>

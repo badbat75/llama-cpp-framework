@@ -816,7 +816,7 @@ if ($haveTar) {
 # it at TheRock's newer LLVM half-breaks it: hipMemGetInfo starts returning
 # "invalid argument" (devices report 0 MiB) and every llama-server dies with
 # an access violation (0xC0000005) mid weight-upload. Found 2026-07-16 with
-# Adrenalin + TheRock 7.14; builds get all three per-process from scripts\common.ps1.
+# Adrenalin + TheRock 7.14; xtask build and package get all three per-process (hip_env, xtask\src\windows\mod.rs).
 # The removal below self-heals machines poisoned by earlier versions of this
 # script.
 if ($rocmActiveDir -and (Test-Path (Join-Path $rocmActiveDir $rocmMarker))) {
@@ -1110,7 +1110,7 @@ $vulkanAfter  = Find-Dist 'Vulkan' $sources $distRoot
 # same console). HIP_PATH/PATH reach new terminals via the machine env; the
 # three compile-time vars are PROCESS-scoped on purpose (machine-wide
 # LLVM_PATH breaks the driver HIP runtime; see the elevated block) and
-# build consoles get them from scripts\common.ps1.
+# xtask build and package set them themselves (hip_env, xtask\src\windows\mod.rs).
 if ($rocmAfter -and $rocmAfter -ne 'unknown') {
     $env:HIP_PATH            = $rocmAfterDir
     $env:HIP_DEVICE_LIB_PATH = "$rocmAfterDir\lib\llvm\amdgcn\bitcode"
@@ -1297,7 +1297,7 @@ foreach ($scope in 'Machine', 'User') {
     foreach ($name in 'LLVM_PATH', 'HIP_DEVICE_LIB_PATH', 'HIP_PLATFORM') {
         $v = [Environment]::GetEnvironmentVariable($name, $scope)
         if ($v) {
-            $envWarnings += "$scope-level $name ($v) breaks the driver HIP runtime (0xC0000005 at model load): remove it; builds set it per-process via scripts\common.ps1"
+            $envWarnings += "$scope-level $name ($v) breaks the driver HIP runtime (0xC0000005 at model load): remove it; xtask build and xtask package set it per process"
         }
     }
 }

@@ -5,9 +5,9 @@
 .DESCRIPTION
     Supplies the machine-derived half of the configure line the same way
     xtask build does for llama.cpp: ROCm's clang as the CXX compiler, the
-    process-scoped HIP compile vars from scripts\common.ps1, and, below clang 24, the
-    patched __clang_hip_runtime_wrapper.h for the dist's clang resource major
-    (without it MSVC's <cmath> clashes with the HIP device math declarations).
+    process-scoped HIP compile vars from scripts\common.ps1, and the stock HIP
+    runtime wrapper: a dist's clang resource major below 24 fails here
+    (its wrapper's MSVC <cmath> clashes with the HIP device math declarations).
     Writes compile_commands.json for VS Code's IntelliSense. Needs
     build\windows\config-build.psd1, i.e. xtask configure run once.
 
