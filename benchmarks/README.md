@@ -56,6 +56,21 @@ that loads an `mmproj`, skipped on the rest), and has two passes:
 | `engine` | 0 | off (`spec-type=none`) | single | 3 | the bare engine: deterministic text, so only speed differs between legs |
 | `real` | the preset's | the preset's | `all`: single, then every concurrent scenario at N = `parallel` | 5 | what the preset serves; each repetition writes a different text, so compare means |
 
+Version 1.1 (the newest) keeps both passes on the prose and image prompts, replaces the
+code prompt in them with `bench-prompt-code-write-1.1.json` (the same task and files pasted
+into one message, and a request to write a source file back in full: the decode on code
+that 1.0's short tool-call reply never reached) and moves `bench-prompt-code-1.0.json` to a
+third pass, an agent step with its prefix cached:
+
+| pass | prompts | temperature | speculator | concurrency | reps | measures |
+|---|---|---|---|---|---:|---|
+| `agent` | `bench-prompt-code-1.0.json` | the preset's | the preset's | `all` but `prefill`: single, decode, prefill+decode | 5 | an agent's step: the slot primed with the conversation up to its last assistant turn, then the whole turn sent with the cache on (`Warm = prefix`), so the prefill is only what the turn added; `first token (s)` and `turn (s)` beside the rates |
+
+A pass's `Prompts` (file names of the spec's prompts) limits it to those; `--only <file>,...`
+on `bench run --spec` runs just the legs of those prompts, recorded as the spec's own (a
+selection of its legs, not a change of method), which is how a new version measures only
+what it added.
+
 Greedy text is what a drafter predicts best: a temp-0 run with the speculator on reads
 far faster than the preset ever serves, which is why `engine` turns it off and `real`
 keeps the preset's sampling. The off switch is for the benchmark only; the preset keeps

@@ -52,7 +52,13 @@ Reps = 3
   the spec's setting, not baked into the file. It runs only on presets with an `mmproj`.
 - One `[Pass.<name>]` per pass, run in file order, once per prompt. `Temp` is a number or
   `preset`; `Override` keys are written to the preset for the pass and put back after it;
-  `Concurrency` is `single`, `prefill`, `decode`, `prefill+decode` or `all`.
+  `Concurrency` is `single`, `prefill`, `decode`, `prefill+decode` or `all`. `Prompts` (file
+  names among `[Spec] Prompts`) limits the pass to those; `Warm = prefix` makes every
+  request an agent step with its prefix cached (needs a conversation with an assistant turn;
+  `all` then leaves `prefill` out). Both enter the digest only when set.
+- `bench run --spec <it> --only <file>,...` runs just the legs of those prompts, recorded as
+  the spec's: a new version can measure only the legs it added and cite the older version's
+  runs for the rest when their rules are unchanged.
 
 Comments are whole lines (`;`), never after a value. `bench run --spec standard` runs the
 newest published version and `--spec standard-<X.Y>` that one (every version stays installed,
@@ -93,14 +99,18 @@ and a change is the next version.
    runs, recorded as derived (`spec-derived-fields = override`), never as the spec.
 2. **It can run everywhere it claims.** `Concurrency` other than `single` needs a preset with
    `parallel` >= 2 (`all` falls back to single alone). Each prompt needs a slot context of
-   its tokens plus the longest uncapped answer (~5k): the 110k prompt needs ~116k per slot,
+   its tokens plus the longest uncapped answer (~5k for prose; `bench-prompt-code-write-1.1.json`
+   reasons 3k to 19k tokens before ~4k of code, so ~65-70k per slot): the 110k prompt needs ~116k per slot,
    `ctx-size` ~232k at `parallel = 2`; a smaller preset fails those legs (not recorded), so
    say which presets a spec fits. An `Override` key must be sweepable
    (`parse` refuses one that is not). A prompt must be one every machine has: a shipped one,
    or a file published with the spec.
 3. **It is affordable.** Estimate the length: prompts x passes x scenarios x reps x legs, at
    the prefill and decode rates of the slowest machine it targets (on two R9700s a 110k cold
-   prefill is ~2 minutes, an uncapped answer up to ~5000 tokens). Say the estimate.
+   prefill is ~2 minutes, an uncapped answer up to ~5000 tokens, a code-write one up to ~23k).
+   Say the estimate. A `Warm = prefix` pass: check on one short run that the turn's `cache_n`
+   is close to the prefix and `prompt_n` only the last turn's delta (a hybrid model restores
+   the cache from context checkpoints).
 4. **It does not re-measure for nothing.** A new version re-runs configurations bench.db
    already holds under the old one; that is the price of a method change, so the change must
    be worth it. State what the old version got wrong.

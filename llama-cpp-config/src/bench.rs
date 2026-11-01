@@ -429,6 +429,12 @@ pub struct Plan {
     /// Live only: one request per repetition, or two at once (see
     /// [`Concurrency`]).
     pub concurrency: Concurrency,
+    /// Live only: an agent step with its prefix cached (a spec pass's
+    /// `Warm = prefix`). Before each repetition the slot is primed with the
+    /// conversation up to its last assistant turn ([`prompt_prefix`]), then
+    /// the whole conversation is sent with the cache on, so the prefill is
+    /// only what the last turn added, as in a coding agent's loop.
+    pub warm_prefix: bool,
     // Synthetic half.
     pub prompt_lens: Vec<i32>,
     pub depths: Vec<i32>,
@@ -459,6 +465,7 @@ impl Default for Plan {
             image_size: parse_image_size(DEFAULT_IMAGE_SIZE).unwrap_or(None),
             image: None,
             concurrency: Concurrency::Single,
+            warm_prefix: false,
             prompt_lens: parse_int_list(DEFAULT_PROMPT_LENS),
             depths: parse_int_list(DEFAULT_DEPTHS),
             n_gen: DEFAULT_GEN,
@@ -799,6 +806,26 @@ pub fn prompt_request(
     (v["messages"].take(), v.get("tools").cloned())
 }
 
+/// The conversation up to (not including) its last assistant message, as a
+/// prompt text of the same shape (its `tools` kept): what an agent's previous
+/// turn left in the slot's cache. `None` for a plain text or a conversation
+/// without an assistant message before its end.
+pub fn prompt_prefix(text: &str) -> Option<String> {
+    let (messages, tools) = prompt_request(text, None);
+    let messages = messages.as_array()?;
+    let last = messages
+        .iter()
+        .rposition(|m| m.get("role").and_then(serde_json::Value::as_str) == Some("assistant"))?;
+    if last == 0 {
+        return None;
+    }
+    let mut out = serde_json::json!({ "messages": messages[..last].to_vec() });
+    if let Some(tools) = tools {
+        out["tools"] = tools;
+    }
+    Some(out.to_string())
+}
+
 /// Whether a prompt holds an image: a conversation with an `image_url`
 /// content part. Only a model loaded with an mmproj can read one, so a spec
 /// runs such a prompt on the presets that have one and skips it on the rest.
@@ -979,8 +1006,11 @@ pub fn live_preview(port: u16, preset_id: &str, plan: &Plan) -> String {
 pub struct Timings {
     pub prompt_n: i64,
     pub prompt_tps: f64,
+    /// The prefill's time: from the slot taking the request to its first token.
+    pub prompt_ms: f64,
     pub predicted_n: i64,
     pub predicted_tps: f64,
+    pub predicted_ms: f64,
     /// Prompt tokens served from the cache instead of being processed. Must be 0
     /// under `cache_prompt: false`; anything else means the prefill number below
     /// is not a prefill number.
@@ -997,8 +1027,10 @@ fn timings_from(t: &serde_json::Value) -> Timings {
     Timings {
         prompt_n: int("prompt_n"),
         prompt_tps: num("prompt_per_second"),
+        prompt_ms: num("prompt_ms"),
         predicted_n: int("predicted_n"),
         predicted_tps: num("predicted_per_second"),
+        predicted_ms: num("predicted_ms"),
         cache_n: int("cache_n"),
         draft_n: int("draft_n"),
         draft_accepted: int("draft_n_accepted"),
@@ -1011,6 +1043,11 @@ pub const LIVE_PREFILL: &str = "prefill";
 pub const LIVE_DECODE: &str = "decode";
 pub const LIVE_DECODE_REASONING: &str = "decode (reasoning)";
 pub const LIVE_DECODE_ANSWER: &str = "decode (answer)";
+/// An agent step's (`Plan::warm_prefix`) latency, in seconds: the server's
+/// prefill time of the turn (its time to the first token), and the whole
+/// turn as the client waited for it, send to last byte.
+pub const LIVE_FIRST_TOKEN: &str = "first token (s)";
+pub const LIVE_TURN: &str = "turn (s)";
 
 /// A trace point every this many generated tokens (see [`Streamed::trace`]).
 pub const TRACE_EVERY: i64 = 64;
@@ -1984,6 +2021,19 @@ mod tests {
     }
 
     #[test]
+    fn the_prefix_ends_before_the_last_assistant_turn() {
+        let conv = r#"{"messages":[{"role":"system","content":"s"},{"role":"user","content":"u"},
+            {"role":"assistant","content":"a1"},{"role":"tool","content":"t1"},
+            {"role":"assistant","content":"a2"},{"role":"tool","content":"t2"}],"tools":[{"x":1}]}"#;
+        let p: serde_json::Value = serde_json::from_str(&prompt_prefix(conv).unwrap()).unwrap();
+        let roles: Vec<&str> = p["messages"].as_array().unwrap().iter().map(|m| m["role"].as_str().unwrap()).collect();
+        assert_eq!(roles, ["system", "user", "assistant", "tool"]);
+        assert_eq!(p["tools"], serde_json::json!([{"x": 1}]));
+        assert!(prompt_prefix("just text").is_none());
+        assert!(prompt_prefix(r#"{"messages":[{"role":"assistant","content":"a"}]}"#).is_none());
+    }
+
+    #[test]
     fn concurrent_totals_span_the_shared_window() {
         let t = |prompt_n, prompt_tps, predicted_n, predicted_tps| Timings {
             prompt_n,
@@ -2489,7 +2539,10 @@ mod tests {
             } else if p.extension().unwrap() == "json" {
                 let (messages, tools) = prompt_request(&raw, None);
                 assert!(messages.as_array().unwrap().len() > 1, "{name}: a conversation");
-                assert!(tools.is_some(), "{name}: with its tools");
+                // An agent turn carries the tools its calls name; a request
+                // to write a file (code-write) has no tool turn and no tools.
+                let calls = messages.as_array().unwrap().iter().any(|m| m["role"] == "tool");
+                assert_eq!(tools.is_some(), calls, "{name}: tools exactly when it has tool turns");
             }
         }
     }

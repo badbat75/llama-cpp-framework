@@ -246,6 +246,12 @@ pub struct BenchRun {
     /// that a pass sets: the runs are then custom, derived from the spec.
     #[arg(long)]
     pub spec: Option<String>,
+    /// With --spec: run only these of its prompts (file names,
+    /// comma-separated), each with the passes that run it. A selection of the
+    /// spec's legs, not a change of method: the runs are the spec's, so a new
+    /// version can measure just the legs it added.
+    #[arg(long, requires = "spec", value_delimiter = ',')]
+    pub only: Vec<String>,
     /// Synthetic only: prompt lengths, comma-separated.
     #[arg(long)]
     pub prompt_lens: Option<String>,
@@ -725,7 +731,7 @@ fn run_bench(c: BenchCmd) -> Result<()> {
     // benchmark on the same cards would be measured as this one's.
     let _gpu = bench::gpu_lock::acquire(|m| println!("{m}")).map_err(|e| anyhow::anyhow!(e))?;
     if let Some(spec) = &spec {
-        bench::spec::run(spec, &opts, &derive).map_err(|e| anyhow::anyhow!(e))?;
+        bench::spec::run(spec, &opts, &derive, &a.only).map_err(|e| anyhow::anyhow!(e))?;
         return Ok(());
     }
     if !concurrency_all {

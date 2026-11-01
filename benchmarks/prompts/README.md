@@ -90,11 +90,36 @@ the answer phase. At ~42k tokens it sits at the depth of the 43k prose prompt, s
 the two differ in content, not in context: the comparison says what code does to
 decode and to drafter acceptance.
 
+Measured cold (`standard-1.0`) the reply turned out to be a short step, ~100 to 200
+tokens of reasoning and one `grep` or `read_file`, so it measured a latency more than a
+decode. `standard-1.1` runs it only in its `agent` pass, as a step whose prefix is cached
+(`Warm = prefix`), and measures the decode on code with `bench-prompt-code-write-1.1.json`.
+
 It is a **frozen snapshot of commit `87cda04`** (2026-10-31), built once by a
 script that read those files with `git show 87cda04:<path>`. The same rules as
 above apply: never regenerate it when the sources change (a new snapshot is
 `bench-prompt-code-1.1.json` and a new spec version), keep it LF and BOM-free.
 It contains no em-dash.
+
+## `bench-prompt-code-write-1.1.json`
+
+Writing code (140,517 bytes, ~42.2k tokens on Qwen3.8): the task of
+`bench-prompt-code-1.0.json` and every file its agent read, plus the three lookups it
+asked for next (a grep for the default-path helpers, `src/bench/db.rs` lines 42 to 52,
+`src/bench.rs` lines 1448 to 1453), pasted into one user message under a heading each,
+with the same system message minus its line about tools. No tools, no tool turns. It
+ends asking for `llama-cpp-config/src/paths.rs` written back in full: a function for the
+default benchmark database beside the other path helpers, with a doc comment and a test,
+the rest of the file unchanged, in one `rust` block.
+
+The reply is reasoning, then ~3.9k tokens of code, most of it copied from the context
+(the case an n-gram drafter is built for): `decode (answer)` is the rate of writing code,
+`decode (reasoning)` that of thinking about it. Tried before it was pinned, on Swift-1.5
+Qwen3.8-27B: every reply was the whole file with one correct function and test added,
+the answer 3.8 to 4.0k tokens each time; the reasoning varied from 3k to 19k tokens, so
+a repetition takes 2 to 7 minutes on two R9700s.
+
+A frozen snapshot of commit `87cda04`, like the agent turn; LF, BOM-free, no em-dash.
 
 ## `bench-prompt-image-1.0.json`
 

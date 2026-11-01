@@ -512,7 +512,23 @@ fn run_live(
             continue;
         }
 
-        let body = super::live_body(&preset.id, &plan);
+        // An agent step: the slot primed with the prefix before every
+        // repetition (the last one left the whole turn in it), the turn sent
+        // with the cache on and pinned to that slot.
+        let prefix = if plan.warm_prefix {
+            let text = super::prompt_prefix(&plan.prompt)
+                .ok_or_else(|| format!("{}: Warm = prefix needs a conversation with an assistant turn", preset.id))?;
+            Some(super::live_body_slot(&preset.id, &Plan { prompt: text, ..plan.clone() }, 0, true, 1))
+        } else {
+            None
+        };
+        let body = if plan.warm_prefix {
+            super::live_body_slot(&preset.id, &plan, 0, true, plan.max_tokens)
+        } else {
+            super::live_body(&preset.id, &plan)
+        };
+        let mut first_token: Vec<f64> = Vec::new();
+        let mut turn: Vec<f64> = Vec::new();
         let mut prefill: Vec<f64> = Vec::new();
         let mut decode: Vec<f64> = Vec::new();
         let mut cache_seen: i64 = 0;
@@ -531,6 +547,18 @@ fn run_live(
                 "{}: repetition {rep}/{}",
                 preset.id, plan.reps
             )));
+            if let Some(prime) = &prefix {
+                let res = http::request(port, "POST", super::LIVE_PATH, Some(prime), live_timeout(&plan))
+                    .map_err(|e| format!("{}: priming the prefix: {e}", preset.id))?;
+                if res.status != 200 {
+                    let body: String = res.body.chars().take(600).collect();
+                    return Err(format!(
+                        "{}: priming the prefix, llama-server answered HTTP {}: {body}",
+                        preset.id, res.status
+                    ));
+                }
+            }
+            let sent = std::time::Instant::now();
             let res = http::request(
                 port,
                 "POST",
@@ -546,11 +574,17 @@ fn run_live(
                     preset.id, res.status
                 ));
             }
+            let wall = sent.elapsed().as_secs_f64();
             let s = super::parse_stream(&res.body).map_err(|e| format!("{}: {e}", preset.id))?;
             let t = &s.timings;
             prefill.push(t.prompt_tps);
             decode.push(t.predicted_tps);
-            cache_seen = cache_seen.max(t.cache_n);
+            if plan.warm_prefix {
+                first_token.push(t.prompt_ms / 1e3);
+                turn.push(wall);
+            } else {
+                cache_seen = cache_seen.max(t.cache_n);
+            }
             draft_n += t.draft_n;
             draft_ok += t.draft_accepted;
             if let Some(split) = &s.split {
@@ -565,7 +599,7 @@ fn run_live(
             run.sample(Sample {
                 rep: rep as i64,
                 temperature: plan.temp,
-                cache_prompt: Some(false),
+                cache_prompt: Some(plan.warm_prefix),
                 prompt_tokens: Some(t.prompt_n),
                 prefill_tps: Some(t.prompt_tps),
                 gen_tokens: Some(t.predicted_n),
@@ -577,6 +611,10 @@ fn run_live(
                 answer_tps: s.split.as_ref().and_then(|p| p.answer.tps()),
                 detail: Some(
                     serde_json::json!({
+                        "warm": if plan.warm_prefix { "prefix" } else { "none" },
+                        "prompt_ms": t.prompt_ms,
+                        "predicted_ms": t.predicted_ms,
+                        "wall_s": wall,
                         "phases": s.split.as_ref().map(super::phases_json),
                         "trace": super::trace_json(&s.trace),
                     })
@@ -637,6 +675,23 @@ fn run_live(
                 if let Some(point) = super::phase_point(&preset.id, test, spans) {
                     run.put(point, emit);
                 }
+            }
+            for (test, values) in [(super::LIVE_FIRST_TOKEN, &first_token), (super::LIVE_TURN, &turn)] {
+                if values.is_empty() {
+                    continue;
+                }
+                let (mean, sd) = super::mean_sd(values);
+                run.put(
+                    Point {
+                        preset: preset.id.clone(),
+                        test: test.into(),
+                        mean,
+                        sd,
+                        n: values.len() as i32,
+                        note: String::new(),
+                    },
+                    emit,
+                );
             }
         }
     }
@@ -707,15 +762,30 @@ fn run_concurrent(
         super::parse_stream(&res.body).map_err(|e| format!("{}: {e}", preset.id))
     };
 
-    for (slot, &w) in warm.iter().enumerate() {
-        if w {
-            emit(Event::Progress(format!(
-                "{}: priming slot {slot} with the prompt",
-                preset.id
-            )));
-            post(&super::live_body_slot(&preset.id, plan, slot, true, 1))?;
+    // Warm slots hold the prompt (primed once, every repetition then hits
+    // it), or, for an agent step, its prefix: primed before EVERY repetition,
+    // since the last one left the whole turn in the slot.
+    let prime_plan = if plan.warm_prefix {
+        let text = super::prompt_prefix(&plan.prompt)
+            .ok_or_else(|| format!("{}: Warm = prefix needs a conversation with an assistant turn", preset.id))?;
+        Plan { prompt: text, ..plan.clone() }
+    } else {
+        plan.clone()
+    };
+    let prime = |what: &str| -> Result<(), String> {
+        for (slot, &w) in warm.iter().enumerate() {
+            if w {
+                emit(Event::Progress(format!("{}: priming slot {slot} with the {what}", preset.id)));
+                post(&super::live_body_slot(&preset.id, &prime_plan, slot, true, 1))?;
+            }
         }
+        Ok(())
+    };
+    if !plan.warm_prefix {
+        prime("prompt")?;
     }
+    let mut first_token: Vec<f64> = Vec::new();
+    let mut turn: Vec<f64> = Vec::new();
 
     let mut prefill: Vec<f64> = Vec::new();
     let mut decode: Vec<f64> = Vec::new();
@@ -726,6 +796,9 @@ fn run_concurrent(
     for rep in 1..=plan.reps {
         if cancelled(cancel) {
             return Err("Cancelled.".into());
+        }
+        if plan.warm_prefix {
+            prime("prefix")?;
         }
         emit(Event::Progress(format!(
             "{}: repetition {rep}/{} ({}, {} requests at once)",
@@ -778,6 +851,10 @@ fn run_concurrent(
             if scenario != super::Concurrency::PrefillDecode || r.warm {
                 decode.push(t.predicted_tps);
             }
+            if plan.warm_prefix && r.warm {
+                first_token.push(t.prompt_ms / 1e3);
+                turn.push(r.wall);
+            }
             draft_n += t.draft_n;
             draft_ok += t.draft_accepted;
             run.sample(Sample {
@@ -798,8 +875,11 @@ fn run_concurrent(
                         "concurrency": scenario.as_str(),
                         "slot": r.slot,
                         "role": if r.warm { "warm" } else { "cold" },
+                        "warm": if plan.warm_prefix && r.warm { "prefix" } else if r.warm { "prompt" } else { "none" },
                         "sent_s": r.sent,
                         "wall_s": r.wall,
+                        "prompt_ms": t.prompt_ms,
+                        "predicted_ms": t.predicted_ms,
                         "phases": split.map(super::phases_json),
                         "trace": super::trace_json(&r.streamed.trace),
                     })
@@ -842,6 +922,8 @@ fn run_concurrent(
             (super::LIVE_DECODE, &decode, draft_note),
             (super::LIVE_PREFILL_TOTAL, &prefill_total, String::new()),
             (super::LIVE_DECODE_TOTAL, &decode_total, String::new()),
+            (super::LIVE_FIRST_TOKEN, &first_token, String::new()),
+            (super::LIVE_TURN, &turn, String::new()),
         ];
         for (test, values, note) in series {
             if values.is_empty() {

@@ -759,6 +759,7 @@ fn plan_from_ui(app: &AppWindow, state: &Rc<RefCell<State>>) -> Plan {
             .map(std::path::PathBuf::from),
         concurrency: bench::Concurrency::from_str(s.get_bench_concurrency().as_str())
             .unwrap_or_default(),
+        warm_prefix: false,
         prompt_lens: bench::parse_int_list(s.get_bench_prompt_lens().as_str()),
         depths: bench::parse_int_list(s.get_bench_depths().as_str()),
         n_gen: int(s.get_bench_n_gen(), bench::DEFAULT_GEN),
@@ -866,6 +867,8 @@ fn save_spec(app: &AppWindow, state: &Rc<RefCell<State>>, path: &Path) -> Result
                 reps: plan.reps,
                 concurrency: (s.get_bench_concurrency() != "all").then_some(plan.concurrency),
                 overrides: Vec::new(),
+                prompts: Vec::new(),
+                warm: false,
             }],
             published: false,
         },

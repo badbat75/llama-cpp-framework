@@ -501,6 +501,9 @@ pub fn plan_params(plan: &Plan) -> Vec<(String, String)> {
                 }
             }
             out.push(("concurrency".into(), plan.concurrency.as_str().into()));
+            if plan.warm_prefix {
+                out.push(("warm".into(), "prefix".into()));
+            }
             out.push(("prompt".into(), prompt_name(plan)));
         }
         Mode::Synthetic => {

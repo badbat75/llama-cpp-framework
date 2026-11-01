@@ -121,6 +121,19 @@ pub struct Pass {
     /// `None` = `all`.
     pub concurrency: Option<Concurrency>,
     pub overrides: Vec<(String, String)>,
+    /// `Prompts`: the file names of the spec's prompts this pass runs; empty
+    /// = every prompt.
+    pub prompts: Vec<String>,
+    /// `Warm = prefix`: each request is an agent step with its prefix cached
+    /// (`Plan::warm_prefix`).
+    pub warm: bool,
+}
+
+impl Pass {
+    /// Whether this pass runs the prompt in `file` (a file name).
+    pub fn runs(&self, file: &str) -> bool {
+        self.prompts.is_empty() || self.prompts.iter().any(|p| p == file)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -262,12 +275,31 @@ pub fn parse(text: &str, config: &Path) -> Result<Spec, String> {
             sweep::setter(&k).map_err(|e| ctx(format!("Override `{k}`: {e}")))?;
             overrides.push((k, v));
         }
+        let pass_prompts: Vec<String> = get("Prompts")
+            .unwrap_or_default()
+            .split(',')
+            .map(str::trim)
+            .filter(|p| !p.is_empty())
+            .map(str::to_string)
+            .collect();
+        for p in &pass_prompts {
+            if !prompts.iter().any(|(f, _)| f.file_name().is_some_and(|n| n.to_string_lossy() == p.as_str())) {
+                return Err(ctx(format!("Prompts `{p}`: not one of [Spec] Prompts (a file name)")));
+            }
+        }
+        let warm = match get("Warm").as_deref() {
+            None | Some("none") => false,
+            Some("prefix") => true,
+            Some(v) => return Err(ctx(format!("Warm = {v}: `prefix` or `none`"))),
+        };
         passes.push(Pass {
             name: pass.to_string(),
             temp,
             reps,
             concurrency,
             overrides,
+            prompts: pass_prompts,
+            warm,
         });
     }
     if passes.is_empty() {
@@ -317,6 +349,16 @@ pub fn canonical(spec: &Spec) -> String {
             p.concurrency.map_or("all", |c| c.as_str()),
             overrides.join(";")
         ));
+        // Only when set, so a spec without them keeps the digest it had
+        // before the keys existed.
+        if !p.prompts.is_empty() {
+            out.pop();
+            out.push_str(&format!(" prompts={}\n", p.prompts.join(",")));
+        }
+        if p.warm {
+            out.pop();
+            out.push_str(" warm=prefix\n");
+        }
     }
     out
 }
@@ -393,6 +435,12 @@ pub fn to_ini(spec: &Spec, config: &Path) -> String {
             let o: Vec<String> = p.overrides.iter().map(|(k, v)| format!("{k}={v}")).collect();
             out.push_str(&format!("Override = {}\n", o.join("; ")));
         }
+        if !p.prompts.is_empty() {
+            out.push_str(&format!("Prompts = {}\n", p.prompts.join(", ")));
+        }
+        if p.warm {
+            out.push_str("Warm = prefix\n");
+        }
         out.push_str(&format!(
             "Concurrency = {}\nReps = {}\n",
             p.concurrency.map_or("all", |c| c.as_str()),
@@ -418,7 +466,10 @@ pub fn published_versions(text: &str) -> Vec<(String, String)> {
 /// The sweep, once per prompt, pass and scenario, all into one campaign.
 /// `base` carries the preset, key, values, apply, campaign and question; its
 /// plan's method fields are replaced by the spec's.
-pub fn run(spec: &Spec, base: &Opts, derive: &Derive) -> Result<String, String> {
+/// `only`: the file names of the spec's prompts to run, empty = all; a
+/// selection of its legs, not a change of method (each leg is recorded as the
+/// spec's), so a new version can run just the legs it added.
+pub fn run(spec: &Spec, base: &Opts, derive: &Derive, only: &[String]) -> Result<String, String> {
     if base.plan.mode != super::Mode::Live {
         return Err("--spec runs the live engine".into());
     }
@@ -429,7 +480,15 @@ pub fn run(spec: &Spec, base: &Opts, derive: &Derive) -> Result<String, String> 
     // derived from it: a flag given beside --spec, a swept key that a pass
     // sets (the leg's value goes over the pass's), a file that is no
     // published version.
-    let (prompts, derived) = prompts_and_derived(spec, derive, base.key.as_deref())?;
+    let (mut prompts, derived) = prompts_and_derived(spec, derive, base.key.as_deref())?;
+    if !only.is_empty() {
+        for o in only {
+            if !prompts.iter().any(|p| prompt_name(p) == *o) {
+                return Err(format!("--only {o}: not one of the spec's prompts"));
+            }
+        }
+        prompts.retain(|p| only.contains(&prompt_name(p)));
+    }
     if !derived.is_empty() {
         println!(
             "Not spec {}-{} as published ({}): every run records spec = custom, derived from it.",
@@ -454,10 +513,15 @@ pub fn run(spec: &Spec, base: &Opts, derive: &Derive) -> Result<String, String> 
             continue;
         }
         for pass in &spec.passes {
-            let scenarios = match derive.concurrency.unwrap_or(pass.concurrency) {
-                Some(c) => vec![c],
-                None => sweep::all_scenarios(&base.preset)?,
-            };
+            if derive.prompt.is_none() && !pass.runs(&prompt_name(prompt)) {
+                continue;
+            }
+            let scenarios = pass_scenarios(
+                pass,
+                &prompt.1,
+                derive.concurrency.unwrap_or(pass.concurrency),
+                sweep::all_scenarios(&base.preset)?,
+            )?;
             let restore = apply_overrides(&base.preset, &pass.overrides)?;
             for c in scenarios {
                 println!(
@@ -492,6 +556,31 @@ pub fn run(spec: &Spec, base: &Opts, derive: &Derive) -> Result<String, String> 
     }
 }
 
+/// The scenarios a pass runs on a prompt: its own (`chosen`), or `all` (the
+/// preset's). A warm-prefix pass needs a prompt with an agent turn to cache up
+/// to, and has nothing to measure in `prefill` (no slot is warm), so `all`
+/// leaves that one out.
+fn pass_scenarios(
+    pass: &Pass,
+    text: &str,
+    chosen: Option<Concurrency>,
+    all: Vec<Concurrency>,
+) -> Result<Vec<Concurrency>, String> {
+    if pass.warm && super::prompt_prefix(text).is_none() {
+        return Err(format!(
+            "pass {}: Warm = prefix needs a conversation with an assistant turn",
+            pass.name
+        ));
+    }
+    Ok(match chosen {
+        Some(c) => vec![c],
+        None => all
+            .into_iter()
+            .filter(|c| !(pass.warm && *c == Concurrency::Prefill))
+            .collect(),
+    })
+}
+
 /// `spec-<name>-<version>-<stamp>`: a spec run's campaign when none is named.
 pub fn default_campaign(spec: &Spec) -> String {
     format!(
@@ -523,6 +612,7 @@ fn pass_plan(
         image_size: derive.image_size.unwrap_or(spec.image_size),
         image: derive.image.clone().unwrap_or(None),
         concurrency: c,
+        warm_prefix: pass.warm,
         spec: Some(Tag {
             name: spec.name.clone(),
             version: spec.version.clone(),
@@ -611,10 +701,15 @@ pub fn tab_steps(
             all.retain(|c| mine.contains(c));
         }
         for pass in &spec.passes {
-            let scenarios = match derive.concurrency.unwrap_or(pass.concurrency) {
-                Some(c) => vec![c],
-                None => all.clone(),
-            };
+            if derive.prompt.is_none() && !pass.runs(&name) {
+                continue;
+            }
+            let scenarios = pass_scenarios(
+                pass,
+                &prompt.1,
+                derive.concurrency.unwrap_or(pass.concurrency),
+                all.clone(),
+            )?;
             for c in scenarios {
                 steps.push(super::exec::Step {
                     label: format!("{} · {} · {}", pass.name, name, c.as_str()),
@@ -733,6 +828,40 @@ mod tests {
         let r = &s.passes[1];
         assert_eq!((r.temp, r.reps, r.concurrency), (None, 5, None));
         assert!(r.overrides.is_empty());
+    }
+
+    #[test]
+    fn a_pass_can_pick_its_prompts_and_warm_a_prefix() {
+        let with = SAMPLE.replace(
+            "[Pass.real]\nTemp = preset\n",
+            "[Pass.real]\nTemp = preset\nPrompts = y.txt\nWarm = prefix\n",
+        );
+        let s = parse(&with, Path::new("/cfg")).unwrap();
+        let real = &s.passes[1];
+        assert_eq!(real.prompts, vec!["y.txt".to_string()]);
+        assert!(real.warm && real.runs("y.txt") && !real.runs("bench-prompt-43k.txt"));
+        assert!(s.passes[0].runs("anything.txt") && !s.passes[0].warm);
+        // The keys enter the digest, and a spec without them keeps its own.
+        assert_ne!(s.sha256, parse(SAMPLE, Path::new("/cfg")).unwrap().sha256);
+        assert!(canonical(&s).contains(" prompts=y.txt warm=prefix\n"));
+        assert!(!canonical(&parse(SAMPLE, Path::new("/cfg")).unwrap()).contains("prompts="));
+        // Saved and read back, the same rules.
+        let again = parse(&to_ini(&s, Path::new("/cfg")), Path::new("/cfg")).unwrap();
+        assert_eq!(again.passes, s.passes);
+        for bad in ["Prompts = other.txt", "Warm = yes"] {
+            let text = SAMPLE.replace("[Pass.real]\n", &format!("[Pass.real]\n{bad}\n"));
+            assert!(parse(&text, Path::new("/cfg")).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn a_warm_pass_skips_prefill_and_needs_an_agent_turn() {
+        let s = parse(&SAMPLE.replace("Concurrency = all\n", "Concurrency = all\nWarm = prefix\n"), Path::new("/cfg")).unwrap();
+        let conv = r#"{"messages":[{"role":"user","content":"a"},{"role":"assistant","content":"b"},{"role":"user","content":"c"}]}"#;
+        let got = pass_scenarios(&s.passes[1], conv, None, Concurrency::ALL.to_vec()).unwrap();
+        assert!(!got.contains(&Concurrency::Prefill) && got.contains(&Concurrency::PrefillDecode));
+        assert!(pass_scenarios(&s.passes[1], "plain text", None, Concurrency::ALL.to_vec()).is_err());
+        assert_eq!(pass_scenarios(&s.passes[0], "plain text", None, Concurrency::ALL.to_vec()).unwrap().len(), 4);
     }
 
     #[test]
