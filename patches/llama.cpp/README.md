@@ -230,9 +230,14 @@ rebuilt with patches 0001-0004 against the run of 2026-10-16 with 0001 only (`be
 campaign `flash-next-patches-linux-20261021`): prefill 422.7 ±2.6 against 417.9 ±2.2 t/s
 at 43.7k, decode 25.0 both, the band line in the log. Kept on, the default:
 `docs\qwen3.8_flash_next.md` section 7. The same Linux build on Qwen3.8-27B-Coder390
-(GQA 12, `draft-mtp`), against the runs before 0003 and 0004: prefill +5% at 43.7k and
-+8% on a 100-token prompt, flat at 115k, decode unchanged (campaign
-`coder390-patches-linux-20261021`, `docs\qwen3.8_27b.md` section 6).
+(GQA 6, `draft-mtp`), against the runs with 0001-0003 and the same placement (ctx 172032
+against 180224): prefill 1185.6 ±12.6 against 1164.0 ±15.7 t/s at 43.7k, within noise, flat
+at 115k (894.7 against 899.0), decode unchanged at both (31.2; 29.2 against 29.3). On a
+100-token prompt the only earlier runs have 0001 alone and another placement, so they
+isolate no patch: prefill 244.8 against 224.9 and 226.2 (+8 to 9%), decode 36.7 against
+38.1 with draft acceptance 58% against 61% (campaign `coder390-patches-linux-20261021`,
+campaign `coder390-placement-20261020`, campaign `coder390-device-order-20261019`,
+`docs\qwen3.8_27b.md` section 6).
 
 **Confirming it is live.** The first head-256 attention call on RDNA4 with the variable set
 logs one line at info level, `RDNA4 FA band enabled: ncols1 = 4, GQA ratios up to 12`

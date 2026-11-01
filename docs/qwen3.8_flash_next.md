@@ -100,14 +100,14 @@ rename   = unset=all experts in VRAM
 | `ubatch-size` | `512` | `768` buys 3% of prefill, decodes slower and halves the R9700's margin (campaign `flash-next-ubatch768-linux-20261021`). With `q8_0` at `n-cpu-moe 14`, `1024` and `2048` do not load |
 | `spec-type` | `ngram-map-k`, `size-m 64` | code 61 to 65 t/s against 28.6 with none; prose reasoning 40.0 ±1.6 against 29.4 ±1.3 (IQ3_XXS, v0.6.0) |
 
-**23 blocks is the RTX 4070 SUPER's limit at `n-cpu-moe 16`.** `24,25` does not load (campaign
-`flash-next-device-order-linux-20261021`), and neither does `n-cpu-moe 15` at `23,26` (not recorded): weights
+**23 blocks is the RTX 4070 SUPER's limit at `n-cpu-moe 16`.** `24,25` does not load
+(campaign `flash-next-device-order-linux-20261021`), and neither does `n-cpu-moe 15` at `23,26` (not recorded): weights
 and KV fit, the compute buffer does not.
 
 On *Linux* the IQ3_XXS preset (`q8_0` KV, `n-cpu-moe 7`) follows the same order: the RTX 4070 SUPER
 first at `19,30` prefills 776.7 ±15.8 against 580.8 ±10.6 and decodes 27.8 ±0.4 against 26.1 ±0.8,
-but leaves only 72 MiB free on that card, and `20,29` does not load (campaign
-`flash-next-xxs-device-order-linux-20261021`). The order comes from where the work runs: the RTX 4070 SUPER takes blocks 0 to 22, among them the 16
+but leaves only 72 MiB free on that card, and `20,29` does not load
+(campaign `flash-next-xxs-device-order-linux-20261021`). The order comes from where the work runs: the RTX 4070 SUPER takes blocks 0 to 22, among them the 16
 host-expert layers, and the R9700 takes blocks 23 to 47, the output head and the sampling. Size the
 split from the per-layer weights, since `llama-gguf <shard> r` shows experts of 738 to 1300 MiB per
 layer, the late layers heavier (campaign `flash-next-device-order-linux-20261021`).
@@ -140,7 +140,7 @@ halves the KV but its compute buffer grows (877 against 533 MiB on the R9700 at 
 one layer of experts at 131072 (15 against 16; the row's 14 comes from also moving that override's
 tensor to the RTX 4070 SUPER) and two at 262144.
 
-**The second card is worth ten layers of experts and decodes 9 to 23% faster:**
+**The second card is worth nine or ten layers of experts and decodes 9 to 23% faster:**
 
 | context, KV | both cards | R9700 alone |
 | --- | --- | --- |
@@ -211,8 +211,8 @@ and `24,25` (block 24 to the second card), since `f16` at `1,1` does not load: a
 `spec-draft-n-max 3`.
 
 43.7k prose and a code rewrite (rename one function in a 356-line Rust file), `q8_0`, `24,25`, 262144,
-temperature 0 (campaign `flash-next-mtp-base-2xr9700-linux-20261030`; campaign
-`flash-next-mtp-ngram-2xr9700-linux-20261030`):
+temperature 0 (campaign `flash-next-mtp-base-2xr9700-linux-20261030`;
+campaign `flash-next-mtp-ngram-2xr9700-linux-20261030`):
 
 | `spec-type` | decode on prose | decode on code | prefill at 43.7k |
 | --- | --- | --- | --- |
@@ -238,9 +238,9 @@ lifts decode by 77%; on a rewrite the n-gram drafts whole runs of the context an
 The n-gram drafters are always tried first, whatever the order written. The chain costs 25% of cold
 prefill, all of it the head's: without it the same `q8_0` preset prefills 2020.4.
 
-`spec-draft-n-max` 3 is the peak, and HIP graphs help most there (campaign
-`flash-next-mtp-graphs-2xr9700-linux-20261030`; graphs off with `CudaDisableGraphs = true`, campaign
-`flash-next-mtp-2xr9700-linux-20261030`):
+`spec-draft-n-max` 3 is the peak, and HIP graphs help most there
+(campaign `flash-next-mtp-graphs-2xr9700-linux-20261030`; graphs off with `CudaDisableGraphs = true`,
+campaign `flash-next-mtp-2xr9700-linux-20261030`):
 
 | `spec-draft-n-max` | decode, graphs on | decode, graphs off | accepted |
 | --- | --- | --- | --- |

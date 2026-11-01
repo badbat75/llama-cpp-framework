@@ -87,8 +87,8 @@ visible to HIP does with `device` left blank: hence `mmap`, set explicitly. *Lin
 
 One card in the CPU's Gen5 x16 slot (the x16 card), one behind the chipset at Gen4 x4 with no PCIe
 AtomicOps (the x4 card). The Swift-1.5 fine-tune of the 27B Q8_0, `parallel 2`, an n-gram stage then
-MTP; [Qwen3.8-27B](qwen3.8_27b.md) has the detail and the full baseline (campaign
-`swift27b-standard-1.0-2xr9700-linux-20261031`).
+MTP; [Qwen3.8-27B](qwen3.8_27b.md) has the detail and the full baseline
+(campaign `swift27b-standard-1.0-2xr9700-linux-20261031`).
 
 ![Two R9700s: the x16 card in the CPU slot, the x4 card behind the chipset without AtomicOps; the tensor split stages its AllReduce through host memory](assets/diagrams/two-r9700-topology.svg)
 

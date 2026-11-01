@@ -102,8 +102,8 @@ Three behaviours shape how to read every figure below:
 Two R9700s, layer split, the preset's sampling (temperature 1), 5 repetitions, all at `q8_0` KV,
 `ctx-size 514288`, `35,31`, `parallel 2`: compare these figures with each other, not with the `f16`
 preset this page recommends. The code prompt is a rewrite with 1536 tokens out: at 256 tokens the reply ends inside the reasoning and the
-n-gram stage has nothing to copy (campaign `swift27b-drafter-2xr9700-linux-20261030`; campaign
-`swift27b-drafter-code1536-2xr9700-linux-20261030`).
+n-gram stage has nothing to copy (campaign `swift27b-drafter-2xr9700-linux-20261030`;
+campaign `swift27b-drafter-code1536-2xr9700-linux-20261030`).
 
 | drafter | decode on 43.7k prose | decode on code |
 | --- | --- | --- |
@@ -158,10 +158,10 @@ If you prefer DFlash2, `spec-draft-n-max 5` is its best on prose. DFlash2 alone,
 `Qwen3.8-27B-Q8_0.gguf` with `f16` at 262144, `parallel 1`, temperature 0 and 256 tokens out, decodes
 34.1 ±2.0 at `5` against 32.2 ±1.4 at `7` (4 repetitions), 32.4 at `3` and 31.3 at `10` (2 repetitions)
 (campaign `qwen27b-dflash-2xr9700-linux-draft-n-max-20261028`). That setup holds its speed at
-`ctx-size 262144`: at `7`, 1396.9 prefill and 31.5 decode against 1405 and 31.1 at 172032 (campaign
-`qwen27b-dflash-2xr9700-linux-ctx-20261028`). On code, in the n-gram then DFlash2 chain on the Swift-1.5
-file, with `q8_0` KV, temperature 1 and 1536 tokens out, it reaches 146.1 ±28.8 at `7` (campaign
-`swift27b-draft-length-2xr9700-linux-20261030`).
+`ctx-size 262144`: at `7`, 1396.9 prefill and 31.5 decode against 1405 and 31.1 at 172032
+(campaign `qwen27b-dflash-2xr9700-linux-ctx-20261028`). On code, in the n-gram then DFlash2 chain on the Swift-1.5
+file, with `q8_0` KV, temperature 1 and 1536 tokens out, it reaches 146.1 ±28.8 at `7`
+(campaign `swift27b-draft-length-2xr9700-linux-20261030`).
 
 ## 4. KV cache type and context
 
@@ -171,9 +171,9 @@ show on short prompts. Conversations that grow turn by turn pay that decode at e
 `q8_0` is worth it only if you need a context `f16` cannot fit. A `q8_0` slot snapshot does not
 restore into an `f16` cache.
 
-An R9700 and an RTX 4070 SUPER, *Linux*, the R9700 last, `draft-mtp` (campaign
-`27b-kv-f16-20261016`, the 43.7k rows; campaign `coder390-ubatch-20261020`, the 172032 row; campaign
-`coder390-ctx-20261020`, 180224 and 188416):
+An R9700 and an RTX 4070 SUPER, *Linux*, the R9700 last, `draft-mtp`
+(campaign `27b-kv-f16-20261016`, the 43.7k rows; campaign `coder390-ubatch-20261020`, the 172032 row;
+campaign `coder390-ctx-20261020`, 180224 and 188416):
 
 | KV, context | free, R9700 / RTX 4070 SUPER (MiB) (a) | prefill | decode |
 | --- | --- | --- | --- |
@@ -209,8 +209,8 @@ series   = ctx-size
 where    = cache-type-k=f16
 ```
 
-Two R9700s, tensor split, `parallel 2`, after a 115k prefill (campaign
-`swift27b-ctx-tensor-2xr9700-linux-20261031`):
+Two R9700s, tensor split, `parallel 2`, after a 115k prefill
+(campaign `swift27b-ctx-tensor-2xr9700-linux-20261031`):
 
 | context | free, one prefill (MiB) | free, both slots prefilling (MiB) | prefill | decode |
 | --- | --- | --- | --- | --- |
@@ -311,8 +311,8 @@ kernel's boot log names the width (`available PCIe bandwidth ... limited by ... 
 **The last device takes the MTP head, the output head and the sampling.** On *Linux*, the
 R9700 last prefills 1133 and 1123 t/s at 43.7k against, with the RTX 4070 SUPER last, 1069 at `52,14`
 (28 MiB free) and 1071 at `53,13`. It decodes 31.2 against 29.8 at `53,13`, the split that leaves that
-card a usable 430 MiB; `52,14` decodes 31.3 with no margin, and `50,16` and `48,18` do not load (campaign
-`coder390-device-order-20261019`). *Windows* reverses the order: [section 6](#6-linux-against-windows).
+card a usable 430 MiB; `52,14` decodes 31.3 with no margin, and `50,16` and `48,18` do not load
+(campaign `coder390-device-order-20261019`). *Windows* reverses the order: [section 6](#6-linux-against-windows).
 
 **Attention blocks decide the split.** Attention sits on blocks 3, 7, 11, 15 and so on, each with
 672 MiB of KV at 172032 `f16`, so the boundary block moves its KV slice with it: block 15 costs
@@ -335,9 +335,9 @@ has 342 MiB free after a 115k prefill, and the encoder runs it out of memory.
 ## 6. Linux against Windows
 
 The same machine and build, the Coder390 file, an R9700 and an RTX 4070 SUPER, the R9700 last, 172032 `f16`, three
-repetitions of 256 tokens at temperature 0 (campaign `coder390-device-order-20261019`; campaign
-`coder390-windows-vs-linux-20261020`; with the [section 5](#5-splitting-the-model-across-two-cards) placement, campaign
-`coder390-placement-20261020` and campaign `coder390-placement-windows-20261021`):
+repetitions of 256 tokens at temperature 0 (campaign `coder390-device-order-20261019`;
+campaign `coder390-windows-vs-linux-20261020`; with the [section 5](#5-splitting-the-model-across-two-cards) placement,
+campaign `coder390-placement-20261020` and campaign `coder390-placement-windows-20261021`):
 
 | prompt | prefill, *Linux* / *Windows* | decode, *Linux* / *Windows* |
 | --- | --- | --- |
@@ -348,8 +348,8 @@ repetitions of 256 tokens at temperature 0 (campaign `coder390-device-order-2026
 *Linux* prefills 8 to 20% faster, widening with the context, and decodes 16 to 23% faster. Weights and KV per card match to the
 MiB and draft acceptance within a few points, so the gap is the time of each step.
 
-**On *Windows*, put the R9700 first.** It removes most of that gap (campaign
-`coder390-device-order-windows-20261021`):
+**On *Windows*, put the R9700 first.** It removes most of that gap
+(campaign `coder390-device-order-windows-20261021`):
 
 | *Windows* | prefill at 43.7k | decode at 43.7k | prefill at 115k | decode at 115k |
 | --- | --- | --- | --- | --- |
@@ -373,9 +373,10 @@ blocking copies from 5.24 s to 2.50 s and gains ~2% with the R9700 second and no
 so the order remains the setting. Keeping the R9700 second, moving `blk\.15\.ffn_gate` onto it
 buys 3.8% of prefill (campaign `coder390-gate-windows-20261021`).
 
-On *Linux*, with patches 0001 to 0004 at `180224`, prefill at 43.7k reads 1185.6 ±12.6 against
-1132.6 ±12.7 with 0001 alone (at 172032, the table on the RTX 4070 SUPER), 5% faster, decode the same
-(campaign `coder390-patches-linux-20261021`).
+On *Linux*, with patches 0001 to 0004 at `180224`, prefill at 43.7k reads 1185.6 ±12.6
+(campaign `coder390-patches-linux-20261021`) against 1164.0 ±15.7 with 0001 to 0003 at 172032, the
+same placement (campaign `coder390-placement-20261020`): within noise, decode the same, so 0004
+gains nothing measurable there.
 
 ## 7. Baseline under the standard spec (two R9700s)
 

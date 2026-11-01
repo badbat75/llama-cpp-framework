@@ -85,6 +85,8 @@ setup gets that tag, not the form of a rule.
 - Another page by name, as a link. An upstream PR as a worded link.
 - A figure from bench.db cites "(campaign `name`)", singular, once per campaign: only that form
   is linked by the site. Hand-read or server-log figures say so ("read by hand, not recorded").
+- Keep "campaign `name`" on one source line: split at a line end, the code is not linked, the page
+  does not count the citation, and `--check` still passes.
 
 ## 7. Placeholders
 
@@ -101,6 +103,7 @@ live preset.
 4. Compare cited campaigns against the previous version; each one dropped is a deliberate choice.
 5. No em-dashes, no absolute paths, front matter `updated` set.
 6. Read the page once as a new reader. If a sentence needs the history to make sense, rewrite it.
+7. No citation split across lines: `grep -nE 'campaign[[:space:]]*$' docs/*.md` prints nothing.
 
 ## 9. Improving this skill
 
