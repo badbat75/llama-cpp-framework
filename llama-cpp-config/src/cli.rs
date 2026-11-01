@@ -363,7 +363,7 @@ pub struct ServerSet {
     /// the newest one on the next start (--slot-save-path). true = on.
     #[arg(long)]
     pub save_state_on_shutdown: Option<bool>,
-    /// Folder for those snapshots (~8.3 GiB per model at a 262k context).
+    /// Folder for those snapshots (one file per model, sized by the conversation it holds).
     /// Empty = the default under the user's runtime root.
     #[arg(long)]
     pub state_dir: Option<String>,

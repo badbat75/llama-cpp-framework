@@ -99,15 +99,20 @@ and a change is the next version.
    runs, recorded as derived (`spec-derived-fields = override`), never as the spec.
 2. **It can run everywhere it claims.** `Concurrency` other than `single` needs a preset with
    `parallel` >= 2 (`all` falls back to single alone). Each prompt needs a slot context of
-   its tokens plus the longest uncapped answer (~5k for prose; `bench-prompt-code-write-1.1.json`
-   reasons 3k to 19k tokens before ~4k of code, so ~65-70k per slot): the 110k prompt needs ~116k per slot,
-   `ctx-size` ~232k at `parallel = 2`; a smaller preset fails those legs (not recorded), so
+   its tokens plus the longest uncapped answer (for prose at least ~8k, the longest measured so
+   far, on one model, so leave a margin: single-request temp-0 answers to the 115k prompt ran
+   1,945 to 7,840 tokens across configurations; `bench-prompt-code-write-1.1.json`
+   reasons 3k to 19k tokens before ~4k of code, so ~65-70k per slot): the 115k prompt needs ~124k per slot,
+   `ctx-size` ~248k at `parallel = 2`, a minimum with no margin; on a smaller preset a prompt that
+   does not fit gets llama-server's context-size error and one that fits with an answer the context
+   cuts fails with `the reply was cut by the context limit`, which names the slot size and tokens
+   (one such repetition discards that preset's run; an answer stopped by a `max-tokens` cap stays valid), so
    say which presets a spec fits. An `Override` key must be sweepable
    (`parse` refuses one that is not). A prompt must be one every machine has: a shipped one,
    or a file published with the spec.
 3. **It is affordable.** Estimate the length: prompts x passes x scenarios x reps x legs, at
-   the prefill and decode rates of the slowest machine it targets (on two R9700s a 110k cold
-   prefill is ~2 minutes, an uncapped answer up to ~5000 tokens, a code-write one up to ~23k).
+   the prefill and decode rates of the slowest machine it targets (on two R9700s a 115k cold
+   prefill is ~2 minutes, an uncapped answer ~8000 tokens at the longest measured so far, a code-write one up to ~23k).
    Say the estimate. A `Warm = prefix` pass: check on one short run that the turn's `cache_n`
    is close to the prefix and `prompt_n` only the last turn's delta (a hybrid model restores
    the cache from context checkpoints).

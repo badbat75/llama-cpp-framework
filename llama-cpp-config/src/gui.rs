@@ -1528,7 +1528,7 @@ fn start_server_async(app_weak: slint::Weak<AppWindow>, tray_weak: slint::Weak<A
 
         // Push the last shutdown's conversation back in, AFTER the UI has been
         // told the server is up. It is the slowest thing the framework does (the
-        // proxied restore makes the router load the model, then reads ~8 GiB of
+        // proxied restore makes the router load the model, then reads the whole
         // KV cache off disk), so it must not sit inside the "Starting…"
         // transition, and it stays on this worker thread rather than blocking
         // the event loop. Nothing to restore is the ordinary first-run state and
@@ -1622,7 +1622,7 @@ fn stop_server_async_with(
     std::thread::spawn(move || {
         // Snapshot BEFORE the kill: the KV cache is process memory, so once
         // taskkill lands there is nothing left to save. This is the slow leg
-        // (~8 GiB per model), which is why it reports its own progress and why
+        // (a whole KV cache per model), which is why it reports its own progress and why
         // the whole stop path already lives off the UI thread.
         let cfg = server_cfg::load();
         let snapshot = if cfg.save_state_on_shutdown_or_default() {

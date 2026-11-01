@@ -62,7 +62,7 @@ hip_path = {hip}
 # gpu_targets: DERIVED from the installed ROCm dist (the archs it ships BLAS
 # kernels for, minus the data-center gfx9xx and gfx125x, plus the Ryzen iGPU
 # archs). Re-run cargo run -p xtask -- configure after a ROCm dist bump to refresh.
-# Hand-edit to prune (~56 MiB of libggml-hip.so per arch) or to add an MI card.
+# Hand-edit to prune (each arch adds to libggml-hip.so) or to add an MI card.
 gpu_targets = {targets}
 build_type = {build_type}
 c_compiler = {cc}

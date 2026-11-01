@@ -78,11 +78,11 @@ const POLL: Duration = Duration::from_millis(500);
 ///
 /// The process vanishing is NOT the same event as the driver releasing its
 /// memory, and a sweep is the one workload that asks for tens of GiB, drops
-/// them, and asks again a second later. Measured here on a 27B model split over
+/// them, and asks again a second later. Seen here on a 27B model split over
 /// a Vulkan R9700 and a CUDA 4070S: the leg after a restart died with
-/// `vk::Device::allocateMemory: ErrorOutOfDeviceMemory` on a 1,052,686,976-byte
-/// buffer, while `--list-devices` moments later reported 31 GiB free on that
-/// same card; an earlier run failed differently for the same reason (ROCm
+/// `vk::Device::allocateMemory: ErrorOutOfDeviceMemory` on a buffer far smaller
+/// than what `--list-devices` reported free on that same card moments
+/// later; an earlier run failed differently for the same reason (ROCm
 /// reporting "no ROCm-capable device is detected" mid-teardown, which then made
 /// a vision-encoder device of `ROCm0` invalid and stopped the server from starting
 /// at all). Both are the previous child still being torn down. The wait costs

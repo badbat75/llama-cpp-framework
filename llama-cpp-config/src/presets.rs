@@ -504,10 +504,9 @@ pub struct Preset {
     /// rule sends to `CPU`). With the offload on, such an operation still goes
     /// to the card for batches of 32+ tokens, and its host weights are copied
     /// there on EVERY prefill batch. On a card behind a narrow PCIe link that
-    /// copy dominates the batch. Measured 2026-10-12 on a 116.5 B-param MoE
-    /// (Q4_K_M, 8 blocks of experts in RAM, R9700 on a Gen4 x4 chipset link):
-    /// `false` took prefill from 385 to 608 tok/s at 93.7k tokens and from ~360
-    /// to ~600 at 2.6k. Decode did not move: only batches offload, a
+    /// copy dominates the batch, so `false` prefills faster with experts in RAM
+    /// on such a link (`docs/qwen3.8_flash_next.md` sections 6 and 7). Decode
+    /// does not move: only batches offload, a
     /// single-token step never does. With every weight in VRAM there is nothing
     /// to copy and the key is a no-op.
     pub op_offload: Option<bool>,
@@ -531,8 +530,8 @@ pub struct Preset {
     /// has interleaved kernels for (unless `repack = false`) and the RAM stays
     /// pageable. What it trades: the host-to-GPU copies `op-offload` makes per
     /// batch come from pageable memory, and a repacked expert leaves the MoE
-    /// cache. On Qwen3.8-Flash-Next IQ3_S (IQ4_NL `ffn_down_exps` in 39 of 48
-    /// layers, AVX-512) it repacked 17550 MiB. Written only when true: a
+    /// cache (`docs/qwen3.8_flash_next.md` section 3 has what it repacks on
+    /// Qwen3.8-Flash-Next IQ3_S). Written only when true: a
     /// `no-host = false` would launch the same as no key.
     pub no_host: bool,
     /// On-demand reading of the tensors the ARCH marks for it (--lazy-mode,
@@ -541,7 +540,7 @@ pub struct Preset {
     /// looks up are paged in, instead of the whole table becoming resident. Today
     /// the marked tensors are per-layer token-embedding tables
     /// (`TENSOR_READ_LAZY` in `src/models/`: gemma4's `per_layer_token_embd`,
-    /// qwen4exp's n-gram table, the 28.8 GB second shard of
+    /// qwen4exp's n-gram table, the second shard of
     /// Qwen3.8-Flash-Next-GSQ-RCO), so on any other model every value is a no-op.
     ///
     /// `auto` is lazy only for a marked tensor LARGER than 4 GiB, and it falls
@@ -604,8 +603,8 @@ pub struct Preset {
     /// slots in without a migration; `Some(true)` is the only value that changes
     /// anything today.
     ///
-    /// What moves is the per-token round trip: on a 27B model the logits are
-    /// ~150k floats per output, and with a CPU sampler they cross PCIe every
+    /// What moves is the per-token round trip: the logits are one float per
+    /// vocabulary token per output, and with a CPU sampler they cross PCIe every
     /// token before `top_k`/`top_p`/`min_p`/`temp`/penalties/`dist` run on the
     /// host. Backend-capable samplers (`src/llama-sampler.cpp`, the ones with a
     /// `backend_apply`): greedy, dist, top-k, top-p, min-p, temp / temp-ext,
@@ -1818,12 +1817,12 @@ pub fn render_section(p: &Preset) -> String {
     out.push_str(
         "; those weights are copied to the card on every prefill batch of 32+ tokens,\r\n",
     );
-    out.push_str("; which dominates on a narrow PCIe link: false measured 385 -> 608 tok/s of\r\n");
+    out.push_str("; which dominates on a narrow PCIe link, so false prefills faster there\r\n");
     out.push_str(
-        "; prefill at 93.7k tokens on a MoE with 8 blocks of experts in RAM, card on a\r\n",
+        "; when experts sit in RAM (figures in the Qwen3.8-Flash-Next guide). Decode is\r\n",
     );
     out.push_str(
-        "; Gen4 x4 link. Decode is unchanged, and it is a no-op when every weight is in\r\n",
+        "; unchanged, and it is a no-op when every weight is in\r\n",
     );
     out.push_str("; VRAM.\r\n");
     emit_bool(&mut out, "op-offload", p.op_offload);

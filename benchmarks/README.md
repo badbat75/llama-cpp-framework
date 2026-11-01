@@ -45,7 +45,7 @@ with the prompts, the output cap (none) and the passes, each with its temperatur
 repetitions, concurrency and the preset keys it overrides for every leg. Version 1.0 pins
 four prompts from `prompts\` (each file versioned in its name too, `prompts/README.md` says
 what each one is): `bench-prompt-43k-1.0.txt` (technical prose, 43.7k tokens on Qwen3.8),
-`bench-prompt-110k-1.0.txt` (the same kind, 110k), `bench-prompt-code-1.0.json` (a
+`bench-prompt-110k-1.0.txt` (the same kind, 115k), `bench-prompt-code-1.0.json` (a
 coding-agent turn at ~42k tokens: tool definitions, earlier tool calls with the source files
 they read, then the model's next step) and `bench-prompt-image-1.0.json` (image to text: a
 photograph to describe, fitted into `ImageSize = 1344x896` when sent; run only on a preset
@@ -107,7 +107,8 @@ method: each is listed as `<file>@<sha256 of its text>` (the digest `bench query
 shows), a prompt that no longer matches is refused before the first leg, and a test pins every
 published version to the shipped prompts. A changed prompt is a new prompt file
 (`<name>-<X.Y+1>`) and a new spec version pinning it. `standard` needs a slot context of about
-116k tokens (the 110k prompt plus an uncapped answer: `ctx-size` about 232k at `parallel = 2`)
+124k tokens (the 115k prompt plus the longest uncapped answer measured, 7,840 tokens: `ctx-size`
+about 248k at `parallel = 2`, a minimum with no margin)
 and, scaled from version 1's 4 to 8 hours by the context the code prompt adds (an estimate,
 not yet measured), about 5 to 10 hours for a two-value sweep on two R9700s with the dense 27B:
 an overnight job, not a quick screen (a screen is a spec of its own). A sweep that varies a key

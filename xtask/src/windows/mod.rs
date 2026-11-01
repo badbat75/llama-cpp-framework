@@ -176,7 +176,7 @@ impl WinConfig {
     # when kernels are absent (the driver HIP runtime fails module load on
     # EVERY visible device when one visible device has no code object).
     # Re-run cargo run -p xtask -- configure after a ROCm dist bump to refresh. Hand-edit
-    # only to prune (~56 MiB of ggml-hip.dll per arch), and never prune the
+    # only to prune (each arch adds to ggml-hip.dll), and never prune the
     # iGPU archs (gfx1035/1036/1103/1152/1153).
     GpuTargets  = {targets}
     BuildType   = {build_type}

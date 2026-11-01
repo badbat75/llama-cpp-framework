@@ -2,22 +2,18 @@
 //! stops, and hand it back to llama-server on the next start.
 //!
 //! WHY IT EXISTS. Prefill is quadratic in the prompt length, so a long agentic
-//! session pays a cost that dwarfs everything else the framework tunes.
-//! Measured on Qwen3.8-27B (hybrid `qwen35`, 17 of 65 blocks carrying
-//! attention) across a 234k-token prompt: the marginal cost per token fits
-//! `0.95 ms + 0.0287 ms per 1k of context`, i.e. 984 t/s at position 4k against
-//! 142 t/s at 218k, and integrating that line puts a cold 234k prefill at
-//! roughly 17 MINUTES. The KV cache is process memory, so every restart of
+//! session pays a cost that dwarfs everything else the framework tunes
+//! (`llama-cpp-config/README.md`, "Conversation snapshots", has the measured
+//! cost). The KV cache is process memory, so every restart of
 //! llama-server pays it again from zero. Dumping the slot instead is sequential
-//! IO, seconds on an NVMe: the file holds the KV cache of the tokens actually in
-//! the conversation (so it tracks the conversation, not `ctx-size`), which for
-//! this arch is 36 KiB per token, i.e. 4.38 GiB measured at 127,579 tokens and
-//! ~8.3 GiB for a full 262k context. Those figures are v0.6.0's: since v0.7.0
+//! IO: the file holds the KV cache of the tokens actually in
+//! the conversation (so it tracks the conversation, not `ctx-size`; size per
+//! token: `docs/qwen3.8_27b.md` section 1). Since v0.7.0
 //! the file also carries the slot's context checkpoints (#26004, so a restored
 //! hybrid / SWA slot can still roll back to one instead of re-reading the
 //! prompt) and the draft context's state (#30574, so a restored slot does not
 //! draft from an empty KV). Expect it larger by up to `ctx-checkpoints` copies
-//! of the recurrent state plus the draft's KV; not re-measured yet.
+//! of the recurrent state plus the draft's KV.
 //!
 //! HOW IT REACHES THE CHILD, which is the part that nearly killed the feature.
 //! The endpoints only exist on a server started with `--slot-save-path`, and the
@@ -48,7 +44,7 @@
 //!
 //! SCOPE, deliberately narrow on the way back in. Saving covers every model the
 //! router reports as `loaded`; restoring takes the NEWEST dump only. A dump is
-//! one conversation, restoring is an 8 GiB read plus a full model load, and the
+//! one conversation, restoring is a read of its whole KV cache plus a full model load, and the
 //! LRU would evict whatever a second restore pushed out anyway. Restoring the
 //! one model the user was last working on is the predictable choice; the others
 //! stay on disk and are simply overwritten the next time they are live.
@@ -59,12 +55,12 @@ use std::time::Duration;
 use crate::http::request;
 
 /// Extension every dump carries. Not `.bin`: the directory is user-visible and
-/// these are 8 GiB files, so it should be obvious what may be deleted.
+/// these are large files, so it should be obvious what may be deleted.
 const STATE_EXT: &str = "llamastate";
 
 /// Read timeout for the save and restore calls. Generous on purpose: the server
-/// answers only once the whole state has hit the disk, which at ~8 GiB is tens
-/// of seconds on NVMe and minutes on a spinning disk. The cost of guessing too
+/// answers only once the whole state has hit the disk, which for a long
+/// conversation can take minutes on a slow disk. The cost of guessing too
 /// low is a half-written dump reported as a failure.
 const TRANSFER_TIMEOUT: Duration = Duration::from_secs(900);
 
@@ -100,7 +96,7 @@ const SLOT_ID: u32 = 0;
 ///
 /// Overridable precisely BECAUSE of the default's one weakness: `%LOCALAPPDATA%`
 /// sits on the system drive, and a dump is roughly one byte of KV cache per byte
-/// the model would have recomputed, which for a 262k context is 8.3 GiB per
+/// the model would have recomputed, which for a large context is many GiB per
 /// model. A user whose models live on another disk will want the snapshots there
 /// too, and filling C:\ with no way out is not a default anyone should be stuck
 /// with.
@@ -295,7 +291,7 @@ fn wait_listening(
 /// `ensure_model_ready` (`server-models.cpp`), which loads the model (through
 /// the scheduler's queue) and holds the request until the child reports
 /// `loaded`, so the restore never reaches a child that is still loading. That
-/// wait counts against [`TRANSFER_TIMEOUT`], which a 30 s load leaves ample.
+/// wait counts against [`TRANSFER_TIMEOUT`], which a model load leaves ample.
 /// What it cannot cover is a router that is not listening yet: the caller of a
 /// restore after a start waits for that first ([`wait_listening`]).
 fn slot_action(port: u16, action: &str, model: &str, filename: &str) -> Result<Transfer, String> {
@@ -406,7 +402,7 @@ pub fn save_all(cfg: &crate::server_cfg::ServerConfig) -> (Vec<Transfer>, Vec<St
 /// the router to open its port: sent at once, the request met a router still
 /// measuring its presets and failed with "connection refused".
 /// The router then loads the model as a side effect of the proxied request, so
-/// this is slow (a full model load plus an 8 GiB read) and belongs on a worker
+/// this is slow (a full model load plus a read of the whole KV cache) and belongs on a worker
 /// thread, never on the UI thread.
 pub fn restore_newest(
     cfg: &crate::server_cfg::ServerConfig,

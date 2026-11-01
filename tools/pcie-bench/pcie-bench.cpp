@@ -18,8 +18,8 @@
 // CUDA (nvcc, pcie-bench-cuda.exe, through pcie-bench.cu). See README.md.
 //
 // Two HIP-on-Windows traps this file works around, both found writing it:
-//   - event timing of DMA copies is bogus there (it reported 270 GB/s over a
-//     link that moves 3.2), so DMA is timed wall-clock around a synchronize;
+//   - event timing of DMA copies is bogus there (it reports rates far beyond
+//     what the link moves: README.md), so DMA is timed wall-clock around a synchronize;
 //   - a launched kernel does not start until the stream is flushed by some
 //     later API call, so a host thread that spins right after the launch waits
 //     for a kernel that never runs; the handshake flushes with a stream query.

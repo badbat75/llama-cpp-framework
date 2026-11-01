@@ -19,7 +19,8 @@
 //! `LLM_FFN_EXPS_REGEX`) and of everything else; the input embedding tables
 //! (`token_embd`, and `per_layer_token_embd` where a model has one: both are
 //! `LLM_TENSOR_LAYER_INPUT` tensors, which stay in host memory even with
-//! every layer offloaded; Qwen3.8-Flash-Next's is 27 GiB); the rest (the
+//! every layer offloaded; `docs/qwen3.8_flash_next.md` section 1 has a large
+//! one); the rest (the
 //! output head and norms); and the KV cache. `local_shape` reads the same
 //! headers from the downloaded files, for the preset.
 //!
@@ -30,8 +31,8 @@
 //! failure. The header grammar is small and stable (v2 and v3), so the
 //! mirror is cheaper than the plumbing.
 //!
-//! How much is fetched: the header holds the tokenizer (150k tokens and as
-//! many merges for Qwen3: about 6 MiB), so the first request asks for
+//! How much is fetched: the header holds the tokenizer (every token and merge,
+//! megabytes on a large vocabulary), so the first request asks for
 //! `INITIAL_FETCH`, or the largest header seen so far in this process plus a
 //! margin (`HINT`), and a header still cut short asks again for four times
 //! as much, up to `MAX_HEADER`. A shape is cached per (repo, commit, path) for
@@ -58,9 +59,9 @@
 //! Several cards are modelled ONE BY ONE, never as one pool: `Budget::gpus`
 //! is in SPLIT ORDER (`split_order`), the order the guides measured best for
 //! a CUDA + ROCm pair: on Windows the ROCm card first (`docs/qwen3.8_27b.md`
-//! section 6: +9% prefill, +21% decode; `docs/qwen3.8_flash_next.md` section
+//! section 6 has the figures; `docs/qwen3.8_flash_next.md` section
 //! 7 runs that order too), on Linux the CUDA card first
-//! (`docs/qwen3.8_flash_next.md` section 2: +32% prefill, +13% decode; the
+//! (`docs/qwen3.8_flash_next.md` section 2 has the figures; the
 //! 27B puts the R9700 last there). Cards of one backend, or of a backend
 //! the guides never measured, keep the probe's order. The basis line names
 //! them in that order. No probe yet, or no GPU: every row says the estimate
@@ -72,9 +73,9 @@
 //! Per GPU, `GPU_RESERVE` (2 GiB) is kept free: llama.cpp's own `--fit`
 //! leaves 1 GiB per device (`--fit-target` default, which a preset left to
 //! the fit runs with), and the compute buffers plus the runtime's pools take
-//! another 0.8 to 1.4 GiB at the default batch sizes (measured on the R9700
-//! and the RTX 4070 SUPER, `docs/qwen3.8_flash_next.md`; the R9700 also wants
-//! ~500 MB left after a real prefill). On top, the KV cache of a
+//! more at the default batch sizes, which is what the second GiB covers
+//! (`docs/qwen3.8_flash_next.md`, with what the R9700 also wants left after a
+//! real prefill). On top, the KV cache of a
 //! `REF_CTX` (32k) context, or the model's own context when shorter, at f16,
 //! from the header: `head_count_kv x (key_length + value_length) x 2 bytes`
 //! per attention layer and token (a per-layer `head_count_kv` array is summed,
@@ -137,10 +138,9 @@
 //! without them spills or loses its recommendation):
 //!
 //! - The image encoder: its file size (the listing's) plus `MMPROJ_COMPUTE`
-//!   (512 MiB) for encoding an image. Measured for Qwen3.8's encoder
-//!   (`qwen3vl_merger`, 888 MiB of weights): 248 MiB of compute buffer at
-//!   llama.cpp's warmup (1472x1472) and 418 MiB at a 3840x2160 image
-//!   (`docs/nvidia_rtx4070_super.md`); its header is not read, since the
+//!   (512 MiB) for encoding an image, set above what Qwen3.8's encoder
+//!   (`qwen3vl_merger`) takes at llama.cpp's warmup and at a 3840x2160 image
+//!   (`docs/qwen3.8_27b.md` section 5); its header is not read, since the
 //!   compute buffer depends on the projector and the image, not on anything
 //!   the header says. llama.cpp puts it on the FIRST `--device` entry
 //!   (`common/arg.cpp`: `devices.front()` when no `--mmproj-device` is set),
@@ -163,11 +163,10 @@
 //!   alone), its KV cache at f16 for the MODEL's context (the draft context
 //!   holds as many tokens as the target's, `common/speculative.cpp`), where a
 //!   sliding-window layer holds its window plus a ubatch (2560 cells for a
-//!   DFlash drafter, whose every layer is windowed: 50 MiB at f16, as
-//!   measured), plus `DRAFT_COMPUTE` (768 MiB: the draft context's compute
-//!   buffers, 218 to 243 MiB on the drafter's card and 536 MiB on the card
-//!   with the target's output head, measured for a DFlash Q8_0 drafter of
-//!   Qwen3.8-27B; all of it is counted on the drafter's card, which on a
+//!   DFlash drafter, whose every layer is windowed), plus `DRAFT_COMPUTE`
+//!   (768 MiB: the draft context's compute buffers, on the drafter's card and
+//!   on the card with the target's output head, sized for a DFlash Q8_0 drafter
+//!   of Qwen3.8-27B; all of it is counted on the drafter's card, which on a
 //!   split is the output head's anyway). It goes with a model alone on its
 //!   card (or on another card when that keeps the model alone), and on the
 //!   LAST card of a split. Always a GPU: a drafter on the CPU is slower
@@ -904,12 +903,12 @@ pub fn budget_for(devs: &[DeviceOption], ram_total: Option<u64>, windows: bool) 
 // ── The extras: image encoder and separate drafter ───────────────────────
 
 /// What an image encoder takes on top of its weights while it encodes an
-/// image (module header, "The extras"): 248 MiB measured at llama.cpp's
-/// warmup and 418 MiB at a 3840x2160 image for Qwen3.8's 888 MiB encoder.
+/// image (module header, "The extras"): set above what Qwen3.8's encoder takes
+/// at llama.cpp's warmup and at a 3840x2160 image.
 pub const MMPROJ_COMPUTE: u64 = 512 * MIB;
-/// A separate drafter's compute buffers (module header, "The extras"):
-/// 218 to 243 MiB on the drafter's card plus 536 MiB on the card holding the
-/// target's output head, measured for a DFlash Q8_0 drafter of Qwen3.8-27B.
+/// A separate drafter's compute buffers (module header, "The extras"): on the
+/// drafter's card and on the card holding the target's output head, sized for a
+/// DFlash Q8_0 drafter of Qwen3.8-27B.
 pub const DRAFT_COMPUTE: u64 = 768 * MIB;
 /// The cells a sliding-window layer holds beyond its window: the default
 /// `--ubatch-size` (`llama_kv_cache_iswa`: 2048 + 512 = 2560 cells).
@@ -2374,7 +2373,7 @@ pub(crate) mod tests {
         let h = parse_header(&bytes).unwrap();
         let d = draft_shape_of(&[(h.clone(), size)]).unwrap();
         assert_eq!((d.kv_full, d.kv_swa, d.swa_cells), (0, 5 * 8 * 256 * 2, 2560));
-        // 50 MiB of KV at any context past the window, as measured at f16.
+        // 50 MiB of KV at any context past the window, at f16: the product above.
         assert_eq!(d.bytes(32768) - d.weights - DRAFT_COMPUTE, 50 * MIB);
         assert_eq!(d.bytes(32768), d.bytes(262144));
         // Its tensors but the input embeddings (host memory).

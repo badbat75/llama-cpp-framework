@@ -340,7 +340,7 @@ impl Layout {
 
     /// The last position, which is the OUTPUT layer rather than a block, worth
     /// naming because it carries `output.weight`, routinely the single biggest
-    /// tensor on its device (1.9 GiB on a 9B at BF16).
+    /// tensor on its device.
     fn output_position(self) -> i32 {
         self.start + self.count - 1
     }
@@ -994,7 +994,7 @@ mod tests {
     }
 
     // The label has to name the output layer: it is a position but not a block,
-    // and it carries `output.weight`: 1.9 GiB on a 9B at BF16, routinely the
+    // and it carries `output.weight`, routinely the
     // biggest single tensor on its device.
     #[test]
     fn the_range_label_names_the_output_layer_separately() {

@@ -235,7 +235,7 @@ LogRotateKb = {log_rotate_kb}
 ; `bench run` with no --prompt / --prompt-file). Empty = the
 ; default, the framework's own bench-prompt-43k-1.0.txt, installed read-only
 ; under share\\benchmarks\\prompts beside the other prompts the standard spec
-; pins (a 110k-token one, a coding-agent turn as .json).
+; pins (a longer one, a coding-agent turn as .json).
 BenchPromptFile = {prompt_file}
 
 ; BenchDb: the SQLite database every finished benchmark run is written to

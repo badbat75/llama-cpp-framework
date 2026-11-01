@@ -134,7 +134,7 @@ $distOs   = $sources.DistOs
 # newest stable inside the layout, by a HIP_PATH move when that version is
 # already there, by a download otherwise, and leaves the old tree where it
 # is. Copy it to <DistRoot>\TheRock\<version>\windows first (its marker comes
-# along) to save the 4.6 GB.
+# along) to save the download.
 $rocm = $sources.Rocm
 $rocmRoot = Get-DistHome 'Rocm' $sources $distRoot
 
@@ -651,7 +651,7 @@ if ($vulkanLatest -and (-not $vulkanBefore -or $vulkanBefore.Parsed -lt $vulkanL
 # ── Decide the ROCm action ──────────────────────────────────────────
 # Cheapest convergence first, which is what the version directories buy: a
 # dist an earlier run already extracted only needs HIP_PATH moved onto it.
-# Downloading 4.6 GB is the last resort, not the first.
+# Downloading the dist is the last resort, not the first.
 
 $rocmTarget  = $null   # dist to download and extract this run (Version/Url/Size)
 $rocmSwitch  = $null   # version dir already on disk to point HIP_PATH at
@@ -1223,7 +1223,7 @@ if (-not $rocmBefore -and $rocmAfter) {
 $rocmOther = @($rocmOnDisk.Keys | Where-Object { $rocmOnDisk[$_] -ne $rocmAfterDir })
 if ($rocmOther.Count) {
     # Never deleted here: an inactive dist is a working rollback (switching
-    # back is a HIP_PATH move), and 25 GB is the user's call, not the script's.
+    # back is a HIP_PATH move), and the disk it takes is the user's call, not the script's.
     Write-ReportRow "    " DarkGray "" "inactive dists in ${rocmRoot}: $($rocmOther -join ', ') (~25 GB each, delete the directory to reclaim)"
 }
 if ($rocmBeforeDir -and $rocmBeforeDir -ne $rocmAfterDir -and (Test-Path $rocmBeforeDir) -and

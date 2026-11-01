@@ -60,7 +60,7 @@ would benchmark a workload the machine never runs.
 
 ## `bench-prompt-110k-1.0.txt`
 
-`bench-prompt-110k-1.0.txt` (404,098 characters, 110k tokens on Qwen3.8) is the same
+`bench-prompt-110k-1.0.txt` (404,098 characters, 115k tokens on Qwen3.8) is the same
 kind of frozen snapshot, taken on 2026-10-20 and larger: the agent guides, the
 per-GPU and per-model references, the build pipeline guide, the configurator's
 README and some of its sources, then one question. It measures the regime where a

@@ -81,7 +81,7 @@ fn size_mib(dir: &Path) -> u64 {
 
 /// The OpenSSL DLL names a binary mentions (`libcrypto-N-x64.dll`,
 /// `libssl-N-x64.dll`), read from its raw bytes in chunks: ggml-hip.dll alone
-/// is ~1 GB. The search for the prefix gates the match, so only the few chunks
+/// is huge. The search for the prefix gates the match, so only the few chunks
 /// that could hold a name are looked at; the overlap carried between chunks is
 /// longer than any name, so one straddling a boundary is still seen.
 fn openssl_imports(path: &Path) -> Result<BTreeSet<String>> {
@@ -129,7 +129,7 @@ fn openssl_name_at(s: &[u8], prefix_len: usize) -> Option<String> {
 }
 
 /// The DLL names a PE32+ image imports, normal and delay-load, read from its
-/// import directories. Headers only: ggml-hip.dll is ~1 GB.
+/// import directories. Headers only: ggml-hip.dll is huge.
 fn pe_imports(path: &Path) -> Result<Vec<String>> {
     let mut f = std::fs::File::open(path)?;
     let mut rd = |off: u64, n: usize| -> Result<Vec<u8>> {
@@ -316,7 +316,7 @@ pub fn run(keep_staging: bool, wix_arg: Option<PathBuf>) -> Result<()> {
     ui::head("Staging llama.cpp binaries...");
     run_cmd(cmd("cmake").arg("--install").arg(&build_dir).arg("--prefix").arg(&stage))?;
 
-    // llama.cpp's own test harnesses (test-*.exe, ~11 MB): unit tests, and
+    // llama.cpp's own test harnesses (test-*.exe): unit tests, and
     // unwanted here because the installer offers to put bin\ on the SYSTEM
     // PATH. The C headers go too: the installer does not ship them, and the
     // MSI harvests the staging tree whole.

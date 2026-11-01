@@ -339,16 +339,15 @@ impl ModelInfo {
     /// "Shared GPU memory" a fully-offloaded model still shows (llama.cpp parks
     /// `token_embd` in a pinned host buffer even at `offloaded N/N layers`). But
     /// the cure has TWO preconditions, and violating either turns a win into a
-    /// 10-15x loss, both measured on a 27B split across ROCm + CUDA:
+    /// large loss, both seen on a 27B split across ROCm + CUDA:
     ///
     /// 1. **The type must have a GPU `get_rows` kernel.** Pin a table of a type
     ///    the backend cannot `GET_ROWS` and the tensor sits in VRAM the GPU cannot
     ///    read, so the lookup round-trips to the host EVERY token: decode collapsed
-    ///    25 t/s → 2.8 t/s (Q4_K embd) and → 1.9 t/s (Q5_K, whose table is bigger,
-    ///    hence slower; the penalty tracks the table size). Prefill is untouched
+    ///    (the penalty tracks the table size). Prefill is untouched
     ///    (one round-trip per 2048-token batch amortizes it), which is why this
-    ///    reads as "the GPU is idle" rather than "the GPU is slow". Those numbers
-    ///    were taken on b9976, when ggml-cuda/ggml-hip whitelisted only
+    ///    reads as "the GPU is idle" rather than "the GPU is slow". That was
+    ///    on b9976, when ggml-cuda/ggml-hip whitelisted only
     ///    F32/F16/BF16/I32/Q1_0/Q4_0/Q4_1/Q5_0/Q5_1/Q8_0; **b10089** (#25962,
     ///    2026-07-22, "cuda: GET_ROWS quants", whose PR text names exactly that
     ///    round-trip as what it fixes) added every K-quant and IQ-quant, so from
@@ -360,8 +359,8 @@ impl ModelInfo {
     /// 2. **The card must have room for it.** Pinning MOVES the table out of host
     ///    RAM and into VRAM, so it is a straight add to the device's footprint,
     ///    hence the size here. With the KV cache already filling the card, that
-    ///    add is what tips it into paging (23 t/s → 13.7 t/s, a Q8_0 table on a
-    ///    card holding a 256k f16 KV cache). Size is the number to budget against.
+    ///    add is what tips it into paging (a Q8_0 table on a card already holding
+    ///    a large f16 KV cache). Size is the number to budget against.
     pub fn embd_line(&self) -> String {
         match self.embd {
             Some((ty, bytes)) => {
@@ -382,7 +381,7 @@ impl ModelInfo {
             Some((ty, _)) if !gpu_has_get_rows(ty, self.n_embd) => format!(
                 "This model stores token_embd as {}: CUDA/ROCm have no get_rows kernel for \
                  that type, so pinning it to a GPU sends the whole table back to host RAM on \
-                 EVERY token (measured: 25 → 2.8 tok/s). Point the rule at CPU, or use a build \
+                 EVERY token, and decode collapses. Point the rule at CPU, or use a build \
                  whose embedding table is Q8_0/F16/BF16 or a K-quant.",
                 ggml_type_name(ty)
             ),
@@ -1434,8 +1433,8 @@ mod tests {
     /// Unsloth "XL" builds of the SAME model: the Q6_K_XL keeps its embedding
     /// table at Q8_0 while the Q5/Q4 builds drop it to a K-quant. Up to b10088
     /// that was the difference between a pin that worked and one that
-    /// round-tripped the table to the host every token (measured 2.8 t/s (Q4_K)
-    /// and 1.9 t/s (Q5_K) against 21-52 t/s unpinned); since b10089 (#25962)
+    /// round-tripped the table to the host every token, collapsing decode; since
+    /// b10089 (#25962)
     /// the K-quants have a kernel and all three pin, so the verdict has to
     /// follow the TYPE against the current whitelist, not a remembered rule.
     #[test]

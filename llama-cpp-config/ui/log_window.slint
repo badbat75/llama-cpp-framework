@@ -8,8 +8,7 @@
 //
 // The log is a ListView with one row per line, NOT one TextEdit: a text
 // widget lays its WHOLE content out again on every change and on every frame
-// (measured: ~320 ms per append and ~150 ms per frame at 70 KB, i.e. the
-// window frozen for most of each poll). A list lays out the visible rows
+// (on a real log, the window frozen for most of each poll). A list lays out the visible rows
 // only, and an append touches nothing above it, which is also what keeps the
 // view still while Auto-scroll is off.
 

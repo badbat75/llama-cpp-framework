@@ -47,7 +47,7 @@
       (a single release asset). "high" is LZX; a cabinet holds at most
       MaximumUncompressedMediaSize MB of input, and WiX compresses the
       cabinets in parallel, one thread each, which is what keeps the build
-      time sane on ~2.9 GB of payload.
+      time sane on a large payload.
     -->
     <MediaTemplate EmbedCab="yes" CompressionLevel="high" MaximumUncompressedMediaSize="128" />
 

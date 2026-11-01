@@ -180,7 +180,7 @@ pub fn run() -> Result<()> {
     }
 
     // ── CUDA toolkit: the newest installed version ─────────────────────
-    // CMake picks nvcc once and caches ~40 toolkit paths next to it, so the
+    // CMake picks nvcc once and caches the toolkit's paths next to it, so the
     // newest toolkit is pinned on every configure. A changed
     // CMAKE_CUDA_COMPILER alone makes CMake delete the WHOLE cache, so on a
     // change only the CUDA half is reset: that language's identification

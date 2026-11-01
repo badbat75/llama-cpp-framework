@@ -54,7 +54,7 @@
 //!   which is the listing's job once a row is picked.
 //! - `gguf` is the header summary of the repo's GGUFs: `total` (the parameter
 //!   count), `architecture`, `context_length`, `totalFileSize`, and the whole
-//!   chat template (a few KB per row: still a ~20 KB answer for 30 rows). Only
+//!   chat template (per row, so it sets the size of the answer). Only
 //!   `total` and `architecture` are read, into the row's model marker
 //!   (`model_kind`, `kind_label`: `MoE 30.5B`, `dense 8.2B`). The architecture
 //!   alone does not always tell: Mixtral is `llama`, so an arch that serves

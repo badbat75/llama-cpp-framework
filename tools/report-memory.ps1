@@ -268,15 +268,14 @@ function ConvertFrom-LoadBlock {
     # llama_context is constructed, i.e. while the model's context is still the open
     # one: its `load_tensors` lines would be charged to the model and then eaten by the
     # (owner, kind, device) de-duplication below, which keeps only the larger of two
-    # "model buffer" rows. That dropped 1.7-1.95 GiB of DFlash2 weights from every
+    # "model buffer" rows. That dropped the DFlash2 weights from every
     # balance sheet (found 2026-09-24). Latch on the banner that opens the load.
     $draftFile = $false
 
     # sched_reserve lines come in GROUPS (one line per device, back to back), and a
     # group is not always owned by the context that is open when it prints: after the
-    # draft context, the slots' first batch re-reserves the MODEL's graph (DFlash2:
-    # 1080/1050 MiB with the model's own 202 MiB host buffer, against the draft's
-    # 243/536 with 10 MiB). Each group is tagged here and assigned after the loop.
+    # draft context, the slots' first batch re-reserves the MODEL's graph, whose sizes
+    # are not the draft's. Each group is tagged here and assigned after the loop.
     $schedGroup = 0
     $groupCtx   = @{}
     $prevSched  = $false
@@ -810,7 +809,7 @@ foreach ($d in ($deviceRows | Sort-Object RequestedMiB -Descending)) {
     # buffers per BACKEND (`ROCm_Host`, `CUDA_Host`), never per device, so with two cards
     # on one backend they can only be matched family-wide; and WDDM charges the same
     # allocation under EVERY adapter of that family (verified 2026-08-18: the identical
-    # 2,120 MiB shows up under both the R9700 and the AMD iGPU), which is why this is a
+    # amount shows up under both the R9700 and the AMD iGPU), which is why this is a
     # subtraction and not an apportionment.
     $family      = ($d.Device -replace '\d+$', '') + '_Host'
     $pinnedFam   = @($hostRows | Where-Object { $_.Device -eq $family })
@@ -825,19 +824,18 @@ foreach ($d in ($deviceRows | Sort-Object RequestedMiB -Descending)) {
     # it decides: a spill shows up as SHARED memory beyond the backend's pinned buffers,
     # and if that has not moved then the excess went into real VRAM and the finding is
     # 'no headroom left', which is a different instruction to the reader than 'it is
-    # paging' (verified 2026-08-18: requested 85 MiB past free-at-load, dedicated grew by
-    # exactly the requested amount and shared stayed flat at 124 MiB).
+    # paging' (verified 2026-08-18: asked past free-at-load, dedicated grew by
+    # exactly the requested amount and shared stayed flat).
     #
     # The corroboration threshold is deliberately lower than the standalone one below:
     # here the arithmetic has already raised the suspicion, so a moderate shared excess
     # is enough to confirm it, whereas a device whose log fits needs a big shared
     # allocation before it means anything at all. Both must clear the driver's OWN
     # non-local memory, which no log line accounts for and which is there with the card
-    # half empty: 290-360 MiB on the 4070 Super (CUDA) and ~210 MiB on the R9700 (HIP)
-    # beyond the pinned buffers, measured 2026-09-24 in runs with 1.5-1.9 GiB of VRAM
-    # free. At 256 MiB this line called a 4070 Super OVERSUBSCRIBED at its dedicated
-    # ceiling with exactly that baseline in shared (358 MiB, the same figure as at a
-    # split 400 MiB lighter); the one real spill of that campaign put 1,994 MiB there.
+    # half empty, beyond the pinned buffers, and differs per card and backend. A
+    # threshold too near it calls a 4070 Super OVERSUBSCRIBED at its dedicated ceiling
+    # with exactly that baseline in shared, the same figure at a lighter split, while a
+    # real spill puts several times the threshold there.
     if ($d.FreeAtLoadMiB -and $d.RequestedMiB -gt $d.FreeAtLoadMiB) {
         $over = $d.RequestedMiB - $d.FreeAtLoadMiB
         if (-not $liveRow) {

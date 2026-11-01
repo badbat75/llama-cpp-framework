@@ -196,7 +196,8 @@ pub fn build_options(
 // backends dynamically and drops one whose imports don't resolve without a
 // word, so a machine whose ROCm dist is absent, half-extracted, or simply not
 // on the child's PATH does not fail: it enumerates the same AMD card through
-// Vulkan and runs perhaps half as fast, with nothing anywhere saying why.
+// Vulkan and runs slower (`docs/amd_ai_pro_r9700.md` section 5), with nothing
+// anywhere saying why.
 // Observed twice while investigating this: a console whose PATH still named a
 // dist directory that had been renamed produced a device list with no ROCm row
 // at all, and a test harness that cheerfully reported "backends passed" having

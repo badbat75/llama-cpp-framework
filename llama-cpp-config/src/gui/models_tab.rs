@@ -894,8 +894,8 @@ fn apply_draft_pick(form: &mut PresetForm, value: &str, spec: &str) {
 /// the device holding the last layers, i.e. the LAST of the list with a share
 /// (a blank `tensor-split` gives every device one). Pinned anywhere else, the
 /// draft context aborts at load: "pre-allocated tensor (output.weight) in a
-/// buffer (ROCm1) that cannot run the operation". Measured on 2x R9700 with
-/// Qwen3.8-27B + DFlash2; a reduced-vocab drafter ships its own head and runs
+/// buffer (ROCm1) that cannot run the operation" (`docs/amd_ai_pro_r9700.md`
+/// section 4: the last device takes the head); a reduced-vocab drafter ships its own head and runs
 /// on either card, so the last one is safe for both.
 fn draft_pin_device(form: &PresetForm, spec: &str) -> Option<String> {
     let devices = gpu_split::parse_device_list(form.device.as_str());
@@ -1432,7 +1432,7 @@ mod tests {
 
     // A full-vocab DFlash drafter runs the target's output head, which a
     // layer split leaves on the last device with a share: pinned to the first,
-    // the draft context aborts at load (2x R9700, Qwen3.8-27B + DFlash2).
+    // the draft context aborts at load.
     #[test]
     fn pick_pins_a_dflash_draft_to_the_device_holding_the_output_head() {
         let mut f = PresetForm {

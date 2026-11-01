@@ -58,9 +58,8 @@ defines = [
     # ... (slow)"), so a q5_0 or q5_1 cache, the steps between q4_0 and
     # q8_0 the configurator offers, paid that on every such step. Batched steps
     # (prefill, MTP verify batches of 3+) convert to f16 for every type and
-    # are unaffected. Cost measured on the 2026-09-07 build: ~80 s of nvcc
-    # and ~160 s of HIP clang per pair, +1.6 MB ggml-cuda.dll and +7 MB
-    # ggml-hip.dll per pair. Mixed pairs (q8_0 K with a q5 V) are NOT
+    # are unaffected. Each pair costs compile time in nvcc and HIP clang and
+    # size in ggml-cuda.dll and ggml-hip.dll. Mixed pairs (q8_0 K with a q5 V) are NOT
     # listed and still take the slow path. Commas, not semicolons: the
     # value is split on either, and a comma cannot turn into a CMake list
     # on the way through the command line. Changing the list changes a

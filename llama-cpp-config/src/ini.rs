@@ -471,7 +471,7 @@ pub fn parse_int_in(s: &str, range: &RangeInclusive<i32>) -> Option<i32> {
 /// "unset" is a real instruction: a preset saved with an unparseable context
 /// has no `ctx-size` at all, and llama-server then loads the model's TRAINED
 /// context. Met on 2026-09-17: a context edit saved from the Models tab reached
-/// disk with no `ctx-size`, and the R9700 paged 1.5 GiB at 262144. The field is
+/// disk with no `ctx-size`, and the card paged at that context. The field is
 /// digits-only, so the text cannot have held a separator; a number typed next to
 /// the one already there (`196608245760`, past `i32`) is one way to that save.
 pub fn int_problem(label: &str, s: &str, range: &RangeInclusive<i32>) -> Option<String> {

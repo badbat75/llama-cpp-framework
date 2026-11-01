@@ -41,12 +41,12 @@
 //! `Embedding table` is the one that pays for the table's existence. llama.cpp
 //! leaves `token_embd.weight` in HOST memory even when it reports
 //! `offloaded 33/33 layers to GPU`: the embedding lookup is a `get_rows` over a
-//! handful of tokens, cheap on CPU and worth ~1-2 GiB of VRAM. But with a GPU
+//! handful of tokens, cheap on CPU, and the table would only take VRAM. But with a GPU
 //! backend active that host buffer is PINNED (`ROCm_Host` / `CUDA_Host`), and
 //! Windows counts pinned host memory as **Shared GPU memory**, so a model that
 //! fits in VRAM with room to spare still shows GBs of shared allocation, and the
 //! graph carries a CPU split it didn't need. On a big-vocab BF16 model the table
-//! is huge (`n_vocab 248320 × n_embd 4096 × 2 B` = 1940 MiB), which is when
+//! is huge (`n_vocab × n_embd × 2 B`), which is when
 //! moving it onto a GPU is worth the VRAM.
 
 use crate::devices::DeviceOption;

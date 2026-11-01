@@ -18,8 +18,8 @@ use std::path::Path;
 //    multiarch dist has no kernels for it, and llama.cpp v0.6.0 does not
 //    compile for it: mma.cuh uses the gfx12 WMMA builtins, which gfx1250
 //    lacks, "needs target feature wmma-128b-insts"). Linux does drive the MI
-//    cards: add them by hand in the config if this machine has one (~56 MiB
-//    of ggml-hip per arch);
+//    cards: add them by hand in the config if this machine has one (each arch
+//    adds to ggml-hip: `docs/build-compiling.md`, "HIP targets");
 //  - the Ryzen iGPU archs are always kept, even if a future dist drops their
 //    kernels: the driver-bundled HIP runtime on Windows fails kernel-module
 //    load on EVERY visible device when one visible device has no matching

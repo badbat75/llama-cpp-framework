@@ -33,7 +33,7 @@ macos = "~/dists"
 # stable is FOUND in the indexes, never composed (the host depends on the
 # version: up to 7.14 the legacy index, from 10.0 the stable repo), matched
 # strictly as therock-dist-<os>-<flavor>-<X.Y.Z>.tar.gz so `-tests-` builds and
-# dated nightlies are never taken as releases. ~9.5 GB download, ~22 GB on disk.
+# dated nightlies are never taken as releases. Sizes: docs/build-prerequisites.md.
 [rocm]
 dir = "TheRock"
 marker = ".therock-version"

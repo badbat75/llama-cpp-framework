@@ -299,7 +299,7 @@ pub fn env_vars(cfg: &crate::server_cfg::ServerConfig) -> Vec<(String, String)> 
 
 /// How long `start()` watches a freshly spawned llama-server before declaring
 /// success: long enough to catch a launch that dies on a bad preset, a taken
-/// port, or a missing model (those exit within ~1 s), short enough that a
+/// port, or a missing model (those exit at once), short enough that a
 /// healthy server (still alive while it loads the model) isn't held up.
 const LAUNCH_GRACE: std::time::Duration = std::time::Duration::from_millis(2500);
 
@@ -458,8 +458,8 @@ pub fn start() -> io::Result<Option<crate::server_cfg::ServerConfig>> {
 /// alive after `STOP_GRACE`; the caller reports that as "still running", and a
 /// restart must not go on to `start()`, which would see the old process and
 /// launch nothing. The wait matters on Linux, where SIGTERM is a GRACEFUL stop:
-/// the router waits for its children, and a child that held a 5.6 GiB KV cache
-/// took ~40 s to exit after logging "cleaning up before exit".
+/// the router waits for its children, and a child that holds a large KV cache
+/// takes a long while to exit after logging "cleaning up before exit".
 /// The log is closed only after `is_running()` reads false: renaming the file
 /// while the process still holds it as stdout would carry its last lines into
 /// the closed log and, on a kill that never lands, would file a live run under
@@ -503,8 +503,8 @@ pub fn stop() -> bool {
 /// How long `stop()` waits for the stopped process to disappear before it
 /// reports failure. `taskkill /f` is synchronous in practice, so on Windows
 /// this is a ceiling, not a delay; on Linux the graceful exit of a router whose
-/// child held a 5.6 GiB KV cache took about a minute, so the ceiling is twice
-/// that.
+/// child holds a large KV cache is slow, so the ceiling is twice the longest
+/// exit seen.
 pub const STOP_GRACE: std::time::Duration = std::time::Duration::from_secs(120);
 
 /// Poll `running` every `step` until it reads false (`true`), or until `grace`

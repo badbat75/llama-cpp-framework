@@ -89,9 +89,8 @@ pub struct ServerConfig {
     /// launch; f32 is immune, and the identical call sequence passes on Tensile
     /// (standalone repro: default and `=1` fail, `=0` passes for
     /// batched/strided/plain × bf16/f16). llama-server aborts on the first
-    /// prefill batch of any BF16/F16 model. Forcing Tensile is a full-speed cure
-    /// rather than a degradation: measured pp512 587 t/s, tg128 35 t/s on Ornith
-    /// BF16, against ~19 t/s prefill for the older
+    /// prefill batch of any BF16/F16 model. Forcing Tensile is the cure: its
+    /// prefill is far ahead of the older
     /// `GGML_CUDA_CUBLAS_COMPUTE_TYPE=f32` workaround. Upstream: llama.cpp
     /// #25836, ROCm #6461, TheRock #7271.
     ///
@@ -114,8 +113,8 @@ pub struct ServerConfig {
     /// that stood until an iGPU appeared and then killed `hipGetDeviceCount`
     /// outright, dropping the whole HIP backend (2026-09-03).
     ///
-    /// Left unset by default all the same: the bug is per-arch, hipBLASLt is the
-    /// faster path everywhere it works, and the runtime finding rests on one
+    /// Left unset by default all the same: the bug is per-arch, whether Tensile
+    /// costs speed is unmeasured (the R9700 guide), and the runtime finding rests on one
     /// driver (32.0.22042.14002) on one box.
     pub rocblas_use_hipblaslt: Option<bool>,
     /// Which AllReduce `--split-mode tensor` reduces through, exported as
@@ -140,7 +139,8 @@ pub struct ServerConfig {
     /// `ggml_cuda_ar_allreduce`, measured 2026-10-13 on v0.6.0 with an R9700 +
     /// an RTX 4070 Super, under the default and under `internal` alike). With
     /// `none` the meta backend's generic reduction runs instead: on that pair
-    /// prefill 599 t/s against 1290 for the layer split, decode unchanged.
+    /// prefill falls well behind the layer split and decode does not move
+    /// (`docs/amd_ai_pro_r9700.md` section 4).
     ///
     /// An unknown value is NOT refused by the backend: it warns and behaves as
     /// `none`, so a typo would silently cost the fast path. Hence the closed
@@ -173,15 +173,14 @@ pub struct ServerConfig {
     /// code, not in server.ini, so unset renders as a commented hint line and
     /// reloads as None.
     ///
-    /// An opt-in path in the framework's PATCHED `libggml-hip`: the 1-8 query
+    /// A path in the framework's PATCHED `libggml-hip`, on by default: the 1-8 query
     /// FlashAttention (the single-token decode and the MTP verify batch) of a
     /// head-256 model at GQA 5 to 12 (Qwen3.8-27B at 6, Qwen3.8-Flash-Next at
     /// 12) runs on the WMMA kernel with the KV cache split round-robin over the
-    /// CUs. Measured at GQA 6 on the R9700 (2026-10-20):
-    /// FLASH_ATTN_EXT -15% at 1 query and -38% at 3-4 queries, decode at a
-    /// 115k-token prompt -5%, and greedy output identical between MTP and plain
-    /// decode. `2` runs the same kernel but reads the KV cache twice as often at
-    /// 3-4 queries, so `4` is the one to use. Inert on an unpatched llama.cpp,
+    /// CUs, which speeds that attention and decode at depth
+    /// (`docs/amd_ai_pro_r9700.md` section 3; what it does to the greedy text:
+    /// `docs/qwen3.8_27b.md` section 1). `2` runs the same kernel but reads the
+    /// KV cache twice as often at 3-4 queries, so `4` is the one to use. Inert on an unpatched llama.cpp,
     /// on a GPU older than RDNA4, on any other head size or GQA, on a KV cache
     /// other than f16 or q8_0, and on CUDA. Not a llama-server flag: ggml reads
     /// it with `getenv` at the first attention call, hence `env_vars`.
@@ -235,9 +234,9 @@ pub struct ServerConfig {
     ///
     /// What it buys is the one cost no amount of VRAM tuning touches: prefill is
     /// QUADRATIC in the prompt length, and the KV cache is process memory, so a
-    /// restart re-reads the whole conversation from zero. Measured on a 234k
-    /// prompt (Qwen3.8-27B, hybrid `qwen35`): about 17 minutes of prefill, against
-    /// ~8.3 GiB of sequential IO to reload the same state.
+    /// restart re-reads the whole conversation from zero, where reloading the
+    /// same state is only sequential IO (`llama-cpp-config/README.md`,
+    /// "Conversation snapshots", has the measured cost).
     ///
     /// Off by default because it is not free: each snapshot is roughly one byte
     /// on disk per byte of KV cache, the stop path waits for the write, and the
@@ -251,12 +250,10 @@ pub struct ServerConfig {
     /// It is overridable rather than fixed for one reason: the default sits on
     /// the SYSTEM drive and these files are large. The size follows the tokens
     /// the slot actually HOLDS, not `ctx-size`: the KV cache is dumped for the
-    /// conversation, not for the allocated context, so a 127,579-token
-    /// conversation on Qwen3.8-27B measured 4,703,061,864 bytes (4.38 GiB, i.e.
-    /// the arch's 36 KiB per token) where a full 262k context would be ~8.3 GiB.
-    /// Measured on v0.6.0; since v0.7.0 the file also carries the context
-    /// checkpoints and the draft state (`slot_state` module header), so more.
-    /// That is a ceiling to plan disk against, never a fixed cost of enabling
+    /// conversation, not for the allocated context (size per token:
+    /// `docs/qwen3.8_27b.md` section 1). Since v0.7.0 the file also carries the
+    /// context checkpoints and the draft state (`slot_state` module header).
+    /// A full context is the ceiling to plan disk against, never a fixed cost of enabling
     /// the feature.
     /// A user whose models already live on another disk will want the dumps
     /// there too, and a default that fills C:\ with no way out would be a poor
@@ -753,12 +750,11 @@ LogVerbosity = {log_verbosity}
 ; by the framework's PATCHED ROCm backend: the 1-8 query FlashAttention (decode
 ; and the MTP verify batch) of a head-256 model at GQA 5 to 12 (Qwen3.8-27B at
 ; 6, Qwen3.8-Flash-Next at 12) runs on the WMMA kernel with the KV cache split
-; round-robin over the CUs. Measured at GQA 6 on the R9700: FLASH_ATTN_EXT -15%
-; at 1 query, -38% at 3-4, decode at a 115k-token prompt -5%, same greedy
-; output. 2 runs the same kernel but reads the KV cache twice as often at 3-4
-; queries, so 4 is the one to use. Inert on an unpatched llama.cpp, on GPUs
-; older than RDNA4, other head sizes or GQA, a KV cache other than f16 or q8_0,
-; and on CUDA. Commented = the default, 4 (exported); 0 switches it off.
+; round-robin over the CUs: faster attention, and faster decode at depth
+; (figures in the R9700 guide). 2 runs the same kernel but reads the KV cache
+; twice as often at 3-4 queries, so 4 is the one to use. Inert on an unpatched
+; llama.cpp, on GPUs older than RDNA4, other head sizes or GQA, a KV cache other
+; than f16 or q8_0, and on CUDA. Commented = the default, 4 (exported); 0 switches it off.
 {hip_fa_band_line}
 ; RocprofAttach exports ROCP_TOOL_ATTACH=1, which rocprofiler-sdk requires of a
 ; process before `rocprofv3 --attach <pid>` (in the TheRock dist) may attach a
@@ -768,15 +764,15 @@ LogVerbosity = {log_verbosity}
 ; server stops (--slot-save-path + a /slots save call), and push the newest one
 ; back on the next start. It buys back the one cost VRAM tuning cannot touch:
 ; prefill is QUADRATIC in the prompt length and the cache dies with the process,
-; so a restart re-reads the whole conversation. Measured on a 234k-token prompt:
-; ~17 minutes of prefill against ~8.3 GiB of sequential IO. Off by default: each
-; snapshot costs that much disk, the stop waits for the write, and the next start
+; so a restart re-reads the whole conversation, where restoring a snapshot is
+; only sequential IO. Off by default: each snapshot costs disk, as much as the KV
+; cache it holds, the stop waits for the write, and the next start
 ; loads the model eagerly to push the state back in.
 SaveStateOnShutdown = {save_state_lit}
 ; StateDir: where those snapshots go. One file per model, overwritten each time,
 ; and dumps of models that are no longer loaded are pruned on save. Point it at a
-; data disk if the system drive is tight: a 262k-context snapshot is ~8.3 GiB
-; of KV cache, plus the context checkpoints and the draft state it also holds.
+; data disk if the system drive is tight: a snapshot is the KV cache of the
+; conversation, plus the context checkpoints and the draft state it also holds.
 StateDir = {state_dir}
 ; OpencodeBaseUrl overrides the auto-derived integration URL (host:port/v1).
 ; OpencodeApiKey is the provider's API key for authentication.
@@ -903,7 +899,7 @@ mod tests {
         assert_eq!(reloaded.cuda_allreduce, None);
         assert_eq!(reloaded.models_dir, Some(default_models_dir()));
         // Snapshots are off until asked for, and StateDir materializes like
-        // ModelsDir: an 8 GiB-per-dump directory has to be visible in the file.
+        // ModelsDir: a directory of large dumps has to be visible in the file.
         assert_eq!(reloaded.save_state_on_shutdown, Some(false));
         assert_eq!(
             reloaded.state_dir,

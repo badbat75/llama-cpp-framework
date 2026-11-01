@@ -34,7 +34,7 @@
     # HIP_PATH names the ACTIVE dist. Dists therefore live side by side: an
     # upgrade lands next to its predecessor instead of wiping it, so going
     # back is a HIP_PATH move (plus xtask configure + a rebuild), not a
-    # 4.6 GB re-download. The cost is disk, ~25 GB each.
+    # re-download. The cost is disk.
     #
     # The newest stable is FOUND, never composed: both scripts scan Indexes
     # (HTML pages carrying their listing as an inline JS `files` array) for

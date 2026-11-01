@@ -186,7 +186,7 @@ pub fn config_to_form(cfg: &server_cfg::ServerConfig) -> ServerForm {
         log_verbosity: log_level_label(cfg.log_verbosity_or_default()),
         // A plain bool toggle, and a path that materializes its default the same
         // way ModelsDir does: the field is always populated, so the user can see
-        // where 8 GiB-per-model dumps would land before turning the toggle on.
+        // where the per-model dumps would land before turning the toggle on.
         save_state_on_shutdown: cfg.save_state_on_shutdown_or_default(),
         state_dir: cfg.state_dir_or_default().into(),
         // Base URL: when unset, show auto-derived and check the default box.
@@ -322,7 +322,7 @@ mod tests {
             webui_mcp_proxy: Some(false),
             log_verbosity: Some(2),
             // Non-default toggle, and a StateDir off the system drive: the path
-            // is only overridable because 8 GiB dumps do not belong on C:.
+            // is only overridable because large dumps do not belong on C:.
             save_state_on_shutdown: Some(true),
             state_dir: Some(r"E:\llama-state".into()),
             opencode_base_url: Some("https://proxy.example.com".into()),

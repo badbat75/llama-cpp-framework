@@ -17,8 +17,8 @@
 //!
 //! The view is a list of rows, not one text widget, and that is the whole
 //! reason the window stays responsive: a Slint text widget lays out ALL of
-//! its text again on every change and every frame (measured ~320 ms per
-//! append plus ~150 ms per frame at 70 KB of log), while a list lays out the
+//! its text again on every change and every frame, far too slow on a real
+//! log, while a list lays out the
 //! visible rows only. It also fixes the view while Auto-scroll is off: an
 //! append adds rows at the end and moves nothing, and the rows above are not
 //! trimmed while the user is reading them (`HOLD_ROWS`).
