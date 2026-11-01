@@ -1,0 +1,31 @@
+Subject: [PATCH] llama : fix qwen4exp MTP graph reallocations when switching inputs
+
+Same fix as upstream PR #31415 (qwen35), ported to qwen4exp.
+
+---
+diff --git a/src/models/qwen4exp.cpp b/src/models/qwen4exp.cpp
+index c3e2b010d..79a4354b7 100644
+--- a/src/models/qwen4exp.cpp
++++ b/src/models/qwen4exp.cpp
+@@ -606,12 +606,16 @@ llama_model_qwen4exp::graph_mtp::graph_mtp(const llama_model & model, const llm_
+     ggml_set_input(inp->h);
+     ggml_set_name(inp->h, "mtp_h_input");
+ 
+-    ggml_tensor * tok_embd;
+-    if (ubatch.token) {
+-        tok_embd = ggml_get_rows(ctx0, model.tok_embd, inp->tokens);
+-    } else {
+-        tok_embd = inp->embd;
++    ggml_tensor * tok_embd = ggml_get_rows(ctx0, model.tok_embd, inp->tokens);
++    ggml_build_forward_order(gf, tok_embd);
++
++    ggml_tensor * embd = inp->embd;
++    if (model.tok_embd->buffer && !ggml_backend_buffer_is_host(model.tok_embd->buffer)) {
++        embd = ggml_dup(ctx0, embd);
+     }
++
++    ggml_tensor * inps[] = { tok_embd, embd };
++    tok_embd = ggml_build_forward_select(gf, inps, 2, ubatch.token ? 0 : 1);
+     cb(tok_embd, "mtp_tok_embd", il);
+ 
+     ggml_tensor * h = inp->h;

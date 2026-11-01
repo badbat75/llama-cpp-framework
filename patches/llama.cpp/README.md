@@ -357,3 +357,38 @@ request logs no `sched_graph_realloc` line with a two-digit node count (the draf
 **When to drop it.** As soon as the bundled llama.cpp release contains #31415: `git apply
 --check` then fails and the build stops with a message pointing here; delete the file and
 rebuild. If the PR changes before it is merged, re-download it (the sha256 above changes).
+
+## `0006-qwen4exp-mtp-graph-realloc.patch`
+
+Our port of `0005` (#31415 touches `qwen35.cpp` only) to `src/models/qwen4exp.cpp`, the
+architecture of Qwen3.8-Flash-Next: not published upstream, so this file is not a verbatim
+copy of anything. sha256 `54d5f2185f2265f2610a16598a9bf2660ee9a85dc3839907d2b1cae31daeea07`.
+
+**What it changes.** Same defect and same fix as `0005`: `graph_mtp` picked its input with an
+`if` on `ubatch.token`, now it builds both inputs and picks one with
+`ggml_build_forward_select`, so the topology no longer depends on the input; a `ggml_dup` of the
+embedding input when the embedding table is off the host.
+
+**Why one image is enough.** The first switch between the two inputs changes the backend
+assignments, so the scheduler re-reserves for that one graph (silently: `sched_graph_realloc`
+traces only the reserves with unchanged assignments) and the worst-case reservation made at
+load is gone. From then on `process()` (several tokens, no output) and `draft()` (one token, one
+output) each need something the other's reservation lacks: two reallocations per draft cycle,
+for the rest of the server's life, all with the same node count. This chain is read from the
+code (`ggml_backend_sched_alloc_splits`, `ggml_gallocr_needs_realloc`); what was measured is
+its start and its end, below.
+
+**Measured (Linux, 2x R9700, Swift-Qwen3.8-Flash-Next IQ3_S + BF16 mmproj, its preset's
+flags with `draft-mtp,ngram-map-k4v`, temp 0, 500 tokens per request, 2026-11-01).**
+Draft reallocations on 2 text requests, an image request and 3 more text requests: 0 / 0 / 408 /
+336 / 338 / 332 without the patch, 0 on all six with it. Decode unchanged (75.1-75.7 t/s
+with it, 75.5-76.2 without, on the text requests after the image), response text and draft
+acceptance identical, compute buffers identical: no gain at this length, no regression. Only the
+embedding-in-RAM branch ran: the `ggml_dup` branch (`token_embd` on a GPU) is untested here.
+
+**Confirming it is live.** At `-lv 4`, an image request on an MTP preset followed by a text
+request logs no `sched_graph_realloc` line after the load.
+
+**When to drop it.** As soon as the bundled llama.cpp release ships the fix for `qwen4exp`: `git
+apply --check` then fails and the build stops with a message pointing here; delete the file and
+rebuild. #31415 being merged as it stands does not fix this architecture.
