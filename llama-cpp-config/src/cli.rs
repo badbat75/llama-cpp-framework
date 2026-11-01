@@ -3,7 +3,7 @@
 use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand};
 
-use crate::{bench, paths, presets, server_cfg};
+use crate::{bench, paths, presets, server_cfg, strings};
 
 // ── Command definitions (clap) ───────────────────────────────────────────
 
@@ -540,15 +540,10 @@ fn shared_refusal(chosen: &[crate::linked_files::LinkedFile]) -> Option<String> 
         .filter(|f| f.in_use())
         .map(|f| {
             let ids: Vec<String> = f.used_by.iter().map(|id| format!("[{id}]")).collect();
-            format!("{} is used by {}", f.path.display(), ids.join(", "))
+            strings::fill("file-used-by", &[&f.path.display(), &ids.join(", ")])
         })
         .collect();
-    (!shared.is_empty()).then(|| {
-        format!(
-            "nothing deleted: {}. Leave it out of --delete-files, or pass --even-if-shared to delete it anyway.",
-            shared.join("; ")
-        )
-    })
+    (!shared.is_empty()).then(|| strings::fill("nothing-deleted-shared", &[&shared.join("; ")]))
 }
 
 #[derive(Args, Debug)]
@@ -604,7 +599,7 @@ fn run_bench(c: BenchCmd) -> Result<()> {
         BenchCmd::Answer { campaign, text, db } => {
             let path = db.unwrap_or_else(bench::db::work_path);
             bench::query::answer(&path, &campaign, &text).map_err(|e| anyhow::anyhow!(e))?;
-            println!("{campaign}: answer recorded in {}", path.display());
+            println!("{}", strings::fill("answer-recorded", &[&campaign, &path.display()]));
             return Ok(());
         }
         BenchCmd::Publish {
@@ -616,7 +611,7 @@ fn run_bench(c: BenchCmd) -> Result<()> {
             for (name, runs) in
                 bench::query::publish(&from, &to, &campaigns).map_err(|e| anyhow::anyhow!(e))?
             {
-                println!("{name}: {runs} run(s) copied to {}", to.display());
+                println!("{}", strings::fill("runs-copied", &[&name, &runs, &to.display()]));
             }
             return Ok(());
         }
@@ -658,7 +653,7 @@ fn run_bench(c: BenchCmd) -> Result<()> {
         } else {
             Some(
                 temp.parse::<f64>()
-                    .with_context(|| format!("--temp {temp} is not a number (or `preset`)"))?,
+                    .with_context(|| strings::fill("temp-not-a-number", &[&temp]))?,
             )
         };
     }
@@ -678,7 +673,7 @@ fn run_bench(c: BenchCmd) -> Result<()> {
     let concurrency_all = a.concurrency.as_deref() == Some("all");
     if let Some(c) = a.concurrency.as_deref().filter(|c| *c != "all") {
         plan.concurrency = bench::Concurrency::from_str(c)
-            .ok_or_else(|| anyhow::anyhow!("--concurrency {c}: unknown scenario"))?;
+            .ok_or_else(|| anyhow::anyhow!(strings::fill("concurrency-unknown", &[&c])))?;
     }
     // Refused by value rather than parsed leniently: an entry the parser drops
     // is a length or a depth the sweep silently never measures.
@@ -757,7 +752,7 @@ fn run_bench(c: BenchCmd) -> Result<()> {
             ..opts.clone()
         };
         if let Err(e) = bench::sweep::run(&o) {
-            problems.push(format!("concurrency {}: {e}", c.as_str()));
+            problems.push(strings::fill("concurrency-failed", &[&c.as_str(), &e]));
         }
     }
     if !problems.is_empty() {
@@ -876,7 +871,7 @@ fn show_lines(cfg: &server_cfg::ServerConfig) -> String {
     row(
         "WebuiMcpProxy:",
         cfg.webui_mcp_proxy
-            .map_or_else(|| "true (default)".into(), |v| v.to_string()),
+            .map_or_else(|| "false (default)".into(), |v| v.to_string()),
     );
     row(
         "LogVerbosity:",
@@ -920,8 +915,8 @@ fn run_server(c: ServerCmd) -> Result<()> {
         ServerCmd::Set(s) => {
             let mut cfg = server_cfg::load();
             s.apply(&mut cfg);
-            server_cfg::save(&cfg).context("save server.ini")?;
-            println!("Wrote {}", paths::server_ini().display());
+            server_cfg::save(&cfg).with_context(|| strings::t("save-server-settings-failed"))?;
+            println!("{}", strings::fill("wrote-file", &[&paths::server_ini().display()]));
             Ok(())
         }
     }
@@ -935,9 +930,7 @@ fn find_listed(id: &str) -> Result<presets::Listed> {
     presets::load_listed()
         .into_iter()
         .find(|l| l.preset.id.eq_ignore_ascii_case(id))
-        .ok_or_else(|| {
-            anyhow::anyhow!("No preset named `{id}`. Run `llama-cpp-config preset list`.")
-        })
+        .ok_or_else(|| anyhow::anyhow!(strings::fill("preset-not-listed", &[&id])))
 }
 
 /// The same follow-up the GUI makes after every preset change: a configured
@@ -945,12 +938,9 @@ fn find_listed(id: &str) -> Result<presets::Listed> {
 /// fatal: the preset change itself has already landed.
 fn follow_opencode() {
     match crate::integrations::follow_presets() {
-        Ok(true) => println!(
-            "Updated the model list in {}",
-            paths::opencode_user_config().display()
-        ),
+        Ok(true) => println!("{}", strings::fill("opencode-list-updated", &[&paths::opencode_user_config().display()])),
         Ok(false) => {}
-        Err(e) => eprintln!("opencode.json not updated: {e:#}"),
+        Err(e) => eprintln!("{}", strings::fill("opencode-not-updated", &[&format!("{e:#}")])),
     }
 }
 
@@ -960,13 +950,13 @@ fn run_preset(c: PresetCmd) -> Result<()> {
             let listed = presets::load_listed();
             println!("presets.ini: {}", paths::presets_ini().display());
             if listed.iter().any(|l| !l.enabled) {
-                println!("switched off: {}", paths::presets_disabled_ini().display());
+                println!("{}", strings::fill("switched-off-file", &[&paths::presets_disabled_ini().display()]));
             }
             if listed.is_empty() {
-                println!("  (no presets defined)");
+                println!("{}", strings::t("no-presets-defined"));
             }
             for l in listed {
-                let off = if l.enabled { "" } else { "  (off)" };
+                let off = if l.enabled { String::new() } else { strings::t("preset-off-mark") };
                 println!("  [{}]{off}  model={}", l.preset.id, l.preset.model);
             }
             Ok(())
@@ -974,7 +964,7 @@ fn run_preset(c: PresetCmd) -> Result<()> {
         PresetCmd::Show { id } => {
             let l = find_listed(&id)?;
             if !l.enabled {
-                println!("; switched off: parked in presets.ini.disabled");
+                println!("{}", strings::t("preset-parked"));
             }
             println!("{}", presets::render_section(&l.preset));
             Ok(())
@@ -1011,7 +1001,7 @@ fn run_preset_delete(id: &str, which: &[FileKind], even_if_shared: bool) -> Resu
             let word = clap::ValueEnum::to_possible_value(kind)
                 .map(|v| v.get_name().to_string())
                 .unwrap_or_default();
-            eprintln!("No {word} file of [{real_id}] is on disk: nothing to delete there.");
+            eprintln!("{}", strings::fill("no-file-of-kind", &[&word, &real_id]));
         }
     }
     if !even_if_shared {
@@ -1019,39 +1009,36 @@ fn run_preset_delete(id: &str, which: &[FileKind], even_if_shared: bool) -> Resu
             anyhow::bail!(refusal);
         }
     }
-    presets::delete(&real_id).context("delete preset")?;
+    presets::delete(&real_id).with_context(|| strings::t("delete-preset-failed"))?;
     let file = if l.enabled {
         paths::presets_ini()
     } else {
         paths::presets_disabled_ini()
     };
-    println!("Removed [{real_id}] from {}", file.display());
+    println!("{}", strings::fill("removed-preset-from", &[&real_id, &file.display()]));
     let mut failed = 0;
     if chosen.is_empty() {
         if !linked.is_empty() {
             let names: Vec<String> = linked.iter().map(|f| f.name()).collect();
-            println!(
-                "Kept its files: {} (--delete-files removes them).",
-                names.join(", ")
-            );
+            println!("{}", strings::fill("kept-files", &[&names.join(", ")]));
         }
     } else {
         let models_dir = server_cfg::load().models_dir_or_default();
         let out = linked_files::delete(&chosen, &models_dir, even_if_shared);
         for (f, size) in &out.removed {
-            println!("Deleted {} ({})", f.display(), crate::hf::format_size(*size));
+            println!("{}", strings::fill("deleted-file", &[&f.display(), &crate::hf::format_size(*size)]));
         }
         for d in &out.dirs_removed {
-            println!("Removed the empty folder {}", d.display());
+            println!("{}", strings::fill("removed-empty-folder", &[&d.display()]));
         }
         for (f, e) in &out.failed {
-            eprintln!("Could not delete {}: {e}", f.display());
+            eprintln!("{}", strings::fill("file-not-deleted", &[&f.display(), &e]));
         }
         failed = out.failed.len();
     }
     follow_opencode();
     if failed > 0 {
-        anyhow::bail!("the preset is deleted, but {failed} file(s) could not be");
+        anyhow::bail!(strings::fill("preset-gone-files-not", &[&failed]));
     }
     Ok(())
 }
@@ -1062,10 +1049,10 @@ fn run_preset_delete(id: &str, which: &[FileKind], even_if_shared: bool) -> Resu
 /// would be replaced wholesale).
 fn check_download_id(id: &str, existing: &[String]) -> Result<()> {
     if id.is_empty() || !presets::valid_id(id) {
-        anyhow::bail!("invalid --id `{id}`: use letters, digits, '.', '-', '_'");
+        anyhow::bail!(strings::fill("id-flag-invalid", &[&id]));
     }
     if presets::id_taken(id, existing) {
-        anyhow::bail!("a preset [{id}] already exists (ids ignore case): pick another --id");
+        anyhow::bail!(strings::fill("id-flag-taken", &[&id]));
     }
     Ok(())
 }
@@ -1084,7 +1071,7 @@ fn run_preset_download(a: PresetDownload) -> Result<()> {
         hf::Input::Query(hf::parse_query(&a.spec)?)
     } else {
         hf::classify_input(&a.spec)?
-            .ok_or_else(|| anyhow::anyhow!("enter a model name to search for, or a repository: org/repo"))?
+            .ok_or_else(|| anyhow::anyhow!(strings::t("enter-a-search")))?
     };
     let mut spec = match input {
         hf::Input::Spec(spec) => spec,
@@ -1111,7 +1098,7 @@ fn run_preset_download(a: PresetDownload) -> Result<()> {
     }
     let listing = hf::list_repo(&spec, token.as_ref())?;
     let sidecar = match a.draft.as_deref() {
-        Some(d) => Some(hf::Sidecar::parse(d).ok_or_else(|| anyhow::anyhow!("--draft takes mtp, dflash or dspark, not {d}"))?),
+        Some(d) => Some(hf::Sidecar::parse(d).ok_or_else(|| anyhow::anyhow!(strings::fill("draft-flag-invalid", &[&d])))?),
         None => None,
     };
     if a.list {
@@ -1120,9 +1107,9 @@ fn run_preset_download(a: PresetDownload) -> Result<()> {
         let fit = crate::hf_fit::budget(&crate::devices::list(), crate::hf_fit::system_ram_total());
         let shapes = match &fit {
             Some(_) => {
-                eprintln!("Reading the GGUF headers of {} quantizations...", listing.candidates.len());
+                eprintln!("{}", strings::fill("reading-gguf-headers", &[&listing.candidates.len()]));
                 let got: std::sync::Mutex<Vec<crate::hf_fit::ShapeResult>> =
-                    std::sync::Mutex::new(vec![Err("not read".into()); listing.candidates.len()]);
+                    std::sync::Mutex::new(vec![Err(strings::t("shape-not-read")); listing.candidates.len()]);
                 crate::hf_fit::fetch_shapes(
                     &hf::Curl,
                     &hf::endpoint(),
@@ -1159,7 +1146,7 @@ fn run_preset_download(a: PresetDownload) -> Result<()> {
             println!("{line}");
         }
         if fit.is_none() {
-            println!("Placement estimate unavailable: {}.", crate::hf_fit::no_gpu());
+            println!("{}", strings::fill("placement-estimate-unavailable", &[&crate::hf_fit::no_gpu()]));
         }
         return Ok(());
     }
@@ -1169,29 +1156,34 @@ fn run_preset_download(a: PresetDownload) -> Result<()> {
 
     let models_dir = std::path::PathBuf::from(server_cfg::load().models_dir_or_default());
     let job = hf::DownloadJob::new(&listing, listing.default, !a.no_mmproj, sidecar, models_dir.clone(), token)?;
-    println!("Downloading {} into {}", job.candidate.primary().path, models_dir.display());
+    println!("{}", strings::fill("downloading-into", &[&job.candidate.primary().path, &models_dir.display()]));
 
     let (tx, rx) = std::sync::mpsc::channel();
     let _handle = hf::spawn_download(
         job,
         |p| {
             eprint!(
-                "\r  {} / {}  ({}/{} files)  {:<60}",
-                hf::format_size(p.done),
-                hf::format_size(p.total),
-                p.files_done,
-                p.files_total,
-                p.file
+                "{}",
+                strings::fill(
+                    "download-progress",
+                    &[
+                        &hf::format_size(p.done),
+                        &hf::format_size(p.total),
+                        &p.files_done,
+                        &p.files_total,
+                        &format!("{:<60}", p.file),
+                    ],
+                )
             );
         },
         move |r| {
             let _ = tx.send(r);
         },
     );
-    let done = rx.recv().context("download thread ended without a result")?;
+    let done = rx.recv().with_context(|| strings::t("download-thread-ended"))?;
     eprintln!();
     let d = done?;
-    println!("Model:  {}", d.model.display());
+    println!("{}", strings::fill("downloaded-model", &[&d.model.display()]));
     if let Some(m) = &d.mmproj {
         println!("mmproj: {}", m.display());
     }
@@ -1209,8 +1201,8 @@ fn run_preset_download(a: PresetDownload) -> Result<()> {
         check_download_id(&id, &existing)?;
         preset.id = id;
     }
-    hf::save_preset(&preset, &models_dir).context("save preset")?;
-    println!("Created [{}] in {}", preset.id, paths::presets_ini().display());
+    hf::save_preset(&preset, &models_dir).with_context(|| strings::t("save-preset-failed"))?;
+    println!("{}", strings::fill("created-preset-in", &[&preset.id, &paths::presets_ini().display()]));
     if let Some(line) = placement_line(&preset) {
         println!("{line}");
     }
@@ -1240,7 +1232,7 @@ fn placement_line(p: &presets::Preset) -> Option<String> {
     .into_iter()
     .flatten()
     .collect();
-    Some(format!("Placement: {} ({})", keys.join(", "), p.placement_note))
+    Some(strings::fill("placement-line", &[&keys.join(", "), &p.placement_note]))
 }
 
 /// The listing as `preset download` prints it (pure): `repo @ commit`, then
@@ -1282,7 +1274,7 @@ fn list_report(
         let mark = if i == l.default { "*" } else { " " };
         let mut extra: Vec<String> = Vec::new();
         if c.shards.len() > 1 {
-            extra.push(format!("{} shards", c.shards.len()));
+            extra.push(strings::fill("shards", &[&c.shards.len()]));
         }
         if c.mmproj.is_some() {
             extra.push("mmproj".into());
@@ -1297,8 +1289,8 @@ fn list_report(
         if let Some((_, shapes, _)) = fit {
             let label = match (&estimates[i], shapes.get(i)) {
                 (Some((e, ctx)), _) => hf_fit::estimate_label(e, *ctx),
-                (None, Some(Err(m))) => format!("estimate unavailable: {m}"),
-                (None, _) => "estimate unavailable".to_string(),
+                (None, Some(Err(m))) => strings::fill("estimate-unavailable", &[&m]),
+                (None, _) => strings::t("estimate-missing"),
             };
             let reason = rec.as_ref().filter(|r| r.index == i).map(|r| r.reason.as_str());
             out.push(format!("    {}", hf_fit::detail_line(&label, reason)));
@@ -1307,10 +1299,7 @@ fn list_report(
     if let Some((b, _, _)) = fit {
         out.push(format!("{}.", hf_fit::basis_label(b)));
         out.push(match &rec {
-            Some(r) => format!(
-                "Recommended here: {} ({}); download it with --quant {}",
-                l.candidates[r.index].tag, r.reason, l.candidates[r.index].tag
-            ),
+            Some(r) => strings::fill("recommended-here", &[&l.candidates[r.index].tag, &r.reason]),
             None => hf_fit::none_recommended(),
         });
     }
@@ -1324,16 +1313,14 @@ fn list_report(
 fn search_report(query: &str, hits: &[crate::hf::SearchHit]) -> Vec<String> {
     use crate::hf;
     if hits.is_empty() {
-        return vec![format!("No GGUF repository matches \"{query}\".")];
+        return vec![strings::fill("results-none", &[&query])];
     }
-    let mut out = vec![format!(
-        "GGUF repositories for \"{query}\", most downloaded first (downloads over the last 30 days):"
-    )];
+    let mut out = vec![strings::fill("gguf-repositories-heading", &[&query])];
     let width = hits.iter().map(|h| h.repo.len()).max().unwrap_or(0);
     let kinds: Vec<String> = hits.iter().map(|h| hf::kind_label(h.kind, h.params).unwrap_or_default()).collect();
     let kind_width = kinds.iter().map(String::len).max().unwrap_or(0);
     for (h, kind) in hits.iter().zip(&kinds) {
-        let quants = if h.quants.is_empty() { "no GGUF model file".to_string() } else { h.quants.join(" ") };
+        let quants = if h.quants.is_empty() { strings::t("no-gguf-model-file") } else { h.quants.join(" ") };
         let mut extra: Vec<&str> = Vec::new();
         if h.mmproj {
             extra.push("mmproj");
@@ -1341,10 +1328,10 @@ fn search_report(query: &str, hits: &[crate::hf::SearchHit]) -> Vec<String> {
         extra.extend(h.drafters.iter().map(|s| s.label()));
         let extra = if extra.is_empty() { String::new() } else { format!("  [{}]", extra.join(", ")) };
         let access = match (h.gated, h.private) {
-            (true, true) => "  gated, private",
-            (true, false) => "  gated",
-            (false, true) => "  private",
-            (false, false) => "",
+            (true, true) => strings::t("access-gated-private"),
+            (true, false) => strings::t("access-gated"),
+            (false, true) => strings::t("access-private"),
+            (false, false) => String::new(),
         };
         let kind = if kind_width == 0 { String::new() } else { format!("{kind:<kind_width$}  ") };
         out.push(format!(
@@ -1353,27 +1340,24 @@ fn search_report(query: &str, hits: &[crate::hf::SearchHit]) -> Vec<String> {
             hf::format_count(h.downloads)
         ));
     }
-    out.push(
-        "Pick one: llama-cpp-config preset download <org/repo>[:QUANT] (add --list to see the sizes first)".into(),
-    );
+    out.push(strings::t("pick-a-repository"));
     out
 }
 
 fn set_preset_enabled(id: &str, enabled: bool) -> Result<()> {
     let l = find_listed(id)?;
     let real_id = l.preset.id;
-    let word = if enabled { "on" } else { "off" };
     if l.enabled == enabled {
-        println!("[{real_id}] is already {word}.");
+        let already = if enabled { strings::fill("preset-already-on", &[&real_id]) } else { strings::fill("preset-already-off", &[&real_id]) };
+        println!("{already}");
         return Ok(());
     }
-    presets::set_enabled(&real_id, enabled).context("switch preset")?;
-    println!("Switched [{real_id}] {word}.");
+    presets::set_enabled(&real_id, enabled).with_context(|| strings::t("switch-preset-failed"))?;
+    let switched = if enabled { strings::fill("preset-switched-on", &[&real_id]) } else { strings::fill("preset-switched-off", &[&real_id]) };
+    println!("{switched}");
     // The router reads presets.ini once, at launch.
     if crate::runstate::is_running() {
-        println!(
-            "llama-server is running: restart it to apply (`llama-cpp-config control restart`)."
-        );
+        println!("{}", strings::t("restart-to-apply"));
     }
     follow_opencode();
     Ok(())
@@ -1392,13 +1376,13 @@ fn snapshot_before_stop() {
     if !cfg.save_state_on_shutdown_or_default() {
         return;
     }
-    println!("Saving the conversation snapshot…");
+    println!("{}", strings::t("snapshot-saving"));
     let (saved, errors) = crate::slot_state::save_all(&cfg);
     for t in &saved {
-        println!("  saved {}", t.describe());
+        println!("{}", strings::fill("snapshot-saved-row", &[&t.describe()]));
     }
     for e in &errors {
-        eprintln!("  snapshot failed: {e}");
+        eprintln!("{}", strings::fill("snapshot-failed-row", &[&e]));
     }
 }
 
@@ -1417,12 +1401,12 @@ fn snapshot_after_start(cfg: &crate::server_cfg::ServerConfig) {
         .into_iter()
         .map(|p| p.id)
         .collect();
-    println!("Restoring the conversation snapshot…");
+    println!("{}", strings::t("snapshot-restoring"));
     match crate::slot_state::restore_newest(cfg, &known) {
-        Ok(Some(t)) => println!("  restored {}", t.describe()),
+        Ok(Some(t)) => println!("{}", strings::fill("snapshot-restored", &[&t.describe()])),
         // Nothing on disk: the ordinary first-run state, not worth a line.
         Ok(None) => {}
-        Err(e) => eprintln!("  snapshot not restored: {e}"),
+        Err(e) => eprintln!("{}", strings::fill("snapshot-not-restored", &[&e])),
     }
 }
 
@@ -1432,23 +1416,20 @@ fn run_control(c: ControlCmd) -> Result<()> {
         ControlCmd::Start => {
             match runstate::start() {
                 Ok(Some(cfg)) => {
-                    println!("llama-server started.");
+                    println!("{}", strings::t("server-started"));
                     snapshot_after_start(&cfg);
                 }
-                Ok(None) => println!("llama-server is already running."),
-                Err(e) => anyhow::bail!("Failed to start llama-server: {}", e),
+                Ok(None) => println!("{}", strings::t("server-already-running")),
+                Err(e) => anyhow::bail!(strings::fill("start-failed", &[&e])),
             }
             Ok(())
         }
         ControlCmd::Stop => {
             snapshot_before_stop();
             if !runstate::stop() {
-                anyhow::bail!(
-                    "Failed to stop llama-server: still running {} s after the stop.",
-                    runstate::STOP_GRACE.as_secs()
-                );
+                anyhow::bail!(strings::fill("stop-failed", &[&runstate::STOP_GRACE.as_secs()]));
             }
-            println!("llama-server stopped.");
+            println!("{}", strings::t("server-stopped"));
             Ok(())
         }
         ControlCmd::Restart => {
@@ -1461,19 +1442,16 @@ fn run_control(c: ControlCmd) -> Result<()> {
             // to exit): starting earlier saw the old process, launched nothing,
             // and left no server once it exited.
             if !runstate::stop() {
-                anyhow::bail!(
-                    "Failed to restart llama-server: the old one is still running {} s after the stop.",
-                    runstate::STOP_GRACE.as_secs()
-                );
+                anyhow::bail!(strings::fill("restart-old-still-running", &[&runstate::STOP_GRACE.as_secs()]));
             }
             std::thread::sleep(std::time::Duration::from_millis(1000));
             match runstate::start() {
                 Ok(Some(cfg)) => {
-                    println!("llama-server restarted.");
+                    println!("{}", strings::t("server-restarted"));
                     snapshot_after_start(&cfg);
                 }
-                Ok(None) => println!("llama-server is already running."),
-                Err(e) => anyhow::bail!("Failed to restart llama-server: {}", e),
+                Ok(None) => println!("{}", strings::t("server-already-running")),
+                Err(e) => anyhow::bail!(strings::fill("restart-failed", &[&e])),
             }
             Ok(())
         }
@@ -1483,7 +1461,7 @@ fn run_control(c: ControlCmd) -> Result<()> {
             std::thread::sleep(std::time::Duration::from_millis(500));
             #[cfg(windows)]
             crate::single_instance::signal_close();
-            println!("llama-server stopped and config GUI closed.");
+            println!("{}", strings::t("server-stopped-gui-closed"));
             Ok(())
         }
     }

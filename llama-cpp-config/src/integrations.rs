@@ -64,6 +64,7 @@ use crate::ini;
 use crate::paths;
 use crate::presets;
 use crate::server_cfg;
+use crate::strings;
 
 const PROVIDER_KEY: &str = "llama.cpp";
 const PROVIDER_NPM: &str = "@ai-sdk/openai-compatible";
@@ -137,10 +138,15 @@ pub fn save_opencode_models(base_url: &str, api_key: Option<&str>) -> Result<()>
     // like every other writer does (read_or_create_value already treats the
     // missing FILE as an empty object, so the missing DIR must not fail).
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
+        fs::create_dir_all(parent).with_context(|| strings::fill("create-failed", &[&parent.display()]))?;
     }
-    ini::atomic_write(&path, &serialized).with_context(|| format!("write {}", path.display()))?;
+    ini::atomic_write(&path, &serialized).with_context(|| strings::fill("write-failed", &[&path.display()]))?;
     Ok(())
+}
+
+/// `what`, a place in opencode.json, holds something else than the object it must.
+fn not_an_object(what: &str) -> anyhow::Error {
+    anyhow::anyhow!(strings::fill("not-an-object", &[&what]))
 }
 
 /// Replace the provider's model entries with `entries`, whole: an entry is never
@@ -153,7 +159,7 @@ fn fill_models(v: &mut Value, entries: Vec<(String, Value)>) -> Result<()> {
         .and_then(|p| p.get_mut(PROVIDER_KEY))
         .and_then(|p| p.get_mut("models"))
         .and_then(|m| m.as_object_mut())
-        .ok_or_else(|| anyhow::anyhow!("provider.{PROVIDER_KEY}.models is not an object"))?;
+        .ok_or_else(|| not_an_object(&format!("provider.{PROVIDER_KEY}.models")))?;
     models.clear();
     models.extend(entries);
     Ok(())
@@ -299,11 +305,11 @@ fn read_opencode() -> Option<Value> {
 
 fn read_or_create_value(path: &Path) -> Result<Value> {
     if path.exists() {
-        let txt = fs::read_to_string(path).context("read existing config")?;
+        let txt = fs::read_to_string(path).with_context(|| strings::t("read-existing-config"))?;
         if txt.trim().is_empty() {
             Ok(Value::Object(Default::default()))
         } else {
-            serde_json::from_str(&txt).context("parse existing config as JSON")
+            serde_json::from_str(&txt).with_context(|| strings::t("parse-existing-config"))
         }
     } else {
         Ok(Value::Object(Default::default()))
@@ -313,7 +319,7 @@ fn read_or_create_value(path: &Path) -> Result<Value> {
 fn ensure_provider_section(v: &mut Value, base_url: &str, api_key: Option<&str>) -> Result<()> {
     let obj = v
         .as_object_mut()
-        .ok_or_else(|| anyhow::anyhow!("top-level is not an object"))?;
+        .ok_or_else(|| anyhow::anyhow!(strings::t("top-level-not-an-object")))?;
 
     // Append /v1 for the OpenAI-compatible API endpoint.
     let api_base = format!("{base_url}/v1");
@@ -323,7 +329,7 @@ fn ensure_provider_section(v: &mut Value, base_url: &str, api_key: Option<&str>)
         .or_insert_with(|| json!({}));
     let provider_obj = provider
         .as_object_mut()
-        .ok_or_else(|| anyhow::anyhow!("provider is not an object"))?;
+        .ok_or_else(|| not_an_object("provider"))?;
 
     let lp = provider_obj
         .entry(PROVIDER_KEY.to_string())
@@ -337,7 +343,7 @@ fn ensure_provider_section(v: &mut Value, base_url: &str, api_key: Option<&str>)
         });
     let lp_obj = lp
         .as_object_mut()
-        .ok_or_else(|| anyhow::anyhow!("provider.llama.cpp is not an object"))?;
+        .ok_or_else(|| not_an_object("provider.llama.cpp"))?;
 
     lp_obj.insert("npm".to_string(), json!(PROVIDER_NPM));
     lp_obj.insert("name".to_string(), json!(PROVIDER_NAME));
@@ -347,7 +353,7 @@ fn ensure_provider_section(v: &mut Value, base_url: &str, api_key: Option<&str>)
         .or_insert_with(|| json!({}));
     let opts_obj = opts
         .as_object_mut()
-        .ok_or_else(|| anyhow::anyhow!("options is not an object"))?;
+        .ok_or_else(|| not_an_object("options"))?;
     opts_obj.insert("baseURL".to_string(), json!(api_base));
     if let Some(key) = api_key {
         opts_obj.insert("apiKey".to_string(), json!(key));

@@ -11,6 +11,7 @@ use rusqlite::types::Value;
 use rusqlite::{params_from_iter, Connection};
 
 use super::db;
+use crate::strings;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Format {
@@ -148,7 +149,7 @@ pub fn where_clause(f: &Filters) -> Result<(String, Vec<Value>), String> {
             (Some(i), Some(j)) if i < j => (&p[..i], "LIKE", like(&p[i + 1..])),
             (Some(i), None) => (&p[..i], "LIKE", like(&p[i + 1..])),
             (_, Some(j)) => (&p[..j], "=", text(&p[j + 1..])),
-            _ => return Err(format!("--param {p}: expected K=V or K~V")),
+            _ => return Err(strings::fill("param-flag-format", &[&p])),
         };
         w.push(format!(
             "r.id IN (SELECT run_id FROM run_param WHERE key = ? AND value {op} ?)"
@@ -543,7 +544,7 @@ fn run_detail(conn: &Connection, id: i64, o: &Opts) -> Result<Table, String> {
          JOIN campaign c ON c.id = r.campaign_id WHERE r.id = ?",
         id,
     )?
-    .ok_or_else(|| format!("no run {id}"))?;
+    .ok_or_else(|| strings::fill("no-run-numbered", &[&id]))?;
     let num = |k: &str| get(&r, k).parse::<i64>().unwrap_or(0);
     let m = one("SELECT * FROM machine WHERE id = ?", num("machine_id"))?.unwrap_or_default();
     let s = one("SELECT * FROM software WHERE id = ?", num("software_id"))?.unwrap_or_default();
@@ -841,7 +842,7 @@ pub fn publish(
     campaigns: &[String],
 ) -> Result<Vec<(String, usize)>, String> {
     if from == to {
-        return Err("the source and the target are the same file".into());
+        return Err(strings::t("publish-same-file"));
     }
     let src = db::open_ro(from)?;
     let mut dst = db::open(to)?;
@@ -857,17 +858,14 @@ pub fn publish(
         .map_err(e)?
         .into_iter()
         .next() else {
-            return Err(format!("no campaign `{name}` in {}", from.display()));
+            return Err(strings::fill("no-campaign-in", &[&name, &from.display()]));
         };
         if tx
             .prepare("SELECT 1 FROM campaign WHERE name = ?1")
             .and_then(|mut s| s.exists([name]))
             .map_err(e)?
         {
-            return Err(format!(
-                "campaign `{name}` is already in {}; nothing was copied",
-                to.display()
-            ));
+            return Err(strings::fill("campaign-already-in", &[&name, &to.display()]));
         }
         tx.execute(
             "INSERT INTO campaign (name, question, started, answer, notes, report) \

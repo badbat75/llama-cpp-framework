@@ -846,7 +846,7 @@ pub fn run(opts: &Opts) -> Result<String, String> {
     if let Some(set) = set {
         for v in &opts.values {
             let mut probe = base.clone();
-            set(&mut probe, v).map_err(|e| format!("value `{v}`: {e}"))?;
+            set(&mut probe, v).map_err(|e| strings::fill("value-refused", &[&v, &e]))?;
         }
     }
     if let Some(problem) = super::validate(&leg_plan(opts, &opts.preset)) {
@@ -861,7 +861,7 @@ pub fn run(opts: &Opts) -> Result<String, String> {
     let was_running = runstate::is_running();
     super::interrupt::note_server(was_running);
     let port = u16::try_from(server_cfg::load().port_or_default())
-        .map_err(|_| "invalid port in server.ini".to_string())?;
+        .map_err(|_| strings::t("invalid-port"))?;
 
     // BEFORE this sweep's own marker exists, and that ordering is the whole
     // correctness of the check: `interrupted` answers with the NEWEST marker of
@@ -897,42 +897,28 @@ pub fn run(opts: &Opts) -> Result<String, String> {
         label: None,
     };
     let dir = super::bench_dir();
-    std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
-    let reps = format!(
-        "{} engine, {} repetition{}",
-        opts.plan.mode.as_str(),
-        opts.plan.reps,
-        if opts.plan.reps == 1 { "" } else { "s" }
-    );
+    std::fs::create_dir_all(&dir).map_err(|e| strings::fill("cannot-create", &[&dir.display(), &e]))?;
+    let reps = if opts.plan.reps == 1 {
+        strings::fill("engine-one-repetition", &[&opts.plan.mode.as_str(), &opts.plan.reps])
+    } else {
+        strings::fill("engine-repetitions", &[&opts.plan.mode.as_str(), &opts.plan.reps])
+    };
     if let Some(key) = &opts.key {
         let marker = pending_path(&stamp);
         std::fs::write(&marker, header_json(opts, &original, &stamp))
-            .map_err(|e| format!("cannot write {}: {e}", marker.display()))?;
+            .map_err(|e| strings::fill("cannot-write", &[&marker.display(), &e]))?;
         super::interrupt::hold(&opts.preset, key, &original, marker.clone());
-        println!(
-            "Sweeping {key} = {} on preset {} ({reps}).",
-            opts.values.join(", "),
-            opts.preset
-        );
-        println!(
-            "presets.ini is being edited; `{key} = {original}` is restored at the end \
-             (also recorded in {}).",
-            marker.display()
-        );
+        println!("{}", strings::fill("sweeping-key", &[&key, &opts.values.join(", "), &opts.preset, &reps]));
+        println!("{}", strings::fill("presets-being-edited", &[&key, &original, &marker.display()]));
     } else {
-        println!("Measuring preset {} as it is ({reps}).", opts.preset);
+        println!("{}", strings::fill("measuring-preset", &[&opts.preset, &reps]));
     }
     // An interrupted sweep left the key on one of ITS leg values, so the value
     // read out of presets.ini above is that leftover and not the configuration
     // this machine ran. Restoring it would quietly promote a half-measured
     // value to the permanent one, so say so while there is still time to stop.
     if let (Some(key), Some((path, restore))) = (&opts.key, &leftover) {
-        println!(
-            "WARNING: {} never finished, so `{key} = {original}` may be ITS leftover. \
-             That sweep recorded `{restore}` as the value to put back; \
-             pass --restore-to {restore} to restore that instead.",
-            path.display()
-        );
+        println!("{}", strings::fill("sweep-leftover-warning", &[&path.display(), &key, &original, &restore]));
     }
 
     // The engine resolves the preset's device ids to card names through the
@@ -960,7 +946,7 @@ pub fn run(opts: &Opts) -> Result<String, String> {
         let leg = match written.and_then(|()| prepare_server(opts.plan.mode, port)) {
             Ok(()) => measure(opts, value, &campaign),
             Err(e) => {
-                println!("    failed: {e}");
+                println!("{}", strings::fill("leg-failed", &[&e]));
                 Leg {
                     value: value.clone(),
                     error: e,
@@ -1023,12 +1009,9 @@ pub fn run(opts: &Opts) -> Result<String, String> {
         &campaign_notes(opts, &legs, &original, &applied),
         &summary,
     ) {
-        println!(
-            "Campaign {} in bench.db: `llama-cpp-config bench query runs --campaign {}`.",
-            campaign.name, campaign.name
-        );
+        println!("{}", strings::fill("campaign-recorded", &[&campaign.name]));
     } else {
-        println!("No leg finished, so bench.db has no campaign for this run.");
+        println!("{}", strings::t("no-campaign-recorded"));
     }
 
     let mut problems: Vec<String> = legs
@@ -1040,7 +1023,7 @@ pub fn run(opts: &Opts) -> Result<String, String> {
         })
         .collect();
     if let (Some(key), Err(e)) = (&opts.key, restore) {
-        problems.push(format!("could not restore {key}: {e}"));
+        problems.push(strings::fill("key-not-restored", &[&key, &e]));
     }
     if let Err(e) = server {
         problems.push(e);
@@ -1353,24 +1336,30 @@ fn measure(opts: &Opts, value: &str, campaign: &super::record::Campaign) -> Leg 
 
 fn report_leg(leg: &Leg, mode: Mode) {
     if !leg.error.is_empty() {
-        println!("    -> failed after {} s: {}", leg.secs, leg.error);
+        println!("{}", strings::fill("leg-failed-after", &[&leg.secs, &leg.error]));
         return;
     }
     let primary = primary_test(mode, std::slice::from_ref(leg));
     match leg.point(&primary) {
         Some(p) => println!(
-            "    -> {primary} {:.1} t/s (+- {:.1}, n={}) in {} s{}",
-            p.mean,
-            p.sd,
-            p.n,
-            leg.secs,
-            if p.note.is_empty() {
-                String::new()
-            } else {
-                format!(", {}", p.note)
-            }
+            "{}",
+            strings::fill(
+                "leg-result",
+                &[
+                    &primary,
+                    &format!("{:.1}", p.mean),
+                    &format!("{:.1}", p.sd),
+                    &p.n,
+                    &leg.secs,
+                    &if p.note.is_empty() {
+                        String::new()
+                    } else {
+                        format!(", {}", p.note)
+                    },
+                ],
+            )
         ),
-        None => println!("    -> no {primary} row in {} s", leg.secs),
+        None => println!("{}", strings::fill("leg-no-row", &[&primary, &leg.secs])),
     }
 }
 

@@ -169,7 +169,7 @@ pub fn load(arg: &str) -> Result<Spec, String> {
             .into_iter()
             .map(|(v, _)| v)
             .max_by_key(|v| version_key(v))
-            .ok_or("standard.versions lists no version")?;
+            .ok_or_else(|| strings::t("spec-no-published-version"))?;
         return standard_version(&newest);
     }
     if let Some(v) = arg.strip_prefix("standard-") {
@@ -463,10 +463,10 @@ pub fn published_versions(text: &str) -> Vec<(String, String)> {
 /// spec's), so a new version can run just the legs it added.
 pub fn run(spec: &Spec, base: &Opts, derive: &Derive, only: &[String]) -> Result<String, String> {
     if base.plan.mode != super::Mode::Live {
-        return Err("--spec runs the live engine".into());
+        return Err(strings::t("spec-flag-live-only"));
     }
     if base.apply != Apply::Original && spec.passes.len() * spec.prompts.len() > 1 {
-        return Err("--spec with several passes or prompts leaves the preset as it was: drop --apply".into());
+        return Err(strings::t("spec-flag-no-apply"));
     }
     // Anything that is not the spec's own rules makes every run custom,
     // derived from it: a flag given beside --spec, a swept key that a pass
@@ -476,18 +476,13 @@ pub fn run(spec: &Spec, base: &Opts, derive: &Derive, only: &[String]) -> Result
     if !only.is_empty() {
         for o in only {
             if !prompts.iter().any(|p| prompt_name(p) == *o) {
-                return Err(format!("--only {o}: not one of the spec's prompts"));
+                return Err(strings::fill("only-flag-unknown", &[&o]));
             }
         }
         prompts.retain(|p| only.contains(&prompt_name(p)));
     }
     if !derived.is_empty() {
-        println!(
-            "Not spec {}-{} as published ({}): every run records spec = custom, derived from it.",
-            spec.name,
-            spec.version,
-            derived.join(", ")
-        );
+        println!("{}", strings::fill("spec-derived-notice", &[&spec.name, &spec.version, &derived.join(", ")]));
     }
     let campaign = if base.campaign.is_empty() {
         default_campaign(spec)
@@ -497,11 +492,7 @@ pub fn run(spec: &Spec, base: &Opts, derive: &Derive, only: &[String]) -> Result
     let mut problems = Vec::new();
     for prompt in &prompts {
         if super::prompt_has_image(&prompt.1) && !sweep::has_mmproj(&base.preset)? {
-            println!(
-                "\nSkipping {}: an image prompt, and preset `{}` loads no mmproj.",
-                prompt_name(prompt),
-                base.preset
-            );
+            println!("\n{}", strings::fill("image-prompt-skipped", &[&prompt_name(prompt), &base.preset]));
             continue;
         }
         for pass in &spec.passes {
@@ -517,12 +508,11 @@ pub fn run(spec: &Spec, base: &Opts, derive: &Derive, only: &[String]) -> Result
             let restore = apply_overrides(&base.preset, &pass.overrides)?;
             for c in scenarios {
                 println!(
-                    "\n=== spec {}-{} · pass {} · {} · concurrency {} ===",
-                    spec.name,
-                    spec.version,
-                    pass.name,
-                    prompt_name(prompt),
-                    c.as_str()
+                    "\n{}",
+                    strings::fill(
+                        "spec-leg-heading",
+                        &[&spec.name, &spec.version, &pass.name, &prompt_name(prompt), &c.as_str()],
+                    )
                 );
                 let opts = Opts {
                     plan: pass_plan(spec, pass, prompt, c, &base.plan, derive, &derived),
@@ -530,7 +520,7 @@ pub fn run(spec: &Spec, base: &Opts, derive: &Derive, only: &[String]) -> Result
                     ..base.clone()
                 };
                 if let Err(e) = sweep::run(&opts) {
-                    problems.push(format!("pass {} concurrency {}: {e}", pass.name, c.as_str()));
+                    problems.push(strings::fill("spec-leg-failed", &[&pass.name, &c.as_str(), &e]));
                 }
             }
             if let Err(e) = restore_overrides(&base.preset, restore) {
@@ -778,7 +768,7 @@ pub(super) fn apply_overrides(
             super::interrupt::release(&marker);
             return Err(strings::fill("override-failed", &[&key, &value, &e]));
         }
-        println!("Override for this pass: {key} = {value} (was {original}).");
+        println!("{}", strings::fill("override-for-pass", &[&key, &value, &original]));
         restore.push((key.clone(), original, marker));
     }
     Ok(restore)

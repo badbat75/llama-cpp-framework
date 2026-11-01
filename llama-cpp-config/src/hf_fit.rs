@@ -309,7 +309,7 @@ struct Reader<'a> {
 
 impl<'a> Reader<'a> {
     fn take(&mut self, n: u64) -> Result<&'a [u8], ParseError> {
-        let n = usize::try_from(n).map_err(|_| ParseError::Invalid("a length beyond memory".into()))?;
+        let n = usize::try_from(n).map_err(|_| ParseError::Invalid(strings::t("gguf-length-beyond-memory")))?;
         let end = self.pos.checked_add(n).ok_or(ParseError::Truncated)?;
         if end > self.buf.len() {
             return Err(ParseError::Truncated);
@@ -337,7 +337,7 @@ impl<'a> Reader<'a> {
         const MAX_STRING: u64 = 64 * MIB;
         let n = self.u64()?;
         if n > MAX_STRING {
-            return Err(ParseError::Invalid(format!("a string of {n} bytes")));
+            return Err(ParseError::Invalid(strings::fill("gguf-string-too-long", &[&n])));
         }
         Ok(n)
     }
@@ -361,12 +361,12 @@ impl<'a> Reader<'a> {
             8 => Kv::Str(self.string()?),
             9 => {
                 if depth > 2 {
-                    return Err(ParseError::Invalid("arrays nested too deep".into()));
+                    return Err(ParseError::Invalid(strings::t("gguf-arrays-too-deep")));
                 }
                 let et = self.u32()?;
                 let n = self.u64()?;
                 if n > 1 << 28 {
-                    return Err(ParseError::Invalid(format!("an array of {n} values")));
+                    return Err(ParseError::Invalid(strings::fill("gguf-array-too-long", &[&n])));
                 }
                 match (et, fixed_size(et)) {
                     // Small numeric arrays (per-layer head counts) are kept.
@@ -388,13 +388,13 @@ impl<'a> Reader<'a> {
                         }
                         Kv::Skipped
                     }
-                    _ => return Err(ParseError::Invalid(format!("array element type {et}"))),
+                    _ => return Err(ParseError::Invalid(strings::fill("gguf-array-element-type", &[&et]))),
                 }
             }
             10 => Kv::Uint(self.u64()?),
             11 => Kv::Int(self.u64()? as i64),
             12 => Kv::Float(f64::from_le_bytes(self.take(8)?.try_into().unwrap())),
-            _ => return Err(ParseError::Invalid(format!("value type {t}"))),
+            _ => return Err(ParseError::Invalid(strings::fill("gguf-value-type", &[&t]))),
         })
     }
 }
@@ -415,16 +415,16 @@ fn fixed_size(t: u32) -> Option<u64> {
 pub fn parse_header(buf: &[u8]) -> Result<Header, ParseError> {
     let mut r = Reader { buf, pos: 0 };
     if r.take(4)? != b"GGUF" {
-        return Err(ParseError::Invalid("no GGUF magic".into()));
+        return Err(ParseError::Invalid(strings::t("gguf-no-magic")));
     }
     let version = r.u32()?;
     if !matches!(version, 2 | 3) {
-        return Err(ParseError::Invalid(format!("GGUF version {version}")));
+        return Err(ParseError::Invalid(strings::fill("gguf-version", &[&version])));
     }
     let n_tensors = r.u64()?;
     let n_kv = r.u64()?;
     if n_tensors > 1 << 20 || n_kv > 1 << 20 {
-        return Err(ParseError::Invalid(format!("{n_tensors} tensors, {n_kv} keys")));
+        return Err(ParseError::Invalid(strings::fill("gguf-too-many-entries", &[&n_tensors, &n_kv])));
     }
     let mut kvs = HashMap::new();
     for _ in 0..n_kv {
@@ -438,7 +438,7 @@ pub fn parse_header(buf: &[u8]) -> Result<Header, ParseError> {
         let name = r.string()?;
         let n_dims = r.u32()?;
         if n_dims > 8 {
-            return Err(ParseError::Invalid(format!("{name}: {n_dims} dimensions")));
+            return Err(ParseError::Invalid(strings::fill("gguf-tensor-dimensions", &[&name, &n_dims])));
         }
         r.skip(u64::from(n_dims) * 8)?;
         let _type = r.u32()?;
@@ -528,7 +528,7 @@ pub fn shape_of(shards: &[(Header, u64)]) -> Result<Shape, String> {
         offsets.sort();
         let data = file_size
             .checked_sub(h.data_start)
-            .ok_or_else(|| format!("a shard of {file_size} bytes whose header ends at {}", h.data_start))?;
+            .ok_or_else(|| strings::fill("gguf-shard-too-small", &[&file_size, &h.data_start]))?;
         for (i, (off, name)) in offsets.iter().enumerate() {
             let end = offsets.get(i + 1).map_or(data, |n| n.0);
             let bytes = end.saturating_sub(*off);
@@ -537,7 +537,7 @@ pub fn shape_of(shards: &[(Header, u64)]) -> Result<Shape, String> {
                 s.token_embd += bytes;
             } else if let Some(b) = block_of(name) {
                 if b >= 4096 {
-                    return Err(format!("block {b}"));
+                    return Err(strings::fill("block-one", &[&b]));
                 }
                 if s.layers.len() <= b {
                     s.layers.resize(b + 1, Layer::default());

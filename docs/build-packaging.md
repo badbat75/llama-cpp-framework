@@ -36,7 +36,7 @@ For example, `llama-cpp-framework-v2.2.0-v0.7.0-x64.msi`.
 `standard.versions`, and the prompts with their images. `bench_share.rs` stages it.
 
 **Every OS ships the configurator's text read-only** in `share/strings/`: `en_US.toml`, the GUI's
-language file, and `cli.toml`, the messages the CLI shares with the GUI. `strings_share.rs` stages
+language file, and `cli.toml`, the CLI's text. `strings_share.rs` stages
 every `*.toml` of `llama-cpp-config/strings/`.
 
 **llama.cpp's test harnesses are pruned on every OS.** On Windows the installer can put `bin\` on

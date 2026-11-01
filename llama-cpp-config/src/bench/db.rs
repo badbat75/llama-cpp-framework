@@ -68,7 +68,7 @@ pub fn open(path: &Path) -> Result<Connection, String> {
 /// Read-only, for queries: a missing file is an error, not a new database.
 pub fn open_ro(path: &Path) -> Result<Connection, String> {
     if !path.is_file() {
-        return Err(format!("{}: no such database", path.display()));
+        return Err(crate::strings::fill("no-such-database", &[&path.display()]));
     }
     Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
         .map_err(|e| err(path, e))
@@ -335,7 +335,7 @@ pub fn set_answer(conn: &Connection, campaign: &str, answer: &str) -> Result<(),
         )
         .map_err(|e| e.to_string())?;
     if n == 0 {
-        return Err(format!("no campaign `{campaign}`"));
+        return Err(crate::strings::fill("no-campaign-named", &[&campaign]));
     }
     Ok(())
 }

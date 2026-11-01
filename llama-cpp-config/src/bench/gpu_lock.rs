@@ -16,6 +16,7 @@
 //! has `/dev/kfd` (ROCm) or `/dev/nvidia*` (CUDA) open, llama-server excepted:
 //! the run restarts that one itself.
 
+use crate::strings;
 use std::fs::{File, OpenOptions, TryLockError};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -46,7 +47,7 @@ fn open_at(p: &std::path::Path) -> Result<File, String> {
         .truncate(false)
         .write(true)
         .open(p)
-        .map_err(|e| format!("cannot open the GPU lock {}: {e}", p.display()))
+        .map_err(|e| strings::fill("gpu-lock-open-failed", &[&p.display(), &e]))
 }
 
 /// The CLI's: waits for the lock, then for the cards, saying why on `say`.
@@ -55,14 +56,11 @@ pub fn acquire(say: impl Fn(&str)) -> Result<Guard, String> {
     match file.try_lock() {
         Ok(()) => {}
         Err(TryLockError::WouldBlock) => {
-            say(&format!(
-                "Waiting for the GPU lock {} (another benchmark holds it)...",
-                path().display()
-            ));
+            say(&strings::fill("gpu-lock-waiting", &[&path().display()]));
             file.lock()
-                .map_err(|e| format!("cannot take the GPU lock: {e}"))?;
+                .map_err(|e| strings::fill("gpu-lock-take-failed", &[&e]))?;
         }
-        Err(TryLockError::Error(e)) => return Err(format!("cannot take the GPU lock: {e}")),
+        Err(TryLockError::Error(e)) => return Err(strings::fill("gpu-lock-take-failed", &[&e])),
     }
     let mut last_said: Option<Instant> = None;
     loop {
@@ -71,10 +69,7 @@ pub fn acquire(say: impl Fn(&str)) -> Result<Guard, String> {
             return Ok(Guard { _file: file });
         }
         if last_said.is_none_or(|t| t.elapsed() >= Duration::from_secs(60)) {
-            say(&format!(
-                "Waiting: another process uses the GPUs ({}).",
-                users.join(", ")
-            ));
+            say(&strings::fill("gpus-in-use-waiting", &[&users.join(", ")]));
             last_said = Some(Instant::now());
         }
         std::thread::sleep(Duration::from_secs(5));
@@ -87,19 +82,13 @@ pub fn try_acquire() -> Result<Guard, String> {
     match file.try_lock() {
         Ok(()) => {}
         Err(TryLockError::WouldBlock) => {
-            return Err(format!(
-                "another benchmark holds the GPU lock {}; run when it is done",
-                path().display()
-            ))
+            return Err(strings::fill("gpu-lock-held", &[&path().display()]))
         }
-        Err(TryLockError::Error(e)) => return Err(format!("cannot take the GPU lock: {e}")),
+        Err(TryLockError::Error(e)) => return Err(strings::fill("gpu-lock-take-failed", &[&e])),
     }
     let users = other_gpu_users();
     if !users.is_empty() {
-        return Err(format!(
-            "another process uses the GPUs ({}): its load would be measured too",
-            users.join(", ")
-        ));
+        return Err(strings::fill("gpus-in-use", &[&users.join(", ")]));
     }
     Ok(Guard { _file: file })
 }

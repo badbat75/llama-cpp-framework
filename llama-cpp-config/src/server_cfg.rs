@@ -215,9 +215,9 @@ pub struct ServerConfig {
     /// greys out every Open chat UI entry while the RUNNING server has no UI.
     pub webui: Option<bool>,
     /// Enable the built-in web UI's MCP CORS proxy (--webui-mcp-proxy).
-    /// None = the framework default (on): the bundled chat UI uses it for an MCP
-    /// server the user marks "Use llama-server proxy". Experimental upstream
-    /// (llama.cpp defaults it OFF); don't enable on an untrusted network.
+    /// None = off, llama.cpp's default: the proxy fetches any URL for whoever can
+    /// reach the server. The bundled chat UI uses it for an MCP server the user
+    /// marks "Use llama-server proxy". Experimental upstream.
     pub webui_mcp_proxy: Option<bool>,
     /// llama-server log verbosity threshold (-lv / --log-verbosity N): messages
     /// above this level are dropped. None = the framework default (4, per-request
@@ -383,11 +383,11 @@ impl ServerConfig {
         self.webui.unwrap_or(true)
     }
 
-    /// The web-UI MCP proxy flag, or `true` (the framework default) when unset.
+    /// The web-UI MCP proxy flag, or `false` (llama.cpp's default) when unset.
     /// The STORED choice: whether the launch passes the flag also depends on
     /// [`Self::webui_or_default`] (`runstate::server_args`).
     pub fn webui_mcp_proxy_or_default(&self) -> bool {
-        self.webui_mcp_proxy.unwrap_or(true)
+        self.webui_mcp_proxy.unwrap_or(false)
     }
 
     /// The FlashAttention band (`GGML_HIP_FA_BAND_WMMA`), or `4` (the framework
@@ -710,7 +710,9 @@ Hostname = {hostname}
 ; OpenAI-compatible API keeps working either way.
 Webui = {ui_lit}
 ; WebuiMcpProxy: enable the built-in web UI's MCP CORS proxy (--webui-mcp-proxy).
-; The bundled chat UI needs it to call MCP tools; disable on an untrusted network.
+; The chat UI uses it for an MCP server marked to use the proxy. Anyone who
+; can reach this server can then make it fetch any URL: keep it off on an untrusted
+; network.
 ; Ignored while Webui = false (the flag is not passed).
 WebuiMcpProxy = {webui_lit}
 ; LogVerbosity: llama-server log threshold (-lv). llama.cpp defines six levels:
@@ -883,7 +885,7 @@ mod tests {
         assert_eq!(reloaded.port, None);
         assert_eq!(reloaded.hostname.as_deref(), Some("localhost"));
         assert_eq!(reloaded.webui, Some(true));
-        assert_eq!(reloaded.webui_mcp_proxy, Some(true));
+        assert_eq!(reloaded.webui_mcp_proxy, Some(false));
         assert_eq!(reloaded.log_verbosity, Some(4));
         // Unset renders as a commented line and stays unset: the default (4)
         // lives in the code, and `env_vars` still exports it.

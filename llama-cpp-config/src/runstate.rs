@@ -1056,7 +1056,7 @@ mod tests {
             a.contains(&"localhost".to_string()),
             "host is always written"
         );
-        assert!(a.contains(&"--webui-mcp-proxy".to_string()));
+        assert!(!a.contains(&"--webui-mcp-proxy".to_string()), "off unless asked for");
     }
 
     #[test]

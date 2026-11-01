@@ -537,16 +537,20 @@ fn gui_only_source(path: &Path) -> bool {
 /// Keys of a source a CLI command does reach, written where it does not:
 /// `linked_files.rs` shows its rows and its deletion report to the GUI alone,
 /// `bench::sweep::check_values` is the tab's A/B check, `presets::rename` and the
-/// `ini::rename_section` under it are the rename dialog's, and `startup::set_enabled`
-/// is the Settings tab's.
-const GUI_ONLY_KEYS: [&str; 19] = [
+/// `ini::rename_section` under it are the rename dialog's, `startup::set_enabled`
+/// is the Settings tab's, and `main` prints `gui-launch-error` on a launch with no
+/// arguments, which reads the language file.
+const GUI_ONLY_KEYS: [&str; 22] = [
     "command-too-long",
+    "gpu-lock-held",
+    "gpus-in-use",
     "could-not-delete",
     "delete-also-files",
     "delete-preset-only",
     "deleted-preset",
     "empty-folder-many",
     "empty-folder-one",
+    "gui-launch-error",
     "in-use-kept",
     "kept-in-use",
     "key-value-refused",
@@ -560,6 +564,43 @@ const GUI_ONLY_KEYS: [&str; 19] = [
     "section-exists",
     "section-not-found",
 ];
+
+/// Functions of the shared sources that only a CLI command runs, beside all of
+/// `cli.rs`: their keys are in `cli.toml` alone. `cli_only_code_is_not_called_from_elsewhere`
+/// fails when other code starts calling one, since the GUI would then miss its keys.
+const CLI_ONLY_FNS: [(&str, &str); 13] = [
+    ("bench/db.rs", "set_answer"),
+    ("bench/gpu_lock.rs", "acquire"),
+    ("bench/interrupt.rs", "install"),
+    ("bench/interrupt.rs", "restore"),
+    ("bench/query.rs", "answer"),
+    ("bench/query.rs", "publish"),
+    ("bench/query.rs", "run"),
+    ("bench/query.rs", "run_detail"),
+    ("bench/query.rs", "where_clause"),
+    ("bench/spec.rs", "run"),
+    ("bench/sweep.rs", "measure"),
+    ("bench/sweep.rs", "report_leg"),
+    ("bench/sweep.rs", "run"),
+];
+
+/// A source split into what only a CLI command runs and the rest. The split of a
+/// source with such functions comes from `rust_fns`, so its tests are in neither.
+fn split_cli_only(path: &Path, source: &str) -> (String, String) {
+    if path.file_name().is_some_and(|n| n == "cli.rs") {
+        return (source.to_string(), String::new());
+    }
+    let listed: Vec<&str> = CLI_ONLY_FNS.iter().filter(|(file, _)| path.ends_with(file)).map(|(_, f)| *f).collect();
+    if listed.is_empty() {
+        return (String::new(), source.to_string());
+    }
+    let (mut cli, mut rest) = (String::new(), String::new());
+    for (name, indented, text) in rust_fns(source) {
+        let side = if !indented && listed.contains(&name.as_str()) { &mut cli } else { &mut rest };
+        side.push_str(&text);
+    }
+    (cli, rest)
+}
 
 /// The functions of a rustfmt-ed source, `(name, indented, text)`, its tests left
 /// out: a body ends at the `}` at its `fn`'s indent. What lies outside every
@@ -716,10 +757,14 @@ fn strings_t_keys_and_the_language_file_match() {
     let mut sources = Vec::new();
     rust_sources(&Path::new(env!("CARGO_MANIFEST_DIR")).join("src"), &mut sources);
     let (mut shared, mut reachers, mut gui_only) = (std::collections::BTreeSet::new(), Vec::new(), Vec::new());
+    let mut cli_only = std::collections::BTreeSet::new();
     for path in &sources {
         let source = std::fs::read_to_string(path).expect("read .rs");
         let found = rust_string_calls(&source);
-        calls.extend(marked_key_calls(&source));
+        let (cli_text, rest) = split_cli_only(path, &source);
+        cli_only.extend(rust_string_calls(&cli_text).into_iter().map(|(_, key)| key));
+        calls.extend(marked_key_calls(&rest));
+        calls.extend(rust_string_calls(&rest));
         if !gui_only_source(path) {
             shared.extend(found.iter().cloned());
             reachers.push(rust_fns(&source).into_iter().map(|(_, _, text)| text).collect::<String>());
@@ -727,7 +772,6 @@ fn strings_t_keys_and_the_language_file_match() {
             let module = path.file_stem().expect("file stem").to_string_lossy().into_owned();
             gui_only.push((module, source));
         }
-        calls.extend(found);
     }
     shared.extend(reached_gui_only_calls(&reachers, &gui_only));
     shared.retain(|(_, key)| !GUI_ONLY_KEYS.contains(&key.as_str()));
@@ -740,10 +784,10 @@ fn strings_t_keys_and_the_language_file_match() {
     let missing: Vec<_> = used.iter().filter(|k| !table.contains_key(**k)).collect();
     assert!(missing.is_empty(), "used in ui/ or src/ but not in en_US.toml: {missing:?}");
     let unused: Vec<_> = table.keys().filter(|k| !used.contains(k)).collect();
-    assert!(unused.is_empty(), "in en_US.toml but used nowhere in ui/ or src/: {unused:?}");
+    assert!(unused.is_empty(), "in en_US.toml but used nowhere in ui/ or in src/ outside the CLI's own code: {unused:?}");
 
-    // cli.toml: exactly the keys a CLI command can reach, each also
-    // in the language file, its {N} matching the calls.
+    // cli.toml: exactly the keys a CLI command can reach, each also in the language
+    // file unless only the CLI's own code uses it, its {N} matching the calls.
     let file = Path::new(env!("CARGO_MANIFEST_DIR")).join("strings").join("cli.toml");
     let cli = crate::strings::parse(&std::fs::read_to_string(file).expect("read cli.toml"));
     let bad_values = mistuned(&shared, &cli);
@@ -753,8 +797,205 @@ fn strings_t_keys_and_the_language_file_match() {
     assert!(missing.is_empty(), "used by a source the CLI reaches but not in cli.toml: {missing:?}");
     let unused: Vec<_> = cli.keys().filter(|k| !shared.contains(k)).collect();
     assert!(unused.is_empty(), "in cli.toml but used by no source the CLI reaches: {unused:?}");
-    let alone: Vec<_> = cli.keys().filter(|k| !table.contains_key(*k)).collect();
-    assert!(alone.is_empty(), "in cli.toml but not in en_US.toml: {alone:?}");
+    let invalid: Vec<_> = cli.keys().filter(|k| !is_key(k)).collect();
+    assert!(invalid.is_empty(), "not a lowercase-hyphen key in cli.toml: {invalid:?}");
+    let alone: Vec<_> = cli.keys().filter(|k| !table.contains_key(*k) && !cli_only.contains(*k)).collect();
+    assert!(alone.is_empty(), "in cli.toml but not in en_US.toml, and not only the CLI's: {alone:?}");
+}
+
+/// A key in `cli.toml` alone is a miss in the window, so what holds one must stay
+/// out of the GUI's reach: nothing but the CLI's own code (and `main`, which
+/// dispatches) may call into `cli.rs` or a `CLI_ONLY_FNS` function.
+#[test]
+fn cli_only_code_is_not_called_from_elsewhere() {
+    let mut sources = Vec::new();
+    rust_sources(&Path::new(env!("CARGO_MANIFEST_DIR")).join("src"), &mut sources);
+    let texts: Vec<_> = sources
+        .iter()
+        .map(|path| {
+            let source = std::fs::read_to_string(path).expect("read .rs");
+            let code: String = rust_fns(&source).into_iter().map(|(_, _, text)| text).collect();
+            let rest = split_cli_only(path, &code).1;
+            (path.clone(), rest)
+        })
+        .collect();
+    let mut hits = Vec::new();
+    for (path, rest) in &texts {
+        if !path.ends_with("main.rs") && names(rest, "cli", Some(':')) {
+            hits.push(format!("{}: cli::", path.display()));
+        }
+        for (file, function) in CLI_ONLY_FNS {
+            let module = Path::new(file).file_stem().expect("file stem").to_string_lossy();
+            let bare = path.ends_with(file)
+                && rest.match_indices(&format!("{function}(")).any(|(at, _)| {
+                    !rest[..at].ends_with(|c: char| c.is_alphanumeric() || "_.:".contains(c))
+                });
+            if bare || names(rest, &format!("{module}::{function}"), None) {
+                hits.push(format!("{}: {module}::{function}", path.display()));
+            }
+        }
+    }
+    assert!(hits.is_empty(), "the GUI could reach text of cli.toml alone: put its keys in en_US.toml too and take the function off CLI_ONLY_FNS: {hits:?}");
+}
+
+/// The macros of the CLI's print paths whose text is shown to the user.
+const SHOWN_MACROS: [&str; 7] = ["println", "eprintln", "print", "eprint", "bail", "anyhow", "ensure"];
+
+/// Sources whose print and error macros are scanned, and, for those marked, every
+/// `format!` and `.context` too: there a format string is shown, recorded
+/// (`SHOWN_LITERALS`) or layout, and nothing else.
+const CLI_PRINT_PATHS: [(&str, bool); 6] = [
+    ("cli.rs", true),
+    ("main.rs", true),
+    ("bench/interrupt.rs", true),
+    ("integrations.rs", false),
+    ("bench/spec.rs", false),
+    ("bench/sweep.rs", false),
+];
+
+/// The format strings with a word in them that stay literal, each with why.
+const SHOWN_LITERALS: [(&str, &str); 5] = [
+    ("sweep-{}", "a campaign name: it goes into bench.db"),
+    ("{} (default)", "a value of `server show`, read by scripts"),
+    ("{v} MiB", "a value of `server show`; a unit"),
+    ("  [{}]{off}  model={}", "`preset list` row: `model` is the INI key"),
+    ("mmproj: {}", "`preset download` row: `mmproj` is the INI key"),
+];
+
+/// Every string literal handed to one of `macros` (`format` and `.context` with
+/// `all`) in a Rust source, its test module left out, however many lines the call
+/// takes; a literal that is a key of a `strings::` call is not one.
+fn shown_literals(source: &str, all: bool) -> Vec<String> {
+    let code: String = source.lines().take_while(|l| !l.trim_end().ends_with("mod tests {")).map(|l| format!("{l}\n")).collect();
+    let starts_call = |before: &str| {
+        if all && before.ends_with(".context(") {
+            return true;
+        }
+        let Some(head) = before.strip_suffix("!(") else { return false };
+        let word = &head[head.rfind(|c: char| !c.is_alphanumeric() && c != '_').map_or(0, |i| i + 1)..];
+        SHOWN_MACROS.contains(&word) || (all && word == "format")
+    };
+    let (mut out, mut before, mut depth) = (Vec::new(), String::new(), 0usize);
+    let mut chars = code.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '/' if chars.peek() == Some(&'/') => {
+                chars.by_ref().find(|c| *c == '\n');
+                continue;
+            }
+            // A char literal: `'"'`, `'\\''`, never a lifetime.
+            '\'' => {
+                let mut ahead = chars.clone();
+                let first = ahead.next();
+                if first == Some('\\') {
+                    ahead.next();
+                }
+                if ahead.next() == Some('\'') {
+                    chars = ahead;
+                    continue;
+                }
+            }
+            '"' => {
+                let mut text = String::new();
+                while let Some(s) = chars.next() {
+                    match s {
+                        '\\' => {
+                            text.push(' ');
+                            chars.next();
+                        }
+                        '"' => break,
+                        _ => text.push(s),
+                    }
+                }
+                let is_key = ["strings::t(", "strings::fill(", "strings::key("].iter().any(|k| before.trim_end().ends_with(k));
+                if depth > 0 && !is_key {
+                    out.push(text);
+                }
+                before.push('"');
+                continue;
+            }
+            '(' => {
+                before.push(c);
+                if depth > 0 {
+                    depth += 1;
+                } else if starts_call(&before) {
+                    depth = 1;
+                }
+                continue;
+            }
+            ')' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+        before.push(c);
+    }
+    out
+}
+
+/// The words of a format string left to translate: ASCII letters, three or more,
+/// once `{...}` placeholders, flags (`--x-y`) and file names (`server.ini`) are out.
+fn language_words(literal: &str) -> Vec<String> {
+    let mut rest = String::new();
+    let mut skip = false;
+    for c in literal.chars() {
+        match c {
+            '{' => skip = true,
+            '}' if skip => {
+                skip = false;
+                rest.push(' ');
+            }
+            _ if !skip => rest.push(c),
+            _ => {}
+        }
+    }
+    let mut words = Vec::new();
+    for token in rest.split_whitespace() {
+        let bare = token.trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '-');
+        let file_name = bare.split_once('.').is_some_and(|(a, b)| !a.is_empty() && !b.is_empty());
+        if bare.starts_with("--") || file_name {
+            continue;
+        }
+        words.extend(bare.split(|c: char| !c.is_ascii_alphabetic()).filter(|w| w.len() >= 3).map(str::to_string));
+    }
+    words
+}
+
+// The owner's rule: no user-visible text literal in the code. Text the CLI prints
+// goes through `strings::`; this stops a new literal in the paths already moved.
+#[test]
+fn cli_print_paths_hold_no_language() {
+    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut hits = Vec::new();
+    let mut allowed = std::collections::BTreeSet::new();
+    for (file, all) in CLI_PRINT_PATHS {
+        let source = std::fs::read_to_string(src.join(file)).expect("read .rs");
+        for literal in shown_literals(&source, all) {
+            if language_words(&literal).is_empty() {
+                continue;
+            }
+            match SHOWN_LITERALS.iter().find(|(text, _)| *text == literal) {
+                Some((text, _)) => {
+                    allowed.insert(*text);
+                }
+                None => hits.push(format!("{file}: {literal:?}")),
+            }
+        }
+    }
+    assert!(hits.is_empty(), "text in a print or error macro: give it a key in strings/cli.toml (AGENTS.md, The CLI): {hits:#?}");
+    let stale: Vec<_> = SHOWN_LITERALS.iter().filter(|(text, _)| !allowed.contains(text)).collect();
+    assert!(stale.is_empty(), "SHOWN_LITERALS entries nothing uses any more: {stale:?}");
+}
+
+#[test]
+fn shown_literal_scan_reads_macros_and_leaves_the_rest() {
+    let source = "// println!(\"comment\");\nprintln!(\"one {x}\");\neprintln!(\n    \"two \\\n     lines\",\n    a(b),\n);\nanyhow::bail!(\"three\");\nlet c = '\"';\nprintln!(\"{}\", strings::fill(\"a-key\", &[&\"four\"]));\nlet s = \"five\";\nlet f = format!(\"six\");\nx.context(\"seven\");\n#[cfg(test)]\nmod tests {\n    println!(\"eight\");\n}\n";
+    assert_eq!(shown_literals(source, false), ["one {x}", "two       lines", "three", "{}", "four"]);
+    assert_eq!(shown_literals(source, true), ["one {x}", "two       lines", "three", "{}", "four", "six", "seven"]);
+    for none in ["{line}", "{}", "  {:<60}  {x:.1}", "--image-size: {e}", "--image {}: {e}", " to ", "{key} = {applied} (presets.ini).", "server.ini: {}"] {
+        assert!(language_words(none).iter().all(|w| w == "to"), "{none:?}: {:?}", language_words(none));
+    }
+    assert_eq!(language_words("Wrote {path}"), ["Wrote"]);
+    assert_eq!(language_words("--draft takes mtp, not {d}"), ["takes", "mtp", "not"]);
+    assert_eq!(language_words("Done."), ["Done"]);
 }
 
 #[test]

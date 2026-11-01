@@ -64,7 +64,7 @@ fn main() {
     if argv.len() <= 1 {
         strings::set_reader(reader_of(None));
         if let Err(e) = gui::run(false) {
-            eprintln!("GUI error: {e:#}");
+            eprintln!("{}", strings::fill("gui-launch-error", &[&format!("{e:#}")]));
             std::process::exit(1);
         }
         return;
@@ -73,7 +73,7 @@ fn main() {
     let cli = cli::Cli::parse();
     strings::set_reader(reader_of(Some(&cli.command)));
     if let Err(e) = cli::run(cli) {
-        eprintln!("Error: {e:#}");
+        eprintln!("{}", strings::fill("error-line", &[&format!("{e:#}")]));
         std::process::exit(1);
     }
 }

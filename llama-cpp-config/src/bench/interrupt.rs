@@ -13,6 +13,7 @@
 //! thread, still running a leg, stops at its next edit or restart and cannot
 //! undo the restore.
 
+use crate::strings;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
 
@@ -67,11 +68,11 @@ pub fn note_server(was_running: bool) {
 /// For `bench run`, before anything else it does.
 pub fn install() -> Result<(), String> {
     ctrlc::set_handler(|| {
-        println!("\nInterrupted: putting the preset and the server back.");
+        println!("\n{}", strings::t("interrupted-putting-back"));
         let code = restore(&mut gate());
         std::process::exit(code);
     })
-    .map_err(|e| format!("cannot install the interrupt handler: {e}"))
+    .map_err(|e| strings::fill("interrupt-handler-failed", &[&e]))
 }
 
 /// Returns the exit code. A key that cannot be put back keeps its marker.
@@ -84,12 +85,7 @@ fn restore(state: &mut State) -> i32 {
                 println!("{} = {} (presets.ini).", h.key, h.restore);
             }
             Err(e) => {
-                println!(
-                    "Could not restore {} = {}: {e}. The value stays in {}.",
-                    h.key,
-                    h.restore,
-                    h.marker.display()
-                );
+                println!("{}", strings::fill("interrupted-not-restored", &[&h.key, &h.restore, &e, &h.marker.display()]));
                 code = 1;
             }
         }

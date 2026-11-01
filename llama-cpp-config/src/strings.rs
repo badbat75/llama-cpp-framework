@@ -5,9 +5,10 @@
 //!
 //! A process reads one file, chosen once at the entry point (`main`, `set_reader`).
 //! The GUI reads its language. A CLI command reads `cli.toml` and only that, which
-//! holds the messages it shares with the GUI: not a language and never translated,
-//! so no language file can change CLI output. Text only the CLI prints is literal
-//! in `cli.rs`, `--help` included.
+//! holds everything the CLI prints: not a language and never translated, so no
+//! language file can change CLI output. Only `--help` is literal, in `cli.rs`. A
+//! test has no entry point: it reads the GUI's file over `cli.toml`, so the keys
+//! only the CLI has are found too.
 //!
 //! A key the table does not hold is returned as it is: a miss shows on screen as
 //! the key. An unreadable or malformed file is an empty table, every text then
@@ -62,8 +63,18 @@ fn lookup<'a>(table: &'a HashMap<String, String>, key: &'a str) -> &'a str {
 fn table() -> &'static HashMap<String, String> {
     static TABLE: OnceLock<HashMap<String, String>> = OnceLock::new();
     TABLE.get_or_init(|| {
-        let file = crate::paths::strings_dir().join(format!("{}.toml", file_stem(READER.get().copied().unwrap_or(Reader::Gui))));
-        parse(&std::fs::read_to_string(file).unwrap_or_default())
+        let read = |stem: &str| {
+            let file = crate::paths::strings_dir().join(format!("{stem}.toml"));
+            parse(&std::fs::read_to_string(file).unwrap_or_default())
+        };
+        let table = read(file_stem(READER.get().copied().unwrap_or(Reader::Gui)));
+        #[cfg(test)]
+        let table = {
+            let mut merged = read(CLI_FILE);
+            merged.extend(table);
+            merged
+        };
+        table
     })
 }
 
@@ -131,8 +142,6 @@ mod tests {
         assert_eq!(of(&["x", "gui"]), GUI_LANGUAGE);
         assert_eq!(of(&["x", "server", "show"]), "cli");
         assert_eq!(of(&["x", "preset", "list"]), "cli");
-        // The CLI's own text stays literal.
-        assert!(!include_str!("cli.rs").contains("strings::"));
     }
 
     #[test]
