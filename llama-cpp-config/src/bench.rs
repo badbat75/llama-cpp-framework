@@ -111,6 +111,7 @@ pub mod env;
 pub mod exec;
 pub mod gpu_lock;
 pub mod host;
+pub mod interrupt;
 pub mod query;
 pub mod record;
 pub mod spec;

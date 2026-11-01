@@ -46,7 +46,9 @@
 //! runs, and the marker is deleted only once the key is put back: a machine
 //! that reboots mid-sweep still has the value to restore on disk, and the next
 //! sweep of the same preset and key warns about it. The marker is the one file
-//! a sweep writes, and it exists only while the preset is not as it was.
+//! a sweep writes, and it exists only while the preset is not as it was. Ctrl-C
+//! puts the key back as well (`interrupt.rs`), so the marker is left only by what
+//! no handler survives: a kill -9, a crash, a power cut.
 
 use crate::strings;
 use std::path::PathBuf;
@@ -857,6 +859,7 @@ pub fn run(opts: &Opts) -> Result<String, String> {
         (Some(key), None) => current_value(&opts.preset, key),
     };
     let was_running = runstate::is_running();
+    super::interrupt::note_server(was_running);
     let port = u16::try_from(server_cfg::load().port_or_default())
         .map_err(|_| "invalid port in server.ini".to_string())?;
 
@@ -905,6 +908,7 @@ pub fn run(opts: &Opts) -> Result<String, String> {
         let marker = pending_path(&stamp);
         std::fs::write(&marker, header_json(opts, &original, &stamp))
             .map_err(|e| format!("cannot write {}: {e}", marker.display()))?;
+        super::interrupt::hold(&opts.preset, key, &original, marker.clone());
         println!(
             "Sweeping {key} = {} on preset {} ({reps}).",
             opts.values.join(", "),
@@ -997,6 +1001,7 @@ pub fn run(opts: &Opts) -> Result<String, String> {
     // died putting the key back still reads as interrupted.
     if let Some(key) = &opts.key {
         if restore.is_ok() {
+            super::interrupt::release(&pending_path(&stamp));
             for (path, _) in markers(&opts.preset, key) {
                 let _ = std::fs::remove_file(path);
             }
@@ -1086,12 +1091,18 @@ pub fn hold_key(preset: &str, key: &str) -> Result<(String, PathBuf), String> {
     });
     std::fs::write(&marker, header.to_string())
         .map_err(|e| strings::fill("cannot-write", &[&marker.display(), &e]))?;
+    super::interrupt::hold(preset, key, &original, marker.clone());
     Ok((original, marker))
 }
 
 /// Write one key of `preset` (`unset` removes it).
 pub fn set_key(preset: &str, key: &str, value: &str) -> Result<(), String> {
     write_value(preset, setter(key)?, value)
+}
+
+/// `set_key` for the interrupt handler, which already holds the gate.
+pub(super) fn write_key(preset: &str, key: &str, value: &str) -> Result<(), String> {
+    write_unlocked(preset, setter(key)?, value)
 }
 
 /// The plan one leg runs: the caller's, pinned to the swept preset.
@@ -1151,6 +1162,11 @@ fn current_value(preset: &str, key: &str) -> String {
 }
 
 fn write_value(preset: &str, set: Setter, value: &str) -> Result<(), String> {
+    let _gate = super::interrupt::gate();
+    write_unlocked(preset, set, value)
+}
+
+fn write_unlocked(preset: &str, set: Setter, value: &str) -> Result<(), String> {
     // Re-read rather than mutate one cached copy: the sweep may run for an hour
     // and the rest of the section belongs to whoever edited it last.
     let mut p = load_one(preset)?;
@@ -1163,15 +1179,19 @@ fn write_value(preset: &str, set: Setter, value: &str) -> Result<(), String> {
 pub(super) fn prepare_server(mode: Mode, port: u16) -> Result<(), String> {
     match mode {
         Mode::Live => {
-            runstate::stop();
-            wait_gone()?;
-            std::thread::sleep(GPU_SETTLE);
-            // Bare start, not the `control restart` path: no snapshot save or
-            // restore, see the module header.
-            runstate::start().map_err(|e| format!("cannot start llama-server: {e}"))?;
+            {
+                let _gate = super::interrupt::gate();
+                runstate::stop();
+                wait_gone()?;
+                std::thread::sleep(GPU_SETTLE);
+                // Bare start, not the `control restart` path: no snapshot save or
+                // restore, see the module header.
+                runstate::start().map_err(|e| format!("cannot start llama-server: {e}"))?;
+            }
             wait_ready(port)
         }
         Mode::Synthetic => {
+            let _gate = super::interrupt::gate();
             if runstate::is_running() {
                 runstate::stop();
                 wait_gone()?;
@@ -1187,6 +1207,12 @@ pub(super) fn prepare_server(mode: Mode, port: u16) -> Result<(), String> {
 /// Leave the machine as the sweep found it: llama-server running (on the value
 /// presets.ini now names) when it was running before, stopped when it was not.
 pub(super) fn restore_server(was_running: bool) -> Result<(), String> {
+    let _gate = super::interrupt::gate();
+    put_server_back(was_running)
+}
+
+/// `restore_server` for the interrupt handler, which already holds the gate.
+pub(super) fn put_server_back(was_running: bool) -> Result<(), String> {
     if was_running {
         runstate::stop();
         wait_gone()?;

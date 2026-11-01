@@ -775,7 +775,7 @@ pub(super) fn apply_overrides(
         let (original, marker) = sweep::hold_key(preset, key)?;
         if let Err(e) = sweep::set_key(preset, key, value) {
             let _ = restore_overrides(preset, restore);
-            let _ = std::fs::remove_file(&marker);
+            super::interrupt::release(&marker);
             return Err(strings::fill("override-failed", &[&key, &value, &e]));
         }
         println!("Override for this pass: {key} = {value} (was {original}).");
@@ -788,7 +788,7 @@ pub(super) fn restore_overrides(preset: &str, restore: Vec<(String, String, Path
     for (key, original, marker) in restore.into_iter().rev() {
         sweep::set_key(preset, &key, &original)
             .map_err(|e| strings::fill("override-not-restored", &[&key, &original, &e]))?;
-        let _ = std::fs::remove_file(marker);
+        super::interrupt::release(&marker);
     }
     Ok(())
 }

@@ -727,6 +727,7 @@ fn run_bench(c: BenchCmd) -> Result<()> {
         Some(s) => Some(bench::spec::load(s).map_err(|e| anyhow::anyhow!(e))?),
         None => None,
     };
+    bench::interrupt::install().map_err(|e| anyhow::anyhow!(e))?;
     // For the whole sweep, every pass and scenario included: another
     // benchmark on the same cards would be measured as this one's.
     let _gpu = bench::gpu_lock::acquire(|m| println!("{m}")).map_err(|e| anyhow::anyhow!(e))?;

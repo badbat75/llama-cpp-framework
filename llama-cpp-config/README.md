@@ -421,7 +421,7 @@ To give such a model a number, set its `ctx-size`, or turn its `fit` off.
 | `presets.ini.disabled` | `%LOCALAPPDATA%\llama.cpp\config\` | Same format: the presets switched off in the Models tab, which llama-server never reads |
 | `<model>.llamastate` | `%LOCALAPPDATA%\llama.cpp\state\` (overridable) | Binary KV-cache dump, written only when **SaveStateOnShutdown** is on |
 | `bench.db` | `%LOCALAPPDATA%\llama.cpp\bench\` | SQLite (`benchmarks\schema.sql`): every finished benchmark run, its report, the sweeps' digests |
-| `sweep-pending-<stamp>.json` | `%LOCALAPPDATA%\llama.cpp\bench\` | Only while a `bench run` has not put its key back: the value to restore |
+| `sweep-pending-<stamp>.json` | `%LOCALAPPDATA%\llama.cpp\bench\` | Only while a `bench run` has not put its key back: the value to restore. Ctrl-C restores it and removes the file; a kill -9 or a power cut leaves it |
 
 On Linux / macOS, `%LOCALAPPDATA%\llama.cpp` maps to `$HOME/.local/share/llama.cpp`; on Linux the `config\` directory is `${XDG_CONFIG_HOME:-$HOME/.config}/llama.cpp` instead (`paths::config_dir`).
 
