@@ -6,7 +6,7 @@ A build orchestrator, run with cargo (`cargo run -p xtask -- <phase>`, the crate
 
 Beside llama.cpp it ships **`llama-cpp-config`**, a GUI + CLI configurator (Rust, [Slint](https://slint.dev)) that writes `llama-server`'s `server.ini` and per-model `presets.ini`, starts and stops the server, and benchmarks presets into a public SQLite database (`benchmarks/bench.db`) with a versioned method, so numbers from two machines compare like with like.
 
-**Read the guides at [badbat75.github.io/llama-cpp-framework](https://badbat75.github.io/llama-cpp-framework/)**: the measured per-card and per-model settings with interactive charts drawn from `bench.db`, linked citations and a page per benchmark campaign. The same guides are the Markdown files in [docs/](docs/README.md).
+**Read the guides at [badbat75.github.io/llama-cpp-framework](https://badbat75.github.io/llama-cpp-framework/)**: the measured per-card and per-model settings with interactive charts drawn from `bench.db`, linked citations and a page per cited benchmark campaign. The same guides are the Markdown files in [docs/](docs/README.md).
 
 ## Screenshots
 

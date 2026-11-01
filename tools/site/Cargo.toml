@@ -1,6 +1,6 @@
 # The HTML site of docs\ and benchmarks\bench.db (docs\AGENTS.md): every page of
 # docs\ rendered with its bench-chart blocks drawn as SVG, plus a page per
-# campaign. A crate of its own so CI builds it without the configurator's
+# cited campaign. A crate of its own so CI builds it without the configurator's
 # toolchain (Slint, node, the llama.cpp clone).
 [package]
 name = "docs-site"

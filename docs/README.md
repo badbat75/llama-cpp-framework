@@ -9,7 +9,7 @@ updated: 2026-11-01
 Configuration references measured on this framework, and the developer references. Every
 measured value names the campaign in `benchmarks/bench.db` it comes from; how pages are
 written is in [AGENTS.md](AGENTS.md). For easier reading, the same pages are on the
-[site](https://badbat75.github.io/llama-cpp-framework/), with charts and a page per campaign.
+[site](https://badbat75.github.io/llama-cpp-framework/), with charts and a page per cited campaign.
 
 ## Cards (`type: gpu`)
 

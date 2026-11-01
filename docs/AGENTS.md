@@ -3,7 +3,7 @@
 The configuration references and the developer references. The `.md` files are the source:
 read as is on GitHub and by agents. `tools\site\` (`cargo run -p docs-site`) generates the HTML
 site from them and from `benchmarks\bench.db`: the charts drawn, the citations linked, a page
-per campaign; `.github\workflows\docs-site.yml` publishes it on GitHub Pages at every push to
+per cited campaign; `.github\workflows\docs-site.yml` publishes it on GitHub Pages at every push to
 `main`. Nothing here may need the site to be read.
 
 `cargo run -p docs-site -- --check` checks every rule below that a program can (front matter,
@@ -66,7 +66,7 @@ fully answered moves to the settings or the choices table).
 
 - A complete review, not a log: follow the `write-docs` skill (`.agents\skills\write-docs\SKILL.md`), through the `docs-writer` subagent. A new finding is merged into the topic it changes, and the page is written as of today, with no history.
 - Terse: a table cell holds one headline comparison; the reasoning goes in the prose under the table.
-- Every value traces to a measurement; a value recorded in `benchmarks\bench.db` names its campaign, as in (campaign `27b-kv-f16-20261016`) (`llama-cpp-config bench query campaigns --db benchmarks\bench.db` lists them), never a local archive file or path; no absolute paths. A cited campaign must exist in bench.db. A failed leg is left out, unless it sets a limit a reader must respect; then state the limit.
+- Every value traces to a measurement; a value recorded in `benchmarks\bench.db` names its campaign, as in (campaign `27b-kv-f16-20261016`) (`llama-cpp-config bench query campaigns --db benchmarks\bench.db` lists them), never a local archive file or path; no absolute paths. A cited campaign must exist in bench.db. A campaign reaches the site only once a guide cites or charts it. A failed leg is left out, unless it sets a limit a reader must respect; then state the limit.
 - When a campaign changes a result, update the row (and fill or retire its placeholder) in the same change, and `updated` in the front matter.
 - Runs recorded without a spec are `spec = custom`: say the method in the row or the section intro (temperature, repetitions, prompt, output cap), since no spec version stands for it.
 - A `gpu` page covers ITS card only: no split vector of one pairing, no mention of the other card. One exception: an example `presets.ini` section, folded in `<details>` under the multi-GPU section, may keep its `tensor-split`, with absolute paths removed.

@@ -6,7 +6,8 @@
 //! (front matter, required sections, every cited campaign present, every
 //! bench-chart block drawable) and fails on the first build with a problem.
 //! Without `--check` it then writes the site: one page per guide, a page per
-//! campaign (question, answer, runs, the guides citing it), docs\assets\ and
+//! campaign a guide cites or charts (question, answer, runs, the guides citing
+//! it), docs\assets\ and
 //! the stylesheet and site.js, into DIR or `build/<os>/site/`. Static HTML
 //! that GitHub Pages serves (.github\workflows\docs-site.yml); site.js only
 //! adds chart tooltips and series toggles, everything reads without it.
@@ -69,11 +70,12 @@ fn run() -> Result<(), String> {
         std::fs::create_dir_all(p.parent().unwrap()).map_err(|e| format!("{}: {e}", p.display()))?;
         std::fs::write(&p, text).map_err(|e| format!("{}: {e}", p.display()))
     };
+    let published = published(&db, &pages);
     w("style.css", CSS)?;
     w("site.js", JS)?;
     copy_dir(&root.join("docs/assets"), &out.join("assets"))?;
     for p in &pages {
-        let mut body = if p.stem == "index" { hero(&pages, &db) } else { meta_line(p) };
+        let mut body = if p.stem == "index" { hero(&pages, &db, &published) } else { meta_line(p) };
         body += &page::render(p, &pages, &db, "");
         let cited = p.citations();
         if !cited.is_empty() {
@@ -86,11 +88,11 @@ fn run() -> Result<(), String> {
         }
         w(&format!("{}.html", p.stem), &shell(p.title(), "", &body))?;
     }
-    w("campaigns/index.html", &shell("Campaigns", "../", &campaign_index(&db)))?;
-    for c in &db.campaigns {
+    w("campaigns/index.html", &shell("Campaigns", "../", &campaign_index(&db, &published)))?;
+    for c in &published {
         w(&format!("campaigns/{}.html", c.name), &shell(&c.name, "../", &campaign_page(c, &db, &pages)))?;
     }
-    println!("docs-site: {} pages, {} campaigns -> {}", pages.len(), db.campaigns.len(), out.display());
+    println!("docs-site: {} pages, {} of {} campaigns -> {}", pages.len(), published.len(), db.campaigns.len(), out.display());
     Ok(())
 }
 
@@ -141,28 +143,42 @@ fn meta_line(p: &Page) -> String {
     format!("<p class=\"meta\">{}</p>", parts.join(""))
 }
 
+/// The campaigns that get a page: those a guide cites or draws a chart from,
+/// the only ones a link can reach. The rest stay in bench.db, off the site.
+fn published<'a>(db: &'a Db, pages: &[Page]) -> Vec<&'a data::Campaign> {
+    let used: std::collections::HashSet<String> = pages
+        .iter()
+        .flat_map(|p| {
+            let charted = p.charts().iter().filter_map(|c| chart::Spec::parse(c).ok()).flat_map(|s| s.campaigns).collect::<Vec<_>>();
+            p.citations().into_iter().chain(charted)
+        })
+        .collect();
+    db.campaigns.iter().filter(|c| used.contains(&c.name)).collect()
+}
+
 /// The home page's banner: what the site is and how much bench.db holds.
-fn hero(pages: &[Page], db: &Db) -> String {
+fn hero(pages: &[Page], db: &Db, published: &[&data::Campaign]) -> String {
     let guides = pages.iter().filter(|p| matches!(p.get("type"), Some("gpu" | "model"))).count();
-    let runs = db.runs.iter().filter(|r| r.status == "ok").count();
-    let reqs: usize = db.runs.iter().map(|r| r.reqs.len()).sum();
+    let all_runs: Vec<_> = published.iter().flat_map(|c| db.runs_of(c)).collect();
+    let runs = all_runs.iter().filter(|r| r.status == "ok").count();
+    let reqs: usize = all_runs.iter().map(|r| r.reqs.len()).sum();
     let stat = |n: usize, what: &str| format!("<div class=\"stat\"><b>{n}</b><span>{what}</span></div>");
     format!(
         "<section class=\"hero\"><h1>llama.cpp-framework</h1><p>Measured configuration guides for llama.cpp on AMD and NVIDIA cards: every value traces to a benchmark campaign in <code>benchmarks/bench.db</code>.</p><div class=\"stats\">{}{}{}{}{}</div></section>",
         stat(guides, "card and model guides"),
-        stat(db.campaigns.len(), "campaigns"),
+        stat(published.len(), "campaigns"),
         stat(runs, "runs"),
         stat(reqs, "requests measured"),
         stat(db.gpus.len(), "GPU models")
     )
 }
 
-fn campaign_index(db: &Db) -> String {
+fn campaign_index(db: &Db, published: &[&data::Campaign]) -> String {
     let mut s = String::from(
-        "<h1>Campaigns</h1><p>Every set of runs in <code>benchmarks/bench.db</code>, newest first: the question it was run to answer and, once drawn, the answer. A run recorded without a spec reads as <code>custom</code>.</p>\
+        "<h1>Campaigns</h1><p>The sets of runs of <code>benchmarks/bench.db</code> the guides cite, newest first: the question it was run to answer and, once drawn, the answer. A run recorded without a spec reads as <code>custom</code>.</p>\
 <table><thead><tr><th>campaign</th><th>started</th><th>model</th><th>runs</th><th>spec</th><th>answer</th></tr></thead><tbody>",
     );
-    for c in &db.campaigns {
+    for c in published {
         let runs: Vec<_> = db.runs_of(c).collect();
         let mut models: Vec<String> = runs.iter().map(|r| r.model.clone()).collect();
         models.dedup();
