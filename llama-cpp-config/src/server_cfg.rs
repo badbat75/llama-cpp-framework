@@ -166,22 +166,25 @@ pub struct ServerConfig {
     /// Read by llama.cpp itself with `atoi`, hence the `1`, and an env var
     /// because no flag reaches it.
     pub attn_rot_disable: bool,
-    /// The FlashAttention band on RDNA4, exported as `GGML_HIP_FA_BAND_WMMA`:
-    /// one of [`HIP_FA_BANDS`], `0` = off (the variable is not exported). None
-    /// = the tool's default, `4` ([`Self::hip_fa_band_or_default`]), which IS
-    /// exported; it lives in the code, not in server.ini, so unset renders as a
-    /// commented hint line and reloads as None.
+    /// The FlashAttention band on RDNA4 or newer, exported as
+    /// `GGML_HIP_FA_BAND_WMMA`: one of [`HIP_FA_BANDS`], `0` = off (the variable
+    /// is not exported). None = the tool's default, `4`
+    /// ([`Self::hip_fa_band_or_default`]), which IS exported; it lives in the
+    /// code, not in server.ini, so unset renders as a commented hint line and
+    /// reloads as None.
     ///
     /// An opt-in path in the framework's PATCHED `libggml-hip`: the 1-8 query
     /// FlashAttention (the single-token decode and the MTP verify batch) of a
-    /// head-256 / GQA 6 model (Qwen3.8-27B) runs on the WMMA kernel with the KV
-    /// cache split round-robin over the CUs. Measured on the R9700 (2026-10-20):
-    /// FLASH_ATTN_EXT -15% at 1 query and -38% at 3-4 queries, decode at a 110k
-    /// context -5%, and greedy output identical between MTP and plain decode.
-    /// `2` only helps at 1-2 queries and falls back at 3-4, so `4` is the one to
-    /// use. Inert on an unpatched llama.cpp, on a non-RDNA4 GPU, on any other
-    /// head size or GQA, and on CUDA. Not a llama-server flag: ggml reads it
-    /// with `getenv` at the first attention call, hence `env_vars`.
+    /// head-256 model at GQA 5 to 12 (Qwen3.8-27B at 6, Qwen3.8-Flash-Next at
+    /// 12) runs on the WMMA kernel with the KV cache split round-robin over the
+    /// CUs. Measured at GQA 6 on the R9700 (2026-10-20):
+    /// FLASH_ATTN_EXT -15% at 1 query and -38% at 3-4 queries, decode at a
+    /// 115k-token prompt -5%, and greedy output identical between MTP and plain
+    /// decode. `2` runs the same kernel but reads the KV cache twice as often at
+    /// 3-4 queries, so `4` is the one to use. Inert on an unpatched llama.cpp,
+    /// on a GPU older than RDNA4, on any other head size or GQA, on a KV cache
+    /// other than f16 or q8_0, and on CUDA. Not a llama-server flag: ggml reads
+    /// it with `getenv` at the first attention call, hence `env_vars`.
     pub hip_fa_band: Option<i32>,
     /// Export `ROCP_TOOL_ATTACH=1`: lets `rocprofv3 --attach <pid>` (ROCm's
     /// profiler, shipped in the TheRock dist) attach a kernel trace to the
@@ -748,11 +751,13 @@ LogVerbosity = {log_verbosity}
 {attn_rot_disable_line}
 ; HipFaBand exports GGML_HIP_FA_BAND_WMMA (0 | 2 | 4; 0 = not exported), read
 ; by the framework's PATCHED ROCm backend: the 1-8 query FlashAttention (decode
-; and the MTP verify batch) of a head-256 / GQA 6 model (Qwen3.8-27B) runs on
-; the WMMA kernel with the KV cache split round-robin over the CUs. Measured on
-; the R9700: FLASH_ATTN_EXT -15% at 1 query, -38% at 3-4, decode at 110k -5%,
-; same greedy output. 2 only helps at 1-2 queries, so 4 is the one to use.
-; Inert on an unpatched llama.cpp, on non-RDNA4 GPUs, other head sizes or GQA,
+; and the MTP verify batch) of a head-256 model at GQA 5 to 12 (Qwen3.8-27B at
+; 6, Qwen3.8-Flash-Next at 12) runs on the WMMA kernel with the KV cache split
+; round-robin over the CUs. Measured at GQA 6 on the R9700: FLASH_ATTN_EXT -15%
+; at 1 query, -38% at 3-4, decode at a 115k-token prompt -5%, same greedy
+; output. 2 runs the same kernel but reads the KV cache twice as often at 3-4
+; queries, so 4 is the one to use. Inert on an unpatched llama.cpp, on GPUs
+; older than RDNA4, other head sizes or GQA, a KV cache other than f16 or q8_0,
 ; and on CUDA. Commented = the default, 4 (exported); 0 switches it off.
 {hip_fa_band_line}
 ; RocprofAttach exports ROCP_TOOL_ATTACH=1, which rocprofiler-sdk requires of a

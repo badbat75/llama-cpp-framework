@@ -71,7 +71,7 @@ visible to HIP does with `device` left blank: hence `mmap`, set explicitly. *Lin
 
 | key | value | evidence |
 | --- | --- | --- |
-| `HipFaBand` (env `GGML_HIP_FA_BAND_WMMA`) | default (`4`) | the framework's FlashAttention band (`patches\llama.cpp\0003`): attention 1.18x faster at 1 query and 1.6x at 3 to 4, on `f16` KV; end to end the 27B decodes 25.9 against 24.5 at 115k |
+| `HipFaBand` (env `GGML_HIP_FA_BAND_WMMA`) | default (`4`) | the framework's FlashAttention band (`patches\llama.cpp\0003`): attention 1.18x faster at 1 query and 1.6x at 3 to 4, on `f16` KV; end to end the 27B decodes 25.9 against 24.5 at 115k (not recorded) |
 | `RocprofAttach` (env `ROCP_TOOL_ATTACH=1`) | off; on while diagnosing | lets `rocprofv3 --attach <pid>` trace the running server |
 
 ### Quantization on RDNA4
@@ -94,7 +94,7 @@ MTP; [Qwen3.8-27B](qwen3.8_27b.md) has the detail and the full baseline
 
 | key | value | evidence |
 | --- | --- | --- |
-| `split-mode`, `tensor-split` | `tensor`, even | decode 59.6 against 40.4 at 43.7k (48% faster), 55.4 against 33.5 at 110k (65% faster); cold prefill 22% and 16% slower (campaign `swift27b-concurrency-2xr9700-linux-20261031`). An even split leaves 3624 / 2486 MiB free at 43.7k, an uneven one left the x16 card at 0 MiB (campaign `swift27b-balance-mmproj-2xr9700-linux-20261031`) |
+| `split-mode`, `tensor-split` | `tensor`, even | decode 59.6 against 40.4 at 43.7k (48% faster), 55.4 against 33.5 at 115k (65% faster); cold prefill 22% and 16% slower (campaign `swift27b-concurrency-2xr9700-linux-20261031`). An even split leaves 3624 / 2486 MiB free at 43.7k, an uneven one left the x16 card at 0 MiB (campaign `swift27b-balance-mmproj-2xr9700-linux-20261031`) |
 | `CudaAllreduce` | `internal` | RCCL needs AtomicOps on both slots. The internal one follows the x4 card's host link: prefill 785.6 against 1136.1 on a boot where the chipset uplink trained at x2 (campaign `swift27b-driver-check-2xr9700-linux-20261031`) |
 | `parallel` | `2` | two decodes total 82.5 t/s against 59.6 for one (tensor, 43.7k). The context divides per slot: `425984` gives each 212992 (campaign `swift27b-ctx-tensor-2xr9700-linux-20261031`) |
 | drafter | MTP behind an n-gram stage | MTP and DFlash2 are within noise on prose and in the chains: 30.9 and 28.8 at 43.7k. Alone on code DFlash2 leads, 58.2 against 49.8. MTP takes ~1.3 GB more on the last card (campaign `swift27b-drafter-2xr9700-linux-20261030`; campaign `swift27b-drafter-code1536-2xr9700-linux-20261030`) |
@@ -108,6 +108,65 @@ split and 20.2 under the layer split.
 Each card sits at its 300 W cap while prefilling and at 210 to 270 W while decoding (read by hand from
 sysfs, not recorded). `power1_cap_max` equals the default, so the cap can only go down without the driver's
 overdrive.
+
+An example `presets.ini` section, the preset of the
+[baseline under the standard spec](qwen3.8_27b.md#7-baseline-under-the-standard-spec-two-r9700s): set
+`model` and `mmproj` to your own paths, and `device` and `mmproj-device` to your own ids, which
+`llama-server --list-devices` prints (they can change between boots, and both cards print the same name,
+so the list does not say which one is the x16 card).
+
+<details>
+<summary>presets.ini: Qwen3.8-27B on two R9700s</summary>
+
+```ini
+[Swift-1.5-Qwen3.8-27B]
+; url = https://huggingface.co/ukisai/Swift-1.5-Qwen3.8-27B-GGUF
+model = Swift-1.5-Qwen3.8-27B-Q8_0.gguf
+mmproj = Qwen3.8-27B-UD-mmproj-BF16.gguf
+mmproj-offload = true
+; the x4 card
+mmproj-device = ROCm1
+
+spec-type = ngram-map-k4v,draft-mtp
+spec-draft-n-max = 2
+spec-draft-type-k = f16
+spec-draft-type-v = f16
+spec-ngram-map-k4v-size-m = 32
+
+ctx-size = 425984
+; the x16 card first
+device = ROCm0,ROCm1
+; needs CudaAllreduce = internal in server.ini
+split-mode = tensor
+tensor-split = 1,1
+parallel = 2
+kv-unified = false
+ubatch-size = 1024
+
+cache-type-k = f16
+cache-type-v = f16
+cache-ram = 24576
+cache-reuse = 256
+ctx-checkpoints = 12
+
+jinja = true
+reasoning = auto
+reasoning-format = auto
+reasoning-budget-message = Reasoning budget reached. Stop analysing and write the final answer now.
+
+load-mode = none
+fit = off
+
+temp = 1
+top-k = 20
+top-p = 0.95
+min-p = 0
+repeat-penalty = 1
+presence-penalty = 0
+backend-sampling = true
+```
+
+</details>
 
 ### Paired with a card of another backend
 
@@ -149,6 +208,6 @@ replaces that path when every device is a ROCm one and every slot has AtomicOps.
 | `spec-draft-p-min` | default | does a confidence floor lift acceptance on the reasoning phase? | TBD |
 | power limit | stock (300 W) | prefill and decode per watt | partly: draw read by hand ([section 4](#4-multi-gpu)), no per-watt figure |
 | `GGML_CUDA_AR_COPY_THRESHOLD` / `_CHUNK_BYTES` on two R9700 | default | the internal AllReduce's staging sizes (seeds: 1-2 MiB, 2 MiB) against the default | TBD |
-| Linux: memory beyond the card | n/a | what moving buffers to GTT costs in speed | partly: with two 110k contexts on a full card, requests ran out of memory in the HIP graph update, once after 14 GB had moved to GTT (campaign `swift27b-concurrency-2xr9700-linux-20261031`); the speed under GTT is unmeasured |
+| Linux: memory beyond the card | n/a | what moving buffers to GTT costs in speed | partly: with two 115k contexts on a full card, requests ran out of memory in the HIP graph update, once after 14 GB had moved to GTT (campaign `swift27b-concurrency-2xr9700-linux-20261031`); the speed under GTT is unmeasured |
 | `GGML_HIP_FA_BAND_WMMA_SPLIT` | default (one block per CU) | 32, 48, 96 or 128 KV blocks against the default, at 65k and 131k cells | TBD |
 | Q8_0 GEMV ceiling | n/a | `llama-bench` on this card alone at depth 0 and 131072, against the 58% of bandwidth seen in a trace | TBD |

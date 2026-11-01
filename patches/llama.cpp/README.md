@@ -171,13 +171,17 @@ queries), it runs the scalar `flash_attn_tile` kernel, which reads each KV head 
 three times per step and reaches ~180 GB/s of the R9700's 640 (upstream issue
 <https://github.com/ggml-org/llama.cpp/issues/28867>). The band runs those calls on the
 MMA kernel with the KV sequence split round-robin over one block per CU and the GQA group
-folded into the tile (`ncols2 = 8`), reading each K/V once; the partials are combined by
+folded into the tile (`ncols2 = 8`), reading each K/V once at band 4 with 1-4 queries and
+GQA up to 8; the partials are combined by
 upstream's own stream-k fixup, untouched. **Opt-in through the environment**:
 `GGML_HIP_FA_BAND_WMMA=4` (or `2`; unset or `0` = off), read by `getenv` at the first
 attention call, so a change needs a server restart; `GGML_HIP_FA_BAND_WMMA_SPLIT=N`
 overrides the number of blocks (default: the CU count). `llama-cpp-config` exports it from
 `server.ini` (SDK Tuning). Gate (`ggml_cuda_fattn_band_wmma_applies`, one function for
-kernel selection, dispatch and launch): RDNA4 with WMMA, K and V head 256, GQA in (4,
+kernel selection, dispatch and launch): RDNA4 or newer with WMMA (`GGML_CUDA_CC_IS_RDNA4` is
+`cc >= GGML_CUDA_CC_RDNA4`; measured on gfx1201 only), Q and V head 256 (`Q->ne[0]`,
+`V->ne[0]`; K's head is not tested here, `ggml_flash_attn_ext` already asserts it equal to
+Q's), GQA in (4,
 `GGML_HIP_FA_BAND_WMMA_GQA_MAX`] (default 12; 8 or below restores the whole-group fold
 alone), at most 8 queries, one sequence, mask present, no softcap, no ALiBi, K/V both f16
 or both q8_0. Everything else, CUDA included (the files compile into `libggml-cuda.so` too,
@@ -196,9 +200,12 @@ and takes 3; the price is a wider tile per query at a short context (below).
 **Measured (R9700, gfx1201, ROCm 10.1.0, 2026-10-20).** `test-backend-ops perf
 FLASH_ATTN_EXT` f16, head 256, 4 KV heads x 6, mask, us per call, tile vs band 4: kv
 131072 at 1 query 1085 -> 922 (-15%), at 2: 1075 -> 924, at 3: 1494 -> 928, at 4:
-1497 -> 930 (**-38%**); kv 65536 at 4 queries 752 -> 494. The band's cost is flat in the
-query count (one KV read); band 2 helps at 1-2 queries only and falls back to the tile at
-3-4, so **4 is the value to use**. q8_0 K/V stays far slower than f16 even with the band
+1497 -> 930 (**-38%**); kv 65536 at 4 queries 752 -> 494. Band 4's cost is flat from 1 to 4
+queries (one output tile, one read of each KV head). Band 2 runs the same kernel (its
+`ncols1 = 2` instance) and stays in the band at 3-4 queries, but as two output tiles
+(`launch_fattn`'s `ntiles_x`), so it reads each KV head twice per call where band 4 reads it
+once; no timing of band 2 is recorded. **4 is the value to use**. q8_0 K/V stays far slower
+than f16 even with the band
 (2388 vs 930 us at kv 131072, 4 queries): upstream converts quantized K/V to f16 on every
 call of the MMA kernel, so quantized types gain nothing from this path. Server
 (Qwen3.8-27B-Coder390 Q8_0 MTP, 115k-token prompt): decode 40.7 -> 38.7 ms per token at
@@ -243,8 +250,9 @@ accepted a draft, so the gain with drafts (2 to 4 queries per step) rests only o
 `test-backend-ops` figures above; the server run is open in `TODO.md`. Kept on, the default:
 `docs\qwen3.8_flash_next.md` section 7.
 
-**Confirming it is live.** The first head-256 attention call on RDNA4 with the variable set
-logs one line at info level, `RDNA4 FA band enabled: ncols1 = 4, GQA ratios up to 12`
+**Confirming it is live.** The first head-256 attention call on RDNA4 or newer with the
+variable set logs one line at info level,
+`RDNA4 FA band enabled: ncols1 = 4, GQA ratios up to 12`
 (`llama-server.log`, right after the model load). With the variable set, a kernel trace
 (`rocprofv3 --kernel-trace --stats`, see `ROCP_TOOL_ATTACH` in SDK Tuning) shows
 `flash_attn_ext_f16` instances where an unpatched build shows `flash_attn_tile`; without a

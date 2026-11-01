@@ -30,7 +30,8 @@ order is the opposite on Windows and on Linux. [Section 7](#7-baseline-under-the
 two-R9700 preset.
 
 All speeds are t/s, with ± the sample standard deviation over the repetitions. "43.7k" and "115k"
-are prompts of that many tokens, sent with the prompt cache off.
+are prompts of 43,730 and 115,343 tokens (the second is named `bench-prompt-110k` in bench.db and the
+specs), sent with the prompt cache off.
 
 ## 1. Model facts
 
@@ -70,7 +71,7 @@ Three behaviours shape how to read every figure below:
 | `load-mode` | `none` | every weight is on a GPU: nothing to map |
 | `ubatch-size` | `1024` | best prefill at 115k: 902 t/s, against 895 at `768`, 837 at `1536`, 809 at `2048`; decode unchanged. Above `1024` the R9700 keeps 659 and 75 MiB, against 1232 (*Linux*, mixed pair; campaign `coder390-ubatch-20261020`) |
 | `ctx-checkpoints` | `12` | covers ~98k tokens of history at the default 8192 spacing, for 1.8 GiB of host RAM; a client compaction should then reprocess under 8192 tokens (not yet observed), against 95,814 tokens in 101.7 s at `4` |
-| `HipFaBand` | default (`4`) | decode 25.9 against 24.5 t/s at 115k on the R9700 with `draft-mtp`, prefill unchanged |
+| `HipFaBand` | default (`4`) | decode 25.9 against 24.5 t/s at 115k on the R9700 with `draft-mtp`, prefill unchanged (not recorded) |
 
 ### Two R9700s on Linux
 
@@ -243,7 +244,7 @@ Two requests at once run in three scenarios: both cold (`prefill`), both decodin
 prompt (`decode`), and one cold while the other decodes (`prefill+decode`). A total is the tokens of
 both requests over the window they share.
 
-| scenario | figure | layer, 43.7k | tensor, 43.7k | layer, 110k | tensor, 110k |
+| scenario | figure | layer, 43.7k | tensor, 43.7k | layer, 115k | tensor, 115k |
 | --- | --- | --- | --- | --- | --- |
 | one request | prefill | 1433.6 ±6.6 | 1114.7 ±33.2 | 1098.6 ±6.2 | 924.8 ±1.0 |
 | one request | decode | 40.4 ±0.8 | 59.6 ±0.1 | 33.5 ±0.0 | 55.4 ±0.0 |
@@ -256,9 +257,9 @@ both requests over the window they share.
 | `prefill+decode` | decode total | 39.5 ±0.2 | 52.1 ±0.2 | 19.5 ±0.2 | 27.5 ±4.9 (b) |
 
 Most tensor columns ran at `tensor-split 35,31`, `ctx-size 393216`, with the image encoder on the CPU.
-The two 110k scenarios marked, five cells, come from runs of the same preset at the even split below,
+The two 115k scenarios marked, five cells, come from runs of the same preset at the even split below,
 `ctx-size 425984`, with the encoder on the x4 card. The even split matches `35,31` at 43.7k (1126.4 prefill
-and 59.3 decode against 1136.1 and 59.8). At 110k it prefills 4% faster and decodes 7% slower (961.6 and
+and 59.3 decode against 1136.1 and 59.8). At 115k it prefills 4% faster and decodes 7% slower (961.6 and
 51.4 against 924.8 and 55.4), on another text.
 
 - (a) one repetition at temperature 0 (campaign `swift27b-ctx-tensor-2xr9700-linux-20261031`);
@@ -282,23 +283,23 @@ metric   = decode
 x        = prompt
 series   = split-mode
 where    = concurrency=single
-rename   = unset=layer, bench-prompt-long=43.7k tokens, bench-prompt-110k=110k tokens
+rename   = unset=layer, bench-prompt-long=43.7k tokens, bench-prompt-110k=115k tokens
 ```
 
-- **The tensor split decodes faster**: 48% for one request at 43.7k, 65% at 110k, 28 and 32% in
+- **The tensor split decodes faster**: 48% for one request at 43.7k, 65% at 115k, 28 and 32% in
   total with two decodes. A request decoding beside a prefill nearly doubles at 43.7k.
 - **It prefills 16 to 22% slower.** Two cold prefills run one after the other under both splits, so
   their total equals one request's rate.
 - **The x4 link does not limit a layer-split decode**: under `rocprofv3` at 43.7k, cross-card copies
   take under 0.4% of the time and `mul_mat_vec_q` 67% of the GPU time.
 - **Temperature 0 with a drafter writes a different text under each split** (acceptance 84% layer,
-  76% tensor, two decodes at 110k), so each decode figure is the drafter's rate on its own text.
+  76% tensor, two decodes at 115k), so each decode figure is the drafter's rate on its own text.
 
 **Split evenly.** Under `split-mode tensor` an uneven split inflates the buffers: `35,31` takes
 14238 MiB of model and 15360 of KV against 13229 and 12288 at `1,1`. After a 43.7k prefill that
 leaves 0 / 7766 MiB free against 3624 / 2486, at the same speed: prefill 1136.1 ±2.3 and 1126.4
 ±1.9, decode 59.8 ±0.2 and 59.3 ±0.1 (campaign `swift27b-balance-mmproj-2xr9700-linux-20261031`). With
-the x16 card that full, two 110k contexts at once run out of memory at `35,31`; `1,1` holds them.
+the x16 card that full, two 115k contexts at once run out of memory at `35,31`; `1,1` holds them.
 
 **Check the link before measuring.** The tensor split stages every AllReduce through host memory,
 so its prefill follows the x4 card's host link. On a boot where the CPU-to-chipset link trained at
@@ -413,7 +414,7 @@ the default 2048); `spec-type ngram-map-k4v,draft-mtp`, `spec-draft-n-max 2`,
 `top-p 0.95`, `min-p 0`, `repeat-penalty 1`, `presence-penalty 0`. Server: `Threads 12`, `ThreadsBatch 12`,
 `CudaAllreduce internal`, `ModelsMemoryMargin 1024`.
 
-**Prompts.** Technical prose of 43.7k and 115.3k tokens; a coding-agent turn of 42.5k tokens
+**Prompts.** Technical prose of 43.7k and 115k tokens; a coding-agent turn of 42.5k tokens
 (`bench-prompt-code-1.0.json`); writing code (`bench-prompt-code-write-1.1.json`, 42.2k tokens), the
 agent's task and files in one message and a request to write `paths.rs` back in full, replying with
 reasoning and then ~3.9k tokens of code; one photograph fitted into 1344x896 (1259 tokens).
@@ -434,8 +435,8 @@ One request:
 | --- | --- | --- | --- | --- |
 | 43.7k prose | `engine` | 27.1 ±0.1 | 1210.3 ±2.6 | n/a |
 | 43.7k prose | `real` | 59.3 ±1.5 | 1125.4 ±1.6 | 79% |
-| 110k prose | `engine` | 24.5 ±0.0 | 1025.5 ±2.2 | n/a |
-| 110k prose | `real` | 59.2 ±7.0 | 960.1 ±1.2 | 82% |
+| 115k prose | `engine` | 24.5 ±0.0 | 1025.5 ±2.2 | n/a |
+| 115k prose | `real` | 59.2 ±7.0 | 960.1 ±1.2 | 82% |
 | agent turn | `engine` | 27.2 ±0.0 | 1214.8 ±2.4 | n/a |
 | agent turn | `real` | 52.0 ±4.1 | 1138.2 ±1.7 | 69% |
 | writing code | `engine` | 27.1 ±0.0 | 1211.0 ±3.6 | n/a |
@@ -450,10 +451,10 @@ metric   = decode
 x        = prompt
 series   = spec-pass
 where    = concurrency=single
-rename   = bench-prompt-43k-1.0=43.7k prose, bench-prompt-110k-1.0=110k prose, bench-prompt-code-1.0=agent turn, bench-prompt-code-write-1.1=writing code, bench-prompt-image-1.0=image
+rename   = bench-prompt-43k-1.0=43.7k prose, bench-prompt-110k-1.0=115k prose, bench-prompt-code-1.0=agent turn, bench-prompt-code-write-1.1=writing code, bench-prompt-image-1.0=image
 ```
 
-- **The speculator doubles decode**: 2.2x at 43.7k, 2.4x at 110k (it barely drops with depth when it
+- **The speculator doubles decode**: 2.2x at 43.7k, 2.4x at 115k (it barely drops with depth when it
   drafts), 1.9x on the agent turn and 1.75x on the image, following acceptance, and 2.1x writing code
   despite its 62%. It costs 6 to 7% of cold prefill on text and nothing measurable on the image.
 - **Writing code is not faster than prose**: 55.9 t/s against 59.3. The code itself (61.6 ±8.3)
@@ -473,9 +474,9 @@ and the prefill the cold one's:
 | 43.7k prose | `prefill` | 38.6 ±11.0 | 797.0 ±257.9 | 1104.7 ±2.4 | 57.8 ±10.1 | 78% |
 | 43.7k prose | `decode` | 48.2 ±3.8 | n/a | n/a | 87.3 ±5.7 | 78% |
 | 43.7k prose | `prefill+decode` | 25.2 ±4.8 | 1079.5 ±6.3 | 1079.5 ±6.3 | 46.9 ±3.8 | 77% |
-| 110k prose | `prefill` | 29.0 ±14.4 | 699.7 ±244.7 | 935.1 ±1.3 | 31.6 ±3.9 | 80% |
-| 110k prose | `decode` | 39.6 ±4.2 | n/a | n/a | 69.7 ±3.8 | 80% |
-| 110k prose | `prefill+decode` | 15.8 ±5.2 | 908.9 ±1.6 | 908.8 ±1.6 | 27.5 ±4.9 | 82% |
+| 115k prose | `prefill` | 29.0 ±14.4 | 699.7 ±244.7 | 935.1 ±1.3 | 31.6 ±3.9 | 80% |
+| 115k prose | `decode` | 39.6 ±4.2 | n/a | n/a | 69.7 ±3.8 | 80% |
+| 115k prose | `prefill+decode` | 15.8 ±5.2 | 908.9 ±1.6 | 908.8 ±1.6 | 27.5 ±4.9 | 82% |
 | agent turn | `prefill` | 22.5 ±21.2 | 812.9 ±219.8 | 1208.8 ±1.4 | 5.8 ±1.1 | 58% |
 | agent turn | `decode` | 35.9 ±4.1 | n/a | n/a | 67.6 ±7.2 | 59% |
 | agent turn | `prefill+decode` | 2.9 ±0.7 | 1090.8 ±1.2 | 1090.8 ±1.2 | 5.9 ±1.0 | 63% |
@@ -493,16 +494,16 @@ metric   = decode-total
 x        = concurrency
 series   = prompt
 where    = spec-pass=real
-rename   = bench-prompt-43k-1.0=43.7k prose, bench-prompt-110k-1.0=110k prose, bench-prompt-code-1.0=agent turn, bench-prompt-code-write-1.1=writing code, bench-prompt-image-1.0=image
+rename   = bench-prompt-43k-1.0=43.7k prose, bench-prompt-110k-1.0=115k prose, bench-prompt-code-1.0=agent turn, bench-prompt-code-write-1.1=writing code, bench-prompt-image-1.0=image
 ```
 
-- **Two decodes at once** total 1.47x one request at 43.7k, 1.18x at 110k, 1.32x on code and 1.66x on
+- **Two decodes at once** total 1.47x one request at 43.7k, 1.18x at 115k, 1.32x on code and 1.66x on
   the image. The deeper the prose, the less the second slot adds; code at 42.2k adds less than prose at
   43.7k, because each request's lower acceptance leaves less room in the batch.
 - **A request decoding beside a prefill almost stops.** Each server batch takes one `batch-size` chunk
   of the cold prompt (2048 tokens, ~1.7 s) and one decode step of the warm slot, so the warm slot runs
   at ~2 t/s until the prefill ends, then at full speed. Its mean depends on how far the reply runs
-  past the prefill: 36.2 on code, 25.2 at 43.7k, 15.8 at 110k, 2.9 on the short agent turn. The cold
+  past the prefill: 36.2 on code, 25.2 at 43.7k, 15.8 at 115k, 2.9 on the short agent turn. The cold
   prefill loses only 4 to 5% on text and 7.5% on the image.
 - **Two cold prefills run one after the other**, so the total equals one request's rate and the
   per-request mean mixes the first-served request with the waiting one. On the agent turn and on code
@@ -556,7 +557,7 @@ where    = spec-pass=agent
 | parameter | current value | question | result |
 | --- | --- | --- | --- |
 | `spec-draft-n-max` at 100k+ tokens | `2` | does the value chosen at 43.7k and on code hold deep in the context? | TBD |
-| `q8_0` KV at 110k+ tokens | `f16` | does the decode gap over `f16` keep growing? | partly: `f16` is measured at 110k, `q8_0` not past 43.7k |
+| `q8_0` KV at 115k+ tokens | `f16` | does the decode gap over `f16` keep growing? | partly: `f16` is measured at 115k, `q8_0` not past 43.7k |
 | `batch-size` on two R9700s | default (2048) | how much do `1024` or `512` give back to a request decoding beside a prefill, and what do they cost the cold prefill? | TBD |
 | `ctx-checkpoints` | `12` | tokens reprocessed at a real client compaction (expected under 8192) | TBD |
 | `reasoning-preserve` | default | what a divergent prompt costs on the 598.5 MiB recurrent state | TBD |

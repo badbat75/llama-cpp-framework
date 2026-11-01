@@ -294,8 +294,8 @@ the repo's database; on this machine it does.)
    working db. Scan for secrets before committing: the db is public.
 4. Update the guides in the same change: the row in the model/card guide's settings
    table with "(campaign `<name>`)", fill or retire the placeholder it answers, no
-   absolute paths, no em-dashes. Per-card guides stay about their card (no `CUDA0`,
-   no split vector of one pairing).
+   absolute paths, no em-dashes. Per-card guides stay about their card
+   (no split vector of one pairing).
 5. Update the memory note for that model with the new preset, the numbers, the backup
    file name and the levers still untested.
 6. Update this skill (section 7) before closing the task.

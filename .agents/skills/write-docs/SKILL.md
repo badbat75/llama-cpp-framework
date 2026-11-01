@@ -80,7 +80,7 @@ setup gets that tag, not the form of a rule.
 
 ## 6. References
 
-- A section reference is a link: `[section 4](#4-linux-against-windows)`. Use few; a page that
+- A section reference is a link: `[section 6](#6-linux-against-windows)` in `qwen3.8_27b.md`. Use few; a page that
   needs many is badly ordered.
 - Another page by name, as a link. An upstream PR as a worded link.
 - A figure from bench.db cites "(campaign `name`)", singular, once per campaign: only that form

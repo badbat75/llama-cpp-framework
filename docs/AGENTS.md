@@ -48,7 +48,7 @@ read from its "(campaign `name`)" citations, so the list cannot drift.
 ## Sections (`gpu` and `model`)
 
 Numbered `## N. <title>`, cited by number within the page as a link to the heading's anchor
-(`[section 4](#4-linux-against-windows)`). Required, under these names:
+(in `qwen3.8_27b.md`, `[section 6](#6-linux-against-windows)`). Required, under these names:
 
 - `gpu`: `Runtime prerequisites`, `Device facts`, `Settings`, `Choices that look better than they measure`, `Checking a configuration`, `Not yet measured (placeholders)`.
 - `model`: `Model facts`, `Recommended settings`, `Choices that look better than they measure`, `Not yet measured (placeholders)`.
@@ -69,7 +69,8 @@ fully answered moves to the settings or the choices table).
 - Every value traces to a measurement; a value recorded in `benchmarks\bench.db` names its campaign, as in (campaign `27b-kv-f16-20261016`) (`llama-cpp-config bench query campaigns --db benchmarks\bench.db` lists them), never a local archive file or path; no absolute paths. A cited campaign must exist in bench.db. A failed leg is left out, unless it sets a limit a reader must respect; then state the limit.
 - When a campaign changes a result, update the row (and fill or retire its placeholder) in the same change, and `updated` in the front matter.
 - Runs recorded without a spec are `spec = custom`: say the method in the row or the section intro (temperature, repetitions, prompt, output cap), since no spec version stands for it.
-- A `gpu` page covers ITS card only: no machine-specific device ids (`ROCm1`, `CUDA0`), no split vector of one pairing, no mention of the other card.
+- A `gpu` page covers ITS card only: no split vector of one pairing, no mention of the other card. One exception: an example `presets.ini` section, folded in `<details>` under the multi-GPU section, may keep its `tensor-split`, with absolute paths removed.
+- No hardware identifiers: MAC addresses, serial numbers, GPU UUIDs and the like. A backend device id (`ROCm1`, `CUDA0`) is fine: an enumeration index that identifies no machine. Its numbering depends on the machine, so a reader checks their own with `llama-server --list-devices`. A PCI address is fine too: it names a slot position and identifies no machine.
 - A `model` page names the cards it was measured on but stays about the model; per-card detail stays in the card guides, which it cites.
 
 ## Charts: `bench-chart` blocks
