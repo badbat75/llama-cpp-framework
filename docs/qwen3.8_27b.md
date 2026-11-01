@@ -210,8 +210,8 @@ against `coder390-device-order-20261019`, `coder390-ubatch-20261020` and
 | the same HIP API log on *Linux* | n/a | is the Linux lead on the R9700-last placement the copy rate alone (section 4), or the kernels too? | TBD |
 | a pinned staging buffer in ggml's cross-runtime tensor copy | `malloc` staging (section 4) | with the R9700 second on *Windows*, the 2.5 s of staged hops left after patch 0004 (~5% of the prefill); with it first, the 0.3 s copies out of the R9700 | TBD |
 | `batch-size` on two R9700s | default (2048) | a request decoding while the other prefills runs at ~2 t/s (section 10): how much do `1024` or `512` give it back, and what do they cost the cold prefill? | TBD |
-| decode on code with a long reply | n/a | the agent turn of section 10 replies in ~100 tokens; the drafter's rate on a reply that writes code (a new spec version with a code-writing prompt) | TBD |
-| an agent step with the prefix cached | n/a | the latency of a turn that prefills only the last tool result, alone and beside another request's prefill (needs a warm-prefix mode in `bench run`) | TBD |
+| decode on code with a long reply | n/a | the agent turn of section 10 replies in ~100 tokens; the drafter's rate on a reply that writes code (a new spec version with a code-writing prompt) | measured in section 11: 55.9 t/s for one request, 61.6 while writing the file |
+| an agent step with the prefix cached | n/a | the latency of a turn that prefills only the last tool result, alone and beside another request's prefill (needs a warm-prefix mode in `bench run`) | measured in section 11: first token 6.3 s, turn 8.8 s alone; 47.7 s beside a cold prefill |
 
 ## 7. Two R9700s on Linux (v0.8.0)
 
@@ -478,3 +478,94 @@ rename   = bench-prompt-43k-1.0=43.7k prose, bench-prompt-110k-1.0=110k prose, b
 - Board power, read by hand during the `real` 43.7k legs (sysfs, not recorded): both
   cards at the 300 W cap while prefilling, 210 to 270 W each while decoding, the CPU
   package ~80 W throughout.
+
+## 11. Two R9700s: the legs the standard 1.1 spec added (v0.8.0)
+
+`standard-1.1` (spec sha256 `ad6870d2...`) keeps the prose and image legs of 1.0 with the
+same rules and adds two measurements of code, run here on the same machine, software and
+preset as section 10 (campaign `swift27b-standard-1.1-2xr9700-linux-20261101`, runs 174 to
+181, recorded with `bench run --spec standard-1.1 --only ...`: only the new legs; the
+43.7k, 110k and image legs are those of section 10, campaign
+`swift27b-standard-1.0-2xr9700-linux-20261031`). The two sections together are the
+baseline under 1.1.
+
+- **Writing code** (`bench-prompt-code-write-1.1.json`, 42.2k tokens): the task and files
+  of the agent turn pasted into one message, and a request to write `paths.rs` back in
+  full. The reply is reasoning, then ~3.9k tokens of code, most of it copied from the
+  context. Passes `engine` and `real` as in section 10.
+- **An agent step with its prefix cached** (`bench-prompt-code-1.0.json`, the agent turn
+  of section 10, pass `agent`): before each repetition the slot is primed with the
+  conversation up to its last assistant turn (37,043 tokens cached), then the whole turn is
+  sent with the cache on, so it prefills only the last tool call and its result (5,457
+  tokens) and replies with one short step (86 to 236 tokens). The preset's sampling and
+  speculator, 5 repetitions; one request, two steps at once (`decode`), and a step while
+  the other slot prefills the 42.5k turn cold (`prefill+decode`). Every repetition read
+  the 37,043 tokens from the cache.
+
+Free memory after the first prefill: 4488 / 3350 MiB (x16 / x4 card) under `engine`, 2338
+to 2478 / 1240 to 1340 under `real` and `agent`.
+
+Writing code, t/s, mean ± sample standard deviation:
+
+| pass, scenario | decode per request | reasoning | answer (code) | prefill per request | prefill total | decode total | accepted |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `engine`, one request | 27.1 ±0.0 | 27.2 | 27.0 | 1211.0 ±3.6 | | | |
+| `real`, one request | 55.9 ±5.1 | 51.4 ±2.7 | 61.6 ±8.3 | 1135.2 ±1.4 | | | 62% |
+| `real`, `prefill` | 36.8 ±7.0 | | | 804.9 ±214.4 | 1203.0 ±4.4 | 64.7 ±4.3 | 62% |
+| `real`, `decode` | 41.5 ±5.6 | | | | | 74.0 ±4.6 | 63% |
+| `real`, `prefill+decode` | 36.2 ±4.5 (warm) | | | 1082.5 ±6.8 (cold) | 1082.5 ±6.8 | 64.0 ±6.0 | 62% |
+
+```bench-chart
+title    = Writing code: decode total by scenario, the preset's sampling and speculator
+campaign = swift27b-standard-1.1-2xr9700-linux-20261101
+metric   = decode-total
+x        = concurrency
+series   = spec-pass
+where    = spec-pass=real
+```
+
+The agent step, latency in seconds (first token: the server's prefill time of the turn;
+turn: send to last byte, as the client waits) and rates in t/s:
+
+| scenario | first token (s) | turn (s) | prefill of the step | decode of the step | accepted |
+| --- | --- | --- | --- | --- | --- |
+| one request | 6.3 ±0.3 | 8.8 ±0.7 | 867.9 ±36.7 | 51.5 ±3.3 | 63% |
+| `decode`: two steps at once | 9.7 ±2.2 | 16.6 ±3.3 | | 31.1 ±11.2 | 64% |
+| `prefill+decode`: a step beside a 42.5k cold prefill | 10.1 ±0.2 | 47.7 ±1.6 | 1045.2 ±3.4 (the cold one) | 3.7 ±1.4 | 60% |
+
+```bench-chart
+title    = The agent step: decode of the step by scenario
+campaign = swift27b-standard-1.1-2xr9700-linux-20261101
+metric   = decode
+x        = concurrency
+series   = spec-pass
+where    = spec-pass=agent
+```
+
+- **Writing code is not faster than writing prose.** One request decodes at 55.9 t/s
+  against 59.3 on the 43.7k prose: the code (61.6) drafts better than the reasoning before
+  it (51.4), but acceptance is 62% against prose's 79%, and the copied parts of the file do
+  not lift it much at `spec-draft-n-max 2`. Without the speculator the rate is the same as
+  every other text prompt (27.1). The reasoning varies the most: 4.2k tokens on average
+  under `real`, from 3.1k to 7.3k (5.7k at temperature 0), so a repetition takes 2.5 to 6
+  minutes.
+- **Two requests writing code** total 74.0 t/s (×1.32 one request), less than prose's 87.3:
+  each request's lower acceptance leaves less room for the batch.
+- **A long reply hides the prefill stall.** The warm request of `prefill+decode` averages
+  36.2 t/s here against 2.9 on the short agent turn of section 10: it still runs at ~2 t/s
+  during the other's ~37 s prefill, but its 7.5k to 16k tokens run far past it.
+- **An agent step alone costs ~9 s**: 6.3 s to prefill the 5.5k tokens the last tool call
+  added (at 868 t/s: the depth of the 37k cached prefix makes it slower than a cold
+  prefill's average) and ~2.5 s for the step itself. Cold, the same turn took ~37 s of
+  prefill (section 10): the prefix cache is what makes an agent usable at this depth.
+- **Two steps at once** take 16.6 s each, nearly twice one: their two prefills are served
+  one after the other, as in the cold `prefill` scenario.
+- **A step beside another conversation's cold prefill waits for that prefill**: its first
+  token comes after 10.1 s, but the rest of the step runs at ~2 t/s until the other
+  prompt is done, so the turn takes 47.7 s, five times the step alone, while the cold
+  prefill loses only 8% (1045 against 1135). This is the case of two agents on one server
+  when one of them starts or compacts a conversation; the `batch-size` placeholder of
+  section 6 is the lever to try.
+- Section 10's `prefill` anomaly recurs: two cold code-writing prompts total 1203.0 t/s
+  against one request's 1135.2; the prose prompts do not show it. Not explained yet.
+
