@@ -524,7 +524,7 @@ pub(super) fn run(app: &AppWindow) {
     );
     // The two checked GPUs are a ROCm and a CUDA device, the pair that aborts
     // at load under every AllReduce but `none`: the strip says so until the
-    // Server tab's SDK Tuning knob is on `none`, and with that set, flash
+    // Server tab's SDK tuning knob is on `none`, and with that set, flash
     // attention untouched and a supported arch it stays quiet.
     assert!(
         st.get_preset_split_mode_warning()

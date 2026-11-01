@@ -393,7 +393,7 @@ Two sections: **OpenCode** (status line + buttons) and **Claude Code** (env-vari
 
 The status line says which of three states the file is in: no provider yet, in step with the enabled presets, or **out of step**, in which case it names the ids on each side (`enabled but not listed`, `listed but not enabled`). That last state is what a hand-edit or a failed write leaves behind; a refresh (F5) only reports it, and Save repairs it.
 
-The **Claude Code** snippet includes the API key from server.ini when set (otherwise `not-needed`), and the compaction variables described below.
+The **Claude Code** snippet, written for the OS's shell (PowerShell on Windows, `export` lines on Linux and macOS), includes the API key from server.ini when set (otherwise `not-needed`), and the compaction variables described below.
 
 The one field that is not a straight copy is each model's **`limit.context`**, and it is not the preset's `ctx-size`. opencode fills a prompt up to whatever ceiling it is handed, so the number has to be the context **one request** can actually use, which llama.cpp derives from three things at once (`integrations::effective_ctx`):
 

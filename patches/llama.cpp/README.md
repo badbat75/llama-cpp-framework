@@ -177,7 +177,7 @@ upstream's own stream-k fixup, untouched. **Opt-in through the environment**:
 `GGML_HIP_FA_BAND_WMMA=4` (or `2`; unset or `0` = off), read by `getenv` at the first
 attention call, so a change needs a server restart; `GGML_HIP_FA_BAND_WMMA_SPLIT=N`
 overrides the number of blocks (default: the CU count). `llama-cpp-config` exports it from
-`server.ini` (SDK Tuning). Gate (`ggml_cuda_fattn_band_wmma_applies`, one function for
+`server.ini` (SDK tuning). Gate (`ggml_cuda_fattn_band_wmma_applies`, one function for
 kernel selection, dispatch and launch): RDNA4 or newer with WMMA (`GGML_CUDA_CC_IS_RDNA4` is
 `cc >= GGML_CUDA_CC_RDNA4`; measured on gfx1201 only), Q and V head 256 (`Q->ne[0]`,
 `V->ne[0]`; K's head is not tested here, `ggml_flash_attn_ext` already asserts it equal to
@@ -254,7 +254,7 @@ accepted a draft, so the gain with drafts (2 to 4 queries per step) rests only o
 variable set logs one line at info level,
 `RDNA4 FA band enabled: ncols1 = 4, GQA ratios up to 12`
 (`llama-server.log`, right after the model load). With the variable set, a kernel trace
-(`rocprofv3 --kernel-trace --stats`, see `ROCP_TOOL_ATTACH` in SDK Tuning) shows
+(`rocprofv3 --kernel-trace --stats`, see `ROCP_TOOL_ATTACH` in SDK tuning) shows
 `flash_attn_ext_f16` instances where an unpatched build shows `flash_attn_tile`; without a
 profiler, `test-backend-ops perf` at the shapes above with and without the variable differs
 by the numbers above. A build without the patch ignores the variable silently.
@@ -311,7 +311,7 @@ on the CUDA runtime. The registrations: 416 MiB (the main context's `CUDA_Host` 
 buffer) and 376 MiB (the draft context's).
 
 **Confirming it is live.** Nothing is logged at the server's default verbosity. With
-`AMD_LOG_LEVEL=3` (SDK Tuning, or the environment of a standalone server) the HIP API log
+`AMD_LOG_LEVEL=3` (in the environment llama-server starts from) the HIP API log
 shows `hipHostRegister` calls of the `*_Host compute buffer size` values the server logs
 at startup, returning `hipSuccess`, right after each `sched_reserve` block; an unpatched
 build never calls `hipHostRegister`.

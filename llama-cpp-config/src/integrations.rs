@@ -217,7 +217,7 @@ pub fn detect_opencode_provider() -> bool {
 
 // ── Claude Code ────────────────────────────────────────────────────────
 
-/// Generates a PowerShell snippet that sets the env vars needed for
+/// Generates a snippet, for this OS's shell, that sets the env vars needed for
 /// Claude Code to use llama-server as a custom model provider. `example` is
 /// a preset id to show in the commented model line, with its advertised context,
 /// `None` when the fit decides it at load time (`claude_code_example` picks it;
@@ -238,12 +238,39 @@ pub fn claude_code_env_script(
     api_key: Option<&str>,
     example: Option<(&str, Option<i64>)>,
 ) -> String {
-    let api_key_val = api_key.unwrap_or("not-needed");
-    let head = format!(
-        "# Run this in PowerShell before launching Claude Code to use your local llama-server.\r\n\
-         $env:ANTHROPIC_BASE_URL = \"{base_url}\"\r\n\
-         $env:ANTHROPIC_API_KEY = \"{api_key_val}\"\r\n"
-    );
+    let shell = if cfg!(windows) { Shell::PowerShell } else { Shell::Posix };
+    env_script(shell, base_url, api_key, example)
+}
+
+/// The shell a Claude Code snippet is written for.
+#[derive(Clone, Copy)]
+enum Shell {
+    PowerShell,
+    Posix,
+}
+
+impl Shell {
+    fn eol(self) -> &'static str {
+        match self {
+            Shell::PowerShell => "\r\n",
+            Shell::Posix => "\n",
+        }
+    }
+
+    fn set(self, var: &str, value: &str) -> String {
+        match self {
+            Shell::PowerShell => format!("$env:{var} = \"{value}\""),
+            Shell::Posix => format!("export {var}=\"{value}\""),
+        }
+    }
+}
+
+fn env_script(
+    shell: Shell,
+    base_url: &str,
+    api_key: Option<&str>,
+    example: Option<(&str, Option<i64>)>,
+) -> String {
     let (example_id, example_ctx) = match example {
         Some((id, ctx)) => (id, ctx.map(|c| (c.to_string(), compact_pct(c).to_string()))),
         None => (
@@ -251,25 +278,31 @@ pub fn claude_code_env_script(
             Some(("<context>".to_string(), "<percent>".to_string())),
         ),
     };
-    let body = match example_ctx {
-        Some((ctx, pct)) => format!(
-            "# Pick a preset id from your presets.ini as the model name, with its context and\r\n\
-             # where to compact ({COMPACT_RESERVE_PCT}% + {COMPACT_RESERVE_TOKENS} tokens short of it), e.g.:\r\n\
-             # $env:ANTHROPIC_DEFAULT_SONNET_MODEL = \"{example_id}\"\r\n\
-             # $env:CLAUDE_CODE_MAX_CONTEXT_TOKENS = \"{ctx}\"\r\n\
-             # $env:CLAUDE_AUTOCOMPACT_PCT_OVERRIDE = \"{pct}\"\r\n\
-             # A preset whose context llama.cpp's fit sizes at load time has no fixed number:\r\n\
-             # name only its model, or copy n_ctx_slot from the server log after it loads.\r\n"
-        ),
-        None => format!(
-            "# Pick a preset id from your presets.ini as the model name, e.g.:\r\n\
-             # $env:ANTHROPIC_DEFAULT_SONNET_MODEL = \"{example_id}\"\r\n\
-             # No context or compaction line for it: llama.cpp's fit sizes its context at load\r\n\
-             # time to fit free memory, so there is no fixed number to give. To set one, copy\r\n\
-             # n_ctx_slot from the server log after it loads into CLAUDE_CODE_MAX_CONTEXT_TOKENS.\r\n"
-        ),
-    };
-    format!("{head}{body}# Then launch: claude\r\n")
+    let comment = |text: String| text.lines().map(|l| format!("# {l}")).collect::<Vec<_>>();
+    let mut out = comment(crate::strings::t("claude-snippet-run").to_string());
+    out.push(shell.set("ANTHROPIC_BASE_URL", base_url));
+    out.push(shell.set("ANTHROPIC_API_KEY", api_key.unwrap_or("not-needed")));
+    let model = format!("# {}", shell.set("ANTHROPIC_DEFAULT_SONNET_MODEL", example_id));
+    match example_ctx {
+        Some((ctx, pct)) => {
+            out.extend(comment(crate::strings::fill(
+                "claude-snippet-pick-with-context",
+                &[&COMPACT_RESERVE_PCT, &COMPACT_RESERVE_TOKENS],
+            )));
+            out.push(model);
+            out.push(format!("# {}", shell.set("CLAUDE_CODE_MAX_CONTEXT_TOKENS", &ctx)));
+            out.push(format!("# {}", shell.set("CLAUDE_AUTOCOMPACT_PCT_OVERRIDE", &pct)));
+            out.extend(comment(crate::strings::t("claude-snippet-fit-note").to_string()));
+        }
+        None => {
+            out.extend(comment(crate::strings::t("claude-snippet-pick").to_string()));
+            out.push(model);
+            out.extend(comment(crate::strings::t("claude-snippet-no-context").to_string()));
+        }
+    }
+    out.extend(comment(crate::strings::t("claude-snippet-launch").to_string()));
+    let eol = shell.eol();
+    out.iter().map(|l| format!("{l}{eol}")).collect()
 }
 
 /// The Claude Code snippet's example among `enabled`: the first preset with an
@@ -874,18 +907,33 @@ mod tests {
 
     #[test]
     fn claude_snippet_without_a_context_names_the_model_only() {
-        let with = claude_code_env_script("http://h", None, Some(("m", Some(262_144))));
-        assert!(with.contains("CLAUDE_CODE_MAX_CONTEXT_TOKENS = \"262144\""));
-        assert!(with.contains("CLAUDE_AUTOCOMPACT_PCT_OVERRIDE = \"81\""));
-        let without = claude_code_env_script("http://h", None, Some(("m", None)));
-        assert!(without.contains("ANTHROPIC_DEFAULT_SONNET_MODEL = \"m\""));
-        assert!(!without.contains("$env:CLAUDE_CODE_MAX_CONTEXT_TOKENS"));
-        assert!(!without.contains("$env:CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"));
+        let script = |ex| env_script(Shell::Posix, "http://h", None, ex);
+        let with = script(Some(("m", Some(262_144))));
+        assert!(with.contains("export CLAUDE_CODE_MAX_CONTEXT_TOKENS=\"262144\""));
+        assert!(with.contains("export CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=\"81\""));
+        let without = script(Some(("m", None)));
+        assert!(without.contains("export ANTHROPIC_DEFAULT_SONNET_MODEL=\"m\""));
+        assert!(!without.contains("CLAUDE_CODE_MAX_CONTEXT_TOKENS=\""));
+        assert!(!without.contains("CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"));
         assert!(without.contains("fit sizes its context at load"));
-        assert!(without.ends_with("# Then launch: claude\r\n"));
         // No preset at all: placeholders, both lines.
-        let none = claude_code_env_script("http://h", None, None);
+        let none = script(None);
         assert!(none.contains("\"<context>\"") && none.contains("\"<percent>\""));
+    }
+
+    #[test]
+    fn claude_snippet_speaks_the_shell_of_its_os() {
+        let posix = env_script(Shell::Posix, "http://h", Some("k"), None);
+        assert!(posix.contains("\nexport ANTHROPIC_BASE_URL=\"http://h\"\n"));
+        assert!(posix.contains("\nexport ANTHROPIC_API_KEY=\"k\"\n"));
+        assert!(!posix.contains("$env:") && !posix.contains('\r'));
+        assert!(posix.ends_with("# Then launch: claude\n"));
+
+        let ps = env_script(Shell::PowerShell, "http://h", None, None);
+        assert!(ps.contains("\r\n$env:ANTHROPIC_BASE_URL = \"http://h\"\r\n"));
+        assert!(ps.contains("$env:ANTHROPIC_API_KEY = \"not-needed\"\r\n"));
+        assert!(!ps.contains("export "));
+        assert!(ps.ends_with("# Then launch: claude\r\n"));
     }
 
     /// The advertised context is what ONE request may use, and llama.cpp derives

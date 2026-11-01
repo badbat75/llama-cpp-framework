@@ -152,7 +152,7 @@ pub fn config_to_form(cfg: &server_cfg::ServerConfig) -> ServerForm {
         models_dir: cfg.models_dir_or_default().into(),
         // Driven by the tensor-placement table, which reads and rewrites this one
         // string; no second copy of the rules exists (see src/tensor_override.rs).
-        // The SDK Tuning card's ROCm knob: a TRI-state through the same helper
+        // The SDK tuning card's ROCm knob: a TRI-state through the same helper
         // pair as the preset tab's flash-attn, because "never export
         // ROCBLAS_USE_HIPBLASLT" is a third instruction and the framework's
         // default. Shown as a dropdown (Options.tri_states).
@@ -441,7 +441,7 @@ mod tests {
         assert_eq!(parse_hip_fa_band("nonsense"), None);
     }
 
-    /// The SDK Tuning tri-state, all three states in both directions. "default"
+    /// The SDK tuning tri-state, all three states in both directions. "default"
     /// must come back as `None` and NOT as an explicit off: the difference is
     /// whether `ROCBLAS_USE_HIPBLASLT=0` reaches the child at all, i.e. whether
     /// every machine silently gets the Tensile workaround.

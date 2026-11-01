@@ -2,13 +2,13 @@
 // component just lays out the widgets against it.
 //
 // Layout (grep `heading:`): Network → Resources → GPU distribution → Tensor
-// placement → Advanced → SDK Tuning cards, then the FormActions row
+// placement → Advanced → SDK tuning cards, then the FormActions row
 // (Save/Revert), then the Command Line card
 // last. The Command
 // Line card auto-sizes to its content (a hidden mirror-Text drives its height) so
 // it never shows its own inner scrollbar; the page's own ScrollView handles it.
 //
-// SDK Tuning is the one card that holds no llama-server flags: its fields are
+// SDK tuning is the one card that holds no llama-server flags: its fields are
 // vendor-library environment variables (`runstate::env_vars`), so they are split
 // per GPU SDK: a knob there is read by the backend's own libraries, never by
 // llama.cpp, and is inert on every other backend.

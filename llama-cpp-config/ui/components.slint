@@ -101,7 +101,7 @@ export global Options {
     out property <[string]> load_modes: ["default", "auto", "none", "mmap", "mlock", "mmap+mlock", "dio"];
     out property <[string]> load_mode_labels: [Strings.t("default"), Strings.t("auto"), Strings.t("none"), "mmap", "mlock", "mmap+mlock", "dio"];
     // The words form.rs's tri_state / tri_bool pair speaks, for a tri-state shown
-    // as a dropdown (SDK Tuning's hipBLASLt): "default" passes nothing.
+    // as a dropdown (SDK tuning's hipBLASLt): "default" passes nothing.
     out property <[string]> tri_states: ["default", "on", "off"];
     out property <[string]> tri_state_labels: [Strings.t("default"), Strings.t("on"), Strings.t("off")];
     // GGML_CUDA_ALLREDUCE: "default" never exports the variable, the rest are

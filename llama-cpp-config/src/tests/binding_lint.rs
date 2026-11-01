@@ -536,11 +536,18 @@ fn gui_only_source(path: &Path) -> bool {
 
 /// Keys of a source a CLI command does reach, written where it does not:
 /// `linked_files.rs` shows its rows and its deletion report to the GUI alone,
+/// `integrations::claude_code_env_script` is the Integrations tab's snippet,
 /// `bench::sweep::check_values` is the tab's A/B check, `presets::rename` and the
 /// `ini::rename_section` under it are the rename dialog's, `startup::set_enabled`
 /// is the Settings tab's, and `main` prints `gui-launch-error` on a launch with no
 /// arguments, which reads the language file.
-const GUI_ONLY_KEYS: [&str; 22] = [
+const GUI_ONLY_KEYS: [&str; 28] = [
+    "claude-snippet-fit-note",
+    "claude-snippet-launch",
+    "claude-snippet-no-context",
+    "claude-snippet-pick",
+    "claude-snippet-pick-with-context",
+    "claude-snippet-run",
     "command-too-long",
     "gpu-lock-held",
     "gpus-in-use",

@@ -263,7 +263,7 @@ export struct ServerForm {
     models_memory_margin: string,
     models_memory_margin_default: bool,
     models_dir: string,
-    // ROCBLAS_USE_HIPBLASLT (the SDK Tuning card's ROCm half), a TRI-state
+    // ROCBLAS_USE_HIPBLASLT (the SDK tuning card's ROCm half), a TRI-state
     // carried as a string exactly like PresetForm's `flash_attn`: "default"
     // (never export the variable: rocBLAS routes as it sees fit), "on" (=1,
     // force hipBLASLt), "off" (=0, force Tensile). Not a bool: "default" and
@@ -271,7 +271,7 @@ export struct ServerForm {
     // GEMM failure (see src/server_cfg.rs). A dropdown over Options.tri_states,
     // and the same form::tri_state / tri_bool pair the preset tri-states use.
     rocblas_use_hipblaslt: string,
-    // GGML_CUDA_ALLREDUCE (the SDK Tuning card's multi-GPU half): "default"
+    // GGML_CUDA_ALLREDUCE (the SDK tuning card's multi-GPU half): "default"
     // (never export the variable) or one of server_cfg::ALLREDUCE_MODES, a
     // dropdown over Options.allreduce_modes.
     cuda_allreduce: string,
