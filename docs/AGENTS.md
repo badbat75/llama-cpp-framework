@@ -47,24 +47,26 @@ read from its "(campaign `name`)" citations, so the list cannot drift.
 
 ## Sections (`gpu` and `model`)
 
-Numbered `## N. <title>`, cited by number ("section 4") within the page. Required, under
-these names:
+Numbered `## N. <title>`, cited by number within the page as a link to the heading's anchor
+(`[section 4](#4-linux-against-windows)`). Required, under these names:
 
 - `gpu`: `Runtime prerequisites`, `Device facts`, `Settings`, `Choices that look better than they measure`, `Checking a configuration`, `Not yet measured (placeholders)`.
 - `model`: `Model facts`, `Recommended settings`, `Choices that look better than they measure`, `Not yet measured (placeholders)`.
 
 A required title may carry a qualifier in parentheses (`Recommended settings (two cards)`).
-Other sections (a topic, a platform, a machine: `Two R9700s on Linux (v0.8.0)`) go in
-between or after, numbered on; a new one is appended, never inserted, so citations by
-number keep pointing where they did. The tables keep their columns: settings
-`key | value | evidence`, choices `option | result`, placeholders
-`parameter | current value | question | result` (`TBD` until a campaign answers it; then
-the row moves to the settings or the choices table).
+Other sections are topics a reader looks for (drafters, the KV cache, Windows), placed where the
+page reads best, not appended by date; when one moves, update the citations to it across the repo
+(`TODO.md`, `patches\llama.cpp\README.md`, code comments, skills). The tables keep their columns:
+settings `key | value | evidence`, choices `option | result`, placeholders
+`parameter | current value | question | result` (`TBD` until a campaign answers it, `partly: ...`
+for what one answered, `TBD: needs ...` if it needs hardware missing from the test machine; a row
+fully answered moves to the settings or the choices table).
 
 ## Rules for `gpu` and `model` pages
 
-- Terse: a reference, not a narrative.
-- Every value traces to a measurement; a value recorded in `benchmarks\bench.db` names its campaign, as in (campaign `27b-kv-f16-20261016`) (`llama-cpp-config bench query campaigns --db benchmarks\bench.db` lists them), never a local archive file or path; no absolute paths. A cited campaign must exist in bench.db: a leg that failed records nothing (only finished runs are recorded), so name its sweep without the citation form ("the sweep `x` recorded nothing").
+- A complete review, not a log: follow the `write-docs` skill (`.agents\skills\write-docs\SKILL.md`), through the `docs-writer` subagent. A new finding is merged into the topic it changes, and the page is written as of today, with no history.
+- Terse: a table cell holds one headline comparison; the reasoning goes in the prose under the table.
+- Every value traces to a measurement; a value recorded in `benchmarks\bench.db` names its campaign, as in (campaign `27b-kv-f16-20261016`) (`llama-cpp-config bench query campaigns --db benchmarks\bench.db` lists them), never a local archive file or path; no absolute paths. A cited campaign must exist in bench.db. A failed leg is left out, unless it sets a limit a reader must respect; then state the limit.
 - When a campaign changes a result, update the row (and fill or retire its placeholder) in the same change, and `updated` in the front matter.
 - Runs recorded without a spec are `spec = custom`: say the method in the row or the section intro (temperature, repetitions, prompt, output cap), since no spec version stands for it.
 - A `gpu` page covers ITS card only: no machine-specific device ids (`ROCm1`, `CUDA0`), no split vector of one pairing, no mention of the other card.

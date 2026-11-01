@@ -6,6 +6,8 @@ A build orchestrator, run with cargo (`cargo run -p xtask -- <phase>`, the crate
 
 Beside llama.cpp it ships **`llama-cpp-config`**, a GUI + CLI configurator (Rust, [Slint](https://slint.dev)) that writes `llama-server`'s `server.ini` and per-model `presets.ini`, starts and stops the server, and benchmarks presets into a public SQLite database (`benchmarks/bench.db`) with a versioned method, so numbers from two machines compare like with like.
 
+**Read the guides at [badbat75.github.io/llama-cpp-framework](https://badbat75.github.io/llama-cpp-framework/)**: the measured per-card and per-model settings with interactive charts drawn from `bench.db`, linked citations and a page per benchmark campaign. The same guides are the Markdown files in [docs/](docs/README.md).
+
 ## Screenshots
 
 | | |
@@ -46,7 +48,7 @@ Beside llama.cpp it ships **`llama-cpp-config`**, a GUI + CLI configurator (Rust
 - Every finished run in SQLite with the machine, the software stack (llama.cpp, ROCm, CUDA, Vulkan SDK), the model and every parameter; `bench query` to read it; absolute paths and secrets dropped on the way in, so the database can be public.
 - A GPU lock every benchmark holds, plus a check that no other process has the GPUs open.
 
-**Measured guides** ([docs/](docs/AGENTS.md)): the per-card settings for the Radeon AI PRO R9700 and the RTX 4070 SUPER, and per-model guides for Qwen3.8-Flash-Next and Qwen3.8-27B, each value citing the bench.db campaign it comes from.
+**Measured guides** ([site](https://badbat75.github.io/llama-cpp-framework/), [Markdown](docs/README.md)): the per-card settings for the Radeon AI PRO R9700 and the RTX 4070 SUPER, and per-model guides for Qwen3.8-Flash-Next and Qwen3.8-27B, each value citing the bench.db campaign it comes from.
 
 ## Prerequisites
 

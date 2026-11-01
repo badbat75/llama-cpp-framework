@@ -44,7 +44,7 @@ faster than the tile kernel at 131k with one query per step and 55-59 % with 2-4
 65k-131k, 16 us slower per call at 4k. On the Flash-Next preset at 43.7k and 2.6k (3 runs
 each, temperature 0) prefill and decode are within noise and the output byte-identical,
 because the n-gram drafter drafts nothing on those prompts and attention is ~5 % of a decode
-step: `docs\qwen3.8_flash_next.md` section 10. Porting it surfaced a Windows abort in patch
+step: `docs\qwen3.8_flash_next.md` section 7. Porting it surfaced a Windows abort in patch
 0004 (`hipHostFree` on host memory CUDA still had registered, at the second prompt of a
 different shape), fixed in the same patch.
 
@@ -86,7 +86,7 @@ not applicable (Linux, 2026-10-21; was priority 1).** The patch pins the KV spli
 `launch_fattn`'s non-stream-k branch for `Q->ne[1] <= 8`, so a verify batch reduces the KV
 like plain decode. That branch is the tile and vec kernels, which no decode path of ours
 takes: the R9700 runs the band of 0003 (one fixed grid for 1 to 4 queries, width-pure by
-construction, `docs\qwen3.8_27b.md` section 2) and the RTX 4070 SUPER runs the stream-k MMA
+construction, `docs\qwen3.8_27b.md` section 1) and the RTX 4070 SUPER runs the stream-k MMA
 kernel, where `switch_ncols1` picks a different kernel instance per verify width (1, 4 or 8
 query columns, each with its own KV batch and rounding order). Measured on the installed
 v0.7.0 + 0001-0004, band on, Coder390 preset as configured (`CUDA0,ROCm0`, 16 layers on the
@@ -143,7 +143,7 @@ Nothing left to port from the list of 2026-10-21: the two kernel items were meas
 - Runtime knobs: `ROCBLAS_USE_HIPBLASLT=0` is already exported by the configurator;
   `GGML_CUDA_FA_WMMA_256=0` is harmful (their own charts: 3x slower deep prefill).
 
-## Other open checks (from the Windows work of 2026-10-21, `docs\qwen3.8_27b.md` section 6)
+## Other open checks (from the Windows work of 2026-10-21, `docs\qwen3.8_27b.md` section 9)
 
 - `tensor-split 53,13` for the Windows Coder390 preset at ctx 180224.
 - The HIP API log on Linux: is the Linux prefill lead the copy rate alone?
@@ -151,7 +151,7 @@ Nothing left to port from the list of 2026-10-21: the two kernel items were meas
   still staged through `malloc`: 2.5 s per 43.7k prefill with the R9700 second).
 - The Swift preset's device order on Windows.
 
-## Drafter benchmarks look too favorable (2026-10-30, `docs/qwen3.8_flash_next.md` section 11, MTP)
+## Drafter benchmarks look too favorable (2026-10-30, `docs/qwen3.8_flash_next.md` section 5)
 
 The live sweeps rank Flash-Next's drafters far above what the coding agent showed live
 (n-gram alone 274.5 t/s and the MTP chain 280.1 on the code prompt, MTP +77% on prose, against

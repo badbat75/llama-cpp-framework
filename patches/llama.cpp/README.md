@@ -229,10 +229,10 @@ Output identical in every pair, with and without drafting. Linux, the installed 
 rebuilt with patches 0001-0004 against the run of 2026-10-16 with 0001 only (`bench.db`
 campaign `flash-next-patches-linux-20261021`): prefill 422.7 ±2.6 against 417.9 ±2.2 t/s
 at 43.7k, decode 25.0 both, the band line in the log. Kept on, the default:
-`docs\qwen3.8_flash_next.md` section 10. The same Linux build on Qwen3.8-27B-Coder390
+`docs\qwen3.8_flash_next.md` section 7. The same Linux build on Qwen3.8-27B-Coder390
 (GQA 12, `draft-mtp`), against the runs before 0003 and 0004: prefill +5% at 43.7k and
 +8% on a 100-token prompt, flat at 115k, decode unchanged (campaign
-`coder390-patches-linux-20261021`, `docs\qwen3.8_27b.md` section 4).
+`coder390-patches-linux-20261021`, `docs\qwen3.8_27b.md` section 6).
 
 **Confirming it is live.** The first head-256 attention call on RDNA4 with the variable set
 logs one line at info level, `RDNA4 FA band enabled: ncols1 = 4, GQA ratios up to 12`
@@ -284,7 +284,7 @@ buffer refuses to register it again; that failure is expected and ignored. Compi
 both `ggml-cuda.dll` and `ggml-hip.dll`; a backend without the proc (Vulkan) is skipped.
 
 **Measured (R9700 + RTX 4070 SUPER, Qwen3.8-27B-Coder390 Q8_0 MTP, 43.7k-token prompt,
-one request per placement, 2026-10-21; `docs\qwen3.8_27b.md` section 4).** With the
+one request per placement, 2026-10-21; `docs\qwen3.8_27b.md` section 6).** With the
 R9700 second (`CUDA0,ROCm1`, `16,50`): the blocking HIP copies of the prefill 5.24 s to
 2.50 s, prefill 1029 to 1058 t/s (+2-3%); the masks now stream asynchronously, what
 remains is the cross-card hops llama stages through `malloc` (the 68 MiB block-15 gate

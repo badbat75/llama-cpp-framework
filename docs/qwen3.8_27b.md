@@ -11,230 +11,104 @@ updated: 2026-11-01
 
 # Qwen3.8-27B: configuration reference (draft)
 
-Reference settings for Qwen3.8-27B (architecture `qwen35`, dense, with an embedded MTP
-head) on this framework. The *Linux* rows were measured with llama.cpp v0.7.0 on the
-AMD Radeon AI PRO R9700 (32 GB, ROCm backend) and the RTX 4070 SUPER (12 GB, CUDA
-backend) in ONE model, layer split, a 12-core AVX-512 host and 64 GB of RAM (kernel 7.0,
-TheRock 10.1.0, CUDA 13.4.2). The file is the Q8_0 with its MTP head, the speculator
-`draft-mtp`, `Threads` = `ThreadsBatch` = 12. Rows marked v0.6.0 or *Windows* come from
-the earlier campaigns of the two card guides (`amd_ai_pro_r9700.md`,
-`nvidia_rtx4070_super.md`), which hold the per-card detail.
+Qwen3.8-27B (architecture `qwen35`) is a dense model with an embedded MTP head. This guide says
+how to run it for speed on two machines built around a 12-core AVX-512 host with 64 GB of RAM:
 
-Measurements: a 43.7k-token prompt with the prompt cache off (two runs, 128 tokens out:
-prefill, then decode right after it, deep in the context), and three different short
-prompts after a warm-up (code, prose, math; 400 tokens, temperature 0). The MTP head
-changes the greedy path, so read the per-run figures beside the mean.
+- **Two R9700s on Linux** (llama.cpp v0.8.0, the Swift-1.5 fine-tune of the Q8_0): one card in
+  the CPU's Gen5 x16 slot (the x16 card), one behind the chipset at Gen4 x4 (the x4 card).
+- **An R9700 and an RTX 4070 SUPER in one model** (llama.cpp v0.7.0, the Q8_0), on Linux and
+  on Windows. A row measured on another release names it.
+
+**In short.** Use an `f16` KV cache at the largest context that fits: deep in the context it
+decodes 11 to 12% faster than `q8_0`. Put an n-gram drafter in front of the MTP head: it more
+than doubles decode on code and costs nothing on prose. On two R9700s use the tensor split with
+an even `tensor-split`: it decodes 48 to 65% faster than the layer split for 16 to 22% less
+cold prefill. With two different cards, card order decides most of the speed, and the best
+order is the opposite on Windows and on Linux. [Section 7](#7-baseline-under-the-standard-spec-two-r9700s) holds the full baseline of the
+two-R9700 preset.
+
+All speeds are t/s, with ± the sample standard deviation over the repetitions. "43.7k" and "115k"
+are prompts of that many tokens, sent with the prompt cache off.
 
 ## 1. Model facts
 
 | item | value | source |
 | --- | --- | --- |
-| blocks | 64 plus the MTP block (65 in the GGUF) | `block_count = 65`, `nextn_predict_layers = 1`; `n_layer = 64` |
-| attention | on every 4th block: 16 layers hold a KV cache; 24 query heads, 4 KV heads, head size 256 | `full_attention_interval = 4`; `llama_kv_cache: 16 layers` |
-| Memory row (Model info) | hybrid (attention + recurrent) | `llm_arch_is_hybrid` |
+| blocks | 64 plus the MTP block (65 in the GGUF) | `block_count = 65`, `nextn_predict_layers = 1` |
+| attention | on every 4th block: 16 layers hold a KV cache; 24 query heads, 4 KV heads, head size 256 | `full_attention_interval = 4` |
+| memory type | hybrid (attention + recurrent) | `llm_arch_is_hybrid` |
 | native context | 262144 | `context_length` |
 | GGUF sampling defaults | temp 1.0, top-k 20, top-p 0.95 | `general.sampling.*` |
 | file (Q8_0) | 27.04 GiB, 27.32 B parameters | `file size`, `model params` |
-| KV cache per token | 64 KiB in `f16`, 34 KiB in `q8_0` (16 layers) | `KV buffer size`: 8704 MiB at 262144 cells in `q8_0`, 10240 at 163840 in `f16` |
-| recurrent state at one slot | 598.50 MiB (with the MTP head's sequences) | `llama_memory_recurrent: size` |
-| MTP draft context | its own KV over the full context, `f16`: 672 MiB at 172032 cells, 1024 at 262144 | `llama_kv_cache: ... 1 layers` |
-| prefill cost by position | v0.6.0, 234k-token prompt: 0.95 ms plus 0.0287 ms per 1k of context per token, 984 t/s at 4k against 142 t/s at 218k | marginal cost per token over one long prompt |
-| saved state (`SaveStateOnShutdown`) | ~36 KiB per token held in `q8_0` (4.38 GiB for 127,579 tokens, v0.6.0) | the snapshot file |
-| context checkpoint | 149.6 MiB each, in host RAM; one at every user-message start and one at the end of each prompt; at the cap the server first drops those within `checkpoint-min-step` of an earlier one, then the oldest | `slot create_check` log lines; `tools/server/server-context.cpp` (v0.7.0) |
-| MTP head in the prefill | the draft head processes the prompt too: 1065 t/s without a speculator against 882 with `draft-mtp` (*Linux*, v0.7.0, 115k-token prompt, same binary); it is paid back in decode | `prompt eval time` of the same request with `--spec-type none` |
-| `draft-mtp` in greedy decoding | not lossless on the stock HIP FlashAttention tile kernel: at 115k tokens, temperature 0, the output diverges from unassisted decoding after ~100 tokens; with the FlashAttention band (section 2) the two are identical over 278 tokens, as are band and stock without a drafter. Not width-pure either, band on: at 43.7k tokens, 300 greedy tokens, `spec-draft-n-max` 2, 4 and no drafter give three different texts (first flip at token ~120 and ~250), each one byte-identical when its run is repeated; the device placement puts 16 layers on the RTX 4070 SUPER, whose MMA kernel takes a different column count per verify width (1, 4, 8 queries), which the band does not cover | four hand-launched runs at 115k, five at 43.7k, same prompt and seed (*Linux*, v0.7.0) |
-| `split-mode tensor` with a card of the other backend | aborts at load unless Tensor-split AllReduce is `none`; with `none` it loses (section 5) | v0.6.0 |
+| KV cache per token | 64 KiB in `f16`, 34 KiB in `q8_0` | `KV buffer size` |
+| recurrent state, one slot | 598.50 MiB | `llama_memory_recurrent: size` |
+| MTP draft context | its own `f16` KV over the full context: 672 MiB at 172032 cells, 1024 at 262144 | `llama_kv_cache: ... 1 layers` |
+| saved state | ~36 KiB per token held in `q8_0` (v0.6.0) | the snapshot file |
+| context checkpoint | 149.6 MiB each, in host RAM | `slot create_check` log lines |
 
-## 2. Recommended settings (two cards)
+Three behaviours shape how to read every figure below:
+
+- **Prefill slows with depth**: 984 t/s at 4k tokens, 142 at 218k, in one long prompt (v0.6.0).
+- **The MTP head reads the prompt too**: 882 t/s against 1065 with no speculator at 115k. Decode
+  pays that back.
+- **The MTP head can change the greedy text.** With the FlashAttention band (`HipFaBand`), MTP
+  and unassisted decoding agree over 278 tokens at 115k, but different draft widths on a
+  mixed-card split still write different texts, each repeatable. Compare runs on the same kind
+  of text.
+
+## 2. Recommended settings
+
+### Any setup
 
 | key | value | evidence |
 | --- | --- | --- |
-| quant | Q8_0 | on the R9700 (*Windows*) the fastest of the 27B files measured, prefill and decode; Q5_K_M -13%/-10% prefill and -7%/-15% decode, Q6_K mixes slower still |
-| `cache-type-k/-v` | `f16`, at the largest context that fits: `172032` | *Linux*: decode at 43.7k tokens 35.2 and 34.5 t/s against 31.5 and 31.5 in `q8_0` at 262144 (+11%), prefill 1161 and 1162 against 1158 and 1169, three prompts 37.7 against 38.9 (36.4/33.4/43.4 against 37.3/34.9/44.4, the same draft acceptance). `q8_0` halves the KV but the compute buffers grow with it: 1712 and 1736 MiB on the two cards at 262144, against 456 and 604 in `f16` at 163840, so `f16` reaches 172032, not 131072 (section 3) (campaign `27b-kv-f16-20261016`) |
-| `ctx-size` | `180224` with `f16`, once the embedding table and the image encoder are off the cards' critical paths (the `override-tensor` and `mmproj-device` rows) | with the embedding table on the RTX 4070 SUPER, 180224 and 196608 did not load (`cudaMalloc failed: out of memory`) and 172032 left 281 MB free on the R9700. With the table in host RAM and the encoder on the RTX 4070 SUPER: free after a 115k prefill (R9700 / RTX 4070 SUPER) 1232 / 1274 MiB at 172032, 638 / 1026 at 180224, 339 / 986 at 188416, prefill 902, 889 and 893 t/s, decode the same within the draft's noise. 188416 runs but is under the 500 MB margin this card needs for its pools. At 180224 a 3840x2160 image appended to a 115k conversation (119,406 prompt tokens) succeeds and leaves 801 / 716 MiB (campaign `coder390-ctx-20261020`) |
-| `device` | the R9700 last on *Linux*, FIRST on *Windows* (`52,14`, section 4) | the last device takes the MTP head, the output head and the sampling: *Linux*, v0.6.0, decode +7% at 2.5k tokens and +4.5% at 43.6k against the RTX 4070 SUPER last, prefill -3% (the sign is reversed on *Windows*: v0.7.0, +9% prefill and +21% decode with the R9700 first, section 4). Repeated on v0.7.0 with the Coder390 Q8_0 MTP file at 172032 `f16`: at 43.7k decode 31.2 t/s (twice) against 31.3 with the RTX 4070 SUPER last at split 52,14, which leaves it 28 MiB free, and 29.8 at 53,13 (430 MiB free); prefill 1133 and 1123 against 1069 and 1071; short prompt 38.1 against 36.5 and 36.6. With the RTX 4070 SUPER last, 50,16 and 48,18 do not load (its compute buffer finds no room) (campaign `coder390-device-order-20261019`) |
-| `tensor-split` | most layers on the R9700, the RTX 4070 SUPER keeping ~800 MiB free | the split that fits 172032 `f16` with `blk\.15\.ffn_(up|down)` pinned to the R9700. Attention sits on blocks 3, 7, 11, 15, ... (`(i + 1) % 4 == 0`, `models/qwen35.cpp`), each with 672 MiB of KV at 172032 `f16`, so the boundary block of a split moves its KV slice with it: moving block 15 to the R9700 costs 1061 MiB there, a linear block 389 |
-| `override-tensor` | no `token_embd` rule: the embedding table (1288 MiB) stays in host RAM, llama.cpp's default | *Linux*, v0.7.0: with the table on the RTX 4070 SUPER against in host RAM, decode 31.2 against 31.2 t/s at 43.7k and 29.3 against 29.3 at 115k, prefill 1178 against 1164 and 897 against 899 (campaign `coder390-placement-20261020`, runs 22 and 28, 25 and 29). The *Windows* +1-2% of v0.5.0 does not repeat. The 1288 MiB freed on the card is what lets the image encoder move there (`mmproj-device`) |
-| `override-tensor`, output head | `output.weight` left on the last device | `^output\.weight$` on the RTX 4070 SUPER (its GEMV would be faster there) costs prefill 1026 against 1139 and 779 against 890 t/s, decode 29.9 against 29.7 and 28.2 against 29.2 at 43.7k and 115k: the MTP draft on the other card hops devices for every drafted token (campaign `coder390-placement-20261020`) |
-| `split-mode` | `layer` | `tensor` with `none` AllReduce: prefill 599 against 1290 t/s, decode 17.6 against 17.8 without a drafter, 44.7 against 45.0 with MTP (v0.6.0, ctx 16384) |
-| `ubatch-size` | `1024` | fits at ctx 262144 in `q8_0` (v0.6.0); against `512`, +5% prefill at 2.6k and 93.6k on the R9700 (*Windows*); decode unaffected. *Linux*, v0.7.0, 115k-token prompt: prefill 895 t/s at `768`, 902 at `1024`, 837 at `1536`, 809 at `2048`; decode 28.5, 29.3, 29.3, 29.0 (draft acceptance 54 to 57%). Above `1024` the compute buffers also eat the margin (R9700 free after the prefill 1232, 659 and 75 MiB at `1024`, `1536`, `2048`) (campaign `coder390-ubatch-20261020`) |
-| `spec-type` | `draft-mtp` | the head is in the GGUF. *Windows*, `spec-draft-n-max 4`: 50.6 t/s at 2.6k tokens; *Linux*, v0.6.0, unassisted (llama-bench `tg2048`): 17.9 |
-| `spec-draft-type-k/-v` | `f16` | *Linux*, v0.6.0: `q8_0` halves the draft KV (544 MiB at 262144) but raises the draft compute buffer from 648 to 1696 MiB |
+| quant | Q8_0 | the fastest 27B file: Q5_K_M prefills 10 to 13% slower and decodes 7 to 15% slower (*Windows*) |
+| `cache-type-k/-v` | `f16` | decodes 11 to 12% faster than `q8_0` deep in the context ([section 4](#4-kv-cache-type-and-context)) |
+| `spec-draft-type-k/-v` | `f16` | `q8_0` halves the draft KV but grows the draft compute buffer from 648 to 1696 MiB (v0.6.0) |
 | `load-mode` | `none` | every weight is on a GPU: nothing to map |
-| `mmproj-device` | the RTX 4070 SUPER, once the embedding table is off it | the image encoder (600 MiB of weights; its compute buffer, ~418 MiB for a 3840x2160 image, is allocated at the first image) only computes on image requests. *Linux*, v0.7.0, 172032 `f16`: on the R9700, with 342 MiB free after a 115k prefill, a 3840x2160 image aborts the server (`ROCm error: out of memory` in `clip_encode`); on the RTX 4070 SUPER the same request succeeds (612 t/s image prefill) and leaves 856 MiB free there and 1239 on the R9700. Text speed identical to the R9700 placement (campaign `coder390-placement-20261020`, runs 28 and 29). The *Windows* +2.4% of v0.5.0 came from the two blocks the encoder displaced on the smaller card |
-| `ctx-checkpoints` | `12` (`checkpoint-min-step` at its default 8192) | the client compacts a long conversation into a shorter prompt (observed: a 154.9k-token turn followed by a 95.8k one); the server resumes from the newest checkpoint under the common prefix, or reprocesses the whole prompt. With `4` no checkpoint survived under 95.1k ("forcing full prompt re-processing": 95,814 tokens in 101.7 s). With the eviction rule of section 1, 12 checkpoints spaced 8192 apart cover ~98k tokens of history, so the reprocessing is bounded by 8192 tokens; cost 1.8 GiB of host RAM, no VRAM (*Linux*, v0.7.0; first compaction with `12` still to be observed, section 6) |
-| `HipFaBand` (Server tab, SDK Tuning) | default (`4`) | the framework's FlashAttention band on RDNA4 (`patches\llama.cpp\0003`, `amd_ai_pro_r9700.md` section 3), covering the attention layers on the R9700: *Linux*, v0.7.0, 115k-token prompt, decode 25.9 against 24.5 t/s with `draft-mtp` at temperature 1.0 and 14.4 against 13.9 unassisted at temperature 0; prefill unchanged |
+| `ubatch-size` | `1024` | best prefill at 115k: 902 t/s, against 895 at `768`, 837 at `1536`, 809 at `2048`; decode unchanged (campaign `coder390-ubatch-20261020`) |
+| `ctx-checkpoints` | `12` | covers ~98k tokens of history at the default 8192 spacing, for 1.8 GiB of host RAM; a client compaction then reprocesses under 8192 tokens, against 95,814 tokens in 101.7 s at `4` |
+| `HipFaBand` | default (`4`) | decode 25.9 against 24.5 t/s at 115k on the R9700 with `draft-mtp`, prefill unchanged |
 
-## 3. KV cache type and context (*Linux*, v0.7.0)
+### Two R9700s on Linux
 
-Both cards, the R9700 last, `ubatch-size 1024`, `draft-mtp` with an `f16` draft KV (campaign
-`27b-kv-f16-20261016`):
-
-| KV, context | free after a 2.9k prompt (R9700 / RTX 4070 SUPER) | prefill t/s at 43.7k | decode at 43.7k | decode, three prompts |
-| --- | --- | --- | --- | --- |
-| `q8_0`, 262144 | 196 MB / 223 MiB | 1158, 1169 | 31.5, 31.5 | 38.9 |
-| `f16`, 163840 | 878 MB / 989 MiB | 1161, 1162 | 35.2, 34.5 | 37.7 |
-| `f16`, 172032 | 281 MB / 829 MiB | 1165 | 35.2 | n/a |
-| `f16`, 180224 and 196608 | do not load with the embedding table on the RTX 4070 SUPER | | | |
-| **`f16`, 180224**, table in host RAM, encoder on the RTX 4070 SUPER | 638 / 1026 MiB after a 115k prefill | 889 at 115k | 28.5 at 115k | n/a |
-| `f16`, 188416, same placement | 339 / 986 MiB after a 115k prefill: runs, under the margin | 893 at 115k | 29.3 at 115k | n/a |
-
-The last two rows are campaign `coder390-ctx-20261020`, the others `27b-kv-f16-20261016`.
-The gap grows with the tokens held, as an attention that reads a quantized KV would,
-and does not show on short prompts. The same holds on Qwen3.8-Flash-Next
-(`qwen3.8_flash_next.md`, section 9). For conversations that grow turn by turn, decode
-deep in the context is what every turn pays; `q8_0` stays the choice only where a context
-above 172032 is needed.
-
-## 4. Linux against Windows (v0.7.0)
-
-The same machine and preset on both systems: the Coder390 Q8_0 MTP file, 172032 `f16`,
-the R9700 last, `ubatch-size 1024`, the same llama.cpp build and prompts, three
-repetitions of 256 tokens at temperature 0 (campaigns `coder390-device-order-20261019`
-for *Linux*, `coder390-windows-vs-linux-20261020` for *Windows*):
-
-| prompt | prefill t/s *Linux* / *Windows* | decode t/s *Linux* / *Windows* | draft acceptance |
-| --- | --- | --- | --- |
-| 43.7k tokens | 1133, 1123 / 1030 (-9%) | 31.2, 31.2 / 25.3 (-19%) | 53% / 51% |
-| 100 tokens | 225, 226 / 209 (-7%) | 38.1, 38.1 / 31.0 (-19%) | 61% / 59% |
-
-Weights and KV per card are the same to the MiB and the draft acceptance is within two
-points, so the gap is the time of each step (39.6 against ~32 ms per token at 43.7k), not
-the placement or the drafter. `Threads` was 18 on *Windows* against 12, inert with every
-layer on a GPU. *Windows* lists the CPU's integrated GPU as a ROCm device too, ahead of
-the R9700, so a preset copied from *Linux* names the wrong card until its device ids are
-renumbered.
-
-The same comparison on the section 2 placement (`blk\.15\.ffn_(up|down)` on the R9700,
-embedding table in host RAM, the same v0.7.0 build with its three patches, `Threads` 12 on
-both; campaigns `coder390-placement-20261020` runs 28 and 29 for *Linux*,
-`coder390-placement-windows-20261021` for *Windows*). Free memory after the 115k prefill
-is the same to within 200 MiB on each card:
-
-| prompt | prefill t/s *Linux* / *Windows* | decode t/s *Linux* / *Windows* | draft acceptance |
-| --- | --- | --- | --- |
-| 43.7k tokens | 1182, 1156, 1154 / 1026, 1017, 1016 (-12%) | 31.2 / 26.7, 27.0, 27.0 (-14%) | 51% / 54% |
-| 115k tokens | 902, 895, 900 / 753, 745, 743 (-17%) | 29.3 / 24.9, 25.0, 25.3 (-14%) | 57% / 60% |
-
-Where a *Windows* prefill step goes (one 43.7k prefill of that preset, the CUDA side under
-Nsight Systems, the HIP side through its API log, `AMD_LOG_LEVEL=3`, since the Windows
-TheRock dist ships no rocprofiler; the GPU-engine counters for each card's busy share).
-A 1024-token ubatch takes ~1.04 s:
-
-| share | what |
-| --- | --- |
-| ~65% | the R9700's 50 layers: one `hipStreamSynchronize` of ~0.65 s per ubatch |
-| ~12% | host-to-device copies INTO the R9700, ~200 MiB per ubatch at ~2 GB/s: the block-15 activations crossing from the other card (the 68 MiB gate output and three 20 MiB hidden states) and the attention mask of the full-attention layers (85 MiB at 43.7k tokens, growing with the context). The card sits on the chipset link (3.2 GB/s pinned, `tools\pcie-bench`), and llama's input buffers are pinned for the first device only, so the R9700 copies them as pageable memory |
-| ~19% | the RTX 4070 SUPER's 16 layers (its kernel time: `mul_mat_q` 58%, flash attention 20%, `silu` 4.5%) |
-| ~2% | copies out of the 4070 (~110 MiB per ubatch at ~7.7 GB/s) and launch overhead |
-
-The two cards never overlap: the R9700's compute engine reads 60-94% busy (~73% on
-average) and idles while the 4070 computes and while the copies run. The *Linux* lead at
-43.7k (5.8 s over the prefill) is of the order of those copies (5.2 s), which the Linux
-HIP runtime stages faster; the kernels themselves were not compared.
-
-What the profile suggested, measured the same morning at 43.7k tokens, three repetitions,
-against the R9700-last placement re-measured minutes before (1041, 1029, 1018 prefill,
-27.0-27.1 decode):
-
-| change | prefill t/s | decode t/s | free after the prefill (R9700 / 4070) | campaign |
-| --- | --- | --- | --- | --- |
-| `blk\.15\.ffn_gate` on the R9700 too (no 68 MiB gate output crossing) | 1074, 1068, 1065 (+3.8%) | 27.1-27.5 (same) | 1222 / 1551 MiB | `coder390-gate-windows-20261021` |
-| the R9700 FIRST: `device` R9700, 4070; `tensor-split 52,14` (the 4070 takes the output head and the sampling; the R9700 gets llama's pinned input buffers) | 1129, 1119, 1118 (+9%) | 32.6, 32.9, 33.0 (+21%) | 2146 / 687 MiB | `coder390-device-order-windows-20261021` |
-
-On *Windows* the reversed order is therefore the setting (section 2): decode passes the
-*Linux* R9700-last figure (31.2) and prefill comes within 3% of it. On *Linux* the same
-swap lost (the `device` row) and the gate move changed nothing. At 115k tokens, `180224`
-(the same campaign): prefill 850, 844, 843 t/s (+13% over the R9700-last 753, 745, 743;
-*Linux* 902, 895, 900) and decode 31.0, 30.7, 31.0 (+23% over 24.9-25.3; *Linux* 29.3),
-with 527 MiB free on the 4070 and 1714 on the R9700 after the prefill. The prefill gap to
-*Linux* widens with the context (3% at 43.7k, 6% at 115k): the copies the swap does not
-remove, the attention mask above all, grow with it. Not measured with the R9700 first:
-the gate rule (moot: block 15 sits on the R9700 either way) and a `53,13` split for more
-margin on the 4070.
-
-Why *Linux* never showed the copy cost, tested with a llama.cpp change
-(`patches\llama.cpp\0004`, 2026-10-21): llama allocates the scheduler's host compute
-buffers (the graph inputs: token ids, positions, the attention masks) from the FIRST
-device's pinned memory, so the second device's runtime copies them as pageable memory;
-the patch registers those buffers (416 MiB for the main context, 376 for the draft's)
-with every GPU runtime. One 43.7k prefill per placement on the patched build, the profile's
-prompt, a single request (the HIP API log costs ~1% of prefill):
-
-| placement | prefill t/s unpatched | patched | blocking HIP copies in the prefill |
-| --- | --- | --- | --- |
-| the R9700 second (`16,50`) | 1029 | 1036 with the HIP log, 1058 without | 5.24 s to 2.50 s: the masks now stream asynchronously; what remains is the cross-card hops llama stages through `malloc` (pageable on both sides): the 68 MiB block-15 gate output at 33 ms once per ubatch (the gate lever above removes exactly this) and 20 MiB hidden states at ~10 ms |
-| the R9700 first (`52,14`) | 1105 | 1113 | none to begin with: the 4070's pageable copies cost 0.3 s in all (the CUDA runtime stages them at ~22 GB/s) |
-
-So the *Windows* loss is the HIP runtime's pageable path (~2 GB/s, blocking the thread)
-and nothing else; the Linux runtime pins pageable memory on the fly. The patch buys ~2%
-with the R9700 second and nothing measurable with it first, the setting of section 2; a
-placement that keeps the R9700 second still pays the staged hops, a ggml change (section
-6).
-
-The installed *Linux* server with 0001 to 0004, the preset as configured (R9700 second,
-`16,50`, 180224 `f16`, `ubatch 1024`, `draft-mtp`), through the configurator, against
-the runs before 0003 and 0004 (at 172032 where noted): 43.7k-token prompt prefill
-1185.6 ±12.6 against 1132.6 ±12.7 and 1123.3 ±6.7 t/s (+5%), decode 31.2 both;
-100-token prompt prefill 244.8 ±1.1 against 224.9 and 226.2 (+8%), decode 36.7 ±0.2
-against 38.1 with the acceptance at 58% against 61% (the band's numerics change the
-greedy text and the drafter's luck with it, section 2; the step itself is not slower);
-115k prompt prefill 894.7 ±1.2 against 889.2 at the same context and 902.2 ±6.9 at
-172032, decode 29.2 against 28.5 and 29.3: within noise. Free after the prefills 948 to
-960 MiB on the 4070, 854 to 910 on the R9700 (campaign `coder390-patches-linux-20261021`
-against `coder390-device-order-20261019`, `coder390-ubatch-20261020` and
-`coder390-ctx-20261020`).
-
-## 5. Choices that look better than they measure
-
-| option | result |
-| --- | --- |
-| `q8_0` KV to fit the native context | fits 262144, but costs 11% of decode at 43.7k tokens (section 3) |
-| `split-mode tensor` across the two backends | half the prefill of the layer split, no decode gain (section 2) |
-| Vulkan on the R9700 instead of ROCm | *Windows*, Q8_0: prefill -27% / -25% and decode -18% / -15% at 2.6k / 93.6k |
-| a low `spec-draft-n-max`, to stay on the FlashAttention vector kernel | *Windows*: `n-max 1` gives 9.8 t/s at 93.6k, against 13.0 with no drafter; `2` costs 21-25% against `4` |
-| `q8_0` draft KV | larger, not smaller, on v0.6.0 and later (section 2) |
-| moving the whole sampling chain onto the GPU (`top-p` 1.0, or the probe patch `patches\llama.cpp\0002`) | no measurable decode change at 115k tokens (40.7 against 40.6 to 41.5 ms per token): after `top-k 20` the CPU side of the chain handles 20 candidates. And a request with a tool-call grammar disables backend sampling altogether (`common_sampler_init: backend sampling is not compatible with grammar`), at ~1 ms per token of CPU work (*Linux*, v0.7.0) |
-
-## 6. Not yet measured (placeholders)
-
-| parameter | current value | question | result |
-| --- | --- | --- | --- |
-| `spec-draft-n-max` on *Linux*, v0.7.0 | default | does `4` (`3` at long context) still win with the R9700 last? | TBD |
-| decode at 87k+ tokens in `f16` | n/a | does the gap over `q8_0` keep growing with the context? | TBD |
-| the IQ3_S file with its MTP head | `q8_0`, 393216, `parallel 2` | the same `f16` question at a context it can afford | TBD |
-| `ctx-checkpoints` `12` | `12` | tokens reprocessed at the first client compaction (expected under 8192, section 2) | TBD |
-| `reasoning-preserve` | default | the hybrid model reprocesses from a checkpoint on a divergent prompt: the cost on this model's 598.5 MiB recurrent state | TBD |
-| `spec-draft-n-max` 2 to 5 at 100k+ tokens | `3` | the draft phase is ~20% of a decode step and acceptance moves decode by 20-30% between tasks (0.49 to 0.65 observed) | TBD |
-| the R9700 first on *Windows* at `53,13` | `52,14` (section 4) | does `53,13` buy margin on the 4070 (527 MiB free after a 115k prefill at `180224`) for free? | TBD |
-| the same HIP API log on *Linux* | n/a | is the Linux lead on the R9700-last placement the copy rate alone (section 4), or the kernels too? | TBD |
-| a pinned staging buffer in ggml's cross-runtime tensor copy | `malloc` staging (section 4) | with the R9700 second on *Windows*, the 2.5 s of staged hops left after patch 0004 (~5% of the prefill); with it first, the 0.3 s copies out of the R9700 | TBD |
-| `batch-size` on two R9700s | default (2048) | a request decoding while the other prefills runs at ~2 t/s (section 10): how much do `1024` or `512` give it back, and what do they cost the cold prefill? | TBD |
-| decode on code with a long reply | n/a | the agent turn of section 10 replies in ~100 tokens; the drafter's rate on a reply that writes code (a new spec version with a code-writing prompt) | measured in section 11: 55.9 t/s for one request, 61.6 while writing the file |
-| an agent step with the prefix cached | n/a | the latency of a turn that prefills only the last tool result, alone and beside another request's prefill (needs a warm-prefix mode in `bench run`) | measured in section 11: first token 6.3 s, turn 8.8 s alone; 47.7 s beside a cold prefill |
-
-## 7. Two R9700s on Linux (v0.8.0)
-
-The host now carries two R9700s and no RTX 4070 SUPER: one in the CPU's Gen5 x16 slot
-(`ROCm0`), one behind the chipset at Gen4 x4 (`ROCm1`) with no PCIe AtomicOps, so RCCL does
-not run; this section is the layer split only (the tensor split with the internal AllReduce is
-section 8). `f16` KV, 43.7k-token prompt
-with the prompt cache off, 128 tokens out. Two presets: the Swift-1.5 fine-tune of this model
-with `draft-mtp`, and the Q8_0 with the `draft-dflash` drafter on the second card.
-
-![Two R9700s: the x16 card in the CPU slot, the x4 card behind the chipset without AtomicOps; the tensor split stages its AllReduce through host memory](assets/diagrams/two-r9700-topology.svg)
-
-| preset, key | value | evidence |
+| key | value | evidence |
 | --- | --- | --- |
-| Swift, `device` | the x16 card first, `1,1` | prefill 1491 / decode 33.5 against 1476 / 32.2 with the order reversed (campaign `swift27b-2xr9700-linux-device-20261028`) |
-| Swift, `ctx-size` | `262144` (was 180224) | same speed: 1472.3 / 33.4; free after the prefill 7322 and 4086 MiB (campaign `swift27b-2xr9700-linux-ctx-20261028`) |
-| Swift, `ubatch-size` | `1024` | `2048` prefills 1118.3 ±5.8, -24% (campaign `swift27b-2xr9700-linux-ubatch-20261028`) |
-| Swift, `spec-draft-n-max` | default | `2` / `4` / `5`: 31.6 / 33.6 / 32.9 decode, none better than the default (campaign `swift27b-2xr9700-linux-draft-n-max-20261028`) |
-| Swift, `spec-type` | `ngram-map-k4v,draft-mtp` (`size-m 32`) | at the preset's sampling (temperature 1, 5 repetitions), decode at 43.7k / on a code rewrite with 1536 tokens out: no drafter 15.4 / 18.6, MTP 30.9 / 49.8, the DFlash2 Q8_0 drafter on the second card (`spec-draft-n-max 5`) 28.8 / 58.2, the n-gram stage in front of MTP 32.2 / 119.9, in front of DFlash2 31.0 / 127.1. The n-gram stage doubles the code decode and costs nothing on prose; MTP and DFlash2 are within noise of each other. MTP takes ~1.3 GB more on the second card than DFlash2 (its KV and compute buffer sit with the output head). With 256 tokens out the code reply ends inside the reasoning and the n-gram stage shows no gain (campaigns `swift27b-drafter-2xr9700-linux-20261030`, `swift27b-drafter-code1536-2xr9700-linux-20261030`) |
-| Swift, `spec-draft-n-max` with the n-gram stage | `2` | MTP: 29.9 / 136.5 ±8.4 at `2`, 32.2 / 119.9 ±19.8 at `3`, 30.5 / 107.3 ±35.0 at `4`, 27.3 / 124.0 ±17.1 at `5` (43.7k / code); DFlash2: 28.6 at `3`, 31.0 / 127.1 at `5`, 28.7 / 127.4 at `6`, 146.1 ±28.8 on code at `7`. The n-gram draft length is `spec-ngram-map-k4v-size-m`, not `spec-draft-n-max`: `16` / `32` / `64` give 118.8 / 127.1 / 134.9 ±33.6 on code. The code legs swing with how much of the prompt the sampled reply copies, more than with the draft length (campaign `swift27b-draft-length-2xr9700-linux-20261030`) |
-| Swift, `cache-type-k/-v`, `ctx-size` | `f16`, `393216` with `parallel 2` (was `q8_0`, 514288) | with MTP: decode at 43.7k 30.8 against 27.5 ±0.4 (+12%), prefill 1431 against 1412; free after the prefill 2768 / 1172 MiB at 393216, 3920 / 2580 at 360448, 464 / 0 at 458752; 425984 runs out of memory in the prefill. A `q8_0` slot snapshot does not restore into an `f16` cache (campaign `swift27b-kv-f16-mtp-2xr9700-linux-20261031`) |
-| DFlash, `ctx-size` | `262144` (was 172032) | 1396.9 / 31.5 against 1405 / 31.1 (campaign `qwen27b-dflash-2xr9700-linux-ctx-20261028`) |
-| DFlash, `spec-draft-n-max` | `5` (was 7) | 34.1 ±2.0 against 32.2 ±1.4 over 4 repetitions (35.1 against 32.9 without the first, which always reads ~3 t/s low after a restart); `3` 32.4, `10` 31.3 (campaign `qwen27b-dflash-2xr9700-linux-draft-n-max-20261028`) |
+| `split-mode`, `tensor-split` | `tensor`, `1,1` | decode 59.3 t/s against 40.4 with the layer split at 43.7k; balanced memory ([section 5](#5-splitting-the-model-across-two-cards)) |
+| `device` | the x16 card first | decode 33.5 against 32.2, prefill 1491 against 1476 (layer split; campaign `swift27b-2xr9700-linux-device-20261028`) |
+| `CudaAllreduce` | `internal` | RCCL cannot run: the x4 card's slot has no PCIe AtomicOps |
+| `ubatch-size` | `1024` | `2048` prefills 24% slower: 1118.3 ±5.8 (campaign `swift27b-2xr9700-linux-ubatch-20261028`) |
+| `ctx-size`, `parallel` | `425984`, `2` | 212992 per slot, with 2476 / 1378 MiB free after a 115k prefill ([section 4](#4-kv-cache-type-and-context)) |
+| `spec-type` | `ngram-map-k4v,draft-mtp`, `size-m 32` | code 119.9 t/s against 49.8 with MTP alone; prose 32.2 against 30.9 ([section 3](#3-drafters)) |
+| `spec-draft-n-max` | `2` | code 136.5 t/s, 119.9 at `3`; prose stays near 30 ([section 3](#3-drafters)) |
+| `mmproj-device` | the x4 card | a 3840x2160 image beside a slot holding 115k tokens leaves 2877 / 1032 MiB free |
+
+### An R9700 and an RTX 4070 SUPER
+
+| key | value | evidence |
+| --- | --- | --- |
+| `device` | the R9700 last on *Linux*, first on *Windows* | the order that wins on each system ([section 5](#5-splitting-the-model-across-two-cards), [section 6](#6-linux-against-windows)) |
+| `tensor-split` | most layers on the R9700; `52,14` on *Windows* | keeps ~800 MiB free on the RTX 4070 SUPER |
+| `ctx-size` | `180224` | the largest with margin: 638 / 1026 MiB free after a 115k prefill ([section 4](#4-kv-cache-type-and-context)) |
+| `split-mode` | `layer` | `tensor` across two backends prefills 599 t/s against 1290, decode the same (v0.6.0) |
+| `override-tensor` | no `token_embd` rule; `output.weight` on the last device | [section 5](#5-splitting-the-model-across-two-cards) |
+| `spec-type`, `spec-draft-n-max` | `draft-mtp`, `3` at long context, `4` otherwise | *Windows*: 50.6 t/s at 2.6k tokens at `4`, 30.1 at 93.6k at `3`; 17.9 unassisted (*Linux*, v0.6.0) |
+| `mmproj-device` | the RTX 4070 SUPER | a 3840x2160 image at 115k succeeds, text speed unchanged ([section 5](#5-splitting-the-model-across-two-cards)) |
+
+## 3. Drafters
+
+Two R9700s, layer split, the preset's sampling (temperature 1), 5 repetitions. The code prompt
+is a rewrite with 1536 tokens out: at 256 tokens the reply ends inside the reasoning and the
+n-gram stage has nothing to copy (campaign `swift27b-drafter-2xr9700-linux-20261030`; campaign
+`swift27b-drafter-code1536-2xr9700-linux-20261030`).
+
+| drafter | decode on 43.7k prose | decode on code |
+| --- | --- | --- |
+| none | 15.4 | 18.6 |
+| MTP | 30.9 | 49.8 |
+| DFlash2 on the second card, `spec-draft-n-max 5` | 28.8 | 58.2 |
+| n-gram (`ngram-map-k4v`), then MTP | 32.2 | 119.9 |
+| n-gram (`ngram-map-k4v`), then DFlash2 | 31.0 | 127.1 |
 
 ```bench-chart
 title    = Swift: decode by drafter at the preset's sampling, 43.7k-token prose
@@ -255,6 +129,60 @@ series   = prompt
 rename   = unset=none, ngram-map-k4v,draft-dflash=k4v + dflash, ngram-map-k4v,draft-mtp=k4v + mtp, bench-prompt-code=code rewrite
 ```
 
+Either speculator doubles decode. The n-gram stage then doubles it again on code, where the reply
+copies the context, and costs nothing on prose. MTP and DFlash2 are within noise of each other;
+MTP needs no second file but takes ~1.3 GB more on the last card, where its KV and compute
+buffer sit with the output head.
+
+The draft length matters less than the text (campaign `swift27b-draft-length-2xr9700-linux-20261030`):
+
+| `spec-draft-n-max`, n-gram then MTP | decode on 43.7k prose | decode on code |
+| --- | --- | --- |
+| **2** | 29.9 | 136.5 ±8.4 |
+| 3 | 32.2 | 119.9 ±19.8 |
+| 4 | 30.5 | 107.3 ±35.0 |
+| 5 | 27.3 | 124.0 ±17.1 |
+
+The code legs swing with how much of the prompt each sampled reply copies. The n-gram stage has
+its own length, `spec-ngram-map-k4v-size-m`: `16`, `32` and `64` give 118.8, 127.1 and 134.9
+±33.6 on code. With MTP alone, `spec-draft-n-max` `2`, `4` and `5` give 31.6, 33.6 and 32.9 on
+prose, none better than the default (campaign `swift27b-2xr9700-linux-draft-n-max-20261028`).
+
+If you prefer DFlash2, `spec-draft-n-max 5` is its best on prose: 34.1 ±2.0 against 32.2 ±1.4 at
+`7`, 32.4 at `3` and 31.3 at `10` (campaign `qwen27b-dflash-2xr9700-linux-draft-n-max-20261028`).
+On code it reaches 146.1 ±28.8 at `7`. It holds its speed at `ctx-size 262144`: 1396.9 prefill and
+31.5 decode against 1405 and 31.1 at 172032 (campaign `qwen27b-dflash-2xr9700-linux-ctx-20261028`).
+
+## 4. KV cache type and context
+
+`f16` takes more memory per token than `q8_0` but less compute buffer, so it reaches about 66% of
+the `q8_0` context, not half, and decodes faster. The gap grows with the tokens held and does not
+show on short prompts. Conversations that grow turn by turn pay that decode at every turn, so
+`q8_0` is worth it only if you need a context `f16` cannot fit. A `q8_0` slot snapshot does not
+restore into an `f16` cache.
+
+An R9700 and an RTX 4070 SUPER, *Linux*, the R9700 last, `draft-mtp` (campaign
+`27b-kv-f16-20261016`; campaign `coder390-ctx-20261020`, the rows marked at 115k):
+
+| KV, context | free, R9700 / RTX 4070 SUPER (MiB) (a) | prefill | decode |
+| --- | --- | --- | --- |
+| `q8_0`, 262144 | 196 / 223 | 1158, 1169 at 43.7k | 31.5, 31.5 at 43.7k |
+| `f16`, 163840 | 878 / 989 | 1161, 1162 at 43.7k | 35.2, 34.5 at 43.7k |
+| `f16`, 172032 | 1232 / 1274 | 902 at 115k | 29.3 at 115k |
+| **`f16`, 180224** | 638 / 1026 | 889 at 115k | 28.5 at 115k |
+| `f16`, 188416 | 339 / 986: under the 500 MiB margin this card needs | 893 at 115k | 29.3 at 115k |
+
+(a) After a 2.9k prompt in the 43.7k rows, after a 115k prefill in the others.
+
+Among the `f16` contexts speed differs only by the draft's noise, so the largest with margin wins.
+Short prompts decode about the same in both types: 37.7 in `f16`, 38.9 in `q8_0`.
+
+Two R9700s, layer split, MTP: `f16` decodes 30.8 t/s against 27.5 ±0.4 in `q8_0` at 43.7k, prefill
+1431 against 1412 (campaign `swift27b-kv-f16-mtp-2xr9700-linux-20261031`). Free memory after that
+prefill (x16 / x4 card) is 3920 / 2580 MiB at 360448, 2768 / 1172 at 393216 and 464 / 0 at 458752.
+Within that range speed does not follow the context: 1472.3 prefill and 33.4 decode at 262144 (campaign
+`swift27b-2xr9700-linux-ctx-20261028`).
+
 ```bench-chart
 title    = Swift: free memory per card after a 43.7k prefill, f16 KV, by context
 campaign = swift27b-kv-f16-mtp-2xr9700-linux-20261031
@@ -264,37 +192,58 @@ series   = ctx-size
 where    = cache-type-k=f16
 ```
 
-Swift's decode under `rocprofv3` (43.7k tokens): the two cards busy ~75% of the time combined
-(~84% estimated without the profiler), `mul_mat_vec_q` 67% of the GPU time, cross-card copies
-under 0.4%: the x4 link does not limit a layer-split decode.
+Two R9700s, tensor split, `parallel 2`, after a 115k prefill (campaign
+`swift27b-ctx-tensor-2xr9700-linux-20261031`):
 
-## 8. Two R9700s: tensor split and two requests at once (v0.8.0)
+| context | free, one prefill (MiB) | free, both slots prefilling (MiB) | prefill | decode |
+| --- | --- | --- | --- | --- |
+| **425984** | 2476 / 1378 | 2460 / 1366 | 961.6 ±2.3 | 51.4 |
+| 458752 | 1364 / 226 | 1308 / 214 | 962.0 ±1.4 | 51.4 |
 
-The Swift preset of section 7 (`f16` KV at 393216, `parallel 2`, `ngram-map-k4v,draft-mtp`
-with `spec-draft-n-max 2`, `tensor-split 35,31`, `ubatch-size 1024`) with the image
-encoder on the CPU: with it on the x16 card the tensor split does not load (the 888 MiB
-encoder allocation fails). `split-mode tensor` reduces through the internal AllReduce
-(`CudaAllreduce = internal`), RCCL not running without AtomicOps on the chipset slot.
-Recorded without a spec (`custom`): temperature 0, 3 repetitions, output uncapped, every
-cold request with the prompt cache off. With two requests at once: both cold (`prefill`),
-both decoding on a cached prompt (`decode`), one cold while the other decodes
-(`prefill+decode`). A total is the tokens of both requests over the window they share
-(`bench::concurrent_totals`); a single request's total is its own rate. Temperature 0
-with the drafter on writes a different greedy text under each split (110k, two decodes:
-acceptance 84% layer, 76% tensor), so a decode figure is the drafter's rate on that text.
-All figures t/s (campaign `swift27b-concurrency-2xr9700-linux-20261031`).
+Speed does not depend on the context, so `425984` keeps the margin. The native 262144 per slot
+(524288) would need ~4 GiB more per card.
+
+```bench-chart
+title    = Free memory per card after a 115k prefill, both slots prefilling at once
+campaign = swift27b-ctx-tensor-2xr9700-linux-20261031
+metric   = free-mib
+x        = ctx-size
+series   = ctx-size
+where    = concurrency=prefill
+```
+
+## 5. Splitting the model across two cards
+
+### Two R9700s: the tensor split
+
+![Two R9700s: the x16 card in the CPU slot, the x4 card behind the chipset without AtomicOps; the tensor split stages its AllReduce through host memory](assets/diagrams/two-r9700-topology.svg)
+
+The Swift preset with `f16` KV, `parallel 2`, the n-gram stage then MTP at `spec-draft-n-max 2`,
+`ubatch-size 1024`, temperature 0, 3 repetitions, output uncapped, every cold request with the
+prompt cache off, no spec (campaign `swift27b-concurrency-2xr9700-linux-20261031`).
+
+Two requests at once run in three scenarios: both cold (`prefill`), both decoding on a cached
+prompt (`decode`), and one cold while the other decodes (`prefill+decode`). A total is the tokens of
+both requests over the window they share.
 
 | scenario | figure | layer, 43.7k | tensor, 43.7k | layer, 110k | tensor, 110k |
 | --- | --- | --- | --- | --- | --- |
 | one request | prefill | 1433.6 ±6.6 | 1114.7 ±33.2 | 1098.6 ±6.2 | 924.8 ±1.0 |
 | one request | decode | 40.4 ±0.8 | 59.6 ±0.1 | 33.5 ±0.0 | 55.4 ±0.0 |
-| `prefill` | prefill total | 1395.9 ±13.9 | 1112.2 ±0.3 | 1060.2 ±8.4 | out of memory |
-| `prefill` | decode total | 42.4 ±3.8 | 45.5 ±0.4 | 20.4 ±0.3 | out of memory |
+| `prefill` | prefill total | 1395.9 ±13.9 | 1112.2 ±0.3 | 1060.2 ±8.4 | 937.5 (a) |
+| `prefill` | decode total | 42.4 ±3.8 | 45.5 ±0.4 | 20.4 ±0.3 | 22.7 (a) |
 | `decode` | decode total | 64.3 ±0.5 | 82.5 ±6.8 | 52.1 ±0.2 | 68.7 ±0.2 |
 | `decode` | decode per request | 32.3 ±0.2 | 49.9 ±4.0 | 26.1 ±0.1 | 34.6 ±0.1 |
-| `prefill+decode` | prefill of the cold request | 1334.5 ±19.8 | 1085.4 ±1.9 | 1012.1 ±3.2 | out of memory |
-| `prefill+decode` | decode of the warm request | 20.2 ±0.1 | 37.1 ±0.2 | 10.4 ±0.3 | out of memory |
-| `prefill+decode` | decode total | 39.5 ±0.2 | 52.1 ±0.2 | 19.5 ±0.2 | out of memory |
+| `prefill+decode` | prefill of the cold request | 1334.5 ±19.8 | 1085.4 ±1.9 | 1012.1 ±3.2 | 908.9 ±1.6 (b) |
+| `prefill+decode` | decode of the warm request | 20.2 ±0.1 | 37.1 ±0.2 | 10.4 ±0.3 | 15.8 ±5.2 (b) |
+| `prefill+decode` | decode total | 39.5 ±0.2 | 52.1 ±0.2 | 19.5 ±0.2 | 27.5 ±4.9 (b) |
+
+Most tensor columns ran at `tensor-split 35,31`. The three 110k scenarios marked come from
+runs of the same preset at the even split below, which matches `35,31` in speed:
+
+- (a) one repetition at `ctx-size 425984` (campaign `swift27b-ctx-tensor-2xr9700-linux-20261031`);
+- (b) the baseline of [section 7](#7-baseline-under-the-standard-spec-two-r9700s), with the preset's own sampling and 5 repetitions: compare its
+  prefill freely, but its decode only loosely with the temperature 0 layer column.
 
 ```bench-chart
 title    = Decode total by scenario, 43.7k tokens
@@ -316,222 +265,235 @@ where    = concurrency=single
 rename   = unset=layer, bench-prompt-long=43.7k tokens, bench-prompt-110k=110k tokens
 ```
 
-- **The tensor split decodes faster in every scenario that completed**: +48% for one request
-  at 43.7k, +65% at 110k, +28% / +32% in total with two decodes, and the request that
-  decodes while the other prefills nearly doubles (20.2 against 37.1 at 43.7k). It costs 16 to
-  22% of cold prefill, and two cold prefills are served one after the other under both splits
-  (the totals equal one request's rate).
-- **It fills the x16 card**: the free-memory probe reads 0 MiB on it after the first prefill
-  (layer split: 3906 MiB, and 1042 on the x4 card), so two 110k contexts at once run it out of
-  memory in the HIP graph update (`prefill` and `prefill+decode`, three times; once the driver
-  also moved 14 GB to GTT). Those legs are not recorded. The preset keeps `split-mode tensor`;
-  its `tensor-split` needed rebalancing before two long conversations could share it:
-  `1,1` does it (section 9).
+- **The tensor split decodes faster**: 48% for one request at 43.7k, 65% at 110k, 28 and 32% in
+  total with two decodes. A request decoding beside a prefill nearly doubles at 43.7k.
+- **It prefills 16 to 22% slower.** Two cold prefills run one after the other under both splits, so
+  their total equals one request's rate.
+- **The x4 link does not limit a layer-split decode**: under `rocprofv3` at 43.7k, cross-card copies
+  take under 0.4% of the time and `mul_mat_vec_q` 67% of the GPU time.
+- **Temperature 0 with a drafter writes a different text under each split** (acceptance 84% layer,
+  76% tensor, two decodes at 110k), so each decode figure is the drafter's rate on its own text.
 
-## 9. Two R9700s: tensor split balanced, image encoder and context (v0.8.0)
+**Split evenly.** Under `split-mode tensor` an uneven split inflates the buffers: `35,31` takes
+14238 MiB of model and 15360 of KV against 13229 and 12288 at `1,1`. After a 43.7k prefill that
+leaves 0 / 7766 MiB free against 3624 / 2486, at the same speed: prefill 1136.1 ±2.3 and 1126.4
+±1.9, decode 59.8 ±0.2 and 59.3 ±0.1 (campaign `swift27b-balance-mmproj-2xr9700-linux-20261031`).
 
-The Swift preset of section 8 (`split-mode tensor`, internal AllReduce, `f16` KV,
-`parallel 2`, `ngram-map-k4v,draft-mtp` with `spec-draft-n-max 2`, `ubatch-size 1024`).
-Recorded without a spec (`custom`): temperature 0, 3 repetitions at 43.7k and 2 at 110k,
-output uncapped, prompt cache off. Free memory is the run's probe after the first prefill.
+**Check the link before measuring.** The tensor split stages every AllReduce through host memory,
+so its prefill follows the x4 card's host link. On a boot where the CPU-to-chipset link trained at
+Gen4 x2, the x4 card moved 3.5 GB/s instead of 7.0 and the same preset prefilled 785.6 ±0.5 against
+1136.1 ±2.3; decode 58.0 against 59.8 (campaign `swift27b-driver-check-2xr9700-linux-20261031`). The
+kernel's boot log names the width (`available PCIe bandwidth ... limited by ... x4 link`).
 
-| key | value | evidence |
+### An R9700 and an RTX 4070 SUPER: order and placement
+
+**The last device takes the MTP head, the output head and the sampling.** On *Linux*, the
+R9700 last prefills 1133 and 1123 t/s at 43.7k against 1069 and 1071 with the RTX 4070 SUPER last
+at `52,14`, and decodes 31.2 against 29.8 at `53,13`, the split that leaves that card a usable 430
+MiB (campaign `coder390-device-order-20261019`). *Windows* reverses the order: [section 6](#6-linux-against-windows).
+
+**Attention blocks decide the split.** Attention sits on blocks 3, 7, 11, 15 and so on, each with
+672 MiB of KV at 172032 `f16`, so the boundary block moves its KV slice with it: block 15 costs
+1061 MiB on the R9700, a linear block 389. Pin `blk\.15\.ffn_(up|down)` to the R9700 at the
+boundary.
+
+**The embedding table stays in host RAM** (llama.cpp's default), freeing 1288 MiB on the RTX 4070
+SUPER at no cost: decode 31.2 t/s either way at 43.7k and 29.3 at 115k, prefill 1178 on the card
+against 1164 in RAM and 897 against 899 (campaign `coder390-placement-20261020`).
+
+**The output head stays on the last device.** Moving `output.weight` to the RTX 4070 SUPER lowers
+prefill to 1026 t/s from 1139 at 43.7k and to 779 from 890 at 115k, because the MTP draft on the
+other card then hops devices for every drafted token.
+
+**The image encoder goes on the RTX 4070 SUPER**, in the room the embedding table left: 600 MiB of
+weights plus ~418 MiB of compute at the first 3840x2160 image. Added to a 115k conversation
+at 180224, that image leaves 801 / 716 MiB free, while the R9700 has only 342 MiB left for it.
+
+## 6. Linux against Windows
+
+The same machine and build, an R9700 and an RTX 4070 SUPER, the R9700 last, 172032 `f16`, three
+repetitions of 256 tokens at temperature 0 (campaign `coder390-device-order-20261019`; campaign
+`coder390-windows-vs-linux-20261020`; with the [section 5](#5-splitting-the-model-across-two-cards) placement, campaign
+`coder390-placement-20261020` and campaign `coder390-placement-windows-20261021`):
+
+| prompt | prefill, *Linux* / *Windows* | decode, *Linux* / *Windows* |
 | --- | --- | --- |
-| `tensor-split` | `1,1` (was `35,31`) | under `split-mode tensor` an uneven split inflates the buffers: at 393216 the log reads 14238 MiB of model and 15360 of KV at `35,31` against 13229 and 12288 at `1,1`. Free after a 43.7k prefill: 0 / 7766 MiB at `35,31` (the x16 card full: two 110k prefills at once ran it out of memory, section 8) against 3624 / 2486 at `1,1` with the image encoder on the x4 card. Prefill 1126.4 ±1.9 against 1136.1 ±2.3, decode 59.3 ±0.1 against 59.8 ±0.2 (campaigns `swift27b-balance-mmproj-2xr9700-linux-20261031`, run 149, and `swift27b-driver-check-2xr9700-linux-20261031`, run 148) |
-| `mmproj-device` | the x4 card (was the CPU) | loads under the tensor split (on the x16 card it did not, section 8). At 425984, with one slot holding 115k tokens, a 3840x2160 image (4080 tokens) appended to a 115k prompt on the other slot succeeds; minimum free 2877 / 1032 MiB during it (by hand, sysfs sampler, not recorded) |
-| `ctx-size` | `425984` (212992 per slot, was 393216) | after a 115k prefill, alone and with both slots prefilling at once: 2476 / 1378 and 2460 / 1366 MiB free at 425984, 1364 / 226 and 1308 / 214 at 458752 (under the 500 MB margin); 524288 (262144 per slot) would need ~4 GiB more per card. Prefill 961.6 ±2.3 against 962.0 ±1.4, decode 51.4 at both (campaign `swift27b-ctx-tensor-2xr9700-linux-20261031`) |
+| 100 tokens | 225 / 209 | 38.1 / 31.0 |
+| 43.7k, [section 5](#5-splitting-the-model-across-two-cards) placement | 1164 / 1020 | 31.2 / 26.9 |
+| 115k, [section 5](#5-splitting-the-model-across-two-cards) placement | 899 / 747 | 29.3 / 25.1 |
 
-```bench-chart
-title    = Free memory per card after a 115k prefill, both slots prefilling at once
-campaign = swift27b-ctx-tensor-2xr9700-linux-20261031
-metric   = free-mib
-x        = ctx-size
-series   = ctx-size
-where    = concurrency=prefill
-```
+*Linux* prefills 7 to 17% faster, widening with the context, and decodes 14 to 19% faster. Weights and KV per card match to the
+MiB and draft acceptance within a few points, so the gap is the time of each step.
 
-The tensor split stages every AllReduce through host memory, so its prefill follows the
-x4 card's host link. On one boot the CPU-to-chipset link trained at Gen4 x2: the x4 card
-moved 3.5 GB/s each way instead of 7.0, and the same preset prefilled 785.6 ±0.5 against
-1136.1 ±2.3 after a power cycle restored x4 (decode 58.0 against 59.8; campaign
-`swift27b-driver-check-2xr9700-linux-20261031`, runs 147 and 148). Under `rocprofv3` at x2,
-the cards computed for 21 to 26% of the prefill's wall time and ~35 s of its 67 s went to
-host copies of the x4 card. The kernel's boot log names the link width (`available PCIe
-bandwidth ... limited by ... x4 link`): read it before measuring a tensor split.
+**On *Windows*, put the R9700 first.** It removes most of that gap (campaign
+`coder390-device-order-windows-20261021`):
 
+| *Windows* | prefill at 43.7k | decode at 43.7k | prefill at 115k | decode at 115k |
+| --- | --- | --- | --- | --- |
+| the R9700 last | 1029 | 27.0 | 747 | 25.1 |
+| **the R9700 first, `52,14`** | 1122 (9% faster) | 32.8 (21% faster) | 846 (13% faster) | 30.9 (23% faster) |
 
-## 10. Two R9700s: the baseline under the standard 1.0 spec (v0.8.0)
+Decode then passes the *Linux* figure and prefill comes within 3% at 43.7k and 6% at 115k. Free
+memory after the 115k prefill at `180224`: 1714 MiB on the R9700, 527 on the RTX 4070 SUPER. *Linux*
+goes the other way ([section 5](#5-splitting-the-model-across-two-cards)). *Windows* also lists the CPU's integrated GPU as a ROCm device
+ahead of the R9700, so a preset copied from *Linux* needs its device ids renumbered.
 
-The first run of the versioned method (`benchmarks/specs/standard-1.0.ini`, spec sha256
-`b42974fa...`), on the Swift preset as sections 7 to 9 left it. **It is the baseline**: a
-later change to this preset, this machine or its software is compared against these
-numbers, measured again under the same spec version (campaign
-`swift27b-standard-1.0-2xr9700-linux-20261031`, runs 154 to 173; `llama-cpp-config bench
-query run <id> --db benchmarks/bench.db` prints every parameter of one run).
+**Why the order matters on *Windows*.** llama's input buffers are pinned for the first device only,
+and the HIP runtime on *Windows* copies pageable memory at ~2 GB/s, blocking the thread. With the
+R9700 second, ~200 MiB per ubatch crosses that way: the block-15 activations and the attention
+mask, which grows with the context. That is ~12% of a prefill step; the R9700's own layers take
+~65% and the RTX 4070 SUPER's ~19%. The *Linux* runtime pins pageable memory on the fly, so it never
+pays this. Registering those buffers with every runtime (`patches\llama.cpp\0004`) cuts the
+blocking copies from 5.24 s to 2.50 s and gains ~2% with the R9700 second and nothing with it first,
+so the order remains the setting. Keeping the R9700 second, moving `blk\.15\.ffn_gate` onto it
+buys 3.8% of prefill (campaign `coder390-gate-windows-20261021`).
 
-**Machine.** AMD Ryzen 9 9900X (12 cores, 24 threads), 64 GB DDR5 6000 MT/s (59 GiB
-visible), two AMD Radeon AI PRO R9700 (32624 MiB each, vbios `113-R9700AT-F40`): the x16
-card in the CPU's Gen5 x16 slot, the x4 card behind two chipset switches at Gen4 x4 with
-no PCIe AtomicOps; the CPU-to-chipset link at x4 (section 9). Ubuntu 26.04.1 LTS, kernel
-7.0.0-42-generic, amdgpu 7.1.9, both cards at the stock 300 W power cap.
+On *Linux* the patches reach the installed server too: prefill 1185.6 ±12.6 at 43.7k, 5% above
+1132.6 ±12.7, decode the same (campaign `coder390-patches-linux-20261021`).
 
-**Software.** llama-cpp-framework 2.2.0, llama.cpp v0.8.0 (build 11960, `8642541b2`) with
-the patches `0001-qwen35-fastmtp-d2t`, `0002-sampler-backend-probe-chain-width`,
-`0003-fa-band-wmma-rdna4`, `0004-sched-host-buffers-pinned-all-runtimes` and
-`0005-qwen35-mtp-graph-realloc-pr31415`; ROCm from TheRock 10.1.0. Environment of the
-server: `GGML_CUDA_ALLREDUCE=internal`, `GGML_HIP_FA_BAND_WMMA=4`, `ROCP_TOOL_ATTACH=1`
-(from `RocprofAttach`, which only lets `rocprofv3` attach; its cost is not measured).
+## 7. Baseline under the standard spec (two R9700s)
 
-**Preset.** `Swift-1.5-Qwen3.8-27B-Q8_0.gguf` with `Qwen3.8-27B-UD-mmproj-BF16.gguf`
-(`mmproj-offload true`, on the x4 card); `device` the x16 card first, `split-mode tensor`,
-`tensor-split 1,1`; `ctx-size 425984` with `parallel 2` (212992 per slot), `kv-unified
-false`; `cache-type-k/-v f16`, `ubatch-size 1024` (`batch-size` the default 2048);
-`spec-type ngram-map-k4v,draft-mtp`, `spec-draft-n-max 2`, `spec-ngram-map-k4v-size-m 32`,
-`spec-draft-type-k/-v f16`; `cache-ram 24576`, `cache-reuse 256`, `ctx-checkpoints 12`;
-`jinja true`, `reasoning auto`, `reasoning-format auto`, a `reasoning-budget-message`;
-`load-mode none`, `fit off`, `backend-sampling true`; sampling `temp 1`, `top-k 20`, `top-p
-0.95`, `min-p 0`, `repeat-penalty 1`, `presence-penalty 0`. Server: `Threads 12`,
-`ThreadsBatch 12`, `CudaAllreduce internal`, `ModelsMemoryMargin 1024`.
+This is the reference for this preset. Compare a later change to the preset, the machine or the
+software against it, measured again under the same spec version. `llama-cpp-config bench query run
+<id> --db benchmarks/bench.db` prints every parameter of one run.
 
-**Method** (the spec; every leg restarts llama-server, every cold request has the prompt
-cache off, output uncapped). Four prompts: technical prose of 43.7k and 115.3k tokens (the 43k and 110k prompts), a
-coding-agent turn of 42.5k tokens (`bench-prompt-code-1.0.json`), and one photograph
-fitted into 1344x896 with a request to describe it (1259 tokens). Two passes per prompt:
-`engine`, temperature 0 with the speculator off (`spec-type none`), 3 repetitions, one
-request; `real`, the preset's own sampling and speculator, 5 repetitions, one request and
-then the three two-request scenarios of section 8 (`prefill`, `decode`, `prefill+decode`).
-Free memory after the first prefill: 4552 / 3414 MiB (x16 / x4 card) under `engine`,
-2420 to 2518 / 1312 to 1380 under `real` (the MTP head and its cache).
+The tables merge two runs on the same machine, software and preset. The prose, image and agent-turn
+legs ran under `standard-1.0` (campaign `swift27b-standard-1.0-2xr9700-linux-20261031`).
+`standard-1.1` keeps the prose and image legs unchanged and adds writing code and the cached agent
+step, run later (campaign `swift27b-standard-1.1-2xr9700-linux-20261101`).
 
-All figures t/s, mean ± sample standard deviation over the repetitions (requests, for the
-per-request columns of the two-request scenarios).
+<details>
+<summary>Machine, software, preset and method</summary>
 
-| prompt | pass, scenario | decode per request | prefill per request | prefill total | decode total | accepted |
-| --- | --- | --- | --- | --- | --- | --- |
-| 43.7k prose | `engine`, one request | 27.1 ±0.1 | 1210.3 ±2.6 | | | |
-| 43.7k prose | `real`, one request | 59.3 ±1.5 | 1125.4 ±1.6 | | | 79% |
-| 43.7k prose | `real`, `prefill` | 38.6 ±11.0 | 797.0 ±257.9 | 1104.7 ±2.4 | 57.8 ±10.1 | 78% |
-| 43.7k prose | `real`, `decode` | 48.2 ±3.8 | | | 87.3 ±5.7 | 78% |
-| 43.7k prose | `real`, `prefill+decode` | 25.2 ±4.8 (warm) | 1079.5 ±6.3 (cold) | 1079.5 ±6.3 | 46.9 ±3.8 | 77% |
-| 110k prose | `engine`, one request | 24.5 ±0.0 | 1025.5 ±2.2 | | | |
-| 110k prose | `real`, one request | 59.2 ±7.0 | 960.1 ±1.2 | | | 82% |
-| 110k prose | `real`, `prefill` | 29.0 ±14.4 | 699.7 ±244.7 | 935.1 ±1.3 | 31.6 ±3.9 | 80% |
-| 110k prose | `real`, `decode` | 39.6 ±4.2 | | | 69.7 ±3.8 | 80% |
-| 110k prose | `real`, `prefill+decode` | 15.8 ±5.2 (warm) | 908.9 ±1.6 (cold) | 908.8 ±1.6 | 27.5 ±4.9 | 82% |
-| agent turn | `engine`, one request | 27.2 ±0.0 | 1214.8 ±2.4 | | | |
-| agent turn | `real`, one request | 52.0 ±4.1 | 1138.2 ±1.7 | | | 69% |
-| agent turn | `real`, `prefill` | 22.5 ±21.2 | 812.9 ±219.8 | 1208.8 ±1.4 | 5.8 ±1.1 | 58% |
-| agent turn | `real`, `decode` | 35.9 ±4.1 | | | 67.6 ±7.2 | 59% |
-| agent turn | `real`, `prefill+decode` | 2.9 ±0.7 (warm) | 1090.8 ±1.2 (cold) | 1090.8 ±1.2 | 5.9 ±1.0 | 63% |
-| image | `engine`, one request | 28.9 ±0.0 | 612.7 ±67.3 | | | |
-| image | `real`, one request | 50.6 ±0.5 | 613.4 ±33.0 | | | 63% |
-| image | `real`, `prefill` | 44.9 ±0.8 | 327.5 ±9.0 | 649.6 ±17.5 | 86.8 ±3.6 | 62% |
-| image | `real`, `decode` | 45.5 ±0.4 | | | 84.1 ±3.6 | 63% |
-| image | `real`, `prefill+decode` | 44.0 ±0.8 (warm) | 567.1 ±6.6 (cold) | 566.7 ±6.6 | 83.1 ±4.0 | 62% |
+**Machine.** AMD Ryzen 9 9900X (12 cores, 24 threads), 64 GB DDR5 6000 MT/s (59 GiB visible), two
+AMD Radeon AI PRO R9700 (32624 MiB each, vbios `113-R9700AT-F40`): the x16 card in the CPU's Gen5 x16
+slot, the x4 card behind two chipset switches at Gen4 x4 with no PCIe AtomicOps. Ubuntu 26.04.1 LTS,
+kernel 7.0.0-42-generic, amdgpu 7.1.9, stock 300 W power cap.
+
+**Software.** llama-cpp-framework 2.2.0, llama.cpp v0.8.0 (build 11960, `8642541b2`) with the patches
+`0001-qwen35-fastmtp-d2t`, `0002-sampler-backend-probe-chain-width`, `0003-fa-band-wmma-rdna4`,
+`0004-sched-host-buffers-pinned-all-runtimes` and `0005-qwen35-mtp-graph-realloc-pr31415`; ROCm from
+TheRock 10.1.0. Environment: `GGML_CUDA_ALLREDUCE=internal`, `GGML_HIP_FA_BAND_WMMA=4`,
+`ROCP_TOOL_ATTACH=1`.
+
+**Preset.** `Swift-1.5-Qwen3.8-27B-Q8_0.gguf` with `Qwen3.8-27B-UD-mmproj-BF16.gguf` (`mmproj-offload
+true`, on the x4 card); `device` the x16 card first, `split-mode tensor`, `tensor-split 1,1`; `ctx-size
+425984` with `parallel 2`, `kv-unified false`; `cache-type-k/-v f16`, `ubatch-size 1024` (`batch-size`
+the default 2048); `spec-type ngram-map-k4v,draft-mtp`, `spec-draft-n-max 2`,
+`spec-ngram-map-k4v-size-m 32`, `spec-draft-type-k/-v f16`; `cache-ram 24576`, `cache-reuse 256`,
+`ctx-checkpoints 12`; `jinja true`, `reasoning auto`, `reasoning-format auto`, a
+`reasoning-budget-message`; `load-mode none`, `fit off`, `backend-sampling true`; `temp 1`, `top-k 20`,
+`top-p 0.95`, `min-p 0`, `repeat-penalty 1`, `presence-penalty 0`. Server: `Threads 12`, `ThreadsBatch 12`,
+`CudaAllreduce internal`, `ModelsMemoryMargin 1024`.
+
+**Prompts.** Technical prose of 43.7k and 115.3k tokens; a coding-agent turn of 42.5k tokens
+(`bench-prompt-code-1.0.json`); writing code (`bench-prompt-code-write-1.1.json`, 42.2k tokens), the
+agent's task and files in one message and a request to write `paths.rs` back in full, replying with
+reasoning and then ~3.9k tokens of code; one photograph fitted into 1344x896 (1259 tokens).
+
+**Passes.** Every leg restarts llama-server, every cold request has the prompt cache off, output
+uncapped. `engine`: temperature 0, speculator off, 3 repetitions, one request. `real`: the preset's
+sampling and speculator, 5 repetitions, one request and then the three two-request scenarios of
+[section 5](#5-splitting-the-model-across-two-cards). `agent`: described below.
+
+**Free memory** after the first prefill (x16 / x4 card): 4488 to 4552 / 3350 to 3414 MiB under `engine`,
+2338 to 2518 / 1240 to 1380 under `real` and `agent`.
+
+</details>
+
+One request:
+
+| prompt | pass | decode | prefill | accepted |
+| --- | --- | --- | --- | --- |
+| 43.7k prose | `engine` | 27.1 ±0.1 | 1210.3 ±2.6 | n/a |
+| 43.7k prose | `real` | 59.3 ±1.5 | 1125.4 ±1.6 | 79% |
+| 110k prose | `engine` | 24.5 ±0.0 | 1025.5 ±2.2 | n/a |
+| 110k prose | `real` | 59.2 ±7.0 | 960.1 ±1.2 | 82% |
+| agent turn | `engine` | 27.2 ±0.0 | 1214.8 ±2.4 | n/a |
+| agent turn | `real` | 52.0 ±4.1 | 1138.2 ±1.7 | 69% |
+| writing code | `engine` | 27.1 ±0.0 | 1211.0 ±3.6 | n/a |
+| writing code | `real` | 55.9 ±5.1 | 1135.2 ±1.4 | 62% |
+| image | `engine` | 28.9 ±0.0 | 612.7 ±67.3 | n/a |
+| image | `real` | 50.6 ±0.5 | 613.4 ±33.0 | 63% |
 
 ```bench-chart
 title    = Decode of one request by prompt: bare engine against the preset's speculator
-campaign = swift27b-standard-1.0-2xr9700-linux-20261031
+campaign = swift27b-standard-1.0-2xr9700-linux-20261031, swift27b-standard-1.1-2xr9700-linux-20261101
 metric   = decode
 x        = prompt
 series   = spec-pass
 where    = concurrency=single
-rename   = bench-prompt-43k-1.0=43.7k prose, bench-prompt-110k-1.0=110k prose, bench-prompt-code-1.0=agent turn, bench-prompt-image-1.0=image
+rename   = bench-prompt-43k-1.0=43.7k prose, bench-prompt-110k-1.0=110k prose, bench-prompt-code-1.0=agent turn, bench-prompt-code-write-1.1=writing code, bench-prompt-image-1.0=image
 ```
+
+- **The speculator doubles decode**: 2.2x at 43.7k, 2.4x at 110k (it barely drops with depth when it
+  drafts), 2.1x on code, 1.9x on the agent turn and 1.75x on the image, following acceptance. It
+  costs 6 to 7% of cold prefill on text and nothing measurable on the image.
+- **Writing code is not faster than prose**: 55.9 t/s against 59.3. The code itself (61.6 ±8.3)
+  drafts better than the reasoning before it (51.4 ±2.7), but at `spec-draft-n-max 2` the copied
+  parts lift acceptance little (62% against 79%). The reasoning varies from 3.1k to 7.3k tokens, so a
+  repetition takes 2.5 to 6 minutes.
+- **The agent turn replies in 75 to 170 tokens**, too short for a good decode rate. Writing code and
+  the agent step below cover what it misses.
+- **Power**, read by hand during the 43.7k `real` legs (sysfs, not recorded): both cards at the 300 W
+  cap while prefilling, 210 to 270 W each while decoding, the CPU package ~80 W.
+
+Two requests at once, pass `real`. In `prefill+decode` the decode per request is the warm one's
+and the prefill the cold one's:
+
+| prompt | scenario | decode per request | prefill per request | prefill total | decode total | accepted |
+| --- | --- | --- | --- | --- | --- | --- |
+| 43.7k prose | `prefill` | 38.6 ±11.0 | 797.0 ±257.9 | 1104.7 ±2.4 | 57.8 ±10.1 | 78% |
+| 43.7k prose | `decode` | 48.2 ±3.8 | n/a | n/a | 87.3 ±5.7 | 78% |
+| 43.7k prose | `prefill+decode` | 25.2 ±4.8 | 1079.5 ±6.3 | 1079.5 ±6.3 | 46.9 ±3.8 | 77% |
+| 110k prose | `prefill` | 29.0 ±14.4 | 699.7 ±244.7 | 935.1 ±1.3 | 31.6 ±3.9 | 80% |
+| 110k prose | `decode` | 39.6 ±4.2 | n/a | n/a | 69.7 ±3.8 | 80% |
+| 110k prose | `prefill+decode` | 15.8 ±5.2 | 908.9 ±1.6 | 908.8 ±1.6 | 27.5 ±4.9 | 82% |
+| agent turn | `prefill` | 22.5 ±21.2 | 812.9 ±219.8 | 1208.8 ±1.4 | 5.8 ±1.1 | 58% |
+| agent turn | `decode` | 35.9 ±4.1 | n/a | n/a | 67.6 ±7.2 | 59% |
+| agent turn | `prefill+decode` | 2.9 ±0.7 | 1090.8 ±1.2 | 1090.8 ±1.2 | 5.9 ±1.0 | 63% |
+| writing code | `prefill` | 36.8 ±7.0 | 804.9 ±214.4 | 1203.0 ±4.4 | 64.7 ±4.3 | 62% |
+| writing code | `decode` | 41.5 ±5.6 | n/a | n/a | 74.0 ±4.6 | 63% |
+| writing code | `prefill+decode` | 36.2 ±4.5 | 1082.5 ±6.8 | 1082.5 ±6.8 | 64.0 ±6.0 | 62% |
+| image | `prefill` | 44.9 ±0.8 | 327.5 ±9.0 | 649.6 ±17.5 | 86.8 ±3.6 | 62% |
+| image | `decode` | 45.5 ±0.4 | n/a | n/a | 84.1 ±3.6 | 63% |
+| image | `prefill+decode` | 44.0 ±0.8 | 567.1 ±6.6 | 566.7 ±6.6 | 83.1 ±4.0 | 62% |
 
 ```bench-chart
 title    = Decode total by scenario, the preset's sampling and speculator
-campaign = swift27b-standard-1.0-2xr9700-linux-20261031
+campaign = swift27b-standard-1.0-2xr9700-linux-20261031, swift27b-standard-1.1-2xr9700-linux-20261101
 metric   = decode-total
 x        = concurrency
 series   = prompt
 where    = spec-pass=real
-rename   = bench-prompt-43k-1.0=43.7k prose, bench-prompt-110k-1.0=110k prose, bench-prompt-code-1.0=agent turn, bench-prompt-image-1.0=image
+rename   = bench-prompt-43k-1.0=43.7k prose, bench-prompt-110k-1.0=110k prose, bench-prompt-code-1.0=agent turn, bench-prompt-code-write-1.1=writing code, bench-prompt-image-1.0=image
 ```
 
-- **The speculator doubles the decode of one request**: ×2.2 at 43.7k, ×2.4 at 110k (59.2
-  against 24.5: decode barely drops with depth when it drafts), ×1.9 on the agent turn and
-  ×1.75 on the image description, following acceptance (79 to 82% on prose, 63 to 69% on
-  the other two). It costs 6 to 7% of cold prefill on the text prompts and nothing
-  measurable on the image.
-- **Two decodes at once** total 87.3 t/s at 43.7k (×1.47 one request), 69.7 at 110k
-  (×1.18) and 84.1 on the short image context (×1.66): the deeper the context, the less
-  the second slot adds.
-- **A request decoding while the other prefills almost stops**: llama-server puts one
-  `batch-size` chunk of the cold prompt (2048 tokens, ~1.7 s here) and one decode step of
-  the warm slot in each batch, so the warm slot runs at ~2 t/s until the prefill ends (the
-  log of run 158: 100 tokens in the 40 s of a 43.7k prefill), then at full speed. The
-  "warm" figure is its mean over the whole request, so it depends on how long the reply
-  runs past the prefill: 25.2 at 43.7k, 15.8 at 110k, and 2.9 on the agent turn, whose
-  reply (~100 tokens) ends inside the other request's prefill. The cold prefill itself
-  loses only 4 to 5%.
-- **Two cold prefills are served one after the other** (`prefill`: the total equals one
-  request's rate, the per-request mean mixes the first-served request with the waiting
-  one). On the agent turn the total, 1208.8, reads above one request's 1138.2 and the
-  first-served request prefills at ~1020 rather than ~1138: the two prompts share more of
-  the window there; not explained yet.
-- **The agent turn replies in 75 to 170 tokens** (a reasoning span and one tool call), too
-  short to measure a decode rate well, and it is prefilled cold although an agent's next
-  turn finds all but the last tool result in the prompt cache. Its decode rows are the
-  weakest of this table; a longer code-writing prompt and a warm agent step are open
-  (section 6).
-- Board power, read by hand during the `real` 43.7k legs (sysfs, not recorded): both
-  cards at the 300 W cap while prefilling, 210 to 270 W each while decoding, the CPU
-  package ~80 W throughout.
+- **Two decodes at once** total 1.47x one request at 43.7k, 1.18x at 110k, 1.32x on code and 1.66x on
+  the image: the deeper the context, the less the second slot adds.
+- **A request decoding beside a prefill almost stops.** Each server batch takes one `batch-size` chunk
+  of the cold prompt (2048 tokens, ~1.7 s) and one decode step of the warm slot, so the warm slot runs
+  at ~2 t/s until the prefill ends, then at full speed. Its mean depends on how far the reply runs
+  past the prefill: 36.2 on code, 25.2 at 43.7k, 15.8 at 110k, 2.9 on the short agent turn. The cold
+  prefill loses only 4 to 5%.
+- **Two cold prefills run one after the other**, so the total equals one request's rate and the
+  per-request mean mixes the first-served request with the waiting one. On the agent turn and on code
+  the total reads above one request's rate (1208.8 against 1138.2, 1203.0 against 1135.2); this
+  is not explained yet.
 
-## 11. Two R9700s: the legs the standard 1.1 spec added (v0.8.0)
+### The agent step, with its prefix cached
 
-`standard-1.1` (spec sha256 `ad6870d2...`) keeps the prose and image legs of 1.0 with the
-same rules and adds two measurements of code, run here on the same machine, software and
-preset as section 10 (campaign `swift27b-standard-1.1-2xr9700-linux-20261101`, runs 174 to
-181, recorded with `bench run --spec standard-1.1 --only ...`: only the new legs; the
-43.7k, 110k and image legs are those of section 10, campaign
-`swift27b-standard-1.0-2xr9700-linux-20261031`). The two sections together are the
-baseline under 1.1.
-
-- **Writing code** (`bench-prompt-code-write-1.1.json`, 42.2k tokens): the task and files
-  of the agent turn pasted into one message, and a request to write `paths.rs` back in
-  full. The reply is reasoning, then ~3.9k tokens of code, most of it copied from the
-  context. Passes `engine` and `real` as in section 10.
-- **An agent step with its prefix cached** (`bench-prompt-code-1.0.json`, the agent turn
-  of section 10, pass `agent`): before each repetition the slot is primed with the
-  conversation up to its last assistant turn (37,043 tokens cached), then the whole turn is
-  sent with the cache on, so it prefills only the last tool call and its result (5,457
-  tokens) and replies with one short step (86 to 236 tokens). The preset's sampling and
-  speculator, 5 repetitions; one request, two steps at once (`decode`), and a step while
-  the other slot prefills the 42.5k turn cold (`prefill+decode`). Every repetition read
-  the 37,043 tokens from the cache.
-
-Free memory after the first prefill: 4488 / 3350 MiB (x16 / x4 card) under `engine`, 2338
-to 2478 / 1240 to 1340 under `real` and `agent`.
-
-Writing code, t/s, mean ± sample standard deviation:
-
-| pass, scenario | decode per request | reasoning | answer (code) | prefill per request | prefill total | decode total | accepted |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| `engine`, one request | 27.1 ±0.0 | 27.2 | 27.0 | 1211.0 ±3.6 | | | |
-| `real`, one request | 55.9 ±5.1 | 51.4 ±2.7 | 61.6 ±8.3 | 1135.2 ±1.4 | | | 62% |
-| `real`, `prefill` | 36.8 ±7.0 | | | 804.9 ±214.4 | 1203.0 ±4.4 | 64.7 ±4.3 | 62% |
-| `real`, `decode` | 41.5 ±5.6 | | | | | 74.0 ±4.6 | 63% |
-| `real`, `prefill+decode` | 36.2 ±4.5 (warm) | | | 1082.5 ±6.8 (cold) | 1082.5 ±6.8 | 64.0 ±6.0 | 62% |
-
-```bench-chart
-title    = Writing code: decode total by scenario, the preset's sampling and speculator
-campaign = swift27b-standard-1.1-2xr9700-linux-20261101
-metric   = decode-total
-x        = concurrency
-series   = spec-pass
-where    = spec-pass=real
-```
-
-The agent step, latency in seconds (first token: the server's prefill time of the turn;
-turn: send to last byte, as the client waits) and rates in t/s:
+The slot is first primed with the conversation up to its last assistant turn (37,043 tokens cached).
+The whole turn then goes out with the cache on, so it prefills only the last tool call and its result
+(5,457 tokens) and replies with one short step (86 to 236 tokens). The preset's sampling and speculator,
+5 repetitions. First token is the server's prefill time of the turn; turn is send to last byte, what
+the client waits.
 
 | scenario | first token (s) | turn (s) | prefill of the step | decode of the step | accepted |
 | --- | --- | --- | --- | --- | --- |
 | one request | 6.3 ±0.3 | 8.8 ±0.7 | 867.9 ±36.7 | 51.5 ±3.3 | 63% |
-| `decode`: two steps at once | 9.7 ±2.2 | 16.6 ±3.3 | | 31.1 ±11.2 | 64% |
-| `prefill+decode`: a step beside a 42.5k cold prefill | 10.1 ±0.2 | 47.7 ±1.6 | 1045.2 ±3.4 (the cold one) | 3.7 ±1.4 | 60% |
+| `decode`: two steps at once | 9.7 ±2.2 | 16.6 ±3.3 | n/a | 31.1 ±11.2 | 64% |
+| `prefill+decode`: beside a 42.5k cold prefill | 10.1 ±0.2 | 47.7 ±1.6 | 1045.2 ±3.4 (the cold one) | 3.7 ±1.4 | 60% |
 
 ```bench-chart
 title    = The agent step: decode of the step by scenario
@@ -542,30 +504,34 @@ series   = spec-pass
 where    = spec-pass=agent
 ```
 
-- **Writing code is not faster than writing prose.** One request decodes at 55.9 t/s
-  against 59.3 on the 43.7k prose: the code (61.6) drafts better than the reasoning before
-  it (51.4), but acceptance is 62% against prose's 79%, and the copied parts of the file do
-  not lift it much at `spec-draft-n-max 2`. Without the speculator the rate is the same as
-  every other text prompt (27.1). The reasoning varies the most: 4.2k tokens on average
-  under `real`, from 3.1k to 7.3k (5.7k at temperature 0), so a repetition takes 2.5 to 6
-  minutes.
-- **Two requests writing code** total 74.0 t/s (×1.32 one request), less than prose's 87.3:
-  each request's lower acceptance leaves less room for the batch.
-- **A long reply hides the prefill stall.** The warm request of `prefill+decode` averages
-  36.2 t/s here against 2.9 on the short agent turn of section 10: it still runs at ~2 t/s
-  during the other's ~37 s prefill, but its 7.5k to 16k tokens run far past it.
-- **An agent step alone costs ~9 s**: 6.3 s to prefill the 5.5k tokens the last tool call
-  added (at 868 t/s: the depth of the 37k cached prefix makes it slower than a cold
-  prefill's average) and ~2.5 s for the step itself. Cold, the same turn took ~37 s of
-  prefill (section 10): the prefix cache is what makes an agent usable at this depth.
-- **Two steps at once** take 16.6 s each, nearly twice one: their two prefills are served
-  one after the other, as in the cold `prefill` scenario.
-- **A step beside another conversation's cold prefill waits for that prefill**: its first
-  token comes after 10.1 s, but the rest of the step runs at ~2 t/s until the other
-  prompt is done, so the turn takes 47.7 s, five times the step alone, while the cold
-  prefill loses only 8% (1045 against 1135). This is the case of two agents on one server
-  when one of them starts or compacts a conversation; the `batch-size` placeholder of
-  section 6 is the lever to try.
-- Section 10's `prefill` anomaly recurs: two cold code-writing prompts total 1203.0 t/s
-  against one request's 1135.2; the prose prompts do not show it. Not explained yet.
+- **A step alone takes ~9 s**, against ~37 s just to prefill the same turn cold: the prefix cache is
+  what makes an agent usable at this depth.
+- **Two steps at once** take 16.6 s each, since their prefills run one after the other.
+- **A step beside another conversation's cold prefill waits for it**: first token after 10.1 s, then
+  ~2 t/s until the other prompt is done, so 47.7 s, five times the step alone. This is two agents on
+  one server when one of them starts or compacts a conversation. `batch-size` is the lever to try
+  ([section 9](#9-not-yet-measured-placeholders)).
 
+## 8. Choices that look better than they measure
+
+| option | result |
+| --- | --- |
+| `q8_0` KV to fit the native context | fits 262144 but decodes 11% slower at 43.7k ([section 4](#4-kv-cache-type-and-context)) |
+| `split-mode tensor` across two backends | half the prefill of the layer split, no decode gain (v0.6.0) |
+| Vulkan on the R9700 instead of ROCm | *Windows*: prefill 25 to 27% and decode 15 to 18% slower |
+| a low `spec-draft-n-max` with MTP alone | *Windows*: `1` gives 9.8 t/s at 93.6k, against 13.0 with no drafter; `2` gives 21 to 25% less than `4` |
+| `q8_0` draft KV | larger, not smaller (v0.6.0) |
+| the whole sampling chain on the GPU | no decode change at 115k: after `top-k 20` the CPU handles only 20 candidates, and a tool-call grammar disables backend sampling anyway |
+
+## 9. Not yet measured (placeholders)
+
+| parameter | current value | question | result |
+| --- | --- | --- | --- |
+| `spec-draft-n-max` at 100k+ tokens | `2` | does the value chosen at 43.7k and on code hold deep in the context? | TBD |
+| `q8_0` KV at 110k+ tokens | `f16` | does the decode gap over `f16` keep growing? | partly: `f16` is measured at 110k, `q8_0` not past 43.7k |
+| `batch-size` on two R9700s | default (2048) | how much do `1024` or `512` give back to a request decoding beside a prefill, and what do they cost the cold prefill? | TBD |
+| `ctx-checkpoints` | `12` | tokens reprocessed at a real client compaction (expected under 8192) | TBD |
+| `reasoning-preserve` | default | what a divergent prompt costs on the 598.5 MiB recurrent state | TBD |
+| a pinned staging buffer in ggml's cross-runtime copy | `malloc` staging | what it gives back of the 2.5 s of staged hops with the R9700 second on *Windows* | TBD: needs a ggml change first |
+| the R9700 first on *Windows* at `53,13` | `52,14` | does `53,13` buy margin on the RTX 4070 SUPER for free? | TBD: needs the RTX 4070 SUPER in the test machine |
+| the HIP API log on *Linux*, R9700 second | n/a | is the *Linux* lead the copy rate alone, or the kernels too? | TBD: needs the RTX 4070 SUPER in the test machine |

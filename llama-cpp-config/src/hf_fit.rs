@@ -58,8 +58,8 @@
 //! Several cards are modelled ONE BY ONE, never as one pool: `Budget::gpus`
 //! is in SPLIT ORDER (`split_order`), the order the guides measured best for
 //! a CUDA + ROCm pair: on Windows the ROCm card first (`docs/qwen3.8_27b.md`
-//! section 4: +9% prefill, +21% decode; `docs/qwen3.8_flash_next.md` section
-//! 10 runs that order too), on Linux the CUDA card first
+//! section 6: +9% prefill, +21% decode; `docs/qwen3.8_flash_next.md` section
+//! 7 runs that order too), on Linux the CUDA card first
 //! (`docs/qwen3.8_flash_next.md` section 2: +32% prefill, +13% decode; the
 //! 27B puts the R9700 last there). Cards of one backend, or of a backend
 //! the guides never measured, keep the probe's order. The basis line names

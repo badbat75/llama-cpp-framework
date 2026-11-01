@@ -11,32 +11,41 @@ updated: 2026-11-01
 
 # AMD Radeon AI PRO R9700: configuration reference
 
-Reference settings for running llama.cpp on the R9700 (RDNA4, `gfx1201`, 32 GB) under
-Windows, through the ROCm (HIP) backend. Values were measured on this framework with
-llama.cpp v0.5.0. Section 7 holds what was measured again on Linux, with llama.cpp v0.6.0 unless a row says v0.7.0; section 9 two of these cards together on Linux (v0.8.0).
+How to run llama.cpp on the R9700 (RDNA4, `gfx1201`, 32 GB) through the ROCm (HIP) backend, on Windows
+and on Linux. Figures come from llama.cpp v0.5.0 on *Windows* and v0.6.0 or v0.7.0 on *Linux*, mostly
+with Qwen3.8-27B Q8_0; two cards are v0.8.0. Backend and driver versions differ between the two systems,
+so a difference between them is not the OS alone. Model-specific detail is in the
+[Qwen3.8-27B](qwen3.8_27b.md) and [Qwen3.8-Flash-Next](qwen3.8_flash_next.md) guides.
+
+**In short.** Use the ROCm backend with `f16` KV at the context you need and `ubatch-size 1024`. For two
+cards on Linux, use the tensor split with an even `tensor-split`: it decodes 48 to 65% faster than the
+layer split for 16 to 22% less cold prefill.
 
 ## 1. Runtime prerequisites
 
 | item | requirement | why |
 | --- | --- | --- |
-| ROCm | TheRock dist, newest stable (`installer\dist-sources.psd1`): its runtime and kernels are bundled by the installer; a build from source reaches them through a machine-wide `HIP_PATH` | rocBLAS/Tensile kernels |
-| HIP runtime | the dist's `amdhip64_7.dll`, `amd_comgr.dll`, `rocm_kpack.dll` next to `llama-server.exe` (bundled by the installer) | against the runtime bundled with the display driver, BF16/F16 GEMMs abort at the first prefill, and with a Ryzen iGPU visible no HIP device enumerates |
-| GPU targets | `gfx1201` plus the arch of any visible Ryzen iGPU | one visible device without code objects makes every device fail with "device kernel image is invalid" |
+| ROCm | TheRock dist, newest stable: bundled by the installer | rocBLAS/Tensile kernels |
+| HIP runtime | the dist's `amdhip64_7.dll`, `amd_comgr.dll`, `rocm_kpack.dll` next to `llama-server.exe` (bundled) | the runtime in the display driver aborts BF16/F16 GEMMs at the first prefill |
+| GPU targets | `gfx1201` plus the arch of any visible Ryzen iGPU | one visible device without code objects makes every device fail |
 | `LLVM_PATH`, `HIP_DEVICE_LIB_PATH` | never machine-wide | the driver's HIP runtime reads `LLVM_PATH`: devices report 0 MiB and children crash |
-| `ROCBLAS_USE_HIPBLASLT` | unset (fallback `0`) | needed only without the staged runtime |
-| llama.cpp | v0.4.1 or later, never with #28102 reverted | #28102 routes head-size-256 FlashAttention to the WMMA kernel: 93.6k prefill 805 t/s with it, 442 without |
+| `ROCBLAS_USE_HIPBLASLT` | unset | needed only without the staged runtime |
+| llama.cpp | v0.4.1 or later | carries [upstream's gfx1201 FlashAttention tuning](https://github.com/ggml-org/llama.cpp/pull/28102): prefill 805 t/s at 93.6k, 442 without |
 | driver | 26.9.2 or later, once released | from 26.5.1 on, a card driving no display has its VRAM purged after ~10 s idle, followed by a TDR |
 
 ## 2. Device facts
 
-- **HIP device ids follow enumeration order**, and a visible Ryzen iGPU takes one of them.
-  Select the card by name, never by assuming an id.
-- **Usable VRAM is about 31.8 GiB dedicated**: the total minus ~0.8 GiB. The HIP driver
-  also keeps ~210 MiB of non-local memory that no log line accounts for.
-- **The advertised PCIe link can be misleading.** The card always reports Gen5 x16,
-  because that is the link to its own internal switch. The slot's real bandwidth to the
-  CPU can be far lower; measure it with `tools\pcie-bench`. It matters for model load,
-  snapshot restore and `split-mode tensor`, not for single-card or layer-split inference.
+- **HIP device ids follow enumeration order**, and a visible Ryzen iGPU takes one. Select the card by
+  name.
+- **Usable VRAM is about 31.8 GiB on *Windows***, plus ~210 MiB of non-local memory no log line accounts
+  for. On *Linux*, `mem_info_vram_total` reads 32624 MiB.
+- **Prefill adds 85 to 170 MiB at run time** (*Linux*, ubatch `1024`), the same at 2.5k and 43.6k tokens.
+- **The advertised PCIe link can mislead.** The card always reports Gen5 x16, the link to its own
+  internal switch. Measure the real one with `tools\pcie-bench`. It matters for model load, snapshot
+  restore and `split-mode tensor`.
+- **A decode step is mostly kernels.** Tracing the 27B Q8_0 at 72k and 150k tokens, the Q8_0 GEMV takes 61
+  to 73% of kernel time and FlashAttention the rest, growing with the context. Power stays at 212 to
+  216 W of 300, so the headroom is in the kernels, not the power limit.
 
 ## 3. Settings
 
@@ -44,118 +53,88 @@ llama.cpp v0.5.0. Section 7 holds what was measured again on Linux, with llama.c
 
 | key | value | evidence |
 | --- | --- | --- |
-| `load-mode` | `none`; on a MoE model with only part of the experts on the card (`n-cpu-moe` above 0 and below the layer count), `mmap`, set explicitly: `auto` resolves to `none` when any device of the model reports no mmap support, as a Ryzen iGPU visible to HIP does | `mmap` leaves ~1 GiB of weights `CPU_Mapped`, which cross PCIe on every batch: prefill 98 vs 571 t/s at 43.7k. With a partial `n-cpu-moe`, `none` aborts right after the weight upload (`ROCm error: unspecified launch failure` in `ggml_cuda_set_device`, 4 of 4 runs, llama.cpp v0.7.0); with every expert in RAM it loads |
-| `flash-attn` | omit (`auto` resolves to on) | the #28102 WMMA path; a quantized KV cache needs FlashAttention |
-| `cache-type-k/-v` | `f16` at the context you need; `q8_0` only to fit a longer one | *Linux* (section 7): `f16` decodes 11% faster deep in the context, and its compute buffer is smaller. `q5_1` saves ~30% of the KV against `q8_0` but decodes 6% slower; `iq4_nl` has no HIP FlashAttention kernel |
-| `ubatch-size` | the largest that fits: `768` or `1024` | against `512`: `768` gives +5.8% prefill at 2.6k and nothing at 93.6k, `1024` +5% at both depths, `256` costs 20%. Decode is unaffected (identical per-step cost). Each ubatch token costs ~0.53 MiB of compute buffer per device |
-| `split-mode` (multi-GPU) | `layer` | see section 4 |
+| `load-mode` | `none`; `mmap`, set explicitly, on a MoE model with part of the experts on the card | `mmap` otherwise leaves ~1 GiB of weights crossing PCIe per batch: prefill 98 against 571 t/s at 43.7k |
+| `flash-attn` | omit (`auto` resolves to on) | selects the FlashAttention kernel this card needs |
+| `cache-type-k/-v` | `f16` at the context you need; `q8_0` only to fit a longer one | decode 35 t/s against 31.5 at 43.7k, prefill the same; `f16` fits ~66% of the `q8_0` context (campaign `27b-kv-f16-20261016`) |
+| `ubatch-size` | `1024` | prefill 902 t/s at 115k, against 895 at `768`, 837 at `1536`, 809 at `2048`; free VRAM 1232, 659 and 75 MiB from `1024` up (campaign `coder390-ubatch-20261020`) |
+| `split-mode` (two cards) | `tensor` on two R9700s on Linux, otherwise `layer` | [section 4](#4-multi-gpu) |
 | `spec-draft-n-max` (DFlash2) | `7` | best at 2.6k and 93.6k; `1` is slower than no drafter |
-| `spec-draft-type-k/-v` | `f16` | a DFlash draft KV is a small window (50 MiB in f16, 27 MiB in q8_0). No measured speed or acceptance difference |
+| `spec-draft-type-k/-v` | `f16` | a DFlash draft KV is a small window (50 MiB in `f16`), no speed difference |
 
 ### Server (SDK Tuning, ROCm)
 
 | key | value | evidence |
 | --- | --- | --- |
-| `HipFaBand` (env `GGML_HIP_FA_BAND_WMMA`) | default (`4`); `0` only to compare | the framework's FlashAttention band (`patches\llama.cpp\0003`): for head size 256, GQA 6 and up to 8 queries (an MTP verify batch), the KV is split across all CUs in one launch instead of the tile kernel upstream picks. `test-backend-ops perf`, f16 KV of 131072 cells, us per call (*Linux*, v0.7.0): 1 query 1085 -> 922 (1.18x), 3 to 4 queries 1494 -> 928 (1.6x); 65536 cells, 4 queries 752 -> 494. 41/41 correctness cases against the CPU reference. `2` helps only at 1 or 2 queries. A `q8_0` KV stays far slower (2895 -> 2388 against 930 in `f16`): the band is an `f16` win. End to end on the 27B: `qwen3.8_27b.md` section 2. Nothing in the log says it is active: a kernel trace shows `flash_attn_ext_f16` in place of `flash_attn_tile` |
-| `RocprofAttach` (env `ROCP_TOOL_ATTACH=1`) | off; on while diagnosing | lets `rocprofv3 --attach <pid>` trace the running server (kernel names and durations per step); no measured cost when nothing is attached |
+| `HipFaBand` (env `GGML_HIP_FA_BAND_WMMA`) | default (`4`) | the framework's FlashAttention band (`patches\llama.cpp\0003`): attention 1.18x faster at 1 query and 1.6x at 3 to 4, on `f16` KV; end to end the 27B decodes 25.9 against 24.5 at 115k |
+| `RocprofAttach` (env `ROCP_TOOL_ATTACH=1`) | off; on while diagnosing | lets `rocprofv3 --attach <pid>` trace the running server |
 
 ### Quantization on RDNA4
 
-| quant | result |
+| quant | result against Q8_0, the fastest of the 27B files |
 | --- | --- |
-| Q8_0 | fastest of the 27B files measured, prefill and decode |
-| Q5_K_M | ~70% of the size; prefill -13% / -10% and decode -7% / -15% against Q8_0 (2.6k / 93.6k). Worth it only where Q8_0 does not fit |
-| Q6_K (any Q6_K-based mix) | slow: prefill -33% against Q5_K_M |
+| Q5_K_M | ~70% of the size; prefill 10 to 13% slower, decode 7 to 15% slower. Worth it only where Q8_0 does not fit |
+| Q6_K mixes | slower still: prefill a third below Q5_K_M |
 
 ## 4. Multi-GPU
 
-- **The last device in `device` receives the output head, the drafter's logits and the
-  sampling.** Put the card with the most free VRAM after its layers there.
-- **`split-mode tensor`** reduces through the internal AllReduce on Windows (no RCCL),
-  staged through pinned host memory, so the slowest card's PCIe link bounds it. Over a
-  ~3 GB/s link that costs ~200 ms per 512-token ubatch, which cancels the prefill gain. It
-  only has a fast path between two devices of the same backend. The Linux build links
-  RCCL, which replaces that AllReduce when every device of the split is a ROCm one
-  (Server tab, SDK Tuning, Tensor-split AllReduce `internal` switches back). On a pair with
-  one card behind a chipset slot without PCIe AtomicOps RCCL does not run: section 9.
-- **`split-mode tensor` with a card of the other backend** (measured on Linux, llama.cpp
-  v0.6.0): the model aborts while loading unless Tensor-split AllReduce is `none`. With
-  `none`, on a 27B Q8_0 at ctx 16384 with KV `f16` and a 3:1 ratio, 2.7k tokens, against
-  the layer split: prefill 599 against 1290 t/s and decode 17.6 against 17.8 without a
-  drafter, prefill 577 against 1232 and decode 44.7 against 45.0 with the embedded MTP
-  head.
+### Two R9700s on Linux
 
-## 5. Choices that look better than they measure
-
-| option | result |
-| --- | --- |
-| a low `spec-draft-n-max`, to stay on the FlashAttention vector kernel | refuted: `n-max 1` gives 9.8 t/s at 93.6k, against 13.0 with no drafter |
-| Vulkan instead of ROCm | slower on both halves since #28102: with Q8_0, prefill -27% / -25% and decode -18% / -15% (2.6k / 93.6k), per-step cost +20-24% despite a slightly higher draft acceptance. With Q5_K_M the gap widens: prefill -22% / -23%, decode -41% / -30%, per-step cost +50-55%. Its only edge is a compute buffer ~690 MiB smaller. (On v0.4.0, before #28102, Vulkan had won both.) |
-
-## 6. Checking a configuration
-
-- `tools\report-memory.ps1`: requested vs actual VRAM per device, and spill into shared
-  memory. A spill is real only above ~512 MiB beyond the pinned `*_Host` buffers.
-- `tools\pcie-bench\`: the card's real host link.
-- Benchmark tab / `llama-cpp-config bench run`: measure at 2.6k and ~90k context, with
-  temp 0 and 3 repetitions.
-
-## 7. Linux
-
-Measured with llama.cpp v0.6.0 (v0.7.0 where a row says so) and the TheRock 10.1.0 dist on the `amdgpu` kernel
-driver, with the desktop drawn by another adapter (nothing else on the card). llama.cpp
-and ROCm are both newer than in the Windows campaign above: a figure that differs from
-sections 2 to 5 is not the OS alone. Model: Qwen3.8-27B Q8_0 with its embedded MTP head,
-KV `q8_0`, layer split with a CUDA card. Decode figures are 3 reps of 400 tokens at
-temp 0.
-
-| subject | result |
-| --- | --- |
-| VRAM | 32624 MiB total (`mem_info_vram_total` in the card's DRM sysfs directory). The figures below ran at 32442 MiB used, 182 MiB free, with `mem_info_gtt_used` at its idle 24 MiB throughout |
-| run-time growth | 85 to 170 MiB over the idle figure at the first prefill (ubatch `1024`), the same at 2.5k and 43.6k tokens |
-| `ubatch-size` | `1024` fits at ctx 262144. Model compute buffer on this card: 1176 MiB at `768` and ctx 196608; at `1024`, 1312 (196608), 1504 (229376) and 1696 to 1736 (262144): it grows with the context as well as with the ubatch |
-| prefill, card first with most of the layers | 1122 t/s at 2.4k tokens, 1045 at 43.6k (ubatch `1024`, ctx 262144) |
-| last-device role (MTP head, output head, sampling) on this card | costs 1288 MiB of output head, 1024 MiB of draft KV (f16) and 648 MiB of draft compute at ctx 262144. Against the same role on a CUDA card: decode 36.3 -> 38.9 t/s at 2.5k tokens (+7%) and 28.5 -> 29.8 at 43.6k (+4.5%), draft acceptance unchanged; prefill at 43.6k 1045 -> 1010 t/s (-3%) |
-| `cache-type-k/-v` `f16` against `q8_0` (llama.cpp v0.7.0) | decode at a 43.7k-token prompt 35.2 and 34.5 t/s against 31.5 and 31.5 (+11%), prefill 1161 against 1164 t/s, short prompts within noise. The KV doubles (64 against 34 KiB per token over 16 layers), but the `q8_0` compute buffer grows with the context: on this card 1712 MiB at 262144 in `q8_0`, 456 MiB at 163840 and 620 at 172032 in `f16`. So `f16` fits ~66% of the context `q8_0` does, not half (campaign `27b-kv-f16-20261016`) |
-| decode step anatomy (llama.cpp v0.7.0, kernel trace of the 27B Q8_0 at 72k and 150k tokens, `f16` KV) | the Q8_0 GEMV (`mul_mat_vec_q`) is 61 to 73% of the card's kernel time and reads the weights at ~372 GB/s, 58% of the card's 640 GB/s; FlashAttention is the rest and grows linearly with the context (19% at 72k, 33% at 150k on the tile kernel, before the band). Power 212 to 216 W of 300 with the memory clock at its maximum: the headroom is in the kernels, not the power limit |
-| `ubatch-size` (llama.cpp v0.7.0, the 27B Q8_0 at a 115k-token prompt, `f16` KV, layer split with most blocks on this card) | `1024` stays the optimum: prefill 895 t/s at `768`, 902 at `1024`, 837 at `1536`, 809 at `2048`, decode unchanged within the draft's noise. Free VRAM on this card after the prefill: 1232 MiB at `1024`, 659 at `1536`, 75 at `2048` (campaign `coder390-ubatch-20261020`) |
-| FlashAttention band, end to end | with the band (`HipFaBand` 4) the 27B at a 115k-token prompt decodes 25.9 against 24.5 t/s with its MTP drafter, prefill unchanged; the MTP verify batch and single-token decode then agree in greedy decoding, where the stock tile kernel diverges (`qwen3.8_27b.md` section 1) |
-| checking a configuration | `tools\report-memory.ps1` is Windows-only: read `mem_info_vram_used` and `mem_info_gtt_used` after a prefill |
-
-## 8. Not yet measured (placeholders)
-
-| parameter | current value | question | result |
-| --- | --- | --- | --- |
-| `ROCBLAS_USE_HIPBLASLT` with the staged runtime | unset | is hipBLASLt (`1`) faster than Tensile (`0`) for BF16/F16 models? | TBD |
-| `batch-size` | default (2048) | does a larger logical batch help prefill at the chosen `ubatch-size`? | TBD |
-| `cache-ram` | 20480 | restore time of the prompt cache over the card's link | TBD |
-| `spec-draft-p-min` | default | does a confidence floor lift acceptance on the reasoning phase? | TBD |
-| power limit | stock (300 W) | prefill and decode per watt | TBD |
-| `GGML_CUDA_AR_COPY_THRESHOLD` / `_CHUNK_BYTES` on two R9700 | default | the internal AllReduce's staging sizes (seeds: 1-2 MiB, 2 MiB) against the default; its cost is in section 9 | TBD |
-| Linux: over-allocation | n/a | does it fail the load or move buffers to GTT, and at what cost? | TBD |
-| `GGML_HIP_FA_BAND_WMMA_SPLIT` | default (one block per CU) | 32, 48, 96 or 128 KV blocks against the default, at 65k and 131k cells | TBD |
-| Q8_0 GEMV ceiling | n/a | `llama-bench` on this card alone at depth 0 and 131072 against the 58% of bandwidth seen in the trace (section 7): how much the `mmvq` RDNA4 tuning leaves | TBD |
-
-## 9. Two R9700s on Linux (v0.8.0)
-
-Two of these cards, one in the CPU's Gen5 x16 slot (the x16 card) and one behind the chipset
-at Gen4 x4 with no PCIe AtomicOps (the x4 card). Model: the Swift-1.5 fine-tune of
-Qwen3.8-27B Q8_0, `f16` KV, `parallel 2`, `ngram-map-k4v,draft-mtp`; per-model detail is in
-`qwen3.8_27b.md` sections 7 to 9.
+One card in the CPU's Gen5 x16 slot (the x16 card), one behind the chipset at Gen4 x4 with no PCIe
+AtomicOps (the x4 card). The Swift-1.5 fine-tune of the 27B Q8_0, `f16` KV, `parallel 2`, an n-gram stage then
+MTP; [Qwen3.8-27B](qwen3.8_27b.md) has the detail and the full baseline (campaign
+`swift27b-standard-1.0-2xr9700-linux-20261031`).
 
 ![Two R9700s: the x16 card in the CPU slot, the x4 card behind the chipset without AtomicOps; the tensor split stages its AllReduce through host memory](assets/diagrams/two-r9700-topology.svg)
 
 | key | value | evidence |
 | --- | --- | --- |
-| `split-mode` | `tensor`, an even `tensor-split` | against the layer split, one request, temperature 0: decode 59.6 against 40.4 t/s at 43.7k tokens (+48%) and 55.4 against 33.5 at 110k (+65%); cold prefill 1114.7 against 1433.6 (-22%) and 924.8 against 1098.6 (-16%) (campaign `swift27b-concurrency-2xr9700-linux-20261031`). An uneven `tensor-split` inflates the buffers under the tensor split and left the x16 card at 0 MiB free after a 43.7k prefill; an even one leaves 3624 / 2486 MiB at the same speed (campaign `swift27b-balance-mmproj-2xr9700-linux-20261031`) |
-| Tensor-split AllReduce (`CudaAllreduce`) | `internal` | RCCL does not run without PCIe AtomicOps on the x4 card's slot, so RCCL against the internal AllReduce cannot be measured on this pair. The internal one stages every reduction through host memory and its prefill follows the x4 card's host link: 785.6 against 1136.1 t/s at 43.7k on a boot where the CPU-to-chipset uplink trained at x2 (3.5 GB/s instead of 7.0), decode 58.0 against 59.8 (campaign `swift27b-driver-check-2xr9700-linux-20261031`) |
-| `parallel` | `2` | two decodes at once, total 64.3 (layer) and 82.5 (tensor) t/s at 43.7k against 40.4 and 59.6 for one request; two cold prefills are served one after the other (the total is one request's rate); a request decoding while the other prefills drops to 20.2 (layer) and 37.1 (tensor). The context is divided per slot: `425984` gives each 212992 (campaigns `swift27b-concurrency-2xr9700-linux-20261031`, `swift27b-ctx-tensor-2xr9700-linux-20261031`) |
-| drafter: embedded MTP or DFlash2 | either; MTP in the n-gram chain | temperature 1, 5 repetitions, layer split: decode at 43.7k 30.9 (MTP) against 28.8 (DFlash2 Q8_0 on the second card, `spec-draft-n-max 5`), on a code rewrite with 1536 tokens out 49.8 against 58.2: within noise of each other. MTP takes ~1.3 GB more on the last card (its KV and compute buffer sit with the output head) (campaigns `swift27b-drafter-2xr9700-linux-20261030`, `swift27b-drafter-code1536-2xr9700-linux-20261030`) |
+| `split-mode`, `tensor-split` | `tensor`, even | decode 59.6 against 40.4 at 43.7k (48% faster), 55.4 against 33.5 at 110k (65% faster); cold prefill 22% and 16% slower (campaign `swift27b-concurrency-2xr9700-linux-20261031`). An even split leaves 3624 / 2486 MiB free at 43.7k (campaign `swift27b-balance-mmproj-2xr9700-linux-20261031`) |
+| `CudaAllreduce` | `internal` | RCCL needs AtomicOps on both slots. The internal one follows the x4 card's host link: prefill 785.6 against 1136.1 on a boot where the chipset uplink trained at x2 (campaign `swift27b-driver-check-2xr9700-linux-20261031`) |
+| `parallel` | `2` | two decodes total 82.5 t/s against 59.6 for one (tensor, 43.7k). The context divides per slot: `425984` gives each 212992 (campaign `swift27b-ctx-tensor-2xr9700-linux-20261031`) |
+| drafter | MTP behind an n-gram stage | MTP and DFlash2 are within noise: 30.9 and 28.8 at 43.7k; MTP takes ~1.3 GB more on the last card (campaign `swift27b-drafter-2xr9700-linux-20261030`; campaign `swift27b-drafter-code1536-2xr9700-linux-20261030`) |
 
-The baseline of this pair under the versioned method (`standard-1.0`: four prompts, the
-bare engine and the preset's own sampling and speculator, one and two requests at once),
-with the full hardware and software configuration it ran on, is `qwen3.8_27b.md`
-section 10 (campaign `swift27b-standard-1.0-2xr9700-linux-20261031`). Under it each card
-sits at its stock 300 W power cap while prefilling and at 210 to 270 W while decoding (read
-by hand from sysfs, not recorded); `power1_cap_max` equals the default, so the cap can only
-be lowered without the driver's overdrive.
+Each card sits at its 300 W cap while prefilling and at 210 to 270 W while decoding (read by hand from
+sysfs, not recorded). `power1_cap_max` equals the default, so the cap can only go down without the driver's
+overdrive.
+
+### Paired with a card of another backend
+
+- **The last device in `device` receives the output head, the drafter's logits and the sampling**: on
+  *Linux* this role on this card decodes 7% faster at 2.5k tokens and 4.5% at 43.6k, prefills 3%
+  slower, and costs 1288 MiB of output head, 1024 of draft KV and 648 of draft compute at ctx 262144.
+- **`split-mode tensor` does not pay**: with `none` AllReduce, prefill 599 against 1290 t/s and decode
+  17.6 against 17.8 (*Linux*, v0.6.0).
+
+On *Windows*, with no RCCL, a tensor split between same-backend cards goes through pinned host memory:
+over a ~3 GB/s link that costs ~200 ms per 512-token ubatch and cancels the prefill gain. On *Linux*, RCCL
+replaces that path when every device is a ROCm one and every slot has AtomicOps.
+
+## 5. Choices that look better than they measure
+
+| option | result |
+| --- | --- |
+| a low `spec-draft-n-max`, to stay on the FlashAttention vector kernel | `1` gives 9.8 t/s at 93.6k, against 13.0 with no drafter |
+| Vulkan instead of ROCm | with Q8_0, prefill 25 to 27% and decode 15 to 18% slower; with Q5_K_M, prefill 22 to 23% and decode 30 to 41% slower. Its only edge is a compute buffer ~690 MiB smaller |
+
+## 6. Checking a configuration
+
+- *Windows*: `tools\report-memory.ps1` shows requested against actual VRAM per device and any spill into
+  shared memory; a spill is real only above ~512 MiB beyond the pinned `*_Host` buffers.
+- *Linux*: read `mem_info_vram_used` and `mem_info_gtt_used` after a prefill.
+- `tools\pcie-bench\`: the card's real host link. On two cards, also read the boot log's link width.
+- Benchmark tab or `llama-cpp-config bench run`: measure at 2.6k and ~90k context, with temp 0 and 3
+  repetitions, or under the `standard` spec.
+
+## 7. Not yet measured (placeholders)
+
+| parameter | current value | question | result |
+| --- | --- | --- | --- |
+| `ROCBLAS_USE_HIPBLASLT` with the staged runtime | unset | is hipBLASLt (`1`) faster than Tensile (`0`) for BF16/F16 models? | TBD |
+| `batch-size` | default (2048) | does a larger logical batch help prefill at the chosen `ubatch-size`? | TBD |
+| `cache-ram` | 24576 | restore time of the prompt cache over the card's link | TBD |
+| `spec-draft-p-min` | default | does a confidence floor lift acceptance on the reasoning phase? | TBD |
+| power limit | stock (300 W) | prefill and decode per watt | partly: draw read by hand ([section 4](#4-multi-gpu)), no per-watt figure |
+| `GGML_CUDA_AR_COPY_THRESHOLD` / `_CHUNK_BYTES` on two R9700 | default | the internal AllReduce's staging sizes (seeds: 1-2 MiB, 2 MiB) against the default | TBD |
+| Linux: memory beyond the card | n/a | what moving buffers to GTT costs in speed | partly: a shortage fails the request; the speed under GTT is unmeasured |
+| `GGML_HIP_FA_BAND_WMMA_SPLIT` | default (one block per CU) | 32, 48, 96 or 128 KV blocks against the default, at 65k and 131k cells | TBD |
+| Q8_0 GEMV ceiling | n/a | `llama-bench` on this card alone at depth 0 and 131072, against the 58% of bandwidth seen in a trace | TBD |

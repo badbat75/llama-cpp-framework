@@ -16,6 +16,8 @@ under <OS>, through the <backend> backend. Values were measured on this framewor
 llama.cpp <vX.Y.Z>; the method of each campaign (prompt, temperature, repetitions, output
 cap, or its spec) is in the row or the section that cites it.
 
+**In short.** <what to do, and the size of the gain>
+
 ## 1. Runtime prerequisites
 
 | item | requirement | why |

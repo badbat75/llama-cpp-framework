@@ -77,7 +77,7 @@ apply.
    depends on the model (~0.5 MiB per ubatch token per device on the dense 27B, ~1.0 to
    1.15 on Flash-Next): take it from the `compute buffer size` lines of the last load,
    not from a constant. On MoE with experts in RAM a larger ubatch is paid in experts
-   moved off the GPU: usually not worth it (`docs/qwen3.8_flash_next.md` section 2).
+   moved off the GPU: usually not worth it (`docs/qwen3.8_flash_next.md` section 8).
 4. **Speculator.** `draft-mtp` if the GGUF has MTP heads or a separate MTP head file
    exists (`model-draft`); otherwise `ngram-map-k` (size-m 64, size-n 12 measured best).
    Sweep `spec-draft-n-max`. Read per-rep numbers: a speculator changes the output path.
@@ -247,7 +247,7 @@ llama-cpp-config bench run --preset <id> --key <key> --values '<a>,<b>,<c>' \
   the trace's end: per card the union of kernel intervals over the wall time (on a layer
   split the cards run in series, so their shares add up), the top kernels, the copies by
   direction. The profiler slows decode ~12%; scale the shares before quoting them.
-  Example of what it finds: `docs/qwen3.8_27b.md` section 4.
+  Example of what it finds: `docs/qwen3.8_27b.md` section 6.
 
 Read results:
 

@@ -16,6 +16,8 @@ framework, measured with llama.cpp <vX.Y.Z> on <cards> (<host: cores, RAM, OS>).
 of each campaign (prompt, temperature, repetitions, output cap, or its spec) is in the row
 or the section that cites it. Per-card detail lives in the card guides.
 
+**In short.** <what to do, and the size of the gain>
+
 ## 1. Model facts
 
 | item | value | source |
