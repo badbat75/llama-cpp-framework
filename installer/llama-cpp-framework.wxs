@@ -264,6 +264,7 @@
       <DialogRef Id="ErrorDlg" />
       <DialogRef Id="FatalError" />
       <DialogRef Id="FilesInUse" />
+      <DialogRef Id="LicenseAgreementDlg" />
       <DialogRef Id="MsiRMFilesInUse" />
       <DialogRef Id="PrepareDlg" />
       <DialogRef Id="ProgressDlg" />
@@ -272,16 +273,20 @@
 
       <!--
         First install: LlamaWelcomeDlg (the runtime-requirements notice) ->
-        CustomizeDlg (features, and Browse for the install directory) ->
-        VerifyReadyDlg. WixUI_FeatureTree without its license page and with
+        LicenseAgreementDlg (what is under which terms: xtask package writes
+        the page, WixUILicenseRtf below) -> CustomizeDlg (features, and Browse
+        for the install directory) -> VerifyReadyDlg. WixUI_FeatureTree with
         our own welcome page: WixUI's WelcomeDlg has room for four lines.
       -->
       <Publish Dialog="ExitDialog" Control="Finish" Event="EndDialog" Value="Return" Order="999" />
 
-      <Publish Dialog="LlamaWelcomeDlg" Control="Next" Event="NewDialog" Value="CustomizeDlg" />
+      <Publish Dialog="LlamaWelcomeDlg" Control="Next" Event="NewDialog" Value="LicenseAgreementDlg" />
+
+      <Publish Dialog="LicenseAgreementDlg" Control="Back" Event="NewDialog" Value="LlamaWelcomeDlg" />
+      <Publish Dialog="LicenseAgreementDlg" Control="Next" Event="NewDialog" Value="CustomizeDlg" Condition="LicenseAccepted = &quot;1&quot;" />
 
       <Publish Dialog="CustomizeDlg" Control="Back" Event="NewDialog" Value="MaintenanceTypeDlg" Order="1" Condition="Installed" />
-      <Publish Dialog="CustomizeDlg" Control="Back" Event="NewDialog" Value="LlamaWelcomeDlg" Order="2" Condition="NOT Installed" />
+      <Publish Dialog="CustomizeDlg" Control="Back" Event="NewDialog" Value="LicenseAgreementDlg" Order="2" Condition="NOT Installed" />
       <Publish Dialog="CustomizeDlg" Control="Next" Event="NewDialog" Value="VerifyReadyDlg" />
 
       <Publish Dialog="BrowseDlg" Control="OK" Event="SetTargetPath" Value="[_BrowseProperty]" Order="3" />
@@ -317,7 +322,7 @@
         <Control Id="Title" Type="Text" X="135" Y="15" Width="225" Height="30" Transparent="yes" NoPrefix="yes"
                  Text="{\WixUI_Font_Bigger}llama.cpp-framework v$(var.Version)" />
         <Control Id="Description" Type="Text" X="135" Y="45" Width="225" Height="185" Transparent="yes" NoPrefix="yes"
-                 Text="This installs llama.cpp-framework (llama.cpp $(var.LlamaBuild)) with the llama-cpp-config configurator. The AMD ROCm, NVIDIA CUDA and OpenSSL runtime libraries are bundled.&#13;&#10;&#13;&#10;Not bundled, needed at runtime:&#13;&#10;- Visual C++ Redistributable x64: always required&#13;&#10;- AMD GPU: the Adrenalin driver&#13;&#10;- NVIDIA GPU: the NVIDIA driver&#13;&#10;- Vulkan: nothing to install (ships with GPU drivers)&#13;&#10;&#13;&#10;A backend whose driver is missing is skipped when llama-server starts." />
+                 Text="This installs llama.cpp-framework (llama.cpp $(var.LlamaBuild)) with the llama-cpp-config configurator. The AMD ROCm, NVIDIA CUDA, Vulkan loader and OpenSSL runtime libraries are bundled.&#13;&#10;&#13;&#10;Not bundled, needed at runtime:&#13;&#10;- Visual C++ Redistributable x64: always required&#13;&#10;- AMD GPU: the Adrenalin driver&#13;&#10;- NVIDIA GPU: the NVIDIA driver&#13;&#10;- Vulkan: the driver of the GPU, any vendor&#13;&#10;&#13;&#10;A backend whose driver is missing is skipped when llama-server starts." />
       </Dialog>
 
       <!--
@@ -368,5 +373,6 @@
          flavour of its custom actions (ui:WixUI picks it by -arch). -->
     <UIRef Id="WixUI_Common" />
     <ui:WixUI Id="WixUI_Common" />
+    <WixVariable Id="WixUILicenseRtf" Value="$(var.LicenseRtf)" />
   </Package>
 </Wix>

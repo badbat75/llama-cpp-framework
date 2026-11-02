@@ -5,6 +5,7 @@
 //! validates it. installer\AGENTS.md says what the MSI does with the tree.
 
 use super::build_llama::load_build_env;
+use crate::common::licenses;
 use crate::common::ui;
 use crate::common::version;
 use crate::common::util::{self, cmd, gfx_arch, run as run_cmd};
@@ -368,9 +369,9 @@ pub fn run(keep_staging: bool, wix_arg: Option<PathBuf>) -> Result<()> {
 
     // ── Bundle the GPU runtimes ─────────────────────────────────────────
     // The import closure of the staged binaries, restricted to what
-    // resolves inside a dist (ROCm, CUDA, Vulkan SDK): everything else is a
-    // system library and stays one (Windows' DLLs, the VC++ runtime, the
-    // driver's vulkan-1.dll). Flat in bin\, next to llama-server.exe, which
+    // resolves inside a dist (ROCm, CUDA, Vulkan SDK with the loader the
+    // prerequisites put in its Runtime\): everything else is a system library
+    // and stays one (Windows' DLLs, the VC++ runtime). Flat in bin\, next to llama-server.exe, which
     // precedes System32 in the search order, so the bundled amdhip64_*.dll
     // also wins over the driver's copy and the dist's rocBLAS never runs
     // against the DRIVER's HIP runtime (the mix that aborts BF16/F16 models on
@@ -384,7 +385,7 @@ pub fn run(keep_staging: bool, wix_arg: Option<PathBuf>) -> Result<()> {
         runtime_dirs.push(("CUDA", vec![c.join(r"bin\x64"), c.join("bin")]));
     }
     if let Some(v) = dists.find_vulkan() {
-        runtime_dirs.push(("Vulkan", vec![v.join("Bin")]));
+        runtime_dirs.push(("Vulkan", vec![v.join("Bin"), v.join("Runtime")]));
     }
 
     ui::head("Bundling the GPU runtimes...");
@@ -422,6 +423,14 @@ pub fn run(keep_staging: bool, wix_arg: Option<PathBuf>) -> Result<()> {
                 dists.root.display()
             );
         }
+    }
+    // Not every machine has a loader of its own, whatever its driver: this one
+    // resolved a stranger's copy through PATH, so the backend lived on that.
+    if stage_bin.join("ggml-vulkan.dll").is_file() && !stage_bin.join("vulkan-1.dll").is_file() {
+        bail!(
+            "ggml-vulkan.dll is staged but vulkan-1.dll was not found in the Runtime directory of a Vulkan SDK under {}; run scripts\\00-install-prerequisites.ps1, which puts it there",
+            dists.root.display()
+        );
     }
 
     // What no import table shows, ROCm only:
@@ -515,6 +524,31 @@ pub fn run(keep_staging: bool, wix_arg: Option<PathBuf>) -> Result<()> {
     let wxs = repo.join(r"installer\llama-cpp-framework.wxs");
     let obj = build_root.join("wix-obj");
 
+    // ── Licences ────────────────────────────────────────────────────────
+    let sources = licenses::Sources {
+        llama_cpp: PathBuf::from(&cfg.llama_cpp_dir),
+        rocm: hip_root.clone(),
+        cuda: dists.find_cuda(),
+        vulkan_runtime: dists.find_vulkan().map(|v| v.join("Runtime")),
+        openssl: (!cfg.openssl_dir.is_empty()).then(|| PathBuf::from(&cfg.openssl_dir)),
+    };
+    let share = stage.join("share");
+    let entries = licenses::stage(&share, &licenses::libraries_under(&stage), &sources)?;
+    let read_text = |p: &Path| -> Result<String> {
+        let bytes = std::fs::read(p).with_context(|| format!("reading {}", p.display()))?;
+        Ok(String::from_utf8_lossy(&bytes).into_owned())
+    };
+    let own = read_text(&repo.join("LICENSE"))?;
+    let bundles_cuda = entries.iter().any(|e| e.file == licenses::CUDA_EULA_FILE);
+    let eula = if bundles_cuda {
+        Some(read_text(&share.join("licenses").join(licenses::CUDA_EULA_FILE))?)
+    } else {
+        None
+    };
+    // Beside the intermediates: it is shown by the installer, not installed.
+    let license_rtf = build_root.join("license.rtf");
+    std::fs::write(&license_rtf, licenses::installer_page(&entries, &own, eula.as_deref()))?;
+
     let files = walk(&stage);
     let payload: u64 = files.iter().filter_map(|f| std::fs::metadata(f).ok()).map(|m| m.len()).sum();
     let defines: Vec<(&str, String)> = vec![
@@ -524,6 +558,7 @@ pub fn run(keep_staging: bool, wix_arg: Option<PathBuf>) -> Result<()> {
         ("HasLib", (stage.join("lib").exists() as u8).to_string()),
         ("HasKpack", (stage.join(".kpack").exists() as u8).to_string()),
         ("EstimatedSizeKb", payload.div_ceil(1024).to_string()),
+        ("LicenseRtf", license_rtf.display().to_string()),
         ("StopProcessesCmd", script_command(&repo.join(r"installer\msi-stop-processes.ps1"))?),
     ];
     // The .wixpdb (debug symbols of the package) goes with the

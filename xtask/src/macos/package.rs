@@ -20,6 +20,7 @@
 
 use super::build_llama::load_build_env;
 use super::OPT_DIR;
+use crate::common::licenses;
 use crate::common::ui;
 use crate::common::util::{self, cmd, output, run as run_cmd, which};
 use crate::common::version;
@@ -255,6 +256,14 @@ pub fn run(keep_staging: bool) -> Result<()> {
         }
     }
     ui::dim(format!("{n_links} commands linked into /usr/local/bin"));
+
+    // ── Licences ────────────────────────────────────────────────────────
+    let opt = under(&stage, OPT_DIR);
+    licenses::stage(
+        &opt.join("share"),
+        &licenses::libraries_under(&opt),
+        &licenses::Sources { llama_cpp: llama.clone(), ..Default::default() },
+    )?;
 
     // ── Build the .pkg ──────────────────────────────────────────────────
     let pkg = out_dir.join(format!("{PKG_NAME}-v{fw_version}-{llama_build}-arm64.pkg"));

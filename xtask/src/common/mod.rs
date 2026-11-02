@@ -7,6 +7,7 @@ pub mod bench_share;
 pub mod cmake_options;
 pub mod configurator;
 pub mod dists;
+pub mod licenses;
 pub mod llama;
 #[cfg(unix)]
 pub mod prereq;

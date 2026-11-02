@@ -730,15 +730,17 @@ $blocks = @()
 # the installer exits; what was verified is what runs. Returns the exit code,
 # $null when the installer was refused.
 $blocks += @'
+function Test-VendorSignature([string]$File, [string]$Org) {
+    $sig = Get-AuthenticodeSignature $File
+    $subject = if ($sig.SignerCertificate) { $sig.SignerCertificate.Subject } else { '' }
+    if ($sig.Status -eq 'Valid' -and $subject -match ('(^|, )O="?' + [regex]::Escape($Org) + '"?(, |$)')) { return $true }
+    Write-Host "  [!!] $(Split-Path $File -Leaf): signature $($sig.Status), signer '$subject' (expected O=$Org); refused" -ForegroundColor Red
+    return $false
+}
 function Invoke-SignedInstaller([string]$File, [string]$Org, [string]$Arguments) {
     $lock = [IO.File]::Open($File, 'Open', 'Read', 'Read')
     try {
-        $sig = Get-AuthenticodeSignature $File
-        $subject = if ($sig.SignerCertificate) { $sig.SignerCertificate.Subject } else { '' }
-        if ($sig.Status -ne 'Valid' -or $subject -notmatch ('(^|, )O="?' + [regex]::Escape($Org) + '"?(, |$)')) {
-            Write-Host "  [!!] $(Split-Path $File -Leaf): signature $($sig.Status), signer '$subject' (expected O=$Org); NOT run" -ForegroundColor Red
-            return $null
-        }
+        if (-not (Test-VendorSignature $File $Org)) { return $null }
         return (Start-Process $File -ArgumentList $Arguments -Wait -PassThru).ExitCode
     } finally { $lock.Dispose() }
 }
@@ -953,6 +955,66 @@ if ($LASTEXITCODE -ne 0 -or (Get-Item $vkExe -ErrorAction SilentlyContinue).Leng
 Remove-Item $vkExe -Force -ErrorAction SilentlyContinue
 '@
 }
+# The Vulkan loader the package bundles (xtask package): the SDK has only an
+# import lib and an installer that would write System32, so it comes from
+# LunarG's runtime archive of the same version, into Runtime\ of the dist. Runs
+# on an SDK already installed too, which is how a dist older than this step
+# gets it. Only the two files named are taken out of the archive, and the DLL is
+# checked inside the locked dist, where no unelevated process can swap it,
+# before it takes its name.
+$vkRuntimeDist = if ($vulkanTarget) {
+    @{ Version = $vulkanTarget.Version; Dir = Get-DistDir 'Vulkan' $vulkanTarget.Version $sources $distRoot }
+} else { $vulkanBefore }
+if ($vkRuntimeDist -and -not (Test-Path (Join-Path $vkRuntimeDist.Dir 'Runtime\vulkan-1.dll'))) {
+    $blocks += @'
+
+function Install-VulkanRuntime([string]$Zip, [string]$DistDir, [string]$Org) {
+    $runtime = Join-Path $DistDir 'Runtime'
+    $dll = Join-Path $runtime 'vulkan-1.dll'
+    $license = Join-Path $runtime 'VulkanRT-License.txt'
+    $new = "$dll.new"
+    try {
+        New-Item -ItemType Directory -Force -Path $runtime | Out-Null
+        Add-Type -AssemblyName System.IO.Compression.FileSystem
+        $archive = [IO.Compression.ZipFile]::OpenRead($Zip)
+        try {
+            foreach ($entry in $archive.Entries) {
+                if ($entry.FullName -match '/x64/vulkan-1\.dll$') {
+                    [IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $new, $true)
+                } elseif ($entry.FullName -match '/VulkanRT-License\.txt$') {
+                    [IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $license, $true)
+                }
+            }
+        } finally { $archive.Dispose() }
+        if ((Test-Path $new) -and (Test-Path $license) -and (Test-VendorSignature $new $Org)) {
+            Move-Item -Force $new $dll
+            return $true
+        }
+    } catch {
+        Write-Host "  [!!] $(Split-Path $Zip -Leaf): $($_.Exception.Message)" -ForegroundColor Red
+    }
+    Remove-Item $new -Force -ErrorAction SilentlyContinue
+    return $false
+}
+'@
+    $blocks += "`$rtVer = $(Lit $vkRuntimeDist.Version); `$rtUrl = $(Lit ($vulkan.Runtime -f $vkRuntimeDist.Version)); `$rtDir = $(Lit $vkRuntimeDist.Dir); `$rtSigner = $(Lit $vulkan.Signer)"
+    $blocks += "`$rtDl = $(Lit (Join-Path (Get-DistHome 'Vulkan' $sources $distRoot) '.downloads')); `$rtMarker = $(Lit $vulkan.Marker)"
+    $blocks += @'
+
+if (Test-Path (Join-Path $rtDir $rtMarker)) {
+    Write-Host "Fetching the Vulkan loader $rtVer..." -ForegroundColor Cyan
+    New-Item -ItemType Directory -Force -Path $rtDl | Out-Null
+    $rtZip = Join-Path $rtDl (Split-Path $rtUrl -Leaf)
+    curl.exe --fail -L --retry 3 --retry-delay 5 -o $rtZip $rtUrl
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "  download failed (curl exit $LASTEXITCODE)" -ForegroundColor Red
+    } elseif (Install-VulkanRuntime $rtZip $rtDir $rtSigner) {
+        Write-Host "  Vulkan loader $rtVer in $rtDir\Runtime" -ForegroundColor Green
+    }
+    Remove-Item $rtZip -Force -ErrorAction SilentlyContinue
+}
+'@
+}
 # OpenSSL ships libs under lib\VC\x64\MD\ but cmake/find_package expects them
 # directly under lib\. Idempotent: safe to re-run after any OpenSSL touch.
 $blocks += @'
@@ -1105,6 +1167,9 @@ $rocmAfter    = Get-RocmDirVersion $rocmAfterDir
 $rocmOnDisk   = Get-RocmInstalled
 $cudaAfter    = Find-Dist 'Cuda' $sources $distRoot
 $vulkanAfter  = Find-Dist 'Vulkan' $sources $distRoot
+if ($vulkanAfter -and -not (Test-Path (Join-Path $vulkanAfter.Dir 'Runtime\vulkan-1.dll'))) {
+    Write-Host "Vulkan loader missing from $($vulkanAfter.Dir)\Runtime: xtask package refuses until a run of this script fetches it." -ForegroundColor Yellow
+}
 
 # Make the dist visible to THIS session too (a xtask configure run in the
 # same console). HIP_PATH/PATH reach new terminals via the machine env; the

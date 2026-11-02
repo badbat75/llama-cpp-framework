@@ -1,7 +1,7 @@
 ---
 title: Packaging and install
 type: reference
-updated: 2026-11-01
+updated: 2026-11-02
 ---
 
 # Packaging and install
@@ -47,6 +47,23 @@ executable with an `install()` rule, so count them from the staging tree, not th
 **Which runtime libraries is never a list.** It is the closure of what the staged binaries link,
 restricted to what resolves inside a dist. Everything else stays a system library.
 
+**Every package carries `share/licenses/` beside `bin`** (`/opt/llama.cpp/share/licenses` on Linux
+and macOS). `licenses.rs` (`xtask/src/common/`) stages it:
+
+- This project's licence, llama.cpp's and what llama.cpp's own `licenses/` holds, the configurator's
+  icon font, and a text for every bundled library.
+- `README.txt` says which text covers which library. llama.cpp's own libraries are covered by its
+  licence.
+- **The table in `licenses.rs` decides which licence a library has; nothing is guessed.** The package
+  is refused when a bundled library (any `.dll`, `.dylib`, `.so` or `.so.*` under the staged tree) is
+  not named there, or when its text cannot be found. A new library in a dist is read before it ships.
+- A text comes from the dist when it has one, so it matches the bundled version: ROCm's
+  `share\doc\<name>\LICENSE*`, CUDA's `LICENSE`, the Windows Vulkan dist's
+  `Runtime\VulkanRT-License.txt`, OpenSSL's `license.txt`. Otherwise it comes from
+  `installer/licenses/`, whose README says where each was taken from.
+- NVIDIA's terms are not an open-source licence. They install as `NVIDIA-CUDA-EULA.txt`, and
+  `ggml-cuda` needs them too, since it links NVIDIA's static runtime.
+
 ### The MSI (Windows)
 
 **`xtask package` checks WiX first, then stages, builds into `dist/` and validates.** The check
@@ -70,17 +87,30 @@ tree. A missing icon is regenerated here.
 | Bundled into `bin\` | How |
 | --- | --- |
 | OpenSSL `libcrypto-N-x64.dll`, `libssl-N-x64.dll` | Names scanned from every staged binary, copied from `OpenSSLDir\bin` |
-| GPU runtimes | Import closure, restricted to the ROCm dist's `bin\`, the CUDA dist's `bin\x64` or `bin`, the Vulkan SDK's `Bin\` |
+| GPU runtimes | Import closure, restricted to the ROCm dist's `bin\`, the CUDA dist's `bin\x64` or `bin`, the Vulkan SDK's `Bin\`, and its `Runtime\` for `vulkan-1.dll` |
 | `amd_comgr*.dll` | By name from the ROCm dist: no import table shows it |
 | `rocblas\library`, `hipblaslt\library` (`.kpack\blas_lib_*` beside `bin\`) | For the architectures in `GpuTargets` only, plus whatever names no architecture |
 
 The GPU runtimes add about 1.6 GB on top of the binaries. It refuses a `ggml-hip.dll` without
-`hipblas.dll`, or a `ggml-cuda.dll` without `cublas64_*.dll`, since ggml would silently drop that
-backend on every other machine.
+`hipblas.dll`, a `ggml-cuda.dll` without `cublas64_*.dll`, or a `ggml-vulkan.dll` without
+`vulkan-1.dll`, since ggml would silently drop that backend on every other machine.
 
-**System libraries stay external:** the VC++ redist x64 (`libomp140.x86_64.dll` included), the GPU
-drivers, and `vulkan-1.dll`, which ships with any GPU driver and is not in the SDK as a DLL. cudart
-is static. The load-order reasons are in [installer\AGENTS.md](../installer/AGENTS.md).
+**The Vulkan loader is bundled, because a driver does not guarantee one.** A machine can have the
+GPU driver and no `vulkan-1.dll` in System32. The SDK holds only the import lib, so the prerequisites
+script takes the x64 DLL and `VulkanRT-License.txt` out of LunarG's `VulkanRT-X64-<version>-Components.zip`
+of the SDK's version, into `<DistRoot>\VulkanSDK\<version>\windows\Runtime\`. The DLL must pass
+Authenticode (`O=LunarG, Inc.`), and an SDK already installed gets it on the next run. Staging
+copies the DLL through the import closure, and its licence follows the general rule above as
+`share\licenses\VulkanRT-License.txt`: a staged `vulkan-1.dll` without the licence beside it in the
+dist fails the package.
+
+**The MSI shows a licence page** (WixUI `LicenseAgreementDlg`, with the accept checkbox) between the
+welcome page and `CustomizeDlg`. `xtask package` writes its text to `build\windows\license.rtf`
+(not installed): which text covers what, the MIT licence, and NVIDIA's terms in full. A silent or
+basic-UI install does not show it.
+
+**System libraries stay external:** the VC++ redist x64 (`libomp140.x86_64.dll` included) and the
+GPU drivers. cudart is static. The load-order reasons are in [installer\AGENTS.md](../installer/AGENTS.md).
 
 <details>
 <summary>Why the OpenSSL scan works the way it does</summary>
@@ -117,8 +147,9 @@ rebuild on a newer llama.cpp alone is then an upgrade to apt and dnf. dpkg and r
 | `/opt/llama.cpp/.kpack/` | hipBLASLt's `blas_lib_*` and RCCL's `rccl_lib_*` archives |
 | `/opt/llama.cpp/share/benchmarks/` | The benchmark method |
 | `/opt/llama.cpp/share/strings/` | The configurator's text: the GUI's `en_US.toml`, the CLI's `cli.toml` |
+| `/opt/llama.cpp/share/licenses/` | The licence texts and their `README.txt` |
 | `/usr/bin/` | One relative symlink per executable; rpm warns on absolute ones |
-| `/usr/share/` | The desktop entry ("llama.cpp Config" in the menu), its icon, the licences |
+| `/usr/share/` | The desktop entry ("llama.cpp Config" in the menu), its icon, the `.deb`'s `doc/<pkg>/copyright` |
 
 **`bin/` stays one directory, so it skips `cmake --install`,** which would split it into `bin/` and
 `lib/`. ggml looks for its backends next to the executable (`/proc/self/exe`, so through a symlink
@@ -191,6 +222,11 @@ group-writable ones.
 
 **Icon.** It is the largest PNG frame of `resources/llama.ico`, cut out of the container by xtask,
 so no image tool is needed.
+
+**Licence metadata.** The `.rpm` `License:` field is computed from what the package bundles: an SPDX
+expression, with `LicenseRef-NVIDIA-CUDA-EULA` for NVIDIA's terms. The `.deb`'s
+`usr/share/doc/<pkg>/copyright` includes the `share/licenses/README.txt` and points to the
+directory.
 
 **Maintainer.** `LLAMA_FW_MAINTAINER` sets it, else git's `user.name` and `user.email`.
 

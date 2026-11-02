@@ -90,15 +90,17 @@
         )
     }
 
-    # LunarG Vulkan SDK (build machine only: end users get vulkan-1.dll with
-    # any GPU driver). LatestUrl answers the newest Windows SDK version as
-    # plain text; the installer is a Qt installer run headless into
-    # <DistRoot>\VulkanSDK\<version>\<DistOs>.
+    # LunarG Vulkan SDK (build machine only). LatestUrl answers the newest
+    # Windows SDK version as plain text; the installer is a Qt installer run
+    # headless into <DistRoot>\VulkanSDK\<version>\<DistOs>. Runtime is the
+    # archive of the same version holding the loader, vulkan-1.dll, which the
+    # SDK lacks and the package bundles: it lands in Runtime\ of the dist.
     Vulkan = @{
         Dir         = 'VulkanSDK'
         Marker      = '.vulkan-version'    # written once the installer left a complete SDK
         LatestUrl   = 'https://vulkan.lunarg.com/sdk/latest/windows.txt'
         Installer   = 'https://sdk.lunarg.com/sdk/download/{0}/windows/vulkansdk-windows-X64-{0}.exe'
-        Signer      = 'LunarG, Inc.'         # Authenticode O= the installer must carry before it runs elevated
+        Runtime     = 'https://sdk.lunarg.com/sdk/download/{0}/windows/VulkanRT-X64-{0}-Components.zip'
+        Signer      = 'LunarG, Inc.'         # Authenticode O= the installer and the loader must carry
     }
 }

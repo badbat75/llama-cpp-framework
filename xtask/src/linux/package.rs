@@ -29,6 +29,7 @@
 use crate::common::configurator::set_mode;
 use super::build_llama::load_build_env;
 use super::dists;
+use crate::common::licenses;
 use crate::common::ui;
 use crate::common::version;
 use crate::common::util::{self, cmd, gfx_arch, output, run as run_cmd, which};
@@ -361,14 +362,26 @@ pub fn run(want_deb: bool, want_rpm: bool, keep_staging: bool) -> Result<()> {
         ui::warn("No PNG frame in resources/llama.ico: the desktop entry ships without an icon");
     }
 
+    let share = stage.join(OPT_DIR).join("share");
+    let license_entries = licenses::stage(
+        &share,
+        &licenses::libraries_under(&stage.join(OPT_DIR)),
+        &licenses::Sources {
+            llama_cpp: llama.clone(),
+            rocm: Some(PathBuf::from(&hip_root)).filter(|_| !hip_root.is_empty()),
+            cuda: dists.find_cuda(),
+            ..Default::default()
+        },
+    )?;
     let mut copyright = format!("{PKG_NAME} {fw_version} is distributed under the MIT licence:\n\n");
     copyright.push_str(&std::fs::read_to_string(repo.join("LICENSE"))?);
     copyright.push_str(&format!("\nIt bundles llama.cpp {llama_build}, whose licence follows.\n"));
     copyright.push_str(&format!(
-        "The libraries under /{RT_DIR} are redistributed unmodified from the AMD ROCm\n"
+        "The libraries under /{RT_DIR} are redistributed unmodified, each under its own licence.\n"
     ));
-    copyright.push_str("(TheRock) distribution, the NVIDIA CUDA redistributable archives and the\n");
-    copyright.push_str("LunarG Vulkan SDK, each under its own licence.\n\n");
+    copyright.push_str(&format!("The full texts are in /{OPT_DIR}/share/licenses:\n\n"));
+    copyright.push_str(&std::fs::read_to_string(share.join("licenses").join("README.txt"))?);
+    copyright.push_str("\nllama.cpp's licence:\n\n");
     copyright.push_str(&std::fs::read_to_string(llama.join("LICENSE"))?);
     copyright.push_str("\nllama-cpp-config embeds the Fluent UI System Icons font, whose licence follows.\n\n");
     copyright.push_str(&std::fs::read_to_string(repo.join("llama-cpp-config/ui/fonts/LICENSE"))?);
@@ -445,6 +458,7 @@ pub fn run(want_deb: bool, want_rpm: bool, keep_staging: bool) -> Result<()> {
             homepage: &homepage,
             summary: description_short,
             description: &long_description,
+            license: &licenses::rpm_license(&license_entries),
         })?;
     }
 
@@ -618,6 +632,7 @@ struct RpmFields<'a> {
     homepage: &'a str,
     summary: &'a str,
     description: &'a str,
+    license: &'a str,
 }
 
 fn build_rpm(stage: &Path, pkg_work: &Path, out_dir: &Path, rpm_file: &Path, has_icon: bool, f: &RpmFields) -> Result<()> {
@@ -648,7 +663,7 @@ fn build_rpm(stage: &Path, pkg_work: &Path, out_dir: &Path, rpm_file: &Path, has
 Version:        {version}
 Release:        1
 Summary:        {summary}
-License:        MIT
+License:        {license}
 {url}Conflicts:      llama-cpp
 
 # The staged files are final: no stripping, no debuginfo, no build-id links,
@@ -676,6 +691,7 @@ cp -a "{stage}/." "%{{buildroot}}/"
             version = f.version,
             summary = f.summary,
             description = f.description,
+            license = f.license,
             stage = stage.display(),
         ),
     )?;

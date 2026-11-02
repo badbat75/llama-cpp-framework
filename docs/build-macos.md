@@ -69,6 +69,7 @@ refuses a built `llama-cpp-config` whose version differs from `Cargo.toml`.
 | `/opt/llama.cpp/lib/` | The Vulkan loader and MoltenVK |
 | `/opt/llama.cpp/share/benchmarks/` | The benchmark method |
 | `/opt/llama.cpp/share/strings/` | The configurator's text: the GUI's `en_US.toml`, the CLI's `cli.toml` |
+| `/opt/llama.cpp/share/licenses/` | The licence texts, with the MoltenVK and Vulkan loader ones; see [Packaging](build-packaging.md#packaging) |
 | `/usr/local/bin/` | A symlink per executable |
 | `/usr/local/share/vulkan/icd.d/llama-cpp-framework-MoltenVK_icd.json` | The driver manifest, with an absolute `library_path` into `/opt/llama.cpp/lib` |
 

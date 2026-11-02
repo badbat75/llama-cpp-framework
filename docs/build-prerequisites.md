@@ -1,7 +1,7 @@
 ---
 title: Build prerequisites
 type: reference
-updated: 2026-11-01
+updated: 2026-11-02
 ---
 
 # Build prerequisites
@@ -40,6 +40,10 @@ version wins, compared numerically.
 | `CUDA` | `.cuda-version` | `bin\nvcc.exe`, `lib\x64\cudart_static.lib`, `lib\x64\cublas.lib` | `bin/nvcc`, `lib64/libcudart.so`, `lib64/libcublas.so` |
 | `NCCL` | `.nccl-version` | n/a | `lib/libnccl.so`, `include/nccl.h` |
 | `VulkanSDK` | `.vulkan-version` | `Lib\vulkan-1.lib`, `Bin\glslc.exe` | `x86_64/include/vulkan/vulkan.h`, `x86_64/bin/glslc`, the loader |
+
+On Windows the dist also holds `Runtime\vulkan-1.dll` and `Runtime\VulkanRT-License.txt`, the loader
+the MSI bundles. They are no part of what makes a dist complete: a build never needs them, and
+`xtask package` is what refuses a Vulkan build without them.
 
 The finders are `xtask/src/<os>/dists.rs` and `Find-Dist` in `scripts\dists.ps1`. The directory
 `VULKAN_SDK` names is the dist itself on Windows, `<Version>/linux/x86_64` on Linux and
@@ -137,7 +141,7 @@ so it works on a fresh machine before `xtask configure` has run.
 | PowerShell 7, OpenSSL, .NET SDK 10 | winget, installed or upgraded, plus links for OpenSSL's `lib\VC\x64\MD\*.lib` into `lib\` | Elevated |
 | ROCm | Extracted to `<DistRoot>\TheRock\<version>\windows` from `.downloads`; a partial download resumes | Elevated |
 | CUDA Toolkit | Redist archives in `<DistRoot>\CUDA\.downloads\<X.Y.Z>`; a re-run reuses finished downloads | Elevated |
-| Vulkan SDK | LunarG's installer, headless, into `<DistRoot>\VulkanSDK\<version>\windows` | Elevated |
+| Vulkan SDK | LunarG's installer, headless, into `<DistRoot>\VulkanSDK\<version>\windows`; then the loader from LunarG's `VulkanRT-X64-<version>-Components.zip` into its `Runtime\`, also for an SDK already installed | Elevated |
 | sccache | `%LOCALAPPDATA%\Programs\sccache\sccache.exe`, its directory added to the user PATH | User |
 | WiX 7.0.1 and extensions | `dotnet tool`, moved to the pin with `--allow-downgrade`; `WixToolset.UI.wixext`, `WixToolset.Util.wixext` | User |
 | Rust | winget's `Rustlang.Rustup`, when no cargo is found | User |
@@ -219,7 +223,10 @@ also covers the typographic quotes the parser accepts as a closing quote.
 - `.vulkan-version` needs `Lib\vulkan-1.lib` and `Bin\glslc.exe` left by the installer.
 
 **Vulkan install.** The download goes to `<DistRoot>\VulkanSDK\.downloads`, and the installer runs
-with `--root <dir> --accept-licenses --default-answer --confirm-command install`.
+with `--root <dir> --accept-licenses --default-answer --confirm-command install`. The loader step
+downloads the runtime zip beside it, takes only `x64\vulkan-1.dll` and `VulkanRT-License.txt` out,
+and checks the DLL (Authenticode, `O=LunarG, Inc.`) inside the locked dist before it takes its name.
+A failed download or check leaves no `Runtime\vulkan-1.dll`, and `xtask package` then refuses.
 
 **sccache install.** It runs outside the elevated session. The newest `x86_64` or `aarch64`
 `pc-windows-msvc` zip is staged and moved over the target, so an exe in use stays intact and the run
