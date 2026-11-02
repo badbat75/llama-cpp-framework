@@ -3,6 +3,7 @@
 //! parent module's header.
 
 use super::*;
+use crate::devices::{PcieLink, PhysicalGpu};
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
@@ -208,6 +209,58 @@ fn disk_for(path: &Path) -> Option<Disk> {
     })
 }
 
+// ── PCIe path (sysfs) ───────────────────────────────────────────────
+
+/// A sysfs link: `16.0 GT/s PCIe` and `4`. `None` for a device without one
+/// (`Unknown`, or a width of 0 on a link that is down).
+fn parse_link(speed: &str, width: &str) -> Option<PcieLink> {
+    let rate = speed.split_whitespace().next()?;
+    let generation = match rate {
+        "2.5" => 1,
+        "5.0" | "5" => 2,
+        "8.0" | "8" => 3,
+        "16.0" | "16" => 4,
+        "32.0" | "32" => 5,
+        "64.0" | "64" => 6,
+        _ => return None,
+    };
+    let width = width.trim().parse().ok().filter(|w| *w > 0)?;
+    Some(PcieLink { generation, width })
+}
+
+/// Fill in the link between the card and the CPU from the card's sysfs
+/// directory: the device path runs through every bridge, each with its own
+/// link, and the slowest of them is what the card gets. Unlike Windows this
+/// sees past a card's own switch. A switch shows as two bridges (upstream and
+/// downstream port) under the one root port.
+fn read_path(gpu: &mut PhysicalGpu, device_dir: &Path) {
+    let Ok(path) = std::fs::canonicalize(device_dir) else {
+        return;
+    };
+    let hops: Vec<&Path> = path
+        .ancestors()
+        .take_while(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| crate::devices::pci_address(n).is_some())
+        })
+        .collect();
+    let slowest = |speed: &str, width: &str| {
+        hops.iter()
+            .filter_map(|hop| {
+                let read = |f: &str| std::fs::read_to_string(hop.join(f)).ok();
+                parse_link(&read(speed)?, &read(width)?)
+            })
+            .min_by_key(|link| link.rate())
+    };
+    gpu.link = slowest("current_link_speed", "current_link_width");
+    gpu.max_link = slowest("max_link_speed", "max_link_width");
+    gpu.link_is_whole_path = true;
+    // Past the card itself, a root port and two bridges per switch.
+    let bridges = hops.len().saturating_sub(1) as u32;
+    gpu.switches = (bridges > 0).then(|| (bridges - 1) / 2);
+}
+
 // ── amdgpu (sysfs) ──────────────────────────────────────────────────
 
 fn read_u64(path: &Path) -> Option<u64> {
@@ -245,6 +298,7 @@ struct AmdCard {
     id: String,
     title: String,
     detail: String,
+    gpu: Option<PhysicalGpu>,
     /// `/sys/class/drm/cardN/device`.
     dir: PathBuf,
 }
@@ -287,8 +341,25 @@ fn amd_cards(drm_root: &Path, pci_ids: &str) -> Vec<AmdCard> {
                 index,
                 AmdCard {
                     id,
-                    title,
                     detail,
+                    gpu: crate::devices::pci_address(&address).map(|pci| {
+                        let mib = |file: &str| read_u64(&dir.join(file)).unwrap_or(0) >> 20;
+                        let mut gpu = PhysicalGpu {
+                            pci,
+                            name: title.clone(),
+                            vendor: "AMD".to_string(),
+                            pci_id: match ids {
+                                (Some(v), Some(d)) => format!("{v:04x}:{d:04x}"),
+                                _ => String::new(),
+                            },
+                            vram_mib: mib("mem_info_vram_total"),
+                            shared_mib: mib("mem_info_gtt_total"),
+                            ..Default::default()
+                        };
+                        read_path(&mut gpu, &dir);
+                        gpu
+                    }),
+                    title,
                     dir,
                 },
             ))
@@ -296,6 +367,35 @@ fn amd_cards(drm_root: &Path, pci_ids: &str) -> Vec<AmdCard> {
         .collect();
     cards.sort_by_key(|(index, _)| *index);
     cards.into_iter().map(|(_, card)| card).collect()
+}
+
+fn pci_ids() -> String {
+    ["/usr/share/hwdata/pci.ids", "/usr/share/misc/pci.ids"]
+        .iter()
+        .find_map(|p| std::fs::read_to_string(p).ok())
+        .unwrap_or_default()
+}
+
+/// What the system knows of every amdgpu and NVIDIA card.
+pub(super) fn physical_gpus() -> Vec<PhysicalGpu> {
+    let mut gpus: Vec<PhysicalGpu> = amd_cards(Path::new("/sys/class/drm"), &pci_ids())
+        .into_iter()
+        .filter_map(|card| card.gpu)
+        .collect();
+    for gpu in nvml().iter().flat_map(|nvml| &nvml.devices) {
+        if let Some((bus, device)) = gpu.address {
+            let pci = crate::devices::pci_text(bus, device, 0);
+            let mut card = PhysicalGpu {
+                name: gpu.name.clone(),
+                vendor: "NVIDIA".to_string(),
+                ..Default::default()
+            };
+            read_path(&mut card, Path::new(&format!("/sys/bus/pci/devices/0000:{pci}")));
+            card.pci = pci;
+            gpus.push(card);
+        }
+    }
+    gpus
 }
 
 fn amd_bars(dir: &Path) -> Vec<Bar> {
@@ -331,6 +431,7 @@ pub struct Sampler {
     disk: Option<Disk>,
     cpu_title: String,
     threads: usize,
+    memory_detail: String,
     prev: Counters,
     disk_peak: f64,
     /// One per NVML device.
@@ -342,16 +443,14 @@ impl Sampler {
     /// difference against. `models_dir` picks the disk; `off` is the set
     /// `sample` takes.
     pub fn new(models_dir: &Path, off: &HashSet<String>) -> Self {
-        let pci_ids = ["/usr/share/hwdata/pci.ids", "/usr/share/misc/pci.ids"]
-            .iter()
-            .find_map(|p| std::fs::read_to_string(p).ok())
-            .unwrap_or_default();
+        let pci_ids = pci_ids();
         let cpuinfo = std::fs::read_to_string("/proc/cpuinfo").unwrap_or_default();
         let mut s = Sampler {
             amd: amd_cards(Path::new("/sys/class/drm"), &pci_ids),
             disk: disk_for(models_dir),
             cpu_title: cpu_model(&cpuinfo).unwrap_or_else(|| "CPU".to_string()),
             threads: std::thread::available_parallelism().map_or(0, |n| n.get()),
+            memory_detail: memory_detail(),
             prev: Counters {
                 at: Instant::now(),
                 cpu: None,
@@ -410,14 +509,23 @@ impl Sampler {
             let devices = nvml.devices.iter().zip(&mut self.pcie_peaks).enumerate();
             for (i, (gpu, peak)) in devices {
                 let detail = format!("nvidia · NVML · GPU {i}");
-                groups.push(group(off, &gpu.id, gpu.name.clone(), detail, || {
-                    nvidia_bars(nvml, gpu.handle, peak)
-                }));
+                let pci = gpu
+                    .address
+                    .map(|(bus, device)| crate::devices::pci_text(bus, device, 0));
+                groups.push(
+                    group(off, &gpu.id, gpu.name.clone(), detail, || {
+                        nvidia_bars(nvml, gpu.handle, peak)
+                    })
+                    .at_pci(pci.as_deref()),
+                );
             }
         }
         for card in &self.amd {
             let (title, detail) = (card.title.clone(), card.detail.clone());
-            groups.push(group(off, &card.id, title, detail, || amd_bars(&card.dir)));
+            groups.push(
+                group(off, &card.id, title, detail, || amd_bars(&card.dir))
+                    .at_pci(card.gpu.as_ref().map(|gpu| gpu.pci.as_str())),
+            );
         }
 
         let cpu = match (self.prev.cpu, now.cpu) {
@@ -435,7 +543,7 @@ impl Sampler {
             off,
             MEMORY_ID,
             "Memory".to_string(),
-            String::new(),
+            self.memory_detail.clone(),
             || {
                 let mem =
                     parse_meminfo(&std::fs::read_to_string("/proc/meminfo").unwrap_or_default());
@@ -540,6 +648,34 @@ mod tests {
         assert_eq!(src("/mnt/my disk/models").as_deref(), Some("/dev/sda1"));
         // A sibling that merely shares the name prefix is not under the mount.
         assert_eq!(src("/mnt/database").as_deref(), Some("/dev/nvme0n1p3"));
+    }
+
+    // An R9700 behind the chipset: its own link reads 5.0 x16, and the slot's
+    // four lanes show only further up the path.
+    #[test]
+    fn the_link_is_the_slowest_hop_up_to_the_cpu() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("pci0000:00");
+        let chain = ["0000:00:02.1", "0000:0c:00.0", "0000:0d:00.0", "0000:14:00.0"];
+        let hops = [("16.0 GT/s PCIe", "4"), ("16.0 GT/s PCIe", "4"), ("32.0 GT/s PCIe", "16"), ("32.0 GT/s PCIe", "16")];
+        let mut at = root;
+        for (name, (speed, width)) in chain.iter().zip(hops) {
+            at = at.join(name);
+            std::fs::create_dir_all(&at).unwrap();
+            for kind in ["current", "max"] {
+                std::fs::write(at.join(format!("{kind}_link_speed")), speed).unwrap();
+                std::fs::write(at.join(format!("{kind}_link_width")), width).unwrap();
+            }
+        }
+        let mut gpu = PhysicalGpu::default();
+        read_path(&mut gpu, &at);
+        let four_lanes = PcieLink { generation: 4, width: 4 };
+        assert_eq!((gpu.link, gpu.max_link), (Some(four_lanes), Some(four_lanes)));
+        assert!(gpu.link_is_whole_path);
+        assert_eq!(gpu.switches, Some(1));
+
+        assert_eq!(parse_link("Unknown", "4"), None);
+        assert_eq!(parse_link("16.0 GT/s PCIe", "0"), None);
     }
 
     #[test]

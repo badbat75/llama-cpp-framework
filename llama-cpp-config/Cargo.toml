@@ -52,6 +52,8 @@ rfd = { version = "0.17", default-features = false, features = ["xdg-portal", "w
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = [
     "Wdk_Graphics_Direct3D",
+    "Win32_Devices_DeviceAndDriverInstallation",
+    "Win32_Devices_Properties",
     "Win32_Foundation",
     "Win32_Security",
     "Win32_Storage_FileSystem",

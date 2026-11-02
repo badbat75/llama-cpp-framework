@@ -26,9 +26,20 @@
 //!   IOCTLs ask for none.
 
 use super::*;
+use crate::devices::{PcieLink, PhysicalGpu};
 use std::collections::HashMap;
 use std::os::windows::ffi::OsStrExt;
 use std::path::Path;
+use windows_sys::Win32::Devices::DeviceAndDriverInstallation::{
+    CM_Get_DevNode_PropertyW, CM_Get_Device_ID_ListW, CM_Get_Device_ID_List_SizeW, CM_Get_Parent,
+    CM_Locate_DevNodeW, CM_GETIDLIST_FILTER_CLASS, CM_GETIDLIST_FILTER_PRESENT,
+    CM_LOCATE_DEVNODE_NORMAL, CR_SUCCESS,
+};
+use windows_sys::Win32::Devices::Properties::{
+    DEVPKEY_Device_Address, DEVPKEY_Device_BusNumber, DEVPKEY_Device_DriverVersion,
+    DEVPROP_TYPE_STRING, DEVPROP_TYPE_UINT32,
+};
+use windows_sys::Win32::Foundation::DEVPROPKEY;
 use windows_sys::Wdk::Graphics::Direct3D::{
     D3DKMTCloseAdapter, D3DKMTEnumAdapters2, D3DKMTQueryAdapterInfo, D3DKMT_ADAPTERADDRESS,
     D3DKMT_ADAPTERINFO, D3DKMT_ADAPTERREGISTRYINFO, D3DKMT_ADAPTERTYPE, D3DKMT_CLOSEADAPTER,
@@ -452,7 +463,7 @@ fn free_per_adapter(
                 .dedicated
                 .saturating_sub(used.get(&a.luid).copied().unwrap_or(0));
             Some(crate::devices::AdapterFree {
-                pci: format!("{bus:02x}:{device:02x}.{function:x}"),
+                pci: crate::devices::pci_text(bus, device, function),
                 name: a.name.clone(),
                 free_mib: (free >> 20) as i64,
             })
@@ -479,6 +490,7 @@ struct Adapter {
     id: String,
     title: String,
     detail: String,
+    pci: Option<String>,
     luid: u64,
     /// Totals of the VRAM and Shared memory bars.
     dedicated: u64,
@@ -493,7 +505,7 @@ impl Adapter {
         let vendor = vendor_name(facts.vendor);
         let address = facts
             .address
-            .map(|(bus, device, function)| format!("{bus:02x}:{device:02x}.{function:x}"));
+            .map(|(bus, device, function)| crate::devices::pci_text(bus, device, function));
         let title = match nvml {
             Some(gpu) => gpu.name.clone(),
             None if facts.name.is_empty() => {
@@ -517,6 +529,7 @@ impl Adapter {
             id,
             title,
             detail,
+            pci: address,
             luid: facts.luid,
             dedicated: facts.dedicated,
             shared: facts.shared,
@@ -566,17 +579,169 @@ impl Adapter {
 fn find_adapters() -> Vec<Adapter> {
     enumerate_adapters()
         .iter()
-        .map(|facts| {
-            let gpu = (facts.vendor == NVIDIA)
-                .then(|| {
-                    let (bus, device, _) = facts.address?;
-                    let devices = &nvml()?.devices;
-                    devices.iter().find(|g| g.address == Some((bus, device)))
-                })
-                .flatten();
-            Adapter::new(facts, gpu)
+        .map(|facts| Adapter::new(facts, nvml_of(facts)))
+        .collect()
+}
+
+fn nvml_of(facts: &AdapterFacts) -> Option<&'static NvmlGpu> {
+    if facts.vendor != NVIDIA {
+        return None;
+    }
+    let (bus, device, _) = facts.address?;
+    let devices = &nvml()?.devices;
+    devices.iter().find(|g| g.address == Some((bus, device)))
+}
+
+/// What the system knows of every adapter on a PCI bus.
+pub(super) fn physical_gpus() -> Vec<PhysicalGpu> {
+    enumerate_adapters()
+        .iter()
+        .filter_map(|facts| {
+            let address = facts.address?;
+            let (bus, device, function) = address;
+            let mut gpu = PhysicalGpu {
+                pci: crate::devices::pci_text(bus, device, function),
+                name: Adapter::new(facts, nvml_of(facts)).title,
+                vendor: vendor_name(facts.vendor),
+                pci_id: format!("{:04x}:{:04x}", facts.vendor, facts.device),
+                vram_mib: facts.dedicated >> 20,
+                shared_mib: facts.shared >> 20,
+                ..Default::default()
+            };
+            read_device_tree(&mut gpu, address);
+            Some(gpu)
         })
         .collect()
+}
+
+// ── The device tree (Configuration Manager) ─────────────────────────
+
+/// A `DEVPKEY_PciDevice_*` property, by its id in `pciprop.h`.
+const fn pci_property(pid: u32) -> DEVPROPKEY {
+    DEVPROPKEY {
+        fmtid: windows_sys::core::GUID::from_u128(0x3ab22e31_8264_4b4e_9af5_a8d2d8e33e62),
+        pid,
+    }
+}
+const PCI_DEVICE_TYPE: DEVPROPKEY = pci_property(1);
+const PCI_CURRENT_LINK_SPEED: DEVPROPKEY = pci_property(9);
+const PCI_CURRENT_LINK_WIDTH: DEVPROPKEY = pci_property(10);
+const PCI_MAX_LINK_SPEED: DEVPROPKEY = pci_property(11);
+const PCI_MAX_LINK_WIDTH: DEVPROPKEY = pci_property(12);
+/// `DEVPKEY_PciDevice_DeviceType` of the port that heads a PCIe switch.
+const PCIE_UPSTREAM_PORT: u32 = 9;
+
+fn node_u32(node: u32, key: &DEVPROPKEY) -> Option<u32> {
+    let (mut kind, mut value, mut size) = (0u32, 0u32, 4u32);
+    // SAFETY: the buffer is the local u32, passed with its size in bytes.
+    let status = unsafe {
+        CM_Get_DevNode_PropertyW(
+            node,
+            key,
+            &mut kind,
+            &mut value as *mut u32 as *mut u8,
+            &mut size,
+            0,
+        )
+    };
+    (status == CR_SUCCESS && kind == DEVPROP_TYPE_UINT32).then_some(value)
+}
+
+fn node_text(node: u32, key: &DEVPROPKEY) -> Option<String> {
+    let mut buf = [0u16; 128];
+    let (mut kind, mut size) = (0u32, std::mem::size_of_val(&buf) as u32);
+    // SAFETY: the buffer is the local array, passed with its size in bytes.
+    let status = unsafe {
+        CM_Get_DevNode_PropertyW(
+            node,
+            key,
+            &mut kind,
+            buf.as_mut_ptr() as *mut u8,
+            &mut size,
+            0,
+        )
+    };
+    (status == CR_SUCCESS && kind == DEVPROP_TYPE_STRING)
+        .then(|| from_wide(&buf))
+        .filter(|text| !text.is_empty())
+}
+
+/// The present display adapters' device nodes.
+fn display_nodes() -> Vec<u32> {
+    let filter = wide("{4d36e968-e325-11ce-bfc1-08002be10318}");
+    let flags = CM_GETIDLIST_FILTER_CLASS | CM_GETIDLIST_FILTER_PRESENT;
+    let mut len = 0u32;
+    // SAFETY: the sizing call fills a local; the list call gets a buffer of
+    // that many characters, and both take a NUL-terminated filter.
+    let listed = unsafe {
+        CM_Get_Device_ID_List_SizeW(&mut len, filter.as_ptr(), flags) == CR_SUCCESS && len > 0
+    };
+    if !listed {
+        return Vec::new();
+    }
+    let mut ids = vec![0u16; len as usize];
+    if unsafe { CM_Get_Device_ID_ListW(filter.as_ptr(), ids.as_mut_ptr(), len, flags) }
+        != CR_SUCCESS
+    {
+        return Vec::new();
+    }
+    ids.split(|c| *c == 0)
+        .filter(|id| !id.is_empty())
+        .filter_map(|id| {
+            let id: Vec<u16> = id.iter().copied().chain(Some(0)).collect();
+            let mut node = 0u32;
+            // SAFETY: `id` is NUL-terminated, and the out-pointer a live local.
+            (unsafe { CM_Locate_DevNodeW(&mut node, id.as_ptr(), CM_LOCATE_DEVNODE_NORMAL) }
+                == CR_SUCCESS)
+                .then_some(node)
+        })
+        .collect()
+}
+
+/// Fill in what the device tree knows of the card at `address`.
+///
+/// Windows gives link properties to the endpoint and to no bridge, so `link`
+/// is the card's own: on a card with a switch of its own (the R9700) that is
+/// the link to the switch, and a slot with four lanes still reads x16 here.
+/// What the tree does tell is how many switches stand between card and CPU.
+fn read_device_tree(gpu: &mut PhysicalGpu, address: (u32, u32, u32)) {
+    let (bus, device, function) = address;
+    let located = (device << 16) | function;
+    let found = display_nodes().into_iter().find(|node| {
+        node_u32(*node, &DEVPKEY_Device_BusNumber) == Some(bus)
+            && node_u32(*node, &DEVPKEY_Device_Address) == Some(located)
+    });
+    let Some(node) = found else {
+        return;
+    };
+    let link = |speed: &DEVPROPKEY, width: &DEVPROPKEY| {
+        Some(PcieLink {
+            generation: node_u32(node, speed)?,
+            width: node_u32(node, width)?,
+        })
+    };
+    gpu.link = link(&PCI_CURRENT_LINK_SPEED, &PCI_CURRENT_LINK_WIDTH);
+    gpu.max_link = link(&PCI_MAX_LINK_SPEED, &PCI_MAX_LINK_WIDTH);
+    gpu.driver = node_text(node, &DEVPKEY_Device_DriverVersion);
+
+    let mut switches = 0;
+    let mut at = node;
+    loop {
+        let mut parent = 0u32;
+        // SAFETY: the out-pointer is a live local.
+        if unsafe { CM_Get_Parent(&mut parent, at, 0) } != CR_SUCCESS {
+            break;
+        }
+        // Above the root port the tree leaves PCIe: no such property.
+        let Some(kind) = node_u32(parent, &PCI_DEVICE_TYPE) else {
+            break;
+        };
+        if kind == PCIE_UPSTREAM_PORT {
+            switches += 1;
+        }
+        at = parent;
+    }
+    gpu.switches = Some(switches);
 }
 
 // ── CPU and memory ──────────────────────────────────────────────────
@@ -835,6 +1000,7 @@ pub struct Sampler {
     disk: Option<Disk>,
     cpu_title: String,
     threads: usize,
+    memory_detail: String,
     prev: Counters,
     disk_peak: f64,
 }
@@ -857,6 +1023,7 @@ impl Sampler {
             disk: disk_for(models_dir),
             cpu_title: cpu_title.unwrap_or_else(|| "CPU".to_string()),
             threads: std::thread::available_parallelism().map_or(0, |n| n.get()),
+            memory_detail: memory_detail(),
             prev: Counters {
                 cpu: None,
                 disk: None,
@@ -895,7 +1062,10 @@ impl Sampler {
                 adapter.title.clone(),
                 adapter.detail.clone(),
             );
-            groups.push(group(off, &id, title, detail, || adapter.bars(&usage)));
+            let pci = adapter.pci.clone();
+            groups.push(
+                group(off, &id, title, detail, || adapter.bars(&usage)).at_pci(pci.as_deref()),
+            );
         }
 
         let cpu = match (self.prev.cpu, now.cpu) {
@@ -914,7 +1084,7 @@ impl Sampler {
             off,
             MEMORY_ID,
             "Memory".to_string(),
-            String::new(),
+            self.memory_detail.clone(),
             || {
                 let Some(mem) = memory() else {
                     return Vec::new();
@@ -1042,6 +1212,18 @@ mod tests {
             free_per_adapter(&[card], &HashMap::new())[0].free_mib,
             32768
         );
+    }
+
+    /// The live device tree, on whatever cards this machine has: every card on
+    /// a PCI bus is found, and a link that is read is a real one.
+    #[test]
+    fn the_device_tree_describes_every_located_card() {
+        for gpu in physical_gpus() {
+            assert!(gpu.switches.is_some(), "{gpu:?}");
+            if let Some(link) = gpu.link {
+                assert!((1..=7).contains(&link.generation) && link.width >= 1, "{gpu:?}");
+            }
+        }
     }
 
     /// The live counters, on whatever cards this machine has.

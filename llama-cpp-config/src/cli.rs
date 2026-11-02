@@ -40,6 +40,10 @@ pub enum Command {
     /// Benchmarks that run unattended (the GUI's Benchmark tab, in a loop).
     #[command(subcommand)]
     Bench(BenchCmd),
+    /// The HW Monitor's child: each SDK's device ids with their PCI addresses
+    /// (src/hwmon/sdk.rs).
+    #[command(hide = true)]
+    SdkDevices,
 }
 
 #[derive(Subcommand, Debug)]
@@ -586,6 +590,11 @@ pub fn run(cli: Cli) -> Result<()> {
         Command::Preset(c) => run_preset(c),
         Command::Control(c) => run_control(c),
         Command::Bench(c) => run_bench(c),
+        Command::SdkDevices => {
+            #[cfg(any(target_os = "linux", windows))]
+            crate::hwmon::sdk::print();
+            Ok(())
+        }
     }
 }
 

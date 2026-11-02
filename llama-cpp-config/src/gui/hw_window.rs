@@ -44,15 +44,98 @@ fn bar_row(b: &hwmon::Bar) -> HwBar {
 /// choice holds across launches.
 type Off = Arc<Mutex<HashSet<String>>>;
 
-fn group_row(g: &hwmon::Group, enabled: bool) -> HwGroup {
+/// `ROCm1: 7.13.1 · C:\...\amdhip64_7.dll`: a device id and the runtime behind it.
+fn sdk_line(id: &str, sdk: Option<&devices::Sdk>) -> String {
+    let parts: Vec<&str> = sdk
+        .into_iter()
+        .flat_map(|s| [s.version.as_deref(), Some(s.library.as_str())])
+        .flatten()
+        .collect();
+    if parts.is_empty() {
+        id.to_string()
+    } else {
+        format!("{id}: {}", parts.join(" · "))
+    }
+}
+
+/// A GPU's facts behind its info glyph, one per line; the ones nobody could
+/// read are left out. Empty for any other device.
+fn hint_text(g: &hwmon::Group) -> String {
+    let Some(gpu) = &g.gpu else {
+        return String::new();
+    };
+    let gib = |mib: u64| format!("{:.1}", mib as f64 / 1024.0);
+    let sdks = devices::sdks();
+    let mut lines: Vec<String> = gpu
+        .sdk_ids
+        .iter()
+        .map(|id| {
+            let of = sdks.iter().find(|s| s.name == hwmon::sdk::backend(id));
+            sdk_line(id, of)
+        })
+        .collect();
+    if gpu.vram_mib > 0 {
+        lines.push(format!("VRAM: {} GiB", gib(gpu.vram_mib)));
+    }
+    if gpu.shared_mib > 0 {
+        lines.push(strings::fill("gpu-shared-memory", &[&gib(gpu.shared_mib)]));
+    }
+    if let Some(link) = gpu.link {
+        let key = if gpu.link_is_whole_path {
+            strings::key("gpu-link-path")
+        } else {
+            strings::key("gpu-link-card")
+        };
+        lines.push(strings::fill(key, &[&link]));
+    }
+    if let Some(max) = gpu.max_link {
+        let key = if gpu.link_is_whole_path {
+            strings::key("gpu-link-path-max")
+        } else {
+            strings::key("gpu-link-card-max")
+        };
+        lines.push(strings::fill(key, &[&max]));
+    }
+    if let Some(switches) = gpu.switches {
+        lines.push(strings::fill("gpu-switches", &[&switches]));
+    }
+    lines.push(format!("PCI: {}", gpu.pci));
+    if !gpu.pci_id.is_empty() {
+        lines.push(format!("PCI ID: {}", gpu.pci_id));
+    }
+    if let Some(driver) = &gpu.driver {
+        lines.push(strings::fill("gpu-driver", &[driver]));
+    }
+    lines.join("\n")
+}
+
+fn device_row(g: &hwmon::Group, enabled: bool) -> HwDevice {
     let bars = if enabled { g.bars.as_slice() } else { &[] };
-    HwGroup {
+    HwDevice {
         id: SharedString::from(g.id.as_str()),
-        title: SharedString::from(g.title.as_str()),
         detail: SharedString::from(g.detail.as_str()),
+        hint: SharedString::from(hint_text(g)),
         enabled,
         bars: model(bars.iter().map(bar_row).collect()),
     }
+}
+
+/// The window's boxes: the devices of one name together, each box where the
+/// first of them came. Inside a box they run by their detail, which starts
+/// with the SDK id where there is one, so ROCm1 sits above ROCm2 whatever the
+/// PCI order.
+fn boxed(groups: &[hwmon::Group]) -> Vec<Vec<&hwmon::Group>> {
+    let mut boxes: Vec<Vec<&hwmon::Group>> = Vec::new();
+    for g in groups {
+        match boxes.iter_mut().find(|b| b[0].title == g.title) {
+            Some(same_name) => same_name.push(g),
+            None => boxes.push(vec![g]),
+        }
+    }
+    for b in &mut boxes {
+        b.sort_by(|x, y| x.detail.cmp(&y.detail));
+    }
+    boxes
 }
 
 /// Show one sample. While the set of devices and bars is the one already on
@@ -66,51 +149,66 @@ fn group_row(g: &hwmon::Group, enabled: bool) -> HwGroup {
 fn push(win: &HwWindow, groups: &[hwmon::Group], off: &HashSet<String>) {
     let enabled = |g: &hwmon::Group| g.enabled && !off.contains(&g.id);
     let bar_count = |g: &hwmon::Group| if enabled(g) { g.bars.len() } else { 0 };
+    let boxes = boxed(groups);
     let shown = win.get_groups();
-    let same_shape = shown.row_count() == groups.len()
-        && shown.iter().zip(groups).all(|(row, g)| {
-            row.id == g.id.as_str()
-                && row.title == g.title.as_str()
-                && row.detail == g.detail.as_str()
-                && row.enabled == enabled(g)
-                && row.bars.row_count() == bar_count(g)
+    let same_shape = shown.row_count() == boxes.len()
+        && shown.iter().zip(&boxes).all(|(row, devices)| {
+            row.title == devices[0].title.as_str()
+                && row.devices.row_count() == devices.len()
+                && row.devices.iter().zip(devices).all(|(device, g)| {
+                    device.id == g.id.as_str()
+                        && device.detail == g.detail.as_str()
+                        && device.hint == hint_text(g).as_str()
+                        && device.enabled == enabled(g)
+                        && device.bars.row_count() == bar_count(g)
+                })
         });
     if same_shape {
-        for (row, g) in shown.iter().zip(groups) {
-            for (i, b) in g.bars.iter().take(bar_count(g)).enumerate() {
-                let new = bar_row(b);
-                if row.bars.row_data(i).as_ref() != Some(&new) {
-                    row.bars.set_row_data(i, new);
+        for (row, devices) in shown.iter().zip(&boxes) {
+            for (device, g) in row.devices.iter().zip(devices) {
+                for (i, b) in g.bars.iter().take(bar_count(g)).enumerate() {
+                    let new = bar_row(b);
+                    if device.bars.row_data(i).as_ref() != Some(&new) {
+                        device.bars.set_row_data(i, new);
+                    }
                 }
             }
         }
         return;
     }
     win.set_groups(model(
-        groups.iter().map(|g| group_row(g, enabled(g))).collect(),
+        boxes
+            .iter()
+            .map(|devices| HwGroup {
+                title: SharedString::from(devices[0].title.as_str()),
+                devices: model(devices.iter().map(|g| device_row(g, enabled(g))).collect()),
+            })
+            .collect(),
     ));
 }
 
 /// A device's checkbox was clicked. The set is what stops the sampler; the
-/// row is rewritten here as well so the card goes (or the empty card comes
-/// back) at once, not at the next sample.
-fn toggle(win: &HwWindow, off: &Off, index: usize, on: bool) {
-    let shown = win.get_groups();
-    let Some(mut row) = shown.row_data(index) else {
-        return;
-    };
-    let key = row.id.to_string();
+/// row is rewritten here as well so the bars go (or the empty row comes back)
+/// at once, not at the next sample.
+fn toggle(win: &HwWindow, off: &Off, id: &str, on: bool) {
     {
         let mut off = off.lock().unwrap_or_else(|e| e.into_inner());
         if on {
-            off.remove(&key);
+            off.remove(id);
         } else {
-            off.insert(key);
+            off.insert(id.to_string());
         }
     }
-    row.enabled = on;
-    row.bars = model(Vec::new());
-    shown.set_row_data(index, row);
+    for row in win.get_groups().iter() {
+        if let Some(i) = row.devices.iter().position(|d| d.id == id) {
+            if let Some(mut device) = row.devices.row_data(i) {
+                device.enabled = on;
+                device.bars = model(Vec::new());
+                row.devices.set_row_data(i, device);
+            }
+            return;
+        }
+    }
 }
 
 /// Write the switched-off set to settings.ini, read-modify-write so no other
@@ -158,9 +256,9 @@ pub(super) fn wire(app: &AppWindow) -> Result<HwWindow, slint::PlatformError> {
     {
         let win_weak = win.as_weak();
         let off = off.clone();
-        win.on_group_toggled(move |index, on| {
+        win.on_device_toggled(move |id, on| {
             if let Some(win) = win_weak.upgrade() {
-                toggle(&win, &off, index as usize, on);
+                toggle(&win, &off, &id, on);
                 persist(&off);
             }
         });
@@ -199,7 +297,8 @@ pub(super) fn wire(app: &AppWindow) -> Result<HwWindow, slint::PlatformError> {
                     if live.load(Ordering::Relaxed) != id {
                         return;
                     }
-                    let groups = sampler.sample(&now_off());
+                    let mut groups = sampler.sample(&now_off());
+                    hwmon::name_sdk_ids(&mut groups, &devices::probed());
                     let win_weak = win_weak.clone();
                     let off = off.clone();
                     let posted = slint::invoke_from_event_loop(move || {
@@ -222,8 +321,9 @@ pub(super) fn wire(app: &AppWindow) -> Result<HwWindow, slint::PlatformError> {
 /// E2E phase, run from `tests/ui_bindings.rs`'s single `#[test]` (it needs the
 /// testing backend that test owns): the bars reach the screen, a sample of the
 /// same shape rewrites them IN PLACE (the same model object, or the fill
-/// animation never runs), a changed device set rebuilds, and a device's
-/// checkbox hides its card and holds against a sample already on its way.
+/// animation never runs), a changed device set rebuilds, two devices of one
+/// name share a box, and a device's checkbox hides its bars and holds against
+/// a sample already on its way.
 #[cfg(test)]
 pub(super) fn e2e() {
     use i_slint_backend_testing::ElementHandle;
@@ -231,7 +331,8 @@ pub(super) fn e2e() {
     let group = |title: &str, bars: &[(&str, &str, f32)]| hwmon::Group {
         id: title.to_lowercase().replace(' ', "-"),
         title: title.to_string(),
-        detail: String::new(),
+        detail: format!("{title} spec"),
+        gpu: None,
         enabled: true,
         bars: bars
             .iter()
@@ -258,9 +359,10 @@ pub(super) fn e2e() {
     )];
     push(&win, &a1, &none);
     assert_eq!(shown(&win, "Sampling…"), 0);
-    // (A title is a CheckBox, which the accessibility tree lists together
-    // with its own inner text: present, not "once".)
-    assert!(shown(&win, "Card A") > 0);
+    // (A specification is a CheckBox, which the accessibility tree lists
+    // together with its own inner text: present, not "once".)
+    assert!(shown(&win, "Card A spec") > 0);
+    assert_eq!(shown(&win, "Card A"), 1, "the box's heading");
     for text in ["VRAM", "1.0 / 2.0 GiB", "GPU", "10 %"] {
         assert_eq!(shown(&win, text), 1, "{text:?} must be drawn once");
     }
@@ -274,7 +376,15 @@ pub(super) fn e2e() {
     assert!(win.get_groups() == before, "same shape: updated in place");
     assert_eq!(shown(&win, "1.5 / 2.0 GiB"), 1);
     assert_eq!(shown(&win, "1.0 / 2.0 GiB"), 0);
-    let vram = before.row_data(0).unwrap().bars.row_data(0).unwrap();
+    let vram = before
+        .row_data(0)
+        .unwrap()
+        .devices
+        .row_data(0)
+        .unwrap()
+        .bars
+        .row_data(0)
+        .unwrap();
     assert_eq!(vram.fraction, 0.75);
 
     let two = [
@@ -283,7 +393,7 @@ pub(super) fn e2e() {
     ];
     push(&win, &two, &none);
     assert!(win.get_groups() != before, "another shape: rebuilt");
-    assert!(shown(&win, "Card B") > 0);
+    assert!(shown(&win, "Card B spec") > 0);
     assert_eq!(shown(&win, "10 %"), 0);
 
     // Untick Card A through the window's own callback, wired as `wire` does
@@ -291,24 +401,99 @@ pub(super) fn e2e() {
     let off = Off::default();
     {
         let (weak, off) = (win.as_weak(), off.clone());
-        win.on_group_toggled(move |i, on| toggle(&weak.unwrap(), &off, i as usize, on));
+        win.on_device_toggled(move |id, on| toggle(&weak.unwrap(), &off, &id, on));
     }
-    win.invoke_group_toggled(0, false);
+    win.invoke_device_toggled("card-a".into(), false);
     assert!(off.lock().unwrap().contains("card-a"));
-    assert!(shown(&win, "Card A") > 0, "the checkbox stays");
-    assert_eq!(shown(&win, "VRAM"), 0, "its card is gone at once");
+    assert!(shown(&win, "Card A spec") > 0, "the checkbox stays");
+    assert_eq!(shown(&win, "Card A"), 1, "and so does the box");
+    assert_eq!(shown(&win, "VRAM"), 0, "its bars are gone at once");
     assert_eq!(shown(&win, "GTT"), 1, "the other device is untouched");
 
     // A sample taken before the click still carries Card A's bars: the set
-    // wins, and the card stays hidden.
+    // wins, and the bars stay hidden.
     push(&win, &two, &off.lock().unwrap());
     assert_eq!(shown(&win, "VRAM"), 0);
-    assert!(!win.get_groups().row_data(0).unwrap().enabled);
+    let row = win.get_groups().row_data(0).unwrap();
+    assert!(!row.devices.row_data(0).unwrap().enabled);
 
     // Ticked again: the bars are back with the next sample.
-    win.invoke_group_toggled(0, true);
+    win.invoke_device_toggled("card-a".into(), true);
     assert!(off.lock().unwrap().is_empty());
     push(&win, &two, &off.lock().unwrap());
     assert_eq!(shown(&win, "VRAM"), 1);
+
+    // Two cards of one name: one box, one heading, a checkbox and bars each,
+    // ordered by specification whatever order they came in; one can go alone.
+    let card = |id: &str, detail: &str, text: &str| hwmon::Group {
+        id: id.to_string(),
+        title: "R9700".to_string(),
+        detail: detail.to_string(),
+        gpu: Some(devices::PhysicalGpu {
+            pci: id.to_string(),
+            vram_mib: 32624,
+            link: Some(devices::PcieLink {
+                generation: 5,
+                width: 16,
+            }),
+            switches: Some(3),
+            ..Default::default()
+        }),
+        enabled: true,
+        bars: vec![hwmon::Bar {
+            label: "VRAM".to_string(),
+            text: text.to_string(),
+            fraction: 0.5,
+        }],
+    };
+    let twins = [
+        card("gpu-03", "ROCm2 · AMD · PCI 03:00.0", "2 GiB"),
+        card("gpu-14", "ROCm1 · AMD · PCI 14:00.0", "1 GiB"),
+    ];
+    push(&win, &twins, &off.lock().unwrap());
+    let boxes = win.get_groups();
+    assert_eq!(boxes.row_count(), 1);
+    assert_eq!(shown(&win, "R9700"), 1);
+    let ids: Vec<String> = boxes
+        .row_data(0)
+        .unwrap()
+        .devices
+        .iter()
+        .map(|d| d.id.to_string())
+        .collect();
+    assert_eq!(ids, ["gpu-14", "gpu-03"]);
+    assert_eq!(shown(&win, "VRAM"), 2);
+
+    // The info glyph's text is the card's facts, and it never says a link is
+    // the whole path when only the card's own end could be read.
+    let hint = boxes
+        .row_data(0)
+        .unwrap()
+        .devices
+        .row_data(0)
+        .unwrap()
+        .hint
+        .to_string();
+    assert_eq!(
+        hint.lines().collect::<Vec<_>>(),
+        [
+            "VRAM: 31.9 GiB",
+            "PCIe link at the GPU: 5.0 x16; a slower one toward the CPU would not show here",
+            "PCIe switches to the CPU: 3",
+            "PCI: gpu-14",
+        ]
+    );
+    assert!(hint_text(&group("CPU", &[])).is_empty(), "no GPU, no glyph");
+    let sdk = devices::Sdk {
+        name: "ROCm".to_string(),
+        library: "amdhip64_7.dll".to_string(),
+        version: Some("7.13.1".to_string()),
+        built_with: None,
+    };
+    assert_eq!(sdk_line("ROCm1", Some(&sdk)), "ROCm1: 7.13.1 · amdhip64_7.dll");
+    assert_eq!(sdk_line("ROCm1", None), "ROCm1");
+
+    win.invoke_device_toggled("gpu-14".into(), false);
+    assert_eq!((shown(&win, "1 GiB"), shown(&win, "2 GiB")), (0, 1));
     win.hide().ok();
 }

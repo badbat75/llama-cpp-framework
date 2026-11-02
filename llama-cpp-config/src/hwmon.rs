@@ -49,6 +49,11 @@
 //! collects every adapter at once, so it is skipped only when no adapter that
 //! needs it is on.)
 //!
+//! What does not change while the machine runs (a GPU's facts, the SDKs) is not
+//! sampled: `publish_gpus` reads it once at the GUI's startup and on a refresh,
+//! and a sample only looks a card up by its address. `sdk.rs` says which
+//! `--device` ids a card is.
+//!
 //! NVML is loaded at runtime, not linked: a machine without the NVIDIA
 //! driver simply has no NVIDIA readings. `nvmlDeviceGetPcieThroughput`
 //! measures over 20 ms per call, which is why the sampler runs on a worker
@@ -57,6 +62,8 @@
 use std::collections::HashSet;
 use std::ffi::{c_char, c_int, c_uint, c_void, CStr};
 use std::sync::OnceLock;
+
+pub mod sdk;
 
 #[cfg(target_os = "linux")]
 mod linux;
@@ -105,10 +112,97 @@ pub struct Group {
     pub id: String,
     pub title: String,
     pub detail: String,
+    /// What is known of a GPU; `None` for any other device, and for a GPU
+    /// without a PCI address.
+    pub gpu: Option<crate::devices::PhysicalGpu>,
     /// False for a device the user switched off: it keeps its place in the
     /// window, with no bars, and none of its sources was read.
     pub enabled: bool,
     pub bars: Vec<Bar>,
+}
+
+impl Group {
+    fn of_gpu(mut self, gpu: Option<crate::devices::PhysicalGpu>) -> Self {
+        self.gpu = gpu;
+        self
+    }
+
+    /// The published GPU at this address, if the startup has got that far.
+    fn at_pci(self, pci: Option<&str>) -> Self {
+        let gpu = pci.and_then(|pci| {
+            crate::devices::physical().into_iter().find(|gpu| gpu.pci == pci)
+        });
+        self.of_gpu(gpu)
+    }
+}
+
+/// The probe's devices of one model, matched by name alone: one source may say
+/// `Radeon AI PRO R9700` for another's `AMD Radeon AI PRO R9700`.
+fn of_model<'a>(
+    name: &str,
+    devs: &'a [crate::devices::DeviceOption],
+) -> impl Iterator<Item = &'a crate::devices::DeviceOption> {
+    let wanted = name.to_ascii_lowercase();
+    devs.iter().filter(move |d| {
+        let name = d.name.to_ascii_lowercase();
+        !d.is_cpu() && !name.is_empty() && (name.contains(&wanted) || wanted.contains(&name))
+    })
+}
+
+/// Read what is known of the machine's GPUs and publish it for the session: the
+/// system's facts, and from the SDKs which `--device` ids each card is. On the
+/// GUI's probe thread, at startup and on a refresh; `devs` is that probe.
+pub fn publish_gpus(devs: &[crate::devices::DeviceOption]) {
+    let (addresses, sdks) = sdk::ask(devs);
+    crate::devices::set_sdks(sdks);
+    let mut gpus = os::physical_gpus();
+    for gpu in &mut gpus {
+        gpu.sdk_ids = devs
+            .iter()
+            .filter(|d| addresses.get(&d.id) == Some(&gpu.pci))
+            .map(|d| d.id.clone())
+            .collect();
+        if gpu.vram_mib == 0 {
+            gpu.vram_mib = of_model(&gpu.name, devs).map(|d| d.total_mib).max().unwrap_or(0);
+        }
+    }
+    crate::devices::set_physical(gpus);
+}
+
+/// Say which `--device` ids each GPU is. A card's own ids head its detail, the
+/// SDKs joined (`ROCm1/Vulkan1`). An id no card claims (its SDK could not be
+/// asked) goes in the title of its model: it belongs to a model, and twins keep
+/// one title, so one box. The ids are the probe's, which lands after the window
+/// opens and comes again on a refresh, so they are applied to every sample
+/// rather than kept in the sampler.
+pub fn name_sdk_ids(groups: &mut [Group], devs: &[crate::devices::DeviceOption]) {
+    let claimed: HashSet<String> = groups
+        .iter()
+        .filter_map(|g| g.gpu.as_ref())
+        .flat_map(|gpu| gpu.sdk_ids.iter().cloned())
+        .collect();
+    for g in groups.iter_mut() {
+        let Some(gpu) = &g.gpu else {
+            continue;
+        };
+        if !gpu.sdk_ids.is_empty() {
+            g.detail = format!("{} · {}", gpu.sdk_ids.join("/"), g.detail);
+        }
+        let unclaimed: Vec<&str> = of_model(&g.title, devs)
+            .filter(|d| !claimed.contains(&d.id))
+            .map(|d| d.id.as_str())
+            .collect();
+        for id in unclaimed {
+            g.title = format!("{} · {id}", g.title);
+        }
+    }
+}
+
+/// The memory card's detail: the RAM installed. Empty when it cannot be read.
+fn memory_detail() -> String {
+    os::system_ram().map_or(String::new(), |(total, _)| {
+        format!("{:.1} GiB", total as f64 / GIB)
+    })
 }
 
 const CPU_ID: &str = "cpu";
@@ -143,6 +237,7 @@ fn group(
         bars: if enabled { bars() } else { Vec::new() },
         title,
         detail,
+        gpu: None,
         enabled,
     }
 }
@@ -204,9 +299,9 @@ struct NvmlUtilization {
     memory: c_uint,
 }
 
-/// `nvmlPciInfo_t`. Only Windows needs it: there the card's PCI address is
-/// what pairs an NVML device with the adapter the system's counters describe.
-#[cfg(windows)]
+/// `nvmlPciInfo_t`: the card's PCI address is what pairs an NVML device with
+/// the ids of the device probe, and on Windows with the adapter the system's
+/// counters describe.
 #[repr(C)]
 struct NvmlPciInfo {
     bus_id_legacy: [c_char; 16],
@@ -229,7 +324,6 @@ struct NvmlGpu {
     /// The card's UUID, as `GPU-...`.
     id: String,
     /// PCI (bus, device), where NVML says.
-    #[cfg(windows)]
     address: Option<(u32, u32)>,
 }
 
@@ -276,7 +370,6 @@ unsafe fn load_nvml() -> Option<Nvml> {
         symbol(lib, c"nvmlDeviceGetName")?;
     let uuid: Option<unsafe extern "C" fn(NvmlDevice, *mut c_char, c_uint) -> c_int> =
         symbol(lib, c"nvmlDeviceGetUUID");
-    #[cfg(windows)]
     let pci: Option<unsafe extern "C" fn(NvmlDevice, *mut NvmlPciInfo) -> c_int> =
         symbol(lib, c"nvmlDeviceGetPciInfo_v3");
     let memory = symbol(lib, c"nvmlDeviceGetMemoryInfo")?;
@@ -308,7 +401,6 @@ unsafe fn load_nvml() -> Option<Nvml> {
             }
             _ => format!("nvidia-{i}"),
         };
-        #[cfg(windows)]
         let address = pci.and_then(|pci| {
             let mut info: NvmlPciInfo = std::mem::zeroed();
             (pci(dev, &mut info) == 0).then_some((info.bus, info.device))
@@ -317,7 +409,6 @@ unsafe fn load_nvml() -> Option<Nvml> {
             handle: dev,
             name: title,
             id: ini_safe(&id),
-            #[cfg(windows)]
             address,
         });
     }
@@ -409,6 +500,52 @@ mod tests {
             !read.get(),
             "a switched-off device's sources must not be touched"
         );
+    }
+
+    #[test]
+    fn a_card_is_headed_by_its_own_ids_and_the_unclaimed_stay_at_the_model() {
+        let card = |title: &str, ids: &[&str]| {
+            let gpu = crate::devices::PhysicalGpu {
+                pci: "x".into(),
+                sdk_ids: ids.iter().map(|id| id.to_string()).collect(),
+                ..Default::default()
+            };
+            group(&HashSet::new(), "id", title.into(), "AMD".into(), Vec::new).of_gpu(Some(gpu))
+        };
+        let devs = crate::devices::parse(
+            "  ROCm0: AMD Radeon(TM) Graphics (37078 MiB, 36926 MiB free)\n  \
+             ROCm1: AMD Radeon AI PRO R9700 (32624 MiB, 32462 MiB free)\n  \
+             ROCm2: AMD Radeon AI PRO R9700 (32624 MiB, 32462 MiB free)\n  \
+             Vulkan1: AMD Radeon AI PRO R9700 (32624 MiB, 31707 MiB free)\n  \
+             CPU: AMD Radeon AI PRO R9700 (1 MiB, 1 MiB free)\n",
+        );
+        // No SDK could be asked: the ids stay at the model's level, twins share a
+        // title, and the name matches with or without the vendor (pci.ids).
+        let mut groups = [
+            card("AMD Radeon AI PRO R9700", &[]),
+            card("AMD Radeon AI PRO R9700", &[]),
+            card("Radeon AI PRO R9700", &[]),
+            card("Another Card", &[]),
+            group(&HashSet::new(), "m", "AMD Radeon(TM) Graphics".into(), "AMD".into(), Vec::new),
+        ];
+        name_sdk_ids(&mut groups, &devs);
+        let twins = "AMD Radeon AI PRO R9700 · ROCm1 · ROCm2 · Vulkan1";
+        assert_eq!((groups[0].title.as_str(), groups[1].title.as_str()), (twins, twins));
+        assert_eq!(groups[2].title, "Radeon AI PRO R9700 · ROCm1 · ROCm2 · Vulkan1");
+        assert_eq!(groups[3].title, "Another Card", "not a probed model");
+        assert_eq!(groups[4].title, "AMD Radeon(TM) Graphics", "not a GPU");
+        assert_eq!(groups[0].detail, "AMD");
+
+        // Asked: each card gets its own ids, joined across the SDKs; an id only
+        // one SDK could not place stays at the model's level.
+        let mut twins = [
+            card("AMD Radeon AI PRO R9700", &["ROCm1", "Vulkan1"]),
+            card("AMD Radeon AI PRO R9700", &["ROCm2"]),
+        ];
+        name_sdk_ids(&mut twins, &devs);
+        assert_eq!(twins[0].detail, "ROCm1/Vulkan1 · AMD");
+        assert_eq!(twins[1].detail, "ROCm2 · AMD");
+        assert_eq!(twins[0].title, "AMD Radeon AI PRO R9700");
     }
 
     // An id is written into a comma-separated INI value, where `;` and `#`

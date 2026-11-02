@@ -563,6 +563,40 @@ export global LabelColumn {
     in-out property <length> settings;
 }
 
+// The ⓘ glyph with `hint` as its hover popup.
+export component InfoHint inherits Text {
+    in property <string> hint;
+    text: Icons.info;
+    font-family: Icons.font;
+    font-size: 13px;
+    // Fixed-width cell so the glyph is always visible and gives the
+    // Tooltip a reliable hover target: inside the label row a
+    // stretched/0-width cell would collapse and never trigger hover.
+    width: 16px;
+    horizontal-stretch: 0;
+    horizontal-alignment: center;
+    vertical-alignment: center;
+    color: Palette.foreground.transparentize(Tokens.muted);
+    // Custom content (a plain Text) avoids the styled-text/@markdown
+    // conversion that Tooltip.text would require for a string property.
+    // It MUST be wrapped in a layout: ToolTipImpl is a plain Rectangle
+    // and does not lay out a bare fixed-width child, so the popup stays
+    // ~padding-wide and the text spills off its right edge. A layout
+    // propagates the 300px width up so the Rectangle sizes to it.
+    Tooltip {
+        VerticalLayout {
+            padding: 10px;
+            // WrapText, not Text, for the same reason as InfoRow's value:
+            // the popup is a component, so the wrapped hint would be
+            // measured against the layout's width (the 300px plus its
+            // padding) rather than the 300px it renders at, and a hint
+            // that ends exactly on a line boundary would lose its last
+            // line off the bottom of the popup.
+            WrapText { text: root.hint; width: 300px; font_size: 14px; }
+        }
+    }
+}
+
 // The two-column form row every labeled input sits in: a fixed-width `label`
 // column (with an optional ⓘ hover `hint`) on the left, the stretched field
 // `@children` on the right.
@@ -606,36 +640,8 @@ export component LabeledField inherits HorizontalLayout {
             overflow: elide;
             horizontal-stretch: 1;
         }
-        if root.hint != "" : Text {
-            text: Icons.info;
-            font-family: Icons.font;
-            font-size: 13px;
-            // Fixed-width cell so the glyph is always visible and gives the
-            // Tooltip a reliable hover target: inside the label row a
-            // stretched/0-width cell would collapse and never trigger hover.
-            width: 16px;
-            horizontal-stretch: 0;
-            horizontal-alignment: center;
-            vertical-alignment: center;
-            color: Palette.foreground.transparentize(Tokens.muted);
-            // Custom content (a plain Text) avoids the styled-text/@markdown
-            // conversion that Tooltip.text would require for a string property.
-            // It MUST be wrapped in a layout: ToolTipImpl is a plain Rectangle
-            // and does not lay out a bare fixed-width child, so the popup stays
-            // ~padding-wide and the text spills off its right edge. A layout
-            // propagates the 300px width up so the Rectangle sizes to it.
-            Tooltip {
-                VerticalLayout {
-                    padding: 10px;
-                    // WrapText, not Text, for the same reason as InfoRow's value:
-                    // the popup is a component, so the wrapped hint would be
-                    // measured against the layout's width (the 300px plus its
-                    // padding) rather than the 300px it renders at, and a hint
-                    // that ends exactly on a line boundary would lose its last
-                    // line off the bottom of the popup.
-                    WrapText { text: root.hint; width: 300px; font_size: 14px; }
-                }
-            }
+        if root.hint != "" : InfoHint {
+            hint: root.hint;
         }
     }
     @children

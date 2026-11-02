@@ -471,21 +471,30 @@ export struct TensorPickRow {
 
 // HW Monitor (hw_window.slint). Built entirely in Rust (src/hwmon.rs) and
 // read-only to Slint: `text` arrives pre-formatted and `fraction` (0 to 1) is
-// the bar's fill. A group is one device: a GPU, the CPU, memory, the disk.
+// the bar's fill. A device is a GPU, the CPU, memory or the disk; a group is
+// one box of the window, every device of one name.
 export struct HwBar {
     label: string,
     text: string,
     fraction: float,
 }
 
-export struct HwGroup {
+export struct HwDevice {
     // The device's identity (hwmon::Group::id): what its checkbox acts on.
     id: string,
-    title: string,
+    // The checkbox's text, what tells two devices of one name apart.
     detail: string,
+    // Everything else known of it, one fact per line, behind an info glyph.
+    // Empty: no glyph.
+    hint: string,
     // The device's checkbox. Off: no bars, and Rust reads nothing for it.
     enabled: bool,
     bars: [HwBar],
+}
+
+export struct HwGroup {
+    title: string,
+    devices: [HwDevice],
 }
 
 // One Hugging Face download in the Downloads window (downloads_window.slint).

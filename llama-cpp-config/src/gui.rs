@@ -1433,7 +1433,8 @@ fn spawn_version_probe(app_weak: slint::Weak<AppWindow>) {
 /// `devices::probed()`, then rebuild the device dropdowns via the event loop.
 fn spawn_device_probe(app_weak: slint::Weak<AppWindow>) {
     std::thread::spawn(move || {
-        devices::set_probed(devices::list());
+        let devs = devices::list();
+        devices::set_probed(devs.clone());
         slint::invoke_from_event_loop(move || {
             let Some(app) = app_weak.upgrade() else {
                 return;
@@ -1442,6 +1443,11 @@ fn spawn_device_probe(app_weak: slint::Weak<AppWindow>) {
             refresh_device_options(&app);
         })
         .ok();
+        // After the dropdowns, which should not wait for it.
+        #[cfg(any(target_os = "linux", windows))]
+        crate::hwmon::publish_gpus(&devs);
+        #[cfg(not(any(target_os = "linux", windows)))]
+        let _ = devs;
     });
 }
 

@@ -31,6 +31,121 @@ pub struct DeviceOption {
     pub free_mib: u64,
 }
 
+/// A PCIe link: generation and lanes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(not(any(target_os = "linux", windows)), allow(dead_code))]
+pub struct PcieLink {
+    pub generation: u32,
+    pub width: u32,
+}
+
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+impl PcieLink {
+    /// Relative throughput, what makes one hop the slowest of a path: each
+    /// generation doubles the rate of a lane (to within its line coding).
+    pub fn rate(self) -> u64 {
+        (1u64 << self.generation.saturating_sub(1).min(16)) * self.width as u64
+    }
+}
+
+impl std::fmt::Display for PcieLink {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}.0 x{}", self.generation, self.width)
+    }
+}
+
+/// One physical GPU and everything known of it, published at the GUI's startup
+/// (`hwmon::publish_gpus`, kept here as `physical()`). Any field but the address
+/// may stay empty: a source that does not answer only drops its fact.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[cfg_attr(not(any(target_os = "linux", windows)), allow(dead_code))]
+pub struct PhysicalGpu {
+    /// `14:00.0` (`pci_text`).
+    pub pci: String,
+    pub name: String,
+    pub vendor: String,
+    /// `1002:7551`: the PCI vendor and device ids.
+    pub pci_id: String,
+    pub vram_mib: u64,
+    /// The system memory the card can map: Shared memory on Windows, GTT on
+    /// Linux.
+    pub shared_mib: u64,
+    pub link: Option<PcieLink>,
+    pub max_link: Option<PcieLink>,
+    /// True when `link` is the slowest hop between the card and the CPU. False
+    /// where only the card's own link can be read (Windows reports nothing
+    /// for a bridge), which on a card with an internal switch is the link to
+    /// that switch, whatever the slot gives it: see `hwmon/windows.rs`.
+    pub link_is_whole_path: bool,
+    /// The PCIe switches between the card and the CPU, its own included.
+    pub switches: Option<u32>,
+    pub driver: Option<String>,
+    /// The ids `--device` knows this very card by, one per SDK that sees it
+    /// (`hwmon::sdk`).
+    pub sdk_ids: Vec<String>,
+}
+
+/// One SDK whose runtime loads on this machine, published beside the GPUs.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[cfg_attr(not(any(target_os = "linux", windows)), allow(dead_code))]
+pub struct Sdk {
+    /// What its `--device` ids start with: `ROCm`, `CUDA`, `Vulkan`.
+    pub name: String,
+    /// The runtime llama-server would load, in full where the system says.
+    pub library: String,
+    /// The version that runtime reports.
+    pub version: Option<String>,
+    /// The version of the dist this binary was built against, when known.
+    pub built_with: Option<String>,
+}
+
+static PHYSICAL: RwLock<Vec<PhysicalGpu>> = RwLock::new(Vec::new());
+static SDKS: RwLock<Vec<Sdk>> = RwLock::new(Vec::new());
+
+#[cfg_attr(not(any(target_os = "linux", windows)), allow(dead_code))]
+pub fn set_sdks(sdks: Vec<Sdk>) {
+    *SDKS.write().unwrap() = sdks;
+}
+
+/// The machine's SDKs: like `physical()`, the GUI's alone.
+#[cfg_attr(not(any(target_os = "linux", windows)), allow(dead_code))]
+pub fn sdks() -> Vec<Sdk> {
+    SDKS.read().unwrap().clone()
+}
+
+#[cfg_attr(not(any(target_os = "linux", windows)), allow(dead_code))]
+pub fn set_physical(gpus: Vec<PhysicalGpu>) {
+    *PHYSICAL.write().unwrap() = gpus;
+}
+
+/// The machine's GPUs; empty until the GUI's startup has published them, and in
+/// the CLI, which has no use for them.
+#[cfg_attr(not(any(target_os = "linux", windows)), allow(dead_code))]
+pub fn physical() -> Vec<PhysicalGpu> {
+    PHYSICAL.read().unwrap().clone()
+}
+
+/// A PCI address as the system's sources number it: `14:00.0`.
+#[cfg_attr(not(any(target_os = "linux", windows)), allow(dead_code))]
+pub fn pci_text(bus: u32, device: u32, function: u32) -> String {
+    format!("{bus:02x}:{device:02x}.{function:x}")
+}
+
+/// A bus id as an SDK or sysfs writes it (`0000:14:00.0`) reduced to `pci_text`'s
+/// form. `None` for anything else, a sysfs `pci0000:00` root among them.
+#[cfg_attr(not(any(target_os = "linux", windows)), allow(dead_code))]
+pub fn pci_address(raw: &str) -> Option<String> {
+    let raw = raw.trim().to_ascii_lowercase();
+    let mut parts = raw.rsplit(':');
+    let (slot, bus) = (parts.next()?, parts.next()?);
+    let hex = |s: &str| s.chars().all(|c| c.is_ascii_hexdigit());
+    let (device, function) = slot.split_once('.')?;
+    (bus.len() == 2 && device.len() == 2 && function.len() == 1)
+        .then_some(())
+        .filter(|_| hex(bus) && hex(device) && hex(function))?;
+    Some(format!("{bus}:{slot}"))
+}
+
 /// One hardware adapter's free memory as the whole system sees it, read on
 /// Windows off the counters Task Manager shows (`hwmon::adapters_free`).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -104,8 +219,8 @@ fn run(exe: &std::path::Path) -> Option<String> {
 }
 
 /// Parse the `--list-devices` block. Each device is an indented line shaped
-/// `  CUDA0: NVIDIA GeForce RTX 4070 SUPER (12281 MiB, 10844 MiB free)`.
-/// The `Available devices:` header and any non-indented noise are ignored.
+/// `  CUDA0: NVIDIA GeForce RTX 4070 SUPER (12281 MiB, 10844 MiB free)`. The
+/// `Available devices:` header and any non-indented noise are ignored.
 pub(crate) fn parse(s: &str) -> Vec<DeviceOption> {
     let mut out: Vec<DeviceOption> = Vec::new();
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
@@ -417,6 +532,25 @@ mod tests {
         // A name that itself contains parens: only the LAST one is the VRAM.
         assert_eq!(devs[1].name, "AMD Radeon(TM) Graphics");
         assert_eq!(devs[1].total_mib, 33593);
+    }
+
+    #[test]
+    fn the_slowest_link_is_found_by_rate_not_by_generation() {
+        let link = |generation, width| PcieLink { generation, width };
+        assert_eq!(link(5, 16).to_string(), "5.0 x16");
+        assert!(link(4, 4).rate() < link(3, 16).rate());
+        assert_eq!(link(4, 4).rate(), link(5, 2).rate());
+    }
+
+    #[test]
+    fn a_bus_id_is_reduced_to_one_form_and_anything_else_is_refused() {
+        assert_eq!(pci_address("0000:14:00.0").as_deref(), Some("14:00.0"));
+        assert_eq!(pci_address("0000:0A:00.1").as_deref(), Some("0a:00.1"));
+        assert_eq!(pci_address("14:00.0").as_deref(), Some("14:00.0"));
+        assert_eq!(pci_text(0x14, 0, 0), "14:00.0");
+        for bad in ["", "pci0000:00", "unknown id", "GPU-5a3b", "14:00", "zz:00.0"] {
+            assert_eq!(pci_address(bad), None, "{bad:?}");
+        }
     }
 
     #[test]
