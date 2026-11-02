@@ -114,6 +114,38 @@ Nothing left to port from the list of 2026-10-21: the two kernel items were meas
   merges #27210 or something like it, when the measurement becomes a sweep at 43.7k and
   115k, both temperatures, rather than a port.
 
+## Reopened: block 12 hybrid all-reduce (2026-11-02)
+
+Dropped on 2026-10-21 as not applicable, when the machine was one R9700 plus one 4070 SUPER. It
+now has two R9700s and the Linux presets that split by tensor use the internal AllReduce, so the
+block's mechanism applies. The fork's current README calls it block 01 (V2.0 numbering), not the
+block 01 of "Parked" above.
+
+The block is not RCCL alone: `auto`, its default on Linux/HIP, takes an internal pipeline for the
+small tensors reduced at every decode step, and picks the large-tensor path once per model: the
+copy engine for a dense model, RCCL's ring when experts sit in host memory. Its figures, copy engine
+against RCCL (the link of these runs is not stated; read through a summary of the first 100k of 223k
+characters of `patches/README.md`, so check them against the original before citing them in a guide):
+
+| shape | copy engine | RCCL |
+| --- | --- | --- |
+| 27B `pp2048` | 2178 | 2018 |
+| Flash-Next all in VRAM, decode | 67.2 | 59.9 |
+| Flash-Next IQ4_NL, 2 GPUs, `-ncmoe 20` | 604 | 809 |
+| Flash-Next IQ4_NL, 2 GPUs, `-ncmoe 32` | 414 | 555 |
+
+Enabling peer access alone cost 42.25 to 38.77 t/s of dense decode on 3x R9700, and it cannot be
+undone once RCCL has made its mappings.
+
+- Compare the block's small-tensor path and its copy engine with upstream's internal AllReduce
+  (`ggml/src/ggml-cuda/allreduce.cu`): what is left to gain over v0.8.0 is not known. This part
+  needs no RCCL, so it could run on the current board.
+- RCCL itself cannot run here: the x4 card's slot has no AtomicOps. With both cards on CPU slots,
+  `GGML_CUDA_ALLREDUCE` compares `internal` and `nccl` with no rebuild. Upstream's init tries NCCL
+  first, so keep `internal` set until that is measured.
+- Our presets keep every expert in VRAM, the shape where RCCL loses above. It matters only if a
+  preset moves experts to host memory.
+
 ## Watch items (no action unless the symptom appears)
 
 - `UPSTREAM-PR-per-device-host-buffers` (`-sm layer -ncmoe` sends every host-expert op to
@@ -128,7 +160,6 @@ Nothing left to port from the list of 2026-10-21: the two kernel items were meas
 ## Not applicable or superseded
 
 - Block 11 HIP graphs on verify batches: superseded by upstream's keyed graphs (measured above).
-- Block 12 hybrid all-reduce: `split-mode tensor` over RCCL, same-vendor cards, Linux only.
 - Blocks 06 and 13 (MoE expert cache, slab allocator, staging ring, MoE MMQ fusions,
   737 KB): built for `-ncmoe` under tensor split; `GGML_CUDA_ASYNC_INPUT` (a 16 MiB pinned
   ring per device) overlaps our 0004 and cannot be extracted from the block.
