@@ -83,9 +83,9 @@ Measured on *Linux* unless a row says otherwise. *Windows* runs this same preset
 | key | value | evidence |
 | --- | --- | --- |
 | `split-mode`, `tensor-split` | `tensor`, `1,1` | decode 59.3 t/s against 40.4 with the layer split at 43.7k; balanced memory ([section 5](#5-splitting-the-model-across-two-cards)). *Windows*: 57.7, no layer run to compare |
-| `device` | the x16 card first | decode 33.5 against 32.2, prefill 1491 against 1476 (layer split; campaign `swift27b-2xr9700-linux-device-20261028`). *Windows*, tensor split: no practical difference ([section 6](#6-linux-against-windows)) |
+| `device` | the x16 card first | decode 33.5 against 32.2, prefill 1491 against 1476 (layer split; campaign `swift27b-2xr9700-linux-device-20261028`). *Windows*, tensor split: prefill unchanged, decode an open lead ([section 9](#9-not-yet-measured-placeholders)) |
 | `CudaAllreduce` | `internal` | RCCL cannot run: the x4 card's slot has no PCIe AtomicOps, and *Windows* has no RCCL |
-| `ThreadsBatch` | `12` on *Linux*, `24` on *Windows* | what each baseline ran; never compared on this preset ([section 9](#9-not-yet-measured-placeholders)) |
+| `ThreadsBatch` | `12` on *Linux*, `24` on *Windows* | what each baseline ran. It makes no difference here: *Windows* prefills 1034.3 at `24`, 1031.7 at `12` ([section 6](#6-linux-against-windows)); `24` is there for [Flash-Next](qwen3.8_flash_next.md) |
 | `ubatch-size` | `1024` | `2048` prefills 24% slower: 1118.3 ±5.8 against 1472.3 ±8.0 (layer split, MTP alone, 262144, `parallel 1`; campaign `swift27b-2xr9700-linux-ubatch-20261028`) |
 | `ctx-size`, `parallel` | `425984`, `2` | 212992 per slot, with 2476 / 1378 MiB free after a 115k prefill; *Windows* holds it too ([section 4](#4-kv-cache-type-and-context)) |
 | `spec-type` | `ngram-map-k4v,draft-mtp`, `size-m 32` | code 119.9 t/s against 49.8 with MTP alone; prose 32.2 against 30.9 ([section 3](#3-drafters)) |
@@ -236,11 +236,23 @@ series   = ctx-size
 where    = concurrency=prefill
 ```
 
-*Windows* holds `425984` too. With two slots at 115,343 tokens each at once, there are no errors and no
-spill to shared memory, and peak dedicated memory reads 31304 and 29712 MiB of 32624, so 1320 and 2912 free
-(Windows performance counters, read by hand, not recorded; the adapters are not formally mapped to the
-cards, and the fuller one is probably the x4). That is the only memory reading on *Windows* for this preset:
-the benchmark recorded none after a prefill there.
+*Windows* holds `425984` too. Free memory after the first prefill of one 43.7k request, x16 / x4 card, in MiB:
+
+| pass | *Windows* | *Linux* |
+| --- | --- | --- |
+| `engine` | 4829 / 3390 | 4552 / 3414 |
+| `real` | 2758 / 1166 | 2518 / 1380 |
+
+The *Windows* figures are system-wide, read from the Windows GPU counters per adapter (`pci-03:00.0` the x16 card,
+`pci-14:00.0` the x4 card), under the method of [section 6](#6-linux-against-windows). They repeat exactly across
+those runs, whatever the device order (campaign `swift27b-memory-integrity-windows-20261102`). The *Linux* figures
+are the baseline's (campaign `swift27b-standard-1.0-2xr9700-linux-20261031`), from another probe, so compare the
+two loosely. The *Windows* run of the standard spec holds no free memory.
+
+With two slots at 115,343 tokens each at once on *Windows*, there are no errors and no spill to shared memory, and
+peak dedicated memory reads 31304 and 29712 MiB of 32624, so 1320 and 2912 free (Windows performance counters,
+read by hand, not recorded; the adapters are not formally mapped to the cards, and the fuller one is probably the
+x4).
 
 ## 5. Splitting the model across two cards
 
@@ -388,14 +400,41 @@ where    = concurrency=single, spec-pass=real
 rename   = 12=Linux, 24=Windows, bench-prompt-43k-1.0=43.7k prose, bench-prompt-110k-1.0=115k prose, bench-prompt-code-1.0=agent turn, bench-prompt-code-write-1.1=writing code, bench-prompt-image-1.0=image
 ```
 
-- **Prefill.** The gap holds on text and on the image, whose repetitions spread widely. `ThreadsBatch` is 24
-  on *Windows* and 12 on *Linux*, so it cannot be attributed to the link alone; no measurement isolates the
-  two. During a 43.7k prefill the *Windows* copy engine reads ~47% on the x4 card and 11 to 12% on the x16 card
+- **Prefill.** The gap holds on text and on the image, whose repetitions spread widely. Its cause is unmeasured
+  (below). During a 43.7k prefill the *Windows* copy engine reads ~47% on the x4 card and 11 to 12% on the x16 card
   (read by hand, not recorded).
 - **Decode with the speculator** is level: within the repetitions' spread on prose and code, under 2% apart
   on the image.
 - **Decode without it** is 8 to 10% faster on *Windows*, and on the text prompts both systems write the same
   number of tokens (1670, 7840 and 9599). The run does not explain why.
+
+**No *Windows* setting tried closes the prefill gap; leave them as they are.** The Swift preset on two R9700s,
+tensor split at `1,1`, the 43.7k prompt, `spec = custom` derived from `standard-1.1`: one repetition per pass,
+`engine` at temperature 0 with the speculator off, `real` with the preset's sampling and speculator. The first row
+is the standard run, with 3 and 5 repetitions (campaign `swift27b-standard-1.1-2xr9700-windows-20261101`). The
+others ran on one boot, where `tools\pcie-bench` read the x4 link at 6.8 GB/s, and compare with the second row
+(campaign `swift27b-memory-integrity-windows-20261102`; campaign `swift27b-device-order-windows-20261102`;
+campaign `swift27b-threads-batch-windows-20261102`; campaign `swift27b-power-plan-windows-20261102`).
+
+| *Windows* setup | `engine` prefill / decode | `real` prefill / decode |
+| --- | --- | --- |
+| **the preset, Memory Integrity on** | 1001.7 / 29.6 | 952.1 / 57.7 (repetitions 56.1 to 60.2) |
+| Memory Integrity off | 1034.3 / 30.0 | 970.9 / 59.4 |
+| Memory Integrity off, x4 card first | 1029.0 / 30.1 | 968.6 / 63.0 |
+| Memory Integrity off, `ThreadsBatch 12` | 1031.7 / 30.0 | n/a |
+| Memory Integrity off, Ultimate Performance plan | 1031.5 / 30.0 | n/a |
+
+- **Memory Integrity off** prefills 3% and 2% faster, with decode unchanged within noise (VBS and the hypervisor
+  stayed on). That is a small part of the gap at most, *Windows* still 15% and 14% slower than *Linux*, and no
+  reason to turn it off: the setting stays on. This comparison crosses boots, and that Memory Integrity was on during
+  the standard run is inferred, not recorded: it was the machine's state until it was turned off for this test.
+- **`ThreadsBatch 12` against `24`** changes nothing on this preset, every weight on the GPUs: prefill 0.3% slower,
+  so the thread count does not explain the gap here. At `12`, the *Linux* value, *Windows* is still 15% slower, 1031.7
+  against 1210.3. [Flash-Next](qwen3.8_flash_next.md), with experts on the CPU, is another case, with its own finding.
+- **The Ultimate Performance plan** turns PCIe ASPM off (Balanced: moderate) and changes nothing: prefill 0.3%
+  slower. The minimum processor state stays 0, so this does not test a pinned CPU frequency.
+- **What remains is unmeasured.** The driver and HIP runtime, transfers and submissions under `split-mode tensor`,
+  and the hypervisor are candidates, not results ([section 9](#9-not-yet-measured-placeholders)).
 
 Two requests at once, pass `real`, as totals. The per-request prefill of a `prefill+decode` row in
 `bench query summary` pools the long cold prompt with the warm request's very short one, so compare it only
@@ -445,9 +484,11 @@ cold prefill waits for it, so its turn takes 17% longer on *Windows*, 55.8 s aga
 prefill being 18% slower. These replies are too short for their decode to separate the systems: in the first
 two rows it moves with acceptance.
 
-**The device order makes no practical difference on this pair.** *Windows*, 43.7k, v0.8.0, read by hand, not
-recorded: the x4 card first prefills 950.6 and 950.9 (2 repetitions), the x16 card first 945 (1 repetition);
-decode 49.2 and 51.2 against 47.1 on only 128 tokens; about 140 MiB less free with the x4 card first. The
+**The device order leaves prefill unchanged on this pair; keep the x16 card first.** In the one-repetition runs
+above, the x16 card first prefills 1034.3 against 1029.0 under `engine` and 970.9 against 968.6 under `real`, and free
+memory stays the same to the MiB ([section 4](#4-kv-cache-type-and-context)). The x4 card first reads 63.0 against 59.4
+in `real` decode, one repetition of a noisy pass, above the 56.1 to 60.2 of the standard run's repetitions, with
+acceptance 79% in both: an open lead, not a result ([section 9](#9-not-yet-measured-placeholders)). The
 "R9700 first" rule below belongs to a layer split across two different cards and does not apply here. The
 integrated GPU takes `ROCm0` on *Windows*, so a preset copied from *Linux* needs its ids renumbered: on this
 machine `device = ROCm2,ROCm1`, with `ROCm2` the x16 card and `ROCm1` the x4 card.
@@ -552,9 +593,10 @@ uncapped. `engine`: temperature 0, speculator off, 3 repetitions, one request. `
 sampling and speculator, 5 repetitions, one request and then the three two-request scenarios of
 [section 5](#5-splitting-the-model-across-two-cards). `agent`: described below.
 
-**Free memory** after the first prefill (x16 / x4 card), *Linux*: 4488 to 4552 / 3350 to 3414 MiB under `engine`,
-2338 to 2518 / 1240 to 1380 under `real` and `agent`. The *Windows* run recorded no free memory after a prefill
-([section 4](#4-kv-cache-type-and-context) has the one reading there is).
+**Free memory** after the first prefill (x16 / x4 card), *Linux*: on text, 4488 to 4588 / 3350 to 3450 MiB under
+`engine`, 2338 to 2518 / 1240 to 1380 under `real` and `agent`; on the image, 4552 / 3168 under `engine` and 2478 / 1094
+under `real`. The *Windows* run of this spec holds none; one-repetition runs of the same preset do, at 43.7k
+([section 4](#4-kv-cache-type-and-context)).
 
 </details>
 
@@ -676,7 +718,10 @@ where    = spec-pass=agent
 | --- | --- |
 | `q8_0` KV to fit the native context | fits 262144 but decodes 11% slower at 43.7k ([section 4](#4-kv-cache-type-and-context)) |
 | `split-mode tensor` across two backends | aborts at load unless AllReduce is `none`; with it, half the prefill of the layer split, no decode gain (v0.6.0) |
-| the x4 card first on two R9700s, copying "the R9700 first" of the mixed pair | *Windows*, tensor split: no practical difference, 950.6 and 950.9 prefill against 945, by hand ([section 6](#6-linux-against-windows)) |
+| the x4 card first on two R9700s, copying "the R9700 first" of the mixed pair | *Windows*, tensor split: prefill unchanged, 1034.3 against 1029.0; decode an open lead ([section 9](#9-not-yet-measured-placeholders)) |
+| Memory Integrity off, for the *Windows* prefill gap on two R9700s | prefill 2 to 3% faster, decode unchanged within noise: a small part of the gap at most, and the setting stays on ([section 6](#6-linux-against-windows)) |
+| `ThreadsBatch 12` against `24` on two R9700s on *Windows* | no change: prefill 1034.3 at `24`, 1031.7 at `12` ([section 6](#6-linux-against-windows)) |
+| the Ultimate Performance plan, PCIe ASPM off, on two R9700s on *Windows* | no change: prefill 1034.3 against 1031.5; the minimum processor state stays 0, so no test of a pinned CPU frequency ([section 6](#6-linux-against-windows)) |
 | Vulkan on the R9700 instead of ROCm | *Windows*: prefill 25 to 27% and decode 15 to 18% slower |
 | a low `spec-draft-n-max` with MTP alone | *Windows*: `1` gives 9.8 t/s at 93.6k, against 13.0 with no drafter; `2` gives 21 to 25% less than `4` |
 | `q8_0` draft KV | larger, not smaller (v0.6.0) |
@@ -690,9 +735,10 @@ where    = spec-pass=agent
 | `q8_0` KV at 115k+ tokens | `f16` | does the decode gap over `f16` keep growing? | partly: `f16` is measured at 115k, `q8_0` not past 43.7k |
 | `batch-size` on two R9700s | default (2048) | how much do `1024` or `512` give back to a request decoding beside a prefill, and what do they cost the cold prefill? | TBD |
 | `split-mode` on two R9700s on *Windows* | `tensor` | what do the tensor split's decode gain and prefill cost come to against `layer` there? | TBD |
-| `ThreadsBatch` on two R9700s on *Windows* | `24` | how much of the prefill gap to *Linux* is this setting, and how much the link? | TBD |
+| the prefill gap to *Linux* on two R9700s on *Windows* | n/a | what causes it: the driver and HIP runtime, transfers and submissions under `split-mode tensor`, the hypervisor? | partly: Memory Integrity gives 2 to 3%, `ThreadsBatch` and PCIe ASPM nothing ([section 8](#8-choices-that-look-better-than-they-measure)); the candidates are unmeasured |
+| `device` on two R9700s on *Windows* | the x16 card first | does the x4 card first really decode faster under `real`? | partly: prefill unchanged; decode 63.0 against 59.4, one repetition, above the standard run's 56.1 to 60.2, acceptance 79% in both ([section 6](#6-linux-against-windows)) |
 | decode on two R9700s on *Windows* | n/a | why does `engine` run 8 to 10% faster than *Linux*, and code under concurrency slower? | TBD |
-| free memory after a prefill on *Windows*, two R9700s | n/a | a recorded figure per card, comparable with the *Linux* baseline | partly: one reading by hand, two 115k slots at once ([section 4](#4-kv-cache-type-and-context)); nothing recorded |
+| free memory after a prefill on *Windows*, two R9700s | n/a | a recorded figure per card, comparable with the *Linux* baseline | partly: recorded per adapter at 43.7k, one request ([section 4](#4-kv-cache-type-and-context)); 115k only by hand, the other prompts and two requests not recorded |
 | `ctx-checkpoints` | `12` | tokens reprocessed at a real client compaction (expected under 8192) | TBD |
 | `reasoning-preserve` | default | what a divergent prompt costs on the 598.5 MiB recurrent state | TBD |
 | a pinned staging buffer in ggml's cross-runtime copy | `malloc` staging | what it gives back of the 2.5 s of staged hops with the R9700 second on *Windows* | TBD: needs a ggml change first |

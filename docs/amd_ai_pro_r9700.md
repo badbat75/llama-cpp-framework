@@ -108,12 +108,17 @@ split and 20.2 under the layer split.
 
 **On *Windows* the same tensor preset runs at the same decode for one request and a slower prefill**: 57.7
 against 59.3 at 43.7k, 53.9 against 59.2 at 115k, and prefill 952.1 against 1125.4 and 823.3 against 960.1
-(15% and 14% slower), with `ThreadsBatch` 24 against 12 (campaign `swift27b-standard-1.1-2xr9700-windows-20261101`).
-Since `ThreadsBatch` differs, the prefill gap cannot be attributed to the link alone; no measurement isolates the
-two. No run of this model uses the layer split on two R9700s on *Windows*, so the tensor split's decode gain and
-prefill cost against it are unmeasured there. That run does not record memory after a prefill; by hand, with two
-115k contexts at once at `ctx-size 425984`, there is no spill to shared memory and the cards peak at 31304 and
-29712 MiB of 32624 (Windows performance counters, not recorded; the fuller one is probably the x4 card).
+(15% and 14% slower) (campaign `swift27b-standard-1.1-2xr9700-windows-20261101`). The cause of that prefill gap is
+unmeasured. One-repetition runs at 43.7k (`spec = custom`, derived from `standard-1.1`) find no change from
+`ThreadsBatch 12` against `24` or from PCIe ASPM off, and 2 to 3% from Memory Integrity off:
+[Qwen3.8-27B, section 6](qwen3.8_27b.md#6-linux-against-windows). No run of this model uses the layer split on two
+R9700s on *Windows*, so the tensor split's decode gain and prefill cost against it are unmeasured there.
+
+The one-repetition runs read 4829 / 3390 MiB free (x16 / x4 card) after the first 43.7k prefill with the speculator off and
+2758 / 1166 with it on, system-wide from the Windows GPU counters (campaign `swift27b-memory-integrity-windows-20261102`);
+the standard-spec run holds none. By hand, with two 115k contexts at once at `ctx-size 425984`, there is no spill to
+shared memory and the cards peak at 31304 and 29712 MiB of 32624 (Windows performance counters, not recorded; the
+fuller one is probably the x4 card).
 
 **The tensor split's prefill follows the x4 card's link on either system**, since the internal AllReduce stages
 through pinned host memory. On *Linux*, RCCL replaces that path when every device is a ROCm one and every slot has
@@ -133,7 +138,9 @@ An example `presets.ini` section, the preset of the
 `llama-server --list-devices` prints (they can change between boots, and both cards print the same name,
 so the list does not say which one is the x16 card). On *Windows* the integrated GPU takes `ROCm0`, so the same
 preset reads `device = ROCm2,ROCm1` with `mmproj-device = ROCm1` on the machine measured. There, on this
-same-card tensor pair, either order prefills within 1%, read by hand: the order that reverses on *Windows*, below,
+same-card tensor pair, either order prefills within 1%, one repetition per pass at 43.7k (campaign `swift27b-device-order-windows-20261102`),
+and the x16 card stays first; a decode difference stays open in
+[Qwen3.8-27B, section 9](qwen3.8_27b.md#9-not-yet-measured-placeholders). The order that reverses on *Windows*, below,
 concerns a card of another backend.
 
 <details>
@@ -205,13 +212,15 @@ backend-sampling = true
 | --- | --- |
 | a low `spec-draft-n-max`, to stay on the FlashAttention vector kernel | `1` gives 9.8 t/s at 93.6k, against 13.0 with no drafter |
 | Vulkan instead of ROCm | with Q8_0, prefill 25 to 27% and decode 15 to 18% slower; with Q5_K_M, prefill 22 to 23% and decode 30 to 41% slower. Its only edge is a compute buffer ~690 MiB smaller |
+| Memory Integrity off on *Windows*, two cards | prefill 2 to 3% faster, decode unchanged within noise: a small part of the gap to *Linux* at most, and the setting stays on ([Qwen3.8-27B, section 6](qwen3.8_27b.md#6-linux-against-windows)) |
+| `ThreadsBatch 12` against `24`, or PCIe ASPM off, on *Windows*, two cards with every weight on them | no change: prefill 0.3% slower each ([Qwen3.8-27B, section 6](qwen3.8_27b.md#6-linux-against-windows)) |
 
 ## 6. Checking a configuration
 
 - *Windows*: `tools\report-memory.ps1` shows requested against actual VRAM per device and any spill into
-  shared memory; a spill is real only above ~512 MiB beyond the pinned `*_Host` buffers. Read this on two
-  cards: their *Windows* benchmark run recorded no free memory after a prefill. A later run there records it per
-  adapter, under its PCI address (for example `pci-14:00.0`).
+  shared memory; a spill is real only above ~512 MiB beyond the pinned `*_Host` buffers. A benchmark run records the
+  memory free after its first prefill per adapter, under its PCI address (for example `pci-14:00.0`): system-wide,
+  read from the Windows GPU counters. Use this script where a run holds no such row.
 - *Linux*: read `mem_info_vram_used` and `mem_info_gtt_used` after a prefill.
 - `tools\pcie-bench\`: the card's real host link. On two cards on *Linux*, also read the boot log's link width;
   *Windows* shows no width on the bridges, so there a card reading about half its bandwidth is the sign.
@@ -228,7 +237,7 @@ backend-sampling = true
 | `spec-draft-p-min` | default | does a confidence floor lift acceptance on the reasoning phase? | TBD |
 | power limit | stock (300 W) | prefill and decode per watt | partly: draw read by hand ([section 4](#4-multi-gpu)), no per-watt figure |
 | `split-mode` on two R9700s on *Windows* | `tensor` | what do the tensor split's decode gain and prefill cost come to against `layer` there? | TBD |
-| `ThreadsBatch` on two R9700s on *Windows* | `24` | how much of the prefill gap to *Linux* is this setting, and how much the link? | TBD |
+| the prefill gap to *Linux* on two R9700s on *Windows* | n/a | what causes it: the driver and HIP runtime, transfers and submissions under `split-mode tensor`, the hypervisor? | partly: Memory Integrity gives 2 to 3%, `ThreadsBatch` and PCIe ASPM nothing ([section 5](#5-choices-that-look-better-than-they-measure)); the candidates are unmeasured |
 | `GGML_CUDA_AR_COPY_THRESHOLD` / `_CHUNK_BYTES` on two R9700 | default | the internal AllReduce's staging sizes (seeds: 1-2 MiB, 2 MiB) against the default | TBD |
 | Linux: memory beyond the card | n/a | what moving buffers to GTT costs in speed | partly: with two 115k contexts on a full card, requests ran out of memory in the HIP graph update, once after 14 GB had moved to GTT (campaign `swift27b-concurrency-2xr9700-linux-20261031`); the speed under GTT is unmeasured |
 | `GGML_HIP_FA_BAND_WMMA_SPLIT` | default (one block per CU) | 32, 48, 96 or 128 KV blocks against the default, at 65k and 131k cells | TBD |

@@ -149,7 +149,11 @@ Nothing left to port from the list of 2026-10-21: the two kernel items were meas
 - The HIP API log on Linux: is the Linux prefill lead the copy rate alone?
 - A pinned staging buffer in `ggml_backend_tensor_copy`'s slow path (the cross-card hops
   still staged through `malloc`: 2.5 s per 43.7k prefill with the R9700 second).
-- The Swift preset's device order on Windows.
+- The Swift preset's device order on Windows: prefill is settled, the `real` decode lead of the
+  x4 card first needs repetitions ([Qwen3.8-27B, section 9](docs/qwen3.8_27b.md#9-not-yet-measured-placeholders)).
+- The Swift preset's prefill gap to Linux on Windows: Memory Integrity, `ThreadsBatch` and the
+  power plan do not explain it; the hypervisor and the driver and HIP costs are unmeasured
+  ([Qwen3.8-27B, section 6](docs/qwen3.8_27b.md#6-linux-against-windows)).
 
 ## The band on GQA 12 with accepted drafts (2026-11-01, `docs/qwen3.8_flash_next.md` section 7)
 
