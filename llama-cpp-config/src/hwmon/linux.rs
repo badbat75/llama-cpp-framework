@@ -1065,7 +1065,7 @@ mod tests {
         let cpu = find(&groups, CPU_ID);
         assert_eq!((cpu.enabled, cpu.bars.len()), (true, 0));
         std::thread::sleep(std::time::Duration::from_millis(30));
-        assert_eq!(find(&s.sample(&none), CPU_ID).bars.len(), 1);
+        assert_eq!(find(&s.sample(&none), CPU_ID).bars.len(), 2);
     }
 
     /// A fake `/sys/class/drm` with one card of each kind.
