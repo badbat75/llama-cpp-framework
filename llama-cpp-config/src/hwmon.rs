@@ -22,6 +22,7 @@
 //! | GPU, VRAM, Shared memory (every adapter) | The performance counters Task Manager reads, through PDH: `\GPU Engine(*)\Utilization Percentage`, `\GPU Adapter Memory(*)\Dedicated Usage` and `Shared Usage`. The adapters, their names and both totals come from D3DKMT (`gdi32`) |
 //! | GPU, VRAM, Memory activity, PCIe RX/TX (NVIDIA) | NVML (`nvml.dll`, loaded at runtime from System32), with Shared memory from PDH as above |
 //! | CPU | `GetSystemTimes` |
+//! | I/O wait (est.) | PDH: `\PhysicalDisk(*)\Avg. Disk Queue Length`, an estimate |
 //! | RAM, Committed | `GetPerformanceInfo` |
 //! | Cached | PDH: the standby lists plus the modified list, which is Task Manager's "Cached" |
 //! | Disk read, write, busy, I/O wait | `IOCTL_DISK_PERFORMANCE` on the physical drive holding the models directory |
@@ -29,9 +30,11 @@
 //! Things that are not obvious from the tables:
 //!
 //! - **I/O wait means two things.** The CPU card's is the share of processor
-//!   time spent idle with I/O pending, which only Linux accounts: the Windows
-//!   kernel counts that time as plain idle, so its CPU card has no such bar.
-//!   The disk card's, on both, is the average time one I/O took.
+//!   time spent idle with I/O pending. Only Linux accounts it: the Windows kernel
+//!   counts that time as plain idle, so there the bar is an estimate and says so
+//!   (`\PhysicalDisk(*)\Avg. Disk Queue Length` over the threads, within the idle
+//!   time; `windows.rs` `estimated_iowait`). The disk card's, on both, is the
+//!   average time one I/O of that disk took.
 //! - **GTT is what Windows calls Shared GPU memory**: system RAM the GPU has
 //!   mapped. NVIDIA has no such bar on Linux, since its driver never spills
 //!   into system RAM there; on Windows every adapter has one, and a card

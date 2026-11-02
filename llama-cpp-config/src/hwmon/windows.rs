@@ -973,6 +973,48 @@ fn socket_usage(values: &[(String, f64)], sockets: &[Vec<(u16, u64)>]) -> Vec<Op
         .collect()
 }
 
+/// The I/Os in flight on every disk, averaged over the interval: what stands in
+/// for the threads blocked on I/O, which Windows does not count.
+struct DiskQueues {
+    query: Query,
+    counter: Handle,
+}
+
+impl DiskQueues {
+    fn open() -> Option<Self> {
+        let query = Query::open()?;
+        let counter = query.add(r"\PhysicalDisk(*)\Avg. Disk Queue Length")?;
+        // The first reading is only the baseline of the next.
+        query.collect();
+        Some(DiskQueues { query, counter })
+    }
+
+    fn read(&self) -> Option<f64> {
+        if !self.query.collect() {
+            return None;
+        }
+        Some(summed_queues(&counter_values(self.counter)?))
+    }
+}
+
+/// The disks' queues added up; the `_Total` instance names no disk.
+fn summed_queues(values: &[(String, f64)]) -> f64 {
+    values
+        .iter()
+        .filter(|(name, _)| name != "_Total")
+        .map(|(_, queue)| *queue)
+        .sum()
+}
+
+/// An estimate of the share of processor time spent idle with I/O pending, in
+/// percent, the figure Linux accounts as iowait: there, one blocked thread weighs
+/// one processor's worth at most, so the queue is divided by the threads, and
+/// the time can only come out of the idle time.
+fn estimated_iowait(busy_percent: f64, queue: f64, threads: u32) -> f64 {
+    let idle = (100.0 - busy_percent).max(0.0);
+    (100.0 * queue / threads.max(1) as f64).clamp(0.0, idle)
+}
+
 pub fn cpu_facts() -> Cpu {
     let mut cpu = Cpu {
         instructions: super::cpu_instructions(),
@@ -1243,6 +1285,8 @@ pub struct Sampler {
     cpu_title: String,
     /// On a machine of several sockets; without it one row stands for them all.
     sockets: Option<SocketCounters>,
+    disk_queues: Option<DiskQueues>,
+    threads: u32,
     memory_detail: String,
     prev: Counters,
     disk_peak: f64,
@@ -1260,7 +1304,11 @@ impl Sampler {
         )
         .map(|name| name.trim().to_string())
         .filter(|name| !name.is_empty());
+        let mut topology = Cpu::default();
+        read_topology(&topology_buffer(), &mut topology);
         let mut s = Sampler {
+            disk_queues: DiskQueues::open(),
+            threads: topology.threads.unwrap_or(1),
             adapters: find_adapters(),
             gpu: GpuCounters::open(),
             cached: CachedCounters::open(),
@@ -1332,10 +1380,25 @@ impl Sampler {
             }
             None => vec![cpu],
         };
+        let queue = usage
+            .iter()
+            .enumerate()
+            .any(|(i, _)| !off.contains(&cpu_id(i)))
+            .then(|| self.disk_queues.as_ref().and_then(DiskQueues::read))
+            .flatten();
+        let threads = self.threads;
         for (i, usage) in usage.into_iter().enumerate() {
             let title = self.cpu_title.clone();
             groups.push(group(off, &cpu_id(i), title, cpu_detail(i), || {
-                usage.map(|p| percent_bar("CPU", p)).into_iter().collect()
+                let Some(busy) = usage else {
+                    return Vec::new();
+                };
+                let mut bars = vec![percent_bar("CPU", busy)];
+                if let Some(queue) = queue {
+                    let iowait = estimated_iowait(busy, queue, threads);
+                    bars.push(percent_bar("I/O wait (est.)", iowait));
+                }
+                bars
             }));
         }
 
@@ -1652,6 +1715,30 @@ mod tests {
     }
 
     #[test]
+    fn the_estimated_iowait_is_the_queue_over_the_threads_within_the_idle_time() {
+        // One I/O in flight all the time on 24 threads, one processor's worth.
+        assert!((estimated_iowait(10.0, 1.0, 24) - 100.0 / 24.0).abs() < 1e-9);
+        // It cannot exceed the idle time, however long the queue.
+        assert_eq!(estimated_iowait(90.0, 100.0, 24), 10.0);
+        assert_eq!(estimated_iowait(100.0, 1.0, 24), 0.0);
+        assert_eq!(estimated_iowait(0.0, 0.0, 24), 0.0);
+        // No thread count is one thread, not a division by zero.
+        assert_eq!(estimated_iowait(50.0, 0.25, 0), 25.0);
+
+        let values = [("0 C:".to_string(), 1.5), ("1 E:".to_string(), 0.5), ("_Total".to_string(), 9.0)];
+        assert_eq!(summed_queues(&values), 2.0);
+    }
+
+    // The real counter: an instance per disk, read after its baseline.
+    #[test]
+    fn the_disk_queue_counter_answers_on_this_machine() {
+        let queues = DiskQueues::open().expect("the counter opens");
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        let queue = queues.read().expect("the counter reads");
+        assert!(queue >= 0.0, "{queue}");
+    }
+
+    #[test]
     fn a_socket_is_the_mean_of_its_processors() {
         let values: Vec<(String, f64)> = [
             ("0,0", 10.0),
@@ -1747,6 +1834,9 @@ mod tests {
         assert_eq!((cpu.enabled, cpu.bars.len()), (true, 0));
         // The processor times advance in clock ticks of about 16 ms.
         std::thread::sleep(std::time::Duration::from_millis(100));
-        assert_eq!(find(&s.sample(&none), CPU_ID).bars.len(), 1);
+        let groups = s.sample(&none);
+        let cpu = find(&groups, CPU_ID);
+        let labels: Vec<&str> = cpu.bars.iter().map(|b| b.label.as_str()).collect();
+        assert_eq!(labels, ["CPU", "I/O wait (est.)"]);
     }
 }
