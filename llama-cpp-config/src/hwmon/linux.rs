@@ -3,7 +3,8 @@
 //! parent module's header.
 
 use super::*;
-use crate::devices::{PcieLink, PhysicalGpu};
+use crate::devices::{Cpu, MemoryModule, PcieLink, PhysicalGpu};
+use std::collections::HashMap;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
@@ -32,10 +33,42 @@ pub(super) unsafe fn library_symbol(lib: *mut c_void, name: &CStr) -> *mut c_voi
 
 // ── CPU and memory ──────────────────────────────────────────────────
 
-/// `(busy, total)` jiffies from the aggregate `cpu` line of `/proc/stat`.
+/// `(busy, total, iowait)` jiffies from the aggregate `cpu` line of `/proc/stat`.
 /// Idle and iowait are the not-busy part; guest time is already inside user.
-fn parse_cpu(stat: &str) -> Option<(u64, u64)> {
-    let line = stat.lines().find(|l| l.starts_with("cpu "))?;
+fn parse_cpu(stat: &str) -> Option<(u64, u64, u64)> {
+    parse_cpu_line(stat.lines().find(|l| l.starts_with("cpu "))?)
+}
+
+/// The same per socket, adding up the lines of each socket's threads (`cpu<N>`).
+/// With one socket that is the aggregate line.
+fn parse_sockets(
+    stat: &str,
+    thread_socket: &HashMap<u32, usize>,
+    sockets: usize,
+) -> Option<Vec<(u64, u64, u64)>> {
+    if sockets <= 1 {
+        return parse_cpu(stat).map(|times| vec![times]);
+    }
+    let mut totals = vec![(0, 0, 0); sockets];
+    for line in stat.lines() {
+        let thread = line
+            .split_whitespace()
+            .next()
+            .and_then(|name| name.strip_prefix("cpu"))
+            .and_then(|n| n.parse::<u32>().ok());
+        let total = thread
+            .and_then(|t| thread_socket.get(&t))
+            .and_then(|s| totals.get_mut(*s));
+        if let (Some(total), Some((busy, all, iowait))) = (total, parse_cpu_line(line)) {
+            total.0 += busy;
+            total.1 += all;
+            total.2 += iowait;
+        }
+    }
+    Some(totals)
+}
+
+fn parse_cpu_line(line: &str) -> Option<(u64, u64, u64)> {
     let v: Vec<u64> = line
         .split_whitespace()
         .skip(1)
@@ -46,7 +79,183 @@ fn parse_cpu(stat: &str) -> Option<(u64, u64)> {
         return None;
     }
     let total: u64 = v.iter().sum();
-    Some((total - v[3] - v[4], total))
+    Some((total - v[3] - v[4], total, v[4]))
+}
+
+/// A sysfs file's text, trimmed.
+fn read_trimmed(path: &Path) -> Option<String> {
+    Some(std::fs::read_to_string(path).ok()?.trim().to_string())
+}
+
+/// A sysfs cache size: `32K`, `1024K`, `32M`.
+fn cache_kib(size: &str) -> Option<u64> {
+    match size.strip_suffix('K') {
+        Some(kib) => kib.parse().ok(),
+        None => size.strip_suffix('M')?.parse::<u64>().ok().map(|mib| mib * 1024),
+    }
+}
+
+/// The subdirectories named `<prefix><number>`, with their numbers.
+fn numbered_with(dir: &Path, prefix: &str) -> Vec<(u32, PathBuf)> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    entries
+        .flatten()
+        .filter_map(|e| {
+            let name = e.file_name();
+            let n = name.to_str()?.strip_prefix(prefix)?.parse().ok()?;
+            Some((n, e.path()))
+        })
+        .collect()
+}
+
+fn numbered(dir: &Path, prefix: &str) -> Vec<PathBuf> {
+    numbered_with(dir, prefix).into_iter().map(|(_, path)| path).collect()
+}
+
+/// Which socket each thread is on, the sockets counted from 0 in the order of
+/// their ids, and how many there are (at least one).
+fn thread_sockets(cpu_dir: &Path) -> (HashMap<u32, usize>, usize) {
+    let threads: Vec<(u32, u32)> = numbered_with(cpu_dir, "cpu")
+        .into_iter()
+        .filter_map(|(thread, dir)| {
+            let package = read_trimmed(&dir.join("topology/physical_package_id"))?;
+            Some((thread, package.parse().ok()?))
+        })
+        .collect();
+    let mut packages: Vec<u32> = threads.iter().map(|(_, package)| *package).collect();
+    packages.sort_unstable();
+    packages.dedup();
+    let socket = |package: &u32| packages.iter().position(|p| p == package).unwrap_or(0);
+    (
+        threads.iter().map(|(thread, package)| (*thread, socket(package))).collect(),
+        packages.len().max(1),
+    )
+}
+
+/// The processor's facts from `cpu_dir` (`/sys/devices/system/cpu`) and
+/// `node_dir` (`/sys/devices/system/node`). A cache shared between threads
+/// appears under each of them, so one is told by what shares it.
+fn read_cpu_sysfs(cpu_dir: &Path, node_dir: &Path, cpu: &mut Cpu) {
+    let (mut threads, mut sockets, mut cores, mut caches) =
+        (0u32, HashSet::new(), HashSet::new(), HashSet::new());
+    let mut cache_totals = [0u64; 3];
+    for thread in numbered(cpu_dir, "cpu") {
+        threads += 1;
+        let package = read_trimmed(&thread.join("topology/physical_package_id"));
+        let core = read_trimmed(&thread.join("topology/core_id"));
+        if let (Some(package), Some(core)) = (package, core) {
+            sockets.insert(package.clone());
+            cores.insert((package, core));
+        }
+        for index in numbered(&thread.join("cache"), "index") {
+            let text = |file: &str| read_trimmed(&index.join(file));
+            let (Some(level), Some(kind), Some(shared), Some(kib)) = (
+                text("level").and_then(|l| l.parse::<usize>().ok()),
+                text("type"),
+                text("shared_cpu_list"),
+                text("size").and_then(|s| cache_kib(&s)),
+            ) else {
+                continue;
+            };
+            if (1..=3).contains(&level) && caches.insert((level, kind, shared)) {
+                cache_totals[level - 1] += kib;
+            }
+        }
+    }
+    let count = |n: usize| (n > 0).then_some(n as u32);
+    cpu.threads = (threads > 0).then_some(threads);
+    cpu.sockets = count(sockets.len());
+    cpu.cores = count(cores.len());
+    cpu.numa_nodes = count(numbered(node_dir, "node").len());
+    let kib = |n: u64| (n > 0).then_some(n);
+    (cpu.l1_kib, cpu.l2_kib, cpu.l3_kib) =
+        (kib(cache_totals[0]), kib(cache_totals[1]), kib(cache_totals[2]));
+    let mhz = |file: &str| {
+        read_trimmed(&cpu_dir.join("cpu0/cpufreq").join(file))?
+            .parse::<u32>()
+            .ok()
+            .map(|khz| khz / 1000)
+    };
+    cpu.max_mhz = mhz("cpuinfo_max_freq");
+    cpu.base_mhz = mhz("base_frequency").or_else(|| mhz("amd_pstate_nominal_freq"));
+}
+
+pub fn cpu_facts() -> Cpu {
+    let mut cpu = Cpu {
+        instructions: super::cpu_instructions(),
+        ..Default::default()
+    };
+    read_cpu_sysfs(
+        Path::new("/sys/devices/system/cpu"),
+        Path::new("/sys/devices/system/node"),
+        &mut cpu,
+    );
+    cpu
+}
+
+/// The modules in udev's record of the DMI device (`/run/udev/data/+dmi:id`, its
+/// `MEMORY_DEVICE_<n>_<field>` properties): the one readable copy of the firmware's
+/// table, the table itself being root's alone. Empty where nothing records them.
+fn parse_udev_memory(record: &str) -> Vec<MemoryModule> {
+    let mut modules: std::collections::BTreeMap<u32, MemoryModule> = Default::default();
+    let known = |value: &str| {
+        let lower = value.to_ascii_lowercase();
+        let placeholder = ["unknown", "not specified", "none", "undefined"];
+        (!placeholder.contains(&lower.as_str())).then(|| value.trim().to_string())
+    };
+    let mut slots: HashMap<u32, (String, String)> = HashMap::new();
+    for line in record.lines() {
+        let Some(property) = line.strip_prefix("E:MEMORY_DEVICE_") else {
+            continue;
+        };
+        let Some((name, value)) = property.split_once('=') else {
+            continue;
+        };
+        let Some((n, field)) = name.split_once('_') else {
+            continue;
+        };
+        let Ok(n) = n.parse::<u32>() else {
+            continue;
+        };
+        let module = modules.entry(n).or_default();
+        match field {
+            "SIZE" => module.bytes = value.parse().unwrap_or(0),
+            "TYPE" => module.kind = known(value),
+            "MANUFACTURER" => module.maker = known(value).unwrap_or_default(),
+            "PART_NUMBER" => module.part = known(value).unwrap_or_default(),
+            "SPEED_MTS" => module.rated_mts = value.parse().ok().filter(|v| *v != 0),
+            "CONFIGURED_SPEED_MTS" => {
+                module.configured_mts = value.parse().ok().filter(|v| *v != 0);
+            }
+            "CONFIGURED_VOLTAGE" => {
+                module.configured_millivolts = value.parse().ok().filter(|v| *v != 0);
+            }
+            "BANK_LOCATOR" => slots.entry(n).or_default().0 = known(value).unwrap_or_default(),
+            "LOCATOR" => slots.entry(n).or_default().1 = known(value).unwrap_or_default(),
+            _ => {}
+        }
+    }
+    modules
+        .into_iter()
+        .filter(|(_, m)| m.bytes > 0)
+        .map(|(n, mut m)| {
+            if let Some((bank, slot)) = slots.get(&n) {
+                let names = [bank.as_str(), slot.as_str()];
+                m.slot = names
+                    .into_iter()
+                    .filter(|s| !s.is_empty())
+                    .collect::<Vec<_>>()
+                    .join(" / ");
+            }
+            m
+        })
+        .collect()
+}
+
+pub fn memory_modules() -> Vec<MemoryModule> {
+    parse_udev_memory(&std::fs::read_to_string("/run/udev/data/+dmi:id").unwrap_or_default())
 }
 
 /// The `/proc/meminfo` fields the window shows, in bytes.
@@ -106,6 +315,9 @@ struct BlockStat {
     write_sectors: u64,
     /// Milliseconds the device had at least one request in flight.
     io_ticks: u64,
+    /// The I/Os completed, and the milliseconds they took between them.
+    io_count: u64,
+    io_wait_ms: u64,
 }
 
 fn parse_block_stat(s: &str) -> Option<BlockStat> {
@@ -117,6 +329,8 @@ fn parse_block_stat(s: &str) -> Option<BlockStat> {
         read_sectors: v[2],
         write_sectors: v[6],
         io_ticks: v[9],
+        io_count: v[0] + v[4],
+        io_wait_ms: v[3] + v[7],
     })
 }
 
@@ -255,7 +469,6 @@ fn read_path(gpu: &mut PhysicalGpu, device_dir: &Path) {
     };
     gpu.link = slowest("current_link_speed", "current_link_width");
     gpu.max_link = slowest("max_link_speed", "max_link_width");
-    gpu.link_is_whole_path = true;
     // Past the card itself, a root port and two bridges per switch.
     let bridges = hops.len().saturating_sub(1) as u32;
     gpu.switches = (bridges > 0).then(|| (bridges - 1) / 2);
@@ -422,7 +635,8 @@ fn amd_bars(dir: &Path) -> Vec<Bar> {
 /// The counters a rate is the difference of.
 struct Counters {
     at: Instant,
-    cpu: Option<(u64, u64)>,
+    /// One per socket.
+    cpu: Option<Vec<(u64, u64, u64)>>,
     disk: Option<BlockStat>,
 }
 
@@ -430,10 +644,12 @@ pub struct Sampler {
     amd: Vec<AmdCard>,
     disk: Option<Disk>,
     cpu_title: String,
-    threads: usize,
+    thread_socket: HashMap<u32, usize>,
+    sockets: usize,
     memory_detail: String,
     prev: Counters,
     disk_peak: f64,
+    disk_wait_peak: f64,
     /// One per NVML device.
     pcie_peaks: Vec<f64>,
 }
@@ -445,11 +661,13 @@ impl Sampler {
     pub fn new(models_dir: &Path, off: &HashSet<String>) -> Self {
         let pci_ids = pci_ids();
         let cpuinfo = std::fs::read_to_string("/proc/cpuinfo").unwrap_or_default();
+        let (thread_socket, sockets) = thread_sockets(Path::new("/sys/devices/system/cpu"));
         let mut s = Sampler {
+            thread_socket,
+            sockets,
             amd: amd_cards(Path::new("/sys/class/drm"), &pci_ids),
             disk: disk_for(models_dir),
             cpu_title: cpu_model(&cpuinfo).unwrap_or_else(|| "CPU".to_string()),
-            threads: std::thread::available_parallelism().map_or(0, |n| n.get()),
             memory_detail: memory_detail(),
             prev: Counters {
                 at: Instant::now(),
@@ -457,14 +675,11 @@ impl Sampler {
                 disk: None,
             },
             disk_peak: 0.0,
+            disk_wait_peak: 0.0,
             pcie_peaks: vec![0.0; nvml().map_or(0, |n| n.devices.len())],
         };
         s.prev = s.counters(off);
         s
-    }
-
-    fn cpu_detail(&self) -> String {
-        format!("{} threads", self.threads)
     }
 
     fn disk_names(disk: &Disk) -> (String, String) {
@@ -485,10 +700,11 @@ impl Sampler {
     fn counters(&self, off: &HashSet<String>) -> Counters {
         Counters {
             at: Instant::now(),
-            cpu: (!off.contains(CPU_ID))
+            cpu: (0..self.sockets)
+                .any(|i| !off.contains(&cpu_id(i)))
                 .then(|| std::fs::read_to_string("/proc/stat").ok())
                 .flatten()
-                .and_then(|s| parse_cpu(&s)),
+                .and_then(|s| parse_sockets(&s, &self.thread_socket, self.sockets)),
             disk: self
                 .disk
                 .as_ref()
@@ -528,21 +744,29 @@ impl Sampler {
             );
         }
 
-        let cpu = match (self.prev.cpu, now.cpu) {
-            (Some((b0, t0)), Some((b1, t1))) if t1 > t0 => {
-                Some(100.0 * b1.saturating_sub(b0) as f64 / (t1 - t0) as f64)
-            }
-            _ => None,
-        };
-        let (title, detail) = (self.cpu_title.clone(), self.cpu_detail());
-        groups.push(group(off, CPU_ID, title, detail, || {
-            cpu.map(|p| percent_bar("CPU", p)).into_iter().collect()
-        }));
+        for i in 0..self.sockets {
+            let before = self.prev.cpu.as_ref().and_then(|c| c.get(i));
+            let after = now.cpu.as_ref().and_then(|c| c.get(i));
+            let usage = match (before, after) {
+                (Some(&(b0, t0, w0)), Some(&(b1, t1, w1))) if t1 > t0 => {
+                    let share =
+                        |x: u64, y: u64| 100.0 * y.saturating_sub(x) as f64 / (t1 - t0) as f64;
+                    Some((share(b0, b1), share(w0, w1)))
+                }
+                _ => None,
+            };
+            let title = self.cpu_title.clone();
+            groups.push(group(off, &cpu_id(i), title, cpu_detail(i), || {
+                usage.map_or(Vec::new(), |(busy, iowait)| {
+                    vec![percent_bar("CPU", busy), percent_bar("I/O wait", iowait)]
+                })
+            }));
+        }
 
         groups.push(group(
             off,
             MEMORY_ID,
-            "Memory".to_string(),
+            memory_title(&crate::devices::memory()),
             self.memory_detail.clone(),
             || {
                 let mem =
@@ -561,7 +785,7 @@ impl Sampler {
 
         if let Some(disk) = &self.disk {
             let (title, detail) = Self::disk_names(disk);
-            let peak = &mut self.disk_peak;
+            let (peak, wait_peak) = (&mut self.disk_peak, &mut self.disk_wait_peak);
             let (before, after) = (self.prev.disk, now.disk);
             groups.push(group(off, DISK_ID, title, detail, || {
                 let (Some(a), Some(b)) = (before, after) else {
@@ -577,6 +801,11 @@ impl Sampler {
                     rate_bar("Read", read, peak),
                     rate_bar("Write", write, peak),
                     percent_bar("Busy", busy),
+                    wait_bar(
+                        b.io_wait_ms.saturating_sub(a.io_wait_ms) as f64,
+                        b.io_count.saturating_sub(a.io_count),
+                        wait_peak,
+                    ),
                 ]
             }));
         }
@@ -596,8 +825,111 @@ mod tests {
     fn cpu_line_splits_into_busy_and_total() {
         let stat = "cpu  100 5 50 800 40 3 2 0 0 0\ncpu0 1 1 1 1 1 1 1 1 1 1\n";
         // total = 1000; idle 800 + iowait 40 are the not-busy part.
-        assert_eq!(parse_cpu(stat), Some((160, 1000)));
+        assert_eq!(parse_cpu(stat), Some((160, 1000, 40)));
         assert_eq!(parse_cpu("intr 1 2 3\n"), None);
+    }
+
+    #[test]
+    fn each_socket_adds_up_its_threads() {
+        let stat = "cpu  9 9 9 9 9 0 0 0\ncpu0 10 0 0 80 10 0 0 0\ncpu1 20 0 0 70 10 0 0 0\n\
+                    cpu2 30 0 0 60 10 0 0 0\nintr 1 2\n";
+        let map = HashMap::from([(0, 0), (1, 0), (2, 1)]);
+        assert_eq!(
+            parse_sockets(stat, &map, 2),
+            Some(vec![(30, 200, 20), (30, 100, 10)])
+        );
+        // One socket reads the aggregate line.
+        assert_eq!(parse_sockets(stat, &map, 1), Some(vec![(27, 45, 9)]));
+    }
+
+    #[test]
+    fn sockets_are_counted_from_0_whatever_the_ids() {
+        let root = tempfile::tempdir().unwrap();
+        for (thread, package) in [(0, "3"), (1, "3"), (2, "7")] {
+            let dir = root.path().join(format!("cpu{thread}/topology"));
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join("physical_package_id"), package).unwrap();
+        }
+        std::fs::create_dir_all(root.path().join("cpufreq")).unwrap();
+        let (map, sockets) = thread_sockets(root.path());
+        assert_eq!(sockets, 2);
+        assert_eq!(map, HashMap::from([(0, 0), (1, 0), (2, 1)]));
+        assert_eq!(thread_sockets(&root.path().join("none")).1, 1);
+    }
+
+    #[test]
+    fn the_processor_is_read_from_sysfs() {
+        let root = tempfile::tempdir().unwrap();
+        let put = |path: &str, text: &str| {
+            let path = root.path().join(path);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        };
+        // One socket, one core, two threads sharing every cache.
+        for thread in ["cpu0", "cpu1"] {
+            put(&format!("cpu/{thread}/topology/physical_package_id"), "0\n");
+            put(&format!("cpu/{thread}/topology/core_id"), "0\n");
+            for (index, level, kind, size) in [
+                ("index0", "1", "Data", "48K"),
+                ("index1", "1", "Instruction", "32K"),
+                ("index2", "2", "Unified", "1024K"),
+                ("index3", "3", "Unified", "32M"),
+            ] {
+                put(&format!("cpu/{thread}/cache/{index}/level"), level);
+                put(&format!("cpu/{thread}/cache/{index}/type"), kind);
+                put(&format!("cpu/{thread}/cache/{index}/size"), size);
+                put(&format!("cpu/{thread}/cache/{index}/shared_cpu_list"), "0-1");
+            }
+        }
+        put("cpu/cpufreq/policy0", "not a thread");
+        put("cpu/cpu0/cpufreq/cpuinfo_max_freq", "5600000\n");
+        put("cpu/cpu0/cpufreq/amd_pstate_nominal_freq", "4400000\n");
+        put("node/node0/x", "");
+        let mut cpu = Cpu::default();
+        read_cpu_sysfs(&root.path().join("cpu"), &root.path().join("node"), &mut cpu);
+        assert_eq!(
+            cpu,
+            Cpu {
+                sockets: Some(1),
+                cores: Some(1),
+                threads: Some(2),
+                base_mhz: Some(4400),
+                max_mhz: Some(5600),
+                l1_kib: Some(80),
+                l2_kib: Some(1024),
+                l3_kib: Some(32 << 10),
+                numa_nodes: Some(1),
+                ..Default::default()
+            }
+        );
+    }
+
+    #[test]
+    fn modules_are_read_from_udev_s_record() {
+        let record = "I:123\nE:MEMORY_ARRAY_LOCATION=System Board\n\
+            E:MEMORY_DEVICE_0_PRESENT=1\nE:MEMORY_DEVICE_0_SIZE=34359738368\n\
+            E:MEMORY_DEVICE_0_TYPE=DDR5\nE:MEMORY_DEVICE_0_SPEED_MTS=6400\n\
+            E:MEMORY_DEVICE_0_CONFIGURED_SPEED_MTS=6000\n\
+            E:MEMORY_DEVICE_0_CONFIGURED_VOLTAGE=1100\n\
+            E:MEMORY_DEVICE_0_MANUFACTURER=CORSAIR\n\
+            E:MEMORY_DEVICE_0_PART_NUMBER=CMK64\n\
+            E:MEMORY_DEVICE_0_BANK_LOCATOR=P0 CHANNEL A\n\
+            E:MEMORY_DEVICE_0_LOCATOR=DIMM 1\n\
+            E:MEMORY_DEVICE_1_PRESENT=0\nE:MEMORY_DEVICE_1_LOCATOR=DIMM 2\n";
+        assert_eq!(
+            parse_udev_memory(record),
+            [MemoryModule {
+                maker: "CORSAIR".to_string(),
+                part: "CMK64".to_string(),
+                slot: "P0 CHANNEL A / DIMM 1".to_string(),
+                bytes: 32 << 30,
+                kind: Some("DDR5".to_string()),
+                configured_mts: Some(6000),
+                rated_mts: Some(6400),
+                configured_millivolts: Some(1100),
+            }]
+        );
+        assert!(parse_udev_memory("").is_empty());
     }
 
     #[test]
@@ -622,7 +954,9 @@ mod tests {
             Some(BlockStat {
                 read_sectors: 13216,
                 write_sectors: 900,
-                io_ticks: 40
+                io_ticks: 40,
+                io_count: 529,
+                io_wait_ms: 44,
             })
         );
         assert_eq!(parse_block_stat("1 2 3"), None);
@@ -671,7 +1005,6 @@ mod tests {
         read_path(&mut gpu, &at);
         let four_lanes = PcieLink { generation: 4, width: 4 };
         assert_eq!((gpu.link, gpu.max_link), (Some(four_lanes), Some(four_lanes)));
-        assert!(gpu.link_is_whole_path);
         assert_eq!(gpu.switches, Some(1));
 
         assert_eq!(parse_link("Unknown", "4"), None);

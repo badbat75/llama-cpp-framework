@@ -11,9 +11,9 @@
 //! |-----|--------|
 //! | GPU, VRAM, GTT, Memory activity (amdgpu) | `/sys/class/drm/cardN/device/`: `gpu_busy_percent`, `mem_info_vram_*`, `mem_info_gtt_*`, `mem_busy_percent` |
 //! | GPU, VRAM, Memory activity, PCIe RX/TX (NVIDIA) | NVML (`libnvidia-ml.so.1`, loaded at runtime) |
-//! | CPU | `/proc/stat`, first line |
+//! | CPU, I/O wait | `/proc/stat`, first line |
 //! | RAM, Page cache, Swap | `/proc/meminfo` |
-//! | Disk read, write, busy | `/sys/block/<disk>/stat` of the disk holding the models directory |
+//! | Disk read, write, busy, I/O wait | `/sys/block/<disk>/stat` of the disk holding the models directory |
 //!
 //! On Windows:
 //!
@@ -24,10 +24,14 @@
 //! | CPU | `GetSystemTimes` |
 //! | RAM, Committed | `GetPerformanceInfo` |
 //! | Cached | PDH: the standby lists plus the modified list, which is Task Manager's "Cached" |
-//! | Disk read, write, busy | `IOCTL_DISK_PERFORMANCE` on the physical drive holding the models directory |
+//! | Disk read, write, busy, I/O wait | `IOCTL_DISK_PERFORMANCE` on the physical drive holding the models directory |
 //!
 //! Things that are not obvious from the tables:
 //!
+//! - **I/O wait means two things.** The CPU card's is the share of processor
+//!   time spent idle with I/O pending, which only Linux accounts: the Windows
+//!   kernel counts that time as plain idle, so its CPU card has no such bar.
+//!   The disk card's, on both, is the average time one I/O took.
 //! - **GTT is what Windows calls Shared GPU memory**: system RAM the GPU has
 //!   mapped. NVIDIA has no such bar on Linux, since its driver never spills
 //!   into system RAM there; on Windows every adapter has one, and a card
@@ -49,10 +53,10 @@
 //! collects every adapter at once, so it is skipped only when no adapter that
 //! needs it is on.)
 //!
-//! What does not change while the machine runs (a GPU's facts, the SDKs) is not
-//! sampled: `publish_gpus` reads it once at the GUI's startup and on a refresh,
-//! and a sample only looks a card up by its address. `sdk.rs` says which
-//! `--device` ids a card is.
+//! What does not change while the machine runs (a GPU's facts, the SDKs, the
+//! processor, the memory modules) is not sampled: `publish_gpus` reads it once at
+//! the GUI's startup and on a refresh, and a sample only looks a card up by its
+//! address. `sdk.rs` says which `--device` ids a card is.
 //!
 //! NVML is loaded at runtime, not linked: a machine without the NVIDIA
 //! driver simply has no NVIDIA readings. `nvmlDeviceGetPcieThroughput`
@@ -69,6 +73,8 @@ pub mod sdk;
 mod linux;
 #[cfg(target_os = "linux")]
 use linux as os;
+#[cfg(windows)]
+mod smbios;
 #[cfg(windows)]
 mod windows;
 #[cfg(windows)]
@@ -90,6 +96,8 @@ const GIB: f64 = (1u64 << 30) as f64;
 const MIB: f64 = (1u64 << 20) as f64;
 /// Lowest full-scale value of a rate bar, in bytes per second.
 const RATE_FLOOR: f64 = 16.0 * MIB;
+/// Lowest full-scale value of the disk's wait bar, in milliseconds per I/O.
+const WAIT_FLOOR_MS: f64 = 1.0;
 
 /// One horizontal bar: `fraction` (0 to 1) is the fill, `text` the readout.
 #[derive(Debug, Clone, PartialEq)]
@@ -167,6 +175,68 @@ pub fn publish_gpus(devs: &[crate::devices::DeviceOption]) {
         }
     }
     crate::devices::set_physical(gpus);
+    crate::devices::set_machine(os::cpu_facts(), os::memory_modules());
+}
+
+/// The vector extensions the processor reports, of those inference uses.
+fn cpu_instructions() -> Vec<&'static str> {
+    let mut found = Vec::new();
+    #[cfg(target_arch = "x86_64")]
+    {
+        macro_rules! check {
+            ($($feature:tt => $name:literal),* $(,)?) => {
+                $(if std::is_x86_feature_detected!($feature) { found.push($name); })*
+            };
+        }
+        check!(
+            "avx2" => "AVX2",
+            "fma" => "FMA",
+            "avx512f" => "AVX-512",
+            "avx512vnni" => "AVX-512 VNNI",
+            "avx512bf16" => "AVX-512 BF16",
+        );
+    }
+    found
+}
+
+/// A socket's device id, counted from 0: the first keeps the plain id, so a
+/// setting saved with it holds whatever the machine.
+fn cpu_id(socket: usize) -> String {
+    if socket == 0 {
+        CPU_ID.to_string()
+    } else {
+        format!("{CPU_ID}-{}", socket + 1)
+    }
+}
+
+/// Whether a device id is a socket's.
+pub fn is_cpu_id(id: &str) -> bool {
+    id == CPU_ID || id.strip_prefix("cpu-").is_some_and(|n| n.parse::<usize>().is_ok())
+}
+
+/// A socket's row in the CPU box: `Socket 1`.
+fn cpu_detail(socket: usize) -> String {
+    crate::strings::fill("hw-cpu-socket-number", &[&(socket + 1)])
+}
+
+/// The memory card's title: its modules' names, the count on each. "Memory"
+/// when the firmware names none.
+fn memory_title(modules: &[crate::devices::MemoryModule]) -> String {
+    let mut models: Vec<(String, usize)> = Vec::new();
+    for model in modules.iter().map(|m| m.model()).filter(|m| !m.is_empty()) {
+        match models.iter_mut().find(|(name, _)| *name == model) {
+            Some((_, count)) => *count += 1,
+            None => models.push((model, 1)),
+        }
+    }
+    if models.is_empty() {
+        return "Memory".to_string();
+    }
+    models
+        .iter()
+        .map(|(name, count)| format!("{count} × {name}"))
+        .collect::<Vec<_>>()
+        .join(" + ")
 }
 
 /// Say which `--device` ids each GPU is. A card's own ids head its detail, the
@@ -206,7 +276,7 @@ fn memory_detail() -> String {
 }
 
 const CPU_ID: &str = "cpu";
-const MEMORY_ID: &str = "memory";
+pub const MEMORY_ID: &str = "memory";
 /// The disk holding the models directory, whichever one that is.
 const DISK_ID: &str = "disk";
 
@@ -277,6 +347,18 @@ fn rate_bar(label: &str, bytes_per_s: f64, peak: &mut f64) -> Bar {
         label: label.to_string(),
         text: format!("{} · peak {}", rate_text(bytes_per_s), rate_text(*peak)),
         fraction: (bytes_per_s / *peak).clamp(0.0, 1.0) as f32,
+    }
+}
+
+/// The time an I/O of the interval took on average, against the running `peak`.
+/// `wait_ms` is the time the interval's `ops` spent queued and in service.
+fn wait_bar(wait_ms: f64, ops: u64, peak: &mut f64) -> Bar {
+    let ms = if ops == 0 { 0.0 } else { wait_ms / ops as f64 };
+    *peak = peak.max(ms).max(WAIT_FLOOR_MS);
+    Bar {
+        label: "I/O wait".to_string(),
+        text: format!("{ms:.2} ms per I/O · peak {peak:.2} ms"),
+        fraction: (ms / *peak).clamp(0.0, 1.0) as f32,
     }
 }
 
@@ -453,6 +535,44 @@ fn nvidia_bars(nvml: &Nvml, dev: NvmlDevice, peak: &mut f64) -> Vec<Bar> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_memory_title_names_each_kind_of_module() {
+        let module = |part: &str| crate::devices::MemoryModule {
+            maker: "CORSAIR".to_string(),
+            part: part.to_string(),
+            ..Default::default()
+        };
+        assert_eq!(memory_title(&[]), "Memory");
+        assert_eq!(
+            memory_title(&[module("A"), module("A")]),
+            "2 × CORSAIR A"
+        );
+        // Mixed modules, in slot order; one the firmware does not name is skipped.
+        assert_eq!(
+            memory_title(&[module("A"), module("B"), module("A"), Default::default()]),
+            "2 × CORSAIR A + 1 × CORSAIR B"
+        );
+    }
+
+    #[test]
+    fn a_socket_s_id_keeps_the_plain_one_first() {
+        assert_eq!((cpu_id(0).as_str(), cpu_id(1).as_str()), ("cpu", "cpu-2"));
+        assert!(is_cpu_id("cpu") && is_cpu_id("cpu-2"));
+        assert!(!is_cpu_id("cpu-x") && !is_cpu_id("memory"));
+    }
+
+    #[test]
+    fn the_wait_bar_is_time_per_io_against_its_peak() {
+        let mut peak = 0.0;
+        // Under the floor the scale is the floor.
+        let bar = wait_bar(50.0, 100, &mut peak);
+        assert_eq!(bar.text, "0.50 ms per I/O · peak 1.00 ms");
+        assert_eq!(bar.fraction, 0.5);
+        // No I/O in the interval is no wait, not a division by zero.
+        assert_eq!(wait_bar(0.0, 0, &mut peak).text, "0.00 ms per I/O · peak 1.00 ms");
+        assert_eq!(wait_bar(400.0, 100, &mut peak).fraction, 1.0);
+    }
 
     #[test]
     fn rate_bars_scale_to_the_peak_and_never_below_the_floor() {

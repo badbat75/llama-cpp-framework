@@ -729,7 +729,7 @@ $blocks = @()
 # Read only: no write, rename or delete by anyone) from BEFORE the check until
 # the installer exits; what was verified is what runs. Returns the exit code,
 # $null when the installer was refused.
-$blocks += @'
+$vendorSignatureFunction = @'
 function Test-VendorSignature([string]$File, [string]$Org) {
     $sig = Get-AuthenticodeSignature $File
     $subject = if ($sig.SignerCertificate) { $sig.SignerCertificate.Subject } else { '' }
@@ -737,6 +737,10 @@ function Test-VendorSignature([string]$File, [string]$Org) {
     Write-Host "  [!!] $(Split-Path $File -Leaf): signature $($sig.Status), signer '$subject' (expected O=$Org); refused" -ForegroundColor Red
     return $false
 }
+'@
+. ([scriptblock]::Create($vendorSignatureFunction))
+$blocks += $vendorSignatureFunction
+$blocks += @'
 function Invoke-SignedInstaller([string]$File, [string]$Org, [string]$Arguments) {
     $lock = [IO.File]::Open($File, 'Open', 'Read', 'Read')
     try {
@@ -959,13 +963,18 @@ Remove-Item $vkExe -Force -ErrorAction SilentlyContinue
 # import lib and an installer that would write System32, so it comes from
 # LunarG's runtime archive of the same version, into Runtime\ of the dist. Runs
 # on an SDK already installed too, which is how a dist older than this step
-# gets it. Only the two files named are taken out of the archive, and the DLL is
-# checked inside the locked dist, where no unelevated process can swap it,
-# before it takes its name.
+# gets it, and how a copy that no longer passes its signature is replaced. The
+# dist is locked FIRST, whatever its root allows: the archive, the check and the
+# rename all happen where no unelevated process can write. Only the two files
+# named are taken out of the archive; a file already there goes first, since
+# extracting over a link would write through it, and a loader that fails stays
+# gone rather than shipped.
 $vkRuntimeDist = if ($vulkanTarget) {
     @{ Version = $vulkanTarget.Version; Dir = Get-DistDir 'Vulkan' $vulkanTarget.Version $sources $distRoot }
 } else { $vulkanBefore }
-if ($vkRuntimeDist -and -not (Test-Path (Join-Path $vkRuntimeDist.Dir 'Runtime\vulkan-1.dll'))) {
+$vkRuntimeDll = if ($vkRuntimeDist) { Join-Path $vkRuntimeDist.Dir 'Runtime\vulkan-1.dll' }
+if ($vkRuntimeDist -and -not ((Test-Path $vkRuntimeDll) -and (Test-VendorSignature $vkRuntimeDll $vulkan.Signer))) {
+    $blocks += $distAclFunctions
     $blocks += @'
 
 function Install-VulkanRuntime([string]$Zip, [string]$DistDir, [string]$Org) {
@@ -974,7 +983,7 @@ function Install-VulkanRuntime([string]$Zip, [string]$DistDir, [string]$Org) {
     $license = Join-Path $runtime 'VulkanRT-License.txt'
     $new = "$dll.new"
     try {
-        New-Item -ItemType Directory -Force -Path $runtime | Out-Null
+        Remove-Item -LiteralPath $dll, $license, $new -Force -ErrorAction SilentlyContinue
         Add-Type -AssemblyName System.IO.Compression.FileSystem
         $archive = [IO.Compression.ZipFile]::OpenRead($Zip)
         try {
@@ -998,20 +1007,27 @@ function Install-VulkanRuntime([string]$Zip, [string]$DistDir, [string]$Org) {
 }
 '@
     $blocks += "`$rtVer = $(Lit $vkRuntimeDist.Version); `$rtUrl = $(Lit ($vulkan.Runtime -f $vkRuntimeDist.Version)); `$rtDir = $(Lit $vkRuntimeDist.Dir); `$rtSigner = $(Lit $vulkan.Signer)"
-    $blocks += "`$rtDl = $(Lit (Join-Path (Get-DistHome 'Vulkan' $sources $distRoot) '.downloads')); `$rtMarker = $(Lit $vulkan.Marker)"
+    $blocks += "`$rtMarker = $(Lit $vulkan.Marker)"
     $blocks += @'
 
 if (Test-Path (Join-Path $rtDir $rtMarker)) {
     Write-Host "Fetching the Vulkan loader $rtVer..." -ForegroundColor Cyan
-    New-Item -ItemType Directory -Force -Path $rtDl | Out-Null
-    $rtZip = Join-Path $rtDl (Split-Path $rtUrl -Leaf)
-    curl.exe --fail -L --retry 3 --retry-delay 5 -o $rtZip $rtUrl
-    if ($LASTEXITCODE -ne 0) {
-        Write-Host "  download failed (curl exit $LASTEXITCODE)" -ForegroundColor Red
-    } elseif (Install-VulkanRuntime $rtZip $rtDir $rtSigner) {
-        Write-Host "  Vulkan loader $rtVer in $rtDir\Runtime" -ForegroundColor Green
+    Protect-DistDir $rtDir
+    $rtRuntime = Join-Path $rtDir 'Runtime'
+    $rtLinked = (Test-Path $rtRuntime) -and ((Get-Item -Force $rtRuntime).Attributes -band [IO.FileAttributes]::ReparsePoint)
+    if (@(Get-DistBroadWriters $rtDir).Count -or $rtLinked) {
+        Write-Host "  [!!] $rtDir is not writable by administrators alone, or Runtime is a link: the loader was not fetched" -ForegroundColor Red
+    } else {
+        New-Item -ItemType Directory -Force -Path $rtRuntime | Out-Null
+        $rtZip = Join-Path $rtRuntime (Split-Path $rtUrl -Leaf)
+        curl.exe --fail -L --retry 3 --retry-delay 5 -o $rtZip $rtUrl
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "  download failed (curl exit $LASTEXITCODE)" -ForegroundColor Red
+        } elseif (Install-VulkanRuntime $rtZip $rtDir $rtSigner) {
+            Write-Host "  Vulkan loader $rtVer in $rtRuntime" -ForegroundColor Green
+        }
+        Remove-Item $rtZip -Force -ErrorAction SilentlyContinue
     }
-    Remove-Item $rtZip -Force -ErrorAction SilentlyContinue
 }
 '@
 }

@@ -121,6 +121,11 @@ pub fn print() {
     // SAFETY: each symbol is looked up under the name its SDK's header declares
     // it by, with that header's signature.
     unsafe {
+        // The system's search stands in for llama-server's, so it keeps the path,
+        // but a library must never come from wherever this was started: the empty
+        // string takes the current directory out, for dependencies too.
+        #[cfg(windows)]
+        windows_sys::Win32::System::LibraryLoader::SetDllDirectoryW([0u16].as_ptr());
         for path in hip_candidates() {
             let lib = open_path(&path);
             if !lib.is_null() {

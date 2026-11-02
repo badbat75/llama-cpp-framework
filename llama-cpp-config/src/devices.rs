@@ -70,13 +70,12 @@ pub struct PhysicalGpu {
     /// The system memory the card can map: Shared memory on Windows, GTT on
     /// Linux.
     pub shared_mib: u64,
+    /// The slowest hop between the card and the CPU on Linux. Windows reports
+    /// nothing for a bridge, so there it is the card's own link, which on a card
+    /// with an internal switch is the link to that switch, whatever the slot
+    /// gives it: see `hwmon/windows.rs`.
     pub link: Option<PcieLink>,
     pub max_link: Option<PcieLink>,
-    /// True when `link` is the slowest hop between the card and the CPU. False
-    /// where only the card's own link can be read (Windows reports nothing
-    /// for a bridge), which on a card with an internal switch is the link to
-    /// that switch, whatever the slot gives it: see `hwmon/windows.rs`.
-    pub link_is_whole_path: bool,
     /// The PCIe switches between the card and the CPU, its own included.
     pub switches: Option<u32>,
     pub driver: Option<String>,
@@ -99,8 +98,77 @@ pub struct Sdk {
     pub built_with: Option<String>,
 }
 
+/// What is known of the machine's processor, published with the GPUs. A source
+/// that does not answer leaves its fact empty.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[cfg_attr(not(any(target_os = "linux", windows)), allow(dead_code))]
+pub struct Cpu {
+    /// How many are populated, and the firmware's name for them: `AM5`.
+    pub sockets: Option<u32>,
+    pub socket: Option<String>,
+    pub cores: Option<u32>,
+    pub threads: Option<u32>,
+    pub base_mhz: Option<u32>,
+    pub max_mhz: Option<u32>,
+    /// Totals over the whole processor, data and instruction caches together.
+    pub l1_kib: Option<u64>,
+    pub l2_kib: Option<u64>,
+    pub l3_kib: Option<u64>,
+    pub numa_nodes: Option<u32>,
+    /// The vector extensions the processor reports, of those inference uses.
+    pub instructions: Vec<&'static str>,
+}
+
+/// One installed memory module, published with the GPUs.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[cfg_attr(not(any(target_os = "linux", windows)), allow(dead_code))]
+pub struct MemoryModule {
+    pub maker: String,
+    pub part: String,
+    /// Where it sits: the firmware's bank and slot names.
+    pub slot: String,
+    pub bytes: u64,
+    /// `DDR5`.
+    pub kind: Option<String>,
+    /// The speed it runs at and the one it is rated for, in MT/s.
+    pub configured_mts: Option<u32>,
+    pub rated_mts: Option<u32>,
+    pub configured_millivolts: Option<u32>,
+}
+
+impl MemoryModule {
+    /// `CORSAIR CMK64GX5M2B6000Z30`; empty when the firmware names neither.
+    pub fn model(&self) -> String {
+        [self.maker.as_str(), self.part.as_str()]
+            .into_iter()
+            .filter(|s| !s.is_empty())
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+}
+
 static PHYSICAL: RwLock<Vec<PhysicalGpu>> = RwLock::new(Vec::new());
 static SDKS: RwLock<Vec<Sdk>> = RwLock::new(Vec::new());
+static CPU: RwLock<Option<Cpu>> = RwLock::new(None);
+static MEMORY: RwLock<Vec<MemoryModule>> = RwLock::new(Vec::new());
+
+#[cfg_attr(not(any(target_os = "linux", windows)), allow(dead_code))]
+pub fn set_machine(cpu: Cpu, memory: Vec<MemoryModule>) {
+    *CPU.write().unwrap() = Some(cpu);
+    *MEMORY.write().unwrap() = memory;
+}
+
+/// The processor: like `physical()`, the GUI's alone.
+#[cfg_attr(not(any(target_os = "linux", windows)), allow(dead_code))]
+pub fn cpu() -> Option<Cpu> {
+    CPU.read().unwrap().clone()
+}
+
+/// The installed memory modules: like `physical()`, the GUI's alone.
+#[cfg_attr(not(any(target_os = "linux", windows)), allow(dead_code))]
+pub fn memory() -> Vec<MemoryModule> {
+    MEMORY.read().unwrap().clone()
+}
 
 #[cfg_attr(not(any(target_os = "linux", windows)), allow(dead_code))]
 pub fn set_sdks(sdks: Vec<Sdk>) {

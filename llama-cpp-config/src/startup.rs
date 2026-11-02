@@ -64,7 +64,7 @@ fn choose_autostart_exe(
 }
 
 #[cfg(windows)]
-pub use win::{is_enabled, machine_reg_sz, set_enabled, starts_minimized};
+pub use win::{is_enabled, machine_reg_dword, machine_reg_sz, set_enabled, starts_minimized};
 
 #[cfg(target_os = "linux")]
 pub use linux::{is_enabled, set_enabled, starts_minimized};
@@ -227,7 +227,7 @@ mod win {
     use windows_sys::Win32::System::Registry::{
         RegCloseKey, RegDeleteValueW, RegOpenKeyExW, RegQueryValueExW, RegSetValueExW,
         HKEY as Hkey, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, KEY_QUERY_VALUE, KEY_SET_VALUE,
-        REG_SAM_FLAGS, REG_SZ,
+        REG_DWORD, REG_SAM_FLAGS, REG_SZ,
     };
 
     const RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
@@ -315,6 +315,31 @@ mod win {
     /// this module already owns it.
     pub fn machine_reg_sz(subkey: &str, value: &str) -> Option<String> {
         read_reg_sz(HKEY_LOCAL_MACHINE, subkey, value)
+    }
+
+    /// Read one `REG_DWORD` under `HKLM`.
+    pub fn machine_reg_dword(subkey: &str, value: &str) -> Option<u32> {
+        let (sub, name) = (wide(subkey), wide(value));
+        let mut key: Hkey = std::ptr::null_mut();
+        // SAFETY: NUL-terminated names and live locals sized for a DWORD.
+        unsafe {
+            if RegOpenKeyExW(HKEY_LOCAL_MACHINE, sub.as_ptr(), 0, KEY_QUERY_VALUE, &mut key)
+                != ERROR_SUCCESS
+            {
+                return None;
+            }
+            let (mut kind, mut data, mut len) = (0u32, 0u32, 4u32);
+            let ret = RegQueryValueExW(
+                key,
+                name.as_ptr(),
+                std::ptr::null_mut(),
+                &mut kind,
+                (&mut data as *mut u32).cast::<u8>(),
+                &mut len,
+            );
+            RegCloseKey(key);
+            (ret == ERROR_SUCCESS && kind == REG_DWORD).then_some(data)
+        }
     }
 
     const INSTALL_KEY: &str = r"Software\llama.cpp";

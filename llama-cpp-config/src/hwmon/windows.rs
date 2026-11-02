@@ -26,7 +26,7 @@
 //!   IOCTLs ask for none.
 
 use super::*;
-use crate::devices::{PcieLink, PhysicalGpu};
+use crate::devices::{Cpu, MemoryModule, PcieLink, PhysicalGpu};
 use std::collections::HashMap;
 use std::os::windows::ffi::OsStrExt;
 use std::path::Path;
@@ -67,6 +67,9 @@ use windows_sys::Win32::System::Performance::{
     PDH_FMT_COUNTERVALUE_ITEM_W, PDH_FMT_DOUBLE, PDH_MORE_DATA,
 };
 use windows_sys::Win32::System::ProcessStatus::{K32GetPerformanceInfo, PERFORMANCE_INFORMATION};
+use windows_sys::Win32::System::SystemInformation::{
+    GetLogicalProcessorInformationEx, GetSystemFirmwareTable, RelationAll,
+};
 use windows_sys::Win32::System::Threading::GetSystemTimes;
 use windows_sys::Win32::System::IO::DeviceIoControl;
 
@@ -761,6 +764,235 @@ fn cpu_times() -> Option<(u64, u64)> {
     Some((total.saturating_sub(idle), total))
 }
 
+const RELATION_CORE: u32 = 0;
+const RELATION_NUMA_NODE: u32 = 1;
+const RELATION_CACHE: u32 = 2;
+const RELATION_PACKAGE: u32 = 3;
+/// Where a core's or a package's list of group affinities starts, and its count.
+const GROUP_COUNT: usize = 30;
+const GROUP_MASKS: usize = 32;
+const GROUP_AFFINITY_SIZE: usize = 16;
+
+fn u32_at(record: &[u8], at: usize) -> Option<u32> {
+    let b = record.get(at..at + 4)?;
+    Some(u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+}
+
+/// The records of `GetLogicalProcessorInformationEx`, each headed by its
+/// relationship and its size; a nonsense size ends the walk.
+fn topology_records(buffer: &[u8]) -> Vec<(u32, &[u8])> {
+    let mut records = Vec::new();
+    let mut at = 0;
+    while let Some(rest) = buffer.get(at..) {
+        let (Some(relationship), Some(size)) = (u32_at(rest, 0), u32_at(rest, 4)) else {
+            break;
+        };
+        let Some(record) = rest.get(..size as usize).filter(|_| size >= 8) else {
+            break;
+        };
+        records.push((relationship, record));
+        at += size as usize;
+    }
+    records
+}
+
+/// Each socket's processors, as `(group, mask)` pairs.
+fn socket_masks(buffer: &[u8]) -> Vec<Vec<(u16, u64)>> {
+    topology_records(buffer)
+        .into_iter()
+        .filter(|(relationship, _)| *relationship == RELATION_PACKAGE)
+        .map(|(_, record)| {
+            let count = record
+                .get(GROUP_COUNT..GROUP_COUNT + 2)
+                .map_or(0, |b| u16::from_le_bytes([b[0], b[1]]) as usize);
+            record
+                .get(GROUP_MASKS..)
+                .unwrap_or_default()
+                .as_chunks::<GROUP_AFFINITY_SIZE>()
+                .0
+                .iter()
+                .take(count)
+                .map(|affinity| {
+                    let mut mask = [0u8; 8];
+                    mask.copy_from_slice(&affinity[..8]);
+                    let group = u16::from_le_bytes([affinity[8], affinity[9]]);
+                    (group, u64::from_le_bytes(mask))
+                })
+                .collect()
+        })
+        .collect()
+}
+
+/// What `GetLogicalProcessorInformationEx` says of the processor.
+fn read_topology(buffer: &[u8], cpu: &mut Cpu) {
+    const CORE: u32 = RELATION_CORE;
+    const NUMA_NODE: u32 = RELATION_NUMA_NODE;
+    const CACHE: u32 = RELATION_CACHE;
+    const PACKAGE: u32 = RELATION_PACKAGE;
+    const CORE_MASK: usize = GROUP_MASKS;
+    // Offsets in a cache record.
+    const CACHE_LEVEL: usize = 8;
+    const CACHE_SIZE: usize = 12;
+    let (mut cores, mut threads, mut nodes, mut packages) = (0u32, 0u32, 0u32, 0u32);
+    let mut cache_kib = [0u64; 3];
+    for (relationship, record) in topology_records(buffer) {
+        match relationship {
+            CORE => {
+                cores += 1;
+                // The first group's mask: a core does not span groups.
+                let low = u32_at(record, CORE_MASK).unwrap_or(0);
+                let high = u32_at(record, CORE_MASK + 4).unwrap_or(0);
+                threads += low.count_ones() + high.count_ones();
+            }
+            NUMA_NODE => nodes += 1,
+            PACKAGE => packages += 1,
+            CACHE => {
+                let level = record.get(CACHE_LEVEL).copied().unwrap_or(0) as usize;
+                if let (1..=3, Some(bytes)) = (level, u32_at(record, CACHE_SIZE)) {
+                    cache_kib[level - 1] += bytes as u64 / 1024;
+                }
+            }
+            _ => {}
+        }
+    }
+    let some = |n: u32| (n > 0).then_some(n);
+    let some_kib = |n: u64| (n > 0).then_some(n);
+    (cpu.sockets, cpu.cores, cpu.threads, cpu.numa_nodes) =
+        (some(packages), some(cores), some(threads), some(nodes));
+    (cpu.l1_kib, cpu.l2_kib, cpu.l3_kib) = (
+        some_kib(cache_kib[0]),
+        some_kib(cache_kib[1]),
+        some_kib(cache_kib[2]),
+    );
+}
+
+/// The firmware's SMBIOS table, without the header Windows puts before it.
+fn smbios_table() -> Option<Vec<u8>> {
+    const HEADER: usize = 8;
+    let provider = u32::from_be_bytes(*b"RSMB");
+    // SAFETY: a null buffer of size 0 asks for the size; the second call gets a
+    // live buffer of that size.
+    let mut raw = unsafe {
+        let size = GetSystemFirmwareTable(provider, 0, std::ptr::null_mut(), 0);
+        if size == 0 {
+            return None;
+        }
+        let mut raw = vec![0u8; size as usize];
+        let written = GetSystemFirmwareTable(provider, 0, raw.as_mut_ptr().cast(), size);
+        if written == 0 || written > size {
+            return None;
+        }
+        raw.truncate(written as usize);
+        raw
+    };
+    if raw.len() < HEADER {
+        return None;
+    }
+    Some(raw.split_off(HEADER))
+}
+
+/// The whole of `GetLogicalProcessorInformationEx`; empty when it fails.
+fn topology_buffer() -> Vec<u8> {
+    let mut size = 0u32;
+    // SAFETY: a null buffer asks for the size, then a live buffer of it is
+    // filled; u64 storage keeps the records aligned.
+    unsafe {
+        GetLogicalProcessorInformationEx(RelationAll, std::ptr::null_mut(), &mut size);
+        let mut buffer = vec![0u64; (size as usize).div_ceil(8)];
+        let filled = size > 0
+            && GetLogicalProcessorInformationEx(
+                RelationAll,
+                buffer.as_mut_ptr().cast(),
+                &mut size,
+            ) != 0;
+        if !filled {
+            return Vec::new();
+        }
+        std::slice::from_raw_parts(buffer.as_ptr().cast::<u8>(), size as usize).to_vec()
+    }
+}
+
+/// Each socket's share of busy time out of `\Processor Information`, whose
+/// instances are named `<group>,<processor>`. On a machine of several sockets
+/// only: `GetSystemTimes` knows the machine as a whole.
+struct SocketCounters {
+    query: Query,
+    counter: Handle,
+    sockets: Vec<Vec<(u16, u64)>>,
+}
+
+impl SocketCounters {
+    fn open(sockets: Vec<Vec<(u16, u64)>>) -> Option<Self> {
+        let query = Query::open()?;
+        let counter = query.add(r"\Processor Information(*)\% Processor Time")?;
+        // The first reading is only the baseline of the next.
+        query.collect();
+        Some(SocketCounters {
+            query,
+            counter,
+            sockets,
+        })
+    }
+
+    fn read(&self) -> Vec<Option<f64>> {
+        let values = self
+            .query
+            .collect()
+            .then(|| counter_values(self.counter))
+            .flatten()
+            .unwrap_or_default();
+        socket_usage(&values, &self.sockets)
+    }
+}
+
+/// The mean of each socket's processors; `None` for a socket none of them
+/// answered for. The `_Total` instances name no processor.
+fn socket_usage(values: &[(String, f64)], sockets: &[Vec<(u16, u64)>]) -> Vec<Option<f64>> {
+    let parsed: Vec<(u16, u32, f64)> = values
+        .iter()
+        .filter_map(|(name, value)| {
+            let (group, processor) = name.split_once(',')?;
+            Some((group.parse().ok()?, processor.parse().ok()?, *value))
+        })
+        .collect();
+    sockets
+        .iter()
+        .map(|masks| {
+            let of_socket: Vec<f64> = parsed
+                .iter()
+                .filter(|(group, processor, _)| {
+                    *processor < 64
+                        && masks
+                            .iter()
+                            .any(|(g, mask)| g == group && mask & (1u64 << processor) != 0)
+                })
+                .map(|(_, _, value)| *value)
+                .collect();
+            (!of_socket.is_empty()).then(|| of_socket.iter().sum::<f64>() / of_socket.len() as f64)
+        })
+        .collect()
+}
+
+pub fn cpu_facts() -> Cpu {
+    let mut cpu = Cpu {
+        instructions: super::cpu_instructions(),
+        base_mhz: crate::startup::machine_reg_dword(
+            r"HARDWARE\DESCRIPTION\System\CentralProcessor\0",
+            "~MHz",
+        ),
+        ..Default::default()
+    };
+    read_topology(&topology_buffer(), &mut cpu);
+    if let Some(table) = smbios_table() {
+        (cpu.socket, cpu.max_mhz) = super::smbios::processor(&table);
+    }
+    cpu
+}
+
+pub fn memory_modules() -> Vec<MemoryModule> {
+    smbios_table().map_or(Vec::new(), |table| super::smbios::memory_modules(&table))
+}
+
 /// The memory figures of Task Manager's Performance page, in bytes.
 struct Mem {
     total: u64,
@@ -851,6 +1083,9 @@ struct DiskStat {
     idle: i64,
     /// When the counters were read, on the same clock as `idle`.
     at: i64,
+    /// The time reads and writes took, in 100 ns units, and how many there were.
+    io_time: i64,
+    io_count: u64,
 }
 
 /// The device's name out of a `STORAGE_DEVICE_DESCRIPTOR`: its vendor and
@@ -962,12 +1197,14 @@ impl Disk {
             written_bytes: perf.BytesWritten,
             idle: perf.IdleTime,
             at: perf.QueryTime,
+            io_time: perf.ReadTime.wrapping_add(perf.WriteTime),
+            io_count: perf.ReadCount as u64 + perf.WriteCount as u64,
         })
     }
 }
 
 /// The disk's bars between two readings; none when no time passed.
-fn disk_bars(a: DiskStat, b: DiskStat, peak: &mut f64) -> Vec<Bar> {
+fn disk_bars(a: DiskStat, b: DiskStat, peak: &mut f64, wait_peak: &mut f64) -> Vec<Bar> {
     let ticks = (b.at - a.at) as f64;
     if ticks <= 0.0 {
         return Vec::new();
@@ -982,6 +1219,11 @@ fn disk_bars(a: DiskStat, b: DiskStat, peak: &mut f64) -> Vec<Bar> {
         rate_bar("Read", read, peak),
         rate_bar("Write", write, peak),
         percent_bar("Busy", busy.clamp(0.0, 100.0)),
+        wait_bar(
+            (b.io_time - a.io_time).max(0) as f64 / 1e4,
+            b.io_count.saturating_sub(a.io_count),
+            wait_peak,
+        ),
     ]
 }
 
@@ -999,10 +1241,12 @@ pub struct Sampler {
     cached: Option<CachedCounters>,
     disk: Option<Disk>,
     cpu_title: String,
-    threads: usize,
+    /// On a machine of several sockets; without it one row stands for them all.
+    sockets: Option<SocketCounters>,
     memory_detail: String,
     prev: Counters,
     disk_peak: f64,
+    disk_wait_peak: f64,
 }
 
 impl Sampler {
@@ -1022,13 +1266,16 @@ impl Sampler {
             cached: CachedCounters::open(),
             disk: disk_for(models_dir),
             cpu_title: cpu_title.unwrap_or_else(|| "CPU".to_string()),
-            threads: std::thread::available_parallelism().map_or(0, |n| n.get()),
+            sockets: Some(socket_masks(&topology_buffer()))
+                .filter(|masks| masks.len() > 1)
+                .and_then(SocketCounters::open),
             memory_detail: memory_detail(),
             prev: Counters {
                 cpu: None,
                 disk: None,
             },
             disk_peak: 0.0,
+            disk_wait_peak: 0.0,
         };
         s.prev = s.counters(off);
         s.gpu.read(&s.adapters, off);
@@ -1074,16 +1321,29 @@ impl Sampler {
             }
             _ => None,
         };
-        let detail = format!("{} threads", self.threads);
-        groups.push(group(off, CPU_ID, self.cpu_title.clone(), detail, || {
-            cpu.map(|p| percent_bar("CPU", p)).into_iter().collect()
-        }));
+        let usage = match &self.sockets {
+            Some(sockets) => {
+                let on = (0..sockets.sockets.len()).any(|i| !off.contains(&cpu_id(i)));
+                if on {
+                    sockets.read()
+                } else {
+                    vec![None; sockets.sockets.len()]
+                }
+            }
+            None => vec![cpu],
+        };
+        for (i, usage) in usage.into_iter().enumerate() {
+            let title = self.cpu_title.clone();
+            groups.push(group(off, &cpu_id(i), title, cpu_detail(i), || {
+                usage.map(|p| percent_bar("CPU", p)).into_iter().collect()
+            }));
+        }
 
         let cached = &self.cached;
         groups.push(group(
             off,
             MEMORY_ID,
-            "Memory".to_string(),
+            memory_title(&crate::devices::memory()),
             self.memory_detail.clone(),
             || {
                 let Some(mem) = memory() else {
@@ -1103,12 +1363,12 @@ impl Sampler {
         ));
 
         if let Some(disk) = &self.disk {
-            let peak = &mut self.disk_peak;
+            let (peak, wait_peak) = (&mut self.disk_peak, &mut self.disk_wait_peak);
             let (before, after) = (self.prev.disk, now.disk);
             let (title, detail) = (disk.title.clone(), disk.detail.clone());
             groups.push(group(off, DISK_ID, title, detail, || {
                 match (before, after) {
-                    (Some(a), Some(b)) => disk_bars(a, b, peak),
+                    (Some(a), Some(b)) => disk_bars(a, b, peak, wait_peak),
                     _ => Vec::new(),
                 }
             }));
@@ -1309,22 +1569,132 @@ mod tests {
             written_bytes: 0,
             idle: 0,
             at: 0,
+            io_time: 0,
+            io_count: 0,
         };
-        // Two seconds later: 64 MiB read, 16 MiB written, idle for 1.5 s.
+        // Two seconds later: 64 MiB read, 16 MiB written, idle for 1.5 s, and
+        // 100 I/Os that took 0.5 s in all.
         let b = DiskStat {
             read_bytes: (1 << 30) + (64 << 20),
             written_bytes: 16 << 20,
             idle: 15_000_000,
             at: 20_000_000,
+            io_time: 5_000_000,
+            io_count: 100,
         };
-        let mut peak = 0.0;
-        let bars = disk_bars(a, b, &mut peak);
+        let (mut peak, mut wait_peak) = (0.0, 0.0);
+        let bars = disk_bars(a, b, &mut peak, &mut wait_peak);
         assert_eq!(bars[0].text, "32.0 MiB/s · peak 32.0 MiB/s");
         // One scale for both directions.
         assert_eq!(bars[1].text, "8.0 MiB/s · peak 32.0 MiB/s");
         assert_eq!(bars[2].text, "25 %");
+        assert_eq!(bars[3].text, "5.00 ms per I/O · peak 5.00 ms");
         // The same reading twice is no interval at all.
-        assert!(disk_bars(b, b, &mut peak).is_empty());
+        assert!(disk_bars(b, b, &mut peak, &mut wait_peak).is_empty());
+    }
+
+    #[test]
+    fn topology_records_add_up_to_the_processor() {
+        let record = |relationship: u32, fields: &[(usize, &[u8])]| {
+            let mut r = vec![0u8; 48];
+            r[0..4].copy_from_slice(&relationship.to_le_bytes());
+            r[4..8].copy_from_slice(&48u32.to_le_bytes());
+            for (at, bytes) in fields {
+                r[*at..*at + bytes.len()].copy_from_slice(bytes);
+            }
+            r
+        };
+        let core = |mask: u64| record(0, &[(32, &mask.to_le_bytes())]);
+        let cache = |level: u8, bytes: u32| {
+            record(2, &[(8, &[level]), (12, &bytes.to_le_bytes())])
+        };
+        let buffer = [
+            core(0b0011),
+            core(0b1100),
+            record(1, &[]),
+            cache(1, 48 << 10),
+            cache(1, 32 << 10),
+            cache(2, 1 << 20),
+            cache(2, 1 << 20),
+            cache(3, 32 << 20),
+            record(3, &[]),
+            // A relationship nobody reads counts for nothing.
+            record(4, &[]),
+        ]
+        .concat();
+        let mut cpu = Cpu::default();
+        read_topology(&buffer, &mut cpu);
+        assert_eq!(
+            (cpu.sockets, cpu.cores, cpu.threads, cpu.numa_nodes),
+            (Some(1), Some(2), Some(4), Some(1))
+        );
+        assert_eq!(
+            (cpu.l1_kib, cpu.l2_kib, cpu.l3_kib),
+            (Some(80), Some(2048), Some(32 << 10))
+        );
+
+        // A record with a nonsense size ends the walk.
+        let mut cpu = Cpu::default();
+        read_topology(&[0, 0, 0, 0, 2, 0, 0, 0], &mut cpu);
+        assert_eq!(cpu, Cpu::default());
+    }
+
+    #[test]
+    fn a_package_lists_its_group_masks() {
+        let mut record = vec![0u8; 64];
+        record[0..4].copy_from_slice(&RELATION_PACKAGE.to_le_bytes());
+        record[4..8].copy_from_slice(&64u32.to_le_bytes());
+        record[GROUP_COUNT] = 2;
+        record[GROUP_MASKS..GROUP_MASKS + 8].copy_from_slice(&0xFu64.to_le_bytes());
+        record[GROUP_MASKS + 16..GROUP_MASKS + 24].copy_from_slice(&0x3u64.to_le_bytes());
+        record[GROUP_MASKS + 24] = 1;
+        assert_eq!(socket_masks(&record), [vec![(0, 0xF), (1, 0x3)]]);
+    }
+
+    #[test]
+    fn a_socket_is_the_mean_of_its_processors() {
+        let values: Vec<(String, f64)> = [
+            ("0,0", 10.0),
+            ("0,1", 30.0),
+            ("0,_Total", 99.0),
+            ("_Total", 99.0),
+            ("1,0", 50.0),
+        ]
+        .iter()
+        .map(|(name, value)| (name.to_string(), *value))
+        .collect();
+        let sockets = [vec![(0, 0b11)], vec![(1, 0b1)], vec![(2, 0b1)]];
+        assert_eq!(
+            socket_usage(&values, &sockets),
+            [Some(20.0), Some(50.0), None]
+        );
+    }
+
+    // The real machine: whatever it is, it has a processor with threads.
+    #[test]
+    fn the_processor_is_read_on_this_machine() {
+        let cpu = cpu_facts();
+        assert!(cpu.cores.is_some_and(|n| n > 0), "{cpu:?}");
+        assert!(cpu.threads >= cpu.cores, "{cpu:?}");
+        assert!(cpu.sockets.is_some_and(|n| n > 0), "{cpu:?}");
+    }
+
+    // The real counter, with this machine's first socket's processors split in
+    // two as if they were two sockets: both answer, with a share of busy time.
+    #[test]
+    fn the_per_socket_counter_answers_on_this_machine() {
+        let masks = socket_masks(&topology_buffer());
+        let (group, mask) = masks[0][0];
+        let low = mask.isolate_lowest_one();
+        let sockets = SocketCounters::open(vec![vec![(group, low)], vec![(group, mask & !low)]])
+            .expect("the counter opens");
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        let usage = sockets.read();
+        assert_eq!(usage.len(), 2);
+        assert!(
+            usage.iter().all(|u| u.is_some_and(|p| (0.0..=100.0).contains(&p))),
+            "{usage:?}"
+        );
     }
 
     #[test]

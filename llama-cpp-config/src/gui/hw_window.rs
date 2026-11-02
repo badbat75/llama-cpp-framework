@@ -44,23 +44,101 @@ fn bar_row(b: &hwmon::Bar) -> HwBar {
 /// choice holds across launches.
 type Off = Arc<Mutex<HashSet<String>>>;
 
-/// `ROCm1: 7.13.1 · C:\...\amdhip64_7.dll`: a device id and the runtime behind it.
+/// `ROCm1: 7.13.1`: a device id and the version of the runtime behind it.
 fn sdk_line(id: &str, sdk: Option<&devices::Sdk>) -> String {
-    let parts: Vec<&str> = sdk
-        .into_iter()
-        .flat_map(|s| [s.version.as_deref(), Some(s.library.as_str())])
-        .flatten()
-        .collect();
-    if parts.is_empty() {
-        id.to_string()
-    } else {
-        format!("{id}: {}", parts.join(" · "))
+    match sdk.and_then(|s| s.version.as_deref()) {
+        Some(version) => format!("{id}: {version}"),
+        None => id.to_string(),
     }
 }
 
-/// A GPU's facts behind its info glyph, one per line; the ones nobody could
-/// read are left out. Empty for any other device.
+/// A cache size in the unit that keeps it short.
+fn cache_text(kib: u64) -> String {
+    if kib >= 1024 {
+        format!("{} MiB", kib / 1024)
+    } else {
+        format!("{kib} KiB")
+    }
+}
+
+/// One socket's facts, one per line. The hint sits on a socket's row and the
+/// sources count the machine, so the counts are divided by the sockets: the
+/// processors of a multi-socket machine are of one model.
+fn cpu_hint(cpu: &devices::Cpu) -> String {
+    let sockets = cpu.sockets.unwrap_or(1).max(1);
+    let each = |n: Option<u32>| n.map(|n| n / sockets);
+    let mut lines = Vec::new();
+    if let Some(socket) = &cpu.socket {
+        lines.push(strings::fill("hw-cpu-socket", &[socket]));
+    }
+    let counts = [
+        (strings::key("hw-cpu-cores"), each(cpu.cores)),
+        (strings::key("hw-cpu-threads"), each(cpu.threads)),
+        (strings::key("hw-cpu-base-clock"), cpu.base_mhz),
+        (strings::key("hw-cpu-max-clock"), cpu.max_mhz),
+    ];
+    for (key, value) in counts {
+        if let Some(value) = value {
+            lines.push(strings::fill(key, &[&value]));
+        }
+    }
+    for (name, kib) in [("L1", cpu.l1_kib), ("L2", cpu.l2_kib), ("L3", cpu.l3_kib)] {
+        if let Some(kib) = kib {
+            lines.push(format!("{name}: {}", cache_text(kib / sockets as u64)));
+        }
+    }
+    if let Some(nodes) = each(cpu.numa_nodes) {
+        lines.push(strings::fill("hw-cpu-numa-nodes", &[&nodes]));
+    }
+    if !cpu.instructions.is_empty() {
+        lines.push(strings::fill("hw-cpu-instructions", &[&cpu.instructions.join(", ")]));
+    }
+    lines.join("\n")
+}
+
+/// The memory modules, one per line. A module's name is on the card's title, so
+/// it is repeated here only when the modules differ.
+fn memory_hint(modules: &[devices::MemoryModule]) -> String {
+    let same_model = modules.windows(2).all(|m| m[0].model() == m[1].model());
+    modules
+        .iter()
+        .map(|m| {
+            let size = format!("{:.1} GiB", m.bytes as f64 / (1u64 << 30) as f64);
+            let mut parts = vec![size];
+            parts.extend(m.kind.clone());
+            if !same_model {
+                parts.push(m.model());
+            }
+            parts.extend(m.configured_mts.or(m.rated_mts).map(|mts| format!("{mts} MT/s")));
+            if let (Some(_), Some(rated)) = (m.configured_mts, m.rated_mts) {
+                if m.configured_mts != m.rated_mts {
+                    parts.push(strings::fill("hw-memory-rated", &[&rated]));
+                }
+            }
+            parts.extend(
+                m.configured_millivolts
+                    .map(|mv| format!("{:.2} V", mv as f64 / 1000.0)),
+            );
+            let text = parts.join(" · ");
+            if m.slot.is_empty() {
+                text
+            } else {
+                format!("{}: {text}", m.slot)
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// A device's facts behind its info glyph, one per line; the ones nobody could
+/// read are left out, and with none there is no glyph.
 fn hint_text(g: &hwmon::Group) -> String {
+    if hwmon::is_cpu_id(&g.id) {
+        return devices::cpu().map_or(String::new(), |cpu| cpu_hint(&cpu));
+    }
+    if g.id == hwmon::MEMORY_ID {
+        return memory_hint(&devices::memory());
+    }
     let Some(gpu) = &g.gpu else {
         return String::new();
     };
@@ -81,20 +159,10 @@ fn hint_text(g: &hwmon::Group) -> String {
         lines.push(strings::fill("gpu-shared-memory", &[&gib(gpu.shared_mib)]));
     }
     if let Some(link) = gpu.link {
-        let key = if gpu.link_is_whole_path {
-            strings::key("gpu-link-path")
-        } else {
-            strings::key("gpu-link-card")
-        };
-        lines.push(strings::fill(key, &[&link]));
+        lines.push(strings::fill("gpu-link", &[&link]));
     }
     if let Some(max) = gpu.max_link {
-        let key = if gpu.link_is_whole_path {
-            strings::key("gpu-link-path-max")
-        } else {
-            strings::key("gpu-link-card-max")
-        };
-        lines.push(strings::fill(key, &[&max]));
+        lines.push(strings::fill("gpu-link-max", &[&max]));
     }
     if let Some(switches) = gpu.switches {
         lines.push(strings::fill("gpu-switches", &[&switches]));
@@ -478,7 +546,7 @@ pub(super) fn e2e() {
         hint.lines().collect::<Vec<_>>(),
         [
             "VRAM: 31.9 GiB",
-            "PCIe link at the GPU: 5.0 x16; a slower one toward the CPU would not show here",
+            "PCIe link: 5.0 x16",
             "PCIe switches to the CPU: 3",
             "PCI: gpu-14",
         ]
@@ -490,8 +558,52 @@ pub(super) fn e2e() {
         version: Some("7.13.1".to_string()),
         built_with: None,
     };
-    assert_eq!(sdk_line("ROCm1", Some(&sdk)), "ROCm1: 7.13.1 · amdhip64_7.dll");
+    assert_eq!(sdk_line("ROCm1", Some(&sdk)), "ROCm1: 7.13.1");
     assert_eq!(sdk_line("ROCm1", None), "ROCm1");
+    let cpu = devices::Cpu {
+        socket: Some("AM5".to_string()),
+        threads: Some(24),
+        l2_kib: Some(12288),
+        l1_kib: Some(960),
+        instructions: vec!["AVX2", "AVX-512"],
+        ..Default::default()
+    };
+    assert_eq!(
+        cpu_hint(&cpu).lines().collect::<Vec<_>>(),
+        [
+            "Socket: AM5",
+            "Threads: 24",
+            "L1: 960 KiB",
+            "L2: 12 MiB",
+            "Instructions: AVX2, AVX-512"
+        ]
+    );
+    let two_sockets = devices::Cpu {
+        sockets: Some(2),
+        threads: Some(48),
+        l3_kib: Some(128 << 10),
+        ..Default::default()
+    };
+    assert_eq!(cpu_hint(&two_sockets), "Threads: 24\nL3: 64 MiB");
+    let module = |part: &str, rated: u32| devices::MemoryModule {
+        maker: "CORSAIR".to_string(),
+        part: part.to_string(),
+        slot: "P0 CHANNEL A".to_string(),
+        bytes: 32 << 30,
+        kind: Some("DDR5".to_string()),
+        configured_mts: Some(6000),
+        rated_mts: Some(rated),
+        configured_millivolts: Some(1100),
+    };
+    let twins = [module("A", 6000), module("A", 6000)];
+    assert_eq!(
+        memory_hint(&twins).lines().next(),
+        Some("P0 CHANNEL A: 32.0 GiB · DDR5 · 6000 MT/s · 1.10 V")
+    );
+    assert_eq!(
+        memory_hint(&[module("A", 6400), module("B", 6000)]).lines().next(),
+        Some("P0 CHANNEL A: 32.0 GiB · DDR5 · CORSAIR A · 6000 MT/s · rated 6400 MT/s · 1.10 V")
+    );
 
     win.invoke_device_toggled("gpu-14".into(), false);
     assert_eq!((shown(&win, "1 GiB"), shown(&win, "2 GiB")), (0, 1));
