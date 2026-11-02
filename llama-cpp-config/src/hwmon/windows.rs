@@ -424,6 +424,42 @@ fn enumerate_adapters() -> Vec<AdapterFacts> {
     list
 }
 
+/// Each located adapter's free memory: its dedicated total less what the
+/// `Dedicated Usage` counter says the whole system holds on it. Empty when the
+/// counters cannot be read; an adapter they do not list holds nothing.
+pub fn adapters_free() -> Vec<crate::devices::AdapterFree> {
+    let used = Query::open().and_then(|query| {
+        let counter = query.add(r"\GPU Adapter Memory(*)\Dedicated Usage")?;
+        query.collect().then_some(())?;
+        counter_values(counter).map(|v| by_adapter(&v))
+    });
+    let Some(used) = used else {
+        return Vec::new();
+    };
+    free_per_adapter(&enumerate_adapters(), &used)
+}
+
+fn free_per_adapter(
+    adapters: &[AdapterFacts],
+    used: &HashMap<u64, u64>,
+) -> Vec<crate::devices::AdapterFree> {
+    adapters
+        .iter()
+        .filter(|a| a.dedicated > 0)
+        .filter_map(|a| {
+            let (bus, device, function) = a.address?;
+            let free = a
+                .dedicated
+                .saturating_sub(used.get(&a.luid).copied().unwrap_or(0));
+            Some(crate::devices::AdapterFree {
+                pci: format!("{bus:02x}:{device:02x}.{function:x}"),
+                name: a.name.clone(),
+                free_mib: (free >> 20) as i64,
+            })
+        })
+        .collect()
+}
+
 fn vendor_name(vendor: u32) -> String {
     match vendor {
         0x1002 => "AMD".to_string(),
@@ -980,6 +1016,40 @@ mod tests {
             address,
             dedicated: 32 << 30,
             shared: 48 << 30,
+        }
+    }
+
+    #[test]
+    fn free_memory_is_the_total_less_the_system_wide_usage() {
+        let card = facts(0x1002, Some((0x14, 0, 0)), "AMD Radeon AI PRO R9700");
+        let unlocated = facts(0x1002, None, "AMD Radeon AI PRO R9700");
+        let no_memory = AdapterFacts {
+            dedicated: 0,
+            ..facts(0x1002, Some((0x7d, 0, 0)), "AMD Radeon(TM) Graphics")
+        };
+        let used = HashMap::from([(R9700, 31u64 << 30)]);
+        let free = free_per_adapter(&[card.clone(), unlocated, no_memory], &used);
+        assert_eq!(
+            free,
+            vec![crate::devices::AdapterFree {
+                pci: "14:00.0".into(),
+                name: "AMD Radeon AI PRO R9700".into(),
+                free_mib: 1024,
+            }]
+        );
+        // An adapter the counters do not list holds nothing.
+        assert_eq!(
+            free_per_adapter(&[card], &HashMap::new())[0].free_mib,
+            32768
+        );
+    }
+
+    /// The live counters, on whatever cards this machine has.
+    #[test]
+    fn the_live_reading_stays_within_the_card() {
+        for a in adapters_free() {
+            assert!(a.free_mib >= 0, "{a:?}");
+            assert_eq!(a.pci.len(), 7, "{a:?}");
         }
     }
 

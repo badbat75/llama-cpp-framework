@@ -210,8 +210,8 @@ backend-sampling = true
 
 - *Windows*: `tools\report-memory.ps1` shows requested against actual VRAM per device and any spill into
   shared memory; a spill is real only above ~512 MiB beyond the pinned `*_Host` buffers. Read this on two
-  cards: the benchmark's free-memory column of their *Windows* run holds the probe's figure, not the memory after
-  a prefill.
+  cards: their *Windows* benchmark run recorded no free memory after a prefill. A later run there records it per
+  adapter, under its PCI address (for example `pci-14:00.0`).
 - *Linux*: read `mem_info_vram_used` and `mem_info_gtt_used` after a prefill.
 - `tools\pcie-bench\`: the card's real host link. On two cards on *Linux*, also read the boot log's link width;
   *Windows* shows no width on the bridges, so there a card reading about half its bandwidth is the sign.

@@ -67,6 +67,8 @@ mod windows;
 #[cfg(windows)]
 use windows as os;
 
+#[cfg(windows)]
+pub use os::adapters_free;
 pub use os::Sampler;
 
 /// Total and available physical memory in bytes, from the same source the

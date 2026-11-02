@@ -121,7 +121,8 @@ CREATE TABLE IF NOT EXISTS run_gpu (
 -- Memory per device after the load (and the first prefill, when free_mib was read then).
 CREATE TABLE IF NOT EXISTS run_device (
   run_id       INTEGER NOT NULL REFERENCES run(id) ON DELETE CASCADE,
-  device       TEXT NOT NULL,           -- ROCm0, CUDA0, CPU, CPU_REPACK, ROCm_Host...
+  device       TEXT NOT NULL,           -- ROCm0, CUDA0, CPU, CPU_REPACK, ROCm_Host...; pci-14:00.0: one
+                                        -- adapter's free memory, where ROCm cannot report it (Windows)
   free_mib     INTEGER,
   model_mib    REAL,
   kv_mib       REAL,

@@ -494,9 +494,17 @@ pub fn public_text(text: &str) -> String {
     // A path starts at the beginning of a line or after a separator (a
     // backtick included: the report quotes paths as markdown code), so the
     // `/v1/...` of a URL stays as it is; its directory part is everything up
-    // to the last separator. A directory with a space in it is cut at the
-    // space: the home directory, the one most likely to have one, is
-    // replaced as a whole first, in both separator forms on Windows.
+    // to the last separator. Bare, a directory with a space in it would stop
+    // the match at the space, so three kinds of path come first: the home
+    // directory replaced as a whole, in both separator forms on Windows; the
+    // Program Files directories, closed up so PATH then cuts them; and a path
+    // between quotes or backticks, where the closing one says where it ends.
+    static QUOTED: LazyLock<regex::Regex> = LazyLock::new(|| {
+        regex::Regex::new(
+            r#"(["'`])(?:[A-Za-z]:[\\/]|/)(?:[^"'`\\/\r\n]+[\\/])+([^"'`\\/\r\n]*["'`])"#,
+        )
+        .unwrap()
+    });
     static PATH: LazyLock<regex::Regex> = LazyLock::new(|| {
         regex::Regex::new(
             r#"(^|[\s"'`=(\[,<>|])((?:[A-Za-z]:[\\/]|/)(?:[^\s\\/"'`;,()\[\]<>|]+[\\/])+)"#,
@@ -521,6 +529,16 @@ pub fn public_text(text: &str) -> String {
             }
         }
     }
+    for dir in ["ProgramFiles", "ProgramFiles(x86)", "ProgramW6432"] {
+        if let Ok(d) = std::env::var(dir) {
+            let d = d.trim_end_matches(['/', '\\']);
+            if d.len() > 3 {
+                let closed: String = d.chars().filter(|c| !" ()".contains(*c)).collect();
+                out = out.replace(d, &closed);
+            }
+        }
+    }
+    let out = QUOTED.replace_all(&out, "$1$2");
     let out = PATH.replace_all(&out, "$1");
     SECRET.replace_all(&out, "$1$2$3<redacted>").into_owned()
 }
@@ -556,7 +574,7 @@ pub fn add_gpus(conn: &Connection, run: i64, devices: &[(String, String)]) -> ru
 }
 
 /// One `run_device` row: a backend's memory after the load (`record::buffer_sizes`)
-/// and its free memory after the first prefill (the device probe).
+/// and its free memory after the first prefill (`record::device_rows`).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct DeviceMemory {
     /// The backend name the log uses: ROCm0, CUDA0, CPU, CPU_Mapped, ROCm_Host...
@@ -851,5 +869,30 @@ mod tests {
             public_text("| prompt | `C:/Temp/scratchpad/x/bench-prompt.txt` |"),
             "| prompt | `bench-prompt.txt` |"
         );
+    }
+
+    #[test]
+    fn a_directory_with_a_space_is_cut_too() {
+        assert_eq!(
+            public_text(r"| prompt | `C:\Program Files\llama.cpp\share\bench-prompt.txt` |"),
+            "| prompt | `bench-prompt.txt` |"
+        );
+        assert_eq!(
+            public_text(r#"-m "D:\My Models\org\m.gguf" --mmproj 'E:/other dir/x.gguf'"#),
+            r#"-m "m.gguf" --mmproj 'x.gguf'"#
+        );
+        // Between two paths, or after an unclosed quote, the prose stays.
+        assert_eq!(
+            public_text(r"load /a/b.gguf from c/d and /e/f.gguf"),
+            "load b.gguf from c/d and f.gguf"
+        );
+        assert_eq!(public_text("it's a test/case"), "it's a test/case");
+        #[cfg(windows)]
+        if let Ok(dir) = std::env::var("ProgramFiles") {
+            assert_eq!(
+                public_text(&format!(r"exe: {dir}\app\bin\x.exe")),
+                "exe: x.exe"
+            );
+        }
     }
 }

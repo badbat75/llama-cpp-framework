@@ -31,6 +31,18 @@ pub struct DeviceOption {
     pub free_mib: u64,
 }
 
+/// One hardware adapter's free memory as the whole system sees it, read on
+/// Windows off the counters Task Manager shows (`hwmon::adapters_free`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(not(windows), allow(dead_code))]
+pub struct AdapterFree {
+    /// `14:00.0`: what tells two cards of one name apart.
+    pub pci: String,
+    /// The driver's name for the card, as `DeviceOption::name` has it.
+    pub name: String,
+    pub free_mib: i64,
+}
+
 impl DeviceOption {
     /// True for the CPU pseudo-device, which `--device` does not accept and the
     /// GPU table must skip.

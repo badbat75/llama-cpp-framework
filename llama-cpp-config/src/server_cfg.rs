@@ -728,9 +728,12 @@ LogVerbosity = {log_verbosity}
 ; llama.cpp never sees them, so nothing validates them and each only bites the
 ; backend it belongs to. RocblasUseHipblaslt picks rocBLAS's GEMM backend:
 ; false forces Tensile, true forces hipBLASLt, commented leaves rocBLAS to its
-; own routing. Set it false on gfx1201 (Radeon AI PRO R9700): hipBLASLt fails
-; the second 16-bit GEMM of a process there, so every BF16/F16 model aborts on
-; its first prefill batch (ROCm issue #6461). Inert on CUDA / Vulkan builds.
+; own routing. An installed framework should not need it: the installer puts
+; ROCm's own runtime beside llama-server. A Windows build from source runs the
+; graphics driver's runtime, and there on gfx1201 (Radeon AI PRO R9700) hipBLASLt
+; fails the second 16-bit GEMM of a process, so every BF16/F16 model aborts on
+; its first prefill batch (ROCm issue #6461): set it false in that case. Inert
+; on CUDA / Vulkan builds.
 {rocblas_hipblaslt_line}
 ; CudaAllreduce picks the AllReduce split-mode tensor reduces through (env
 ; GGML_CUDA_ALLREDUCE, read by the CUDA and the ROCm backend alike; inert in

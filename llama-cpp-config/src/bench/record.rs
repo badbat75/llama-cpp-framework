@@ -170,7 +170,16 @@ impl Recorder {
         }
         let log = std::fs::read(paths::server_log()).unwrap_or_default();
         let buffers = buffer_sizes(&String::from_utf8_lossy(&log), &p.preset);
-        p.devices = device_rows(buffers, &p.pinned, &crate::devices::list());
+        #[cfg(windows)]
+        let adapters = Some(crate::hwmon::adapters_free());
+        #[cfg(not(windows))]
+        let adapters: Option<Vec<crate::devices::AdapterFree>> = None;
+        p.devices = device_rows(
+            buffers,
+            &p.pinned,
+            &crate::devices::list(),
+            adapters.as_deref(),
+        );
     }
 
     /// Drop the held run: it failed or was cancelled.
@@ -356,10 +365,18 @@ fn row<'a>(rows: &'a mut Vec<db::DeviceMemory>, device: &str) -> &'a mut db::Dev
 /// ones no buffer line named, each with the free memory the probe reports for
 /// that id (none for a host buffer such as `CPU_Mapped` or `ROCm_Host`, which
 /// the probe does not list).
+///
+/// `adapters` is `Some` on Windows, where the probe cannot answer for ROCm: the
+/// free memory HIP gives a fresh process does not show what the server holds.
+/// A ROCm row keeps no free memory there, and
+/// each adapter of a ROCm device's name gets a row of its own, `pci-14:00.0`,
+/// with what the system's counters read. By address and not by id because
+/// nothing here ties a ROCm id to an adapter when two cards share one name.
 pub fn device_rows(
     mut rows: Vec<db::DeviceMemory>,
     pinned: &[String],
     probe: &[crate::devices::DeviceOption],
+    adapters: Option<&[crate::devices::AdapterFree]>,
 ) -> Vec<db::DeviceMemory> {
     for id in pinned {
         if !rows.iter().any(|r| &r.device == id) {
@@ -374,6 +391,31 @@ pub fn device_rows(
             .iter()
             .find(|d| d.id == r.device && d.total_mib > 0)
             .map(|d| d.free_mib as i64);
+    }
+    if let Some(adapters) = adapters {
+        let mut names = Vec::new();
+        for r in rows
+            .iter_mut()
+            .filter(|r| r.free_mib.is_some() && r.device.starts_with("ROCm"))
+        {
+            r.free_mib = None;
+            names.extend(
+                probe
+                    .iter()
+                    .filter(|d| d.id == r.device)
+                    .map(|d| d.name.as_str()),
+            );
+        }
+        rows.extend(
+            adapters
+                .iter()
+                .filter(|a| names.contains(&a.name.as_str()))
+                .map(|a| db::DeviceMemory {
+                    device: format!("pci-{}", a.pci),
+                    free_mib: Some(a.free_mib),
+                    ..Default::default()
+                }),
+        );
     }
     rows
 }
@@ -745,7 +787,7 @@ mod tests {
             dev("ROCm0", 32624, 900),
             dev("CPU", 60857, 30000),
         ];
-        let rows = device_rows(buffers, &["ROCm0".into(), "Vulkan2".into()], &probe);
+        let rows = device_rows(buffers, &["ROCm0".into(), "Vulkan2".into()], &probe, None);
         let free: Vec<(&str, Option<i64>)> = rows
             .iter()
             .map(|r| (r.device.as_str(), r.free_mib))
@@ -758,6 +800,55 @@ mod tests {
                 ("ROCm0", Some(900)),
                 ("CPU", Some(30000)),
                 ("Vulkan2", None),
+            ]
+        );
+    }
+
+    #[test]
+    fn on_windows_rocm_free_memory_comes_from_the_adapters() {
+        let dev = |id: &str, name: &str, free: u64| crate::devices::DeviceOption {
+            id: id.into(),
+            label: String::new(),
+            name: name.into(),
+            total_mib: 32624,
+            free_mib: free,
+        };
+        let adapter = |pci: &str, name: &str, free: i64| crate::devices::AdapterFree {
+            pci: pci.into(),
+            name: name.into(),
+            free_mib: free,
+        };
+        const CARD: &str = "AMD Radeon AI PRO R9700";
+        let probe = [
+            dev("ROCm0", "AMD Radeon(TM) Graphics", 44507),
+            dev("ROCm1", CARD, 32462),
+            dev("ROCm2", CARD, 32462),
+            dev("CUDA0", "NVIDIA", 1200),
+        ];
+        let adapters = [
+            adapter("03:00.0", CARD, 2912),
+            adapter("14:00.0", CARD, 1320),
+            adapter("7d:00.0", "AMD Radeon(TM) Graphics", 40000),
+        ];
+        let rows = device_rows(
+            Vec::new(),
+            &["ROCm2".into(), "ROCm1".into(), "CUDA0".into()],
+            &probe,
+            Some(&adapters),
+        );
+        let free: Vec<(&str, Option<i64>)> = rows
+            .iter()
+            .map(|r| (r.device.as_str(), r.free_mib))
+            .collect();
+        // Both cards once, the unused iGPU not at all, CUDA as the probe has it.
+        assert_eq!(
+            free,
+            vec![
+                ("ROCm2", None),
+                ("ROCm1", None),
+                ("CUDA0", Some(1200)),
+                ("pci-03:00.0", Some(2912)),
+                ("pci-14:00.0", Some(1320)),
             ]
         );
     }

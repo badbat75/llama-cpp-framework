@@ -553,8 +553,7 @@ sampling and speculator, 5 repetitions, one request and then the three two-reque
 [section 5](#5-splitting-the-model-across-two-cards). `agent`: described below.
 
 **Free memory** after the first prefill (x16 / x4 card), *Linux*: 4488 to 4552 / 3350 to 3414 MiB under `engine`,
-2338 to 2518 / 1240 to 1380 under `real` and `agent`. The *Windows* run does not record memory after a prefill:
-its free-memory column holds the probe's figure, not a reading after the prefill, so compare nothing with it
+2338 to 2518 / 1240 to 1380 under `real` and `agent`. The *Windows* run recorded no free memory after a prefill
 ([section 4](#4-kv-cache-type-and-context) has the one reading there is).
 
 </details>

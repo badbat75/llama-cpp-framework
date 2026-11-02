@@ -65,27 +65,32 @@ beside a loaded llama-server. It takes under a minute.
 ## Two HIP-on-Windows traps (handled in the code)
 
 - **Event timing of DMA copies is wrong.** It reported 270 GB/s over a link that
-  measured 3.2 GB/s by wall clock. The DMA columns therefore use wall-clock time. Kernel
+  measures a few GB/s by wall clock. The DMA columns therefore use wall-clock time. Kernel
   event timings agree with wall-clock time.
 - **A launched kernel does not start until the stream is flushed** by some later API
   call. A host thread that spins straight after the launch waits for a kernel that never
   starts. The handshake calls `hipStreamQuery` after the launch. Without that call, every
   trip timed out.
 
-## Reference results (2026-09-24, X870E AORUS ELITE WIFI7)
+## Reference results (X870E AORUS ELITE WIFI7)
 
-| | R9700 (chipset slot, behind two Promontory 21) | RTX 4070 Super (CPU Gen5 x16 slot, Gen4 card) |
+| | R9700 (chipset slot, behind two Promontory 21), 2026-11-02 | RTX 4070 Super (CPU Gen5 x16 slot, Gen4 card), 2026-09-24 |
 |---|---|---|
-| DMA, 32 MiB | 3.2 GB/s each way | 26 GB/s each way |
-| DMA, 4 KiB call | ~60 us | ~5 us |
-| kernel store / load | 2.8 / 3.3 GB/s | 26 / 26.7 GB/s |
-| handshake round trip | 2.4 us | 1.35 us |
-| empty kernel | 8 to 13 us | 5 us |
+| DMA, 32 MiB | 6.8 GB/s each way | 26 GB/s each way |
+| DMA, 4 KiB call | ~75 us | ~5 us |
+| kernel store / load | 5.7 / 6.4 GB/s | 26 / 26.7 GB/s |
+| handshake round trip | 2.1 us | 1.35 us |
+| empty kernel | ~17 us | 5 us |
 
 The R9700 reports Gen5 x16, but that is only its link to the card's own internal switch.
-On this board the card's real path to the CPU is the chipset uplink, and it measures about
-half of what Gen4 x4 should deliver.
+On this board the card's real path to the CPU is the chipset uplink, Gen4 x4.
 
-For this link, the numbers suggest `GGML_CUDA_AR_COPY_THRESHOLD` of 1 to 2 MiB and a
-fixed 2 MiB `GGML_CUDA_AR_COPY_CHUNK_BYTES`. The DMA and kernel paths have almost the same
-bandwidth here, and each DMA call carries tens of microseconds of fixed cost.
+**A boot can come up at half that bandwidth.** The same card measured 3.45 / 3.52 GB/s of DMA
+on one boot and 6.8 after a power cycle, and 3.2 GB/s on 2026-09-24 (kernel store / load 2.8 /
+3.3), which reads as the same state. Windows shows no link width for a card behind a switch,
+so x2 is inferred from the bandwidth, not read. If the card reads about half, power cycle the
+machine before measuring a tensor split: the reductions follow this link.
+
+For the healthy link, the numbers suggest `GGML_CUDA_AR_COPY_THRESHOLD` of 2 MiB, where DMA
+overtakes the kernel store, and a fixed 2 MiB `GGML_CUDA_AR_COPY_CHUNK_BYTES`, since each DMA
+call carries tens of microseconds of fixed cost.
