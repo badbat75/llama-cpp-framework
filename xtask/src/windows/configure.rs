@@ -52,7 +52,7 @@ fn find_vs_dev_shell() -> Option<PathBuf> {
                 (major, e.path())
             })
             .collect();
-        versions.sort_by(|a, b| b.0.cmp(&a.0));
+        versions.sort_by_key(|v| std::cmp::Reverse(v.0));
         for (_, ver) in versions {
             for edition in ["Enterprise", "Professional", "Community", "BuildTools"] {
                 let script = ver.join(edition).join(&rel);

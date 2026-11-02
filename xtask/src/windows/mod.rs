@@ -288,7 +288,7 @@ pub fn activate_vs(bat: &Path) -> Result<()> {
         bail!("{} failed ({status})", bat.display());
     }
     let bytes = bytes.with_context(|| format!("{} left no environment", bat.display()))?;
-    let units: Vec<u16> = bytes.chunks_exact(2).map(|b| u16::from_le_bytes([b[0], b[1]])).collect();
+    let units: Vec<u16> = bytes.as_chunks::<2>().0.iter().map(|b| u16::from_le_bytes(*b)).collect();
     let text = String::from_utf16_lossy(&units);
     for line in text.lines() {
         let line = line.trim_start_matches('\u{feff}');

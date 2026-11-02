@@ -56,7 +56,7 @@ pub fn build(llama_cpp_dir: &str, build_jobs: u32) -> Result<PathBuf> {
             cmd("node")
                 .current_dir(&resources)
                 .arg("generate-llama-ico.mjs")
-                .arg(&llama_cpp_dir)
+                .arg(llama_cpp_dir)
                 .arg(&ico),
         )?;
     }

@@ -2,17 +2,17 @@
 //! repo root (the scripts in scripts/ are optional wrappers over the same
 //! commands). The phases:
 //!
-//! - `prereq`     the GPU SDK dists and sccache (`scripts/00-install-prerequisites.sh`
-//!                installs the system packages and Rust first, natively, since
-//!                this crate cannot build before they exist). On Windows
-//!                scripts\00-install-prerequisites.ps1 does it all natively
-//! - `configure`  detects paths and tools, writes the build config under
-//!                `build/<os>/`
-//! - `build`      llama.cpp (CMake + Ninja) and llama-cpp-config (cargo), two
-//!                separate modules: `build llama`, `build config`, or both
-//! - `package`    the `.deb` and the `.rpm` (Linux), the MSI (Windows), the
-//!                `.pkg` (macOS)
-//! - `install`    installs the newest package on this machine
+//! - `prereq`: the GPU SDK dists and sccache (`scripts/00-install-prerequisites.sh`
+//!   installs the system packages and Rust first, natively, since this crate
+//!   cannot build before they exist). On Windows
+//!   scripts\00-install-prerequisites.ps1 does it all natively
+//! - `configure`: detects paths and tools, writes the build config under
+//!   `build/<os>/`
+//! - `build`: llama.cpp (CMake + Ninja) and llama-cpp-config (cargo), two
+//!   separate modules: `build llama`, `build config`, or both
+//! - `package`: the `.deb` and the `.rpm` (Linux), the MSI (Windows), the
+//!   `.pkg` (macOS)
+//! - `install`: installs the newest package on this machine
 //!
 //! `common/` is what the operating systems share (the dist layout, the
 //! llama.cpp checkout and its patches, the CMake options of xtask/cmake/,

@@ -85,7 +85,7 @@ fn valid_define(d: &str) -> bool {
     let mut c = name.chars();
     c.next().is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
         && c.all(|c| c.is_ascii_alphanumeric() || c == '_')
-        && ty.map_or(true, |t| !t.is_empty() && t.chars().all(|c| c.is_ascii_uppercase()))
+        && ty.is_none_or(|t| !t.is_empty() && t.chars().all(|c| c.is_ascii_uppercase()))
 }
 
 #[cfg(test)]
