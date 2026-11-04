@@ -302,20 +302,28 @@ pub fn basename(s: &str) -> &str {
     s.rsplit('/').next().unwrap_or(s)
 }
 
-/// 3/4 of the logical cores, and never all of them: a core stays free during
-/// the long CUDA/HIP compiles.
+/// All the logical cores but two, which stay free during the long CUDA/HIP
+/// compiles; at least one job.
 pub fn default_build_jobs() -> u32 {
-    let n = std::thread::available_parallelism().map(|n| n.get() as i64).unwrap_or(1);
-    let mut j = n * 3 / 4;
-    if j > n - 1 {
-        j = n - 1;
-    }
-    j.max(1) as u32
+    let cores = std::thread::available_parallelism().map(|n| n.get() as u32).unwrap_or(1);
+    jobs_for(cores)
+}
+
+fn jobs_for(cores: u32) -> u32 {
+    cores.saturating_sub(2).max(1)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn build_jobs_leave_two_cores_free() {
+        assert_eq!(jobs_for(24), 22);
+        assert_eq!(jobs_for(3), 1);
+        assert_eq!(jobs_for(2), 1);
+        assert_eq!(jobs_for(1), 1);
+    }
 
     #[test]
     fn version_order() {

@@ -72,8 +72,8 @@ cxx_compiler = {cxx}
 linker_type = {linker}
 # Host compiler nvcc drives for the CUDA backend.
 cuda_host_compiler = {cuda_host}
-# Parallel build jobs: 3/4 of logical cores, never all of them, so at least
-# one stays free during a long CUDA/HIP compile (0 = use all cores).
+# Parallel build jobs: all logical cores but two, which stay free during a
+# long CUDA/HIP compile (0 = use all cores).
 build_jobs = {jobs}
 "#,
             os = util::OS_DIR,

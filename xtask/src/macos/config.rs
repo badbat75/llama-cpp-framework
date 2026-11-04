@@ -55,8 +55,8 @@ build_type = {build_type}
 # Apple's clang, from the Xcode Command Line Tools (xcrun --find).
 c_compiler = {cc}
 cxx_compiler = {cxx}
-# Parallel build jobs: 3/4 of logical cores, never all of them, so at least
-# one stays free during the build (0 = use all cores).
+# Parallel build jobs: all logical cores but two, which stay free during
+# the build (0 = use all cores).
 build_jobs = {jobs}
 "#,
             dist_root = q(&self.dist_root),

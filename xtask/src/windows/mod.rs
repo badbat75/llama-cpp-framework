@@ -184,9 +184,8 @@ impl WinConfig {
     CxxCompiler = {cxx}
     # Linker: the lld-link.exe next to CCompiler; empty lets CMake pick (link.exe).
     Linker      = {linker}
-    # Parallel build jobs: 3/4 of logical cores, never all of them, so at
-    # least one stays free for interactive use during a long CUDA/HIP
-    # compile (0 = use all cores).
+    # Parallel build jobs: all logical cores but two, which stay free for
+    # interactive use during a long CUDA/HIP compile (0 = use all cores).
     BuildJobs   = [int]{jobs}
 }}
 "#,
