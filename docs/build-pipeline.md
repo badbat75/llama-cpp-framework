@@ -1,14 +1,15 @@
 ---
 title: Build pipeline
 type: reference
-updated: 2026-11-01
+updated: 2026-11-04
 ---
 
 # Build pipeline
 
 The pipeline turns a llama.cpp release into an installable package with the CUDA, Vulkan and ROCm
-backends and the `llama-cpp-config` configurator. It runs on Windows (MSI) and Linux (`.deb`,
-`.rpm`). It also runs on macOS (Apple Silicon, `.pkg`), where it is written but untested.
+backends and the `llama-cpp-config` configurator. It runs on Windows (one MSI) and Linux (five `.deb`
+and five `.rpm` packages: the configurator, llama.cpp and one per GPU runtime). It also runs on macOS
+(Apple Silicon, three `.pkg`), where it is written but untested.
 
 **In short.** Run the bootstrap script once, which also runs `xtask prereq` on Linux and macOS. Then
 run `xtask configure`, `build`, `package` and `install` in that order. `xtask <phase>` is short for
@@ -25,7 +26,7 @@ MSI itself is in [installer\AGENTS.md](../installer/AGENTS.md).
 | --- | --- |
 | [Build prerequisites](build-prerequisites.md) | Where do the GPU SDKs live, which one is taken, and what do the bootstrap scripts install? |
 | [Compiling](build-compiling.md) | What do `configure` and `build` do and why: release tag, patches, CMake options, sccache, LTO, lld, HIP targets, build parallelism, the Windows and Linux specifics, the source map |
-| [Packaging and install](build-packaging.md) | What goes in the MSI, the `.deb` and the `.rpm`, and how does `xtask install` lay them down? |
+| [Packaging and install](build-packaging.md) | What goes in the MSI and in each `.deb` and `.rpm`, how do the packages depend on each other, and how does `xtask install` lay them down? |
 | [Building on macOS](build-macos.md) | The whole macOS story, every phase |
 
 ## Phases
@@ -36,8 +37,8 @@ MSI itself is in [installer\AGENTS.md](../installer/AGENTS.md).
 | `xtask prereq` | Linux, macOS: installs sccache and the newest GPU dists. On Windows it refuses: the script does this. | Dists under the dist root |
 | `xtask configure` | Detects paths and tools, derives the GPU targets, records the dist root. | `build/<os>/config-build.*`; on Windows also `.cargo/config.toml` |
 | `xtask build` | Checks out the newest llama.cpp release, applies the patches, builds llama.cpp, then the configurator. | `build/<os>/llama.cpp-cmake/`, `build/<os>/cargo-target/` |
-| `xtask package` | Stages the binaries and GPU runtimes, then builds the package. | `dist/` |
-| `xtask install` | Installs the newest package in `dist/`: first install, upgrade, reinstall or downgrade. | The machine |
+| `xtask package` | Stages the binaries and GPU runtimes, then builds the packages. | `dist/` |
+| `xtask install` | Installs the newest package in `dist/`, on Linux and macOS the newest of each: first install, upgrade, reinstall or downgrade. | The machine |
 
 | Phase | Options |
 | --- | --- |
@@ -45,7 +46,7 @@ MSI itself is in [installer\AGENTS.md](../installer/AGENTS.md).
 | `configure` | `--dist-root <path>`, `--llama-cpp-dir <path>` (default `build/<os>/llama.cpp`) |
 | `build` | `llama` or `config` for one module (default: both, in that order) |
 | `package` | `--keep-staging`; Linux `--deb`, `--rpm`; Windows `--wix <wix.exe>` |
-| `install` | `--dry-run`, a package file; Linux `--deb`, `--rpm`; Linux and macOS `--force` |
+| `install` | `--dry-run`, a package file (Linux and macOS: any number, and only those install); Linux `--deb`, `--rpm`; Linux and macOS `--force` |
 
 **After a change, re-run the phases below.** The bootstrap report names the same steps.
 
@@ -103,7 +104,7 @@ says. The configurator always goes to `build/<os>/cargo-target`.
 | Dists | `TheRock`, `CUDA`, `VulkanSDK` | The same, with `NCCL` | `VulkanSDK` |
 | Machine environment | `HIP_PATH` and PATH of the active ROCm dist | None | None |
 | sccache binary | `%LOCALAPPDATA%\Programs\sccache\sccache.exe` | `~/.local/bin/sccache` | `~/.local/bin/sccache` |
-| Package | MSI | `.deb`, `.rpm` | `.pkg` |
+| Packages | One MSI | Five `.deb`, five `.rpm` | Three `.pkg` |
 | Installs to | `Program Files\llama.cpp` (choosable) | `/opt/llama.cpp`, links in `/usr/bin` | `/opt/llama.cpp`, links in `/usr/local/bin` |
 
 ## Where things land
@@ -120,7 +121,7 @@ clone shared between systems would mix line endings, patch state and the UI's pl
 | `build/<os>/cargo-target/` | The configurator's cargo output |
 | `build/<os>/.sccache/` | The compiler cache |
 | `build/<os>/staging/` | The package tree; deleted after packaging unless `--keep-staging` |
-| `build/linux/package/` | Control files, spec and rpmbuild tree; transient |
+| `build/<os>/package/` | Linux, macOS: one tree per package, and on Linux the control files, specs and rpmbuild tree; transient |
 | `build/windows/wix-obj/` | WiX intermediates; deleted after packaging |
 | `build/windows/msi-install.log`, `msi-uninstall.log` | The logs of `xtask install` |
 | `dist/` | The finished packages (gitignored) |
@@ -151,6 +152,7 @@ On Windows, `$buildRoot` in `scripts\common.ps1` names `build\windows`.
 | Export `HIP_PATH` or `ROCM_PATH` before `xtask configure` on Linux | A usable one wins over the layout. [Dist layout and root](build-prerequisites.md#dist-layout-and-root) |
 | Run bare `cargo` on Linux with the Windows `.cargo/config.toml` present | It lands in `build/windows/cargo-target`. [Build parallelism](build-compiling.md#build-parallelism) |
 | Share a clone or build directory between systems | Line endings, patch state and `node_modules` mix. [Where things land](#where-things-land) |
-| Upgrade the Linux package under a running server | It would load new kernels with old libraries. [Install](build-packaging.md#install) |
+| Upgrade the Linux packages under a running server | It would load new kernels with old libraries. [Install](build-packaging.md#install) |
+| Leave out the runtime package of a GPU the machine has | llama-server skips that backend at start, with only a log line. [The `.deb` and `.rpm`](build-packaging.md#the-deb-and-rpm-linux) |
 | Copy all of `OpenSSLDir\bin` into the package | Most of it is providers that must not ship. [The MSI](build-packaging.md#the-msi-windows) |
 | Switch the MSI to external cabinets | The release is one file, under GitHub's 2 GiB limit. [installer\AGENTS.md](../installer/AGENTS.md) |

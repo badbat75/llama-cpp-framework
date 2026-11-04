@@ -6,7 +6,7 @@ gpus: [AMD Radeon AI PRO R9700, NVIDIA GeForce RTX 4070 SUPER]
 models: [Qwen3.8-Flash-Next, Swift-Qwen3.8-Flash-Next]
 platforms: [windows, linux]
 llama-cpp: v0.6.0 to v0.8.0
-updated: 2026-11-01
+updated: 2026-11-04
 ---
 
 # Qwen3.8-Flash-Next: configuration reference (draft)
@@ -33,6 +33,13 @@ behind Linux on prefill, because the host experts run on the CPU.
 
 All speeds are t/s, with ± the sample standard deviation over the repetitions. "43.7k" is a prompt of
 that many tokens, sent with the prompt cache off.
+
+**The build behind these figures.** The framework bundles llama.cpp v0.9.0, and no figure here was measured on it.
+Every figure from v0.8.0, and every recorded one from v0.7.0 except campaign `flash-next-moe-cache-20261016` and campaign `flash-next-no-host-20261016`,
+comes from a build carrying patches the bundled build does not have:
+the FlashAttention band on RDNA4 and the backend sampler probe, and on all but the earliest v0.7.0 campaigns host buffers pinned for every runtime. v0.5.0 and v0.6.0 figures predate them; a figure read by hand on v0.7.0 does not record its build, so it may
+or may not have carried them. How far the figures move is open, above all with drafts
+([section 7](#7-windows), [section 9](#9-not-yet-measured-placeholders)).
 
 ## 1. Model facts
 
@@ -494,11 +501,12 @@ add nothing beyond them, so scheduling is not the loss. Keep cmake's default `GG
 prefill falls by a third (178.6 t/s). `op-offload true` at ubatch 512 is also a loss on *Windows*: 108 t/s
 against 277.
 
-**The band kernel on GQA 12** (`patches\llama.cpp\0003`) changes nothing here on either system: *Windows*
-prefill 256 ±6 against 258 ±3, decode 20.5 ±0.5 against 20.1 ±0.2 (by hand, not recorded); *Linux* prefill 422.7 ±2.6 against
-417.9 ±2.2, decode 25.0 both (campaign `flash-next-patches-linux-20261021`). On *Windows* the output is byte-identical,
-and the band's gain sits on the 2 to 4 queries per step of an accepted draft, which these prompts do not
-produce. It stays on, with nothing to tune.
+**The FlashAttention band behind most figures here changes nothing on these prompts, on either system** (v0.7.0,
+the band first): *Windows* prefill 256 ±6 against 258 ±3, decode 20.5 ±0.5 against 20.1 ±0.2 (by hand, not recorded);
+*Linux* prefill 422.7 ±2.6 against 417.9 ±2.2, decode 25.0 both (campaign `flash-next-patches-linux-20261021`). On *Windows*
+the output is byte-identical. These prompts accept no draft, and the band's gain sat on the 2 to 4 queries per step of
+an accepted draft. The runs that accept drafts, the `flash-next-mtp-*` and `swift-flash-next-*` campaigns, all carried
+it and have no leg without it, so their figures may not hold on the bundled v0.9.0.
 
 ## 8. Choices that look better than they measure
 
@@ -517,6 +525,7 @@ produce. It stays on, with nothing to tune.
 
 | parameter | current value | question | result |
 | --- | --- | --- | --- |
+| the settings on the bundled llama.cpp v0.9.0 | as in [section 2](#2-recommended-settings) | how far do these figures move without the band and the other patches they ran with, above all with accepted drafts? | TBD; the mixed pair needs the RTX 4070 SUPER in the test machine |
 | HIP upload cost per miss | n/a | a profile of the miss path on ROCm against CUDA | TBD: needs a trace (rocprofv3, nsys), not a bench run |
 | `device` order on *Windows* | the R9700 first | does the card on the fast link belong last? | partly: on two R9700s the x16 card last decodes 23.1 ±1.4 against 21.3 ±0.2, prefill 1499.8 against 1524.7 (campaign `flash-next-2xr9700-device-order-20261028`); with the RTX 4070 SUPER, TBD: needs that card in the test machine |
 | `load-mode none` abort | n/a | a minimal reproduction for upstream; does it also hit CUDA or Vulkan on *Windows*? | TBD |

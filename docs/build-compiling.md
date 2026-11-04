@@ -1,14 +1,14 @@
 ---
 title: Compiling llama.cpp and the configurator
 type: reference
-updated: 2026-11-01
+updated: 2026-11-04
 ---
 
 # Compiling llama.cpp and the configurator
 
 What `xtask configure` and `xtask build` do and why: the recorded config, the release tag and the
 patches, the CMake line, the compiler cache, LTO and the linker, the GPU targets, the job count, and
-what is specific to Windows and Linux. The [source map](#source-map) closes the page. The phases and
+the configurator's generated tables, and what is specific to Windows and Linux. The [source map](#source-map) closes the page. The phases and
 what breaks are in [Build pipeline](build-pipeline.md); macOS has
 [its own page](build-macos.md) for what differs there.
 
@@ -63,7 +63,9 @@ Upstream tags every master merge with a lightweight `bNNNN` and each release als
 - No reachable release tag is a hard failure.
 - A missing clone is cloned first.
 
-**Patches are provisional.** `patches/llama.cpp/*.patch` apply onto the fresh tag.
+**Patches are provisional.** `patches/llama.cpp/*.patch` apply onto the fresh tag, v0.9.0 today. Three
+are carried: `0001` (FastMTP sidecars on `qwen35`), `0005` and `0006` (draft reallocations after an
+image on `qwen35` and `qwen4exp`).
 
 - They are reverted before a checkout that moves HEAD, or when one applies in neither direction,
   because a tag bump touching a patched file would abort the checkout.
@@ -346,9 +348,9 @@ thing to delete.
 
 ## Build parallelism
 
-**`xtask configure` sets the job count to 3/4 of the logical cores, at most `cores - 1`, so a core
-stays free during long CUDA and HIP compiles.** The clamp keeps that reservation through a later
-retune. A 1-core machine gets 1 job.
+**`xtask configure` sets the job count to all logical cores but two, at least one, so two cores stay
+free during long CUDA and HIP compiles** (`default_build_jobs` in `xtask/src/common/util.rs`). A machine
+with up to 3 cores gets 1 job.
 
 - The value is `BuildJobs` or `build_jobs` in the config.
 - It feeds CMake and Ninja's `-j` and `cargo build --jobs`.
@@ -376,6 +378,19 @@ that. The wrappers already do.
 `.ninja_deps` open, so on Windows the generate step fails with
 `failed recompaction: Permission denied` after rewriting `build.ninja` and the cache. The two then
 disagree until the next configure.
+
+## Generated architecture tables
+
+**The configurator's per-architecture lists are generated from the clone, so a bare `cargo build` or
+`cargo test` of it needs the clone: run `xtask build` first.** `llama-cpp-config/build.rs`, with
+`llama-cpp-config/arch_tables.rs`, reads `src/llama-arch.cpp` and writes the recurrent, hybrid and
+tensor-split deny lists to `OUT_DIR`, from `llm_arch_is_recurrent`, `llm_arch_is_hybrid` and
+`llm_arch_supports_sm_tensor`. llama.cpp compiles them in and exposes them through no public API by name.
+
+- There is no fallback list, since a wrong one would be silent. No clone, or a source of another
+  shape, stops the build. A new shape means updating `arch_tables.rs` for that release.
+- `xtask` passes the recorded clone through `LLAMA_FW_LLAMA_CPP_DIR`. A bare cargo command reads the
+  default clone of the target OS, `build/<os>/llama.cpp`, unless that variable is set.
 
 ## Windows
 
@@ -499,9 +514,10 @@ which `std::path` does not split on Linux. The code under test is not at fault.
 | --- | --- |
 | `Cargo.toml` | The workspace: `llama-cpp-config`, `xtask` and `tools/site`. The profiles live here because cargo reads them only at the root. |
 | `xtask/src/main.rs` | The phases and their options |
-| `xtask/src/common/` | Shared: `dists.rs`, `llama.rs`, `cmake_options.rs`, `configurator.rs`, `prereq.rs`, `rocm.rs`, `version.rs`, `bench_share.rs` |
+| `xtask/src/common/` | Shared: `dists.rs`, `llama.rs`, `cmake_options.rs`, `configurator.rs`, `prereq.rs`, `rocm.rs`, `version.rs`, `bench_share.rs`, `components.rs` (Linux and macOS: which package owns each staged file) |
 | `xtask/src/<os>/` | One OS's phases: `configure.rs`, `build_llama.rs`, `package.rs`, `install.rs`, `dists.rs` (the finders) |
 | `xtask/cmake/` | The checked-in llama.cpp CMake options |
+| `llama-cpp-config/build.rs`, `llama-cpp-config/arch_tables.rs` | The configurator's build script and the [architecture tables](#generated-architecture-tables) it generates from the clone |
 | `installer/dist-sources.toml` | Dist roots and download sources for xtask, with no versions |
 | `installer/dist-sources.psd1` | The same data for the Windows PowerShell scripts: a source changes in both files |
 | `installer/wix-toolset.psd1` | The WiX pin |

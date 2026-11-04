@@ -1,7 +1,7 @@
 ---
 title: Building on macOS
 type: reference
-updated: 2026-11-01
+updated: 2026-11-04
 ---
 
 # Building on macOS
@@ -60,18 +60,31 @@ directory, loader and `glslc` are
 tree's binaries find the SDK's loader through their build RPATH. A changed compiler path wipes the build directory, since a
 new Xcode can move it.
 
-**Package.** `pkgbuild` writes the `.pkg` (identifier `io.github.badbat75.llama-cpp-framework`). It
-refuses a built `llama-cpp-config` whose version differs from `Cargo.toml`.
+**Package.** `pkgbuild` writes three `.pkg` files from one staged tree, split by path as
+[on Linux](build-packaging.md#packaging). It refuses a built `llama-cpp-config` whose version differs from
+`Cargo.toml`.
 
-| Path | Holds |
-| --- | --- |
-| `/opt/llama.cpp/bin/` | The build's `bin/` without `test-*`, `llama-cpp-config` beside the server |
-| `/opt/llama.cpp/lib/` | The Vulkan loader and MoltenVK |
-| `/opt/llama.cpp/share/benchmarks/` | The benchmark method |
-| `/opt/llama.cpp/share/strings/` | The configurator's text: the GUI's `en_US.toml`, the CLI's `cli.toml` |
-| `/opt/llama.cpp/share/licenses/` | The licence texts, with the MoltenVK and Vulkan loader ones; see [Packaging](build-packaging.md#packaging) |
-| `/usr/local/bin/` | A symlink per executable |
-| `/usr/local/share/vulkan/icd.d/llama-cpp-framework-MoltenVK_icd.json` | The driver manifest, with an absolute `library_path` into `/opt/llama.cpp/lib` |
+| Package | File | Identifier ends in |
+| --- | --- | --- |
+| `config` | `llama-cpp-framework-config-v<framework>-<llama>-arm64.pkg` | `.config` |
+| `llama` | `llama-cpp-framework-llama-v<framework>-<llama>-arm64.pkg` | `.llama` |
+| `vulkan` | `llama-cpp-framework-vulkan-v<sdk>-arm64.pkg` | `.vulkan` |
+
+The identifier starts with `io.github.badbat75.llama-cpp-framework`. `config` and `llama` carry the framework's
+version, and `vulkan` the SDK's, or the framework's for an SDK outside the layout.
+
+**A `.pkg` has no dependency mechanism, so nothing ties the three together.** `xtask install` lays down the newest of
+each with `installer`, or only the files given. Without the `vulkan` package ggml skips that backend and Metal runs.
+
+| Path | Package | Holds |
+| --- | --- | --- |
+| `/opt/llama.cpp/bin/` | `llama`; `llama-cpp-config` in `config` | The build's `bin/` without `test-*`, `llama-cpp-config` beside the server |
+| `/opt/llama.cpp/lib/` | `vulkan` | The Vulkan loader and MoltenVK |
+| `/opt/llama.cpp/share/benchmarks/` | `config` | The benchmark method |
+| `/opt/llama.cpp/share/strings/` | `config` | The configurator's text: the GUI's `en_US.toml`, the CLI's `cli.toml` |
+| `/opt/llama.cpp/share/licenses/<suffix>/` | Each its own | The licence texts, with the MoltenVK and Vulkan loader ones in `vulkan/`; see [Packaging](build-packaging.md#packaging) |
+| `/usr/local/bin/` | `llama`; `llama-cpp-config` in `config` | A symlink per executable |
+| `/usr/local/share/vulkan/icd.d/llama-cpp-framework-MoltenVK_icd.json` | `vulkan` | The driver manifest, with an absolute `library_path` into `/opt/llama.cpp/lib` |
 
 - The manifest goes there because the loader does not look next to itself. A system-wide Vulkan SDK
   install adds its own MoltenVK manifest there too.

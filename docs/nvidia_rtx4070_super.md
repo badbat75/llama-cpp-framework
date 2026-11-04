@@ -6,7 +6,7 @@ gpus: [NVIDIA GeForce RTX 4070 SUPER]
 models: []
 platforms: [windows, linux]
 llama-cpp: v0.5.0 to v0.7.0
-updated: 2026-11-01
+updated: 2026-11-04
 ---
 
 # NVIDIA GeForce RTX 4070 Super: configuration reference
@@ -14,7 +14,9 @@ updated: 2026-11-01
 How to run llama.cpp on the RTX 4070 Super (Ada, `sm_89`, 12 GB) through the CUDA backend, on Windows and
 on Linux. Figures come from llama.cpp v0.5.0 on *Windows* and v0.6.0 or v0.7.0 on *Linux*, with Qwen3.8-27B
 Q8_0 and its embedded MTP head in a layer split with a HIP card. Backend and driver versions differ between
-the two systems, so a difference between them is not the OS alone.
+the two systems, so a difference between them is not the OS alone. The framework bundles llama.cpp v0.9.0, and no
+figure here was measured on it. The figures from campaign `coder390-placement-20261020` and campaign `coder390-ubatch-20261020`
+also ran with a FlashAttention band on the HIP card and a backend sampler probe, patches the bundled build does not have.
 
 **In short.** Use the CUDA backend with `f16` KV. The embedded MTP head and the sampling run best on this
 card on Windows and on the other card on Linux. Read `memory.free`, and run a real prefill before trusting

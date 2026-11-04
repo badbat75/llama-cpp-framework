@@ -6,7 +6,7 @@ gpus: [AMD Radeon AI PRO R9700, NVIDIA GeForce RTX 4070 SUPER]
 models: [Qwen3.8-27B]
 platforms: [linux, windows]
 llama-cpp: v0.5.0 to v0.8.0
-updated: 2026-11-02
+updated: 2026-11-04
 ---
 
 # Qwen3.8-27B: configuration reference (draft)
@@ -35,6 +35,14 @@ All speeds are t/s, with ± the sample standard deviation over the repetitions. 
 are prompts of 43,730 and 115,343 tokens (the second is named `bench-prompt-110k` in bench.db and the
 specs), sent with the prompt cache off.
 
+**The build behind these figures.** The framework bundles llama.cpp v0.9.0, and no figure here was measured on it.
+Every figure from v0.8.0, and every recorded one from v0.7.0 except campaign `27b-kv-f16-20261016`, campaign `coder390-device-order-20261019`
+and campaign `coder390-windows-vs-linux-20261020`, comes from a build carrying patches the bundled build does not have:
+the FlashAttention band on RDNA4 and the backend sampler probe, and on all but the earliest v0.7.0 campaigns host buffers pinned for every runtime. v0.5.0 and v0.6.0 figures predate them; a figure read by hand on v0.7.0 does not record its build, so it may
+or may not have carried them. The band is the one that moved speed: on the R9700 with `draft-mtp`, decode 25.9 t/s with
+it against 24.5 without at 115k, prefill unchanged (not recorded). How far the figures move is open
+([section 9](#9-not-yet-measured-placeholders)).
+
 ## 1. Model facts
 
 | item | value | source |
@@ -56,10 +64,10 @@ Three behaviours shape how to read every figure below:
 - **Prefill slows with depth**: 984 t/s at 4k tokens, 142 at 218k, in one long prompt (v0.6.0).
 - **The MTP head reads the prompt too**: 882 t/s against 1065 with no speculator at 115k. Decode
   pays that back.
-- **The MTP head can change the greedy text.** With the FlashAttention band (`HipFaBand`), MTP
-  and unassisted decoding agree over 278 tokens at 115k, but different draft widths on a
-  mixed-card split still write different texts, each repeatable. Compare runs on the same kind
-  of text.
+- **The MTP head can change the greedy text.** On the R9700's tile kernel, MTP and unassisted decoding part
+  after ~100 tokens at 115k, because the kernel's split changes with the number of queries; a build with the
+  FlashAttention band agreed over 278 tokens (v0.7.0, not recorded, not re-measured on v0.9.0). Different draft
+  widths on a mixed-card split write different texts too, each repeatable. Compare runs on the same kind of text.
 
 ## 2. Recommended settings
 
@@ -73,7 +81,6 @@ Three behaviours shape how to read every figure below:
 | `load-mode` | `none` | every weight is on a GPU: nothing to map |
 | `ubatch-size` | `1024` | best prefill at 115k: 902 t/s, against 895 at `768`, 837 at `1536`, 809 at `2048`; decode unchanged. Above `1024` the R9700 keeps 659 and 75 MiB, against 1232 (*Linux*, mixed pair; campaign `coder390-ubatch-20261020`) |
 | `ctx-checkpoints` | `12` | covers ~98k tokens of history at the default 8192 spacing, for 1.8 GiB of host RAM; a client compaction should then reprocess under 8192 tokens (not yet observed), against 95,814 tokens in 101.7 s at `4` |
-| `HipFaBand` | default (`4`) | decode 25.9 against 24.5 t/s at 115k on the R9700 with `draft-mtp`, prefill unchanged (not recorded) |
 
 ### Two R9700s
 
@@ -529,15 +536,15 @@ and the HIP runtime on *Windows* copies pageable memory at ~2 GB/s, blocking the
 R9700 second, ~200 MiB per ubatch crosses that way: the block-15 activations and the attention
 mask, which grows with the context. That is ~12% of a prefill step; the R9700's own layers take
 ~65% and the RTX 4070 SUPER's ~19%. The *Linux* runtime pins pageable memory on the fly, so it never
-pays this. Registering those buffers with every runtime (`patches\llama.cpp\0004`) cuts the
-blocking copies from 5.24 s to 2.50 s and gains ~2% with the R9700 second and nothing with it first,
-so the order remains the setting. Keeping the R9700 second, moving `blk\.15\.ffn_gate` onto it
-buys 3.8% of prefill (campaign `coder390-gate-windows-20261021`).
+pays this. The order is the setting: the bundled build pins those buffers for the first device
+alone. A build that registered them with every runtime cut the blocking copies from 5.24 s to 2.50 s
+and gained ~2% with the R9700 second and nothing with it first. Keeping the R9700 second, moving
+`blk\.15\.ffn_gate` onto it buys 3.8% of prefill (campaign `coder390-gate-windows-20261021`, on a build
+with the band, not re-measured on v0.9.0).
 
-On *Linux*, with patches 0001 to 0004 at `180224`, prefill at 43.7k reads 1185.6 ±12.6
-(campaign `coder390-patches-linux-20261021`) against 1164.0 ±15.7 with 0001 to 0003 at 172032, the
-same placement (campaign `coder390-placement-20261020`): within noise, decode the same, so 0004
-gains nothing measurable there.
+On *Linux*, registering them with every runtime gains nothing measurable. A build that did, at `180224`, prefills
+1185.6 ±12.6 at 43.7k (campaign `coder390-patches-linux-20261021`) against 1164.0 ±15.7 for one that did not at 172032, the
+same placement (campaign `coder390-placement-20261020`): within noise, decode the same. Both builds carried the band.
 
 ## 7. Baseline under the standard spec (two R9700s)
 
@@ -549,7 +556,9 @@ software against the figures of its own system, measured again under the same sp
 The tables merge two runs on the same machine, software and preset. The prose, image and agent-turn
 legs ran under `standard-1.0` (campaign `swift27b-standard-1.0-2xr9700-linux-20261031`).
 `standard-1.1` keeps the prose and image legs unchanged and adds writing code and the cached agent
-step, run separately (campaign `swift27b-standard-1.1-2xr9700-linux-20261101`).
+step, run separately (campaign `swift27b-standard-1.1-2xr9700-linux-20261101`). Both ran on llama.cpp v0.8.0 with
+the FlashAttention band and the other patches listed below; this baseline has not been re-measured on the bundled
+v0.9.0, which carries neither.
 
 <details>
 <summary>Machine, software, preset and method</summary>
@@ -725,7 +734,7 @@ where    = spec-pass=agent
 | Vulkan on the R9700 instead of ROCm | *Windows*: prefill 25 to 27% and decode 15 to 18% slower |
 | a low `spec-draft-n-max` with MTP alone | *Windows*: `1` gives 9.8 t/s at 93.6k, against 13.0 with no drafter; `2` gives 21 to 25% less than `4` |
 | `q8_0` draft KV | larger, not smaller (v0.6.0) |
-| the whole sampling chain on the GPU | no decode change at 115k: after `top-k 20` the CPU handles only 20 candidates, and a tool-call grammar disables backend sampling anyway |
+| the whole sampling chain on the GPU | no decode change at 115k: 40.7 to 40.8 ms per token against 40.6 to 41.5 with `top-p` and `dist` on the CPU, the same text (mixed pair, a patched v0.7.0, not recorded). After `top-k 20` the CPU handles only 20 candidates, and a tool-call grammar disables backend sampling anyway. On ROCm the bundled build keeps them on the CPU and logs `does not have support for op ARGSORT` |
 
 ## 9. Not yet measured (placeholders)
 
@@ -741,6 +750,7 @@ where    = spec-pass=agent
 | free memory after a prefill on *Windows*, two R9700s | n/a | a recorded figure per card, comparable with the *Linux* baseline | partly: recorded per adapter at 43.7k, one request ([section 4](#4-kv-cache-type-and-context)); 115k only by hand, the other prompts and two requests not recorded |
 | `ctx-checkpoints` | `12` | tokens reprocessed at a real client compaction (expected under 8192) | TBD |
 | `reasoning-preserve` | default | what a divergent prompt costs on the 598.5 MiB recurrent state | TBD |
-| a pinned staging buffer in ggml's cross-runtime copy | `malloc` staging | what it gives back of the 2.5 s of staged hops with the R9700 second on *Windows* | TBD: needs a ggml change first |
+| a pinned staging buffer in ggml's cross-runtime copy | `malloc` staging | what it gives back of the staged hops with the R9700 second on *Windows*: 2.5 s of the 5.24 s of blocking copies, the rest being the buffers of [section 6](#6-linux-against-windows) | TBD: needs a ggml change first |
 | the R9700 first on *Windows* at `53,13` | `52,14` | does `53,13` buy margin on the RTX 4070 SUPER for free? | TBD: needs the RTX 4070 SUPER in the test machine |
+| the settings on the bundled llama.cpp v0.9.0 | as in [section 2](#2-recommended-settings) | how far do these figures move without the band and the other patches they ran with? | TBD; the mixed pair needs the RTX 4070 SUPER in the test machine |
 | the HIP API log on *Linux*, R9700 second | n/a | is the *Linux* lead the copy rate alone, or the kernels too? | TBD: needs the RTX 4070 SUPER in the test machine |

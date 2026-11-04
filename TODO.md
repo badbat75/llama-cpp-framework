@@ -1,7 +1,9 @@
 # TODO: optimizations to port
 
 Candidates taken from <https://github.com/overdoingism/llama-cpp-rdna-boosts> (MIT), assessed
-on 2026-10-21 against our tree (llama.cpp v0.7.0 + `patches\llama.cpp\0001`-`0004`). That
+on 2026-10-21 against the tree of that day (llama.cpp v0.7.0 with patches 0001 to 0004). The
+tree is v0.9.0 with `patches\llama.cpp\0001`, `0005` and `0006`: 0002, 0003 and 0004 are removed,
+and the items below say where that changes their conclusion. That
 repository is a 16-block `git am` series against upstream `097cf33d9` (2026-10-12, an
 ancestor of v0.7.0, 98 commits behind it), validated on Linux with two or three R9700 in
 `split-mode tensor` over RCCL; nothing there was run on NVIDIA hardware, on a mixed
@@ -11,12 +13,12 @@ and Linux. So the headline numbers of that repo (prefill +8 % to +70 %, decode +
 R9700, Qwen3.8-27B Q8_0, measured in August against a master that predates upstream's RDNA4
 WMMA FlashAttention #28102) do not transfer; the items below are the ones whose mechanism
 applies to our cards, ranked by expected gain over porting cost. Cherry-picking means
-re-cutting hunks onto v0.7.0 by hand, as 0003 was (the blocks depend on each other and on
+re-cutting hunks onto the current tag by hand, as the removed 0003 was (the blocks depend on each other and on
 fork-only plumbing), plus one ~35 minute rebuild per attempt.
 
 ## Checks done before ranking (Windows, 2026-10-21)
 
-Hand runs on the installed server (v0.7.0 + 0001-0004), preset `Qwen3.8-27B-Coder390`,
+Hand runs on the server of that day (v0.7.0 with patches 0001 to 0004), preset `Qwen3.8-27B-Coder390`,
 device `ROCm1,CUDA0`, split `52,14`, `draft-mtp`, temperature 0, one repetition each, not
 recorded in `benchmarks\bench.db` (diagnostics, not a campaign).
 
@@ -38,15 +40,15 @@ worth today, `GGML_CUDA_DISABLE_GRAPHS=1` against the default:
 
 Block 11 is therefore superseded: nothing to port.
 
-**Band WMMA for GQA ratios above 8: ported** (patch 0003, `GGML_HIP_FA_BAND_WMMA_GQA_MAX`,
-default 12; was priority 1). `test-backend-ops` 135/135 at `nr23 {12,1}`; the band is 12 %
-faster than the tile kernel at 131k with one query per step and 55-59 % with 2-4 queries at
-65k-131k, 16 us slower per call at 4k. On the Flash-Next preset at 43.7k and 2.6k (3 runs
-each, temperature 0) prefill and decode are within noise and the output byte-identical,
-because the n-gram drafter drafts nothing on those prompts and attention is ~5 % of a decode
-step: `docs\qwen3.8_flash_next.md` section 7. Porting it surfaced a Windows abort in patch
-0004 (`hipHostFree` on host memory CUDA still had registered, at the second prompt of a
-different shape), fixed in the same patch.
+**Band WMMA for GQA ratios above 8: was ported as patch 0003, removed with it.** The build and the
+configurator have no band: the R9700's small decode batches run upstream's tile kernel (`fattn.cu`,
+v0.9.0: WMMA only above 16 queries times the GQA fold). What the port measured on v0.7.0:
+`test-backend-ops` 135/135 at `nr23 {12,1}`; the band was 12 % faster than the tile kernel at 131k
+with one query per step and 55-59 % with 2-4 queries at 65k-131k, 16 us slower per call at 4k. On
+the Flash-Next preset at 43.7k and 2.6k (3 runs each, temperature 0) prefill and decode were within
+noise and the output byte-identical, because the n-gram drafter drafted nothing on those prompts and
+attention is ~5 % of a decode step: `docs\qwen3.8_flash_next.md` section 7. What its absence costs
+with accepted drafts is the open measurement [below](#re-measure-the-presets-on-v090-without-patches-0002-to-0004).
 
 **Upstream's chunked GDN prefill kernel excludes RDNA4.** `gated-delta-net-mma.cu` (the
 MMA chunked kernel for the gated delta net layers, 36 of the 48 layers of Qwen3.8-27B and of
@@ -77,31 +79,28 @@ three WMMA per k-step for the bf16 hi/lo split; making it fast on RDNA4 is kerne
 the fork's 1015-line gfx12 file. The RTX 4070 SUPER runs the same cases on the chunked
 kernel at 33 / 115 / 225 / 492 / 966 / 1917. The prize was bounded anyway: 36 layers x
 449 us per 512-token ubatch is 32 us per token, 1.3 % of Flash-Next's 2.4 ms prefill step
-at 43.7k, and 36 x 925 us per 1024 tokens is 3.5 % of the 27B's 0.9 ms. Reverted; the tree
-is v0.7.0 + 0001-0004 again. Revisit only if upstream ships an RDNA4 arm of its own
+at 43.7k, and 36 x 925 us per 1024 tokens is 3.5 % of the 27B's 0.9 ms. Reverted. Revisit only if upstream ships an RDNA4 arm of its own
 (check `gated-delta-net-mma.cu` at every tag bump).
 
-**KV-split width determinism (`upstream/UPSTREAM-PR-fa-kv-split-width.patch`): measured and
-not applicable (Linux, 2026-10-21; was priority 1).** The patch pins the KV split of
-`launch_fattn`'s non-stream-k branch for `Q->ne[1] <= 8`, so a verify batch reduces the KV
-like plain decode. That branch is the tile and vec kernels, which no decode path of ours
-takes: the R9700 runs the band of 0003 (one fixed grid for 1 to 4 queries, width-pure by
-construction, `docs\qwen3.8_27b.md` section 1) and the RTX 4070 SUPER runs the stream-k MMA
-kernel, where `switch_ncols1` picks a different kernel instance per verify width (1, 4 or 8
-query columns, each with its own KV batch and rounding order). Measured on the installed
-v0.7.0 + 0001-0004, band on, Coder390 preset as configured (`CUDA0,ROCm0`, 16 layers on the
-4070), 43.7k-token prompt, temperature 0, seed 42, 300 tokens: `spec-draft-n-max` 2, 4 and
-no drafter give three different texts (first flips at token ~120 and ~250), each run
-byte-identical when repeated, so the dependence is deterministic and sits in the paths the
-patch leaves alone. Width purity on this placement would need the MMA kernel pinned to one
-`ncols1` for every small width (what the band does on RDNA4: a kernel change, not this
-patch), or every layer on the R9700. Not added; it still applies clean to v0.7.0 should a
-preset ever run the tile kernel at decode (band off).
+**KV-split width determinism (`upstream/UPSTREAM-PR-fa-kv-split-width.patch`): open again, it
+depended on the band (measured on Linux, 2026-10-21, on v0.7.0 with patches 0001 to 0004).** The patch
+pins the KV split of `launch_fattn`'s non-stream-k branch for `Q->ne[1] <= 8`, so a verify batch reduces
+the KV like plain decode. That branch is the tile and vec kernels. With the band of 0003 no decode path
+of ours took it, so the patch was found not applicable. Without the band the R9700's decode takes it, so
+that finding no longer holds on the R9700; whether the patch applies to v0.9.0 is unchecked. The RTX
+4070 SUPER still runs the stream-k MMA kernel, where `switch_ncols1` picks a different kernel instance
+per verify width (1, 4 or 8 query columns, each with its own KV batch and rounding order). The same run,
+band on, Coder390 preset as configured (`CUDA0,ROCm0`, 16 layers on the 4070), 43.7k-token prompt,
+temperature 0, seed 42, 300 tokens: `spec-draft-n-max` 2, 4 and no drafter give three different texts
+(first flips at token ~120 and ~250), each run byte-identical when repeated, so that dependence is
+deterministic and sits in the paths the patch leaves alone. Width purity on that placement would need the
+MMA kernel pinned to one `ncols1` for every small width (a kernel change, not this patch).
 
 ## Priorities
 
-Nothing left to port from the list of 2026-10-21: the two kernel items were measured out
-(above) and the host-side one is parked (below).
+Nothing ranked to port from the list of 2026-10-21: the chunked GDN kernel was measured out (above)
+and the host-side item is parked (below). The KV-split width patch above is open again, and the
+re-measurement below says what the removed patches cost.
 
 ## Parked (not now, by decision)
 
@@ -138,7 +137,7 @@ Enabling peer access alone cost 42.25 to 38.77 t/s of dense decode on 3x R9700, 
 undone once RCCL has made its mappings.
 
 - Compare the block's small-tensor path and its copy engine with upstream's internal AllReduce
-  (`ggml/src/ggml-cuda/allreduce.cu`): what is left to gain over v0.8.0 is not known. This part
+  (`ggml/src/ggml-cuda/allreduce.cu`): what is left to gain over v0.9.0 is not known. This part
   needs no RCCL, so it could run on the current board.
 - RCCL itself cannot run here: the x4 card's slot has no AtomicOps. With both cards on CPU slots,
   `GGML_CUDA_ALLREDUCE` compares `internal` and `nccl` with no rebuild. Upstream's init tries NCCL
@@ -162,7 +161,7 @@ undone once RCCL has made its mappings.
 - Block 11 HIP graphs on verify batches: superseded by upstream's keyed graphs (measured above).
 - Blocks 06 and 13 (MoE expert cache, slab allocator, staging ring, MoE MMQ fusions,
   737 KB): built for `-ncmoe` under tensor split; `GGML_CUDA_ASYNC_INPUT` (a 16 MiB pinned
-  ring per device) overlaps our 0004 and cannot be extracted from the block.
+  ring per device) cannot be extracted from the block.
 - Block 10 k-quant VDR: the dense kernels keep upstream's VDR (only the MoE expert kernel
   changes), so the Q8_0 dense 27B gains nothing.
 - Block 15 derived KQ mask (`LLAMA_KQ_MASK_DERIVED`): saves mask memory but costs -1.6 %
@@ -178,33 +177,70 @@ undone once RCCL has made its mappings.
 
 - `tensor-split 53,13` for the Windows Coder390 preset at ctx 180224.
 - The HIP API log on Linux: is the Linux prefill lead the copy rate alone?
-- A pinned staging buffer in `ggml_backend_tensor_copy`'s slow path (the cross-card hops
-  still staged through `malloc`: 2.5 s per 43.7k prefill with the R9700 second).
+- A pinned staging buffer in `ggml_backend_tensor_copy`'s slow path (the cross-card hops staged
+  through `malloc`: 2.5 s of the 5.24 s of blocking copies per 43.7k prefill with the R9700 second,
+  measured on v0.7.0; the other 2.7 s were what patch 0004, since removed, took away).
 - The Swift preset's device order on Windows: prefill is settled, the `real` decode lead of the
   x4 card first needs repetitions ([Qwen3.8-27B, section 9](docs/qwen3.8_27b.md#9-not-yet-measured-placeholders)).
 - The Swift preset's prefill gap to Linux on Windows: Memory Integrity, `ThreadsBatch` and the
   power plan do not explain it; the hypervisor and the driver and HIP costs are unmeasured
   ([Qwen3.8-27B, section 6](docs/qwen3.8_27b.md#6-linux-against-windows)).
 
-## The band on GQA 12 with accepted drafts (2026-11-01, `docs/qwen3.8_flash_next.md` section 7)
+## Performance regression since patches 0002 to 0004 were dropped: decide whether to bring them back
 
-The band's gain at 2 to 4 queries per step on GQA 12 rests only on `test-backend-ops`
-(`patches\llama.cpp\README.md`, patch 0003): the server tests of it, cap 8 against cap 12 on
-Windows and 0001-0004 against 0001 on Linux, accepted no draft. The runs that accept drafts have no
-band-off leg: every run of the four `flash-next-mtp-*` campaigns records
-`GGML_HIP_FA_BAND_WMMA=4`, and so do the `swift-flash-next-*` ones.
+Patches `0002`, `0003` and `0004` were removed to reduce the maintenance cost, in the same change that moved
+to v0.9.0, and performance dropped. Swift-1.5-Qwen3.8-27B on 2x R9700, Linux, preset temperature, one
+repetition per prompt on 2026-11-04 (a quick check, not recorded in bench.db), against the 5 repetitions of
+campaign `swift27b-standard-1.0-2xr9700-linux-20261031` on v0.8.0 with the patches:
 
-- The missing run: Flash-Next on two R9700s with `draft-mtp`, `HipFaBand` default (exports 4)
-  against off (`HipFaBand = 0`, `server set --hip-fa-band 0`: the variable is not exported), at
-  43.7k, same text, temperature 0, 3 repetitions, on the preset of
-  campaign `flash-next-mtp-graphs-2xr9700-linux-20261030` (`spec-draft-n-max` 3: 54.9 t/s, 488 of
-  821 drafts accepted). `HipFaBand` is a `server.ini` key, not a preset key, so this is one `bench run`
-  per value rather than a `--key` sweep.
+| Prompt | Prefill t/s, before | Prefill t/s, now | Decode t/s, before | Decode t/s, now |
+| --- | --- | --- | --- | --- |
+| 43k | 1125.4 (1124.5-1128.2) | 1077.2 (-4.3%) | 59.3 (57.0-60.8) | 56.1 (-5.4%) |
+| 110k | 960.1 (958.7-962.1) | 893.4 (-6.9%) | 59.2 (48.7-67.0) | 59.6 (+0.7%) |
+
+The prefill drop is outside the spread of the old runs. Decode at 43k is just below it on one repetition and
+decode at 110k says nothing, so decode is still open. Another job was running on the machine during the check.
+
+**Not established yet: how much comes from the missing patches and how much from v0.9.0.** The two changed
+together. To separate them:
+
+1. Repeat both prompts on an idle machine with temperature 0 and no drafter (the `engine` pass of the standard
+   spec; v0.8.0 recorded prefill 1210.3 and 1025.5, decode 27.1 and 24.5 t/s).
+2. If the drop holds, build v0.9.0 with the patches back and measure again, one patch at a time.
+3. Weigh each patch's gain against its upkeep, and bring back the ones that pay.
+
+**Bringing a patch back.** Take it from the last commit that has it (`git show 54396fb:patches/llama.cpp/<name>`),
+with its section of `patches/llama.cpp/README.md`, and refresh it for v0.9.0. `0002` applies as it is. `0003`
+needs a context change in `fattn-mma-f16.cuh` (`nullptr` became `indices`, #29510). `0004` loses the hunk adding
+`<algorithm>`, which upstream now includes. Bringing `0003` back also means restoring the `HipFaBand` option of
+the configurator, removed with it.
+
+## Re-measure the presets on v0.9.0 without patches 0002 to 0004
+
+Every recorded figure the guides hold from v0.7.0 and v0.8.0 ran with the FlashAttention band (0003),
+the sampler probe (0002) and, from 2026-10-21, host buffers pinned for every runtime (0004), except
+campaigns `27b-kv-f16-20261016`, `coder390-device-order-20261019`, `coder390-windows-vs-linux-20261020`,
+`flash-next-moe-cache-20261016` and `flash-next-no-host-20261016`. No run in bench.db is on v0.9.0. The
+guides say so under their "In short" and in a placeholder row; both go, and the figures change, once
+this is done.
+
+- Run the two-R9700 presets under the same spec version as their baselines: the Swift 27B on Linux and
+  Windows against campaign `swift27b-standard-1.1-2xr9700-linux-20261101` and
+  campaign `swift27b-standard-1.1-2xr9700-windows-20261101`, Swift Flash-Next on Linux against
+  campaign `swift-flash-next-standard-1.1-2xr9700-linux-20261101`. The mixed pair needs the RTX 4070 SUPER
+  in the test machine.
+- The biggest unknown is decode with accepted drafts: the band's gain at 2 to 4 queries per step rests
+  on `test-backend-ops`, and no run that accepts drafts has a leg without the band. For Flash-Next, repeat
+  the preset of campaign `flash-next-mtp-graphs-2xr9700-linux-20261030` (`spec-draft-n-max` 3: 54.9 t/s,
+  488 of 821 drafts accepted) at 43.7k, same text, temperature 0, 3 repetitions.
 - Check that both legs write the same reply before comparing decode: a different reply changes the
-  acceptance, and with it the rate.
-- That preset's KV is q8_0 (MTP does not load at f16 with split 1,1) and the GQA 12 `perf` figures
-  are f16, while at GQA 6 quantized K/V gains nothing on this path: a null result may be the KV
-  type, not the band.
+  acceptance, and with it the rate. The tile kernel's split changes with the query count, so MTP and
+  unassisted text may part (`docs/qwen3.8_27b.md` section 1).
+- That Flash-Next preset's KV is q8_0 (MTP does not load at f16 with split 1,1) and the GQA 12 `perf`
+  figures are f16, while at GQA 6 quantized K/V gained nothing on the band's path: a null result may be
+  the KV type.
+- A change of release sits in the same comparison, v0.8.0 to v0.9.0, so a difference is not the patches
+  alone.
 
 ## Drafter benchmarks look too favorable (2026-10-30, `docs/qwen3.8_flash_next.md` section 5)
 

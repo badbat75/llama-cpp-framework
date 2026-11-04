@@ -6,7 +6,7 @@ gpus: [AMD Radeon AI PRO R9700]
 models: []
 platforms: [windows, linux]
 llama-cpp: v0.5.0 to v0.8.0
-updated: 2026-11-02
+updated: 2026-11-04
 ---
 
 # AMD Radeon AI PRO R9700: configuration reference
@@ -21,6 +21,14 @@ so a difference between them is not the OS alone. Model-specific detail is in th
 R9700s, use the tensor split with an even `tensor-split`: on Linux it decodes 48 to 65% faster than the
 layer split for 16 to 22% less cold prefill. Windows runs the same preset with one request's decode level
 with Linux and prefill 11 to 18% slower; the gain over the layer split is unmeasured there.
+
+**The build behind these figures.** The framework bundles llama.cpp v0.9.0, and no figure here was measured on it.
+Every figure from v0.8.0, and every recorded one from v0.7.0 except campaign `27b-kv-f16-20261016`, comes from a
+build carrying patches the bundled build does not have: the FlashAttention band on RDNA4 and the backend sampler probe, and on all but the earliest v0.7.0 campaigns host buffers pinned for every runtime. v0.5.0 and v0.6.0 figures predate them; a figure read by hand on v0.7.0 does not record its build, so it may
+or may not have carried them. The band is the one
+that moved speed: on `f16` KV it ran attention 1.18x faster at 1 query and 1.6x at 3 to 4, and the 27B decoded 25.9
+against 24.5 t/s without it at 115k, prefill unchanged (not recorded). The bundled build runs this card's `f16` decode
+steps on upstream's tile kernel. How far the figures move is open ([section 7](#7-not-yet-measured-placeholders)).
 
 ## 1. Runtime prerequisites
 
@@ -47,6 +55,10 @@ with Linux and prefill 11 to 18% slower; the gain over the layer split is unmeas
 - **A decode step is mostly kernels** (*Linux*, v0.7.0, on the tile kernel). Tracing the 27B Q8_0 at 72k and 150k tokens, the Q8_0 GEMV takes 61
   to 73% of kernel time and FlashAttention the rest, growing with the context. Power stays at 212 to
   216 W of 300, so the headroom is in the kernels, not the power limit.
+- **With `backend-sampling`, a `top-p` falls to the CPU, with the samplers after it.** ROCm has no CUB, so the backend
+  probe refuses `ARGSORT` on a vocabulary-wide row even when a `top-k` before it leaves 20 candidates. llama-server logs
+  `does not have support for op ARGSORT needed for sampler 'top-p'` on every request. It costs no speed:
+  [Qwen3.8-27B, section 8](qwen3.8_27b.md#8-choices-that-look-better-than-they-measure).
 
 ## 3. Settings
 
@@ -72,7 +84,6 @@ visible to HIP does with `device` left blank: hence `mmap`, set explicitly. *Lin
 
 | key | value | evidence |
 | --- | --- | --- |
-| `HipFaBand` (env `GGML_HIP_FA_BAND_WMMA`) | default (`4`) | the framework's FlashAttention band (`patches\llama.cpp\0003`): attention 1.18x faster at 1 query and 1.6x at 3 to 4, on `f16` KV; end to end the 27B decodes 25.9 against 24.5 at 115k (not recorded) |
 | `RocprofAttach` (env `ROCP_TOOL_ATTACH=1`) | off; on while diagnosing | lets `rocprofv3 --attach <pid>` trace the running server |
 
 ### Quantization on RDNA4
@@ -240,5 +251,5 @@ backend-sampling = true
 | the prefill gap to *Linux* on two R9700s on *Windows* | n/a | what causes it: the driver and HIP runtime, transfers and submissions under `split-mode tensor`, the hypervisor? | partly: Memory Integrity gives 2 to 3%, `ThreadsBatch` and PCIe ASPM nothing ([section 5](#5-choices-that-look-better-than-they-measure)); the candidates are unmeasured |
 | `GGML_CUDA_AR_COPY_THRESHOLD` / `_CHUNK_BYTES` on two R9700 | default | the internal AllReduce's staging sizes (seeds: 1-2 MiB, 2 MiB) against the default | TBD |
 | Linux: memory beyond the card | n/a | what moving buffers to GTT costs in speed | partly: with two 115k contexts on a full card, requests ran out of memory in the HIP graph update, once after 14 GB had moved to GTT (campaign `swift27b-concurrency-2xr9700-linux-20261031`); the speed under GTT is unmeasured |
-| `GGML_HIP_FA_BAND_WMMA_SPLIT` | default (one block per CU) | 32, 48, 96 or 128 KV blocks against the default, at 65k and 131k cells | TBD |
+| the settings on the bundled llama.cpp v0.9.0 | as in [section 3](#3-settings) | how far do these figures move without the band and the other patches they ran with? | TBD |
 | Q8_0 GEMV ceiling | n/a | `llama-bench` on this card alone at depth 0 and 131072, against the 58% of bandwidth seen in a trace | TBD |

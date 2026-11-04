@@ -1,29 +1,35 @@
 ---
 title: Packaging and install
 type: reference
-updated: 2026-11-02
+updated: 2026-11-04
 ---
 
 # Packaging and install
 
-What `xtask package` puts in the MSI, the `.deb` and the `.rpm`, and how `xtask install` lays a
-package down. The `.pkg` is on [the macOS page](build-macos.md). The MSI's own authoring is in
+What `xtask package` puts in the MSI and in each `.deb` and `.rpm`, and how `xtask install` lays the
+packages down. The `.pkg` files are on [the macOS page](build-macos.md). The MSI's own authoring is in
 [installer\AGENTS.md](../installer/AGENTS.md), and the phases and what breaks are in
 [Build pipeline](build-pipeline.md).
 
 ## Packaging
 
-**Every package is self-contained: the target machine needs the GPU drivers and little else.** On
+**What a machine installs is self-contained: the target needs the GPU drivers and little else.** On
 Windows that also means the VC++ runtime. Each OS stages into `build/<os>/staging/`, and the staged
 tree is the installed tree.
 
-| OS | File in `dist/` |
-| --- | --- |
-| Windows | `llama-cpp-framework-v<framework>-<llama>-x64.msi` (`arm64` on an ARM build) |
-| Linux | `llama-cpp-framework-v<framework>-<llama>-amd64.deb`, `-x86_64.rpm` (`arm64`, `aarch64` on ARM) |
-| macOS | `llama-cpp-framework-v<framework>-<llama>-arm64.pkg` |
+**Windows ships one MSI. Linux ships five packages per format and macOS three, so a machine can leave out
+the runtime of a GPU it does not have.** `xtask/src/common/components.rs` splits the staged tree by
+path, so no file lands in two packages or in none.
 
-For example, `llama-cpp-framework-v2.2.0-v0.7.0-x64.msi`.
+| OS | Package | File in `dist/` |
+| --- | --- | --- |
+| Windows | The MSI | `llama-cpp-framework-v<framework>-<llama>-x64.msi` (`arm64` on an ARM build) |
+| Linux | `config`, `llama` | `llama-cpp-framework-<package>-v<framework>-<llama>-amd64.deb`, `-x86_64.rpm` (`arm64`, `aarch64` on ARM) |
+| Linux | `rocm`, `cuda`, `vulkan` | `llama-cpp-framework-<package>-v<sdk>-amd64.deb`, `-x86_64.rpm` (the same on ARM) |
+| macOS | `config`, `llama`, `vulkan` | [The macOS page](build-macos.md) |
+
+For example, `llama-cpp-framework-v2.2.0-v0.9.0-x64.msi`, `llama-cpp-framework-llama-v2.2.0-v0.9.0-amd64.deb`,
+`llama-cpp-framework-rocm-v10.1.0-amd64.deb`.
 
 - `<framework>` is the `[package]` version of `llama-cpp-config/Cargo.toml`: the configurator and
   the framework are versioned together.
@@ -31,13 +37,16 @@ For example, `llama-cpp-framework-v2.2.0-v0.7.0-x64.msi`.
   nightly on the same commit.
 - Anything but an exact `vX.Y.Z` falls back to `b<rev-list --count>`, shaped so a non-release
   package cannot pass for one.
+- `<sdk>` is the version of the SDK in the dist layout. An SDK outside the layout takes the package
+  version of `config` and `llama`.
 
 **Every OS ships the benchmark method read-only** in `share/benchmarks/`: each `standard-<X.Y>.ini`,
-`standard.versions`, and the prompts with their images. `bench_share.rs` stages it.
+`standard.versions`, and the prompts with their images. `bench_share.rs` stages it, and on Linux and
+macOS it is in the `config` package.
 
 **Every OS ships the configurator's text read-only** in `share/strings/`: `en_US.toml`, the GUI's
 language file, and `cli.toml`, the CLI's text. `strings_share.rs` stages
-every `*.toml` of `llama-cpp-config/strings/`.
+every `*.toml` of `llama-cpp-config/strings/`, and on Linux and macOS it is in the `config` package.
 
 **llama.cpp's test harnesses are pruned on every OS.** On Windows the installer can put `bin\` on
 the system PATH. On Linux and macOS every staged executable gets a command link. Either way,
@@ -47,8 +56,9 @@ executable with an `install()` rule, so count them from the staging tree, not th
 **Which runtime libraries is never a list.** It is the closure of what the staged binaries link,
 restricted to what resolves inside a dist. Everything else stays a system library.
 
-**Every package carries `share/licenses/` beside `bin`** (`/opt/llama.cpp/share/licenses` on Linux
-and macOS). `licenses.rs` (`xtask/src/common/`) stages it:
+**Every package carries its licences.** The MSI holds them in `share\licenses\` beside `bin\`. On Linux
+and macOS each package holds its own `/opt/llama.cpp/share/licenses/<package>/`, since no two packages
+can own one file. `licenses.rs` (`xtask/src/common/`) stages them:
 
 - This project's licence, llama.cpp's and what llama.cpp's own `licenses/` holds, the configurator's
   icon font, and a text for every bundled library.
@@ -62,7 +72,8 @@ and macOS). `licenses.rs` (`xtask/src/common/`) stages it:
   `Runtime\VulkanRT-License.txt`, OpenSSL's `license.txt`. Otherwise it comes from
   `installer/licenses/`, whose README says where each was taken from.
 - NVIDIA's terms are not an open-source licence. They install as `NVIDIA-CUDA-EULA.txt`, and
-  `ggml-cuda` needs them too, since it links NVIDIA's static runtime.
+  `ggml-cuda` needs them too, since it links NVIDIA's static runtime: on Linux both `llama` and `cuda`
+  carry them.
 
 ### The MSI (Windows)
 
@@ -132,27 +143,51 @@ The app directory wins the DLL search order, so they go in `bin\`.
 
 ### The `.deb` and `.rpm` (Linux)
 
-**`xtask package` builds both from one staged tree, about 1.2 GB each and 3.3 GB installed.**
-`--deb` or `--rpm` builds one. It refuses to run when the built `llama-cpp-config --version` differs
+**`xtask package` builds five packages per format from one staged tree, 3.8 GiB installed with all five.**
+`--deb` or `--rpm` builds one format. It refuses to run when the built `llama-cpp-config --version` differs
 from `Cargo.toml`, a bump without a rebuild.
 
-**The package version is `<framework>+llama.cpp.<tag>`**, for example `2.0.0+llama.cpp.v0.7.0`. A
+| Package `llama-cpp-framework-` | Holds | Version | `.deb` / `.rpm` |
+| --- | --- | --- | --- |
+| `config` | `llama-cpp-config` (GUI and CLI), its text, the benchmark method, the desktop entry | `<framework>+llama.cpp.<tag>` | 18 / 21 MiB |
+| `llama` | llama.cpp with the ggml backends (`libggml-hip.so`, `libggml-cuda.so`, `libggml-vulkan.so`), libomp | `<framework>+llama.cpp.<tag>` | 179 / 214 MiB |
+| `rocm` | The ROCm libraries with RCCL, and the kernel stores | The SDK's, `10.1.0` | 831 / 922 MiB |
+| `cuda` | The CUDA libraries and NCCL | `<cuda>+nccl.<nccl>`, `13.4.3+nccl.2.32.3` | 651 / 670 MiB |
+| `vulkan` | The Vulkan loader | The SDK's, `1.4.363.0` | 2 / 2 MiB |
+
+Sizes are of the v0.9.0 build, as `xtask package` prints them, rounded up to the MiB.
+
+**A runtime package holds only the external SDK's libraries, so it changes only with the SDK.** A new
+llama.cpp on the same SDKs leaves the three as they are. Each is optional: a backend whose runtime is
+missing is skipped at start, with only a log line.
+
+**The packages tie each other to exact versions:**
+
+| Relation | `.deb` | `.rpm` |
+| --- | --- | --- |
+| `config` needs `llama` at exactly its version | `Depends` `(= <version>)` | `Requires` `= <version>` |
+| `llama` asks for each runtime at the version it was built against | `Recommends` `(= <version>)` | `Recommends` `= <version>` |
+| `llama` refuses any other version of a runtime, whose symbols a backend may not resolve | `Breaks` `(<< <version>)`, `(>> <version>)` | `Conflicts` `< <version>`, `> <version>` |
+| All five replace `llama-cpp-framework`, the single package of earlier releases | `Conflicts`, `Replaces` | `Obsoletes` |
+| `llama` keeps out the distribution's own package | `Conflicts: llama.cpp` | `Conflicts: llama-cpp` |
+
+**`config` and `llama` carry `<framework>+llama.cpp.<tag>`**, for example `2.2.0+llama.cpp.v0.9.0`. A
 rebuild on a newer llama.cpp alone is then an upgrade to apt and dnf. dpkg and rpm both order
-`2.0.0` < `2.0.0+llama.cpp.v0.7.0` < `2.0.0+llama.cpp.v0.10.0` < `2.0.1+...`.
+`2.2.0` < `2.2.0+llama.cpp.v0.9.0` < `2.2.0+llama.cpp.v0.10.0` < `2.2.1+...`.
 
-| Path | Holds |
-| --- | --- |
-| `/opt/llama.cpp/bin/` | Executables, llama.cpp's libraries, ggml backends, `llama-cpp-config`, copied from the build's `bin/` |
-| `/opt/llama.cpp/lib/` | The bundled runtimes |
-| `/opt/llama.cpp/.kpack/` | hipBLASLt's `blas_lib_*` and RCCL's `rccl_lib_*` archives |
-| `/opt/llama.cpp/share/benchmarks/` | The benchmark method |
-| `/opt/llama.cpp/share/strings/` | The configurator's text: the GUI's `en_US.toml`, the CLI's `cli.toml` |
-| `/opt/llama.cpp/share/licenses/` | The licence texts and their `README.txt` |
-| `/usr/bin/` | One relative symlink per executable; rpm warns on absolute ones |
-| `/usr/share/` | The desktop entry ("llama.cpp Config" in the menu), its icon, the `.deb`'s `doc/<pkg>/copyright` |
+| Path | Package | Holds |
+| --- | --- | --- |
+| `/opt/llama.cpp/bin/` | `llama`; `llama-cpp-config` in `config` | Executables, llama.cpp's libraries, ggml backends, `llama-cpp-config`, copied from the build's `bin/` |
+| `/opt/llama.cpp/lib/` | `rocm`, `cuda`, `vulkan`; `llvm/lib/libomp.so` in `llama` | The bundled runtimes |
+| `/opt/llama.cpp/.kpack/` | `rocm` | hipBLASLt's `blas_lib_*` and RCCL's `rccl_lib_*` archives |
+| `/opt/llama.cpp/share/benchmarks/` | `config` | The benchmark method |
+| `/opt/llama.cpp/share/strings/` | `config` | The configurator's text: the GUI's `en_US.toml`, the CLI's `cli.toml` |
+| `/opt/llama.cpp/share/licenses/<package>/` | Each its own | The licence texts and their `README.txt` |
+| `/usr/bin/` | `llama`; `llama-cpp-config` in `config` | One relative symlink per executable; rpm warns on absolute ones |
+| `/usr/share/` | `config`; `doc/<pkg>/copyright` in each | The desktop entry ("llama.cpp Config" in the menu), its icon, the copyright file |
 
-**`bin/` stays one directory, so it skips `cmake --install`,** which would split it into `bin/` and
-`lib/`. ggml looks for its backends next to the executable (`/proc/self/exe`, so through a symlink
+**`bin/` stays one directory, across `config` and `llama`, so it skips `cmake --install`,** which would
+split it into `bin/` and `lib/`. ggml looks for its backends next to the executable (`/proc/self/exe`, so through a symlink
 too), and `paths::llama_bin` looks for `llama-server` next to the configurator.
 
 **The runtimes are the `ldd` closure of the staged files**, restricted to the ROCm, CUDA and NCCL
@@ -170,11 +205,11 @@ dists and the Vulkan SDK's loader directory. Each lands under its soname with sy
 **The ROCm part mirrors the dist's `lib/` layout** (`lib/`, `lib/llvm/lib/`,
 `lib/rocm_sysdeps/lib/`, `lib/rocblas/library/`, `lib/hipblaslt/library/`). AMD's libraries find
 each other and their kernel files through `$ORIGIN`-relative RUNPATHs and paths, so a mirrored tree
-needs no patching of anything AMD shipped. `libomp.so` comes along, because the CPU backends link
-the dist's OpenMP runtime.
+needs no patching of anything AMD shipped. `libomp.so` comes along in the `llama` package, not `rocm`,
+because ggml-base itself links the dist's OpenMP runtime.
 
 CUDA (`libcudart`, `libcublas`, `libcublasLt`, about 575 MiB), NCCL and the Vulkan loader go flat
-into `lib/`.
+into `lib/`, in the `cuda` and `vulkan` packages.
 
 **Kernel data, which `ldd` cannot show, is copied only for `gpu_targets`,** files or per-arch
 directories alike, plus whatever names no architecture.
@@ -198,23 +233,22 @@ scripts and create no group.
 <details>
 <summary>Dependencies, payload and metadata</summary>
 
-**`.deb` `Depends`** come from `dpkg-shlibdeps` over the staged ELF files, bundled runtimes
-included, with `libvulkan1` dropped because the loader is bundled.
+**`.deb` `Depends`** come from `dpkg-shlibdeps` over each package's staged ELF files, with the library
+directories of all five given as private paths, so a library another package carries asks for nothing.
+`libvulkan1` is dropped because the loader is bundled.
 
 - `libggml-cuda.so` and the `libcu*` files are left out of the scan. They link the driver's
   `libcuda.so.1`, which no Debian package provides, and `dpkg-shlibdeps` fails on a library it
   cannot find.
-- A fixed list is the fallback.
-- What the configurator and the Vulkan backend only `dlopen` (xkbcommon, Wayland, X11, EGL) is
-  `Recommends`.
-- It conflicts with `llama.cpp`.
+- A fixed list is the fallback of `config` and `llama`. A runtime asks for nothing it does not bring along.
+- What the configurator only `dlopen`s (xkbcommon, Wayland, X11, EGL) is `Recommends` of `config` alone:
+  neither the Vulkan loader nor the Vulkan backend names those libraries.
 
 **`.rpm`** keeps rpm's automatic scan.
 
-- `__requires_exclude` covers every library the package carries, and `libcuda`.
+- `__requires_exclude` covers every library of the five, and `libcuda`.
 - Those libraries are excluded from `Provides` too.
 - `rpmbuild` runs against a throwaway `_dbpath`, since a Debian host has no rpm database.
-- It conflicts with `llama-cpp`.
 
 **Payload and modes.** The payload is zstd in both formats, because xz takes many minutes on 3 GiB
 of GPU kernels. Modes are normalized to 755 and 644, because the repo drive may hand out
@@ -223,10 +257,9 @@ group-writable ones.
 **Icon.** It is the largest PNG frame of `resources/llama.ico`, cut out of the container by xtask,
 so no image tool is needed.
 
-**Licence metadata.** The `.rpm` `License:` field is computed from what the package bundles: an SPDX
-expression, with `LicenseRef-NVIDIA-CUDA-EULA` for NVIDIA's terms. The `.deb`'s
-`usr/share/doc/<pkg>/copyright` includes the `share/licenses/README.txt` and points to the
-directory.
+**Licence metadata.** The `.rpm` `License:` field is computed from what each package bundles: an SPDX
+expression, with `LicenseRef-NVIDIA-CUDA-EULA` for NVIDIA's terms. `usr/share/doc/<pkg>/copyright`
+includes that package's `share/licenses/<package>/README.txt` and points to the directory.
 
 **Maintainer.** `LLAMA_FW_MAINTAINER` sets it, else git's `user.name` and `user.email`.
 
@@ -237,15 +270,16 @@ directory.
 ## Install
 
 **`xtask install` covers first install, upgrade, same-version reinstall and downgrade with one
-command.** It takes the last-written package of this architecture in `dist/`, or the file given.
-`--dry-run` prints the commands.
+command.** On Windows it takes the last-written MSI of this architecture in `dist/`, or the file given. On
+Linux and macOS it takes the last-written file of each package, or only the files given: that is how to
+leave out the runtime of a GPU the machine does not have. `--dry-run` prints the commands.
 
 | | Windows | Linux | macOS |
 | --- | --- | --- | --- |
-| Command | `msiexec /i <msi> /qb /norestart /l*v <log>` | Package manager, see below | `sudo installer -pkg <pkg> -target /` |
+| Command | `msiexec /i <msi> /qb /norestart /l*v <log>` | Package manager, see below | `sudo installer -pkg <pkg> -target /`, per package |
 | Downgrade | Removes the installed version first: `msiexec /x {ProductCode} /qb` | Package manager's own | Laid down over it |
 | Running programs | The MSI's `StopProcesses` action stops them | Refused (`--force` overrides) | Refused (`--force` overrides) |
-| Success check | `DisplayVersion` matches the package | `llama-cpp-config --version` | `llama-cpp-config --version` |
+| Success check | `DisplayVersion` matches the package | `llama-cpp-config --version`, when `config` is among the files | `llama-cpp-config --version`, when `config` is among the files |
 
 **Windows.**
 
@@ -263,14 +297,15 @@ command.** It takes the last-written package of this architecture in `dist/`, or
 
 | Format | Command |
 | --- | --- |
-| `.deb` | `apt-get install -y --reinstall --allow-downgrades` |
-| `.rpm` with dnf | `dnf install`, `reinstall` or `downgrade` |
-| `.rpm` with zypper | `zypper --non-interactive install --force --allow-unsigned-rpm` |
-| `.rpm` otherwise | `rpm -Uvh --replacepkgs --oldpackage` |
+| `.deb` | `apt-get install -y --reinstall --allow-downgrades`, every file in one transaction |
+| `.rpm` with dnf | `dnf install`, `downgrade` and `reinstall`, one command per action, the rising versions first |
+| `.rpm` with zypper | `zypper --non-interactive install --force --allow-unsigned-rpm`, every file in one transaction |
+| `.rpm` otherwise | `rpm -Uvh --replacepkgs --oldpackage`, every file in one transaction |
 
 - The format comes from `ID` and `ID_LIKE` in `/etc/os-release`, and the package managers on PATH
   only second, since a Debian build host has `rpm` too.
 - Running programs are refused because rocBLAS and hipBLASLt load their kernel files lazily. A
   server outliving the upgrade would read the new kernels with the old libraries.
-- It warns when the package predates the last `xtask build`.
+- It warns when `config` or `llama` predates the last `xtask build`. A runtime comes out of an SDK,
+  which the build does not change.
 - `sudo` is added when not root, here and on macOS.
