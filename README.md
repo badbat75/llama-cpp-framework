@@ -1,6 +1,6 @@
 # llama.cpp-framework
 
-> **Windows first**: the full pipeline (build, installer) targets Windows 10/11 and ends in an MSI. Linux ends in a `.deb` and an `.rpm` (see [Linux](#linux)), macOS on Apple Silicon in a `.pkg` (see [macOS](#macos), untested).
+> **Windows first**: the full pipeline (build, installer) targets Windows 10/11 and ends in an MSI. Linux ends in five `.deb` and five `.rpm` packages (see [Linux](#linux)), macOS on Apple Silicon in three `.pkg` (see [macOS](#macos), untested).
 
 A build orchestrator, run with cargo (`cargo run -p xtask -- <phase>`, the crate in `xtask/`), that builds and packages [llama.cpp](https://github.com/ggerganov/llama.cpp) with multi-GPU backend support (CUDA, Vulkan, ROCm/HIP on Windows and Linux; Metal and Vulkan on macOS) and MSI packaging (WiX Toolset) on Windows. The chat UI built into `llama-server` is used as the frontend; no separate web UI is bundled.
 
@@ -27,8 +27,8 @@ Beside llama.cpp it ships **`llama-cpp-config`**, a GUI + CLI configurator (Rust
 - Always the newest llama.cpp **release** tag (`vX.Y.Z`, never a `bNNNN` nightly), CMake + Ninja, sccache, the machine-independent CMake options in `xtask/cmake/*.toml` with a reason for each.
 - Backends: CUDA, Vulkan and ROCm/HIP on Windows and Linux (RCCL/NCCL for `--split-mode tensor` on Linux); Metal and Vulkan through MoltenVK on Apple Silicon.
 - GPU SDKs (ROCm TheRock, CUDA, Vulkan SDK) installed side by side as `<root>/<Name>/<Version>/<os>`, newest stable, the layout winning over the environment; no machine-wide SDK variables.
-- Self-contained packages: an MSI (WiX, upgrades, downgrade refused, ICE-validated), a `.deb` and an `.rpm` under `/opt/llama.cpp`, a `.pkg` on macOS; the ROCm, CUDA and Vulkan runtimes the backends load are bundled, so a target machine needs only the GPU driver.
-- Out-of-tree llama.cpp patches in `patches/llama.cpp/`, applied on every build and reverted before the next checkout, each with its source, digest and the condition to drop it: a trimmed MTP draft vocabulary for Qwen3.5/3.8, an RDNA4 WMMA FlashAttention kernel for small query batches, pinned host buffers on every runtime, and an upstream MTP fix.
+- Self-contained packages: an MSI (WiX, upgrades, downgrade refused, ICE-validated), split `.deb` and `.rpm` packages under `/opt/llama.cpp`, split `.pkg` on macOS; the ROCm, CUDA and Vulkan runtimes the backends load are packaged too, so a target machine needs only the GPU driver.
+- Out-of-tree llama.cpp patches in `patches/llama.cpp/`, applied on every build and reverted before the next checkout, each with its source, digest and the condition to drop it: a trimmed MTP draft vocabulary for Qwen3.5/3.8, and the fix of the MTP draft graph's reallocations after an image.
 
 **Configurator** ([llama-cpp-config/README.md](llama-cpp-config/README.md))
 
@@ -105,7 +105,7 @@ cargo run -p xtask -- install
 
 ## Linux
 
-Debian/Ubuntu: the same cargo phases end at a working `llama-server` with the CUDA, Vulkan and HIP backends and `llama-cpp-config` beside it, packaged as a `.deb` and an `.rpm`.
+Debian/Ubuntu: the same cargo phases end at a working `llama-server` with the CUDA, Vulkan and HIP backends and `llama-cpp-config` beside it, packaged as five `.deb` and five `.rpm` packages.
 
 ```bash
 # 1. First time only (no Rust yet): apt packages (sudo), Rust (rustup), then the dists.
@@ -121,15 +121,26 @@ cargo run -p xtask -- configure
 # 3. Build llama.cpp and llama-cpp-config into build/linux/llama.cpp-cmake/bin/
 cargo run -p xtask -- build
 
-# 4. Package: dist/llama-cpp-framework-v<version>-<llamaRelease>-amd64.deb and -x86_64.rpm
+# 4. Package: dist/llama-cpp-framework-{config,llama}-v<version>-<llamaRelease>-amd64.deb,
+#    dist/llama-cpp-framework-{rocm,cuda,vulkan}-v<sdkVersion>-amd64.deb, and the same as -x86_64.rpm
 cargo run -p xtask -- package
 
-# 5. Install (or upgrade, or reinstall) the newest package in dist/: the .deb or the .rpm,
-#    as the distribution takes (sudo)
+# 5. Install (or upgrade, or reinstall) the newest package of each component in dist/: the .deb
+#    or the .rpm, as the distribution takes (sudo). Name the files to install only those.
 cargo run -p xtask -- install
 ```
 
-The packages (about 1.2 GB each, 3.3 GB installed) are self-contained under `/opt/llama.cpp/`: the binaries in `bin/` and, in `lib/`, the ROCm, CUDA and Vulkan runtime libraries the backends need, so the target machine needs the GPU drivers and nothing else. They also install a symlink per executable in `/usr/bin/` (`llama-server`, `llama-cpp-config`, the other llama.cpp tools), a desktop entry that puts the configurator ("llama.cpp Config") in the applications menu, and nothing else: `llama-cpp-config` keeps `server.ini`, `presets.ini`, `presets.ini.disabled` and `settings.ini` per user in `~/.config/llama.cpp/` (logs, benchmark runs and saved states in `~/.local/share/llama.cpp/`). A backend whose GPU or driver is missing is skipped at start.
+The packages (about 1.7 GiB in all, 3.8 GiB installed) are self-contained under `/opt/llama.cpp/`, so the target machine needs the GPU drivers and nothing else:
+
+| Package | Holds | Version |
+|---|---|---|
+| `llama-cpp-framework-config` | `llama-cpp-config` and its data (requires `llama` at the same version) | framework + llama.cpp release |
+| `llama-cpp-framework-llama` | llama.cpp's programs and libraries, the ggml backends included | framework + llama.cpp release |
+| `llama-cpp-framework-rocm` | The ROCm runtime libraries (`lib/`) | ROCm SDK |
+| `llama-cpp-framework-cuda` | The CUDA and NCCL runtime libraries (`lib/`) | CUDA + NCCL SDK |
+| `llama-cpp-framework-vulkan` | The Vulkan loader (`lib/`) | Vulkan SDK |
+
+`llama` recommends the three runtimes and refuses any other version of them; leave out the ones the machine has no use for. The packages replace the old single `llama-cpp-framework`. They also install a symlink per executable in `/usr/bin/` (`llama-server`, `llama-cpp-config`, the other llama.cpp tools), a desktop entry that puts the configurator ("llama.cpp Config") in the applications menu, and nothing else: `llama-cpp-config` keeps `server.ini`, `presets.ini`, `presets.ini.disabled` and `settings.ini` per user in `~/.config/llama.cpp/` (logs, benchmark runs and saved states in `~/.local/share/llama.cpp/`). A backend whose GPU, driver or runtime package is missing is skipped at start.
 
 The dists install side by side as `<root>/<version>/linux` under `/mnt/data` (`TheRock`, `CUDA`, `VulkanSDK`; for another mountpoint pass `--dist-root <path>` to `scripts/00-install-prerequisites.sh` and `xtask configure`, which records it, or set `LLAMA_FW_DIST_ROOT`), about 27 GB in all, and nothing is added to the environment: the scripts find the newest of each on every run. Everything generated lives under `build/linux/`, apart from the Windows artifacts under `build/windows/`. Details: [docs/build-prerequisites.md](docs/build-prerequisites.md#dist-layout-and-root).
 
@@ -146,11 +157,11 @@ scripts/00-install-prerequisites.sh
 # 2. to 5., as on Linux:
 cargo run -p xtask -- configure
 cargo run -p xtask -- build
-cargo run -p xtask -- package    # dist/llama-cpp-framework-v<version>-<llamaRelease>-arm64.pkg
-cargo run -p xtask -- install    # sudo installer -pkg ... -target /
+cargo run -p xtask -- package    # dist/llama-cpp-framework-{config,llama}-v<version>-<llamaRelease>-arm64.pkg, -vulkan-v<sdkVersion>-arm64.pkg
+cargo run -p xtask -- install    # sudo installer -pkg ... -target /, once per package
 ```
 
-The package installs into `/opt/llama.cpp/` with a symlink per executable in `/usr/local/bin/`; it is unsigned and not notarized. Details: [docs/build-macos.md](docs/build-macos.md).
+The packages install into `/opt/llama.cpp/` with a symlink per executable in `/usr/local/bin/`; they are unsigned and not notarized, and a `.pkg` has no dependencies, so install all three. Details: [docs/build-macos.md](docs/build-macos.md).
 
 ## Layout
 
@@ -208,8 +219,8 @@ Runtime configs are created and edited with `llama-cpp-config` (GUI when launche
 | `xtask prereq` | Linux and macOS: sccache and the newest stable GPU SDK dists, the llama.cpp release check. Accepts `--dist-root`, `--skip`. |
 | `xtask configure` | Detects environment, verifies tools, writes the build config (`config-build.psd1` on Windows, `config-build.toml` elsewhere). Accepts `--llama-cpp-dir` and `--dist-root`. |
 | `xtask build` | Builds **both** llama.cpp (CMake configure out-of-source into `build\<os>\llama.cpp-cmake\` + Ninja, checked out at the newest `vX.Y.Z` release tag: upstream also tags every merge to master `bNNNN`, and those nightlies are not candidates) **and** `llama-cpp-config` (`cargo build --release` into `build\<os>\cargo-target\`). `xtask build llama` and `xtask build config` build one of them. Auto-clones llama.cpp into `build\<os>\llama.cpp\`. Uses sccache when available. |
-| `xtask package` | Windows: stages into `build\windows\staging\`, then runs WiX to produce `dist\llama-cpp-framework-v<version>-<llamaBuild>-<arch>.msi` and validates it (`--wix`, `--keep-staging`). Linux: the `.deb` and `.rpm` (`--deb`, `--rpm`); macOS: the `.pkg`. |
-| `xtask install` | Installs the newest package in `dist/` on this machine (`--dry-run`). Windows: the MSI through `msiexec /qb` (progress bar and the UAC prompt, all features, the recorded install directory; a downgrade removes the installed version first). Linux and macOS: the `.deb`, `.rpm` or `.pkg` through the package manager (`--force` installs while a program from `/opt/llama.cpp` runs; the MSI stops them itself). |
+| `xtask package` | Windows: stages into `build\windows\staging\`, then runs WiX to produce `dist\llama-cpp-framework-v<version>-<llamaBuild>-<arch>.msi` and validates it (`--wix`, `--keep-staging`). Linux: the `.deb` and `.rpm` of each component (`--deb`, `--rpm`); macOS: the `.pkg` of each component. |
+| `xtask install` | Installs the newest package in `dist/` on this machine, on Linux and macOS the newest of each component or the files named (`--dry-run`). Windows: the MSI through `msiexec /qb` (progress bar and the UAC prompt, all features, the recorded install directory; a downgrade removes the installed version first). Linux and macOS: the `.deb`, `.rpm` or `.pkg` through the package manager (`--force` installs while a program from `/opt/llama.cpp` runs; the MSI stops them itself). |
 | `llama-cpp-config\` | Rust GUI + CLI configurator for `server.ini` / `presets.ini`, opencode/Claude Code integrations, and llama-server start/stop. See [llama-cpp-config\README.md](llama-cpp-config/README.md). |
 
 ## Packaging

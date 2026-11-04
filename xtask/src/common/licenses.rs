@@ -183,9 +183,15 @@ fn copy(from: &Path, to: &Path) -> Result<()> {
 
 /// Stage every text into `<share>/licenses`. `libraries` is what the package
 /// bundles, by file name; llama.cpp's own files in it are accepted as they are.
+#[cfg(any(windows, test))]
 pub fn stage(share: &Path, libraries: &[String], sources: &Sources) -> Result<Vec<Entry>> {
-    let dir = share.join("licenses");
-    std::fs::create_dir_all(&dir)?;
+    stage_in(&share.join("licenses"), libraries, sources)
+}
+
+/// [`stage`] into `dir` itself: split packages each keep their own directory,
+/// since no two packages can own the same file.
+pub fn stage_in(dir: &Path, libraries: &[String], sources: &Sources) -> Result<Vec<Entry>> {
+    std::fs::create_dir_all(dir)?;
     let repo = util::repo_root();
     copy(&repo.join("LICENSE"), &dir.join("llama.cpp-framework.txt"))?;
     copy(&repo.join("llama-cpp-config").join("ui").join("fonts").join("LICENSE"), &dir.join("fluent-system-icons.txt"))?;

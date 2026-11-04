@@ -5,6 +5,8 @@
 
 pub mod bench_share;
 pub mod cmake_options;
+#[cfg(unix)]
+pub mod components;
 pub mod configurator;
 pub mod dists;
 pub mod licenses;

@@ -88,8 +88,9 @@ enum Phase {
         #[arg(long)]
         wix: Option<PathBuf>,
     },
-    /// Install the newest package in ./dist/ (install, upgrade, same-version
-    /// reinstall or downgrade alike).
+    /// Install the newest package in ./dist/, on Linux and macOS the newest of
+    /// each of the split packages (install, upgrade, same-version reinstall or
+    /// downgrade alike).
     Install {
         /// Install the .deb (default: by the host's distribution).
         #[arg(long, conflicts_with = "rpm")]
@@ -104,8 +105,9 @@ enum Phase {
         /// Print the command instead of running it.
         #[arg(long)]
         dry_run: bool,
-        /// Install this file instead of the newest in ./dist/.
-        file: Option<PathBuf>,
+        /// Install these files instead of the newest in ./dist/: on Linux and
+        /// macOS, leave out the runtime of a GPU this machine does not have.
+        files: Vec<PathBuf>,
     },
 }
 
@@ -143,9 +145,9 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             let both = !deb && !rpm;
             linux::package::run(deb || both, rpm || both, keep_staging)
         }
-        Phase::Install { deb, rpm, force, dry_run, file } => {
+        Phase::Install { deb, rpm, force, dry_run, files } => {
             let format = if deb { Some("deb") } else if rpm { Some("rpm") } else { None };
-            linux::install::run(format, force, dry_run, file)
+            linux::install::run(format, force, dry_run, files)
         }
     }
 }
@@ -172,11 +174,14 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             }
             windows::package::run(keep_staging, wix)
         }
-        Phase::Install { deb, rpm, force: _, dry_run, file } => {
+        Phase::Install { deb, rpm, force: _, dry_run, files } => {
             if deb || rpm {
                 anyhow::bail!("--deb and --rpm are Linux packages; on Windows the package is the MSI");
             }
-            windows::install::run(dry_run, file)
+            if files.len() > 1 {
+                anyhow::bail!("on Windows the package is one MSI: give one file");
+            }
+            windows::install::run(dry_run, files.into_iter().next())
         }
     }
 }
@@ -197,15 +202,15 @@ fn run(cli: Cli) -> anyhow::Result<()> {
         }
         Phase::Package { deb, rpm, keep_staging, wix } => {
             if deb || rpm || wix.is_some() {
-                anyhow::bail!("--deb, --rpm and --wix are other systems' packages; on macOS the package is the .pkg");
+                anyhow::bail!("--deb, --rpm and --wix are other systems' packages; on macOS the packages are .pkg files");
             }
             macos::package::run(keep_staging)
         }
-        Phase::Install { deb, rpm, force, dry_run, file } => {
+        Phase::Install { deb, rpm, force, dry_run, files } => {
             if deb || rpm {
-                anyhow::bail!("--deb and --rpm are Linux packages; on macOS the package is the .pkg");
+                anyhow::bail!("--deb and --rpm are Linux packages; on macOS the packages are .pkg files");
             }
-            macos::install::run(force, dry_run, file)
+            macos::install::run(force, dry_run, files)
         }
     }
 }

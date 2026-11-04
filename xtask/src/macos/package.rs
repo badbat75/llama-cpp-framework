@@ -1,8 +1,12 @@
-//! Package phase on macOS (cargo run -p xtask -- package): stages the build into
+//! Package phase on macOS (cargo run -p xtask -- package): three .pkg files
+//! (llama-cpp-config, llama.cpp, the Vulkan runtime: common/components.rs says
+//! which file goes where; ROCm and CUDA do not exist here). Stages the build into
 //! /opt/llama.cpp (binaries, backends and llama-cpp-config in bin/, the
 //! bundled Vulkan loader and MoltenVK in lib/), a symlink per executable in
 //! /usr/local/bin, the MoltenVK driver manifest in
-//! /usr/local/share/vulkan/icd.d, and builds a .pkg with pkgbuild into ./dist/.
+//! /usr/local/share/vulkan/icd.d, and builds them with pkgbuild into ./dist/.
+//! A component package states no dependencies: `xtask install` lays down all
+//! three, and without the Vulkan one ggml skips that backend and Metal runs.
 //!
 //! Self-contained: Metal is part of the system, and what Vulkan needs comes
 //! out of the SDK the build linked. WHICH libraries is not a list kept here:
@@ -20,6 +24,7 @@
 
 use super::build_llama::load_build_env;
 use super::OPT_DIR;
+use crate::common::components::{self, Component};
 use crate::common::licenses;
 use crate::common::ui;
 use crate::common::util::{self, cmd, output, run as run_cmd, which};
@@ -28,7 +33,6 @@ use anyhow::{bail, Context, Result};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-pub const PKG_NAME: &str = "llama-cpp-framework";
 pub const PKG_ID: &str = "io.github.badbat75.llama-cpp-framework";
 const ICD_NAME: &str = "llama-cpp-framework-MoltenVK_icd.json";
 const ICD_DIR: &str = "/usr/local/share/vulkan/icd.d";
@@ -257,31 +261,43 @@ pub fn run(keep_staging: bool) -> Result<()> {
     }
     ui::dim(format!("{n_links} commands linked into /usr/local/bin"));
 
-    // ── Licences ────────────────────────────────────────────────────────
-    let opt = under(&stage, OPT_DIR);
-    licenses::stage(
-        &opt.join("share"),
-        &licenses::libraries_under(&opt),
-        &licenses::Sources { llama_cpp: llama.clone(), ..Default::default() },
-    )?;
-
-    // ── Build the .pkg ──────────────────────────────────────────────────
-    let pkg = out_dir.join(format!("{PKG_NAME}-v{fw_version}-{llama_build}-arm64.pkg"));
-    let _ = std::fs::remove_file(&pkg);
-    ui::head(format!("Building {}...", name_of(&pkg)));
-    run_cmd(
-        cmd("pkgbuild")
-            .arg("--root")
-            .arg(&stage)
-            .args(["--install-location", "/", "--identifier", PKG_ID, "--version", &fw_version])
-            .arg(&pkg),
-    )?;
+    // ── One .pkg per component ─────────────────────────────────────────
+    let roots = build_root.join("package");
+    util::remove_all(&roots)?;
+    let present = components::split(&stage, &roots)?;
+    let vulkan_version = sdk.as_deref().and_then(components::dist_version).unwrap_or_else(|| fw_version.clone());
+    let mut created = Vec::new();
+    for c in present {
+        let root = components::root(&roots, c);
+        let opt = under(&root, OPT_DIR);
+        licenses::stage_in(
+            &opt.join("share/licenses").join(c.suffix()),
+            &licenses::libraries_under(&opt),
+            &licenses::Sources { llama_cpp: llama.clone(), ..Default::default() },
+        )?;
+        let version = if c == Component::Vulkan { vulkan_version.as_str() } else { fw_version.as_str() };
+        let stem = components::file_stem(c, &fw_version, &llama_build, version);
+        let pkg = out_dir.join(format!("{stem}-arm64.pkg"));
+        let _ = std::fs::remove_file(&pkg);
+        ui::head(format!("Building {}...", name_of(&pkg)));
+        run_cmd(
+            cmd("pkgbuild")
+                .arg("--root")
+                .arg(&root)
+                .args(["--install-location", "/", "--identifier", &format!("{PKG_ID}.{}", c.suffix()), "--version", version])
+                .arg(&pkg),
+        )?;
+        created.push(pkg);
+    }
+    util::remove_all(&roots)?;
     if !keep_staging {
         util::remove_all(&stage)?;
     }
 
     ui::say("");
-    ui::ok(format!("Package: {} ({} MiB)", pkg.display(), std::fs::metadata(&pkg)?.len() / (1024 * 1024)));
+    for pkg in &created {
+        ui::ok(format!("Package: {} ({} MiB)", pkg.display(), std::fs::metadata(pkg)?.len() / (1024 * 1024)));
+    }
     ui::say("");
     Ok(())
 }
