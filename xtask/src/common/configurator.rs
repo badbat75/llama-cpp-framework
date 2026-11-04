@@ -14,7 +14,7 @@ use std::path::Path;
 use std::path::PathBuf;
 
 /// Builds llama-cpp-config in release mode and returns cargo's target dir.
-/// `llama_cpp_dir` is the clone the icon is drawn from; `build_jobs` caps
+/// `llama_cpp_dir` is the clone the icon and the architecture tables come from; `build_jobs` caps
 /// cargo (0 = cargo's default, all cores).
 pub fn build(llama_cpp_dir: &str, build_jobs: u32) -> Result<PathBuf> {
     let repo = util::repo_root();
@@ -67,6 +67,8 @@ pub fn build(llama_cpp_dir: &str, build_jobs: u32) -> Result<PathBuf> {
     std::env::set_var("CARGO_TARGET_DIR", &target);
     let mut c = cmd(&cargo);
     c.current_dir(&repo).args(["build", "--release", "-p", "llama-cpp-config"]);
+    // Its build script generates the architecture tables from this clone.
+    c.env("LLAMA_FW_LLAMA_CPP_DIR", llama_cpp_dir);
     if build_jobs > 0 {
         c.arg("--jobs").arg(build_jobs.to_string());
     }

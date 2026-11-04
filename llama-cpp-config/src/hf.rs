@@ -1078,9 +1078,9 @@ pub enum ModelKind {
 /// The architectures (`general.architecture`) llama.cpp implements as
 /// mixtures of experts and that carry no `moe` in their name, which already
 /// counts (`qwen3moe`, `glm4moe`, `bailingmoe2`, ...). From `src/llama-arch.cpp`
-/// (v0.7.0): each of these sets `expert_count`. Re-check on a bump; a missing
+/// (v0.9.0): each of these sets `expert_count`. Re-check on a bump; a missing
 /// one only reads as "unknown".
-const MOE_ARCHS: [&str; 14] = [
+const MOE_ARCHS: [&str; 23] = [
     "deepseek",
     "deepseek2",
     "dbrx",
@@ -1095,6 +1095,15 @@ const MOE_ARCHS: [&str; 14] = [
     "smallthinker",
     "kimi-linear",
     "step35",
+    "beam",
+    "deepseek41",
+    "flint",
+    "kolibri1",
+    "laguna",
+    "mellum",
+    "metis16",
+    "mistral-large4",
+    "muse-spark",
 ];
 
 /// The architectures llama.cpp implements as DENSE only (their MoE siblings
@@ -1464,8 +1473,19 @@ fn split_files(files: &[RepoFile], file: &RepoFile) -> Vec<RepoFile> {
     out
 }
 
-/// `find_best_model`: the first model file matching `<tag>[.-]`
-/// (case-insensitive) that is not a later shard; with no tag, `Q4_K_M`, then
+/// Whether `path` carries `tag` as a whole token, upstream's
+/// `(^|[-./])<tag>[.-]`: `F16` is not in a `BF16` file, and `_` is not a
+/// separator. Both already lower-cased.
+fn has_tag_token(path: &str, tag: &str) -> bool {
+    path.match_indices(tag).any(|(at, _)| {
+        let before = path[..at].chars().next_back();
+        let after = path[at + tag.len()..].chars().next();
+        matches!(before, None | Some('-' | '.' | '/')) && matches!(after, Some('.' | '-'))
+    })
+}
+
+/// `find_best_model`: the first model file carrying `<tag>` as a token
+/// (case-insensitive, [`has_tag_token`]) that is not a later shard; with no tag, `Q4_K_M`, then
 /// `Q8_0`, then the first model file. An empty `path` when nothing matches.
 fn find_best_model(files: &[RepoFile], tag: &str) -> RepoFile {
     let tags: Vec<&str> = if tag.is_empty() { vec!["Q4_K_M", "Q8_0"] } else { vec![tag] };
@@ -1475,10 +1495,8 @@ fn find_best_model(files: &[RepoFile], tag: &str) -> RepoFile {
     };
     for t in tags {
         let t = t.to_ascii_lowercase();
-        let (dot, dash) = (format!("{t}."), format!("{t}-"));
         if let Some(f) = files.iter().find(|f| {
-            let p = f.path.to_ascii_lowercase();
-            is_model_file(&f.path) && (p.contains(&dot) || p.contains(&dash)) && first_shard(f)
+            is_model_file(&f.path) && has_tag_token(&f.path.to_ascii_lowercase(), &t) && first_shard(f)
         }) {
             return f.clone();
         }
@@ -2742,6 +2760,12 @@ mod tests {
         assert_eq!(find_best_model(&files, "").path, "m-Q4_K_M.gguf");
         assert_eq!(find_best_model(&files, "q2_k").path, "m-Q2_K.gguf");
         assert_eq!(find_best_model(&files, "Q5_K_M").path, "");
+        // The tag is a whole token: F16 is not BF16 (#31620), `_` does not
+        // separate (#31639), a directory does.
+        let twins = [f("m-BF16.gguf", 1), f("m-F16.gguf", 1)];
+        assert_eq!(find_best_model(&twins, "F16").path, "m-F16.gguf");
+        assert_eq!(find_best_model(&[f("m_Q8_0.gguf", 1)], "Q8_0").path, "");
+        assert_eq!(find_best_model(&[f("Q8_0/Q8_0.gguf", 1)], "Q8_0").path, "Q8_0/Q8_0.gguf");
         let only = vec![f("m-IQ3_XS.gguf", 3)];
         assert_eq!(find_best_model(&only, "").path, "m-IQ3_XS.gguf");
         // A later shard never wins, even when it comes first.
@@ -2993,6 +3017,7 @@ mod tests {
         assert_eq!(model_kind(Some("qwen3moe"), "o/x"), ModelKind::Moe);
         assert_eq!(model_kind(Some("deepseek2"), "o/x"), ModelKind::Moe);
         assert_eq!(model_kind(Some("gpt-oss"), "o/x"), ModelKind::Moe);
+        assert_eq!(model_kind(Some("mistral-large4"), "o/x"), ModelKind::Moe);
         assert_eq!(model_kind(Some("qwen3"), "o/Qwen3-8B"), ModelKind::Dense);
         assert_eq!(model_kind(Some("gemma3"), "o/x"), ModelKind::Dense);
         // `llama` serves Mixtral too: only the name can tell.

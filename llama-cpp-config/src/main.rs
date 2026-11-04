@@ -8,6 +8,9 @@
     windows_subsystem = "windows"
 )]
 
+#[cfg(test)]
+#[path = "../arch_tables.rs"]
+mod arch_tables;
 mod bench;
 mod cli;
 mod devices;

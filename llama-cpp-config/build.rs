@@ -1,4 +1,4 @@
-// Build script, six jobs:
+// Build script, seven jobs:
 // - Icon bootstrap: resources/llama.ico is generated, not checked in; when
 //   it's missing, run resources/generate-llama-ico.mjs to rasterize it from
 //   the llama.cpp clone's webui logo.
@@ -19,8 +19,12 @@
 //   dist versions, the patches applied), read off its CMake cache into
 //   LLAMA_FW_* env vars for bench.db's software row: an installed machine
 //   has no build tree to read them from at run time.
+// - The per-architecture tables of src/gguf.rs, generated from the llama.cpp
+//   clone (arch_tables.rs).
 
 use std::path::Path;
+
+mod arch_tables;
 
 fn main() {
     // Convert llama.ico to PNG so Slint's @image-url can embed it. Emit two
@@ -31,6 +35,7 @@ fn main() {
     ensure_icon(ico_path);
 
     let out_dir = std::env::var("OUT_DIR").expect("OUT_DIR not set");
+    emit_arch_tables(&out_dir);
 
     let img = decode_largest_frame(ico_path);
     let (w, h) = (img.width(), img.height());
@@ -77,6 +82,39 @@ fn main() {
     }
 
     emit_build_stack();
+}
+
+/// Generate `arch_tables.rs` in `OUT_DIR` from the clone's `llama-arch.cpp`:
+/// `LLAMA_FW_LLAMA_CPP_DIR`, which `xtask build` sets from the recorded clone,
+/// or the default clone of the target OS for a bare cargo command. There is no
+/// fallback list: a wrong one would be silent, so a missing clone or a source
+/// of another shape fails the build.
+fn emit_arch_tables(out_dir: &str) {
+    println!("cargo:rerun-if-env-changed=LLAMA_FW_LLAMA_CPP_DIR");
+    let clone = std::env::var("LLAMA_FW_LLAMA_CPP_DIR").unwrap_or_else(|_| {
+        let os = match std::env::var("CARGO_CFG_TARGET_OS").as_deref() {
+            Ok("windows") => "windows",
+            Ok("macos") => "macos",
+            _ => "linux",
+        };
+        format!("../build/{os}/llama.cpp")
+    });
+    let source = Path::new(&clone).join("src/llama-arch.cpp");
+    println!("cargo:rerun-if-changed={}", source.display());
+    let text = std::fs::read_to_string(&source).unwrap_or_else(|e| {
+        panic!(
+            "{}: {e}. The architecture tables are generated from the llama.cpp clone: run xtask build first",
+            source.display()
+        )
+    });
+    let tables = arch_tables::render(&text).unwrap_or_else(|e| {
+        panic!(
+            "{}: {e}. Update llama-cpp-config/arch_tables.rs for this llama.cpp release",
+            source.display()
+        )
+    });
+    std::fs::write(Path::new(out_dir).join("arch_tables.rs"), tables)
+        .expect("Failed to write arch_tables.rs");
 }
 
 /// `LLAMA_FW_ROCM`, `LLAMA_FW_CUDA`, `LLAMA_FW_VULKAN_SDK` and

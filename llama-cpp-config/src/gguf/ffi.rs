@@ -10,9 +10,9 @@
 // value/ref without ever naming its type, so re-exporting `Ctx` too would be an
 // unused import.
 #[cfg(any(windows, target_os = "linux"))]
-pub use loaded_impl::open;
+pub use loaded_impl::{open, type_name};
 #[cfg(not(any(windows, target_os = "linux")))]
-pub use stub_impl::open;
+pub use stub_impl::{open, type_name};
 
 /// Dynamically load ggml-base and expose a `KvSource` over a live
 /// `gguf_context`. On Windows the DLL ships next to `llama-cpp-config.exe` in
@@ -52,6 +52,7 @@ mod loaded_impl {
 
     type FnInit = unsafe extern "C" fn(*const c_char, InitParams) -> GgufCtx;
     type FnFree = unsafe extern "C" fn(GgufCtx);
+    type FnTypeName = unsafe extern "C" fn(i32) -> *const c_char;
     type FnFind = unsafe extern "C" fn(GgufCtx, *const c_char) -> i64;
     type FnType = unsafe extern "C" fn(GgufCtx, i64) -> i32;
     // Tensor infos (not KV): `gguf_find_tensor` returns -1 when absent, and the
@@ -78,6 +79,7 @@ mod loaded_impl {
     struct Api {
         init: FnInit,
         free: FnFree,
+        type_name: FnTypeName,
         find_key: FnFind,
         kv_type: FnType,
         v_u8: FnU8,
@@ -237,6 +239,7 @@ mod loaded_impl {
                 tensor_size: sym!(FnTensorSize, b"gguf_get_tensor_size\0"),
                 n_tensors: sym!(FnNTensors, b"gguf_get_n_tensors\0"),
                 tensor_name: sym!(FnTensorName, b"gguf_get_tensor_name\0"),
+                type_name: sym!(FnTypeName, b"ggml_type_name\0"),
             })
         }
     }
@@ -261,6 +264,18 @@ mod loaded_impl {
     }
 
     /// Open a GGUF file's metadata (header + tensor infos only; `no_alloc`).
+    /// ggml's own name of a `ggml_type`, upper-cased as the tool shows types.
+    /// `ggml_type_name` does not check its index: `t` must be a type this
+    /// library read, which `gguf_init_from_file` has validated.
+    pub fn type_name(t: u32) -> Option<String> {
+        let name = unsafe { (api()?.type_name)(t as i32) };
+        if name.is_null() {
+            return None;
+        }
+        let name = unsafe { CStr::from_ptr(name) };
+        Some(name.to_string_lossy().to_ascii_uppercase())
+    }
+
     pub fn open(path: &Path) -> Option<Ctx> {
         let api = api()?;
         // ggml_fopen converts this UTF-8 path back to wide (`_wfopen`) on
@@ -416,6 +431,10 @@ mod stub_impl {
     use std::path::Path;
 
     pub struct Ctx;
+
+    pub fn type_name(_t: u32) -> Option<String> {
+        None
+    }
 
     pub fn open(_path: &Path) -> Option<Ctx> {
         None
