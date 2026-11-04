@@ -282,14 +282,6 @@ pub fn env_vars(cfg: &crate::server_cfg::ServerConfig) -> Vec<(String, String)> 
     if cfg.attn_rot_disable {
         env.push(("LLAMA_ATTN_ROT_DISABLE".into(), "1".into()));
     }
-    // GGML_HIP_FA_BAND_WMMA: read with `getenv` by the framework's patched
-    // libggml-hip at the first attention call (see server_cfg::hip_fa_band).
-    // 0 is off and exports nothing; the default (4) DOES export, so a bare
-    // config is not an empty environment.
-    let band = cfg.hip_fa_band_or_default();
-    if band != 0 {
-        env.push(("GGML_HIP_FA_BAND_WMMA".into(), band.to_string()));
-    }
     // ROCP_TOOL_ATTACH: what rocprofiler-sdk requires of a process before
     // `rocprofv3 --attach` may trace it. Off exports nothing.
     if cfg.rocprof_attach {
@@ -1097,7 +1089,6 @@ mod tests {
             cuda_allreduce: Some("none".into()),
             cuda_disable_graphs: true,
             attn_rot_disable: true,
-            hip_fa_band: Some(2),
             rocprof_attach: true,
             webui: Some(false),
             webui_mcp_proxy: Some(false),
@@ -1129,9 +1120,8 @@ mod tests {
             // asserted in the env test further down.
             cuda_disable_graphs: _,
             attn_rot_disable: _,
-            // launch env only (GGML_HIP_FA_BAND_WMMA / ROCP_TOOL_ATTACH), read
-            // below llama.cpp. Asserted in the env tests further down.
-            hip_fa_band: _,
+            // launch env only (ROCP_TOOL_ATTACH), read below llama.cpp. Asserted
+            // in the env tests further down.
             rocprof_attach: _,
             webui,
             webui_mcp_proxy,
@@ -1305,29 +1295,8 @@ mod tests {
     /// others can pin "unset exports nothing".
     fn band_off() -> ServerConfig {
         ServerConfig {
-            hip_fa_band: Some(0),
             ..Default::default()
         }
-    }
-
-    // The FlashAttention band: the DEFAULT exports `4` (the framework's
-    // choice), 2 and 4 ride verbatim, and 0 (off) exports nothing.
-    #[test]
-    fn hip_fa_band_rides_the_env_and_off_exports_nothing() {
-        let band = |v: Option<i32>| {
-            env_vars(&ServerConfig {
-                hip_fa_band: v,
-                ..Default::default()
-            })
-        };
-        let exported = |n: &str| [("GGML_HIP_FA_BAND_WMMA".to_string(), n.to_string())];
-        assert_eq!(band(None), exported("4"));
-        assert_eq!(band(Some(4)), exported("4"));
-        assert_eq!(band(Some(2)), exported("2"));
-        assert!(band(Some(0)).is_empty());
-        assert!(!args_for(&ServerConfig::default())
-            .iter()
-            .any(|a| a.contains("FA_BAND")));
     }
 
     // The SDK-tuning tri-state, on the env-only path.

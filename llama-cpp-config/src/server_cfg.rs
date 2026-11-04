@@ -166,25 +166,6 @@ pub struct ServerConfig {
     /// Read by llama.cpp itself with `atoi`, hence the `1`, and an env var
     /// because no flag reaches it.
     pub attn_rot_disable: bool,
-    /// The FlashAttention band on RDNA4 or newer, exported as
-    /// `GGML_HIP_FA_BAND_WMMA`: one of [`HIP_FA_BANDS`], `0` = off (the variable
-    /// is not exported). None = the tool's default, `4`
-    /// ([`Self::hip_fa_band_or_default`]), which IS exported; it lives in the
-    /// code, not in server.ini, so unset renders as a commented hint line and
-    /// reloads as None.
-    ///
-    /// A path in the framework's PATCHED `libggml-hip`, on by default: the 1-8 query
-    /// FlashAttention (the single-token decode and the MTP verify batch) of a
-    /// head-256 model at GQA 5 to 12 (Qwen3.8-27B at 6, Qwen3.8-Flash-Next at
-    /// 12) runs on the WMMA kernel with the KV cache split round-robin over the
-    /// CUs, which speeds that attention and decode at depth
-    /// (`docs/amd_ai_pro_r9700.md` section 3; what it does to the greedy text:
-    /// `docs/qwen3.8_27b.md` section 1). `2` runs the same kernel but reads the
-    /// KV cache twice as often at 3-4 queries, so `4` is the one to use. Inert on an unpatched llama.cpp,
-    /// on a GPU older than RDNA4, on any other head size or GQA, on a KV cache
-    /// other than f16 or q8_0, and on CUDA. Not a llama-server flag: ggml reads
-    /// it with `getenv` at the first attention call, hence `env_vars`.
-    pub hip_fa_band: Option<i32>,
     /// Export `ROCP_TOOL_ATTACH=1`: lets `rocprofv3 --attach <pid>` (ROCm's
     /// profiler, shipped in the TheRock dist) attach a kernel trace to the
     /// running llama-server. rocprofiler-sdk's process-attachment docs require
@@ -313,20 +294,6 @@ pub fn normalize_allreduce(v: &str) -> Option<&'static str> {
         .find(|m| m.eq_ignore_ascii_case(v))
 }
 
-/// The values `HipFaBand` takes (`GGML_HIP_FA_BAND_WMMA` of the patched
-/// libggml-hip), `0` meaning off. Mirrors `Options.hip_fa_bands` in
-/// ui/components.slint after its leading "default" (the unset state), through
-/// `server_form::hip_fa_band_label`; the e2e
-/// (`src/tests/ui_bindings.rs`) asserts the two lists agree.
-pub const HIP_FA_BANDS: [i32; 3] = [0, 2, 4];
-
-/// `v` as one of [`HIP_FA_BANDS`]; `None` for anything else ("default" and a
-/// blank included), so a hand-edited value the patch does not know reloads as
-/// unset, i.e. as the default.
-pub fn normalize_hip_fa_band(v: &str) -> Option<i32> {
-    ini::parse_int(v).filter(|n| HIP_FA_BANDS.contains(n))
-}
-
 /// llama-server's own `--port` default (`common_params::port`, common/common.h),
 /// which is what it binds when `Port` is unset and the launch omits the flag.
 /// It MUST track the bundled llama.cpp: every client URL the configurator
@@ -388,12 +355,6 @@ impl ServerConfig {
     /// [`Self::webui_or_default`] (`runstate::server_args`).
     pub fn webui_mcp_proxy_or_default(&self) -> bool {
         self.webui_mcp_proxy.unwrap_or(false)
-    }
-
-    /// The FlashAttention band (`GGML_HIP_FA_BAND_WMMA`), or `4` (the framework
-    /// default) when unset.
-    pub fn hip_fa_band_or_default(&self) -> i32 {
-        self.hip_fa_band.unwrap_or(4)
     }
 
     /// The log verbosity (-lv), or `4` (the framework default) when unset.
@@ -493,7 +454,6 @@ fn from_keys(keys: &std::collections::BTreeMap<String, String>) -> ServerConfig 
             .get("AttnRotDisable")
             .and_then(|v| ini::parse_bool(v))
             .unwrap_or(false),
-        hip_fa_band: keys.get("HipFaBand").and_then(|v| normalize_hip_fa_band(v)),
         rocprof_attach: keys
             .get("RocprofAttach")
             .and_then(|v| ini::parse_bool(v))
@@ -641,16 +601,6 @@ fn render(cfg: &ServerConfig) -> String {
     } else {
         "; AttnRotDisable = true  ; env LLAMA_ATTN_ROT_DISABLE=1: no Hadamard rotation of a quantized KV cache; commented = rotation on".to_string()
     };
-    // Unset collapses to the hint, like the other SDK keys, although unset
-    // still EXPORTS the default (4): the default belongs to the code, so a
-    // later change of it reaches every server.ini that never chose. Every
-    // explicit value is kept, 0 (off) included.
-    let hip_fa_band_line = int_line_or_hint(
-        cfg.hip_fa_band,
-        "HipFaBand",
-        "; HipFaBand = 4  ; env GGML_HIP_FA_BAND_WMMA: 0 = off (not exported), 2, 4; commented = the default, 4",
-        |_| true,
-    );
     let rocprof_attach_line = if cfg.rocprof_attach {
         "RocprofAttach = true".to_string()
     } else {
@@ -751,16 +701,6 @@ LogVerbosity = {log_verbosity}
 ; quantized K/V cache, for a quality or speed A/B. Both: commented = unset.
 {cuda_disable_graphs_line}
 {attn_rot_disable_line}
-; HipFaBand exports GGML_HIP_FA_BAND_WMMA (0 | 2 | 4; 0 = not exported), read
-; by the framework's PATCHED ROCm backend: the 1-8 query FlashAttention (decode
-; and the MTP verify batch) of a head-256 model at GQA 5 to 12 (Qwen3.8-27B at
-; 6, Qwen3.8-Flash-Next at 12) runs on the WMMA kernel with the KV cache split
-; round-robin over the CUs: faster attention, and faster decode at depth
-; (figures in the R9700 guide). 2 runs the same kernel but reads the KV cache
-; twice as often at 3-4 queries, so 4 is the one to use. Inert on an unpatched
-; llama.cpp, on GPUs older than RDNA4, other head sizes or GQA, a KV cache other
-; than f16 or q8_0, and on CUDA. Commented = the default, 4 (exported); 0 switches it off.
-{hip_fa_band_line}
 ; RocprofAttach exports ROCP_TOOL_ATTACH=1, which rocprofiler-sdk requires of a
 ; process before `rocprofv3 --attach <pid>` (in the TheRock dist) may attach a
 ; kernel trace to it; without it the attach is refused. Commented = unset.
@@ -857,7 +797,6 @@ mod tests {
             attn_rot_disable: true,
             // Non-default (4 is the framework default); true for the same
             // reason as the toggles above.
-            hip_fa_band: Some(2),
             rocprof_attach: true,
             // Non-default (on is llama.cpp's default).
             webui: Some(false),
@@ -892,7 +831,6 @@ mod tests {
         assert_eq!(reloaded.log_verbosity, Some(4));
         // Unset renders as a commented line and stays unset: the default (4)
         // lives in the code, and `env_vars` still exports it.
-        assert_eq!(reloaded.hip_fa_band, None);
         assert!(!reloaded.rocprof_attach);
         assert_eq!(reloaded.threads, None);
         assert_eq!(reloaded.threads_batch, None);
@@ -950,33 +888,6 @@ mod tests {
         assert_eq!(read(" Internal ").as_deref(), Some("internal"));
         assert_eq!(read("default"), None);
         assert_eq!(read("butterfly"), None);
-    }
-
-    /// `HipFaBand = 0` is a value (off), not an absence, so it must survive the
-    /// round trip rather than fall back to the default 4; unset comes back
-    /// unset (a commented line, not `HipFaBand = 4`); a number the patch does
-    /// not know reloads as unset, i.e. as the default.
-    #[test]
-    fn hip_fa_band_round_trips_its_values_and_drops_unknown_numbers() {
-        for band in HIP_FA_BANDS {
-            let cfg = ServerConfig {
-                hip_fa_band: Some(band),
-                ..Default::default()
-            };
-            assert_eq!(round_trip(&cfg).hip_fa_band, Some(band));
-        }
-        let unset = ServerConfig {
-            models_dir: Some(r"E:\llm".into()),
-            ..Default::default()
-        };
-        assert!(render(&unset)
-            .lines()
-            .any(|l| l.starts_with("; HipFaBand = 4")));
-        assert!(!render(&unset).lines().any(|l| l.starts_with("HipFaBand")));
-        assert_eq!(round_trip(&unset).hip_fa_band, None);
-        for bad in ["3", "8", "-1", "on", "default", ""] {
-            assert_eq!(normalize_hip_fa_band(bad), None, "{bad:?}");
-        }
     }
 
     /// A hand-edited `load-mode` is canonicalized rather than silently dropped,

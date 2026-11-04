@@ -291,19 +291,6 @@ export component ServerPage inherits ScrollView {
             }
             LabeledField {
                 label_width <=> LabelColumn.server;
-                label: Strings.t("flashattention-band");
-                hint: Strings.t("flashattention-band-hint");
-                // The label, not the number: "off" reads better than 0.
-                // "default" leaves the key unset, and the tool's default (4)
-                // is what gets exported then.
-                EnumComboBox {
-                    options: Options.hip_fa_bands;
-                    labels: Options.hip_fa_band_labels;
-                    value <=> AppState.server_form.hip_fa_band;
-                }
-            }
-            LabeledField {
-                label_width <=> LabelColumn.server;
                 label: Strings.t("profiler-attach");
                 hint: Strings.t("profiler-attach-hint");
                 CheckBox {
