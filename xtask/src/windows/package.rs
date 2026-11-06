@@ -529,7 +529,6 @@ pub fn run(keep_staging: bool, wix_arg: Option<PathBuf>) -> Result<()> {
         llama_cpp: PathBuf::from(&cfg.llama_cpp_dir),
         rocm: hip_root.clone(),
         cuda: dists.find_cuda(),
-        vulkan_runtime: dists.find_vulkan().map(|v| v.join("Runtime")),
         openssl: (!cfg.openssl_dir.is_empty()).then(|| PathBuf::from(&cfg.openssl_dir)),
     };
     let share = stage.join("share");

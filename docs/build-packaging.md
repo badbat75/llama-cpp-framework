@@ -68,9 +68,9 @@ can own one file. `licenses.rs` (`xtask/src/common/`) stages them:
   is refused when a bundled library (any `.dll`, `.dylib`, `.so` or `.so.*` under the staged tree) is
   not named there, or when its text cannot be found. A new library in a dist is read before it ships.
 - A text comes from the dist when it has one, so it matches the bundled version: ROCm's
-  `share\doc\<name>\LICENSE*`, CUDA's `LICENSE`, the Windows Vulkan dist's
-  `Runtime\VulkanRT-License.txt`, OpenSSL's `license.txt`. Otherwise it comes from
-  `installer/licenses/`, whose README says where each was taken from.
+  `share\doc\<name>\LICENSE*`, CUDA's `LICENSE`, OpenSSL's `license.txt`. Otherwise it comes from
+  `installer/licenses/`, whose README says where each was taken from: the Vulkan loader is Apache
+  2.0 there on every OS, since it is Khronos' open-source loader code, whatever package carries it.
 - NVIDIA's terms are not an open-source licence. They install as `NVIDIA-CUDA-EULA.txt`, and
   `ggml-cuda` needs them too, since it links NVIDIA's static runtime: on Linux both `llama` and `cuda`
   carry them.
@@ -107,13 +107,14 @@ The GPU runtimes add about 1.6 GB on top of the binaries. It refuses a `ggml-hip
 `vulkan-1.dll`, since ggml would silently drop that backend on every other machine.
 
 **The Vulkan loader is bundled, because a driver does not guarantee one.** A machine can have the
-GPU driver and no `vulkan-1.dll` in System32. The SDK holds only the import lib, so the prerequisites
-script takes the x64 DLL and `VulkanRT-License.txt` out of LunarG's `VulkanRT-X64-<version>-Components.zip`
-of the SDK's version, into `<DistRoot>\VulkanSDK\<version>\windows\Runtime\`. The DLL must pass
-Authenticode (`O=LunarG, Inc.`), and an SDK already installed gets it on the next run. Staging
-copies the DLL through the import closure, and its licence follows the general rule above as
-`share\licenses\VulkanRT-License.txt`: a staged `vulkan-1.dll` without the licence beside it in the
-dist fails the package.
+GPU driver and no `vulkan-1.dll` in System32. The SDK ships no loader of its own, only the import
+lib and the runtime installer `Helpers\VulkanRT.exe`, and LunarG no longer publishes the standalone
+runtime archive the SDK's version used to ship, so the prerequisites script copies the DLL out of
+System32, where that installer leaves it, into `<DistRoot>\VulkanSDK\<version>\windows\Runtime\`.
+The DLL must pass Authenticode (`O=LunarG, Inc.`): a driver's own loader, signed by the vendor, is
+not bundled, and an SDK already installed gets it on the next run. Staging copies the DLL through
+the import closure, and its licence is the vendored Apache 2.0 of the loader's own code, the same
+`vulkan-loader.txt` Linux's `libvulkan.so.1` carries.
 
 **The MSI shows a licence page** (WixUI `LicenseAgreementDlg`, with the accept checkbox) between the
 welcome page and `CustomizeDlg`. `xtask package` writes its text to `build\windows\license.rtf`

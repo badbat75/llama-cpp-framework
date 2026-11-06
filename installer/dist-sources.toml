@@ -85,6 +85,11 @@ wheel_platform = "x86_64"
 # files_json carries its sha256 (no checksum, no install). The tarball unpacks
 # as <version>/x86_64/{bin,include,lib,share}; its top directory is stripped,
 # so the SDK proper (what VULKAN_SDK must name) is <root>/<version>/linux/x86_64.
+# On Windows the SDK holds no loader (only Helpers\VulkanRT.exe, which writes
+# System32) and LunarG no longer publishes the runtime archive it used to: the
+# loader the package bundles is copied out of System32 by
+# scripts\00-install-prerequisites.ps1 (see dist-sources.psd1), and its licence
+# is the vulkan-loader Apache 2.0 in installer\licenses.
 [vulkan]
 dir = "VulkanSDK"
 marker = ".vulkan-version"

@@ -21,8 +21,6 @@ pub enum Origin {
     Vendored(&'static str),
     /// `LICENSE` of the CUDA dist: NVIDIA's terms, not an open-source licence.
     CudaEula,
-    /// `Runtime/VulkanRT-License.txt` of the Windows Vulkan dist.
-    VulkanRuntime,
     /// `license.txt` of the OpenSSL install.
     OpenSsl,
 }
@@ -65,7 +63,6 @@ const TABLE: &[(&str, Origin)] = &[
     ("cublas", Origin::CudaEula),
     ("cudart", Origin::CudaEula),
     ("nccl", Origin::Vendored("nccl")),
-    ("vulkan-1", Origin::VulkanRuntime),
     ("vulkan", Origin::Vendored("vulkan-loader")),
     ("MoltenVK", Origin::Vendored("moltenvk")),
     ("crypto", Origin::OpenSsl),
@@ -95,7 +92,6 @@ pub struct Sources {
     pub llama_cpp: PathBuf,
     pub rocm: Option<PathBuf>,
     pub cuda: Option<PathBuf>,
-    pub vulkan_runtime: Option<PathBuf>,
     pub openssl: Option<PathBuf>,
 }
 
@@ -119,10 +115,6 @@ impl Sources {
                 Some((util::repo_root().join("installer").join("licenses").join(&file), file))
             }
             Origin::CudaEula => Some((self.cuda.as_ref()?.join("LICENSE"), CUDA_EULA_FILE.to_string())),
-            Origin::VulkanRuntime => Some((
-                self.vulkan_runtime.as_ref()?.join("VulkanRT-License.txt"),
-                "VulkanRT-License.txt".to_string(),
-            )),
             Origin::OpenSsl => Some((self.openssl.as_ref()?.join("license.txt"), "openssl.txt".to_string())),
         }
     }
@@ -356,7 +348,7 @@ mod tests {
             ("libcudart.so.13", Origin::CudaEula),
             ("ggml-cuda.dll", Origin::CudaEula),
             ("libggml-cuda.so", Origin::CudaEula),
-            ("vulkan-1.dll", Origin::VulkanRuntime),
+            ("vulkan-1.dll", Origin::Vendored("vulkan-loader")),
             ("libvulkan.so.1", Origin::Vendored("vulkan-loader")),
             ("libcrypto-4-x64.dll", Origin::OpenSsl),
             ("libssl-4-x64.dll", Origin::OpenSsl),
@@ -433,7 +425,7 @@ mod tests {
                 Origin::Vendored("moltenvk") => continue,
                 Origin::Vendored(name) => format!("{name}.txt"),
                 Origin::CudaEula => CUDA_EULA_FILE.to_string(),
-                Origin::VulkanRuntime | Origin::OpenSsl => continue,
+                Origin::OpenSsl => continue,
             };
             assert!(spdx(&file).is_some(), "{file}");
         }

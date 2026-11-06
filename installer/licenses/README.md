@@ -13,7 +13,7 @@ The licences of libraries a package bundles whose text the dist does not carry. 
 | `rocm-rccl.txt` | `rccl` | `ROCm/rocm-systems`, `projects/rccl` |
 | `rocm-rocroller.txt` | `rocroller` | `ROCm/rocm-libraries`, `shared/rocroller/LICENSE.md` |
 | `nccl.txt` | NCCL | `NVIDIA/nccl`, `LICENSE.txt` |
-| `vulkan-loader.txt` | Vulkan loader on Linux | `KhronosGroup/Vulkan-Loader`, `LICENSE.txt` |
+| `vulkan-loader.txt` | Vulkan loader: `vulkan-1.dll` on Windows, `libvulkan.so.1` on Linux | `KhronosGroup/Vulkan-Loader`, `LICENSE.txt` |
 | `moltenvk.txt` | MoltenVK | `KhronosGroup/MoltenVK`, `LICENSE` |
 | `llvm.txt` | LLVM, clang-cpp, OpenMP | `llvm/llvm-project`, `llvm/LICENSE.TXT` |
 | `bzip2.txt` | bzip2 | `gitlab.com/bzip2/bzip2`, `COPYING` |

@@ -960,73 +960,49 @@ Remove-Item $vkExe -Force -ErrorAction SilentlyContinue
 '@
 }
 # The Vulkan loader the package bundles (xtask package): the SDK has only an
-# import lib and an installer that would write System32, so it comes from
-# LunarG's runtime archive of the same version, into Runtime\ of the dist. Runs
-# on an SDK already installed too, which is how a dist older than this step
-# gets it, and how a copy that no longer passes its signature is replaced. The
-# dist is locked FIRST, whatever its root allows: the archive, the check and the
-# rename all happen where no unelevated process can write. Only the two files
-# named are taken out of the archive; a file already there goes first, since
-# extracting over a link would write through it, and a loader that fails stays
-# gone rather than shipped.
+# import lib and an installer (Helpers\VulkanRT.exe) that writes System32.
+# LunarG no longer publishes the standalone runtime archive the SDK's version
+# used to ship (the Components.zip is gone for every version), so the loader is
+# taken from System32, where that installer leaves it: it must be LunarG-signed
+# (a GPU driver's own vulkan-1.dll is signed by the vendor and is not bundled).
+# The loader's licence is its own, the Apache 2.0 of the vulkan-loader project,
+# which xtask stages from installer\licenses\vulkan-loader.txt, so no licence
+# file is placed in the dist. Runs on an SDK already installed too, which is how
+# a dist older than this step gets the loader, and how a copy that no longer
+# passes its signature is replaced. The dist is locked FIRST, whatever its root
+# allows: the check and the copy happen where no unelevated process can write;
+# a loader that fails the signature stays gone rather than shipped.
 $vkRuntimeDist = if ($vulkanTarget) {
     @{ Version = $vulkanTarget.Version; Dir = Get-DistDir 'Vulkan' $vulkanTarget.Version $sources $distRoot }
 } else { $vulkanBefore }
 $vkRuntimeDll = if ($vkRuntimeDist) { Join-Path $vkRuntimeDist.Dir 'Runtime\vulkan-1.dll' }
 if ($vkRuntimeDist -and -not ((Test-Path $vkRuntimeDll) -and (Test-VendorSignature $vkRuntimeDll $vulkan.Signer))) {
     $blocks += $distAclFunctions
-    $blocks += @'
-
-function Install-VulkanRuntime([string]$Zip, [string]$DistDir, [string]$Org) {
-    $runtime = Join-Path $DistDir 'Runtime'
-    $dll = Join-Path $runtime 'vulkan-1.dll'
-    $license = Join-Path $runtime 'VulkanRT-License.txt'
-    $new = "$dll.new"
-    try {
-        Remove-Item -LiteralPath $dll, $license, $new -Force -ErrorAction SilentlyContinue
-        Add-Type -AssemblyName System.IO.Compression.FileSystem
-        $archive = [IO.Compression.ZipFile]::OpenRead($Zip)
-        try {
-            foreach ($entry in $archive.Entries) {
-                if ($entry.FullName -match '/x64/vulkan-1\.dll$') {
-                    [IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $new, $true)
-                } elseif ($entry.FullName -match '/VulkanRT-License\.txt$') {
-                    [IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $license, $true)
-                }
-            }
-        } finally { $archive.Dispose() }
-        if ((Test-Path $new) -and (Test-Path $license) -and (Test-VendorSignature $new $Org)) {
-            Move-Item -Force $new $dll
-            return $true
-        }
-    } catch {
-        Write-Host "  [!!] $(Split-Path $Zip -Leaf): $($_.Exception.Message)" -ForegroundColor Red
-    }
-    Remove-Item $new -Force -ErrorAction SilentlyContinue
-    return $false
-}
-'@
-    $blocks += "`$rtVer = $(Lit $vkRuntimeDist.Version); `$rtUrl = $(Lit ($vulkan.Runtime -f $vkRuntimeDist.Version)); `$rtDir = $(Lit $vkRuntimeDist.Dir); `$rtSigner = $(Lit $vulkan.Signer)"
+    $blocks += "`$rtVer = $(Lit $vkRuntimeDist.Version); `$rtDir = $(Lit $vkRuntimeDist.Dir); `$rtSigner = $(Lit $vulkan.Signer)"
     $blocks += "`$rtMarker = $(Lit $vulkan.Marker)"
     $blocks += @'
 
 if (Test-Path (Join-Path $rtDir $rtMarker)) {
-    Write-Host "Fetching the Vulkan loader $rtVer..." -ForegroundColor Cyan
+    Write-Host "Setting up the Vulkan loader $rtVer..." -ForegroundColor Cyan
     Protect-DistDir $rtDir
     $rtRuntime = Join-Path $rtDir 'Runtime'
     $rtLinked = (Test-Path $rtRuntime) -and ((Get-Item -Force $rtRuntime).Attributes -band [IO.FileAttributes]::ReparsePoint)
     if (@(Get-DistBroadWriters $rtDir).Count -or $rtLinked) {
-        Write-Host "  [!!] $rtDir is not writable by administrators alone, or Runtime is a link: the loader was not fetched" -ForegroundColor Red
+        Write-Host "  [!!] $rtDir is not writable by administrators alone, or Runtime is a link: the loader was not set up" -ForegroundColor Red
     } else {
         New-Item -ItemType Directory -Force -Path $rtRuntime | Out-Null
-        $rtZip = Join-Path $rtRuntime (Split-Path $rtUrl -Leaf)
-        curl.exe --fail -L --retry 3 --retry-delay 5 -o $rtZip $rtUrl
-        if ($LASTEXITCODE -ne 0) {
-            Write-Host "  download failed (curl exit $LASTEXITCODE)" -ForegroundColor Red
-        } elseif (Install-VulkanRuntime $rtZip $rtDir $rtSigner) {
-            Write-Host "  Vulkan loader $rtVer in $rtRuntime" -ForegroundColor Green
+        $rtDll = Join-Path $rtRuntime 'vulkan-1.dll'
+        $sysDll = Join-Path $env:Windir 'System32\vulkan-1.dll'
+        if ((Test-Path $sysDll) -and (Test-VendorSignature $sysDll $rtSigner)) {
+            Copy-Item -Force $sysDll $rtDll
+            $got = (Get-Item $rtDll).VersionInfo.FileVersion
+            if ("$got" -ne $rtVer) { Write-Host "  note: System32 loader is $got, the SDK is $rtVer" -ForegroundColor DarkGray }
+            Write-Host "  Vulkan loader $got in $rtRuntime" -ForegroundColor Green
+        } else {
+            Write-Host "  [!!] no LunarG-signed vulkan-1.dll in System32 (a driver's own loader is not bundled)." -ForegroundColor Red
+            Write-Host "      Run the SDK's runtime installer to put one there, then re-run this script:" -ForegroundColor Red
+            Write-Host "        $(Join-Path $rtDir 'Helpers\VulkanRT.exe')" -ForegroundColor Red
         }
-        Remove-Item $rtZip -Force -ErrorAction SilentlyContinue
     }
 }
 '@
@@ -1184,7 +1160,7 @@ $rocmOnDisk   = Get-RocmInstalled
 $cudaAfter    = Find-Dist 'Cuda' $sources $distRoot
 $vulkanAfter  = Find-Dist 'Vulkan' $sources $distRoot
 if ($vulkanAfter -and -not (Test-Path (Join-Path $vulkanAfter.Dir 'Runtime\vulkan-1.dll'))) {
-    Write-Host "Vulkan loader missing from $($vulkanAfter.Dir)\Runtime: xtask package refuses until a run of this script fetches it." -ForegroundColor Yellow
+    Write-Host "Vulkan loader missing from $($vulkanAfter.Dir)\Runtime: xtask package refuses until it is there. This script copies it from System32, where the SDK's Helpers\VulkanRT.exe installer leaves it; run that installer if System32 has no LunarG-signed vulkan-1.dll, then re-run this script." -ForegroundColor Yellow
 }
 
 # Make the dist visible to THIS session too (a xtask configure run in the
