@@ -46,8 +46,12 @@ use std::collections::BTreeSet;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
-/// The single package every release up to 2.2.0 shipped, which the five replace.
+/// The single package every release up to `MONOLITH_LAST` shipped, which the five replace.
 const MONOLITH: &str = components::BASE_NAME;
+/// The last release that shipped it: the relation against `MONOLITH` stops there, an
+/// unversioned one matches every version of the name, future ones included (rpmbuild
+/// warns about it). See "The `.deb` and `.rpm` (Linux)" in docs/build-packaging.md.
+const MONOLITH_LAST: &str = "2.2.0";
 const OPT_DIR: &str = "opt/llama.cpp"; // relative to the package root
 const BIN_DIR: &str = "opt/llama.cpp/bin"; // llama.cpp + llama-cpp-config
 const RT_DIR: &str = "opt/llama.cpp/lib"; // the bundled GPU runtimes
@@ -621,7 +625,7 @@ fn deb_relations(f: &Fields) -> (String, String, String) {
 
 /// The `.rpm` relations, one tag per line.
 fn rpm_relations(f: &Fields) -> String {
-    let mut lines = vec![format!("Obsoletes:      {MONOLITH}")];
+    let mut lines = vec![format!("Obsoletes:      {MONOLITH} <= {MONOLITH_LAST}")];
     if let Some(v) = f.depends_on_llama {
         lines.push(format!("Requires:       {} = {v}", Component::Llama.package()));
     }
@@ -885,7 +889,7 @@ mod tests {
         assert!(rpm.contains("Recommends:     llama-cpp-framework-rocm = 10.1.0"), "{rpm}");
         assert!(rpm.contains("Conflicts:      llama-cpp-framework-rocm < 10.1.0"), "{rpm}");
         assert!(rpm.contains("Conflicts:      llama-cpp-framework-rocm > 10.1.0"), "{rpm}");
-        assert!(rpm.contains("Obsoletes:      llama-cpp-framework\n"), "{rpm}");
+        assert!(rpm.contains("Obsoletes:      llama-cpp-framework <= 2.2.0\n"), "{rpm}");
     }
 
     #[test]
@@ -901,6 +905,6 @@ mod tests {
     fn a_runtime_requires_nothing_of_the_others() {
         let f = fields(Component::Cuda, &[], None);
         assert_eq!(deb_relations(&f), (String::new(), String::new(), "llama-cpp-framework".to_string()));
-        assert_eq!(rpm_relations(&f), "Obsoletes:      llama-cpp-framework");
+        assert_eq!(rpm_relations(&f), "Obsoletes:      llama-cpp-framework <= 2.2.0");
     }
 }

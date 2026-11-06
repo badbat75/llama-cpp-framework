@@ -169,8 +169,13 @@ missing is skipped at start, with only a log line.
 | `config` needs `llama` at exactly its version | `Depends` `(= <version>)` | `Requires` `= <version>` |
 | `llama` asks for each runtime at the version it was built against | `Recommends` `(= <version>)` | `Recommends` `= <version>` |
 | `llama` refuses any other version of a runtime, whose symbols a backend may not resolve | `Breaks` `(<< <version>)`, `(>> <version>)` | `Conflicts` `< <version>`, `> <version>` |
-| All five replace `llama-cpp-framework`, the single package of earlier releases | `Conflicts`, `Replaces` | `Obsoletes` |
+| All five replace `llama-cpp-framework`, the single package of the releases up to 2.2.0 | `Conflicts`, `Replaces` | `Obsoletes` `<= 2.2.0` |
 | `llama` keeps out the distribution's own package | `Conflicts: llama.cpp` | `Conflicts: llama-cpp` |
+
+**The `Obsoletes` is versioned, the `.deb` pair is not.** rpm matches an unversioned `Obsoletes` against
+every version of the name, future ones included, so it would remove a package that later takes the name
+back: rpmbuild warns about it. dpkg warns about no such thing and its `Replaces` is only about taking over
+the old files, so those stay unversioned.
 
 **`config` and `llama` carry `<framework>+llama.cpp.<tag>`**, for example `2.2.0+llama.cpp.v0.9.0`. A
 rebuild on a newer llama.cpp alone is then an upgrade to apt and dnf. dpkg and rpm both order
