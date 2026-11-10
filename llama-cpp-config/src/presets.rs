@@ -92,6 +92,15 @@ pub struct Preset {
     /// (`; placement = <text>`, `PLACEMENT_MARKER`), for the same reason;
     /// the Models tab shows it beside the GPU table and clears it on request.
     pub placement_note: String,
+    /// Load this model as soon as the router starts (`load-on-startup`, a
+    /// preset-only key: no command-line flag, the router reads it from the
+    /// preset). Only at startup: a preset added by a later reload of the file
+    /// is listed but not loaded. false = omit the key, llama.cpp's default (load
+    /// on the first request). The router refuses to start when more presets
+    /// carry it than `--models-max` allows, and with `--models-max 0`
+    /// (unlimited) whenever any does (`server-models.cpp`, `load_models`); Save
+    /// and the on switch refuse that in advance (`check_startup_count`).
+    pub load_on_startup: bool,
     pub mmproj: String,
     /// GPU-offload the multimodal projector, the mmproj/CLIP image encoder
     /// (--mmproj-offload / --no-mmproj-offload). None/true = llama.cpp's default
@@ -663,6 +672,7 @@ impl Default for Preset {
             model: String::new(),
             project_url: String::new(),
             placement_note: String::new(),
+            load_on_startup: false,
             mmproj: String::new(),
             mmproj_offload: Some(true),
             mmproj_device: String::new(),
@@ -760,6 +770,7 @@ impl Preset {
             // Comments, not keys: `from_section` fills them.
             project_url: String::new(),
             placement_note: String::new(),
+            load_on_startup: getb("load-on-startup") == Some(true),
             mmproj: get("mmproj"),
             mmproj_offload: getb("mmproj-offload"),
             mmproj_device: get("mmproj-device"),
@@ -1222,6 +1233,9 @@ const DISABLED_FILE_HEADER: &str = "\
 pub fn set_enabled(id: &str, enabled: bool) -> io::Result<()> {
     let (on, off) = (paths::presets_ini(), paths::presets_disabled_ini());
     if enabled {
+        if let Some(p) = read_presets(&off).iter().find(|p| p.id.eq_ignore_ascii_case(id)) {
+            check_startup_for(p)?;
+        }
         move_section(id, &off, &on, None)
     } else {
         move_section(id, &on, &off, Some(DISABLED_FILE_HEADER))
@@ -1266,6 +1280,9 @@ fn move_section(id: &str, from: &Path, to: &Path, new_file_header: Option<&str>)
 pub fn save(preset: &Preset) -> io::Result<()> {
     validate_for_save(preset)?;
     let path = home_of(&preset.id);
+    if path == paths::presets_ini() {
+        check_startup_for(preset)?;
+    }
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
@@ -1343,6 +1360,50 @@ pub(crate) fn validate_for_save(preset: &Preset) -> io::Result<()> {
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
     validate_moe_cache_split(preset).map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
     Ok(())
+}
+
+/// llama.cpp's `--models-max` when server.ini sets none (`common_params::models_max`).
+pub(crate) const LLAMA_MODELS_MAX_DEFAULT: i32 = 4;
+
+/// Refuse a presets.ini whose `load-on-startup` presets (`count`) the router
+/// would not start with: more than `models_max` (server.ini `ModelsMax`, `None`
+/// = llama.cpp's default), or any at all under `ModelsMax = 0`, which the
+/// router's startup check compares literally instead of reading it as
+/// unlimited (`server_models::load_models`). Pure, so tests need no files.
+pub(crate) fn check_startup_count(count: usize, models_max: Option<i32>) -> io::Result<()> {
+    let max = models_max.unwrap_or(LLAMA_MODELS_MAX_DEFAULT);
+    if count == 0 || (max > 0 && count <= max as usize) {
+        return Ok(());
+    }
+    let msg = if max <= 0 {
+        strings::fill("load-on-startup-unlimited", &[&count])
+    } else {
+        strings::fill("load-on-startup-over-max", &[&count, &max])
+    };
+    Err(io::Error::new(io::ErrorKind::InvalidInput, msg))
+}
+
+/// How many presets in `enabled` would carry `load-on-startup` once `id` is
+/// written (or switched on) with `on`: the others' flags plus its own.
+fn startup_count_with(enabled: &[Preset], id: &str, on: bool) -> usize {
+    enabled
+        .iter()
+        .filter(|p| p.load_on_startup && !p.id.eq_ignore_ascii_case(id))
+        .count()
+        + usize::from(on)
+}
+
+/// `check_startup_count` for `preset` about to land in presets.ini. Only a
+/// preset that carries the key can push the count over, so any other save or
+/// switch is never blocked by presets already on disk.
+fn check_startup_for(preset: &Preset) -> io::Result<()> {
+    if !preset.load_on_startup {
+        return Ok(());
+    }
+    check_startup_count(
+        startup_count_with(&load_all(), &preset.id, true),
+        server_cfg::load().models_max,
+    )
 }
 
 /// A positive `moe-cache-mib` under `split-mode = tensor` is a model that never
@@ -1529,6 +1590,11 @@ pub fn render_section(p: &Preset) -> String {
     }
     out.push_str("; Model: local path (-m).\r\n");
     out.push_str(&format!("model = {}\r\n", p.model.trim()));
+    if p.load_on_startup {
+        out.push_str("; load-on-startup = true loads the model when the router starts, not on the\r\n");
+        out.push_str("; first request (a preset-only key). Omit the key = load on demand.\r\n");
+        out.push_str("load-on-startup = true\r\n");
+    }
     out.push_str("\r\n; Sub-model paths\r\n");
     emit_str(&mut out, "mmproj", &p.mmproj);
     out.push_str(
@@ -2020,6 +2086,44 @@ mod tests {
         }
     }
 
+    // The router's startup check: at most ModelsMax presets load on startup,
+    // none under ModelsMax = 0, llama.cpp's default when server.ini sets none.
+    #[test]
+    fn load_on_startup_count_is_held_to_models_max() {
+        assert!(check_startup_count(0, Some(0)).is_ok());
+        assert!(check_startup_count(1, Some(0)).is_err());
+        assert!(check_startup_count(2, Some(2)).is_ok());
+        assert!(check_startup_count(3, Some(2)).is_err());
+        let d = LLAMA_MODELS_MAX_DEFAULT as usize;
+        assert!(check_startup_count(d, None).is_ok());
+        assert!(check_startup_count(d + 1, None).is_err());
+    }
+
+    // The preset being written counts once, with its NEW flag, whatever the
+    // file held for it (any letter case of its id).
+    #[test]
+    fn startup_count_replaces_the_written_preset() {
+        let p = |id: &str, on| Preset {
+            id: id.into(),
+            load_on_startup: on,
+            ..Default::default()
+        };
+        let file = [p("a", true), p("B", true), p("c", false)];
+        assert_eq!(startup_count_with(&file, "b", true), 2);
+        assert_eq!(startup_count_with(&file, "b", false), 1);
+        assert_eq!(startup_count_with(&file, "c", true), 3);
+        assert_eq!(startup_count_with(&file, "new", true), 3);
+    }
+
+    // Written only when true: the key has no negative form to mean anything.
+    #[test]
+    fn load_on_startup_is_written_only_when_on() {
+        let mut p = Preset::new_default("x".into(), "m.gguf".into());
+        assert!(!render_section(&p).contains("\nload-on-startup"));
+        p.load_on_startup = true;
+        assert!(render_section(&p).contains("\r\nload-on-startup = true\r\n"));
+    }
+
     // A draft FILE makes all four live, on any model; prune must not touch them.
     #[test]
     fn prune_leaves_a_preset_with_a_draft_file_alone() {
@@ -2393,6 +2497,7 @@ mod tests {
             project_url: "https://huggingface.co/org/repo?a=1;b=2#files".into(),
             // `;` and `=` inside the note: a comment line keeps both.
             placement_note: "estimated at download for a 32k context; a = b".into(),
+            load_on_startup: true,
             mmproj: r"E:\mmprojs\clip.gguf".into(),
             mmproj_offload: Some(false),
             mmproj_device: "ROCm1".into(),

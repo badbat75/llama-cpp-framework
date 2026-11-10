@@ -24,6 +24,9 @@ export struct PresetForm {
     // `; placement =` comment in the INI, shown read-only on the GPU
     // distribution card, whose Clear button empties it.
     placement_note: string,
+    // load-on-startup (checked = on): a preset-only key with no negative form, so a
+    // plain bool like no_host; off omits the key.
+    load_on_startup: bool,
     mmproj: string,
     // --mmproj-offload: run the image encoder on GPU (llama.cpp's default) or
     // keep it on CPU. Plain bool (CheckBox, two-way <=>), same shape as jinja.

@@ -483,6 +483,13 @@ pub fn opt_nonblank(s: Option<String>) -> Option<String> {
 
 pub fn save(cfg: &ServerConfig) -> io::Result<()> {
     validate_for_save(cfg)?;
+    // A lower ModelsMax can strand the presets already set to load on startup:
+    // the router would refuse to start (`presets::check_startup_count`).
+    let startup = crate::presets::load_all()
+        .iter()
+        .filter(|p| p.load_on_startup)
+        .count();
+    crate::presets::check_startup_count(startup, cfg.models_max)?;
     let models_dir = cfg.models_dir_or_default();
     let path = paths::server_ini();
     if let Some(parent) = path.parent() {

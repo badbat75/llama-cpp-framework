@@ -1850,6 +1850,45 @@ pub(super) fn run(app: &AppWindow) {
     win.hide().ok();
 
     delete_with_files_phase(app, &models_dir, &model);
+    load_on_startup_phase();
+}
+
+/// `load-on-startup` held to `ModelsMax` at every way into the file the router
+/// reads: Save, the on switch, and a server.ini save lowering the cap. Runs
+/// under the same redirected data root; leaves both files as it found them.
+fn load_on_startup_phase() {
+    use crate::{presets, server_cfg};
+    let saved_cfg = server_cfg::load();
+    let mut cfg = saved_cfg.clone();
+    cfg.models_max = Some(1);
+    server_cfg::save(&cfg).expect("ModelsMax = 1");
+    let p = |id: &str| presets::Preset {
+        load_on_startup: true,
+        ..presets::Preset::new_default(id.into(), "m.gguf".into())
+    };
+    presets::save(&p("los-a")).expect("one fits ModelsMax = 1");
+    presets::save(&p("los-a")).expect("re-saving the same preset still counts once");
+    let err = presets::save(&p("los-b")).expect_err("a second one does not fit");
+    assert!(err.to_string().contains("ModelsMax"), "{err}");
+    assert!(presets::load_all().iter().all(|q| q.id != "los-b"), "nothing written");
+
+    // Parked, then switched on: the switch is refused, the section stays parked.
+    presets::save(&presets::Preset { load_on_startup: false, ..p("los-b") }).expect("off fits");
+    presets::set_enabled("los-b", false).expect("park it");
+    presets::save(&p("los-b")).expect("a parked preset does not count");
+    assert!(presets::set_enabled("los-b", true).is_err(), "switching it on would make two");
+    assert!(presets::load_listed().iter().any(|l| l.preset.id == "los-b" && !l.enabled));
+
+    // server.ini: ModelsMax = 0 is not unlimited for the startup check.
+    cfg.models_max = Some(0);
+    assert!(server_cfg::save(&cfg).is_err(), "ModelsMax = 0 with one startup preset");
+    assert_eq!(server_cfg::load().models_max, Some(1), "server.ini unchanged");
+    cfg.models_max = None;
+    server_cfg::save(&cfg).expect("llama.cpp's default cap holds one");
+
+    presets::delete("los-a").expect("cleanup");
+    presets::delete("los-b").expect("cleanup");
+    server_cfg::save(&saved_cfg).expect("restore server.ini");
 }
 
 /// Deleting a preset together with the model files it links (gui/models_tab.rs

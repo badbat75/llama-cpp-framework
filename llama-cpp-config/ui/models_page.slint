@@ -1052,6 +1052,17 @@ export component ModelsPage inherits HorizontalLayout {
                 heading: Strings.t("advanced");
                 LabeledField {
                     label_width <=> LabelColumn.models;
+                    label: Strings.t("load-on-startup");
+                    hint: Strings.t("load-on-startup-hint");
+                    SegmentedControl {
+                        options: ["off", "on"];
+                        labels: [Strings.t("off"), Strings.t("on")];
+                        current: AppState.form.load_on_startup ? "on" : "off";
+                        activated(value) => { AppState.form.load_on_startup = value == "on"; }
+                    }
+                }
+                LabeledField {
+                    label_width <=> LabelColumn.models;
                     label: Strings.t("chat-kwargs");
                     hint: Strings.t("chat-kwargs-hint");
                     LineEdit {
