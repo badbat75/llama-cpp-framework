@@ -118,12 +118,9 @@ cannot read `~/.config/llama.cpp/`. `server.ini` (renamed `server@<id>.ini`, one
 manager. `settings.ini` (the configurator's preferences) and `bench.db` stay per user. An existing
 per-user config is migrated once, never lost (Definition of Done 4).
 
-Slices, in order, each test first:
+Slices, in order, each test first (slice 1, the system config directory and the instance paths
+in `paths.rs`, is done; the numbers of the others stay as they are cited):
 
-1. **Config paths for the service.** `paths` gains the system config directory beside the per-user
-   one, and the instance files: `server@<id>.ini` for a valid ID, the list of instances from the files
-   present, an invalid ID refused. `LLAMA_CPP_CONFIG_DATA_ROOT` still redirects everything in tests.
-   Done when the tests pin the paths on each OS.
 2. **The launcher.** A subcommand (`private-ai-manager run-instance <id>`) that reads
    `server@<id>.ini` and execs llama-server with `server_args()`, its env (`LLAMA_CACHE`, the ROCm PATH
    prepend) and the cwd `runstate::start` sets today; it refuses an ID with no file. Where it

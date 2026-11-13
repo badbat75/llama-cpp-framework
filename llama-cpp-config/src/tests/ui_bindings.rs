@@ -593,4 +593,9 @@ fn editable_widgets_track_model_after_edit() {
     // Its own root window, on the same backend for the same reason.
     #[cfg(any(target_os = "linux", windows))]
     crate::gui::hw_window_e2e();
+
+    // ── System config paths (paths.rs `system_config_dir`, instances) ────
+    // Sets the process-wide data-root redirect, so it runs here, not as a
+    // unit test of its own (src/tests/mod.rs).
+    crate::paths::instance_paths_e2e();
 }

@@ -79,6 +79,69 @@ pub fn config_dir() -> PathBuf {
     data_root().join("config")
 }
 
+/// The machine-wide config directory the llama-server instances read:
+/// `/etc/llama.cpp` outside Windows, `%ProgramData%\llama.cpp\config` on
+/// Windows. Under the test override it is `<override>/system-config` on every
+/// OS, apart from the per-user `config_dir()`.
+// The service launcher (`private-ai-manager run-instance`) will call this; the allow goes then.
+#[allow(dead_code)]
+pub fn system_config_dir() -> PathBuf {
+    if let Some(p) = env_path("LLAMA_CPP_CONFIG_DATA_ROOT") {
+        return p.join("system-config");
+    }
+    #[cfg(windows)]
+    {
+        env_path("ProgramData")
+            .expect("ProgramData not set on Windows")
+            .join("llama.cpp")
+            .join("config")
+    }
+    #[cfg(not(windows))]
+    {
+        PathBuf::from("/etc/llama.cpp")
+    }
+}
+
+/// An instance id is 1 to 32 ASCII lowercase letters, digits and `-`, starting
+/// with a letter or digit, so it is always a safe file name component.
+// The service launcher (`private-ai-manager run-instance`) will call this; the allow goes then.
+#[allow(dead_code)]
+pub fn valid_instance_id(id: &str) -> bool {
+    let ok = |c: char| c.is_ascii_lowercase() || c.is_ascii_digit();
+    (1..=32).contains(&id.len())
+        && id.chars().next().is_some_and(ok)
+        && id.chars().all(|c| ok(c) || c == '-')
+}
+
+/// `server@<id>.ini` in `system_config_dir()`, or None for an invalid id.
+// The service launcher (`private-ai-manager run-instance`) will call this; the allow goes then.
+#[allow(dead_code)]
+pub fn instance_ini(id: &str) -> Option<PathBuf> {
+    valid_instance_id(id).then(|| system_config_dir().join(format!("server@{id}.ini")))
+}
+
+/// The ids of the regular files `server@<valid id>.ini` in
+/// `system_config_dir()`, sorted; empty when the directory is missing, which
+/// this never creates.
+// The service launcher (`private-ai-manager run-instance`) will call this; the allow goes then.
+#[allow(dead_code)]
+pub fn instance_ids() -> Vec<String> {
+    let Ok(entries) = std::fs::read_dir(system_config_dir()) else {
+        return Vec::new();
+    };
+    let mut ids: Vec<String> = entries
+        .flatten()
+        .filter(|e| e.file_type().is_ok_and(|t| t.is_file()))
+        .filter_map(|e| {
+            let name = e.file_name().into_string().ok()?;
+            let id = name.strip_prefix("server@")?.strip_suffix(".ini")?;
+            valid_instance_id(id).then(|| id.to_string())
+        })
+        .collect();
+    ids.sort();
+    ids
+}
+
 pub fn server_ini() -> PathBuf {
     config_dir().join("server.ini")
 }
@@ -341,9 +404,70 @@ pub fn os_path(win: &str) -> String {
     rest.replace('\\', "/")
 }
 
+/// E2E phase for the system config directory and the instance paths in it, for the
+/// shared UI test to call: it sets the process-wide
+/// `LLAMA_CPP_CONFIG_DATA_ROOT` redirect, which a plain unit test must not
+/// (`src/tests/mod.rs`). Only the redirected case is pinned: the real
+/// `/etc/llama.cpp` and `%ProgramData%\llama.cpp\config` need the variable
+/// unset, and no test in this crate unsets it safely.
+#[cfg(test)]
+pub(crate) fn instance_paths_e2e() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::env::set_var("LLAMA_CPP_CONFIG_DATA_ROOT", dir.path());
+    let sys = dir.path().join("system-config");
+
+    // The redirect wins on every OS, and the system directory is not the
+    // per-user one.
+    assert_eq!(system_config_dir(), sys);
+    assert_ne!(
+        system_config_dir(),
+        config_dir(),
+        "apart from the user's config"
+    );
+
+    // No directory yet: no instances, and nothing created by asking.
+    assert_eq!(instance_ids(), Vec::<String>::new());
+    assert!(!sys.exists(), "instance_ids must not create the directory");
+
+    // A crafted or malformed id never yields a path.
+    for bad in [
+        "", "../x", "..", "a/b", "Default", "a_b", "-a", "a@b", "a b", "x.ini",
+    ] {
+        assert_eq!(instance_ini(bad), None, "id {bad:?}");
+    }
+    assert_eq!(
+        instance_ini("default"),
+        Some(sys.join("server@default.ini"))
+    );
+    assert_eq!(instance_ini("lan-2"), Some(sys.join("server@lan-2.ini")));
+    assert_eq!(instance_ini("8080"), Some(sys.join("server@8080.ini")));
+
+    // Only `server@<valid id>.ini` FILES are instances, sorted.
+    std::fs::create_dir_all(&sys).expect("system config dir");
+    for name in [
+        "server@lan-2.ini",
+        "server@default.ini",
+        "server@8080.ini",
+        "server.ini",
+        "presets.ini",
+        "presets.ini.disabled",
+        "server@x.ini.bak",
+        "server@.ini",
+        "server@Upper.ini",
+        "server@a_b.ini",
+        "server@-lead.ini",
+        "server@a.b.ini",
+        "settings.ini",
+    ] {
+        std::fs::write(sys.join(name), "[Server]\n").expect("fixture file");
+    }
+    std::fs::create_dir(sys.join("server@dir.ini")).expect("fixture directory");
+    assert_eq!(instance_ids(), ["8080", "default", "lan-2"]);
+}
+
 #[cfg(test)]
 mod tests {
-    use super::newest_version;
+    use super::{newest_version, valid_instance_id};
 
     fn names(v: &[&str]) -> Vec<String> {
         v.iter().map(|s| s.to_string()).collect()
@@ -359,6 +483,48 @@ mod tests {
     fn newest_version_handles_mixed_depth_and_ignores_non_numeric() {
         let n = names(&["6.4.2", "6.4", "temp", "7.1-beta"]);
         assert_eq!(newest_version(&n).map(String::as_str), Some("6.4.2"));
+    }
+
+    #[test]
+    fn valid_instance_id_accepts_short_lowercase_names() {
+        let max = "a".repeat(32);
+        for id in [
+            "default",
+            "lan-2",
+            "8080",
+            "a",
+            "0",
+            "gpu-0-r9700",
+            max.as_str(),
+        ] {
+            assert!(valid_instance_id(id), "id {id:?} should be valid");
+        }
+    }
+
+    #[test]
+    fn valid_instance_id_refuses_empty_long_and_unsafe_names() {
+        let too_long = "a".repeat(33);
+        for id in [
+            "",
+            too_long.as_str(),
+            "Default",
+            "LAN",
+            "a_b",
+            "a.b",
+            "..",
+            "a/b",
+            "../x",
+            "a\\b",
+            "a@b",
+            "a b",
+            " a",
+            "-a",
+            "-",
+            "caf\u{e9}",
+            "a\n",
+        ] {
+            assert!(!valid_instance_id(id), "id {id:?} should be refused");
+        }
     }
 
     #[test]

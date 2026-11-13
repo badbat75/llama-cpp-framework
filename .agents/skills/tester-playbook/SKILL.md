@@ -14,3 +14,10 @@ Lessons only: the rules are in `AGENTS.md`.
 - Use real names and values in fixtures, captured from the real system. They find what invented data hides.
 - A fake holds whatever you write, while the real system can answer differently. Do not treat a passing
   test on a fake as proof about the real thing.
+- In `llama-cpp-config`, a test that needs `LLAMA_CPP_CONFIG_DATA_ROOT` (anything reading `paths::`) is not
+  a `#[test]` of its own: write a `#[cfg(test)] pub(crate) fn <name>_e2e()` that sets the redirect to its
+  own tempdir, and call it at the end of `editable_widgets_track_model_after_edit` in
+  `src/tests/ui_bindings.rs`; filter on that name to run it. Pure helpers stay plain unit tests. Nothing
+  unsets the variable safely, so the real-path branches (`/etc`, `%ProgramData%`) go untested.
+- Stubs with `todo!("<fn>")` give a red that names the missing function; prefer them to a compile error,
+  which hides every other test in the binary.
