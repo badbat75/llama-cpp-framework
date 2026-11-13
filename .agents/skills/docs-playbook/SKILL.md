@@ -17,3 +17,6 @@ Lessons only: the rules are in `AGENTS.md`.
   `AGENTS.md` and `PLAN.md` while you work.
 - `cargo clean -p <crate>` with no `--release`/`--profile` removes only that crate's dev-profile
   artifacts in the configured target dir (checked with `cargo clean -n -v`); `-n` is a safe dry run.
+- After a directory move, grep for the old path in both slash styles and for `-p <old-package>`, and fix
+  the relative links inside the moved files too (`crates/config/*.md` reaches the repo root with `../../`).
+  Binary names are a separate rename: leave them unless the brief says so.

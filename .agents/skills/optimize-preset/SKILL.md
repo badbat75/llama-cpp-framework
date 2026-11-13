@@ -18,7 +18,7 @@ bench.db. Never claim a number you did not measure; never apply a value that onl
   tables are the open questions. Start from these, do not re-derive them.
 - The memory notes (VRAM headroom, per-model tuning, workload): they hold the last
   measured state of each preset and the levers still untested.
-- `llama-cpp-config/AGENTS.md` "Footguns": semantics of `tensor-split` (normalized over
+- `crates/config/AGENTS.md` "Footguns": semantics of `tensor-split` (normalized over
   blocks + output layer), `override-tensor` (regex matched anywhere, first rule wins,
   anchor with `^` and `$`), `load-mode`, `parallel` (divides the context; absent means
   auto 4 slots), the embedding table left in pinned host RAM, `spec-type` vs MTP heads.

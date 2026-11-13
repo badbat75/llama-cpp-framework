@@ -14,7 +14,7 @@ published version means.
 ## 0. Read first
 
 - `benchmarks/README.md`, "Specs: the method, versioned": the passes of `standard` and why.
-- `llama-cpp-config/src/bench/spec.rs`: the format, what `parse` refuses, `canonical` (what
+- `crates/config/src/bench/spec.rs`: the format, what `parse` refuses, `canonical` (what
   the digest covers), and the tests that freeze the repo's spec.
 - `benchmarks/specs/standard-<X.Y>.ini` (one file per published version) and
   `standard.versions`.
@@ -127,7 +127,7 @@ and a change is the next version.
 1. Copy the newest `benchmarks/specs/standard-<X.Y>.ini` to `standard-<X.Y+1>.ini` (or
    `<X+1>.0` for a change of purpose within `standard`), change the rules and `Version`.
    Never edit or delete a published version's file.
-2. Run `cargo test the_standard_spec_is_a_published_version` (in `llama-cpp-config/`): it
+2. Run `cargo test the_standard_spec_is_a_published_version` (in `crates/config/`): it
    fails and prints the line to add, `<X.Y> <sha256>`. Append that line to
    `standard.versions`; never edit an existing line.
 3. A new prompt: add the file to `benchmarks/prompts/` as `<name>-<X.Y>.txt|json` and describe
@@ -151,7 +151,7 @@ subagent (`.opencode/agents/spec-reviewer.md`, read by Claude Code through the
 `.claude/agents` symlink; it only loads this skill and follows this section), or
 any agent told to review with it. Read-only: the review judges, it does not edit.
 
-Get the change with `git diff` (or `git diff <base>`), read `llama-cpp-config/src/bench/spec.rs`
+Get the change with `git diff` (or `git diff <base>`), read `crates/config/src/bench/spec.rs`
 (`parse`, `canonical`) and the files touched, then report each check as PASS, FAIL or N/A with
 one line of evidence:
 
@@ -160,7 +160,7 @@ one line of evidence:
    shipped prompt's text edited in place, is a FAIL.
 2. **`.versions`**: a new version has exactly one new line, appended, with the digest
    `cargo test the_standard_spec_is_a_published_version` expects (run it from
-   `llama-cpp-config/` when a build is possible; say so when it is not).
+   `crates/config/` when a build is possible; say so when it is not).
 3. **Measurement rules** (section 3, item 1): no temp-0 pass with the speculator on; a pass
    with the speculator on uses the preset's temperature and at least 5 repetitions; a
    speculator override says `none`, not `unset`.

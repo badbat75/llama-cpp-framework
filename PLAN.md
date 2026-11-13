@@ -36,7 +36,7 @@ as the column says. A requirement still open must be covered by a step.
 | W6 | The coordinator or the user can change the plan when needed | Met: rule in `AGENTS.md` |
 | W7 | Each agent has its own skills, which it can update itself or the coordinator can | Met: `.agents/skills/` |
 | W8 | Everything in English; only the conversation with the user may be in their language | Applies to every step |
-| W9 | Displayed text in a dedicated file, ready for more languages | Met: `llama-cpp-config/strings/` |
+| W9 | Displayed text in a dedicated file, ready for more languages | Met: `crates/config/strings/` |
 | W10 | Agents run only the tests of the part they work on, plus linter and format check; the user runs the full suite once, on main after the merge, before installing | Applies to every step |
 | W11 | No em-dashes anywhere in the repo ("Key conventions" in `AGENTS.md`) | Applies to every step |
 | W12 | Every change to a benchmark spec is reviewed by `spec-reviewer` before it is committed | Applies to every step |

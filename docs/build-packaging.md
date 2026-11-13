@@ -31,7 +31,7 @@ path, so no file lands in two packages or in none.
 For example, `llama-cpp-framework-v2.2.0-v0.9.0-x64.msi`, `llama-cpp-framework-llama-v2.2.0-v0.9.0-amd64.deb`,
 `llama-cpp-framework-rocm-v10.1.0-amd64.deb`.
 
-- `<framework>` is the `[package]` version of `llama-cpp-config/Cargo.toml`: the configurator and
+- `<framework>` is the `[package]` version of `crates/config/Cargo.toml`: the configurator and
   the framework are versioned together.
 - `<llama>` is `git describe --tags` of the clone, which prefers the annotated release tag over the
   nightly on the same commit.
@@ -46,7 +46,7 @@ macOS it is in the `config` package.
 
 **Every OS ships the configurator's text read-only** in `share/strings/`: `en_US.toml`, the GUI's
 language file, and `cli.toml`, the CLI's text. `strings_share.rs` stages
-every `*.toml` of `llama-cpp-config/strings/`, and on Linux and macOS it is in the `config` package.
+every `*.toml` of `crates/config/strings/`, and on Linux and macOS it is in the `config` package.
 
 **llama.cpp's test harnesses are pruned on every OS.** On Windows the installer can put `bin\` on
 the system PATH. On Linux and macOS every staged executable gets a command link. Either way,

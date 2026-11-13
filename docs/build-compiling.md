@@ -383,8 +383,8 @@ disagree until the next configure.
 ## Generated architecture tables
 
 **The configurator's per-architecture lists are generated from the clone, so a bare `cargo build` or
-`cargo test` of it needs the clone: run `xtask build` first.** `llama-cpp-config/build.rs`, with
-`llama-cpp-config/arch_tables.rs`, reads `src/llama-arch.cpp` and writes the recurrent, hybrid and
+`cargo test` of it needs the clone: run `xtask build` first.** `crates/config/build.rs`, with
+`crates/config/arch_tables.rs`, reads `src/llama-arch.cpp` and writes the recurrent, hybrid and
 tensor-split deny lists to `OUT_DIR`, from `llm_arch_is_recurrent`, `llm_arch_is_hybrid` and
 `llm_arch_supports_sm_tensor`. llama.cpp compiles them in and exposes them through no public API by name.
 
@@ -513,12 +513,12 @@ which `std::path` does not split on Linux. The code under test is not at fault.
 
 | Path | What it is |
 | --- | --- |
-| `Cargo.toml` | The workspace: `llama-cpp-config`, `xtask` and `tools/site`. The profiles live here because cargo reads them only at the root. |
+| `Cargo.toml` | The workspace: `crates/config` (package `pai-config`), `xtask` and `tools/site`. The profiles live here because cargo reads them only at the root. |
 | `xtask/src/main.rs` | The phases and their options |
 | `xtask/src/common/` | Shared: `dists.rs`, `llama.rs`, `cmake_options.rs`, `configurator.rs`, `prereq.rs`, `rocm.rs`, `version.rs`, `bench_share.rs`, `components.rs` (Linux and macOS: which package owns each staged file) |
 | `xtask/src/<os>/` | One OS's phases: `configure.rs`, `build_llama.rs`, `package.rs`, `install.rs`, `dists.rs` (the finders) |
 | `xtask/cmake/` | The checked-in llama.cpp CMake options |
-| `llama-cpp-config/build.rs`, `llama-cpp-config/arch_tables.rs` | The configurator's build script and the [architecture tables](#generated-architecture-tables) it generates from the clone |
+| `crates/config/build.rs`, `crates/config/arch_tables.rs` | The configurator's build script and the [architecture tables](#generated-architecture-tables) it generates from the clone |
 | `installer/dist-sources.toml` | Dist roots and download sources for xtask, with no versions |
 | `installer/dist-sources.psd1` | The same data for the Windows PowerShell scripts: a source changes in both files |
 | `installer/wix-toolset.psd1` | The WiX pin |
