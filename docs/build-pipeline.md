@@ -105,7 +105,7 @@ says. The configurator always goes to `build/<os>/cargo-target`.
 | Machine environment | `HIP_PATH` and PATH of the active ROCm dist | None | None |
 | sccache binary | `%LOCALAPPDATA%\Programs\sccache\sccache.exe` | `~/.local/bin/sccache` | `~/.local/bin/sccache` |
 | Packages | One MSI | Five `.deb`, five `.rpm` | Three `.pkg` |
-| Installs to | `Program Files\private-ai` (choosable) | `/opt/private-ai`, links in `/usr/bin` | `/opt/private-ai`, links in `/usr/local/bin` |
+| Installs to | `Program Files\private-ai` (choosable) | `/usr` (`/usr/bin`, `/usr/lib/private-ai`, `/usr/libexec/private-ai`, `/usr/share/private-ai`) | `/opt/private-ai`, links in `/usr/local/bin` |
 
 ## Where things land
 
@@ -152,6 +152,7 @@ On Windows, `$buildRoot` in `scripts\common.ps1` names `build\windows`.
 | Export `HIP_PATH` or `ROCM_PATH` before `xtask configure` on Linux | A usable one wins over the layout. [Dist layout and root](build-prerequisites.md#dist-layout-and-root) |
 | Run bare `cargo` on Linux with the Windows `.cargo/config.toml` present | It lands in `build/windows/cargo-target`. [Build parallelism](build-compiling.md#build-parallelism) |
 | Share a clone or build directory between systems | Line endings, patch state and `node_modules` mix. [Where things land](#where-things-land) |
+| Test a tree-built `llama-server` on Linux while the `llama` package is installed | It loads the installed backends from `GGML_BACKEND_DIR`, `/usr/lib/private-ai`, before its own. [The `.deb` and `.rpm`](build-packaging.md#the-deb-and-rpm-linux) |
 | Upgrade the Linux packages under a running server | It would load new kernels with old libraries. [Install](build-packaging.md#install) |
 | Leave out the runtime package of a GPU the machine has | llama-server skips that backend at start, with only a log line. [The `.deb` and `.rpm`](build-packaging.md#the-deb-and-rpm-linux) |
 | Copy all of `OpenSSLDir\bin` into the package | Most of it is providers that must not ship. [The MSI](build-packaging.md#the-msi-windows) |

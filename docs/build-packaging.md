@@ -50,7 +50,8 @@ language file, and `cli.toml`, the CLI's text. `strings_share.rs` stages
 every `*.toml` of `crates/core/strings/`, and on Linux and macOS it is in the `config` package.
 
 **llama.cpp's test harnesses are pruned on every OS.** On Windows the installer can put `bin\` on
-the system PATH. On Linux and macOS every staged executable gets a command link. Either way,
+the system PATH. On Linux every staged executable lands in `/usr/bin`, and on macOS each gets a command
+link. Either way,
 shipping them would drop generically named `test-*` commands into every shell. cmake stages every
 executable with an `install()` rule, so count them from the staging tree, not the build directory.
 
@@ -58,8 +59,8 @@ executable with an `install()` rule, so count them from the staging tree, not th
 restricted to what resolves inside a dist. Everything else stays a system library.
 
 **Every package carries its licences.** The MSI holds them in `share\licenses\` beside `bin\`. On Linux
-and macOS each package holds its own `/opt/private-ai/share/licenses/<package>/`, since no two packages
-can own one file. `licenses.rs` (`xtask/src/common/`) stages them:
+each package holds its own `/usr/share/private-ai/licenses/<package>/`, and on macOS its own
+`/opt/private-ai/share/licenses/<package>/`, since no two packages can own one file. `licenses.rs` (`xtask/src/common/`) stages them:
 
 - This project's licence, llama.cpp's and what llama.cpp's own `licenses/` holds, the configurator's
   icon font, and a text for every bundled library.
@@ -194,18 +195,30 @@ rebuild on a newer llama.cpp alone is then an upgrade to apt and dnf. dpkg and r
 
 | Path | Package | Holds |
 | --- | --- | --- |
-| `/opt/private-ai/bin/` | `llama`; `pai-config` in `config` | Executables, llama.cpp's libraries, ggml backends, `pai-config`, copied from the build's `bin/` |
-| `/opt/private-ai/lib/` | `rocm`, `cuda`, `vulkan`; `llvm/lib/libomp.so` in `llama` | The bundled runtimes |
-| `/opt/private-ai/.kpack/` | `rocm` | hipBLASLt's `blas_lib_*` and RCCL's `rccl_lib_*` archives |
-| `/opt/private-ai/share/benchmarks/` | `config` | The benchmark method |
-| `/opt/private-ai/share/strings/` | `config` | The configurator's text: the GUI's `en_US.toml`, the CLI's `cli.toml` |
-| `/opt/private-ai/share/licenses/<package>/` | Each its own | The licence texts and their `README.txt` |
-| `/usr/bin/` | `llama`; `pai-config` in `config` | One relative symlink per executable; rpm warns on absolute ones |
+| `/usr/bin/` | `llama`; `pai-config` in `config` | llama.cpp's executables and `pai-config`, the real files |
+| `/usr/libexec/private-ai/` | `llama` | `pai-manager`, which the units call by full path |
+| `/usr/lib/private-ai/` | `llama` | llama.cpp's libraries (`libllama`, `libmtmd`) and the ggml backends, a private directory, never a system library directory |
+| `/usr/lib/private-ai/lib/` | `rocm`, `cuda`, `vulkan`; `llvm/lib/libomp.so` in `llama` | The bundled runtimes |
+| `/usr/lib/private-ai/.kpack/` | `rocm` | hipBLASLt's `blas_lib_*` and RCCL's `rccl_lib_*` archives; ROCm looks in `<libdir>/../.kpack`, so they cannot sit at the top |
+| `/usr/share/private-ai/benchmarks/` | `config` | The benchmark method |
+| `/usr/share/private-ai/strings/` | `config` | The configurator's text: the GUI's `en_US.toml`, the CLI's `cli.toml` |
+| `/usr/share/private-ai/licenses/<package>/` | Each its own | The licence texts and their `README.txt` |
 | `/usr/share/` | `config`; `doc/<pkg>/copyright` in each | The desktop entry `org.privateai.Config.desktop` ("Private AI Framework" in the menu), its icon, the copyright file |
+| `/usr/lib/systemd/system/`, `/usr/lib/sysusers.d/`, `/usr/share/dbus-1/system.d/`, `/usr/share/polkit-1/actions/` | `llama` | The services' system files, below |
 
-**`bin/` stays one directory, across `config` and `llama`, so it skips `cmake --install`,** which would
-split it into `bin/` and `lib/`. ggml looks for its backends next to the executable (`/proc/self/exe`, so through a symlink
-too), and `paths::llama_bin` looks for `llama-server` next to the configurator.
+**Staging skips `cmake --install` and places each file of the build's `bin/` by name** (`place` in
+`xtask/src/linux/package.rs`): a `lib*.so*` in `/usr/lib/private-ai`, every other executable in
+`/usr/bin`, library symlinks kept as symlinks. `pai-manager` comes from cargo's target dir.
+`paths::llama_bin` finds `llama-server` beside `pai-config` in `/usr/bin`, and from `pai-manager` in
+`/usr/libexec/private-ai` through `../../bin`; `paths::installed_share_dir` finds the data in
+`/usr/share/private-ai`. The rpm `%files` owns no system directory, and the private libraries stay out
+of `Provides`.
+
+**ggml finds its backends through `GGML_BACKEND_DIR=/usr/lib/private-ai`** (`xtask/cmake/linux.toml`),
+which ggml searches before the executable's directory and the working directory
+(`ggml_backend_load_best` in `ggml/src/ggml-backend-reg.cpp`). So while the `llama` package is installed,
+a `llama-server` built in the tree loads the installed backends, not its own; with nothing installed
+there, it finds its own beside it.
 
 **The runtimes are the `ldd` closure of the staged files**, restricted to the ROCm, CUDA and NCCL
 dists and the Vulkan SDK's loader directory. Each lands under its soname with symlinks dereferenced.
@@ -237,17 +250,49 @@ directories alike, plus whatever names no architecture.
 | `lib/hipblaslt/library` | 467 MiB | 2198 MiB |
 | `.kpack` | 91 MiB | 2258 MiB |
 
-**RUNPATH is rewritten with `patchelf` on llama.cpp's own ELF files only**, after
-`strip --strip-unneeded` and never before, since stripping a patched file can drop the section
-patchelf appended. The value is `$ORIGIN:$ORIGIN/../lib:$ORIGIN/../lib/llvm/lib`. `LD_LIBRARY_PATH`
-still wins over RUNPATH. Extracting the `.deb` and tracing a generation per backend with `strace`
-showed no file opened under the dists or the build tree (read by hand, not recorded).
+**RUNPATH is rewritten with `patchelf` on the ELF files staged in `/usr/bin` and `/usr/lib/private-ai`
+only** (the runtimes keep AMD's), after `strip --strip-unneeded` and never before, since stripping a
+patched file can drop the section patchelf appended. The value is absolute,
+`/usr/lib/private-ai:/usr/lib/private-ai/lib:/usr/lib/private-ai/lib/llvm/lib`. `LD_LIBRARY_PATH`
+still wins over RUNPATH. That no file is opened under the dists or the build tree was checked by hand
+(extracting the `.deb`, `strace` of a generation per backend, not recorded) with a `$ORIGIN`-relative
+RUNPATH; it has not been repeated with the absolute one.
 
-**No config directory is shipped.** `pai-config` writes the config files per user, in
-`${XDG_CONFIG_HOME:-~/.config}/private-ai/` (`paths::config_dir`), and moves release 2.4's
+**No config file is shipped.** The server and preset files (`server@<id>.ini`, `presets.ini`,
+`presets.ini.disabled`) are in `/etc/private-ai/`, which systemd creates at the manager's start
+(`ConfigurationDirectory=`) and which only the manager writes. `pai-config` keeps `settings.ini` per
+user in `${XDG_CONFIG_HOME:-~/.config}/private-ai/` (`paths::config_dir`) and moves release 2.4's
 `~/.config/llama.cpp/` and `~/.local/share/llama.cpp/` there at its first start
-([Migration from 2.4](../crates/config/README.md#migration-from-24)). So the packages have no maintainer
-scripts and create no group.
+([Migration from 2.4](../crates/config/README.md#migration-from-24)).
+
+**The services' system files are in `llama`, beside `pai-manager`** (`xtask/src/linux/system_files.rs`,
+installed 0644, overwritten on every upgrade; local changes go in a drop-in, `systemctl edit`):
+
+| File | What it does |
+| --- | --- |
+| `/usr/lib/systemd/system/private-ai-manager.service` | `pai-manager serve` as root, `Type=dbus` on `org.privateai.Manager1`, `HOME=/var/lib/private-ai` so a blank `ModelsDir` means the same as for the instances, `ConfigurationDirectory=private-ai`, `Restart=on-failure`, enabled for `multi-user.target` |
+| `/usr/lib/systemd/system/llama.cpp@.service` | `pai-manager run-instance %i` as user `private-ai` (supplementary groups `render`, `video`), `StateDirectory=` for its home `/var/lib/private-ai` and the data root under it, `Restart=on-abnormal`; no `[Install]`: the manager starts the instances, at boot included; its output goes to journald |
+| `/usr/share/dbus-1/system.d/org.privateai.Manager1.conf` | Only root owns the name; anyone may call it, and polkit decides in each call |
+| `/usr/share/polkit-1/actions/org.privateai.manager.policy` | `org.privateai.manager.control` (start, stop, restart): `yes` in the active session, `auth_admin` otherwise; `org.privateai.manager.configure` (writing a file): `auth_admin_keep` |
+| `/usr/lib/sysusers.d/private-ai.conf` | The system user `private-ai`, home `/var/lib/private-ai`, in `render` and `video` |
+
+Their texts (the unit descriptions, the polkit descriptions and messages) are read in place by systemd
+and polkit, so they are literal in the code, not in the strings files.
+
+**The maintainer scripts are only `llama`'s**, in debhelper's form for the `.deb` (`postinst`,
+`prerm`, `postrm`) and Fedora's systemd macros written out for the `.rpm` (`%post`, `%preun`,
+`%postun`, `%posttrans`):
+
+| When | What they do |
+| --- | --- |
+| Install | `systemd-sysusers private-ai.conf`, enable the manager, `daemon-reload`, reload the bus policies, start the manager (the `.rpm` in `%posttrans`, once the old package's files are gone) |
+| Upgrade | The same, then restart the manager and `try-restart` the running `llama.cpp@*` instances on the new `llama-server` (the `.rpm` only while the manager is enabled) |
+| Removal | Stop the manager first, so it starts nothing, then the instances; `daemon-reload` (the `.rpm` also disables the manager) |
+| Purge (`.deb`) | Forget the manager's enablement state; `/etc/private-ai` and `/var/lib/private-ai` are kept |
+
+The `.deb` `Depends` on `systemd | systemd-standalone-sysusers | systemd-sysusers` for those scripts;
+the `.rpm` takes weak dependencies on the `render` and `video` groups, which the sysusers `m` lines
+create when missing.
 
 <details>
 <summary>Dependencies, payload and metadata</summary>
@@ -324,7 +369,10 @@ leave out the runtime of a GPU the machine does not have. `--dry-run` prints the
 - The format comes from `ID` and `ID_LIKE` in `/etc/os-release`, and the package managers on PATH
   only second, since a Debian build host has `rpm` too.
 - Running programs are refused because rocBLAS and hipBLASLt load their kernel files lazily. A
-  server outliving the upgrade would read the new kernels with the old libraries.
+  server outliving the upgrade would read the new kernels with the old libraries. Only a user's
+  program counts: one whose argv[0] is `pai-config` or a `llama-*` in `/usr/bin`, or that maps a file
+  of `/usr/lib/private-ai` (`/proc/<pid>/cmdline`, `/proc/<pid>/maps`). `pai-manager` and the
+  processes of the `private-ai` user do not: the maintainer scripts restart the services.
 - It warns when `config` or `llama` predates the last `xtask build`. A runtime comes out of an SDK,
   which the build does not change.
 - `sudo` is added when not root, here and on macOS.

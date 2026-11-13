@@ -43,10 +43,11 @@
 //! against and refuses any other, because a backend that cannot resolve a symbol
 //! is skipped at start with nothing but a log line.
 //!
-//! The config files (server.ini, presets.ini, presets.ini.disabled,
-//! settings.ini) are NOT in the package: pai-config writes them per user, in
-//! ~/.config/private-ai, on first use; the services' /etc/private-ai is
-//! created by systemd at the manager's start (ConfigurationDirectory=).
+//! No config file is in the package. The server and preset files
+//! (server@<id>.ini, presets.ini, presets.ini.disabled) live in
+//! /etc/private-ai, which systemd creates at the manager's start
+//! (ConfigurationDirectory=) and only the manager writes; settings.ini stays
+//! per user, written by pai-config in ~/.config/private-ai on first use.
 
 use super::build_llama::load_build_env;
 use super::dists;

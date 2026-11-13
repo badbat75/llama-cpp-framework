@@ -90,12 +90,13 @@ Each `build_llama.rs` adds what depends on this machine, and owns the `-U` unset
 | File | Applies to | Today |
 | --- | --- | --- |
 | `xtask/cmake/common.toml` | Every OS: the generator (`Ninja`) and the defines | Checked in |
-| `xtask/cmake/<os>.toml` | One OS: its defines follow the common ones and replace an entry of the same name | `macos.toml` only |
+| `xtask/cmake/<os>.toml` | One OS: its defines follow the common ones and replace an entry of the same name | `linux.toml`, `macos.toml` |
 
 An entry is one `NAME[:TYPE]=VALUE` string. An invalid one or an unknown key fails before cmake
 runs, so a typo fails as a typo. `cmake_options` in `xtask/src/common/cmake_options.rs` reads them,
-and each entry's full reason sits beside it in the file. There is no `linux.toml`, since nothing
-Linux builds is both Linux-only and machine-independent.
+and each entry's full reason sits beside it in the file. `linux.toml` holds one entry,
+`GGML_BACKEND_DIR=/usr/lib/private-ai`, where the Linux packages put the ggml backends
+([The `.deb` and `.rpm`](build-packaging.md#the-deb-and-rpm-linux)).
 
 | Option | Why |
 | --- | --- |

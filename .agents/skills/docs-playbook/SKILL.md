@@ -33,3 +33,6 @@ Lessons only: the rules are in `AGENTS.md`.
   (`### Migration from 2.4` is `#migration-from-24`). Check it in the built site (`--out <dir>`).
 - After a product rename, grep the scripts the names lints do not scan (`tools/*.ps1`) for the old
   data paths, and describe what the script does today rather than the new name.
+- After an install-layout change, grep the old prefix (`/opt/private-ai`) in the root `README.md`,
+  `docs/build-*.md`, `AGENTS.md` and `crates/*/README.md`: the root README repeats the paths. A check
+  done by hand on the old layout (an `strace`, a run) is not true of the new one: say it was not repeated.
