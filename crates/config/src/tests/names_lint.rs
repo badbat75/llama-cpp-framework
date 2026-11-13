@@ -6,8 +6,10 @@
 //! (`MIGRATION_MODULE`) may name the old tree and login entry it moves. A plain text scan of every `.rs` and `.slint` file, `build.rs` and
 //! `Cargo.toml`, whole-line comments left out (the docs say the old names
 //! where they tell the history). The engine's own names stay: `llama-server`,
-//! the unit `llama.cpp@<id>`, llama.cpp itself; so does the systemd service
-//! `private-ai-manager.service`.
+//! the unit `llama.cpp@<id>`, llama.cpp itself; so does the manager's
+//! service name: the systemd unit `private-ai-manager.service`, the named
+//! pipe `\\.\pipe\private-ai-manager` and the Windows service
+//! `"private-ai-manager"` in `WINDOWS_SERVICE_MODULE`.
 
 use std::path::{Path, PathBuf};
 
@@ -33,8 +35,19 @@ const OLD_NAMES: [&str; 11] = [
 const MIGRATION_MODULE: &str = "core/src/migrate.rs";
 const MIGRATION_NAMES: [&str; 2] = ["llama-cpp-config", r#"join("llama.cpp")"#];
 
-/// The old manager executable; `private-ai-manager.service` keeps its name.
+/// The old manager executable; the manager's service keeps the name
+/// (`MANAGER_SERVICE_NAMES`).
 const OLD_MANAGER: &str = "private-ai-manager";
+
+/// The service's own name, accepted anywhere: the systemd unit and the
+/// Windows named pipe.
+const MANAGER_SERVICE_NAMES: [&str; 2] =
+    ["private-ai-manager.service", r"\pipe\private-ai-manager"];
+
+/// The one file allowed to spell the Windows service name as a bare string,
+/// relative to `crates/`; `"private-ai-manager.exe"` stays refused there.
+const WINDOWS_SERVICE_MODULE: &str = "manager/src/manager/windows.rs";
+const WINDOWS_SERVICE_NAME: &str = "\"private-ai-manager\"";
 
 fn files(dir: &Path, out: &mut Vec<PathBuf>) {
     for entry in std::fs::read_dir(dir).expect("read dir") {
@@ -67,12 +80,22 @@ fn hits(path: &Path) -> Vec<String> {
                 .iter()
                 .filter(|old| !exempt.contains(old))
                 .any(|old| line.contains(old))
-                || line
-                    .replace("private-ai-manager.service", "")
-                    .contains(OLD_MANAGER)
+                || manager_names_left(path, line).contains(OLD_MANAGER)
         })
         .map(|(n, line)| format!("{}:{}: {}", path.display(), n + 1, line.trim()))
         .collect()
+}
+
+/// `line` with the manager's service names it may hold taken out.
+fn manager_names_left(path: &Path, line: &str) -> String {
+    let mut left = line.to_string();
+    for name in MANAGER_SERVICE_NAMES {
+        left = left.replace(name, "");
+    }
+    if path.ends_with(WINDOWS_SERVICE_MODULE) {
+        left = left.replace(WINDOWS_SERVICE_NAME, "");
+    }
+    left
 }
 
 #[test]
@@ -116,6 +139,37 @@ fn the_scan_skips_comments_and_keeps_the_service_name() {
     assert_eq!(found.len(), 2, "{found:?}");
     assert!(found[0].ends_with("let exe = \"private-ai-manager\";"));
     assert!(found[1].contains("join(\"llama.cpp\")"));
+}
+
+/// The pipe path is the service's name anywhere; the bare name only in the
+/// Windows service module, and only as the whole string.
+#[test]
+fn the_scan_keeps_the_pipe_and_the_windows_service_name() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let other = dir.path().join("x.rs");
+    std::fs::write(
+        &other,
+        "pub const PIPE_NAME: &str = r\"\\\\.\\pipe\\private-ai-manager\";\n\
+         pub const MANAGER_SERVICE: &str = \"private-ai-manager\";\n",
+    )
+    .expect("fixture");
+    let found = hits(&other);
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert!(found[0].contains("MANAGER_SERVICE"), "{found:?}");
+
+    let module = dir.path().join(WINDOWS_SERVICE_MODULE);
+    std::fs::create_dir_all(module.parent().expect("parent")).expect("dirs");
+    std::fs::write(
+        &module,
+        "pub const MANAGER_SERVICE: &str = \"private-ai-manager\";\n\
+         let exe = \"private-ai-manager.exe\";\n\
+         let cmd = Command::new(\"private-ai-manager-cli\");\n",
+    )
+    .expect("fixture");
+    let found = hits(&module);
+    assert_eq!(found.len(), 2, "{found:?}");
+    assert!(found[0].contains("private-ai-manager.exe"), "{found:?}");
+    assert!(found[1].contains("private-ai-manager-cli"), "{found:?}");
 }
 
 // Every old build variable is refused, not only the dist root: any

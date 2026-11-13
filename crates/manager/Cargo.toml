@@ -31,6 +31,23 @@ zbus = "5.19"
 # thread (manager/dbus.rs); the version zbus already pulls into the lock.
 blocking = "1.7"
 
+# The Windows services (manager/windows/scm.rs, manager/windows/serve.rs):
+# the SCM's dispatcher, control handler and service configuration, and the
+# raw Win32 calls it has no wrapper for (the named pipe and its security
+# descriptor, the client's token, the service list).
+[target.'cfg(windows)'.dependencies]
+windows-service = "0.8.1"
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_Storage_FileSystem",
+    "Win32_System_IO",
+    "Win32_System_Pipes",
+    "Win32_System_Services",
+    "Win32_System_Threading",
+] }
+
 [dev-dependencies]
 pai-core = { path = "../core", features = ["test-support"] }
 tempfile = "3"

@@ -107,6 +107,33 @@ pub fn system_config_dir() -> PathBuf {
     }
 }
 
+/// The machine-wide log directory of the instances' services:
+/// `%ProgramData%\private-ai\logs` on Windows, `/var/log/private-ai`
+/// elsewhere (unused on Linux, where the journal keeps the output). Under
+/// the test override it is `<override>/system-logs` on every OS.
+pub fn system_log_dir() -> PathBuf {
+    if let Some(p) = env_path(DATA_ROOT_VAR) {
+        return p.join("system-logs");
+    }
+    #[cfg(windows)]
+    {
+        env_path("ProgramData")
+            .expect("ProgramData not set on Windows")
+            .join(APP_DIR)
+            .join("logs")
+    }
+    #[cfg(not(windows))]
+    {
+        PathBuf::from("/var/log").join(APP_DIR)
+    }
+}
+
+/// `llama-server@<id>.log` in `system_log_dir()`, the output of instance
+/// `id`'s service on Windows; None for an invalid id.
+pub fn instance_log(id: &str) -> Option<PathBuf> {
+    valid_instance_id(id).then(|| system_log_dir().join(format!("llama-server@{id}.log")))
+}
+
 /// An instance id is 1 to 32 ASCII lowercase letters, digits and `-`, starting
 /// with a letter or digit, so it is always a safe file name component.
 pub fn valid_instance_id(id: &str) -> bool {
@@ -530,6 +557,28 @@ pub(crate) fn instance_paths_e2e() {
     assert_eq!(instance_ids(), ["8080", "default", "lan-2"]);
 }
 
+/// E2E phase for the instances' log files (the service's output on Windows),
+/// for the e2e test of this crate to call: it sets the process-wide
+/// `PRIVATE_AI_DATA_ROOT` redirect (`src/tests/mod.rs`).
+#[cfg(test)]
+pub(crate) fn instance_log_paths_e2e() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    redirect_for_tests(dir.path());
+    let logs = dir.path().join("system-logs");
+    assert_eq!(system_log_dir(), logs);
+    assert_ne!(system_log_dir(), data_root().join("logs"), "not the user's");
+    assert_ne!(system_log_dir(), system_config_dir());
+    assert_eq!(
+        instance_log("default"),
+        Some(logs.join("llama-server@default.log"))
+    );
+    assert_eq!(
+        instance_log("lan-2"),
+        Some(logs.join("llama-server@lan-2.log"))
+    );
+    assert!(!logs.exists(), "asking creates nothing");
+}
+
 #[cfg(test)]
 mod tests {
     use super::{installed_share_dir, llama_bin_from, newest_version, valid_instance_id};
@@ -671,6 +720,17 @@ mod tests {
     fn newest_version_handles_mixed_depth_and_ignores_non_numeric() {
         let n = names(&["6.4.2", "6.4", "temp", "7.1-beta"]);
         assert_eq!(newest_version(&n).map(String::as_str), Some("6.4.2"));
+    }
+
+    /// A crafted id never yields a log path; refused before any path is
+    /// read, so this needs no redirect.
+    #[test]
+    fn invalid_ids_have_no_log() {
+        for bad in [
+            "", "../x", "..", "a/b", "a\\b", "Default", "a@b", "a b", "x.log",
+        ] {
+            assert_eq!(super::instance_log(bad), None, "id {bad:?}");
+        }
     }
 
     #[test]

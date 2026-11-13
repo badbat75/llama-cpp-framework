@@ -8,6 +8,8 @@
 pub mod dbus;
 pub mod pipe;
 pub mod service;
+// The Windows side's decisions, OS-neutral (the Win32 glue is cfg(windows)).
+pub mod windows;
 
 /// A parsed `pai-manager` command line.
 #[derive(Debug, PartialEq, Eq)]
@@ -97,43 +99,64 @@ fn run(args: &[String]) -> Result<i32, (i32, String)> {
                 std::thread::park();
             }
         }
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(windows)]
+        ManagerCommand::Serve => {
+            windows::entry::serve(|id, e| {
+                let detail = service::error_reply(e).1;
+                eprintln!(
+                    "{}",
+                    strings::fill("manager-boot-start-failed", &[&id, &detail])
+                );
+            })
+            .map_err(|e| (1, strings::fill("manager-serve-failed", &[&e])))?;
+            return Ok(0);
+        }
+        #[cfg(not(any(target_os = "linux", windows)))]
         ManagerCommand::Serve => return Err((1, strings::t("manager-serve-unavailable"))),
     };
-    let exe = crate::paths::llama_server_exe().ok_or_else(|| {
-        let name = crate::paths::binary_name("llama-server");
-        (1, strings::fill("binary-not-found", &[&name]))
-    })?;
-    let mut cmd = crate::launch::instance_command(&id, &exe).map_err(|e| {
-        let text = match e {
-            LaunchError::InvalidId => strings::fill("manager-invalid-id", &[&id]),
-            LaunchError::NoConfig(p) => strings::fill("manager-no-config", &[&p.display(), &id]),
-            LaunchError::NoPresets => {
-                let presets = crate::paths::system_config_dir().join("presets.ini");
-                strings::fill("manager-no-presets", &[&presets.display()])
-            }
-            LaunchError::StateDir(p, kind) => {
-                strings::fill("manager-state-dir", &[&p.display(), &kind])
-            }
-        };
-        (1, text)
-    })?;
-    let failed = |e: std::io::Error| {
-        (
-            1,
-            strings::fill("manager-launch-failed", &[&exe.display(), &e]),
-        )
-    };
+    // A launch error is its message: on Windows the service writes it into
+    // the instance's log.
+    let launch = crate::paths::llama_server_exe()
+        .ok_or_else(|| {
+            let name = crate::paths::binary_name("llama-server");
+            strings::fill("binary-not-found", &[&name])
+        })
+        .and_then(|exe| {
+            let cmd = crate::launch::instance_command(&id, &exe).map_err(|e| match e {
+                LaunchError::InvalidId => strings::fill("manager-invalid-id", &[&id]),
+                LaunchError::NoConfig(p) => {
+                    strings::fill("manager-no-config", &[&p.display(), &id])
+                }
+                LaunchError::NoPresets => {
+                    let presets = crate::paths::system_config_dir().join("presets.ini");
+                    strings::fill("manager-no-presets", &[&presets.display()])
+                }
+                LaunchError::StateDir(p, kind) => {
+                    strings::fill("manager-state-dir", &[&p.display(), &kind])
+                }
+            })?;
+            Ok((exe, cmd))
+        });
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
+        let (exe, mut cmd) = launch.map_err(|text| (1, text))?;
         // Returns only when the exec failed.
-        Err(failed(cmd.exec()))
+        let e = cmd.exec();
+        Err((
+            1,
+            strings::fill("manager-launch-failed", &[&exe.display(), &e]),
+        ))
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
     {
-        let status = cmd.status().map_err(failed)?;
-        Ok(status.code().unwrap_or(1))
+        let (shown, cmd) = match launch {
+            Ok((exe, cmd)) => (exe.display().to_string(), Ok(cmd)),
+            Err(text) => (String::new(), Err(text)),
+        };
+        let launch_failed =
+            move |e: &std::io::Error| strings::fill("manager-launch-failed", &[&shown, e]);
+        windows::entry::run_instance(&id, cmd, Box::new(launch_failed)).map_err(|text| (1, text))
     }
 }
 

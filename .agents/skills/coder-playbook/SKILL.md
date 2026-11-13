@@ -104,3 +104,13 @@ Lessons only: the rules are in `AGENTS.md`.
   `dbus::Error`'s `From<ManagerError>` takes its message from there, while `dbus::error_reply` stays
   derived from the zbus enum so `pipe`'s equality test still checks the zbus names. The pipe frames
   are read and written by `pai_core::client::pipe::{read_frame, write_frame}` on both sides.
+- Windows manager glue lives in `manager/windows/` (`scm.rs`, `pipe_server.rs`, `entry.rs`, all
+  `cfg(windows)`), the decisions in `manager/windows.rs`. `ImpersonateNamedPipeClient` takes the
+  security context "of the last message read from the pipe": read a byte before it (the server
+  hands the byte back to `serve_stream` through a prefixed reader). `windows-service` 0.8 is on
+  windows-sys 0.61 too; the SCM calls themselves are raw windows-sys so `image_path` is what
+  `CreateServiceW` gets. A `windows-sys` fn whose signature names another module's type needs that
+  feature too (`ConnectNamedPipe` needs `Win32_System_IO`).
+- config's `names_lint` refuses the bare string `private-ai-manager` in code (only
+  `private-ai-manager.service` passes) and scans core and manager too: run
+  `cargo test -p pai-config -- names_lint binding_lint` after touching manager or core strings.

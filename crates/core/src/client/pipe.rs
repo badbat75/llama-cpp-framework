@@ -160,6 +160,82 @@ pub fn write_frame(w: &mut impl Write, body: &[u8]) -> std::io::Result<()> {
     w.flush()
 }
 
+/// The manager's named pipe, served by `pai-manager serve` and opened by the
+/// client (Windows).
+pub const PIPE_NAME: &str = r"\\.\pipe\private-ai-manager";
+
+/// The rights the client opens the pipe with (`CreateFileW`'s
+/// `dwDesiredAccess`): `FILE_GENERIC_READ | FILE_WRITE_DATA`, never
+/// `GENERIC_WRITE`, whose `FILE_APPEND_DATA` is `FILE_CREATE_PIPE_INSTANCE`
+/// and is not granted to interactive users.
+pub const CLIENT_ACCESS: u32 = 0x0012_0089 | 0x2;
+
+/// The client's `CreateFileW` flags: `SECURITY_SQOS_PRESENT |
+/// SECURITY_IDENTIFICATION`, so the server can read the client's token but
+/// never act as the client.
+pub const CLIENT_FLAGS: u32 = 0x0010_0000 | 0x0001_0000;
+
+/// Why opening the pipe failed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OpenError {
+    /// Every instance is in use: wait for one (`WaitNamedPipeW`) and retry.
+    Busy,
+    /// Give up with this error.
+    Fail(ClientError),
+}
+
+/// The meaning of the Win32 error `code` of opening the pipe.
+pub fn open_error(code: i32) -> OpenError {
+    match code {
+        // ERROR_FILE_NOT_FOUND: no manager serves the pipe.
+        2 => OpenError::Fail(ClientError::Unavailable),
+        // ERROR_ACCESS_DENIED: the pipe's security descriptor refused us.
+        5 => OpenError::Fail(ClientError::NotAuthorized),
+        // ERROR_PIPE_BUSY.
+        231 => OpenError::Busy,
+        _ => OpenError::Fail(ClientError::Other(format!("Win32 error {code}"))),
+    }
+}
+
+/// How long [`connect`] waits for a free instance of a busy pipe.
+#[cfg(windows)]
+const BUSY_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// The manager's client over its named pipe (Windows). A pipe busy for
+/// longer than [`BUSY_WAIT`] is [`ClientError::Unavailable`].
+#[cfg(windows)]
+pub fn connect() -> Result<PipeClient<std::fs::File>, ClientError> {
+    use std::os::windows::ffi::OsStrExt;
+    use std::os::windows::fs::OpenOptionsExt;
+    let deadline = std::time::Instant::now() + BUSY_WAIT;
+    loop {
+        let opened = std::fs::OpenOptions::new()
+            .access_mode(CLIENT_ACCESS)
+            .custom_flags(CLIENT_FLAGS)
+            .open(PIPE_NAME);
+        let code = match opened {
+            Ok(file) => return Ok(PipeClient::new(file)),
+            Err(e) => e.raw_os_error().unwrap_or_default(),
+        };
+        if let OpenError::Fail(e) = open_error(code) {
+            return Err(e);
+        }
+        let left = deadline.saturating_duration_since(std::time::Instant::now());
+        if left.is_zero() {
+            return Err(ClientError::Unavailable);
+        }
+        let name: Vec<u16> = std::ffi::OsStr::new(PIPE_NAME)
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+        let ms = u32::try_from(left.as_millis()).unwrap_or(u32::MAX).max(1);
+        // Returns at once when an instance is free, or at the timeout; the
+        // open is retried either way, until the deadline.
+        // SAFETY: `name` is a NUL-terminated UTF-16 string that outlives the call.
+        unsafe { windows_sys::Win32::System::Pipes::WaitNamedPipeW(name.as_ptr(), ms) };
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -668,5 +744,65 @@ mod tests {
                 json!({"method": "Status", "id": "default"}),
             ]
         );
+    }
+
+    // ── The named pipe (Windows) ─────────────────────────────────────────
+
+    /// Pipe Names: `\\.\pipe\<name>`, the name without a backslash, at
+    /// most 256 characters in all.
+    #[test]
+    fn the_pipe_is_the_manager_s_local_pipe() {
+        assert_eq!(PIPE_NAME, r"\\.\pipe\private-ai-manager");
+        let name = PIPE_NAME.strip_prefix(r"\\.\pipe\").expect("a local pipe");
+        assert!(!name.is_empty() && !name.contains('\\'), "{PIPE_NAME}");
+        assert!(PIPE_NAME.len() <= 256);
+    }
+
+    #[test]
+    fn the_client_asks_to_read_and_write_data_only() {
+        const FILE_GENERIC_READ: u32 = 0x0012_0089;
+        const FILE_WRITE_DATA: u32 = 0x2;
+        const FILE_CREATE_PIPE_INSTANCE: u32 = 0x4;
+        assert_eq!(CLIENT_ACCESS, FILE_GENERIC_READ | FILE_WRITE_DATA);
+        assert_eq!(CLIENT_ACCESS & FILE_CREATE_PIPE_INSTANCE, 0);
+    }
+
+    #[test]
+    fn the_client_lets_the_server_identify_it_only() {
+        const SECURITY_SQOS_PRESENT: u32 = 0x0010_0000;
+        const SECURITY_IDENTIFICATION: u32 = 0x0001_0000;
+        assert_eq!(
+            CLIENT_FLAGS,
+            SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION
+        );
+    }
+
+    #[test]
+    fn no_pipe_means_no_manager() {
+        // ERROR_FILE_NOT_FOUND: the manager is not running.
+        assert_eq!(open_error(2), OpenError::Fail(ClientError::Unavailable));
+    }
+
+    /// The security descriptor keeps out everyone but SYSTEM,
+    /// Administrators and interactive users: a service account or a network
+    /// logon is refused at the open.
+    #[test]
+    fn a_refused_open_is_not_authorized() {
+        assert_eq!(open_error(5), OpenError::Fail(ClientError::NotAuthorized));
+    }
+
+    #[test]
+    fn a_busy_pipe_is_waited_for() {
+        assert_eq!(open_error(231), OpenError::Busy);
+    }
+
+    #[test]
+    fn any_other_open_failure_names_its_code() {
+        for code in [3, 87, 1450] {
+            assert_eq!(
+                open_error(code),
+                OpenError::Fail(ClientError::Other(format!("Win32 error {code}")))
+            );
+        }
     }
 }

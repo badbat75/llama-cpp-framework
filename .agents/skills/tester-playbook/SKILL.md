@@ -197,3 +197,17 @@ Lessons only: the rules are in `AGENTS.md`.
   e2e phase.
 - A frame cap needs a test in both directions on each side: a client that sends an oversized request
   gets the server's hang-up, read as Unavailable or Other by timing, so the client refuses it first.
+- Windows-only decisions are pinned as OS-neutral pure functions and constants in
+  `crates/manager/src/manager/windows.rs` (SDDL, token facts, SCM spec, states, errors, service plan,
+  log rotation) and `pai_core::client::pipe` (pipe name, client access and flags, open errors); only
+  Win32 glue stays `cfg(windows)`. Win32 numeric values (access rights, error codes, flags) are read
+  from the local windows-sys source (`~/.cargo/registry/src/*/windows-sys-0.61.2/src`, generated from
+  Microsoft's metadata), the meaning from learn.microsoft.com. A crate's behaviour (windows-service
+  quoting, which APIs it lacks) is read from its `.crate` at `static.crates.io`, unpacked in /tmp.
+- A per-connection identity behind a shared `Authority` (the Windows pipe) is a thread-local set
+  around the call (`TokenAuthority::with_caller`); pin that it is cleared on return and on panic, and
+  that another thread sees none.
+- The pai-config names lint refuses a bare `private-ai-manager` (the old executable) everywhere but
+  in `MANAGER_SERVICE_NAMES` (the unit `.service`, the pipe `\pipe\private-ai-manager`) and the quoted
+  string in `WINDOWS_SERVICE_MODULE` (`manager/src/manager/windows.rs`). A test that must name the
+  manager's service elsewhere uses the constant, not the literal.

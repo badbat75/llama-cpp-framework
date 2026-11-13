@@ -24,6 +24,7 @@ as the column says. A requirement still open must be covered by a step.
 | R8 | llama-server runs as an OS service per instance (`llama.cpp@<id>` on Linux, config `server@<id>.ini`, a Windows service) managed by the runtime service `private-ai-manager`, which starts the instances at boot and is what the GUI and CLI talk to (D-Bus plus polkit on Linux, a named pipe with an ACL on Windows); units started by hand stay under its management; the manager owns every check on the config it writes and the GUI is a thin client; later engines (Strata) are to fit the same manager | Open: step 1 |
 | R9 | The project is `private-ai-framework`, its executables `pai-config` and `pai-manager` (decided 2026-11-13), with upgrades from the old packages and the user's data carried over | Open: step 2 |
 | R10 | The GUI and the CLI are two executables over one shared library: GUI `pai-config`, CLI `pai`, the shared logic in a new crate without Slint (decided with the user on 2026-11-13) | Open: step 3 |
+| R11 | A backend-for-frontend (`bff`) running as a local service beside `private-ai-manager`, in the same packages: the web UI of the configurator (a `fe` it serves), a gateway in front of the llama-server instances (one OpenAI-compatible endpoint, authentication, routing across instances and later engines), and the benchmark portal over `bench.db` (decided with the user on 2026-11-14) | Open: step 10 |
 
 ### How we work
 
@@ -191,10 +192,15 @@ so the second binary, `private-ai-manager`, shares its modules: a `[[bin]]` alon
    the user's real run (`xtask package`, `xtask install`, then the step's "Done when" checks).
 6. **Windows.** Split in four, each test first: **6a** (done) the OS-neutral protocol the manager serves
    over the named pipe (`pai_core::client::pipe`, `manager::pipe`: a u32 length and a JSON body of at
-   most 1 MiB, the D-Bus method and error names), tested on Linux over a socket pair; **6b** the
+   most 1 MiB, the D-Bus method and error names), tested on Linux over a socket pair; **6b** (done, type-checked only) the
    Windows-only parts (the pipe server and client with the security descriptor, the caller from the
    client token, the Authority over it, the SCM `ServiceControl`, `serve` and `run-instance` as
-   services), type-checked here and tried on the user's Windows build; **6c** the configurator's
+   services), type-checked here and tried on the user's Windows build; on Windows `control` is any
+   interactive user and `configure` a member of the local Administrators group, elevated or not
+   (user, 2026-11-13: no prompt can cross the pipe); each instance's service and virtual account are named
+   `llama.cpp_<id>` (`NT SERVICE\llama.cpp_<id>`: `_`, not systemd's `@`; user, 2026-11-14), the files keep
+   `server@<id>.ini` and `llama-server@<id>.log` on both OSes; the manager service and its pipe are named `private-ai-manager`
+   (`\\.\pipe\private-ai-manager`), as the Linux unit; Stop kills llama-server outright (user, 2026-11-14); **6c** the configurator's
    manager backend on Windows and the log file; **6d** the MSI, below.
    **Windows packaging.** The MSI registers the manager service (automatic start) and creates
    `%ProgramData%\private-ai\` with the right ACL. SCM has no template services, so the manager creates
@@ -218,10 +224,15 @@ Points of design, and what is still open:
   session without a password, config writes `auth_admin_keep`.
 - `SaveStateOnShutdown` and `StateDir`: the slot snapshots are written by the server, so by the service
   user; their default directory moves with it.
-- **Open, for the user:** `OpencodeApiKey` sits in `server@<id>.ini`, written 0644 into
-  `/etc/private-ai`, and the manager's `read_file` has no polkit check, so any local user can read the
-  key. Options: mode 0640 root:private-ai on the server files (the instance still reads them) and
-  `read_file` of the server files under `control`, or keep the key out of the system files.
+- `OpencodeApiKey` sits in `server@<id>.ini` (user, 2026-11-14): the server files are mode 0640
+  root:private-ai (the instance still reads them; on Windows the ACL counterpart), and reading them
+  through the manager needs the `control` authorization. A slice of its own, after 6b.
+- Windows accounts and logs (user, 2026-11-14): each instance runs as its virtual account
+  `NT SERVICE\llama.cpp_<id>`, LocalService the fallback if GPU compute fails from session 0; a
+  ModelsDir it cannot read is reported, and the MSI may create a default models folder under
+  `%ProgramData%\private-ai\models` readable by it (6d). The instance log is a file keeping one
+  previous run; the Event Log is not used (llama-server's output is too verbose for it), and a launch
+  error is written into the instance log.
 - The D-Bus name and polkit action ids, agreed with the user on 2026-11-13: `org.privateai.Manager1`,
   `org.privateai.manager.*`.
 
@@ -482,8 +493,25 @@ From the Windows work of 2026-10-21, `docs/qwen3.8_27b.md` section 9.
 - Done when: each check above has a measurement in bench.db, or a recorded reason it cannot run here,
   and the guide's placeholders are filled or retired.
 
+### 10. A backend-for-frontend: web UI, gateway and benchmark portal
+
+Covers: R11. Started once the steps the coordinator can do alone are done (user, 2026-11-14).
+
+Decided with the user on 2026-11-14: one local service on the machine, installed beside the manager by
+the same packages, listening on localhost and, when configured, on the LAN with authentication. It
+serves three things: the configurator's web UI (what `pai-config` does: server, presets, start and
+stop, logs, benchmarks), talking to `private-ai-manager` like the GUI does; a gateway in front of the
+instances; the benchmark portal over `bench.db`. The `fe` is developed with React and Vite in TypeScript and
+built to static files (user, 2026-11-14). The rest is the coordinator's proposal, to review with the
+user: the bff in Rust (axum, over `pai-core` and the `pai-app` crate of step 3), the `fe` built at
+package time and embedded in the bff, so one binary, the same tests and the
+same packaging. Slices and their order are written when the step starts; the first is the service
+skeleton with its packaging and one read-only page.
+
 ## Waiting for the user
 
+- Step 1: the real run of the Linux packages, after the Windows slices (user, 2026-11-14), together
+  with the Windows build: `xtask build`, `package`, `install`, then the step's checks.
 - Step 2: a Windows build of the renamed MSI and the installer test plan of `installer/AGENTS.md`,
   which also settles two points no test here can: `ProgramFiles64Folder` is set before `AppSearch`,
   and the `Type="directory"` search returns the trailing backslash the old-default comparison needs.

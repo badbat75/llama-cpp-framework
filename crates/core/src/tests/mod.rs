@@ -17,6 +17,9 @@ fn data_root_e2e() {
     // ── The old user tree moved to the new names (migrate.rs) ────────────
     #[cfg(not(windows))]
     crate::migrate::migrate_e2e();
+
+    // ── The instances' log files (paths.rs `instance_log`) ───────────────
+    crate::paths::instance_log_paths_e2e();
 }
 
 /// The paths with no test redirect, named after the project, and the old
@@ -91,6 +94,10 @@ fn real_paths_child() {
             paths::system_config_dir(),
             var("ProgramData").join("private-ai").join("config")
         );
+        assert_eq!(
+            paths::system_log_dir(),
+            var("ProgramData").join("private-ai").join("logs")
+        );
         // The old tree to migrate: the one 2.4 kept in %LOCALAPPDATA%.
         assert_eq!(
             crate::migrate::old_trees(),
@@ -105,6 +112,10 @@ fn real_paths_child() {
         );
         assert_eq!(paths::config_dir(), home.join(".config").join("private-ai"));
         assert_eq!(paths::system_config_dir(), PathBuf::from("/etc/private-ai"));
+        assert_eq!(
+            paths::system_log_dir(),
+            PathBuf::from("/var/log/private-ai")
+        );
         // The old trees to migrate, where 2.4 kept them: computed, not read.
         let old_data = (
             home.join(".local").join("share").join(OLD_DIR),
