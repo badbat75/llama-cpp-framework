@@ -10,7 +10,7 @@
 
 use clap::Parser;
 use pai_config::cli::reader_of;
-use pai_config::{cli, gui, strings};
+use pai_config::{cli, gui, migration, strings};
 
 fn main() {
     // Attach to the parent console (if any) BEFORE branching: the release
@@ -22,9 +22,15 @@ fn main() {
         attach_parent_console();
     }
 
+    // The trees and login entry of release 2.4 move before anything reads
+    // or writes them; the failures print once the strings reader is set.
+    let migrated = migration::run();
     let argv: Vec<String> = std::env::args().collect();
     if argv.len() <= 1 {
         strings::set_reader(reader_of(None));
+        for line in migrated.errors() {
+            eprintln!("{line}");
+        }
         if let Err(e) = gui::run(false) {
             eprintln!(
                 "{}",
@@ -37,6 +43,9 @@ fn main() {
 
     let cli = cli::Cli::parse();
     strings::set_reader(reader_of(Some(&cli.command)));
+    for line in migrated.errors() {
+        eprintln!("{line}");
+    }
     if let Err(e) = cli::run(cli) {
         eprintln!("{}", strings::fill("error-line", &[&format!("{e:#}")]));
         std::process::exit(1);

@@ -42,6 +42,7 @@ as the column says. A requirement still open must be covered by a step.
 | W12 | Every change to a benchmark spec is reviewed by `spec-reviewer` before it is committed | Applies to every step |
 | W13 | The coordinator only coordinates: the tester writes and reruns the tests, the coder runs the linter and the format check, the coordinator reads their reports and commits | Met: `AGENTS.md` "Roles", `.opencode/agents/` |
 | W14 | Every release until 3.0.0 is a 2.99.x pre-release (2.99.0, 2.99.1, ...), decided on 2026-11-13; 3.0.0 is the user's call | Applies to every release |
+| W15 | Windows-only code is type-checked on Linux with `cargo check -p <crate> --target x86_64-pc-windows-msvc` by the coder, decided on 2026-11-13 | Open: step 2, slice 3 (added to the agent commands in `AGENTS.md` once it is shown to work here) |
 
 ## Definition of Done
 
@@ -246,11 +247,11 @@ Slices, in order:
    the services (`private-ai-manager.service`, `llama.cpp@<id>.service`) and the D-Bus name keep their
    names. Also the window title and product strings, the environment variables,
    the user and system paths, the registry key, the service user; tests pin the new names first.
-3. **Migration** of the old user tree, tests first. It also removes what 2.4 left for start at login
-   (the HKCU Run value `llama-cpp-config`, `~/.config/autostart/llama-cpp-config.desktop`) and
-   re-creates it under the new name when it was on. The names lint gains the other old variables
-   (`LLAMA_FW_ROCM`, `_CUDA`, `_VULKAN_SDK`, `_PATCHES`, `_GPU_LOCK`, `_LLAMA_CPP_DIR`,
-   `_MAINTAINER`), renamed in slice 2 but not linted.
+3. **Migration**, done except: a Run entry switched off in Task Manager (the `StartupApproved\Run`
+   value, first byte odd = off; no Microsoft spec, Firefox's `WindowsLaunchOnLogin.sys.mjs` uses the
+   same rule) is removed without enabling the new one, as a desktop-disabled entry on Linux (user,
+   2026-11-13); the Windows registry test restores the starting state through a `Drop` guard; the
+   Windows code is type-checked (W15). Tests first, the parsing as a pure function tested on Linux.
 4. **Packages:** names, `Replaces`/`Conflicts`/`Provides`, `Obsoletes`, the MSI's UpgradeCode kept;
    xtask tests first, `--dry-run` where it exists.
 5. **Docs and scaffolding**, including the manager docs left from slices 3a and 3b of step 1.

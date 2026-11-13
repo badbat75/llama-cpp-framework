@@ -4,6 +4,7 @@
 
 pub mod ini;
 pub mod launch;
+pub mod migrate;
 pub mod net_ifaces;
 pub mod paths;
 pub mod proc;

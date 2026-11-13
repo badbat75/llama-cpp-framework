@@ -23,6 +23,7 @@ mod hwmon;
 mod integrations;
 mod kv_cache;
 mod linked_files;
+pub mod migration;
 mod model_scan;
 mod moe_cache;
 mod presets;

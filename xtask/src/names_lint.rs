@@ -35,7 +35,9 @@ fn files(dir: &Path, ext: &[&str], out: &mut Vec<PathBuf>) {
     }
 }
 
-const OLD_DIST_ROOT: &str = concat!("LLAMA_FW", "_DIST_ROOT");
+/// The prefix of every old build variable (`_DIST_ROOT`, `_ROCM`, `_CUDA`,
+/// `_VULKAN_SDK`, `_PATCHES`, `_GPU_LOCK`, `_LLAMA_CPP_DIR`, `_MAINTAINER`).
+const OLD_DIST_ROOT: &str = concat!("LLAMA_FW", "_");
 
 /// Lines of xtask's code (not whole-line comments) naming an old name.
 #[test]
@@ -68,7 +70,7 @@ fn xtask_code_names_the_new_executable_tree_and_variable() {
     );
 }
 
-/// No fallback to the old dist root variable: not read, not even offered in a
+/// No fallback to an old build variable: not read, not even offered in a
 /// comment, by the scripts and the dist sources.
 #[test]
 fn scripts_and_dist_sources_name_only_the_new_dist_root_variable() {

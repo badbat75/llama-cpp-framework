@@ -47,3 +47,7 @@ Lessons only: the rules are in `AGENTS.md`.
   `.parent()` chain) and xtask's `repo_root().join(...)` (`configurator.rs`, `licenses.rs`,
   `strings_share.rs`, `version.rs`, `linux/package.rs`). A sed on `^name = "..."` in its Cargo.toml also
   hits the `[[bin]]` entry of the same name.
+- `main.rs` (config) is a print path shared by the GUI and the CLI: a key it prints (directly or
+  through a shared fn such as `Migration::errors`) goes in both `cli.toml` and `en_US.toml`, and
+  only once `strings::set_reader` has run. Windows-only code (`startup::win`) is not compiled by the
+  agent commands on Linux: say so in the report.

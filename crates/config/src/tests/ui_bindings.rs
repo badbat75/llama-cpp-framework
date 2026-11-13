@@ -597,4 +597,8 @@ fn editable_widgets_track_model_after_edit() {
     // ── Login entry (startup.rs `set_enabled`, the XDG autostart file) ───
     #[cfg(target_os = "linux")]
     crate::startup::startup_e2e();
+
+    // ── The 2.4 tree and login entry migrated (migration.rs) ─────────────
+    #[cfg(target_os = "linux")]
+    crate::migration::migration_e2e();
 }

@@ -67,3 +67,11 @@ Lessons only: the rules are in `AGENTS.md`.
 - A names lint (`crates/config/src/tests/names_lint.rs`, `xtask/src/names_lint.rs`) flags old names in
   code lines; a test that must spell an old name (a negative assertion, the old-variable-is-ignored check)
   splits it with `concat!("llama-cpp", "-config")` so the lint stays clean.
+- The names lints also flag `join("llama.cpp")`: a test building an old tree spells the directory
+  `concat!("llama", ".cpp")`. Only `crates/core/src/migrate.rs` may name the old tree and login entry
+  (`MIGRATION_MODULE` / `MIGRATION_NAMES` in the pai-config names lint); a fixture under a temp
+  `core/src/migrate.rs` exercises the exemption, since `hits` matches the path by its tail.
+- A stub reached only from tests fails `cargo clippy -D warnings` with dead code until the coder wires
+  it in: say so in the report instead of adding `allow`s.
+- To force a copy fallback without a second filesystem, inject the rename (`&dyn Fn(&Path, &Path)`)
+  and fail it for one source path only, so the final temp-to-new rename still runs for real.

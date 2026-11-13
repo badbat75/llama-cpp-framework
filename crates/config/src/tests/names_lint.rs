@@ -2,7 +2,8 @@
 //! "Private AI Framework", the executables `pai-config` and `pai-manager`, the
 //! user and system trees `private-ai`, the registry key `Software\private-ai`
 //! and the test redirect `PRIVATE_AI_DATA_ROOT`, with no fallback to the old
-//! names. A plain text scan of every `.rs` and `.slint` file, `build.rs` and
+//! names (no `LLAMA_FW_` build variable either). Only the migration module
+//! (`MIGRATION_MODULE`) may name the old tree and login entry it moves. A plain text scan of every `.rs` and `.slint` file, `build.rs` and
 //! `Cargo.toml`, whole-line comments left out (the docs say the old names
 //! where they tell the history). The engine's own names stay: `llama-server`,
 //! the unit `llama.cpp@<id>`, llama.cpp itself; so does the systemd service
@@ -17,13 +18,20 @@ const OLD_NAMES: [&str; 11] = [
     "llama.cpp-framework",
     "llama.cpp Config",
     concat!("LLAMA_CPP_CONFIG", "_DATA_ROOT"),
-    concat!("LLAMA_FW", "_DIST_ROOT"),
+    // Every old build variable (`_DIST_ROOT`, `_ROCM`, `_GPU_LOCK`, ...).
+    concat!("LLAMA_FW", "_"),
     r"Software\llama.cpp",
     r"ProgramData\llama.cpp",
     "/etc/llama.cpp",
     "/opt/llama.cpp",
     r#"join("llama.cpp")"#,
 ];
+
+/// The one file allowed to name the old user tree and login entry, relative
+/// to `crates/`: the migration must find them. Only `MIGRATION_NAMES` are
+/// accepted there, every other old name is still refused.
+const MIGRATION_MODULE: &str = "core/src/migrate.rs";
+const MIGRATION_NAMES: [&str; 2] = ["llama-cpp-config", r#"join("llama.cpp")"#];
 
 /// The old manager executable; `private-ai-manager.service` keeps its name.
 const OLD_MANAGER: &str = "private-ai-manager";
@@ -43,6 +51,11 @@ fn files(dir: &Path, out: &mut Vec<PathBuf>) {
 fn hits(path: &Path) -> Vec<String> {
     let text = std::fs::read_to_string(path).expect("read source");
     let toml = path.extension().is_some_and(|e| e == "toml");
+    let exempt: &[&str] = if path.ends_with(MIGRATION_MODULE) {
+        &MIGRATION_NAMES
+    } else {
+        &[]
+    };
     text.lines()
         .enumerate()
         .filter(|(_, line)| {
@@ -50,7 +63,10 @@ fn hits(path: &Path) -> Vec<String> {
             !(t.starts_with("//") || (toml && t.starts_with('#')))
         })
         .filter(|(_, line)| {
-            OLD_NAMES.iter().any(|old| line.contains(old))
+            OLD_NAMES
+                .iter()
+                .filter(|old| !exempt.contains(old))
+                .any(|old| line.contains(old))
                 || line
                     .replace("private-ai-manager.service", "")
                     .contains(OLD_MANAGER)
@@ -100,4 +116,56 @@ fn the_scan_skips_comments_and_keeps_the_service_name() {
     assert_eq!(found.len(), 2, "{found:?}");
     assert!(found[0].ends_with("let exe = \"private-ai-manager\";"));
     assert!(found[1].contains("join(\"llama.cpp\")"));
+}
+
+// Every old build variable is refused, not only the dist root: any
+// `LLAMA_FW_` name.
+#[test]
+fn the_scan_refuses_every_old_build_variable() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = dir.path().join("x.rs");
+    let vars = [
+        "ROCM",
+        "CUDA",
+        "VULKAN_SDK",
+        "PATCHES",
+        "GPU_LOCK",
+        "LLAMA_CPP_DIR",
+        "MAINTAINER",
+        "DIST_ROOT",
+    ];
+    let text: String = vars
+        .iter()
+        .map(|v| format!("let v = env!(\"{}_{v}\");\n", concat!("LLAMA", "_FW")))
+        .collect();
+    std::fs::write(&file, text).expect("fixture");
+    assert_eq!(hits(&file).len(), vars.len(), "{:?}", hits(&file));
+}
+
+// The migration module, and it alone, may name the old directory and the old
+// login entry, which it must find; any other old name is still refused there.
+#[test]
+fn only_the_migration_module_may_name_the_old_tree_and_entry() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let src = dir.path().join("core").join("src");
+    std::fs::create_dir_all(&src).expect("src");
+    let text = format!(
+        "pub const OLD_LOGIN_ENTRY: &str = \"{}\";\n\
+         let old = base.join(\"llama.cpp\");\n\
+         let v = env!(\"{}\");\n",
+        concat!("llama-cpp", "-config"),
+        concat!("LLAMA", "_FW_GPU_LOCK"),
+    );
+    for name in ["migrate.rs", "paths.rs"] {
+        std::fs::write(src.join(name), &text).expect("fixture");
+    }
+    let migrate = hits(&src.join("migrate.rs"));
+    assert_eq!(migrate.len(), 1, "{migrate:?}");
+    assert!(migrate[0].contains("_FW_GPU_LOCK"), "{migrate:?}");
+    assert_eq!(hits(&src.join("paths.rs")).len(), 3);
+    // The exempt file is a real one, not a name left behind by a move.
+    let real = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join(MIGRATION_MODULE);
+    assert!(real.is_file(), "{real:?}");
 }

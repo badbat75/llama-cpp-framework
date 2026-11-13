@@ -63,6 +63,29 @@ fn choose_autostart_exe(
     installed.unwrap_or(current)
 }
 
+/// Replace the login entry of release 2.4 and earlier
+/// (`pai_core::migrate::OLD_LOGIN_ENTRY`: the HKCU Run value on Windows, the
+/// `<name>.desktop` XDG autostart file on Linux) by the new one: when the old
+/// entry exists it is removed and, when it was on, the new entry is enabled
+/// with the same "start minimized" choice. `Ok(true)` when an old entry was
+/// found; with none, nothing is created. Unsupported platforms: `Ok(false)`.
+pub fn migrate_old_entry() -> io::Result<bool> {
+    #[cfg(windows)]
+    {
+        win::migrate_old_entry()
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let new = linux::entry_path();
+        let old = new.with_file_name(format!("{}.desktop", pai_core::migrate::OLD_LOGIN_ENTRY));
+        linux::migrate_entry(&old, &new)
+    }
+    #[cfg(not(any(windows, target_os = "linux")))]
+    {
+        Ok(false)
+    }
+}
+
 #[cfg(windows)]
 pub use win::{is_enabled, machine_reg_dword, machine_reg_sz, set_enabled, starts_minimized};
 
@@ -106,7 +129,7 @@ mod linux {
     /// `~/.config` default. Under the e2e redirect `home_dir()` is the temp
     /// tree and `XDG_CONFIG_HOME` is ignored, so a test can never write the
     /// developer's real autostart directory.
-    fn entry_path() -> PathBuf {
+    pub(super) fn entry_path() -> PathBuf {
         let redirected = std::env::var_os("PRIVATE_AI_DATA_ROOT").is_some();
         let config = std::env::var_os("XDG_CONFIG_HOME")
             .filter(|v| !redirected && !v.is_empty())
@@ -203,6 +226,21 @@ mod linux {
         write_entry(&entry_path(), on, minimized)
     }
 
+    /// The Linux half of `migrate_old_entry`, on explicit paths: the old
+    /// entry at `old` replaced by one at `new`.
+    pub(super) fn migrate_entry(old: &Path, new: &Path) -> io::Result<bool> {
+        let text = match std::fs::read_to_string(old) {
+            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
+            other => other?,
+        };
+        let (on, minimized) = parse_entry(&text);
+        if on {
+            write_entry(new, true, minimized)?;
+        }
+        std::fs::remove_file(old)?;
+        Ok(true)
+    }
+
     pub(super) fn write_entry(path: &Path, on: bool, minimized: bool) -> io::Result<()> {
         if on {
             let exe = super::choose_autostart_exe(installed_exe(), std::env::current_exe()?);
@@ -230,7 +268,7 @@ mod win {
         REG_DWORD, REG_SAM_FLAGS, REG_SZ,
     };
 
-    const RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
+    pub(super) const RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
     const VALUE_NAME: &str = "org.privateai.Config";
 
     fn wide(s: &str) -> Vec<u16> {
@@ -253,7 +291,7 @@ mod win {
     /// Read a `REG_SZ` value from `root\subkey`, or `None` when the key/value is
     /// absent, unreadable, or not a string. Shared by `stored_command` (HKCU Run)
     /// and `install_dir` (HKLM InstallDir).
-    fn read_reg_sz(root: Hkey, subkey: &str, value: &str) -> Option<String> {
+    pub(super) fn read_reg_sz(root: Hkey, subkey: &str, value: &str) -> Option<String> {
         let sub = wide(subkey);
         let mut key: Hkey = std::ptr::null_mut();
         if unsafe { RegOpenKeyExW(root, sub.as_ptr(), 0, KEY_QUERY_VALUE, &mut key) }
@@ -421,6 +459,29 @@ mod win {
             Err(io::Error::from_raw_os_error(ret as i32))
         }
     }
+
+    /// The Windows half of `super::migrate_old_entry`: the old Run value's
+    /// `--minimized` choice carried into the new value, then the old one
+    /// deleted. With the new value not written, the old one stays.
+    pub fn migrate_old_entry() -> io::Result<bool> {
+        let old = pai_core::migrate::OLD_LOGIN_ENTRY;
+        let Some(command) = read_reg_sz(HKEY_CURRENT_USER, RUN_KEY, old) else {
+            return Ok(false);
+        };
+        set_enabled(true, command.contains("--minimized"))?;
+        let key = open_run_key(KEY_SET_VALUE)?;
+        let name = wide(old);
+        let ret = match unsafe { RegDeleteValueW(key, name.as_ptr()) } {
+            ERROR_FILE_NOT_FOUND => ERROR_SUCCESS,
+            other => other,
+        };
+        unsafe { RegCloseKey(key) };
+        if ret == ERROR_SUCCESS {
+            Ok(true)
+        } else {
+            Err(io::Error::from_raw_os_error(ret as i32))
+        }
+    }
 }
 
 /// E2E phase for the login entry, for the shared UI test to call: under the
@@ -559,6 +620,104 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// A 2.4 autostart entry, as that release wrote it, `minimized` and
+    /// switched on or off by GNOME's startup panel.
+    #[cfg(target_os = "linux")]
+    fn old_entry_text(minimized: bool, on: bool) -> String {
+        let old = pai_core::migrate::OLD_LOGIN_ENTRY;
+        let flag = if minimized { " --minimized" } else { "" };
+        format!(
+            "[Desktop Entry]\nType=Application\nName={}\n\
+             Comment=Configure and run llama-server and its model presets\n\
+             Exec=\"/usr/bin/{old}\" gui{flag}\nIcon={old}\nTerminal=false\n\
+             X-GNOME-Autostart-enabled={on}\n",
+            concat!("llama.cpp", " Config")
+        )
+    }
+
+    // The old entry, when there is one, gives way to the new one with the
+    // same minimized choice; the old file is gone.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn an_old_autostart_entry_is_replaced_by_the_new_one() {
+        use super::linux::{migrate_entry, parse_entry};
+        for minimized in [true, false] {
+            let dir = tempfile::tempdir().expect("tempdir");
+            let old = dir
+                .path()
+                .join(format!("{}.desktop", pai_core::migrate::OLD_LOGIN_ENTRY));
+            let new = dir.path().join("org.privateai.Config.desktop");
+            std::fs::write(&old, old_entry_text(minimized, true)).expect("old entry");
+
+            assert!(migrate_entry(&old, &new).expect("migrated"), "{minimized}");
+            assert!(!old.exists(), "the old entry is removed");
+            let text = std::fs::read_to_string(&new).expect("new entry");
+            assert_eq!(parse_entry(&text), (true, minimized), "{text}");
+            assert!(text.contains("Name=Private AI Framework"), "{text}");
+        }
+    }
+
+    // No old entry: nothing is created, and that is not an error.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn no_old_autostart_entry_creates_nothing() {
+        use super::linux::migrate_entry;
+        let dir = tempfile::tempdir().expect("tempdir");
+        let old = dir
+            .path()
+            .join(format!("{}.desktop", pai_core::migrate::OLD_LOGIN_ENTRY));
+        let new = dir.path().join("org.privateai.Config.desktop");
+        assert!(!migrate_entry(&old, &new).expect("no error"));
+        assert!(!new.exists());
+        assert_eq!(std::fs::read_dir(dir.path()).expect("dir").count(), 0);
+    }
+
+    // An old entry the desktop had switched off: the setting was off, so it
+    // is removed and no new entry is enabled.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_switched_off_old_autostart_entry_is_removed_and_not_enabled() {
+        use super::linux::migrate_entry;
+        let dir = tempfile::tempdir().expect("tempdir");
+        let old = dir
+            .path()
+            .join(format!("{}.desktop", pai_core::migrate::OLD_LOGIN_ENTRY));
+        let new = dir.path().join("org.privateai.Config.desktop");
+        std::fs::write(&old, old_entry_text(true, false)).expect("old entry");
+        assert!(migrate_entry(&old, &new).expect("no error"));
+        assert!(!old.exists() && !new.exists());
+    }
+
+    // The new entry cannot be written (read-only autostart directory): the
+    // error comes back and the old entry stays, so the setting is not lost.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_failed_new_autostart_entry_keeps_the_old_one() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().expect("tempdir");
+        let old = dir
+            .path()
+            .join(format!("{}.desktop", pai_core::migrate::OLD_LOGIN_ENTRY));
+        let new = dir.path().join("org.privateai.Config.desktop");
+        let text = old_entry_text(true, true);
+        std::fs::write(&old, &text).expect("old entry");
+        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o555))
+            .expect("chmod");
+        if std::fs::write(dir.path().join("probe"), "x").is_ok() {
+            std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o755))
+                .expect("chmod back");
+            eprintln!("skipped: running as root, a mode-555 directory is still writable");
+            return;
+        }
+        let result = super::linux::migrate_entry(&old, &new);
+        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o755))
+            .expect("chmod back");
+        let err = result.expect_err("the new entry cannot be written");
+        assert_eq!(err.kind(), std::io::ErrorKind::PermissionDenied, "{err}");
+        assert_eq!(std::fs::read_to_string(&old).expect("old kept"), text);
+        assert!(!new.exists());
+    }
+
     // MANUAL-ONLY (`cargo test startup -- --ignored`): drives the real FFI
     // against the real HKCU Run key, restoring the initial state either way.
     // Ignored by default exactly because it touches the developer's registry.
@@ -588,5 +747,65 @@ mod tests {
         if initially {
             super::set_enabled(true, initially_min).expect("restore");
         }
+    }
+
+    // MANUAL-ONLY (`cargo test startup -- --ignored`): the old Run value of
+    // release 2.4, set to start minimized, gives way to the new one with the
+    // same choice; a second run finds nothing. Restores the initial state
+    // (the old value included, when there was one) either way.
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "writes the real HKCU Run key; run explicitly with -- --ignored"]
+    fn registry_old_entry_migrates_and_restores_initial_state() {
+        use super::win::{read_reg_sz, RUN_KEY};
+        use windows_sys::Win32::Foundation::{ERROR_FILE_NOT_FOUND, ERROR_SUCCESS};
+        use windows_sys::Win32::System::Registry::{
+            RegCloseKey, RegDeleteValueW, RegOpenKeyExW, RegSetValueExW, HKEY as Hkey,
+            HKEY_CURRENT_USER, KEY_SET_VALUE, REG_SZ,
+        };
+        let old = pai_core::migrate::OLD_LOGIN_ENTRY;
+        let initially = super::is_enabled();
+        let initially_min = super::starts_minimized();
+        let initially_old = read_reg_sz(HKEY_CURRENT_USER, RUN_KEY, old);
+
+        let wide = |s: &str| -> Vec<u16> { s.encode_utf16().chain(std::iter::once(0)).collect() };
+        let (sub, name) = (wide(RUN_KEY), wide(old));
+        let mut key: Hkey = std::ptr::null_mut();
+        let set_old = |key: Hkey, command: &str| {
+            let data = wide(command);
+            let ret = unsafe {
+                RegSetValueExW(
+                    key,
+                    name.as_ptr(),
+                    0,
+                    REG_SZ,
+                    data.as_ptr().cast::<u8>(),
+                    (data.len() * 2) as u32,
+                )
+            };
+            assert_eq!(ret, ERROR_SUCCESS, "write the old value");
+        };
+        let ret =
+            unsafe { RegOpenKeyExW(HKEY_CURRENT_USER, sub.as_ptr(), 0, KEY_SET_VALUE, &mut key) };
+        assert_eq!(ret, ERROR_SUCCESS, "open the Run key");
+        super::set_enabled(false, false).expect("no new entry to start with");
+        set_old(key, r#""C:\old\bin\old.exe" gui --minimized"#);
+
+        let first = super::migrate_old_entry();
+        let enabled = (super::is_enabled(), super::starts_minimized());
+        let second = super::migrate_old_entry();
+        // Delete what the migration should have deleted: NOT_FOUND when it did.
+        let left = unsafe { RegDeleteValueW(key, name.as_ptr()) };
+
+        if let Some(command) = &initially_old {
+            set_old(key, command);
+        }
+        unsafe { RegCloseKey(key) };
+        super::set_enabled(initially, initially_min).expect("restore");
+
+        assert!(first.expect("migrated"), "an old value was found");
+        assert_eq!(enabled, (true, true), "enabled, minimized carried over");
+        assert!(!second.expect("second run"), "nothing left to migrate");
+        assert_eq!(left, ERROR_FILE_NOT_FOUND, "the old value was deleted");
     }
 }

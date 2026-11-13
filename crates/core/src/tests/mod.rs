@@ -13,6 +13,10 @@ fn data_root_e2e() {
 
     // ── Service launch (launch.rs `instance_command`) ────────────────────
     crate::launch::instance_launch_e2e();
+
+    // ── The old user tree moved to the new names (migrate.rs) ────────────
+    #[cfg(not(windows))]
+    crate::migrate::migrate_e2e();
 }
 
 /// The paths with no test redirect, named after the project, and the old
@@ -53,6 +57,10 @@ fn real_paths_follow_the_new_names() {
     );
 }
 
+/// The directory name of release 2.4's trees, spelled in two halves so the
+/// names lint finds no old name in this file.
+const OLD_DIR: &str = concat!("llama", ".cpp");
+
 /// Set by `real_paths_follow_the_new_names` on its child only.
 const CHILD_MARKER: &str = "PAI_TEST_REAL_PATHS_CHILD";
 
@@ -83,6 +91,11 @@ fn real_paths_child() {
             paths::system_config_dir(),
             var("ProgramData").join("private-ai").join("config")
         );
+        // The old tree to migrate: the one 2.4 kept in %LOCALAPPDATA%.
+        assert_eq!(
+            crate::migrate::old_trees(),
+            [(var("LOCALAPPDATA").join(OLD_DIR), local.clone())]
+        );
     }
     #[cfg(not(windows))]
     {
@@ -92,12 +105,40 @@ fn real_paths_child() {
         );
         assert_eq!(paths::config_dir(), home.join(".config").join("private-ai"));
         assert_eq!(paths::system_config_dir(), PathBuf::from("/etc/private-ai"));
+        // The old trees to migrate, where 2.4 kept them: computed, not read.
+        let old_data = (
+            home.join(".local").join("share").join(OLD_DIR),
+            paths::data_root(),
+        );
+        let trees = crate::migrate::old_trees();
+        assert_eq!(trees.len(), 2, "{trees:?}");
+        assert!(trees.contains(&old_data), "{trees:?}");
+        assert!(
+            trees.contains(&(home.join(".config").join(OLD_DIR), paths::config_dir())),
+            "{trees:?}"
+        );
         // An absolute XDG_CONFIG_HOME moves the config, a relative one is
         // ignored (the XDG spec). Alone in this process: setting it is safe.
         let xdg = home.join("xdg");
         std::env::set_var("XDG_CONFIG_HOME", &xdg);
         assert_eq!(paths::config_dir(), xdg.join("private-ai"));
+        // The old config tree follows the same rule: an absolute
+        // XDG_CONFIG_HOME held it, a relative one never did.
+        let trees = crate::migrate::old_trees();
+        assert!(
+            trees.contains(&(xdg.join(OLD_DIR), xdg.join("private-ai"))),
+            "{trees:?}"
+        );
+        assert!(trees.contains(&old_data), "{trees:?}");
         std::env::set_var("XDG_CONFIG_HOME", "relative/xdg");
         assert_eq!(paths::config_dir(), home.join(".config").join("private-ai"));
+        let trees = crate::migrate::old_trees();
+        assert!(
+            trees.contains(&(
+                home.join(".config").join(OLD_DIR),
+                home.join(".config").join("private-ai")
+            )),
+            "{trees:?}"
+        );
     }
 }
