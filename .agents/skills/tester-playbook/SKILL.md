@@ -215,3 +215,12 @@ Lessons only: the rules are in `AGENTS.md`.
   as a pure function of `server_control::Os` (`backend_kind`, `os_backend_for`, `log_source_for`,
   `log_rotate_note_key`) tested on Linux for every variant, with `Os::current()` written with `cfg!`
   (compiled on every OS) so only the Win32 call itself stays under `#[cfg(windows)]`.
+- A fake one-shot runner returning `std::process::Output` needs an `ExitStatus`: on Unix
+  `std::os::unix::process::ExitStatusExt::from_raw(code << 8)`; put such tests under `#[cfg(unix)]`,
+  since the user's Windows `cargo test --workspace` compiles pai-config's tests too.
+- `strings::t`/`fill` return the KEY itself when it is missing from the strings file: a test of a
+  new message must assert its content (and `!text.starts_with("<key>")`), never only equality with
+  `strings::fill("<new-key>", ..)`, which a stub using the same missing key would pass.
+- "Only the seam may name X" is one more scan in `tests/control_lint.rs` (`production_lines` +
+  a `*_hits(line)` helper + a scan test of the helper): `only_the_seam_reads_the_instances_log`
+  for `paths::server_log` is the model.

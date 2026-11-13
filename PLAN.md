@@ -201,9 +201,7 @@ so the second binary, `private-ai-manager`, shares its modules: a `[[bin]]` alon
    `llama.cpp_<id>` (`NT SERVICE\llama.cpp_<id>`: `_`, not systemd's `@`; user, 2026-11-14), the files keep
    `server@<id>.ini` and `llama-server@<id>.log` on both OSes; the manager service and its pipe are named `private-ai-manager`
    (`\\.\pipe\private-ai-manager`), as the Linux unit; Stop kills llama-server outright (user, 2026-11-14); **6c** (done; its Windows arm compiled first by the user's build) the configurator's
-   manager backend on Windows and the log file; then two readers of the per-user `paths::server_log()` that are wrong
-   under the manager on both OSes, found in 6c: `bench/record.rs` (the engine's log stored with a run)
-   and the "server-gone" message in `gui.rs`: they read the backend's log source instead; **6d** the MSI, below.
+   manager backend on Windows and the log file; **6d** the MSI, below.
    **Windows packaging.** The MSI registers the manager service (automatic start) and creates
    `%ProgramData%\private-ai\` with the right ACL. SCM has no template services, so the manager creates
    one service per instance (`llama.cpp@<id>`, manual start) when the instance is added and removes it

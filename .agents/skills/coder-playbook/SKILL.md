@@ -117,3 +117,8 @@ Lessons only: the rules are in `AGENTS.md`.
 - A `strings::key` in a source the CLI reaches (`server_control.rs` is one) puts the key in
   `binding_lint`'s cli.toml check even when only the GUI shows it: it needs `cli.toml` or an entry in
   the test's `GUI_ONLY_KEYS`. Settle which with the tester before writing the key there.
+- A strings key used inside `server_control.rs` or `bench/` (sources a CLI command reaches, e.g.
+  `bench run` through `Backend::log_text`) needs a `cli.toml` entry even if the CLI only discards
+  the text: binding_lint is static. `log-journal-denied`/`-failed` are in both files for that reason.
+- A periodic GUI probe that would spawn a process to read a log (journalctl under the manager)
+  reads only on a flip: `gui.rs` keeps the last sample in a static `AtomicBool` and swaps it.

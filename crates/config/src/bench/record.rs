@@ -19,7 +19,7 @@ use std::sync::{Arc, Mutex};
 use super::db::{self, Sample};
 use super::{Mode, Plan, Point};
 use crate::server_control::{self, ConfigFile};
-use crate::{gguf, paths, presets, runstate, server_cfg};
+use crate::{gguf, presets, runstate, server_cfg};
 
 /// Which campaign a run lands in, and under which label. `None` in the plan
 /// means "a campaign of its own", named after the run's stamp.
@@ -172,8 +172,10 @@ impl Recorder {
         if !p.devices.is_empty() {
             return;
         }
-        let log = std::fs::read(paths::server_log()).unwrap_or_default();
-        let buffers = buffer_sizes(&String::from_utf8_lossy(&log), &p.preset);
+        let buffers = preset_buffers(
+            &|since, max| server_control::backend().log_text(since, max),
+            &p.preset,
+        );
         #[cfg(windows)]
         let adapters = Some(crate::hwmon::adapters_free());
         #[cfg(not(windows))]
@@ -348,6 +350,23 @@ pub fn buffer_sizes(log: &str, preset: &str) -> Vec<db::DeviceMemory> {
         round(&mut r.compute_mib);
     }
     rows
+}
+
+/// The most of the instance's log `read_memory` reads, from its end: the
+/// preset's latest load lines are in it.
+pub const MEMORY_LOG_MAX: usize = 4 << 20;
+
+/// `buffer_sizes` of the end of the instance's log, read through `read`
+/// (`server_control::Backend::log_text`) with no time window and bounded by
+/// `MEMORY_LOG_MAX`; none when the log cannot be read.
+pub fn preset_buffers(
+    read: &dyn Fn(Option<std::time::SystemTime>, usize) -> Result<String, String>,
+    preset: &str,
+) -> Vec<db::DeviceMemory> {
+    match read(None, MEMORY_LOG_MAX) {
+        Ok(log) => buffer_sizes(&log, preset),
+        Err(_) => Vec::new(),
+    }
 }
 
 /// The device's row, appended on first sight so the rows keep the log's order.
@@ -783,6 +802,39 @@ mod tests {
         assert!(rows.iter().all(|r| r.free_mib.is_none()));
         assert!(buffer_sizes(LOAD_LOG, "Qwen3.8").is_empty());
         assert!(buffer_sizes("", "Qwen3.8-27B").is_empty());
+    }
+
+    // ── The instance's log, through the backend ─────────────────────────
+    // Under the manager the instance writes the unit's journal (Linux) or
+    // the service's file (Windows), never the per-user `paths::server_log()`:
+    // the memory is read through `Backend::log_text`, here a fake reader.
+
+    type Asked = std::sync::Mutex<Vec<(Option<std::time::SystemTime>, usize)>>;
+
+    /// No time window: the preset's model may have been loaded before its
+    /// run started (already loaded when a live run without a restart begins,
+    /// or by an earlier step), and `buffer_sizes` keeps only its latest load
+    /// anyway. The bound is `MEMORY_LOG_MAX`; the buffers are those of the
+    /// log read.
+    #[test]
+    fn preset_buffers_read_the_end_of_the_instances_log_without_a_window() {
+        let asked = Asked::default();
+        let read = |since, max| {
+            asked.lock().unwrap().push((since, max));
+            Ok(LOAD_LOG.to_string())
+        };
+        let rows = preset_buffers(&read, "Qwen3.8-27B");
+        assert_eq!(rows, buffer_sizes(LOAD_LOG, "Qwen3.8-27B"));
+        assert!(!rows.is_empty());
+        assert_eq!(*asked.lock().unwrap(), [(None, MEMORY_LOG_MAX)]);
+    }
+
+    /// A log that cannot be read (the journal refused, the file unreadable)
+    /// leaves the memory empty: recording never fails a benchmark.
+    #[test]
+    fn a_log_that_cannot_be_read_gives_no_buffers() {
+        let read = |_, _| Err(crate::strings::t("log-journal-denied"));
+        assert!(preset_buffers(&read, "Qwen3.8-27B").is_empty());
     }
 
     #[test]

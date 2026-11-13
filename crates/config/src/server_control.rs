@@ -6,7 +6,7 @@
 use crate::server_cfg::ServerConfig;
 use crate::strings;
 use pai_core::client::{ClientError, InstanceState, ManagerClient};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -320,6 +320,136 @@ pub fn journal_spawner() -> &'static JournalSpawn {
 pub fn journal_access_denied(stderr: &str) -> bool {
     stderr.contains("Hint: You are currently not seeing messages from")
         || stderr.contains("No journal files were opened due to insufficient permissions")
+}
+
+/// Runs the journal reader once with these arguments, to its exit, and
+/// returns what it printed (`journalctl_command(args).output()`).
+pub type JournalRun = dyn Fn(&[String]) -> std::io::Result<std::process::Output> + Send + Sync;
+
+/// The one-shot runner `Backend::log_text` uses. In a test build one that
+/// runs nothing and fails, so no test reads the real journal.
+pub fn journal_runner() -> &'static JournalRun {
+    #[cfg(test)]
+    return &|_: &[String]| {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "a test build reads no journal",
+        ))
+    };
+    #[cfg(not(test))]
+    &|args: &[String]| journalctl_command(args).output()
+}
+
+/// The arguments after `journalctl` that print `unit`'s last `lines` entries
+/// once (no `-f`), only those on or after `since` when given.
+pub fn journalctl_once_args(
+    unit: &str,
+    lines: usize,
+    since: Option<std::time::SystemTime>,
+) -> Vec<String> {
+    let mut args = [
+        "-u",
+        unit,
+        "-o",
+        "cat",
+        "--no-pager",
+        "-n",
+        &lines.to_string(),
+    ]
+    .map(String::from)
+    .to_vec();
+    if let Some(since) = since {
+        let secs = since
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        args.push("--since".into());
+        args.push(format!("@{secs}"));
+    }
+    args
+}
+
+/// The end of `bytes`, at most `max` of them, starting at a line start.
+fn tail_lines(bytes: &[u8], max: usize) -> &[u8] {
+    if bytes.len() <= max {
+        return bytes;
+    }
+    let start = bytes.len() - max;
+    if bytes[start - 1] == b'\n' {
+        return &bytes[start..];
+    }
+    match bytes[start..].iter().position(|&b| b == b'\n') {
+        Some(i) => &bytes[start + i + 1..],
+        None => &[],
+    }
+}
+
+/// The last `max_bytes` (at most) of the log `source` holds, from a line
+/// start; a journal is read once through `run`.
+pub fn read_log(
+    source: &LogSource,
+    since: Option<std::time::SystemTime>,
+    max_bytes: usize,
+    run: &JournalRun,
+) -> Result<String, String> {
+    match source {
+        LogSource::File(path) => read_log_file(path, since, max_bytes).map_err(|e| e.to_string()),
+        LogSource::Journal { unit } => {
+            let out = run(&journalctl_once_args(unit, max_bytes, since))
+                .map_err(|e| strings::fill("log-journal-failed", &[&e]))?;
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            if journal_access_denied(&stderr) {
+                return Err(strings::t("log-journal-denied"));
+            }
+            if !out.status.success() {
+                let why = stderr
+                    .lines()
+                    .map(str::trim)
+                    .rfind(|l| !l.is_empty())
+                    .map(str::to_string)
+                    .unwrap_or_else(|| out.status.to_string());
+                return Err(strings::fill("log-journal-failed", &[&why]));
+            }
+            Ok(String::from_utf8_lossy(tail_lines(&out.stdout, max_bytes)).into_owned())
+        }
+    }
+}
+
+/// `read_log` of a file: missing, or last written before `since`, is empty.
+fn read_log_file(
+    path: &Path,
+    since: Option<std::time::SystemTime>,
+    max_bytes: usize,
+) -> std::io::Result<String> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut file = match std::fs::File::open(path) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(String::new()),
+        other => other?,
+    };
+    let meta = file.metadata()?;
+    if let Some(since) = since {
+        if meta.modified()? < since {
+            return Ok(String::new());
+        }
+    }
+    // One byte more than the bound: it tells whether the window starts at a line.
+    let window = max_bytes.saturating_add(1) as u64;
+    file.seek(SeekFrom::Start(meta.len().saturating_sub(window)))?;
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)?;
+    Ok(String::from_utf8_lossy(tail_lines(&bytes, max_bytes)).into_owned())
+}
+
+impl Backend {
+    /// The end of the log this backend's instance writes: `read_log` of
+    /// `log_source()` through `journal_runner()`.
+    pub fn log_text(
+        &self,
+        since: Option<std::time::SystemTime>,
+        max_bytes: usize,
+    ) -> Result<String, String> {
+        read_log(&self.log_source(), since, max_bytes, journal_runner())
+    }
 }
 
 /// The sections of the file as `backend()` reads it; none when it is missing
@@ -1312,6 +1442,329 @@ mod tests {
         assert!(!journal_access_denied("No journal files were found.\n"));
         assert!(!journal_access_denied("-- No entries --\n"));
         assert!(!journal_access_denied(""));
+    }
+
+    // ── A bounded read of the instance's log (`read_log`, `log_text`) ───
+    // For the readers that want the log's end once, not a follower: the
+    // memory a benchmark run records, the "server-gone" message. Files are
+    // temp files; the journal is a fake runner: nothing reads the real
+    // journal or the user's log.
+
+    use std::time::{Duration as Span, SystemTime, UNIX_EPOCH};
+
+    /// A runner that must not be called: a file source never runs journalctl.
+    fn no_journal(args: &[String]) -> std::io::Result<std::process::Output> {
+        panic!("a file source ran journalctl with {args:?}");
+    }
+
+    fn file_source(dir: &tempfile::TempDir, text: &[u8]) -> LogSource {
+        let path = dir.path().join("llama-server@default.log");
+        std::fs::write(&path, text).expect("write the log");
+        LogSource::File(path)
+    }
+
+    // Failure paths first.
+
+    /// No file yet (the instance never started): an empty log, not an error.
+    #[test]
+    fn a_missing_log_file_reads_as_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = LogSource::File(dir.path().join("llama-server.log"));
+        assert_eq!(
+            read_log(&source, None, 4096, &no_journal),
+            Ok(String::new())
+        );
+    }
+
+    /// A log that cannot be read (here a directory where the file should be)
+    /// is an error with the system's text, not an empty log.
+    #[test]
+    fn an_unreadable_log_file_is_an_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("llama-server.log");
+        std::fs::create_dir(&path).unwrap();
+        match read_log(&LogSource::File(path), None, 4096, &no_journal) {
+            Err(e) => assert!(!e.is_empty(), "the error says why"),
+            Ok(t) => panic!("a directory read as a log: {t:?}"),
+        }
+    }
+
+    /// Bytes that are not UTF-8 (a cut multi-byte char, a binary line) are
+    /// read lossily, never refused.
+    #[test]
+    fn a_log_with_invalid_utf8_reads_lossily() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = file_source(&dir, b"srv  load: ok\n\xff\xfe broken\nlast line\n");
+        let text = read_log(&source, None, 4096, &no_journal).expect("read");
+        assert!(text.ends_with("last line\n"), "{text:?}");
+        assert!(text.contains('\u{fffd}'), "{text:?}");
+    }
+
+    /// A file last written before `since` holds nothing of that window: the
+    /// file's lines carry no time, its modification time is the cheap check.
+    #[test]
+    fn a_log_file_untouched_since_the_window_opened_reads_as_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = file_source(&dir, b"[52043] old load\n");
+        let LogSource::File(path) = &source else {
+            unreachable!()
+        };
+        let written = SystemTime::now() - Span::from_secs(3600);
+        std::fs::File::options()
+            .write(true)
+            .open(path)
+            .unwrap()
+            .set_modified(written)
+            .unwrap();
+        let since = written + Span::from_secs(60);
+        assert_eq!(
+            read_log(&source, Some(since), 4096, &no_journal),
+            Ok(String::new())
+        );
+        // Written inside the window: the whole tail (the lines carry no time).
+        let since = written - Span::from_secs(60);
+        assert_eq!(
+            read_log(&source, Some(since), 4096, &no_journal),
+            Ok("[52043] old load\n".to_string())
+        );
+    }
+
+    /// A short file comes back whole.
+    #[test]
+    fn a_log_under_the_bound_reads_whole() {
+        let dir = tempfile::tempdir().unwrap();
+        let text = "srv  main: listening\n[52043] llama_server: model loaded\n";
+        let source = file_source(&dir, text.as_bytes());
+        assert_eq!(
+            read_log(&source, None, 4096, &no_journal),
+            Ok(text.to_string())
+        );
+    }
+
+    /// A long file: only its end, at most `max_bytes`, starting at a line
+    /// start (the partial first line dropped), ending with the file's end.
+    #[test]
+    fn a_log_over_the_bound_reads_its_last_whole_lines() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut text = String::new();
+        for i in 0..1000 {
+            text.push_str(&format!("[52043] line {i:04} of the load\n"));
+        }
+        let source = file_source(&dir, text.as_bytes());
+        let max = 100;
+        let got = read_log(&source, None, max, &no_journal).expect("read");
+        assert!(got.len() <= max, "{} bytes > {max}", got.len());
+        assert!(got.ends_with("[52043] line 0999 of the load\n"), "{got:?}");
+        assert!(
+            got.starts_with("[52043] line "),
+            "starts at a line: {got:?}"
+        );
+        assert!(text.ends_with(&got));
+        // 30 bytes a line: 3 whole lines fit in 100 bytes.
+        assert_eq!(got.lines().count(), 3, "{got:?}");
+    }
+
+    /// A Windows-style file (CRLF) is cut the same way.
+    #[test]
+    fn a_crlf_log_over_the_bound_starts_at_a_line() {
+        let dir = tempfile::tempdir().unwrap();
+        let text = "first line that is long\r\nsecond\r\nthird\r\n";
+        let source = file_source(&dir, text.as_bytes());
+        assert_eq!(
+            read_log(&source, None, 18, &no_journal),
+            Ok("second\r\nthird\r\n".to_string())
+        );
+    }
+
+    // ── The journal, once (`journalctl` without `-f`) ───────────────────
+
+    const UNIT: &str = "llama.cpp@default.service";
+
+    /// journalctl(1), systemd 259: `-u` the unit, `-o cat` the message alone,
+    /// `--no-pager`, `-n` the last N entries, `-S/--since` entries "on or
+    /// newer than" a date, which systemd.time(7) lets be "an integer prefixed
+    /// with @ ... relative to the UNIX epoch". No `-f` (one read to the end)
+    /// and no `-q` (it hides the access hint `journal_access_denied` reads).
+    #[test]
+    fn journalctl_once_args_print_the_units_end_without_following() {
+        assert_eq!(
+            journalctl_once_args(UNIT, 4096, None),
+            ["-u", UNIT, "-o", "cat", "--no-pager", "-n", "4096"]
+        );
+        let since = UNIX_EPOCH + Span::from_millis(1_795_000_123_900);
+        assert_eq!(
+            journalctl_once_args(UNIT, 10, Some(since)),
+            [
+                "-u",
+                UNIT,
+                "-o",
+                "cat",
+                "--no-pager",
+                "-n",
+                "10",
+                "--since",
+                // Whole seconds, rounded down: the entries of that second count.
+                "@1795000123"
+            ]
+        );
+        let args = journalctl_once_args(UNIT, 10, Some(since));
+        assert!(
+            !args
+                .iter()
+                .any(|a| a == "-f" || a == "--follow" || a == "-q" || a == "--quiet"),
+            "{args:?}"
+        );
+    }
+
+    /// The fake journalctl: records the argv, answers with `exit`, `stdout`
+    /// and `stderr`.
+    #[cfg(unix)]
+    fn journal(
+        argv: &Arc<Mutex<Vec<Vec<String>>>>,
+        exit: i32,
+        stdout: &'static str,
+        stderr: &'static str,
+    ) -> impl Fn(&[String]) -> std::io::Result<std::process::Output> + Send + Sync {
+        use std::os::unix::process::ExitStatusExt;
+        let argv = argv.clone();
+        move |args: &[String]| {
+            argv.lock().unwrap().push(args.to_vec());
+            Ok(std::process::Output {
+                status: std::process::ExitStatus::from_raw(exit << 8),
+                stdout: stdout.as_bytes().to_vec(),
+                stderr: stderr.as_bytes().to_vec(),
+            })
+        }
+    }
+
+    fn journal_source() -> LogSource {
+        LogSource::Journal { unit: UNIT.into() }
+    }
+
+    /// Not root and in none of the journal's groups: journalctl prints the
+    /// hint and exits 0 with nothing of the system unit. The same groups
+    /// message as the Log window, not an empty log.
+    #[cfg(unix)]
+    #[test]
+    fn a_journal_hint_that_the_system_is_hidden_is_the_groups_message() {
+        let argv = Arc::new(Mutex::new(Vec::new()));
+        let run = journal(
+            &argv,
+            0,
+            "",
+            "Hint: You are currently not seeing messages from other users and the system.\n      \
+             Users in groups 'adm', 'systemd-journal', 'wheel' can see all messages.\n      \
+             Pass -q to turn off this notice.\n",
+        );
+        assert_eq!(
+            read_log(&journal_source(), None, 4096, &run),
+            Err(strings::t("log-journal-denied"))
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn no_journal_file_opened_is_the_groups_message() {
+        let argv = Arc::new(Mutex::new(Vec::new()));
+        let run = journal(
+            &argv,
+            1,
+            "",
+            "No journal files were opened due to insufficient permissions.\n",
+        );
+        assert_eq!(
+            read_log(&journal_source(), None, 4096, &run),
+            Err(strings::t("log-journal-denied"))
+        );
+    }
+
+    /// Any other failure exit: the Log window's failure message with the
+    /// last line journalctl wrote on stderr.
+    #[cfg(unix)]
+    #[test]
+    fn a_journal_read_that_fails_otherwise_says_why() {
+        let argv = Arc::new(Mutex::new(Vec::new()));
+        let run = journal(
+            &argv,
+            1,
+            "srv  load_model: loading\n",
+            "Warning: something\nFailed to iterate through journal: Bad message\n",
+        );
+        assert_eq!(
+            read_log(&journal_source(), None, 4096, &run),
+            Err(strings::fill(
+                "log-journal-failed",
+                &[&"Failed to iterate through journal: Bad message"]
+            ))
+        );
+    }
+
+    #[test]
+    fn a_journal_reader_that_cannot_run_says_why() {
+        let run = |_: &[String]| -> std::io::Result<std::process::Output> {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "journalctl not found",
+            ))
+        };
+        assert_eq!(
+            read_log(&journal_source(), None, 4096, &run),
+            Err(strings::fill(
+                "log-journal-failed",
+                &[&"journalctl not found"]
+            ))
+        );
+    }
+
+    /// The happy path: one run for the unit with the bound as `-n` (every
+    /// entry is at least one byte, so the last `max_bytes` entries hold the
+    /// last `max_bytes` bytes) and the window as `--since`; stdout is the
+    /// log, cut to `max_bytes` from a line start like a file.
+    #[cfg(unix)]
+    #[test]
+    fn a_journal_read_runs_journalctl_once_for_the_unit_and_window() {
+        let argv = Arc::new(Mutex::new(Vec::new()));
+        let run = journal(
+            &argv,
+            0,
+            "first entry that will be cut off\n[52043] llama_server: model loaded\n",
+            "",
+        );
+        let since = UNIX_EPOCH + Span::from_secs(1_795_000_000);
+        let got = read_log(&journal_source(), Some(since), 40, &run);
+        assert_eq!(got, Ok("[52043] llama_server: model loaded\n".to_string()));
+        assert_eq!(
+            *argv.lock().unwrap(),
+            [journalctl_once_args(UNIT, 40, Some(since))]
+        );
+    }
+
+    /// No test reads the real journal: the runner of a test build runs
+    /// nothing and fails.
+    #[test]
+    fn the_journal_runner_of_a_test_build_runs_nothing() {
+        let args = journalctl_once_args(&instance_unit(), 10, None);
+        if let Ok(out) = journal_runner()(&args) {
+            panic!("a test build ran journalctl: {out:?}");
+        }
+    }
+
+    /// The manager's `log_text` on Linux reads the unit's journal through
+    /// `journal_runner()`: in a test build that is the failure message, with
+    /// no call to the manager.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn the_managers_log_text_reads_the_journal_without_a_manager_call() {
+        let log = fake::log();
+        let b = fake::backend(FakeClient::new(&log, InstanceState::Active));
+        match b.log_text(None, 4096) {
+            Err(e) => assert!(
+                e.starts_with(&strings::fill("log-journal-failed", &[&""])),
+                "{e:?}"
+            ),
+            Ok(t) => panic!("a test build read a journal: {t:?}"),
+        }
+        assert!(log.lock().unwrap().is_empty(), "no manager call");
     }
 }
 

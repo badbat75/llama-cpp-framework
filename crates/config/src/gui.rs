@@ -1794,7 +1794,18 @@ fn refresh_run_status(
 ) {
     std::thread::spawn(move || {
         let sampled_gen = RUN_STATUS_GEN.load(std::sync::atomic::Ordering::SeqCst);
-        let running = crate::server_control::backend().is_running();
+        let backend = crate::server_control::backend();
+        let running = backend.is_running();
+        // The log's end is read only on a running->stopped flip of these
+        // samples: under the manager on Linux each read runs journalctl.
+        let flipped =
+            LAST_SAMPLE_RUNNING.swap(running, std::sync::atomic::Ordering::SeqCst) && !running;
+        let tail = if flipped {
+            backend.log_text(None, SERVER_GONE_TAIL_MAX)
+        } else {
+            Err(String::new())
+        };
+        let gone = server_gone_text(&backend.log_source(), tail);
         slint::invoke_from_event_loop(move || {
             // A start/stop transition began or landed after this sample was
             // taken: its result is authoritative, ours is stale. Drop it.
@@ -1831,17 +1842,39 @@ fn refresh_run_status(
                     && !s.get_bench_running()
                 {
                     s.set_server_status_is_error(true);
-                    set_status(
-                        &app,
-                        strings::fill("server-gone", &[&crate::paths::server_log().display()]),
-                        true,
-                    );
+                    set_status(&app, gone, true);
                 }
             }
             push_tray_status(&tray_weak, &app_weak, running);
         })
         .ok();
     });
+}
+
+/// Whether the last run-status sample saw llama-server running.
+static LAST_SAMPLE_RUNNING: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// The most of the log's end `server_gone_text` is given: its last line.
+const SERVER_GONE_TAIL_MAX: usize = 64 << 10;
+
+/// The status line when llama-server stopped outside the GUI: where its log
+/// is (`source`: the file, or the unit whose journal holds it) and, when
+/// `tail` (the end of that log, `Backend::log_text`) has one, its last line.
+pub(crate) fn server_gone_text(
+    source: &crate::server_control::LogSource,
+    tail: Result<String, String>,
+) -> String {
+    use crate::server_control::LogSource;
+    let place = match source {
+        LogSource::File(path) => path.display().to_string(),
+        LogSource::Journal { unit } => unit.clone(),
+    };
+    let tail = tail.unwrap_or_default();
+    match tail.lines().map(str::trim).rfind(|l| !l.is_empty()) {
+        Some(line) => strings::fill("server-gone-last-line", &[&place, &line]),
+        None => strings::fill("server-gone", &[&place]),
+    }
 }
 
 /// Push the run state to the tray, which is a separate Slint root without
@@ -2067,5 +2100,66 @@ mod tests {
              listed but not enabled: off; changed: tuned; base URL or API key changed). \
              Save shows the changes before writing them."
         );
+    }
+
+    // ── The server-gone message ─────────────────────────────────────────
+    // It names the log the instance writes (`Backend::log_source`: the
+    // unit's journal under the manager on Linux, the service's file on
+    // Windows), never the per-user `paths::server_log()`, and quotes the
+    // log's last line read through `Backend::log_text`.
+
+    use crate::server_control::LogSource;
+
+    fn journal() -> LogSource {
+        LogSource::Journal {
+            unit: "llama.cpp@default.service".into(),
+        }
+    }
+
+    /// A tail that cannot be read (the journal refused): the message still
+    /// says where the log is, with no line quoted.
+    #[test]
+    fn server_gone_without_a_readable_tail_names_the_log() {
+        let text = server_gone_text(&journal(), Err(strings::t("log-journal-denied")));
+        assert_eq!(
+            text,
+            strings::fill("server-gone", &[&"llama.cpp@default.service"])
+        );
+    }
+
+    /// An empty log, or one of blank lines only: nothing to quote.
+    #[test]
+    fn server_gone_with_an_empty_tail_names_the_log() {
+        let path = std::path::PathBuf::from("/var/log/private-ai/llama-server@default.log");
+        let file = LogSource::File(path.clone());
+        let want = strings::fill("server-gone", &[&path.display()]);
+        assert_eq!(server_gone_text(&file, Ok(String::new())), want);
+        assert_eq!(server_gone_text(&file, Ok("\n  \n".into())), want);
+    }
+
+    /// The log's last non-blank line is quoted beside where the log is.
+    #[test]
+    fn server_gone_quotes_the_logs_last_line() {
+        let tail = "srv  load_model: loading\n\
+                    [52043] CUDA error: out of memory\n\
+                    \n";
+        let text = server_gone_text(&journal(), Ok(tail.into()));
+        assert!(
+            text.contains("llama.cpp@default.service"),
+            "names the unit: {text:?}"
+        );
+        assert!(
+            text.contains("[52043] CUDA error: out of memory"),
+            "quotes the last line: {text:?}"
+        );
+        assert!(!text.contains("load_model"), "only the last line: {text:?}");
+        assert!(!text.contains("llama-server.log"), "{text:?}");
+        assert_ne!(
+            text,
+            strings::fill("server-gone", &[&"llama.cpp@default.service"]),
+            "the line is in the message"
+        );
+        // Its own text, in the strings file (a missing key reads as the key).
+        assert!(!text.starts_with("server-gone"), "{text:?}");
     }
 }

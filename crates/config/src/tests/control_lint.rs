@@ -334,3 +334,79 @@ fn both() {
         .collect();
     assert_eq!(numbers, [25], "numbered as in the file");
 }
+
+// ── The instance's log ──────────────────────────────────────────────────
+//
+// The per-user `paths::server_log()` is the log only `Direct` writes
+// (`runstate.rs`); under the manager the instance writes the unit's journal
+// (Linux) or the service's file (Windows). Every reader goes through
+// `server_control` (`Backend::log_source`, `Backend::log_text`), which picks
+// the right one. Test code may name it.
+
+/// The files allowed to name the per-user log.
+const LOG_ALLOWED: [&str; 2] = ["runstate.rs", "server_control.rs"];
+
+/// `paths::server_log` named on one line of code, comments left out.
+fn log_hits(line: &str) -> Vec<String> {
+    let code = line.split("//").next().unwrap_or(line);
+    let mut found = Vec::new();
+    let mut rest = code;
+    while let Some(i) = rest.find("paths::") {
+        let after = &rest[i + "paths::".len()..];
+        let end = after.find(|c: char| !is_ident(c)).unwrap_or(after.len());
+        if &after[..end] == "server_log" {
+            found.push("paths::server_log".to_string());
+        }
+        rest = after;
+    }
+    found
+}
+
+#[test]
+fn only_the_seam_reads_the_instances_log() {
+    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut files = Vec::new();
+    sources(&src, &mut files);
+    let mut violations = String::new();
+    for file in files {
+        let name = file.file_name().unwrap().to_string_lossy().to_string();
+        if LOG_ALLOWED.contains(&name.as_str()) {
+            continue;
+        }
+        let text = std::fs::read_to_string(&file).expect("read source");
+        for (n, line) in production_lines(&text) {
+            for hit in log_hits(line) {
+                violations.push_str(&format!(
+                    "\n  {}:{n}: {hit}",
+                    file.strip_prefix(&src).unwrap().display()
+                ));
+            }
+        }
+    }
+    assert!(
+        violations.is_empty(),
+        "read or name the instance's log through crate::server_control::backend() \
+         (log_source, log_text), not the per-user file:{violations}"
+    );
+}
+
+#[test]
+fn log_scan_flags_the_per_user_log_and_leaves_the_rest() {
+    for (line, expected) in [
+        (
+            "        let log = std::fs::read(paths::server_log()).unwrap_or_default();",
+            vec!["paths::server_log"],
+        ),
+        (
+            "    strings::fill(\"server-gone\", &[&crate::paths::server_log().display()]),",
+            vec!["paths::server_log"],
+        ),
+        // Not guarded: other paths, the instance's own log, comments.
+        ("    let p = paths::server_log_dir();", vec![]),
+        ("    let p = paths::instance_log(INSTANCE);", vec![]),
+        ("    // paths::server_log() is Direct's", vec![]),
+        ("/// `paths::server_log` is the per-user file", vec![]),
+    ] {
+        assert_eq!(log_hits(line), expected, "{line:?}");
+    }
+}
