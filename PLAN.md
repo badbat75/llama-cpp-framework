@@ -198,7 +198,7 @@ the user's to do.
 
 What changes:
 
-- **Code:** the crate and its directory (`private-ai-config/`), the binary, the window title and the
+- **Code:** the crates and their directories (`crates/`, slice 1), the binary, the window title and the
   strings that name the product; `private-ai-manager` already has its final name.
 - **Packages:** `private-ai-framework-config`, `-llama`, `-rocm`, `-cuda`, `-vulkan` (`.deb`, `.rpm`), the
   macOS `.pkg` names, the MSI `private-ai-framework-v<version>-v<llama tag>-x64.msi`. An upgrade replaces
@@ -230,10 +230,23 @@ the environment variables become `PRIVATE_AI_DIST_ROOT` and `PRIVATE_AI_DATA_ROO
 
 Slices, in order:
 
-1. **The move:** `llama-cpp-config/` becomes `private-ai-config/`, the crate `private-ai-config`, the
-   workspace member and every path that names the directory (xtask, scripts, `.vscode`, workflows);
-   no behaviour change, the existing tests stay green on the tester's rerun.
-2. **The names that behave:** binary, window title and product strings, the environment variables,
+1. **The layout** (decided with the user on 2026-11-13: `private-ai-config` is one piece of the
+   framework, beside the manager and the future bff and fe): a
+   `crates/` directory with one crate per piece and a shared library. In two moves, each with no
+   behaviour change and the existing tests green on the tester's rerun:
+   Folders carry no prefix and packages are named `pai-*` (decided with the user on 2026-11-13; a
+   package named bare `core` would clash with Rust's `core` crate).
+   1. `llama-cpp-config/` becomes `crates/config/`, the package `pai-config`, the
+      workspace member and every path that names the directory (xtask, scripts, `.vscode`, workflows).
+   2. The shared modules (paths, INI and server config, the launch code, strings, ...) move to
+      `crates/core` (package `pai-core`), and the manager becomes its own crate, `crates/manager`
+      (package `pai-manager`), depending on the core only, so the service links no GUI library.
+      The manager's tests move with it, with their own e2e test under the data-root rule.
+2. **The names that behave:** the executables take the `pai-` acronym (decided with the user on
+   2026-11-13): `pai-config` (the GUI and CLI, today `llama-cpp-config`), `pai-manager` (today
+   `private-ai-manager`, so the unit runs `pai-manager run-instance <id>`), later `pai-bff` and `pai-fe`;
+   the services (`private-ai-manager.service`, `llama.cpp@<id>.service`) and the D-Bus name keep their
+   names. Also the window title and product strings, the environment variables,
    the user and system paths, the registry key, the service user; tests pin the new names first.
 3. **Migration** of the old user tree, tests first.
 4. **Packages:** names, `Replaces`/`Conflicts`/`Provides`, `Obsoletes`, the MSI's UpgradeCode kept;
