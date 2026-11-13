@@ -1,33 +1,38 @@
-// Regenerate resources\llama.ico from llama.cpp's webui logo SVG.
+// Regenerate resources\llama.ico from the llama brand icon.
 //
-// Upstream commits no .ico — the webui's favicon.ico is produced by its npm
-// build from tools/ui/src/lib/assets/logo.svg, a `currentColor` SVG. This
-// script mirrors how upstream renders its own PWA/apple-touch app icons:
-// dark #111111 glyph on a white rounded tile, so the icon reads on both dark
-// taskbars and light Explorer backgrounds. llama.ico is gitignored;
-// llama-cpp-config's build.rs (and, belt-and-braces, xtask package) runs
-// this script automatically whenever the file is missing — delete llama.ico
-// to force a regeneration after an upstream logo change.
+// Upstream commits no .ico. The glyph is the llama-brand package's
+// logo/svg/icon/icon-light.svg: the webui's own app icons come from the same
+// package (tools/ui/package.json pins the commit; the old
+// tools/ui/src/lib/assets/logo.svg the webui used to carry was removed in
+// llama.cpp v1.0.0). This script downloads that pinned SVG once, caches it as
+// resources\llama-brand-logo.svg (gitignored), and rasterizes it the way
+// upstream renders its own PWA icons: the dark #111111 glyph on a white
+// rounded tile, so the icon reads on both dark taskbars and light Explorer
+// backgrounds. llama.ico is gitignored; llama-cpp-config's build.rs (and,
+// belt-and-braces, xtask package) runs this script automatically whenever the
+// file is missing. Delete llama.ico to force a regeneration; delete
+// llama-brand-logo.svg to re-download the glyph (e.g. after a brand refresh).
 //
-// Manual usage (Node 18+; the clone must exist: xtask build creates it):
+// Manual usage (Node 18+):
 //   cd resources
 //   npm install --no-save sharp sharp-ico
-//   node generate-llama-ico.mjs [path-to-llama.cpp-clone] [output.ico]
+//   node generate-llama-ico.mjs [output.ico]
 //
-// Defaults: clone = ..\build\windows\llama.cpp (..\build\linux\llama.cpp off
-// Windows), output = .\llama.ico. The transient node_modules\ / package*.json
+// Default output: .\llama.ico. The transient node_modules\ / package*.json
 // in resources\ are gitignored.
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import sharp from 'sharp';
 import ico from 'sharp-ico';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const OS_DIR = process.platform === 'win32' ? 'windows' : 'linux';
-const CLONE = resolve(process.argv[2] ?? resolve(HERE, '..', 'build', OS_DIR, 'llama.cpp'));
-const SRC = resolve(CLONE, 'tools', 'ui', 'src', 'lib', 'assets', 'logo.svg');
-const OUT = resolve(process.argv[3] ?? resolve(HERE, 'llama.ico'));
+
+// The commit llama.cpp v1.0.0 pins as the llama-brand dependency of tools/ui.
+const BRAND_COMMIT = 'f05540643c1ca2a18d732ed6491c839686da9a3a';
+const BRAND_URL = `https://raw.githubusercontent.com/ggml-org/llama-brand/${BRAND_COMMIT}/logo/svg/icon/icon-light.svg`;
+const SRC = resolve(HERE, 'llama-brand-logo.svg');
+const OUT = resolve(process.argv[2] ?? resolve(HERE, 'llama.ico'));
 
 const GLYPH = '#111111';
 const TILE = '#ffffff';
@@ -37,9 +42,13 @@ const RADIUS = 0.22 * CANVAS; // rounded-tile corner radius
 const SIZES = [256, 128, 64, 48, 32, 24, 16];
 
 if (!existsSync(SRC)) {
-	console.error(`Logo SVG not found: ${SRC}`);
-	console.error('Clone llama.cpp first (xtask build does), or pass the clone path as argument.');
-	process.exit(1);
+	const res = await fetch(BRAND_URL);
+	if (!res.ok) {
+		console.error(`download failed (${res.status}) from ${BRAND_URL}`);
+		console.error('Fetch it by hand into resources/llama-brand-logo.svg, or fix the network, and re-run.');
+		process.exit(1);
+	}
+	writeFileSync(SRC, await res.text());
 }
 
 const svg = readFileSync(SRC, 'utf8').replaceAll('currentColor', GLYPH);

@@ -4,12 +4,12 @@ Same fix as upstream PR #31415 (qwen35), ported to qwen4exp.
 
 ---
 diff --git a/src/models/qwen4exp.cpp b/src/models/qwen4exp.cpp
-index c3e2b010d..79a4354b7 100644
+index 181e4dc..3f734a2 100644
 --- a/src/models/qwen4exp.cpp
 +++ b/src/models/qwen4exp.cpp
-@@ -606,12 +606,16 @@ llama_model_qwen4exp::graph_mtp::graph_mtp(const llama_model & model, const llm_
-     ggml_set_input(inp->h);
-     ggml_set_name(inp->h, "mtp_h_input");
+@@ -598,12 +598,16 @@ llama_model_qwen4exp::graph_mtp::graph_mtp(const llm_graph_params & params) :
+ 
+     inp->h = build_inp_embd_state(inp.get(), hparams.n_embd_out());
  
 -    ggml_tensor * tok_embd;
 -    if (ubatch.token) {
@@ -29,3 +29,6 @@ index c3e2b010d..79a4354b7 100644
      cb(tok_embd, "mtp_tok_embd", il);
  
      ggml_tensor * h = inp->h;
+-- 
+2.53.0
+

@@ -38,10 +38,10 @@ pub fn build(llama_cpp_dir: &str, build_jobs: u32) -> Result<PathBuf> {
     ui::dim(format!("cargo: {}", cargo.display()));
 
     // The icon is generated, not checked in (build.rs bootstraps it the same
-    // way, but from the default clone location, build/<os>/llama.cpp): done
-    // here first, from the configured clone. sharp ships one native package
-    // per platform, so the npm install also completes a node_modules that the
-    // other OS created. npm is npm.cmd on Windows, hence the PATH lookup.
+    // way): done here first, so the packaged binaries ship it. sharp ships
+    // one native package per platform, so the npm install also completes a
+    // node_modules that the other OS created. npm is npm.cmd on Windows,
+    // hence the PATH lookup.
     let ico = repo.join("resources").join("llama.ico");
     if !ico.is_file() {
         ui::head("Generating resources/llama.ico from the llama.cpp webui logo...");
@@ -56,7 +56,6 @@ pub fn build(llama_cpp_dir: &str, build_jobs: u32) -> Result<PathBuf> {
             cmd("node")
                 .current_dir(&resources)
                 .arg("generate-llama-ico.mjs")
-                .arg(llama_cpp_dir)
                 .arg(&ico),
         )?;
     }

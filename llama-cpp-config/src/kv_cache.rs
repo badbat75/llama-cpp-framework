@@ -10,8 +10,14 @@
 //!   the CPU for every layer on those cards; with an unquantized V and flash
 //!   attention on `auto`, llama.cpp detects the mismatch and turns it off instead
 //!   (`llama_context::resolve_fused_ops`).
-//! - **Vulkan covers `iq4_nl` too, but `bf16` only on K and V together**
-//!   (`ggml_backend_vk_device_supports_op`, `GGML_OP_FLASH_ATTN_EXT`).
+//! - **Vulkan covers `iq4_nl` too, not `f8_e4m3`, and `bf16` only on K and V
+//!   together** (`fa_kv_ok`, `ggml_backend_vk_device_supports_op`,
+//!   `GGML_OP_FLASH_ATTN_EXT`).
+//! - **`f8_e4m3` is a plain 8-bit float: NOT quantized, block size 1**
+//!   (`[GGML_TYPE_F8_E4M3]`'s traits, `ggml.c`). A quantized V does not force
+//!   flash attention on for it, it loads with flash attention `off`, and the
+//!   per-layer block-size check passes for any head width. `is_quantized` below
+//!   mirrors the traits table, not the name.
 //! - **On CUDA and HIP a supported pair still needs a compiled VECTOR kernel** for
 //!   the decode steps of 1-2 query tokens; without one those steps convert the
 //!   whole used cache to f16 first ("no FlashAttention vector kernel compiled",
@@ -23,7 +29,7 @@
 //! - **A quantized V with flash attention `off` does not load at all**
 //!   (`quantized V cache requires flash_attn to be enabled`).
 //!
-//! All of this is a copy of upstream logic (llama.cpp v0.5.0) rather than a probe
+//! All of this is a copy of upstream logic (llama.cpp v1.0.0) rather than a probe
 //! of the installed DLLs: re-check `fattn.cu`, the Vulkan `supports_op` arm and
 //! `kv_cache_types` on every llama.cpp bump. A type that gains a kernel and is
 //! missing here only costs a needless warning; a type listed here WITHOUT one
@@ -36,7 +42,7 @@ use crate::devices::DeviceOption;
 /// order the Models tab lists them in, after its own "default" entry). Equal
 /// to `Options.cache_types` minus "default": asserted by the e2e test.
 pub const TYPES: &[&str] = &[
-    "f32", "f16", "bf16", "q8_0", "q5_1", "q5_0", "q4_1", "q4_0", "iq4_nl",
+    "f32", "f16", "bf16", "f8_e4m3", "q8_0", "q5_1", "q5_0", "q4_1", "q4_0", "iq4_nl",
 ];
 
 /// K-V pairs with a compiled FlashAttention vector kernel on CUDA and HIP in
@@ -48,6 +54,7 @@ pub const NATIVE_VEC_PAIRS: &[(&str, &str)] = &[
     ("q5_0", "q5_0"),
     ("q5_1", "q5_1"),
     ("bf16", "bf16"),
+    ("f8_e4m3", "f8_e4m3"),
     ("f16", "f16"),
 ];
 
@@ -68,8 +75,11 @@ fn effective(t: &str) -> &str {
     }
 }
 
+/// Mirrors `ggml_is_quantized` for the cache types (`is_quantized` in the type's
+/// traits, `ggml.c`): `f8_e4m3` is a plain float, a quantized V does not force
+/// flash attention on for it and it loads with flash attention `off`.
 fn is_quantized(t: &str) -> bool {
-    !matches!(t, "f32" | "f16" | "bf16")
+    !matches!(t, "f32" | "f16" | "bf16" | "f8_e4m3")
 }
 
 fn backend_of(device_id: &str) -> Option<Backend> {
@@ -88,13 +98,14 @@ fn has_fa_kernel(backend: Backend, k: &str, v: &str) -> bool {
     let cuda_hip = |t: &str| {
         matches!(
             t,
-            "f32" | "f16" | "bf16" | "q4_0" | "q4_1" | "q5_0" | "q5_1" | "q8_0"
+            "f32" | "f16" | "bf16" | "f8_e4m3" | "q4_0" | "q4_1" | "q5_0" | "q5_1" | "q8_0"
         )
     };
     match backend {
         Backend::CudaHip => cuda_hip(k) && cuda_hip(v),
         Backend::Vulkan => {
-            let vk = |t: &str| cuda_hip(t) || t == "iq4_nl";
+            // fa_kv_ok: CUDA/HIP's set plus iq4_nl, minus f8_e4m3.
+            let vk = |t: &str| (cuda_hip(t) && t != "f8_e4m3") || t == "iq4_nl";
             vk(k) && vk(v) && ((k == "bf16") == (v == "bf16"))
         }
     }
@@ -246,6 +257,18 @@ mod tests {
     }
 
     #[test]
+    fn f8_e4m3_is_fine_on_cuda_and_rocm_and_falls_back_on_vulkan() {
+        // The compiled f8_e4m3-f8_e4m3 pair: silent, like q8_0.
+        for dev in ["ROCm1", "CUDA0", "ROCm1,CUDA0"] {
+            assert_eq!(warning(&input(dev, "f8_e4m3", "f8_e4m3")), "", "{dev}");
+        }
+        // Vulkan's fa_kv_ok does not list it: the pair warns there, like iq4_nl
+        // warns on CUDA/HIP.
+        let w = warning(&input("Vulkan1", "f8_e4m3", "f8_e4m3"));
+        assert!(w.contains("without flash attention"), "{w}");
+    }
+
+    #[test]
     fn mixed_pairs_take_the_slow_decode_path_on_cuda_and_rocm_only() {
         let w = warning(&input("ROCm1", "q8_0", "q5_0"));
         assert!(w.contains("no native flash attention decode kernel"), "{w}");
@@ -255,6 +278,10 @@ mod tests {
         assert!(warning(&input("CUDA0", "q4_1", "q4_1")).contains("no native"));
         // With flash attention off there is no FA kernel to miss (an f16 V loads).
         let mut off = input("CUDA0", "q8_0", "f16");
+        off.flash_attn = "off";
+        assert_eq!(warning(&off), "");
+        // f8_e4m3 is not quantized (traits), so an FA-off load with an F8 V passes.
+        let mut off = input("ROCm1", "f8_e4m3", "f8_e4m3");
         off.flash_attn = "off";
         assert_eq!(warning(&off), "");
     }

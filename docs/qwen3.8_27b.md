@@ -35,7 +35,7 @@ All speeds are t/s, with ± the sample standard deviation over the repetitions. 
 are prompts of 43,730 and 115,343 tokens (the second is named `bench-prompt-110k` in bench.db and the
 specs), sent with the prompt cache off.
 
-**The build behind these figures.** The framework bundles llama.cpp v0.9.0, and no figure here was measured on it.
+**The build behind these figures.** The framework bundles llama.cpp v1.0.0, and no figure here was measured on it.
 Every figure from v0.8.0, and every recorded one from v0.7.0 except campaign `27b-kv-f16-20261016`, campaign `coder390-device-order-20261019`
 and campaign `coder390-windows-vs-linux-20261020`, comes from a build carrying patches the bundled build does not have:
 the FlashAttention band on RDNA4 and the backend sampler probe, and on all but the earliest v0.7.0 campaigns host buffers pinned for every runtime. v0.5.0 and v0.6.0 figures predate them; a figure read by hand on v0.7.0 does not record its build, so it may
@@ -66,7 +66,7 @@ Three behaviours shape how to read every figure below:
   pays that back.
 - **The MTP head can change the greedy text.** On the R9700's tile kernel, MTP and unassisted decoding part
   after ~100 tokens at 115k, because the kernel's split changes with the number of queries; a build with the
-  FlashAttention band agreed over 278 tokens (v0.7.0, not recorded, not re-measured on v0.9.0). Different draft
+  FlashAttention band agreed over 278 tokens (v0.7.0, not recorded, not re-measured on v1.0.0). Different draft
   widths on a mixed-card split write different texts too, each repeatable. Compare runs on the same kind of text.
 
 ## 2. Recommended settings
@@ -540,7 +540,7 @@ pays this. The order is the setting: the bundled build pins those buffers for th
 alone. A build that registered them with every runtime cut the blocking copies from 5.24 s to 2.50 s
 and gained ~2% with the R9700 second and nothing with it first. Keeping the R9700 second, moving
 `blk\.15\.ffn_gate` onto it buys 3.8% of prefill (campaign `coder390-gate-windows-20261021`, on a build
-with the band, not re-measured on v0.9.0).
+with the band, not re-measured on v1.0.0).
 
 On *Linux*, registering them with every runtime gains nothing measurable. A build that did, at `180224`, prefills
 1185.6 ±12.6 at 43.7k (campaign `coder390-patches-linux-20261021`) against 1164.0 ±15.7 for one that did not at 172032, the
@@ -558,7 +558,7 @@ legs ran under `standard-1.0` (campaign `swift27b-standard-1.0-2xr9700-linux-202
 `standard-1.1` keeps the prose and image legs unchanged and adds writing code and the cached agent
 step, run separately (campaign `swift27b-standard-1.1-2xr9700-linux-20261101`). Both ran on llama.cpp v0.8.0 with
 the FlashAttention band and the other patches listed below; this baseline has not been re-measured on the bundled
-v0.9.0, which carries neither.
+v1.0.0, which carries neither.
 
 <details>
 <summary>Machine, software, preset and method</summary>
@@ -752,5 +752,5 @@ where    = spec-pass=agent
 | `reasoning-preserve` | default | what a divergent prompt costs on the 598.5 MiB recurrent state | TBD |
 | a pinned staging buffer in ggml's cross-runtime copy | `malloc` staging | what it gives back of the staged hops with the R9700 second on *Windows*: 2.5 s of the 5.24 s of blocking copies, the rest being the buffers of [section 6](#6-linux-against-windows) | TBD: needs a ggml change first |
 | the R9700 first on *Windows* at `53,13` | `52,14` | does `53,13` buy margin on the RTX 4070 SUPER for free? | TBD: needs the RTX 4070 SUPER in the test machine |
-| the settings on the bundled llama.cpp v0.9.0 | as in [section 2](#2-recommended-settings) | how far do these figures move without the band and the other patches they ran with? | TBD; the mixed pair needs the RTX 4070 SUPER in the test machine |
+| the settings on the bundled llama.cpp v1.0.0 | as in [section 2](#2-recommended-settings) | how far do these figures move without the band and the other patches they ran with? | TBD; the mixed pair needs the RTX 4070 SUPER in the test machine |
 | the HIP API log on *Linux*, R9700 second | n/a | is the *Linux* lead the copy rate alone, or the kernels too? | TBD: needs the RTX 4070 SUPER in the test machine |

@@ -1,7 +1,7 @@
 ---
 title: Packaging and install
 type: reference
-updated: 2026-11-04
+updated: 2026-11-13
 ---
 
 # Packaging and install
@@ -151,12 +151,12 @@ from `Cargo.toml`, a bump without a rebuild.
 | Package `llama-cpp-framework-` | Holds | Version | `.deb` / `.rpm` |
 | --- | --- | --- | --- |
 | `config` | `llama-cpp-config` (GUI and CLI), its text, the benchmark method, the desktop entry | `<framework>+llama.cpp.<tag>` | 18 / 21 MiB |
-| `llama` | llama.cpp with the ggml backends (`libggml-hip.so`, `libggml-cuda.so`, `libggml-vulkan.so`), libomp | `<framework>+llama.cpp.<tag>` | 179 / 214 MiB |
+| `llama` | llama.cpp with the ggml backends (`libggml-hip.so`, `libggml-cuda.so`, `libggml-vulkan.so`), libomp | `<framework>+llama.cpp.<tag>` | 190 / 229 MiB |
 | `rocm` | The ROCm libraries with RCCL, and the kernel stores | The SDK's, `10.1.0` | 831 / 922 MiB |
-| `cuda` | The CUDA libraries and NCCL | `<cuda>+nccl.<nccl>`, `13.4.3+nccl.2.32.3` | 651 / 670 MiB |
-| `vulkan` | The Vulkan loader | The SDK's, `1.4.363.0` | 2 / 2 MiB |
+| `cuda` | The CUDA libraries and NCCL | `<cuda>+nccl.<nccl>`, `13.5.0+nccl.2.32.3` | 655 / 675 MiB |
+| `vulkan` | The Vulkan loader | The SDK's, `1.4.363.1` | 2 / 2 MiB |
 
-Sizes are of the v0.9.0 build, as `xtask package` prints them, rounded up to the MiB.
+Sizes are of the v1.0.0 build (framework 2.4.0), as `xtask package` prints them, rounded up to the MiB.
 
 **A runtime package holds only the external SDK's libraries, so it changes only with the SDK.** A new
 llama.cpp on the same SDKs leaves the three as they are. Each is optional: a backend whose runtime is

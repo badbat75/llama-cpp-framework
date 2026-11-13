@@ -63,7 +63,7 @@ Upstream tags every master merge with a lightweight `bNNNN` and each release als
 - No reachable release tag is a hard failure.
 - A missing clone is cloned first.
 
-**Patches are provisional.** `patches/llama.cpp/*.patch` apply onto the fresh tag, v0.9.0 today. Three
+**Patches are provisional.** `patches/llama.cpp/*.patch` apply onto the fresh tag, v1.0.0 today. Three
 are carried: `0001` (FastMTP sidecars on `qwen35`), `0005` and `0006` (draft reallocations after an
 image on `qwen35` and `qwen4exp`).
 
@@ -103,7 +103,7 @@ Linux builds is both Linux-only and machine-independent.
 | `GGML_BACKEND_DL=ON` | Backends load separately, so a machine missing a vendor's runtime skips that backend and still starts |
 | `GGML_CPU_ALL_VARIANTS=ON` | One ggml-cpu library per ISA level, chosen at run time by ggml's feature score |
 | `GGML_CUDA`, `GGML_VULKAN`, `GGML_HIP` `=ON` | The three GPU backends |
-| `GGML_CUDA_FA_QUANTS=q4_0-q4_0,q8_0-q8_0,q5_0-q5_0,q5_1-q5_1,bf16-bf16` | Adds q5 pairs to the native FlashAttention kernels, see below |
+| `GGML_CUDA_FA_QUANTS=q4_0-q4_0,q8_0-q8_0,q5_0-q5_0,q5_1-q5_1,bf16-bf16,f8_e4m3-f8_e4m3` | Adds the q5 pairs to the native FlashAttention kernels; upstream's set carries f8_e4m3, see below |
 | `GGML_LTO=ON` | See [LTO and `-march`](#lto-and--march) |
 | `LLAMA_BUILD_IS_DEV=OFF` | Only release tags are checked out, so a `-dev` suffix in `--version` and the configurator's badge would be false |
 | `LLAMA_BUILD_UI=ON` | Builds the UI from the same tag as the server, see below |
@@ -111,10 +111,11 @@ Linux builds is both Linux-only and machine-independent.
 | `CMAKE_C_FLAGS=-w -Wno-error=incompatible-pointer-types` | See [LTO and `-march`](#lto-and--march) for the flag; `-w` because upstream's warnings bury the output that matters |
 | `CMAKE_CXX_FLAGS`, `CMAKE_CUDA_FLAGS`, `CMAKE_HIP_FLAGS` `=-w` | The same. `CMAKE_HIP_FLAGS` matters on Linux; on Windows the sources compile as CXX |
 
-**`GGML_CUDA_FA_QUANTS` keeps q5 caches off the slow path.** Upstream's default is
-`q4_0-q4_0;q8_0-q8_0;f16-f16;bf16-bf16`, with `f16-f16` added whatever the list says. A pair outside
-the list still runs on the GPU. But every decode step of 1 or 2 query tokens then converts the whole
-used K and V to f16, and llama-server logs "no FlashAttention vector kernel compiled ... (slow)".
+**`GGML_CUDA_FA_QUANTS` keeps the q5 and f8_e4m3 caches off the slow path.** Upstream's default is
+`q4_0-q4_0;q8_0-q8_0;f16-f16;bf16-bf16;f8_e4m3-f8_e4m3`, with `f16-f16` added whatever the list says;
+the framework's list adds the two q5 pairs to it. A pair outside the list still runs on the GPU. But
+every decode step of 1 or 2 query tokens then converts the whole used K and V to f16, and llama-server
+logs "no FlashAttention vector kernel compiled ... (slow)".
 
 - Batched steps (prefill, MTP verify batches of 3 or more) convert to f16 for every type and are
   unaffected.

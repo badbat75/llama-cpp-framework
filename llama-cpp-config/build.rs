@@ -1,7 +1,7 @@
 // Build script, seven jobs:
 // - Icon bootstrap: resources/llama.ico is generated, not checked in; when
 //   it's missing, run resources/generate-llama-ico.mjs to rasterize it from
-//   the llama.cpp clone's webui logo.
+//   the llama-brand icon (the script downloads and caches the SVG).
 // - ICO → PNG ×2: decode resources/llama.ico's largest frame and emit the
 //   plain tray icon plus a green-dot "running" variant into OUT_DIR, where
 //   the Slint @image-url includes resolve them.
@@ -160,10 +160,11 @@ fn emit_build_stack() {
 }
 
 /// Generate the icon when it's absent (fresh checkout, or deleted on purpose
-/// to pick up an upstream logo change) by running the node script that
-/// rasterizes it from the llama.cpp clone's webui logo. Needs node + npm and
-/// the clone (xtask build creates it before this cargo leg runs); a missing
-/// prerequisite fails the build with the script's own error message.
+/// to pick up a brand change) by running the node script that rasterizes it
+/// from the llama-brand icon. Needs node + npm and network for the script's
+/// one-time SVG download (cached in resources/, gitignored; delete it to
+/// re-fetch); a missing prerequisite fails the build with the script's own
+/// error message.
 fn ensure_icon(ico_path: &str) {
     if Path::new(ico_path).exists() {
         return;

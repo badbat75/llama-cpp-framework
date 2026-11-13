@@ -512,7 +512,7 @@ pub fn run(keep_staging: bool, wix_arg: Option<PathBuf>) -> Result<()> {
             let npm = util::which("npm").context("npm not found: node + npm generate resources\\llama.ico")?;
             run_cmd(cmd(npm).current_dir(&resources).args(["install", "--no-save", "sharp", "sharp-ico"]))?;
         }
-        run_cmd(cmd("node").current_dir(&resources).arg("generate-llama-ico.mjs").arg(&cfg.llama_cpp_dir))?;
+        run_cmd(cmd("node").current_dir(&resources).arg("generate-llama-ico.mjs"))?;
     }
     std::fs::copy(&ico, stage_bin.join("llama.ico"))?;
 

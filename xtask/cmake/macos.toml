@@ -18,9 +18,10 @@ defines = [
     "CMAKE_OSX_ARCHITECTURES=arm64",
     # The oldest macOS the binaries run on, upstream's value.
     "CMAKE_OSX_DEPLOYMENT_TARGET=13.3",
-    # HTTPS for llama-server through BoringSSL, built from source
-    # (FetchContent at configure time) and linked STATICALLY, as upstream
-    # ships it: no OpenSSL dylib to bundle and no Homebrew path baked
-    # into the binaries.
-    "LLAMA_BUILD_BORINGSSL=ON",
+    # HTTPS for llama-server through LibreSSL, fetched and built from
+    # source (FetchContent at configure time) and linked STATICALLY, as
+    # upstream ships it: no OpenSSL dylib to bundle and no Homebrew path
+    # baked into the binaries. Replaces the BoringSSL fetch llama.cpp
+    # dropped (vendor/cpp-httplib: LLAMA_BUILD_BORINGSSL is gone upstream).
+    "LLAMA_BUILD_LIBRESSL=ON",
 ]

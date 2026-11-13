@@ -14,7 +14,7 @@ updated: 2026-11-04
 How to run llama.cpp on the RTX 4070 Super (Ada, `sm_89`, 12 GB) through the CUDA backend, on Windows and
 on Linux. Figures come from llama.cpp v0.5.0 on *Windows* and v0.6.0 or v0.7.0 on *Linux*, with Qwen3.8-27B
 Q8_0 and its embedded MTP head in a layer split with a HIP card. Backend and driver versions differ between
-the two systems, so a difference between them is not the OS alone. The framework bundles llama.cpp v0.9.0, and no
+the two systems, so a difference between them is not the OS alone. The framework bundles llama.cpp v1.0.0, and no
 figure here was measured on it. The figures from campaign `coder390-placement-20261020` and campaign `coder390-ubatch-20261020`
 also ran with a FlashAttention band on the HIP card and a backend sampler probe, patches the bundled build does not have.
 
@@ -29,7 +29,7 @@ a configuration: a clean load proves nothing.
 | cuBLAS | CUDA 13 `cublas64_13.dll` + `cublasLt64_13.dll` next to `llama-server.exe` (pinned: 13.8.0.4) | without them the CUDA backend is skipped silently and the card falls back to Vulkan |
 | cudart | linked statically | nothing to install |
 | CUDA toolkit (build) | newest installed version, picked by `xtask build` | |
-| `GGML_CUDA_FA_QUANTS` (build) | q5_0/q5_1 pairs added (`xtask/cmake/common.toml`) | without them a q5 KV cache converts to f16 on every short decode step |
+| `GGML_CUDA_FA_QUANTS` (build) | q5_0/q5_1 pairs added to the compiled set, which carries f8_e4m3 (`xtask/cmake/common.toml`) | without them a q5 KV cache converts to f16 on every short decode step |
 
 ## 2. Device facts
 

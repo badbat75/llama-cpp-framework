@@ -1,4 +1,4 @@
-From dc704b74a1397e51eb3a72898e6df25ee4951ee8 Mon Sep 17 00:00:00 2001
+From 0400d98481f07e777801f2edcd60bb0f2ae4ea6a Mon Sep 17 00:00:00 2001
 From: o7si <o7si@kanda-mashiro.cc>
 Date: Fri, 30 Oct 2026 18:32:21 +0800
 Subject: [PATCH] llama : fix MTP graph reallocations when switching inputs
@@ -8,10 +8,10 @@ Subject: [PATCH] llama : fix MTP graph reallocations when switching inputs
  1 file changed, 19 insertions(+), 17 deletions(-)
 
 diff --git a/src/models/qwen35.cpp b/src/models/qwen35.cpp
-index 8a4e434117fa..89b929874d5b 100644
+index 5b05fc6..e9ca234 100644
 --- a/src/models/qwen35.cpp
 +++ b/src/models/qwen35.cpp
-@@ -521,27 +521,29 @@ llama_model_qwen35::graph_mtp::graph_mtp(const llama_model & model, const llm_gr
+@@ -533,27 +533,29 @@ llama_model_qwen35::graph_mtp::graph_mtp(const llm_graph_params & params)
      inp->embd = ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, hparams.n_embd_inp(), n_tokens);
      ggml_set_input(inp->embd);
  
@@ -57,4 +57,7 @@ index 8a4e434117fa..89b929874d5b 100644
 +    tok_embd = ggml_build_forward_select(gf, inps, 2, ubatch.token ? 0 : 1);
      cb(tok_embd, "mtp_tok_embd", il);
  
-     inp->h = ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, hparams.n_embd, n_tokens);
+     inp->h = build_inp_embd_state(inp.get(), hparams.n_embd);
+-- 
+2.53.0
+

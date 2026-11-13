@@ -48,10 +48,11 @@ Without the patch the load fails, so a server that starts with the sidecar is al
 
 ## `0005-qwen35-mtp-graph-realloc-pr31415`
 
-sha256 `a3cf439f9b813b352a0832fd8c30b4c3a1c170adab4b924c01376de6e4bb3d16`.
+sha256 `9345730ea1f76a5eaaf433f441d9cfe902a5bbd91b6c1982a0e2bba1c633fe4b`.
 [PR #31415](https://github.com/ggml-org/llama.cpp/pull/31415) (commit `dc704b74`) as GitHub serves
-it, fixing our issue [#31302](https://github.com/ggml-org/llama.cpp/issues/31302). Applies after
-`0001`.
+it, 3-way refreshed for the bundled tag: upstream moved the `graph_mtp` constructor and the
+`inp->h` line around it, the fix itself is the PR's. Fixes our issue
+[#31302](https://github.com/ggml-org/llama.cpp/issues/31302). Applies after `0001`.
 
 **What it does.** `graph_mtp` chose its input with an `if` on `ubatch.token`, so tokens and image
 rows built two different graphs. After the first image the draft context switches between them on
@@ -69,8 +70,9 @@ and draft acceptance unchanged: it removes the churn and brings no speed at this
 
 ## `0006-qwen4exp-mtp-graph-realloc`
 
-sha256 `54d5f2185f2265f2610a16598a9bf2660ee9a85dc3839907d2b1cae31daeea07`. Our port of `0005` to
-`src/models/qwen4exp.cpp`, with the same defect and the same fix.
+sha256 `b411f05246ae67544d87ab5d1fbff25debf579c21de0ec80252cb88deb4fb4b5`. Our port of `0005` to
+`src/models/qwen4exp.cpp`, with the same defect and the same fix, refreshed for the bundled tag
+the same way as `0005`.
 
 **Measured** (2x R9700, Swift-Qwen3.8-Flash-Next IQ3_S, 2026-11-01). Draft reallocations over 2
 text requests, an image and 3 more: 0 / 0 / 408 / 336 / 338 / 332 without the patch, 0 with it.
