@@ -1493,7 +1493,7 @@ fn set_preset_enabled(id: &str, enabled: bool) -> Result<()> {
     };
     println!("{switched}");
     // The router reads presets.ini once, at launch.
-    if crate::runstate::is_running() {
+    if crate::server_control::backend().is_running() {
         println!("{}", strings::t("restart-to-apply"));
     }
     Ok(())
@@ -1529,7 +1529,10 @@ fn snapshot_before_stop() {
 /// Slow by nature (the proxied restore makes the router load the model, then
 /// reads the KV cache off disk) and, like its twin above, never fatal: a server
 /// that started is started whether or not the cache came back.
-fn snapshot_after_start(cfg: &crate::server_cfg::ServerConfig) {
+fn snapshot_after_start(
+    cfg: &crate::server_cfg::ServerConfig,
+    server: &crate::server_control::Backend,
+) {
     if !cfg.save_state_on_shutdown_or_default() {
         return;
     }
@@ -1538,7 +1541,7 @@ fn snapshot_after_start(cfg: &crate::server_cfg::ServerConfig) {
         .map(|p| p.id)
         .collect();
     println!("{}", strings::t("snapshot-restoring"));
-    match crate::slot_state::restore_newest(cfg, &known) {
+    match crate::slot_state::restore_newest_with(cfg, &known, || server.is_running()) {
         Ok(Some(t)) => println!("{}", strings::fill("snapshot-restored", &[&t.describe()])),
         // Nothing on disk: the ordinary first-run state, not worth a line.
         Ok(None) => {}
@@ -1547,13 +1550,18 @@ fn snapshot_after_start(cfg: &crate::server_cfg::ServerConfig) {
 }
 
 fn run_control(c: ControlCmd) -> Result<()> {
+    run_control_with(c, crate::server_control::backend())
+}
+
+/// `run_control` on `server`, the backend that runs llama-server.
+fn run_control_with(c: ControlCmd, server: &crate::server_control::Backend) -> Result<()> {
     use crate::runstate;
     match c {
         ControlCmd::Start => {
-            match runstate::start() {
+            match server.start() {
                 Ok(Some(cfg)) => {
                     println!("{}", strings::t("server-started"));
-                    snapshot_after_start(&cfg);
+                    snapshot_after_start(&cfg, server);
                 }
                 Ok(None) => println!("{}", strings::t("server-already-running")),
                 Err(e) => anyhow::bail!(strings::fill("start-failed", &[&e])),
@@ -1562,7 +1570,7 @@ fn run_control(c: ControlCmd) -> Result<()> {
         }
         ControlCmd::Stop => {
             snapshot_before_stop();
-            if !runstate::stop() {
+            if !server.stop().map_err(anyhow::Error::msg)? {
                 anyhow::bail!(strings::fill(
                     "stop-failed",
                     &[&runstate::STOP_GRACE.as_secs()]
@@ -1576,21 +1584,10 @@ fn run_control(c: ControlCmd) -> Result<()> {
             // below puts back, which is what makes a restart cheap on a long
             // conversation instead of a fresh multi-minute prefill.
             snapshot_before_stop();
-            // `stop()` returns only once the old router and its children are
-            // gone (a child that held a large KV cache takes tens of seconds
-            // to exit): starting earlier saw the old process, launched nothing,
-            // and left no server once it exited.
-            if !runstate::stop() {
-                anyhow::bail!(strings::fill(
-                    "restart-old-still-running",
-                    &[&runstate::STOP_GRACE.as_secs()]
-                ));
-            }
-            std::thread::sleep(std::time::Duration::from_millis(1000));
-            match runstate::start() {
+            match server.restart() {
                 Ok(Some(cfg)) => {
                     println!("{}", strings::t("server-restarted"));
-                    snapshot_after_start(&cfg);
+                    snapshot_after_start(&cfg, server);
                 }
                 Ok(None) => println!("{}", strings::t("server-already-running")),
                 Err(e) => anyhow::bail!(strings::fill("restart-failed", &[&e])),
@@ -1599,7 +1596,9 @@ fn run_control(c: ControlCmd) -> Result<()> {
         }
         ControlCmd::StopAndClose => {
             snapshot_before_stop();
-            runstate::stop();
+            if let Err(e) = server.stop() {
+                eprintln!("{e}");
+            }
             std::thread::sleep(std::time::Duration::from_millis(500));
             #[cfg(windows)]
             crate::single_instance::signal_close();
@@ -1609,7 +1608,10 @@ fn run_control(c: ControlCmd) -> Result<()> {
     }
 }
 
+// The e2e phase below follows this module: `binding_lint` reads the CLI's
+// print paths only up to `mod tests {`, and the phase's literals are test data.
 #[cfg(test)]
+#[allow(clippy::items_after_test_module)]
 mod tests {
     use super::*;
     use crate::server_cfg::ServerConfig;
@@ -2312,5 +2314,140 @@ mod tests {
         assert_eq!(of(&["x", "gui"]), GUI_LANGUAGE);
         assert_eq!(of(&["x", "server", "show"]), "cli");
         assert_eq!(of(&["x", "preset", "list"]), "cli");
+    }
+}
+
+/// E2E phase (called from `editable_widgets_track_model_after_edit`): the
+/// `control` commands on the manager backend (a recording fake): each asks the
+/// manager for the `default` instance, the conversation snapshot is taken
+/// BEFORE the manager's stop and put back AFTER its start, and the manager's
+/// errors reach the user as their own text.
+#[cfg(test)]
+pub(crate) fn cli_control_e2e() {
+    use crate::server_control::fake::{self, FakeClient};
+    use pai_core::client::{ClientError, InstanceState};
+    let dir = tempfile::tempdir().expect("tempdir");
+    crate::paths::redirect_for_tests(dir.path());
+    let log = fake::log();
+    let port = fake::http_stub(&log);
+    let state = dir.path().join("state");
+    std::fs::create_dir_all(&state).expect("state dir");
+    let server_ini = crate::paths::server_ini();
+    std::fs::create_dir_all(server_ini.parent().unwrap()).expect("config dir");
+    std::fs::write(
+        &server_ini,
+        format!(
+            "[Server]\nPort = {port}\nSaveStateOnShutdown = true\nStateDir = {}\n",
+            state.display()
+        ),
+    )
+    .expect("server.ini");
+    std::fs::write(
+        crate::paths::presets_ini(),
+        "[Qwen3.8-27B]\nmodel = /models/Qwen3.8-27B-Q8_0.gguf\n",
+    )
+    .expect("presets.ini");
+    // The last shutdown's dump, for the restore after a start.
+    std::fs::write(
+        state.join(crate::slot_state::state_file_name("Qwen3.8-27B")),
+        b"dump",
+    )
+    .expect("dump");
+
+    let position = |entries: &[String], what: &str| {
+        entries
+            .iter()
+            .position(|e| e.starts_with(what))
+            .unwrap_or_else(|| panic!("no {what:?} in {entries:?}"))
+    };
+    const SNAPSHOT: &str = "GET /models";
+    const RESTORE: &str = "POST /slots/0?action=restore";
+
+    // Stop: snapshot first, then the manager's stop of default.
+    log.lock().unwrap().clear();
+    let b = fake::backend(FakeClient::new(&log, InstanceState::Active));
+    run_control_with(ControlCmd::Stop, &b).expect("stop");
+    let entries = log.lock().unwrap().clone();
+    assert!(
+        position(&entries, SNAPSHOT) < position(&entries, "stop default"),
+        "snapshot before the stop: {entries:?}"
+    );
+    // What the manager was asked (the stub's requests are `<METHOD> /...`).
+    let asked: Vec<String> = fake::actions(&log)
+        .into_iter()
+        .filter(|e| !e.contains(" /"))
+        .collect();
+    assert_eq!(asked, ["stop default"]);
+
+    // Start: the manager's start of default, then the restore.
+    log.lock().unwrap().clear();
+    let b = fake::backend(FakeClient::new(&log, InstanceState::Inactive));
+    run_control_with(ControlCmd::Start, &b).expect("start");
+    let entries = log.lock().unwrap().clone();
+    assert!(
+        position(&entries, "start default") < position(&entries, RESTORE),
+        "restore after the start: {entries:?}"
+    );
+
+    // Already running: nothing started, nothing restored over a live slot.
+    log.lock().unwrap().clear();
+    let b = fake::backend(FakeClient::new(&log, InstanceState::Active));
+    run_control_with(ControlCmd::Start, &b).expect("start when running");
+    let entries = log.lock().unwrap().clone();
+    assert!(
+        !entries
+            .iter()
+            .any(|e| e == "start default" || e.starts_with(RESTORE)),
+        "{entries:?}"
+    );
+
+    // Restart: snapshot, the manager's restart, restore, in that order.
+    log.lock().unwrap().clear();
+    let b = fake::backend(FakeClient::new(&log, InstanceState::Active));
+    run_control_with(ControlCmd::Restart, &b).expect("restart");
+    let entries = log.lock().unwrap().clone();
+    let restart = position(&entries, "restart default");
+    assert!(position(&entries, SNAPSHOT) < restart, "{entries:?}");
+    assert!(restart < position(&entries, RESTORE), "{entries:?}");
+    assert!(
+        !entries
+            .iter()
+            .any(|e| e == "stop default" || e == "start default"),
+        "one restart, not a stop and a start: {entries:?}"
+    );
+
+    // StopAndClose: snapshot, then the manager's stop.
+    log.lock().unwrap().clear();
+    let b = fake::backend(FakeClient::new(&log, InstanceState::Active));
+    run_control_with(ControlCmd::StopAndClose, &b).expect("stop-and-close");
+    let entries = log.lock().unwrap().clone();
+    assert!(
+        position(&entries, SNAPSHOT) < position(&entries, "stop default"),
+        "{entries:?}"
+    );
+
+    // The manager's errors: the command fails with the client's own text.
+    for (cmd, e) in [
+        (ControlCmd::Start, ClientError::Unavailable),
+        (ControlCmd::Stop, ClientError::Unavailable),
+        (ControlCmd::Restart, ClientError::Unavailable),
+        (ControlCmd::Start, ClientError::NotAuthorized),
+        (ControlCmd::Stop, ClientError::NotAuthorized),
+        (ControlCmd::Restart, ClientError::NotAuthorized),
+    ] {
+        let label = format!("{cmd:?} {e:?}");
+        let mut c = FakeClient::new(&log, InstanceState::Inactive);
+        c.fail_actions = Some(e.clone());
+        if e == ClientError::Unavailable {
+            c.fail_status = Some(e.clone());
+        }
+        match run_control_with(cmd, &fake::backend(c)) {
+            Ok(()) => panic!("{label}: succeeded"),
+            Err(err) => assert!(
+                format!("{err:#}").contains(&e.text()),
+                "{label}: {err:#} carries {:?}",
+                e.text()
+            ),
+        }
     }
 }

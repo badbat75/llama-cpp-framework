@@ -366,6 +366,18 @@ pub fn restore_newest(
     cfg: &crate::server_cfg::ServerConfig,
     known_models: &[String],
 ) -> Result<Option<Transfer>, String> {
+    restore_newest_with(cfg, known_models, || {
+        crate::server_control::backend().is_running()
+    })
+}
+
+/// `restore_newest` with `alive` as the probe of whether the server is still
+/// there while it waits for the port (the caller's backend, not the global one).
+pub fn restore_newest_with(
+    cfg: &crate::server_cfg::ServerConfig,
+    known_models: &[String],
+    alive: impl FnMut() -> bool,
+) -> Result<Option<Transfer>, String> {
     let port = cfg.port_or_default() as u16;
     let dir = state_dir(cfg);
     let Some(newest) = dumps_newest_first(&dir).into_iter().next() else {
@@ -382,18 +394,49 @@ pub fn restore_newest(
         .find(|m| state_file_name(m) == filename)
         .ok_or_else(|| strings::fill("dump-no-model", &[&filename]))?;
 
-    wait_listening(
-        port,
-        LISTEN_TIMEOUT,
-        LISTEN_POLL,
-        crate::runstate::is_running,
-    )?;
+    wait_listening(port, LISTEN_TIMEOUT, LISTEN_POLL, alive)?;
     slot_action(port, "restore", model, &filename).map(Some)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The restore asks the probe it is given (the caller's backend, here a
+    /// fake manager that reports the instance gone) while the port does not
+    /// answer, and gives up at once with the probe's answer.
+    #[test]
+    fn restore_asks_the_probe_it_is_given() {
+        use crate::server_control::fake::{self, FakeClient};
+        use pai_core::client::InstanceState;
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(dir.path().join(state_file_name("Qwen3.8-27B")), b"dump").expect("dump");
+        let port = free_port();
+        let cfg = crate::server_cfg::ServerConfig {
+            port: Some(i32::from(port)),
+            state_dir: Some(dir.path().display().to_string()),
+            ..Default::default()
+        };
+        let log = fake::log();
+        let b = fake::backend(FakeClient::new(&log, InstanceState::Inactive));
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let r = restore_newest_with(&cfg, &["Qwen3.8-27B".to_string()], || b.is_running());
+            let _ = tx.send(r.map(|t| t.map(|t| t.model)));
+        });
+        let result = match rx.recv_timeout(Duration::from_secs(20)) {
+            Ok(r) => r,
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                panic!("restore did not give up within 20 s")
+            }
+            Err(e) => panic!("the restore thread panicked: {e:?}"),
+        };
+        assert_eq!(result, Err(strings::fill("exited-before-answer", &[&port])));
+        assert!(
+            log.lock().unwrap().iter().any(|e| e == "status default"),
+            "the given backend was asked: {log:?}"
+        );
+    }
 
     #[test]
     fn file_name_is_sanitized_and_stable() {

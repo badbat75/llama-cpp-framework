@@ -147,7 +147,7 @@ so the second binary, `private-ai-manager`, shares its modules: a `[[bin]]` alon
    authorization, `async fn` D-Bus methods running the core off zbus's executor thread).
    **3c**, in four pieces, each test first: **3c-1** (done) the content checks in `pai-core`
    (`checks.rs`), refused by the manager with a strings key and its values; **3c-2** (done) the client `pai_core::client` with its D-Bus
-   implementation; **3c-3** the
+   implementation; **3c-3** (done, `server_control.rs`) the
    configurator picks a backend, the manager on Linux and today's direct spawn and per-user files on
    macOS and, until slice 6, Windows, and `runstate`'s callers (GUI, CLI `server`, benchmarks) go
    through it for the `default` instance; **3c-4** every INI reader and writer goes through it.

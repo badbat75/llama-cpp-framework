@@ -125,7 +125,7 @@ fn run_steps(
 ) -> Result<String, String> {
     let port = u16::try_from(server_cfg::load().port_or_default())
         .map_err(|_| strings::t("invalid-port"))?;
-    let was_running = runstate::is_running();
+    let was_running = crate::server_control::backend().is_running();
     // presets.ini differs from what the running router read.
     let mut dirty = false;
     let mut shown: Vec<Point> = Vec::new();
@@ -363,7 +363,7 @@ fn run(plan: &Plan, cancel: &Arc<AtomicBool>, emit: &impl Fn(Event)) -> Result<S
         plan
     };
     let cfg = server_cfg::load();
-    let running = runstate::is_running();
+    let running = crate::server_control::backend().is_running();
     match plan.mode {
         Mode::Live if !running => {
             return Err(

@@ -19,7 +19,7 @@
 //! llama-server's router spawns one child per model and hands it the preset's
 //! keys at spawn time; nothing re-reads presets.ini afterwards. A live sweep
 //! therefore restarts the server between values, and the restart is deliberately
-//! the bare `runstate::stop()` + `start()` pair rather than the one `control
+//! the bare `stop()` + `start()` pair of `server_control` rather than the one `control
 //! restart` performs: that path saves and restores the conversation snapshot,
 //! which on a model of this size is gigabytes of IO per leg to reinstate a KV
 //! cache the benchmark then refuses to use (`cache_prompt: false`).
@@ -57,7 +57,7 @@ use std::time::{Duration, Instant};
 
 use super::exec::Event;
 use super::{Concurrency, Mode, Plan, Point};
-use crate::{http, ini, paths, presets, runstate, server_cfg};
+use crate::{http, ini, paths, presets, server_cfg, server_control};
 
 /// The value that means "the key is absent from the section". Spelled rather
 /// than left blank so it survives a round trip through a comma-separated list
@@ -858,7 +858,7 @@ pub fn run(opts: &Opts) -> Result<String, String> {
         (Some(_), Some(v)) => v.clone(),
         (Some(key), None) => current_value(&opts.preset, key),
     };
-    let was_running = runstate::is_running();
+    let was_running = server_control::backend().is_running();
     super::interrupt::note_server(was_running);
     let port = u16::try_from(server_cfg::load().port_or_default())
         .map_err(|_| strings::t("invalid-port"))?;
@@ -1193,19 +1193,23 @@ pub(super) fn prepare_server(mode: Mode, port: u16) -> Result<(), String> {
         Mode::Live => {
             {
                 let _gate = super::interrupt::gate();
-                runstate::stop();
+                let server = server_control::backend();
+                server.stop()?;
                 wait_gone()?;
                 std::thread::sleep(GPU_SETTLE);
                 // Bare start, not the `control restart` path: no snapshot save or
                 // restore, see the module header.
-                runstate::start().map_err(|e| format!("cannot start llama-server: {e}"))?;
+                server
+                    .start()
+                    .map_err(|e| format!("cannot start llama-server: {e}"))?;
             }
             wait_ready(port)
         }
         Mode::Synthetic => {
             let _gate = super::interrupt::gate();
-            if runstate::is_running() {
-                runstate::stop();
+            let server = server_control::backend();
+            if server.is_running() {
+                server.stop()?;
                 wait_gone()?;
                 // llama-bench asks the same cards for the same weights, so it
                 // needs the same settling the live path does.
@@ -1225,14 +1229,17 @@ pub(super) fn restore_server(was_running: bool) -> Result<(), String> {
 
 /// `restore_server` for the interrupt handler, which already holds the gate.
 pub(super) fn put_server_back(was_running: bool) -> Result<(), String> {
+    let server = server_control::backend();
     if was_running {
-        runstate::stop();
+        server.stop()?;
         wait_gone()?;
-        runstate::start().map_err(|e| strings::fill("cannot-restart-server", &[&e]))?;
+        server
+            .start()
+            .map_err(|e| strings::fill("cannot-restart-server", &[&e]))?;
         return Ok(());
     }
-    if runstate::is_running() {
-        runstate::stop();
+    if server.is_running() {
+        server.stop()?;
         wait_gone()?;
     }
     Ok(())
@@ -1240,7 +1247,7 @@ pub(super) fn put_server_back(was_running: bool) -> Result<(), String> {
 
 fn wait_gone() -> Result<(), String> {
     let deadline = Instant::now() + STOP_TIMEOUT;
-    while runstate::is_running() {
+    while server_control::backend().is_running() {
         if Instant::now() >= deadline {
             return Err("llama-server did not stop".into());
         }

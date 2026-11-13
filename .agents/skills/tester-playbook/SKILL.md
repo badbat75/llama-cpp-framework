@@ -119,3 +119,14 @@ Lessons only: the rules are in `AGENTS.md`.
   (zbus reads it in `Address::system`), in the one test of the binary that touches it.
 - `recv_timeout` on `on_thread`'s receiver returns `Disconnected` at once when the thread panicked
   (a `todo!` stub): report that apart from `Timeout`, or the red reads as a hang.
+- To pin the order of a call to llama-server against a call to a fake (the snapshot before the
+  manager's stop), share one log: `server_control::fake::http_stub(&log)` answers `/models`, `/health`
+  and a slot restore on a free loopback port and records `"<METHOD> <path>"` beside the
+  `FakeClient`'s `"<method> <id>"`; point server.ini's `Port` at it in an e2e phase.
+- Since `server_control::backend()` is the manager on Linux, a test that reaches it through a caller
+  (bench, slot_state, the GUI tick) would dial the real system bus: inject a `Backend` instead.
+- To prove a test run never dials the real system bus, start a Unix listener that logs each accept
+  (a 10-line `python3 -I` script outside the repo), run `cargo test` with
+  `DBUS_SYSTEM_BUS_ADDRESS=unix:path=<that socket>` and check the log is empty. The callers of
+  `server_control::backend()` are in cli.rs, gui.rs, slot_state.rs and bench/; filtering on
+  `bench:: cli:: slot_state gui::` plus the e2e covers every path that can reach it.

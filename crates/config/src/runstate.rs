@@ -336,7 +336,7 @@ pub const STOP_GRACE: std::time::Duration = std::time::Duration::from_secs(120);
 /// Poll `running` every `step` until it reads false (`true`), or until `grace`
 /// has passed with it still true (`false`). Split out of `stop()` so a process
 /// that takes long to exit can be simulated in a test.
-fn wait_gone(
+pub(crate) fn wait_gone(
     mut running: impl FnMut() -> bool,
     grace: std::time::Duration,
     step: std::time::Duration,

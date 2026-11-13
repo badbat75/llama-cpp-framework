@@ -21,6 +21,7 @@
 // dir): cargo runs tests on parallel threads, so they would race the e2e
 // thread nondeterministically.
 mod binding_lint;
+mod control_lint;
 mod names_lint;
 mod save_flow;
 mod ui_bindings;

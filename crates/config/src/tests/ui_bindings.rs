@@ -601,4 +601,10 @@ fn editable_widgets_track_model_after_edit() {
     // ── The 2.4 tree and login entry migrated (migration.rs) ─────────────
     #[cfg(target_os = "linux")]
     crate::migration::migration_e2e();
+
+    // ── Starting and stopping through the manager (server_control.rs) ────
+    crate::server_control::server_control_e2e();
+
+    // ── The `control` commands on the manager backend (cli.rs) ───────────
+    crate::cli::cli_control_e2e();
 }

@@ -1489,7 +1489,7 @@ fn start_server_async(app_weak: slint::Weak<AppWindow>, tray_weak: slint::Weak<A
     }
     bump_run_status_gen();
     std::thread::spawn(move || {
-        let result = runstate::start();
+        let result = crate::server_control::backend().start();
         // Snapshot the client URL from the config `start()` ACTUALLY launched
         // with (returned, not re-loaded; a save landing mid-start must not
         // leak into the snapshot): the RUNNING server keeps listening there
@@ -1655,7 +1655,13 @@ fn stop_server_async_with(
         };
 
         // `stop()` waits for the exit itself, up to `runstate::STOP_GRACE`.
-        let running = !runstate::stop();
+        // A stop the backend refused leaves the server as the probe finds it.
+        let server = crate::server_control::backend();
+        let stopped = server.stop();
+        let running = match &stopped {
+            Ok(gone) => !gone,
+            Err(_) => server.is_running(),
+        };
         slint::invoke_from_event_loop(move || {
             bump_run_status_gen();
             if let Some(app) = app_weak.upgrade() {
@@ -1666,8 +1672,10 @@ fn stop_server_async_with(
                     // No process to point Open-chat at any more.
                     s.set_launched_url(SharedString::default());
                 }
-                // `stop()` can't fail; the re-polled run state is the outcome.
-                if running {
+                if let Err(e) = stopped {
+                    s.set_server_status_is_error(true);
+                    set_status(&app, e, true);
+                } else if running {
                     s.set_server_status_is_error(true);
                     set_status(&app, strings::t("stop-timed-out"), true);
                 } else {
@@ -1712,7 +1720,7 @@ fn refresh_run_status(
 ) {
     std::thread::spawn(move || {
         let sampled_gen = RUN_STATUS_GEN.load(std::sync::atomic::Ordering::SeqCst);
-        let running = runstate::is_running();
+        let running = crate::server_control::backend().is_running();
         slint::invoke_from_event_loop(move || {
             // A start/stop transition began or landed after this sample was
             // taken: its result is authoritative, ours is stale. Drop it.

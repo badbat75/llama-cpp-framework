@@ -29,6 +29,7 @@ mod moe_cache;
 mod presets;
 mod runstate;
 mod server_cfg;
+mod server_control;
 mod server_form;
 mod server_version;
 mod settings;

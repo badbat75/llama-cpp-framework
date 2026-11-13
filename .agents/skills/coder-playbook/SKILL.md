@@ -68,3 +68,10 @@ Lessons only: the rules are in `AGENTS.md`.
   Use `git worktree add` or `git show HEAD:<path>` instead.
 - A helper generic over a zbus call's body needs serde's traits: `zbus::export::serde` re-exports
   serde, so no `serde` dependency is added for it (`pai-core` `client/dbus.rs`).
+- `binding_lint` reads `cli.rs` only up to the line `mod tests {`, so a `#[cfg(test)]` e2e phase with
+  literal test data in `cli.rs` must come after that module; clippy's `items_after_test_module` then
+  needs `#[allow(clippy::items_after_test_module)]` on `mod tests` (the attribute on its own line keeps
+  the `mod tests {` line the lint looks for).
+- Every start, stop and run probe of llama-server goes through `server_control::backend()`
+  (`control_lint`); only `runstate.rs` and `server_control.rs` may call `runstate::{start,stop,is_running}`.
+  Under the test redirect the Linux backend never dials D-Bus (`system_connect` is `Unavailable`).
