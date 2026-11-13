@@ -47,11 +47,18 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 
 /// The single package every release up to `MONOLITH_LAST` shipped, which the five replace.
-const MONOLITH: &str = components::BASE_NAME;
+const MONOLITH: &str = components::OLD_BASE_NAME;
 /// The last release that shipped it: the relation against `MONOLITH` stops there, an
 /// unversioned one matches every version of the name, future ones included (rpmbuild
 /// warns about it). See "The `.deb` and `.rpm` (Linux)" in docs/build-packaging.md.
 const MONOLITH_LAST: &str = "2.2.0";
+/// The bound of the `.rpm` Obsoletes against the 2.4 configurator and llama.cpp
+/// packages (`<MONOLITH>-<component>`): the first version after the last release
+/// under the old name. Their versions read `2.4.0+llama.cpp.<tag>`, which rpm
+/// orders above 2.4.0 and below 2.4.1, so `< 2.4.1` catches every such build.
+const OLD_SPLIT_BEFORE: &str = "2.4.1";
+/// The `.rpm` Release of every package, which a versioned Provides spells too.
+const RPM_RELEASE: &str = "1";
 const OPT_DIR: &str = "opt/private-ai"; // relative to the package root
 const BIN_DIR: &str = "opt/private-ai/bin"; // llama.cpp + pai-config
 const RT_DIR: &str = "opt/private-ai/lib"; // the bundled GPU runtimes
@@ -492,9 +499,10 @@ pub fn run(want_deb: bool, want_rpm: bool, keep_staging: bool) -> Result<()> {
         let doc = root.join("usr/share/doc").join(c.package());
         std::fs::create_dir_all(&doc)?;
         let mut copyright = format!(
-            "{} {} is part of {MONOLITH} {fw_version}, distributed under the MIT licence:\n\n",
+            "{} {} is part of {} {fw_version}, distributed under the MIT licence:\n\n",
             c.package(),
-            version_of(*c)
+            version_of(*c),
+            components::BASE_NAME
         );
         copyright.push_str(&std::fs::read_to_string(repo.join("LICENSE"))?);
         copyright.push_str(&format!(
@@ -566,7 +574,7 @@ pub fn run(want_deb: bool, want_rpm: bool, keep_staging: bool) -> Result<()> {
                 repo_git(&["config", "user.email"])
             );
             if m == " <>" {
-                format!("{MONOLITH} <nobody@localhost>")
+                format!("{} <nobody@localhost>", components::BASE_NAME)
             } else {
                 m
             }
@@ -741,7 +749,7 @@ fn deb_relations(f: &Fields) -> (String, String, String) {
     if f.component == Component::Config {
         recommends.push("libxkbcommon0, libxkbcommon-x11-0, libwayland-client0, libx11-6, libxcursor1, libxi6, libegl1".into());
     }
-    let mut conflicts = vec![MONOLITH.to_string()];
+    let mut conflicts = vec![MONOLITH.to_string(), old_package(f.component)];
     if f.component == Component::Llama {
         conflicts.push("llama.cpp".into());
     }
@@ -752,9 +760,71 @@ fn deb_relations(f: &Fields) -> (String, String, String) {
     )
 }
 
+/// The `.deb` control file of one package: its identity, the scanned
+/// `depends`, [`deb_relations`], and the takeover of the packages it
+/// replaces (`Replaces`, `Provides`).
+fn deb_control(
+    f: &Fields,
+    arch: &str,
+    maintainer: &str,
+    installed_size: &str,
+    depends: &str,
+) -> String {
+    let line = |tag: &str, value: &str| {
+        if value.is_empty() {
+            String::new()
+        } else {
+            format!("{tag}: {value}\n")
+        }
+    };
+    // Debian folds the long description one space in, a blank line as " .".
+    let body: String = f
+        .description
+        .lines()
+        .map(|l| {
+            if l.is_empty() {
+                " .\n".to_string()
+            } else {
+                format!(" {l}\n")
+            }
+        })
+        .collect();
+    let (recommends, breaks, conflicts) = deb_relations(f);
+    let old = old_package(f.component);
+    format!(
+        "Package: {}\nVersion: {}\nArchitecture: {arch}\nMaintainer: {maintainer}\nInstalled-Size: {installed_size}\n{}{}{}Conflicts: {conflicts}\nReplaces: {MONOLITH}, {old}\nProvides: {old} (= {})\nSection: utils\nPriority: optional\n{}Description: {}\n{body}",
+        f.component.package(),
+        f.version,
+        line("Depends", depends),
+        line("Recommends", &recommends),
+        line("Breaks", &breaks),
+        f.version,
+        line("Homepage", f.homepage),
+        f.summary,
+    )
+}
+
+/// The 2.3 and 2.4 package of a component, which this one takes over.
+fn old_package(c: Component) -> String {
+    format!("{MONOLITH}-{}", c.suffix())
+}
+
 /// The `.rpm` relations, one tag per line.
 fn rpm_relations(f: &Fields) -> String {
     let mut lines = vec![format!("Obsoletes:      {MONOLITH} <= {MONOLITH_LAST}")];
+    // The old package of this component: a runtime is versioned by its SDK and
+    // built locally, so no last version under the old name is known; its own
+    // version, inclusive, takes the old package of the same SDK or an older one.
+    let old = old_package(f.component);
+    if f.component.is_runtime() {
+        lines.push(format!("Obsoletes:      {old} <= {}", f.version));
+    } else {
+        lines.push(format!("Obsoletes:      {old} < {OLD_SPLIT_BEFORE}"));
+    }
+    lines.push(format!(
+        "Provides:       {old} = {}-{RPM_RELEASE}",
+        f.version
+    ));
     if let Some(v) = f.depends_on_llama {
         lines.push(format!(
             "Requires:       {} = {v}",
@@ -903,37 +973,9 @@ fn build_deb(
     let installed_size = output(cmd("du").args(["-sk", "--exclude=DEBIAN"]).arg(root))
         .and_then(|s| s.split_whitespace().next().map(str::to_string))
         .unwrap_or_default();
-    let line = |tag: &str, value: &str| {
-        if value.is_empty() {
-            String::new()
-        } else {
-            format!("{tag}: {value}\n")
-        }
-    };
-    // Debian folds the long description one space in, a blank line as " .".
-    let body: String = f
-        .description
-        .lines()
-        .map(|l| {
-            if l.is_empty() {
-                " .\n".to_string()
-            } else {
-                format!(" {l}\n")
-            }
-        })
-        .collect();
-    let (recommends, breaks, conflicts) = deb_relations(f);
     std::fs::write(
         root.join("DEBIAN/control"),
-        format!(
-            "Package: {package}\nVersion: {}\nArchitecture: {arch}\nMaintainer: {maintainer}\nInstalled-Size: {installed_size}\n{}{}{}Conflicts: {conflicts}\nReplaces: {MONOLITH}\nSection: utils\nPriority: optional\n{}Description: {}\n{body}",
-            f.version,
-            line("Depends", &depends),
-            line("Recommends", &recommends),
-            line("Breaks", &breaks),
-            line("Homepage", f.homepage),
-            f.summary,
-        ),
+        deb_control(f, arch, maintainer, &installed_size, &depends),
     )?;
     // zstd: the tree is several GiB of GPU kernels and xz would take many
     // minutes.
@@ -1012,7 +1054,7 @@ fn build_rpm(
         format!(
             r#"Name:           {package}
 Version:        {version}
-Release:        1
+Release:        {RPM_RELEASE}
 Summary:        {summary}
 License:        {license}
 {url}{relations}
@@ -1127,60 +1169,197 @@ mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
+    /// The packages of the 2.4 releases and earlier, spelled split so the
+    /// names lint stays clean: the monolith of 2.2 and earlier, and the
+    /// split packages `<OLD>-<component>` of 2.3 and 2.4.
+    const OLD: &str = concat!("llama-cpp", "-framework");
+
+    fn fields_v<'a>(
+        component: Component,
+        version: &'a str,
+        runtimes: &'a [(Component, String)],
+        depends_on_llama: Option<&'a str>,
+    ) -> Fields<'a> {
+        Fields {
+            version,
+            ..fields(component, runtimes, depends_on_llama)
+        }
+    }
+
     #[test]
     fn llama_cpp_recommends_its_runtimes_and_refuses_any_other_version() {
         let runtimes = [(Component::Rocm, "10.1.0".to_string())];
         let f = fields(Component::Llama, &runtimes, None);
         let (recommends, breaks, conflicts) = deb_relations(&f);
-        assert_eq!(recommends, "llama-cpp-framework-rocm (= 10.1.0)");
+        assert_eq!(recommends, "private-ai-framework-rocm (= 10.1.0)");
         assert_eq!(
             breaks,
-            "llama-cpp-framework-rocm (<< 10.1.0), llama-cpp-framework-rocm (>> 10.1.0)"
+            "private-ai-framework-rocm (<< 10.1.0), private-ai-framework-rocm (>> 10.1.0)"
         );
-        assert_eq!(conflicts, "llama-cpp-framework, llama.cpp");
+        assert_eq!(conflicts, format!("{OLD}, {OLD}-llama, llama.cpp"));
         let rpm = rpm_relations(&f);
         assert!(
-            rpm.contains("Recommends:     llama-cpp-framework-rocm = 10.1.0"),
+            rpm.contains("Recommends:     private-ai-framework-rocm = 10.1.0"),
             "{rpm}"
         );
         assert!(
-            rpm.contains("Conflicts:      llama-cpp-framework-rocm < 10.1.0"),
+            rpm.contains("Conflicts:      private-ai-framework-rocm < 10.1.0"),
             "{rpm}"
         );
         assert!(
-            rpm.contains("Conflicts:      llama-cpp-framework-rocm > 10.1.0"),
+            rpm.contains("Conflicts:      private-ai-framework-rocm > 10.1.0"),
             "{rpm}"
         );
         assert!(
-            rpm.contains("Obsoletes:      llama-cpp-framework <= 2.2.0\n"),
+            rpm.contains(&format!("Obsoletes:      {OLD} <= 2.2.0\n")),
             "{rpm}"
         );
+        assert!(!rpm.contains(&format!("{OLD}-rocm")), "{rpm}");
     }
 
     #[test]
     fn the_configurator_requires_its_llama_cpp_exactly() {
-        let f = fields(Component::Config, &[], Some("2.3.0+llama.cpp.v0.9.0"));
+        let f = fields(Component::Config, &[], Some("2.99.0+llama.cpp.v0.9.0"));
         assert!(rpm_relations(&f)
-            .contains("Requires:       llama-cpp-framework-llama = 2.3.0+llama.cpp.v0.9.0"));
-        let (recommends, breaks, _) = deb_relations(&f);
+            .contains("Requires:       private-ai-framework-llama = 2.99.0+llama.cpp.v0.9.0"));
+        let (recommends, breaks, conflicts) = deb_relations(&f);
         assert!(recommends.contains("libxkbcommon0"), "{recommends}");
         assert!(breaks.is_empty());
+        assert_eq!(conflicts, format!("{OLD}, {OLD}-config"));
     }
 
     #[test]
     fn a_runtime_requires_nothing_of_the_others() {
-        let f = fields(Component::Cuda, &[], None);
+        let f = fields_v(Component::Cuda, "13.0.2", &[], None);
         assert_eq!(
             deb_relations(&f),
-            (
-                String::new(),
-                String::new(),
-                "llama-cpp-framework".to_string()
-            )
+            (String::new(), String::new(), format!("{OLD}, {OLD}-cuda"))
         );
         assert_eq!(
             rpm_relations(&f),
-            "Obsoletes:      llama-cpp-framework <= 2.2.0"
+            format!(
+                "Obsoletes:      {OLD} <= 2.2.0\n\
+                 Obsoletes:      {OLD}-cuda <= 13.0.2\n\
+                 Provides:       {OLD}-cuda = 13.0.2-1"
+            )
         );
+    }
+
+    /// The upgrade from 2.4 on a .deb system: each package replaces the old
+    /// package of its component as a rename (Debian Policy 7.6.2: Replaces
+    /// with Conflicts forces the old one out; 7.5: a versioned Provides keeps
+    /// a versioned dependency on the old name satisfied; 7.4: conflicting
+    /// with a name it provides does not stop its own installation).
+    #[test]
+    fn a_deb_takes_over_the_old_package_of_its_component() {
+        let runtimes = [(Component::Rocm, "10.1.0".to_string())];
+        for (component, version, runtimes, depends) in [
+            (
+                Component::Config,
+                "2.99.0+llama.cpp.v0.9.0",
+                &[][..],
+                "libc6, private-ai-framework-llama (= 2.99.0+llama.cpp.v0.9.0)",
+            ),
+            (
+                Component::Llama,
+                "2.99.0+llama.cpp.v0.9.0",
+                &runtimes[..],
+                "libc6",
+            ),
+            (Component::Rocm, "10.1.0", &[][..], ""),
+            (Component::Vulkan, "1.4.328.1", &[][..], ""),
+        ] {
+            let f = fields_v(component, version, runtimes, None);
+            let old = format!("{OLD}-{}", component.suffix());
+            let text = deb_control(&f, "amd64", "Someone <a@b.c>", "1234", depends);
+            let lines: Vec<&str> = text.lines().collect();
+            let (recommends, breaks, conflicts) = deb_relations(&f);
+            let mut want = vec![
+                format!("Package: private-ai-framework-{}", component.suffix()),
+                format!("Version: {version}"),
+                "Architecture: amd64".to_string(),
+                "Maintainer: Someone <a@b.c>".to_string(),
+                "Installed-Size: 1234".to_string(),
+                format!("Conflicts: {conflicts}"),
+                format!("Replaces: {OLD}, {old}"),
+                format!("Provides: {old} (= {version})"),
+            ];
+            for (tag, value) in [
+                ("Depends", depends),
+                ("Recommends", recommends.as_str()),
+                ("Breaks", breaks.as_str()),
+            ] {
+                if value.is_empty() {
+                    assert!(
+                        !lines.iter().any(|l| l.starts_with(&format!("{tag}:"))),
+                        "an empty {tag} is left out:\n{text}"
+                    );
+                } else {
+                    want.push(format!("{tag}: {value}"));
+                }
+            }
+            for line in &want {
+                assert!(lines.contains(&line.as_str()), "{line} missing:\n{text}");
+            }
+            assert_eq!(
+                lines.iter().filter(|l| l.starts_with("Provides:")).count(),
+                1,
+                "{text}"
+            );
+        }
+    }
+
+    /// The upgrade from 2.4 on an .rpm system, as Fedora's packaging
+    /// guidelines rename a package ("Renaming/Replacing or Removing Existing
+    /// Packages"): `Provides: old = %{version}-%{release}` and `Obsoletes:
+    /// old < $obsEVR`, a fixed bound just beyond the last release under the
+    /// old name. That is 2.4.0 for the configurator and llama.cpp, whose
+    /// versions read 2.4.0+llama.cpp.<tag> (rpm orders that above 2.4.0 and
+    /// below 2.4.1, so `<= 2.4.0` would miss it). A runtime is versioned by
+    /// its SDK and built locally, so no last version is known: its bound is
+    /// its own version, inclusive, which takes the old package of the same
+    /// SDK and any older one (rpm matches Obsoletes against package names
+    /// only, rpm-dependencies(7), so the package does not obsolete its own
+    /// Provides).
+    #[test]
+    fn an_rpm_obsoletes_and_provides_the_old_package_of_its_component() {
+        let runtimes = [(Component::Rocm, "10.1.0".to_string())];
+        let f = fields_v(
+            Component::Config,
+            "2.99.0+llama.cpp.v0.9.0",
+            &[],
+            Some("2.99.0+llama.cpp.v0.9.0"),
+        );
+        let rpm = rpm_relations(&f);
+        for want in [
+            format!("Obsoletes:      {OLD} <= 2.2.0"),
+            format!("Obsoletes:      {OLD}-config < 2.4.1"),
+            format!("Provides:       {OLD}-config = 2.99.0+llama.cpp.v0.9.0-1"),
+        ] {
+            assert!(rpm.lines().any(|l| l == want), "{want} missing:\n{rpm}");
+        }
+        let f = fields_v(Component::Llama, "2.99.0+llama.cpp.v0.9.0", &runtimes, None);
+        let rpm = rpm_relations(&f);
+        for want in [
+            format!("Obsoletes:      {OLD}-llama < 2.4.1"),
+            format!("Provides:       {OLD}-llama = 2.99.0+llama.cpp.v0.9.0-1"),
+            "Conflicts:      llama-cpp".to_string(),
+        ] {
+            assert!(rpm.lines().any(|l| l == want), "{want} missing:\n{rpm}");
+        }
+        for (c, v) in [
+            (Component::Rocm, "10.1.0"),
+            (Component::Vulkan, "1.4.328.1"),
+        ] {
+            let f = fields_v(c, v, &[], None);
+            let rpm = rpm_relations(&f);
+            let old = format!("{OLD}-{}", c.suffix());
+            for want in [
+                format!("Obsoletes:      {old} <= {v}"),
+                format!("Provides:       {old} = {v}-1"),
+            ] {
+                assert!(rpm.lines().any(|l| l == want), "{want} missing:\n{rpm}");
+            }
+        }
     }
 }

@@ -1,4 +1,4 @@
-# Custom action of the MSI (llama-cpp-framework.wxs, StopProcesses): stop the
+# Custom action of the MSI (private-ai-framework.wxs, StopProcesses): stop the
 # configurator and llama-server before Windows Installer replaces or removes
 # their files. xtask package embeds this file as a -EncodedCommand, so it runs
 # under the target machine's Windows PowerShell 5.1: keep it 5.1-safe and
@@ -28,9 +28,9 @@ $ErrorActionPreference = 'SilentlyContinue'
 $ProgressPreference = 'SilentlyContinue'   # no CLIXML progress records in the MSI log
 try {
     $dir = (Get-ItemProperty -LiteralPath 'HKLM:\Software\private-ai').InstallDir
-    # An upgrade from a release before the rename finds only the old key and
-    # the old executable, llama-cpp-config: kept beside the new names until the
-    # packages' rename settles the upgrade from the old product.
+    # An upgrade from 2.4 finds only the old key and the old executable,
+    # llama-cpp-config: a 2.4 configurator may still be running while the MSI
+    # replaces it, so it is stopped like the new one.
     if (-not $dir) { $dir = (Get-ItemProperty -LiteralPath 'HKLM:\Software\llama.cpp').InstallDir }
     if (-not $dir) { exit 0 }
     $bin = (Join-Path $dir 'bin').TrimEnd('\') + '\'

@@ -62,16 +62,24 @@
     <Property Id="ARPSYSTEMCOMPONENT" Value="1" />
 
     <!-- The directory an earlier install recorded, as the default for this
-         one. Still the old key: the upgrade from the old product's names is
-         settled with the packages' rename. -->
+         one. On an upgrade from 2.4 only the old key holds it: a directory
+         chosen in 2.4 is kept, while the old default moves to the new one
+         (private-ai under Program Files). The old key is only searched,
+         never written. -->
     <Property Id="INSTALLFOLDER" Secure="yes">
-      <RegistrySearch Id="PreviousInstallDir" Root="HKLM" Key="Software\llama.cpp" Name="InstallDir" Type="directory" Bitness="always64" />
+      <RegistrySearch Id="PreviousInstallDir" Root="HKLM" Key="Software\private-ai" Name="InstallDir" Type="directory" Bitness="always64" />
     </Property>
+    <Property Id="OLDINSTALLDIR" Secure="yes">
+      <RegistrySearch Id="OldInstallDir" Root="HKLM" Key="Software\llama.cpp" Name="InstallDir" Type="directory" Bitness="always64" />
+    </Property>
+    <SetProperty Id="OLDDEFAULTDIR" Value="[ProgramFiles64Folder]llama.cpp\" Before="AppSearch" Sequence="both"/>
+    <SetProperty Id="INSTALLFOLDER" Value="[OLDINSTALLDIR]" After="AppSearch" Sequence="both" Condition="NOT INSTALLFOLDER AND OLDINSTALLDIR AND OLDINSTALLDIR ~&lt;&gt; OLDDEFAULTDIR"/>
 
     <!--
       Guard against a previous installation that is not this MSI: the Apps
-      entry Uninstall\llama.cpp exists and its UninstallString is not an
-      msiexec command line. Ours always is (MachineRegistration below writes
+      entry Uninstall\llama.cpp (the old name, where those installs
+      registered) or Uninstall\private-ai exists and its UninstallString is
+      not an msiexec command line. Ours always is (MachineRegistration below writes
       "MsiExec.exe /I[ProductCode] LLAMA_UNINSTALL=1"), so the guard never
       fires on an upgrade or a repackage of this MSI, and never in
       maintenance (Installed). LaunchConditions runs after AppSearch in both
@@ -82,7 +90,10 @@
     <Property Id="PREVIOUSUNINSTALLSTRING" Secure="yes">
       <RegistrySearch Id="PreviousUninstallString" Root="HKLM" Key="Software\Microsoft\Windows\CurrentVersion\Uninstall\llama.cpp" Name="UninstallString" Type="raw" Bitness="always64" />
     </Property>
-    <Launch Condition="Installed OR NOT PREVIOUSUNINSTALLSTRING OR (PREVIOUSUNINSTALLSTRING ~&gt;&lt; &quot;msiexec&quot;)"
+    <Property Id="NEWUNINSTALLSTRING" Secure="yes">
+      <RegistrySearch Id="NewUninstallString" Root="HKLM" Key="Software\Microsoft\Windows\CurrentVersion\Uninstall\private-ai" Name="UninstallString" Type="raw" Bitness="always64" />
+    </Property>
+    <Launch Condition="Installed OR ((NOT PREVIOUSUNINSTALLSTRING OR (PREVIOUSUNINSTALLSTRING ~&gt;&lt; &quot;msiexec&quot;)) AND (NOT NEWUNINSTALLSTRING OR (NEWUNINSTALLSTRING ~&gt;&lt; &quot;msiexec&quot;)))"
             Message="A previous installation of Private AI Framework must be uninstalled first: Settings &gt; Apps &gt; Private AI Framework &gt; Uninstall. Answer No when it asks whether to delete your data, to keep your configuration. Then run this installer again." />
 
     <!-- The uninstalling user's data tree, and whether it holds a config:
@@ -148,7 +159,7 @@
         <RegistryValue Name="InstallDir" Type="string" Value="[INSTALLFOLDER]" KeyPath="yes" />
         <RegistryValue Name="LlamaBuild" Type="string" Value="$(var.LlamaBuild)" />
       </RegistryKey>
-      <RegistryKey Root="HKLM" Key="Software\Microsoft\Windows\CurrentVersion\Uninstall\llama.cpp" ForceDeleteOnUninstall="yes">
+      <RegistryKey Root="HKLM" Key="Software\Microsoft\Windows\CurrentVersion\Uninstall\private-ai" ForceDeleteOnUninstall="yes">
         <RegistryValue Name="DisplayName" Type="string" Value="Private AI Framework v$(var.Version) (llama $(var.LlamaBuild))" />
         <RegistryValue Name="DisplayVersion" Type="string" Value="$(var.Version)" />
         <RegistryValue Name="Publisher" Type="string" Value="Private AI Framework" />

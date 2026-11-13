@@ -79,3 +79,9 @@ Lessons only: the rules are in `AGENTS.md`.
   x86_64-pc-windows-msvc` stops in libsqlite3-sys's build script (no MSVC compiler). Review it by
   reading, and give a registry test a guard whose `Drop` restores every value it touches (no panic in
   the `Drop`).
+- docs.fedoraproject.org blocks scripted fetches (Anubis): read the packaging guidelines through
+  `https://web.archive.org/web/2026/https://docs.fedoraproject.org/en-US/packaging-guidelines/` and say
+  it is an archive copy. Check an rpm version bound with `rpm --eval '%{lua:
+  print(rpm.vercmp("2.4.0+llama.cpp.v0.9.0", "2.4.1"))}'` (-1, 0, 1): `2.4.0+x` sorts above `2.4.0`.
+- A text-pin test on a file the coder will rename or rewrite (the `.wxs`): also check it goes green on a
+  candidate edit in a temporary copy, then delete the copy, so the red is not a broken helper.

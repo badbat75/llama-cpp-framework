@@ -1048,7 +1048,7 @@ if (Test-IsAdmin) {
     # (which nothing unelevated can alter after the UAC prompt) and runs the
     # verified bytes from memory, so a swap after the write is refused, not
     # executed. Decoded as UTF-8 explicitly, so no BOM is needed.
-    $elevated = Join-Path $env:TEMP "llama-cpp-framework-elevated-$PID.ps1"
+    $elevated = Join-Path $env:TEMP "private-ai-framework-elevated-$PID.ps1"
     $bytes = [Text.UTF8Encoding]::new($false).GetBytes($script)
     [IO.File]::WriteAllBytes($elevated, $bytes)
     $hash = [BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash($bytes)) -replace '-', ''

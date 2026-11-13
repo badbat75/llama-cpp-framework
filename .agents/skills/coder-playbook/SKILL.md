@@ -38,8 +38,9 @@ Lessons only: the rules are in `AGENTS.md`.
   in core and manager, the UI test in config).
 - The names lints (`config/src/tests/names_lint.rs`, `xtask/src/names_lint.rs`) scan code lines for
   the old project names; whole-line comments are skipped, so a test that must name an old name spells
-  it in halves with `concat!`. Package names (`components::BASE_NAME`, the MSI and `.pkg` names) and
-  the upgrade bits of the `.wxs` and `msi-stop-processes.ps1` keep the old names on purpose.
+  it in halves with `concat!`. xtask's lint also scans comments for the old package name: only
+  `components::OLD_BASE_NAME` spells it (the `.deb`/`.rpm` takeover relations are built from it), and
+  in `scripts/` and `installer/` the old registry keys appear only inside `<RegistrySearch>` lines.
 - Several test-name filters go after `--`: `cargo test -p pai-config -- names_lint cli::`.
 - Moving a crate changes the depth of its repo-root paths: `build.rs` (`../../resources`,
   `../../build`, `../../patches`), `include_str!` of `benchmarks/` (`bench/db.rs`, `bench/spec.rs`),

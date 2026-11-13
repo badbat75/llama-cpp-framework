@@ -15,7 +15,10 @@
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 
-pub const BASE_NAME: &str = "llama-cpp-framework";
+pub const BASE_NAME: &str = "private-ai-framework";
+/// The base name of the packages up to 2.4 (the single package of 2.2 and
+/// earlier, then `<base>-<component>`), which the upgrade relations name.
+pub const OLD_BASE_NAME: &str = "llama-cpp-framework";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Component {
@@ -143,8 +146,8 @@ pub fn file_stem(c: Component, fw_version: &str, llama_build: &str, version: &st
 }
 
 /// The newest file in `dir` of each component, for this architecture and
-/// extension (`-amd64.deb`): the last one written. The single package of older
-/// releases has another name and never matches.
+/// extension (`-amd64.deb`): the last one written. The packages of 2.4 and
+/// earlier have another base name and never match.
 pub fn newest_in(dir: &Path, tail: &str) -> Vec<(Component, PathBuf)> {
     let files: Vec<PathBuf> = std::fs::read_dir(dir)
         .map(|rd| rd.flatten().map(|e| e.path()).collect())
@@ -242,7 +245,7 @@ mod tests {
             ("opt/private-ai/lib/libvulkan.1.dylib", Component::Vulkan),
             ("opt/private-ai/lib/libMoltenVK.dylib", Component::Vulkan),
             (
-                "usr/local/share/vulkan/icd.d/llama-cpp-framework-MoltenVK_icd.json",
+                "usr/local/share/vulkan/icd.d/private-ai-framework-MoltenVK_icd.json",
                 Component::Vulkan,
             ),
         ] {
@@ -250,41 +253,90 @@ mod tests {
         }
     }
 
+    /// The packages of the 2.4 releases and earlier, spelled split so the
+    /// names lint stays clean.
+    const OLD_BASE: &str = concat!("llama-cpp", "-framework");
+
+    #[test]
+    fn packages_carry_the_project_name() {
+        let names: Vec<String> = Component::ALL.iter().map(|c| c.package()).collect();
+        assert_eq!(
+            names,
+            [
+                "private-ai-framework-config",
+                "private-ai-framework-llama",
+                "private-ai-framework-rocm",
+                "private-ai-framework-cuda",
+                "private-ai-framework-vulkan",
+            ]
+        );
+    }
+
     #[test]
     fn file_names_carry_the_release_or_the_sdk() {
         assert_eq!(
             file_stem(
                 Component::Llama,
-                "2.3.0",
+                "2.99.0",
                 "v0.9.0",
-                "2.3.0+llama.cpp.v0.9.0"
+                "2.99.0+llama.cpp.v0.9.0"
             ),
-            "llama-cpp-framework-llama-v2.3.0-v0.9.0"
+            "private-ai-framework-llama-v2.99.0-v0.9.0"
         );
         assert_eq!(
-            file_stem(Component::Rocm, "2.3.0", "v0.9.0", "10.1.0"),
-            "llama-cpp-framework-rocm-v10.1.0"
+            file_stem(
+                Component::Config,
+                "2.99.0",
+                "v0.9.0",
+                "2.99.0+llama.cpp.v0.9.0"
+            ),
+            "private-ai-framework-config-v2.99.0-v0.9.0"
+        );
+        assert_eq!(
+            file_stem(Component::Rocm, "2.99.0", "v0.9.0", "10.1.0"),
+            "private-ai-framework-rocm-v10.1.0"
         );
     }
 
+    /// Old packages left in dist/ (the monolith of 2.2 and earlier, the split
+    /// packages of 2.3 and 2.4) are never picked, even when written last.
     #[test]
-    fn the_newest_file_of_each_component_wins_and_the_old_package_never_matches() {
+    fn the_newest_file_of_each_component_wins_and_the_old_packages_never_match() {
         let dir = std::env::temp_dir().join(format!("xtask-newest-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        for file in [
-            "llama-cpp-framework-v2.2.0-v0.8.0-amd64.deb",
-            "llama-cpp-framework-rocm-v10.0.0-amd64.deb",
-            "llama-cpp-framework-rocm-v10.1.0-x86_64.rpm",
-        ] {
-            std::fs::write(dir.join(file), "").unwrap();
+        let start =
+            std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
+        let files = [
+            "private-ai-framework-rocm-v10.0.0-amd64.deb".to_string(),
+            "private-ai-framework-rocm-v10.1.0-x86_64.rpm".to_string(),
+            format!("{OLD_BASE}-v2.2.0-v0.8.0-amd64.deb"),
+            format!("{OLD_BASE}-rocm-v10.2.0-amd64.deb"),
+            format!("{OLD_BASE}-config-v2.4.0-v0.9.0-amd64.deb"),
+        ];
+        // Each file one minute newer than the one before: the old ones last.
+        for (i, file) in files.iter().enumerate() {
+            let path = dir.join(file);
+            std::fs::write(&path, "").unwrap();
+            std::fs::File::options()
+                .write(true)
+                .open(&path)
+                .unwrap()
+                .set_modified(start + std::time::Duration::from_secs(60 * i as u64))
+                .unwrap();
         }
         let found = newest_in(&dir, "-amd64.deb");
-        assert_eq!(found.len(), 1);
-        assert_eq!(found[0].0, Component::Rocm);
-        assert!(found[0]
-            .1
-            .ends_with("llama-cpp-framework-rocm-v10.0.0-amd64.deb"));
+        let names: Vec<(Component, String)> = found
+            .iter()
+            .map(|(c, p)| (*c, p.file_name().unwrap().to_string_lossy().into_owned()))
+            .collect();
+        assert_eq!(
+            names,
+            [(
+                Component::Rocm,
+                "private-ai-framework-rocm-v10.0.0-amd64.deb".to_string()
+            )]
+        );
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

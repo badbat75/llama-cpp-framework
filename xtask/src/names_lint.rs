@@ -2,11 +2,12 @@
 //! executable `pai-config`, the install tree `/opt/private-ai`, the desktop
 //! entry's display name "Private AI Framework", the registry key
 //! `Software\private-ai` and the dist root variable `PRIVATE_AI_DIST_ROOT`,
-//! with no fallback to the old names. A text scan, since most of it lives in
-//! code that compiles on one OS only (`windows/`, `macos/`), in the MSI source
-//! or in PowerShell. The package and file names of the packages are not
-//! checked here, nor the engine's own names (`llama-server`, the llama.cpp
-//! clone under `build/`).
+//! with no fallback to the old names; the packages `private-ai-framework-*`
+//! and the MSI, with the few places that name the old ones for the upgrade
+//! from 2.4. A text scan, since most of it lives in code that compiles on one
+//! OS only (`windows/`, `macos/`), in the MSI source or in PowerShell. The
+//! engine's own names (`llama-server`, the llama.cpp clone under `build/`)
+//! are not checked here.
 
 use std::path::{Path, PathBuf};
 
@@ -38,6 +39,28 @@ fn files(dir: &Path, ext: &[&str], out: &mut Vec<PathBuf>) {
 /// The prefix of every old build variable (`_DIST_ROOT`, `_ROCM`, `_CUDA`,
 /// `_VULKAN_SDK`, `_PATCHES`, `_GPU_LOCK`, `_LLAMA_CPP_DIR`, `_MAINTAINER`).
 const OLD_DIST_ROOT: &str = concat!("LLAMA_FW", "_");
+
+/// The base name of the packages up to 2.4 (the monolith, then
+/// `<base>-<component>`).
+const OLD_PACKAGES: &str = concat!("llama-cpp", "-framework");
+
+/// The one line of xtask that may spell the old package name: the constant
+/// the `.deb` and `.rpm` relations of the upgrade from 2.4 are built from.
+const OLD_PACKAGES_SOURCE: (&str, &str) = (
+    "xtask/src/common/components.rs",
+    concat!(
+        r#"pub const OLD_BASE_NAME: &str = "llama-cpp"#,
+        r#"-framework";"#
+    ),
+);
+
+/// The MSI source, renamed with the packages.
+const WXS: &str = "installer/private-ai-framework.wxs";
+
+/// The one installer file that may name the old executable: the process
+/// stopper, which must stop a 2.4 configurator still running while the
+/// upgrade replaces it.
+const OLD_PRODUCT_STOPPER: &str = "installer/msi-stop-processes.ps1";
 
 /// Lines of xtask's code (not whole-line comments) naming an old name.
 #[test]
@@ -104,12 +127,10 @@ fn scripts_and_dist_sources_name_only_the_new_dist_root_variable() {
 
 /// The MSI installs `pai-config.exe` into `private-ai`, records it under
 /// `HKLM\Software\private-ai`, and shows "Private AI Framework" as the product,
-/// the Apps list entry and the Start menu shortcut. (The upgrade from the old
-/// product, its UpgradeCode, Uninstall key and file name, is the packages'
-/// change, not checked here.)
+/// the Apps list entry and the Start menu shortcut.
 #[test]
 fn the_msi_installs_and_registers_the_new_names() {
-    let wxs = read("installer/llama-cpp-framework.wxs");
+    let wxs = read(WXS);
     for want in [
         r#"<Package Name="Private AI Framework "#,
         r#"<Directory Id="INSTALLFOLDER" Name="private-ai">"#,
@@ -146,5 +167,280 @@ fn the_windows_scripts_find_the_new_install() {
             stopper.contains(want),
             "msi-stop-processes.ps1 has no {want}"
         );
+    }
+}
+
+/// Every line of xtask, comments included (they name the package files), says
+/// `private-ai-framework`: the old package name is spelled once, in the
+/// constant the upgrade relations come from.
+#[test]
+fn xtask_names_the_old_packages_only_in_their_constant() {
+    let mut sources = Vec::new();
+    files(&repo().join("xtask").join("src"), &["rs"], &mut sources);
+    let this = Path::new(file!()).file_name().expect("own name");
+    let (exempt_file, exempt_line) = OLD_PACKAGES_SOURCE;
+    let mut found = Vec::new();
+    let mut exempt_seen = 0;
+    for path in sources.iter().filter(|p| p.file_name() != Some(this)) {
+        let text = std::fs::read_to_string(path).expect("read source");
+        let rel = path
+            .strip_prefix(repo())
+            .expect("under the repo")
+            .to_string_lossy()
+            .replace('\\', "/");
+        for (n, line) in text.lines().enumerate() {
+            if !line.contains(OLD_PACKAGES) {
+                continue;
+            }
+            if rel == exempt_file && line.trim() == exempt_line {
+                exempt_seen += 1;
+                continue;
+            }
+            found.push(format!("{rel}:{}: {}", n + 1, line.trim()));
+        }
+    }
+    assert!(
+        found.is_empty(),
+        "old package name in xtask:\n{}",
+        found.join("\n")
+    );
+    assert_eq!(
+        exempt_seen, 1,
+        "{exempt_file} defines the old package name once: {exempt_line}"
+    );
+    assert!(
+        read("xtask/src/common/components.rs")
+            .contains(r#"pub const BASE_NAME: &str = "private-ai-framework";"#),
+        "components.rs names the packages private-ai-framework"
+    );
+}
+
+/// The scripts and the installer sources never name the old packages, and
+/// the old product's names (its registry keys, its executable) only where the
+/// upgrade from 2.4 needs them: the MSI only searches the old keys, never
+/// writes them, and only the process stopper names the old executable.
+#[test]
+fn scripts_and_installer_name_the_old_product_only_for_the_upgrade() {
+    let mut texts = Vec::new();
+    for dir in ["scripts", "installer"] {
+        files(
+            &repo().join(dir),
+            &["ps1", "sh", "psd1", "toml", "wxs"],
+            &mut texts,
+        );
+    }
+    let old_exe = concat!("llama-cpp", "-config");
+    let mut found = Vec::new();
+    for path in &texts {
+        let rel = path
+            .strip_prefix(repo())
+            .expect("under the repo")
+            .to_string_lossy()
+            .replace('\\', "/");
+        let text = std::fs::read_to_string(path).expect("read");
+        for (n, line) in text.lines().enumerate() {
+            let at = format!("{rel}:{}: {}", n + 1, line.trim());
+            if line.contains(OLD_PACKAGES) {
+                found.push(at.clone());
+            }
+            if line.contains(old_exe) && rel != OLD_PRODUCT_STOPPER {
+                found.push(at.clone());
+            }
+            let old_key = line.contains(r#"\llama.cpp""#) && line.contains("Key=");
+            if old_key && !line.trim_start().starts_with("<RegistrySearch ") {
+                found.push(at);
+            }
+        }
+    }
+    assert!(
+        found.is_empty(),
+        "old product names outside the upgrade's places:\n{}",
+        found.join("\n")
+    );
+    assert!(
+        !repo().join("installer/llama-cpp-framework.wxs").exists(),
+        "the old .wxs is renamed to {WXS}"
+    );
+}
+
+/// The start of every element `<tag ...>` in the .wxs, up to its first `>`
+/// (attribute values escape theirs).
+fn elements<'a>(wxs: &'a str, tag: &str) -> Vec<&'a str> {
+    let open = format!("<{tag} ");
+    let mut out = Vec::new();
+    let mut rest = wxs;
+    while let Some(i) = rest.find(&open) {
+        let from = &rest[i..];
+        let end = from.find('>').map_or(from.len(), |j| j + 1);
+        out.push(&from[..end]);
+        rest = &from[end..];
+    }
+    out
+}
+
+/// One attribute's value in an element.
+fn attr<'a>(element: &'a str, name: &str) -> Option<&'a str> {
+    let key = format!(" {name}=\"");
+    let from = element.find(&key)? + key.len();
+    let len = element[from..].find('"')?;
+    Some(&element[from..from + len])
+}
+
+/// The `<Property Id=...>` holding the RegistrySearch of `key` / `name`.
+fn property_searching(wxs: &str, key: &str, name: &str) -> Option<String> {
+    let search = elements(wxs, "RegistrySearch")
+        .into_iter()
+        .find(|e| attr(e, "Key") == Some(key) && attr(e, "Name") == Some(name))?;
+    let at = wxs.find(search)?;
+    let property = elements(&wxs[..at], "Property").into_iter().last()?;
+    attr(property, "Id").map(str::to_string)
+}
+
+/// The upgrade from 2.4 on Windows: the MSI keeps the UpgradeCode every
+/// version shares (so MajorUpgrade removes the old product), and writes its
+/// own Apps entry under the new name.
+#[test]
+fn the_msi_keeps_its_upgrade_code_and_writes_the_new_apps_entry() {
+    let wxs = read(WXS);
+    let package = elements(&wxs, "Package");
+    assert_eq!(package.len(), 1, "one <Package>");
+    assert_eq!(
+        attr(package[0], "UpgradeCode"),
+        Some("F21D044C-04F5-478D-8F0A-A9B940DB23C3"),
+        "the UpgradeCode never changes"
+    );
+    assert_eq!(elements(&wxs, "MajorUpgrade").len(), 1, "MajorUpgrade kept");
+    let written: Vec<&str> = elements(&wxs, "RegistryKey")
+        .into_iter()
+        .filter_map(|e| attr(e, "Key"))
+        .collect();
+    assert!(
+        written.contains(&r"Software\Microsoft\Windows\CurrentVersion\Uninstall\private-ai"),
+        "the Apps entry is Uninstall\\private-ai: {written:?}"
+    );
+    assert!(
+        !written.iter().any(|k| k.ends_with(r"\llama.cpp")),
+        "no old key written: {written:?}"
+    );
+}
+
+/// The guard against an installation that is not an MSI looks at the Apps
+/// entry of the old name (where those installs registered) and of the new
+/// one: either, when present with an UninstallString that is not msiexec's,
+/// stops the install.
+#[test]
+fn the_msi_guard_checks_the_old_and_the_new_apps_entry() {
+    let wxs = read(WXS);
+    let launch = elements(&wxs, "Launch");
+    assert_eq!(launch.len(), 1, "one launch condition");
+    let condition = attr(launch[0], "Condition").expect("Condition");
+    for entry in ["llama.cpp", "private-ai"] {
+        let key = format!(r"Software\Microsoft\Windows\CurrentVersion\Uninstall\{entry}");
+        let property = property_searching(&wxs, &key, "UninstallString")
+            .unwrap_or_else(|| panic!("no Property searches {key} UninstallString"));
+        for want in [
+            format!("NOT {property}"),
+            format!("({property} ~&gt;&lt; &quot;msiexec&quot;)"),
+        ] {
+            assert!(
+                condition.contains(&want),
+                "the launch condition has no {want}: {condition}"
+            );
+        }
+    }
+    assert!(condition.starts_with("Installed OR "), "{condition}");
+}
+
+/// The install directory: the one recorded under `Software\private-ai`;
+/// else, on an upgrade from 2.4, the one recorded under `Software\llama.cpp`
+/// unless it is the old default `[ProgramFiles64Folder]llama.cpp\` (a
+/// directory the user chose is kept; the old default moves to the new
+/// default, `private-ai` under Program Files).
+#[test]
+fn the_msi_install_dir_follows_the_new_key_then_a_chosen_old_one() {
+    let wxs = read(WXS);
+    assert_eq!(
+        property_searching(&wxs, r"Software\private-ai", "InstallDir").as_deref(),
+        Some("INSTALLFOLDER"),
+        "INSTALLFOLDER comes from HKLM\\Software\\private-ai InstallDir"
+    );
+    let old = property_searching(&wxs, r"Software\llama.cpp", "InstallDir")
+        .expect("a Property searches Software\\llama.cpp InstallDir");
+    assert_ne!(old, "INSTALLFOLDER");
+    let sets = elements(&wxs, "SetProperty");
+    let default = sets
+        .iter()
+        .find(|e| attr(e, "Value") == Some(r"[ProgramFiles64Folder]llama.cpp\"))
+        .and_then(|e| attr(e, "Id"))
+        .expect("a SetProperty holds the old default directory");
+    let set = sets
+        .iter()
+        .find(|e| attr(e, "Id") == Some("INSTALLFOLDER"))
+        .expect("a SetProperty sets INSTALLFOLDER");
+    assert_eq!(attr(set, "Value"), Some(format!("[{old}]").as_str()));
+    let condition = attr(set, "Condition").expect("Condition");
+    for want in [
+        "NOT INSTALLFOLDER".to_string(),
+        format!("{old} ~&lt;&gt; {default}"),
+    ] {
+        assert!(
+            condition.contains(&want),
+            "the INSTALLFOLDER condition has no {want}: {condition}"
+        );
+    }
+    assert!(
+        wxs.contains(r#"<Directory Id="INSTALLFOLDER" Name="private-ai">"#),
+        "the default directory is private-ai"
+    );
+}
+
+/// The process stopper still stops a running 2.4 configurator during the
+/// upgrade (the old executable under the old InstallDir), and says why rather
+/// than leaving it to a later change.
+#[test]
+fn the_process_stopper_still_stops_the_old_configurator() {
+    let stopper = read(OLD_PRODUCT_STOPPER);
+    for want in [
+        "private-ai-framework.wxs",
+        r"HKLM:\Software\llama.cpp",
+        concat!("'llama-cpp", "-config.exe'"),
+        concat!("'llama-cpp", "-config'"),
+    ] {
+        assert!(
+            stopper.contains(want),
+            "msi-stop-processes.ps1 has no {want}"
+        );
+    }
+    assert!(
+        !stopper.contains("settles"),
+        "msi-stop-processes.ps1 still defers the old names to a later change"
+    );
+}
+
+/// What only a Windows or macOS build runs, pinned as text: the MSI's file
+/// name and source, the Windows install's package prefix and Apps entry, the
+/// macOS package identifier and MoltenVK manifest.
+#[test]
+fn the_windows_and_macos_phases_name_the_new_packages() {
+    let package = read("xtask/src/windows/package.rs");
+    for want in [
+        r#""private-ai-framework-v{framework_version}-{llama_build}-{arch}.msi""#,
+        r#"installer\private-ai-framework.wxs"#,
+    ] {
+        assert!(package.contains(want), "windows/package.rs has no {want}");
+    }
+    let install = read("xtask/src/windows/install.rs");
+    for want in [
+        r#"const PKG_NAME: &str = "private-ai-framework";"#,
+        r#"CurrentVersion\Uninstall\private-ai";"#,
+    ] {
+        assert!(install.contains(want), "windows/install.rs has no {want}");
+    }
+    let macos = read("xtask/src/macos/package.rs");
+    for want in [
+        r#"pub const PKG_ID: &str = "org.privateai.framework";"#,
+        r#"const ICD_NAME: &str = "private-ai-framework-MoltenVK_icd.json";"#,
+    ] {
+        assert!(macos.contains(want), "macos/package.rs has no {want}");
     }
 }

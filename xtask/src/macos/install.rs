@@ -46,7 +46,7 @@ pub fn run(force: bool, dry_run: bool, files: Vec<PathBuf>) -> Result<()> {
         }
         given
     };
-    // llama-cpp-framework-config-v<fw>-<llama>-arm64.pkg -> <fw>
+    // private-ai-framework-config-v<fw>-<llama>-arm64.pkg -> <fw>
     let config_prefix = format!("{}-v", Component::Config.package());
     let new_version = pkgs.iter().find_map(|p| {
         let file = name(p);

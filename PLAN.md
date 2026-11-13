@@ -231,16 +231,16 @@ the environment variables become `PRIVATE_AI_DIST_ROOT` and `PRIVATE_AI_DATA_ROO
 
 Slices, in order:
 
-Slices 1 to 3 are done (`git log`): the crate layout (`crates/core`, `crates/manager`, `crates/config`,
+Slices 1 to 4 are done (`git log`): the crate layout (`crates/core`, `crates/manager`, `crates/config`,
 packages `pai-*`, one workspace version), the names that behave (executables `pai-config` and
 `pai-manager`; display name "Private AI Framework"; identifiers `org.privateai.Config`; paths
 `private-ai` under `~/.config`, `~/.local/share`, `%LOCALAPPDATA%`, `/etc`, `%ProgramData%`, `/opt`,
 `C:\Program Files`; registry `Software\private-ai`; every `LLAMA_FW_*` variable now `PRIVATE_AI_*`)
-and the migration of the old user tree and start-at-login entry. Kept on purpose for slice 4: the
-upgrade-from-2.4 logic in the `.wxs` and `msi-stop-processes.ps1`, and the package and MSI names.
+the migration of the old user tree and start-at-login entry, and the packages
+(`private-ai-framework-*`; deb `Conflicts`/`Replaces`/`Provides` and rpm `Obsoletes`/`Provides` of
+the old package of each component; the MSI keeps its UpgradeCode, keeps a directory chosen in 2.4
+and moves the old default; `installer/private-ai-framework.wxs`).
 
-4. **Packages:** names, `Replaces`/`Conflicts`/`Provides`, `Obsoletes`, the MSI's UpgradeCode kept;
-   xtask tests first, `--dry-run` where it exists.
 5. **Docs and scaffolding**, including the manager docs left from slices 3a and 3b of step 1.
 
 - Done when: nothing outside the engine's own names and bench.db history says `llama.cpp-framework` or
@@ -413,6 +413,9 @@ From the Windows work of 2026-10-21, `docs/qwen3.8_27b.md` section 9.
 
 ## Waiting for the user
 
+- Step 2: a Windows build of the renamed MSI and the installer test plan of `installer/AGENTS.md`,
+  which also settles two points no test here can: `ProgramFiles64Folder` is set before `AppSearch`,
+  and the `Type="directory"` search returns the trailing backslash the old-default comparison needs.
 - Step 2: pai-config's Windows code (start at login with the old-entry migration and Task Manager's
   off state, single instance, the migration's Windows branch) is compiled by nobody here (W15): build
   it on Windows and run `cargo test -p pai-config startup -- --ignored` (registry round trips that

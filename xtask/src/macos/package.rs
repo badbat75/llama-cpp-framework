@@ -33,8 +33,8 @@ use anyhow::{bail, Context, Result};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-pub const PKG_ID: &str = "io.github.badbat75.llama-cpp-framework";
-const ICD_NAME: &str = "llama-cpp-framework-MoltenVK_icd.json";
+pub const PKG_ID: &str = "org.privateai.framework";
+const ICD_NAME: &str = "private-ai-framework-MoltenVK_icd.json";
 const ICD_DIR: &str = "/usr/local/share/vulkan/icd.d";
 
 fn is_macho(p: &Path) -> bool {

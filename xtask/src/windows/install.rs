@@ -18,9 +18,9 @@ use anyhow::{bail, Context, Result};
 use std::cmp::Ordering;
 use std::path::{Path, PathBuf};
 
-const PKG_NAME: &str = "llama-cpp-framework";
+const PKG_NAME: &str = "private-ai-framework";
 /// The Apps entry the package writes (64-bit view).
-const UNINSTALL_KEY: &str = r"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\llama.cpp";
+const UNINSTALL_KEY: &str = r"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\private-ai";
 
 fn name(p: &Path) -> String {
     p.file_name()
@@ -97,7 +97,7 @@ pub fn run(dry_run: bool, file: Option<PathBuf>) -> Result<()> {
                 )
             })?,
     };
-    // llama-cpp-framework-v<fw>-<llama>-x64.msi -> <fw>
+    // private-ai-framework-v<fw>-<llama>-x64.msi -> <fw>
     let new_version = name(&msi)
         .strip_prefix(&prefix)
         .and_then(|r| r.split('-').next())

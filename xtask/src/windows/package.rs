@@ -612,11 +612,11 @@ pub fn run(keep_staging: bool, wix_arg: Option<PathBuf>) -> Result<()> {
     std::fs::copy(&ico, stage_bin.join("llama.ico"))?;
 
     // ── The MSI ─────────────────────────────────────────────────────────
-    // e.g. llama-cpp-framework-v2.2.0-v0.7.0-x64.msi: the framework's own
+    // e.g. private-ai-framework-v2.99.0-v0.9.0-x64.msi: the framework's own
     // version first, the bundled llama.cpp release second.
-    let installer = format!("llama-cpp-framework-v{framework_version}-{llama_build}-{arch}.msi");
+    let installer = format!("private-ai-framework-v{framework_version}-{llama_build}-{arch}.msi");
     let out_file = out_dir.join(&installer);
-    let wxs = repo.join(r"installer\llama-cpp-framework.wxs");
+    let wxs = repo.join(r"installer\private-ai-framework.wxs");
     let obj = build_root.join("wix-obj");
 
     // ── Licences ────────────────────────────────────────────────────────
