@@ -15,7 +15,7 @@ pub use loaded_impl::{open, type_name};
 pub use stub_impl::{open, type_name};
 
 /// Dynamically load ggml-base and expose a `KvSource` over a live
-/// `gguf_context`. On Windows the DLL ships next to `llama-cpp-config.exe` in
+/// `gguf_context`. On Windows the DLL ships next to `pai-config.exe` in
 /// `bin\`; on Linux the package puts `libggml-base.so.0` in `lib/` beside
 /// `bin/`, and a build tree keeps it beside llama-server.
 #[cfg(any(windows, target_os = "linux"))]
@@ -164,7 +164,7 @@ mod loaded_impl {
         const LIB: &str = "libggml-base.so.0";
 
         pub(super) fn load_lib() -> Option<HModule> {
-            // The package: `<prefix>/bin/llama-cpp-config` and
+            // The package: `<prefix>/bin/pai-config` and
             // `<prefix>/lib/libggml-base.so.0`. A build tree: beside llama-server
             // (`llama.cpp-cmake/bin`). Last, the loader's own search path.
             let mut candidates: Vec<PathBuf> = Vec::new();

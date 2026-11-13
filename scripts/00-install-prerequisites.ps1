@@ -10,7 +10,7 @@
 # SDK) are installed in that same session, every one of them as
 #   <DistRoot>\<Name>\<Version>\windows      e.g. E:\TheRock\10.1.0\windows
 # DistRoot defaults to the one in installer\dist-sources.psd1 and is
-# overridden by -DistRoot, by LLAMA_FW_DIST_ROOT, or by what xtask configure
+# overridden by -DistRoot, by PRIVATE_AI_DIST_ROOT, or by what xtask configure
 # recorded (scripts\dists.ps1). Versions sit side by side, and nothing is ever
 # deleted. Nothing is pinned either: all three converge to the newest STABLE
 # release their vendor publishes (dist-sources.psd1 says where each one is
@@ -40,7 +40,7 @@
 
 [CmdletBinding()]
 param(
-    [string]$DistRoot  # where the SDK dists live (<DistRoot>\<Name>\<Version>\windows). If omitted: LLAMA_FW_DIST_ROOT, config-build.psd1, dist-sources.psd1
+    [string]$DistRoot  # where the SDK dists live (<DistRoot>\<Name>\<Version>\windows). If omitted: PRIVATE_AI_DIST_ROOT, config-build.psd1, dist-sources.psd1
 )
 
 $ErrorActionPreference = 'Stop'
@@ -512,7 +512,7 @@ function Install-Rust {
 # ── Banner ──────────────────────────────────────────────────────────
 
 Write-Host ""
-Write-Host "  llama.cpp-framework: Install & Update Toolchain" -ForegroundColor Cyan
+Write-Host "  Private AI Framework: Install & Update Toolchain" -ForegroundColor Cyan
 Write-Host "  ================================================" -ForegroundColor Cyan
 Write-Host ""
 
@@ -1367,11 +1367,11 @@ foreach ($scope in 'Machine', 'User') {
 # copy, both precede PATH). It does not follow a HIP_PATH move and does not
 # have to: it changes with the next installer.
 # Doubled separators collapsed and a trailing one dropped, for comparison only:
-# the MSI writes its PATH entry as ...\llama.cpp\bin\, and a hand-edited entry
+# the MSI writes its PATH entry as ...\private-ai\bin\, and a hand-edited entry
 # may differ in either.
 function Get-NormalizedDir([string]$Dir) { ($Dir -replace '(?<!^)\\{2,}', '\').TrimEnd('\') }
 $fwBin = $null
-$fwDir = (Get-ItemProperty 'HKLM:\Software\llama.cpp' -ErrorAction SilentlyContinue).InstallDir
+$fwDir = (Get-ItemProperty 'HKLM:\Software\private-ai' -ErrorAction SilentlyContinue).InstallDir
 if ($fwDir -and (Test-Path (Join-Path $fwDir 'bin'))) { $fwBin = Get-NormalizedDir (Join-Path $fwDir 'bin') }
 # amdhip64_*.dll in more than one PATH dir: a second DIST (legacy SDK, a
 # hand-added TheRock), whose rocblas.dll/libhipblaslt.dll then resolve by

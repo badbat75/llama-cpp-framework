@@ -1,4 +1,4 @@
-//! `build config` (02-build, second half): llama-cpp-config, the Rust GUI +
+//! `build config` (02-build, second half): pai-config, the Rust GUI +
 //! CLI configurator, built with cargo. A module of its own: it needs nothing
 //! from the llama.cpp build but the clone (for the icon). What follows the
 //! cargo build is the OS's: Linux and macOS copy the binary next to
@@ -13,14 +13,14 @@ use anyhow::{Context, Result};
 use std::path::Path;
 use std::path::PathBuf;
 
-/// Builds llama-cpp-config in release mode and returns cargo's target dir.
+/// Builds pai-config in release mode and returns cargo's target dir.
 /// `llama_cpp_dir` is the clone the architecture tables come from; `build_jobs` caps
 /// cargo (0 = cargo's default, all cores).
 pub fn build(llama_cpp_dir: &str, build_jobs: u32) -> Result<PathBuf> {
     let repo = util::repo_root();
 
     ui::say("");
-    ui::warn("  === llama-cpp-config (Rust) ===");
+    ui::warn("  === pai-config (Rust) ===");
 
     // The cargo that runs xtask (cargo run sets CARGO), else PATH, else where
     // rustup installs it: only a NEW login shell has ~/.cargo/bin on PATH.
@@ -83,7 +83,7 @@ pub fn build(llama_cpp_dir: &str, build_jobs: u32) -> Result<PathBuf> {
         "pai-manager",
     ]);
     // Its build script generates the architecture tables from this clone.
-    c.env("LLAMA_FW_LLAMA_CPP_DIR", llama_cpp_dir);
+    c.env("PRIVATE_AI_LLAMA_CPP_DIR", llama_cpp_dir);
     if build_jobs > 0 {
         c.arg("--jobs").arg(build_jobs.to_string());
     }
@@ -103,15 +103,12 @@ pub fn install_next_to_server(target: &Path) -> Result<()> {
     // Staged beside the target and renamed over it, as install(1) does, so a
     // configurator that is running keeps its file.
     std::fs::create_dir_all(&bin_dir)?;
-    let dest = bin_dir.join("llama-cpp-config");
-    let staged = bin_dir.join(".llama-cpp-config.new");
-    std::fs::copy(target.join("release/llama-cpp-config"), &staged)?;
+    let dest = bin_dir.join("pai-config");
+    let staged = bin_dir.join(".pai-config.new");
+    std::fs::copy(target.join("release/pai-config"), &staged)?;
     set_mode(&staged, 0o755)?;
     std::fs::rename(&staged, &dest)?;
-    ui::ok(format!(
-        "llama-cpp-config build complete: {}",
-        dest.display()
-    ));
+    ui::ok(format!("pai-config build complete: {}", dest.display()));
     crate::common::llama::print_version(&dest, false)?;
     ui::say("");
     Ok(())

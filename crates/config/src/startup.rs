@@ -5,9 +5,9 @@
 //!
 //! - **Windows**: the per-user Run registry entry
 //!   (`HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, value
-//!   `llama-cpp-config`), the one Task Manager's Startup panel edits.
+//!   `org.privateai.Config`), the one Task Manager's Startup panel edits.
 //! - **Linux**: an XDG autostart entry,
-//!   `~/.config/autostart/llama-cpp-config.desktop`, which GNOME (and every
+//!   `~/.config/autostart/org.privateai.Config.desktop` (named after the app id), which GNOME (and every
 //!   other desktop following the spec) runs at login and which GNOME Tweaks'
 //!   Startup Applications edits.
 //!
@@ -18,8 +18,8 @@
 //! exe path.
 //!
 //! The entry registers the INSTALLED copy, not `current_exe()`: `set_enabled`
-//! prefers the exe under `HKLM\Software\llama.cpp\InstallDir\bin` on Windows
-//! and `/usr/bin/llama-cpp-config` (the deb/rpm's symlink) on Linux
+//! prefers the exe under `HKLM\Software\private-ai\InstallDir\bin` on Windows
+//! and `/usr/bin/pai-config` (the deb/rpm's symlink) on Linux
 //! (`installed_exe`), falling back to `current_exe()` only when no install is
 //! found (portable / dev use). `current_exe()` alone is a footgun: toggling
 //! the setting from a second, non-installed build (e.g. a `cargo run` debug exe)
@@ -95,19 +95,19 @@ mod linux {
     use super::io;
     use std::path::{Path, PathBuf};
 
-    const ENTRY_NAME: &str = "llama-cpp-config.desktop";
+    const ENTRY_NAME: &str = "org.privateai.Config.desktop";
 
-    /// Where the deb/rpm put the command: a symlink into `/opt/llama.cpp/bin`.
+    /// Where the deb/rpm put the command: a symlink into `/opt/private-ai/bin`.
     /// Registered as-is rather than resolved, so the entry survives a package
     /// that moves the real file.
-    const INSTALLED_EXE: &str = "/usr/bin/llama-cpp-config";
+    const INSTALLED_EXE: &str = "/usr/bin/pai-config";
 
-    /// `$XDG_CONFIG_HOME/autostart/llama-cpp-config.desktop`, with the spec's
+    /// `$XDG_CONFIG_HOME/autostart/org.privateai.Config.desktop`, with the spec's
     /// `~/.config` default. Under the e2e redirect `home_dir()` is the temp
     /// tree and `XDG_CONFIG_HOME` is ignored, so a test can never write the
     /// developer's real autostart directory.
     fn entry_path() -> PathBuf {
-        let redirected = std::env::var_os("LLAMA_CPP_CONFIG_DATA_ROOT").is_some();
+        let redirected = std::env::var_os("PRIVATE_AI_DATA_ROOT").is_some();
         let config = std::env::var_os("XDG_CONFIG_HOME")
             .filter(|v| !redirected && !v.is_empty())
             .map(PathBuf::from)
@@ -150,10 +150,10 @@ mod linux {
         format!(
             "[Desktop Entry]\n\
              Type=Application\n\
-             Name=llama.cpp Config\n\
+             Name=Private AI Framework\n\
              Comment=Configure and run llama-server and its model presets\n\
              Exec={}\n\
-             Icon=llama-cpp-config\n\
+             Icon=org.privateai.Config\n\
              Terminal=false\n\
              X-GNOME-Autostart-enabled=true\n",
             exec_line(exe, minimized)
@@ -231,7 +231,7 @@ mod win {
     };
 
     const RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
-    const VALUE_NAME: &str = "llama-cpp-config";
+    const VALUE_NAME: &str = "org.privateai.Config";
 
     fn wide(s: &str) -> Vec<u16> {
         s.encode_utf16().chain(std::iter::once(0)).collect()
@@ -347,10 +347,10 @@ mod win {
         }
     }
 
-    const INSTALL_KEY: &str = r"Software\llama.cpp";
+    const INSTALL_KEY: &str = r"Software\private-ai";
     const INSTALL_VALUE: &str = "InstallDir";
 
-    /// The exe of the INSTALLED copy (`InstallDir\bin\llama-cpp-config.exe`) as
+    /// The exe of the INSTALLED copy (`InstallDir\bin\pai-config.exe`) as
     /// recorded by the installer, or `None` when no
     /// install is registered (portable / dev use) or the recorded exe is missing. `set_enabled`
     /// prefers this over `current_exe()` so the logon entry always launches the
@@ -362,7 +362,7 @@ mod win {
         }
         let exe = std::path::Path::new(&dir)
             .join("bin")
-            .join("llama-cpp-config.exe");
+            .join("pai-config.exe");
         exe.is_file().then_some(exe)
     }
 
@@ -423,6 +423,34 @@ mod win {
     }
 }
 
+/// E2E phase for the login entry, for the shared UI test to call: under the
+/// process-wide `PRIVATE_AI_DATA_ROOT` redirect (`paths::redirect_for_tests`)
+/// the XDG autostart file is `<redirect>/.config/autostart/` named after the
+/// app id, written by an enable and removed by a disable. Linux only: the
+/// Windows entry is the real HKCU Run key, which no test writes.
+#[cfg(all(test, target_os = "linux"))]
+pub(crate) fn startup_e2e() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    crate::paths::redirect_for_tests(dir.path());
+    let autostart = dir.path().join(".config").join("autostart");
+    let entry = autostart.join("org.privateai.Config.desktop");
+
+    assert!(!is_enabled(), "nothing written yet");
+    set_enabled(true, true).expect("enable");
+    assert!(entry.is_file(), "the entry is named after the app id");
+    assert_eq!(
+        std::fs::read_dir(&autostart)
+            .expect("autostart dir")
+            .count(),
+        1,
+        "one entry, no file under the old name"
+    );
+    assert!(is_enabled() && starts_minimized());
+    set_enabled(false, false).expect("disable");
+    assert!(!entry.exists());
+    assert!(!is_enabled());
+}
+
 #[cfg(test)]
 mod tests {
     use super::{choose_autostart_exe, run_command};
@@ -432,8 +460,8 @@ mod tests {
     // falling back to the running exe only when no install is present.
     #[test]
     fn choose_autostart_exe_prefers_the_installed_copy() {
-        let installed = PathBuf::from(r"C:\Program Files\llama.cpp\bin\llama-cpp-config.exe");
-        let current = PathBuf::from(r"C:\dev\target\debug\llama-cpp-config.exe");
+        let installed = PathBuf::from(r"C:\Program Files\private-ai\bin\pai-config.exe");
+        let current = PathBuf::from(r"C:\dev\target\debug\pai-config.exe");
         assert_eq!(
             choose_autostart_exe(Some(installed.clone()), current.clone()),
             installed
@@ -448,14 +476,14 @@ mod tests {
     // see the #[ignore] round-trip below for a manual check.
     #[test]
     fn run_command_quotes_the_exe_and_carries_the_minimized_choice() {
-        let exe = std::path::Path::new(r"C:\Program Files\llama.cpp\bin\llama-cpp-config.exe");
+        let exe = std::path::Path::new(r"C:\Program Files\private-ai\bin\pai-config.exe");
         assert_eq!(
             run_command(exe, true),
-            r#""C:\Program Files\llama.cpp\bin\llama-cpp-config.exe" gui --minimized"#
+            r#""C:\Program Files\private-ai\bin\pai-config.exe" gui --minimized"#
         );
         assert_eq!(
             run_command(exe, false),
-            r#""C:\Program Files\llama.cpp\bin\llama-cpp-config.exe" gui"#
+            r#""C:\Program Files\private-ai\bin\pai-config.exe" gui"#
         );
     }
 
@@ -466,10 +494,10 @@ mod tests {
     #[test]
     fn autostart_entry_round_trips_through_its_text() {
         use super::linux::{entry_text, exec_line, parse_entry};
-        let exe = std::path::Path::new("/usr/bin/llama-cpp-config");
+        let exe = std::path::Path::new("/usr/bin/pai-config");
         assert_eq!(
             exec_line(exe, true),
-            r#""/usr/bin/llama-cpp-config" gui --minimized"#
+            r#""/usr/bin/pai-config" gui --minimized"#
         );
         assert_eq!(
             exec_line(std::path::Path::new("/opt/my $apps/100%/x"), false),
@@ -479,13 +507,25 @@ mod tests {
         assert_eq!(parse_entry(&entry_text(exe, false)), (true, false));
     }
 
+    // The entry names the product by its display name and its icon by the
+    // app id, as the packaged desktop entry does.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn autostart_entry_names_the_product_and_the_app_id() {
+        let text = super::linux::entry_text(std::path::Path::new("/usr/bin/pai-config"), false);
+        let lines: Vec<&str> = text.lines().collect();
+        assert!(lines.contains(&"Name=Private AI Framework"), "{text}");
+        assert!(lines.contains(&"Icon=org.privateai.Config"), "{text}");
+        assert!(!text.contains("llama-cpp"), "{text}");
+    }
+
     // An entry GNOME's startup panel switched off (or one marked Hidden) reads
     // as disabled although the file exists; a file with no Exec is no entry.
     #[cfg(target_os = "linux")]
     #[test]
     fn autostart_entry_switched_off_by_the_desktop_reads_as_disabled() {
         use super::linux::{entry_text, parse_entry};
-        let on = entry_text(std::path::Path::new("/usr/bin/llama-cpp-config"), true);
+        let on = entry_text(std::path::Path::new("/usr/bin/pai-config"), true);
         let gnome_off = on.replace(
             "X-GNOME-Autostart-enabled=true",
             "X-GNOME-Autostart-enabled=false",
@@ -505,9 +545,8 @@ mod tests {
     #[test]
     fn autostart_entry_file_is_written_rewritten_and_removed() {
         use super::linux::{parse_entry, write_entry};
-        let dir =
-            std::env::temp_dir().join(format!("llama-cpp-config-autostart-{}", std::process::id()));
-        let path = dir.join("autostart").join("llama-cpp-config.desktop");
+        let dir = std::env::temp_dir().join(format!("pai-config-autostart-{}", std::process::id()));
+        let path = dir.join("autostart").join("org.privateai.Config.desktop");
         let read = || parse_entry(&std::fs::read_to_string(&path).unwrap());
 
         write_entry(&path, true, true).expect("enable minimized");

@@ -1,7 +1,7 @@
 //! The configurator's text files (each language, and `cli.toml`, the messages a CLI
 //! command shares with the GUI), installed read-only beside the binaries:
 //! `<root>/share/strings/`, from `crates/core/strings/`. The configurator
-//! finds them from its own path (`<root>/bin/llama-cpp-config`,
+//! finds them from its own path (`<root>/bin/pai-config`,
 //! `paths::strings_dir`) and reads them at startup.
 
 use super::{ui, util};

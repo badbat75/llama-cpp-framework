@@ -20,7 +20,7 @@
     #
     # DistRoot is the DEFAULT, the counterpart of /mnt/data on Linux. It is
     # overridden, in this order, by -DistRoot on scripts\00-install-prerequisites.ps1
-    # or --dist-root on xtask configure, by the LLAMA_FW_DIST_ROOT environment
+    # or --dist-root on xtask configure, by the PRIVATE_AI_DIST_ROOT environment
     # variable, and by the DistRoot that xtask configure recorded in
     # build\windows\config-build.psd1 (Resolve-DistRoot in scripts\dists.ps1; xtask reads
     # the same default from dist-sources.toml).

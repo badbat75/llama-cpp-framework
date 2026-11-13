@@ -1749,7 +1749,7 @@ pub fn render_report(plan: &Plan, points: &[Point], meta: &RunMeta) -> String {
 
 // ── Where runs live ──────────────────────────────────────────────────────
 
-/// `%LOCALAPPDATA%\llama.cpp\bench\`: a sibling of `config\`, `logs\` and
+/// `%LOCALAPPDATA%\private-ai\bench\`: a sibling of `config\`, `logs\` and
 /// `state\`, not the repo's `build\bench\`, because the GUI also runs on an
 /// installed machine that has no repo.
 pub fn bench_dir() -> PathBuf {

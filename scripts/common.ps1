@@ -30,12 +30,12 @@ $cfg = Import-PowerShellDataFile $cfgPath
 # $distRoot is the root xtask configure RECORDED, so the CUDA Toolkit and the
 # Vulkan SDK that xtask build resolves come from the same root as the HipPath
 # in the config. A config written before the key existed falls
-# back to LLAMA_FW_DIST_ROOT, then to the default in dist-sources.psd1.
+# back to PRIVATE_AI_DIST_ROOT, then to the default in dist-sources.psd1.
 $sources = Import-PowerShellDataFile (Join-Path $repoRoot 'installer\dist-sources.psd1')
 . (Join-Path $PSScriptRoot 'dists.ps1')
 $distRoot = if ($cfg.DistRoot) { $cfg.DistRoot } else { Resolve-DistRoot $null $null $sources }
 
-# cargo's target dir for llama-cpp-config. xtask build passes it to cargo as
+# cargo's target dir for pai-config. xtask build passes it to cargo as
 # CARGO_TARGET_DIR, xtask package stages the exe from it. A bare `cargo build`
 # outside the scripts lands here too, through the `[build] target-dir` that
 # xtask configure writes into .cargo\config.toml (keep the two in step).

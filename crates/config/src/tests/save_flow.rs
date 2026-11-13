@@ -17,9 +17,9 @@
 //! confirm acts on, the folder cleanup, a failed delete reported) with the
 //! CLI's `preset delete --delete-files` under the same rules.
 //!
-//! Config IO is redirected at a temp dir through `LLAMA_CPP_CONFIG_DATA_ROOT`
+//! Config IO is redirected at a temp dir through `PRIVATE_AI_DATA_ROOT`
 //! (see `paths::data_root`), set here BEFORE the tabs are wired, so the flow
-//! never touches the user's real `%LOCALAPPDATA%\llama.cpp`.
+//! never touches the user's real `%LOCALAPPDATA%\private-ai`.
 //!
 //! Not a `#[test]` of its own: exposes `run(&app)`, called from ui_bindings'
 //! single shared `#[test]`. Topology rationale: `src/tests/mod.rs`.
@@ -33,7 +33,7 @@ pub(super) fn run(app: &AppWindow) {
     // Redirect ALL config IO before anything below reads or writes a path.
     // The TempDir guard lives to the end of the flow.
     let dir = tempfile::tempdir().expect("tempdir");
-    std::env::set_var("LLAMA_CPP_CONFIG_DATA_ROOT", dir.path());
+    crate::paths::redirect_for_tests(dir.path());
     // A prompt of the user's, configured before the tab first reads the
     // setting: the shipped ones are read-only, so the external-edit check
     // further down needs a file of its own.

@@ -5,7 +5,7 @@
 //! an upgrade and a same-version repackage are one command, the MSI's
 //! MajorUpgrade (AllowSameVersionUpgrades). A downgrade, which the MSI
 //! refuses, removes the installed version first (basic UI, so the user data
-//! under %LOCALAPPDATA%\llama.cpp is kept: installer\AGENTS.md).
+//! under %LOCALAPPDATA%\private-ai is kept: installer\AGENTS.md).
 //!
 //! Running programs need no check here: the package's StopProcesses custom
 //! action stops the configurator and llama-server before files are replaced.

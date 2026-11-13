@@ -1,5 +1,5 @@
 //! Probes / starts / stops the llama-server process, and reconstructs its launch
-//! command from server.ini. `server_args()` is the single source of truth for the
+//! command from server.ini. `pai_core::launch::server_args()` is the single source of truth for the
 //! arg list, shared by `start()` (spawns the process) and `command_line()` (the
 //! human-readable, shell-pasteable rendering shown in the Server tab's Command
 //! Line card). `start()` additionally sets cwd = `paths::data_root()`,
@@ -30,7 +30,7 @@ use crate::strings;
 use std::io;
 
 // The launch itself (args, env, the process) is the core's, shared with
-// `private-ai-manager run-instance`.
+// `pai-manager run-instance`.
 pub use pai_core::launch::env_vars;
 use pai_core::launch::{has_presets_in, launch_command, server_args};
 

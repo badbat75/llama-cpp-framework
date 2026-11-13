@@ -3,7 +3,7 @@
 //!
 //! Two jobs on the same cards wreck both measurements, and nothing in a
 //! benchmark's numbers says it happened. So a run holds an exclusive lock on
-//! one file for its whole length: `LLAMA_FW_GPU_LOCK` when set (point other GPU
+//! one file for its whole length: `PRIVATE_AI_GPU_LOCK` when set (point other GPU
 //! jobs of yours at the same file, e.g. `flock -o <file> <job>`), else
 //! `gpu.lock` in the bench directory. It is `File::lock`, i.e. `flock` on Linux
 //! (compatible with `flock(1)` on the same path) and `LockFileEx` on Windows,
@@ -28,7 +28,7 @@ pub struct Guard {
 }
 
 pub fn path() -> PathBuf {
-    match std::env::var_os("LLAMA_FW_GPU_LOCK") {
+    match std::env::var_os("PRIVATE_AI_GPU_LOCK") {
         Some(p) if !p.is_empty() => PathBuf::from(p),
         _ => super::bench_dir().join("gpu.lock"),
     }

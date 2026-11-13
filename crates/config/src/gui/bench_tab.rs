@@ -1850,7 +1850,7 @@ pub(super) fn wire(
                     .map_err(|e| e.to_string())
                     .and_then(|(_, r)| r.ok_or_else(|| strings::t("no-report")))
             });
-            let path = std::env::temp_dir().join(format!("llama-cpp-config-{name}.md"));
+            let path = std::env::temp_dir().join(format!("pai-config-{name}.md"));
             match report.and_then(|r| std::fs::write(&path, r).map_err(|e| e.to_string())) {
                 // The default .md handler, as for the prompt file.
                 Ok(()) => {

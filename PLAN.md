@@ -235,7 +235,7 @@ Slices, in order:
    `crates/config` (`pai-config`, GUI and CLI); later `crates/bff` and `crates/fe`. Folders carry no
    prefix and packages are named `pai-*` (a package named bare `core` would clash with Rust's `core`).
    One version for all crates: `[workspace.package]` in the root `Cargo.toml`.
-2. **The names that behave** (display name and identifiers decided with the user on 2026-11-13: the
+2. **The names that behave**, done except the gaps noted below (display name and identifiers decided with the user on 2026-11-13: the
    display name is "Private AI Framework" everywhere people see it (window title "Private AI
    Framework: Config", Start menu, Apps list, desktop entry, MSI product name); identifiers are
    reverse-DNS `org.privateai.*`: XDG app id `org.privateai.Config`, desktop file
@@ -246,7 +246,11 @@ Slices, in order:
    the services (`private-ai-manager.service`, `llama.cpp@<id>.service`) and the D-Bus name keep their
    names. Also the window title and product strings, the environment variables,
    the user and system paths, the registry key, the service user; tests pin the new names first.
-3. **Migration** of the old user tree, tests first.
+3. **Migration** of the old user tree, tests first. It also removes what 2.4 left for start at login
+   (the HKCU Run value `llama-cpp-config`, `~/.config/autostart/llama-cpp-config.desktop`) and
+   re-creates it under the new name when it was on. The names lint gains the other old variables
+   (`LLAMA_FW_ROCM`, `_CUDA`, `_VULKAN_SDK`, `_PATCHES`, `_GPU_LOCK`, `_LLAMA_CPP_DIR`,
+   `_MAINTAINER`), renamed in slice 2 but not linted.
 4. **Packages:** names, `Replaces`/`Conflicts`/`Provides`, `Obsoletes`, the MSI's UpgradeCode kept;
    xtask tests first, `--dry-run` where it exists.
 5. **Docs and scaffolding**, including the manager docs left from slices 3a and 3b of step 1.

@@ -20,7 +20,7 @@ use anyhow::{bail, Context, Result};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-/// `build config`: llama-cpp-config, in the VS environment as it always
+/// `build config`: pai-config, in the VS environment as it always
 /// was. Not copied anywhere: the package phase stages it straight from
 /// cargo's release dir.
 pub fn build_config() -> Result<()> {
@@ -28,11 +28,8 @@ pub fn build_config() -> Result<()> {
     vs_env(&cfg)?;
     let target = crate::common::configurator::build(&cfg.llama_cpp_dir, cfg.build_jobs)?;
     ui::ok(format!(
-        "llama-cpp-config build complete: {}",
-        target
-            .join("release")
-            .join("llama-cpp-config.exe")
-            .display()
+        "pai-config build complete: {}",
+        target.join("release").join("pai-config.exe").display()
     ));
     ui::say("");
     Ok(())
@@ -289,7 +286,7 @@ pub fn activate_vs(bat: &Path) -> Result<()> {
     // `set` goes to a file of its own, in UTF-16 (cmd /u), so neither the
     // console code page nor VsDevCmd's own output can garble a value.
     let dump = std::env::temp_dir().join(format!(
-        "llama-cpp-framework-vsenv-{}.txt",
+        "private-ai-framework-vsenv-{}.txt",
         std::process::id()
     ));
     let status = std::process::Command::new("cmd.exe")

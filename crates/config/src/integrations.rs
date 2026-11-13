@@ -648,7 +648,7 @@ fn advertised(p: &presets::Preset, fit_on: bool, n_ctx_train: Option<u32>) -> Op
 /// Whether llama-server runs the fit for preset `id`, as llama.cpp resolves the
 /// `fit` key: the section's own, else the `[*]` section's (`common/preset.cpp`
 /// cascades the global preset onto every one; the router's own command line
-/// never carries `-fit`, `runstate::server_args`), else upstream's default ON
+/// never carries `-fit`, `pai_core::launch::server_args`), else upstream's default ON
 /// (`common_params::fit_params = true`, common/common.h). Read from the RAW
 /// section because `Preset::fit` reads an absent key as off, the framework's
 /// own default that it always writes; a hand-written section without the key is

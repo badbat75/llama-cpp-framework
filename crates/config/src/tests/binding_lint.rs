@@ -939,7 +939,7 @@ fn strings_t_keys_and_the_language_file_match() {
 
 /// A key in `cli.toml` alone is a miss in the window, so what holds one must stay
 /// out of the GUI's reach: nothing but the CLI's own code (and the binary roots,
-/// `main.rs` and `bin/private-ai-manager.rs`, which dispatch and which no module
+/// `main.rs` and `bin/pai-manager.rs`, which dispatch and which no module
 /// can call) may call into `cli.rs` or a `CLI_ONLY_FNS` function. The library root
 /// `lib.rs` is NOT exempt: every module, the GUI's included, can call into it.
 #[test]
@@ -959,7 +959,7 @@ fn cli_only_code_is_not_called_from_elsewhere() {
         .collect();
     let mut hits = Vec::new();
     for (path, rest) in &texts {
-        if path.ends_with("main.rs") || path.ends_with("bin/private-ai-manager.rs") {
+        if path.ends_with("main.rs") || path.ends_with("bin/pai-manager.rs") {
             continue;
         }
         if names(rest, "cli", Some(':')) {

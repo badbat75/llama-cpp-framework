@@ -10,7 +10,7 @@
 //! a claim about the running config (see `draft_line`).
 //!
 //! Metadata is read with llama.cpp's OWN gguf reader: we runtime-load
-//! `ggml-base.dll` (shipped next to `llama-cpp-config.exe` in `bin\`; on Linux
+//! `ggml-base.dll` (shipped next to `pai-config.exe` in `bin\`; on Linux
 //! `libggml-base.so.0`, in the package's `lib/`) and call
 //! `gguf_init_from_file` with `no_alloc = true`, so only the header + tensor
 //! infos are read, never the multi-GB weights. No GGUF parsing is reimplemented

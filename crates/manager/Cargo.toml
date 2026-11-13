@@ -2,7 +2,7 @@
 name = "pai-manager"
 version.workspace = true
 edition = "2021"
-description = "private-ai-manager: runs llama-server instances as services"
+description = "pai-manager: runs llama-server instances as services"
 license = "MIT"
 publish = false
 
@@ -13,13 +13,13 @@ path = "src/lib.rs"
 doctest = false
 
 [[bin]]
-name = "private-ai-manager"
-path = "src/bin/private-ai-manager.rs"
+name = "pai-manager"
+path = "src/bin/pai-manager.rs"
 
 [dependencies]
 pai-core = { path = "../core" }
 
-# private-ai-manager's D-Bus service on the system bus (manager/dbus.rs). The
+# pai-manager's D-Bus service on the system bus (manager/dbus.rs). The
 # version already in the lock (accesskit, atspi, ashpd), so there is one zbus;
 # 5.x keeps the blocking API the synchronous core needs.
 [target.'cfg(target_os = "linux")'.dependencies]

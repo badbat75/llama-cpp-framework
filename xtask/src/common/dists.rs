@@ -109,13 +109,14 @@ pub struct Dists {
 
 impl Dists {
     /// The dist root in use: an explicit one wins (made absolute), then
-    /// LLAMA_FW_DIST_ROOT, then the one the configure phase recorded, then
+    /// PRIVATE_AI_DIST_ROOT, then the one the configure phase recorded, then
     /// the default in dist-sources.toml.
     pub fn resolve(explicit: Option<&Path>, recorded: Option<&str>) -> Result<Dists> {
         let sources = load_sources()?;
         let root = if let Some(p) = explicit {
             util::absolute(p)
-        } else if let Some(env) = std::env::var_os("LLAMA_FW_DIST_ROOT").filter(|v| !v.is_empty()) {
+        } else if let Some(env) = std::env::var_os("PRIVATE_AI_DIST_ROOT").filter(|v| !v.is_empty())
+        {
             PathBuf::from(env)
         } else if let Some(r) = recorded.filter(|r| !r.is_empty()) {
             PathBuf::from(r)
@@ -190,4 +191,39 @@ pub fn dist_version(dir: &Path) -> String {
         .and_then(|p| p.file_name())
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The dist root's environment variable is `PRIVATE_AI_DIST_ROOT`, after an
+    /// explicit root and before the recorded one; the old name is ignored. The
+    /// only test that sets either variable, and nothing else in the tests reads
+    /// them, so it cannot race another.
+    #[test]
+    fn the_dist_root_variable_is_private_ai_dist_root() {
+        let old = concat!("LLAMA_FW", "_DIST_ROOT");
+        std::env::remove_var("PRIVATE_AI_DIST_ROOT");
+        std::env::set_var(old, "/old/dists");
+        let root = |explicit: Option<&Path>| {
+            Dists::resolve(explicit, Some("/recorded/dists"))
+                .expect("resolve")
+                .root
+        };
+        let ignored = root(None);
+        std::env::set_var("PRIVATE_AI_DIST_ROOT", "/new/dists");
+        let from_env = root(None);
+        let explicit = root(Some(Path::new("/explicit/dists")));
+        std::env::remove_var("PRIVATE_AI_DIST_ROOT");
+        std::env::remove_var(old);
+
+        assert_eq!(
+            ignored,
+            PathBuf::from("/recorded/dists"),
+            "old name ignored"
+        );
+        assert_eq!(from_env, PathBuf::from("/new/dists"));
+        assert_eq!(explicit, PathBuf::from("/explicit/dists"));
+    }
 }

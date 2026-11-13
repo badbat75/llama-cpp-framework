@@ -8,7 +8,7 @@
 //!   scripts\00-install-prerequisites.ps1 does it all natively
 //! - `configure`: detects paths and tools, writes the build config under
 //!   `build/<os>/`
-//! - `build`: llama.cpp (CMake + Ninja) and llama-cpp-config (cargo), two
+//! - `build`: llama.cpp (CMake + Ninja) and pai-config (cargo), two
 //!   separate modules: `build llama`, `build config`, or both
 //! - `package`: the `.deb` and the `.rpm` (Linux), the MSI (Windows), the
 //!   `.pkg` (macOS)
@@ -26,6 +26,8 @@ mod common;
 mod linux;
 #[cfg(target_os = "macos")]
 mod macos;
+#[cfg(test)]
+mod names_lint;
 #[cfg(windows)]
 mod windows;
 
@@ -34,7 +36,7 @@ use common::ui;
 use std::path::PathBuf;
 
 #[derive(Parser)]
-#[command(name = "xtask", about = "llama.cpp-framework build orchestrator")]
+#[command(name = "xtask", about = "Private AI Framework build orchestrator")]
 struct Cli {
     #[command(subcommand)]
     phase: Phase,
@@ -47,7 +49,7 @@ enum Phase {
     /// Idempotent; a source that cannot be reached keeps what is installed.
     Prereq {
         /// Where the dists live (<root>/<Name>/<Version>/<os>). Default:
-        /// LLAMA_FW_DIST_ROOT, else the recorded one, else dist-sources.toml.
+        /// PRIVATE_AI_DIST_ROOT, else the recorded one, else dist-sources.toml.
         #[arg(long)]
         dist_root: Option<PathBuf>,
         /// Comma-separated legs to skip: sccache,rocm,cuda,nccl,vulkan (macOS:
@@ -66,7 +68,7 @@ enum Phase {
         #[arg(long)]
         dist_root: Option<PathBuf>,
     },
-    /// Build llama.cpp and/or llama-cpp-config (default: both, in that order).
+    /// Build llama.cpp and/or pai-config (default: both, in that order).
     Build {
         #[arg(value_enum)]
         module: Option<Module>,
@@ -98,7 +100,7 @@ enum Phase {
         /// Install the .rpm (default: by the host's distribution).
         #[arg(long)]
         rpm: bool,
-        /// Install even while a program from /opt/llama.cpp/bin runs (Linux,
+        /// Install even while a program from /opt/private-ai/bin runs (Linux,
         /// macOS; on Windows the MSI stops them itself).
         #[arg(long)]
         force: bool,
@@ -115,7 +117,7 @@ enum Phase {
 enum Module {
     /// llama.cpp: CMake configure + Ninja build
     Llama,
-    /// llama-cpp-config: cargo build --release
+    /// pai-config: cargo build --release
     Config,
 }
 

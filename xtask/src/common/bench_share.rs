@@ -2,7 +2,7 @@
 //! `<root>/share/benchmarks/`: every published `standard-<X.Y>.ini` with
 //! `standard.versions`, and every prompt in `benchmarks/prompts/` with the
 //! images the image prompts name. The
-//! configurator finds it from its own path (`<root>/bin/llama-cpp-config`,
+//! configurator finds it from its own path (`<root>/bin/pai-config`,
 //! `paths::bench_share_dir`) and checks each file against the digests built
 //! into it, so every installed version stays runnable.
 

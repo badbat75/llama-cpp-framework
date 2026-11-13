@@ -15,14 +15,14 @@
 # HIP_PATH, CUDA_PATH or VULKAN_SDK left by another install, or by a console
 # opened before an upgrade, cannot pull a build out of the layout.
 
-# The dist root in use. An explicit -DistRoot wins, then LLAMA_FW_DIST_ROOT,
+# The dist root in use. An explicit -DistRoot wins, then PRIVATE_AI_DIST_ROOT,
 # then what xtask configure recorded in config-build.psd1, then the default
 # in dist-sources.psd1. Returned without a trailing separator, except for a
 # bare drive root (E:\), which needs it to stay an absolute path.
 function Resolve-DistRoot {
     param([string]$Explicit, $Config, $Sources)
     $root = $Explicit
-    if (-not $root) { $root = $env:LLAMA_FW_DIST_ROOT }
+    if (-not $root) { $root = $env:PRIVATE_AI_DIST_ROOT }
     if (-not $root -and $Config) { $root = $Config.DistRoot }
     if (-not $root) { $root = $Sources.DistRoot }
     if (-not $root) { throw 'no dist root: dist-sources.psd1 has no DistRoot' }

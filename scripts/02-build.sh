@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Build llama.cpp (CMake + Ninja; CUDA + Vulkan + HIP on Linux, Metal +
-# Vulkan/MoltenVK on macOS) and llama-cpp-config (cargo), the counterpart of
+# Vulkan/MoltenVK on macOS) and pai-config (cargo), the counterpart of
 # 02-build.ps1. Two separate modules: xtask/src/<os>/build_llama.rs and
 # xtask/src/common/configurator.rs; this script only runs them.
 # docs/build-compiling.md explains the decisions behind the build.

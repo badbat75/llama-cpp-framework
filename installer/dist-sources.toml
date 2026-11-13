@@ -19,7 +19,7 @@
 # so a version bump needs no environment change.
 
 # The DEFAULT dist root. Overridden, in this order, by --dist-root on the
-# prerequisites and configure phases, by the LLAMA_FW_DIST_ROOT environment
+# prerequisites and configure phases, by the PRIVATE_AI_DIST_ROOT environment
 # variable, and by the dist root the configure phase recorded in
 # build/<os>/config-build.* (which build and package use).
 # A leading ~/ is the user's home.

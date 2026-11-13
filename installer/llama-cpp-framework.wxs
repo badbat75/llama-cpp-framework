@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  llama.cpp-framework MSI (WiX Toolset; the version and the extensions are
+  Private AI Framework MSI (WiX Toolset; the version and the extensions are
   pinned in installer\wix-toolset.psd1). Built by xtask package, which passes:
     Version          framework version (crates\config\Cargo.toml), X.Y.Z
     LlamaBuild       the bundled llama.cpp release tag (v0.7.0; a bNNNN build
@@ -23,8 +23,8 @@
     directory). ProductCode is generated per build (Package has no
     ProductCode attribute), so every package is a major upgrade of the last.
   -->
-  <Package Name="llama.cpp-framework v$(var.Version) (llama $(var.LlamaBuild))"
-           Manufacturer="llama.cpp"
+  <Package Name="Private AI Framework v$(var.Version) (llama $(var.LlamaBuild))"
+           Manufacturer="Private AI Framework"
            Version="$(var.Version)"
            UpgradeCode="F21D044C-04F5-478D-8F0A-A9B940DB23C3"
            Scope="perMachine"
@@ -40,7 +40,7 @@
       and must still replace the installed package (ICE61 warns about it).
     -->
     <MajorUpgrade AllowSameVersionUpgrades="yes"
-                  DowngradeErrorMessage="A newer version of llama.cpp-framework is already installed. To install this older version, uninstall the installed one first (Settings, Apps)." />
+                  DowngradeErrorMessage="A newer version of Private AI Framework is already installed. To install this older version, uninstall the installed one first (Settings, Apps)." />
 
     <!--
       One file, no external cabinets: the cabinets are embedded in the .msi
@@ -62,7 +62,8 @@
     <Property Id="ARPSYSTEMCOMPONENT" Value="1" />
 
     <!-- The directory an earlier install recorded, as the default for this
-         one. -->
+         one. Still the old key: the upgrade from the old product's names is
+         settled with the packages' rename. -->
     <Property Id="INSTALLFOLDER" Secure="yes">
       <RegistrySearch Id="PreviousInstallDir" Root="HKLM" Key="Software\llama.cpp" Name="InstallDir" Type="directory" Bitness="always64" />
     </Property>
@@ -82,12 +83,12 @@
       <RegistrySearch Id="PreviousUninstallString" Root="HKLM" Key="Software\Microsoft\Windows\CurrentVersion\Uninstall\llama.cpp" Name="UninstallString" Type="raw" Bitness="always64" />
     </Property>
     <Launch Condition="Installed OR NOT PREVIOUSUNINSTALLSTRING OR (PREVIOUSUNINSTALLSTRING ~&gt;&lt; &quot;msiexec&quot;)"
-            Message="A previous installation of llama.cpp-framework must be uninstalled first: Settings &gt; Apps &gt; llama.cpp-framework &gt; Uninstall. Answer No when it asks whether to delete your data, to keep your configuration. Then run this installer again." />
+            Message="A previous installation of Private AI Framework must be uninstalled first: Settings &gt; Apps &gt; Private AI Framework &gt; Uninstall. Answer No when it asks whether to delete your data, to keep your configuration. Then run this installer again." />
 
     <!-- The uninstalling user's data tree, and whether it holds a config:
          the removal dialog offers it only when config\server.ini exists. -->
     <Property Id="LLAMA_USERDATA_FOUND" Secure="yes">
-      <DirectorySearch Id="UserDataRoot" Path="[LocalAppDataFolder]llama.cpp" Depth="0">
+      <DirectorySearch Id="UserDataRoot" Path="[LocalAppDataFolder]private-ai" Depth="0">
         <DirectorySearch Id="UserDataConfig" Path="config" Depth="0">
           <FileSearch Id="UserDataServerIni" Name="server.ini" />
         </DirectorySearch>
@@ -98,11 +99,11 @@
     <!-- Set by our ARP entry's UninstallString: open the UI on the removal
          dialog instead of the maintenance wizard. -->
     <Property Id="LLAMA_UNINSTALL" Secure="yes" />
-    <SetProperty Id="LLAMA_USERDATA_DIR" Value="[LocalAppDataFolder]llama.cpp" Before="AppSearch" Sequence="both" Condition="NOT LLAMA_USERDATA_DIR" />
+    <SetProperty Id="PRIVATE_AI_USERDATA_DIR" Value="[LocalAppDataFolder]private-ai" Before="AppSearch" Sequence="both" Condition="NOT PRIVATE_AI_USERDATA_DIR" />
 
     <!-- ── Layout: bin\, lib\, .kpack\ under the install root, no file at the root ── -->
     <StandardDirectory Id="ProgramFiles64Folder">
-      <Directory Id="INSTALLFOLDER" Name="llama.cpp">
+      <Directory Id="INSTALLFOLDER" Name="private-ai">
         <Directory Id="BINFOLDER" Name="bin" />
         <Directory Id="LIBFOLDER" Name="lib" />
         <Directory Id="SHAREFOLDER" Name="share" />
@@ -111,7 +112,7 @@
     </StandardDirectory>
     <StandardDirectory Id="ProgramMenuFolder">
       <!-- Not ALL CAPS: a public property under the Start Menu trips ICE90. -->
-      <Directory Id="StartMenuDir" Name="llama.cpp" />
+      <Directory Id="StartMenuDir" Name="Private AI Framework" />
     </StandardDirectory>
 
     <!--
@@ -125,7 +126,7 @@
       <!-- Read-only: the benchmark method, share\benchmarks\specs (every
            published standard-<X.Y>.ini) and share\benchmarks\prompts, and the
            configurator's language files and the CLI's cli.toml, share\strings.
-           llama-cpp-config finds them from its own path, bin\..\share. -->
+           pai-config finds them from its own path, bin\..\share. -->
       <Files Directory="SHAREFOLDER" Include="$(var.StagingDir)\share\**" />
 <?if $(var.HasLib) = 1 ?>
       <Files Directory="LIBFOLDER" Include="$(var.StagingDir)\lib\**" />
@@ -136,21 +137,21 @@
     </ComponentGroup>
 
     <!--
-      HKLM\Software\llama.cpp (64-bit view, as the package is x64): InstallDir
+      HKLM\Software\private-ai (64-bit view, as the package is x64): InstallDir
       and LlamaBuild, read by the configurator (startup.rs) and by
       scripts\00-install-prerequisites.ps1. InstallDir carries a trailing backslash
       here (an MSI directory property always does); every reader joins paths
       onto it.
     -->
     <Component Id="MachineRegistration" Directory="INSTALLFOLDER">
-      <RegistryKey Root="HKLM" Key="Software\llama.cpp" ForceDeleteOnUninstall="yes">
+      <RegistryKey Root="HKLM" Key="Software\private-ai" ForceDeleteOnUninstall="yes">
         <RegistryValue Name="InstallDir" Type="string" Value="[INSTALLFOLDER]" KeyPath="yes" />
         <RegistryValue Name="LlamaBuild" Type="string" Value="$(var.LlamaBuild)" />
       </RegistryKey>
       <RegistryKey Root="HKLM" Key="Software\Microsoft\Windows\CurrentVersion\Uninstall\llama.cpp" ForceDeleteOnUninstall="yes">
-        <RegistryValue Name="DisplayName" Type="string" Value="llama.cpp-framework v$(var.Version) (llama $(var.LlamaBuild))" />
+        <RegistryValue Name="DisplayName" Type="string" Value="Private AI Framework v$(var.Version) (llama $(var.LlamaBuild))" />
         <RegistryValue Name="DisplayVersion" Type="string" Value="$(var.Version)" />
-        <RegistryValue Name="Publisher" Type="string" Value="llama.cpp" />
+        <RegistryValue Name="Publisher" Type="string" Value="Private AI Framework" />
         <RegistryValue Name="DisplayIcon" Type="string" Value="[BINFOLDER]llama.ico" />
         <RegistryValue Name="InstallLocation" Type="string" Value="[INSTALLFOLDER]" />
         <RegistryValue Name="EstimatedSize" Type="integer" Value="$(var.EstimatedSizeKb)" />
@@ -170,11 +171,11 @@
     -->
     <Component Id="SystemPath" Directory="BINFOLDER">
       <Environment Id="PathBin" Name="PATH" Value="[BINFOLDER]" Part="last" Action="set" System="yes" Permanent="no" />
-      <RegistryValue Root="HKLM" Key="Software\llama.cpp" Name="SystemPath" Type="integer" Value="1" KeyPath="yes" />
+      <RegistryValue Root="HKLM" Key="Software\private-ai" Name="SystemPath" Type="integer" Value="1" KeyPath="yes" />
     </Component>
 
     <!--
-      Optional: Start Menu "llama.cpp Config", in the ALL-USERS Start Menu
+      Optional: Start Menu "Private AI Framework", in the ALL-USERS Start Menu
       (ProgramMenuFolder resolves there in a per-machine package). The key
       path is an HKCU value, the documented pattern for a non-advertised
       shortcut: ICE38/ICE43 require it, because the validator counts the
@@ -183,26 +184,26 @@
       uninstalls, a one-DWORD leftover in the installer's hive, nothing else).
     -->
     <Component Id="StartMenuShortcut" Directory="StartMenuDir">
-      <Shortcut Id="ConfigShortcut" Name="llama.cpp Config" Description="llama.cpp-framework configurator"
-                Target="[BINFOLDER]llama-cpp-config.exe" WorkingDirectory="BINFOLDER" Icon="llama.ico" />
+      <Shortcut Id="ConfigShortcut" Name="Private AI Framework" Description="Private AI Framework configurator"
+                Target="[BINFOLDER]pai-config.exe" WorkingDirectory="BINFOLDER" Icon="llama.ico" />
       <RemoveFolder Id="RemoveStartMenuDir" On="uninstall" />
-      <RegistryValue Root="HKCU" Key="Software\llama.cpp" Name="StartMenuShortcut" Type="integer" Value="1" KeyPath="yes" />
+      <RegistryValue Root="HKCU" Key="Software\private-ai" Name="StartMenuShortcut" Type="integer" Value="1" KeyPath="yes" />
     </Component>
 
     <!-- ── Features: the CustomizeDlg tree ── -->
     <Feature Id="Main" Title="llama.cpp binaries (required)"
-             Description="llama.cpp binaries, the llama-cpp-config configurator and the bundled AMD ROCm and NVIDIA CUDA runtime libraries."
+             Description="llama.cpp binaries, the pai-config configurator and the bundled AMD ROCm and NVIDIA CUDA runtime libraries."
              Level="1" AllowAbsent="no" AllowAdvertise="no" ConfigurableDirectory="INSTALLFOLDER" Display="expand">
       <ComponentGroupRef Id="Payload" />
       <ComponentRef Id="MachineRegistration" />
     </Feature>
     <Feature Id="SystemPathFeature" Title="Add to system PATH"
-             Description="Add the llama.cpp bin directory to the system PATH."
+             Description="Add the Private AI Framework bin directory to the system PATH."
              Level="1" AllowAdvertise="no">
       <ComponentRef Id="SystemPath" />
     </Feature>
     <Feature Id="StartMenuFeature" Title="Start Menu shortcut"
-             Description="Create a Start Menu shortcut to llama-cpp-config."
+             Description="Create a Start Menu shortcut to pai-config."
              Level="1" AllowAdvertise="no">
       <ComponentRef Id="StartMenuShortcut" />
     </Feature>
@@ -242,14 +243,14 @@
       must not roll back the uninstall.
     -->
     <SetProperty Id="DeleteUserData" Sequence="execute" Before="DeleteUserData"
-                 Value="&quot;[System64Folder]cmd.exe&quot; /d /c rd /s /q &quot;[LLAMA_USERDATA_DIR]&quot;" />
+                 Value="&quot;[System64Folder]cmd.exe&quot; /d /c rd /s /q &quot;[PRIVATE_AI_USERDATA_DIR]&quot;" />
     <CustomAction Id="DeleteUserData" BinaryRef="Wix4UtilCA_X64" DllEntry="WixQuietExec" Execute="deferred" Impersonate="yes" Return="ignore" />
 
     <InstallExecuteSequence>
       <Custom Action="StopProcesses" Before="InstallValidate"
               Condition="NOT Installed OR REMOVE~=&quot;ALL&quot; OR REINSTALL" />
       <Custom Action="DeleteUserData" After="RemoveFiles"
-              Condition="REMOVE~=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE AND LLAMA_DELETEUSERDATA=&quot;1&quot; AND UILevel &gt;= 5 AND LLAMA_USERDATA_DIR" />
+              Condition="REMOVE~=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE AND LLAMA_DELETEUSERDATA=&quot;1&quot; AND UILevel &gt;= 5 AND PRIVATE_AI_USERDATA_DIR" />
     </InstallExecuteSequence>
 
     <!-- ── UI ── -->
@@ -320,9 +321,9 @@
         <Control Id="Back" Type="PushButton" X="180" Y="243" Width="56" Height="17" Disabled="yes" Text="!(loc.WixUIBack)" />
         <Control Id="BottomLine" Type="Line" X="0" Y="234" Width="373" Height="0" />
         <Control Id="Title" Type="Text" X="135" Y="15" Width="225" Height="30" Transparent="yes" NoPrefix="yes"
-                 Text="{\WixUI_Font_Bigger}llama.cpp-framework v$(var.Version)" />
+                 Text="{\WixUI_Font_Bigger}Private AI Framework v$(var.Version)" />
         <Control Id="Description" Type="Text" X="135" Y="45" Width="225" Height="185" Transparent="yes" NoPrefix="yes"
-                 Text="This installs llama.cpp-framework (llama.cpp $(var.LlamaBuild)) with the llama-cpp-config configurator. The AMD ROCm, NVIDIA CUDA, Vulkan loader and OpenSSL runtime libraries are bundled.&#13;&#10;&#13;&#10;Not bundled, needed at runtime:&#13;&#10;- Visual C++ Redistributable x64: always required&#13;&#10;- AMD GPU: the Adrenalin driver&#13;&#10;- NVIDIA GPU: the NVIDIA driver&#13;&#10;- Vulkan: the driver of the GPU, any vendor&#13;&#10;&#13;&#10;A backend whose driver is missing is skipped when llama-server starts." />
+                 Text="This installs Private AI Framework (llama.cpp $(var.LlamaBuild)) with the pai-config configurator. The AMD ROCm, NVIDIA CUDA, Vulkan loader and OpenSSL runtime libraries are bundled.&#13;&#10;&#13;&#10;Not bundled, needed at runtime:&#13;&#10;- Visual C++ Redistributable x64: always required&#13;&#10;- AMD GPU: the Adrenalin driver&#13;&#10;- NVIDIA GPU: the NVIDIA driver&#13;&#10;- Vulkan: the driver of the GPU, any vendor&#13;&#10;&#13;&#10;A backend whose driver is missing is skipped when llama-server starts." />
       </Dialog>
 
       <!--
@@ -350,12 +351,12 @@
         <Control Id="BannerLine" Type="Line" X="0" Y="44" Width="373" Height="0" />
         <Control Id="BottomLine" Type="Line" X="0" Y="234" Width="373" Height="0" />
         <Control Id="Title" Type="Text" X="15" Y="15" Width="300" Height="15" Transparent="yes" NoPrefix="yes"
-                 Text="{\WixUI_Font_Title}Remove llama.cpp-framework" />
+                 Text="{\WixUI_Font_Title}Remove Private AI Framework" />
         <Control Id="Text" Type="Text" X="25" Y="60" Width="320" Height="40" NoPrefix="yes"
-                 Text="Click Remove to remove llama.cpp-framework v$(var.Version) from this computer: the programs, the PATH entry and the Start Menu shortcut." />
+                 Text="Click Remove to remove Private AI Framework v$(var.Version) from this computer: the programs, the PATH entry and the Start Menu shortcut." />
         <Control Id="UserDataText" Type="Text" X="25" Y="105" Width="320" Height="60" NoPrefix="yes" Hidden="yes"
                  ShowCondition="LLAMA_USERDATA_FOUND"
-                 Text="Your configuration, model presets, logs and benchmark results are in&#13;&#10;[LLAMA_USERDATA_DIR]&#13;&#10;They are kept unless you tick the box below, so a later install finds them again." />
+                 Text="Your configuration, model presets, logs and benchmark results are in&#13;&#10;[PRIVATE_AI_USERDATA_DIR]&#13;&#10;They are kept unless you tick the box below, so a later install finds them again." />
         <Control Id="DeleteUserData" Type="CheckBox" X="25" Y="170" Width="320" Height="17" Hidden="yes"
                  ShowCondition="LLAMA_USERDATA_FOUND" Property="LLAMA_DELETEUSERDATA" CheckBoxValue="1"
                  Text="&amp;Also delete them (this cannot be undone)" />

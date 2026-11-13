@@ -1,10 +1,10 @@
-//! Paths for the llama.cpp-framework configuration tool.
+//! Paths for the Private AI Framework.
 //!
-//! Four jobs: (1) the user runtime tree, %LOCALAPPDATA%\llama.cpp\ on Windows
+//! Four jobs: (1) the user runtime tree, %LOCALAPPDATA%\private-ai\ on Windows
 //! (config\server.ini, config\presets.ini, config\settings.ini,
-//! logs\llama-server.log) and ~/.local/share/llama.cpp elsewhere, where the
-//! config files live in ~/.config/llama.cpp instead (`config_dir`), overridable
-//! for tests via LLAMA_CPP_CONFIG_DATA_ROOT; (2) locating llama.cpp's binaries
+//! logs\llama-server.log) and ~/.local/share/private-ai elsewhere, where the
+//! config files live in ~/.config/private-ai instead (`config_dir`), overridable
+//! for tests via PRIVATE_AI_DATA_ROOT; (2) locating llama.cpp's binaries
 //! across the installer and dev layouts (`llama_bin`, with `llama_server_exe` /
 //! `llama_bench_exe` as its two callers; it also strips canonicalize()'s \\?\
 //! prefix so the path is shell-pasteable); (3) the ONE
@@ -15,6 +15,13 @@
 
 use std::path::{Path, PathBuf};
 
+/// The directory name of every tree the framework keeps (user data, config,
+/// system config).
+const APP_DIR: &str = "private-ai";
+
+/// The test redirect of the whole data tree (`data_root`).
+const DATA_ROOT_VAR: &str = "PRIVATE_AI_DATA_ROOT";
+
 fn env_path(var: &str) -> Option<PathBuf> {
     std::env::var_os(var).map(PathBuf::from)
 }
@@ -24,7 +31,7 @@ pub fn home_dir() -> PathBuf {
     // home-derived paths (e.g. `server_cfg::default_models_dir`, which save()
     // CREATES on disk) must stay inside the temp tree, or a redirected test
     // would silently touch (and mkdir under) the user's real home.
-    if let Some(p) = env_path("LLAMA_CPP_CONFIG_DATA_ROOT") {
+    if let Some(p) = env_path(DATA_ROOT_VAR) {
         return p;
     }
     #[cfg(windows)]
@@ -37,31 +44,31 @@ pub fn home_dir() -> PathBuf {
     }
 }
 
-/// `%LOCALAPPDATA%\llama.cpp` on Windows, `$HOME/.local/share/llama.cpp` elsewhere.
+/// `%LOCALAPPDATA%\private-ai` on Windows, `$HOME/.local/share/private-ai` elsewhere.
 ///
-/// `LLAMA_CPP_CONFIG_DATA_ROOT` overrides the whole tree (plus
+/// `PRIVATE_AI_DATA_ROOT` overrides the whole tree (plus
 /// `opencode_user_config` below AND `home_dir` above, so home-derived
 /// defaults land in the temp tree too). It exists for the e2e tests under
 /// `src/tests/`, which point config IO at a temp dir so they never touch the
 /// user's real data; it is NOT a supported end-user knob.
 pub fn data_root() -> PathBuf {
-    if let Some(p) = env_path("LLAMA_CPP_CONFIG_DATA_ROOT") {
-        return p.join("llama.cpp");
+    if let Some(p) = env_path(DATA_ROOT_VAR) {
+        return p.join(APP_DIR);
     }
     #[cfg(windows)]
     {
         env_path("LOCALAPPDATA")
             .expect("LOCALAPPDATA not set on Windows")
-            .join("llama.cpp")
+            .join(APP_DIR)
     }
     #[cfg(not(windows))]
     {
-        home_dir().join(".local").join("share").join("llama.cpp")
+        home_dir().join(".local").join("share").join(APP_DIR)
     }
 }
 
-/// `<data_root>\config` on Windows. On Linux `$XDG_CONFIG_HOME/llama.cpp`,
-/// i.e. `~/.config/llama.cpp` unless the variable names another ABSOLUTE path
+/// `<data_root>\config` on Windows. On Linux `$XDG_CONFIG_HOME/private-ai`,
+/// i.e. `~/.config/private-ai` unless the variable names another ABSOLUTE path
 /// (the XDG spec says a relative one is to be ignored): per user, as
 /// `%LOCALAPPDATA%` is, and the directory llama.cpp itself reads a
 /// `config.ini` from (`common/arg.cpp`), which is not a name this tool writes.
@@ -70,33 +77,33 @@ pub fn data_root() -> PathBuf {
 /// every OS, so the e2e tests never touch a real config.
 pub fn config_dir() -> PathBuf {
     #[cfg(not(windows))]
-    if env_path("LLAMA_CPP_CONFIG_DATA_ROOT").is_none() {
+    if env_path(DATA_ROOT_VAR).is_none() {
         let base = env_path("XDG_CONFIG_HOME")
             .filter(|p| p.is_absolute())
             .unwrap_or_else(|| home_dir().join(".config"));
-        return base.join("llama.cpp");
+        return base.join(APP_DIR);
     }
     data_root().join("config")
 }
 
 /// The machine-wide config directory the llama-server instances read:
-/// `/etc/llama.cpp` outside Windows, `%ProgramData%\llama.cpp\config` on
+/// `/etc/private-ai` outside Windows, `%ProgramData%\private-ai\config` on
 /// Windows. Under the test override it is `<override>/system-config` on every
 /// OS, apart from the per-user `config_dir()`.
 pub fn system_config_dir() -> PathBuf {
-    if let Some(p) = env_path("LLAMA_CPP_CONFIG_DATA_ROOT") {
+    if let Some(p) = env_path(DATA_ROOT_VAR) {
         return p.join("system-config");
     }
     #[cfg(windows)]
     {
         env_path("ProgramData")
             .expect("ProgramData not set on Windows")
-            .join("llama.cpp")
+            .join(APP_DIR)
             .join("config")
     }
     #[cfg(not(windows))]
     {
-        PathBuf::from("/etc/llama.cpp")
+        PathBuf::from("/etc").join(APP_DIR)
     }
 }
 
@@ -161,7 +168,7 @@ pub fn settings_ini() -> PathBuf {
 /// version of `standard`, `standard-<X.Y>.ini`, and `standard.versions`) and
 /// `prompts\` (every prompt a version pins, `<name>-<X.Y>.txt|json`).
 /// Read-only, beside the binaries: `<root>\share\benchmarks` where the exe is
-/// `<root>\bin\llama-cpp-config` (every package installs that layout), else
+/// `<root>\bin\pai-config` (every package installs that layout), else
 /// the repo's own `benchmarks\` for a tree build. The binary carries only
 /// `standard.versions` (the digest of every published spec, and each spec
 /// pins its prompts' digests), so an edited file here is refused, not run.
@@ -185,7 +192,7 @@ pub fn bench_prompts_dir() -> PathBuf {
 }
 
 /// The language files as installed: `<root>\share\strings` where the exe is
-/// `<root>\bin\llama-cpp-config` (every package installs that layout), else
+/// `<root>\bin\pai-config` (every package installs that layout), else
 /// the crate's own `strings\` for a tree build. Read-only, like
 /// `bench_share_dir`.
 pub fn strings_dir() -> PathBuf {
@@ -218,7 +225,7 @@ pub fn server_log() -> PathBuf {
 /// The test override redirects this too: the e2e tests exercise flows that read
 /// (and could one day write) opencode.json, and must never touch the real one.
 pub fn opencode_user_config() -> PathBuf {
-    if let Some(p) = env_path("LLAMA_CPP_CONFIG_DATA_ROOT") {
+    if let Some(p) = env_path(DATA_ROOT_VAR) {
         return p.join("opencode").join("opencode.json");
     }
     home_dir()
@@ -397,17 +404,54 @@ pub fn os_path(win: &str) -> String {
     rest.replace('\\', "/")
 }
 
+/// Point the whole data tree at `dir` for a test, through `PRIVATE_AI_DATA_ROOT`,
+/// and refuse to go on unless the paths really follow it: a redirect that is
+/// not honoured would send the test's IO into the user's real tree. The OLD
+/// variable is set too, to a directory of its own inside `dir`, which the paths
+/// must ignore (no fallback to the old name). Process-wide and never restored,
+/// so only an e2e phase calls it (`src/tests/mod.rs`).
+#[cfg(any(test, feature = "test-support"))]
+pub fn redirect_for_tests(dir: &Path) {
+    // Spelled in two halves so the names lint finds no old name in the code.
+    let old_name = concat!("LLAMA_CPP_CONFIG", "_DATA_ROOT");
+    std::env::set_var(old_name, dir.join("old-name-ignored"));
+    std::env::set_var("PRIVATE_AI_DATA_ROOT", dir);
+    assert_eq!(
+        home_dir(),
+        dir,
+        "PRIVATE_AI_DATA_ROOT is not honoured (or the old name still is): \
+         the test stops before touching any real path"
+    );
+}
+
 /// E2E phase for the system config directory and the instance paths in it, for the
 /// e2e test of this crate to call: it sets the process-wide
-/// `LLAMA_CPP_CONFIG_DATA_ROOT` redirect, which a plain unit test must not
-/// (`src/tests/mod.rs`). Only the redirected case is pinned: the real
-/// `/etc/llama.cpp` and `%ProgramData%\llama.cpp\config` need the variable
-/// unset, and no test in this crate unsets it safely.
+/// `PRIVATE_AI_DATA_ROOT` redirect, which a plain unit test must not
+/// (`src/tests/mod.rs`). Only the redirected case is pinned here: the real
+/// paths need the variable unset, which `real_paths_follow_the_new_names` does
+/// in a child process.
 #[cfg(test)]
 pub(crate) fn instance_paths_e2e() {
     let dir = tempfile::tempdir().expect("tempdir");
-    std::env::set_var("LLAMA_CPP_CONFIG_DATA_ROOT", dir.path());
+    redirect_for_tests(dir.path());
     let sys = dir.path().join("system-config");
+
+    // The redirected tree is named after the project, under the new variable,
+    // and every home-derived path stays inside it.
+    assert_eq!(home_dir(), dir.path());
+    assert_eq!(data_root(), dir.path().join("private-ai"));
+    assert_eq!(config_dir(), dir.path().join("private-ai").join("config"));
+    assert_eq!(
+        server_log(),
+        dir.path()
+            .join("private-ai")
+            .join("logs")
+            .join("llama-server.log")
+    );
+    assert_eq!(
+        opencode_user_config(),
+        dir.path().join("opencode").join("opencode.json")
+    );
 
     // The redirect wins on every OS, and the system directory is not the
     // per-user one.

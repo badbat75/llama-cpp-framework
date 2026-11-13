@@ -9,12 +9,12 @@
 # stopped here never reaches it. Impersonated, which is what it needs: the
 # configurator and llama-server run as the desktop user, who can stop them.
 #
-# The order matters. `llama-cpp-config control stop-and-close` is the GRACEFUL
+# The order matters. `pai-config control stop-and-close` is the GRACEFUL
 # leg: it writes the conversation snapshot first (Server tab, Conversation
 # snapshots), then stops llama-server, then signals the GUI to close. A plain
 # kill would lose that snapshot. Whatever is still alive afterwards is killed.
 #
-# What is stopped: processes named llama-server / llama-cpp-config whose image
+# What is stopped: processes named llama-server / pai-config whose image
 # lies under the installed bin\, plus those whose image path cannot be read
 # (another user's, from a non-elevated context). Not by name alone: a process
 # of the same name started from a build tree
@@ -27,13 +27,18 @@
 $ErrorActionPreference = 'SilentlyContinue'
 $ProgressPreference = 'SilentlyContinue'   # no CLIXML progress records in the MSI log
 try {
-    $dir = (Get-ItemProperty -LiteralPath 'HKLM:\Software\llama.cpp').InstallDir
+    $dir = (Get-ItemProperty -LiteralPath 'HKLM:\Software\private-ai').InstallDir
+    # An upgrade from a release before the rename finds only the old key and
+    # the old executable, llama-cpp-config: kept beside the new names until the
+    # packages' rename settles the upgrade from the old product.
+    if (-not $dir) { $dir = (Get-ItemProperty -LiteralPath 'HKLM:\Software\llama.cpp').InstallDir }
     if (-not $dir) { exit 0 }
     $bin = (Join-Path $dir 'bin').TrimEnd('\') + '\'
-    $exe = Join-Path $bin 'llama-cpp-config.exe'
+    $exe = Join-Path $bin 'pai-config.exe'
+    if (-not (Test-Path -LiteralPath $exe)) { $exe = Join-Path $bin 'llama-cpp-config.exe' }
 
     function Get-Ours {
-        Get-Process -Name 'llama-server', 'llama-cpp-config' -ErrorAction SilentlyContinue |
+        Get-Process -Name 'llama-server', 'pai-config', 'llama-cpp-config' -ErrorAction SilentlyContinue |
             Where-Object { -not $_.Path -or $_.Path.StartsWith($bin, [StringComparison]::OrdinalIgnoreCase) }
     }
 

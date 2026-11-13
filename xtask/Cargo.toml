@@ -2,7 +2,7 @@
 name = "xtask"
 version = "0.1.0"
 edition = "2021"
-description = "Build orchestrator: prerequisites, configure, build (llama.cpp and llama-cpp-config), package, install"
+description = "Build orchestrator: prerequisites, configure, build (llama.cpp and pai-config), package, install"
 license = "MIT"
 publish = false
 

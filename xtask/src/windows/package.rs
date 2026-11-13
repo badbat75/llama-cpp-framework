@@ -1,5 +1,5 @@
 //! Package phase on Windows (cargo run -p xtask -- package): stages the llama.cpp build and
-//! llama-cpp-config into build\windows\staging\ (the GPU runtimes the
+//! pai-config into build\windows\staging\ (the GPU runtimes the
 //! backends load included, copied out of the dists), builds the MSI into
 //! .\dist\ with the WiX Toolset pinned in installer\wix-toolset.psd1 and
 //! validates it. installer\AGENTS.md says what the MSI does with the tree.
@@ -574,18 +574,18 @@ pub fn run(keep_staging: bool, wix_arg: Option<PathBuf>) -> Result<()> {
         ui::dim(format!("  {dist}: {what}"));
     }
 
-    // ── llama-cpp-config and the icon ───────────────────────────────────
+    // ── pai-config and the icon ───────────────────────────────────
     // Straight from cargo's release output, into bin\ where it is installed:
     // the staging tree is the installed tree, file for file.
-    let config_exe = build_root.join(r"cargo-target\release\llama-cpp-config.exe");
+    let config_exe = build_root.join(r"cargo-target\release\pai-config.exe");
     if !config_exe.is_file() {
         bail!(
-            "llama-cpp-config.exe not found at {}. Run cargo run -p xtask -- build first.",
+            "pai-config.exe not found at {}. Run cargo run -p xtask -- build first.",
             config_exe.display()
         );
     }
-    std::fs::copy(&config_exe, stage_bin.join("llama-cpp-config.exe"))?;
-    ui::dim("Staged llama-cpp-config.exe");
+    std::fs::copy(&config_exe, stage_bin.join("pai-config.exe"))?;
+    ui::dim("Staged pai-config.exe");
 
     // The icon (the Apps list entry, the Start Menu shortcut, the MSI's
     // own): generated, not checked in; regenerated here if it went missing.

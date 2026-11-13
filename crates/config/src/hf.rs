@@ -748,7 +748,7 @@ fn curl_config_with(
         "url = {}\nheader = {}\nuser-agent = {}\nwrite-out = \"\\n%{{http_code}}\"\n",
         curl_value(url)?,
         curl_value(&format!("Accept: {accept}"))?,
-        curl_value(&format!("llama-cpp-config/{}", env!("CARGO_PKG_VERSION")))?,
+        curl_value(&format!("pai-config/{}", env!("CARGO_PKG_VERSION")))?,
     );
     if let Some((start, end)) = range {
         c.push_str(&format!(
@@ -3049,6 +3049,13 @@ mod tests {
         assert!(c.contains("write-out = \"\\n%{http_code}\"\n"));
         assert!(!c.contains("range"));
         assert!(!curl_config("u", None).unwrap().contains("Authorization"));
+        assert!(
+            c.contains(&format!(
+                "user-agent = \"pai-config/{}\"\n",
+                env!("CARGO_PKG_VERSION")
+            )),
+            "{c}"
+        );
         let r = curl_config_with(
             "https://h/o/r/resolve/c/m.gguf",
             None,

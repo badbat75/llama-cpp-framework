@@ -46,10 +46,10 @@ pub fn software() -> Software {
         llama_cpp_build: build,
         llama_cpp_commit: commit,
         framework_version: Some(env!("CARGO_PKG_VERSION").to_string()),
-        rocm: opt(env!("LLAMA_FW_ROCM")),
-        cuda: opt(env!("LLAMA_FW_CUDA")),
-        vulkan_sdk: opt(env!("LLAMA_FW_VULKAN_SDK")),
-        patches: opt(env!("LLAMA_FW_PATCHES")),
+        rocm: opt(env!("PRIVATE_AI_ROCM")),
+        cuda: opt(env!("PRIVATE_AI_CUDA")),
+        vulkan_sdk: opt(env!("PRIVATE_AI_VULKAN_SDK")),
+        patches: opt(env!("PRIVATE_AI_PATCHES")),
     }
 }
 

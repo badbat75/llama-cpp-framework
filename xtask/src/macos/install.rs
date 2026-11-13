@@ -4,7 +4,7 @@
 //! A first install, an upgrade, a reinstall and a downgrade are the same
 //! command: a flat component package is laid down whatever is there.
 //!
-//! Refuses to run while a program from /opt/llama.cpp is running (--force
+//! Refuses to run while a program from /opt/private-ai is running (--force
 //! goes ahead): a server that outlives the install keeps the old libraries.
 
 use super::OPT_DIR;
@@ -54,7 +54,7 @@ pub fn run(force: bool, dry_run: bool, files: Vec<PathBuf>) -> Result<()> {
             .and_then(|r| r.split('-').next())
             .map(str::to_string)
     });
-    let old_version = output(cmd(format!("{OPT_DIR}/bin/llama-cpp-config")).arg("--version"))
+    let old_version = output(cmd(format!("{OPT_DIR}/bin/pai-config")).arg("--version"))
         .and_then(|s| s.split_whitespace().last().map(str::to_string))
         .unwrap_or_default();
 
@@ -108,12 +108,12 @@ pub fn run(force: bool, dry_run: bool, files: Vec<PathBuf>) -> Result<()> {
     }
 
     if let Some(new_version) = &new_version {
-        let version = output(cmd(format!("{OPT_DIR}/bin/llama-cpp-config")).arg("--version"))
+        let version = output(cmd(format!("{OPT_DIR}/bin/pai-config")).arg("--version"))
             .and_then(|s| s.split_whitespace().last().map(str::to_string))
             .unwrap_or_default();
         if version != *new_version {
             bail!(
-                "{OPT_DIR}/bin/llama-cpp-config reports '{}', the package is {new_version}",
+                "{OPT_DIR}/bin/pai-config reports '{}', the package is {new_version}",
                 if version.is_empty() {
                     "nothing"
                 } else {

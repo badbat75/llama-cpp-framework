@@ -18,9 +18,9 @@ use crate::common::configurator;
 use anyhow::Result;
 
 /// The package's prefix on the target machine, and the payload path of it.
-pub const OPT_DIR: &str = "/opt/llama.cpp";
+pub const OPT_DIR: &str = "/opt/private-ai";
 
-/// `build config`: llama-cpp-config, copied next to llama-server.
+/// `build config`: pai-config, copied next to llama-server.
 pub fn build_config() -> Result<()> {
     let cfg = config::load()?;
     let target = configurator::build(&cfg.llama_cpp_dir, cfg.build_jobs)?;

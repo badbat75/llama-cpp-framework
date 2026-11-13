@@ -342,7 +342,7 @@ pub fn finish(
     let mut configure = String::from("cargo run -p xtask -- configure");
     let root = dists.root.display().to_string();
     if explicit_root
-        && std::env::var_os("LLAMA_FW_DIST_ROOT")
+        && std::env::var_os("PRIVATE_AI_DIST_ROOT")
             .map(|v| v.is_empty())
             .unwrap_or(true)
         && root != recorded_root

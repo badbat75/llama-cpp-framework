@@ -17,7 +17,7 @@
 //   stack, so both platforms keep the same headroom.
 // - The SDK stack llama.cpp was built against (TheRock, CUDA, Vulkan SDK
 //   dist versions, the patches applied), read off its CMake cache into
-//   LLAMA_FW_* env vars for bench.db's software row: an installed machine
+//   PRIVATE_AI_* env vars for bench.db's software row: an installed machine
 //   has no build tree to read them from at run time.
 // - The per-architecture tables of src/gguf.rs, generated from the llama.cpp
 //   clone (arch_tables.rs).
@@ -85,13 +85,13 @@ fn main() {
 }
 
 /// Generate `arch_tables.rs` in `OUT_DIR` from the clone's `llama-arch.cpp`:
-/// `LLAMA_FW_LLAMA_CPP_DIR`, which `xtask build` sets from the recorded clone,
+/// `PRIVATE_AI_LLAMA_CPP_DIR`, which `xtask build` sets from the recorded clone,
 /// or the default clone of the target OS for a bare cargo command. There is no
 /// fallback list: a wrong one would be silent, so a missing clone or a source
 /// of another shape fails the build.
 fn emit_arch_tables(out_dir: &str) {
-    println!("cargo:rerun-if-env-changed=LLAMA_FW_LLAMA_CPP_DIR");
-    let clone = std::env::var("LLAMA_FW_LLAMA_CPP_DIR").unwrap_or_else(|_| {
+    println!("cargo:rerun-if-env-changed=PRIVATE_AI_LLAMA_CPP_DIR");
+    let clone = std::env::var("PRIVATE_AI_LLAMA_CPP_DIR").unwrap_or_else(|_| {
         let os = match std::env::var("CARGO_CFG_TARGET_OS").as_deref() {
             Ok("windows") => "windows",
             Ok("macos") => "macos",
@@ -117,8 +117,8 @@ fn emit_arch_tables(out_dir: &str) {
         .expect("Failed to write arch_tables.rs");
 }
 
-/// `LLAMA_FW_ROCM`, `LLAMA_FW_CUDA`, `LLAMA_FW_VULKAN_SDK` and
-/// `LLAMA_FW_PATCHES`, each empty when unknown (a bare `cargo build` before
+/// `PRIVATE_AI_ROCM`, `PRIVATE_AI_CUDA`, `PRIVATE_AI_VULKAN_SDK` and
+/// `PRIVATE_AI_PATCHES`, each empty when unknown (a bare `cargo build` before
 /// 02-build has configured llama.cpp). The dist layout puts the version in the
 /// path (`<DistRoot>/<Name>/<Version>/<os>`), so the first cache line naming
 /// a dist directory is enough. The patches are the ones 02-build applies: every
@@ -136,9 +136,9 @@ fn emit_build_stack() {
         .unwrap_or_default()
         .replace('\\', "/");
     for (var, dist) in [
-        ("LLAMA_FW_ROCM", "/TheRock/"),
-        ("LLAMA_FW_CUDA", "/CUDA/"),
-        ("LLAMA_FW_VULKAN_SDK", "/VulkanSDK/"),
+        ("PRIVATE_AI_ROCM", "/TheRock/"),
+        ("PRIVATE_AI_CUDA", "/CUDA/"),
+        ("PRIVATE_AI_VULKAN_SDK", "/VulkanSDK/"),
     ] {
         let version = text
             .split(dist)
@@ -156,7 +156,7 @@ fn emit_build_stack() {
         })
         .unwrap_or_default();
     patches.sort();
-    println!("cargo:rustc-env=LLAMA_FW_PATCHES={}", patches.join(","));
+    println!("cargo:rustc-env=PRIVATE_AI_PATCHES={}", patches.join(","));
 }
 
 /// Generate the icon when it's absent (fresh checkout, or deleted on purpose
@@ -251,8 +251,8 @@ fn embed_windows_resources() {
     let mut res = winresource::WindowsResource::new();
     res.set_icon(icon);
     res.set("FileDescription", "llama.cpp framework configurator");
-    res.set("ProductName", "llama.cpp-framework");
-    res.set("OriginalFilename", "llama-cpp-config.exe");
+    res.set("ProductName", "Private AI Framework");
+    res.set("OriginalFilename", "pai-config.exe");
     if let Err(e) = res.compile() {
         println!("cargo:warning=Failed to embed icon resource: {e}");
     }

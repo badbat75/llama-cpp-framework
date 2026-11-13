@@ -593,4 +593,8 @@ fn editable_widgets_track_model_after_edit() {
     // Its own root window, on the same backend for the same reason.
     #[cfg(any(target_os = "linux", windows))]
     crate::gui::hw_window_e2e();
+
+    // ── Login entry (startup.rs `set_enabled`, the XDG autostart file) ───
+    #[cfg(target_os = "linux")]
+    crate::startup::startup_e2e();
 }

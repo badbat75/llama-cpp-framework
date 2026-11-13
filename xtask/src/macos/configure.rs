@@ -28,7 +28,7 @@ pub fn run(llama_cpp_dir: Option<PathBuf>, dist_root: Option<PathBuf>) -> Result
     let mut rows = Rows { gaps: Vec::new() };
 
     ui::say("");
-    ui::head("  llama.cpp-framework: Environment Check (macOS)");
+    ui::head("  Private AI Framework: Environment Check (macOS)");
     ui::head("  ==============================================");
     ui::say("");
 

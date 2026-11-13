@@ -1,4 +1,4 @@
-//! The command line of `private-ai-manager`, the runtime service binary that
+//! The command line of `pai-manager`, the runtime service binary that
 //! runs llama-server instances as services. `run-instance <id>` is what the
 //! unit `llama.cpp@<id>` runs: it launches instance `id`
 //! (`launch::instance_command`). `serve` is the manager's own service: the
@@ -8,7 +8,7 @@
 pub mod dbus;
 pub mod service;
 
-/// A parsed `private-ai-manager` command line.
+/// A parsed `pai-manager` command line.
 #[derive(Debug, PartialEq, Eq)]
 pub enum ManagerCommand {
     /// `run-instance <id>`.
@@ -49,7 +49,7 @@ pub fn parse_args(args: &[String]) -> Result<ManagerCommand, ArgsError> {
     Ok(ManagerCommand::RunInstance(id.clone()))
 }
 
-/// The `private-ai-manager` entry point, returning the exit code: on Unix
+/// The `pai-manager` entry point, returning the exit code: on Unix
 /// the process becomes llama-server and returns only on failure; on Windows
 /// it waits for llama-server and returns its code. A failure prints one
 /// error line on stderr.
@@ -214,10 +214,32 @@ mod tests {
         for key in ["manager-usage", "manager-unknown-command"] {
             let text = &cli[key];
             assert!(
-                text.contains("private-ai-manager serve") && text.contains("run-instance <id>"),
+                text.contains("pai-manager serve")
+                    && text.contains("pai-manager run-instance <id>"),
+                "{key}: {text:?}"
+            );
+            assert!(
+                !text.contains(concat!("private-ai", "-manager")),
                 "{key}: {text:?}"
             );
         }
+    }
+
+    /// The executable is `pai-manager`, the name the unit `llama.cpp@<id>`
+    /// runs (`pai-manager run-instance <id>`) and the usage text gives.
+    #[test]
+    fn the_executable_is_named_pai_manager() {
+        let manifest = include_str!("../Cargo.toml");
+        let bin = manifest.split("[[bin]]").nth(1).expect("a [[bin]] table");
+        let name = bin
+            .lines()
+            .find_map(|l| l.trim().strip_prefix("name = "))
+            .expect("a bin name");
+        assert_eq!(name, "\"pai-manager\"");
+        assert!(
+            !manifest.contains(concat!("private-ai", "-manager.rs")),
+            "{manifest}"
+        );
     }
 
     #[test]

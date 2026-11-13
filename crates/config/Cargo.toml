@@ -3,7 +3,7 @@ name = "pai-config"
 version.workspace = true
 edition = "2021"
 build = "build.rs"
-description = "GUI + CLI configurator for llama.cpp-framework"
+description = "GUI + CLI configurator for the Private AI Framework"
 license = "MIT"
 publish = false
 
@@ -14,11 +14,11 @@ path = "src/lib.rs"
 doctest = false
 
 [[bin]]
-name = "llama-cpp-config"
+name = "pai-config"
 path = "src/main.rs"
 
 [dependencies]
-# The modules shared with private-ai-manager (paths, INI, server config, the
+# The modules shared with pai-manager (paths, INI, server config, the
 # launch, strings).
 pai-core = { path = "../core" }
 slint = { version = "1.18", default-features = false, features = ["std", "compat-1-2", "backend-winit", "renderer-skia", "accessibility", "unstable-winit-030", "system-tray"] }

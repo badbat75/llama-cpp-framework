@@ -23,9 +23,9 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{AllowSetForegroundWindow, ASFW
 
 // Per-session names (`Local\`): the goal is one running instance per user
 // session, which is also what survives fast-user-switching / RDP cleanly.
-const MUTEX_NAME: &str = r"Local\llama-cpp-config.singleton";
-const EVENT_NAME: &str = r"Local\llama-cpp-config.activate";
-const CLOSE_EVENT_NAME: &str = r"Local\llama-cpp-config.close";
+const MUTEX_NAME: &str = r"Local\org.privateai.Config.singleton";
+const EVENT_NAME: &str = r"Local\org.privateai.Config.activate";
+const CLOSE_EVENT_NAME: &str = r"Local\org.privateai.Config.close";
 
 fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()

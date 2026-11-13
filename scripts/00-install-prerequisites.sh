@@ -10,7 +10,7 @@
 #   - macOS: the Xcode Command Line Tools (checked: their installer is a GUI
 #     dialog) and Homebrew packages (cmake, ninja, node; Homebrew itself is
 #     checked, not installed).
-#   - Rust through rustup, when missing (for xtask and llama-cpp-config).
+#   - Rust through rustup, when missing (for xtask and pai-config).
 # Then it runs xtask's prerequisites phase (xtask/src/<os>/prereq.rs):
 # sccache and the newest stable dists (Linux: ROCm, CUDA Toolkit, NCCL and
 # Vulkan SDK; macOS: the Vulkan SDK), the llama.cpp release check and the
@@ -81,7 +81,7 @@ if (( ! help )) && [[ $os == linux ]]; then
     # distro's GCC install, and nvcc drives g++ as its host compiler. nodejs +
     # npm build the chat UI that llama-server embeds (LLAMA_BUILD_UI=ON).
     # unzip unpacks the NCCL wheel.
-    # libfontconfig-dev is for llama-cpp-config: Slint's Skia renderer links
+    # libfontconfig-dev is for pai-config: Slint's Skia renderer links
     # the system fontconfig (and freetype, which it pulls in).
     # patchelf, dpkg-dev and rpm are the package phase's: the RUNPATH rewrite,
     # the Depends computation (dpkg-shlibdeps) and rpmbuild.

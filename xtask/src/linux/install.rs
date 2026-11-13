@@ -13,7 +13,7 @@
 //! the command line brings its own format. "Newest" is the last one written
 //! of the files named for this architecture, per package.
 //!
-//! Refuses to run while a program from /opt/llama.cpp is running: rocBLAS and
+//! Refuses to run while a program from /opt/private-ai is running: rocBLAS and
 //! hipBLASLt load their kernel files lazily, so a server that outlives the
 //! upgrade would read the NEW kernel files with the OLD libraries.
 
@@ -23,7 +23,7 @@ use crate::common::util::{self, cmd, output, run as run_cmd, which};
 use anyhow::{bail, Context, Result};
 use std::path::{Path, PathBuf};
 
-const OPT_DIR: &str = "/opt/llama.cpp";
+const OPT_DIR: &str = "/opt/private-ai";
 
 /// The distribution decides, from ID and ID_LIKE in /etc/os-release. The
 /// tools on PATH come second and are not enough alone: a Debian build host
@@ -326,7 +326,7 @@ pub fn run(format: Option<&str>, force: bool, dry_run: bool, files: Vec<PathBuf>
     // ── Check ───────────────────────────────────────────────────────────
     let config = Component::Config.package();
     if let Some(p) = packages.iter().find(|p| p.name == config) {
-        let version = output(cmd(format!("{OPT_DIR}/bin/llama-cpp-config")).arg("--version"))
+        let version = output(cmd(format!("{OPT_DIR}/bin/pai-config")).arg("--version"))
             .and_then(|s| s.split_whitespace().last().map(str::to_string))
             .unwrap_or_default();
         let matches = !version.is_empty()
@@ -336,7 +336,7 @@ pub fn run(format: Option<&str>, force: bool, dry_run: bool, files: Vec<PathBuf>
                 .unwrap_or(false);
         if !matches {
             bail!(
-                "{OPT_DIR}/bin/llama-cpp-config reports '{}', the package is {}",
+                "{OPT_DIR}/bin/pai-config reports '{}', the package is {}",
                 if version.is_empty() {
                     "nothing"
                 } else {

@@ -1,4 +1,4 @@
-//! Headless CLI dispatcher for llama-cpp-config.
+//! Headless CLI dispatcher for pai-config.
 
 use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand};
@@ -9,9 +9,9 @@ use crate::{bench, paths, presets, server_cfg, strings};
 
 #[derive(Parser, Debug)]
 #[command(
-    name = "llama-cpp-config",
+    name = "pai-config",
     version,
-    about = "Configure llama.cpp-framework: llama-server and model presets. Run with no args for the GUI."
+    about = "Configure the Private AI Framework: llama-server and model presets. Run with no args for the GUI."
 )]
 pub struct Cli {
     #[command(subcommand)]
@@ -1618,12 +1618,41 @@ mod tests {
     // spot (server_cfg load/save, the form conversions) has a round-trip test,
     // but `apply` is the CLI-only copy; an omitted field here is silent.
 
+    /// The CLI calls itself `pai-config`, the executable's name: in `--version`
+    /// (which `xtask package` reads back), `--help` and its errors.
+    #[test]
+    fn the_cli_is_named_pai_config() {
+        use clap::CommandFactory;
+        let mut cmd = Cli::command();
+        assert_eq!(cmd.get_name(), "pai-config");
+        assert_eq!(
+            cmd.render_version(),
+            format!("pai-config {}\n", env!("CARGO_PKG_VERSION"))
+        );
+        let help = cmd.render_help().to_string();
+        assert!(!help.contains(concat!("llama.cpp", "-framework")), "{help}");
+        assert!(!help.contains(concat!("llama-cpp", "-config")), "{help}");
+    }
+
+    /// The executable is `pai-config`: the Cargo `[[bin]]` name, which is the
+    /// file every package installs.
+    #[test]
+    fn the_executable_is_named_pai_config() {
+        let manifest = include_str!("../Cargo.toml");
+        let bin = manifest.split("[[bin]]").nth(1).expect("a [[bin]] table");
+        let name = bin
+            .lines()
+            .find_map(|l| l.trim().strip_prefix("name = "))
+            .expect("a bin name");
+        assert_eq!(name, "\"pai-config\"");
+    }
+
     /// `preset delete` keeps every file unless asked, takes the files as a
     /// comma list, and the shared override only beside a file list.
     #[test]
     fn preset_delete_parses_its_file_flags() {
         let parse = |args: &[&str]| {
-            let mut argv = vec!["llama-cpp-config", "preset", "delete", "p"];
+            let mut argv = vec!["pai-config", "preset", "delete", "p"];
             argv.extend_from_slice(args);
             Cli::try_parse_from(argv).map(|c| match c.command {
                 Command::Preset(PresetCmd::Delete {
@@ -1697,7 +1726,7 @@ mod tests {
     #[test]
     fn preset_download_parses_its_flags() {
         let cli = Cli::try_parse_from([
-            "llama-cpp-config",
+            "pai-config",
             "preset",
             "download",
             "unsloth/Qwen3-8B-GGUF:Q4_K_M",
@@ -1718,10 +1747,10 @@ mod tests {
             (Some("mtp"), Some("q3"), None)
         );
         assert!(!a.search && a.limit == crate::hf::SEARCH_LIMIT);
-        assert!(Cli::try_parse_from(["llama-cpp-config", "preset", "download"]).is_err());
+        assert!(Cli::try_parse_from(["pai-config", "preset", "download"]).is_err());
         // Words search; --search forces it, --limit caps the rows.
         let cli = Cli::try_parse_from([
-            "llama-cpp-config",
+            "pai-config",
             "preset",
             "download",
             "unsloth/Qwen3",
@@ -1781,7 +1810,7 @@ mod tests {
             lines[3],
             format!("  {:<34}  {:>7}  no GGUF model file", "o/r", "5")
         );
-        assert!(lines[4].starts_with("Pick one: llama-cpp-config preset download <org/repo>"));
+        assert!(lines[4].starts_with("Pick one: pai-config preset download <org/repo>"));
         assert_eq!(
             search_report("zzz", &[]),
             ["No GGUF repository matches \"zzz\"."]
@@ -2020,7 +2049,7 @@ mod tests {
     #[test]
     fn prompt_and_prompt_file_are_mutually_exclusive() {
         let base = [
-            "llama-cpp-config",
+            "pai-config",
             "bench",
             "run",
             "--preset",
@@ -2043,7 +2072,7 @@ mod tests {
     /// preset as it is, one without the other is a sweep with half its axis.
     #[test]
     fn key_and_values_come_together() {
-        let base = ["llama-cpp-config", "bench", "run", "--preset", "P"];
+        let base = ["pai-config", "bench", "run", "--preset", "P"];
         assert!(Cli::try_parse_from(base).is_ok());
         let mut key_only = base.to_vec();
         key_only.extend(["--key", "spec-draft-n-max"]);

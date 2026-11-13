@@ -432,7 +432,7 @@ pub fn to_ini(spec: &Spec, config: &Path) -> String {
         })
         .collect();
     let mut out = format!(
-        "; A benchmark spec of your own (saved by llama-cpp-config). It is not a\n\
+        "; A benchmark spec of your own (saved by pai-config). It is not a\n\
          ; published version of standard, so every run of it records spec = custom,\n\
          ; derived from it. Format: benchmarks/README.md, \"Specs\".\n\
          [Spec]\nName = {}\nVersion = {}\nPrompts = {}\nMaxTokens = {}\n",
@@ -875,6 +875,21 @@ mod tests {
         /x/y.txt@96D8FB4F7D56D59EE53AA145394C8F8ADB0122ADBE16421391DCFD5576AAAAE6\nMaxTokens = 0\n\n\
         [Pass.engine]\nTemp = 0\nOverride = spec-type=none\nReps = 3\n\n\
         [Pass.real]\nTemp = preset\nConcurrency = all\nReps = 5\n";
+
+    /// A spec saved by the configurator names it by its new name.
+    #[test]
+    fn a_saved_spec_names_pai_config() {
+        let cfg = Path::new("/cfg");
+        let text = to_ini(&parse(SAMPLE, cfg).unwrap(), cfg);
+        assert!(
+            text.lines()
+                .next()
+                .unwrap()
+                .contains("(saved by pai-config)"),
+            "{text}"
+        );
+        assert!(!text.contains(concat!("llama-cpp", "-config")), "{text}");
+    }
 
     #[test]
     fn spec_type_none_also_removes_the_draft_file() {

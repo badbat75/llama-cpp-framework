@@ -1,4 +1,4 @@
-//! llama-cpp-config's library: the configurator's modules (`main.rs`), over
+//! pai-config's library: the configurator's modules (`main.rs`), over
 //! the shared core (`pai-core`).
 
 // The core modules, under the names the sources use (`crate::paths`, ...).

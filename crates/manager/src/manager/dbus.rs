@@ -1,4 +1,4 @@
-//! The D-Bus face of `private-ai-manager` on Linux: interface
+//! The D-Bus face of `pai-manager` on Linux: interface
 //! `org.privateai.Manager1` at `/org/privateai/Manager1` on the system bus,
 //! over the core [`Manager`]. The caller of a method is its sender (the
 //! unique bus name the bus stamps), handed to the core as [`Caller`]; every
@@ -300,7 +300,7 @@ pub fn serve() -> zbus::Result<(Connection, Vec<(String, ManagerError)>)> {
 }
 
 /// E2E phase for the D-Bus interface, for this crate's e2e test to call: it sets
-/// the process-wide `LLAMA_CPP_CONFIG_DATA_ROOT` redirect (`src/tests/mod.rs`).
+/// the process-wide `PRIVATE_AI_DATA_ROOT` redirect (`src/tests/mod.rs`).
 /// The interface is served over a peer-to-peer connection on a Unix socket
 /// pair inside the test, never a bus; the seams are the core's fakes. A
 /// client given a unique name stamps it as the sender of its calls, as the
@@ -317,7 +317,7 @@ pub(crate) fn manager_dbus_e2e() {
     type Core = Manager<FakeService, FakeAuthority, FakeResolver>;
 
     let dir = tempfile::tempdir().expect("tempdir");
-    std::env::set_var("LLAMA_CPP_CONFIG_DATA_ROOT", dir.path());
+    crate::paths::redirect_for_tests(dir.path());
     let sys = crate::paths::system_config_dir();
     std::fs::create_dir_all(&sys).expect("system config dir");
     let default_ini = "[Server]\nPort = 8080\nHostname = 0.0.0.0\n";

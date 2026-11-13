@@ -25,7 +25,7 @@ pub fn run(llama_cpp_dir: Option<PathBuf>, dist_root: Option<PathBuf>) -> Result
     let mut rows = Rows { gaps: Vec::new() };
 
     ui::say("");
-    ui::head("  llama.cpp-framework: Environment Check (Linux)");
+    ui::head("  Private AI Framework: Environment Check (Linux)");
     ui::head("  ==============================================");
     ui::say("");
 
@@ -129,7 +129,7 @@ pub fn run(llama_cpp_dir: Option<PathBuf>, dist_root: Option<PathBuf>) -> Result
             ),
         }
     }
-    // cargo builds llama-cpp-config; rustup puts it in ~/.cargo/bin, which
+    // cargo builds pai-config; rustup puts it in ~/.cargo/bin, which
     // only a new login shell has on PATH.
     let home_cargo = util::home().join(".cargo/bin/cargo");
     match which("cargo").or_else(|| util::is_executable(&home_cargo).then_some(home_cargo)) {

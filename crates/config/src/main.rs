@@ -1,7 +1,7 @@
-//! llama-cpp-config: GUI + CLI configurator for llama.cpp-framework.
+//! pai-config: GUI + CLI configurator for the Private AI Framework.
 
-//   llama-cpp-config                  → GUI
-//   llama-cpp-config <subcommand> ... → headless CLI (clap-defined in cli.rs)
+//   pai-config                  → GUI
+//   pai-config <subcommand> ... → headless CLI (clap-defined in cli.rs)
 
 #![cfg_attr(
     all(not(debug_assertions), target_os = "windows"),

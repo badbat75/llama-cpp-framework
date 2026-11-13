@@ -1,4 +1,4 @@
-//! Slint GUI wiring for the llama.cpp-framework configurator.
+//! Slint GUI wiring for the Private AI Framework configurator.
 //!
 //! ## Shape
 //! `run()` builds `AppWindow` + `AppTray`, seeds the UI from disk, then wires
@@ -218,7 +218,7 @@ pub(crate) use hf_dialog::{
 #[cfg(test)]
 pub(crate) fn window_size_e2e() {
     let dir = tempfile::tempdir().expect("tempdir");
-    std::env::set_var("LLAMA_CPP_CONFIG_DATA_ROOT", dir.path());
+    crate::paths::redirect_for_tests(dir.path());
 
     let win = LogWindow::new().expect("build LogWindow");
     win.window()
@@ -276,7 +276,7 @@ pub fn run(start_minimized: bool) -> anyhow::Result<()> {
     };
 
     // The Wayland app id (and X11 WM_CLASS) of every window: the name of the
-    // desktop entry the deb/rpm install (`llama-cpp-config.desktop`), which is
+    // desktop entry the deb/rpm install (`org.privateai.Config.desktop`), which is
     // how GNOME's dock finds the icon and the name. Without it the windows
     // belong to no known application and the dock shows a generic gear. Set
     // AFTER the first component exists (before that there is no platform to
@@ -289,7 +289,7 @@ pub fn run(start_minimized: bool) -> anyhow::Result<()> {
     let app = AppWindow::new()?;
     install_strings(app.global::<Strings>());
     #[cfg(target_os = "linux")]
-    let _ = slint::set_xdg_app_id("llama-cpp-config");
+    let _ = slint::set_xdg_app_id("org.privateai.Config");
     let s = app.global::<AppState>();
     s.set_app_version(SharedString::from(env!("CARGO_PKG_VERSION")));
     // Upper bound for the Server tab's CPU-thread sliders: this machine's logical
@@ -302,7 +302,7 @@ pub fn run(start_minimized: bool) -> anyhow::Result<()> {
     let state = Rc::new(RefCell::new(State::default()));
 
     // Surface the live window when another launch pokes the activation event,
-    // or exit when a close request is signaled (e.g., by `llama-cpp-config stop-and-close`).
+    // or exit when a close request is signaled (e.g., by `pai-config stop-and-close`).
     #[cfg(windows)]
     {
         let app_weak = app.as_weak();
@@ -516,7 +516,7 @@ fn discard_unshown_wayland_window<T: ComponentHandle + 'static>(component: &T) {
 /// only a root without a `title` keeps. Since Slint 1.18 that default is the
 /// program's name (argument zero without its directory, `application_name` in
 /// i-slint-core), no longer "Slint Window": GNOME lists it as
-/// "llama-cpp-config". Every window of ours sets a title of its own.
+/// "pai-config". Every window of ours sets a title of its own.
 #[cfg(target_os = "linux")]
 struct DiscardTrayWindow;
 

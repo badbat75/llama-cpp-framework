@@ -1,4 +1,4 @@
-//! The OS-neutral core of `private-ai-manager` (running llama-server as a service):
+//! The OS-neutral core of `pai-manager` (running llama-server as a service):
 //! the instances, their config files in `paths::system_config_dir()` and
 //! their services, behind two seams. [`ServiceControl`] starts, stops and
 //! reports the unit of an instance (systemd's D-Bus API on
@@ -452,7 +452,7 @@ pub(crate) mod fakes {
 }
 
 /// E2E phase for the manager core, for this crate's e2e test to call: it sets
-/// the process-wide `LLAMA_CPP_CONFIG_DATA_ROOT` redirect (`src/tests/mod.rs`).
+/// the process-wide `PRIVATE_AI_DATA_ROOT` redirect (`src/tests/mod.rs`).
 /// Nothing here touches D-Bus, systemd, polkit or the GPUs: both seams are
 /// fakes.
 #[cfg(test)]
@@ -461,7 +461,7 @@ pub(crate) fn manager_e2e() {
     use std::collections::BTreeSet;
 
     let dir = tempfile::tempdir().expect("tempdir");
-    std::env::set_var("LLAMA_CPP_CONFIG_DATA_ROOT", dir.path());
+    crate::paths::redirect_for_tests(dir.path());
     let sys = crate::paths::system_config_dir();
     let alice = Caller(":1.42".into());
     let files_in = |p: &std::path::Path| -> BTreeSet<String> {
@@ -1034,8 +1034,8 @@ mod tests {
             "./presets.ini",
             "sub/presets.ini",
             "sub\\presets.ini",
-            "/etc/llama.cpp/presets.ini",
-            "C:\\ProgramData\\llama.cpp\\config\\presets.ini",
+            "/etc/private-ai/presets.ini",
+            "C:\\ProgramData\\private-ai\\config\\presets.ini",
             "server.ini",
             "settings.ini",
             "server@Bad.ini",

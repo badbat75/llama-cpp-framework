@@ -1,37 +1,37 @@
 //! Package phase (cargo run -p xtask -- package): the Linux build as five .deb
 //! and five .rpm packages in ./dist/ (common/components.rs says which file goes
-//! where): llama-cpp-config, llama.cpp, and the ROCm, CUDA and Vulkan runtimes.
+//! where): pai-config, llama.cpp, and the ROCm, CUDA and Vulkan runtimes.
 //! The counterpart of the Windows MSI (windows/package.rs). Requires a successful
 //! build; patchelf, dpkg-dev and rpm come from the prerequisites.
 //!
 //! What the packages install together (all from one staged tree):
-//!   /opt/llama.cpp/bin/   every llama.cpp tool, its shared libraries and the
-//!                         ggml backends, plus llama-cpp-config: ONE
+//!   /opt/private-ai/bin/  every llama.cpp tool, its shared libraries and the
+//!                         ggml backends, plus pai-config: ONE
 //!                         directory, because ggml looks for its backends next
-//!                         to the executable and llama-cpp-config looks for
+//!                         to the executable and pai-config looks for
 //!                         llama-server there too
-//!   /opt/llama.cpp/lib/   the GPU runtimes the backends need, taken from the
+//!   /opt/private-ai/lib/  the GPU runtimes the backends need, taken from the
 //!                         dists this build linked against: the ROCm runtime
 //!                         with its kernel libraries, the CUDA libraries, the
 //!                         Vulkan loader. Self-contained: nothing else has to
 //!                         be installed but the GPU drivers.
-//!   /opt/llama.cpp/share/benchmarks/
+//!   /opt/private-ai/share/benchmarks/
 //!                         the benchmark method, read-only: every published
 //!                         standard-<X.Y>.ini and the prompts they pin
-//!   /opt/llama.cpp/share/strings/
+//!   /opt/private-ai/share/strings/
 //!                         the configurator's language files, read-only
-//!   /usr/bin/             a symlink per executable into /opt/llama.cpp/bin
+//!   /usr/bin/             a symlink per executable into /opt/private-ai/bin
 //!   /usr/share/           the desktop entry, its icon, the licence
 //!
-//! llama-cpp-config and llama.cpp carry <framework>+llama.cpp.<tag> as version
+//! pai-config and llama.cpp carry <framework>+llama.cpp.<tag> as version
 //! and require each other's exact one, in that direction. A runtime carries its
 //! SDK's version and is optional: llama.cpp recommends the one it was built
 //! against and refuses any other, because a backend that cannot resolve a symbol
 //! is skipped at start with nothing but a log line.
 //!
 //! The config files (server.ini, presets.ini, presets.ini.disabled,
-//! settings.ini) are NOT in the package: llama-cpp-config
-//! writes them per user, in ~/.config/llama.cpp, on first use.
+//! settings.ini) are NOT in the package: pai-config
+//! writes them per user, in ~/.config/private-ai, on first use.
 
 use super::build_llama::load_build_env;
 use super::dists;
@@ -52,9 +52,9 @@ const MONOLITH: &str = components::BASE_NAME;
 /// unversioned one matches every version of the name, future ones included (rpmbuild
 /// warns about it). See "The `.deb` and `.rpm` (Linux)" in docs/build-packaging.md.
 const MONOLITH_LAST: &str = "2.2.0";
-const OPT_DIR: &str = "opt/llama.cpp"; // relative to the package root
-const BIN_DIR: &str = "opt/llama.cpp/bin"; // llama.cpp + llama-cpp-config
-const RT_DIR: &str = "opt/llama.cpp/lib"; // the bundled GPU runtimes
+const OPT_DIR: &str = "opt/private-ai"; // relative to the package root
+const BIN_DIR: &str = "opt/private-ai/bin"; // llama.cpp + pai-config
+const RT_DIR: &str = "opt/private-ai/lib"; // the bundled GPU runtimes
 
 fn is_elf(p: &Path) -> bool {
     let Ok(m) = std::fs::symlink_metadata(p) else {
@@ -168,19 +168,19 @@ pub fn run(want_deb: bool, want_rpm: bool, keep_staging: bool) -> Result<()> {
             bin.display()
         );
     }
-    if !util::is_executable(&bin.join("llama-cpp-config")) {
+    if !util::is_executable(&bin.join("pai-config")) {
         bail!(
-            "llama-cpp-config not found in {}. Run cargo run -p xtask -- build first.",
+            "pai-config not found in {}. Run cargo run -p xtask -- build first.",
             bin.display()
         );
     }
     // A version bump without a rebuild would ship the OLD configurator in a
     // package named after the new version.
-    let built = output(cmd(bin.join("llama-cpp-config")).arg("--version"))
+    let built = output(cmd(bin.join("pai-config")).arg("--version"))
         .and_then(|s| s.split_whitespace().last().map(str::to_string))
         .unwrap_or_default();
     if built != fw_version {
-        bail!("the built llama-cpp-config is {built}, Cargo.toml says {fw_version}. Run cargo run -p xtask -- build first.");
+        bail!("the built pai-config is {built}, Cargo.toml says {fw_version}. Run cargo run -p xtask -- build first.");
     }
     if which("patchelf").is_none() {
         bail!("patchelf not found. Run scripts/00-install-prerequisites.sh (or: sudo apt-get install patchelf).");
@@ -207,7 +207,7 @@ pub fn run(want_deb: bool, want_rpm: bool, keep_staging: bool) -> Result<()> {
 
     ui::head("Staging binaries...");
     // Straight from the build's bin/, where the build leaves executables,
-    // libraries, backends and llama-cpp-config side by side: the layout the
+    // libraries, backends and pai-config side by side: the layout the
     // package keeps. `cmake --install` would split them into bin/ and lib/.
     // llama.cpp's own test-* harnesses stay out: they are its unit tests, and
     // every executable staged here gets a command in /usr/bin.
@@ -433,10 +433,7 @@ pub fn run(want_deb: bool, want_rpm: bool, keep_staging: bool) -> Result<()> {
     // ── Desktop entry, icon ─────────────────────────────────────────────
     let apps = stage.join("usr/share/applications");
     std::fs::create_dir_all(&apps)?;
-    std::fs::write(
-        apps.join("llama-cpp-config.desktop"),
-        "[Desktop Entry]\nType=Application\nName=llama.cpp Config\nComment=Configure and run llama-server and its model presets\nExec=llama-cpp-config\nIcon=llama-cpp-config\nTerminal=false\nCategories=Utility;\nStartupWMClass=llama-cpp-config\n",
-    )?;
+    std::fs::write(apps.join("org.privateai.Config.desktop"), desktop_entry())?;
 
     let icon = stage_icon(&repo.join("resources/llama.ico"), &stage)?;
     if icon.is_none() {
@@ -514,7 +511,7 @@ pub fn run(want_deb: bool, want_rpm: bool, keep_staging: bool) -> Result<()> {
         copyright.push_str("\nllama.cpp's licence:\n\n");
         copyright.push_str(&std::fs::read_to_string(llama.join("LICENSE"))?);
         copyright.push_str(
-            "\nllama-cpp-config embeds the Fluent UI System Icons font, whose licence follows.\n\n",
+            "\npai-config embeds the Fluent UI System Icons font, whose licence follows.\n\n",
         );
         copyright.push_str(&std::fs::read_to_string(
             repo.join("crates/config/ui/fonts/LICENSE"),
@@ -552,7 +549,7 @@ pub fn run(want_deb: bool, want_rpm: bool, keep_staging: bool) -> Result<()> {
     }
 
     // No maintainer scripts: the package ships no config directory,
-    // llama-cpp-config writes ~/.config/llama.cpp as whoever runs it.
+    // pai-config writes ~/.config/private-ai as whoever runs it.
 
     let repo_git =
         |args: &[&str]| output(cmd("git").arg("-C").arg(&repo).args(args)).unwrap_or_default();
@@ -560,7 +557,7 @@ pub fn run(want_deb: bool, want_rpm: bool, keep_staging: bool) -> Result<()> {
         let url = repo_git(&["remote", "get-url", "origin"]);
         url.strip_suffix(".git").map(str::to_string).unwrap_or(url)
     };
-    let maintainer = match std::env::var("LLAMA_FW_MAINTAINER") {
+    let maintainer = match std::env::var("PRIVATE_AI_MAINTAINER") {
         Ok(m) if !m.is_empty() => m,
         _ => {
             let m = format!(
@@ -649,9 +646,9 @@ pub fn run(want_deb: bool, want_rpm: bool, keep_staging: bool) -> Result<()> {
 fn texts(c: Component, llama_build: &str) -> (&'static str, String) {
     match c {
         Component::Config => (
-            "llama-cpp-config: GUI and CLI configurator for llama-server",
-            "llama-cpp-config, the GUI + CLI configurator for server.ini and the per-model\n\
-             presets.ini (kept per user, in ~/.config/llama.cpp), with the benchmark method.\n"
+            "pai-config: GUI and CLI configurator for llama-server",
+            "pai-config, the GUI + CLI configurator for server.ini and the per-model\n\
+             presets.ini (kept per user, in ~/.config/private-ai), with the benchmark method.\n"
                 .to_string(),
         ),
         Component::Llama => (
@@ -739,7 +736,7 @@ fn deb_relations(f: &Fields) -> (String, String, String) {
         breaks.push(format!("{} (<< {v})", c.package()));
         breaks.push(format!("{} (>> {v})", c.package()));
     }
-    // What llama-cpp-config loads at run time by dlopen, which no link-time
+    // What pai-config loads at run time by dlopen, which no link-time
     // scan sees.
     if f.component == Component::Config {
         recommends.push("libxkbcommon0, libxkbcommon-x11-0, libwayland-client0, libx11-6, libxcursor1, libxi6, libegl1".into());
@@ -773,6 +770,22 @@ fn rpm_relations(f: &Fields) -> String {
         lines.push("Conflicts:      llama-cpp".into());
     }
     lines.join("\n")
+}
+
+/// The configurator's desktop entry, installed as
+/// `usr/share/applications/<app id>.desktop`: the display name, the
+/// executable, and the app id as the icon and the window class.
+fn desktop_entry() -> String {
+    "[Desktop Entry]\n\
+     Type=Application\n\
+     Name=Private AI Framework\n\
+     Comment=Configure and run llama-server and its model presets\n\
+     Exec=pai-config\n\
+     Icon=org.privateai.Config\n\
+     Terminal=false\n\
+     Categories=Utility;\n\
+     StartupWMClass=org.privateai.Config\n"
+        .to_string()
 }
 
 /// The icon is the largest PNG frame of resources/llama.ico (the same image
@@ -812,7 +825,7 @@ fn stage_icon(ico: &Path, stage: &Path) -> Result<Option<PathBuf>> {
         .map(|b| u32::from_be_bytes([b[0], b[1], b[2], b[3]]))
         .unwrap_or(0);
     let png = stage.join(format!(
-        "usr/share/icons/hicolor/{px}x{px}/apps/llama-cpp-config.png"
+        "usr/share/icons/hicolor/{px}x{px}/apps/org.privateai.Config.png"
     ));
     std::fs::create_dir_all(png.parent().unwrap())?;
     let end = (best_off + best_size).min(data.len());
@@ -988,10 +1001,10 @@ fn build_rpm(
         files.push_str("/usr/bin/*\n");
     }
     if root.join("usr/share/applications").is_dir() {
-        files.push_str("/usr/share/applications/llama-cpp-config.desktop\n");
+        files.push_str("/usr/share/applications/org.privateai.Config.desktop\n");
     }
     if root.join("usr/share/icons").is_dir() {
-        files.push_str("/usr/share/icons/hicolor/*/apps/llama-cpp-config.png\n");
+        files.push_str("/usr/share/icons/hicolor/*/apps/org.privateai.Config.png\n");
     }
     let spec = pkg_work.join(format!("{package}.spec"));
     std::fs::write(
@@ -1064,6 +1077,54 @@ mod tests {
             depends_on_llama,
             runtimes,
         }
+    }
+
+    /// The desktop entry names the product by its display name, runs
+    /// `pai-config`, and carries the app id the window sets (the Wayland app
+    /// id and X11 class), so the dock matches the window to the entry.
+    #[test]
+    fn the_desktop_entry_names_the_product_and_the_app_id() {
+        let text = desktop_entry();
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(lines[0], "[Desktop Entry]");
+        for line in [
+            "Type=Application",
+            "Name=Private AI Framework",
+            "Exec=pai-config",
+            "Icon=org.privateai.Config",
+            "StartupWMClass=org.privateai.Config",
+        ] {
+            assert!(lines.contains(&line), "{line} missing:\n{text}");
+        }
+        assert!(!text.contains("llama-cpp"), "{text}");
+    }
+
+    /// The icon is installed under the app id, the name the desktop entry's
+    /// `Icon=` gives.
+    #[test]
+    fn the_icon_is_staged_under_the_app_id() {
+        let dir = std::env::temp_dir().join(format!("xtask-icon-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        // A PNG whose IHDR says 256x256, in a one-frame ICO.
+        let mut png = b"\x89PNG\r\n\x1a\n\0\0\0\x0dIHDR".to_vec();
+        png.extend(256u32.to_be_bytes());
+        png.extend(256u32.to_be_bytes());
+        png.extend([8, 6, 0, 0, 0, 0, 0, 0, 0]);
+        let mut ico = vec![0, 0, 1, 0, 1, 0];
+        ico.extend([0, 0, 0, 0, 1, 0, 32, 0]);
+        ico.extend((png.len() as u32).to_le_bytes());
+        ico.extend(22u32.to_le_bytes());
+        ico.extend(&png);
+        let ico_path = dir.join("llama.ico");
+        std::fs::write(&ico_path, &ico).unwrap();
+        let stage = dir.join("stage");
+
+        let staged = stage_icon(&ico_path, &stage).unwrap();
+        let want = stage.join("usr/share/icons/hicolor/256x256/apps/org.privateai.Config.png");
+        assert_eq!(staged.as_deref(), Some(want.as_path()));
+        assert!(want.is_file());
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

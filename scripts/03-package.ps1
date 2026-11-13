@@ -1,5 +1,5 @@
 ﻿#requires -Version 7
-# Package llama.cpp + llama-cpp-config into an MSI in .\dist\ (WiX Toolset),
+# Package llama.cpp + pai-config into an MSI in .\dist\ (WiX Toolset),
 # validated (ICE). Requires a successful build and the WiX Toolset
 # pinned in installer\wix-toolset.psd1 (scripts\00-install-prerequisites.ps1
 # installs it). The logic is in xtask\src\windows\package.rs; this script only runs it.

@@ -137,6 +137,58 @@ mod tests {
         assert_eq!(substitute("{0} of {1}", &[&3, &1.5]), "3 of 1.5");
     }
 
+    /// The product is "Private AI Framework" and its executables `pai-config`
+    /// and `pai-manager`: no text either binary shows or prints names the old
+    /// project, the old configurator or the old manager executable. The
+    /// systemd unit `private-ai-manager.service` keeps its name.
+    #[test]
+    fn the_strings_name_the_product_and_the_executables_by_their_new_names() {
+        for file in ["en_US.toml", "cli.toml"] {
+            let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("strings")
+                .join(file);
+            let text = std::fs::read_to_string(&path).expect("read strings file");
+            for (key, value) in parse(&text) {
+                // Spelled in halves so the names lint (pai-config) finds no old name here.
+                for old in [
+                    concat!("llama-cpp", "-config"),
+                    concat!("llama.cpp", "-framework"),
+                    concat!("llama.cpp", " Config"),
+                ] {
+                    assert!(!value.contains(old), "{file} {key}: {value:?} names {old}");
+                }
+                let manager = value.replace("private-ai-manager.service", "");
+                assert!(
+                    !manager.contains(concat!("private-ai", "-manager")),
+                    "{file} {key}: {value:?} names the old manager executable"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_window_title_is_the_display_name() {
+        let gui = parse(include_str!("../strings/en_US.toml"));
+        assert_eq!(gui["window-title"], "Private AI Framework: Config");
+        assert_eq!(
+            gui["window-title-versioned"],
+            "Private AI Framework: Config v{0}"
+        );
+    }
+
+    #[test]
+    fn the_manager_usage_names_pai_manager() {
+        let cli = parse(include_str!("../strings/cli.toml"));
+        assert_eq!(
+            cli["manager-usage"],
+            "usage: pai-manager run-instance <id> | pai-manager serve"
+        );
+        assert_eq!(
+            cli["manager-missing-id"],
+            "run-instance needs an instance id: pai-manager run-instance <id>"
+        );
+    }
+
     #[test]
     fn an_unknown_key_reads_as_itself() {
         let table = parse(r#"known = "text""#);

@@ -15,9 +15,10 @@ Lessons only: the rules are in `AGENTS.md`.
 - A fake holds whatever you write, while the real system can answer differently. Do not treat a passing
   test on a fake as proof about the real thing.
 - In the configurator (package `pai-config` in `crates/config/`, formerly `llama-cpp-config/`; filter with
-  `cargo test -p pai-config <name>`), a test that needs `LLAMA_CPP_CONFIG_DATA_ROOT` (anything reading `paths::`) is not
-  a `#[test]` of its own: write a `#[cfg(test)] pub(crate) fn <name>_e2e()` that sets the redirect to its
-  own tempdir, and call it at the end of `editable_widgets_track_model_after_edit` in
+  `cargo test -p pai-config <name>`), a test that needs `PRIVATE_AI_DATA_ROOT` (anything reading `paths::`) is not
+  a `#[test]` of its own: write a `#[cfg(test)] pub(crate) fn <name>_e2e()` that calls
+  `crate::paths::redirect_for_tests(dir.path())` on its own tempdir (it sets the variable and asserts the
+  paths follow it before any IO, so a broken redirect fails instead of writing the real tree), and call it at the end of `editable_widgets_track_model_after_edit` in
   `src/tests/ui_bindings.rs`; filter on that name to run it. Pure helpers stay plain unit tests. Nothing
   unsets the variable safely, so the real-path branches (`/etc`, `%ProgramData%`) go untested.
 - Stubs with `todo!("<fn>")` give a red that names the missing function; prefer them to a compile error,
@@ -61,3 +62,8 @@ Lessons only: the rules are in `AGENTS.md`.
   working tree into that worktree), never in the real tree. In binding_lint only the keys rules
   (`strings_t_keys_...`, `cli_only_code_...`) walk every crate's `src/`; `cli_print_paths_hold_no_language`
   reads only the files named in `CLI_PRINT_PATHS`, so a literal `println!` elsewhere is not caught.
+- Several filters go in one run: `cargo test -p <crate> -- a b c` (libtest takes many). A loop of one
+  `cargo test` per filter took minutes each on pai-config; one run with every filter took one.
+- A names lint (`crates/config/src/tests/names_lint.rs`, `xtask/src/names_lint.rs`) flags old names in
+  code lines; a test that must spell an old name (a negative assertion, the old-variable-is-ignored check)
+  splits it with `concat!("llama-cpp", "-config")` so the lint stays clean.

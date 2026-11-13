@@ -16,10 +16,11 @@
 // with its own #[test]; no Slint backend involved.
 //
 // WARNING: save_flow redirects config IO by setting the process-wide
-// `LLAMA_CPP_CONFIG_DATA_ROOT` env var and never restores it. Unit tests
+// `PRIVATE_AI_DATA_ROOT` env var and never restores it. Unit tests
 // elsewhere must not touch `paths::` (or anything that resolves the config
 // dir): cargo runs tests on parallel threads, so they would race the e2e
 // thread nondeterministically.
 mod binding_lint;
+mod names_lint;
 mod save_flow;
 mod ui_bindings;

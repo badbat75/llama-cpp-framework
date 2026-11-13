@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Package the build (llama.cpp + llama-cpp-config) in ./dist/: a .deb and an
+# Package the build (llama.cpp + pai-config) in ./dist/: a .deb and an
 # .rpm per component on Linux, a .pkg per component on macOS; the counterpart of
 # 03-package.ps1. Requires
 # a successful build. The logic, and what the packages install, is in

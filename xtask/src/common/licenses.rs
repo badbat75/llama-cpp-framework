@@ -216,7 +216,7 @@ pub fn stage(share: &Path, libraries: &[String], sources: &Sources) -> Result<Ve
 pub fn stage_in(dir: &Path, libraries: &[String], sources: &Sources) -> Result<Vec<Entry>> {
     std::fs::create_dir_all(dir)?;
     let repo = util::repo_root();
-    copy(&repo.join("LICENSE"), &dir.join("llama.cpp-framework.txt"))?;
+    copy(&repo.join("LICENSE"), &dir.join("private-ai-framework.txt"))?;
     copy(
         &repo
             .join("crates")
@@ -275,7 +275,7 @@ fn listing(entries: &[Entry]) -> String {
 
 fn readme(entries: &[Entry]) -> String {
     let mut text = String::from(
-        "llama.cpp-framework is distributed under the MIT licence (llama.cpp-framework.txt).\n\
+        "The Private AI Framework is distributed under the MIT licence (private-ai-framework.txt).\n\
          llama.cpp is under llama.cpp.txt, the icon font of the configurator under\n\
          fluent-system-icons.txt. The bundled libraries are redistributed under their own\n\
          licences, and this project's MIT licence does not cover them:\n\n",
@@ -380,7 +380,7 @@ fn rtf_paragraphs(text: &str) -> String {
 pub fn installer_page(entries: &[Entry], own: &str, eula: Option<&str>) -> String {
     let mut text = readme(entries);
     text.push_str("\nThe full texts are installed in share\\licenses, beside bin.\n\n");
-    text.push_str("---- llama.cpp-framework: MIT licence ----\n\n");
+    text.push_str("---- Private AI Framework: MIT licence ----\n\n");
     text.push_str(own);
     if let Some(eula) = eula {
         text.push_str("\n\n---- The NVIDIA libraries: NVIDIA's terms ----\n\n");
@@ -501,7 +501,7 @@ mod tests {
         );
         let licenses = share.join("licenses");
         for file in [
-            "llama.cpp-framework.txt",
+            "private-ai-framework.txt",
             "llama.cpp.txt",
             "llama.cpp-jsonhpp.txt",
             CUDA_EULA_FILE,

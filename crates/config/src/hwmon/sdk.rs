@@ -68,9 +68,9 @@ fn parse_sdks(text: &str) -> Vec<Sdk> {
             let mut fields = line.strip_prefix('@')?.splitn(3, '\t');
             let (name, library, version) = (fields.next()?, fields.next()?, fields.next()?);
             let built_with = match name {
-                "ROCm" => env!("LLAMA_FW_ROCM"),
-                "CUDA" => env!("LLAMA_FW_CUDA"),
-                "Vulkan" => env!("LLAMA_FW_VULKAN_SDK"),
+                "ROCm" => env!("PRIVATE_AI_ROCM"),
+                "CUDA" => env!("PRIVATE_AI_CUDA"),
+                "Vulkan" => env!("PRIVATE_AI_VULKAN_SDK"),
                 _ => "",
             };
             let known = |text: &str| (!text.is_empty()).then(|| text.to_string());

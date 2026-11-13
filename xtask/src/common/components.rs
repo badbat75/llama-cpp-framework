@@ -2,7 +2,7 @@
 //! staged file. One staged tree goes in, one tree per package comes out, so
 //! no file can land in two packages or in none.
 //!
-//! - `config`: llama-cpp-config (one binary, GUI and CLI), its language files,
+//! - `config`: pai-config (one binary, GUI and CLI), its language files,
 //!   the benchmark method, the desktop entry.
 //! - `llama`: llama.cpp's executables and libraries, every ggml backend, and
 //!   libomp: the dist's OpenMP runtime, which ggml-base itself links, so it
@@ -60,8 +60,8 @@ impl Component {
 pub fn of(rel: &str) -> Component {
     let path = rel.trim_start_matches('/');
     let name = path.rsplit('/').next().unwrap_or(path);
-    if let Some(inner) = path.strip_prefix("opt/llama.cpp/") {
-        if inner == "bin/llama-cpp-config" || inner.starts_with("share/") {
+    if let Some(inner) = path.strip_prefix("opt/private-ai/") {
+        if inner == "bin/pai-config" || inner.starts_with("share/") {
             return Component::Config;
         }
         if inner.starts_with(".kpack/") {
@@ -85,7 +85,7 @@ pub fn of(rel: &str) -> Component {
     if path.starts_with("usr/local/share/vulkan/") {
         return Component::Vulkan;
     }
-    if name == "llama-cpp-config" || path.starts_with("usr/share/") {
+    if name == "pai-config" || path.starts_with("usr/share/") {
         return Component::Config;
     }
     Component::Llama
@@ -132,7 +132,7 @@ pub fn split(stage: &Path, into: &Path) -> Result<Vec<Component>> {
     Ok(present)
 }
 
-/// A package file's name without architecture and extension. llama-cpp-config and
+/// A package file's name without architecture and extension. pai-config and
 /// llama.cpp name the framework and the llama.cpp release; a runtime names its SDK.
 pub fn file_stem(c: Component, fw_version: &str, llama_build: &str, version: &str) -> String {
     if c.is_runtime() {
@@ -184,50 +184,50 @@ mod tests {
     #[test]
     fn linux_files_go_to_their_package() {
         for (rel, want) in [
-            ("opt/llama.cpp/bin/llama-cpp-config", Component::Config),
-            ("opt/llama.cpp/share/strings/en_US.toml", Component::Config),
+            ("opt/private-ai/bin/pai-config", Component::Config),
+            ("opt/private-ai/share/strings/en_US.toml", Component::Config),
             (
-                "opt/llama.cpp/share/benchmarks/standard-1.1.ini",
+                "opt/private-ai/share/benchmarks/standard-1.1.ini",
                 Component::Config,
             ),
-            ("usr/bin/llama-cpp-config", Component::Config),
+            ("usr/bin/pai-config", Component::Config),
             (
-                "usr/share/applications/llama-cpp-config.desktop",
+                "usr/share/applications/org.privateai.Config.desktop",
                 Component::Config,
             ),
             (
-                "usr/share/icons/hicolor/256x256/apps/llama-cpp-config.png",
+                "usr/share/icons/hicolor/256x256/apps/org.privateai.Config.png",
                 Component::Config,
             ),
-            ("opt/llama.cpp/bin/llama-server", Component::Llama),
-            ("opt/llama.cpp/bin/libggml-base.so.0", Component::Llama),
-            ("opt/llama.cpp/bin/libggml-hip.so", Component::Llama),
-            ("opt/llama.cpp/bin/libggml-cuda.so", Component::Llama),
-            ("opt/llama.cpp/bin/libggml-vulkan.so", Component::Llama),
-            ("opt/llama.cpp/lib/llvm/lib/libomp.so", Component::Llama),
+            ("opt/private-ai/bin/llama-server", Component::Llama),
+            ("opt/private-ai/bin/libggml-base.so.0", Component::Llama),
+            ("opt/private-ai/bin/libggml-hip.so", Component::Llama),
+            ("opt/private-ai/bin/libggml-cuda.so", Component::Llama),
+            ("opt/private-ai/bin/libggml-vulkan.so", Component::Llama),
+            ("opt/private-ai/lib/llvm/lib/libomp.so", Component::Llama),
             ("usr/bin/llama-server", Component::Llama),
-            ("opt/llama.cpp/lib/libamdhip64.so.7", Component::Rocm),
+            ("opt/private-ai/lib/libamdhip64.so.7", Component::Rocm),
             (
-                "opt/llama.cpp/lib/llvm/lib/libLLVM.so.24.0git",
+                "opt/private-ai/lib/llvm/lib/libLLVM.so.24.0git",
                 Component::Rocm,
             ),
             (
-                "opt/llama.cpp/lib/rocm_sysdeps/lib/librocm_sysdeps_numa.so.1",
+                "opt/private-ai/lib/rocm_sysdeps/lib/librocm_sysdeps_numa.so.1",
                 Component::Rocm,
             ),
             (
-                "opt/llama.cpp/lib/rocblas/library/Kernels.so-000-gfx1201.dat",
+                "opt/private-ai/lib/rocblas/library/Kernels.so-000-gfx1201.dat",
                 Component::Rocm,
             ),
             (
-                "opt/llama.cpp/.kpack/blas_lib_gfx1201.kpack",
+                "opt/private-ai/.kpack/blas_lib_gfx1201.kpack",
                 Component::Rocm,
             ),
-            ("opt/llama.cpp/lib/libcublas.so.13", Component::Cuda),
-            ("opt/llama.cpp/lib/libcublasLt.so.13", Component::Cuda),
-            ("opt/llama.cpp/lib/libcudart.so.13", Component::Cuda),
-            ("opt/llama.cpp/lib/libnccl.so.2", Component::Cuda),
-            ("opt/llama.cpp/lib/libvulkan.so.1", Component::Vulkan),
+            ("opt/private-ai/lib/libcublas.so.13", Component::Cuda),
+            ("opt/private-ai/lib/libcublasLt.so.13", Component::Cuda),
+            ("opt/private-ai/lib/libcudart.so.13", Component::Cuda),
+            ("opt/private-ai/lib/libnccl.so.2", Component::Cuda),
+            ("opt/private-ai/lib/libvulkan.so.1", Component::Vulkan),
         ] {
             assert_eq!(of(rel), want, "{rel}");
         }
@@ -236,11 +236,11 @@ mod tests {
     #[test]
     fn macos_files_go_to_their_package() {
         for (rel, want) in [
-            ("usr/local/bin/llama-cpp-config", Component::Config),
+            ("usr/local/bin/pai-config", Component::Config),
             ("usr/local/bin/llama-server", Component::Llama),
-            ("opt/llama.cpp/bin/libggml-metal.so", Component::Llama),
-            ("opt/llama.cpp/lib/libvulkan.1.dylib", Component::Vulkan),
-            ("opt/llama.cpp/lib/libMoltenVK.dylib", Component::Vulkan),
+            ("opt/private-ai/bin/libggml-metal.so", Component::Llama),
+            ("opt/private-ai/lib/libvulkan.1.dylib", Component::Vulkan),
+            ("opt/private-ai/lib/libMoltenVK.dylib", Component::Vulkan),
             (
                 "usr/local/share/vulkan/icd.d/llama-cpp-framework-MoltenVK_icd.json",
                 Component::Vulkan,
@@ -314,8 +314,8 @@ mod tests {
         let stage = dir.join("stage");
         let into = dir.join("into");
         for file in [
-            "opt/llama.cpp/bin/llama-server",
-            "opt/llama.cpp/lib/libcublas.so.13",
+            "opt/private-ai/bin/llama-server",
+            "opt/private-ai/lib/libcublas.so.13",
         ] {
             let path = stage.join(file);
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -323,7 +323,7 @@ mod tests {
         }
         std::fs::create_dir_all(stage.join("usr/bin")).unwrap();
         std::os::unix::fs::symlink(
-            "../../opt/llama.cpp/bin/llama-server",
+            "../../opt/private-ai/bin/llama-server",
             stage.join("usr/bin/llama-server"),
         )
         .unwrap();
@@ -333,18 +333,18 @@ mod tests {
             [Component::Llama, Component::Cuda]
         );
 
-        assert!(into.join("llama/opt/llama.cpp/bin/llama-server").is_file());
+        assert!(into.join("llama/opt/private-ai/bin/llama-server").is_file());
         assert!(into
-            .join("cuda/opt/llama.cpp/lib/libcublas.so.13")
+            .join("cuda/opt/private-ai/lib/libcublas.so.13")
             .is_file());
         assert!(!into.join("rocm").exists());
         let link = into.join("llama/usr/bin/llama-server");
         assert_eq!(
             std::fs::read_link(link).unwrap(),
-            Path::new("../../opt/llama.cpp/bin/llama-server")
+            Path::new("../../opt/private-ai/bin/llama-server")
         );
         assert!(
-            stage.join("opt/llama.cpp/bin/llama-server").is_file(),
+            stage.join("opt/private-ai/bin/llama-server").is_file(),
             "the staged tree stays whole"
         );
         std::fs::remove_dir_all(&dir).unwrap();

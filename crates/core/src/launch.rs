@@ -1,5 +1,5 @@
 //! The llama-server launch, shared by the configurator's `runstate::start()` and
-//! `private-ai-manager run-instance` (`instance_command`): `server_args()` is
+//! `pai-manager run-instance` (`instance_command`): `server_args()` is
 //! the single source of truth for the arg list, `env_vars()` the settings
 //! llama.cpp exposes only as env vars, `launch_command()` the process with its
 //! cwd, `LLAMA_CACHE` and the ROCm PATH prepend (`proc::prepend_rocm_path`:
@@ -193,7 +193,7 @@ pub fn launch_command(
     cmd
 }
 
-// ── Service launch (private-ai-manager run-instance) ─────────────────────
+// ── Service launch (pai-manager run-instance) ─────────────────────
 
 /// Why `instance_command` built no launch.
 #[derive(Debug, PartialEq, Eq)]
@@ -235,7 +235,7 @@ pub fn instance_command(
 }
 
 /// E2E phase for `instance_command`, for this crate's e2e test to call: it sets
-/// the process-wide `LLAMA_CPP_CONFIG_DATA_ROOT` redirect (`src/tests/mod.rs`).
+/// the process-wide `PRIVATE_AI_DATA_ROOT` redirect (`src/tests/mod.rs`).
 /// The expected launch is always computed by the existing path
 /// (`server_cfg::load()` of `paths::server_ini()` fed to `server_args`), never
 /// hard-coded.
@@ -245,7 +245,7 @@ pub(crate) fn instance_launch_e2e() {
     use std::ffi::OsString;
 
     let dir = tempfile::tempdir().expect("tempdir");
-    std::env::set_var("LLAMA_CPP_CONFIG_DATA_ROOT", dir.path());
+    crate::paths::redirect_for_tests(dir.path());
     let sys = crate::paths::system_config_dir();
     let exe = dir
         .path()

@@ -1,7 +1,7 @@
 //! Package phase on macOS (cargo run -p xtask -- package): three .pkg files
-//! (llama-cpp-config, llama.cpp, the Vulkan runtime: common/components.rs says
+//! (pai-config, llama.cpp, the Vulkan runtime: common/components.rs says
 //! which file goes where; ROCm and CUDA do not exist here). Stages the build into
-//! /opt/llama.cpp (binaries, backends and llama-cpp-config in bin/, the
+//! /opt/private-ai (binaries, backends and pai-config in bin/, the
 //! bundled Vulkan loader and MoltenVK in lib/), a symlink per executable in
 //! /usr/local/bin, the MoltenVK driver manifest in
 //! /usr/local/share/vulkan/icd.d, and builds them with pkgbuild into ./dist/.
@@ -19,7 +19,7 @@
 //!
 //! The driver manifest goes where the Vulkan loader looks for it (the loader
 //! does not search next to itself): /usr/local/share/vulkan/icd.d, under a
-//! name of its own, with an absolute library_path into /opt/llama.cpp/lib. A
+//! name of its own, with an absolute library_path into /opt/private-ai/lib. A
 //! system-wide Vulkan SDK install adds its own MoltenVK manifest there too.
 
 use super::build_llama::load_build_env;
@@ -132,7 +132,7 @@ pub fn run(keep_staging: bool) -> Result<()> {
     ui::head("Architecture:      arm64");
 
     // ── Preconditions ───────────────────────────────────────────────────
-    for exe in ["llama-server", "llama-cpp-config"] {
+    for exe in ["llama-server", "pai-config"] {
         if !util::is_executable(&bin.join(exe)) {
             bail!(
                 "{exe} not found in {}. Run cargo run -p xtask -- build first.",
@@ -140,11 +140,11 @@ pub fn run(keep_staging: bool) -> Result<()> {
             );
         }
     }
-    let built = output(cmd(bin.join("llama-cpp-config")).arg("--version"))
+    let built = output(cmd(bin.join("pai-config")).arg("--version"))
         .and_then(|s| s.split_whitespace().last().map(str::to_string))
         .unwrap_or_default();
     if built != fw_version {
-        bail!("the built llama-cpp-config is {built}, Cargo.toml says {fw_version}. Run cargo run -p xtask -- build first.");
+        bail!("the built pai-config is {built}, Cargo.toml says {fw_version}. Run cargo run -p xtask -- build first.");
     }
     for tool in ["pkgbuild", "otool", "install_name_tool", "codesign"] {
         if which(tool).is_none() {
@@ -168,7 +168,7 @@ pub fn run(keep_staging: bool) -> Result<()> {
 
     ui::head("Staging binaries...");
     // The build's bin/ as is (executables, the backend dylibs and
-    // llama-cpp-config side by side), llama.cpp's own test-* harnesses left
+    // pai-config side by side), llama.cpp's own test-* harnesses left
     // out. `orig` remembers where each staged Mach-O came from, to resolve
     // its @rpath dependencies as the build tree does.
     let mut orig: Vec<(PathBuf, PathBuf)> = Vec::new();

@@ -10,7 +10,7 @@ Lessons only: the rules are in `AGENTS.md`.
 - When a test fails, check whether the test or the code is wrong before changing either.
 - A screenshot that comes out blank proves nothing about a GUI. Check that it really shows the window.
 - The framework is three crates under `crates/`: `core` (`pai-core`, no GUI), `manager` (`pai-manager`,
-  the `private-ai-manager` bin, core only) and `config` (`pai-config`, GUI + CLI). The config and manager
+  the `pai-manager` bin, core only) and `config` (`pai-config`, GUI + CLI). The config and manager
   lib roots `use pai_core::{paths, ...}` so `crate::paths::x` still resolves; a module split between
   core and config (`server_cfg`, `slot_state`, `runstate` over `pai_core::launch`) re-exports the core
   half with `pub use`. A `#[cfg(test)]` item of core is invisible to the other crates' tests: gate it
@@ -33,8 +33,14 @@ Lessons only: the rules are in `AGENTS.md`.
   of their own (`manager/dbus.rs`).
 - In `manager.rs` only `main` and `run` are CLI-only for `binding_lint`: a new helper fn that prints
   a `cli.toml` key needs the key in `en_US.toml` too, so keep such printing inside `run`.
-- Each crate's tests that set `LLAMA_CPP_CONFIG_DATA_ROOT` run as phases of ONE `#[test]` in its
-  `src/tests/mod.rs` (`data_root_e2e` in core and manager, the UI test in config).
+- Each crate's tests that redirect the data tree (`paths::redirect_for_tests`, which sets
+  `PRIVATE_AI_DATA_ROOT`) run as phases of ONE `#[test]` in its `src/tests/mod.rs` (`data_root_e2e`
+  in core and manager, the UI test in config).
+- The names lints (`config/src/tests/names_lint.rs`, `xtask/src/names_lint.rs`) scan code lines for
+  the old project names; whole-line comments are skipped, so a test that must name an old name spells
+  it in halves with `concat!`. Package names (`components::BASE_NAME`, the MSI and `.pkg` names) and
+  the upgrade bits of the `.wxs` and `msi-stop-processes.ps1` keep the old names on purpose.
+- Several test-name filters go after `--`: `cargo test -p pai-config -- names_lint cli::`.
 - Moving a crate changes the depth of its repo-root paths: `build.rs` (`../../resources`,
   `../../build`, `../../patches`), `include_str!` of `benchmarks/` (`bench/db.rs`, `bench/spec.rs`),
   `CARGO_MANIFEST_DIR` joins (`bench/db.rs` test, `kv_cache.rs` test, `paths::bench_share_dir`'s
