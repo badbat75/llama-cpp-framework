@@ -3,7 +3,8 @@
 use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand};
 
-use crate::{bench, paths, presets, server_cfg, strings};
+use crate::server_control::{self, ConfigFile};
+use crate::{bench, presets, server_cfg, strings};
 
 // ── Command definitions (clap) ───────────────────────────────────────────
 
@@ -916,11 +917,16 @@ fn show_lines(cfg: &server_cfg::ServerConfig) -> String {
     out
 }
 
+/// Where a configuration file is, to show the user: the seam's answer.
+fn config_path(file: ConfigFile) -> std::path::PathBuf {
+    server_control::backend().config_path(file)
+}
+
 fn run_server(c: ServerCmd) -> Result<()> {
     match c {
         ServerCmd::Show => {
             let cfg = server_cfg::load();
-            println!("server.ini: {}", paths::server_ini().display());
+            println!("server.ini: {}", config_path(ConfigFile::Server).display());
             print!("{}", show_lines(&cfg));
             Ok(())
         }
@@ -930,7 +936,7 @@ fn run_server(c: ServerCmd) -> Result<()> {
             server_cfg::save(&cfg).with_context(|| strings::t("save-server-settings-failed"))?;
             println!(
                 "{}",
-                strings::fill("wrote-file", &[&paths::server_ini().display()])
+                strings::fill("wrote-file", &[&config_path(ConfigFile::Server).display()])
             );
             Ok(())
         }
@@ -952,13 +958,16 @@ fn run_preset(c: PresetCmd) -> Result<()> {
     match c {
         PresetCmd::List => {
             let listed = presets::load_listed();
-            println!("presets.ini: {}", paths::presets_ini().display());
+            println!(
+                "presets.ini: {}",
+                config_path(ConfigFile::Presets).display()
+            );
             if listed.iter().any(|l| !l.enabled) {
                 println!(
                     "{}",
                     strings::fill(
                         "switched-off-file",
-                        &[&paths::presets_disabled_ini().display()]
+                        &[&config_path(ConfigFile::PresetsDisabled).display()]
                     )
                 );
             }
@@ -1025,9 +1034,9 @@ fn run_preset_delete(id: &str, which: &[FileKind], even_if_shared: bool) -> Resu
     }
     presets::delete(&real_id).with_context(|| strings::t("delete-preset-failed"))?;
     let file = if l.enabled {
-        paths::presets_ini()
+        config_path(ConfigFile::Presets)
     } else {
-        paths::presets_disabled_ini()
+        config_path(ConfigFile::PresetsDisabled)
     };
     println!(
         "{}",
@@ -1284,7 +1293,7 @@ fn run_preset_download(a: PresetDownload) -> Result<()> {
         "{}",
         strings::fill(
             "created-preset-in",
-            &[&preset.id, &paths::presets_ini().display()]
+            &[&preset.id, &config_path(ConfigFile::Presets).display()]
         )
     );
     if let Some(line) = placement_line(&preset) {
@@ -2332,16 +2341,15 @@ pub(crate) fn cli_control_e2e() {
     let port = fake::http_stub(&log);
     let state = dir.path().join("state");
     std::fs::create_dir_all(&state).expect("state dir");
+    // The config: the default backend's (the stop's snapshot reads it) and
+    // the manager's, which a start or restart reads back.
+    let server_text = format!(
+        "[Server]\nPort = {port}\nSaveStateOnShutdown = true\nStateDir = {}\n",
+        state.display()
+    );
     let server_ini = crate::paths::server_ini();
     std::fs::create_dir_all(server_ini.parent().unwrap()).expect("config dir");
-    std::fs::write(
-        &server_ini,
-        format!(
-            "[Server]\nPort = {port}\nSaveStateOnShutdown = true\nStateDir = {}\n",
-            state.display()
-        ),
-    )
-    .expect("server.ini");
+    std::fs::write(&server_ini, &server_text).expect("server.ini");
     std::fs::write(
         crate::paths::presets_ini(),
         "[Qwen3.8-27B]\nmodel = /models/Qwen3.8-27B-Q8_0.gguf\n",
@@ -2381,7 +2389,10 @@ pub(crate) fn cli_control_e2e() {
 
     // Start: the manager's start of default, then the restore.
     log.lock().unwrap().clear();
-    let b = fake::backend(FakeClient::new(&log, InstanceState::Inactive));
+    let b = fake::backend(
+        FakeClient::new(&log, InstanceState::Inactive)
+            .with_file("server@default.ini", &server_text),
+    );
     run_control_with(ControlCmd::Start, &b).expect("start");
     let entries = log.lock().unwrap().clone();
     assert!(
@@ -2403,7 +2414,9 @@ pub(crate) fn cli_control_e2e() {
 
     // Restart: snapshot, the manager's restart, restore, in that order.
     log.lock().unwrap().clear();
-    let b = fake::backend(FakeClient::new(&log, InstanceState::Active));
+    let b = fake::backend(
+        FakeClient::new(&log, InstanceState::Active).with_file("server@default.ini", &server_text),
+    );
     run_control_with(ControlCmd::Restart, &b).expect("restart");
     let entries = log.lock().unwrap().clone();
     let restart = position(&entries, "restart default");
@@ -2448,6 +2461,95 @@ pub(crate) fn cli_control_e2e() {
                 "{label}: {err:#} carries {:?}",
                 e.text()
             ),
+        }
+    }
+}
+
+/// E2E phase (called from `editable_widgets_track_model_after_edit`): `server
+/// set` and `preset enable` / `disable` write the manager's files through the
+/// seam and nothing under the per-user config directory, and a write the
+/// manager refuses fails the command with the refusal's own text, which
+/// `main` prints on stderr before exiting non-zero.
+#[cfg(test)]
+pub(crate) fn cli_config_e2e() {
+    use crate::server_control::fake::{self, FakeClient};
+    use clap::Parser;
+    use pai_core::client::{ClientError, InstanceState};
+    let dir = tempfile::tempdir().expect("tempdir");
+    crate::paths::redirect_for_tests(dir.path());
+    let user = crate::paths::config_dir();
+    let cli = |args: &[&str]| Cli::try_parse_from(args).expect("parses");
+    let nothing_per_user = |when: &str| {
+        for name in ["server.ini", "presets.ini", "presets.ini.disabled"] {
+            assert!(
+                !user.join(name).exists(),
+                "{when}: {name} written under the per-user config directory"
+            );
+        }
+    };
+    let log = fake::log();
+    let seeded = || {
+        FakeClient::new(&log, InstanceState::Inactive)
+            .with_file("server@default.ini", "[Server]\nPort = 8080\n")
+            .with_file(
+                "presets.ini",
+                "[Qwen3.8-27B]\nmodel = /models/Qwen3.8-27B-Q8_0.gguf\n",
+            )
+            .with_file(
+                "presets.ini.disabled",
+                "[Qwen3.8-Flash-Next]\nmodel = /models/Qwen3.8-Flash-Next-IQ3_S.gguf\n",
+            )
+    };
+
+    let c = seeded();
+    let files = c.files.clone();
+    let file = |name: &str| files.lock().unwrap().get(name).cloned().unwrap_or_default();
+    fake::scoped(fake::backend(c), || {
+        log.lock().unwrap().clear();
+        run(cli(&["x", "server", "set", "--port", "8099"])).expect("server set");
+        assert_eq!(fake::writes(&log), ["write_file server@default.ini"]);
+        assert_eq!(
+            crate::server_cfg::from_text(&file("server@default.ini")).port,
+            Some(8099)
+        );
+        nothing_per_user("server set");
+
+        log.lock().unwrap().clear();
+        run(cli(&["x", "preset", "disable", "Qwen3.8-27B"])).expect("preset disable");
+        assert_eq!(
+            fake::writes(&log),
+            ["write_file presets.ini.disabled", "write_file presets.ini"]
+        );
+        assert!(!file("presets.ini").contains("[Qwen3.8-27B]"));
+        assert!(file("presets.ini.disabled").contains("[Qwen3.8-27B]"));
+        nothing_per_user("preset disable");
+    });
+
+    // Refused: the command fails with the refusal's text, nothing written.
+    let refusal = pai_core::checks::Refusal {
+        key: "not-whole-number-in-range",
+        values: ["Port", "99999", "1", "65535"].map(String::from).to_vec(),
+    };
+    for e in [ClientError::Invalid(refusal), ClientError::NotAuthorized] {
+        for args in [
+            &["x", "server", "set", "--port", "8099"][..],
+            &["x", "preset", "enable", "Qwen3.8-Flash-Next"][..],
+        ] {
+            let mut c = seeded();
+            c.fail_write = Some(e.clone());
+            let files = c.files.clone();
+            let before = files.lock().unwrap().clone();
+            let label = format!("{args:?} {e:?}");
+            match fake::scoped(fake::backend(c), || run(cli(args))) {
+                Ok(()) => panic!("{label}: succeeded"),
+                Err(err) => assert!(
+                    format!("{err:#}").contains(&e.text()),
+                    "{label}: {err:#} carries {:?}",
+                    e.text()
+                ),
+            }
+            assert_eq!(*files.lock().unwrap(), before, "{label}: nothing changed");
+            nothing_per_user(&label);
         }
     }
 }

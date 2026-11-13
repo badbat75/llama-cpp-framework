@@ -8,6 +8,11 @@
 use super::*;
 use crate::strings;
 
+/// Where the server file is, to show in the status line: the seam's answer.
+fn server_ini_path() -> std::path::PathBuf {
+    crate::server_control::backend().config_path(crate::server_control::ConfigFile::Server)
+}
+
 pub(super) fn wire(app: &AppWindow, tray: &AppTray, state: &Rc<RefCell<State>>) {
     {
         let app_weak = app.as_weak();
@@ -36,9 +41,9 @@ pub(super) fn wire(app: &AppWindow, tray: &AppTray, state: &Rc<RefCell<State>>) 
                     // (the save only changes the file), so surface the restart
                     // step instead of implying the change is live.
                     let msg = if s.get_server_running() {
-                        strings::fill("server-saved-restart", &[&paths::server_ini().display()])
+                        strings::fill("server-saved-restart", &[&server_ini_path().display()])
                     } else {
-                        strings::fill("server-saved", &[&paths::server_ini().display()])
+                        strings::fill("server-saved", &[&server_ini_path().display()])
                     };
                     set_status(&app, msg, false);
                     // Re-derive the saved-config projections (Command Line
@@ -67,7 +72,7 @@ pub(super) fn wire(app: &AppWindow, tray: &AppTray, state: &Rc<RefCell<State>>) 
             // config, so there is nothing for them to re-derive.
             set_status(
                 &app,
-                strings::fill("server-reloaded", &[&paths::server_ini().display()]),
+                strings::fill("server-reloaded", &[&server_ini_path().display()]),
                 false,
             );
         });

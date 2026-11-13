@@ -128,140 +128,24 @@ pub fn read_section(path: &Path, section: &str) -> BTreeMap<String, String> {
 }
 
 // ── Writers (atomic, section-preserving) ─────────────────────────────────
+//
+// Each writer is a text transform in `text` (what a caller that reads and
+// writes through someone else, the manager, uses) and a file wrapper here.
 
 /// Replace one key inside the named section.
 pub fn replace_key(path: &Path, section: &str, key: &str, value: &str) -> std::io::Result<()> {
-    let new_line = format!("{key} = {value}");
     let content = fs::read_to_string(path).unwrap_or_default();
-    // Inserted lines follow the file's line-ending style (the replace path
-    // below preserves it per line); brand-new / empty files get CRLF.
-    let eol = detect_eol(&content);
-
-    let header = format!("[{section}]");
-    let Some((_, header_end)) = find_section_header(&content, section) else {
-        let mut out = content;
-        if !out.is_empty() && !out.ends_with('\n') {
-            out.push_str(eol);
-        }
-        if !out.is_empty() {
-            out.push_str(eol);
-        }
-        out.push_str(&header);
-        out.push_str(eol);
-        out.push_str(&new_line);
-        out.push_str(eol);
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        return atomic_write(path, &out);
-    };
-
-    // Body starts after the header's newline; a header that is the file's
-    // last line (no terminator) gets one added at the splice below so the
-    // appended key starts on its own line instead of glued to the `]`.
-    let (section_start, header_needs_eol) = match content[header_end..].find('\n') {
-        Some(n) => (header_end + n + 1, false),
-        None => (content.len(), true),
-    };
-    // Scan from header_end (like replace_section / delete_section), NOT from
-    // section_start: next_section_start only sees a header on a line AFTER a
-    // '\n' at/beyond `from`, so scanning from the body start skips a
-    // neighbouring header sitting exactly there (empty body): the key would
-    // splice into THAT section instead.
-    let section_end = next_section_start(&content, header_end).unwrap_or(content.len());
-    let section_body = &content[section_start..section_end];
-
-    let mut new_body = String::new();
-    let mut replaced = false;
-    let lines_iter = section_body.split_inclusive('\n');
-    for line in lines_iter {
-        // line_starts_with_key does its own trim_start.
-        if !replaced && line_starts_with_key(line, key) {
-            new_body.push_str(&new_line);
-            // An unterminated final line has no ending to preserve: fall
-            // back to the file's detected EOL, not a hardcoded `\n` that
-            // would mix endings into a CRLF file.
-            new_body.push_str(if line.ends_with("\r\n") {
-                "\r\n"
-            } else if line.ends_with('\n') {
-                "\n"
-            } else {
-                eol
-            });
-            replaced = true;
-        } else {
-            new_body.push_str(line);
-        }
-    }
-    if !replaced {
-        let trimmed = new_body.trim_end_matches(['\r', '\n']);
-        let tail = &new_body[trimmed.len()..];
-        // `tail` still holds the last real line's terminator (plus any blank
-        // separator lines before the next section), so don't add another `eol`
-        // in front of it: that duplicated the terminator, growing one blank
-        // line per appended key.
-        new_body = if trimmed.is_empty() {
-            format!("{new_line}{eol}{tail}")
-        } else {
-            format!("{trimmed}{eol}{new_line}{tail}")
-        };
-    }
-
-    let mut out = String::with_capacity(content.len() + new_line.len());
-    out.push_str(&content[..section_start]);
-    if header_needs_eol {
-        out.push_str(eol);
-    }
-    out.push_str(&new_body);
-    out.push_str(&content[section_end..]);
-
+    let out = text::replace_key(&content, section, key, value);
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
     atomic_write(path, &out)
 }
 
-/// Replace (or insert) an entire named section. The body arrives CRLF from
-/// the renderers (`presets::render_section`, `ServerConfig::render`) and is
-/// converted to the file's own line-ending style, so a hand-maintained
-/// LF-only file doesn't gain mixed endings on every save.
+/// Replace (or insert) an entire named section: `text::replace_section`.
 pub fn replace_section(path: &Path, section_name: &str, section_body: &str) -> std::io::Result<()> {
     let content = fs::read_to_string(path).unwrap_or_default();
-    let eol = detect_eol(&content);
-    let body = normalize_eol(section_body.trim_end(), eol);
-    let new_section = if body.is_empty() {
-        String::new()
-    } else {
-        format!("{body}{eol}")
-    };
-
-    let Some((header_pos, header_end)) = find_section_header(&content, section_name) else {
-        let mut out = content;
-        if !out.is_empty() {
-            out = out.trim_end_matches(['\r', '\n']).to_string();
-            out.push_str(eol);
-            out.push_str(eol);
-        }
-        out.push_str(&new_section);
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        return atomic_write(path, &out);
-    };
-
-    let next = next_section_start(&content, header_end).unwrap_or(content.len());
-    // Splice from the header's line start so an indented header's leading
-    // whitespace is replaced along with it, not left glued to the new body.
-    let before = &content[..line_start_of(&content, header_pos)];
-    let after = &content[next..];
-    let separator = if after.is_empty() { "" } else { eol };
-
-    let mut out = String::with_capacity(before.len() + new_section.len() + after.len() + 4);
-    out.push_str(before);
-    out.push_str(&new_section);
-    out.push_str(separator);
-    out.push_str(after);
-
+    let out = text::replace_section(&content, section_name, section_body);
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
@@ -270,56 +154,205 @@ pub fn replace_section(path: &Path, section_name: &str, section_body: &str) -> s
 
 /// Rename a section header in place.
 pub fn rename_section(path: &Path, old: &str, new: &str) -> std::io::Result<()> {
-    let new_header = format!("[{new}]");
     let content = fs::read_to_string(path)?;
-    let Some((pos, end)) = find_section_header(&content, old) else {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::NotFound,
-            strings::fill("section-not-found", &[&old]),
-        ));
-    };
-    // A case-only rename matches itself; only a *different* section counts.
-    if find_section_header(&content, new).is_some_and(|(p, _)| p != pos) {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::AlreadyExists,
-            strings::fill("section-exists", &[&new]),
-        ));
-    }
-    let mut out = String::with_capacity(content.len() + new.len());
-    out.push_str(&content[..pos]);
-    out.push_str(&new_header);
-    out.push_str(&content[end..]);
-    atomic_write(path, &out)
+    atomic_write(path, &text::rename_section(&content, old, new)?)
 }
 
-/// The named section's raw text, header line included, exactly as it sits on
-/// disk (comments, key order, hand-edits), up to the next section's header; or
-/// `None` when the file or the section is missing. The unit `delete_section`
-/// removes, so the pair moves a section between files without re-rendering it.
+/// The named section's raw text (`text::section_text`), or `None` when the
+/// file or the section is missing.
 pub fn section_text(path: &Path, section_name: &str) -> Option<String> {
     let content = fs::read_to_string(path).ok()?;
-    let (header_pos, header_end) = find_section_header(&content, section_name)?;
-    let next = next_section_start(&content, header_end).unwrap_or(content.len());
-    Some(content[line_start_of(&content, header_pos)..next].to_string())
+    text::section_text(&content, section_name)
 }
 
-/// Remove a section entirely.
+/// Remove a section entirely; a missing file or section is left alone.
 pub fn delete_section(path: &Path, section_name: &str) -> std::io::Result<()> {
-    let content = match fs::read_to_string(path) {
-        Ok(c) => c,
-        Err(_) => return Ok(()),
-    };
-    let Some((header_pos, header_end)) = find_section_header(&content, section_name) else {
+    let Ok(content) = fs::read_to_string(path) else {
         return Ok(());
     };
-    let next = next_section_start(&content, header_end).unwrap_or(content.len());
-    let mut out = String::with_capacity(content.len());
-    out.push_str(&content[..line_start_of(&content, header_pos)]);
-    out.push_str(&content[next..]);
-    let tidied = out
-        .replace("\r\n\r\n\r\n", "\r\n\r\n")
-        .replace("\n\n\n", "\n\n");
-    atomic_write(path, &tidied)
+    match text::delete_section(&content, section_name) {
+        Some(out) => atomic_write(path, &out),
+        None => Ok(()),
+    }
+}
+
+/// The writers as transforms of a file's text: each takes the content and
+/// returns the content to write.
+pub mod text {
+    use super::{detect_eol, find_section_header, line_start_of, next_section_start};
+    use super::{line_starts_with_key, normalize_eol, strings};
+
+    /// `content` with one key replaced inside the named section (inserted,
+    /// with the section when that is missing too).
+    pub fn replace_key(content: &str, section: &str, key: &str, value: &str) -> String {
+        let new_line = format!("{key} = {value}");
+        // Inserted lines follow the file's line-ending style (the replace path
+        // below preserves it per line); brand-new / empty files get CRLF.
+        let eol = detect_eol(content);
+
+        let header = format!("[{section}]");
+        let Some((_, header_end)) = find_section_header(content, section) else {
+            let mut out = content.to_string();
+            if !out.is_empty() && !out.ends_with('\n') {
+                out.push_str(eol);
+            }
+            if !out.is_empty() {
+                out.push_str(eol);
+            }
+            out.push_str(&header);
+            out.push_str(eol);
+            out.push_str(&new_line);
+            out.push_str(eol);
+            return out;
+        };
+
+        // Body starts after the header's newline; a header that is the file's
+        // last line (no terminator) gets one added at the splice below so the
+        // appended key starts on its own line instead of glued to the `]`.
+        let (section_start, header_needs_eol) = match content[header_end..].find('\n') {
+            Some(n) => (header_end + n + 1, false),
+            None => (content.len(), true),
+        };
+        // Scan from header_end (like replace_section / delete_section), NOT from
+        // section_start: next_section_start only sees a header on a line AFTER a
+        // '\n' at/beyond `from`, so scanning from the body start skips a
+        // neighbouring header sitting exactly there (empty body): the key would
+        // splice into THAT section instead.
+        let section_end = next_section_start(content, header_end).unwrap_or(content.len());
+        let section_body = &content[section_start..section_end];
+
+        let mut new_body = String::new();
+        let mut replaced = false;
+        let lines_iter = section_body.split_inclusive('\n');
+        for line in lines_iter {
+            // line_starts_with_key does its own trim_start.
+            if !replaced && line_starts_with_key(line, key) {
+                new_body.push_str(&new_line);
+                // An unterminated final line has no ending to preserve: fall
+                // back to the file's detected EOL, not a hardcoded `\n` that
+                // would mix endings into a CRLF file.
+                new_body.push_str(if line.ends_with("\r\n") {
+                    "\r\n"
+                } else if line.ends_with('\n') {
+                    "\n"
+                } else {
+                    eol
+                });
+                replaced = true;
+            } else {
+                new_body.push_str(line);
+            }
+        }
+        if !replaced {
+            let trimmed = new_body.trim_end_matches(['\r', '\n']);
+            let tail = &new_body[trimmed.len()..];
+            // `tail` still holds the last real line's terminator (plus any blank
+            // separator lines before the next section), so don't add another `eol`
+            // in front of it: that duplicated the terminator, growing one blank
+            // line per appended key.
+            new_body = if trimmed.is_empty() {
+                format!("{new_line}{eol}{tail}")
+            } else {
+                format!("{trimmed}{eol}{new_line}{tail}")
+            };
+        }
+
+        let mut out = String::with_capacity(content.len() + new_line.len());
+        out.push_str(&content[..section_start]);
+        if header_needs_eol {
+            out.push_str(eol);
+        }
+        out.push_str(&new_body);
+        out.push_str(&content[section_end..]);
+        out
+    }
+
+    /// `content` with an entire named section replaced (or appended). The
+    /// body arrives CRLF from the renderers (`presets::render_section`,
+    /// `ServerConfig::render`) and is converted to the file's own line-ending
+    /// style, so a hand-maintained LF-only file doesn't gain mixed endings on
+    /// every save.
+    pub fn replace_section(content: &str, section_name: &str, section_body: &str) -> String {
+        let eol = detect_eol(content);
+        let body = normalize_eol(section_body.trim_end(), eol);
+        let new_section = if body.is_empty() {
+            String::new()
+        } else {
+            format!("{body}{eol}")
+        };
+
+        let Some((header_pos, header_end)) = find_section_header(content, section_name) else {
+            let mut out = content.to_string();
+            if !out.is_empty() {
+                out = out.trim_end_matches(['\r', '\n']).to_string();
+                out.push_str(eol);
+                out.push_str(eol);
+            }
+            out.push_str(&new_section);
+            return out;
+        };
+
+        let next = next_section_start(content, header_end).unwrap_or(content.len());
+        // Splice from the header's line start so an indented header's leading
+        // whitespace is replaced along with it, not left glued to the new body.
+        let before = &content[..line_start_of(content, header_pos)];
+        let after = &content[next..];
+        let separator = if after.is_empty() { "" } else { eol };
+
+        let mut out = String::with_capacity(before.len() + new_section.len() + after.len() + 4);
+        out.push_str(before);
+        out.push_str(&new_section);
+        out.push_str(separator);
+        out.push_str(after);
+        out
+    }
+
+    /// `content` with a section header renamed in place: `NotFound` when
+    /// there is no `old`, `AlreadyExists` when another section is `new`.
+    pub fn rename_section(content: &str, old: &str, new: &str) -> std::io::Result<String> {
+        let new_header = format!("[{new}]");
+        let Some((pos, end)) = find_section_header(content, old) else {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                strings::fill("section-not-found", &[&old]),
+            ));
+        };
+        // A case-only rename matches itself; only a *different* section counts.
+        if find_section_header(content, new).is_some_and(|(p, _)| p != pos) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::AlreadyExists,
+                strings::fill("section-exists", &[&new]),
+            ));
+        }
+        let mut out = String::with_capacity(content.len() + new.len());
+        out.push_str(&content[..pos]);
+        out.push_str(&new_header);
+        out.push_str(&content[end..]);
+        Ok(out)
+    }
+
+    /// The named section's raw text, header line included, exactly as it sits
+    /// in `content` (comments, key order, hand-edits), up to the next section's
+    /// header; or `None` when the section is missing. The unit `delete_section`
+    /// removes, so the pair moves a section between files without re-rendering it.
+    pub fn section_text(content: &str, section_name: &str) -> Option<String> {
+        let (header_pos, header_end) = find_section_header(content, section_name)?;
+        let next = next_section_start(content, header_end).unwrap_or(content.len());
+        Some(content[line_start_of(content, header_pos)..next].to_string())
+    }
+
+    /// `content` without the named section, or `None` when it has none.
+    pub fn delete_section(content: &str, section_name: &str) -> Option<String> {
+        let (header_pos, header_end) = find_section_header(content, section_name)?;
+        let next = next_section_start(content, header_end).unwrap_or(content.len());
+        let mut out = String::with_capacity(content.len());
+        out.push_str(&content[..line_start_of(content, header_pos)]);
+        out.push_str(&content[next..]);
+        Some(
+            out.replace("\r\n\r\n\r\n", "\r\n\r\n")
+                .replace("\n\n\n", "\n\n"),
+        )
+    }
 }
 
 /// Write via a sibling temp file + rename so an interrupted write can't

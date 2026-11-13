@@ -57,7 +57,8 @@ use std::time::{Duration, Instant};
 
 use super::exec::Event;
 use super::{Concurrency, Mode, Plan, Point};
-use crate::{http, ini, paths, presets, server_cfg, server_control};
+use crate::server_control::ConfigFile;
+use crate::{http, ini, presets, server_cfg, server_control};
 
 /// The value that means "the key is absent from the section". Spelled rather
 /// than left blank so it survives a round trip through a comma-separated list
@@ -1166,7 +1167,7 @@ fn load_one(id: &str) -> Result<presets::Preset, String> {
 /// does not carry it. Read from the INI rather than from the parsed preset so
 /// the restore puts back exactly what was there.
 fn current_value(preset: &str, key: &str) -> String {
-    ini::read_section(&paths::presets_ini(), preset)
+    server_control::read_section(ConfigFile::Presets, preset)
         .get(key)
         .map(|v| v.trim().to_string())
         .filter(|v| !v.is_empty())
@@ -1400,6 +1401,36 @@ fn report_leg(leg: &Leg, mode: Mode) {
         ),
         None => println!("{}", strings::fill("leg-no-row", &[&primary, &leg.secs])),
     }
+}
+
+/// E2E phase (called from `editable_widgets_track_model_after_edit`): the
+/// value a sweep will put back is read from the instance's presets.ini through
+/// the seam (the manager's file), not from the per-user one.
+#[cfg(test)]
+pub(crate) fn sweep_config_e2e() {
+    use crate::server_control::fake::{self, FakeClient};
+    use pai_core::client::InstanceState;
+    let dir = tempfile::tempdir().expect("tempdir");
+    crate::paths::redirect_for_tests(dir.path());
+    let user_presets = crate::paths::presets_ini();
+    std::fs::create_dir_all(user_presets.parent().unwrap()).expect("config dir");
+    std::fs::write(&user_presets, "[Qwen3.8-27B]\nctx-size = 4096\n").expect("user presets.ini");
+    let log = fake::log();
+    let c = FakeClient::new(&log, InstanceState::Inactive).with_file(
+        "presets.ini",
+        "[Qwen3.8-27B]\nmodel = /models/Qwen3.8-27B-Q8_0.gguf\nctx-size = 172032\n",
+    );
+    fake::scoped(fake::backend(c), || {
+        assert_eq!(current_value("Qwen3.8-27B", "ctx-size"), "172032");
+        assert_eq!(current_value("Qwen3.8-27B", "ubatch-size"), UNSET);
+    });
+    assert!(
+        log.lock()
+            .unwrap()
+            .iter()
+            .any(|e| e == "read_file presets.ini"),
+        "read from the manager: {log:?}"
+    );
 }
 
 #[cfg(test)]

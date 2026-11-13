@@ -68,6 +68,7 @@ use crate::gguf;
 use crate::ini;
 use crate::paths;
 use crate::presets;
+use crate::server_control::{self, ConfigFile};
 use crate::strings;
 
 const PROVIDER_KEY: &str = "llama.cpp";
@@ -249,7 +250,7 @@ pub fn save_opencode_models(base_url: &str, api_key: Option<&str>, keep: &[Strin
 
 /// The entries Save writes, one per ENABLED preset, in presets.ini order.
 fn desired_models() -> Vec<(String, Value)> {
-    let sections = ini::read_all(&paths::presets_ini());
+    let sections = server_control::read_sections(ConfigFile::Presets);
     presets::load_all()
         .into_iter()
         .map(|p| {
@@ -485,7 +486,7 @@ fn env_script(
 /// else the first preset, without a context (see `claude_code_env_script`).
 /// Reads presets.ini (the raw `fit` key, `fit_on`) and the GGUF headers.
 pub fn claude_code_example(enabled: &[presets::Preset]) -> Option<(&str, Option<i64>)> {
-    let sections = ini::read_all(&paths::presets_ini());
+    let sections = server_control::read_sections(ConfigFile::Presets);
     let mut first = None;
     for p in enabled {
         let ctx = advertised(p, fit_on(&sections, &p.id), trained_ctx(p));

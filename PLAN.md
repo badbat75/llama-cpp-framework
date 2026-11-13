@@ -150,7 +150,8 @@ so the second binary, `private-ai-manager`, shares its modules: a `[[bin]]` alon
    implementation; **3c-3** (done, `server_control.rs`) the
    configurator picks a backend, the manager on Linux and today's direct spawn and per-user files on
    macOS and, until slice 6, Windows, and `runstate`'s callers (GUI, CLI `server`, benchmarks) go
-   through it for the `default` instance; **3c-4** every INI reader and writer goes through it.
+   through it for the `default` instance; **3c-4** (done) every INI reader and writer goes through it. The
+   configurator's existing per-user `server.ini` and `presets.ini` are handed to the manager by slice 7.
    The manager owns every check on the
    content it writes (decided with the user on 2026-11-13): before a write it runs all the checks the
    configurator runs today (`server_form.rs`, the presets checks) and refuses invalid content with an
@@ -158,9 +159,14 @@ so the second binary, `private-ai-manager`, shares its modules: a `[[bin]]` alon
    configurator is a thin client: it keeps no check of its own; it may call the same shared code for
    feedback while the user types, but the manager's answer decides. The Windows SCM and pipe
    implementations come with slice 6.
-4. **Logs.** The unit appends both streams to `/var/log/llama.cpp/llama-server@<id>.log`
-   (`StandardOutput=append:`), the Windows service to `%ProgramData%\llama.cpp\logs\`; the closing and
-   rotation of `runstate.rs` move to the manager, and the GUI's Log window reads the new path.
+4. **Logs, through journald** (user, 2026-11-13). On Linux the unit writes both streams to the journal
+   (`StandardOutput=journal`, systemd's default), journald rotates them, and `LogRotate` and
+   `LogRotateKb` no longer apply there (they stay for the Direct backend). The GUI's Log window and
+   the tray's Open log read `journalctl -u llama.cpp@<id> -f -o cat` through the backend seam;
+   reading a system unit's journal needs root or the `systemd-journal`, `adm` or `wheel` group
+   (journalctl(1)); without it the window says so through a strings key. The first users of Ubuntu and
+   Fedora are usually in `adm` and `wheel`: check on the user's machine. Windows keeps a file under
+   `%ProgramData%\private-ai\logs\` (slice 6).
 5. **Linux packaging.** The `-llama` package ships the two units, the D-Bus policy
    (`/usr/share/dbus-1/system.d/`), the polkit action file (`/usr/share/polkit-1/actions/`) and a
    sysusers.d entry for `llama-cpp`. This adds the first maintainer scripts to the `.deb` and `.rpm`

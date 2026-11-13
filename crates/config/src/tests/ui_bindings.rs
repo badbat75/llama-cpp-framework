@@ -607,4 +607,13 @@ fn editable_widgets_track_model_after_edit() {
 
     // ── The `control` commands on the manager backend (cli.rs) ───────────
     crate::cli::cli_control_e2e();
+
+    // ── The configuration files through the seam (server_control.rs) ─────
+    crate::server_control::config_seam_e2e();
+
+    // ── `server set` and `preset enable` through the seam (cli.rs) ───────
+    crate::cli::cli_config_e2e();
+
+    // ── The sweep reads the value to restore through the seam ────────────
+    crate::bench::sweep::sweep_config_e2e();
 }

@@ -112,3 +112,225 @@ fn control_scan_flags_calls_imports_and_fn_pointers_and_leaves_the_rest() {
         assert_eq!(hits(line), expected, "{line:?}");
     }
 }
+
+// ── The configuration files ─────────────────────────────────────────────
+//
+// server.ini (`server@default.ini` under the manager), presets.ini and
+// presets.ini.disabled are read and written only through `server_control`
+// (`Backend::read_config`, `write_config`, `config_path`): under the manager
+// they live in the system directory, and a reader of the per-user path would
+// see a stale file, a writer would write one nobody reads. `runstate.rs` is
+// the `Direct` backend's launch, which hands llama-server the per-user
+// presets.ini. Test code (a `#[cfg(test)]` item, `src/tests/`) may name them.
+
+/// The files allowed to name the per-user paths.
+const CONFIG_ALLOWED: [&str; 2] = ["runstate.rs", "server_control.rs"];
+
+/// The `paths::` functions only the seam may call.
+const CONFIG_PATHS: [&str; 3] = ["server_ini", "presets_ini", "presets_disabled_ini"];
+
+/// The file names only the seam may join onto `config_dir()`.
+const CONFIG_NAMES: [&str; 3] = ["server.ini", "presets.ini", "presets.ini.disabled"];
+
+/// The per-user config paths named on one line of code, comments left out.
+fn config_hits(line: &str) -> Vec<String> {
+    let code = line.split("//").next().unwrap_or(line);
+    let mut found = Vec::new();
+    let mut rest = code;
+    while let Some(i) = rest.find("paths::") {
+        let after = &rest[i + "paths::".len()..];
+        let end = after.find(|c: char| !is_ident(c)).unwrap_or(after.len());
+        if CONFIG_PATHS.contains(&&after[..end]) {
+            found.push(format!("paths::{}", &after[..end]));
+        }
+        rest = after;
+    }
+    let mut rest = code;
+    while let Some(i) = rest.find("config_dir()") {
+        let after = rest[i + "config_dir()".len()..].trim_start();
+        if let Some(arg) = after.strip_prefix(".join(\"") {
+            let name = arg.split('"').next().unwrap_or("");
+            if CONFIG_NAMES.contains(&name) {
+                found.push(format!("config_dir().join(\"{name}\")"));
+            }
+        }
+        rest = &rest[i + "config_dir()".len()..];
+    }
+    found
+}
+
+/// The lines of `text` outside `#[cfg(test)]` items, numbered from 1. An
+/// item runs from the attribute to its `;` or to the `}` that closes it
+/// (braces counted per line, comments left out).
+fn production_lines(text: &str) -> Vec<(usize, &str)> {
+    enum State {
+        Code,
+        /// After a test attribute, before the item's body opens.
+        Header,
+        /// Inside a test item's body, opened at this depth.
+        Body(i64),
+    }
+    let mut state = State::Code;
+    let mut depth: i64 = 0;
+    let mut out = Vec::new();
+    for (n, line) in text.lines().enumerate() {
+        let code = line.split("//").next().unwrap_or(line);
+        let t = code.trim();
+        let opens = code.matches('{').count() as i64;
+        let closes = code.matches('}').count() as i64;
+        match state {
+            State::Code => {
+                if t.starts_with("#[cfg(test)]") || t.starts_with("#[cfg(all(test") {
+                    state = State::Header;
+                } else {
+                    out.push((n + 1, line));
+                }
+                depth += opens - closes;
+            }
+            State::Header => {
+                if t.starts_with("#[") {
+                    continue;
+                }
+                if opens > closes {
+                    state = State::Body(depth);
+                } else if opens > 0 || t.ends_with(';') {
+                    state = State::Code;
+                }
+                depth += opens - closes;
+            }
+            State::Body(d) => {
+                depth += opens - closes;
+                if depth <= d {
+                    state = State::Code;
+                }
+            }
+        }
+    }
+    out
+}
+
+#[test]
+fn only_the_seam_reads_or_writes_the_config_files() {
+    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut files = Vec::new();
+    sources(&src, &mut files);
+    let mut violations = String::new();
+    for file in files {
+        let name = file.file_name().unwrap().to_string_lossy().to_string();
+        if CONFIG_ALLOWED.contains(&name.as_str()) {
+            continue;
+        }
+        let text = std::fs::read_to_string(&file).expect("read source");
+        for (n, line) in production_lines(&text) {
+            for hit in config_hits(line) {
+                violations.push_str(&format!(
+                    "\n  {}:{n}: {hit}",
+                    file.strip_prefix(&src).unwrap().display()
+                ));
+            }
+        }
+    }
+    assert!(
+        violations.is_empty(),
+        "read, write or show these through crate::server_control::backend() \
+         (read_config, write_config, config_path), not the per-user path:{violations}"
+    );
+}
+
+#[test]
+fn config_scan_flags_the_per_user_paths_and_leaves_the_rest() {
+    for (line, expected) in [
+        (
+            "    let path = paths::server_ini();",
+            vec!["paths::server_ini"],
+        ),
+        (
+            "    read_presets(&crate::paths::presets_ini())",
+            vec!["paths::presets_ini"],
+        ),
+        (
+            "    listed_from(&paths::presets_ini(), &paths::presets_disabled_ini())",
+            vec!["paths::presets_ini", "paths::presets_disabled_ini"],
+        ),
+        (
+            "    strings::fill(\"wrote-file\", &[&paths::server_ini().display()])",
+            vec!["paths::server_ini"],
+        ),
+        (
+            "    let p = paths::config_dir().join(\"presets.ini\");",
+            vec!["config_dir().join(\"presets.ini\")"],
+        ),
+        (
+            "    let p = config_dir().join(\"presets.ini.disabled\");",
+            vec!["config_dir().join(\"presets.ini.disabled\")"],
+        ),
+        (
+            "    let p = config_dir().join(\"server.ini\");",
+            vec!["config_dir().join(\"server.ini\")"],
+        ),
+        // Not guarded: the user's own files, other directories, comments.
+        ("    let s = paths::settings_ini();", vec![]),
+        ("    let d = paths::config_dir();", vec![]),
+        (
+            "    let d = paths::config_dir().join(\"settings.ini\");",
+            vec![],
+        ),
+        ("    let p = dir.path().join(\"presets.ini\");", vec![]),
+        ("    let p = paths::server_ini_backup();", vec![]),
+        (
+            "    // paths::server_ini() would be the stale per-user file",
+            vec![],
+        ),
+        ("/// `paths::presets_ini()` is Direct's", vec![]),
+    ] {
+        assert_eq!(config_hits(line), expected, "{line:?}");
+    }
+}
+
+#[test]
+fn config_scan_skips_test_items_and_keeps_the_code_after_them() {
+    let text = "\
+fn load() {
+    a();
+}
+#[cfg(test)]
+mod tests {
+    fn t() {
+        b();
+    }
+}
+fn save() {
+    c();
+}
+#[cfg(test)]
+pub(crate) fn e2e(
+    x: u8,
+) {
+    d();
+}
+#[cfg(all(test, target_os = \"linux\"))]
+#[allow(dead_code)]
+fn linux_e2e() { e(); }
+#[cfg(test)]
+use std::fs;
+fn rename() {
+    f();
+}
+#[cfg(any(test, feature = \"test-support\"))]
+fn both() {
+    g();
+}
+";
+    let kept: Vec<&str> = production_lines(text)
+        .into_iter()
+        .map(|(_, l)| l.trim())
+        .filter(|l| l.ends_with("();"))
+        .collect();
+    assert_eq!(kept, ["a();", "c();", "f();", "g();"]);
+    let numbers: Vec<usize> = production_lines(text)
+        .into_iter()
+        .filter(|(_, l)| l.trim() == "f();")
+        .map(|(n, _)| n)
+        .collect();
+    assert_eq!(numbers, [25], "numbered as in the file");
+}

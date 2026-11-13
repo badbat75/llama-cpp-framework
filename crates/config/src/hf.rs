@@ -2871,12 +2871,7 @@ pub fn local_extras(d: &Downloaded) -> hf_fit::Extras {
 pub fn save_preset(p: &Preset, models_dir: &Path) -> std::io::Result<()> {
     presets::validate_for_save(p)?;
     if crate::server_cfg::load().models_dir.is_none() {
-        crate::ini::replace_key(
-            &crate::paths::server_ini(),
-            "Server",
-            "ModelsDir",
-            &models_dir.to_string_lossy(),
-        )?;
+        presets::set_server_key("ModelsDir", &models_dir.to_string_lossy())?;
     }
     presets::save(p)
 }

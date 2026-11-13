@@ -319,7 +319,10 @@ pub fn run(start_minimized: bool) -> anyhow::Result<()> {
     reload_all_from_disk(&app, &state, tray.as_weak());
 
     s.set_presets_path(SharedString::from(
-        paths::presets_ini().to_string_lossy().into_owned(),
+        crate::server_control::backend()
+            .config_path(crate::server_control::ConfigFile::Presets)
+            .to_string_lossy()
+            .into_owned(),
     ));
 
     {

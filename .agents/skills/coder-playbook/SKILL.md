@@ -75,3 +75,11 @@ Lessons only: the rules are in `AGENTS.md`.
 - Every start, stop and run probe of llama-server goes through `server_control::backend()`
   (`control_lint`); only `runstate.rs` and `server_control.rs` may call `runstate::{start,stop,is_running}`.
   Under the test redirect the Linux backend never dials D-Bus (`system_connect` is `Unavailable`).
+- server.ini, presets.ini and presets.ini.disabled are read and written only through
+  `server_control::backend()` (`read_config`, `write_config`, `config_path`; `read_sections`,
+  `read_section` for parsed reads), enforced by `control_lint`. An edit is read-modify-write over
+  `pai_core::ini::text::*` (string transforms; the path writers wrap them). `presets.rs` runs its file
+  logic over the `PresetFiles` trait: `Backend` in the program, the `#[cfg(test)]` `PathFiles` behind the
+  old path-taking helpers (`listed_from`, `move_section`, `home_in`, `rename_in`) its unit tests call.
+- A tester's e2e phase placed after `mod tests` trips clippy's `items_after_test_module`: report it
+  (the tester moves the phase above `mod tests`); `cli.rs` keeps an allow only for `binding_lint`.

@@ -63,13 +63,16 @@
 //! `load_listed`), so switching a preset back on can never land on a namesake.
 
 use crate::strings;
+#[cfg(test)]
 use std::fs;
 use std::io;
-use std::path::{Path, PathBuf};
+#[cfg(test)]
+use std::path::Path;
+use std::path::PathBuf;
 
 use crate::ini;
-use crate::paths;
 use crate::server_cfg;
+use crate::server_control::{self, ConfigFile};
 use pai_core::checks;
 // The startup-count tests read llama.cpp's default `ModelsMax` from here.
 #[cfg(test)]
@@ -1159,14 +1162,85 @@ pub fn prune_unused_ngram_keys(p: &mut Preset) -> Vec<&'static str> {
 /// llama-server reads this and only this; the switched-off ones are
 /// `load_listed`'s (see the module header).
 pub fn load_all() -> Vec<Preset> {
-    read_presets(&paths::presets_ini())
+    presets_in(server_control::backend(), ConfigFile::Presets)
 }
 
+#[cfg(test)]
 pub(crate) fn read_presets(path: &Path) -> Vec<Preset> {
-    ini::read_all(path)
+    presets_from_text(&fs::read_to_string(path).unwrap_or_default())
+}
+
+fn presets_from_text(text: &str) -> Vec<Preset> {
+    ini::parse_sections(text)
         .into_iter()
         .map(|s| Preset::from_section(&s))
         .collect()
+}
+
+/// Where the two preset files are read and written: the seam
+/// (`server_control::Backend`) in the program, two paths in the unit tests.
+trait PresetFiles {
+    /// The file's text, `None` when it does not exist.
+    fn read(&self, file: ConfigFile) -> io::Result<Option<String>>;
+    fn write(&self, file: ConfigFile, text: &str) -> io::Result<()>;
+}
+
+impl PresetFiles for server_control::Backend {
+    fn read(&self, file: ConfigFile) -> io::Result<Option<String>> {
+        self.read_config(file).map_err(io::Error::other)
+    }
+    fn write(&self, file: ConfigFile, text: &str) -> io::Result<()> {
+        self.write_config(file, text).map_err(io::Error::other)
+    }
+}
+
+/// The presets of one file, in file order; none when it is missing or cannot
+/// be read.
+fn presets_in(files: &impl PresetFiles, file: ConfigFile) -> Vec<Preset> {
+    presets_from_text(&files.read(file).ok().flatten().unwrap_or_default())
+}
+
+fn has_section_in(files: &impl PresetFiles, file: ConfigFile, id: &str) -> bool {
+    files.read(file).ok().flatten().is_some_and(|t| {
+        ini::parse_sections(&t)
+            .iter()
+            .any(|s| s.id.eq_ignore_ascii_case(id))
+    })
+}
+
+/// The two files of the unit tests: presets.ini at `on`, the disabled one at
+/// `off`.
+#[cfg(test)]
+struct PathFiles<'a> {
+    on: &'a Path,
+    off: &'a Path,
+}
+
+#[cfg(test)]
+impl PresetFiles for PathFiles<'_> {
+    fn read(&self, file: ConfigFile) -> io::Result<Option<String>> {
+        let path = if file == ConfigFile::Presets {
+            self.on
+        } else {
+            self.off
+        };
+        match fs::read_to_string(path) {
+            Ok(t) => Ok(Some(t)),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+    fn write(&self, file: ConfigFile, text: &str) -> io::Result<()> {
+        let path = if file == ConfigFile::Presets {
+            self.on
+        } else {
+            self.off
+        };
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        ini::atomic_write(path, text)
+    }
 }
 
 /// A preset as the Models tab lists it: the preset, and whether it is on.
@@ -1179,16 +1253,24 @@ pub struct Listed {
 /// Every preset in both files: the enabled ones first, then the disabled ones,
 /// each group in file order.
 pub fn load_listed() -> Vec<Listed> {
-    listed_from(&paths::presets_ini(), &paths::presets_disabled_ini())
+    listed_in(server_control::backend())
 }
 
 /// `load_listed` over explicit paths (unit tests must never touch `paths::`).
-/// An id present in BOTH files is listed once, as enabled: that is what a
-/// `set_enabled` interrupted between its two writes leaves behind, and
-/// presets.ini is the copy llama-server actually serves.
+#[cfg(test)]
 fn listed_from(enabled: &Path, parked: &Path) -> Vec<Listed> {
-    let on = read_presets(enabled);
-    let off: Vec<Preset> = read_presets(parked)
+    listed_in(&PathFiles {
+        on: enabled,
+        off: parked,
+    })
+}
+
+/// `load_listed` over `files`. An id present in BOTH files is listed once, as
+/// enabled: that is what a `set_enabled` interrupted between its two writes
+/// leaves behind, and presets.ini is the copy llama-server actually serves.
+fn listed_in(files: &impl PresetFiles) -> Vec<Listed> {
+    let on = presets_in(files, ConfigFile::Presets);
+    let off: Vec<Preset> = presets_in(files, ConfigFile::PresetsDisabled)
         .into_iter()
         .filter(|p| !on.iter().any(|q| q.id.eq_ignore_ascii_case(&p.id)))
         .collect();
@@ -1204,25 +1286,36 @@ fn listed_from(enabled: &Path, parked: &Path) -> Vec<Listed> {
         .collect()
 }
 
+#[cfg(test)]
 fn has_section(path: &Path, id: &str) -> bool {
     ini::read_all(path)
         .iter()
         .any(|s| s.id.eq_ignore_ascii_case(id))
 }
 
-/// The file a preset's section lives in: see `home_in`.
-fn home_of(id: &str) -> PathBuf {
-    home_in(id, paths::presets_ini(), paths::presets_disabled_ini())
+/// `home` over explicit paths.
+#[cfg(test)]
+fn home_in(id: &str, enabled: PathBuf, parked: PathBuf) -> PathBuf {
+    let files = PathFiles {
+        on: &enabled,
+        off: &parked,
+    };
+    match home(&files, id) {
+        ConfigFile::Presets => enabled.clone(),
+        _ => parked.clone(),
+    }
 }
 
-/// presets.ini when the id is there (enabled wins, as in `listed_from`), the
-/// disabled file when it is parked there, and presets.ini for an id in neither:
-/// a NEW preset starts switched on.
-fn home_in(id: &str, enabled: PathBuf, parked: PathBuf) -> PathBuf {
-    if !has_section(&enabled, id) && has_section(&parked, id) {
-        parked
+/// The file a preset's section lives in: presets.ini when the id is there
+/// (enabled wins, as in `listed_in`), the disabled file when it is parked
+/// there, and presets.ini for an id in neither: a NEW preset starts switched on.
+fn home(files: &impl PresetFiles, id: &str) -> ConfigFile {
+    if !has_section_in(files, ConfigFile::Presets, id)
+        && has_section_in(files, ConfigFile::PresetsDisabled, id)
+    {
+        ConfigFile::PresetsDisabled
     } else {
-        enabled
+        ConfigFile::Presets
     }
 }
 
@@ -1238,29 +1331,56 @@ const DISABLED_FILE_HEADER: &str = "\
 /// presets.ini and the disabled file (`move_section`). A running llama-server
 /// keeps the set it was started with: the router reads presets.ini at launch.
 pub fn set_enabled(id: &str, enabled: bool) -> io::Result<()> {
-    let (on, off) = (paths::presets_ini(), paths::presets_disabled_ini());
+    let files = server_control::backend();
+    let (on, off) = (ConfigFile::Presets, ConfigFile::PresetsDisabled);
     if enabled {
-        if let Some(p) = read_presets(&off)
+        if let Some(p) = presets_in(files, off)
             .iter()
             .find(|p| p.id.eq_ignore_ascii_case(id))
         {
             check_startup_for(p)?;
         }
-        move_section(id, &off, &on, None)
+        move_between(files, id, off, on, None)
     } else {
-        move_section(id, &on, &off, Some(DISABLED_FILE_HEADER))
+        move_between(files, id, on, off, Some(DISABLED_FILE_HEADER))
     }
+}
+
+/// `move_between` over explicit paths.
+#[cfg(test)]
+fn move_section(id: &str, from: &Path, to: &Path, new_file_header: Option<&str>) -> io::Result<()> {
+    let files = PathFiles { on: to, off: from };
+    move_between(
+        &files,
+        id,
+        ConfigFile::PresetsDisabled,
+        ConfigFile::Presets,
+        new_file_header,
+    )
 }
 
 /// Move one section, as raw text, from `from` to `to`. The destination is
 /// written FIRST: an interruption between the two writes leaves the preset in
-/// both files (read as enabled, see `listed_from`), never in neither, and the
+/// both files (read as enabled, see `listed_in`), never in neither, and the
 /// next move replaces that stale twin rather than adding a second one. A section
 /// already gone from `from` but present in `to` is success: the switch is
 /// already where it was asked to go.
-fn move_section(id: &str, from: &Path, to: &Path, new_file_header: Option<&str>) -> io::Result<()> {
-    let Some(text) = ini::section_text(from, id) else {
-        if has_section(to, id) {
+fn move_between(
+    files: &impl PresetFiles,
+    id: &str,
+    from: ConfigFile,
+    to: ConfigFile,
+    new_file_header: Option<&str>,
+) -> io::Result<()> {
+    let source = files.read(from)?.unwrap_or_default();
+    let dest = files.read(to)?;
+    let Some(text) = ini::text::section_text(&source, id) else {
+        let there = dest.as_deref().is_some_and(|d| {
+            ini::parse_sections(d)
+                .iter()
+                .any(|s| s.id.eq_ignore_ascii_case(id))
+        });
+        if there {
             return Ok(());
         }
         return Err(io::Error::new(
@@ -1268,14 +1388,16 @@ fn move_section(id: &str, from: &Path, to: &Path, new_file_header: Option<&str>)
             strings::fill("no-preset-named", &[&id]),
         ));
     };
-    if let Some(parent) = to.parent() {
-        fs::create_dir_all(parent)?;
+    let dest = match (dest, new_file_header) {
+        (Some(d), _) => d,
+        (None, Some(header)) => header.to_string(),
+        (None, None) => String::new(),
+    };
+    files.write(to, &ini::text::replace_section(&dest, id, &text))?;
+    if let Some(rest) = ini::text::delete_section(&source, id) {
+        files.write(from, &rest)?;
     }
-    if let Some(header) = new_file_header.filter(|_| !to.exists()) {
-        ini::atomic_write(to, header)?;
-    }
-    ini::replace_section(to, id, &text)?;
-    ini::delete_section(from, id)
+    Ok(())
 }
 
 /// Write (replace) the preset's section in the file it lives in (`home_of`):
@@ -1289,22 +1411,32 @@ fn move_section(id: &str, from: &Path, to: &Path, new_file_header: Option<&str>)
 /// if server.ini can't be touched.
 pub fn save(preset: &Preset) -> io::Result<()> {
     validate_for_save(preset)?;
-    let path = home_of(&preset.id);
-    if path == paths::presets_ini() {
+    let files = server_control::backend();
+    let file = home(files, &preset.id);
+    if file == ConfigFile::Presets {
         check_startup_for(preset)?;
     }
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
     let body = render_section(preset);
-    ini::replace_section(&path, &preset.id, &body)?;
+    let text = files.read(file)?.unwrap_or_default();
+    files.write(file, &ini::text::replace_section(&text, &preset.id, &body))?;
     // `load()` already normalizes blank to None (opt_nonblank in from_keys).
     if server_cfg::load().models_dir.is_none() {
         if let Some(models_dir) = infer_models_dir(&preset.model) {
-            let _ = ini::replace_key(&paths::server_ini(), "Server", "ModelsDir", &models_dir);
+            let _ = set_server_key("ModelsDir", &models_dir);
         }
     }
     Ok(())
+}
+
+/// Set one key of the server file's `[Server]` section, read and written
+/// through the seam.
+pub(crate) fn set_server_key(key: &str, value: &str) -> io::Result<()> {
+    let files = server_control::backend();
+    let text = files.read(ConfigFile::Server)?.unwrap_or_default();
+    files.write(
+        ConfigFile::Server,
+        &ini::text::replace_key(&text, "Server", key, value),
+    )
 }
 
 /// True if `id` uses only the presets.ini section-header charset (letters,
@@ -1423,8 +1555,16 @@ pub fn validate_fit_target(v: &str) -> Result<(), String> {
 /// Remove a preset from whichever file holds it (both, for the twin an
 /// interrupted `set_enabled` leaves behind).
 pub fn delete(id: &str) -> io::Result<()> {
-    ini::delete_section(&paths::presets_ini(), id)?;
-    ini::delete_section(&paths::presets_disabled_ini(), id)
+    let files = server_control::backend();
+    for file in [ConfigFile::Presets, ConfigFile::PresetsDisabled] {
+        let Some(text) = files.read(file)? else {
+            continue;
+        };
+        if let Some(rest) = ini::text::delete_section(&text, id) {
+            files.write(file, &rest)?;
+        }
+    }
+    Ok(())
 }
 
 pub fn rename(old_id: &str, new_id: &str) -> io::Result<()> {
@@ -1451,29 +1591,40 @@ pub fn rename(old_id: &str, new_id: &str) -> io::Result<()> {
             strings::t("preset-id-charset"),
         ));
     }
-    rename_in(
-        &paths::presets_ini(),
-        &paths::presets_disabled_ini(),
-        old_id,
-        new,
-    )
+    rename_with(server_control::backend(), old_id, new)
 }
 
-/// `rename` over explicit paths: the section is renamed in the file it lives in
-/// (`home_in`), and the new id must be free in the OTHER file too. `rename_section`
-/// only guards its own file, and a namesake parked in the disabled one would be
-/// overwritten the day this preset is switched off (or would overwrite it the day
-/// that one is switched on).
+/// `rename_with` over explicit paths.
+#[cfg(test)]
 fn rename_in(enabled: &Path, parked: &Path, old_id: &str, new: &str) -> io::Result<()> {
-    let home = home_in(old_id, enabled.to_path_buf(), parked.to_path_buf());
-    let other = if home == enabled { parked } else { enabled };
-    if !new.eq_ignore_ascii_case(old_id) && has_section(other, new) {
+    let files = PathFiles {
+        on: enabled,
+        off: parked,
+    };
+    rename_with(&files, old_id, new)
+}
+
+/// The section is renamed in the file it lives in (`home`), and the new id
+/// must be free in the OTHER file too. `rename_section` only guards its own
+/// file, and a namesake parked in the disabled one would be overwritten the day
+/// this preset is switched off (or would overwrite it the day that one is
+/// switched on).
+fn rename_with(files: &impl PresetFiles, old_id: &str, new: &str) -> io::Result<()> {
+    let home = home(files, old_id);
+    let other = if home == ConfigFile::Presets {
+        ConfigFile::PresetsDisabled
+    } else {
+        ConfigFile::Presets
+    };
+    if !new.eq_ignore_ascii_case(old_id) && has_section_in(files, other, new) {
         return Err(io::Error::new(
             io::ErrorKind::AlreadyExists,
             strings::fill("preset-name-taken", &[&new]),
         ));
     }
-    ini::rename_section(&home, old_id, new)
+    // A missing file is a missing section: `rename_section`'s NotFound.
+    let text = files.read(home)?.unwrap_or_default();
+    files.write(home, &ini::text::rename_section(&text, old_id, new)?)
 }
 
 /// First of `base`, `base-2`, `base-3`, … that isn't already in `existing`.

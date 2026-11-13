@@ -18,7 +18,8 @@ use std::sync::{Arc, Mutex};
 
 use super::db::{self, Sample};
 use super::{Mode, Plan, Point};
-use crate::{gguf, ini, paths, presets, runstate, server_cfg};
+use crate::server_control::{self, ConfigFile};
+use crate::{gguf, paths, presets, runstate, server_cfg};
 
 /// Which campaign a run lands in, and under which label. `None` in the plan
 /// means "a campaign of its own", named after the run's stamp.
@@ -116,11 +117,14 @@ impl Recorder {
             params: vec![
                 (
                     "preset",
-                    pairs(ini::read_section(&paths::presets_ini(), &preset.id)),
+                    pairs(server_control::read_section(
+                        ConfigFile::Presets,
+                        &preset.id,
+                    )),
                 ),
                 (
                     "server",
-                    pairs(ini::read_section(&paths::server_ini(), "Server")),
+                    pairs(server_control::read_section(ConfigFile::Server, "Server")),
                 ),
                 ("env", runstate::env_vars(cfg)),
                 ("bench", plan_params(&self.plan)),
