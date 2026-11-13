@@ -126,6 +126,7 @@ Cycle: coordinator takes the next step from `PLAN.md` and picks one small slice,
    - Tag name: **no `v` prefix** (e.g. `1.5.1`, not `v1.5.1`).
    - Tag message: starts with `Release vX.Y.Z: <summary>` on first line, then blank line, then bullet points of changes. Match the style of previous tags (`git show 1.5.0`).
 6. **Create release**: `gh release create X.Y.Z --title "vX.Y.Z (llama.cpp vA.B.C)" --notes "<markdown body>"`
+   - Pre-release: while the version is 2.99.N (the pre-releases of 3.0.0), add `--prerelease`: `gh release create X.Y.Z --prerelease --title ...`. 3.0.0 and later are not pre-releases.
    - Title format: **`vX.Y.Z (llama.cpp vA.B.C)`** (with `v` prefix, includes the bundled llama.cpp release).
    - Body: detailed markdown with sections (`##`, `###`), bullet points, code formatting. Match the style of previous releases (`gh release view 1.5.0`). End with test count and bundled llama.cpp release.
 7. **Attach installer**: `gh release upload X.Y.Z dist\llama-cpp-framework-vX.Y.Z-vA.B.C-x64.msi`
