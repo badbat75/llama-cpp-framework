@@ -18,6 +18,9 @@ path = "src/bin/pai-manager.rs"
 
 [dependencies]
 pai-core = { path = "../core" }
+# The manager's protocol over a byte stream (manager/pipe.rs): one JSON
+# message per frame, the frames pai-core's client writes.
+serde_json = "1"
 
 # pai-manager's D-Bus service on the system bus (manager/dbus.rs). The
 # version already in the lock (accesskit, atspi, ashpd), so there is one zbus;

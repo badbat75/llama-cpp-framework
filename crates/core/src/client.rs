@@ -10,6 +10,7 @@ const ERROR_PREFIX: &str = "org.privateai.Manager1.Error.";
 
 #[cfg(target_os = "linux")]
 pub mod dbus;
+pub mod pipe;
 
 /// The state of an instance, as the manager names it (systemd's
 /// `ActiveState`); a name it does not know is kept as [`InstanceState::Other`].

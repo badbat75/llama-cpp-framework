@@ -3389,6 +3389,7 @@ name = "pai-core"
 version = "2.4.0"
 dependencies = [
  "if-addrs",
+ "serde_json",
  "tempfile",
  "toml",
  "windows-sys 0.61.2",
@@ -3402,6 +3403,7 @@ dependencies = [
  "blocking",
  "pai-core",
  "serde",
+ "serde_json",
  "tempfile",
  "zbus",
 ]

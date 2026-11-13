@@ -100,3 +100,7 @@ Lessons only: the rules are in `AGENTS.md`.
   polkit policies for `own=`, `<policy`, `<action id=`: a comment written into them must not hold
   those substrings (`form `, `perform `, `term ` contain `rm `). An rpm scriptlet body has no line
   starting with `%` and no `%` in its comments (rpm expands them).
+- The manager's error (name, message) pairs and `state_name` live in `manager/service.rs`, OS-neutral;
+  `dbus::Error`'s `From<ManagerError>` takes its message from there, while `dbus::error_reply` stays
+  derived from the zbus enum so `pipe`'s equality test still checks the zbus names. The pipe frames
+  are read and written by `pai_core::client::pipe::{read_frame, write_frame}` on both sides.

@@ -4,6 +4,7 @@
 //! unique bus name the bus stamps), handed to the core as [`Caller`]; every
 //! [`ManagerError`] replies as a D-Bus error `org.privateai.Manager1.Error.<Kind>`.
 
+pub use super::service::state_name;
 use super::service::{
     Action, Authority, Caller, Manager, ManagerError, Resolver, ServiceControl, ServiceError,
     SystemResolver, UnitState,
@@ -36,17 +37,6 @@ pub fn caller(sender: Option<&str>) -> Result<Caller, ManagerError> {
     }
 }
 
-/// The lowercase name `Status` answers for a unit state.
-pub fn state_name(state: UnitState) -> &'static str {
-    match state {
-        UnitState::Active => "active",
-        UnitState::Inactive => "inactive",
-        UnitState::Failed => "failed",
-        UnitState::Activating => "activating",
-        UnitState::Deactivating => "deactivating",
-    }
-}
-
 /// The error replies of the interface, `org.privateai.Manager1.Error.<Kind>`,
 /// one per [`ManagerError`], the message carrying its detail.
 #[derive(Debug, zbus::DBusError)]
@@ -64,21 +54,20 @@ pub enum Error {
     Invalid(String),
 }
 
-/// The message is protocol data, not user text: the detail when the error
-/// has one (an instance id, a host, the service manager's own message, the
-/// I/O error kind, a refusal's key and values), else the kind's own name. The client shows its own text.
+/// The message is `service::error_reply`'s, the same on every transport.
 impl From<ManagerError> for Error {
     fn from(e: ManagerError) -> Self {
+        let (_, message) = super::service::error_reply(&e);
         match e {
-            ManagerError::NotAuthorized => Error::NotAuthorized("NotAuthorized".into()),
-            ManagerError::InvalidId => Error::InvalidId("InvalidId".into()),
-            ManagerError::NoInstance => Error::NoInstance("NoInstance".into()),
-            ManagerError::BadFileName => Error::BadFileName("BadFileName".into()),
-            ManagerError::AddressInUse(id) => Error::AddressInUse(id),
-            ManagerError::UnresolvableHost(host) => Error::UnresolvableHost(host),
-            ManagerError::Service(e) => Error::Service(e.0),
-            ManagerError::Io(kind) => Error::Io(kind.to_string()),
-            ManagerError::Invalid(refusal) => Error::Invalid(refusal.encode()),
+            ManagerError::NotAuthorized => Error::NotAuthorized(message),
+            ManagerError::InvalidId => Error::InvalidId(message),
+            ManagerError::NoInstance => Error::NoInstance(message),
+            ManagerError::BadFileName => Error::BadFileName(message),
+            ManagerError::AddressInUse(_) => Error::AddressInUse(message),
+            ManagerError::UnresolvableHost(_) => Error::UnresolvableHost(message),
+            ManagerError::Service(_) => Error::Service(message),
+            ManagerError::Io(_) => Error::Io(message),
+            ManagerError::Invalid(_) => Error::Invalid(message),
         }
     }
 }

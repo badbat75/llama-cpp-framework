@@ -21,6 +21,8 @@ test-support = []
 if-addrs = "0.15"
 # The language files (strings.rs).
 toml = { version = "1", default-features = false, features = ["std", "parse", "serde"] }
+# The manager's protocol over a byte stream (client/pipe.rs): one JSON message per frame.
+serde_json = "1"
 
 # The manager's D-Bus client (client/dbus.rs): the zbus pai-manager serves with.
 [target.'cfg(target_os = "linux")'.dependencies]

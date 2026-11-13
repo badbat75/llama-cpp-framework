@@ -187,3 +187,13 @@ Lessons only: the rules are in `AGENTS.md`.
 - A shell snippet in a test is checked with `sh -n` on stdin (parses, runs nothing). An `at(text,
   needle)` helper returning the position pins both presence and order of commands.
 - A doc comment line starting with `1)` trips clippy's `doc_lazy_continuation`: reflow the sentence.
+- A server or client over `impl Read + Write` is tested without threads by a scripted stream: a
+  `Cursor` of the peer's frames for reads, an `Arc<Mutex<Vec<u8>>>` capturing writes, an optional
+  `ErrorKind` failing every read or write. Compare JSON frames as `serde_json::Value`, never as bytes
+  (key order). A real duplex for client-against-server is `UnixStream::pair()` with
+  `set_read_timeout` on the client end as the deadline (`manager/pipe.rs`, `tests/pipe_client.rs`).
+- Manager calls that are refused at authorization, or ask only `Status` with a valid id, never reach
+  `paths::`, so they can be plain `#[test]`s; anything listing instances or touching a file is an
+  e2e phase.
+- A frame cap needs a test in both directions on each side: a client that sends an oversized request
+  gets the server's hang-up, read as Unavailable or Other by timing, so the client refuses it first.

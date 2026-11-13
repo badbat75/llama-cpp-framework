@@ -6,6 +6,7 @@
 
 #[cfg(target_os = "linux")]
 pub mod dbus;
+pub mod pipe;
 pub mod service;
 
 /// A parsed `pai-manager` command line.

@@ -86,6 +86,38 @@ pub enum ManagerError {
     Invalid(pai_core::checks::Refusal),
 }
 
+/// The error name and message `e` replies with, on every transport
+/// (`org.privateai.Manager1.Error.<Kind>`). The message is protocol data, not
+/// user text: the detail when the error has one (an instance id, a host, the
+/// service manager's own message, the I/O error kind, a refusal's key and
+/// values), else the kind's own name. The client shows its own text.
+pub fn error_reply(e: &ManagerError) -> (String, String) {
+    let (kind, message) = match e {
+        ManagerError::NotAuthorized => ("NotAuthorized", "NotAuthorized".to_string()),
+        ManagerError::InvalidId => ("InvalidId", "InvalidId".to_string()),
+        ManagerError::NoInstance => ("NoInstance", "NoInstance".to_string()),
+        ManagerError::BadFileName => ("BadFileName", "BadFileName".to_string()),
+        ManagerError::AddressInUse(id) => ("AddressInUse", id.clone()),
+        ManagerError::UnresolvableHost(host) => ("UnresolvableHost", host.clone()),
+        ManagerError::Service(e) => ("Service", e.0.clone()),
+        ManagerError::Io(kind) => ("Io", kind.to_string()),
+        // `Refusal::encode`'s string: the client decodes it.
+        ManagerError::Invalid(refusal) => ("Invalid", refusal.encode()),
+    };
+    (format!("org.privateai.Manager1.Error.{kind}"), message)
+}
+
+/// The lowercase name `Status` answers for a unit state.
+pub fn state_name(state: UnitState) -> &'static str {
+    match state {
+        UnitState::Active => "active",
+        UnitState::Inactive => "inactive",
+        UnitState::Failed => "failed",
+        UnitState::Activating => "activating",
+        UnitState::Deactivating => "deactivating",
+    }
+}
+
 /// A file of the system config directory the manager serves.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConfigFile {

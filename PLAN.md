@@ -189,7 +189,14 @@ so the second binary, `private-ai-manager`, shares its modules: a `[[bin]]` alon
    layout, `pai-manager` in `-llama`) and **5b** (done: units, D-Bus policy, polkit, sysusers, the first
    maintainer scripts; `xtask install` is not blocked by the services, which the scripts restart). Left:
    the user's real run (`xtask package`, `xtask install`, then the step's "Done when" checks).
-6. **Windows packaging.** The MSI registers the manager service (automatic start) and creates
+6. **Windows.** Split in four, each test first: **6a** (done) the OS-neutral protocol the manager serves
+   over the named pipe (`pai_core::client::pipe`, `manager::pipe`: a u32 length and a JSON body of at
+   most 1 MiB, the D-Bus method and error names), tested on Linux over a socket pair; **6b** the
+   Windows-only parts (the pipe server and client with the security descriptor, the caller from the
+   client token, the Authority over it, the SCM `ServiceControl`, `serve` and `run-instance` as
+   services), type-checked here and tried on the user's Windows build; **6c** the configurator's
+   manager backend on Windows and the log file; **6d** the MSI, below.
+   **Windows packaging.** The MSI registers the manager service (automatic start) and creates
    `%ProgramData%\private-ai\` with the right ACL. SCM has no template services, so the manager creates
    one service per instance (`llama.cpp@<id>`, manual start) when the instance is added and removes it
    with the instance; the uninstall removes them. An upgrade keeps the config. Runs the installer test

@@ -9,6 +9,10 @@
 // pai-core's D-Bus client against the interface (Linux only).
 #[cfg(target_os = "linux")]
 mod dbus_client;
+// pai-core's stream client against the stream server (the named pipe's
+// protocol), joined by a Unix socket pair.
+#[cfg(unix)]
+mod pipe_client;
 
 #[test]
 fn data_root_e2e() {
@@ -39,4 +43,10 @@ fn data_root_e2e() {
     // pai_core::client::dbus against the interface, peer to peer, no bus.
     #[cfg(target_os = "linux")]
     dbus_client::manager_dbus_client_e2e();
+
+    // ── pai-core's client of the manager over a stream ──────────────────
+    // pai_core::client::pipe against manager::pipe::serve_stream, on a
+    // Unix socket pair (the named pipe's OS-neutral protocol).
+    #[cfg(unix)]
+    pipe_client::manager_pipe_client_e2e();
 }
