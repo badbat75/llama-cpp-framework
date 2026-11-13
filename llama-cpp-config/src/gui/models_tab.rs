@@ -23,8 +23,8 @@
 //! - `apply_draft_pick`: the merged MTP/DFlash draft-pick policy (incl. the
 //!   gemma4 auto-pin), unit-tested below.
 
-use crate::strings;
 use super::*;
+use crate::strings;
 
 // The Model-info box and the draft pick's speculator lookup are the only helpers
 // that reach `gguf` directly; gui.rs no longer does, so pull it in here rather
@@ -61,7 +61,11 @@ pub(super) fn wire(app: &AppWindow, state: &Rc<RefCell<State>>) {
                     let Some(app) = app_weak.upgrade() else {
                         return;
                     };
-                    let index = state.borrow().presets.iter().position(|l| l.preset.id == id);
+                    let index = state
+                        .borrow()
+                        .presets
+                        .iter()
+                        .position(|l| l.preset.id == id);
                     if let Some(index) = index {
                         do_select_preset(&app, &state, i32::try_from(index).unwrap_or(-1));
                     }
@@ -115,8 +119,8 @@ pub(super) fn wire(app: &AppWindow, state: &Rc<RefCell<State>>) {
                 // never loads. The LOAD floor is a true lower bound
                 // (`moe_cache::floor`), so this never refuses a value that could
                 // have worked. 0 is "no cache" and passes.
-                let floor = preset_moe_floor(&p)
-                    .map_or(0, |f| crate::moe_cache::mib(f.load_bytes()));
+                let floor =
+                    preset_moe_floor(&p).map_or(0, |f| crate::moe_cache::mib(f.load_bytes()));
                 if let Some(v) = p.moe_cache_mib.filter(|&v| v > 0 && (v as u64) < floor) {
                     set_status(
                         &app,
@@ -366,7 +370,11 @@ pub(super) fn wire(app: &AppWindow, state: &Rc<RefCell<State>>) {
                 };
                 match presets::rename(old_id.as_str(), new_id.as_str()) {
                     Ok(()) => {
-                        set_status(&app, strings::fill("preset-renamed", &[&old_id, &new_id]), false);
+                        set_status(
+                            &app,
+                            strings::fill("preset-renamed", &[&old_id, &new_id]),
+                            false,
+                        );
                         preset_written(&app, &state, Some(new_id.as_str()));
                     }
                     Err(e) => set_status(&app, strings::fill("rename-failed", &[&e]), true),
@@ -396,7 +404,11 @@ pub(super) fn wire(app: &AppWindow, state: &Rc<RefCell<State>>) {
                         };
                         set_status(&app, strings::fill(key, &[&id]), false);
                     }
-                    Err(e) => set_status(&app, strings::fill("preset-switch-failed", &[&id, &e]), true),
+                    Err(e) => set_status(
+                        &app,
+                        strings::fill("preset-switch-failed", &[&id, &e]),
+                        true,
+                    ),
                 }
                 // Rebuilt on failure too: the click already flipped the switch
                 // and broke its one-way binding, and only a fresh row puts it
@@ -840,7 +852,11 @@ use crate::form::ALL_LAYERS;
 
 /// A `--spec-type` list in the form's spelling: empty is "none" (`preset_to_form`).
 fn form_spec_type(spec_type: String) -> SharedString {
-    if spec_type.is_empty() { "none".into() } else { spec_type.into() }
+    if spec_type.is_empty() {
+        "none".into()
+    } else {
+        spec_type.into()
+    }
 }
 
 // ── Draft-pick policy ─────────────────────────────────────────────────
@@ -981,7 +997,10 @@ fn open_delete_dialog(app: &AppWindow, state: &Rc<RefCell<State>>) {
         return;
     }
     let listed = presets::load_listed();
-    let Some(target) = listed.iter().find(|l| l.preset.id.eq_ignore_ascii_case(&id)) else {
+    let Some(target) = listed
+        .iter()
+        .find(|l| l.preset.id.eq_ignore_ascii_case(&id))
+    else {
         set_status(app, strings::fill("preset-not-on-disk", &[&id]), true);
         return;
     };
@@ -993,7 +1012,14 @@ fn open_delete_dialog(app: &AppWindow, state: &Rc<RefCell<State>>) {
         files,
     };
     s.set_delete_target_id(dialog.id.as_str().into());
-    s.set_delete_target_file(if target.enabled { "presets.ini" } else { "presets.ini.disabled" }.into());
+    s.set_delete_target_file(
+        if target.enabled {
+            "presets.ini"
+        } else {
+            "presets.ini.disabled"
+        }
+        .into(),
+    );
     push_delete_rows(app, &dialog);
     state.borrow_mut().delete_dialog = dialog;
     s.set_show_delete_dialog(true);
@@ -1029,7 +1055,10 @@ fn delete_ticked_files(dialog: &DeleteDialog, id: &str) -> crate::linked_files::
     if !dialog.id.eq_ignore_ascii_case(id) {
         return Default::default();
     }
-    let all: Vec<presets::Preset> = presets::load_listed().into_iter().map(|l| l.preset).collect();
+    let all: Vec<presets::Preset> = presets::load_listed()
+        .into_iter()
+        .map(|l| l.preset)
+        .collect();
     let chosen: Vec<crate::linked_files::LinkedFile> = dialog
         .files
         .iter()
@@ -1182,13 +1211,21 @@ pub(super) fn update_model_info(app: &AppWindow) {
         // wrong lesson: with embedded MTP heads only the PLACEMENT keys die.
         let mut parts = Vec::new();
         if !dropped.is_empty() {
-            let key = if embeds_mtp { strings::key("dropped-no-draft-file") } else { strings::key("dropped-no-mtp") };
+            let key = if embeds_mtp {
+                strings::key("dropped-no-draft-file")
+            } else {
+                strings::key("dropped-no-mtp")
+            };
             parts.push(strings::fill(key, &[&dropped.join(", ")]));
         }
         if moe_cache_dropped {
             parts.push(strings::t("dropped-moe-cache"));
         }
-        set_status(app, strings::fill("save-to-persist", &[&parts.join(" ")]), false);
+        set_status(
+            app,
+            strings::fill("save-to-persist", &[&parts.join(" ")]),
+            false,
+        );
     }
     // Two tables depend on BOTH their own rules and the model, and only the model
     // changed here: the Tensor-placement warning (its embd verdict) and the GPU
@@ -1286,12 +1323,7 @@ fn run_new_empty(app: &AppWindow, state: &Rc<RefCell<State>>, path: PathBuf) {
     let path_str = path.to_string_lossy().into_owned();
     let id = deconflicted_id(&path_str);
     let p = presets::Preset::new_default(id.clone(), path_str);
-    commit_new_preset(
-        app,
-        state,
-        p,
-        strings::fill("preset-added", &[&id]),
-    );
+    commit_new_preset(app, state, p, strings::fill("preset-added", &[&id]));
 }
 
 fn run_new_clone(

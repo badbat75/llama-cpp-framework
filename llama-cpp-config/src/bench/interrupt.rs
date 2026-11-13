@@ -85,7 +85,13 @@ fn restore(state: &mut State) -> i32 {
                 println!("{} = {} (presets.ini).", h.key, h.restore);
             }
             Err(e) => {
-                println!("{}", strings::fill("interrupted-not-restored", &[&h.key, &h.restore, &e, &h.marker.display()]));
+                println!(
+                    "{}",
+                    strings::fill(
+                        "interrupted-not-restored",
+                        &[&h.key, &h.restore, &e, &h.marker.display()]
+                    )
+                );
                 code = 1;
             }
         }

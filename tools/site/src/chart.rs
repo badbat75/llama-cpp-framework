@@ -38,26 +38,44 @@ impl Spec {
             if line.is_empty() {
                 continue;
             }
-            let (k, v) = line.split_once('=').ok_or_else(|| format!("not `key = value`: {line}"))?;
+            let (k, v) = line
+                .split_once('=')
+                .ok_or_else(|| format!("not `key = value`: {line}"))?;
             kv.push((k.trim().to_string(), v.trim().to_string()));
         }
         let get = |k: &str| kv.iter().find(|p| p.0 == k).map(|p| p.1.clone());
         for (k, _) in &kv {
-            if !["title", "campaign", "metric", "x", "series", "where", "unit", "rename"].contains(&k.as_str()) {
+            if ![
+                "title", "campaign", "metric", "x", "series", "where", "unit", "rename",
+            ]
+            .contains(&k.as_str())
+            {
                 return Err(format!("unknown key `{k}`"));
             }
         }
-        let need = |k: &str| get(k).filter(|v| !v.is_empty()).ok_or_else(|| format!("`{k}` is required"));
+        let need = |k: &str| {
+            get(k)
+                .filter(|v| !v.is_empty())
+                .ok_or_else(|| format!("`{k}` is required"))
+        };
         let metric = need("metric")?;
         if !METRICS.contains(&metric.as_str()) {
-            return Err(format!("unknown metric `{metric}` (one of {})", METRICS.join(", ")));
+            return Err(format!(
+                "unknown metric `{metric}` (one of {})",
+                METRICS.join(", ")
+            ));
         }
         let pairs = |key: &str| -> Result<Vec<(String, String)>, String> {
             // A segment without `=` belongs to the next one: a value may hold a
             // comma (`ngram-map-k4v,draft-mtp=k4v + mtp`).
             let mut out = Vec::new();
             let mut held = String::new();
-            for f in get(key).unwrap_or_default().split(',').map(str::trim).filter(|f| !f.is_empty()) {
+            for f in get(key)
+                .unwrap_or_default()
+                .split(',')
+                .map(str::trim)
+                .filter(|f| !f.is_empty())
+            {
                 if !f.contains('=') {
                     held += f;
                     held.push(',');
@@ -68,7 +86,10 @@ impl Spec {
                 out.push((k.trim().to_string(), v.trim().to_string()));
             }
             if !held.is_empty() {
-                return Err(format!("`{key}` needs a=b pairs: {}", held.trim_end_matches(',')));
+                return Err(format!(
+                    "`{key}` needs a=b pairs: {}",
+                    held.trim_end_matches(',')
+                ));
             }
             Ok(out)
         };
@@ -76,7 +97,10 @@ impl Spec {
         let rename = pairs("rename")?;
         Ok(Spec {
             title: get("title"),
-            campaigns: need("campaign")?.split(',').map(|c| c.trim().to_string()).collect(),
+            campaigns: need("campaign")?
+                .split(',')
+                .map(|c| c.trim().to_string())
+                .collect(),
             metric,
             x: need("x")?,
             series: need("series")?,
@@ -111,13 +135,23 @@ pub struct Data {
 pub fn build(spec: &Spec, db: &Db) -> Result<Data, String> {
     let mut runs: Vec<&Run> = Vec::new();
     for name in &spec.campaigns {
-        let c = db.campaign(name).ok_or_else(|| format!("no campaign `{name}` in bench.db"))?;
+        let c = db
+            .campaign(name)
+            .ok_or_else(|| format!("no campaign `{name}` in bench.db"))?;
         runs.extend(db.runs_of(c).filter(|r| r.status == "ok"));
     }
-    let keys = spec.filter.iter().map(|f| &f.0).chain([&spec.x]).chain((spec.metric != "free-mib").then_some(&spec.series));
+    let keys = spec
+        .filter
+        .iter()
+        .map(|f| &f.0)
+        .chain([&spec.x])
+        .chain((spec.metric != "free-mib").then_some(&spec.series));
     for k in keys {
         if !runs.iter().any(|r| r.param(k).is_some()) {
-            return Err(format!("no run of {} has the key `{k}`", spec.campaigns.join(", ")));
+            return Err(format!(
+                "no run of {} has the key `{k}`",
+                spec.campaigns.join(", ")
+            ));
         }
     }
     runs.retain(|r| spec.filter.iter().all(|(k, v)| r.value(k) == v));
@@ -141,16 +175,29 @@ pub fn build(spec: &Spec, db: &Db) -> Result<Data, String> {
                 add(r.value(&spec.x), dev, vec![*free as f64]);
             }
         } else {
-            add(r.value(&spec.x), r.value(&spec.series), r.samples(&spec.metric));
+            add(
+                r.value(&spec.x),
+                r.value(&spec.series),
+                r.samples(&spec.metric),
+            );
         }
     }
     if pools.is_empty() {
-        return Err(format!("no `{}` data in {} after the filter", spec.metric, spec.campaigns.join(", ")));
+        return Err(format!(
+            "no `{}` data in {} after the filter",
+            spec.metric,
+            spec.campaigns.join(", ")
+        ));
     }
     // Numeric x values (ctx-size, ubatch-size...) read left to right ascending.
     let mut order: Vec<usize> = (0..xs.len()).collect();
     if xs.iter().all(|x| x.parse::<f64>().is_ok()) {
-        order.sort_by(|a, b| xs[*a].parse::<f64>().unwrap().total_cmp(&xs[*b].parse::<f64>().unwrap()));
+        order.sort_by(|a, b| {
+            xs[*a]
+                .parse::<f64>()
+                .unwrap()
+                .total_cmp(&xs[*b].parse::<f64>().unwrap())
+        });
     }
     let mut xs: Vec<String> = order.iter().map(|i| xs[*i].clone()).collect();
     let mut cells = vec![vec![None; xs.len()]; series.len()];
@@ -180,16 +227,27 @@ fn idx(v: &mut Vec<String>, s: &str) -> usize {
 fn tick_step(max: f64) -> f64 {
     let raw = max / 5.0;
     let p = 10f64.powf(raw.log10().floor());
-    [1.0, 2.0, 5.0, 10.0].into_iter().map(|m| m * p).find(|s| *s >= raw).unwrap_or(10.0 * p)
+    [1.0, 2.0, 5.0, 10.0]
+        .into_iter()
+        .map(|m| m * p)
+        .find(|s| *s >= raw)
+        .unwrap_or(10.0 * p)
 }
 
 fn num(v: f64) -> String {
-    if v >= 100.0 { format!("{v:.0}") } else { format!("{v:.1}") }
+    if v >= 100.0 {
+        format!("{v:.0}")
+    } else {
+        format!("{v:.1}")
+    }
 }
 
 pub fn svg(spec: &Spec, d: &Data, campaign_href: &dyn Fn(&str) -> String) -> String {
     let unit = spec.unit();
-    let title = spec.title.clone().unwrap_or_else(|| format!("{} ({unit})", spec.metric));
+    let title = spec
+        .title
+        .clone()
+        .unwrap_or_else(|| format!("{} ({unit})", spec.metric));
     let (w, h, l, r, t, b) = (720.0, 340.0, 56.0, 16.0, 40.0, 44.0);
     let pw = w - l - r;
     let ph = h - t - b;
@@ -223,7 +281,11 @@ pub fn svg(spec: &Spec, d: &Data, campaign_href: &dyn Fn(&str) -> String) -> Str
         );
         v += step;
     }
-    o += &format!("<text class=\"tick\" x=\"{l}\" y=\"{}\">{}</text>", t - 26.0, esc(&unit));
+    o += &format!(
+        "<text class=\"tick\" x=\"{l}\" y=\"{}\">{}</text>",
+        t - 26.0,
+        esc(&unit)
+    );
     // legend: each entry a button the page script turns into a series toggle
     let mut lx = l + 40.0;
     for (si, s) in d.series.iter().enumerate() {
@@ -244,7 +306,9 @@ pub fn svg(spec: &Spec, d: &Data, campaign_href: &dyn Fn(&str) -> String) -> Str
         let cx = l + gw * (xi as f64 + 0.5);
         let x0 = cx - bw * d.series.len() as f64 / 2.0;
         for (si, s) in d.series.iter().enumerate() {
-            let Some((m, sd, n)) = d.cells[si][xi] else { continue };
+            let Some((m, sd, n)) = d.cells[si][xi] else {
+                continue;
+            };
             let bx = x0 + bw * si as f64;
             let sdt = sd.map(|s| format!(" ±{}", num(s))).unwrap_or_default();
             o += &format!(
@@ -283,7 +347,12 @@ pub fn svg(spec: &Spec, d: &Data, campaign_href: &dyn Fn(&str) -> String) -> Str
             esc(x)
         );
     }
-    o += &format!("<line class=\"axis\" x1=\"{l}\" x2=\"{}\" y1=\"{:.1}\" y2=\"{:.1}\"/>", l + pw, y(0.0), y(0.0));
+    o += &format!(
+        "<line class=\"axis\" x1=\"{l}\" x2=\"{}\" y1=\"{:.1}\" y2=\"{:.1}\"/>",
+        l + pw,
+        y(0.0),
+        y(0.0)
+    );
     o += "</svg>";
     // the numbers drawn, as a table: readable without the script and without colour
     o += "<details class=\"chart-data\"><summary>Data</summary><table><thead><tr><th></th>";
@@ -307,11 +376,27 @@ pub fn svg(spec: &Spec, d: &Data, campaign_href: &dyn Fn(&str) -> String) -> Str
     }
     o += &format!("</tbody></table></details><figcaption>{}", esc(&unit));
     o += ": mean of each bar's samples, ± one sample standard deviation; ";
-    o += &spec.campaigns.iter().map(|c| format!("campaign <a href=\"{}\"><code>{}</code></a>", campaign_href(c), esc(c))).collect::<Vec<_>>().join(", ");
+    o += &spec
+        .campaigns
+        .iter()
+        .map(|c| {
+            format!(
+                "campaign <a href=\"{}\"><code>{}</code></a>",
+                campaign_href(c),
+                esc(c)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
     if !spec.filter.is_empty() {
         o += &format!(
             ", {}",
-            esc(&spec.filter.iter().map(|(k, v)| format!("{k} = {v}")).collect::<Vec<_>>().join(", "))
+            esc(&spec
+                .filter
+                .iter()
+                .map(|(k, v)| format!("{k} = {v}"))
+                .collect::<Vec<_>>()
+                .join(", "))
         );
     }
     o += ".</figcaption></figure>";
@@ -326,13 +411,30 @@ mod tests {
     fn a_block_parses_with_comments() {
         let s = Spec::parse("campaign = a, b\nmetric = decode ; per request\nx = prompt\nseries = split-mode\nwhere = concurrency=single, temp=0\n").unwrap();
         assert_eq!(s.campaigns, ["a", "b"]);
-        assert_eq!(s.filter, [("concurrency".into(), "single".into()), ("temp".into(), "0".into())]);
+        assert_eq!(
+            s.filter,
+            [
+                ("concurrency".into(), "single".into()),
+                ("temp".into(), "0".into())
+            ]
+        );
         let r = Spec::parse("campaign = a\nmetric = decode\nx = a\nseries = b\nrename = unset=none, k4v,mtp=k4v + mtp").unwrap();
-        assert_eq!(r.rename, [("unset".into(), "none".into()), ("k4v,mtp".into(), "k4v + mtp".into())]);
-        assert!(Spec::parse("campaign = a\nmetric = decode\nx = a\nseries = b\nrename = a=b, c").is_err());
+        assert_eq!(
+            r.rename,
+            [
+                ("unset".into(), "none".into()),
+                ("k4v,mtp".into(), "k4v + mtp".into())
+            ]
+        );
+        assert!(
+            Spec::parse("campaign = a\nmetric = decode\nx = a\nseries = b\nrename = a=b, c")
+                .is_err()
+        );
         assert!(Spec::parse("campaign = a\nmetric = speed\nx = a\nseries = b").is_err());
         assert!(Spec::parse("campaign = a\nmetric = decode\nx = a").is_err());
-        assert!(Spec::parse("campaign = a\nmetric = decode\nx = a\nseries = b\ncolour = red").is_err());
+        assert!(
+            Spec::parse("campaign = a\nmetric = decode\nx = a\nseries = b\ncolour = red").is_err()
+        );
     }
 
     #[test]

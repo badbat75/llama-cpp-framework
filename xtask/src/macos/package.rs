@@ -40,12 +40,17 @@ const ICD_DIR: &str = "/usr/local/share/vulkan/icd.d";
 fn is_macho(p: &Path) -> bool {
     use std::io::Read;
     let mut magic = [0u8; 4];
-    std::fs::File::open(p).and_then(|mut f| f.read_exact(&mut magic)).is_ok()
+    std::fs::File::open(p)
+        .and_then(|mut f| f.read_exact(&mut magic))
+        .is_ok()
         && matches!(magic, [0xcf, 0xfa, 0xed, 0xfe] | [0xca, 0xfe, 0xba, 0xbe])
 }
 
 fn name_of(p: &Path) -> String {
-    p.file_name().unwrap_or_default().to_string_lossy().into_owned()
+    p.file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .into_owned()
 }
 
 /// A path under the payload root.
@@ -63,7 +68,12 @@ fn rpaths(p: &Path) -> Vec<String> {
             in_rpath = l == "cmd LC_RPATH";
         } else if in_rpath {
             if let Some(rest) = l.strip_prefix("path ") {
-                out.push(rest.rsplit_once(" (offset").map(|(p, _)| p).unwrap_or(rest).to_string());
+                out.push(
+                    rest.rsplit_once(" (offset")
+                        .map(|(p, _)| p)
+                        .unwrap_or(rest)
+                        .to_string(),
+                );
                 in_rpath = false;
             }
         }
@@ -92,9 +102,15 @@ fn is_system(dep: &str) -> bool {
 /// directory, as dyld would), or None.
 fn resolve(dep: &str, orig: &Path, orig_rpaths: &[String]) -> Option<PathBuf> {
     let dir = orig.parent()?;
-    let loader = |s: &str| s.replace("@loader_path", &dir.display().to_string()).replace("@executable_path", &dir.display().to_string());
+    let loader = |s: &str| {
+        s.replace("@loader_path", &dir.display().to_string())
+            .replace("@executable_path", &dir.display().to_string())
+    };
     if let Some(rest) = dep.strip_prefix("@rpath/") {
-        return orig_rpaths.iter().map(|r| PathBuf::from(loader(r)).join(rest)).find(|p| p.is_file());
+        return orig_rpaths
+            .iter()
+            .map(|r| PathBuf::from(loader(r)).join(rest))
+            .find(|p| p.is_file());
     }
     let p = PathBuf::from(loader(dep));
     p.is_file().then_some(p)
@@ -118,7 +134,10 @@ pub fn run(keep_staging: bool) -> Result<()> {
     // ── Preconditions ───────────────────────────────────────────────────
     for exe in ["llama-server", "llama-cpp-config"] {
         if !util::is_executable(&bin.join(exe)) {
-            bail!("{exe} not found in {}. Run cargo run -p xtask -- build first.", bin.display());
+            bail!(
+                "{exe} not found in {}. Run cargo run -p xtask -- build first.",
+                bin.display()
+            );
         }
     }
     let built = output(cmd(bin.join("llama-cpp-config")).arg("--version"))
@@ -129,7 +148,9 @@ pub fn run(keep_staging: bool) -> Result<()> {
     }
     for tool in ["pkgbuild", "otool", "install_name_tool", "codesign"] {
         if which(tool).is_none() {
-            bail!("{tool} not found: install the Xcode Command Line Tools (xcode-select --install)");
+            bail!(
+                "{tool} not found: install the Xcode Command Line Tools (xcode-select --install)"
+            );
         }
     }
 
@@ -151,7 +172,10 @@ pub fn run(keep_staging: bool) -> Result<()> {
     // out. `orig` remembers where each staged Mach-O came from, to resolve
     // its @rpath dependencies as the build tree does.
     let mut orig: Vec<(PathBuf, PathBuf)> = Vec::new();
-    let mut entries: Vec<PathBuf> = std::fs::read_dir(&bin)?.flatten().map(|e| e.path()).collect();
+    let mut entries: Vec<PathBuf> = std::fs::read_dir(&bin)?
+        .flatten()
+        .map(|e| e.path())
+        .collect();
     entries.sort();
     for src in entries {
         let n = name_of(&src);
@@ -170,15 +194,24 @@ pub fn run(keep_staging: bool) -> Result<()> {
     let sdk_canon = sdk.as_deref().and_then(|d| d.canonicalize().ok());
     if let Some(sdk) = &sdk {
         let src_icd = super::dists::moltenvk_icd(sdk);
-        let text = std::fs::read_to_string(&src_icd).with_context(|| format!("reading {}", src_icd.display()))?;
-        let mut json: serde_json::Value = serde_json::from_str(&text).with_context(|| format!("parsing {}", src_icd.display()))?;
-        let lib = json["ICD"]["library_path"].as_str().context("MoltenVK_icd.json has no ICD.library_path")?.to_string();
+        let text = std::fs::read_to_string(&src_icd)
+            .with_context(|| format!("reading {}", src_icd.display()))?;
+        let mut json: serde_json::Value = serde_json::from_str(&text)
+            .with_context(|| format!("parsing {}", src_icd.display()))?;
+        let lib = json["ICD"]["library_path"]
+            .as_str()
+            .context("MoltenVK_icd.json has no ICD.library_path")?
+            .to_string();
         let lib_path = src_icd.parent().unwrap().join(&lib);
         let dest = opt_lib.join("libMoltenVK.dylib");
-        std::fs::copy(&lib_path, &dest).with_context(|| format!("copying {}", lib_path.display()))?;
+        std::fs::copy(&lib_path, &dest)
+            .with_context(|| format!("copying {}", lib_path.display()))?;
         orig.push((dest, lib_path));
         json["ICD"]["library_path"] = format!("{OPT_DIR}/lib/libMoltenVK.dylib").into();
-        std::fs::write(icd_dir.join(ICD_NAME), serde_json::to_string_pretty(&json)? + "\n")?;
+        std::fs::write(
+            icd_dir.join(ICD_NAME),
+            serde_json::to_string_pretty(&json)? + "\n",
+        )?;
         ui::dim(format!("MoltenVK and its manifest from {}", sdk.display()));
     } else {
         ui::warn("No Vulkan SDK in the dists: the package has no MoltenVK (Vulkan backend unusable, Metal unaffected)");
@@ -202,7 +235,11 @@ pub fn run(keep_staging: bool) -> Result<()> {
             let base = util::basename(&dep).to_string();
             if opt_bin.join(&base).is_file() || opt_lib.join(&base).is_file() {
                 if !dep.starts_with('@') {
-                    run_cmd(cmd("install_name_tool").args(["-change", &dep, &format!("@rpath/{base}")]).arg(&staged))?;
+                    run_cmd(
+                        cmd("install_name_tool")
+                            .args(["-change", &dep, &format!("@rpath/{base}")])
+                            .arg(&staged),
+                    )?;
                 }
                 continue;
             }
@@ -221,16 +258,27 @@ pub fn run(keep_staging: bool) -> Result<()> {
             let found = found.unwrap();
             let dest = opt_lib.join(&base);
             std::fs::copy(&found, &dest).with_context(|| format!("copying {}", found.display()))?;
-            run_cmd(cmd("install_name_tool").args(["-id", &format!("@rpath/{base}")]).arg(&dest))?;
+            run_cmd(
+                cmd("install_name_tool")
+                    .args(["-id", &format!("@rpath/{base}")])
+                    .arg(&dest),
+            )?;
             if !dep.starts_with('@') {
-                run_cmd(cmd("install_name_tool").args(["-change", &dep, &format!("@rpath/{base}")]).arg(&staged))?;
+                run_cmd(
+                    cmd("install_name_tool")
+                        .args(["-change", &dep, &format!("@rpath/{base}")])
+                        .arg(&staged),
+                )?;
             }
             bundled.insert(base);
             orig.push((dest, found));
         }
     }
     if !bundled.is_empty() {
-        ui::dim(format!("Bundled from the SDK: {}", bundled.into_iter().collect::<Vec<_>>().join(", ")));
+        ui::dim(format!(
+            "Bundled from the SDK: {}",
+            bundled.into_iter().collect::<Vec<_>>().join(", ")
+        ));
     }
 
     // ── Rpaths and signatures ──────────────────────────────────────────
@@ -254,7 +302,10 @@ pub fn run(keep_staging: bool) -> Result<()> {
     let mut n_links = 0;
     for (staged, _) in &orig {
         let n = name_of(staged);
-        if staged.parent() == Some(opt_bin.as_path()) && !n.ends_with(".dylib") && !n.ends_with(".so") {
+        if staged.parent() == Some(opt_bin.as_path())
+            && !n.ends_with(".dylib")
+            && !n.ends_with(".so")
+        {
             std::os::unix::fs::symlink(format!("{OPT_DIR}/bin/{n}"), links.join(&n))?;
             n_links += 1;
         }
@@ -265,7 +316,10 @@ pub fn run(keep_staging: bool) -> Result<()> {
     let roots = build_root.join("package");
     util::remove_all(&roots)?;
     let present = components::split(&stage, &roots)?;
-    let vulkan_version = sdk.as_deref().and_then(components::dist_version).unwrap_or_else(|| fw_version.clone());
+    let vulkan_version = sdk
+        .as_deref()
+        .and_then(components::dist_version)
+        .unwrap_or_else(|| fw_version.clone());
     let mut created = Vec::new();
     for c in present {
         let root = components::root(&roots, c);
@@ -273,9 +327,16 @@ pub fn run(keep_staging: bool) -> Result<()> {
         licenses::stage_in(
             &opt.join("share/licenses").join(c.suffix()),
             &licenses::libraries_under(&opt),
-            &licenses::Sources { llama_cpp: llama.clone(), ..Default::default() },
+            &licenses::Sources {
+                llama_cpp: llama.clone(),
+                ..Default::default()
+            },
         )?;
-        let version = if c == Component::Vulkan { vulkan_version.as_str() } else { fw_version.as_str() };
+        let version = if c == Component::Vulkan {
+            vulkan_version.as_str()
+        } else {
+            fw_version.as_str()
+        };
         let stem = components::file_stem(c, &fw_version, &llama_build, version);
         let pkg = out_dir.join(format!("{stem}-arm64.pkg"));
         let _ = std::fs::remove_file(&pkg);
@@ -284,7 +345,14 @@ pub fn run(keep_staging: bool) -> Result<()> {
             cmd("pkgbuild")
                 .arg("--root")
                 .arg(&root)
-                .args(["--install-location", "/", "--identifier", &format!("{PKG_ID}.{}", c.suffix()), "--version", version])
+                .args([
+                    "--install-location",
+                    "/",
+                    "--identifier",
+                    &format!("{PKG_ID}.{}", c.suffix()),
+                    "--version",
+                    version,
+                ])
                 .arg(&pkg),
         )?;
         created.push(pkg);
@@ -296,7 +364,11 @@ pub fn run(keep_staging: bool) -> Result<()> {
 
     ui::say("");
     for pkg in &created {
-        ui::ok(format!("Package: {} ({} MiB)", pkg.display(), std::fs::metadata(pkg)?.len() / (1024 * 1024)));
+        ui::ok(format!(
+            "Package: {} ({} MiB)",
+            pkg.display(),
+            std::fs::metadata(pkg)?.len() / (1024 * 1024)
+        ));
     }
     ui::say("");
     Ok(())

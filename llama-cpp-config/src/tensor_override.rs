@@ -49,9 +49,9 @@
 //! is huge (`n_vocab × n_embd × 2 B`), which is when
 //! moving it onto a GPU is worth the VRAM.
 
-use crate::strings;
 use crate::devices::DeviceOption;
 use crate::gui::TensorOverrideRow;
+use crate::strings;
 
 /// One `<pattern>=<buffer type>` rule. `device` is a buffer-type name, i.e. a
 /// device id (`ROCm0`) or `CPU`; empty means a hand-edited INI left the `=<dev>`

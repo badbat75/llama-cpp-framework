@@ -30,12 +30,16 @@ pub const GPU_TARGETS_FALLBACK: &str = "gfx1010;gfx1011;gfx1012;gfx1030;gfx1031;
 
 /// The archs named by `<prefix>gfx...<suffix>` files in `dir`.
 fn archs_in(dir: &Path, prefix: &str, suffix: &str) -> Vec<String> {
-    let Ok(rd) = std::fs::read_dir(dir) else { return Vec::new() };
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
     rd.flatten()
         .filter_map(|e| {
             let name = e.file_name().to_string_lossy().into_owned();
             let arch = name.strip_prefix(prefix)?.strip_suffix(suffix)?;
-            let ok = arch.strip_prefix("gfx").map(|r| !r.is_empty() && r.bytes().all(|c| c.is_ascii_alphanumeric()));
+            let ok = arch
+                .strip_prefix("gfx")
+                .map(|r| !r.is_empty() && r.bytes().all(|c| c.is_ascii_alphanumeric()));
             ok.unwrap_or(false).then(|| arch.to_string())
         })
         .collect()
@@ -47,7 +51,11 @@ pub fn gpu_targets(hip: &Path) -> String {
     let mut archs = archs_in(&hip.join(".kpack"), "blas_lib_", ".kpack");
     for legacy in ["bin", "lib"] {
         if archs.is_empty() {
-            archs = archs_in(&hip.join(legacy).join("rocblas").join("library"), "TensileLibrary_lazy_", ".dat");
+            archs = archs_in(
+                &hip.join(legacy).join("rocblas").join("library"),
+                "TensileLibrary_lazy_",
+                ".dat",
+            );
         }
     }
     if archs.is_empty() {

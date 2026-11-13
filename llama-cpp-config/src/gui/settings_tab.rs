@@ -22,8 +22,8 @@
 //! default the user never typed. A commit that changes nothing writes nothing,
 //! so tabbing through the field leaves the footer alone.
 
-use crate::strings;
 use super::*;
+use crate::strings;
 
 /// Seed / re-seed the tab from its two sources. Part of the
 /// `reload_all_from_disk` hub (startup seed + Refresh/F5).

@@ -309,7 +309,8 @@ struct Reader<'a> {
 
 impl<'a> Reader<'a> {
     fn take(&mut self, n: u64) -> Result<&'a [u8], ParseError> {
-        let n = usize::try_from(n).map_err(|_| ParseError::Invalid(strings::t("gguf-length-beyond-memory")))?;
+        let n = usize::try_from(n)
+            .map_err(|_| ParseError::Invalid(strings::t("gguf-length-beyond-memory")))?;
         let end = self.pos.checked_add(n).ok_or(ParseError::Truncated)?;
         if end > self.buf.len() {
             return Err(ParseError::Truncated);
@@ -337,7 +338,10 @@ impl<'a> Reader<'a> {
         const MAX_STRING: u64 = 64 * MIB;
         let n = self.u64()?;
         if n > MAX_STRING {
-            return Err(ParseError::Invalid(strings::fill("gguf-string-too-long", &[&n])));
+            return Err(ParseError::Invalid(strings::fill(
+                "gguf-string-too-long",
+                &[&n],
+            )));
         }
         Ok(n)
     }
@@ -352,11 +356,17 @@ impl<'a> Reader<'a> {
         Ok(match t {
             0 => Kv::Uint(u64::from(self.take(1)?[0])),
             1 => Kv::Int(i64::from(self.take(1)?[0] as i8)),
-            2 => Kv::Uint(u64::from(u16::from_le_bytes(self.take(2)?.try_into().unwrap()))),
-            3 => Kv::Int(i64::from(i16::from_le_bytes(self.take(2)?.try_into().unwrap()))),
+            2 => Kv::Uint(u64::from(u16::from_le_bytes(
+                self.take(2)?.try_into().unwrap(),
+            ))),
+            3 => Kv::Int(i64::from(i16::from_le_bytes(
+                self.take(2)?.try_into().unwrap(),
+            ))),
             4 => Kv::Uint(u64::from(self.u32()?)),
             5 => Kv::Int(i64::from(self.u32()? as i32)),
-            6 => Kv::Float(f64::from(f32::from_le_bytes(self.take(4)?.try_into().unwrap()))),
+            6 => Kv::Float(f64::from(f32::from_le_bytes(
+                self.take(4)?.try_into().unwrap(),
+            ))),
             7 => Kv::Bool(self.take(1)?[0] != 0),
             8 => Kv::Str(self.string()?),
             9 => {
@@ -366,11 +376,18 @@ impl<'a> Reader<'a> {
                 let et = self.u32()?;
                 let n = self.u64()?;
                 if n > 1 << 28 {
-                    return Err(ParseError::Invalid(strings::fill("gguf-array-too-long", &[&n])));
+                    return Err(ParseError::Invalid(strings::fill(
+                        "gguf-array-too-long",
+                        &[&n],
+                    )));
                 }
                 match (et, fixed_size(et)) {
                     // Small numeric arrays (per-layer head counts) are kept.
-                    (_, Some(_)) if n <= 4096 => Kv::Arr((0..n).map(|_| self.value(et, depth + 1)).collect::<Result<_, _>>()?),
+                    (_, Some(_)) if n <= 4096 => Kv::Arr(
+                        (0..n)
+                            .map(|_| self.value(et, depth + 1))
+                            .collect::<Result<_, _>>()?,
+                    ),
                     (_, Some(size)) => {
                         self.skip(n * size)?;
                         Kv::Skipped
@@ -388,7 +405,12 @@ impl<'a> Reader<'a> {
                         }
                         Kv::Skipped
                     }
-                    _ => return Err(ParseError::Invalid(strings::fill("gguf-array-element-type", &[&et]))),
+                    _ => {
+                        return Err(ParseError::Invalid(strings::fill(
+                            "gguf-array-element-type",
+                            &[&et],
+                        )))
+                    }
                 }
             }
             10 => Kv::Uint(self.u64()?),
@@ -419,12 +441,18 @@ pub fn parse_header(buf: &[u8]) -> Result<Header, ParseError> {
     }
     let version = r.u32()?;
     if !matches!(version, 2 | 3) {
-        return Err(ParseError::Invalid(strings::fill("gguf-version", &[&version])));
+        return Err(ParseError::Invalid(strings::fill(
+            "gguf-version",
+            &[&version],
+        )));
     }
     let n_tensors = r.u64()?;
     let n_kv = r.u64()?;
     if n_tensors > 1 << 20 || n_kv > 1 << 20 {
-        return Err(ParseError::Invalid(strings::fill("gguf-too-many-entries", &[&n_tensors, &n_kv])));
+        return Err(ParseError::Invalid(strings::fill(
+            "gguf-too-many-entries",
+            &[&n_tensors, &n_kv],
+        )));
     }
     let mut kvs = HashMap::new();
     for _ in 0..n_kv {
@@ -438,16 +466,27 @@ pub fn parse_header(buf: &[u8]) -> Result<Header, ParseError> {
         let name = r.string()?;
         let n_dims = r.u32()?;
         if n_dims > 8 {
-            return Err(ParseError::Invalid(strings::fill("gguf-tensor-dimensions", &[&name, &n_dims])));
+            return Err(ParseError::Invalid(strings::fill(
+                "gguf-tensor-dimensions",
+                &[&name, &n_dims],
+            )));
         }
         r.skip(u64::from(n_dims) * 8)?;
         let _type = r.u32()?;
         let offset = r.u64()?;
         tensors.push((name, offset));
     }
-    let align = kvs.get("general.alignment").and_then(Kv::as_u64).filter(|&a| a > 0).unwrap_or(32);
+    let align = kvs
+        .get("general.alignment")
+        .and_then(Kv::as_u64)
+        .filter(|&a| a > 0)
+        .unwrap_or(32);
     let data_start = (r.pos as u64).div_ceil(align) * align;
-    Ok(Header { kvs, tensors, data_start })
+    Ok(Header {
+        kvs,
+        tensors,
+        data_start,
+    })
 }
 
 // ── Shape ────────────────────────────────────────────────────────────────
@@ -495,9 +534,9 @@ fn is_input_embedding(name: &str) -> bool {
 /// A routed-expert tensor: what `--n-cpu-moe` moves (`LLM_FFN_EXPS_REGEX`,
 /// `\.ffn_(up|down|gate|gate_up)_(ch|)exps`). A shared expert (`_shexp`) is not.
 fn is_expert(name: &str) -> bool {
-    ["up", "down", "gate", "gate_up"]
-        .iter()
-        .any(|k| name.contains(&format!(".ffn_{k}_exps")) || name.contains(&format!(".ffn_{k}_chexps")))
+    ["up", "down", "gate", "gate_up"].iter().any(|k| {
+        name.contains(&format!(".ffn_{k}_exps")) || name.contains(&format!(".ffn_{k}_chexps"))
+    })
 }
 
 /// Fold the headers of a model's shards (first shard first, each with the
@@ -524,7 +563,8 @@ pub fn shape_of(shards: &[(Header, u64)]) -> Result<Shape, String> {
         ctx: 0,
     };
     for (h, file_size) in shards {
-        let mut offsets: Vec<(u64, &str)> = h.tensors.iter().map(|(n, o)| (*o, n.as_str())).collect();
+        let mut offsets: Vec<(u64, &str)> =
+            h.tensors.iter().map(|(n, o)| (*o, n.as_str())).collect();
         offsets.sort();
         let data = file_size
             .checked_sub(h.data_start)
@@ -555,7 +595,9 @@ pub fn shape_of(shards: &[(Header, u64)]) -> Result<Shape, String> {
     }
     let key = |k: &str| kvs.get(&format!("{arch}.{k}"));
     let int = |k: &str| key(k).and_then(Kv::as_u64);
-    s.ctx = int("context_length").filter(|&c| c > 0).map_or(REF_CTX, |c| c.min(REF_CTX));
+    s.ctx = int("context_length")
+        .filter(|&c| c > 0)
+        .map_or(REF_CTX, |c| c.min(REF_CTX));
     s.kv = kv_per_token(&key, s.layers.len() as u64).map_or(FALLBACK_KV, |b| b * s.ctx);
     Ok(s)
 }
@@ -610,9 +652,19 @@ fn resolve_url(endpoint: &str, repo: &str, commit: &str, path: &str) -> String {
 
 /// One shard's header over growing range requests, the first one sized by
 /// `HINT`.
-fn fetch_header(fetch: &dyn Fetch, url: &str, token: Option<&Token>, repo: &str, file_size: u64) -> Result<Header, HfError> {
+fn fetch_header(
+    fetch: &dyn Fetch,
+    url: &str,
+    token: Option<&Token>,
+    repo: &str,
+    file_size: u64,
+) -> Result<Header, HfError> {
     let hint = HINT.load(Ordering::Relaxed);
-    let first = if hint > 0 { hint + HINT_MARGIN } else { INITIAL_FETCH };
+    let first = if hint > 0 {
+        hint + HINT_MARGIN
+    } else {
+        INITIAL_FETCH
+    };
     fetch_header_from(fetch, url, token, repo, file_size, first)
 }
 
@@ -640,7 +692,11 @@ fn fetch_header_from(
                 HINT.fetch_max(h.data_start, Ordering::Relaxed);
                 return Ok(h);
             }
-            Err(ParseError::Truncated) if body.len() as u64 >= len && len < MAX_HEADER && (file_size == 0 || len < file_size) => {
+            Err(ParseError::Truncated)
+                if body.len() as u64 >= len
+                    && len < MAX_HEADER
+                    && (file_size == 0 || len < file_size) =>
+            {
                 len = (len * 4).min(MAX_HEADER);
                 if file_size > 0 {
                     len = len.min(file_size);
@@ -649,7 +705,9 @@ fn fetch_header_from(
             Err(ParseError::Truncated) => {
                 return Err(HfError::Io(strings::fill("gguf-cut-short", &[&body.len()])));
             }
-            Err(ParseError::Invalid(m)) => return Err(HfError::Io(strings::fill("gguf-unreadable", &[&m]))),
+            Err(ParseError::Invalid(m)) => {
+                return Err(HfError::Io(strings::fill("gguf-unreadable", &[&m])))
+            }
         }
     }
 }
@@ -670,13 +728,22 @@ pub fn fetch_shape(
     let mut headers = Vec::with_capacity(c.shards.len());
     for f in &c.shards {
         if !hf::safe_repo_path(&f.path) {
-            return Err(HfError::InvalidSpec(strings::fill("refused-repo-path", &[&format!("{:?}", f.path)])));
+            return Err(HfError::InvalidSpec(strings::fill(
+                "refused-repo-path",
+                &[&format!("{:?}", f.path)],
+            )));
         }
         let url = resolve_url(endpoint, repo, commit, &f.path);
         headers.push((fetch_header(fetch, &url, token, repo, f.size)?, f.size));
     }
-    let shape = Arc::new(shape_of(&headers).map_err(|m| HfError::Io(format!("{}: {m}", c.primary().name())))?);
-    CACHE.lock().unwrap().get_or_insert_with(HashMap::new).insert(key, shape.clone());
+    let shape = Arc::new(
+        shape_of(&headers).map_err(|m| HfError::Io(format!("{}: {m}", c.primary().name())))?,
+    );
+    CACHE
+        .lock()
+        .unwrap()
+        .get_or_insert_with(HashMap::new)
+        .insert(key, shape.clone());
     Ok(shape)
 }
 
@@ -727,7 +794,9 @@ fn read_local_header(path: &Path, file_size: u64) -> Result<Header, String> {
             Err(ParseError::Truncated) if len < MAX_HEADER && len < file_size => {
                 len = (len * 4).min(MAX_HEADER).min(file_size);
             }
-            Err(ParseError::Truncated) => return Err(strings::fill("gguf-cut-short", &[&buf.len()])),
+            Err(ParseError::Truncated) => {
+                return Err(strings::fill("gguf-cut-short", &[&buf.len()]))
+            }
             Err(ParseError::Invalid(m)) => return Err(strings::fill("gguf-unreadable", &[&m])),
         }
     }
@@ -739,7 +808,9 @@ fn read_local_header(path: &Path, file_size: u64) -> Result<Header, String> {
 pub fn local_shape(first: &Path) -> Result<Shape, String> {
     let mut headers = Vec::new();
     for p in crate::linked_files::shard_set(first) {
-        let size = std::fs::metadata(&p).map_err(|e| format!("{}: {e}", p.display()))?.len();
+        let size = std::fs::metadata(&p)
+            .map_err(|e| format!("{}: {e}", p.display()))?
+            .len();
         headers.push((read_local_header(&p, size)?, size));
     }
     shape_of(&headers)
@@ -769,11 +840,18 @@ impl Gpu {
             .name
             .split_whitespace()
             .filter(|w| {
-                let bare = w.trim_end_matches("(TM)").trim_end_matches("(R)").to_ascii_lowercase();
+                let bare = w
+                    .trim_end_matches("(TM)")
+                    .trim_end_matches("(R)")
+                    .to_ascii_lowercase();
                 !VENDOR.contains(&bare.as_str())
             })
             .collect();
-        if words.is_empty() { self.name.clone() } else { words.join(" ") }
+        if words.is_empty() {
+            self.name.clone()
+        } else {
+            words.join(" ")
+        }
     }
 }
 
@@ -797,7 +875,11 @@ pub fn is_integrated(name: &str) -> bool {
         return model || n.ends_with("radeon(tm) graphics") || n.ends_with("radeon graphics");
     }
     n.contains("intel")
-        && (n.contains("uhd") || n.contains("iris") || n.contains("hd graphics") || n.ends_with("arc(tm) graphics") || n.ends_with("arc graphics"))
+        && (n.contains("uhd")
+            || n.contains("iris")
+            || n.contains("hd graphics")
+            || n.ends_with("arc(tm) graphics")
+            || n.ends_with("arc graphics"))
 }
 
 /// The physical discrete GPUs of a device probe (see the module header): CPU
@@ -810,7 +892,11 @@ pub fn gpu_pool(devs: &[DeviceOption]) -> Vec<Gpu> {
     type Seen<'a> = Vec<(String, Vec<&'a DeviceOption>)>;
     let mut by_name: Vec<(String, Seen)> = Vec::new();
     for d in devs.iter().filter(|d| !d.is_cpu() && d.total_mib > 0) {
-        let name = if d.name.is_empty() { d.id.clone() } else { d.name.trim().to_string() };
+        let name = if d.name.is_empty() {
+            d.id.clone()
+        } else {
+            d.name.trim().to_string()
+        };
         let key = name.to_ascii_lowercase();
         let entry = match by_name.iter().position(|e| e.0.to_ascii_lowercase() == key) {
             Some(i) => &mut by_name[i],
@@ -827,9 +913,15 @@ pub fn gpu_pool(devs: &[DeviceOption]) -> Vec<Gpu> {
     }
     let mut gpus: Vec<Gpu> = Vec::new();
     for (name, backends) in by_name {
-        let pick = backends.iter().max_by_key(|(b, list)| (list.len(), b != "vulkan"));
+        let pick = backends
+            .iter()
+            .max_by_key(|(b, list)| (list.len(), b != "vulkan"));
         if let Some((_, list)) = pick {
-            gpus.extend(list.iter().map(|d| Gpu { id: d.id.clone(), name: name.clone(), total_mib: d.total_mib }));
+            gpus.extend(list.iter().map(|d| Gpu {
+                id: d.id.clone(),
+                name: name.clone(),
+                total_mib: d.total_mib,
+            }));
         }
     }
     if gpus.iter().any(|g| !is_integrated(&g.name)) {
@@ -840,7 +932,8 @@ pub fn gpu_pool(devs: &[DeviceOption]) -> Vec<Gpu> {
 
 /// `cuda` for `CUDA0`: a device id's backend, lowercase.
 fn backend_of(id: &str) -> String {
-    id.trim_end_matches(|c: char| c.is_ascii_digit()).to_ascii_lowercase()
+    id.trim_end_matches(|c: char| c.is_ascii_digit())
+        .to_ascii_lowercase()
 }
 
 /// `gpus` in the order a split runs best on (pure; module header): on Windows
@@ -898,7 +991,11 @@ pub fn budget_for(devs: &[DeviceOption], ram_total: Option<u64>, windows: bool) 
     if gpus.is_empty() {
         return None;
     }
-    Some(Budget { gpus: split_order(gpus, windows), ram: ram_total.map(|r| r.saturating_sub(RAM_RESERVE)), ram_total })
+    Some(Budget {
+        gpus: split_order(gpus, windows),
+        ram: ram_total.map(|r| r.saturating_sub(RAM_RESERVE)),
+        ram_total,
+    })
 }
 
 // ── The extras: image encoder and separate drafter ───────────────────────
@@ -932,7 +1029,10 @@ pub struct DraftShape {
 impl DraftShape {
     /// A drafter whose header could not be read: its file, nothing more.
     pub fn from_size(size: u64) -> DraftShape {
-        DraftShape { weights: size, ..DraftShape::default() }
+        DraftShape {
+            weights: size,
+            ..DraftShape::default()
+        }
     }
 
     /// Its weights, its KV cache at `ctx` (the draft context holds as many
@@ -961,14 +1061,25 @@ pub fn draft_shape_of(shards: &[(Header, u64)]) -> Result<DraftShape, String> {
     let n_layer = int("block_count").unwrap_or(s.layers.len() as u64);
     let window = int("attention.sliding_window").unwrap_or(0);
     let swa = match key("attention.sliding_window_pattern") {
-        Some(Kv::Arr(a)) => (a.iter().filter(|v| matches!(v, Kv::Bool(true))).count() as u64).min(n_layer),
+        Some(Kv::Arr(a)) => {
+            (a.iter().filter(|v| matches!(v, Kv::Bool(true))).count() as u64).min(n_layer)
+        }
         _ => 0,
     };
     if window == 0 || swa == 0 {
-        return Ok(DraftShape { weights, kv_full: per_token, ..DraftShape::default() });
+        return Ok(DraftShape {
+            weights,
+            kv_full: per_token,
+            ..DraftShape::default()
+        });
     }
     let per_layer = per_token / n_layer;
-    Ok(DraftShape { weights, kv_full: per_layer * (n_layer - swa), kv_swa: per_layer * swa, swa_cells: window + SWA_EXTRA_CELLS })
+    Ok(DraftShape {
+        weights,
+        kv_full: per_layer * (n_layer - swa),
+        kv_swa: per_layer * swa,
+        swa_cells: window + SWA_EXTRA_CELLS,
+    })
 }
 
 /// A drafter file's shape, or why its header could not be read.
@@ -988,22 +1099,39 @@ pub fn fetch_draft_shape(
     token: Option<&Token>,
 ) -> Result<Arc<DraftShape>, HfError> {
     let key = format!("{repo}@{commit}/{}", file.path);
-    if let Some(s) = DRAFT_CACHE.lock().unwrap().as_ref().and_then(|m| m.get(&key)) {
+    if let Some(s) = DRAFT_CACHE
+        .lock()
+        .unwrap()
+        .as_ref()
+        .and_then(|m| m.get(&key))
+    {
         return Ok(s.clone());
     }
     if !hf::safe_repo_path(&file.path) {
-        return Err(HfError::InvalidSpec(strings::fill("refused-repo-path", &[&format!("{:?}", file.path)])));
+        return Err(HfError::InvalidSpec(strings::fill(
+            "refused-repo-path",
+            &[&format!("{:?}", file.path)],
+        )));
     }
     let url = resolve_url(endpoint, repo, commit, &file.path);
     let header = fetch_header(fetch, &url, token, repo, file.size)?;
-    let shape = Arc::new(draft_shape_of(&[(header, file.size)]).map_err(|m| HfError::Io(format!("{}: {m}", file.name())))?);
-    DRAFT_CACHE.lock().unwrap().get_or_insert_with(HashMap::new).insert(key, shape.clone());
+    let shape = Arc::new(
+        draft_shape_of(&[(header, file.size)])
+            .map_err(|m| HfError::Io(format!("{}: {m}", file.name())))?,
+    );
+    DRAFT_CACHE
+        .lock()
+        .unwrap()
+        .get_or_insert_with(HashMap::new)
+        .insert(key, shape.clone());
     Ok(shape)
 }
 
 /// The `DraftShape` of a drafter on disk.
 pub fn local_draft_shape(path: &Path) -> Result<DraftShape, String> {
-    let size = std::fs::metadata(path).map_err(|e| format!("{}: {e}", path.display()))?.len();
+    let size = std::fs::metadata(path)
+        .map_err(|e| format!("{}: {e}", path.display()))?
+        .len();
     draft_shape_of(&[(read_local_header(path, size)?, size)])
 }
 
@@ -1027,7 +1155,10 @@ pub fn extras_of(
     drafter: Option<hf::Sidecar>,
     draft: &dyn Fn(&hf::RepoFile) -> Option<DraftResult>,
 ) -> Option<Extras> {
-    let mut x = Extras { mmproj: c.mmproj.as_ref().filter(|_| mmproj).map_or(0, |m| m.size), drafter: None };
+    let mut x = Extras {
+        mmproj: c.mmproj.as_ref().filter(|_| mmproj).map_or(0, |m| m.size),
+        drafter: None,
+    };
     if let Some((kind, f)) = drafter.and_then(|k| Some((k, c.sidecar(k)?))) {
         let shape = match draft(f)? {
             Ok(s) => *s,
@@ -1066,9 +1197,19 @@ pub enum Fit {
     Gpu { need: u64, budget: u64 },
     /// The experts of `gpu_layers` of `moe_layers` MoE layers on the GPUs
     /// (`gpu_experts` bytes), `--n-cpu-moe n_cpu_moe`, `ram` bytes in RAM.
-    Moe { gpu_layers: u32, moe_layers: u32, n_cpu_moe: u32, gpu_experts: u64, ram: u64 },
+    Moe {
+        gpu_layers: u32,
+        moe_layers: u32,
+        n_cpu_moe: u32,
+        gpu_experts: u64,
+        ram: u64,
+    },
     /// A dense model split: `gpu_layers` of `layers` on the GPUs.
-    Dense { gpu_layers: u32, layers: u32, ram: u64 },
+    Dense {
+        gpu_layers: u32,
+        layers: u32,
+        ram: u64,
+    },
     /// Even the attention and shared weights (with the KV cache) need more
     /// than the GPUs have.
     TooBig { base: u64, budget: u64 },
@@ -1105,7 +1246,13 @@ pub struct Estimate {
 impl Estimate {
     /// An estimate without extras.
     pub fn plain(fit: Fit, ram_short: Option<u64>, shares: Vec<Share>) -> Estimate {
-        Estimate { fit, ram_short, shares, encoder: None, drafter: None }
+        Estimate {
+            fit,
+            ram_short,
+            shares,
+            encoder: None,
+            drafter: None,
+        }
     }
 }
 
@@ -1147,7 +1294,11 @@ fn pack(w: &[u64], caps: &[u64]) -> Option<Vec<u32>> {
 /// every cap that still fits.
 fn balanced(w: &[u64], caps: &[u64]) -> Option<Vec<u32>> {
     const ONE: u64 = 1 << 16;
-    let at = |f: u64| -> Vec<u64> { caps.iter().map(|&c| (u128::from(c) * u128::from(f) / u128::from(ONE)) as u64).collect() };
+    let at = |f: u64| -> Vec<u64> {
+        caps.iter()
+            .map(|&c| (u128::from(c) * u128::from(f) / u128::from(ONE)) as u64)
+            .collect()
+    };
     pack(w, caps)?;
     let (mut lo, mut hi) = (0, ONE);
     while hi - lo > 1 {
@@ -1189,11 +1340,23 @@ pub fn estimate_with(s: &Shape, b: &Budget, x: &Extras) -> Estimate {
     let n = s.layers.len();
     let short = |ram: u64| b.ram.map(|r| ram.saturating_sub(r));
     if nc == 0 {
-        return Estimate::plain(Fit::Dense { gpu_layers: 0, layers: n as u32, ram: s.total }, short(s.total), Vec::new());
+        return Estimate::plain(
+            Fit::Dense {
+                gpu_layers: 0,
+                layers: n as u32,
+                ram: s.total,
+            },
+            short(s.total),
+            Vec::new(),
+        );
     }
     // The encoder's weights plus its compute allowance, the drafter's
     // weights plus its KV cache at the model's context and its compute.
-    let m = if x.mmproj > 0 { x.mmproj + MMPROJ_COMPUTE } else { 0 };
+    let m = if x.mmproj > 0 {
+        x.mmproj + MMPROJ_COMPUTE
+    } else {
+        0
+    };
     let d = x.drafter.as_ref().map_or(0, |(_, ds)| ds.bytes(s.ctx));
     // The caps left for the model with the encoder on `enc` and the drafter
     // on card `dc`; `None` when either does not fit its card.
@@ -1213,7 +1376,10 @@ pub fn estimate_with(s: &Shape, b: &Budget, x: &Extras) -> Estimate {
         if m == 0 {
             return vec![Enc::Absent];
         }
-        std::iter::once(first).chain((0..nc).filter(|&i| i != first)).map(Enc::Card).collect()
+        std::iter::once(first)
+            .chain((0..nc).filter(|&i| i != first))
+            .map(Enc::Card)
+            .collect()
     };
     let on_cpu: Vec<Enc> = if m > 0 { vec![Enc::Cpu] } else { Vec::new() };
     // The estimate of the cut `counts` over `w`, with `ram` bytes of the
@@ -1226,7 +1392,11 @@ pub fn estimate_with(s: &Shape, b: &Budget, x: &Extras) -> Estimate {
                 let bytes = w[at..at + c as usize].iter().sum();
                 at += c as usize;
                 if c > 0 {
-                    shares.push(Share { gpu: g.clone(), positions: c, bytes });
+                    shares.push(Share {
+                        gpu: g.clone(),
+                        positions: c,
+                        bytes,
+                    });
                 }
             }
         }
@@ -1235,10 +1405,21 @@ pub fn estimate_with(s: &Shape, b: &Budget, x: &Extras) -> Estimate {
         let first = shares.first().map(|f| f.gpu.id.clone());
         let encoder = match enc {
             Enc::Absent => None,
-            Enc::Cpu => Some(Extra { what: ENCODER.into(), bytes: x.mmproj, spot: Spot::Cpu }),
+            Enc::Cpu => Some(Extra {
+                what: ENCODER.into(),
+                bytes: x.mmproj,
+                spot: Spot::Cpu,
+            }),
             Enc::Card(i) => {
                 let pinned = first.as_ref().is_some_and(|f| *f != b.gpus[i].id);
-                Some(Extra { what: ENCODER.into(), bytes: m, spot: Spot::Gpu { gpu: b.gpus[i].clone(), pinned } })
+                Some(Extra {
+                    what: ENCODER.into(),
+                    bytes: m,
+                    spot: Spot::Gpu {
+                        gpu: b.gpus[i].clone(),
+                        pinned,
+                    },
+                })
             }
         };
         let drafter = x.drafter.as_ref().map(|(what, _)| {
@@ -1248,11 +1429,21 @@ pub fn estimate_with(s: &Shape, b: &Budget, x: &Extras) -> Estimate {
                 [one] => one.gpu.id != gpu.id,
                 _ => true,
             };
-            Extra { what: what.clone(), bytes: d, spot: Spot::Gpu { gpu, pinned } }
+            Extra {
+                what: what.clone(),
+                bytes: d,
+                spot: Spot::Gpu { gpu, pinned },
+            }
         });
         let ram = ram + if enc == Enc::Cpu { x.mmproj } else { 0 };
         let ram_short = if ram == 0 { Some(0) } else { short(ram) };
-        Estimate { fit, ram_short, shares, encoder, drafter }
+        Estimate {
+            fit,
+            ram_short,
+            shares,
+            encoder,
+            drafter,
+        }
     };
     let all = positions(s, 0);
     let need: u64 = all.iter().sum();
@@ -1262,7 +1453,9 @@ pub fn estimate_with(s: &Shape, b: &Budget, x: &Extras) -> Estimate {
     // goes with a model alone on its card, or to another card when that is
     // what lets the model stay alone; on a split, to the last card.
     let largest = (0..nc).rev().max_by_key(|&i| caps[i]).unwrap_or(0);
-    let others: Vec<usize> = std::iter::once(largest).chain((0..nc).filter(|&i| i != largest)).collect();
+    let others: Vec<usize> = std::iter::once(largest)
+        .chain((0..nc).filter(|&i| i != largest))
+        .collect();
     let drafter_cards: &[usize] = if d > 0 { &others } else { &others[..1] };
     let mut tries: Vec<(Enc, bool, usize)> = Vec::new();
     let mut add = |encs: &[Enc]| {
@@ -1307,7 +1500,17 @@ pub fn estimate_with(s: &Shape, b: &Budget, x: &Extras) -> Estimate {
         };
         if let Some(counts) = counts {
             let on_gpu = need + d + if matches!(enc, Enc::Card(_)) { m } else { 0 };
-            return finish(Fit::Gpu { need: on_gpu, budget: b.vram() }, 0, &all, &counts, enc, dc);
+            return finish(
+                Fit::Gpu {
+                    need: on_gpu,
+                    budget: b.vram(),
+                },
+                0,
+                &all,
+                &counts,
+                enc,
+                dc,
+            );
         }
     }
     if s.moe {
@@ -1328,11 +1531,20 @@ pub fn estimate_with(s: &Shape, b: &Budget, x: &Extras) -> Estimate {
             }
         }
         if best.is_none() {
-            best = on_cpu.iter().find_map(|&enc| fewest(enc).map(|(k, c)| (k, c, enc)));
+            best = on_cpu
+                .iter()
+                .find_map(|&enc| fewest(enc).map(|(k, c)| (k, c, enc)));
         }
         let Some((k, c, enc)) = best else {
             let base = positions(s, n).iter().sum::<u64>() + d;
-            return Estimate::plain(Fit::TooBig { base, budget: b.vram() }, short(s.total), Vec::new());
+            return Estimate::plain(
+                Fit::TooBig {
+                    base,
+                    budget: b.vram(),
+                },
+                short(s.total),
+                Vec::new(),
+            );
         };
         let w = positions(s, k);
         let counts = balanced(&w, &c).unwrap_or_default();
@@ -1366,14 +1578,30 @@ pub fn estimate_with(s: &Shape, b: &Budget, x: &Extras) -> Estimate {
         }
     }
     let Some((l, c, enc)) = best else {
-        return Estimate::plain(Fit::Dense { gpu_layers: 0, layers: n as u32, ram: s.total }, short(s.total), Vec::new());
+        return Estimate::plain(
+            Fit::Dense {
+                gpu_layers: 0,
+                layers: n as u32,
+                ram: s.total,
+            },
+            short(s.total),
+            Vec::new(),
+        );
     };
     let w = &all[p - l..];
     let counts = balanced(w, &c).unwrap_or_default();
     let blocks = l - 1;
-    let on_gpu = s.globals + s.layers[n - blocks..].iter().map(|x| x.experts + x.other).sum::<u64>();
+    let on_gpu = s.globals
+        + s.layers[n - blocks..]
+            .iter()
+            .map(|x| x.experts + x.other)
+            .sum::<u64>();
     let ram = s.total - on_gpu;
-    let fit = Fit::Dense { gpu_layers: blocks as u32, layers: n as u32, ram: ram + if enc == Enc::Cpu { x.mmproj } else { 0 } };
+    let fit = Fit::Dense {
+        gpu_layers: blocks as u32,
+        layers: n as u32,
+        ram: ram + if enc == Enc::Cpu { x.mmproj } else { 0 },
+    };
     finish(fit, ram, w, &counts, enc, nc - 1)
 }
 
@@ -1402,17 +1630,27 @@ fn ram_note(e: &Estimate) -> String {
 /// `AI PRO R9700 (ROCm1) 20.2 GiB + RTX 4070 SUPER (CUDA0) 9.1 GiB,
 /// tensor-split 26,23`: a split card by card, with the vector it is written as.
 pub fn split_label(shares: &[Share]) -> String {
-    let cards: Vec<String> = shares.iter().map(|s| format!("{} ({}) {}", s.gpu.short_name(), s.gpu.id, gib(s.bytes))).collect();
+    let cards: Vec<String> = shares
+        .iter()
+        .map(|s| format!("{} ({}) {}", s.gpu.short_name(), s.gpu.id, gib(s.bytes)))
+        .collect();
     let mut out = cards.join(" + ");
     if shares.len() > 1 {
-        out.push_str(&strings::fill("tensor-split-named", &[&tensor_split(shares)]));
+        out.push_str(&strings::fill(
+            "tensor-split-named",
+            &[&tensor_split(shares)],
+        ));
     }
     out
 }
 
 /// `26,23`: the `--tensor-split` of a split, its position counts.
 fn tensor_split(shares: &[Share]) -> String {
-    shares.iter().map(|s| s.positions.to_string()).collect::<Vec<_>>().join(",")
+    shares
+        .iter()
+        .map(|s| s.positions.to_string())
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 /// Where an extra went, for a label: `ROCm1`, `the CPU`.
@@ -1439,16 +1677,29 @@ fn extras_note(e: &Estimate) -> String {
         Spot::Gpu { gpu, .. } => gpu.id.clone(),
         Spot::Cpu => "the CPU".to_string(),
     };
-    let parts: Vec<String> =
-        e.encoder.iter().chain(&e.drafter).map(|x| format!("the {} ({}) on {}", x.what, gib(x.bytes), spot(x))).collect();
+    let parts: Vec<String> = e
+        .encoder
+        .iter()
+        .chain(&e.drafter)
+        .map(|x| format!("the {} ({}) on {}", x.what, gib(x.bytes), spot(x)))
+        .collect();
     parts.join(" and ")
 }
 
 /// `the image encoder (1.4 GiB) on ROCm1 and the DFlash drafter (2.7 GiB)
 /// on CUDA0`: the extras an estimate counted; empty without any.
 pub fn extras_label(e: &Estimate) -> String {
-    let parts: Vec<String> =
-        e.encoder.iter().chain(&e.drafter).map(|x| strings::fill("extra-on", &[&what_label(&x.what), &gib(x.bytes), &spot_label(x)])).collect();
+    let parts: Vec<String> = e
+        .encoder
+        .iter()
+        .chain(&e.drafter)
+        .map(|x| {
+            strings::fill(
+                "extra-on",
+                &[&what_label(&x.what), &gib(x.bytes), &spot_label(x)],
+            )
+        })
+        .collect();
     parts.join(&strings::t("list-and"))
 }
 
@@ -1469,35 +1720,63 @@ fn model_label(e: &Estimate, ctx: u64) -> String {
     match &e.fit {
         Fit::Gpu { need, budget } if e.shares.is_empty() => strings::fill(
             "all-on-gpu-of",
-            &[&format!("{:.1}", *need as f64 / GIB as f64), &gib(*budget), &ctx_label(ctx)],
+            &[
+                &format!("{:.1}", *need as f64 / GIB as f64),
+                &gib(*budget),
+                &ctx_label(ctx),
+            ],
         ),
         Fit::Gpu { .. } => strings::fill("all-on-gpu", &[&ctx_label(ctx), &split]),
-        Fit::Moe { gpu_layers: 0, ram, .. } => strings::fill(
+        Fit::Moe {
+            gpu_layers: 0, ram, ..
+        } => strings::fill(
             "moe-all-in-ram",
             &[
-                &if split.is_empty() { String::new() } else { format!(" ({split})") },
+                &if split.is_empty() {
+                    String::new()
+                } else {
+                    format!(" ({split})")
+                },
                 &gib(*ram),
                 &ram_note(e),
             ],
         ),
-        Fit::Moe { gpu_layers, moe_layers, n_cpu_moe, gpu_experts, ram } => strings::fill(
+        Fit::Moe {
+            gpu_layers,
+            moe_layers,
+            n_cpu_moe,
+            gpu_experts,
+            ram,
+        } => strings::fill(
             "moe-partial",
             &[
                 &gpu_layers,
                 &moe_layers,
                 &gib(*gpu_experts),
-                &if split.is_empty() { String::new() } else { format!("{split}, ") },
+                &if split.is_empty() {
+                    String::new()
+                } else {
+                    format!("{split}, ")
+                },
                 &gib(*ram),
                 &n_cpu_moe,
                 &ram_note(e),
             ],
         ),
-        Fit::Dense { gpu_layers, layers, ram } => strings::fill(
+        Fit::Dense {
+            gpu_layers,
+            layers,
+            ram,
+        } => strings::fill(
             "too-big-for-gpu",
             &[
                 &gpu_layers,
                 &layers,
-                &if split.is_empty() { String::new() } else { format!(" ({split})") },
+                &if split.is_empty() {
+                    String::new()
+                } else {
+                    format!(" ({split})")
+                },
                 &gib(*ram),
                 &ram_note(e),
             ],
@@ -1511,14 +1790,24 @@ pub fn basis_label(b: &Budget) -> String {
     let gpus = if let [g] = b.gpus.as_slice() {
         strings::fill("gpu-usable", &[&g.name, &gib(g.usable())])
     } else {
-        let cards: Vec<String> = b.gpus.iter().map(|g| strings::fill("gpu-id-usable", &[&g.name, &g.id, &gib(g.usable())])).collect();
-        strings::fill("gpus-in-split-order", &[&b.gpus.len(), &cards.join(&strings::t("list-then"))])
+        let cards: Vec<String> = b
+            .gpus
+            .iter()
+            .map(|g| strings::fill("gpu-id-usable", &[&g.name, &g.id, &gib(g.usable())]))
+            .collect();
+        strings::fill(
+            "gpus-in-split-order",
+            &[&b.gpus.len(), &cards.join(&strings::t("list-then"))],
+        )
     };
     let ram = match b.ram_total {
         Some(r) => strings::fill("of-ram", &[&gib(r)]),
         None => strings::t("ram-unknown"),
     };
-    strings::fill("estimated-for", &[&gpus, &ram, &gib(GPU_RESERVE), &gib(RAM_RESERVE)])
+    strings::fill(
+        "estimated-for",
+        &[&gpus, &ram, &gib(GPU_RESERVE), &gib(RAM_RESERVE)],
+    )
 }
 
 /// Why no estimate can be made without a GPU (after "estimate unavailable: ").
@@ -1573,7 +1862,12 @@ pub fn placement(e: &Estimate, s: &Shape) -> Option<Placement> {
         Fit::Dense { gpu_layers, .. } => p.n_gpu_layers = Some(gpu_layers as i32 + 1),
     }
     if !e.shares.is_empty() {
-        p.device = e.shares.iter().map(|x| x.gpu.id.as_str()).collect::<Vec<_>>().join(",");
+        p.device = e
+            .shares
+            .iter()
+            .map(|x| x.gpu.id.as_str())
+            .collect::<Vec<_>>()
+            .join(",");
         if e.shares.len() > 1 {
             p.tensor_split = tensor_split(&e.shares);
         }
@@ -1586,21 +1880,32 @@ pub fn placement(e: &Estimate, s: &Shape) -> Option<Placement> {
     if let Some(Spot::Gpu { gpu, pinned: true }) = e.drafter.as_ref().map(|x| &x.spot) {
         p.device_draft = gpu.id.clone();
     }
-    let moved = !p.mmproj_device.is_empty() || p.mmproj_offload.is_some() || !p.device_draft.is_empty();
+    let moved =
+        !p.mmproj_device.is_empty() || p.mmproj_offload.is_some() || !p.device_draft.is_empty();
     if p.device.is_empty() && p.n_cpu_moe.is_none() && p.n_gpu_layers.is_none() && !moved {
         return None;
     }
     let sized = !p.tensor_split.is_empty() || p.n_cpu_moe.is_some() || p.n_gpu_layers.is_some();
     let mut note = if sized {
         p.ctx_size = Some(i32::try_from(s.ctx).unwrap_or(i32::MAX));
-        format!("estimated at download for a {} context with {} kept free per GPU", ctx_label(s.ctx), gib(GPU_RESERVE))
+        format!(
+            "estimated at download for a {} context with {} kept free per GPU",
+            ctx_label(s.ctx),
+            gib(GPU_RESERVE)
+        )
     } else {
-        let card = e.shares.first().map_or_else(|| "the GPU".to_string(), |x| x.gpu.short_name());
+        let card = e
+            .shares
+            .first()
+            .map_or_else(|| "the GPU".to_string(), |x| x.gpu.short_name());
         format!("estimated at download: {card} holds the whole model, the fit sizes the context")
     };
     match e.ram_short {
         Some(0) => {}
-        Some(x) => note.push_str(&format!(", {} over the RAM (the rest pages from disk)", gib(x))),
+        Some(x) => note.push_str(&format!(
+            ", {} over the RAM (the rest pages from disk)",
+            gib(x)
+        )),
         None => note.push_str(", RAM size unknown"),
     }
     let extras = extras_note(e);
@@ -1633,7 +1938,13 @@ pub struct Recommendation {
 /// the CPU; 3: an MoE with its experts in RAM without paging; `None`: does
 /// not run well.
 fn tier(e: &Estimate) -> Option<u8> {
-    let encoder_on_cpu = matches!(e.encoder, Some(Extra { spot: Spot::Cpu, .. }));
+    let encoder_on_cpu = matches!(
+        e.encoder,
+        Some(Extra {
+            spot: Spot::Cpu,
+            ..
+        })
+    );
     match e.fit {
         Fit::Gpu { .. } if encoder_on_cpu => Some(2),
         Fit::Gpu { .. } => Some(1),
@@ -1655,16 +1966,26 @@ pub fn quality(tag: &str, size: u64) -> (bool, i64, u8, u8, u64) {
     } else {
         0
     };
-    let variant = [("_XXS", 0), ("_XS", 1), ("_XL", 5), ("_S", 2), ("_M", 3), ("_L", 4)]
-        .iter()
-        .find(|(s, _)| t.ends_with(s))
-        .map_or(3, |v| v.1);
+    let variant = [
+        ("_XXS", 0),
+        ("_XS", 1),
+        ("_XL", 5),
+        ("_S", 2),
+        ("_M", 3),
+        ("_L", 4),
+    ]
+    .iter()
+    .find(|(s, _)| t.ends_with(s))
+    .map_or(3, |v| v.1);
     (bits > 0 && bits <= 8, bits, family, variant, size)
 }
 
 /// The quantization to recommend (pure; see the module header).
 pub fn recommend(rows: &[Row]) -> Option<Recommendation> {
-    let best_tier = rows.iter().filter_map(|r| r.estimate.and_then(tier)).min()?;
+    let best_tier = rows
+        .iter()
+        .filter_map(|r| r.estimate.and_then(tier))
+        .min()?;
     let index = rows
         .iter()
         .enumerate()
@@ -1802,7 +2123,10 @@ pub(crate) mod tests {
                 ("qwen3moe.attention.key_length", W::U32(128)),
                 ("qwen3moe.attention.value_length", W::U32(128)),
                 ("qwen3moe.expert_count", W::U32(128)),
-                ("tokenizer.ggml.tokens", W::ArrStr(vec!["<|im_start|>", "hello", "world"])),
+                (
+                    "tokenizer.ggml.tokens",
+                    W::ArrStr(vec!["<|im_start|>", "hello", "world"]),
+                ),
                 ("general.file_type", W::U64(15)),
             ],
             &t,
@@ -1815,7 +2139,11 @@ pub(crate) mod tests {
         let hdr = parse_header(&h).unwrap();
         assert_eq!(hdr.kvs["general.architecture"], Kv::Str("qwen3moe".into()));
         assert_eq!(hdr.kvs["qwen3moe.block_count"], Kv::Uint(2));
-        assert_eq!(hdr.kvs["tokenizer.ggml.tokens"], Kv::Skipped, "string arrays are skipped");
+        assert_eq!(
+            hdr.kvs["tokenizer.ggml.tokens"],
+            Kv::Skipped,
+            "string arrays are skipped"
+        );
         assert_eq!(hdr.tensors.len(), 21);
         assert_eq!(hdr.tensors[0], ("token_embd.weight".to_string(), 0));
         assert_eq!(hdr.data_start % 32, 0);
@@ -1830,9 +2158,16 @@ pub(crate) mod tests {
     fn a_short_or_foreign_buffer_says_which() {
         let (h, _) = moe_fixture();
         for cut in [0, 3, 10, 30, h.len() / 2, h.len() - 1] {
-            assert_eq!(parse_header(&h[..cut]), Err(ParseError::Truncated), "cut at {cut}");
+            assert_eq!(
+                parse_header(&h[..cut]),
+                Err(ParseError::Truncated),
+                "cut at {cut}"
+            );
         }
-        assert!(matches!(parse_header(b"GGML\x03\0\0\0"), Err(ParseError::Invalid(_))));
+        assert!(matches!(
+            parse_header(b"GGML\x03\0\0\0"),
+            Err(ParseError::Invalid(_))
+        ));
         let mut v1 = h.clone();
         v1[4] = 1;
         assert!(matches!(parse_header(&v1), Err(ParseError::Invalid(_))));
@@ -1866,34 +2201,59 @@ pub(crate) mod tests {
     fn a_downloaded_model_is_read_from_disk_with_its_shards() {
         let dir = tempfile::tempdir().unwrap();
         let (h, size) = gguf(
-            &[("general.architecture", W::Str("qwen3moe")), ("qwen3moe.block_count", W::U32(1))],
-            &[("token_embd.weight", MIB), ("blk.0.ffn_up_exps.weight", 2 * MIB), ("output.weight", MIB)],
+            &[
+                ("general.architecture", W::Str("qwen3moe")),
+                ("qwen3moe.block_count", W::U32(1)),
+            ],
+            &[
+                ("token_embd.weight", MIB),
+                ("blk.0.ffn_up_exps.weight", 2 * MIB),
+                ("output.weight", MIB),
+            ],
         );
         let one = dir.path().join("m.gguf");
         write_sparse(&one, &h, size);
         let s = local_shape(&one).unwrap();
         assert_eq!(s, shape_of(&[(parse_header(&h).unwrap(), size)]).unwrap());
         // A split model: the first shard brings the rest.
-        let (h1, s1) = gguf(&[("general.architecture", W::Str("qwen3"))], &[("blk.0.attn_q.weight", MIB), ("per_layer_token_embd.weight", 3 * MIB)]);
+        let (h1, s1) = gguf(
+            &[("general.architecture", W::Str("qwen3"))],
+            &[
+                ("blk.0.attn_q.weight", MIB),
+                ("per_layer_token_embd.weight", 3 * MIB),
+            ],
+        );
         let (h2, s2) = gguf(&[("split.no", W::U32(1))], &[("blk.1.attn_q.weight", MIB)]);
         write_sparse(&dir.path().join("x-00001-of-00002.gguf"), &h1, s1);
         write_sparse(&dir.path().join("x-00002-of-00002.gguf"), &h2, s2);
         let s = local_shape(&dir.path().join("x-00001-of-00002.gguf")).unwrap();
         assert_eq!(s.layers.len(), 2);
-        assert_eq!(s.token_embd, 3 * MIB, "the per-layer embedding stays in host memory");
+        assert_eq!(
+            s.token_embd,
+            3 * MIB,
+            "the per-layer embedding stays in host memory"
+        );
         assert!(local_shape(&dir.path().join("missing.gguf")).is_err());
     }
 
     /// `header` padded with a hole to `size` bytes.
     pub(crate) fn write_sparse(path: &Path, header: &[u8], size: u64) {
         std::fs::write(path, header).unwrap();
-        std::fs::OpenOptions::new().write(true).open(path).unwrap().set_len(size).unwrap();
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(path)
+            .unwrap()
+            .set_len(size)
+            .unwrap();
     }
 
     #[test]
     fn kv_layouts_per_layer_hybrid_and_mla() {
         let kv = |kvs: &[(&str, Kv)]| {
-            let m: HashMap<String, Kv> = kvs.iter().map(|(k, v)| (format!("a.{k}"), v.clone())).collect();
+            let m: HashMap<String, Kv> = kvs
+                .iter()
+                .map(|(k, v)| (format!("a.{k}"), v.clone()))
+                .collect();
             kv_per_token(&|k: &str| m.get(&format!("a.{k}")), 4)
         };
         let base = [
@@ -1904,7 +2264,10 @@ pub(crate) mod tests {
         assert_eq!(kv(&base), Some(32 * 256 * 2 * 4));
         // A per-layer array: recurrent layers count zero.
         let mut arr = base.to_vec();
-        arr.push(("attention.head_count_kv", Kv::Arr(vec![Kv::Uint(0), Kv::Uint(8), Kv::Uint(0), Kv::Uint(8)])));
+        arr.push((
+            "attention.head_count_kv",
+            Kv::Arr(vec![Kv::Uint(0), Kv::Uint(8), Kv::Uint(0), Kv::Uint(8)]),
+        ));
         assert_eq!(kv(&arr), Some(16 * 256 * 2));
         // Every 4th layer attends.
         let mut hybrid = base.to_vec();
@@ -1912,7 +2275,10 @@ pub(crate) mod tests {
         hybrid.push(("full_attention_interval", Kv::Uint(4)));
         assert_eq!(kv(&hybrid), Some(2 * 256 * 2));
         // MLA: latent plus rope dims.
-        let mla = [("attention.kv_lora_rank", Kv::Uint(512)), ("rope.dimension_count", Kv::Uint(64))];
+        let mla = [
+            ("attention.kv_lora_rank", Kv::Uint(512)),
+            ("rope.dimension_count", Kv::Uint(64)),
+        ];
         assert_eq!(kv(&mla), Some(576 * 2 * 4));
         assert_eq!(kv(&[]), None, "unknown layout: the fallback reserve");
     }
@@ -1927,21 +2293,49 @@ pub(crate) mod tests {
                 ("qwen3.attention.head_count", W::U32(8)),
                 ("qwen3.attention.head_count_kv", W::ArrU32(vec![8, 8])),
             ],
-            &[("token_embd.weight", 64 * MIB), ("blk.0.attn_q.weight", 32 * MIB)],
+            &[
+                ("token_embd.weight", 64 * MIB),
+                ("blk.0.attn_q.weight", 32 * MIB),
+            ],
         );
-        let (h2, s2) = gguf(&[("split.no", W::U32(1))], &[("blk.1.attn_q.weight", 32 * MIB), ("output.weight", 64 * MIB)]);
-        let s = shape_of(&[(parse_header(&h1).unwrap(), s1), (parse_header(&h2).unwrap(), s2)]).unwrap();
+        let (h2, s2) = gguf(
+            &[("split.no", W::U32(1))],
+            &[
+                ("blk.1.attn_q.weight", 32 * MIB),
+                ("output.weight", 64 * MIB),
+            ],
+        );
+        let s = shape_of(&[
+            (parse_header(&h1).unwrap(), s1),
+            (parse_header(&h2).unwrap(), s2),
+        ])
+        .unwrap();
         assert!(!s.moe);
-        assert_eq!(s.layers, [Layer { experts: 0, other: 32 * MIB }; 2]);
+        assert_eq!(
+            s.layers,
+            [Layer {
+                experts: 0,
+                other: 32 * MIB
+            }; 2]
+        );
         assert_eq!(s.globals, 64 * MIB);
         assert_eq!(s.kv, 16 * 256 * 2 * REF_CTX);
-        assert!(shape_of(&[(parse_header(&h2).unwrap(), s2)]).is_err(), "no architecture anywhere");
+        assert!(
+            shape_of(&[(parse_header(&h2).unwrap(), s2)]).is_err(),
+            "no architecture anywhere"
+        );
     }
 
     // ── machine ──
 
     fn dev(id: &str, name: &str, total: u64) -> DeviceOption {
-        DeviceOption { id: id.into(), label: String::new(), name: name.into(), total_mib: total, free_mib: total }
+        DeviceOption {
+            id: id.into(),
+            label: String::new(),
+            name: name.into(),
+            total_mib: total,
+            free_mib: total,
+        }
     }
 
     /// This repo's test machine, as `llama-server --list-devices` reports it.
@@ -1962,26 +2356,56 @@ pub(crate) mod tests {
         assert_eq!(
             g,
             [
-                Gpu { id: "CUDA0".into(), name: "NVIDIA GeForce RTX 4070 SUPER".into(), total_mib: 12281 },
+                Gpu {
+                    id: "CUDA0".into(),
+                    name: "NVIDIA GeForce RTX 4070 SUPER".into(),
+                    total_mib: 12281
+                },
                 // ROCm1: the iGPU took ROCm0, and ROCm, not Vulkan2, names it.
-                Gpu { id: "ROCm1".into(), name: "AMD Radeon AI PRO R9700".into(), total_mib: 32624 },
+                Gpu {
+                    id: "ROCm1".into(),
+                    name: "AMD Radeon AI PRO R9700".into(),
+                    total_mib: 32624
+                },
             ]
         );
         assert_eq!(g[0].short_name(), "RTX 4070 SUPER");
         assert_eq!(g[1].short_name(), "AI PRO R9700");
         // Two identical cards stay two.
-        let twin = [dev("CUDA0", "RTX 3090", 24576), dev("CUDA1", "RTX 3090", 24576), dev("Vulkan0", "RTX 3090", 24000), dev("Vulkan1", "RTX 3090", 24000)];
+        let twin = [
+            dev("CUDA0", "RTX 3090", 24576),
+            dev("CUDA1", "RTX 3090", 24576),
+            dev("Vulkan0", "RTX 3090", 24000),
+            dev("Vulkan1", "RTX 3090", 24000),
+        ];
         let ids: Vec<String> = gpu_pool(&twin).into_iter().map(|g| g.id).collect();
         assert_eq!(ids, ["CUDA0", "CUDA1"]);
         // A card only Vulkan sees keeps its Vulkan id.
-        assert_eq!(gpu_pool(&[dev("Vulkan0", "Intel(R) Arc(TM) A770 Graphics", 16000)])[0].id, "Vulkan0");
+        assert_eq!(
+            gpu_pool(&[dev("Vulkan0", "Intel(R) Arc(TM) A770 Graphics", 16000)])[0].id,
+            "Vulkan0"
+        );
         // An APU alone keeps its iGPU; the CPU never counts.
-        let apu = [dev("Vulkan0", "AMD Radeon 8060S Graphics", 98304), dev("CPU", "CPU", 65536)];
+        let apu = [
+            dev("Vulkan0", "AMD Radeon 8060S Graphics", 98304),
+            dev("CPU", "CPU", 65536),
+        ];
         assert_eq!(gpu_pool(&apu).len(), 1);
-        for n in ["AMD Radeon(TM) Graphics", "AMD Radeon 780M Graphics", "AMD Radeon(TM) 890M", "Intel(R) UHD Graphics 770", "Intel(R) Arc(TM) Graphics"] {
+        for n in [
+            "AMD Radeon(TM) Graphics",
+            "AMD Radeon 780M Graphics",
+            "AMD Radeon(TM) 890M",
+            "Intel(R) UHD Graphics 770",
+            "Intel(R) Arc(TM) Graphics",
+        ] {
             assert!(is_integrated(n), "{n}");
         }
-        for n in ["AMD Radeon AI PRO R9700", "AMD Radeon RX 7900 XTX", "Intel(R) Arc(TM) A770 Graphics", "NVIDIA GeForce RTX 4070 SUPER"] {
+        for n in [
+            "AMD Radeon AI PRO R9700",
+            "AMD Radeon RX 7900 XTX",
+            "Intel(R) Arc(TM) A770 Graphics",
+            "NVIDIA GeForce RTX 4070 SUPER",
+        ] {
             assert!(!is_integrated(n), "{n}");
         }
     }
@@ -1999,9 +2423,17 @@ pub(crate) mod tests {
         assert_eq!(ids, ["CUDA0", "ROCm1"], "Linux: the CUDA card first");
         // One backend: the probe's order stands.
         let twin = [dev("ROCm0", "R9700", 32624), dev("ROCm1", "W7900", 49152)];
-        let ids: Vec<String> = budget_for(&twin, None, true).unwrap().gpus.into_iter().map(|g| g.id).collect();
+        let ids: Vec<String> = budget_for(&twin, None, true)
+            .unwrap()
+            .gpus
+            .into_iter()
+            .map(|g| g.id)
+            .collect();
         assert_eq!(ids, ["ROCm0", "ROCm1"]);
-        assert!(budget(&[dev("CPU", "CPU", 1000)], Some(GIB)).is_none(), "no GPU, no estimate");
+        assert!(
+            budget(&[dev("CPU", "CPU", 1000)], Some(GIB)).is_none(),
+            "no GPU, no estimate"
+        );
         assert!(budget(&[], None).is_none());
         let basis = basis_label(&b);
         assert!(
@@ -2016,17 +2448,28 @@ pub(crate) mod tests {
 
     /// A card with `usable_gib` to fill once the reserve is kept.
     fn card(id: &str, name: &str, usable_gib: u64) -> Gpu {
-        Gpu { id: id.into(), name: name.into(), total_mib: usable_gib * 1024 + GPU_RESERVE / MIB }
+        Gpu {
+            id: id.into(),
+            name: name.into(),
+            total_mib: usable_gib * 1024 + GPU_RESERVE / MIB,
+        }
     }
 
     fn budget_of(vram_gib: u64, ram_gib: Option<u64>) -> Budget {
-        Budget { gpus: vec![card("CUDA0", "G", vram_gib)], ram: ram_gib.map(|r| r * GIB), ram_total: ram_gib.map(|r| r * GIB) }
+        Budget {
+            gpus: vec![card("CUDA0", "G", vram_gib)],
+            ram: ram_gib.map(|r| r * GIB),
+            ram_total: ram_gib.map(|r| r * GIB),
+        }
     }
 
     /// This machine's two cards, Windows order: 29 and 10 GiB usable.
     fn pair(ram_gib: Option<u64>) -> Budget {
         Budget {
-            gpus: vec![card("ROCm1", "AMD Radeon AI PRO R9700", 29), card("CUDA0", "NVIDIA GeForce RTX 4070 SUPER", 10)],
+            gpus: vec![
+                card("ROCm1", "AMD Radeon AI PRO R9700", 29),
+                card("CUDA0", "NVIDIA GeForce RTX 4070 SUPER", 10),
+            ],
             ram: ram_gib.map(|r| r * GIB),
             ram_total: ram_gib.map(|r| r * GIB),
         }
@@ -2037,34 +2480,89 @@ pub(crate) mod tests {
         for sh in &e.shares {
             assert!(sh.bytes <= sh.gpu.usable(), "{sh:?}");
         }
-        assert_eq!(e.shares.iter().map(|s| s.positions).sum::<u32>(), positions, "{e:?}");
+        assert_eq!(
+            e.shares.iter().map(|s| s.positions).sum::<u32>(),
+            positions,
+            "{e:?}"
+        );
     }
 
     /// 48 MoE layers of 0.5 GiB experts + 32 MiB rest, 0.5 GiB embedding,
     /// 0.5 GiB output, 1 GiB KV (a 30B-A3B at about Q5): 26.5 GiB of weights,
     /// a 3 GiB base (all but the embedding and the experts, plus the KV).
     fn moe_shape() -> Shape {
-        let layers = vec![Layer { experts: GIB / 2, other: 32 * MIB }; 48];
+        let layers = vec![
+            Layer {
+                experts: GIB / 2,
+                other: 32 * MIB
+            };
+            48
+        ];
         let total = GIB / 2 + GIB / 2 + layers.iter().map(|l| l.experts + l.other).sum::<u64>();
-        Shape { arch: "qwen3moe".into(), moe: true, total, token_embd: GIB / 2, globals: GIB / 2, layers, kv: GIB, ctx: REF_CTX }
+        Shape {
+            arch: "qwen3moe".into(),
+            moe: true,
+            total,
+            token_embd: GIB / 2,
+            globals: GIB / 2,
+            layers,
+            kv: GIB,
+            ctx: REF_CTX,
+        }
     }
 
     fn dense_shape() -> Shape {
-        let layers = vec![Layer { experts: 0, other: GIB / 2 }; 32];
-        Shape { arch: "qwen3".into(), moe: false, total: 17 * GIB, token_embd: GIB / 2, globals: GIB / 2, layers, kv: 4 * GIB, ctx: REF_CTX }
+        let layers = vec![
+            Layer {
+                experts: 0,
+                other: GIB / 2
+            };
+            32
+        ];
+        Shape {
+            arch: "qwen3".into(),
+            moe: false,
+            total: 17 * GIB,
+            token_embd: GIB / 2,
+            globals: GIB / 2,
+            layers,
+            kv: 4 * GIB,
+            ctx: REF_CTX,
+        }
     }
 
     #[test]
     fn a_dense_model_fits_or_splits_by_layers() {
         let s = dense_shape();
         let fits = estimate(&s, &budget_of(24, Some(32)));
-        assert_eq!(fits, Estimate::plain(Fit::Gpu { need: 20 * GIB + GIB / 2, budget: 24 * GIB }, Some(0), vec![]));
-        assert_eq!(estimate_label(&fits, REF_CTX), "all on GPU: 20.5 of 24.0 GiB with a 32k context");
+        assert_eq!(
+            fits,
+            Estimate::plain(
+                Fit::Gpu {
+                    need: 20 * GIB + GIB / 2,
+                    budget: 24 * GIB
+                },
+                Some(0),
+                vec![]
+            )
+        );
+        assert_eq!(
+            estimate_label(&fits, REF_CTX),
+            "all on GPU: 20.5 of 24.0 GiB with a 32k context"
+        );
         // 10 GiB: output 0.5, then layers of 0.5 + 0.125 KV: 15 of them.
         let split = estimate(&s, &budget_of(10, Some(32)));
-        assert_eq!(split.fit, Fit::Dense { gpu_layers: 15, layers: 32, ram: 17 * GIB - GIB / 2 - 15 * GIB / 2 });
+        assert_eq!(
+            split.fit,
+            Fit::Dense {
+                gpu_layers: 15,
+                layers: 32,
+                ram: 17 * GIB - GIB / 2 - 15 * GIB / 2
+            }
+        );
         assert_eq!(split.ram_short, Some(0));
-        assert!(estimate_label(&split, REF_CTX).starts_with("too big for the GPU: 15/32 layers on GPU, 9.0 GiB in RAM (slow)"));
+        assert!(estimate_label(&split, REF_CTX)
+            .starts_with("too big for the GPU: 15/32 layers on GPU, 9.0 GiB in RAM (slow)"));
         // One card: nothing to write when it fits, the fit sizes the context.
         assert!(fits.shares.is_empty());
         assert_eq!(placement(&fits, &s), None);
@@ -2082,7 +2580,14 @@ pub(crate) mod tests {
         );
         // Not even the output layer: left to the fit.
         let none = estimate(&s, &budget_of(0, Some(32)));
-        assert_eq!(none.fit, Fit::Dense { gpu_layers: 0, layers: 32, ram: 17 * GIB });
+        assert_eq!(
+            none.fit,
+            Fit::Dense {
+                gpu_layers: 0,
+                layers: 32,
+                ram: 17 * GIB
+            }
+        );
         assert_eq!(placement(&none, &s), None);
     }
 
@@ -2094,9 +2599,20 @@ pub(crate) mod tests {
         assert!(matches!(alone.fit, Fit::Gpu { .. }));
         check_shares(&alone, 33);
         assert_eq!(alone.shares[0].gpu.id, "ROCm1");
-        assert_eq!(estimate_label(&alone, REF_CTX), "all on GPU with a 32k context: AI PRO R9700 (ROCm1) 20.5 GiB");
+        assert_eq!(
+            estimate_label(&alone, REF_CTX),
+            "all on GPU with a 32k context: AI PRO R9700 (ROCm1) 20.5 GiB"
+        );
         let p = placement(&alone, &s).unwrap();
-        assert_eq!((p.device.as_str(), p.tensor_split.as_str(), p.ctx_size, p.device_draft.as_str()), ("ROCm1", "", None, ""));
+        assert_eq!(
+            (
+                p.device.as_str(),
+                p.tensor_split.as_str(),
+                p.ctx_size,
+                p.device_draft.as_str()
+            ),
+            ("ROCm1", "", None, "")
+        );
         assert!(p.note.starts_with("estimated at download: AI PRO R9700 holds the whole model, the fit sizes the context"), "{}", p.note);
 
         // 48 blocks of 0.875 GiB with their KV and a 1 GiB output layer: 43
@@ -2109,21 +2625,43 @@ pub(crate) mod tests {
             total: GIB / 2 + GIB + 48 * (3 * GIB / 4),
             token_embd: GIB / 2,
             globals: GIB,
-            layers: vec![Layer { experts: 0, other: 3 * GIB / 4 }; 48],
+            layers: vec![
+                Layer {
+                    experts: 0,
+                    other: 3 * GIB / 4
+                };
+                48
+            ],
             kv: 6 * GIB,
             ctx: REF_CTX,
         };
         let e = estimate(&big, &pair(Some(64)));
-        assert_eq!(e.fit, Fit::Dense { gpu_layers: 43, layers: 48, ram: GIB / 2 + 5 * (3 * GIB / 4) });
+        assert_eq!(
+            e.fit,
+            Fit::Dense {
+                gpu_layers: 43,
+                layers: 48,
+                ram: GIB / 2 + 5 * (3 * GIB / 4)
+            }
+        );
         check_shares(&e, 44);
-        assert_eq!(e.shares.iter().map(|s| s.positions).collect::<Vec<_>>(), [33, 11]);
+        assert_eq!(
+            e.shares.iter().map(|s| s.positions).collect::<Vec<_>>(),
+            [33, 11]
+        );
         assert_eq!(
             estimate_label(&e, REF_CTX),
             "too big for the GPU: 43/48 layers on GPU (AI PRO R9700 (ROCm1) 28.9 GiB + RTX 4070 SUPER (CUDA0) 9.8 GiB, tensor-split 33,11), 4.2 GiB in RAM (slow)"
         );
         let p = placement(&e, &big).unwrap();
         assert_eq!(
-            (p.device.as_str(), p.tensor_split.as_str(), p.n_gpu_layers, p.n_cpu_moe, p.ctx_size),
+            (
+                p.device.as_str(),
+                p.tensor_split.as_str(),
+                p.n_gpu_layers,
+                p.n_cpu_moe,
+                p.ctx_size
+            ),
             ("ROCm1,CUDA0", "33,11", Some(44), None, Some(REF_CTX as i32))
         );
     }
@@ -2131,15 +2669,31 @@ pub(crate) mod tests {
     #[test]
     fn three_cards_share_a_dense_model_evenly() {
         let s = dense_shape();
-        let b = Budget { gpus: vec![card("CUDA0", "A", 8), card("CUDA1", "A", 8), card("CUDA2", "A", 8)], ram: Some(60 * GIB), ram_total: Some(64 * GIB) };
+        let b = Budget {
+            gpus: vec![
+                card("CUDA0", "A", 8),
+                card("CUDA1", "A", 8),
+                card("CUDA2", "A", 8),
+            ],
+            ram: Some(60 * GIB),
+            ram_total: Some(64 * GIB),
+        };
         let e = estimate(&s, &b);
         assert!(matches!(e.fit, Fit::Gpu { .. }));
         check_shares(&e, 33);
         // 11 blocks each, the output layer on the last: 6.9, 6.9, 6.8 GiB.
-        assert_eq!(e.shares.iter().map(|s| s.positions).collect::<Vec<_>>(), [11, 11, 11]);
+        assert_eq!(
+            e.shares.iter().map(|s| s.positions).collect::<Vec<_>>(),
+            [11, 11, 11]
+        );
         let p = placement(&e, &s).unwrap();
         assert_eq!(
-            (p.device.as_str(), p.tensor_split.as_str(), p.ctx_size, p.device_draft.as_str()),
+            (
+                p.device.as_str(),
+                p.tensor_split.as_str(),
+                p.ctx_size,
+                p.device_draft.as_str()
+            ),
             ("CUDA0,CUDA1,CUDA2", "11,11,11", Some(REF_CTX as i32), "")
         );
         // A separate drafter: counted on the last card and pinned there.
@@ -2147,7 +2701,12 @@ pub(crate) mod tests {
         check_shares(&e, 33);
         let p = placement(&e, &s).unwrap();
         assert_eq!(p.device_draft, "CUDA2");
-        assert!(p.note.contains("; counting the DFlash drafter (1.5 GiB) on CUDA2;"), "{}", p.note);
+        assert!(
+            p.note
+                .contains("; counting the DFlash drafter (1.5 GiB) on CUDA2;"),
+            "{}",
+            p.note
+        );
     }
 
     #[test]
@@ -2157,7 +2716,13 @@ pub(crate) mod tests {
         let e = estimate(&s, &budget_of(8, Some(32)));
         assert_eq!(
             e.fit,
-            Fit::Moe { gpu_layers: 10, moe_layers: 48, n_cpu_moe: 38, gpu_experts: 5 * GIB, ram: GIB / 2 + 19 * GIB }
+            Fit::Moe {
+                gpu_layers: 10,
+                moe_layers: 48,
+                n_cpu_moe: 38,
+                gpu_experts: 5 * GIB,
+                ram: GIB / 2 + 19 * GIB
+            }
         );
         assert_eq!(e.ram_short, Some(0));
         assert_eq!(
@@ -2167,28 +2732,53 @@ pub(crate) mod tests {
         // RAM short: the rest pages from disk.
         let short = estimate(&s, &budget_of(8, Some(16)));
         assert_eq!(short.ram_short, Some(3 * GIB + GIB / 2));
-        assert!(estimate_label(&short, REF_CTX).ends_with(", 3.5 GiB over the RAM: the rest pages from disk"));
+        assert!(estimate_label(&short, REF_CTX)
+            .ends_with(", 3.5 GiB over the RAM: the rest pages from disk"));
         // RAM unknown is said, not assumed.
-        assert!(estimate_label(&estimate(&s, &budget_of(8, None)), REF_CTX).ends_with(", RAM size unknown"));
+        assert!(estimate_label(&estimate(&s, &budget_of(8, None)), REF_CTX)
+            .ends_with(", RAM size unknown"));
         // Not even the base fits.
         let tiny = estimate(&s, &budget_of(2, Some(64)));
         assert!(matches!(tiny.fit, Fit::TooBig { .. }));
-        assert!(estimate_label(&tiny, REF_CTX).starts_with("too big: attention and shared weights alone need"));
+        assert!(estimate_label(&tiny, REF_CTX)
+            .starts_with("too big: attention and shared weights alone need"));
         // Room for the base only: every expert in RAM.
         let none = estimate(&s, &budget_of(3, Some(64)));
-        assert!(matches!(none.fit, Fit::Moe { gpu_layers: 0, n_cpu_moe: 48, .. }));
-        assert!(estimate_label(&none, REF_CTX).starts_with("MoE split: attention on GPU, every expert in RAM"));
+        assert!(matches!(
+            none.fit,
+            Fit::Moe {
+                gpu_layers: 0,
+                n_cpu_moe: 48,
+                ..
+            }
+        ));
+        assert!(estimate_label(&none, REF_CTX)
+            .starts_with("MoE split: attention on GPU, every expert in RAM"));
         // Everything fits: no split at all.
-        assert!(matches!(estimate(&s, &budget_of(40, Some(64))).fit, Fit::Gpu { .. }));
+        assert!(matches!(
+            estimate(&s, &budget_of(40, Some(64))).fit,
+            Fit::Gpu { .. }
+        ));
 
         // The keys: n-cpu-moe at the estimate's context; a RAM shortfall is
         // written anyway (the GPU part is the best there is) and said.
         let p = placement(&e, &s).unwrap();
-        assert_eq!((p.n_cpu_moe, p.n_gpu_layers, p.ctx_size, p.device.as_str()), (Some(38), None, Some(REF_CTX as i32), ""));
+        assert_eq!(
+            (p.n_cpu_moe, p.n_gpu_layers, p.ctx_size, p.device.as_str()),
+            (Some(38), None, Some(REF_CTX as i32), "")
+        );
         let p = placement(&short, &s).unwrap();
         assert_eq!(p.n_cpu_moe, Some(38));
-        assert!(p.note.contains(", 3.5 GiB over the RAM (the rest pages from disk);"), "{}", p.note);
-        assert!(placement(&estimate(&s, &budget_of(8, None)), &s).unwrap().note.contains(", RAM size unknown;"));
+        assert!(
+            p.note
+                .contains(", 3.5 GiB over the RAM (the rest pages from disk);"),
+            "{}",
+            p.note
+        );
+        assert!(placement(&estimate(&s, &budget_of(8, None)), &s)
+            .unwrap()
+            .note
+            .contains(", RAM size unknown;"));
         assert_eq!(placement(&none, &s).unwrap().n_cpu_moe, Some(48));
         assert_eq!(placement(&tiny, &s), None, "too big: left to the fit");
     }
@@ -2198,12 +2788,22 @@ pub(crate) mod tests {
         let s = moe_shape();
         // 27 GiB, past the 14 GiB of a 10 + 4 GiB pair.
         let b = Budget {
-            gpus: vec![card("ROCm1", "AMD Radeon AI PRO R9700", 10), card("CUDA0", "NVIDIA GeForce RTX 4070 SUPER", 4)],
+            gpus: vec![
+                card("ROCm1", "AMD Radeon AI PRO R9700", 10),
+                card("CUDA0", "NVIDIA GeForce RTX 4070 SUPER", 4),
+            ],
             ram: Some(60 * GIB),
             ram_total: Some(64 * GIB),
         };
         let e = estimate(&s, &b);
-        let Fit::Moe { gpu_layers, n_cpu_moe, .. } = e.fit else { panic!("{e:?}") };
+        let Fit::Moe {
+            gpu_layers,
+            n_cpu_moe,
+            ..
+        } = e.fit
+        else {
+            panic!("{e:?}")
+        };
         assert_eq!(gpu_layers + n_cpu_moe, 48);
         check_shares(&e, 49);
         // The smallest n-cpu-moe whose row still cuts into the two cards.
@@ -2213,13 +2813,33 @@ pub(crate) mod tests {
         // cut costs a layer: a block never straddles the two cards.
         assert_eq!(gpu_layers, 21);
         let label = estimate_label(&e, REF_CTX);
-        assert!(label.starts_with("MoE split: experts of 21/48 layers on GPU (10.5 GiB), AI PRO R9700 (ROCm1) "), "{label}");
-        assert!(label.ends_with(&format!(" in RAM, --n-cpu-moe {n_cpu_moe}")), "{label}");
+        assert!(
+            label.starts_with(
+                "MoE split: experts of 21/48 layers on GPU (10.5 GiB), AI PRO R9700 (ROCm1) "
+            ),
+            "{label}"
+        );
+        assert!(
+            label.ends_with(&format!(" in RAM, --n-cpu-moe {n_cpu_moe}")),
+            "{label}"
+        );
         let p = placement(&e, &s).unwrap();
         let split = tensor_split(&e.shares);
         assert_eq!(
-            (p.device.as_str(), p.tensor_split.as_str(), p.n_cpu_moe, p.n_gpu_layers, p.device_draft.as_str()),
-            ("ROCm1,CUDA0", split.as_str(), Some(n_cpu_moe as i32), None, "")
+            (
+                p.device.as_str(),
+                p.tensor_split.as_str(),
+                p.n_cpu_moe,
+                p.n_gpu_layers,
+                p.device_draft.as_str()
+            ),
+            (
+                "ROCm1,CUDA0",
+                split.as_str(),
+                Some(n_cpu_moe as i32),
+                None,
+                ""
+            )
         );
     }
 
@@ -2241,19 +2861,36 @@ pub(crate) mod tests {
         s.layers[0].experts = 0; // a DeepSeek-style dense first layer
         s.total -= GIB / 2;
         let e = estimate(&s, &budget_of(8, Some(64)));
-        assert!(matches!(e.fit, Fit::Moe { gpu_layers: 10, moe_layers: 47, n_cpu_moe: 38, .. }), "{e:?}");
+        assert!(
+            matches!(
+                e.fit,
+                Fit::Moe {
+                    gpu_layers: 10,
+                    moe_layers: 47,
+                    n_cpu_moe: 38,
+                    ..
+                }
+            ),
+            "{e:?}"
+        );
     }
 
     // ── extras ──
 
     /// A DFlash drafter of `weights` bytes and no KV cache.
     fn drafter(weights: u64) -> Extras {
-        Extras { mmproj: 0, drafter: Some(("DFlash drafter".into(), DraftShape::from_size(weights))) }
+        Extras {
+            mmproj: 0,
+            drafter: Some(("DFlash drafter".into(), DraftShape::from_size(weights))),
+        }
     }
 
     /// An image encoder of `size` bytes.
     fn mmproj(size: u64) -> Extras {
-        Extras { mmproj: size, drafter: None }
+        Extras {
+            mmproj: size,
+            drafter: None,
+        }
     }
 
     /// 44 dense blocks of 0.5 GiB plus 0.125 of KV and a 0.5 GiB output
@@ -2265,7 +2902,13 @@ pub(crate) mod tests {
             total: GIB + 22 * GIB,
             token_embd: GIB / 2,
             globals: GIB / 2,
-            layers: vec![Layer { experts: 0, other: GIB / 2 }; 44],
+            layers: vec![
+                Layer {
+                    experts: 0,
+                    other: GIB / 2
+                };
+                44
+            ],
             kv: 44 * GIB / 8,
             ctx: REF_CTX,
         }
@@ -2283,7 +2926,13 @@ pub(crate) mod tests {
         let s = dense_shape();
         // 20.5 GiB plus 2.5 (2 of weights, 0.5 of compute) on the R9700 alone.
         let e = estimate_with(&s, &pair(Some(64)), &mmproj(2 * GIB));
-        assert_eq!(e.fit, Fit::Gpu { need: 23 * GIB, budget: 39 * GIB });
+        assert_eq!(
+            e.fit,
+            Fit::Gpu {
+                need: 23 * GIB,
+                budget: 39 * GIB
+            }
+        );
         assert_eq!(gpu_spot(&e.encoder), ("ROCm1", false));
         assert_eq!(e.encoder.as_ref().unwrap().bytes, 2 * GIB + MMPROJ_COMPUTE);
         assert_eq!(
@@ -2291,8 +2940,20 @@ pub(crate) mod tests {
             "all on GPU with a 32k context: AI PRO R9700 (ROCm1) 20.5 GiB; with the image encoder (2.5 GiB) on ROCm1"
         );
         let p = placement(&e, &s).unwrap();
-        assert_eq!((p.device.as_str(), p.mmproj_device.as_str(), p.mmproj_offload), ("ROCm1", "", None));
-        assert!(p.note.contains("; counting the image encoder (2.5 GiB) on ROCm1;"), "{}", p.note);
+        assert_eq!(
+            (
+                p.device.as_str(),
+                p.mmproj_device.as_str(),
+                p.mmproj_offload
+            ),
+            ("ROCm1", "", None)
+        );
+        assert!(
+            p.note
+                .contains("; counting the image encoder (2.5 GiB) on ROCm1;"),
+            "{}",
+            p.note
+        );
         // One card: the encoder beside the model, nothing to write.
         let one = estimate_with(&s, &budget_of(24, Some(32)), &mmproj(2 * GIB));
         assert_eq!(gpu_spot(&one.encoder), ("CUDA0", false));
@@ -2310,16 +2971,35 @@ pub(crate) mod tests {
         assert_eq!(e.shares[0].gpu.id, "ROCm1");
         assert_eq!(gpu_spot(&e.encoder), ("CUDA0", true));
         let p = placement(&e, &s).unwrap();
-        assert_eq!((p.device.as_str(), p.tensor_split.as_str(), p.mmproj_device.as_str()), ("ROCm1", "", "CUDA0"));
+        assert_eq!(
+            (
+                p.device.as_str(),
+                p.tensor_split.as_str(),
+                p.mmproj_device.as_str()
+            ),
+            ("ROCm1", "", "CUDA0")
+        );
         // One card it no longer fits beside: the encoder on the CPU, the
         // model whole on the GPU; it costs RAM and says so.
         let one = estimate_with(&s, &budget_of(29, Some(32)), &mmproj(2 * GIB));
-        assert!(matches!(one.fit, Fit::Gpu { need, .. } if need == 28 * GIB), "{one:?}");
+        assert!(
+            matches!(one.fit, Fit::Gpu { need, .. } if need == 28 * GIB),
+            "{one:?}"
+        );
         assert_eq!(one.encoder.as_ref().unwrap().spot, Spot::Cpu);
-        assert!(estimate_label(&one, REF_CTX).ends_with("; with the image encoder (2.0 GiB) on the CPU"));
+        assert!(estimate_label(&one, REF_CTX)
+            .ends_with("; with the image encoder (2.0 GiB) on the CPU"));
         let p = placement(&one, &s).unwrap();
-        assert_eq!((p.device.as_str(), p.mmproj_offload, p.ctx_size), ("", Some(false), None));
-        assert!(p.note.starts_with("estimated at download: the GPU holds the whole model"), "{}", p.note);
+        assert_eq!(
+            (p.device.as_str(), p.mmproj_offload, p.ctx_size),
+            ("", Some(false), None)
+        );
+        assert!(
+            p.note
+                .starts_with("estimated at download: the GPU holds the whole model"),
+            "{}",
+            p.note
+        );
         // RAM too small for the encoder as well: said.
         let tight = estimate_with(&s, &budget_of(29, Some(1)), &mmproj(2 * GIB));
         assert_eq!(tight.ram_short, Some(GIB));
@@ -2344,14 +3024,30 @@ pub(crate) mod tests {
     #[test]
     fn a_drafter_counts_on_the_last_card_and_shifts_the_split() {
         // 52 blocks: 33 GiB, past the R9700 alone, so split over both.
-        let s = Shape { layers: vec![Layer { experts: 0, other: GIB / 2 }; 52], kv: 52 * GIB / 8, ..full_r9700() };
+        let s = Shape {
+            layers: vec![
+                Layer {
+                    experts: 0,
+                    other: GIB / 2
+                };
+                52
+            ],
+            kv: 52 * GIB / 8,
+            ..full_r9700()
+        };
         let plain = estimate(&s, &pair(Some(64)));
         let with = estimate_with(&s, &pair(Some(64)), &drafter(3 * GIB / 4));
         check_shares(&with, 53);
         assert_eq!(gpu_spot(&with.drafter), ("CUDA0", true));
         // The 4070 hosts 1.5 GiB of drafter: it takes fewer positions.
-        assert!(with.shares[1].positions < plain.shares[1].positions, "{plain:?} {with:?}");
-        assert!(with.shares[1].bytes + with.drafter.as_ref().unwrap().bytes <= with.shares[1].gpu.usable());
+        assert!(
+            with.shares[1].positions < plain.shares[1].positions,
+            "{plain:?} {with:?}"
+        );
+        assert!(
+            with.shares[1].bytes + with.drafter.as_ref().unwrap().bytes
+                <= with.shares[1].gpu.usable()
+        );
         let p = placement(&with, &s).unwrap();
         assert_eq!(p.device_draft, "CUDA0");
         assert_ne!(p.tensor_split, placement(&plain, &s).unwrap().tensor_split);
@@ -2362,7 +3058,13 @@ pub(crate) mod tests {
         let s = dense_shape();
         // One card: beside the model, nothing pinned.
         let one = estimate_with(&s, &budget_of(24, Some(32)), &drafter(3 * GIB / 4));
-        assert_eq!(one.fit, Fit::Gpu { need: 22 * GIB, budget: 24 * GIB });
+        assert_eq!(
+            one.fit,
+            Fit::Gpu {
+                need: 22 * GIB,
+                budget: 24 * GIB
+            }
+        );
         assert_eq!(gpu_spot(&one.drafter), ("CUDA0", false));
         assert_eq!(placement(&one, &s), None);
         // The R9700 holds the model and the drafter: no pin.
@@ -2375,7 +3077,10 @@ pub(crate) mod tests {
         assert_eq!(e.shares.len(), 1, "{e:?}");
         assert_eq!(gpu_spot(&e.drafter), ("CUDA0", true));
         let p = placement(&e, &s).unwrap();
-        assert_eq!((p.device.as_str(), p.device_draft.as_str()), ("ROCm1", "CUDA0"));
+        assert_eq!(
+            (p.device.as_str(), p.device_draft.as_str()),
+            ("ROCm1", "CUDA0")
+        );
     }
 
     #[test]
@@ -2392,13 +3097,23 @@ pub(crate) mod tests {
                 ("dflash.attention.key_length", W::U32(128)),
                 ("dflash.attention.value_length", W::U32(128)),
                 ("dflash.attention.sliding_window", W::U32(2048)),
-                ("dflash.attention.sliding_window_pattern", W::ArrBool(vec![true; 5])),
+                (
+                    "dflash.attention.sliding_window_pattern",
+                    W::ArrBool(vec![true; 5]),
+                ),
             ],
-            &[("token_embd.weight", 4096 * 256), ("blk.0.attn_q.weight", 4096 * 512), ("output.weight", 4096 * 256)],
+            &[
+                ("token_embd.weight", 4096 * 256),
+                ("blk.0.attn_q.weight", 4096 * 512),
+                ("output.weight", 4096 * 256),
+            ],
         );
         let h = parse_header(&bytes).unwrap();
         let d = draft_shape_of(&[(h.clone(), size)]).unwrap();
-        assert_eq!((d.kv_full, d.kv_swa, d.swa_cells), (0, 5 * 8 * 256 * 2, 2560));
+        assert_eq!(
+            (d.kv_full, d.kv_swa, d.swa_cells),
+            (0, 5 * 8 * 256 * 2, 2560)
+        );
         // 50 MiB of KV at any context past the window, at f16: the product above.
         assert_eq!(d.bytes(32768) - d.weights - DRAFT_COMPUTE, 50 * MIB);
         assert_eq!(d.bytes(32768), d.bytes(262144));
@@ -2424,7 +3139,11 @@ pub(crate) mod tests {
 
     #[test]
     fn the_extras_follow_the_choices_and_an_embedded_mtp_counts_once() {
-        let f = |p: &str, size: u64| hf::RepoFile { path: p.into(), size, oid: String::new() };
+        let f = |p: &str, size: u64| hf::RepoFile {
+            path: p.into(),
+            size,
+            oid: String::new(),
+        };
         let c = Candidate {
             tag: "Q4_K_M".into(),
             shards: vec![f("m.gguf", 10)],
@@ -2434,21 +3153,43 @@ pub(crate) mod tests {
             dflash: Some(f("dflash.gguf", 5)),
             dspark: None,
         };
-        let known = DraftShape { weights: 4, kv_full: 1, ..DraftShape::default() };
+        let known = DraftShape {
+            weights: 4,
+            kv_full: 1,
+            ..DraftShape::default()
+        };
         let read = |_: &hf::RepoFile| Some(Ok(Arc::new(known)));
         let x = extras_of(&c, true, Some(hf::Sidecar::Dflash), &read).unwrap();
-        assert_eq!(x, Extras { mmproj: 7, drafter: Some(("DFlash drafter".into(), known)) });
-        assert_eq!(extras_of(&c, false, None, &read).unwrap(), Extras::default());
+        assert_eq!(
+            x,
+            Extras {
+                mmproj: 7,
+                drafter: Some(("DFlash drafter".into(), known))
+            }
+        );
+        assert_eq!(
+            extras_of(&c, false, None, &read).unwrap(),
+            Extras::default()
+        );
         // The drafter's header not read yet: no estimate yet; unreadable: its size.
-        assert_eq!(extras_of(&c, true, Some(hf::Sidecar::Dflash), &|_| None), None);
-        let failed = extras_of(&c, true, Some(hf::Sidecar::Dflash), &|_| Some(Err("boom".into()))).unwrap();
+        assert_eq!(
+            extras_of(&c, true, Some(hf::Sidecar::Dflash), &|_| None),
+            None
+        );
+        let failed = extras_of(&c, true, Some(hf::Sidecar::Dflash), &|_| {
+            Some(Err("boom".into()))
+        })
+        .unwrap();
         assert_eq!(failed.drafter.unwrap().1, DraftShape::from_size(5));
         // An MTP head inside the model file: no MTP FILE, so nothing extra;
         // its block is in the model's shape and counts there once.
         let x = extras_of(&c, false, Some(hf::Sidecar::Mtp), &read).unwrap();
         assert_eq!(x, Extras::default());
         let mut s = dense_shape();
-        s.layers.push(Layer { experts: 0, other: GIB / 4 }); // the nextn block
+        s.layers.push(Layer {
+            experts: 0,
+            other: GIB / 4,
+        }); // the nextn block
         let b = budget_of(24, Some(32));
         assert_eq!(estimate_with(&s, &b, &x), estimate(&s, &b));
     }
@@ -2461,23 +3202,60 @@ pub(crate) mod tests {
             total: gib * GIB,
             token_embd: 0,
             globals: 0,
-            layers: vec![Layer { experts: 0, other: gib * GIB / 4 }; 4],
+            layers: vec![
+                Layer {
+                    experts: 0,
+                    other: gib * GIB / 4
+                };
+                4
+            ],
             kv: GIB,
             ctx: REF_CTX,
         };
         let b = budget_of(12, Some(32));
-        let x = Extras { mmproj: GIB, drafter: Some(("DFlash drafter".into(), DraftShape::from_size(GIB / 4))) };
+        let x = Extras {
+            mmproj: GIB,
+            drafter: Some(("DFlash drafter".into(), DraftShape::from_size(GIB / 4))),
+        };
         // Without extras the Q8_0 (10 GiB) fits; with 1.5 + 1 GiB of extras
         // it no longer does, and the Q4_K_M (6 GiB) is the one.
         let (q4, q8) = (estimate(&s(5), &b), estimate(&s(9), &b));
-        let rows = [Row { tag: "Q4_K_M", size: 5, estimate: Some(&q4) }, Row { tag: "Q8_0", size: 9, estimate: Some(&q8) }];
+        let rows = [
+            Row {
+                tag: "Q4_K_M",
+                size: 5,
+                estimate: Some(&q4),
+            },
+            Row {
+                tag: "Q8_0",
+                size: 9,
+                estimate: Some(&q8),
+            },
+        ];
         assert_eq!(recommend(&rows).unwrap().index, 1);
         let (q4, q8) = (estimate_with(&s(5), &b, &x), estimate_with(&s(9), &b, &x));
         assert_eq!(gpu_spot(&q4.encoder), ("CUDA0", false));
         // The Q8_0 keeps the drafter and moves the encoder to the CPU.
         assert_eq!(q8.encoder.as_ref().unwrap().spot, Spot::Cpu);
-        let rows = [Row { tag: "Q4_K_M", size: 5, estimate: Some(&q4) }, Row { tag: "Q8_0", size: 9, estimate: Some(&q8) }];
-        assert_eq!(recommend(&rows), Some(Recommendation { index: 0, reason: "the best quality that fits in GPU memory".to_string() }));
+        let rows = [
+            Row {
+                tag: "Q4_K_M",
+                size: 5,
+                estimate: Some(&q4),
+            },
+            Row {
+                tag: "Q8_0",
+                size: 9,
+                estimate: Some(&q8),
+            },
+        ];
+        assert_eq!(
+            recommend(&rows),
+            Some(Recommendation {
+                index: 0,
+                reason: "the best quality that fits in GPU memory".to_string()
+            })
+        );
         // Only the Q8_0 listed: tier 2, said so.
         assert_eq!(
             recommend(&rows[1..]).unwrap().reason,
@@ -2492,20 +3270,53 @@ pub(crate) mod tests {
     }
 
     fn moe_ram(short: u64) -> Estimate {
-        Estimate::plain(Fit::Moe { gpu_layers: 1, moe_layers: 2, n_cpu_moe: 1, gpu_experts: 1, ram: 1 }, Some(short), vec![])
+        Estimate::plain(
+            Fit::Moe {
+                gpu_layers: 1,
+                moe_layers: 2,
+                n_cpu_moe: 1,
+                gpu_experts: 1,
+                ram: 1,
+            },
+            Some(short),
+            vec![],
+        )
     }
 
     #[test]
     fn the_best_quality_on_gpu_is_recommended() {
         let (g, m) = (gpu(), moe_ram(0));
         let rows = [
-            Row { tag: "Q4_K_M", size: 18, estimate: Some(&g) },
-            Row { tag: "Q8_0", size: 32, estimate: Some(&m) },
-            Row { tag: "Q5_K_S", size: 21, estimate: Some(&g) },
-            Row { tag: "IQ4_XS", size: 16, estimate: Some(&g) },
+            Row {
+                tag: "Q4_K_M",
+                size: 18,
+                estimate: Some(&g),
+            },
+            Row {
+                tag: "Q8_0",
+                size: 32,
+                estimate: Some(&m),
+            },
+            Row {
+                tag: "Q5_K_S",
+                size: 21,
+                estimate: Some(&g),
+            },
+            Row {
+                tag: "IQ4_XS",
+                size: 16,
+                estimate: Some(&g),
+            },
         ];
         let r = recommend(&rows).unwrap();
-        assert_eq!(r, Recommendation { index: 2, reason: "the best quality that fits in GPU memory".to_string() }, "GPU tier beats a bigger quant in RAM");
+        assert_eq!(
+            r,
+            Recommendation {
+                index: 2,
+                reason: "the best quality that fits in GPU memory".to_string()
+            },
+            "GPU tier beats a bigger quant in RAM"
+        );
     }
 
     #[test]
@@ -2521,26 +3332,79 @@ pub(crate) mod tests {
         assert!(q("IQ3_XXS") > q("Q2_K"), "more bits first");
         assert!(q("Q4_K_M") > q("model"));
         let g = gpu();
-        let only16 = [Row { tag: "BF16", size: 2, estimate: Some(&g) }, Row { tag: "F32", size: 4, estimate: None }];
+        let only16 = [
+            Row {
+                tag: "BF16",
+                size: 2,
+                estimate: Some(&g),
+            },
+            Row {
+                tag: "F32",
+                size: 4,
+                estimate: None,
+            },
+        ];
         assert_eq!(recommend(&only16).unwrap().index, 0);
     }
 
     #[test]
     fn an_moe_recommends_experts_in_ram_without_paging_or_nothing() {
         let (ok, pages) = (moe_ram(0), moe_ram(5));
-        let dense_split = Estimate::plain(Fit::Dense { gpu_layers: 1, layers: 2, ram: 1 }, Some(0), vec![]);
+        let dense_split = Estimate::plain(
+            Fit::Dense {
+                gpu_layers: 1,
+                layers: 2,
+                ram: 1,
+            },
+            Some(0),
+            vec![],
+        );
         let rows = [
-            Row { tag: "Q2_K", size: 1, estimate: Some(&ok) },
-            Row { tag: "Q4_K_M", size: 2, estimate: Some(&ok) },
-            Row { tag: "Q8_0", size: 3, estimate: Some(&pages) },
+            Row {
+                tag: "Q2_K",
+                size: 1,
+                estimate: Some(&ok),
+            },
+            Row {
+                tag: "Q4_K_M",
+                size: 2,
+                estimate: Some(&ok),
+            },
+            Row {
+                tag: "Q8_0",
+                size: 3,
+                estimate: Some(&pages),
+            },
         ];
         assert_eq!(
             recommend(&rows),
-            Some(Recommendation { index: 1, reason: "the best quality whose experts fit in RAM without paging".to_string() })
+            Some(Recommendation {
+                index: 1,
+                reason: "the best quality whose experts fit in RAM without paging".to_string()
+            })
         );
-        let none = [Row { tag: "Q8_0", size: 3, estimate: Some(&pages) }, Row { tag: "Q4_K_M", size: 1, estimate: Some(&dense_split) }];
+        let none = [
+            Row {
+                tag: "Q8_0",
+                size: 3,
+                estimate: Some(&pages),
+            },
+            Row {
+                tag: "Q4_K_M",
+                size: 1,
+                estimate: Some(&dense_split),
+            },
+        ];
         assert_eq!(recommend(&none), None);
-        assert_eq!(recommend(&[Row { tag: "Q4_K_M", size: 1, estimate: None }]), None, "nothing known, nothing picked");
+        assert_eq!(
+            recommend(&[Row {
+                tag: "Q4_K_M",
+                size: 1,
+                estimate: None
+            }]),
+            None,
+            "nothing known, nothing picked"
+        );
     }
 
     // ── remote ──
@@ -2557,7 +3421,13 @@ pub(crate) mod tests {
         fn get(&self, _url: &str, _token: Option<&Token>) -> Result<(u16, String), HfError> {
             unreachable!()
         }
-        fn get_range(&self, url: &str, _token: Option<&Token>, start: u64, len: u64) -> Result<(u16, Vec<u8>), HfError> {
+        fn get_range(
+            &self,
+            url: &str,
+            _token: Option<&Token>,
+            start: u64,
+            len: u64,
+        ) -> Result<(u16, Vec<u8>), HfError> {
             assert!(url.starts_with("https://hf.test/o/r/resolve/"), "{url}");
             self.calls.fetch_add(1, Ordering::Relaxed);
             self.lens.lock().unwrap().push(len);
@@ -2573,24 +3443,51 @@ pub(crate) mod tests {
         let (mut h, size) = gguf(
             &[
                 ("general.architecture", W::Str("qwen3")),
-                ("tokenizer.ggml.tokens", W::ArrStr(tokens.iter().map(String::as_str).collect())),
+                (
+                    "tokenizer.ggml.tokens",
+                    W::ArrStr(tokens.iter().map(String::as_str).collect()),
+                ),
             ],
             &[("blk.0.attn_q.weight", MIB)],
         );
         assert!(h.len() as u64 > INITIAL_FETCH);
         h.resize(size as usize, 0);
-        let remote = Remote { file: h, calls: AtomicU32::new(0), lens: Mutex::new(Vec::new()), status: 206 };
+        let remote = Remote {
+            file: h,
+            calls: AtomicU32::new(0),
+            lens: Mutex::new(Vec::new()),
+            status: 206,
+        };
         let url = "https://hf.test/o/r/resolve/c/m.gguf";
         let hdr = fetch_header_from(&remote, url, None, "o/r", size, INITIAL_FETCH).unwrap();
         assert_eq!(hdr.tensors.len(), 1);
-        assert_eq!(*remote.lens.lock().unwrap(), [INITIAL_FETCH, (4 * INITIAL_FETCH).min(size)]);
+        assert_eq!(
+            *remote.lens.lock().unwrap(),
+            [INITIAL_FETCH, (4 * INITIAL_FETCH).min(size)]
+        );
         // A file shorter than its header claims is cut short, not fetched forever.
-        let cut = Remote { file: remote.file[..1000].to_vec(), calls: AtomicU32::new(0), lens: Mutex::new(Vec::new()), status: 206 };
-        assert!(matches!(fetch_header_from(&cut, url, None, "o/r", size, INITIAL_FETCH), Err(HfError::Io(_))));
+        let cut = Remote {
+            file: remote.file[..1000].to_vec(),
+            calls: AtomicU32::new(0),
+            lens: Mutex::new(Vec::new()),
+            status: 206,
+        };
+        assert!(matches!(
+            fetch_header_from(&cut, url, None, "o/r", size, INITIAL_FETCH),
+            Err(HfError::Io(_))
+        ));
         assert_eq!(cut.calls.load(Ordering::Relaxed), 1);
         // An error status is the API's error.
-        let gated = Remote { file: b"{\"error\":\"gated\"}".to_vec(), calls: AtomicU32::new(0), lens: Mutex::new(Vec::new()), status: 403 };
-        assert!(matches!(fetch_header_from(&gated, url, None, "o/r", 0, MIB), Err(HfError::Gated { .. })));
+        let gated = Remote {
+            file: b"{\"error\":\"gated\"}".to_vec(),
+            calls: AtomicU32::new(0),
+            lens: Mutex::new(Vec::new()),
+            status: 403,
+        };
+        assert!(matches!(
+            fetch_header_from(&gated, url, None, "o/r", 0, MIB),
+            Err(HfError::Gated { .. })
+        ));
     }
 
     #[test]
@@ -2598,11 +3495,20 @@ pub(crate) mod tests {
         // The header alone (the fixture's data would be 3 GiB): it parses
         // from the first answer whatever its length.
         let (h, size) = moe_fixture();
-        let remote = Remote { file: h, calls: AtomicU32::new(0), lens: Mutex::new(Vec::new()), status: 206 };
+        let remote = Remote {
+            file: h,
+            calls: AtomicU32::new(0),
+            lens: Mutex::new(Vec::new()),
+            status: 206,
+        };
         let cands: Vec<Candidate> = (0..6)
             .map(|i| Candidate {
                 tag: format!("Q{i}_K"),
-                shards: vec![RepoFile { path: format!("dir/m Q{i}_K.gguf"), size, oid: String::new() }],
+                shards: vec![RepoFile {
+                    path: format!("dir/m Q{i}_K.gguf"),
+                    size,
+                    oid: String::new(),
+                }],
                 size,
                 mmproj: None,
                 mtp: None,
@@ -2613,9 +3519,18 @@ pub(crate) mod tests {
         let got = Mutex::new(Vec::new());
         let commit = "e".repeat(40);
         let run = || {
-            fetch_shapes(&remote, "https://hf.test/", "o/r", &commit, &cands, None, &|| true, &|i, r| {
-                got.lock().unwrap().push((i, r.map(|s| s.layers.len())));
-            })
+            fetch_shapes(
+                &remote,
+                "https://hf.test/",
+                "o/r",
+                &commit,
+                &cands,
+                None,
+                &|| true,
+                &|i, r| {
+                    got.lock().unwrap().push((i, r.map(|s| s.layers.len())));
+                },
+            )
         };
         run();
         let mut g = got.lock().unwrap().clone();
@@ -2623,13 +3538,35 @@ pub(crate) mod tests {
         assert_eq!(g, (0..6).map(|i| (i, Ok(2))).collect::<Vec<_>>());
         assert_eq!(remote.calls.load(Ordering::Relaxed), 6);
         run();
-        assert_eq!(remote.calls.load(Ordering::Relaxed), 6, "a second listing reads the cache");
+        assert_eq!(
+            remote.calls.load(Ordering::Relaxed),
+            6,
+            "a second listing reads the cache"
+        );
         // A space in a path is encoded.
-        assert_eq!(resolve_url("e/", "o/r", "c", "dir/m Q4.gguf"), "e/o/r/resolve/c/dir/m%20Q4.gguf");
+        assert_eq!(
+            resolve_url("e/", "o/r", "c", "dir/m Q4.gguf"),
+            "e/o/r/resolve/c/dir/m%20Q4.gguf"
+        );
         // A stop request ends the run early.
         let none = Mutex::new(0);
-        let other: Vec<Candidate> = cands.iter().map(|c| Candidate { tag: "x".into(), ..c.clone() }).collect();
-        fetch_shapes(&remote, "https://hf.test/", "o/r", "f", &other, None, &|| false, &|_, _| *none.lock().unwrap() += 1);
+        let other: Vec<Candidate> = cands
+            .iter()
+            .map(|c| Candidate {
+                tag: "x".into(),
+                ..c.clone()
+            })
+            .collect();
+        fetch_shapes(
+            &remote,
+            "https://hf.test/",
+            "o/r",
+            "f",
+            &other,
+            None,
+            &|| false,
+            &|_, _| *none.lock().unwrap() += 1,
+        );
         assert_eq!(*none.lock().unwrap(), 0);
     }
 }

@@ -141,7 +141,9 @@ impl Group {
     /// The published GPU at this address, if the startup has got that far.
     fn at_pci(self, pci: Option<&str>) -> Self {
         let gpu = pci.and_then(|pci| {
-            crate::devices::physical().into_iter().find(|gpu| gpu.pci == pci)
+            crate::devices::physical()
+                .into_iter()
+                .find(|gpu| gpu.pci == pci)
         });
         self.of_gpu(gpu)
     }
@@ -174,7 +176,10 @@ pub fn publish_gpus(devs: &[crate::devices::DeviceOption]) {
             .map(|d| d.id.clone())
             .collect();
         if gpu.vram_mib == 0 {
-            gpu.vram_mib = of_model(&gpu.name, devs).map(|d| d.total_mib).max().unwrap_or(0);
+            gpu.vram_mib = of_model(&gpu.name, devs)
+                .map(|d| d.total_mib)
+                .max()
+                .unwrap_or(0);
         }
     }
     crate::devices::set_physical(gpus);
@@ -214,7 +219,10 @@ fn cpu_id(socket: usize) -> String {
 
 /// Whether a device id is a socket's.
 pub fn is_cpu_id(id: &str) -> bool {
-    id == CPU_ID || id.strip_prefix("cpu-").is_some_and(|n| n.parse::<usize>().is_ok())
+    id == CPU_ID
+        || id
+            .strip_prefix("cpu-")
+            .is_some_and(|n| n.parse::<usize>().is_ok())
 }
 
 /// A socket's row in the CPU box: `Socket 1`.
@@ -547,10 +555,7 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(memory_title(&[]), "Memory");
-        assert_eq!(
-            memory_title(&[module("A"), module("A")]),
-            "2 × CORSAIR A"
-        );
+        assert_eq!(memory_title(&[module("A"), module("A")]), "2 × CORSAIR A");
         // Mixed modules, in slot order; one the firmware does not name is skipped.
         assert_eq!(
             memory_title(&[module("A"), module("B"), module("A"), Default::default()]),
@@ -573,7 +578,10 @@ mod tests {
         assert_eq!(bar.text, "0.50 ms per I/O · peak 1.00 ms");
         assert_eq!(bar.fraction, 0.5);
         // No I/O in the interval is no wait, not a division by zero.
-        assert_eq!(wait_bar(0.0, 0, &mut peak).text, "0.00 ms per I/O · peak 1.00 ms");
+        assert_eq!(
+            wait_bar(0.0, 0, &mut peak).text,
+            "0.00 ms per I/O · peak 1.00 ms"
+        );
         assert_eq!(wait_bar(400.0, 100, &mut peak).fraction, 1.0);
     }
 
@@ -649,12 +657,24 @@ mod tests {
             card("AMD Radeon AI PRO R9700", &[]),
             card("Radeon AI PRO R9700", &[]),
             card("Another Card", &[]),
-            group(&HashSet::new(), "m", "AMD Radeon(TM) Graphics".into(), "AMD".into(), Vec::new),
+            group(
+                &HashSet::new(),
+                "m",
+                "AMD Radeon(TM) Graphics".into(),
+                "AMD".into(),
+                Vec::new,
+            ),
         ];
         name_sdk_ids(&mut groups, &devs);
         let twins = "AMD Radeon AI PRO R9700 · ROCm1 · ROCm2 · Vulkan1";
-        assert_eq!((groups[0].title.as_str(), groups[1].title.as_str()), (twins, twins));
-        assert_eq!(groups[2].title, "Radeon AI PRO R9700 · ROCm1 · ROCm2 · Vulkan1");
+        assert_eq!(
+            (groups[0].title.as_str(), groups[1].title.as_str()),
+            (twins, twins)
+        );
+        assert_eq!(
+            groups[2].title,
+            "Radeon AI PRO R9700 · ROCm1 · ROCm2 · Vulkan1"
+        );
         assert_eq!(groups[3].title, "Another Card", "not a probed model");
         assert_eq!(groups[4].title, "AMD Radeon(TM) Graphics", "not a GPU");
         assert_eq!(groups[0].detail, "AMD");

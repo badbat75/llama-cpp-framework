@@ -67,7 +67,10 @@ fn main() {
     if argv.len() <= 1 {
         strings::set_reader(reader_of(None));
         if let Err(e) = gui::run(false) {
-            eprintln!("{}", strings::fill("gui-launch-error", &[&format!("{e:#}")]));
+            eprintln!(
+                "{}",
+                strings::fill("gui-launch-error", &[&format!("{e:#}")])
+            );
             std::process::exit(1);
         }
         return;

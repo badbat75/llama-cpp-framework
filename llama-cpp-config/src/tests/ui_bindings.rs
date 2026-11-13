@@ -67,20 +67,41 @@ fn assert_text_built_before_ready_shows_the_file() {
     let labels: Vec<ElementHandle> =
         ElementHandle::find_by_element_id(&app, "LabeledField::label_text").collect();
     assert!(!labels.is_empty(), "new() built no Server tab rows");
-    let before: Vec<_> = labels.iter().map(|l| l.accessible_label().unwrap_or_default()).collect();
-    assert!(before.iter().all(|l| l.is_empty()), "text before ready: {before:?}");
-    assert!(columns.get_server() <= 130.0, "a blank label raised the column");
+    let before: Vec<_> = labels
+        .iter()
+        .map(|l| l.accessible_label().unwrap_or_default())
+        .collect();
+    assert!(
+        before.iter().all(|l| l.is_empty()),
+        "text before ready: {before:?}"
+    );
+    assert!(
+        columns.get_server() <= 130.0,
+        "a blank label raised the column"
+    );
 
     crate::gui::install_strings(app.global::<crate::gui::Strings>());
     app.window().set_size(slint::PhysicalSize::new(1400, 3200));
     app.show().expect("realize window");
     itest::mock_elapsed_time(std::time::Duration::from_millis(1));
 
-    let after: Vec<_> = labels.iter().map(|l| l.accessible_label().unwrap_or_default()).collect();
+    let after: Vec<_> = labels
+        .iter()
+        .map(|l| l.accessible_label().unwrap_or_default())
+        .collect();
     let port = slint::SharedString::from(crate::strings::t("port"));
-    assert!(!port.is_empty() && port.as_str() != "port", "the file has no text for port");
-    assert!(after.contains(&port), "the same elements after ready: {after:?}");
-    assert!(after.iter().all(|l| !l.is_empty()), "a label stayed blank: {after:?}");
+    assert!(
+        !port.is_empty() && port.as_str() != "port",
+        "the file has no text for port"
+    );
+    assert!(
+        after.contains(&port),
+        "the same elements after ready: {after:?}"
+    );
+    assert!(
+        after.iter().all(|l| !l.is_empty()),
+        "a label stayed blank: {after:?}"
+    );
     assert!(
         columns.get_server() > 28.0,
         "LabelColumn.server is {}px: no label measured after ready",
@@ -312,7 +333,9 @@ fn editable_widgets_track_model_after_edit() {
 
     // The language file reaches the global: no handler reads as empty, a miss
     // as the key.
-    let cancel = app.global::<crate::gui::Strings>().invoke_t("cancel".into());
+    let cancel = app
+        .global::<crate::gui::Strings>()
+        .invoke_t("cancel".into());
     assert!(
         !cancel.is_empty() && cancel.as_str() != "cancel",
         "Strings.t does not answer from the language file: {cancel:?}"
@@ -442,10 +465,22 @@ fn editable_widgets_track_model_after_edit() {
         f.webui = true;
         f.webui_mcp_proxy = true;
     });
-    assert_eq!(proxy.accessible_enabled(), Some(true), "UI on: proxy editable");
+    assert_eq!(
+        proxy.accessible_enabled(),
+        Some(true),
+        "UI on: proxy editable"
+    );
     set_server_form(&st, |f| f.webui = false);
-    assert_eq!(proxy.accessible_enabled(), Some(false), "UI off: proxy greyed out");
-    assert_eq!(proxy.accessible_checked(), Some(true), "UI off: proxy value kept");
+    assert_eq!(
+        proxy.accessible_enabled(),
+        Some(false),
+        "UI off: proxy greyed out"
+    );
+    assert_eq!(
+        proxy.accessible_checked(),
+        Some(true),
+        "UI off: proxy value kept"
+    );
     assert!(st.get_server_form().webui_mcp_proxy);
     set_server_form(&st, |f| f.webui = true);
     assert_eq!(proxy.accessible_enabled(), Some(true));
@@ -458,10 +493,16 @@ fn editable_widgets_track_model_after_edit() {
     st.set_launched_ui(false);
     st.set_chat_ui_saved(true);
     assert!(!st.get_chat_ui_enabled() && !st.get_can_open_chat());
-    assert_eq!(by_label(&app, "Web UI off").accessible_enabled(), Some(false));
+    assert_eq!(
+        by_label(&app, "Web UI off").accessible_enabled(),
+        Some(false)
+    );
     st.set_launched_ui(true);
     assert!(st.get_can_open_chat());
-    assert_eq!(by_label(&app, "Open chat UI").accessible_enabled(), Some(true));
+    assert_eq!(
+        by_label(&app, "Open chat UI").accessible_enabled(),
+        Some(true)
+    );
     // A server the GUI did not launch: the saved server.ini decides.
     st.set_launched_url("".into());
     st.set_chat_ui_saved(false);

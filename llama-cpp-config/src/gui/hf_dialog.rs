@@ -101,8 +101,8 @@
 //! are unit-tested below; the e2e flow test (`src/tests/save_flow.rs`) drives
 //! the wiring that needs no network, the hand-over to the background included.
 
-use crate::strings;
 use super::*;
+use crate::strings;
 
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -227,7 +227,10 @@ fn input_is_query(text: &str) -> bool {
 fn result_label(h: &hf::SearchHit) -> String {
     let mut parts = vec![h.repo.clone()];
     parts.extend(hf::kind_label(h.kind, h.params));
-    parts.push(strings::fill("result-downloads", &[&hf::format_count(h.downloads)]));
+    parts.push(strings::fill(
+        "result-downloads",
+        &[&hf::format_count(h.downloads)],
+    ));
     if h.gated {
         parts.push(strings::t("gated"));
     }
@@ -240,7 +243,11 @@ fn result_label(h: &hf::SearchHit) -> String {
 /// A search row's second line: the quantizations its file names show, and
 /// the sidecars (the list's own wording, `candidate_label`).
 fn result_detail(h: &hf::SearchHit) -> String {
-    let quants = if h.quants.is_empty() { strings::t("no-gguf-model-file") } else { h.quants.join(", ") };
+    let quants = if h.quants.is_empty() {
+        strings::t("no-gguf-model-file")
+    } else {
+        h.quants.join(", ")
+    };
     let mut with: Vec<&str> = Vec::new();
     if h.mmproj {
         with.push("mmproj");
@@ -249,7 +256,10 @@ fn result_detail(h: &hf::SearchHit) -> String {
     if with.is_empty() {
         quants
     } else {
-        format!("{quants}  ·  {}", strings::fill("with-extras", &[&with.join(", ")]))
+        format!(
+            "{quants}  ·  {}",
+            strings::fill("with-extras", &[&with.join(", ")])
+        )
     }
 }
 
@@ -278,9 +288,10 @@ pub(super) fn sentence(s: &str) -> String {
 fn dialog_error(e: &hf::HfError) -> String {
     let text = sentence(&e.to_string());
     match e {
-        hf::HfError::NotFoundOrPrivate { .. } | hf::HfError::Gated { had_token: false, .. } => {
-            strings::fill("or-paste-a-token", &[&text])
-        }
+        hf::HfError::NotFoundOrPrivate { .. }
+        | hf::HfError::Gated {
+            had_token: false, ..
+        } => strings::fill("or-paste-a-token", &[&text]),
         _ => text,
     }
 }
@@ -302,7 +313,11 @@ fn request_token(
 /// the one `llama-server -hf` would pick and on the one recommended for this
 /// machine (`hf_fit::recommend`).
 fn candidate_label(c: &hf::Candidate, is_default: bool, is_recommended: bool) -> String {
-    let name = if c.tag.is_empty() { c.primary().name().to_string() } else { c.tag.clone() };
+    let name = if c.tag.is_empty() {
+        c.primary().name().to_string()
+    } else {
+        c.tag.clone()
+    };
     let mut parts = vec![name, hf::format_size(c.size)];
     if c.shards.len() > 1 {
         parts.push(strings::fill("shards", &[&c.shards.len()]));
@@ -330,7 +345,10 @@ fn candidate_label(c: &hf::Candidate, is_default: bool, is_recommended: bool) ->
 
 /// A candidate row's second line: its placement estimate (or why there is
 /// none), led by the recommendation when it is the one.
-fn candidate_detail(slot: &Option<Result<(hf_fit::Estimate, u64), String>>, recommended: Option<&str>) -> String {
+fn candidate_detail(
+    slot: &Option<Result<(hf_fit::Estimate, u64), String>>,
+    recommended: Option<&str>,
+) -> String {
     let label = match slot {
         None => strings::t("estimating"),
         Some(Ok((e, ctx))) => hf_fit::estimate_label(e, *ctx),
@@ -357,7 +375,13 @@ fn drafter_options(c: &hf::Candidate) -> Vec<String> {
 fn drafter_labels(options: &[String]) -> Vec<String> {
     options
         .iter()
-        .map(|o| if o == "none" { strings::t("none") } else { o.clone() })
+        .map(|o| {
+            if o == "none" {
+                strings::t("none")
+            } else {
+                o.clone()
+            }
+        })
         .collect()
 }
 
@@ -392,7 +416,10 @@ fn selection_summary(c: &hf::Candidate, mmproj: bool, drafter: Option<hf::Sideca
     if count == 1 {
         strings::fill("fetches-one", &[&hf::format_size(size), &files.join(", ")])
     } else {
-        strings::fill("fetches-many", &[&count, &hf::format_size(size), &files.join(", ")])
+        strings::fill(
+            "fetches-many",
+            &[&count, &hf::format_size(size), &files.join(", ")],
+        )
     }
 }
 
@@ -414,7 +441,11 @@ fn busy_refusal(repo: &str) -> String {
 
 /// A Downloads row's title: the repository and the quantization.
 fn job_title(repo: &str, c: &hf::Candidate) -> String {
-    let quant = if c.tag.is_empty() { c.primary().name().to_string() } else { c.tag.clone() };
+    let quant = if c.tag.is_empty() {
+        c.primary().name().to_string()
+    } else {
+        c.tag.clone()
+    };
     format!("{repo}  ·  {quant}")
 }
 
@@ -457,7 +488,11 @@ fn refresh_summary(app: &AppWindow, state: &Rc<RefCell<State>>) {
         .ok()
         .and_then(|i| st.hf.listing.as_ref()?.candidates.get(i));
     let text = c.map_or_else(String::new, |c| {
-        selection_summary(c, s.get_hf_take_mmproj(), drafter_choice(s.get_hf_drafter().as_str()))
+        selection_summary(
+            c,
+            s.get_hf_take_mmproj(),
+            drafter_choice(s.get_hf_drafter().as_str()),
+        )
     });
     s.set_hf_selection_summary(SharedString::from(text));
 }
@@ -476,7 +511,9 @@ fn pick(app: &AppWindow, state: &Rc<RefCell<State>>, index: i32) {
     let s = app.global::<AppState>();
     let (picked, wish_mmproj, wish_drafter) = {
         let st = state.borrow();
-        let c = usize::try_from(index).ok().and_then(|i| st.hf.listing.as_ref()?.candidates.get(i).cloned());
+        let c = usize::try_from(index)
+            .ok()
+            .and_then(|i| st.hf.listing.as_ref()?.candidates.get(i).cloned());
         (c, st.hf.wish_mmproj, st.hf.wish_drafter)
     };
     let Some(c) = picked else {
@@ -488,7 +525,9 @@ fn pick(app: &AppWindow, state: &Rc<RefCell<State>>, index: i32) {
     let drafters = drafter_options(&c);
     s.set_hf_drafter_labels(string_model(drafter_labels(&drafters)));
     s.set_hf_drafter_options(string_model(drafters));
-    let drafter = wish_drafter.filter(|k| c.sidecar(*k).is_some()).map_or("none", |k| k.label());
+    let drafter = wish_drafter
+        .filter(|k| c.sidecar(*k).is_some())
+        .map_or("none", |k| k.label());
     s.set_hf_drafter(SharedString::from(drafter));
     refresh_summary(app, state);
     refresh_resume(app, state, &models_dir());
@@ -568,7 +607,10 @@ fn recompute(h: &mut Session) -> Option<i32> {
         })
         .collect();
     let rec = hf_fit::recommend(&rows);
-    let to = rec.as_ref().filter(|_| !h.user_picked).map(|r| r.index as i32);
+    let to = rec
+        .as_ref()
+        .filter(|_| !h.user_picked)
+        .map(|r| r.index as i32);
     h.recommended = rec;
     to
 }
@@ -580,29 +622,40 @@ fn spawn_drafts(app: &AppWindow, state: &Rc<RefCell<State>>) {
     let job = {
         let mut st = state.borrow_mut();
         let h = &mut st.hf;
-        let (Some(kind), Some(l), Some(_)) = (h.wish_drafter, h.listing.as_ref(), h.budget.as_ref()) else {
+        let (Some(kind), Some(l), Some(_)) =
+            (h.wish_drafter, h.listing.as_ref(), h.budget.as_ref())
+        else {
             return;
         };
         let mut files: Vec<hf::RepoFile> = Vec::new();
         for f in l.candidates.iter().filter_map(|c| c.sidecar(kind)) {
-            if !h.drafts.contains_key(&f.path) && !h.drafts_pending.contains(&f.path) && !files.iter().any(|x| x.path == f.path) {
+            if !h.drafts.contains_key(&f.path)
+                && !h.drafts_pending.contains(&f.path)
+                && !files.iter().any(|x| x.path == f.path)
+            {
                 files.push(f.clone());
             }
         }
         if files.is_empty() {
             return;
         }
-        h.drafts_pending.extend(files.iter().map(|f| f.path.clone()));
+        h.drafts_pending
+            .extend(files.iter().map(|f| f.path.clone()));
         (l.repo.clone(), l.commit.clone(), files, h.generation)
     };
-    let token: Option<hf::Token> =
-        request_token(app.global::<AppState>().get_hf_token().as_str(), hf::token_from_env).unwrap_or_default();
+    let token: Option<hf::Token> = request_token(
+        app.global::<AppState>().get_hf_token().as_str(),
+        hf::token_from_env,
+    )
+    .unwrap_or_default();
     let app_weak = app.as_weak();
     spawn_request(move || {
         let (repo, commit, files, generation) = job;
         let endpoint = hf::endpoint();
         for f in files {
-            let result = hf_fit::fetch_draft_shape(&hf::Curl, &endpoint, &repo, &commit, &f, token.as_ref()).map_err(|e| e.to_string());
+            let result =
+                hf_fit::fetch_draft_shape(&hf::Curl, &endpoint, &repo, &commit, &f, token.as_ref())
+                    .map_err(|e| e.to_string());
             let weak = app_weak.clone();
             slint::invoke_from_event_loop(move || {
                 let (Some(app), Some(state)) = (weak.upgrade(), shared_state()) else {
@@ -619,7 +672,12 @@ fn spawn_drafts(app: &AppWindow, state: &Rc<RefCell<State>>) {
 }
 
 /// A drafter file's header landed (current generation): its rows again.
-fn drafted(app: &AppWindow, state: &Rc<RefCell<State>>, path: String, result: Result<std::sync::Arc<hf_fit::DraftShape>, String>) {
+fn drafted(
+    app: &AppWindow,
+    state: &Rc<RefCell<State>>,
+    path: String,
+    result: Result<std::sync::Arc<hf_fit::DraftShape>, String>,
+) {
     {
         let mut st = state.borrow_mut();
         st.hf.drafts_pending.remove(&path);
@@ -630,7 +688,11 @@ fn drafted(app: &AppWindow, state: &Rc<RefCell<State>>, path: String, result: Re
 
 /// TEST-ONLY seam: land a drafter header read as the worker does.
 #[cfg(test)]
-pub(crate) fn land_draft_for_tests(app: &AppWindow, path: &str, result: Result<std::sync::Arc<hf_fit::DraftShape>, String>) {
+pub(crate) fn land_draft_for_tests(
+    app: &AppWindow,
+    path: &str,
+    result: Result<std::sync::Arc<hf_fit::DraftShape>, String>,
+) {
     let state = shared_state().expect("hf_dialog::wire ran");
     drafted(app, &state, path.to_string(), result);
 }
@@ -640,13 +702,15 @@ pub(crate) fn land_draft_for_tests(app: &AppWindow, path: &str, result: Result<s
 fn refresh_resume(app: &AppWindow, state: &Rc<RefCell<State>>, models_dir: &Path) {
     let s = app.global::<AppState>();
     let st = state.borrow();
-    let resume = usize::try_from(s.get_hf_candidate_index()).ok().is_some_and(|i| {
-        st.hf
-            .listing
-            .as_ref()
-            .and_then(|l| Some((l, l.candidates.get(i)?)))
-            .is_some_and(|(l, c)| hf::has_partial(models_dir, &l.repo, c))
-    });
+    let resume = usize::try_from(s.get_hf_candidate_index())
+        .ok()
+        .is_some_and(|i| {
+            st.hf
+                .listing
+                .as_ref()
+                .and_then(|l| Some((l, l.candidates.get(i)?)))
+                .is_some_and(|(l, c)| hf::has_partial(models_dir, &l.repo, c))
+        });
     s.set_hf_resume(resume);
 }
 
@@ -760,11 +824,20 @@ fn search(app: &AppWindow, state: &Rc<RefCell<State>>, query: String) {
 }
 
 /// A search landed (current generation).
-fn searched(app: &AppWindow, state: &Rc<RefCell<State>>, query: String, result: Result<Vec<hf::SearchHit>, hf::HfError>) {
+fn searched(
+    app: &AppWindow,
+    state: &Rc<RefCell<State>>,
+    query: String,
+    result: Result<Vec<hf::SearchHit>, hf::HfError>,
+) {
     let s = app.global::<AppState>();
     match result {
         Ok(hits) => {
-            s.set_hf_results_title(SharedString::from(results_title(&query, hits.len(), hf::SEARCH_LIMIT)));
+            s.set_hf_results_title(SharedString::from(results_title(
+                &query,
+                hits.len(),
+                hf::SEARCH_LIMIT,
+            )));
             show_results(app, &hits, -1);
             let mut st = state.borrow_mut();
             st.hf.query = query;
@@ -802,7 +875,16 @@ fn pick_result(app: &AppWindow, state: &Rc<RefCell<State>>, index: i32) {
     let s = app.global::<AppState>();
     s.set_hf_result_index(index);
     s.set_hf_input(SharedString::from(repo.as_str()));
-    list(app, state, hf::RepoSpec { repo, tag: None, file: None }, true);
+    list(
+        app,
+        state,
+        hf::RepoSpec {
+            repo,
+            tag: None,
+            file: None,
+        },
+        true,
+    );
 }
 
 /// Back from a picked row's listing to the results, the query back in the
@@ -884,7 +966,9 @@ fn listed_with(
     match result {
         Ok(l) => {
             s.set_hf_listing_title(SharedString::from(listing_title(&l)));
-            s.set_hf_estimate_basis(SharedString::from(budget.as_ref().map(hf_fit::basis_label).unwrap_or_default()));
+            s.set_hf_estimate_basis(SharedString::from(
+                budget.as_ref().map(hf_fit::basis_label).unwrap_or_default(),
+            ));
             let n = l.candidates.len();
             let default = l.default as i32;
             let job = (l.repo.clone(), l.commit.clone(), l.candidates.clone());
@@ -913,7 +997,11 @@ fn listed_with(
         }
         Err(e) => {
             // From a picked row the results stay on screen, the error under them.
-            let back = if state.borrow().hf.results.is_empty() { Phase::Idle } else { Phase::Searched };
+            let back = if state.borrow().hf.results.is_empty() {
+                Phase::Idle
+            } else {
+                Phase::Searched
+            };
             set_phase(app, back);
             s.set_hf_error(SharedString::from(dialog_error(&e)));
         }
@@ -928,12 +1016,21 @@ fn refresh_rows(app: &AppWindow, state: &Rc<RefCell<State>>) {
     };
     let rec = st.hf.recommended.as_ref();
     let is_rec = |i: usize| rec.is_some_and(|r| r.index == i);
-    let labels: Vec<String> =
-        l.candidates.iter().enumerate().map(|(i, c)| candidate_label(c, i == l.default, is_rec(i))).collect();
+    let labels: Vec<String> = l
+        .candidates
+        .iter()
+        .enumerate()
+        .map(|(i, c)| candidate_label(c, i == l.default, is_rec(i)))
+        .collect();
     let details: Vec<String> = (0..l.candidates.len())
         .map(|i| {
             let slot = st.hf.estimates.get(i).cloned().flatten();
-            candidate_detail(&slot, rec.as_ref().filter(|r| r.index == i).map(|r| r.reason.as_str()))
+            candidate_detail(
+                &slot,
+                rec.as_ref()
+                    .filter(|r| r.index == i)
+                    .map(|r| r.reason.as_str()),
+            )
         })
         .collect();
     let s = app.global::<AppState>();
@@ -945,12 +1042,19 @@ fn refresh_rows(app: &AppWindow, state: &Rc<RefCell<State>>) {
 /// (`hf_fit::fetch_shapes`, `WORKERS` at a time), each answer landing in
 /// `estimated` as it comes. Stops early once the listing is superseded
 /// (`ESTIMATE_RUN`). Nothing is spawned under `cfg(test)` (`spawn_request`).
-fn spawn_estimates(app: &AppWindow, state: &Rc<RefCell<State>>, job: (String, String, Vec<hf::Candidate>)) {
+fn spawn_estimates(
+    app: &AppWindow,
+    state: &Rc<RefCell<State>>,
+    job: (String, String, Vec<hf::Candidate>),
+) {
     use std::sync::atomic::Ordering;
     // The listing's own token rule; a typed token that cannot be one already
     // stopped the listing, so this falls back to none only in theory.
-    let token: Option<hf::Token> =
-        request_token(app.global::<AppState>().get_hf_token().as_str(), hf::token_from_env).unwrap_or_default();
+    let token: Option<hf::Token> = request_token(
+        app.global::<AppState>().get_hf_token().as_str(),
+        hf::token_from_env,
+    )
+    .unwrap_or_default();
     let generation = state.borrow().hf.generation;
     let run = ESTIMATE_RUN.fetch_add(1, Ordering::Relaxed) + 1;
     let app_weak = app.as_weak();
@@ -985,7 +1089,12 @@ fn spawn_estimates(app: &AppWindow, state: &Rc<RefCell<State>>, job: (String, St
 /// One candidate's header landed (current generation): its estimate, and
 /// once every row has its answer the recommendation, which also moves the
 /// pick unless the user already chose a row (`reestimate`).
-fn estimated(app: &AppWindow, state: &Rc<RefCell<State>>, index: usize, result: Result<std::sync::Arc<hf_fit::Shape>, hf::HfError>) {
+fn estimated(
+    app: &AppWindow,
+    state: &Rc<RefCell<State>>,
+    index: usize,
+    result: Result<std::sync::Arc<hf_fit::Shape>, hf::HfError>,
+) {
     {
         let mut st = state.borrow_mut();
         if st.hf.budget.is_none() {
@@ -1002,14 +1111,22 @@ fn estimated(app: &AppWindow, state: &Rc<RefCell<State>>, index: usize, result: 
 /// TEST-ONLY seam: land a listing measured against `budget` (the probe is
 /// empty under test), as `listed` does.
 #[cfg(test)]
-pub(crate) fn land_listing_with_budget_for_tests(app: &AppWindow, result: Result<hf::Listing, hf::HfError>, budget: Option<hf_fit::Budget>) {
+pub(crate) fn land_listing_with_budget_for_tests(
+    app: &AppWindow,
+    result: Result<hf::Listing, hf::HfError>,
+    budget: Option<hf_fit::Budget>,
+) {
     let state = shared_state().expect("hf_dialog::wire ran");
     listed_with(app, &state, result, budget);
 }
 
 /// TEST-ONLY seam: land one candidate's header read as the worker does.
 #[cfg(test)]
-pub(crate) fn land_estimate_for_tests(app: &AppWindow, index: usize, result: Result<std::sync::Arc<hf_fit::Shape>, hf::HfError>) {
+pub(crate) fn land_estimate_for_tests(
+    app: &AppWindow,
+    index: usize,
+    result: Result<std::sync::Arc<hf_fit::Shape>, hf::HfError>,
+) {
     let state = shared_state().expect("hf_dialog::wire ran");
     estimated(app, &state, index, result);
 }
@@ -1045,13 +1162,25 @@ fn download(app: &AppWindow, state: &Rc<RefCell<State>>) {
         if st.downloads.busy_with(&listing.repo) {
             Err(busy_refusal(&listing.repo))
         } else {
-            let detail = listing.candidates.get(index).map(|c| selection_summary(c, mmproj, drafter)).unwrap_or_default();
-            hf::DownloadJob::for_server(listing, index, mmproj, drafter, models_dir(), token, server_exe)
-                .map(|job| {
-                    let title = job_title(&job.repo, &job.candidate);
-                    (job, title, detail)
-                })
-                .map_err(|e| dialog_error(&e))
+            let detail = listing
+                .candidates
+                .get(index)
+                .map(|c| selection_summary(c, mmproj, drafter))
+                .unwrap_or_default();
+            hf::DownloadJob::for_server(
+                listing,
+                index,
+                mmproj,
+                drafter,
+                models_dir(),
+                token,
+                server_exe,
+            )
+            .map(|job| {
+                let title = job_title(&job.repo, &job.candidate);
+                (job, title, detail)
+            })
+            .map_err(|e| dialog_error(&e))
         }
     };
     let (job, title, detail) = match built {
@@ -1064,7 +1193,11 @@ fn download(app: &AppWindow, state: &Rc<RefCell<State>>) {
     // Against the budget the rows were estimated with, so the preset gets the
     // split the picked row showed.
     let budget = state.borrow().hf.budget.clone();
-    set_status(app, strings::fill("downloading-in-background", &[&title]), false);
+    set_status(
+        app,
+        strings::fill("downloading-in-background", &[&title]),
+        false,
+    );
     // The dialog's part ends here: close it as a dismiss does (a header read
     // still in flight lands on nothing), then hand the job over.
     dismiss(app, state);
@@ -1130,7 +1263,11 @@ pub(super) fn wire(app: &AppWindow, state: &Rc<RefCell<State>>) {
 /// TEST-ONLY seam for the e2e flow (src/tests/save_flow.rs): land a search's
 /// answer exactly as the worker's closure does, without a network.
 #[cfg(test)]
-pub(crate) fn land_search_for_tests(app: &AppWindow, query: &str, result: Result<Vec<hf::SearchHit>, hf::HfError>) {
+pub(crate) fn land_search_for_tests(
+    app: &AppWindow,
+    query: &str,
+    result: Result<Vec<hf::SearchHit>, hf::HfError>,
+) {
     let state = shared_state().expect("hf_dialog::wire ran");
     searched(app, &state, query.to_string(), result);
 }
@@ -1148,7 +1285,11 @@ mod tests {
     use hf::{Candidate, HfError, RepoFile, Sidecar};
 
     fn file(path: &str, size: u64) -> RepoFile {
-        RepoFile { path: path.into(), size, oid: String::new() }
+        RepoFile {
+            path: path.into(),
+            size,
+            oid: String::new(),
+        }
     }
 
     fn candidate(tag: &str, shards: usize) -> Candidate {
@@ -1156,14 +1297,33 @@ mod tests {
             vec![file(&format!("M-{tag}.gguf"), 4 << 30)]
         } else {
             (1..=shards)
-                .map(|i| file(&format!("{tag}/M-{tag}-0000{i}-of-0000{shards}.gguf"), 2 << 30))
+                .map(|i| {
+                    file(
+                        &format!("{tag}/M-{tag}-0000{i}-of-0000{shards}.gguf"),
+                        2 << 30,
+                    )
+                })
                 .collect()
         };
         let size = shards.iter().map(|f| f.size).sum();
-        Candidate { tag: tag.into(), shards, size, mmproj: None, mtp: None, dflash: None, dspark: None }
+        Candidate {
+            tag: tag.into(),
+            shards,
+            size,
+            mmproj: None,
+            mtp: None,
+            dflash: None,
+            dspark: None,
+        }
     }
 
-    const ALL: [Phase; 5] = [Phase::Idle, Phase::Searching, Phase::Searched, Phase::Listing, Phase::Listed];
+    const ALL: [Phase; 5] = [
+        Phase::Idle,
+        Phase::Searching,
+        Phase::Searched,
+        Phase::Listing,
+        Phase::Listed,
+    ];
 
     #[test]
     fn phase_numbering_is_the_ui_contract() {
@@ -1171,7 +1331,11 @@ mod tests {
             assert_eq!(Phase::from_int(p as i32), p);
         }
         assert_eq!(Phase::from_int(99), Phase::Idle);
-        assert_eq!(Phase::from_int(5), Phase::Idle, "the old transfer phases are gone: no transfer runs in the dialog");
+        assert_eq!(
+            Phase::from_int(5),
+            Phase::Idle,
+            "the old transfer phases are gone: no transfer runs in the dialog"
+        );
         for p in ALL {
             let n = p as i32;
             // state.slint: `hf_busy: hf_phase == 1 || hf_phase == 3`, `hf_show_results: hf_phase <= 2`.
@@ -1185,11 +1349,22 @@ mod tests {
     #[test]
     fn phase_transitions_allow_one_request_at_a_time() {
         let can: Vec<Phase> = ALL.into_iter().filter(|p| p.can_request()).collect();
-        assert_eq!(can, [Phase::Idle, Phase::Searched, Phase::Listed], "search, list and a row pick");
-        assert!(!Phase::Searching.can_request(), "one search at a time, as the button says");
+        assert_eq!(
+            can,
+            [Phase::Idle, Phase::Searched, Phase::Listed],
+            "search, list and a row pick"
+        );
+        assert!(
+            !Phase::Searching.can_request(),
+            "one search at a time, as the button says"
+        );
         assert!(!Phase::Listing.can_request(), "one listing at a time");
         // A picked row's listing hides the results; Back returns to them.
-        assert!(Phase::Searched.shows_results() && !Phase::Listing.shows_results() && !Phase::Listed.shows_results());
+        assert!(
+            Phase::Searched.shows_results()
+                && !Phase::Listing.shows_results()
+                && !Phase::Listed.shows_results()
+        );
     }
 
     #[test]
@@ -1198,7 +1373,10 @@ mod tests {
         assert_eq!(input_problem("   "), "");
         assert_eq!(input_problem("unsloth/Qwen3-8B-GGUF"), "");
         assert_eq!(input_problem("unsloth/Qwen3-8B-GGUF:Q4_K_M"), "");
-        assert_eq!(input_problem("https://huggingface.co/unsloth/Qwen3-8B-GGUF/tree/main"), "");
+        assert_eq!(
+            input_problem("https://huggingface.co/unsloth/Qwen3-8B-GGUF/tree/main"),
+            ""
+        );
         assert_eq!(input_problem("qwen3 8b"), "", "words are a search");
         let bad = input_problem("org/repo:");
         assert!(bad.starts_with("Not a quant tag"), "{bad}");
@@ -1210,10 +1388,16 @@ mod tests {
     fn the_button_searches_words_and_lists_a_repository() {
         assert!(input_is_query("qwen3 8b"));
         assert!(input_is_query("tinygemma3"));
-        assert!(!input_is_query("unsloth/Qwen3-8B-GGUF"), "a spec goes straight to the listing");
+        assert!(
+            !input_is_query("unsloth/Qwen3-8B-GGUF"),
+            "a spec goes straight to the listing"
+        );
         assert!(!input_is_query("https://hf.co/org/repo"));
         assert!(!input_is_query(""));
-        assert!(!input_is_query("a/b/c"), "a mistyped spec is an error, not a search");
+        assert!(
+            !input_is_query("a/b/c"),
+            "a mistyped spec is an error, not a search"
+        );
     }
 
     fn hit(repo: &str, downloads: u64, quants: &[&str]) -> hf::SearchHit {
@@ -1233,15 +1417,28 @@ mod tests {
     #[test]
     fn result_rows_carry_repo_downloads_access_and_quants() {
         let mut h = hit("Qwen/Qwen3-8B-GGUF", 644_587, &["Q4_K_M", "Q5_K_M", "Q8_0"]);
-        assert_eq!(result_label(&h), "Qwen/Qwen3-8B-GGUF  ·  644.6k downloads", "no gguf summary, no marker");
+        assert_eq!(
+            result_label(&h),
+            "Qwen/Qwen3-8B-GGUF  ·  644.6k downloads",
+            "no gguf summary, no marker"
+        );
         h.kind = hf::ModelKind::Dense;
         h.params = Some(8_190_735_360);
-        assert_eq!(result_label(&h), "Qwen/Qwen3-8B-GGUF  ·  dense 8.2B  ·  644.6k downloads");
+        assert_eq!(
+            result_label(&h),
+            "Qwen/Qwen3-8B-GGUF  ·  dense 8.2B  ·  644.6k downloads"
+        );
         h.kind = hf::ModelKind::Unknown;
-        assert_eq!(result_label(&h), "Qwen/Qwen3-8B-GGUF  ·  8.2B, dense/MoE unknown  ·  644.6k downloads");
+        assert_eq!(
+            result_label(&h),
+            "Qwen/Qwen3-8B-GGUF  ·  8.2B, dense/MoE unknown  ·  644.6k downloads"
+        );
         h.kind = hf::ModelKind::Moe;
         h.params = Some(30_532_122_624);
-        assert_eq!(result_label(&h), "Qwen/Qwen3-8B-GGUF  ·  MoE 30.5B  ·  644.6k downloads");
+        assert_eq!(
+            result_label(&h),
+            "Qwen/Qwen3-8B-GGUF  ·  MoE 30.5B  ·  644.6k downloads"
+        );
         h.kind = hf::ModelKind::Unknown;
         h.params = None;
         assert_eq!(result_detail(&h), "Q4_K_M, Q5_K_M, Q8_0");
@@ -1249,39 +1446,73 @@ mod tests {
         h.private = true;
         h.mmproj = true;
         h.drafters = vec![Sidecar::Mtp];
-        assert_eq!(result_label(&h), "Qwen/Qwen3-8B-GGUF  ·  644.6k downloads  ·  gated  ·  private");
-        assert_eq!(result_detail(&h), "Q4_K_M, Q5_K_M, Q8_0  ·  with mmproj, MTP");
+        assert_eq!(
+            result_label(&h),
+            "Qwen/Qwen3-8B-GGUF  ·  644.6k downloads  ·  gated  ·  private"
+        );
+        assert_eq!(
+            result_detail(&h),
+            "Q4_K_M, Q5_K_M, Q8_0  ·  with mmproj, MTP"
+        );
         let empty = hit("o/r", 3, &[]);
         assert_eq!(result_detail(&empty), "no GGUF model file");
     }
 
     #[test]
     fn the_results_title_counts_and_says_when_the_limit_cut_it() {
-        assert_eq!(results_title("zzz", 0, 30), "No GGUF repository matches \"zzz\".");
-        assert_eq!(results_title("q", 1, 30), "1 GGUF repository for \"q\"; downloads over the last 30 days");
-        assert!(results_title("q", 4, 30).starts_with("4 GGUF repositories for \"q\", most downloaded first"));
+        assert_eq!(
+            results_title("zzz", 0, 30),
+            "No GGUF repository matches \"zzz\"."
+        );
+        assert_eq!(
+            results_title("q", 1, 30),
+            "1 GGUF repository for \"q\"; downloads over the last 30 days"
+        );
+        assert!(results_title("q", 4, 30)
+            .starts_with("4 GGUF repositories for \"q\", most downloaded first"));
         assert!(results_title("q", 30, 30).contains("(add words to narrow it)"));
     }
 
     #[test]
     fn dialog_errors_point_at_the_token_field_where_a_token_would_help() {
         let e = dialog_error(&HfError::NotFoundOrPrivate { repo: "o/r".into() });
-        assert!(e.starts_with("Repository o/r not found") && e.ends_with("Access token field."), "{e}");
-        let e = dialog_error(&HfError::Gated { repo: "o/r".into(), had_token: false });
+        assert!(
+            e.starts_with("Repository o/r not found") && e.ends_with("Access token field."),
+            "{e}"
+        );
+        let e = dialog_error(&HfError::Gated {
+            repo: "o/r".into(),
+            had_token: false,
+        });
         assert!(e.ends_with("Access token field."), "{e}");
-        let e = dialog_error(&HfError::Gated { repo: "o/r".into(), had_token: true });
+        let e = dialog_error(&HfError::Gated {
+            repo: "o/r".into(),
+            had_token: true,
+        });
         assert!(!e.contains("Access token field"), "{e}");
-        assert_eq!(dialog_error(&HfError::Network("timeout".into())), "Network error: timeout");
+        assert_eq!(
+            dialog_error(&HfError::Network("timeout".into())),
+            "Network error: timeout"
+        );
     }
 
     #[test]
     fn a_typed_token_wins_and_an_empty_field_falls_back_to_the_environment() {
         let env = || hf::Token::new("hf_env").ok();
-        assert_eq!(request_token("", env).unwrap(), hf::Token::new("hf_env").ok());
+        assert_eq!(
+            request_token("", env).unwrap(),
+            hf::Token::new("hf_env").ok()
+        );
         assert_eq!(request_token("  ", || None).unwrap(), None);
-        assert_eq!(request_token(" hf_typed ", env).unwrap(), hf::Token::new("hf_typed").ok());
+        assert_eq!(
+            request_token(" hf_typed ", env).unwrap(),
+            hf::Token::new("hf_typed").ok()
+        );
         let err = request_token("hf bad", env).unwrap_err();
-        assert!(!err.to_string().contains("hf bad"), "the error never echoes the token");
+        assert!(
+            !err.to_string().contains("hf bad"),
+            "the error never echoes the token"
+        );
     }
 
     #[test]
@@ -1290,13 +1521,19 @@ mod tests {
         assert_eq!(candidate_label(&c, false, false), "Q4_K_M  ·  4.00 GiB");
         c.mmproj = Some(file("mmproj-F16.gguf", 600 << 20));
         c.mtp = Some(file("mtp-Q8_0.gguf", 300 << 20));
-        assert_eq!(candidate_label(&c, true, false), "Q4_K_M  ·  4.00 GiB  ·  with mmproj, MTP  ·  default");
+        assert_eq!(
+            candidate_label(&c, true, false),
+            "Q4_K_M  ·  4.00 GiB  ·  with mmproj, MTP  ·  default"
+        );
         assert_eq!(
             candidate_label(&c, true, true),
             "Q4_K_M  ·  4.00 GiB  ·  with mmproj, MTP  ·  default  ·  recommended"
         );
         let c = candidate("BF16", 2);
-        assert_eq!(candidate_label(&c, false, false), "BF16  ·  4.00 GiB  ·  2 shards");
+        assert_eq!(
+            candidate_label(&c, false, false),
+            "BF16  ·  4.00 GiB  ·  2 shards"
+        );
         let mut c = candidate("", 1);
         c.shards[0].path = "dir/model.gguf".into();
         assert!(candidate_label(&c, false, false).starts_with("model.gguf  ·  "));
@@ -1305,8 +1542,18 @@ mod tests {
     #[test]
     fn candidate_details_say_estimating_the_estimate_or_why_not() {
         assert_eq!(candidate_detail(&None, None), strings::t("estimating"));
-        let e = hf_fit::Estimate::plain(hf_fit::Fit::Gpu { need: 6 << 30, budget: 12 << 30 }, Some(0), vec![]);
-        assert_eq!(candidate_detail(&Some(Ok((e.clone(), 32768))), None), "all on GPU: 6.0 of 12.0 GiB with a 32k context");
+        let e = hf_fit::Estimate::plain(
+            hf_fit::Fit::Gpu {
+                need: 6 << 30,
+                budget: 12 << 30,
+            },
+            Some(0),
+            vec![],
+        );
+        assert_eq!(
+            candidate_detail(&Some(Ok((e.clone(), 32768))), None),
+            "all on GPU: 6.0 of 12.0 GiB with a 32k context"
+        );
         assert_eq!(
             candidate_detail(&Some(Ok((e, 32768))), Some("the best quality that fits in GPU memory")),
             "recommended, the best quality that fits in GPU memory: all on GPU: 6.0 of 12.0 GiB with a 32k context"
@@ -1347,7 +1594,10 @@ mod tests {
         // A drafter the candidate lacks adds nothing (the job would refuse it).
         assert!(selection_summary(&c, false, Some(Sidecar::Dspark)).starts_with("Fetches 2 files"));
         let c = candidate("Q4_K_M", 1);
-        assert_eq!(selection_summary(&c, true, None), "Fetches 1 file, 4.00 GiB: M-Q4_K_M.gguf");
+        assert_eq!(
+            selection_summary(&c, true, None),
+            "Fetches 1 file, 4.00 GiB: M-Q4_K_M.gguf"
+        );
     }
 
     #[test]
@@ -1355,9 +1605,17 @@ mod tests {
         assert_eq!(job_title("o/r", &candidate("Q4_K_M", 1)), "o/r  ·  Q4_K_M");
         let mut c = candidate("", 1);
         c.shards[0].path = "dir/model.gguf".into();
-        assert_eq!(job_title("o/r", &c), "o/r  ·  model.gguf", "no tag: the file");
+        assert_eq!(
+            job_title("o/r", &c),
+            "o/r  ·  model.gguf",
+            "no tag: the file"
+        );
         let refused = busy_refusal("o/r");
-        assert!(refused.starts_with("o/r is already downloading") && refused.contains("one download per repository"), "{refused}");
+        assert!(
+            refused.starts_with("o/r is already downloading")
+                && refused.contains("one download per repository"),
+            "{refused}"
+        );
     }
 
     #[test]

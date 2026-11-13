@@ -203,7 +203,10 @@ fn custom_row(current: &str) -> (String, String) {
         .file_name()
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_else(|| current.to_string());
-    (strings::fill("custom-entry", &[&basename]), current.to_string())
+    (
+        strings::fill("custom-entry", &[&basename]),
+        current.to_string(),
+    )
 }
 
 /// Build the unified draft-model dropdown that merges MTP heads (`mtps\`) and

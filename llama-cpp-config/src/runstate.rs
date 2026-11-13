@@ -332,7 +332,10 @@ pub fn start() -> io::Result<Option<crate::server_cfg::ServerConfig>> {
     let exe = crate::paths::llama_server_exe().ok_or_else(|| {
         io::Error::new(
             io::ErrorKind::NotFound,
-            strings::fill("binary-not-found", &[&crate::paths::binary_name("llama-server")]),
+            strings::fill(
+                "binary-not-found",
+                &[&crate::paths::binary_name("llama-server")],
+            ),
         )
     })?;
 
@@ -411,7 +414,10 @@ pub fn start() -> io::Result<Option<crate::server_cfg::ServerConfig>> {
         match child.try_wait() {
             // Exited during the grace window → a failed launch, not a running server.
             Ok(Some(status)) => {
-                return Err(io::Error::other(strings::fill("exited-on-launch", &[&status, &log_path.display()])));
+                return Err(io::Error::other(strings::fill(
+                    "exited-on-launch",
+                    &[&status, &log_path.display()],
+                )));
             }
             // Still alive: keep it running and stop watching.
             Ok(None) => {}
@@ -1048,7 +1054,10 @@ mod tests {
             a.contains(&"localhost".to_string()),
             "host is always written"
         );
-        assert!(!a.contains(&"--webui-mcp-proxy".to_string()), "off unless asked for");
+        assert!(
+            !a.contains(&"--webui-mcp-proxy".to_string()),
+            "off unless asked for"
+        );
     }
 
     #[test]

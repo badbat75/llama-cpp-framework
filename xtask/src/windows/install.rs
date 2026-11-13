@@ -23,7 +23,10 @@ const PKG_NAME: &str = "llama-cpp-framework";
 const UNINSTALL_KEY: &str = r"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\llama.cpp";
 
 fn name(p: &Path) -> String {
-    p.file_name().unwrap_or_default().to_string_lossy().into_owned()
+    p.file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .into_owned()
 }
 
 fn modified(p: &Path) -> Option<std::time::SystemTime> {
@@ -35,7 +38,11 @@ fn reg_value(value: &str) -> Option<String> {
     let text = output(cmd("reg").args(["query", UNINSTALL_KEY, "/v", value, "/reg:64"]))?;
     // "    <name>    REG_SZ    <data>"
     text.lines().find_map(|l| {
-        let rest = l.trim().strip_prefix(value)?.trim_start().strip_prefix("REG_SZ")?;
+        let rest = l
+            .trim()
+            .strip_prefix(value)?
+            .trim_start()
+            .strip_prefix("REG_SZ")?;
         Some(rest.trim().to_string())
     })
 }
@@ -52,7 +59,11 @@ fn msiexec(args: &[String], log: &Path) -> Result<()> {
             Ok(())
         }
         Some(1602) => bail!("cancelled"),
-        code => bail!("msiexec failed (exit {}), see {}", code.map_or("none".into(), |c| c.to_string()), log.display()),
+        code => bail!(
+            "msiexec failed (exit {}), see {}",
+            code.map_or("none".into(), |c| c.to_string()),
+            log.display()
+        ),
     }
 }
 
@@ -61,7 +72,11 @@ pub fn run(dry_run: bool, file: Option<PathBuf>) -> Result<()> {
     let prefix = format!("{PKG_NAME}-v");
     let msi = match file {
         Some(f) => {
-            if !f.is_file() || f.extension().map(|e| !e.eq_ignore_ascii_case("msi")).unwrap_or(true) {
+            if !f.is_file()
+                || f.extension()
+                    .map(|e| !e.eq_ignore_ascii_case("msi"))
+                    .unwrap_or(true)
+            {
                 bail!("not an .msi: {}", f.display());
             }
             util::absolute(&f)
@@ -75,7 +90,12 @@ pub fn run(dry_run: bool, file: Option<PathBuf>) -> Result<()> {
                 n.starts_with(&prefix) && n.ends_with("-x64.msi")
             })
             .max_by_key(|p| modified(p))
-            .with_context(|| format!("no {PKG_NAME} .msi in {}. Run cargo run -p xtask -- package first.", out_dir.display()))?,
+            .with_context(|| {
+                format!(
+                    "no {PKG_NAME} .msi in {}. Run cargo run -p xtask -- package first.",
+                    out_dir.display()
+                )
+            })?,
     };
     // llama-cpp-framework-v<fw>-<llama>-x64.msi -> <fw>
     let new_version = name(&msi)
@@ -86,7 +106,14 @@ pub fn run(dry_run: bool, file: Option<PathBuf>) -> Result<()> {
     let old_version = reg_value("DisplayVersion").unwrap_or_default();
 
     ui::head(format!("Package:   {}", name(&msi)));
-    ui::head(format!("Installed: {}", if old_version.is_empty() { "none" } else { &old_version }));
+    ui::head(format!(
+        "Installed: {}",
+        if old_version.is_empty() {
+            "none"
+        } else {
+            &old_version
+        }
+    ));
 
     let logs = util::build_root();
     std::fs::create_dir_all(&logs)?;
@@ -98,13 +125,18 @@ pub fn run(dry_run: bool, file: Option<PathBuf>) -> Result<()> {
         let code = reg_value("UninstallString")
             .and_then(|s| Some(s[s.find('{')?..=s.find('}')?].to_string()))
             .context("downgrade: the installed version's ProductCode is not in its Apps entry; uninstall it from Settings > Apps")?;
-        ui::warn(format!("Downgrade: {old_version} is removed first (user data kept)"));
+        ui::warn(format!(
+            "Downgrade: {old_version} is removed first (user data kept)"
+        ));
         remove = Some(vec!["/x".to_string(), code, "/qb".into()]);
     }
     let install = vec!["/i".to_string(), msi.display().to_string(), "/qb".into()];
 
     for args in remove.iter().chain([&install]) {
-        ui::head(format!("Running: msiexec {} /norestart /l*v <log>", args.join(" ")));
+        ui::head(format!(
+            "Running: msiexec {} /norestart /l*v <log>",
+            args.join(" ")
+        ));
     }
     if dry_run {
         ui::dim("(dry run: nothing installed)");
@@ -119,7 +151,11 @@ pub fn run(dry_run: bool, file: Option<PathBuf>) -> Result<()> {
     if version != new_version {
         bail!(
             "the Apps entry reports '{}', the package is {new_version}",
-            if version.is_empty() { "nothing" } else { &version }
+            if version.is_empty() {
+                "nothing"
+            } else {
+                &version
+            }
         );
     }
     ui::say("");

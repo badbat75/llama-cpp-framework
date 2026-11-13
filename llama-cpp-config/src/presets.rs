@@ -906,7 +906,10 @@ fn comment_value(comments: &[String], word: &str) -> String {
     comments
         .iter()
         .find_map(|c| {
-            let rest = c.strip_prefix([';', '#'])?.trim_start().strip_prefix(word)?;
+            let rest = c
+                .strip_prefix([';', '#'])?
+                .trim_start()
+                .strip_prefix(word)?;
             Some(rest.trim_start().strip_prefix('=')?.trim().to_string())
         })
         .unwrap_or_default()
@@ -1233,7 +1236,10 @@ const DISABLED_FILE_HEADER: &str = "\
 pub fn set_enabled(id: &str, enabled: bool) -> io::Result<()> {
     let (on, off) = (paths::presets_ini(), paths::presets_disabled_ini());
     if enabled {
-        if let Some(p) = read_presets(&off).iter().find(|p| p.id.eq_ignore_ascii_case(id)) {
+        if let Some(p) = read_presets(&off)
+            .iter()
+            .find(|p| p.id.eq_ignore_ascii_case(id))
+        {
             check_startup_for(p)?;
         }
         move_section(id, &off, &on, None)
@@ -1521,7 +1527,11 @@ pub(crate) fn id_taken(id: &str, existing: &[String]) -> bool {
 /// the three can never disagree on it.
 pub(crate) fn new_preset_id(model_path: &str, existing: &[String]) -> String {
     let base = make_id(model_path);
-    let base = if base.is_empty() { "preset".to_string() } else { base };
+    let base = if base.is_empty() {
+        "preset".to_string()
+    } else {
+        base
+    };
     unique_id(&base, existing)
 }
 
@@ -1585,13 +1595,20 @@ pub fn render_section(p: &Preset) -> String {
         out.push_str(&format!("{PROJECT_URL_MARKER}{}\r\n", p.project_url.trim()));
     }
     if !p.placement_note.trim().is_empty() {
-        out.push_str("; Where device, tensor-split, n-cpu-moe, n-gpu-layers and ctx-size came from.\r\n");
-        out.push_str(&format!("{PLACEMENT_MARKER}{}\r\n", p.placement_note.trim()));
+        out.push_str(
+            "; Where device, tensor-split, n-cpu-moe, n-gpu-layers and ctx-size came from.\r\n",
+        );
+        out.push_str(&format!(
+            "{PLACEMENT_MARKER}{}\r\n",
+            p.placement_note.trim()
+        ));
     }
     out.push_str("; Model: local path (-m).\r\n");
     out.push_str(&format!("model = {}\r\n", p.model.trim()));
     if p.load_on_startup {
-        out.push_str("; load-on-startup = true loads the model when the router starts, not on the\r\n");
+        out.push_str(
+            "; load-on-startup = true loads the model when the router starts, not on the\r\n",
+        );
         out.push_str("; first request (a preset-only key). Omit the key = load on demand.\r\n");
         out.push_str("load-on-startup = true\r\n");
     }
@@ -1883,9 +1900,7 @@ pub fn render_section(p: &Preset) -> String {
     out.push_str(
         "; when experts sit in RAM (figures in the Qwen3.8-Flash-Next guide). Decode is\r\n",
     );
-    out.push_str(
-        "; unchanged, and it is a no-op when every weight is in\r\n",
-    );
+    out.push_str("; unchanged, and it is a no-op when every weight is in\r\n");
     out.push_str("; VRAM.\r\n");
     emit_bool(&mut out, "op-offload", p.op_offload);
     out.push_str(
@@ -2198,8 +2213,14 @@ mod tests {
             spec_type_with_drafter("ngram-map-k4v,draft-mtp", "draft-dflash"),
             "ngram-map-k4v,draft-dflash"
         );
-        assert_eq!(spec_type_with_drafter("ngram-mod,draft-mtp", "none"), "ngram-mod");
-        assert_eq!(spec_type_with_drafter("none", "draft-dflash"), "draft-dflash");
+        assert_eq!(
+            spec_type_with_drafter("ngram-mod,draft-mtp", "none"),
+            "ngram-mod"
+        );
+        assert_eq!(
+            spec_type_with_drafter("none", "draft-dflash"),
+            "draft-dflash"
+        );
 
         assert_eq!(
             spec_type_with_ngram("draft-dflash", "ngram-map-k4v", true),
@@ -2211,7 +2232,10 @@ mod tests {
         );
         assert_eq!(spec_type_with_ngram("ngram-mod", "ngram-mod", false), "");
         // Ticking twice lists it once.
-        assert_eq!(spec_type_with_ngram("ngram-mod", "ngram-mod", true), "ngram-mod");
+        assert_eq!(
+            spec_type_with_ngram("ngram-mod", "ngram-mod", true),
+            "ngram-mod"
+        );
     }
 
     // Only the selected n-gram type keeps its tuning keys; the others are
@@ -2618,11 +2642,23 @@ mod tests {
     #[test]
     fn project_url_is_read_from_its_comment_only() {
         let c = |lines: &[&str]| -> Vec<String> { lines.iter().map(|s| s.to_string()).collect() };
-        assert_eq!(project_url_of(&c(&["; url = https://a.b/c"])), "https://a.b/c");
-        assert_eq!(project_url_of(&c(&["#url=https://a.b/c#x"])), "https://a.b/c#x");
-        assert_eq!(project_url_of(&c(&["; urls are listed below", "; Model: x"])), "");
+        assert_eq!(
+            project_url_of(&c(&["; url = https://a.b/c"])),
+            "https://a.b/c"
+        );
+        assert_eq!(
+            project_url_of(&c(&["#url=https://a.b/c#x"])),
+            "https://a.b/c#x"
+        );
+        assert_eq!(
+            project_url_of(&c(&["; urls are listed below", "; Model: x"])),
+            ""
+        );
         assert_eq!(project_url_of(&c(&["; url-ish = no"])), "");
-        assert_eq!(project_url_of(&c(&["; url = first", "; url = second"])), "first");
+        assert_eq!(
+            project_url_of(&c(&["; url = first", "; url = second"])),
+            "first"
+        );
         assert_eq!(project_url_of(&[]), "");
     }
 
@@ -2830,15 +2866,30 @@ mod tests {
     /// a derived `Qwen3-8B-Q4_K_M` must not replace a tuned `[qwen3-8b-q4_k_m]`.
     #[test]
     fn unique_id_ignores_case_and_new_ids_never_come_out_empty() {
-        let existing = vec!["qwen3-8b-q4_k_m".to_string(), "QWEN3-8B-Q4_K_M-2".to_string()];
+        let existing = vec![
+            "qwen3-8b-q4_k_m".to_string(),
+            "QWEN3-8B-Q4_K_M-2".to_string(),
+        ];
         assert!(id_taken("Qwen3-8B-Q4_K_M", &existing));
         assert_eq!(unique_id("Qwen3-8B-Q4_K_M", &existing), "Qwen3-8B-Q4_K_M-3");
         assert_eq!(
-            new_preset_id(&crate::paths::os_path(r"E:\m\Qwen3-8B-Q4_K_M.gguf"), &existing),
+            new_preset_id(
+                &crate::paths::os_path(r"E:\m\Qwen3-8B-Q4_K_M.gguf"),
+                &existing
+            ),
             "Qwen3-8B-Q4_K_M-3"
         );
-        assert_eq!(new_preset_id(&crate::paths::os_path(r"E:\m\模型.gguf"), &[]), "preset");
-        assert_eq!(new_preset_id(&crate::paths::os_path(r"E:\m\模型.gguf"), &["Preset".into()]), "preset-2");
+        assert_eq!(
+            new_preset_id(&crate::paths::os_path(r"E:\m\模型.gguf"), &[]),
+            "preset"
+        );
+        assert_eq!(
+            new_preset_id(
+                &crate::paths::os_path(r"E:\m\模型.gguf"),
+                &["Preset".into()]
+            ),
+            "preset-2"
+        );
     }
 
     // The writer trims (emit_str + the model line) because the reader trims on

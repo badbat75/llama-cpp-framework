@@ -85,9 +85,9 @@ fn substitute(text: &str, args: &[&dyn Display]) -> String {
     let mut rest = text;
     while let Some((head, tail)) = rest.split_once('{') {
         out.push_str(head);
-        let slot = tail.split_once('}').and_then(|(n, after)| {
-            Some((args.get(n.parse::<usize>().ok()?)?, after))
-        });
+        let slot = tail
+            .split_once('}')
+            .and_then(|(n, after)| Some((args.get(n.parse::<usize>().ok()?)?, after)));
         match slot {
             Some((value, after)) => {
                 out.push_str(&value.to_string());
@@ -120,14 +120,20 @@ mod tests {
     #[test]
     fn a_value_round_trips_its_escapes() {
         let table = parse(r#"some-hint = "one\ntwo \\ \"three\" \u2026""#);
-        assert_eq!(lookup(&table, "some-hint"), "one\ntwo \\ \"three\" \u{2026}");
+        assert_eq!(
+            lookup(&table, "some-hint"),
+            "one\ntwo \\ \"three\" \u{2026}"
+        );
     }
 
     #[test]
     fn placeholders_fill_in_any_order_and_other_braces_stay() {
         assert_eq!(substitute("{1} of {0}, {0}", &[&"a", &"b"]), "b of a, a");
         assert_eq!(substitute("{0}", &[&"{1}", &"b"]), "{1}");
-        assert_eq!(substitute(r#"e.g. {"x":true} {} {5} {"#, &[&"a"]), r#"e.g. {"x":true} {} {5} {"#);
+        assert_eq!(
+            substitute(r#"e.g. {"x":true} {} {5} {"#, &[&"a"]),
+            r#"e.g. {"x":true} {} {5} {"#
+        );
         assert_eq!(substitute("{0} of {1}", &[&3, &1.5]), "3 of 1.5");
     }
 
@@ -138,7 +144,11 @@ mod tests {
             let cli = crate::cli::Cli::try_parse_from(args).expect("parses");
             file_stem(crate::reader_of(Some(&cli.command)))
         };
-        assert_eq!(file_stem(crate::reader_of(None)), GUI_LANGUAGE, "no arguments: the window");
+        assert_eq!(
+            file_stem(crate::reader_of(None)),
+            GUI_LANGUAGE,
+            "no arguments: the window"
+        );
         assert_eq!(of(&["x", "gui"]), GUI_LANGUAGE);
         assert_eq!(of(&["x", "server", "show"]), "cli");
         assert_eq!(of(&["x", "preset", "list"]), "cli");

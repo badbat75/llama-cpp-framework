@@ -15,15 +15,25 @@ use anyhow::{bail, Result};
 use std::path::{Path, PathBuf};
 
 fn name(p: &Path) -> String {
-    p.file_name().unwrap_or_default().to_string_lossy().into_owned()
+    p.file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .into_owned()
 }
 
 pub fn run(force: bool, dry_run: bool, files: Vec<PathBuf>) -> Result<()> {
     let out_dir = util::repo_root().join("dist");
     let pkgs: Vec<PathBuf> = if files.is_empty() {
-        let found: Vec<PathBuf> = components::newest_in(&out_dir, "-arm64.pkg").into_iter().map(|(_, p)| p).collect();
+        let found: Vec<PathBuf> = components::newest_in(&out_dir, "-arm64.pkg")
+            .into_iter()
+            .map(|(_, p)| p)
+            .collect();
         if found.is_empty() {
-            bail!("no {} .pkg in {}. Run cargo run -p xtask -- package first.", components::BASE_NAME, out_dir.display());
+            bail!(
+                "no {} .pkg in {}. Run cargo run -p xtask -- package first.",
+                components::BASE_NAME,
+                out_dir.display()
+            );
         }
         found
     } else {
@@ -40,7 +50,9 @@ pub fn run(force: bool, dry_run: bool, files: Vec<PathBuf>) -> Result<()> {
     let config_prefix = format!("{}-v", Component::Config.package());
     let new_version = pkgs.iter().find_map(|p| {
         let file = name(p);
-        file.strip_prefix(&config_prefix).and_then(|r| r.split('-').next()).map(str::to_string)
+        file.strip_prefix(&config_prefix)
+            .and_then(|r| r.split('-').next())
+            .map(str::to_string)
     });
     let old_version = output(cmd(format!("{OPT_DIR}/bin/llama-cpp-config")).arg("--version"))
         .and_then(|s| s.split_whitespace().last().map(str::to_string))
@@ -49,11 +61,19 @@ pub fn run(force: bool, dry_run: bool, files: Vec<PathBuf>) -> Result<()> {
     for p in &pkgs {
         ui::head(format!("Package:   {}", name(p)));
     }
-    ui::head(format!("Installed: {}", if old_version.is_empty() { "none" } else { &old_version }));
+    ui::head(format!(
+        "Installed: {}",
+        if old_version.is_empty() {
+            "none"
+        } else {
+            &old_version
+        }
+    ));
 
     // ── Running programs ────────────────────────────────────────────────
     // BSD pgrep: -l with -f prints the full command line.
-    let running = output(cmd("pgrep").args(["-l", "-f", &format!("^{OPT_DIR}/bin/")])).unwrap_or_default();
+    let running =
+        output(cmd("pgrep").args(["-l", "-f", &format!("^{OPT_DIR}/bin/")])).unwrap_or_default();
     if !running.is_empty() {
         ui::warn(format!("Running from {OPT_DIR}:"));
         for line in running.lines() {
@@ -67,7 +87,13 @@ pub fn run(force: bool, dry_run: bool, files: Vec<PathBuf>) -> Result<()> {
 
     let root = output(cmd("id").arg("-u")).as_deref() == Some("0");
     for p in &pkgs {
-        let mut argv = vec!["installer".to_string(), "-pkg".into(), p.display().to_string(), "-target".into(), "/".into()];
+        let mut argv = vec![
+            "installer".to_string(),
+            "-pkg".into(),
+            p.display().to_string(),
+            "-target".into(),
+            "/".into(),
+        ];
         if !root {
             argv.insert(0, "sudo".into());
         }
@@ -88,7 +114,11 @@ pub fn run(force: bool, dry_run: bool, files: Vec<PathBuf>) -> Result<()> {
         if version != *new_version {
             bail!(
                 "{OPT_DIR}/bin/llama-cpp-config reports '{}', the package is {new_version}",
-                if version.is_empty() { "nothing" } else { &version }
+                if version.is_empty() {
+                    "nothing"
+                } else {
+                    &version
+                }
             );
         }
     }

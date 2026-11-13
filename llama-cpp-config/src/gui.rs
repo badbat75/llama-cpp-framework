@@ -201,14 +201,14 @@ pub(crate) fn wire_tabs_for_tests(app: &AppWindow) {
 }
 
 #[cfg(test)]
-pub(crate) use hf_dialog::{
-    land_draft_for_tests, land_estimate_for_tests, land_listing_for_tests, land_listing_with_budget_for_tests,
-    land_search_for_tests,
+pub(crate) use downloads::{
+    land_progress_for_tests, land_transfer_for_tests, quit_called_for_tests,
+    request_quit_for_tests, window_for_tests as downloads_window_for_tests,
 };
 #[cfg(test)]
-pub(crate) use downloads::{
-    land_progress_for_tests, land_transfer_for_tests, quit_called_for_tests, request_quit_for_tests,
-    window_for_tests as downloads_window_for_tests,
+pub(crate) use hf_dialog::{
+    land_draft_for_tests, land_estimate_for_tests, land_listing_for_tests,
+    land_listing_with_budget_for_tests, land_search_for_tests,
 };
 
 /// E2E phase for the remembered window sizes, for the shared UI test to call:
@@ -1028,8 +1028,11 @@ fn refresh_device_options(app: &AppWindow) {
     s.set_preset_mmproj_dev_values(val);
     s.set_preset_mmproj_dev_index(idx);
 
-    let (lbl, val, idx) =
-        device_options(&devs, form.device_draft.as_str(), &strings::t("device-same-as-model"));
+    let (lbl, val, idx) = device_options(
+        &devs,
+        form.device_draft.as_str(),
+        &strings::t("device-same-as-model"),
+    );
     s.set_preset_draft_dev_labels(lbl);
     s.set_preset_draft_dev_values(val);
     s.set_preset_draft_dev_index(idx);
@@ -1058,7 +1061,10 @@ fn refresh_gpu_rows(app: &AppWindow) {
     // .slint so the labels/values pair has ONE owner next to the code that
     // interprets a pick (gpu_split::MODE_*).
     s.set_split_mode_labels(string_model(
-        gpu_split::MODE_LABELS.iter().map(|l| strings::t(l)).collect(),
+        gpu_split::MODE_LABELS
+            .iter()
+            .map(|l| strings::t(l))
+            .collect(),
     ));
     s.set_split_mode_values(string_model(
         gpu_split::MODE_VALUES.iter().map(|v| (*v).into()).collect(),
@@ -1559,11 +1565,7 @@ fn start_server_async(app_weak: slint::Weak<AppWindow>, tray_weak: slint::Weak<A
                 .into_iter()
                 .map(|p| p.id)
                 .collect();
-            post_status(
-                &restore_weak,
-                strings::t("snapshot-restoring"),
-                false,
-            );
+            post_status(&restore_weak, strings::t("snapshot-restoring"), false);
             match crate::slot_state::restore_newest(&cfg, &known) {
                 Ok(Some(t)) => post_status(
                     &restore_weak,
@@ -1667,11 +1669,7 @@ fn stop_server_async_with(
                 // `stop()` can't fail; the re-polled run state is the outcome.
                 if running {
                     s.set_server_status_is_error(true);
-                    set_status(
-                        &app,
-                        strings::t("stop-timed-out"),
-                        true,
-                    );
+                    set_status(&app, strings::t("stop-timed-out"), true);
                 } else {
                     s.set_server_status_is_error(false);
                     // The snapshot line rides along rather than replacing the
@@ -1826,12 +1824,18 @@ pub(super) fn refresh_integrations(app: &AppWindow) {
         Err(e) => {
             s.set_integration_provider_active(integrations::detect_opencode_provider());
             s.set_integration_in_sync(false);
-            s.set_integration_status(strings::fill("opencode-plan-failed", &[&format!("{e:#}")]).into());
+            s.set_integration_status(
+                strings::fill("opencode-plan-failed", &[&format!("{e:#}")]).into(),
+            );
             return;
         }
     };
     let ids = |kind: integrations::ChangeKind| -> Vec<String> {
-        plan.models.iter().filter(|c| c.kind == kind).map(|c| c.id.clone()).collect()
+        plan.models
+            .iter()
+            .filter(|c| c.kind == kind)
+            .map(|c| c.id.clone())
+            .collect()
     };
     s.set_integration_provider_active(plan.provider_active);
     s.set_integration_in_sync(plan.is_empty());
@@ -1861,7 +1865,12 @@ struct Drift {
 
 /// The OpenCode card's status line. Pure, so the three wordings are testable.
 fn integration_status(active: bool, enabled: usize, drift: &Drift) -> String {
-    let Drift { missing, extra, changed, provider } = drift;
+    let Drift {
+        missing,
+        extra,
+        changed,
+        provider,
+    } = drift;
     let set = match enabled {
         1 => strings::t("enabled-presets-one"),
         n => strings::fill("enabled-presets-many", &[&n]),
@@ -1874,13 +1883,22 @@ fn integration_status(active: bool, enabled: usize, drift: &Drift) -> String {
     }
     let mut parts = Vec::new();
     if !missing.is_empty() {
-        parts.push(strings::fill("opencode-enabled-not-listed", &[&missing.join(", ")]));
+        parts.push(strings::fill(
+            "opencode-enabled-not-listed",
+            &[&missing.join(", ")],
+        ));
     }
     if !extra.is_empty() {
-        parts.push(strings::fill("opencode-listed-not-enabled", &[&extra.join(", ")]));
+        parts.push(strings::fill(
+            "opencode-listed-not-enabled",
+            &[&extra.join(", ")],
+        ));
     }
     if !changed.is_empty() {
-        parts.push(strings::fill("opencode-entry-changed", &[&changed.join(", ")]));
+        parts.push(strings::fill(
+            "opencode-entry-changed",
+            &[&changed.join(", ")],
+        ));
     }
     if *provider {
         parts.push(strings::t("opencode-provider-changed"));
@@ -1942,7 +1960,10 @@ mod tests {
     #[test]
     fn integration_status_wordings() {
         let ids = |v: &[&str]| v.iter().map(|x| (*x).to_string()).collect::<Vec<_>>();
-        let missing_a = Drift { missing: ids(&["a"]), ..Default::default() };
+        let missing_a = Drift {
+            missing: ids(&["a"]),
+            ..Default::default()
+        };
         assert_eq!(
             integration_status(false, 1, &missing_a),
             "No llama-server provider in opencode.json. Save adds one listing the 1 enabled preset."

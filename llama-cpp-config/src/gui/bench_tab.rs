@@ -40,8 +40,8 @@
 //! `bench::live_body`), never by a second formatter that could drift from it.
 //! Same rule, and the same reason, as the Server tab's Command Line card.
 
-use crate::strings;
 use super::*;
+use crate::strings;
 
 use std::path::Path;
 use std::time::SystemTime;
@@ -117,10 +117,15 @@ fn shown_image(s: &AppState, state: &Rc<RefCell<State>>) -> Option<(std::path::P
     if !chosen.trim().is_empty() {
         return Some((std::path::PathBuf::from(chosen.trim()), Whose::Mine));
     }
-    let ticked = state.borrow().bench_prompts.iter().filter(|r| r.on).find_map(|r| {
-        let text = &r.read.as_ref()?.text;
-        bench::prompt_image_file(text, r.path.parent()?)
-    });
+    let ticked = state
+        .borrow()
+        .bench_prompts
+        .iter()
+        .filter(|r| r.on)
+        .find_map(|r| {
+            let text = &r.read.as_ref()?.text;
+            bench::prompt_image_file(text, r.path.parent()?)
+        });
     if let Some(p) = ticked {
         return Some((p, Whose::Prompt));
     }
@@ -146,7 +151,10 @@ fn image_info(t: &ImageThumb, whose: &Whose, size: Option<(u32, u32)>) -> String
     let sent = match size {
         Some((bw, bh)) if w > bw || h > bh => {
             let f = (f64::from(bw) / f64::from(w)).min(f64::from(bh) / f64::from(h));
-            strings::fill("image-sent-at", &[&(f64::from(w) * f).round(), &(f64::from(h) * f).round()])
+            strings::fill(
+                "image-sent-at",
+                &[&(f64::from(w) * f).round(), &(f64::from(h) * f).round()],
+            )
         }
         _ => strings::t("image-sent-as-is"),
     };
@@ -182,11 +190,19 @@ fn refresh_image_preview(app: &AppWindow, state: &Rc<RefCell<State>>, size: Opti
                     t.width(),
                     t.height(),
                 );
-                (slint::Image::from_rgba8(buf), Ok((img.width(), img.height())))
+                (
+                    slint::Image::from_rgba8(buf),
+                    Ok((img.width(), img.height())),
+                )
             }
             Err(e) => (slint::Image::default(), Err(e.to_string())),
         };
-        state.borrow_mut().bench_image_thumb = Some(ImageThumb { path, stamp, image, dims });
+        state.borrow_mut().bench_image_thumb = Some(ImageThumb {
+            path,
+            stamp,
+            image,
+            dims,
+        });
     }
     let st = state.borrow();
     let Some(t) = st.bench_image_thumb.as_ref() else {
@@ -299,7 +315,13 @@ pub(super) fn refresh_prompt_info(app: &AppWindow, state: &Rc<RefCell<State>>) -
         .iter()
         .map(|r| BenchPromptRow {
             path: SharedString::from(r.path.to_string_lossy().into_owned()),
-            name: SharedString::from(r.path.file_name().unwrap_or_default().to_string_lossy().into_owned()),
+            name: SharedString::from(
+                r.path
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .into_owned(),
+            ),
             info: SharedString::from(r.info.clone()),
             on: r.on,
             shipped: r.shipped,
@@ -509,7 +531,10 @@ pub(super) fn refresh_preview(app: &AppWindow, state: &Rc<RefCell<State>>) {
     // The preview is "exactly what Run will do", and Run will refuse.
     let bad = invalid_numbers(&s, plan.mode);
     if !bad.is_empty() {
-        s.set_bench_preview(SharedString::from(strings::fill("run-will-refuse", &[&bad.join("; ")])));
+        s.set_bench_preview(SharedString::from(strings::fill(
+            "run-will-refuse",
+            &[&bad.join("; ")],
+        )));
         return;
     }
 
@@ -562,7 +587,10 @@ pub(super) fn refresh_preview(app: &AppWindow, state: &Rc<RefCell<State>>) {
             let head = match steps_preview(&s, state, &plan.presets) {
                 Some(Ok(text)) => strings::fill("then-first-request", &[&text]),
                 Some(Err(e)) => {
-                    s.set_bench_preview(SharedString::from(strings::fill("run-will-refuse", &[&e.trim_end_matches('.')])));
+                    s.set_bench_preview(SharedString::from(strings::fill(
+                        "run-will-refuse",
+                        &[&e.trim_end_matches('.')],
+                    )));
                     return;
                 }
                 None => String::new(),
@@ -623,7 +651,10 @@ fn refresh_runs(app: &AppWindow) {
                 if c.runs == 1 {
                     strings::fill("campaign-label-one", &[&c.name, &c.started, &c.tools])
                 } else {
-                    strings::fill("campaign-label-many", &[&c.name, &c.started, &c.tools, &c.runs])
+                    strings::fill(
+                        "campaign-label-many",
+                        &[&c.name, &c.started, &c.tools, &c.runs],
+                    )
                 }
             })
             .collect(),
@@ -811,10 +842,14 @@ fn save_spec(app: &AppWindow, state: &Rc<RefCell<State>>, path: &Path) -> Result
         mode: Mode::Live,
         ..plan_from_ui(app, state)
     };
-    if plan.image.is_some() && (chosen_spec(&s).is_none() || overridden(&s, state).contains(&"image")) {
-        return Err("an image of yours is not a spec rule: make it an image prompt (an image_file \
+    if plan.image.is_some()
+        && (chosen_spec(&s).is_none() || overridden(&s, state).contains(&"image"))
+    {
+        return Err(
+            "an image of yours is not a spec rule: make it an image prompt (an image_file \
                     part naming it with its sha256), add that with + Browse…, and save again"
-            .into());
+                .into(),
+        );
     }
     let pin = |prompts: Vec<bench::spec::Prompt>| -> Vec<(std::path::PathBuf, String)> {
         prompts
@@ -864,7 +899,8 @@ fn save_spec(app: &AppWindow, state: &Rc<RefCell<State>>, path: &Path) -> Result
     // What reads back is what was meant: a spec this tab cannot load again is
     // not saved.
     bench::spec::parse(&text, &paths::config_dir())?;
-    crate::ini::atomic_write(path, &text).map_err(|e| strings::fill("cannot-write", &[&path.display(), &e]))?;
+    crate::ini::atomic_write(path, &text)
+        .map_err(|e| strings::fill("cannot-write", &[&path.display(), &e]))?;
     Ok(name)
 }
 
@@ -1022,7 +1058,10 @@ fn job_from_ui(
 ) -> Result<Job, String> {
     let named = plan.campaign.clone();
     let into = |name: String, steps: Vec<exec::Step>| {
-        let question = named.as_ref().map(|c| c.question.clone()).unwrap_or_default();
+        let question = named
+            .as_ref()
+            .map(|c| c.question.clone())
+            .unwrap_or_default();
         let steps = steps
             .into_iter()
             .map(|st| exec::Step {
@@ -1064,7 +1103,11 @@ fn job_from_ui(
         if ab.is_none() {
             return Ok(Job::One(Box::new(plan)));
         }
-        let name = if explicit.is_empty() { bench::stamp(bench::now_secs()) } else { explicit };
+        let name = if explicit.is_empty() {
+            bench::stamp(bench::now_secs())
+        } else {
+            explicit
+        };
         let one = vec![exec::Step {
             label: String::new(),
             overrides: Vec::new(),
@@ -1143,7 +1186,10 @@ fn common_scenarios(presets: &[String]) -> Result<Vec<bench::Concurrency>, Strin
 }
 
 fn path_name(p: &Path) -> String {
-    p.file_name().unwrap_or_default().to_string_lossy().into_owned()
+    p.file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .into_owned()
 }
 
 /// The preview's head for a run of several steps: what each one is, without
@@ -1181,13 +1227,23 @@ fn runs_preview(
             } else {
                 spec.max_tokens
             };
-            let shown_cap = if cap > 0 { cap.to_string() } else { strings::t("none") };
-            let mut lines = vec![strings::fill("spec-preview", &[&spec.name, &spec.version, &shown_cap])];
+            let shown_cap = if cap > 0 {
+                cap.to_string()
+            } else {
+                strings::t("none")
+            };
+            let mut lines = vec![strings::fill(
+                "spec-preview",
+                &[&spec.name, &spec.version, &shown_cap],
+            )];
             if !spec.published {
                 lines.push(strings::fill("spec-of-yours", &[&spec.name, &spec.version]));
             }
             if !changed.is_empty() {
-                lines.push(strings::fill("spec-overridden", &[&changed.join(", "), &spec.name, &spec.version]));
+                lines.push(strings::fill(
+                    "spec-overridden",
+                    &[&changed.join(", "), &spec.name, &spec.version],
+                ));
             }
             let ui = workload_values(s);
             let ui_of = |f: &str| {
@@ -1211,14 +1267,18 @@ fn runs_preview(
                             None => scenarios.iter().map(|c| c.as_str().to_string()).collect(),
                         },
                     };
-                    let temp = ui_of("temp")
-                        .unwrap_or_else(|| pass.temp.map_or("preset".to_string(), |t| t.to_string()));
+                    let temp = ui_of("temp").unwrap_or_else(|| {
+                        pass.temp.map_or("preset".to_string(), |t| t.to_string())
+                    });
                     let reps = ui_of("reps").unwrap_or_else(|| pass.reps.to_string());
                     let over = if pass.overrides.is_empty() {
                         String::new()
                     } else {
-                        let o: Vec<String> =
-                            pass.overrides.iter().map(|(k, v)| format!("{k} = {v}")).collect();
+                        let o: Vec<String> = pass
+                            .overrides
+                            .iter()
+                            .map(|(k, v)| format!("{k} = {v}"))
+                            .collect();
                         strings::fill("pass-presets-set", &[&o.join(", ")])
                     };
                     lines.push(strings::fill(
@@ -1243,7 +1303,10 @@ fn runs_preview(
             parts.push(strings::fill("preview-prompts", &[&ticked.join(", ")]));
         }
         if all {
-            let cs: Vec<&str> = common_scenarios(presets)?.iter().map(|c| c.as_str()).collect();
+            let cs: Vec<&str> = common_scenarios(presets)?
+                .iter()
+                .map(|c| c.as_str())
+                .collect();
             parts.push(strings::fill("preview-concurrency", &[&cs.join(", ")]));
         }
         Ok(strings::fill("in-turn", &[&parts.join(" x ")]))
@@ -1292,7 +1355,10 @@ fn start_run(app: &AppWindow, state: &Rc<RefCell<State>>, job: Job) {
     let (order, mode) = match &job {
         Job::One(plan) => (plan.presets.clone(), plan.mode),
         Job::Steps(steps, _) => (
-            steps.first().map(|s| s.plan.presets.clone()).unwrap_or_default(),
+            steps
+                .first()
+                .map(|s| s.plan.presets.clone())
+                .unwrap_or_default(),
             Mode::Live,
         ),
     };
@@ -1488,7 +1554,12 @@ pub(super) fn wire(
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
-            let Some(path) = state.borrow().bench_prompts.get(i as usize).map(|r| r.path.clone()) else {
+            let Some(path) = state
+                .borrow()
+                .bench_prompts
+                .get(i as usize)
+                .map(|r| r.path.clone())
+            else {
                 return;
             };
             // The system's default .txt handler (`paths::open_in_desktop`, as
@@ -1500,7 +1571,11 @@ pub(super) fn wire(
                     strings::fill("prompt-opened", &[&path.display()]),
                     false,
                 ),
-                Err(e) => set_status(&app, strings::fill("cannot-open", &[&path.display(), &e]), true),
+                Err(e) => set_status(
+                    &app,
+                    strings::fill("cannot-open", &[&path.display(), &e]),
+                    true,
+                ),
             }
             refresh_prompt_info(&app, &state);
         });
@@ -1543,7 +1618,11 @@ pub(super) fn wire(
                     set_spec_options(&s, &state);
                     s.set_bench_spec(SharedString::from(pick));
                     spec_changed(&app, &state);
-                    set_status(&app, strings::fill("spec-loaded", &[&spec.name, &spec.version]), false);
+                    set_status(
+                        &app,
+                        strings::fill("spec-loaded", &[&spec.name, &spec.version]),
+                        false,
+                    );
                 }
                 Err(e) => set_status(&app, strings::fill("spec-not-loaded", &[&e]), true),
             }
@@ -1571,7 +1650,11 @@ pub(super) fn wire(
                     set_spec_options(&s, &state);
                     s.set_bench_spec(SharedString::from(format!("{SPEC_FILE}{}", path.display())));
                     spec_changed(&app, &state);
-                    set_status(&app, strings::fill("spec-saved", &[&name, &path.display()]), false);
+                    set_status(
+                        &app,
+                        strings::fill("spec-saved", &[&name, &path.display()]),
+                        false,
+                    );
                 }
                 Err(e) => set_status(&app, strings::fill("spec-not-saved", &[&e]), true),
             }
@@ -1590,11 +1673,7 @@ pub(super) fn wire(
         app.global::<AppState>().on_bench_db_accepted(move || {
             if let Some(app) = app_weak.upgrade() {
                 if persist_db_path(&app) {
-                    set_status(
-                        &app,
-                        strings::t("database-saved"),
-                        false,
-                    );
+                    set_status(&app, strings::t("database-saved"), false);
                 }
                 refresh_runs(&app);
             }
@@ -1696,11 +1775,7 @@ pub(super) fn wire(
                         stop_server_async_with(app.as_weak(), tray, Some(Box::new(after)))
                     }
                     // No tray only in the test seam, where nothing is running.
-                    None => set_status(
-                        &app,
-                        strings::t("stop-server-before-synthetic"),
-                        true,
-                    ),
+                    None => set_status(&app, strings::t("stop-server-before-synthetic"), true),
                 }
                 return;
             }
@@ -1809,8 +1884,13 @@ mod tests {
             image_info(&t, &Whose::Prompt, size),
             "bench-image-zebras-1.0.jpg: 6000x4000, sent at 1344x896 (the prompt's own)"
         );
-        assert!(image_info(&t, &Whose::Shipped("bench-prompt-image-1.0.json".into()), size)
-            .ends_with("(the standard spec's, sent when bench-prompt-image-1.0.json runs)"));
-        assert!(image_info(&t, &Whose::Mine, None).ends_with("6000x4000, sent as is (yours, in place of the prompts' own)"));
+        assert!(image_info(
+            &t,
+            &Whose::Shipped("bench-prompt-image-1.0.json".into()),
+            size
+        )
+        .ends_with("(the standard spec's, sent when bench-prompt-image-1.0.json runs)"));
+        assert!(image_info(&t, &Whose::Mine, None)
+            .ends_with("6000x4000, sent as is (yours, in place of the prompts' own)"));
     }
 }

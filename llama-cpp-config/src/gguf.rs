@@ -286,7 +286,10 @@ impl ModelInfo {
             parts.push(strings::fill("experts-active", &[&self.expert_used]));
         }
         if self.expert_shared_count > 0 {
-            parts.push(strings::fill("experts-shared", &[&self.expert_shared_count]));
+            parts.push(strings::fill(
+                "experts-shared",
+                &[&self.expert_shared_count],
+            ));
         }
         strings::fill("moe-kind", &[&parts.join(", ")])
     }
@@ -300,15 +303,20 @@ impl ModelInfo {
         if !self.is_moe || self.n_layer == 0 {
             return String::new();
         }
-        if self.leading_dense_block_count > 0
-            && self.leading_dense_block_count < self.n_layer
-        {
+        if self.leading_dense_block_count > 0 && self.leading_dense_block_count < self.n_layer {
             strings::fill(
                 "moe-layers-after-dense",
-                &[&(self.n_layer - self.leading_dense_block_count), &self.n_layer, &self.leading_dense_block_count],
+                &[
+                    &(self.n_layer - self.leading_dense_block_count),
+                    &self.n_layer,
+                    &self.leading_dense_block_count,
+                ],
             )
         } else if self.moe_every_n_layers > 1 {
-            strings::fill("moe-layers-every", &[&self.moe_every_n_layers, &self.n_layer])
+            strings::fill(
+                "moe-layers-every",
+                &[&self.moe_every_n_layers, &self.n_layer],
+            )
         } else {
             strings::fill("moe-layers-all", &[&self.n_layer])
         }
@@ -403,7 +411,10 @@ impl ModelInfo {
             parts.push(strings::fill("layers-count", &[&self.n_layer]));
         }
         if self.n_ctx_train > 0 {
-            parts.push(strings::fill("trained-ctx", &[&group_thousands(self.n_ctx_train as u64)]));
+            parts.push(strings::fill(
+                "trained-ctx",
+                &[&group_thousands(self.n_ctx_train as u64)],
+            ));
         }
         if parts.is_empty() {
             strings::t("not-available")
@@ -422,7 +433,11 @@ impl ModelInfo {
         if self.head_count.is_multiple_of(self.head_count_kv) {
             strings::fill(
                 "heads-gqa-ratio",
-                &[&self.head_count, &self.head_count_kv, &(self.head_count / self.head_count_kv)],
+                &[
+                    &self.head_count,
+                    &self.head_count_kv,
+                    &(self.head_count / self.head_count_kv),
+                ],
             )
         } else {
             strings::fill("heads-gqa", &[&self.head_count, &self.head_count_kv])
@@ -508,7 +523,10 @@ impl ModelInfo {
             strings::t("layers-head")
         });
         if self.block_size > 0 {
-            parts.push(strings::fill("block-size", &[&self.block_size, &self.block_size.saturating_sub(1)]));
+            parts.push(strings::fill(
+                "block-size",
+                &[&self.block_size, &self.block_size.saturating_sub(1)],
+            ));
         }
         if self.nextn_predict_layers > 0 {
             parts.push(strings::fill("nextn", &[&self.nextn_predict_layers]));
@@ -553,7 +571,10 @@ impl MmprojInfo {
         }
         if self.image_size > 0 {
             if self.patch_size > 0 {
-                parts.push(strings::fill("image-patch", &[&self.image_size, &self.patch_size]));
+                parts.push(strings::fill(
+                    "image-patch",
+                    &[&self.image_size, &self.patch_size],
+                ));
             } else {
                 parts.push(format!("{}px", self.image_size));
             }
@@ -582,7 +603,11 @@ pub fn draft_line(info: &ModelInfo, selected_draft: &str) -> String {
 
     if info.nextn_predict_layers > 0 {
         let n = info.nextn_predict_layers;
-        parts.push(if n == 1 { strings::t("mtp-layers-one") } else { strings::fill("mtp-layers-many", &[&n]) });
+        parts.push(if n == 1 {
+            strings::t("mtp-layers-one")
+        } else {
+            strings::fill("mtp-layers-many", &[&n])
+        });
     }
 
     let selected = selected_draft.trim();
@@ -971,7 +996,8 @@ mod tests {
                 penalty_repeat: Some(1.0),
             }
         );
-        let bare = ModelInfo::from_kv(&map(vec![("general.architecture", Tv::S("llama"))])).unwrap();
+        let bare =
+            ModelInfo::from_kv(&map(vec![("general.architecture", Tv::S("llama"))])).unwrap();
         assert_eq!(bare.sampling, Sampling::default());
     }
 
@@ -1338,7 +1364,10 @@ mod tests {
             vec![("token_embd.weight", (8, 1_351_614_464))],
         ))
         .unwrap();
-        assert_eq!(info.embd_line(), format!("{}  ·  1.26 GiB", ggml_type_name(8)));
+        assert_eq!(
+            info.embd_line(),
+            format!("{}  ·  1.26 GiB", ggml_type_name(8))
+        );
         assert!(info.embd_pin_warning().is_empty());
 
         // Qwen3.6-27B-UD-Q4_K_XL.gguf, embd is Q4_K: a K-quant, pinnable since
@@ -1349,7 +1378,10 @@ mod tests {
             vec![("token_embd.weight", (12, 715_128_832))],
         ))
         .unwrap();
-        assert_eq!(info.embd_line(), format!("{}  ·  682 MiB", ggml_type_name(12)));
+        assert_eq!(
+            info.embd_line(),
+            format!("{}  ·  682 MiB", ggml_type_name(12))
+        );
         assert!(info.embd_pin_warning().is_empty());
 
         // Q5_K (13) likewise.
@@ -1358,7 +1390,10 @@ mod tests {
             vec![("token_embd.weight", (13, 873_463_808))],
         ))
         .unwrap();
-        assert_eq!(info.embd_line(), format!("{}  ·  833 MiB", ggml_type_name(13)));
+        assert_eq!(
+            info.embd_line(),
+            format!("{}  ·  833 MiB", ggml_type_name(13))
+        );
         assert!(info.embd_pin_warning().is_empty());
 
         // A type with NO kernel still warns, naming the type: Q8_K (15) is the

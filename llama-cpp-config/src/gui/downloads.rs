@@ -70,8 +70,8 @@
 //! `land_transfer_for_tests`), and the preset derivation runs inline. The pure
 //! job list (`Jobs`) and the progress text are unit-tested below.
 
-use crate::strings;
 use super::*;
+use crate::strings;
 
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
@@ -119,7 +119,13 @@ fn progress_view(p: &hf::Progress) -> ProgressView {
     let current = (p.files_done + 1).min(p.files_total.max(1));
     let overall = strings::fill(
         "progress-overall",
-        &[&hf::format_size(p.done), &hf::format_size(p.total), &percent(p.done, p.total), &current, &p.files_total],
+        &[
+            &hf::format_size(p.done),
+            &hf::format_size(p.total),
+            &percent(p.done, p.total),
+            &current,
+            &p.files_total,
+        ],
     );
     let file = if p.file.is_empty() {
         strings::t("waiting-for-transfer")
@@ -127,7 +133,12 @@ fn progress_view(p: &hf::Progress) -> ProgressView {
         let name = p.file.rsplit('/').next().unwrap_or(&p.file);
         strings::fill(
             "progress-file",
-            &[&name, &hf::format_size(p.file_done), &hf::format_size(p.file_total), &percent(p.file_done, p.file_total)],
+            &[
+                &name,
+                &hf::format_size(p.file_done),
+                &hf::format_size(p.file_total),
+                &percent(p.file_done, p.file_total),
+            ],
         )
     };
     ProgressView {
@@ -148,7 +159,10 @@ struct Coalescer {
 
 impl Coalescer {
     fn new(interval: Duration) -> Coalescer {
-        Coalescer { interval, last: None }
+        Coalescer {
+            interval,
+            last: None,
+        }
     }
 
     fn admit(&mut self, p: &hf::Progress, now: Instant) -> bool {
@@ -178,9 +192,21 @@ fn created_status(d: &hf::Downloaded, id: &str, placed: bool) -> String {
     if let Some((s, _)) = &d.draft {
         with.push(s.label());
     }
-    let with = if with.is_empty() { String::new() } else { strings::fill("downloaded-with", &[&with.join(&strings::t("list-and"))]) };
-    let name = d.model.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-    let key = if placed { strings::key("downloaded-placed") } else { strings::key("downloaded") };
+    let with = if with.is_empty() {
+        String::new()
+    } else {
+        strings::fill("downloaded-with", &[&with.join(&strings::t("list-and"))])
+    };
+    let name = d
+        .model
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let key = if placed {
+        strings::key("downloaded-placed")
+    } else {
+        strings::key("downloaded")
+    };
     strings::fill(key, &[&name, &with, &d.repo, &id])
 }
 
@@ -207,7 +233,10 @@ impl JobState {
     /// A child runs, or its preset is still being made: the repository is
     /// busy, and Quit asks first.
     fn active(&self) -> bool {
-        matches!(self, JobState::Downloading | JobState::Cancelling | JobState::Configuring)
+        matches!(
+            self,
+            JobState::Downloading | JobState::Cancelling | JobState::Configuring
+        )
     }
 
     fn label(&self) -> String {
@@ -247,7 +276,9 @@ impl Jobs {
     /// Another job of `repo` is active: a second one would share its staging
     /// tree. Repository ids compare without case, as Hugging Face resolves them.
     pub(super) fn busy_with(&self, repo: &str) -> bool {
-        self.list.iter().any(|j| j.state.active() && j.repo.eq_ignore_ascii_case(repo))
+        self.list
+            .iter()
+            .any(|j| j.state.active() && j.repo.eq_ignore_ascii_case(repo))
     }
 
     /// A new job, downloading; its id.
@@ -335,7 +366,9 @@ impl Jobs {
     /// repository is active.
     fn restart(&mut self, id: u64) -> Result<(), String> {
         let repo = match self.get(id) {
-            Some(j) if matches!(j.state, JobState::Failed(_) | JobState::Cancelled) => j.repo.clone(),
+            Some(j) if matches!(j.state, JobState::Failed(_) | JobState::Cancelled) => {
+                j.repo.clone()
+            }
             _ => return Err(String::new()),
         };
         if self.busy_with(&repo) {
@@ -358,7 +391,12 @@ impl Jobs {
 
     /// Drop every finished row; the active ones stay.
     fn clear_finished(&mut self) -> Vec<u64> {
-        let gone: Vec<u64> = self.list.iter().filter(|j| !j.state.active()).map(|j| j.id).collect();
+        let gone: Vec<u64> = self
+            .list
+            .iter()
+            .filter(|j| !j.state.active())
+            .map(|j| j.id)
+            .collect();
         self.list.retain(|j| j.state.active());
         gone
     }
@@ -376,7 +414,11 @@ impl Jobs {
 
     /// The jobs still transferring, for a confirmed Quit to cancel.
     fn downloading(&self) -> Vec<u64> {
-        self.list.iter().filter(|j| j.state == JobState::Downloading).map(|j| j.id).collect()
+        self.list
+            .iter()
+            .filter(|j| j.state == JobState::Downloading)
+            .map(|j| j.id)
+            .collect()
     }
 
     fn preset_of(&self, id: u64) -> Option<String> {
@@ -399,13 +441,26 @@ impl Jobs {
     fn summary(&self) -> String {
         let active = self.active();
         if active > 0 {
-            return if active == 1 { strings::t("downloads-running-one") } else { strings::fill("downloads-running-many", &[&active]) };
+            return if active == 1 {
+                strings::t("downloads-running-one")
+            } else {
+                strings::fill("downloads-running-many", &[&active])
+            };
         }
         let count = |f: fn(&JobState) -> bool| self.list.iter().filter(|j| f(&j.state)).count();
         let parts: Vec<String> = [
-            (count(|s| matches!(s, JobState::Done { .. })), strings::key("downloads-done")),
-            (count(|s| matches!(s, JobState::Failed(_))), strings::key("downloads-failed")),
-            (count(|s| *s == JobState::Cancelled), strings::key("downloads-cancelled")),
+            (
+                count(|s| matches!(s, JobState::Done { .. })),
+                strings::key("downloads-done"),
+            ),
+            (
+                count(|s| matches!(s, JobState::Failed(_))),
+                strings::key("downloads-failed"),
+            ),
+            (
+                count(|s| *s == JobState::Cancelled),
+                strings::key("downloads-cancelled"),
+            ),
         ]
         .into_iter()
         .filter(|(n, _)| *n > 0)
@@ -423,18 +478,24 @@ impl Jobs {
 fn row(j: &Job) -> DownloadRow {
     let transferring = matches!(j.state, JobState::Downloading | JobState::Cancelling);
     let (overall, file, of, ff) = match (&j.progress, transferring) {
-        (Some(p), true) => (p.overall.clone(), p.file.clone(), p.overall_fraction, p.file_fraction),
+        (Some(p), true) => (
+            p.overall.clone(),
+            p.file.clone(),
+            p.overall_fraction,
+            p.file_fraction,
+        ),
         (None, true) => (strings::t("starting"), String::new(), 0.0, 0.0),
         _ => (String::new(), String::new(), 0.0, 0.0),
     };
     let (message, is_error) = match &j.state {
-        JobState::Done { preset, placed: true } => (
-            strings::fill("created-preset-placed", &[&preset]),
-            false,
-        ),
-        JobState::Done { preset, placed: false } => {
-            (strings::fill("created-preset", &[&preset]), false)
-        }
+        JobState::Done {
+            preset,
+            placed: true,
+        } => (strings::fill("created-preset-placed", &[&preset]), false),
+        JobState::Done {
+            preset,
+            placed: false,
+        } => (strings::fill("created-preset", &[&preset]), false),
         JobState::Failed(e) => (e.clone(), true),
         JobState::Cancelled => (strings::t("download-cancelled-kept"), false),
         _ => (String::new(), false),
@@ -519,7 +580,8 @@ fn push(app: &AppWindow, state: &Rc<RefCell<State>>) {
     let st = state.borrow();
     let d = &st.downloads;
     sync_rows(&d.rows, d.jobs.rows());
-    app.global::<AppState>().set_downloads_summary(SharedString::from(d.jobs.summary()));
+    app.global::<AppState>()
+        .set_downloads_summary(SharedString::from(d.jobs.summary()));
     if let Some(w) = &d.window {
         w.set_quit_pending(d.quit == QuitState::Asking);
         w.set_quitting(d.quit == QuitState::Quitting);
@@ -529,7 +591,12 @@ fn push(app: &AppWindow, state: &Rc<RefCell<State>>) {
 
 /// Show (or raise) the window.
 fn open(state: &Rc<RefCell<State>>) {
-    let win = state.borrow().downloads.window.as_ref().map(|w| w.clone_strong());
+    let win = state
+        .borrow()
+        .downloads
+        .window
+        .as_ref()
+        .map(|w| w.clone_strong());
     if let Some(w) = win {
         raise_window(w.window());
     }
@@ -549,7 +616,14 @@ pub(super) fn start(
         let mut st = state.borrow_mut();
         let d = &mut st.downloads;
         let id = d.jobs.add(&job.repo, title, detail);
-        d.runs.insert(id, Run { job, handle: None, budget });
+        d.runs.insert(
+            id,
+            Run {
+                job,
+                handle: None,
+                budget,
+            },
+        );
         id
     };
     spawn(app, state, id);
@@ -561,7 +635,13 @@ pub(super) fn start(
 /// Start (or restart) job `id`'s transfer. Nothing is started under
 /// `cfg(test)`: the flow test lands the results itself.
 fn spawn(app: &AppWindow, state: &Rc<RefCell<State>>, id: u64) {
-    let Some(job) = state.borrow().downloads.runs.get(&id).map(|r| r.job.clone()) else {
+    let Some(job) = state
+        .borrow()
+        .downloads
+        .runs
+        .get(&id)
+        .map(|r| r.job.clone())
+    else {
         return;
     };
     #[cfg(not(test))]
@@ -600,7 +680,8 @@ fn spawn_transfer(app: &AppWindow, id: u64, job: hf::DownloadJob) -> hf::Downloa
         },
         move |result| {
             slint::invoke_from_event_loop(move || {
-                let (Some(app), Some(state)) = (done_weak.upgrade(), hf_dialog::shared_state()) else {
+                let (Some(app), Some(state)) = (done_weak.upgrade(), hf_dialog::shared_state())
+                else {
                     return;
                 };
                 transfer_ended(&app, &state, id, result);
@@ -617,22 +698,38 @@ fn progressed(app: &AppWindow, state: &Rc<RefCell<State>>, id: u64, view: Progre
 }
 
 /// A transfer ended (on the event loop).
-fn transfer_ended(app: &AppWindow, state: &Rc<RefCell<State>>, id: u64, result: Result<hf::Downloaded, hf::HfError>) {
+fn transfer_ended(
+    app: &AppWindow,
+    state: &Rc<RefCell<State>>,
+    id: u64,
+    result: Result<hf::Downloaded, hf::HfError>,
+) {
     let (moved, title) = {
         let mut st = state.borrow_mut();
         let d = &mut st.downloads;
         if let Some(r) = d.runs.get_mut(&id) {
             r.handle = None;
         }
-        (d.jobs.transfer_ended(id, result.as_ref().map(|_| ())), d.jobs.title_of(id))
+        (
+            d.jobs.transfer_ended(id, result.as_ref().map(|_| ())),
+            d.jobs.title_of(id),
+        )
     };
     if !moved {
         return;
     }
     match result {
         Ok(downloaded) => configure(app, state, id, downloaded),
-        Err(hf::HfError::Cancelled) => set_status(app, strings::fill("hf-download-cancelled", &[&title]), false),
-        Err(e) => set_status(app, strings::fill("hf-download-failed", &[&title, &e]), true),
+        Err(hf::HfError::Cancelled) => set_status(
+            app,
+            strings::fill("hf-download-cancelled", &[&title]),
+            false,
+        ),
+        Err(e) => set_status(
+            app,
+            strings::fill("hf-download-failed", &[&title, &e]),
+            true,
+        ),
     }
     push(app, state);
     maybe_quit(state);
@@ -641,8 +738,18 @@ fn transfer_ended(app: &AppWindow, state: &Rc<RefCell<State>>, id: u64, result: 
 /// Derive the preset from the downloaded files' headers, off the event loop
 /// (inline under `cfg(test)`), then land it in `configured`.
 fn configure(app: &AppWindow, state: &Rc<RefCell<State>>, id: u64, d: hf::Downloaded) {
-    let existing: Vec<String> = state.borrow().presets.iter().map(|l| l.preset.id.clone()).collect();
-    let budget = state.borrow().downloads.runs.get(&id).and_then(|r| r.budget.clone());
+    let existing: Vec<String> = state
+        .borrow()
+        .presets
+        .iter()
+        .map(|l| l.preset.id.clone())
+        .collect();
+    let budget = state
+        .borrow()
+        .downloads
+        .runs
+        .get(&id)
+        .and_then(|r| r.budget.clone());
     let work = move || {
         let p = hf::preset_from_download(&d, &existing, budget.as_ref());
         (d, p)
@@ -670,12 +777,27 @@ fn configure(app: &AppWindow, state: &Rc<RefCell<State>>, id: u64, d: hf::Downlo
 
 /// The derived preset landed: save it and refresh what lists presets and
 /// files, without touching the editor (module header).
-fn configured(app: &AppWindow, state: &Rc<RefCell<State>>, id: u64, d: hf::Downloaded, mut p: presets::Preset) {
-    let Some(models_dir) = state.borrow().downloads.runs.get(&id).map(|r| r.job.models_dir.clone()) else {
+fn configured(
+    app: &AppWindow,
+    state: &Rc<RefCell<State>>,
+    id: u64,
+    d: hf::Downloaded,
+    mut p: presets::Preset,
+) {
+    let Some(models_dir) = state
+        .borrow()
+        .downloads
+        .runs
+        .get(&id)
+        .map(|r| r.job.models_dir.clone())
+    else {
         return;
     };
     // Another preset may have taken the id while the headers were read.
-    let ids: Vec<String> = presets::load_listed().into_iter().map(|l| l.preset.id).collect();
+    let ids: Vec<String> = presets::load_listed()
+        .into_iter()
+        .map(|l| l.preset.id)
+        .collect();
     p.id = presets::new_preset_id(&d.model.to_string_lossy(), &ids);
     let placed = !p.placement_note.is_empty();
     match hf::save_preset(&p, &models_dir) {
@@ -744,7 +866,13 @@ fn show_preset(app: &AppWindow, state: &Rc<RefCell<State>>, id: u64) {
         s.set_current_tab(1);
         String::new()
     };
-    let position = |state: &Rc<RefCell<State>>| state.borrow().presets.iter().position(|l| l.preset.id == target);
+    let position = |state: &Rc<RefCell<State>>| {
+        state
+            .borrow()
+            .presets
+            .iter()
+            .position(|l| l.preset.id == target)
+    };
     let note = match (note.is_empty(), position(state)) {
         (false, _) => note,
         (true, None) => strings::fill("preset-no-longer-listed", &[&target]),
@@ -824,7 +952,9 @@ fn confirm_quit(app: &AppWindow, state: &Rc<RefCell<State>>) {
         for id in &ids {
             d.jobs.cancel(*id);
         }
-        ids.iter().filter_map(|id| d.runs.get(id)?.handle.clone()).collect()
+        ids.iter()
+            .filter_map(|id| d.runs.get(id)?.handle.clone())
+            .collect()
     };
     for h in handles {
         h.cancel();
@@ -879,7 +1009,10 @@ pub(crate) fn quit_called_for_tests() -> bool {
 /// Build the window, wire it and `AppState.open_downloads`, and keep a handle
 /// in `State.downloads`. The caller (gui::run) keeps the returned window for
 /// the remembered size at Quit.
-pub(super) fn wire(app: &AppWindow, state: &Rc<RefCell<State>>) -> Result<DownloadsWindow, slint::PlatformError> {
+pub(super) fn wire(
+    app: &AppWindow,
+    state: &Rc<RefCell<State>>,
+) -> Result<DownloadsWindow, slint::PlatformError> {
     let win = DownloadsWindow::new()?;
     install_strings(win.global::<Strings>());
     restore_window_size(&win);
@@ -904,7 +1037,9 @@ pub(super) fn wire(app: &AppWindow, state: &Rc<RefCell<State>>) -> Result<Downlo
         let app_weak = app.as_weak();
         let state = Rc::downgrade(state);
         move |id| {
-            if let (Some(app), Some(state), Some(id)) = (app_weak.upgrade(), state.upgrade(), id_of(id)) {
+            if let (Some(app), Some(state), Some(id)) =
+                (app_weak.upgrade(), state.upgrade(), id_of(id))
+            {
                 body(&app, &state, id);
             }
         }
@@ -948,7 +1083,11 @@ pub(super) fn wire(app: &AppWindow, state: &Rc<RefCell<State>>) -> Result<Downlo
 pub(crate) fn window_for_tests() -> DownloadsWindow {
     let state = hf_dialog::shared_state().expect("hf_dialog::wire ran");
     let st = state.borrow();
-    st.downloads.window.as_ref().expect("downloads::wire ran").clone_strong()
+    st.downloads
+        .window
+        .as_ref()
+        .expect("downloads::wire ran")
+        .clone_strong()
 }
 
 /// TEST-ONLY seam: land a progress readout as the worker does.
@@ -961,7 +1100,11 @@ pub(crate) fn land_progress_for_tests(app: &AppWindow, id: i32, p: &hf::Progress
 /// TEST-ONLY seam: land a transfer's result exactly as the worker's closure
 /// does, without a network or a child.
 #[cfg(test)]
-pub(crate) fn land_transfer_for_tests(app: &AppWindow, id: i32, result: Result<hf::Downloaded, hf::HfError>) {
+pub(crate) fn land_transfer_for_tests(
+    app: &AppWindow,
+    id: i32,
+    result: Result<hf::Downloaded, hf::HfError>,
+) {
     let state = hf_dialog::shared_state().expect("hf_dialog::wire ran");
     transfer_ended(app, &state, id_of(id).expect("an id"), result);
 }
@@ -986,18 +1129,33 @@ pub(super) fn e2e() {
     win.window().set_size(slint::PhysicalSize::new(900, 1400));
     win.show().expect("realize window");
     let shown = |text: &str| ElementHandle::find_by_accessible_label(&win, text).count();
-    assert_eq!(shown("No downloads. Start one from Models, New…, From Hugging Face."), 1, "the empty state");
+    assert_eq!(
+        shown("No downloads. Start one from Models, New…, From Hugging Face."),
+        1,
+        "the empty state"
+    );
     assert_eq!(shown("Clear finished"), 0);
 
     let mut jobs = Jobs::default();
-    let done = jobs.add("org/Done-GGUF", "org/Done-GGUF  ·  Q8_0".into(), "Fetches 1 file, 8.00 GiB: d.gguf".into());
+    let done = jobs.add(
+        "org/Done-GGUF",
+        "org/Done-GGUF  ·  Q8_0".into(),
+        "Fetches 1 file, 8.00 GiB: d.gguf".into(),
+    );
     jobs.transfer_ended(done, Ok(()));
     jobs.configured(done, Ok(("d-Q8_0".into(), false)));
-    let running = jobs.add("org/Run-GGUF", "org/Run-GGUF  ·  Q4_K_M".into(), "Fetches 1 file, 4.00 GiB: r.gguf".into());
+    let running = jobs.add(
+        "org/Run-GGUF",
+        "org/Run-GGUF  ·  Q4_K_M".into(),
+        "Fetches 1 file, 4.00 GiB: r.gguf".into(),
+    );
     let rows: Rc<VecModel<DownloadRow>> = Rc::new(VecModel::default());
     win.set_rows(ModelRc::from(rows.clone()));
     sync_rows(&rows, jobs.rows());
-    assert_eq!(shown("No downloads. Start one from Models, New…, From Hugging Face."), 0);
+    assert_eq!(
+        shown("No downloads. Start one from Models, New…, From Hugging Face."),
+        0
+    );
     for text in [
         "org/Run-GGUF  ·  Q4_K_M",
         "Downloading",
@@ -1022,10 +1180,22 @@ pub(super) fn e2e() {
         .next()
         .expect("the button")
         .invoke_accessible_default_action();
-    assert_eq!(id_of(clicked.get()), Some(running), "the button acts on its own row's id");
+    assert_eq!(
+        id_of(clicked.get()),
+        Some(running),
+        "the button acts on its own row's id"
+    );
 
     // A progress tick rewrites the row in place: same model object.
-    let p = hf::Progress { done: 1 << 30, total: 4 << 30, file: "r.gguf".into(), file_done: 1 << 30, file_total: 4 << 30, files_done: 0, files_total: 1 };
+    let p = hf::Progress {
+        done: 1 << 30,
+        total: 4 << 30,
+        file: "r.gguf".into(),
+        file_done: 1 << 30,
+        file_total: 4 << 30,
+        files_done: 0,
+        files_total: 1,
+    };
     jobs.progress(running, progress_view(&p));
     let before = win.get_rows();
     sync_rows(&rows, jobs.rows());
@@ -1048,7 +1218,14 @@ mod tests {
     use super::*;
     use hf::{HfError, Progress, Sidecar};
 
-    fn progress(done: u64, total: u64, file: &str, fd: u64, ft: u64, files: (usize, usize)) -> Progress {
+    fn progress(
+        done: u64,
+        total: u64,
+        file: &str,
+        fd: u64,
+        ft: u64,
+        files: (usize, usize),
+    ) -> Progress {
         Progress {
             done,
             total,
@@ -1068,13 +1245,27 @@ mod tests {
         assert_eq!((v.overall_fraction, v.file_fraction), (0.0, 0.0));
 
         let gib = 1u64 << 30;
-        let v = progress_view(&progress(gib, 4 * gib, "sub/a.gguf", gib / 2, 2 * gib, (1, 3)));
+        let v = progress_view(&progress(
+            gib,
+            4 * gib,
+            "sub/a.gguf",
+            gib / 2,
+            2 * gib,
+            (1, 3),
+        ));
         assert_eq!(v.overall, "1.00 GiB of 4.00 GiB (25%), file 2 of 3");
         assert_eq!(v.file, "a.gguf: 512.0 MiB of 2.00 GiB (25%)");
         assert_eq!((v.overall_fraction, v.file_fraction), (0.25, 0.25));
 
         // The end: never "file 4 of 3", never past 100%.
-        let v = progress_view(&progress(5 * gib, 4 * gib, "a.gguf", 2 * gib, 2 * gib, (3, 3)));
+        let v = progress_view(&progress(
+            5 * gib,
+            4 * gib,
+            "a.gguf",
+            2 * gib,
+            2 * gib,
+            (3, 3),
+        ));
         assert!(v.overall.ends_with("(100%), file 3 of 3"), "{}", v.overall);
         assert_eq!(v.overall_fraction, 1.0);
     }
@@ -1084,15 +1275,42 @@ mod tests {
         let t0 = Instant::now();
         let ms = |n| t0 + Duration::from_millis(n);
         let mut c = Coalescer::new(Duration::from_millis(250));
-        assert!(c.admit(&progress(0, 100, "", 0, 0, (0, 2)), ms(0)), "the first one");
-        assert!(c.admit(&progress(1, 100, "a", 1, 50, (0, 2)), ms(10)), "a new current file");
-        assert!(!c.admit(&progress(2, 100, "a", 2, 50, (0, 2)), ms(20)), "throttled");
-        assert!(!c.admit(&progress(3, 100, "a", 3, 50, (0, 2)), ms(259)), "still inside the interval");
-        assert!(c.admit(&progress(4, 100, "a", 4, 50, (0, 2)), ms(260)), "the interval passed");
-        assert!(c.admit(&progress(50, 100, "a", 50, 50, (1, 2)), ms(270)), "one more file done");
-        assert!(c.admit(&progress(100, 100, "b", 50, 50, (1, 2)), ms(280)), "new file");
-        assert!(c.admit(&progress(100, 100, "b", 50, 50, (2, 2)), ms(281)), "the end always passes");
-        assert!(c.admit(&progress(100, 100, "b", 50, 50, (2, 2)), ms(282)), "the last byte always passes");
+        assert!(
+            c.admit(&progress(0, 100, "", 0, 0, (0, 2)), ms(0)),
+            "the first one"
+        );
+        assert!(
+            c.admit(&progress(1, 100, "a", 1, 50, (0, 2)), ms(10)),
+            "a new current file"
+        );
+        assert!(
+            !c.admit(&progress(2, 100, "a", 2, 50, (0, 2)), ms(20)),
+            "throttled"
+        );
+        assert!(
+            !c.admit(&progress(3, 100, "a", 3, 50, (0, 2)), ms(259)),
+            "still inside the interval"
+        );
+        assert!(
+            c.admit(&progress(4, 100, "a", 4, 50, (0, 2)), ms(260)),
+            "the interval passed"
+        );
+        assert!(
+            c.admit(&progress(50, 100, "a", 50, 50, (1, 2)), ms(270)),
+            "one more file done"
+        );
+        assert!(
+            c.admit(&progress(100, 100, "b", 50, 50, (1, 2)), ms(280)),
+            "new file"
+        );
+        assert!(
+            c.admit(&progress(100, 100, "b", 50, 50, (2, 2)), ms(281)),
+            "the end always passes"
+        );
+        assert!(
+            c.admit(&progress(100, 100, "b", 50, 50, (2, 2)), ms(282)),
+            "the last byte always passes"
+        );
         assert_eq!(PROGRESS_INTERVAL, Duration::from_millis(250));
     }
 
@@ -1101,7 +1319,10 @@ mod tests {
         let d = hf::Downloaded {
             repo: "org/Repo-GGUF".into(),
             project_url: "https://huggingface.co/org/Repo-GGUF".into(),
-            model: PathBuf::from("M").join("models").join("Repo-GGUF").join("m-Q4_K_M.gguf"),
+            model: PathBuf::from("M")
+                .join("models")
+                .join("Repo-GGUF")
+                .join("m-Q4_K_M.gguf"),
             mmproj: Some(PathBuf::from("mm.gguf")),
             draft: Some((Sidecar::Mtp, PathBuf::from("mtp.gguf"))),
         };
@@ -1111,10 +1332,14 @@ mod tests {
              Show preset (Downloads) opens it."
         );
         assert!(
-            created_status(&d, "m-Q4_K_M", true).contains("created [m-Q4_K_M], placed on the GPUs as estimated."),
+            created_status(&d, "m-Q4_K_M", true)
+                .contains("created [m-Q4_K_M], placed on the GPUs as estimated."),
             "the status says the placement is an estimate"
         );
-        assert!(!created_status(&d, "m-Q4_K_M", true).contains("selected"), "nothing is selected for the user");
+        assert!(
+            !created_status(&d, "m-Q4_K_M", true).contains("selected"),
+            "nothing is selected for the user"
+        );
     }
 
     fn jobs_with(repo: &str) -> (Jobs, u64) {
@@ -1132,27 +1357,54 @@ mod tests {
         let (mut j, id) = jobs_with("org/Repo-GGUF");
         assert_eq!(state_of(&j, id), JobState::Downloading);
         let r = &j.rows()[0];
-        assert_eq!((r.state.as_str(), r.overall.as_str()), ("Downloading", "Starting…"));
+        assert_eq!(
+            (r.state.as_str(), r.overall.as_str()),
+            ("Downloading", "Starting…")
+        );
         assert!(r.show_progress && r.can_cancel && !r.can_resume && !r.can_show && !r.can_dismiss);
         assert_eq!(j.summary(), "1 download running");
 
-        assert!(j.progress(id, progress_view(&progress(1 << 30, 4 << 30, "a.gguf", 1 << 30, 4 << 30, (0, 1)))));
+        assert!(j.progress(
+            id,
+            progress_view(&progress(
+                1 << 30,
+                4 << 30,
+                "a.gguf",
+                1 << 30,
+                4 << 30,
+                (0, 1)
+            ))
+        ));
         let r = &j.rows()[0];
-        assert!(r.overall.starts_with("1.00 GiB of 4.00 GiB (25%)"), "{}", r.overall);
+        assert!(
+            r.overall.starts_with("1.00 GiB of 4.00 GiB (25%)"),
+            "{}",
+            r.overall
+        );
         assert_eq!(r.overall_fraction, 0.25);
 
         assert!(j.transfer_ended(id, Ok(())));
         assert_eq!(state_of(&j, id), JobState::Configuring);
         let r = &j.rows()[0];
         assert_eq!(r.state.as_str(), "Creating the preset…");
-        assert!(!r.show_progress && !r.can_cancel && !r.can_dismiss, "nothing to cancel while the preset is written");
-        assert!(!j.progress(id, progress_view(&progress(0, 1, "", 0, 0, (0, 1)))), "a late readout is dropped");
+        assert!(
+            !r.show_progress && !r.can_cancel && !r.can_dismiss,
+            "nothing to cancel while the preset is written"
+        );
+        assert!(
+            !j.progress(id, progress_view(&progress(0, 1, "", 0, 0, (0, 1)))),
+            "a late readout is dropped"
+        );
         assert_eq!(j.active(), 1, "Quit still asks while the preset is made");
 
         assert!(j.configured(id, Ok(("m-Q4_K_M".into(), true))));
         let r = &j.rows()[0];
         assert_eq!(r.state.as_str(), "Done");
-        assert!(r.message.contains("[m-Q4_K_M]") && r.message.contains("as estimated"), "{}", r.message);
+        assert!(
+            r.message.contains("[m-Q4_K_M]") && r.message.contains("as estimated"),
+            "{}",
+            r.message
+        );
         assert!(r.can_show && r.can_dismiss && !r.can_resume && !r.is_error);
         assert_eq!(j.preset_of(id).as_deref(), Some("m-Q4_K_M"));
         assert_eq!(j.summary(), "Downloads: 1 done");
@@ -1166,7 +1418,10 @@ mod tests {
         assert!(!j.cancel(id), "once");
         let r = &j.rows()[0];
         assert_eq!(r.state.as_str(), "Cancelling…");
-        assert!(r.show_progress && !r.can_cancel, "the bar stays until the child stops");
+        assert!(
+            r.show_progress && !r.can_cancel,
+            "the bar stays until the child stops"
+        );
         assert!(j.transfer_ended(id, Err(&HfError::Cancelled)));
         let r = &j.rows()[0];
         assert_eq!(r.state.as_str(), "Cancelled");
@@ -1178,7 +1433,11 @@ mod tests {
         assert!(j.transfer_ended(id, Err(&HfError::DiskFull("no space left".into()))));
         let r = &j.rows()[0];
         assert_eq!(r.state.as_str(), "Failed");
-        assert!(r.is_error && r.message.contains("no space left"), "{}", r.message);
+        assert!(
+            r.is_error && r.message.contains("no space left"),
+            "{}",
+            r.message
+        );
         assert_eq!(j.summary(), "Downloads: 1 failed");
         assert!(j.restart(id).is_ok(), "a failure resumes too");
         assert!(j.restart(id).is_err(), "a running job does not restart");
@@ -1187,8 +1446,14 @@ mod tests {
     #[test]
     fn one_download_per_repository_at_a_time() {
         let (mut j, a) = jobs_with("org/Repo-GGUF");
-        assert!(j.busy_with("org/Repo-GGUF") && j.busy_with("ORG/repo-gguf"), "the same staging tree, any case");
-        assert!(!j.busy_with("org/Other-GGUF"), "another repository may run beside it");
+        assert!(
+            j.busy_with("org/Repo-GGUF") && j.busy_with("ORG/repo-gguf"),
+            "the same staging tree, any case"
+        );
+        assert!(
+            !j.busy_with("org/Other-GGUF"),
+            "another repository may run beside it"
+        );
         let b = j.add("org/Other-GGUF", "o".into(), String::new());
         assert_eq!(j.summary(), "2 downloads running");
         assert_eq!(j.rows()[0].id as u64, b, "newest first");
@@ -1196,7 +1461,10 @@ mod tests {
         // A second job of the busy repository (added after the first failed)
         // cannot resume while the first runs again.
         j.transfer_ended(a, Err(&HfError::Network("x".into())));
-        assert!(!j.busy_with("org/Repo-GGUF"), "a failed job frees its repository");
+        assert!(
+            !j.busy_with("org/Repo-GGUF"),
+            "a failed job frees its repository"
+        );
         let c = j.add("org/Repo-GGUF", "again".into(), String::new());
         let refused = j.restart(a).unwrap_err();
         assert!(refused.contains("already downloading"), "{refused}");
@@ -1205,7 +1473,10 @@ mod tests {
         j.cancel(c);
         j.transfer_ended(c, Err(&HfError::Cancelled));
         assert!(j.restart(a).is_ok());
-        assert!(j.get(a).unwrap().note.is_empty(), "a resume clears the old note");
+        assert!(
+            j.get(a).unwrap().note.is_empty(),
+            "a resume clears the old note"
+        );
     }
 
     #[test]
@@ -1231,7 +1502,10 @@ mod tests {
     #[test]
     fn a_failed_save_is_a_failure_and_ids_map_to_rows() {
         let (mut j, id) = jobs_with("org/A");
-        assert!(!j.configured(id, Ok(("x".into(), false))), "not before the transfer ended");
+        assert!(
+            !j.configured(id, Ok(("x".into(), false))),
+            "not before the transfer ended"
+        );
         j.transfer_ended(id, Ok(()));
         assert!(j.configured(id, Err("could not be saved".into())));
         assert!(j.rows()[0].is_error && j.rows()[0].can_resume);

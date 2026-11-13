@@ -40,9 +40,8 @@ fn detect_format() -> Option<&'static str> {
     for id in ids.split_whitespace() {
         match id {
             "debian" | "ubuntu" => return Some("deb"),
-            "fedora" | "rhel" | "centos" | "rocky" | "almalinux" | "suse" | "sles" | "mageia" | "openmandriva" => {
-                return Some("rpm")
-            }
+            "fedora" | "rhel" | "centos" | "rocky" | "almalinux" | "suse" | "sles" | "mageia"
+            | "openmandriva" => return Some("rpm"),
             _ if id.starts_with("opensuse") => return Some("rpm"),
             _ => {}
         }
@@ -58,7 +57,10 @@ fn detect_format() -> Option<&'static str> {
 }
 
 fn name(p: &Path) -> String {
-    p.file_name().unwrap_or_default().to_string_lossy().into_owned()
+    p.file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .into_owned()
 }
 
 fn modified(p: &Path) -> Option<std::time::SystemTime> {
@@ -83,7 +85,12 @@ impl Package {
         } else {
             (
                 output(cmd("rpm").args(["-qp", "--qf", "%{NAME}"]).arg(&file)).unwrap_or_default(),
-                output(cmd("rpm").args(["-qp", "--qf", "%{VERSION}-%{RELEASE}"]).arg(&file)).unwrap_or_default(),
+                output(
+                    cmd("rpm")
+                        .args(["-qp", "--qf", "%{VERSION}-%{RELEASE}"])
+                        .arg(&file),
+                )
+                .unwrap_or_default(),
             )
         };
         if name.is_empty() || new_version.is_empty() {
@@ -97,7 +104,12 @@ impl Package {
                 .filter(|s| !s.contains(' ') && !s.contains("not installed"))
         }
         .unwrap_or_default();
-        Ok(Package { file, name, new_version, old_version })
+        Ok(Package {
+            file,
+            name,
+            new_version,
+            old_version,
+        })
     }
 
     fn action(&self) -> &'static str {
@@ -118,7 +130,12 @@ impl Package {
 /// dnf wants a verb per action, and refuses to reinstall what is not installed,
 /// so it gets one command per action, the versions going up first.
 fn install_commands(pkgs: &[Package], deb: bool, has: &dyn Fn(&str) -> bool) -> Vec<Vec<String>> {
-    let files = |subset: &[&Package]| subset.iter().map(|p| p.file.display().to_string()).collect::<Vec<_>>();
+    let files = |subset: &[&Package]| {
+        subset
+            .iter()
+            .map(|p| p.file.display().to_string())
+            .collect::<Vec<_>>()
+    };
     let all: Vec<&Package> = pkgs.iter().collect();
     let with = |base: &[&str], subset: &[&Package]| {
         let mut argv: Vec<String> = base.iter().map(|s| s.to_string()).collect();
@@ -127,11 +144,23 @@ fn install_commands(pkgs: &[Package], deb: bool, has: &dyn Fn(&str) -> bool) -> 
     };
     if deb {
         // --reinstall makes the same version count; --allow-downgrades the older.
-        return vec![with(&["apt-get", "install", "-y", "--reinstall", "--allow-downgrades"], &all)];
+        return vec![with(
+            &[
+                "apt-get",
+                "install",
+                "-y",
+                "--reinstall",
+                "--allow-downgrades",
+            ],
+            &all,
+        )];
     }
     if has("dnf") {
         let mut commands = Vec::new();
-        let up: Vec<&Package> = pkgs.iter().filter(|p| matches!(p.action(), "install" | "upgrade")).collect();
+        let up: Vec<&Package> = pkgs
+            .iter()
+            .filter(|p| matches!(p.action(), "install" | "upgrade"))
+            .collect();
         if !up.is_empty() {
             commands.push(with(&["dnf", "install", "-y"], &up));
         }
@@ -145,10 +174,22 @@ fn install_commands(pkgs: &[Package], deb: bool, has: &dyn Fn(&str) -> bool) -> 
     }
     if has("zypper") {
         // The packages are unsigned; --force covers reinstall and downgrade alike.
-        return vec![with(&["zypper", "--non-interactive", "install", "--force", "--allow-unsigned-rpm"], &all)];
+        return vec![with(
+            &[
+                "zypper",
+                "--non-interactive",
+                "install",
+                "--force",
+                "--allow-unsigned-rpm",
+            ],
+            &all,
+        )];
     }
     // Bare rpm checks the dependencies but cannot fetch them.
-    vec![with(&["rpm", "-Uvh", "--replacepkgs", "--oldpackage"], &all)]
+    vec![with(
+        &["rpm", "-Uvh", "--replacepkgs", "--oldpackage"],
+        &all,
+    )]
 }
 
 pub fn run(format: Option<&str>, force: bool, dry_run: bool, files: Vec<PathBuf>) -> Result<()> {
@@ -175,7 +216,9 @@ pub fn run(format: Option<&str>, force: bool, dry_run: bool, files: Vec<PathBuf>
     let format = match format {
         Some(f) => f,
         None => {
-            let f = detect_format().context("cannot tell whether this machine takes a .deb or an .rpm: pass --deb or --rpm")?;
+            let f = detect_format().context(
+                "cannot tell whether this machine takes a .deb or an .rpm: pass --deb or --rpm",
+            )?;
             ui::dim(format!("Format: .{f} (detected)"));
             f.to_string()
         }
@@ -192,10 +235,16 @@ pub fn run(format: Option<&str>, force: bool, dry_run: bool, files: Vec<PathBuf>
             ("aarch64", false) => "aarch64",
             (a, _) => bail!("unsupported architecture: {a}"),
         };
-        let found: Vec<PathBuf> =
-            components::newest_in(&out_dir, &format!("-{arch}.{format}")).into_iter().map(|(_, p)| p).collect();
+        let found: Vec<PathBuf> = components::newest_in(&out_dir, &format!("-{arch}.{format}"))
+            .into_iter()
+            .map(|(_, p)| p)
+            .collect();
         if found.is_empty() {
-            bail!("no {} .{format} for {arch} in {}. Run cargo run -p xtask -- package first.", components::BASE_NAME, out_dir.display());
+            bail!(
+                "no {} .{format} for {arch} in {}. Run cargo run -p xtask -- package first.",
+                components::BASE_NAME,
+                out_dir.display()
+            );
         }
         found
     } else {
@@ -206,7 +255,9 @@ pub fn run(format: Option<&str>, force: bool, dry_run: bool, files: Vec<PathBuf>
     // A runtime comes out of an SDK, which the build does not change.
     let built = util::build_root().join("llama.cpp-cmake/bin/llama-server");
     for p in &picked {
-        let runtime = Component::RUNTIMES.iter().any(|c| name(p).starts_with(&format!("{}-v", c.package())));
+        let runtime = Component::RUNTIMES
+            .iter()
+            .any(|c| name(p).starts_with(&format!("{}-v", c.package())));
         if let (false, Some(b), Some(m)) = (runtime, modified(&built), modified(p)) {
             if b > m {
                 ui::warn(format!(
@@ -218,19 +269,32 @@ pub fn run(format: Option<&str>, force: bool, dry_run: bool, files: Vec<PathBuf>
     }
 
     // ── Versions ────────────────────────────────────────────────────────
-    let packages = picked.into_iter().map(|f| Package::read(f, deb)).collect::<Result<Vec<_>>>()?;
+    let packages = picked
+        .into_iter()
+        .map(|f| Package::read(f, deb))
+        .collect::<Result<Vec<_>>>()?;
     for p in &packages {
-        ui::head(format!("{}: {} ({} MiB)", p.name, name(&p.file), util::du("-m", &p.file)));
+        ui::head(format!(
+            "{}: {} ({} MiB)",
+            p.name,
+            name(&p.file),
+            util::du("-m", &p.file)
+        ));
         ui::head(format!(
             "  {} to {} (installed: {})",
             p.action(),
             p.new_version,
-            if p.old_version.is_empty() { "none" } else { &p.old_version }
+            if p.old_version.is_empty() {
+                "none"
+            } else {
+                &p.old_version
+            }
         ));
     }
 
     // ── Running programs ────────────────────────────────────────────────
-    let running = output(cmd("pgrep").args(["-a", "-f", &format!("^{OPT_DIR}/bin/")])).unwrap_or_default();
+    let running =
+        output(cmd("pgrep").args(["-a", "-f", &format!("^{OPT_DIR}/bin/")])).unwrap_or_default();
     if !running.is_empty() {
         ui::warn(format!("Running from {OPT_DIR}:"));
         for line in running.lines() {
@@ -273,14 +337,23 @@ pub fn run(format: Option<&str>, force: bool, dry_run: bool, files: Vec<PathBuf>
         if !matches {
             bail!(
                 "{OPT_DIR}/bin/llama-cpp-config reports '{}', the package is {}",
-                if version.is_empty() { "nothing" } else { &version },
+                if version.is_empty() {
+                    "nothing"
+                } else {
+                    &version
+                },
                 p.new_version
             );
         }
     }
     ui::say("");
     for p in &packages {
-        ui::ok(format!("{} {} installed in {OPT_DIR} ({})", p.name, p.new_version, p.action()));
+        ui::ok(format!(
+            "{} {} installed in {OPT_DIR} ({})",
+            p.name,
+            p.new_version,
+            p.action()
+        ));
     }
     if !running.is_empty() {
         ui::warn("Restart the programs listed above to use it");
@@ -294,7 +367,12 @@ mod tests {
     use super::*;
 
     fn pkg(file: &str, new_version: &str, old_version: &str) -> Package {
-        Package { file: file.into(), name: String::new(), new_version: new_version.into(), old_version: old_version.into() }
+        Package {
+            file: file.into(),
+            name: String::new(),
+            new_version: new_version.into(),
+            old_version: old_version.into(),
+        }
     }
 
     #[test]
@@ -308,7 +386,12 @@ mod tests {
 
     #[test]
     fn dnf_gets_one_verb_per_action_with_the_rising_versions_first() {
-        let pkgs = [pkg("same.rpm", "1", "1"), pkg("new.rpm", "1", ""), pkg("up.rpm", "2", "1"), pkg("down.rpm", "1", "2")];
+        let pkgs = [
+            pkg("same.rpm", "1", "1"),
+            pkg("new.rpm", "1", ""),
+            pkg("up.rpm", "2", "1"),
+            pkg("down.rpm", "1", "2"),
+        ];
         let commands = install_commands(&pkgs, false, &|t| t == "dnf");
         assert_eq!(commands[0], ["dnf", "install", "-y", "new.rpm", "up.rpm"]);
         assert_eq!(commands[1], ["dnf", "downgrade", "-y", "down.rpm"]);

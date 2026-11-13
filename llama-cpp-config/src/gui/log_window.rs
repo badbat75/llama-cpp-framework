@@ -29,8 +29,8 @@
 //!
 //! Helpers live in the parent `gui` module (`use super::*`).
 
-use crate::strings;
 use super::*;
+use crate::strings;
 use slint::Model;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
@@ -239,9 +239,18 @@ fn tail_status(path: &std::path::Path) -> String {
     let age = match meta.modified().ok().and_then(|m| m.elapsed().ok()) {
         None => String::new(),
         Some(e) if e.as_secs() < 2 => format!(" · {}", strings::t("updated-just-now")),
-        Some(e) if e.as_secs() < 120 => format!(" · {}", strings::fill("updated-seconds-ago", &[&e.as_secs()])),
-        Some(e) if e.as_secs() < 7200 => format!(" · {}", strings::fill("updated-minutes-ago", &[&(e.as_secs() / 60)])),
-        Some(e) => format!(" · {}", strings::fill("updated-hours-ago", &[&(e.as_secs() / 3600)])),
+        Some(e) if e.as_secs() < 120 => format!(
+            " · {}",
+            strings::fill("updated-seconds-ago", &[&e.as_secs()])
+        ),
+        Some(e) if e.as_secs() < 7200 => format!(
+            " · {}",
+            strings::fill("updated-minutes-ago", &[&(e.as_secs() / 60)])
+        ),
+        Some(e) => format!(
+            " · {}",
+            strings::fill("updated-hours-ago", &[&(e.as_secs() / 3600)])
+        ),
     };
     format!("{size}{age}")
 }

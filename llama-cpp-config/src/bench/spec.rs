@@ -184,10 +184,10 @@ pub fn version_key(v: &str) -> Vec<u64> {
 }
 
 fn load_file(path: &Path) -> Result<Spec, String> {
-    let bytes = std::fs::read(path).map_err(|e| strings::fill("cannot-read-file", &[&path.display(), &e]))?;
+    let bytes = std::fs::read(path)
+        .map_err(|e| strings::fill("cannot-read-file", &[&path.display(), &e]))?;
     let text = String::from_utf8_lossy(&bytes);
-    parse(&text, &crate::paths::config_dir())
-        .map_err(|e| format!("{}: {e}", path.display()))
+    parse(&text, &crate::paths::config_dir()).map_err(|e| format!("{}: {e}", path.display()))
 }
 
 /// Parse a spec's text; `config` resolves bare prompt names.
@@ -198,11 +198,15 @@ pub fn parse(text: &str, config: &Path) -> Result<Spec, String> {
         .find(|s| s.id == "Spec")
         .ok_or_else(|| strings::t("no-spec-section"))?;
     let get = |k: &str| head.keys.get(k).map(|v| v.trim().to_string());
-    let name = get("Name").filter(|v| !v.is_empty()).ok_or_else(|| strings::t("spec-no-name"))?;
+    let name = get("Name")
+        .filter(|v| !v.is_empty())
+        .ok_or_else(|| strings::t("spec-no-name"))?;
     if name == "custom" {
         return Err(strings::t("spec-name-reserved"));
     }
-    let version = get("Version").filter(|v| !v.is_empty()).ok_or_else(|| strings::t("spec-no-version"))?;
+    let version = get("Version")
+        .filter(|v| !v.is_empty())
+        .ok_or_else(|| strings::t("spec-no-version"))?;
     let mut prompts = Vec::new();
     for entry in get("Prompts").unwrap_or_default().split(',').map(str::trim) {
         if entry.is_empty() {
@@ -246,9 +250,9 @@ pub fn parse(text: &str, config: &Path) -> Result<Spec, String> {
         let ctx = |e: String| format!("[{}] {e}", s.id);
         let temp = match get("Temp").as_deref() {
             None | Some("preset") => None,
-            Some(v) => Some(
-                ini::parse_float(v).ok_or_else(|| ctx(strings::fill("spec-temp", &[&v])))?,
-            ),
+            Some(v) => {
+                Some(ini::parse_float(v).ok_or_else(|| ctx(strings::fill("spec-temp", &[&v])))?)
+            }
         };
         let reps = match get("Reps") {
             None => super::DEFAULT_REPS,
@@ -284,7 +288,10 @@ pub fn parse(text: &str, config: &Path) -> Result<Spec, String> {
             .map(str::to_string)
             .collect();
         for p in &pass_prompts {
-            if !prompts.iter().any(|(f, _)| f.file_name().is_some_and(|n| n.to_string_lossy() == p.as_str())) {
+            if !prompts.iter().any(|(f, _)| {
+                f.file_name()
+                    .is_some_and(|n| n.to_string_lossy() == p.as_str())
+            }) {
                 return Err(ctx(strings::fill("spec-prompt-unknown", &[&p])));
             }
         }
@@ -334,14 +341,21 @@ pub fn canonical(spec: &Spec) -> String {
         spec.name, spec.version, spec.max_tokens
     );
     if let Some(size) = spec.image_size {
-        out.push_str(&format!("image-size={}\n", super::image_size_str(Some(size))));
+        out.push_str(&format!(
+            "image-size={}\n",
+            super::image_size_str(Some(size))
+        ));
     }
     for (path, sha) in &spec.prompts {
         let file = path.file_name().unwrap_or_default().to_string_lossy();
         out.push_str(&format!("prompt={file}@{sha}\n"));
     }
     for p in &spec.passes {
-        let overrides: Vec<String> = p.overrides.iter().map(|(k, v)| format!("{k}={v}")).collect();
+        let overrides: Vec<String> = p
+            .overrides
+            .iter()
+            .map(|(k, v)| format!("{k}={v}"))
+            .collect();
         out.push_str(&format!(
             "pass={} temp={} reps={} concurrency={} override={}\n",
             p.name,
@@ -376,15 +390,24 @@ pub const STANDARD_VERSIONS: &str = include_str!("../../../benchmarks/specs/stan
 pub fn standard_version(version: &str) -> Result<Spec, String> {
     let published = published_versions(STANDARD_VERSIONS);
     if !published.iter().any(|(v, _)| v == version) {
-        return Err(strings::fill("spec-not-published", &[&version, &"standard.versions"]));
+        return Err(strings::fill(
+            "spec-not-published",
+            &[&version, &"standard.versions"],
+        ));
     }
     let path = specs_dir().join(format!("standard-{version}.ini"));
     let spec = load_file(&path)?;
     if spec.name != "standard" || spec.version != version {
-        return Err(strings::fill("spec-file-mismatch", &[&path.display(), &spec.name, &spec.version, &version]));
+        return Err(strings::fill(
+            "spec-file-mismatch",
+            &[&path.display(), &spec.name, &spec.version, &version],
+        ));
     }
     if !spec.published {
-        return Err(strings::fill("spec-digest-mismatch", &[&path.display(), &version, &"standard.versions"]));
+        return Err(strings::fill(
+            "spec-digest-mismatch",
+            &[&path.display(), &version, &"standard.versions"],
+        ));
     }
     Ok(spec)
 }
@@ -398,7 +421,11 @@ pub fn to_ini(spec: &Spec, config: &Path) -> String {
         .iter()
         .map(|(p, sha)| {
             let shown = match p.parent() {
-                Some(dir) if dir == config || dir == crate::paths::bench_prompts_dir() => p.file_name().unwrap_or_default().to_string_lossy().into_owned(),
+                Some(dir) if dir == config || dir == crate::paths::bench_prompts_dir() => p
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .into_owned(),
                 _ => p.to_string_lossy().into_owned(),
             };
             format!("{shown}@{sha}")
@@ -415,7 +442,10 @@ pub fn to_ini(spec: &Spec, config: &Path) -> String {
         spec.max_tokens
     );
     if spec.image_size.is_some() {
-        out.push_str(&format!("ImageSize = {}\n", super::image_size_str(spec.image_size)));
+        out.push_str(&format!(
+            "ImageSize = {}\n",
+            super::image_size_str(spec.image_size)
+        ));
     }
     for p in &spec.passes {
         out.push_str(&format!(
@@ -424,7 +454,11 @@ pub fn to_ini(spec: &Spec, config: &Path) -> String {
             p.temp.map_or("preset".to_string(), |t| t.to_string())
         ));
         if !p.overrides.is_empty() {
-            let o: Vec<String> = p.overrides.iter().map(|(k, v)| format!("{k}={v}")).collect();
+            let o: Vec<String> = p
+                .overrides
+                .iter()
+                .map(|(k, v)| format!("{k}={v}"))
+                .collect();
             out.push_str(&format!("Override = {}\n", o.join("; ")));
         }
         if !p.prompts.is_empty() {
@@ -482,7 +516,13 @@ pub fn run(spec: &Spec, base: &Opts, derive: &Derive, only: &[String]) -> Result
         prompts.retain(|p| only.contains(&prompt_name(p)));
     }
     if !derived.is_empty() {
-        println!("{}", strings::fill("spec-derived-notice", &[&spec.name, &spec.version, &derived.join(", ")]));
+        println!(
+            "{}",
+            strings::fill(
+                "spec-derived-notice",
+                &[&spec.name, &spec.version, &derived.join(", ")]
+            )
+        );
     }
     let campaign = if base.campaign.is_empty() {
         default_campaign(spec)
@@ -492,7 +532,13 @@ pub fn run(spec: &Spec, base: &Opts, derive: &Derive, only: &[String]) -> Result
     let mut problems = Vec::new();
     for prompt in &prompts {
         if super::prompt_has_image(&prompt.1) && !sweep::has_mmproj(&base.preset)? {
-            println!("\n{}", strings::fill("image-prompt-skipped", &[&prompt_name(prompt), &base.preset]));
+            println!(
+                "\n{}",
+                strings::fill(
+                    "image-prompt-skipped",
+                    &[&prompt_name(prompt), &base.preset]
+                )
+            );
             continue;
         }
         for pass in &spec.passes {
@@ -511,7 +557,13 @@ pub fn run(spec: &Spec, base: &Opts, derive: &Derive, only: &[String]) -> Result
                     "\n{}",
                     strings::fill(
                         "spec-leg-heading",
-                        &[&spec.name, &spec.version, &pass.name, &prompt_name(prompt), &c.as_str()],
+                        &[
+                            &spec.name,
+                            &spec.version,
+                            &pass.name,
+                            &prompt_name(prompt),
+                            &c.as_str()
+                        ],
                     )
                 );
                 let opts = Opts {
@@ -520,7 +572,10 @@ pub fn run(spec: &Spec, base: &Opts, derive: &Derive, only: &[String]) -> Result
                     ..base.clone()
                 };
                 if let Err(e) = sweep::run(&opts) {
-                    problems.push(strings::fill("spec-leg-failed", &[&pass.name, &c.as_str(), &e]));
+                    problems.push(strings::fill(
+                        "spec-leg-failed",
+                        &[&pass.name, &c.as_str(), &e],
+                    ));
                 }
             }
             if let Err(e) = restore_overrides(&base.preset, restore) {
@@ -621,7 +676,11 @@ fn prompts_and_derived(
             .collect(),
     };
     let mut derived = derive.fields();
-    if key.is_some_and(|k| spec.passes.iter().any(|p| p.overrides.iter().any(|(o, _)| o == k))) {
+    if key.is_some_and(|k| {
+        spec.passes
+            .iter()
+            .any(|p| p.overrides.iter().any(|(o, _)| o == k))
+    }) {
         derived.push("override".into());
     }
     if !spec.published {
@@ -632,7 +691,11 @@ fn prompts_and_derived(
 
 fn prompt_name(p: &Prompt) -> String {
     match &p.0 {
-        Some(f) => f.file_name().unwrap_or_default().to_string_lossy().into_owned(),
+        Some(f) => f
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .into_owned(),
         None => "--prompt".into(),
     }
 }
@@ -704,12 +767,20 @@ pub fn tab_steps(
 /// The Benchmark tab's A/B: every step once per value of `key`, that value
 /// written to the presets for it (over a pass's own override of the same key,
 /// which `tab_steps` then records as derived), value first in the label.
-pub fn ab_expand(steps: Vec<super::exec::Step>, key: &str, values: &[String]) -> Vec<super::exec::Step> {
+pub fn ab_expand(
+    steps: Vec<super::exec::Step>,
+    key: &str,
+    values: &[String],
+) -> Vec<super::exec::Step> {
     let mut out = Vec::new();
     for v in values {
         for st in &steps {
-            let mut overrides: Vec<(String, String)> =
-                st.overrides.iter().filter(|(k, _)| k != key).cloned().collect();
+            let mut overrides: Vec<(String, String)> = st
+                .overrides
+                .iter()
+                .filter(|(k, _)| k != key)
+                .cloned()
+                .collect();
             overrides.push((key.to_string(), v.clone()));
             let label = if st.label.is_empty() {
                 format!("{key}={v}")
@@ -733,7 +804,10 @@ fn checked_prompts(spec: &Spec) -> Result<Vec<(PathBuf, String)>, String> {
         let text = super::load_prompt_file(p)?;
         let actual = super::prompt_info(&text).sha256;
         if &actual != pinned {
-            return Err(strings::fill("spec-prompt-changed", &[&p.display(), &actual, &spec.name, &spec.version, pinned]));
+            return Err(strings::fill(
+                "spec-prompt-changed",
+                &[&p.display(), &actual, &spec.name, &spec.version, pinned],
+            ));
         }
         prompts.push((p.clone(), text));
     }
@@ -747,7 +821,9 @@ fn checked_prompts(spec: &Spec) -> Result<Vec<(PathBuf, String)>, String> {
 /// can fail to load on a preset that fits with one.
 fn effective_overrides(overrides: &[(String, String)]) -> Vec<(String, String)> {
     let mut out = overrides.to_vec();
-    let draft_off = overrides.iter().any(|(k, v)| k == "spec-type" && v == "none");
+    let draft_off = overrides
+        .iter()
+        .any(|(k, v)| k == "spec-type" && v == "none");
     if draft_off && !overrides.iter().any(|(k, _)| k == "model-draft") {
         out.push(("model-draft".to_string(), sweep::UNSET.to_string()));
     }
@@ -768,13 +844,19 @@ pub(super) fn apply_overrides(
             super::interrupt::release(&marker);
             return Err(strings::fill("override-failed", &[&key, &value, &e]));
         }
-        println!("{}", strings::fill("override-for-pass", &[&key, &value, &original]));
+        println!(
+            "{}",
+            strings::fill("override-for-pass", &[&key, &value, &original])
+        );
         restore.push((key.clone(), original, marker));
     }
     Ok(restore)
 }
 
-pub(super) fn restore_overrides(preset: &str, restore: Vec<(String, String, PathBuf)>) -> Result<(), String> {
+pub(super) fn restore_overrides(
+    preset: &str,
+    restore: Vec<(String, String, PathBuf)>,
+) -> Result<(), String> {
     for (key, original, marker) in restore.into_iter().rev() {
         sweep::set_key(preset, &key, &original)
             .map_err(|e| strings::fill("override-not-restored", &[&key, &original, &e]))?;
@@ -802,7 +884,10 @@ mod tests {
             vec![o("spec-type", "none"), o("model-draft", sweep::UNSET)]
         );
         // Any other speculator keeps the file, and a list that names it wins.
-        assert_eq!(effective_overrides(&[o("spec-type", "draft-mtp")]), vec![o("spec-type", "draft-mtp")]);
+        assert_eq!(
+            effective_overrides(&[o("spec-type", "draft-mtp")]),
+            vec![o("spec-type", "draft-mtp")]
+        );
         let named = [o("spec-type", "none"), o("model-draft", "x.gguf")];
         assert_eq!(effective_overrides(&named), named.to_vec());
     }
@@ -822,8 +907,14 @@ mod tests {
         assert_eq!(s.max_tokens, 0);
         assert_eq!(s.passes.len(), 2);
         let e = &s.passes[0];
-        assert_eq!((e.temp, e.reps, e.concurrency), (Some(0.0), 3, Some(Concurrency::Single)));
-        assert_eq!(e.overrides, vec![("spec-type".to_string(), "none".to_string())]);
+        assert_eq!(
+            (e.temp, e.reps, e.concurrency),
+            (Some(0.0), 3, Some(Concurrency::Single))
+        );
+        assert_eq!(
+            e.overrides,
+            vec![("spec-type".to_string(), "none".to_string())]
+        );
         let r = &s.passes[1];
         assert_eq!((r.temp, r.reps, r.concurrency), (None, 5, None));
         assert!(r.overrides.is_empty());
@@ -855,12 +946,23 @@ mod tests {
 
     #[test]
     fn a_warm_pass_skips_prefill_and_needs_an_agent_turn() {
-        let s = parse(&SAMPLE.replace("Concurrency = all\n", "Concurrency = all\nWarm = prefix\n"), Path::new("/cfg")).unwrap();
+        let s = parse(
+            &SAMPLE.replace("Concurrency = all\n", "Concurrency = all\nWarm = prefix\n"),
+            Path::new("/cfg"),
+        )
+        .unwrap();
         let conv = r#"{"messages":[{"role":"user","content":"a"},{"role":"assistant","content":"b"},{"role":"user","content":"c"}]}"#;
         let got = pass_scenarios(&s.passes[1], conv, None, Concurrency::ALL.to_vec()).unwrap();
         assert!(!got.contains(&Concurrency::Prefill) && got.contains(&Concurrency::PrefillDecode));
-        assert!(pass_scenarios(&s.passes[1], "plain text", None, Concurrency::ALL.to_vec()).is_err());
-        assert_eq!(pass_scenarios(&s.passes[0], "plain text", None, Concurrency::ALL.to_vec()).unwrap().len(), 4);
+        assert!(
+            pass_scenarios(&s.passes[1], "plain text", None, Concurrency::ALL.to_vec()).is_err()
+        );
+        assert_eq!(
+            pass_scenarios(&s.passes[0], "plain text", None, Concurrency::ALL.to_vec())
+                .unwrap()
+                .len(),
+            4
+        );
     }
 
     #[test]
@@ -869,7 +971,11 @@ mod tests {
         assert!(parse("[Pass.a]\nTemp = 0\n", cfg).is_err());
         assert!(parse(&SAMPLE.replace("Name = standard", "Name = custom"), cfg).is_err());
         assert!(parse(&SAMPLE.replace("Reps = 3", "Reps = 0"), cfg).is_err());
-        assert!(parse(&SAMPLE.replace("Concurrency = all", "Concurrency = many"), cfg).is_err());
+        assert!(parse(
+            &SAMPLE.replace("Concurrency = all", "Concurrency = many"),
+            cfg
+        )
+        .is_err());
         assert!(parse(&SAMPLE.replace("spec-type=none", "no-such-key=1"), cfg).is_err());
         let no_pass = format!("[Spec]\nName = a\nVersion = 1\nPrompts = p.txt@{A}\n");
         assert!(parse(&no_pass, cfg).is_err());
@@ -924,7 +1030,10 @@ mod tests {
         let back = parse(&to_ini(&mine, cfg), cfg).unwrap();
         assert_eq!(back.passes, mine.passes);
         assert_eq!(back.prompts, mine.prompts);
-        assert_eq!((back.max_tokens, back.name.as_str()), (mine.max_tokens, "mine"));
+        assert_eq!(
+            (back.max_tokens, back.name.as_str()),
+            (mine.max_tokens, "mine")
+        );
         assert!(!back.published);
         // Named standard with the same rules, it IS the published version.
         assert!(parse(&to_ini(&std, cfg), cfg).unwrap().published);
@@ -941,9 +1050,15 @@ mod tests {
             assert!(s.published);
             assert_eq!(load(&format!("standard-{v}")).unwrap(), s);
         }
-        let newest = published.iter().map(|(v, _)| v).max_by_key(|v| version_key(v)).unwrap();
+        let newest = published
+            .iter()
+            .map(|(v, _)| v)
+            .max_by_key(|v| version_key(v))
+            .unwrap();
         assert_eq!(&load("standard").unwrap().version, newest);
-        assert!(standard_version("999.0").unwrap_err().contains("not a published version"));
+        assert!(standard_version("999.0")
+            .unwrap_err()
+            .contains("not a published version"));
         assert!(version_key("1.10") > version_key("1.9"));
     }
 
@@ -966,14 +1081,20 @@ mod tests {
         let mut files = 0;
         for e in std::fs::read_dir(specs_dir()).unwrap().flatten() {
             let name = e.file_name().to_string_lossy().into_owned();
-            let Some(v) = name.strip_prefix("standard-").and_then(|n| n.strip_suffix(".ini")) else {
+            let Some(v) = name
+                .strip_prefix("standard-")
+                .and_then(|n| n.strip_suffix(".ini"))
+            else {
                 continue;
             };
             files += 1;
             let s = load_file(&e.path()).unwrap();
             assert_eq!(s.version, v, "{name} says Version {}", s.version);
             let pinned = published.iter().find(|(pv, _)| pv == v).unwrap_or_else(|| {
-                panic!("{name}: {v} is not in standard.versions: add `{v} {}`", s.sha256)
+                panic!(
+                    "{name}: {v} is not in standard.versions: add `{v} {}`",
+                    s.sha256
+                )
             });
             assert_eq!(
                 pinned.1, s.sha256,
@@ -982,7 +1103,11 @@ mod tests {
                 s.sha256
             );
         }
-        assert!(files > 0, "no standard-<X.Y>.ini in {}", specs_dir().display());
+        assert!(
+            files > 0,
+            "no standard-<X.Y>.ini in {}",
+            specs_dir().display()
+        );
     }
 
     /// The tab's steps: prompt x pass x scenario, each pass's overrides on its
@@ -1014,12 +1139,18 @@ mod tests {
                 "real · p.txt · prefill+decode",
             ]
         );
-        assert_eq!(steps[0].overrides, [("spec-type".to_string(), "none".to_string())]);
+        assert_eq!(
+            steps[0].overrides,
+            [("spec-type".to_string(), "none".to_string())]
+        );
         assert!(steps[1..].iter().all(|s| s.overrides.is_empty()));
         assert_eq!((steps[0].plan.temp, steps[0].plan.reps), (Some(0.0), 3));
         assert_eq!((steps[1].plan.temp, steps[1].plan.reps), (None, 5));
         assert_eq!(steps[0].plan.prompt, "hello");
-        assert_eq!(steps[4].plan.spec.as_ref().map(|t| t.pass.as_str()), Some("real"));
+        assert_eq!(
+            steps[4].plan.spec.as_ref().map(|t| t.pass.as_str()),
+            Some("real")
+        );
         // A spec file that is no published standard version runs, but every
         // run of it is custom, derived from it.
         assert!(!spec.published);
@@ -1040,7 +1171,11 @@ mod tests {
         let steps = tab_steps(&spec, &base, &derive, None).unwrap();
         assert_eq!(steps.len(), 2, "one scenario per pass");
         assert!(steps.iter().all(|s| s.plan.reps == 2));
-        assert_eq!(steps[0].plan.temp, Some(0.0), "the pass's temperature stays");
+        assert_eq!(
+            steps[0].plan.temp,
+            Some(0.0),
+            "the pass's temperature stays"
+        );
         assert_eq!(
             steps[1].plan.spec.as_ref().unwrap().derived,
             ["concurrency", "reps", "spec-file"],
@@ -1095,8 +1230,17 @@ mod tests {
         let ab = ab_expand(steps, "spec-type", &values);
         assert_eq!(ab.len(), 2 * n);
         assert!(ab[0].label.starts_with("spec-type=none · "));
-        assert_eq!(ab[n].overrides, [("spec-type".to_string(), "draft-mtp".to_string())]);
-        assert!(ab[n].plan.spec.as_ref().unwrap().derived.contains(&"override".to_string()));
+        assert_eq!(
+            ab[n].overrides,
+            [("spec-type".to_string(), "draft-mtp".to_string())]
+        );
+        assert!(ab[n]
+            .plan
+            .spec
+            .as_ref()
+            .unwrap()
+            .derived
+            .contains(&"override".to_string()));
     }
 
     /// Every published version pins prompts that are shipped, with the
@@ -1108,9 +1252,17 @@ mod tests {
             let s = standard_version(&v).unwrap();
             assert!(!s.prompts.is_empty());
             for (path, pinned) in &s.prompts {
-                assert_eq!(path.parent(), Some(crate::paths::bench_prompts_dir().as_path()));
+                assert_eq!(
+                    path.parent(),
+                    Some(crate::paths::bench_prompts_dir().as_path())
+                );
                 let text = super::super::load_prompt_file(path).unwrap();
-                assert_eq!(&super::super::prompt_info(&text).sha256, pinned, "{}", path.display());
+                assert_eq!(
+                    &super::super::prompt_info(&text).sha256,
+                    pinned,
+                    "{}",
+                    path.display()
+                );
             }
         }
     }

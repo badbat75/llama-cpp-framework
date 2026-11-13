@@ -865,7 +865,10 @@ pub fn publish(
             .and_then(|mut s| s.exists([name]))
             .map_err(e)?
         {
-            return Err(strings::fill("campaign-already-in", &[&name, &to.display()]));
+            return Err(strings::fill(
+                "campaign-already-in",
+                &[&name, &to.display()],
+            ));
         }
         tx.execute(
             "INSERT INTO campaign (name, question, started, answer, notes, report) \

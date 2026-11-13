@@ -5,8 +5,8 @@
 //! Shared state, generated Slint types, and the `load_*` / `refresh_*` / `set_status`
 //! helpers all live in the parent `gui` module; `use super::*` pulls them in.
 
-use crate::strings;
 use super::*;
+use crate::strings;
 
 pub(super) fn wire(app: &AppWindow, tray: &AppTray, state: &Rc<RefCell<State>>) {
     {

@@ -129,17 +129,29 @@ bool llm_arch_supports_sm_tensor(const llm_arch & arch) {{
     fn tables_carry_the_spellings_of_the_names_map() {
         let out = render(&source(DENY_B)).unwrap();
         assert!(out.contains(r#"RECURRENT: &[&str] = &["a-a"];"#), "{out}");
-        assert!(out.contains(r#"HYBRID: &[&str] = &["a-a", "b_b"];"#), "{out}");
-        assert!(out.contains(r#"NO_SM_TENSOR: &[&str] = &["b_b"];"#), "{out}");
+        assert!(
+            out.contains(r#"HYBRID: &[&str] = &["a-a", "b_b"];"#),
+            "{out}"
+        );
+        assert!(
+            out.contains(r#"NO_SM_TENSOR: &[&str] = &["b_b"];"#),
+            "{out}"
+        );
     }
 
     #[test]
     fn a_rewritten_switch_stops_the_build() {
         for (body, why) in [
             (DENY_B.replace("return false;", "return true;"), "polarity"),
-            (DENY_B.replace("return false;", "return x > 1;"), "condition"),
+            (
+                DENY_B.replace("return false;", "return x > 1;"),
+                "condition",
+            ),
             ("    return arch != LLM_ARCH_B;".to_string(), "no switch"),
-            (DENY_B.replace("case LLM_ARCH_B:", "case LLM_ARCH_C:"), "unknown arch"),
+            (
+                DENY_B.replace("case LLM_ARCH_B:", "case LLM_ARCH_C:"),
+                "unknown arch",
+            ),
         ] {
             assert!(render(&source(&body)).is_err(), "{why}");
         }

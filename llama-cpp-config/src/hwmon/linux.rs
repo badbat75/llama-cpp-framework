@@ -91,7 +91,11 @@ fn read_trimmed(path: &Path) -> Option<String> {
 fn cache_kib(size: &str) -> Option<u64> {
     match size.strip_suffix('K') {
         Some(kib) => kib.parse().ok(),
-        None => size.strip_suffix('M')?.parse::<u64>().ok().map(|mib| mib * 1024),
+        None => size
+            .strip_suffix('M')?
+            .parse::<u64>()
+            .ok()
+            .map(|mib| mib * 1024),
     }
 }
 
@@ -111,7 +115,10 @@ fn numbered_with(dir: &Path, prefix: &str) -> Vec<(u32, PathBuf)> {
 }
 
 fn numbered(dir: &Path, prefix: &str) -> Vec<PathBuf> {
-    numbered_with(dir, prefix).into_iter().map(|(_, path)| path).collect()
+    numbered_with(dir, prefix)
+        .into_iter()
+        .map(|(_, path)| path)
+        .collect()
 }
 
 /// Which socket each thread is on, the sockets counted from 0 in the order of
@@ -129,7 +136,10 @@ fn thread_sockets(cpu_dir: &Path) -> (HashMap<u32, usize>, usize) {
     packages.dedup();
     let socket = |package: &u32| packages.iter().position(|p| p == package).unwrap_or(0);
     (
-        threads.iter().map(|(thread, package)| (*thread, socket(package))).collect(),
+        threads
+            .iter()
+            .map(|(thread, package)| (*thread, socket(package)))
+            .collect(),
         packages.len().max(1),
     )
 }
@@ -170,8 +180,11 @@ fn read_cpu_sysfs(cpu_dir: &Path, node_dir: &Path, cpu: &mut Cpu) {
     cpu.cores = count(cores.len());
     cpu.numa_nodes = count(numbered(node_dir, "node").len());
     let kib = |n: u64| (n > 0).then_some(n);
-    (cpu.l1_kib, cpu.l2_kib, cpu.l3_kib) =
-        (kib(cache_totals[0]), kib(cache_totals[1]), kib(cache_totals[2]));
+    (cpu.l1_kib, cpu.l2_kib, cpu.l3_kib) = (
+        kib(cache_totals[0]),
+        kib(cache_totals[1]),
+        kib(cache_totals[2]),
+    );
     let mhz = |file: &str| {
         read_trimmed(&cpu_dir.join("cpu0/cpufreq").join(file))?
             .parse::<u32>()
@@ -603,7 +616,10 @@ pub(super) fn physical_gpus() -> Vec<PhysicalGpu> {
                 vendor: "NVIDIA".to_string(),
                 ..Default::default()
             };
-            read_path(&mut card, Path::new(&format!("/sys/bus/pci/devices/0000:{pci}")));
+            read_path(
+                &mut card,
+                Path::new(&format!("/sys/bus/pci/devices/0000:{pci}")),
+            );
             card.pci = pci;
             gpus.push(card);
         }
@@ -878,7 +894,10 @@ mod tests {
                 put(&format!("cpu/{thread}/cache/{index}/level"), level);
                 put(&format!("cpu/{thread}/cache/{index}/type"), kind);
                 put(&format!("cpu/{thread}/cache/{index}/size"), size);
-                put(&format!("cpu/{thread}/cache/{index}/shared_cpu_list"), "0-1");
+                put(
+                    &format!("cpu/{thread}/cache/{index}/shared_cpu_list"),
+                    "0-1",
+                );
             }
         }
         put("cpu/cpufreq/policy0", "not a thread");
@@ -886,7 +905,11 @@ mod tests {
         put("cpu/cpu0/cpufreq/amd_pstate_nominal_freq", "4400000\n");
         put("node/node0/x", "");
         let mut cpu = Cpu::default();
-        read_cpu_sysfs(&root.path().join("cpu"), &root.path().join("node"), &mut cpu);
+        read_cpu_sysfs(
+            &root.path().join("cpu"),
+            &root.path().join("node"),
+            &mut cpu,
+        );
         assert_eq!(
             cpu,
             Cpu {
@@ -990,8 +1013,18 @@ mod tests {
     fn the_link_is_the_slowest_hop_up_to_the_cpu() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().join("pci0000:00");
-        let chain = ["0000:00:02.1", "0000:0c:00.0", "0000:0d:00.0", "0000:14:00.0"];
-        let hops = [("16.0 GT/s PCIe", "4"), ("16.0 GT/s PCIe", "4"), ("32.0 GT/s PCIe", "16"), ("32.0 GT/s PCIe", "16")];
+        let chain = [
+            "0000:00:02.1",
+            "0000:0c:00.0",
+            "0000:0d:00.0",
+            "0000:14:00.0",
+        ];
+        let hops = [
+            ("16.0 GT/s PCIe", "4"),
+            ("16.0 GT/s PCIe", "4"),
+            ("32.0 GT/s PCIe", "16"),
+            ("32.0 GT/s PCIe", "16"),
+        ];
         let mut at = root;
         for (name, (speed, width)) in chain.iter().zip(hops) {
             at = at.join(name);
@@ -1003,8 +1036,14 @@ mod tests {
         }
         let mut gpu = PhysicalGpu::default();
         read_path(&mut gpu, &at);
-        let four_lanes = PcieLink { generation: 4, width: 4 };
-        assert_eq!((gpu.link, gpu.max_link), (Some(four_lanes), Some(four_lanes)));
+        let four_lanes = PcieLink {
+            generation: 4,
+            width: 4,
+        };
+        assert_eq!(
+            (gpu.link, gpu.max_link),
+            (Some(four_lanes), Some(four_lanes))
+        );
         assert_eq!(gpu.switches, Some(1));
 
         assert_eq!(parse_link("Unknown", "4"), None);

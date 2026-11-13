@@ -234,9 +234,12 @@ fn hip_candidates() -> Vec<PathBuf> {
                 .flatten()
                 .map(|entry| entry.path())
                 .filter(|path| {
-                    path.file_name().and_then(|n| n.to_str()).is_some_and(|name| {
-                        name.starts_with(prefix) && (name.ends_with(suffix) || name.contains(".so."))
-                    })
+                    path.file_name()
+                        .and_then(|n| n.to_str())
+                        .is_some_and(|name| {
+                            name.starts_with(prefix)
+                                && (name.ends_with(suffix) || name.contains(".so."))
+                        })
                 })
                 .collect();
             here.sort();
@@ -256,7 +259,11 @@ unsafe fn open_path(path: &Path) -> *mut c_void {
         LoadLibraryExW, LOAD_WITH_ALTERED_SEARCH_PATH,
     };
     let wide: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
-    let flags = if path.is_absolute() { LOAD_WITH_ALTERED_SEARCH_PATH } else { 0 };
+    let flags = if path.is_absolute() {
+        LOAD_WITH_ALTERED_SEARCH_PATH
+    } else {
+        0
+    };
     LoadLibraryExW(wide.as_ptr(), std::ptr::null_mut(), flags)
 }
 
@@ -427,7 +434,11 @@ struct Properties2 {
 /// prints nothing: `confirmed` then finds the ids missing.
 unsafe fn report_vulkan(lib: *mut c_void) -> Option<()> {
     type ProcAddr = unsafe extern "system" fn(*mut c_void, *const c_char) -> *mut c_void;
-    type Create = unsafe extern "system" fn(*const InstanceCreateInfo, *const c_void, *mut *mut c_void) -> i32;
+    type Create = unsafe extern "system" fn(
+        *const InstanceCreateInfo,
+        *const c_void,
+        *mut *mut c_void,
+    ) -> i32;
     type Enumerate = unsafe extern "system" fn(*mut c_void, *mut u32, *mut *mut c_void) -> i32;
     type GetProperties = unsafe extern "system" fn(*mut c_void, *mut Properties2);
 
@@ -438,7 +449,8 @@ unsafe fn report_vulkan(lib: *mut c_void) -> Option<()> {
     let version = (!version.is_null()).then(|| {
         let read: unsafe extern "system" fn(*mut u32) -> i32 = std::mem::transmute_copy(&version);
         let mut v = 0u32;
-        (read(&mut v) == 0).then(|| format!("{}.{}.{}", (v >> 22) & 0x7f, (v >> 12) & 0x3ff, v & 0xfff))
+        (read(&mut v) == 0)
+            .then(|| format!("{}.{}.{}", (v >> 22) & 0x7f, (v >> 12) & 0x3ff, v & 0xfff))
     });
     #[cfg(windows)]
     let file_stem = "vulkan-1";
@@ -471,7 +483,8 @@ unsafe fn report_vulkan(lib: *mut c_void) -> Option<()> {
     }
     let by_name = |name: &CStr| proc_addr(instance, name.as_ptr());
     let enumerate = by_name(c"vkEnumeratePhysicalDevices");
-    let enumerate: Enumerate = (!enumerate.is_null()).then(|| std::mem::transmute_copy(&enumerate))?;
+    let enumerate: Enumerate =
+        (!enumerate.is_null()).then(|| std::mem::transmute_copy(&enumerate))?;
     let properties = by_name(c"vkGetPhysicalDeviceProperties2");
     let properties: GetProperties =
         (!properties.is_null()).then(|| std::mem::transmute_copy(&properties))?;
@@ -510,10 +523,11 @@ unsafe fn report_vulkan(lib: *mut c_void) -> Option<()> {
         if bus.domain == u32::MAX {
             return None;
         }
-        let name = CStr::from_bytes_until_nul(&head[DEVICE_NAME_AT..DEVICE_NAME_AT + DEVICE_NAME_SIZE])
-            .ok()?
-            .to_string_lossy()
-            .into_owned();
+        let name =
+            CStr::from_bytes_until_nul(&head[DEVICE_NAME_AT..DEVICE_NAME_AT + DEVICE_NAME_SIZE])
+                .ok()?
+                .to_string_lossy()
+                .into_owned();
         let address = format!(
             "{:04x}:{:02x}:{:02x}.{:x}",
             bus.domain, bus.bus, bus.device, bus.function
@@ -571,7 +585,10 @@ mod tests {
         assert_eq!(sdks[0].name, "ROCm");
         assert_eq!(sdks[0].library, "C:\\rt\\amdhip64_7.dll");
         assert_eq!(sdks[0].version.as_deref(), Some("7.13.1"));
-        assert_eq!((sdks[1].version.as_deref(), sdks[1].built_with.as_deref()), (None, None));
+        assert_eq!(
+            (sdks[1].version.as_deref(), sdks[1].built_with.as_deref()),
+            (None, None)
+        );
     }
 
     #[test]

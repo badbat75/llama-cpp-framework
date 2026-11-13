@@ -8,9 +8,9 @@
 //! and the next configure use it without being told again.
 
 use super::WinConfig;
+use crate::common::dists::Dists;
 use crate::common::report::Rows;
 use crate::common::rocm::{gpu_targets, GPU_TARGETS_FALLBACK};
-use crate::common::dists::Dists;
 use crate::common::ui;
 use crate::common::util::{self, cmd, output, which};
 use anyhow::{bail, Context, Result};
@@ -22,12 +22,19 @@ use std::path::{Path, PathBuf};
 /// roots are scanned, years mapped to their major version (2022 to 17, 2019
 /// to 16, 2017 to 15) so the comparison is numeric.
 fn find_vs_dev_shell() -> Option<PathBuf> {
-    let rel = Path::new("Common7").join("Tools").join("Launch-VsDevShell.ps1");
+    let rel = Path::new("Common7")
+        .join("Tools")
+        .join("Launch-VsDevShell.ps1");
     let pf86 = std::env::var_os("ProgramFiles(x86)").map(PathBuf::from);
     if let Some(pf86) = &pf86 {
-        let vswhere = pf86.join("Microsoft Visual Studio").join("Installer").join("vswhere.exe");
+        let vswhere = pf86
+            .join("Microsoft Visual Studio")
+            .join("Installer")
+            .join("vswhere.exe");
         if vswhere.is_file() {
-            if let Some(install) = output(cmd(&vswhere).args(["-latest", "-property", "installationPath"])) {
+            if let Some(install) =
+                output(cmd(&vswhere).args(["-latest", "-property", "installationPath"]))
+            {
                 let script = Path::new(install.lines().next().unwrap_or("").trim()).join(&rel);
                 if script.is_file() {
                     return Some(script);
@@ -36,8 +43,14 @@ fn find_vs_dev_shell() -> Option<PathBuf> {
         }
     }
     let roots = [std::env::var_os("ProgramFiles").map(PathBuf::from), pf86];
-    for root in roots.iter().flatten().map(|r| r.join("Microsoft Visual Studio")) {
-        let Ok(rd) = std::fs::read_dir(&root) else { continue };
+    for root in roots
+        .iter()
+        .flatten()
+        .map(|r| r.join("Microsoft Visual Studio"))
+    {
+        let Ok(rd) = std::fs::read_dir(&root) else {
+            continue;
+        };
         let mut versions: Vec<(u32, PathBuf)> = rd
             .flatten()
             .filter(|e| e.path().is_dir())
@@ -96,7 +109,10 @@ fn find_tool(name: &str, hip: Option<&Path>) -> Option<PathBuf> {
 
 pub fn run(llama_cpp_dir: Option<PathBuf>, dist_root: Option<PathBuf>) -> Result<()> {
     let recorded = WinConfig::load_optional().ok().flatten();
-    let dists = Dists::resolve(dist_root.as_deref(), recorded.as_ref().map(|c| c.dist_root.as_str()))?;
+    let dists = Dists::resolve(
+        dist_root.as_deref(),
+        recorded.as_ref().map(|c| c.dist_root.as_str()),
+    )?;
     let mut rows = Rows { gaps: Vec::new() };
 
     ui::say("");
@@ -116,12 +132,22 @@ pub fn run(llama_cpp_dir: Option<PathBuf>, dist_root: Option<PathBuf>) -> Result
         super::activate_vs(&p.with_file_name("VsDevCmd.bat"))?;
     }
 
-    rows.ok("DistRoot", format!("{} (<Name>\\<Version>\\{})", dists.root.display(), util::OS_DIR));
+    rows.ok(
+        "DistRoot",
+        format!(
+            "{} (<Name>\\<Version>\\{})",
+            dists.root.display(),
+            util::OS_DIR
+        ),
+    );
 
     let openssl = find_openssl();
     match &openssl {
         Some(p) => rows.ok("OpenSSLDir", p.display().to_string()),
-        None => rows.miss("OpenSSLDir", "run scripts\\00-install-prerequisites.ps1 (winget ShiningLight.OpenSSL.Dev)"),
+        None => rows.miss(
+            "OpenSSLDir",
+            "run scripts\\00-install-prerequisites.ps1 (winget ShiningLight.OpenSSL.Dev)",
+        ),
     }
 
     let hip = dists.find_rocm();
@@ -129,30 +155,52 @@ pub fn run(llama_cpp_dir: Option<PathBuf>, dist_root: Option<PathBuf>) -> Result
         Some(p) => rows.ok("HipPath", p.display().to_string()),
         None => rows.opt(
             "HipPath",
-            format!("not found under {} (optional, needed for HIP/ROCm)", dists.rocm_root().display()),
+            format!(
+                "not found under {} (optional, needed for HIP/ROCm)",
+                dists.rocm_root().display()
+            ),
         ),
     }
     // Shown, not recorded (see the module header), so a missing one is seen
     // here rather than as a backend silently left to CMake's own search.
     match dists.find_cuda() {
         Some(d) => rows.ok("CUDA Toolkit", d.display().to_string()),
-        None => rows.opt("CUDA Toolkit", format!("not found under {} (optional)", dists.cuda_root().display())),
+        None => rows.opt(
+            "CUDA Toolkit",
+            format!("not found under {} (optional)", dists.cuda_root().display()),
+        ),
     }
     match dists.find_vulkan() {
         Some(d) => rows.ok("Vulkan SDK", d.display().to_string()),
-        None => rows.opt("Vulkan SDK", format!("not found under {} (optional)", dists.vulkan_root().display())),
+        None => rows.opt(
+            "Vulkan SDK",
+            format!(
+                "not found under {} (optional)",
+                dists.vulkan_root().display()
+            ),
+        ),
     }
 
     let mut targets = hip.as_deref().map(gpu_targets).unwrap_or_default();
     if !targets.is_empty() {
-        rows.ok("GpuTargets", format!("{} archs from the installed ROCm dist", targets.split(';').count()));
+        rows.ok(
+            "GpuTargets",
+            format!(
+                "{} archs from the installed ROCm dist",
+                targets.split(';').count()
+            ),
+        );
         ui::dim(format!("                         {targets}"));
     } else {
         targets = GPU_TARGETS_FALLBACK.to_string();
-        rows.opt("GpuTargets", "no kernel list found in the dist, using the 7.14.0 snapshot");
+        rows.opt(
+            "GpuTargets",
+            "no kernel list found in the dist, using the 7.14.0 snapshot",
+        );
     }
 
-    let llama_dir = util::absolute(&llama_cpp_dir.unwrap_or_else(|| util::build_root().join("llama.cpp")));
+    let llama_dir =
+        util::absolute(&llama_cpp_dir.unwrap_or_else(|| util::build_root().join("llama.cpp")));
     rows.ok("LlamaCppDir", llama_dir.display().to_string());
 
     // ── Tools (detected AFTER the VS environment) ──────────────────────
@@ -174,7 +222,11 @@ pub fn run(llama_cpp_dir: Option<PathBuf>, dist_root: Option<PathBuf>) -> Result
         ("clang", "Clang, via the ROCm dist, Visual Studio or LLVM"),
         ("git", "Git, from https://git-scm.com/"),
     ] {
-        let found = if tool == "clang" { clang.clone() } else { find_tool(tool, hip.as_deref()) };
+        let found = if tool == "clang" {
+            clang.clone()
+        } else {
+            find_tool(tool, hip.as_deref())
+        };
         match found {
             Some(p) => rows.ok(tool, p.display().to_string()),
             None => rows.miss(tool, hint),
@@ -206,7 +258,10 @@ pub fn run(llama_cpp_dir: Option<PathBuf>, dist_root: Option<PathBuf>) -> Result
     // Full path to the resolved clang (bare 'clang' as a last resort): with
     // the TheRock dist the compiler lives in HIP_PATH\lib\llvm\bin, which is
     // not on a stale console's PATH.
-    let cc = clang.as_ref().map(|p| p.display().to_string()).unwrap_or_else(|| "clang".into());
+    let cc = clang
+        .as_ref()
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|| "clang".into());
     // Linker: lld, but only the one shipping WITH the compiler above (looked
     // up next to it and nowhere else). CMake finds it unaided when clang comes
     // from a full LLVM tree, so this mostly PINS what happens; the point is
@@ -239,7 +294,9 @@ pub fn run(llama_cpp_dir: Option<PathBuf>, dist_root: Option<PathBuf>) -> Result
     ui::ok("  build\\windows\\config-build.psd1 written.");
 
     write_cargo_config(jobs)?;
-    let cores = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
+    let cores = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1);
     ui::ok(format!(
         "  .cargo\\config.toml written (cargo jobs + test threads = {jobs} of {cores} cores; linker = rust-lld; target-dir = build\\windows\\cargo-target)."
     ));

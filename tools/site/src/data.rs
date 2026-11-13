@@ -102,18 +102,28 @@ impl Db {
             .collect::<Result<Vec<_>, _>>()
             .map_err(e)?;
         let index: BTreeMap<i64, usize> = runs.iter().enumerate().map(|(i, r)| (r.id, i)).collect();
-        let mut st = c.prepare("SELECT run_id, scope, key, value FROM run_param ORDER BY run_id, scope, key").map_err(e)?;
+        let mut st = c
+            .prepare("SELECT run_id, scope, key, value FROM run_param ORDER BY run_id, scope, key")
+            .map_err(e)?;
         let mut rows = st.query([]).map_err(e)?;
         while let Some(r) = rows.next().map_err(e)? {
             if let Some(&i) = index.get(&r.get::<_, i64>(0).map_err(e)?) {
-                runs[i].params.push((r.get(1).map_err(e)?, r.get(2).map_err(e)?, r.get(3).map_err(e)?));
+                runs[i].params.push((
+                    r.get(1).map_err(e)?,
+                    r.get(2).map_err(e)?,
+                    r.get(3).map_err(e)?,
+                ));
             }
         }
-        let mut st = c.prepare("SELECT run_id, device, gpu FROM run_gpu ORDER BY run_id, device").map_err(e)?;
+        let mut st = c
+            .prepare("SELECT run_id, device, gpu FROM run_gpu ORDER BY run_id, device")
+            .map_err(e)?;
         let mut rows = st.query([]).map_err(e)?;
         while let Some(r) = rows.next().map_err(e)? {
             if let Some(&i) = index.get(&r.get::<_, i64>(0).map_err(e)?) {
-                runs[i].gpus.push((r.get(1).map_err(e)?, r.get(2).map_err(e)?));
+                runs[i]
+                    .gpus
+                    .push((r.get(1).map_err(e)?, r.get(2).map_err(e)?));
             }
         }
         let mut st = c
@@ -122,7 +132,9 @@ impl Db {
         let mut rows = st.query([]).map_err(e)?;
         while let Some(r) = rows.next().map_err(e)? {
             if let Some(&i) = index.get(&r.get::<_, i64>(0).map_err(e)?) {
-                runs[i].free.push((r.get(1).map_err(e)?, r.get(2).map_err(e)?));
+                runs[i]
+                    .free
+                    .push((r.get(1).map_err(e)?, r.get(2).map_err(e)?));
             }
         }
         // Request rows only: a llama-bench row (test set) is not a request.
@@ -135,7 +147,9 @@ impl Db {
             .map_err(e)?;
         let mut rows = st.query([]).map_err(e)?;
         while let Some(r) = rows.next().map_err(e)? {
-            let Some(&i) = index.get(&r.get::<_, i64>(0).map_err(e)?) else { continue };
+            let Some(&i) = index.get(&r.get::<_, i64>(0).map_err(e)?) else {
+                continue;
+            };
             let detail: Option<String> = r.get(9).map_err(e)?;
             let sent = detail
                 .and_then(|d| serde_json::from_str::<serde_json::Value>(&d).ok())
@@ -155,7 +169,12 @@ impl Db {
         }
         let models = col(&c, "SELECT DISTINCT name FROM model ORDER BY name").map_err(e)?;
         let gpus = col(&c, "SELECT DISTINCT name FROM gpu ORDER BY name").map_err(e)?;
-        Ok(Db { campaigns, runs, models, gpus })
+        Ok(Db {
+            campaigns,
+            runs,
+            models,
+            gpus,
+        })
     }
 
     pub fn campaign(&self, name: &str) -> Option<&Campaign> {
@@ -219,7 +238,11 @@ impl Run {
                 reps.values()
                     .filter_map(|g| {
                         let (p, d) = totals(g)?;
-                        if metric == "prefill-total" { p } else { d }
+                        if metric == "prefill-total" {
+                            p
+                        } else {
+                            d
+                        }
                     })
                     .collect()
             }
@@ -249,10 +272,17 @@ fn totals(g: &[&Req]) -> Option<(Option<f64>, Option<f64>)> {
         None
     } else {
         let tokens: i64 = cold.iter().map(|(r, _)| r.prompt_tokens).sum();
-        let end = cold.iter().map(|&(r, s)| pre_end((r, s))).fold(f64::NEG_INFINITY, f64::max);
+        let end = cold
+            .iter()
+            .map(|&(r, s)| pre_end((r, s)))
+            .fold(f64::NEG_INFINITY, f64::max);
         (end > t0).then(|| tokens as f64 / (end - t0))
     };
-    let start = g.iter().zip(&sent).map(pre_end).fold(f64::INFINITY, f64::min);
+    let start = g
+        .iter()
+        .zip(&sent)
+        .map(pre_end)
+        .fold(f64::INFINITY, f64::min);
     let end = g
         .iter()
         .zip(&sent)
@@ -270,7 +300,8 @@ pub fn stat(v: &[f64]) -> Option<(f64, Option<f64>, usize)> {
     }
     let n = v.len() as f64;
     let m = v.iter().sum::<f64>() / n;
-    let sd = (v.len() > 1).then(|| (v.iter().map(|x| (x - m).powi(2)).sum::<f64>() / (n - 1.0)).sqrt());
+    let sd =
+        (v.len() > 1).then(|| (v.iter().map(|x| (x - m).powi(2)).sum::<f64>() / (n - 1.0)).sqrt());
     Some((m, sd, v.len()))
 }
 
@@ -279,7 +310,17 @@ mod tests {
     use super::*;
 
     fn req(rep: i64, cold: bool, sent: f64, pt: i64, pp: f64, gen: i64, dec: f64) -> Req {
-        Req { rep, prompt_tokens: pt, prefill: Some(pp), gen, decode: Some(dec), draft_gen: 0, draft_acc: 0, cold, sent: Some(sent) }
+        Req {
+            rep,
+            prompt_tokens: pt,
+            prefill: Some(pp),
+            gen,
+            decode: Some(dec),
+            draft_gen: 0,
+            draft_acc: 0,
+            cold,
+            sent: Some(sent),
+        }
     }
 
     #[test]

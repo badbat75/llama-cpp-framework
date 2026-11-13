@@ -42,7 +42,10 @@ const TABLE: &[(&str, Origin)] = &[
     ("rocm_kpack", Origin::Vendored("rocm-kpack")),
     ("hsa-runtime64", Origin::Vendored("rocm-rocr-runtime")),
     ("amd_smi", Origin::Vendored("rocm-amdsmi")),
-    ("rocprofiler-register", Origin::Vendored("rocm-rocprofiler-register")),
+    (
+        "rocprofiler-register",
+        Origin::Vendored("rocm-rocprofiler-register"),
+    ),
     ("roctx64", Origin::Vendored("rocm-roctracer")),
     ("rccl", Origin::Vendored("rocm-rccl")),
     ("rocroller", Origin::Vendored("rocm-rocroller")),
@@ -77,13 +80,18 @@ fn stem(file: &str) -> &str {
 
 pub fn origin(file: &str) -> Option<Origin> {
     let stem = stem(file);
-    TABLE.iter().find(|(prefix, _)| stem.starts_with(prefix)).map(|(_, origin)| *origin)
+    TABLE
+        .iter()
+        .find(|(prefix, _)| stem.starts_with(prefix))
+        .map(|(_, origin)| *origin)
 }
 
 /// llama.cpp's own libraries: its licence, staged for every package, covers them.
 fn is_llama_cpp(file: &str) -> bool {
     let stem = stem(file);
-    ["ggml", "llama", "mtmd"].iter().any(|own| stem.starts_with(own))
+    ["ggml", "llama", "mtmd"]
+        .iter()
+        .any(|own| stem.starts_with(own))
 }
 
 /// Where a package's texts come from. What a package does not bundle stays None.
@@ -105,17 +113,32 @@ impl Sources {
                     .ok()?
                     .flatten()
                     .map(|e| e.path())
-                    .filter(|p| p.file_name().is_some_and(|n| n.to_string_lossy().starts_with("LICENSE")))
+                    .filter(|p| {
+                        p.file_name()
+                            .is_some_and(|n| n.to_string_lossy().starts_with("LICENSE"))
+                    })
                     .collect();
                 found.sort();
                 Some((found.into_iter().next()?, format!("rocm-{name}.txt")))
             }
             Origin::Vendored(name) => {
                 let file = format!("{name}.txt");
-                Some((util::repo_root().join("installer").join("licenses").join(&file), file))
+                Some((
+                    util::repo_root()
+                        .join("installer")
+                        .join("licenses")
+                        .join(&file),
+                    file,
+                ))
             }
-            Origin::CudaEula => Some((self.cuda.as_ref()?.join("LICENSE"), CUDA_EULA_FILE.to_string())),
-            Origin::OpenSsl => Some((self.openssl.as_ref()?.join("license.txt"), "openssl.txt".to_string())),
+            Origin::CudaEula => Some((
+                self.cuda.as_ref()?.join("LICENSE"),
+                CUDA_EULA_FILE.to_string(),
+            )),
+            Origin::OpenSsl => Some((
+                self.openssl.as_ref()?.join("license.txt"),
+                "openssl.txt".to_string(),
+            )),
         }
     }
 }
@@ -133,7 +156,10 @@ fn group(pairs: Vec<(String, String)>) -> Vec<Entry> {
     for (library, file) in pairs {
         match entries.iter_mut().find(|e| e.file == file) {
             Some(e) => e.libraries.push(library),
-            None => entries.push(Entry { file, libraries: vec![library] }),
+            None => entries.push(Entry {
+                file,
+                libraries: vec![library],
+            }),
         }
     }
     entries.sort_by(|a, b| a.file.cmp(&b.file));
@@ -147,7 +173,9 @@ pub fn libraries_under(root: &Path) -> Vec<String> {
     let mut found = Vec::new();
     let mut dirs = vec![root.to_path_buf()];
     while let Some(dir) = dirs.pop() {
-        let Ok(rd) = std::fs::read_dir(&dir) else { continue };
+        let Ok(rd) = std::fs::read_dir(&dir) else {
+            continue;
+        };
         for e in rd.flatten() {
             let Ok(kind) = e.file_type() else { continue };
             let name = e.file_name().to_string_lossy().into_owned();
@@ -165,7 +193,10 @@ pub fn libraries_under(root: &Path) -> Vec<String> {
 
 fn is_library(file: &str) -> bool {
     let lower = file.to_ascii_lowercase();
-    lower.ends_with(".dll") || lower.ends_with(".dylib") || lower.ends_with(".so") || lower.contains(".so.")
+    lower.ends_with(".dll")
+        || lower.ends_with(".dylib")
+        || lower.ends_with(".so")
+        || lower.contains(".so.")
 }
 
 fn copy(from: &Path, to: &Path) -> Result<()> {
@@ -186,13 +217,26 @@ pub fn stage_in(dir: &Path, libraries: &[String], sources: &Sources) -> Result<V
     std::fs::create_dir_all(dir)?;
     let repo = util::repo_root();
     copy(&repo.join("LICENSE"), &dir.join("llama.cpp-framework.txt"))?;
-    copy(&repo.join("llama-cpp-config").join("ui").join("fonts").join("LICENSE"), &dir.join("fluent-system-icons.txt"))?;
-    copy(&sources.llama_cpp.join("LICENSE"), &dir.join("llama.cpp.txt"))?;
+    copy(
+        &repo
+            .join("llama-cpp-config")
+            .join("ui")
+            .join("fonts")
+            .join("LICENSE"),
+        &dir.join("fluent-system-icons.txt"),
+    )?;
+    copy(
+        &sources.llama_cpp.join("LICENSE"),
+        &dir.join("llama.cpp.txt"),
+    )?;
     // What llama.cpp itself embeds (LICENSE-jsonhpp and the like).
     if let Ok(rd) = std::fs::read_dir(sources.llama_cpp.join("licenses")) {
         for e in rd.flatten().filter(|e| e.path().is_file()) {
             let name = e.file_name().to_string_lossy().replace("LICENSE-", "");
-            copy(&e.path(), &dir.join(format!("llama.cpp-{}.txt", name.trim_end_matches(".txt"))))?;
+            copy(
+                &e.path(),
+                &dir.join(format!("llama.cpp-{}.txt", name.trim_end_matches(".txt"))),
+            )?;
         }
     }
 
@@ -214,12 +258,18 @@ pub fn stage_in(dir: &Path, libraries: &[String], sources: &Sources) -> Result<V
     }
     let entries = group(pairs);
     std::fs::write(dir.join("README.txt"), readme(&entries))?;
-    ui::dim(format!("Licences of {} libraries in share/licenses", libraries.len()));
+    ui::dim(format!(
+        "Licences of {} libraries in share/licenses",
+        libraries.len()
+    ));
     Ok(entries)
 }
 
 fn listing(entries: &[Entry]) -> String {
-    entries.iter().map(|e| format!("{}: {}\n", e.file, e.libraries.join(", "))).collect()
+    entries
+        .iter()
+        .map(|e| format!("{}: {}\n", e.file, e.libraries.join(", ")))
+        .collect()
 }
 
 fn readme(entries: &[Entry]) -> String {
@@ -236,7 +286,10 @@ fn readme(entries: &[Entry]) -> String {
              they may be used only through it.\n",
         );
     }
-    if entries.iter().any(|e| e.libraries.iter().any(|l| l.contains("rocm_sysdeps"))) {
+    if entries
+        .iter()
+        .any(|e| e.libraries.iter().any(|l| l.contains("rocm_sysdeps")))
+    {
         text.push_str(
             "\nThe rocm_sysdeps libraries are AMD's builds of the projects named above, some under\n\
              the LGPL, unmodified by this project. Their sources: https://github.com/ROCm/TheRock\n\
@@ -250,9 +303,18 @@ fn readme(entries: &[Entry]) -> String {
 #[cfg(any(target_os = "linux", test))]
 fn spdx(file: &str) -> Option<&'static str> {
     Some(match file {
-        "rocm-rocblas.txt" | "rocm-hipblas.txt" | "rocm-hipblaslt.txt" | "rocm-origami.txt" | "rocm-rocm-core.txt"
-        | "rocm-clr.txt" | "rocm-kpack.txt" | "rocm-amdsmi.txt" | "rocm-rocprofiler-register.txt"
-        | "rocm-roctracer.txt" | "rocm-rocroller.txt" | "libdrm.txt" => "MIT",
+        "rocm-rocblas.txt"
+        | "rocm-hipblas.txt"
+        | "rocm-hipblaslt.txt"
+        | "rocm-origami.txt"
+        | "rocm-rocm-core.txt"
+        | "rocm-clr.txt"
+        | "rocm-kpack.txt"
+        | "rocm-amdsmi.txt"
+        | "rocm-rocprofiler-register.txt"
+        | "rocm-roctracer.txt"
+        | "rocm-rocroller.txt"
+        | "libdrm.txt" => "MIT",
         "rocm-rocsolver.txt" => "BSD-2-Clause AND BSD-3-Clause",
         "rocm-amd_comgr.txt" | "llvm.txt" => "Apache-2.0 WITH LLVM-exception",
         "rocm-rocr-runtime.txt" => "NCSA",
@@ -354,15 +416,25 @@ mod tests {
             ("libssl-4-x64.dll", Origin::OpenSsl),
             ("librocm_sysdeps_z.so.1", Origin::Vendored("zlib")),
             ("librocm_sysdeps_zstd.so.1", Origin::Vendored("zstd")),
-            ("librocm_sysdeps_drm_amdgpu.so.1", Origin::Vendored("libdrm")),
-            ("librocm_sysdeps_nl_genl_3.so.200", Origin::Vendored("libnl")),
+            (
+                "librocm_sysdeps_drm_amdgpu.so.1",
+                Origin::Vendored("libdrm"),
+            ),
+            (
+                "librocm_sysdeps_nl_genl_3.so.200",
+                Origin::Vendored("libnl"),
+            ),
             ("libLLVM.so.24.0git", Origin::Vendored("llvm")),
             ("libomp.so", Origin::Vendored("llvm")),
         ] {
             assert_eq!(origin(file), Some(want), "{file}");
         }
         assert_eq!(origin("ggml-vulkan.dll"), None, "llama.cpp's own");
-        assert!(is_llama_cpp("ggml-vulkan.dll") && is_llama_cpp("libllama.so") && is_llama_cpp("mtmd.dll"));
+        assert!(
+            is_llama_cpp("ggml-vulkan.dll")
+                && is_llama_cpp("libllama.so")
+                && is_llama_cpp("mtmd.dll")
+        );
         assert_eq!(origin("somethingnew.dll"), None);
         assert!(!is_llama_cpp("somethingnew.dll"));
     }
@@ -388,31 +460,59 @@ mod tests {
         std::fs::create_dir_all(&cuda).unwrap();
         std::fs::write(cuda.join("LICENSE"), "EULA").unwrap();
         let share = dir.join("share");
-        let sources = Sources { llama_cpp: llama, cuda: Some(cuda), ..Default::default() };
+        let sources = Sources {
+            llama_cpp: llama,
+            cuda: Some(cuda),
+            ..Default::default()
+        };
 
         let unknown = stage(&share, &["somethingnew.dll".to_string()], &sources).unwrap_err();
-        assert!(unknown.to_string().contains("somethingnew.dll"), "{unknown}");
+        assert!(
+            unknown.to_string().contains("somethingnew.dll"),
+            "{unknown}"
+        );
         let absent = stage(&share, &["hipblas.dll".to_string()], &sources).unwrap_err();
         assert!(absent.to_string().contains("hipblas.dll"), "{absent}");
 
-        let libraries = ["cublas64_13.dll", "cublasLt64_13.dll", "llama.dll", "amdhip64_7.dll"].map(str::to_string);
+        let libraries = [
+            "cublas64_13.dll",
+            "cublasLt64_13.dll",
+            "llama.dll",
+            "amdhip64_7.dll",
+        ]
+        .map(str::to_string);
         let entries = stage(&share, &libraries, &sources).unwrap();
         assert_eq!(
             entries,
             [
                 Entry {
                     file: CUDA_EULA_FILE.to_string(),
-                    libraries: vec!["cublas64_13.dll".to_string(), "cublasLt64_13.dll".to_string()],
+                    libraries: vec![
+                        "cublas64_13.dll".to_string(),
+                        "cublasLt64_13.dll".to_string()
+                    ],
                 },
-                Entry { file: "rocm-clr.txt".to_string(), libraries: vec!["amdhip64_7.dll".to_string()] },
+                Entry {
+                    file: "rocm-clr.txt".to_string(),
+                    libraries: vec!["amdhip64_7.dll".to_string()]
+                },
             ]
         );
         let licenses = share.join("licenses");
-        for file in ["llama.cpp-framework.txt", "llama.cpp.txt", "llama.cpp-jsonhpp.txt", CUDA_EULA_FILE, "rocm-clr.txt"] {
+        for file in [
+            "llama.cpp-framework.txt",
+            "llama.cpp.txt",
+            "llama.cpp-jsonhpp.txt",
+            CUDA_EULA_FILE,
+            "rocm-clr.txt",
+        ] {
             assert!(licenses.join(file).is_file(), "{file}");
         }
         let readme = std::fs::read_to_string(licenses.join("README.txt")).unwrap();
-        assert!(readme.contains("NVIDIA-CUDA-EULA.txt: cublas64_13.dll, cublasLt64_13.dll"), "{readme}");
+        assert!(
+            readme.contains("NVIDIA-CUDA-EULA.txt: cublas64_13.dll, cublasLt64_13.dll"),
+            "{readme}"
+        );
         assert!(readme.contains("used only through it"), "{readme}");
         std::fs::remove_dir_all(&dir).unwrap();
     }
@@ -430,11 +530,22 @@ mod tests {
             assert!(spdx(&file).is_some(), "{file}");
         }
         let entries = |files: &[&str]| -> Vec<Entry> {
-            files.iter().map(|f| Entry { file: f.to_string(), libraries: Vec::new() }).collect()
+            files
+                .iter()
+                .map(|f| Entry {
+                    file: f.to_string(),
+                    libraries: Vec::new(),
+                })
+                .collect()
         };
         assert_eq!(rpm_license(&[]), "MIT");
         assert_eq!(
-            rpm_license(&entries(&["rocm-clr.txt", CUDA_EULA_FILE, "numactl.txt", "libnl.txt"])),
+            rpm_license(&entries(&[
+                "rocm-clr.txt",
+                CUDA_EULA_FILE,
+                "numactl.txt",
+                "libnl.txt"
+            ])),
             "MIT AND LicenseRef-NVIDIA-CUDA-EULA AND LGPL-2.1-only"
         );
     }
@@ -443,10 +554,20 @@ mod tests {
     fn the_libraries_are_found_at_any_depth_and_data_files_are_not() {
         let dir = std::env::temp_dir().join(format!("xtask-libraries-{}", std::process::id()));
         std::fs::create_dir_all(dir.join("lib").join("llvm")).unwrap();
-        for file in ["lib/llvm/libomp.so", "lib/libamdhip64.so.7", "a.dll", "b.dylib", "lib/kernels.dat", "soname.txt"] {
+        for file in [
+            "lib/llvm/libomp.so",
+            "lib/libamdhip64.so.7",
+            "a.dll",
+            "b.dylib",
+            "lib/kernels.dat",
+            "soname.txt",
+        ] {
             std::fs::write(dir.join(file), "").unwrap();
         }
-        assert_eq!(libraries_under(&dir), ["a.dll", "b.dylib", "libamdhip64.so.7", "libomp.so"]);
+        assert_eq!(
+            libraries_under(&dir),
+            ["a.dll", "b.dylib", "libamdhip64.so.7", "libomp.so"]
+        );
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -455,11 +576,17 @@ mod tests {
         assert_eq!(rtf_paragraphs("a\\b{c}\n"), "a\\\\b\\{c\\}\\par\n");
         assert_eq!(rtf_paragraphs("\u{2019}"), "\\u8217?\\par\n");
         assert_eq!(rtf_paragraphs("\u{1F600}"), "\\u-10179?\\u-8704?\\par\n");
-        let entries = [Entry { file: CUDA_EULA_FILE.to_string(), libraries: vec!["cublas.dll".to_string()] }];
+        let entries = [Entry {
+            file: CUDA_EULA_FILE.to_string(),
+            libraries: vec!["cublas.dll".to_string()],
+        }];
         let page = installer_page(&entries, "MIT text", Some("EULA text"));
         assert!(page.starts_with("{\\rtf1"), "{page}");
         assert!(page.trim_end().ends_with('}'), "{page}");
-        assert!(page.contains("MIT text") && page.contains("EULA text") && page.contains("cublas.dll"), "{page}");
+        assert!(
+            page.contains("MIT text") && page.contains("EULA text") && page.contains("cublas.dll"),
+            "{page}"
+        );
         assert!(!installer_page(&entries, "MIT text", None).contains("NVIDIA's terms ----"));
     }
 }

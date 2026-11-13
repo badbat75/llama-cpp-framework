@@ -1058,9 +1058,15 @@ pub(super) fn run(app: &AppWindow) {
     st.invoke_save_integrations();
     assert!(st.get_show_opencode_dialog(), "{}", st.get_status_text());
     assert_eq!(preview_labels().len(), enabled_ids().len());
-    assert!(preview_labels().iter().all(|l| l.ends_with(": added")), "{:?}", preview_labels());
+    assert!(
+        preview_labels().iter().all(|l| l.ends_with(": added")),
+        "{:?}",
+        preview_labels()
+    );
     assert_eq!(st.get_opencode_ticked() as usize, enabled_ids().len());
-    assert!(st.get_opencode_provider_summary().contains("Adds the llama-server provider"));
+    assert!(st
+        .get_opencode_provider_summary()
+        .contains("Adds the llama-server provider"));
     assert!(st.get_modal_open());
     st.invoke_opencode_cancel();
     assert!(!st.get_show_opencode_dialog());
@@ -1086,7 +1092,11 @@ pub(super) fn run(app: &AppWindow) {
     // Nothing to change: Save says so and opens no preview.
     st.invoke_save_integrations();
     assert!(!st.get_show_opencode_dialog());
-    assert!(st.get_status_text().contains("nothing to save"), "{}", st.get_status_text());
+    assert!(
+        st.get_status_text().contains("nothing to save"),
+        "{}",
+        st.get_status_text()
+    );
 
     // A switch no longer reaches opencode.json: the status line names it.
     st.set_current_tab(1);
@@ -1108,7 +1118,11 @@ pub(super) fn run(app: &AppWindow) {
     st.set_current_tab(3);
     st.invoke_save_integrations();
     assert_eq!(preview_labels(), vec!["e2e-2: removed".to_string()]);
-    assert_eq!(st.get_opencode_provider_summary(), "", "the provider does not change");
+    assert_eq!(
+        st.get_opencode_provider_summary(),
+        "",
+        "the provider does not change"
+    );
     st.invoke_opencode_change_toggle(0);
     assert_eq!(st.get_opencode_ticked(), 0);
     assert!(!st.get_opencode_change_rows().row_data(0).unwrap().checked);
@@ -1129,7 +1143,9 @@ pub(super) fn run(app: &AppWindow) {
     switch("e2e-2").invoke_accessible_default_action(); // back on
     itest::mock_elapsed_time(std::time::Duration::from_millis(1));
     st.set_current_tab(3);
-    assert!(st.get_integration_status().contains("enabled but not listed: e2e-2"));
+    assert!(st
+        .get_integration_status()
+        .contains("enabled but not listed: e2e-2"));
     st.invoke_save_integrations();
     assert_eq!(preview_labels(), vec!["e2e-2: added".to_string()]);
     st.invoke_opencode_change_toggle(0);
@@ -1154,7 +1170,12 @@ pub(super) fn run(app: &AppWindow) {
     );
     st.invoke_save_integrations();
     assert_eq!(preview_labels(), vec!["e2e-2: changed".to_string()]);
-    let detail = st.get_opencode_change_rows().row_data(0).unwrap().detail.to_string();
+    let detail = st
+        .get_opencode_change_rows()
+        .row_data(0)
+        .unwrap()
+        .detail
+        .to_string();
     assert!(detail.starts_with("name: hand-edited → "), "{detail}");
     st.invoke_opencode_confirm();
     assert!(st.get_integration_in_sync());
@@ -1252,11 +1273,17 @@ pub(super) fn run(app: &AppWindow) {
     // silently ignored.
     let row = |i: usize| st.get_bench_prompts().row_data(i).expect("a prompt row");
     let shipped = crate::bench::shipped_prompts();
-    assert!(shipped.len() >= 3, "43k, 110k and the code prompt are shipped");
+    assert!(
+        shipped.len() >= 3,
+        "43k, 110k and the code prompt are shipped"
+    );
     assert_eq!(st.get_bench_prompts().row_count(), shipped.len() + 1);
     for (i, p) in shipped.iter().enumerate() {
         assert_eq!(row(i).path.as_str(), p.to_string_lossy());
-        assert!(row(i).shipped && !row(i).on, "a shipped prompt, not the configured one");
+        assert!(
+            row(i).shipped && !row(i).on,
+            "a shipped prompt, not the configured one"
+        );
     }
     let mine = shipped.len();
     assert_eq!(row(mine).path.as_str(), prompt_path.to_string_lossy());
@@ -1293,10 +1320,17 @@ pub(super) fn run(app: &AppWindow) {
         .position(|p| p.extension().is_some_and(|e| e == "json"))
         .expect("the code prompt is shipped");
     st.invoke_bench_prompt_toggle(code as i32);
-    let code_name = shipped[code].file_name().unwrap().to_string_lossy().into_owned();
+    let code_name = shipped[code]
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
     assert!(
-        st.get_bench_preview().contains(&format!("{code_name}, my-prompt.txt"))
-            || st.get_bench_preview().contains(&format!("my-prompt.txt, {code_name}")),
+        st.get_bench_preview()
+            .contains(&format!("{code_name}, my-prompt.txt"))
+            || st
+                .get_bench_preview()
+                .contains(&format!("my-prompt.txt, {code_name}")),
         "two ticked prompts run in turn: {}",
         st.get_bench_preview()
     );
@@ -1314,7 +1348,8 @@ pub(super) fn run(app: &AppWindow) {
     );
     assert!(!st.get_bench_running(), "and must not arm the tab");
     st.invoke_bench_toggle_preset("bench-a".into());
-    std::fs::write(&prompt_path, "Summarize the release notes.\n").expect("restore the prompt file");
+    std::fs::write(&prompt_path, "Summarize the release notes.\n")
+        .expect("restore the prompt file");
     st.invoke_reload_all();
 
     // ── Benchmark: the Database field is settings.ini `BenchDb` ──────────────
@@ -1422,16 +1457,36 @@ pub(super) fn run(app: &AppWindow) {
     // this one: mirror both (an earlier phase may have left the picker up).
     st.set_show_new_kind_picker(false);
     st.invoke_hf_open();
-    assert!(st.get_show_hf_dialog() && st.get_modal_open(), "the dialog is a modal");
+    assert!(
+        st.get_show_hf_dialog() && st.get_modal_open(),
+        "the dialog is a modal"
+    );
     assert_eq!(st.get_hf_phase(), 0);
-    assert!(st.get_hf_show_results() && !st.get_hf_has_results(), "an empty results panel first");
-    assert!(st.get_hf_token().is_empty(), "the token field is never prefilled");
-    assert_eq!(st.invoke_hf_input_problem("org/repo:Q4_K_M".into()).as_str(), "");
+    assert!(
+        st.get_hf_show_results() && !st.get_hf_has_results(),
+        "an empty results panel first"
+    );
+    assert!(
+        st.get_hf_token().is_empty(),
+        "the token field is never prefilled"
+    );
+    assert_eq!(
+        st.invoke_hf_input_problem("org/repo:Q4_K_M".into())
+            .as_str(),
+        ""
+    );
     assert_eq!(st.invoke_hf_input_problem("".into()).as_str(), "");
-    assert_eq!(st.invoke_hf_input_problem("qwen3 8b".into()).as_str(), "", "words are a search");
+    assert_eq!(
+        st.invoke_hf_input_problem("qwen3 8b".into()).as_str(),
+        "",
+        "words are a search"
+    );
     assert!(!st.invoke_hf_input_problem("a/b/c".into()).is_empty());
     assert!(st.invoke_hf_input_is_query("qwen3 8b".into()));
-    assert!(!st.invoke_hf_input_is_query("org/repo".into()), "a spec lists without searching");
+    assert!(
+        !st.invoke_hf_input_is_query("org/repo".into()),
+        "a spec lists without searching"
+    );
     // A token that cannot be one is refused IN the dialog before any request
     // (a listing or a search alike), and echoed nowhere.
     let status_before = st.get_status_text();
@@ -1440,10 +1495,20 @@ pub(super) fn run(app: &AppWindow) {
         st.set_hf_input(input.into());
         st.set_hf_error("".into());
         st.invoke_hf_submit();
-        assert_eq!(st.get_hf_phase(), 0, "a refused token starts no request ({input})");
-        assert!(!st.get_hf_error().is_empty(), "the refusal shows in the dialog");
+        assert_eq!(
+            st.get_hf_phase(),
+            0,
+            "a refused token starts no request ({input})"
+        );
+        assert!(
+            !st.get_hf_error().is_empty(),
+            "the refusal shows in the dialog"
+        );
         for text in [st.get_hf_error(), st.get_hf_note(), st.get_status_text()] {
-            assert!(!text.contains("hf_secret"), "the token leaked into {text:?}");
+            assert!(
+                !text.contains("hf_secret"),
+                "the token leaked into {text:?}"
+            );
         }
     }
     assert_eq!(st.get_status_text(), status_before);
@@ -1478,40 +1543,81 @@ pub(super) fn run(app: &AppWindow) {
                 params: Some(8_190_735_360),
                 ..hit("Qwen/Qwen3-8B-GGUF", 644_587, &["Q4_K_M", "Q8_0"])
             },
-            hit("unsloth/Qwen3-8B-GGUF", 131_220, &["Q2_K", "Q4_K_M", "BF16"]),
+            hit(
+                "unsloth/Qwen3-8B-GGUF",
+                131_220,
+                &["Q2_K", "Q4_K_M", "BF16"],
+            ),
         ]),
     );
     assert_eq!(st.get_hf_phase(), 2, "searched");
     assert!(st.get_hf_has_results() && st.get_hf_show_results());
-    assert!(st.get_hf_results_title().contains("\"qwen3 8b\""), "{}", st.get_hf_results_title());
-    let labels: Vec<String> = st.get_hf_result_labels().iter().map(|s| s.to_string()).collect();
+    assert!(
+        st.get_hf_results_title().contains("\"qwen3 8b\""),
+        "{}",
+        st.get_hf_results_title()
+    );
+    let labels: Vec<String> = st
+        .get_hf_result_labels()
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
     assert_eq!(
         labels,
-        ["Qwen/Qwen3-8B-GGUF  ·  dense 8.2B  ·  644.6k downloads", "unsloth/Qwen3-8B-GGUF  ·  131.2k downloads"],
+        [
+            "Qwen/Qwen3-8B-GGUF  ·  dense 8.2B  ·  644.6k downloads",
+            "unsloth/Qwen3-8B-GGUF  ·  131.2k downloads"
+        ],
         "the model marker only where the search knows it"
     );
-    assert_eq!(st.get_hf_result_details().row_data(1).unwrap().as_str(), "Q2_K, Q4_K_M, BF16  ·  with mmproj");
+    assert_eq!(
+        st.get_hf_result_details().row_data(1).unwrap().as_str(),
+        "Q2_K, Q4_K_M, BF16  ·  with mmproj"
+    );
     // Picking a row lists that repository: its id in the field, results kept.
     st.invoke_hf_pick_result(1);
     assert_eq!(st.get_hf_phase(), 3, "listing the picked repository");
     assert_eq!(st.get_hf_input().as_str(), "unsloth/Qwen3-8B-GGUF");
     assert_eq!(st.get_hf_result_index(), 1);
-    assert!(st.get_hf_has_results() && !st.get_hf_show_results(), "Back is offered, the candidates show");
+    assert!(
+        st.get_hf_has_results() && !st.get_hf_show_results(),
+        "Back is offered, the candidates show"
+    );
     // Back drops the listing in flight and restores the query.
     st.invoke_hf_back_to_results();
     assert_eq!(st.get_hf_phase(), 2);
     assert_eq!(st.get_hf_input().as_str(), "qwen3 8b");
-    assert_eq!(st.get_hf_result_labels().row_count(), 2, "the rows survive Back");
+    assert_eq!(
+        st.get_hf_result_labels().row_count(),
+        2,
+        "the rows survive Back"
+    );
     // A failed listing of a picked row falls back to the results, error shown.
     st.invoke_hf_pick_result(0);
-    crate::gui::land_listing_for_tests(app, Err(crate::hf::HfError::NotFoundOrPrivate { repo: "Qwen/Qwen3-8B-GGUF".into() }));
+    crate::gui::land_listing_for_tests(
+        app,
+        Err(crate::hf::HfError::NotFoundOrPrivate {
+            repo: "Qwen/Qwen3-8B-GGUF".into(),
+        }),
+    );
     assert_eq!(st.get_hf_phase(), 2);
-    assert!(st.get_hf_error().contains("Access token field"), "{}", st.get_hf_error());
+    assert!(
+        st.get_hf_error().contains("Access token field"),
+        "{}",
+        st.get_hf_error()
+    );
     assert_eq!(st.get_hf_result_labels().row_count(), 2);
     // A listing that lands shows the candidates, the default one picked.
     st.invoke_hf_pick_result(0);
-    assert!(st.get_hf_error().is_empty(), "a new request clears the old error");
-    let file = |path: &str, size: u64| crate::hf::RepoFile { path: path.into(), size, oid: String::new() };
+    assert!(
+        st.get_hf_error().is_empty(),
+        "a new request clears the old error"
+    );
+    let file = |path: &str, size: u64| crate::hf::RepoFile {
+        path: path.into(),
+        size,
+        oid: String::new(),
+    };
     let candidate = |tag: &str| crate::hf::Candidate {
         tag: tag.into(),
         shards: vec![file(&format!("Qwen3-8B-{tag}.gguf"), 5 << 30)],
@@ -1535,13 +1641,29 @@ pub(super) fn run(app: &AppWindow) {
     );
     assert_eq!(st.get_hf_phase(), 4, "listed");
     assert_eq!(st.get_hf_candidate_labels().row_count(), 2);
-    assert_eq!(st.get_hf_candidate_index(), 1, "the default quantization starts picked");
-    assert!(st.get_hf_selection_summary().contains("Qwen3-8B-Q4_K_M.gguf"));
-    assert!(st.get_hf_has_results(), "Back is still offered from the listing");
+    assert_eq!(
+        st.get_hf_candidate_index(),
+        1,
+        "the default quantization starts picked"
+    );
+    assert!(st
+        .get_hf_selection_summary()
+        .contains("Qwen3-8B-Q4_K_M.gguf"));
+    assert!(
+        st.get_hf_has_results(),
+        "Back is still offered from the listing"
+    );
     // No GPU probed (none under test): every row says the estimate is
     // unavailable, no basis line, no recommendation.
-    let details: Vec<String> = st.get_hf_candidate_details().iter().map(|s| s.to_string()).collect();
-    assert_eq!(details, vec![format!("estimate unavailable: {}", crate::hf_fit::no_gpu()); 2]);
+    let details: Vec<String> = st
+        .get_hf_candidate_details()
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    assert_eq!(
+        details,
+        vec![format!("estimate unavailable: {}", crate::hf_fit::no_gpu()); 2]
+    );
     assert!(st.get_hf_estimate_basis().is_empty());
 
     // With a GPU: rows read "estimating" until their header lands; once all
@@ -1555,7 +1677,11 @@ pub(super) fn run(app: &AppWindow) {
         default: 1,
     };
     let budget = || crate::hf_fit::Budget {
-        gpus: vec![crate::hf_fit::Gpu { id: "CUDA0".into(), name: "Test GPU".into(), total_mib: 24 << 10 }],
+        gpus: vec![crate::hf_fit::Gpu {
+            id: "CUDA0".into(),
+            name: "Test GPU".into(),
+            total_mib: 24 << 10,
+        }],
         ram: Some(28 << 30),
         ram_total: Some(32 << 30),
     };
@@ -1566,7 +1692,13 @@ pub(super) fn run(app: &AppWindow) {
             total: gib << 30,
             token_embd: 0,
             globals: 0,
-            layers: vec![crate::hf_fit::Layer { experts: 0, other: (gib << 30) / 4 }; 4],
+            layers: vec![
+                crate::hf_fit::Layer {
+                    experts: 0,
+                    other: (gib << 30) / 4
+                };
+                4
+            ],
             kv: 1 << 30,
             ctx: 32768,
         })
@@ -1574,17 +1706,54 @@ pub(super) fn run(app: &AppWindow) {
     st.invoke_hf_pick_result(0);
     crate::gui::land_listing_with_budget_for_tests(app, Ok(listing()), Some(budget()));
     assert_eq!(st.get_hf_phase(), 4);
-    assert!(st.get_hf_estimate_basis().starts_with("Estimated for Test GPU"), "{}", st.get_hf_estimate_basis());
-    assert!(st.get_hf_candidate_details().iter().all(|d| d.starts_with("estimating")));
-    assert_eq!(st.get_hf_candidate_index(), 1, "the default while estimates load");
+    assert!(
+        st.get_hf_estimate_basis()
+            .starts_with("Estimated for Test GPU"),
+        "{}",
+        st.get_hf_estimate_basis()
+    );
+    assert!(st
+        .get_hf_candidate_details()
+        .iter()
+        .all(|d| d.starts_with("estimating")));
+    assert_eq!(
+        st.get_hf_candidate_index(),
+        1,
+        "the default while estimates load"
+    );
     crate::gui::land_estimate_for_tests(app, 1, Ok(shape(5)));
-    assert_eq!(st.get_hf_candidate_details().row_data(1).unwrap().as_str(), "all on GPU: 6.0 of 22.0 GiB with a 32k context");
-    assert!(st.get_hf_candidate_details().row_data(0).unwrap().starts_with("estimating"), "rows fill in one by one");
-    assert_eq!(st.get_hf_candidate_index(), 1, "no recommendation before every row has its answer");
+    assert_eq!(
+        st.get_hf_candidate_details().row_data(1).unwrap().as_str(),
+        "all on GPU: 6.0 of 22.0 GiB with a 32k context"
+    );
+    assert!(
+        st.get_hf_candidate_details()
+            .row_data(0)
+            .unwrap()
+            .starts_with("estimating"),
+        "rows fill in one by one"
+    );
+    assert_eq!(
+        st.get_hf_candidate_index(),
+        1,
+        "no recommendation before every row has its answer"
+    );
     crate::gui::land_estimate_for_tests(app, 0, Ok(shape(9)));
-    assert_eq!(st.get_hf_candidate_index(), 0, "the pick moved to the recommendation");
-    assert!(st.get_hf_candidate_labels().row_data(0).unwrap().ends_with("recommended"));
-    assert!(st.get_hf_candidate_details().row_data(0).unwrap().starts_with("recommended, the best quality that fits in GPU memory: "));
+    assert_eq!(
+        st.get_hf_candidate_index(),
+        0,
+        "the pick moved to the recommendation"
+    );
+    assert!(st
+        .get_hf_candidate_labels()
+        .row_data(0)
+        .unwrap()
+        .ends_with("recommended"));
+    assert!(st
+        .get_hf_candidate_details()
+        .row_data(0)
+        .unwrap()
+        .starts_with("recommended, the best quality that fits in GPU memory: "));
     assert!(st.get_hf_selection_summary().contains("Qwen3-8B-Q8_0.gguf"));
     // A row the user clicked stays picked: the recommendation only marks.
     st.invoke_hf_pick_result(0);
@@ -1593,8 +1762,15 @@ pub(super) fn run(app: &AppWindow) {
     crate::gui::land_estimate_for_tests(app, 0, Ok(shape(9)));
     crate::gui::land_estimate_for_tests(app, 1, Err(crate::hf::HfError::Network("boom".into())));
     assert_eq!(st.get_hf_candidate_index(), 1, "the user's pick is kept");
-    assert!(st.get_hf_candidate_labels().row_data(0).unwrap().ends_with("recommended"));
-    assert_eq!(st.get_hf_candidate_details().row_data(1).unwrap().as_str(), "estimate unavailable: network error: boom");
+    assert!(st
+        .get_hf_candidate_labels()
+        .row_data(0)
+        .unwrap()
+        .ends_with("recommended"));
+    assert_eq!(
+        st.get_hf_candidate_details().row_data(1).unwrap().as_str(),
+        "estimate unavailable: network error: boom"
+    );
 
     // The extras count, and the choices drive them: every row has a 12 GiB
     // mmproj (12.5 with its compute) and a DFlash drafter. Taken (the
@@ -1605,12 +1781,20 @@ pub(super) fn run(app: &AppWindow) {
         dflash: Some(file("Qwen3-8B-DFlash-Q8_0.gguf", 1 << 30)),
         ..candidate(tag)
     };
-    let listing_x = || crate::hf::Listing { candidates: vec![with_extras("Q8_0"), with_extras("Q4_K_M")], ..listing() };
+    let listing_x = || crate::hf::Listing {
+        candidates: vec![with_extras("Q8_0"), with_extras("Q4_K_M")],
+        ..listing()
+    };
     st.invoke_hf_pick_result(0);
     crate::gui::land_listing_with_budget_for_tests(app, Ok(listing_x()), Some(budget()));
     crate::gui::land_estimate_for_tests(app, 0, Ok(shape(9)));
     crate::gui::land_estimate_for_tests(app, 1, Ok(shape(5)));
-    let detail = |i: usize| st.get_hf_candidate_details().row_data(i).unwrap().to_string();
+    let detail = |i: usize| {
+        st.get_hf_candidate_details()
+            .row_data(i)
+            .unwrap()
+            .to_string()
+    };
     assert_eq!(st.get_hf_candidate_index(), 1);
     assert!(st.get_hf_take_mmproj());
     assert_eq!(
@@ -1624,16 +1808,36 @@ pub(super) fn run(app: &AppWindow) {
     st.set_hf_take_mmproj(false);
     st.invoke_hf_choices_changed();
     assert_eq!(detail(1), "all on GPU: 6.0 of 22.0 GiB with a 32k context");
-    assert!(detail(0).starts_with("recommended, the best quality that fits in GPU memory: all on GPU: 10.0 of 22.0 GiB"), "{}", detail(0));
-    assert_eq!(st.get_hf_candidate_index(), 0, "the pick follows the recommendation");
+    assert!(
+        detail(0).starts_with(
+            "recommended, the best quality that fits in GPU memory: all on GPU: 10.0 of 22.0 GiB"
+        ),
+        "{}",
+        detail(0)
+    );
+    assert_eq!(
+        st.get_hf_candidate_index(),
+        0,
+        "the pick follows the recommendation"
+    );
     assert!(!st.get_hf_take_mmproj(), "the choice survives the move");
-    assert!(st.get_hf_selection_summary().starts_with("Fetches 1 file"), "{}", st.get_hf_selection_summary());
+    assert!(
+        st.get_hf_selection_summary().starts_with("Fetches 1 file"),
+        "{}",
+        st.get_hf_selection_summary()
+    );
     // Pick the drafter: its header is read first (rows estimating), then
     // counted on the card beside the model.
     st.set_hf_drafter("DFlash".into());
     st.invoke_hf_choices_changed();
     assert!(detail(0).starts_with("estimating") && detail(1).starts_with("estimating"));
-    crate::gui::land_draft_for_tests(app, "Qwen3-8B-DFlash-Q8_0.gguf", Ok(std::sync::Arc::new(crate::hf_fit::DraftShape::from_size(1 << 30))));
+    crate::gui::land_draft_for_tests(
+        app,
+        "Qwen3-8B-DFlash-Q8_0.gguf",
+        Ok(std::sync::Arc::new(crate::hf_fit::DraftShape::from_size(
+            1 << 30,
+        ))),
+    );
     assert!(
         detail(0).ends_with("all on GPU: 11.8 of 22.0 GiB with a 32k context; with the DFlash drafter (1.8 GiB) on CUDA0"),
         "{}",
@@ -1644,7 +1848,10 @@ pub(super) fn run(app: &AppWindow) {
     st.set_hf_take_mmproj(true);
     st.invoke_hf_choices_changed();
     assert_eq!(st.get_hf_candidate_index(), 1);
-    assert!(st.get_hf_take_mmproj() && st.get_hf_drafter().as_str() == "DFlash", "both wishes kept on the new pick");
+    assert!(
+        st.get_hf_take_mmproj() && st.get_hf_drafter().as_str() == "DFlash",
+        "both wishes kept on the new pick"
+    );
     assert!(
         detail(1).ends_with("all on GPU: 20.2 of 22.0 GiB with a 32k context; with the image encoder (12.5 GiB) on CUDA0 and the DFlash drafter (1.8 GiB) on CUDA0"),
         "{}",
@@ -1664,9 +1871,18 @@ pub(super) fn run(app: &AppWindow) {
     st.invoke_hf_submit();
     assert_eq!(st.get_hf_phase(), 3, "a spec skips the search");
     assert!(!st.get_hf_has_results() && st.get_hf_result_labels().row_count() == 0);
-    crate::gui::land_listing_for_tests(app, Err(crate::hf::HfError::NoGguf { repo: "org/repo".into() }));
+    crate::gui::land_listing_for_tests(
+        app,
+        Err(crate::hf::HfError::NoGguf {
+            repo: "org/repo".into(),
+        }),
+    );
     assert_eq!(st.get_hf_phase(), 0);
-    assert!(st.get_hf_error().contains("no GGUF"), "{}", st.get_hf_error());
+    assert!(
+        st.get_hf_error().contains("no GGUF"),
+        "{}",
+        st.get_hf_error()
+    );
     st.invoke_hf_back_to_results();
     assert_eq!(st.get_hf_phase(), 0, "no results to go back to");
 
@@ -1683,7 +1899,10 @@ pub(super) fn run(app: &AppWindow) {
     }
     let win = crate::gui::downloads_window_for_tests();
     let rows = || win.get_rows().iter().collect::<Vec<_>>();
-    assert!(rows().is_empty() && st.get_downloads_summary().is_empty(), "no download: no footer indicator");
+    assert!(
+        rows().is_empty() && st.get_downloads_summary().is_empty(),
+        "no download: no footer indicator"
+    );
     assert!(!crate::gui::quit_called_for_tests());
     // A dirty editor first.
     let first = st.get_presets().row_data(0).expect("a preset is listed");
@@ -1695,11 +1914,23 @@ pub(super) fn run(app: &AppWindow) {
     st.set_form(form);
     assert!(st.get_preset_dirty());
     let editor_kept = |why: &str| {
-        assert_eq!(st.get_form().id.as_str(), edited_id, "{why}: the editor keeps its preset");
+        assert_eq!(
+            st.get_form().id.as_str(),
+            edited_id,
+            "{why}: the editor keeps its preset"
+        );
         assert!(st.get_preset_dirty(), "{why}: and its unsaved edit");
         let sel = st.get_selected_preset_index();
-        let row = st.get_presets().iter().find(|p| p.orig_index == sel).expect("the selection is listed");
-        assert_eq!(row.id.as_str(), edited_id, "{why}: the selection stays on it");
+        let row = st
+            .get_presets()
+            .iter()
+            .find(|p| p.orig_index == sel)
+            .expect("the selection is listed");
+        assert_eq!(
+            row.id.as_str(),
+            edited_id,
+            "{why}: the selection stays on it"
+        );
     };
     let open_listing = |l: crate::hf::Listing, budget: Option<crate::hf_fit::Budget>| {
         st.set_show_new_kind_picker(false);
@@ -1713,29 +1944,68 @@ pub(super) fn run(app: &AppWindow) {
     open_listing(listing(), None);
     st.set_hf_token("hf_e2esecret".into());
     st.invoke_hf_download();
-    assert!(!st.get_show_hf_dialog() && !st.get_modal_open(), "Download closes the modal: the main window is free");
+    assert!(
+        !st.get_show_hf_dialog() && !st.get_modal_open(),
+        "Download closes the modal: the main window is free"
+    );
     assert_eq!(st.get_hf_phase(), 0);
-    assert!(st.get_status_text().contains("in the background"), "{}", st.get_status_text());
+    assert!(
+        st.get_status_text().contains("in the background"),
+        "{}",
+        st.get_status_text()
+    );
     let r = rows();
     assert_eq!(r.len(), 1, "the window has the job");
-    assert_eq!(r[0].title.as_str(), "Qwen/Qwen3-8B-GGUF  ·  Q4_K_M", "the default pick");
-    assert!(r[0].detail.contains("Qwen3-8B-Q4_K_M.gguf"), "{}", r[0].detail);
-    assert_eq!((r[0].state.as_str(), r[0].overall.as_str()), ("Downloading", "Starting…"));
+    assert_eq!(
+        r[0].title.as_str(),
+        "Qwen/Qwen3-8B-GGUF  ·  Q4_K_M",
+        "the default pick"
+    );
+    assert!(
+        r[0].detail.contains("Qwen3-8B-Q4_K_M.gguf"),
+        "{}",
+        r[0].detail
+    );
+    assert_eq!(
+        (r[0].state.as_str(), r[0].overall.as_str()),
+        ("Downloading", "Starting…")
+    );
     assert!(r[0].can_cancel && r[0].show_progress && !r[0].can_dismiss);
     assert_eq!(st.get_downloads_summary().as_str(), "1 download running");
-    assert!(win.window().is_visible(), "the window comes up with the job");
+    assert!(
+        win.window().is_visible(),
+        "the window comes up with the job"
+    );
     editor_kept("a started download");
     let qwen = r[0].id;
-    for text in [st.get_status_text(), r[0].title.clone(), r[0].detail.clone(), r[0].message.clone()] {
-        assert!(!text.contains("hf_e2esecret"), "the token leaked into {text:?}");
+    for text in [
+        st.get_status_text(),
+        r[0].title.clone(),
+        r[0].detail.clone(),
+        r[0].message.clone(),
+    ] {
+        assert!(
+            !text.contains("hf_e2esecret"),
+            "the token leaked into {text:?}"
+        );
     }
     st.set_hf_token("".into());
     // A second download of the same repository (any case) is refused in the
     // dialog: both would write its staging folder.
-    open_listing(crate::hf::Listing { repo: "qwen/qwen3-8b-gguf".into(), ..listing() }, None);
+    open_listing(
+        crate::hf::Listing {
+            repo: "qwen/qwen3-8b-gguf".into(),
+            ..listing()
+        },
+        None,
+    );
     st.invoke_hf_download();
     assert!(st.get_show_hf_dialog(), "refused: the dialog stays");
-    assert!(st.get_hf_error().contains("already downloading"), "{}", st.get_hf_error());
+    assert!(
+        st.get_hf_error().contains("already downloading"),
+        "{}",
+        st.get_hf_error()
+    );
     assert_eq!(rows().len(), 1);
     // The dialog closes while a download runs: nothing runs IN it.
     st.invoke_hf_dismiss();
@@ -1755,12 +2025,23 @@ pub(super) fn run(app: &AppWindow) {
         },
     );
     let r = rows();
-    assert!(r[0].overall.starts_with("1.00 GiB of 5.00 GiB (20%)"), "{}", r[0].overall);
-    assert!(r[0].file.starts_with("Qwen3-8B-Q4_K_M.gguf: "), "{}", r[0].file);
+    assert!(
+        r[0].overall.starts_with("1.00 GiB of 5.00 GiB (20%)"),
+        "{}",
+        r[0].overall
+    );
+    assert!(
+        r[0].file.starts_with("Qwen3-8B-Q4_K_M.gguf: "),
+        "{}",
+        r[0].file
+    );
     assert_eq!(r[0].overall_fraction, 0.2);
     // Quit asks first while it runs; Keep running takes it back.
     crate::gui::request_quit_for_tests(app);
-    assert!(!crate::gui::quit_called_for_tests(), "a running download makes Quit ask");
+    assert!(
+        !crate::gui::quit_called_for_tests(),
+        "a running download makes Quit ask"
+    );
     assert!(win.get_quit_pending() && win.get_quit_active() == 1);
     win.invoke_keep_running();
     assert!(!win.get_quit_pending());
@@ -1772,14 +2053,25 @@ pub(super) fn run(app: &AppWindow) {
     assert_eq!(r[0].state.as_str(), "Cancelled");
     assert!(r[0].message.contains("kept") && r[0].can_resume && r[0].can_dismiss && !r[0].is_error);
     assert!(!st.get_status_is_error(), "a cancel is not an error");
-    assert_eq!(st.get_downloads_summary().as_str(), "Downloads: 1 cancelled");
+    assert_eq!(
+        st.get_downloads_summary().as_str(),
+        "Downloads: 1 cancelled"
+    );
     // Resume, then a failure: in the row AND in the footer.
     win.invoke_resume(qwen);
     assert_eq!(rows()[0].state.as_str(), "Downloading");
-    crate::gui::land_transfer_for_tests(app, qwen, Err(crate::hf::HfError::DiskFull("no space left".into())));
+    crate::gui::land_transfer_for_tests(
+        app,
+        qwen,
+        Err(crate::hf::HfError::DiskFull("no space left".into())),
+    );
     let r = rows();
     assert_eq!(r[0].state.as_str(), "Failed");
-    assert!(r[0].is_error && r[0].message.contains("no space left"), "{}", r[0].message);
+    assert!(
+        r[0].is_error && r[0].message.contains("no space left"),
+        "{}",
+        r[0].message
+    );
     assert!(st.get_status_is_error());
     editor_kept("a cancel and a failure");
     // A finished one creates and lists the preset WITHOUT selecting it,
@@ -1787,7 +2079,10 @@ pub(super) fn run(app: &AppWindow) {
     // 4-block MoE of 80 MiB on cards of 48 and 24 MiB usable keeps block 0's
     // experts in RAM and cuts the rest 3 + 2 (hf.rs has the same fixture,
     // `placed_download`).
-    let model = models_dir.join("models").join("Hf-GGUF").join("hfmodel-Q4_K_M.gguf");
+    let model = models_dir
+        .join("models")
+        .join("Hf-GGUF")
+        .join("hfmodel-Q4_K_M.gguf");
     std::fs::create_dir_all(model.parent().unwrap()).expect("repo folder");
     {
         use crate::hf_fit::tests::{gguf, write_sparse, W};
@@ -1820,13 +2115,25 @@ pub(super) fn run(app: &AppWindow) {
         total_mib: usable_mib + (crate::hf_fit::GPU_RESERVE >> 20),
     };
     let pair = crate::hf_fit::Budget {
-        gpus: vec![card("ROCm1", "AMD Radeon AI PRO R9700", 48), card("CUDA0", "NVIDIA GeForce RTX 4070 SUPER", 24)],
+        gpus: vec![
+            card("ROCm1", "AMD Radeon AI PRO R9700", 48),
+            card("CUDA0", "NVIDIA GeForce RTX 4070 SUPER", 24),
+        ],
         ram: Some(28 << 30),
         ram_total: Some(32 << 30),
     };
-    open_listing(crate::hf::Listing { repo: "org/Hf-GGUF".into(), ..listing() }, Some(pair));
+    open_listing(
+        crate::hf::Listing {
+            repo: "org/Hf-GGUF".into(),
+            ..listing()
+        },
+        Some(pair),
+    );
     st.invoke_hf_download();
-    assert!(!st.get_show_hf_dialog(), "another repository downloads beside the failed one");
+    assert!(
+        !st.get_show_hf_dialog(),
+        "another repository downloads beside the failed one"
+    );
     let hf_job = rows()[0].id;
     assert_ne!(hf_job, qwen, "newest first");
     crate::gui::land_transfer_for_tests(
@@ -1842,24 +2149,56 @@ pub(super) fn run(app: &AppWindow) {
     );
     let r = rows();
     assert_eq!(r[0].state.as_str(), "Done", "{}", r[0].message);
-    assert!(r[0].message.contains("[hfmodel-Q4_K_M]") && r[0].message.contains("as estimated"), "{}", r[0].message);
+    assert!(
+        r[0].message.contains("[hfmodel-Q4_K_M]") && r[0].message.contains("as estimated"),
+        "{}",
+        r[0].message
+    );
     assert!(r[0].can_show && r[0].can_dismiss && !r[0].can_resume);
-    assert_eq!(st.get_downloads_summary().as_str(), "Downloads: 1 done, 1 failed");
+    assert_eq!(
+        st.get_downloads_summary().as_str(),
+        "Downloads: 1 done, 1 failed"
+    );
     assert!(!st.get_status_is_error(), "{}", st.get_status_text());
-    assert!(st.get_status_text().contains("[hfmodel-Q4_K_M]"), "{}", st.get_status_text());
-    assert!(st.get_status_text().contains("placed on the GPUs as estimated"), "{}", st.get_status_text());
+    assert!(
+        st.get_status_text().contains("[hfmodel-Q4_K_M]"),
+        "{}",
+        st.get_status_text()
+    );
+    assert!(
+        st.get_status_text()
+            .contains("placed on the GPUs as estimated"),
+        "{}",
+        st.get_status_text()
+    );
     editor_kept("a created preset");
-    assert!(st.get_presets().iter().any(|p| p.id.as_str() == "hfmodel-Q4_K_M"), "the new preset is listed");
+    assert!(
+        st.get_presets()
+            .iter()
+            .any(|p| p.id.as_str() == "hfmodel-Q4_K_M"),
+        "the new preset is listed"
+    );
     let ini = std::fs::read_to_string(crate::paths::presets_ini()).expect("presets.ini");
     assert!(
         ini.contains("[hfmodel-Q4_K_M]") && ini.contains("https://huggingface.co/org/Hf-GGUF"),
         "the derived preset is saved with its project URL:\n{ini}"
     );
-    for line in ["device = ROCm1,CUDA0", "tensor-split = 3,2", "n-cpu-moe = 1", "ctx-size = 4096", "; placement = estimated at download"] {
-        assert!(ini.contains(line), "the placement is written ({line}):\n{ini}");
+    for line in [
+        "device = ROCm1,CUDA0",
+        "tensor-split = 3,2",
+        "n-cpu-moe = 1",
+        "ctx-size = 4096",
+        "; placement = estimated at download",
+    ] {
+        assert!(
+            ini.contains(line),
+            "the placement is written ({line}):\n{ini}"
+        );
     }
     assert!(
-        st.get_model_labels().iter().any(|l| l.contains("hfmodel-Q4_K_M")),
+        st.get_model_labels()
+            .iter()
+            .any(|l| l.contains("hfmodel-Q4_K_M")),
         "the pickers were rescanned and list the new file"
     );
     // Show preset: refused (with a note) while a dialog is open in the main
@@ -1872,20 +2211,49 @@ pub(super) fn run(app: &AppWindow) {
     st.set_current_tab(0);
     win.invoke_show_preset(hf_job);
     assert_eq!(st.get_current_tab(), 1, "Show goes to the Models tab");
-    assert!(rows()[0].note.is_empty(), "the note goes with the next Show");
-    assert!(st.get_show_discard_dialog(), "a dirty form asks before Show replaces it");
+    assert!(
+        rows()[0].note.is_empty(),
+        "the note goes with the next Show"
+    );
+    assert!(
+        st.get_show_discard_dialog(),
+        "a dirty form asks before Show replaces it"
+    );
     st.invoke_cancel_discard();
     editor_kept("a Show whose discard was cancelled");
     win.invoke_show_preset(hf_job);
     st.invoke_confirm_discard();
-    assert_eq!(st.get_form().id.as_str(), "hfmodel-Q4_K_M", "Show selects the new preset");
+    assert_eq!(
+        st.get_form().id.as_str(),
+        "hfmodel-Q4_K_M",
+        "Show selects the new preset"
+    );
     assert_eq!(st.get_form().model.as_str(), model.to_string_lossy());
     let f = st.get_form();
-    assert!(f.placement_note.starts_with("estimated at download for a 4k context"), "{}", f.placement_note);
-    assert_eq!((f.device.as_str(), f.tensor_split.as_str(), f.n_cpu_moe, f.fit), ("ROCm1,CUDA0", "3,2", 1, false));
-    assert!(!st.get_preset_dirty(), "the derived preset loads clean: the form round-trips it");
+    assert!(
+        f.placement_note
+            .starts_with("estimated at download for a 4k context"),
+        "{}",
+        f.placement_note
+    );
+    assert_eq!(
+        (
+            f.device.as_str(),
+            f.tensor_split.as_str(),
+            f.n_cpu_moe,
+            f.fit
+        ),
+        ("ROCm1,CUDA0", "3,2", 1, false)
+    );
+    assert!(
+        !st.get_preset_dirty(),
+        "the derived preset loads clean: the form round-trips it"
+    );
     win.invoke_show_preset(hf_job);
-    assert!(!st.get_show_discard_dialog(), "already in the editor: nothing to ask");
+    assert!(
+        !st.get_show_discard_dialog(),
+        "already in the editor: nothing to ask"
+    );
     // Dismiss takes a finished row; a confirmed Quit stops what runs and
     // quits once it has landed.
     win.invoke_dismiss(hf_job);
@@ -1894,14 +2262,27 @@ pub(super) fn run(app: &AppWindow) {
     crate::gui::request_quit_for_tests(app);
     win.invoke_confirm_quit();
     assert!(win.get_quitting());
-    assert_eq!(rows()[0].state.as_str(), "Cancelling…", "Quit cancels cooperatively");
-    assert!(!crate::gui::quit_called_for_tests(), "not before the child has stopped");
+    assert_eq!(
+        rows()[0].state.as_str(),
+        "Cancelling…",
+        "Quit cancels cooperatively"
+    );
+    assert!(
+        !crate::gui::quit_called_for_tests(),
+        "not before the child has stopped"
+    );
     crate::gui::land_transfer_for_tests(app, qwen, Err(crate::hf::HfError::Cancelled));
-    assert!(crate::gui::quit_called_for_tests(), "the last transfer landed: the loop ends");
+    assert!(
+        crate::gui::quit_called_for_tests(),
+        "the last transfer landed: the loop ends"
+    );
     win.invoke_clear_finished();
     assert!(rows().is_empty() && st.get_downloads_summary().is_empty());
     crate::gui::request_quit_for_tests(app);
-    assert!(crate::gui::quit_called_for_tests(), "nothing runs: Quit quits at once");
+    assert!(
+        crate::gui::quit_called_for_tests(),
+        "nothing runs: Quit quits at once"
+    );
     win.hide().ok();
 
     delete_with_files_phase(app, &models_dir, &model);
@@ -1925,19 +2306,38 @@ fn load_on_startup_phase() {
     presets::save(&p("los-a")).expect("re-saving the same preset still counts once");
     let err = presets::save(&p("los-b")).expect_err("a second one does not fit");
     assert!(err.to_string().contains("ModelsMax"), "{err}");
-    assert!(presets::load_all().iter().all(|q| q.id != "los-b"), "nothing written");
+    assert!(
+        presets::load_all().iter().all(|q| q.id != "los-b"),
+        "nothing written"
+    );
 
     // Parked, then switched on: the switch is refused, the section stays parked.
-    presets::save(&presets::Preset { load_on_startup: false, ..p("los-b") }).expect("off fits");
+    presets::save(&presets::Preset {
+        load_on_startup: false,
+        ..p("los-b")
+    })
+    .expect("off fits");
     presets::set_enabled("los-b", false).expect("park it");
     presets::save(&p("los-b")).expect("a parked preset does not count");
-    assert!(presets::set_enabled("los-b", true).is_err(), "switching it on would make two");
-    assert!(presets::load_listed().iter().any(|l| l.preset.id == "los-b" && !l.enabled));
+    assert!(
+        presets::set_enabled("los-b", true).is_err(),
+        "switching it on would make two"
+    );
+    assert!(presets::load_listed()
+        .iter()
+        .any(|l| l.preset.id == "los-b" && !l.enabled));
 
     // server.ini: ModelsMax = 0 is not unlimited for the startup check.
     cfg.models_max = Some(0);
-    assert!(server_cfg::save(&cfg).is_err(), "ModelsMax = 0 with one startup preset");
-    assert_eq!(server_cfg::load().models_max, Some(1), "server.ini unchanged");
+    assert!(
+        server_cfg::save(&cfg).is_err(),
+        "ModelsMax = 0 with one startup preset"
+    );
+    assert_eq!(
+        server_cfg::load().models_max,
+        Some(1),
+        "server.ini unchanged"
+    );
     cfg.models_max = None;
     server_cfg::save(&cfg).expect("llama.cpp's default cap holds one");
 
@@ -1953,7 +2353,11 @@ fn load_on_startup_phase() {
 /// section and then the ticked files and their emptied repo folders, the
 /// pickers are rescanned, and a file that fails to delete is reported without
 /// blocking the preset's deletion.
-fn delete_with_files_phase(app: &AppWindow, models_dir: &std::path::Path, hf_model: &std::path::Path) {
+fn delete_with_files_phase(
+    app: &AppWindow,
+    models_dir: &std::path::Path,
+    hf_model: &std::path::Path,
+) {
     use crate::presets::Preset;
     let st = app.global::<AppState>();
     let mut cfg = crate::server_cfg::load();
@@ -2002,22 +2406,37 @@ fn delete_with_files_phase(app: &AppWindow, models_dir: &std::path::Path, hf_mod
     };
     select("split");
     assert!(
-        st.get_model_labels().iter().any(|l| l.contains("split-00001")),
+        st.get_model_labels()
+            .iter()
+            .any(|l| l.contains("split-00001")),
         "the split model is in the picker before the delete"
     );
 
     // Opening lists the three files, none ticked, the shared mmproj locked.
     st.invoke_request_delete();
-    assert!(st.get_show_delete_dialog() && st.get_modal_open(), "the dialog is a modal");
+    assert!(
+        st.get_show_delete_dialog() && st.get_modal_open(),
+        "the dialog is a modal"
+    );
     assert_eq!(st.get_delete_target_id().as_str(), "split");
     assert_eq!(st.get_delete_target_file().as_str(), "presets.ini");
     let rows = || st.get_delete_file_rows().iter().collect::<Vec<_>>();
     let r = rows();
     assert_eq!(r.len(), 3, "model, mmproj, drafter");
-    assert_eq!(r[0].label.as_str(), "Model: split-00001-of-00002.gguf (2 shards)");
-    assert!(r.iter().all(|r| !r.checked), "keeping the files is the default");
+    assert_eq!(
+        r[0].label.as_str(),
+        "Model: split-00001-of-00002.gguf (2 shards)"
+    );
+    assert!(
+        r.iter().all(|r| !r.checked),
+        "keeping the files is the default"
+    );
     assert!(!r[0].in_use && r[1].in_use && !r[2].in_use);
-    assert!(r[1].detail.contains("in use by [sharer]"), "{}", r[1].detail);
+    assert!(
+        r[1].detail.contains("in use by [sharer]"),
+        "{}",
+        r[1].detail
+    );
     assert_eq!(st.get_delete_files_ticked(), 0);
     assert!(st.get_delete_files_summary().starts_with("Only the preset"));
     // Cancel drops the ticks: a reopen starts cleared again.
@@ -2026,7 +2445,11 @@ fn delete_with_files_phase(app: &AppWindow, models_dir: &std::path::Path, hf_mod
     st.invoke_delete_cancel();
     assert!(!st.get_show_delete_dialog());
     st.invoke_request_delete();
-    assert_eq!(st.get_delete_files_ticked(), 0, "ticks never outlive their dialog");
+    assert_eq!(
+        st.get_delete_files_ticked(),
+        0,
+        "ticks never outlive their dialog"
+    );
     // The shared mmproj cannot be ticked; the model and the drafter can, the
     // drafter through the row's own box (the .slint wiring).
     st.invoke_delete_file_toggle(1);
@@ -2041,7 +2464,8 @@ fn delete_with_files_phase(app: &AppWindow, models_dir: &std::path::Path, hf_mod
     assert_eq!(st.get_delete_files_ticked(), 2);
     let summary = st.get_delete_files_summary();
     assert!(
-        summary.contains("split-00001-of-00002.gguf (2 shards)") && summary.contains("split-mtp.gguf"),
+        summary.contains("split-00001-of-00002.gguf (2 shards)")
+            && summary.contains("split-mtp.gguf"),
         "the summary names what goes: {summary}"
     );
 
@@ -2051,23 +2475,35 @@ fn delete_with_files_phase(app: &AppWindow, models_dir: &std::path::Path, hf_mod
     assert!(!st.get_status_is_error(), "{}", st.get_status_text());
     let status = st.get_status_text();
     assert!(
-        status.starts_with("Deleted [split]; removed 3 files") && status.contains("empty folders removed"),
+        status.starts_with("Deleted [split]; removed 3 files")
+            && status.contains("empty folders removed"),
         "{status}"
     );
-    assert!(crate::presets::load_listed().iter().all(|l| l.preset.id != "split"));
+    assert!(crate::presets::load_listed()
+        .iter()
+        .all(|l| l.preset.id != "split"));
     assert!(!shard1.exists() && !shard2.exists() && !drafter.exists());
     assert!(mmproj.exists(), "the shared mmproj stays");
     assert!(!repo("models", "Split-GGUF").exists() && !repo("mtps", "Split-GGUF").exists());
-    assert!(repo("mmprojs", "Split-GGUF").is_dir(), "a folder with content stays");
+    assert!(
+        repo("mmprojs", "Split-GGUF").is_dir(),
+        "a folder with content stays"
+    );
     assert!(
         models_dir.join("models").is_dir() && models_dir.join("mtps").is_dir(),
         "the subfolders themselves stay"
     );
     assert!(
-        st.get_model_labels().iter().all(|l| !l.contains("split-00001")),
+        st.get_model_labels()
+            .iter()
+            .all(|l| !l.contains("split-00001")),
         "the pickers were rescanned"
     );
-    assert_eq!(st.get_selected_preset_index(), -1, "delete still clears the selection");
+    assert_eq!(
+        st.get_selected_preset_index(),
+        -1,
+        "delete still clears the selection"
+    );
 
     // A file that fails to delete (a folder now stands at its path) is
     // reported, and the preset is deleted anyway. `sharer` is parked, and its
@@ -2077,7 +2513,11 @@ fn delete_with_files_phase(app: &AppWindow, models_dir: &std::path::Path, hf_mod
     assert_eq!(st.get_delete_target_file().as_str(), "presets.ini.disabled");
     let r = rows();
     assert_eq!(r.len(), 2);
-    assert!(r[0].in_use && r[0].detail.contains("[hfmodel-Q4_K_M]"), "{}", r[0].detail);
+    assert!(
+        r[0].in_use && r[0].detail.contains("[hfmodel-Q4_K_M]"),
+        "{}",
+        r[0].detail
+    );
     assert!(!r[1].in_use, "nobody else uses the mmproj now");
     st.invoke_delete_file_toggle(1);
     std::fs::remove_file(&mmproj).expect("remove the mmproj");
@@ -2089,7 +2529,9 @@ fn delete_with_files_phase(app: &AppWindow, models_dir: &std::path::Path, hf_mod
         st.get_status_text()
     );
     assert!(st.get_status_text().starts_with("Deleted [sharer]"));
-    assert!(crate::presets::load_listed().iter().all(|l| l.preset.id != "sharer"));
+    assert!(crate::presets::load_listed()
+        .iter()
+        .all(|l| l.preset.id != "sharer"));
     assert!(hf_model.exists(), "the in-use model was never offered");
     assert!(mmproj.is_dir(), "the folder that refused is still there");
     std::fs::remove_dir(&mmproj).expect("tidy up");
@@ -2123,10 +2565,17 @@ fn delete_with_files_phase(app: &AppWindow, models_dir: &std::path::Path, hf_mod
         ..Preset::default()
     })
     .expect("save cli-other");
-    let listed = |id: &str| crate::presets::load_listed().iter().any(|l| l.preset.id == id);
+    let listed = |id: &str| {
+        crate::presets::load_listed()
+            .iter()
+            .any(|l| l.preset.id == id)
+    };
     let err = delete("cli-del", &[FileKind::All], false).expect_err("a shared drafter is refused");
     assert!(err.to_string().contains("[cli-other]"), "{err}");
-    assert!(listed("cli-del") && cli_model.exists() && cli_draft.exists(), "a refusal changes nothing");
+    assert!(
+        listed("cli-del") && cli_model.exists() && cli_draft.exists(),
+        "a refusal changes nothing"
+    );
     delete("cli-del", &[FileKind::All], true).expect("forced");
     assert!(!listed("cli-del") && !cli_model.exists() && !cli_draft.exists());
     assert!(!repo("models", "Cli-GGUF").exists() && !repo("mtps", "Cli-GGUF").exists());

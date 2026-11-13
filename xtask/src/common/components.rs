@@ -27,8 +27,13 @@ pub enum Component {
 }
 
 impl Component {
-    pub const ALL: [Component; 5] =
-        [Component::Config, Component::Llama, Component::Rocm, Component::Cuda, Component::Vulkan];
+    pub const ALL: [Component; 5] = [
+        Component::Config,
+        Component::Llama,
+        Component::Rocm,
+        Component::Cuda,
+        Component::Vulkan,
+    ];
     pub const RUNTIMES: [Component; 3] = [Component::Rocm, Component::Cuda, Component::Vulkan];
 
     pub fn suffix(self) -> &'static str {
@@ -98,7 +103,9 @@ pub fn split(stage: &Path, into: &Path) -> Result<Vec<Component>> {
     let mut present = Vec::new();
     let mut dirs = vec![stage.to_path_buf()];
     while let Some(dir) = dirs.pop() {
-        for entry in std::fs::read_dir(&dir).with_context(|| format!("reading {}", dir.display()))? {
+        for entry in
+            std::fs::read_dir(&dir).with_context(|| format!("reading {}", dir.display()))?
+        {
             let entry = entry?;
             let path = entry.path();
             let kind = entry.file_type()?;
@@ -113,7 +120,8 @@ pub fn split(stage: &Path, into: &Path) -> Result<Vec<Component>> {
             if kind.is_symlink() {
                 std::os::unix::fs::symlink(std::fs::read_link(&path)?, &dest)?;
             } else {
-                std::fs::hard_link(&path, &dest).with_context(|| format!("linking {}", path.display()))?;
+                std::fs::hard_link(&path, &dest)
+                    .with_context(|| format!("linking {}", path.display()))?;
             }
             if !present.contains(&component) {
                 present.push(component);
@@ -138,8 +146,9 @@ pub fn file_stem(c: Component, fw_version: &str, llama_build: &str, version: &st
 /// extension (`-amd64.deb`): the last one written. The single package of older
 /// releases has another name and never matches.
 pub fn newest_in(dir: &Path, tail: &str) -> Vec<(Component, PathBuf)> {
-    let files: Vec<PathBuf> =
-        std::fs::read_dir(dir).map(|rd| rd.flatten().map(|e| e.path()).collect()).unwrap_or_default();
+    let files: Vec<PathBuf> = std::fs::read_dir(dir)
+        .map(|rd| rd.flatten().map(|e| e.path()).collect())
+        .unwrap_or_default();
     Component::ALL
         .iter()
         .filter_map(|c| {
@@ -163,7 +172,8 @@ pub fn dist_version(dist: &Path) -> Option<String> {
     dist.components().rev().find_map(|c| {
         let name = c.as_os_str().to_string_lossy();
         // "-" is not allowed in an rpm Version.
-        name.starts_with(|ch: char| ch.is_ascii_digit()).then(|| name.replace('-', "."))
+        name.starts_with(|ch: char| ch.is_ascii_digit())
+            .then(|| name.replace('-', "."))
     })
 }
 
@@ -176,10 +186,19 @@ mod tests {
         for (rel, want) in [
             ("opt/llama.cpp/bin/llama-cpp-config", Component::Config),
             ("opt/llama.cpp/share/strings/en_US.toml", Component::Config),
-            ("opt/llama.cpp/share/benchmarks/standard-1.1.ini", Component::Config),
+            (
+                "opt/llama.cpp/share/benchmarks/standard-1.1.ini",
+                Component::Config,
+            ),
             ("usr/bin/llama-cpp-config", Component::Config),
-            ("usr/share/applications/llama-cpp-config.desktop", Component::Config),
-            ("usr/share/icons/hicolor/256x256/apps/llama-cpp-config.png", Component::Config),
+            (
+                "usr/share/applications/llama-cpp-config.desktop",
+                Component::Config,
+            ),
+            (
+                "usr/share/icons/hicolor/256x256/apps/llama-cpp-config.png",
+                Component::Config,
+            ),
             ("opt/llama.cpp/bin/llama-server", Component::Llama),
             ("opt/llama.cpp/bin/libggml-base.so.0", Component::Llama),
             ("opt/llama.cpp/bin/libggml-hip.so", Component::Llama),
@@ -188,10 +207,22 @@ mod tests {
             ("opt/llama.cpp/lib/llvm/lib/libomp.so", Component::Llama),
             ("usr/bin/llama-server", Component::Llama),
             ("opt/llama.cpp/lib/libamdhip64.so.7", Component::Rocm),
-            ("opt/llama.cpp/lib/llvm/lib/libLLVM.so.24.0git", Component::Rocm),
-            ("opt/llama.cpp/lib/rocm_sysdeps/lib/librocm_sysdeps_numa.so.1", Component::Rocm),
-            ("opt/llama.cpp/lib/rocblas/library/Kernels.so-000-gfx1201.dat", Component::Rocm),
-            ("opt/llama.cpp/.kpack/blas_lib_gfx1201.kpack", Component::Rocm),
+            (
+                "opt/llama.cpp/lib/llvm/lib/libLLVM.so.24.0git",
+                Component::Rocm,
+            ),
+            (
+                "opt/llama.cpp/lib/rocm_sysdeps/lib/librocm_sysdeps_numa.so.1",
+                Component::Rocm,
+            ),
+            (
+                "opt/llama.cpp/lib/rocblas/library/Kernels.so-000-gfx1201.dat",
+                Component::Rocm,
+            ),
+            (
+                "opt/llama.cpp/.kpack/blas_lib_gfx1201.kpack",
+                Component::Rocm,
+            ),
             ("opt/llama.cpp/lib/libcublas.so.13", Component::Cuda),
             ("opt/llama.cpp/lib/libcublasLt.so.13", Component::Cuda),
             ("opt/llama.cpp/lib/libcudart.so.13", Component::Cuda),
@@ -210,7 +241,10 @@ mod tests {
             ("opt/llama.cpp/bin/libggml-metal.so", Component::Llama),
             ("opt/llama.cpp/lib/libvulkan.1.dylib", Component::Vulkan),
             ("opt/llama.cpp/lib/libMoltenVK.dylib", Component::Vulkan),
-            ("usr/local/share/vulkan/icd.d/llama-cpp-framework-MoltenVK_icd.json", Component::Vulkan),
+            (
+                "usr/local/share/vulkan/icd.d/llama-cpp-framework-MoltenVK_icd.json",
+                Component::Vulkan,
+            ),
         ] {
             assert_eq!(of(rel), want, "{rel}");
         }
@@ -219,10 +253,18 @@ mod tests {
     #[test]
     fn file_names_carry_the_release_or_the_sdk() {
         assert_eq!(
-            file_stem(Component::Llama, "2.3.0", "v0.9.0", "2.3.0+llama.cpp.v0.9.0"),
+            file_stem(
+                Component::Llama,
+                "2.3.0",
+                "v0.9.0",
+                "2.3.0+llama.cpp.v0.9.0"
+            ),
             "llama-cpp-framework-llama-v2.3.0-v0.9.0"
         );
-        assert_eq!(file_stem(Component::Rocm, "2.3.0", "v0.9.0", "10.1.0"), "llama-cpp-framework-rocm-v10.1.0");
+        assert_eq!(
+            file_stem(Component::Rocm, "2.3.0", "v0.9.0", "10.1.0"),
+            "llama-cpp-framework-rocm-v10.1.0"
+        );
     }
 
     #[test]
@@ -240,7 +282,9 @@ mod tests {
         let found = newest_in(&dir, "-amd64.deb");
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].0, Component::Rocm);
-        assert!(found[0].1.ends_with("llama-cpp-framework-rocm-v10.0.0-amd64.deb"));
+        assert!(found[0]
+            .1
+            .ends_with("llama-cpp-framework-rocm-v10.0.0-amd64.deb"));
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -249,8 +293,14 @@ mod tests {
         for (dist, want) in [
             ("/mnt/data/TheRock/10.1.0/linux", Some("10.1.0")),
             ("/mnt/data/CUDA/13.0.2/linux", Some("13.0.2")),
-            ("/mnt/data/VulkanSDK/1.4.328.1/linux/x86_64", Some("1.4.328.1")),
-            ("/Users/me/dists/VulkanSDK/1.4.328.1/macos/macOS", Some("1.4.328.1")),
+            (
+                "/mnt/data/VulkanSDK/1.4.328.1/linux/x86_64",
+                Some("1.4.328.1"),
+            ),
+            (
+                "/Users/me/dists/VulkanSDK/1.4.328.1/macos/macOS",
+                Some("1.4.328.1"),
+            ),
             ("/opt/rocm", None),
         ] {
             assert_eq!(dist_version(Path::new(dist)).as_deref(), want, "{dist}");
@@ -263,22 +313,40 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         let stage = dir.join("stage");
         let into = dir.join("into");
-        for file in ["opt/llama.cpp/bin/llama-server", "opt/llama.cpp/lib/libcublas.so.13"] {
+        for file in [
+            "opt/llama.cpp/bin/llama-server",
+            "opt/llama.cpp/lib/libcublas.so.13",
+        ] {
             let path = stage.join(file);
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
             std::fs::write(path, "x").unwrap();
         }
         std::fs::create_dir_all(stage.join("usr/bin")).unwrap();
-        std::os::unix::fs::symlink("../../opt/llama.cpp/bin/llama-server", stage.join("usr/bin/llama-server")).unwrap();
+        std::os::unix::fs::symlink(
+            "../../opt/llama.cpp/bin/llama-server",
+            stage.join("usr/bin/llama-server"),
+        )
+        .unwrap();
 
-        assert_eq!(split(&stage, &into).unwrap(), [Component::Llama, Component::Cuda]);
+        assert_eq!(
+            split(&stage, &into).unwrap(),
+            [Component::Llama, Component::Cuda]
+        );
 
         assert!(into.join("llama/opt/llama.cpp/bin/llama-server").is_file());
-        assert!(into.join("cuda/opt/llama.cpp/lib/libcublas.so.13").is_file());
+        assert!(into
+            .join("cuda/opt/llama.cpp/lib/libcublas.so.13")
+            .is_file());
         assert!(!into.join("rocm").exists());
         let link = into.join("llama/usr/bin/llama-server");
-        assert_eq!(std::fs::read_link(link).unwrap(), Path::new("../../opt/llama.cpp/bin/llama-server"));
-        assert!(stage.join("opt/llama.cpp/bin/llama-server").is_file(), "the staged tree stays whole");
+        assert_eq!(
+            std::fs::read_link(link).unwrap(),
+            Path::new("../../opt/llama.cpp/bin/llama-server")
+        );
+        assert!(
+            stage.join("opt/llama.cpp/bin/llama-server").is_file(),
+            "the staged tree stays whole"
+        );
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

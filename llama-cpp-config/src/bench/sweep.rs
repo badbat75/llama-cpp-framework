@@ -331,9 +331,7 @@ pub fn setter(key: &str) -> Result<Setter, String> {
         .iter()
         .find(|(k, _)| *k == key)
         .map(|(_, f)| *f)
-        .ok_or_else(|| {
-            strings::fill("not-sweepable", &[&key, &keys()])
-        })
+        .ok_or_else(|| strings::fill("not-sweepable", &[&key, &keys()]))
 }
 
 /// Every value of `key` applied to a throwaway copy of `preset`: the Benchmark
@@ -433,7 +431,9 @@ fn expand(token: &str, out: &mut Vec<String>) -> Result<(), String> {
     });
     match range {
         Some((lo, hi)) if lo > hi => Err(strings::fill("range-backwards", &[&token])),
-        Some((lo, hi)) if hi - lo + 1 > MAX_RANGE => Err(strings::fill("range-too-long", &[&token, &(hi - lo + 1)])),
+        Some((lo, hi)) if hi - lo + 1 > MAX_RANGE => {
+            Err(strings::fill("range-too-long", &[&token, &(hi - lo + 1)]))
+        }
         Some((lo, hi)) => {
             out.extend((lo..=hi).map(|n| n.to_string()));
             Ok(())
@@ -897,28 +897,56 @@ pub fn run(opts: &Opts) -> Result<String, String> {
         label: None,
     };
     let dir = super::bench_dir();
-    std::fs::create_dir_all(&dir).map_err(|e| strings::fill("cannot-create", &[&dir.display(), &e]))?;
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| strings::fill("cannot-create", &[&dir.display(), &e]))?;
     let reps = if opts.plan.reps == 1 {
-        strings::fill("engine-one-repetition", &[&opts.plan.mode.as_str(), &opts.plan.reps])
+        strings::fill(
+            "engine-one-repetition",
+            &[&opts.plan.mode.as_str(), &opts.plan.reps],
+        )
     } else {
-        strings::fill("engine-repetitions", &[&opts.plan.mode.as_str(), &opts.plan.reps])
+        strings::fill(
+            "engine-repetitions",
+            &[&opts.plan.mode.as_str(), &opts.plan.reps],
+        )
     };
     if let Some(key) = &opts.key {
         let marker = pending_path(&stamp);
         std::fs::write(&marker, header_json(opts, &original, &stamp))
             .map_err(|e| strings::fill("cannot-write", &[&marker.display(), &e]))?;
         super::interrupt::hold(&opts.preset, key, &original, marker.clone());
-        println!("{}", strings::fill("sweeping-key", &[&key, &opts.values.join(", "), &opts.preset, &reps]));
-        println!("{}", strings::fill("presets-being-edited", &[&key, &original, &marker.display()]));
+        println!(
+            "{}",
+            strings::fill(
+                "sweeping-key",
+                &[&key, &opts.values.join(", "), &opts.preset, &reps]
+            )
+        );
+        println!(
+            "{}",
+            strings::fill(
+                "presets-being-edited",
+                &[&key, &original, &marker.display()]
+            )
+        );
     } else {
-        println!("{}", strings::fill("measuring-preset", &[&opts.preset, &reps]));
+        println!(
+            "{}",
+            strings::fill("measuring-preset", &[&opts.preset, &reps])
+        );
     }
     // An interrupted sweep left the key on one of ITS leg values, so the value
     // read out of presets.ini above is that leftover and not the configuration
     // this machine ran. Restoring it would quietly promote a half-measured
     // value to the permanent one, so say so while there is still time to stop.
     if let (Some(key), Some((path, restore))) = (&opts.key, &leftover) {
-        println!("{}", strings::fill("sweep-leftover-warning", &[&path.display(), &key, &original, &restore]));
+        println!(
+            "{}",
+            strings::fill(
+                "sweep-leftover-warning",
+                &[&path.display(), &key, &original, &restore]
+            )
+        );
     }
 
     // The engine resolves the preset's device ids to card names through the
@@ -1062,7 +1090,8 @@ pub fn hold_key(preset: &str, key: &str) -> Result<(String, PathBuf), String> {
     let original = current_value(preset, key);
     let stamp = format!("{}-{key}", super::stamp(super::now_secs()));
     let dir = super::bench_dir();
-    std::fs::create_dir_all(&dir).map_err(|e| strings::fill("cannot-create", &[&dir.display(), &e]))?;
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| strings::fill("cannot-create", &[&dir.display(), &e]))?;
     let marker = pending_path(&stamp);
     let header = serde_json::json!({
         "kind": "sweep",
@@ -1336,7 +1365,10 @@ fn measure(opts: &Opts, value: &str, campaign: &super::record::Campaign) -> Leg 
 
 fn report_leg(leg: &Leg, mode: Mode) {
     if !leg.error.is_empty() {
-        println!("{}", strings::fill("leg-failed-after", &[&leg.secs, &leg.error]));
+        println!(
+            "{}",
+            strings::fill("leg-failed-after", &[&leg.secs, &leg.error])
+        );
         return;
     }
     let primary = primary_test(mode, std::slice::from_ref(leg));

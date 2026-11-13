@@ -28,7 +28,8 @@ fn dir() -> PathBuf {
 }
 
 fn read<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<T> {
-    let text = std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+    let text =
+        std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
     let value: T = toml::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
     Ok(value)
 }
@@ -55,7 +56,10 @@ fn load(dir: &Path, os: &str) -> Result<(String, Vec<String>)> {
             defines.push(d);
         }
     }
-    Ok((common.generator, defines.into_iter().map(|d| format!("-D{d}")).collect()))
+    Ok((
+        common.generator,
+        defines.into_iter().map(|d| format!("-D{d}")).collect(),
+    ))
 }
 
 fn check(defines: &[String], path: &Path) -> Result<()> {
@@ -77,13 +81,16 @@ fn define_name(d: &str) -> &str {
 
 /// `^[A-Za-z_][A-Za-z0-9_]*(:[A-Z]+)?=.*$`
 fn valid_define(d: &str) -> bool {
-    let Some((key, _)) = d.split_once('=') else { return false };
+    let Some((key, _)) = d.split_once('=') else {
+        return false;
+    };
     let (name, ty) = match key.split_once(':') {
         Some((n, t)) => (n, Some(t)),
         None => (key, None),
     };
     let mut c = name.chars();
-    c.next().is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+    c.next()
+        .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
         && c.all(|c| c.is_ascii_alphanumeric() || c == '_')
         && ty.is_none_or(|t| !t.is_empty() && t.chars().all(|c| c.is_ascii_uppercase()))
 }

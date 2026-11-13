@@ -251,7 +251,10 @@ pub fn selection_summary(files: &[LinkedFile], ticked: &[bool]) -> String {
     }
     let bytes: u64 = chosen.iter().map(|f| f.size).sum();
     let names: Vec<String> = chosen.iter().map(|f| f.name()).collect();
-    strings::fill("delete-also-files", &[&crate::hf::format_size(bytes), &names.join(", ")])
+    strings::fill(
+        "delete-also-files",
+        &[&crate::hf::format_size(bytes), &names.join(", ")],
+    )
 }
 
 /// What `delete` did.
@@ -358,7 +361,12 @@ fn depth_inside_subfolder(dir: &Path, models_dir: &Path) -> Option<usize> {
         Some(out)
     };
     let d = parts(dir)?;
-    for cat in [Category::Model, Category::Mmproj, Category::Mtp, Category::Dflash] {
+    for cat in [
+        Category::Model,
+        Category::Mmproj,
+        Category::Mtp,
+        Category::Dflash,
+    ] {
         let r = parts(&models_dir.join(cat.subdir()))?;
         if d.len() > r.len() && r.iter().zip(&d).all(|(a, b)| component_eq(a, b)) {
             return Some(d.len() - r.len());
@@ -395,7 +403,11 @@ pub fn report(id: &str, out: &Outcome) -> (String, bool) {
     }
     if !out.dirs_removed.is_empty() {
         let n = out.dirs_removed.len();
-        parts.push(if n == 1 { strings::t("empty-folder-one") } else { strings::fill("empty-folder-many", &[&n]) });
+        parts.push(if n == 1 {
+            strings::t("empty-folder-one")
+        } else {
+            strings::fill("empty-folder-many", &[&n])
+        });
     }
     for (name, ids) in &out.kept {
         parts.push(strings::fill("kept-in-use", &[&name, &bracketed(ids)]));
@@ -450,7 +462,12 @@ mod tests {
 
     #[test]
     fn shard_set_of_a_plain_file_is_the_file() {
-        for name in ["m.gguf", "m-1-of-2.gguf", "m-00001-of-00002.bin", "m-00001-of-00000.gguf"] {
+        for name in [
+            "m.gguf",
+            "m-1-of-2.gguf",
+            "m-00001-of-00002.bin",
+            "m-00001-of-00000.gguf",
+        ] {
             let p = Path::new("d").join(name);
             assert_eq!(shard_set(&p), vec![p.clone()], "{name}");
         }
@@ -459,15 +476,32 @@ mod tests {
     #[test]
     fn users_names_other_presets_in_either_file_and_matches_shards() {
         let all = vec![
-            preset("me", r"C:\M\models\s-00001-of-00002.gguf", r"C:\M\mmprojs\p.gguf", ""),
+            preset(
+                "me",
+                r"C:\M\models\s-00001-of-00002.gguf",
+                r"C:\M\mmprojs\p.gguf",
+                "",
+            ),
             // Names shard 2 of the same set, in another spelling.
             preset("twin", "c:/m/models/S-00002-of-00002.gguf", "", ""),
-            preset("vision", r"C:\M\models\other.gguf", r"C:\M\mmprojs\p.gguf", ""),
+            preset(
+                "vision",
+                r"C:\M\models\other.gguf",
+                r"C:\M\mmprojs\p.gguf",
+                "",
+            ),
             preset("ME", r"C:\M\models\s-00001-of-00002.gguf", "", ""),
         ];
         let model = shard_set(Path::new(r"C:\M\models\s-00001-of-00002.gguf"));
-        assert_eq!(users(&model, "me", &all), ["twin"], "the target is skipped in any case");
-        assert_eq!(users(&[PathBuf::from(r"C:\M\mmprojs\p.gguf")], "me", &all), ["vision"]);
+        assert_eq!(
+            users(&model, "me", &all),
+            ["twin"],
+            "the target is skipped in any case"
+        );
+        assert_eq!(
+            users(&[PathBuf::from(r"C:\M\mmprojs\p.gguf")], "me", &all),
+            ["vision"]
+        );
         assert!(users(&[PathBuf::from(r"C:\M\mtps\d.gguf")], "me", &all).is_empty());
     }
 
@@ -475,7 +509,11 @@ mod tests {
     fn linked_files_lists_what_exists_with_sizes_and_users() {
         let dir = tempfile::tempdir().unwrap();
         let m = dir.path();
-        let s1 = m.join("models").join("o").join("r").join("s-00001-of-00002.gguf");
+        let s1 = m
+            .join("models")
+            .join("o")
+            .join("r")
+            .join("s-00001-of-00002.gguf");
         let s2 = s1.with_file_name("s-00002-of-00002.gguf");
         let mm = m.join("mmprojs").join("o").join("r").join("mmproj.gguf");
         touch(&s1, 10);
@@ -489,10 +527,17 @@ mod tests {
         assert_eq!(files[0].files, vec![s1.clone(), s2.clone()]);
         assert_eq!(files[0].size, 30);
         assert!(!files[0].in_use());
-        assert_eq!(files[0].row_label(), "Model: s-00001-of-00002.gguf (2 shards)");
+        assert_eq!(
+            files[0].row_label(),
+            "Model: s-00001-of-00002.gguf (2 shards)"
+        );
         assert_eq!(files[1].role, Role::Mmproj);
         assert_eq!(files[1].used_by, ["other"]);
-        assert!(files[1].row_detail().contains("in use by [other]"), "{}", files[1].row_detail());
+        assert!(
+            files[1].row_detail().contains("in use by [other]"),
+            "{}",
+            files[1].row_detail()
+        );
         // A path under two keys is one entry.
         let doubled = preset("d", &s(&mm), &s(&mm), "");
         assert_eq!(linked_files(&doubled, &[]).len(), 1);
@@ -537,9 +582,18 @@ mod tests {
         assert!(out.failed.is_empty() && out.kept.is_empty());
         assert!(!s1.exists() && !s2.exists() && !draft.exists());
         assert!(!repo.exists(), "the emptied repo folder goes");
-        assert!(keep.exists() && m.join("models").join("org").is_dir(), "a folder with content stays");
-        assert!(!m.join("mtps").join("org2").exists(), "an emptied org folder goes too");
-        assert!(m.join("models").is_dir() && m.join("mtps").is_dir(), "the subfolders themselves stay");
+        assert!(
+            keep.exists() && m.join("models").join("org").is_dir(),
+            "a folder with content stays"
+        );
+        assert!(
+            !m.join("mtps").join("org2").exists(),
+            "an emptied org folder goes too"
+        );
+        assert!(
+            m.join("models").is_dir() && m.join("mtps").is_dir(),
+            "the subfolders themselves stay"
+        );
         assert_eq!(out.dirs_removed.len(), 3, "{:?}", out.dirs_removed);
         let (text, err) = report("t", &out);
         assert!(!err);
@@ -562,12 +616,21 @@ mod tests {
         };
         let out = delete(std::slice::from_ref(&shared), &s(m), false);
         assert!(mm.exists(), "in use: kept");
-        assert_eq!(out.kept, vec![("p.gguf".to_string(), vec!["other".to_string()])]);
+        assert_eq!(
+            out.kept,
+            vec![("p.gguf".to_string(), vec!["other".to_string()])]
+        );
         let (text, err) = report("t", &out);
-        assert!(!err && text.contains("kept p.gguf: in use by [other]"), "{text}");
+        assert!(
+            !err && text.contains("kept p.gguf: in use by [other]"),
+            "{text}"
+        );
         let out = delete(std::slice::from_ref(&shared), &s(m), true);
         assert!(!mm.exists() && out.removed.len() == 1, "forced");
-        assert!(m.join("mmprojs").is_dir(), "a file directly in the subfolder leaves it alone");
+        assert!(
+            m.join("mmprojs").is_dir(),
+            "a file directly in the subfolder leaves it alone"
+        );
 
         // A path that cannot be removed (a folder here) is reported, and the
         // next file still goes.
@@ -585,7 +648,10 @@ mod tests {
         let out = delete(&[entry(&blocker), entry(&fine)], &s(m), false);
         assert_eq!(out.failed.len(), 1);
         assert!(!fine.exists());
-        assert!(blocker.is_dir() && out.dirs_removed.is_empty(), "the folder still has content");
+        assert!(
+            blocker.is_dir() && out.dirs_removed.is_empty(),
+            "the folder still has content"
+        );
         let (text, err) = report("t", &out);
         assert!(err && text.contains("could not delete"), "{text}");
     }
@@ -610,7 +676,12 @@ mod tests {
         assert!(remove_empty_dirs(&direct, &s(&m)).is_empty());
         assert!(m.join("models").is_dir());
         // A `..` is refused rather than resolved.
-        let dotted = m.join("models").join("a").join("..").join("b").join("x.gguf");
+        let dotted = m
+            .join("models")
+            .join("a")
+            .join("..")
+            .join("b")
+            .join("x.gguf");
         fs::create_dir_all(m.join("models").join("b")).unwrap();
         assert!(remove_empty_dirs(&dotted, &s(&m)).is_empty());
         // No ModelsDir: no cleanup.
@@ -626,9 +697,18 @@ mod tests {
     #[test]
     fn depth_counts_levels_below_a_subfolder() {
         let m = Path::new("root");
-        assert_eq!(depth_inside_subfolder(&m.join("models").join("o").join("r"), m), Some(2));
-        assert_eq!(depth_inside_subfolder(&m.join("dflashs").join("o"), m), Some(1));
+        assert_eq!(
+            depth_inside_subfolder(&m.join("models").join("o").join("r"), m),
+            Some(2)
+        );
+        assert_eq!(
+            depth_inside_subfolder(&m.join("dflashs").join("o"), m),
+            Some(1)
+        );
         assert_eq!(depth_inside_subfolder(&m.join("models"), m), None);
-        assert_eq!(depth_inside_subfolder(Path::new("other").join("models").join("o").as_path(), m), None);
+        assert_eq!(
+            depth_inside_subfolder(Path::new("other").join("models").join("o").as_path(), m),
+            None
+        );
     }
 }

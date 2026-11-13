@@ -103,7 +103,11 @@ pub struct Step {
 /// (the router reads presets.ini only at start), and so does the first step
 /// after one; the server is left as it was found. `Done` carries the campaign,
 /// or every step's error joined.
-pub fn spawn_steps(steps: Vec<Step>, campaign: String, emit: impl Fn(Event) + Send + 'static) -> Handle {
+pub fn spawn_steps(
+    steps: Vec<Step>,
+    campaign: String,
+    emit: impl Fn(Event) + Send + 'static,
+) -> Handle {
     let cancel = Arc::new(AtomicBool::new(false));
     let flag = cancel.clone();
     std::thread::spawn(move || {
@@ -132,7 +136,10 @@ fn run_steps(
             problems.push("Cancelled.".to_string());
             break;
         }
-        emit(Event::Progress(strings::fill("step-progress", &[&(i + 1), &total, &step.label])));
+        emit(Event::Progress(strings::fill(
+            "step-progress",
+            &[&(i + 1), &total, &step.label],
+        )));
         let mut held = Vec::new();
         for preset in &step.plan.presets {
             match super::spec::apply_overrides(preset, &step.overrides) {
@@ -343,7 +350,12 @@ fn run(plan: &Plan, cancel: &Arc<AtomicBool>, emit: &impl Fn(Event)) -> Result<S
             .and_then(std::path::Path::parent)
             .map_or_else(paths::config_dir, std::path::Path::to_path_buf);
         resolved = Plan {
-            prompt: super::resolve_images(&plan.prompt, &dir, plan.image_size, plan.image.as_deref())?,
+            prompt: super::resolve_images(
+                &plan.prompt,
+                &dir,
+                plan.image_size,
+                plan.image.as_deref(),
+            )?,
             ..plan.clone()
         };
         &resolved
@@ -386,7 +398,8 @@ fn run(plan: &Plan, cancel: &Arc<AtomicBool>, emit: &impl Fn(Event)) -> Result<S
     }
 
     let dir = super::bench_dir();
-    std::fs::create_dir_all(&dir).map_err(|e| strings::fill("cannot-create", &[&dir.display(), &e]))?;
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| strings::fill("cannot-create", &[&dir.display(), &e]))?;
     let stamp = super::stamp(super::now_secs());
     // Opened BEFORE anything is measured: a database that cannot be written is
     // a run whose results would have nowhere to go.
@@ -498,7 +511,10 @@ fn run_live(
             return Err("Cancelled.".into());
         }
         run.begin_preset(preset, cfg);
-        emit(Event::Progress(strings::fill("loading-warm-up", &[&preset.id])));
+        emit(Event::Progress(strings::fill(
+            "loading-warm-up",
+            &[&preset.id],
+        )));
         // Discarded on purpose, INCLUDING its error: a router that cannot warm
         // the model will fail the first real repetition too, with a message
         // about the actual request rather than about a warm-up.
@@ -516,7 +532,16 @@ fn run_live(
         let prefix = if plan.warm_prefix {
             let text = super::prompt_prefix(&plan.prompt)
                 .ok_or_else(|| strings::fill("warm-needs-assistant", &[&preset.id]))?;
-            Some(super::live_body_slot(&preset.id, &Plan { prompt: text, ..plan.clone() }, 0, true, 1))
+            Some(super::live_body_slot(
+                &preset.id,
+                &Plan {
+                    prompt: text,
+                    ..plan.clone()
+                },
+                0,
+                true,
+                1,
+            ))
         } else {
             None
         };
@@ -541,13 +566,25 @@ fn run_live(
             if cancelled(cancel) {
                 return Err("Cancelled.".into());
             }
-            emit(Event::Progress(strings::fill("repetition", &[&preset.id, &rep, &plan.reps])));
+            emit(Event::Progress(strings::fill(
+                "repetition",
+                &[&preset.id, &rep, &plan.reps],
+            )));
             if let Some(prime) = &prefix {
-                let res = http::request(port, "POST", super::LIVE_PATH, Some(prime), live_timeout(&plan))
-                    .map_err(|e| strings::fill("priming-failed", &[&preset.id, &e]))?;
+                let res = http::request(
+                    port,
+                    "POST",
+                    super::LIVE_PATH,
+                    Some(prime),
+                    live_timeout(&plan),
+                )
+                .map_err(|e| strings::fill("priming-failed", &[&preset.id, &e]))?;
                 if res.status != 200 {
                     let body: String = res.body.chars().take(600).collect();
-                    return Err(strings::fill("priming-http", &[&preset.id, &res.status, &body]));
+                    return Err(strings::fill(
+                        "priming-http",
+                        &[&preset.id, &res.status, &body],
+                    ));
                 }
             }
             let sent = std::time::Instant::now();
@@ -561,7 +598,10 @@ fn run_live(
             .map_err(|e| format!("{}: {e}", preset.id))?;
             if res.status != 200 {
                 let body: String = res.body.chars().take(600).collect();
-                return Err(strings::fill("server-http", &[&preset.id, &res.status, &body]));
+                return Err(strings::fill(
+                    "server-http",
+                    &[&preset.id, &res.status, &body],
+                ));
             }
             let wall = sent.elapsed().as_secs_f64();
             let s = super::parse_stream(&res.body).map_err(|e| format!("{}: {e}", preset.id))?;
@@ -666,7 +706,10 @@ fn run_live(
                     run.put(point, emit);
                 }
             }
-            for (test, values) in [(super::LIVE_FIRST_TOKEN, &first_token), (super::LIVE_TURN, &turn)] {
+            for (test, values) in [
+                (super::LIVE_FIRST_TOKEN, &first_token),
+                (super::LIVE_TURN, &turn),
+            ] {
                 if values.is_empty() {
                     continue;
                 }
@@ -756,7 +799,10 @@ fn run_concurrent(
     // One request per slot: with a single slot nothing runs concurrently.
     let n = preset.parallel.unwrap_or(super::AUTO_PARALLEL);
     if n < 2 {
-        return Err(strings::fill("concurrency-needs-parallel", &[&preset.id, &scenario.as_str(), &n]));
+        return Err(strings::fill(
+            "concurrency-needs-parallel",
+            &[&preset.id, &scenario.as_str(), &n],
+        ));
     }
     let warm = scenario.warm_slots(n as usize);
     let timeout = live_timeout(plan);
@@ -765,7 +811,10 @@ fn run_concurrent(
             .map_err(|e| format!("{}: {e}", preset.id))?;
         if res.status != 200 {
             let body: String = res.body.chars().take(600).collect();
-            return Err(strings::fill("server-http", &[&preset.id, &res.status, &body]));
+            return Err(strings::fill(
+                "server-http",
+                &[&preset.id, &res.status, &body],
+            ));
         }
         super::parse_stream(&res.body).map_err(|e| format!("{}: {e}", preset.id))
     };
@@ -776,15 +825,27 @@ fn run_concurrent(
     let prime_plan = if plan.warm_prefix {
         let text = super::prompt_prefix(&plan.prompt)
             .ok_or_else(|| strings::fill("warm-needs-assistant", &[&preset.id]))?;
-        Plan { prompt: text, ..plan.clone() }
+        Plan {
+            prompt: text,
+            ..plan.clone()
+        }
     } else {
         plan.clone()
     };
     let prime = |what: &str| -> Result<(), String> {
         for (slot, &w) in warm.iter().enumerate() {
             if w {
-                emit(Event::Progress(strings::fill("priming-slot", &[&preset.id, &slot, &what])));
-                post(&super::live_body_slot(&preset.id, &prime_plan, slot, true, 1))?;
+                emit(Event::Progress(strings::fill(
+                    "priming-slot",
+                    &[&preset.id, &slot, &what],
+                )));
+                post(&super::live_body_slot(
+                    &preset.id,
+                    &prime_plan,
+                    slot,
+                    true,
+                    1,
+                ))?;
             }
         }
         Ok(())
@@ -810,7 +871,13 @@ fn run_concurrent(
         }
         emit(Event::Progress(strings::fill(
             "repetition-concurrent",
-            &[&preset.id, &rep, &plan.reps, &scenario.as_str(), &warm.len()],
+            &[
+                &preset.id,
+                &rep,
+                &plan.reps,
+                &scenario.as_str(),
+                &warm.len(),
+            ],
         )));
         let t0 = std::time::Instant::now();
         let replies: Vec<Result<SlotReply, String>> = std::thread::scope(|sc| {
@@ -995,7 +1062,10 @@ fn run_synthetic(
             if cancelled(cancel) {
                 return Err("Cancelled.".into());
             }
-            emit(Event::Progress(strings::fill("llama-bench-sweep", &[&preset.id, &sweep.name])));
+            emit(Event::Progress(strings::fill(
+                "llama-bench-sweep",
+                &[&preset.id, &sweep.name],
+            )));
             let argv = super::synthetic_argv(preset, cfg, &plan, sweep);
             run.note(&format!(
                 "\n--- {} / {} ---\n{} {}",
@@ -1106,7 +1176,10 @@ fn run_one(
         return Err("Cancelled.".into());
     }
     if !status.success() {
-        return Err(strings::fill("llama-bench-exited", &[&status, &preset.id, &log_tail(run, 8)]));
+        return Err(strings::fill(
+            "llama-bench-exited",
+            &[&status, &preset.id, &log_tail(run, 8)],
+        ));
     }
     Ok(())
 }

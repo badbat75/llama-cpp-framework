@@ -16,10 +16,19 @@ pub fn stage(root: &Path) -> Result<()> {
     let dest = root.join("share").join("benchmarks");
     let mut n = 0;
     for (dir, keep) in [
-        ("specs", (|name: &str| name == "standard.versions" || (name.starts_with("standard-") && name.ends_with(".ini"))) as fn(&str) -> bool),
+        (
+            "specs",
+            (|name: &str| {
+                name == "standard.versions"
+                    || (name.starts_with("standard-") && name.ends_with(".ini"))
+            }) as fn(&str) -> bool,
+        ),
         // The images an image prompt names (`bench-image-*.jpg`) beside it.
         ("prompts", |name: &str| {
-            name.ends_with(".txt") || name.ends_with(".json") || name.ends_with(".jpg") || name == "README.md"
+            name.ends_with(".txt")
+                || name.ends_with(".json")
+                || name.ends_with(".jpg")
+                || name == "README.md"
         }),
     ] {
         let to = dest.join(dir);
@@ -35,6 +44,9 @@ pub fn stage(root: &Path) -> Result<()> {
             }
         }
     }
-    ui::dim(format!("Staged the benchmark method: {n} files in {}", dest.display()));
+    ui::dim(format!(
+        "Staged the benchmark method: {n} files in {}",
+        dest.display()
+    ));
     Ok(())
 }

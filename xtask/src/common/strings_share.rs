@@ -23,6 +23,9 @@ pub fn stage(root: &Path) -> Result<()> {
             n += 1;
         }
     }
-    ui::dim(format!("Staged the language files: {n} in {}", to.display()));
+    ui::dim(format!(
+        "Staged the language files: {n} in {}",
+        to.display()
+    ));
     Ok(())
 }

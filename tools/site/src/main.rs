@@ -59,15 +59,26 @@ fn run() -> Result<(), String> {
         return Err(format!("{} problem(s) in docs/", errors.len()));
     }
     if check {
-        println!("docs-site: {} pages, {} campaigns: ok", pages.len(), db.campaigns.len());
+        println!(
+            "docs-site: {} pages, {} campaigns: ok",
+            pages.len(),
+            db.campaigns.len()
+        );
         return Ok(());
     }
-    let os = if cfg!(windows) { "windows" } else if cfg!(target_os = "macos") { "macos" } else { "linux" };
+    let os = if cfg!(windows) {
+        "windows"
+    } else if cfg!(target_os = "macos") {
+        "macos"
+    } else {
+        "linux"
+    };
     let out = out.unwrap_or_else(|| root.join("build").join(os).join("site"));
     let _ = std::fs::remove_dir_all(&out);
     let w = |rel: &str, text: &str| -> Result<(), String> {
         let p = out.join(rel);
-        std::fs::create_dir_all(p.parent().unwrap()).map_err(|e| format!("{}: {e}", p.display()))?;
+        std::fs::create_dir_all(p.parent().unwrap())
+            .map_err(|e| format!("{}: {e}", p.display()))?;
         std::fs::write(&p, text).map_err(|e| format!("{}: {e}", p.display()))
     };
     let published = published(&db, &pages);
@@ -75,7 +86,11 @@ fn run() -> Result<(), String> {
     w("site.js", JS)?;
     copy_dir(&root.join("docs/assets"), &out.join("assets"))?;
     for p in &pages {
-        let mut body = if p.stem == "index" { hero(&pages, &db, &published) } else { meta_line(p) };
+        let mut body = if p.stem == "index" {
+            hero(&pages, &db, &published)
+        } else {
+            meta_line(p)
+        };
         body += &page::render(p, &pages, &db, "");
         let cited = p.citations();
         if !cited.is_empty() {
@@ -88,20 +103,37 @@ fn run() -> Result<(), String> {
         }
         w(&format!("{}.html", p.stem), &shell(p.title(), "", &body))?;
     }
-    w("campaigns/index.html", &shell("Campaigns", "../", &campaign_index(&db, &published)))?;
+    w(
+        "campaigns/index.html",
+        &shell("Campaigns", "../", &campaign_index(&db, &published)),
+    )?;
     for c in &published {
-        w(&format!("campaigns/{}.html", c.name), &shell(&c.name, "../", &campaign_page(c, &db, &pages)))?;
+        w(
+            &format!("campaigns/{}.html", c.name),
+            &shell(&c.name, "../", &campaign_page(c, &db, &pages)),
+        )?;
     }
-    println!("docs-site: {} pages, {} of {} campaigns -> {}", pages.len(), published.len(), db.campaigns.len(), out.display());
+    println!(
+        "docs-site: {} pages, {} of {} campaigns -> {}",
+        pages.len(),
+        published.len(),
+        db.campaigns.len(),
+        out.display()
+    );
     Ok(())
 }
 
 pub fn esc(s: &str) -> String {
-    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
 }
 
 fn copy_dir(from: &Path, to: &Path) -> Result<(), String> {
-    let Ok(rd) = std::fs::read_dir(from) else { return Ok(()) };
+    let Ok(rd) = std::fs::read_dir(from) else {
+        return Ok(());
+    };
     std::fs::create_dir_all(to).map_err(|e| format!("{}: {e}", to.display()))?;
     for e in rd.flatten() {
         let (s, d) = (e.path(), to.join(e.file_name()));
@@ -131,10 +163,23 @@ fn shell(title: &str, base: &str, body: &str) -> String {
 
 fn meta_line(p: &Page) -> String {
     let mut parts: Vec<String> = Vec::new();
-    for (k, label) in [("type", ""), ("status", ""), ("platforms", ""), ("llama-cpp", "llama.cpp "), ("updated", "updated ")] {
+    for (k, label) in [
+        ("type", ""),
+        ("status", ""),
+        ("platforms", ""),
+        ("llama-cpp", "llama.cpp "),
+        ("updated", "updated "),
+    ] {
         if let Some(v) = p.get(k).filter(|v| !v.is_empty()) {
-            let class = if k == "status" { format!(" status-{}", esc(v)) } else { String::new() };
-            parts.push(format!("<span class=\"pill{class}\">{label}{}</span>", esc(v.trim_start_matches('[').trim_end_matches(']'))));
+            let class = if k == "status" {
+                format!(" status-{}", esc(v))
+            } else {
+                String::new()
+            };
+            parts.push(format!(
+                "<span class=\"pill{class}\">{label}{}</span>",
+                esc(v.trim_start_matches('[').trim_end_matches(']'))
+            ));
         }
     }
     if parts.is_empty() {
@@ -149,20 +194,32 @@ fn published<'a>(db: &'a Db, pages: &[Page]) -> Vec<&'a data::Campaign> {
     let used: std::collections::HashSet<String> = pages
         .iter()
         .flat_map(|p| {
-            let charted = p.charts().iter().filter_map(|c| chart::Spec::parse(c).ok()).flat_map(|s| s.campaigns).collect::<Vec<_>>();
+            let charted = p
+                .charts()
+                .iter()
+                .filter_map(|c| chart::Spec::parse(c).ok())
+                .flat_map(|s| s.campaigns)
+                .collect::<Vec<_>>();
             p.citations().into_iter().chain(charted)
         })
         .collect();
-    db.campaigns.iter().filter(|c| used.contains(&c.name)).collect()
+    db.campaigns
+        .iter()
+        .filter(|c| used.contains(&c.name))
+        .collect()
 }
 
 /// The home page's banner: what the site is and how much bench.db holds.
 fn hero(pages: &[Page], db: &Db, published: &[&data::Campaign]) -> String {
-    let guides = pages.iter().filter(|p| matches!(p.get("type"), Some("gpu" | "model"))).count();
+    let guides = pages
+        .iter()
+        .filter(|p| matches!(p.get("type"), Some("gpu" | "model")))
+        .count();
     let all_runs: Vec<_> = published.iter().flat_map(|c| db.runs_of(c)).collect();
     let runs = all_runs.iter().filter(|r| r.status == "ok").count();
     let reqs: usize = all_runs.iter().map(|r| r.reqs.len()).sum();
-    let stat = |n: usize, what: &str| format!("<div class=\"stat\"><b>{n}</b><span>{what}</span></div>");
+    let stat =
+        |n: usize, what: &str| format!("<div class=\"stat\"><b>{n}</b><span>{what}</span></div>");
     format!(
         "<section class=\"hero\"><h1>llama.cpp-framework</h1><p>Measured configuration guides for llama.cpp on AMD and NVIDIA cards: every value traces to a benchmark campaign in <code>benchmarks/bench.db</code>.</p><div class=\"stats\">{}{}{}{}{}</div></section>",
         stat(guides, "card and model guides"),
@@ -207,17 +264,28 @@ fn pm(v: &[f64]) -> String {
 }
 
 fn campaign_page(c: &data::Campaign, db: &Db, pages: &[Page]) -> String {
-    let mut s = format!("<h1><code>{}</code></h1><p class=\"meta\">started {}</p>", esc(&c.name), esc(&c.started));
+    let mut s = format!(
+        "<h1><code>{}</code></h1><p class=\"meta\">started {}</p>",
+        esc(&c.name),
+        esc(&c.started)
+    );
     s += &format!("<h2>Question</h2><p>{}</p>", esc(&c.question));
     s += &match &c.answer {
         Some(a) => format!("<h2>Answer</h2><p>{}</p>", esc(a)),
         None => "<h2>Answer</h2><p class=\"muted\">Not drawn yet.</p>".to_string(),
     };
-    let citing: Vec<&Page> = pages.iter().filter(|p| p.citations().contains(&c.name)).collect();
+    let citing: Vec<&Page> = pages
+        .iter()
+        .filter(|p| p.citations().contains(&c.name))
+        .collect();
     if !citing.is_empty() {
         s += "<h2>Cited by</h2><ul>";
         for p in citing {
-            s += &format!("<li><a href=\"../{}.html\">{}</a></li>", p.stem, esc(p.title()));
+            s += &format!(
+                "<li><a href=\"../{}.html\">{}</a></li>",
+                p.stem,
+                esc(p.title())
+            );
         }
         s += "</ul>";
     }
@@ -225,8 +293,17 @@ fn campaign_page(c: &data::Campaign, db: &Db, pages: &[Page]) -> String {
 <div class=\"wide\"><table><thead><tr><th>run</th><th>label</th><th>status</th><th>model</th><th>llama.cpp</th><th>spec</th><th>requests</th><th>prefill</th><th>decode</th><th>prefill total</th><th>decode total</th><th>draft acc.</th><th>free MiB</th></tr></thead><tbody>";
     let runs: Vec<_> = db.runs_of(c).collect();
     for r in &runs {
-        let multi = r.reqs.iter().any(|q| r.reqs.iter().filter(|o| o.rep == q.rep).count() > 1);
-        let tot = |m: &str| if multi { pm(&r.samples(m)) } else { String::new() };
+        let multi = r
+            .reqs
+            .iter()
+            .any(|q| r.reqs.iter().filter(|o| o.rep == q.rep).count() > 1);
+        let tot = |m: &str| {
+            if multi {
+                pm(&r.samples(m))
+            } else {
+                String::new()
+            }
+        };
         s += &format!(
             "<tr><td>{}</td><td>{}</td><td>{}</td><td>{} {}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
             r.id,
@@ -247,16 +324,30 @@ fn campaign_page(c: &data::Campaign, db: &Db, pages: &[Page]) -> String {
     }
     s += "</tbody></table></div><h2>Parameters</h2>";
     for r in &runs {
-        s += &format!("<details><summary>run {} <code>{}</code></summary>", r.id, esc(&r.label));
+        s += &format!(
+            "<details><summary>run {} <code>{}</code></summary>",
+            r.id,
+            esc(&r.label)
+        );
         if !r.gpus.is_empty() {
             s += &format!(
                 "<p>{}</p>",
-                esc(&r.gpus.iter().map(|(d, g)| format!("{d}: {g}")).collect::<Vec<_>>().join(", "))
+                esc(&r
+                    .gpus
+                    .iter()
+                    .map(|(d, g)| format!("{d}: {g}"))
+                    .collect::<Vec<_>>()
+                    .join(", "))
             );
         }
         s += "<table><thead><tr><th>scope</th><th>key</th><th>value</th></tr></thead><tbody>";
         for (sc, k, v) in &r.params {
-            s += &format!("<tr><td>{}</td><td><code>{}</code></td><td><code>{}</code></td></tr>", esc(sc), esc(k), esc(v));
+            s += &format!(
+                "<tr><td>{}</td><td><code>{}</code></td><td><code>{}</code></td></tr>",
+                esc(sc),
+                esc(k),
+                esc(v)
+            );
         }
         s += "</tbody></table></details>";
     }

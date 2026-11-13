@@ -20,7 +20,6 @@ pub fn prereq_script() -> &'static str {
     }
 }
 
-
 fn git(dir: &Path) -> Command {
     let mut c = cmd("git");
     c.arg("-C").arg(dir);
@@ -38,15 +37,25 @@ fn can_apply(dir: &Path, reverse: bool, patch: &Path) -> bool {
 }
 
 fn patch_name(p: &Path) -> String {
-    p.file_name().unwrap_or_default().to_string_lossy().into_owned()
+    p.file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .into_owned()
 }
 
 /// Clone or fetch, check out the newest release tag (vX.Y.Z), never master
 /// HEAD and never a bNNNN nightly, and apply patches/llama.cpp/*.patch.
 pub fn checkout(dir: &Path) -> Result<()> {
     if !dir.join("CMakeLists.txt").is_file() {
-        ui::warn(format!("llama.cpp not found at {}, cloning...", dir.display()));
-        run_cmd(cmd("git").args(["clone", "https://github.com/ggerganov/llama.cpp"]).arg(dir))?;
+        ui::warn(format!(
+            "llama.cpp not found at {}, cloning...",
+            dir.display()
+        ));
+        run_cmd(
+            cmd("git")
+                .args(["clone", "https://github.com/ggerganov/llama.cpp"])
+                .arg(dir),
+        )?;
     } else {
         ui::head("Fetching latest llama.cpp (branches + tags)...");
         run_cmd(git(dir).args(["fetch", "origin", "--tags"]))?;
@@ -94,9 +103,13 @@ pub fn checkout(dir: &Path) -> Result<()> {
                 continue;
             }
             run_cmd(git(dir).args(["apply", "--reverse", "--"]).arg(p))?;
-            ui::dim(format!("Reverted patch for a clean checkout: {}", patch_name(p)));
+            ui::dim(format!(
+                "Reverted patch for a clean checkout: {}",
+                patch_name(p)
+            ));
         }
-        let dirty = util::output(git(dir).args(["status", "--porcelain", "--untracked-files=no"])).unwrap_or_default();
+        let dirty = util::output(git(dir).args(["status", "--porcelain", "--untracked-files=no"]))
+            .unwrap_or_default();
         if !dirty.is_empty() {
             run_cmd(git(dir).args([
                 "stash",
@@ -133,7 +146,9 @@ pub fn checkout(dir: &Path) -> Result<()> {
 
 /// The value of a CMakeCache entry, empty when absent.
 pub fn cache_get(cache: &Path, name: &str) -> String {
-    let Ok(text) = std::fs::read_to_string(cache) else { return String::new() };
+    let Ok(text) = std::fs::read_to_string(cache) else {
+        return String::new();
+    };
     let prefix = format!("{name}:");
     text.lines()
         .filter_map(|l| l.strip_prefix(&prefix))
@@ -156,15 +171,25 @@ impl SccacheDaemon {
         std::env::set_var("SCCACHE_CACHE_SIZE", "10G");
         std::env::set_var("SCCACHE_IDLE_TIMEOUT", "0");
         std::env::set_var("SCCACHE_MAX_FRAME_LENGTH", "104857600"); // 100MB: GPU multi-arch objects are large
-        // Client-side mode (sccache 0.17+): cache lookup and compile run in
-        // the client process, the daemon serves only shared state. Stats stay
-        // server-side, so --show-stats still aggregates the whole build.
+                                                                    // Client-side mode (sccache 0.17+): cache lookup and compile run in
+                                                                    // the client process, the daemon serves only shared state. Stats stay
+                                                                    // server-side, so --show-stats still aggregates the whole build.
         std::env::set_var("SCCACHE_CLIENT_SIDE", "1");
         std::env::set_var("SCCACHE_SERVER_PORT", "4227");
         std::fs::create_dir_all(&dir)?;
-        ui::head(format!("sccache: {} (cache: {}, port 4227)", sc.display(), dir.display()));
+        ui::head(format!(
+            "sccache: {} (cache: {}, port 4227)",
+            sc.display(),
+            dir.display()
+        ));
         let _ = succeeds(cmd(sc).arg("--stop-server"));
-        if !cmd(sc).arg("--start-server").stdout(Stdio::null()).status().map(|s| s.success()).unwrap_or(false) {
+        if !cmd(sc)
+            .arg("--start-server")
+            .stdout(Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+        {
             bail!("sccache could not start its server on port 4227");
         }
         Ok(SccacheDaemon(sc.to_path_buf()))
@@ -176,7 +201,11 @@ impl Drop for SccacheDaemon {
         ui::say("");
         ui::head("sccache stats:");
         let _ = cmd(&self.0).arg("--show-stats").status();
-        let _ = cmd(&self.0).arg("--stop-server").stdout(Stdio::null()).stderr(Stdio::null()).status();
+        let _ = cmd(&self.0)
+            .arg("--stop-server")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
     }
 }
 
@@ -190,8 +219,16 @@ impl Drop for SccacheDaemon {
 /// too), and only the download leaves a .ui-stamp, which is how the report
 /// knows which one ran.
 pub fn check_web_ui(build_dir: &Path, llama: &Path) -> Result<()> {
-    let ui_dist = build_dir.join("tools").join("ui").join("dist").join("index.html");
-    let ui_src_dist = llama.join("tools").join("ui").join("dist").join("index.html");
+    let ui_dist = build_dir
+        .join("tools")
+        .join("ui")
+        .join("dist")
+        .join("index.html");
+    let ui_src_dist = llama
+        .join("tools")
+        .join("ui")
+        .join("dist")
+        .join("index.html");
     let ui_stamp = build_dir.join("tools").join("ui").join(".ui-stamp");
     if !ui_dist.is_file() && !ui_src_dist.is_file() {
         bail!(
@@ -211,7 +248,10 @@ pub fn check_web_ui(build_dir: &Path, llama: &Path) -> Result<()> {
     } else if ui_dist.is_file() {
         ui::dim("Web UI: built from the checked-out sources (npm)");
     } else {
-        ui::dim(format!("Web UI: pre-built assets found in the source tree ({})", ui_src_dist.display()));
+        ui::dim(format!(
+            "Web UI: pre-built assets found in the source tree ({})",
+            ui_src_dist.display()
+        ));
     }
     Ok(())
 }
@@ -219,13 +259,19 @@ pub fn check_web_ui(build_dir: &Path, llama: &Path) -> Result<()> {
 /// Removes CMake's CUDA identification files from every CMakeFiles/<ver>/.
 #[cfg(not(target_os = "macos"))]
 pub fn reset_cuda_detection(build_dir: &Path) -> Result<()> {
-    let Ok(rd) = std::fs::read_dir(build_dir.join("CMakeFiles")) else { return Ok(()) };
+    let Ok(rd) = std::fs::read_dir(build_dir.join("CMakeFiles")) else {
+        return Ok(());
+    };
     for e in rd.flatten() {
         let name = e.file_name().to_string_lossy().into_owned();
         if !name.starts_with(|c: char| c.is_ascii_digit()) || !e.path().is_dir() {
             continue;
         }
-        for f in ["CMakeCUDACompiler.cmake", "CMakeDetermineCompilerABI_CUDA.bin", "CompilerIdCUDA"] {
+        for f in [
+            "CMakeCUDACompiler.cmake",
+            "CMakeDetermineCompilerABI_CUDA.bin",
+            "CompilerIdCUDA",
+        ] {
             util::remove_all(&e.path().join(f))?;
         }
     }

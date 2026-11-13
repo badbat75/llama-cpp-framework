@@ -130,7 +130,9 @@ impl Floor {
             Floor::Split { load, every } if mib(load) == mib(every) => {
                 strings::fill("moe-floor-split-same", &[&mib(load)])
             }
-            Floor::Split { load, every } => strings::fill("moe-floor-split", &[&mib(load), &mib(every)]),
+            Floor::Split { load, every } => {
+                strings::fill("moe-floor-split", &[&mib(load), &mib(every)])
+            }
         }
     }
 }

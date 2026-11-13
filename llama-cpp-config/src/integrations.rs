@@ -173,7 +173,12 @@ pub fn opencode_plan(base_url: &str, api_key: Option<&str>) -> Result<OpencodePl
         p
     };
     let mut provider = Vec::new();
-    leaf_diff("", &without_models(&current), &without_models(&target), &mut provider);
+    leaf_diff(
+        "",
+        &without_models(&current),
+        &without_models(&target),
+        &mut provider,
+    );
 
     let old = current_models(&current);
     let desired = desired_models();
@@ -186,12 +191,27 @@ pub fn opencode_plan(base_url: &str, api_key: Option<&str>) -> Result<OpencodePl
         };
         let mut fields = Vec::new();
         leaf_diff("", &before, new, &mut fields);
-        models.push(ModelChange { id: id.clone(), kind, fields });
+        models.push(ModelChange {
+            id: id.clone(),
+            kind,
+            fields,
+        });
     }
-    for id in old.keys().filter(|id| !desired.iter().any(|(d, _)| d == *id)) {
-        models.push(ModelChange { id: id.clone(), kind: ChangeKind::Remove, fields: Vec::new() });
+    for id in old
+        .keys()
+        .filter(|id| !desired.iter().any(|(d, _)| d == *id))
+    {
+        models.push(ModelChange {
+            id: id.clone(),
+            kind: ChangeKind::Remove,
+            fields: Vec::new(),
+        });
     }
-    Ok(OpencodePlan { provider_active, provider, models })
+    Ok(OpencodePlan {
+        provider_active,
+        provider,
+        models,
+    })
 }
 
 /// Writes the provider entry (created when absent) and its models list: one
@@ -219,9 +239,11 @@ pub fn save_opencode_models(base_url: &str, api_key: Option<&str>, keep: &[Strin
     // like every other writer does (read_or_create_value already treats the
     // missing FILE as an empty object, so the missing DIR must not fail).
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).with_context(|| strings::fill("create-failed", &[&parent.display()]))?;
+        fs::create_dir_all(parent)
+            .with_context(|| strings::fill("create-failed", &[&parent.display()]))?;
     }
-    ini::atomic_write(&path, &serialized).with_context(|| strings::fill("write-failed", &[&path.display()]))?;
+    ini::atomic_write(&path, &serialized)
+        .with_context(|| strings::fill("write-failed", &[&path.display()]))?;
     Ok(())
 }
 
@@ -281,12 +303,24 @@ fn current_models(v: &Value) -> serde_json::Map<String, Value> {
 fn leaf_diff(prefix: &str, old: &Value, new: &Value, out: &mut Vec<FieldDiff>) {
     if old.is_object() || new.is_object() {
         let empty = serde_json::Map::new();
-        let (o, n) = (old.as_object().unwrap_or(&empty), new.as_object().unwrap_or(&empty));
+        let (o, n) = (
+            old.as_object().unwrap_or(&empty),
+            new.as_object().unwrap_or(&empty),
+        );
         let keys = o.keys().chain(n.keys().filter(|k| !o.contains_key(*k)));
         for k in keys {
-            let path = if prefix.is_empty() { k.clone() } else { format!("{prefix}.{k}") };
+            let path = if prefix.is_empty() {
+                k.clone()
+            } else {
+                format!("{prefix}.{k}")
+            };
             let null = Value::Null;
-            leaf_diff(&path, o.get(k).unwrap_or(&null), n.get(k).unwrap_or(&null), out);
+            leaf_diff(
+                &path,
+                o.get(k).unwrap_or(&null),
+                n.get(k).unwrap_or(&null),
+                out,
+            );
         }
         return;
     }
@@ -358,7 +392,11 @@ pub fn claude_code_env_script(
     api_key: Option<&str>,
     example: Option<(&str, Option<i64>)>,
 ) -> String {
-    let shell = if cfg!(windows) { Shell::PowerShell } else { Shell::Posix };
+    let shell = if cfg!(windows) {
+        Shell::PowerShell
+    } else {
+        Shell::Posix
+    };
     env_script(shell, base_url, api_key, example)
 }
 
@@ -402,7 +440,10 @@ fn env_script(
     let mut out = comment(crate::strings::t("claude-snippet-run").to_string());
     out.push(shell.set("ANTHROPIC_BASE_URL", base_url));
     out.push(shell.set("ANTHROPIC_API_KEY", api_key.unwrap_or("not-needed")));
-    let model = format!("# {}", shell.set("ANTHROPIC_DEFAULT_SONNET_MODEL", example_id));
+    let model = format!(
+        "# {}",
+        shell.set("ANTHROPIC_DEFAULT_SONNET_MODEL", example_id)
+    );
     match example_ctx {
         Some((ctx, pct)) => {
             out.extend(comment(crate::strings::fill(
@@ -410,17 +451,31 @@ fn env_script(
                 &[&COMPACT_RESERVE_PCT, &COMPACT_RESERVE_TOKENS],
             )));
             out.push(model);
-            out.push(format!("# {}", shell.set("CLAUDE_CODE_MAX_CONTEXT_TOKENS", &ctx)));
-            out.push(format!("# {}", shell.set("CLAUDE_AUTOCOMPACT_PCT_OVERRIDE", &pct)));
-            out.extend(comment(crate::strings::t("claude-snippet-fit-note").to_string()));
+            out.push(format!(
+                "# {}",
+                shell.set("CLAUDE_CODE_MAX_CONTEXT_TOKENS", &ctx)
+            ));
+            out.push(format!(
+                "# {}",
+                shell.set("CLAUDE_AUTOCOMPACT_PCT_OVERRIDE", &pct)
+            ));
+            out.extend(comment(
+                crate::strings::t("claude-snippet-fit-note").to_string(),
+            ));
         }
         None => {
-            out.extend(comment(crate::strings::t("claude-snippet-pick").to_string()));
+            out.extend(comment(
+                crate::strings::t("claude-snippet-pick").to_string(),
+            ));
             out.push(model);
-            out.extend(comment(crate::strings::t("claude-snippet-no-context").to_string()));
+            out.extend(comment(
+                crate::strings::t("claude-snippet-no-context").to_string(),
+            ));
         }
     }
-    out.extend(comment(crate::strings::t("claude-snippet-launch").to_string()));
+    out.extend(comment(
+        crate::strings::t("claude-snippet-launch").to_string(),
+    ));
     let eol = shell.eol();
     out.iter().map(|l| format!("{l}{eol}")).collect()
 }
@@ -552,7 +607,10 @@ fn preset_to_opencode_model(p: &presets::Preset, context: Option<i64>) -> Value 
 /// Where a client should compact a conversation in a `context`-token window:
 /// `COMPACT_RESERVE_PCT` percent plus `COMPACT_RESERVE_TOKENS` short of it.
 fn compact_at(context: i64) -> i64 {
-    std::cmp::max(0, context * (100 - COMPACT_RESERVE_PCT) / 100 - COMPACT_RESERVE_TOKENS)
+    std::cmp::max(
+        0,
+        context * (100 - COMPACT_RESERVE_PCT) / 100 - COMPACT_RESERVE_TOKENS,
+    )
 }
 
 /// `compact_at` as the percentage Claude Code takes, rounded down so it never
@@ -946,28 +1004,54 @@ mod tests {
         // 1. Fit off: the context is exactly what effective_ctx derives.
         assert!(!cut(&base, false, TRAINED));
         // 2. split-mode tensor: the fit throws before doing anything.
-        let tensor = presets::Preset { split_mode: "tensor".into(), ..Default::default() };
+        let tensor = presets::Preset {
+            split_mode: "tensor".into(),
+            ..Default::default()
+        };
         assert!(!cut(&tensor, true, TRAINED));
-        let layer = presets::Preset { split_mode: "layer".into(), ..Default::default() };
+        let layer = presets::Preset {
+            split_mode: "layer".into(),
+            ..Default::default()
+        };
         assert!(cut(&layer, true, TRAINED));
         // 3. An explicit ctx-size is "set by user -> no change".
-        let explicit = presets::Preset { ctx_size: Some(65_536), ..Default::default() };
+        let explicit = presets::Preset {
+            ctx_size: Some(65_536),
+            ..Default::default()
+        };
         assert!(!cut(&explicit, true, TRAINED));
         // 3/5. ctx-size = 0 is automatic but sets the full-context sentinel...
-        let zero = presets::Preset { ctx_size: Some(0), ..Default::default() };
+        let zero = presets::Preset {
+            ctx_size: Some(0),
+            ..Default::default()
+        };
         assert!(!cut(&zero, true, TRAINED));
         assert!(!cut(&zero, true, None));
         // ...which a fit-ctx overwrites (`-fitc` is parsed after `-c`).
-        let zero_floor = presets::Preset { ctx_size: Some(0), fit_ctx: Some(8192), ..Default::default() };
+        let zero_floor = presets::Preset {
+            ctx_size: Some(0),
+            fit_ctx: Some(8192),
+            ..Default::default()
+        };
         assert!(cut(&zero_floor, true, TRAINED));
         // fit-ctx = -1 is the sentinel itself.
-        let sentinel = presets::Preset { fit_ctx: Some(-1), ..Default::default() };
+        let sentinel = presets::Preset {
+            fit_ctx: Some(-1),
+            ..Default::default()
+        };
         assert!(!cut(&sentinel, true, TRAINED));
         // 4. kv-unified-per-slot with ctx-size absent sizes the pool first.
-        let per_slot = presets::Preset { kv_unified_per_slot: Some(32_768), ..Default::default() };
+        let per_slot = presets::Preset {
+            kv_unified_per_slot: Some(32_768),
+            ..Default::default()
+        };
         assert!(!cut(&per_slot, true, TRAINED));
         // Under ctx-size = 0 the pool is not sized, but the sentinel stops the cut.
-        let per_slot_zero = presets::Preset { ctx_size: Some(0), kv_unified_per_slot: Some(32_768), ..Default::default() };
+        let per_slot_zero = presets::Preset {
+            ctx_size: Some(0),
+            kv_unified_per_slot: Some(32_768),
+            ..Default::default()
+        };
         assert!(!cut(&per_slot_zero, true, TRAINED));
         // ...and with a fit-ctx beside ctx-size = 0 the pool is sized again.
         let per_slot_floor = presets::Preset {
@@ -980,12 +1064,18 @@ mod tests {
         // 5. A trained context at or below the floor leaves nothing to cut.
         assert!(!cut(&base, true, Some(4096)));
         assert!(cut(&base, true, Some(4097)));
-        let floor = presets::Preset { fit_ctx: Some(300_000), ..Default::default() };
+        let floor = presets::Preset {
+            fit_ctx: Some(300_000),
+            ..Default::default()
+        };
         assert!(!cut(&floor, true, TRAINED));
         // An unreadable header counts as above the floor.
         assert!(cut(&base, true, None));
         // n-gpu-layers by hand does not stop the context cut (step 2 runs first).
-        let ngl = presets::Preset { n_gpu_layers: Some(99), ..Default::default() };
+        let ngl = presets::Preset {
+            n_gpu_layers: Some(99),
+            ..Default::default()
+        };
         assert!(cut(&ngl, true, TRAINED));
     }
 
@@ -1008,7 +1098,9 @@ mod tests {
     fn fit_on_resolves_like_llama_cpp() {
         let sec = |id: &str, fit: Option<&str>| ini::Section {
             id: id.into(),
-            keys: fit.map(|v| [("fit".to_string(), v.to_string())].into()).unwrap_or_default(),
+            keys: fit
+                .map(|v| [("fit".to_string(), v.to_string())].into())
+                .unwrap_or_default(),
             comments: Vec::new(),
         };
         // Absent everywhere: upstream's default, on.
@@ -1150,7 +1242,11 @@ mod tests {
             ("new-kept".to_string(), json!({ "name": "n" })),
             ("new".to_string(), json!({ "name": "n2" })),
         ];
-        let keep = ["changed".to_string(), "new-kept".to_string(), "kept-off".to_string()];
+        let keep = [
+            "changed".to_string(),
+            "new-kept".to_string(),
+            "kept-off".to_string(),
+        ];
         let out = merge_models(current, desired.clone(), &keep);
         assert_eq!(
             out,
@@ -1180,18 +1276,34 @@ mod tests {
         };
         assert_eq!(
             out,
-            vec![d("limit.context", Some("131072"), Some("65536")), d("reasoning", None, Some("true"))]
+            vec![
+                d("limit.context", Some("131072"), Some("65536")),
+                d("reasoning", None, Some("true"))
+            ]
         );
         // A whole object appearing lists its leaves.
         let mut out = Vec::new();
-        leaf_diff("", &Value::Null, &json!({ "options": { "baseURL": "http://h/v1", "timeout": 5 } }), &mut out);
+        leaf_diff(
+            "",
+            &Value::Null,
+            &json!({ "options": { "baseURL": "http://h/v1", "timeout": 5 } }),
+            &mut out,
+        );
         assert_eq!(
             out,
-            vec![d("options.baseURL", None, Some("http://h/v1")), d("options.timeout", None, Some("5"))]
+            vec![
+                d("options.baseURL", None, Some("http://h/v1")),
+                d("options.timeout", None, Some("5"))
+            ]
         );
         // Equal values, in any key order: nothing.
         let mut out = Vec::new();
-        leaf_diff("", &json!({ "a": 1, "b": 2 }), &json!({ "b": 2, "a": 1 }), &mut out);
+        leaf_diff(
+            "",
+            &json!({ "a": 1, "b": 2 }),
+            &json!({ "b": 2, "a": 1 }),
+            &mut out,
+        );
         assert!(out.is_empty());
     }
 

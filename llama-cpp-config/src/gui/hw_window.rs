@@ -91,7 +91,10 @@ fn cpu_hint(cpu: &devices::Cpu) -> String {
         lines.push(strings::fill("hw-cpu-numa-nodes", &[&nodes]));
     }
     if !cpu.instructions.is_empty() {
-        lines.push(strings::fill("hw-cpu-instructions", &[&cpu.instructions.join(", ")]));
+        lines.push(strings::fill(
+            "hw-cpu-instructions",
+            &[&cpu.instructions.join(", ")],
+        ));
     }
     lines.join("\n")
 }
@@ -109,7 +112,11 @@ fn memory_hint(modules: &[devices::MemoryModule]) -> String {
             if !same_model {
                 parts.push(m.model());
             }
-            parts.extend(m.configured_mts.or(m.rated_mts).map(|mts| format!("{mts} MT/s")));
+            parts.extend(
+                m.configured_mts
+                    .or(m.rated_mts)
+                    .map(|mts| format!("{mts} MT/s")),
+            );
             if let (Some(_), Some(rated)) = (m.configured_mts, m.rated_mts) {
                 if m.configured_mts != m.rated_mts {
                     parts.push(strings::fill("hw-memory-rated", &[&rated]));
@@ -601,7 +608,9 @@ pub(super) fn e2e() {
         Some("P0 CHANNEL A: 32.0 GiB · DDR5 · 6000 MT/s · 1.10 V")
     );
     assert_eq!(
-        memory_hint(&[module("A", 6400), module("B", 6000)]).lines().next(),
+        memory_hint(&[module("A", 6400), module("B", 6000)])
+            .lines()
+            .next(),
         Some("P0 CHANNEL A: 32.0 GiB · DDR5 · CORSAIR A · 6000 MT/s · rated 6400 MT/s · 1.10 V")
     );
 

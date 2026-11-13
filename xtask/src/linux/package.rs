@@ -33,14 +33,14 @@
 //! settings.ini) are NOT in the package: llama-cpp-config
 //! writes them per user, in ~/.config/llama.cpp, on first use.
 
-use crate::common::components::{self, Component};
-use crate::common::configurator::set_mode;
 use super::build_llama::load_build_env;
 use super::dists;
+use crate::common::components::{self, Component};
+use crate::common::configurator::set_mode;
 use crate::common::licenses;
 use crate::common::ui;
-use crate::common::version;
 use crate::common::util::{self, cmd, gfx_arch, output, run as run_cmd, which};
+use crate::common::version;
 use anyhow::{bail, Context, Result};
 use std::collections::BTreeSet;
 use std::io::Read;
@@ -57,22 +57,35 @@ const BIN_DIR: &str = "opt/llama.cpp/bin"; // llama.cpp + llama-cpp-config
 const RT_DIR: &str = "opt/llama.cpp/lib"; // the bundled GPU runtimes
 
 fn is_elf(p: &Path) -> bool {
-    let Ok(m) = std::fs::symlink_metadata(p) else { return false };
+    let Ok(m) = std::fs::symlink_metadata(p) else {
+        return false;
+    };
     if !m.is_file() {
         return false;
     }
     let mut magic = [0u8; 4];
-    std::fs::File::open(p).and_then(|mut f| f.read_exact(&mut magic)).is_ok() && magic == *b"\x7fELF"
+    std::fs::File::open(p)
+        .and_then(|mut f| f.read_exact(&mut magic))
+        .is_ok()
+        && magic == *b"\x7fELF"
 }
 
 fn name_of(p: &Path) -> String {
-    p.file_name().unwrap_or_default().to_string_lossy().into_owned()
+    p.file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .into_owned()
 }
 
 /// The entries of a directory, sorted by name (a shell glob's order).
 fn entries(dir: &Path) -> Vec<PathBuf> {
     let mut v: Vec<PathBuf> = std::fs::read_dir(dir)
-        .map(|rd| rd.flatten().map(|e| e.path()).filter(|p| !name_of(p).starts_with('.')).collect())
+        .map(|rd| {
+            rd.flatten()
+                .map(|e| e.path())
+                .filter(|p| !name_of(p).starts_with('.'))
+                .collect()
+        })
         .unwrap_or_default();
     v.sort();
     v
@@ -84,7 +97,9 @@ fn walk(dir: &Path) -> Vec<PathBuf> {
     let mut out = Vec::new();
     let mut stack = vec![dir.to_path_buf()];
     while let Some(d) = stack.pop() {
-        let Ok(rd) = std::fs::read_dir(&d) else { continue };
+        let Ok(rd) = std::fs::read_dir(&d) else {
+            continue;
+        };
         for e in rd.flatten() {
             let p = e.path();
             if e.file_type().map(|t| t.is_dir()).unwrap_or(false) {
@@ -98,7 +113,9 @@ fn walk(dir: &Path) -> Vec<PathBuf> {
 }
 
 fn is_file(p: &Path) -> bool {
-    std::fs::symlink_metadata(p).map(|m| m.is_file()).unwrap_or(false)
+    std::fs::symlink_metadata(p)
+        .map(|m| m.is_file())
+        .unwrap_or(false)
 }
 
 /// `cp <flags> <srcs...> <dest>`, in chunks so no argument list overflows.
@@ -146,10 +163,16 @@ pub fn run(want_deb: bool, want_rpm: bool, keep_staging: bool) -> Result<()> {
     // ── Preconditions ───────────────────────────────────────────────────
     let bin = build_dir.join("bin");
     if !util::is_executable(&bin.join("llama-server")) {
-        bail!("llama-server not found in {}. Run cargo run -p xtask -- build first.", bin.display());
+        bail!(
+            "llama-server not found in {}. Run cargo run -p xtask -- build first.",
+            bin.display()
+        );
     }
     if !util::is_executable(&bin.join("llama-cpp-config")) {
-        bail!("llama-cpp-config not found in {}. Run cargo run -p xtask -- build first.", bin.display());
+        bail!(
+            "llama-cpp-config not found in {}. Run cargo run -p xtask -- build first.",
+            bin.display()
+        );
     }
     // A version bump without a rebuild would ship the OLD configurator in a
     // package named after the new version.
@@ -172,7 +195,13 @@ pub fn run(want_deb: bool, want_rpm: bool, keep_staging: bool) -> Result<()> {
     // ── Stage ───────────────────────────────────────────────────────────
     util::remove_all(&stage)?;
     util::remove_all(&pkg_work)?;
-    for d in [stage.join(BIN_DIR), stage.join(RT_DIR), stage.join("usr/bin"), pkg_work.clone(), out_dir.clone()] {
+    for d in [
+        stage.join(BIN_DIR),
+        stage.join(RT_DIR),
+        stage.join("usr/bin"),
+        pkg_work.clone(),
+        out_dir.clone(),
+    ] {
         std::fs::create_dir_all(&d)?;
     }
 
@@ -182,8 +211,9 @@ pub fn run(want_deb: bool, want_rpm: bool, keep_staging: bool) -> Result<()> {
     // package keeps. `cmake --install` would split them into bin/ and lib/.
     // llama.cpp's own test-* harnesses stay out: they are its unit tests, and
     // every executable staged here gets a command in /usr/bin.
-    let (tests, keep): (Vec<PathBuf>, Vec<PathBuf>) =
-        entries(&bin).into_iter().partition(|p| name_of(p).starts_with("test-"));
+    let (tests, keep): (Vec<PathBuf>, Vec<PathBuf>) = entries(&bin)
+        .into_iter()
+        .partition(|p| name_of(p).starts_with("test-"));
     cp("-a", &keep, &stage.join(BIN_DIR))?;
     crate::common::bench_share::stage(&stage.join(OPT_DIR))?;
     crate::common::strings_share::stage(&stage.join(OPT_DIR))?;
@@ -210,7 +240,11 @@ pub fn run(want_deb: bool, want_rpm: bool, keep_staging: bool) -> Result<()> {
     // (lib/llvm/lib/libomp.so). CUDA, NCCL and Vulkan libraries have no such
     // structure and go flat into lib/.
     let hip_root = cfg.hip_path.clone();
-    let canon = |p: &Path| p.canonicalize().map(|c| c.display().to_string()).unwrap_or_default();
+    let canon = |p: &Path| {
+        p.canonicalize()
+            .map(|c| c.display().to_string())
+            .unwrap_or_default()
+    };
     let cuda_dir = dists.find_cuda().map(|d| canon(&d));
     let nccl_dir = dists.find_nccl().map(|d| canon(&d));
     let vulkan_dir = dists.find_vulkan();
@@ -226,7 +260,9 @@ pub fn run(want_deb: bool, want_rpm: bool, keep_staging: bool) -> Result<()> {
         if !is_elf(&f) || name_of(&f).starts_with("test-") {
             continue;
         }
-        let Some(ldd) = output(cmd("ldd").arg(&f)) else { continue };
+        let Some(ldd) = output(cmd("ldd").arg(&f)) else {
+            continue;
+        };
         for line in ldd.lines() {
             let cols: Vec<&str> = line.split_whitespace().collect();
             if cols.len() >= 3 && cols[1] == "=>" && cols[2].starts_with('/') {
@@ -234,7 +270,11 @@ pub fn run(want_deb: bool, want_rpm: bool, keep_staging: bool) -> Result<()> {
             }
         }
     }
-    let under = |real: &str, dir: &Option<String>| dir.as_ref().map(|d| real.starts_with(&format!("{d}/"))).unwrap_or(false);
+    let under = |real: &str, dir: &Option<String>| {
+        dir.as_ref()
+            .map(|d| real.starts_with(&format!("{d}/")))
+            .unwrap_or(false)
+    };
     let rt = stage.join(RT_DIR);
     let mut bundled = 0;
     for (soname, path) in &closure {
@@ -242,7 +282,10 @@ pub fn run(want_deb: bool, want_rpm: bool, keep_staging: bool) -> Result<()> {
         let hip_lib = format!("{hip_root}/lib/");
         let (dest, from) = if !hip_root.is_empty() && path.starts_with(&hip_lib) {
             let rel = Path::new(&path[hip_lib.len()..]);
-            (rt.join(rel.parent().unwrap_or(Path::new(""))).join(soname), Component::Rocm)
+            (
+                rt.join(rel.parent().unwrap_or(Path::new(""))).join(soname),
+                Component::Rocm,
+            )
         } else if under(&real, &cuda_dir) || under(&real, &nccl_dir) {
             (rt.join(soname), Component::Cuda)
         } else if under(&real, &vulkan_lib_dir) {
@@ -255,7 +298,11 @@ pub fn run(want_deb: bool, want_rpm: bool, keep_staging: bool) -> Result<()> {
         // the ROCm dist and belongs to llama.cpp on purpose.
         let owner = components::of(&dest.strip_prefix(&stage)?.to_string_lossy());
         if owner != from && owner != Component::Llama {
-            bail!("{soname} comes from the {} dist but common/components.rs gives it to {}", from.suffix(), owner.suffix());
+            bail!(
+                "{soname} comes from the {} dist but common/components.rs gives it to {}",
+                from.suffix(),
+                owner.suffix()
+            );
         }
         if dest.exists() {
             continue;
@@ -270,8 +317,13 @@ pub fn run(want_deb: bool, want_rpm: bool, keep_staging: bool) -> Result<()> {
     // from a system ROCm, or the dist is gone from under the dist root) would
     // be dropped silently by ggml on every machine but this one.
     let rt_names: Vec<String> = entries(&rt).iter().map(|p| name_of(p)).collect();
-    for (backend, runtime) in [("libggml-hip.so", "libhipblas.so."), ("libggml-cuda.so", "libcublas.so.")] {
-        if stage.join(BIN_DIR).join(backend).exists() && !rt_names.iter().any(|n| n.starts_with(runtime)) {
+    for (backend, runtime) in [
+        ("libggml-hip.so", "libhipblas.so."),
+        ("libggml-cuda.so", "libcublas.so."),
+    ] {
+        if stage.join(BIN_DIR).join(backend).exists()
+            && !rt_names.iter().any(|n| n.starts_with(runtime))
+        {
             bail!(
                 "{backend} is staged but {runtime}* was not found in its dist under {}; refusing to package a backend that cannot load",
                 cfg.dist_root
@@ -312,7 +364,10 @@ pub fn run(want_deb: bool, want_rpm: bool, keep_staging: bool) -> Result<()> {
             std::fs::create_dir_all(&dest)?;
             // Entries are files named after their architecture, or (rocBLAS,
             // for the newer ones) a directory per architecture.
-            let picked: Vec<PathBuf> = entries(&src).into_iter().filter(|p| wanted(&name_of(p))).collect();
+            let picked: Vec<PathBuf> = entries(&src)
+                .into_iter()
+                .filter(|p| wanted(&name_of(p)))
+                .collect();
             cp("-rL", &picked, &dest)?;
             ui::dim(format!("{sub}: {} MiB", util::du("-sm", &dest)));
         }
@@ -361,12 +416,18 @@ pub fn run(want_deb: bool, want_rpm: bool, keep_staging: bool) -> Result<()> {
         }
     }
     let after = util::du("-sm", &staged_bin);
-    ui::dim(format!("{} executables, {before} MiB -> {after} MiB stripped", executables.len()));
+    ui::dim(format!(
+        "{} executables, {before} MiB -> {after} MiB stripped",
+        executables.len()
+    ));
     ui::dim(format!("Bundled runtimes: {} MiB", util::du("-sm", &rt)));
 
     for exe in &executables {
         // relative: rpm warns on absolute ones
-        std::os::unix::fs::symlink(format!("../../{BIN_DIR}/{exe}"), stage.join("usr/bin").join(exe))?;
+        std::os::unix::fs::symlink(
+            format!("../../{BIN_DIR}/{exe}"),
+            stage.join("usr/bin").join(exe),
+        )?;
     }
 
     // ── Desktop entry, icon ─────────────────────────────────────────────
@@ -389,9 +450,15 @@ pub fn run(want_deb: bool, want_rpm: bool, keep_staging: bool) -> Result<()> {
     // A runtime's version is its SDK's, so a new llama.cpp alone leaves it as it
     // is. NCCL has a version of its own and travels in the CUDA package.
     let sdk_version = |dist: Option<PathBuf>| {
-        dist.as_deref().and_then(components::dist_version).unwrap_or_else(|| pkg_version.clone())
+        dist.as_deref()
+            .and_then(components::dist_version)
+            .unwrap_or_else(|| pkg_version.clone())
     };
-    let cuda_version = match dists.find_nccl().as_deref().and_then(components::dist_version) {
+    let cuda_version = match dists
+        .find_nccl()
+        .as_deref()
+        .and_then(components::dist_version)
+    {
         Some(nccl) => format!("{}+nccl.{nccl}", sdk_version(dists.find_cuda())),
         None => sdk_version(dists.find_cuda()),
     };
@@ -401,8 +468,11 @@ pub fn run(want_deb: bool, want_rpm: bool, keep_staging: bool) -> Result<()> {
         Component::Cuda => cuda_version.clone(),
         Component::Vulkan => sdk_version(dists.find_vulkan()),
     };
-    let runtimes: Vec<(Component, String)> =
-        present.iter().filter(|c| c.is_runtime()).map(|c| (*c, version_of(*c))).collect();
+    let runtimes: Vec<(Component, String)> = present
+        .iter()
+        .filter(|c| c.is_runtime())
+        .map(|c| (*c, version_of(*c)))
+        .collect();
 
     // ── Licences ────────────────────────────────────────────────────────
     let mut licence_fields = Vec::new();
@@ -424,34 +494,59 @@ pub fn run(want_deb: bool, want_rpm: bool, keep_staging: bool) -> Result<()> {
 
         let doc = root.join("usr/share/doc").join(c.package());
         std::fs::create_dir_all(&doc)?;
-        let mut copyright = format!("{} {} is part of {MONOLITH} {fw_version}, distributed under the MIT licence:\n\n", c.package(), version_of(*c));
+        let mut copyright = format!(
+            "{} {} is part of {MONOLITH} {fw_version}, distributed under the MIT licence:\n\n",
+            c.package(),
+            version_of(*c)
+        );
         copyright.push_str(&std::fs::read_to_string(repo.join("LICENSE"))?);
-        copyright.push_str(&format!("\nIt was built with llama.cpp {llama_build}, whose licence follows.\n"));
+        copyright.push_str(&format!(
+            "\nIt was built with llama.cpp {llama_build}, whose licence follows.\n"
+        ));
         copyright.push_str(&format!(
             "The libraries under /{RT_DIR} are redistributed unmodified, each under its own licence.\n"
         ));
-        copyright.push_str(&format!("The full texts are in /{OPT_DIR}/share/licenses/{}:\n\n", c.suffix()));
+        copyright.push_str(&format!(
+            "The full texts are in /{OPT_DIR}/share/licenses/{}:\n\n",
+            c.suffix()
+        ));
         copyright.push_str(&std::fs::read_to_string(dir.join("README.txt"))?);
         copyright.push_str("\nllama.cpp's licence:\n\n");
         copyright.push_str(&std::fs::read_to_string(llama.join("LICENSE"))?);
-        copyright.push_str("\nllama-cpp-config embeds the Fluent UI System Icons font, whose licence follows.\n\n");
-        copyright.push_str(&std::fs::read_to_string(repo.join("llama-cpp-config/ui/fonts/LICENSE"))?);
+        copyright.push_str(
+            "\nllama-cpp-config embeds the Fluent UI System Icons font, whose licence follows.\n\n",
+        );
+        copyright.push_str(&std::fs::read_to_string(
+            repo.join("llama-cpp-config/ui/fonts/LICENSE"),
+        )?);
         std::fs::write(doc.join("copyright"), copyright)?;
 
         // The repo may sit on a filesystem that hands out group-writable modes; a
         // package carries 755 / 644 whatever the build drive says.
         for p in walk(&root) {
-            let Ok(m) = std::fs::symlink_metadata(&p) else { continue };
+            let Ok(m) = std::fs::symlink_metadata(&p) else {
+                continue;
+            };
             if m.is_dir() {
                 set_mode(&p, 0o755)?;
             }
         }
         for dir in [opt.join("lib"), opt.join(".kpack")] {
             for p in walk(&dir).into_iter().filter(|p| is_file(p)) {
-                set_mode(&p, if name_of(&p).contains(".so") { 0o755 } else { 0o644 })?;
+                set_mode(
+                    &p,
+                    if name_of(&p).contains(".so") {
+                        0o755
+                    } else {
+                        0o644
+                    },
+                )?;
             }
         }
-        for p in walk(&root.join("usr/share")).into_iter().filter(|p| is_file(p)) {
+        for p in walk(&root.join("usr/share"))
+            .into_iter()
+            .filter(|p| is_file(p))
+        {
             set_mode(&p, 0o644)?;
         }
     }
@@ -459,7 +554,8 @@ pub fn run(want_deb: bool, want_rpm: bool, keep_staging: bool) -> Result<()> {
     // No maintainer scripts: the package ships no config directory,
     // llama-cpp-config writes ~/.config/llama.cpp as whoever runs it.
 
-    let repo_git = |args: &[&str]| output(cmd("git").arg("-C").arg(&repo).args(args)).unwrap_or_default();
+    let repo_git =
+        |args: &[&str]| output(cmd("git").arg("-C").arg(&repo).args(args)).unwrap_or_default();
     let homepage = {
         let url = repo_git(&["remote", "get-url", "origin"]);
         url.strip_suffix(".git").map(str::to_string).unwrap_or(url)
@@ -467,7 +563,11 @@ pub fn run(want_deb: bool, want_rpm: bool, keep_staging: bool) -> Result<()> {
     let maintainer = match std::env::var("LLAMA_FW_MAINTAINER") {
         Ok(m) if !m.is_empty() => m,
         _ => {
-            let m = format!("{} <{}>", repo_git(&["config", "user.name"]), repo_git(&["config", "user.email"]));
+            let m = format!(
+                "{} <{}>",
+                repo_git(&["config", "user.name"]),
+                repo_git(&["config", "user.email"])
+            );
             if m == " <>" {
                 format!("{MONOLITH} <nobody@localhost>")
             } else {
@@ -493,18 +593,36 @@ pub fn run(want_deb: bool, want_rpm: bool, keep_staging: bool) -> Result<()> {
             description: &description,
             homepage: &homepage,
             depends_on_llama: (*c == Component::Config).then_some(pkg_version.as_str()),
-            runtimes: if *c == Component::Llama { &runtimes } else { &[] },
+            runtimes: if *c == Component::Llama {
+                &runtimes
+            } else {
+                &[]
+            },
         };
         let stem = components::file_stem(*c, &fw_version, &llama_build, &version);
         if want_deb {
             let file = out_dir.join(format!("{stem}-{deb_arch}.deb"));
-            build_deb(&root, &pkg_work, &file, &fields, deb_arch, &maintainer, &library_dirs)?;
+            build_deb(
+                &root,
+                &pkg_work,
+                &file,
+                &fields,
+                deb_arch,
+                &maintainer,
+                &library_dirs,
+            )?;
             created.push(file);
         }
         if want_rpm {
             let file = out_dir.join(format!("{stem}-{rpm_arch}.rpm"));
-            let license = &licence_fields.iter().find(|(l, _)| l == c).expect("every component has its licences").1;
-            build_rpm(&root, &pkg_work, &out_dir, &file, &fields, rpm_arch, license, &libraries)?;
+            let license = &licence_fields
+                .iter()
+                .find(|(l, _)| l == c)
+                .expect("every component has its licences")
+                .1;
+            build_rpm(
+                &root, &pkg_work, &out_dir, &file, &fields, rpm_arch, license, &libraries,
+            )?;
             created.push(file);
         }
     }
@@ -517,7 +635,11 @@ pub fn run(want_deb: bool, want_rpm: bool, keep_staging: bool) -> Result<()> {
 
     ui::say("");
     for file in &created {
-        ui::ok(format!("Package created: {} ({} MiB)", file.display(), util::du("-m", file)));
+        ui::ok(format!(
+            "Package created: {} ({} MiB)",
+            file.display(),
+            util::du("-m", file)
+        ));
     }
     ui::say("");
     Ok(())
@@ -582,7 +704,13 @@ fn library_stems(roots: &Path, present: &[Component]) -> String {
         .map(|n| {
             let stem = &n[..n.find(".so").unwrap()];
             stem.chars()
-                .map(|c| if c == '+' || c == '.' { format!("\\\\{c}") } else { c.to_string() })
+                .map(|c| {
+                    if c == '+' || c == '.' {
+                        format!("\\\\{c}")
+                    } else {
+                        c.to_string()
+                    }
+                })
                 .collect()
         })
         .collect();
@@ -620,14 +748,21 @@ fn deb_relations(f: &Fields) -> (String, String, String) {
     if f.component == Component::Llama {
         conflicts.push("llama.cpp".into());
     }
-    (recommends.join(", "), breaks.join(", "), conflicts.join(", "))
+    (
+        recommends.join(", "),
+        breaks.join(", "),
+        conflicts.join(", "),
+    )
 }
 
 /// The `.rpm` relations, one tag per line.
 fn rpm_relations(f: &Fields) -> String {
     let mut lines = vec![format!("Obsoletes:      {MONOLITH} <= {MONOLITH_LAST}")];
     if let Some(v) = f.depends_on_llama {
-        lines.push(format!("Requires:       {} = {v}", Component::Llama.package()));
+        lines.push(format!(
+            "Requires:       {} = {v}",
+            Component::Llama.package()
+        ));
     }
     for (c, v) in f.runtimes {
         lines.push(format!("Recommends:     {} = {v}", c.package()));
@@ -646,13 +781,23 @@ fn rpm_relations(f: &Fields) -> String {
 /// 6-byte header, followed by the frames, and its large frames are plain PNG
 /// files. Returns the staged PNG, or None when there is none.
 fn stage_icon(ico: &Path, stage: &Path) -> Result<Option<PathBuf>> {
-    let Ok(data) = std::fs::read(ico) else { return Ok(None) };
-    let u16le = |o: usize| data.get(o..o + 2).map(|b| u16::from_le_bytes([b[0], b[1]]) as usize);
-    let u32le = |o: usize| data.get(o..o + 4).map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]) as usize);
+    let Ok(data) = std::fs::read(ico) else {
+        return Ok(None);
+    };
+    let u16le = |o: usize| {
+        data.get(o..o + 2)
+            .map(|b| u16::from_le_bytes([b[0], b[1]]) as usize)
+    };
+    let u32le = |o: usize| {
+        data.get(o..o + 4)
+            .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]) as usize)
+    };
     let count = u16le(4).unwrap_or(0);
     let (mut best_size, mut best_off) = (0, 0);
     for i in 0..count {
-        let (Some(size), Some(off)) = (u32le(6 + i * 16 + 8), u32le(6 + i * 16 + 12)) else { continue };
+        let (Some(size), Some(off)) = (u32le(6 + i * 16 + 8), u32le(6 + i * 16 + 12)) else {
+            continue;
+        };
         if size > best_size && data.get(off..off + 4) == Some(b"\x89PNG") {
             best_size = size;
             best_off = off;
@@ -666,7 +811,9 @@ fn stage_icon(ico: &Path, stage: &Path) -> Result<Option<PathBuf>> {
         .get(best_off + 16..best_off + 20)
         .map(|b| u32::from_be_bytes([b[0], b[1], b[2], b[3]]))
         .unwrap_or(0);
-    let png = stage.join(format!("usr/share/icons/hicolor/{px}x{px}/apps/llama-cpp-config.png"));
+    let png = stage.join(format!(
+        "usr/share/icons/hicolor/{px}x{px}/apps/llama-cpp-config.png"
+    ));
     std::fs::create_dir_all(png.parent().unwrap())?;
     let end = (best_off + best_size).min(data.len());
     std::fs::write(&png, &data[best_off..end])?;
@@ -725,24 +872,42 @@ fn build_deb(
     // A runtime asks for nothing it does not bring along; the two that hold our
     // programs need the system's C and C++ libraries at the least.
     if depends.is_empty() && !f.component.is_runtime() {
-        depends = "libc6, libstdc++6, libgcc-s1, libssl3t64 | libssl3, libfontconfig1, libfreetype6".into();
+        depends =
+            "libc6, libstdc++6, libgcc-s1, libssl3t64 | libssl3, libfontconfig1, libfreetype6"
+                .into();
         ui::warn("dpkg-shlibdeps gave no answer; using the fixed Depends list");
     }
     if let Some(v) = f.depends_on_llama {
         let exact = format!("{} (= {v})", Component::Llama.package());
-        depends = if depends.is_empty() { exact } else { format!("{depends}, {exact}") };
+        depends = if depends.is_empty() {
+            exact
+        } else {
+            format!("{depends}, {exact}")
+        };
     }
 
     std::fs::create_dir_all(root.join("DEBIAN"))?;
     let installed_size = output(cmd("du").args(["-sk", "--exclude=DEBIAN"]).arg(root))
         .and_then(|s| s.split_whitespace().next().map(str::to_string))
         .unwrap_or_default();
-    let line = |tag: &str, value: &str| if value.is_empty() { String::new() } else { format!("{tag}: {value}\n") };
+    let line = |tag: &str, value: &str| {
+        if value.is_empty() {
+            String::new()
+        } else {
+            format!("{tag}: {value}\n")
+        }
+    };
     // Debian folds the long description one space in, a blank line as " .".
     let body: String = f
         .description
         .lines()
-        .map(|l| if l.is_empty() { " .\n".to_string() } else { format!(" {l}\n") })
+        .map(|l| {
+            if l.is_empty() {
+                " .\n".to_string()
+            } else {
+                format!(" {l}\n")
+            }
+        })
         .collect();
     let (recommends, breaks, conflicts) = deb_relations(f);
     std::fs::write(
@@ -774,7 +939,9 @@ fn build_deb(
 /// `-perm -u+x`
 fn user_executable(p: &Path) -> bool {
     use std::os::unix::fs::PermissionsExt;
-    std::fs::symlink_metadata(p).map(|m| m.permissions().mode() & 0o100 != 0).unwrap_or(false)
+    std::fs::symlink_metadata(p)
+        .map(|m| m.permissions().mode() & 0o100 != 0)
+        .unwrap_or(false)
 }
 
 /// Drops the first libvulkan1 entry of a Depends list (the loader is
@@ -782,7 +949,13 @@ fn user_executable(p: &Path) -> bool {
 fn drop_libvulkan(depends: &str) -> String {
     let parts: Vec<&str> = depends.split(", ").collect();
     match parts.iter().position(|p| p.starts_with("libvulkan1")) {
-        Some(i) => parts.iter().enumerate().filter(|(j, _)| *j != i).map(|(_, p)| *p).collect::<Vec<_>>().join(", "),
+        Some(i) => parts
+            .iter()
+            .enumerate()
+            .filter(|(j, _)| *j != i)
+            .map(|(_, p)| *p)
+            .collect::<Vec<_>>()
+            .join(", "),
         None => depends.to_string(),
     }
 }
@@ -804,7 +977,11 @@ fn build_rpm(
     // any rpm distro resolves), minus what it must not see: every library the
     // five packages carry (not "provided" to the system, so not "required"
     // from it either) and libcuda, which is the NVIDIA driver's.
-    let url = if f.homepage.is_empty() { String::new() } else { format!("URL:            {}\n", f.homepage) };
+    let url = if f.homepage.is_empty() {
+        String::new()
+    } else {
+        format!("URL:            {}\n", f.homepage)
+    };
     // Only what this package holds: a %files line without a match stops rpmbuild.
     let mut files = format!("/{OPT_DIR}\n/usr/share/doc/{package}\n");
     if root.join("usr/bin").is_dir() {
@@ -873,8 +1050,20 @@ cp -a "{root}/." "%{{buildroot}}/"
 mod tests {
     use super::*;
 
-    fn fields<'a>(component: Component, runtimes: &'a [(Component, String)], depends_on_llama: Option<&'a str>) -> Fields<'a> {
-        Fields { component, version: "1", summary: "", description: "", homepage: "", depends_on_llama, runtimes }
+    fn fields<'a>(
+        component: Component,
+        runtimes: &'a [(Component, String)],
+        depends_on_llama: Option<&'a str>,
+    ) -> Fields<'a> {
+        Fields {
+            component,
+            version: "1",
+            summary: "",
+            description: "",
+            homepage: "",
+            depends_on_llama,
+            runtimes,
+        }
     }
 
     #[test]
@@ -883,19 +1072,35 @@ mod tests {
         let f = fields(Component::Llama, &runtimes, None);
         let (recommends, breaks, conflicts) = deb_relations(&f);
         assert_eq!(recommends, "llama-cpp-framework-rocm (= 10.1.0)");
-        assert_eq!(breaks, "llama-cpp-framework-rocm (<< 10.1.0), llama-cpp-framework-rocm (>> 10.1.0)");
+        assert_eq!(
+            breaks,
+            "llama-cpp-framework-rocm (<< 10.1.0), llama-cpp-framework-rocm (>> 10.1.0)"
+        );
         assert_eq!(conflicts, "llama-cpp-framework, llama.cpp");
         let rpm = rpm_relations(&f);
-        assert!(rpm.contains("Recommends:     llama-cpp-framework-rocm = 10.1.0"), "{rpm}");
-        assert!(rpm.contains("Conflicts:      llama-cpp-framework-rocm < 10.1.0"), "{rpm}");
-        assert!(rpm.contains("Conflicts:      llama-cpp-framework-rocm > 10.1.0"), "{rpm}");
-        assert!(rpm.contains("Obsoletes:      llama-cpp-framework <= 2.2.0\n"), "{rpm}");
+        assert!(
+            rpm.contains("Recommends:     llama-cpp-framework-rocm = 10.1.0"),
+            "{rpm}"
+        );
+        assert!(
+            rpm.contains("Conflicts:      llama-cpp-framework-rocm < 10.1.0"),
+            "{rpm}"
+        );
+        assert!(
+            rpm.contains("Conflicts:      llama-cpp-framework-rocm > 10.1.0"),
+            "{rpm}"
+        );
+        assert!(
+            rpm.contains("Obsoletes:      llama-cpp-framework <= 2.2.0\n"),
+            "{rpm}"
+        );
     }
 
     #[test]
     fn the_configurator_requires_its_llama_cpp_exactly() {
         let f = fields(Component::Config, &[], Some("2.3.0+llama.cpp.v0.9.0"));
-        assert!(rpm_relations(&f).contains("Requires:       llama-cpp-framework-llama = 2.3.0+llama.cpp.v0.9.0"));
+        assert!(rpm_relations(&f)
+            .contains("Requires:       llama-cpp-framework-llama = 2.3.0+llama.cpp.v0.9.0"));
         let (recommends, breaks, _) = deb_relations(&f);
         assert!(recommends.contains("libxkbcommon0"), "{recommends}");
         assert!(breaks.is_empty());
@@ -904,7 +1109,17 @@ mod tests {
     #[test]
     fn a_runtime_requires_nothing_of_the_others() {
         let f = fields(Component::Cuda, &[], None);
-        assert_eq!(deb_relations(&f), (String::new(), String::new(), "llama-cpp-framework".to_string()));
-        assert_eq!(rpm_relations(&f), "Obsoletes:      llama-cpp-framework <= 2.2.0");
+        assert_eq!(
+            deb_relations(&f),
+            (
+                String::new(),
+                String::new(),
+                "llama-cpp-framework".to_string()
+            )
+        );
+        assert_eq!(
+            rpm_relations(&f),
+            "Obsoletes:      llama-cpp-framework <= 2.2.0"
+        );
     }
 }

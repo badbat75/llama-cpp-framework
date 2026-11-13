@@ -288,24 +288,47 @@ pub enum HfError {
     MissingTool(String),
     /// 404, or a 401 without a token: Hugging Face answers both for a repo that
     /// does not exist and for a private one.
-    NotFoundOrPrivate { repo: String },
+    NotFoundOrPrivate {
+        repo: String,
+    },
     /// A 401 WITH a token: it is invalid or expired.
-    TokenRejected { repo: String },
+    TokenRejected {
+        repo: String,
+    },
     /// A 403: a gated repo whose conditions this account has not accepted.
-    Gated { repo: String, had_token: bool },
+    Gated {
+        repo: String,
+        had_token: bool,
+    },
     Network(String),
-    Http { status: u16, message: String },
+    Http {
+        status: u16,
+        message: String,
+    },
     /// The repo holds no main-model GGUF.
-    NoGguf { repo: String },
+    NoGguf {
+        repo: String,
+    },
     /// No GGUF matches the requested quant tag or file.
-    NoMatch { repo: String, wanted: String },
+    NoMatch {
+        repo: String,
+        wanted: String,
+    },
     /// A preset repo (`preset.ini` at its root): llama.cpp would fetch only that
     /// file and run it as a router preset, which is not a model.
-    PresetRepo { repo: String },
+    PresetRepo {
+        repo: String,
+    },
     /// A sidecar was requested that the chosen candidate does not have.
-    SidecarMissing { what: &'static str },
+    SidecarMissing {
+        what: &'static str,
+    },
     /// A different file already sits where a download would land.
-    TargetConflict { path: PathBuf, found: u64, expected: u64 },
+    TargetConflict {
+        path: PathBuf,
+        found: u64,
+        expected: u64,
+    },
     DiskFull(String),
     /// The router child protocol did not hold (see the module header).
     Protocol(String),
@@ -320,8 +343,12 @@ impl fmt::Display for HfError {
         match self {
             HfError::InvalidSpec(m) => write!(f, "{m}"),
             HfError::MissingTool(m) => write!(f, "{m}"),
-            HfError::NotFoundOrPrivate { repo } => f.write_str(&strings::fill("hf-not-found", &[&repo])),
-            HfError::TokenRejected { repo } => f.write_str(&strings::fill("hf-token-rejected", &[&repo])),
+            HfError::NotFoundOrPrivate { repo } => {
+                f.write_str(&strings::fill("hf-not-found", &[&repo]))
+            }
+            HfError::TokenRejected { repo } => {
+                f.write_str(&strings::fill("hf-token-rejected", &[&repo]))
+            }
             HfError::Gated { repo, had_token } => {
                 if *had_token {
                     f.write_str(&strings::fill("hf-gated-with-token", &[&repo]))
@@ -330,14 +357,25 @@ impl fmt::Display for HfError {
                 }
             }
             HfError::Network(m) => f.write_str(&strings::fill("network-error", &[&m])),
-            HfError::Http { status, message } => f.write_str(&strings::fill("hf-http", &[&status, &message])),
-            HfError::NoGguf { repo } => f.write_str(&strings::fill("hf-no-gguf", &[&repo])),
-            HfError::NoMatch { repo, wanted } => f.write_str(&strings::fill("hf-no-match", &[&repo, &wanted])),
-            HfError::PresetRepo { repo } => f.write_str(&strings::fill("hf-preset-repo", &[&repo])),
-            HfError::SidecarMissing { what } => f.write_str(&strings::fill("hf-sidecar-missing", &[&what])),
-            HfError::TargetConflict { path, found, expected } => {
-                f.write_str(&strings::fill("hf-target-conflict", &[&path.display(), &found, &expected]))
+            HfError::Http { status, message } => {
+                f.write_str(&strings::fill("hf-http", &[&status, &message]))
             }
+            HfError::NoGguf { repo } => f.write_str(&strings::fill("hf-no-gguf", &[&repo])),
+            HfError::NoMatch { repo, wanted } => {
+                f.write_str(&strings::fill("hf-no-match", &[&repo, &wanted]))
+            }
+            HfError::PresetRepo { repo } => f.write_str(&strings::fill("hf-preset-repo", &[&repo])),
+            HfError::SidecarMissing { what } => {
+                f.write_str(&strings::fill("hf-sidecar-missing", &[&what]))
+            }
+            HfError::TargetConflict {
+                path,
+                found,
+                expected,
+            } => f.write_str(&strings::fill(
+                "hf-target-conflict",
+                &[&path.display(), &found, &expected],
+            )),
             HfError::DiskFull(m) => f.write_str(&strings::fill("disk-full", &[&m])),
             HfError::Protocol(m) => f.write_str(&strings::fill("download-protocol-error", &[&m])),
             HfError::Download(m) => f.write_str(&strings::fill("download-failed", &[&m])),
@@ -379,7 +417,10 @@ pub fn parse_spec(input: &str) -> Result<RepoSpec, HfError> {
         .map_or(s, |p| &s[p.len()..]);
     let host_end = no_scheme.find('/').unwrap_or(no_scheme.len());
     let host = no_scheme[..host_end].to_ascii_lowercase();
-    let is_url = matches!(host.as_str(), "huggingface.co" | "www.huggingface.co" | "hf.co");
+    let is_url = matches!(
+        host.as_str(),
+        "huggingface.co" | "www.huggingface.co" | "hf.co"
+    );
     if !is_url && no_scheme.len() != s.len() {
         return Err(HfError::InvalidSpec(strings::fill("not-a-hf-url", &[&s])));
     }
@@ -408,11 +449,21 @@ pub fn parse_spec(input: &str) -> Result<RepoSpec, HfError> {
         None => (repo_part, None),
     };
     if !valid_repo_id(&repo) {
-        return Err(HfError::InvalidSpec(strings::fill("not-a-repo-id-expected", &[&repo])));
+        return Err(HfError::InvalidSpec(strings::fill(
+            "not-a-repo-id-expected",
+            &[&repo],
+        )));
     }
     if let Some(t) = &tag {
-        if t.is_empty() || !t.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') {
-            return Err(HfError::InvalidSpec(strings::fill("not-a-quant-tag", &[&t])));
+        if t.is_empty()
+            || !t
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+        {
+            return Err(HfError::InvalidSpec(strings::fill(
+                "not-a-quant-tag",
+                &[&t],
+            )));
         }
     }
     Ok(RepoSpec { repo, tag, file })
@@ -460,7 +511,11 @@ impl Token {
     /// config line it travels in.
     pub fn new(raw: &str) -> Result<Token, HfError> {
         let t = raw.trim();
-        if t.is_empty() || !t.chars().all(|c| c.is_ascii_graphic() && c != '"' && c != '\\') {
+        if t.is_empty()
+            || !t
+                .chars()
+                .all(|c| c.is_ascii_graphic() && c != '"' && c != '\\')
+        {
             return Err(HfError::InvalidSpec(strings::t("token-bad-characters")));
         }
         Ok(Token(t.to_string()))
@@ -479,7 +534,10 @@ pub fn token_from_env() -> Option<Token> {
 }
 
 /// `token_from_env` over injected lookups, so the precedence is testable.
-fn token_from(env: impl Fn(&str) -> Option<String>, read: impl Fn(&Path) -> Option<String>) -> Option<Token> {
+fn token_from(
+    env: impl Fn(&str) -> Option<String>,
+    read: impl Fn(&Path) -> Option<String>,
+) -> Option<Token> {
     let set = |k: &str| env(k).filter(|v| !v.trim().is_empty());
     if let Some(t) = set("HF_TOKEN") {
         return Token::new(&t).ok();
@@ -492,7 +550,10 @@ fn token_from(env: impl Fn(&str) -> Option<String>, read: impl Fn(&Path) -> Opti
         PathBuf::from(x).join("huggingface").join("token")
     } else {
         let home = set(if cfg!(windows) { "USERPROFILE" } else { "HOME" })?;
-        PathBuf::from(home).join(".cache").join("huggingface").join("token")
+        PathBuf::from(home)
+            .join(".cache")
+            .join("huggingface")
+            .join("token")
     };
     read(&file).and_then(|t| Token::new(&t).ok())
 }
@@ -537,7 +598,13 @@ pub trait Fetch {
     /// The bytes `start..start + len` of a file (a GGUF header,
     /// `hf_fit::fetch_shape`), following redirects: `(status, bytes)`, 206 for
     /// an honoured range. The body is BINARY, so it is never decoded.
-    fn get_range(&self, url: &str, token: Option<&Token>, start: u64, len: u64) -> Result<(u16, Vec<u8>), HfError>;
+    fn get_range(
+        &self,
+        url: &str,
+        token: Option<&Token>,
+        start: u64,
+        len: u64,
+    ) -> Result<(u16, Vec<u8>), HfError>;
 }
 
 /// The real `Fetch`: the system's `curl` (see the module header).
@@ -549,19 +616,30 @@ impl Curl {
         let config = config?;
         let exe = curl_exe();
         let mut cmd = Command::new(&exe);
-        cmd.args(["-sS", "-L", "--connect-timeout", "20", "--max-time", "120", "-K", "-"])
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
+        cmd.args([
+            "-sS",
+            "-L",
+            "--connect-timeout",
+            "20",
+            "--max-time",
+            "120",
+            "-K",
+            "-",
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
         crate::proc::hide_console(&mut cmd);
-        let mut child = cmd.spawn().map_err(|e| {
-            HfError::MissingTool(strings::fill("curl-not-started", &[&e]))
-        })?;
+        let mut child = cmd
+            .spawn()
+            .map_err(|e| HfError::MissingTool(strings::fill("curl-not-started", &[&e])))?;
         if let Some(mut stdin) = child.stdin.take() {
             // A write error surfaces as curl's own "no URL" failure below.
             let _ = stdin.write_all(config.as_bytes());
         }
-        let out = child.wait_with_output().map_err(|e| HfError::Io(format!("curl: {e}")))?;
+        let out = child
+            .wait_with_output()
+            .map_err(|e| HfError::Io(format!("curl: {e}")))?;
         if !out.status.success() {
             let code = out.status.code().unwrap_or(-1);
             let err = redact(String::from_utf8_lossy(&out.stderr).trim(), token);
@@ -577,9 +655,18 @@ impl Fetch for Curl {
         parse_curl_output(&String::from_utf8_lossy(&out))
     }
 
-    fn get_range(&self, url: &str, token: Option<&Token>, start: u64, len: u64) -> Result<(u16, Vec<u8>), HfError> {
+    fn get_range(
+        &self,
+        url: &str,
+        token: Option<&Token>,
+        start: u64,
+        len: u64,
+    ) -> Result<(u16, Vec<u8>), HfError> {
         let end = start + len.max(1) - 1;
-        let out = Curl::run(curl_config_with(url, token, "*/*", Some((start, end))), token)?;
+        let out = Curl::run(
+            curl_config_with(url, token, "*/*", Some((start, end))),
+            token,
+        )?;
         parse_curl_bytes(out)
     }
 }
@@ -629,7 +716,9 @@ fn curl_exe() -> PathBuf {
 /// right.
 fn curl_value(v: &str) -> Result<String, HfError> {
     if v.chars().any(char::is_control) {
-        return Err(HfError::InvalidSpec(strings::t("request-control-character")));
+        return Err(HfError::InvalidSpec(strings::t(
+            "request-control-character",
+        )));
     }
     let mut out = String::with_capacity(v.len() + 2);
     out.push('"');
@@ -649,7 +738,12 @@ fn curl_value(v: &str) -> Result<String, HfError> {
 /// (`start-end`, inclusive) and a `max-filesize` just above it, so a server
 /// that ignores the range and answers the WHOLE file is refused by its
 /// `Content-Length` instead of streamed into memory.
-fn curl_config_with(url: &str, token: Option<&Token>, accept: &str, range: Option<(u64, u64)>) -> Result<String, HfError> {
+fn curl_config_with(
+    url: &str,
+    token: Option<&Token>,
+    accept: &str,
+    range: Option<(u64, u64)>,
+) -> Result<String, HfError> {
     let mut c = format!(
         "url = {}\nheader = {}\nuser-agent = {}\nwrite-out = \"\\n%{{http_code}}\"\n",
         curl_value(url)?,
@@ -657,10 +751,16 @@ fn curl_config_with(url: &str, token: Option<&Token>, accept: &str, range: Optio
         curl_value(&format!("llama-cpp-config/{}", env!("CARGO_PKG_VERSION")))?,
     );
     if let Some((start, end)) = range {
-        c.push_str(&format!("range = \"{start}-{end}\"\nmax-filesize = {}\n", end - start + 1 + 65536));
+        c.push_str(&format!(
+            "range = \"{start}-{end}\"\nmax-filesize = {}\n",
+            end - start + 1 + 65536
+        ));
     }
     if let Some(t) = token {
-        c.push_str(&format!("header = {}\n", curl_value(&format!("Authorization: Bearer {}", t.0))?));
+        c.push_str(&format!(
+            "header = {}\n",
+            curl_value(&format!("Authorization: Bearer {}", t.0))?
+        ));
     }
     Ok(c)
 }
@@ -708,7 +808,10 @@ pub(crate) fn api_error(status: u16, body: &str, had_token: bool, repo: &str) ->
         401 | 404 => HfError::NotFoundOrPrivate { repo },
         403 => HfError::Gated { repo, had_token },
         429 => HfError::Network(strings::t("hf-rate-limited")),
-        _ => HfError::Http { status, message: api_message(body) },
+        _ => HfError::Http {
+            status,
+            message: api_message(body),
+        },
     }
 }
 
@@ -720,12 +823,18 @@ fn api_message(body: &str) -> String {
         .unwrap_or_else(|| body.chars().take(200).collect())
 }
 
-fn api_json(fetch: &dyn Fetch, url: &str, token: Option<&Token>, repo: &str) -> Result<Value, HfError> {
+fn api_json(
+    fetch: &dyn Fetch,
+    url: &str,
+    token: Option<&Token>,
+    repo: &str,
+) -> Result<Value, HfError> {
     let (status, body) = fetch.get(url, token)?;
     if status != 200 {
         return Err(api_error(status, &body, token.is_some(), repo));
     }
-    serde_json::from_str(&body).map_err(|e| HfError::Network(strings::fill("unreadable-answer", &[&url, &e])))
+    serde_json::from_str(&body)
+        .map_err(|e| HfError::Network(strings::fill("unreadable-answer", &[&url, &e])))
 }
 
 // ── The repository listing ───────────────────────────────────────────────
@@ -758,7 +867,9 @@ pub fn safe_repo_path(path: &str) -> bool {
     !path.is_empty()
         && !path.contains(['\\', ':'])
         && !path.chars().any(char::is_control)
-        && path.split('/').all(|seg| !seg.is_empty() && seg != "." && seg != "..")
+        && path
+            .split('/')
+            .all(|seg| !seg.is_empty() && seg != "." && seg != "..")
 }
 
 /// A drafter that can come with a model, by its file-name prefix (llama.cpp's
@@ -872,11 +983,23 @@ pub fn list_repo(spec: &RepoSpec, token: Option<&Token>) -> Result<Listing, HfEr
 
 /// `list_repo` over an injected `Fetch` and endpoint: the refs call for the
 /// commit (as `hf_cache::get_repo_commit`), then the recursive tree at it.
-fn list_repo_with(fetch: &dyn Fetch, endpoint: &str, spec: &RepoSpec, token: Option<&Token>) -> Result<Listing, HfError> {
+fn list_repo_with(
+    fetch: &dyn Fetch,
+    endpoint: &str,
+    spec: &RepoSpec,
+    token: Option<&Token>,
+) -> Result<Listing, HfError> {
     let repo = &spec.repo;
-    let refs = api_json(fetch, &format!("{endpoint}api/models/{repo}/refs"), token, repo)?;
-    let commit = commit_from_refs(&refs)
-        .ok_or_else(|| HfError::Http { status: 200, message: strings::fill("repo-lists-no-branch", &[&repo]) })?;
+    let refs = api_json(
+        fetch,
+        &format!("{endpoint}api/models/{repo}/refs"),
+        token,
+        repo,
+    )?;
+    let commit = commit_from_refs(&refs).ok_or_else(|| HfError::Http {
+        status: 200,
+        message: strings::fill("repo-lists-no-branch", &[&repo]),
+    })?;
     let tree = api_json(
         fetch,
         &format!("{endpoint}api/models/{repo}/tree/{commit}?recursive=true"),
@@ -920,7 +1043,11 @@ fn files_from_tree(tree: &Value) -> Vec<RepoFile> {
         .iter()
         .filter(|i| i.get("type").and_then(Value::as_str) == Some("file"))
         .filter_map(|i| {
-            let path = i.get("path")?.as_str().filter(|p| safe_repo_path(p))?.to_string();
+            let path = i
+                .get("path")?
+                .as_str()
+                .filter(|p| safe_repo_path(p))?
+                .to_string();
             let lfs = i.get("lfs").filter(|l| l.is_object());
             let size = lfs
                 .and_then(|l| l.get("size"))
@@ -940,8 +1067,17 @@ fn files_from_tree(tree: &Value) -> Vec<RepoFile> {
 
 /// Group a file list into candidates (pure; see `Listing`). A path
 /// `safe_repo_path` refuses is dropped here too, whoever built the list.
-fn build_listing(repo: &str, commit: &str, files: Vec<RepoFile>, spec: &RepoSpec, endpoint: &str) -> Result<Listing, HfError> {
-    let files: Vec<RepoFile> = files.into_iter().filter(|f| safe_repo_path(&f.path)).collect();
+fn build_listing(
+    repo: &str,
+    commit: &str,
+    files: Vec<RepoFile>,
+    spec: &RepoSpec,
+    endpoint: &str,
+) -> Result<Listing, HfError> {
+    let files: Vec<RepoFile> = files
+        .into_iter()
+        .filter(|f| safe_repo_path(&f.path))
+        .collect();
     if files.iter().any(|f| f.path == "preset.ini") {
         return Err(HfError::PresetRepo { repo: repo.into() });
     }
@@ -971,7 +1107,10 @@ fn build_listing(repo: &str, commit: &str, files: Vec<RepoFile>, spec: &RepoSpec
     }
     let index_of = |path: &str| candidates.iter().position(|c| c.primary().path == path);
     let default = if let Some(file) = &spec.file {
-        index_of(file).ok_or_else(|| HfError::NoMatch { repo: repo.into(), wanted: file.clone() })?
+        index_of(file).ok_or_else(|| HfError::NoMatch {
+            repo: repo.into(),
+            wanted: file.clone(),
+        })?
     } else {
         let tag = spec.tag.as_deref().unwrap_or("");
         let best = find_best_model(&files, tag);
@@ -1031,10 +1170,15 @@ pub fn parse_query(text: &str) -> Result<String, HfError> {
         return Err(HfError::InvalidSpec(strings::t("enter-a-search")));
     }
     if q.chars().any(char::is_control) {
-        return Err(HfError::InvalidSpec(strings::t("search-control-characters")));
+        return Err(HfError::InvalidSpec(strings::t(
+            "search-control-characters",
+        )));
     }
     if q.chars().count() > QUERY_MAX {
-        return Err(HfError::InvalidSpec(strings::fill("search-too-long", &[&QUERY_MAX])));
+        return Err(HfError::InvalidSpec(strings::fill(
+            "search-too-long",
+            &[&QUERY_MAX],
+        )));
     }
     Ok(q)
 }
@@ -1167,13 +1311,20 @@ fn name_says_moe(repo: &str) -> bool {
         let active = tok
             .strip_prefix('a')
             .and_then(|r| r.strip_suffix('b'))
-            .is_some_and(|n| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit() || c == '.') && n.starts_with(|c: char| c.is_ascii_digit()));
-        let experts = tok.strip_suffix('b').and_then(|r| r.split_once('x')).is_some_and(|(a, b)| {
-            !a.is_empty()
-                && !b.is_empty()
-                && a.chars().all(|c| c.is_ascii_digit())
-                && b.chars().all(|c| c.is_ascii_digit() || c == '.')
-        });
+            .is_some_and(|n| {
+                !n.is_empty()
+                    && n.chars().all(|c| c.is_ascii_digit() || c == '.')
+                    && n.starts_with(|c: char| c.is_ascii_digit())
+            });
+        let experts = tok
+            .strip_suffix('b')
+            .and_then(|r| r.split_once('x'))
+            .is_some_and(|(a, b)| {
+                !a.is_empty()
+                    && !b.is_empty()
+                    && a.chars().all(|c| c.is_ascii_digit())
+                    && b.chars().all(|c| c.is_ascii_digit() || c == '.')
+            });
         active || experts
     })
 }
@@ -1265,9 +1416,14 @@ pub(crate) fn percent_encode(s: &str) -> String {
 /// token's fault, a 429 a rate limit, anything else the API's own message.
 fn search_error(status: u16, body: &str, had_token: bool) -> HfError {
     match status {
-        401 if had_token => HfError::TokenRejected { repo: strings::t("the-search") },
+        401 if had_token => HfError::TokenRejected {
+            repo: strings::t("the-search"),
+        },
         429 => HfError::Network(strings::t("hf-rate-limited")),
-        _ => HfError::Http { status, message: api_message(body) },
+        _ => HfError::Http {
+            status,
+            message: api_message(body),
+        },
     }
 }
 
@@ -1286,21 +1442,36 @@ fn hits_from_search(v: &Value) -> Result<Vec<SearchHit>, HfError> {
     Ok(items
         .iter()
         .filter_map(|m| {
-            let repo = m.get("id")?.as_str().filter(|id| valid_repo_id(id))?.to_string();
+            let repo = m
+                .get("id")?
+                .as_str()
+                .filter(|id| valid_repo_id(id))?
+                .to_string();
             let gguf = m.get("gguf");
-            let arch = gguf.and_then(|g| g.get("architecture")).and_then(Value::as_str);
+            let arch = gguf
+                .and_then(|g| g.get("architecture"))
+                .and_then(Value::as_str);
             let kind = model_kind(arch, &repo);
-            let params = gguf.and_then(|g| g.get("total")).and_then(Value::as_u64).filter(|&n| n > 0);
+            let params = gguf
+                .and_then(|g| g.get("total"))
+                .and_then(Value::as_u64)
+                .filter(|&n| n > 0);
             let files: Vec<&str> = m
                 .get("siblings")
                 .and_then(Value::as_array)
-                .map(|s| s.iter().filter_map(|f| f.get("rfilename")?.as_str()).collect())
+                .map(|s| {
+                    s.iter()
+                        .filter_map(|f| f.get("rfilename")?.as_str())
+                        .collect()
+                })
                 .unwrap_or_default();
             let ggufs = || files.iter().filter(|f| f.ends_with(".gguf"));
             Some(SearchHit {
                 downloads: m.get("downloads").and_then(Value::as_u64).unwrap_or(0),
                 // `false`, or the gating mode as a string.
-                gated: m.get("gated").is_some_and(|g| g.as_bool().unwrap_or(!g.is_null())),
+                gated: m
+                    .get("gated")
+                    .is_some_and(|g| g.as_bool().unwrap_or(!g.is_null())),
                 private: m.get("private").and_then(Value::as_bool).unwrap_or(false),
                 quants: quants_of(&files),
                 mmproj: ggufs().any(|f| f.contains("mmproj")),
@@ -1330,7 +1501,10 @@ pub fn quants_of(paths: &[&str]) -> Vec<String> {
         }
         let entry = if s.tag.is_empty() {
             let name = p.rsplit('/').next().unwrap_or(p);
-            (i64::MAX, name.strip_suffix(".gguf").unwrap_or(name).to_string())
+            (
+                i64::MAX,
+                name.strip_suffix(".gguf").unwrap_or(name).to_string(),
+            )
         } else {
             let bits = bits_of_tag(&s.tag);
             (if bits == 0 { i64::MAX } else { bits }, s.tag)
@@ -1384,7 +1558,12 @@ fn split_info(path: &str) -> SplitInfo {
         .filter(|t| !t.is_empty() && t.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'))
         .map(str::to_ascii_uppercase)
         .unwrap_or_default();
-    SplitInfo { prefix: prefix.to_string(), tag, index, count }
+    SplitInfo {
+        prefix: prefix.to_string(),
+        tag,
+        index,
+        count,
+    }
 }
 
 /// `extract_quant_bits`: the number after the tag's first digit run starts
@@ -1397,7 +1576,10 @@ pub(crate) fn bits_of_tag(tag: &str) -> i64 {
     let Some(pos) = tag.find(|c: char| c.is_ascii_digit()) else {
         return 0;
     };
-    let digits: String = tag[pos..].chars().take_while(char::is_ascii_digit).collect();
+    let digits: String = tag[pos..]
+        .chars()
+        .take_while(char::is_ascii_digit)
+        .collect();
     digits.parse().unwrap_or(i64::MAX)
 }
 
@@ -1429,7 +1611,10 @@ fn mmproj_target_name(model_file: &str, mmproj_file: &str) -> String {
         // The tag is the prefix's tail, upper-cased: cut by length.
         let cut = base.len() - model.tag.len();
         base = base[..cut].strip_suffix(['-', '.']).unwrap_or(&base[..cut]);
-        if let Some(b) = base.strip_suffix("-UD").or_else(|| base.strip_suffix("-ud")) {
+        if let Some(b) = base
+            .strip_suffix("-UD")
+            .or_else(|| base.strip_suffix("-ud"))
+        {
             base = b;
         }
     }
@@ -1488,7 +1673,11 @@ fn has_tag_token(path: &str, tag: &str) -> bool {
 /// (case-insensitive, [`has_tag_token`]) that is not a later shard; with no tag, `Q4_K_M`, then
 /// `Q8_0`, then the first model file. An empty `path` when nothing matches.
 fn find_best_model(files: &[RepoFile], tag: &str) -> RepoFile {
-    let tags: Vec<&str> = if tag.is_empty() { vec!["Q4_K_M", "Q8_0"] } else { vec![tag] };
+    let tags: Vec<&str> = if tag.is_empty() {
+        vec!["Q4_K_M", "Q8_0"]
+    } else {
+        vec![tag]
+    };
     let first_shard = |f: &RepoFile| {
         let s = split_info(&f.path);
         !(s.count > 1 && s.index != 1)
@@ -1496,17 +1685,26 @@ fn find_best_model(files: &[RepoFile], tag: &str) -> RepoFile {
     for t in tags {
         let t = t.to_ascii_lowercase();
         if let Some(f) = files.iter().find(|f| {
-            is_model_file(&f.path) && has_tag_token(&f.path.to_ascii_lowercase(), &t) && first_shard(f)
+            is_model_file(&f.path)
+                && has_tag_token(&f.path.to_ascii_lowercase(), &t)
+                && first_shard(f)
         }) {
             return f.clone();
         }
     }
     if tag.is_empty() {
-        if let Some(f) = files.iter().find(|f| is_model_file(&f.path) && first_shard(f)) {
+        if let Some(f) = files
+            .iter()
+            .find(|f| is_model_file(&f.path) && first_shard(f))
+        {
             return f.clone();
         }
     }
-    RepoFile { path: String::new(), size: 0, oid: String::new() }
+    RepoFile {
+        path: String::new(),
+        size: 0,
+        oid: String::new(),
+    }
 }
 
 /// `find_best_sibling`: among the `.gguf` files whose path contains `keyword`
@@ -1516,7 +1714,11 @@ fn find_best_model(files: &[RepoFile], tag: &str) -> RepoFile {
 /// none qualifies.
 fn find_best_sibling(files: &[RepoFile], model: &str, keyword: &str, tag: &str) -> RepoFile {
     let tag_upper = tag.to_ascii_uppercase();
-    let model_bits = if tag_upper.is_empty() { quant_bits(model) } else { bits_of_tag(&tag_upper) };
+    let model_bits = if tag_upper.is_empty() {
+        quant_bits(model)
+    } else {
+        bits_of_tag(&tag_upper)
+    };
     let model_parts: Vec<&str> = model.split('/').collect();
     let model_dir = &model_parts[..model_parts.len() - 1];
 
@@ -1536,19 +1738,27 @@ fn find_best_sibling(files: &[RepoFile], model: &str, keyword: &str, tag: &str) 
             continue;
         }
         let diff = (quant_bits(&f.path) - model_bits).abs();
-        let exact = !tag_upper.is_empty() && f.path.to_ascii_uppercase().contains(&format!("-{tag_upper}."));
+        let exact = !tag_upper.is_empty()
+            && f.path
+                .to_ascii_uppercase()
+                .contains(&format!("-{tag_upper}."));
         let better = match best {
             None => true,
             Some((_, bd, bdiff, bexact)) => {
-                depth > bd || (depth == bd && exact && !bexact) || (depth == bd && exact == bexact && diff < bdiff)
+                depth > bd
+                    || (depth == bd && exact && !bexact)
+                    || (depth == bd && exact == bexact && diff < bdiff)
             }
         };
         if better {
             best = Some((f, depth, diff, exact));
         }
     }
-    best.map(|b| b.0.clone())
-        .unwrap_or(RepoFile { path: String::new(), size: 0, oid: String::new() })
+    best.map(|b| b.0.clone()).unwrap_or(RepoFile {
+        path: String::new(),
+        size: 0,
+        oid: String::new(),
+    })
 }
 
 // ── Download: the job, its placements, progress ──────────────────────────
@@ -1602,7 +1812,9 @@ impl DownloadJob {
     ) -> Result<DownloadJob, HfError> {
         let server_exe = crate::paths::llama_server_exe()
             .ok_or_else(|| HfError::MissingTool(strings::t("server-not-found-for-download")))?;
-        DownloadJob::for_server(listing, index, mmproj, sidecar, models_dir, token, server_exe)
+        DownloadJob::for_server(
+            listing, index, mmproj, sidecar, models_dir, token, server_exe,
+        )
     }
 
     /// `new` with the child's executable given: the GUI's background download
@@ -1621,7 +1833,10 @@ impl DownloadJob {
             .candidates
             .get(index)
             .cloned()
-            .ok_or_else(|| HfError::NoMatch { repo: listing.repo.clone(), wanted: strings::fill("candidate-numbered", &[&index]) })?;
+            .ok_or_else(|| HfError::NoMatch {
+                repo: listing.repo.clone(),
+                wanted: strings::fill("candidate-numbered", &[&index]),
+            })?;
         if let Some(s) = sidecar {
             if candidate.sidecar(s).is_none() {
                 return Err(HfError::SidecarMissing { what: s.label() });
@@ -1653,7 +1868,10 @@ impl DownloadJob {
     /// is touched.
     pub fn placements(&self) -> Result<Vec<Placement>, HfError> {
         if !valid_repo_id(&self.repo) {
-            return Err(HfError::InvalidSpec(strings::fill("not-a-repo-id", &[&self.repo])));
+            return Err(HfError::InvalidSpec(strings::fill(
+                "not-a-repo-id",
+                &[&self.repo],
+            )));
         }
         let (org, name) = self.repo.split_once('/').unwrap_or(("", &self.repo));
         let place = |role: Role, file: &RepoFile| -> Result<Placement, HfError> {
@@ -1662,7 +1880,12 @@ impl DownloadJob {
                 Role::Mmproj => crate::model_scan::Category::Mmproj.subdir(),
                 Role::Draft(s) => s.subdir(),
             };
-            let refused = || HfError::InvalidSpec(strings::fill("refused-repo-path", &[&format!("{:?}", file.path)]));
+            let refused = || {
+                HfError::InvalidSpec(strings::fill(
+                    "refused-repo-path",
+                    &[&format!("{:?}", file.path)],
+                ))
+            };
             if !safe_repo_path(&file.path) {
                 return Err(refused());
             }
@@ -1683,7 +1906,11 @@ impl DownloadJob {
             if !lexically_under(&target, &root) || target == root {
                 return Err(refused());
             }
-            Ok(Placement { role, target, file: file.clone() })
+            Ok(Placement {
+                role,
+                target,
+                file: file.clone(),
+            })
         };
         let mut out: Vec<Placement> = self
             .candidate
@@ -1750,7 +1977,13 @@ impl Tracker {
             files: placements
                 .iter()
                 .zip(present)
-                .map(|(p, &here)| (p.file.path.clone(), p.file.size, if here { p.file.size } else { 0 }))
+                .map(|(p, &here)| {
+                    (
+                        p.file.path.clone(),
+                        p.file.size,
+                        if here { p.file.size } else { 0 },
+                    )
+                })
                 .collect(),
             current: String::new(),
         }
@@ -1788,7 +2021,10 @@ impl Tracker {
     }
 
     fn progress(&self) -> Progress {
-        let current = self.files.iter().find(|f| !self.current.is_empty() && f.0 == self.current);
+        let current = self
+            .files
+            .iter()
+            .find(|f| !self.current.is_empty() && f.0 == self.current);
         Progress {
             done: self.files.iter().map(|f| f.2.min(f.1)).sum(),
             total: self.files.iter().map(|f| f.1).sum(),
@@ -1805,7 +2041,11 @@ impl Tracker {
 
 #[derive(Debug, PartialEq)]
 enum ChildEvent {
-    Progress { url: String, downloaded: u64, total: u64 },
+    Progress {
+        url: String,
+        downloaded: u64,
+        total: u64,
+    },
     Finished,
     Failed,
 }
@@ -1817,7 +2057,8 @@ fn parse_child_line(line: &str) -> Result<Option<ChildEvent>, String> {
     let Some(json) = line.trim_end().strip_prefix(CHILD_STATE_PREFIX) else {
         return Ok(None);
     };
-    let v: Value = serde_json::from_str(json).map_err(|e| strings::fill("unreadable-state-line", &[&e, &line]))?;
+    let v: Value = serde_json::from_str(json)
+        .map_err(|e| strings::fill("unreadable-state-line", &[&e, &line]))?;
     let state = v.get("state").and_then(Value::as_str).unwrap_or("");
     if state != "downloading" {
         return Err(strings::fill("unexpected-child-state", &[&state, &line]));
@@ -1833,7 +2074,10 @@ fn parse_child_line(line: &str) -> Result<Option<ChildEvent>, String> {
     match payload.get("url").and_then(Value::as_str) {
         Some(url) if !url.is_empty() => Ok(Some(ChildEvent::Progress {
             url: url.to_string(),
-            downloaded: payload.get("downloaded").and_then(Value::as_u64).unwrap_or(0),
+            downloaded: payload
+                .get("downloaded")
+                .and_then(Value::as_u64)
+                .unwrap_or(0),
             total: payload.get("total").and_then(Value::as_u64).unwrap_or(0),
         })),
         _ => Err(strings::fill("state-line-no-url", &[&line])),
@@ -1871,7 +2115,10 @@ const CHILD_ENV_CLEARED: [&str; 12] = [
 /// The child's environment, minus `CHILD_ENV_CLEARED` (an `LLAMA_ARG_MODEL`
 /// from the user's shell would make it a local-model child). The token rides
 /// `HF_TOKEN`, never an argv.
-fn child_env(job: &DownloadJob, hf_file: &str) -> (Vec<(&'static str, String)>, [&'static str; 12]) {
+fn child_env(
+    job: &DownloadJob,
+    hf_file: &str,
+) -> (Vec<(&'static str, String)>, [&'static str; 12]) {
     let mut set = vec![
         // Its presence alone makes the process a router child; no port is
         // opened in download mode, so the number is never used.
@@ -1898,10 +2145,15 @@ const CHILD_ARGS: [&str; 1] = ["--no-mmproj"];
 /// transfer, `error writing to file` when a write fails).
 fn classify_failure(lines: &[String], had_token: bool, repo: &str) -> HfError {
     let all = lines.join("\n").to_ascii_lowercase();
-    let status = |n: &str| all.contains(&format!("({n})")) || all.contains(&format!("status code: {n}"));
+    let status =
+        |n: &str| all.contains(&format!("({n})")) || all.contains(&format!("status code: {n}"));
     let repo = repo.to_string();
     if status("401") {
-        return if had_token { HfError::TokenRejected { repo } } else { HfError::NotFoundOrPrivate { repo } };
+        return if had_token {
+            HfError::TokenRejected { repo }
+        } else {
+            HfError::NotFoundOrPrivate { repo }
+        };
     }
     if status("403") {
         return HfError::Gated { repo, had_token };
@@ -1913,15 +2165,26 @@ fn classify_failure(lines: &[String], had_token: bool, repo: &str) -> HfError {
     if all.contains("error opening local file for writing") {
         return HfError::Io(strings::fill("cannot-create-download-file", &[&tail]));
     }
-    if ["error writing to file", "no space left", "not enough space", "disk full"]
-        .iter()
-        .any(|m| all.contains(m))
+    if [
+        "error writing to file",
+        "no space left",
+        "not enough space",
+        "disk full",
+    ]
+    .iter()
+    .any(|m| all.contains(m))
     {
         return HfError::DiskFull(tail);
     }
-    if ["httplib failed", "download failed:", "could not establish connection", "status code: -1", "connection"]
-        .iter()
-        .any(|m| all.contains(m))
+    if [
+        "httplib failed",
+        "download failed:",
+        "could not establish connection",
+        "status code: -1",
+        "connection",
+    ]
+    .iter()
+    .any(|m| all.contains(m))
     {
         return HfError::Network(tail);
     }
@@ -1996,7 +2259,10 @@ fn run_child(
     crate::proc::hide_console(&mut cmd);
     crate::proc::prepend_rocm_path(&mut cmd);
     let mut child = cmd.spawn().map_err(|e| {
-        HfError::MissingTool(strings::fill("server-not-started", &[&job.server_exe.display(), &e]))
+        HfError::MissingTool(strings::fill(
+            "server-not-started",
+            &[&job.server_exe.display(), &e],
+        ))
     })?;
     let mut stdin = child.stdin.take();
 
@@ -2028,7 +2294,11 @@ fn run_child(
     loop {
         match rx.recv_timeout(Duration::from_millis(250)) {
             Ok(line) => match parse_child_line(&line) {
-                Ok(Some(ChildEvent::Progress { url, downloaded, total })) => {
+                Ok(Some(ChildEvent::Progress {
+                    url,
+                    downloaded,
+                    total,
+                })) => {
                     if tracker.update(&url, downloaded, total) {
                         on_progress(&tracker.progress());
                     }
@@ -2082,7 +2352,10 @@ fn run_child(
     let cancelled = cancel.load(Ordering::SeqCst);
 
     if let Some(e) = protocol_error {
-        return Err(HfError::Protocol(strings::fill("protocol-server-said", &[&e, &tail_text(&lines)])));
+        return Err(HfError::Protocol(strings::fill(
+            "protocol-server-said",
+            &[&e, &tail_text(&lines)],
+        )));
     }
     match result {
         Some(ChildEvent::Finished) => Ok(lines),
@@ -2090,7 +2363,10 @@ fn run_child(
         Some(_) => Err(classify_failure(&lines, job.token.is_some(), &job.repo)),
         None => Err(HfError::Protocol(strings::fill(
             "server-ended-no-result",
-            &[&exit.map_or_else(|| strings::t("server-killed"), |s| s.to_string()), &tail_text(&lines)],
+            &[
+                &exit.map_or_else(|| strings::t("server-killed"), |s| s.to_string()),
+                &tail_text(&lines),
+            ],
         ))),
     }
 }
@@ -2103,7 +2379,11 @@ fn run_child(
 fn target_present(target: &Path, expected: u64) -> Result<bool, HfError> {
     match std::fs::metadata(target) {
         Ok(m) if m.is_file() && (expected == 0 || m.len() == expected) => Ok(true),
-        Ok(m) => Err(HfError::TargetConflict { path: target.to_path_buf(), found: m.len(), expected }),
+        Ok(m) => Err(HfError::TargetConflict {
+            path: target.to_path_buf(),
+            found: m.len(),
+            expected,
+        }),
         Err(_) => Ok(false),
     }
 }
@@ -2139,7 +2419,10 @@ pub fn has_partial(models_dir: &Path, repo: &str, candidate: &Candidate) -> bool
         .chain(candidate.dspark.iter());
     files.into_iter().any(|f| {
         let in_blobs = !f.oid.is_empty()
-            && repo_dir.join("blobs").join(format!("{}.downloadInProgress", f.oid)).is_file();
+            && repo_dir
+                .join("blobs")
+                .join(format!("{}.downloadInProgress", f.oid))
+                .is_file();
         in_blobs
             || snapshots.iter().any(|s| {
                 let entry = f.path.split('/').fold(s.clone(), |p, seg| p.join(seg));
@@ -2173,11 +2456,18 @@ fn cached_commit(repo_dir: &Path) -> Option<String> {
 /// llama.cpp's ref names, else the listing's, else any snapshot holding it.
 fn find_staged(repo_dir: &Path, listing_commit: &str, repo_path: &str) -> Option<PathBuf> {
     let snaps = repo_dir.join("snapshots");
-    let rel = |c: &str| repo_path.split('/').fold(snaps.join(c), |p, seg| p.join(seg));
+    let rel = |c: &str| {
+        repo_path
+            .split('/')
+            .fold(snaps.join(c), |p, seg| p.join(seg))
+    };
     let mut commits: Vec<String> = cached_commit(repo_dir).into_iter().collect();
     commits.push(listing_commit.to_string());
     if let Ok(rd) = std::fs::read_dir(&snaps) {
-        commits.extend(rd.flatten().map(|e| e.file_name().to_string_lossy().into_owned()));
+        commits.extend(
+            rd.flatten()
+                .map(|e| e.file_name().to_string_lossy().into_owned()),
+        );
     }
     commits
         .iter()
@@ -2282,7 +2572,12 @@ fn copy_into_place(src: &Path, dst: &Path) -> std::io::Result<()> {
 /// Move one finished group out of staging. A file the child reported but that
 /// is not there is the empty-plan trap (module header): the stderr is
 /// classified, so a swallowed 401 still reads as one.
-fn place_group(job: &DownloadJob, group: &[&Placement], child_log: &[String], tracker: &mut Tracker) -> Result<(), HfError> {
+fn place_group(
+    job: &DownloadJob,
+    group: &[&Placement],
+    child_log: &[String],
+    tracker: &mut Tracker,
+) -> Result<(), HfError> {
     let repo_dir = job.staging().join(repo_folder(&job.repo));
     for p in group {
         if target_present(&p.target, p.file.size)? {
@@ -2290,23 +2585,32 @@ fn place_group(job: &DownloadJob, group: &[&Placement], child_log: &[String], tr
             continue;
         }
         let Some(src) = find_staged(&repo_dir, &job.commit, &p.file.path) else {
-            return Err(match classify_failure(child_log, job.token.is_some(), &job.repo) {
-                HfError::Download(tail) => HfError::Download(strings::fill(
-                    "success-but-missing",
-                    &[&p.file.path, &repo_dir.display(), &tail],
-                )),
-                e => e,
-            });
+            return Err(
+                match classify_failure(child_log, job.token.is_some(), &job.repo) {
+                    HfError::Download(tail) => HfError::Download(strings::fill(
+                        "success-but-missing",
+                        &[&p.file.path, &repo_dir.display(), &tail],
+                    )),
+                    e => e,
+                },
+            );
         };
-        move_real_data(&src, &p.target, &repo_dir)
-            .map_err(|e| HfError::Io(strings::fill("moving-failed", &[&p.file.path, &p.target.display(), &e])))?;
+        move_real_data(&src, &p.target, &repo_dir).map_err(|e| {
+            HfError::Io(strings::fill(
+                "moving-failed",
+                &[&p.file.path, &p.target.display(), &e],
+            ))
+        })?;
         let got = std::fs::metadata(&p.target).map(|m| m.len()).unwrap_or(0);
         if p.file.size > 0 && got != p.file.size {
             // A wrong-sized file left at the target would be refused as a
             // TargetConflict by every retry: it goes, and the retry fetches
             // it again.
             let _ = std::fs::remove_file(&p.target);
-            return Err(HfError::Io(strings::fill("size-mismatch-removed", &[&p.file.path, &got, &p.file.size])));
+            return Err(HfError::Io(strings::fill(
+                "size-mismatch-removed",
+                &[&p.file.path, &got, &p.file.size],
+            )));
         }
         tracker.complete(&p.file.path);
     }
@@ -2368,13 +2672,20 @@ pub fn run_download(
         let _ = std::fs::remove_dir(job.staging());
     }
 
-    let target = |role: Role| placements.iter().find(|p| p.role == role).map(|p| p.target.clone());
+    let target = |role: Role| {
+        placements
+            .iter()
+            .find(|p| p.role == role)
+            .map(|p| p.target.clone())
+    };
     Ok(Downloaded {
         repo: job.repo.clone(),
         project_url: job.project_url.clone(),
         model: target(Role::Model).unwrap_or_default(),
         mmproj: target(Role::Mmproj),
-        draft: job.sidecar.and_then(|s| target(Role::Draft(s)).map(|t| (s, t))),
+        draft: job
+            .sidecar
+            .and_then(|s| target(Role::Draft(s)).map(|t| (s, t))),
     })
 }
 
@@ -2519,7 +2830,11 @@ pub fn derive_preset(
 /// `budget` is the machine the dialog or `--list` estimated against
 /// (`hf_fit::budget`), `None` without a GPU: the placement is then left out,
 /// as it is when the downloaded header cannot be read.
-pub fn preset_from_download(d: &Downloaded, existing_ids: &[String], budget: Option<&hf_fit::Budget>) -> Preset {
+pub fn preset_from_download(
+    d: &Downloaded,
+    existing_ids: &[String],
+    budget: Option<&hf_fit::Budget>,
+) -> Preset {
     let id = presets::new_preset_id(&d.model.to_string_lossy(), existing_ids);
     let info = gguf::read_model_info(&d.model);
     let spec = d.draft.as_ref().and_then(|(_, p)| gguf::draft_spec_type(p));
@@ -2538,7 +2853,8 @@ pub fn local_extras(d: &Downloaded) -> hf_fit::Extras {
     hf_fit::Extras {
         mmproj: d.mmproj.as_deref().map_or(0, size),
         drafter: d.draft.as_ref().map(|(kind, path)| {
-            let shape = hf_fit::local_draft_shape(path).unwrap_or_else(|_| hf_fit::DraftShape::from_size(size(path)));
+            let shape = hf_fit::local_draft_shape(path)
+                .unwrap_or_else(|_| hf_fit::DraftShape::from_size(size(path)));
             (format!("{} drafter", kind.label()), shape)
         }),
     }
@@ -2584,23 +2900,47 @@ mod tests {
     const COMMIT: &str = "0123456789abcdef0123456789abcdef01234567";
 
     fn f(path: &str, size: u64) -> RepoFile {
-        RepoFile { path: path.into(), size, oid: format!("oid-{path}") }
+        RepoFile {
+            path: path.into(),
+            size,
+            oid: format!("oid-{path}"),
+        }
     }
 
     fn spec(repo: &str, tag: Option<&str>) -> RepoSpec {
-        RepoSpec { repo: repo.into(), tag: tag.map(str::to_string), file: None }
+        RepoSpec {
+            repo: repo.into(),
+            tag: tag.map(str::to_string),
+            file: None,
+        }
     }
 
     // ── spec ──
 
     #[test]
     fn spec_parses_the_three_forms() {
-        assert_eq!(parse_spec(" unsloth/Qwen3-8B-GGUF ").unwrap(), spec("unsloth/Qwen3-8B-GGUF", None));
-        assert_eq!(parse_spec("org/repo:q4_k_m").unwrap(), spec("org/repo", Some("q4_k_m")));
-        assert_eq!(parse_spec("https://huggingface.co/org/repo").unwrap(), spec("org/repo", None));
-        assert_eq!(parse_spec("huggingface.co/org/repo/tree/main?x=1#y").unwrap(), spec("org/repo", None));
-        assert_eq!(parse_spec("HTTPS://hf.co/org/repo:Q8_0").unwrap(), spec("org/repo", Some("Q8_0")));
-        let blob = parse_spec("https://huggingface.co/org/repo/blob/main/sub/m-Q4_K_M.gguf").unwrap();
+        assert_eq!(
+            parse_spec(" unsloth/Qwen3-8B-GGUF ").unwrap(),
+            spec("unsloth/Qwen3-8B-GGUF", None)
+        );
+        assert_eq!(
+            parse_spec("org/repo:q4_k_m").unwrap(),
+            spec("org/repo", Some("q4_k_m"))
+        );
+        assert_eq!(
+            parse_spec("https://huggingface.co/org/repo").unwrap(),
+            spec("org/repo", None)
+        );
+        assert_eq!(
+            parse_spec("huggingface.co/org/repo/tree/main?x=1#y").unwrap(),
+            spec("org/repo", None)
+        );
+        assert_eq!(
+            parse_spec("HTTPS://hf.co/org/repo:Q8_0").unwrap(),
+            spec("org/repo", Some("Q8_0"))
+        );
+        let blob =
+            parse_spec("https://huggingface.co/org/repo/blob/main/sub/m-Q4_K_M.gguf").unwrap();
         assert_eq!(blob.file.as_deref(), Some("sub/m-Q4_K_M.gguf"));
         assert_eq!(blob.repo, "org/repo");
     }
@@ -2633,37 +2973,69 @@ mod tests {
         assert!(Token::new("hf_a b").is_err());
         assert!(Token::new("hf_\"x").is_err());
         assert!(Token::new("  ").is_err());
-        assert_eq!(redact("Bearer hf_abcdefghijklmnopqrstuvwxyz0123456789 bad", Some(&t)), "Bearer *** bad");
+        assert_eq!(
+            redact(
+                "Bearer hf_abcdefghijklmnopqrstuvwxyz0123456789 bad",
+                Some(&t)
+            ),
+            "Bearer *** bad"
+        );
         assert_eq!(redact("plain", None), "plain");
     }
 
     #[test]
     fn token_comes_from_env_then_the_cli_token_file() {
-        let read = |p: &Path| (p == Path::new("/h/.cache/huggingface/token")).then(|| "hf_file\n".to_string());
+        let read = |p: &Path| {
+            (p == Path::new("/h/.cache/huggingface/token")).then(|| "hf_file\n".to_string())
+        };
         let home = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
         let env = |vars: Vec<(&'static str, &'static str)>| {
             let m: HashMap<&str, &str> = vars.into_iter().collect();
             move |k: &str| m.get(k).map(|v| v.to_string())
         };
-        assert_eq!(token_from(env(vec![("HF_TOKEN", "hf_env"), (home, "/h")]), read), Some(Token("hf_env".into())));
-        assert_eq!(token_from(env(vec![(home, "/h")]), read), Some(Token("hf_file".into())));
+        assert_eq!(
+            token_from(env(vec![("HF_TOKEN", "hf_env"), (home, "/h")]), read),
+            Some(Token("hf_env".into()))
+        );
+        assert_eq!(
+            token_from(env(vec![(home, "/h")]), read),
+            Some(Token("hf_file".into()))
+        );
         // A padded HF_TOKEN is trimmed; a blank one falls through to the file.
-        assert_eq!(token_from(env(vec![("HF_TOKEN", " hf_env \n"), (home, "/h")]), read), Some(Token("hf_env".into())));
-        assert_eq!(token_from(env(vec![("HF_TOKEN", "  "), (home, "/h")]), read), Some(Token("hf_file".into())));
+        assert_eq!(
+            token_from(env(vec![("HF_TOKEN", " hf_env \n"), (home, "/h")]), read),
+            Some(Token("hf_env".into()))
+        );
+        assert_eq!(
+            token_from(env(vec![("HF_TOKEN", "  "), (home, "/h")]), read),
+            Some(Token("hf_file".into()))
+        );
         // HF_HOME moves the file; a missing file is no token, not an error.
-        assert_eq!(token_from(env(vec![("HF_HOME", "/elsewhere"), (home, "/h")]), read), None);
+        assert_eq!(
+            token_from(env(vec![("HF_HOME", "/elsewhere"), (home, "/h")]), read),
+            None
+        );
         assert_eq!(token_from(env(vec![]), read), None);
     }
 
     #[test]
     fn endpoint_follows_llama_cpp_precedence() {
         assert_eq!(endpoint_from(None, None), "https://huggingface.co/");
-        assert_eq!(endpoint_from(None, Some("https://mirror.test".into())), "https://mirror.test/");
         assert_eq!(
-            endpoint_from(Some("https://a.test/".into()), Some("https://b.test".into())),
+            endpoint_from(None, Some("https://mirror.test".into())),
+            "https://mirror.test/"
+        );
+        assert_eq!(
+            endpoint_from(
+                Some("https://a.test/".into()),
+                Some("https://b.test".into())
+            ),
             "https://a.test/"
         );
-        assert_eq!(endpoint_from(Some(String::new()), None), "https://huggingface.co/");
+        assert_eq!(
+            endpoint_from(Some(String::new()), None),
+            "https://huggingface.co/"
+        );
     }
 
     // ── curl plumbing ──
@@ -2677,8 +3049,17 @@ mod tests {
         assert!(c.contains("write-out = \"\\n%{http_code}\"\n"));
         assert!(!c.contains("range"));
         assert!(!curl_config("u", None).unwrap().contains("Authorization"));
-        let r = curl_config_with("https://h/o/r/resolve/c/m.gguf", None, "*/*", Some((0, 1023))).unwrap();
-        assert!(r.contains("range = \"0-1023\"\nmax-filesize = 66560\n"), "{r}");
+        let r = curl_config_with(
+            "https://h/o/r/resolve/c/m.gguf",
+            None,
+            "*/*",
+            Some((0, 1023)),
+        )
+        .unwrap();
+        assert!(
+            r.contains("range = \"0-1023\"\nmax-filesize = 66560\n"),
+            "{r}"
+        );
     }
 
     #[test]
@@ -2686,28 +3067,50 @@ mod tests {
         assert_eq!(curl_value(r#"a"b\c"#).unwrap(), r#""a\"b\\c""#);
         // A newline would end the line and start an option of its own.
         for bad in ["u\nurl = \"https://evil\"", "u\r", "u\0", "u\u{1b}"] {
-            assert!(matches!(curl_config(bad, None), Err(HfError::InvalidSpec(_))), "{bad:?}");
+            assert!(
+                matches!(curl_config(bad, None), Err(HfError::InvalidSpec(_))),
+                "{bad:?}"
+            );
         }
         let c = curl_config("https://h/x\"y", None).unwrap();
         assert!(c.starts_with("url = \"https://h/x\\\"y\"\n"), "{c}");
-        assert_eq!(c.lines().count(), 4, "one line per option, nothing smuggled");
+        assert_eq!(
+            c.lines().count(),
+            4,
+            "one line per option, nothing smuggled"
+        );
     }
 
     #[test]
     fn binary_curl_output_splits_at_the_last_newline() {
         let mut out = b"GGUF\n\x00\x01\n".to_vec();
         out.extend_from_slice(b"\n206");
-        assert_eq!(parse_curl_bytes(out).unwrap(), (206, b"GGUF\n\x00\x01\n".to_vec()));
-        assert!(matches!(parse_curl_bytes(b"\n000".to_vec()), Err(HfError::Network(_))));
+        assert_eq!(
+            parse_curl_bytes(out).unwrap(),
+            (206, b"GGUF\n\x00\x01\n".to_vec())
+        );
+        assert!(matches!(
+            parse_curl_bytes(b"\n000".to_vec()),
+            Err(HfError::Network(_))
+        ));
         assert!(parse_curl_bytes(b"junk".to_vec()).is_err());
     }
 
     #[test]
     fn curl_output_splits_body_and_status() {
-        assert_eq!(parse_curl_output("{\"a\":1}\n200").unwrap(), (200, "{\"a\":1}".into()));
-        assert_eq!(parse_curl_output("line1\nline2\n404").unwrap(), (404, "line1\nline2".into()));
+        assert_eq!(
+            parse_curl_output("{\"a\":1}\n200").unwrap(),
+            (200, "{\"a\":1}".into())
+        );
+        assert_eq!(
+            parse_curl_output("line1\nline2\n404").unwrap(),
+            (404, "line1\nline2".into())
+        );
         assert!(parse_curl_output("garbage").is_err());
-        assert!(matches!(parse_curl_output("\n000"), Err(HfError::Network(_))));
+        assert!(matches!(
+            parse_curl_output("\n000"),
+            Err(HfError::Network(_))
+        ));
     }
 
     #[test]
@@ -2719,13 +3122,31 @@ mod tests {
 
     #[test]
     fn api_statuses_map_to_actionable_errors() {
-        assert_eq!(api_error(404, "", false, "o/r"), HfError::NotFoundOrPrivate { repo: "o/r".into() });
-        assert_eq!(api_error(401, "", false, "o/r"), HfError::NotFoundOrPrivate { repo: "o/r".into() });
-        assert_eq!(api_error(401, "", true, "o/r"), HfError::TokenRejected { repo: "o/r".into() });
-        assert_eq!(api_error(403, "", true, "o/r"), HfError::Gated { repo: "o/r".into(), had_token: true });
+        assert_eq!(
+            api_error(404, "", false, "o/r"),
+            HfError::NotFoundOrPrivate { repo: "o/r".into() }
+        );
+        assert_eq!(
+            api_error(401, "", false, "o/r"),
+            HfError::NotFoundOrPrivate { repo: "o/r".into() }
+        );
+        assert_eq!(
+            api_error(401, "", true, "o/r"),
+            HfError::TokenRejected { repo: "o/r".into() }
+        );
+        assert_eq!(
+            api_error(403, "", true, "o/r"),
+            HfError::Gated {
+                repo: "o/r".into(),
+                had_token: true
+            }
+        );
         assert_eq!(
             api_error(500, "{\"error\":\"oops\"}", false, "o/r"),
-            HfError::Http { status: 500, message: "oops".into() }
+            HfError::Http {
+                status: 500,
+                message: "oops".into()
+            }
         );
     }
 
@@ -2748,7 +3169,14 @@ mod tests {
     fn model_files_exclude_sidecars_by_file_name_only() {
         assert!(is_model_file("Qwen3-8B-Q4_K_M.gguf"));
         assert!(is_model_file("mmproj-dir/Qwen3-8B-Q4_K_M.gguf"));
-        for side in ["mmproj-F16.gguf", "mtp-Q8_0.gguf", "x-dflash-Q4.gguf", "dspark-q.gguf", "imatrix.gguf", "eagle3-a.gguf"] {
+        for side in [
+            "mmproj-F16.gguf",
+            "mtp-Q8_0.gguf",
+            "x-dflash-Q4.gguf",
+            "dspark-q.gguf",
+            "imatrix.gguf",
+            "eagle3-a.gguf",
+        ] {
             assert!(!is_model_file(side), "{side}");
         }
         assert!(!is_model_file("README.md"));
@@ -2756,7 +3184,11 @@ mod tests {
 
     #[test]
     fn best_model_prefers_q4_k_m_then_q8_0_then_the_first() {
-        let files = vec![f("m-Q8_0.gguf", 8), f("m-Q4_K_M.gguf", 4), f("m-Q2_K.gguf", 2)];
+        let files = vec![
+            f("m-Q8_0.gguf", 8),
+            f("m-Q4_K_M.gguf", 4),
+            f("m-Q2_K.gguf", 2),
+        ];
         assert_eq!(find_best_model(&files, "").path, "m-Q4_K_M.gguf");
         assert_eq!(find_best_model(&files, "q2_k").path, "m-Q2_K.gguf");
         assert_eq!(find_best_model(&files, "Q5_K_M").path, "");
@@ -2765,12 +3197,21 @@ mod tests {
         let twins = [f("m-BF16.gguf", 1), f("m-F16.gguf", 1)];
         assert_eq!(find_best_model(&twins, "F16").path, "m-F16.gguf");
         assert_eq!(find_best_model(&[f("m_Q8_0.gguf", 1)], "Q8_0").path, "");
-        assert_eq!(find_best_model(&[f("Q8_0/Q8_0.gguf", 1)], "Q8_0").path, "Q8_0/Q8_0.gguf");
+        assert_eq!(
+            find_best_model(&[f("Q8_0/Q8_0.gguf", 1)], "Q8_0").path,
+            "Q8_0/Q8_0.gguf"
+        );
         let only = vec![f("m-IQ3_XS.gguf", 3)];
         assert_eq!(find_best_model(&only, "").path, "m-IQ3_XS.gguf");
         // A later shard never wins, even when it comes first.
-        let split = vec![f("m-Q4_K_M-00002-of-00002.gguf", 1), f("m-Q4_K_M-00001-of-00002.gguf", 1)];
-        assert_eq!(find_best_model(&split, "").path, "m-Q4_K_M-00001-of-00002.gguf");
+        let split = vec![
+            f("m-Q4_K_M-00002-of-00002.gguf", 1),
+            f("m-Q4_K_M-00001-of-00002.gguf", 1),
+        ];
+        assert_eq!(
+            find_best_model(&split, "").path,
+            "m-Q4_K_M-00001-of-00002.gguf"
+        );
     }
 
     #[test]
@@ -2784,13 +3225,25 @@ mod tests {
             f("other/mmproj-Q8_0.gguf", 1),
         ];
         // A root model: the root projectors only (not other/), closest bits to 8.
-        assert_eq!(find_best_sibling(&files, "m-Q8_0.gguf", "mmproj", "").path, "mmproj-F16.gguf");
+        assert_eq!(
+            find_best_sibling(&files, "m-Q8_0.gguf", "mmproj", "").path,
+            "mmproj-F16.gguf"
+        );
         // A model in BF16/: its own directory wins over the root.
-        assert_eq!(find_best_sibling(&files, "BF16/m-BF16.gguf", "mmproj", "").path, "BF16/mmproj-BF16.gguf");
+        assert_eq!(
+            find_best_sibling(&files, "BF16/m-BF16.gguf", "mmproj", "").path,
+            "BF16/mmproj-BF16.gguf"
+        );
         // An exact tag beats closer bits.
         let mtps = vec![f("mtp-Q4_0.gguf", 1), f("mtp-Q8_0.gguf", 1)];
-        assert_eq!(find_best_sibling(&mtps, "m-Q8_0.gguf", "mtp-", "Q8_0").path, "mtp-Q8_0.gguf");
-        assert_eq!(find_best_sibling(&mtps, "m-Q4_K_M.gguf", "mtp-", "Q4_K_M").path, "mtp-Q4_0.gguf");
+        assert_eq!(
+            find_best_sibling(&mtps, "m-Q8_0.gguf", "mtp-", "Q8_0").path,
+            "mtp-Q8_0.gguf"
+        );
+        assert_eq!(
+            find_best_sibling(&mtps, "m-Q4_K_M.gguf", "mtp-", "Q4_K_M").path,
+            "mtp-Q4_0.gguf"
+        );
         assert_eq!(find_best_sibling(&mtps, "m.gguf", "dflash-", "").path, "");
     }
 
@@ -2800,9 +3253,18 @@ mod tests {
     struct Canned(HashMap<String, (u16, String)>);
     impl Fetch for Canned {
         fn get(&self, url: &str, _token: Option<&Token>) -> Result<(u16, String), HfError> {
-            self.0.get(url).cloned().ok_or_else(|| HfError::Network(format!("unexpected url {url}")))
+            self.0
+                .get(url)
+                .cloned()
+                .ok_or_else(|| HfError::Network(format!("unexpected url {url}")))
         }
-        fn get_range(&self, url: &str, _token: Option<&Token>, _start: u64, _len: u64) -> Result<(u16, Vec<u8>), HfError> {
+        fn get_range(
+            &self,
+            url: &str,
+            _token: Option<&Token>,
+            _start: u64,
+            _len: u64,
+        ) -> Result<(u16, Vec<u8>), HfError> {
             Err(HfError::Network(format!("unexpected range request {url}")))
         }
     }
@@ -2826,20 +3288,38 @@ mod tests {
         let e = "https://hf.test/";
         Canned(HashMap::from([
             (format!("{e}api/models/o/r/refs"), (200, refs)),
-            (format!("{e}api/models/o/r/tree/{COMMIT}?recursive=true"), (200, tree.to_string())),
+            (
+                format!("{e}api/models/o/r/tree/{COMMIT}?recursive=true"),
+                (200, tree.to_string()),
+            ),
         ]))
     }
 
     #[test]
     fn listing_groups_shards_and_pairs_sidecars() {
-        let l = list_repo_with(&canned_repo(), "https://hf.test/", &spec("o/r", None), None).unwrap();
+        let l =
+            list_repo_with(&canned_repo(), "https://hf.test/", &spec("o/r", None), None).unwrap();
         assert_eq!(l.commit, COMMIT);
         assert_eq!(l.project_url, "https://hf.test/o/r");
-        let names: Vec<&str> = l.candidates.iter().map(|c| c.primary().path.as_str()).collect();
-        assert_eq!(names, ["Q-8B-Q8_0.gguf", "Q-8B-Q4_K_M.gguf", "Q-8B-BF16-00001-of-00002.gguf"]);
+        let names: Vec<&str> = l
+            .candidates
+            .iter()
+            .map(|c| c.primary().path.as_str())
+            .collect();
+        assert_eq!(
+            names,
+            [
+                "Q-8B-Q8_0.gguf",
+                "Q-8B-Q4_K_M.gguf",
+                "Q-8B-BF16-00001-of-00002.gguf"
+            ]
+        );
         assert_eq!(l.default, 1, "Q4_K_M is upstream's default pick");
         let bf16 = &l.candidates[2];
-        assert_eq!((bf16.tag.as_str(), bf16.shards.len(), bf16.size), ("BF16", 2, 16000));
+        assert_eq!(
+            (bf16.tag.as_str(), bf16.shards.len(), bf16.size),
+            ("BF16", 2, 16000)
+        );
         let q4 = &l.candidates[1];
         assert_eq!(q4.size, 4000, "the LFS size, not the pointer's");
         assert_eq!(q4.mmproj.as_ref().unwrap().path, "mmproj-F16.gguf");
@@ -2852,10 +3332,19 @@ mod tests {
     #[test]
     fn listing_default_follows_the_spec() {
         let c = canned_repo();
-        let tagged = list_repo_with(&c, "https://hf.test/", &spec("o/r", Some("bf16")), None).unwrap();
+        let tagged =
+            list_repo_with(&c, "https://hf.test/", &spec("o/r", Some("bf16")), None).unwrap();
         assert_eq!(tagged.default, 2);
-        let file = RepoSpec { file: Some("Q-8B-Q8_0.gguf".into()), ..spec("o/r", None) };
-        assert_eq!(list_repo_with(&c, "https://hf.test/", &file, None).unwrap().default, 0);
+        let file = RepoSpec {
+            file: Some("Q-8B-Q8_0.gguf".into()),
+            ..spec("o/r", None)
+        };
+        assert_eq!(
+            list_repo_with(&c, "https://hf.test/", &file, None)
+                .unwrap()
+                .default,
+            0
+        );
         let missing = list_repo_with(&c, "https://hf.test/", &spec("o/r", Some("Q2_K")), None);
         assert!(matches!(missing, Err(HfError::NoMatch { .. })));
     }
@@ -2863,9 +3352,21 @@ mod tests {
     #[test]
     fn listing_refuses_preset_and_empty_repos_and_maps_api_errors() {
         let s = spec("o/r", None);
-        let preset = build_listing("o/r", COMMIT, vec![f("preset.ini", 1), f("m-Q4_K_M.gguf", 1)], &s, "e/");
+        let preset = build_listing(
+            "o/r",
+            COMMIT,
+            vec![f("preset.ini", 1), f("m-Q4_K_M.gguf", 1)],
+            &s,
+            "e/",
+        );
         assert_eq!(preset, Err(HfError::PresetRepo { repo: "o/r".into() }));
-        let empty = build_listing("o/r", COMMIT, vec![f("README.md", 1), f("mmproj-F16.gguf", 1)], &s, "e/");
+        let empty = build_listing(
+            "o/r",
+            COMMIT,
+            vec![f("README.md", 1), f("mmproj-F16.gguf", 1)],
+            &s,
+            "e/",
+        );
         assert_eq!(empty, Err(HfError::NoGguf { repo: "o/r".into() }));
         let gated = Canned(HashMap::from([(
             "https://hf.test/api/models/o/r/refs".to_string(),
@@ -2874,7 +3375,10 @@ mod tests {
         let tok = Token::new("hf_x").unwrap();
         assert_eq!(
             list_repo_with(&gated, "https://hf.test/", &s, Some(&tok)),
-            Err(HfError::Gated { repo: "o/r".into(), had_token: true })
+            Err(HfError::Gated {
+                repo: "o/r".into(),
+                had_token: true
+            })
         );
     }
 
@@ -2910,18 +3414,38 @@ mod tests {
     #[test]
     fn input_is_a_spec_when_it_parses_else_a_query_unless_it_is_a_mistyped_spec() {
         assert_eq!(classify_input("   ").unwrap(), None);
-        assert_eq!(classify_input(" org/repo:Q4_K_M ").unwrap(), Some(Input::Spec(spec("org/repo", Some("Q4_K_M")))));
+        assert_eq!(
+            classify_input(" org/repo:Q4_K_M ").unwrap(),
+            Some(Input::Spec(spec("org/repo", Some("Q4_K_M"))))
+        );
         assert_eq!(
             classify_input("https://huggingface.co/org/repo").unwrap(),
             Some(Input::Spec(spec("org/repo", None)))
         );
-        assert_eq!(classify_input("qwen3   8b").unwrap(), Some(Input::Query("qwen3 8b".into())));
-        assert_eq!(classify_input("tinygemma3").unwrap(), Some(Input::Query("tinygemma3".into())));
+        assert_eq!(
+            classify_input("qwen3   8b").unwrap(),
+            Some(Input::Query("qwen3 8b".into()))
+        );
+        assert_eq!(
+            classify_input("tinygemma3").unwrap(),
+            Some(Input::Query("tinygemma3".into()))
+        );
         // A slash with a space is words, not a repo id.
-        assert_eq!(classify_input("unsloth/ qwen3").unwrap(), Some(Input::Query("unsloth/ qwen3".into())));
+        assert_eq!(
+            classify_input("unsloth/ qwen3").unwrap(),
+            Some(Input::Query("unsloth/ qwen3".into()))
+        );
         // Slash-carrying, no space, not a repository: the spec's own error.
-        for bad in ["org/repo:", "a/b/c", "https://example.com/org/repo", "https://huggingface.co/org"] {
-            assert!(matches!(classify_input(bad), Err(HfError::InvalidSpec(_))), "{bad:?}");
+        for bad in [
+            "org/repo:",
+            "a/b/c",
+            "https://example.com/org/repo",
+            "https://huggingface.co/org",
+        ] {
+            assert!(
+                matches!(classify_input(bad), Err(HfError::InvalidSpec(_))),
+                "{bad:?}"
+            );
         }
         assert!(parse_query(&"x".repeat(201)).is_err());
         assert!(parse_query("a\u{7}b").is_err());
@@ -2936,26 +3460,44 @@ mod tests {
              &limit=30&expand%5B%5D=downloads&expand%5B%5D=gated&expand%5B%5D=private&expand%5B%5D=siblings\
              &expand%5B%5D=gguf"
         );
-        assert!(!u.contains('[') && !u.contains(' ') && !u.contains('"'), "nothing curl globs or the config quotes");
+        assert!(
+            !u.contains('[') && !u.contains(' ') && !u.contains('"'),
+            "nothing curl globs or the config quotes"
+        );
         assert!(search_url("e/", "q", 0).contains("&limit=1&"));
     }
 
     #[test]
     fn search_answers_parse_into_rows_with_quants_and_sidecars() {
         let e = "https://hf.test/";
-        let canned = Canned(HashMap::from([(search_url(e, "qwen3", 30), (200, SEARCH_FIXTURE.to_string()))]));
+        let canned = Canned(HashMap::from([(
+            search_url(e, "qwen3", 30),
+            (200, SEARCH_FIXTURE.to_string()),
+        )]));
         let hits = search_with(&canned, e, " qwen3 ", 30, None).unwrap();
         let repos: Vec<&str> = hits.iter().map(|h| h.repo.as_str()).collect();
         assert_eq!(
             repos,
-            ["Qwen/Qwen3-0.6B-GGUF", "unsloth/Qwen3.6-35B-A3B-MTP-GGUF", "google/gemma-3-4b-it-qat-q4_0-gguf", "ggml-org/tinygemma3-GGUF"],
+            [
+                "Qwen/Qwen3-0.6B-GGUF",
+                "unsloth/Qwen3.6-35B-A3B-MTP-GGUF",
+                "google/gemma-3-4b-it-qat-q4_0-gguf",
+                "ggml-org/tinygemma3-GGUF"
+            ],
             "the API's order (most downloaded first) is kept"
         );
         let q = &hits[0];
-        assert_eq!((q.downloads, q.gated, q.private, q.mmproj), (231589, false, false, false));
+        assert_eq!(
+            (q.downloads, q.gated, q.private, q.mmproj),
+            (231589, false, false, false)
+        );
         assert_eq!(q.quants, ["Q8_0"]);
         let moe = &hits[1];
-        assert_eq!(moe.quants, ["IQ2_M", "MXFP4_MOE", "Q4_K_M", "Q4_K_XL", "Q8_0", "BF16"], "a split once, UD- read as upstream reads it");
+        assert_eq!(
+            moe.quants,
+            ["IQ2_M", "MXFP4_MOE", "Q4_K_M", "Q4_K_XL", "Q8_0", "BF16"],
+            "a split once, UD- read as upstream reads it"
+        );
         assert!(moe.mmproj && moe.drafters.is_empty());
         let gated = &hits[2];
         assert!(gated.gated, "\"manual\" is gated");
@@ -2970,7 +3512,10 @@ mod tests {
         let h = hits_from_search(&v).unwrap();
         assert_eq!(h.len(), 1);
         assert_eq!(h[0].drafters, [Sidecar::Mtp, Sidecar::Dflash]);
-        assert_eq!((h[0].downloads, h[0].gated, h[0].quants.as_slice()), (0, false, &["Q4_K_M".to_string()][..]));
+        assert_eq!(
+            (h[0].downloads, h[0].gated, h[0].quants.as_slice()),
+            (0, false, &["Q4_K_M".to_string()][..])
+        );
 
         // Ids are the remote's data: one `parse_spec` would refuse is dropped.
         let v = serde_json::json!([
@@ -2980,12 +3525,24 @@ mod tests {
             {"id": "o/ok", "siblings": []}
         ]);
         let h = hits_from_search(&v).unwrap();
-        assert_eq!(h.iter().map(|h| h.repo.as_str()).collect::<Vec<_>>(), ["o/ok"]);
+        assert_eq!(
+            h.iter().map(|h| h.repo.as_str()).collect::<Vec<_>>(),
+            ["o/ok"]
+        );
 
-        let empty = Canned(HashMap::from([(search_url(e, "zzz", 5), (200, "[]".to_string()))]));
+        let empty = Canned(HashMap::from([(
+            search_url(e, "zzz", 5),
+            (200, "[]".to_string()),
+        )]));
         assert_eq!(search_with(&empty, e, "zzz", 5, None).unwrap(), []);
-        let odd = Canned(HashMap::from([(search_url(e, "zzz", 5), (200, "{\"error\":\"x\"}".to_string()))]));
-        assert!(matches!(search_with(&odd, e, "zzz", 5, None), Err(HfError::Http { status: 200, .. })));
+        let odd = Canned(HashMap::from([(
+            search_url(e, "zzz", 5),
+            (200, "{\"error\":\"x\"}".to_string()),
+        )]));
+        assert!(matches!(
+            search_with(&odd, e, "zzz", 5, None),
+            Err(HfError::Http { status: 200, .. })
+        ));
     }
 
     #[test]
@@ -3021,14 +3578,27 @@ mod tests {
         assert_eq!(model_kind(Some("qwen3"), "o/Qwen3-8B"), ModelKind::Dense);
         assert_eq!(model_kind(Some("gemma3"), "o/x"), ModelKind::Dense);
         // `llama` serves Mixtral too: only the name can tell.
-        assert_eq!(model_kind(Some("llama"), "o/Llama-3.1-8B"), ModelKind::Unknown);
-        assert_eq!(model_kind(Some("llama"), "o/Mixtral-8x22B-v0.1"), ModelKind::Moe);
-        assert_eq!(model_kind(None, "o/Qwen3-Coder-30B-A3B-Instruct-GGUF"), ModelKind::Moe);
+        assert_eq!(
+            model_kind(Some("llama"), "o/Llama-3.1-8B"),
+            ModelKind::Unknown
+        );
+        assert_eq!(
+            model_kind(Some("llama"), "o/Mixtral-8x22B-v0.1"),
+            ModelKind::Moe
+        );
+        assert_eq!(
+            model_kind(None, "o/Qwen3-Coder-30B-A3B-Instruct-GGUF"),
+            ModelKind::Moe
+        );
         assert_eq!(model_kind(None, "o/Ling-A1.5B"), ModelKind::Moe);
         assert_eq!(model_kind(None, "o/Qwen3-8B"), ModelKind::Unknown);
         // Words that merely look alike are not size patterns.
         for name in ["o/alpha-b", "o/ab", "o/AWQ-8B", "o/x-7b", "o/max-8b"] {
-            assert_eq!(model_kind(Some("llama"), name), ModelKind::Unknown, "{name}");
+            assert_eq!(
+                model_kind(Some("llama"), name),
+                ModelKind::Unknown,
+                "{name}"
+            );
         }
     }
 
@@ -3046,13 +3616,26 @@ mod tests {
 
     #[test]
     fn search_errors_name_no_repository() {
-        assert_eq!(search_error(401, "", true), HfError::TokenRejected { repo: strings::t("the-search") });
-        assert!(matches!(search_error(429, "", false), HfError::Network(m) if m.contains("rate limited")));
+        assert_eq!(
+            search_error(401, "", true),
+            HfError::TokenRejected {
+                repo: strings::t("the-search")
+            }
+        );
+        assert!(
+            matches!(search_error(429, "", false), HfError::Network(m) if m.contains("rate limited"))
+        );
         assert_eq!(
             search_error(400, "{\"error\":\"bad expand\"}", false),
-            HfError::Http { status: 400, message: "bad expand".into() }
+            HfError::Http {
+                status: 400,
+                message: "bad expand".into()
+            }
         );
-        assert!(matches!(search_error(404, "", false), HfError::Http { status: 404, .. }));
+        assert!(matches!(
+            search_error(404, "", false),
+            HfError::Http { status: 404, .. }
+        ));
     }
 
     #[test]
@@ -3107,20 +3690,40 @@ mod tests {
         let root = Path::new("M");
         let j = job(root, 2, true, Some(Sidecar::Dspark));
         // BF16 has no dspark sidecar: only the shards and the mmproj.
-        let t: Vec<PathBuf> = j.placements().unwrap().into_iter().map(|p| p.target).collect();
+        let t: Vec<PathBuf> = j
+            .placements()
+            .unwrap()
+            .into_iter()
+            .map(|p| p.target)
+            .collect();
         // `<org>\<repo>`: two orgs' same-named repos never share a folder.
         assert_eq!(
             t,
             [
-                root.join("models").join("o").join("r").join("Q-8B-BF16-00001-of-00002.gguf"),
-                root.join("models").join("o").join("r").join("Q-8B-BF16-00002-of-00002.gguf"),
+                root.join("models")
+                    .join("o")
+                    .join("r")
+                    .join("Q-8B-BF16-00001-of-00002.gguf"),
+                root.join("models")
+                    .join("o")
+                    .join("r")
+                    .join("Q-8B-BF16-00002-of-00002.gguf"),
                 // Named after the model, not the generic HF name.
-                root.join("mmprojs").join("o").join("r").join("Q-8B-mmproj-F16.gguf"),
+                root.join("mmprojs")
+                    .join("o")
+                    .join("r")
+                    .join("Q-8B-mmproj-F16.gguf"),
             ]
         );
         // Every quant of the repo puts the shared projector at ONE target, so
         // the second download finds it in place.
-        let mm = |idx| job(root, idx, true, None).placements().unwrap().pop().unwrap();
+        let mm = |idx| {
+            job(root, idx, true, None)
+                .placements()
+                .unwrap()
+                .pop()
+                .unwrap()
+        };
         assert_eq!(mm(0).role, Role::Mmproj);
         assert_eq!(mm(0).target, mm(1).target);
         assert_eq!(mm(1).target, t[2]);
@@ -3131,49 +3734,124 @@ mod tests {
         let p = j.placements().unwrap();
         assert_eq!(p.len(), 2);
         assert_eq!(p[1].role, Role::Draft(Sidecar::Dflash));
-        assert_eq!(p[1].target, root.join("dflashs").join("o").join("r").join("dflash-Q4_K_M.gguf"));
-        let g = groups(&j.placements().unwrap()).into_iter().map(|g| g.len()).collect::<Vec<_>>();
+        assert_eq!(
+            p[1].target,
+            root.join("dflashs")
+                .join("o")
+                .join("r")
+                .join("dflash-Q4_K_M.gguf")
+        );
+        let g = groups(&j.placements().unwrap())
+            .into_iter()
+            .map(|g| g.len())
+            .collect::<Vec<_>>();
         assert_eq!(g, [1, 1]);
-        assert_eq!(groups(&job(root, 2, true, None).placements().unwrap()).len(), 2, "shards share one child");
+        assert_eq!(
+            groups(&job(root, 2, true, None).placements().unwrap()).len(),
+            2,
+            "shards share one child"
+        );
     }
 
     #[test]
     fn the_mmproj_is_named_after_the_model() {
         let n = mmproj_target_name;
         // No quant tag on the mmproj; one on it (lower-case read upper).
-        assert_eq!(n("tinygemma3-Q8_0.gguf", "mmproj-tinygemma3.gguf"), "tinygemma3-mmproj.gguf");
-        assert_eq!(n("Qwen3-VL-8B-Instruct-Q4_K_M.gguf", "mmproj-F16.gguf"), "Qwen3-VL-8B-Instruct-mmproj-F16.gguf");
-        assert_eq!(n("gemma-3-4b-it-q4_0.gguf", "mmproj-model-f16.gguf"), "gemma-3-4b-it-mmproj-F16.gguf");
-        assert_eq!(n("m-Q8_0.gguf", "BF16/mmproj-BF16.gguf"), "m-mmproj-BF16.gguf");
+        assert_eq!(
+            n("tinygemma3-Q8_0.gguf", "mmproj-tinygemma3.gguf"),
+            "tinygemma3-mmproj.gguf"
+        );
+        assert_eq!(
+            n("Qwen3-VL-8B-Instruct-Q4_K_M.gguf", "mmproj-F16.gguf"),
+            "Qwen3-VL-8B-Instruct-mmproj-F16.gguf"
+        );
+        assert_eq!(
+            n("gemma-3-4b-it-q4_0.gguf", "mmproj-model-f16.gguf"),
+            "gemma-3-4b-it-mmproj-F16.gguf"
+        );
+        assert_eq!(
+            n("m-Q8_0.gguf", "BF16/mmproj-BF16.gguf"),
+            "m-mmproj-BF16.gguf"
+        );
         // A tail that is not a quant is not a tag (the size, the model's name).
-        assert_eq!(n("gemma-3-4b-it-q4_0.gguf", "mmproj-model-f16-4B.gguf"), "gemma-3-4b-it-mmproj.gguf");
-        assert_eq!(n("Qwen3-30B-A3B.gguf", "mmproj-F16.gguf"), "Qwen3-30B-A3B-mmproj-F16.gguf");
+        assert_eq!(
+            n("gemma-3-4b-it-q4_0.gguf", "mmproj-model-f16-4B.gguf"),
+            "gemma-3-4b-it-mmproj.gguf"
+        );
+        assert_eq!(
+            n("Qwen3-30B-A3B.gguf", "mmproj-F16.gguf"),
+            "Qwen3-30B-A3B-mmproj-F16.gguf"
+        );
         // A split's first shard: the shard suffix and the tag both go.
-        assert_eq!(n("Qwen3-VL-32B-BF16-00001-of-00002.gguf", "mmproj-BF16.gguf"), "Qwen3-VL-32B-mmproj-BF16.gguf");
+        assert_eq!(
+            n("Qwen3-VL-32B-BF16-00001-of-00002.gguf", "mmproj-BF16.gguf"),
+            "Qwen3-VL-32B-mmproj-BF16.gguf"
+        );
         // Dots and spaces in the stem are part of the name.
-        assert_eq!(n("Llama-3.2-11B-Vision.Q4_K_M.gguf", "mmproj-F16.gguf"), "Llama-3.2-11B-Vision-mmproj-F16.gguf");
-        assert_eq!(n("My Vision Model v1.5-Q6_K.gguf", "mmproj.gguf"), "My Vision Model v1.5-mmproj.gguf");
+        assert_eq!(
+            n("Llama-3.2-11B-Vision.Q4_K_M.gguf", "mmproj-F16.gguf"),
+            "Llama-3.2-11B-Vision-mmproj-F16.gguf"
+        );
+        assert_eq!(
+            n("My Vision Model v1.5-Q6_K.gguf", "mmproj.gguf"),
+            "My Vision Model v1.5-mmproj.gguf"
+        );
         // Unusual tags: Unsloth's `UD-` goes with its tag, IQ and ternary quants.
-        assert_eq!(n("Qwen3-VL-30B-A3B-UD-Q4_K_XL.gguf", "mmproj-F16.gguf"), "Qwen3-VL-30B-A3B-mmproj-F16.gguf");
-        assert_eq!(n("Qwen3-VL-30B-A3B-UD-IQ2_XXS.gguf", "mmproj-F16.gguf"), "Qwen3-VL-30B-A3B-mmproj-F16.gguf");
-        assert_eq!(n("m-IQ2_XXS.gguf", "mmproj-Q8_0.gguf"), "m-mmproj-Q8_0.gguf");
-        assert_eq!(n("m-TQ1_0.gguf", "mmproj-MXFP4.gguf"), "m-mmproj-MXFP4.gguf");
+        assert_eq!(
+            n("Qwen3-VL-30B-A3B-UD-Q4_K_XL.gguf", "mmproj-F16.gguf"),
+            "Qwen3-VL-30B-A3B-mmproj-F16.gguf"
+        );
+        assert_eq!(
+            n("Qwen3-VL-30B-A3B-UD-IQ2_XXS.gguf", "mmproj-F16.gguf"),
+            "Qwen3-VL-30B-A3B-mmproj-F16.gguf"
+        );
+        assert_eq!(
+            n("m-IQ2_XXS.gguf", "mmproj-Q8_0.gguf"),
+            "m-mmproj-Q8_0.gguf"
+        );
+        assert_eq!(
+            n("m-TQ1_0.gguf", "mmproj-MXFP4.gguf"),
+            "m-mmproj-MXFP4.gguf"
+        );
         // Two quants of one repo share their projector's name.
-        for model in ["Qwen3-VL-8B-Instruct-Q4_K_M.gguf", "Qwen3-VL-8B-Instruct-Q8_0.gguf", "Qwen3-VL-8B-Instruct-UD-Q6_K_XL.gguf"] {
-            assert_eq!(n(model, "mmproj-F16.gguf"), "Qwen3-VL-8B-Instruct-mmproj-F16.gguf", "{model}");
+        for model in [
+            "Qwen3-VL-8B-Instruct-Q4_K_M.gguf",
+            "Qwen3-VL-8B-Instruct-Q8_0.gguf",
+            "Qwen3-VL-8B-Instruct-UD-Q6_K_XL.gguf",
+        ] {
+            assert_eq!(
+                n(model, "mmproj-F16.gguf"),
+                "Qwen3-VL-8B-Instruct-mmproj-F16.gguf",
+                "{model}"
+            );
         }
         // A name with no `-`/`.` has no tag to cut; one that is nothing but
         // its tag keeps the HF name.
-        assert_eq!(n("Q4_K_M.gguf", "mmproj-F16.gguf"), "Q4_K_M-mmproj-F16.gguf");
+        assert_eq!(
+            n("Q4_K_M.gguf", "mmproj-F16.gguf"),
+            "Q4_K_M-mmproj-F16.gguf"
+        );
         assert_eq!(n("-Q4_K_M.gguf", "mmproj-F16.gguf"), "mmproj-F16.gguf");
     }
 
     #[test]
     fn quant_tags_are_told_from_other_name_tails() {
-        for q in ["Q4_K_M", "Q8_0", "IQ2_XXS", "IQ4_NL", "TQ2_0", "F16", "F32", "BF16", "MXFP4", "NVFP4", "Q4_K_XL"] {
+        for q in [
+            "Q4_K_M", "Q8_0", "IQ2_XXS", "IQ4_NL", "TQ2_0", "F16", "F32", "BF16", "MXFP4", "NVFP4",
+            "Q4_K_XL",
+        ] {
             assert!(is_quant_tag(q), "{q}");
         }
-        for t in ["", "8B", "A3B", "TINYGEMMA3", "INSTRUCT", "FP8X", "QAT", "UD"] {
+        for t in [
+            "",
+            "8B",
+            "A3B",
+            "TINYGEMMA3",
+            "INSTRUCT",
+            "FP8X",
+            "QAT",
+            "UD",
+        ] {
             assert!(!is_quant_tag(t), "{t}");
         }
     }
@@ -3181,14 +3859,31 @@ mod tests {
     #[test]
     fn placements_refuse_remote_paths_and_ids_that_escape_the_models_dir() {
         let root = Path::new("M");
-        for bad in ["../x.gguf", "a/../../x.gguf", "./x.gguf", "a//x.gguf", "/x.gguf", "a\\..\\x.gguf", "C:x.gguf", "c:/x.gguf", "x\n.gguf", ""] {
+        for bad in [
+            "../x.gguf",
+            "a/../../x.gguf",
+            "./x.gguf",
+            "a//x.gguf",
+            "/x.gguf",
+            "a\\..\\x.gguf",
+            "C:x.gguf",
+            "c:/x.gguf",
+            "x\n.gguf",
+            "",
+        ] {
             assert!(!safe_repo_path(bad), "{bad:?}");
             let mut j = job(root, 1, false, None);
             j.candidate.shards[0].path = bad.to_string();
-            assert!(matches!(j.placements(), Err(HfError::InvalidSpec(_))), "{bad:?}");
+            assert!(
+                matches!(j.placements(), Err(HfError::InvalidSpec(_))),
+                "{bad:?}"
+            );
         }
         assert!(safe_repo_path("BF16/m-BF16-00001-of-00002.gguf"));
-        assert!(safe_repo_path("a..b/x.gguf"), "dots inside a name are a name");
+        assert!(
+            safe_repo_path("a..b/x.gguf"),
+            "dots inside a name are a name"
+        );
         let mut j = job(root, 1, false, None);
         j.repo = "../r".into();
         assert!(matches!(j.placements(), Err(HfError::InvalidSpec(_))));
@@ -3206,8 +3901,18 @@ mod tests {
             {"type": "file", "path": "ok-Q4_K_M.gguf", "size": 1}
         ]);
         let files = files_from_tree(&tree);
-        assert_eq!(files.iter().map(|f| f.path.as_str()).collect::<Vec<_>>(), ["ok-Q4_K_M.gguf"]);
-        let l = build_listing("o/r", COMMIT, vec![f("/abs-Q8_0.gguf", 1), f("m-Q4_K_M.gguf", 1)], &spec("o/r", None), "e/").unwrap();
+        assert_eq!(
+            files.iter().map(|f| f.path.as_str()).collect::<Vec<_>>(),
+            ["ok-Q4_K_M.gguf"]
+        );
+        let l = build_listing(
+            "o/r",
+            COMMIT,
+            vec![f("/abs-Q8_0.gguf", 1), f("m-Q4_K_M.gguf", 1)],
+            &spec("o/r", None),
+            "e/",
+        )
+        .unwrap();
         assert_eq!(l.candidates.len(), 1);
         assert_eq!(l.candidates[0].primary().path, "m-Q4_K_M.gguf");
     }
@@ -3215,9 +3920,21 @@ mod tests {
     #[test]
     fn lexical_containment_folds_dots_and_refuses_climbing_out() {
         let root = Path::new("S").join("repo");
-        assert!(lexically_under(&root.join("snapshots").join("c").join("..").join("..").join("blobs").join("x"), &root));
+        assert!(lexically_under(
+            &root
+                .join("snapshots")
+                .join("c")
+                .join("..")
+                .join("..")
+                .join("blobs")
+                .join("x"),
+            &root
+        ));
         assert!(!lexically_under(&root.join("..").join("other"), &root));
-        assert!(!lexically_under(&root.join("..").join("..").join("..").join("x"), &root));
+        assert!(!lexically_under(
+            &root.join("..").join("..").join("..").join("x"),
+            &root
+        ));
         assert!(!lexically_under(Path::new("elsewhere"), &root));
     }
 
@@ -3229,8 +3946,14 @@ mod tests {
         assert!(get("LLAMA_SERVER_ROUTER_PORT").is_some());
         assert_eq!(get("LLAMA_SERVER_CHILD_MODE").as_deref(), Some("download"));
         assert_eq!(get("LLAMA_ARG_HF_REPO").as_deref(), Some("o/r"));
-        assert_eq!(get("LLAMA_ARG_HF_FILE").as_deref(), Some("Q-8B-Q4_K_M.gguf"));
-        assert_eq!(get("LLAMA_CACHE").map(PathBuf::from), Some(Path::new("M").join(STAGING_DIR)));
+        assert_eq!(
+            get("LLAMA_ARG_HF_FILE").as_deref(),
+            Some("Q-8B-Q4_K_M.gguf")
+        );
+        assert_eq!(
+            get("LLAMA_CACHE").map(PathBuf::from),
+            Some(Path::new("M").join(STAGING_DIR))
+        );
         assert_eq!(get("HF_TOKEN").as_deref(), Some("hf_tok"));
         assert!(!CHILD_ARGS.iter().any(|a| a.contains("hf_tok")));
         assert_eq!(CHILD_ARGS, ["--no-mmproj"]);
@@ -3266,9 +3989,15 @@ mod tests {
         {
             let mut stdin: Option<&mut Vec<u8>> = Some(&mut written);
             cancel_stop(&mut stdin);
-            assert!(stdin.is_none(), "the pipe is closed (dropped), so the child reads EOF");
+            assert!(
+                stdin.is_none(),
+                "the pipe is closed (dropped), so the child reads EOF"
+            );
         }
-        assert!(written.is_empty(), "no exit line: it would delete the partial");
+        assert!(
+            written.is_empty(),
+            "no exit line: it would delete the partial"
+        );
     }
 
     /// The pipe readers decode lossily: a Windows ANSI-code-page byte in the
@@ -3297,21 +4026,34 @@ mod tests {
     fn child_lines_parse_and_a_protocol_change_is_an_error() {
         let line = |j: &str| format!("{CHILD_STATE_PREFIX}{j}");
         assert_eq!(
-            parse_child_line(&line(r#"{"state":"downloading","payload":{"url":"u/x.gguf","downloaded":5,"total":9}}"#)),
-            Ok(Some(ChildEvent::Progress { url: "u/x.gguf".into(), downloaded: 5, total: 9 }))
+            parse_child_line(&line(
+                r#"{"state":"downloading","payload":{"url":"u/x.gguf","downloaded":5,"total":9}}"#
+            )),
+            Ok(Some(ChildEvent::Progress {
+                url: "u/x.gguf".into(),
+                downloaded: 5,
+                total: 9
+            }))
         );
         assert_eq!(
-            parse_child_line(&line(r#"{"state":"downloading","payload":{"result":"download_finished"}}"#)),
+            parse_child_line(&line(
+                r#"{"state":"downloading","payload":{"result":"download_finished"}}"#
+            )),
             Ok(Some(ChildEvent::Finished))
         );
         assert_eq!(
-            parse_child_line(&line("{\"state\":\"downloading\",\"payload\":{\"result\":\"download_failed\"}}\r")),
+            parse_child_line(&line(
+                "{\"state\":\"downloading\",\"payload\":{\"result\":\"download_failed\"}}\r"
+            )),
             Ok(Some(ChildEvent::Failed))
         );
         assert_eq!(parse_child_line("some stray log line"), Ok(None));
         assert!(parse_child_line(&line("{not json")).is_err());
         assert!(parse_child_line(&line(r#"{"state":"loading","payload":{}}"#)).is_err());
-        assert!(parse_child_line(&line(r#"{"state":"downloading","payload":{"result":"done"}}"#)).is_err());
+        assert!(parse_child_line(&line(
+            r#"{"state":"downloading","payload":{"result":"done"}}"#
+        ))
+        .is_err());
         assert!(parse_child_line(&line(r#"{"state":"downloading","payload":{}}"#)).is_err());
     }
 
@@ -3335,11 +4077,18 @@ mod tests {
         let base = format!("https://hf.test/o/r/resolve/{COMMIT}/");
         assert!(t.update(&format!("{base}Q-8B-BF16-00001-of-00002.gguf"), 4000, 9000));
         let pr = t.progress();
-        assert_eq!((pr.file_done, pr.file_total), (4000, 9000), "the per-file bytes follow the current file");
+        assert_eq!(
+            (pr.file_done, pr.file_total),
+            (4000, 9000),
+            "the per-file bytes follow the current file"
+        );
         assert!(t.update(&format!("{base}Q-8B-BF16-00002-of-00002.gguf"), 7000, 7000));
         assert!(!t.update(&format!("{base}unrelated.gguf"), 1, 1));
         let pr = t.progress();
-        assert_eq!((pr.done, pr.files_done, pr.file.as_str()), (11600, 2, "Q-8B-BF16-00002-of-00002.gguf"));
+        assert_eq!(
+            (pr.done, pr.files_done, pr.file.as_str()),
+            (11600, 2, "Q-8B-BF16-00002-of-00002.gguf")
+        );
         assert_eq!((pr.file_done, pr.file_total), (7000, 7000));
         t.complete("Q-8B-BF16-00001-of-00002.gguf");
         assert_eq!(t.progress().done, t.progress().total);
@@ -3356,12 +4105,18 @@ mod tests {
         let repo_dir = dir.path().join(STAGING_DIR).join("models--o--r");
         std::fs::create_dir_all(repo_dir.join("refs")).unwrap();
         std::fs::write(repo_dir.join("refs").join("main"), COMMIT).unwrap();
-        assert!(!has_partial(dir.path(), "o/r", q4), "the folder alone is nothing to resume");
+        assert!(
+            !has_partial(dir.path(), "o/r", q4),
+            "the folder alone is nothing to resume"
+        );
         // Q8_0's partial is not Q4_K_M's.
         std::fs::create_dir_all(repo_dir.join("blobs")).unwrap();
         std::fs::write(repo_dir.join("blobs").join("o1.downloadInProgress"), b"x").unwrap();
         assert!(has_partial(dir.path(), "o/r", q8));
-        assert!(!has_partial(dir.path(), "o/r", q4), "another quant's partial");
+        assert!(
+            !has_partial(dir.path(), "o/r", q4),
+            "another quant's partial"
+        );
         assert!(!has_partial(dir.path(), "o/other", q8), "another repo's");
         // Its own mmproj counts (a resume of that group).
         std::fs::write(repo_dir.join("blobs").join("o5.downloadInProgress"), b"x").unwrap();
@@ -3382,14 +4137,25 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let j = job(dir.path(), 1, false, None);
         let p = j.placements().unwrap();
-        let snap = j.staging().join(repo_folder("o/r")).join("snapshots").join(COMMIT);
+        let snap = j
+            .staging()
+            .join(repo_folder("o/r"))
+            .join("snapshots")
+            .join(COMMIT);
         std::fs::create_dir_all(&snap).unwrap();
         std::fs::write(snap.join("Q-8B-Q4_K_M.gguf"), vec![0u8; 10]).unwrap();
         let mut t = Tracker::new(&p, &[false]);
         let err = place_group(&j, &[&p[0]], &[], &mut t).unwrap_err();
-        assert!(matches!(err, HfError::Io(ref m) if m.contains("removed")), "{err}");
+        assert!(
+            matches!(err, HfError::Io(ref m) if m.contains("removed")),
+            "{err}"
+        );
         assert!(!p[0].target.exists());
-        assert_eq!(target_present(&p[0].target, 4000), Ok(false), "a retry starts clean");
+        assert_eq!(
+            target_present(&p[0].target, 4000),
+            Ok(false),
+            "a retry starts clean"
+        );
     }
 
     #[test]
@@ -3413,7 +4179,11 @@ mod tests {
         let l = |s: &[&str]| s.iter().map(|x| x.to_string()).collect::<Vec<_>>();
         let r = "o/r";
         assert_eq!(
-            classify_failure(&l(&["get_repo_commit: error: GET failed (401): Invalid credentials"]), true, r),
+            classify_failure(
+                &l(&["get_repo_commit: error: GET failed (401): Invalid credentials"]),
+                true,
+                r
+            ),
             HfError::TokenRejected { repo: r.into() }
         );
         assert_eq!(
@@ -3422,10 +4192,17 @@ mod tests {
         );
         assert_eq!(
             classify_failure(&l(&["Download 'x' failed with status code: 403"]), false, r),
-            HfError::Gated { repo: r.into(), had_token: false }
+            HfError::Gated {
+                repo: r.into(),
+                had_token: false
+            }
         );
         assert!(matches!(
-            classify_failure(&l(&["common_pull_file: error writing to file: x.downloadInProgress"]), false, r),
+            classify_failure(
+                &l(&["common_pull_file: error writing to file: x.downloadInProgress"]),
+                false,
+                r
+            ),
             HfError::DiskFull(_)
         ));
         assert!(matches!(
@@ -3442,8 +4219,12 @@ mod tests {
             ),
             HfError::Io(m) if m.contains("260 characters")
         ));
-        assert!(matches!(classify_failure(&l(&["something odd"]), false, r), HfError::Download(m) if m == "something odd"));
-        assert!(matches!(classify_failure(&[], false, r), HfError::Download(m) if m.contains("no output")));
+        assert!(
+            matches!(classify_failure(&l(&["something odd"]), false, r), HfError::Download(m) if m == "something odd")
+        );
+        assert!(
+            matches!(classify_failure(&[], false, r), HfError::Download(m) if m.contains("no output"))
+        );
     }
 
     // ── staging → subfolders (real files in a temp dir; no child) ──
@@ -3468,16 +4249,27 @@ mod tests {
         let mut t = Tracker::new(&placements, &[false, true]);
         place_group(&j, &[&placements[0]], &[], &mut t).unwrap();
         place_group(&j, &[&placements[1]], &[], &mut t).unwrap();
-        assert_eq!(std::fs::metadata(&placements[0].target).unwrap().len(), 4000);
+        assert_eq!(
+            std::fs::metadata(&placements[0].target).unwrap().len(),
+            4000
+        );
         assert!(!snap.join("Q-8B-Q4_K_M.gguf").exists(), "moved, not copied");
-        assert_eq!(std::fs::read(mm).unwrap(), vec![1u8; 600], "the existing file is kept");
+        assert_eq!(
+            std::fs::read(mm).unwrap(),
+            vec![1u8; 600],
+            "the existing file is kept"
+        );
         assert_eq!(t.progress().done, t.progress().total);
 
         // A different file in the way is refused, naming it.
         std::fs::write(mm, vec![1u8; 5]).unwrap();
         assert!(matches!(
             target_present(mm, 600),
-            Err(HfError::TargetConflict { found: 5, expected: 600, .. })
+            Err(HfError::TargetConflict {
+                found: 5,
+                expected: 600,
+                ..
+            })
         ));
     }
 
@@ -3493,7 +4285,9 @@ mod tests {
             Err(HfError::TokenRejected { repo: "o/r".into() })
         );
         let other = place_group(&j, &[&p[0]], &["fine".into()], &mut t).unwrap_err();
-        assert!(other.to_string().contains("reported success but Q-8B-Q4_K_M.gguf is not in"));
+        assert!(other
+            .to_string()
+            .contains("reported success but Q-8B-Q4_K_M.gguf is not in"));
     }
 
     #[cfg(unix)]
@@ -3508,7 +4302,10 @@ mod tests {
         std::os::unix::fs::symlink(Path::new("../../blobs/oid"), snap.join("m.gguf")).unwrap();
         let dst = dir.path().join("out").join("m.gguf");
         move_real_data(&snap.join("m.gguf"), &dst, dir.path()).unwrap();
-        assert!(!std::fs::symlink_metadata(&dst).unwrap().file_type().is_symlink());
+        assert!(!std::fs::symlink_metadata(&dst)
+            .unwrap()
+            .file_type()
+            .is_symlink());
         assert_eq!(std::fs::read(&dst).unwrap(), b"data");
         assert!(!blobs.join("oid").exists());
     }
@@ -3524,7 +4321,10 @@ mod tests {
         std::os::unix::fs::symlink(outside.path().join("precious"), snap.join("m.gguf")).unwrap();
         let dst = dir.path().join("out").join("m.gguf");
         assert!(move_real_data(&snap.join("m.gguf"), &dst, dir.path()).is_err());
-        assert_eq!(std::fs::read(outside.path().join("precious")).unwrap(), b"mine");
+        assert_eq!(
+            std::fs::read(outside.path().join("precious")).unwrap(),
+            b"mine"
+        );
         assert!(!dst.exists());
     }
 
@@ -3549,7 +4349,13 @@ mod tests {
         std::fs::write(snap.join("x.gguf"), b"1").unwrap();
         assert_eq!(
             find_staged(dir.path(), COMMIT, "sub/x.gguf"),
-            Some(dir.path().join("snapshots").join(&other).join("sub").join("x.gguf"))
+            Some(
+                dir.path()
+                    .join("snapshots")
+                    .join(&other)
+                    .join("sub")
+                    .join("x.gguf")
+            )
         );
         assert_eq!(find_staged(dir.path(), COMMIT, "y.gguf"), None);
         std::fs::create_dir_all(dir.path().join("refs")).unwrap();
@@ -3602,16 +4408,32 @@ mod tests {
     #[test]
     fn derived_preset_fills_paths_url_sampling_and_fit() {
         let d = downloaded(true, None);
-        let p = derive_preset("m-Q4_K_M".into(), &d, Some(&info(Some("{% if x %}{{ y }}{% endif %}"), 0, false)), None, None);
+        let p = derive_preset(
+            "m-Q4_K_M".into(),
+            &d,
+            Some(&info(Some("{% if x %}{{ y }}{% endif %}"), 0, false)),
+            None,
+            None,
+        );
         assert_eq!(p.model, d.model.to_string_lossy());
         assert_eq!(p.mmproj, d.mmproj.as_ref().unwrap().to_string_lossy());
         assert_eq!(p.project_url, "https://huggingface.co/o/r");
-        assert_eq!((p.temp, p.top_k, p.top_p, p.min_p, p.repeat_penalty), (Some(0.6), Some(20), Some(0.95), Some(0.0), None));
+        assert_eq!(
+            (p.temp, p.top_k, p.top_p, p.min_p, p.repeat_penalty),
+            (Some(0.6), Some(20), Some(0.95), Some(0.0), None)
+        );
         assert_eq!(p.jinja, Some(true));
         assert!(p.fit);
-        assert!(crate::form::fit_allowed(p.ctx_size.is_none(), p.n_gpu_layers.is_none()));
+        assert!(crate::form::fit_allowed(
+            p.ctx_size.is_none(),
+            p.n_gpu_layers.is_none()
+        ));
         assert_eq!(p.reasoning, "auto");
-        assert_eq!((p.model_draft.as_str(), p.spec_type.as_str()), ("", ""), "embedded-MTP-free and no drafter");
+        assert_eq!(
+            (p.model_draft.as_str(), p.spec_type.as_str()),
+            ("", ""),
+            "embedded-MTP-free and no drafter"
+        );
         // Everything the derivation does not own is the New dialog's preset.
         let base = Preset {
             model: p.model.clone(),
@@ -3646,14 +4468,23 @@ mod tests {
     #[test]
     fn derived_jinja_and_the_unreadable_header() {
         let d = downloaded(false, None);
-        let legacy = derive_preset("x".into(), &d, Some(&info(Some("chatml"), 0, false)), None, None);
+        let legacy = derive_preset(
+            "x".into(),
+            &d,
+            Some(&info(Some("chatml"), 0, false)),
+            None,
+            None,
+        );
         assert_eq!(legacy.jinja, Some(false));
         let none = derive_preset("x".into(), &d, Some(&info(None, 2, false)), None, None);
         assert_eq!(none.jinja, Some(true));
         assert_eq!(none.spec_type, "", "embedded MTP heads are not switched on");
         // No header: paths, URL and fit only.
         let blind = derive_preset("x".into(), &d, None, None, None);
-        assert_eq!((blind.temp, blind.top_k, blind.jinja), (None, None, Some(true)));
+        assert_eq!(
+            (blind.temp, blind.top_k, blind.jinja),
+            (None, None, Some(true))
+        );
         assert!(blind.fit);
     }
 
@@ -3695,7 +4526,10 @@ mod tests {
             let mmproj = dir.join("mmproj-F16.gguf");
             std::fs::write(&mmproj, vec![0u8; MIB as usize]).unwrap();
             d.mmproj = Some(mmproj);
-            let (h, size) = gguf(&[("general.architecture", W::Str("qwen3"))], &[("blk.0.attn_q.weight", 2 * MIB)]);
+            let (h, size) = gguf(
+                &[("general.architecture", W::Str("qwen3"))],
+                &[("blk.0.attn_q.weight", 2 * MIB)],
+            );
             let draft = dir.join("m-MTP-Q8_0.gguf");
             write_sparse(&draft, &h, size);
             d.draft = Some((Sidecar::Mtp, draft));
@@ -3707,7 +4541,10 @@ mod tests {
             total_mib: usable_mib + hf_fit::GPU_RESERVE / MIB,
         };
         let b = hf_fit::Budget {
-            gpus: vec![card("ROCm1", "AMD Radeon AI PRO R9700", 48), card("CUDA0", "NVIDIA GeForce RTX 4070 SUPER", 24 + room)],
+            gpus: vec![
+                card("ROCm1", "AMD Radeon AI PRO R9700", 48),
+                card("CUDA0", "NVIDIA GeForce RTX 4070 SUPER", 24 + room),
+            ],
             ram: Some(60 << 30),
             ram_total: Some(64 << 30),
         };
@@ -3724,15 +4561,35 @@ mod tests {
         // Block 0's experts in RAM; blocks 0-2 on the R9700 (41 of 48 MiB),
         // block 3 and the output head on the 4070 (23 of 24 MiB).
         assert_eq!(
-            (p.device.as_str(), p.tensor_split.as_str(), p.n_cpu_moe, p.n_gpu_layers, p.ctx_size),
+            (
+                p.device.as_str(),
+                p.tensor_split.as_str(),
+                p.n_cpu_moe,
+                p.n_gpu_layers,
+                p.ctx_size
+            ),
             ("ROCm1,CUDA0", "3,2", Some(1), None, Some(4096))
         );
-        assert!(!p.fit, "the context is set, so the fit is off (form::fit_allowed)");
-        assert_eq!(p.device_draft, "CUDA0", "a separate drafter on the last card of the split");
+        assert!(
+            !p.fit,
+            "the context is set, so the fit is off (form::fit_allowed)"
+        );
+        assert_eq!(
+            p.device_draft, "CUDA0",
+            "a separate drafter on the last card of the split"
+        );
         // The encoder does not fit the first device (its default): moved to
         // the second, where the room was left for it.
-        assert_eq!((p.mmproj_device.as_str(), p.mmproj_offload), ("CUDA0", Some(true)));
-        assert!(p.placement_note.starts_with("estimated at download for a 4k context"), "{}", p.placement_note);
+        assert_eq!(
+            (p.mmproj_device.as_str(), p.mmproj_offload),
+            ("CUDA0", Some(true))
+        );
+        assert!(
+            p.placement_note
+                .starts_with("estimated at download for a 4k context"),
+            "{}",
+            p.placement_note
+        );
         assert!(
             p.placement_note.contains("; counting the image encoder (0.5 GiB) on CUDA0 and the MTP drafter (0.8 GiB) on CUDA0;"),
             "{}",
@@ -3744,8 +4601,15 @@ mod tests {
         let path = dir.path().join("presets.ini");
         std::fs::write(&path, presets::render_section(&p)).unwrap();
         let text = std::fs::read_to_string(&path).unwrap();
-        assert!(text.contains(&format!("\r\n; placement = {}\r\n", p.placement_note)), "{text}");
-        assert!(text.contains("\r\nmmproj-device = CUDA0\r\n") && text.contains("\r\ndevice-draft = CUDA0\r\n"), "{text}");
+        assert!(
+            text.contains(&format!("\r\n; placement = {}\r\n", p.placement_note)),
+            "{text}"
+        );
+        assert!(
+            text.contains("\r\nmmproj-device = CUDA0\r\n")
+                && text.contains("\r\ndevice-draft = CUDA0\r\n"),
+            "{text}"
+        );
         let back = presets::read_presets(&path);
         assert_eq!(back, std::slice::from_ref(&p));
         // Through the form, as a GUI save does: unchanged, so not dirty either.
@@ -3759,16 +4623,33 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let (d, b) = placed_download(dir.path(), false);
         let p = preset_from_download(&d, &[], None);
-        assert_eq!((p.device.as_str(), p.tensor_split.as_str(), p.n_cpu_moe, p.ctx_size), ("", "", None, None));
+        assert_eq!(
+            (
+                p.device.as_str(),
+                p.tensor_split.as_str(),
+                p.n_cpu_moe,
+                p.ctx_size
+            ),
+            ("", "", None, None)
+        );
         assert!(p.fit && p.placement_note.is_empty());
         // One card that holds it all: nothing to write either.
-        let big = hf_fit::Budget { gpus: vec![hf_fit::Gpu { id: "CUDA0".into(), name: "G".into(), total_mib: 4096 }], ..b };
+        let big = hf_fit::Budget {
+            gpus: vec![hf_fit::Gpu {
+                id: "CUDA0".into(),
+                name: "G".into(),
+                total_mib: 4096,
+            }],
+            ..b
+        };
         let one = preset_from_download(&d, &[], Some(&big));
         assert_eq!(one, p);
         // An unreadable file: no placement, no failure.
         let mut gone = d.clone();
         gone.model = dir.path().join("missing.gguf");
-        assert!(preset_from_download(&gone, &[], Some(&big)).placement_note.is_empty());
+        assert!(preset_from_download(&gone, &[], Some(&big))
+            .placement_note
+            .is_empty());
     }
 
     #[test]

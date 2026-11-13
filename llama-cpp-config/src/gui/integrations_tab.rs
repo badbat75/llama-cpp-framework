@@ -10,9 +10,9 @@
 //! ticked row per model whose entry would change. Unticking a row leaves that
 //! model's entry as the file holds it.
 
+use super::*;
 use crate::integrations::{ChangeKind, FieldDiff, ModelChange, OpencodePlan};
 use crate::strings;
-use super::*;
 
 /// The preview's models and their ticks, between Save and the confirm.
 type Pending = Rc<RefCell<Vec<(ModelChange, bool)>>>;
@@ -27,10 +27,17 @@ pub(super) fn wire(app: &AppWindow) {
                 return;
             };
             let cfg = server_cfg::load();
-            let plan = match integrations::opencode_plan(&cfg.opencode_base_url_or_default(), cfg.opencode_api_key.as_deref()) {
+            let plan = match integrations::opencode_plan(
+                &cfg.opencode_base_url_or_default(),
+                cfg.opencode_api_key.as_deref(),
+            ) {
                 Ok(plan) => plan,
                 Err(e) => {
-                    set_status(&app, strings::fill("save-failed", &[&format!("{e:#}")]), true);
+                    set_status(
+                        &app,
+                        strings::fill("save-failed", &[&format!("{e:#}")]),
+                        true,
+                    );
                     return;
                 }
             };
@@ -49,15 +56,16 @@ pub(super) fn wire(app: &AppWindow) {
     {
         let app_weak = app.as_weak();
         let pending = pending.clone();
-        app.global::<AppState>().on_opencode_change_toggle(move |i| {
-            let Some(app) = app_weak.upgrade() else {
-                return;
-            };
-            if let Some(row) = pending.borrow_mut().get_mut(i as usize) {
-                row.1 = !row.1;
-            }
-            push_rows(&app, &pending);
-        });
+        app.global::<AppState>()
+            .on_opencode_change_toggle(move |i| {
+                let Some(app) = app_weak.upgrade() else {
+                    return;
+                };
+                if let Some(row) = pending.borrow_mut().get_mut(i as usize) {
+                    row.1 = !row.1;
+                }
+                push_rows(&app, &pending);
+            });
     }
     {
         let app_weak = app.as_weak();
@@ -67,8 +75,12 @@ pub(super) fn wire(app: &AppWindow) {
                 return;
             };
             app.global::<AppState>().set_show_opencode_dialog(false);
-            let keep: Vec<String> =
-                pending.borrow_mut().drain(..).filter(|(_, ticked)| !ticked).map(|(c, _)| c.id).collect();
+            let keep: Vec<String> = pending
+                .borrow_mut()
+                .drain(..)
+                .filter(|(_, ticked)| !ticked)
+                .map(|(c, _)| c.id)
+                .collect();
             let cfg = server_cfg::load();
             match integrations::save_opencode_models(
                 &cfg.opencode_base_url_or_default(),
@@ -76,7 +88,11 @@ pub(super) fn wire(app: &AppWindow) {
                 &keep,
             ) {
                 Ok(()) => set_status(&app, strings::t("opencode-saved"), false),
-                Err(e) => set_status(&app, strings::fill("save-failed", &[&format!("{e:#}")]), true),
+                Err(e) => set_status(
+                    &app,
+                    strings::fill("save-failed", &[&format!("{e:#}")]),
+                    true,
+                ),
             }
             refresh_integrations(&app);
         });
@@ -144,7 +160,10 @@ fn fields_text(fields: &[FieldDiff]) -> String {
                 Some(_) if f.path.ends_with("apiKey") => hidden.clone(),
                 Some(v) => v.clone(),
             };
-            strings::fill("opencode-field-diff", &[&f.path, &shown(&f.old), &shown(&f.new)])
+            strings::fill(
+                "opencode-field-diff",
+                &[&f.path, &shown(&f.old), &shown(&f.new)],
+            )
         })
         .collect::<Vec<_>>()
         .join("; ")

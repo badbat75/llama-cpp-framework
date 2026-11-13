@@ -23,8 +23,16 @@ impl Page {
 
     /// A `[a, b]` list of the front matter (empty when absent).
     pub fn list(&self, k: &str) -> Vec<String> {
-        let v = self.get(k).unwrap_or("").trim().trim_start_matches('[').trim_end_matches(']');
-        v.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect()
+        let v = self
+            .get(k)
+            .unwrap_or("")
+            .trim()
+            .trim_start_matches('[')
+            .trim_end_matches(']');
+        v.split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect()
     }
 
     pub fn title(&self) -> &str {
@@ -39,7 +47,10 @@ impl Page {
             rest = &rest[i + "campaign `".len()..];
             if let Some(j) = rest.find('`') {
                 let name = &rest[..j];
-                if !name.is_empty() && !name.contains(char::is_whitespace) && !out.iter().any(|n| n == name) {
+                if !name.is_empty()
+                    && !name.contains(char::is_whitespace)
+                    && !out.iter().any(|n| n == name)
+                {
                     out.push(name.to_string());
                 }
             }
@@ -53,7 +64,9 @@ impl Page {
         let mut cur: Option<String> = None;
         for line in self.body.lines() {
             match &mut cur {
-                None if line.trim_start().starts_with("```bench-chart") => cur = Some(String::new()),
+                None if line.trim_start().starts_with("```bench-chart") => {
+                    cur = Some(String::new())
+                }
                 Some(_) if line.trim_start().starts_with("```") => out.push(cur.take().unwrap()),
                 Some(c) => {
                     c.push_str(line);
@@ -82,19 +95,37 @@ pub fn load_all(dir: &Path) -> Result<Vec<Page>, String> {
                 .map_err(|e| format!("docs/{file}: {e}"))?
                 .replace("\r\n", "\n");
             let (meta, body) = split_front(&text);
-            let stem = if file == "README.md" { "index".to_string() } else { file.trim_end_matches(".md").to_string() };
-            Ok(Page { file, stem, meta, body: body.to_string() })
+            let stem = if file == "README.md" {
+                "index".to_string()
+            } else {
+                file.trim_end_matches(".md").to_string()
+            };
+            Ok(Page {
+                file,
+                stem,
+                meta,
+                body: body.to_string(),
+            })
         })
         .collect()
 }
 
 fn split_front(s: &str) -> (Vec<(String, String)>, &str) {
-    let Some(rest) = s.strip_prefix("---\n") else { return (Vec::new(), s) };
-    let Some(end) = rest.find("\n---\n") else { return (Vec::new(), s) };
+    let Some(rest) = s.strip_prefix("---\n") else {
+        return (Vec::new(), s);
+    };
+    let Some(end) = rest.find("\n---\n") else {
+        return (Vec::new(), s);
+    };
     let meta = rest[..end]
         .lines()
         .filter_map(|l| l.split_once(':'))
-        .map(|(k, v)| (k.trim().to_string(), v.split(" #").next().unwrap_or("").trim().to_string()))
+        .map(|(k, v)| {
+            (
+                k.trim().to_string(),
+                v.split(" #").next().unwrap_or("").trim().to_string(),
+            )
+        })
         .collect();
     (meta, rest[end + 5..].trim_start_matches('\n'))
 }
@@ -151,7 +182,9 @@ pub fn check(p: &Page, db: &Db) -> Vec<String> {
     }
     for m in p.list("models") {
         if !db.models.iter().any(|n| n.starts_with(&m)) {
-            err(format!("models: no model name in bench.db starts with `{m}`"));
+            err(format!(
+                "models: no model name in bench.db starts with `{m}`"
+            ));
         }
     }
     let heads: Vec<(u32, String)> = p
@@ -165,13 +198,18 @@ pub fn check(p: &Page, db: &Db) -> Vec<String> {
         err(format!("sections are not numbered 1..{}", heads.len()));
     }
     for r in required {
-        if !heads.iter().any(|(_, t)| t == r || t.starts_with(&format!("{r} ("))) {
+        if !heads
+            .iter()
+            .any(|(_, t)| t == r || t.starts_with(&format!("{r} (")))
+        {
             err(format!("no `## N. {r}` section"));
         }
     }
     for c in p.citations() {
         if db.campaign(&c).is_none() {
-            err(format!("cites campaign `{c}`, which bench.db does not hold"));
+            err(format!(
+                "cites campaign `{c}`, which bench.db does not hold"
+            ));
         }
     }
     for (i, src) in p.charts().iter().enumerate() {
@@ -194,30 +232,48 @@ pub fn render(p: &Page, pages: &[Page], db: &Db, base: &str) -> String {
     for ev in Parser::new_ext(&p.body, opts) {
         let next = matches!(&ev, Event::Text(t) if t.ends_with("campaign "));
         match ev {
-            Event::Start(Tag::CodeBlock(CodeBlockKind::Fenced(ref lang))) if lang.as_ref() == "bench-chart" => {
+            Event::Start(Tag::CodeBlock(CodeBlockKind::Fenced(ref lang)))
+                if lang.as_ref() == "bench-chart" =>
+            {
                 chart_src = Some(String::new());
             }
             Event::Text(t) if chart_src.is_some() => chart_src.as_mut().unwrap().push_str(&t),
             Event::End(TagEnd::CodeBlock) if chart_src.is_some() => {
                 let src = chart_src.take().unwrap();
-                let html = match Spec::parse(&src).and_then(|s| chart::build(&s, db).map(|d| (s, d))) {
-                    Ok((s, d)) => chart::svg(&s, &d, &campaign_href),
-                    Err(e) => format!("<p class=\"bad\">chart: {}</p>", esc(&e)),
-                };
+                let html =
+                    match Spec::parse(&src).and_then(|s| chart::build(&s, db).map(|d| (s, d))) {
+                        Ok((s, d)) => chart::svg(&s, &d, &campaign_href),
+                        Err(e) => format!("<p class=\"bad\">chart: {}</p>", esc(&e)),
+                    };
                 out.push(Event::Html(html.into()));
             }
             Event::Code(c) if after_campaign && db.campaign(&c).is_some() => {
                 out.push(Event::Html(
-                    format!("<a href=\"{}\"><code>{}</code></a>", campaign_href(&c), esc(&c)).into(),
+                    format!(
+                        "<a href=\"{}\"><code>{}</code></a>",
+                        campaign_href(&c),
+                        esc(&c)
+                    )
+                    .into(),
                 ));
             }
-            Event::Start(Tag::Link { link_type, dest_url, title, id }) => out.push(Event::Start(Tag::Link {
+            Event::Start(Tag::Link {
+                link_type,
+                dest_url,
+                title,
+                id,
+            }) => out.push(Event::Start(Tag::Link {
                 link_type,
                 dest_url: link(&dest_url, pages, base).into(),
                 title,
                 id,
             })),
-            Event::Start(Tag::Image { link_type, dest_url, title, id }) => out.push(Event::Start(Tag::Image {
+            Event::Start(Tag::Image {
+                link_type,
+                dest_url,
+                title,
+                id,
+            }) => out.push(Event::Start(Tag::Image {
                 link_type,
                 dest_url: link(&dest_url, pages, base).into(),
                 title,
@@ -242,7 +298,9 @@ fn contents(out: &mut Vec<Event>) {
     let mut title_end: Option<usize> = None;
     for (i, ev) in out.iter().enumerate() {
         match ev {
-            Event::Start(Tag::Heading { level, .. }) if (*level as u8) == 2 || (*level as u8) == 3 => {
+            Event::Start(Tag::Heading { level, .. })
+                if (*level as u8) == 2 || (*level as u8) == 3 =>
+            {
                 cur = Some((i, *level as u8, String::new()))
             }
             Event::Text(t) | Event::Code(t) if cur.is_some() => cur.as_mut().unwrap().2.push_str(t),

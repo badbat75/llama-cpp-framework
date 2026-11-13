@@ -5,8 +5,10 @@
 
 use super::WinConfig;
 use crate::common::cmake_options::cmake_options;
-use crate::common::llama::{cache_get, check_web_ui, checkout, reset_cuda_detection, SccacheDaemon};
 use crate::common::dists::Dists;
+use crate::common::llama::{
+    cache_get, check_web_ui, checkout, reset_cuda_detection, SccacheDaemon,
+};
 use crate::common::ui;
 use crate::common::util::{self, cmd, run as run_cmd};
 use anyhow::{bail, Result};
@@ -17,7 +19,10 @@ use std::path::{Path, PathBuf};
 /// keeps the PATH it inherits).
 pub fn load_build_env() -> Result<(WinConfig, Dists)> {
     let cfg = WinConfig::load()?;
-    let dists = Dists::resolve(Some(Path::new(&cfg.dist_root)).filter(|p| !p.as_os_str().is_empty()), None)?;
+    let dists = Dists::resolve(
+        Some(Path::new(&cfg.dist_root)).filter(|p| !p.as_os_str().is_empty()),
+        None,
+    )?;
     super::hip_env(&cfg);
     super::vs_env(&cfg)?;
     Ok((cfg, dists))
@@ -26,7 +31,11 @@ pub fn load_build_env() -> Result<(WinConfig, Dists)> {
 /// Paths as CMake writes them, compared the way PowerShell's -ne did:
 /// separators unified, case ignored.
 fn same_path(a: &str, b: &str) -> bool {
-    let n = |s: &str| s.replace('/', "\\").trim_end_matches('\\').to_ascii_lowercase();
+    let n = |s: &str| {
+        s.replace('/', "\\")
+            .trim_end_matches('\\')
+            .to_ascii_lowercase()
+    };
     n(a) == n(b)
 }
 
@@ -52,10 +61,16 @@ pub fn run() -> Result<()> {
     // cached entries poison the reconfigure. Only comparable when the config
     // carries a full path.
     let cached_cc = cache_get(&cache, "CMAKE_C_COMPILER");
-    if !cached_cc.is_empty() && Path::new(&cfg.c_compiler).is_absolute() && !same_path(&cached_cc, &cfg.c_compiler) {
+    if !cached_cc.is_empty()
+        && Path::new(&cfg.c_compiler).is_absolute()
+        && !same_path(&cached_cc, &cfg.c_compiler)
+    {
         ui::warn("Cached compiler changed:");
         ui::warn(format!("  {cached_cc} -> {}", cfg.c_compiler));
-        ui::warn(format!("  wiping {} for a clean configure", build_dir.display()));
+        ui::warn(format!(
+            "  wiping {} for a clean configure",
+            build_dir.display()
+        ));
         util::remove_all(&build_dir)?;
         std::fs::create_dir_all(&build_dir)?;
     }
@@ -66,7 +81,10 @@ pub fn run() -> Result<()> {
     if !cached_dir.is_empty() && !same_path(&cached_dir, &build_dir.display().to_string()) {
         ui::warn("Build dir was relocated:");
         ui::warn(format!("  {cached_dir} -> {}", build_dir.display()));
-        ui::warn(format!("  wiping {} for a clean configure", build_dir.display()));
+        ui::warn(format!(
+            "  wiping {} for a clean configure",
+            build_dir.display()
+        ));
         util::remove_all(&build_dir)?;
         std::fs::create_dir_all(&build_dir)?;
     }
@@ -78,9 +96,23 @@ pub fn run() -> Result<()> {
     let openssl = cfg.openssl_dir.replace('\\', "/");
     let mut openssl_reset: Vec<String> = Vec::new();
     let cached_ssl = cache_get(&cache, "OPENSSL_INCLUDE_DIR");
-    if !cached_ssl.is_empty() && !cached_ssl.to_ascii_lowercase().starts_with(&format!("{openssl}/").to_ascii_lowercase()) {
-        ui::warn(format!("OpenSSL moved to {} (cache had {cached_ssl}): searching again", cfg.openssl_dir));
-        openssl_reset = ["-UOPENSSL_INCLUDE_DIR", "-ULIB_EAY*", "-USSL_EAY*", "-UOPENSSL_APPLINK_SOURCE"].map(String::from).to_vec();
+    if !cached_ssl.is_empty()
+        && !cached_ssl
+            .to_ascii_lowercase()
+            .starts_with(&format!("{openssl}/").to_ascii_lowercase())
+    {
+        ui::warn(format!(
+            "OpenSSL moved to {} (cache had {cached_ssl}): searching again",
+            cfg.openssl_dir
+        ));
+        openssl_reset = [
+            "-UOPENSSL_INCLUDE_DIR",
+            "-ULIB_EAY*",
+            "-USSL_EAY*",
+            "-UOPENSSL_APPLINK_SOURCE",
+        ]
+        .map(String::from)
+        .to_vec();
     }
 
     // ── Vulkan SDK: the newest installed version, pinned explicitly ────
@@ -167,7 +199,11 @@ pub fn run() -> Result<()> {
     let (generator, defines) = cmake_options()?;
     ui::dim(format!(
         "CMake options (xtask/cmake/): {}",
-        defines.iter().map(|d| &d[2..]).collect::<Vec<_>>().join(" ")
+        defines
+            .iter()
+            .map(|d| &d[2..])
+            .collect::<Vec<_>>()
+            .join(" ")
     ));
     let mut args: Vec<String> = vec![
         "-S".into(),
@@ -237,7 +273,12 @@ pub fn run() -> Result<()> {
     // directly, where a `-Wl,` flag is an unknown argument. lld-link's ThinLTO
     // backend already runs one thread per physical core.
     args.extend(
-        ["-UCMAKE_EXE_LINKER_FLAGS", "-UCMAKE_SHARED_LINKER_FLAGS", "-UCMAKE_MODULE_LINKER_FLAGS"].map(String::from),
+        [
+            "-UCMAKE_EXE_LINKER_FLAGS",
+            "-UCMAKE_SHARED_LINKER_FLAGS",
+            "-UCMAKE_MODULE_LINKER_FLAGS",
+        ]
+        .map(String::from),
     );
 
     match &sccache {
@@ -279,6 +320,9 @@ pub fn run() -> Result<()> {
 
     check_web_ui(&build_dir, &llama)?;
 
-    ui::ok(format!("llama.cpp build complete: {}\\", build_dir.join("bin").display()));
+    ui::ok(format!(
+        "llama.cpp build complete: {}\\",
+        build_dir.join("bin").display()
+    ));
     Ok(())
 }

@@ -7,8 +7,8 @@
 use super::build_llama::load_build_env;
 use crate::common::licenses;
 use crate::common::ui;
-use crate::common::version;
 use crate::common::util::{self, cmd, gfx_arch, run as run_cmd};
+use crate::common::version;
 use anyhow::{bail, Context, Result};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::io::{Read, Seek, SeekFrom};
@@ -18,7 +18,10 @@ use std::time::Instant;
 const GIB: u64 = 1 << 30;
 
 fn name_of(p: &Path) -> String {
-    p.file_name().unwrap_or_default().to_string_lossy().into_owned()
+    p.file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .into_owned()
 }
 
 /// Every file under `dir`, recursively, hidden ones included.
@@ -26,7 +29,9 @@ fn walk(dir: &Path) -> Vec<PathBuf> {
     let mut out = Vec::new();
     let mut stack = vec![dir.to_path_buf()];
     while let Some(d) = stack.pop() {
-        let Ok(rd) = std::fs::read_dir(&d) else { continue };
+        let Ok(rd) = std::fs::read_dir(&d) else {
+            continue;
+        };
         for e in rd.flatten() {
             let p = e.path();
             if p.is_dir() {
@@ -42,7 +47,12 @@ fn walk(dir: &Path) -> Vec<PathBuf> {
 /// The files directly in `dir`.
 fn files_in(dir: &Path) -> Vec<PathBuf> {
     std::fs::read_dir(dir)
-        .map(|rd| rd.flatten().map(|e| e.path()).filter(|p| p.is_file()).collect())
+        .map(|rd| {
+            rd.flatten()
+                .map(|e| e.path())
+                .filter(|p| p.is_file())
+                .collect()
+        })
         .unwrap_or_default()
 }
 
@@ -71,13 +81,19 @@ fn copy_into(src: &Path, dest_dir: &Path) -> Result<()> {
             copy_into(&e.path(), &dest)?;
         }
     } else {
-        std::fs::copy(src, &dest).with_context(|| format!("copying {} to {}", src.display(), dest.display()))?;
+        std::fs::copy(src, &dest)
+            .with_context(|| format!("copying {} to {}", src.display(), dest.display()))?;
     }
     Ok(())
 }
 
 fn size_mib(dir: &Path) -> u64 {
-    walk(dir).iter().filter_map(|f| std::fs::metadata(f).ok()).map(|m| m.len()).sum::<u64>() / (1 << 20)
+    walk(dir)
+        .iter()
+        .filter_map(|f| std::fs::metadata(f).ok())
+        .map(|m| m.len())
+        .sum::<u64>()
+        / (1 << 20)
 }
 
 /// The OpenSSL DLL names a binary mentions (`libcrypto-N-x64.dll`,
@@ -119,7 +135,10 @@ fn find(hay: &[u8], needle: &[u8]) -> Option<usize> {
 
 /// `(?:libcrypto|libssl)-\d+-x64\.dll` at the start of `s`.
 fn openssl_name_at(s: &[u8], prefix_len: usize) -> Option<String> {
-    let digits = s[prefix_len..].iter().take_while(|c| c.is_ascii_digit()).count();
+    let digits = s[prefix_len..]
+        .iter()
+        .take_while(|c| c.is_ascii_digit())
+        .count();
     if digits == 0 {
         return None;
     }
@@ -155,7 +174,12 @@ fn pe_imports(path: &Path) -> Result<Vec<String>> {
     let mut sections = Vec::new();
     for i in 0..section_count {
         let s = rd(opt + opt_size + 40 * i + 8, 16)?;
-        sections.push((u32_at(&s, 0) as u64, u32_at(&s, 4) as u64, u32_at(&s, 8) as u64, u32_at(&s, 12) as u64));
+        sections.push((
+            u32_at(&s, 0) as u64,
+            u32_at(&s, 4) as u64,
+            u32_at(&s, 8) as u64,
+            u32_at(&s, 12) as u64,
+        ));
     }
     let to_offset = |rva: u64| {
         sections
@@ -177,13 +201,17 @@ fn pe_imports(path: &Path) -> Result<Vec<String>> {
         if rva == 0 {
             continue;
         }
-        let Some(table) = to_offset(rva) else { continue };
+        let Some(table) = to_offset(rva) else {
+            continue;
+        };
         for i in 0.. {
             let name_rva = u32_at(&rd(table + size * i + name_at, 4)?, 0) as u64;
             if name_rva == 0 {
                 break;
             }
-            let Some(off) = to_offset(name_rva) else { break };
+            let Some(off) = to_offset(name_rva) else {
+                break;
+            };
             let mut name = Vec::new();
             let mut at = off;
             loop {
@@ -206,7 +234,9 @@ fn encoded_command(text: &str) -> String {
     let bytes: Vec<u8> = text.encode_utf16().flat_map(|u| u.to_le_bytes()).collect();
     let mut out = String::new();
     for c in bytes.chunks(3) {
-        let n = (c[0] as u32) << 16 | (*c.get(1).unwrap_or(&0) as u32) << 8 | *c.get(2).unwrap_or(&0) as u32;
+        let n = (c[0] as u32) << 16
+            | (*c.get(1).unwrap_or(&0) as u32) << 8
+            | *c.get(2).unwrap_or(&0) as u32;
         for k in 0..4 {
             if k <= c.len() {
                 out.push(T[(n >> (18 - 6 * k) & 63) as usize] as char);
@@ -222,7 +252,8 @@ fn encoded_command(text: &str) -> String {
 /// extract at install time, no quoting of a script body. Comment-only and
 /// blank lines are dropped to keep the command line short.
 fn script_command(path: &Path) -> Result<String> {
-    let text = std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+    let text =
+        std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
     let body: Vec<&str> = text
         .trim_start_matches('\u{feff}')
         .lines()
@@ -269,7 +300,8 @@ pub fn run(keep_staging: bool, wix_arg: Option<PathBuf>) -> Result<()> {
                 pin.version
             )
         })?;
-    let wix_version = super::wix_version(&wix).with_context(|| format!("{} --version failed", wix.display()))?;
+    let wix_version =
+        super::wix_version(&wix).with_context(|| format!("{} --version failed", wix.display()))?;
     if wix_version != pin.version {
         ui::warn(format!(
             "WiX {wix_version} at {} is not the pinned {} (installer\\wix-toolset.psd1)",
@@ -280,7 +312,11 @@ pub fn run(keep_staging: bool, wix_arg: Option<PathBuf>) -> Result<()> {
     // Any command but --version doubles as the EULA check (v7+: WIX7015 until
     // `wix eula accept wix7`); this never accepts it on the user's behalf.
     let list = cmd(&wix).args(["extension", "list", "-g"]).output()?;
-    let list_text = format!("{}{}", String::from_utf8_lossy(&list.stdout), String::from_utf8_lossy(&list.stderr));
+    let list_text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&list.stdout),
+        String::from_utf8_lossy(&list.stderr)
+    );
     if !list.status.success() {
         if list_text.contains("WIX7015") {
             bail!(
@@ -294,14 +330,21 @@ pub fn run(keep_staging: bool, wix_arg: Option<PathBuf>) -> Result<()> {
         let want = format!("{ext} {wix_version}");
         let present = list_text.lines().any(|l| {
             l.starts_with(&want)
-                && !l[want.len()..].chars().next().map(|c| c.is_alphanumeric() || c == '_').unwrap_or(false)
+                && !l[want.len()..]
+                    .chars()
+                    .next()
+                    .map(|c| c.is_alphanumeric() || c == '_')
+                    .unwrap_or(false)
         });
         if !present {
             ui::warn(format!("Adding WiX extension {ext}/{wix_version}..."));
             run_cmd(cmd(&wix).args(["extension", "add", "-g", &format!("{ext}/{wix_version}")]))?;
         }
     }
-    ui::head(format!("WiX:               {wix_version} ({})", wix.display()));
+    ui::head(format!(
+        "WiX:               {wix_version} ({})",
+        wix.display()
+    ));
 
     // ── Stage llama.cpp with cmake --install ────────────────────────────
     let build_root = util::build_root();
@@ -316,7 +359,13 @@ pub fn run(keep_staging: bool, wix_arg: Option<PathBuf>) -> Result<()> {
     crate::common::strings_share::stage(&stage)?;
 
     ui::head("Staging llama.cpp binaries...");
-    run_cmd(cmd("cmake").arg("--install").arg(&build_dir).arg("--prefix").arg(&stage))?;
+    run_cmd(
+        cmd("cmake")
+            .arg("--install")
+            .arg(&build_dir)
+            .arg("--prefix")
+            .arg(&stage),
+    )?;
 
     // llama.cpp's own test harnesses (test-*.exe): unit tests, and
     // unwanted here because the installer offers to put bin\ on the SYSTEM
@@ -330,11 +379,19 @@ pub fn run(keep_staging: bool, wix_arg: Option<PathBuf>) -> Result<()> {
         })
         .collect();
     if !tests.is_empty() {
-        let bytes: u64 = tests.iter().filter_map(|p| std::fs::metadata(p).ok()).map(|m| m.len()).sum();
+        let bytes: u64 = tests
+            .iter()
+            .filter_map(|p| std::fs::metadata(p).ok())
+            .map(|m| m.len())
+            .sum();
         for t in &tests {
             std::fs::remove_file(t)?;
         }
-        ui::dim(format!("Pruned {} llama.cpp test binaries ({:.1} MB)", tests.len(), bytes as f64 / (1 << 20) as f64));
+        ui::dim(format!(
+            "Pruned {} llama.cpp test binaries ({:.1} MB)",
+            tests.len(),
+            bytes as f64 / (1 << 20) as f64
+        ));
     }
     util::remove_all(&stage.join("include"))?;
 
@@ -364,7 +421,10 @@ pub fn run(keep_staging: bool, wix_arg: Option<PathBuf>) -> Result<()> {
             );
         }
         std::fs::copy(&src, stage_bin.join(name))?;
-        ui::dim(format!("Staged {name} (OpenSSL runtime, imported by {})", users.join(", ")));
+        ui::dim(format!(
+            "Staged {name} (OpenSSL runtime, imported by {})",
+            users.join(", ")
+        ));
     }
 
     // ── Bundle the GPU runtimes ─────────────────────────────────────────
@@ -376,7 +436,8 @@ pub fn run(keep_staging: bool, wix_arg: Option<PathBuf>) -> Result<()> {
     // also wins over the driver's copy and the dist's rocBLAS never runs
     // against the DRIVER's HIP runtime (the mix that aborts BF16/F16 models on
     // gfx1201 at the first prefill batch).
-    let hip_root = Some(PathBuf::from(&cfg.hip_path)).filter(|p| !cfg.hip_path.is_empty() && p.is_dir());
+    let hip_root =
+        Some(PathBuf::from(&cfg.hip_path)).filter(|p| !cfg.hip_path.is_empty() && p.is_dir());
     let mut runtime_dirs: Vec<(&str, Vec<PathBuf>)> = Vec::new();
     if let Some(h) = &hip_root {
         runtime_dirs.push(("ROCm", vec![h.join("bin")]));
@@ -390,7 +451,10 @@ pub fn run(keep_staging: bool, wix_arg: Option<PathBuf>) -> Result<()> {
 
     ui::head("Bundling the GPU runtimes...");
     let mut bundled: BTreeMap<&str, Vec<String>> = BTreeMap::new();
-    let mut pending: VecDeque<PathBuf> = files_in(&stage_bin).into_iter().filter(|p| is_pe(p)).collect();
+    let mut pending: VecDeque<PathBuf> = files_in(&stage_bin)
+        .into_iter()
+        .filter(|p| is_pe(p))
+        .collect();
     while let Some(bin) = pending.pop_front() {
         for name in pe_imports(&bin)? {
             let dest = stage_bin.join(&name);
@@ -398,7 +462,9 @@ pub fn run(keep_staging: bool, wix_arg: Option<PathBuf>) -> Result<()> {
                 continue;
             }
             for (dist, dirs) in &runtime_dirs {
-                let Some(src) = dirs.iter().map(|d| d.join(&name)).find(|p| p.is_file()) else { continue };
+                let Some(src) = dirs.iter().map(|d| d.join(&name)).find(|p| p.is_file()) else {
+                    continue;
+                };
                 std::fs::copy(&src, &dest)?;
                 pending.push_back(dest);
                 bundled.entry(dist).or_default().push(name.clone());
@@ -410,7 +476,10 @@ pub fn run(keep_staging: bool, wix_arg: Option<PathBuf>) -> Result<()> {
     // A backend whose runtime did not resolve would be dropped silently by
     // ggml on every machine that lacks the SDK, which is every machine but
     // this one.
-    for (backend, prefix, suffix) in [("ggml-hip.dll", "hipblas", ".dll"), ("ggml-cuda.dll", "cublas64_", ".dll")] {
+    for (backend, prefix, suffix) in [
+        ("ggml-hip.dll", "hipblas", ".dll"),
+        ("ggml-cuda.dll", "cublas64_", ".dll"),
+    ] {
         let runtime_present = if prefix == "hipblas" {
             stage_bin.join("hipblas.dll").is_file()
         } else {
@@ -443,7 +512,10 @@ pub fn run(keep_staging: bool, wix_arg: Option<PathBuf>) -> Result<()> {
     //     <dist>\.kpack, which is <bin>\..\.kpack here as there. Only the BLAS
     //     archives, and only the architectures this build targets; entries
     //     that name no architecture are shared and always copied.
-    if let Some(hip) = hip_root.as_ref().filter(|_| any_like(&stage_bin, "amdhip64_", ".dll")) {
+    if let Some(hip) = hip_root
+        .as_ref()
+        .filter(|_| any_like(&stage_bin, "amdhip64_", ".dll"))
+    {
         let hip_bin = hip.join("bin");
         for f in files_in(&hip_bin) {
             let n = name_of(&f);
@@ -453,12 +525,22 @@ pub fn run(keep_staging: bool, wix_arg: Option<PathBuf>) -> Result<()> {
                 bundled.entry("ROCm").or_default().push(n);
             }
         }
-        let targets: BTreeSet<String> =
-            cfg.gpu_targets.split(';').filter(|t| !t.is_empty()).map(|t| t.to_ascii_lowercase()).collect();
-        let wanted = |name: &str| gfx_arch(name).map(|a| targets.contains(&a.to_ascii_lowercase())).unwrap_or(true);
+        let targets: BTreeSet<String> = cfg
+            .gpu_targets
+            .split(';')
+            .filter(|t| !t.is_empty())
+            .map(|t| t.to_ascii_lowercase())
+            .collect();
+        let wanted = |name: &str| {
+            gfx_arch(name)
+                .map(|a| targets.contains(&a.to_ascii_lowercase()))
+                .unwrap_or(true)
+        };
         for sub in [r"rocblas\library", r"hipblaslt\library"] {
             let from = hip_bin.join(sub);
-            let Ok(rd) = std::fs::read_dir(&from) else { continue };
+            let Ok(rd) = std::fs::read_dir(&from) else {
+                continue;
+            };
             let to = stage_bin.join(sub);
             std::fs::create_dir_all(&to)?;
             for e in rd.flatten() {
@@ -497,7 +579,10 @@ pub fn run(keep_staging: bool, wix_arg: Option<PathBuf>) -> Result<()> {
     // the staging tree is the installed tree, file for file.
     let config_exe = build_root.join(r"cargo-target\release\llama-cpp-config.exe");
     if !config_exe.is_file() {
-        bail!("llama-cpp-config.exe not found at {}. Run cargo run -p xtask -- build first.", config_exe.display());
+        bail!(
+            "llama-cpp-config.exe not found at {}. Run cargo run -p xtask -- build first.",
+            config_exe.display()
+        );
     }
     std::fs::copy(&config_exe, stage_bin.join("llama-cpp-config.exe"))?;
     ui::dim("Staged llama-cpp-config.exe");
@@ -509,10 +594,20 @@ pub fn run(keep_staging: bool, wix_arg: Option<PathBuf>) -> Result<()> {
     if !ico.is_file() {
         ui::head("llama.ico missing: regenerating from the llama.cpp webui logo...");
         if !resources.join(r"node_modules\sharp-ico").is_dir() {
-            let npm = util::which("npm").context("npm not found: node + npm generate resources\\llama.ico")?;
-            run_cmd(cmd(npm).current_dir(&resources).args(["install", "--no-save", "sharp", "sharp-ico"]))?;
+            let npm = util::which("npm")
+                .context("npm not found: node + npm generate resources\\llama.ico")?;
+            run_cmd(cmd(npm).current_dir(&resources).args([
+                "install",
+                "--no-save",
+                "sharp",
+                "sharp-ico",
+            ]))?;
         }
-        run_cmd(cmd("node").current_dir(&resources).arg("generate-llama-ico.mjs"))?;
+        run_cmd(
+            cmd("node")
+                .current_dir(&resources)
+                .arg("generate-llama-ico.mjs"),
+        )?;
     }
     std::fs::copy(&ico, stage_bin.join("llama.ico"))?;
 
@@ -540,25 +635,40 @@ pub fn run(keep_staging: bool, wix_arg: Option<PathBuf>) -> Result<()> {
     let own = read_text(&repo.join("LICENSE"))?;
     let bundles_cuda = entries.iter().any(|e| e.file == licenses::CUDA_EULA_FILE);
     let eula = if bundles_cuda {
-        Some(read_text(&share.join("licenses").join(licenses::CUDA_EULA_FILE))?)
+        Some(read_text(
+            &share.join("licenses").join(licenses::CUDA_EULA_FILE),
+        )?)
     } else {
         None
     };
     // Beside the intermediates: it is shown by the installer, not installed.
     let license_rtf = build_root.join("license.rtf");
-    std::fs::write(&license_rtf, licenses::installer_page(&entries, &own, eula.as_deref()))?;
+    std::fs::write(
+        &license_rtf,
+        licenses::installer_page(&entries, &own, eula.as_deref()),
+    )?;
 
     let files = walk(&stage);
-    let payload: u64 = files.iter().filter_map(|f| std::fs::metadata(f).ok()).map(|m| m.len()).sum();
+    let payload: u64 = files
+        .iter()
+        .filter_map(|f| std::fs::metadata(f).ok())
+        .map(|m| m.len())
+        .sum();
     let defines: Vec<(&str, String)> = vec![
         ("Version", framework_version.clone()),
         ("LlamaBuild", llama_build.clone()),
         ("StagingDir", stage.display().to_string()),
         ("HasLib", (stage.join("lib").exists() as u8).to_string()),
-        ("HasKpack", (stage.join(".kpack").exists() as u8).to_string()),
+        (
+            "HasKpack",
+            (stage.join(".kpack").exists() as u8).to_string(),
+        ),
         ("EstimatedSizeKb", payload.div_ceil(1024).to_string()),
         ("LicenseRtf", license_rtf.display().to_string()),
-        ("StopProcessesCmd", script_command(&repo.join(r"installer\msi-stop-processes.ps1"))?),
+        (
+            "StopProcessesCmd",
+            script_command(&repo.join(r"installer\msi-stop-processes.ps1"))?,
+        ),
     ];
     // The .wixpdb (debug symbols of the package) goes with the
     // intermediates, not beside the .msi in dist\.
@@ -601,7 +711,11 @@ pub fn run(keep_staging: bool, wix_arg: Option<PathBuf>) -> Result<()> {
 
     // ICE validation; the suppressed ICEs, and why, are in installer\AGENTS.md.
     ui::head("Validating the MSI (ICE)...");
-    run_cmd(cmd(&wix).args(["msi", "validate", "-sice", "ICE61"]).arg(&out_file))?;
+    run_cmd(
+        cmd(&wix)
+            .args(["msi", "validate", "-sice", "ICE61"])
+            .arg(&out_file),
+    )?;
 
     let _ = util::remove_all(&obj);
     if !keep_staging {

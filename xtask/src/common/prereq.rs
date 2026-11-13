@@ -36,7 +36,9 @@ pub fn fetch_json(url: &str) -> Option<Value> {
 }
 
 pub fn sha256_matches(p: &Path, want: &str) -> bool {
-    let Ok(mut f) = std::fs::File::open(p) else { return false };
+    let Ok(mut f) = std::fs::File::open(p) else {
+        return false;
+    };
     let mut h = Sha256::new();
     if std::io::copy(&mut f, &mut h).is_err() {
         return false;
@@ -57,13 +59,33 @@ pub fn download(url: &str, dest: &Path, sha: Option<&str>) -> bool {
             return true;
         }
     }
-    let name = dest.file_name().unwrap_or_default().to_string_lossy().into_owned();
+    let name = dest
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .into_owned();
     ui::dim(format!("    downloading {name}"));
     // -C - resumes; a server answering 416 means the file is already whole.
     use std::io::IsTerminal;
-    let progress = if std::io::stderr().is_terminal() { "--progress-bar" } else { "-sS" };
+    let progress = if std::io::stderr().is_terminal() {
+        "--progress-bar"
+    } else {
+        "-sS"
+    };
     let rc = cmd("curl")
-        .args(["-fL", "--retry", "5", "--retry-delay", "5", "--connect-timeout", "20", "-C", "-", progress, "-o"])
+        .args([
+            "-fL",
+            "--retry",
+            "5",
+            "--retry-delay",
+            "5",
+            "--connect-timeout",
+            "20",
+            "-C",
+            "-",
+            progress,
+            "-o",
+        ])
         .arg(dest)
         .arg(url)
         .status()
@@ -72,7 +94,9 @@ pub fn download(url: &str, dest: &Path, sha: Option<&str>) -> bool {
         .unwrap_or(-1);
     // 22 with a file already on disk is the 416 case: the hash (or, for an
     // archive without one, the extract) decides whether it really is whole.
-    let nonempty = std::fs::metadata(dest).map(|m| m.len() > 0).unwrap_or(false);
+    let nonempty = std::fs::metadata(dest)
+        .map(|m| m.len() > 0)
+        .unwrap_or(false);
     if rc != 0 && !(rc == 22 && nonempty) {
         return false;
     }
@@ -91,11 +115,18 @@ pub fn need_space(dir: &Path, need_gib: u64) -> bool {
     let _ = std::fs::create_dir_all(dir);
     // POSIX output (-P), the same on GNU and BSD df: Available is field 4.
     let avail_kib: u64 = output(cmd("df").args(["-P", "-k"]).arg(dir))
-        .and_then(|s| s.lines().last().and_then(|l| l.split_whitespace().nth(3)?.parse().ok()))
+        .and_then(|s| {
+            s.lines()
+                .last()
+                .and_then(|l| l.split_whitespace().nth(3)?.parse().ok())
+        })
         .unwrap_or(0);
     let avail = avail_kib / 1_048_576;
     if avail < need_gib {
-        ui::err(format!("    only {avail} GiB free under {}, {need_gib} GiB needed", dir.display()));
+        ui::err(format!(
+            "    only {avail} GiB free under {}, {need_gib} GiB needed",
+            dir.display()
+        ));
         return false;
     }
     true
@@ -154,7 +185,14 @@ pub fn sccache(dists: &Dists, r: &mut Report) {
         .map(|t| t.trim_start_matches('v').to_string())
         .unwrap_or_default();
     if latest.is_empty() {
-        r.note(format!("sccache        : {} (release lookup failed, kept)", if have.is_empty() { "not installed" } else { &have }));
+        r.note(format!(
+            "sccache        : {} (release lookup failed, kept)",
+            if have.is_empty() {
+                "not installed"
+            } else {
+                &have
+            }
+        ));
     } else if !have.is_empty() && !util::version_gt(&latest, &have) {
         ui::ok(format!("    {have} is current"));
         r.note(format!("sccache        : {have} (current)"));
@@ -163,8 +201,16 @@ pub fn sccache(dists: &Dists, r: &mut Report) {
         let entry = rel
             .as_ref()
             .and_then(|j| j["assets"].as_array())
-            .and_then(|a| a.iter().find(|x| x["name"].as_str() == Some(&asset)).cloned());
-        let url = entry.as_ref().and_then(|e| e["browser_download_url"].as_str()).unwrap_or_default().to_string();
+            .and_then(|a| {
+                a.iter()
+                    .find(|x| x["name"].as_str() == Some(&asset))
+                    .cloned()
+            });
+        let url = entry
+            .as_ref()
+            .and_then(|e| e["browser_download_url"].as_str())
+            .unwrap_or_default()
+            .to_string();
         let sha = entry
             .as_ref()
             .and_then(|e| e["digest"].as_str())
@@ -179,12 +225,20 @@ pub fn sccache(dists: &Dists, r: &mut Report) {
             && succeeds(cmd(tmp.join("sccache")).arg("--version"))
             && install_binary(&tmp.join("sccache"), &bin);
         if ok {
-            ui::ok(format!("    {} -> {latest} ({})", or_none(&have), bin.display()));
+            ui::ok(format!(
+                "    {} -> {latest} ({})",
+                or_none(&have),
+                bin.display()
+            ));
             r.note(format!("sccache        : {} -> {latest}", or_none(&have)));
         } else {
             r.note(format!(
                 "sccache        : {} (download of {latest} failed, kept)",
-                if have.is_empty() { "not installed" } else { &have }
+                if have.is_empty() {
+                    "not installed"
+                } else {
+                    &have
+                }
             ));
         }
         let _ = util::remove_all(&tmp);
@@ -196,8 +250,13 @@ pub fn sccache(dists: &Dists, r: &mut Report) {
 /// that is running without disturbing the process.
 fn install_binary(src: &Path, dest: &Path) -> bool {
     use std::os::unix::fs::PermissionsExt;
-    let Some(dir) = dest.parent() else { return false };
-    let staged = dir.join(format!("{}.new", dest.file_name().unwrap_or_default().to_string_lossy()));
+    let Some(dir) = dest.parent() else {
+        return false;
+    };
+    let staged = dir.join(format!(
+        "{}.new",
+        dest.file_name().unwrap_or_default().to_string_lossy()
+    ));
     std::fs::create_dir_all(dir).is_ok()
         && std::fs::copy(src, &staged).is_ok()
         && std::fs::set_permissions(&staged, std::fs::Permissions::from_mode(0o755)).is_ok()
@@ -221,13 +280,16 @@ pub fn llama_check(recorded_dir: Option<&str>, r: &mut Report) {
         c.arg("-C").arg(&dir);
         c
     };
-    let cur = output(git().args(["describe", "--tags", "--exact-match"])).unwrap_or_else(|| "untagged".into());
+    let cur = output(git().args(["describe", "--tags", "--exact-match"]))
+        .unwrap_or_else(|| "untagged".into());
     if succeeds(git().args(["fetch", "--quiet", "origin", "--tags"])) {
         let new = util::newest_release_tag(&dir).unwrap_or_default();
         if cur == new {
             r.note(format!("llama.cpp      : {cur} (latest release)"));
         } else {
-            r.note(format!("llama.cpp      : {cur}, release {new} available (run cargo run -p xtask -- build)"));
+            r.note(format!(
+                "llama.cpp      : {cur}, release {new} available (run cargo run -p xtask -- build)"
+            ));
         }
     } else {
         r.note(format!("llama.cpp      : {cur} (fetch failed)"));
@@ -239,7 +301,13 @@ pub fn llama_check(recorded_dir: Option<&str>, r: &mut Report) {
 /// fail the phase. `explicit_root` is whether --dist-root was given:
 /// The configure phase has to be told the root only when it would not resolve
 /// this one by itself.
-pub fn finish(r: &Report, dists: &Dists, roots: &[PathBuf], explicit_root: bool, recorded_root: &str) -> Result<()> {
+pub fn finish(
+    r: &Report,
+    dists: &Dists,
+    roots: &[PathBuf],
+    explicit_root: bool,
+    recorded_root: &str,
+) -> Result<()> {
     // ── Report ──────────────────────────────────────────────────────────
     ui::head("  Report");
     ui::head("  ------");
@@ -248,7 +316,11 @@ pub fn finish(r: &Report, dists: &Dists, roots: &[PathBuf], explicit_root: bool,
     }
     for root in roots {
         let n = std::fs::read_dir(root)
-            .map(|rd| rd.flatten().filter(|e| e.path().join(util::OS_DIR).is_dir()).count())
+            .map(|rd| {
+                rd.flatten()
+                    .filter(|e| e.path().join(util::OS_DIR).is_dir())
+                    .count()
+            })
             .unwrap_or(0);
         if n > 1 {
             ui::dim(format!(
@@ -269,11 +341,17 @@ pub fn finish(r: &Report, dists: &Dists, roots: &[PathBuf], explicit_root: bool,
     }
     let mut configure = String::from("cargo run -p xtask -- configure");
     let root = dists.root.display().to_string();
-    if explicit_root && std::env::var_os("LLAMA_FW_DIST_ROOT").map(|v| v.is_empty()).unwrap_or(true) && root != recorded_root {
+    if explicit_root
+        && std::env::var_os("LLAMA_FW_DIST_ROOT")
+            .map(|v| v.is_empty())
+            .unwrap_or(true)
+        && root != recorded_root
+    {
         configure.push_str(&format!(" --dist-root {root}"));
     }
-    ui::ok(format!("  All prerequisites in place. Next: {configure}, then cargo run -p xtask -- build"));
+    ui::ok(format!(
+        "  All prerequisites in place. Next: {configure}, then cargo run -p xtask -- build"
+    ));
     ui::say("");
     Ok(())
 }
-

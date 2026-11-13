@@ -216,7 +216,10 @@ impl Transfer {
     /// rolled: the crate has no formatting dependency and this is the only place
     /// that wants them.
     pub fn describe(&self) -> String {
-        strings::fill("snapshot-describe", &[&self.model, &thousands(self.tokens), &gib(self.bytes)])
+        strings::fill(
+            "snapshot-describe",
+            &[&self.model, &thousands(self.tokens), &gib(self.bytes)],
+        )
     }
 }
 
@@ -264,7 +267,10 @@ fn wait_listening(
             return Err(strings::fill("exited-before-answer", &[&port]));
         }
         if std::time::Instant::now() >= deadline {
-            return Err(strings::fill("no-answer-within", &[&port, &timeout.as_secs()]));
+            return Err(strings::fill(
+                "no-answer-within",
+                &[&port, &timeout.as_secs()],
+            ));
         }
         std::thread::sleep(step);
     }
@@ -338,12 +344,7 @@ pub fn save_all(cfg: &crate::server_cfg::ServerConfig) -> (Vec<Transfer>, Vec<St
     let port = cfg.port_or_default() as u16;
     let dir = match ensure_dir(cfg) {
         Ok(d) => d,
-        Err(e) => {
-            return (
-                Vec::new(),
-                vec![strings::fill("state-dir-failed", &[&e])],
-            )
-        }
+        Err(e) => return (Vec::new(), vec![strings::fill("state-dir-failed", &[&e])]),
     };
 
     let models = match loaded_models(port) {
@@ -413,9 +414,7 @@ pub fn restore_newest(
     let model = known_models
         .iter()
         .find(|m| state_file_name(m) == filename)
-        .ok_or_else(|| {
-            strings::fill("dump-no-model", &[&filename])
-        })?;
+        .ok_or_else(|| strings::fill("dump-no-model", &[&filename]))?;
 
     wait_listening(
         port,

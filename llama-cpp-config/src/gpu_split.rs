@@ -613,7 +613,9 @@ pub fn build_rows(
             .find(|d| d.id.eq_ignore_ascii_case(id) && !d.is_cpu());
         rows.push(GpuRow {
             id: id.clone().into(),
-            name: dev.map_or_else(|| strings::t("not-detected"), |d| d.name.clone()).into(),
+            name: dev
+                .map_or_else(|| strings::t("not-detected"), |d| d.name.clone())
+                .into(),
             vram: dev
                 .map(DeviceOption::vram_summary)
                 .map_or_else(SharedString::new, Into::into),

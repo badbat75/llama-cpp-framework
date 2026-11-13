@@ -503,7 +503,10 @@ pub fn plan_params(plan: &Plan) -> Vec<(String, String)> {
         // what it started from and what it changed.
         Some(t) if !t.derived.is_empty() => {
             out.push(("spec".into(), "custom".into()));
-            out.push(("spec-derived-from".into(), format!("{}-{}", t.name, t.version)));
+            out.push((
+                "spec-derived-from".into(),
+                format!("{}-{}", t.name, t.version),
+            ));
             out.push(("spec-derived-sha256".into(), t.sha256.clone()));
             out.push(("spec-derived-fields".into(), t.derived.join(",")));
             out.push(("spec-pass".into(), t.pass.clone()));
@@ -536,7 +539,13 @@ pub fn plan_params(plan: &Plan) -> Vec<(String, String)> {
                 // An image of the user's in place of the prompt's: no pin
                 // covers it, so its name and digest identify it.
                 if let Some(img) = &plan.image {
-                    out.push(("image".into(), img.file_name().unwrap_or_default().to_string_lossy().into_owned()));
+                    out.push((
+                        "image".into(),
+                        img.file_name()
+                            .unwrap_or_default()
+                            .to_string_lossy()
+                            .into_owned(),
+                    ));
                     if let Ok(bytes) = std::fs::read(img) {
                         out.push(("image-sha256".into(), crate::sha256::hex(&bytes)));
                     }

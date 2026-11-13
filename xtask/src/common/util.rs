@@ -88,14 +88,24 @@ pub fn which(name: &str) -> Option<PathBuf> {
         &[""]
     };
     std::env::split_paths(&path)
-        .flat_map(|d| exts.iter().map(move |e| if e.is_empty() { d.join(name) } else { d.join(name).with_extension(e) }))
+        .flat_map(|d| {
+            exts.iter().map(move |e| {
+                if e.is_empty() {
+                    d.join(name)
+                } else {
+                    d.join(name).with_extension(e)
+                }
+            })
+        })
         .find(|p| is_executable(p))
 }
 
 #[cfg(unix)]
 pub fn is_executable(p: &Path) -> bool {
     use std::os::unix::fs::PermissionsExt;
-    std::fs::metadata(p).map(|m| m.is_file() && m.permissions().mode() & 0o111 != 0).unwrap_or(false)
+    std::fs::metadata(p)
+        .map(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+        .unwrap_or(false)
 }
 #[cfg(not(unix))]
 pub fn is_executable(p: &Path) -> bool {
@@ -131,7 +141,9 @@ fn describe(c: &Command) -> String {
 
 /// Runs with inherited stdio; an error when it cannot start or fails.
 pub fn run(c: &mut Command) -> Result<()> {
-    let status = c.status().with_context(|| format!("cannot run {}", describe(c)))?;
+    let status = c
+        .status()
+        .with_context(|| format!("cannot run {}", describe(c)))?;
     if !status.success() {
         bail!("{} failed ({status})", describe(c));
     }
@@ -183,7 +195,11 @@ pub fn vercmp(a: &str, b: &str) -> Ordering {
             a = &a[na..];
             b = &b[nb..];
         } else if da != db {
-            return if da { Ordering::Less } else { Ordering::Greater };
+            return if da {
+                Ordering::Less
+            } else {
+                Ordering::Greater
+            };
         } else {
             let na = a.iter().take_while(|c| !c.is_ascii_digit()).count();
             let nb = b.iter().take_while(|c| !c.is_ascii_digit()).count();
@@ -210,7 +226,10 @@ pub fn version_gt(a: &str, b: &str) -> bool {
 /// `^[0-9]+(\.[0-9]+)+$`
 pub fn is_dotted_version(s: &str) -> bool {
     let parts: Vec<&str> = s.split('.').collect();
-    parts.len() >= 2 && parts.iter().all(|p| !p.is_empty() && p.bytes().all(|c| c.is_ascii_digit()))
+    parts.len() >= 2
+        && parts
+            .iter()
+            .all(|p| !p.is_empty() && p.bytes().all(|c| c.is_ascii_digit()))
 }
 
 /// `^v[0-9]+\.[0-9]+\.[0-9]+$`: a llama.cpp release tag, not a bNNNN
@@ -275,7 +294,9 @@ pub fn du(flag: &str, p: &Path) -> String {
 pub fn remove_all(p: &Path) -> Result<()> {
     match std::fs::symlink_metadata(p) {
         Err(_) => Ok(()),
-        Ok(m) if m.is_dir() => std::fs::remove_dir_all(p).with_context(|| format!("removing {}", p.display())),
+        Ok(m) if m.is_dir() => {
+            std::fs::remove_dir_all(p).with_context(|| format!("removing {}", p.display()))
+        }
         Ok(_) => std::fs::remove_file(p).with_context(|| format!("removing {}", p.display())),
     }
 }
@@ -287,7 +308,10 @@ pub fn gfx_arch(name: &str) -> Option<&str> {
     while let Some(i) = name[from..].find("gfx") {
         let start = from + i;
         let tail = &name[start + 3..];
-        let n = tail.bytes().take_while(|c| c.is_ascii_alphanumeric()).count();
+        let n = tail
+            .bytes()
+            .take_while(|c| c.is_ascii_alphanumeric())
+            .count();
         if n > 0 {
             return Some(&name[start..start + 3 + n]);
         }
@@ -305,7 +329,9 @@ pub fn basename(s: &str) -> &str {
 /// All the logical cores but two, which stay free during the long CUDA/HIP
 /// compiles; at least one job.
 pub fn default_build_jobs() -> u32 {
-    let cores = std::thread::available_parallelism().map(|n| n.get() as u32).unwrap_or(1);
+    let cores = std::thread::available_parallelism()
+        .map(|n| n.get() as u32)
+        .unwrap_or(1);
     jobs_for(cores)
 }
 
@@ -330,8 +356,14 @@ mod tests {
         assert!(version_gt("1.4.10", "1.4.9"));
         assert!(version_gt("v0.10.0", "v0.2.0"));
         assert!(!version_gt("1.0", "1.0"));
-        assert!(version_gt("2.2.0+llama.cpp.v0.10.0-1", "2.2.0+llama.cpp.v0.7.0-1"));
-        assert!(version_gt("2.2.1+llama.cpp.v0.1.0-1", "2.2.0+llama.cpp.v0.9.0-1"));
+        assert!(version_gt(
+            "2.2.0+llama.cpp.v0.10.0-1",
+            "2.2.0+llama.cpp.v0.7.0-1"
+        ));
+        assert!(version_gt(
+            "2.2.1+llama.cpp.v0.1.0-1",
+            "2.2.0+llama.cpp.v0.9.0-1"
+        ));
     }
 
     #[test]
@@ -352,6 +384,9 @@ mod tests {
             .collect();
         assert_eq!(v, ["10.1.0", "7.14.0"]);
         let idx = "redistrib_13.4.3.json redistrib_13.0.json";
-        assert_eq!(scan_versions(idx, "redistrib_", ".json")[0].1, "redistrib_13.4.3.json");
+        assert_eq!(
+            scan_versions(idx, "redistrib_", ".json")[0].1,
+            "redistrib_13.4.3.json"
+        );
     }
 }

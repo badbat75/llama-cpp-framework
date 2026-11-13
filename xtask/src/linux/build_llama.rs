@@ -5,9 +5,11 @@
 
 use super::config::{self, BuildConfig};
 use super::dists::vulkan_loader;
-use crate::common::dists::Dists;
 use crate::common::cmake_options::cmake_options;
-use crate::common::llama::{cache_get, check_web_ui, checkout, print_version, reset_cuda_detection, SccacheDaemon};
+use crate::common::dists::Dists;
+use crate::common::llama::{
+    cache_get, check_web_ui, checkout, print_version, reset_cuda_detection, SccacheDaemon,
+};
 use crate::common::ui;
 use crate::common::util::{self, cmd, run as run_cmd};
 use anyhow::{bail, Context, Result};
@@ -23,7 +25,10 @@ pub fn load_build_env() -> Result<(BuildConfig, Dists)> {
     let cfg = config::load()?;
     // The root the configure phase recorded, so the CUDA Toolkit and the
     // Vulkan SDK resolved at build time come from the same root as hip_path.
-    let dists = Dists::resolve(Some(Path::new(&cfg.dist_root)).filter(|p| !p.as_os_str().is_empty()), None)?;
+    let dists = Dists::resolve(
+        Some(Path::new(&cfg.dist_root)).filter(|p| !p.as_os_str().is_empty()),
+        None,
+    )?;
     let hip = Path::new(&cfg.hip_path);
     if !cfg.hip_path.is_empty() && hip.is_dir() {
         std::env::set_var("HIP_PATH", hip);
@@ -61,7 +66,10 @@ pub fn run() -> Result<()> {
     if !cached_cc.is_empty() && cached_cc != cfg.c_compiler {
         ui::warn("Cached compiler changed:");
         ui::warn(format!("  {cached_cc} -> {}", cfg.c_compiler));
-        ui::warn(format!("  wiping {} for a clean configure", build_dir.display()));
+        ui::warn(format!(
+            "  wiping {} for a clean configure",
+            build_dir.display()
+        ));
         util::remove_all(&build_dir)?;
         std::fs::create_dir_all(&build_dir)?;
     }
@@ -70,7 +78,11 @@ pub fn run() -> Result<()> {
     let (generator, defines) = cmake_options()?;
     ui::dim(format!(
         "CMake options (xtask/cmake/): {}",
-        defines.iter().map(|d| &d[2..]).collect::<Vec<_>>().join(" ")
+        defines
+            .iter()
+            .map(|d| &d[2..])
+            .collect::<Vec<_>>()
+            .join(" ")
     ));
 
     let mut args: Vec<String> = vec![
@@ -104,7 +116,11 @@ pub fn run() -> Result<()> {
     // passed, blank included, so none survives in the cache from an
     // experiment or from a config that has since lost its lld; -U retires the
     // cached linker type of a build dir configured before this was changed.
-    let ld_flags = if cfg.linker_type == "LLD" { "-fuse-ld=lld" } else { "" };
+    let ld_flags = if cfg.linker_type == "LLD" {
+        "-fuse-ld=lld"
+    } else {
+        ""
+    };
     args.extend([
         format!("-DCMAKE_EXE_LINKER_FLAGS={ld_flags}"),
         format!("-DCMAKE_SHARED_LINKER_FLAGS={ld_flags}"),
@@ -125,7 +141,10 @@ pub fn run() -> Result<()> {
     }
     let hip = Path::new(&cfg.hip_path);
     args.extend([
-        format!("-DCMAKE_HIP_COMPILER={}", hip.join("lib/llvm/bin/clang++").display()),
+        format!(
+            "-DCMAKE_HIP_COMPILER={}",
+            hip.join("lib/llvm/bin/clang++").display()
+        ),
         format!("-DCMAKE_HIP_COMPILER_ROCM_ROOT={}", cfg.hip_path),
     ]);
     // RCCL, AMD's NCCL: the collective library `--split-mode tensor` reduces
@@ -166,11 +185,17 @@ pub fn run() -> Result<()> {
             args.extend([
                 format!("-DVulkan_INCLUDE_DIR:PATH={}", vk.join("include").display()),
                 format!("-DVulkan_LIBRARY:FILEPATH={}", loader.display()),
-                format!("-DVulkan_GLSLC_EXECUTABLE:FILEPATH={}", vk.join("bin/glslc").display()),
+                format!(
+                    "-DVulkan_GLSLC_EXECUTABLE:FILEPATH={}",
+                    vk.join("bin/glslc").display()
+                ),
             ]);
             let validator = vk.join("bin/glslangValidator");
             if util::is_executable(&validator) {
-                args.push(format!("-DVulkan_GLSLANG_VALIDATOR_EXECUTABLE:FILEPATH={}", validator.display()));
+                args.push(format!(
+                    "-DVulkan_GLSLANG_VALIDATOR_EXECUTABLE:FILEPATH={}",
+                    validator.display()
+                ));
             }
         }
         None => ui::warn(format!(
@@ -198,8 +223,13 @@ pub fn run() -> Result<()> {
                 ui::warn("  resetting the CUDA detection only (the CUDA objects recompile, nothing else)");
                 reset_cuda_detection(&build_dir)?;
                 args.extend(
-                    ["-UCUDA_*", "-UCUDAToolkit_*", "-U_cmake_CUDAToolkit_*", "-UFIND_PACKAGE_MESSAGE_DETAILS_CUDAToolkit"]
-                        .map(String::from),
+                    [
+                        "-UCUDA_*",
+                        "-UCUDAToolkit_*",
+                        "-U_cmake_CUDAToolkit_*",
+                        "-UFIND_PACKAGE_MESSAGE_DETAILS_CUDAToolkit",
+                    ]
+                    .map(String::from),
                 );
             }
             args.extend([
@@ -216,7 +246,10 @@ pub fn run() -> Result<()> {
             // nvcc's host compiler: the distro g++ (see configure), not the
             // ROCm clang that compiles everything else.
             if !cfg.cuda_host_compiler.is_empty() {
-                args.push(format!("-DCMAKE_CUDA_HOST_COMPILER:FILEPATH={}", cfg.cuda_host_compiler));
+                args.push(format!(
+                    "-DCMAKE_CUDA_HOST_COMPILER:FILEPATH={}",
+                    cfg.cuda_host_compiler
+                ));
             }
         }
         None => {
@@ -242,7 +275,10 @@ pub fn run() -> Result<()> {
             ui::head(format!("NCCL: {}", nccl.display()));
             args.extend([
                 format!("-DNCCL_INCLUDE_DIR:PATH={}", nccl.join("include").display()),
-                format!("-DNCCL_LIBRARY:FILEPATH={}", nccl.join("lib/libnccl.so").display()),
+                format!(
+                    "-DNCCL_LIBRARY:FILEPATH={}",
+                    nccl.join("lib/libnccl.so").display()
+                ),
             ]);
         }
         None => {
@@ -272,7 +308,11 @@ pub fn run() -> Result<()> {
     // first. Ours prints its stats and stops right after the build, or when
     // the configure or the build fails.
     let home_sccache = util::home().join(".local/bin/sccache");
-    let sccache = if util::is_executable(&home_sccache) { Some(home_sccache) } else { util::which("sccache") };
+    let sccache = if util::is_executable(&home_sccache) {
+        Some(home_sccache)
+    } else {
+        util::which("sccache")
+    };
     let mut daemon = None;
     match &sccache {
         Some(sc) => {
@@ -314,7 +354,10 @@ pub fn run() -> Result<()> {
     check_web_ui(&build_dir, &llama)?;
 
     ui::say("");
-    ui::ok(format!("llama.cpp build complete: {}/", build_dir.join("bin").display()));
+    ui::ok(format!(
+        "llama.cpp build complete: {}/",
+        build_dir.join("bin").display()
+    ));
     // The binaries carry a build-tree RPATH to the ROCm, CUDA and Vulkan
     // dists they were linked against, so they run from here with no
     // LD_LIBRARY_PATH.
@@ -323,4 +366,3 @@ pub fn run() -> Result<()> {
     ui::say("");
     Ok(())
 }
-

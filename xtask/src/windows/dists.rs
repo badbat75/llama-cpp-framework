@@ -24,11 +24,23 @@ impl Dists {
     pub fn find_cuda(&self) -> Option<PathBuf> {
         newest_dist(
             &self.cuda_root(),
-            &[&self.sources.cuda.marker, r"bin\nvcc.exe", r"lib\x64\cudart_static.lib", r"lib\x64\cublas.lib"],
+            &[
+                &self.sources.cuda.marker,
+                r"bin\nvcc.exe",
+                r"lib\x64\cudart_static.lib",
+                r"lib\x64\cublas.lib",
+            ],
         )
     }
     /// The dist dir itself, which is what VULKAN_SDK names on Windows.
     pub fn find_vulkan(&self) -> Option<PathBuf> {
-        newest_dist(&self.vulkan_root(), &[&self.sources.vulkan.marker, r"Lib\vulkan-1.lib", r"Bin\glslc.exe"])
+        newest_dist(
+            &self.vulkan_root(),
+            &[
+                &self.sources.vulkan.marker,
+                r"Lib\vulkan-1.lib",
+                r"Bin\glslc.exe",
+            ],
+        )
     }
 }

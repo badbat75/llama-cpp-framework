@@ -35,8 +35,8 @@
 //! missing here only costs a needless warning; a type listed here WITHOUT one
 //! hides a CPU fallback.
 
-use crate::strings;
 use crate::devices::DeviceOption;
+use crate::strings;
 
 /// Every type llama.cpp accepts for the KV cache, highest precision first (the
 /// order the Models tab lists them in, after its own "default" entry). Equal
@@ -169,18 +169,22 @@ fn check(label: &str, backends: &[Backend], k: &str, v: &str, flash_attn: &str) 
     // combo then shows "default" for a value it does not list, so the strip is
     // the one place that can say the launch will fail (`Unsupported cache type`).
     if let Some(bad) = [k, v].into_iter().find(|t| !TYPES.contains(t)) {
-        return Some(strings::fill("kv-type-unknown", &[&label, &bad, &TYPES.join(", ")]));
+        return Some(strings::fill(
+            "kv-type-unknown",
+            &[&label, &bad, &TYPES.join(", ")],
+        ));
     }
     if flash_attn == "off" {
         // No flash attention at all: no kernel to miss, one refusal to report.
-        return is_quantized(v).then(|| {
-            strings::fill("kv-quantized-needs-fa", &[&label, &v])
-        });
+        return is_quantized(v).then(|| strings::fill("kv-quantized-needs-fa", &[&label, &v]));
     }
     // A quantized V forces flash attention on, whatever `auto` would pick.
     let fa_forced = flash_attn == "on" || is_quantized(v);
     if backends.contains(&Backend::CudaHip) && !has_fa_kernel(Backend::CudaHip, k, v) {
-        return Some(strings::fill("kv-no-kernel-cuda", &[&label, &k, &v, &fallback(fa_forced)]));
+        return Some(strings::fill(
+            "kv-no-kernel-cuda",
+            &[&label, &k, &v, &fallback(fa_forced)],
+        ));
     }
     if backends.contains(&Backend::Vulkan) && !has_fa_kernel(Backend::Vulkan, k, v) {
         // Either a type with no kernel at all, or a bf16 on one side only.
@@ -213,7 +217,13 @@ pub fn warning(input: &Input) -> String {
         lines.push(w);
     }
     if let Some((dk, dv)) = input.draft {
-        if let Some(w) = check(&strings::t("draft-kv-cache-label"), &backends, dk, dv, input.flash_attn) {
+        if let Some(w) = check(
+            &strings::t("draft-kv-cache-label"),
+            &backends,
+            dk,
+            dv,
+            input.flash_attn,
+        ) {
             lines.push(w);
         }
     }

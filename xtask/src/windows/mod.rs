@@ -27,7 +27,13 @@ pub fn build_config() -> Result<()> {
     let cfg = WinConfig::load()?;
     vs_env(&cfg)?;
     let target = crate::common::configurator::build(&cfg.llama_cpp_dir, cfg.build_jobs)?;
-    ui::ok(format!("llama-cpp-config build complete: {}", target.join("release").join("llama-cpp-config.exe").display()));
+    ui::ok(format!(
+        "llama-cpp-config build complete: {}",
+        target
+            .join("release")
+            .join("llama-cpp-config.exe")
+            .display()
+    ));
     ui::say("");
     Ok(())
 }
@@ -65,7 +71,9 @@ pub fn psd1_scalars(text: &str) -> BTreeMap<String, String> {
     let mut out = BTreeMap::new();
     for line in text.lines() {
         let t = line.trim();
-        let Some((key, value)) = t.split_once('=') else { continue };
+        let Some((key, value)) = t.split_once('=') else {
+            continue;
+        };
         let key = key.trim();
         if key.is_empty() || !key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
             continue;
@@ -112,7 +120,12 @@ pub fn psd1_list(text: &str, key: &str) -> Option<Vec<String>> {
         Some(
             inner
                 .split(',')
-                .filter_map(|s| s.trim().strip_prefix('\'')?.strip_suffix('\'').map(str::to_string))
+                .filter_map(|s| {
+                    s.trim()
+                        .strip_prefix('\'')?
+                        .strip_suffix('\'')
+                        .map(str::to_string)
+                })
                 .collect(),
         )
     })
@@ -125,7 +138,8 @@ impl WinConfig {
         if !p.exists() {
             return Ok(None);
         }
-        let text = std::fs::read_to_string(&p).with_context(|| format!("reading {}", p.display()))?;
+        let text =
+            std::fs::read_to_string(&p).with_context(|| format!("reading {}", p.display()))?;
         let m = psd1_scalars(&text);
         let get = |k: &str| m.get(k).cloned().unwrap_or_default();
         Ok(Some(WinConfig {
@@ -249,7 +263,10 @@ pub fn vs_env(cfg: &WinConfig) -> Result<()> {
     }
     let shell = Path::new(&cfg.vs_dev_shell);
     if !shell.is_file() {
-        bail!("VsDevShell not found at '{}'. Re-run cargo run -p xtask -- configure to fix the path.", shell.display());
+        bail!(
+            "VsDevShell not found at '{}'. Re-run cargo run -p xtask -- configure to fix the path.",
+            shell.display()
+        );
     }
     activate_vs(&shell.with_file_name("VsDevCmd.bat"))
 }
@@ -271,7 +288,10 @@ pub fn activate_vs(bat: &Path) -> Result<()> {
     }
     // `set` goes to a file of its own, in UTF-16 (cmd /u), so neither the
     // console code page nor VsDevCmd's own output can garble a value.
-    let dump = std::env::temp_dir().join(format!("llama-cpp-framework-vsenv-{}.txt", std::process::id()));
+    let dump = std::env::temp_dir().join(format!(
+        "llama-cpp-framework-vsenv-{}.txt",
+        std::process::id()
+    ));
     let status = std::process::Command::new("cmd.exe")
         .raw_arg(format!(
             "/d /u /s /c \"\"{}\" -arch=amd64 -no_logo && set > \"{}\"\"",
@@ -287,7 +307,12 @@ pub fn activate_vs(bat: &Path) -> Result<()> {
         bail!("{} failed ({status})", bat.display());
     }
     let bytes = bytes.with_context(|| format!("{} left no environment", bat.display()))?;
-    let units: Vec<u16> = bytes.as_chunks::<2>().0.iter().map(|b| u16::from_le_bytes(*b)).collect();
+    let units: Vec<u16> = bytes
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|b| u16::from_le_bytes(*b))
+        .collect();
     let text = String::from_utf16_lossy(&units);
     for line in text.lines() {
         let line = line.trim_start_matches('\u{feff}');
@@ -311,13 +336,19 @@ pub struct WixPin {
 
 pub fn wix_pin() -> Result<WixPin> {
     let path = util::repo_root().join("installer").join("wix-toolset.psd1");
-    let text = std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
+    let text =
+        std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
     let m = psd1_scalars(&text);
-    let field = |k: &str| m.get(k).cloned().with_context(|| format!("{}: {k} is missing", path.display()));
+    let field = |k: &str| {
+        m.get(k)
+            .cloned()
+            .with_context(|| format!("{}: {k} is missing", path.display()))
+    };
     Ok(WixPin {
         version: field("Version")?,
         eula_id: field("EulaId")?,
-        extensions: psd1_list(&text, "Extensions").with_context(|| format!("{}: Extensions is missing", path.display()))?,
+        extensions: psd1_list(&text, "Extensions")
+            .with_context(|| format!("{}: Extensions is missing", path.display()))?,
     })
 }
 
@@ -349,7 +380,10 @@ mod tests {
         assert_eq!(m["Name"], "it's");
         assert_eq!(m["BuildJobs"], "18");
         assert!(!m.contains_key("c"));
-        assert_eq!(psd1_list(text, "Extensions").unwrap(), ["WixToolset.UI.wixext", "WixToolset.Util.wixext"]);
+        assert_eq!(
+            psd1_list(text, "Extensions").unwrap(),
+            ["WixToolset.UI.wixext", "WixToolset.Util.wixext"]
+        );
         assert_eq!(psq("it's"), "'it''s'");
     }
 }

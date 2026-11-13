@@ -598,7 +598,10 @@ fn run_bench(c: BenchCmd) -> Result<()> {
         BenchCmd::Answer { campaign, text, db } => {
             let path = db.unwrap_or_else(bench::db::work_path);
             bench::query::answer(&path, &campaign, &text).map_err(|e| anyhow::anyhow!(e))?;
-            println!("{}", strings::fill("answer-recorded", &[&campaign, &path.display()]));
+            println!(
+                "{}",
+                strings::fill("answer-recorded", &[&campaign, &path.display()])
+            );
             return Ok(());
         }
         BenchCmd::Publish {
@@ -610,7 +613,10 @@ fn run_bench(c: BenchCmd) -> Result<()> {
             for (name, runs) in
                 bench::query::publish(&from, &to, &campaigns).map_err(|e| anyhow::anyhow!(e))?
             {
-                println!("{}", strings::fill("runs-copied", &[&name, &runs, &to.display()]));
+                println!(
+                    "{}",
+                    strings::fill("runs-copied", &[&name, &runs, &to.display()])
+                );
             }
             return Ok(());
         }
@@ -660,13 +666,17 @@ fn run_bench(c: BenchCmd) -> Result<()> {
     // how long the model talks under a setting is part of what a sweep shows.
     plan.max_tokens = a.max_tokens.unwrap_or(0);
     if let Some(v) = a.image_size.as_deref() {
-        plan.image_size = bench::parse_image_size(v).map_err(|e| anyhow::anyhow!("--image-size: {e}"))?;
+        plan.image_size =
+            bench::parse_image_size(v).map_err(|e| anyhow::anyhow!("--image-size: {e}"))?;
     }
     if let Some(img) = a.image.as_deref() {
         // Refused now, not after the first restart: an unreadable image.
         std::fs::read(img)
             .map_err(|e| anyhow::anyhow!("--image {}: {e}", img.display()))
-            .and_then(|b| image::guess_format(&b).map_err(|e| anyhow::anyhow!("--image {}: {e}", img.display())))?;
+            .and_then(|b| {
+                image::guess_format(&b)
+                    .map_err(|e| anyhow::anyhow!("--image {}: {e}", img.display()))
+            })?;
         plan.image = Some(img.to_path_buf());
     }
     let concurrency_all = a.concurrency.as_deref() == Some("all");
@@ -910,7 +920,10 @@ fn run_server(c: ServerCmd) -> Result<()> {
             let mut cfg = server_cfg::load();
             s.apply(&mut cfg);
             server_cfg::save(&cfg).with_context(|| strings::t("save-server-settings-failed"))?;
-            println!("{}", strings::fill("wrote-file", &[&paths::server_ini().display()]));
+            println!(
+                "{}",
+                strings::fill("wrote-file", &[&paths::server_ini().display()])
+            );
             Ok(())
         }
     }
@@ -933,13 +946,23 @@ fn run_preset(c: PresetCmd) -> Result<()> {
             let listed = presets::load_listed();
             println!("presets.ini: {}", paths::presets_ini().display());
             if listed.iter().any(|l| !l.enabled) {
-                println!("{}", strings::fill("switched-off-file", &[&paths::presets_disabled_ini().display()]));
+                println!(
+                    "{}",
+                    strings::fill(
+                        "switched-off-file",
+                        &[&paths::presets_disabled_ini().display()]
+                    )
+                );
             }
             if listed.is_empty() {
                 println!("{}", strings::t("no-presets-defined"));
             }
             for l in listed {
-                let off = if l.enabled { String::new() } else { strings::t("preset-off-mark") };
+                let off = if l.enabled {
+                    String::new()
+                } else {
+                    strings::t("preset-off-mark")
+                };
                 println!("  [{}]{off}  model={}", l.preset.id, l.preset.model);
             }
             Ok(())
@@ -998,7 +1021,10 @@ fn run_preset_delete(id: &str, which: &[FileKind], even_if_shared: bool) -> Resu
     } else {
         paths::presets_disabled_ini()
     };
-    println!("{}", strings::fill("removed-preset-from", &[&real_id, &file.display()]));
+    println!(
+        "{}",
+        strings::fill("removed-preset-from", &[&real_id, &file.display()])
+    );
     let mut failed = 0;
     if chosen.is_empty() {
         if !linked.is_empty() {
@@ -1009,7 +1035,13 @@ fn run_preset_delete(id: &str, which: &[FileKind], even_if_shared: bool) -> Resu
         let models_dir = server_cfg::load().models_dir_or_default();
         let out = linked_files::delete(&chosen, &models_dir, even_if_shared);
         for (f, size) in &out.removed {
-            println!("{}", strings::fill("deleted-file", &[&f.display(), &crate::hf::format_size(*size)]));
+            println!(
+                "{}",
+                strings::fill(
+                    "deleted-file",
+                    &[&f.display(), &crate::hf::format_size(*size)]
+                )
+            );
         }
         for d in &out.dirs_removed {
             println!("{}", strings::fill("removed-empty-folder", &[&d.display()]));
@@ -1052,8 +1084,7 @@ fn run_preset_download(a: PresetDownload) -> Result<()> {
     let input = if a.search {
         hf::Input::Query(hf::parse_query(&a.spec)?)
     } else {
-        hf::classify_input(&a.spec)?
-            .ok_or_else(|| anyhow::anyhow!(strings::t("enter-a-search")))?
+        hf::classify_input(&a.spec)?.ok_or_else(|| anyhow::anyhow!(strings::t("enter-a-search")))?
     };
     let mut spec = match input {
         hf::Input::Spec(spec) => spec,
@@ -1065,7 +1096,10 @@ fn run_preset_download(a: PresetDownload) -> Result<()> {
             return Ok(());
         }
     };
-    let existing: Vec<String> = presets::load_listed().into_iter().map(|l| l.preset.id).collect();
+    let existing: Vec<String> = presets::load_listed()
+        .into_iter()
+        .map(|l| l.preset.id)
+        .collect();
     if let Some(id) = &a.id {
         check_download_id(id, &existing)?;
     }
@@ -1080,7 +1114,10 @@ fn run_preset_download(a: PresetDownload) -> Result<()> {
     }
     let listing = hf::list_repo(&spec, token.as_ref())?;
     let sidecar = match a.draft.as_deref() {
-        Some(d) => Some(hf::Sidecar::parse(d).ok_or_else(|| anyhow::anyhow!(strings::fill("draft-flag-invalid", &[&d])))?),
+        Some(d) => Some(
+            hf::Sidecar::parse(d)
+                .ok_or_else(|| anyhow::anyhow!(strings::fill("draft-flag-invalid", &[&d])))?,
+        ),
         None => None,
     };
     if a.list {
@@ -1089,9 +1126,15 @@ fn run_preset_download(a: PresetDownload) -> Result<()> {
         let fit = crate::hf_fit::budget(&crate::devices::list(), crate::hf_fit::system_ram_total());
         let shapes = match &fit {
             Some(_) => {
-                eprintln!("{}", strings::fill("reading-gguf-headers", &[&listing.candidates.len()]));
+                eprintln!(
+                    "{}",
+                    strings::fill("reading-gguf-headers", &[&listing.candidates.len()])
+                );
                 let got: std::sync::Mutex<Vec<crate::hf_fit::ShapeResult>> =
-                    std::sync::Mutex::new(vec![Err(strings::t("shape-not-read")); listing.candidates.len()]);
+                    std::sync::Mutex::new(vec![
+                        Err(strings::t("shape-not-read"));
+                        listing.candidates.len()
+                    ]);
                 crate::hf_fit::fetch_shapes(
                     &hf::Curl,
                     &hf::endpoint(),
@@ -1109,12 +1152,21 @@ fn run_preset_download(a: PresetDownload) -> Result<()> {
         // The extras each row counts: its mmproj unless --no-mmproj, the
         // --draft drafter where the row has one (its header read once per
         // file; unreadable, its size alone).
-        let mut drafts: std::collections::HashMap<String, Result<std::sync::Arc<crate::hf_fit::DraftShape>, String>> =
-            std::collections::HashMap::new();
+        let mut drafts: std::collections::HashMap<
+            String,
+            Result<std::sync::Arc<crate::hf_fit::DraftShape>, String>,
+        > = std::collections::HashMap::new();
         if let (Some(_), Some(kind)) = (&fit, sidecar) {
             for f in listing.candidates.iter().filter_map(|c| c.sidecar(kind)) {
                 if !drafts.contains_key(&f.path) {
-                    let r = crate::hf_fit::fetch_draft_shape(&hf::Curl, &hf::endpoint(), &listing.repo, &listing.commit, f, token.as_ref());
+                    let r = crate::hf_fit::fetch_draft_shape(
+                        &hf::Curl,
+                        &hf::endpoint(),
+                        &listing.repo,
+                        &listing.commit,
+                        f,
+                        token.as_ref(),
+                    );
                     drafts.insert(f.path.clone(), r.map_err(|e| e.to_string()));
                 }
             }
@@ -1122,13 +1174,28 @@ fn run_preset_download(a: PresetDownload) -> Result<()> {
         let extras: Vec<crate::hf_fit::Extras> = listing
             .candidates
             .iter()
-            .map(|c| crate::hf_fit::extras_of(c, !a.no_mmproj, sidecar, &|f| drafts.get(&f.path).cloned()).unwrap_or_default())
+            .map(|c| {
+                crate::hf_fit::extras_of(c, !a.no_mmproj, sidecar, &|f| {
+                    drafts.get(&f.path).cloned()
+                })
+                .unwrap_or_default()
+            })
             .collect();
-        for line in list_report(&listing, fit.as_ref().map(|b| (b, shapes.as_slice(), extras.as_slice()))) {
+        for line in list_report(
+            &listing,
+            fit.as_ref()
+                .map(|b| (b, shapes.as_slice(), extras.as_slice())),
+        ) {
             println!("{line}");
         }
         if fit.is_none() {
-            println!("{}", strings::fill("placement-estimate-unavailable", &[&crate::hf_fit::no_gpu()]));
+            println!(
+                "{}",
+                strings::fill(
+                    "placement-estimate-unavailable",
+                    &[&crate::hf_fit::no_gpu()]
+                )
+            );
         }
         return Ok(());
     }
@@ -1137,8 +1204,21 @@ fn run_preset_download(a: PresetDownload) -> Result<()> {
     }
 
     let models_dir = std::path::PathBuf::from(server_cfg::load().models_dir_or_default());
-    let job = hf::DownloadJob::new(&listing, listing.default, !a.no_mmproj, sidecar, models_dir.clone(), token)?;
-    println!("{}", strings::fill("downloading-into", &[&job.candidate.primary().path, &models_dir.display()]));
+    let job = hf::DownloadJob::new(
+        &listing,
+        listing.default,
+        !a.no_mmproj,
+        sidecar,
+        models_dir.clone(),
+        token,
+    )?;
+    println!(
+        "{}",
+        strings::fill(
+            "downloading-into",
+            &[&job.candidate.primary().path, &models_dir.display()]
+        )
+    );
 
     let (tx, rx) = std::sync::mpsc::channel();
     let _handle = hf::spawn_download(
@@ -1162,10 +1242,15 @@ fn run_preset_download(a: PresetDownload) -> Result<()> {
             let _ = tx.send(r);
         },
     );
-    let done = rx.recv().with_context(|| strings::t("download-thread-ended"))?;
+    let done = rx
+        .recv()
+        .with_context(|| strings::t("download-thread-ended"))?;
     eprintln!();
     let d = done?;
-    println!("{}", strings::fill("downloaded-model", &[&d.model.display()]));
+    println!(
+        "{}",
+        strings::fill("downloaded-model", &[&d.model.display()])
+    );
     if let Some(m) = &d.mmproj {
         println!("mmproj: {}", m.display());
     }
@@ -1174,7 +1259,10 @@ fn run_preset_download(a: PresetDownload) -> Result<()> {
     }
 
     // Re-read: another process may have added a preset during the transfer.
-    let existing: Vec<String> = presets::load_listed().into_iter().map(|l| l.preset.id).collect();
+    let existing: Vec<String> = presets::load_listed()
+        .into_iter()
+        .map(|l| l.preset.id)
+        .collect();
     // The placement the --list rows show, from the downloaded headers on this
     // machine (`hf_fit::placement`); left to the fit without a GPU estimate.
     let budget = crate::hf_fit::budget(&crate::devices::list(), crate::hf_fit::system_ram_total());
@@ -1184,7 +1272,13 @@ fn run_preset_download(a: PresetDownload) -> Result<()> {
         preset.id = id;
     }
     hf::save_preset(&preset, &models_dir).with_context(|| strings::t("save-preset-failed"))?;
-    println!("{}", strings::fill("created-preset-in", &[&preset.id, &paths::presets_ini().display()]));
+    println!(
+        "{}",
+        strings::fill(
+            "created-preset-in",
+            &[&preset.id, &paths::presets_ini().display()]
+        )
+    );
     if let Some(line) = placement_line(&preset) {
         println!("{line}");
     }
@@ -1208,12 +1302,16 @@ fn placement_line(p: &presets::Preset) -> Option<String> {
         num("ctx-size", p.ctx_size),
         text("device-draft", &p.device_draft),
         text("mmproj-device", &p.mmproj_device),
-        (p.mmproj_offload == Some(false) && !p.mmproj.is_empty()).then(|| "mmproj-offload = false".to_string()),
+        (p.mmproj_offload == Some(false) && !p.mmproj.is_empty())
+            .then(|| "mmproj-offload = false".to_string()),
     ]
     .into_iter()
     .flatten()
     .collect();
-    Some(strings::fill("placement-line", &[&keys.join(", "), &p.placement_note]))
+    Some(strings::fill(
+        "placement-line",
+        &[&keys.join(", "), &p.placement_note],
+    ))
 }
 
 /// The listing as `preset download` prints it (pure): `repo @ commit`, then
@@ -1226,14 +1324,21 @@ fn placement_line(p: &presets::Preset) -> Option<String> {
 /// (`hf_fit::recommend`).
 fn list_report(
     l: &crate::hf::Listing,
-    fit: Option<(&crate::hf_fit::Budget, &[crate::hf_fit::ShapeResult], &[crate::hf_fit::Extras])>,
+    fit: Option<(
+        &crate::hf_fit::Budget,
+        &[crate::hf_fit::ShapeResult],
+        &[crate::hf_fit::Extras],
+    )>,
 ) -> Vec<String> {
     use crate::{hf, hf_fit};
     let none = hf_fit::Extras::default();
     let estimates: Vec<Option<(hf_fit::Estimate, u64)>> = match fit {
         Some((b, shapes, extras)) => (0..l.candidates.len())
             .map(|i| match shapes.get(i) {
-                Some(Ok(s)) => Some((hf_fit::estimate_with(s, b, extras.get(i).unwrap_or(&none)), s.ctx)),
+                Some(Ok(s)) => Some((
+                    hf_fit::estimate_with(s, b, extras.get(i).unwrap_or(&none)),
+                    s.ctx,
+                )),
                 _ => None,
             })
             .collect(),
@@ -1249,8 +1354,16 @@ fn list_report(
             estimate: estimates.get(i).and_then(|e| e.as_ref().map(|e| &e.0)),
         })
         .collect();
-    let rec = if fit.is_some() { hf_fit::recommend(&rows) } else { None };
-    let mut out = vec![format!("{} @ {}", l.repo, &l.commit[..12.min(l.commit.len())])];
+    let rec = if fit.is_some() {
+        hf_fit::recommend(&rows)
+    } else {
+        None
+    };
+    let mut out = vec![format!(
+        "{} @ {}",
+        l.repo,
+        &l.commit[..12.min(l.commit.len())]
+    )];
     for (i, c) in l.candidates.iter().enumerate() {
         let mark = if i == l.default { "*" } else { " " };
         let mut extra: Vec<String> = Vec::new();
@@ -1265,15 +1378,27 @@ fn list_report(
                 extra.push(s.label().into());
             }
         }
-        let extra = if extra.is_empty() { String::new() } else { format!("  [{}]", extra.join(", ")) };
-        out.push(format!("{mark} {:<12} {:>10}  {}{extra}", c.tag, hf::format_size(c.size), c.primary().path));
+        let extra = if extra.is_empty() {
+            String::new()
+        } else {
+            format!("  [{}]", extra.join(", "))
+        };
+        out.push(format!(
+            "{mark} {:<12} {:>10}  {}{extra}",
+            c.tag,
+            hf::format_size(c.size),
+            c.primary().path
+        ));
         if let Some((_, shapes, _)) = fit {
             let label = match (&estimates[i], shapes.get(i)) {
                 (Some((e, ctx)), _) => hf_fit::estimate_label(e, *ctx),
                 (None, Some(Err(m))) => strings::fill("estimate-unavailable", &[&m]),
                 (None, _) => strings::t("estimate-missing"),
             };
-            let reason = rec.as_ref().filter(|r| r.index == i).map(|r| r.reason.as_str());
+            let reason = rec
+                .as_ref()
+                .filter(|r| r.index == i)
+                .map(|r| r.reason.as_str());
             out.push(format!("    {}", hf_fit::detail_line(&label, reason)));
         }
     }
@@ -1298,23 +1423,38 @@ fn search_report(query: &str, hits: &[crate::hf::SearchHit]) -> Vec<String> {
     }
     let mut out = vec![strings::fill("gguf-repositories-heading", &[&query])];
     let width = hits.iter().map(|h| h.repo.len()).max().unwrap_or(0);
-    let kinds: Vec<String> = hits.iter().map(|h| hf::kind_label(h.kind, h.params).unwrap_or_default()).collect();
+    let kinds: Vec<String> = hits
+        .iter()
+        .map(|h| hf::kind_label(h.kind, h.params).unwrap_or_default())
+        .collect();
     let kind_width = kinds.iter().map(String::len).max().unwrap_or(0);
     for (h, kind) in hits.iter().zip(&kinds) {
-        let quants = if h.quants.is_empty() { strings::t("no-gguf-model-file") } else { h.quants.join(" ") };
+        let quants = if h.quants.is_empty() {
+            strings::t("no-gguf-model-file")
+        } else {
+            h.quants.join(" ")
+        };
         let mut extra: Vec<&str> = Vec::new();
         if h.mmproj {
             extra.push("mmproj");
         }
         extra.extend(h.drafters.iter().map(|s| s.label()));
-        let extra = if extra.is_empty() { String::new() } else { format!("  [{}]", extra.join(", ")) };
+        let extra = if extra.is_empty() {
+            String::new()
+        } else {
+            format!("  [{}]", extra.join(", "))
+        };
         let access = match (h.gated, h.private) {
             (true, true) => strings::t("access-gated-private"),
             (true, false) => strings::t("access-gated"),
             (false, true) => strings::t("access-private"),
             (false, false) => String::new(),
         };
-        let kind = if kind_width == 0 { String::new() } else { format!("{kind:<kind_width$}  ") };
+        let kind = if kind_width == 0 {
+            String::new()
+        } else {
+            format!("{kind:<kind_width$}  ")
+        };
         out.push(format!(
             "  {:<width$}  {:>7}  {kind}{quants}{extra}{access}",
             h.repo,
@@ -1329,12 +1469,20 @@ fn set_preset_enabled(id: &str, enabled: bool) -> Result<()> {
     let l = find_listed(id)?;
     let real_id = l.preset.id;
     if l.enabled == enabled {
-        let already = if enabled { strings::fill("preset-already-on", &[&real_id]) } else { strings::fill("preset-already-off", &[&real_id]) };
+        let already = if enabled {
+            strings::fill("preset-already-on", &[&real_id])
+        } else {
+            strings::fill("preset-already-off", &[&real_id])
+        };
         println!("{already}");
         return Ok(());
     }
     presets::set_enabled(&real_id, enabled).with_context(|| strings::t("switch-preset-failed"))?;
-    let switched = if enabled { strings::fill("preset-switched-on", &[&real_id]) } else { strings::fill("preset-switched-off", &[&real_id]) };
+    let switched = if enabled {
+        strings::fill("preset-switched-on", &[&real_id])
+    } else {
+        strings::fill("preset-switched-off", &[&real_id])
+    };
     println!("{switched}");
     // The router reads presets.ini once, at launch.
     if crate::runstate::is_running() {
@@ -1407,7 +1555,10 @@ fn run_control(c: ControlCmd) -> Result<()> {
         ControlCmd::Stop => {
             snapshot_before_stop();
             if !runstate::stop() {
-                anyhow::bail!(strings::fill("stop-failed", &[&runstate::STOP_GRACE.as_secs()]));
+                anyhow::bail!(strings::fill(
+                    "stop-failed",
+                    &[&runstate::STOP_GRACE.as_secs()]
+                ));
             }
             println!("{}", strings::t("server-stopped"));
             Ok(())
@@ -1422,7 +1573,10 @@ fn run_control(c: ControlCmd) -> Result<()> {
             // to exit): starting earlier saw the old process, launched nothing,
             // and left no server once it exited.
             if !runstate::stop() {
-                anyhow::bail!(strings::fill("restart-old-still-running", &[&runstate::STOP_GRACE.as_secs()]));
+                anyhow::bail!(strings::fill(
+                    "restart-old-still-running",
+                    &[&runstate::STOP_GRACE.as_secs()]
+                ));
             }
             std::thread::sleep(std::time::Duration::from_millis(1000));
             match runstate::start() {
@@ -1481,8 +1635,14 @@ mod tests {
             parse(&["--delete-files", "all", "--even-if-shared"]).unwrap(),
             (vec![FileKind::All], true)
         );
-        assert!(parse(&["--even-if-shared"]).is_err(), "the override needs a file list");
-        assert!(parse(&["--delete-files", "weights"]).is_err(), "an unknown kind");
+        assert!(
+            parse(&["--even-if-shared"]).is_err(),
+            "the override needs a file list"
+        );
+        assert!(
+            parse(&["--delete-files", "weights"]).is_err(),
+            "an unknown kind"
+        );
     }
 
     #[test]
@@ -1504,12 +1664,22 @@ mod tests {
             pick_files(&linked, which).iter().map(|f| f.role).collect()
         };
         assert!(roles(&[]).is_empty());
-        assert_eq!(roles(&[FileKind::All]), [Role::Model, Role::Mmproj, Role::Draft]);
-        assert_eq!(roles(&[FileKind::Draft, FileKind::Model]), [Role::Model, Role::Draft]);
-        assert_eq!(shared_refusal(&pick_files(&linked, &[FileKind::Model, FileKind::Draft])), None);
+        assert_eq!(
+            roles(&[FileKind::All]),
+            [Role::Model, Role::Mmproj, Role::Draft]
+        );
+        assert_eq!(
+            roles(&[FileKind::Draft, FileKind::Model]),
+            [Role::Model, Role::Draft]
+        );
+        assert_eq!(
+            shared_refusal(&pick_files(&linked, &[FileKind::Model, FileKind::Draft])),
+            None
+        );
         let refusal = shared_refusal(&pick_files(&linked, &[FileKind::All])).expect("refused");
         assert!(
-            refusal.contains("p.gguf is used by [vision], [other]") && refusal.contains("--even-if-shared"),
+            refusal.contains("p.gguf is used by [vision], [other]")
+                && refusal.contains("--even-if-shared"),
             "{refusal}"
         );
     }
@@ -1535,12 +1705,23 @@ mod tests {
         };
         assert_eq!(a.spec, "unsloth/Qwen3-8B-GGUF:Q4_K_M");
         assert!(a.no_mmproj && !a.list);
-        assert_eq!((a.draft.as_deref(), a.id.as_deref(), a.quant.as_deref()), (Some("mtp"), Some("q3"), None));
+        assert_eq!(
+            (a.draft.as_deref(), a.id.as_deref(), a.quant.as_deref()),
+            (Some("mtp"), Some("q3"), None)
+        );
         assert!(!a.search && a.limit == crate::hf::SEARCH_LIMIT);
         assert!(Cli::try_parse_from(["llama-cpp-config", "preset", "download"]).is_err());
         // Words search; --search forces it, --limit caps the rows.
-        let cli = Cli::try_parse_from(["llama-cpp-config", "preset", "download", "unsloth/Qwen3", "--search", "--limit", "5"])
-            .unwrap();
+        let cli = Cli::try_parse_from([
+            "llama-cpp-config",
+            "preset",
+            "download",
+            "unsloth/Qwen3",
+            "--search",
+            "--limit",
+            "5",
+        ])
+        .unwrap();
         let Command::Preset(PresetCmd::Download(a)) = cli.command else {
             panic!("not a preset download");
         };
@@ -1551,32 +1732,52 @@ mod tests {
     /// access; a hint to go on, or one line when nothing matched.
     #[test]
     fn search_report_prints_repo_downloads_and_quants_per_row() {
-        let hit = |repo: &str, downloads: u64, quants: &[&str], mmproj: bool, gated: bool| crate::hf::SearchHit {
-            repo: repo.into(),
-            downloads,
-            gated,
-            private: false,
-            quants: quants.iter().map(|q| q.to_string()).collect(),
-            mmproj,
-            drafters: Vec::new(),
-            kind: crate::hf::ModelKind::Unknown,
-            params: None,
+        let hit = |repo: &str, downloads: u64, quants: &[&str], mmproj: bool, gated: bool| {
+            crate::hf::SearchHit {
+                repo: repo.into(),
+                downloads,
+                gated,
+                private: false,
+                quants: quants.iter().map(|q| q.to_string()).collect(),
+                mmproj,
+                drafters: Vec::new(),
+                kind: crate::hf::ModelKind::Unknown,
+                params: None,
+            }
         };
         let lines = search_report(
             "gemma 3",
             &[
                 hit("ggml-org/tinygemma3-GGUF", 73_988, &["Q8_0"], true, false),
-                hit("google/gemma-3-4b-it-qat-q4_0-gguf", 3_330, &["Q4_0"], true, true),
+                hit(
+                    "google/gemma-3-4b-it-qat-q4_0-gguf",
+                    3_330,
+                    &["Q4_0"],
+                    true,
+                    true,
+                ),
                 hit("o/r", 5, &[], false, false),
             ],
         );
         assert_eq!(lines.len(), 5);
         assert!(lines[0].contains("\"gemma 3\""));
-        assert_eq!(lines[1], "  ggml-org/tinygemma3-GGUF              74.0k  Q8_0  [mmproj]");
-        assert_eq!(lines[2], "  google/gemma-3-4b-it-qat-q4_0-gguf     3.3k  Q4_0  [mmproj]  gated");
-        assert_eq!(lines[3], format!("  {:<34}  {:>7}  no GGUF model file", "o/r", "5"));
+        assert_eq!(
+            lines[1],
+            "  ggml-org/tinygemma3-GGUF              74.0k  Q8_0  [mmproj]"
+        );
+        assert_eq!(
+            lines[2],
+            "  google/gemma-3-4b-it-qat-q4_0-gguf     3.3k  Q4_0  [mmproj]  gated"
+        );
+        assert_eq!(
+            lines[3],
+            format!("  {:<34}  {:>7}  no GGUF model file", "o/r", "5")
+        );
         assert!(lines[4].starts_with("Pick one: llama-cpp-config preset download <org/repo>"));
-        assert_eq!(search_report("zzz", &[]), ["No GGUF repository matches \"zzz\"."]);
+        assert_eq!(
+            search_report("zzz", &[]),
+            ["No GGUF repository matches \"zzz\"."]
+        );
 
         // With the search's gguf summary: an aligned model column.
         let with_kind = |repo: &str, kind, params| crate::hf::SearchHit {
@@ -1587,16 +1788,40 @@ mod tests {
         let lines = search_report(
             "qwen3",
             &[
-                with_kind("o/Qwen3-30B-A3B-GGUF", crate::hf::ModelKind::Moe, Some(30_532_122_624)),
-                with_kind("o/Qwen3-8B-GGUF", crate::hf::ModelKind::Dense, Some(8_190_735_360)),
-                with_kind("o/Llama-GGUF", crate::hf::ModelKind::Unknown, Some(8_030_261_312)),
+                with_kind(
+                    "o/Qwen3-30B-A3B-GGUF",
+                    crate::hf::ModelKind::Moe,
+                    Some(30_532_122_624),
+                ),
+                with_kind(
+                    "o/Qwen3-8B-GGUF",
+                    crate::hf::ModelKind::Dense,
+                    Some(8_190_735_360),
+                ),
+                with_kind(
+                    "o/Llama-GGUF",
+                    crate::hf::ModelKind::Unknown,
+                    Some(8_030_261_312),
+                ),
                 with_kind("o/x", crate::hf::ModelKind::Unknown, None),
             ],
         );
-        assert_eq!(lines[1], "  o/Qwen3-30B-A3B-GGUF       10  MoE 30.5B                Q4_K_M");
-        assert_eq!(lines[2], "  o/Qwen3-8B-GGUF            10  dense 8.2B               Q4_K_M");
-        assert_eq!(lines[3], "  o/Llama-GGUF               10  8.0B, dense/MoE unknown  Q4_K_M");
-        assert_eq!(lines[4], "  o/x                        10                           Q4_K_M");
+        assert_eq!(
+            lines[1],
+            "  o/Qwen3-30B-A3B-GGUF       10  MoE 30.5B                Q4_K_M"
+        );
+        assert_eq!(
+            lines[2],
+            "  o/Qwen3-8B-GGUF            10  dense 8.2B               Q4_K_M"
+        );
+        assert_eq!(
+            lines[3],
+            "  o/Llama-GGUF               10  8.0B, dense/MoE unknown  Q4_K_M"
+        );
+        assert_eq!(
+            lines[4],
+            "  o/x                        10                           Q4_K_M"
+        );
     }
 
     /// `--list`: a placement line under every row, the basis, and the
@@ -1609,7 +1834,11 @@ mod tests {
         const GIB: u64 = 1 << 30;
         let cand = |tag: &str, size: u64| Candidate {
             tag: tag.into(),
-            shards: vec![RepoFile { path: format!("m-{tag}.gguf"), size, oid: String::new() }],
+            shards: vec![RepoFile {
+                path: format!("m-{tag}.gguf"),
+                size,
+                oid: String::new(),
+            }],
             size,
             mmproj: None,
             mtp: None,
@@ -1620,7 +1849,11 @@ mod tests {
             repo: "o/r".into(),
             commit: "c".repeat(40),
             project_url: String::new(),
-            candidates: vec![cand("Q4_K_M", 5 * GIB), cand("Q8_0", 9 * GIB), cand("BF16", 17 * GIB)],
+            candidates: vec![
+                cand("Q4_K_M", 5 * GIB),
+                cand("Q8_0", 9 * GIB),
+                cand("BF16", 17 * GIB),
+            ],
             default: 0,
         };
         let shape = |gib: u64| {
@@ -1630,20 +1863,45 @@ mod tests {
                 total: gib * GIB,
                 token_embd: 0,
                 globals: 0,
-                layers: vec![Layer { experts: 0, other: gib * GIB / 4 }; 4],
+                layers: vec![
+                    Layer {
+                        experts: 0,
+                        other: gib * GIB / 4
+                    };
+                    4
+                ],
                 kv: GIB,
                 ctx: 32768,
             })
         };
-        let b = Budget { gpus: vec![Gpu { id: "CUDA0".into(), name: "G".into(), total_mib: 14 << 10 }], ram: Some(28 * GIB), ram_total: Some(32 * GIB) };
-        let shapes = vec![Ok(shape(5)), Ok(shape(9)), Err("network error: boom".to_string())];
+        let b = Budget {
+            gpus: vec![Gpu {
+                id: "CUDA0".into(),
+                name: "G".into(),
+                total_mib: 14 << 10,
+            }],
+            ram: Some(28 * GIB),
+            ram_total: Some(32 * GIB),
+        };
+        let shapes = vec![
+            Ok(shape(5)),
+            Ok(shape(9)),
+            Err("network error: boom".to_string()),
+        ];
         let lines = list_report(&l, Some((&b, &shapes, &[])));
         assert_eq!(lines[0], format!("o/r @ {}", "c".repeat(12)));
         assert!(lines[1].starts_with("* Q4_K_M"));
-        assert_eq!(lines[2], "    all on GPU: 6.0 of 12.0 GiB with a 32k context");
+        assert_eq!(
+            lines[2],
+            "    all on GPU: 6.0 of 12.0 GiB with a 32k context"
+        );
         assert_eq!(lines[4], "    recommended, the best quality that fits in GPU memory: all on GPU: 10.0 of 12.0 GiB with a 32k context");
         assert_eq!(lines[6], "    estimate unavailable: network error: boom");
-        assert!(lines[7].starts_with("Estimated for G (12.0 GiB usable) and 32.0 GiB of RAM"), "{}", lines[7]);
+        assert!(
+            lines[7].starts_with("Estimated for G (12.0 GiB usable) and 32.0 GiB of RAM"),
+            "{}",
+            lines[7]
+        );
         assert_eq!(lines[8], "Recommended here: Q8_0 (the best quality that fits in GPU memory); download it with --quant Q8_0");
         assert_eq!(lines.len(), 9);
         // A 2 GiB image encoder taken with every row (2.5 GiB with its
@@ -1651,7 +1909,10 @@ mod tests {
         // the CPU and the recommendation falls back to the Q4_K_M, which
         // keeps it on the card.
         let mmproj = hf_fit_extras(2 * GIB);
-        let lines = list_report(&l, Some((&b, &shapes, &[mmproj.clone(), mmproj.clone(), mmproj])));
+        let lines = list_report(
+            &l,
+            Some((&b, &shapes, &[mmproj.clone(), mmproj.clone(), mmproj])),
+        );
         assert_eq!(
             lines[2],
             "    recommended, the best quality that fits in GPU memory: all on GPU: 8.5 of 12.0 GiB with a 32k context; \
@@ -1665,14 +1926,25 @@ mod tests {
         // (the output layer on the last card).
         let pair = Budget {
             gpus: vec![
-                Gpu { id: "ROCm1".into(), name: "AMD Radeon AI PRO R9700".into(), total_mib: 9 << 10 },
-                Gpu { id: "CUDA0".into(), name: "NVIDIA GeForce RTX 4070 SUPER".into(), total_mib: 7 << 10 },
+                Gpu {
+                    id: "ROCm1".into(),
+                    name: "AMD Radeon AI PRO R9700".into(),
+                    total_mib: 9 << 10,
+                },
+                Gpu {
+                    id: "CUDA0".into(),
+                    name: "NVIDIA GeForce RTX 4070 SUPER".into(),
+                    total_mib: 7 << 10,
+                },
             ],
             ram: Some(28 * GIB),
             ram_total: Some(32 * GIB),
         };
         let lines = list_report(&l, Some((&pair, &shapes, &[])));
-        assert_eq!(lines[2], "    all on GPU with a 32k context: AI PRO R9700 (ROCm1) 6.0 GiB");
+        assert_eq!(
+            lines[2],
+            "    all on GPU with a 32k context: AI PRO R9700 (ROCm1) 6.0 GiB"
+        );
         assert_eq!(
             lines[4],
             "    recommended, the best quality that fits in GPU memory: all on GPU with a 32k context: \
@@ -1705,12 +1977,17 @@ mod tests {
         );
         p.mmproj_device.clear();
         p.mmproj_offload = Some(false);
-        assert!(placement_line(&p).unwrap().contains(", device-draft = CUDA0, mmproj-offload = false ("));
+        assert!(placement_line(&p)
+            .unwrap()
+            .contains(", device-draft = CUDA0, mmproj-offload = false ("));
     }
 
     /// The extras of an image encoder of `size` bytes alone.
     fn hf_fit_extras(size: u64) -> crate::hf_fit::Extras {
-        crate::hf_fit::Extras { mmproj: size, drafter: None }
+        crate::hf_fit::Extras {
+            mmproj: size,
+            drafter: None,
+        }
     }
 
     /// A `--id` is refused BEFORE the download when it is not a valid section
@@ -1720,7 +1997,10 @@ mod tests {
     fn download_id_is_checked_up_front() {
         let existing = vec!["qwen3-8b".to_string()];
         assert!(check_download_id("q3", &existing).is_ok());
-        assert!(check_download_id("Qwen3-8B", &existing).unwrap_err().to_string().contains("already exists"));
+        assert!(check_download_id("Qwen3-8B", &existing)
+            .unwrap_err()
+            .to_string()
+            .contains("already exists"));
         assert!(check_download_id("bad id", &existing).is_err());
         assert!(check_download_id("", &existing).is_err());
     }

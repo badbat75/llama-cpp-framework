@@ -24,13 +24,19 @@ pub fn build(llama_cpp_dir: &str, build_jobs: u32) -> Result<PathBuf> {
 
     // The cargo that runs xtask (cargo run sets CARGO), else PATH, else where
     // rustup installs it: only a NEW login shell has ~/.cargo/bin on PATH.
-    let home_cargo = util::home().join(".cargo").join("bin").join(if cfg!(windows) { "cargo.exe" } else { "cargo" });
+    let home_cargo = util::home()
+        .join(".cargo")
+        .join("bin")
+        .join(if cfg!(windows) { "cargo.exe" } else { "cargo" });
     let cargo = std::env::var_os("CARGO")
         .map(PathBuf::from)
         .or_else(|| util::which("cargo"))
         .or_else(|| util::is_executable(&home_cargo).then_some(home_cargo))
         .with_context(|| {
-            format!("cargo not found. Run {} (it installs Rust through rustup).", prereq_script())
+            format!(
+                "cargo not found. Run {} (it installs Rust through rustup).",
+                prereq_script()
+            )
         })?;
     if let Some(d) = cargo.parent() {
         util::path_prepend(d, false);
@@ -46,12 +52,15 @@ pub fn build(llama_cpp_dir: &str, build_jobs: u32) -> Result<PathBuf> {
     if !ico.is_file() {
         ui::head("Generating resources/llama.ico from the llama-brand icon...");
         let resources = repo.join("resources");
-        let npm = util::which("npm").context("npm not found: node + npm generate resources/llama.ico")?;
-        run_cmd(
-            cmd(npm)
-                .current_dir(&resources)
-                .args(["install", "--no-save", "--silent", "sharp", "sharp-ico"]),
-        )?;
+        let npm =
+            util::which("npm").context("npm not found: node + npm generate resources/llama.ico")?;
+        run_cmd(cmd(npm).current_dir(&resources).args([
+            "install",
+            "--no-save",
+            "--silent",
+            "sharp",
+            "sharp-ico",
+        ]))?;
         run_cmd(
             cmd("node")
                 .current_dir(&resources)
@@ -65,7 +74,8 @@ pub fn build(llama_cpp_dir: &str, build_jobs: u32) -> Result<PathBuf> {
     let target = util::build_root().join("cargo-target");
     std::env::set_var("CARGO_TARGET_DIR", &target);
     let mut c = cmd(&cargo);
-    c.current_dir(&repo).args(["build", "--release", "-p", "llama-cpp-config"]);
+    c.current_dir(&repo)
+        .args(["build", "--release", "-p", "llama-cpp-config"]);
     // Its build script generates the architecture tables from this clone.
     c.env("LLAMA_FW_LLAMA_CPP_DIR", llama_cpp_dir);
     if build_jobs > 0 {
@@ -92,7 +102,10 @@ pub fn install_next_to_server(target: &Path) -> Result<()> {
     std::fs::copy(target.join("release/llama-cpp-config"), &staged)?;
     set_mode(&staged, 0o755)?;
     std::fs::rename(&staged, &dest)?;
-    ui::ok(format!("llama-cpp-config build complete: {}", dest.display()));
+    ui::ok(format!(
+        "llama-cpp-config build complete: {}",
+        dest.display()
+    ));
     crate::common::llama::print_version(&dest, false)?;
     ui::say("");
     Ok(())

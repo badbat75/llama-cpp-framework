@@ -4,8 +4,8 @@
 //! file, sccache and the web UI check are shared (common/llama.rs).
 
 use super::config::{self, BuildConfig};
-use crate::common::dists::Dists;
 use crate::common::cmake_options::cmake_options;
+use crate::common::dists::Dists;
 use crate::common::llama::{cache_get, check_web_ui, checkout, print_version, SccacheDaemon};
 use crate::common::ui;
 use crate::common::util::{self, cmd, run as run_cmd};
@@ -15,7 +15,10 @@ use std::path::{Path, PathBuf};
 /// The config and the dists of its recorded root.
 pub fn load_build_env() -> Result<(BuildConfig, Dists)> {
     let cfg = config::load()?;
-    let dists = Dists::resolve(Some(Path::new(&cfg.dist_root)).filter(|p| !p.as_os_str().is_empty()), None)?;
+    let dists = Dists::resolve(
+        Some(Path::new(&cfg.dist_root)).filter(|p| !p.as_os_str().is_empty()),
+        None,
+    )?;
     Ok((cfg, dists))
 }
 
@@ -37,7 +40,10 @@ pub fn run() -> Result<()> {
     if !cached_cc.is_empty() && cached_cc != cfg.c_compiler {
         ui::warn("Cached compiler changed:");
         ui::warn(format!("  {cached_cc} -> {}", cfg.c_compiler));
-        ui::warn(format!("  wiping {} for a clean configure", build_dir.display()));
+        ui::warn(format!(
+            "  wiping {} for a clean configure",
+            build_dir.display()
+        ));
         util::remove_all(&build_dir)?;
         std::fs::create_dir_all(&build_dir)?;
     }
@@ -46,7 +52,11 @@ pub fn run() -> Result<()> {
     let (generator, defines) = cmake_options()?;
     ui::dim(format!(
         "CMake options (xtask/cmake/): {}",
-        defines.iter().map(|d| &d[2..]).collect::<Vec<_>>().join(" ")
+        defines
+            .iter()
+            .map(|d| &d[2..])
+            .collect::<Vec<_>>()
+            .join(" ")
     ));
     let mut args: Vec<String> = vec![
         "-S".into(),
@@ -93,7 +103,11 @@ pub fn run() -> Result<()> {
     // C and C++ only: the Metal backend's Objective-C sources are compiled
     // uncached (-U clears a launcher an experiment may have left).
     let home_sccache = util::home().join(".local/bin/sccache");
-    let sccache = if util::is_executable(&home_sccache) { Some(home_sccache) } else { util::which("sccache") };
+    let sccache = if util::is_executable(&home_sccache) {
+        Some(home_sccache)
+    } else {
+        util::which("sccache")
+    };
     let mut daemon = None;
     match &sccache {
         Some(sc) => {
@@ -107,8 +121,12 @@ pub fn run() -> Result<()> {
         None => {
             ui::dim("sccache not found, building without compiler cache");
             args.extend(
-                ["-UCMAKE_C_COMPILER_LAUNCHER", "-UCMAKE_CXX_COMPILER_LAUNCHER", "-UCMAKE_OBJC_COMPILER_LAUNCHER"]
-                    .map(String::from),
+                [
+                    "-UCMAKE_C_COMPILER_LAUNCHER",
+                    "-UCMAKE_CXX_COMPILER_LAUNCHER",
+                    "-UCMAKE_OBJC_COMPILER_LAUNCHER",
+                ]
+                .map(String::from),
             );
         }
     }
@@ -128,8 +146,12 @@ pub fn run() -> Result<()> {
     check_web_ui(&build_dir, &llama)?;
 
     ui::say("");
-    ui::ok(format!("llama.cpp build complete: {}/", build_dir.join("bin").display()));
-    print_version(&build_dir.join("bin/llama-server"), true).context("the freshly built llama-server does not start")?;
+    ui::ok(format!(
+        "llama.cpp build complete: {}/",
+        build_dir.join("bin").display()
+    ));
+    print_version(&build_dir.join("bin/llama-server"), true)
+        .context("the freshly built llama-server does not start")?;
     ui::say("");
     Ok(())
 }

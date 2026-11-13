@@ -147,7 +147,10 @@ fn no_one_way_appstate_bindings_on_self_assigning_widgets() {
         }
     }
     // 12: every ui/*.slint, downloads_window.slint the latest.
-    assert!(scanned >= 12, "expected the full ui/ set, scanned {scanned}");
+    assert!(
+        scanned >= 12,
+        "expected the full ui/ set, scanned {scanned}"
+    );
     assert!(
         violations.is_empty(),
         "one-way AppState bindings on self-assigning widgets (use `<=>`, or a \
@@ -410,7 +413,10 @@ fn slint_string_literals_only_use_glyphs_proven_to_render() {
         }
     }
     // 12: every ui/*.slint, downloads_window.slint the latest.
-    assert!(scanned >= 12, "expected the full ui/ set, scanned {scanned}");
+    assert!(
+        scanned >= 12,
+        "expected the full ui/ set, scanned {scanned}"
+    );
     assert!(
         hits.is_empty(),
         "glyph(s) not known to render in the GUI's font stack: they draw as an \
@@ -422,7 +428,9 @@ fn slint_string_literals_only_use_glyphs_proven_to_render() {
 // ── Language file ────────────────────────────────────────────────────────
 
 fn language_file() -> std::collections::HashMap<String, String> {
-    let file = Path::new(env!("CARGO_MANIFEST_DIR")).join("strings").join("en_US.toml");
+    let file = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("strings")
+        .join("en_US.toml");
     crate::strings::parse(&std::fs::read_to_string(file).expect("read en_US.toml"))
 }
 
@@ -459,18 +467,32 @@ fn strings_t_keys(source: &str) -> Vec<(usize, String)> {
 /// a key shown later). A call on a non-literal is skipped: that key is marked with
 /// `key` where it is written.
 fn rust_string_calls(source: &str) -> Vec<(Option<usize>, String)> {
-    let code: String = source.lines().map(|l| format!("{}\n", strip_line_comment(l))).collect();
+    let code: String = source
+        .lines()
+        .map(|l| format!("{}\n", strip_line_comment(l)))
+        .collect();
     let mut calls = Vec::new();
-    for (call, is_fill) in [("strings::t(", false), ("strings::key(", false), ("strings::fill(", true)] {
+    for (call, is_fill) in [
+        ("strings::t(", false),
+        ("strings::key(", false),
+        ("strings::fill(", true),
+    ] {
         let mut rest = code.as_str();
         while let Some(at) = rest.find(call) {
             rest = &rest[at + call.len()..];
-            let Some((key, after)) = rest.trim_start().strip_prefix('"').and_then(|s| s.split_once('"')) else {
+            let Some((key, after)) = rest
+                .trim_start()
+                .strip_prefix('"')
+                .and_then(|s| s.split_once('"'))
+            else {
                 continue;
             };
             let values = match (call, is_fill) {
                 ("strings::t(", _) => Some(0),
-                (_, true) => after.trim_start().strip_prefix(',').and_then(|s| slice_len(s.trim_start())),
+                (_, true) => after
+                    .trim_start()
+                    .strip_prefix(',')
+                    .and_then(|s| slice_len(s.trim_start())),
                 _ => None,
             };
             calls.push((values, key.to_string()));
@@ -530,8 +552,11 @@ const GUI_ONLY: [&str; 12] = [
 ];
 
 fn gui_only_source(path: &Path) -> bool {
-    path.ancestors().any(|p| p.file_name().is_some_and(|n| n == "gui"))
-        || path.file_name().is_some_and(|n| n == "gui.rs" || GUI_ONLY.iter().any(|g| n == *g))
+    path.ancestors()
+        .any(|p| p.file_name().is_some_and(|n| n == "gui"))
+        || path
+            .file_name()
+            .is_some_and(|n| n == "gui.rs" || GUI_ONLY.iter().any(|g| n == *g))
 }
 
 /// Keys of a source a CLI command does reach, written where it does not:
@@ -597,13 +622,21 @@ fn split_cli_only(path: &Path, source: &str) -> (String, String) {
     if path.file_name().is_some_and(|n| n == "cli.rs") {
         return (source.to_string(), String::new());
     }
-    let listed: Vec<&str> = CLI_ONLY_FNS.iter().filter(|(file, _)| path.ends_with(file)).map(|(_, f)| *f).collect();
+    let listed: Vec<&str> = CLI_ONLY_FNS
+        .iter()
+        .filter(|(file, _)| path.ends_with(file))
+        .map(|(_, f)| *f)
+        .collect();
     if listed.is_empty() {
         return (String::new(), source.to_string());
     }
     let (mut cli, mut rest) = (String::new(), String::new());
     for (name, indented, text) in rust_fns(source) {
-        let side = if !indented && listed.contains(&name.as_str()) { &mut cli } else { &mut rest };
+        let side = if !indented && listed.contains(&name.as_str()) {
+            &mut cli
+        } else {
+            &mut rest
+        };
         side.push_str(&text);
     }
     (cli, rest)
@@ -619,14 +652,20 @@ fn rust_fns(source: &str) -> Vec<(String, bool, String)> {
     while let Some(raw) = lines.next() {
         let line = strip_line_comment(raw);
         let code = line.trim_start();
-        let bare = ["pub(crate) ", "pub(super) ", "pub "].iter().find_map(|p| code.strip_prefix(p)).unwrap_or(code);
+        let bare = ["pub(crate) ", "pub(super) ", "pub "]
+            .iter()
+            .find_map(|p| code.strip_prefix(p))
+            .unwrap_or(code);
         let bare = bare.strip_prefix("const ").unwrap_or(bare);
         let Some(rest) = bare.strip_prefix("fn ") else {
             outside.push_str(line);
             outside.push('\n');
             continue;
         };
-        let name = rest.split(|c: char| !c.is_alphanumeric() && c != '_').next().unwrap_or_default();
+        let name = rest
+            .split(|c: char| !c.is_alphanumeric() && c != '_')
+            .next()
+            .unwrap_or_default();
         let indent = &line[..line.len() - code.len()];
         let mut body = format!("{line}\n");
         if !line.trim_end().ends_with(['}', ';']) {
@@ -660,10 +699,17 @@ fn names(text: &str, name: &str, then: Option<char>) -> bool {
 /// in `reachers` can get to: by `module::function`, through a same-file bare call
 /// once inside, or by a method carrying text, matched by name alone. `lines` is left
 /// out of that match: it is `str::lines` everywhere else.
-fn reached_gui_only_calls(reachers: &[String], gui_only: &[(String, String)]) -> Vec<(Option<usize>, String)> {
+fn reached_gui_only_calls(
+    reachers: &[String],
+    gui_only: &[(String, String)],
+) -> Vec<(Option<usize>, String)> {
     let fns: Vec<(&str, (String, bool, String))> = gui_only
         .iter()
-        .flat_map(|(module, source)| rust_fns(source).into_iter().map(move |f| (module.as_str(), f)))
+        .flat_map(|(module, source)| {
+            rust_fns(source)
+                .into_iter()
+                .map(move |f| (module.as_str(), f))
+        })
         .filter(|(_, (name, _, _))| !name.is_empty())
         .collect();
     let mut reached = vec![false; fns.len()];
@@ -671,10 +717,14 @@ fn reached_gui_only_calls(reachers: &[String], gui_only: &[(String, String)]) ->
     let mut calls = Vec::new();
     while let Some((from, text)) = work.pop() {
         for (i, (module, (name, indented, body))) in fns.iter().enumerate() {
-            let method = *indented && name != "lines" && body.contains("strings::") && text.contains(&format!(".{name}("));
-            let bare = *module == from && text.match_indices(&format!("{name}(")).any(|(at, _)| {
-                !text[..at].ends_with(|c: char| c.is_alphanumeric() || "_.:".contains(c))
-            });
+            let method = *indented
+                && name != "lines"
+                && body.contains("strings::")
+                && text.contains(&format!(".{name}("));
+            let bare = *module == from
+                && text.match_indices(&format!("{name}(")).any(|(at, _)| {
+                    !text[..at].ends_with(|c: char| c.is_alphanumeric() || "_.:".contains(c))
+                });
             if !reached[i] && (method || bare || names(text, &format!("{module}::{name}"), None)) {
                 reached[i] = true;
                 calls.extend(rust_string_calls(body));
@@ -702,7 +752,10 @@ fn marked_key_calls(source: &str) -> Vec<(Option<usize>, String)> {
             .collect();
         let passed = if passed.is_empty() { vec![0] } else { passed };
         for (at, call) in body.match_indices("strings::key(") {
-            let Some((key, _)) = body[at + call.len()..].trim_start().strip_prefix('"').and_then(|s| s.split_once('"'))
+            let Some((key, _)) = body[at + call.len()..]
+                .trim_start()
+                .strip_prefix('"')
+                .and_then(|s| s.split_once('"'))
             else {
                 continue;
             };
@@ -758,12 +811,20 @@ fn strings_t_keys_and_the_language_file_match() {
         let path = entry.expect("dir entry").path();
         if path.extension().is_some_and(|e| e == "slint") {
             let source = std::fs::read_to_string(&path).expect("read .slint");
-            calls.extend(strings_t_keys(&source).into_iter().map(|(n, key)| (Some(n), key)));
+            calls.extend(
+                strings_t_keys(&source)
+                    .into_iter()
+                    .map(|(n, key)| (Some(n), key)),
+            );
         }
     }
     let mut sources = Vec::new();
-    rust_sources(&Path::new(env!("CARGO_MANIFEST_DIR")).join("src"), &mut sources);
-    let (mut shared, mut reachers, mut gui_only) = (std::collections::BTreeSet::new(), Vec::new(), Vec::new());
+    rust_sources(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
+        &mut sources,
+    );
+    let (mut shared, mut reachers, mut gui_only) =
+        (std::collections::BTreeSet::new(), Vec::new(), Vec::new());
     let mut cli_only = std::collections::BTreeSet::new();
     for path in &sources {
         let source = std::fs::read_to_string(path).expect("read .rs");
@@ -774,9 +835,21 @@ fn strings_t_keys_and_the_language_file_match() {
         calls.extend(rust_string_calls(&rest));
         if !gui_only_source(path) {
             shared.extend(found.iter().cloned());
-            reachers.push(rust_fns(&source).into_iter().map(|(_, _, text)| text).collect::<String>());
-        } else if path.file_name().is_some_and(|n| GUI_ONLY.iter().any(|g| n == *g)) {
-            let module = path.file_stem().expect("file stem").to_string_lossy().into_owned();
+            reachers.push(
+                rust_fns(&source)
+                    .into_iter()
+                    .map(|(_, _, text)| text)
+                    .collect::<String>(),
+            );
+        } else if path
+            .file_name()
+            .is_some_and(|n| GUI_ONLY.iter().any(|g| n == *g))
+        {
+            let module = path
+                .file_stem()
+                .expect("file stem")
+                .to_string_lossy()
+                .into_owned();
             gui_only.push((module, source));
         }
     }
@@ -785,29 +858,66 @@ fn strings_t_keys_and_the_language_file_match() {
     let used: std::collections::BTreeSet<&String> = calls.iter().map(|(_, key)| key).collect();
     let table = language_file();
     let bad_values = mistuned(&calls, &table);
-    assert!(bad_values.is_empty(), "values passed do not match the text's {{N}}: {bad_values:?}");
-    let invalid: Vec<_> = used.iter().copied().chain(table.keys()).filter(|k| !is_key(k)).collect();
-    assert!(invalid.is_empty(), "not a literal lowercase-hyphen key: {invalid:?}");
+    assert!(
+        bad_values.is_empty(),
+        "values passed do not match the text's {{N}}: {bad_values:?}"
+    );
+    let invalid: Vec<_> = used
+        .iter()
+        .copied()
+        .chain(table.keys())
+        .filter(|k| !is_key(k))
+        .collect();
+    assert!(
+        invalid.is_empty(),
+        "not a literal lowercase-hyphen key: {invalid:?}"
+    );
     let missing: Vec<_> = used.iter().filter(|k| !table.contains_key(**k)).collect();
-    assert!(missing.is_empty(), "used in ui/ or src/ but not in en_US.toml: {missing:?}");
+    assert!(
+        missing.is_empty(),
+        "used in ui/ or src/ but not in en_US.toml: {missing:?}"
+    );
     let unused: Vec<_> = table.keys().filter(|k| !used.contains(k)).collect();
-    assert!(unused.is_empty(), "in en_US.toml but used nowhere in ui/ or in src/ outside the CLI's own code: {unused:?}");
+    assert!(
+        unused.is_empty(),
+        "in en_US.toml but used nowhere in ui/ or in src/ outside the CLI's own code: {unused:?}"
+    );
 
     // cli.toml: exactly the keys a CLI command can reach, each also in the language
     // file unless only the CLI's own code uses it, its {N} matching the calls.
-    let file = Path::new(env!("CARGO_MANIFEST_DIR")).join("strings").join("cli.toml");
+    let file = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("strings")
+        .join("cli.toml");
     let cli = crate::strings::parse(&std::fs::read_to_string(file).expect("read cli.toml"));
     let bad_values = mistuned(&shared, &cli);
-    assert!(bad_values.is_empty(), "values passed do not match cli.toml's {{N}}: {bad_values:?}");
+    assert!(
+        bad_values.is_empty(),
+        "values passed do not match cli.toml's {{N}}: {bad_values:?}"
+    );
     let shared: std::collections::BTreeSet<&String> = shared.iter().map(|(_, key)| key).collect();
     let missing: Vec<_> = shared.iter().filter(|k| !cli.contains_key(**k)).collect();
-    assert!(missing.is_empty(), "used by a source the CLI reaches but not in cli.toml: {missing:?}");
+    assert!(
+        missing.is_empty(),
+        "used by a source the CLI reaches but not in cli.toml: {missing:?}"
+    );
     let unused: Vec<_> = cli.keys().filter(|k| !shared.contains(k)).collect();
-    assert!(unused.is_empty(), "in cli.toml but used by no source the CLI reaches: {unused:?}");
+    assert!(
+        unused.is_empty(),
+        "in cli.toml but used by no source the CLI reaches: {unused:?}"
+    );
     let invalid: Vec<_> = cli.keys().filter(|k| !is_key(k)).collect();
-    assert!(invalid.is_empty(), "not a lowercase-hyphen key in cli.toml: {invalid:?}");
-    let alone: Vec<_> = cli.keys().filter(|k| !table.contains_key(*k) && !cli_only.contains(*k)).collect();
-    assert!(alone.is_empty(), "in cli.toml but not in en_US.toml, and not only the CLI's: {alone:?}");
+    assert!(
+        invalid.is_empty(),
+        "not a lowercase-hyphen key in cli.toml: {invalid:?}"
+    );
+    let alone: Vec<_> = cli
+        .keys()
+        .filter(|k| !table.contains_key(*k) && !cli_only.contains(*k))
+        .collect();
+    assert!(
+        alone.is_empty(),
+        "in cli.toml but not in en_US.toml, and not only the CLI's: {alone:?}"
+    );
 }
 
 /// A key in `cli.toml` alone is a miss in the window, so what holds one must stay
@@ -816,12 +926,18 @@ fn strings_t_keys_and_the_language_file_match() {
 #[test]
 fn cli_only_code_is_not_called_from_elsewhere() {
     let mut sources = Vec::new();
-    rust_sources(&Path::new(env!("CARGO_MANIFEST_DIR")).join("src"), &mut sources);
+    rust_sources(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
+        &mut sources,
+    );
     let texts: Vec<_> = sources
         .iter()
         .map(|path| {
             let source = std::fs::read_to_string(path).expect("read .rs");
-            let code: String = rust_fns(&source).into_iter().map(|(_, _, text)| text).collect();
+            let code: String = rust_fns(&source)
+                .into_iter()
+                .map(|(_, _, text)| text)
+                .collect();
             let rest = split_cli_only(path, &code).1;
             (path.clone(), rest)
         })
@@ -832,7 +948,10 @@ fn cli_only_code_is_not_called_from_elsewhere() {
             hits.push(format!("{}: cli::", path.display()));
         }
         for (file, function) in CLI_ONLY_FNS {
-            let module = Path::new(file).file_stem().expect("file stem").to_string_lossy();
+            let module = Path::new(file)
+                .file_stem()
+                .expect("file stem")
+                .to_string_lossy();
             let bare = path.ends_with(file)
                 && rest.match_indices(&format!("{function}(")).any(|(at, _)| {
                     !rest[..at].ends_with(|c: char| c.is_alphanumeric() || "_.:".contains(c))
@@ -846,7 +965,9 @@ fn cli_only_code_is_not_called_from_elsewhere() {
 }
 
 /// The macros of the CLI's print paths whose text is shown to the user.
-const SHOWN_MACROS: [&str; 7] = ["println", "eprintln", "print", "eprint", "bail", "anyhow", "ensure"];
+const SHOWN_MACROS: [&str; 7] = [
+    "println", "eprintln", "print", "eprint", "bail", "anyhow", "ensure",
+];
 
 /// Sources whose print and error macros are scanned, and, for those marked, every
 /// `format!` and `.context` too: there a format string is shown, recorded
@@ -865,21 +986,35 @@ const SHOWN_LITERALS: [(&str, &str); 5] = [
     ("sweep-{}", "a campaign name: it goes into bench.db"),
     ("{} (default)", "a value of `server show`, read by scripts"),
     ("{v} MiB", "a value of `server show`; a unit"),
-    ("  [{}]{off}  model={}", "`preset list` row: `model` is the INI key"),
-    ("mmproj: {}", "`preset download` row: `mmproj` is the INI key"),
+    (
+        "  [{}]{off}  model={}",
+        "`preset list` row: `model` is the INI key",
+    ),
+    (
+        "mmproj: {}",
+        "`preset download` row: `mmproj` is the INI key",
+    ),
 ];
 
 /// Every string literal handed to one of `macros` (`format` and `.context` with
 /// `all`) in a Rust source, its test module left out, however many lines the call
 /// takes; a literal that is a key of a `strings::` call is not one.
 fn shown_literals(source: &str, all: bool) -> Vec<String> {
-    let code: String = source.lines().take_while(|l| !l.trim_end().ends_with("mod tests {")).map(|l| format!("{l}\n")).collect();
+    let code: String = source
+        .lines()
+        .take_while(|l| !l.trim_end().ends_with("mod tests {"))
+        .map(|l| format!("{l}\n"))
+        .collect();
     let starts_call = |before: &str| {
         if all && before.ends_with(".context(") {
             return true;
         }
-        let Some(head) = before.strip_suffix("!(") else { return false };
-        let word = &head[head.rfind(|c: char| !c.is_alphanumeric() && c != '_').map_or(0, |i| i + 1)..];
+        let Some(head) = before.strip_suffix("!(") else {
+            return false;
+        };
+        let word = &head[head
+            .rfind(|c: char| !c.is_alphanumeric() && c != '_')
+            .map_or(0, |i| i + 1)..];
         SHOWN_MACROS.contains(&word) || (all && word == "format")
     };
     let (mut out, mut before, mut depth) = (Vec::new(), String::new(), 0usize);
@@ -914,7 +1049,9 @@ fn shown_literals(source: &str, all: bool) -> Vec<String> {
                         _ => text.push(s),
                     }
                 }
-                let is_key = ["strings::t(", "strings::fill(", "strings::key("].iter().any(|k| before.trim_end().ends_with(k));
+                let is_key = ["strings::t(", "strings::fill(", "strings::key("]
+                    .iter()
+                    .any(|k| before.trim_end().ends_with(k));
                 if depth > 0 && !is_key {
                     out.push(text);
                 }
@@ -957,11 +1094,17 @@ fn language_words(literal: &str) -> Vec<String> {
     let mut words = Vec::new();
     for token in rest.split_whitespace() {
         let bare = token.trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '-');
-        let file_name = bare.split_once('.').is_some_and(|(a, b)| !a.is_empty() && !b.is_empty());
+        let file_name = bare
+            .split_once('.')
+            .is_some_and(|(a, b)| !a.is_empty() && !b.is_empty());
         if bare.starts_with("--") || file_name {
             continue;
         }
-        words.extend(bare.split(|c: char| !c.is_ascii_alphabetic()).filter(|w| w.len() >= 3).map(str::to_string));
+        words.extend(
+            bare.split(|c: char| !c.is_ascii_alphabetic())
+                .filter(|w| w.len() >= 3)
+                .map(str::to_string),
+        );
     }
     words
 }
@@ -988,20 +1131,56 @@ fn cli_print_paths_hold_no_language() {
         }
     }
     assert!(hits.is_empty(), "text in a print or error macro: give it a key in strings/cli.toml (AGENTS.md, The CLI): {hits:#?}");
-    let stale: Vec<_> = SHOWN_LITERALS.iter().filter(|(text, _)| !allowed.contains(text)).collect();
-    assert!(stale.is_empty(), "SHOWN_LITERALS entries nothing uses any more: {stale:?}");
+    let stale: Vec<_> = SHOWN_LITERALS
+        .iter()
+        .filter(|(text, _)| !allowed.contains(text))
+        .collect();
+    assert!(
+        stale.is_empty(),
+        "SHOWN_LITERALS entries nothing uses any more: {stale:?}"
+    );
 }
 
 #[test]
 fn shown_literal_scan_reads_macros_and_leaves_the_rest() {
     let source = "// println!(\"comment\");\nprintln!(\"one {x}\");\neprintln!(\n    \"two \\\n     lines\",\n    a(b),\n);\nanyhow::bail!(\"three\");\nlet c = '\"';\nprintln!(\"{}\", strings::fill(\"a-key\", &[&\"four\"]));\nlet s = \"five\";\nlet f = format!(\"six\");\nx.context(\"seven\");\n#[cfg(test)]\nmod tests {\n    println!(\"eight\");\n}\n";
-    assert_eq!(shown_literals(source, false), ["one {x}", "two       lines", "three", "{}", "four"]);
-    assert_eq!(shown_literals(source, true), ["one {x}", "two       lines", "three", "{}", "four", "six", "seven"]);
-    for none in ["{line}", "{}", "  {:<60}  {x:.1}", "--image-size: {e}", "--image {}: {e}", " to ", "{key} = {applied} (presets.ini).", "server.ini: {}"] {
-        assert!(language_words(none).iter().all(|w| w == "to"), "{none:?}: {:?}", language_words(none));
+    assert_eq!(
+        shown_literals(source, false),
+        ["one {x}", "two       lines", "three", "{}", "four"]
+    );
+    assert_eq!(
+        shown_literals(source, true),
+        [
+            "one {x}",
+            "two       lines",
+            "three",
+            "{}",
+            "four",
+            "six",
+            "seven"
+        ]
+    );
+    for none in [
+        "{line}",
+        "{}",
+        "  {:<60}  {x:.1}",
+        "--image-size: {e}",
+        "--image {}: {e}",
+        " to ",
+        "{key} = {applied} (presets.ini).",
+        "server.ini: {}",
+    ] {
+        assert!(
+            language_words(none).iter().all(|w| w == "to"),
+            "{none:?}: {:?}",
+            language_words(none)
+        );
     }
     assert_eq!(language_words("Wrote {path}"), ["Wrote"]);
-    assert_eq!(language_words("--draft takes mtp, not {d}"), ["takes", "mtp", "not"]);
+    assert_eq!(
+        language_words("--draft takes mtp, not {d}"),
+        ["takes", "mtp", "not"]
+    );
     assert_eq!(language_words("Done."), ["Done"]);
 }
 
@@ -1011,7 +1190,10 @@ fn reach_follows_calls_out_of_a_shared_source() {
         ("alpha".to_string(), "pub fn used() {\n    helper();\n}\nfn helper() {\n    strings::t(\"reached\");\n    beta::far();\n}\nfn idle() {\n    strings::t(\"idle\");\n}\nstruct S;\nimpl S {\n    fn called(&self) {\n        strings::t(\"method\");\n    }\n    fn lines(&self) {\n        strings::t(\"lines\");\n    }\n}\n".to_string()),
         ("beta".to_string(), "pub fn far() {\n    strings::t(\"far\");\n}\npub fn far_not() {\n    strings::t(\"far-not\");\n}\n".to_string()),
     ];
-    let reached = reached_gui_only_calls(&["alpha::used(); x.called(); y.lines();".to_string()], &gui_only);
+    let reached = reached_gui_only_calls(
+        &["alpha::used(); x.called(); y.lines();".to_string()],
+        &gui_only,
+    );
     let mut keys: Vec<_> = reached.into_iter().map(|(_, key)| key).collect();
     keys.sort();
     assert_eq!(keys, ["far", "method", "reached"]);
@@ -1020,7 +1202,8 @@ fn reach_follows_calls_out_of_a_shared_source() {
 #[test]
 fn marked_keys_take_what_the_later_call_passes() {
     let source = "fn a() {\n    let key = strings::key(\"one\");\n    strings::fill(key, &[&x, &y]);\n}\nfn b() {\n    strings::t(strings::key(\"two\"));\n}\nconst T: &str = strings::key(\"three\");\n";
-    let expect = [(Some(2), "one"), (Some(0), "two"), (Some(0), "three")].map(|(n, k)| (n, k.to_string()));
+    let expect =
+        [(Some(2), "one"), (Some(0), "two"), (Some(0), "three")].map(|(n, k)| (n, k.to_string()));
     assert_eq!(marked_key_calls(source), expect);
 }
 
@@ -1029,8 +1212,13 @@ fn rust_scan_reads_keys_and_counts_values() {
     let calls = rust_string_calls(
         "// strings::t(\"comment\")\nstrings::t(\"one\"); strings::t(key);\nstrings::key(\"two\");\nstrings::fill(\n    \"three\",\n    &[&a(b, c), &\"d,\", &[1, 2],\n],\n);\nstrings::fill(\"four\", args);\n",
     );
-    let expect = [(Some(0), "one"), (None, "two"), (Some(3), "three"), (None, "four")]
-        .map(|(n, k)| (n, k.to_string()));
+    let expect = [
+        (Some(0), "one"),
+        (None, "two"),
+        (Some(3), "three"),
+        (None, "four"),
+    ]
+    .map(|(n, k)| (n, k.to_string()));
     assert_eq!(calls, expect);
 }
 

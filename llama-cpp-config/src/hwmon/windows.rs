@@ -30,6 +30,13 @@ use crate::devices::{Cpu, MemoryModule, PcieLink, PhysicalGpu};
 use std::collections::HashMap;
 use std::os::windows::ffi::OsStrExt;
 use std::path::Path;
+use windows_sys::Wdk::Graphics::Direct3D::{
+    D3DKMTCloseAdapter, D3DKMTEnumAdapters2, D3DKMTQueryAdapterInfo, D3DKMT_ADAPTERADDRESS,
+    D3DKMT_ADAPTERINFO, D3DKMT_ADAPTERREGISTRYINFO, D3DKMT_ADAPTERTYPE, D3DKMT_CLOSEADAPTER,
+    D3DKMT_ENUMADAPTERS2, D3DKMT_QUERYADAPTERINFO, D3DKMT_QUERY_DEVICE_IDS, D3DKMT_SEGMENTSIZEINFO,
+    KMTQAITYPE_ADAPTERADDRESS, KMTQAITYPE_ADAPTERREGISTRYINFO, KMTQAITYPE_ADAPTERTYPE,
+    KMTQAITYPE_GETSEGMENTSIZE, KMTQAITYPE_PHYSICALADAPTERDEVICEIDS, KMTQUERYADAPTERINFOTYPE,
+};
 use windows_sys::Win32::Devices::DeviceAndDriverInstallation::{
     CM_Get_DevNode_PropertyW, CM_Get_Device_ID_ListW, CM_Get_Device_ID_List_SizeW, CM_Get_Parent,
     CM_Locate_DevNodeW, CM_GETIDLIST_FILTER_CLASS, CM_GETIDLIST_FILTER_PRESENT,
@@ -40,13 +47,6 @@ use windows_sys::Win32::Devices::Properties::{
     DEVPROP_TYPE_STRING, DEVPROP_TYPE_UINT32,
 };
 use windows_sys::Win32::Foundation::DEVPROPKEY;
-use windows_sys::Wdk::Graphics::Direct3D::{
-    D3DKMTCloseAdapter, D3DKMTEnumAdapters2, D3DKMTQueryAdapterInfo, D3DKMT_ADAPTERADDRESS,
-    D3DKMT_ADAPTERINFO, D3DKMT_ADAPTERREGISTRYINFO, D3DKMT_ADAPTERTYPE, D3DKMT_CLOSEADAPTER,
-    D3DKMT_ENUMADAPTERS2, D3DKMT_QUERYADAPTERINFO, D3DKMT_QUERY_DEVICE_IDS, D3DKMT_SEGMENTSIZEINFO,
-    KMTQAITYPE_ADAPTERADDRESS, KMTQAITYPE_ADAPTERREGISTRYINFO, KMTQAITYPE_ADAPTERTYPE,
-    KMTQAITYPE_GETSEGMENTSIZE, KMTQAITYPE_PHYSICALADAPTERDEVICEIDS, KMTQUERYADAPTERINFOTYPE,
-};
 use windows_sys::Win32::Foundation::{
     CloseHandle, FILETIME, HANDLE as Handle, INVALID_HANDLE_VALUE,
 };
@@ -900,11 +900,8 @@ fn topology_buffer() -> Vec<u8> {
         GetLogicalProcessorInformationEx(RelationAll, std::ptr::null_mut(), &mut size);
         let mut buffer = vec![0u64; (size as usize).div_ceil(8)];
         let filled = size > 0
-            && GetLogicalProcessorInformationEx(
-                RelationAll,
-                buffer.as_mut_ptr().cast(),
-                &mut size,
-            ) != 0;
+            && GetLogicalProcessorInformationEx(RelationAll, buffer.as_mut_ptr().cast(), &mut size)
+                != 0;
         if !filled {
             return Vec::new();
         }
@@ -1544,7 +1541,10 @@ mod tests {
         for gpu in physical_gpus() {
             assert!(gpu.switches.is_some(), "{gpu:?}");
             if let Some(link) = gpu.link {
-                assert!((1..=7).contains(&link.generation) && link.width >= 1, "{gpu:?}");
+                assert!(
+                    (1..=7).contains(&link.generation) && link.width >= 1,
+                    "{gpu:?}"
+                );
             }
         }
     }
@@ -1668,9 +1668,7 @@ mod tests {
             r
         };
         let core = |mask: u64| record(0, &[(32, &mask.to_le_bytes())]);
-        let cache = |level: u8, bytes: u32| {
-            record(2, &[(8, &[level]), (12, &bytes.to_le_bytes())])
-        };
+        let cache = |level: u8, bytes: u32| record(2, &[(8, &[level]), (12, &bytes.to_le_bytes())]);
         let buffer = [
             core(0b0011),
             core(0b1100),
@@ -1725,7 +1723,11 @@ mod tests {
         // No thread count is one thread, not a division by zero.
         assert_eq!(estimated_iowait(50.0, 0.25, 0), 25.0);
 
-        let values = [("0 C:".to_string(), 1.5), ("1 E:".to_string(), 0.5), ("_Total".to_string(), 9.0)];
+        let values = [
+            ("0 C:".to_string(), 1.5),
+            ("1 E:".to_string(), 0.5),
+            ("_Total".to_string(), 9.0),
+        ];
         assert_eq!(summed_queues(&values), 2.0);
     }
 
@@ -1779,7 +1781,9 @@ mod tests {
         let usage = sockets.read();
         assert_eq!(usage.len(), 2);
         assert!(
-            usage.iter().all(|u| u.is_some_and(|p| (0.0..=100.0).contains(&p))),
+            usage
+                .iter()
+                .all(|u| u.is_some_and(|p| (0.0..=100.0).contains(&p))),
             "{usage:?}"
         );
     }

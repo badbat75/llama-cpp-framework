@@ -323,8 +323,13 @@ mod win {
         let mut key: Hkey = std::ptr::null_mut();
         // SAFETY: NUL-terminated names and live locals sized for a DWORD.
         unsafe {
-            if RegOpenKeyExW(HKEY_LOCAL_MACHINE, sub.as_ptr(), 0, KEY_QUERY_VALUE, &mut key)
-                != ERROR_SUCCESS
+            if RegOpenKeyExW(
+                HKEY_LOCAL_MACHINE,
+                sub.as_ptr(),
+                0,
+                KEY_QUERY_VALUE,
+                &mut key,
+            ) != ERROR_SUCCESS
             {
                 return None;
             }
@@ -387,8 +392,12 @@ mod win {
         let ret = if on {
             let exe = super::choose_autostart_exe(installed_exe(), std::env::current_exe()?);
             let data = wide(&run_command(&exe, minimized));
-            let byte_len = u32::try_from(data.len() * 2)
-                .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, crate::strings::t("command-too-long")))?;
+            let byte_len = u32::try_from(data.len() * 2).map_err(|_| {
+                io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    crate::strings::t("command-too-long"),
+                )
+            })?;
             unsafe {
                 RegSetValueExW(
                     key,

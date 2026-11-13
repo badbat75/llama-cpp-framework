@@ -9,28 +9,47 @@ impl Dists {
     pub fn find_rocm(&self) -> Option<PathBuf> {
         newest_dist(
             &self.rocm_root(),
-            &[&self.sources.rocm.marker, "lib/llvm/bin/clang++", "lib/cmake/hip/hip-config.cmake"],
+            &[
+                &self.sources.rocm.marker,
+                "lib/llvm/bin/clang++",
+                "lib/cmake/hip/hip-config.cmake",
+            ],
         )
     }
     pub fn find_cuda(&self) -> Option<PathBuf> {
         newest_dist(
             &self.cuda_root(),
-            &[&self.sources.cuda.marker, "bin/nvcc", "lib64/libcudart.so", "lib64/libcublas.so"],
+            &[
+                &self.sources.cuda.marker,
+                "bin/nvcc",
+                "lib64/libcudart.so",
+                "lib64/libcublas.so",
+            ],
         )
     }
     pub fn find_nccl(&self) -> Option<PathBuf> {
-        newest_dist(&self.nccl_root(), &[&self.sources.nccl.marker, "lib/libnccl.so", "include/nccl.h"])
+        newest_dist(
+            &self.nccl_root(),
+            &[
+                &self.sources.nccl.marker,
+                "lib/libnccl.so",
+                "include/nccl.h",
+            ],
+        )
     }
     /// The SDK proper (the x86_64 dir), which is what VULKAN_SDK names.
     pub fn find_vulkan(&self) -> Option<PathBuf> {
         let d = newest_dist(
             &self.vulkan_root(),
-            &[&self.sources.vulkan.marker, "x86_64/include/vulkan/vulkan.h", "x86_64/bin/glslc"],
+            &[
+                &self.sources.vulkan.marker,
+                "x86_64/include/vulkan/vulkan.h",
+                "x86_64/bin/glslc",
+            ],
         )?;
         let sdk = d.join("x86_64");
         vulkan_loader(&sdk).map(|_| sdk)
     }
-
 }
 
 /// The loader library of a Vulkan SDK. Since 1.4.3xx LunarG keeps it out of

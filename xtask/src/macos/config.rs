@@ -27,11 +27,15 @@ pub fn load_optional() -> Result<Option<BuildConfig>> {
         return Ok(None);
     }
     let text = std::fs::read_to_string(&p).with_context(|| format!("reading {}", p.display()))?;
-    Ok(Some(toml::from_str(&text).with_context(|| format!("parsing {}", p.display()))?))
+    Ok(Some(
+        toml::from_str(&text).with_context(|| format!("parsing {}", p.display()))?,
+    ))
 }
 
 pub fn load() -> Result<BuildConfig> {
-    load_optional()?.context("build/macos/config-build.toml not found. Run cargo run -p xtask -- configure first.")
+    load_optional()?.context(
+        "build/macos/config-build.toml not found. Run cargo run -p xtask -- configure first.",
+    )
 }
 
 fn q(s: &str) -> String {

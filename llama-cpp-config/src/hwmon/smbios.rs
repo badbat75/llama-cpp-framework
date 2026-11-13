@@ -120,7 +120,10 @@ fn module_bytes(s: &Structure) -> Option<u64> {
 fn speed(s: &Structure, at: usize, extended_at: usize) -> Option<u32> {
     match s.u16_at(at)? {
         0 => None,
-        0xFFFF => s.u32_at(extended_at).map(|v| v & 0x7FFF_FFFF).filter(|v| *v != 0),
+        0xFFFF => s
+            .u32_at(extended_at)
+            .map(|v| v & 0x7FFF_FFFF)
+            .filter(|v| *v != 0),
         mts => Some(mts as u32),
     }
 }
@@ -144,10 +147,7 @@ pub fn memory_modules(table: &[u8]) -> Vec<MemoryModule> {
                 kind: s.u8_at(0x12).and_then(memory_kind).map(str::to_string),
                 configured_mts: speed(s, 0x20, 0x58),
                 rated_mts: speed(s, 0x15, 0x54),
-                configured_millivolts: s
-                    .u16_at(0x26)
-                    .filter(|mv| *mv != 0)
-                    .map(u32::from),
+                configured_millivolts: s.u16_at(0x26).filter(|mv| *mv != 0).map(u32::from),
             })
         })
         .collect()
@@ -160,7 +160,10 @@ pub fn processor(table: &[u8]) -> (Option<String>, Option<u32>) {
         return (None, None);
     };
     let socket = Some(s.text_at(0x04)).filter(|t| !t.is_empty());
-    (socket, s.u16_at(0x14).filter(|mhz| *mhz != 0).map(u32::from))
+    (
+        socket,
+        s.u16_at(0x14).filter(|mhz| *mhz != 0).map(u32::from),
+    )
 }
 
 #[cfg(test)]
@@ -213,10 +216,19 @@ mod tests {
             &[(0x04, &[1]), (0x14, &5600u16.to_le_bytes())],
             &["AM5"],
         );
-        table.extend(module([0, 0x10], &["DIMM 1", "P0 CHANNEL A", "CORSAIR", "CMK64 "]));
+        table.extend(module(
+            [0, 0x10],
+            &["DIMM 1", "P0 CHANNEL A", "CORSAIR", "CMK64 "],
+        ));
         // Empty slots: a size of zero, and of zero KiB.
-        table.extend(module([0, 0], &["DIMM 2", "P0 CHANNEL A", "Unknown", "Unknown"]));
-        table.extend(module([0, 0x80], &["DIMM 2", "P0 CHANNEL B", "Unknown", "Unknown"]));
+        table.extend(module(
+            [0, 0],
+            &["DIMM 2", "P0 CHANNEL A", "Unknown", "Unknown"],
+        ));
+        table.extend(module(
+            [0, 0x80],
+            &["DIMM 2", "P0 CHANNEL B", "Unknown", "Unknown"],
+        ));
         table.extend(structure(END_OF_TABLE, 4, &[], &[]));
         // After the end of the table nothing counts.
         table.extend(module([0, 0x10], &["DIMM 3", "P1", "x", "y"]));
@@ -240,7 +252,10 @@ mod tests {
         let mut table = structure(
             MEMORY_DEVICE,
             0x28,
-            &[(0x0C, &0x7FFFu16.to_le_bytes()), (0x1C, &65536u32.to_le_bytes())],
+            &[
+                (0x0C, &0x7FFFu16.to_le_bytes()),
+                (0x1C, &65536u32.to_le_bytes()),
+            ],
             &[],
         );
         table.extend(structure(END_OF_TABLE, 4, &[], &[]));
@@ -259,7 +274,10 @@ mod tests {
         table.extend(structure(END_OF_TABLE, 4, &[], &[]));
         let m = &memory_modules(&table)[0];
         assert_eq!((m.maker.as_str(), m.part.as_str()), ("", "PART"));
-        assert_eq!((m.configured_mts, m.rated_mts, m.configured_millivolts), (None, None, None));
+        assert_eq!(
+            (m.configured_mts, m.rated_mts, m.configured_millivolts),
+            (None, None, None)
+        );
     }
 
     #[test]

@@ -29,8 +29,8 @@ mod macos;
 #[cfg(windows)]
 mod windows;
 
-use common::ui;
 use clap::{Parser, Subcommand, ValueEnum};
+use common::ui;
 use std::path::PathBuf;
 
 #[derive(Parser)]
@@ -131,7 +131,10 @@ fn main() {
 fn run(cli: Cli) -> anyhow::Result<()> {
     match cli.phase {
         Phase::Prereq { dist_root, skip } => linux::prereq::run(dist_root, &skip),
-        Phase::Configure { llama_cpp_dir, dist_root } => linux::configure::run(llama_cpp_dir, dist_root),
+        Phase::Configure {
+            llama_cpp_dir,
+            dist_root,
+        } => linux::configure::run(llama_cpp_dir, dist_root),
         Phase::Build { module } => {
             if module != Some(Module::Config) {
                 linux::build_llama::run()?;
@@ -141,12 +144,29 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             }
             Ok(())
         }
-        Phase::Package { deb, rpm, keep_staging, wix: _ } => {
+        Phase::Package {
+            deb,
+            rpm,
+            keep_staging,
+            wix: _,
+        } => {
             let both = !deb && !rpm;
             linux::package::run(deb || both, rpm || both, keep_staging)
         }
-        Phase::Install { deb, rpm, force, dry_run, files } => {
-            let format = if deb { Some("deb") } else if rpm { Some("rpm") } else { None };
+        Phase::Install {
+            deb,
+            rpm,
+            force,
+            dry_run,
+            files,
+        } => {
+            let format = if deb {
+                Some("deb")
+            } else if rpm {
+                Some("rpm")
+            } else {
+                None
+            };
             linux::install::run(format, force, dry_run, files)
         }
     }
@@ -158,7 +178,10 @@ fn run(cli: Cli) -> anyhow::Result<()> {
         Phase::Prereq { .. } => {
             anyhow::bail!("on Windows the prerequisites are scripts\\00-install-prerequisites.ps1's, run it directly")
         }
-        Phase::Configure { llama_cpp_dir, dist_root } => windows::configure::run(llama_cpp_dir, dist_root),
+        Phase::Configure {
+            llama_cpp_dir,
+            dist_root,
+        } => windows::configure::run(llama_cpp_dir, dist_root),
         Phase::Build { module } => {
             if module != Some(Module::Config) {
                 windows::build_llama::run()?;
@@ -168,15 +191,30 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             }
             Ok(())
         }
-        Phase::Package { deb, rpm, keep_staging, wix } => {
+        Phase::Package {
+            deb,
+            rpm,
+            keep_staging,
+            wix,
+        } => {
             if deb || rpm {
-                anyhow::bail!("--deb and --rpm are Linux packages; on Windows the package is the MSI");
+                anyhow::bail!(
+                    "--deb and --rpm are Linux packages; on Windows the package is the MSI"
+                );
             }
             windows::package::run(keep_staging, wix)
         }
-        Phase::Install { deb, rpm, force: _, dry_run, files } => {
+        Phase::Install {
+            deb,
+            rpm,
+            force: _,
+            dry_run,
+            files,
+        } => {
             if deb || rpm {
-                anyhow::bail!("--deb and --rpm are Linux packages; on Windows the package is the MSI");
+                anyhow::bail!(
+                    "--deb and --rpm are Linux packages; on Windows the package is the MSI"
+                );
             }
             if files.len() > 1 {
                 anyhow::bail!("on Windows the package is one MSI: give one file");
@@ -190,7 +228,10 @@ fn run(cli: Cli) -> anyhow::Result<()> {
 fn run(cli: Cli) -> anyhow::Result<()> {
     match cli.phase {
         Phase::Prereq { dist_root, skip } => macos::prereq::run(dist_root, &skip),
-        Phase::Configure { llama_cpp_dir, dist_root } => macos::configure::run(llama_cpp_dir, dist_root),
+        Phase::Configure {
+            llama_cpp_dir,
+            dist_root,
+        } => macos::configure::run(llama_cpp_dir, dist_root),
         Phase::Build { module } => {
             if module != Some(Module::Config) {
                 macos::build_llama::run()?;
@@ -200,15 +241,28 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             }
             Ok(())
         }
-        Phase::Package { deb, rpm, keep_staging, wix } => {
+        Phase::Package {
+            deb,
+            rpm,
+            keep_staging,
+            wix,
+        } => {
             if deb || rpm || wix.is_some() {
                 anyhow::bail!("--deb, --rpm and --wix are other systems' packages; on macOS the packages are .pkg files");
             }
             macos::package::run(keep_staging)
         }
-        Phase::Install { deb, rpm, force, dry_run, files } => {
+        Phase::Install {
+            deb,
+            rpm,
+            force,
+            dry_run,
+            files,
+        } => {
             if deb || rpm {
-                anyhow::bail!("--deb and --rpm are Linux packages; on macOS the packages are .pkg files");
+                anyhow::bail!(
+                    "--deb and --rpm are Linux packages; on macOS the packages are .pkg files"
+                );
             }
             macos::install::run(force, dry_run, files)
         }

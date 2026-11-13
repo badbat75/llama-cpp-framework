@@ -240,7 +240,10 @@ impl DeviceOption {
         }
         strings::fill(
             "vram-summary",
-            &[&format!("{:.1}", self.total_mib as f64 / 1024.0), &format!("{:.1}", self.free_mib as f64 / 1024.0)],
+            &[
+                &format!("{:.1}", self.total_mib as f64 / 1024.0),
+                &format!("{:.1}", self.free_mib as f64 / 1024.0),
+            ],
         )
     }
 }
@@ -616,7 +619,14 @@ mod tests {
         assert_eq!(pci_address("0000:0A:00.1").as_deref(), Some("0a:00.1"));
         assert_eq!(pci_address("14:00.0").as_deref(), Some("14:00.0"));
         assert_eq!(pci_text(0x14, 0, 0), "14:00.0");
-        for bad in ["", "pci0000:00", "unknown id", "GPU-5a3b", "14:00", "zz:00.0"] {
+        for bad in [
+            "",
+            "pci0000:00",
+            "unknown id",
+            "GPU-5a3b",
+            "14:00",
+            "zz:00.0",
+        ] {
             assert_eq!(pci_address(bad), None, "{bad:?}");
         }
     }

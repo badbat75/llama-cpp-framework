@@ -503,7 +503,10 @@ pub fn int_list_problem(label: &str, s: &str) -> Option<String> {
         .map(str::trim)
         .filter(|p| !p.is_empty())
         .find(|p| ini::parse_int_in(p, &ini::INT_NON_NEGATIVE).is_none())?;
-    Some(strings::fill("list-entry-not-number", &[&label, &s.trim(), &bad, &i32::MAX]))
+    Some(strings::fill(
+        "list-entry-not-number",
+        &[&label, &s.trim(), &bad, &i32::MAX],
+    ))
 }
 
 /// Render an integer list back for the UI field.
@@ -781,7 +784,10 @@ pub fn prompt_request(
         .flatten()
         .filter(|v| v.get("messages").is_some_and(serde_json::Value::is_array));
     let Some(mut v) = conversation else {
-        return (serde_json::json!([{ "role": "user", "content": shorten(text) }]), None);
+        return (
+            serde_json::json!([{ "role": "user", "content": shorten(text) }]),
+            None,
+        );
     };
     if cap.is_some() {
         for m in v["messages"].as_array_mut().into_iter().flatten() {
@@ -790,11 +796,19 @@ pub fn prompt_request(
             }
             // A content array: its text parts, and an image's data URL (a
             // few hundred kilobytes of base64 nobody reads in a preview).
-            for part in m.get_mut("content").and_then(serde_json::Value::as_array_mut).into_iter().flatten() {
+            for part in m
+                .get_mut("content")
+                .and_then(serde_json::Value::as_array_mut)
+                .into_iter()
+                .flatten()
+            {
                 if let Some(t) = part.get("text").and_then(serde_json::Value::as_str) {
                     part["text"] = serde_json::json!(shorten(t));
                 }
-                if let Some(u) = part.pointer("/image_url/url").and_then(serde_json::Value::as_str) {
+                if let Some(u) = part
+                    .pointer("/image_url/url")
+                    .and_then(serde_json::Value::as_str)
+                {
                     part["image_url"]["url"] = serde_json::json!(shorten(u));
                 }
             }
@@ -833,7 +847,12 @@ pub fn prompt_has_image(text: &str) -> bool {
             .and_then(serde_json::Value::as_array)
             .into_iter()
             .flatten()
-            .any(|p| matches!(p.get("type").and_then(serde_json::Value::as_str), Some("image_url" | "image_file")))
+            .any(|p| {
+                matches!(
+                    p.get("type").and_then(serde_json::Value::as_str),
+                    Some("image_url" | "image_file")
+                )
+            })
     })
 }
 
@@ -861,13 +880,29 @@ pub fn resolve_images(
         return Ok(text.to_string());
     };
     let mut changed = false;
-    for m in v.get_mut("messages").and_then(serde_json::Value::as_array_mut).into_iter().flatten() {
-        for part in m.get_mut("content").and_then(serde_json::Value::as_array_mut).into_iter().flatten() {
+    for m in v
+        .get_mut("messages")
+        .and_then(serde_json::Value::as_array_mut)
+        .into_iter()
+        .flatten()
+    {
+        for part in m
+            .get_mut("content")
+            .and_then(serde_json::Value::as_array_mut)
+            .into_iter()
+            .flatten()
+        {
             if part.get("type").and_then(serde_json::Value::as_str) != Some("image_file") {
                 continue;
             }
-            let name = part.get("file").and_then(serde_json::Value::as_str).unwrap_or_default();
-            let pinned = part.get("sha256").and_then(serde_json::Value::as_str).unwrap_or_default();
+            let name = part
+                .get("file")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default();
+            let pinned = part
+                .get("sha256")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default();
             if name.is_empty() || pinned.is_empty() {
                 return Err("an image_file part needs `file` and `sha256`".into());
             }
@@ -881,12 +916,17 @@ pub fn resolve_images(
                     path.display()
                 ));
             }
-            let url = image_data_url(&bytes, size).map_err(|e| format!("{}: {e}", path.display()))?;
+            let url =
+                image_data_url(&bytes, size).map_err(|e| format!("{}: {e}", path.display()))?;
             *part = serde_json::json!({ "type": "image_url", "image_url": { "url": url } });
             changed = true;
         }
     }
-    Ok(if changed { v.to_string() } else { text.to_string() })
+    Ok(if changed {
+        v.to_string()
+    } else {
+        text.to_string()
+    })
 }
 
 /// The image a prompt sends of its own: its first `image_file` part's file,
@@ -907,7 +947,8 @@ pub fn prompt_image_file(text: &str, dir: &std::path::Path) -> Option<PathBuf> {
 fn image_data_url(bytes: &[u8], size: Option<(u32, u32)>) -> Result<String, String> {
     use base64::Engine as _;
     let format = image::guess_format(bytes).map_err(|e| format!("not an image: {e}"))?;
-    let img = image::load_from_memory_with_format(bytes, format).map_err(|e| format!("unreadable image: {e}"))?;
+    let img = image::load_from_memory_with_format(bytes, format)
+        .map_err(|e| format!("unreadable image: {e}"))?;
     let (w, h) = (img.width(), img.height());
     let (data, mime) = match size {
         Some((bw, bh)) if w > bw || h > bh => {
@@ -1142,7 +1183,10 @@ pub fn parse_stream(body: &str) -> Result<Streamed, String> {
         if let Some(msg) = v.pointer("/error/message").and_then(|m| m.as_str()) {
             return Err(msg.to_string());
         }
-        if let Some(r) = v.pointer("/choices/0/finish_reason").and_then(|r| r.as_str()) {
+        if let Some(r) = v
+            .pointer("/choices/0/finish_reason")
+            .and_then(|r| r.as_str())
+        {
             finish_reason = Some(r.to_string());
         }
         let delta = v.pointer("/choices/0/delta");
@@ -1614,7 +1658,10 @@ pub fn render_report(plan: &Plan, points: &[Point], meta: &RunMeta) -> String {
             ));
             md.push_str(&format!("| max output tokens | {} |\n", plan.max_tokens));
             if prompt_has_image(&plan.prompt) {
-                md.push_str(&format!("| image size | {} |\n", image_size_str(plan.image_size)));
+                md.push_str(&format!(
+                    "| image size | {} |\n",
+                    image_size_str(plan.image_size)
+                ));
             }
             for (label, value) in prompt_report_rows(plan) {
                 md.push_str(&format!("| {label} | {value} |\n"));
@@ -2092,7 +2139,12 @@ mod tests {
             {"role":"assistant","content":"a1"},{"role":"tool","content":"t1"},
             {"role":"assistant","content":"a2"},{"role":"tool","content":"t2"}],"tools":[{"x":1}]}"#;
         let p: serde_json::Value = serde_json::from_str(&prompt_prefix(conv).unwrap()).unwrap();
-        let roles: Vec<&str> = p["messages"].as_array().unwrap().iter().map(|m| m["role"].as_str().unwrap()).collect();
+        let roles: Vec<&str> = p["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|m| m["role"].as_str().unwrap())
+            .collect();
         assert_eq!(roles, ["system", "user", "assistant", "tool"]);
         assert_eq!(p["tools"], serde_json::json!([{"x": 1}]));
         assert!(prompt_prefix("just text").is_none());
@@ -2252,7 +2304,10 @@ mod tests {
             + &event("reasoning_content", " me", 101, 5000.0, 0, 0)
             + &call(102, 5010.0)
             + &call(301, 9000.0);
-        let split = parse_stream(&body).unwrap().split.expect("the model reasoned");
+        let split = parse_stream(&body)
+            .unwrap()
+            .split
+            .expect("the model reasoned");
         assert_eq!(split.reasoning.tokens, 101);
         assert_eq!(split.answer.tokens, 200);
     }
@@ -2690,27 +2745,52 @@ mod tests {
             let (_, version) = name.rsplit_once('-').expect("<name>-<X.Y>");
             assert!(
                 version.split('.').count() == 2
-                    && version.split('.').all(|n| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit())),
+                    && version
+                        .split('.')
+                        .all(|n| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit())),
                 "{name}: the file name ends in -<X.Y>"
             );
             let raw = std::fs::read_to_string(p).unwrap();
-            assert_eq!(normalize_prompt(&raw), raw, "{name} must already be LF and BOM-free");
+            assert_eq!(
+                normalize_prompt(&raw),
+                raw,
+                "{name} must already be LF and BOM-free"
+            );
             if p.extension().unwrap() == "json" && prompt_has_image(&raw) {
                 // Its image is shipped beside it, matches its pin, and is
                 // sent fitted into the default size.
                 let size = parse_image_size(DEFAULT_IMAGE_SIZE).unwrap();
                 let sent = resolve_images(&raw, p.parent().unwrap(), size, None).expect(&name);
                 let (messages, _) = prompt_request(&sent, None);
-                let url = messages[0]["content"][0]["image_url"]["url"].as_str().unwrap();
-                assert!(url.starts_with("data:image/jpeg;base64,"), "{name}: the image inline");
-                assert_eq!(resolve_images(&sent, p.parent().unwrap(), size, None).unwrap(), sent);
+                let url = messages[0]["content"][0]["image_url"]["url"]
+                    .as_str()
+                    .unwrap();
+                assert!(
+                    url.starts_with("data:image/jpeg;base64,"),
+                    "{name}: the image inline"
+                );
+                assert_eq!(
+                    resolve_images(&sent, p.parent().unwrap(), size, None).unwrap(),
+                    sent
+                );
             } else if p.extension().unwrap() == "json" {
                 let (messages, tools) = prompt_request(&raw, None);
-                assert!(messages.as_array().unwrap().len() > 1, "{name}: a conversation");
+                assert!(
+                    messages.as_array().unwrap().len() > 1,
+                    "{name}: a conversation"
+                );
                 // An agent turn carries the tools its calls name; a request
                 // to write a file (code-write) has no tool turn and no tools.
-                let calls = messages.as_array().unwrap().iter().any(|m| m["role"] == "tool");
-                assert_eq!(tools.is_some(), calls, "{name}: tools exactly when it has tool turns");
+                let calls = messages
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|m| m["role"] == "tool");
+                assert_eq!(
+                    tools.is_some(),
+                    calls,
+                    "{name}: tools exactly when it has tool turns"
+                );
             }
         }
     }
@@ -2775,34 +2855,58 @@ mod tests {
         assert!(prompt_has_image(&good));
         let decoded = |sent: &str| {
             let (m, _) = prompt_request(sent, None);
-            let url = m[0]["content"][0]["image_url"]["url"].as_str().unwrap().to_string();
-            let (mime, data) = url.strip_prefix("data:").unwrap().split_once(";base64,").unwrap();
-            let bytes = base64::engine::general_purpose::STANDARD.decode(data).unwrap();
+            let url = m[0]["content"][0]["image_url"]["url"]
+                .as_str()
+                .unwrap()
+                .to_string();
+            let (mime, data) = url
+                .strip_prefix("data:")
+                .unwrap()
+                .split_once(";base64,")
+                .unwrap();
+            let bytes = base64::engine::general_purpose::STANDARD
+                .decode(data)
+                .unwrap();
             (mime.to_string(), bytes)
         };
-        let (mime, bytes) = decoded(&resolve_images(&good, dir.path(), Some((300, 300)), None).unwrap());
+        let (mime, bytes) =
+            decoded(&resolve_images(&good, dir.path(), Some((300, 300)), None).unwrap());
         let img = image::load_from_memory(&bytes).unwrap();
-        assert_eq!((mime.as_str(), img.width(), img.height()), ("image/jpeg", 300, 200));
+        assert_eq!(
+            (mime.as_str(), img.width(), img.height()),
+            ("image/jpeg", 300, 200)
+        );
         // Already inside the box, or original: the file's own bytes.
         for size in [Some((1344, 896)), None] {
             let (mime, bytes) = decoded(&resolve_images(&good, dir.path(), size, None).unwrap());
             assert_eq!((mime.as_str(), &bytes), ("image/png", &png));
         }
         let bad = prompt(&"0".repeat(64));
-        assert!(resolve_images(&bad, dir.path(), None, None).unwrap_err().contains("the prompt pins"));
+        assert!(resolve_images(&bad, dir.path(), None, None)
+            .unwrap_err()
+            .contains("the prompt pins"));
         // An image of the user's replaces the prompt's, with no pin to match.
         let mine = dir.path().join("mine.png");
         let mut other = Vec::new();
         image::RgbImage::from_pixel(10, 10, image::Rgb([0, 0, 0]))
-            .write_to(&mut std::io::Cursor::new(&mut other), image::ImageFormat::Png)
+            .write_to(
+                &mut std::io::Cursor::new(&mut other),
+                image::ImageFormat::Png,
+            )
             .unwrap();
         std::fs::write(&mine, &other).unwrap();
         let (_, bytes) = decoded(&resolve_images(&bad, dir.path(), None, Some(&mine)).unwrap());
         assert_eq!(bytes, other);
-        assert_eq!(prompt_image_file(&good, dir.path()), Some(dir.path().join("i.png")));
+        assert_eq!(
+            prompt_image_file(&good, dir.path()),
+            Some(dir.path().join("i.png"))
+        );
         assert_eq!(prompt_image_file("hello", dir.path()), None);
         // A prompt without an image_file comes back as it was.
-        assert_eq!(resolve_images("hello", dir.path(), None, None).unwrap(), "hello");
+        assert_eq!(
+            resolve_images("hello", dir.path(), None, None).unwrap(),
+            "hello"
+        );
         assert_eq!(parse_image_size("1344x896").unwrap(), Some((1344, 896)));
         assert_eq!(parse_image_size("original").unwrap(), None);
         assert!(parse_image_size("0x5").is_err() && parse_image_size("big").is_err());
@@ -2813,7 +2917,10 @@ mod tests {
     /// elides its data URL; the request sends it whole.
     #[test]
     fn an_image_prompt_is_recognized_and_its_data_url_elided_in_the_preview() {
-        let url = format!("data:image/jpeg;base64,{}", "A".repeat(PREVIEW_PROMPT_CHARS * 3));
+        let url = format!(
+            "data:image/jpeg;base64,{}",
+            "A".repeat(PREVIEW_PROMPT_CHARS * 3)
+        );
         let image = serde_json::json!({
             "messages": [{ "role": "user", "content": [
                 { "type": "image_url", "image_url": { "url": url } },
@@ -2823,9 +2930,14 @@ mod tests {
         .to_string();
         assert!(prompt_has_image(&image));
         assert!(!prompt_has_image("Describe it."));
-        assert!(!prompt_has_image(r#"{"messages": [{"role": "user", "content": "hi"}]}"#));
+        assert!(!prompt_has_image(
+            r#"{"messages": [{"role": "user", "content": "hi"}]}"#
+        ));
         let (m, _) = prompt_request(&image, Some(PREVIEW_PROMPT_CHARS));
-        assert!(m[0]["content"][0]["image_url"]["url"].as_str().unwrap().contains("chars shown]"));
+        assert!(m[0]["content"][0]["image_url"]["url"]
+            .as_str()
+            .unwrap()
+            .contains("chars shown]"));
         assert_eq!(m[0]["content"][1]["text"], "Describe it.");
         let (m, _) = prompt_request(&image, None);
         assert_eq!(m[0]["content"][0]["image_url"]["url"], url.as_str());
@@ -2864,10 +2976,7 @@ mod tests {
         let md = render_report(&plan, &[], &RunMeta::default());
         assert!(md.contains(r"short.txt"), "the path is in the report");
         assert!(md.contains(&crate::sha256::hex(SHORT.as_bytes())));
-        assert!(
-            md.contains(SHORT),
-            "a short prompt is embedded whole"
-        );
+        assert!(md.contains(SHORT), "a short prompt is embedded whole");
 
         // Inline (`--prompt`) says so instead of printing an invented path.
         let inline = Plan {

@@ -35,8 +35,8 @@
 //! matches are marked: llama.cpp applies the first rule that matches a tensor,
 //! so ticking one of them here changes nothing for it.
 
-use crate::strings;
 use crate::gguf::TensorInfo;
+use crate::strings;
 use crate::tensor_override::{self, KINDS};
 use regex::Regex;
 use std::collections::{BTreeMap, BTreeSet};
@@ -370,7 +370,10 @@ impl Picker {
         let mut line = if n == 0 {
             strings::t("nothing-ticked")
         } else {
-            strings::fill("tensors-ticked", &[&n, &self.tensors.len(), &fmt_bytes(bytes)])
+            strings::fill(
+                "tensors-ticked",
+                &[&n, &self.tensors.len(), &fmt_bytes(bytes)],
+            )
         };
         if shadowed > 0 {
             line.push_str(&strings::fill("ticked-stay", &[&shadowed]));

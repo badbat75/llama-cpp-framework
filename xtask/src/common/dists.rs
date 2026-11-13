@@ -93,8 +93,11 @@ pub struct Sccache {
 }
 
 pub fn load_sources() -> Result<Sources> {
-    let path = util::repo_root().join("installer").join("dist-sources.toml");
-    let text = std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
+    let path = util::repo_root()
+        .join("installer")
+        .join("dist-sources.toml");
+    let text =
+        std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
     toml::from_str(&text).with_context(|| format!("parsing {}", path.display()))
 }
 
@@ -159,7 +162,11 @@ pub fn newest_dist(root: &Path, required: &[&str]) -> Option<PathBuf> {
         if !d.is_dir() || !required.iter().all(|rel| d.join(rel).exists()) {
             continue;
         }
-        if best.as_ref().map(|(b, _)| util::version_gt(&ver, b)).unwrap_or(true) {
+        if best
+            .as_ref()
+            .map(|(b, _)| util::version_gt(&ver, b))
+            .unwrap_or(true)
+        {
             best = Some((ver, d));
         }
     }
@@ -170,7 +177,11 @@ pub fn newest_dist(root: &Path, required: &[&str]) -> Option<PathBuf> {
 /// sits one level down: x86_64/ on Linux, macOS/ on macOS)
 #[cfg_attr(windows, allow(dead_code))]
 pub fn dist_version(dir: &Path) -> String {
-    let d = if dir.file_name().map(|n| n == "x86_64" || n == "macOS").unwrap_or(false) {
+    let d = if dir
+        .file_name()
+        .map(|n| n == "x86_64" || n == "macOS")
+        .unwrap_or(false)
+    {
         dir.parent().unwrap_or(dir)
     } else {
         dir
