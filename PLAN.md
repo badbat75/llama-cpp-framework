@@ -208,7 +208,18 @@ What changes:
 - **Migration:** the first run of the new version moves the old user tree to the new one once, when the
   new one does not exist yet, and leaves the old one untouched if anything fails (Definition of Done 4).
 - **Not rewritten:** the committed `benchmarks/bench.db`: its recorded software names are history.
-- **Docs:** README, every `AGENTS.md`, the guides, the skills, the role files, `PLAN.md`.
+- **Docs:** README, every `AGENTS.md`, the guides, `PLAN.md`.
+- **AI scaffolding:** the role files (`.opencode/agents/`), every skill in `.agents/skills/` (role
+  playbooks and task skills: today `coordinator.md`, `coder-playbook`, `tester-playbook`, `bench-spec`,
+  `optimize-preset` and `write-docs` name the old project or crate), `.claude/settings.json` and
+  `.opencode/opencode.json`, the commands and paths the skills give (`cargo test -p private-ai-config`,
+  the data root variable), so an agent starting from zero finds nothing stale.
+- **Repository, the user's action:** rename it on GitHub (Settings > Repository name). GitHub redirects
+  the web pages and git operations to the new name but not the Pages site, whose URL changes, so every
+  link to the site and `.github/workflows/docs-site.yml` are checked; never create a new repository
+  under the old name (it breaks the redirects); `git remote set-url origin` on each clone. Renaming the
+  local folder too moves Claude Code's per-project memory, which is keyed by the folder's path: copy it
+  over when that happens.
 
 To settle in the step: the service user's name (`llama-cpp` in step 1; `private-ai` proposed), and
 whether `xtask` and the scripts' environment variables (`LLAMA_FW_DIST_ROOT`,
