@@ -108,7 +108,7 @@ Each role has a skill in `.agents\skills\` in the standard `SKILL.md` format; `.
 
 Role definitions live in `.opencode\agents\`; `.claude\agents` is a symlink to that directory, so OpenCode and Claude Code read the same files. Keep the frontmatter to the fields both accept (`name`, `description`, `mode`), and write role limits in the body rather than in harness-specific tool lists.
 
-- `coordinator`: plans, briefs, reads the reports, commits and keeps `PLAN.md`; it runs no tests, linter, formatter or other code tool, and reports a slice done only on the tester's green rerun plus the coder's lint and format report, never on a single agent's word. The default agent for a session, set in `.claude\settings.json` and `.opencode\opencode.json`.
+- `coordinator`: plans, briefs, reads the reports, commits and keeps `PLAN.md`; it runs no tests, linter, formatter or other code tool (the one exception: at the end of each task it frees the workspace's own crate artifacts with `cargo clean`, `.opencode\agents\coordinator.md`), and reports a slice done only on the tester's green rerun plus the coder's lint and format report, never on a single agent's word. The default agent for a session, set in `.claude\settings.json` and `.opencode\opencode.json`.
 - `tester`: writes the failing tests and shows them red; after the coder, reruns the slice's tests and reports them green (the independent check of the coder's work).
 - `coder`: makes them pass, then runs the linter and the format check and reports them.
 - `docs`: keeps the documentation true; for a guide in `docs\` it loads the `write-docs` skill.
@@ -118,7 +118,7 @@ Cycle: coordinator takes the next step from `PLAN.md` and picks one small slice,
 
 ## Release process
 
-1. **Bump version** in `llama-cpp-config\Cargo.toml` (`[package] version = "X.Y.Z"`). The next build also refreshes the crate's line in the workspace's `Cargo.lock` (at the repo root): both files belong to the release commit.
+1. **Bump version** in `llama-cpp-config\Cargo.toml` (`[package] version = "X.Y.Z"`). Until 3.0.0 every release is a pre-release of it numbered `2.99.N`: after 2.4.0 come 2.99.0, 2.99.1, 2.99.2...; 3.0.0 is the user's call (decided 2026-11-13). The next build also refreshes the crate's line in the workspace's `Cargo.lock` (at the repo root): both files belong to the release commit.
 2. **Run `xtask build`**: builds llama.cpp (fetches and checks out the latest `vX.Y.Z` **release** tag; `bNNNN` nightlies are not candidates) and llama-cpp-config.
 3. **Run `xtask package`**: stages binaries, builds the MSI to `.\dist\llama-cpp-framework-vX.Y.Z-vA.B.C-x64.msi` (framework version first, bundled llama.cpp release second; the ProductVersion is the framework version) and validates it (ICE). It refuses a package of 2 GiB or more (GitHub's asset limit). Before tagging, run the installer test plan in [installer\AGENTS.md](installer/AGENTS.md) on a test machine whenever the `.wxs` or its scripts changed.
 4. **Commit** all changes. Subject: **`Release vX.Y.Z: <summary>`**, the SAME first line as the tag (step 5); a `feat:`/`docs:`-style subject is not the convention for release commits. Body: a prose summary, closing with a **`Bundles llama.cpp <tag> (up from <previous tag>).`** line, e.g. `Bundles llama.cpp v0.2.0 (up from v0.1.2).`.
@@ -130,7 +130,7 @@ Cycle: coordinator takes the next step from `PLAN.md` and picks one small slice,
    - Body: detailed markdown with sections (`##`, `###`), bullet points, code formatting. Match the style of previous releases (`gh release view 1.5.0`). End with test count and bundled llama.cpp release.
 7. **Attach installer**: `gh release upload X.Y.Z dist\llama-cpp-framework-vX.Y.Z-vA.B.C-x64.msi`
 
-**Formatting conventions** (older releases show a `bNNNN` llama.cpp token instead of `vA.B.C`):
+**Formatting conventions** (older releases show a `bNNNN` llama.cpp token instead of `vA.B.C`; until 3.0.0, `X.Y.Z` is `2.99.N`, e.g. tag `2.99.0`, title `v2.99.0 (llama.cpp vA.B.C)`):
 
 | Artifact | Format | Example |
 |---|---|---|

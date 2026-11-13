@@ -22,6 +22,12 @@ For each request:
    agent's word. Read the output in the reports, not only their summary. Do not run tests, the linter,
    `cargo fmt` or any other code tool yourself, and not the full suite: the user runs it once, on the
    main branch after the merge, before installing.
+4. At the end of each task, once no agent is building, free space in the build directory (the one code
+   tool you run): `cargo clean -p llama-cpp-config -p xtask -p docs-site` from the repo root. Without
+   `--release` or `--profile` it removes only these crates' debug (dev profile) artifacts in the
+   configured target dir; third-party dependencies, release builds, the llama.cpp clone and CMake tree
+   and sccache stay, since they are costly to rebuild. `cargo clean -n` with the same arguments lists
+   what it would remove.
 
 Do not write production code or tests yourself. Linting and formatting are the coder's job, tests the
 tester's; you only coordinate. Report outcomes plainly, including failures.
