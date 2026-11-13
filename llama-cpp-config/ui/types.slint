@@ -449,6 +449,18 @@ export struct DeleteFileRow {
     in_use: bool,
 }
 
+// One model of the OpenCode Save preview (the modal in app.slint), built in
+// Rust (gui/integrations_tab.rs over integrations::opencode_plan).
+export struct OpencodeChangeRow {
+    // `qwen-27b: changed`.
+    label: string,
+    // The fields that change, `limit.context: 131072 → 65536; ...`.
+    detail: string,
+    // Ticked: Save writes this model's change. Starts true; unticked leaves
+    // its entry in opencode.json as it is.
+    checked: bool,
+}
+
 // One line of the tensor picker (the modal in app.slint), built in Rust
 // (src/tensor_picker.rs `Line`): a group header (a tensor family, or the
 // tensors outside the blocks) or one tensor under an unfolded header. The ticks

@@ -472,10 +472,10 @@ pub enum PresetCmd {
         even_if_shared: bool,
     },
     /// Switch a preset on: move it back into presets.ini, so llama-server
-    /// (after a restart) and OpenCode offer it again.
+    /// offers it again (after a restart).
     Enable { id: String },
     /// Switch a preset off: park it in presets.ini.disabled, unchanged, where
-    /// llama-server and OpenCode no longer see it.
+    /// llama-server no longer sees it.
     Disable { id: String },
     /// Download a GGUF from Hugging Face with llama.cpp's own downloader and
     /// create a preset for it. Lists the repo's quantizations first; the files
@@ -927,17 +927,6 @@ fn find_listed(id: &str) -> Result<presets::Listed> {
         .ok_or_else(|| anyhow::anyhow!(strings::fill("preset-not-listed", &[&id])))
 }
 
-/// The same follow-up the GUI makes after every preset change: a configured
-/// OpenCode provider re-derives its model list from the enabled presets. Never
-/// fatal: the preset change itself has already landed.
-fn follow_opencode() {
-    match crate::integrations::follow_presets() {
-        Ok(true) => println!("{}", strings::fill("opencode-list-updated", &[&paths::opencode_user_config().display()])),
-        Ok(false) => {}
-        Err(e) => eprintln!("{}", strings::fill("opencode-not-updated", &[&format!("{e:#}")])),
-    }
-}
-
 fn run_preset(c: PresetCmd) -> Result<()> {
     match c {
         PresetCmd::List => {
@@ -1030,7 +1019,6 @@ fn run_preset_delete(id: &str, which: &[FileKind], even_if_shared: bool) -> Resu
         }
         failed = out.failed.len();
     }
-    follow_opencode();
     if failed > 0 {
         anyhow::bail!(strings::fill("preset-gone-files-not", &[&failed]));
     }
@@ -1200,7 +1188,6 @@ fn run_preset_download(a: PresetDownload) -> Result<()> {
     if let Some(line) = placement_line(&preset) {
         println!("{line}");
     }
-    follow_opencode();
     Ok(())
 }
 
@@ -1353,7 +1340,6 @@ fn set_preset_enabled(id: &str, enabled: bool) -> Result<()> {
     if crate::runstate::is_running() {
         println!("{}", strings::t("restart-to-apply"));
     }
-    follow_opencode();
     Ok(())
 }
 

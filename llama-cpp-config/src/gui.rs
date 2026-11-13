@@ -1806,10 +1806,11 @@ fn apply_form(app: &AppWindow, form: PresetForm) {
 /// Re-derive the Integrations tab from disk: the Claude Code env snippet
 /// (server.ini's base URL + API key, an enabled preset as the example id) and
 /// the OpenCode status line, which says whether opencode.json carries the
-/// provider and, when it does, whether its model list is still the enabled
-/// preset set. Read-only: opencode.json is written by the tab's Save and by
-/// `follow_integrations`, never from here.
-fn refresh_integrations(app: &AppWindow) {
+/// provider and, when it does, what the tab's Save would change
+/// (`integrations::opencode_plan`). Read-only: opencode.json is written by the
+/// tab's Save alone. Every preset write and server.ini save calls this, so the
+/// line names a change as soon as it is made.
+pub(super) fn refresh_integrations(app: &AppWindow) {
     let s = app.global::<AppState>();
     let cfg = server_cfg::load();
     let base_url = cfg.opencode_base_url_or_default();
@@ -1820,26 +1821,47 @@ fn refresh_integrations(app: &AppWindow) {
     let claude_env = integrations::claude_code_env_script(&base_url, api_key, example);
     s.set_integration_claude_env(SharedString::from(claude_env));
 
-    let active = integrations::detect_opencode_provider();
-    let (missing, extra) = integrations::opencode_drift();
-    let in_sync = missing.is_empty() && extra.is_empty();
-    s.set_integration_provider_active(active);
-    s.set_integration_in_sync(in_sync);
+    let plan = match integrations::opencode_plan(&base_url, api_key) {
+        Ok(plan) => plan,
+        Err(e) => {
+            s.set_integration_provider_active(integrations::detect_opencode_provider());
+            s.set_integration_in_sync(false);
+            s.set_integration_status(strings::fill("opencode-plan-failed", &[&format!("{e:#}")]).into());
+            return;
+        }
+    };
+    let ids = |kind: integrations::ChangeKind| -> Vec<String> {
+        plan.models.iter().filter(|c| c.kind == kind).map(|c| c.id.clone()).collect()
+    };
+    s.set_integration_provider_active(plan.provider_active);
+    s.set_integration_in_sync(plan.is_empty());
     s.set_integration_status(SharedString::from(integration_status(
-        active,
+        plan.provider_active,
         enabled.len(),
-        &missing,
-        &extra,
+        &Drift {
+            missing: ids(integrations::ChangeKind::Add),
+            extra: ids(integrations::ChangeKind::Remove),
+            changed: ids(integrations::ChangeKind::Update),
+            provider: !plan.provider.is_empty(),
+        },
     )));
 }
 
+/// What the OpenCode status line names when opencode.json is out of step: the
+/// enabled presets it does not list, the listed models that are no enabled
+/// preset, the listed ones whose entry would change, and whether the provider's
+/// own fields (base URL, API key) would.
+#[derive(Default)]
+struct Drift {
+    missing: Vec<String>,
+    extra: Vec<String>,
+    changed: Vec<String>,
+    provider: bool,
+}
+
 /// The OpenCode card's status line. Pure, so the three wordings are testable.
-fn integration_status(
-    active: bool,
-    enabled: usize,
-    missing: &[String],
-    extra: &[String],
-) -> String {
+fn integration_status(active: bool, enabled: usize, drift: &Drift) -> String {
+    let Drift { missing, extra, changed, provider } = drift;
     let set = match enabled {
         1 => strings::t("enabled-presets-one"),
         n => strings::fill("enabled-presets-many", &[&n]),
@@ -1847,7 +1869,7 @@ fn integration_status(
     if !active {
         return strings::fill("opencode-no-provider", &[&set]);
     }
-    if missing.is_empty() && extra.is_empty() {
+    if missing.is_empty() && extra.is_empty() && changed.is_empty() && !provider {
         return strings::fill("opencode-active", &[&set]);
     }
     let mut parts = Vec::new();
@@ -1857,19 +1879,13 @@ fn integration_status(
     if !extra.is_empty() {
         parts.push(strings::fill("opencode-listed-not-enabled", &[&extra.join(", ")]));
     }
-    strings::fill("opencode-out-of-step", &[&parts.join("; ")])
-}
-
-/// After a write that changes what OpenCode should list (a preset switched on or
-/// off, saved, renamed, deleted, created; server.ini's base URL or key): bring
-/// opencode.json along when it already carries the provider
-/// (`integrations::follow_presets`), then re-derive the tab. A failure only
-/// flags the footer, and the status line then names the drift it left.
-fn follow_integrations(app: &AppWindow) {
-    if let Err(e) = integrations::follow_presets() {
-        set_status(app, strings::fill("opencode-update-failed", &[&e]), true);
+    if !changed.is_empty() {
+        parts.push(strings::fill("opencode-entry-changed", &[&changed.join(", ")]));
     }
-    refresh_integrations(app);
+    if *provider {
+        parts.push(strings::t("opencode-provider-changed"));
+    }
+    strings::fill("opencode-out-of-step", &[&parts.join("; ")])
 }
 
 // Pure-struct tests (PresetSummary is a plain generated struct, no Slint
@@ -1926,19 +1942,27 @@ mod tests {
     #[test]
     fn integration_status_wordings() {
         let ids = |v: &[&str]| v.iter().map(|x| (*x).to_string()).collect::<Vec<_>>();
+        let missing_a = Drift { missing: ids(&["a"]), ..Default::default() };
         assert_eq!(
-            integration_status(false, 1, &ids(&["a"]), &[]),
+            integration_status(false, 1, &missing_a),
             "No llama-server provider in opencode.json. Save adds one listing the 1 enabled preset."
         );
         assert_eq!(
-            integration_status(true, 2, &[], &[]),
+            integration_status(true, 2, &Drift::default()),
             "llama-server provider active in opencode.json, listing the 2 enabled presets."
         );
-        // Out of step names the ids, both ways, so the reader knows what Save changes.
+        // Out of step names the ids, every way, so the reader knows what Save changes.
+        let all = Drift {
+            missing: ids(&["new"]),
+            extra: ids(&["off"]),
+            changed: ids(&["tuned"]),
+            provider: true,
+        };
         assert_eq!(
-            integration_status(true, 2, &ids(&["new"]), &ids(&["off"])),
-            "opencode.json is out of step with the enabled presets \
-             (enabled but not listed: new; listed but not enabled: off). Save brings it in line."
+            integration_status(true, 2, &all),
+            "opencode.json is out of step with the presets (enabled but not listed: new; \
+             listed but not enabled: off; changed: tuned; base URL or API key changed). \
+             Save shows the changes before writing them."
         );
     }
 }

@@ -11,7 +11,7 @@
 // The tray (`AppTray` in app.slint) is a separate root and does NOT use this
 // global; it keeps its own pushed-in state.
 
-import { PresetSummary, PresetForm, ServerForm, GpuRow, TensorOverrideRow, TensorPickRow, DeleteFileRow, BenchPresetRow, BenchPromptRow, BenchResultRow, BindRow } from "types.slint";
+import { PresetSummary, PresetForm, ServerForm, GpuRow, TensorOverrideRow, TensorPickRow, DeleteFileRow, OpencodeChangeRow, BenchPresetRow, BenchPromptRow, BenchResultRow, BindRow } from "types.slint";
 import { Options } from "components.slint";
 import { Strings } from "strings.slint";
 
@@ -473,7 +473,7 @@ export global AppState {
     // the page hidden behind the backdrop.
     out property <bool> modal_open: show_new_kind_picker || show_rename_dialog
         || show_discard_dialog || show_delete_dialog || show_chat_template_dialog
-        || show_hf_dialog;
+        || show_hf_dialog || show_opencode_dialog;
 
     // ── Benchmark tab state ─────────────────────────────────────────
     // Two engines behind one tab, and the mode decides which half of the
@@ -588,11 +588,21 @@ export global AppState {
     // ── Integrations tab state ─────────────────────────────────────
     // All read-only projections, pushed by gui::refresh_integrations. There is
     // no model list here: OpenCode lists every ENABLED preset (the switch in the
-    // Models tab), and the status line says whether opencode.json still does.
+    // Models tab), and the status line says what the tab's Save would change.
     in-out property <bool> integration_provider_active: false;
     in-out property <bool> integration_in_sync: true;
     in-out property <string> integration_status: "";
     in-out property <string> integration_claude_env: "";
+    // The Save preview (gui/integrations_tab.rs): Save opens it when
+    // opencode.json would change, one row per model that changes, every row
+    // ticked; an unticked model's entry stays as the file holds it. The
+    // provider line is not optional (base URL and API key follow server.ini).
+    // The ticks live Rust-side; the rows are a read-only projection rebuilt on
+    // every `opencode_change_toggle`.
+    in-out property <bool> show_opencode_dialog: false;
+    in-out property <[OpencodeChangeRow]> opencode_change_rows;
+    in-out property <string> opencode_provider_summary: "";
+    in-out property <int> opencode_ticked: 0;
 
     // ── Settings tab state ──────────────────────────────────────────
     // App-level preferences (the configurator's own, not llama-server's).
@@ -810,7 +820,12 @@ export global AppState {
     callback bench_db_accepted();
     callback bench_pick_db(string) -> string;
 
+    // Save opens the preview (or reports that nothing changes); the preview
+    // ticks a row, writes the ticked changes, or is dismissed.
     callback save_integrations();
+    callback opencode_change_toggle(int);
+    callback opencode_confirm();
+    callback opencode_cancel();
     callback open_opencode_folder();
 
     // Settings tab: fired AFTER the two-way binding flipped the property (see

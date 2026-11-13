@@ -34,7 +34,7 @@
 //! the on/off switch refreshes it: `refresh_preset_list` (the list, the
 //! selection kept on the preset being edited, by id; the form untouched, dirty
 //! or not), the pickers rescanned (`refresh_file_options`, so the new files are
-//! listed), and opencode.json and the Benchmark tab followed
+//! listed), and the Integrations status line and the Benchmark tab re-derived
 //! (`models_tab::presets_moved`). The selection never jumps: the footer says
 //! the preset was created, and the row's **Show preset** goes to it. Show
 //! raises the main window on the Models tab and selects the preset through the
@@ -685,8 +685,6 @@ fn configured(app: &AppWindow, state: &Rc<RefCell<State>>, id: u64, d: hf::Downl
                 st.downloads.jobs.configured(id, Ok((p.id.clone(), placed)));
                 st.downloads.runs.remove(&id);
             }
-            // Status first, like the other write paths, so a failed
-            // opencode.json follow-up is not papered over by the success.
             set_status(app, created_status(&d, &p.id, placed), false);
             refresh_preset_list(app, state);
             refresh_file_options(app, state);

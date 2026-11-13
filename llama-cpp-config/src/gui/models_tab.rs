@@ -927,12 +927,13 @@ fn preset_written(app: &AppWindow, state: &Rc<RefCell<State>>, want: Option<&str
 
 /// The tail every preset write shares: the consumers of the ENABLED set, which
 /// a save can change (a `ctx-size` moves an opencode entry's `limit.context`)
-/// as surely as a switch or a delete can. opencode.json follows when it carries
-/// the provider (`follow_integrations`), and the Benchmark tab re-lists, since a
+/// as surely as a switch or a delete can. The Integrations tab re-derives its
+/// status line, which then names what its Save would change (opencode.json
+/// itself is written only by that Save), and the Benchmark tab re-lists, since a
 /// preset that is off, renamed or gone can no longer be run (its refresh also
 /// drops it from the selection).
 pub(super) fn presets_moved(app: &AppWindow, state: &Rc<RefCell<State>>) {
-    follow_integrations(app);
+    refresh_integrations(app);
     bench_tab::refresh(app, state);
 }
 

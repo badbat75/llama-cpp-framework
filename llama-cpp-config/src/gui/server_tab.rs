@@ -46,8 +46,9 @@ pub(super) fn wire(app: &AppWindow, tray: &AppTray, state: &Rc<RefCell<State>>) 
                     refresh_server_snapshot(&app);
                     refresh_file_options(&app, &state);
                     // The Base URL and API key opencode.json carries come from
-                    // server.ini, so a configured provider follows the save.
-                    follow_integrations(&app);
+                    // server.ini: the Integrations tab names the change (its
+                    // Save writes it) and the Claude Code snippet follows.
+                    refresh_integrations(&app);
                     snapshot_server_base(&app);
                 }
                 Err(e) => set_status(&app, strings::fill("save-failed", &[&e]), true),

@@ -877,6 +877,65 @@ export component AppWindow inherits Window {
         }
     }
 
+    // OpenCode Save preview: one row per model whose opencode.json entry would
+    // change, all ticked at open. As in the Delete dialog, Rust owns the ticks
+    // (`opencode_change_toggle` rebuilds the rows), so no CheckBox here is
+    // self-assigned. The provider line under the list is always written.
+    if AppState.show_opencode_dialog: ModalOverlay {
+        property <bool> has_rows: AppState.opencode_change_rows.length > 0;
+        title: Strings.t("opencode-preview-title");
+        description: has_rows ? Strings.t("opencode-preview-description") : Strings.t("opencode-preview-provider-only");
+        card_width: 640px;
+        card_height: has_rows ? 440px : 220px;
+        dismissed => { AppState.opencode_cancel(); }
+
+        if has_rows : ListPanel {
+            is_empty: false;
+            vertical-stretch: 1;
+            ListView {
+                for row[i] in AppState.opencode_change_rows : SelectableRow {
+                    height: 44px;
+                    label: row.label;
+                    detail: row.detail;
+                    selected: row.checked;
+                    clicked => { AppState.opencode_change_toggle(i); }
+                    Rectangle {
+                        width: 24px;
+                        CheckBox {
+                            checked: row.checked;
+                        }
+                        TouchArea {
+                            accessible-role: button;
+                            accessible-label: "opencode-change-" + i;
+                            accessible-action-default => { AppState.opencode_change_toggle(i); }
+                            clicked => { AppState.opencode_change_toggle(i); }
+                        }
+                    }
+                }
+            }
+        }
+        if AppState.opencode_provider_summary != "" : WrapText {
+            text: AppState.opencode_provider_summary;
+            font_size: 12px;
+            color: Palette.foreground.transparentize(Tokens.subtle);
+        }
+        if !has_rows : Rectangle { vertical-stretch: 1; }
+        HorizontalLayout {
+            spacing: 8px;
+            alignment: end;
+            Button {
+                text: Strings.t("cancel");
+                clicked => { AppState.opencode_cancel(); }
+            }
+            Button {
+                text: Strings.t("save");
+                primary: true;
+                enabled: AppState.opencode_ticked > 0 || AppState.opencode_provider_summary != "";
+                clicked => { AppState.opencode_confirm(); }
+            }
+        }
+    }
+
     if AppState.show_rename_dialog: ModalOverlay {
         title: Strings.t("rename-preset");
         description: Strings.t1("rename-preset-description", AppState.rename_old_id);

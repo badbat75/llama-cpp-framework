@@ -1017,11 +1017,11 @@ pub(super) fn run(app: &AppWindow) {
     st.invoke_reload_all();
     assert_eq!(switch("e2e").accessible_checked(), Some(true));
 
-    // ── Integrations: OpenCode lists the ENABLED presets, and follows them ──
-    // Every preset change above already ran the opencode.json follow-up, and it
-    // must not have created anything: only Save adds the provider. Under the
-    // redirect even the parent dir (<tmp>\opencode\) is missing, the exact
-    // "OpenCode never ran here" shape the v1.2.13 create_dir_all fix is for.
+    // ── Integrations: OpenCode lists the ENABLED presets, on Save only ──────
+    // No preset change above touched opencode.json: only the Integrations tab's
+    // Save writes it. Under the redirect even the parent dir (<tmp>\opencode\)
+    // is missing, the exact "OpenCode never ran here" shape the v1.2.13
+    // create_dir_all fix is for.
     st.set_current_tab(3); // Integrations (2 is Benchmark)
     let opencode = crate::paths::opencode_user_config();
     assert!(
@@ -1047,7 +1047,27 @@ pub(super) fn run(app: &AppWindow) {
         v.sort();
         v
     };
+    let preview_labels = || {
+        let rows = st.get_opencode_change_rows();
+        (0..rows.row_count())
+            .map(|i| rows.row_data(i).unwrap().label.to_string())
+            .collect::<Vec<_>>()
+    };
+    // Save previews first: every enabled preset added, all ticked, the provider
+    // line saying it is created. Cancel writes nothing.
     st.invoke_save_integrations();
+    assert!(st.get_show_opencode_dialog(), "{}", st.get_status_text());
+    assert_eq!(preview_labels().len(), enabled_ids().len());
+    assert!(preview_labels().iter().all(|l| l.ends_with(": added")), "{:?}", preview_labels());
+    assert_eq!(st.get_opencode_ticked() as usize, enabled_ids().len());
+    assert!(st.get_opencode_provider_summary().contains("Adds the llama-server provider"));
+    assert!(st.get_modal_open());
+    st.invoke_opencode_cancel();
+    assert!(!st.get_show_opencode_dialog());
+    assert!(!opencode.exists(), "Cancel writes nothing");
+    st.invoke_save_integrations();
+    st.invoke_opencode_confirm();
+    assert!(!st.get_show_opencode_dialog());
     assert!(
         !st.get_status_is_error(),
         "Integrations Save failed (missing opencode dir?): {}",
@@ -1063,44 +1083,80 @@ pub(super) fn run(app: &AppWindow) {
         "one model per enabled preset"
     );
     assert!(st.get_integration_provider_active() && st.get_integration_in_sync());
+    // Nothing to change: Save says so and opens no preview.
+    st.invoke_save_integrations();
+    assert!(!st.get_show_opencode_dialog());
+    assert!(st.get_status_text().contains("nothing to save"), "{}", st.get_status_text());
 
-    // Now that the provider exists, a switch follows through on its own.
+    // A switch no longer reaches opencode.json: the status line names it.
     st.set_current_tab(1);
     switch("e2e-2").invoke_accessible_default_action(); // off
     itest::mock_elapsed_time(std::time::Duration::from_millis(1));
     assert!(!st.get_status_is_error(), "{}", st.get_status_text());
     assert!(
-        !crate::integrations::opencode_model_ids().contains(&"e2e-2".to_string()),
-        "switched off in the Models tab = gone from OpenCode"
+        crate::integrations::opencode_model_ids().contains(&"e2e-2".to_string()),
+        "a switch must not rewrite opencode.json"
     );
+    assert!(!st.get_integration_in_sync());
+    assert!(
+        st.get_integration_status()
+            .contains("listed but not enabled: e2e-2"),
+        "{}",
+        st.get_integration_status()
+    );
+    // Save previews the one removal; unticked, the entry stays.
+    st.set_current_tab(3);
+    st.invoke_save_integrations();
+    assert_eq!(preview_labels(), vec!["e2e-2: removed".to_string()]);
+    assert_eq!(st.get_opencode_provider_summary(), "", "the provider does not change");
+    st.invoke_opencode_change_toggle(0);
+    assert_eq!(st.get_opencode_ticked(), 0);
+    assert!(!st.get_opencode_change_rows().row_data(0).unwrap().checked);
+    st.invoke_opencode_confirm();
+    assert!(
+        crate::integrations::opencode_model_ids().contains(&"e2e-2".to_string()),
+        "an unticked model keeps its entry"
+    );
+    assert!(!st.get_integration_in_sync());
+    // Ticked, it goes.
+    st.invoke_save_integrations();
+    st.invoke_opencode_confirm();
+    assert!(!crate::integrations::opencode_model_ids().contains(&"e2e-2".to_string()));
     assert_eq!(opencode_ids(), enabled_ids());
     assert!(st.get_integration_in_sync());
+    // Back on: an addition, unticked = still absent, ticked = listed.
+    st.set_current_tab(1);
     switch("e2e-2").invoke_accessible_default_action(); // back on
     itest::mock_elapsed_time(std::time::Duration::from_millis(1));
+    st.set_current_tab(3);
+    assert!(st.get_integration_status().contains("enabled but not listed: e2e-2"));
+    st.invoke_save_integrations();
+    assert_eq!(preview_labels(), vec!["e2e-2: added".to_string()]);
+    st.invoke_opencode_change_toggle(0);
+    st.invoke_opencode_confirm();
+    assert!(!crate::integrations::opencode_model_ids().contains(&"e2e-2".to_string()));
+    st.invoke_save_integrations();
+    st.invoke_opencode_confirm();
     assert_eq!(opencode_ids(), enabled_ids(), "…and back");
 
-    // A file that drifted (written by a version with the old checkbox list, or
-    // edited by hand) is NAMED by a refresh, never rewritten by it; Save repairs.
+    // A hand-edited entry is NAMED by a refresh, never rewritten by it; the
+    // preview shows the field, and Save repairs it.
     let mut v: serde_json::Value =
         serde_json::from_str(&read(&opencode)).expect("opencode.json is JSON");
-    v["provider"]["llama.cpp"]["models"]
-        .as_object_mut()
-        .expect("models object")
-        .remove("e2e-2");
+    v["provider"]["llama.cpp"]["models"]["e2e-2"]["name"] = serde_json::json!("hand-edited");
     std::fs::write(&opencode, serde_json::to_string_pretty(&v).unwrap()).expect("hand-edit");
     st.invoke_reload_all();
     assert!(!st.get_integration_in_sync());
     assert!(
-        st.get_integration_status()
-            .contains("enabled but not listed: e2e-2"),
+        st.get_integration_status().contains("changed: e2e-2"),
         "{}",
         st.get_integration_status()
     );
-    assert!(
-        !crate::integrations::opencode_model_ids().contains(&"e2e-2".to_string()),
-        "a refresh only reports"
-    );
     st.invoke_save_integrations();
+    assert_eq!(preview_labels(), vec!["e2e-2: changed".to_string()]);
+    let detail = st.get_opencode_change_rows().row_data(0).unwrap().detail.to_string();
+    assert!(detail.starts_with("name: hand-edited → "), "{detail}");
+    st.invoke_opencode_confirm();
     assert!(st.get_integration_in_sync());
     assert_eq!(opencode_ids(), enabled_ids());
 
@@ -1323,8 +1379,8 @@ pub(super) fn run(app: &AppWindow) {
     );
 
     // ── CLI: `preset disable|enable` is the same move the switch makes ──────
-    // Case-insensitive lookup (like show/delete), acting on the STORED id, and
-    // the OpenCode provider configured above follows it too.
+    // Case-insensitive lookup (like show/delete), acting on the STORED id; the
+    // OpenCode provider configured above does NOT follow it.
     let preset_cmd = |cmd: PresetCmd| {
         crate::cli::run(Cli {
             command: Command::Preset(cmd),
@@ -1336,13 +1392,12 @@ pub(super) fn run(app: &AppWindow) {
         .iter()
         .any(|l| l.preset.id == "e2e" && !l.enabled));
     assert!(
-        !crate::integrations::opencode_model_ids().contains(&"e2e".to_string()),
-        "the CLI makes the same opencode.json follow-up as the GUI"
+        crate::integrations::opencode_model_ids().contains(&"e2e".to_string()),
+        "the CLI never touches opencode.json: only the Integrations tab's Save does"
     );
     preset_cmd(PresetCmd::Disable { id: "e2e".into() }).expect("already off is not an error");
     preset_cmd(PresetCmd::Enable { id: "e2e".into() }).expect("preset enable");
     assert!(crate::presets::load_all().iter().any(|p| p.id == "e2e"));
-    assert!(crate::integrations::opencode_model_ids().contains(&"e2e".to_string()));
     assert!(
         preset_cmd(PresetCmd::Enable {
             id: "no-such-preset".into()

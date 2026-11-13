@@ -9,10 +9,15 @@
 //! (`presets::load_all`, i.e. presets.ini), the same set llama-server serves,
 //! so switching a preset off in the Models tab is also how it leaves OpenCode.
 //! It used to be a second checkbox list here, which could offer OpenCode a model
-//! llama-server had no preset for, or hide one it did. The provider section is
-//! created only by the Integrations tab's Save; after that every preset change
-//! re-derives the list on its own (`follow_presets`), from the GUI and the CLI
-//! alike, and a machine that never set OpenCode up is never written to.
+//! llama-server had no preset for, or hide one it did.
+//!
+//! **opencode.json is written by the Integrations tab's Save and nothing else**:
+//! no preset change, server.ini save or CLI command touches it, so a preset can
+//! be tuned without its OpenCode entry moving under a running session. The tab's
+//! status line names what is out of step, and Save first shows the change per
+//! model (`opencode_plan`), each with a tick: an unticked model's entry is left
+//! exactly as the file holds it (`save_opencode_models`'s `keep`). A machine
+//! that never set OpenCode up is never written to unless its user saves.
 //!
 //! The one non-mechanical field is a model's `limit.context`, and it is not a
 //! copy of the preset's `ctx-size`: opencode fills a prompt to whatever ceiling it
@@ -63,7 +68,6 @@ use crate::gguf;
 use crate::ini;
 use crate::paths;
 use crate::presets;
-use crate::server_cfg;
 use crate::strings;
 
 const PROVIDER_KEY: &str = "llama.cpp";
@@ -94,6 +98,7 @@ const OPENCODE_COMPACTION_BUFFER: i64 = 20_000;
 // ── opencode.json ──────────────────────────────────────────────────────
 
 /// Returns the preset IDs currently registered as models in opencode.json.
+#[cfg(test)]
 pub fn opencode_model_ids() -> Vec<String> {
     let cfg = read_opencode();
     cfg.as_ref()
@@ -105,30 +110,106 @@ pub fn opencode_model_ids() -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// Ensures the provider entry exists and rebuilds its models list: one entry per
-/// ENABLED preset (see the module header).
+/// One field of an opencode.json entry that Save would change: its dotted path
+/// (`limit.context`), the value the file holds and the value Save writes, each
+/// `None` when absent. The preview masks the API key's values.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FieldDiff {
+    pub path: String,
+    pub old: Option<String>,
+    pub new: Option<String>,
+}
+
+/// What Save would do to one model entry.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ChangeKind {
+    /// An enabled preset the file does not list.
+    Add,
+    /// A listed model that is no enabled preset (switched off, renamed, deleted).
+    Remove,
+    /// A listed enabled preset whose entry would change.
+    Update,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ModelChange {
+    pub id: String,
+    pub kind: ChangeKind,
+    pub fields: Vec<FieldDiff>,
+}
+
+/// Everything the Integrations tab's Save would change in opencode.json: the
+/// provider's own fields (created whole when absent; base URL and API key follow
+/// server.ini) and one change per model whose entry differs. A model not listed
+/// here is already what Save would write.
+#[derive(Debug, Clone, PartialEq)]
+pub struct OpencodePlan {
+    /// The file already carries the provider.
+    pub provider_active: bool,
+    pub provider: Vec<FieldDiff>,
+    pub models: Vec<ModelChange>,
+}
+
+impl OpencodePlan {
+    /// Save would write nothing.
+    pub fn is_empty(&self) -> bool {
+        self.provider.is_empty() && self.models.is_empty()
+    }
+}
+
+/// Compares opencode.json with what Save would write (see `OpencodePlan`).
+/// Read-only. `base_url` and `api_key` as for `save_opencode_models`.
+pub fn opencode_plan(base_url: &str, api_key: Option<&str>) -> Result<OpencodePlan> {
+    let current = read_or_create_value(&paths::opencode_user_config())?;
+    let mut target = current.clone();
+    ensure_provider_section(&mut target, base_url, api_key)?;
+    let provider_active = provider_of(&current).is_some();
+
+    let without_models = |v: &Value| {
+        let mut p = provider_of(v).cloned().unwrap_or(Value::Null);
+        if let Some(o) = p.as_object_mut() {
+            o.remove("models");
+        }
+        p
+    };
+    let mut provider = Vec::new();
+    leaf_diff("", &without_models(&current), &without_models(&target), &mut provider);
+
+    let old = current_models(&current);
+    let desired = desired_models();
+    let mut models = Vec::new();
+    for (id, new) in &desired {
+        let (kind, before) = match old.get(id) {
+            None => (ChangeKind::Add, Value::Null),
+            Some(o) if o != new => (ChangeKind::Update, o.clone()),
+            Some(_) => continue,
+        };
+        let mut fields = Vec::new();
+        leaf_diff("", &before, new, &mut fields);
+        models.push(ModelChange { id: id.clone(), kind, fields });
+    }
+    for id in old.keys().filter(|id| !desired.iter().any(|(d, _)| d == *id)) {
+        models.push(ModelChange { id: id.clone(), kind: ChangeKind::Remove, fields: Vec::new() });
+    }
+    Ok(OpencodePlan { provider_active, provider, models })
+}
+
+/// Writes the provider entry (created when absent) and its models list: one
+/// entry per ENABLED preset (see the module header), except the ids in `keep`,
+/// whose entry is left exactly as the file holds it: kept when listed, still
+/// absent when not (the preview's unticked rows, `opencode_plan`).
 /// `base_url` comes from the current server.ini (e.g. "http://127.0.0.1:9931/v1").
 /// `api_key` is the optional API key for proxy/gateway authentication.
 ///
-/// A rebuild that comes out identical to the file is not written: every preset
-/// save now lands here (`follow_presets`), and opencode.json is the user's file,
-/// so it is touched only when its content actually has to change.
-pub fn save_opencode_models(base_url: &str, api_key: Option<&str>) -> Result<()> {
+/// A rebuild that comes out identical to the file is not written: opencode.json
+/// is the user's file, so it is touched only when its content has to change.
+pub fn save_opencode_models(base_url: &str, api_key: Option<&str>, keep: &[String]) -> Result<()> {
     let path = paths::opencode_user_config();
     let mut v = read_or_create_value(&path)?;
+    let current = current_models(&v);
 
     ensure_provider_section(&mut v, base_url, api_key)?;
-
-    let sections = ini::read_all(&paths::presets_ini());
-    let entries = presets::load_all()
-        .into_iter()
-        .map(|p| {
-            let context = advertised(&p, fit_on(&sections, &p.id), trained_ctx(&p));
-            let entry = preset_to_opencode_model(&p, context);
-            (p.id, entry)
-        })
-        .collect();
-    fill_models(&mut v, entries)?;
+    fill_models(&mut v, merge_models(&current, desired_models(), keep))?;
 
     let serialized = serde_json::to_string_pretty(&v)? + "\n";
     if fs::read_to_string(&path).is_ok_and(|current| current == serialized) {
@@ -142,6 +223,89 @@ pub fn save_opencode_models(base_url: &str, api_key: Option<&str>) -> Result<()>
     }
     ini::atomic_write(&path, &serialized).with_context(|| strings::fill("write-failed", &[&path.display()]))?;
     Ok(())
+}
+
+/// The entries Save writes, one per ENABLED preset, in presets.ini order.
+fn desired_models() -> Vec<(String, Value)> {
+    let sections = ini::read_all(&paths::presets_ini());
+    presets::load_all()
+        .into_iter()
+        .map(|p| {
+            let context = advertised(&p, fit_on(&sections, &p.id), trained_ctx(&p));
+            let entry = preset_to_opencode_model(&p, context);
+            (p.id, entry)
+        })
+        .collect()
+}
+
+/// `desired`, except that every id in `keep` stays as `current` has it: its old
+/// entry when it has one (in the desired position, or after the others when it is
+/// no enabled preset any more), nothing when it has none.
+fn merge_models(
+    current: &serde_json::Map<String, Value>,
+    desired: Vec<(String, Value)>,
+    keep: &[String],
+) -> Vec<(String, Value)> {
+    let kept = |id: &String| keep.contains(id);
+    let mut out: Vec<(String, Value)> = Vec::new();
+    for (id, entry) in &desired {
+        if !kept(id) {
+            out.push((id.clone(), entry.clone()));
+        } else if let Some(old) = current.get(id) {
+            out.push((id.clone(), old.clone()));
+        }
+    }
+    for (id, old) in current {
+        if kept(id) && !desired.iter().any(|(d, _)| d == id) {
+            out.push((id.clone(), old.clone()));
+        }
+    }
+    out
+}
+
+fn provider_of(v: &Value) -> Option<&Value> {
+    v.get("provider").and_then(|p| p.get(PROVIDER_KEY))
+}
+
+/// The provider's model entries as the file holds them (empty without a provider).
+fn current_models(v: &Value) -> serde_json::Map<String, Value> {
+    provider_of(v)
+        .and_then(|p| p.get("models"))
+        .and_then(|m| m.as_object())
+        .cloned()
+        .unwrap_or_default()
+}
+
+/// The leaves where `old` and `new` differ, as dotted paths under `prefix`. An
+/// object on either side is walked key by key, the missing side read as absent.
+fn leaf_diff(prefix: &str, old: &Value, new: &Value, out: &mut Vec<FieldDiff>) {
+    if old.is_object() || new.is_object() {
+        let empty = serde_json::Map::new();
+        let (o, n) = (old.as_object().unwrap_or(&empty), new.as_object().unwrap_or(&empty));
+        let keys = o.keys().chain(n.keys().filter(|k| !o.contains_key(*k)));
+        for k in keys {
+            let path = if prefix.is_empty() { k.clone() } else { format!("{prefix}.{k}") };
+            let null = Value::Null;
+            leaf_diff(&path, o.get(k).unwrap_or(&null), n.get(k).unwrap_or(&null), out);
+        }
+        return;
+    }
+    if old != new {
+        out.push(FieldDiff {
+            path: prefix.to_string(),
+            old: render(old),
+            new: render(new),
+        });
+    }
+}
+
+/// A leaf as the preview shows it: a string bare, anything else as JSON.
+fn render(v: &Value) -> Option<String> {
+    match v {
+        Value::Null => None,
+        Value::String(s) => Some(s.clone()),
+        other => Some(other.to_string()),
+    }
 }
 
 /// `what`, a place in opencode.json, holds something else than the object it must.
@@ -163,50 +327,6 @@ fn fill_models(v: &mut Value, entries: Vec<(String, Value)>) -> Result<()> {
     models.clear();
     models.extend(entries);
     Ok(())
-}
-
-/// The follow-up to every change of the enabled preset set or of a preset's
-/// content (a switch, a save, a rename, a delete, a New/Clone, and a server.ini
-/// save, which moves the base URL): rebuild opencode.json's model list, but ONLY
-/// when it already carries this provider. Returns whether it did. Creating the
-/// provider stays the Integrations tab's Save, so a machine that never set
-/// OpenCode up is never handed a config it did not ask for.
-pub fn follow_presets() -> Result<bool> {
-    if !detect_opencode_provider() {
-        return Ok(false);
-    }
-    let cfg = server_cfg::load();
-    save_opencode_models(
-        &cfg.opencode_base_url_or_default(),
-        cfg.opencode_api_key.as_deref(),
-    )?;
-    Ok(true)
-}
-
-/// How opencode.json's model list differs from the enabled preset set, by id:
-/// see `drift`. Both empty = in step. A difference is what a file written by a
-/// version with the old checkbox list, a hand-edit, or a failed `follow_presets`
-/// leaves behind; nothing rewrites it until the next preset change or Save, so
-/// the Integrations tab names it instead.
-pub fn opencode_drift() -> (Vec<String>, Vec<String>) {
-    let enabled: Vec<String> = presets::load_all().into_iter().map(|p| p.id).collect();
-    drift(&opencode_model_ids(), &enabled)
-}
-
-/// `(missing, extra)`: the enabled presets `listed` lacks, and the entries of
-/// `listed` that are not an enabled preset (switched off, renamed or deleted).
-fn drift(listed: &[String], enabled: &[String]) -> (Vec<String>, Vec<String>) {
-    let missing = enabled
-        .iter()
-        .filter(|id| !listed.contains(id))
-        .cloned()
-        .collect();
-    let extra = listed
-        .iter()
-        .filter(|id| !enabled.contains(id))
-        .cloned()
-        .collect();
-    (missing, extra)
 }
 
 pub fn detect_opencode_provider() -> bool {
@@ -1014,18 +1134,65 @@ mod tests {
         assert_eq!(ctx(Some(0), Some(2), None, Some(200_000)), 131_072);
     }
 
+    /// An unticked id keeps the file's state for that model: its old entry
+    /// (listed and changed, or listed and no longer enabled) or its absence (a new
+    /// preset); every other id takes the rebuilt entry or goes.
     #[test]
-    fn drift_names_both_directions() {
-        let s = |v: &[&str]| v.iter().map(|x| (*x).to_string()).collect::<Vec<_>>();
-        // In step, whatever the order.
-        assert_eq!(drift(&s(&["b", "a"]), &s(&["a", "b"])), (vec![], vec![]));
-        // A preset switched on since the last write, and one switched off.
+    fn merge_models_leaves_kept_ids_as_the_file_has_them() {
+        let current = json!({
+            "changed": { "name": "old" },
+            "kept-off": { "name": "off" },
+            "dropped-off": { "name": "gone" },
+        });
+        let current = current.as_object().unwrap();
+        let desired = vec![
+            ("changed".to_string(), json!({ "name": "new" })),
+            ("new-kept".to_string(), json!({ "name": "n" })),
+            ("new".to_string(), json!({ "name": "n2" })),
+        ];
+        let keep = ["changed".to_string(), "new-kept".to_string(), "kept-off".to_string()];
+        let out = merge_models(current, desired.clone(), &keep);
         assert_eq!(
-            drift(&s(&["a", "gone"]), &s(&["a", "new"])),
-            (s(&["new"]), s(&["gone"]))
+            out,
+            vec![
+                ("changed".to_string(), json!({ "name": "old" })),
+                ("new".to_string(), json!({ "name": "n2" })),
+                ("kept-off".to_string(), json!({ "name": "off" })),
+            ]
         );
-        // No provider models at all: everything enabled is missing.
-        assert_eq!(drift(&[], &s(&["a"])), (s(&["a"]), vec![]));
+        // Nothing kept: exactly the desired list.
+        assert_eq!(merge_models(current, desired.clone(), &[]), desired);
+    }
+
+    #[test]
+    fn leaf_diff_names_each_changed_leaf() {
+        let mut out = Vec::new();
+        leaf_diff(
+            "",
+            &json!({ "name": "M", "limit": { "context": 131072, "output": 32768 } }),
+            &json!({ "name": "M", "limit": { "context": 65536, "output": 32768 }, "reasoning": true }),
+            &mut out,
+        );
+        let d = |p: &str, o: Option<&str>, n: Option<&str>| FieldDiff {
+            path: p.into(),
+            old: o.map(Into::into),
+            new: n.map(Into::into),
+        };
+        assert_eq!(
+            out,
+            vec![d("limit.context", Some("131072"), Some("65536")), d("reasoning", None, Some("true"))]
+        );
+        // A whole object appearing lists its leaves.
+        let mut out = Vec::new();
+        leaf_diff("", &Value::Null, &json!({ "options": { "baseURL": "http://h/v1", "timeout": 5 } }), &mut out);
+        assert_eq!(
+            out,
+            vec![d("options.baseURL", None, Some("http://h/v1")), d("options.timeout", None, Some("5"))]
+        );
+        // Equal values, in any key order: nothing.
+        let mut out = Vec::new();
+        leaf_diff("", &json!({ "a": 1, "b": 2 }), &json!({ "b": 2, "a": 1 }), &mut out);
+        assert!(out.is_empty());
     }
 
     #[test]
