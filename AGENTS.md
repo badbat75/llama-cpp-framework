@@ -72,7 +72,6 @@ Agents run only these, on the crate they are working on (`llama-cpp-config`, `xt
 
 - Tests run in the debug profile, never `--release`: the configurator's e2e tests need Slint debug info. On Windows `cargo test` links only with the `.cargo\config.toml` that `xtask configure` generates ([llama-cpp-config\AGENTS.md](llama-cpp-config/AGENTS.md)).
 - The docs-site check is for changes to `docs\`, bench.db or the generator.
-- The format check is red on today's tree: step 1 of `PLAN.md` fixes it. Until then, a slice must not add new format errors.
 
 The user runs the full suite, once, on the main branch after the merge and before installing. Agents do not run it:
 

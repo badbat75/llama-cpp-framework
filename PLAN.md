@@ -19,9 +19,9 @@ as the column says. A requirement still open must be covered by a step.
 | R3 | The same on macOS, Apple Silicon only (Metal + Vulkan through MoltenVK, split `.pkg`) | Written, never run on a Mac |
 | R4 | A GUI + CLI configurator (`llama-cpp-config`) for `server.ini` and the per-model `presets.ini` | Met: release 2.4.0 |
 | R5 | Every measurement in `benchmarks/bench.db`, under a versioned spec, public: no credentials, no local paths | Met |
-| R6 | Per-GPU and per-model guides where every value traces to a campaign, published as a site | Met, but their figures predate v0.9.0: step 4 |
-| R7 | The fastest presets for the test machine's GPUs: port an out-of-tree optimization when its gain pays for its upkeep | Open: steps 3 to 8 |
-| R8 | llama-server runs as an OS service per instance (`llama.cpp@<id>` on Linux, config `server@<id>.ini`, a Windows service) managed by the runtime service `private-ai-manager`, which starts the instances at boot and is what the GUI and CLI talk to (D-Bus plus polkit on Linux, a named pipe with an ACL on Windows); units started by hand stay under its management; later engines (Strata) are to fit the same manager | Open: step 2 |
+| R6 | Per-GPU and per-model guides where every value traces to a campaign, published as a site | Met, but their figures predate v0.9.0: step 3 |
+| R7 | The fastest presets for the test machine's GPUs: port an out-of-tree optimization when its gain pays for its upkeep | Open: steps 2 to 7 |
+| R8 | llama-server runs as an OS service per instance (`llama.cpp@<id>` on Linux, config `server@<id>.ini`, a Windows service) managed by the runtime service `private-ai-manager`, which starts the instances at boot and is what the GUI and CLI talk to (D-Bus plus polkit on Linux, a named pipe with an ACL on Windows); units started by hand stay under its management; later engines (Strata) are to fit the same manager | Open: step 1 |
 
 ### How we work
 
@@ -36,7 +36,7 @@ as the column says. A requirement still open must be covered by a step.
 | W7 | Each agent has its own skills, which it can update itself or the coordinator can | Met: `.agents/skills/` |
 | W8 | Everything in English; only the conversation with the user may be in their language | Applies to every step |
 | W9 | Displayed text in a dedicated file, ready for more languages | Met: `llama-cpp-config/strings/` |
-| W10 | Agents run only the tests of the part they work on, plus linter and format check; the user runs the full suite once, on main after the merge, before installing | Applies to every step; the format check is red today: step 1 |
+| W10 | Agents run only the tests of the part they work on, plus linter and format check; the user runs the full suite once, on main after the merge, before installing | Applies to every step |
 | W11 | No em-dashes anywhere in the repo ("Key conventions" in `AGENTS.md`) | Applies to every step |
 | W12 | Every change to a benchmark spec is reviewed by `spec-reviewer` before it is committed | Applies to every step |
 
@@ -68,7 +68,7 @@ as not checked, and the step stays open.
 ## Where things stand
 
 Release 2.4.0 bundles llama.cpp v1.0.0 with patches `0001`, `0005` and `0006`; `0002`, `0003` and `0004`
-were dropped at v0.9.0 and performance dropped with them (step 3). The test machine has two R9700 (one in
+were dropped at v0.9.0 and performance dropped with them (step 2). The test machine has two R9700 (one in
 an x4 slot with no AtomicOps); the RTX 4070 SUPER is out of it, so the mixed-pair measurements wait for it.
 No run in bench.db is on v0.9.0 or later. What was checked among the out-of-tree candidates
 (`overdoingism/llama-cpp-rdna-boosts`), and found superseded or not applicable, is in
@@ -76,19 +76,7 @@ No run in bench.db is on v0.9.0 or later. What was checked among the out-of-tree
 
 ## Next steps
 
-### 1. Make the agent commands green
-
-Covers: W10.
-
-`cargo fmt --all --check` fails on today's tree (`llama-cpp-config/arch_tables.rs`,
-`llama-cpp-config/src/bench/exec.rs` and others), so the format check cannot gate a slice yet. Run
-`cargo fmt --all` as one commit with no other change, then run `cargo clippy -p <crate> --all-targets
--- -D warnings` on each crate and fix or list what it reports (the configurator is documented as
-warning-free; xtask and docs-site are unchecked).
-
-- Done when: `cargo fmt --all --check` and the clippy command pass on every crate of the workspace.
-
-### 2. Run llama-server as a service under `private-ai-manager`
+### 1. Run llama-server as a service under `private-ai-manager`
 
 Covers: R8.
 
@@ -161,24 +149,24 @@ Slices, in order, each test first:
    `server.ini` (as `server@default.ini`) and `presets.ini` into the system directory through the manager; the user's files are left
    in place.
 
-Open points to settle inside the slices, not guessed here:
+Points of design, and what is still open:
 
 - The service user must be able to read `ModelsDir` (and write it, as `LLAMA_CACHE`, for downloads by
   name). A models directory under a home with mode 0700 is not readable by `llama-cpp`: the manager
-  reports it rather than changing permissions.
-- Polkit defaults: start, stop and status for the active local session without a password, config
-  writes `auth_admin_keep`. A proposal, to confirm with the user at slice 5.
+  reports it rather than changing permissions (agreed with the user on 2026-11-13).
+- Polkit defaults, agreed with the user on 2026-11-13: start, stop and status for the active local
+  session without a password, config writes `auth_admin_keep`.
 - `SaveStateOnShutdown` and `StateDir`: the slot snapshots are written by the server, so by the service
   user; their default directory moves with it.
-- The D-Bus name and polkit action ids (`org.privateai.Manager1`, `org.privateai.manager.*`) are a
-  proposal, to confirm before slice 3.
+- The D-Bus name and polkit action ids, agreed with the user on 2026-11-13: `org.privateai.Manager1`,
+  `org.privateai.manager.*`.
 
 - Done when: on Linux, after installing the packages, the instance in `server@default.ini` starts at
   boot, `systemctl start/stop llama.cpp@default` and the GUI agree on its state, and a user without
   authorization is refused by polkit; on Windows the same with the services and the pipe; the user's
   previous config has been migrated without loss; `AGENTS.md` and the guides describe the new layout.
 
-### 3. Decide whether to bring back patches 0002 to 0004
+### 2. Decide whether to bring back patches 0002 to 0004
 
 Covers: R7.
 
@@ -212,11 +200,11 @@ the configurator, removed with it.
 - Done when: each of the three patches is either back (refreshed, measured, recorded in bench.db) or
   left out with the measurement that says it does not pay, and `patches/llama.cpp/README.md` says which.
 
-### 4. Re-measure the presets on the current release
+### 3. Re-measure the presets on the current release
 
 Covers: R6, R7.
 
-Do it after step 3, on the patch set it settles on: the figures below were written for v0.9.0
+Do it after step 2, on the patch set it settles on: the figures below were written for v0.9.0
 without patches 0002 to 0004.
 
 Every recorded figure the guides hold from v0.7.0 and v0.8.0 ran with the FlashAttention band (0003),
@@ -247,7 +235,7 @@ this is done.
 - Done when: each preset above has a campaign on the current release, and the guides' figures, their
   "In short" note and the placeholder row are updated from it.
 
-### 5. Find out why the drafter benchmarks look too favorable
+### 4. Find out why the drafter benchmarks look too favorable
 
 Covers: R6, R7.
 
@@ -278,7 +266,7 @@ before trusting the size of the gains (the ranking itself may hold):
 - Done when: the gap between the sweeps and the live agent turns is explained by a measurement, and the
   guide states the drafter gains under the conditions that hold for real use.
 
-### 6. Check the KV-split width patch on the current release
+### 5. Check the KV-split width patch on the current release
 
 Covers: R7.
 
@@ -290,7 +278,7 @@ the R9700's decode takes the branch it changes. What was measured is in
 - Done when: it is known whether the patch applies to the current tag and what it changes on the R9700
   (byte-identical replies across `spec-draft-n-max`, and the speed cost), and it is ported or dropped.
 
-### 7. Compare block 12's all-reduce with upstream's internal AllReduce
+### 6. Compare block 12's all-reduce with upstream's internal AllReduce
 
 Covers: R7.
 
@@ -322,7 +310,7 @@ undone once RCCL has made its mappings.
 - Done when: block 12's small-tensor path and copy engine are measured against
   `ggml/src/ggml-cuda/allreduce.cu` on the two R9700 (no RCCL needed), and ported or dropped.
 
-### 8. Settle the open Windows checks
+### 7. Settle the open Windows checks
 
 Covers: R6, R7.
 
@@ -344,9 +332,9 @@ From the Windows work of 2026-10-21, `docs/qwen3.8_27b.md` section 9.
 
 ## Waiting for the user
 
-- Steps 3 to 8: every benchmark run and every llama-server start on the GPUs needs the user's
+- Steps 2 to 7: every benchmark run and every llama-server start on the GPUs needs the user's
   go-ahead (they hold the GPUs and may collide with other jobs).
-- Steps 4 and 8 partly need the RTX 4070 SUPER back in the test machine.
+- Steps 3 and 7 partly need the RTX 4070 SUPER back in the test machine.
 
 ## Later, not planned yet
 
