@@ -147,3 +147,12 @@ Lessons only: the rules are in `AGENTS.md`.
 - A fast throwaway candidate for "route this path-based IO through the seam": copy the seam's files
   into a temp dir, run the existing path-based function there, write back the files that changed, in
   the order the test expects. It showed the whole e2e can go green without writing the real refactor.
+- A fake child process for an injected spawner: `sh -c '<printf ...>; exec sleep 30'` piped like the real
+  one (`exec`, so the pid you hold is the one killed). "Killed and reaped" is `/proc/<pid>` gone (a zombie
+  keeps it), polled with a deadline. Pass `'` inside the script as `'"'"'`.
+- slint's `ElementHandle` has no visibility query: a `visible: false` element still answers
+  `find_by_accessible_label`. Pin a note that shows only sometimes by asking for an `if` in the page and
+  checking whether the search finds it. A `Text`'s accessible label is its text.
+- journalctl's access-refusal texts are in systemd's `src/shared/journal-util.c`
+  (`access_check_var_log_journal`, `journal_access_check_and_warn`); `strings $(which journalctl)
+  /usr/lib/x86_64-linux-gnu/systemd/libsystemd-shared*.so` shows the installed version's wording.

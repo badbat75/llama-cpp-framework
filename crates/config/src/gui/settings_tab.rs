@@ -44,6 +44,7 @@ pub(super) fn refresh(app: &AppWindow) {
     s.set_start_server_on_launch(cfg.start_server_on_launch);
     s.set_log_rotate(cfg.log_rotate);
     s.set_log_rotate_kb(SharedString::from(cfg.log_rotate_kb.to_string()));
+    s.set_log_rotate_applies(crate::server_control::backend().rotates_log_file());
 }
 
 /// Persist one settings.ini change read-modify-write (so no toggle's save can
@@ -198,4 +199,73 @@ pub(super) fn wire(app: &AppWindow) {
             }
         });
     }
+}
+
+/// E2E phase, run from `tests/ui_bindings.rs`'s single `#[test]` (it needs the
+/// testing backend that test owns): under the manager journald rotates the
+/// log, so the rotation pair is greyed out (its values kept) with a note
+/// saying so; on `Direct` it stays as it was.
+#[cfg(test)]
+pub(super) fn e2e() {
+    use crate::server_control::{fake, Backend};
+    use i_slint_backend_testing::ElementHandle;
+    let dir = tempfile::tempdir().expect("tempdir");
+    crate::paths::redirect_for_tests(dir.path());
+
+    let app = AppWindow::new().expect("build AppWindow");
+    install_strings(app.global::<Strings>());
+    app.window().set_size(slint::PhysicalSize::new(1400, 3200));
+    app.show().expect("realize window");
+    let st = app.global::<AppState>();
+    st.set_current_tab(4); // Settings
+    let toggle = strings::t("rotate-log-toggle");
+    let note = strings::t("log-rotate-journald");
+    assert_ne!(
+        note, "log-rotate-journald",
+        "the note is in the strings file"
+    );
+    let enabled = |label: &str| {
+        ElementHandle::find_by_accessible_label(&app, label)
+            .next()
+            .unwrap_or_else(|| panic!("no widget with accessible-label {label:?}"))
+            .accessible_enabled()
+    };
+    // The note is built only under the manager (an `if` in the page): a
+    // `visible: false` element still answers a search.
+    let shown = |label: &str| {
+        ElementHandle::find_by_accessible_label(&app, label)
+            .next()
+            .is_some()
+    };
+
+    // Direct: the per-user file is rotated by these two, as before.
+    fake::scoped(Backend::Direct, || refresh(&app));
+    assert!(st.get_log_rotate(), "the default: on");
+    assert_eq!(enabled(&toggle), Some(true), "Direct: rotation editable");
+    assert_eq!(
+        enabled("log-rotate-kb"),
+        Some(true),
+        "Direct: threshold editable"
+    );
+    assert!(!shown(&note), "Direct: no journald note");
+
+    // The manager (the test build's default backend): journald rotates.
+    refresh(&app);
+    assert_eq!(
+        enabled(&toggle),
+        Some(false),
+        "Manager: rotation greyed out"
+    );
+    assert_eq!(
+        enabled("log-rotate-kb"),
+        Some(false),
+        "Manager: threshold greyed out"
+    );
+    assert!(st.get_log_rotate(), "greyed out, not cleared");
+    assert_eq!(st.get_log_rotate_kb(), "1024", "the stored value kept");
+    assert!(
+        shown(&note),
+        "Manager: the note says journald rotates the log"
+    );
+    app.hide().ok();
 }

@@ -628,6 +628,9 @@ export global AppState {
     // pushes the stored value back when the text is not a size.
     in-out property <bool> log_rotate: true;
     in-out property <string> log_rotate_kb: "1024";
+    // Whether the pair applies: only when the configurator runs llama-server
+    // itself; under the manager journald rotates the log (settings_tab::refresh).
+    in property <bool> log_rotate_applies: true;
 
     // ── Status / toast ───────────────────────────────────────────────
     in-out property <string> status_text: "";

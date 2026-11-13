@@ -13,7 +13,9 @@
 //! Windows' default share flags allow the concurrent read.
 //! Truncation/rotation (len < offset) resets the rows; a missing file shows a
 //! placeholder and keeps polling, so the first Start populates the window
-//! live.
+//! live. Under the manager the log is the unit's journal instead
+//! (`server_control::Backend::log_source`): `JournalTail` follows a
+//! `journalctl -f` child and turns its lines into the same `Delta`s.
 //!
 //! The view is a list of rows, not one text widget, and that is the whole
 //! reason the window stays responsive: a Slint text widget lays out ALL of
@@ -238,36 +240,246 @@ fn tail_status(path: &std::path::Path) -> String {
     };
     let age = match meta.modified().ok().and_then(|m| m.elapsed().ok()) {
         None => String::new(),
-        Some(e) if e.as_secs() < 2 => format!(" · {}", strings::t("updated-just-now")),
-        Some(e) if e.as_secs() < 120 => format!(
-            " · {}",
-            strings::fill("updated-seconds-ago", &[&e.as_secs()])
-        ),
-        Some(e) if e.as_secs() < 7200 => format!(
-            " · {}",
-            strings::fill("updated-minutes-ago", &[&(e.as_secs() / 60)])
-        ),
-        Some(e) => format!(
-            " · {}",
-            strings::fill("updated-hours-ago", &[&(e.as_secs() / 3600)])
-        ),
+        Some(e) => format!(" · {}", age_text(e)),
     };
     format!("{size}{age}")
+}
+
+/// One opening's journal follower (the `Manager` backend): a journal reader
+/// started through `spawn` (`journalctl -u <unit> -f ...`,
+/// `server_control::journalctl_args` with `MAX_ROWS`), whose stdout lines
+/// become rows. The first poll resets the view; an access refusal
+/// (`server_control::journal_access_denied` on its stderr) replaces the rows
+/// with `log-journal-denied`; a reader that fails otherwise, or cannot be
+/// spawned, adds `log-journal-failed`. The reader is killed and reaped by
+/// `stop` and on drop, so a closed window leaves no child.
+struct JournalTail {
+    /// The running reader; `None` once stopped, or when it could not be spawned.
+    child: Option<std::process::Child>,
+    /// The reader's output, one message per line, from its two pipe threads.
+    lines: std::sync::mpsc::Receiver<JournalLine>,
+    /// The spawn error, shown by the first poll.
+    spawn_error: Option<String>,
+    /// False until the first poll, which clears the view.
+    started: bool,
+    /// The view shows the final message (denied or failed): nothing follows.
+    done: bool,
+    /// What the reader wrote on stderr so far.
+    stderr: String,
+    /// How many of the two pipes reached their end.
+    closed: u8,
+    /// When the last stdout line came.
+    last_line: Option<std::time::Instant>,
+}
+
+/// One message from a reader's pipe thread.
+enum JournalLine {
+    Out(Vec<u8>),
+    Err(String),
+    /// A pipe reached its end.
+    Closed,
+}
+
+/// Send each line read from `pipe` (without its newline) through `tx`, then
+/// `Closed`.
+fn pipe_lines(
+    pipe: impl Read + Send + 'static,
+    tx: std::sync::mpsc::Sender<JournalLine>,
+    wrap: fn(Vec<u8>) -> JournalLine,
+) {
+    std::thread::spawn(move || {
+        use std::io::BufRead;
+        let mut reader = std::io::BufReader::new(pipe);
+        loop {
+            let mut line = Vec::new();
+            match reader.read_until(b'\n', &mut line) {
+                Ok(0) | Err(_) => break,
+                Ok(_) => {
+                    if line.last() == Some(&b'\n') {
+                        line.pop();
+                    }
+                    if tx.send(wrap(line)).is_err() {
+                        return;
+                    }
+                }
+            }
+        }
+        let _ = tx.send(JournalLine::Closed);
+    });
+}
+
+impl JournalTail {
+    fn start(spawn: &crate::server_control::JournalSpawn, unit: &str) -> JournalTail {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut tail = JournalTail {
+            child: None,
+            lines: rx,
+            spawn_error: None,
+            started: false,
+            done: false,
+            stderr: String::new(),
+            closed: 0,
+            last_line: None,
+        };
+        match spawn(&crate::server_control::journalctl_args(unit, MAX_ROWS)) {
+            Ok(mut child) => {
+                if let Some(out) = child.stdout.take() {
+                    pipe_lines(out, tx.clone(), JournalLine::Out);
+                }
+                if let Some(err) = child.stderr.take() {
+                    pipe_lines(err, tx, |l| {
+                        JournalLine::Err(String::from_utf8_lossy(&l).into_owned())
+                    });
+                }
+                tail.child = Some(child);
+            }
+            Err(e) => tail.spawn_error = Some(e.to_string()),
+        }
+        tail
+    }
+
+    /// What arrived since the last poll; never blocks.
+    fn poll(&mut self) -> Delta {
+        let reset = !std::mem::replace(&mut self.started, true);
+        let mut delta = Delta {
+            reset,
+            ..Delta::default()
+        };
+        if self.done {
+            return delta;
+        }
+        if let Some(e) = self.spawn_error.take() {
+            self.done = true;
+            delta.rows = vec![strings::fill("log-journal-failed", &[&e])];
+            return delta;
+        }
+        while let Ok(msg) = self.lines.try_recv() {
+            match msg {
+                JournalLine::Out(line) => {
+                    push_rows(&mut delta.rows, &line);
+                    self.last_line = Some(std::time::Instant::now());
+                }
+                JournalLine::Err(line) => {
+                    self.stderr.push_str(&line);
+                    self.stderr.push('\n');
+                    if crate::server_control::journal_access_denied(&self.stderr) {
+                        self.done = true;
+                        return Delta {
+                            reset: true,
+                            drop_last: 0,
+                            rows: vec![strings::t("log-journal-denied")],
+                        };
+                    }
+                }
+                JournalLine::Closed => self.closed += 1,
+            }
+        }
+        // Both pipes drained: the reader has ended, or is about to.
+        if self.closed >= 2 {
+            let status = self
+                .child
+                .as_mut()
+                .and_then(|c| c.try_wait().ok().flatten());
+            if let Some(status) = status {
+                self.child = None;
+                self.done = true;
+                if !status.success() {
+                    let why = self
+                        .stderr
+                        .lines()
+                        .map(str::trim)
+                        .rfind(|l| !l.is_empty())
+                        .map(str::to_string)
+                        .unwrap_or_else(|| status.to_string());
+                    delta
+                        .rows
+                        .push(strings::fill("log-journal-failed", &[&why]));
+                }
+            }
+        }
+        delta
+    }
+
+    /// The reader's pid while it runs.
+    #[cfg(test)]
+    fn child_id(&self) -> Option<u32> {
+        self.child.as_ref().map(std::process::Child::id)
+    }
+
+    /// Kill the reader and wait for it.
+    fn stop(&mut self) {
+        if let Some(mut child) = self.child.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
+}
+
+impl Drop for JournalTail {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+
+/// "updated N ago" for an age, as the header shows it.
+fn age_text(e: std::time::Duration) -> String {
+    match e.as_secs() {
+        s if s < 2 => strings::t("updated-just-now"),
+        s if s < 120 => strings::fill("updated-seconds-ago", &[&s]),
+        s if s < 7200 => strings::fill("updated-minutes-ago", &[&(s / 60)]),
+        s => strings::fill("updated-hours-ago", &[&(s / 3600)]),
+    }
+}
+
+/// The header's readout for the journal: how long ago the last line came
+/// ("updated 5 s ago"), empty before the first one. No size: the journal is
+/// not one file.
+fn journal_status(since_last_line: Option<std::time::Duration>) -> String {
+    since_last_line.map(age_text).unwrap_or_default()
+}
+
+/// What the header names: the file's path, or the unit whose journal is read.
+fn header_path(source: &crate::server_control::LogSource) -> String {
+    match source {
+        crate::server_control::LogSource::File(p) => p.to_string_lossy().into_owned(),
+        crate::server_control::LogSource::Journal { unit } => unit.clone(),
+    }
 }
 
 /// The tail thread of one opening of the window: poll, post, sleep, until
 /// `live` no longer holds `id`. The first poll runs at once, so the window
 /// does not sit blank for a tick.
-fn tail_thread(win: slint::Weak<LogWindow>, live: Arc<AtomicU64>, id: u64) {
-    let path = paths::server_log();
-    let mut tail = Tail::default();
+fn tail_thread(
+    win: slint::Weak<LogWindow>,
+    live: Arc<AtomicU64>,
+    id: u64,
+    source: crate::server_control::LogSource,
+) {
+    use crate::server_control::LogSource;
+    enum Follow {
+        File(std::path::PathBuf, Tail),
+        Journal(JournalTail),
+    }
+    // A journal reader is killed and reaped when this drops, at the end.
+    let mut follow = match source {
+        LogSource::File(path) => Follow::File(path, Tail::default()),
+        LogSource::Journal { unit } => Follow::Journal(JournalTail::start(
+            crate::server_control::journal_spawner(),
+            &unit,
+        )),
+    };
     let mut last_status = None;
     while live.load(Ordering::Relaxed) == id {
-        let delta = read_increment(&mut tail, &path);
-        // The readout ages even while the file does not change; that is its
+        // The readout ages even while the log does not change; that is its
         // point. Posted only when the text differs, so an idle log wakes the
         // event loop once a second at most.
-        let status = tail_status(&path);
+        let (delta, status) = match &mut follow {
+            Follow::File(path, tail) => (read_increment(tail, path), tail_status(path)),
+            Follow::Journal(j) => {
+                let delta = j.poll();
+                (delta, journal_status(j.last_line.map(|t| t.elapsed())))
+            }
+        };
         let status_changed = last_status.as_ref() != Some(&status);
         if !delta.is_empty() || status_changed {
             last_status = Some(status.clone());
@@ -291,9 +503,9 @@ fn tail_thread(win: slint::Weak<LogWindow>, live: Arc<AtomicU64>, id: u64) {
 pub(super) fn wire(app: &AppWindow) -> Result<LogWindow, slint::PlatformError> {
     let win = LogWindow::new()?;
     install_strings(win.global::<Strings>());
-    win.set_log_path(SharedString::from(
-        paths::server_log().to_string_lossy().into_owned(),
-    ));
+    win.set_log_path(SharedString::from(header_path(
+        &crate::server_control::backend().log_source(),
+    )));
     win.set_lines(model(Vec::<SharedString>::new()));
     let live = Arc::new(AtomicU64::new(0));
     restore_window_size(&win);
@@ -340,7 +552,8 @@ pub(super) fn wire(app: &AppWindow) -> Result<LogWindow, slint::PlatformError> {
             let id = sessions.get();
             live.store(id, Ordering::Relaxed);
             let (win_weak, live) = (win_weak.clone(), live.clone());
-            std::thread::spawn(move || tail_thread(win_weak, live, id));
+            let source = crate::server_control::backend().log_source();
+            std::thread::spawn(move || tail_thread(win_weak, live, id, source));
         });
     }
 
@@ -536,5 +749,286 @@ mod tests {
         append(&log, &"y".repeat(CARRY_MAX));
         read_increment(&mut t, &log);
         assert!(t.carry.is_empty() && t.open_rows == 0);
+    }
+
+    // ── The journal (the `Manager` backend) ─────────────────────────────
+    // The reader is a `sh -c` script standing in for journalctl, through the
+    // injected spawner: no test runs the real journalctl.
+
+    use crate::server_control::{journalctl_args, LogSource};
+    use std::process::{Child, Command, Stdio};
+    use std::sync::Mutex;
+    use std::time::{Duration, Instant};
+
+    const UNIT: &str = "llama.cpp@default.service";
+
+    /// A spawner running `script` in `sh`, piped as journalctl would be, and
+    /// recording the argv it was asked for.
+    fn sh_spawner(
+        script: &'static str,
+        argv: Arc<Mutex<Vec<Vec<String>>>>,
+    ) -> impl Fn(&[String]) -> std::io::Result<Child> + Send + Sync {
+        move |args: &[String]| {
+            argv.lock().unwrap().push(args.to_vec());
+            Command::new("sh")
+                .arg("-c")
+                .arg(script)
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+        }
+    }
+
+    /// Poll `tail` into `view` until `done` holds, failing after 5 s.
+    fn poll_until(
+        tail: &mut JournalTail,
+        view: &mut Vec<String>,
+        done: impl Fn(&[String]) -> bool,
+    ) {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            fold(view, tail.poll());
+            if done(view) {
+                return;
+            }
+            if Instant::now() > deadline {
+                tail.stop();
+                panic!("the view never got there within 5 s: {view:?}");
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    /// `/proc/<pid>` is gone: the child was killed AND reaped (a zombie keeps it).
+    fn gone(pid: u32) -> bool {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while Instant::now() < deadline {
+            if !Path::new(&format!("/proc/{pid}")).exists() {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        false
+    }
+
+    #[test]
+    fn the_journal_tail_asks_for_the_unit_and_the_retained_rows() {
+        let argv = Arc::new(Mutex::new(Vec::new()));
+        let spawn = sh_spawner("exec sleep 30", argv.clone());
+        let mut tail = JournalTail::start(&spawn, UNIT);
+        tail.stop();
+        assert_eq!(
+            *argv.lock().unwrap(),
+            [journalctl_args(UNIT, MAX_ROWS)],
+            "one reader, for the unit, backfilling as many rows as the view keeps"
+        );
+    }
+
+    #[test]
+    fn journal_lines_become_rows_and_the_first_poll_clears_the_view() {
+        let argv = Arc::new(Mutex::new(Vec::new()));
+        let spawn = sh_spawner(
+            "printf 'main: server is listening\\r\\n\\nsrv  update_slots: all slots are idle\\n'; exec sleep 30",
+            argv,
+        );
+        let mut tail = JournalTail::start(&spawn, UNIT);
+        let mut view = vec!["left by a previous opening".to_string()];
+        let first = tail.poll();
+        assert!(
+            first.reset,
+            "the first poll clears what the last opening left"
+        );
+        fold(&mut view, first);
+        poll_until(&mut tail, &mut view, |v| v.len() >= 3);
+        assert_eq!(
+            view,
+            [
+                "main: server is listening",
+                "",
+                "srv  update_slots: all slots are idle"
+            ]
+        );
+        // Nothing new: an empty delta.
+        assert!(tail.poll().is_empty());
+        tail.stop();
+    }
+
+    /// The window's row bound and cutting apply to the journal as to the file.
+    #[test]
+    fn an_overlong_journal_line_is_cut_into_rows() {
+        let argv = Arc::new(Mutex::new(Vec::new()));
+        // ROW_MAX * 2 + 1 bytes, then a short line.
+        let spawn = sh_spawner(
+            "head -c 4097 /dev/zero | tr '\\0' x; printf '\\nend\\n'; exec sleep 30",
+            argv,
+        );
+        assert_eq!(ROW_MAX, 2048, "the script's length assumes ROW_MAX");
+        let mut tail = JournalTail::start(&spawn, UNIT);
+        let mut view = Vec::new();
+        poll_until(&mut tail, &mut view, |v| {
+            v.last().is_some_and(|l| l == "end")
+        });
+        tail.stop();
+        assert_eq!(
+            view.len(),
+            4,
+            "{:?}",
+            view.iter().map(String::len).collect::<Vec<_>>()
+        );
+        assert!(view[..3].iter().all(|r| r.len() <= ROW_MAX));
+        assert_eq!(view[..3].concat(), "x".repeat(4097));
+    }
+
+    /// Not root and in none of the journal's groups: journalctl opens the
+    /// user's own journal, prints systemd's hint on stderr and keeps running
+    /// with nothing to show. The window says why, naming the groups.
+    #[test]
+    fn a_hint_that_the_system_journal_is_hidden_shows_the_groups_message() {
+        let argv = Arc::new(Mutex::new(Vec::new()));
+        let spawn = sh_spawner(
+            "printf 'Hint: You are currently not seeing messages from other users and the system.\\n      \
+             Users in groups '\"'\"'adm'\"'\"', '\"'\"'systemd-journal'\"'\"' can see all messages.\\n      \
+             Pass -q to turn off this notice.\\n' >&2; exec sleep 30",
+            argv,
+        );
+        let mut tail = JournalTail::start(&spawn, UNIT);
+        let mut view = vec!["left by a previous opening".to_string()];
+        let denied = strings::t("log-journal-denied");
+        poll_until(&mut tail, &mut view, |v| v.contains(&denied));
+        assert_eq!(view, std::slice::from_ref(&denied), "the message alone");
+        // Once: the next polls change nothing.
+        std::thread::sleep(Duration::from_millis(100));
+        assert!(tail.poll().is_empty());
+        tail.stop();
+    }
+
+    /// No journal file opened at all: systemd's error and a failure exit.
+    #[test]
+    fn insufficient_permissions_and_a_failure_exit_show_the_groups_message() {
+        let argv = Arc::new(Mutex::new(Vec::new()));
+        let spawn = sh_spawner(
+            "echo 'No journal files were opened due to insufficient permissions.' >&2; exit 1",
+            argv,
+        );
+        let mut tail = JournalTail::start(&spawn, UNIT);
+        let mut view = Vec::new();
+        let denied = strings::t("log-journal-denied");
+        poll_until(&mut tail, &mut view, |v| v.contains(&denied));
+        assert_eq!(view, [denied]);
+        tail.stop();
+    }
+
+    /// Another failure keeps the rows already shown and adds why, from the
+    /// last line journalctl wrote on stderr.
+    #[test]
+    fn a_reader_that_fails_otherwise_says_why_after_its_rows() {
+        let argv = Arc::new(Mutex::new(Vec::new()));
+        let spawn = sh_spawner(
+            "echo 'srv  load_model: loading'; echo 'Failed to iterate through journal: Bad message' >&2; exit 3",
+            argv,
+        );
+        let mut tail = JournalTail::start(&spawn, UNIT);
+        let mut view = Vec::new();
+        let failed = strings::fill(
+            "log-journal-failed",
+            &[&"Failed to iterate through journal: Bad message"],
+        );
+        poll_until(&mut tail, &mut view, |v| v.contains(&failed));
+        assert_eq!(view, ["srv  load_model: loading".to_string(), failed]);
+        tail.stop();
+    }
+
+    #[test]
+    fn a_reader_that_cannot_be_spawned_says_why() {
+        let spawn = |_: &[String]| -> std::io::Result<Child> {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "journalctl not found",
+            ))
+        };
+        let mut tail = JournalTail::start(&spawn, UNIT);
+        assert_eq!(tail.child_id(), None);
+        let mut view = vec!["left by a previous opening".to_string()];
+        fold(&mut view, tail.poll());
+        assert_eq!(
+            view,
+            [strings::fill(
+                "log-journal-failed",
+                &[&"journalctl not found"]
+            )]
+        );
+        assert!(tail.poll().is_empty());
+        tail.stop();
+    }
+
+    /// Closing the window stops the tail: the reader is killed and reaped.
+    #[test]
+    fn stop_kills_and_reaps_the_journal_reader() {
+        let argv = Arc::new(Mutex::new(Vec::new()));
+        let spawn = sh_spawner("exec sleep 30", argv);
+        let mut tail = JournalTail::start(&spawn, UNIT);
+        let pid = tail.child_id().expect("the reader runs");
+        assert!(Path::new(&format!("/proc/{pid}")).exists());
+        tail.stop();
+        assert!(gone(pid), "the reader {pid} outlived the stop");
+        assert_eq!(tail.child_id(), None);
+        tail.stop(); // a second stop is harmless
+    }
+
+    /// No orphan even when the tail is dropped without a stop (the tail
+    /// thread unwinding).
+    #[test]
+    fn dropping_the_journal_tail_kills_the_reader() {
+        let argv = Arc::new(Mutex::new(Vec::new()));
+        let spawn = sh_spawner("exec sleep 30", argv);
+        let tail = JournalTail::start(&spawn, UNIT);
+        let pid = tail.child_id().expect("the reader runs");
+        drop(tail);
+        assert!(gone(pid), "the reader {pid} outlived the drop");
+    }
+
+    /// journalctl(1): root and the members of systemd-journal, adm and wheel
+    /// read the system journal.
+    #[test]
+    fn the_denied_message_names_the_groups() {
+        let text = strings::t("log-journal-denied");
+        assert_ne!(text, "log-journal-denied", "the key is in the strings file");
+        for group in ["systemd-journal", "adm", "wheel"] {
+            assert!(text.contains(group), "{group} missing from {text:?}");
+        }
+        let failed = strings::fill("log-journal-failed", &[&"WHY"]);
+        assert!(failed.contains("WHY") && !failed.contains("log-journal-failed"));
+    }
+
+    #[test]
+    fn the_journal_readout_ages_from_the_last_line() {
+        assert_eq!(journal_status(None), "", "nothing yet: no readout");
+        assert_eq!(
+            journal_status(Some(Duration::from_millis(500))),
+            strings::t("updated-just-now")
+        );
+        assert_eq!(
+            journal_status(Some(Duration::from_secs(5))),
+            strings::fill("updated-seconds-ago", &[&5])
+        );
+        assert_eq!(
+            journal_status(Some(Duration::from_secs(600))),
+            strings::fill("updated-minutes-ago", &[&10])
+        );
+        assert_eq!(
+            journal_status(Some(Duration::from_secs(3 * 3600))),
+            strings::fill("updated-hours-ago", &[&3])
+        );
+    }
+
+    #[test]
+    fn the_header_names_the_file_or_the_unit() {
+        assert_eq!(header_path(&LogSource::Journal { unit: UNIT.into() }), UNIT);
+        let file = std::path::PathBuf::from("/tmp/x/logs/llama-server.log");
+        assert_eq!(
+            header_path(&LogSource::File(file.clone())),
+            file.to_string_lossy()
+        );
     }
 }

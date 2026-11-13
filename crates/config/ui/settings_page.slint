@@ -75,6 +75,7 @@ export component SettingsPage inherits ScrollView {
                 hint: Strings.t("rotate-the-log-hint");
                 CheckBox {
                     text: Strings.t("rotate-log-toggle");
+                    enabled: AppState.log_rotate_applies;
                     checked <=> AppState.log_rotate;
                     toggled => { AppState.toggle_log_rotate(); }
                 }
@@ -85,7 +86,7 @@ export component SettingsPage inherits ScrollView {
                 hint: Strings.t("only-above-hint");
                 LineEdit {
                     accessible-label: "log-rotate-kb";
-                    enabled: AppState.log_rotate;
+                    enabled: AppState.log_rotate && AppState.log_rotate_applies;
                     text <=> AppState.log_rotate_kb;
                     input-type: InputType.number;
                     placeholder-text: "1024";
@@ -101,6 +102,11 @@ export component SettingsPage inherits ScrollView {
                     vertical-alignment: center;
                     color: Palette.foreground.transparentize(Tokens.muted);
                 }
+            }
+            if !AppState.log_rotate_applies: Text {
+                text: Strings.t("log-rotate-journald");
+                wrap: word-wrap;
+                color: Palette.foreground.transparentize(Tokens.muted);
             }
         }
     }

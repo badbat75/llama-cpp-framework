@@ -249,6 +249,13 @@ pub(crate) fn log_window_e2e() {
     log_window::e2e();
 }
 
+/// The Settings tab's e2e phase (the log rotation pair per backend), for the
+/// shared UI test to call.
+#[cfg(test)]
+pub(crate) fn settings_tab_e2e() {
+    settings_tab::e2e();
+}
+
 /// The Downloads window's e2e phase, for the shared UI test to call.
 #[cfg(test)]
 pub(crate) fn downloads_window_e2e() {

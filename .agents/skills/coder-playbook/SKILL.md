@@ -81,5 +81,8 @@ Lessons only: the rules are in `AGENTS.md`.
   `pai_core::ini::text::*` (string transforms; the path writers wrap them). `presets.rs` runs its file
   logic over the `PresetFiles` trait: `Backend` in the program, the `#[cfg(test)]` `PathFiles` behind the
   old path-taking helpers (`listed_from`, `move_section`, `home_in`, `rename_in`) its unit tests call.
+- A Slint `Text` answers `ElementHandle::find_by_accessible_label` with its text; an element under
+  `if` is absent from the search, one with `visible: false` is not. A method only tests call on a
+  private type is gated `#[cfg(test)]` (dead_code otherwise).
 - A tester's e2e phase placed after `mod tests` trips clippy's `items_after_test_module`: report it
   (the tester moves the phase above `mod tests`); `cli.rs` keeps an allow only for `binding_lint`.

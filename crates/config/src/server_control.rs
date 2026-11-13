@@ -234,6 +234,95 @@ impl Backend {
     }
 }
 
+/// Where the instance's log is read from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LogSource {
+    /// The per-user file `Direct` writes (`paths::server_log`), rotated by
+    /// `runstate` (`LogRotate`, `LogRotateKb`).
+    File(PathBuf),
+    /// The journal of the instance's systemd unit, read with `journalctl`;
+    /// journald rotates it.
+    Journal { unit: String },
+}
+
+impl Backend {
+    /// Where the Log window reads the instance's log: the file on `Direct`,
+    /// the unit's journal on `Manager` (no call to the manager).
+    pub fn log_source(&self) -> LogSource {
+        match self {
+            Backend::Direct => LogSource::File(crate::paths::server_log()),
+            Backend::Manager(_) => LogSource::Journal {
+                unit: instance_unit(),
+            },
+        }
+    }
+
+    /// Whether `LogRotate` and `LogRotateKb` apply: only on `Direct`, the
+    /// journal is rotated by journald.
+    pub fn rotates_log_file(&self) -> bool {
+        matches!(self, Backend::Direct)
+    }
+}
+
+/// The systemd unit of the instance, as the manager names it.
+pub fn instance_unit() -> String {
+    format!("llama.cpp@{INSTANCE}.service")
+}
+
+/// The arguments after `journalctl` that follow `unit`'s journal, starting
+/// with its last `lines` entries.
+pub fn journalctl_args(unit: &str, lines: usize) -> Vec<String> {
+    [
+        "-u",
+        unit,
+        "-f",
+        "-n",
+        &lines.to_string(),
+        "-o",
+        "cat",
+        "--no-pager",
+    ]
+    .map(String::from)
+    .to_vec()
+}
+
+/// `journalctl` with `args`, stdin closed and both output streams piped; not
+/// spawned.
+pub fn journalctl_command(args: &[String]) -> std::process::Command {
+    use std::process::Stdio;
+    let mut cmd = std::process::Command::new("journalctl");
+    cmd.args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    cmd
+}
+
+/// Spawns the journal reader with these arguments; the child's stdout and
+/// stderr are piped.
+pub type JournalSpawn = dyn Fn(&[String]) -> std::io::Result<std::process::Child> + Send + Sync;
+
+/// The spawner the Log window uses: `journalctl_command(args).spawn()`. In a
+/// test build one that spawns nothing and fails, so no test reads the real
+/// journal.
+pub fn journal_spawner() -> &'static JournalSpawn {
+    #[cfg(test)]
+    return &|_: &[String]| {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "a test build reads no journal",
+        ))
+    };
+    #[cfg(not(test))]
+    &|args: &[String]| journalctl_command(args).spawn()
+}
+
+/// Whether journalctl's stderr says the user may not read the system journal.
+pub fn journal_access_denied(stderr: &str) -> bool {
+    stderr.contains("Hint: You are currently not seeing messages from")
+        || stderr.contains("No journal files were opened due to insufficient permissions")
+}
+
 /// The sections of the file as `backend()` reads it; none when it is missing
 /// or cannot be read.
 pub fn read_sections(file: ConfigFile) -> Vec<crate::ini::Section> {
@@ -953,6 +1042,124 @@ mod tests {
             }
             Err(e) => panic!("the probe thread panicked: {e:?}"),
         }
+    }
+
+    // ── The log, through journald on the manager ────────────────────────
+
+    #[test]
+    fn the_manager_reads_the_log_from_the_units_journal_without_a_call() {
+        let log = fake::log();
+        let b = fake::backend(FakeClient::new(&log, InstanceState::Active));
+        assert_eq!(
+            b.log_source(),
+            LogSource::Journal {
+                unit: "llama.cpp@default.service".into()
+            }
+        );
+        assert!(
+            log.lock().unwrap().is_empty(),
+            "no manager call to know where the log is"
+        );
+    }
+
+    #[test]
+    fn direct_reads_the_log_from_the_per_user_file() {
+        match Backend::Direct.log_source() {
+            LogSource::File(p) => {
+                assert_eq!(p.file_name().unwrap(), "llama-server.log", "{p:?}")
+            }
+            other => panic!("Direct reads a file, got {other:?}"),
+        }
+    }
+
+    /// `LogRotate`/`LogRotateKb` rotate the per-user file; under the manager
+    /// journald rotates the journal and they do not apply.
+    #[test]
+    fn only_direct_rotates_its_log_file() {
+        assert!(Backend::Direct.rotates_log_file());
+        let log = fake::log();
+        let b = fake::backend(FakeClient::new(&log, InstanceState::Active));
+        assert!(!b.rotates_log_file());
+        assert!(log.lock().unwrap().is_empty());
+    }
+
+    /// The manager runs `llama.cpp@<id>.service` (manager/dbus.rs).
+    #[test]
+    fn the_instance_unit_is_the_managers_template_instance() {
+        assert_eq!(instance_unit(), "llama.cpp@default.service");
+    }
+
+    /// journalctl(1), systemd 259: `-u` the unit, `-f` follow, `-n` the last
+    /// N entries first, `-o cat` the message alone, `--no-pager`. No `-q`:
+    /// it hides the access hint `journal_access_denied` reads.
+    #[test]
+    fn journalctl_args_follow_the_unit_message_only_without_a_pager() {
+        assert_eq!(
+            journalctl_args("llama.cpp@default.service", 5000),
+            [
+                "-u",
+                "llama.cpp@default.service",
+                "-f",
+                "-n",
+                "5000",
+                "-o",
+                "cat",
+                "--no-pager"
+            ]
+        );
+        let args = journalctl_args("llama.cpp@default.service", 7);
+        assert!(
+            !args.iter().any(|a| a == "-q" || a == "--quiet"),
+            "{args:?}"
+        );
+    }
+
+    #[test]
+    fn journalctl_command_runs_journalctl_with_the_args_unspawned() {
+        let args = journalctl_args("llama.cpp@default.service", 5000);
+        let cmd = journalctl_command(&args);
+        assert_eq!(cmd.get_program(), "journalctl");
+        let got: Vec<&std::ffi::OsStr> = cmd.get_args().collect();
+        let want: Vec<&std::ffi::OsStr> = args.iter().map(std::ffi::OsStr::new).collect();
+        assert_eq!(got, want);
+    }
+
+    /// No test reads the real journal: the spawner of a test build spawns
+    /// nothing and fails.
+    #[test]
+    fn the_journal_spawner_of_a_test_build_spawns_nothing() {
+        let args = journalctl_args(&instance_unit(), 10);
+        if let Ok(mut child) = journal_spawner()(&args) {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("a test build spawned a journal reader (pid {})", child.id());
+        }
+    }
+
+    /// The texts systemd's `journal_access_check_and_warn` and
+    /// `access_check_var_log_journal` (src/shared/journal-util.c) print on
+    /// stderr when the user is not root and not in a group the journal's ACL
+    /// names (systemd-journal, adm, wheel). The hint comes with exit 0 when
+    /// the user's own journal opened, the error with a failure exit when
+    /// nothing did. Captured from systemd 259 (Ubuntu).
+    #[test]
+    fn journal_access_denied_reads_systemds_permission_texts() {
+        let hint =
+            "Hint: You are currently not seeing messages from other users and the system.\n      \
+                    Users in groups 'adm', 'systemd-journal', 'wheel' can see all messages.\n      \
+                    Pass -q to turn off this notice.\n";
+        assert!(journal_access_denied(hint));
+        let short = "Hint: You are currently not seeing messages from the system.\n      \
+                     Users in the 'systemd-journal' group can see all messages. Pass -q to\n      \
+                     turn off this notice.\n";
+        assert!(journal_access_denied(short));
+        assert!(journal_access_denied(
+            "No journal files were opened due to insufficient permissions.\n"
+        ));
+        // Not a permission problem: there is simply no journal yet, or nothing.
+        assert!(!journal_access_denied("No journal files were found.\n"));
+        assert!(!journal_access_denied("-- No entries --\n"));
+        assert!(!journal_access_denied(""));
     }
 }
 

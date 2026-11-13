@@ -159,7 +159,8 @@ so the second binary, `private-ai-manager`, shares its modules: a `[[bin]]` alon
    configurator is a thin client: it keeps no check of its own; it may call the same shared code for
    feedback while the user types, but the manager's answer decides. The Windows SCM and pipe
    implementations come with slice 6.
-4. **Logs, through journald** (user, 2026-11-13). On Linux the unit writes both streams to the journal
+4. **Logs, through journald** (user, 2026-11-13; done on the configurator's side: the unit itself
+   comes with slice 5). On Linux the unit writes both streams to the journal
    (`StandardOutput=journal`, systemd's default), journald rotates them, and `LogRotate` and
    `LogRotateKb` no longer apply there (they stay for the Direct backend). The GUI's Log window and
    the tray's Open log read `journalctl -u llama.cpp@<id> -f -o cat` through the backend seam;

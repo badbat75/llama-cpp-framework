@@ -585,6 +585,9 @@ fn editable_widgets_track_model_after_edit() {
     // ── View-logs window (src/gui/log_window.rs) ─────────────────────────
     crate::gui::log_window_e2e();
 
+    // ── Settings tab: log rotation per backend (src/gui/settings_tab.rs) ─
+    crate::gui::settings_tab_e2e();
+
     // ── Downloads window (src/gui/downloads.rs) ──────────────────────────
     // Its own root window too; the wiring is driven in save_flow.
     crate::gui::downloads_window_e2e();
