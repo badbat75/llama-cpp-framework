@@ -102,7 +102,9 @@ Decisions taken with the user on 2026-11-13:
   the port, a common edit in the Server tab, would otherwise rename the unit, the config file, the log
   and the state, with a stop and start in between. The ID is short, lowercase letters, digits and `-`
   (safe in a unit name with no escaping); the first instance, and the one a migrated config becomes,
-  is `default`. The manager refuses two instances on the same port. `presets.ini` stays one file shared
+  is `default`. The ID also leaves room for two instances on the same port bound to different
+  interfaces (the user's case, 2026-11-13): the manager refuses two instances only when their address
+  and port collide, a wildcard address (`0.0.0.0`, `::`) colliding with every address on that port. `presets.ini` stays one file shared
   by every instance (no per-instance option until one is needed, W2).
 - **Linux.** A template unit `llama.cpp@.service` (`llama.cpp@default`). It runs as a dedicated system
   user (`llama-cpp`, in the GPU groups) and its `ExecStart` is a launcher that reads `server@<id>.ini`
