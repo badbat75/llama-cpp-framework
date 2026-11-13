@@ -587,7 +587,7 @@ fn gui_only_source(path: &Path) -> bool {
 /// `ini::rename_section` under it are the rename dialog's, `startup::set_enabled`
 /// is the Settings tab's, and `main` prints `gui-launch-error` on a launch with no
 /// arguments, which reads the language file.
-const GUI_ONLY_KEYS: [&str; 28] = [
+const GUI_ONLY_KEYS: [&str; 27] = [
     "claude-snippet-fit-note",
     "claude-snippet-launch",
     "claude-snippet-no-context",
@@ -611,7 +611,6 @@ const GUI_ONLY_KEYS: [&str; 28] = [
     "new-preset-id-empty",
     "new-preset-id-unchanged",
     "preset-id-charset",
-    "preset-name-taken",
     "removed-file-many",
     "removed-file-one",
     "section-exists",

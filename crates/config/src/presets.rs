@@ -70,6 +70,10 @@ use std::path::{Path, PathBuf};
 use crate::ini;
 use crate::paths;
 use crate::server_cfg;
+use pai_core::checks;
+// The startup-count tests read llama.cpp's default `ModelsMax` from here.
+#[cfg(test)]
+use pai_core::checks::LLAMA_MODELS_MAX_DEFAULT;
 
 // ── Schema: Preset + Default ─────────────────────────────────────────────
 
@@ -1311,8 +1315,7 @@ pub fn save(preset: &Preset) -> io::Result<()> {
 /// editable-id GUI change) can't corrupt the file. Emptiness is a separate
 /// check so `rename` can keep its own "…is empty" message.
 pub(crate) fn valid_id(id: &str) -> bool {
-    id.chars()
-        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_'))
+    checks::valid_preset_id(id)
 }
 
 /// Save-boundary validation, pure so the unit test never touches `paths::`:
@@ -1329,12 +1332,7 @@ pub(crate) fn valid_id(id: &str) -> bool {
 /// buried in a child process's log. The table can't produce one; a hand-edited
 /// INI can, which is exactly why the check lives at the save boundary too.
 pub(crate) fn validate_for_save(preset: &Preset) -> io::Result<()> {
-    if preset.id.is_empty() || !valid_id(&preset.id) {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            strings::fill("invalid-preset-id", &[&preset.id]),
-        ));
-    }
+    checks::preset_id(&preset.id).map_err(refused)?;
     for (field, value) in [
         ("model", &preset.model),
         ("mmproj", &preset.mmproj),
@@ -1344,7 +1342,7 @@ pub(crate) fn validate_for_save(preset: &Preset) -> io::Result<()> {
         ("reasoning-budget-message", &preset.reasoning_budget_message),
         ("fit-target", &preset.fit_target),
     ] {
-        ini::reject_comment_markers(field, value)?;
+        checks::comment_markers(field, value).map_err(refused)?;
     }
     // A comment line, so `;`/`#` are fine; a line break would end it and spill
     // the rest into the section as a key llama-server refuses.
@@ -1360,16 +1358,17 @@ pub(crate) fn validate_for_save(preset: &Preset) -> io::Result<()> {
             strings::t("placement-note-one-line"),
         ));
     }
-    validate_fit_target(&preset.fit_target)
-        .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
-    crate::tensor_override::validate(&preset.override_tensor)
-        .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
+    checks::fit_target(&preset.fit_target).map_err(refused)?;
+    checks::override_tensor(&preset.override_tensor).map_err(refused)?;
     validate_moe_cache_split(preset).map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
     Ok(())
 }
 
-/// llama.cpp's `--models-max` when server.ini sets none (`common_params::models_max`).
-pub(crate) const LLAMA_MODELS_MAX_DEFAULT: i32 = 4;
+/// A refusal of `pai_core::checks` as the error a save returns, its text in
+/// the strings file this process reads.
+fn refused(r: checks::Refusal) -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidInput, r.text())
+}
 
 /// Refuse a presets.ini whose `load-on-startup` presets (`count`) the router
 /// would not start with: more than `models_max` (server.ini `ModelsMax`, `None`
@@ -1377,16 +1376,7 @@ pub(crate) const LLAMA_MODELS_MAX_DEFAULT: i32 = 4;
 /// router's startup check compares literally instead of reading it as
 /// unlimited (`server_models::load_models`). Pure, so tests need no files.
 pub(crate) fn check_startup_count(count: usize, models_max: Option<i32>) -> io::Result<()> {
-    let max = models_max.unwrap_or(LLAMA_MODELS_MAX_DEFAULT);
-    if count == 0 || (max > 0 && count <= max as usize) {
-        return Ok(());
-    }
-    let msg = if max <= 0 {
-        strings::fill("load-on-startup-unlimited", &[&count])
-    } else {
-        strings::fill("load-on-startup-over-max", &[&count, &max])
-    };
-    Err(io::Error::new(io::ErrorKind::InvalidInput, msg))
+    checks::startup_count(count, models_max).map_err(refused)
 }
 
 /// How many presets in `enabled` would carry `load-on-startup` once `id` is
@@ -1418,11 +1408,7 @@ fn check_startup_for(preset: &Preset) -> io::Result<()> {
 /// two refusals (a dense model, a budget below one token's experts), so it lives
 /// at the save boundary every writer goes through. 0 is "no cache" and passes.
 pub fn validate_moe_cache_split(p: &Preset) -> Result<(), String> {
-    if p.moe_cache_mib.is_some_and(|v| v > 0) && p.split_mode.trim() == "tensor" {
-        Err(strings::t("moe-cache-with-tensor-split"))
-    } else {
-        Ok(())
-    }
+    checks::moe_cache_split(p.moe_cache_mib, &p.split_mode).map_err(|r| r.text())
 }
 
 /// `fit-target` as llama.cpp takes it: MiB as whole numbers, one for every
@@ -1431,15 +1417,7 @@ pub fn validate_moe_cache_split(p: &Preset) -> Result<(), String> {
 /// than passed through because llama.cpp's `std::stoull` throws on a stray
 /// word and the server then refuses to load the model.
 pub fn validate_fit_target(v: &str) -> Result<(), String> {
-    let v = v.trim();
-    if v.is_empty()
-        || v.split(',')
-            .all(|n| !n.trim().is_empty() && n.trim().bytes().all(|b| b.is_ascii_digit()))
-    {
-        Ok(())
-    } else {
-        Err(strings::fill("fit-target-format", &[&v, &"MiB"]))
-    }
+    checks::fit_target(v).map_err(|r| r.text())
 }
 
 /// Remove a preset from whichever file holds it (both, for the twin an
@@ -2533,9 +2511,10 @@ mod tests {
     // inline comments) rather than a hand-rolled `split_once('=')`, so a field
     // added to the struct/Default/from_keys but forgotten in render_section (or
     // vice-versa) fails here instead of silently not persisting.
-    #[test]
-    fn full_preset_round_trips_through_ini() {
-        let original = Preset {
+    /// A preset with every field set, shared by the round trip below and the
+    /// manager's checks' agreement with `validate_for_save`.
+    fn full_preset() -> Preset {
+        Preset {
             id: "full".into(),
             model: r"E:\m\model.gguf".into(),
             // A `#` fragment and a `;`: a key's value would lose both to the
@@ -2645,7 +2624,12 @@ mod tests {
             chat_template_kwargs: r#"{"enable_thinking":true}"#.into(),
             // Some(false): the one value that changes the launch.
             prefill_assistant: Some(false),
-        };
+        }
+    }
+
+    #[test]
+    fn full_preset_round_trips_through_ini() {
+        let original = full_preset();
 
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("presets.ini");
@@ -2659,6 +2643,61 @@ mod tests {
             !sections[0].keys.keys().any(|k| k.contains("url") || k.contains("placement")),
             "the project URL and the placement note must never become keys llama-server would refuse"
         );
+    }
+
+    /// The manager's checks (`pai_core::checks::presets_file`, run on the text
+    /// `render_section` writes) give the verdict `validate_for_save` gives
+    /// today, on every case its own tests hold. Not covered: the project URL
+    /// and the placement note, whose line break makes ordinary lines once
+    /// written, so only the configurator can see it.
+    #[test]
+    fn the_manager_checks_agree_with_validate_for_save() {
+        let base = Preset {
+            id: "m".into(),
+            model: r"C:\models\m.gguf".into(),
+            ..Default::default()
+        };
+        let with = |f: &dyn Fn(&mut Preset)| {
+            let mut p = base.clone();
+            f(&mut p);
+            p
+        };
+        let mut cases = vec![
+            full_preset(),
+            base.clone(),
+            with(&|p| p.model = r"C:\Models #1\m.gguf".into()),
+            with(&|p| p.mmproj = r"C:\a;b\m-mmproj.gguf".into()),
+            with(&|p| p.model_draft = r"C:\models\m #mtp.gguf".into()),
+            with(&|p| p.chat_template_kwargs = r##"{"tag":"#think"}"##.into()),
+            with(&|p| p.override_tensor = r"blk\.[0-9#]+\.attn=CPU".into()),
+            with(&|p| p.reasoning_budget_message = "Stop now; write the final answer.".into()),
+            with(&|p| p.fit_target = "2048 ; per GPU".into()),
+            with(&|p| p.fit_target = "1,x".into()),
+            with(&|p| p.fit_target = "2048,1024".into()),
+            with(&|p| p.override_tensor = r"token_embd\.weight=ROCm0".into()),
+            with(&|p| p.override_tensor = r"blk\.0\.ffn_up_exps".into()),
+            with(&|p| {
+                p.moe_cache_mib = Some(4096);
+                p.split_mode = "tensor".into();
+            }),
+            with(&|p| {
+                p.moe_cache_mib = Some(0);
+                p.split_mode = "tensor".into();
+            }),
+        ];
+        for id in ["", "has space", "a;b", "sec]tion", "qwen3-coder.q8_0"] {
+            cases.push(with(&|p| p.id = id.into()));
+        }
+        for p in cases {
+            let today = validate_for_save(&p);
+            let manager = pai_core::checks::presets_file(&render_section(&p), "", None);
+            assert_eq!(
+                manager.is_err(),
+                today.is_err(),
+                "[{}]: manager {manager:?}, today {today:?}",
+                p.id
+            );
+        }
     }
 
     #[test]

@@ -505,16 +505,7 @@ pub fn set_device(s: &str, index: usize, device: &str) -> String {
 /// name another machine's GPU; `build_rows` flags that as an undetected row
 /// instead, the same way the GPU distribution table does.
 pub fn validate(s: &str) -> Result<(), String> {
-    for (i, rule) in parse(s).iter().enumerate() {
-        let n = i + 1;
-        if rule.pattern.is_empty() {
-            return Err(strings::fill("override-no-pattern", &[&n]));
-        }
-        if rule.device.is_empty() {
-            return Err(strings::fill("override-no-device", &[&n, &rule.pattern]));
-        }
-    }
-    Ok(())
+    pai_core::checks::override_tensor(s).map_err(|r| r.text())
 }
 
 /// True when the rules pin the embedding table to a GPU, the one placement whose

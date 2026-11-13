@@ -106,3 +106,9 @@ Lessons only: the rules are in `AGENTS.md`.
   blocks that thread for every other call on the connection.
 - To skip one e2e phase for a red check, remove the `#[cfg(..)]` line with the call (a lone attribute
   does not compile), on a backup of the file restored after.
+- `server_cfg::render` writes ModelsDir and StateDir RESOLVED, so an unset one goes through `paths::`
+  (home dir, data root): a unit test that renders a `ServerConfig` sets both explicitly.
+- Before handing over a large set of red tests, implement a throwaway candidate in place (copy the
+  stub, the strings files and any wired file to /tmp, write the candidate, run, `cp` them all back,
+  check `git status`): it shows the fixtures can go green, so the red is the missing code and not a
+  wrong expectation.

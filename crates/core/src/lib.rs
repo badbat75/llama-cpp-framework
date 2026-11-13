@@ -2,6 +2,7 @@
 //! manager (`pai-manager`) share, with no GUI dependency: the paths, the INI
 //! files and the server config, the llama-server launch, the strings.
 
+pub mod checks;
 pub mod ini;
 pub mod launch;
 pub mod migrate;

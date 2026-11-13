@@ -13,6 +13,7 @@ use slint::SharedString;
 use crate::gui::ServerForm;
 use crate::ini;
 use crate::server_cfg;
+use pai_core::checks::PORT;
 
 /// An optional int as the text its `DefaultLineEdit` shows, falling back to
 /// `hint` when the key is unset, the server-side twin of `form::itxt` (and its
@@ -64,27 +65,28 @@ fn parse_log_level(label: &str) -> i32 {
         .unwrap_or_else(|| server_cfg::ServerConfig::default().log_verbosity_or_default())
 }
 
-/// The ports a listener can bind.
-const PORT: RangeInclusive<i32> = 1..=65535;
-
 /// Every INTEGER text field of the server form, as (server.ini key, its "default"
 /// box, its text, the values it takes): the server twin of `form::int_fields`,
 /// with the ranges `form_to_config` reads the same fields with (the
 /// thread counts are sliders, and LogVerbosity a dropdown, so neither is here).
 fn int_fields(f: &ServerForm) -> [(&'static str, bool, &str, RangeInclusive<i32>); 3] {
+    // The range of each key is `pai_core::checks::SERVER_INT_KEYS`'s, the one
+    // the manager checks server@<id>.ini with.
+    fn int<'a>(
+        key: &'static str,
+        default: bool,
+        text: &'a str,
+    ) -> (&'static str, bool, &'a str, RangeInclusive<i32>) {
+        let range = pai_core::checks::server_int_range(key).expect("a server integer key");
+        (key, default, text, range)
+    }
     [
-        ("Port", f.port_default, f.port.as_str(), PORT),
-        (
-            "ModelsMax",
-            f.models_max_default,
-            f.models_max.as_str(),
-            ini::INT_ANY,
-        ),
-        (
+        int("Port", f.port_default, f.port.as_str()),
+        int("ModelsMax", f.models_max_default, f.models_max.as_str()),
+        int(
             "ModelsMemoryMargin",
             f.models_memory_margin_default,
             f.models_memory_margin.as_str(),
-            ini::INT_NON_NEGATIVE,
         ),
     ]
 }

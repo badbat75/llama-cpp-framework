@@ -60,11 +60,13 @@ pub enum Error {
     UnresolvableHost(String),
     Service(String),
     Io(String),
+    /// The message is `Refusal::encode`'s string: the client decodes it.
+    Invalid(String),
 }
 
 /// The message is protocol data, not user text: the detail when the error
 /// has one (an instance id, a host, the service manager's own message, the
-/// I/O error kind), else the kind's own name. The client shows its own text.
+/// I/O error kind, a refusal's key and values), else the kind's own name. The client shows its own text.
 impl From<ManagerError> for Error {
     fn from(e: ManagerError) -> Self {
         match e {
@@ -76,6 +78,7 @@ impl From<ManagerError> for Error {
             ManagerError::UnresolvableHost(host) => Error::UnresolvableHost(host),
             ManagerError::Service(e) => Error::Service(e.0),
             ManagerError::Io(kind) => Error::Io(kind.to_string()),
+            ManagerError::Invalid(refusal) => Error::Invalid(refusal.encode()),
         }
     }
 }
@@ -703,6 +706,133 @@ pub(crate) fn manager_dbus_waits_e2e() {
     assert!(started.is_ok(), "the Start's own reply: {started:?}");
 }
 
+/// E2E phase for a refused write's reply over D-Bus, for this crate's e2e
+/// test to call (it sets the process-wide `PRIVATE_AI_DATA_ROOT` redirect,
+/// `src/tests/mod.rs`): the client gets `org.privateai.Manager1.Error.Invalid`
+/// and reads the refusal back, key and values, with `Refusal::decode`.
+#[cfg(test)]
+pub(crate) fn manager_dbus_checks_e2e() {
+    use super::service::fakes::{FakeAuthority, FakeResolver, FakeService};
+    use pai_core::checks::Refusal;
+    use std::os::unix::net::UnixStream;
+    use std::time::Duration;
+    use zbus::blocking::connection::Builder;
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    crate::paths::redirect_for_tests(dir.path());
+    let sys = crate::paths::system_config_dir();
+    std::fs::create_dir_all(&sys).expect("system config dir");
+    let default_ini = "[Server]\nPort = 8080\nHostname = 127.0.0.1\n";
+    let presets = "[Qwen3.8-27B]\nmodel = /models/Qwen3.8-27B-Q8_0.gguf\n";
+    std::fs::write(sys.join("server@default.ini"), default_ini).expect("write default");
+    std::fs::write(sys.join("presets.ini"), presets).expect("write presets");
+
+    let core = Arc::new(Manager::new(
+        FakeService::new(),
+        FakeAuthority::new(true),
+        FakeResolver::lan(),
+    ));
+    let (s0, s1) = UnixStream::pair().expect("socket pair");
+    let iface = ManagerInterface::new(core);
+    let server = std::thread::spawn(move || {
+        Builder::async_io_unix_stream(s0)
+            .server(zbus::Guid::generate())
+            .expect("server guid")
+            .p2p()
+            .serve_at(OBJECT_PATH, iface)
+            .expect("serve_at")
+            .build()
+            .expect("server connection")
+    });
+    let client = Builder::async_io_unix_stream(s1)
+        .p2p()
+        .method_timeout(Duration::from_secs(10))
+        .build()
+        .expect("client connection");
+    client
+        .inner()
+        .set_unique_name(":1.42")
+        .expect("unique name");
+    let _server = server.join().expect("server thread");
+
+    // A WriteFile: Ok, or Err((error name, message)).
+    let write = |name: &str, contents: &str| -> Result<(), (String, String)> {
+        client
+            .call_method(
+                None::<&str>,
+                OBJECT_PATH,
+                Some(INTERFACE),
+                "WriteFile",
+                &(name, contents),
+            )
+            .map(|_| ())
+            .map_err(|e| match e {
+                zbus::Error::MethodError(name, detail, _) => {
+                    (name.to_string(), detail.unwrap_or_default())
+                }
+                other => panic!("WriteFile: not a method error reply: {other:?}"),
+            })
+    };
+    let refusal = |key: &'static str, values: &[&str]| Refusal {
+        key,
+        values: values.iter().map(|v| v.to_string()).collect(),
+    };
+    let invalid = "org.privateai.Manager1.Error.Invalid";
+
+    let (name, message) = write(
+        "server@default.ini",
+        "[Server]\nPort = 70000\nHostname = 127.0.0.1\n",
+    )
+    .expect_err("an invalid port");
+    assert_eq!(name, invalid);
+    assert_eq!(
+        Refusal::decode(&message),
+        Some(refusal(
+            "not-whole-number-in-range",
+            &["Port", "70000", "1", "65535"]
+        )),
+        "{message:?}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(sys.join("server@default.ini")).unwrap(),
+        default_ini,
+        "refused: the file kept"
+    );
+
+    // A value with spaces, a backslash and a non-ASCII letter comes back whole.
+    let hostile = "[Qwen 3 (v2) é]\nmodel = /models/q.gguf\n";
+    let (name, message) = write("presets.ini", hostile).expect_err("an invalid id");
+    assert_eq!(name, invalid);
+    assert_eq!(
+        Refusal::decode(&message),
+        Some(refusal("invalid-preset-id", &["Qwen 3 (v2) é"])),
+        "{message:?}"
+    );
+    let (name, message) = write(
+        "presets.ini",
+        &format!("{presets}[m]\nmodel = /models/m.gguf\noverride-tensor = blk\\.0\\.ffn_up_exps\n"),
+    )
+    .expect_err("an override with no device");
+    assert_eq!(name, invalid);
+    assert_eq!(
+        Refusal::decode(&message),
+        Some(refusal(
+            "override-no-device",
+            &["1", r"blk\.0\.ffn_up_exps"]
+        )),
+        "{message:?}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(sys.join("presets.ini")).unwrap(),
+        presets,
+        "refused: the file kept"
+    );
+
+    // A valid write still goes through.
+    let more = format!("{presets}[m]\nmodel = /models/m.gguf\nctx-size = 8192\n");
+    assert_eq!(write("presets.ini", &more), Ok(()));
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -748,6 +878,13 @@ mod tests {
                 "Service",
             ),
             (ManagerError::Io(ErrorKind::PermissionDenied), "Io"),
+            (
+                ManagerError::Invalid(pai_core::checks::Refusal {
+                    key: "comment-markers",
+                    values: vec!["ModelsDir".into()],
+                }),
+                "Invalid",
+            ),
         ];
         for (error, kind) in cases {
             let (name, message) = error_reply(&error);
@@ -774,6 +911,30 @@ mod tests {
         ] {
             let (_, m) = error_reply(&ManagerError::Io(kind));
             assert!(m.contains(&kind.to_string()), "io kind {kind:?}: {m:?}");
+        }
+    }
+
+    /// The client reads the refusal back from the message, key and values.
+    #[test]
+    fn an_invalid_reply_carries_the_refusal() {
+        use pai_core::checks::Refusal;
+        for refusal in [
+            Refusal {
+                key: "load-on-startup-over-max",
+                values: vec!["3".into(), "2".into()],
+            },
+            Refusal {
+                key: "moe-cache-with-tensor-split",
+                values: vec![],
+            },
+            Refusal {
+                key: "comment-markers",
+                values: vec!["OpencodeApiKey".into()],
+            },
+        ] {
+            let (name, message) = error_reply(&ManagerError::Invalid(refusal.clone()));
+            assert_eq!(name, format!("{PREFIX}Invalid"));
+            assert_eq!(Refusal::decode(&message), Some(refusal), "{message:?}");
         }
     }
 

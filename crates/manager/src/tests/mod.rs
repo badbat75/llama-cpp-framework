@@ -15,6 +15,9 @@ fn data_root_e2e() {
     // ── Manager core while polkit waits for a password ──────────────────
     crate::manager::service::manager_waits_e2e();
 
+    // ── Manager core: the content checks before a write ─────────────────
+    crate::manager::service::manager_checks_e2e();
+
     // ── Manager over D-Bus (manager/dbus.rs `ManagerInterface`) ──────────
     // Served peer to peer on a socket pair, no bus.
     #[cfg(target_os = "linux")]
@@ -23,4 +26,8 @@ fn data_root_e2e() {
     // ── Manager over D-Bus while polkit waits for a password ────────────
     #[cfg(target_os = "linux")]
     crate::manager::dbus::manager_dbus_waits_e2e();
+
+    // ── Manager over D-Bus: a refused write's key and values ─────────────
+    #[cfg(target_os = "linux")]
+    crate::manager::dbus::manager_dbus_checks_e2e();
 }

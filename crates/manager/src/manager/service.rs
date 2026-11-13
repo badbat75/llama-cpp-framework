@@ -82,6 +82,8 @@ pub enum ManagerError {
     Service(ServiceError),
     /// Reading or writing the file failed.
     Io(std::io::ErrorKind),
+    /// The contents fail a check of `pai_core::checks`; nothing was written.
+    Invalid(pai_core::checks::Refusal),
 }
 
 /// A file of the system config directory the manager serves.
@@ -260,6 +262,7 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
         let file = config_file(name).ok_or(ManagerError::BadFileName)?;
         // A poisoned lock is taken over: it guards no data of its own.
         let _writing = self.writing.lock().unwrap_or_else(|e| e.into_inner());
+        check_contents(&file, contents).map_err(ManagerError::Invalid)?;
         if let ConfigFile::Instance(id) = &file {
             self.check_address(id, contents)?;
         }
@@ -307,6 +310,36 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
             }
         }
         Ok(())
+    }
+}
+
+/// The content checks of `file` for `contents`, against the files on disk:
+/// an instance file against `presets.ini`, `presets.ini` against every
+/// instance's `ModelsMax` (each serves it: the lowest decides), the disabled
+/// presets against both preset files.
+fn check_contents(file: &ConfigFile, contents: &str) -> Result<(), pai_core::checks::Refusal> {
+    use pai_core::checks;
+    let dir = crate::paths::system_config_dir();
+    let on_disk = |name: &str| std::fs::read_to_string(dir.join(name)).unwrap_or_default();
+    match file {
+        ConfigFile::Instance(_) => checks::server_file(contents, &on_disk("presets.ini")),
+        ConfigFile::Presets => {
+            let models_max = crate::paths::instance_ids()
+                .iter()
+                .filter_map(|id| crate::paths::instance_ini(id))
+                .map(|path| {
+                    crate::server_cfg::load_from(&path)
+                        .models_max
+                        .unwrap_or(checks::LLAMA_MODELS_MAX_DEFAULT)
+                })
+                .min();
+            checks::presets_file(contents, &on_disk("presets.ini"), models_max)
+        }
+        ConfigFile::PresetsDisabled => checks::presets_disabled_file(
+            contents,
+            &on_disk("presets.ini.disabled"),
+            &on_disk("presets.ini"),
+        ),
     }
 }
 
@@ -1381,6 +1414,238 @@ pub(crate) fn manager_waits_e2e() {
                  first {first:?}, second {second:?}; lan-a written {a}, lan-b written {b}"
             ),
         }
+    }
+}
+
+/// E2E phase for the content checks of `write_file`, for this crate's e2e
+/// test to call (it sets the process-wide `PRIVATE_AI_DATA_ROOT` redirect,
+/// `src/tests/mod.rs`). Invalid contents are refused with the check's
+/// refusal after the authorization, and nothing is written.
+#[cfg(test)]
+pub(crate) fn manager_checks_e2e() {
+    use fakes::{FakeAuthority, FakeResolver, FakeService};
+    use pai_core::checks::Refusal;
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    crate::paths::redirect_for_tests(dir.path());
+    let sys = crate::paths::system_config_dir();
+    let alice = Caller(":1.42".into());
+    let manager = |allow: bool| {
+        Manager::new(
+            FakeService::new(),
+            FakeAuthority::new(allow),
+            FakeResolver::lan(),
+        )
+    };
+    let refusal = |key: &'static str, values: &[&str]| Refusal {
+        key,
+        values: values.iter().map(|v| v.to_string()).collect(),
+    };
+    let invalid =
+        |key: &'static str, values: &[&str]| Err(ManagerError::Invalid(refusal(key, values)));
+    let read = |name: &str| std::fs::read_to_string(sys.join(name)).ok();
+    let listing = || -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(&sys)
+            .map(|rd| {
+                rd.flatten()
+                    .map(|e| e.file_name().to_string_lossy().into_owned())
+                    .collect()
+            })
+            .unwrap_or_default();
+        names.sort();
+        names
+    };
+    let flagged = |ids: &[&str]| -> String {
+        ids.iter()
+            .map(|id| format!("[{id}]\nmodel = /models/{id}.gguf\nload-on-startup = true\n"))
+            .collect()
+    };
+
+    // ── A refused caller is told only that: no check runs first ──────────
+    {
+        let m = manager(false);
+        assert_eq!(
+            m.write_file(&alice, "server@default.ini", "[Server]\nPort = 0\n"),
+            Err(ManagerError::NotAuthorized)
+        );
+        assert_eq!(
+            m.write_file(&alice, "presets.ini", "[a b]\nmodel = /m/a.gguf\n"),
+            Err(ManagerError::NotAuthorized)
+        );
+        assert!(!sys.exists(), "nothing created");
+    }
+
+    // ── An invalid instance file: refused, nothing created ───────────────
+    {
+        let m = manager(true);
+        assert_eq!(
+            m.write_file(&alice, "server@default.ini", "[Server]\nPort = 0\n"),
+            invalid("not-whole-number-in-range", &["Port", "0", "1", "65535"])
+        );
+        assert!(listing().is_empty(), "nothing written: {:?}", listing());
+        assert_eq!(
+            m.write_file(
+                &alice,
+                "server@default.ini",
+                "[Server]\nPort = 8081\nHostname = 127.0.0.1\nModelsDir = /models #1\n"
+            ),
+            invalid("comment-markers", &["ModelsDir"])
+        );
+        assert!(listing().is_empty(), "nothing written: {:?}", listing());
+        assert_eq!(
+            m.list_instances(),
+            Vec::<String>::new(),
+            "no instance added"
+        );
+    }
+
+    // ── Valid files are written; then an invalid rewrite keeps the old ───
+    let default_ini = "[Server]\nPort = 8081\nHostname = 127.0.0.1\nModelsMax = 2\n";
+    let presets = "[Qwen3.8-27B]\nmodel = /models/Qwen3.8-27B-Q8_0.gguf\nctx-size = 172032\n";
+    {
+        let m = manager(true);
+        assert_eq!(
+            m.write_file(&alice, "server@default.ini", default_ini),
+            Ok(())
+        );
+        assert_eq!(m.write_file(&alice, "presets.ini", presets), Ok(()));
+
+        assert_eq!(
+            m.write_file(
+                &alice,
+                "server@default.ini",
+                "[Server]\nPort = 8081\nHostname = 127.0.0.1\nModelsMemoryMargin = -1\n"
+            ),
+            invalid(
+                "not-whole-number-in-range",
+                &["ModelsMemoryMargin", "-1", "0", "2147483647"]
+            )
+        );
+        assert_eq!(
+            read("server@default.ini").as_deref(),
+            Some(default_ini),
+            "old kept"
+        );
+
+        let bad = format!("{presets}[Other]\nmodel = C:\\Models #1\\o.gguf\n");
+        assert_eq!(
+            m.write_file(&alice, "presets.ini", &bad),
+            invalid("comment-markers", &["model"])
+        );
+        let bad = format!(
+            "{presets}[Other]\nmodel = /models/o.gguf\nmoe-cache-mib = 4096\nsplit-mode = tensor\n"
+        );
+        assert_eq!(
+            m.write_file(&alice, "presets.ini", &bad),
+            invalid("moe-cache-with-tensor-split", &[])
+        );
+        assert_eq!(read("presets.ini").as_deref(), Some(presets), "old kept");
+        assert_eq!(
+            listing(),
+            ["presets.ini", "server@default.ini"],
+            "no temp file left"
+        );
+        assert!(
+            m.service().calls.lock().unwrap().is_empty(),
+            "a write calls no service"
+        );
+    }
+
+    // ── load-on-startup against the instances' ModelsMax ─────────────────
+    {
+        let m = manager(true);
+        // default's ModelsMax is 2.
+        assert_eq!(
+            m.write_file(&alice, "presets.ini", &flagged(&["a", "b", "c"])),
+            invalid("load-on-startup-over-max", &["3", "2"])
+        );
+        assert_eq!(read("presets.ini").as_deref(), Some(presets));
+        assert_eq!(
+            m.write_file(&alice, "presets.ini", &flagged(&["a", "b"])),
+            Ok(())
+        );
+        // Lowering ModelsMax under them is refused too.
+        assert_eq!(
+            m.write_file(
+                &alice,
+                "server@default.ini",
+                "[Server]\nPort = 8081\nHostname = 127.0.0.1\nModelsMax = 1\n"
+            ),
+            invalid("load-on-startup-over-max", &["2", "1"])
+        );
+        assert_eq!(read("server@default.ini").as_deref(), Some(default_ini));
+        // So is a new instance that could not start with them.
+        assert_eq!(
+            m.write_file(
+                &alice,
+                "server@lan-2.ini",
+                "[Server]\nPort = 8082\nHostname = 127.0.0.1\nModelsMax = 0\n"
+            ),
+            invalid("load-on-startup-unlimited", &["2"])
+        );
+        assert!(read("server@lan-2.ini").is_none(), "not written");
+        // Every instance serves presets.ini: the lowest ModelsMax decides.
+        assert_eq!(
+            m.write_file(
+                &alice,
+                "server@lan-2.ini",
+                "[Server]\nPort = 8082\nHostname = 127.0.0.1\nModelsMax = 3\n"
+            ),
+            Ok(())
+        );
+        assert_eq!(
+            m.write_file(&alice, "presets.ini", &flagged(&["a", "b", "c"])),
+            invalid("load-on-startup-over-max", &["3", "2"])
+        );
+        assert_eq!(read("presets.ini"), Some(flagged(&["a", "b"])));
+    }
+
+    // ── A broken section already on disk blocks no other write ───────────
+    let broken = "[old]\nmodel = /models/old.gguf\nctx-size = abc\n";
+    {
+        let m = manager(true);
+        std::fs::write(sys.join("presets.ini"), broken).expect("hand-edited fixture");
+        let added = format!("{broken}[new]\nmodel = /models/new.gguf\n");
+        assert_eq!(m.write_file(&alice, "presets.ini", &added), Ok(()));
+        assert_eq!(read("presets.ini"), Some(added.clone()));
+        let edited = format!("{broken}[new]\nmodel = /models/new.gguf\nparallel = 0\n");
+        assert_eq!(
+            m.write_file(&alice, "presets.ini", &edited),
+            invalid(
+                "not-whole-number-in-range",
+                &["parallel", "0", "1", "2147483647"]
+            )
+        );
+        assert_eq!(read("presets.ini"), Some(added));
+    }
+
+    // ── presets.ini.disabled: switching off is never refused ─────────────
+    {
+        let m = manager(true);
+        // The broken preset moves out of presets.ini unchanged: accepted.
+        assert_eq!(m.write_file(&alice, "presets.ini.disabled", broken), Ok(()));
+        assert_eq!(read("presets.ini.disabled").as_deref(), Some(broken));
+        // A disabled preset edited now gets the preset rules.
+        let edited = format!("{broken}[parked]\nmodel = /models/p.gguf\nfit-target = 2048MiB\n");
+        assert_eq!(
+            m.write_file(&alice, "presets.ini.disabled", &edited),
+            invalid("fit-target-format", &["2048MiB", "MiB"])
+        );
+        assert_eq!(read("presets.ini.disabled").as_deref(), Some(broken));
+        // No startup count: llama-server never reads this file.
+        let many = format!("{broken}{}", flagged(&["a", "b", "c", "d", "e"]));
+        assert_eq!(m.write_file(&alice, "presets.ini.disabled", &many), Ok(()));
+        // Switching the broken one back on: new in presets.ini, so checked.
+        let enabled = "[new]\nmodel = /models/new.gguf\n";
+        std::fs::write(sys.join("presets.ini"), enabled).expect("presets.ini fixture");
+        let on = format!("{enabled}{broken}");
+        assert_eq!(
+            m.write_file(&alice, "presets.ini", &on),
+            invalid(
+                "not-whole-number-in-range",
+                &["ctx-size", "abc", "1", "2147483647"]
+            )
+        );
     }
 }
 

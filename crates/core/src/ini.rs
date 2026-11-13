@@ -113,13 +113,8 @@ fn strip_inline_comment(val: &str) -> &str {
 /// here instead, so the user gets an error naming the field rather than a
 /// config that quietly points somewhere else.
 pub fn reject_comment_markers(field: &str, value: &str) -> std::io::Result<()> {
-    if value.contains([';', '#']) {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            strings::fill("comment-markers", &[&field]),
-        ));
-    }
-    Ok(())
+    crate::checks::comment_markers(field, value)
+        .map_err(|r| std::io::Error::new(std::io::ErrorKind::InvalidInput, r.text()))
 }
 
 /// Read only the named section's keys, or empty if not present.

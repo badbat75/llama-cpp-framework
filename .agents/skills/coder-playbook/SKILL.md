@@ -60,5 +60,9 @@ Lessons only: the rules are in `AGENTS.md`.
   skia-bindings (slint `renderer-skia`) has no prebuilt binaries for `windows-gnu` (404) and its full
   build asserts an MSVC install (`win_vc`); its build.rs also wants `build/windows/llama.cpp` unless
   `PRIVATE_AI_LLAMA_CPP_DIR` names a clone. Check windows-sys signatures in `~/.cargo/registry`.
+- `binding_lint` counts a key's values only at a literal `strings::fill("key", &[..])`: a key marked
+  with `strings::key` in a table (outside a fn with such a fill) must take no `{N}`. A key carried in a
+  value and shown later (`checks::Refusal::text`) gets one literal `fill` arm per key. A key that moves
+  into a source the CLI reaches leaves `GUI_ONLY_KEYS` and goes in `cli.toml`.
 - Never `git stash` to compare against HEAD: other agents edit the same working tree at the same time.
   Use `git worktree add` or `git show HEAD:<path>` instead.

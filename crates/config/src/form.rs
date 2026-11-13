@@ -11,6 +11,7 @@ use slint::SharedString;
 
 use crate::gui::PresetForm;
 use crate::{ini, presets, server_cfg};
+use pai_core::checks::{NGRAM_DRAFT, NGRAM_HITS, NGRAM_SIZE};
 
 /// The preset's string value, or the schema default when it's empty, so the
 /// form's text defaults track `Preset::default()` instead of being re-hardcoded.
@@ -139,12 +140,6 @@ const HINT_SPEC_NGRAM_MAP_K_SIZE_M: i32 = 48;
 const HINT_SPEC_NGRAM_MAP_K4V_SIZE_N: i32 = 12;
 const HINT_SPEC_NGRAM_MAP_K4V_SIZE_M: i32 = 48;
 const HINT_SPEC_NGRAM_MAP_K4V_MIN_HITS: i32 = 1;
-/// The ranges llama.cpp's argument parser accepts for the `--spec-ngram-*`
-/// keys (common/arg.cpp): a lookup or draft length, a draft-count bound (0 is
-/// valid) and a hit count (stored as a `uint16_t`).
-const NGRAM_SIZE: RangeInclusive<i32> = 1..=1024;
-const NGRAM_DRAFT: RangeInclusive<i32> = 0..=1024;
-const NGRAM_HITS: RangeInclusive<i32> = 1..=u16::MAX as i32;
 // --image-min/max-tokens have no fixed llama.cpp numeric default (their -1 = read
 // from the model), so the box parks on a sane value the way --ctx-size does: the
 // 1024 llama.cpp itself suggests for Qwen-VL grounding, and a matching upper bound.
@@ -625,175 +620,125 @@ pub fn form_to_preset(f: &PresetForm) -> presets::Preset {
 /// `PresetForm` struct in ui/types.slint, so a new integer field that skips it
 /// fails a test instead of saving a mistyped number as an absent key.
 fn int_fields(f: &PresetForm) -> [(&'static str, bool, &str, RangeInclusive<i32>); 29] {
+    // The range of each key is `pai_core::checks::PRESET_INT_KEYS`'s, the one
+    // the manager checks presets.ini with.
+    fn int<'a>(
+        key: &'static str,
+        default: bool,
+        text: &'a str,
+    ) -> (&'static str, bool, &'a str, RangeInclusive<i32>) {
+        let range = pai_core::checks::preset_int_range(key).expect("a preset integer key");
+        (key, default, text, range)
+    }
     [
-        (
+        int(
             "image-min-tokens",
             f.image_min_tokens_default,
             f.image_min_tokens.as_str(),
-            ini::INT_POSITIVE,
         ),
-        (
+        int(
             "image-max-tokens",
             f.image_max_tokens_default,
             f.image_max_tokens.as_str(),
-            ini::INT_POSITIVE,
         ),
-        (
+        int(
             "spec-draft-n-max",
             f.spec_draft_n_max_default,
             f.spec_draft_n_max.as_str(),
-            ini::INT_POSITIVE,
         ),
-        (
+        int(
             "spec-draft-n-min",
             f.spec_draft_n_min_default,
             f.spec_draft_n_min.as_str(),
-            ini::INT_NON_NEGATIVE,
         ),
-        (
+        int(
             "spec-draft-n-ubatch",
             f.spec_draft_n_ubatch_default,
             f.spec_draft_n_ubatch.as_str(),
-            ini::INT_NON_NEGATIVE,
         ),
-        (
+        int(
             "moe-cache-mib",
             f.moe_cache_mib_default,
             f.moe_cache_mib.as_str(),
-            ini::INT_NON_NEGATIVE,
         ),
-        (
-            "ctx-size",
-            f.ctx_size_default,
-            f.ctx_size.as_str(),
-            ini::INT_POSITIVE,
-        ),
-        (
-            "parallel",
-            f.parallel_default,
-            f.parallel.as_str(),
-            ini::INT_POSITIVE,
-        ),
-        (
+        int("ctx-size", f.ctx_size_default, f.ctx_size.as_str()),
+        int("parallel", f.parallel_default, f.parallel.as_str()),
+        int(
             "kv-unified-per-slot",
             f.kv_unified_per_slot_default,
             f.kv_unified_per_slot.as_str(),
-            ini::INT_POSITIVE,
         ),
-        (
-            "batch-size",
-            f.batch_size_default,
-            f.batch_size.as_str(),
-            ini::INT_POSITIVE,
-        ),
-        (
-            "ubatch-size",
-            f.ubatch_size_default,
-            f.ubatch_size.as_str(),
-            ini::INT_POSITIVE,
-        ),
-        (
-            "cache-ram",
-            f.cache_ram_default,
-            f.cache_ram.as_str(),
-            ini::INT_ANY,
-        ),
-        (
-            "cache-reuse",
-            f.cache_reuse_default,
-            f.cache_reuse.as_str(),
-            ini::INT_POSITIVE,
-        ),
-        (
+        int("batch-size", f.batch_size_default, f.batch_size.as_str()),
+        int("ubatch-size", f.ubatch_size_default, f.ubatch_size.as_str()),
+        int("cache-ram", f.cache_ram_default, f.cache_ram.as_str()),
+        int("cache-reuse", f.cache_reuse_default, f.cache_reuse.as_str()),
+        int(
             "ctx-checkpoints",
             f.ctx_checkpoints_default,
             f.ctx_checkpoints.as_str(),
-            ini::INT_NON_NEGATIVE,
         ),
-        (
+        int(
             "checkpoint-min-step",
             f.checkpoint_min_step_default,
             f.checkpoint_min_step.as_str(),
-            ini::INT_NON_NEGATIVE,
         ),
-        (
-            "fit-ctx",
-            f.fit_ctx_default,
-            f.fit_ctx.as_str(),
-            ini::INT_POSITIVE,
-        ),
-        (
+        int("fit-ctx", f.fit_ctx_default, f.fit_ctx.as_str()),
+        int(
             "reasoning-budget",
             f.reasoning_budget_default,
             f.reasoning_budget.as_str(),
-            ini::INT_ANY,
         ),
-        (
-            "n-predict",
-            f.n_predict_default,
-            f.n_predict.as_str(),
-            ini::INT_ANY,
-        ),
-        ("top-k", f.top_k_default, f.top_k.as_str(), ini::INT_ANY),
-        (
+        int("n-predict", f.n_predict_default, f.n_predict.as_str()),
+        int("top-k", f.top_k_default, f.top_k.as_str()),
+        int(
             "spec-ngram-mod-n-match",
             f.spec_ngram_mod_n_match_default,
             f.spec_ngram_mod_n_match.as_str(),
-            NGRAM_SIZE,
         ),
-        (
+        int(
             "spec-ngram-mod-n-min",
             f.spec_ngram_mod_n_min_default,
             f.spec_ngram_mod_n_min.as_str(),
-            NGRAM_DRAFT,
         ),
-        (
+        int(
             "spec-ngram-mod-n-max",
             f.spec_ngram_mod_n_max_default,
             f.spec_ngram_mod_n_max.as_str(),
-            NGRAM_DRAFT,
         ),
-        (
+        int(
             "spec-ngram-simple-size-n",
             f.spec_ngram_simple_size_n_default,
             f.spec_ngram_simple_size_n.as_str(),
-            NGRAM_SIZE,
         ),
-        (
+        int(
             "spec-ngram-simple-size-m",
             f.spec_ngram_simple_size_m_default,
             f.spec_ngram_simple_size_m.as_str(),
-            NGRAM_SIZE,
         ),
-        (
+        int(
             "spec-ngram-map-k-size-n",
             f.spec_ngram_map_k_size_n_default,
             f.spec_ngram_map_k_size_n.as_str(),
-            NGRAM_SIZE,
         ),
-        (
+        int(
             "spec-ngram-map-k-size-m",
             f.spec_ngram_map_k_size_m_default,
             f.spec_ngram_map_k_size_m.as_str(),
-            NGRAM_SIZE,
         ),
-        (
+        int(
             "spec-ngram-map-k4v-size-n",
             f.spec_ngram_map_k4v_size_n_default,
             f.spec_ngram_map_k4v_size_n.as_str(),
-            NGRAM_SIZE,
         ),
-        (
+        int(
             "spec-ngram-map-k4v-size-m",
             f.spec_ngram_map_k4v_size_m_default,
             f.spec_ngram_map_k4v_size_m.as_str(),
-            NGRAM_SIZE,
         ),
-        (
+        int(
             "spec-ngram-map-k4v-min-hits",
             f.spec_ngram_map_k4v_min_hits_default,
             f.spec_ngram_map_k4v_min_hits.as_str(),
-            NGRAM_HITS,
         ),
     ]
 }
