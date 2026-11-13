@@ -31,6 +31,11 @@
 //!   /usr/share/private-ai/licenses/<component>/
 //!                         the licence texts of each package
 //!   /usr/share/           the desktop entry, its icon, the copyright file
+//!   /usr/lib/systemd/system/, /usr/lib/sysusers.d/, /usr/share/dbus-1/,
+//!   /usr/share/polkit-1/  the system files of the services, in the llama.cpp
+//!                         package (linux/system_files.rs), with the
+//!                         maintainer scripts that create the service user and
+//!                         enable, start and stop the manager
 //!
 //! pai-config and llama.cpp carry <framework>+llama.cpp.<tag> as version
 //! and require each other's exact one, in that direction. A runtime carries its
@@ -39,11 +44,13 @@
 //! is skipped at start with nothing but a log line.
 //!
 //! The config files (server.ini, presets.ini, presets.ini.disabled,
-//! settings.ini) are NOT in the package: pai-config
-//! writes them per user, in ~/.config/private-ai, on first use.
+//! settings.ini) are NOT in the package: pai-config writes them per user, in
+//! ~/.config/private-ai, on first use; the services' /etc/private-ai is
+//! created by systemd at the manager's start (ConfigurationDirectory=).
 
 use super::build_llama::load_build_env;
 use super::dists;
+use super::system_files;
 use crate::common::components::{self, Component};
 use crate::common::configurator::set_mode;
 use crate::common::licenses;
@@ -140,6 +147,12 @@ fn rpm_spec(f: &Fields, license: &str, libraries: &str, root: &Path) -> String {
             files.push('\n');
         }
     }
+    // The system files by name: systemd, dbus and polkit own their directories.
+    for (rel, _) in system_files::files() {
+        if root.join(rel).is_file() {
+            files.push_str(&format!("/{rel}\n"));
+        }
+    }
     format!(
         r#"Name:           {package}
 Version:        {version}
@@ -156,6 +169,9 @@ License:        {license}
 %global _build_id_links none
 %global _binary_payload w3T0.zstdio
 %global __provides_exclude_from ^/{LIB_DIR}/.*$
+# The groups of the sysusers.d m lines (render, video) may be provided by no
+# package; the m line creates a missing one anyway.
+%global _use_weak_usergroup_deps 1
 %global __requires_exclude ^({libraries}|libcuda)\\.so
 
 %description
@@ -163,7 +179,7 @@ License:        {license}
 %install
 cp -a "{root}/." "%{{buildroot}}/"
 
-%files
+{scriptlets}%files
 %defattr(-,root,root,-)
 {files}"#,
         version = f.version,
@@ -171,6 +187,7 @@ cp -a "{root}/." "%{{buildroot}}/"
         description = f.description,
         relations = rpm_relations(f),
         root = root.display(),
+        scriptlets = system_files::rpm_scriptlets(f.component),
     )
 }
 
@@ -604,6 +621,9 @@ pub fn run(want_deb: bool, want_rpm: bool, keep_staging: bool) -> Result<()> {
         ui::warn("No PNG frame in resources/llama.ico: the desktop entry ships without an icon");
     }
 
+    // ── The services' system files ──────────────────────────────────────
+    system_files::stage(&stage)?;
+
     // ── One tree per package ────────────────────────────────────────────
     let roots = pkg_work.join("roots");
     let present = components::split(&stage, &roots)?;
@@ -712,8 +732,8 @@ pub fn run(want_deb: bool, want_rpm: bool, keep_staging: bool) -> Result<()> {
         }
     }
 
-    // No maintainer scripts: the package ships no config directory,
-    // pai-config writes ~/.config/private-ai as whoever runs it.
+    // The maintainer scripts (the llama.cpp package's only) are written by
+    // build_deb and rpm_spec.
 
     let repo_git =
         |args: &[&str]| output(cmd("git").arg("-C").arg(&repo).args(args)).unwrap_or_default();
@@ -994,6 +1014,10 @@ fn rpm_relations(f: &Fields) -> String {
     }
     if f.component == Component::Llama {
         lines.push("Conflicts:      llama-cpp".into());
+        // What the scriptlets run (Fedora's %systemd_requires, plus %posttrans).
+        for tag in ["post", "preun", "postun", "posttrans"] {
+            lines.push(format!("Requires({tag}): systemd"));
+        }
     }
     lines.join("\n")
 }
@@ -1115,6 +1139,14 @@ fn build_deb(
             format!("{depends}, {exact}")
         };
     }
+    let scripts = system_files::deb_depends(f.component);
+    if !scripts.is_empty() {
+        depends = if depends.is_empty() {
+            scripts.to_string()
+        } else {
+            format!("{depends}, {scripts}")
+        };
+    }
 
     std::fs::create_dir_all(root.join("DEBIAN"))?;
     let installed_size = output(cmd("du").args(["-sk", "--exclude=DEBIAN"]).arg(root))
@@ -1124,6 +1156,7 @@ fn build_deb(
         root.join("DEBIAN/control"),
         deb_control(f, arch, maintainer, &installed_size, &depends),
     )?;
+    system_files::write_deb_scripts(root, f.component)?;
     // zstd: the tree is several GiB of GPU kernels and xz would take many
     // minutes.
     let status = cmd("dpkg-deb")
@@ -1600,6 +1633,14 @@ mod tests {
                     "/usr/share/doc",
                     "/usr/share/applications",
                     "/usr/share/icons",
+                    "/usr/lib/systemd",
+                    "/usr/lib/systemd/system",
+                    "/usr/lib/sysusers.d",
+                    "/usr/share/dbus-1",
+                    "/usr/share/dbus-1/system.d",
+                    "/usr/share/polkit-1",
+                    "/usr/share/polkit-1/actions",
+                    "/etc",
                 ]
                 .contains(&line.as_str()),
                 "{line} would own a directory of the system:\n{spec}"
@@ -1779,5 +1820,108 @@ mod tests {
         .collect();
         assert_eq!(private_library_dirs(&roots, &present), want);
         std::fs::remove_dir_all(&roots).unwrap();
+    }
+
+    // ── The system files of the services ────────────────────────────────
+
+    /// The units call pai-manager by full path, where `place` puts it.
+    #[test]
+    fn the_units_run_pai_manager_where_the_package_places_it() {
+        use super::super::system_files::{instance_unit, manager_unit};
+        let exe = format!("/{}", place("pai-manager"));
+        let manager = manager_unit();
+        assert!(
+            manager.contains(&format!("\nExecStart={exe} serve\n")),
+            "{manager}"
+        );
+        let instance = instance_unit();
+        assert!(
+            instance.contains(&format!("\nExecStart={exe} run-instance %i\n")),
+            "{instance}"
+        );
+    }
+
+    /// The llama.cpp `.rpm` lists each system file by name in `%files`
+    /// (never their directories, which systemd, dbus and polkit own), runs
+    /// its scriptlets (before `%files`, whose lines run to the end of the
+    /// spec), and needs systemd for them (Fedora's `%systemd_requires`:
+    /// Requires(post), (preun), (postun); %posttrans too, since the start
+    /// is there). rpm (4.19 and later) turns each `m` line of the sysusers.d
+    /// file into a `Requires: group(<group>)`; render and video may be
+    /// provided by no package of an older distribution, and the `m` line
+    /// creates a missing group anyway, so they are weak
+    /// (`_use_weak_usergroup_deps`, /usr/lib/rpm/fileattrs/sysusers.attr).
+    /// The configurator's `.rpm` has none of it.
+    #[test]
+    fn the_llama_rpm_ships_the_system_files_and_their_scriptlets() {
+        use super::super::system_files::{files, rpm_scriptlets};
+        let dir = scratch("rpm-system-files");
+        let llama = dir.join("llama");
+        for (rel, mode) in [
+            ("usr/bin/llama-server", 0o755),
+            ("usr/lib/private-ai/libggml-base.so.0", 0o755),
+            ("usr/libexec/private-ai/pai-manager", 0o755),
+            ("usr/share/doc/private-ai-framework-llama/copyright", 0o644),
+            ("usr/share/private-ai/licenses/llama/README.txt", 0o644),
+        ] {
+            put(&llama, rel, ELF, mode);
+        }
+        for (rel, text) in files() {
+            put(&llama, rel, text.as_bytes(), 0o644);
+        }
+        let runtimes = [(Component::Rocm, "10.1.0".to_string())];
+        let f = fields_v(Component::Llama, "2.99.0+llama.cpp.v1.0.0", &runtimes, None);
+        let spec = rpm_spec(&f, "MIT", "libggml\\\\-base", &llama);
+        check_files(&spec, &llama);
+        let listed = files_section(&spec);
+        for (rel, _) in files() {
+            let line = format!("/{rel}");
+            assert!(listed.contains(&line), "{line} missing:\n{spec}");
+        }
+        let scriptlets = rpm_scriptlets(Component::Llama);
+        let at = spec
+            .find(&scriptlets)
+            .unwrap_or_else(|| panic!("the scriptlets are missing:\n{spec}"));
+        assert!(at < spec.find("\n%files\n").unwrap(), "{spec}");
+        let lines: Vec<&str> = spec.lines().collect();
+        assert!(
+            lines.contains(&"%global _use_weak_usergroup_deps 1"),
+            "{spec}"
+        );
+        for tag in ["post", "preun", "postun", "posttrans"] {
+            let want = format!("Requires({tag}): systemd");
+            assert!(
+                rpm_relations(&f)
+                    .lines()
+                    .any(|l| l.split_whitespace().collect::<Vec<_>>()
+                        == want.split_whitespace().collect::<Vec<_>>()),
+                "{want} missing:\n{}",
+                rpm_relations(&f)
+            );
+        }
+
+        let config = dir.join("config");
+        for rel in [
+            "usr/bin/pai-config",
+            "usr/share/doc/private-ai-framework-config/copyright",
+        ] {
+            put(&config, rel, ELF, 0o644);
+        }
+        let f = fields_v(
+            Component::Config,
+            "2.99.0+llama.cpp.v1.0.0",
+            &[],
+            Some("2.99.0+llama.cpp.v1.0.0"),
+        );
+        let spec = rpm_spec(&f, "MIT", "libggml", &config);
+        check_files(&spec, &config);
+        for scriptlet in ["%post", "%preun", "%postun", "%posttrans"] {
+            assert!(
+                !spec.lines().any(|l| l.trim() == scriptlet),
+                "{scriptlet} in the configurator:\n{spec}"
+            );
+        }
+        assert!(!rpm_relations(&f).contains("Requires(post)"));
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

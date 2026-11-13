@@ -5,8 +5,10 @@
 //! - `config`: pai-config (one binary, GUI and CLI), its language files,
 //!   the benchmark method, the desktop entry.
 //! - `llama`: llama.cpp's executables and libraries, every ggml backend,
-//!   pai-manager, and libomp: the dist's OpenMP runtime, which ggml-base
-//!   itself links, so it comes with llama.cpp and not with ROCm.
+//!   pai-manager with the system files of its services (the systemd units,
+//!   the D-Bus and polkit policies, the sysusers.d entry), and libomp: the
+//!   dist's OpenMP runtime, which ggml-base itself links, so it comes with
+//!   llama.cpp and not with ROCm.
 //! - `rocm`, `cuda`, `vulkan`: the external runtimes and nothing else. ggml
 //!   loads a backend at start and skips it when its runtime is missing, so
 //!   each is optional, and each is versioned by its SDK: a new llama.cpp on the
@@ -76,6 +78,10 @@ pub fn of(rel: &str) -> Component {
     }
     if path.starts_with("usr/local/share/vulkan/") {
         return Component::Vulkan;
+    }
+    // The bus and polkit policies of the services, beside pai-manager.
+    if path.starts_with("usr/share/dbus-1/") || path.starts_with("usr/share/polkit-1/") {
+        return Component::Llama;
     }
     if name == "pai-config" || path.starts_with("usr/share/") {
         return Component::Config;
@@ -255,6 +261,26 @@ mod tests {
         ] {
             assert_eq!(of(rel), want, "{rel}");
         }
+    }
+
+    /// The system files of the services go with pai-manager, in the
+    /// llama.cpp package, although two of them sit under /usr/share, which
+    /// is otherwise the configurator's.
+    #[test]
+    fn the_system_files_of_the_services_go_to_llama() {
+        for rel in [
+            "usr/lib/systemd/system/private-ai-manager.service",
+            "usr/lib/systemd/system/llama.cpp@.service",
+            "usr/share/dbus-1/system.d/org.privateai.Manager1.conf",
+            "usr/share/polkit-1/actions/org.privateai.manager.policy",
+            "usr/lib/sysusers.d/private-ai.conf",
+        ] {
+            assert_eq!(of(rel), Component::Llama, "{rel}");
+        }
+        assert_eq!(
+            of("usr/share/applications/org.privateai.Config.desktop"),
+            Component::Config
+        );
     }
 
     #[test]

@@ -96,3 +96,7 @@ Lessons only: the rules are in `AGENTS.md`.
   signature every OS calls (`bench_share::stage(dest)`), not a Linux variant beside the old one.
 - `xtask/cmake/<os>.toml` is picked up by file name alone (`cmake_options::load`); a new OS file needs
   no code change, only the header and a reason per entry in the style of `macos.toml`.
+- The tests of `linux/system_files.rs` scan the generated maintainer scripts for `rm ` and the bus and
+  polkit policies for `own=`, `<policy`, `<action id=`: a comment written into them must not hold
+  those substrings (`form `, `perform `, `term ` contain `rm `). An rpm scriptlet body has no line
+  starting with `%` and no `%` in its comments (rpm expands them).

@@ -176,3 +176,14 @@ Lessons only: the rules are in `AGENTS.md`.
   after `canonicalize`, so the test pins which library opens, not which of its names. Read the soname
   from the clone (`ggml/CMakeLists.txt` `GGML_VERSION_MAJOR`, `SOVERSION` in `ggml/src/CMakeLists.txt`)
   and `ls build/linux/llama.cpp-cmake/bin`, never from an older note.
+- Packaging facts for maintainer scripts (checked on this machine): the local rpmbuild has no
+  `%systemd_post` & co. (`rpm --eval '%systemd_post x'` echoes it back), so scriptlets are written out
+  by hand; rpm 6 turns a sysusers.d `m user group` line into `Requires: group(<group>)`
+  (`/usr/lib/rpm/fileattrs/sysusers.attr`, `_use_weak_usergroup_deps` makes it a Recommends). The
+  debhelper snippets to mirror are in `/usr/share/debhelper/autoscripts/` (`postinst-systemd-enable`,
+  `-restart`, `postinst-sysusers`, `prerm-systemd-restart`, `postrm-systemd`); dbus' dpkg trigger is
+  `interest-noawait`, so a postinst cannot count on the bus policy being reloaded before it starts a
+  Type=dbus unit. `man 5 systemd.exec` etc. are installed locally (systemd 259): cite them.
+- A shell snippet in a test is checked with `sh -n` on stdin (parses, runs nothing). An `at(text,
+  needle)` helper returning the position pins both presence and order of commands.
+- A doc comment line starting with `1)` trips clippy's `doc_lazy_continuation`: reflow the sentence.

@@ -13,11 +13,12 @@
 //! the command line brings its own format. "Newest" is the last one written
 //! of the files named for this architecture, per package.
 //!
-//! Refuses to run while a program of the packages runs (by its argv[0] in
-//! /usr/bin or /usr/libexec/private-ai) or holds a library of
-//! /usr/lib/private-ai: rocBLAS and hipBLASLt load their kernel
-//! files lazily, so a server that outlives the upgrade would read the NEW
-//! kernel files with the OLD libraries.
+//! Refuses to run while a user runs a program of the packages (by its argv[0]
+//! in /usr/bin) or a process that holds a library of /usr/lib/private-ai:
+//! rocBLAS and hipBLASLt load their kernel files lazily, so a server that
+//! outlives the upgrade would read the NEW kernel files with the OLD
+//! libraries. The services do not stop it (pai-manager, and the instances
+//! the services' user runs): the maintainer scripts restart them.
 
 use crate::common::components::{self, Component};
 use crate::common::ui;
@@ -30,13 +31,10 @@ const PRIVATE_LIB_DIR: &str = "/usr/lib/private-ai";
 
 /// Whether a process, by its `/proc/<pid>/cmdline` (NUL-separated, readable
 /// for every user's processes), runs a program of the packages: argv[0] is
-/// one of their executables in /usr/bin (`pai-config`, `llama-*`) or
-/// /usr/libexec/private-ai/pai-manager.
+/// one of their executables in /usr/bin (`pai-config`, `llama-*`).
+/// pai-manager is not: it only runs as the manager's service.
 fn runs_packaged_program(cmdline: &[u8]) -> bool {
     let argv0 = cmdline.split(|&b| b == 0).next().unwrap_or_default();
-    if argv0 == b"/usr/libexec/private-ai/pai-manager" {
-        return true;
-    }
     argv0
         .strip_prefix(b"/usr/bin/")
         .is_some_and(|name| name == b"pai-config" || name.starts_with(b"llama-"))
@@ -53,11 +51,44 @@ fn holds_private_libraries(maps: &str) -> bool {
     })
 }
 
-/// `<pid> <command line>` of every process that runs a program of the
-/// packages ([`runs_packaged_program`], which sees every user's processes) or
-/// holds one of their libraries ([`holds_private_libraries`], for the maps
-/// this user can read), a line each.
+/// The real uid of a process, from the `Uid:` line of its
+/// `/proc/<pid>/status` (real, effective, saved, filesystem); None without one.
+fn real_uid(status: &str) -> Option<u32> {
+    status
+        .lines()
+        .find_map(|l| l.strip_prefix("Uid:"))
+        .and_then(|v| v.split_whitespace().next())
+        .and_then(|v| v.parse().ok())
+}
+
+/// The uid of the services' user (`private-ai`) in a passwd file's text, None
+/// when the user does not exist (yet).
+fn service_uid(passwd: &str) -> Option<u32> {
+    passwd.lines().find_map(|l| {
+        let mut fields = l.split(':');
+        if fields.next() != Some("private-ai") {
+            return None;
+        }
+        fields.nth(1).and_then(|uid| uid.parse().ok())
+    })
+}
+
+/// Whether a process stops the install: a program of the packages
+/// ([`runs_packaged_program`]) or a holder of their libraries
+/// ([`holds_private_libraries`]) that a user runs, not the services (a
+/// process of `service_uid`, which the maintainer scripts restart).
+fn blocks_install(cmdline: &[u8], maps: &str, uid: Option<u32>, service_uid: Option<u32>) -> bool {
+    let service = uid.is_some() && uid == service_uid;
+    !service && (runs_packaged_program(cmdline) || holds_private_libraries(maps))
+}
+
+/// `<pid> <command line>` of every process that stops the install
+/// ([`blocks_install`]): one that runs a program of the packages
+/// ([`runs_packaged_program`], which sees every user's processes) or holds
+/// one of their libraries ([`holds_private_libraries`], for the maps this
+/// user can read), not the services' own, a line each.
 fn private_library_holders() -> String {
+    let service = service_uid(&std::fs::read_to_string("/etc/passwd").unwrap_or_default());
     let mut out = Vec::new();
     for entry in std::fs::read_dir("/proc").into_iter().flatten().flatten() {
         let pid = entry.file_name().to_string_lossy().into_owned();
@@ -66,7 +97,8 @@ fn private_library_holders() -> String {
         }
         let cmdline = std::fs::read(entry.path().join("cmdline")).unwrap_or_default();
         let maps = std::fs::read_to_string(entry.path().join("maps")).unwrap_or_default();
-        if runs_packaged_program(&cmdline) || holds_private_libraries(&maps) {
+        let status = std::fs::read_to_string(entry.path().join("status")).unwrap_or_default();
+        if blocks_install(&cmdline, &maps, real_uid(&status), service) {
             let cmdline = String::from_utf8_lossy(&cmdline).replace('\0', " ");
             out.push(format!("{pid} {}", cmdline.trim_end()));
         }
@@ -451,9 +483,11 @@ mod tests {
     /// A non-root install cannot read the maps of another user's processes,
     /// and llama-server runs as the service user, pai-manager as root; their
     /// command lines are readable by everyone. argv[0] alone decides: one of
-    /// the packages' executables in /usr/bin, or pai-manager in
-    /// /usr/libexec/private-ai. Another program in /usr/bin, the same name
-    /// elsewhere, or one of ours named only as an argument is not.
+    /// the packages' executables in /usr/bin. pai-manager in
+    /// /usr/libexec/private-ai is not: it only ever runs as the manager's
+    /// service, which the maintainer scripts restart on the upgrade. Another
+    /// program in /usr/bin, the same name elsewhere, or one of ours named only
+    /// as an argument is not either.
     #[test]
     fn a_process_running_a_packaged_program_counts_as_running() {
         for ours in [
@@ -463,8 +497,6 @@ mod tests {
             b"/usr/bin/llama-cli\0",
             b"/usr/bin/pai-config\0",
             b"/usr/bin/pai-config\0server\0start\0",
-            b"/usr/libexec/private-ai/pai-manager\0serve\0",
-            b"/usr/libexec/private-ai/pai-manager",
         ] {
             assert!(
                 runs_packaged_program(ours),
@@ -477,6 +509,9 @@ mod tests {
             b"/usr/bin/bash\0",
             b"/usr/bin/python3\0/usr/bin/llama-server\0",
             b"/usr/bin/vim\0/usr/bin/pai-config\0",
+            // Always the manager's service, which the maintainer scripts restart.
+            b"/usr/libexec/private-ai/pai-manager\0serve\0",
+            b"/usr/libexec/private-ai/pai-manager",
             b"/usr/local/bin/llama-server\0",
             b"/opt/other/bin/pai-config\0",
             b"/usr/libexec/private-ai-other/pai-manager\0",
@@ -512,5 +547,104 @@ mod tests {
         assert_eq!(commands[0], ["dnf", "install", "-y", "new.rpm", "up.rpm"]);
         assert_eq!(commands[1], ["dnf", "downgrade", "-y", "down.rpm"]);
         assert_eq!(commands[2], ["dnf", "reinstall", "-y", "same.rpm"]);
+    }
+
+    // ── The services do not stop an install ─────────────────────────────
+
+    /// The `Uid:` line of `/proc/<pid>/status` holds the real, effective,
+    /// saved and filesystem uids, tab-separated (proc_pid_status(5)); the
+    /// real one is the first. A status without the line, or a nonsense one,
+    /// gives none.
+    #[test]
+    fn the_real_uid_is_the_first_of_the_status_uid_line() {
+        let status = "Name:\tllama-server\nUmask:\t0022\nState:\tS (sleeping)\n\
+                      Tgid:\t4242\nPid:\t4242\nPPid:\t1\n\
+                      Uid:\t988\t988\t988\t988\nGid:\t985\t985\t985\t985\n";
+        assert_eq!(real_uid(status), Some(988));
+        assert_eq!(real_uid("Uid:\t1000\t0\t0\t0\n"), Some(1000));
+        assert_eq!(real_uid("Name:\tx\nGid:\t5\t5\t5\t5\n"), None);
+        assert_eq!(real_uid(""), None);
+        assert_eq!(real_uid("Uid:\tnobody\n"), None);
+        assert_eq!(real_uid("Uid:\n"), None);
+        // Only a line that starts with the key.
+        assert_eq!(real_uid("XUid:\t7\t7\t7\t7\n"), None);
+    }
+
+    /// The services' user, as systemd-sysusers writes it into /etc/passwd
+    /// (`name:x:uid:gid:gecos:home:shell`); a user whose name only starts
+    /// the same, a missing user or a broken line gives none.
+    #[test]
+    fn the_service_uid_comes_from_the_private_ai_passwd_entry() {
+        let passwd = "root:x:0:0:root:/root:/bin/bash\n\
+                      private-ai-other:x:977:977::/:/usr/sbin/nologin\n\
+                      private-ai:x:988:985:Private AI Framework:/var/lib/private-ai:/usr/sbin/nologin\n\
+                      emiliano:x:1000:1000:,,,:/home/emiliano:/bin/bash\n";
+        assert_eq!(service_uid(passwd), Some(988));
+        assert_eq!(
+            service_uid(
+                "root:x:0:0:root:/root:/bin/bash\nprivate-ai-other:x:977:977::/:/bin/false\n"
+            ),
+            None
+        );
+        assert_eq!(service_uid(""), None);
+        assert_eq!(
+            service_uid("private-ai:x:notanumber:985::/:/bin/false\n"),
+            None
+        );
+        assert_eq!(service_uid("private-ai\n"), None);
+    }
+
+    /// The instances run as the services' user and the maintainer scripts
+    /// restart them: a llama-server of that uid, its libraries mapped, does
+    /// not stop the install. The same llama-server, pai-config, a llama-bench
+    /// or a process holding the libraries run by a user (or by root) does;
+    /// so does every one of them when the services' user does not exist yet
+    /// or the uid could not be read. pai-manager never does.
+    #[test]
+    fn only_a_users_program_blocks_the_install_never_the_services() {
+        const SERVICE: u32 = 988;
+        let server = b"/usr/bin/llama-server\0--port\08080\0".as_slice();
+        let maps = "7f2a1c000000-7f2a1c200000 r-xp 00000000 103:02 1234567 \
+                    /usr/lib/private-ai/libggml-base.so.0.9.0\n";
+        let manager = b"/usr/libexec/private-ai/pai-manager\0serve\0".as_slice();
+
+        assert!(!blocks_install(server, maps, Some(SERVICE), Some(SERVICE)));
+        assert!(!blocks_install(server, "", Some(SERVICE), Some(SERVICE)));
+        assert!(!blocks_install(b"", maps, Some(SERVICE), Some(SERVICE)));
+        assert!(!blocks_install(manager, "", Some(0), Some(SERVICE)));
+        assert!(!blocks_install(manager, "", Some(0), None));
+
+        for uid in [Some(1000), Some(0), None] {
+            assert!(blocks_install(server, maps, uid, Some(SERVICE)), "{uid:?}");
+            assert!(blocks_install(server, "", uid, Some(SERVICE)), "{uid:?}");
+            assert!(blocks_install(
+                b"/usr/bin/pai-config\0",
+                "",
+                uid,
+                Some(SERVICE)
+            ));
+            assert!(blocks_install(
+                b"/usr/bin/llama-bench\0",
+                "",
+                uid,
+                Some(SERVICE)
+            ));
+            assert!(blocks_install(
+                b"/usr/bin/python3\0",
+                maps,
+                uid,
+                Some(SERVICE)
+            ));
+        }
+        // No services' user yet: nothing is exempt but pai-manager.
+        assert!(blocks_install(server, maps, Some(SERVICE), None));
+        assert!(blocks_install(server, maps, None, None));
+        // Neither a program of the packages nor a holder of their libraries.
+        assert!(!blocks_install(
+            b"/usr/bin/bash\0",
+            "",
+            Some(1000),
+            Some(SERVICE)
+        ));
     }
 }

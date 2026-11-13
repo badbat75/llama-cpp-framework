@@ -186,8 +186,9 @@ so the second binary, `private-ai-manager`, shares its modules: a `[[bin]]` alon
    llama-server finds its ggml backends in `/usr/lib/private-ai` through `GGML_BACKEND_DIR`, compiled in
    (user, 2026-11-13); the footgun, a tree-built llama-server loading the installed backends first while
    the package is installed, goes in the footguns of `docs/build-packaging.md`. Split in **5a** (done: the
-   layout, `pai-manager` in `-llama`) and **5b** (units, D-Bus policy, polkit, sysusers, maintainer
-   scripts).
+   layout, `pai-manager` in `-llama`) and **5b** (done: units, D-Bus policy, polkit, sysusers, the first
+   maintainer scripts; `xtask install` is not blocked by the services, which the scripts restart). Left:
+   the user's real run (`xtask package`, `xtask install`, then the step's "Done when" checks).
 6. **Windows packaging.** The MSI registers the manager service (automatic start) and creates
    `%ProgramData%\private-ai\` with the right ACL. SCM has no template services, so the manager creates
    one service per instance (`llama.cpp@<id>`, manual start) when the instance is added and removes it
@@ -210,6 +211,10 @@ Points of design, and what is still open:
   session without a password, config writes `auth_admin_keep`.
 - `SaveStateOnShutdown` and `StateDir`: the slot snapshots are written by the server, so by the service
   user; their default directory moves with it.
+- **Open, for the user:** `OpencodeApiKey` sits in `server@<id>.ini`, written 0644 into
+  `/etc/private-ai`, and the manager's `read_file` has no polkit check, so any local user can read the
+  key. Options: mode 0640 root:private-ai on the server files (the instance still reads them) and
+  `read_file` of the server files under `control`, or keep the key out of the system files.
 - The D-Bus name and polkit action ids, agreed with the user on 2026-11-13: `org.privateai.Manager1`,
   `org.privateai.manager.*`.
 

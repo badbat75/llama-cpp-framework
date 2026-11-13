@@ -8,6 +8,7 @@ pub mod dists;
 pub mod install;
 pub mod package;
 pub mod prereq;
+pub mod system_files;
 
 use anyhow::Result;
 
