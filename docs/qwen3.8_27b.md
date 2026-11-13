@@ -550,7 +550,7 @@ same placement (campaign `coder390-placement-20261020`): within noise, decode th
 
 This is the reference for this preset, on *Linux*; [section 6](#6-linux-against-windows) sets the *Windows*
 run of the same spec beside it. Compare a later change to the preset, the machine or the
-software against the figures of its own system, measured again under the same spec version. `llama-cpp-config bench query run
+software against the figures of its own system, measured again under the same spec version. `pai-config bench query run
 <id> --db benchmarks/bench.db` prints every parameter of one run.
 
 The tables merge two runs on the same machine, software and preset. The prose, image and agent-turn

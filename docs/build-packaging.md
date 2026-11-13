@@ -23,13 +23,14 @@ path, so no file lands in two packages or in none.
 
 | OS | Package | File in `dist/` |
 | --- | --- | --- |
-| Windows | The MSI | `llama-cpp-framework-v<framework>-<llama>-x64.msi` (`arm64` on an ARM build) |
-| Linux | `config`, `llama` | `llama-cpp-framework-<package>-v<framework>-<llama>-amd64.deb`, `-x86_64.rpm` (`arm64`, `aarch64` on ARM) |
-| Linux | `rocm`, `cuda`, `vulkan` | `llama-cpp-framework-<package>-v<sdk>-amd64.deb`, `-x86_64.rpm` (the same on ARM) |
+| Windows | The MSI | `private-ai-framework-v<framework>-<llama>-x64.msi` (`arm64` on an ARM build) |
+| Linux | `config`, `llama` | `private-ai-framework-<package>-v<framework>-<llama>-amd64.deb`, `-x86_64.rpm` (`arm64`, `aarch64` on ARM) |
+| Linux | `rocm`, `cuda`, `vulkan` | `private-ai-framework-<package>-v<sdk>-amd64.deb`, `-x86_64.rpm` (the same on ARM) |
 | macOS | `config`, `llama`, `vulkan` | [The macOS page](build-macos.md) |
 
-For example, `llama-cpp-framework-v2.2.0-v0.9.0-x64.msi`, `llama-cpp-framework-llama-v2.2.0-v0.9.0-amd64.deb`,
-`llama-cpp-framework-rocm-v10.1.0-amd64.deb`.
+For example, `private-ai-framework-v2.99.0-v0.9.0-x64.msi`, `private-ai-framework-llama-v2.99.0-v0.9.0-amd64.deb`,
+`private-ai-framework-rocm-v10.1.0-amd64.deb`. Release 2.4 and earlier named them `llama-cpp-framework-*`:
+the new packages upgrade those in place (below, per format).
 
 - `<framework>` is the `[workspace.package]` version of the root `Cargo.toml`, one for the
   `pai-*` crates: the configurator and the framework are versioned together.
@@ -57,7 +58,7 @@ executable with an `install()` rule, so count them from the staging tree, not th
 restricted to what resolves inside a dist. Everything else stays a system library.
 
 **Every package carries its licences.** The MSI holds them in `share\licenses\` beside `bin\`. On Linux
-and macOS each package holds its own `/opt/llama.cpp/share/licenses/<package>/`, since no two packages
+and macOS each package holds its own `/opt/private-ai/share/licenses/<package>/`, since no two packages
 can own one file. `licenses.rs` (`xtask/src/common/`) stages them:
 
 - This project's licence, llama.cpp's and what llama.cpp's own `licenses/` holds, the configurator's
@@ -91,7 +92,7 @@ missing).
 
 **Staging** uses `cmake --install`, then removes `test*.exe` and `include\`, which never shipped.
 Filtering happens in staging and not in the `.wxs`, so what is staged is exactly what ships. The
-`.wxs` harvests `bin\`, `lib\`, `share\` and `.kpack\` whole. `llama-cpp-config.exe` and `llama.ico`
+`.wxs` harvests `bin\`, `lib\`, `share\` and `.kpack\` whole. `pai-config.exe` and `llama.ico`
 are staged into `bin\` too, so an administrative image (`msiexec /a`) compares 1:1 with the staging
 tree. A missing icon is regenerated here.
 
@@ -121,6 +122,13 @@ welcome page and `CustomizeDlg`. `xtask package` writes its text to `build\windo
 (not installed): which text covers what, the MIT licence, and NVIDIA's terms in full. A silent or
 basic-UI install does not show it.
 
+**An upgrade from release 2.4 is a `MajorUpgrade`:** `private-ai-framework.wxs` keeps the UpgradeCode
+of `llama-cpp-framework.wxs`, so it removes the old product first. A directory chosen in 2.4, read from
+the old `HKLM\Software\llama.cpp` key, is kept; the old default `Program Files\llama.cpp\` moves to
+`Program Files\private-ai\`. The guard against a non-MSI install checks the old and the new Apps entry,
+and `StopProcesses` stops a 2.4 `llama-cpp-config.exe` too. Details and the test step:
+[installer\AGENTS.md](../installer/AGENTS.md).
+
 **System libraries stay external:** the VC++ redist x64 (`libomp140.x86_64.dll` included) and the
 GPU drivers. cudart is static. The load-order reasons are in [installer\AGENTS.md](../installer/AGENTS.md).
 
@@ -145,12 +153,12 @@ The app directory wins the DLL search order, so they go in `bin\`.
 ### The `.deb` and `.rpm` (Linux)
 
 **`xtask package` builds five packages per format from one staged tree, 3.8 GiB installed with all five.**
-`--deb` or `--rpm` builds one format. It refuses to run when the built `llama-cpp-config --version` differs
+`--deb` or `--rpm` builds one format. It refuses to run when the built `pai-config --version` differs
 from the root `Cargo.toml`'s, a bump without a rebuild.
 
-| Package `llama-cpp-framework-` | Holds | Version | `.deb` / `.rpm` |
+| Package `private-ai-framework-` | Holds | Version | `.deb` / `.rpm` |
 | --- | --- | --- | --- |
-| `config` | `llama-cpp-config` (GUI and CLI), its text, the benchmark method, the desktop entry | `<framework>+llama.cpp.<tag>` | 18 / 21 MiB |
+| `config` | `pai-config` (GUI and CLI), its text, the benchmark method, the desktop entry | `<framework>+llama.cpp.<tag>` | 18 / 21 MiB |
 | `llama` | llama.cpp with the ggml backends (`libggml-hip.so`, `libggml-cuda.so`, `libggml-vulkan.so`), libomp | `<framework>+llama.cpp.<tag>` | 190 / 229 MiB |
 | `rocm` | The ROCm libraries with RCCL, and the kernel stores | The SDK's, `10.1.0` | 831 / 922 MiB |
 | `cuda` | The CUDA libraries and NCCL | `<cuda>+nccl.<nccl>`, `13.5.0+nccl.2.32.3` | 655 / 675 MiB |
@@ -170,12 +178,15 @@ missing is skipped at start, with only a log line.
 | `llama` asks for each runtime at the version it was built against | `Recommends` `(= <version>)` | `Recommends` `= <version>` |
 | `llama` refuses any other version of a runtime, whose symbols a backend may not resolve | `Breaks` `(<< <version>)`, `(>> <version>)` | `Conflicts` `< <version>`, `> <version>` |
 | All five replace `llama-cpp-framework`, the single package of the releases up to 2.2.0 | `Conflicts`, `Replaces` | `Obsoletes` `<= 2.2.0` |
+| Each replaces its component's package of releases 2.3 and 2.4, `llama-cpp-framework-<package>`, and stands in for it | `Conflicts`, `Replaces`, `Provides` `(= <version>)` | `Obsoletes` `< 2.4.1` (`config`, `llama`) or `<= <version>` (a runtime), `Provides` `= <version>-1` |
 | `llama` keeps out the distribution's own package | `Conflicts: llama.cpp` | `Conflicts: llama-cpp` |
 
 **The `Obsoletes` is versioned, the `.deb` pair is not.** rpm matches an unversioned `Obsoletes` against
 every version of the name, future ones included, so it would remove a package that later takes the name
 back: rpmbuild warns about it. dpkg warns about no such thing and its `Replaces` is only about taking over
-the old files, so those stay unversioned.
+the old files, so those stay unversioned. Against the 2.4 component packages, `< 2.4.1` catches every `2.4.0+llama.cpp.<tag>`
+(rpm orders it above 2.4.0, below 2.4.1); a runtime is versioned by its SDK, with no last version known
+under the old name, so its own version bounds the old package.
 
 **`config` and `llama` carry `<framework>+llama.cpp.<tag>`**, for example `2.2.0+llama.cpp.v0.9.0`. A
 rebuild on a newer llama.cpp alone is then an upgrade to apt and dnf. dpkg and rpm both order
@@ -183,14 +194,14 @@ rebuild on a newer llama.cpp alone is then an upgrade to apt and dnf. dpkg and r
 
 | Path | Package | Holds |
 | --- | --- | --- |
-| `/opt/llama.cpp/bin/` | `llama`; `llama-cpp-config` in `config` | Executables, llama.cpp's libraries, ggml backends, `llama-cpp-config`, copied from the build's `bin/` |
-| `/opt/llama.cpp/lib/` | `rocm`, `cuda`, `vulkan`; `llvm/lib/libomp.so` in `llama` | The bundled runtimes |
-| `/opt/llama.cpp/.kpack/` | `rocm` | hipBLASLt's `blas_lib_*` and RCCL's `rccl_lib_*` archives |
-| `/opt/llama.cpp/share/benchmarks/` | `config` | The benchmark method |
-| `/opt/llama.cpp/share/strings/` | `config` | The configurator's text: the GUI's `en_US.toml`, the CLI's `cli.toml` |
-| `/opt/llama.cpp/share/licenses/<package>/` | Each its own | The licence texts and their `README.txt` |
-| `/usr/bin/` | `llama`; `llama-cpp-config` in `config` | One relative symlink per executable; rpm warns on absolute ones |
-| `/usr/share/` | `config`; `doc/<pkg>/copyright` in each | The desktop entry ("llama.cpp Config" in the menu), its icon, the copyright file |
+| `/opt/private-ai/bin/` | `llama`; `pai-config` in `config` | Executables, llama.cpp's libraries, ggml backends, `pai-config`, copied from the build's `bin/` |
+| `/opt/private-ai/lib/` | `rocm`, `cuda`, `vulkan`; `llvm/lib/libomp.so` in `llama` | The bundled runtimes |
+| `/opt/private-ai/.kpack/` | `rocm` | hipBLASLt's `blas_lib_*` and RCCL's `rccl_lib_*` archives |
+| `/opt/private-ai/share/benchmarks/` | `config` | The benchmark method |
+| `/opt/private-ai/share/strings/` | `config` | The configurator's text: the GUI's `en_US.toml`, the CLI's `cli.toml` |
+| `/opt/private-ai/share/licenses/<package>/` | Each its own | The licence texts and their `README.txt` |
+| `/usr/bin/` | `llama`; `pai-config` in `config` | One relative symlink per executable; rpm warns on absolute ones |
+| `/usr/share/` | `config`; `doc/<pkg>/copyright` in each | The desktop entry `org.privateai.Config.desktop` ("Private AI Framework" in the menu), its icon, the copyright file |
 
 **`bin/` stays one directory, across `config` and `llama`, so it skips `cmake --install`,** which would
 split it into `bin/` and `lib/`. ggml looks for its backends next to the executable (`/proc/self/exe`, so through a symlink
@@ -232,8 +243,10 @@ patchelf appended. The value is `$ORIGIN:$ORIGIN/../lib:$ORIGIN/../lib/llvm/lib`
 still wins over RUNPATH. Extracting the `.deb` and tracing a generation per backend with `strace`
 showed no file opened under the dists or the build tree (read by hand, not recorded).
 
-**No config directory is shipped.** `llama-cpp-config` writes the config files per user, in
-`${XDG_CONFIG_HOME:-~/.config}/llama.cpp/` (`paths::config_dir`). So the packages have no maintainer
+**No config directory is shipped.** `pai-config` writes the config files per user, in
+`${XDG_CONFIG_HOME:-~/.config}/private-ai/` (`paths::config_dir`), and moves release 2.4's
+`~/.config/llama.cpp/` and `~/.local/share/llama.cpp/` there at its first start
+([Migration from 2.4](../crates/config/README.md#migration-from-24)). So the packages have no maintainer
 scripts and create no group.
 
 <details>
@@ -267,7 +280,7 @@ so no image tool is needed.
 expression, with `LicenseRef-NVIDIA-CUDA-EULA` for NVIDIA's terms. `usr/share/doc/<pkg>/copyright`
 includes that package's `share/licenses/<package>/README.txt` and points to the directory.
 
-**Maintainer.** `LLAMA_FW_MAINTAINER` sets it, else git's `user.name` and `user.email`.
+**Maintainer.** `PRIVATE_AI_MAINTAINER` sets it, else git's `user.name` and `user.email`.
 
 **A `-` in the llama.cpp token** becomes `.` in the version, since rpm's Version does not allow it.
 
@@ -285,7 +298,7 @@ leave out the runtime of a GPU the machine does not have. `--dry-run` prints the
 | Command | `msiexec /i <msi> /qb /norestart /l*v <log>` | Package manager, see below | `sudo installer -pkg <pkg> -target /`, per package |
 | Downgrade | Removes the installed version first: `msiexec /x {ProductCode} /qb` | Package manager's own | Laid down over it |
 | Running programs | The MSI's `StopProcesses` action stops them | Refused (`--force` overrides) | Refused (`--force` overrides) |
-| Success check | `DisplayVersion` matches the package | `llama-cpp-config --version`, when `config` is among the files | `llama-cpp-config --version`, when `config` is among the files |
+| Success check | `DisplayVersion` matches the package | `pai-config --version`, when `config` is among the files | `pai-config --version`, when `config` is among the files |
 
 **Windows.**
 
@@ -296,7 +309,7 @@ leave out the runtime of a GPU the machine does not have. `--dry-run` prints the
 - An upgrade and a same-version repackage are the MSI's own `MajorUpgrade`.
 - The MSI refuses a downgrade, hence the removal first. The ProductCode comes from the Apps entry's
   `UninstallString`, and basic UI keeps the user data.
-- Success reads `DisplayVersion` of `HKLM\...\Uninstall\llama.cpp`. Exit 3010 (restart required)
+- Success reads `DisplayVersion` of `HKLM\...\Uninstall\private-ai`. Exit 3010 (restart required)
   counts as success with a warning.
 
 **Linux.**

@@ -1,25 +1,10 @@
 # tools\
 
-Diagnostics and the 1.x → 2.0 config migration, not part of the build pipeline or the installer.
-
-## migrate-config-v1-to-v2.ps1 / .sh
-
-The offline migration of a 1.x config to 2.0, run by hand (`-DryRun` / `--dry-run` shows the changes): the binary carries no migration code, by decision, and 2.0 simply ignores the moved server.ini keys. Twins (Windows `%LOCALAPPDATA%\llama.cpp\config`, Linux `~/.config/llama.cpp`, plus a copy out of `/etc/llama.cpp` when the new directory is empty): keep their rules in step. What moves, each written as the launch 1.x actually ran:
-
-- `LoadMode` (or the legacy `Mlock`/`NoMmap` pair: both true = `mlock`, `NoMmap` alone = `none`) → `load-mode` in every preset, replacing the preset's own, because 1.x put `-lm` on the router line ALWAYS (auto when unset). Under auto only a disagreeing preset key is rewritten; with none of the three keys in server.ini the step is skipped.
-- `Device` → `device` in every preset, and `TensorSplit` → `tensor-split` with it: a server-wide device list won over the preset's and took its split along, so with a `Device` and no `TensorSplit` the preset's own `tensor-split` is DROPPED (its weights were positional over another list). A `TensorSplit` alone is written alone.
-- `OverrideTensor` → `override-tensor` in every preset, overwriting the preset's own: the server-wide rules REPLACED a preset's rather than adding to them.
-- `SplitMode` → `split-mode` in every preset, only when it is `none`/`tensor`/`row`: a server-wide `layer` was dropped on read.
-- `Fit` → `fit = on|off` in every preset, replacing the preset's own: 1.x always put `-fit` on the router line, `off` unless `Fit = true`.
-- `PrefillAssistant = false` → `prefill-assistant = false` in every preset (1.x passed `--no-prefill-assistant` to every model); `true` was llama.cpp's default and writes nothing.
-- `CacheReuse` above 0 → `cache-reuse` in every preset, replacing the preset's own (1.x put `--cache-reuse` on the router line).
-- `MmprojDevice` → `mmproj-device` only where the preset has an `mmproj` and no device of its own (the env `MTMD_BACKEND_DEVICE` it rode loses to a preset key).
-- Then the keys, their commented placeholders and the comment block above each go from server.ini. Both `presets.ini` and `presets.ini.disabled`; each touched file is backed up as `<file>.v1.bak`; line endings and UTF-8 without BOM are kept.
-- **No moved key left in server.ini means already migrated, and the script exits untouched.** Without that guard a second run reads the absence as 1.x's `auto` and rewrites every preset's `load-mode`.
+Diagnostics, not part of the build pipeline or the installer.
 
 ## report-memory.ps1
 
-Reads only `%LOCALAPPDATA%\llama.cpp\`, so it runs on an installed machine. Slices the memory of the **currently running** llama-server across llama-server's load log (every buffer's size and device → the *requested* footprint) and Windows' `GPU Process Memory` counters (dedicated VRAM vs shared system RAM actually handed out), and cross-checks them: an oversubscribed device does not fail to allocate, WDDM silently pages the excess over PCIe and the only symptom is slow decoding. Tensor placement is an **`of which tensor override`** sub-row under `model weights`, never a row of its own and never summed (an override *moves* a tensor, it allocates nothing extra). The host section names the pinned share of the model weights (the shared-GPU-memory number). `-Json` for machine output.
+Reads only llama-server's log, so it runs on an installed machine: `-LogPath`, by default `%LOCALAPPDATA%\llama.cpp\logs\llama-server.log`, the tree of release 2.4 (the configurator now writes `%LOCALAPPDATA%\private-ai\logs\`: pass `-LogPath` until the script's default follows). Slices the memory of the **currently running** llama-server across llama-server's load log (every buffer's size and device → the *requested* footprint) and Windows' `GPU Process Memory` counters (dedicated VRAM vs shared system RAM actually handed out), and cross-checks them: an oversubscribed device does not fail to allocate, WDDM silently pages the excess over PCIe and the only symptom is slow decoding. Tensor placement is an **`of which tensor override`** sub-row under `model weights`, never a row of its own and never summed (an override *moves* a tensor, it allocates nothing extra). The host section names the pinned share of the model weights (the shared-GPU-memory number). `-Json` for machine output.
 
 Placement sources: the **rules** come from the ROUTER's `spawning server instance with args:` block (the already-merged winner, not `presets.ini`/`server.ini`), which sits above the `device_info` banner and is matched to the child by its `[port]` prefix, never by proximity. The **hits** come from `tensor <name> (<n> MiB <type>) buffer type overridden to <buft>`, which is `LLAMA_LOG_DEBUG` (verbosity **5**), so at `-lv 4` no hits does not mean nothing matched; the report says which.
 

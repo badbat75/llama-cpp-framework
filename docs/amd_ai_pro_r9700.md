@@ -235,7 +235,7 @@ backend-sampling = true
 - *Linux*: read `mem_info_vram_used` and `mem_info_gtt_used` after a prefill.
 - `tools\pcie-bench\`: the card's real host link. On two cards on *Linux*, also read the boot log's link width;
   *Windows* shows no width on the bridges, so there a card reading about half its bandwidth is the sign.
-- Benchmark tab or `llama-cpp-config bench run`: measure at 2.6k and ~90k context, with temp 0 and 3
+- Benchmark tab or `pai-config bench run`: measure at 2.6k and ~90k context, with temp 0 and 3
   repetitions, or under the `standard` spec.
 
 ## 7. Not yet measured (placeholders)

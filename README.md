@@ -1,10 +1,10 @@
-# llama.cpp-framework
+# Private AI Framework
 
 > **Windows first**: the full pipeline (build, installer) targets Windows 10/11 and ends in an MSI. Linux ends in five `.deb` and five `.rpm` packages (see [Linux](#linux)), macOS on Apple Silicon in three `.pkg` (see [macOS](#macos), untested).
 
 A build orchestrator, run with cargo (`cargo run -p xtask -- <phase>`, the crate in `xtask/`), that builds and packages [llama.cpp](https://github.com/ggerganov/llama.cpp) with multi-GPU backend support (CUDA, Vulkan, ROCm/HIP on Windows and Linux; Metal and Vulkan on macOS) and MSI packaging (WiX Toolset) on Windows. The chat UI built into `llama-server` is used as the frontend; no separate web UI is bundled.
 
-Beside llama.cpp it ships **`llama-cpp-config`**, a GUI + CLI configurator (Rust, [Slint](https://slint.dev)) that writes `llama-server`'s `server.ini` and per-model `presets.ini`, starts and stops the server, and benchmarks presets into a public SQLite database (`benchmarks/bench.db`) with a versioned method, so numbers from two machines compare like with like.
+Beside llama.cpp it ships **`pai-config`**, a GUI + CLI configurator (Rust, [Slint](https://slint.dev)) that writes `llama-server`'s `server.ini` and per-model `presets.ini`, starts and stops the server, and benchmarks presets into a public SQLite database (`benchmarks/bench.db`) with a versioned method, so numbers from two machines compare like with like.
 
 **Read the guides at [badbat75.github.io/llama-cpp-framework](https://badbat75.github.io/llama-cpp-framework/)**: the measured per-card and per-model settings with interactive charts drawn from `bench.db`, linked citations and a page per cited benchmark campaign. The same guides are the Markdown files in [docs/](docs/README.md).
 
@@ -27,7 +27,7 @@ Beside llama.cpp it ships **`llama-cpp-config`**, a GUI + CLI configurator (Rust
 - Always the newest llama.cpp **release** tag (`vX.Y.Z`, never a `bNNNN` nightly), CMake + Ninja, sccache, the machine-independent CMake options in `xtask/cmake/*.toml` with a reason for each.
 - Backends: CUDA, Vulkan and ROCm/HIP on Windows and Linux (RCCL/NCCL for `--split-mode tensor` on Linux); Metal and Vulkan through MoltenVK on Apple Silicon.
 - GPU SDKs (ROCm TheRock, CUDA, Vulkan SDK) installed side by side as `<root>/<Name>/<Version>/<os>`, newest stable, the layout winning over the environment; no machine-wide SDK variables.
-- Self-contained packages: an MSI (WiX, upgrades, downgrade refused, ICE-validated), split `.deb` and `.rpm` packages under `/opt/llama.cpp`, split `.pkg` on macOS; the ROCm, CUDA and Vulkan runtimes the backends load are packaged too, so a target machine needs only the GPU driver.
+- Self-contained packages: an MSI (WiX, upgrades, downgrade refused, ICE-validated), split `.deb` and `.rpm` packages under `/opt/private-ai`, split `.pkg` on macOS; the ROCm, CUDA and Vulkan runtimes the backends load are packaged too, so a target machine needs only the GPU driver.
 - Out-of-tree llama.cpp patches in `patches/llama.cpp/`, applied on every build and reverted before the next checkout, each with its source, digest and the condition to drop it: a trimmed MTP draft vocabulary for Qwen3.5/3.8, and the fix of the MTP draft graph's reallocations after an image.
 
 **Configurator** ([crates/config/README.md](crates/config/README.md))
@@ -37,7 +37,7 @@ Beside llama.cpp it ships **`llama-cpp-config`**, a GUI + CLI configurator (Rust
 - Hugging Face search and download that creates the preset and recommends a quantization that fits this machine's GPUs.
 - Conversation snapshots: each model's KV cache saved on stop and restored on the next start, so a restart does not re-read a long conversation.
 - Integrations: the OpenCode provider (one model per enabled preset) and a Claude Code environment snippet; log rotation; start at login.
-- The same operations headless: `llama-cpp-config server|preset|control|bench ...`.
+- The same operations headless: `pai-config server|preset|control|bench ...`.
 
 **Benchmarks** ([benchmarks/README.md](benchmarks/README.md))
 
@@ -72,7 +72,7 @@ GPU SDKs, installed/updated to their newest stable release by `scripts\00-instal
 - [CUDA Toolkit](https://developer.nvidia.com/cuda-toolkit) in `CUDA` (assembled from NVIDIA's redist archives; no driver touched)
 - [Vulkan SDK](https://vulkan.lunarg.com/) in `VulkanSDK`
 
-`DistRoot` defaults to `E:\` (`installer\dist-sources.psd1`). Pass `-DistRoot <path>` to `scripts\00-install-prerequisites.ps1` and `--dist-root <path>` to `xtask configure`, or set `LLAMA_FW_DIST_ROOT`, to keep them elsewhere; `xtask configure` records the root, so the later steps need nothing. The build takes its GPU SDKs from this layout only.
+`DistRoot` defaults to `E:\` (`installer\dist-sources.psd1`). Pass `-DistRoot <path>` to `scripts\00-install-prerequisites.ps1` and `--dist-root <path>` to `xtask configure`, or set `PRIVATE_AI_DIST_ROOT`, to keep them elsewhere; `xtask configure` records the root, so the later steps need nothing. The build takes its GPU SDKs from this layout only.
 
 ## Quick start
 
@@ -105,7 +105,7 @@ cargo run -p xtask -- install
 
 ## Linux
 
-Debian/Ubuntu: the same cargo phases end at a working `llama-server` with the CUDA, Vulkan and HIP backends and `llama-cpp-config` beside it, packaged as five `.deb` and five `.rpm` packages.
+Debian/Ubuntu: the same cargo phases end at a working `llama-server` with the CUDA, Vulkan and HIP backends and `pai-config` beside it, packaged as five `.deb` and five `.rpm` packages.
 
 ```bash
 # 1. First time only (no Rust yet): apt packages (sudo), Rust (rustup), then the dists.
@@ -118,11 +118,11 @@ cargo run -p xtask -- prereq
 # 2. Auto-detect paths and generate build/linux/config-build.toml
 cargo run -p xtask -- configure
 
-# 3. Build llama.cpp and llama-cpp-config into build/linux/llama.cpp-cmake/bin/
+# 3. Build llama.cpp and pai-config into build/linux/llama.cpp-cmake/bin/
 cargo run -p xtask -- build
 
-# 4. Package: dist/llama-cpp-framework-{config,llama}-v<version>-<llamaRelease>-amd64.deb,
-#    dist/llama-cpp-framework-{rocm,cuda,vulkan}-v<sdkVersion>-amd64.deb, and the same as -x86_64.rpm
+# 4. Package: dist/private-ai-framework-{config,llama}-v<version>-<llamaRelease>-amd64.deb,
+#    dist/private-ai-framework-{rocm,cuda,vulkan}-v<sdkVersion>-amd64.deb, and the same as -x86_64.rpm
 cargo run -p xtask -- package
 
 # 5. Install (or upgrade, or reinstall) the newest package of each component in dist/: the .deb
@@ -130,19 +130,19 @@ cargo run -p xtask -- package
 cargo run -p xtask -- install
 ```
 
-The packages (about 1.7 GiB in all, 3.8 GiB installed) are self-contained under `/opt/llama.cpp/`, so the target machine needs the GPU drivers and nothing else:
+The packages (about 1.7 GiB in all, 3.8 GiB installed) are self-contained under `/opt/private-ai/`, so the target machine needs the GPU drivers and nothing else:
 
 | Package | Holds | Version |
 |---|---|---|
-| `llama-cpp-framework-config` | `llama-cpp-config` and its data (requires `llama` at the same version) | framework + llama.cpp release |
-| `llama-cpp-framework-llama` | llama.cpp's programs and libraries, the ggml backends included | framework + llama.cpp release |
-| `llama-cpp-framework-rocm` | The ROCm runtime libraries (`lib/`) | ROCm SDK |
-| `llama-cpp-framework-cuda` | The CUDA and NCCL runtime libraries (`lib/`) | CUDA + NCCL SDK |
-| `llama-cpp-framework-vulkan` | The Vulkan loader (`lib/`) | Vulkan SDK |
+| `private-ai-framework-config` | `pai-config` and its data (requires `llama` at the same version) | framework + llama.cpp release |
+| `private-ai-framework-llama` | llama.cpp's programs and libraries, the ggml backends included | framework + llama.cpp release |
+| `private-ai-framework-rocm` | The ROCm runtime libraries (`lib/`) | ROCm SDK |
+| `private-ai-framework-cuda` | The CUDA and NCCL runtime libraries (`lib/`) | CUDA + NCCL SDK |
+| `private-ai-framework-vulkan` | The Vulkan loader (`lib/`) | Vulkan SDK |
 
-`llama` recommends the three runtimes and refuses any other version of them; leave out the ones the machine has no use for. The packages replace the old single `llama-cpp-framework`. They also install a symlink per executable in `/usr/bin/` (`llama-server`, `llama-cpp-config`, the other llama.cpp tools), a desktop entry that puts the configurator ("llama.cpp Config") in the applications menu, and nothing else: `llama-cpp-config` keeps `server.ini`, `presets.ini`, `presets.ini.disabled` and `settings.ini` per user in `~/.config/llama.cpp/` (logs, benchmark runs and saved states in `~/.local/share/llama.cpp/`). A backend whose GPU, driver or runtime package is missing is skipped at start.
+`llama` recommends the three runtimes and refuses any other version of them; leave out the ones the machine has no use for. Each package upgrades in place the packages of release 2.4 and earlier, `llama-cpp-framework` and `llama-cpp-framework-<component>`, which it replaces. They also install a symlink per executable in `/usr/bin/` (`llama-server`, `pai-config`, the other llama.cpp tools), a desktop entry that puts the configurator ("Private AI Framework") in the applications menu, and nothing else: `pai-config` keeps `server.ini`, `presets.ini`, `presets.ini.disabled` and `settings.ini` per user in `~/.config/private-ai/` (logs, benchmark runs and saved states in `~/.local/share/private-ai/`), and at its first start moves there what release 2.4 kept under `~/.config/llama.cpp/` and `~/.local/share/llama.cpp/` ([details](crates/config/README.md#migration-from-24)). A backend whose GPU, driver or runtime package is missing is skipped at start.
 
-The dists install side by side as `<root>/<version>/linux` under `/mnt/data` (`TheRock`, `CUDA`, `VulkanSDK`; for another mountpoint pass `--dist-root <path>` to `scripts/00-install-prerequisites.sh` and `xtask configure`, which records it, or set `LLAMA_FW_DIST_ROOT`), about 27 GB in all, and nothing is added to the environment: the scripts find the newest of each on every run. Everything generated lives under `build/linux/`, apart from the Windows artifacts under `build/windows/`. Details: [docs/build-prerequisites.md](docs/build-prerequisites.md#dist-layout-and-root).
+The dists install side by side as `<root>/<version>/linux` under `/mnt/data` (`TheRock`, `CUDA`, `VulkanSDK`; for another mountpoint pass `--dist-root <path>` to `scripts/00-install-prerequisites.sh` and `xtask configure`, which records it, or set `PRIVATE_AI_DIST_ROOT`), about 27 GB in all, and nothing is added to the environment: the scripts find the newest of each on every run. Everything generated lives under `build/linux/`, apart from the Windows artifacts under `build/windows/`. Details: [docs/build-prerequisites.md](docs/build-prerequisites.md#dist-layout-and-root).
 
 ## macOS
 
@@ -157,11 +157,11 @@ scripts/00-install-prerequisites.sh
 # 2. to 5., as on Linux:
 cargo run -p xtask -- configure
 cargo run -p xtask -- build
-cargo run -p xtask -- package    # dist/llama-cpp-framework-{config,llama}-v<version>-<llamaRelease>-arm64.pkg, -vulkan-v<sdkVersion>-arm64.pkg
+cargo run -p xtask -- package    # dist/private-ai-framework-{config,llama}-v<version>-<llamaRelease>-arm64.pkg, -vulkan-v<sdkVersion>-arm64.pkg
 cargo run -p xtask -- install    # sudo installer -pkg ... -target /, once per package
 ```
 
-The packages install into `/opt/llama.cpp/` with a symlink per executable in `/usr/local/bin/`; they are unsigned and not notarized, and a `.pkg` has no dependencies, so install all three. Details: [docs/build-macos.md](docs/build-macos.md).
+The packages install into `/opt/private-ai/` with a symlink per executable in `/usr/local/bin/`; they are unsigned and not notarized, and a `.pkg` has no dependencies, so install all three. Details: [docs/build-macos.md](docs/build-macos.md).
 
 ## Layout
 
@@ -172,7 +172,7 @@ All build artifacts live under `build\`, in a per-OS directory (`build\windows\`
 ├── build/
 │   └── windows/
 │       ├── .sccache/           ← sccache compile cache
-│       ├── cargo-target/       ← cargo target dir of llama-cpp-config
+│       ├── cargo-target/       ← cargo target dir of the Rust crates
 │       ├── config-build.psd1   ← build-time config (generated by xtask configure)
 │       ├── llama.cpp/          ← llama.cpp source clone (LlamaCppDir)
 │       ├── llama.cpp-cmake/    ← cmake binary dir (out-of-source build)
@@ -180,7 +180,7 @@ All build artifacts live under `build\`, in a per-OS directory (`build\windows\`
 │       └── wix-obj/            ← WiX intermediates (xtask package, transient)
 ├── dist/                    ← final installer .msi
 ├── installer/               ← the MSI source (.wxs + custom-action script), the WiX pin, dist-sources.psd1 (where external dists come from)
-├── crates/config/           ← Rust GUI + CLI configurator (source)
+├── crates/                  ← the Rust crates: core/ (pai-core, shared), manager/ (pai-manager, the runtime service binary), config/ (pai-config, the GUI + CLI configurator)
 ├── patches/                 ← checked-in build workarounds (HIP clang runtime wrapper, per clang major)
 ├── resources/               ← icon generator (llama.ico is built on demand, gitignored)
 ├── scripts/                 ← helpers: 00-install-prerequisites (.ps1/.sh) and thin wrappers over the cargo phases
@@ -194,8 +194,8 @@ Settings are split between build-time and runtime so the same scripts work both 
 | File | Where | Purpose |
 |------|-------|---------|
 | `config-build.psd1` | `build\windows\` (gitignored) | Build-time paths and flags. Generated by `xtask configure`. |
-| `server.ini` | `%LOCALAPPDATA%\llama.cpp\config\` | Machine-wide llama-server runtime (port, host, threads, threads-batch, models dir, max simultaneous models). Single `[Server]` section. Written by `llama-cpp-config`. |
-| `presets.ini` | `%LOCALAPPDATA%\llama.cpp\config\` | Per-model presets: one `[<model-id>]` section each with model path, ctx size, GPU layers, GPU distribution (device / split-mode / tensor-split), load mode, the image encoder's device, batch sizes, cache types, flash-attn, sampling, MoE expert offload, chat-template kwargs, speculative decoding (draft model / spec-type / draft device+layers). Consumed directly by `llama-server --models-preset`. Written by `llama-cpp-config`. |
+| `server.ini` | `%LOCALAPPDATA%\private-ai\config\` | Machine-wide llama-server runtime (port, host, threads, threads-batch, models dir, max simultaneous models). Single `[Server]` section. Written by `pai-config`. |
+| `presets.ini` | `%LOCALAPPDATA%\private-ai\config\` | Per-model presets: one `[<model-id>]` section each with model path, ctx size, GPU layers, GPU distribution (device / split-mode / tensor-split), load mode, the image encoder's device, batch sizes, cache types, flash-attn, sampling, MoE expert offload, chat-template kwargs, speculative decoding (draft model / spec-type / draft device+layers). Consumed directly by `llama-server --models-preset`. Written by `pai-config`. |
 
 > **GPU distribution** is edited as a table, not as free text: `--tensor-split` is a positional vector over the devices named by `--device`, so the configurator lists the detected GPUs with a checkbox and a weight each and derives both settings from that. The [configurator README](crates/config/README.md#gpu-distribution-table) has the details, including the two footguns it exists to make visible: a blank tensor-split over 2+ GPUs means *split by free VRAM*, not evenly; and the **image encoder (mmproj/CLIP) is placed on its own**: it follows the first `--device` entry, and with no device pinned llama.cpp puts it on the first GPU backend it finds, where it holds VRAM but only works on image requests; the preset's Vision GPU dropdown overrides both.
 
@@ -206,7 +206,7 @@ Settings are split between build-time and runtime so the same scripts work both 
 | Paths | `DistRoot`, `LlamaCppDir`, `OpenSSLDir`, `HipPath`, `VsDevShell`, `WixExe` |
 | Build | `GpuTargets`, `BuildType`, `CCompiler`, `CxxCompiler`, `Linker`, `BuildJobs` |
 
-Runtime configs are created and edited with `llama-cpp-config` (GUI when launched with no arguments, headless CLI via `server` / `preset` subcommands). The installer ships it in `bin\` next to `llama-server.exe`, with an optional Start Menu shortcut ("llama.cpp Config"). See [crates\config\README.md](crates/config/README.md).
+Runtime configs are created and edited with `pai-config` (GUI when launched with no arguments, headless CLI via `server` / `preset` subcommands). The installer ships it in `bin\` next to `llama-server.exe`, with an optional Start Menu shortcut ("Private AI Framework"). See [crates\config\README.md](crates/config/README.md).
 
 ## Phases
 
@@ -218,20 +218,20 @@ Runtime configs are created and edited with `llama-cpp-config` (GUI when launche
 | `scripts/00-install-prerequisites.sh` | Linux and macOS: the system packages (apt, or Homebrew) and Rust, then `xtask prereq`. |
 | `xtask prereq` | Linux and macOS: sccache and the newest stable GPU SDK dists, the llama.cpp release check. Accepts `--dist-root`, `--skip`. |
 | `xtask configure` | Detects environment, verifies tools, writes the build config (`config-build.psd1` on Windows, `config-build.toml` elsewhere). Accepts `--llama-cpp-dir` and `--dist-root`. |
-| `xtask build` | Builds **both** llama.cpp (CMake configure out-of-source into `build\<os>\llama.cpp-cmake\` + Ninja, checked out at the newest `vX.Y.Z` release tag: upstream also tags every merge to master `bNNNN`, and those nightlies are not candidates) **and** `llama-cpp-config` (`cargo build --release` into `build\<os>\cargo-target\`). `xtask build llama` and `xtask build config` build one of them. Auto-clones llama.cpp into `build\<os>\llama.cpp\`. Uses sccache when available. |
-| `xtask package` | Windows: stages into `build\windows\staging\`, then runs WiX to produce `dist\llama-cpp-framework-v<version>-<llamaBuild>-<arch>.msi` and validates it (`--wix`, `--keep-staging`). Linux: the `.deb` and `.rpm` of each component (`--deb`, `--rpm`); macOS: the `.pkg` of each component. |
-| `xtask install` | Installs the newest package in `dist/` on this machine, on Linux and macOS the newest of each component or the files named (`--dry-run`). Windows: the MSI through `msiexec /qb` (progress bar and the UAC prompt, all features, the recorded install directory; a downgrade removes the installed version first). Linux and macOS: the `.deb`, `.rpm` or `.pkg` through the package manager (`--force` installs while a program from `/opt/llama.cpp` runs; the MSI stops them itself). |
+| `xtask build` | Builds **both** llama.cpp (CMake configure out-of-source into `build\<os>\llama.cpp-cmake\` + Ninja, checked out at the newest `vX.Y.Z` release tag: upstream also tags every merge to master `bNNNN`, and those nightlies are not candidates) **and** `pai-config` (`cargo build --release` into `build\<os>\cargo-target\`). `xtask build llama` and `xtask build config` build one of them. Auto-clones llama.cpp into `build\<os>\llama.cpp\`. Uses sccache when available. |
+| `xtask package` | Windows: stages into `build\windows\staging\`, then runs WiX to produce `dist\private-ai-framework-v<version>-<llamaBuild>-<arch>.msi` and validates it (`--wix`, `--keep-staging`). Linux: the `.deb` and `.rpm` of each component (`--deb`, `--rpm`); macOS: the `.pkg` of each component. |
+| `xtask install` | Installs the newest package in `dist/` on this machine, on Linux and macOS the newest of each component or the files named (`--dry-run`). Windows: the MSI through `msiexec /qb` (progress bar and the UAC prompt, all features, the recorded install directory; a downgrade removes the installed version first). Linux and macOS: the `.deb`, `.rpm` or `.pkg` through the package manager (`--force` installs while a program from `/opt/private-ai` runs; the MSI stops them itself). |
 | `crates\config\` | Rust GUI + CLI configurator for `server.ini` / `presets.ini`, opencode/Claude Code integrations, and llama-server start/stop. See [crates\config\README.md](crates/config/README.md). |
 
 ## Packaging
 
-`xtask package` produces a Windows Installer package at `dist\llama-cpp-framework-v<version>-<llamaRelease>-<arch>.msi` (e.g. `llama-cpp-framework-v2.2.0-v0.7.0-x64.msi`: the framework version first, the bundled llama.cpp release second). The package:
+`xtask package` produces a Windows Installer package at `dist\private-ai-framework-v<version>-<llamaRelease>-<arch>.msi` (e.g. `private-ai-framework-v2.99.0-v0.9.0-x64.msi`: the framework version first, the bundled llama.cpp release second). The package:
 
-- Installs llama.cpp binaries to `C:\Program Files\llama.cpp\` by default, the directory choosable (`llama-cpp-config.exe` and `llama.ico` go into `bin\` next to `llama-server.exe`).
-- Is self-contained for the GPU backends: the ROCm and CUDA runtime libraries the backends load (with rocBLAS's and hipBLASLt's kernels for the targeted GPU architectures) are copied out of the dists the build linked against, into `bin\` and `.kpack\`. The target machine needs the GPU drivers, which also bring the Vulkan loader, and the Visual C++ Redistributable; nothing is downloaded at install time.
+- Installs llama.cpp binaries to `C:\Program Files\private-ai\` by default, the directory choosable (`pai-config.exe` and `llama.ico` go into `bin\` next to `llama-server.exe`).
+- Is self-contained for the GPU backends: the ROCm and CUDA runtime libraries the backends load (with rocBLAS's and hipBLASLt's kernels for the targeted GPU architectures) are copied out of the dists the build linked against, into `bin\` and `.kpack\`. The Vulkan loader is bundled too. The target machine needs the GPU drivers and the Visual C++ Redistributable; nothing is downloaded at install time.
 - Optionally adds `bin\` to the system PATH.
-- Optionally creates a Start Menu shortcut ("llama.cpp Config" → `llama-cpp-config.exe`).
-- No install-time configuration page: all runtime configuration (server settings and per-model presets) is done post-install with `llama-cpp-config`.
-- Stops a running `llama-cpp-config` and `llama-server` before it replaces or removes their files (gracefully first, so the conversation snapshot is saved).
-- Supports upgrades (removes the previous version first; refuses a downgrade). On a machine with a previous installation that is not this MSI, it stops before changing anything and asks to uninstall that one first from Settings > Apps (answering No to its question keeps the user data).
-- Is listed in Settings > Apps (and Programs and Features). Uninstalling from there preserves `%LOCALAPPDATA%\llama.cpp\` (configs, logs, benchmark results) unless the user ticks the box that offers to delete it; a silent uninstall always preserves it.
+- Optionally creates a Start Menu shortcut ("Private AI Framework" → `pai-config.exe`).
+- No install-time configuration page: all runtime configuration (server settings and per-model presets) is done post-install with `pai-config`.
+- Stops a running `pai-config` and `llama-server` before it replaces or removes their files (gracefully first, so the conversation snapshot is saved).
+- Supports upgrades (removes the previous version first; refuses a downgrade), release 2.4's `llama.cpp-framework` included: an install directory chosen in 2.4 is kept, the old default `C:\Program Files\llama.cpp\` becomes `C:\Program Files\private-ai\`, and `pai-config` moves the 2.4 user tree `%LOCALAPPDATA%\llama.cpp\` at its first start. On a machine with a previous installation that is not this MSI, it stops before changing anything and asks to uninstall that one first from Settings > Apps (answering No to its question keeps the user data).
+- Is listed in Settings > Apps (and Programs and Features). Uninstalling from there preserves `%LOCALAPPDATA%\private-ai\` (configs, logs, benchmark results) unless the user ticks the box that offers to delete it; a silent uninstall always preserves it.

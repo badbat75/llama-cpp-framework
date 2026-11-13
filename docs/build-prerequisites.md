@@ -1,7 +1,7 @@
 ---
 title: Build prerequisites
 type: reference
-updated: 2026-11-02
+updated: 2026-11-13
 ---
 
 # Build prerequisites
@@ -21,13 +21,13 @@ The dist root resolves in this order, on every OS:
 
 1. An explicit `--dist-root` on `xtask prereq` and `xtask configure` (`-DistRoot` on the PowerShell
    script).
-2. `LLAMA_FW_DIST_ROOT`.
+2. `PRIVATE_AI_DIST_ROOT`.
 3. The root `xtask configure` recorded in `config-build.*`.
 4. The default in `installer/dist-sources.toml` (`.psd1` for PowerShell). On macOS a leading `~/` is
    the home directory.
 
 `xtask configure` records the resolved root, so it is given once. `xtask build` and `xtask package`
-use the recorded root and ignore `LLAMA_FW_DIST_ROOT` while one is recorded. To move them, re-run
+use the recorded root and ignore `PRIVATE_AI_DIST_ROOT` while one is recorded. To move them, re-run
 `xtask configure`.
 
 **A dist counts only with its marker and the files the build consumes.** The marker is written after
@@ -185,7 +185,7 @@ build reads neither.
 - any persistent `LLVM_PATH`, `HIP_DEVICE_LIB_PATH` or `HIP_PLATFORM`;
 - `amdhip64_*.dll` in more than one PATH directory.
 
-That last check sets aside the installed framework's `bin\`, found through `HKLM\Software\llama.cpp`
+That last check sets aside the installed framework's `bin\`, found through `HKLM\Software\private-ai`
 `InstallDir`, and the driver's copy under the Windows directory. The installed set is
 self-contained: an exe resolves it from its own directory before PATH, and PATH never decides
 `amdhip64_7.dll` for another exe.

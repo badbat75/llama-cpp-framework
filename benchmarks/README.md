@@ -19,7 +19,7 @@ have the start date only.
 
 The configurator compiles `schema.sql` in and records every finished run of its
 Benchmark tab and of `bench run` into a WORKING database under its data directory
-(`~/.local/share/llama.cpp/bench/bench.db`, `%LOCALAPPDATA%\llama.cpp\bench\bench.db`):
+(`~/.local/share/private-ai/bench/bench.db`, `%LOCALAPPDATA%\private-ai\bench\bench.db`):
 one campaign per tab run or sweep, machine and software detected (the ROCm, CUDA and
 Vulkan SDK dist versions are the ones llama.cpp was built against). Credentials and
 service URLs are never stored, and an absolute path is stored as its file name, in the
@@ -27,8 +27,8 @@ logs and reports too: the file is public with the repo. A campaign the docs cite
 copied here, with its answer:
 
 ```sh
-llama-cpp-config bench answer sweep-20261016-181500 "4 wins up to 40k, 3 beyond"
-llama-cpp-config bench publish sweep-20261016-181500 --to benchmarks/bench.db
+pai-config bench answer sweep-20261016-181500 "4 wins up to 40k, 3 beyond"
+pai-config bench publish sweep-20261016-181500 --to benchmarks/bench.db
 ```
 
 `publish` copies whole campaigns and everything their runs point at (the machine matched
@@ -77,13 +77,13 @@ keeps the preset's sampling. The off switch is for the benchmark only; the prese
 its speculator.
 
 ```sh
-llama-cpp-config bench run --spec standard --preset <id> --key split-mode --values 'unset,tensor'
+pai-config bench run --spec standard --preset <id> --key split-mode --values 'unset,tensor'
 ```
 
 `--spec standard` runs the newest published version, `--spec standard-1.0` that one: every
 published version stays installed, so a machine can still measure with an older method. The
 packages install `specs\` and `prompts\` read-only beside the binaries
-(`/opt/llama.cpp/share/benchmarks` on Linux and macOS, `<InstallDir>\share\benchmarks` on
+(`/opt/private-ai/share/benchmarks` on Linux and macOS, `<InstallDir>\share\benchmarks` on
 Windows; a tree build reads this directory), and nothing is copied into the user's config.
 The configurator carries only `specs/standard.versions`, the digest of each published version,
 and each version pins the sha256 of its prompts: an installed spec or prompt changed in place
@@ -91,7 +91,7 @@ is refused, not run under the version it claims. Only a published version of `st
 runs a spec of your own, and a method flag beside `--spec` (`--prompt-file`, `--temp`, `--reps`...)
 replaces the spec's value, but their runs record `spec = custom`, derived from the spec. Every benchmark (a
 sweep with or without a spec, and the Benchmark tab) holds the GPU lock for its whole
-length: an exclusive lock on `$LLAMA_FW_GPU_LOCK`, default `gpu.lock` in the bench
+length: an exclusive lock on `$PRIVATE_AI_GPU_LOCK`, default `gpu.lock` in the bench
 directory (`flock` on Linux, so `flock -o <same file> <job>` keeps other GPU jobs out),
 and on Linux it also waits until nothing but llama-server holds `/dev/kfd` or
 `/dev/nvidia*`. The tab refuses instead of waiting. Every run
@@ -122,12 +122,12 @@ committed (the `spec-reviewer` subagent of Claude Code and OpenCode runs it). A 
 `custom`). Compare like with like:
 
 ```sh
-llama-cpp-config bench query summary --db benchmarks/bench.db --param spec-version=1.0 --param spec-pass=real
+pai-config bench query summary --db benchmarks/bench.db --param spec-version=1.0 --param spec-pass=real
 ```
 
 ## Querying
 
-`llama-cpp-config bench query` reads the working database, or this one with
+`pai-config bench query` reads the working database, or this one with
 `--db benchmarks/bench.db`, read-only:
 
 ```sh

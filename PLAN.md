@@ -231,7 +231,7 @@ the environment variables become `PRIVATE_AI_DIST_ROOT` and `PRIVATE_AI_DATA_ROO
 
 Slices, in order:
 
-Slices 1 to 4 are done (`git log`): the crate layout (`crates/core`, `crates/manager`, `crates/config`,
+Slices 1 to 4 and the docs are done (`git log`): the crate layout (`crates/core`, `crates/manager`, `crates/config`,
 packages `pai-*`, one workspace version), the names that behave (executables `pai-config` and
 `pai-manager`; display name "Private AI Framework"; identifiers `org.privateai.Config`; paths
 `private-ai` under `~/.config`, `~/.local/share`, `%LOCALAPPDATA%`, `/etc`, `%ProgramData%`, `/opt`,
@@ -241,7 +241,15 @@ the migration of the old user tree and start-at-login entry, and the packages
 the old package of each component; the MSI keeps its UpgradeCode, keeps a directory chosen in 2.4
 and moves the old default; `installer/private-ai-framework.wxs`).
 
-5. **Docs and scaffolding**, including the manager docs left from slices 3a and 3b of step 1.
+5. **Leftovers in code**, tests first where code behaves: the docs site's title, header and hero
+   (`tools/site/src/main.rs`) say the old project name; `tools/report-memory.ps1` defaults `-LogPath`
+   to the old `%LOCALAPPDATA%` tree; `benchmarks/schema.sql`'s comment names the old binary; the
+   `crates/manager/src/manager/service.rs` header promises an SCM backend that does not exist yet;
+   `crates/config/README.md` "Build" says the icon needs the llama.cpp clone, `AGENTS.md` says it
+   needs node, npm and network (check `build.rs` and `generate-llama-ico.mjs`). The specs
+   `standard-1.0.ini` and `standard-1.1.ini` keep the old binary name in a comment: they are frozen by
+   sha256, so they change only with a new spec version. The repository URL waits for the user's GitHub
+   rename.
 
 - Done when: nothing outside the engine's own names and bench.db history says `llama.cpp-framework` or
   `llama-cpp-config`; the packages and the MSI upgrade an installed 2.4.0 in place (checked by the user on

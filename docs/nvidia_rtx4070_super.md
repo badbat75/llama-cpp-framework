@@ -101,7 +101,7 @@ land on the last device. *Windows* unless a row says otherwise, this card last, 
 - *Windows*: `tools\report-memory.ps1` shows requested against actual VRAM and any spill into shared memory.
 - *Linux*: read `nvidia-smi --query-gpu=memory.used,memory.free,memory.reserved` after a prefill.
 - `tools\pcie-bench\`: the card's real host link.
-- Benchmark tab or `llama-cpp-config bench run`: measure at 2.6k and ~90k context, with temp 0 and 3
+- Benchmark tab or `pai-config bench run`: measure at 2.6k and ~90k context, with temp 0 and 3
   repetitions.
 
 ## 7. Not yet measured (placeholders)

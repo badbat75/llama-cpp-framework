@@ -25,3 +25,11 @@ Lessons only: the rules are in `AGENTS.md`.
   as paths: code doc comments lag the move too, and they are code's to fix, so report them.
 - `grep` here is ugrep: a long `.{0,120}` context regex fails with "exceeds complexity limits". Use a
   Python `re` script instead.
+- `updated` in a `gpu`/`model` page's front matter is the last change to a measured value: a rename
+  or wording fix leaves it alone. Reference pages (`build-*.md`) take the day of any change.
+- `benchmarks/specs/*.ini` are pinned by sha256 (`standard.versions`): never edit one, not even a
+  comment; report a stale name in it instead. bench.db and `benchmarks/prompts/` are recorded data.
+- The site turns a link out of `docs/` into a GitHub URL, so an anchor into a README is GitHub's slug
+  (`### Migration from 2.4` is `#migration-from-24`). Check it in the built site (`--out <dir>`).
+- After a product rename, grep the scripts the names lints do not scan (`tools/*.ps1`) for the old
+  data paths, and describe what the script does today rather than the new name.

@@ -1,7 +1,7 @@
 ---
 title: Compiling llama.cpp and the configurator
 type: reference
-updated: 2026-11-04
+updated: 2026-11-13
 ---
 
 # Compiling llama.cpp and the configurator
@@ -390,7 +390,7 @@ tensor-split deny lists to `OUT_DIR`, from `llm_arch_is_recurrent`, `llm_arch_is
 
 - There is no fallback list, since a wrong one would be silent. No clone, or a source of another
   shape, stops the build. A new shape means updating `arch_tables.rs` for that release.
-- `xtask` passes the recorded clone through `LLAMA_FW_LLAMA_CPP_DIR`. A bare cargo command reads the
+- `xtask` passes the recorded clone through `PRIVATE_AI_LLAMA_CPP_DIR`. A bare cargo command reads the
   default clone of the target OS, `build/<os>/llama.cpp`, unless that variable is set.
 
 ## Windows
@@ -513,7 +513,7 @@ which `std::path` does not split on Linux. The code under test is not at fault.
 
 | Path | What it is |
 | --- | --- |
-| `Cargo.toml` | The workspace: `crates/core` (package `pai-core`, the shared library), `crates/manager` (`pai-manager`, `private-ai-manager`), `crates/config` (`pai-config`, the configurator), `xtask` and `tools/site`. The profiles live here because cargo reads them only at the root, and so does the framework version, `[workspace.package] version`, one for the three `pai-*` crates. |
+| `Cargo.toml` | The workspace: `crates/core` (package `pai-core`, the shared library), `crates/manager` (`pai-manager`, the binary of the `private-ai-manager` service), `crates/config` (`pai-config`, the configurator), `xtask` and `tools/site`. The profiles live here because cargo reads them only at the root, and so does the framework version, `[workspace.package] version`, one for the three `pai-*` crates. |
 | `xtask/src/main.rs` | The phases and their options |
 | `xtask/src/common/` | Shared: `dists.rs`, `llama.rs`, `cmake_options.rs`, `configurator.rs`, `prereq.rs`, `rocm.rs`, `version.rs`, `bench_share.rs`, `components.rs` (Linux and macOS: which package owns each staged file) |
 | `xtask/src/<os>/` | One OS's phases: `configure.rs`, `build_llama.rs`, `package.rs`, `install.rs`, `dists.rs` (the finders) |

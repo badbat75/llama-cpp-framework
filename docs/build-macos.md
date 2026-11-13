@@ -1,7 +1,7 @@
 ---
 title: Building on macOS
 type: reference
-updated: 2026-11-04
+updated: 2026-11-13
 ---
 
 # Building on macOS
@@ -61,16 +61,16 @@ tree's binaries find the SDK's loader through their build RPATH. A changed compi
 new Xcode can move it.
 
 **Package.** `pkgbuild` writes three `.pkg` files from one staged tree, split by path as
-[on Linux](build-packaging.md#packaging). It refuses a built `llama-cpp-config` whose version differs from
+[on Linux](build-packaging.md#packaging). It refuses a built `pai-config` whose version differs from
 the root `Cargo.toml`'s.
 
 | Package | File | Identifier ends in |
 | --- | --- | --- |
-| `config` | `llama-cpp-framework-config-v<framework>-<llama>-arm64.pkg` | `.config` |
-| `llama` | `llama-cpp-framework-llama-v<framework>-<llama>-arm64.pkg` | `.llama` |
-| `vulkan` | `llama-cpp-framework-vulkan-v<sdk>-arm64.pkg` | `.vulkan` |
+| `config` | `private-ai-framework-config-v<framework>-<llama>-arm64.pkg` | `.config` |
+| `llama` | `private-ai-framework-llama-v<framework>-<llama>-arm64.pkg` | `.llama` |
+| `vulkan` | `private-ai-framework-vulkan-v<sdk>-arm64.pkg` | `.vulkan` |
 
-The identifier starts with `io.github.badbat75.llama-cpp-framework`. `config` and `llama` carry the framework's
+The identifier starts with `org.privateai.framework`. Release 2.4's packages had other names and identifiers, and nothing in `xtask` removes a 2.4 install under `/opt/llama.cpp`. `config` and `llama` carry the framework's
 version, and `vulkan` the SDK's, or the framework's for an SDK outside the layout.
 
 **A `.pkg` has no dependency mechanism, so nothing ties the three together.** `xtask install` lays down the newest of
@@ -78,13 +78,13 @@ each with `installer`, or only the files given. Without the `vulkan` package ggm
 
 | Path | Package | Holds |
 | --- | --- | --- |
-| `/opt/llama.cpp/bin/` | `llama`; `llama-cpp-config` in `config` | The build's `bin/` without `test-*`, `llama-cpp-config` beside the server |
-| `/opt/llama.cpp/lib/` | `vulkan` | The Vulkan loader and MoltenVK |
-| `/opt/llama.cpp/share/benchmarks/` | `config` | The benchmark method |
-| `/opt/llama.cpp/share/strings/` | `config` | The configurator's text: the GUI's `en_US.toml`, the CLI's `cli.toml` |
-| `/opt/llama.cpp/share/licenses/<suffix>/` | Each its own | The licence texts, with the MoltenVK and Vulkan loader ones in `vulkan/`; see [Packaging](build-packaging.md#packaging) |
-| `/usr/local/bin/` | `llama`; `llama-cpp-config` in `config` | A symlink per executable |
-| `/usr/local/share/vulkan/icd.d/llama-cpp-framework-MoltenVK_icd.json` | `vulkan` | The driver manifest, with an absolute `library_path` into `/opt/llama.cpp/lib` |
+| `/opt/private-ai/bin/` | `llama`; `pai-config` in `config` | The build's `bin/` without `test-*`, `pai-config` beside the server |
+| `/opt/private-ai/lib/` | `vulkan` | The Vulkan loader and MoltenVK |
+| `/opt/private-ai/share/benchmarks/` | `config` | The benchmark method |
+| `/opt/private-ai/share/strings/` | `config` | The configurator's text: the GUI's `en_US.toml`, the CLI's `cli.toml` |
+| `/opt/private-ai/share/licenses/<suffix>/` | Each its own | The licence texts, with the MoltenVK and Vulkan loader ones in `vulkan/`; see [Packaging](build-packaging.md#packaging) |
+| `/usr/local/bin/` | `llama`; `pai-config` in `config` | A symlink per executable |
+| `/usr/local/share/vulkan/icd.d/private-ai-framework-MoltenVK_icd.json` | `vulkan` | The driver manifest, with an absolute `library_path` into `/opt/private-ai/lib` |
 
 - The manifest goes there because the loader does not look next to itself. A system-wide Vulkan SDK
   install adds its own MoltenVK manifest there too.
@@ -98,5 +98,5 @@ each with `installer`, or only the files given. Without the `vulkan` package ggm
   browser.
 
 **The configurator** builds with its existing non-Linux, non-Windows fallbacks: start at login, GPU
-monitoring and similar are not ported. Its paths follow the Linux ones (`~/.local/share/llama.cpp`,
-`~/.config/llama.cpp`) per `paths.rs`.
+monitoring and similar are not ported. Its paths follow the Linux ones (`~/.local/share/private-ai`,
+`~/.config/private-ai`) per `paths.rs`, and so does the move of release 2.4's trees at its start.

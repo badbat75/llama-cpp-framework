@@ -62,7 +62,7 @@
   <text class="s" x="320" y="196">bNNNN nightly), applies</text>
   <text class="m" x="320" y="213">patches/llama.cpp/</text>
   <text class="s" x="320" y="230">CMake + Ninja, then</text>
-  <text class="m" x="320" y="245">llama-cpp-config</text>
+  <text class="m" x="320" y="245">pai-config</text>
 
   <text class="s" x="471" y="166">stages binaries and</text>
   <text class="s" x="471" y="181">the GPU runtimes;</text>

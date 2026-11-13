@@ -1,13 +1,13 @@
 ---
 title: Build pipeline
 type: reference
-updated: 2026-11-04
+updated: 2026-11-13
 ---
 
 # Build pipeline
 
 The pipeline turns a llama.cpp release into an installable package with the CUDA, Vulkan and ROCm
-backends and the `llama-cpp-config` configurator. It runs on Windows (one MSI) and Linux (five `.deb`
+backends and the `pai-config` configurator. It runs on Windows (one MSI) and Linux (five `.deb`
 and five `.rpm` packages: the configurator, llama.cpp and one per GPU runtime). It also runs on macOS
 (Apple Silicon, three `.pkg`), where it is written but untested.
 
@@ -105,7 +105,7 @@ says. The configurator always goes to `build/<os>/cargo-target`.
 | Machine environment | `HIP_PATH` and PATH of the active ROCm dist | None | None |
 | sccache binary | `%LOCALAPPDATA%\Programs\sccache\sccache.exe` | `~/.local/bin/sccache` | `~/.local/bin/sccache` |
 | Packages | One MSI | Five `.deb`, five `.rpm` | Three `.pkg` |
-| Installs to | `Program Files\llama.cpp` (choosable) | `/opt/llama.cpp`, links in `/usr/bin` | `/opt/llama.cpp`, links in `/usr/local/bin` |
+| Installs to | `Program Files\private-ai` (choosable) | `/opt/private-ai`, links in `/usr/bin` | `/opt/private-ai`, links in `/usr/local/bin` |
 
 ## Where things land
 

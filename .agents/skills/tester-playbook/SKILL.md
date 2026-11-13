@@ -14,7 +14,7 @@ Lessons only: the rules are in `AGENTS.md`.
 - Use real names and values in fixtures, captured from the real system. They find what invented data hides.
 - A fake holds whatever you write, while the real system can answer differently. Do not treat a passing
   test on a fake as proof about the real thing.
-- In the configurator (package `pai-config` in `crates/config/`, formerly `llama-cpp-config/`; filter with
+- In the configurator (package `pai-config` in `crates/config/`; filter with
   `cargo test -p pai-config <name>`), a test that needs `PRIVATE_AI_DATA_ROOT` (anything reading `paths::`) is not
   a `#[test]` of its own: write a `#[cfg(test)] pub(crate) fn <name>_e2e()` that calls
   `crate::paths::redirect_for_tests(dir.path())` on its own tempdir (it sets the variable and asserts the
@@ -55,7 +55,8 @@ Lessons only: the rules are in `AGENTS.md`.
   has no test: after a path change, check the targets exist by hand and say so.
 - To list or run the tests of an older commit: `git worktree add --detach build/<name> <rev>`, copy the
   gitignored `resources/llama.ico` (and `llama-brand-logo.svg`) into it, set
-  `LLAMA_FW_LLAMA_CPP_DIR=<repo>/build/linux/llama.cpp` (build.rs reads the clone's `llama-arch.cpp`)
+  `PRIVATE_AI_LLAMA_CPP_DIR=<repo>/build/linux/llama.cpp` (`LLAMA_FW_LLAMA_CPP_DIR` before commit
+  7bddcff; build.rs reads the clone's `llama-arch.cpp`)
   and a separate `CARGO_TARGET_DIR`, since the repo's `.cargo/config.toml` would point the worktree at
   the main target dir. Compare `-- --list` names with `LC_ALL=C sort`, else `comm` complains.
 - To check that a lint still bites after a refactor, plant a violation in a scratch copy (rsync the
