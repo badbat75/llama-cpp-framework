@@ -235,7 +235,12 @@ Slices, in order:
    `crates/config` (`pai-config`, GUI and CLI); later `crates/bff` and `crates/fe`. Folders carry no
    prefix and packages are named `pai-*` (a package named bare `core` would clash with Rust's `core`).
    One version for all crates: `[workspace.package]` in the root `Cargo.toml`.
-2. **The names that behave:** the executables take the `pai-` acronym (decided with the user on
+2. **The names that behave** (display name and identifiers decided with the user on 2026-11-13: the
+   display name is "Private AI Framework" everywhere people see it (window title "Private AI
+   Framework: Config", Start menu, Apps list, desktop entry, MSI product name); identifiers are
+   reverse-DNS `org.privateai.*`: XDG app id `org.privateai.Config`, desktop file
+   `org.privateai.Config.desktop`, the single-instance name after the app id; registry
+   `HKLM\Software\private-ai`): the executables take the `pai-` acronym (decided with the user on
    2026-11-13): `pai-config` (the GUI and CLI, today `llama-cpp-config`), `pai-manager` (today
    `private-ai-manager`, so the unit runs `pai-manager run-instance <id>`), later `pai-bff` and `pai-fe`;
    the services (`private-ai-manager.service`, `llama.cpp@<id>.service`) and the D-Bus name keep their
