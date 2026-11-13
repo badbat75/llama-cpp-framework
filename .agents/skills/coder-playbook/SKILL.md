@@ -51,3 +51,9 @@ Lessons only: the rules are in `AGENTS.md`.
   through a shared fn such as `Migration::errors`) goes in both `cli.toml` and `en_US.toml`, and
   only once `strings::set_reader` has run. Windows-only code (`startup::win`) is not compiled by the
   agent commands on Linux: say so in the report.
+- Windows-only code is type-checked on Linux against the GNU target (mingw-w64 and the rustup target
+  installed): `cargo check -p pai-core -p pai-manager -p xtask --all-targets --target
+  x86_64-pc-windows-gnu`, then clippy with the same target. pai-config does not build there:
+  skia-bindings (slint `renderer-skia`) has no prebuilt binaries for `windows-gnu` (404) and its full
+  build asserts an MSVC install (`win_vc`); its build.rs also wants `build/windows/llama.cpp` unless
+  `PRIVATE_AI_LLAMA_CPP_DIR` names a clone. Check windows-sys signatures in `~/.cargo/registry`.

@@ -42,7 +42,7 @@ as the column says. A requirement still open must be covered by a step.
 | W12 | Every change to a benchmark spec is reviewed by `spec-reviewer` before it is committed | Applies to every step |
 | W13 | The coordinator only coordinates: the tester writes and reruns the tests, the coder runs the linter and the format check, the coordinator reads their reports and commits | Met: `AGENTS.md` "Roles", `.opencode/agents/` |
 | W14 | Every release until 3.0.0 is a 2.99.x pre-release (2.99.0, 2.99.1, ...), decided on 2026-11-13; 3.0.0 is the user's call | Applies to every release |
-| W15 | Windows-only code is type-checked on Linux with `cargo check -p <crate> --target x86_64-pc-windows-msvc` by the coder, decided on 2026-11-13 | Open: step 2, slice 3 (added to the agent commands in `AGENTS.md` once it is shown to work here) |
+| W15 | Windows-only code is type-checked on Linux by the coder, `cargo check` and `cargo clippy` with `--target x86_64-pc-windows-gnu`, for pai-core, pai-manager and xtask (MinGW installed by the user; no crate code uses `cfg(target_env)`); pai-config is left out because slint's Skia renderer builds only with MSVC, so its Windows code is checked by the user's build on Windows (user, 2026-11-13) | Applies to every slice ("Commands" in `AGENTS.md`) |
 
 ## Definition of Done
 
@@ -231,27 +231,14 @@ the environment variables become `PRIVATE_AI_DIST_ROOT` and `PRIVATE_AI_DATA_ROO
 
 Slices, in order:
 
-1. **The layout**, done (decided with the user on 2026-11-13): `crates/core` (`pai-core`, the shared
-   modules and the strings files, no GUI), `crates/manager` (`pai-manager`, links no GUI) and
-   `crates/config` (`pai-config`, GUI and CLI); later `crates/bff` and `crates/fe`. Folders carry no
-   prefix and packages are named `pai-*` (a package named bare `core` would clash with Rust's `core`).
-   One version for all crates: `[workspace.package]` in the root `Cargo.toml`.
-2. **The names that behave**, done except the gaps noted below (display name and identifiers decided with the user on 2026-11-13: the
-   display name is "Private AI Framework" everywhere people see it (window title "Private AI
-   Framework: Config", Start menu, Apps list, desktop entry, MSI product name); identifiers are
-   reverse-DNS `org.privateai.*`: XDG app id `org.privateai.Config`, desktop file
-   `org.privateai.Config.desktop`, the single-instance name after the app id; registry
-   `HKLM\Software\private-ai`): the executables take the `pai-` acronym (decided with the user on
-   2026-11-13): `pai-config` (the GUI and CLI, today `llama-cpp-config`), `pai-manager` (today
-   `private-ai-manager`, so the unit runs `pai-manager run-instance <id>`), later `pai-bff` and `pai-fe`;
-   the services (`private-ai-manager.service`, `llama.cpp@<id>.service`) and the D-Bus name keep their
-   names. Also the window title and product strings, the environment variables,
-   the user and system paths, the registry key, the service user; tests pin the new names first.
-3. **Migration**, done except: a Run entry switched off in Task Manager (the `StartupApproved\Run`
-   value, first byte odd = off; no Microsoft spec, Firefox's `WindowsLaunchOnLogin.sys.mjs` uses the
-   same rule) is removed without enabling the new one, as a desktop-disabled entry on Linux (user,
-   2026-11-13); the Windows registry test restores the starting state through a `Drop` guard; the
-   Windows code is type-checked (W15). Tests first, the parsing as a pure function tested on Linux.
+Slices 1 to 3 are done (`git log`): the crate layout (`crates/core`, `crates/manager`, `crates/config`,
+packages `pai-*`, one workspace version), the names that behave (executables `pai-config` and
+`pai-manager`; display name "Private AI Framework"; identifiers `org.privateai.Config`; paths
+`private-ai` under `~/.config`, `~/.local/share`, `%LOCALAPPDATA%`, `/etc`, `%ProgramData%`, `/opt`,
+`C:\Program Files`; registry `Software\private-ai`; every `LLAMA_FW_*` variable now `PRIVATE_AI_*`)
+and the migration of the old user tree and start-at-login entry. Kept on purpose for slice 4: the
+upgrade-from-2.4 logic in the `.wxs` and `msi-stop-processes.ps1`, and the package and MSI names.
+
 4. **Packages:** names, `Replaces`/`Conflicts`/`Provides`, `Obsoletes`, the MSI's UpgradeCode kept;
    xtask tests first, `--dry-run` where it exists.
 5. **Docs and scaffolding**, including the manager docs left from slices 3a and 3b of step 1.
@@ -426,6 +413,10 @@ From the Windows work of 2026-10-21, `docs/qwen3.8_27b.md` section 9.
 
 ## Waiting for the user
 
+- Step 2: pai-config's Windows code (start at login with the old-entry migration and Task Manager's
+  off state, single instance, the migration's Windows branch) is compiled by nobody here (W15): build
+  it on Windows and run `cargo test -p pai-config startup -- --ignored` (registry round trips that
+  put the starting state back).
 - Steps 3 to 8: every benchmark run and every llama-server start on the GPUs needs the user's
   go-ahead (they hold the GPUs and may collide with other jobs).
 - Steps 4 and 8 partly need the RTX 4070 SUPER back in the test machine.

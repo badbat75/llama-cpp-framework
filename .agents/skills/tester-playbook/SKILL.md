@@ -75,3 +75,7 @@ Lessons only: the rules are in `AGENTS.md`.
   it in: say so in the report instead of adding `allow`s.
 - To force a copy fallback without a second filesystem, inject the rename (`&dyn Fn(&Path, &Path)`)
   and fail it for one source path only, so the final temp-to-new rename still runs for real.
+- `#[cfg(windows)]` test code cannot be type-checked from Linux: `cargo check --target
+  x86_64-pc-windows-msvc` stops in libsqlite3-sys's build script (no MSVC compiler). Review it by
+  reading, and give a registry test a guard whose `Drop` restores every value it touches (no panic in
+  the `Drop`).

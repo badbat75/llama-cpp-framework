@@ -50,6 +50,18 @@ fn run_command(exe: &std::path::Path, minimized: bool) -> String {
     format!("\"{}\" gui{flag}", exe.display())
 }
 
+/// Whether Windows lets a Run entry start, from its value in
+/// `HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run`
+/// (named like the Run value), which Task Manager's Startup panel writes when
+/// the entry is switched off or on. There is no Microsoft spec: the first byte
+/// even is on (`0x02`, `0x06`), odd is off (`0x03`, then a FILETIME), the rule
+/// Firefox's `WindowsLaunchOnLogin.sys.mjs` follows. A missing or empty value
+/// is on. Pure, compiled on every OS so its test runs anywhere.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn approved_on(data: Option<&[u8]>) -> bool {
+    data.and_then(|d| d.first()).is_none_or(|b| b % 2 == 0)
+}
+
 /// The exe to register in the login startup: the installed copy when one is
 /// found (`HKLM InstallDir` on Windows, `/usr/bin` on Linux), else the running
 /// exe. Pure so the precedence is testable without touching the registry;
@@ -263,12 +275,15 @@ mod win {
     use windows_sys::Win32::Foundation::{ERROR_FILE_NOT_FOUND, ERROR_SUCCESS};
     // Predefined key handles are sentinel values, not real handles; no close.
     use windows_sys::Win32::System::Registry::{
-        RegCloseKey, RegDeleteValueW, RegOpenKeyExW, RegQueryValueExW, RegSetValueExW,
-        HKEY as Hkey, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, KEY_QUERY_VALUE, KEY_SET_VALUE,
-        REG_DWORD, REG_SAM_FLAGS, REG_SZ,
+        RegCloseKey, RegDeleteKeyValueW, RegDeleteValueW, RegGetValueW, RegOpenKeyExW,
+        RegQueryValueExW, RegSetValueExW, HKEY as Hkey, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE,
+        KEY_QUERY_VALUE, KEY_SET_VALUE, REG_DWORD, REG_SAM_FLAGS, REG_SZ, RRF_RT_REG_BINARY,
     };
 
     pub(super) const RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
+    /// Task Manager's on/off switch of each Run value (`super::approved_on`).
+    const APPROVED_KEY: &str =
+        r"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run";
     const VALUE_NAME: &str = "org.privateai.Config";
 
     fn wide(s: &str) -> Vec<u16> {
@@ -460,27 +475,73 @@ mod win {
         }
     }
 
+    /// A `REG_BINARY` value under HKCU, or `None` when the key or value is
+    /// absent, unreadable or of another type.
+    fn read_user_binary(subkey: &str, value: &str) -> Option<Vec<u8>> {
+        let (sub, name) = (wide(subkey), wide(value));
+        let mut len: u32 = 0;
+        // SAFETY: NUL-terminated names, live locals, a buffer of `len` bytes.
+        // Two-call pattern as in `read_reg_sz`.
+        unsafe {
+            if RegGetValueW(
+                HKEY_CURRENT_USER,
+                sub.as_ptr(),
+                name.as_ptr(),
+                RRF_RT_REG_BINARY,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                &mut len,
+            ) != ERROR_SUCCESS
+            {
+                return None;
+            }
+            let mut buf = vec![0u8; len as usize];
+            if RegGetValueW(
+                HKEY_CURRENT_USER,
+                sub.as_ptr(),
+                name.as_ptr(),
+                RRF_RT_REG_BINARY,
+                std::ptr::null_mut(),
+                buf.as_mut_ptr().cast(),
+                &mut len,
+            ) != ERROR_SUCCESS
+            {
+                return None;
+            }
+            buf.truncate(len as usize);
+            Some(buf)
+        }
+    }
+
+    /// Delete a value under HKCU; an absent one is a success.
+    fn delete_user_value(subkey: &str, value: &str) -> io::Result<()> {
+        let (sub, name) = (wide(subkey), wide(value));
+        // SAFETY: NUL-terminated names.
+        match unsafe { RegDeleteKeyValueW(HKEY_CURRENT_USER, sub.as_ptr(), name.as_ptr()) } {
+            ERROR_SUCCESS | ERROR_FILE_NOT_FOUND => Ok(()),
+            other => Err(io::Error::from_raw_os_error(other as i32)),
+        }
+    }
+
     /// The Windows half of `super::migrate_old_entry`: the old Run value's
     /// `--minimized` choice carried into the new value, then the old one
-    /// deleted. With the new value not written, the old one stays.
+    /// deleted with its StartupApproved value. With the new value not written,
+    /// the old one stays. An old value switched off in Task Manager is only
+    /// deleted: the new entry is not enabled.
     pub fn migrate_old_entry() -> io::Result<bool> {
         let old = pai_core::migrate::OLD_LOGIN_ENTRY;
         let Some(command) = read_reg_sz(HKEY_CURRENT_USER, RUN_KEY, old) else {
             return Ok(false);
         };
-        set_enabled(true, command.contains("--minimized"))?;
-        let key = open_run_key(KEY_SET_VALUE)?;
-        let name = wide(old);
-        let ret = match unsafe { RegDeleteValueW(key, name.as_ptr()) } {
-            ERROR_FILE_NOT_FOUND => ERROR_SUCCESS,
-            other => other,
-        };
-        unsafe { RegCloseKey(key) };
-        if ret == ERROR_SUCCESS {
-            Ok(true)
-        } else {
-            Err(io::Error::from_raw_os_error(ret as i32))
+        let approved = read_user_binary(APPROVED_KEY, old);
+        if super::approved_on(approved.as_deref()) {
+            set_enabled(true, command.contains("--minimized"))?;
         }
+        delete_user_value(RUN_KEY, old)?;
+        if approved.is_some() {
+            delete_user_value(APPROVED_KEY, old)?;
+        }
+        Ok(true)
     }
 }
 
@@ -514,7 +575,7 @@ pub(crate) fn startup_e2e() {
 
 #[cfg(test)]
 mod tests {
-    use super::{choose_autostart_exe, run_command};
+    use super::{approved_on, choose_autostart_exe, run_command};
     use std::path::PathBuf;
 
     // The autostart entry registers the installed copy when one is recorded,
@@ -528,6 +589,27 @@ mod tests {
             installed
         );
         assert_eq!(choose_autostart_exe(None, current.clone()), current);
+    }
+
+    // Task Manager's switch on a Run entry: no value (never touched) and an
+    // empty one are on; an even first byte is on, an odd one off.
+    #[test]
+    fn approved_on_reads_task_managers_switch() {
+        let filetime = [0x10u8, 0x32, 0x54, 0x76, 0x98, 0xba, 0xdc, 0x01];
+        let with = |first: u8| {
+            let mut v = vec![first, 0, 0, 0];
+            v.extend_from_slice(&filetime);
+            v
+        };
+        assert!(approved_on(None), "no value: never switched off");
+        assert!(approved_on(Some(&[])), "empty value");
+        assert!(approved_on(Some(&with(0x02))), "0x02: on");
+        assert!(approved_on(Some(&with(0x06))), "0x06: on");
+        assert!(approved_on(Some(&[0x02; 12])), "on, any tail");
+        assert!(!approved_on(Some(&with(0x03))), "0x03: off");
+        assert!(!approved_on(Some(&with(0x01))), "odd: off");
+        assert!(!approved_on(Some(&with(0x07))), "odd: off");
+        assert!(!approved_on(Some(&[0x03])), "off, short value");
     }
 
     // The exe path is quoted (Program Files has a space) and the launch goes
@@ -750,62 +832,163 @@ mod tests {
     }
 
     // MANUAL-ONLY (`cargo test startup -- --ignored`): the old Run value of
-    // release 2.4, set to start minimized, gives way to the new one with the
-    // same choice; a second run finds nothing. Restores the initial state
-    // (the old value included, when there was one) either way.
+    // release 2.4 gives way to the new one. Switched on (no StartupApproved
+    // value), it is moved with its minimized choice and a second run finds
+    // nothing; switched off in Task Manager (StartupApproved first byte odd),
+    // it is removed with its StartupApproved value and no new entry is
+    // enabled. A guard records the four values involved first and puts them
+    // back in its Drop, so the developer's registry is restored on every
+    // path, a failed assertion included.
     #[cfg(windows)]
     #[test]
     #[ignore = "writes the real HKCU Run key; run explicitly with -- --ignored"]
     fn registry_old_entry_migrates_and_restores_initial_state() {
-        use super::win::{read_reg_sz, RUN_KEY};
+        use super::win::RUN_KEY;
         use windows_sys::Win32::Foundation::{ERROR_FILE_NOT_FOUND, ERROR_SUCCESS};
         use windows_sys::Win32::System::Registry::{
-            RegCloseKey, RegDeleteValueW, RegOpenKeyExW, RegSetValueExW, HKEY as Hkey,
-            HKEY_CURRENT_USER, KEY_SET_VALUE, REG_SZ,
+            RegDeleteKeyValueW, RegGetValueW, RegSetKeyValueW, HKEY_CURRENT_USER, REG_BINARY,
+            REG_SZ, RRF_RT_ANY,
         };
+        const APPROVED: &str =
+            r"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run";
+        const NEW: &str = "org.privateai.Config";
         let old = pai_core::migrate::OLD_LOGIN_ENTRY;
-        let initially = super::is_enabled();
-        let initially_min = super::starts_minimized();
-        let initially_old = read_reg_sz(HKEY_CURRENT_USER, RUN_KEY, old);
 
-        let wide = |s: &str| -> Vec<u16> { s.encode_utf16().chain(std::iter::once(0)).collect() };
-        let (sub, name) = (wide(RUN_KEY), wide(old));
-        let mut key: Hkey = std::ptr::null_mut();
-        let set_old = |key: Hkey, command: &str| {
-            let data = wide(command);
-            let ret = unsafe {
-                RegSetValueExW(
-                    key,
-                    name.as_ptr(),
-                    0,
-                    REG_SZ,
-                    data.as_ptr().cast::<u8>(),
-                    (data.len() * 2) as u32,
-                )
-            };
-            assert_eq!(ret, ERROR_SUCCESS, "write the old value");
-        };
-        let ret =
-            unsafe { RegOpenKeyExW(HKEY_CURRENT_USER, sub.as_ptr(), 0, KEY_SET_VALUE, &mut key) };
-        assert_eq!(ret, ERROR_SUCCESS, "open the Run key");
-        super::set_enabled(false, false).expect("no new entry to start with");
-        set_old(key, r#""C:\old\bin\old.exe" gui --minimized"#);
-
-        let first = super::migrate_old_entry();
-        let enabled = (super::is_enabled(), super::starts_minimized());
-        let second = super::migrate_old_entry();
-        // Delete what the migration should have deleted: NOT_FOUND when it did.
-        let left = unsafe { RegDeleteValueW(key, name.as_ptr()) };
-
-        if let Some(command) = &initially_old {
-            set_old(key, command);
+        fn wide(s: &str) -> Vec<u16> {
+            s.encode_utf16().chain(std::iter::once(0)).collect()
         }
-        unsafe { RegCloseKey(key) };
-        super::set_enabled(initially, initially_min).expect("restore");
+        /// A value as stored: its type and its bytes, or None when absent.
+        fn get(sub: &str, name: &str) -> Option<(u32, Vec<u8>)> {
+            let (s, n) = (wide(sub), wide(name));
+            let (mut kind, mut len) = (0u32, 0u32);
+            // SAFETY: NUL-terminated names, live locals, a buffer of `len` bytes.
+            unsafe {
+                let sized = RegGetValueW(
+                    HKEY_CURRENT_USER,
+                    s.as_ptr(),
+                    n.as_ptr(),
+                    RRF_RT_ANY,
+                    &mut kind,
+                    std::ptr::null_mut(),
+                    &mut len,
+                );
+                if sized != ERROR_SUCCESS {
+                    return None;
+                }
+                let mut buf = vec![0u8; len as usize];
+                let read = RegGetValueW(
+                    HKEY_CURRENT_USER,
+                    s.as_ptr(),
+                    n.as_ptr(),
+                    RRF_RT_ANY,
+                    &mut kind,
+                    buf.as_mut_ptr().cast(),
+                    &mut len,
+                );
+                if read != ERROR_SUCCESS {
+                    return None;
+                }
+                buf.truncate(len as usize);
+                Some((kind, buf))
+            }
+        }
+        /// Write a value (creating the subkey) or, for None, delete it.
+        fn put(sub: &str, name: &str, value: Option<&(u32, Vec<u8>)>) -> u32 {
+            let (s, n) = (wide(sub), wide(name));
+            // SAFETY: NUL-terminated names and a buffer of the given length.
+            let ret = unsafe {
+                match value {
+                    Some((kind, data)) => RegSetKeyValueW(
+                        HKEY_CURRENT_USER,
+                        s.as_ptr(),
+                        n.as_ptr(),
+                        *kind,
+                        data.as_ptr().cast(),
+                        data.len() as u32,
+                    ),
+                    None => RegDeleteKeyValueW(HKEY_CURRENT_USER, s.as_ptr(), n.as_ptr()),
+                }
+            };
+            if ret == ERROR_FILE_NOT_FOUND && value.is_none() {
+                ERROR_SUCCESS
+            } else {
+                ret
+            }
+        }
+        fn sz(text: &str) -> (u32, Vec<u8>) {
+            (
+                REG_SZ,
+                wide(text).iter().flat_map(|u| u.to_le_bytes()).collect(),
+            )
+        }
 
-        assert!(first.expect("migrated"), "an old value was found");
-        assert_eq!(enabled, (true, true), "enabled, minimized carried over");
-        assert!(!second.expect("second run"), "nothing left to migrate");
-        assert_eq!(left, ERROR_FILE_NOT_FOUND, "the old value was deleted");
+        /// The starting state of every value the test touches, put back on drop.
+        struct Restore(Vec<(&'static str, String, Option<(u32, Vec<u8>)>)>);
+        impl Drop for Restore {
+            fn drop(&mut self) {
+                for (sub, name, value) in &self.0 {
+                    let ret = put(sub, name, value.as_ref());
+                    if ret != ERROR_SUCCESS {
+                        // No panic in a Drop: it could run during a panic.
+                        eprintln!("could not restore {sub}\\{name}: error {ret}");
+                    }
+                }
+            }
+        }
+        let touched = [
+            (RUN_KEY, NEW),
+            (RUN_KEY, old),
+            (APPROVED, NEW),
+            (APPROVED, old),
+        ];
+        let _restore = Restore(
+            touched
+                .iter()
+                .map(|(sub, name)| (*sub, name.to_string(), get(sub, name)))
+                .collect(),
+        );
+        let clear = || {
+            for (sub, name) in touched {
+                assert_eq!(put(sub, name, None), ERROR_SUCCESS, "clear {sub}\\{name}");
+            }
+        };
+
+        // Switched on: moved, minimized carried over; a second run finds nothing.
+        clear();
+        let command = r#""C:\old\bin\old.exe" gui --minimized"#;
+        assert_eq!(put(RUN_KEY, old, Some(&sz(command))), ERROR_SUCCESS);
+        assert!(
+            super::migrate_old_entry().expect("migrated"),
+            "an old value was found"
+        );
+        assert_eq!(
+            (super::is_enabled(), super::starts_minimized()),
+            (true, true),
+            "enabled, minimized carried over"
+        );
+        assert_eq!(get(RUN_KEY, old), None, "the old value was deleted");
+        assert!(
+            !super::migrate_old_entry().expect("second run"),
+            "nothing left"
+        );
+
+        // Switched off in Task Manager: removed with its StartupApproved value,
+        // and the new entry is not enabled.
+        clear();
+        assert_eq!(put(RUN_KEY, old, Some(&sz(command))), ERROR_SUCCESS);
+        let off = (
+            REG_BINARY,
+            vec![
+                0x03, 0, 0, 0, 0x10, 0x32, 0x54, 0x76, 0x98, 0xba, 0xdc, 0x01,
+            ],
+        );
+        assert_eq!(put(APPROVED, old, Some(&off)), ERROR_SUCCESS);
+        assert!(
+            super::migrate_old_entry().expect("migrated"),
+            "an old value was found"
+        );
+        assert!(!super::is_enabled(), "a switched-off entry is not enabled");
+        assert_eq!(get(RUN_KEY, old), None, "the old Run value was deleted");
+        assert_eq!(get(APPROVED, old), None, "its StartupApproved value too");
     }
 }

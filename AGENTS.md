@@ -70,8 +70,14 @@ Agents run only these, on the crate they are working on (`pai-core`, `pai-manage
     cargo fmt -p <crate> --check
     cargo run -p docs-site -- --check
 
+On Linux the coder also type-checks the Windows-only code (`cfg(windows)`) of `pai-core`, `pai-manager` and `xtask`; nothing runs:
+
+    cargo check -p <crate> --all-targets --target x86_64-pc-windows-gnu
+    cargo clippy -p <crate> --all-targets --target x86_64-pc-windows-gnu -- -D warnings
+
 - Tests run in the debug profile, never `--release`: the configurator's e2e tests need Slint debug info. On Windows `cargo test` links only with the `.cargo\config.toml` that `xtask configure` generates ([crates\config\AGENTS.md](crates/config/AGENTS.md)).
 - The docs-site check is for changes to `docs\`, bench.db or the generator.
+- The Windows check needs, installed once by the user, `sudo apt install gcc-mingw-w64-x86-64` (the C cross-compiler for the bundled SQLite and the other C build scripts) and `rustup target add x86_64-pc-windows-gnu`. The GNU target stands in for the MSVC one the Windows build uses: no crate code uses `cfg(target_env)`. `pai-config` is not checked this way (slint's Skia renderer builds only with MSVC); its Windows code is checked by the user's build on Windows.
 
 The user runs the full suite, once, on the main branch after the merge and before installing. Agents do not run it:
 
