@@ -236,8 +236,7 @@ Slices, in order:
    behaviour change and the existing tests green on the tester's rerun:
    Folders carry no prefix and packages are named `pai-*` (decided with the user on 2026-11-13; a
    package named bare `core` would clash with Rust's `core` crate).
-   1. `llama-cpp-config/` becomes `crates/config/`, the package `pai-config`, the
-      workspace member and every path that names the directory (xtask, scripts, `.vscode`, workflows).
+   1. Done: `llama-cpp-config/` is `crates/config/`, the package `pai-config`.
    2. The shared modules (paths, INI and server config, the launch code, strings, ...) move to
       `crates/core` (package `pai-core`), and the manager becomes its own crate, `crates/manager`
       (package `pai-manager`), depending on the core only, so the service links no GUI library.

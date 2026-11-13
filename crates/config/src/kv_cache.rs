@@ -357,7 +357,7 @@ mod tests {
     /// `GGML_CUDA_FA_QUANTS` in the repo's `xtask/cmake/common.toml`, plus f16-f16.
     #[test]
     fn native_pairs_mirror_the_build_setting() {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../xtask/cmake/common.toml");
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../xtask/cmake/common.toml");
         let text = std::fs::read_to_string(path).expect("read xtask/cmake/common.toml");
         let value = text
             .lines()

@@ -3,7 +3,7 @@
 //!
 //! WHY IT EXISTS. Prefill is quadratic in the prompt length, so a long agentic
 //! session pays a cost that dwarfs everything else the framework tunes
-//! (`llama-cpp-config/README.md`, "Conversation snapshots", has the measured
+//! (`crates/config/README.md`, "Conversation snapshots", has the measured
 //! cost). The KV cache is process memory, so every restart of
 //! llama-server pays it again from zero. Dumping the slot instead is sequential
 //! IO: the file holds the KV cache of the tokens actually in

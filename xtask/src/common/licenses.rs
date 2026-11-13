@@ -219,7 +219,8 @@ pub fn stage_in(dir: &Path, libraries: &[String], sources: &Sources) -> Result<V
     copy(&repo.join("LICENSE"), &dir.join("llama.cpp-framework.txt"))?;
     copy(
         &repo
-            .join("llama-cpp-config")
+            .join("crates")
+            .join("config")
             .join("ui")
             .join("fonts")
             .join("LICENSE"),

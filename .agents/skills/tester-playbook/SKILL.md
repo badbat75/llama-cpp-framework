@@ -14,16 +14,14 @@ Lessons only: the rules are in `AGENTS.md`.
 - Use real names and values in fixtures, captured from the real system. They find what invented data hides.
 - A fake holds whatever you write, while the real system can answer differently. Do not treat a passing
   test on a fake as proof about the real thing.
-- In `llama-cpp-config`, a test that needs `LLAMA_CPP_CONFIG_DATA_ROOT` (anything reading `paths::`) is not
+- In the configurator (package `pai-config` in `crates/config/`, formerly `llama-cpp-config/`; filter with
+  `cargo test -p pai-config <name>`), a test that needs `LLAMA_CPP_CONFIG_DATA_ROOT` (anything reading `paths::`) is not
   a `#[test]` of its own: write a `#[cfg(test)] pub(crate) fn <name>_e2e()` that sets the redirect to its
   own tempdir, and call it at the end of `editable_widgets_track_model_after_edit` in
   `src/tests/ui_bindings.rs`; filter on that name to run it. Pure helpers stay plain unit tests. Nothing
   unsets the variable safely, so the real-path branches (`/etc`, `%ProgramData%`) go untested.
 - Stubs with `todo!("<fn>")` give a red that names the missing function; prefer them to a compile error,
   which hides every other test in the binary.
-- `llama-cpp-config` is a binary-only crate (no `lib.rs`): tests run in the `llama-cpp-config` bin's test
-  target, so logic for a second `[[bin]]` must sit in a module of the main crate (`mod x;` in `main.rs`) to
-  be tested. Wiring the second binary is the coder's job.
 - To pin a launch, build a `std::process::Command` and read it back with `get_program`, `get_args`,
   `get_envs` and `get_current_dir`; take the exe as a parameter, because `paths::llama_server_exe()` finds
   nothing from the test binary's directory. Compute the expected args with the existing `server_args()`
@@ -50,3 +48,7 @@ Lessons only: the rules are in `AGENTS.md`.
   carries no sender; to stamp one as the bus would, `client.inner().set_unique_name(":1.42")` after the
   build (dev feature `bus-impl`). Error replies named under `org.freedesktop.DBus.Error` come back as
   `zbus::Error::FDO`, any other name as `MethodError`.
+- `git grep` searches only tracked files: after a move that is not yet `git add`ed (a new `crates/`), it
+  finds nothing there. Use plain `grep -rn` on the new directory.
+- Most xtask path code (`version::framework`, `strings_share`, the font licence in `licenses::stage_in`)
+  has no test: after a path change, check the targets exist by hand and say so.

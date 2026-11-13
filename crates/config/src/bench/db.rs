@@ -38,7 +38,7 @@ use std::path::{Path, PathBuf};
 
 use rusqlite::{params, Connection, OptionalExtension};
 
-pub const SCHEMA: &str = include_str!("../../../benchmarks/schema.sql");
+pub const SCHEMA: &str = include_str!("../../../../benchmarks/schema.sql");
 
 /// The database runs are written to and read from: settings.ini `BenchDb`,
 /// or `default_path` when that is unset.
@@ -721,7 +721,7 @@ mod tests {
     /// rebuild of `benchmarks/bench.db` fails here instead of in the tab.
     #[test]
     fn the_repo_database_matches_the_schema() {
-        let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../benchmarks/bench.db");
+        let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../benchmarks/bench.db");
         assert_eq!(columns(&open_ro(&repo).unwrap()), columns(&mem()));
     }
 

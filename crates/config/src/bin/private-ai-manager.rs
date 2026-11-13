@@ -2,5 +2,5 @@
 //! llama-server with instance `id`'s configuration (`manager.rs`).
 
 fn main() {
-    std::process::exit(llama_cpp_config::manager::main());
+    std::process::exit(pai_config::manager::main());
 }

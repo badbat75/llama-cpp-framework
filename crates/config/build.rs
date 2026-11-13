@@ -30,7 +30,7 @@ fn main() {
     // Convert llama.ico to PNG so Slint's @image-url can embed it. Emit two
     // variants: the plain icon, and one with a green "running" status dot in the
     // bottom-right corner. The tray binds its icon to whichever matches state.
-    let ico_path = "../resources/llama.ico";
+    let ico_path = "../../resources/llama.ico";
     println!("cargo:rerun-if-changed={ico_path}");
     ensure_icon(ico_path);
 
@@ -97,7 +97,7 @@ fn emit_arch_tables(out_dir: &str) {
             Ok("macos") => "macos",
             _ => "linux",
         };
-        format!("../build/{os}/llama.cpp")
+        format!("../../build/{os}/llama.cpp")
     });
     let source = Path::new(&clone).join("src/llama-arch.cpp");
     println!("cargo:rerun-if-changed={}", source.display());
@@ -109,7 +109,7 @@ fn emit_arch_tables(out_dir: &str) {
     });
     let tables = arch_tables::render(&text).unwrap_or_else(|e| {
         panic!(
-            "{}: {e}. Update llama-cpp-config/arch_tables.rs for this llama.cpp release",
+            "{}: {e}. Update crates/config/arch_tables.rs for this llama.cpp release",
             source.display()
         )
     });
@@ -129,9 +129,9 @@ fn emit_build_stack() {
     } else {
         "linux"
     };
-    let cache = format!("../build/{os}/llama.cpp-cmake/CMakeCache.txt");
+    let cache = format!("../../build/{os}/llama.cpp-cmake/CMakeCache.txt");
     println!("cargo:rerun-if-changed={cache}");
-    println!("cargo:rerun-if-changed=../patches/llama.cpp");
+    println!("cargo:rerun-if-changed=../../patches/llama.cpp");
     let text = std::fs::read_to_string(&cache)
         .unwrap_or_default()
         .replace('\\', "/");
@@ -147,7 +147,7 @@ fn emit_build_stack() {
             .unwrap_or_default();
         println!("cargo:rustc-env={var}={version}");
     }
-    let mut patches: Vec<String> = std::fs::read_dir("../patches/llama.cpp")
+    let mut patches: Vec<String> = std::fs::read_dir("../../patches/llama.cpp")
         .map(|d| {
             d.flatten()
                 .filter_map(|e| e.file_name().into_string().ok())
@@ -173,7 +173,7 @@ fn ensure_icon(ico_path: &str) {
     const NPM: &str = "npm.cmd";
     #[cfg(not(windows))]
     const NPM: &str = "npm";
-    let resources = Path::new("../resources");
+    let resources = Path::new("../../resources");
     if !resources.join("node_modules/sharp-ico").exists() {
         run_checked(
             std::process::Command::new(NPM)
@@ -246,7 +246,7 @@ fn draw_status_dot(rgba: &mut [u8], w: u32, h: u32) {
 
 #[cfg(windows)]
 fn embed_windows_resources() {
-    let icon = "../resources/llama.ico";
+    let icon = "../../resources/llama.ico";
     println!("cargo:rerun-if-changed={icon}");
     let mut res = winresource::WindowsResource::new();
     res.set_icon(icon);

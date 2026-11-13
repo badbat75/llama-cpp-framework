@@ -14,3 +14,5 @@ Lessons only: the rules are in `AGENTS.md` and `PLAN.md`.
 - Ask the user for real runs one at a time, with the exact command and the expected result.
 - OpenCode's first answer after a file changes can be stale: `opencode debug agents` gave `[]`, and
   `debug config` missed a new file. Query again before believing it.
+- `git add X && git commit` commits the whole index, including what an agent staged with `git mv` while
+  it works. When agents are running, commit only named paths: `git commit -m ... -- PLAN.md`.

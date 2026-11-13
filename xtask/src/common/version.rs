@@ -6,11 +6,12 @@ use crate::common::util::{self, cmd, output};
 use anyhow::{bail, Context, Result};
 use std::path::Path;
 
-/// The framework version = the llama-cpp-config crate version: the
+/// The framework version = the pai-config crate version: the
 /// configurator and the framework are versioned together.
 pub fn framework() -> Result<String> {
     let path = util::repo_root()
-        .join("llama-cpp-config")
+        .join("crates")
+        .join("config")
         .join("Cargo.toml");
     let manifest: toml::Table = toml::from_str(&std::fs::read_to_string(&path)?)
         .with_context(|| format!("parsing {}", path.display()))?;

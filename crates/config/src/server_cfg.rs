@@ -216,7 +216,7 @@ pub struct ServerConfig {
     /// What it buys is the one cost no amount of VRAM tuning touches: prefill is
     /// QUADRATIC in the prompt length, and the KV cache is process memory, so a
     /// restart re-reads the whole conversation from zero, where reloading the
-    /// same state is only sequential IO (`llama-cpp-config/README.md`,
+    /// same state is only sequential IO (`crates/config/README.md`,
     /// "Conversation snapshots", has the measured cost).
     ///
     /// Off by default because it is not free: each snapshot is roughly one byte

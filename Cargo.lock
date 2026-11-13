@@ -2702,32 +2702,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4744e383959f0db86ede514b809b1c53251889093803c05267acc7d4e7030d70"
 
 [[package]]
-name = "llama-cpp-config"
-version = "2.4.0"
-dependencies = [
- "anyhow",
- "base64",
- "clap",
- "ctrlc",
- "i-slint-backend-testing",
- "ico",
- "if-addrs",
- "image",
- "regex",
- "rfd",
- "rusqlite",
- "serde",
- "serde_json",
- "slint",
- "slint-build",
- "tempfile",
- "toml",
- "windows-sys 0.61.2",
- "winresource",
- "zbus",
-]
-
-[[package]]
 name = "lock_api"
 version = "0.4.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3385,6 +3359,32 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "36820e9051aca1014ddc75770aab4d68bc1e9e632f0f5627c4086bc216fb583b"
 dependencies = [
  "ttf-parser",
+]
+
+[[package]]
+name = "pai-config"
+version = "2.4.0"
+dependencies = [
+ "anyhow",
+ "base64",
+ "clap",
+ "ctrlc",
+ "i-slint-backend-testing",
+ "ico",
+ "if-addrs",
+ "image",
+ "regex",
+ "rfd",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "slint",
+ "slint-build",
+ "tempfile",
+ "toml",
+ "windows-sys 0.61.2",
+ "winresource",
+ "zbus",
 ]
 
 [[package]]

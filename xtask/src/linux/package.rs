@@ -517,7 +517,7 @@ pub fn run(want_deb: bool, want_rpm: bool, keep_staging: bool) -> Result<()> {
             "\nllama-cpp-config embeds the Fluent UI System Icons font, whose licence follows.\n\n",
         );
         copyright.push_str(&std::fs::read_to_string(
-            repo.join("llama-cpp-config/ui/fonts/LICENSE"),
+            repo.join("crates/config/ui/fonts/LICENSE"),
         )?);
         std::fs::write(doc.join("copyright"), copyright)?;
 

@@ -382,7 +382,7 @@ pub fn canonical(spec: &Spec) -> String {
 /// digest. The only part of the method compiled in: the spec files and the
 /// prompts are installed, and each is checked against this (the spec's digest
 /// covers its prompt pins).
-pub const STANDARD_VERSIONS: &str = include_str!("../../../benchmarks/specs/standard.versions");
+pub const STANDARD_VERSIONS: &str = include_str!("../../../../benchmarks/specs/standard.versions");
 
 /// `standard` at a published `version`: its installed file
 /// (`specs\standard-<version>.ini`), refused unless it IS that version and

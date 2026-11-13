@@ -1,6 +1,6 @@
 //! The configurator's text files (each language, and `cli.toml`, the messages a CLI
 //! command shares with the GUI), installed read-only beside the binaries:
-//! `<root>/share/strings/`, from `llama-cpp-config/strings/`. The configurator
+//! `<root>/share/strings/`, from `crates/config/strings/`. The configurator
 //! finds them from its own path (`<root>/bin/llama-cpp-config`,
 //! `paths::strings_dir`) and reads them at startup.
 
@@ -10,7 +10,10 @@ use std::path::Path;
 
 /// Copy every `*.toml` of the language folder into `<root>/share/strings`.
 pub fn stage(root: &Path) -> Result<()> {
-    let from = util::repo_root().join("llama-cpp-config").join("strings");
+    let from = util::repo_root()
+        .join("crates")
+        .join("config")
+        .join("strings");
     let to = root.join("share").join("strings");
     std::fs::create_dir_all(&to)?;
     let mut n = 0;

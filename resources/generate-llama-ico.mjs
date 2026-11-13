@@ -8,7 +8,7 @@
 // resources\llama-brand-logo.svg (gitignored), and rasterizes it the way
 // upstream renders its own PWA icons: the dark #111111 glyph on a white
 // rounded tile, so the icon reads on both dark taskbars and light Explorer
-// backgrounds. llama.ico is gitignored; llama-cpp-config's build.rs (and,
+// backgrounds. llama.ico is gitignored; pai-config's build.rs (and,
 // belt-and-braces, xtask package) runs this script automatically whenever the
 // file is missing. Delete llama.ico to force a regeneration; delete
 // llama-brand-logo.svg to re-download the glyph (e.g. after a brand refresh).

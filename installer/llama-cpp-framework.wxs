@@ -2,7 +2,7 @@
 <!--
   llama.cpp-framework MSI (WiX Toolset; the version and the extensions are
   pinned in installer\wix-toolset.psd1). Built by xtask package, which passes:
-    Version          framework version (llama-cpp-config\Cargo.toml), X.Y.Z
+    Version          framework version (crates\config\Cargo.toml), X.Y.Z
     LlamaBuild       the bundled llama.cpp release tag (v0.7.0; a bNNNN build
                      number only when the checkout was not on a release)
     StagingDir       build\windows\staging: the tree that ships, as is

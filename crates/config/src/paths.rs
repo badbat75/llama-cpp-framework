@@ -173,6 +173,7 @@ pub fn bench_share_dir() -> PathBuf {
         Some(dir) if dir.join("specs").is_dir() => dir,
         _ => Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
+            .and_then(Path::parent)
             .unwrap_or(Path::new("."))
             .join("benchmarks"),
     }

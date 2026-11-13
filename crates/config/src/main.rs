@@ -9,8 +9,8 @@
 )]
 
 use clap::Parser;
-use llama_cpp_config::cli::reader_of;
-use llama_cpp_config::{cli, gui, strings};
+use pai_config::cli::reader_of;
+use pai_config::{cli, gui, strings};
 
 fn main() {
     // Attach to the parent console (if any) BEFORE branching: the release

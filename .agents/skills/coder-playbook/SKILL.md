@@ -26,3 +26,9 @@ Lessons only: the rules are in `AGENTS.md`.
   of their own (`manager/dbus.rs`).
 - In `manager.rs` only `main` and `run` are CLI-only for `binding_lint`: a new helper fn that prints
   a `cli.toml` key needs the key in `en_US.toml` too, so keep such printing inside `run`.
+- Moving the configurator crate changes the depth of its repo-root paths: `build.rs` (`../../resources`,
+  `../../build`, `../../patches`), `include_str!` of `benchmarks/` (`bench/db.rs`, `bench/spec.rs`),
+  `CARGO_MANIFEST_DIR` joins (`bench/db.rs` test, `kv_cache.rs` test, `paths::bench_share_dir`'s
+  `.parent()` chain) and xtask's `repo_root().join(...)` (`configurator.rs`, `licenses.rs`,
+  `strings_share.rs`, `version.rs`, `linux/package.rs`). A sed on `^name = "..."` in its Cargo.toml also
+  hits the `[[bin]]` entry of the same name.
