@@ -602,4 +602,8 @@ fn editable_widgets_track_model_after_edit() {
     // ── Service launch (runstate.rs `instance_command`) ──────────────────
     // Same redirect rule as above.
     crate::runstate::instance_launch_e2e();
+
+    // ── Manager core (manager/service.rs `Manager`) ──────────────────────
+    // Same redirect rule as above; both seams are fakes.
+    crate::manager::service::manager_e2e();
 }

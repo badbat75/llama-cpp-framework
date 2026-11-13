@@ -35,3 +35,11 @@ Lessons only: the rules are in `AGENTS.md`.
   shape. A compile error would hide every other test in the binary, the lints included.
 - Since `src/lib.rs` exists, the binary roots (`main.rs`, `bin/*.rs`) are separate crates no module can
   call, while `lib.rs` is reachable from every module: a lint may exempt the former, never the latter.
+- To make a write fail without a fake filesystem, chmod the directory `0o555` (Unix), probe that a write
+  really fails (root ignores the mode) and put the mode back before asserting. Then check the old content
+  and that the directory listing is unchanged, which also proves no temp file was left.
+- A seam the code calls through `&self` (a service manager, polkit) gets a fake with `RefCell` logs read
+  back through an accessor on the struct under test; assert the recorded calls are empty to pin "nothing
+  happened" on a refusal, as well as the returned error kind.
+- Comments never cite PLAN.md step or slice numbers: steps are renumbered and removed when done. Name
+  the feature instead ("running llama-server as a service").

@@ -2,11 +2,15 @@
 //! (PLAN.md step 1). `run-instance <id>` is what the unit `llama.cpp@<id>`
 //! runs: it launches instance `id` (`runstate::instance_command`).
 
+pub mod service;
+
 /// A parsed `private-ai-manager` command line.
 #[derive(Debug, PartialEq, Eq)]
 pub enum ManagerCommand {
     /// `run-instance <id>`.
     RunInstance(String),
+    /// `serve`: the D-Bus / named-pipe service entry.
+    Serve,
 }
 
 /// Why a command line was refused.
@@ -25,6 +29,12 @@ pub enum ArgsError {
 /// Parse the arguments after the program name.
 pub fn parse_args(args: &[String]) -> Result<ManagerCommand, ArgsError> {
     let (command, rest) = args.split_first().ok_or(ArgsError::NoCommand)?;
+    if command == "serve" {
+        if let Some(arg) = rest.first() {
+            return Err(ArgsError::ExtraArgument(arg.clone()));
+        }
+        return Ok(ManagerCommand::Serve);
+    }
     if command != "run-instance" {
         return Err(ArgsError::UnknownCommand(command.clone()));
     }
@@ -55,7 +65,7 @@ fn run(args: &[String]) -> Result<i32, (i32, String)> {
     use crate::runstate::LaunchError;
     use crate::strings;
 
-    let ManagerCommand::RunInstance(id) = parse_args(args).map_err(|e| {
+    let command = parse_args(args).map_err(|e| {
         let text = match e {
             ArgsError::NoCommand => strings::t("manager-usage"),
             ArgsError::UnknownCommand(c) => strings::fill("manager-unknown-command", &[&c]),
@@ -64,6 +74,10 @@ fn run(args: &[String]) -> Result<i32, (i32, String)> {
         };
         (2, text)
     })?;
+    let id = match command {
+        ManagerCommand::RunInstance(id) => id,
+        ManagerCommand::Serve => return Err((1, strings::t("manager-serve-unavailable"))),
+    };
     let exe = crate::paths::llama_server_exe().ok_or_else(|| {
         let name = crate::paths::binary_name("llama-server");
         (1, strings::fill("binary-not-found", &[&name]))
@@ -143,6 +157,30 @@ mod tests {
         ] {
             assert_eq!(
                 parse(&[cmd, "default"]),
+                Err(ArgsError::UnknownCommand(cmd.into())),
+                "subcommand {cmd:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn parse_args_reads_serve() {
+        assert_eq!(parse(&["serve"]), Ok(ManagerCommand::Serve));
+    }
+
+    #[test]
+    fn parse_args_refuses_serve_with_arguments() {
+        assert_eq!(
+            parse(&["serve", "default"]),
+            Err(ArgsError::ExtraArgument("default".into()))
+        );
+        assert_eq!(
+            parse(&["serve", "--system"]),
+            Err(ArgsError::ExtraArgument("--system".into()))
+        );
+        for cmd in ["Serve", "--serve", "serve-all"] {
+            assert_eq!(
+                parse(&[cmd]),
                 Err(ArgsError::UnknownCommand(cmd.into())),
                 "subcommand {cmd:?}"
             );

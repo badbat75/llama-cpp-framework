@@ -12,6 +12,8 @@ Lessons only: the rules are in `AGENTS.md`.
 - `llama-cpp-config` is a library (`src/lib.rs`, every module) plus two bins (`main.rs`,
   `bin/private-ai-manager.rs`). Most modules are private, so `pub` does not silence dead_code there,
   and a function only tests call fails `clippy --all-targets -D warnings` until a caller lands.
+  A `pub` item of a `pub mod` (`manager`, `manager::service`) is the library's API and never dead:
+  check clippy without an `#[allow(dead_code)]` before adding one.
 - `binding_lint` reads the sources by file name: only the binary roots may say `cli::` (`lib.rs` may
   not: the GUI can reach it), and a key printed outside `cli.rs` and `CLI_ONLY_FNS` must be in both
   `cli.toml` and `en_US.toml`.

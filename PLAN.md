@@ -132,9 +132,16 @@ so the second binary, `private-ai-manager`, shares its modules: a `[[bin]]` alon
    sets a key and puts it back, the migration. The configurator never writes those files itself; the
    launcher only reads them. Until this slice the configurator keeps writing its per-user files, since
    the manager does not exist yet.
-   A small control trait (start, stop, status of an instance) with the
-   D-Bus/systemd and named-pipe/SCM implementations (an instance addressed by its ID) behind it, and `runstate`'s callers switched to it.
-   Tests use a fake systemd and a fake polkit; nothing touches the real system bus.
+   Split in three. **3a, done:** the OS-neutral core, `manager::service::Manager` over the
+   `ServiceControl`, `Authority` and `Resolver` traits (polkit check first on every change, the file
+   whitelist, atomic writes, collisions on resolved addresses with a wildcard colliding with every
+   address on its port, start at boot), tested with fakes. **3b:** `private-ai-manager serve`, the
+   D-Bus service on the system bus (`org.privateai.Manager1`) with the systemd and polkit
+   implementations of the traits; `serve` says it is unavailable until then; the usage text names
+   `serve`; `paths::instance_ids()` loses its dead_code allow once boot calls it; `manager.rs` line 2
+   cites a plan step, to reword. **3c:** the configurator's start, stop, status and every INI write
+   go through the manager, `runstate`'s callers switched to it. The Windows SCM and pipe
+   implementations come with slice 6.
 4. **Logs.** The unit appends both streams to `/var/log/llama.cpp/llama-server@<id>.log`
    (`StandardOutput=append:`), the Windows service to `%ProgramData%\llama.cpp\logs\`; the closing and
    rotation of `runstate.rs` move to the manager, and the GUI's Log window reads the new path.

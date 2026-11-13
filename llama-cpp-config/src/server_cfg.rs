@@ -428,6 +428,17 @@ pub fn load_from(path: &std::path::Path) -> ServerConfig {
     from_keys(&ini::read_section(path, "Server"))
 }
 
+/// The `[Server]` section of INI `text`, read as `load_from` reads a file:
+/// the manager checks an instance file before writing it.
+pub fn from_text(text: &str) -> ServerConfig {
+    let keys = ini::parse_sections(text)
+        .into_iter()
+        .find(|s| s.id.eq_ignore_ascii_case("Server"))
+        .map(|s| s.keys)
+        .unwrap_or_default();
+    from_keys(&keys)
+}
+
 /// Parse the `[Server]` key/value map into a config. Split out of `load()` so
 /// the save→load round-trip test can run against `render()`'s output without
 /// touching the real config path.
