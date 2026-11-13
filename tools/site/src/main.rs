@@ -153,8 +153,8 @@ fn shell(title: &str, base: &str, body: &str) -> String {
     });
     format!(
         "<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\
-<title>{t} | llama.cpp-framework</title><link rel=\"stylesheet\" href=\"{base}style.css\"><script src=\"{base}site.js\" defer></script></head><body>\
-<header><a class=\"home\" href=\"{base}index.html\">llama.cpp-framework</a><nav><a href=\"{base}index.html\">Guides</a><a href=\"{base}campaigns/index.html\">Campaigns</a><a href=\"{REPO}\">GitHub</a></nav></header>\
+<title>{t} | Private AI Framework</title><link rel=\"stylesheet\" href=\"{base}style.css\"><script src=\"{base}site.js\" defer></script></head><body>\
+<header><a class=\"home\" href=\"{base}index.html\">Private AI Framework</a><nav><a href=\"{base}index.html\">Guides</a><a href=\"{base}campaigns/index.html\">Campaigns</a><a href=\"{REPO}\">GitHub</a></nav></header>\
 <main>{body}</main><footer>Generated from <code>docs/</code> and <code>benchmarks/bench.db</code>{c}. Every number traces to a campaign; the markdown on GitHub is the source.</footer></body></html>\n",
         t = esc(title),
         c = commit.unwrap_or_default()
@@ -221,7 +221,7 @@ fn hero(pages: &[Page], db: &Db, published: &[&data::Campaign]) -> String {
     let stat =
         |n: usize, what: &str| format!("<div class=\"stat\"><b>{n}</b><span>{what}</span></div>");
     format!(
-        "<section class=\"hero\"><h1>llama.cpp-framework</h1><p>Measured configuration guides for llama.cpp on AMD and NVIDIA cards: every value traces to a benchmark campaign in <code>benchmarks/bench.db</code>.</p><div class=\"stats\">{}{}{}{}{}</div></section>",
+        "<section class=\"hero\"><h1>Private AI Framework</h1><p>Measured configuration guides for llama.cpp on AMD and NVIDIA cards: every value traces to a benchmark campaign in <code>benchmarks/bench.db</code>.</p><div class=\"stats\">{}{}{}{}{}</div></section>",
         stat(guides, "card and model guides"),
         stat(published.len(), "campaigns"),
         stat(runs, "runs"),
@@ -352,4 +352,58 @@ fn campaign_page(c: &data::Campaign, db: &Db, pages: &[Page]) -> String {
         s += "</tbody></table></details>";
     }
     s
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// What every page and the home banner call the project. The repository
+    /// link (`REPO`) is not pinned here: it follows the GitHub repository.
+    const PRODUCT: &str = "Private AI Framework";
+
+    /// The old project name, split so this file does not spell it.
+    const OLD_NAME: &str = concat!("llama.cpp", "-framework");
+
+    fn empty_db() -> Db {
+        Db {
+            campaigns: Vec::new(),
+            runs: Vec::new(),
+            models: Vec::new(),
+            gpus: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn every_page_is_titled_and_headed_with_the_product_name() {
+        let html = shell("Guides", "", "<p>body</p>");
+        assert!(
+            html.contains(&format!("<title>Guides | {PRODUCT}</title>")),
+            "the <title> names {PRODUCT}: {html}"
+        );
+        assert!(
+            html.contains(&format!(
+                "<a class=\"home\" href=\"index.html\">{PRODUCT}</a>"
+            )),
+            "the header's home link reads {PRODUCT}: {html}"
+        );
+        let without_repo = html.replace(REPO, "");
+        assert!(
+            !without_repo.contains(OLD_NAME),
+            "no {OLD_NAME} outside the repository link: {without_repo}"
+        );
+    }
+
+    #[test]
+    fn the_home_banner_names_the_product() {
+        let html = hero(&[], &empty_db(), &[]);
+        assert!(
+            html.contains(&format!("<h1>{PRODUCT}</h1>")),
+            "the hero's heading is {PRODUCT}: {html}"
+        );
+        assert!(
+            !html.contains(OLD_NAME),
+            "the hero still says {OLD_NAME}: {html}"
+        );
+    }
 }

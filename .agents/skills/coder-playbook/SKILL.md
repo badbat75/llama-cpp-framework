@@ -58,3 +58,5 @@ Lessons only: the rules are in `AGENTS.md`.
   skia-bindings (slint `renderer-skia`) has no prebuilt binaries for `windows-gnu` (404) and its full
   build asserts an MSVC install (`win_vc`); its build.rs also wants `build/windows/llama.cpp` unless
   `PRIVATE_AI_LLAMA_CPP_DIR` names a clone. Check windows-sys signatures in `~/.cargo/registry`.
+- Never `git stash` to compare against HEAD: other agents edit the same working tree at the same time.
+  Use `git worktree add` or `git show HEAD:<path>` instead.

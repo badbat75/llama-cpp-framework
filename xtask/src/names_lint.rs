@@ -444,3 +444,78 @@ fn the_windows_and_macos_phases_name_the_new_packages() {
         assert!(macos.contains(want), "macos/package.rs has no {want}");
     }
 }
+
+/// The helper scripts under `tools/` (comments included: a header says
+/// where a script reads from) name neither the old product nor its old user
+/// tree. The engine's own names (`llama-server`, llama.cpp's log lines) are
+/// not old names and stay.
+#[test]
+fn tools_scripts_name_the_new_product_and_user_tree() {
+    let mut texts = Vec::new();
+    files(&repo().join("tools"), &["ps1", "sh"], &mut texts);
+    assert!(
+        texts.iter().any(|p| p.ends_with("report-memory.ps1")),
+        "the scan reaches tools/report-memory.ps1"
+    );
+    let old_names = [
+        OLD_PACKAGES,
+        OLD_DIST_ROOT,
+        concat!("llama.cpp", "-framework"),
+        concat!("llama-cpp", "-config"),
+        concat!("llama.cpp", " Config"),
+        concat!("opt/", "llama.cpp"),
+        concat!(".local/share/", "llama.cpp"),
+        concat!(".config/", "llama.cpp"),
+    ];
+    let old_tree = concat!("llama", r".cpp\");
+    let mut found = Vec::new();
+    for path in &texts {
+        let rel = path
+            .strip_prefix(repo())
+            .expect("under the repo")
+            .to_string_lossy()
+            .replace('\\', "/");
+        let text = std::fs::read_to_string(path).expect("read");
+        for (n, line) in text.lines().enumerate() {
+            let windows_tree = line.contains("LOCALAPPDATA") && line.contains(old_tree);
+            if windows_tree || old_names.iter().any(|old| line.contains(old)) {
+                found.push(format!("{rel}:{}: {}", n + 1, line.trim()));
+            }
+        }
+    }
+    assert!(
+        found.is_empty(),
+        "old product names or user tree in tools/:\n{}",
+        found.join("\n")
+    );
+    let report = read("tools/report-memory.ps1");
+    assert!(
+        report.contains(r"Join-Path $env:LOCALAPPDATA 'private-ai\logs\llama-server.log'"),
+        "report-memory.ps1 defaults -LogPath to %LOCALAPPDATA%\\private-ai\\logs\\llama-server.log"
+    );
+}
+
+/// The bench.db schema's comments name the configurator by its new name.
+/// Only comments outside the `CREATE` statements change: SQLite stores each
+/// statement's text from `CREATE` on, so the committed bench.db's schema
+/// (`sqlite_master`) does not hold these lines.
+#[test]
+fn the_bench_schema_names_the_new_configurator() {
+    let schema = read("benchmarks/schema.sql");
+    let old_exe = concat!("llama-cpp", "-config");
+    let found: Vec<String> = schema
+        .lines()
+        .enumerate()
+        .filter(|(_, l)| l.contains(old_exe) || l.contains(OLD_PACKAGES))
+        .map(|(n, l)| format!("benchmarks/schema.sql:{}: {}", n + 1, l.trim()))
+        .collect();
+    assert!(
+        found.is_empty(),
+        "old names in the schema:\n{}",
+        found.join("\n")
+    );
+    assert!(
+        schema.contains("pai-config"),
+        "schema.sql names pai-config where it names the configurator"
+    );
+}

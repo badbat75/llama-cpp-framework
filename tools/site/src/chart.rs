@@ -362,8 +362,8 @@ pub fn svg(spec: &Spec, d: &Data, campaign_href: &dyn Fn(&str) -> String) -> Str
     o += "</tr></thead><tbody>";
     for (xi, x) in d.xs.iter().enumerate() {
         o += &format!("<tr><th>{}</th>", esc(x));
-        for si in 0..d.series.len() {
-            o += &match d.cells[si][xi] {
+        for col in d.cells.iter().take(d.series.len()) {
+            o += &match col[xi] {
                 Some((m, sd, n)) => format!(
                     "<td>{}{} <span class=\"muted\">n = {n}</span></td>",
                     num(m),

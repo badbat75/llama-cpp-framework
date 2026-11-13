@@ -27,7 +27,8 @@ CREATE TABLE IF NOT EXISTS gpu (
   PRIMARY KEY (machine_id, name, backend)
 );
 
--- The software stack; framework_version is llama-cpp-config's Cargo.toml version.
+-- The software stack; framework_version is the [workspace.package] version in the
+-- root Cargo.toml, shared by pai-core, pai-manager and pai-config.
 CREATE TABLE IF NOT EXISTS software (
   id                INTEGER PRIMARY KEY,
   llama_cpp_tag     TEXT NOT NULL,      -- v0.7.0

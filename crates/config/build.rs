@@ -119,9 +119,9 @@ fn emit_arch_tables(out_dir: &str) {
 
 /// `PRIVATE_AI_ROCM`, `PRIVATE_AI_CUDA`, `PRIVATE_AI_VULKAN_SDK` and
 /// `PRIVATE_AI_PATCHES`, each empty when unknown (a bare `cargo build` before
-/// 02-build has configured llama.cpp). The dist layout puts the version in the
+/// `xtask build` has configured llama.cpp). The dist layout puts the version in the
 /// path (`<DistRoot>/<Name>/<Version>/<os>`), so the first cache line naming
-/// a dist directory is enough. The patches are the ones 02-build applies: every
+/// a dist directory is enough. The patches are the ones `xtask build` applies: every
 /// `.patch` under patches/llama.cpp.
 fn emit_build_stack() {
     let os = if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {

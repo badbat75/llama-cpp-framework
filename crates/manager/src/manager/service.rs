@@ -2,8 +2,8 @@
 //! the instances, their config files in `paths::system_config_dir()` and
 //! their services, behind two seams. [`ServiceControl`] starts, stops and
 //! reports the unit of an instance (systemd's D-Bus API on
-//! `llama.cpp@<id>.service` on Linux, the SCM on Windows); [`Authority`]
-//! decides whether a caller may do an action (polkit `CheckAuthorization`
+//! `llama.cpp@<id>.service` on Linux, the SCM on Windows once written);
+//! [`Authority`] decides whether a caller may do an action (polkit `CheckAuthorization`
 //! with the caller's bus name as subject on Linux). Reads, the instance list
 //! and status need no authorization; everything that changes something does,
 //! and a refused caller changes nothing.
@@ -51,7 +51,7 @@ pub enum UnitState {
 }
 
 /// A failure of the service manager, its own message (systemd's D-Bus error
-/// or the SCM's), not shown as user text.
+/// or, once written, the SCM's), not shown as user text.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ServiceError(pub String);
 

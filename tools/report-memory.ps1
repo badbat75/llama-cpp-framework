@@ -1,7 +1,7 @@
 # Memory slicing report for the llama-server instance that is running right now.
 #
 # Two independent sources, cross-checked against each other:
-#   1. llama-server's own load log (%LOCALAPPDATA%\llama.cpp\logs\llama-server.log):
+#   1. llama-server's own load log (%LOCALAPPDATA%\private-ai\logs\llama-server.log):
 #      every buffer llama.cpp allocates announces itself there with its size and
 #      its device, so the REQUESTED footprint can be rebuilt exactly.
 #   2. Windows' GPU perf counters for the live process: what the driver ACTUALLY
@@ -36,7 +36,7 @@
 
 [CmdletBinding()]
 param(
-    [string] $LogPath = (Join-Path $env:LOCALAPPDATA 'llama.cpp\logs\llama-server.log'),
+    [string] $LogPath = (Join-Path $env:LOCALAPPDATA 'private-ai\logs\llama-server.log'),
     [switch] $Json
 )
 

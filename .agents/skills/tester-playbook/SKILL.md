@@ -86,3 +86,8 @@ Lessons only: the rules are in `AGENTS.md`.
   print(rpm.vercmp("2.4.0+llama.cpp.v0.9.0", "2.4.1"))}'` (-1, 0, 1): `2.4.0+x` sorts above `2.4.0`.
 - A text-pin test on a file the coder will rename or rewrite (the `.wxs`): also check it goes green on a
   candidate edit in a temporary copy, then delete the copy, so the red is not a broken helper.
+- `benchmarks/schema.sql` is not pinned by digest: pai-config `include_str!`s it and
+  `the_repo_database_matches_the_schema` compares only the columns with the committed bench.db. SQLite
+  keeps each statement's text from `CREATE` on in `sqlite_master`, so a comment line between statements
+  changes nothing recorded (check with `sqlite3 -readonly benchmarks/bench.db "select sql from
+  sqlite_master"`); a comment inside a `CREATE` would.

@@ -231,7 +231,7 @@ the environment variables become `PRIVATE_AI_DIST_ROOT` and `PRIVATE_AI_DATA_ROO
 
 Slices, in order:
 
-Slices 1 to 4 and the docs are done (`git log`): the crate layout (`crates/core`, `crates/manager`, `crates/config`,
+Slices 1 to 5 are done (`git log`): the crate layout (`crates/core`, `crates/manager`, `crates/config`,
 packages `pai-*`, one workspace version), the names that behave (executables `pai-config` and
 `pai-manager`; display name "Private AI Framework"; identifiers `org.privateai.Config`; paths
 `private-ai` under `~/.config`, `~/.local/share`, `%LOCALAPPDATA%`, `/etc`, `%ProgramData%`, `/opt`,
@@ -241,15 +241,11 @@ the migration of the old user tree and start-at-login entry, and the packages
 the old package of each component; the MSI keeps its UpgradeCode, keeps a directory chosen in 2.4
 and moves the old default; `installer/private-ai-framework.wxs`).
 
-5. **Leftovers in code**, tests first where code behaves: the docs site's title, header and hero
-   (`tools/site/src/main.rs`) say the old project name; `tools/report-memory.ps1` defaults `-LogPath`
-   to the old `%LOCALAPPDATA%` tree; `benchmarks/schema.sql`'s comment names the old binary; the
-   `crates/manager/src/manager/service.rs` header promises an SCM backend that does not exist yet;
-   `crates/config/README.md` "Build" says the icon needs the llama.cpp clone, `AGENTS.md` says it
-   needs node, npm and network (check `build.rs` and `generate-llama-ico.mjs`). The specs
-   `standard-1.0.ini` and `standard-1.1.ini` keep the old binary name in a comment: they are frozen by
-   sha256, so they change only with a new spec version. The repository URL waits for the user's GitHub
-   rename.
+What is left is the user's: the in-place upgrade of an installed 2.4.0 on each OS, the Windows
+build and installer test plan ("Waiting for the user"), and renaming the GitHub repository (then the
+repository URLs in `README.md`, `docs/README.md` and `tools/site/src/main.rs` follow). The specs
+`standard-1.0.ini` and `standard-1.1.ini` keep the old binary name in a comment: frozen by sha256,
+they change only with a new spec version.
 
 - Done when: nothing outside the engine's own names and bench.db history says `llama.cpp-framework` or
   `llama-cpp-config`; the packages and the MSI upgrade an installed 2.4.0 in place (checked by the user on
@@ -434,6 +430,9 @@ From the Windows work of 2026-10-21, `docs/qwen3.8_27b.md` section 9.
 
 ## Later, not planned yet
 
+- **macOS build stack, unverified:** `crates/config/build.rs` `emit_build_stack` reads the CMake
+  cache under `build/windows` or `build/linux` only, so on a Mac the recorded SDK versions would come
+  out empty (found by reading; nothing has run on a Mac, R3).
 - **Adaptive MTP depth** (block 01, `draft-mtp-adaptive`, 84 KB, host side, built on
   upstream PR #27210): a decode lever for Coder390, where the guide records acceptance
   moving between 0.49 and 0.65 across tasks and decode with it by 20-30 %. Their figure:

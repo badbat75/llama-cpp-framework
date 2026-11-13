@@ -459,7 +459,7 @@ cargo build --release
 cargo run -p xtask -- build
 ```
 
-The build script (`build.rs`) first regenerates `resources\llama.ico` if it's missing (it's gitignored: `resources\generate-llama-ico.mjs` rasterizes it from the llama.cpp clone's webui logo, so a fresh checkout needs the clone plus node+npm), then converts it to two PNGs at compile time (using the `ico` crate) for the Slint GUI (the plain icon plus a green-dotted "running" variant the tray switches to while llama-server is up), and on Windows embeds the ICO as an EXE resource via `winresource`.
+The build script (`build.rs`) first regenerates `resources\llama.ico` if it's missing (it's gitignored: `npm install --no-save sharp sharp-ico`, then `resources\generate-llama-ico.mjs` rasterizes the llama-brand package's `icon-light.svg` at a pinned commit, downloaded once into the gitignored `resources\llama-brand-logo.svg`, so it needs node+npm and network or a pre-fetched SVG), then converts it to two PNGs at compile time (using the `ico` crate) for the Slint GUI (the plain icon plus a green-dotted "running" variant the tray switches to while llama-server is up), and on Windows embeds the ICO as an EXE resource via `winresource`. The build does need the llama.cpp clone for another reason: `src\gguf.rs`'s per-architecture tables are generated from its `src\llama-arch.cpp` (`PRIVATE_AI_LLAMA_CPP_DIR`, set by `xtask build`, else `build\<os>\llama.cpp`), and a missing clone fails the build, so run `xtask build` first on a fresh checkout.
 
 ## Source layout
 
