@@ -119,14 +119,11 @@ cannot read `~/.config/llama.cpp/`. `server.ini` (renamed `server@<id>.ini`, one
 manager. `settings.ini` (the configurator's preferences) and `bench.db` stay per user. An existing
 per-user config is migrated once, never lost (Definition of Done 4).
 
-Slices, in order, each test first (slice 1, the system config directory and the instance paths
-in `paths.rs`, is done; the numbers of the others stay as they are cited):
+Slices, in order, each test first (slice 1, the system config directory and the instance paths in
+`paths.rs`, and slice 2, the launcher `private-ai-manager run-instance <id>`, are done; the numbers of
+the others stay as they are cited). The `llama-cpp-config` crate now has a library target (`src/lib.rs`)
+so the second binary, `private-ai-manager`, shares its modules: a `[[bin]]` alone could not reach them.
 
-2. **The launcher.** A subcommand (`private-ai-manager run-instance <id>`) that reads
-   `server@<id>.ini` and execs llama-server with `server_args()`, its env (`LLAMA_CACHE`, the ROCm PATH
-   prepend) and the cwd `runstate::start` sets today; it refuses an ID with no file. Where it
-   lives: a second binary target of the `llama-cpp-config` crate, so it shares `server_args()` with no
-   new crate (W2); split later only if Strata needs it.
 3. **The manager behind a seam.** Only `private-ai-manager` writes the INI files of the system
    directory (`server@<id>.ini`, `presets.ini`, `presets.ini.disabled`): it exposes reading and writing
    them over D-Bus / the pipe, under polkit / the ACL. Every writer in the configurator goes through

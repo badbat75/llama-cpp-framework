@@ -130,7 +130,12 @@ fn running_from_tasklist(stdout: &str, probe_pids: &[u32]) -> bool {
 /// `true` if the presets file has at least one section (reusing the real INI
 /// parser instead of a hand-rolled header scan).
 fn has_presets() -> bool {
-    !crate::ini::read_all(&crate::paths::presets_ini()).is_empty()
+    has_presets_in(&crate::paths::presets_ini())
+}
+
+/// `true` if the presets file at `path` has at least one section.
+fn has_presets_in(path: &std::path::Path) -> bool {
+    !crate::ini::read_all(path).is_empty()
 }
 
 // ── Launch argument assembly (server_args) ───────────────────────────────
@@ -342,9 +347,6 @@ pub fn start() -> io::Result<Option<crate::server_cfg::ServerConfig>> {
     let cfg = crate::server_cfg::load();
     let presets_path = crate::paths::presets_ini();
 
-    let models_dir = cfg.models_dir_or_default();
-
-    let data_root = crate::paths::data_root();
     let log_path = crate::paths::server_log();
     if let Some(log_dir) = log_path.parent() {
         std::fs::create_dir_all(log_dir)?;
@@ -370,19 +372,7 @@ pub fn start() -> io::Result<Option<crate::server_cfg::ServerConfig>> {
         crate::slot_state::ensure_dir(&cfg)?;
     }
 
-    let mut cmd = std::process::Command::new(&exe);
-    cmd.args(server_args(&cfg, &presets_path));
-
-    cmd.current_dir(&data_root);
-    cmd.env("LLAMA_CACHE", &models_dir);
-    // Settings llama.cpp exposes only as env vars; inherited by the router's
-    // per-model children, so they cover every preset.
-    for dev in env_vars(&cfg) {
-        cmd.env(dev.0, dev.1);
-    }
-    // Make ggml-hip.dll loadable: the HIP SDK's bin dir isn't on the system
-    // PATH, and ggml silently skips a backend whose DLL deps don't resolve.
-    crate::proc::prepend_rocm_path(&mut cmd);
+    let mut cmd = launch_command(&exe, &cfg, &presets_path);
     // llama-server writes most of its logging (model load, request logs,
     // GGML asserts, crash traces) to stderr; capture both streams in the
     // same log file so the log isn't empty and crashes leave a trail.
@@ -440,6 +430,374 @@ pub fn start() -> io::Result<Option<crate::server_cfg::ServerConfig>> {
         let _ = child.wait();
     });
     Ok(Some(cfg))
+}
+
+/// The llama-server process of `cfg` and `presets_path`, before its stdio:
+/// args, cwd and env, shared by `start()` and `instance_command()`.
+fn launch_command(
+    exe: &std::path::Path,
+    cfg: &crate::server_cfg::ServerConfig,
+    presets_path: &std::path::Path,
+) -> std::process::Command {
+    let mut cmd = std::process::Command::new(exe);
+    cmd.args(server_args(cfg, presets_path));
+
+    cmd.current_dir(crate::paths::data_root());
+    cmd.env("LLAMA_CACHE", cfg.models_dir_or_default());
+    // Settings llama.cpp exposes only as env vars; inherited by the router's
+    // per-model children, so they cover every preset.
+    for dev in env_vars(cfg) {
+        cmd.env(dev.0, dev.1);
+    }
+    // Make ggml-hip.dll loadable: the HIP SDK's bin dir isn't on the system
+    // PATH, and ggml silently skips a backend whose DLL deps don't resolve.
+    crate::proc::prepend_rocm_path(&mut cmd);
+    cmd
+}
+
+// ── Service launch (private-ai-manager run-instance) ─────────────────────
+
+/// Why `instance_command` built no launch.
+#[derive(Debug, PartialEq, Eq)]
+pub enum LaunchError {
+    /// The id is not a valid instance id (`paths::valid_instance_id`).
+    InvalidId,
+    /// No `server@<id>.ini` at this path.
+    NoConfig(std::path::PathBuf),
+    /// The system `presets.ini` has no section (`start()`'s `has_presets`).
+    NoPresets,
+    /// SaveStateOnShutdown is on and this slot-state directory could not be
+    /// created, for this reason.
+    StateDir(std::path::PathBuf, std::io::ErrorKind),
+}
+
+/// The llama-server launch of instance `id`: `exe` with `server_args()` of
+/// `server@<id>.ini`, the cwd and env `start()` sets. No log, no rotation:
+/// the service manager captures the output.
+pub fn instance_command(
+    id: &str,
+    exe: &std::path::Path,
+) -> Result<std::process::Command, LaunchError> {
+    let ini = crate::paths::instance_ini(id).ok_or(LaunchError::InvalidId)?;
+    if !ini.is_file() {
+        return Err(LaunchError::NoConfig(ini));
+    }
+    let presets_path = crate::paths::system_config_dir().join("presets.ini");
+    if !has_presets_in(&presets_path) {
+        return Err(LaunchError::NoPresets);
+    }
+    let cfg = crate::server_cfg::load_from(&ini);
+    // Before the spawn, as in `start()`: llama.cpp refuses a missing
+    // `--slot-save-path` directory during argument parsing.
+    if cfg.save_state_on_shutdown_or_default() {
+        crate::slot_state::ensure_dir(&cfg)
+            .map_err(|e| LaunchError::StateDir(crate::slot_state::state_dir(&cfg), e.kind()))?;
+    }
+    Ok(launch_command(exe, &cfg, &presets_path))
+}
+
+/// E2E phase for `instance_command`, for the shared UI test to call: it sets
+/// the process-wide `LLAMA_CPP_CONFIG_DATA_ROOT` redirect (`src/tests/mod.rs`).
+/// The expected launch is always computed by the existing path
+/// (`server_cfg::load()` of `paths::server_ini()` fed to `server_args`), never
+/// hard-coded.
+#[cfg(test)]
+pub(crate) fn instance_launch_e2e() {
+    use std::collections::BTreeMap;
+    use std::ffi::OsString;
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::env::set_var("LLAMA_CPP_CONFIG_DATA_ROOT", dir.path());
+    let sys = crate::paths::system_config_dir();
+    let exe = dir
+        .path()
+        .join("bin")
+        .join(crate::paths::binary_name("llama-server"));
+    let envs_of = |cmd: &std::process::Command| -> BTreeMap<OsString, Option<OsString>> {
+        cmd.get_envs()
+            .map(|(k, v)| (k.to_owned(), v.map(|v| v.to_owned())))
+            .collect()
+    };
+    let port_of = |cmd: &std::process::Command| -> Option<String> {
+        let args: Vec<String> = cmd
+            .get_args()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        let i = args.iter().position(|a| a == "--port")?;
+        args.get(i + 1).cloned()
+    };
+
+    // ── Refusals ─────────────────────────────────────────────────────────
+    // A crafted or malformed id is refused before any path is built.
+    for bad in ["", "../x", "..", "a/b", "Default", "a_b", "-a", "x.ini"] {
+        assert_eq!(
+            instance_command(bad, &exe).err(),
+            Some(LaunchError::InvalidId),
+            "id {bad:?}"
+        );
+    }
+    // A valid id with no file: no system directory at all yet.
+    assert_eq!(
+        instance_command("default", &exe).err(),
+        Some(LaunchError::NoConfig(sys.join("server@default.ini"))),
+        "no system config directory"
+    );
+    assert!(
+        !sys.exists(),
+        "a refused launch must not create the directory"
+    );
+    // The directory exists and holds another instance, not this one.
+    std::fs::create_dir_all(&sys).expect("system config dir");
+    std::fs::write(sys.join("server@lan-2.ini"), "[Server]\nPort = 8090\n").expect("lan-2");
+    assert_eq!(
+        instance_command("default", &exe).err(),
+        Some(LaunchError::NoConfig(sys.join("server@default.ini"))),
+        "another instance's file is not this one's"
+    );
+    // The per-user server.ini does not stand in for a missing instance file.
+    let user_ini = crate::paths::server_ini();
+    std::fs::create_dir_all(user_ini.parent().expect("config dir")).expect("user config dir");
+    std::fs::write(&user_ini, "[Server]\nPort = 9999\n").expect("server.ini");
+    assert_eq!(
+        instance_command("default", &exe).err(),
+        Some(LaunchError::NoConfig(sys.join("server@default.ini"))),
+        "server.ini is not server@default.ini"
+    );
+
+    // ── Refused for want of presets, as start() refuses (`has_presets`) ──
+    // The instance file exists from here on; the presets are the system
+    // directory's `presets.ini`, and llama-server reads only that file.
+    std::fs::write(sys.join("server@default.ini"), "[Server]\nPort = 8081\n")
+        .expect("server@default.ini");
+    // The per-user presets.ini has a section: it must not count.
+    let user_presets = crate::paths::presets_ini();
+    std::fs::write(&user_presets, "[user-model]\nmodel = /m/user.gguf\n").expect("user presets");
+    let sys_presets = sys.join("presets.ini");
+    assert_eq!(
+        instance_command("default", &exe).err(),
+        Some(LaunchError::NoPresets),
+        "no system presets.ini"
+    );
+    std::fs::write(&sys_presets, "; no model yet\n\n").expect("empty presets");
+    assert_eq!(
+        instance_command("default", &exe).err(),
+        Some(LaunchError::NoPresets),
+        "a presets.ini with no section"
+    );
+    // Every preset switched off: the sections are in the file llama-server
+    // does not read.
+    std::fs::write(
+        sys.join("presets.ini.disabled"),
+        "[Qwen3.8-27B]\nmodel = /m/Qwen3.8-27B-Q8_0.gguf\n",
+    )
+    .expect("presets.ini.disabled");
+    assert_eq!(
+        instance_command("default", &exe).err(),
+        Some(LaunchError::NoPresets),
+        "only switched-off presets"
+    );
+    std::fs::write(
+        &sys_presets,
+        "[Qwen3.8-27B]\nmodel = /m/Qwen3.8-27B-Q8_0.gguf\nctx-size = 172032\n",
+    )
+    .expect("presets.ini");
+
+    // ── Same launch as start() for the same config ───────────────────────
+    // Real keys; `Threads = lots` is nonsense, which load() reads as unset:
+    // the launcher must read it the same way.
+    let models = dir.path().join("models");
+    let content = format!(
+        "[Server]\nPort = 8081\nHostname = 127.0.0.1\nModelsDir = {}\nModelsMax = 2\n\
+         LogVerbosity = 3\nThreads = lots\nWebui = false\nAttnRotDisable = true\n\
+         RocblasUseHipblaslt = false\n",
+        models.display()
+    );
+    std::fs::write(sys.join("server@default.ini"), &content).expect("server@default.ini");
+    std::fs::write(&user_ini, &content).expect("server.ini");
+    let cfg = crate::server_cfg::load();
+    // Presets move to the system directory with the instance files (PLAN.md step 1).
+    let expected_args = server_args(&cfg, &sys.join("presets.ini"));
+    let expected_env = env_vars(&cfg);
+    assert!(
+        expected_args.windows(2).any(|w| w == ["--port", "8081"]),
+        "fixture sanity: {expected_args:?}"
+    );
+    assert!(
+        !expected_env.is_empty(),
+        "fixture sanity: env-only settings set"
+    );
+
+    let cmd = instance_command("default", &exe).expect("launch of server@default.ini");
+    assert_eq!(cmd.get_program(), exe.as_os_str(), "program");
+    let args: Vec<String> = cmd
+        .get_args()
+        .map(|a| a.to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(
+        args, expected_args,
+        "args are server_args() of the instance file"
+    );
+    assert_eq!(
+        cmd.get_current_dir(),
+        Some(crate::paths::data_root().as_path()),
+        "cwd as start() sets it"
+    );
+    let envs = envs_of(&cmd);
+    assert_eq!(
+        envs.get(&OsString::from("LLAMA_CACHE")),
+        Some(&Some(models.clone().into_os_string())),
+        "LLAMA_CACHE is the file's ModelsDir"
+    );
+    for (k, v) in &expected_env {
+        assert_eq!(
+            envs.get(&OsString::from(k)),
+            Some(&Some(OsString::from(v))),
+            "env-only setting {k}"
+        );
+    }
+    // The ROCm PATH prepend of start() (`proc::prepend_rocm_path`).
+    match crate::paths::rocm_bin_dir() {
+        None => assert!(
+            !envs.contains_key(&OsString::from("PATH")),
+            "no ROCm runtime found: PATH left inherited"
+        ),
+        Some(bin) => {
+            let path = envs
+                .get(&OsString::from("PATH"))
+                .cloned()
+                .flatten()
+                .expect("PATH set with a ROCm runtime");
+            assert_eq!(
+                std::env::split_paths(&path).next(),
+                Some(bin),
+                "ROCm bin dir first on PATH"
+            );
+        }
+    }
+    // systemd captures the output: the launcher writes no log of its own.
+    assert!(
+        !crate::paths::server_log().exists(),
+        "the launcher must not create llama-server.log"
+    );
+
+    // ── The instance file is what is read, not server.ini ────────────────
+    let other_models = dir.path().join("other-models");
+    std::fs::write(
+        &user_ini,
+        format!(
+            "[Server]\nPort = 9999\nModelsDir = {}\n",
+            other_models.display()
+        ),
+    )
+    .expect("server.ini");
+    std::fs::write(
+        sys.join("server@default.ini"),
+        format!("[Server]\nPort = 8082\nModelsDir = {}\n", models.display()),
+    )
+    .expect("server@default.ini");
+    let cmd = instance_command("default", &exe).expect("launch of server@default.ini");
+    assert_eq!(
+        port_of(&cmd).as_deref(),
+        Some("8082"),
+        "port of server@default.ini"
+    );
+    assert_eq!(
+        envs_of(&cmd).get(&OsString::from("LLAMA_CACHE")),
+        Some(&Some(models.into_os_string())),
+        "ModelsDir of server@default.ini"
+    );
+    // And each id reads its own file.
+    let cmd = instance_command("lan-2", &exe).expect("launch of server@lan-2.ini");
+    assert_eq!(
+        port_of(&cmd).as_deref(),
+        Some("8090"),
+        "port of server@lan-2.ini"
+    );
+
+    // ── The slot-state directory, as start() creates it ──────────────────
+    // Off (the fixtures above): no directory, default or configured.
+    let default_state = crate::slot_state::default_state_dir();
+    assert!(
+        default_state.starts_with(dir.path()),
+        "fixture sanity: the default state dir is under the redirect"
+    );
+    assert!(
+        !default_state.exists(),
+        "SaveStateOnShutdown unset: no state directory"
+    );
+    let state = dir.path().join("states").join("default");
+    std::fs::write(
+        sys.join("server@default.ini"),
+        format!(
+            "[Server]\nSaveStateOnShutdown = false\nStateDir = {}\n",
+            state.display()
+        ),
+    )
+    .expect("server@default.ini");
+    instance_command("default", &exe).expect("launch with snapshots off");
+    assert!(
+        !state.exists(),
+        "SaveStateOnShutdown off: StateDir not created"
+    );
+    // On with StateDir: created before the launch is returned, with its parents.
+    std::fs::write(
+        sys.join("server@default.ini"),
+        format!(
+            "[Server]\nSaveStateOnShutdown = true\nStateDir = {}\n",
+            state.display()
+        ),
+    )
+    .expect("server@default.ini");
+    let cmd = instance_command("default", &exe).expect("launch with snapshots on");
+    assert!(state.is_dir(), "SaveStateOnShutdown on: StateDir created");
+    let args: Vec<String> = cmd
+        .get_args()
+        .map(|a| a.to_string_lossy().into_owned())
+        .collect();
+    assert!(
+        args.windows(2)
+            .any(|w| w[0] == "--slot-save-path" && w[1] == state.to_string_lossy()),
+        "the created directory is the one passed: {args:?}"
+    );
+    // On with no StateDir: the default one is created.
+    std::fs::write(
+        sys.join("server@default.ini"),
+        "[Server]\nSaveStateOnShutdown = true\n",
+    )
+    .expect("server@default.ini");
+    instance_command("default", &exe).expect("launch with default state dir");
+    assert!(default_state.is_dir(), "default state directory created");
+    // A directory that cannot be created (a file is in the way) refuses the
+    // launch, as start() returns the error, rather than a server that dies
+    // parsing --slot-save-path.
+    let blocker = dir.path().join("not-a-dir");
+    std::fs::write(&blocker, "x").expect("blocker file");
+    let blocked = blocker.join("state");
+    std::fs::write(
+        sys.join("server@default.ini"),
+        format!(
+            "[Server]\nSaveStateOnShutdown = true\nStateDir = {}\n",
+            blocked.display()
+        ),
+    )
+    .expect("server@default.ini");
+    // The error keeps the reason, as the io::ErrorKind std gives for this very
+    // operation (NotADirectory on Linux, checked with a real run).
+    let kind = std::fs::create_dir_all(&blocked)
+        .expect_err("fixture: a directory under a regular file")
+        .kind();
+    #[cfg(unix)]
+    assert_eq!(kind, std::io::ErrorKind::NotADirectory, "fixture sanity");
+    let err = instance_command("default", &exe).err();
+    assert!(
+        matches!(&err, Some(LaunchError::StateDir(p, ..)) if *p == blocked),
+        "state directory that cannot be created: {err:?}"
+    );
+    assert_eq!(
+        err,
+        Some(LaunchError::StateDir(blocked, kind)),
+        "the refusal carries the io error kind"
+    );
 }
 
 /// Force-kill all llama-server.exe processes (taskkill /f: llama-server has

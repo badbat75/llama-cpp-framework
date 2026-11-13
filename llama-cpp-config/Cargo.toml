@@ -7,9 +7,19 @@ description = "GUI + CLI configurator for llama.cpp-framework"
 license = "MIT"
 publish = false
 
+# The modules live in the library, shared by both binaries. Its doc comments
+# are not doctests: none was written as one.
+[lib]
+path = "src/lib.rs"
+doctest = false
+
 [[bin]]
 name = "llama-cpp-config"
 path = "src/main.rs"
+
+[[bin]]
+name = "private-ai-manager"
+path = "src/bin/private-ai-manager.rs"
 
 [dependencies]
 slint = { version = "1.18", default-features = false, features = ["std", "compat-1-2", "backend-winit", "renderer-skia", "accessibility", "unstable-winit-030", "system-tray"] }

@@ -419,8 +419,13 @@ impl ServerConfig {
 // ── Construct & parse (from_keys = INI read) ─────────────────────────────
 
 pub fn load() -> ServerConfig {
-    let path = paths::server_ini();
-    from_keys(&ini::read_section(&path, "Server"))
+    load_from(&paths::server_ini())
+}
+
+/// The `[Server]` section of the INI at `path`, read as `load()` reads
+/// server.ini: the service launcher reads an instance's `server@<id>.ini`.
+pub fn load_from(path: &std::path::Path) -> ServerConfig {
+    from_keys(&ini::read_section(path, "Server"))
 }
 
 /// Parse the `[Server]` key/value map into a config. Split out of `load()` so

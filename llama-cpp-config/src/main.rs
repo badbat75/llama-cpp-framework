@@ -8,50 +8,9 @@
     windows_subsystem = "windows"
 )]
 
-#[cfg(test)]
-#[path = "../arch_tables.rs"]
-mod arch_tables;
-mod bench;
-mod cli;
-mod devices;
-mod form;
-mod gguf;
-mod gpu_split;
-mod gui;
-mod hf;
-mod hf_fit;
-mod http;
-#[cfg(any(target_os = "linux", windows))]
-mod hwmon;
-mod ini;
-mod integrations;
-mod kv_cache;
-mod linked_files;
-mod model_scan;
-mod moe_cache;
-mod net_ifaces;
-mod paths;
-mod presets;
-mod proc;
-mod runstate;
-mod server_cfg;
-mod server_form;
-mod server_version;
-mod settings;
-mod sha256;
-#[cfg(windows)]
-mod single_instance;
-mod slot_state;
-mod startup;
-mod strings;
-mod tensor_override;
-mod tensor_picker;
-// Cross-cutting end-to-end tests (e.g. the Slint UI regression test) live under
-// src/tests/; per-module unit tests stay inline in their own files.
-#[cfg(test)]
-mod tests;
-
 use clap::Parser;
+use llama_cpp_config::cli::reader_of;
+use llama_cpp_config::{cli, gui, strings};
 
 fn main() {
     // Attach to the parent console (if any) BEFORE branching: the release
@@ -81,14 +40,6 @@ fn main() {
     if let Err(e) = cli::run(cli) {
         eprintln!("{}", strings::fill("error-line", &[&format!("{e:#}")]));
         std::process::exit(1);
-    }
-}
-
-/// Which text file this process reads: `None` is a launch with no arguments.
-fn reader_of(command: Option<&cli::Command>) -> strings::Reader {
-    match command {
-        None | Some(cli::Command::Gui { .. }) => strings::Reader::Gui,
-        Some(_) => strings::Reader::Cli,
     }
 }
 

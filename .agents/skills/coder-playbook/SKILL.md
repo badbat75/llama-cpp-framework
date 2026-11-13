@@ -9,6 +9,12 @@ Lessons only: the rules are in `AGENTS.md`.
   control, or a pattern that cannot match itself.
 - When a test fails, check whether the test or the code is wrong before changing either.
 - A screenshot that comes out blank proves nothing about a GUI. Check that it really shows the window.
-- `llama-cpp-config` is a binary crate: `pub` does not silence dead_code, and `clippy --all-targets`
-  also builds the non-test bin, so a function only tests call fails `-D warnings` until a caller lands.
+- `llama-cpp-config` is a library (`src/lib.rs`, every module) plus two bins (`main.rs`,
+  `bin/private-ai-manager.rs`). Most modules are private, so `pub` does not silence dead_code there,
+  and a function only tests call fails `clippy --all-targets -D warnings` until a caller lands.
+- `binding_lint` reads the sources by file name: only the binary roots may say `cli::` (`lib.rs` may
+  not: the GUI can reach it), and a key printed outside `cli.rs` and `CLI_ONLY_FNS` must be in both
+  `cli.toml` and `en_US.toml`.
+- A debug binary in `cargo-target/debug` finds no llama-server (`paths::llama_bin` layouts). To show a
+  launcher's refusals, hardlink it into a scratch dir beside an empty, non-executable `llama-server`.
 - Code comments never cite PLAN.md step numbers: they change on renumbering. Name the feature or caller instead.

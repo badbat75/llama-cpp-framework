@@ -573,6 +573,14 @@ pub struct PresetDownload {
 
 // ── Dispatch & rendering ─────────────────────────────────────────────────
 
+/// Which text file this process reads: `None` is a launch with no arguments.
+pub fn reader_of(command: Option<&Command>) -> strings::Reader {
+    match command {
+        None | Some(Command::Gui { .. }) => strings::Reader::Gui,
+        Some(_) => strings::Reader::Cli,
+    }
+}
+
 pub fn run(cli: Cli) -> Result<()> {
     match cli.command {
         Command::Gui { minimized } => crate::gui::run(minimized),

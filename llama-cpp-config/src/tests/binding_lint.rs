@@ -600,7 +600,7 @@ const GUI_ONLY_KEYS: [&str; 28] = [
 /// Functions of the shared sources that only a CLI command runs, beside all of
 /// `cli.rs`: their keys are in `cli.toml` alone. `cli_only_code_is_not_called_from_elsewhere`
 /// fails when other code starts calling one, since the GUI would then miss its keys.
-const CLI_ONLY_FNS: [(&str, &str); 13] = [
+const CLI_ONLY_FNS: [(&str, &str); 15] = [
     ("bench/db.rs", "set_answer"),
     ("bench/gpu_lock.rs", "acquire"),
     ("bench/interrupt.rs", "install"),
@@ -614,6 +614,8 @@ const CLI_ONLY_FNS: [(&str, &str); 13] = [
     ("bench/sweep.rs", "measure"),
     ("bench/sweep.rs", "report_leg"),
     ("bench/sweep.rs", "run"),
+    ("manager.rs", "main"),
+    ("manager.rs", "run"),
 ];
 
 /// A source split into what only a CLI command runs and the rest. The split of a
@@ -921,8 +923,10 @@ fn strings_t_keys_and_the_language_file_match() {
 }
 
 /// A key in `cli.toml` alone is a miss in the window, so what holds one must stay
-/// out of the GUI's reach: nothing but the CLI's own code (and `main`, which
-/// dispatches) may call into `cli.rs` or a `CLI_ONLY_FNS` function.
+/// out of the GUI's reach: nothing but the CLI's own code (and the binary roots,
+/// `main.rs` and `bin/private-ai-manager.rs`, which dispatch and which no module
+/// can call) may call into `cli.rs` or a `CLI_ONLY_FNS` function. The library root
+/// `lib.rs` is NOT exempt: every module, the GUI's included, can call into it.
 #[test]
 fn cli_only_code_is_not_called_from_elsewhere() {
     let mut sources = Vec::new();
@@ -944,7 +948,10 @@ fn cli_only_code_is_not_called_from_elsewhere() {
         .collect();
     let mut hits = Vec::new();
     for (path, rest) in &texts {
-        if !path.ends_with("main.rs") && names(rest, "cli", Some(':')) {
+        if path.ends_with("main.rs") || path.ends_with("bin/private-ai-manager.rs") {
+            continue;
+        }
+        if names(rest, "cli", Some(':')) {
             hits.push(format!("{}: cli::", path.display()));
         }
         for (file, function) in CLI_ONLY_FNS {
@@ -972,9 +979,10 @@ const SHOWN_MACROS: [&str; 7] = [
 /// Sources whose print and error macros are scanned, and, for those marked, every
 /// `format!` and `.context` too: there a format string is shown, recorded
 /// (`SHOWN_LITERALS`) or layout, and nothing else.
-const CLI_PRINT_PATHS: [(&str, bool); 6] = [
+const CLI_PRINT_PATHS: [(&str, bool); 7] = [
     ("cli.rs", true),
     ("main.rs", true),
+    ("manager.rs", true),
     ("bench/interrupt.rs", true),
     ("integrations.rs", false),
     ("bench/spec.rs", false),

@@ -83,8 +83,6 @@ pub fn config_dir() -> PathBuf {
 /// `/etc/llama.cpp` outside Windows, `%ProgramData%\llama.cpp\config` on
 /// Windows. Under the test override it is `<override>/system-config` on every
 /// OS, apart from the per-user `config_dir()`.
-// The service launcher (`private-ai-manager run-instance`) will call this; the allow goes then.
-#[allow(dead_code)]
 pub fn system_config_dir() -> PathBuf {
     if let Some(p) = env_path("LLAMA_CPP_CONFIG_DATA_ROOT") {
         return p.join("system-config");
@@ -104,8 +102,6 @@ pub fn system_config_dir() -> PathBuf {
 
 /// An instance id is 1 to 32 ASCII lowercase letters, digits and `-`, starting
 /// with a letter or digit, so it is always a safe file name component.
-// The service launcher (`private-ai-manager run-instance`) will call this; the allow goes then.
-#[allow(dead_code)]
 pub fn valid_instance_id(id: &str) -> bool {
     let ok = |c: char| c.is_ascii_lowercase() || c.is_ascii_digit();
     (1..=32).contains(&id.len())
@@ -114,8 +110,6 @@ pub fn valid_instance_id(id: &str) -> bool {
 }
 
 /// `server@<id>.ini` in `system_config_dir()`, or None for an invalid id.
-// The service launcher (`private-ai-manager run-instance`) will call this; the allow goes then.
-#[allow(dead_code)]
 pub fn instance_ini(id: &str) -> Option<PathBuf> {
     valid_instance_id(id).then(|| system_config_dir().join(format!("server@{id}.ini")))
 }
@@ -123,7 +117,7 @@ pub fn instance_ini(id: &str) -> Option<PathBuf> {
 /// The ids of the regular files `server@<valid id>.ini` in
 /// `system_config_dir()`, sorted; empty when the directory is missing, which
 /// this never creates.
-// The service launcher (`private-ai-manager run-instance`) will call this; the allow goes then.
+// The manager's boot start of every instance will call this; the allow goes then.
 #[allow(dead_code)]
 pub fn instance_ids() -> Vec<String> {
     let Ok(entries) = std::fs::read_dir(system_config_dir()) else {

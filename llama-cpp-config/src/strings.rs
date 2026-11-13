@@ -142,10 +142,10 @@ mod tests {
         use clap::Parser;
         let of = |args: &[&str]| {
             let cli = crate::cli::Cli::try_parse_from(args).expect("parses");
-            file_stem(crate::reader_of(Some(&cli.command)))
+            file_stem(crate::cli::reader_of(Some(&cli.command)))
         };
         assert_eq!(
-            file_stem(crate::reader_of(None)),
+            file_stem(crate::cli::reader_of(None)),
             GUI_LANGUAGE,
             "no arguments: the window"
         );

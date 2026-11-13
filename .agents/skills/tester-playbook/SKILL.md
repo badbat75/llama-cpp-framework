@@ -21,3 +21,17 @@ Lessons only: the rules are in `AGENTS.md`.
   unsets the variable safely, so the real-path branches (`/etc`, `%ProgramData%`) go untested.
 - Stubs with `todo!("<fn>")` give a red that names the missing function; prefer them to a compile error,
   which hides every other test in the binary.
+- `llama-cpp-config` is a binary-only crate (no `lib.rs`): tests run in the `llama-cpp-config` bin's test
+  target, so logic for a second `[[bin]]` must sit in a module of the main crate (`mod x;` in `main.rs`) to
+  be tested. Wiring the second binary is the coder's job.
+- To pin a launch, build a `std::process::Command` and read it back with `get_program`, `get_args`,
+  `get_envs` and `get_current_dir`; take the exe as a parameter, because `paths::llama_server_exe()` finds
+  nothing from the test binary's directory. Compute the expected args with the existing `server_args()`
+  instead of hard-coding the list.
+- A single file can be formatted with `rustfmt --edition 2021 <file>`; `cargo fmt -p <crate> --check` then
+  shows whether anything else is left.
+- To pin a field a variant does not have yet without breaking the build, match with `Variant(p, ..)` (it
+  compiles for one field or more) and check the new field through `{:?}`; tell the coder the intended
+  shape. A compile error would hide every other test in the binary, the lints included.
+- Since `src/lib.rs` exists, the binary roots (`main.rs`, `bin/*.rs`) are separate crates no module can
+  call, while `lib.rs` is reachable from every module: a lint may exempt the former, never the latter.

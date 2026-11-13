@@ -598,4 +598,8 @@ fn editable_widgets_track_model_after_edit() {
     // Sets the process-wide data-root redirect, so it runs here, not as a
     // unit test of its own (src/tests/mod.rs).
     crate::paths::instance_paths_e2e();
+
+    // ── Service launch (runstate.rs `instance_command`) ──────────────────
+    // Same redirect rule as above.
+    crate::runstate::instance_launch_e2e();
 }
