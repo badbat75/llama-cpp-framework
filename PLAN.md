@@ -141,12 +141,17 @@ so the second binary, `private-ai-manager`, shares its modules: a `[[bin]]` alon
    D-Bus service on the system bus (`org.privateai.Manager1`, zbus 5 blocking) with the systemd and
    polkit implementations of the traits, tested over a peer-to-peer connection with the fakes; the
    systemd and polkit proxies and `serve` itself wait for a real run (slice 5). Left: `serve extra`
-   prints the run-instance usage hint. Before 3c: the D-Bus service must keep answering while polkit waits for a user to authenticate.
-   Today the core's mutex is held during `CheckAuthorization` and zbus runs a connection's handlers on
-   one executor thread, so every other call, status reads included, waits for the password prompt.
-   **3c** (after step 2, the rename):
-   the configurator's start, stop, status and every INI write
-   go through the manager, `runstate`'s callers switched to it. The manager owns every check on the
+   prints the run-instance usage hint.
+   The manager answers while polkit waits (done: a write lock inside the core taken after
+   authorization, `async fn` D-Bus methods running the core off zbus's executor thread).
+   **3c**, in four pieces, each test first: **3c-1** the content checks of `server@<id>.ini` and
+   `presets.ini` move to `pai-core` and the manager refuses invalid content with a strings key and its
+   values; **3c-2** a client in `pai-core` (start, stop, restart, status, read, write) with its D-Bus
+   implementation, tested against the real interface over a peer-to-peer connection; **3c-3** the
+   configurator picks a backend, the manager on Linux and today's direct spawn and per-user files on
+   macOS and, until slice 6, Windows, and `runstate`'s callers (GUI, CLI `server`, benchmarks) go
+   through it for the `default` instance; **3c-4** every INI reader and writer goes through it.
+   The manager owns every check on the
    content it writes (decided with the user on 2026-11-13): before a write it runs all the checks the
    configurator runs today (`server_form.rs`, the presets checks) and refuses invalid content with an
    error carrying a strings key and its values, which the configurator shows in its own language. The
