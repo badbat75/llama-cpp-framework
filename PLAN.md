@@ -21,7 +21,7 @@ as the column says. A requirement still open must be covered by a step.
 | R5 | Every measurement in `benchmarks/bench.db`, under a versioned spec, public: no credentials, no local paths | Met |
 | R6 | Per-GPU and per-model guides where every value traces to a campaign, published as a site | Met, but their figures predate v0.9.0: step 3 |
 | R7 | The fastest presets for the test machine's GPUs: port an out-of-tree optimization when its gain pays for its upkeep | Open: steps 2 to 7 |
-| R8 | llama-server runs as an OS service per instance (`llama.cpp@<id>` on Linux, config `server@<id>.ini`, a Windows service) managed by the runtime service `private-ai-manager`, which starts the instances at boot and is what the GUI and CLI talk to (D-Bus plus polkit on Linux, a named pipe with an ACL on Windows); units started by hand stay under its management; later engines (Strata) are to fit the same manager | Open: step 1 |
+| R8 | llama-server runs as an OS service per instance (`llama.cpp@<id>` on Linux, config `server@<id>.ini`, a Windows service) managed by the runtime service `private-ai-manager`, which starts the instances at boot and is what the GUI and CLI talk to (D-Bus plus polkit on Linux, a named pipe with an ACL on Windows); units started by hand stay under its management; the manager owns every check on the config it writes and the GUI is a thin client; later engines (Strata) are to fit the same manager | Open: step 1 |
 
 ### How we work
 
@@ -140,7 +140,12 @@ so the second binary, `private-ai-manager`, shares its modules: a `[[bin]]` alon
    implementations of the traits; `serve` says it is unavailable until then; the usage text names
    `serve`; `paths::instance_ids()` loses its dead_code allow once boot calls it; `manager.rs` line 2
    cites a plan step, to reword. **3c:** the configurator's start, stop, status and every INI write
-   go through the manager, `runstate`'s callers switched to it. The Windows SCM and pipe
+   go through the manager, `runstate`'s callers switched to it. The manager owns every check on the
+   content it writes (decided with the user on 2026-11-13): before a write it runs all the checks the
+   configurator runs today (`server_form.rs`, the presets checks) and refuses invalid content with an
+   error carrying a strings key and its values, which the configurator shows in its own language. The
+   configurator is a thin client: it keeps no check of its own; it may call the same shared code for
+   feedback while the user types, but the manager's answer decides. The Windows SCM and pipe
    implementations come with slice 6.
 4. **Logs.** The unit appends both streams to `/var/log/llama.cpp/llama-server@<id>.log`
    (`StandardOutput=append:`), the Windows service to `%ProgramData%\llama.cpp\logs\`; the closing and
