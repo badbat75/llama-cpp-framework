@@ -17,11 +17,12 @@ as the column says. A requirement still open must be covered by a step.
 | R1 | Build llama.cpp (newest release tag, plus `patches/llama.cpp/`) with CUDA, Vulkan and ROCm/HIP on Windows and Linux; every phase a cargo command | Met: release 2.4.0 |
 | R2 | Package it: an MSI on Windows, split `.deb` and `.rpm` on Linux, self-contained but for the GPU drivers | Met: release 2.4.0 |
 | R3 | The same on macOS, Apple Silicon only (Metal + Vulkan through MoltenVK, split `.pkg`) | Written, never run on a Mac |
-| R4 | A GUI + CLI configurator (`llama-cpp-config`) for `server.ini` and the per-model `presets.ini` | Met: release 2.4.0 |
+| R4 | A GUI + CLI configurator (`llama-cpp-config`, becoming `private-ai-config`: step 2) for `server.ini` and the per-model `presets.ini` | Met: release 2.4.0 |
 | R5 | Every measurement in `benchmarks/bench.db`, under a versioned spec, public: no credentials, no local paths | Met |
-| R6 | Per-GPU and per-model guides where every value traces to a campaign, published as a site | Met, but their figures predate v0.9.0: step 3 |
-| R7 | The fastest presets for the test machine's GPUs: port an out-of-tree optimization when its gain pays for its upkeep | Open: steps 2 to 7 |
+| R6 | Per-GPU and per-model guides where every value traces to a campaign, published as a site | Met, but their figures predate v0.9.0: step 4 |
+| R7 | The fastest presets for the test machine's GPUs: port an out-of-tree optimization when its gain pays for its upkeep | Open: steps 3 to 8 |
 | R8 | llama-server runs as an OS service per instance (`llama.cpp@<id>` on Linux, config `server@<id>.ini`, a Windows service) managed by the runtime service `private-ai-manager`, which starts the instances at boot and is what the GUI and CLI talk to (D-Bus plus polkit on Linux, a named pipe with an ACL on Windows); units started by hand stay under its management; the manager owns every check on the config it writes and the GUI is a thin client; later engines (Strata) are to fit the same manager | Open: step 1 |
+| R9 | The project is `private-ai-framework` and the configurator `private-ai-config` (decided 2026-11-13), with upgrades from the old packages and the user's data carried over | Open: step 2 |
 
 ### How we work
 
@@ -70,7 +71,7 @@ as not checked, and the step stays open.
 ## Where things stand
 
 Release 2.4.0 bundles llama.cpp v1.0.0 with patches `0001`, `0005` and `0006`; `0002`, `0003` and `0004`
-were dropped at v0.9.0 and performance dropped with them (step 2). The test machine has two R9700 (one in
+were dropped at v0.9.0 and performance dropped with them (step 3). The test machine has two R9700 (one in
 an x4 slot with no AtomicOps); the RTX 4070 SUPER is out of it, so the mixed-pair measurements wait for it.
 No run in bench.db is on v0.9.0 or later. What was checked among the out-of-tree candidates
 (`overdoingism/llama-cpp-rdna-boosts`), and found superseded or not applicable, is in
@@ -139,7 +140,8 @@ so the second binary, `private-ai-manager`, shares its modules: a `[[bin]]` alon
    D-Bus service on the system bus (`org.privateai.Manager1`) with the systemd and polkit
    implementations of the traits; `serve` says it is unavailable until then; the usage text names
    `serve`; `paths::instance_ids()` loses its dead_code allow once boot calls it; `manager.rs` line 2
-   cites a plan step, to reword. **3c:** the configurator's start, stop, status and every INI write
+   cites a plan step, to reword. **3c** (after step 2, the rename):
+   the configurator's start, stop, status and every INI write
    go through the manager, `runstate`'s callers switched to it. The manager owns every check on the
    content it writes (decided with the user on 2026-11-13): before a write it runs all the checks the
    configurator runs today (`server_form.rs`, the presets checks) and refuses invalid content with an
@@ -181,7 +183,42 @@ Points of design, and what is still open:
   authorization is refused by polkit; on Windows the same with the services and the pipe; the user's
   previous config has been migrated without loss; `AGENTS.md` and the guides describe the new layout.
 
-### 2. Decide whether to bring back patches 0002 to 0004
+### 2. Rename the project to private-ai-framework
+
+Covers: R9.
+
+Decided with the user on 2026-11-13: the project becomes `private-ai-framework` (it was
+`llama.cpp-framework`), the configurator `private-ai-config` (it was `llama-cpp-config`); today it supports
+llama.cpp, later other engines (Strata). Done between slices 3b and 3c of step 1, so 3c and the packaging
+slices are written with the new names. The GitHub repository rename, and with it the Pages site URL, is
+the user's to do.
+
+What changes:
+
+- **Code:** the crate and its directory (`private-ai-config/`), the binary, the window title and the
+  strings that name the product; `private-ai-manager` already has its final name.
+- **Packages:** `private-ai-framework-config`, `-llama`, `-rocm`, `-cuda`, `-vulkan` (`.deb`, `.rpm`), the
+  macOS `.pkg` names, the MSI `private-ai-framework-v<version>-v<llama tag>-x64.msi`. An upgrade replaces
+  the old packages: `Replaces`/`Conflicts`/`Provides` on the `.deb`, `Obsoletes`/`Provides` on the `.rpm`,
+  the same `UpgradeCode` on the MSI (so MajorUpgrade still removes the old product).
+- **Paths:** install `/opt/private-ai` (Linux, macOS) and the Windows install dir; user data
+  `~/.config/private-ai`, `~/.local/share/private-ai`, `%LOCALAPPDATA%\private-ai`; the registry key; the
+  system config dir of step 1 (`/etc/private-ai`, `%ProgramData%\private-ai\config`). The engine's names
+  keep `llama.cpp`: the unit `llama.cpp@<id>`, `llama-server`, the `-llama` package's contents.
+- **Migration:** the first run of the new version moves the old user tree to the new one once, when the
+  new one does not exist yet, and leaves the old one untouched if anything fails (Definition of Done 4).
+- **Not rewritten:** the committed `benchmarks/bench.db`: its recorded software names are history.
+- **Docs:** README, every `AGENTS.md`, the guides, the skills, the role files, `PLAN.md`.
+
+To settle in the step: the service user's name (`llama-cpp` in step 1; `private-ai` proposed), and
+whether `xtask` and the scripts' environment variables (`LLAMA_FW_DIST_ROOT`,
+`LLAMA_CPP_CONFIG_DATA_ROOT`) are renamed with a fallback to the old names.
+
+- Done when: nothing outside the engine's own names and bench.db history says `llama.cpp-framework` or
+  `llama-cpp-config`; the packages and the MSI upgrade an installed 2.4.0 in place (checked by the user on
+  each OS); a user's existing config and data are found after the upgrade.
+
+### 3. Decide whether to bring back patches 0002 to 0004
 
 Covers: R7.
 
@@ -215,11 +252,11 @@ the configurator, removed with it.
 - Done when: each of the three patches is either back (refreshed, measured, recorded in bench.db) or
   left out with the measurement that says it does not pay, and `patches/llama.cpp/README.md` says which.
 
-### 3. Re-measure the presets on the current release
+### 4. Re-measure the presets on the current release
 
 Covers: R6, R7.
 
-Do it after step 2, on the patch set it settles on: the figures below were written for v0.9.0
+Do it after step 3, on the patch set it settles on: the figures below were written for v0.9.0
 without patches 0002 to 0004.
 
 Every recorded figure the guides hold from v0.7.0 and v0.8.0 ran with the FlashAttention band (0003),
@@ -250,7 +287,7 @@ this is done.
 - Done when: each preset above has a campaign on the current release, and the guides' figures, their
   "In short" note and the placeholder row are updated from it.
 
-### 4. Find out why the drafter benchmarks look too favorable
+### 5. Find out why the drafter benchmarks look too favorable
 
 Covers: R6, R7.
 
@@ -281,7 +318,7 @@ before trusting the size of the gains (the ranking itself may hold):
 - Done when: the gap between the sweeps and the live agent turns is explained by a measurement, and the
   guide states the drafter gains under the conditions that hold for real use.
 
-### 5. Check the KV-split width patch on the current release
+### 6. Check the KV-split width patch on the current release
 
 Covers: R7.
 
@@ -293,7 +330,7 @@ the R9700's decode takes the branch it changes. What was measured is in
 - Done when: it is known whether the patch applies to the current tag and what it changes on the R9700
   (byte-identical replies across `spec-draft-n-max`, and the speed cost), and it is ported or dropped.
 
-### 6. Compare block 12's all-reduce with upstream's internal AllReduce
+### 7. Compare block 12's all-reduce with upstream's internal AllReduce
 
 Covers: R7.
 
@@ -325,7 +362,7 @@ undone once RCCL has made its mappings.
 - Done when: block 12's small-tensor path and copy engine are measured against
   `ggml/src/ggml-cuda/allreduce.cu` on the two R9700 (no RCCL needed), and ported or dropped.
 
-### 7. Settle the open Windows checks
+### 8. Settle the open Windows checks
 
 Covers: R6, R7.
 
@@ -347,9 +384,9 @@ From the Windows work of 2026-10-21, `docs/qwen3.8_27b.md` section 9.
 
 ## Waiting for the user
 
-- Steps 2 to 7: every benchmark run and every llama-server start on the GPUs needs the user's
+- Steps 3 to 8: every benchmark run and every llama-server start on the GPUs needs the user's
   go-ahead (they hold the GPUs and may collide with other jobs).
-- Steps 3 and 7 partly need the RTX 4070 SUPER back in the test machine.
+- Steps 4 and 8 partly need the RTX 4070 SUPER back in the test machine.
 
 ## Later, not planned yet
 
