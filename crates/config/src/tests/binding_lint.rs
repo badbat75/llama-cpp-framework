@@ -427,10 +427,31 @@ fn slint_string_literals_only_use_glyphs_proven_to_render() {
 
 // ── Language file ────────────────────────────────────────────────────────
 
+/// A file of the strings folder, which lives in the core: both binaries read it.
+fn strings_file(name: &str) -> std::path::PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../core/strings")
+        .join(name)
+}
+
+/// The `src/` of every crate whose text the files hold: this one, the core and
+/// the manager.
+fn src_dirs() -> [std::path::PathBuf; 3] {
+    let crates = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    ["config", "core", "manager"].map(|c| crates.join(c).join("src"))
+}
+
+/// Every `.rs` of every crate in `src_dirs`, as `rust_sources` picks them.
+fn all_rust_sources() -> Vec<std::path::PathBuf> {
+    let mut sources = Vec::new();
+    for dir in src_dirs() {
+        rust_sources(&dir, &mut sources);
+    }
+    sources
+}
+
 fn language_file() -> std::collections::HashMap<String, String> {
-    let file = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("strings")
-        .join("en_US.toml");
+    let file = strings_file("en_US.toml");
     crate::strings::parse(&std::fs::read_to_string(file).expect("read en_US.toml"))
 }
 
@@ -820,11 +841,7 @@ fn strings_t_keys_and_the_language_file_match() {
             );
         }
     }
-    let mut sources = Vec::new();
-    rust_sources(
-        &Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
-        &mut sources,
-    );
+    let sources = all_rust_sources();
     let (mut shared, mut reachers, mut gui_only) =
         (std::collections::BTreeSet::new(), Vec::new(), Vec::new());
     let mut cli_only = std::collections::BTreeSet::new();
@@ -887,9 +904,7 @@ fn strings_t_keys_and_the_language_file_match() {
 
     // cli.toml: exactly the keys a CLI command can reach, each also in the language
     // file unless only the CLI's own code uses it, its {N} matching the calls.
-    let file = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("strings")
-        .join("cli.toml");
+    let file = strings_file("cli.toml");
     let cli = crate::strings::parse(&std::fs::read_to_string(file).expect("read cli.toml"));
     let bad_values = mistuned(&shared, &cli);
     assert!(
@@ -929,11 +944,7 @@ fn strings_t_keys_and_the_language_file_match() {
 /// `lib.rs` is NOT exempt: every module, the GUI's included, can call into it.
 #[test]
 fn cli_only_code_is_not_called_from_elsewhere() {
-    let mut sources = Vec::new();
-    rust_sources(
-        &Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
-        &mut sources,
-    );
+    let sources = all_rust_sources();
     let texts: Vec<_> = sources
         .iter()
         .map(|path| {
@@ -1121,11 +1132,15 @@ fn language_words(literal: &str) -> Vec<String> {
 // goes through `strings::`; this stops a new literal in the paths already moved.
 #[test]
 fn cli_print_paths_hold_no_language() {
-    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let mut hits = Vec::new();
     let mut allowed = std::collections::BTreeSet::new();
     for (file, all) in CLI_PRINT_PATHS {
-        let source = std::fs::read_to_string(src.join(file)).expect("read .rs");
+        let path = src_dirs()
+            .iter()
+            .map(|src| src.join(file))
+            .find(|p| p.is_file())
+            .unwrap_or_else(|| panic!("{file}: in no crate's src/"));
+        let source = std::fs::read_to_string(path).expect("read .rs");
         for literal in shown_literals(&source, all) {
             if language_words(&literal).is_empty() {
                 continue;

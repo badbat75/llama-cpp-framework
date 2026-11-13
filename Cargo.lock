@@ -3371,19 +3371,36 @@ dependencies = [
  "ctrlc",
  "i-slint-backend-testing",
  "ico",
- "if-addrs",
  "image",
+ "pai-core",
  "regex",
  "rfd",
  "rusqlite",
- "serde",
  "serde_json",
  "slint",
  "slint-build",
  "tempfile",
- "toml",
  "windows-sys 0.61.2",
  "winresource",
+]
+
+[[package]]
+name = "pai-core"
+version = "2.4.0"
+dependencies = [
+ "if-addrs",
+ "tempfile",
+ "toml",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "pai-manager"
+version = "2.4.0"
+dependencies = [
+ "pai-core",
+ "serde",
+ "tempfile",
  "zbus",
 ]
 

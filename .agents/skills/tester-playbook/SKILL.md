@@ -52,3 +52,12 @@ Lessons only: the rules are in `AGENTS.md`.
   finds nothing there. Use plain `grep -rn` on the new directory.
 - Most xtask path code (`version::framework`, `strings_share`, the font licence in `licenses::stage_in`)
   has no test: after a path change, check the targets exist by hand and say so.
+- To list or run the tests of an older commit: `git worktree add --detach build/<name> <rev>`, copy the
+  gitignored `resources/llama.ico` (and `llama-brand-logo.svg`) into it, set
+  `LLAMA_FW_LLAMA_CPP_DIR=<repo>/build/linux/llama.cpp` (build.rs reads the clone's `llama-arch.cpp`)
+  and a separate `CARGO_TARGET_DIR`, since the repo's `.cargo/config.toml` would point the worktree at
+  the main target dir. Compare `-- --list` names with `LC_ALL=C sort`, else `comm` complains.
+- To check that a lint still bites after a refactor, plant a violation in a scratch copy (rsync the
+  working tree into that worktree), never in the real tree. In binding_lint only the keys rules
+  (`strings_t_keys_...`, `cli_only_code_...`) walk every crate's `src/`; `cli_print_paths_hold_no_language`
+  reads only the files named in `CLI_PRINT_PATHS`, so a literal `println!` elsewhere is not caught.

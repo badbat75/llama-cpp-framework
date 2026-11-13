@@ -1,5 +1,9 @@
-//! llama-cpp-config's library: every module, shared by the configurator
-//! (`main.rs`) and the service launcher (`bin/private-ai-manager.rs`).
+//! llama-cpp-config's library: the configurator's modules (`main.rs`), over
+//! the shared core (`pai-core`).
+
+// The core modules, under the names the sources use (`crate::paths`, ...).
+pub use pai_core::strings;
+use pai_core::{ini, net_ifaces, paths, proc};
 
 #[cfg(test)]
 #[path = "../arch_tables.rs"]
@@ -16,17 +20,12 @@ mod hf_fit;
 mod http;
 #[cfg(any(target_os = "linux", windows))]
 mod hwmon;
-mod ini;
 mod integrations;
 mod kv_cache;
 mod linked_files;
-pub mod manager;
 mod model_scan;
 mod moe_cache;
-mod net_ifaces;
-mod paths;
 mod presets;
-mod proc;
 mod runstate;
 mod server_cfg;
 mod server_form;
@@ -37,7 +36,6 @@ mod sha256;
 mod single_instance;
 mod slot_state;
 mod startup;
-pub mod strings;
 mod tensor_override;
 mod tensor_picker;
 // Cross-cutting end-to-end tests (e.g. the Slint UI regression test) live under

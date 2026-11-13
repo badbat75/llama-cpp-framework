@@ -593,22 +593,4 @@ fn editable_widgets_track_model_after_edit() {
     // Its own root window, on the same backend for the same reason.
     #[cfg(any(target_os = "linux", windows))]
     crate::gui::hw_window_e2e();
-
-    // ── System config paths (paths.rs `system_config_dir`, instances) ────
-    // Sets the process-wide data-root redirect, so it runs here, not as a
-    // unit test of its own (src/tests/mod.rs).
-    crate::paths::instance_paths_e2e();
-
-    // ── Service launch (runstate.rs `instance_command`) ──────────────────
-    // Same redirect rule as above.
-    crate::runstate::instance_launch_e2e();
-
-    // ── Manager core (manager/service.rs `Manager`) ──────────────────────
-    // Same redirect rule as above; both seams are fakes.
-    crate::manager::service::manager_e2e();
-
-    // ── Manager over D-Bus (manager/dbus.rs `ManagerInterface`) ──────────
-    // Same redirect rule; served peer to peer on a socket pair, no bus.
-    #[cfg(target_os = "linux")]
-    crate::manager::dbus::manager_dbus_e2e();
 }

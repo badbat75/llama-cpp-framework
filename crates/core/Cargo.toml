@@ -1,0 +1,33 @@
+[package]
+name = "pai-core"
+version.workspace = true
+edition = "2021"
+description = "Shared library of private-ai-framework: paths, INI and server config, the llama-server launch, strings"
+license = "MIT"
+publish = false
+
+# Its doc comments are not doctests: none was written as one.
+[lib]
+path = "src/lib.rs"
+doctest = false
+
+# `test-support`: the helpers the other crates' tests use (`paths::os_path`) and
+# the strings table a test reads (the GUI's file over `cli.toml`). Their
+# dev-dependencies turn it on; no shipped build has it.
+[features]
+test-support = []
+
+[dependencies]
+if-addrs = "0.15"
+# The language files (strings.rs).
+toml = { version = "1", default-features = false, features = ["std", "parse", "serde"] }
+
+# The Win32 calls of proc.rs (the std handles a child must not inherit).
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_System_Console",
+] }
+
+[dev-dependencies]
+tempfile = "3"

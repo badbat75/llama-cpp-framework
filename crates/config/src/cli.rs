@@ -2265,4 +2265,23 @@ mod tests {
         assert_eq!(cfg.threads_batch, None);
         assert_eq!(cfg.models_dir, None);
     }
+
+    // The entry point picks the strings file (strings.rs, in the core).
+    #[test]
+    fn the_entry_point_gives_a_command_the_cli_file_and_the_window_the_language() {
+        use crate::strings::{file_stem, GUI_LANGUAGE};
+        use clap::Parser;
+        let of = |args: &[&str]| {
+            let cli = crate::cli::Cli::try_parse_from(args).expect("parses");
+            file_stem(crate::cli::reader_of(Some(&cli.command)))
+        };
+        assert_eq!(
+            file_stem(crate::cli::reader_of(None)),
+            GUI_LANGUAGE,
+            "no arguments: the window"
+        );
+        assert_eq!(of(&["x", "gui"]), GUI_LANGUAGE);
+        assert_eq!(of(&["x", "server", "show"]), "cli");
+        assert_eq!(of(&["x", "preset", "list"]), "cli");
+    }
 }

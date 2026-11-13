@@ -19,7 +19,7 @@ fn env_path(var: &str) -> Option<PathBuf> {
     std::env::var_os(var).map(PathBuf::from)
 }
 
-pub(crate) fn home_dir() -> PathBuf {
+pub fn home_dir() -> PathBuf {
     // Under the e2e redirect the temp dir stands in for the whole profile:
     // home-derived paths (e.g. `server_cfg::default_models_dir`, which save()
     // CREATES on disk) must stay inside the temp tree, or a redirected test
@@ -385,7 +385,7 @@ pub fn open_in_desktop(path: &Path) -> std::io::Result<std::process::Child> {
 /// (`C:\m\x.gguf` -> `/m/x.gguf`), because `std::path` only splits on the
 /// host's separator. For the tests that take a file name, a stem or a parent
 /// out of a path: written once, they then hold on both OSes.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 pub fn os_path(win: &str) -> String {
     if cfg!(windows) {
         return win.to_string();
@@ -398,7 +398,7 @@ pub fn os_path(win: &str) -> String {
 }
 
 /// E2E phase for the system config directory and the instance paths in it, for the
-/// shared UI test to call: it sets the process-wide
+/// e2e test of this crate to call: it sets the process-wide
 /// `LLAMA_CPP_CONFIG_DATA_ROOT` redirect, which a plain unit test must not
 /// (`src/tests/mod.rs`). Only the redirected case is pinned: the real
 /// `/etc/llama.cpp` and `%ProgramData%\llama.cpp\config` need the variable

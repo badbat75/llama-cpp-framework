@@ -1,13 +1,13 @@
 [package]
 name = "pai-config"
-version = "2.4.0"
+version.workspace = true
 edition = "2021"
 build = "build.rs"
 description = "GUI + CLI configurator for llama.cpp-framework"
 license = "MIT"
 publish = false
 
-# The modules live in the library, shared by both binaries. Its doc comments
+# The modules live in the library, the binary only dispatches. Its doc comments
 # are not doctests: none was written as one.
 [lib]
 path = "src/lib.rs"
@@ -17,17 +17,15 @@ doctest = false
 name = "llama-cpp-config"
 path = "src/main.rs"
 
-[[bin]]
-name = "private-ai-manager"
-path = "src/bin/private-ai-manager.rs"
-
 [dependencies]
+# The modules shared with private-ai-manager (paths, INI, server config, the
+# launch, strings).
+pai-core = { path = "../core" }
 slint = { version = "1.18", default-features = false, features = ["std", "compat-1-2", "backend-winit", "renderer-skia", "accessibility", "unstable-winit-030", "system-tray"] }
 clap = { version = "4.6", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 anyhow = "1"
 rfd = { version = "0.17", default-features = false }
-if-addrs = "0.15"
 # The Tensor placement picker reads which tensors a rule's regex matches
 # (tensor_picker.rs). Already in the lock as a transitive dependency.
 regex = "1.13"
@@ -42,8 +40,6 @@ base64 = "0.23"
 # `bench run` puts the preset back when interrupted (bench/interrupt.rs).
 # `termination` adds SIGTERM and SIGHUP to Ctrl-C.
 ctrlc = { version = "3.5", features = ["termination"] }
-# The language files (strings.rs). Already in the lock (xtask's own parser).
-toml = { version = "1", default-features = false, features = ["std", "parse", "serde"] }
 
 # rfd has no file-dialog backend without a feature on Linux, and its build
 # script refuses to compile with none chosen. xdg-portal talks to the desktop
@@ -53,10 +49,6 @@ toml = { version = "1", default-features = false, features = ["std", "parse", "s
 # Linux and the Windows build is unchanged.
 [target.'cfg(target_os = "linux")'.dependencies]
 rfd = { version = "0.17", default-features = false, features = ["xdg-portal", "wayland"] }
-# private-ai-manager's D-Bus service on the system bus (manager/dbus.rs). The
-# version already in the lock (accesskit, atspi, ashpd), so there is one zbus;
-# 5.x keeps the blocking API the synchronous core needs.
-zbus = "5.19"
 
 # Every Win32 call the crate makes (registry, single instance, console, HW
 # Monitor, process handles), with the signatures and constants Microsoft's
@@ -84,18 +76,11 @@ windows-sys = { version = "0.61", features = [
 ] }
 
 [dev-dependencies]
+pai-core = { path = "../core", features = ["test-support"] }
 tempfile = "3"
 # Headless Slint backend for the UI regression tests (src/tests/ui_bindings.rs).
 # Already in the tree as an optional dep of slint; pinned to the same version.
 i-slint-backend-testing = "1.18"
-
-# The D-Bus interface's tests serve it over a peer-to-peer connection on a
-# Unix socket pair, never a bus (manager/dbus.rs).
-[target.'cfg(target_os = "linux")'.dev-dependencies]
-# `bus-impl` lets the client end name itself, so its calls carry a sender as
-# they would from the bus; serde is for the generic call helper.
-zbus = { version = "5.19", features = ["p2p", "bus-impl"] }
-serde = "1"
 
 [build-dependencies]
 slint-build = "1.18"

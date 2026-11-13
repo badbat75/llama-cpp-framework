@@ -6,20 +6,23 @@ use crate::common::util::{self, cmd, output};
 use anyhow::{bail, Context, Result};
 use std::path::Path;
 
-/// The framework version = the pai-config crate version: the
-/// configurator and the framework are versioned together.
+/// The framework version = the workspace version of the root Cargo.toml,
+/// which every framework crate (pai-core, pai-manager, pai-config) takes.
 pub fn framework() -> Result<String> {
-    let path = util::repo_root()
-        .join("crates")
-        .join("config")
-        .join("Cargo.toml");
+    let path = util::repo_root().join("Cargo.toml");
     let manifest: toml::Table = toml::from_str(&std::fs::read_to_string(&path)?)
         .with_context(|| format!("parsing {}", path.display()))?;
     Ok(manifest
-        .get("package")
+        .get("workspace")
+        .and_then(|w| w.get("package"))
         .and_then(|p| p.get("version"))
         .and_then(|v| v.as_str())
-        .with_context(|| format!("could not read [package] version from {}", path.display()))?
+        .with_context(|| {
+            format!(
+                "could not read [workspace.package] version from {}",
+                path.display()
+            )
+        })?
         .to_string())
 }
 

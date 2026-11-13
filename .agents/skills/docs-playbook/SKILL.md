@@ -20,3 +20,8 @@ Lessons only: the rules are in `AGENTS.md`.
 - After a directory move, grep for the old path in both slash styles and for `-p <old-package>`, and fix
   the relative links inside the moved files too (`crates/config/*.md` reaches the repo root with `../../`).
   Binary names are a separate rename: leave them unless the brief says so.
+- After a crate split, take the package list from `cargo metadata --no-deps` (Commands list, the
+  coordinator's `cargo clean -p`), and grep for `module::item` names (`runstate::server_args`) as well
+  as paths: code doc comments lag the move too, and they are code's to fix, so report them.
+- `grep` here is ugrep: a long `.{0,120}` context regex fails with "exceeds complexity limits". Use a
+  Python `re` script instead.

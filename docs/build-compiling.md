@@ -513,7 +513,7 @@ which `std::path` does not split on Linux. The code under test is not at fault.
 
 | Path | What it is |
 | --- | --- |
-| `Cargo.toml` | The workspace: `crates/config` (package `pai-config`), `xtask` and `tools/site`. The profiles live here because cargo reads them only at the root. |
+| `Cargo.toml` | The workspace: `crates/core` (package `pai-core`, the shared library), `crates/manager` (`pai-manager`, `private-ai-manager`), `crates/config` (`pai-config`, the configurator), `xtask` and `tools/site`. The profiles live here because cargo reads them only at the root, and so does the framework version, `[workspace.package] version`, one for the three `pai-*` crates. |
 | `xtask/src/main.rs` | The phases and their options |
 | `xtask/src/common/` | Shared: `dists.rs`, `llama.rs`, `cmake_options.rs`, `configurator.rs`, `prereq.rs`, `rocm.rs`, `version.rs`, `bench_share.rs`, `components.rs` (Linux and macOS: which package owns each staged file) |
 | `xtask/src/<os>/` | One OS's phases: `configure.rs`, `build_llama.rs`, `package.rs`, `install.rs`, `dists.rs` (the finders) |

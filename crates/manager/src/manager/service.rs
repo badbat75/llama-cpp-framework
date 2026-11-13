@@ -451,7 +451,7 @@ pub(crate) mod fakes {
     }
 }
 
-/// E2E phase for the manager core, for the shared UI test to call: it sets
+/// E2E phase for the manager core, for this crate's e2e test to call: it sets
 /// the process-wide `LLAMA_CPP_CONFIG_DATA_ROOT` redirect (`src/tests/mod.rs`).
 /// Nothing here touches D-Bus, systemd, polkit or the GPUs: both seams are
 /// fakes.

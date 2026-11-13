@@ -62,7 +62,7 @@ new Xcode can move it.
 
 **Package.** `pkgbuild` writes three `.pkg` files from one staged tree, split by path as
 [on Linux](build-packaging.md#packaging). It refuses a built `llama-cpp-config` whose version differs from
-`Cargo.toml`.
+the root `Cargo.toml`'s.
 
 | Package | File | Identifier ends in |
 | --- | --- | --- |

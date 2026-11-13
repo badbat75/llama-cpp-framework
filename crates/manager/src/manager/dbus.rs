@@ -299,7 +299,7 @@ pub fn serve() -> zbus::Result<(Connection, Vec<(String, ManagerError)>)> {
     Ok((served, failures))
 }
 
-/// E2E phase for the D-Bus interface, for the shared UI test to call: it sets
+/// E2E phase for the D-Bus interface, for this crate's e2e test to call: it sets
 /// the process-wide `LLAMA_CPP_CONFIG_DATA_ROOT` redirect (`src/tests/mod.rs`).
 /// The interface is served over a peer-to-peer connection on a Unix socket
 /// pair inside the test, never a bus; the seams are the core's fakes. A

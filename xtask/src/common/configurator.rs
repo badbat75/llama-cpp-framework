@@ -74,8 +74,14 @@ pub fn build(llama_cpp_dir: &str, build_jobs: u32) -> Result<PathBuf> {
     let target = util::build_root().join("cargo-target");
     std::env::set_var("CARGO_TARGET_DIR", &target);
     let mut c = cmd(&cargo);
-    c.current_dir(&repo)
-        .args(["build", "--release", "-p", "pai-config"]);
+    c.current_dir(&repo).args([
+        "build",
+        "--release",
+        "-p",
+        "pai-config",
+        "-p",
+        "pai-manager",
+    ]);
     // Its build script generates the architecture tables from this clone.
     c.env("LLAMA_FW_LLAMA_CPP_DIR", llama_cpp_dir);
     if build_jobs > 0 {

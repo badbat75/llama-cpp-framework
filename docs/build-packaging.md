@@ -31,8 +31,8 @@ path, so no file lands in two packages or in none.
 For example, `llama-cpp-framework-v2.2.0-v0.9.0-x64.msi`, `llama-cpp-framework-llama-v2.2.0-v0.9.0-amd64.deb`,
 `llama-cpp-framework-rocm-v10.1.0-amd64.deb`.
 
-- `<framework>` is the `[package]` version of `crates/config/Cargo.toml`: the configurator and
-  the framework are versioned together.
+- `<framework>` is the `[workspace.package]` version of the root `Cargo.toml`, one for the
+  `pai-*` crates: the configurator and the framework are versioned together.
 - `<llama>` is `git describe --tags` of the clone, which prefers the annotated release tag over the
   nightly on the same commit.
 - Anything but an exact `vX.Y.Z` falls back to `b<rev-list --count>`, shaped so a non-release
@@ -46,7 +46,7 @@ macOS it is in the `config` package.
 
 **Every OS ships the configurator's text read-only** in `share/strings/`: `en_US.toml`, the GUI's
 language file, and `cli.toml`, the CLI's text. `strings_share.rs` stages
-every `*.toml` of `crates/config/strings/`, and on Linux and macOS it is in the `config` package.
+every `*.toml` of `crates/core/strings/`, and on Linux and macOS it is in the `config` package.
 
 **llama.cpp's test harnesses are pruned on every OS.** On Windows the installer can put `bin\` on
 the system PATH. On Linux and macOS every staged executable gets a command link. Either way,
@@ -146,7 +146,7 @@ The app directory wins the DLL search order, so they go in `bin\`.
 
 **`xtask package` builds five packages per format from one staged tree, 3.8 GiB installed with all five.**
 `--deb` or `--rpm` builds one format. It refuses to run when the built `llama-cpp-config --version` differs
-from `Cargo.toml`, a bump without a rebuild.
+from the root `Cargo.toml`'s, a bump without a rebuild.
 
 | Package `llama-cpp-framework-` | Holds | Version | `.deb` / `.rpm` |
 | --- | --- | --- | --- |

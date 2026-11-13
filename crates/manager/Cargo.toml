@@ -1,0 +1,38 @@
+[package]
+name = "pai-manager"
+version.workspace = true
+edition = "2021"
+description = "private-ai-manager: runs llama-server instances as services"
+license = "MIT"
+publish = false
+
+# The modules live in the library, the binary only calls `manager::main`. Its
+# doc comments are not doctests: none was written as one.
+[lib]
+path = "src/lib.rs"
+doctest = false
+
+[[bin]]
+name = "private-ai-manager"
+path = "src/bin/private-ai-manager.rs"
+
+[dependencies]
+pai-core = { path = "../core" }
+
+# private-ai-manager's D-Bus service on the system bus (manager/dbus.rs). The
+# version already in the lock (accesskit, atspi, ashpd), so there is one zbus;
+# 5.x keeps the blocking API the synchronous core needs.
+[target.'cfg(target_os = "linux")'.dependencies]
+zbus = "5.19"
+
+[dev-dependencies]
+pai-core = { path = "../core", features = ["test-support"] }
+tempfile = "3"
+
+# The D-Bus interface's tests serve it over a peer-to-peer connection on a
+# Unix socket pair, never a bus (manager/dbus.rs).
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+# `bus-impl` lets the client end name itself, so its calls carry a sender as
+# they would from the bus; serde is for the generic call helper.
+zbus = { version = "5.19", features = ["p2p", "bus-impl"] }
+serde = "1"

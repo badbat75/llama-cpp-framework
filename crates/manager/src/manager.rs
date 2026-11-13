@@ -1,7 +1,7 @@
 //! The command line of `private-ai-manager`, the runtime service binary that
 //! runs llama-server instances as services. `run-instance <id>` is what the
 //! unit `llama.cpp@<id>` runs: it launches instance `id`
-//! (`runstate::instance_command`). `serve` is the manager's own service: the
+//! (`launch::instance_command`). `serve` is the manager's own service: the
 //! D-Bus interface on the system bus (`manager::dbus`, Linux only).
 
 #[cfg(target_os = "linux")]
@@ -66,7 +66,7 @@ pub fn main() -> i32 {
 
 /// What `main` does, its failure as an exit code and a message.
 fn run(args: &[String]) -> Result<i32, (i32, String)> {
-    use crate::runstate::LaunchError;
+    use crate::launch::LaunchError;
     use crate::strings;
 
     let command = parse_args(args).map_err(|e| {
@@ -103,7 +103,7 @@ fn run(args: &[String]) -> Result<i32, (i32, String)> {
         let name = crate::paths::binary_name("llama-server");
         (1, strings::fill("binary-not-found", &[&name]))
     })?;
-    let mut cmd = crate::runstate::instance_command(&id, &exe).map_err(|e| {
+    let mut cmd = crate::launch::instance_command(&id, &exe).map_err(|e| {
         let text = match e {
             LaunchError::InvalidId => strings::fill("manager-invalid-id", &[&id]),
             LaunchError::NoConfig(p) => strings::fill("manager-no-config", &[&p.display(), &id]),
@@ -210,7 +210,7 @@ mod tests {
 
     #[test]
     fn usage_text_names_both_commands() {
-        let cli = crate::strings::parse(include_str!("../strings/cli.toml"));
+        let cli = crate::strings::parse(include_str!("../../core/strings/cli.toml"));
         for key in ["manager-usage", "manager-unknown-command"] {
             let text = &cli[key];
             assert!(

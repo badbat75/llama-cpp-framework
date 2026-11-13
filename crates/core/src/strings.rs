@@ -20,7 +20,7 @@ use std::fmt::Display;
 use std::sync::OnceLock;
 
 /// The language the GUI shows. A second one is a new file plus a change here.
-const GUI_LANGUAGE: &str = "en_US";
+pub const GUI_LANGUAGE: &str = "en_US";
 /// What a CLI command reads, whatever the GUI shows.
 const CLI_FILE: &str = "cli";
 
@@ -39,7 +39,7 @@ pub fn set_reader(reader: Reader) {
     let _ = READER.set(reader);
 }
 
-fn file_stem(reader: Reader) -> &'static str {
+pub fn file_stem(reader: Reader) -> &'static str {
     match reader {
         Reader::Gui => GUI_LANGUAGE,
         Reader::Cli => CLI_FILE,
@@ -52,7 +52,7 @@ pub const fn key(key: &'static str) -> &'static str {
     key
 }
 
-pub(crate) fn parse(text: &str) -> HashMap<String, String> {
+pub fn parse(text: &str) -> HashMap<String, String> {
     toml::from_str(text).unwrap_or_default()
 }
 
@@ -68,7 +68,7 @@ fn table() -> &'static HashMap<String, String> {
             parse(&std::fs::read_to_string(file).unwrap_or_default())
         };
         let table = read(file_stem(READER.get().copied().unwrap_or(Reader::Gui)));
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-support"))]
         let table = {
             let mut merged = read(CLI_FILE);
             merged.extend(table);
@@ -135,23 +135,6 @@ mod tests {
             r#"e.g. {"x":true} {} {5} {"#
         );
         assert_eq!(substitute("{0} of {1}", &[&3, &1.5]), "3 of 1.5");
-    }
-
-    #[test]
-    fn the_entry_point_gives_a_command_the_cli_file_and_the_window_the_language() {
-        use clap::Parser;
-        let of = |args: &[&str]| {
-            let cli = crate::cli::Cli::try_parse_from(args).expect("parses");
-            file_stem(crate::cli::reader_of(Some(&cli.command)))
-        };
-        assert_eq!(
-            file_stem(crate::cli::reader_of(None)),
-            GUI_LANGUAGE,
-            "no arguments: the window"
-        );
-        assert_eq!(of(&["x", "gui"]), GUI_LANGUAGE);
-        assert_eq!(of(&["x", "server", "show"]), "cli");
-        assert_eq!(of(&["x", "preset", "list"]), "cli");
     }
 
     #[test]
