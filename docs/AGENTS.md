@@ -56,7 +56,7 @@ Numbered `## N. <title>`, cited by number within the page as a link to the headi
 A required title may carry a qualifier in parentheses (`Recommended settings (two cards)`).
 Other sections are topics a reader looks for (drafters, the KV cache, Windows), placed where the
 page reads best, not appended by date; when one moves, update the citations to it across the repo
-(`TODO.md`, `patches\llama.cpp\README.md`, code comments, skills). The tables keep their columns:
+(`PLAN.md`, `patches\llama.cpp\README.md`, `patches\llama.cpp\candidates.md`, code comments, skills). The tables keep their columns:
 settings `key | value | evidence`, choices `option | result`, placeholders
 `parameter | current value | question | result` (`TBD` until a campaign answers it, `partly: ...`
 for what one answered, `TBD: needs ...` if it needs hardware missing from the test machine; a row
@@ -64,7 +64,7 @@ fully answered moves to the settings or the choices table).
 
 ## Rules for `gpu` and `model` pages
 
-- A complete review, not a log: follow the `write-docs` skill (`.agents\skills\write-docs\SKILL.md`), through the `docs-writer` subagent. A new finding is merged into the topic it changes, and the page is written as of today, with no history.
+- A complete review, not a log: follow the `write-docs` skill (`.agents\skills\write-docs\SKILL.md`), through the `docs` agent. A new finding is merged into the topic it changes, and the page is written as of today, with no history.
 - Terse: a table cell holds one headline comparison; the reasoning goes in the prose under the table.
 - Every value traces to a measurement; a value recorded in `benchmarks\bench.db` names its campaign, as in (campaign `27b-kv-f16-20261016`) (`llama-cpp-config bench query campaigns --db benchmarks\bench.db` lists them), never a local archive file or path; no absolute paths. A cited campaign must exist in bench.db. A campaign reaches the site only once a guide cites or charts it. A failed leg is left out, unless it sets a limit a reader must respect; then state the limit.
 - When a campaign changes a result, update the row (and fill or retire its placeholder) in the same change, and `updated` in the front matter.

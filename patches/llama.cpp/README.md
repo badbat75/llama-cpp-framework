@@ -14,8 +14,8 @@ it. Refresh with `git apply --3way` on a clean checkout of the tag, and update i
 | `0006-qwen4exp-mtp-graph-realloc` | The same fix on `qwen4exp` (Qwen3.8-Flash-Next) | Our port, not published |
 
 `0002`, `0003` and `0004` were dropped to reduce upkeep, and performance has dropped since. Whether to bring
-them back is open: see "Performance regression since patches 0002 to 0004 were dropped" in
-[TODO.md](../../TODO.md).
+them back is open: see "Decide whether to bring back patches 0002 to 0004" in
+[PLAN.md](../../PLAN.md), step 2.
 
 ## `0001-qwen35-fastmtp-d2t`
 

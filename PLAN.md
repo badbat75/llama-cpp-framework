@@ -1,0 +1,277 @@
+# Plan
+
+What the user asked for, when work counts as done, and what is left to do, in order. Rules in
+`AGENTS.md`, under "Working from this plan".
+
+This plan is not set in stone: the coordinator or the user can change any part of it when needed.
+
+## User requirements
+
+These stay here when met: unlike steps, they are not removed for being done. "Met" means checked as far
+as the column says. A requirement still open must be covered by a step.
+
+### Product
+
+| ID | Requirement | State |
+|---|---|---|
+| R1 | Build llama.cpp (newest release tag, plus `patches/llama.cpp/`) with CUDA, Vulkan and ROCm/HIP on Windows and Linux; every phase a cargo command | Met: release 2.4.0 |
+| R2 | Package it: an MSI on Windows, split `.deb` and `.rpm` on Linux, self-contained but for the GPU drivers | Met: release 2.4.0 |
+| R3 | The same on macOS, Apple Silicon only (Metal + Vulkan through MoltenVK, split `.pkg`) | Written, never run on a Mac |
+| R4 | A GUI + CLI configurator (`llama-cpp-config`) for `server.ini` and the per-model `presets.ini` | Met: release 2.4.0 |
+| R5 | Every measurement in `benchmarks/bench.db`, under a versioned spec, public: no credentials, no local paths | Met |
+| R6 | Per-GPU and per-model guides where every value traces to a campaign, published as a site | Met, but their figures predate v0.9.0: step 3 |
+| R7 | The fastest presets for the test machine's GPUs: port an out-of-tree optimization when its gain pays for its upkeep | Open: steps 2 to 7 |
+
+### How we work
+
+| ID | Requirement | State |
+|---|---|---|
+| W1 | Test driven, always: tests first, then the code | Applies to every step |
+| W2 | Keep it simple | Applies to every step |
+| W3 | One agent each for coordination, code, tests and documentation | Met: `.opencode/agents/`, plus the read-only `spec-reviewer` |
+| W4 | AI scaffolding as standard as possible, readable by other harnesses | Met: `AGENTS.md`, shared role files, `.agents/skills/` |
+| W5 | A maintained plan: closed points removed, evidence in the commit log, so an agent starting from zero knows what to do | Met: this file and `git log` |
+| W6 | The coordinator or the user can change the plan when needed | Met: rule in `AGENTS.md` |
+| W7 | Each agent has its own skills, which it can update itself or the coordinator can | Met: `.agents/skills/` |
+| W8 | Everything in English; only the conversation with the user may be in their language | Applies to every step |
+| W9 | Displayed text in a dedicated file, ready for more languages | Met: `llama-cpp-config/strings/` |
+| W10 | Agents run only the tests of the part they work on, plus linter and format check; the user runs the full suite once, on main after the merge, before installing | Applies to every step; the format check is red today: step 1 |
+| W11 | No em-dashes anywhere in the repo ("Key conventions" in `AGENTS.md`) | Applies to every step |
+| W12 | Every change to a benchmark spec is reviewed by `spec-reviewer` before it is committed | Applies to every step |
+
+## Definition of Done
+
+Every step must meet all of this, as well as its own "Done when". What cannot be checked is reported
+as not checked, and the step stays open.
+
+1. **Test first.** Each behaviour has a test that was seen failing for the right reason, then passing.
+   A step that only measures has no code to test: its evidence is the campaign in bench.db.
+2. **All green.** The agent commands under "Commands" in `AGENTS.md` pass: the tests of the part that
+   changed, the linter and the format check. The full suite is the user's, after the merge.
+3. **Tried for real.** Behaviour is checked in the real thing, not only in tests: the configurator run
+   (CLI or GUI) with `LLAMA_CPP_CONFIG_DATA_ROOT` on a scratch directory; an xtask phase with
+   `--dry-run` where it has one, otherwise run by the user; a guide through
+   `cargo run -p docs-site -- --check`; a measurement as a `bench run`, with the user's go-ahead.
+4. **Safe.** The user's config and data (`server.ini`, `presets.ini`, `settings.ini`, `bench.db`) are
+   never lost or silently rewritten; an upgrade keeps them. The HIP variables are never set
+   machine-wide. Nothing private reaches the committed bench.db. Failure paths are tested first.
+5. **Requirements hold.** The step meets those it covers and breaks none of the others. Their "State"
+   above is updated.
+6. **Language rules hold.** Everything is in English, with no em-dashes, and displayed text is in its
+   strings file.
+7. **Docs are true.** README, the `AGENTS.md` files and `docs/` match what now exists. Facts have a
+   source, and guesses are marked as guesses.
+8. **Plan and history.** The step is removed from this file, in the commit with the work, whose message
+   says what was closed and how it was checked.
+
+## Where things stand
+
+Release 2.4.0 bundles llama.cpp v1.0.0 with patches `0001`, `0005` and `0006`; `0002`, `0003` and `0004`
+were dropped at v0.9.0 and performance dropped with them (step 2). The test machine has two R9700 (one in
+an x4 slot with no AtomicOps); the RTX 4070 SUPER is out of it, so the mixed-pair measurements wait for it.
+No run in bench.db is on v0.9.0 or later. What was checked among the out-of-tree candidates
+(`overdoingism/llama-cpp-rdna-boosts`), and found superseded or not applicable, is in
+[patches/llama.cpp/candidates.md](patches/llama.cpp/candidates.md): read it before reopening one.
+
+## Next steps
+
+### 1. Make the agent commands green
+
+Covers: W10.
+
+`cargo fmt --all --check` fails on today's tree (`llama-cpp-config/arch_tables.rs`,
+`llama-cpp-config/src/bench/exec.rs` and others), so the format check cannot gate a slice yet. Run
+`cargo fmt --all` as one commit with no other change, then run `cargo clippy -p <crate> --all-targets
+-- -D warnings` on each crate and fix or list what it reports (the configurator is documented as
+warning-free; xtask and docs-site are unchecked).
+
+- Done when: `cargo fmt --all --check` and the clippy command pass on every crate of the workspace.
+
+### 2. Decide whether to bring back patches 0002 to 0004
+
+Covers: R7.
+
+Patches `0002`, `0003` and `0004` were removed to reduce the maintenance cost, in the same change that moved
+to v0.9.0, and performance dropped. Swift-1.5-Qwen3.8-27B on 2x R9700, Linux, preset temperature, one
+repetition per prompt on 2026-11-04 (a quick check, not recorded in bench.db), against the 5 repetitions of
+campaign `swift27b-standard-1.0-2xr9700-linux-20261031` on v0.8.0 with the patches:
+
+| Prompt | Prefill t/s, before | Prefill t/s, now | Decode t/s, before | Decode t/s, now |
+| --- | --- | --- | --- | --- |
+| 43k | 1125.4 (1124.5-1128.2) | 1077.2 (-4.3%) | 59.3 (57.0-60.8) | 56.1 (-5.4%) |
+| 110k | 960.1 (958.7-962.1) | 893.4 (-6.9%) | 59.2 (48.7-67.0) | 59.6 (+0.7%) |
+
+The prefill drop is outside the spread of the old runs. Decode at 43k is just below it on one repetition and
+decode at 110k says nothing, so decode is still open. Another job was running on the machine during the check.
+
+**Not established yet: how much comes from the missing patches and how much from v0.9.0.** The two changed
+together. To separate them:
+
+1. Repeat both prompts on an idle machine with temperature 0 and no drafter (the `engine` pass of the standard
+   spec; v0.8.0 recorded prefill 1210.3 and 1025.5, decode 27.1 and 24.5 t/s).
+2. If the drop holds, build v0.9.0 with the patches back and measure again, one patch at a time.
+3. Weigh each patch's gain against its upkeep, and bring back the ones that pay.
+
+**Bringing a patch back.** Take it from the last commit that has it (`git show 54396fb:patches/llama.cpp/<name>`),
+with its section of `patches/llama.cpp/README.md`, and refresh it for v0.9.0. `0002` applies as it is. `0003`
+needs a context change in `fattn-mma-f16.cuh` (`nullptr` became `indices`, #29510). `0004` loses the hunk adding
+`<algorithm>`, which upstream now includes. Bringing `0003` back also means restoring the `HipFaBand` option of
+the configurator, removed with it.
+
+- Done when: each of the three patches is either back (refreshed, measured, recorded in bench.db) or
+  left out with the measurement that says it does not pay, and `patches/llama.cpp/README.md` says which.
+
+### 3. Re-measure the presets on the current release
+
+Covers: R6, R7.
+
+Do it after step 2, on the patch set it settles on: the figures below were written for v0.9.0
+without patches 0002 to 0004.
+
+Every recorded figure the guides hold from v0.7.0 and v0.8.0 ran with the FlashAttention band (0003),
+the sampler probe (0002) and, from 2026-10-21, host buffers pinned for every runtime (0004), except
+campaigns `27b-kv-f16-20261016`, `coder390-device-order-20261019`, `coder390-windows-vs-linux-20261020`,
+`flash-next-moe-cache-20261016` and `flash-next-no-host-20261016`. No run in bench.db is on v0.9.0. The
+guides say so under their "In short" and in a placeholder row; both go, and the figures change, once
+this is done.
+
+- Run the two-R9700 presets under the same spec version as their baselines: the Swift 27B on Linux and
+  Windows against campaign `swift27b-standard-1.1-2xr9700-linux-20261101` and
+  campaign `swift27b-standard-1.1-2xr9700-windows-20261101`, Swift Flash-Next on Linux against
+  campaign `swift-flash-next-standard-1.1-2xr9700-linux-20261101`. The mixed pair needs the RTX 4070 SUPER
+  in the test machine.
+- The biggest unknown is decode with accepted drafts: the band's gain at 2 to 4 queries per step rests
+  on `test-backend-ops`, and no run that accepts drafts has a leg without the band. For Flash-Next, repeat
+  the preset of campaign `flash-next-mtp-graphs-2xr9700-linux-20261030` (`spec-draft-n-max` 3: 54.9 t/s,
+  488 of 821 drafts accepted) at 43.7k, same text, temperature 0, 3 repetitions.
+- Check that both legs write the same reply before comparing decode: a different reply changes the
+  acceptance, and with it the rate. The tile kernel's split changes with the query count, so MTP and
+  unassisted text may part (`docs/qwen3.8_27b.md` section 1).
+- That Flash-Next preset's KV is q8_0 (MTP does not load at f16 with split 1,1) and the GQA 12 `perf`
+  figures are f16, while at GQA 6 quantized K/V gained nothing on the band's path: a null result may be
+  the KV type.
+- A change of release sits in the same comparison, v0.8.0 to v0.9.0, so a difference is not the patches
+  alone.
+
+- Done when: each preset above has a campaign on the current release, and the guides' figures, their
+  "In short" note and the placeholder row are updated from it.
+
+### 4. Find out why the drafter benchmarks look too favorable
+
+Covers: R6, R7.
+
+From `docs/qwen3.8_flash_next.md` section 5 (2026-10-30).
+
+The live sweeps rank Flash-Next's drafters far above what the coding agent showed live
+(n-gram alone 274.5 t/s and the MTP chain 280.1 on the code prompt, MTP +77% on prose, against
++8% for the n-gram drafter measured on real agent turns at 130-160k). Not yet explained; check
+before trusting the size of the gains (the ranking itself may hold):
+
+- Temperature 0 (greedy) against the preset's temp 1 / top-k 20: greedy output is what the
+  drafters predict best, so acceptance (98% on the code prompt) may be far above real sampling.
+  Checked on Swift-1.5-Qwen3.8-27B at its temperature 1 (2026-10-30, campaigns
+  `swift27b-drafter-2xr9700-linux-20261030` and `-code1536-`): the drafters still double prose
+  decode (15.4 to 28.8-32.2 t/s) and the n-gram chain gives 120-127 against 18.6 on the code
+  rewrite, so sampling alone does not explain the gap; not yet repeated on Flash-Next.
+- The code prompt is a pure copy task (rename one function, output the file): the best case
+  for an n-gram drafter, not an agent turn. Replay recorded agent turns instead.
+- What the "decode" rate counts: the answer phase reads 348-375 t/s, above what a verify
+  batch per token can run on this model; check the engine's timing against wall time and the
+  server's own `timings` (`predicted_per_second`, drafted / accepted counts).
+- Cold start per leg and a 128 to 6000-token output cap: the rate may be taken over a short
+  window that favors the drafter. Partly checked on Swift (same campaigns): with 256 tokens out the code
+  reply ends inside the reasoning and the n-gram stage shows no gain; with 1536 it does.
+- Depth: the prose prompt is 43.7k; the agent runs at 100-180k, where the MTP head's own
+  attention and the verify batches cost more.
+
+- Done when: the gap between the sweeps and the live agent turns is explained by a measurement, and the
+  guide states the drafter gains under the conditions that hold for real use.
+
+### 5. Check the KV-split width patch on the current release
+
+Covers: R7.
+
+`upstream/UPSTREAM-PR-fa-kv-split-width.patch` pins the KV split for `Q->ne[1] <= 8` so a verify batch
+reduces the KV like plain decode. Found not applicable while patch 0003's band was in; without the band
+the R9700's decode takes the branch it changes. What was measured is in
+[candidates.md](patches/llama.cpp/candidates.md), "KV-split width determinism".
+
+- Done when: it is known whether the patch applies to the current tag and what it changes on the R9700
+  (byte-identical replies across `spec-draft-n-max`, and the speed cost), and it is ported or dropped.
+
+### 6. Compare block 12's all-reduce with upstream's internal AllReduce
+
+Covers: R7.
+
+Dropped on 2026-10-21 as not applicable, when the machine was one R9700 plus one 4070 SUPER. It
+now has two R9700s and the Linux presets that split by tensor use the internal AllReduce, so the
+block's mechanism applies. The fork's current README calls it block 01 (V2.0 numbering), not the
+block 01 of "Adaptive MTP depth" under "Later, not planned yet".
+
+The block is not RCCL alone: `auto`, its default on Linux/HIP, takes an internal pipeline for the
+small tensors reduced at every decode step, and picks the large-tensor path once per model: the
+copy engine for a dense model, RCCL's ring when experts sit in host memory. Its figures, copy engine
+against RCCL (the link of these runs is not stated; read through a summary of the first 100k of 223k
+characters of `patches/README.md`, so check them against the original before citing them in a guide):
+
+| shape | copy engine | RCCL |
+| --- | --- | --- |
+| 27B `pp2048` | 2178 | 2018 |
+| Flash-Next all in VRAM, decode | 67.2 | 59.9 |
+| Flash-Next IQ4_NL, 2 GPUs, `-ncmoe 20` | 604 | 809 |
+| Flash-Next IQ4_NL, 2 GPUs, `-ncmoe 32` | 414 | 555 |
+
+Enabling peer access alone cost 42.25 to 38.77 t/s of dense decode on 3x R9700, and it cannot be
+undone once RCCL has made its mappings.
+
+- Compare the block's small-tensor path and its copy engine with upstream's internal AllReduce
+  (`ggml/src/ggml-cuda/allreduce.cu`): what is left to gain over v0.9.0 is not known. This part
+  needs no RCCL, so it could run on the current board. RCCL itself is under "Later, not planned yet".
+
+- Done when: block 12's small-tensor path and copy engine are measured against
+  `ggml/src/ggml-cuda/allreduce.cu` on the two R9700 (no RCCL needed), and ported or dropped.
+
+### 7. Settle the open Windows checks
+
+Covers: R6, R7.
+
+From the Windows work of 2026-10-21, `docs/qwen3.8_27b.md` section 9.
+
+- `tensor-split 53,13` for the Windows Coder390 preset at ctx 180224.
+- The HIP API log on Linux: is the Linux prefill lead the copy rate alone?
+- A pinned staging buffer in `ggml_backend_tensor_copy`'s slow path (the cross-card hops staged
+  through `malloc`: 2.5 s of the 5.24 s of blocking copies per 43.7k prefill with the R9700 second,
+  measured on v0.7.0; the other 2.7 s were what patch 0004, since removed, took away).
+- The Swift preset's device order on Windows: prefill is settled, the `real` decode lead of the
+  x4 card first needs repetitions ([Qwen3.8-27B, section 9](docs/qwen3.8_27b.md#9-not-yet-measured-placeholders)).
+- The Swift preset's prefill gap to Linux on Windows: Memory Integrity, `ThreadsBatch` and the
+  power plan do not explain it; the hypervisor and the driver and HIP costs are unmeasured
+  ([Qwen3.8-27B, section 6](docs/qwen3.8_27b.md#6-linux-against-windows)).
+
+- Done when: each check above has a measurement in bench.db, or a recorded reason it cannot run here,
+  and the guide's placeholders are filled or retired.
+
+## Waiting for the user
+
+- Steps 2 to 7: every benchmark run and every llama-server start on the GPUs needs the user's
+  go-ahead (they hold the GPUs and may collide with other jobs).
+- Steps 3 and 7 partly need the RTX 4070 SUPER back in the test machine.
+
+## Later, not planned yet
+
+- **Adaptive MTP depth** (block 01, `draft-mtp-adaptive`, 84 KB, host side, built on
+  upstream PR #27210): a decode lever for Coder390, where the guide records acceptance
+  moving between 0.49 and 0.65 across tasks and decode with it by 20-30 %. Their figure:
+  +13.6 % overall on the 27B Q8_0 with `ngram-mod` combined. Not in v0.7.0; portable in
+  principle (no kernel code). Parked on 2026-10-21 as too invasive for its expected gain
+  (84 KB of speculative-decoding plumbing to re-cut at every tag bump); revisit if upstream
+  merges #27210 or something like it, when the measurement becomes a sweep at 43.7k and
+  115k, both temperatures, rather than a port.
+
+- **RCCL against the internal AllReduce** (block 12): RCCL cannot run while the x4 card's slot has
+  no AtomicOps. With both cards on CPU slots, `GGML_CUDA_ALLREDUCE` compares `internal` and `nccl`
+  with no rebuild; upstream's init tries NCCL first, so keep `internal` set until that is measured.
+  Our presets keep every expert in VRAM, the shape where RCCL loses; it matters only if a preset
+  moves experts to host memory.
+- **Watch items**: the upstream PRs listed in [candidates.md](patches/llama.cpp/candidates.md),
+  "Watch items", need action only if their symptom appears.

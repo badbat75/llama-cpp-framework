@@ -147,8 +147,8 @@ and a change is the next version.
 
 Every change to a spec, a `.versions` file or a pinned prompt is reviewed against sections 2
 and 3 before it is committed, by a reviewer that did not write it: the `spec-reviewer`
-subagent (Claude Code: `.claude/agents/spec-reviewer.md`; OpenCode:
-`.opencode/agents/spec-reviewer.md`; both only load this skill and follow this section), or
+subagent (`.opencode/agents/spec-reviewer.md`, read by Claude Code through the
+`.claude/agents` symlink; it only loads this skill and follows this section), or
 any agent told to review with it. Read-only: the review judges, it does not edit.
 
 Get the change with `git diff` (or `git diff <base>`), read `llama-cpp-config/src/bench/spec.rs`

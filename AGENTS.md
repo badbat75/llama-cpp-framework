@@ -6,6 +6,8 @@ A build orchestrator for [llama.cpp](https://github.com/ggerganov/llama.cpp): it
 
 A companion Rust binary (`llama-cpp-config`) provides a GUI + CLI configurator for `server.ini` and per-model `presets.ini`.
 
+**Start here: read [PLAN.md](PLAN.md).** It holds the user's requirements, the Definition of Done, and what is left to do, in order.
+
 ## Map
 
 This file is the map; the details of each area live in the guide named beside it. **Read that guide before changing the area.** Subdirectory `AGENTS.md` files are scoped to their folder.
@@ -26,11 +28,11 @@ This file is the map; the details of each area live in the guide named beside it
 - **Configurator** → [llama-cpp-config\AGENTS.md](llama-cpp-config/AGENTS.md) (tabs, common-change checklists, footguns) and [llama-cpp-config\README.md](llama-cpp-config/README.md) (architecture, conventions, tests).
 - **Benchmarks** → [benchmarks\README.md](benchmarks/README.md): `bench.db` (SQLite, committed), every measurement behind the guides with its machine, software stack (llama.cpp, ROCm, CUDA, Vulkan SDK), model, full parameter set and prompts; `specs\` holds the versioned benchmark method (one file per published version, `standard-<X.Y>.ini`, and `prompts\` the prompts they pin, each named `<name>-<X.Y>`: installed read-only as `share\benchmarks\` beside the binaries, read in place, never copied into the user's config; only `standard.versions`, the digest of each version, is compiled in: `bench run --spec standard` runs the newest, `--spec standard-1.0` that one; prompts pinned by sha256; every run records the spec's name, version and sha256, a sweep without one `spec = custom`; every benchmark holds the GPU lock `bench::gpu_lock`); `schema.sql` is the data model, shared with the configurator, which records every finished benchmark run into its own working `bench.db` and copies chosen campaigns into this one (`llama-cpp-config bench publish`), or records straight into this one when `settings.ini` `BenchDb` names it; `llama-cpp-config bench query --db benchmarks/bench.db` queries it (campaigns, models, machines, per-run summary, filters by GPU, model, parameter); only finished runs are recorded. No credentials and no local paths in it: the file is public.
 - **Preset tuning** → [.agents\skills\optimize-preset\SKILL.md](.agents/skills/optimize-preset/SKILL.md) (`.claude\skills` is a symlink to `.agents\skills`, so Claude Code sees the same file): the procedure for tuning one `presets.ini` section for speed and VRAM (baseline, levers in order, memory readout after a real prefill, one key per `bench run`, apply, record the campaign and update the guides). Every run ends by folding what it taught about the method back into the skill (its section 7).
-- **Benchmark specs** → [.agents\skills\bench-spec\SKILL.md](.agents/skills/bench-spec/SKILL.md): how to create, version or review a spec in `benchmarks\specs\` or a prompt it pins (new version vs new spec, the checks, `standard.versions` frozen by a test). Every spec change is reviewed before it is committed, with the skill's section 5, by the `spec-reviewer` subagent. Skills follow the Agent Skills format in `.agents\skills\` (read as is by OpenCode and Codex; `.claude\skills` is a symlink to it for Claude Code). Subagents have no cross-tool format, so each is a thin native file that only loads its skill: `.claude\agents\` (Claude Code) and `.opencode\agents\` (OpenCode); the rules live in the skill, never in the shims.
+- **Benchmark specs** → [.agents\skills\bench-spec\SKILL.md](.agents/skills/bench-spec/SKILL.md): how to create, version or review a spec in `benchmarks\specs\` or a prompt it pins (new version vs new spec, the checks, `standard.versions` frozen by a test). Every spec change is reviewed before it is committed, with the skill's section 5, by the `spec-reviewer` subagent. The roles and skills are described under "Skills" and "Roles" below.
 - **Diagnostics and migration** → [tools\AGENTS.md](tools/AGENTS.md): `migrate-config-v1-to-v2.ps1`/`.sh` (offline 1.x → 2.0 config rewrite), `report-memory.ps1` (requested vs actual GPU memory of the running server) and `pcie-bench\` (host <-> GPU transfer benchmark).
 - **Per-GPU and per-model guides** → [docs\AGENTS.md](docs/AGENTS.md): rules for the `docs\*.md` pages (the R9700 and RTX 4070 SUPER guides; Qwen3.8-Flash-Next and Qwen3.8-27B; `build-pipeline.md` and its topic pages `build-*.md`): page types (`gpu`, `model`, `reference`) in a YAML front matter, the required sections, the citation rule, `bench-chart` blocks (a chart drawn from bench.db, beside the table that holds its numbers), `templates\` for a new page; `docs\README.md` is the index. The `.md` files are the source of the HTML site: `tools\site\` (`cargo run -p docs-site`, `-- --check` for the checks alone) draws the charts from bench.db, links the citations and writes a page per cited campaign into `build\<os>\site\`; `.github\workflows\docs-site.yml` publishes it on GitHub Pages at every push to `main` that touches `docs\`, bench.db or the generator.
-- **Writing the guides** → [.agents\skills\write-docs\SKILL.md](.agents/skills/write-docs/SKILL.md): how to create or update a guide so it reads as one complete review: a finding is merged into its topic rather than appended, no history, failed tests only where they set a limit, results missing from one benchmark merged from another, short tables. Documentation work is delegated to the `docs-writer` subagent, a thin shim that loads this skill (`.claude\agents\`, `.opencode\agents\`).
-- **Open optimization work** → [TODO.md](TODO.md): the ranked list of out-of-tree patches still worth porting (each with the measurement that ranked it, its source and its porting cost), what was checked and found superseded, and the open measurements.
+- **Writing the guides** → [.agents\skills\write-docs\SKILL.md](.agents/skills/write-docs/SKILL.md): how to create or update a guide so it reads as one complete review: a finding is merged into its topic rather than appended, no history, failed tests only where they set a limit, results missing from one benchmark merged from another, short tables. Documentation work is delegated to the `docs` agent, which loads this skill for the guides.
+- **Open work** → [PLAN.md](PLAN.md): requirements, Definition of Done and the open steps, the optimization work and open measurements included. What was checked among the out-of-tree optimization candidates, and found superseded or not applicable: [patches\llama.cpp\candidates.md](patches/llama.cpp/candidates.md).
 - `resources\llama.ico`: icon for the MSI (Apps list entry, Start Menu shortcut) and `llama-cpp-config.exe`. **Generated, not checked in** (gitignored): `resources\generate-llama-ico.mjs` rasterizes the llama-brand package's icon (`logo\svg\icon\icon-light.svg` at the commit llama.cpp pins in `tools\ui\package.json`; llama.cpp removed its own `tools\ui\src\lib\assets\logo.svg` in v1.0.0) as a `#111111` glyph on a white rounded tile, matching upstream's PWA icons. It downloads the SVG once into the gitignored `resources\llama-brand-logo.svg`. `llama-cpp-config\build.rs` (and `xtask package`) runs it whenever `llama.ico` is missing; it needs node+npm and network (or a pre-fetched SVG), not the llama.cpp clone. Delete `llama.ico` to regenerate, `llama-brand-logo.svg` to re-download the glyph.
 
 ## Key conventions
@@ -48,6 +50,72 @@ This file is the map; the details of each area live in the guide named beside it
   - Only when `SaveStateOnShutdown` is on: `state\<model>.llamastate` (KV-cache snapshots sized by the tokens the slot HOLDS, not `ctx-size`: ~4.4 GiB at 128k tokens on Qwen3.8-27B, ~8.3 GiB for a full 262k, plus, since llama.cpp v0.7.0, the slot's context checkpoints and the draft state; overridable via `StateDir` since the default sits on the system drive).
   - The uninstall offers the uninstalling user's tree for deletion (a checkbox, cleared by default) when it runs with the full UI (Settings > Apps > Uninstall included); a silent or basic-UI uninstall, and every upgrade, keeps it: [installer\AGENTS.md](installer/AGENTS.md) lists exactly when the question shows.
 - On Linux the same tree is `~/.local/share/llama.cpp/`, except that everything `config\` holds lives in **`~/.config/llama.cpp/`** (`$XDG_CONFIG_HOME/llama.cpp` when that is set to an absolute path): `paths::config_dir`. The directory is per user and the same for a packaged install and a tree build; the packages ship no config directory and no post-install script. The Settings tab's "Start at login" is the HKCU Run registry entry on Windows and the XDG autostart file `~/.config/autostart/llama-cpp-config.desktop` on Linux (`startup.rs`); either way the entry itself is the state, with no INI mirror.
+
+## Working from this plan
+
+- Take the first open step unless the user says otherwise. Split it if it is too big for one sitting.
+- The plan can change. The coordinator or the user can change any part of it when needed: steps, order, requirements or Definition of Done. Other agents propose changes to the coordinator. The commit says why, and the coordinator tells the user whenever a requirement changes.
+- If a requirement is added, make sure a step covers it.
+- A step is done only when it meets the Definition of Done in `PLAN.md` as well as its own "Done when".
+- Steps in `PLAN.md` are only open work. When a step is done, remove it, and update the requirements' "State" and "Where things stand" if they changed.
+- Do this in the same commit as the work. The commit message says what was closed and how it was checked, so `git log` is the record of closed work. Do not keep a done list in the plan.
+- New work that comes up goes in the plan, in its place in the order. A step that turns out wrong gets rewritten, not worked around.
+
+## Commands
+
+Agents run only these, on the crate they are working on (`llama-cpp-config`, `xtask` or `docs-site`). They are fast and enough to see red and green:
+
+    cargo test -p <crate> <test-name-filter>
+    cargo clippy -p <crate> --all-targets -- -D warnings
+    cargo fmt -p <crate> --check
+    cargo run -p docs-site -- --check
+
+- Tests run in the debug profile, never `--release`: the configurator's e2e tests need Slint debug info. On Windows `cargo test` links only with the `.cargo\config.toml` that `xtask configure` generates ([llama-cpp-config\AGENTS.md](llama-cpp-config/AGENTS.md)).
+- The docs-site check is for changes to `docs\`, bench.db or the generator.
+- The format check is red on today's tree: step 1 of `PLAN.md` fixes it. Until then, a slice must not add new format errors.
+
+The user runs the full suite, once, on the main branch after the merge and before installing. Agents do not run it:
+
+    cargo test --workspace
+
+## Rules
+
+**Test first, always.** Write a failing test, run it and see it fail, then write the code. A change without a test that failed first is not done. Tests never touch real systems or real data: the configurator's tests redirect the whole data tree with `LLAMA_CPP_CONFIG_DATA_ROOT`.
+
+**Keep it simple.** Minimum that solves the problem, no speculative options or abstractions.
+
+**Facts need a source.** Check commands, APIs and limits against official documentation or a real run. In the docs, keep what was measured, read in a source and assumed apart. Mark guesses as guesses. A measured value names its campaign in bench.db.
+
+**Language.** Everything in the project is in English: code, comments, docs, plan, skills, commit messages and displayed text. Only the conversation with the user may be in their language.
+
+**Displayed text.** Text a user sees goes in the strings files, never inline in the code: "No user-visible text in the code" under "Key conventions".
+
+## Actions with real effects
+
+- What counts here: installing or removing packages and SDKs (`xtask prereq`, `xtask install`, the bootstrap scripts), anything machine-wide (environment variables, registry, `/usr`, `/opt`), the user's own config and data (`%LOCALAPPDATA%\llama.cpp\`, `~/.config/llama.cpp/`, `~/.local/share/llama.cpp/`), starting llama-server or a benchmark on the GPUs, writing to the committed `benchmarks\bench.db` (`bench publish`), and git push, tags and GitHub releases.
+- Reading is fine. Anything that changes the real thing needs the user's go-ahead each time.
+- Agents may be blocked from running some commands. Give the user the exact command to run, and say what it does, how long it takes and what result to expect.
+- A command must undo what it changed by itself, wherever it can (a sweep puts its key back: `bench\sweep-pending-<stamp>.json`).
+
+## Skills
+
+Each role has a skill in `.agents\skills\` in the standard `SKILL.md` format; `.claude\skills` is a symlink to that directory. Beside the role playbooks (`coordinator-playbook`, `tester-playbook`, `coder-playbook`, `docs-playbook`) are the task skills: `optimize-preset`, `bench-spec` and `write-docs`.
+
+- A skill holds what its role has learned and is not obvious. Rules stay in this file.
+- An agent can update its own skill. The coordinator can update any of them.
+- Keep them short, and remove what stops being true. Say why in the commit, like any other change.
+
+## Roles
+
+Role definitions live in `.opencode\agents\`; `.claude\agents` is a symlink to that directory, so OpenCode and Claude Code read the same files. Keep the frontmatter to the fields both accept (`name`, `description`, `mode`), and write role limits in the body rather than in harness-specific tool lists.
+
+- `coordinator`: plans and sequences the work, checks each result. The default agent for a session, set in `.claude\settings.json` and `.opencode\opencode.json`.
+- `tester`: writes the failing tests.
+- `coder`: makes them pass.
+- `docs`: keeps the documentation true; for a guide in `docs\` it loads the `write-docs` skill.
+- `spec-reviewer`: reviews a benchmark spec change before it is committed, read-only, with the `bench-spec` skill.
+
+Cycle: coordinator takes the next step from `PLAN.md` and picks one small slice, tester writes tests and shows them red, coder turns them green, coordinator reruns everything, docs updates what changed.
 
 ## Release process
 

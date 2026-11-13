@@ -15,10 +15,12 @@ resources/package-lock.json
 
 # the project skills live in .agents/skills (shared across harnesses);
 # .claude/skills is a symlink to it; .claude/agents holds the Claude Code
-# subagents (thin: they load a skill); everything else under .claude stays local
+# subagents, a symlink to .opencode/agents; settings.json sets the default agent;
+# everything else under .claude stays local
 .claude/*
 !.claude/skills
 !.claude/agents
+!.claude/settings.json
 # settings.json is shared (paths in it are relative, so it holds on any
 # checkout and on both OSes); everything else under .vscode stays local
 .vscode/*
