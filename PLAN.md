@@ -21,7 +21,7 @@ as the column says. A requirement still open must be covered by a step.
 | R5 | Every measurement in `benchmarks/bench.db`, under a versioned spec, public: no credentials, no local paths | Met |
 | R6 | Per-GPU and per-model guides where every value traces to a campaign, published as a site | Met, but their figures predate v0.9.0: step 4 |
 | R7 | The fastest presets for the test machine's GPUs: port an out-of-tree optimization when its gain pays for its upkeep | Open: steps 3 to 8 |
-| R8 | llama-server runs as an OS service (`llama.cpp@<port>` on Linux, a Windows service) managed by the runtime service `private-ai-manager`, which starts the instances `server.ini` describes at boot and is what the GUI and CLI talk to (D-Bus plus polkit on Linux, a named pipe with an ACL on Windows); units started by hand stay under its management; later engines (Strata) are to fit the same manager | Open: step 2 |
+| R8 | llama-server runs as an OS service per instance (`llama.cpp@<id>` on Linux, config `server@<id>.ini`, a Windows service) managed by the runtime service `private-ai-manager`, which starts the instances at boot and is what the GUI and CLI talk to (D-Bus plus polkit on Linux, a named pipe with an ACL on Windows); units started by hand stay under its management; later engines (Strata) are to fit the same manager | Open: step 2 |
 
 ### How we work
 
@@ -96,12 +96,20 @@ Today `llama-cpp-config` spawns llama-server as its own child (`runstate::start`
 called by the GUI, the CLI's `server` commands and the benchmarks). That moves into OS services.
 Decisions taken with the user on 2026-11-13:
 
-- **Linux.** A template unit `llama.cpp@.service`, the instance name is the port (`llama.cpp@8080`).
-  It runs as a dedicated system user (`llama-cpp`, in the GPU groups) and its `ExecStart` is a launcher
-  that reads the system `server.ini` itself and execs llama-server with `runstate::server_args()`, so a
-  unit started by hand (`systemctl start llama.cpp@8080`) runs the same command as one the manager
-  starts. `private-ai-manager.service` owns the D-Bus name on the system bus, starts at boot the
-  instances `server.ini` describes (one for now) and starts, stops and reports them through systemd's
+- **Instances have an ID, not a port, as their name.** Each instance has its own config file,
+  `server@<id>.ini`, and its own unit, `llama.cpp@<id>`; the port is a key inside the file like any
+  other. The coordinator chose this over naming by port (the user left it open, 2026-11-13): changing
+  the port, a common edit in the Server tab, would otherwise rename the unit, the config file, the log
+  and the state, with a stop and start in between. The ID is short, lowercase letters, digits and `-`
+  (safe in a unit name with no escaping); the first instance, and the one a migrated config becomes,
+  is `default`. The manager refuses two instances on the same port. `presets.ini` stays one file shared
+  by every instance (no per-instance option until one is needed, W2).
+- **Linux.** A template unit `llama.cpp@.service` (`llama.cpp@default`). It runs as a dedicated system
+  user (`llama-cpp`, in the GPU groups) and its `ExecStart` is a launcher that reads `server@<id>.ini`
+  itself and execs llama-server with `runstate::server_args()`, so a unit started by hand
+  (`systemctl start llama.cpp@default`) runs the same command as one the manager starts.
+  `private-ai-manager.service` owns the D-Bus name on the system bus, starts at boot the instances it
+  finds as `server@<id>.ini` files (one for now) and starts, stops and reports them through systemd's
   own D-Bus API. It reads instance state from systemd every time and keeps none of its own, so a unit a
   user started or stopped with `systemctl` is still one it manages. Every call that changes something
   is checked with polkit (`CheckAuthorization`, subject = the caller's bus name).
@@ -114,7 +122,8 @@ Decisions taken with the user on 2026-11-13:
   (`bench/exec.rs`, `bench/sweep.rs`) they go through the manager instead.
 
 **Requirement change: the server config moves out of the user's tree.** A service started at boot
-cannot read `~/.config/llama.cpp/`. `server.ini` and `presets.ini` (and `presets.ini.disabled`) move to
+cannot read `~/.config/llama.cpp/`. `server.ini` (renamed `server@<id>.ini`, one per instance) and
+`presets.ini` (and `presets.ini.disabled`) move to
 `/etc/llama.cpp/` on Linux and `%ProgramData%\llama.cpp\config\` on Windows, written only through the
 manager. `settings.ini` (the configurator's preferences) and `bench.db` stay per user. An existing
 per-user config is migrated once, never lost (Definition of Done 4).
@@ -122,17 +131,18 @@ per-user config is migrated once, never lost (Definition of Done 4).
 Slices, in order, each test first:
 
 1. **Config paths for the service.** `paths` gains the system config directory beside the per-user
-   one, with `LLAMA_CPP_CONFIG_DATA_ROOT` still redirecting everything in tests. Done when the tests
-   pin both paths on each OS.
-2. **The launcher.** A subcommand (`private-ai-manager run-instance <port>`) that reads `server.ini`
-   and execs llama-server with `server_args()`, its env (`LLAMA_CACHE`, the ROCm PATH prepend) and the
-   cwd `runstate::start` sets today; it refuses a port that does not match `server.ini`. Where it
+   one, and the instance files: `server@<id>.ini` for a valid ID, the list of instances from the files
+   present, an invalid ID refused. `LLAMA_CPP_CONFIG_DATA_ROOT` still redirects everything in tests.
+   Done when the tests pin the paths on each OS.
+2. **The launcher.** A subcommand (`private-ai-manager run-instance <id>`) that reads
+   `server@<id>.ini` and execs llama-server with `server_args()`, its env (`LLAMA_CACHE`, the ROCm PATH
+   prepend) and the cwd `runstate::start` sets today; it refuses an ID with no file. Where it
    lives: a second binary target of the `llama-cpp-config` crate, so it shares `server_args()` with no
    new crate (W2); split later only if Strata needs it.
 3. **The manager behind a seam.** A small control trait (start, stop, status of an instance) with the
-   D-Bus/systemd and named-pipe/SCM implementations behind it, and `runstate`'s callers switched to it.
+   D-Bus/systemd and named-pipe/SCM implementations (an instance addressed by its ID) behind it, and `runstate`'s callers switched to it.
    Tests use a fake systemd and a fake polkit; nothing touches the real system bus.
-4. **Logs.** The unit appends both streams to `/var/log/llama.cpp/llama-server-<port>.log`
+4. **Logs.** The unit appends both streams to `/var/log/llama.cpp/llama-server@<id>.log`
    (`StandardOutput=append:`), the Windows service to `%ProgramData%\llama.cpp\logs\`; the closing and
    rotation of `runstate.rs` move to the manager, and the GUI's Log window reads the new path.
 5. **Linux packaging.** The `-llama` package ships the two units, the D-Bus policy
@@ -140,11 +150,13 @@ Slices, in order, each test first:
    sysusers.d entry for `llama-cpp`. This adds the first maintainer scripts to the `.deb` and `.rpm`
    (enable the manager, reload systemd), so the "no post-install script" rule in `AGENTS.md` changes.
    Checked with `xtask package` and the contents of the packages; installing them is the user's run.
-6. **Windows packaging.** The MSI registers both services (manager automatic, instance manual) and
-   creates `%ProgramData%\llama.cpp\` with the right ACL; an upgrade keeps the config. Runs the
-   installer test plan of `installer/AGENTS.md`.
+6. **Windows packaging.** The MSI registers the manager service (automatic start) and creates
+   `%ProgramData%\llama.cpp\` with the right ACL. SCM has no template services, so the manager creates
+   one service per instance (`llama.cpp@<id>`, manual start) when the instance is added and removes it
+   with the instance; the uninstall removes them. An upgrade keeps the config. Runs the installer test
+   plan of `installer/AGENTS.md`.
 7. **Migration.** The first start of the new configurator offers to copy the user's
-   `server.ini`/`presets.ini` into the system directory through the manager; the user's files are left
+   `server.ini` (as `server@default.ini`) and `presets.ini` into the system directory through the manager; the user's files are left
    in place.
 
 Open points to settle inside the slices, not guessed here:
@@ -159,8 +171,8 @@ Open points to settle inside the slices, not guessed here:
 - The D-Bus name and polkit action ids (`org.privateai.Manager1`, `org.privateai.manager.*`) are a
   proposal, to confirm before slice 3.
 
-- Done when: on Linux, after installing the packages, the instance in `server.ini` starts at boot,
-  `systemctl start/stop llama.cpp@<port>` and the GUI agree on its state, and a user without
+- Done when: on Linux, after installing the packages, the instance in `server@default.ini` starts at
+  boot, `systemctl start/stop llama.cpp@default` and the GUI agree on its state, and a user without
   authorization is refused by polkit; on Windows the same with the services and the pipe; the user's
   previous config has been migrated without loss; `AGENTS.md` and the guides describe the new layout.
 
