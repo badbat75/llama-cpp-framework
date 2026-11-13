@@ -98,7 +98,7 @@ Decisions taken with the user on 2026-11-13:
   and port collide, a wildcard address (`0.0.0.0`, `::`) colliding with every address on that port. `presets.ini` stays one file shared
   by every instance (no per-instance option until one is needed, W2).
 - **Linux.** A template unit `llama.cpp@.service` (`llama.cpp@default`). It runs as a dedicated system
-  user (`llama-cpp`, in the GPU groups) and its `ExecStart` is a launcher that reads `server@<id>.ini`
+  user (`llama-cpp`, `private-ai` after step 2; in the GPU groups) and its `ExecStart` is a launcher that reads `server@<id>.ini`
   itself and execs llama-server with `runstate::server_args()`, so a unit started by hand
   (`systemctl start llama.cpp@default`) runs the same command as one the manager starts.
   `private-ai-manager.service` owns the D-Bus name on the system bus, starts at boot the instances it
@@ -224,9 +224,21 @@ What changes:
   local folder too moves Claude Code's per-project memory, which is keyed by the folder's path: copy it
   over when that happens.
 
-To settle in the step: the service user's name (`llama-cpp` in step 1; `private-ai` proposed), and
-whether `xtask` and the scripts' environment variables (`LLAMA_FW_DIST_ROOT`,
-`LLAMA_CPP_CONFIG_DATA_ROOT`) are renamed with a fallback to the old names.
+Decided with the user on 2026-11-13: the service user is `private-ai` (it was `llama-cpp` in step 1);
+the environment variables become `PRIVATE_AI_DIST_ROOT` and `PRIVATE_AI_DATA_ROOT` (they were
+`LLAMA_FW_DIST_ROOT` and `LLAMA_CPP_CONFIG_DATA_ROOT`), with no fallback to the old names.
+
+Slices, in order:
+
+1. **The move:** `llama-cpp-config/` becomes `private-ai-config/`, the crate `private-ai-config`, the
+   workspace member and every path that names the directory (xtask, scripts, `.vscode`, workflows);
+   no behaviour change, the existing tests stay green on the tester's rerun.
+2. **The names that behave:** binary, window title and product strings, the environment variables,
+   the user and system paths, the registry key, the service user; tests pin the new names first.
+3. **Migration** of the old user tree, tests first.
+4. **Packages:** names, `Replaces`/`Conflicts`/`Provides`, `Obsoletes`, the MSI's UpgradeCode kept;
+   xtask tests first, `--dry-run` where it exists.
+5. **Docs and scaffolding**, including the manager docs left from slices 3a and 3b of step 1.
 
 - Done when: nothing outside the engine's own names and bench.db history says `llama.cpp-framework` or
   `llama-cpp-config`; the packages and the MSI upgrade an installed 2.4.0 in place (checked by the user on
