@@ -171,3 +171,8 @@ Lessons only: the rules are in `AGENTS.md`.
 - ggml (`ggml/src/ggml-backend-reg.cpp`, `ggml_backend_load_best`) looks for backends in the compiled-in
   `GGML_BACKEND_DIR`, then the executable's directory, then the cwd, keeping the first of equal
   score: a build with `GGML_BACKEND_DIR` prefers the installed backends over its own.
+- A shared-library fixture is built as CMake lays it out (`std::os::unix::fs::symlink`: `.so -> .so.N
+  -> .so.N.M.P`; a package ships only `.so.N` and the real file) and the found candidate is compared
+  after `canonicalize`, so the test pins which library opens, not which of its names. Read the soname
+  from the clone (`ggml/CMakeLists.txt` `GGML_VERSION_MAJOR`, `SOVERSION` in `ggml/src/CMakeLists.txt`)
+  and `ls build/linux/llama.cpp-cmake/bin`, never from an older note.

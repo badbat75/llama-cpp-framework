@@ -1,5 +1,5 @@
 //! ggml-base glue: the `KvSource` backed by llama.cpp's own gguf reader, loaded
-//! at run time (`ggml-base.dll` on Windows, `libggml-base.so.0` on Linux).
+//! at run time (`ggml-base.dll` on Windows, `libggml-base.so.<N>` on Linux).
 //!
 //! Split out of gguf.rs so the field-extraction logic (`ModelInfo::from_kv` &
 //! friends) reads without the ~230 lines of Win32 FFI below. The module's public
@@ -16,8 +16,8 @@ pub use stub_impl::{open, type_name};
 
 /// Dynamically load ggml-base and expose a `KvSource` over a live
 /// `gguf_context`. On Windows the DLL ships next to `pai-config.exe` in
-/// `bin\`; on Linux the package puts `libggml-base.so.0` in `lib/` beside
-/// `bin/`, and a build tree keeps it beside llama-server.
+/// `bin\`; on Linux the package puts `libggml-base.so.<N>` in `lib/private-ai/`
+/// beside `bin/`, and a build tree keeps it beside llama-server.
 #[cfg(any(windows, target_os = "linux"))]
 mod loaded_impl {
     use crate::gguf::{KvSource, TensorInfo};
@@ -161,7 +161,8 @@ mod loaded_impl {
             fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *mut c_void;
         }
         const RTLD_NOW: c_int = 2;
-        const LIB: &str = "libggml-base.so.0";
+        /// The unversioned name; the soname appends `.<N>`.
+        const LIB: &str = "libggml-base.so";
 
         pub(super) fn load_lib() -> Option<HModule> {
             let exe = std::env::current_exe().ok();
@@ -198,31 +199,66 @@ mod loaded_impl {
             server_dir: Option<&std::path::Path>,
         ) -> Vec<PathBuf> {
             // The packages: `/usr/bin/pai-config` and
-            // `/usr/lib/private-ai/libggml-base.so.0`, never a system library
+            // `/usr/lib/private-ai/libggml-base.so.<N>`, never a system library
             // directory. A build tree: beside llama-server
             // (`llama.cpp-cmake/bin`). Last, the loader's own search path.
-            let mut candidates: Vec<PathBuf> = Vec::new();
+            let mut dirs: Vec<PathBuf> = Vec::new();
             if let Some(dir) = exe_dir {
-                candidates.push(dir.join("..").join("lib").join("private-ai").join(LIB));
-                candidates.push(dir.join(LIB));
+                dirs.push(dir.join("..").join("lib").join("private-ai"));
+                dirs.push(dir.to_path_buf());
             }
             if let Some(dir) = server_dir {
-                candidates.push(dir.join(LIB));
+                dirs.push(dir.to_path_buf());
             }
+            let mut candidates: Vec<PathBuf> = dirs.iter().filter_map(|d| lib_in(d)).collect();
             candidates.push(PathBuf::from(LIB));
             candidates
         }
 
+        /// The libggml-base `dir` holds: the unversioned link if present (a
+        /// build tree, where it names the current build), else the highest
+        /// `libggml-base.so.<N>` (a package ships only the soname link, and
+        /// the soname follows llama.cpp's ggml major version).
+        fn lib_in(dir: &std::path::Path) -> Option<PathBuf> {
+            let bare = dir.join(LIB);
+            if bare.exists() {
+                return Some(bare);
+            }
+            let prefix = format!("{LIB}.");
+            std::fs::read_dir(dir)
+                .ok()?
+                .filter_map(|e| e.ok())
+                .filter_map(|e| {
+                    let name = e.file_name().into_string().ok()?;
+                    let n: u64 = name.strip_prefix(&prefix)?.parse().ok()?;
+                    e.path().exists().then_some((n, e.path()))
+                })
+                .max_by_key(|(n, _)| *n)
+                .map(|(_, p)| p)
+        }
+
         #[cfg(test)]
         mod tests {
-            use super::{lib_candidates, LIB};
+            use super::lib_candidates;
+            use std::os::unix::fs::symlink;
             use std::path::{Path, PathBuf};
+
+            /// The bare name left to the loader's own search: the unversioned
+            /// one, so a soname bump does not break it.
+            const BARE: &str = "libggml-base.so";
 
             fn touch(root: &Path, rel: &str) -> PathBuf {
                 let p = root.join(rel);
                 std::fs::create_dir_all(p.parent().unwrap()).unwrap();
                 std::fs::write(&p, "").unwrap();
                 p
+            }
+
+            /// `dir/<link>` pointing at `<target>` beside it, as CMake lays
+            /// out a versioned shared library.
+            fn link(dir: &Path, link: &str, target: &str) {
+                std::fs::create_dir_all(dir).unwrap();
+                symlink(target, dir.join(link)).unwrap();
             }
 
             /// The first candidate that exists, as `load_lib` opens it.
@@ -233,44 +269,131 @@ mod loaded_impl {
             }
 
             /// The Linux packages: pai-config in /usr/bin opens the
-            /// libggml-base.so.0 of /usr/lib/private-ai, never one a system
-            /// library directory holds (/usr/lib beside /usr/bin), and the
-            /// loader's own search comes last.
+            /// libggml-base of /usr/lib/private-ai, under whatever soname the
+            /// bundled llama.cpp built (llama.cpp v1.0.0: `.so.1`; the package
+            /// ships the soname link and the real file, no unversioned link),
+            /// never one a system library directory holds (/usr/lib beside
+            /// /usr/bin), and the loader's own search comes last.
             #[test]
             fn the_package_opens_ggml_base_from_the_private_dir() {
                 let root = tempfile::tempdir().unwrap();
-                let ours = touch(root.path(), &format!("usr/lib/private-ai/{LIB}"));
-                let system = touch(root.path(), &format!("usr/lib/{LIB}"));
+                let private = root.path().join("usr/lib/private-ai");
+                let ours = touch(&private, "libggml-base.so.1.0.0");
+                link(&private, "libggml-base.so.1", "libggml-base.so.1.0.0");
+                let system_dir = root.path().join("usr/lib");
+                let system = touch(&system_dir, "libggml-base.so.1.0.0");
+                link(&system_dir, "libggml-base.so.1", "libggml-base.so.1.0.0");
+                link(&system_dir, "libggml-base.so", "libggml-base.so.1");
                 let bin = root.path().join("usr/bin");
                 touch(root.path(), "usr/bin/llama-server");
                 let c = lib_candidates(Some(&bin), Some(&bin));
-                assert_eq!(first_existing(&c), Some(ours.canonicalize().unwrap()));
+                assert_eq!(
+                    first_existing(&c),
+                    Some(ours.canonicalize().unwrap()),
+                    "{c:?}"
+                );
                 let system = system.canonicalize().unwrap();
                 assert!(
                     !c.iter()
                         .any(|p| p.canonicalize().ok().as_ref() == Some(&system)),
                     "a system library directory is never tried by path: {c:?}"
                 );
-                assert_eq!(c.last(), Some(&PathBuf::from(LIB)));
+                assert_eq!(c.last(), Some(&PathBuf::from(BARE)));
             }
 
-            /// A tree build keeps libggml-base beside llama-server.
+            /// A tree build keeps libggml-base beside llama-server, as CMake
+            /// writes it: `.so -> .so.1 -> .so.1.0.0`.
             #[test]
             fn a_tree_build_opens_ggml_base_beside_llama_server() {
                 let root = tempfile::tempdir().unwrap();
                 let server_dir = root.path().join("build/linux/llama.cpp-cmake/bin");
-                let lib = touch(&server_dir, LIB);
+                let lib = touch(&server_dir, "libggml-base.so.1.0.0");
+                link(&server_dir, "libggml-base.so.1", "libggml-base.so.1.0.0");
+                link(&server_dir, "libggml-base.so", "libggml-base.so.1");
                 let exe_dir = root.path().join("build/linux/cargo-target/debug");
                 std::fs::create_dir_all(&exe_dir).unwrap();
                 let c = lib_candidates(Some(&exe_dir), Some(&server_dir));
-                assert_eq!(first_existing(&c), Some(lib.canonicalize().unwrap()));
+                assert_eq!(
+                    first_existing(&c),
+                    Some(lib.canonicalize().unwrap()),
+                    "{c:?}"
+                );
+            }
+
+            /// A later soname bump needs no code change: whatever
+            /// `libggml-base.so.<N>` the private directory holds is opened.
+            #[test]
+            fn a_future_soname_is_found_without_a_code_change() {
+                let root = tempfile::tempdir().unwrap();
+                let private = root.path().join("usr/lib/private-ai");
+                let ours = touch(&private, "libggml-base.so.7.2.0");
+                link(&private, "libggml-base.so.7", "libggml-base.so.7.2.0");
+                let bin = root.path().join("usr/bin");
+                std::fs::create_dir_all(&bin).unwrap();
+                let c = lib_candidates(Some(&bin), None);
+                assert_eq!(
+                    first_existing(&c),
+                    Some(ours.canonicalize().unwrap()),
+                    "{c:?}"
+                );
+            }
+
+            /// A build tree keeps the libraries of an older build CMake never
+            /// removes: the unversioned link names the current one.
+            #[test]
+            fn a_stale_soname_in_a_tree_build_loses_to_the_unversioned_link() {
+                let root = tempfile::tempdir().unwrap();
+                let server_dir = root.path().join("build/linux/llama.cpp-cmake/bin");
+                touch(&server_dir, "libggml-base.so.0.9.0");
+                link(&server_dir, "libggml-base.so.0", "libggml-base.so.0.9.0");
+                let lib = touch(&server_dir, "libggml-base.so.1.0.0");
+                link(&server_dir, "libggml-base.so.1", "libggml-base.so.1.0.0");
+                link(&server_dir, "libggml-base.so", "libggml-base.so.1");
+                let c = lib_candidates(None, Some(&server_dir));
+                assert_eq!(
+                    first_existing(&c),
+                    Some(lib.canonicalize().unwrap()),
+                    "{c:?}"
+                );
+            }
+
+            /// With no unversioned link (a package), the highest soname wins
+            /// over a stale one left beside it.
+            #[test]
+            fn without_the_unversioned_link_the_highest_soname_wins() {
+                let root = tempfile::tempdir().unwrap();
+                let private = root.path().join("usr/lib/private-ai");
+                touch(&private, "libggml-base.so.0");
+                let lib = touch(&private, "libggml-base.so.1.0.0");
+                link(&private, "libggml-base.so.1", "libggml-base.so.1.0.0");
+                let bin = root.path().join("usr/bin");
+                std::fs::create_dir_all(&bin).unwrap();
+                let c = lib_candidates(Some(&bin), None);
+                assert_eq!(
+                    first_existing(&c),
+                    Some(lib.canonicalize().unwrap()),
+                    "{c:?}"
+                );
+            }
+
+            /// A directory holding only lookalikes yields no path: not
+            /// another library (`libggml-base-extra.so.1`), not a soname that
+            /// is not a number (`libggml-base.so.old`).
+            #[test]
+            fn lookalike_names_are_not_opened() {
+                let root = tempfile::tempdir().unwrap();
+                let server_dir = root.path().join("bin");
+                touch(&server_dir, "libggml-base-extra.so.1");
+                touch(&server_dir, "libggml-base.so.old");
+                let c = lib_candidates(None, Some(&server_dir));
+                assert_eq!(c, [PathBuf::from(BARE)]);
             }
 
             /// Nothing found: only the loader's own search is left.
             #[test]
             fn without_an_install_only_the_bare_name_is_left() {
                 let c = lib_candidates(None, None);
-                assert_eq!(c, [PathBuf::from(LIB)]);
+                assert_eq!(c, [PathBuf::from(BARE)]);
             }
         }
     }

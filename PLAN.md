@@ -188,9 +188,6 @@ so the second binary, `private-ai-manager`, shares its modules: a `[[bin]]` alon
    the package is installed, goes in the footguns of `docs/build-packaging.md`. Split in **5a** (done: the
    layout, `pai-manager` in `-llama`) and **5b** (units, D-Bus policy, polkit, sysusers, maintainer
    scripts).
-   Found on the way, fixed before 5b: the configurator's GGUF reader (`gguf/ffi.rs`) opens
-   `libggml-base.so.0`, but llama.cpp v1.0.0 builds `libggml-base.so.1`, so on Linux it finds nothing
-   (broken before 5a too).
 6. **Windows packaging.** The MSI registers the manager service (automatic start) and creates
    `%ProgramData%\private-ai\` with the right ACL. SCM has no template services, so the manager creates
    one service per instance (`llama.cpp@<id>`, manual start) when the instance is added and removes it
