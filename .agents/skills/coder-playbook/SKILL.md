@@ -66,3 +66,5 @@ Lessons only: the rules are in `AGENTS.md`.
   into a source the CLI reaches leaves `GUI_ONLY_KEYS` and goes in `cli.toml`.
 - Never `git stash` to compare against HEAD: other agents edit the same working tree at the same time.
   Use `git worktree add` or `git show HEAD:<path>` instead.
+- A helper generic over a zbus call's body needs serde's traits: `zbus::export::serde` re-exports
+  serde, so no `serde` dependency is added for it (`pai-core` `client/dbus.rs`).

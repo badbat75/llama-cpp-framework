@@ -6,6 +6,10 @@
 //! touch `paths::` (or anything that resolves the config dir): cargo runs
 //! tests on parallel threads, so they would race this one nondeterministically.
 
+// pai-core's D-Bus client against the interface (Linux only).
+#[cfg(target_os = "linux")]
+mod dbus_client;
+
 #[test]
 fn data_root_e2e() {
     // ── Manager core (manager/service.rs `Manager`) ──────────────────────
@@ -30,4 +34,9 @@ fn data_root_e2e() {
     // ── Manager over D-Bus: a refused write's key and values ─────────────
     #[cfg(target_os = "linux")]
     crate::manager::dbus::manager_dbus_checks_e2e();
+
+    // ── pai-core's client of the manager over D-Bus ─────────────────────
+    // pai_core::client::dbus against the interface, peer to peer, no bus.
+    #[cfg(target_os = "linux")]
+    dbus_client::manager_dbus_client_e2e();
 }

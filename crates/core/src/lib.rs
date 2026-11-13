@@ -3,6 +3,7 @@
 //! files and the server config, the llama-server launch, the strings.
 
 pub mod checks;
+pub mod client;
 pub mod ini;
 pub mod launch;
 pub mod migrate;

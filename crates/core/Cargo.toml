@@ -22,6 +22,10 @@ if-addrs = "0.15"
 # The language files (strings.rs).
 toml = { version = "1", default-features = false, features = ["std", "parse", "serde"] }
 
+# The manager's D-Bus client (client/dbus.rs): the zbus pai-manager serves with.
+[target.'cfg(target_os = "linux")'.dependencies]
+zbus = "5.19"
+
 # The Win32 calls of proc.rs (the std handles a child must not inherit).
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = [

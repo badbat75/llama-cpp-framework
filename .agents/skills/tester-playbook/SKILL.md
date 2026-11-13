@@ -112,3 +112,10 @@ Lessons only: the rules are in `AGENTS.md`.
   stub, the strings files and any wired file to /tmp, write the candidate, run, `cp` them all back,
   check `git status`): it shows the fixtures can go green, so the red is the missing code and not a
   wrong expectation.
+- "No manager" over zbus 5 without a real bus: serve the interface at another path (the call gets
+  `org.freedesktop.DBus.Error.UnknownObject` as `zbus::Error::FDO`), or drop the server connection (the
+  next call fails at once with `zbus::Error::InputOutput`, no timeout); a call with destination
+  `Some(BUS_NAME)` is accepted on p2p. No system bus at all: `DBUS_SYSTEM_BUS_ADDRESS=unix:path=<tempdir>/none`
+  (zbus reads it in `Address::system`), in the one test of the binary that touches it.
+- `recv_timeout` on `on_thread`'s receiver returns `Disconnected` at once when the thread panicked
+  (a `todo!` stub): report that apart from `Timeout`, or the red reads as a hang.
