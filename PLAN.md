@@ -166,6 +166,16 @@ so the second binary, `private-ai-manager`, shares its modules: a `[[bin]]` alon
    sysusers.d entry for `llama-cpp`. This adds the first maintainer scripts to the `.deb` and `.rpm`
    (enable the manager, reload systemd), so the "no post-install script" rule in `AGENTS.md` changes.
    Checked with `xtask package` and the contents of the packages; installing them is the user's run.
+   **Requirement change (user, 2026-11-13): the Linux packages use the standard layout under `/usr`,
+   not `/opt/private-ai`.** `pai-config` and llama.cpp's executables (`llama-server`, `llama-bench`,
+   ...) in `/usr/bin` (the packages keep their Conflicts with the distros' llama.cpp, so no file is
+   shared); `pai-manager` in `/usr/libexec/private-ai` (internal: FHS 3.0, adopted by Debian Policy
+   9.1.1, and Fedora), called by the units by full path; libllama, the ggml backends and the bundled
+   ROCm, CUDA and Vulkan runtimes in the private `/usr/lib/private-ai` (RPATH), never in the system
+   library directories; data in `/usr/share/private-ai` (the benchmark specs and prompts, the licences),
+   the desktop entry and icon where they are today. The per-executable links in `/usr/bin` go. The
+   configurator's install lookups (`llama-server`, `share/benchmarks`) follow. macOS keeps
+   `/opt/private-ai`.
 6. **Windows packaging.** The MSI registers the manager service (automatic start) and creates
    `%ProgramData%\llama.cpp\` with the right ACL. SCM has no template services, so the manager creates
    one service per instance (`llama.cpp@<id>`, manual start) when the instance is added and removes it
