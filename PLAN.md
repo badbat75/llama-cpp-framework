@@ -127,7 +127,14 @@ in `paths.rs`, is done; the numbers of the others stay as they are cited):
    prepend) and the cwd `runstate::start` sets today; it refuses an ID with no file. Where it
    lives: a second binary target of the `llama-cpp-config` crate, so it shares `server_args()` with no
    new crate (W2); split later only if Strata needs it.
-3. **The manager behind a seam.** A small control trait (start, stop, status of an instance) with the
+3. **The manager behind a seam.** Only `private-ai-manager` writes the INI files of the system
+   directory (`server@<id>.ini`, `presets.ini`, `presets.ini.disabled`): it exposes reading and writing
+   them over D-Bus / the pipe, under polkit / the ACL. Every writer in the configurator goes through
+   it: the Server tab's save, the presets editor and `presets::set_enabled`, the benchmark sweep that
+   sets a key and puts it back, the migration. The configurator never writes those files itself; the
+   launcher only reads them. Until this slice the configurator keeps writing its per-user files, since
+   the manager does not exist yet.
+   A small control trait (start, stop, status of an instance) with the
    D-Bus/systemd and named-pipe/SCM implementations (an instance addressed by its ID) behind it, and `runstate`'s callers switched to it.
    Tests use a fake systemd and a fake polkit; nothing touches the real system bus.
 4. **Logs.** The unit appends both streams to `/var/log/llama.cpp/llama-server@<id>.log`
