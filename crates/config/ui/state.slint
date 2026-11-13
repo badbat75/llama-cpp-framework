@@ -441,6 +441,15 @@ export global AppState {
     // runs only on confirm; cancel drops it and keeps the edits.
     in-out property <bool> show_discard_dialog: false;
 
+    // ── Import dialog state ─────────────────────────────────────────
+    // Shown by Rust at start (gui::run) when the per-user config can
+    // be handed to the manager. Import copies it (gui, off the UI thread) and
+    // reports in the status line; Not now closes it until the next start.
+    in-out property <bool> show_import_dialog: false;
+    in-out property <string> import_offer_text: "";
+    callback import_accept();
+    callback import_dismiss();
+
     // ── Delete-confirm dialog state ──────────────────────────────────
     // Rust-driven (gui/models_tab.rs): the Models page's Delete button fires
     // `request_delete`, which seeds the target, lists the model files the
@@ -472,7 +481,7 @@ export global AppState {
     // (app.slint) gate on this so Ctrl+S / Ctrl+N / tab switches can't act on
     // the page hidden behind the backdrop.
     out property <bool> modal_open: show_new_kind_picker || show_rename_dialog
-        || show_discard_dialog || show_delete_dialog || show_chat_template_dialog
+        || show_discard_dialog || show_import_dialog || show_delete_dialog || show_chat_template_dialog
         || show_hf_dialog || show_opencode_dialog;
 
     // ── Benchmark tab state ─────────────────────────────────────────

@@ -446,6 +446,27 @@ pub fn run(start_minimized: bool) -> anyhow::Result<()> {
     if !start_minimized {
         app.show()?;
     }
+    // Offer to hand the per-user config to the manager, decided off the UI
+    // thread since it asks the manager.
+    wire_import(&app);
+    {
+        let app_weak = app.as_weak();
+        std::thread::spawn(move || {
+            let b = crate::server_control::backend();
+            if !crate::migration::import_offered(b, &paths::config_dir()) {
+                return;
+            }
+            let body = crate::migration::import_offer_body(b);
+            slint::invoke_from_event_loop(move || {
+                if let Some(app) = app_weak.upgrade() {
+                    let s = app.global::<AppState>();
+                    s.set_import_offer_text(SharedString::from(body));
+                    s.set_show_import_dialog(true);
+                }
+            })
+            .ok();
+        });
+    }
     #[cfg(target_os = "linux")]
     if start_minimized {
         discard_unshown_wayland_window(&app);
@@ -816,6 +837,49 @@ fn wire_discard_confirm(app: &AppWindow, state: &Rc<RefCell<State>>) {
             };
             app.global::<AppState>().set_show_discard_dialog(false);
             state.borrow_mut().pending_discard = None;
+        });
+    }
+}
+
+// ── Import of the per-user config ────────────────────────────────────
+
+/// Wire the dialog offering to hand the per-user config to the manager
+/// (raised by `run`). Import runs `migration::import_user_config` off the UI thread
+/// too (polkit may ask for a password) and reports in the status line, then
+/// reloads the forms; Not now closes the dialog until the next start.
+fn wire_import(app: &AppWindow) {
+    let s = app.global::<AppState>();
+    {
+        let app_weak = app.as_weak();
+        s.on_import_dismiss(move || {
+            if let Some(app) = app_weak.upgrade() {
+                app.global::<AppState>().set_show_import_dialog(false);
+            }
+        });
+    }
+    {
+        let app_weak = app.as_weak();
+        s.on_import_accept(move || {
+            if let Some(app) = app_weak.upgrade() {
+                app.global::<AppState>().set_show_import_dialog(false);
+            }
+            let app_weak = app_weak.clone();
+            std::thread::spawn(move || {
+                let b = crate::server_control::backend();
+                let done = crate::migration::import_user_config(b, &paths::config_dir());
+                let text = done.lines(b).join(" ");
+                let failed = done.refused.is_some();
+                let wrote = !done.written.is_empty();
+                slint::invoke_from_event_loop(move || {
+                    if let Some(app) = app_weak.upgrade() {
+                        if wrote {
+                            app.global::<AppState>().invoke_reload_all();
+                        }
+                        set_status(&app, text, failed);
+                    }
+                })
+                .ok();
+            });
         });
     }
 }

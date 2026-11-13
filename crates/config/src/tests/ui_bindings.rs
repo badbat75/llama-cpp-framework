@@ -619,4 +619,8 @@ fn editable_widgets_track_model_after_edit() {
 
     // ── The sweep reads the value to restore through the seam ────────────
     crate::bench::sweep::sweep_config_e2e();
+
+    // ── The per-user config handed to the manager (migration.rs, cli.rs) ─
+    crate::migration::config_import_e2e();
+    crate::cli::cli_import_e2e();
 }

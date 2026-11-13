@@ -86,3 +86,8 @@ Lessons only: the rules are in `AGENTS.md`.
   private type is gated `#[cfg(test)]` (dead_code otherwise).
 - A tester's e2e phase placed after `mod tests` trips clippy's `items_after_test_module`: report it
   (the tester moves the phase above `mod tests`); `cli.rs` keeps an allow only for `binding_lint`.
+- `clippy --all-targets` also lints the tester's test code (`redundant_closure` on `|| f()` in an e2e
+  phase): run plain `cargo clippy -p <crate> -- -D warnings` to show the production code is clean, and
+  report the test-code hits to the tester instead of editing them.
+- A GUI start-up hook with a text-check test (`the_gui_offers_the_import_at_start` slices `gui::run`
+  up to its closing `\n}\n`) needs the named call literally inside `run`, not in a helper it calls.

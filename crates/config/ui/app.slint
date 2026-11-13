@@ -808,6 +808,28 @@ export component AppWindow inherits Window {
         }
     }
 
+    if AppState.show_import_dialog: ModalOverlay {
+        title: Strings.t("import-title");
+        description: AppState.import_offer_text;
+        card_height: 220px;
+        dismissed => { AppState.import_dismiss(); }
+
+        Rectangle { vertical-stretch: 1; }
+        HorizontalLayout {
+            spacing: 8px;
+            alignment: end;
+            Button {
+                text: Strings.t("not-now");
+                clicked => { AppState.import_dismiss(); }
+            }
+            Button {
+                text: Strings.t("import");
+                primary: true;
+                clicked => { AppState.import_accept(); }
+            }
+        }
+    }
+
     // Delete preset, and optionally the model files it links (one row each,
     // every tick cleared at open: keeping the files is the default). Rust
     // builds the rows (gui/models_tab.rs over src/linked_files.rs) and owns the

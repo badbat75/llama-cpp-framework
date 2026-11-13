@@ -184,13 +184,17 @@ so the second binary, `private-ai-manager`, shares its modules: a `[[bin]]` alon
    configurator's install lookups (`llama-server`, `share/benchmarks`) follow. macOS keeps
    `/opt/private-ai`.
 6. **Windows packaging.** The MSI registers the manager service (automatic start) and creates
-   `%ProgramData%\llama.cpp\` with the right ACL. SCM has no template services, so the manager creates
+   `%ProgramData%\private-ai\` with the right ACL. SCM has no template services, so the manager creates
    one service per instance (`llama.cpp@<id>`, manual start) when the instance is added and removes it
    with the instance; the uninstall removes them. An upgrade keeps the config. Runs the installer test
    plan of `installer/AGENTS.md`.
-7. **Migration.** The first start of the new configurator offers to copy the user's
-   `server.ini` (as `server@default.ini`) and `presets.ini` into the system directory through the manager; the user's files are left
-   in place.
+7. **Migration** (done on the configurator's side; tried for real with the packages of slice 5).
+   When the backend is the manager, the user has a per-user `server.ini` and some per-user file has no
+   system copy, the GUI offers the import at start (Import / Not now, asked again next start) and
+   `pai-config config import` does it: `server@default.ini`, then `presets.ini`, then
+   `presets.ini.disabled` (the manager checks presets against the instances' `ModelsMax`), exact bytes,
+   never overwriting a system file, stopping at a refusal and resuming on the next run; the user's
+   files are left in place.
 
 Points of design, and what is still open:
 

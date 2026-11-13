@@ -156,3 +156,10 @@ Lessons only: the rules are in `AGENTS.md`.
 - journalctl's access-refusal texts are in systemd's `src/shared/journal-util.c`
   (`access_check_var_log_journal`, `journal_access_check_and_warn`); `strings $(which journalctl)
   /usr/lib/x86_64-linux-gnu/systemd/libsystemd-shared*.so` shows the installed version's wording.
+- `FakeClient::fail_write_of` (name -> error) refuses one manager file and writes the others: the way
+  to pin "a refusal in the middle of several writes stops there". A second fake over the same
+  `files` (`c.files = files.clone()`) continues from what the first one wrote.
+- A function over per-user files that takes the directory as a parameter (`migration::import_*`,
+  `user_dir: &Path`) is tested by plain `#[test]`s on a tempdir, each with its own red, instead of one
+  more e2e phase. Keep in the e2e only what reads `paths::` (a `config_path` under the redirect: the
+  e2e changes `PRIVATE_AI_DATA_ROOT` on another thread, so a unit test comparing system paths races).

@@ -41,6 +41,9 @@ pub enum Command {
     /// Benchmarks that run unattended (the GUI's Benchmark tab, in a loop).
     #[command(subcommand)]
     Bench(BenchCmd),
+    /// The configuration files as a whole.
+    #[command(subcommand)]
+    Config(ConfigCmd),
     /// The HW Monitor's child: each SDK's device ids with their PCI addresses
     /// (src/hwmon/sdk.rs).
     #[command(hide = true)]
@@ -274,6 +277,13 @@ pub struct BenchRun {
     /// spelled from the key, the preset and the values.
     #[arg(long)]
     pub question: Option<String>,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum ConfigCmd {
+    /// Hand your per-user server.ini and presets to the manager service
+    /// (files it already has are kept).
+    Import,
 }
 
 #[derive(Subcommand, Debug)]
@@ -589,6 +599,7 @@ pub fn run(cli: Cli) -> Result<()> {
         Command::Preset(c) => run_preset(c),
         Command::Control(c) => run_control(c),
         Command::Bench(c) => run_bench(c),
+        Command::Config(c) => run_config(c),
         Command::SdkDevices => {
             #[cfg(any(target_os = "linux", windows))]
             crate::hwmon::sdk::print();
@@ -1555,6 +1566,24 @@ fn snapshot_after_start(
         // Nothing on disk: the ordinary first-run state, not worth a line.
         Ok(None) => {}
         Err(e) => eprintln!("{}", strings::fill("snapshot-not-restored", &[&e])),
+    }
+}
+
+fn run_config(c: ConfigCmd) -> Result<()> {
+    match c {
+        ConfigCmd::Import => {
+            let b = crate::server_control::backend();
+            let done = crate::migration::import_user_config(b, &crate::paths::config_dir());
+            let mut lines = done.lines(b);
+            let refusal = done.refused.is_some().then(|| lines.pop()).flatten();
+            for line in lines {
+                println!("{line}");
+            }
+            match refusal {
+                Some(text) => Err(anyhow::anyhow!(text)),
+                None => Ok(()),
+            }
+        }
     }
 }
 
@@ -2552,4 +2581,103 @@ pub(crate) fn cli_config_e2e() {
             nothing_per_user(&label);
         }
     }
+}
+
+/// E2E phase (called from `editable_widgets_track_model_after_edit`):
+/// `config import` hands the per-user files to the manager through the seam,
+/// leaves them in place, fails with the refusal's text (which `main` prints
+/// on stderr before exiting non-zero) after keeping what was written, and
+/// succeeds with nothing to do when there is nothing to import.
+#[cfg(test)]
+pub(crate) fn cli_import_e2e() {
+    use crate::server_control::fake::{self, FakeClient};
+    use clap::Parser;
+    use pai_core::client::{ClientError, InstanceState};
+    let dir = tempfile::tempdir().expect("tempdir");
+    crate::paths::redirect_for_tests(dir.path());
+    let user = crate::paths::config_dir();
+    let import = || run(Cli::try_parse_from(["x", "config", "import"]).expect("parses"));
+    const SERVER: &str = "[Server]\r\nPort = 8080\r\nModelsMax = 6\r\n";
+    const PRESETS: &str = "[Qwen3.8-27B]\r\nmodel = /mnt/data/models/Qwen3.8-27B-Q8_0.gguf\r\n";
+
+    // Nothing per user: nothing to import, success, even with no manager.
+    let log = fake::log();
+    let mut c = FakeClient::new(&log, InstanceState::Inactive);
+    c.fail_read = Some(ClientError::Unavailable);
+    c.fail_write = Some(ClientError::Unavailable);
+    fake::scoped(fake::backend(c), import).expect("nothing to import is a success");
+    assert_eq!(fake::writes(&log), Vec::<String>::new());
+
+    std::fs::create_dir_all(&user).expect("config dir");
+    std::fs::write(user.join("server.ini"), SERVER).expect("server.ini");
+    std::fs::write(user.join("presets.ini"), PRESETS).expect("presets.ini");
+
+    // No manager, with files to import: the client's text, nothing written.
+    let log = fake::log();
+    let mut c = FakeClient::new(&log, InstanceState::Inactive);
+    c.fail_read = Some(ClientError::Unavailable);
+    c.fail_write = Some(ClientError::Unavailable);
+    match fake::scoped(fake::backend(c), import) {
+        Ok(()) => panic!("no manager: succeeded"),
+        Err(err) => assert!(
+            format!("{err:#}").contains(&ClientError::Unavailable.text()),
+            "{err:#}"
+        ),
+    }
+
+    // presets.ini refused: fails with the refusal's text; the server file
+    // written before it stays.
+    let refusal = pai_core::checks::Refusal {
+        key: "load-on-startup-over-max",
+        values: ["7", "6"].map(String::from).to_vec(),
+    };
+    let e = ClientError::Invalid(refusal);
+    let log = fake::log();
+    let mut c = FakeClient::new(&log, InstanceState::Inactive);
+    c.fail_write_of.insert("presets.ini".into(), e.clone());
+    let files = c.files.clone();
+    match fake::scoped(fake::backend(c), import) {
+        Ok(()) => panic!("refused: succeeded"),
+        Err(err) => assert!(format!("{err:#}").contains(&e.text()), "{err:#}"),
+    }
+    assert_eq!(
+        fake::writes(&log),
+        ["write_file server@default.ini", "write_file presets.ini"]
+    );
+    assert_eq!(
+        files
+            .lock()
+            .unwrap()
+            .get("server@default.ini")
+            .map(String::as_str),
+        Some(SERVER)
+    );
+
+    // Again: only what is left, a success.
+    let log = fake::log();
+    let mut c = FakeClient::new(&log, InstanceState::Inactive);
+    c.files = files.clone();
+    fake::scoped(fake::backend(c), import).expect("the rest imported");
+    assert_eq!(fake::writes(&log), ["write_file presets.ini"]);
+    assert_eq!(
+        files.lock().unwrap().get("presets.ini").map(String::as_str),
+        Some(PRESETS)
+    );
+
+    // Once more: nothing to import, a success, nothing written.
+    let log = fake::log();
+    let mut c = FakeClient::new(&log, InstanceState::Inactive);
+    c.files = files.clone();
+    fake::scoped(fake::backend(c), import).expect("nothing left is a success");
+    assert_eq!(fake::writes(&log), Vec::<String>::new());
+
+    // The user's files are where they were, byte for byte.
+    assert_eq!(
+        std::fs::read_to_string(user.join("server.ini")).unwrap(),
+        SERVER
+    );
+    assert_eq!(
+        std::fs::read_to_string(user.join("presets.ini")).unwrap(),
+        PRESETS
+    );
 }

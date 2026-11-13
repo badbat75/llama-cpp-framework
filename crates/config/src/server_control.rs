@@ -436,6 +436,9 @@ pub(crate) mod fake {
         pub(crate) fail_read: Option<ClientError>,
         /// What write_file fails with (the file is then left as it was).
         pub(crate) fail_write: Option<ClientError>,
+        /// What write_file fails with for one file name only, the others
+        /// written: a refusal in the middle of several writes.
+        pub(crate) fail_write_of: std::collections::BTreeMap<String, ClientError>,
     }
 
     impl FakeClient {
@@ -448,6 +451,7 @@ pub(crate) mod fake {
                 files: Files::default(),
                 fail_read: None,
                 fail_write: None,
+                fail_write_of: Default::default(),
             }
         }
 
@@ -513,7 +517,7 @@ pub(crate) mod fake {
         }
         fn write_file(&self, name: &str, contents: &str) -> Result<(), ClientError> {
             self.record("write_file", name);
-            if let Some(e) = &self.fail_write {
+            if let Some(e) = self.fail_write.as_ref().or(self.fail_write_of.get(name)) {
                 return Err(e.clone());
             }
             self.files
