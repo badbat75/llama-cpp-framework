@@ -114,3 +114,6 @@ Lessons only: the rules are in `AGENTS.md`.
 - config's `names_lint` refuses the bare string `private-ai-manager` in code (only
   `private-ai-manager.service` passes) and scans core and manager too: run
   `cargo test -p pai-config -- names_lint binding_lint` after touching manager or core strings.
+- A `strings::key` in a source the CLI reaches (`server_control.rs` is one) puts the key in
+  `binding_lint`'s cli.toml check even when only the GUI shows it: it needs `cli.toml` or an entry in
+  the test's `GUI_ONLY_KEYS`. Settle which with the tester before writing the key there.

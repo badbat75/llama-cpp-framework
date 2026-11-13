@@ -21,8 +21,7 @@ pub type Connect = Box<dyn Fn() -> Result<Client, ClientError> + Send + Sync>;
 
 /// Who runs llama-server.
 pub enum Backend {
-    /// The configurator itself: `runstate`. Built off Linux only (`backend`).
-    #[cfg_attr(target_os = "linux", allow(dead_code))]
+    /// The configurator itself: `runstate`. Built on macOS only (`backend_kind`).
     Direct,
     /// The manager service.
     Manager(ManagerBackend),
@@ -237,8 +236,9 @@ impl Backend {
 /// Where the instance's log is read from.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LogSource {
-    /// The per-user file `Direct` writes (`paths::server_log`), rotated by
-    /// `runstate` (`LogRotate`, `LogRotateKb`).
+    /// A file: the per-user one `Direct` writes (`paths::server_log`), rotated
+    /// by `runstate` (`LogRotate`, `LogRotateKb`), or the Windows service's
+    /// (`paths::instance_log`).
     File(PathBuf),
     /// The journal of the instance's systemd unit, read with `journalctl`;
     /// journald rotates it.
@@ -246,19 +246,18 @@ pub enum LogSource {
 }
 
 impl Backend {
-    /// Where the Log window reads the instance's log: the file on `Direct`,
-    /// the unit's journal on `Manager` (no call to the manager).
+    /// Where the Log window reads the instance's log: `log_source_for` this
+    /// backend's kind on this OS (no call to the manager).
     pub fn log_source(&self) -> LogSource {
-        match self {
-            Backend::Direct => LogSource::File(crate::paths::server_log()),
-            Backend::Manager(_) => LogSource::Journal {
-                unit: instance_unit(),
-            },
-        }
+        let kind = match self {
+            Backend::Direct => Kind::Direct,
+            Backend::Manager(_) => Kind::Manager,
+        };
+        log_source_for(kind, Os::current())
     }
 
-    /// Whether `LogRotate` and `LogRotateKb` apply: only on `Direct`, the
-    /// journal is rotated by journald.
+    /// Whether `LogRotate` and `LogRotateKb` apply: only on `Direct`; under the
+    /// manager journald or the service handles the log.
     pub fn rotates_log_file(&self) -> bool {
         matches!(self, Backend::Direct)
     }
@@ -344,31 +343,105 @@ pub fn read_section(file: ConfigFile, section: &str) -> std::collections::BTreeM
         .unwrap_or_default()
 }
 
-/// The connection the Linux backend makes: the system bus, except in a test
-/// build or under the test redirect (`PRIVATE_AI_DATA_ROOT` set), where it is
-/// `Unavailable` without dialing anything.
-#[cfg(target_os = "linux")]
+/// The connection the manager backend makes: the system bus on Linux, the
+/// named pipe on Windows, except in a test build or under the test redirect
+/// (`PRIVATE_AI_DATA_ROOT` set), where it is `Unavailable` without dialing
+/// anything. macOS has no manager.
 pub(crate) fn system_connect() -> Result<Client, ClientError> {
     if cfg!(test) || std::env::var_os("PRIVATE_AI_DATA_ROOT").is_some() {
         return Err(ClientError::Unavailable);
     }
-    pai_core::client::dbus::DbusClient::connect_system().map(|c| Box::new(c) as Client)
-}
-
-/// A new backend of this OS: the manager on Linux, `Direct` elsewhere.
-pub(crate) fn os_backend() -> Backend {
     #[cfg(target_os = "linux")]
     {
-        Backend::Manager(ManagerBackend::new(Box::new(system_connect)))
+        pai_core::client::dbus::DbusClient::connect_system().map(|c| Box::new(c) as Client)
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(windows)]
     {
-        Backend::Direct
+        pai_core::client::pipe::connect().map(|c| Box::new(c) as Client)
+    }
+    #[cfg(not(any(target_os = "linux", windows)))]
+    {
+        Err(ClientError::Unavailable)
     }
 }
 
-/// The backend of this OS: the manager on Linux, `Direct` elsewhere. In a
-/// test binary, the one `fake::scoped` set on this thread, else
+/// A new backend of this OS: the manager on Linux and Windows, `Direct` on
+/// macOS.
+pub(crate) fn os_backend() -> Backend {
+    os_backend_for(Os::current())
+}
+
+/// The OSes the backend choice tells apart, so the choice of every OS is a
+/// pure function tested on Linux.
+// `MacOs` is the OS's name, not the enum's repeated.
+#[allow(clippy::enum_variant_names)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Os {
+    Linux,
+    Windows,
+    MacOs,
+}
+
+impl Os {
+    /// The OS this crate is built for.
+    pub fn current() -> Os {
+        if cfg!(windows) {
+            Os::Windows
+        } else if cfg!(target_os = "macos") {
+            Os::MacOs
+        } else {
+            Os::Linux
+        }
+    }
+}
+
+/// Which backend runs llama-server, without its connection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Kind {
+    Direct,
+    Manager,
+}
+
+/// The backend kind of `os`.
+pub fn backend_kind(os: Os) -> Kind {
+    match os {
+        Os::Linux | Os::Windows => Kind::Manager,
+        Os::MacOs => Kind::Direct,
+    }
+}
+
+/// A new backend of `os`: the manager over `system_connect`, or `Direct`.
+pub(crate) fn os_backend_for(os: Os) -> Backend {
+    match backend_kind(os) {
+        Kind::Manager => Backend::Manager(ManagerBackend::new(Box::new(system_connect))),
+        Kind::Direct => Backend::Direct,
+    }
+}
+
+/// Where the Log window reads the instance's log under `kind` on `os`.
+pub fn log_source_for(kind: Kind, os: Os) -> LogSource {
+    match (kind, os) {
+        (Kind::Manager, Os::Linux) => LogSource::Journal {
+            unit: instance_unit(),
+        },
+        (Kind::Manager, _) => LogSource::File(
+            crate::paths::instance_log(INSTANCE).expect("INSTANCE is a valid instance id"),
+        ),
+        (Kind::Direct, _) => LogSource::File(crate::paths::server_log()),
+    }
+}
+
+/// The strings key of the Settings tab's note saying why `LogRotate` and
+/// `LogRotateKb` do not apply under the manager on `os`.
+pub fn log_rotate_note_key(os: Os) -> &'static str {
+    match os {
+        Os::Linux => strings::key("log-rotate-journald"),
+        _ => strings::key("log-rotate-service"),
+    }
+}
+
+/// The backend of this OS: the manager on Linux and Windows, `Direct` on
+/// macOS. In a test binary, the one `fake::scoped` set on this thread, else
 /// `fake::default_backend()`.
 pub fn backend() -> &'static Backend {
     #[cfg(test)]
@@ -845,6 +918,81 @@ mod tests {
         assert!(matches!(os_backend(), Backend::Direct));
     }
 
+    // ── The backend of each OS ──────────────────────────────────────────
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn the_current_os_is_linux_here() {
+        assert_eq!(Os::current(), Os::Linux);
+    }
+
+    /// The manager runs llama-server on Linux (D-Bus) and Windows (the named
+    /// pipe); macOS has no manager.
+    #[test]
+    fn the_manager_runs_llama_server_on_linux_and_windows_not_on_macos() {
+        assert_eq!(backend_kind(Os::Linux), Kind::Manager);
+        assert_eq!(backend_kind(Os::Windows), Kind::Manager);
+        assert_eq!(backend_kind(Os::MacOs), Kind::Direct);
+    }
+
+    /// `os_backend_for` builds the kind `backend_kind` names; the Windows
+    /// manager connects through `system_connect`, which a test build never
+    /// dials: the instance reads as not running.
+    #[test]
+    fn the_backend_of_each_os_is_its_kind_and_never_dials_from_a_test() {
+        for os in [Os::Linux, Os::Windows] {
+            let b = os_backend_for(os);
+            assert!(matches!(b, Backend::Manager(_)), "{os:?}");
+            assert!(!b.is_running(), "{os:?}: no manager in a test build");
+            assert_eq!(b.stop(), Err(ClientError::Unavailable.text()), "{os:?}");
+        }
+        assert!(matches!(os_backend_for(Os::MacOs), Backend::Direct));
+    }
+
+    /// Under the manager the log is the unit's journal on Linux and the
+    /// service's file `llama-server@default.log` on Windows, read by the file
+    /// tail; `Direct` reads the per-user file on every OS. (The Windows
+    /// file's directory is pinned in `server_control_e2e`, under the redirect.)
+    #[test]
+    fn the_log_is_the_journal_on_linux_and_the_services_file_on_windows() {
+        assert_eq!(
+            log_source_for(Kind::Manager, Os::Linux),
+            LogSource::Journal {
+                unit: "llama.cpp@default.service".into()
+            }
+        );
+        match log_source_for(Kind::Manager, Os::Windows) {
+            LogSource::File(p) => {
+                assert_eq!(p.file_name().unwrap(), "llama-server@default.log", "{p:?}")
+            }
+            other => panic!("Windows manager reads the service's file, got {other:?}"),
+        }
+        for os in [Os::Linux, Os::Windows, Os::MacOs] {
+            match log_source_for(Kind::Direct, os) {
+                LogSource::File(p) => {
+                    assert_eq!(p.file_name().unwrap(), "llama-server.log", "{os:?}: {p:?}")
+                }
+                other => panic!("{os:?}: Direct reads a file, got {other:?}"),
+            }
+        }
+    }
+
+    /// The Settings note under the manager: journald rotates on Linux; on
+    /// Windows the service keeps one file per run and the previous run's
+    /// (`manager::windows::open_instance_log`), so the note names no journal.
+    #[test]
+    fn the_rotation_note_names_journald_on_linux_only() {
+        assert_eq!(log_rotate_note_key(Os::Linux), "log-rotate-journald");
+        let key = log_rotate_note_key(Os::Windows);
+        assert_ne!(key, "log-rotate-journald");
+        let text = crate::strings::t(key);
+        assert_ne!(text, key, "{key} is in the strings file");
+        assert!(
+            !text.to_lowercase().contains("journal"),
+            "the Windows note names no journal: {text}"
+        );
+    }
+
     // ── The configuration files ─────────────────────────────────────────
 
     #[test]
@@ -1177,6 +1325,26 @@ pub(crate) fn server_control_e2e() {
     use pai_core::client::InstanceState;
     let dir = tempfile::tempdir().expect("tempdir");
     crate::paths::redirect_for_tests(dir.path());
+
+    // The Windows manager: the log is the service's file in the machine-wide
+    // log directory, the config files the machine-wide ones, as on Linux.
+    let log_file = crate::paths::instance_log(INSTANCE).expect("valid id");
+    assert_eq!(
+        log_file.parent(),
+        Some(crate::paths::system_log_dir().as_path())
+    );
+    assert_eq!(
+        log_source_for(Kind::Manager, Os::Windows),
+        LogSource::File(log_file)
+    );
+    let windows = os_backend_for(Os::Windows);
+    for file in ConfigFile::ALL {
+        assert_eq!(
+            windows.config_path(file),
+            crate::paths::system_config_dir().join(file.manager_name()),
+            "{file:?}"
+        );
+    }
 
     // Under the redirect the Linux backend never dials the system bus: a
     // socket of ours stands in for it, and nothing may connect to it. The only

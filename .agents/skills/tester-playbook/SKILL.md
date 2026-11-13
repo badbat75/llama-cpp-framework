@@ -211,3 +211,7 @@ Lessons only: the rules are in `AGENTS.md`.
   in `MANAGER_SERVICE_NAMES` (the unit `.service`, the pipe `\pipe\private-ai-manager`) and the quoted
   string in `WINDOWS_SERVICE_MODULE` (`manager/src/manager/windows.rs`). A test that must name the
   manager's service elsewhere uses the constant, not the literal.
+- pai-config's Windows code is compiled by nobody (Skia builds only with MSVC): pin each per-OS choice
+  as a pure function of `server_control::Os` (`backend_kind`, `os_backend_for`, `log_source_for`,
+  `log_rotate_note_key`) tested on Linux for every variant, with `Os::current()` written with `cfg!`
+  (compiled on every OS) so only the Win32 call itself stays under `#[cfg(windows)]`.

@@ -585,9 +585,10 @@ fn gui_only_source(path: &Path) -> bool {
 /// `integrations::claude_code_env_script` is the Integrations tab's snippet,
 /// `bench::sweep::check_values` is the tab's A/B check, `presets::rename` and the
 /// `ini::rename_section` under it are the rename dialog's, `startup::set_enabled`
-/// is the Settings tab's, and `main` prints `gui-launch-error` on a launch with no
-/// arguments, which reads the language file.
-const GUI_ONLY_KEYS: [&str; 27] = [
+/// is the Settings tab's, `server_control::log_rotate_note_key` names the Settings
+/// tab's note on log rotation, and `main` prints `gui-launch-error` on a launch with
+/// no arguments, which reads the language file.
+const GUI_ONLY_KEYS: [&str; 29] = [
     "claude-snippet-fit-note",
     "claude-snippet-launch",
     "claude-snippet-no-context",
@@ -607,6 +608,8 @@ const GUI_ONLY_KEYS: [&str; 27] = [
     "in-use-kept",
     "kept-in-use",
     "key-value-refused",
+    "log-rotate-journald",
+    "log-rotate-service",
     "login-start-unavailable",
     "new-preset-id-empty",
     "new-preset-id-unchanged",

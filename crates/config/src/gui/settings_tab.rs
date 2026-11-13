@@ -45,6 +45,9 @@ pub(super) fn refresh(app: &AppWindow) {
     s.set_log_rotate(cfg.log_rotate);
     s.set_log_rotate_kb(SharedString::from(cfg.log_rotate_kb.to_string()));
     s.set_log_rotate_applies(crate::server_control::backend().rotates_log_file());
+    s.set_log_rotate_note(SharedString::from(strings::t(
+        crate::server_control::log_rotate_note_key(crate::server_control::Os::current()),
+    )));
 }
 
 /// Persist one settings.ini change read-modify-write (so no toggle's save can

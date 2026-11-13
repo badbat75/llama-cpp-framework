@@ -640,6 +640,8 @@ export global AppState {
     // Whether the pair applies: only when the configurator runs llama-server
     // itself; under the manager journald rotates the log (settings_tab::refresh).
     in property <bool> log_rotate_applies: true;
+    // The note shown when it does not, saying why (settings_tab::refresh).
+    in property <string> log_rotate_note: "";
 
     // ── Status / toast ───────────────────────────────────────────────
     in-out property <string> status_text: "";
