@@ -49,9 +49,9 @@ Without the patch the load fails, so a server that starts with the sidecar is al
 ## `0005-qwen35-mtp-graph-realloc-pr31415`
 
 sha256 `9345730ea1f76a5eaaf433f441d9cfe902a5bbd91b6c1982a0e2bba1c633fe4b`.
-[PR #31415](https://github.com/ggml-org/llama.cpp/pull/31415) (commit `dc704b74`) as GitHub serves
-it, 3-way refreshed for the bundled tag: upstream moved the `graph_mtp` constructor and the
-`inp->h` line around it, the fix itself is the PR's. Fixes our issue
+[PR #31415](https://github.com/ggml-org/llama.cpp/pull/31415) (commit `dc704b74`), 3-way
+refreshed onto the bundled tag (hence its local `From` hash): upstream moved the `graph_mtp`
+constructor and the `inp->h` line around it, the fix itself is the PR's. Fixes our issue
 [#31302](https://github.com/ggml-org/llama.cpp/issues/31302). Applies after `0001`.
 
 **What it does.** `graph_mtp` chose its input with an `if` on `ubatch.token`, so tokens and image

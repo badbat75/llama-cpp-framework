@@ -97,7 +97,7 @@ says. The configurator always goes to `build/<os>/cargo-target`.
 | Compiler | ROCm dist's clang | ROCm dist's clang, else system clang, else GCC | Apple's clang |
 | Linker | `lld-link` | `ld.lld` | Toolchain default |
 | HIP sources | Compiled as CXX | CMake's HIP language | No HIP |
-| HTTPS | OpenSSL from winget, DLLs bundled | Distro OpenSSL | Static LibreSSL |
+| HTTPS | OpenSSL from winget, DLLs bundled | Distro OpenSSL | Static BoringSSL |
 | Config file | `config-build.psd1` | `config-build.toml` | `config-build.toml` |
 | `.cargo/config.toml` | Generated | Not written | Not written |
 | Default dist root | `E:\` | `/mnt/data` | `~/dists` |

@@ -94,19 +94,23 @@ fn backend_of(device_id: &str) -> Option<Backend> {
 }
 
 /// `true` when the backend has ANY FlashAttention kernel for this K-V pair.
+fn cuda_hip_fa_type(t: &str) -> bool {
+    matches!(
+        t,
+        "f32" | "f16" | "bf16" | "f8_e4m3" | "q4_0" | "q4_1" | "q5_0" | "q5_1" | "q8_0"
+    )
+}
+
+/// Vulkan's `fa_kv_ok`: CUDA/HIP's set plus iq4_nl, minus f8_e4m3.
+fn vulkan_fa_type(t: &str) -> bool {
+    (cuda_hip_fa_type(t) && t != "f8_e4m3") || t == "iq4_nl"
+}
+
 fn has_fa_kernel(backend: Backend, k: &str, v: &str) -> bool {
-    let cuda_hip = |t: &str| {
-        matches!(
-            t,
-            "f32" | "f16" | "bf16" | "f8_e4m3" | "q4_0" | "q4_1" | "q5_0" | "q5_1" | "q8_0"
-        )
-    };
     match backend {
-        Backend::CudaHip => cuda_hip(k) && cuda_hip(v),
+        Backend::CudaHip => cuda_hip_fa_type(k) && cuda_hip_fa_type(v),
         Backend::Vulkan => {
-            // fa_kv_ok: CUDA/HIP's set plus iq4_nl, minus f8_e4m3.
-            let vk = |t: &str| (cuda_hip(t) && t != "f8_e4m3") || t == "iq4_nl";
-            vk(k) && vk(v) && ((k == "bf16") == (v == "bf16"))
+            vulkan_fa_type(k) && vulkan_fa_type(v) && ((k == "bf16") == (v == "bf16"))
         }
     }
 }
@@ -179,7 +183,13 @@ fn check(label: &str, backends: &[Backend], k: &str, v: &str, flash_attn: &str) 
         return Some(strings::fill("kv-no-kernel-cuda", &[&label, &k, &v, &fallback(fa_forced)]));
     }
     if backends.contains(&Backend::Vulkan) && !has_fa_kernel(Backend::Vulkan, k, v) {
-        return Some(strings::fill("kv-no-kernel-vulkan", &[&label, &k, &v, &fallback(fa_forced)]));
+        // Either a type with no kernel at all, or a bf16 on one side only.
+        let fb = fallback(fa_forced);
+        return Some(if vulkan_fa_type(k) && vulkan_fa_type(v) {
+            strings::fill("kv-no-kernel-vulkan", &[&label, &k, &v, &fb])
+        } else {
+            strings::fill("kv-no-kernel-vulkan-type", &[&label, &k, &v, &fb])
+        });
     }
     if backends.contains(&Backend::CudaHip) && !has_native_vec_kernel(k, v) {
         return Some(strings::fill("kv-no-decode-kernel", &[&label, &k, &v]));
@@ -266,6 +276,8 @@ mod tests {
         // warns on CUDA/HIP.
         let w = warning(&input("Vulkan1", "f8_e4m3", "f8_e4m3"));
         assert!(w.contains("without flash attention"), "{w}");
+        assert!(w.contains("Vulkan has no flash attention kernel"), "{w}");
+        assert!(!w.contains("bf16"), "{w}");
     }
 
     #[test]

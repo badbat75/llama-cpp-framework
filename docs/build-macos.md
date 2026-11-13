@@ -27,7 +27,7 @@ there. The CPU backend keeps `GGML_CPU_ALL_VARIANTS`, which upstream implements 
 | `GGML_METAL_EMBED_LIBRARY=ON` | No `default.metallib` to find at run time |
 | `CMAKE_OSX_ARCHITECTURES=arm64` | Apple Silicon only |
 | `CMAKE_OSX_DEPLOYMENT_TARGET=13.3` | The oldest macOS the binaries run on, upstream's value |
-| `LLAMA_BUILD_LIBRESSL=ON` | HTTPS through a static LibreSSL fetched at configure time: no OpenSSL dylib, no Homebrew path (llama.cpp dropped the BoringSSL fetch) |
+| `LLAMA_BUILD_BORINGSSL=ON` | HTTPS through a static BoringSSL fetched at configure time: no OpenSSL dylib, no Homebrew path |
 
 **Prerequisites.** `scripts/00-install-prerequisites.sh` does these in order:
 

@@ -14,7 +14,7 @@ use std::path::Path;
 use std::path::PathBuf;
 
 /// Builds llama-cpp-config in release mode and returns cargo's target dir.
-/// `llama_cpp_dir` is the clone the icon and the architecture tables come from; `build_jobs` caps
+/// `llama_cpp_dir` is the clone the architecture tables come from; `build_jobs` caps
 /// cargo (0 = cargo's default, all cores).
 pub fn build(llama_cpp_dir: &str, build_jobs: u32) -> Result<PathBuf> {
     let repo = util::repo_root();
@@ -44,7 +44,7 @@ pub fn build(llama_cpp_dir: &str, build_jobs: u32) -> Result<PathBuf> {
     // hence the PATH lookup.
     let ico = repo.join("resources").join("llama.ico");
     if !ico.is_file() {
-        ui::head("Generating resources/llama.ico from the llama.cpp webui logo...");
+        ui::head("Generating resources/llama.ico from the llama-brand icon...");
         let resources = repo.join("resources");
         let npm = util::which("npm").context("npm not found: node + npm generate resources/llama.ico")?;
         run_cmd(
