@@ -173,11 +173,17 @@ pub fn addresses_collide(a: &Binding, b: &Binding) -> bool {
     a.port == b.port && (wildcard(a) || wildcard(b) || a.ips.iter().any(|ip| b.ips.contains(ip)))
 }
 
-/// The manager: the operations the D-Bus service / named pipe expose.
+/// The manager: the operations the D-Bus service / named pipe expose. It is
+/// shared by every caller at once: only writes run one at a time.
 pub struct Manager<S: ServiceControl, A: Authority, R: Resolver> {
     service: S,
     authority: A,
     resolver: R,
+    /// Held by a write from its address check to its rename, so a check
+    /// sees every write before it (and `ini::atomic_write`'s one temp
+    /// name per file is never shared). Taken only after the authorization:
+    /// a caller polkit is still asking about holds up nobody.
+    writing: std::sync::Mutex<()>,
 }
 
 impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
@@ -186,6 +192,7 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
             service,
             authority,
             resolver,
+            writing: std::sync::Mutex::new(()),
         }
     }
 
@@ -251,6 +258,8 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
     ) -> Result<(), ManagerError> {
         self.authorize(caller, Action::Configure)?;
         let file = config_file(name).ok_or(ManagerError::BadFileName)?;
+        // A poisoned lock is taken over: it guards no data of its own.
+        let _writing = self.writing.lock().unwrap_or_else(|e| e.into_inner());
         if let ConfigFile::Instance(id) = &file {
             self.check_address(id, contents)?;
         }
@@ -330,7 +339,7 @@ fn file_path(name: &str) -> Result<std::path::PathBuf, ManagerError> {
 #[cfg(test)]
 pub(crate) mod fakes {
     use super::*;
-    use std::cell::RefCell;
+    use std::sync::Mutex;
 
     /// One recorded call to the service manager.
     #[derive(Debug, Clone, PartialEq, Eq)]
@@ -344,7 +353,7 @@ pub(crate) mod fakes {
     /// A service manager that records calls, reports `state` and fails every
     /// call for the ids in `failing`.
     pub struct FakeService {
-        pub calls: RefCell<Vec<Call>>,
+        pub calls: Mutex<Vec<Call>>,
         pub state: UnitState,
         pub failing: Vec<String>,
     }
@@ -352,14 +361,14 @@ pub(crate) mod fakes {
     impl FakeService {
         pub fn new() -> Self {
             Self {
-                calls: RefCell::new(Vec::new()),
+                calls: Mutex::new(Vec::new()),
                 state: UnitState::Active,
                 failing: Vec::new(),
             }
         }
 
         fn record(&self, call: Call, id: &str) -> Result<(), ServiceError> {
-            self.calls.borrow_mut().push(call);
+            self.calls.lock().unwrap().push(call);
             if self.failing.iter().any(|f| f == id) {
                 return Err(ServiceError(format!("llama.cpp@{id}.service failed")));
             }
@@ -386,7 +395,7 @@ pub(crate) mod fakes {
     /// A resolver over a fixed table; any other name does not resolve.
     pub struct FakeResolver {
         pub table: Vec<(&'static str, Vec<IpAddr>)>,
-        pub asked: RefCell<Vec<String>>,
+        pub asked: Mutex<Vec<String>>,
     }
 
     impl FakeResolver {
@@ -401,7 +410,7 @@ pub(crate) mod fakes {
                         )
                     })
                     .collect(),
-                asked: RefCell::new(Vec::new()),
+                asked: Mutex::new(Vec::new()),
             }
         }
 
@@ -419,7 +428,7 @@ pub(crate) mod fakes {
 
     impl Resolver for FakeResolver {
         fn resolve(&self, host: &str) -> Result<Vec<IpAddr>, ResolveError> {
-            self.asked.borrow_mut().push(host.to_string());
+            self.asked.lock().unwrap().push(host.to_string());
             self.table
                 .iter()
                 .find(|(name, _)| *name == host)
@@ -431,24 +440,153 @@ pub(crate) mod fakes {
     /// An authority that answers `allow` and records every question.
     pub struct FakeAuthority {
         pub allow: bool,
-        pub asked: RefCell<Vec<(Caller, Action)>>,
+        pub asked: Mutex<Vec<(Caller, Action)>>,
     }
 
     impl FakeAuthority {
         pub fn new(allow: bool) -> Self {
             Self {
                 allow,
-                asked: RefCell::new(Vec::new()),
+                asked: Mutex::new(Vec::new()),
             }
         }
     }
 
     impl Authority for FakeAuthority {
         fn is_authorized(&self, caller: &Caller, action: Action) -> bool {
-            self.asked.borrow_mut().push((caller.clone(), action));
+            self.asked.lock().unwrap().push((caller.clone(), action));
             self.allow
         }
     }
+
+    /// The longest a gate holds a call, and the longest a test waits for one:
+    /// a test that never opens its gate fails instead of hanging.
+    pub const GATE_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
+
+    /// A gate a fake seam holds its calls at until the test opens it, as
+    /// polkit holds `CheckAuthorization` while a password prompt is up.
+    pub struct Gate {
+        /// How many calls arrived, and whether the gate is open.
+        state: Mutex<(usize, bool)>,
+        changed: std::sync::Condvar,
+    }
+
+    impl Gate {
+        pub fn new() -> std::sync::Arc<Self> {
+            std::sync::Arc::new(Self {
+                state: Mutex::new((0, false)),
+                changed: std::sync::Condvar::new(),
+            })
+        }
+
+        /// For the fake: count this call and wait for the gate, at most
+        /// [`GATE_WAIT`]. Whether it was opened.
+        pub fn pass(&self) -> bool {
+            let mut state = self.state.lock().unwrap();
+            state.0 += 1;
+            self.changed.notify_all();
+            let (state, _) = self
+                .changed
+                .wait_timeout_while(state, GATE_WAIT, |s| !s.1)
+                .unwrap();
+            state.1
+        }
+
+        /// For the test: whether `n` calls reached the gate within [`GATE_WAIT`].
+        pub fn arrived(&self, n: usize) -> bool {
+            let state = self.state.lock().unwrap();
+            let (state, _) = self
+                .changed
+                .wait_timeout_while(state, GATE_WAIT, |s| s.0 < n)
+                .unwrap();
+            state.0 >= n
+        }
+
+        /// Let every held call, and every later one, through.
+        pub fn open(&self) {
+            self.state.lock().unwrap().1 = true;
+            self.changed.notify_all();
+        }
+    }
+
+    /// An authority that holds the questions about `gated` at `gate`, as
+    /// polkit does while that user types a password, then answers from
+    /// `answers` (a caller not listed is refused). Records every question.
+    pub struct GateAuthority {
+        pub gated: Caller,
+        pub gate: std::sync::Arc<Gate>,
+        pub answers: Vec<(Caller, bool)>,
+        pub asked: Mutex<Vec<(Caller, Action)>>,
+    }
+
+    impl GateAuthority {
+        pub fn new(
+            gated: &Caller,
+            gate: &std::sync::Arc<Gate>,
+            answers: &[(&Caller, bool)],
+        ) -> Self {
+            Self {
+                gated: gated.clone(),
+                gate: gate.clone(),
+                answers: answers.iter().map(|(c, a)| ((*c).clone(), *a)).collect(),
+                asked: Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    impl Authority for GateAuthority {
+        fn is_authorized(&self, caller: &Caller, action: Action) -> bool {
+            self.asked.lock().unwrap().push((caller.clone(), action));
+            if *caller == self.gated && !self.gate.pass() {
+                return false;
+            }
+            self.answers.iter().any(|(c, allow)| c == caller && *allow)
+        }
+    }
+
+    /// A [`FakeResolver`] that holds the first lookup of `host` at `gate`
+    /// (a slow DNS answer); later lookups answer at once.
+    pub struct GateResolver {
+        pub inner: FakeResolver,
+        pub host: &'static str,
+        pub gate: std::sync::Arc<Gate>,
+        held: std::sync::atomic::AtomicBool,
+    }
+
+    impl GateResolver {
+        pub fn new(inner: FakeResolver, host: &'static str, gate: &std::sync::Arc<Gate>) -> Self {
+            Self {
+                inner,
+                host,
+                gate: gate.clone(),
+                held: std::sync::atomic::AtomicBool::new(false),
+            }
+        }
+    }
+
+    impl Resolver for GateResolver {
+        fn resolve(&self, host: &str) -> Result<Vec<IpAddr>, ResolveError> {
+            use std::sync::atomic::Ordering;
+            if host == self.host && !self.held.swap(true, Ordering::SeqCst) {
+                self.gate.pass();
+            }
+            self.inner.resolve(host)
+        }
+    }
+}
+
+/// Run `f` on a thread of its own; its result arrives on the receiver, read
+/// with `recv_timeout` so a call that never returns fails the test instead
+/// of hanging it.
+#[cfg(test)]
+pub(crate) fn on_thread<T: Send + 'static>(
+    f: impl FnOnce() -> T + Send + 'static,
+) -> std::sync::mpsc::Receiver<T> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(f());
+    });
+    rx
 }
 
 /// E2E phase for the manager core, for this crate's e2e test to call: it sets
@@ -517,7 +655,7 @@ pub(crate) fn manager_e2e() {
             "a refused write must not create the directory"
         );
         assert_eq!(
-            *m.authority().asked.borrow(),
+            *m.authority().asked.lock().unwrap(),
             vec![
                 (alice.clone(), Action::Configure),
                 (alice.clone(), Action::Configure)
@@ -564,7 +702,7 @@ pub(crate) fn manager_e2e() {
             "missing file reads as None"
         );
         assert!(
-            m.service().calls.borrow().is_empty(),
+            m.service().calls.lock().unwrap().is_empty(),
             "no service call for a refused id"
         );
         assert!(!sys.exists(), "asking must not create the directory");
@@ -573,7 +711,7 @@ pub(crate) fn manager_e2e() {
         assert_eq!(m.status("default"), Ok(UnitState::Active));
         assert_eq!(m.stop(&alice, "default"), Ok(()));
         assert_eq!(
-            *m.service().calls.borrow(),
+            *m.service().calls.lock().unwrap(),
             vec![Call::Status("default".into()), Call::Stop("default".into())],
             "status and stop of a valid id with no file reach the service"
         );
@@ -622,13 +760,14 @@ pub(crate) fn manager_e2e() {
         );
         assert_eq!(m.read_file("presets.ini"), Ok(Some(presets.into())));
         assert!(
-            m.service().calls.borrow().is_empty(),
+            m.service().calls.lock().unwrap().is_empty(),
             "a write calls no service"
         );
         assert!(
             m.authority()
                 .asked
-                .borrow()
+                .lock()
+                .unwrap()
                 .iter()
                 .all(|(c, a)| c == &alice && *a == Action::Configure),
             "writes ask for configure"
@@ -666,11 +805,11 @@ pub(crate) fn manager_e2e() {
         assert_eq!(m.read_file("presets.ini"), Ok(Some(presets.into())));
         assert_eq!(m.status("default"), Ok(UnitState::Active));
         assert!(
-            m.authority().asked.borrow().is_empty(),
+            m.authority().asked.lock().unwrap().is_empty(),
             "no question for reads"
         );
         assert_eq!(
-            *m.service().calls.borrow(),
+            *m.service().calls.lock().unwrap(),
             vec![Call::Status("default".into())]
         );
     }
@@ -689,18 +828,18 @@ pub(crate) fn manager_e2e() {
             Err(ManagerError::NotAuthorized)
         );
         assert!(
-            m.service().calls.borrow().is_empty(),
+            m.service().calls.lock().unwrap().is_empty(),
             "no service call when refused"
         );
         assert_eq!(
-            *m.authority().asked.borrow(),
+            *m.authority().asked.lock().unwrap(),
             vec![(alice.clone(), Action::Control); 3],
             "start, stop and restart ask for the control action"
         );
         // A refused caller learns nothing about which ids exist.
         assert_eq!(m.start(&alice, "nope"), Err(ManagerError::NotAuthorized));
         assert_eq!(m.start(&alice, "../x"), Err(ManagerError::NotAuthorized));
-        assert!(m.service().calls.borrow().is_empty());
+        assert!(m.service().calls.lock().unwrap().is_empty());
         // Nor can it change a file.
         assert_eq!(
             m.write_file(&alice, "server@default.ini", "[Server]\nPort = 1\n"),
@@ -727,7 +866,7 @@ pub(crate) fn manager_e2e() {
         assert_eq!(m.restart(&alice, "default"), Ok(()));
         assert_eq!(m.status("default"), Ok(UnitState::Failed));
         assert_eq!(
-            *m.service().calls.borrow(),
+            *m.service().calls.lock().unwrap(),
             vec![
                 Call::Start("default".into()),
                 Call::Stop("default".into()),
@@ -739,7 +878,7 @@ pub(crate) fn manager_e2e() {
         assert_eq!(m.start(&alice, "lan-2"), Err(ManagerError::NoInstance));
         assert_eq!(m.restart(&alice, "lan-2"), Err(ManagerError::NoInstance));
         assert_eq!(
-            m.service().calls.borrow().len(),
+            m.service().calls.lock().unwrap().len(),
             4,
             "no start or restart for an id with no file"
         );
@@ -747,7 +886,7 @@ pub(crate) fn manager_e2e() {
         assert_eq!(m.stop(&alice, "lan-2"), Ok(()));
         assert_eq!(m.status("lan-2"), Ok(UnitState::Failed));
         assert_eq!(
-            m.service().calls.borrow()[4..],
+            m.service().calls.lock().unwrap()[4..],
             [Call::Stop("lan-2".into()), Call::Status("lan-2".into())]
         );
     }
@@ -927,7 +1066,7 @@ pub(crate) fn manager_e2e() {
         assert_eq!(m.write_file(&alice, "presets.ini", presets), Ok(()));
         assert_eq!(m.list_instances(), ["bare", "default", "lan-2", "wild"]);
         assert!(
-            m.service().calls.borrow().is_empty(),
+            m.service().calls.lock().unwrap().is_empty(),
             "a write calls no service"
         );
     }
@@ -973,7 +1112,7 @@ pub(crate) fn manager_e2e() {
         assert_eq!(failures[0].0, "default");
         assert!(matches!(failures[0].1, ManagerError::Service(_)));
         assert_eq!(
-            *m.service().calls.borrow(),
+            *m.service().calls.lock().unwrap(),
             vec![
                 Call::Start("bare".into()),
                 Call::Start("default".into()),
@@ -983,9 +1122,265 @@ pub(crate) fn manager_e2e() {
             "every instance, in list order, past the failing one"
         );
         assert!(
-            m.authority().asked.borrow().is_empty(),
+            m.authority().asked.lock().unwrap().is_empty(),
             "boot asks no authorization"
         );
+    }
+}
+
+/// E2E phase for the manager core while polkit waits for a user to
+/// authenticate, for this crate's e2e test to call (it sets the process-wide
+/// `PRIVATE_AI_DATA_ROOT` redirect, `src/tests/mod.rs`). A caller whose
+/// authorization is pending holds up no other caller, reads or changes, and
+/// gets its own answer once polkit gives it; writes still run one at a time,
+/// so the address check of one sees the file another has just written.
+#[cfg(test)]
+pub(crate) fn manager_waits_e2e() {
+    use fakes::{
+        Call, FakeAuthority, FakeResolver, FakeService, Gate, GateAuthority, GateResolver,
+        GATE_WAIT,
+    };
+    use std::sync::mpsc::Receiver;
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    /// The result on `rx`, which must come while another caller's question
+    /// is still open at `gate`. On a timeout the gate is opened first, so
+    /// the threads still waiting at it finish, then the test fails.
+    fn answer<T>(gate: &Gate, what: &str, rx: Receiver<T>) -> T {
+        let deadline = Duration::from_secs(2);
+        rx.recv_timeout(deadline).unwrap_or_else(|_| {
+            gate.open();
+            panic!(
+                "{what}: no answer within {deadline:?} while another caller's \
+                 authorization was pending"
+            )
+        })
+    }
+
+    let alice = Caller(":1.42".into());
+    let bob = Caller(":1.43".into());
+    let carol = Caller(":1.44".into());
+    let default_ini = "[Server]\nPort = 8080\nHostname = 127.0.0.1\n";
+    let presets = "[Qwen3.8-27B]\nmodel = /models/Qwen3.8-27B-Q8_0.gguf\n";
+
+    // ── A pending authorization holds up no other caller ─────────────────
+    {
+        let dir = tempfile::tempdir().expect("tempdir");
+        crate::paths::redirect_for_tests(dir.path());
+        let sys = crate::paths::system_config_dir();
+        std::fs::create_dir_all(&sys).expect("system config dir");
+        std::fs::write(sys.join("server@default.ini"), default_ini).expect("write default");
+        std::fs::write(sys.join("presets.ini"), presets).expect("write presets");
+
+        let gate = Gate::new();
+        let m = Arc::new(Manager::new(
+            FakeService::new(),
+            GateAuthority::new(&alice, &gate, &[(&alice, true), (&bob, true)]),
+            FakeResolver::lan(),
+        ));
+        let pending = {
+            let (m, alice) = (m.clone(), alice.clone());
+            on_thread(move || m.start(&alice, "default"))
+        };
+        assert!(gate.arrived(1), "alice's start reached polkit");
+
+        let status = {
+            let m = m.clone();
+            on_thread(move || m.status("default"))
+        };
+        assert_eq!(
+            answer(&gate, "status", status),
+            Ok(UnitState::Active),
+            "status of the instance alice is starting"
+        );
+        let list = {
+            let m = m.clone();
+            on_thread(move || m.list_instances())
+        };
+        assert_eq!(answer(&gate, "list_instances", list), vec!["default"]);
+        let read = {
+            let m = m.clone();
+            on_thread(move || m.read_file("presets.ini"))
+        };
+        assert_eq!(
+            answer(&gate, "read_file", read),
+            Ok(Some(presets.to_string()))
+        );
+        let stop = {
+            let (m, bob) = (m.clone(), bob.clone());
+            on_thread(move || m.stop(&bob, "default"))
+        };
+        assert_eq!(
+            answer(&gate, "bob's stop", stop),
+            Ok(()),
+            "another caller's authorization is asked and answered"
+        );
+        let refused = {
+            let (m, carol) = (m.clone(), carol.clone());
+            on_thread(move || m.write_file(&carol, "presets.ini", "[x]\nmodel = /m/x.gguf\n"))
+        };
+        assert_eq!(
+            answer(&gate, "carol's write", refused),
+            Err(ManagerError::NotAuthorized),
+            "a caller polkit refuses is refused at once"
+        );
+        let disabled = "[Qwen3.8-Flash-Next]\nmodel = /models/Qwen3.8-Flash-Next-IQ3_S.gguf\n";
+        let write = {
+            let (m, bob) = (m.clone(), bob.clone());
+            on_thread(move || m.write_file(&bob, "presets.ini.disabled", disabled))
+        };
+        assert_eq!(answer(&gate, "bob's write", write), Ok(()));
+
+        assert!(
+            pending.try_recv().is_err(),
+            "alice's start is still waiting for polkit"
+        );
+        gate.open();
+        let started = pending
+            .recv_timeout(GATE_WAIT)
+            .expect("alice's start returns once polkit answers");
+        assert_eq!(started, Ok(()), "alice's own answer, after the others");
+        assert_eq!(
+            *m.service().calls.lock().unwrap(),
+            vec![
+                Call::Status("default".into()),
+                Call::Stop("default".into()),
+                Call::Start("default".into())
+            ],
+            "alice's start reaches systemd only after polkit answered"
+        );
+        assert_eq!(
+            *m.authority().asked.lock().unwrap(),
+            vec![
+                (alice.clone(), Action::Control),
+                (bob.clone(), Action::Control),
+                (carol.clone(), Action::Configure),
+                (bob.clone(), Action::Configure)
+            ]
+        );
+        assert_eq!(
+            std::fs::read_to_string(sys.join("presets.ini")).unwrap(),
+            presets,
+            "the refused write left presets.ini"
+        );
+        assert_eq!(
+            std::fs::read_to_string(sys.join("presets.ini.disabled")).unwrap(),
+            disabled
+        );
+    }
+
+    // ── A pending caller refused in the end changes nothing ──────────────
+    {
+        let dir = tempfile::tempdir().expect("tempdir");
+        crate::paths::redirect_for_tests(dir.path());
+        let sys = crate::paths::system_config_dir();
+        std::fs::create_dir_all(&sys).expect("system config dir");
+        std::fs::write(sys.join("server@default.ini"), default_ini).expect("write default");
+
+        let gate = Gate::new();
+        let m = Arc::new(Manager::new(
+            FakeService::new(),
+            GateAuthority::new(&alice, &gate, &[(&alice, false), (&bob, true)]),
+            FakeResolver::lan(),
+        ));
+        let pending = {
+            let (m, alice) = (m.clone(), alice.clone());
+            on_thread(move || m.write_file(&alice, "server@default.ini", "[Server]\nPort = 9\n"))
+        };
+        assert!(gate.arrived(1), "alice's write reached polkit");
+        let start = {
+            let (m, bob) = (m.clone(), bob.clone());
+            on_thread(move || m.start(&bob, "default"))
+        };
+        assert_eq!(answer(&gate, "bob's start", start), Ok(()));
+        gate.open();
+        let refused = pending
+            .recv_timeout(GATE_WAIT)
+            .expect("alice's write returns once polkit answers");
+        assert_eq!(refused, Err(ManagerError::NotAuthorized));
+        assert_eq!(
+            std::fs::read_to_string(sys.join("server@default.ini")).unwrap(),
+            default_ini,
+            "the refused write left the file"
+        );
+        assert_eq!(
+            *m.service().calls.lock().unwrap(),
+            vec![Call::Start("default".into())],
+            "only bob's start reached systemd"
+        );
+    }
+
+    // ── Writes run one at a time: a check sees the write before it ───────
+    // The first write's address check is held at a slow host lookup (another
+    // instance's name). The second, of a colliding address, must not slip in
+    // between that check and the first write: one of them is written, the
+    // other refused naming it, whichever went first.
+    {
+        let dir = tempfile::tempdir().expect("tempdir");
+        crate::paths::redirect_for_tests(dir.path());
+        let sys = crate::paths::system_config_dir();
+        std::fs::create_dir_all(&sys).expect("system config dir");
+        std::fs::write(
+            sys.join("server@slow.ini"),
+            "[Server]\nPort = 9000\nHostname = slow-box\n",
+        )
+        .expect("write slow");
+
+        let gate = Gate::new();
+        let resolver = GateResolver::new(
+            FakeResolver::new(&[("gpu-box", &["192.168.1.5"]), ("slow-box", &["10.0.0.7"])]),
+            "slow-box",
+            &gate,
+        );
+        let m = Arc::new(Manager::new(
+            FakeService::new(),
+            FakeAuthority::new(true),
+            resolver,
+        ));
+        let lan_a = "[Server]\nPort = 8081\nHostname = 192.168.1.5\n";
+        let lan_b = "[Server]\nPort = 8081\nHostname = gpu-box\n";
+        let first = {
+            let (m, alice) = (m.clone(), alice.clone());
+            on_thread(move || m.write_file(&alice, "server@lan-a.ini", lan_a))
+        };
+        assert!(
+            gate.arrived(1),
+            "the first write's address check reached the slow lookup"
+        );
+        let second = {
+            let (m, bob) = (m.clone(), bob.clone());
+            on_thread(move || m.write_file(&bob, "server@lan-b.ini", lan_b))
+        };
+        // Time for the second to run past the first, if it can.
+        let early = second.recv_timeout(Duration::from_millis(500)).ok();
+        gate.open();
+        let first = first
+            .recv_timeout(GATE_WAIT)
+            .expect("the first write returns");
+        let second = early
+            .or_else(|| second.recv_timeout(GATE_WAIT).ok())
+            .expect("the second write returns");
+        let a = sys.join("server@lan-a.ini").is_file();
+        let b = sys.join("server@lan-b.ini").is_file();
+        match (&first, &second) {
+            (Ok(()), Err(ManagerError::AddressInUse(other))) => {
+                assert_eq!(other, "lan-a", "the second names the first");
+                assert!(a && !b, "only lan-a written: {a} {b}");
+                assert_eq!(
+                    std::fs::read_to_string(sys.join("server@lan-a.ini")).unwrap(),
+                    lan_a
+                );
+            }
+            (Err(ManagerError::AddressInUse(other)), Ok(())) => {
+                assert_eq!(other, "lan-b", "the first names the second");
+                assert!(b && !a, "only lan-b written: {a} {b}");
+            }
+            _ => panic!(
+                "two colliding writes ran at once, the second not seeing the first: \
+                 first {first:?}, second {second:?}; lan-a written {a}, lan-b written {b}"
+            ),
+        }
     }
 }
 
@@ -1096,7 +1491,10 @@ mod tests {
             binding(&cfg(Some(8081), Some("127.0.0.1, ::1, 0.0.0.0, ::")), &r),
             Ok(bind(8081, &["127.0.0.1", "::1", "0.0.0.0", "::"]))
         );
-        assert!(r.asked.borrow().is_empty(), "a literal IP is not resolved");
+        assert!(
+            r.asked.lock().unwrap().is_empty(),
+            "a literal IP is not resolved"
+        );
     }
 
     #[test]

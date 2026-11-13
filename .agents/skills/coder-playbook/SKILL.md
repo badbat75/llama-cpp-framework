@@ -30,7 +30,9 @@ Lessons only: the rules are in `AGENTS.md`.
 - zbus (5.x, `async-io`) ticks every connection's tasks, method handlers included, on that
   connection's own executor thread. A blocking call made from a handler on the same connection
   waits for a reply that thread can never read: give outgoing calls (systemd, polkit) a connection
-  of their own (`manager/dbus.rs`).
+  of their own (`manager/dbus.rs`). A sync `fn` handler also blocks every other call on that connection
+  while it runs (polkit waiting for a password): the methods are `async fn` that run the core call
+  through `blocking::unblock`, the core shared as `Arc<Manager>` with no outer mutex.
 - In `manager.rs` only `main` and `run` are CLI-only for `binding_lint`: a new helper fn that prints
   a `cli.toml` key needs the key in `en_US.toml` too, so keep such printing inside `run`.
 - Each crate's tests that redirect the data tree (`paths::redirect_for_tests`, which sets

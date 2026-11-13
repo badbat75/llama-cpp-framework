@@ -37,7 +37,8 @@ Lessons only: the rules are in `AGENTS.md`.
 - To make a write fail without a fake filesystem, chmod the directory `0o555` (Unix), probe that a write
   really fails (root ignores the mode) and put the mode back before asserting. Then check the old content
   and that the directory listing is unchanged, which also proves no temp file was left.
-- A seam the code calls through `&self` (a service manager, polkit) gets a fake with `RefCell` logs read
+- A seam the code calls through `&self` (a service manager, polkit) gets a fake with `Mutex` logs (not
+  `RefCell`: the manager is shared across threads, so its seams must be `Sync`) read
   back through an accessor on the struct under test; assert the recorded calls are empty to pin "nothing
   happened" on a refusal, as well as the returned error kind.
 - Comments never cite PLAN.md step or slice numbers: steps are renumbered and removed when done. Name
@@ -91,3 +92,17 @@ Lessons only: the rules are in `AGENTS.md`.
   keeps each statement's text from `CREATE` on in `sqlite_master`, so a comment line between statements
   changes nothing recorded (check with `sqlite3 -readonly benchmarks/bench.db "select sql from
   sqlite_master"`); a comment inside a `CREATE` would.
+- To pin "a slow seam holds up nobody else" (polkit waiting for a password), use `fakes::Gate` in
+  `crates/manager/src/manager/service.rs` (`GateAuthority`, `GateResolver`): the test waits with
+  `gate.arrived(n)`, runs the other calls through `on_thread(..)` + `recv_timeout`, opens the gate
+  before panicking on a timeout, and checks `try_recv()` is still empty to prove the held call never
+  finished early. A race is pinned deterministically by holding one call at a seam *inside* the
+  critical section (the address check's lookup of another instance's host) and accepting either
+  serialization as green.
+- zbus 5 (async-io backend, the one this workspace builds) runs every task of a connection, the
+  method dispatchers included, on one `zbus::Connection executor` thread
+  (`zbus-5.19.0/src/connection/builder.rs` `start_internal_executor`); `spawn` is on by default
+  (`object_server/mod.rs` `dispatch_message`), but a sync `fn` method runs inline in its task and
+  blocks that thread for every other call on the connection.
+- To skip one e2e phase for a red check, remove the `#[cfg(..)]` line with the call (a lone attribute
+  does not compile), on a backup of the file restored after.

@@ -8,7 +8,7 @@ use super::service::{
     Action, Authority, Caller, Manager, ManagerError, Resolver, ServiceControl, ServiceError,
     SystemResolver, UnitState,
 };
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use zbus::blocking::{Connection, Proxy};
 use zbus::zvariant::OwnedObjectPath;
 
@@ -80,20 +80,33 @@ impl From<ManagerError> for Error {
     }
 }
 
-/// The served object: the core, shared with whoever else holds it.
+/// The served object: the core, shared with whoever else holds it. zbus
+/// runs every method of a connection on that connection's one executor
+/// thread, so each method runs its core call on a thread of the `blocking`
+/// pool: a caller polkit is still asking about holds up no other call.
 pub struct ManagerInterface<S: ServiceControl, A: Authority, R: Resolver> {
-    manager: Arc<Mutex<Manager<S, A, R>>>,
+    manager: Arc<Manager<S, A, R>>,
 }
 
 impl<S: ServiceControl, A: Authority, R: Resolver> ManagerInterface<S, A, R> {
-    pub fn new(manager: Arc<Mutex<Manager<S, A, R>>>) -> Self {
+    pub fn new(manager: Arc<Manager<S, A, R>>) -> Self {
         Self { manager }
     }
+}
 
-    /// The core, locked; a poisoned lock is taken over, since the core keeps
-    /// no state a panic could leave half done.
-    fn core(&self) -> std::sync::MutexGuard<'_, Manager<S, A, R>> {
-        self.manager.lock().unwrap_or_else(|e| e.into_inner())
+impl<S, A, R> ManagerInterface<S, A, R>
+where
+    S: ServiceControl + Send + Sync + 'static,
+    A: Authority + Send + Sync + 'static,
+    R: Resolver + Send + Sync + 'static,
+{
+    /// `f` over the core, off the connection's executor thread.
+    async fn core<T: Send + 'static>(
+        &self,
+        f: impl FnOnce(&Manager<S, A, R>) -> T + Send + 'static,
+    ) -> T {
+        let manager = self.manager.clone();
+        blocking::unblock(move || f(&manager)).await
     }
 }
 
@@ -105,60 +118,63 @@ fn sender_of(header: &zbus::message::Header<'_>) -> Result<Caller, ManagerError>
 #[zbus::interface(name = "org.privateai.Manager1")]
 impl<S, A, R> ManagerInterface<S, A, R>
 where
-    S: ServiceControl + Send + 'static,
-    A: Authority + Send + 'static,
-    R: Resolver + Send + 'static,
+    S: ServiceControl + Send + Sync + 'static,
+    A: Authority + Send + Sync + 'static,
+    R: Resolver + Send + Sync + 'static,
 {
-    fn list_instances(&self) -> Vec<String> {
-        self.core().list_instances()
+    async fn list_instances(&self) -> Vec<String> {
+        self.core(|m| m.list_instances()).await
     }
 
-    fn status(&self, id: &str) -> Result<String, Error> {
-        Ok(state_name(self.core().status(id)?).to_string())
+    async fn status(&self, id: String) -> Result<String, Error> {
+        let state = self.core(move |m| m.status(&id)).await?;
+        Ok(state_name(state).to_string())
     }
 
-    fn start(
+    async fn start(
         &self,
         #[zbus(header)] header: zbus::message::Header<'_>,
-        id: &str,
+        id: String,
     ) -> Result<(), Error> {
         let caller = sender_of(&header)?;
-        Ok(self.core().start(&caller, id)?)
+        Ok(self.core(move |m| m.start(&caller, &id)).await?)
     }
 
-    fn stop(
+    async fn stop(
         &self,
         #[zbus(header)] header: zbus::message::Header<'_>,
-        id: &str,
+        id: String,
     ) -> Result<(), Error> {
         let caller = sender_of(&header)?;
-        Ok(self.core().stop(&caller, id)?)
+        Ok(self.core(move |m| m.stop(&caller, &id)).await?)
     }
 
-    fn restart(
+    async fn restart(
         &self,
         #[zbus(header)] header: zbus::message::Header<'_>,
-        id: &str,
+        id: String,
     ) -> Result<(), Error> {
         let caller = sender_of(&header)?;
-        Ok(self.core().restart(&caller, id)?)
+        Ok(self.core(move |m| m.restart(&caller, &id)).await?)
     }
 
-    fn read_file(&self, name: &str) -> Result<(bool, String), Error> {
-        Ok(match self.core().read_file(name)? {
+    async fn read_file(&self, name: String) -> Result<(bool, String), Error> {
+        Ok(match self.core(move |m| m.read_file(&name)).await? {
             Some(text) => (true, text),
             None => (false, String::new()),
         })
     }
 
-    fn write_file(
+    async fn write_file(
         &self,
         #[zbus(header)] header: zbus::message::Header<'_>,
-        name: &str,
-        contents: &str,
+        name: String,
+        contents: String,
     ) -> Result<(), Error> {
         let caller = sender_of(&header)?;
-        Ok(self.core().write_file(&caller, name, contents)?)
+        Ok(self
+            .core(move |m| m.write_file(&caller, &name, &contents))
+            .await?)
     }
 }
 
@@ -283,19 +299,16 @@ impl Authority for PolkitAuthority {
 /// once. The connection to keep alive while serving, and the boot failures.
 pub fn serve() -> zbus::Result<(Connection, Vec<(String, ManagerError)>)> {
     let client = Connection::system()?;
-    let core = Arc::new(Mutex::new(Manager::new(
+    let core = Arc::new(Manager::new(
         SystemdService::new(client.clone()),
         PolkitAuthority::new(client),
         SystemResolver,
-    )));
+    ));
     let served = zbus::blocking::connection::Builder::system()?
         .serve_at(OBJECT_PATH, ManagerInterface::new(core.clone()))?
         .name(BUS_NAME)?
         .build()?;
-    let failures = core
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .start_all_at_boot();
+    let failures = core.start_all_at_boot();
     Ok((served, failures))
 }
 
@@ -331,7 +344,7 @@ pub(crate) fn manager_dbus_e2e() {
     // thread (both ends handshake at once); the client on the other end,
     // stamping `sender` when given. Every call has a deadline: a stub that
     // panics in the server must fail the test, not hang it.
-    let connect = |core: &Arc<Mutex<Core>>, sender: Option<&str>| -> (Connection, Connection) {
+    let connect = |core: &Arc<Core>, sender: Option<&str>| -> (Connection, Connection) {
         let (s0, s1) = UnixStream::pair().expect("socket pair");
         let iface = ManagerInterface::new(core.clone());
         let server = std::thread::spawn(move || {
@@ -355,15 +368,15 @@ pub(crate) fn manager_dbus_e2e() {
         }
         (server.join().expect("server thread"), client)
     };
-    let core_in = |state: UnitState, authority: bool, failing: &[&str]| -> Arc<Mutex<Core>> {
+    let core_in = |state: UnitState, authority: bool, failing: &[&str]| -> Arc<Core> {
         let mut service = FakeService::new();
         service.state = state;
         service.failing = failing.iter().map(|s| s.to_string()).collect();
-        Arc::new(Mutex::new(Manager::new(
+        Arc::new(Manager::new(
             service,
             FakeAuthority::new(authority),
             FakeResolver::lan(),
-        )))
+        ))
     };
     let core = |authority: bool, failing: &[&str]| core_in(UnitState::Active, authority, failing);
     // A method call: Ok(reply), or Err((error name, message)).
@@ -390,8 +403,8 @@ pub(crate) fn manager_dbus_e2e() {
         m.body().deserialize().expect("reply body")
     }
     let err_name = |kind: &str| format!("org.privateai.Manager1.Error.{kind}");
-    let calls = |c: &Arc<Mutex<Core>>| c.lock().unwrap().service().calls.borrow().clone();
-    let asked = |c: &Arc<Mutex<Core>>| c.lock().unwrap().authority().asked.borrow().clone();
+    let calls = |c: &Arc<Core>| c.service().calls.lock().unwrap().clone();
+    let asked = |c: &Arc<Core>| c.authority().asked.lock().unwrap().clone();
     let alice = Caller(":1.42".into());
 
     // ── No sender: every change refused before polkit is even asked ──────
@@ -572,6 +585,122 @@ pub(crate) fn manager_dbus_e2e() {
         let r = call(&client, "Status", &("default",)).expect("Status");
         assert_eq!(body::<String>(&r), name, "{state:?}");
     }
+}
+
+/// E2E phase for the D-Bus interface while polkit waits for a user to
+/// authenticate, for this crate's e2e test to call (it sets the process-wide
+/// `PRIVATE_AI_DATA_ROOT` redirect, `src/tests/mod.rs`). On the system bus
+/// every caller reaches the service over its one connection; here one p2p
+/// connection carries both calls: a `Status` must answer while a `Start` on
+/// the same connection waits for polkit, and the `Start` then gets its own
+/// reply.
+#[cfg(test)]
+pub(crate) fn manager_dbus_waits_e2e() {
+    use super::service::fakes::{FakeResolver, FakeService, Gate, GateAuthority, GATE_WAIT};
+    use super::service::on_thread;
+    use std::os::unix::net::UnixStream;
+    use std::time::Duration;
+    use zbus::blocking::connection::Builder;
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    crate::paths::redirect_for_tests(dir.path());
+    let sys = crate::paths::system_config_dir();
+    std::fs::create_dir_all(&sys).expect("system config dir");
+    let presets = "[Qwen3.8-27B]\nmodel = /models/Qwen3.8-27B-Q8_0.gguf\n";
+    std::fs::write(
+        sys.join("server@default.ini"),
+        "[Server]\nPort = 8080\nHostname = 127.0.0.1\n",
+    )
+    .expect("write default");
+    std::fs::write(sys.join("presets.ini"), presets).expect("write presets");
+
+    let alice = Caller(":1.42".into());
+    let gate = Gate::new();
+    let core = Manager::new(
+        FakeService::new(),
+        GateAuthority::new(&alice, &gate, &[(&alice, true)]),
+        FakeResolver::lan(),
+    );
+    let iface = ManagerInterface::new(Arc::new(core));
+
+    let (s0, s1) = UnixStream::pair().expect("socket pair");
+    let server = std::thread::spawn(move || {
+        Builder::async_io_unix_stream(s0)
+            .server(zbus::Guid::generate())
+            .expect("server guid")
+            .p2p()
+            .serve_at(OBJECT_PATH, iface)
+            .expect("serve_at")
+            .build()
+            .expect("server connection")
+    });
+    // The client's deadline is past the gate's, so a held Start fails on the
+    // gate's own timeout, never hangs.
+    let client = Builder::async_io_unix_stream(s1)
+        .p2p()
+        .method_timeout(GATE_WAIT + Duration::from_secs(5))
+        .build()
+        .expect("client connection");
+    client
+        .inner()
+        .set_unique_name(alice.0.as_str())
+        .expect("unique name");
+    let _server = server.join().expect("server thread");
+
+    // A call on its own thread, its reply decoded as `T`, or the error.
+    fn call<T, B>(
+        client: &zbus::blocking::Connection,
+        method: &'static str,
+        body: B,
+    ) -> std::sync::mpsc::Receiver<Result<T, String>>
+    where
+        T: for<'de> zbus::zvariant::DynamicDeserialize<'de> + Send + 'static,
+        B: serde::ser::Serialize + zbus::zvariant::DynamicType + Send + 'static,
+    {
+        let client = client.clone();
+        on_thread(move || {
+            client
+                .call_method(None::<&str>, OBJECT_PATH, Some(INTERFACE), method, &body)
+                .map_err(|e| e.to_string())
+                .and_then(|r| r.body().deserialize::<T>().map_err(|e| e.to_string()))
+        })
+    }
+    // The result on `rx`, which must come while the Start is held at the
+    // gate. On a timeout the gate is opened first, so nothing is left
+    // waiting, then the test fails.
+    fn answer<T>(gate: &Gate, what: &str, rx: std::sync::mpsc::Receiver<T>) -> T {
+        let deadline = Duration::from_secs(2);
+        rx.recv_timeout(deadline).unwrap_or_else(|_| {
+            gate.open();
+            panic!("{what}: no reply within {deadline:?} while a Start waited for polkit")
+        })
+    }
+
+    let start = call::<(), _>(&client, "Start", ("default",));
+    assert!(gate.arrived(1), "the Start reached polkit");
+
+    let status = answer(
+        &gate,
+        "Status",
+        call::<String, _>(&client, "Status", ("default",)),
+    );
+    assert_eq!(status, Ok("active".to_string()), "Status replies");
+    let read = answer(
+        &gate,
+        "ReadFile",
+        call::<(bool, String), _>(&client, "ReadFile", ("presets.ini",)),
+    );
+    assert_eq!(read, Ok((true, presets.to_string())), "ReadFile replies");
+
+    assert!(
+        start.try_recv().is_err(),
+        "the Start is still waiting for polkit"
+    );
+    gate.open();
+    let started = start
+        .recv_timeout(GATE_WAIT + Duration::from_secs(5))
+        .expect("the Start replies once polkit answers");
+    assert!(started.is_ok(), "the Start's own reply: {started:?}");
 }
 
 #[cfg(test)]

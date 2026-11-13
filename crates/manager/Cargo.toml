@@ -24,6 +24,9 @@ pai-core = { path = "../core" }
 # 5.x keeps the blocking API the synchronous core needs.
 [target.'cfg(target_os = "linux")'.dependencies]
 zbus = "5.19"
+# Runs each D-Bus method's blocking core call off the connection's executor
+# thread (manager/dbus.rs); the version zbus already pulls into the lock.
+blocking = "1.7"
 
 [dev-dependencies]
 pai-core = { path = "../core", features = ["test-support"] }

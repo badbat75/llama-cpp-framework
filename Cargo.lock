@@ -3398,6 +3398,7 @@ dependencies = [
 name = "pai-manager"
 version = "2.4.0"
 dependencies = [
+ "blocking",
  "pai-core",
  "serde",
  "tempfile",
