@@ -19,10 +19,11 @@ as the column says. A requirement still open must be covered by a step.
 | R3 | The same on macOS, Apple Silicon only (Metal + Vulkan through MoltenVK, split `.pkg`) | Written, never run on a Mac |
 | R4 | A GUI + CLI configurator (`llama-cpp-config`, becoming `private-ai-config`: step 2) for `server.ini` and the per-model `presets.ini` | Met: release 2.4.0 |
 | R5 | Every measurement in `benchmarks/bench.db`, under a versioned spec, public: no credentials, no local paths | Met |
-| R6 | Per-GPU and per-model guides where every value traces to a campaign, published as a site | Met, but their figures predate v0.9.0: step 4 |
-| R7 | The fastest presets for the test machine's GPUs: port an out-of-tree optimization when its gain pays for its upkeep | Open: steps 3 to 8 |
+| R6 | Per-GPU and per-model guides where every value traces to a campaign, published as a site | Met, but their figures predate v0.9.0: step 5 |
+| R7 | The fastest presets for the test machine's GPUs: port an out-of-tree optimization when its gain pays for its upkeep | Open: steps 4 to 9 |
 | R8 | llama-server runs as an OS service per instance (`llama.cpp@<id>` on Linux, config `server@<id>.ini`, a Windows service) managed by the runtime service `private-ai-manager`, which starts the instances at boot and is what the GUI and CLI talk to (D-Bus plus polkit on Linux, a named pipe with an ACL on Windows); units started by hand stay under its management; the manager owns every check on the config it writes and the GUI is a thin client; later engines (Strata) are to fit the same manager | Open: step 1 |
-| R9 | The project is `private-ai-framework` and the configurator `private-ai-config` (decided 2026-11-13), with upgrades from the old packages and the user's data carried over | Open: step 2 |
+| R9 | The project is `private-ai-framework`, its executables `pai-config` and `pai-manager` (decided 2026-11-13), with upgrades from the old packages and the user's data carried over | Open: step 2 |
+| R10 | The GUI and the CLI are two executables over one shared library: GUI `pai-config`, CLI `pai`, the shared logic in a new crate without Slint (decided with the user on 2026-11-13) | Open: step 3 |
 
 ### How we work
 
@@ -72,7 +73,7 @@ as not checked, and the step stays open.
 ## Where things stand
 
 Release 2.4.0 bundles llama.cpp v1.0.0 with patches `0001`, `0005` and `0006`; `0002`, `0003` and `0004`
-were dropped at v0.9.0 and performance dropped with them (step 3). The test machine has two R9700 (one in
+were dropped at v0.9.0 and performance dropped with them (step 4). The test machine has two R9700 (one in
 an x4 slot with no AtomicOps); the RTX 4070 SUPER is out of it, so the mixed-pair measurements wait for it.
 No run in bench.db is on v0.9.0 or later. What was checked among the out-of-tree candidates
 (`overdoingism/llama-cpp-rdna-boosts`), and found superseded or not applicable, is in
@@ -255,7 +256,31 @@ they change only with a new spec version.
   `llama-cpp-config`; the packages and the MSI upgrade an installed 2.4.0 in place (checked by the user on
   each OS); a user's existing config and data are found after the upgrade.
 
-### 3. Decide whether to bring back patches 0002 to 0004
+### 3. Split the configurator into a GUI and a CLI
+
+Covers: R10.
+
+Decided with the user on 2026-11-13, to do after step 1 reaches parity: the GUI keeps the name
+`pai-config` (desktop entry, start at login, single instance and MSI shortcut unchanged); the CLI
+becomes `pai` (`pai bench run`, `pai preset enable ...`), short to type over SSH. The logic both share
+(presets, benchmarks, HF, GGUF, the configuration, the server control seam) moves into a new crate
+without Slint, `crates/app` (package `pai-app`); `pai-core` stays what the manager links (paths, INI,
+checks, client, launch). Why: a headless server administered over SSH needs the CLI without Slint,
+Skia and the graphics libraries; on Windows a console executable replaces the console attach of
+today's one binary; the CLI and the shared crate become type-checkable on the Windows GNU target
+(W15), which Skia blocks today.
+
+Slices, each test first: **1** `pai-app` with the shared modules moved out of `pai-config` (code
+moved, not changed; a lint that `pai-app` links no Slint); **2** `crates/cli` (package `pai-cli`,
+binary `pai`) with today's CLI, `pai-config` left GUI-only (no argument parsing beyond what the GUI
+needs, no console attach); **3** packaging: `pai` in the `-config` package or its own (decide then),
+`/usr/bin/pai`, the MSI's PATH; **4** docs, skills and guides from `pai-config <cmd>` to `pai <cmd>`.
+
+- Done when: `pai` runs every command `pai-config` runs today with the same output; `pai-config` opens
+  the GUI only; `pai-app` and `pai-cli` link no Slint and pass the Windows GNU check; the packages ship
+  both; the docs name `pai` for commands.
+
+### 4. Decide whether to bring back patches 0002 to 0004
 
 Covers: R7.
 
@@ -289,11 +314,11 @@ the configurator, removed with it.
 - Done when: each of the three patches is either back (refreshed, measured, recorded in bench.db) or
   left out with the measurement that says it does not pay, and `patches/llama.cpp/README.md` says which.
 
-### 4. Re-measure the presets on the current release
+### 5. Re-measure the presets on the current release
 
 Covers: R6, R7.
 
-Do it after step 3, on the patch set it settles on: the figures below were written for v0.9.0
+Do it after step 4, on the patch set it settles on: the figures below were written for v0.9.0
 without patches 0002 to 0004.
 
 Every recorded figure the guides hold from v0.7.0 and v0.8.0 ran with the FlashAttention band (0003),
@@ -324,7 +349,7 @@ this is done.
 - Done when: each preset above has a campaign on the current release, and the guides' figures, their
   "In short" note and the placeholder row are updated from it.
 
-### 5. Find out why the drafter benchmarks look too favorable
+### 6. Find out why the drafter benchmarks look too favorable
 
 Covers: R6, R7.
 
@@ -355,7 +380,7 @@ before trusting the size of the gains (the ranking itself may hold):
 - Done when: the gap between the sweeps and the live agent turns is explained by a measurement, and the
   guide states the drafter gains under the conditions that hold for real use.
 
-### 6. Check the KV-split width patch on the current release
+### 7. Check the KV-split width patch on the current release
 
 Covers: R7.
 
@@ -367,7 +392,7 @@ the R9700's decode takes the branch it changes. What was measured is in
 - Done when: it is known whether the patch applies to the current tag and what it changes on the R9700
   (byte-identical replies across `spec-draft-n-max`, and the speed cost), and it is ported or dropped.
 
-### 7. Compare block 12's all-reduce with upstream's internal AllReduce
+### 8. Compare block 12's all-reduce with upstream's internal AllReduce
 
 Covers: R7.
 
@@ -399,7 +424,7 @@ undone once RCCL has made its mappings.
 - Done when: block 12's small-tensor path and copy engine are measured against
   `ggml/src/ggml-cuda/allreduce.cu` on the two R9700 (no RCCL needed), and ported or dropped.
 
-### 8. Settle the open Windows checks
+### 9. Settle the open Windows checks
 
 Covers: R6, R7.
 
@@ -428,9 +453,9 @@ From the Windows work of 2026-10-21, `docs/qwen3.8_27b.md` section 9.
   off state, single instance, the migration's Windows branch) is compiled by nobody here (W15): build
   it on Windows and run `cargo test -p pai-config startup -- --ignored` (registry round trips that
   put the starting state back).
-- Steps 3 to 8: every benchmark run and every llama-server start on the GPUs needs the user's
+- Steps 4 to 9: every benchmark run and every llama-server start on the GPUs needs the user's
   go-ahead (they hold the GPUs and may collide with other jobs).
-- Steps 4 and 8 partly need the RTX 4070 SUPER back in the test machine.
+- Steps 5 and 9 partly need the RTX 4070 SUPER back in the test machine.
 
 ## Later, not planned yet
 
