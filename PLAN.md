@@ -39,6 +39,7 @@ as the column says. A requirement still open must be covered by a step.
 | W10 | Agents run only the tests of the part they work on, plus linter and format check; the user runs the full suite once, on main after the merge, before installing | Applies to every step |
 | W11 | No em-dashes anywhere in the repo ("Key conventions" in `AGENTS.md`) | Applies to every step |
 | W12 | Every change to a benchmark spec is reviewed by `spec-reviewer` before it is committed | Applies to every step |
+| W13 | The coordinator only coordinates: the tester writes and reruns the tests, the coder runs the linter and the format check, the coordinator reads their reports and commits | Met: `AGENTS.md` "Roles", `.opencode/agents/` |
 
 ## Definition of Done
 

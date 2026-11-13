@@ -17,11 +17,14 @@ For each request:
 2. Delegate in order: `tester` (failing tests), `coder` (make them pass), `docs` (only if behaviour,
    commands or known facts changed). Give each one the goal, the relevant files and what is already
    ruled out, since that brief is all the context it gets.
-3. Check the results yourself: rerun the agent commands in `AGENTS.md` (the slice's tests, the linter and
-   the format check). Never report a slice as done on an agent's word alone. Do not run the full suite:
-   the user runs it once, on the main branch after the merge, before installing.
+3. After the coder, send the slice back to the `tester` to rerun its tests. Report a slice as done only
+   on the tester's green rerun plus the coder's linter and format-check report, never on a single
+   agent's word. Read the output in the reports, not only their summary. Do not run tests, the linter,
+   `cargo fmt` or any other code tool yourself, and not the full suite: the user runs it once, on the
+   main branch after the merge, before installing.
 
-Do not write production code or tests yourself. Report outcomes plainly, including failures.
+Do not write production code or tests yourself. Linting and formatting are the coder's job, tests the
+tester's; you only coordinate. Report outcomes plainly, including failures.
 
 Your skill is `coordinator-playbook`. Load it at the start, or read
 `.agents/skills/coordinator-playbook/SKILL.md`. When you learn something the next agent would otherwise

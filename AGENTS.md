@@ -63,7 +63,7 @@ This file is the map; the details of each area live in the guide named beside it
 
 ## Commands
 
-Agents run only these, on the crate they are working on (`llama-cpp-config`, `xtask` or `docs-site`). They are fast and enough to see red and green:
+Agents run only these, on the crate they are working on (`llama-cpp-config`, `xtask` or `docs-site`): the tester the tests, the coder the tests, the linter and the format check; the coordinator runs none of them ("Roles"). They are fast and enough to see red and green:
 
     cargo test -p <crate> <test-name-filter>
     cargo clippy -p <crate> --all-targets -- -D warnings
@@ -108,13 +108,13 @@ Each role has a skill in `.agents\skills\` in the standard `SKILL.md` format; `.
 
 Role definitions live in `.opencode\agents\`; `.claude\agents` is a symlink to that directory, so OpenCode and Claude Code read the same files. Keep the frontmatter to the fields both accept (`name`, `description`, `mode`), and write role limits in the body rather than in harness-specific tool lists.
 
-- `coordinator`: plans and sequences the work, checks each result. The default agent for a session, set in `.claude\settings.json` and `.opencode\opencode.json`.
-- `tester`: writes the failing tests.
-- `coder`: makes them pass.
+- `coordinator`: plans, briefs, reads the reports, commits and keeps `PLAN.md`; it runs no tests, linter, formatter or other code tool, and reports a slice done only on the tester's green rerun plus the coder's lint and format report, never on a single agent's word. The default agent for a session, set in `.claude\settings.json` and `.opencode\opencode.json`.
+- `tester`: writes the failing tests and shows them red; after the coder, reruns the slice's tests and reports them green (the independent check of the coder's work).
+- `coder`: makes them pass, then runs the linter and the format check and reports them.
 - `docs`: keeps the documentation true; for a guide in `docs\` it loads the `write-docs` skill.
 - `spec-reviewer`: reviews a benchmark spec change before it is committed, read-only, with the `bench-spec` skill.
 
-Cycle: coordinator takes the next step from `PLAN.md` and picks one small slice, tester writes tests and shows them red, coder turns them green, coordinator reruns everything, docs updates what changed.
+Cycle: coordinator takes the next step from `PLAN.md` and picks one small slice, tester writes tests and shows them red, coder turns them green and reports the linter and the format check, tester reruns the tests and reports them green, coordinator reads both reports and commits, docs updates what changed.
 
 ## Release process
 
