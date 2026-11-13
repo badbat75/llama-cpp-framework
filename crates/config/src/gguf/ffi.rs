@@ -164,23 +164,12 @@ mod loaded_impl {
         const LIB: &str = "libggml-base.so.0";
 
         pub(super) fn load_lib() -> Option<HModule> {
-            // The package: `<prefix>/bin/pai-config` and
-            // `<prefix>/lib/libggml-base.so.0`. A build tree: beside llama-server
-            // (`llama.cpp-cmake/bin`). Last, the loader's own search path.
-            let mut candidates: Vec<PathBuf> = Vec::new();
-            if let Some(dir) = std::env::current_exe()
-                .ok()
-                .and_then(|e| e.parent().map(|d| d.to_path_buf()))
-            {
-                candidates.push(dir.join("..").join("lib").join(LIB));
-                candidates.push(dir.join(LIB));
-            }
-            if let Some(dir) =
-                crate::paths::llama_server_exe().and_then(|e| e.parent().map(|d| d.to_path_buf()))
-            {
-                candidates.push(dir.join(LIB));
-            }
-            candidates.push(PathBuf::from(LIB));
+            let exe = std::env::current_exe().ok();
+            let server = crate::paths::llama_server_exe();
+            let candidates = lib_candidates(
+                exe.as_deref().and_then(|e| e.parent()),
+                server.as_deref().and_then(|e| e.parent()),
+            );
             for cand in candidates {
                 // A bare name goes to the loader's search; a path is opened as is.
                 if cand.components().count() > 1 && !cand.exists() {
@@ -200,6 +189,89 @@ mod loaded_impl {
         pub(super) fn proc(h: HModule, name: &[u8]) -> Option<*const c_void> {
             let p = unsafe { dlsym(h, name.as_ptr().cast()) };
             (!p.is_null()).then_some(p.cast_const())
+        }
+
+        /// The paths `load_lib` tries, in order, for a configurator in
+        /// `exe_dir` and a llama-server in `server_dir`; the bare name last.
+        pub(super) fn lib_candidates(
+            exe_dir: Option<&std::path::Path>,
+            server_dir: Option<&std::path::Path>,
+        ) -> Vec<PathBuf> {
+            // The packages: `/usr/bin/pai-config` and
+            // `/usr/lib/private-ai/libggml-base.so.0`, never a system library
+            // directory. A build tree: beside llama-server
+            // (`llama.cpp-cmake/bin`). Last, the loader's own search path.
+            let mut candidates: Vec<PathBuf> = Vec::new();
+            if let Some(dir) = exe_dir {
+                candidates.push(dir.join("..").join("lib").join("private-ai").join(LIB));
+                candidates.push(dir.join(LIB));
+            }
+            if let Some(dir) = server_dir {
+                candidates.push(dir.join(LIB));
+            }
+            candidates.push(PathBuf::from(LIB));
+            candidates
+        }
+
+        #[cfg(test)]
+        mod tests {
+            use super::{lib_candidates, LIB};
+            use std::path::{Path, PathBuf};
+
+            fn touch(root: &Path, rel: &str) -> PathBuf {
+                let p = root.join(rel);
+                std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+                std::fs::write(&p, "").unwrap();
+                p
+            }
+
+            /// The first candidate that exists, as `load_lib` opens it.
+            fn first_existing(c: &[PathBuf]) -> Option<PathBuf> {
+                c.iter()
+                    .find(|p| p.components().count() > 1 && p.exists())
+                    .map(|p| p.canonicalize().unwrap())
+            }
+
+            /// The Linux packages: pai-config in /usr/bin opens the
+            /// libggml-base.so.0 of /usr/lib/private-ai, never one a system
+            /// library directory holds (/usr/lib beside /usr/bin), and the
+            /// loader's own search comes last.
+            #[test]
+            fn the_package_opens_ggml_base_from_the_private_dir() {
+                let root = tempfile::tempdir().unwrap();
+                let ours = touch(root.path(), &format!("usr/lib/private-ai/{LIB}"));
+                let system = touch(root.path(), &format!("usr/lib/{LIB}"));
+                let bin = root.path().join("usr/bin");
+                touch(root.path(), "usr/bin/llama-server");
+                let c = lib_candidates(Some(&bin), Some(&bin));
+                assert_eq!(first_existing(&c), Some(ours.canonicalize().unwrap()));
+                let system = system.canonicalize().unwrap();
+                assert!(
+                    !c.iter()
+                        .any(|p| p.canonicalize().ok().as_ref() == Some(&system)),
+                    "a system library directory is never tried by path: {c:?}"
+                );
+                assert_eq!(c.last(), Some(&PathBuf::from(LIB)));
+            }
+
+            /// A tree build keeps libggml-base beside llama-server.
+            #[test]
+            fn a_tree_build_opens_ggml_base_beside_llama_server() {
+                let root = tempfile::tempdir().unwrap();
+                let server_dir = root.path().join("build/linux/llama.cpp-cmake/bin");
+                let lib = touch(&server_dir, LIB);
+                let exe_dir = root.path().join("build/linux/cargo-target/debug");
+                std::fs::create_dir_all(&exe_dir).unwrap();
+                let c = lib_candidates(Some(&exe_dir), Some(&server_dir));
+                assert_eq!(first_existing(&c), Some(lib.canonicalize().unwrap()));
+            }
+
+            /// Nothing found: only the loader's own search is left.
+            #[test]
+            fn without_an_install_only_the_bare_name_is_left() {
+                let c = lib_candidates(None, None);
+                assert_eq!(c, [PathBuf::from(LIB)]);
+            }
         }
     }
 

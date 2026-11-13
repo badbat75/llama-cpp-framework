@@ -167,15 +167,16 @@ pub fn settings_ini() -> PathBuf {
 /// The framework's benchmark method as installed: `specs\` (every published
 /// version of `standard`, `standard-<X.Y>.ini`, and `standard.versions`) and
 /// `prompts\` (every prompt a version pins, `<name>-<X.Y>.txt|json`).
-/// Read-only, beside the binaries: `<root>\share\benchmarks` where the exe is
-/// `<root>\bin\pai-config` (every package installs that layout), else
+/// Read-only, beside the binaries ([`installed_share_dir`]):
+/// `<root>\share\benchmarks` where the exe is `<root>\bin\pai-config`
+/// (`/usr/share/private-ai/benchmarks` for the Linux packages), else
 /// the repo's own `benchmarks\` for a tree build. The binary carries only
 /// `standard.versions` (the digest of every published spec, and each spec
 /// pins its prompts' digests), so an edited file here is refused, not run.
 pub fn bench_share_dir() -> PathBuf {
     let installed = std::env::current_exe()
         .ok()
-        .and_then(|exe| Some(exe.parent()?.parent()?.join("share").join("benchmarks")));
+        .and_then(|exe| installed_share_dir(&exe, "benchmarks"));
     match installed {
         Some(dir) if dir.join("specs").is_dir() => dir,
         _ => Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -191,16 +192,17 @@ pub fn bench_prompts_dir() -> PathBuf {
     bench_share_dir().join("prompts")
 }
 
-/// The language files as installed: `<root>\share\strings` where the exe is
-/// `<root>\bin\pai-config` (every package installs that layout), else
+/// The language files as installed ([`installed_share_dir`]):
+/// `<root>\share\strings` where the exe is `<root>\bin\pai-config`
+/// (`/usr/share/private-ai/strings` for the Linux packages), else
 /// the crate's own `strings\` for a tree build. Read-only, like
 /// `bench_share_dir`.
 pub fn strings_dir() -> PathBuf {
     let installed = std::env::current_exe()
         .ok()
-        .and_then(|exe| Some(exe.parent()?.parent()?.join("share").join("strings")));
+        .and_then(|exe| installed_share_dir(&exe, "strings"));
     match installed {
-        Some(dir) if dir.is_dir() => dir,
+        Some(dir) => dir,
         _ => Path::new(env!("CARGO_MANIFEST_DIR")).join("strings"),
     }
 }
@@ -305,27 +307,25 @@ pub fn llama_bench_exe() -> Option<PathBuf> {
     llama_bin("llama-bench")
 }
 
-/// Locate one of llama.cpp's binaries by stem. Tries (in order):
-/// 1. `<exe-dir>\<binary>`: installer layout
-/// 2. `<exe-dir>\..\..\llama.cpp-cmake\bin\<binary>`: the build scripts'
-///    layout (exe in `build\<os>\cargo-target\release`, `<os>` being
-///    `windows` or `linux`)
-/// 3. `<exe-dir>\..\..\build\<os>\llama.cpp-cmake\bin\<binary>`: a bare
-///    `cargo build` at the workspace root (exe in `target\release`)
-/// 4. `<exe-dir>\..\build\<os>\llama.cpp-cmake\bin\<binary>`: alt dev layout
-pub fn llama_bin(stem: &str) -> Option<PathBuf> {
+/// [`llama_bin`] for a program at `exe`: the same search, from that path
+/// instead of the running one. The Linux packages put `pai-config` and
+/// llama.cpp's executables in `/usr/bin` and `pai-manager` in
+/// `/usr/libexec/private-ai`, which must find `/usr/bin/llama-server`.
+pub fn llama_bin_from(exe: &Path, stem: &str) -> Option<PathBuf> {
     // The per-OS directory the build scripts generate everything into.
     #[cfg(windows)]
     const BUILD_OS_DIR: &str = "windows";
     #[cfg(not(windows))]
     const BUILD_OS_DIR: &str = "linux";
 
-    let exe = std::env::current_exe().ok()?;
     let exe_dir = exe.parent()?;
     let name = binary_name(stem);
     let name = name.as_str();
-    let candidates = [
-        exe_dir.join(name),
+    let mut candidates = vec![exe_dir.join(name)];
+    if exe_dir.ends_with("libexec/private-ai") {
+        candidates.push(exe_dir.join("..").join("..").join("bin").join(name));
+    }
+    candidates.extend([
         exe_dir
             .join("..")
             .join("..")
@@ -347,7 +347,7 @@ pub fn llama_bin(stem: &str) -> Option<PathBuf> {
             .join("llama.cpp-cmake")
             .join("bin")
             .join(name),
-    ];
+    ]);
     for c in &candidates {
         if c.exists() {
             return Some(
@@ -358,6 +358,34 @@ pub fn llama_bin(stem: &str) -> Option<PathBuf> {
         }
     }
     None
+}
+
+/// The installed read-only data directory `sub` (`benchmarks`, `strings`)
+/// for a program at `exe`, or `None` when no package installed it there:
+/// `<prefix>/share/private-ai/<sub>` for the Linux packages (`/usr/bin/..`),
+/// `<prefix>/share/<sub>` for a tree under its own prefix (macOS
+/// `/opt/private-ai/bin/..`).
+pub fn installed_share_dir(exe: &Path, sub: &str) -> Option<PathBuf> {
+    let share = exe.parent()?.parent()?.join("share");
+    [share.join("private-ai").join(sub), share.join(sub)]
+        .into_iter()
+        .find(|d| d.is_dir())
+}
+
+/// Locate one of llama.cpp's binaries by stem, from the running program
+/// ([`llama_bin_from`]). Tries (in order):
+/// 1. `<exe-dir>\<binary>`: installer layout (on Linux, `pai-config` beside
+///    llama.cpp's executables in `/usr/bin`)
+/// 2. `<exe-dir>\..\..\bin\<binary>` for a program in `libexec/private-ai`:
+///    the Linux packages' `pai-manager`
+/// 3. `<exe-dir>\..\..\llama.cpp-cmake\bin\<binary>`: the build scripts'
+///    layout (exe in `build\<os>\cargo-target\release`, `<os>` being
+///    `windows` or `linux`)
+/// 4. `<exe-dir>\..\..\build\<os>\llama.cpp-cmake\bin\<binary>`: a bare
+///    `cargo build` at the workspace root (exe in `target\release`)
+/// 5. `<exe-dir>\..\build\<os>\llama.cpp-cmake\bin\<binary>`: alt dev layout
+pub fn llama_bin(stem: &str) -> Option<PathBuf> {
+    llama_bin_from(&std::env::current_exe().ok()?, stem)
 }
 
 /// Drop the `\\?\` extended-length prefix Windows' `canonicalize` prepends:
@@ -504,7 +532,130 @@ pub(crate) fn instance_paths_e2e() {
 
 #[cfg(test)]
 mod tests {
-    use super::{newest_version, valid_instance_id};
+    use super::{installed_share_dir, llama_bin_from, newest_version, valid_instance_id};
+    use std::path::{Path, PathBuf};
+
+    /// An empty file at `root/rel`, its directories made.
+    fn touch(root: &Path, rel: &str) -> PathBuf {
+        let p = root.join(rel);
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(&p, "").unwrap();
+        p
+    }
+
+    fn canon(p: Option<PathBuf>) -> Option<PathBuf> {
+        p.map(|p| p.canonicalize().unwrap())
+    }
+
+    /// No llama-server anywhere it is looked for: nothing, not a guess.
+    #[test]
+    fn llama_server_missing_is_none() {
+        let root = tempfile::tempdir().unwrap();
+        let manager = touch(root.path(), "usr/libexec/private-ai/pai-manager");
+        let config = touch(root.path(), "usr/bin/pai-config");
+        assert_eq!(llama_bin_from(&manager, "llama-server"), None);
+        assert_eq!(llama_bin_from(&config, "llama-server"), None);
+    }
+
+    /// The Linux packages: `pai-config` beside llama-server in /usr/bin, and
+    /// `pai-manager` in /usr/libexec/private-ai, which finds it there too.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn the_usr_layout_finds_llama_server_in_usr_bin() {
+        let root = tempfile::tempdir().unwrap();
+        let server = touch(root.path(), "usr/bin/llama-server");
+        let bench = touch(root.path(), "usr/bin/llama-bench");
+        let config = touch(root.path(), "usr/bin/pai-config");
+        let manager = touch(root.path(), "usr/libexec/private-ai/pai-manager");
+        let want = Some(server.canonicalize().unwrap());
+        assert_eq!(canon(llama_bin_from(&config, "llama-server")), want);
+        assert_eq!(canon(llama_bin_from(&manager, "llama-server")), want);
+        assert_eq!(
+            canon(llama_bin_from(&manager, "llama-bench")),
+            Some(bench.canonicalize().unwrap())
+        );
+    }
+
+    /// A tree build keeps finding the llama-server it built: from the build
+    /// scripts' cargo target dir and from a bare `cargo build` at the root.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_tree_build_finds_its_own_llama_server() {
+        let root = tempfile::tempdir().unwrap();
+        let server = touch(root.path(), "build/linux/llama.cpp-cmake/bin/llama-server");
+        let want = Some(server.canonicalize().unwrap());
+        for exe in [
+            "build/linux/cargo-target/debug/pai-config",
+            "build/linux/cargo-target/release/pai-manager",
+            "target/release/pai-config",
+        ] {
+            let exe = touch(root.path(), exe);
+            assert_eq!(
+                canon(llama_bin_from(&exe, "llama-server")),
+                want,
+                "{}",
+                exe.display()
+            );
+        }
+    }
+
+    /// Nothing installed beside the program: `None`, so the caller falls back
+    /// to the repo's own files (a tree build).
+    #[test]
+    fn no_installed_share_is_none() {
+        let root = tempfile::tempdir().unwrap();
+        let exe = touch(root.path(), "build/linux/cargo-target/debug/pai-config");
+        assert_eq!(installed_share_dir(&exe, "benchmarks"), None);
+        assert_eq!(installed_share_dir(&exe, "strings"), None);
+        let exe = touch(root.path(), "usr/bin/pai-config");
+        assert_eq!(installed_share_dir(&exe, "benchmarks"), None);
+    }
+
+    /// The Linux packages install the benchmark method and the language files
+    /// in /usr/share/private-ai.
+    #[test]
+    fn the_usr_layout_finds_its_data_in_usr_share_private_ai() {
+        let root = tempfile::tempdir().unwrap();
+        let exe = touch(root.path(), "usr/bin/pai-config");
+        for sub in ["benchmarks", "strings"] {
+            let dir = root.path().join("usr/share/private-ai").join(sub);
+            std::fs::create_dir_all(&dir).unwrap();
+            assert_eq!(
+                canon(installed_share_dir(&exe, sub)),
+                Some(dir.canonicalize().unwrap()),
+                "{sub}"
+            );
+        }
+    }
+
+    /// /usr/share/<sub> is whatever else a system installed there: the
+    /// package's own directory wins.
+    #[test]
+    fn the_package_s_own_data_wins_over_a_stray_one() {
+        let root = tempfile::tempdir().unwrap();
+        let exe = touch(root.path(), "usr/bin/pai-config");
+        std::fs::create_dir_all(root.path().join("usr/share/strings")).unwrap();
+        let ours = root.path().join("usr/share/private-ai/strings");
+        std::fs::create_dir_all(&ours).unwrap();
+        assert_eq!(
+            canon(installed_share_dir(&exe, "strings")),
+            Some(ours.canonicalize().unwrap())
+        );
+    }
+
+    /// A tree under its own prefix (macOS, /opt/private-ai) keeps its
+    /// `share/` beside `bin/`.
+    #[test]
+    fn a_prefix_tree_finds_its_data_beside_bin() {
+        let root = tempfile::tempdir().unwrap();
+        let exe = touch(root.path(), "opt/private-ai/bin/pai-config");
+        let dir = root.path().join("opt/private-ai/share/benchmarks");
+        std::fs::create_dir_all(&dir).unwrap();
+        assert_eq!(
+            canon(installed_share_dir(&exe, "benchmarks")),
+            Some(dir.canonicalize().unwrap())
+        );
+    }
 
     fn names(v: &[&str]) -> Vec<String> {
         v.iter().map(|s| s.to_string()).collect()

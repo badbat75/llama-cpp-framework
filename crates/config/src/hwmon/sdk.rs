@@ -149,22 +149,79 @@ pub fn print() {
     }
 }
 
-/// Vulkan's loader in the order llama-server finds it: a package bundles it, and
-/// a build tree leaves it to the system's search (on Windows that can be the
-/// path, since not every machine has it in System32).
-fn vulkan_candidates() -> Vec<PathBuf> {
-    let server = crate::paths::llama_server_exe();
-    let server_dir = server.as_deref().and_then(Path::parent);
+/// [`vulkan_candidates`] for a llama-server at `server` instead of the one
+/// `paths::llama_server_exe` finds.
+fn vulkan_candidates_for(server: Option<&Path>) -> Vec<PathBuf> {
+    let server_dir = server.and_then(Path::parent);
     let mut found: Vec<PathBuf> = Vec::new();
     #[cfg(not(windows))]
-    found.extend(
-        server_dir
-            .and_then(Path::parent)
-            .map(|d| d.join("lib").join(VULKAN_LIBRARY)),
-    );
+    found.extend(server_dir.and_then(Path::parent).into_iter().flat_map(|d| {
+        [
+            d.join("lib")
+                .join("private-ai")
+                .join("lib")
+                .join(VULKAN_LIBRARY),
+            d.join("lib").join(VULKAN_LIBRARY),
+        ]
+    }));
     found.extend(server_dir.map(|d| d.join(VULKAN_LIBRARY)));
     found.push(PathBuf::from(VULKAN_LIBRARY));
     found
+}
+
+/// [`hip_candidates`] for a llama-server at `server` instead of the one
+/// `paths::llama_server_exe` finds.
+fn hip_candidates_for(server: Option<&Path>) -> Vec<PathBuf> {
+    let server_dir = server.and_then(Path::parent);
+    let mut dirs: Vec<PathBuf> = server_dir.map(Path::to_path_buf).into_iter().collect();
+    #[cfg(windows)]
+    let (prefix, suffix, system) = {
+        dirs.extend(crate::paths::rocm_bin_dir());
+        ("amdhip64", ".dll", "amdhip64_7.dll")
+    };
+    #[cfg(not(windows))]
+    let (prefix, suffix, system) = {
+        if let Some(d) = server_dir.and_then(Path::parent) {
+            dirs.push(d.join("lib").join("private-ai").join("lib"));
+            dirs.push(d.join("lib"));
+        }
+        for var in ["HIP_PATH", "ROCM_PATH"] {
+            dirs.extend(std::env::var_os(var).map(|root| PathBuf::from(root).join("lib")));
+        }
+        ("libamdhip64", ".so", "libamdhip64.so")
+    };
+    let mut found: Vec<PathBuf> = dirs
+        .iter()
+        .flat_map(|dir| {
+            let mut here: Vec<PathBuf> = std::fs::read_dir(dir)
+                .into_iter()
+                .flatten()
+                .flatten()
+                .map(|entry| entry.path())
+                .filter(|path| {
+                    path.file_name()
+                        .and_then(|n| n.to_str())
+                        .is_some_and(|name| {
+                            name.starts_with(prefix)
+                                && (name.ends_with(suffix) || name.contains(".so."))
+                        })
+                })
+                .collect();
+            here.sort();
+            here
+        })
+        .collect();
+    found.push(PathBuf::from(system));
+    found
+}
+
+/// Vulkan's loader in the order llama-server finds it: a package bundles it
+/// (the Linux packages in `/usr/lib/private-ai/lib`, a tree under its own
+/// prefix in `lib/` beside `bin/`), and a build tree leaves it to the system's
+/// search (on Windows that can be the path, since not every machine has it in
+/// System32).
+fn vulkan_candidates() -> Vec<PathBuf> {
+    vulkan_candidates_for(crate::paths::llama_server_exe().as_deref())
 }
 
 fn show(id: &str, bus: &str, name: &str) {
@@ -206,48 +263,12 @@ unsafe fn loaded_path(_lib: *mut c_void, file_stem: &str) -> String {
         .unwrap_or_else(|| file_stem.to_string())
 }
 
-/// HIP's runtime in the order llama-server finds it: beside it (what an install
-/// bundles), the directory its children get on the path, then the system's.
+/// HIP's runtime in the order llama-server finds it: beside it or in the
+/// runtime directory of the package (what an install bundles: Windows beside
+/// the exe, the Linux packages in `/usr/lib/private-ai/lib`), the directory its
+/// children get on the path, then the system's.
 fn hip_candidates() -> Vec<PathBuf> {
-    let server = crate::paths::llama_server_exe();
-    let server_dir = server.as_deref().and_then(Path::parent);
-    let mut dirs: Vec<PathBuf> = server_dir.map(Path::to_path_buf).into_iter().collect();
-    #[cfg(windows)]
-    let (prefix, suffix, system) = {
-        dirs.extend(crate::paths::rocm_bin_dir());
-        ("amdhip64", ".dll", "amdhip64_7.dll")
-    };
-    #[cfg(not(windows))]
-    let (prefix, suffix, system) = {
-        dirs.extend(server_dir.and_then(Path::parent).map(|d| d.join("lib")));
-        for var in ["HIP_PATH", "ROCM_PATH"] {
-            dirs.extend(std::env::var_os(var).map(|root| PathBuf::from(root).join("lib")));
-        }
-        ("libamdhip64", ".so", "libamdhip64.so")
-    };
-    let mut found: Vec<PathBuf> = dirs
-        .iter()
-        .flat_map(|dir| {
-            let mut here: Vec<PathBuf> = std::fs::read_dir(dir)
-                .into_iter()
-                .flatten()
-                .flatten()
-                .map(|entry| entry.path())
-                .filter(|path| {
-                    path.file_name()
-                        .and_then(|n| n.to_str())
-                        .is_some_and(|name| {
-                            name.starts_with(prefix)
-                                && (name.ends_with(suffix) || name.contains(".so."))
-                        })
-                })
-                .collect();
-            here.sort();
-            here
-        })
-        .collect();
-    found.push(PathBuf::from(system));
-    found
+    hip_candidates_for(crate::paths::llama_server_exe().as_deref())
 }
 
 /// A runtime by path, its dependencies resolved beside it; a bare name goes
@@ -546,6 +567,65 @@ unsafe fn report_vulkan(lib: *mut c_void) -> Option<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn touch(root: &Path, rel: &str) -> PathBuf {
+        let p = root.join(rel);
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(&p, "").unwrap();
+        p
+    }
+
+    fn canon(p: &Path) -> Option<PathBuf> {
+        p.canonicalize().ok()
+    }
+
+    /// The Linux packages: llama-server in /usr/bin loads the Vulkan loader
+    /// and the HIP runtime bundled in /usr/lib/private-ai/lib (its RUNPATH),
+    /// so the SDK report tries those first, ahead of /usr/lib beside /usr/bin,
+    /// which is the system's.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn the_runtimes_bundled_in_usr_lib_private_ai_come_first() {
+        let root = tempfile::tempdir().unwrap();
+        let server = touch(root.path(), "usr/bin/llama-server");
+        let vulkan = touch(root.path(), "usr/lib/private-ai/lib/libvulkan.so.1");
+        touch(root.path(), "usr/lib/libvulkan.so.1");
+        let hip = touch(root.path(), "usr/lib/private-ai/lib/libamdhip64.so.7");
+        touch(root.path(), "usr/lib/libamdhip64.so.7");
+
+        let first = |c: Vec<PathBuf>| c.iter().find_map(|p| canon(p));
+        assert_eq!(
+            first(vulkan_candidates_for(Some(&server))),
+            canon(&vulkan),
+            "Vulkan"
+        );
+        assert_eq!(first(hip_candidates_for(Some(&server))), canon(&hip), "HIP");
+    }
+
+    /// A tree under its own prefix (macOS, /opt/private-ai) keeps the runtimes
+    /// in `lib/` beside `bin/`.
+    #[cfg(not(windows))]
+    #[test]
+    fn a_prefix_tree_finds_its_runtimes_beside_bin() {
+        let root = tempfile::tempdir().unwrap();
+        let server = touch(root.path(), "opt/private-ai/bin/llama-server");
+        let vulkan = touch(root.path(), "opt/private-ai/lib/libvulkan.so.1");
+        let first = vulkan_candidates_for(Some(&server))
+            .iter()
+            .find_map(|p| canon(p));
+        assert_eq!(first, canon(&vulkan));
+    }
+
+    /// No llama-server: only the system's own search is left.
+    #[cfg(not(windows))]
+    #[test]
+    fn without_llama_server_only_the_system_search_is_left() {
+        assert_eq!(vulkan_candidates_for(None), [PathBuf::from(VULKAN_LIBRARY)]);
+        assert_eq!(
+            hip_candidates_for(None).last(),
+            Some(&PathBuf::from("libamdhip64.so"))
+        );
+    }
 
     const PROBE: &str = "  ROCm0: iGPU (1 MiB, 1 MiB free)\n  \
          ROCm1: Card (1 MiB, 1 MiB free)\n  \

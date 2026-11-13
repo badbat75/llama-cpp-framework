@@ -4,9 +4,9 @@
 //!
 //! - `config`: pai-config (one binary, GUI and CLI), its language files,
 //!   the benchmark method, the desktop entry.
-//! - `llama`: llama.cpp's executables and libraries, every ggml backend, and
-//!   libomp: the dist's OpenMP runtime, which ggml-base itself links, so it
-//!   comes with llama.cpp and not with ROCm.
+//! - `llama`: llama.cpp's executables and libraries, every ggml backend,
+//!   pai-manager, and libomp: the dist's OpenMP runtime, which ggml-base
+//!   itself links, so it comes with llama.cpp and not with ROCm.
 //! - `rocm`, `cuda`, `vulkan`: the external runtimes and nothing else. ggml
 //!   loads a backend at start and skips it when its runtime is missing, so
 //!   each is optional, and each is versioned by its SDK: a new llama.cpp on the
@@ -63,33 +63,46 @@ impl Component {
 pub fn of(rel: &str) -> Component {
     let path = rel.trim_start_matches('/');
     let name = path.rsplit('/').next().unwrap_or(path);
+    // macOS: one tree under /opt/private-ai.
     if let Some(inner) = path.strip_prefix("opt/private-ai/") {
         if inner == "bin/pai-config" || inner.starts_with("share/") {
             return Component::Config;
         }
-        if inner.starts_with(".kpack/") {
-            return Component::Rocm;
-        }
-        if let Some(lib) = inner.strip_prefix("lib/") {
-            if lib.starts_with("llvm/lib/libomp.so") {
-                return Component::Llama;
-            }
-            if name.starts_with("libcu") || name.starts_with("libnccl") {
-                return Component::Cuda;
-            }
-            // macOS bundles nothing but the Vulkan SDK's dylibs.
-            if name.starts_with("libvulkan") || name.ends_with(".dylib") {
-                return Component::Vulkan;
-            }
-            return Component::Rocm;
-        }
-        return Component::Llama;
+        return private(inner, name);
+    }
+    // Linux: the private library directory.
+    if let Some(inner) = path.strip_prefix("usr/lib/private-ai/") {
+        return private(inner, name);
     }
     if path.starts_with("usr/local/share/vulkan/") {
         return Component::Vulkan;
     }
     if name == "pai-config" || path.starts_with("usr/share/") {
         return Component::Config;
+    }
+    Component::Llama
+}
+
+/// The owner of a file under a private tree (`/opt/private-ai` on macOS,
+/// `/usr/lib/private-ai` on Linux), by its path `inner` in that tree: the
+/// runtimes in `lib/` and the kpack archives belong to their SDK, the rest
+/// (llama.cpp's libraries and backends, libomp) to llama.cpp.
+fn private(inner: &str, name: &str) -> Component {
+    if inner.starts_with(".kpack/") {
+        return Component::Rocm;
+    }
+    if let Some(lib) = inner.strip_prefix("lib/") {
+        if lib.starts_with("llvm/lib/libomp.so") {
+            return Component::Llama;
+        }
+        if name.starts_with("libcu") || name.starts_with("libnccl") {
+            return Component::Cuda;
+        }
+        // macOS bundles nothing but the Vulkan SDK's dylibs.
+        if name.starts_with("libvulkan") || name.ends_with(".dylib") {
+            return Component::Vulkan;
+        }
+        return Component::Rocm;
     }
     Component::Llama
 }
@@ -184,16 +197,19 @@ pub fn dist_version(dist: &Path) -> Option<String> {
 mod tests {
     use super::*;
 
+    /// The Linux packages in the standard layout under /usr: the commands in
+    /// /usr/bin, pai-manager in /usr/libexec/private-ai, libllama, the ggml
+    /// backends and the runtimes in /usr/lib/private-ai, the data in
+    /// /usr/share/private-ai.
     #[test]
     fn linux_files_go_to_their_package() {
         for (rel, want) in [
-            ("opt/private-ai/bin/pai-config", Component::Config),
-            ("opt/private-ai/share/strings/en_US.toml", Component::Config),
+            ("usr/bin/pai-config", Component::Config),
+            ("usr/share/private-ai/strings/en_US.toml", Component::Config),
             (
-                "opt/private-ai/share/benchmarks/standard-1.1.ini",
+                "usr/share/private-ai/benchmarks/specs/standard-1.1.ini",
                 Component::Config,
             ),
-            ("usr/bin/pai-config", Component::Config),
             (
                 "usr/share/applications/org.privateai.Config.desktop",
                 Component::Config,
@@ -202,35 +218,40 @@ mod tests {
                 "usr/share/icons/hicolor/256x256/apps/org.privateai.Config.png",
                 Component::Config,
             ),
-            ("opt/private-ai/bin/llama-server", Component::Llama),
-            ("opt/private-ai/bin/libggml-base.so.0", Component::Llama),
-            ("opt/private-ai/bin/libggml-hip.so", Component::Llama),
-            ("opt/private-ai/bin/libggml-cuda.so", Component::Llama),
-            ("opt/private-ai/bin/libggml-vulkan.so", Component::Llama),
-            ("opt/private-ai/lib/llvm/lib/libomp.so", Component::Llama),
             ("usr/bin/llama-server", Component::Llama),
-            ("opt/private-ai/lib/libamdhip64.so.7", Component::Rocm),
+            ("usr/bin/llama-bench", Component::Llama),
+            ("usr/libexec/private-ai/pai-manager", Component::Llama),
+            ("usr/lib/private-ai/libggml-base.so.0", Component::Llama),
+            ("usr/lib/private-ai/libggml-hip.so", Component::Llama),
+            ("usr/lib/private-ai/libggml-cuda.so", Component::Llama),
+            ("usr/lib/private-ai/libggml-vulkan.so", Component::Llama),
+            ("usr/lib/private-ai/libllama.so.0", Component::Llama),
             (
-                "opt/private-ai/lib/llvm/lib/libLLVM.so.24.0git",
+                "usr/lib/private-ai/lib/llvm/lib/libomp.so",
+                Component::Llama,
+            ),
+            ("usr/lib/private-ai/lib/libamdhip64.so.7", Component::Rocm),
+            (
+                "usr/lib/private-ai/lib/llvm/lib/libLLVM.so.24.0git",
                 Component::Rocm,
             ),
             (
-                "opt/private-ai/lib/rocm_sysdeps/lib/librocm_sysdeps_numa.so.1",
+                "usr/lib/private-ai/lib/rocm_sysdeps/lib/librocm_sysdeps_numa.so.1",
                 Component::Rocm,
             ),
             (
-                "opt/private-ai/lib/rocblas/library/Kernels.so-000-gfx1201.dat",
+                "usr/lib/private-ai/lib/rocblas/library/Kernels.so-000-gfx1201.dat",
                 Component::Rocm,
             ),
             (
-                "opt/private-ai/.kpack/blas_lib_gfx1201.kpack",
+                "usr/lib/private-ai/.kpack/blas_lib_gfx1201.kpack",
                 Component::Rocm,
             ),
-            ("opt/private-ai/lib/libcublas.so.13", Component::Cuda),
-            ("opt/private-ai/lib/libcublasLt.so.13", Component::Cuda),
-            ("opt/private-ai/lib/libcudart.so.13", Component::Cuda),
-            ("opt/private-ai/lib/libnccl.so.2", Component::Cuda),
-            ("opt/private-ai/lib/libvulkan.so.1", Component::Vulkan),
+            ("usr/lib/private-ai/lib/libcublas.so.13", Component::Cuda),
+            ("usr/lib/private-ai/lib/libcublasLt.so.13", Component::Cuda),
+            ("usr/lib/private-ai/lib/libcudart.so.13", Component::Cuda),
+            ("usr/lib/private-ai/lib/libnccl.so.2", Component::Cuda),
+            ("usr/lib/private-ai/lib/libvulkan.so.1", Component::Vulkan),
         ] {
             assert_eq!(of(rel), want, "{rel}");
         }
@@ -366,17 +387,17 @@ mod tests {
         let stage = dir.join("stage");
         let into = dir.join("into");
         for file in [
-            "opt/private-ai/bin/llama-server",
-            "opt/private-ai/lib/libcublas.so.13",
+            "usr/bin/llama-server",
+            "usr/lib/private-ai/libggml-base.so.0.9.0",
+            "usr/lib/private-ai/lib/libcublas.so.13",
         ] {
             let path = stage.join(file);
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
             std::fs::write(path, "x").unwrap();
         }
-        std::fs::create_dir_all(stage.join("usr/bin")).unwrap();
         std::os::unix::fs::symlink(
-            "../../opt/private-ai/bin/llama-server",
-            stage.join("usr/bin/llama-server"),
+            "libggml-base.so.0.9.0",
+            stage.join("usr/lib/private-ai/libggml-base.so.0"),
         )
         .unwrap();
 
@@ -385,18 +406,18 @@ mod tests {
             [Component::Llama, Component::Cuda]
         );
 
-        assert!(into.join("llama/opt/private-ai/bin/llama-server").is_file());
+        assert!(into.join("llama/usr/bin/llama-server").is_file());
         assert!(into
-            .join("cuda/opt/private-ai/lib/libcublas.so.13")
+            .join("cuda/usr/lib/private-ai/lib/libcublas.so.13")
             .is_file());
         assert!(!into.join("rocm").exists());
-        let link = into.join("llama/usr/bin/llama-server");
+        let link = into.join("llama/usr/lib/private-ai/libggml-base.so.0");
         assert_eq!(
             std::fs::read_link(link).unwrap(),
-            Path::new("../../opt/private-ai/bin/llama-server")
+            Path::new("libggml-base.so.0.9.0")
         );
         assert!(
-            stage.join("opt/private-ai/bin/llama-server").is_file(),
+            stage.join("usr/bin/llama-server").is_file(),
             "the staged tree stays whole"
         );
         std::fs::remove_dir_all(&dir).unwrap();

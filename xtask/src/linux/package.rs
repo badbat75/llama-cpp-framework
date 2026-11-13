@@ -4,24 +4,33 @@
 //! The counterpart of the Windows MSI (windows/package.rs). Requires a successful
 //! build; patchelf, dpkg-dev and rpm come from the prerequisites.
 //!
-//! What the packages install together (all from one staged tree):
-//!   /opt/private-ai/bin/  every llama.cpp tool, its shared libraries and the
-//!                         ggml backends, plus pai-config: ONE
-//!                         directory, because ggml looks for its backends next
-//!                         to the executable and pai-config looks for
-//!                         llama-server there too
-//!   /opt/private-ai/lib/  the GPU runtimes the backends need, taken from the
+//! What the packages install together (all from one staged tree), in the
+//! standard layout under /usr:
+//!   /usr/bin/             every llama.cpp executable and pai-config, the real
+//!                         files (the distributions' llama.cpp packages are
+//!                         refused by Conflicts, so no file is shared)
+//!   /usr/libexec/private-ai/
+//!                         pai-manager, internal: the units call it by full path
+//!   /usr/lib/private-ai/  llama.cpp's shared libraries and the ggml backends,
+//!                         a private directory (never a system library
+//!                         directory): the executables find it by RUNPATH and
+//!                         ggml its backends by GGML_BACKEND_DIR
+//!                         (xtask/cmake/linux.toml)
+//!   /usr/lib/private-ai/lib/
+//!                         the GPU runtimes the backends need, taken from the
 //!                         dists this build linked against: the ROCm runtime
-//!                         with its kernel libraries, the CUDA libraries, the
+//!                         with its kernel libraries (its kpack archives in
+//!                         /usr/lib/private-ai/.kpack), the CUDA libraries, the
 //!                         Vulkan loader. Self-contained: nothing else has to
 //!                         be installed but the GPU drivers.
-//!   /opt/private-ai/share/benchmarks/
+//!   /usr/share/private-ai/benchmarks/
 //!                         the benchmark method, read-only: every published
 //!                         standard-<X.Y>.ini and the prompts they pin
-//!   /opt/private-ai/share/strings/
+//!   /usr/share/private-ai/strings/
 //!                         the configurator's language files, read-only
-//!   /usr/bin/             a symlink per executable into /opt/private-ai/bin
-//!   /usr/share/           the desktop entry, its icon, the licence
+//!   /usr/share/private-ai/licenses/<component>/
+//!                         the licence texts of each package
+//!   /usr/share/           the desktop entry, its icon, the copyright file
 //!
 //! pai-config and llama.cpp carry <framework>+llama.cpp.<tag> as version
 //! and require each other's exact one, in that direction. A runtime carries its
@@ -59,9 +68,128 @@ const MONOLITH_LAST: &str = "2.2.0";
 const OLD_SPLIT_BEFORE: &str = "2.4.1";
 /// The `.rpm` Release of every package, which a versioned Provides spells too.
 const RPM_RELEASE: &str = "1";
-const OPT_DIR: &str = "opt/private-ai"; // relative to the package root
-const BIN_DIR: &str = "opt/private-ai/bin"; // llama.cpp + pai-config
-const RT_DIR: &str = "opt/private-ai/lib"; // the bundled GPU runtimes
+// Relative to the package root.
+const LIB_DIR: &str = "usr/lib/private-ai"; // llama.cpp's libraries, the ggml backends
+const RT_DIR: &str = "usr/lib/private-ai/lib"; // the bundled GPU runtimes
+const LIBEXEC_DIR: &str = "usr/libexec/private-ai"; // pai-manager
+/// The RUNPATH of every staged llama.cpp ELF file: [`LIB_DIR`], [`RT_DIR`] and
+/// libomp's directory in it, by absolute path.
+const RUNPATH: &str =
+    "/usr/lib/private-ai:/usr/lib/private-ai/lib:/usr/lib/private-ai/lib/llvm/lib";
+
+/// Where a file the build produces is installed, relative to the package
+/// root: an executable of the build's `bin/` (or `pai-config`) in
+/// `usr/bin`, a library or ggml backend in the private `usr/lib/private-ai`,
+/// `pai-manager` (from cargo's target dir) in `usr/libexec/private-ai`.
+fn place(name: &str) -> String {
+    if name == "pai-manager" {
+        format!("{LIBEXEC_DIR}/{name}")
+    } else if name.starts_with("lib") && name.contains(".so") {
+        format!("{LIB_DIR}/{name}")
+    } else {
+        format!("usr/bin/{name}")
+    }
+}
+
+/// The RUNPATH every staged llama.cpp ELF file carries.
+fn runpath() -> &'static str {
+    RUNPATH
+}
+
+/// A read-only data directory (`benchmarks`, `strings`,
+/// `licenses/<component>`), relative to the package root.
+fn share(sub: &str) -> String {
+    format!("usr/share/private-ai/{sub}")
+}
+
+/// The `.spec` of one package, whose `%files` lists only what `root` holds.
+fn rpm_spec(f: &Fields, license: &str, libraries: &str, root: &Path) -> String {
+    let package = f.component.package();
+    // rpm's automatic dependency scan is kept (it yields soname requirements
+    // any rpm distro resolves), minus what it must not see: every library the
+    // five packages carry (not "provided" to the system, so not "required"
+    // from it either) and libcuda, which is the NVIDIA driver's.
+    let url = if f.homepage.is_empty() {
+        String::new()
+    } else {
+        format!("URL:            {}\n", f.homepage)
+    };
+    // Only what this package holds (a %files line without a match stops
+    // rpmbuild), and never a directory of the system, which the filesystem
+    // package owns: /usr/bin by a glob of its files, the private directories
+    // whole.
+    let doc = format!("usr/share/doc/{package}");
+    let mut files = String::new();
+    for (dir, line) in [
+        (doc.as_str(), format!("/{doc}")),
+        ("usr/bin", "/usr/bin/*".to_string()),
+        (LIBEXEC_DIR, format!("/{LIBEXEC_DIR}")),
+        (LIB_DIR, format!("/{LIB_DIR}")),
+        ("usr/share/private-ai", "/usr/share/private-ai".to_string()),
+        (
+            "usr/share/applications",
+            "/usr/share/applications/org.privateai.Config.desktop".to_string(),
+        ),
+        (
+            "usr/share/icons",
+            "/usr/share/icons/hicolor/*/apps/org.privateai.Config.png".to_string(),
+        ),
+    ] {
+        if root.join(dir).is_dir() {
+            files.push_str(&line);
+            files.push('\n');
+        }
+    }
+    format!(
+        r#"Name:           {package}
+Version:        {version}
+Release:        {RPM_RELEASE}
+Summary:        {summary}
+License:        {license}
+{url}{relations}
+
+# The staged files are final: no stripping, no debuginfo, no build-id links,
+# no brp post-processing of a tree this phase already prepared.
+%global debug_package %{{nil}}
+%global __strip /bin/true
+%global __os_install_post %{{nil}}
+%global _build_id_links none
+%global _binary_payload w3T0.zstdio
+%global __provides_exclude_from ^/{LIB_DIR}/.*$
+%global __requires_exclude ^({libraries}|libcuda)\\.so
+
+%description
+{description}
+%install
+cp -a "{root}/." "%{{buildroot}}/"
+
+%files
+%defattr(-,root,root,-)
+{files}"#,
+        version = f.version,
+        summary = f.summary,
+        description = f.description,
+        relations = rpm_relations(f),
+        root = root.display(),
+    )
+}
+
+/// The ELF files of `root` dpkg-shlibdeps scans for the Depends.
+fn shlibdeps_inputs(root: &Path) -> Vec<PathBuf> {
+    // libggml-cuda.so is left out of the scan: it links libcuda.so.1, which
+    // is the NVIDIA DRIVER's and no Debian package's (dpkg-shlibdeps fails on
+    // a library it cannot find), and the package must install on a machine
+    // without an NVIDIA card; the CUDA libraries link it too.
+    walk(root)
+        .into_iter()
+        .filter(|p| is_file(p) && (name_of(p).contains(".so") || user_executable(p)))
+        .filter(|p| is_elf(p))
+        .filter(|p| {
+            let n = name_of(p);
+            n != "libggml-cuda.so" && !n.starts_with("libcu")
+        })
+        .collect()
+}
 
 fn is_elf(p: &Path) -> bool {
     let Ok(m) = std::fs::symlink_metadata(p) else {
@@ -189,6 +317,14 @@ pub fn run(want_deb: bool, want_rpm: bool, keep_staging: bool) -> Result<()> {
     if built != fw_version {
         bail!("the built pai-config is {built}, Cargo.toml says {fw_version}. Run cargo run -p xtask -- build first.");
     }
+    // pai-manager, built beside pai-config by the build phase.
+    let manager = build_root.join("cargo-target/release/pai-manager");
+    if !util::is_executable(&manager) {
+        bail!(
+            "pai-manager not found at {}. Run cargo run -p xtask -- build first.",
+            manager.display()
+        );
+    }
     if which("patchelf").is_none() {
         bail!("patchelf not found. Run scripts/00-install-prerequisites.sh (or: sudo apt-get install patchelf).");
     }
@@ -203,9 +339,10 @@ pub fn run(want_deb: bool, want_rpm: bool, keep_staging: bool) -> Result<()> {
     util::remove_all(&stage)?;
     util::remove_all(&pkg_work)?;
     for d in [
-        stage.join(BIN_DIR),
-        stage.join(RT_DIR),
         stage.join("usr/bin"),
+        stage.join(LIB_DIR),
+        stage.join(RT_DIR),
+        stage.join(LIBEXEC_DIR),
         pkg_work.clone(),
         out_dir.clone(),
     ] {
@@ -214,16 +351,29 @@ pub fn run(want_deb: bool, want_rpm: bool, keep_staging: bool) -> Result<()> {
 
     ui::head("Staging binaries...");
     // Straight from the build's bin/, where the build leaves executables,
-    // libraries, backends and pai-config side by side: the layout the
-    // package keeps. `cmake --install` would split them into bin/ and lib/.
+    // libraries, backends and pai-config side by side: each goes where
+    // `place` says (the executables to /usr/bin, the libraries and backends to
+    // /usr/lib/private-ai), the library symlinks kept as symlinks.
     // llama.cpp's own test-* harnesses stay out: they are its unit tests, and
-    // every executable staged here gets a command in /usr/bin.
+    // every executable staged here is a command in /usr/bin.
     let (tests, keep): (Vec<PathBuf>, Vec<PathBuf>) = entries(&bin)
         .into_iter()
         .partition(|p| name_of(p).starts_with("test-"));
-    cp("-a", &keep, &stage.join(BIN_DIR))?;
-    crate::common::bench_share::stage(&stage.join(OPT_DIR))?;
-    crate::common::strings_share::stage(&stage.join(OPT_DIR))?;
+    let mut by_dir: std::collections::BTreeMap<PathBuf, Vec<PathBuf>> = Default::default();
+    for p in keep {
+        let dest = stage.join(place(&name_of(&p)));
+        by_dir
+            .entry(dest.parent().unwrap().to_path_buf())
+            .or_default()
+            .push(p);
+    }
+    for (dir, files) in &by_dir {
+        cp("-a", files, dir)?;
+    }
+    std::fs::copy(&manager, stage.join(place("pai-manager")))
+        .with_context(|| format!("copying {}", manager.display()))?;
+    crate::common::bench_share::stage(&stage.join(share("benchmarks")))?;
+    crate::common::strings_share::stage(&stage.join(share("strings")))?;
     if !tests.is_empty() {
         ui::dim(format!("Pruned {} llama.cpp test binaries", tests.len()));
     }
@@ -328,9 +478,7 @@ pub fn run(want_deb: bool, want_rpm: bool, keep_staging: bool) -> Result<()> {
         ("libggml-hip.so", "libhipblas.so."),
         ("libggml-cuda.so", "libcublas.so."),
     ] {
-        if stage.join(BIN_DIR).join(backend).exists()
-            && !rt_names.iter().any(|n| n.starts_with(runtime))
-        {
+        if stage.join(place(backend)).exists() && !rt_names.iter().any(|n| n.starts_with(runtime)) {
             bail!(
                 "{backend} is staged but {runtime}* was not found in its dist under {}; refusing to package a backend that cannot load",
                 cfg.dist_root
@@ -352,7 +500,8 @@ pub fn run(want_deb: bool, want_rpm: bool, keep_staging: bool) -> Result<()> {
     // ROCm kernel data, which no ldd shows: rocBLAS and hipBLASLt load their
     // precompiled kernels per GPU architecture from <lib>/rocblas/library and
     // <lib>/hipblaslt/library, and the kpack archives sit in <dist>/.kpack,
-    // which is <lib>/../.kpack here as there: hipBLASLt's (blas_lib) and
+    // which is <lib>/../.kpack here as there (/usr/lib/private-ai/.kpack
+    // beside the runtimes' lib/): hipBLASLt's (blas_lib) and
     // RCCL's (rccl_lib, the collective kernels --split-mode tensor reduces
     // through). Only the architectures this build targets (gpu_targets) are
     // taken: the rest could never be used by a libggml-hip.so that has no
@@ -380,7 +529,7 @@ pub fn run(want_deb: bool, want_rpm: bool, keep_staging: bool) -> Result<()> {
         }
         let kpack = hip.join(".kpack");
         if kpack.is_dir() {
-            let dest = stage.join(OPT_DIR).join(".kpack");
+            let dest = stage.join(LIB_DIR).join(".kpack");
             std::fs::create_dir_all(&dest)?;
             let mut picked = Vec::new();
             for prefix in ["blas_lib_", "rccl_lib_"] {
@@ -395,19 +544,34 @@ pub fn run(want_deb: bool, want_rpm: bool, keep_staging: bool) -> Result<()> {
     }
 
     // RUNPATH. The build tree's RUNPATH names the build tree itself and the
-    // dists under /mnt/data; a packaged file must find its siblings and the
-    // bundled runtimes wherever the tree lands. So every llama.cpp ELF gets
-    // $ORIGIN (the other llama.cpp libraries), $ORIGIN/../lib (the runtimes)
-    // and $ORIGIN/../lib/llvm/lib (libomp). The bundled runtime libraries are
-    // left exactly as their vendor built them. LD_LIBRARY_PATH still wins
-    // over RUNPATH.
-    const RUNPATH: &str = "$ORIGIN:$ORIGIN/../lib:$ORIGIN/../lib/llvm/lib";
-
+    // dists under /mnt/data; a packaged file must find the other llama.cpp
+    // libraries and the bundled runtimes. The executables in /usr/bin are not
+    // beside them, so $ORIGIN cannot reach them: every llama.cpp ELF gets
+    // RUNPATH (/usr/lib/private-ai, its lib/ with the runtimes and lib/llvm/lib
+    // with libomp, by absolute path). The bundled runtime libraries are left
+    // exactly as their vendor built them, and pai-manager links nothing of
+    // llama.cpp and gets none. LD_LIBRARY_PATH still wins over RUNPATH.
     ui::head("Stripping and setting RUNPATH...");
-    let staged_bin = stage.join(BIN_DIR);
-    let before = util::du("-sm", &staged_bin);
-    let mut executables = Vec::new();
-    for f in entries(&staged_bin) {
+    let staged = [stage.join("usr/bin"), stage.join(LIB_DIR)];
+    // llama.cpp's own files: the runtimes in lib/ and .kpack are not stripped.
+    let size = || {
+        output(
+            cmd("du")
+                .args(["-scm", "--exclude=lib", "--exclude=.kpack"])
+                .args(&staged),
+        )
+        .and_then(|s| {
+            s.lines()
+                .last()?
+                .split_whitespace()
+                .next()
+                .map(str::to_string)
+        })
+        .unwrap_or_else(|| "?".into())
+    };
+    let before = size();
+    let mut executables = 0;
+    for f in staged.iter().flat_map(|d| entries(d)) {
         if !is_elf(&f) {
             continue;
         }
@@ -415,27 +579,20 @@ pub fn run(want_deb: bool, want_rpm: bool, keep_staging: bool) -> Result<()> {
         // section patchelf appended. --strip-unneeded keeps the dynamic
         // symbols, which is all a shared library needs.
         run_cmd(cmd("strip").arg("--strip-unneeded").arg(&f))?;
-        run_cmd(cmd("patchelf").args(["--set-rpath", RUNPATH]).arg(&f))?;
+        run_cmd(cmd("patchelf").args(["--set-rpath", runpath()]).arg(&f))?;
         set_mode(&f, 0o755)?;
-        let n = name_of(&f);
-        if !(n.starts_with("lib") && n.contains(".so")) {
-            executables.push(n);
+        if f.parent() == Some(stage.join("usr/bin").as_path()) {
+            executables += 1;
         }
     }
-    let after = util::du("-sm", &staged_bin);
+    let manager_staged = stage.join(place("pai-manager"));
+    run_cmd(cmd("strip").arg("--strip-unneeded").arg(&manager_staged))?;
+    set_mode(&manager_staged, 0o755)?;
+    let after = size();
     ui::dim(format!(
-        "{} executables, {before} MiB -> {after} MiB stripped",
-        executables.len()
+        "{executables} executables, {before} MiB -> {after} MiB stripped"
     ));
     ui::dim(format!("Bundled runtimes: {} MiB", util::du("-sm", &rt)));
-
-    for exe in &executables {
-        // relative: rpm warns on absolute ones
-        std::os::unix::fs::symlink(
-            format!("../../{BIN_DIR}/{exe}"),
-            stage.join("usr/bin").join(exe),
-        )?;
-    }
 
     // ── Desktop entry, icon ─────────────────────────────────────────────
     let apps = stage.join("usr/share/applications");
@@ -482,11 +639,10 @@ pub fn run(want_deb: bool, want_rpm: bool, keep_staging: bool) -> Result<()> {
     let mut licence_fields = Vec::new();
     for c in &present {
         let root = components::root(&roots, *c);
-        let opt = root.join(OPT_DIR);
-        let dir = opt.join("share/licenses").join(c.suffix());
+        let dir = root.join(share(&format!("licenses/{}", c.suffix())));
         let entries = licenses::stage_in(
             &dir,
-            &licenses::libraries_under(&opt),
+            &licenses::libraries_under(&root.join(LIB_DIR)),
             &licenses::Sources {
                 llama_cpp: llama.clone(),
                 rocm: (!hip_root.is_empty()).then(|| PathBuf::from(&hip_root)),
@@ -512,8 +668,8 @@ pub fn run(want_deb: bool, want_rpm: bool, keep_staging: bool) -> Result<()> {
             "The libraries under /{RT_DIR} are redistributed unmodified, each under its own licence.\n"
         ));
         copyright.push_str(&format!(
-            "The full texts are in /{OPT_DIR}/share/licenses/{}:\n\n",
-            c.suffix()
+            "The full texts are in /{}:\n\n",
+            share(&format!("licenses/{}", c.suffix()))
         ));
         copyright.push_str(&std::fs::read_to_string(dir.join("README.txt"))?);
         copyright.push_str("\nllama.cpp's licence:\n\n");
@@ -536,7 +692,7 @@ pub fn run(want_deb: bool, want_rpm: bool, keep_staging: bool) -> Result<()> {
                 set_mode(&p, 0o755)?;
             }
         }
-        for dir in [opt.join("lib"), opt.join(".kpack")] {
+        for dir in [root.join(RT_DIR), root.join(LIB_DIR).join(".kpack")] {
             for p in walk(&dir).into_iter().filter(|p| is_file(p)) {
                 set_mode(
                     &p,
@@ -693,7 +849,7 @@ fn texts(c: Component, llama_build: &str) -> (&'static str, String) {
 fn private_library_dirs(roots: &Path, present: &[Component]) -> BTreeSet<String> {
     present
         .iter()
-        .flat_map(|c| walk(&components::root(roots, *c).join(OPT_DIR)))
+        .flat_map(|c| walk(&components::root(roots, *c).join(LIB_DIR)))
         .filter(|p| is_file(p) && name_of(p).contains(".so"))
         .filter_map(|p| p.parent().map(|d| format!("-l{}", d.display())))
         .collect()
@@ -703,7 +859,7 @@ fn private_library_dirs(roots: &Path, present: &[Component]) -> BTreeSet<String>
 fn library_stems(roots: &Path, present: &[Component]) -> String {
     let stems: BTreeSet<String> = present
         .iter()
-        .flat_map(|c| walk(&components::root(roots, *c).join(OPT_DIR)))
+        .flat_map(|c| walk(&components::root(roots, *c).join(LIB_DIR)))
         .map(|p| name_of(&p))
         .filter(|n| n.starts_with("lib") && n.contains(".so"))
         .map(|n| {
@@ -918,18 +1074,9 @@ fn build_deb(
     // Depends, computed from what the staged ELF files actually link (minus
     // libvulkan1, which the scan names although the loader is bundled), the
     // bundled runtimes included (their own directories are given as private
-    // library paths). libggml-cuda.so is left out of the scan: it links
-    // libcuda.so.1, which is the NVIDIA DRIVER's and no Debian package's
-    // (dpkg-shlibdeps fails on a library it cannot find), and the package
-    // must install on a machine without an NVIDIA card.
-    let scan: Vec<String> = walk(&root.join(OPT_DIR))
+    // library paths).
+    let scan: Vec<String> = shlibdeps_inputs(root)
         .iter()
-        .filter(|p| is_file(p) && (name_of(p).contains(".so") || user_executable(p)))
-        .filter(|p| is_elf(p))
-        .filter(|p| {
-            let n = name_of(p);
-            n != "libggml-cuda.so" && !n.starts_with("libcu")
-        })
         .map(|p| format!("-e{}", p.display()))
         .collect();
     let mut depends = String::new();
@@ -1028,62 +1175,8 @@ fn build_rpm(
 ) -> Result<()> {
     let package = f.component.package();
     ui::head(format!("Building the .rpm of {package}..."));
-    // rpm's automatic dependency scan is kept (it yields soname requirements
-    // any rpm distro resolves), minus what it must not see: every library the
-    // five packages carry (not "provided" to the system, so not "required"
-    // from it either) and libcuda, which is the NVIDIA driver's.
-    let url = if f.homepage.is_empty() {
-        String::new()
-    } else {
-        format!("URL:            {}\n", f.homepage)
-    };
-    // Only what this package holds: a %files line without a match stops rpmbuild.
-    let mut files = format!("/{OPT_DIR}\n/usr/share/doc/{package}\n");
-    if root.join("usr/bin").is_dir() {
-        files.push_str("/usr/bin/*\n");
-    }
-    if root.join("usr/share/applications").is_dir() {
-        files.push_str("/usr/share/applications/org.privateai.Config.desktop\n");
-    }
-    if root.join("usr/share/icons").is_dir() {
-        files.push_str("/usr/share/icons/hicolor/*/apps/org.privateai.Config.png\n");
-    }
     let spec = pkg_work.join(format!("{package}.spec"));
-    std::fs::write(
-        &spec,
-        format!(
-            r#"Name:           {package}
-Version:        {version}
-Release:        {RPM_RELEASE}
-Summary:        {summary}
-License:        {license}
-{url}{relations}
-
-# The staged files are final: no stripping, no debuginfo, no build-id links,
-# no brp post-processing of a tree this phase already prepared.
-%global debug_package %{{nil}}
-%global __strip /bin/true
-%global __os_install_post %{{nil}}
-%global _build_id_links none
-%global _binary_payload w3T0.zstdio
-%global __provides_exclude_from ^/{OPT_DIR}/.*$
-%global __requires_exclude ^({libraries}|libcuda)\\.so
-
-%description
-{description}
-%install
-cp -a "{root}/." "%{{buildroot}}/"
-
-%files
-%defattr(-,root,root,-)
-{files}"#,
-            version = f.version,
-            summary = f.summary,
-            description = f.description,
-            relations = rpm_relations(f),
-            root = root.display(),
-        ),
-    )?;
+    std::fs::write(&spec, rpm_spec(f, license, libraries, root))?;
     let file_name = rpm_file.file_name().unwrap().to_string_lossy().into_owned();
     run_cmd(
         cmd("rpmbuild")
@@ -1361,5 +1454,330 @@ mod tests {
                 assert!(rpm.lines().any(|l| l == want), "{want} missing:\n{rpm}");
             }
         }
+    }
+
+    // ── The standard layout under /usr ──────────────────────────────────
+
+    /// A fresh directory of this test's own under the temp dir.
+    fn scratch(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("xtask-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// `bytes` at `root/rel`, the directories made, with `mode`.
+    fn put(root: &Path, rel: &str, bytes: &[u8], mode: u32) {
+        use std::os::unix::fs::PermissionsExt;
+        let p = root.join(rel);
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(&p, bytes).unwrap();
+        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(mode)).unwrap();
+    }
+
+    const ELF: &[u8] = b"\x7fELF\x02\x01\x01\0";
+
+    /// Every executable the build leaves in its `bin/`, and `pai-config`, is a
+    /// command in /usr/bin as the real file (the per-executable links into
+    /// /opt are gone); the libraries and the ggml backends go to the private
+    /// /usr/lib/private-ai, never a system library directory; `pai-manager`
+    /// is internal and goes to /usr/libexec/private-ai, which the units call
+    /// by full path. Each lands in the package that owns it.
+    #[test]
+    fn executables_go_to_usr_bin_and_libraries_to_the_private_dir() {
+        for exe in ["llama-server", "llama-bench", "llama", "llama-cli"] {
+            assert_eq!(place(exe), format!("usr/bin/{exe}"));
+            assert_eq!(components::of(&place(exe)), Component::Llama, "{exe}");
+        }
+        assert_eq!(place("pai-config"), "usr/bin/pai-config");
+        assert_eq!(components::of(&place("pai-config")), Component::Config);
+        for lib in [
+            "libggml-base.so.0",
+            "libggml-base.so.0.9.0",
+            "libggml.so.0",
+            "libggml-cpu-zen4.so",
+            "libggml-hip.so",
+            "libggml-cuda.so",
+            "libggml-vulkan.so",
+            "libllama.so.0",
+            "libmtmd.so.0",
+            "libllama-server-impl.so",
+        ] {
+            assert_eq!(place(lib), format!("usr/lib/private-ai/{lib}"));
+            assert_eq!(components::of(&place(lib)), Component::Llama, "{lib}");
+        }
+        assert_eq!(place("pai-manager"), "usr/libexec/private-ai/pai-manager");
+        assert_eq!(components::of(&place("pai-manager")), Component::Llama);
+    }
+
+    /// The executables in /usr/bin find libllama, the ggml backends and the
+    /// bundled runtimes through their RUNPATH, by absolute path: /usr/bin is
+    /// not beside them, so `$ORIGIN` no longer reaches them. The runtimes'
+    /// directory (`lib/`, where the ROCm tree keeps its layout and `.kpack`
+    /// sits beside it, as `<lib>/../.kpack` asks) and libomp's are named too.
+    /// No build path, dist path or /opt is left in it.
+    #[test]
+    fn the_runpath_names_the_private_library_dirs() {
+        assert_eq!(
+            runpath(),
+            "/usr/lib/private-ai:/usr/lib/private-ai/lib:/usr/lib/private-ai/lib/llvm/lib"
+        );
+        let first = runpath().split(':').next().unwrap();
+        let lib = place("libggml-base.so.0");
+        assert_eq!(
+            Some(first.trim_start_matches('/')),
+            Path::new(&lib).parent().and_then(|p| p.to_str()),
+            "the first entry is where the libraries are placed"
+        );
+    }
+
+    /// The read-only data (the benchmark method, the language files, the
+    /// licences) under /usr/share/private-ai, owned by the configurator but
+    /// for each package's own licences.
+    #[test]
+    fn the_data_goes_under_usr_share_private_ai() {
+        assert_eq!(share("benchmarks"), "usr/share/private-ai/benchmarks");
+        assert_eq!(share("strings"), "usr/share/private-ai/strings");
+        assert_eq!(
+            share("licenses/llama"),
+            "usr/share/private-ai/licenses/llama"
+        );
+        for rel in [
+            format!("{}/specs/standard-1.1.ini", share("benchmarks")),
+            format!("{}/en_US.toml", share("strings")),
+        ] {
+            assert_eq!(components::of(&rel), Component::Config, "{rel}");
+        }
+    }
+
+    /// The `%files` lines of a spec.
+    fn files_section(spec: &str) -> Vec<String> {
+        spec.split_once("\n%files\n")
+            .map(|(_, rest)| rest)
+            .unwrap_or_default()
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty() && !l.starts_with('%'))
+            .map(str::to_string)
+            .collect()
+    }
+
+    /// Whether a `%files` line takes `path`: the path itself, a directory
+    /// above it, or a `<dir>/*` glob of its directory.
+    fn covers(line: &str, path: &str) -> bool {
+        if let Some(dir) = line.strip_suffix("/*") {
+            return Path::new(path).parent() == Some(Path::new(dir));
+        }
+        if line.contains('*') {
+            let (head, tail) = line.split_once('*').unwrap();
+            return path.starts_with(head) && path.ends_with(tail);
+        }
+        path == line || path.starts_with(&format!("{line}/"))
+    }
+
+    /// Checks `%files` against `root` as rpmbuild does: each line must take
+    /// a file of the tree (a line without a match stops rpmbuild), every file
+    /// must be taken, and no line may claim a directory of the system.
+    fn check_files(spec: &str, root: &Path) {
+        let files = files_section(spec);
+        let tree: Vec<String> = walk(root)
+            .into_iter()
+            .filter(|p| !p.is_dir())
+            .map(|p| format!("/{}", p.strip_prefix(root).unwrap().display()))
+            .collect();
+        for line in &files {
+            assert!(
+                !line.contains("opt/private-ai"),
+                "nothing under /opt: {line}\n{spec}"
+            );
+            assert!(
+                ![
+                    "/usr",
+                    "/usr/bin",
+                    "/usr/lib",
+                    "/usr/libexec",
+                    "/usr/share",
+                    "/usr/share/doc",
+                    "/usr/share/applications",
+                    "/usr/share/icons",
+                ]
+                .contains(&line.as_str()),
+                "{line} would own a directory of the system:\n{spec}"
+            );
+            assert!(
+                tree.iter().any(|f| covers(line, f)),
+                "{line} takes no file of the package (rpmbuild stops):\n{spec}"
+            );
+        }
+        for f in &tree {
+            assert!(
+                files.iter().any(|l| covers(l, f)),
+                "{f} is in no %files line:\n{spec}"
+            );
+        }
+    }
+
+    /// The `.rpm` of each package lists the /usr layout in `%files`, nothing
+    /// more (a line without a match stops rpmbuild) and no directory of the
+    /// system; the libraries under /usr/lib/private-ai are provided to no one
+    /// (a system package asking for `libvulkan.so.1` must not get ours); the
+    /// relations stay.
+    #[test]
+    fn the_rpm_spec_lists_the_usr_layout() {
+        let dir = scratch("rpm-spec");
+        let runtimes = [(Component::Rocm, "10.1.0".to_string())];
+
+        let llama = dir.join("llama");
+        for (rel, mode) in [
+            ("usr/bin/llama-server", 0o755),
+            ("usr/bin/llama-bench", 0o755),
+            ("usr/lib/private-ai/libggml-base.so.0", 0o755),
+            ("usr/lib/private-ai/libggml-hip.so", 0o755),
+            ("usr/lib/private-ai/lib/llvm/lib/libomp.so", 0o755),
+            ("usr/libexec/private-ai/pai-manager", 0o755),
+            ("usr/share/doc/private-ai-framework-llama/copyright", 0o644),
+            ("usr/share/private-ai/licenses/llama/README.txt", 0o644),
+        ] {
+            put(&llama, rel, ELF, mode);
+        }
+        let f = fields_v(Component::Llama, "2.99.0+llama.cpp.v1.0.0", &runtimes, None);
+        let spec = rpm_spec(&f, "MIT", "libggml\\\\-base|libomp", &llama);
+        check_files(&spec, &llama);
+        let lines: Vec<&str> = spec.lines().collect();
+        assert!(
+            lines.contains(&"%global __provides_exclude_from ^/usr/lib/private-ai/.*$"),
+            "{spec}"
+        );
+        assert!(
+            lines.contains(&"%global __requires_exclude ^(libggml\\\\-base|libomp|libcuda)\\\\.so"),
+            "{spec}"
+        );
+        for want in [
+            "Name:           private-ai-framework-llama",
+            "Version:        2.99.0+llama.cpp.v1.0.0",
+            "License:        MIT",
+            "Conflicts:      llama-cpp",
+        ] {
+            assert!(lines.contains(&want), "{want} missing:\n{spec}");
+        }
+        for line in rpm_relations(&f).lines() {
+            assert!(lines.contains(&line), "{line} missing:\n{spec}");
+        }
+        assert!(!spec.contains("opt/private-ai"), "{spec}");
+
+        let cuda = dir.join("cuda");
+        for rel in [
+            "usr/lib/private-ai/lib/libcublas.so.13",
+            "usr/share/doc/private-ai-framework-cuda/copyright",
+            "usr/share/private-ai/licenses/cuda/README.txt",
+        ] {
+            put(&cuda, rel, ELF, 0o644);
+        }
+        let f = fields_v(Component::Cuda, "13.0.2", &[], None);
+        let spec = rpm_spec(&f, "LicenseRef-NVIDIA", "libcublas", &cuda);
+        check_files(&spec, &cuda);
+
+        let config = dir.join("config");
+        for rel in [
+            "usr/bin/pai-config",
+            "usr/share/private-ai/benchmarks/specs/standard-1.1.ini",
+            "usr/share/private-ai/strings/en_US.toml",
+            "usr/share/private-ai/licenses/config/README.txt",
+            "usr/share/applications/org.privateai.Config.desktop",
+            "usr/share/icons/hicolor/256x256/apps/org.privateai.Config.png",
+            "usr/share/doc/private-ai-framework-config/copyright",
+        ] {
+            put(&config, rel, ELF, 0o644);
+        }
+        let f = fields_v(
+            Component::Config,
+            "2.99.0+llama.cpp.v1.0.0",
+            &[],
+            Some("2.99.0+llama.cpp.v1.0.0"),
+        );
+        let spec = rpm_spec(&f, "MIT", "libggml", &config);
+        check_files(&spec, &config);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// dpkg-shlibdeps scans every ELF program and library the package
+    /// installs, in /usr/bin, /usr/libexec/private-ai and /usr/lib/private-ai,
+    /// but libggml-cuda.so and the CUDA libraries (they link the NVIDIA
+    /// driver's libcuda.so.1, which no Debian package provides) and no data
+    /// file.
+    #[test]
+    fn dpkg_shlibdeps_scans_the_programs_and_libraries_of_the_usr_layout() {
+        let root = scratch("shlibdeps");
+        for (rel, bytes, mode) in [
+            ("usr/bin/llama-server", ELF, 0o755),
+            ("usr/libexec/private-ai/pai-manager", ELF, 0o755),
+            ("usr/lib/private-ai/libggml-base.so.0", ELF, 0o755),
+            ("usr/lib/private-ai/libggml-cuda.so", ELF, 0o755),
+            ("usr/lib/private-ai/lib/libcublas.so.13", ELF, 0o755),
+            (
+                "usr/lib/private-ai/lib/rocblas/library/Kernels.so-000-gfx1201.dat",
+                b"data".as_slice(),
+                0o644,
+            ),
+            (
+                "usr/share/private-ai/benchmarks/specs/standard-1.1.ini",
+                b"[x]".as_slice(),
+                0o644,
+            ),
+            (
+                "usr/share/doc/private-ai-framework-llama/copyright",
+                b"MIT".as_slice(),
+                0o644,
+            ),
+        ] {
+            put(&root, rel, bytes, mode);
+        }
+        let mut got: Vec<String> = shlibdeps_inputs(&root)
+            .iter()
+            .map(|p| p.strip_prefix(&root).unwrap().display().to_string())
+            .collect();
+        got.sort();
+        assert_eq!(
+            got,
+            [
+                "usr/bin/llama-server",
+                "usr/lib/private-ai/libggml-base.so.0",
+                "usr/libexec/private-ai/pai-manager",
+            ]
+        );
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// The libraries of the five packages, which no package provides to the
+    /// system or requires from it, are found under /usr/lib/private-ai: the
+    /// rpm's requires filter and dpkg-shlibdeps' private library dirs. Missed,
+    /// the llama.cpp package would require a `libggml-base.so.0` from the
+    /// system and could not install.
+    #[test]
+    fn the_private_libraries_are_found_in_the_usr_layout() {
+        let roots = scratch("private-libs");
+        for rel in [
+            "llama/usr/bin/llama-server",
+            "llama/usr/lib/private-ai/libggml-base.so.0",
+            "cuda/usr/lib/private-ai/lib/libcublas.so.13",
+            "rocm/usr/lib/private-ai/lib/llvm/lib/libLLVM.so.24.0git",
+        ] {
+            put(&roots, rel, ELF, 0o755);
+        }
+        let present = [Component::Llama, Component::Rocm, Component::Cuda];
+        assert_eq!(
+            library_stems(&roots, &present),
+            "libLLVM|libcublas|libggml-base"
+        );
+        let want: BTreeSet<String> = [
+            "llama/usr/lib/private-ai",
+            "cuda/usr/lib/private-ai/lib",
+            "rocm/usr/lib/private-ai/lib/llvm/lib",
+        ]
+        .iter()
+        .map(|d| format!("-l{}", roots.join(d).display()))
+        .collect();
+        assert_eq!(private_library_dirs(&roots, &present), want);
+        std::fs::remove_dir_all(&roots).unwrap();
     }
 }

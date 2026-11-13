@@ -132,9 +132,9 @@ mod linux {
 
     const ENTRY_NAME: &str = "org.privateai.Config.desktop";
 
-    /// Where the deb/rpm put the command: a symlink into `/opt/private-ai/bin`.
-    /// Registered as-is rather than resolved, so the entry survives a package
-    /// that moves the real file.
+    /// Where the deb/rpm put the command. Registered as this path rather than
+    /// the running executable's, so the entry survives a package that moves
+    /// the real file.
     const INSTALLED_EXE: &str = "/usr/bin/pai-config";
 
     /// `$XDG_CONFIG_HOME/autostart/org.privateai.Config.desktop`, with the spec's

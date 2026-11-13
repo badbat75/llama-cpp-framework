@@ -1,5 +1,5 @@
 //! The benchmark method the packages install read-only beside the binaries,
-//! `<root>/share/benchmarks/`: every published `standard-<X.Y>.ini` with
+//! `<root>/share/benchmarks/` (`/usr/share/private-ai/benchmarks/` on Linux): every published `standard-<X.Y>.ini` with
 //! `standard.versions`, and every prompt in `benchmarks/prompts/` with the
 //! images the image prompts name. The
 //! configurator finds it from its own path (`<root>/bin/pai-config`,
@@ -10,10 +10,10 @@ use super::{ui, util};
 use anyhow::{Context, Result};
 use std::path::Path;
 
-/// Copy the method into `<root>/share/benchmarks`.
-pub fn stage(root: &Path) -> Result<()> {
+/// Copy the method into `dest`: `<root>/share/benchmarks` (Windows, macOS),
+/// `/usr/share/private-ai/benchmarks` (the Linux packages).
+pub fn stage(dest: &Path) -> Result<()> {
     let src = util::repo_root().join("benchmarks");
-    let dest = root.join("share").join("benchmarks");
     let mut n = 0;
     for (dir, keep) in [
         (

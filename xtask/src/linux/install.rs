@@ -13,9 +13,11 @@
 //! the command line brings its own format. "Newest" is the last one written
 //! of the files named for this architecture, per package.
 //!
-//! Refuses to run while a program from /opt/private-ai is running: rocBLAS and
-//! hipBLASLt load their kernel files lazily, so a server that outlives the
-//! upgrade would read the NEW kernel files with the OLD libraries.
+//! Refuses to run while a program of the packages runs (by its argv[0] in
+//! /usr/bin or /usr/libexec/private-ai) or holds a library of
+//! /usr/lib/private-ai: rocBLAS and hipBLASLt load their kernel
+//! files lazily, so a server that outlives the upgrade would read the NEW
+//! kernel files with the OLD libraries.
 
 use crate::common::components::{self, Component};
 use crate::common::ui;
@@ -23,7 +25,54 @@ use crate::common::util::{self, cmd, output, run as run_cmd, which};
 use anyhow::{bail, Context, Result};
 use std::path::{Path, PathBuf};
 
-const OPT_DIR: &str = "/opt/private-ai";
+/// The packages' private library directory.
+const PRIVATE_LIB_DIR: &str = "/usr/lib/private-ai";
+
+/// Whether a process, by its `/proc/<pid>/cmdline` (NUL-separated, readable
+/// for every user's processes), runs a program of the packages: argv[0] is
+/// one of their executables in /usr/bin (`pai-config`, `llama-*`) or
+/// /usr/libexec/private-ai/pai-manager.
+fn runs_packaged_program(cmdline: &[u8]) -> bool {
+    let argv0 = cmdline.split(|&b| b == 0).next().unwrap_or_default();
+    if argv0 == b"/usr/libexec/private-ai/pai-manager" {
+        return true;
+    }
+    argv0
+        .strip_prefix(b"/usr/bin/")
+        .is_some_and(|name| name == b"pai-config" || name.starts_with(b"llama-"))
+}
+
+/// Whether a process, by its `/proc/<pid>/maps`, has a file of
+/// /usr/lib/private-ai mapped: a program the install would leave running on
+/// the old libraries.
+fn holds_private_libraries(maps: &str) -> bool {
+    // A mapping's path is its last field and the only one with a slash.
+    maps.lines().any(|line| {
+        line.find('/')
+            .is_some_and(|i| line[i..].starts_with(&format!("{PRIVATE_LIB_DIR}/")))
+    })
+}
+
+/// `<pid> <command line>` of every process that runs a program of the
+/// packages ([`runs_packaged_program`], which sees every user's processes) or
+/// holds one of their libraries ([`holds_private_libraries`], for the maps
+/// this user can read), a line each.
+fn private_library_holders() -> String {
+    let mut out = Vec::new();
+    for entry in std::fs::read_dir("/proc").into_iter().flatten().flatten() {
+        let pid = entry.file_name().to_string_lossy().into_owned();
+        if !pid.bytes().all(|b| b.is_ascii_digit()) {
+            continue;
+        }
+        let cmdline = std::fs::read(entry.path().join("cmdline")).unwrap_or_default();
+        let maps = std::fs::read_to_string(entry.path().join("maps")).unwrap_or_default();
+        if runs_packaged_program(&cmdline) || holds_private_libraries(&maps) {
+            let cmdline = String::from_utf8_lossy(&cmdline).replace('\0', " ");
+            out.push(format!("{pid} {}", cmdline.trim_end()));
+        }
+    }
+    out.join("\n")
+}
 
 /// The distribution decides, from ID and ID_LIKE in /etc/os-release. The
 /// tools on PATH come second and are not enough alone: a Debian build host
@@ -293,10 +342,9 @@ pub fn run(format: Option<&str>, force: bool, dry_run: bool, files: Vec<PathBuf>
     }
 
     // ── Running programs ────────────────────────────────────────────────
-    let running =
-        output(cmd("pgrep").args(["-a", "-f", &format!("^{OPT_DIR}/bin/")])).unwrap_or_default();
+    let running = private_library_holders();
     if !running.is_empty() {
-        ui::warn(format!("Running from {OPT_DIR}:"));
+        ui::warn(format!("Running on the libraries of {PRIVATE_LIB_DIR}:"));
         for line in running.lines() {
             ui::dim(format!("  {line}"));
         }
@@ -326,7 +374,7 @@ pub fn run(format: Option<&str>, force: bool, dry_run: bool, files: Vec<PathBuf>
     // ── Check ───────────────────────────────────────────────────────────
     let config = Component::Config.package();
     if let Some(p) = packages.iter().find(|p| p.name == config) {
-        let version = output(cmd(format!("{OPT_DIR}/bin/pai-config")).arg("--version"))
+        let version = output(cmd("/usr/bin/pai-config").arg("--version"))
             .and_then(|s| s.split_whitespace().last().map(str::to_string))
             .unwrap_or_default();
         let matches = !version.is_empty()
@@ -336,7 +384,7 @@ pub fn run(format: Option<&str>, force: bool, dry_run: bool, files: Vec<PathBuf>
                 .unwrap_or(false);
         if !matches {
             bail!(
-                "{OPT_DIR}/bin/pai-config reports '{}', the package is {}",
+                "/usr/bin/pai-config reports '{}', the package is {}",
                 if version.is_empty() {
                     "nothing"
                 } else {
@@ -349,7 +397,7 @@ pub fn run(format: Option<&str>, force: bool, dry_run: bool, files: Vec<PathBuf>
     ui::say("");
     for p in &packages {
         ui::ok(format!(
-            "{} {} installed in {OPT_DIR} ({})",
+            "{} {} installed ({})",
             p.name,
             p.new_version,
             p.action()
@@ -372,6 +420,74 @@ mod tests {
             name: String::new(),
             new_version: new_version.into(),
             old_version: old_version.into(),
+        }
+    }
+
+    /// The programs of the packages run from /usr/bin and
+    /// /usr/libexec/private-ai, where a command line names no package; what
+    /// they share is the libraries of /usr/lib/private-ai, so a process that
+    /// maps one is a program the install would leave on the old libraries
+    /// (and rocBLAS would read the new kernel files with them). A library of
+    /// the system, or a directory that only starts with the same name, is not.
+    #[test]
+    fn a_process_mapping_the_private_libraries_counts_as_running() {
+        let ours = "7f2a1c000000-7f2a1c200000 r-xp 00000000 103:02 1234567 \
+                    /usr/lib/private-ai/libggml-base.so.0.9.0\n";
+        let runtime = "7f2a1c000000-7f2a1c200000 r--p 00000000 103:02 7654321 \
+                       /usr/lib/private-ai/lib/libamdhip64.so.7\n";
+        let system = "55d0c0000000-55d0c0021000 r-xp 00000000 103:02 42 \
+                      /usr/lib/x86_64-linux-gnu/libc.so.6\n\
+                      7ffd00000000-7ffd00021000 rw-p 00000000 00:00 0 [stack]\n";
+        let lookalike = "7f2a1c000000-7f2a1c200000 r-xp 00000000 103:02 9 \
+                         /usr/lib/private-ai-other/libx.so\n";
+        assert!(holds_private_libraries(ours));
+        assert!(holds_private_libraries(runtime));
+        assert!(holds_private_libraries(&format!("{system}{ours}")));
+        assert!(!holds_private_libraries(system));
+        assert!(!holds_private_libraries(lookalike));
+        assert!(!holds_private_libraries(""));
+    }
+
+    /// A non-root install cannot read the maps of another user's processes,
+    /// and llama-server runs as the service user, pai-manager as root; their
+    /// command lines are readable by everyone. argv[0] alone decides: one of
+    /// the packages' executables in /usr/bin, or pai-manager in
+    /// /usr/libexec/private-ai. Another program in /usr/bin, the same name
+    /// elsewhere, or one of ours named only as an argument is not.
+    #[test]
+    fn a_process_running_a_packaged_program_counts_as_running() {
+        for ours in [
+            b"/usr/bin/llama-server\0--port\08080\0".as_slice(),
+            b"/usr/bin/llama-server\0",
+            b"/usr/bin/llama-bench\0-m\0/models/x.gguf\0",
+            b"/usr/bin/llama-cli\0",
+            b"/usr/bin/pai-config\0",
+            b"/usr/bin/pai-config\0server\0start\0",
+            b"/usr/libexec/private-ai/pai-manager\0serve\0",
+            b"/usr/libexec/private-ai/pai-manager",
+        ] {
+            assert!(
+                runs_packaged_program(ours),
+                "{}",
+                String::from_utf8_lossy(ours)
+            );
+        }
+        for other in [
+            b"".as_slice(),
+            b"/usr/bin/bash\0",
+            b"/usr/bin/python3\0/usr/bin/llama-server\0",
+            b"/usr/bin/vim\0/usr/bin/pai-config\0",
+            b"/usr/local/bin/llama-server\0",
+            b"/opt/other/bin/pai-config\0",
+            b"/usr/libexec/private-ai-other/pai-manager\0",
+            b"/usr/libexec/other/pai-manager\0",
+            b"/usr/bin/\0",
+        ] {
+            assert!(
+                !runs_packaged_program(other),
+                "{}",
+                String::from_utf8_lossy(other)
+            );
         }
     }
 

@@ -1,6 +1,6 @@
 //! The configurator's text files (each language, and `cli.toml`, the messages a CLI
 //! command shares with the GUI), installed read-only beside the binaries:
-//! `<root>/share/strings/`, from `crates/core/strings/`. The configurator
+//! `<root>/share/strings/` (`/usr/share/private-ai/strings/` on Linux), from `crates/core/strings/`. The configurator
 //! finds them from its own path (`<root>/bin/pai-config`,
 //! `paths::strings_dir`) and reads them at startup.
 
@@ -8,14 +8,14 @@ use super::{ui, util};
 use anyhow::{Context, Result};
 use std::path::Path;
 
-/// Copy every `*.toml` of the language folder into `<root>/share/strings`.
-pub fn stage(root: &Path) -> Result<()> {
+/// Copy every `*.toml` of the language folder into `to`: `<root>/share/strings`
+/// (Windows, macOS), `/usr/share/private-ai/strings` (the Linux packages).
+pub fn stage(to: &Path) -> Result<()> {
     let from = util::repo_root()
         .join("crates")
         .join("core")
         .join("strings");
-    let to = root.join("share").join("strings");
-    std::fs::create_dir_all(&to)?;
+    std::fs::create_dir_all(to)?;
     let mut n = 0;
     for e in std::fs::read_dir(&from).with_context(|| format!("reading {}", from.display()))? {
         let e = e?;

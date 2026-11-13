@@ -91,3 +91,8 @@ Lessons only: the rules are in `AGENTS.md`.
   report the test-code hits to the tester instead of editing them.
 - A GUI start-up hook with a text-check test (`the_gui_offers_the_import_at_start` slices `gui::run`
   up to its closing `\n}\n`) needs the named call literally inside `run`, not in a helper it calls.
+- xtask compiles only its own OS's module (`linux/`, `windows/` or `macos/`): a `common/` helper that
+  only the other OSes' phases call is dead code on Linux and fails clippy. Give the shared helper one
+  signature every OS calls (`bench_share::stage(dest)`), not a Linux variant beside the old one.
+- `xtask/cmake/<os>.toml` is picked up by file name alone (`cmake_options::load`); a new OS file needs
+  no code change, only the header and a reason per entry in the style of `macos.toml`.

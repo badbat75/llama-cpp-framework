@@ -100,8 +100,9 @@ enum Phase {
         /// Install the .rpm (default: by the host's distribution).
         #[arg(long)]
         rpm: bool,
-        /// Install even while a program from /opt/private-ai/bin runs (Linux,
-        /// macOS; on Windows the MSI stops them itself).
+        /// Install even while a program of the packages runs (Linux: one that
+        /// holds a library of /usr/lib/private-ai; macOS: one from
+        /// /opt/private-ai/bin; on Windows the MSI stops them itself).
         #[arg(long)]
         force: bool,
         /// Print the command instead of running it.

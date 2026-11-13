@@ -1,0 +1,14 @@
+# The llama.cpp CMake options of Linux, applied after common.toml: an entry
+# here REPLACES the common entry of the same NAME.
+
+defines = [
+    # The packages install the executables in /usr/bin and the ggml backends
+    # in the private /usr/lib/private-ai (docs/build-packaging.md). ggml
+    # looks for its backends in this directory first, then beside the
+    # executable and in the working directory
+    # (ggml/src/ggml-backend-reg.cpp, ggml_backend_load_best), so the
+    # packaged llama-server finds them; a tree build still finds its own
+    # beside the executable when nothing is installed there. Requires
+    # GGML_BACKEND_DL (common.toml).
+    "GGML_BACKEND_DIR=/usr/lib/private-ai",
+]

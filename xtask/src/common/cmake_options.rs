@@ -113,6 +113,27 @@ mod tests {
         assert!(!mac.contains(&"-DGGML_CUDA=ON".to_string()));
     }
 
+    /// The Linux packages install the executables in /usr/bin and the ggml
+    /// backends in /usr/lib/private-ai: ggml looks for its backends beside
+    /// the executable and in the working directory, so the Linux build names
+    /// that directory as its backend directory. Windows and macOS keep their
+    /// backends beside the executables and set none.
+    #[test]
+    fn linux_loads_its_backends_from_the_private_library_dir() {
+        let (_, linux) = load(&dir(), "linux").unwrap();
+        assert!(
+            linux.contains(&"-DGGML_BACKEND_DIR=/usr/lib/private-ai".to_string()),
+            "{linux:?}"
+        );
+        for os in ["windows", "macos"] {
+            let (_, defines) = load(&dir(), os).unwrap();
+            assert!(
+                !defines.iter().any(|d| d.starts_with("-DGGML_BACKEND_DIR")),
+                "{os}: {defines:?}"
+            );
+        }
+    }
+
     #[test]
     fn malformed_define_is_refused() {
         assert!(valid_define("GGML_CUDA=ON"));

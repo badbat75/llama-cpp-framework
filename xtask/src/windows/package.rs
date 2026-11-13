@@ -355,8 +355,8 @@ pub fn run(keep_staging: bool, wix_arg: Option<PathBuf>) -> Result<()> {
     util::remove_all(&stage)?;
     std::fs::create_dir_all(&stage)?;
     std::fs::create_dir_all(&out_dir)?;
-    crate::common::bench_share::stage(&stage)?;
-    crate::common::strings_share::stage(&stage)?;
+    crate::common::bench_share::stage(&stage.join("share").join("benchmarks"))?;
+    crate::common::strings_share::stage(&stage.join("share").join("strings"))?;
 
     ui::head("Staging llama.cpp binaries...");
     run_cmd(

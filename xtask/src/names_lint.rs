@@ -1,5 +1,5 @@
 //! The project's names in what the build installs and runs: the configurator
-//! executable `pai-config`, the install tree `/opt/private-ai`, the desktop
+//! executable `pai-config`, the install tree (`/opt/private-ai` on macOS), the desktop
 //! entry's display name "Private AI Framework", the registry key
 //! `Software\private-ai` and the dist root variable `PRIVATE_AI_DIST_ROOT`,
 //! with no fallback to the old names; the packages `private-ai-framework-*`

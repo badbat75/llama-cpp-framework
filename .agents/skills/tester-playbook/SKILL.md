@@ -163,3 +163,11 @@ Lessons only: the rules are in `AGENTS.md`.
   `user_dir: &Path`) is tested by plain `#[test]`s on a tempdir, each with its own red, instead of one
   more e2e phase. Keep in the e2e only what reads `paths::` (a `config_path` under the redirect: the
   e2e changes `PRIVATE_AI_DATA_ROOT` on another thread, so a unit test comparing system paths races).
+- The Linux package tests (`xtask/src/linux/package.rs`) check a spec's `%files` against a temp tree
+  as rpmbuild does (`check_files`: every line takes a file, every file is taken, no system directory
+  claimed); reuse it for any new packaged path. The ROCm libraries find their kpack archives at
+  `<lib dir>/../.kpack` (`strings libhipblaslt.so | grep kpack`), so the runtimes' directory needs a
+  parent the package owns.
+- ggml (`ggml/src/ggml-backend-reg.cpp`, `ggml_backend_load_best`) looks for backends in the compiled-in
+  `GGML_BACKEND_DIR`, then the executable's directory, then the cwd, keeping the first of equal
+  score: a build with `GGML_BACKEND_DIR` prefers the installed backends over its own.
