@@ -43,3 +43,10 @@ Lessons only: the rules are in `AGENTS.md`.
   happened" on a refusal, as well as the returned error kind.
 - Comments never cite PLAN.md step or slice numbers: steps are renumbered and removed when done. Name
   the feature instead ("running llama-server as a service").
+- To test a zbus interface without a bus (zbus 5, `zbus::blocking`): `UnixStream::pair()`, the server end
+  `Builder::async_io_unix_stream(s0).server(Guid::generate())?.p2p().serve_at(..)?.build()` on its own
+  thread (both ends handshake at once; plain `unix_stream` is deprecated), the client end
+  `.p2p().method_timeout(..)` (the deadline: a panicking method otherwise hangs the call). A p2p call
+  carries no sender; to stamp one as the bus would, `client.inner().set_unique_name(":1.42")` after the
+  build (dev feature `bus-impl`). Error replies named under `org.freedesktop.DBus.Error` come back as
+  `zbus::Error::FDO`, any other name as `MethodError`.

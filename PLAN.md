@@ -136,11 +136,14 @@ so the second binary, `private-ai-manager`, shares its modules: a `[[bin]]` alon
    Split in three. **3a, done:** the OS-neutral core, `manager::service::Manager` over the
    `ServiceControl`, `Authority` and `Resolver` traits (polkit check first on every change, the file
    whitelist, atomic writes, collisions on resolved addresses with a wildcard colliding with every
-   address on its port, start at boot), tested with fakes. **3b:** `private-ai-manager serve`, the
-   D-Bus service on the system bus (`org.privateai.Manager1`) with the systemd and polkit
-   implementations of the traits; `serve` says it is unavailable until then; the usage text names
-   `serve`; `paths::instance_ids()` loses its dead_code allow once boot calls it; `manager.rs` line 2
-   cites a plan step, to reword. **3c** (after step 2, the rename):
+   address on its port, start at boot), tested with fakes. **3b, done:** `private-ai-manager serve`, the
+   D-Bus service on the system bus (`org.privateai.Manager1`, zbus 5 blocking) with the systemd and
+   polkit implementations of the traits, tested over a peer-to-peer connection with the fakes; the
+   systemd and polkit proxies and `serve` itself wait for a real run (slice 5). Left: `serve extra`
+   prints the run-instance usage hint. Before 3c: the D-Bus service must keep answering while polkit waits for a user to authenticate.
+   Today the core's mutex is held during `CheckAuthorization` and zbus runs a connection's handlers on
+   one executor thread, so every other call, status reads included, waits for the password prompt.
+   **3c** (after step 2, the rename):
    the configurator's start, stop, status and every INI write
    go through the manager, `runstate`'s callers switched to it. The manager owns every check on the
    content it writes (decided with the user on 2026-11-13): before a write it runs all the checks the

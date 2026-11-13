@@ -1,7 +1,11 @@
-//! The command line of `private-ai-manager`, the runtime service binary
-//! (PLAN.md step 1). `run-instance <id>` is what the unit `llama.cpp@<id>`
-//! runs: it launches instance `id` (`runstate::instance_command`).
+//! The command line of `private-ai-manager`, the runtime service binary that
+//! runs llama-server instances as services. `run-instance <id>` is what the
+//! unit `llama.cpp@<id>` runs: it launches instance `id`
+//! (`runstate::instance_command`). `serve` is the manager's own service: the
+//! D-Bus interface on the system bus (`manager::dbus`, Linux only).
 
+#[cfg(target_os = "linux")]
+pub mod dbus;
 pub mod service;
 
 /// A parsed `private-ai-manager` command line.
@@ -76,6 +80,23 @@ fn run(args: &[String]) -> Result<i32, (i32, String)> {
     })?;
     let id = match command {
         ManagerCommand::RunInstance(id) => id,
+        #[cfg(target_os = "linux")]
+        ManagerCommand::Serve => {
+            let (_served, failures) =
+                dbus::serve().map_err(|e| (1, strings::fill("manager-serve-failed", &[&e])))?;
+            for (id, e) in failures {
+                let detail = dbus::error_reply(&e).1;
+                eprintln!(
+                    "{}",
+                    strings::fill("manager-boot-start-failed", &[&id, &detail])
+                );
+            }
+            // The connection serves on its own thread; this one only keeps it.
+            loop {
+                std::thread::park();
+            }
+        }
+        #[cfg(not(target_os = "linux"))]
         ManagerCommand::Serve => return Err((1, strings::t("manager-serve-unavailable"))),
     };
     let exe = crate::paths::llama_server_exe().ok_or_else(|| {
@@ -183,6 +204,18 @@ mod tests {
                 parse(&[cmd]),
                 Err(ArgsError::UnknownCommand(cmd.into())),
                 "subcommand {cmd:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn usage_text_names_both_commands() {
+        let cli = crate::strings::parse(include_str!("../strings/cli.toml"));
+        for key in ["manager-usage", "manager-unknown-command"] {
+            let text = &cli[key];
+            assert!(
+                text.contains("private-ai-manager serve") && text.contains("run-instance <id>"),
+                "{key}: {text:?}"
             );
         }
     }

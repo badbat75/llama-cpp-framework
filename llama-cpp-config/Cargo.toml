@@ -53,6 +53,10 @@ toml = { version = "1", default-features = false, features = ["std", "parse", "s
 # Linux and the Windows build is unchanged.
 [target.'cfg(target_os = "linux")'.dependencies]
 rfd = { version = "0.17", default-features = false, features = ["xdg-portal", "wayland"] }
+# private-ai-manager's D-Bus service on the system bus (manager/dbus.rs). The
+# version already in the lock (accesskit, atspi, ashpd), so there is one zbus;
+# 5.x keeps the blocking API the synchronous core needs.
+zbus = "5.19"
 
 # Every Win32 call the crate makes (registry, single instance, console, HW
 # Monitor, process handles), with the signatures and constants Microsoft's
@@ -84,6 +88,14 @@ tempfile = "3"
 # Headless Slint backend for the UI regression tests (src/tests/ui_bindings.rs).
 # Already in the tree as an optional dep of slint; pinned to the same version.
 i-slint-backend-testing = "1.18"
+
+# The D-Bus interface's tests serve it over a peer-to-peer connection on a
+# Unix socket pair, never a bus (manager/dbus.rs).
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+# `bus-impl` lets the client end name itself, so its calls carry a sender as
+# they would from the bus; serde is for the generic call helper.
+zbus = { version = "5.19", features = ["p2p", "bus-impl"] }
+serde = "1"
 
 [build-dependencies]
 slint-build = "1.18"

@@ -20,3 +20,9 @@ Lessons only: the rules are in `AGENTS.md`.
 - A debug binary in `cargo-target/debug` finds no llama-server (`paths::llama_bin` layouts). To show a
   launcher's refusals, hardlink it into a scratch dir beside an empty, non-executable `llama-server`.
 - Code comments never cite PLAN.md step numbers: they change on renumbering. Name the feature or caller instead.
+- zbus (5.x, `async-io`) ticks every connection's tasks, method handlers included, on that
+  connection's own executor thread. A blocking call made from a handler on the same connection
+  waits for a reply that thread can never read: give outgoing calls (systemd, polkit) a connection
+  of their own (`manager/dbus.rs`).
+- In `manager.rs` only `main` and `run` are CLI-only for `binding_lint`: a new helper fn that prints
+  a `cli.toml` key needs the key in `en_US.toml` too, so keep such printing inside `run`.

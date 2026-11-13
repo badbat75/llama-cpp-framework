@@ -117,8 +117,6 @@ pub fn instance_ini(id: &str) -> Option<PathBuf> {
 /// The ids of the regular files `server@<valid id>.ini` in
 /// `system_config_dir()`, sorted; empty when the directory is missing, which
 /// this never creates.
-// The manager's boot start of every instance will call this; the allow goes then.
-#[allow(dead_code)]
 pub fn instance_ids() -> Vec<String> {
     let Ok(entries) = std::fs::read_dir(system_config_dir()) else {
         return Vec::new();

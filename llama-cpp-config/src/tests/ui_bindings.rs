@@ -606,4 +606,9 @@ fn editable_widgets_track_model_after_edit() {
     // ── Manager core (manager/service.rs `Manager`) ──────────────────────
     // Same redirect rule as above; both seams are fakes.
     crate::manager::service::manager_e2e();
+
+    // ── Manager over D-Bus (manager/dbus.rs `ManagerInterface`) ──────────
+    // Same redirect rule; served peer to peer on a socket pair, no bus.
+    #[cfg(target_os = "linux")]
+    crate::manager::dbus::manager_dbus_e2e();
 }
