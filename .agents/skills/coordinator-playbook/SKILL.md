@@ -16,3 +16,7 @@ Lessons only: the rules are in `AGENTS.md` and `PLAN.md`.
   `debug config` missed a new file. Query again before believing it.
 - `git add X && git commit` commits the whole index, including what an agent staged with `git mv` while
   it works. When agents are running, commit only named paths: `git commit -m ... -- PLAN.md`.
+- Another session can be editing the same tree (seen 2026-11-14: core, manager and docs changes not
+  from this session's agents, some inside `AGENTS.md` lines this session also changed). Check
+  `git status` before committing and stage only this task's hunks: `git diff -U0 <file>`, keep the
+  hunks that are yours, `git apply --cached --unidiff-zero`, then a plain `git commit` of the index.

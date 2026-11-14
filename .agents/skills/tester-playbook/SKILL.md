@@ -291,6 +291,11 @@ Lessons only: the rules are in `AGENTS.md`.
   ranges disagree (vitest 5.0.5 beside `@vitest/*` 5.1.0) dies with `Cannot read properties of null
   (reading 'edgesOut')`; align the versions rather than add `--legacy-peer-deps`. Try installs in a
   /tmp copy of `package.json` first.
+- Vitest does not type-check: a `const x: number = 'a'` in `fe/src/Version.tsx` leaves its tests
+  green and only `tsc -b` fails (TS2322). `tsconfig.app.json` excludes `*.test.ts(x)`, so `tsc -b`
+  does not see a type error in a test file either (checked 2026-11-14). `noUnusedLocals` is on, so an
+  unused variable is a tsc error too: probe a linter with a rule tsc lacks (rules-of-hooks). To probe a
+  check, append to a tracked file and `git checkout --` it at once; `git status --short fe` must be empty.
 - The bff's embedded page is tested on whatever the build embedded (`fe/dist` or
   `crates/bff/fe-fixture`), taken from `build.rs`'s `rustc-env` `PAI_BFF_FE_DIR` (`tests/fe.rs`
   `embedded()`), never re-decided at run time: a `fe/dist` made after the build reruns nothing, so a

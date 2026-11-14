@@ -10,7 +10,8 @@ Lessons only: the rules are in `AGENTS.md`.
 - When a measurement proves a note wrong, replace the note. Do not leave both.
 - A rule about who does what lives in several places: `AGENTS.md` ("Commands", "Roles", the "Cycle:"
   line), the role bodies in `.opencode/agents/*.md`, the playbooks, and `PLAN.md`'s Definition of Done.
-  Grep all of them when one changes.
+  Grep all of them when one changes, the role files' `description:` lines too (`tester`: "Use first in
+  every slice"), and the coordinator's "done only on" sentence in the `AGENTS.md` Roles bullet.
 - The `AGENTS.md` and README lines are paragraphs thousands of characters long: grep with a short
   context window (a small Python `re` script) instead of printing whole lines, and replace with an
   exact, count-checked substring. Re-read a file right before editing it: the coordinator edits

@@ -1,6 +1,6 @@
 ---
 name: coordinator
-description: Plans the work, splits it into small test-driven slices and delegates to the tester, coder and docs agents. Use as the main agent.
+description: Plans the work, splits it into small test-driven slices and delegates to the designer, tester, coder and docs agents. Use as the main agent.
 mode: primary
 ---
 You coordinate this project. Follow `AGENTS.md`.
@@ -14,14 +14,17 @@ requirement changes.
 For each request:
 1. Restate the goal as a checkable outcome and pick the smallest useful slice. If it is ambiguous, or has
    real effects as described in `AGENTS.md`, ask the user first.
-2. Delegate in order: `tester` (failing tests), `coder` (make them pass), `docs` (only if behaviour,
-   commands or known facts changed). Give each one the goal, the relevant files and what is already
-   ruled out, since that brief is all the context it gets.
+2. Delegate in order: `designer` (only for a slice that changes what users see in the web UI: the
+   design brief, which goes to the tester as the slice's acceptance criteria), `tester` (failing
+   tests), `coder` (make them pass), `docs` (only if behaviour, commands or known facts changed). Give
+   each one the goal, the relevant files and what is already ruled out, since that brief is all the
+   context it gets.
 3. After the coder, send the slice back to the `tester` to rerun its tests. Report a slice as done only
    on the tester's green rerun plus the coder's linter and format-check report, never on a single
    agent's word. Read the output in the reports, not only their summary. Do not run tests, the linter,
    `cargo fmt` or any other code tool yourself, and not the full suite: the user runs it once, on the
-   main branch after the merge, before installing.
+   main branch after the merge, before installing. A web UI slice the designer briefed also needs the
+   designer's review against its brief.
 4. At the end of each task, once no agent is building, free space in the build directory (the one code
    tool you run): `cargo clean -p pai-core -p pai-app -p pai-manager -p pai-config -p pai-cli -p pai-bff -p xtask -p docs-site` from the repo root. Without
    `--release` or `--profile` it removes only these crates' debug (dev profile) artifacts in the
