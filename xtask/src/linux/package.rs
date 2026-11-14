@@ -2,7 +2,10 @@
 //! and eight .rpm packages in ./dist/ (common/components.rs says which file goes
 //! where): the framework's pai-config, pai, pai-bff and core (pai-manager and
 //! its services), and the engine, llama.cpp, with its ROCm, CUDA and Vulkan
-//! runtimes.
+//! runtimes. `xtask package llama` packages the engine and its runtimes
+//! alone, from llama.cpp's build tree; `xtask package framework` the
+//! framework's four alone, from cargo's release dir (the llama.cpp clone only
+//! for its release and licence).
 //! The counterpart of the Windows MSI (windows/package.rs). Requires a successful
 //! build; patchelf, dpkg-dev and rpm come from the prerequisites.
 //!
@@ -64,8 +67,8 @@
 use super::build_llama::load_build_env;
 use super::dists;
 use super::system_files;
-use crate::common::components::{self, Component};
-use crate::common::configurator::set_mode;
+use crate::common::components::{self, Component, Product};
+use crate::common::configurator::{self, set_mode};
 use crate::common::licenses;
 use crate::common::ui;
 use crate::common::util::{self, cmd, gfx_arch, output, run as run_cmd, which};
@@ -298,11 +301,48 @@ fn cp(flags: &str, srcs: &[PathBuf], dest: &Path) -> Result<()> {
     Ok(())
 }
 
-pub fn run(want_deb: bool, want_rpm: bool, keep_staging: bool) -> Result<()> {
+/// The first build output a package run of `product` (both when None) needs
+/// and does not find under `build_root` as an executable: the engine needs
+/// llama.cpp's build tree (`llama.cpp-cmake/bin/llama-server`), the framework
+/// cargo's release build (`cargo-target/release/`: pai-config, pai,
+/// pai-manager, pai-bff) and nothing of llama.cpp's build tree.
+pub(crate) fn missing_input(build_root: &Path, product: Option<Product>) -> Option<PathBuf> {
+    let mut needed = Vec::new();
+    if product != Some(Product::Framework) {
+        needed.push(build_root.join("llama.cpp-cmake/bin/llama-server"));
+    }
+    if product != Some(Product::Llama) {
+        let release = build_root.join("cargo-target/release");
+        needed.extend(FRAMEWORK_EXES.map(|exe| release.join(exe)));
+    }
+    needed.into_iter().find(|p| !util::is_executable(p))
+}
+
+/// The framework's executables, staged from cargo's release dir.
+const FRAMEWORK_EXES: [&str; 4] = ["pai-config", "pai", "pai-manager", "pai-bff"];
+
+/// Packages `product` (both when None) into ./dist/; the other product's
+/// packages there are left as they are.
+pub fn run(
+    product: Option<Product>,
+    want_deb: bool,
+    want_rpm: bool,
+    keep_staging: bool,
+) -> Result<()> {
+    let build_root = util::build_root();
+    if let Some(missing) = missing_input(&build_root, product) {
+        bail!(
+            "{} not found. Run cargo run -p xtask -- build first.",
+            missing.display()
+        );
+    }
+    let wanted = components::of_product(product);
+    let engine = wanted.contains(&Component::Llama);
+    let framework = wanted.contains(&Component::Core);
     let (cfg, dists) = load_build_env()?;
     let repo = util::repo_root();
-    let build_root = util::build_root();
     let build_dir = build_root.join("llama.cpp-cmake");
+    let release = build_root.join("cargo-target/release");
     let stage = build_root.join("staging");
     let pkg_work = build_root.join("package"); // control files, spec, rpmbuild tree: transient
     let out_dir = repo.join("dist");
@@ -334,45 +374,19 @@ pub fn run(want_deb: bool, want_rpm: bool, keep_staging: bool) -> Result<()> {
     ui::head(format!("Architecture:      {rpm_arch}"));
 
     // ── Preconditions ───────────────────────────────────────────────────
+    // The build outputs are there (`missing_input`, above).
     let bin = build_dir.join("bin");
-    if !util::is_executable(&bin.join("llama-server")) {
-        bail!(
-            "llama-server not found in {}. Run cargo run -p xtask -- build first.",
-            bin.display()
-        );
-    }
-    for exe in ["pai-config", "pai"] {
-        if !util::is_executable(&bin.join(exe)) {
-            bail!(
-                "{exe} not found in {}. Run cargo run -p xtask -- build first.",
-                bin.display()
-            );
-        }
-    }
     // A version bump without a rebuild would ship the OLD configurator in a
     // package named after the new version.
-    let built = output(cmd(bin.join("pai-config")).arg("--version"))
-        .and_then(|s| s.split_whitespace().last().map(str::to_string))
-        .unwrap_or_default();
-    if built != fw_version {
-        bail!("the built pai-config is {built}, Cargo.toml says {fw_version}. Run cargo run -p xtask -- build first.");
+    if framework {
+        let built = output(cmd(release.join("pai-config")).arg("--version"))
+            .and_then(|s| s.split_whitespace().last().map(str::to_string))
+            .unwrap_or_default();
+        if built != fw_version {
+            bail!("the built pai-config is {built}, Cargo.toml says {fw_version}. Run cargo run -p xtask -- build first.");
+        }
     }
-    // pai-manager and pai-bff, built beside pai-config by the build phase.
-    let manager = build_root.join("cargo-target/release/pai-manager");
-    if !util::is_executable(&manager) {
-        bail!(
-            "pai-manager not found at {}. Run cargo run -p xtask -- build first.",
-            manager.display()
-        );
-    }
-    let bff = build_root.join("cargo-target/release/pai-bff");
-    if !util::is_executable(&bff) {
-        bail!(
-            "pai-bff not found at {}. Run cargo run -p xtask -- build first.",
-            bff.display()
-        );
-    }
-    if which("patchelf").is_none() {
+    if engine && which("patchelf").is_none() {
         bail!("patchelf not found. Run scripts/00-install-prerequisites.sh (or: sudo apt-get install patchelf).");
     }
     if want_deb && which("dpkg-deb").is_none() {
@@ -397,262 +411,291 @@ pub fn run(want_deb: bool, want_rpm: bool, keep_staging: bool) -> Result<()> {
     }
 
     ui::head("Staging binaries...");
-    // Straight from the build's bin/, where the build leaves executables,
-    // libraries, backends and pai-config side by side: each goes where
+    // The engine straight from llama.cpp's bin/, where the build leaves
+    // executables, libraries and backends side by side: each goes where
     // `place` says (the executables to /usr/bin, the libraries and backends to
     // /usr/lib/private-ai), the library symlinks kept as symlinks.
     // llama.cpp's own test-* harnesses stay out: they are its unit tests, and
-    // every executable staged here is a command in /usr/bin.
-    let (tests, keep): (Vec<PathBuf>, Vec<PathBuf>) = entries(&bin)
-        .into_iter()
-        .partition(|p| name_of(p).starts_with("test-"));
-    let mut by_dir: std::collections::BTreeMap<PathBuf, Vec<PathBuf>> = Default::default();
-    for p in keep {
-        let dest = stage.join(place(&name_of(&p)));
-        by_dir
-            .entry(dest.parent().unwrap().to_path_buf())
-            .or_default()
-            .push(p);
+    // every executable staged here is a command in /usr/bin. The copies of
+    // pai-config and pai the build leaves there stay out too: the framework
+    // comes from cargo's release dir.
+    let llama_files = |p: &PathBuf| {
+        let name = name_of(p);
+        !configurator::NEXT_TO_SERVER.contains(&name.as_str())
+    };
+    if engine {
+        let (tests, keep): (Vec<PathBuf>, Vec<PathBuf>) = entries(&bin)
+            .into_iter()
+            .filter(llama_files)
+            .partition(|p| name_of(p).starts_with("test-"));
+        let mut by_dir: std::collections::BTreeMap<PathBuf, Vec<PathBuf>> = Default::default();
+        for p in keep {
+            let dest = stage.join(place(&name_of(&p)));
+            by_dir
+                .entry(dest.parent().unwrap().to_path_buf())
+                .or_default()
+                .push(p);
+        }
+        for (dir, files) in &by_dir {
+            cp("-a", files, dir)?;
+        }
+        if !tests.is_empty() {
+            ui::dim(format!("Pruned {} llama.cpp test binaries", tests.len()));
+        }
     }
-    for (dir, files) in &by_dir {
-        cp("-a", files, dir)?;
-    }
-    std::fs::copy(&manager, stage.join(place("pai-manager")))
-        .with_context(|| format!("copying {}", manager.display()))?;
-    std::fs::copy(&bff, stage.join(place("pai-bff")))
-        .with_context(|| format!("copying {}", bff.display()))?;
-    crate::common::bench_share::stage(&stage.join(share("benchmarks")))?;
-    crate::common::strings_share::stage(&stage.join(share("strings")))?;
-    if !tests.is_empty() {
-        ui::dim(format!("Pruned {} llama.cpp test binaries", tests.len()));
+    if framework {
+        // pai-config, pai, pai-manager and pai-bff, from cargo's release dir.
+        let bff = build_root.join("cargo-target/release/pai-bff");
+        std::fs::copy(&bff, stage.join(place("pai-bff")))
+            .with_context(|| format!("copying {}", bff.display()))?;
+        for exe in ["pai-config", "pai", "pai-manager"] {
+            let from = release.join(exe);
+            std::fs::copy(&from, stage.join(place(exe)))
+                .with_context(|| format!("copying {}", from.display()))?;
+        }
+        crate::common::bench_share::stage(&stage.join(share("benchmarks")))?;
+        crate::common::strings_share::stage(&stage.join(share("strings")))?;
     }
 
-    // ── Bundle the GPU runtimes ─────────────────────────────────────────
-    // What the backends load is copied out of the dists this build linked
-    // against, so the package runs on a machine that has the GPU drivers and
-    // nothing else: no ROCm, no CUDA Toolkit, no Vulkan SDK.
-    //
-    // WHICH libraries is not a list kept here: it is the ldd closure of the
-    // staged files, restricted to what resolves inside a dist. Each library
-    // lands under the name it is asked for (its soname), symlinks
-    // dereferenced.
-    //
-    // The ROCm dist keeps its layout under lib/ (lib/, lib/llvm/lib/,
-    // lib/rocm_sysdeps/lib/, lib/rocblas/library/, ...): its libraries find
-    // each other and their kernel files by $ORIGIN-relative paths, so a tree
-    // that mirrors the dist needs no patching of anything AMD shipped. That is
-    // also where the compiler's own runtime comes from: the CPU backends are
-    // built with the dist's clang and link ITS OpenMP runtime
-    // (lib/llvm/lib/libomp.so). CUDA, NCCL and Vulkan libraries have no such
-    // structure and go flat into lib/.
     let hip_root = cfg.hip_path.clone();
-    let canon = |p: &Path| {
-        p.canonicalize()
-            .map(|c| c.display().to_string())
-            .unwrap_or_default()
-    };
-    let cuda_dir = dists.find_cuda().map(|d| canon(&d));
-    let nccl_dir = dists.find_nccl().map(|d| canon(&d));
-    let vulkan_dir = dists.find_vulkan();
-    let vulkan_lib_dir = vulkan_dir
-        .as_deref()
-        .and_then(dists::vulkan_loader)
-        .and_then(|l| l.canonicalize().ok())
-        .and_then(|l| l.parent().map(|d| d.display().to_string()));
-
-    ui::head("Bundling the GPU runtimes...");
-    let mut closure = BTreeSet::new();
-    for f in entries(&bin) {
-        if !is_elf(&f) || name_of(&f).starts_with("test-") {
-            continue;
-        }
-        let Some(ldd) = output(cmd("ldd").arg(&f)) else {
-            continue;
+    if engine {
+        // ── Bundle the GPU runtimes ─────────────────────────────────────────
+        // What the backends load is copied out of the dists this build linked
+        // against, so the package runs on a machine that has the GPU drivers and
+        // nothing else: no ROCm, no CUDA Toolkit, no Vulkan SDK.
+        //
+        // WHICH libraries is not a list kept here: it is the ldd closure of the
+        // staged files, restricted to what resolves inside a dist. Each library
+        // lands under the name it is asked for (its soname), symlinks
+        // dereferenced.
+        //
+        // The ROCm dist keeps its layout under lib/ (lib/, lib/llvm/lib/,
+        // lib/rocm_sysdeps/lib/, lib/rocblas/library/, ...): its libraries find
+        // each other and their kernel files by $ORIGIN-relative paths, so a tree
+        // that mirrors the dist needs no patching of anything AMD shipped. That is
+        // also where the compiler's own runtime comes from: the CPU backends are
+        // built with the dist's clang and link ITS OpenMP runtime
+        // (lib/llvm/lib/libomp.so). CUDA, NCCL and Vulkan libraries have no such
+        // structure and go flat into lib/.
+        let canon = |p: &Path| {
+            p.canonicalize()
+                .map(|c| c.display().to_string())
+                .unwrap_or_default()
         };
-        for line in ldd.lines() {
-            let cols: Vec<&str> = line.split_whitespace().collect();
-            if cols.len() >= 3 && cols[1] == "=>" && cols[2].starts_with('/') {
-                closure.insert((cols[0].to_string(), cols[2].to_string()));
-            }
-        }
-    }
-    let under = |real: &str, dir: &Option<String>| {
-        dir.as_ref()
-            .map(|d| real.starts_with(&format!("{d}/")))
-            .unwrap_or(false)
-    };
-    let rt = stage.join(RT_DIR);
-    let mut bundled = 0;
-    for (soname, path) in &closure {
-        let real = canon(Path::new(path));
-        let hip_lib = format!("{hip_root}/lib/");
-        let (dest, from) = if !hip_root.is_empty() && path.starts_with(&hip_lib) {
-            let rel = Path::new(&path[hip_lib.len()..]);
-            (
-                rt.join(rel.parent().unwrap_or(Path::new(""))).join(soname),
-                Component::Rocm,
-            )
-        } else if under(&real, &cuda_dir) || under(&real, &nccl_dir) {
-            (rt.join(soname), Component::Cuda)
-        } else if under(&real, &vulkan_lib_dir) {
-            (rt.join(soname), Component::Vulkan)
-        } else {
-            continue;
-        };
-        // components::of goes by name; a library it would hand to another SDK's
-        // package has to be taught to it, not shipped there. libomp comes out of
-        // the ROCm dist and belongs to llama.cpp on purpose.
-        let owner = components::of(&dest.strip_prefix(&stage)?.to_string_lossy());
-        if owner != from && owner != Component::Llama {
-            bail!(
-                "{soname} comes from the {} dist but common/components.rs gives it to {}",
-                from.suffix(),
-                owner.suffix()
-            );
-        }
-        if dest.exists() {
-            continue;
-        }
-        std::fs::create_dir_all(dest.parent().unwrap())?;
-        std::fs::copy(path, &dest).with_context(|| format!("copying {path}"))?;
-        bundled += 1;
-    }
-    ui::dim(format!("{bundled} runtime libraries"));
+        let cuda_dir = dists.find_cuda().map(|d| canon(&d));
+        let nccl_dir = dists.find_nccl().map(|d| canon(&d));
+        let vulkan_dir = dists.find_vulkan();
+        let vulkan_lib_dir = vulkan_dir
+            .as_deref()
+            .and_then(dists::vulkan_loader)
+            .and_then(|l| l.canonicalize().ok())
+            .and_then(|l| l.parent().map(|d| d.display().to_string()));
 
-    // A backend whose runtime did not resolve inside a dist (ldd answered
-    // from a system ROCm, or the dist is gone from under the dist root) would
-    // be dropped silently by ggml on every machine but this one.
-    let rt_names: Vec<String> = entries(&rt).iter().map(|p| name_of(p)).collect();
-    for (backend, runtime) in [
-        ("libggml-hip.so", "libhipblas.so."),
-        ("libggml-cuda.so", "libcublas.so."),
-    ] {
-        if stage.join(place(backend)).exists() && !rt_names.iter().any(|n| n.starts_with(runtime)) {
-            bail!(
-                "{backend} is staged but {runtime}* was not found in its dist under {}; refusing to package a backend that cannot load",
-                cfg.dist_root
-            );
-        }
-    }
-
-    // The Vulkan backend links the loader of the SDK it was built with only
-    // if ldd resolved it there; when the system loader answered instead, take
-    // the SDK's by name so the package still carries one.
-    if let Some(dir) = &vulkan_lib_dir {
-        let src = Path::new(dir).join("libvulkan.so.1");
-        if !rt.join("libvulkan.so.1").exists() && src.exists() {
-            std::fs::copy(&src, rt.join("libvulkan.so.1"))?;
-            ui::dim("libvulkan.so.1 (Vulkan loader, from the SDK)");
-        }
-    }
-
-    // ROCm kernel data, which no ldd shows: rocBLAS and hipBLASLt load their
-    // precompiled kernels per GPU architecture from <lib>/rocblas/library and
-    // <lib>/hipblaslt/library, and the kpack archives sit in <dist>/.kpack,
-    // which is <lib>/../.kpack here as there (/usr/lib/private-ai/.kpack
-    // beside the runtimes' lib/): hipBLASLt's (blas_lib) and
-    // RCCL's (rccl_lib, the collective kernels --split-mode tensor reduces
-    // through). Only the architectures this build targets (gpu_targets) are
-    // taken: the rest could never be used by a libggml-hip.so that has no
-    // code for them, and they are most of the size. Files that name no
-    // architecture are shared and always copied.
-    if !hip_root.is_empty() && rt.join("libamdhip64.so.7").exists() {
-        let targets: BTreeSet<&str> = cfg.gpu_targets.split(';').collect();
-        let wanted = |name: &str| gfx_arch(name).map(|a| targets.contains(a)).unwrap_or(true);
-        let hip = Path::new(&hip_root);
-        for sub in ["rocblas/library", "hipblaslt/library"] {
-            let src = hip.join("lib").join(sub);
-            if !src.is_dir() {
+        ui::head("Bundling the GPU runtimes...");
+        let mut closure = BTreeSet::new();
+        for f in entries(&bin).into_iter().filter(llama_files) {
+            if !is_elf(&f) || name_of(&f).starts_with("test-") {
                 continue;
             }
-            let dest = rt.join(sub);
-            std::fs::create_dir_all(&dest)?;
-            // Entries are files named after their architecture, or (rocBLAS,
-            // for the newer ones) a directory per architecture.
-            let picked: Vec<PathBuf> = entries(&src)
-                .into_iter()
-                .filter(|p| wanted(&name_of(p)))
-                .collect();
-            cp("-rL", &picked, &dest)?;
-            ui::dim(format!("{sub}: {} MiB", util::du("-sm", &dest)));
-        }
-        let kpack = hip.join(".kpack");
-        if kpack.is_dir() {
-            let dest = stage.join(LIB_DIR).join(".kpack");
-            std::fs::create_dir_all(&dest)?;
-            let mut picked = Vec::new();
-            for prefix in ["blas_lib_", "rccl_lib_"] {
-                picked.extend(entries(&kpack).into_iter().filter(|p| {
-                    let n = name_of(p);
-                    n.starts_with(prefix) && n.ends_with(".kpack") && wanted(&n)
-                }));
+            let Some(ldd) = output(cmd("ldd").arg(&f)) else {
+                continue;
+            };
+            for line in ldd.lines() {
+                let cols: Vec<&str> = line.split_whitespace().collect();
+                if cols.len() >= 3 && cols[1] == "=>" && cols[2].starts_with('/') {
+                    closure.insert((cols[0].to_string(), cols[2].to_string()));
+                }
             }
-            cp("-L", &picked, &dest)?;
-            ui::dim(format!(".kpack: {} MiB", util::du("-sm", &dest)));
         }
-    }
+        let under = |real: &str, dir: &Option<String>| {
+            dir.as_ref()
+                .map(|d| real.starts_with(&format!("{d}/")))
+                .unwrap_or(false)
+        };
+        let rt = stage.join(RT_DIR);
+        let mut bundled = 0;
+        for (soname, path) in &closure {
+            let real = canon(Path::new(path));
+            let hip_lib = format!("{hip_root}/lib/");
+            let (dest, from) = if !hip_root.is_empty() && path.starts_with(&hip_lib) {
+                let rel = Path::new(&path[hip_lib.len()..]);
+                (
+                    rt.join(rel.parent().unwrap_or(Path::new(""))).join(soname),
+                    Component::Rocm,
+                )
+            } else if under(&real, &cuda_dir) || under(&real, &nccl_dir) {
+                (rt.join(soname), Component::Cuda)
+            } else if under(&real, &vulkan_lib_dir) {
+                (rt.join(soname), Component::Vulkan)
+            } else {
+                continue;
+            };
+            // components::of goes by name; a library it would hand to another SDK's
+            // package has to be taught to it, not shipped there. libomp comes out of
+            // the ROCm dist and belongs to llama.cpp on purpose.
+            let owner = components::of(&dest.strip_prefix(&stage)?.to_string_lossy());
+            if owner != from && owner != Component::Llama {
+                bail!(
+                    "{soname} comes from the {} dist but common/components.rs gives it to {}",
+                    from.suffix(),
+                    owner.suffix()
+                );
+            }
+            if dest.exists() {
+                continue;
+            }
+            std::fs::create_dir_all(dest.parent().unwrap())?;
+            std::fs::copy(path, &dest).with_context(|| format!("copying {path}"))?;
+            bundled += 1;
+        }
+        ui::dim(format!("{bundled} runtime libraries"));
 
-    // RUNPATH. The build tree's RUNPATH names the build tree itself and the
-    // dists under /mnt/data; a packaged file must find the other llama.cpp
-    // libraries and the bundled runtimes. The executables in /usr/bin are not
-    // beside them, so $ORIGIN cannot reach them: every llama.cpp ELF gets
-    // RUNPATH (/usr/lib/private-ai, its lib/ with the runtimes and lib/llvm/lib
-    // with libomp, by absolute path). The bundled runtime libraries are left
-    // exactly as their vendor built them, and pai-manager and pai-bff link
-    // nothing of llama.cpp and get none. LD_LIBRARY_PATH still wins over RUNPATH.
-    ui::head("Stripping and setting RUNPATH...");
-    let staged = [stage.join("usr/bin"), stage.join(LIB_DIR)];
-    // llama.cpp's own files: the runtimes in lib/ and .kpack are not stripped.
-    let size = || {
-        output(
-            cmd("du")
-                .args(["-scm", "--exclude=lib", "--exclude=.kpack"])
-                .args(&staged),
-        )
-        .and_then(|s| {
-            s.lines()
-                .last()?
-                .split_whitespace()
-                .next()
-                .map(str::to_string)
-        })
-        .unwrap_or_else(|| "?".into())
-    };
-    let before = size();
-    let mut executables = 0;
-    for f in staged.iter().flat_map(|d| entries(d)) {
-        if !is_elf(&f) {
-            continue;
+        // A backend whose runtime did not resolve inside a dist (ldd answered
+        // from a system ROCm, or the dist is gone from under the dist root) would
+        // be dropped silently by ggml on every machine but this one.
+        let rt_names: Vec<String> = entries(&rt).iter().map(|p| name_of(p)).collect();
+        for (backend, runtime) in [
+            ("libggml-hip.so", "libhipblas.so."),
+            ("libggml-cuda.so", "libcublas.so."),
+        ] {
+            if stage.join(place(backend)).exists()
+                && !rt_names.iter().any(|n| n.starts_with(runtime))
+            {
+                bail!(
+                    "{backend} is staged but {runtime}* was not found in its dist under {}; refusing to package a backend that cannot load",
+                    cfg.dist_root
+                );
+            }
         }
-        // strip BEFORE patchelf: stripping a patched file can drop the
-        // section patchelf appended. --strip-unneeded keeps the dynamic
-        // symbols, which is all a shared library needs.
-        run_cmd(cmd("strip").arg("--strip-unneeded").arg(&f))?;
-        run_cmd(cmd("patchelf").args(["--set-rpath", runpath()]).arg(&f))?;
-        set_mode(&f, 0o755)?;
-        if f.parent() == Some(stage.join("usr/bin").as_path()) {
-            executables += 1;
+
+        // The Vulkan backend links the loader of the SDK it was built with only
+        // if ldd resolved it there; when the system loader answered instead, take
+        // the SDK's by name so the package still carries one.
+        if let Some(dir) = &vulkan_lib_dir {
+            let src = Path::new(dir).join("libvulkan.so.1");
+            if !rt.join("libvulkan.so.1").exists() && src.exists() {
+                std::fs::copy(&src, rt.join("libvulkan.so.1"))?;
+                ui::dim("libvulkan.so.1 (Vulkan loader, from the SDK)");
+            }
+        }
+
+        // ROCm kernel data, which no ldd shows: rocBLAS and hipBLASLt load their
+        // precompiled kernels per GPU architecture from <lib>/rocblas/library and
+        // <lib>/hipblaslt/library, and the kpack archives sit in <dist>/.kpack,
+        // which is <lib>/../.kpack here as there (/usr/lib/private-ai/.kpack
+        // beside the runtimes' lib/): hipBLASLt's (blas_lib) and
+        // RCCL's (rccl_lib, the collective kernels --split-mode tensor reduces
+        // through). Only the architectures this build targets (gpu_targets) are
+        // taken: the rest could never be used by a libggml-hip.so that has no
+        // code for them, and they are most of the size. Files that name no
+        // architecture are shared and always copied.
+        if !hip_root.is_empty() && rt.join("libamdhip64.so.7").exists() {
+            let targets: BTreeSet<&str> = cfg.gpu_targets.split(';').collect();
+            let wanted = |name: &str| gfx_arch(name).map(|a| targets.contains(a)).unwrap_or(true);
+            let hip = Path::new(&hip_root);
+            for sub in ["rocblas/library", "hipblaslt/library"] {
+                let src = hip.join("lib").join(sub);
+                if !src.is_dir() {
+                    continue;
+                }
+                let dest = rt.join(sub);
+                std::fs::create_dir_all(&dest)?;
+                // Entries are files named after their architecture, or (rocBLAS,
+                // for the newer ones) a directory per architecture.
+                let picked: Vec<PathBuf> = entries(&src)
+                    .into_iter()
+                    .filter(|p| wanted(&name_of(p)))
+                    .collect();
+                cp("-rL", &picked, &dest)?;
+                ui::dim(format!("{sub}: {} MiB", util::du("-sm", &dest)));
+            }
+            let kpack = hip.join(".kpack");
+            if kpack.is_dir() {
+                let dest = stage.join(LIB_DIR).join(".kpack");
+                std::fs::create_dir_all(&dest)?;
+                let mut picked = Vec::new();
+                for prefix in ["blas_lib_", "rccl_lib_"] {
+                    picked.extend(entries(&kpack).into_iter().filter(|p| {
+                        let n = name_of(p);
+                        n.starts_with(prefix) && n.ends_with(".kpack") && wanted(&n)
+                    }));
+                }
+                cp("-L", &picked, &dest)?;
+                ui::dim(format!(".kpack: {} MiB", util::du("-sm", &dest)));
+            }
+        }
+
+        // RUNPATH. The build tree's RUNPATH names the build tree itself and the
+        // dists under /mnt/data; a packaged file must find the other llama.cpp
+        // libraries and the bundled runtimes. The executables in /usr/bin are not
+        // beside them, so $ORIGIN cannot reach them: every llama.cpp ELF gets
+        // RUNPATH (/usr/lib/private-ai, its lib/ with the runtimes and lib/llvm/lib
+        // with libomp, by absolute path). The bundled runtime libraries are left
+        // exactly as their vendor built them, and the framework's executables
+        // link nothing of llama.cpp and get none (below). LD_LIBRARY_PATH still
+        // wins over RUNPATH.
+        ui::head("Stripping and setting RUNPATH...");
+        let staged = [stage.join("usr/bin"), stage.join(LIB_DIR)];
+        // llama.cpp's own files: the runtimes in lib/ and .kpack are not stripped.
+        let size = || {
+            output(
+                cmd("du")
+                    .args(["-scm", "--exclude=lib", "--exclude=.kpack"])
+                    .args(&staged),
+            )
+            .and_then(|s| {
+                s.lines()
+                    .last()?
+                    .split_whitespace()
+                    .next()
+                    .map(str::to_string)
+            })
+            .unwrap_or_else(|| "?".into())
+        };
+        let before = size();
+        let mut executables = 0;
+        for f in staged.iter().flat_map(|d| entries(d)) {
+            if !is_elf(&f) || FRAMEWORK_EXES.contains(&name_of(&f).as_str()) {
+                continue;
+            }
+            // strip BEFORE patchelf: stripping a patched file can drop the
+            // section patchelf appended. --strip-unneeded keeps the dynamic
+            // symbols, which is all a shared library needs.
+            run_cmd(cmd("strip").arg("--strip-unneeded").arg(&f))?;
+            run_cmd(cmd("patchelf").args(["--set-rpath", runpath()]).arg(&f))?;
+            set_mode(&f, 0o755)?;
+            if f.parent() == Some(stage.join("usr/bin").as_path()) {
+                executables += 1;
+            }
+        }
+        let after = size();
+        ui::dim(format!(
+            "{executables} executables, {before} MiB -> {after} MiB stripped"
+        ));
+        ui::dim(format!("Bundled runtimes: {} MiB", util::du("-sm", &rt)));
+    }
+    // The framework's executables link nothing of llama.cpp: stripped, no
+    // RUNPATH.
+    if framework {
+        for name in FRAMEWORK_EXES {
+            let staged = stage.join(place(name));
+            run_cmd(cmd("strip").arg("--strip-unneeded").arg(&staged))?;
+            set_mode(&staged, 0o755)?;
         }
     }
-    for name in ["pai-manager", "pai-bff"] {
-        let staged = stage.join(place(name));
-        run_cmd(cmd("strip").arg("--strip-unneeded").arg(&staged))?;
-        set_mode(&staged, 0o755)?;
-    }
-    let after = size();
-    ui::dim(format!(
-        "{executables} executables, {before} MiB -> {after} MiB stripped"
-    ));
-    ui::dim(format!("Bundled runtimes: {} MiB", util::du("-sm", &rt)));
 
     // ── Desktop entry, icon ─────────────────────────────────────────────
-    let apps = stage.join("usr/share/applications");
-    std::fs::create_dir_all(&apps)?;
-    std::fs::write(apps.join("org.privateai.Config.desktop"), desktop_entry())?;
+    if framework {
+        let apps = stage.join("usr/share/applications");
+        std::fs::create_dir_all(&apps)?;
+        std::fs::write(apps.join("org.privateai.Config.desktop"), desktop_entry())?;
 
-    let icon = stage_icon(&repo.join("resources/llama.ico"), &stage)?;
-    if icon.is_none() {
-        ui::warn("No PNG frame in resources/llama.ico: the desktop entry ships without an icon");
+        let icon = stage_icon(&repo.join("resources/llama.ico"), &stage)?;
+        if icon.is_none() {
+            ui::warn(
+                "No PNG frame in resources/llama.ico: the desktop entry ships without an icon",
+            );
+        }
     }
 
     // ── The services' system files ──────────────────────────────────────
@@ -660,7 +703,11 @@ pub fn run(want_deb: bool, want_rpm: bool, keep_staging: bool) -> Result<()> {
 
     // ── One tree per package ────────────────────────────────────────────
     let roots = pkg_work.join("roots");
-    let present = components::split(&stage, &roots)?;
+    // Only the product asked for is packaged.
+    let present: Vec<Component> = components::split(&stage, &roots)?
+        .into_iter()
+        .filter(|c| wanted.contains(c))
+        .collect();
 
     // A runtime's version is its SDK's, so a new llama.cpp alone leaves it as it
     // is. NCCL has a version of its own and travels in the CUDA package.
@@ -1410,6 +1457,127 @@ fn build_rpm(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A build root under the temp dir holding `files` as executables (or
+    /// plain files when `exec` is false), each a path under the root.
+    fn build_root_with(name: &str, files: &[&str], exec: bool) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        let root = std::env::temp_dir().join(format!("xtask-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        for f in files {
+            let p = root.join(f);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(&p, "#!/bin/sh\n").unwrap();
+            let mode = if exec { 0o755 } else { 0o644 };
+            std::fs::set_permissions(&p, std::fs::Permissions::from_mode(mode)).unwrap();
+        }
+        root
+    }
+
+    const CARGO_OUTPUTS: [&str; 4] = [
+        "cargo-target/release/pai-config",
+        "cargo-target/release/pai",
+        "cargo-target/release/pai-manager",
+        "cargo-target/release/pai-bff",
+    ];
+    const ENGINE_OUTPUT: &str = "llama.cpp-cmake/bin/llama-server";
+
+    /// The framework is packaged from cargo's release build alone: no
+    /// llama.cpp build tree at all.
+    #[test]
+    fn the_framework_packages_without_the_llama_cpp_build_tree() {
+        let root = build_root_with("fw-alone", &CARGO_OUTPUTS, true);
+        assert!(!root.join("llama.cpp-cmake").exists());
+        assert_eq!(missing_input(&root, Some(Product::Framework)), None);
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// The engine is packaged from llama.cpp's build tree alone: no cargo
+    /// artifacts at all.
+    #[test]
+    fn the_engine_packages_without_the_cargo_build() {
+        let root = build_root_with("engine-alone", &[ENGINE_OUTPUT], true);
+        assert!(!root.join("cargo-target").exists());
+        assert_eq!(missing_input(&root, Some(Product::Llama)), None);
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// Each of the framework's four executables is required from cargo's
+    /// release dir: removing any one names it.
+    #[test]
+    fn a_missing_framework_executable_is_named() {
+        for gone in CARGO_OUTPUTS {
+            let left: Vec<&str> = CARGO_OUTPUTS.into_iter().filter(|f| *f != gone).collect();
+            let root = build_root_with("fw-missing", &left, true);
+            assert_eq!(
+                missing_input(&root, Some(Product::Framework)),
+                Some(root.join(gone)),
+                "{gone}"
+            );
+            std::fs::remove_dir_all(&root).unwrap();
+        }
+    }
+
+    /// The engine without llama-server is refused, and an empty build root
+    /// refuses either product.
+    #[test]
+    fn a_missing_llama_server_is_named() {
+        let root = build_root_with("engine-missing", &CARGO_OUTPUTS, true);
+        assert_eq!(
+            missing_input(&root, Some(Product::Llama)),
+            Some(root.join(ENGINE_OUTPUT))
+        );
+        std::fs::remove_dir_all(&root).unwrap();
+
+        let root = build_root_with("empty", &[], true);
+        assert_eq!(
+            missing_input(&root, Some(Product::Llama)),
+            Some(root.join(ENGINE_OUTPUT))
+        );
+        let fw = missing_input(&root, Some(Product::Framework)).expect("nothing built");
+        assert!(
+            fw.starts_with(root.join("cargo-target/release")),
+            "{}",
+            fw.display()
+        );
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// No product named packages both, so both builds are required.
+    #[test]
+    fn packaging_both_needs_both_builds() {
+        let root = build_root_with("both-cargo-only", &CARGO_OUTPUTS, true);
+        assert_eq!(missing_input(&root, None), Some(root.join(ENGINE_OUTPUT)));
+        std::fs::remove_dir_all(&root).unwrap();
+
+        let root = build_root_with("both-engine-only", &[ENGINE_OUTPUT], true);
+        let fw = missing_input(&root, None).expect("no cargo build");
+        assert!(
+            fw.starts_with(root.join("cargo-target/release")),
+            "{}",
+            fw.display()
+        );
+        std::fs::remove_dir_all(&root).unwrap();
+
+        let mut all = CARGO_OUTPUTS.to_vec();
+        all.push(ENGINE_OUTPUT);
+        let root = build_root_with("both-all", &all, true);
+        assert_eq!(missing_input(&root, None), None);
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// A file that is there but not executable (a failed copy, a checkout
+    /// of a placeholder) counts as missing.
+    #[test]
+    fn a_non_executable_output_counts_as_missing() {
+        let root = build_root_with("not-exec", &[ENGINE_OUTPUT], false);
+        assert_eq!(
+            missing_input(&root, Some(Product::Llama)),
+            Some(root.join(ENGINE_OUTPUT))
+        );
+        std::fs::remove_dir_all(&root).unwrap();
+    }
 
     /// `depends_on_llama`: the lowest llama.cpp package version this one
     /// requires (`1:1.0.0`), None when it does not run the engine.

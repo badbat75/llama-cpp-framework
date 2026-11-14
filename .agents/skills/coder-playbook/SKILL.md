@@ -216,3 +216,11 @@ Lessons only: the rules are in `AGENTS.md`.
 - `cargo clippy -p xtask --target x86_64-pc-windows-gnu` prints two `xtask (manifest)` warnings
   (`serde_json` and `sha2`, unused on that target) and still exits 0: they come from
   `xtask/Cargo.toml`, not from the code, and are not a lint failure.
+- xtask's `common/components.rs` is `#[cfg(unix)]` (`common/mod.rs`): a type the command line needs
+  on Windows too (`Product`, the `build`/`package` argument) is declared in `main.rs` and re-exported
+  there with `pub use crate::Product;` (which needs the enum `pub`, not `pub(crate)`).
+- Linux `xtask package` stages the framework from `cargo-target/release` and the engine from
+  `llama.cpp-cmake/bin` minus `configurator::NEXT_TO_SERVER` (the build still copies pai-config and pai
+  there for the dev tree and macOS's packaging). The text-check tests slice `run` from `pub fn run(`
+  to the next `\nfn `: keep its steps inline (`if engine { .. }`), and keep the literal
+  `"cargo-target/release/pai-bff"` and `place("pai-bff")` a test looks for.

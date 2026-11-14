@@ -20,7 +20,7 @@ use anyhow::{bail, Context, Result};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-/// `build config`: pai-config, in the VS environment as it always
+/// `build framework`: pai-config, in the VS environment as it always
 /// was. Not copied anywhere: the package phase stages it straight from
 /// cargo's release dir.
 pub fn build_config() -> Result<()> {

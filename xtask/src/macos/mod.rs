@@ -20,7 +20,8 @@ use anyhow::Result;
 /// The package's prefix on the target machine, and the payload path of it.
 pub const OPT_DIR: &str = "/opt/private-ai";
 
-/// `build config`: pai-config, copied next to llama-server.
+/// `build framework`: the framework, pai-config and pai copied next to
+/// llama-server.
 pub fn build_config() -> Result<()> {
     let cfg = config::load()?;
     let target = configurator::build(&cfg.llama_cpp_dir, cfg.build_jobs)?;

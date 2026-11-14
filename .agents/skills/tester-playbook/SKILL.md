@@ -393,3 +393,9 @@ Lessons only: the rules are in `AGENTS.md`.
   hold at once. `server_cfg::render` always writes ModelsDir and StateDir resolved (and Hostname), so a
   shipped starting file must name the service user's paths or the manager's first write resolves them
   against its own home.
+- xtask's command line is pinned with `Cli::try_parse_from` (tests in `main.rs`, `cli_tests`). To pin a
+  renamed `ValueEnum` variant or a new field without a compile error, compare
+  `m.to_possible_value().unwrap().get_name()` (or `Module::value_variants()`) and match the variant
+  with `Phase::Package { .. }`; a positional the subcommand lacks fails as "unexpected argument".
+  `linux::package::run` itself reads the real `build/linux/` (no redirect): pin its decisions as pure
+  functions over a `build_root: &Path` and a temp tree.

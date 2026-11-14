@@ -8,10 +8,10 @@
 //!   scripts\00-install-prerequisites.ps1 does it all natively
 //! - `configure`: detects paths and tools, writes the build config under
 //!   `build/<os>/`
-//! - `build`: llama.cpp (CMake + Ninja) and pai-config (cargo), two
-//!   separate modules: `build llama`, `build config`, or both
-//! - `package`: the `.deb` and the `.rpm` (Linux), the MSI (Windows), the
-//!   `.pkg` (macOS)
+//! - `build`: llama.cpp (CMake + Ninja) and the framework (cargo), two
+//!   separate products: `build llama`, `build framework`, or both
+//! - `package`: the `.deb` and the `.rpm` (Linux, of one product or both),
+//!   the MSI (Windows), the `.pkg` (macOS)
 //! - `install`: installs the newest package on this machine
 //!
 //! `common/` is what the operating systems share (the dist layout, the
@@ -68,7 +68,7 @@ enum Phase {
         #[arg(long)]
         dist_root: Option<PathBuf>,
     },
-    /// Build llama.cpp and/or pai-config (default: both, in that order).
+    /// Build llama.cpp and/or the framework (default: both, in that order).
     Build {
         #[arg(value_enum)]
         module: Option<Module>,
@@ -76,6 +76,10 @@ enum Phase {
     /// Package the build in ./dist/: a .deb and an .rpm on Linux, the MSI on
     /// Windows, a .pkg on macOS.
     Package {
+        /// The product to package (Linux; default: both). The packages of
+        /// the other one in ./dist/ are left as they are.
+        #[arg(value_enum)]
+        product: Option<Product>,
         /// Build the .deb (Linux; default: both formats).
         #[arg(long)]
         deb: bool,
@@ -114,13 +118,20 @@ enum Phase {
     },
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, ValueEnum)]
-enum Module {
-    /// llama.cpp: CMake configure + Ninja build
+/// The two products, built and packaged apart (`xtask build|package
+/// [llama|framework]`): the engine with its runtimes, and the framework.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum Product {
+    /// llama.cpp: CMake configure + Ninja build; the engine's package and
+    /// its runtimes
     Llama,
-    /// pai-config: cargo build --release
-    Config,
+    /// pai-config, pai, pai-manager, pai-bff and the web UI: cargo build
+    /// --release; the framework's packages
+    Framework,
 }
+
+/// What `build` takes: one of the two products.
+type Module = Product;
 
 fn main() {
     let cli = Cli::parse();
@@ -139,7 +150,7 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             dist_root,
         } => linux::configure::run(llama_cpp_dir, dist_root),
         Phase::Build { module } => {
-            if module != Some(Module::Config) {
+            if module != Some(Module::Framework) {
                 linux::build_llama::run()?;
             }
             if module != Some(Module::Llama) {
@@ -148,13 +159,14 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             Ok(())
         }
         Phase::Package {
+            product,
             deb,
             rpm,
             keep_staging,
             wix: _,
         } => {
             let both = !deb && !rpm;
-            linux::package::run(deb || both, rpm || both, keep_staging)
+            linux::package::run(product, deb || both, rpm || both, keep_staging)
         }
         Phase::Install {
             deb,
@@ -186,7 +198,7 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             dist_root,
         } => windows::configure::run(llama_cpp_dir, dist_root),
         Phase::Build { module } => {
-            if module != Some(Module::Config) {
+            if module != Some(Module::Framework) {
                 windows::build_llama::run()?;
             }
             if module != Some(Module::Llama) {
@@ -195,6 +207,7 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             Ok(())
         }
         Phase::Package {
+            product,
             deb,
             rpm,
             keep_staging,
@@ -204,6 +217,9 @@ fn run(cli: Cli) -> anyhow::Result<()> {
                 anyhow::bail!(
                     "--deb and --rpm are Linux packages; on Windows the package is the MSI"
                 );
+            }
+            if product.is_some() {
+                anyhow::bail!("on Windows the MSI holds both products: give none");
             }
             windows::package::run(keep_staging, wix)
         }
@@ -236,7 +252,7 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             dist_root,
         } => macos::configure::run(llama_cpp_dir, dist_root),
         Phase::Build { module } => {
-            if module != Some(Module::Config) {
+            if module != Some(Module::Framework) {
                 macos::build_llama::run()?;
             }
             if module != Some(Module::Llama) {
@@ -245,11 +261,15 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             Ok(())
         }
         Phase::Package {
+            product,
             deb,
             rpm,
             keep_staging,
             wix,
         } => {
+            if product.is_some() {
+                anyhow::bail!("on macOS the package phase builds every .pkg: give no product");
+            }
             if deb || rpm || wix.is_some() {
                 anyhow::bail!("--deb, --rpm and --wix are other systems' packages; on macOS the packages are .pkg files");
             }
@@ -269,5 +289,94 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             }
             macos::install::run(force, dry_run, files)
         }
+    }
+}
+
+#[cfg(test)]
+mod cli_tests {
+    use super::{Cli, Phase};
+    use clap::{Parser, ValueEnum};
+
+    fn parse(args: &[&str]) -> Result<Cli, clap::Error> {
+        Cli::try_parse_from(std::iter::once("xtask").chain(args.iter().copied()))
+    }
+
+    /// `xtask build` names the two products: `llama` and `framework`.
+    #[test]
+    fn build_takes_the_engine_or_the_framework() {
+        for name in ["llama", "framework"] {
+            let cli = parse(&["build", name]).unwrap_or_else(|e| panic!("build {name}: {e}"));
+            match cli.phase {
+                Phase::Build { module: Some(m) } => assert_eq!(
+                    m.to_possible_value().unwrap().get_name(),
+                    name,
+                    "build {name}"
+                ),
+                _ => panic!("build {name} is not a build of one product"),
+            }
+        }
+    }
+
+    /// With no product, `xtask build` builds both (the run builds llama.cpp
+    /// first).
+    #[test]
+    fn build_with_no_product_builds_both() {
+        assert!(matches!(
+            parse(&["build"]).unwrap().phase,
+            Phase::Build { module: None }
+        ));
+    }
+
+    /// The module was `config` before the products had names; a pre-release
+    /// keeps no alias.
+    #[test]
+    fn build_no_longer_takes_config() {
+        assert!(parse(&["build", "config"]).is_err());
+        assert!(parse(&["build", "nonsense"]).is_err());
+    }
+
+    /// `xtask package` takes the same two products, alone or with the format
+    /// and staging flags.
+    #[test]
+    fn package_takes_the_engine_or_the_framework() {
+        for args in [
+            &["package", "llama"][..],
+            &["package", "framework"],
+            &["package", "framework", "--deb"],
+            &["package", "llama", "--rpm", "--keep-staging"],
+        ] {
+            let cli = parse(args).unwrap_or_else(|e| panic!("{args:?}: {e}"));
+            assert!(
+                matches!(cli.phase, Phase::Package { .. }),
+                "{args:?} is not a package run"
+            );
+        }
+    }
+
+    /// With no product, `xtask package` packages both, as before.
+    #[test]
+    fn package_with_no_product_packages_both() {
+        assert!(matches!(
+            parse(&["package"]).unwrap().phase,
+            Phase::Package { .. }
+        ));
+    }
+
+    /// Anything but the two products is refused, `config` included.
+    #[test]
+    fn package_refuses_an_unknown_product() {
+        assert!(parse(&["package", "config"]).is_err());
+        assert!(parse(&["package", "nonsense"]).is_err());
+        assert!(parse(&["package", "llama", "framework"]).is_err());
+    }
+
+    /// The products' names as the command line spells them.
+    #[test]
+    fn the_products_are_named_llama_and_framework() {
+        let names: Vec<String> = super::Module::value_variants()
+            .iter()
+            .map(|m| m.to_possible_value().unwrap().get_name().to_string())
+            .collect();
+        assert_eq!(names, ["llama", "framework"]);
     }
 }

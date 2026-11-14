@@ -12,7 +12,8 @@ pub mod system_files;
 
 use anyhow::Result;
 
-/// `build config`: pai-config, copied next to llama-server.
+/// `build framework`: the framework, pai-config and pai copied next to
+/// llama-server.
 pub fn build_config() -> Result<()> {
     let (cfg, _) = build_llama::load_build_env()?;
     let target = crate::common::configurator::build(&cfg.llama_cpp_dir, cfg.build_jobs)?;

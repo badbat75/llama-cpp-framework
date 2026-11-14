@@ -227,6 +227,31 @@ pub fn split(stage: &Path, into: &Path) -> Result<Vec<Component>> {
     Ok(present)
 }
 
+/// The two products (declared beside the command line, which names them on
+/// every OS).
+pub use crate::Product;
+
+impl Component {
+    /// The product whose package this is.
+    pub fn product(self) -> Product {
+        if self == Component::Llama || self.is_runtime() {
+            Product::Llama
+        } else {
+            Product::Framework
+        }
+    }
+}
+
+/// The components a package run stages and packages: those of `product`, or
+/// every one when None, in `Component::ALL`'s order.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub fn of_product(product: Option<Product>) -> Vec<Component> {
+    Component::ALL
+        .into_iter()
+        .filter(|c| product.is_none_or(|p| c.product() == p))
+        .collect()
+}
+
 /// The build revision of the llama.cpp package (`+pai<N>` in its version):
 /// raised when the patches or the build options change on the same
 /// llama.cpp release.
@@ -303,6 +328,37 @@ pub fn dist_version(dist: &Path) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The engine's package and its runtimes are the product `llama`, the
+    /// four `private-ai-framework-*` packages the product `framework`.
+    #[test]
+    fn each_component_belongs_to_the_engine_or_the_framework() {
+        for c in Component::ALL {
+            let want = if c == Component::Llama || c.is_runtime() {
+                Product::Llama
+            } else {
+                Product::Framework
+            };
+            assert_eq!(c.product(), want, "{}", c.package());
+        }
+    }
+
+    /// `xtask package llama` touches only the engine and its runtimes,
+    /// `xtask package framework` only the framework's four packages, and no
+    /// choice packages them all, in the order of `Component::ALL`.
+    #[test]
+    fn a_package_run_takes_the_components_of_the_product_it_names() {
+        use Component::*;
+        assert_eq!(
+            of_product(Some(Product::Llama)),
+            vec![Llama, Rocm, Cuda, Vulkan]
+        );
+        assert_eq!(
+            of_product(Some(Product::Framework)),
+            vec![Config, Cli, Bff, Core]
+        );
+        assert_eq!(of_product(None), Component::ALL.to_vec());
+    }
 
     /// The Linux packages in the standard layout under /usr: the commands in
     /// /usr/bin, pai-manager in /usr/libexec/private-ai, libllama, the ggml

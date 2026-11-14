@@ -1,9 +1,10 @@
-//! `build config` (02-build, second half): pai-config (the GUI), pai (the
-//! command line) and pai-manager, built with cargo. A module of its own: it
+//! `build framework` (02-build, second half): pai-config (the GUI), pai (the
+//! command line) and pai-manager, built with cargo. A product of its own: it
 //! needs nothing from the llama.cpp build but the clone (for the icon). What
 //! follows the cargo build is the OS's: Linux and macOS copy the front ends
-//! next to llama-server (`install_next_to_server`), Windows stages them
-//! straight from cargo's release dir in the package phase.
+//! next to llama-server (`install_next_to_server`), where macOS packages them
+//! from and a Linux build tree runs them; the Linux and Windows package
+//! phases stage them straight from cargo's release dir.
 
 use crate::common::llama::prereq_script;
 use crate::common::ui;
@@ -14,7 +15,7 @@ use std::path::Path;
 use std::path::PathBuf;
 
 /// The programs of the cargo workspace copied next to llama-server (Linux,
-/// macOS), where the package phases take them from.
+/// macOS), where the macOS package phase takes them from.
 #[cfg_attr(not(unix), allow(dead_code))]
 pub const NEXT_TO_SERVER: &[&str] = &["pai-config", "pai"];
 
