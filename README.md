@@ -2,7 +2,7 @@
 
 > **Windows first**: the full pipeline (build, installer) targets Windows 10/11 and ends in an MSI. Linux ends in seven `.deb` and seven `.rpm` packages (see [Linux](#linux)), macOS on Apple Silicon in four `.pkg` (see [macOS](#macos), untested).
 
-A build orchestrator, run with cargo (`cargo run -p xtask -- <phase>`, the crate in `xtask/`), that builds and packages [llama.cpp](https://github.com/ggerganov/llama.cpp) with multi-GPU backend support (CUDA, Vulkan, ROCm/HIP on Windows and Linux; Metal and Vulkan on macOS) and MSI packaging (WiX Toolset) on Windows. The chat UI built into `llama-server` is used as the frontend. `pai-bff`, a local service with its own web UI (`fe/`), ships as a service on Linux and Windows; its web UI shows only the framework version so far.
+A build orchestrator, run with cargo (`cargo run -p xtask -- <phase>`, the crate in `xtask/`), that builds and packages [llama.cpp](https://github.com/ggerganov/llama.cpp) with multi-GPU backend support (CUDA, Vulkan, ROCm/HIP on Windows and Linux; Metal and Vulkan on macOS) and MSI packaging (WiX Toolset) on Windows. The chat UI built into `llama-server` is used as the frontend. `pai-bff`, a local service with its own web UI (`fe/`), ships as a service on Linux and Windows; its web UI shows, read-only, the framework version and the manager's instances with their state so far.
 
 Beside llama.cpp it ships **`pai-config`**, a GUI configurator (Rust, [Slint](https://slint.dev); its command line is **`pai`**) that writes `llama-server`'s `server.ini` and per-model `presets.ini`, starts and stops the server, and benchmarks presets into a public SQLite database (`benchmarks/bench.db`) with a versioned method, so numbers from two machines compare like with like.
 

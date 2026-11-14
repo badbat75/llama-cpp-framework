@@ -75,3 +75,8 @@ Lessons only: the rules are in `AGENTS.md`.
   `build-packaging.md` AND `build-macos.md`, and the README's package table. A Windows service's open
   behaviour (what the SCM shows on a failed start) goes in `installer/AGENTS.md`'s open checks, phrased
   "by the code".
+- When the web UI gains a view, what it shows is repeated in four places: `crates/bff/README.md`
+  (intro, route table, "The web UI"), the `AGENTS.md` overview paragraph and its bff Map bullet, and
+  the root `README.md` intro. A route that reaches the manager can be checked by hand with no manager:
+  run the debug `pai-bff` with `PRIVATE_AI_DATA_ROOT` (and `<root>/system-config/bff.ini` for a port);
+  it answers 503 `unavailable`.

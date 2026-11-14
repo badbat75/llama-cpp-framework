@@ -2,7 +2,8 @@
 
 `pai-bff` (package and binary `pai-bff`, over `pai-core`) is the backend-for-frontend: one local
 HTTP service that serves the web UI built from `fe/` and the API it calls. Today it answers the
-framework version and serves a page that shows it (`PLAN.md` step 10).
+framework version and the manager's instances with their state, and serves a page that shows both,
+read-only (`PLAN.md` step 10).
 
 **It runs as a service on Linux and Windows, never on macOS.** `xtask build` compiles it into
 `build/<os>/cargo-target/release/`; the packaging is in
@@ -50,6 +51,7 @@ runtime (axum).
 | Route | Answer |
 | --- | --- |
 | `GET /api/version` | `{"version": "<framework version>"}` |
+| `GET /api/instances` | `[{"id": "<id>", "state": "<state>"}]` from `private-ai-manager` ([below](#the-instances-from-the-manager)) |
 | `GET /` | The embedded `index.html` |
 | `GET /assets/{*path}` | The embedded file at `assets/<path>` |
 
@@ -59,13 +61,48 @@ matches, so `..` reaches nothing else. Content types go by extension: HTML, Java
 
 Checked by hand on Linux from the debug build (2026-11-14): `--version` exits 0, an unknown argument
 2, `0.0.0.0:8590` and `localhost:8590` exit 1; on `127.0.0.1` it answered `/api/version`, `/` as
-`text/html`, 405 to a `POST` and 404 elsewhere.
+`text/html`, 405 to a `POST` and 404 elsewhere. Under `PRIVATE_AI_DATA_ROOT` `/api/instances`
+answered 503 `{"error":"unavailable"}` and a `POST` to it 405.
+
+## The instances from the manager
+
+`GET /api/instances` asks `private-ai-manager` for `ListInstances`, then `Status` of each instance:
+the two calls the manager answers without authorization, and the only ones the bff makes
+(`crates/bff/src/lib.rs`).
+
+| Status | Body | When |
+| --- | --- | --- |
+| 200 | `[{"id", "state"}]` in the manager's order, `[]` when there is none | Every call answered; an instance removed between the two calls is left out |
+| 503 | `{"error": "unavailable"}` | No manager to reach (none running, macOS), or no full answer within 5 s |
+| 502 | `{"error": "not-authorized"}` | The manager refused a call |
+| 502 | `{"error": "failed"}` | Any other failure |
+
+- **The state is the manager's name** (`InstanceState::name()` in `pai-core`: `active`, `inactive`,
+  `activating`, `deactivating`, `failed`, or an unknown name passed on as is). The error body is only
+  the key, never the manager's detail.
+- **A new connection per request**, so a manager started after the bff is seen at the next request.
+  The connect and the calls run on a blocking thread under one 5 s timeout that covers the connect.
+- **Under `PRIVATE_AI_DATA_ROOT` it dials nothing** and answers 503 `unavailable`, so a test never
+  reaches the real manager.
+- **Reaching it**: on Linux the system bus (`org.privateai.Manager1`), whose policy lets every user
+  send to the manager; neither call asks polkit, and with no session the bff's `DynamicUser` gets no
+  `control` (`auth_admin`). On Windows the pipe `\\.\pipe\private-ai-manager`, whose SDDL gives
+  `NT SERVICE\private-ai-bff` the interactive client's rights; its token is neither interactive nor an
+  administrator's, so the manager refuses it `control` and `configure`
+  ([installer/AGENTS.md](../../installer/AGENTS.md)). Type-checked only, not yet run on Windows.
 
 ## The web UI (`fe/`)
 
 React + Vite in TypeScript, exact versions in `fe/package.json` and a committed
-`package-lock.json`. One page (`fe/src/Version.tsx`) fetches `/api/version` and shows it, or a fixed
-message on any failure, never the reply's body.
+`package-lock.json`. One page (`fe/src/App.tsx`) shows, each read once when it opens and never the
+reply's body:
+
+- the version (`fe/src/Version.tsx`, from `/api/version`), or a fixed message on any failure;
+- the instances (`fe/src/Instances.tsx`, from `/api/instances`): a table of instance and state (the
+  five known states as Running, Stopped, Starting, Stopping, Failed; another as `Unknown (<name>)`),
+  a message when there is none, and one message per error key: `unavailable` (the manager is not
+  running or does not answer), `not-authorized` (it refused the web service), anything else,
+  a malformed reply included, as "could not be read".
 
 - **Text goes in `fe/src/strings/en_US.json`**, linked by key through `t(key, ...args)`
   (`fe/src/strings.ts`), with `pai-core`'s rules: `{N}` placeholders filled by position, a missing
@@ -80,7 +117,8 @@ message on any failure, never the reply's body.
 
 `cargo test -p pai-bff` needs no node: without `fe/dist` it embeds the fixture
 `crates/bff/fe-fixture/`. `tests/fe.rs` checks that the routes serve, byte for byte, the directory
-the build embedded (`PAI_BFF_FE_DIR`); `tests/pai_bff_binary.rs` runs the binary with
+the build embedded (`PAI_BFF_FE_DIR`); `tests/instances.rs` drives `/api/instances` against a fake
+manager (`router_with`, a short timeout); `tests/pai_bff_binary.rs` runs the binary with
 `PRIVATE_AI_DATA_ROOT` on the child and an ephemeral port, SIGTERM and SIGINT included; `src/tests/deps_lint.rs` keeps the GUI
 packages (Slint) out of its dependency tree. It is in the Windows GNU type check ("Commands" in
 [AGENTS.md](../../AGENTS.md#commands)); nothing of it has run on Windows.
