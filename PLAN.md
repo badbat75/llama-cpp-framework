@@ -413,6 +413,13 @@ Decided with the user on 2026-11-14:
   `llama.cpp-v<release>+pai<N>-<arch>` for the engine (and its runtimes by SDK version).
 - **Windows: one MSI with two features** (the framework, llama.cpp with its runtimes), named by the
   framework's version only: `private-ai-framework-v<version>-x64.msi`.
+  As on Linux (user, 2026-11-14), llama.cpp is its own on Windows too: **its own install folder**
+  (beside the framework's, e.g. `%ProgramFiles%\llama.cpp\`, not inside `bin\` of the framework), **its
+  own service** (the instance services `llama.cpp_<id>` belong to the llama.cpp feature, created and
+  removed with it) and **its own default configuration** (`server@default.ini` and an empty
+  `presets.ini`, installed read-only with the feature and copied into the engine's configuration folder,
+  e.g. `%ProgramData%\llama.cpp\`, only when missing; `paths::engine_config_dir()` follows on
+  Windows). The exact folders, and where the instance logs and models go, are settled in slice 3.
 - **macOS:** the same split of the `.pkg` (an engine `.pkg` beside the framework's).
 - **The build is split too:** the engine and the framework are separate builds, so either can be
   rebuilt alone. The framework still reads the engine's source at build time (`pai-app`'s architecture
