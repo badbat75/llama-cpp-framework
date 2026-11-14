@@ -43,11 +43,12 @@ exist yet. Change this file first when a shape changes.
 Today's reply gains `engine` (the engine id, `llama.cpp` today) and its errors move from
 `{"error": "unavailable"}` to the common shape: 503 `client-unavailable`, 502
 `client-not-authorized`, 502 `client-other` for any other failure, each with empty `args` (the
-manager's detail never reaches the body). Until `/api/session` exists it answers 404, which the fe
-reads as signed out.
+manager's detail never reaches the body).
 
 ### The session
 
+- `GET /api/session` answers 404 until the bff has the route; the fe reads any reply but 200 as
+  signed out.
 - `canConfigure` says whether the manager would allow `configure` for this user. It is a hint for
   showing the page read-only; the manager still decides every request.
 - `POST /api/session` takes `{"username", "password"}`. Failures the fe tells apart: 401
@@ -108,9 +109,10 @@ preset with no engine is a llama.cpp preset and the key is not written back for 
 
 ## Open on the bff side
 
-- **Linux `configure` is `auth_admin_keep`**: how a signed-in administrator's save passes polkit
-  without the bff keeping a password is not designed. If a save can ask for the password again, the
-  fe needs a status and key for it.
+- **An administrator's save needs no second password** (user, 2026-11-15): the bff vouches for the
+  user it authenticated, and the manager grants `configure` to members of `sudo` or `wheel`
+  (Administrators on Windows), `control` to any signed-in user. No status asks for the password
+  again.
 - **Nothing creates `ModelsDir` after a save** (the GUI creates it as the logged-in user).
 - **`ModelsMax` accepts negatives today** and the render drops them silently; the fe shows whatever
   `limits` says.
