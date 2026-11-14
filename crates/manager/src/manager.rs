@@ -61,6 +61,21 @@ pub fn parse_args(args: &[String]) -> Result<ManagerCommand, ArgsError> {
     Ok(ManagerCommand::RunInstance(id.clone()))
 }
 
+/// The line the manager prints for a failure of its services' sync: the
+/// SCM itself, or the service of the instance it names.
+pub fn sync_failure_message(failure: &windows::SyncFailure) -> String {
+    use crate::strings;
+    let detail = |e: &service::ServiceError| {
+        service::error_reply(&service::ManagerError::Service(e.clone())).1
+    };
+    match failure {
+        windows::SyncFailure::Scm(e) => strings::fill("manager-scm-sync-failed", &[&detail(e)]),
+        windows::SyncFailure::Instance(id, e) => {
+            strings::fill("manager-service-sync-failed", &[id, &detail(e)])
+        }
+    }
+}
+
 /// The `pai-manager` entry point, returning the exit code: on Unix
 /// the process becomes llama-server and returns only on failure; on Windows
 /// it waits for llama-server and returns its code. A failure prints one
@@ -98,7 +113,8 @@ fn run(args: &[String]) -> Result<i32, (i32, String)> {
         ManagerCommand::UninstallServices => {
             let exe = std::env::current_exe()
                 .map_err(|e| (1, strings::fill("manager-uninstall-services-failed", &[&e])))?;
-            for (_, e) in windows::scm::ScmService::new(exe).sync(&[]) {
+            for failure in windows::scm::ScmService::new(exe).sync(&[]) {
+                let (windows::SyncFailure::Scm(e) | windows::SyncFailure::Instance(_, e)) = failure;
                 let detail = service::error_reply(&service::ManagerError::Service(e)).1;
                 eprintln!(
                     "{}",
@@ -122,14 +138,8 @@ fn run(args: &[String]) -> Result<i32, (i32, String)> {
         }
         #[cfg(windows)]
         ManagerCommand::Serve => {
-            windows::entry::serve(|id, e| {
-                let detail = service::error_reply(e).1;
-                eprintln!(
-                    "{}",
-                    strings::fill("manager-service-sync-failed", &[&id, &detail])
-                );
-            })
-            .map_err(|e| (1, strings::fill("manager-serve-failed", &[&e])))?;
+            windows::entry::serve(|failure| eprintln!("{}", sync_failure_message(failure)))
+                .map_err(|e| (1, strings::fill("manager-serve-failed", &[&e])))?;
             return Ok(0);
         }
         #[cfg(not(any(target_os = "linux", windows)))]
@@ -353,10 +363,56 @@ mod tests {
             .expect("the Windows Serve arm");
         let serve = serve.split("ManagerCommand::").next().unwrap();
         assert!(
-            serve.contains(&format!("strings::fill(\"{key}\"")),
-            "the Windows Serve arm does not report with {key}:\n{serve}"
+            serve.contains("sync_failure_message("),
+            "the Windows Serve arm does not report with sync_failure_message:\n{serve}"
         );
         assert!(!code.contains("manager-boot-start-failed"), "{code}");
+    }
+
+    /// An instance's service that could not be set up is reported under
+    /// `manager-service-sync-failed`, naming the instance.
+    #[test]
+    fn a_failed_instance_service_names_the_instance() {
+        let e = windows::scm_error("lan-2", 5);
+        let detail = service::error_reply(&service::ManagerError::Service(e.clone())).1;
+        let text = sync_failure_message(&windows::SyncFailure::Instance("lan-2".into(), e));
+        assert_eq!(
+            text,
+            crate::strings::fill(
+                "manager-service-sync-failed",
+                &[&"lan-2".to_string(), &detail]
+            )
+        );
+        assert!(text.contains("`lan-2`"), "{text}");
+        assert!(text.contains("ERROR_ACCESS_DENIED (5)"), "{text}");
+    }
+
+    /// A failure of the SCM itself (opening it, listing its services) is
+    /// tied to no instance: its own key, with no instance id, never
+    /// "instance ``".
+    #[test]
+    fn an_scm_wide_failure_names_no_instance() {
+        let cli = crate::strings::parse(include_str!("../../core/strings/cli.toml"));
+        let key = "manager-scm-sync-failed";
+        let template = cli
+            .get(key)
+            .unwrap_or_else(|| panic!("{key} missing from cli.toml"));
+        assert!(
+            template.contains("{0}") && !template.contains("{1}"),
+            "{template:?}"
+        );
+        let lower = template.to_lowercase();
+        assert!(lower.contains("service"), "{template:?}");
+        assert!(!lower.contains("instance `"), "{template:?}");
+
+        let e = service::ServiceError("service control manager: ERROR_ACCESS_DENIED (5)".into());
+        let detail = service::error_reply(&service::ManagerError::Service(e.clone())).1;
+        let text = sync_failure_message(&windows::SyncFailure::Scm(e));
+        assert!(!text.starts_with(key), "the key, not its text: {text}");
+        assert_eq!(text, crate::strings::fill(key, &[&detail]));
+        assert!(text.contains("ERROR_ACCESS_DENIED (5)"), "{text}");
+        assert!(!text.contains("``"), "an empty id: {text}");
+        assert!(!text.contains("instance `"), "{text}");
     }
 
     #[test]

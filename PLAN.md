@@ -407,7 +407,7 @@ Decided with the user on 2026-11-14:
   folder, e.g. `%ProgramData%\llama.cpp\`, only when missing; `paths::engine_config_dir()` follows on
   Windows). Two small Windows manager fixes go with it (found 2026-11-14): `windows::entry::serve`'s doc
   comment still says "or started", and `scm.rs` `sync` reports an SCM-wide failure with an empty
-  instance id ("instance ``"). Folders (user, 2026-11-14): the program in `%ProgramFiles%\llama.cpp\` (with the
+  instance id ("instance ``"). (Slice 3a done: the Rust paths below and the two manager fixes.) Folders (user, 2026-11-14): the program in `%ProgramFiles%\llama.cpp\` (with the
   read-only defaults); everything of the engine's instances under `%ProgramData%\llama.cpp\`:
   `config\` (`server@<id>.ini`, `presets.ini`, `presets.ini.disabled`; `paths::engine_config_dir()`),
   `logs\` (`llama-server@<id>.log` and its `.previous.log`) and `models\` (the default `ModelsDir`);

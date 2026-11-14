@@ -399,3 +399,8 @@ Lessons only: the rules are in `AGENTS.md`.
   with `Phase::Package { .. }`; a positional the subcommand lacks fails as "unexpected argument".
   `linux::package::run` itself reads the real `build/linux/` (no redirect): pin its decisions as pure
   functions over a `build_root: &Path` and a temp tree.
+- The engine's Windows tree is `%ProgramData%\llama.cpp\` again, but the pai-config names lint still
+  refuses `ProgramData\llama.cpp` and `join("llama.cpp")` in code lines (doc comments are skipped):
+  spell the directory through a const (`const ENGINE: &str = "llama.cpp"; pd.join(ENGINE)`).
+  Windows path decisions are pinned through `paths::windows_machine_dirs(program_data)`, pure, plus a
+  text check that each real-path fn's body calls it.

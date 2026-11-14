@@ -19,6 +19,10 @@ use std::path::{Path, PathBuf};
 /// system config).
 const APP_DIR: &str = "private-ai";
 
+/// The engine's directory name, as in `/etc/llama.cpp`: on Windows the
+/// machine-wide tree of the engine's instances under `%ProgramData%`.
+const ENGINE_DIR: &str = "llama.cpp";
+
 /// The test redirect of the whole data tree (`data_root`).
 const DATA_ROOT_VAR: &str = "PRIVATE_AI_DATA_ROOT";
 
@@ -86,8 +90,8 @@ pub fn config_dir() -> PathBuf {
     data_root().join("config")
 }
 
-/// The framework's machine-wide config directory (`bff.ini`; on Windows and
-/// macOS also the instance files, `engine_config_dir()`):
+/// The framework's machine-wide config directory (`bff.ini`; on macOS also
+/// the instance files, `engine_config_dir()`):
 /// `/etc/private-ai` outside Windows, `%ProgramData%\private-ai\config` on
 /// Windows. Under the test override it is `<override>/system-config` on every
 /// OS, apart from the per-user `config_dir()`.
@@ -97,10 +101,7 @@ pub fn system_config_dir() -> PathBuf {
     }
     #[cfg(windows)]
     {
-        env_path("ProgramData")
-            .expect("ProgramData not set on Windows")
-            .join(APP_DIR)
-            .join("config")
+        windows_machine_dirs(&program_data()).framework_config
     }
     #[cfg(not(windows))]
     {
@@ -110,7 +111,8 @@ pub fn system_config_dir() -> PathBuf {
 
 /// The engine's machine-wide config directory, where the instance files
 /// live (`server@<id>.ini`, `presets.ini`, `presets.ini.disabled`):
-/// `/etc/llama.cpp` on Linux, `system_config_dir()` elsewhere for now. Under
+/// `/etc/llama.cpp` on Linux, `%ProgramData%\llama.cpp\config` on Windows,
+/// `system_config_dir()` on macOS. Under
 /// the test override it is `<override>/engine-config` on every OS, a sibling
 /// of `system_config_dir()`.
 pub fn engine_config_dir() -> PathBuf {
@@ -121,14 +123,18 @@ pub fn engine_config_dir() -> PathBuf {
     {
         PathBuf::from("/etc/llama.cpp")
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(windows)]
+    {
+        windows_machine_dirs(&program_data()).engine_config
+    }
+    #[cfg(not(any(target_os = "linux", windows)))]
     {
         system_config_dir()
     }
 }
 
 /// The machine-wide log directory of the instances' services:
-/// `%ProgramData%\private-ai\logs` on Windows, `/var/log/private-ai`
+/// `%ProgramData%\llama.cpp\logs` on Windows, `/var/log/private-ai`
 /// elsewhere (unused on Linux, where the journal keeps the output). Under
 /// the test override it is `<override>/system-logs` on every OS.
 pub fn system_log_dir() -> PathBuf {
@@ -137,14 +143,62 @@ pub fn system_log_dir() -> PathBuf {
     }
     #[cfg(windows)]
     {
-        env_path("ProgramData")
-            .expect("ProgramData not set on Windows")
-            .join(APP_DIR)
-            .join("logs")
+        windows_machine_dirs(&program_data()).instance_logs
     }
     #[cfg(not(windows))]
     {
         PathBuf::from("/var/log").join(APP_DIR)
+    }
+}
+
+/// The machine-wide directories on Windows under the `%ProgramData%` root
+/// `program_data`: the framework's own config (`bff.ini`) and the engine's
+/// instances' config, logs and default models.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WindowsMachineDirs {
+    pub framework_config: PathBuf,
+    pub engine_config: PathBuf,
+    pub instance_logs: PathBuf,
+    pub instance_models: PathBuf,
+}
+
+pub fn windows_machine_dirs(program_data: &Path) -> WindowsMachineDirs {
+    let engine = program_data.join(ENGINE_DIR);
+    WindowsMachineDirs {
+        framework_config: program_data.join(APP_DIR).join("config"),
+        engine_config: engine.join("config"),
+        instance_logs: engine.join("logs"),
+        instance_models: engine.join("models"),
+    }
+}
+
+/// `%ProgramData%`, the root of `windows_machine_dirs`.
+#[cfg(windows)]
+fn program_data() -> PathBuf {
+    env_path("ProgramData").expect("ProgramData not set on Windows")
+}
+
+/// The default ModelsDir of the instances: `%ProgramData%\llama.cpp\models`
+/// on Windows, the service user's `/var/lib/private-ai/.llama.cpp` on Linux
+/// (the one the engine's shipped `server@default.ini` names) and, on macOS,
+/// where the configurator runs llama-server as the user, the user's own
+/// `~/.llama.cpp` (`server_cfg::default_models_dir`). Under the test
+/// override it is `<override>/engine-models` on every OS.
+pub fn instance_models_dir() -> PathBuf {
+    if let Some(p) = env_path(DATA_ROOT_VAR) {
+        return p.join("engine-models");
+    }
+    #[cfg(windows)]
+    {
+        windows_machine_dirs(&program_data()).instance_models
+    }
+    #[cfg(target_os = "linux")]
+    {
+        PathBuf::from("/var/lib").join(APP_DIR).join(".llama.cpp")
+    }
+    #[cfg(not(any(windows, target_os = "linux")))]
+    {
+        home_dir().join(".llama.cpp")
     }
 }
 
@@ -650,11 +704,30 @@ pub(crate) fn instance_log_paths_e2e() {
     assert!(!logs.exists(), "asking creates nothing");
 }
 
+/// E2E phase for the instances' default models directory, for the e2e test
+/// of this crate to call: it sets the process-wide `PRIVATE_AI_DATA_ROOT`
+/// redirect (`src/tests/mod.rs`). Beside the engine's config, in the same
+/// redirect layout: `<override>/engine-models`, apart from the user's tree.
+#[cfg(test)]
+pub(crate) fn instance_models_dir_e2e() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    redirect_for_tests(dir.path());
+    let models = dir.path().join("engine-models");
+    assert_eq!(instance_models_dir(), models);
+    assert_ne!(instance_models_dir(), engine_config_dir());
+    assert_ne!(instance_models_dir(), system_log_dir());
+    assert!(
+        !instance_models_dir().starts_with(data_root()),
+        "not in the user's tree"
+    );
+    assert!(!models.exists(), "asking creates nothing");
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         installed_share_candidates, installed_share_dir, llama_bin_from, newest_version,
-        valid_instance_id,
+        valid_instance_id, windows_machine_dirs,
     };
     use std::path::{Path, PathBuf};
 
@@ -668,6 +741,80 @@ mod tests {
 
     fn canon(p: Option<PathBuf>) -> Option<PathBuf> {
         p.map(|p| p.canonicalize().unwrap())
+    }
+
+    // ── The machine-wide directories on Windows ──────────────────────────
+    // Pure over the `%ProgramData%` root, so the Windows layout is pinned
+    // on every OS: everything of the engine's instances under
+    // `%ProgramData%\llama.cpp\` (config, logs, the default models), only the
+    // framework's own config (`bff.ini`) under `%ProgramData%\private-ai\`.
+
+    /// The engine's directory name, as `/etc/llama.cpp` on Linux.
+    const ENGINE: &str = "llama.cpp";
+
+    #[test]
+    fn windows_instance_dirs_are_the_engine_s_under_program_data() {
+        let pd = Path::new(r"C:\ProgramData");
+        let d = windows_machine_dirs(pd);
+        assert_eq!(d.engine_config, pd.join(ENGINE).join("config"));
+        assert_eq!(d.instance_logs, pd.join(ENGINE).join("logs"));
+        assert_eq!(d.instance_models, pd.join(ENGINE).join("models"));
+    }
+
+    #[test]
+    fn windows_framework_config_stays_in_private_ai() {
+        let pd = Path::new(r"C:\ProgramData");
+        let d = windows_machine_dirs(pd);
+        assert_eq!(d.framework_config, pd.join("private-ai").join("config"));
+        assert_ne!(d.framework_config, d.engine_config, "not the engine's");
+    }
+
+    /// The root is whatever `%ProgramData%` says, never a fixed `C:`.
+    #[test]
+    fn windows_machine_dirs_follow_the_program_data_root() {
+        let pd = Path::new(r"D:\Data");
+        let d = windows_machine_dirs(pd);
+        for p in [
+            &d.framework_config,
+            &d.engine_config,
+            &d.instance_logs,
+            &d.instance_models,
+        ] {
+            assert!(p.starts_with(pd), "{}", p.display());
+        }
+        assert_eq!(d.engine_config, pd.join(ENGINE).join("config"));
+    }
+
+    /// The code of `name`'s body in this file, before the tests.
+    fn body_of(name: &str) -> String {
+        let code = include_str!("paths.rs")
+            .split("#[cfg(test)]\nmod tests")
+            .next()
+            .unwrap();
+        let start = code
+            .find(&format!("pub fn {name}("))
+            .unwrap_or_else(|| panic!("no fn {name}"));
+        let rest = &code[start..];
+        rest[..rest.find("\n}\n").expect("end of fn")].to_string()
+    }
+
+    /// The real Windows paths go through the pure function, so what the
+    /// tests above pin is what Windows gets (the Windows branches only
+    /// type-check on Linux).
+    #[test]
+    fn the_windows_branches_use_windows_machine_dirs() {
+        for name in [
+            "system_config_dir",
+            "engine_config_dir",
+            "system_log_dir",
+            "instance_models_dir",
+        ] {
+            let body = body_of(name);
+            assert!(
+                body.contains("windows_machine_dirs("),
+                "{name} does not use windows_machine_dirs:\n{body}"
+            );
+        }
     }
 
     /// No llama-server anywhere it is looked for: nothing, not a guess.

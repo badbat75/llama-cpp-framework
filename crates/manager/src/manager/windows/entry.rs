@@ -5,8 +5,8 @@
 
 use super::pipe_server::{self, WinManager};
 use super::scm::ScmService;
-use super::{exit_report, service_name, TokenAuthority, ERROR_SERVICE_SPECIFIC_ERROR};
-use crate::manager::service::{Manager, ManagerError, SystemResolver};
+use super::{exit_report, service_name, SyncFailure, TokenAuthority, ERROR_SERVICE_SPECIFIC_ERROR};
+use crate::manager::service::{Manager, SystemResolver};
 use std::ffi::OsString;
 use std::io::Write;
 use std::process::Command;
@@ -23,8 +23,8 @@ use windows_service::{define_windows_service, service_dispatcher};
 /// The dispatcher's error when the process was not started by the SCM.
 const NOT_A_SERVICE: i32 = 1063;
 
-/// Where a failure to start an instance at the service's start goes.
-pub type Report = fn(&str, &ManagerError);
+/// Where a failure to set up the services at the manager's start goes.
+pub type Report = fn(&SyncFailure);
 
 /// What `serve`'s service main reports failures to.
 static SERVE_REPORT: Mutex<Option<Report>> = Mutex::new(None);
@@ -40,7 +40,7 @@ define_windows_service!(ffi_serve_main, serve_main);
 define_windows_service!(ffi_instance_main, instance_main);
 
 /// `pai-manager serve`: the manager's service, `report` told of every
-/// instance that could not be set up or started. Returns when the service
+/// service it could not set up (the SCM itself, or an instance's). Returns when the service
 /// stops; from a console it serves until the pipe fails.
 pub fn serve(report: Report) -> std::io::Result<()> {
     *lock(&SERVE_REPORT) = Some(report);
@@ -94,8 +94,8 @@ fn run_manager(report: Report) -> std::io::Result<()> {
         TokenAuthority,
         SystemResolver,
     ));
-    for (id, e) in manager.service().sync(&manager.list_instances()) {
-        report(&id, &ManagerError::Service(e));
+    for failure in manager.service().sync(&manager.list_instances()) {
+        report(&failure);
     }
     pipe_server::serve(manager)
 }
@@ -109,7 +109,7 @@ enum End {
 }
 
 fn serve_main(_arguments: Vec<OsString>) {
-    let report = lock(&SERVE_REPORT).take().unwrap_or(|_, _| {});
+    let report = lock(&SERVE_REPORT).take().unwrap_or(|_| {});
     let (tx, rx) = mpsc::channel();
     let Ok(status) = register(super::MANAGER_SERVICE, tx.clone()) else {
         return;

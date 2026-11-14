@@ -23,6 +23,9 @@ fn data_root_e2e() {
 
     // ── The defaults a saved server.ini resolves (server_cfg.rs) ─────────
     crate::server_cfg::server_cfg_defaults_e2e();
+
+    // ── The instances' default models directory (paths.rs) ───────────────
+    crate::paths::instance_models_dir_e2e();
 }
 
 /// The paths with no test redirect, named after the project, and the old
@@ -97,13 +100,25 @@ fn real_paths_child() {
             paths::system_config_dir(),
             var("ProgramData").join("private-ai").join("config")
         );
+        // Everything of the engine's instances is the engine's, under
+        // `%ProgramData%\llama.cpp\`; the framework keeps only its own config.
+        let engine = var("ProgramData").join(concat!("llama", ".cpp"));
+        assert_eq!(paths::engine_config_dir(), engine.join("config"));
+        assert_eq!(paths::system_log_dir(), engine.join("logs"));
         assert_eq!(
-            paths::system_log_dir(),
-            var("ProgramData").join("private-ai").join("logs")
+            paths::instance_log("default"),
+            Some(engine.join("logs").join("llama-server@default.log"))
         );
-        // Unchanged on Windows for now: the instance files stay in the
-        // machine-wide config directory.
-        assert_eq!(paths::engine_config_dir(), paths::system_config_dir());
+        assert_eq!(paths::instance_models_dir(), engine.join("models"));
+        assert_eq!(
+            paths::windows_machine_dirs(&var("ProgramData")),
+            paths::WindowsMachineDirs {
+                framework_config: paths::system_config_dir(),
+                engine_config: paths::engine_config_dir(),
+                instance_logs: paths::system_log_dir(),
+                instance_models: paths::instance_models_dir(),
+            }
+        );
         // The old tree to migrate: the one 2.4 kept in %LOCALAPPDATA%.
         assert_eq!(
             crate::migrate::old_trees(),
@@ -127,6 +142,14 @@ fn real_paths_child() {
         assert_eq!(
             paths::system_log_dir(),
             PathBuf::from("/var/log/private-ai")
+        );
+        // The instances' default models directory on Linux is the one the
+        // engine's shipped `server@default.ini` names: the service user's
+        // home (`/var/lib/private-ai`), unchanged by the Windows layout.
+        #[cfg(target_os = "linux")]
+        assert_eq!(
+            paths::instance_models_dir(),
+            PathBuf::from("/var/lib/private-ai/.llama.cpp")
         );
         // The old trees to migrate, where 2.4 kept them: computed, not read.
         let old_data = (

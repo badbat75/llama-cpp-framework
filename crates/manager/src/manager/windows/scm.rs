@@ -4,8 +4,9 @@
 //! only the Win32 calls.
 
 use super::{
-    boot_enabled_of, boot_start_type, image_path, scm_error, service_name, service_plan,
-    service_spec, start_failure, status_failure, stop_failure, unit_state, ServiceSpec,
+    boot_enabled_of, boot_start_type, image_path, scm_error, scm_wide_error, service_name,
+    service_plan, service_spec, start_failure, status_failure, stop_failure, unit_state,
+    ServiceSpec, SyncFailure,
 };
 use crate::manager::service::{ServiceControl, ServiceError, UnitState};
 use std::ffi::OsStr;
@@ -46,16 +47,17 @@ impl ScmService {
 
     /// Match the services to `instances` (the ids on disk): create the
     /// missing ones, apply the spec again to the others, stop and delete
-    /// ours that have no instance. The failures, by id.
-    pub fn sync(&self, instances: &[String]) -> Vec<(String, ServiceError)> {
+    /// ours that have no instance. The failures: the SCM itself, or an
+    /// instance's service by its id.
+    pub fn sync(&self, instances: &[String]) -> Vec<SyncFailure> {
         let access = SC_MANAGER_CONNECT | SC_MANAGER_CREATE_SERVICE | SC_MANAGER_ENUMERATE_SERVICE;
         let scm = match open_scm(access) {
             Ok(scm) => scm,
-            Err(code) => return vec![(String::new(), scm_error("", code))],
+            Err(code) => return vec![SyncFailure::Scm(scm_wide_error(code))],
         };
         let services = match service_names(&scm) {
             Ok(names) => names,
-            Err(code) => return vec![(String::new(), scm_error("", code))],
+            Err(code) => return vec![SyncFailure::Scm(scm_wide_error(code))],
         };
         let plan = service_plan(instances, &services);
         let mut failures = Vec::new();
@@ -63,7 +65,7 @@ impl ScmService {
             if let Err(e) = self.spec(id).and_then(|spec| {
                 create(&scm, &spec, SERVICE_QUERY_STATUS).map_err(|c| scm_error(id, c))
             }) {
-                failures.push((id.clone(), e));
+                failures.push(SyncFailure::Instance(id.clone(), e));
             }
         }
         for id in &plan.keep {
@@ -72,7 +74,7 @@ impl ScmService {
                     .and_then(|service| reconfigure(&service, &spec))
                     .map_err(|c| scm_error(id, c))
             }) {
-                failures.push((id.clone(), e));
+                failures.push(SyncFailure::Instance(id.clone(), e));
             }
         }
         for id in &plan.delete {
@@ -82,7 +84,7 @@ impl ScmService {
                 .and_then(|name| open_service(&scm, &name, DELETE))
                 .and_then(|service| ok(unsafe { DeleteService(service.0) }));
             if let Err(code) = deleted {
-                failures.push((id.clone(), scm_error(id, code)));
+                failures.push(SyncFailure::Instance(id.clone(), scm_error(id, code)));
             }
         }
         failures

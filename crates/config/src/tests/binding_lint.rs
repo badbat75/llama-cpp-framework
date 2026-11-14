@@ -627,7 +627,7 @@ const GUI_ONLY_KEYS: [&str; 31] = [
 /// Functions of the shared sources that only a CLI command runs, beside all of
 /// `cli.rs`: their keys are in `cli.toml` alone. `cli_only_code_is_not_called_from_elsewhere`
 /// fails when other code starts calling one, since the GUI would then miss its keys.
-const CLI_ONLY_FNS: [(&str, &str); 17] = [
+const CLI_ONLY_FNS: [(&str, &str); 18] = [
     ("bench/db.rs", "set_answer"),
     ("bench/gpu_lock.rs", "acquire"),
     ("bench/interrupt.rs", "install"),
@@ -645,6 +645,7 @@ const CLI_ONLY_FNS: [(&str, &str); 17] = [
     ("bff.rs", "run"),
     ("manager.rs", "main"),
     ("manager.rs", "run"),
+    ("manager.rs", "sync_failure_message"),
 ];
 
 /// A source split into what only a CLI command runs and the rest. The split of a

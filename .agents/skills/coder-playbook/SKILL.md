@@ -224,3 +224,7 @@ Lessons only: the rules are in `AGENTS.md`.
   there for the dev tree and macOS's packaging). The text-check tests slice `run` from `pub fn run(`
   to the next `\nfn `: keep its steps inline (`if engine { .. }`), and keep the literal
   `"cargo-target/release/pai-bff"` and `place("pai-bff")` a test looks for.
+- The engine's directory name on Windows (`%ProgramData%\llama.cpp\`) is spelled once, as
+  `paths::ENGINE_DIR`: config's names lint refuses `join("llama.cpp")` and `ProgramData\llama.cpp`
+  in code lines (comments pass). A helper outside `main`/`run` that fills only `cli.toml` keys
+  belongs in binding_lint's `CLI_ONLY_FNS` (the tester adds it); never copy CLI keys into en_US.toml.

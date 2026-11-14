@@ -251,6 +251,17 @@ pub fn exit_report(requested: bool, child: Option<i32>) -> (u32, u32) {
 /// service name, the Win32 error's name and its code. Protocol data, not
 /// user text.
 pub fn scm_error(id: &str, code: u32) -> ServiceError {
+    ServiceError(format!("{SERVICE_PREFIX}{id}: {}", win32_error(code)))
+}
+
+/// A failure of the SCM itself (opening it, listing its services), tied to
+/// no instance: the Win32 error as `scm_error` names it.
+pub fn scm_wide_error(code: u32) -> ServiceError {
+    ServiceError(format!("service control manager: {}", win32_error(code)))
+}
+
+/// The Win32 error `code` by its name and code, or its bare code.
+fn win32_error(code: u32) -> String {
     let name = match code {
         5 => "ERROR_ACCESS_DENIED",
         1053 => "ERROR_SERVICE_REQUEST_TIMEOUT",
@@ -259,9 +270,17 @@ pub fn scm_error(id: &str, code: u32) -> ServiceError {
         1064 => "ERROR_EXCEPTION_IN_SERVICE",
         1069 => "ERROR_SERVICE_LOGON_FAILED",
         1072 => "ERROR_SERVICE_MARKED_FOR_DELETE",
-        _ => return ServiceError(format!("{SERVICE_PREFIX}{id}: Win32 error {code}")),
+        _ => return format!("Win32 error {code}"),
     };
-    ServiceError(format!("{SERVICE_PREFIX}{id}: {name} ({code})"))
+    format!("{name} ({code})")
+}
+
+/// What `scm::ScmService::sync` could not do: the SCM itself, or one
+/// instance's service.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SyncFailure {
+    Scm(ServiceError),
+    Instance(String, ServiceError),
 }
 
 /// `StartService` failed with `code`: already running is a success.
@@ -983,6 +1002,76 @@ mod tests {
         assert_eq!(state(false, None), UnitState::Failed);
         assert_eq!(state(false, Some(0)), UnitState::Inactive);
         assert_eq!(state(true, Some(1)), UnitState::Inactive);
+    }
+
+    /// A failure of the SCM itself names no instance's service: no
+    /// `llama.cpp_` with an empty id, the Win32 error as `scm_error` names it.
+    #[test]
+    fn an_scm_wide_error_names_no_instance_service() {
+        for (code, name) in [
+            (5, "ERROR_ACCESS_DENIED"),
+            (1053, "ERROR_SERVICE_REQUEST_TIMEOUT"),
+            (1072, "ERROR_SERVICE_MARKED_FOR_DELETE"),
+        ] {
+            assert_eq!(
+                scm_wide_error(code),
+                ServiceError(format!("service control manager: {name} ({code})"))
+            );
+        }
+        assert_eq!(
+            scm_wide_error(87),
+            ServiceError("service control manager: Win32 error 87".into())
+        );
+        assert!(!scm_wide_error(5).0.contains(SERVICE_PREFIX));
+    }
+
+    /// The code of `scm.rs` (`cfg(windows)`, only type-checked on Linux),
+    /// whole-line comments left out.
+    fn scm_code() -> String {
+        include_str!("windows/scm.rs")
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// `sync` reports a failure of the SCM itself as its own kind, never as
+    /// the failure of an instance with an empty id ("instance ``").
+    #[test]
+    fn sync_reports_an_scm_failure_apart_from_the_instances() {
+        let code = scm_code();
+        assert!(
+            !code.contains("scm_error(\"\""),
+            "an SCM failure as an instance with an empty id"
+        );
+        assert!(!code.contains("(String::new(), "), "an empty instance id");
+        assert!(
+            code.contains("-> Vec<SyncFailure>"),
+            "sync returns its failures as SyncFailure"
+        );
+        assert!(
+            code.matches("SyncFailure::Scm(scm_wide_error(").count() >= 2,
+            "opening the SCM and listing its services are SCM-wide failures"
+        );
+        assert!(code.contains("SyncFailure::Instance("));
+    }
+
+    /// `serve`'s doc says what the manager reports at its start: the
+    /// services it could not set up; it starts no instance (the SCM starts
+    /// the enabled ones).
+    #[test]
+    fn serve_s_doc_says_set_up_not_started() {
+        let entry = include_str!("windows/entry.rs");
+        let at = entry.find("pub fn serve(").expect("serve");
+        let doc: Vec<&str> = entry[..at]
+            .lines()
+            .rev()
+            .take_while(|l| l.trim_start().starts_with("///"))
+            .collect();
+        assert!(!doc.is_empty(), "serve has no doc comment");
+        let doc = doc.into_iter().rev().collect::<Vec<_>>().join("\n");
+        assert!(!doc.contains("started"), "{doc}");
+        assert!(doc.contains("set up"), "{doc}");
     }
 
     #[test]

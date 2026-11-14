@@ -171,6 +171,7 @@ manager-missing-id = "run-instance needs an instance id: pai-manager run-instanc
 manager-no-config = "{0} not found: instance `{1}` has no configuration"
 manager-no-presets = "{0} holds no model preset: add one before starting an instance"
 manager-serve-failed = "the manager service cannot serve its clients: {0}"
+manager-scm-sync-failed = "cannot set up the services of the instances: {0}"
 manager-serve-unavailable = "the pai-manager service is not available in this build"
 manager-state-dir = "cannot create the slot-state directory {0}: {1}"
 manager-uninstall-services-failed = "cannot remove the services of the instances: {0}"
