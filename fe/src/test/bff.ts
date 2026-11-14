@@ -40,6 +40,8 @@ export const EN: Record<string, string> = {
   'api-session-bad-credentials': 'The user name or password is not correct.',
   'api-session-too-many-attempts':
     'Too many attempts. Try again in {0} seconds.',
+  'api-session-unavailable':
+    'Signing in is not available on this server right now. You can still see the overview without signing in.',
   'overview-title': 'Overview',
   'instances-column-engine': 'Engine',
   'instance-engine': '{0} instance',

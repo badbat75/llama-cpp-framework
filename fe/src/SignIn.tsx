@@ -14,6 +14,8 @@ function failureText(error: ApiError | null): string {
       return t('api-session-bad-credentials')
     case 'session-too-many-attempts':
       return t('api-session-too-many-attempts', ...error.args)
+    case 'session-unavailable':
+      return t('api-session-unavailable')
     default:
       return t('signin-failed')
   }
@@ -61,7 +63,10 @@ export default function SignIn({
       return
     }
     setFailure(failureText(result.error))
-    if (result.error?.key === 'session-bad-credentials') {
+    if (
+      result.error?.key === 'session-bad-credentials' ||
+      result.error?.key === 'session-unavailable'
+    ) {
       setPassword('')
       focusField('password')
     }

@@ -51,9 +51,19 @@ manager's detail never reaches the body).
   signed out.
 - `canConfigure` says whether the manager would allow `configure` for this user. It is a hint for
   showing the page read-only; the manager still decides every request.
-- `POST /api/session` takes `{"username", "password"}`. Failures the fe tells apart: 401
-  `session-bad-credentials`; 429 `session-too-many-attempts` with `args: [seconds]`. Both keys are
-  proposed.
+- `POST /api/session` takes `{"username", "password"}`. Failures:
+  - 401 `session-bad-credentials`: the same reply for an unknown user and a wrong password.
+  - 429 `session-too-many-attempts` with `args: [seconds left]`: after 5 failures for one user from
+    one client address within 60 s.
+  - 503 `session-unavailable`: the bff has no way to check a password (no authenticator, or it
+    failed). The bff shipped before the OS login exists answers this to every sign-in.
+  - 400 `session-malformed`: a malformed body or an empty user name. The fe checks both fields
+    before sending, so it shows this as the generic failure.
+- `GET` or `DELETE /api/session` without a valid session is 401 `session-required`; the fe signs
+  out whatever a `DELETE` answers.
+- A session ends after 30 minutes without a request; the next call answers 401.
+- The cookie is `HttpOnly`, `SameSite=Strict`, `Path=/`, without `Secure` while the bff is
+  loopback only.
 
 ### `GET /api/instances/{id}/server`
 

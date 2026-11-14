@@ -33,7 +33,10 @@ the coordinator's contract; the brief assumes these:
 
 - `GET /api/session`: 200 `{"user": "<name>", "canConfigure": <bool>}`, 401 when signed out.
 - `POST /api/session` `{"username", "password"}`: 200 as above (sets the cookie); 401
-  `{"key":"session-bad-credentials"}`; 429 `{"key":"session-too-many-attempts","args":["<seconds>"]}`.
+  `{"key":"session-bad-credentials"}`; 429 `{"key":"session-too-many-attempts","args":["<seconds>"]}`;
+  503 `{"key":"session-unavailable","args":[]}` (no way to check a password: the bff shipped before
+  the OS login answers it to every sign-in); 400 `session-malformed`. A session ends after 30 minutes
+  without a request; the next call answers 401 (`session-required` on `/api/session`).
 - `DELETE /api/session`: 204.
 - `GET /api/version`: as today.
 - `GET /api/instances`: 200 `[{"id", "engine", "state"}]`; errors with keys `client-unavailable`,
@@ -91,6 +94,10 @@ route, and returning to it after sign-in).
    either field submits. Paste is not blocked.
    ([3.3.2](https://www.w3.org/TR/WCAG22/#labels-or-instructions), [3.3.8](https://www.w3.org/TR/WCAG22/#accessible-authentication-minimum))
 10. On a protected route the form shows `signin-required` above the fields.
+10a. A session that ended while idle (30 minutes without a request) is a 401 like any other: in 1a the
+    next read signs the app out and shows this form with `signin-required` (2.6, "401 on the server
+    read"); the wording fits, since 1a has no edits to lose. Nothing changes; 1b and 1c show
+    `session-ended` and `session-ended-run` where edits or an action are at stake (36, 43).
 11. Empty user name or password: no request; the empty field shows `signin-empty-username` or
     `signin-empty-password` under it (`aria-invalid`, `aria-describedby`); focus moves to the first
     empty field.
@@ -100,8 +107,15 @@ route, and returning to it after sign-in).
 14. 401 `session-bad-credentials`: a `role="alert"` paragraph above the fields with
     `api-session-bad-credentials`; the password field is cleared, the user name kept, focus on the
     password field. 429 `session-too-many-attempts`: `api-session-too-many-attempts` with the seconds.
-    Anything else, a network failure included: `signin-failed`. Never the reply's body.
+    Anything else, a network failure and 400 `session-malformed` included: `signin-failed`. Never the
+    reply's body.
     ([3.3.1](https://www.w3.org/TR/WCAG22/#error-identification), [4.1.3](https://www.w3.org/TR/WCAG22/#status-messages))
+14a. 503 `session-unavailable`: the same `role="alert"` paragraph above the fields, with
+    `api-session-unavailable` (not `signin-failed`, which tells the user to try again). As in 14: the
+    password field is cleared, the user name kept, focus on the password field; the form stays usable
+    (the alert does not ask for a retry and does not block one: the same key covers a server with no sign-in yet and a check that failed for a moment). Tested with the body
+    `{"key":"session-unavailable","args":[]}`.
+    ([3.3.1](https://www.w3.org/TR/WCAG22/#error-identification), [3.3.3](https://www.w3.org/TR/WCAG22/#error-suggestion), [4.1.3](https://www.w3.org/TR/WCAG22/#status-messages))
 15. **Sign out**: sends `DELETE /api/session`, then shows the signed-out shell on the Overview
     whatever the answer (the cookie may already be gone). In 1b, with unsaved changes, it first asks
     with the discard dialog (24).
@@ -354,6 +368,7 @@ Hints marked "adapted" differ from the GUI's text where it was wrong on the web;
 | `signin-failed` | Signing in failed. Try again; if it keeps failing, the web service may not be running. |
 | `api-session-bad-credentials` | The user name or password is not correct. |
 | `api-session-too-many-attempts` | Too many attempts. Try again in {0} seconds. |
+| `api-session-unavailable` | Signing in is not available on this server right now. You can still see the overview without signing in. |
 | `overview-title` | Overview |
 | `instances-column-engine` | Engine |
 | `instance-engine` | {0} instance |

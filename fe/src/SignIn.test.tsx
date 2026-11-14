@@ -128,6 +128,10 @@ test('1a.14: any other failure shows signin-failed, never the body', async () =>
     ['network', () => Promise.reject(new TypeError('Failed to fetch'))],
     ['500', () => reply(500, { key: 'secret-detail', args: [] })],
     ['503', () => reply(503, { key: 'client-unavailable', args: [] })],
+    [
+      '400 session-malformed',
+      () => reply(400, { key: 'session-malformed', args: [] }),
+    ],
     ['401 other key', () => reply(401, { key: 'secret-detail', args: [] })],
     ['not json', () => reply(401, 'secret-detail')],
     ['200 malformed', () => reply(200, '{"user":42}')],
@@ -150,6 +154,41 @@ test('1a.14: any other failure shows signin-failed, never the body', async () =>
     vi.unstubAllGlobals()
     startAt('#/sign-in')
   }
+})
+
+test('1a.14a: sign-in unavailable shows its own alert, clears the password, and a retry is still sent', async () => {
+  const bff = fakeBff({
+    session: 'signed-out',
+    signIn: () => reply(503, { key: 'session-unavailable', args: [] }),
+  })
+  render(<App />)
+  const { main, username, password, submit } = await form()
+  type(username, 'alice')
+  type(password, 'hunter2')
+  fireEvent.click(submit)
+  const alert = await within(main).findByRole('alert')
+  expect(alert.tagName).toBe('P')
+  expect(alert.textContent).toBe(en('api-session-unavailable'))
+  expect(alert.textContent).not.toBe(en('signin-failed'))
+  // Above the fields.
+  expect(
+    alert.compareDocumentPosition(username) & Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBeTruthy()
+  expect(password.value).toBe('')
+  expect(username.value).toBe('alice')
+  expect(document.activeElement).toBe(password)
+  expect(
+    screen.queryByRole('button', { name: en('session-sign-out') }),
+  ).toBeNull()
+  // The form stays usable: a second submit is sent.
+  expect(submit.textContent).toBe(en('signin-submit'))
+  type(password, 'hunter3')
+  fireEvent.click(submit)
+  await waitFor(() => expect(bff.to('POST', '/api/session')).toHaveLength(2))
+  expect(bff.to('POST', '/api/session')[1]!.body).toEqual({
+    username: 'alice',
+    password: 'hunter3',
+  })
 })
 
 // ── The form ────────────────────────────────────────────────────────────
