@@ -33,7 +33,7 @@ fn run(exe: &std::path::Path) -> Option<String> {
 /// because since 2026-08 those are the two halves a user can match against
 /// something and they name different things: the VERSION is upstream's release
 /// (`vX.Y.Z`), which is what the framework now builds from and therefore what
-/// the installer name and `LlamaBuild` in the registry carry, while the build
+/// llama.cpp's MSI name and the `Version` of its registry key carry, while the build
 /// number is the `bNNNN` nightly tag on the same commit, which is what
 /// llama.cpp's own issues and PRs cite. The version is prepended only when the
 /// binary reports one, so an older llama-server reads `b9870` rather than

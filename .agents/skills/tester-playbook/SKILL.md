@@ -411,3 +411,9 @@ Lessons only: the rules are in `AGENTS.md`.
   learn.microsoft.com): pin a minimum version of another product as `Upgrade Id=<its UpgradeCode>` +
   `UpgradeVersion OnlyDetect="yes" Minimum=...` (FindRelatedProducts runs before LaunchConditions),
   then a `Launch` on its property, not a RegistrySearch compared in a condition.
+- A `.wxs` condition is pinned by meaning with the evaluator in `xtask/src/common/msi/tests/engine_lifecycle.rs`
+  (`holds(cond, props)`, the MSI condition subset; XOR/EQV/IMP refused) over named scenarios (first
+  install, repair, the new and the old package of an upgrade, uninstall, a `KEEPINSTANCES` removal):
+  `runs_in(doc, action)` lists where a sequence entry runs. With `MajorUpgrade` scheduled
+  afterInstallValidate, the old package is removed before the new one's deferred actions can run, so a
+  "before the files are replaced on upgrade" action runs in the OLD package (`UPGRADINGPRODUCTCODE`).

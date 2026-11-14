@@ -604,6 +604,14 @@ pub fn run(product: Option<Product>, keep_staging: bool, wix_arg: Option<PathBuf
                     "RemoveInstancesCmd",
                     script_command(&repo.join(r"installer\msi-remove-instances.ps1"))?,
                 ),
+                (
+                    "StopInstancesCmd",
+                    script_command(&repo.join(r"installer\msi-stop-instances.ps1"))?,
+                ),
+                (
+                    "StartInstancesCmd",
+                    script_command(&repo.join(r"installer\msi-start-instances.ps1"))?,
+                ),
             ]);
         } else {
             crate::common::bench_share::stage(&stage.join("share").join("benchmarks"))?;

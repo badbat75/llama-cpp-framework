@@ -159,6 +159,55 @@ pub fn uninstall_key(product: Product) -> &'static str {
     }
 }
 
+/// What `xtask install <file>...` installs on Windows, in order: at most
+/// one MSI of llama.cpp and one of the framework, the engine first (the
+/// framework's MSI refuses to install without it), whatever order they
+/// were given in. Refuses a file not named as `xtask package` names an MSI,
+/// and two files of the same product.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub fn files_plan(files: &[PathBuf]) -> anyhow::Result<Vec<PathBuf>> {
+    let mut by_product: Vec<(Product, &PathBuf)> = Vec::new();
+    for f in files {
+        let name = f.file_name().unwrap_or_default().to_string_lossy();
+        let Some((product, _)) = msi_product(&name) else {
+            bail!(
+                "{name} is not named as xtask package names an MSI (llama.cpp-v<release>-x64.msi, private-ai-framework-v<version>-x64.msi)"
+            );
+        };
+        if let Some((_, other)) = by_product.iter().find(|(p, _)| *p == product) {
+            bail!(
+                "two files of the same product: {} and {}; give one",
+                other.display(),
+                f.display()
+            );
+        }
+        by_product.push((product, f));
+    }
+    Ok([Product::Llama, Product::Framework]
+        .into_iter()
+        .filter_map(|p| {
+            by_product
+                .iter()
+                .find(|(q, _)| *q == p)
+                .map(|(_, f)| (*f).clone())
+        })
+        .collect())
+}
+
+/// The msiexec arguments that remove `product`'s installed version (its
+/// ProductCode `product_code`) before a downgrade, basic UI. llama.cpp's
+/// adds `KEEPINSTANCES=1`: the instance services stay (and its MSI stops
+/// and records the running ones), so the older release installed next
+/// finds them again.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub fn removal_args(product: Product, product_code: &str) -> Vec<String> {
+    let mut args = vec!["/x".to_string(), product_code.to_string(), "/qb".into()];
+    if product == Product::Llama {
+        args.push("KEEPINSTANCES=1".into());
+    }
+    args
+}
+
 #[cfg(test)]
 mod tests {
     use super::CARGO_EXES;
@@ -1329,5 +1378,6 @@ mod tests {
     }
 
     /// llama.cpp's own MSI and the framework's MSI without llama.cpp.
+    mod engine_lifecycle;
     mod two_installers;
 }

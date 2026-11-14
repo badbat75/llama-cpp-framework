@@ -410,18 +410,17 @@ Decided with the user on 2026-11-14:
   instance id ("instance ``"). (Slice 3a done: the Rust paths below and the two manager fixes. Slice 3b done, type-checked and
   text-checked only, never compiled by WiX nor run: `installer/llama.cpp.wxs` and the framework's
   `.wxs` without the engine, `xtask package|install` per product on Windows; llama.cpp's MSI removes a
-  2.4 install; the framework no longer carries over a 2.4 install folder. Left for slice 3c: the docs
-  (`installer/AGENTS.md` and its test plan describe one MSI), the real build and test on Windows,
-  stopping and restarting running instances around an engine upgrade or repair, an engine downgrade
-  through `xtask install` deleting the instance services until the manager's next start, `xtask
-  install <file>...` taking one engine and one framework file on Windows, and the release assets.
-  Found by the docs agent after 3b: the Windows default ModelsDir is still `~\.llama.cpp`
-  (`server_cfg::default_models_dir`) for the LocalSystem manager, not `%ProgramData%\llama.cpp\models`
-  (`paths::instance_models_dir`), and StateDir likewise; llama.cpp's MSI has no guard against a non-MSI
-  `Uninstall\llama.cpp` entry, and reads 2.4's `Software\llama.cpp\InstallDir` before removing 2.4, so it
-  takes a 2.4-chosen folder; `msi-stop-processes.ps1` stops llama-server only under the framework's
-  `bin\`, not the engine's; stale: `crates/app/src/server_version.rs` names `LlamaBuild`, and
-  `00-install-prerequisites.ps1` treats the framework's `bin\` as a holder of `amdhip64*.dll`.) Folders (user, 2026-11-14): the program in `%ProgramFiles%\llama.cpp\` (with the
+  2.4 install; the framework no longer carries over a 2.4 install folder. Slice 3c done the same way (type- and text-checked only): llama.cpp's MSI stops the running
+  instances before an upgrade or repair and starts them again (`instances.running` under
+  `%ProgramData%\llama.cpp`), keeps the instance services on a downgrade through `xtask install`
+  (`KEEPINSTANCES=1`), guards against a non-MSI `Uninstall\llama.cpp` entry and creates `state\`;
+  Windows instances without ModelsDir/StateDir use `%ProgramData%\llama.cpp\{models,state}`; `xtask
+  install <engine> <framework>`; two stale mentions gone. Accepted as is: llama.cpp's MSI takes a
+  2.4-chosen install folder. Left: the docs of 3c; the real WiX build and the installer test plan on
+  Windows (the user); the GUI and `pai` write the user's `~\.llama.cpp` as ModelsDir into the manager's
+  file on Windows instead of leaving it unset; an instance's working directory is still the LocalSystem
+  profile; `msi-stop-processes.ps1` matches llama-server only under the framework's `bin\`; the release
+  assets.) Folders (user, 2026-11-14): the program in `%ProgramFiles%\llama.cpp\` (with the
   read-only defaults); everything of the engine's instances under `%ProgramData%\llama.cpp\`:
   `config\` (`server@<id>.ini`, `presets.ini`, `presets.ini.disabled`; `paths::engine_config_dir()`),
   `logs\` (`llama-server@<id>.log` and its `.previous.log`) and `models\` (the default `ModelsDir`);

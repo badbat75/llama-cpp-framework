@@ -26,6 +26,9 @@ fn data_root_e2e() {
 
     // ── The instances' default models directory (paths.rs) ───────────────
     crate::paths::instance_models_dir_e2e();
+
+    // ── The instances' default state directory (paths.rs) ────────────────
+    crate::paths::instance_state_dir_e2e();
 }
 
 /// The paths with no test redirect, named after the project, and the old
@@ -110,6 +113,7 @@ fn real_paths_child() {
             Some(engine.join("logs").join("llama-server@default.log"))
         );
         assert_eq!(paths::instance_models_dir(), engine.join("models"));
+        assert_eq!(paths::instance_state_dir(), engine.join("state"));
         assert_eq!(
             paths::windows_machine_dirs(&var("ProgramData")),
             paths::WindowsMachineDirs {
@@ -117,6 +121,7 @@ fn real_paths_child() {
                 engine_config: paths::engine_config_dir(),
                 instance_logs: paths::system_log_dir(),
                 instance_models: paths::instance_models_dir(),
+                instance_state: paths::instance_state_dir(),
             }
         );
         // The old tree to migrate: the one 2.4 kept in %LOCALAPPDATA%.

@@ -232,10 +232,7 @@ fn run(cli: Cli) -> anyhow::Result<()> {
                     "--deb and --rpm are Linux packages; on Windows the package is the MSI"
                 );
             }
-            if files.len() > 1 {
-                anyhow::bail!("on Windows the package is one MSI: give one file");
-            }
-            windows::install::run(dry_run, files.into_iter().next())
+            windows::install::run(dry_run, files)
         }
     }
 }

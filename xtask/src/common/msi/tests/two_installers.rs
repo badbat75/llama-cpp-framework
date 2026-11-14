@@ -18,18 +18,18 @@ const REMOVE_INSTANCES_PS1: &str = "installer/msi-remove-instances.ps1";
 const FRAMEWORK_UPGRADE_CODE: &str = "F21D044C-04F5-478D-8F0A-A9B940DB23C3";
 const DEFAULTS: [&str; 2] = ["server@default.ini", "presets.ini"];
 
-fn engine_text() -> String {
+pub(super) fn engine_text() -> String {
     read(ENGINE_WXS)
 }
 
-fn package<'a, 'i>(doc: &'a Document<'i>) -> Node<'a, 'i> {
+pub(super) fn package<'a, 'i>(doc: &'a Document<'i>) -> Node<'a, 'i> {
     let p = elements(doc, "Package");
     assert_eq!(p.len(), 1, "one Package");
     p[0]
 }
 
 /// The one element `tag` with `Id` = `id`.
-fn by_id<'a, 'i>(doc: &'a Document<'i>, tag: &str, id: &str) -> Node<'a, 'i> {
+pub(super) fn by_id<'a, 'i>(doc: &'a Document<'i>, tag: &str, id: &str) -> Node<'a, 'i> {
     let found: Vec<_> = elements(doc, tag)
         .into_iter()
         .filter(|n| n.attribute("Id") == Some(id))
@@ -75,7 +75,7 @@ fn engine_upgrade_code() -> String {
 }
 
 /// The `Custom` scheduling action `id` in InstallExecuteSequence.
-fn custom<'a, 'i>(doc: &'a Document<'i>, id: &str) -> Node<'a, 'i> {
+pub(super) fn custom<'a, 'i>(doc: &'a Document<'i>, id: &str) -> Node<'a, 'i> {
     let c = elements(doc, "Custom")
         .into_iter()
         .find(|c| c.attribute("Action") == Some(id))
@@ -90,7 +90,7 @@ fn custom<'a, 'i>(doc: &'a Document<'i>, id: &str) -> Node<'a, 'i> {
 
 /// The WixQuietExec custom action whose command line (its SetProperty, by
 /// the action's id) contains `needle`: (SetProperty value, CustomAction).
-fn quiet_exec<'a, 'i>(doc: &'a Document<'i>, needle: &str) -> (String, Node<'a, 'i>) {
+pub(super) fn quiet_exec<'a, 'i>(doc: &'a Document<'i>, needle: &str) -> (String, Node<'a, 'i>) {
     let set: Vec<_> = elements(doc, "SetProperty")
         .into_iter()
         .filter(|s| s.attribute("Value").is_some_and(|v| v.contains(needle)))
@@ -467,8 +467,8 @@ fn the_engine_has_its_own_apps_entry_opening_the_full_ui() {
 
 // ── llama.cpp's MSI: %ProgramData%\llama.cpp ─────────────────────────────
 
-fn engine_data_dirs(doc: &Document) -> BTreeMap<String, String> {
-    data_dirs_in(doc, "llama.cpp", &["config", "logs", "models"])
+pub(super) fn engine_data_dirs(doc: &Document) -> BTreeMap<String, String> {
+    data_dirs_in(doc, "llama.cpp", &["config", "logs", "models", "state"])
 }
 
 /// The root: protected, SYSTEM and Administrators full, users read.
@@ -893,7 +893,7 @@ fn msi_at(dir: &Path, name: &str, age: u64) -> PathBuf {
     p
 }
 
-fn scratch(name: &str) -> PathBuf {
+pub(super) fn scratch(name: &str) -> PathBuf {
     let d = std::env::temp_dir().join(format!("xtask-msi-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&d);
     std::fs::create_dir_all(&d).unwrap();

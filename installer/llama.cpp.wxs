@@ -11,6 +11,8 @@
     EstimatedSizeKb    the payload size, for the Apps list
     LicenseRtf         the licence page xtask package writes
     RemoveInstancesCmd installer\msi-remove-instances.ps1 as -EncodedCommand base64
+    StopInstancesCmd   installer\msi-stop-instances.ps1, the same way
+    StartInstancesCmd  installer\msi-start-instances.ps1, the same way
   installer\AGENTS.md says why each piece is the way it is.
 -->
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
@@ -69,6 +71,27 @@
     <!-- Set by our Apps entry's UninstallString: open the UI on the removal
          dialog instead of the maintenance wizard. -->
     <Property Id="LLAMA_CPP_UNINSTALL" Secure="yes" />
+    <!-- Set only by xtask install's removal before a downgrade: the instance
+         services stay (see RemoveInstanceServices), so the older release
+         installed next finds them again. -->
+    <Property Id="KEEPINSTANCES" Secure="yes" />
+
+    <!--
+      Guard against a previous llama.cpp install that is not an MSI: the Apps
+      entry Uninstall\llama.cpp exists and its UninstallString is not an
+      msiexec command line. This MSI's own entry is one ("MsiExec.exe
+      /I[ProductCode] LLAMA_CPP_UNINSTALL=1"), and so is the entry of the
+      framework's MSI of 2.1 to 2.4 (removed above as OLDFRAMEWORKFOUND), so
+      the guard never fires on an upgrade, a repackage or in maintenance
+      (Installed). LaunchConditions runs after AppSearch and before
+      RemoveExistingProducts in both sequences, so a silent install stops
+      too, before anything is changed.
+    -->
+    <Property Id="ENGINEUNINSTALLSTRING" Secure="yes">
+      <RegistrySearch Id="EngineUninstallString" Root="HKLM" Key="Software\Microsoft\Windows\CurrentVersion\Uninstall\llama.cpp" Name="UninstallString" Type="raw" Bitness="always64" />
+    </Property>
+    <Launch Condition="Installed OR NOT ENGINEUNINSTALLSTRING OR (ENGINEUNINSTALLSTRING ~&gt;&lt; &quot;msiexec&quot;)"
+            Message="A previous installation of llama.cpp must be uninstalled first: Settings &gt; Apps &gt; llama.cpp &gt; Uninstall. Then run this installer again." />
 
     <!-- ── Layout: bin\, lib\, share\, .kpack\ under the install root ── -->
     <StandardDirectory Id="ProgramFiles64Folder">
@@ -82,13 +105,15 @@
     <!--
       The instances' machine tree, %ProgramData%\llama.cpp: config\ (each
       instance's server@<id>.ini and presets.ini, written by pai-manager),
-      logs\ (llama-server@<id>.log) and models\ (the default ModelsDir).
+      logs\ (llama-server@<id>.log), models\ (the default ModelsDir) and
+      state\ (the default StateDir, slot snapshots).
     -->
     <StandardDirectory Id="CommonAppDataFolder">
       <Directory Id="ENGINEDATAFOLDER" Name="llama.cpp">
         <Directory Id="ENGINECONFIGFOLDER" Name="config" />
         <Directory Id="ENGINELOGSFOLDER" Name="logs" />
         <Directory Id="ENGINEMODELSFOLDER" Name="models" />
+        <Directory Id="ENGINESTATEFOLDER" Name="state" />
       </Directory>
     </StandardDirectory>
 
@@ -141,7 +166,8 @@
       instances' virtual accounts); 0x1200a9 read and execute, 0x1301bf
       modify without WRITE_DAC, WRITE_OWNER or delete child. The root: users
       read. config\: the services read, users have no ACE (they go through
-      pai-manager). logs\ and models\: the services modify, users read. The
+      pai-manager). logs\, models\ and state\: the services modify, users
+      read. The
       key path of each component is its folder, so the GUIDs are fixed.
     -->
     <Component Id="EngineDataRoot" Directory="ENGINEDATAFOLDER" Guid="CFFB075B-ABFA-4BDD-B519-55270E6540B2" KeyPath="yes">
@@ -160,6 +186,11 @@
       </CreateFolder>
     </Component>
     <Component Id="EngineDataModels" Directory="ENGINEMODELSFOLDER" Guid="D212449F-487D-4E45-BCD4-B67C9346ECE7" KeyPath="yes">
+      <CreateFolder>
+        <PermissionEx Sddl="D:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1301bf;;;S-1-5-80-0)(A;OICI;0x1200a9;;;BU)" />
+      </CreateFolder>
+    </Component>
+    <Component Id="EngineDataState" Directory="ENGINESTATEFOLDER" Guid="C944ACDD-FE80-4EE3-89C2-46717954FB7C" KeyPath="yes">
       <CreateFolder>
         <PermissionEx Sddl="D:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1301bf;;;S-1-5-80-0)(A;OICI;0x1200a9;;;BU)" />
       </CreateFolder>
@@ -188,6 +219,7 @@
       <ComponentRef Id="EngineDataConfig" />
       <ComponentRef Id="EngineDataLogs" />
       <ComponentRef Id="EngineDataModels" />
+      <ComponentRef Id="EngineDataState" />
       <ComponentRef Id="DefaultServerIni" />
       <ComponentRef Id="DefaultPresetsIni" />
     </Feature>
@@ -198,11 +230,14 @@
          script inlined in a SetProperty overflows its 255 characters:
          ICE03). Hidden keeps it out of the log. -->
     <Property Id="LlamaCppRemoveInstancesPs" Value="$(var.RemoveInstancesCmd)" Hidden="yes" />
+    <Property Id="LlamaCppStopInstancesPs" Value="$(var.StopInstancesCmd)" Hidden="yes" />
+    <Property Id="LlamaCppStartInstancesPs" Value="$(var.StartInstancesCmd)" Hidden="yes" />
 
     <!--
       The instance services (llama.cpp_<id>) are created at run time by
       pai-manager, so Windows Installer does not know them: on an uninstall
-      that is not the old half of an upgrade they are stopped and deleted
+      that is not the old half of an upgrade, nor the removal xtask install
+      makes before a downgrade (KEEPINSTANCES), they are stopped and deleted
       (installer\msi-remove-instances.ps1). A PowerShell script, not the
       framework's manager: the engine does not require the framework. Deferred and
       not impersonated (deleting a service takes LocalSystem), before the files
@@ -211,6 +246,26 @@
     <SetProperty Id="RemoveInstanceServices" Sequence="execute" Before="RemoveInstanceServices"
                  Value="&quot;[System64Folder]WindowsPowerShell\v1.0\powershell.exe&quot; -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand [LlamaCppRemoveInstancesPs]" />
     <CustomAction Id="RemoveInstanceServices" BinaryRef="Wix4UtilCA_X64" DllEntry="WixQuietExec" Execute="deferred" Impersonate="no" Return="ignore" />
+
+    <!--
+      Running instances kept across a repair, an upgrade and xtask install's
+      downgrade: before llama.cpp's files are replaced or removed, the
+      running instance services are recorded and stopped
+      (installer\msi-stop-instances.ps1), in the package being repaired or
+      removed (the old release of a major upgrade, which MajorUpgrade removes
+      in full right after InstallValidate, before the new one writes
+      anything); once the files are in place, the recorded ones are started
+      again (installer\msi-start-instances.ps1): a repair, the new release of
+      an upgrade, and a first install (the older release a downgrade
+      installs). Deferred, as LocalSystem; Return="ignore": an instance that
+      does not stop or start never rolls the installation back.
+    -->
+    <SetProperty Id="StopInstances" Sequence="execute" Before="StopInstances"
+                 Value="&quot;[System64Folder]WindowsPowerShell\v1.0\powershell.exe&quot; -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand [LlamaCppStopInstancesPs]" />
+    <CustomAction Id="StopInstances" BinaryRef="Wix4UtilCA_X64" DllEntry="WixQuietExec" Execute="deferred" Impersonate="no" Return="ignore" />
+    <SetProperty Id="StartInstances" Sequence="execute" Before="StartInstances"
+                 Value="&quot;[System64Folder]WindowsPowerShell\v1.0\powershell.exe&quot; -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand [LlamaCppStartInstancesPs]" />
+    <CustomAction Id="StartInstances" BinaryRef="Wix4UtilCA_X64" DllEntry="WixQuietExec" Execute="deferred" Impersonate="no" Return="ignore" />
 
     <!--
       %ProgramData%\llama.cpp, deleted only when the removal dialog's checkbox
@@ -224,8 +279,12 @@
     <CustomAction Id="DeleteEngineData" BinaryRef="Wix4UtilCA_X64" DllEntry="WixQuietExec" Execute="deferred" Impersonate="no" Return="ignore" />
 
     <InstallExecuteSequence>
+      <Custom Action="StopInstances" Before="DeleteServices"
+              Condition="Installed AND (REINSTALL OR UPGRADINGPRODUCTCODE OR KEEPINSTANCES)" />
       <Custom Action="RemoveInstanceServices" After="StopServices"
-              Condition="REMOVE~=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
+              Condition="REMOVE~=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE AND NOT KEEPINSTANCES" />
+      <Custom Action="StartInstances" After="StartServices"
+              Condition="NOT (REMOVE~=&quot;ALL&quot;)" />
       <Custom Action="DeleteEngineData" After="RemoveFiles"
               Condition="REMOVE~=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE AND LLAMA_CPP_DELETECONFIG=&quot;1&quot; AND UILevel &gt;= 5" />
     </InstallExecuteSequence>

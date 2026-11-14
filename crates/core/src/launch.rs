@@ -224,7 +224,12 @@ pub fn instance_command(
     if !has_presets_in(&presets_path) {
         return Err(LaunchError::NoPresets);
     }
-    let cfg = crate::server_cfg::load_from(&ini);
+    let cfg = with_instance_defaults(
+        crate::server_cfg::load_from(&ini),
+        cfg!(windows),
+        &crate::paths::instance_models_dir(),
+        &crate::paths::instance_state_dir(),
+    );
     // Before the spawn, as in `start()`: llama.cpp refuses a missing
     // `--slot-save-path` directory during argument parsing.
     if cfg.save_state_on_shutdown_or_default() {
@@ -232,6 +237,32 @@ pub fn instance_command(
             .map_err(|e| LaunchError::StateDir(crate::slot_state::state_dir(&cfg), e.kind()))?;
     }
     Ok(launch_command(exe, &cfg, &presets_path))
+}
+
+/// The defaults of an instance the manager launches, filled into `cfg`
+/// where `server@<id>.ini` leaves ModelsDir or StateDir unset or blank: on
+/// Windows (`windows`) the engine's `models` and `state` directories under
+/// `%ProgramData%\llama.cpp` (`paths::instance_models_dir`,
+/// `paths::instance_state_dir`), not the LocalSystem profile the manager
+/// runs as; elsewhere `cfg` unchanged.
+pub fn with_instance_defaults(
+    cfg: crate::server_cfg::ServerConfig,
+    windows: bool,
+    models: &std::path::Path,
+    state: &std::path::Path,
+) -> crate::server_cfg::ServerConfig {
+    if !windows {
+        return cfg;
+    }
+    let unset = |v: &Option<String>| v.as_deref().is_none_or(|s| s.trim().is_empty());
+    let mut cfg = cfg;
+    if unset(&cfg.models_dir) {
+        cfg.models_dir = Some(models.to_string_lossy().into_owned());
+    }
+    if unset(&cfg.state_dir) {
+        cfg.state_dir = Some(state.to_string_lossy().into_owned());
+    }
+    cfg
 }
 
 /// E2E phase for `instance_command`, for this crate's e2e test to call: it sets
@@ -885,5 +916,126 @@ mod tests {
             ]
         );
         assert!(!args_for(&cfg).iter().any(|a| a.contains("GRAPHS")));
+    }
+
+    // ── The defaults of an instance the manager launches ─────────────────
+    // On Windows the manager runs as LocalSystem: a ModelsDir or StateDir
+    // left unset in server@<id>.ini must not resolve against its profile
+    // (`server_cfg::default_models_dir`, `slot_state::default_state_dir`),
+    // but to the engine's folders under %ProgramData%\llama.cpp, which
+    // llama.cpp's MSI creates with the instances' ACL. Pure over the OS and
+    // the two directories, so the Windows choice is pinned on every OS.
+
+    fn engine_dirs() -> (std::path::PathBuf, std::path::PathBuf) {
+        // Spelled through a const: the names lint refuses the bare join.
+        const ENGINE: &str = "llama.cpp";
+        let engine = Path::new(r"C:\ProgramData").join(ENGINE);
+        (engine.join("models"), engine.join("state"))
+    }
+
+    #[test]
+    fn windows_instances_default_to_the_engine_s_models_and_state() {
+        let (models, state) = engine_dirs();
+        let cfg = with_instance_defaults(ServerConfig::default(), true, &models, &state);
+        assert_eq!(cfg.models_dir_or_default(), models.to_string_lossy());
+        assert_eq!(cfg.state_dir_or_default(), state.to_string_lossy());
+    }
+
+    /// Blank is unset, as everywhere else in server.ini.
+    #[test]
+    fn windows_instances_treat_a_blank_dir_as_unset() {
+        let (models, state) = engine_dirs();
+        let blank = ServerConfig {
+            models_dir: Some("   ".into()),
+            state_dir: Some(String::new()),
+            ..ServerConfig::default()
+        };
+        let cfg = with_instance_defaults(blank, true, &models, &state);
+        assert_eq!(cfg.models_dir_or_default(), models.to_string_lossy());
+        assert_eq!(cfg.state_dir_or_default(), state.to_string_lossy());
+    }
+
+    /// What the file names wins: the defaults fill only what is missing, and
+    /// nothing else of the file changes.
+    #[test]
+    fn windows_instances_keep_a_configured_dir() {
+        let (models, state) = engine_dirs();
+        let mine = ServerConfig {
+            models_dir: Some(r"E:\models".into()),
+            state_dir: Some(r"E:\llama-state".into()),
+            port: Some(8082),
+            ..ServerConfig::default()
+        };
+        assert_eq!(
+            with_instance_defaults(mine.clone(), true, &models, &state),
+            mine
+        );
+        let only_models = ServerConfig {
+            models_dir: Some(r"E:\models".into()),
+            ..ServerConfig::default()
+        };
+        let cfg = with_instance_defaults(only_models, true, &models, &state);
+        assert_eq!(cfg.models_dir.as_deref(), Some(r"E:\models"));
+        assert_eq!(cfg.state_dir_or_default(), state.to_string_lossy());
+    }
+
+    /// Linux and macOS are unchanged: the service user's home on Linux (the
+    /// shipped server@default.ini names it), the user's own tree on macOS.
+    #[test]
+    fn other_oses_keep_their_own_defaults() {
+        let (models, state) = engine_dirs();
+        for cfg in [
+            ServerConfig::default(),
+            ServerConfig {
+                models_dir: Some(" ".into()),
+                ..ServerConfig::default()
+            },
+        ] {
+            assert_eq!(
+                with_instance_defaults(cfg.clone(), false, &models, &state),
+                cfg
+            );
+        }
+    }
+
+    /// The code of `instance_command` in this file, before the tests.
+    fn instance_command_body() -> String {
+        let code = include_str!("launch.rs")
+            .split("#[cfg(test)]\nmod tests")
+            .next()
+            .unwrap();
+        let start = code
+            .find("pub fn instance_command(")
+            .expect("fn instance_command");
+        let rest = &code[start..];
+        rest[..rest.find("\n}\n").expect("end of fn")].to_string()
+    }
+
+    /// The manager's launch goes through the pure function with the real
+    /// OS and the engine's directories, before the state directory is
+    /// created (so a snapshot-on instance with no StateDir creates the
+    /// engine's `state`, not one in the LocalSystem profile). The Windows
+    /// branch only type-checks on Linux, hence a check on the text.
+    #[test]
+    fn the_service_launch_applies_the_instance_defaults() {
+        let body = instance_command_body();
+        for want in [
+            "with_instance_defaults(",
+            "cfg!(windows)",
+            "paths::instance_models_dir()",
+            "paths::instance_state_dir()",
+        ] {
+            assert!(
+                body.contains(want),
+                "instance_command has no {want}:\n{body}"
+            );
+        }
+        let fill = body.find("with_instance_defaults(").unwrap();
+        let ensure = body.find("ensure_dir(").expect("ensure_dir");
+        let launch = body.find("launch_command(").expect("launch_command");
+        assert!(
+            fill < ensure && fill < launch,
+            "the defaults are filled after they are used:\n{body}"
+        );
     }
 }

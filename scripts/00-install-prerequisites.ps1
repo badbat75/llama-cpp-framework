@@ -1359,27 +1359,17 @@ foreach ($scope in 'Machine', 'User') {
         }
     }
 }
-# The installed framework's bin\ is NOT a second dist, although it carries
-# amdhip64_*.dll and its optional PATH component puts it on the system PATH:
-# the installer bundles there the whole runtime of the dist it was BUILT
-# against (xtask package), a self-contained set that an exe resolves from its
-# own directory before PATH is consulted, and PATH never decides
-# amdhip64_7.dll for any other exe (its own dir, then the driver's System32
-# copy, both precede PATH). It does not follow a HIP_PATH move and does not
-# have to: it changes with the next installer.
 # Doubled separators collapsed and a trailing one dropped, for comparison only:
-# the MSI writes its PATH entry as ...\private-ai\bin\, and a hand-edited entry
-# may differ in either.
+# a hand-edited PATH entry may carry either.
 function Get-NormalizedDir([string]$Dir) { ($Dir -replace '(?<!^)\\{2,}', '\').TrimEnd('\') }
-$fwBin = $null
-$fwDir = (Get-ItemProperty 'HKLM:\Software\private-ai' -ErrorAction SilentlyContinue).InstallDir
-if ($fwDir -and (Test-Path (Join-Path $fwDir 'bin'))) { $fwBin = Get-NormalizedDir (Join-Path $fwDir 'bin') }
 # amdhip64_*.dll in more than one PATH dir: a second DIST (legacy SDK, a
 # hand-added TheRock), whose rocblas.dll/libhipblaslt.dll then resolve by
-# PATH order. The driver's System32 copy and the installed one are set aside.
+# PATH order. The driver's System32 copy is set aside; no installer puts a
+# HIP runtime on PATH (llama.cpp's MSI keeps it in its own bin\, which is not
+# on PATH, and the framework's MSI holds none).
 $pathAll = ([Environment]::GetEnvironmentVariable('Path', 'Machine'), [Environment]::GetEnvironmentVariable('Path', 'User')) -join ';'
 $hipDllDirs = @($pathAll -split ';' | Where-Object { $_ } | ForEach-Object { Get-NormalizedDir $_ } | Select-Object -Unique |
-    Where-Object { ($_ -notlike "$env:windir*") -and ($_ -ne $fwBin) -and (Test-Path (Join-Path $_ 'amdhip64*.dll')) })
+    Where-Object { ($_ -notlike "$env:windir*") -and (Test-Path (Join-Path $_ 'amdhip64*.dll')) })
 if ($hipDllDirs.Count -gt 1) {
     $envWarnings += "amdhip64_*.dll in $($hipDllDirs.Count) PATH dirs (ambiguous load order): $($hipDllDirs -join '; ')"
 }

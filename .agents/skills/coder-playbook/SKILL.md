@@ -236,3 +236,8 @@ Lessons only: the rules are in `AGENTS.md`.
 - Windows `xtask package` loops over `msi::products(product)`, each with its own staging dir
   (`msi::staging_dir`), `.wxs`, licence page and wix-obj beside it (`stage.with_extension(..)`); the
   engine's defaults come from `crates/core/defaults/windows/` through `msi::engine_defaults`.
+- llama.cpp.wxs sequence conditions are evaluated by `msi/tests/engine_lifecycle.rs` per scenario: the
+  old package of a major upgrade has `Installed` + `REMOVE=ALL` + `UPGRADINGPRODUCTCODE`, a repair
+  `Installed` + `REINSTALL`, the new package of an upgrade looks like a first install (no `Installed`).
+  Write `NOT (REMOVE~="ALL")` with parentheses. config's names lint also scans core's test modules:
+  a tester's `join("llama.cpp")` there fails `cargo test -p pai-config -- names_lint`; report it.

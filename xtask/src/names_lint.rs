@@ -153,14 +153,11 @@ fn the_msi_installs_and_registers_the_new_names() {
     );
 }
 
-/// The scripts that find the installed tree read the new registry key, and the
-/// MSI's process stopper knows the new executable.
+/// The MSI's process stopper reads the new registry key and knows the new
+/// executable. (The prerequisites script no longer reads the installed tree:
+/// `the_prerequisites_report_sets_no_installed_bin_aside` in the MSI tests.)
 #[test]
 fn the_windows_scripts_find_the_new_install() {
-    assert!(
-        read("scripts/00-install-prerequisites.ps1").contains(r"HKLM:\Software\private-ai"),
-        "00-install-prerequisites.ps1 reads HKLM:\\Software\\private-ai"
-    );
     let stopper = read("installer/msi-stop-processes.ps1");
     for want in [
         r"HKLM:\Software\private-ai",

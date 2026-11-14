@@ -153,13 +153,15 @@ pub fn system_log_dir() -> PathBuf {
 
 /// The machine-wide directories on Windows under the `%ProgramData%` root
 /// `program_data`: the framework's own config (`bff.ini`) and the engine's
-/// instances' config, logs and default models.
+/// instances' config, logs and default models and state.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WindowsMachineDirs {
     pub framework_config: PathBuf,
     pub engine_config: PathBuf,
     pub instance_logs: PathBuf,
     pub instance_models: PathBuf,
+    /// The instances' default StateDir (slot snapshots).
+    pub instance_state: PathBuf,
 }
 
 pub fn windows_machine_dirs(program_data: &Path) -> WindowsMachineDirs {
@@ -169,6 +171,7 @@ pub fn windows_machine_dirs(program_data: &Path) -> WindowsMachineDirs {
         engine_config: engine.join("config"),
         instance_logs: engine.join("logs"),
         instance_models: engine.join("models"),
+        instance_state: engine.join("state"),
     }
 }
 
@@ -199,6 +202,24 @@ pub fn instance_models_dir() -> PathBuf {
     #[cfg(not(any(windows, target_os = "linux")))]
     {
         home_dir().join(".llama.cpp")
+    }
+}
+
+/// The default StateDir of the instances the manager launches:
+/// `%ProgramData%\llama.cpp\state` on Windows (not the LocalSystem
+/// profile); elsewhere `slot_state::default_state_dir()`, unchanged. Under
+/// the test override it is `<override>/engine-state` on every OS.
+pub fn instance_state_dir() -> PathBuf {
+    if let Some(p) = env_path(DATA_ROOT_VAR) {
+        return p.join("engine-state");
+    }
+    #[cfg(windows)]
+    {
+        windows_machine_dirs(&program_data()).instance_state
+    }
+    #[cfg(not(windows))]
+    {
+        crate::slot_state::default_state_dir()
     }
 }
 
@@ -788,6 +809,25 @@ pub(crate) fn instance_log_paths_e2e() {
     assert!(!logs.exists(), "asking creates nothing");
 }
 
+/// E2E phase for the instances' default state directory, for the e2e test
+/// of this crate to call: it sets the process-wide `PRIVATE_AI_DATA_ROOT`
+/// redirect (`src/tests/mod.rs`). Beside the default models, in the same
+/// redirect layout: `<override>/engine-state`, apart from the user's tree.
+#[cfg(test)]
+pub(crate) fn instance_state_dir_e2e() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    redirect_for_tests(dir.path());
+    let state = dir.path().join("engine-state");
+    assert_eq!(instance_state_dir(), state);
+    assert_ne!(instance_state_dir(), instance_models_dir());
+    assert_ne!(instance_state_dir(), engine_config_dir());
+    assert!(
+        !instance_state_dir().starts_with(data_root()),
+        "not in the user's tree"
+    );
+    assert!(!state.exists(), "asking creates nothing");
+}
+
 /// E2E phase for the instances' default models directory, for the e2e test
 /// of this crate to call: it sets the process-wide `PRIVATE_AI_DATA_ROOT`
 /// redirect (`src/tests/mod.rs`). Beside the engine's config, in the same
@@ -843,6 +883,9 @@ mod tests {
         assert_eq!(d.engine_config, pd.join(ENGINE).join("config"));
         assert_eq!(d.instance_logs, pd.join(ENGINE).join("logs"));
         assert_eq!(d.instance_models, pd.join(ENGINE).join("models"));
+        // The instances' slot snapshots: the engine's too, not the
+        // LocalSystem profile the manager runs as.
+        assert_eq!(d.instance_state, pd.join(ENGINE).join("state"));
     }
 
     #[test]
@@ -863,6 +906,7 @@ mod tests {
             &d.engine_config,
             &d.instance_logs,
             &d.instance_models,
+            &d.instance_state,
         ] {
             assert!(p.starts_with(pd), "{}", p.display());
         }
@@ -892,6 +936,7 @@ mod tests {
             "engine_config_dir",
             "system_log_dir",
             "instance_models_dir",
+            "instance_state_dir",
         ] {
             let body = body_of(name);
             assert!(

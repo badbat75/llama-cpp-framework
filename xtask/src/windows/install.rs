@@ -1,13 +1,15 @@
 //! Install phase on Windows (cargo run -p xtask -- install): installs the
 //! newest MSI of llama.cpp the package phase left in .\dist\, then the newest
-//! of the framework (only what is there; or the one given), each with
+//! of the framework (only what is there; or the files given, at most one of
+//! each, the engine first), each with
 //! msiexec, basic UI: a progress bar and the UAC prompt the per-machine
 //! package needs (/qn would show none and fail unelevated). A first install,
 //! an upgrade and a same-version repackage are one command, the MSI's
 //! MajorUpgrade (AllowSameVersionUpgrades). A downgrade, which the MSI
 //! refuses, removes the installed version of that product first (basic UI,
 //! so the framework's user data under %LOCALAPPDATA%\private-ai and the
-//! engine's %ProgramData%\llama.cpp are kept: installer\AGENTS.md).
+//! engine's %ProgramData%\llama.cpp are kept: installer\AGENTS.md; the
+//! engine's with KEEPINSTANCES=1, so its instance services stay).
 //!
 //! Running programs need no check here: the package's StopProcesses custom
 //! action stops the configurator and llama-server before files are replaced.
@@ -65,20 +67,20 @@ fn msiexec(args: &[String], log: &Path) -> Result<()> {
     }
 }
 
-pub fn run(dry_run: bool, file: Option<PathBuf>) -> Result<()> {
+pub fn run(dry_run: bool, files: Vec<PathBuf>) -> Result<()> {
     let out_dir = util::repo_root().join("dist");
-    let plan = match file {
-        Some(f) => {
-            if !f.is_file()
-                || f.extension()
-                    .map(|e| !e.eq_ignore_ascii_case("msi"))
-                    .unwrap_or(true)
-            {
+    let plan = if files.is_empty() {
+        msi::install_plan(&out_dir)
+    } else {
+        for f in &files {
+            if !f.is_file() {
                 bail!("not an .msi: {}", f.display());
             }
-            vec![util::absolute(&f)]
         }
-        None => msi::install_plan(&out_dir),
+        msi::files_plan(&files)?
+            .iter()
+            .map(|f| util::absolute(f))
+            .collect()
     };
     if plan.is_empty() {
         bail!(
@@ -131,7 +133,7 @@ fn install(msi: &Path, dry_run: bool, logs: &Path) -> Result<()> {
         ui::warn(format!(
             "Downgrade: {tag} {old_version} is removed first (its data kept)"
         ));
-        remove = Some(vec!["/x".to_string(), code, "/qb".into()]);
+        remove = Some(msi::removal_args(product, &code));
     }
     let install = vec!["/i".to_string(), msi.display().to_string(), "/qb".into()];
 
