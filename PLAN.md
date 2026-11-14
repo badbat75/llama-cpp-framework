@@ -492,6 +492,42 @@ by the Linux and Windows packaging).
 - Done when: both workflows have run green on GitHub at least once, from a run the user started or
   approved, and what they cover is written in `installer/AGENTS.md` and `docs/build-macos.md`.
 
+### 13. One set of checks for the GUI, `pai`, the manager and the bff
+
+Found by the web UI session's read-only inventory of the configurator (2026-11-14, section 3 of its
+`configurator-inventory.md`, kept in `fe/briefs/`): some checks live only in the Slint layer, so `pai`,
+macOS (no manager) and a future bff write what the GUI would refuse. The bff's server and preset writes
+(step 10, slices 7 and later) need these checks in `pai-app` or `pai-core`, not copied into `fe/`.
+
+Slices, each test first, in order:
+
+1. **Server-wide defaults are never written as the saving process's home.** On Linux a save with
+   ModelsDir or StateDir unset writes the saver's `~/.llama.cpp` or data root into
+   `/etc/llama.cpp/server@default.ini`, which the instance user cannot read; a bff save would write
+   the bff account's home. Extend the Windows rule (425f223: leave both unset under the manager) to
+   Linux under the manager, with the instance defaults (`paths::instance_models_dir`,
+   `instance_state_dir`).
+2. **The Server checks move below the GUI**: Port, ModelsMax (no negatives) and ModelsMemoryMargin
+   ranges, log level 0..5, the base URL's trailing `/` and `/v1` stripped (`pai server set` can store
+   `/v1` and get `/v1/v1`), threads at most the CPU count, a bind list mixing `0.0.0.0` with other
+   addresses refused; in `pai-app` (shared by GUI, `pai`, bff) and, where the manager can check it
+   alone, in `pai-core` `checks.rs`.
+3. **The preset checks move below the GUI**: `validate_for_save` gains model-required and the integer
+   ranges (macOS today has no check at all); a duplicate id across `presets.ini` and
+   `presets.ini.disabled` refused by the manager too; `ctx-size = 0` either writable (as the README and
+   integrations treat it) or documented as not; the MoE cache floor; then floats (no `inf`/`NaN`),
+   enums, `chat-template-kwargs` JSON and min <= max pairs, each where a check is cheap.
+4. **Docs and strings**: the README's stale draft pin, Model info and `DefaultSpinBox` mentions; the
+   literals that break "no text in code" (`model_scan.rs`, `gpu_split.rs`, `bench/exec.rs`,
+   `bench.rs`); GUI keys a non-GUI client needs copied to `cli.toml` when that client shows them.
+
+Accepted as is unless the user says otherwise: greyed-out preset values still written (only the draft,
+ngram and MoE keys are pruned); GUI and CLI defaults of the benchmark differ; delete with shared files
+(GUI keeps them, CLI refuses without `--even-if-shared`): the web UI picks the GUI's side.
+
+- Done when: each check above is enforced below the GUI, with a test through `pai-app` (and the
+  manager where it applies), and the docs say what is checked where.
+
 ### 4. Decide whether to bring back patches 0002 to 0004
 
 Covers: R7.
@@ -718,8 +754,29 @@ Decided with the user on 2026-11-14 (relayed by the web UI session, confirmed he
   and must be exposed from `pai-app`, the manager or the bff rather than copied into `fe/`; the bff
   side is scheduled from that contract.
 
-Later slices (not yet written): editing through the manager, the gateway, the benchmark portal, LAN
-access with authentication.
+The bff side of the web UI's slice 1, from the contract `fe/briefs/api-contract.md` (the web UI
+session's, following the coordinator's shape; the fe is built against mocks), each test first:
+
+6. **Sign-in.** `GET`/`POST`/`DELETE /api/session` (`{user, canConfigure}`, an HttpOnly cookie,
+   `session-bad-credentials` 401, `session-too-many-attempts` 429), against the OS accounts (PAM on
+   Linux, `LogonUser` on Windows); the manager learns who acts. Open, for the user: how a signed-in
+   administrator's save passes Linux polkit `configure` (`auth_admin_keep`) without the bff keeping a
+   password (a polkit rule for `private-ai-bff` acting for a user it authenticated, with the admin test
+   done by group, is the coordinator's proposal), and where a web user's own state lives
+   (`settings.ini`, `bench.db`, HF token, `opencode.json`; it blocks the Downloads, Benchmarks and
+   Settings pages). `GET /api/instances` gains `engine` and moves its errors to `{key, args}` with the
+   `client-*` keys, together with the fe build that reads them.
+7. **Read the server file.** `GET /api/instances/{id}/server`: values by INI key (null = unset), the
+   defaults resolved server side (the instance's own ModelsDir and StateDir), limits (threads max =
+   the machine's CPU count), interfaces, an opaque revision.
+8. **Write it.** `PUT /api/instances/{id}/server` with the revision: step 13's checks (slices 1 and 2
+   first), 422 `{key, args, field}`, 409 `server-changed-elsewhere` on a stale revision; ModelsDir
+   created for the instance after a save.
+9. **Control and boot.** `POST start|stop|restart` (a stop with `SaveStateOnShutdown` saves the slot
+   snapshots first, server side), `GET`/`PUT /api/instances/{id}/boot`.
+10. **Engines.** `GET /api/engines`, `unknown-engine` refused on a preset write.
+
+Later slices (not yet written): the presets page, the gateway, the benchmark portal, LAN access.
 
 ## Waiting for the user
 

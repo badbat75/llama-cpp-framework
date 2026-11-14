@@ -20,3 +20,8 @@ Lessons only: the rules are in `AGENTS.md` and `PLAN.md`.
   from this session's agents, some inside `AGENTS.md` lines this session also changed). Check
   `git status` before committing and stage only this task's hunks: `git diff -U0 <file>`, keep the
   hunks that are yours, `git apply --cached --unidiff-zero`, then a plain `git commit` of the index.
+- A second session can own `fe/` only (since 2026-11-14): it works from `fe/briefs/` (the bff API
+  contract `api-contract.md`, the slice briefs) and `fe/DESIGN.md`, commits only `fe/`, and sends every
+  change outside `fe/` (bff routes, plan entries, other skills) to the coordinator. A user decision it
+  relays is recorded with "(relayed by the web UI session)"; when it changes a requirement, confirm it
+  with the user here first.

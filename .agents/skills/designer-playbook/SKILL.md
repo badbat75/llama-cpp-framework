@@ -9,9 +9,10 @@ Lessons only: the rules are in `AGENTS.md` and the role in `.opencode/agents/des
   "No user-visible text in the code"). A brief names the key and its English text; numbers, units,
   acronyms and paths stay out of the strings.
 - No em-dashes, in briefs, `fe/DESIGN.md` and proposed texts alike (`AGENTS.md`, "Key conventions").
-- The web UI is read-only until the design of who is acting through the bff exists (`PLAN.md` step 10,
-  "Waiting for the user"): a brief for anything that changes state waits for it.
-- The bff's error keys today are `unavailable` (the manager is not reachable), `not-authorized` and
-  `failed`: each is a state the page must show (`crates/bff/README.md`).
+- Who acts through the bff is decided (`PLAN.md` step 10): the user signs in with their OS account and
+  the manager applies its rules to them. Until the bff's sign-in exists (step 10 slice 6), the real
+  page is read-only; briefs for editing are built against `fe/briefs/api-contract.md` and its mocks.
+- Errors follow the contract: `{key, args}` with a strings key (`fe/briefs/api-contract.md`); today's
+  bff still returns `unavailable`, `not-authorized` and `failed` until slice 6 moves them.
 - `pai-config` (Slint, `crates/config/`) is the reference for what each task looks like today; its
   texts are in `crates/core/strings/en_US.toml`.
