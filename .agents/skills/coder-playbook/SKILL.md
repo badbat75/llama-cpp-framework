@@ -204,3 +204,7 @@ Lessons only: the rules are in `AGENTS.md`.
   rewrites. A text-check test that splits `install.rs` at the first `#[cfg(test)]` means a
   production item gated `#[cfg(test)]` above `run` hides `run` from it: use
   `#[cfg_attr(not(test), allow(dead_code))]` for a helper only tests still call.
+- typescript-eslint cannot load TypeScript 7.0 (it ships no compiler API until 7.1; typescript-eslint
+  issue #12518, peer `typescript <6.1.0`): `fe/` stays on TypeScript 6.0.x. Prettier has no width that
+  matches the hand-wrapped fe code, and a `vi.fn(answer)` over `() => Promise<Response>` types
+  `mock.calls` as `[]`: type it `vi.fn<typeof globalThis.fetch>` (a local `fetch` shadows `typeof fetch`).

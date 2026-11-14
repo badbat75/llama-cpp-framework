@@ -10,5 +10,8 @@ const table: Record<string, string> = strings
  */
 export function t(key: string, ...args: string[]): string {
   const text = table[key] ?? key
-  return text.replace(/\{(\d+)\}/g, (whole, n: string) => args[Number(n)] ?? whole)
+  return text.replace(
+    /\{(\d+)\}/g,
+    (whole, n: string) => args[Number(n)] ?? whole,
+  )
 }

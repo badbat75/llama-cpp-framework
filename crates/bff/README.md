@@ -115,6 +115,11 @@ reply's body:
   key shown as itself.
 - **Tests**: Vitest and Testing Library in jsdom, `npm --prefix fe test` from the repo root
   (`npm --prefix fe ci` first when `fe/node_modules` is missing).
+- **Checks**, none of which writes a file: `npm --prefix fe run typecheck` (`tsc` over the app,
+  `vite.config.ts` and, through `fe/tsconfig.test.json`, the tests, which `npm run build` does not
+  type-check), `npm --prefix fe run lint` (ESLint, `fe/eslint.config.js`, no warning allowed) and
+  `npm --prefix fe run format:check` (Prettier, `fe/.prettierrc.json`). TypeScript stays on 6.0:
+  typescript-eslint does not load 7 yet ("Later, not planned yet" in [PLAN.md](../../PLAN.md)).
 - **Built by `xtask build`**, embedded in the binary by `crates/bff/build.rs`: which directory it
   embeds and when it notices a new `fe/dist` are in
   ["The web UI and pai-bff"](../../docs/build-compiling.md#the-web-ui-and-pai-bff).

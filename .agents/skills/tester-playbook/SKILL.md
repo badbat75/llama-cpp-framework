@@ -292,10 +292,14 @@ Lessons only: the rules are in `AGENTS.md`.
   (reading 'edgesOut')`; align the versions rather than add `--legacy-peer-deps`. Try installs in a
   /tmp copy of `package.json` first.
 - Vitest does not type-check: a `const x: number = 'a'` in `fe/src/Version.tsx` leaves its tests
-  green and only `tsc -b` fails (TS2322). `tsconfig.app.json` excludes `*.test.ts(x)`, so `tsc -b`
-  does not see a type error in a test file either (checked 2026-11-14). `noUnusedLocals` is on, so an
-  unused variable is a tsc error too: probe a linter with a rule tsc lacks (rules-of-hooks). To probe a
-  check, append to a tracked file and `git checkout --` it at once; `git status --short fe` must be empty.
+  green; only `npm --prefix fe run typecheck` fails (TS2322). `tsconfig.app.json` excludes
+  `*.test.ts(x)` (so `npm run build` ignores test type errors); `typecheck` adds
+  `tsconfig.test.json` for them, and a source error shows twice since both configs see the file.
+  Type a fetch mock as `vi.fn<typeof globalThis.fetch>(..)`: bare `vi.fn(answer)` types
+  `mock.calls` as `[][]` (TS2493), and `typeof fetch` hits a local `const fetch` (TS7022).
+  `noUnusedLocals` is on, so probe the linter with a rule tsc lacks (rules-of-hooks). To probe a check,
+  copy the file to the scratchpad, append the violation, run, copy it back and `cmp`: `git checkout --`
+  would also throw away uncommitted work.
 - The bff's embedded page is tested on whatever the build embedded (`fe/dist` or
   `crates/bff/fe-fixture`), taken from `build.rs`'s `rustc-env` `PAI_BFF_FE_DIR` (`tests/fe.rs`
   `embedded()`), never re-decided at run time: a `fe/dist` made after the build reruns nothing, so a

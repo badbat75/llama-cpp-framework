@@ -19,7 +19,7 @@ function reply(status: number, body: string): Response {
 }
 
 function stubFetch(answer: () => Promise<Response>) {
-  const fetch = vi.fn(answer)
+  const fetch = vi.fn<typeof globalThis.fetch>(answer)
   vi.stubGlobal('fetch', fetch)
   return fetch
 }

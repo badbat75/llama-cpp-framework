@@ -56,7 +56,8 @@ async function readInstances(): Promise<Answer> {
         (reply.status === 502 && key === 'not-authorized')
       return { error: known ? (key as string) : 'failed' }
     }
-    if (!Array.isArray(body) || !body.every(isInstance)) return { error: 'failed' }
+    if (!Array.isArray(body) || !body.every(isInstance))
+      return { error: 'failed' }
     return body
   } catch {
     return { error: 'failed' }

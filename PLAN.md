@@ -641,12 +641,10 @@ proposals to review with the user):
    The bff's account must reach the manager: the D-Bus policy on Linux, the pipe's SDDL on Windows
    (today SYSTEM, Administrators and interactive users only). The server settings are not shown yet:
    reading them needs `control`, which waits for the design of who is acting.
-5. **The web UI's own checks.** `fe/` gets the three checks a Rust slice closes on: a type check
-   (Vitest does not type-check; today `tsc -b` runs only inside `npm run build`), a linter and a format
-   check, as `npm --prefix fe run` scripts, each failing on a violation and clean on today's `src/`.
-   They join "Commands" in `AGENTS.md` and the coder runs and reports them for every `fe/` change.
-   Added by the coordinator on 2026-11-14, approved by the user: a web UI slice could not meet the
-   rule "done on green tests plus the coder's lint and format report".
+5. (done) **The web UI's own checks.** `npm --prefix fe run typecheck` (the tests included), `lint`
+   (ESLint, typescript-eslint, React hooks rules) and `format:check` (Prettier), in "Commands" of
+   `AGENTS.md`; the coder runs and reports them for every `fe/` change. `fe/` is on TypeScript 6
+   (below, "Later, not planned yet").
 
 Every slice that changes what users see starts with a brief from the `designer` agent and ends with its
 review (user, 2026-11-14).

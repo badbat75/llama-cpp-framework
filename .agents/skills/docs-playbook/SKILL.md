@@ -72,6 +72,8 @@ Lessons only: the rules are in `AGENTS.md`.
 - `xtask` messages can lag the build: check the phase that needs a tool, not the one that reports it.
   Whether `xtask configure` fails on a tool is `rows.miss` (a gap, fails) against `rows.opt` (a warning)
   in `xtask/src/<os>/configure.rs`. Vitest runs as `npm --prefix fe test` (seconds, no network).
+- The fe checks run as `npm --prefix fe run typecheck`, `lint`, `format:check` (seconds each, write
+  nothing): a new one goes in `AGENTS.md` Commands, `coder.md` and the bff README's web UI section.
 - `components.rs` splits Linux and macOS alike: when a file changes package, fix the path tables of
   `build-packaging.md` AND `build-macos.md`, and the README's package table. A Windows service's open
   behaviour (what the SCM shows on a failed start) goes in `installer/AGENTS.md`'s open checks, phrased

@@ -37,8 +37,14 @@ test('every key the code uses has a value, and every value is used', () => {
     for (const m of text.matchAll(/\bt\(\s*'([^']+)'/g)) used.add(m[1]!)
   }
   const defined = new Set(Object.keys(strings))
-  expect([...used].filter((k) => !defined.has(k)), 'keys with no value').toEqual([])
-  expect([...defined].filter((k) => !used.has(k)), 'values no code uses').toEqual([])
+  expect(
+    [...used].filter((k) => !defined.has(k)),
+    'keys with no value',
+  ).toEqual([])
+  expect(
+    [...defined].filter((k) => !used.has(k)),
+    'values no code uses',
+  ).toEqual([])
 })
 
 test('no component writes text of its own in JSX', () => {

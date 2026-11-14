@@ -28,7 +28,7 @@ function reply(status: number, body: string): Response {
 }
 
 function stubFetch(answer: () => Promise<Response>) {
-  const fetch = vi.fn(answer)
+  const fetch = vi.fn<typeof globalThis.fetch>(answer)
   vi.stubGlobal('fetch', fetch)
   return fetch
 }
@@ -39,7 +39,11 @@ async function rows(): Promise<string[][]> {
   return within(table)
     .getAllByRole('row')
     .filter((row) => within(row).queryAllByRole('columnheader').length === 0)
-    .map((row) => within(row).getAllByRole('cell').map((c) => c.textContent ?? ''))
+    .map((row) =>
+      within(row)
+        .getAllByRole('cell')
+        .map((c) => c.textContent ?? ''),
+    )
 }
 
 // ── Failure paths first ─────────────────────────────────────────────────
@@ -54,7 +58,9 @@ test('a service that cannot be reached shows the failure message', async () => {
 test('no manager shows the manager-unavailable message', async () => {
   stubFetch(() => Promise.resolve(reply(503, '{"error":"unavailable"}')))
   render(<Instances />)
-  expect(await screen.findByText(text('instances-manager-unavailable'))).toBeTruthy()
+  expect(
+    await screen.findByText(text('instances-manager-unavailable')),
+  ).toBeTruthy()
   expect(document.body.textContent).not.toContain(text('instances-failed'))
   expect(screen.queryByRole('table')).toBeNull()
 })
@@ -96,7 +102,9 @@ test('a body that is not a list of instances shows the failure message', async (
     stubFetch(() => Promise.resolve(reply(200, body)))
     render(<Instances />)
     expect(await screen.findByText(text('instances-failed')), body).toBeTruthy()
-    expect(document.body.textContent, body).not.toMatch(/undefined|null|NaN|\{0\}/)
+    expect(document.body.textContent, body).not.toMatch(
+      /undefined|null|NaN|\{0\}/,
+    )
     expect(screen.queryByRole('table'), body).toBeNull()
     cleanup()
   }
@@ -132,7 +140,9 @@ test('each instance is a row with its state, in the order received', async () =>
   ]
   stubFetch(() => Promise.resolve(reply(200, JSON.stringify(instances))))
   render(<Instances />)
-  expect(await screen.findByRole('heading', { name: text('instances-title') })).toBeTruthy()
+  expect(
+    await screen.findByRole('heading', { name: text('instances-title') }),
+  ).toBeTruthy()
   expect(await rows()).toEqual([
     ['default', text('instance-state-active')],
     ['coder', text('instance-state-failed')],
@@ -161,9 +171,13 @@ test('a state the page does not know is shown by its name', async () => {
 })
 
 test('every state label is its own text', () => {
-  const labels = ['active', 'inactive', 'activating', 'deactivating', 'failed'].map(
-    (s) => text(`instance-state-${s}`),
-  )
+  const labels = [
+    'active',
+    'inactive',
+    'activating',
+    'deactivating',
+    'failed',
+  ].map((s) => text(`instance-state-${s}`))
   expect(new Set(labels).size).toBe(labels.length)
   for (const label of labels) expect(label).not.toMatch(/^instance-state-/)
 })

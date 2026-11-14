@@ -32,6 +32,10 @@ export default function Version() {
 
   if (version === undefined) return null
   return (
-    <p>{version === null ? t('version-unavailable') : t('version-label', version)}</p>
+    <p>
+      {version === null
+        ? t('version-unavailable')
+        : t('version-label', version)}
+    </p>
   )
 }
