@@ -415,7 +415,7 @@ Decided with the user on 2026-11-14:
   2.4-chosen install folder. Left: the real WiX build and the installer test plan on
   Windows (the user); on Windows under the manager the GUI's model scans (`gui.rs` refresh, `models_tab.rs`,
   `hw_window.rs`) and the StateDir Browse still start from `models_dir_or_default()` (the user's
-  `~\.llama.cpp`), and `snapshot-folder-hint` still says the default is in the user data folder (the
+  `~\.llama.cpp`), and `snapshot-folder-hint` still says the default is in the user data folder; a Hugging Face download (`downloads.rs`, `pai preset download`) goes into `models_dir_or_default()` and `hf::save_preset` then writes that folder as `ModelsDir` into the manager's file; the `startup.rs` module header and a `server_tab.rs` comment describe the old behaviour, and the root `README.md` still says a save from `pai-config` or `pai` writes `~\.llama.cpp` (the
   Server form itself shows both folders blank with the instance default as hint since the user's
   2026-11-14 choice).) Folders (user, 2026-11-14): the program in `%ProgramFiles%\llama.cpp\` (with the
   read-only defaults); everything of the engine's instances under `%ProgramData%\llama.cpp\`:
@@ -455,6 +455,29 @@ files and the engine's homepage are llama.cpp's); **2** (done, Linux) the packag
 - Done when: `xtask package` on Linux makes the framework packages at `2.99.1` requiring `llama.cpp (>=
   1:1.0.0)` and the engine package at `1:1.0.0+pai1`; the engine or the framework can be rebuilt alone;
   the two Windows installers and the `.pkg` follow the same split; the docs describe it.
+
+### 12. Test the Windows and macOS installers on GitHub's runners
+
+The user has no Mac and will test on Windows later (2026-11-14), so the installers are first tested on
+GitHub-hosted runners: `windows-2025` and `macos-15` (arm64, M1), free and unlimited for this public
+repository. Decided with the user on 2026-11-14:
+
+- **Started by hand only** (`workflow_dispatch`), never on push; each run needs the user's go-ahead.
+- **A CI-only reduced build**: xtask gets an option that builds llama.cpp with fewer backends
+  (Windows: CPU or Vulkan only, no ROCm or CUDA SDK; macOS: Metal only, no Vulkan SDK), so a job fits
+  the runner's disk and time. The MSIs and `.pkg` are built and installed for real; the bundling of
+  the GPU runtimes is not tested there and stays for the user's machines.
+- Each job: prerequisites, `xtask configure`, `xtask build`, `xtask package`, then install the
+  packages, check that `pai --version`, `llama-server --version` and (Windows) the services run from
+  the installed folders, upgrade over the same version, uninstall, and check what is left. The
+  automatable checks of the installer test plan (`installer/AGENTS.md`) go in; those needing a GPU, a
+  desktop session or a dialog stay for the user.
+
+Slices, each test first: **1** the reduced-build option in xtask; **2** the Windows workflow (first
+WiX compile of both MSIs); **3** the macOS workflow (first `pkgbuild` run).
+
+- Done when: both workflows have run green on GitHub at least once, from a run the user started or
+  approved, and what they cover is written in `installer/AGENTS.md` and `docs/build-macos.md`.
 
 ### 4. Decide whether to bring back patches 0002 to 0004
 
