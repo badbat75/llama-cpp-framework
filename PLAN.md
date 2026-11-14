@@ -407,6 +407,13 @@ Decided with the user on 2026-11-14:
   boot (step 12). No migration between pre-release layouts (user, 2026-11-14): nothing moves files
   from `/etc/private-ai/`. Windows and macOS: to settle with the
   user in their slices (the same split would be `%ProgramData%\llama.cpp\`).
+  **The format belongs to the framework, the engine ships only starting values** (user,
+  2026-11-14): the engine's `server@default.ini` holds a few `[Server]` values (port, host, models
+  folder) and no copy of pai's template; the manager reads it like any file (missing keys take pai's
+  defaults) and rewrites it in the installed pai's template at its first write. A change of pai's
+  template no longer touches the engine package, and the engine's starting values no longer follow
+  pai's render (the test that pinned the file equal to the render becomes "the manager accepts it and
+  reads these values").
 - **Framework packages carry only the framework's version** (`2.99.1`, no `+llama.cpp...`) and
   require `llama.cpp (>= 1:<release built against>)`; a newer llama.cpp installs without a framework
   rebuild. Package files: `private-ai-framework-<component>-v<version>-<arch>`, and
