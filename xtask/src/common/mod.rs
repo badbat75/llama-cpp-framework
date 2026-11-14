@@ -11,6 +11,7 @@ pub mod configurator;
 pub mod dists;
 pub mod licenses;
 pub mod llama;
+pub mod msi;
 #[cfg(unix)]
 pub mod prereq;
 pub mod report;

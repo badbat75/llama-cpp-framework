@@ -122,3 +122,7 @@ Lessons only: the rules are in `AGENTS.md`.
   the text: binding_lint is static. `log-journal-denied`/`-failed` are in both files for that reason.
 - A periodic GUI probe that would spawn a process to read a log (journalctl under the manager)
   reads only on a flip: `gui.rs` keeps the last sample in a static `AtomicBool` and swaps it.
+- WiX (v4+ schema, the pinned toolset) generates a component's GUID only when its key path is one file
+  or one registry value: a CreateFolder-only component (a folder as key path, e.g. the
+  `%ProgramData%\private-ai` folders with their PermissionEx) needs an explicit `Guid`, fixed forever.
+  The `.wxs` tests in `xtask/src/common/msi.rs` run on Linux; nothing there builds the MSI.

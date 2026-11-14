@@ -1,11 +1,12 @@
-//! Package phase on Windows (cargo run -p xtask -- package): stages the llama.cpp build and
-//! pai-config into build\windows\staging\ (the GPU runtimes the
+//! Package phase on Windows (cargo run -p xtask -- package): stages the llama.cpp build,
+//! pai-config and pai-manager into build\windows\staging\ (the GPU runtimes the
 //! backends load included, copied out of the dists), builds the MSI into
 //! .\dist\ with the WiX Toolset pinned in installer\wix-toolset.psd1 and
 //! validates it. installer\AGENTS.md says what the MSI does with the tree.
 
 use super::build_llama::load_build_env;
 use crate::common::licenses;
+use crate::common::msi;
 use crate::common::ui;
 use crate::common::util::{self, cmd, gfx_arch, run as run_cmd};
 use crate::common::version;
@@ -574,18 +575,20 @@ pub fn run(keep_staging: bool, wix_arg: Option<PathBuf>) -> Result<()> {
         ui::dim(format!("  {dist}: {what}"));
     }
 
-    // ── pai-config and the icon ───────────────────────────────────
-    // Straight from cargo's release output, into bin\ where it is installed:
-    // the staging tree is the installed tree, file for file.
-    let config_exe = build_root.join(r"cargo-target\release\pai-config.exe");
-    if !config_exe.is_file() {
-        bail!(
-            "pai-config.exe not found at {}. Run cargo run -p xtask -- build first.",
-            config_exe.display()
-        );
+    // ── The cargo workspace's executables and the icon ─────────────
+    // Straight from cargo's release output, into bin\ where they are
+    // installed: the staging tree is the installed tree, file for file.
+    for exe in msi::CARGO_EXES {
+        let built = build_root.join(r"cargo-target\release").join(exe);
+        if !built.is_file() {
+            bail!(
+                "{exe} not found at {}. Run cargo run -p xtask -- build first.",
+                built.display()
+            );
+        }
+        std::fs::copy(&built, stage_bin.join(exe))?;
+        ui::dim(format!("Staged {exe}"));
     }
-    std::fs::copy(&config_exe, stage_bin.join("pai-config.exe"))?;
-    ui::dim("Staged pai-config.exe");
 
     // The icon (the Apps list entry, the Start Menu shortcut, the MSI's
     // own): generated, not checked in; regenerated here if it went missing.

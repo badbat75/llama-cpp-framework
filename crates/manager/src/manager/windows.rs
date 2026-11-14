@@ -14,7 +14,7 @@ pub mod entry;
 #[cfg(windows)]
 mod pipe_server;
 #[cfg(windows)]
-mod scm;
+pub mod scm;
 
 /// The manager's own service, registered by the MSI.
 pub const MANAGER_SERVICE: &str = "private-ai-manager";
@@ -885,6 +885,28 @@ mod tests {
             "llama.cpp_Bad_id",
         ]);
         assert_eq!(service_plan(&[], &foreign), ServicePlan::default());
+    }
+
+    /// What `uninstall-services` applies (`ScmService::sync` with no
+    /// instance): every instance's service goes, whatever its case, and
+    /// nobody else's, the manager's own included (the MSI removes that one).
+    #[test]
+    fn with_no_instance_every_instance_service_is_deleted() {
+        let services = ids(&[
+            "Spooler",
+            "private-ai-manager",
+            "llama.cpp_default",
+            "LLAMA.CPP_LAN-2",
+            "llama.cpp",
+            "llama.cpp_Bad_id",
+        ]);
+        assert_eq!(
+            service_plan(&[], &services),
+            ServicePlan {
+                delete: ids(&["default", "lan-2"]),
+                ..ServicePlan::default()
+            }
+        );
     }
 
     #[test]

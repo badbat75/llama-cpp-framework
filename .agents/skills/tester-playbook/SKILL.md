@@ -224,3 +224,13 @@ Lessons only: the rules are in `AGENTS.md`.
 - "Only the seam may name X" is one more scan in `tests/control_lint.rs` (`production_lines` +
   a `*_hits(line)` helper + a scan test of the helper): `only_the_seam_reads_the_instances_log`
   for `paths::server_log` is the model.
+- xtask's `windows/` module is `cfg(windows)`: nothing in it runs on Linux. Pin a Windows packaging
+  choice as an item in `common/` (`common::msi::CARGO_EXES`) plus a text check that `windows/*.rs`
+  uses it. The `.wxs` is checked as XML with roxmltree (xtask dev-dependency, `<?if?>` blocks parse as
+  processing instructions, entities come back decoded): the helpers in `common/msi.rs` find a
+  component's feature, and `dacl()` reads a `PermissionEx Sddl` into ACEs (aliases to SIDs, rights to
+  masks) so an ACL is pinned by meaning, not spelling.
+- WiX facts are read from docs.firegiant.com/wix/schema/wxs/<element>/ (the attribute table sits past
+  character 100000: WebFetch with `offset: 100000`); what the compiler accepts where, from
+  `src/wix/WixToolset.Core/Compiler.cs` at the pinned tag on GitHub (the element page's children list
+  can omit one: CreateFolder accepts the core `PermissionEx`).

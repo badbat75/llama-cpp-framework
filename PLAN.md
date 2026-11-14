@@ -201,7 +201,8 @@ so the second binary, `private-ai-manager`, shares its modules: a `[[bin]]` alon
    `llama.cpp_<id>` (`NT SERVICE\llama.cpp_<id>`: `_`, not systemd's `@`; user, 2026-11-14), the files keep
    `server@<id>.ini` and `llama-server@<id>.log` on both OSes; the manager service and its pipe are named `private-ai-manager`
    (`\\.\pipe\private-ai-manager`), as the Linux unit; Stop kills llama-server outright (user, 2026-11-14); **6c** (done; its Windows arm compiled first by the user's build) the configurator's
-   manager backend on Windows and the log file; **6d** the MSI, below.
+   manager backend on Windows and the log file; **6d** (done, checked on the .wxs text; the installer test plan on Windows is the user's run) the
+   MSI, below.
    **Windows packaging.** The MSI registers the manager service (automatic start) and creates
    `%ProgramData%\private-ai\` with the right ACL. SCM has no template services, so the manager creates
    one service per instance (`llama.cpp@<id>`, manual start) when the instance is added and removes it
@@ -510,6 +511,15 @@ skeleton with its packaging and one read-only page.
 
 ## Waiting for the user
 
+- Step 1, to review (taken by the coordinator on 2026-11-14):
+  - Windows instance services are removed on every uninstall, repair and upgrade by
+    `pai-manager uninstall-services` (a deferred custom action) and recreated by the new manager from
+    the instances on disk; an instance that was running without boot start comes back stopped.
+  - `%ProgramData%\private-ai\logs` and `models` are writable by `NT SERVICE\ALL SERVICES` (every
+    service on the machine), simpler than per-instance entries set by the manager.
+  - The MSI creates `%ProgramData%\private-ai\models`; making it pai-config's default ModelsDir on
+    Windows is a follow-up (the virtual accounts cannot read the user's home).
+  - The manager service restarts after a failure, as the Linux unit does.
 - Step 1: the real run of the Linux packages, after the Windows slices (user, 2026-11-14), together
   with the Windows build: `xtask build`, `package`, `install`, then the step's checks.
 - Step 2: a Windows build of the renamed MSI and the installer test plan of `installer/AGENTS.md`,

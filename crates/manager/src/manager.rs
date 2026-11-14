@@ -18,6 +18,9 @@ pub enum ManagerCommand {
     RunInstance(String),
     /// `serve`: the D-Bus / named-pipe service entry.
     Serve,
+    /// `uninstall-services`: stop and delete every instance's service (the
+    /// MSI, when it removes or repairs the manager's files).
+    UninstallServices,
 }
 
 /// Why a command line was refused.
@@ -41,6 +44,12 @@ pub fn parse_args(args: &[String]) -> Result<ManagerCommand, ArgsError> {
             return Err(ArgsError::ExtraArgument(arg.clone()));
         }
         return Ok(ManagerCommand::Serve);
+    }
+    if command == "uninstall-services" {
+        if let Some(arg) = rest.first() {
+            return Err(ArgsError::ExtraArgument(arg.clone()));
+        }
+        return Ok(ManagerCommand::UninstallServices);
     }
     if command != "run-instance" {
         return Err(ArgsError::UnknownCommand(command.clone()));
@@ -83,6 +92,25 @@ fn run(args: &[String]) -> Result<i32, (i32, String)> {
     })?;
     let id = match command {
         ManagerCommand::RunInstance(id) => id,
+        // The MSI ignores the outcome (its log keeps what is printed): a
+        // service left behind is deleted by the next manager's own sync.
+        #[cfg(windows)]
+        ManagerCommand::UninstallServices => {
+            let exe = std::env::current_exe()
+                .map_err(|e| (1, strings::fill("manager-uninstall-services-failed", &[&e])))?;
+            for (_, e) in windows::scm::ScmService::new(exe).sync(&[]) {
+                let detail = service::error_reply(&service::ManagerError::Service(e)).1;
+                eprintln!(
+                    "{}",
+                    strings::fill("manager-uninstall-services-failed", &[&detail])
+                );
+            }
+            return Ok(0);
+        }
+        #[cfg(not(windows))]
+        ManagerCommand::UninstallServices => {
+            return Err((1, strings::t("manager-uninstall-services-unavailable")))
+        }
         #[cfg(target_os = "linux")]
         ManagerCommand::Serve => {
             let (_served, failures) =
@@ -264,6 +292,47 @@ mod tests {
             !manifest.contains(concat!("private-ai", "-manager.rs")),
             "{manifest}"
         );
+    }
+
+    #[test]
+    fn parse_args_reads_uninstall_services() {
+        assert_eq!(
+            parse(&["uninstall-services"]),
+            Ok(ManagerCommand::UninstallServices)
+        );
+    }
+
+    /// The MSI runs it with no argument: it removes every instance's
+    /// service, never one picked on the command line.
+    #[test]
+    fn parse_args_refuses_uninstall_services_with_arguments() {
+        assert_eq!(
+            parse(&["uninstall-services", "default"]),
+            Err(ArgsError::ExtraArgument("default".into()))
+        );
+        for cmd in [
+            "Uninstall-Services",
+            "uninstall_services",
+            "--uninstall-services",
+        ] {
+            assert_eq!(
+                parse(&[cmd]),
+                Err(ArgsError::UnknownCommand(cmd.into())),
+                "subcommand {cmd:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn usage_text_names_uninstall_services() {
+        let cli = crate::strings::parse(include_str!("../../core/strings/cli.toml"));
+        for key in ["manager-usage", "manager-unknown-command"] {
+            let text = &cli[key];
+            assert!(
+                text.contains("pai-manager uninstall-services"),
+                "{key}: {text:?}"
+            );
+        }
     }
 
     #[test]

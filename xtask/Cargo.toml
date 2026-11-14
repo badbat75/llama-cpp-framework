@@ -15,3 +15,8 @@ toml = "1"
 # sha256 of the downloaded dists (several GiB for the CUDA Toolkit): built
 # optimized even in the dev profile, see the workspace Cargo.toml.
 sha2 = "0.10"
+
+[dev-dependencies]
+# The MSI source's tests parse the .wxs as XML (common/msi.rs); the version
+# already in the lock.
+roxmltree = "0.21"

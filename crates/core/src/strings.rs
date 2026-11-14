@@ -181,7 +181,7 @@ mod tests {
         let cli = parse(include_str!("../strings/cli.toml"));
         assert_eq!(
             cli["manager-usage"],
-            "usage: pai-manager run-instance <id> | pai-manager serve"
+            "usage: pai-manager run-instance <id> | pai-manager serve | pai-manager uninstall-services"
         );
         assert_eq!(
             cli["manager-missing-id"],

@@ -121,6 +121,19 @@
         <Directory Id="KPACKFOLDER" Name=".kpack" />
       </Directory>
     </StandardDirectory>
+    <!--
+      The machine's data tree, %ProgramData%\private-ai: config\ (the
+      instances' server@<id>.ini and presets.ini, written by the manager),
+      logs\ (each instance's llama-server@<id>.log) and models\ (a default
+      ModelsDir). Each folder has its own protected DACL (MachineData below).
+    -->
+    <StandardDirectory Id="CommonAppDataFolder">
+      <Directory Id="MACHINEDATAFOLDER" Name="private-ai">
+        <Directory Id="MACHINECONFIGFOLDER" Name="config" />
+        <Directory Id="MACHINELOGSFOLDER" Name="logs" />
+        <Directory Id="MACHINEMODELSFOLDER" Name="models" />
+      </Directory>
+    </StandardDirectory>
     <StandardDirectory Id="ProgramMenuFolder">
       <!-- Not ALL CAPS: a public property under the Start Menu trips ICE90. -->
       <Directory Id="StartMenuDir" Name="Private AI Framework" />
@@ -133,7 +146,12 @@
       staging tree.
     -->
     <ComponentGroup Id="Payload">
-      <Files Directory="BINFOLDER" Include="$(var.StagingDir)\bin\**" />
+      <!-- pai-manager.exe is the key path of ManagerService, which installs
+           its service: Windows Installer wants the service's executable
+           there, so it is not harvested too. -->
+      <Files Directory="BINFOLDER" Include="$(var.StagingDir)\bin\**">
+        <Exclude Files="$(var.StagingDir)\bin\pai-manager.exe" />
+      </Files>
       <!-- Read-only: the benchmark method, share\benchmarks\specs (every
            published standard-<X.Y>.ini) and share\benchmarks\prompts, and the
            configurator's language files and the CLI's cli.toml, share\strings.
@@ -176,6 +194,64 @@
     </Component>
 
     <!--
+      The manager's service, private-ai-manager: pai-manager serve, as
+      LocalSystem (no Account: a null StartName is LocalSystem), started at
+      boot. It creates, starts and deletes the instances' services and owns
+      config\ under %ProgramData%\private-ai. Restarted a few seconds after
+      a crash (the Linux unit's Restart=on-failure), else the pipe is gone
+      until the next boot. The SCM stops it before its files are replaced or
+      removed and deletes it on uninstall; the process stopper leaves it alone.
+    -->
+    <Component Id="ManagerService" Directory="BINFOLDER">
+      <File Id="PaiManagerExe" Source="$(var.StagingDir)\bin\pai-manager.exe" KeyPath="yes" />
+      <ServiceInstall Id="ManagerService" Name="private-ai-manager"
+                      DisplayName="Private AI Framework manager"
+                      Description="Runs the llama-server instances of Private AI Framework as services and serves the configurator."
+                      Type="ownProcess" Start="auto" ErrorControl="normal" Arguments="serve">
+        <!-- The SCM repeats the last action on every later failure; the
+             count goes back to zero after a day without one. -->
+        <ServiceConfigFailureActions OnInstall="yes" OnReinstall="yes" ResetPeriod="86400">
+          <Failure Action="restartService" Delay="5000" />
+        </ServiceConfigFailureActions>
+      </ServiceInstall>
+      <ServiceControl Id="ManagerService" Name="private-ai-manager" Start="install" Stop="both" Remove="uninstall" />
+    </Component>
+
+    <!--
+      %ProgramData%\private-ai and its folders, each with a protected DACL
+      (P: nothing inherited from %ProgramData%, whose ACL lets any user
+      create files; OICI: files and subfolders inherit it). SY is SYSTEM,
+      BA Administrators, BU Users, S-1-5-80-0 NT SERVICE\ALL SERVICES (the
+      instances' virtual accounts); 0x1200a9 is read and execute, 0x1301bf
+      modify (read, write, execute, delete; no WRITE_DAC, WRITE_OWNER or
+      delete child). The root: users read. config\: the services read, users
+      have no ACE (they go through the manager). logs\ and models\: the
+      services modify, users read. Windows Installer removes such a folder
+      only when it is empty, so the machine's data outlives an uninstall.
+      The key path of each component is its folder, so the GUIDs are fixed.
+    -->
+    <Component Id="MachineDataRoot" Directory="MACHINEDATAFOLDER" Guid="08C0350C-AD98-45B0-AC36-0D84ABD0DF40" KeyPath="yes">
+      <CreateFolder>
+        <PermissionEx Sddl="D:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;BU)" />
+      </CreateFolder>
+    </Component>
+    <Component Id="MachineDataConfig" Directory="MACHINECONFIGFOLDER" Guid="9852B980-4B2A-4844-8502-4739AA86D610" KeyPath="yes">
+      <CreateFolder>
+        <PermissionEx Sddl="D:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;S-1-5-80-0)" />
+      </CreateFolder>
+    </Component>
+    <Component Id="MachineDataLogs" Directory="MACHINELOGSFOLDER" Guid="C02CA00D-07D8-4A4E-A089-9421FD461A73" KeyPath="yes">
+      <CreateFolder>
+        <PermissionEx Sddl="D:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1301bf;;;S-1-5-80-0)(A;OICI;0x1200a9;;;BU)" />
+      </CreateFolder>
+    </Component>
+    <Component Id="MachineDataModels" Directory="MACHINEMODELSFOLDER" Guid="E8AD86CB-EF76-4CF7-A1F6-21B99F4764CC" KeyPath="yes">
+      <CreateFolder>
+        <PermissionEx Sddl="D:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1301bf;;;S-1-5-80-0)(A;OICI;0x1200a9;;;BU)" />
+      </CreateFolder>
+    </Component>
+
+    <!--
       Optional: bin\ appended to the MACHINE PATH, removed again on uninstall.
       Windows Installer broadcasts WM_SETTINGCHANGE itself after changing the
       environment, so new shells see it.
@@ -207,6 +283,11 @@
              Level="1" AllowAbsent="no" AllowAdvertise="no" ConfigurableDirectory="INSTALLFOLDER" Display="expand">
       <ComponentGroupRef Id="Payload" />
       <ComponentRef Id="MachineRegistration" />
+      <ComponentRef Id="ManagerService" />
+      <ComponentRef Id="MachineDataRoot" />
+      <ComponentRef Id="MachineDataConfig" />
+      <ComponentRef Id="MachineDataLogs" />
+      <ComponentRef Id="MachineDataModels" />
     </Feature>
     <Feature Id="SystemPathFeature" Title="Add to system PATH"
              Description="Add the Private AI Framework bin directory to the system PATH."
@@ -257,9 +338,26 @@
                  Value="&quot;[System64Folder]cmd.exe&quot; /d /c rd /s /q &quot;[PRIVATE_AI_USERDATA_DIR]&quot;" />
     <CustomAction Id="DeleteUserData" BinaryRef="Wix4UtilCA_X64" DllEntry="WixQuietExec" Execute="deferred" Impersonate="yes" Return="ignore" />
 
+    <!--
+      The instances' services (llama.cpp_<id>) are the manager's, created at
+      run time, so Windows Installer does not know them: pai-manager
+      uninstall-services stops and deletes them on every run that removes or
+      repairs the manager's files, the old product's removal in an upgrade
+      included (the new manager recreates them from the instances on disk
+      when it starts). After StopServices, so the manager is no longer
+      changing them, and before RemoveFiles, so the exe is still there.
+      Deferred and not impersonated: deleting a service takes LocalSystem.
+      Return="ignore": a service left behind must not roll back the removal.
+    -->
+    <SetProperty Id="UninstallInstanceServices" Sequence="execute" Before="UninstallInstanceServices"
+                 Value="&quot;[BINFOLDER]pai-manager.exe&quot; uninstall-services" />
+    <CustomAction Id="UninstallInstanceServices" BinaryRef="Wix4UtilCA_X64" DllEntry="WixQuietExec" Execute="deferred" Impersonate="no" Return="ignore" />
+
     <InstallExecuteSequence>
       <Custom Action="StopProcesses" Before="InstallValidate"
               Condition="NOT Installed OR REMOVE~=&quot;ALL&quot; OR REINSTALL" />
+      <Custom Action="UninstallInstanceServices" After="StopServices"
+              Condition="REMOVE~=&quot;ALL&quot; OR REINSTALL" />
       <Custom Action="DeleteUserData" After="RemoveFiles"
               Condition="REMOVE~=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE AND LLAMA_DELETEUSERDATA=&quot;1&quot; AND UILevel &gt;= 5 AND PRIVATE_AI_USERDATA_DIR" />
     </InstallExecuteSequence>
