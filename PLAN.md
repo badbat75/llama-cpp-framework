@@ -533,9 +533,11 @@ proposals to review with the user):
    the service is reported only as an SCM start failure (no log yet: write it to a file as the
    instances do, a later slice), and whether the bff's virtual account reads `config\` (the
    ALL SERVICES check in `installer/AGENTS.md`).
-4. **The first read-only page.** The state of the instance `default` and its server settings shown
-   read-only, through `private-ai-manager` as the GUI reads them (the bff's account and the
-   manager's authorization decided here).
+4. **The first read-only page.** The instances and the state of each (`ListInstances`, `Status`: the
+   calls the manager answers without authorization), shown read-only through `private-ai-manager`.
+   The bff's account must reach the manager: the D-Bus policy on Linux, the pipe's SDDL on Windows
+   (today SYSTEM, Administrators and interactive users only). The server settings are not shown yet:
+   reading them needs `control`, which waits for the design of who is acting.
 
 Later slices (not yet written): editing through the manager, the gateway, the benchmark portal, LAN
 access with authentication.
