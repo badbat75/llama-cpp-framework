@@ -413,16 +413,16 @@ Decided with the user on 2026-11-14:
   `llama.cpp-v<release>+pai<N>-<arch>` for the engine (and its runtimes by SDK version).
 - **Windows: two installers** (user, 2026-11-14, replacing "one MSI with two features"): the
   framework's MSI, named by the framework's version only (`private-ai-framework-v<version>-x64.msi`),
-  and **llama.cpp's own MSI** with its runtimes (`llama.cpp-v<release>+pai<N>-x64.msi` or the like),
+  and **llama.cpp's own MSI** with its runtimes, named and versioned by the engine's release alone, no
+  `+pai<N>` (user, 2026-11-14): `llama.cpp-v<release>-x64.msi`, ProductVersion `<release>`;
   each with its own UpgradeCode, upgraded on its own. The framework's MSI refuses to install without
   llama.cpp at the minimum version it was built against (a launch condition over the engine's
   registration). llama.cpp's MSI has **its own install folder** (e.g. `%ProgramFiles%\llama.cpp\`),
   **owns the instance services** `llama.cpp_<id>` and ships **its own default configuration**
   (`server@default.ini`, an empty `presets.ini`, read-only, copied into the engine's configuration
   folder, e.g. `%ProgramData%\llama.cpp\`, only when missing; `paths::engine_config_dir()` follows on
-  Windows). To settle in slice 3: the exact folders, where the instance logs and models go, how
-  `<release>+pai<N>` maps onto an MSI ProductVersion (three numeric fields), and the release assets
-  (two installers per release).
+  Windows). To settle in slice 3: the exact folders, where the instance logs and models go, and the
+  release assets (two installers per release).
 - **macOS:** the same split of the `.pkg` (an engine `.pkg` beside the framework's).
 - **The build is split too:** the engine and the framework are separate builds, so either can be
   rebuilt alone. The framework still reads the engine's source at build time (`pai-app`'s architecture
