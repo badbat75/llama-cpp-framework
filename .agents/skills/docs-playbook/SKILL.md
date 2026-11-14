@@ -36,3 +36,13 @@ Lessons only: the rules are in `AGENTS.md`.
 - After an install-layout change, grep the old prefix (`/opt/private-ai`) in the root `README.md`,
   `docs/build-*.md`, `AGENTS.md` and `crates/*/README.md`: the root README repeats the paths. A check
   done by hand on the old layout (an `strace`, a run) is not true of the new one: say it was not repeated.
+- Windows code is type-checked with the GNU target only (`pai-core`, `pai-manager`, `xtask`), and
+  `pai-config`'s Windows arms not even that: say "type-checked only, not run on Windows" beside each
+  Windows fact until the user's Windows run, and put what only that run can settle in the installer
+  test plan (`installer/AGENTS.md`), not in the prose as fact.
+- When files move out of the per-user tree (to the manager's machine directory), check what still
+  keys on them: the MSI's user-data dialog shows only when `config\server.ini` exists in
+  `%LOCALAPPDATA%\private-ai`, and the root README's config table and uninstall line name the old
+  place.
+- A renamed heading renames its anchor: grep `#<old-slug>` in every `.md` (the root README links into
+  `crates/config/README.md`) before and after.

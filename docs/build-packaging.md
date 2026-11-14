@@ -1,7 +1,7 @@
 ---
 title: Packaging and install
 type: reference
-updated: 2026-11-13
+updated: 2026-11-14
 ---
 
 # Packaging and install
@@ -93,8 +93,9 @@ missing).
 
 **Staging** uses `cmake --install`, then removes `test*.exe` and `include\`, which never shipped.
 Filtering happens in staging and not in the `.wxs`, so what is staged is exactly what ships. The
-`.wxs` harvests `bin\`, `lib\`, `share\` and `.kpack\` whole. `pai-config.exe` and `llama.ico`
-are staged into `bin\` too, so an administrative image (`msiexec /a`) compares 1:1 with the staging
+`.wxs` harvests `bin\`, `lib\`, `share\` and `.kpack\` whole, but for `pai-manager.exe`, the key path of
+the component that installs its service. `pai-config.exe`, `pai-manager.exe` and `llama.ico`
+are staged into `bin\` too, from cargo's release output (`msi::CARGO_EXES`), so an administrative image (`msiexec /a`) compares 1:1 with the staging
 tree. A missing icon is regenerated here.
 
 | Bundled into `bin\` | How |
@@ -122,6 +123,18 @@ the import closure, and its licence is the vendored Apache 2.0 of the loader's o
 welcome page and `CustomizeDlg`. `xtask package` writes its text to `build\windows\license.rtf`
 (not installed): which text covers what, the MIT licence, and NVIDIA's terms in full. A silent or
 basic-UI install does not show it.
+
+**The MSI installs the `private-ai-manager` service and the machine data tree.** The service is
+`pai-manager.exe serve` as LocalSystem, started at boot and restarted after a failure; it runs each
+instance as its own service, `llama.cpp_<id>`, under the virtual account `NT SERVICE\llama.cpp_<id>`,
+and serves the configurator over `\\.\pipe\private-ai-manager`. `%ProgramData%\private-ai\` holds
+`config\` (the instances' server and preset files, which users reach only through the manager),
+`logs\` (each instance's `llama-server@<id>.log`) and `models\`, each folder with a protected DACL,
+and outlives an uninstall. A removal, a repair or the old half of an upgrade runs
+`pai-manager uninstall-services` to delete the instances' services, which the manager creates at run
+time and Windows Installer does not know; the new manager recreates them. The `.wxs` is checked by xtask's tests, the Windows
+code type-checked only: none of it has run on Windows yet. Service, pipe, ACLs and the test steps:
+[installer\AGENTS.md](../installer/AGENTS.md).
 
 **An upgrade from release 2.4 is a `MajorUpgrade`:** `private-ai-framework.wxs` keeps the UpgradeCode
 of `llama-cpp-framework.wxs`, so it removes the old product first. A directory chosen in 2.4, read from

@@ -205,7 +205,7 @@ so the second binary, `private-ai-manager`, shares its modules: a `[[bin]]` alon
    MSI, below.
    **Windows packaging.** The MSI registers the manager service (automatic start) and creates
    `%ProgramData%\private-ai\` with the right ACL. SCM has no template services, so the manager creates
-   one service per instance (`llama.cpp@<id>`, manual start) when the instance is added and removes it
+   one service per instance (`llama.cpp_<id>`, manual start) when the instance is added and removes it
    with the instance; the uninstall removes them. An upgrade keeps the config. Runs the installer test
    plan of `installer/AGENTS.md`.
 7. **Migration** (done on the configurator's side; tried for real with the packages of slice 5).
@@ -217,6 +217,12 @@ so the second binary, `private-ai-manager`, shares its modules: a `[[bin]]` alon
    files are left in place.
 
 Points of design, and what is still open:
+
+- Follow-ups found by the Windows docs pass (2026-11-14), small, before step 1 closes: the MSI's
+  user-data dialog offers deletion only when the per-user `server.ini` exists, which a user under the
+  manager never has, and its text still names configuration and presets; the `import-offer-body` text
+  promises a password prompt, which Windows never shows (a standard user's import is refused); the
+  README's `xtask install` row still names `/opt/private-ai` for Linux.
 
 - The service user must be able to read `ModelsDir` (and write it, as `LLAMA_CACHE`, for downloads by
   name). A models directory under a home with mode 0700 is not readable by `llama-cpp`: the manager
