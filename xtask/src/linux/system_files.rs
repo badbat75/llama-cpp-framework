@@ -2493,10 +2493,10 @@ exit 0
     // ── The engine's configuration and its shipped defaults ─────────────
 
     /// The engine's package ships its defaults read-only in
-    /// /usr/share/private-ai/llama.cpp: `server@default.ini`, the
-    /// configurator's default values, checked in as
-    /// `crates/core/defaults/server@default.ini` (pai-core keeps it equal to
-    /// its default render), and an empty `presets.ini`. No header: the copy
+    /// /usr/share/private-ai/llama.cpp: `server@default.ini`, the engine's
+    /// starting values, checked in as
+    /// `crates/core/defaults/server@default.ini` (pai-core pins its content),
+    /// and an empty `presets.ini`. No header: the copy
     /// in /etc/llama.cpp is the administrator's and the manager's, never
     /// overwritten.
     #[test]

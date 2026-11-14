@@ -384,3 +384,8 @@ Lessons only: the rules are in `AGENTS.md`.
   `Sandbox::run_chroot` in `xtask/src/linux/system_files.rs`: it leaves `/etc` and `/usr/share` paths as
   they are and refuses, before running, any not prefixed with `$DPKG_ROOT`, so the host's `/etc` is never
   written; the red is that refusal ("a /etc/ path not under $DPKG_ROOT").
+- A data file pinned by a test is the coder's to write: you cannot trial a candidate content in the
+  real tree (overwriting a tracked file was refused), so check by reading that the assertions can all
+  hold at once. `server_cfg::render` always writes ModelsDir and StateDir resolved (and Hostname), so a
+  shipped starting file must name the service user's paths or the manager's first write resolves them
+  against its own home.
