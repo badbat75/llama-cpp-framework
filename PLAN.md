@@ -401,8 +401,8 @@ Decided with the user on 2026-11-14:
   instance files (`server@<id>.ini`, `presets.ini`, `presets.ini.disabled`) move from `/etc/private-ai/`
   to **`/etc/llama.cpp/`**; `/etc/private-ai/` keeps the framework's own (`bff.ini`). The manager reads
   and writes them there, with the same modes and checks. The `llama.cpp` package ships the defaults
-  read-only in `/usr/share/private-ai/llama.cpp/` (`server@default.ini` with the configurator's default
-  values, an empty `presets.ini`) and its postinst copies each to `/etc/llama.cpp/` only when missing
+  read-only in `/usr/share/private-ai/llama.cpp/` (`server@default.ini` with a few starting values,
+  an empty `presets.ini`) and its postinst copies each to `/etc/llama.cpp/` only when missing
   (`server@default.ini` 0640 root:private-ai), so an upgrade never touches what the user or the manager
   wrote and dpkg asks nothing; the instance `default` then exists from the first install, disabled at
   boot (step 12). No migration between pre-release layouts (user, 2026-11-14): nothing moves files
