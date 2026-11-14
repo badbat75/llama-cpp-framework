@@ -12,15 +12,15 @@ framework's, and llama.cpp's own with its GPU runtimes, which the framework's re
 Linux (eight `.deb` and eight `.rpm` packages: the framework's GUI, command line, web service and
 core, at the framework's version, and the engine `llama.cpp` with one package per GPU runtime, at their
 own versions). It also runs on macOS (Apple Silicon, five `.pkg`: llama.cpp and its Vulkan runtime, the framework's
-three), where it is written but untested.
+three), where only the minimal Metal build has run, in CI.
 
 **In short.** Run the bootstrap script once, which also runs `xtask prereq` on Linux and macOS. Then
 run `xtask configure`, `build`, `package` and `install` in that order. `xtask <phase>` is short for
 `cargo run -p xtask -- <phase>`. The GPU SDKs come from the dist layout, in their newest stable
 version, and everything generated stays under `build/<os>/`. Before changing the build, read this
 page and the [topic page](#topics) of what you change. [Footguns](#footguns) lists what breaks. The
-MSIs themselves are in [installer\AGENTS.md](../installer/AGENTS.md); both have been compiled by WiX once, in
-CI, and only llama.cpp's has installed.
+MSIs themselves are in [installer\AGENTS.md](../installer/AGENTS.md); both build, install, repair and uninstall
+silently in CI, with a minimal engine and no GPU backend.
 
 ![The bootstrap script, then the xtask phases prereq, configure, build, package and install, with what each writes](assets/diagrams/build-pipeline.svg)
 
@@ -98,7 +98,7 @@ says. The configurator always goes to `build/<os>/cargo-target`.
 
 | | Windows | Linux | macOS |
 | --- | --- | --- | --- |
-| Status | Working up to the single MSI; the two MSIs are not built or run yet | Working; the script's packages are Debian and Ubuntu | Apple Silicon only, untested |
+| Status | The two MSIs build, install, repair and uninstall in CI, minimal build only; not run on a real machine | Working; the script's packages are Debian and Ubuntu | Apple Silicon only; the minimal Metal build runs in CI, nothing else has run |
 | Backends | CUDA, Vulkan, HIP | The same, with RCCL and NCCL | Metal, Vulkan through MoltenVK |
 | Compiler | ROCm dist's clang | ROCm dist's clang, else system clang, else GCC | Apple's clang |
 | Linker | `lld-link` | `ld.lld` | Toolchain default |
@@ -110,7 +110,7 @@ says. The configurator always goes to `build/<os>/cargo-target`.
 | Dists | `TheRock`, `CUDA`, `VulkanSDK` | The same, with `NCCL` | `VulkanSDK` |
 | Machine environment | `HIP_PATH` and PATH of the active ROCm dist | None | None |
 | sccache binary | `%LOCALAPPDATA%\Programs\sccache\sccache.exe` | `~/.local/bin/sccache` | `~/.local/bin/sccache` |
-| Packages | Two MSIs | Eight `.deb`, eight `.rpm` | Five `.pkg` (type-checked only) |
+| Packages | Two MSIs | Eight `.deb`, eight `.rpm` | Five `.pkg` (the minimal build's four run in CI) |
 | Installs to | `Program Files\private-ai` and `Program Files\llama.cpp` (each choosable) | `/usr` (`/usr/bin`, `/usr/lib/private-ai`, `/usr/libexec/private-ai`, `/usr/share/private-ai`) | `/opt/llama.cpp` and `/opt/private-ai`, links in `/usr/local/bin` |
 
 ## Where things land

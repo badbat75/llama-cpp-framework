@@ -22,7 +22,9 @@ already has sign-in and a read-only Server page, built against routes the bff do
 - Windows: the framework's MSI installs the service `private-ai-bff` (`pai-bff.exe service`, automatic start,
   `NT SERVICE\private-ai-bff`, restarted after a failure). Its `Error:` line goes nowhere there: by
   the code, a bad `bff.ini` or a bind failure shows only in the service manager's state and exit code.
-  Type-checked only, not yet run on Windows; the open checks are in the test plan of
+  In CI (run 43651545466, a `windows-2025` runner) it ran as that service, its path and account as
+  declared, `/api/version` answering the framework version and `/api/instances` 200; nothing else has
+  run on Windows, and the open checks are in the test plan of
   [installer/AGENTS.md](../../installer/AGENTS.md).
 
 **It stops gracefully on SIGTERM (how systemd stops it) and Ctrl-C**: it stops accepting, lets the
@@ -97,7 +99,8 @@ the two calls the manager answers without authorization, and the only ones the b
   `control` (`auth_admin`). On Windows the pipe `\\.\pipe\private-ai-manager`, whose SDDL gives
   `NT SERVICE\private-ai-bff` the interactive client's rights; its token is neither interactive nor an
   administrator's, so the manager refuses it `control` and `configure`
-  ([installer/AGENTS.md](../../installer/AGENTS.md)). Type-checked only, not yet run on Windows.
+  ([installer/AGENTS.md](../../installer/AGENTS.md)). The two calls the bff makes passed the pipe in
+  CI (run 43651545466); the refusals are type-checked only.
 
 ## The web UI (`fe/`)
 

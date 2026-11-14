@@ -154,8 +154,13 @@ Lessons only: the rules are in `AGENTS.md`.
 - The installer CI workflows (`.github/workflows/installers-*.yml`, started by hand) are described in
   `docs/build-macos.md` ("CI.") and `installer/AGENTS.md` (the Status paragraph). A run's id and result
   come from the coordinator's commit (no web fetch): cite the commit. When one goes green, also grep
-  "untested", "never run on a Mac" and "compiled by WiX" in `AGENTS.md` (overview and Map), the root
-  `README.md`, `build-pipeline.md`, `build-packaging.md` and `PLAN.md` R3, which repeat the status.
+  "untested", "never run on a Mac", "type-checked only", "not run on Windows" and "compiled by WiX" in
+  `AGENTS.md` (overview, the `pai-manager` sentence, Map), the root `README.md` (intro, the `xtask
+  install` row, Packaging), `build-pipeline.md` (intro, the OS table's Status and Packages rows),
+  `build-packaging.md` (MSIs intro, the Install bullets), `build-compiling.md` ("The minimal build"),
+  `crates/bff/README.md`, `installer/AGENTS.md` (the manager bullet too), the `release` skill (step 4)
+  and `PLAN.md` R3. The Windows test plan opens with "What CI covers": update it with the workflow.
+  A JSON body quoted in a brief may be shortened: check the route's fields in the code before quoting.
 - A commit message's reason can be wrong in a detail: check it in the code before repeating it
   (dbc43cb blamed the instance unit's `ProtectHome`, which only `private-ai-bff.service` sets:
   `xtask/src/linux/system_files.rs`).

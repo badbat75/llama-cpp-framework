@@ -95,11 +95,12 @@ named by the component: `llama/` for the `llama.cpp` package). `licenses.rs` (`x
 ### The MSIs (Windows)
 
 **Windows ships two installers: llama.cpp's own MSI and the framework's, which requires it.** Both
-were compiled by WiX for the first time in CI run 43645918218, which installed llama.cpp's; the
-framework's install failed on its services' restart action, changed since and not yet rerun (commit
-`f546911`). Nothing else has run on Windows: the `.wxs` files are checked as XML by
-xtask's tests, their custom-action conditions evaluated over install, repair, upgrade, uninstall and
-downgrade, and the Rust is type-checked only. The authoring, the services, the
+went green in CI run 43651545466 (2026-11-14): built with the minimal engine, installed by `xtask
+install`, their services and web service checked, repaired and uninstalled, every msiexec silent. CI
+does not cover the GPU runtimes and backends, a desktop session or any dialog, the GUI, a model run or
+an upgrade from an older version. Beyond that run, the `.wxs` files are checked as XML by xtask's tests,
+their custom-action conditions evaluated over install, repair, upgrade, uninstall and downgrade, and
+the Rust is type-checked only. The authoring, the services, the
 ACLs and the test plan are in [installer\AGENTS.md](../installer/AGENTS.md).
 
 | | llama.cpp's MSI | The framework's MSI |
@@ -531,7 +532,8 @@ leave out the runtime of a GPU the machine does not have. `--dry-run` prints the
   `Uninstall\private-ai`. Exit 3010 (restart required) counts as success with a warning.
 - The logs are `build\windows\msi-install-<product>.log` and `msi-uninstall-<product>.log`
   (`llama.cpp`, `private-ai-framework`).
-- None of this has run on Windows since the split: type-checked only.
+- A first install of both has run, in CI (run 43651545466); the upgrade, reinstall and downgrade
+  paths are type-checked only.
 
 **Linux.**
 

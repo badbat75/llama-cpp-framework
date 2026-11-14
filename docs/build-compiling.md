@@ -1,7 +1,7 @@
 ---
 title: Compiling llama.cpp and the configurator
 type: reference
-updated: 2026-11-14
+updated: 2026-11-15
 ---
 
 # Compiling llama.cpp and the configurator
@@ -56,7 +56,7 @@ then a system clang, then GCC.
 **`xtask configure --minimal` records a build without the GPU backends that need an SDK, for CI
 only.** It is meant for GitHub's runners, which have no ROCm, CUDA or Vulkan SDK (`PLAN.md` step 12).
 Read from the code and its tests (`xtask/src/main.rs`, `cmake_options.rs`, `msi.rs`, `macos_pkg.rs`);
-the Windows and macOS branches are type-checked only and have never run.
+both branches have run in CI, green: Windows in run 43651545466, macOS in run 43645311957.
 
 - `xtask build` adds `xtask/cmake/minimal.toml` over the OS options: `GGML_CUDA`, `GGML_HIP` and
   `GGML_VULKAN` off, every other option as in the full build. Windows is left with the CPU backends,
