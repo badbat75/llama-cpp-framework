@@ -763,7 +763,7 @@ Decided with the user on 2026-11-14 (relayed by the web UI session, confirmed he
 The bff side of the web UI's slice 1, from the contract `fe/briefs/api-contract.md` (the web UI
 session's, following the coordinator's shape; the fe is built against mocks), each test first:
 
-6. **Sign-in.** `GET`/`POST`/`DELETE /api/session` (`{user, canConfigure}`, an HttpOnly cookie,
+6. (6a done: `GET /api/instances` items `{id, engine, state}`, errors `{key, args}`) **Sign-in.** `GET`/`POST`/`DELETE /api/session` (`{user, canConfigure}`, an HttpOnly cookie,
    `session-bad-credentials` 401, `session-too-many-attempts` 429), against the OS accounts (PAM on
    Linux, `LogonUser` on Windows); the manager learns who acts. Open, for the user: how a signed-in
    administrator's save passes Linux polkit `configure` (`auth_admin_keep`) without the bff keeping a

@@ -4,11 +4,13 @@
 //! (`tower::ServiceExt::oneshot`) under a deadline, so a bff that waits on the
 //! manager fails instead of hanging.
 //!
-//! The answer: 200 and `[{"id": ..., "state": ...}]` in the manager's order,
-//! the state as the manager names it; 503 `{"error": "unavailable"}` when no
-//! manager answers (none, gone, or too slow); 502 `{"error": "not-authorized"}`
-//! when the manager refuses the bff, 502 `{"error": "failed"}` on any other
-//! failure, never the manager's detail.
+//! The answer (fe/briefs/api-contract.md): 200 and
+//! `[{"id": ..., "engine": "llama.cpp", "state": ...}]` in the manager's
+//! order, the state as the manager names it; errors in the common shape
+//! `{"key": <strings key>, "args": [...]}`: 503 `client-unavailable` when no
+//! manager answers (none, gone, or too slow), 502 `client-not-authorized`
+//! when the manager refuses the bff, 502 `client-other` with no args on any
+//! other failure, never the manager's detail.
 
 use axum::body::Body;
 use axum::http::{header, Method, Request, StatusCode};
@@ -135,7 +137,8 @@ impl Reply {
             .unwrap_or_else(|e| panic!("not JSON ({e}): {:?}", self.body))
     }
 
-    /// An error answer: its status and `{"error": key}` as JSON, nothing else.
+    /// An error answer: its status and `{"key": key, "args": []}` as JSON,
+    /// nothing else.
     fn assert_error(&self, status: StatusCode, key: &str) {
         assert_eq!(self.status, status, "{}", self.body);
         assert!(
@@ -143,7 +146,12 @@ impl Reply {
             "content-type {:?}",
             self.content_type
         );
-        assert_eq!(self.json(), json!({ "error": key }), "{}", self.body);
+        assert_eq!(
+            self.json(),
+            json!({ "key": key, "args": [] }),
+            "{}",
+            self.body
+        );
     }
 }
 
@@ -197,7 +205,7 @@ fn calls(log: &Log) -> Vec<String> {
 async fn no_manager_is_unavailable() {
     let count = Arc::new(AtomicUsize::new(0));
     let r = get_instances(connect_with(&count, || Err(ClientError::Unavailable))).await;
-    r.assert_error(StatusCode::SERVICE_UNAVAILABLE, "unavailable");
+    r.assert_error(StatusCode::SERVICE_UNAVAILABLE, "client-unavailable");
     assert_eq!(count.load(Ordering::SeqCst), 1, "connected once");
 }
 
@@ -213,7 +221,7 @@ async fn a_manager_gone_during_the_call_is_unavailable() {
         m
     }))
     .await;
-    r.assert_error(StatusCode::SERVICE_UNAVAILABLE, "unavailable");
+    r.assert_error(StatusCode::SERVICE_UNAVAILABLE, "client-unavailable");
     assert_eq!(calls(&log), ["list"]);
 }
 
@@ -231,7 +239,7 @@ async fn a_manager_that_does_not_answer_in_time_is_unavailable() {
     }))
     .await;
     let took = started.elapsed();
-    r.assert_error(StatusCode::SERVICE_UNAVAILABLE, "unavailable");
+    r.assert_error(StatusCode::SERVICE_UNAVAILABLE, "client-unavailable");
     assert!(
         took < Duration::from_secs(1),
         "answered after {took:?}, not at the {TIMEOUT:?} timeout"
@@ -250,7 +258,7 @@ async fn a_connect_that_hangs_is_unavailable() {
     }))
     .await;
     let took = started.elapsed();
-    r.assert_error(StatusCode::SERVICE_UNAVAILABLE, "unavailable");
+    r.assert_error(StatusCode::SERVICE_UNAVAILABLE, "client-unavailable");
     assert!(
         took < Duration::from_secs(1),
         "answered after {took:?}, not at the {TIMEOUT:?} timeout"
@@ -258,7 +266,7 @@ async fn a_connect_that_hangs_is_unavailable() {
 }
 
 /// The manager refuses the bff (the pipe's security descriptor or the bus
-/// policy leaves its account out): 502 not-authorized, so the page can say
+/// policy leaves its account out): 502 client-not-authorized, so the page can say
 /// it is the service's access, not the manager's absence.
 #[tokio::test]
 async fn a_refusal_by_the_manager_is_not_authorized() {
@@ -266,11 +274,11 @@ async fn a_refusal_by_the_manager_is_not_authorized() {
         Err(ClientError::NotAuthorized)
     }))
     .await;
-    r.assert_error(StatusCode::BAD_GATEWAY, "not-authorized");
+    r.assert_error(StatusCode::BAD_GATEWAY, "client-not-authorized");
 }
 
-/// Any other failure is 502 failed, and the manager's detail stays in the
-/// bff: the browser gets only the key.
+/// Any other failure is 502 `client-other` with no args: the manager's
+/// detail (which `client-other`'s `{0}` would carry) stays in the bff.
 #[tokio::test]
 async fn any_other_failure_is_failed_without_the_detail() {
     let log = Log::default();
@@ -283,7 +291,7 @@ async fn any_other_failure_is_failed_without_the_detail() {
         m
     }))
     .await;
-    r.assert_error(StatusCode::BAD_GATEWAY, "failed");
+    r.assert_error(StatusCode::BAD_GATEWAY, "client-other");
     assert!(!r.body.contains("secret-detail"), "{}", r.body);
 }
 
@@ -310,7 +318,7 @@ async fn a_state_that_cannot_be_read_fails_the_answer() {
         m
     }))
     .await;
-    r.assert_error(StatusCode::BAD_GATEWAY, "failed");
+    r.assert_error(StatusCode::BAD_GATEWAY, "client-other");
     assert!(!r.body.contains("llama.cpp@coder"), "{}", r.body);
 }
 
@@ -333,7 +341,10 @@ async fn an_instance_removed_meanwhile_is_left_out() {
     }))
     .await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.body);
-    assert_eq!(r.json(), json!([{ "id": "default", "state": "active" }]));
+    assert_eq!(
+        r.json(),
+        json!([{ "id": "default", "engine": "llama.cpp", "state": "active" }])
+    );
 }
 
 /// The route is read-only: another method is 405 and asks the manager
@@ -406,12 +417,12 @@ async fn each_instance_with_its_state_in_the_manager_s_order() {
     assert_eq!(
         r.json(),
         json!([
-            { "id": "default", "state": "active" },
-            { "id": "coder", "state": "failed" },
-            { "id": "big-model", "state": "inactive" },
-            { "id": "a", "state": "activating" },
-            { "id": "z", "state": "deactivating" },
-            { "id": "odd", "state": "maintenance" },
+            { "id": "default", "engine": "llama.cpp", "state": "active" },
+            { "id": "coder", "engine": "llama.cpp", "state": "failed" },
+            { "id": "big-model", "engine": "llama.cpp", "state": "inactive" },
+            { "id": "a", "engine": "llama.cpp", "state": "activating" },
+            { "id": "z", "engine": "llama.cpp", "state": "deactivating" },
+            { "id": "odd", "engine": "llama.cpp", "state": "maintenance" },
         ])
     );
 }
@@ -454,12 +465,12 @@ async fn a_manager_started_later_is_seen_at_the_next_request() {
     });
     let router = pai_bff::router_with(connect, TIMEOUT);
     let first = send_to(router.clone(), Method::GET, "/api/instances").await;
-    first.assert_error(StatusCode::SERVICE_UNAVAILABLE, "unavailable");
+    first.assert_error(StatusCode::SERVICE_UNAVAILABLE, "client-unavailable");
     let second = send_to(router, Method::GET, "/api/instances").await;
     assert_eq!(second.status, StatusCode::OK, "{}", second.body);
     assert_eq!(
         second.json(),
-        json!([{ "id": "default", "state": "active" }])
+        json!([{ "id": "default", "engine": "llama.cpp", "state": "active" }])
     );
     assert_eq!(count.load(Ordering::SeqCst), 2);
 }

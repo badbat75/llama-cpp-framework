@@ -13,6 +13,9 @@ pub type Client = Box<dyn pai_core::client::ManagerClient + Send + Sync>;
 /// How the bff connects to the manager, called for each request that asks it.
 pub type Connect = std::sync::Arc<dyn Fn() -> Result<Client, ClientError> + Send + Sync>;
 
+/// The engine every instance runs: llama.cpp, the only engine today.
+const ENGINE_LLAMA_CPP: &str = "llama.cpp";
+
 /// How long a request waits for the manager, the connect included.
 const MANAGER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
@@ -66,8 +69,8 @@ fn system_connect() -> Result<Client, ClientError> {
     }
 }
 
-/// `GET /api/instances`: `[{"id", "state"}]` in the manager's order, or
-/// `{"error": key}`, never the manager's detail.
+/// `GET /api/instances`: `[{"id", "engine", "state"}]` in the manager's
+/// order, or `{"key": <strings key>, "args": []}`, never the manager's detail.
 async fn instances(connect: Connect, timeout: std::time::Duration) -> axum::response::Response {
     use axum::http::StatusCode;
     use axum::response::IntoResponse;
@@ -76,7 +79,11 @@ async fn instances(connect: Connect, timeout: std::time::Duration) -> axum::resp
         let mut list = Vec::new();
         for id in client.list_instances()? {
             match client.status(&id) {
-                Ok(state) => list.push(serde_json::json!({ "id": id, "state": state.name() })),
+                Ok(state) => list.push(serde_json::json!({
+                    "id": id,
+                    "engine": ENGINE_LLAMA_CPP,
+                    "state": state.name(),
+                })),
                 Err(ClientError::NoInstance) => {}
                 Err(e) => return Err(e),
             }
@@ -86,12 +93,18 @@ async fn instances(connect: Connect, timeout: std::time::Duration) -> axum::resp
     let (status, key) = match tokio::time::timeout(timeout, ask).await {
         Ok(Ok(Ok(list))) => return axum::Json(list).into_response(),
         Ok(Ok(Err(ClientError::Unavailable))) | Err(_) => {
-            (StatusCode::SERVICE_UNAVAILABLE, "unavailable")
+            (StatusCode::SERVICE_UNAVAILABLE, "client-unavailable")
         }
-        Ok(Ok(Err(ClientError::NotAuthorized))) => (StatusCode::BAD_GATEWAY, "not-authorized"),
-        Ok(Ok(Err(_))) | Ok(Err(_)) => (StatusCode::BAD_GATEWAY, "failed"),
+        Ok(Ok(Err(ClientError::NotAuthorized))) => {
+            (StatusCode::BAD_GATEWAY, "client-not-authorized")
+        }
+        Ok(Ok(Err(_))) | Ok(Err(_)) => (StatusCode::BAD_GATEWAY, "client-other"),
     };
-    (status, axum::Json(serde_json::json!({ "error": key }))).into_response()
+    (
+        status,
+        axum::Json(serde_json::json!({ "key": key, "args": [] })),
+    )
+        .into_response()
 }
 
 /// The embedded web UI: (path under its directory, bytes, content type) for

@@ -57,7 +57,7 @@ runtime (axum).
 | Route | Answer |
 | --- | --- |
 | `GET /api/version` | `{"version": "<framework version>"}` |
-| `GET /api/instances` | `[{"id": "<id>", "state": "<state>"}]` from `private-ai-manager` ([below](#the-instances-from-the-manager)) |
+| `GET /api/instances` | `[{"id": "<id>", "engine": "llama.cpp", "state": "<state>"}]` from `private-ai-manager` ([below](#the-instances-from-the-manager)) |
 | `GET /` | The embedded `index.html` |
 | `GET /assets/{*path}` | The embedded file at `assets/<path>` |
 
@@ -68,7 +68,7 @@ matches, so `..` reaches nothing else. Content types go by extension: HTML, Java
 Checked by hand on Linux from the debug build (2026-11-14): `--version` exits 0, an unknown argument
 2, `0.0.0.0:8590` and `localhost:8590` exit 1; on `127.0.0.1` it answered `/api/version`, `/` as
 `text/html`, 405 to a `POST` and 404 elsewhere. Under `PRIVATE_AI_DATA_ROOT` `/api/instances`
-answered 503 `{"error":"unavailable"}` and a `POST` to it 405.
+answered 503 `{"error":"unavailable"}` (the error shape before `{"key", "args"}`) and a `POST` to it 405.
 
 ## The instances from the manager
 
@@ -78,17 +78,18 @@ the two calls the manager answers without authorization, and the only ones the b
 
 | Status | Body | When |
 | --- | --- | --- |
-| 200 | `[{"id", "state"}]` in the manager's order, `[]` when there is none | Every call answered; an instance removed between the two calls is left out |
-| 503 | `{"error": "unavailable"}` | No manager to reach (none running, macOS), or no full answer within 5 s |
-| 502 | `{"error": "not-authorized"}` | The manager refused a call |
-| 502 | `{"error": "failed"}` | Any other failure |
+| 200 | `[{"id", "engine", "state"}]` in the manager's order, `[]` when there is none | Every call answered; an instance removed between the two calls is left out |
+| 503 | `{"key": "client-unavailable", "args": []}` | No manager to reach (none running, macOS), or no full answer within 5 s |
+| 502 | `{"key": "client-not-authorized", "args": []}` | The manager refused a call |
+| 502 | `{"key": "client-other", "args": []}` | Any other failure |
 
 - **The state is the manager's name** (`InstanceState::name()` in `pai-core`: `active`, `inactive`,
-  `activating`, `deactivating`, `failed`, or an unknown name passed on as is). The error body is only
-  the key, never the manager's detail.
+  `activating`, `deactivating`, `failed`, or an unknown name passed on as is). The engine is
+  `llama.cpp`, the only engine today (`ENGINE_LLAMA_CPP` in `lib.rs`). The error body is only the
+  strings key with empty args, never the manager's detail.
 - **A new connection per request**, so a manager started after the bff is seen at the next request.
   The connect and the calls run on a blocking thread under one 5 s timeout that covers the connect.
-- **Under `PRIVATE_AI_DATA_ROOT` it dials nothing** and answers 503 `unavailable`, so a test never
+- **Under `PRIVATE_AI_DATA_ROOT` it dials nothing** and answers 503 `client-unavailable`, so a test never
   reaches the real manager.
 - **Reaching it**: on Linux the system bus (`org.privateai.Manager1`), whose policy lets every user
   send to the manager; neither call asks polkit, and with no session the bff's user `private-ai-bff` gets no

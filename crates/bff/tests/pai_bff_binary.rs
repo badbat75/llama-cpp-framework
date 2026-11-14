@@ -354,7 +354,7 @@ fn service_with_an_argument_is_a_usage_error() {
 
 /// Under `PRIVATE_AI_DATA_ROOT` the shipped router dials no manager, as
 /// pai-app's `system_connect` does: `/api/instances` answers 503
-/// `{"error": "unavailable"}` at once. The child's system bus is a socket
+/// `{"key": "client-unavailable", "args": []}` at once. The child's system bus is a socket
 /// this test listens on, so a bff that dials the bus anyway is caught by the
 /// accept, not hidden by a missing socket.
 #[cfg(unix)]
@@ -397,7 +397,7 @@ fn instances_under_the_test_redirect_are_unavailable_without_dialing() {
     let json: serde_json::Value = serde_json::from_str(&body).expect("a JSON body");
     assert_eq!(
         json,
-        serde_json::json!({ "error": "unavailable" }),
+        serde_json::json!({ "key": "client-unavailable", "args": [] }),
         "{body}"
     );
     match listener.accept() {
