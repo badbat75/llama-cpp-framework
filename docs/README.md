@@ -1,7 +1,7 @@
 ---
 title: Documentation
 type: reference
-updated: 2026-11-04
+updated: 2026-11-14
 ---
 
 # Documentation
@@ -32,7 +32,7 @@ written is in [AGENTS.md](AGENTS.md). For easier reading, the same pages are on 
 | [Build pipeline](build-pipeline.md) | the entry page: the `xtask` phases, what to re-run after a change, how the OSes differ, where things land, the footguns |
 | [Build prerequisites](build-prerequisites.md) | the dist layout and root, the bootstrap scripts on Windows and Linux |
 | [Compiling](build-compiling.md) | the configure phase, release tag and patches, CMake options, sccache, LTO, lld, HIP targets, build parallelism, the Windows and Linux specifics, the source map |
-| [Packaging and install](build-packaging.md) | the MSI, the split `.deb` and `.rpm` packages, `xtask install` |
+| [Packaging and install](build-packaging.md) | the two MSIs, the split `.deb` and `.rpm` packages, `xtask install` |
 | [Building on macOS](build-macos.md) | the whole macOS build, every phase (Apple Silicon, untested) |
 | [Benchmarks](../benchmarks/README.md) | bench.db, the versioned method (`standard-<X.Y>`), the shipped prompts, how to query |
 

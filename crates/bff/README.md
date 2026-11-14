@@ -18,7 +18,7 @@ read-only (`PLAN.md` step 10).
   answered 503; sources in the unit's test in `xtask/src/linux/system_files.rs`). Checked on the real
   install of 2.99.1 on Ubuntu 26.04 (2026-11-14, by the user): the service active, `/api/version`
   answered, `/api/instances` `[]` with 200, and 503 `unavailable` with the manager stopped.
-- Windows: the MSI installs the service `private-ai-bff` (`pai-bff.exe service`, automatic start,
+- Windows: the framework's MSI installs the service `private-ai-bff` (`pai-bff.exe service`, automatic start,
   `NT SERVICE\private-ai-bff`, restarted after a failure). Its `Error:` line goes nowhere there: by
   the code, a bad `bff.ini` or a bind failure shows only in the service manager's state and exit code.
   Type-checked only, not yet run on Windows; the open checks are in the test plan of

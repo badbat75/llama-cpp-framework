@@ -7,7 +7,8 @@ updated: 2026-11-14
 # Build pipeline
 
 The pipeline turns a llama.cpp release into an installable package with the CUDA, Vulkan and ROCm
-backends, the `pai-config` configurator and its command line `pai`. It runs on Windows (one MSI) and
+backends, the `pai-config` configurator and its command line `pai`. It runs on Windows (two MSIs: the
+framework's, and llama.cpp's own with its GPU runtimes, which the framework's requires) and
 Linux (eight `.deb` and eight `.rpm` packages: the framework's GUI, command line, web service and
 core, at the framework's version, and the engine `llama.cpp` with one package per GPU runtime, at their
 own versions). It also runs on macOS (Apple Silicon, four `.pkg`), where it is written but untested.
@@ -17,7 +18,8 @@ run `xtask configure`, `build`, `package` and `install` in that order. `xtask <p
 `cargo run -p xtask -- <phase>`. The GPU SDKs come from the dist layout, in their newest stable
 version, and everything generated stays under `build/<os>/`. Before changing the build, read this
 page and the [topic page](#topics) of what you change. [Footguns](#footguns) lists what breaks. The
-MSI itself is in [installer\AGENTS.md](../installer/AGENTS.md).
+MSIs themselves are in [installer\AGENTS.md](../installer/AGENTS.md); since their split they have not
+been compiled by WiX or run on Windows.
 
 ![The bootstrap script, then the xtask phases prereq, configure, build, package and install, with what each writes](assets/diagrams/build-pipeline.svg)
 
@@ -27,7 +29,7 @@ MSI itself is in [installer\AGENTS.md](../installer/AGENTS.md).
 | --- | --- |
 | [Build prerequisites](build-prerequisites.md) | Where do the GPU SDKs live, which one is taken, and what do the bootstrap scripts install? |
 | [Compiling](build-compiling.md) | What do `configure` and `build` do and why: release tag, patches, CMake options, sccache, LTO, lld, HIP targets, build parallelism, the web UI, the Windows and Linux specifics, the source map |
-| [Packaging and install](build-packaging.md) | What goes in the MSI and in each `.deb` and `.rpm`, how do the packages depend on each other, and how does `xtask install` lay them down? |
+| [Packaging and install](build-packaging.md) | What goes in the two MSIs and in each `.deb` and `.rpm`, how do the packages depend on each other, and how does `xtask install` lay them down? |
 | [Building on macOS](build-macos.md) | The whole macOS story, every phase |
 
 ## Phases
@@ -39,15 +41,15 @@ MSI itself is in [installer\AGENTS.md](../installer/AGENTS.md).
 | `xtask configure` | Detects paths and tools, derives the GPU targets, records the dist root. | `build/<os>/config-build.*`; on Windows also `.cargo/config.toml` |
 | `xtask build` | Checks out the newest llama.cpp release, applies the patches, builds llama.cpp, then the web UI in `fe/` with npm, then `pai-config`, `pai`, `pai-manager` and `pai-bff`. | `build/<os>/llama.cpp-cmake/`, `build/<os>/cargo-target/`, `fe/dist/` |
 | `xtask package` | Stages the binaries and GPU runtimes, then builds the packages. | `dist/` |
-| `xtask install` | Installs the newest package in `dist/`, on Linux and macOS the newest of each: first install, upgrade, reinstall or downgrade. | The machine |
+| `xtask install` | Installs the newest package in `dist/`, on Linux and macOS the newest of each, on Windows llama.cpp's MSI then the framework's: first install, upgrade, reinstall or downgrade. | The machine |
 
 | Phase | Options |
 | --- | --- |
 | `prereq` | `--dist-root <path>`, `--skip <steps>` |
 | `configure` | `--dist-root <path>`, `--llama-cpp-dir <path>` (default `build/<os>/llama.cpp`) |
 | `build` | `llama` (llama.cpp) or `framework` (the web UI and the four cargo binaries) for one product (default: both, in that order) |
-| `package` | `--keep-staging`; Linux `llama` or `framework` for one product's packages (default: both; the other product's files in `dist/` are left as they are), `--deb`, `--rpm`; Windows `--wix <wix.exe>`. Windows and macOS refuse a product: one MSI, one `.pkg` set |
-| `install` | `--dry-run`, a package file (Linux and macOS: any number, and only those install); Linux `--deb`, `--rpm`; Linux and macOS `--force` |
+| `package` | `--keep-staging`; Linux and Windows `llama` or `framework` for one product's packages (default: both; the other product's files in `dist/` are left as they are); Linux `--deb`, `--rpm`; Windows `--wix <wix.exe>`. macOS refuses a product: one `.pkg` set |
+| `install` | `--dry-run`, a package file (Linux and macOS: any number, and only those install; Windows: one); Linux `--deb`, `--rpm`; Linux and macOS `--force` |
 
 **After a change, re-run the phases below.** The bootstrap report names the same steps.
 
@@ -56,8 +58,8 @@ MSI itself is in [installer\AGENTS.md](../installer/AGENTS.md).
 | The ROCm dist or the dist root | `configure`, `build` (a full rebuild, since the compiler path moves), `package` |
 | The CUDA Toolkit, NCCL or the Vulkan SDK | `build`, `package`: the build finds the newest on every run |
 | A newer llama.cpp release | `build`, `package` |
-| The framework only (`crates/`, `fe/`), on Linux | `build framework`, `package framework` |
-| llama.cpp's patches or CMake options only, on Linux | `build llama`, `package llama` |
+| The framework only (`crates/`, `fe/`), on Linux and Windows | `build framework`, `package framework` |
+| llama.cpp's patches or CMake options only, on Linux and Windows | `build llama`, `package llama` |
 | Tools or their paths | `configure` |
 
 ## Running the phases
@@ -95,7 +97,7 @@ says. The configurator always goes to `build/<os>/cargo-target`.
 
 | | Windows | Linux | macOS |
 | --- | --- | --- | --- |
-| Status | Working | Working; the script's packages are Debian and Ubuntu | Apple Silicon only, untested |
+| Status | Working up to the single MSI; the two MSIs are not built or run yet | Working; the script's packages are Debian and Ubuntu | Apple Silicon only, untested |
 | Backends | CUDA, Vulkan, HIP | The same, with RCCL and NCCL | Metal, Vulkan through MoltenVK |
 | Compiler | ROCm dist's clang | ROCm dist's clang, else system clang, else GCC | Apple's clang |
 | Linker | `lld-link` | `ld.lld` | Toolchain default |
@@ -107,8 +109,8 @@ says. The configurator always goes to `build/<os>/cargo-target`.
 | Dists | `TheRock`, `CUDA`, `VulkanSDK` | The same, with `NCCL` | `VulkanSDK` |
 | Machine environment | `HIP_PATH` and PATH of the active ROCm dist | None | None |
 | sccache binary | `%LOCALAPPDATA%\Programs\sccache\sccache.exe` | `~/.local/bin/sccache` | `~/.local/bin/sccache` |
-| Packages | One MSI | Eight `.deb`, eight `.rpm` | Four `.pkg` |
-| Installs to | `Program Files\private-ai` (choosable) | `/usr` (`/usr/bin`, `/usr/lib/private-ai`, `/usr/libexec/private-ai`, `/usr/share/private-ai`) | `/opt/private-ai`, links in `/usr/local/bin` |
+| Packages | Two MSIs | Eight `.deb`, eight `.rpm` | Four `.pkg` |
+| Installs to | `Program Files\private-ai` and `Program Files\llama.cpp` (each choosable) | `/usr` (`/usr/bin`, `/usr/lib/private-ai`, `/usr/libexec/private-ai`, `/usr/share/private-ai`) | `/opt/private-ai`, links in `/usr/local/bin` |
 
 ## Where things land
 
@@ -123,10 +125,10 @@ the whole `build/` is gitignored.** A clone shared between systems would mix lin
 | `build/<os>/llama.cpp-cmake/` | The CMake build directory; the binaries are in `bin/` |
 | `build/<os>/cargo-target/` | The cargo output of the configurator, `pai-manager` and `pai-bff` |
 | `build/<os>/.sccache/` | The compiler cache |
-| `build/<os>/staging/` | The package tree; deleted after packaging unless `--keep-staging` |
+| `build/<os>/staging/` | The package tree (on Windows one per product, `llama/` and `framework/`); deleted after packaging unless `--keep-staging` |
 | `build/<os>/package/` | Linux, macOS: one tree per package, and on Linux the control files, specs and rpmbuild tree; transient |
-| `build/windows/wix-obj/` | WiX intermediates; deleted after packaging |
-| `build/windows/msi-install.log`, `msi-uninstall.log` | The logs of `xtask install` |
+| `build/windows/staging/<product>.wix-obj/`, `<product>.license.rtf` | WiX intermediates, deleted after packaging; the licence page each MSI shows |
+| `build/windows/msi-install-<product>.log`, `msi-uninstall-<product>.log` | The logs of `xtask install` (`llama.cpp`, `private-ai-framework`) |
 | `dist/` | The finished packages (gitignored) |
 | `fe/node_modules/`, `fe/dist/` | The web UI's npm packages and its build, which `pai-bff` embeds: not per OS, since every `xtask build` remakes both (`npm ci`, `npm run build`); gitignored |
 | `.cargo/config.toml` | Windows only: generated and gitignored, at the repo root because cargo discovers it by walking up from the current directory |
@@ -159,5 +161,5 @@ On Windows, `$buildRoot` in `scripts\common.ps1` names `build\windows`.
 | Test a tree-built `llama-server` on Linux while the `llama.cpp` package is installed | It loads the installed backends from `GGML_BACKEND_DIR`, `/usr/lib/private-ai`, before its own. [The `.deb` and `.rpm`](build-packaging.md#the-deb-and-rpm-linux) |
 | Upgrade the Linux packages under a llama-server started by hand | It would load new kernels with old libraries; `xtask install` refuses (the services' instances are stopped and started again by `llama.cpp`'s scripts). [Install](build-packaging.md#install) |
 | Leave out the runtime package of a GPU the machine has | llama-server skips that backend at start, with only a log line. [The `.deb` and `.rpm`](build-packaging.md#the-deb-and-rpm-linux) |
-| Copy all of `OpenSSLDir\bin` into the package | Most of it is providers that must not ship. [The MSI](build-packaging.md#the-msi-windows) |
-| Switch the MSI to external cabinets | The release is one file, under GitHub's 2 GiB limit. [installer\AGENTS.md](../installer/AGENTS.md) |
+| Copy all of `OpenSSLDir\bin` into the package | Most of it is providers that must not ship. [The MSIs](build-packaging.md#the-msis-windows) |
+| Switch an MSI to external cabinets | Each installer is one file, under GitHub's 2 GiB limit. [installer\AGENTS.md](../installer/AGENTS.md) |

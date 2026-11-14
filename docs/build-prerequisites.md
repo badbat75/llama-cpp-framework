@@ -41,7 +41,7 @@ version wins, compared numerically.
 | `NCCL` | `.nccl-version` | n/a | `lib/libnccl.so`, `include/nccl.h` |
 | `VulkanSDK` | `.vulkan-version` | `Lib\vulkan-1.lib`, `Bin\glslc.exe` | `x86_64/include/vulkan/vulkan.h`, `x86_64/bin/glslc`, the loader |
 
-On Windows the dist also holds `Runtime\vulkan-1.dll`, the loader the MSI bundles. It is no part of
+On Windows the dist also holds `Runtime\vulkan-1.dll`, the loader llama.cpp's MSI bundles. It is no part of
 what makes a dist complete: a build never needs it, and `xtask package` is what refuses a Vulkan
 build without it.
 

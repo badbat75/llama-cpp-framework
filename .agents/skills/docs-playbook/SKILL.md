@@ -112,3 +112,12 @@ Lessons only: the rules are in `AGENTS.md`.
   (MSI and `.deb`/`.rpm` intros), `build-macos.md` ("Package."), and the `scripts/0N-*` usage headers
   (not ours: report them). `xtask install`'s "predates the build" warning keys on the build tree's
   `llama-server` mtime only (`linux/install.rs`): recheck it when what a build updates changes.
+- The Windows installer's facts repeat in: `installer/AGENTS.md` (all, with the test plan),
+  `build-packaging.md` (intro and file table, "The MSIs (Windows)", the Install table and bullets),
+  `build-pipeline.md` (intro, Options, re-run table, OS table, "Where things land", footguns),
+  the README (intro, features, steps, tree, config table, command table, Packaging), `AGENTS.md`
+  (overview, Windows bullets, Installer and crate Map bullets, `llama.ico`, the conventions on
+  `%ProgramData%`, release steps 3 and 7 and the names table), `crates/config/README.md` ("Through
+  the manager", the source map's manager row), `crates/config/AGENTS.md` (log source) and
+  `crates/bff/README.md`. Per-product build files are named from the staging dir
+  (`stage.with_extension`): `build\windows\staging\<product>.license.rtf`, `.wix-obj\`.

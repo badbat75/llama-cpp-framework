@@ -6,8 +6,8 @@ updated: 2026-11-14
 
 # Packaging and install
 
-What `xtask package` puts in the MSI and in each `.deb` and `.rpm`, and how `xtask install` lays the
-packages down. The `.pkg` files are on [the macOS page](build-macos.md). The MSI's own authoring is in
+What `xtask package` puts in the two MSIs and in each `.deb` and `.rpm`, and how `xtask install` lays
+the packages down. The `.pkg` files are on [the macOS page](build-macos.md). The MSIs' own authoring is in
 [installer\AGENTS.md](../installer/AGENTS.md), and the phases and what breaks are in
 [Build pipeline](build-pipeline.md).
 
@@ -17,34 +17,37 @@ packages down. The `.pkg` files are on [the macOS page](build-macos.md). The MSI
 Windows that also means the VC++ runtime. Each OS stages into `build/<os>/staging/`, and the staged
 tree is the installed tree.
 
-**Windows ships one MSI. Linux ships eight packages per format and macOS four, so a machine can leave out
-the runtime of a GPU it does not have, and a headless server the GUI.** `xtask/src/common/components.rs` splits the staged tree by
-path, so no file lands in two packages or in none. On Linux the engine, llama.cpp, is packaged apart
-from the framework, under its own name and version (`PLAN.md` step 11, R12); the MSI and the macOS
-`.pkg` files get the same split in later slices of that step (3 and 4), and until then keep the
-layout described here and on [the macOS page](build-macos.md). The same holds for the engine's
-configuration: on Linux the instance files are in `/etc/llama.cpp/`, while Windows keeps them in
-`%ProgramData%\private-ai\config\` and macOS per user until those slices (planned for Windows:
-`%ProgramData%\llama.cpp\`, filled from llama.cpp's own MSI).
+**Windows ships two MSIs, Linux eight packages per format and macOS four, so a machine can leave out
+the runtime of a GPU it does not have (Linux), and a headless server the GUI.** On Linux and Windows
+the engine, llama.cpp, is packaged apart from the framework, under its own name and version
+(`PLAN.md` step 11, R12): on Windows llama.cpp's own MSI holds the engine and all its GPU runtimes,
+and the framework's MSI requires it. The macOS `.pkg` files get the same split in a later slice of
+that step (4), and until then keep the layout on [the macOS page](build-macos.md). On Linux
+`xtask/src/common/components.rs` splits the staged tree by path, so no file lands in two packages or
+in none; on Windows each product has its own staging tree. The engine's configuration follows: the
+instance files are in `/etc/llama.cpp/` on Linux and `%ProgramData%\llama.cpp\config\` on Windows,
+and per user on macOS.
 
 | OS | Package | File in `dist/` |
 | --- | --- | --- |
-| Windows | The MSI | `private-ai-framework-v<framework>-<llama>-x64.msi` (`arm64` on an ARM build); `private-ai-framework-v<framework>-x64.msi` once step 11 slice 3 lands |
+| Windows | The framework's MSI | `private-ai-framework-v<framework>-x64.msi` (`arm64` on an ARM build) |
+| Windows | llama.cpp's MSI, with its GPU runtimes | `llama.cpp-v<release>-x64.msi` (no `+pai<N>`; `arm64` on an ARM build) |
 | Linux | The framework: `config`, `cli`, `bff`, `core` | `private-ai-framework-<package>-v<framework>-amd64.deb`, `-x86_64.rpm` (`arm64`, `aarch64` on ARM) |
 | Linux | The engine, `llama.cpp` | `llama.cpp-v<release>+pai<N>-amd64.deb`, `-x86_64.rpm` (the same on ARM) |
 | Linux | Its runtimes, `llama.cpp-rocm`, `-cuda`, `-vulkan` | `llama.cpp-<sdk>-v<sdk version>-amd64.deb`, `-x86_64.rpm` (the same on ARM) |
 | macOS | `config`, `cli`, `llama`, `vulkan` | [The macOS page](build-macos.md) |
 
 For example, `private-ai-framework-core-v2.99.1-amd64.deb`, `llama.cpp-v1.0.0+pai1-amd64.deb`,
-`llama.cpp-rocm-v10.1.0-amd64.deb`, `private-ai-framework-v2.99.0-v0.9.0-x64.msi`. Release 2.4 and
+`llama.cpp-rocm-v10.1.0-amd64.deb`, `private-ai-framework-v2.99.1-x64.msi`, `llama.cpp-v1.0.0-x64.msi`. Release 2.4 and
 earlier named them `llama-cpp-framework-*`: the new packages upgrade those in place (below, per format).
 
 - `<framework>` is the `[workspace.package]` version of the root `Cargo.toml`, one for the
   `pai-*` crates: the configurator and the framework are versioned together.
-- `<release>` (`<llama>` in the MSI's name) is `git describe --tags` of the clone, which prefers the
-  annotated release tag over the nightly on the same commit. On Linux `xtask package` refuses a clone
-  that is not on an exact `vX.Y.Z` release; elsewhere anything else falls back to
-  `b<rev-list --count>`, shaped so a non-release package cannot pass for one.
+- `<release>` is `git describe --tags` of the clone, which prefers the annotated release tag over
+  the nightly on the same commit. On Linux and Windows `xtask package` refuses a clone that is not on
+  an exact `vX.Y.Z` release (on Windows also one beyond an MSI ProductVersion, 255.255.65535); on
+  macOS anything else falls back to `b<rev-list --count>`, shaped so a non-release package cannot
+  pass for one.
 - `<N>` is our build revision of that release, `LLAMA_CPP_REVISION` in `components.rs` (1), raised
   when the patches or the build options change on the same release.
 - `<sdk version>` is the version of the SDK in the dist layout. An SDK outside the layout takes the
@@ -60,16 +63,15 @@ language file, and `cli.toml`, the text every program prints (`pai`, `pai-manage
 `core` package, which every other framework package requires, and the GUI's language files are in
 `config`. macOS: [its page](build-macos.md).
 
-**llama.cpp's test harnesses are pruned on every OS.** On Windows the installer can put `bin\` on
-the system PATH. On Linux every staged executable lands in `/usr/bin`, and on macOS each gets a command
-link. Either way,
-shipping them would drop generically named `test-*` commands into every shell. cmake stages every
+**llama.cpp's test harnesses are pruned on every OS.** On Linux every staged executable lands in
+`/usr/bin`, and on macOS each gets a command link, so shipping them would drop generically named
+`test-*` commands into every shell; on Windows they are unit tests no installed engine needs. cmake stages every
 executable with an `install()` rule, so count them from the staging tree, not the build directory.
 
 **Which runtime libraries is never a list.** It is the closure of what the staged binaries link,
 restricted to what resolves inside a dist. Everything else stays a system library.
 
-**Every package carries its licences.** The MSI holds them in `share\licenses\` beside `bin\`. On Linux
+**Every package carries its licences.** Each MSI holds its own in `share\licenses\` beside `bin\`. On Linux
 each package holds its own `/usr/share/private-ai/licenses/<package>/`, and on macOS its own
 `/opt/private-ai/share/licenses/<package>/`, since no two packages can own one file (the directory is
 named by the component: `llama/` for the `llama.cpp` package). `licenses.rs` (`xtask/src/common/`) stages them:
@@ -89,28 +91,48 @@ named by the component: `llama/` for the `llama.cpp` package). `licenses.rs` (`x
   `ggml-cuda` needs them too, since it links NVIDIA's static runtime: on Linux both `llama.cpp` and
   `llama.cpp-cuda` carry them.
 
-### The MSI (Windows)
+### The MSIs (Windows)
 
-**`xtask package` checks WiX first, then stages, builds into `dist/` and validates.** The check
-costs seconds, not a staging run: tool found, EULA accepted, extensions present (added when
-missing). It takes no product (`llama`, `framework`): the MSI holds both.
+**Windows ships two installers: llama.cpp's own MSI and the framework's, which requires it.** Neither
+has been compiled by WiX or run on Windows since the split (commit `836fdc7`): the `.wxs` files are
+checked as XML by xtask's tests and the Rust is type-checked only. The authoring, the services, the
+ACLs and the test plan are in [installer\AGENTS.md](../installer/AGENTS.md).
+
+| | llama.cpp's MSI | The framework's MSI |
+| --- | --- | --- |
+| Holds | llama.cpp's executables and DLLs, the ggml backends, the GPU runtimes and OpenSSL, the read-only defaults | `pai-config.exe`, `pai.exe`, `pai-manager.exe`, `pai-bff.exe`, the benchmark method, the strings |
+| Version | The llama.cpp release | The framework version |
+| Installs to | `%ProgramFiles%\llama.cpp\` (choosable), registered in `HKLM\Software\llama.cpp` | `%ProgramFiles%\private-ai\` (choosable), registered in `HKLM\Software\private-ai` |
+| Machine data | `%ProgramData%\llama.cpp\{config,logs,models}` | `%ProgramData%\private-ai\config\` (`bff.ini`) |
+| Services | None; deletes the instance services on uninstall | `private-ai-manager`, `private-ai-bff` |
+| Options | None | PATH entry for `bin\`, Start Menu shortcut |
+
+**`xtask package [llama|framework]` checks WiX first, then stages, builds into `dist/` and validates
+each product** (default: both, llama.cpp's first). The check costs seconds, not a staging run: tool
+found, EULA accepted, extensions present (added when missing). Both need the llama.cpp clone on a
+release: the framework's MSI records that release as the oldest engine it installs over.
 
 - WiX resolves as `--wix <wix.exe>`, then the recorded `WixExe`, then PATH and the dotnet tools
   directory.
-- A non-pinned version gets a warning. WiX 6.0.2 builds the same `.wxs` without the v7 EULA.
-- `wix msi validate` runs the ICEs, with ICE61 suppressed.
+- A non-pinned version gets a warning. WiX 6.0.2 built the single MSI before the split without the
+  v7 EULA.
+- `wix msi validate` runs the ICEs on each, with ICE61 suppressed.
 - It refuses a package of 2 GiB or more, GitHub's asset limit.
-- On the 2.8 GB staging tree: a 1.16 GiB MSI in 2 to 3.5 minutes of `wix build`, plus about 40 s of
-  validation.
+- Measured on the single MSI before the split, not repeated: on the 2.8 GB staging tree, a 1.16 GiB
+  MSI in 2 to 3.5 minutes of `wix build`, plus about 40 s of validation. Nearly all of it is
+  llama.cpp's MSI's now.
 
-**Staging** uses `cmake --install`, then removes `test*.exe` and `include\`, which never shipped.
-Filtering happens in staging and not in the `.wxs`, so what is staged is exactly what ships. The
-`.wxs` harvests `bin\`, `lib\`, `share\` and `.kpack\` whole, but for `pai-manager.exe` and `pai-bff.exe`,
-each the key path of the component that installs its service. `pai-config.exe`, `pai.exe`,
-`pai-manager.exe`, `pai-bff.exe` and `llama.ico` are staged into `bin\` too, from cargo's release output (`msi::CARGO_EXES`), so an administrative image (`msiexec /a`) compares 1:1 with the staging
-tree. A missing icon is regenerated here.
+**Staging** puts each product in its own tree, `build\windows\staging\llama\` and
+`staging\framework\`, which is exactly what its MSI installs, so an administrative image (`msiexec
+/a`) compares 1:1 with it. llama.cpp's uses `cmake --install`, then removes `test*.exe` and
+`include\`, which never shipped, and writes the defaults into `share\defaults\`. The framework's gets
+`pai-config.exe`, `pai.exe`, `pai-manager.exe` and `pai-bff.exe` from cargo's release output
+(`msi::CARGO_EXES`) and `share\benchmarks\` and `share\strings\`. Both get `llama.ico` in `bin\`, and
+a missing icon is regenerated here. Filtering happens in staging and not in the `.wxs`, which harvests
+each tree whole, but for `pai-manager.exe` and `pai-bff.exe`, each the key path of the component that
+installs its service.
 
-| Bundled into `bin\` | How |
+| Bundled into llama.cpp's `bin\` | How |
 | --- | --- |
 | OpenSSL `libcrypto-N-x64.dll`, `libssl-N-x64.dll` | Names scanned from every staged binary, copied from `OpenSSLDir\bin` |
 | GPU runtimes | Import closure, restricted to the ROCm dist's `bin\`, the CUDA dist's `bin\x64` or `bin`, the Vulkan SDK's `Bin\`, and its `Runtime\` for `vulkan-1.dll` |
@@ -131,36 +153,57 @@ not bundled, and an SDK already installed gets it on the next run. Staging copie
 the import closure, and its licence is the vendored Apache 2.0 of the loader's own code, the same
 `vulkan-loader.txt` Linux's `libvulkan.so.1` carries.
 
-**The MSI shows a licence page** (WixUI `LicenseAgreementDlg`, with the accept checkbox) between the
-welcome page and `CustomizeDlg`. `xtask package` writes its text to `build\windows\license.rtf`
-(not installed): which text covers what, the MIT licence, and NVIDIA's terms in full. A silent or
-basic-UI install does not show it.
+**Each MSI shows a licence page** (WixUI `LicenseAgreementDlg`, with the accept checkbox) between the
+welcome page and `CustomizeDlg`. `xtask package` writes its text beside the product's staging tree
+(`build\windows\staging\<product>.license.rtf`, not installed): which text covers what, the MIT
+licence, and, in llama.cpp's, NVIDIA's terms in full. A silent or basic-UI install does not show it.
 
-**The MSI installs the `private-ai-manager` service and the machine data tree.** The service is
-`pai-manager.exe serve` as LocalSystem, started at boot and restarted after a failure; it runs each
-instance as its own service, `llama.cpp_<id>`, under the virtual account `NT SERVICE\llama.cpp_<id>`
-(created with the manual start type; automatic once the configurator's "start llama-server when the
-system starts" is on, and the SCM then starts it at boot: the manager starts none itself), and serves the configurator over `\\.\pipe\private-ai-manager`. `%ProgramData%\private-ai\` holds
-`config\` (the instances' server and preset files, which users reach only through the manager),
-`logs\` (each instance's `llama-server@<id>.log`) and `models\`, each folder with a protected DACL,
-and outlives an uninstall. A removal, a repair or the old half of an upgrade runs
-`pai-manager uninstall-services` to delete the instances' services, which the manager creates at run
-time and Windows Installer does not know; the new manager recreates them. The `.wxs` is checked by xtask's tests, the Windows
-code type-checked only: none of it has run on Windows yet. Service, pipe, ACLs and the test steps:
-[installer\AGENTS.md](../installer/AGENTS.md).
+**The framework's MSI refuses to install without llama.cpp at the release it was built against or
+newer.** Windows Installer conditions compare no versions, so it finds the engine by llama.cpp's
+UpgradeCode with a minimum version and fails a launch condition without it. Each MSI upgrades on its
+own (`MajorUpgrade`, same-version repackages allowed, downgrades refused): a newer llama.cpp needs no
+framework rebuild.
 
-**The MSI installs the web service `private-ai-bff`:** `pai-bff.exe service`, started at boot, as the
-virtual account `NT SERVICE\private-ai-bff`, restarted 5 s after a failure. The SCM stops it before its
-files are replaced or removed and deletes it on uninstall; the process stopper leaves it alone. It
-reads `config\bff.ini` through the read `NT SERVICE\ALL SERVICES` has on `config\`. Type-checked only,
-not yet run on Windows: the open checks are in [installer\AGENTS.md](../installer/AGENTS.md).
+**llama.cpp's MSI ships its defaults and copies them into `%ProgramData%\llama.cpp\config\` only
+when missing**, never over a file, on install, repair and upgrade alike, and leaves them on uninstall
+(`NeverOverwrite`, `Permanent`). They are `crates/core/defaults/windows/`: a `server@default.ini`
+holding only `[Server]` `Port = 9931` and `Hostname = localhost`, and an empty `presets.ini`. As on
+Linux the manager reads the server file with pai's defaults for every other key and rewrites it in
+pai's template at its first write. The instance `default` therefore exists from the engine's install.
 
-**An upgrade from release 2.4 is a `MajorUpgrade`:** `private-ai-framework.wxs` keeps the UpgradeCode
-of `llama-cpp-framework.wxs`, so it removes the old product first. A directory chosen in 2.4, read from
-the old `HKLM\Software\llama.cpp` key, is kept; the old default `Program Files\llama.cpp\` moves to
-`Program Files\private-ai\`. The guard against a non-MSI install checks the old and the new Apps entry,
-and `StopProcesses` stops a 2.4 `llama-cpp-config.exe` too, which it also asks for the graceful stop when
-the install has neither `pai.exe` nor `pai-config.exe`. Details and the test step:
+**The framework's MSI installs the `private-ai-manager` service.** It is `pai-manager.exe serve` as
+LocalSystem, started at boot and restarted after a failure; it runs each instance as its own
+service, `llama.cpp_<id>`, under the virtual account `NT SERVICE\llama.cpp_<id>` (created with the
+manual start type; automatic once the configurator's "start llama-server when the system starts" is
+on, and the SCM then starts it at boot: the manager starts none itself), and serves the configurator
+over `\\.\pipe\private-ai-manager`. The instance runs the llama-server of llama.cpp's install, found
+through `HKLM\Software\llama.cpp` `InstallDir` (a tree build's own wins). `%ProgramData%\llama.cpp\`
+holds `config\` (the instances' server and preset files, which users reach only through the
+manager), `logs\` (each instance's `llama-server@<id>.log`) and `models\`, each folder with a protected
+DACL. A removal, a repair or the old half of an upgrade of the framework runs `pai-manager
+uninstall-services` to delete the instances' services, which the manager creates at run time and
+Windows Installer does not know; the new manager recreates them.
+
+**The framework's MSI installs the web service `private-ai-bff`:** `pai-bff.exe service`, started at
+boot, as the virtual account `NT SERVICE\private-ai-bff`, restarted 5 s after a failure. The SCM stops
+it before its files are replaced or removed and deletes it on uninstall; the process stopper leaves
+it alone. It reads `%ProgramData%\private-ai\config\bff.ini` through the read `NT SERVICE\ALL
+SERVICES` has on that folder.
+
+**Uninstalling llama.cpp's MSI deletes the instance services and asks about its configuration.** A
+script deletes every `llama.cpp_*` service on an uninstall, not on an upgrade; the engine does not
+require the framework, so the framework's manager may be absent. The removal page offers to delete
+`%ProgramData%\llama.cpp\` with a checkbox, cleared by default; a silent or basic-UI uninstall, and
+every upgrade, keeps it. llama.cpp's MSI stops no running instance before an upgrade or repair
+replaces its files: open, `PLAN.md` step 11.
+
+**Release 2.4 is removed by llama.cpp's MSI:** 2.4 (`llama-cpp-framework`, the framework's
+UpgradeCode) installed into `Program Files\llama.cpp\` and registered `HKLM\Software\llama.cpp`, both
+the engine's now, so llama.cpp's MSI removes a framework install below 2.99.0 first. The framework's
+MSI no longer carries over a 2.4 install folder: it installs into `Program Files\private-ai\` unless a
+2.99+ install recorded another. Its guard against a non-MSI install checks the `Uninstall\llama.cpp`
+and `Uninstall\private-ai` entries, which llama.cpp's MSI-written entry passes, and `StopProcesses`
+reads only `HKLM\Software\private-ai`. Details and the test step:
 [installer\AGENTS.md](../installer/AGENTS.md).
 
 **System libraries stay external:** the VC++ redist x64 (`libomp140.x86_64.dll` included) and the
@@ -448,15 +491,16 @@ includes that package's `share/licenses/<package>/README.txt` and points to the 
 ## Install
 
 **`xtask install` covers first install, upgrade, same-version reinstall and downgrade with one
-command.** On Windows it takes the last-written MSI of this architecture in `dist/`, or the file given. On
+command.** On Windows it takes the last-written MSI of llama.cpp in `dist/`, then the last-written
+of the framework (only those there), or the one file given. On
 Linux and macOS it takes the last-written file of each package, or only the files given: that is how to
 leave out the runtime of a GPU the machine does not have. `--dry-run` prints the commands.
 
 | | Windows | Linux | macOS |
 | --- | --- | --- | --- |
-| Command | `msiexec /i <msi> /qb /norestart /l*v <log>` | Package manager, see below | `sudo installer -pkg <pkg> -target /`, per package |
+| Command | `msiexec /i <msi> /qb /norestart /l*v <log>`, per MSI, llama.cpp's first | Package manager, see below | `sudo installer -pkg <pkg> -target /`, per package |
 | Downgrade | Removes the installed version first: `msiexec /x {ProductCode} /qb` | Package manager's own | Laid down over it |
-| Running programs | The MSI's `StopProcesses` action stops them | A llama-server outside the services is refused (`--force` overrides) | Refused (`--force` overrides) |
+| Running programs | The framework's `StopProcesses` action stops them; llama.cpp's MSI stops none | A llama-server outside the services is refused (`--force` overrides) | Refused (`--force` overrides) |
 | Success check | `DisplayVersion` matches the package | `pai-config --version`, when `config` is among the files | `pai-config --version`, when `config` is among the files |
 
 **Windows.**
@@ -465,11 +509,16 @@ leave out the runtime of a GPU the machine does not have. `--dry-run` prints the
   elevates from an unelevated shell.
 - All features go to the `InstallDir` an earlier install recorded, or the default. For another
   choice, run the `.msi` itself.
-- An upgrade and a same-version repackage are the MSI's own `MajorUpgrade`.
-- The MSI refuses a downgrade, hence the removal first. The ProductCode comes from the Apps entry's
-  `UninstallString`, and basic UI keeps the user data.
-- Success reads `DisplayVersion` of `HKLM\...\Uninstall\private-ai`. Exit 3010 (restart required)
-  counts as success with a warning.
+- An upgrade and a same-version repackage are each MSI's own `MajorUpgrade`.
+- Each MSI refuses a downgrade, hence the removal of that product first. The ProductCode comes from
+  its Apps entry's `UninstallString`, and basic UI keeps the user data and `%ProgramData%\llama.cpp\`.
+  An engine downgrade is a real uninstall of the newer engine, so it deletes the instance services
+  until the manager's next start (`PLAN.md` step 11).
+- Success reads `DisplayVersion` of the product's Apps entry, `HKLM\...\Uninstall\llama.cpp` or
+  `Uninstall\private-ai`. Exit 3010 (restart required) counts as success with a warning.
+- The logs are `build\windows\msi-install-<product>.log` and `msi-uninstall-<product>.log`
+  (`llama.cpp`, `private-ai-framework`).
+- None of this has run on Windows since the split: type-checked only.
 
 **Linux.**
 

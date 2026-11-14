@@ -414,7 +414,14 @@ Decided with the user on 2026-11-14:
   (`installer/AGENTS.md` and its test plan describe one MSI), the real build and test on Windows,
   stopping and restarting running instances around an engine upgrade or repair, an engine downgrade
   through `xtask install` deleting the instance services until the manager's next start, `xtask
-  install <file>...` taking one engine and one framework file on Windows, and the release assets.) Folders (user, 2026-11-14): the program in `%ProgramFiles%\llama.cpp\` (with the
+  install <file>...` taking one engine and one framework file on Windows, and the release assets.
+  Found by the docs agent after 3b: the Windows default ModelsDir is still `~\.llama.cpp`
+  (`server_cfg::default_models_dir`) for the LocalSystem manager, not `%ProgramData%\llama.cpp\models`
+  (`paths::instance_models_dir`), and StateDir likewise; llama.cpp's MSI has no guard against a non-MSI
+  `Uninstall\llama.cpp` entry, and reads 2.4's `Software\llama.cpp\InstallDir` before removing 2.4, so it
+  takes a 2.4-chosen folder; `msi-stop-processes.ps1` stops llama-server only under the framework's
+  `bin\`, not the engine's; stale: `crates/app/src/server_version.rs` names `LlamaBuild`, and
+  `00-install-prerequisites.ps1` treats the framework's `bin\` as a holder of `amdhip64*.dll`.) Folders (user, 2026-11-14): the program in `%ProgramFiles%\llama.cpp\` (with the
   read-only defaults); everything of the engine's instances under `%ProgramData%\llama.cpp\`:
   `config\` (`server@<id>.ini`, `presets.ini`, `presets.ini.disabled`; `paths::engine_config_dir()`),
   `logs\` (`llama-server@<id>.log` and its `.previous.log`) and `models\` (the default `ModelsDir`);
