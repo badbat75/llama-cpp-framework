@@ -411,15 +411,18 @@ Decided with the user on 2026-11-14:
   require `llama.cpp (>= 1:<release built against>)`; a newer llama.cpp installs without a framework
   rebuild. Package files: `private-ai-framework-<component>-v<version>-<arch>`, and
   `llama.cpp-v<release>+pai<N>-<arch>` for the engine (and its runtimes by SDK version).
-- **Windows: one MSI with two features** (the framework, llama.cpp with its runtimes), named by the
-  framework's version only: `private-ai-framework-v<version>-x64.msi`.
-  As on Linux (user, 2026-11-14), llama.cpp is its own on Windows too: **its own install folder**
-  (beside the framework's, e.g. `%ProgramFiles%\llama.cpp\`, not inside `bin\` of the framework), **its
-  own service** (the instance services `llama.cpp_<id>` belong to the llama.cpp feature, created and
-  removed with it) and **its own default configuration** (`server@default.ini` and an empty
-  `presets.ini`, installed read-only with the feature and copied into the engine's configuration folder,
-  e.g. `%ProgramData%\llama.cpp\`, only when missing; `paths::engine_config_dir()` follows on
-  Windows). The exact folders, and where the instance logs and models go, are settled in slice 3.
+- **Windows: two installers** (user, 2026-11-14, replacing "one MSI with two features"): the
+  framework's MSI, named by the framework's version only (`private-ai-framework-v<version>-x64.msi`),
+  and **llama.cpp's own MSI** with its runtimes (`llama.cpp-v<release>+pai<N>-x64.msi` or the like),
+  each with its own UpgradeCode, upgraded on its own. The framework's MSI refuses to install without
+  llama.cpp at the minimum version it was built against (a launch condition over the engine's
+  registration). llama.cpp's MSI has **its own install folder** (e.g. `%ProgramFiles%\llama.cpp\`),
+  **owns the instance services** `llama.cpp_<id>` and ships **its own default configuration**
+  (`server@default.ini`, an empty `presets.ini`, read-only, copied into the engine's configuration
+  folder, e.g. `%ProgramData%\llama.cpp\`, only when missing; `paths::engine_config_dir()` follows on
+  Windows). To settle in slice 3: the exact folders, where the instance logs and models go, how
+  `<release>+pai<N>` maps onto an MSI ProductVersion (three numeric fields), and the release assets
+  (two installers per release).
 - **macOS:** the same split of the `.pkg` (an engine `.pkg` beside the framework's).
 - **The build is split too:** the engine and the framework are separate builds, so either can be
   rebuilt alone. The framework still reads the engine's source at build time (`pai-app`'s architecture
@@ -444,12 +447,12 @@ running instances on the old llama-server; settled by the engine owning its unit
 
 Slices, each test first: **1** (done) the Linux split (`core`, the engine and its runtimes,
 versions, relations, file names; a non-release llama.cpp build is refused; the runtimes' copyright
-files and the engine's homepage are llama.cpp's); **2** (stop of the services done: see the commit) the packages stop the services they hold (the engine its instances, with its unit), and the build split in xtask (open); **2b** the engine's configuration in `/etc/llama.cpp/` with its defaults copied when missing; **3** the MSI's two features and its name;
+files and the engine's homepage are llama.cpp's); **2** (stop of the services done: see the commit) the packages stop the services they hold (the engine its instances, with its unit), and the build split in xtask (open); **2b** the engine's configuration in `/etc/llama.cpp/` with its defaults copied when missing; **3** the two Windows installers (the framework's and llama.cpp's);
 **4** the macOS `.pkg`; **5** docs and the release process.
 
 - Done when: `xtask package` on Linux makes the framework packages at `2.99.1` requiring `llama.cpp (>=
   1:1.0.0)` and the engine package at `1:1.0.0+pai1`; the engine or the framework can be rebuilt alone;
-  the MSI and the `.pkg` follow the same split; the docs describe it.
+  the two Windows installers and the `.pkg` follow the same split; the docs describe it.
 
 ### 4. Decide whether to bring back patches 0002 to 0004
 
