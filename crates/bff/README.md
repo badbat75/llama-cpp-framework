@@ -2,11 +2,23 @@
 
 `pai-bff` (package and binary `pai-bff`, over `pai-core`) is the backend-for-frontend: one local
 HTTP service that serves the web UI built from `fe/` and the API it calls. Today it answers the
-framework version and serves a page that shows it (`PLAN.md` step 10, slices 1 and 2).
+framework version and serves a page that shows it (`PLAN.md` step 10).
 
-**Not packaged yet.** `xtask build` compiles it into `build/<os>/cargo-target/release/`, but no
-package or MSI ships it and no service unit starts it: that is slice 3, which also adds a graceful
-stop. Until then it runs in the foreground until killed.
+**It runs as a service on Linux and Windows, never on macOS.** `xtask build` compiles it into
+`build/<os>/cargo-target/release/`; the packaging is in
+[docs/build-packaging.md](../../docs/build-packaging.md).
+
+- Linux: the package `private-ai-framework-bff` puts it in `/usr/libexec/private-ai/pai-bff` with
+  `private-ai-bff.service` (`DynamicUser=yes`, hardened), enabled and started at install, restarted
+  on upgrade, stopped on removal.
+- Windows: the MSI installs the service `private-ai-bff` (`pai-bff.exe service`, automatic start,
+  `NT SERVICE\private-ai-bff`, restarted after a failure). Its `Error:` line goes nowhere there: by
+  the code, a bad `bff.ini` or a bind failure shows only in the service manager's state and exit code.
+  Type-checked only, not yet run on Windows; the open checks are in the test plan of
+  [installer/AGENTS.md](../../installer/AGENTS.md).
+
+**It stops gracefully on SIGTERM (how systemd stops it) and Ctrl-C**: it stops accepting, lets the
+open requests finish and exits 0. Under the Windows service manager the stop control does the same.
 
 ## Running it
 
@@ -25,12 +37,14 @@ Listen = 127.0.0.1:8590
 
 | Exit code | When |
 | --- | --- |
-| 0 | `pai-bff --version`, which prints `pai-bff <version>` |
-| 2 | Any other argument (usage error) |
-| 1 | A refused `Listen` value, an unreadable `bff.ini`, a bind failure or a serving error |
+| 0 | `pai-bff --version`, which prints `pai-bff <version>`; a stop by SIGTERM, Ctrl-C or the service manager |
+| 2 | Any other argument, or anything after `service` (usage error) |
+| 1 | A refused `Listen` value, an unreadable `bff.ini`, a bind failure or a serving error; `pai-bff service` outside the Windows service manager |
 
 Every failure prints one `Error: ...` line on stderr naming the value, the file or the address. The
-texts are the `bff-*` keys of `crates/core/strings/cli.toml`. It serves on a current-thread tokio
+texts are the `bff-*` keys of `crates/core/strings/cli.toml`, found by the installed program in
+`/usr/share/private-ai/strings/` on Linux (`paths::installed_share_candidates`). `pai-bff service`
+hands the process to the Windows service dispatcher, which runs the same server. It serves on a current-thread tokio
 runtime (axum).
 
 | Route | Answer |
@@ -67,6 +81,6 @@ message on any failure, never the reply's body.
 `cargo test -p pai-bff` needs no node: without `fe/dist` it embeds the fixture
 `crates/bff/fe-fixture/`. `tests/fe.rs` checks that the routes serve, byte for byte, the directory
 the build embedded (`PAI_BFF_FE_DIR`); `tests/pai_bff_binary.rs` runs the binary with
-`PRIVATE_AI_DATA_ROOT` on the child and an ephemeral port; `src/tests/deps_lint.rs` keeps the GUI
+`PRIVATE_AI_DATA_ROOT` on the child and an ephemeral port, SIGTERM and SIGINT included; `src/tests/deps_lint.rs` keeps the GUI
 packages (Slint) out of its dependency tree. It is in the Windows GNU type check ("Commands" in
 [AGENTS.md](../../AGENTS.md#commands)); nothing of it has run on Windows.

@@ -1,7 +1,7 @@
 ---
 title: Build prerequisites
 type: reference
-updated: 2026-11-13
+updated: 2026-11-14
 ---
 
 # Build prerequisites
@@ -94,6 +94,11 @@ checksum, so only HTTPS and the expected size vouch for it.
 
 ## Prerequisites
 
+**node and npm are required on every OS**: `xtask configure` counts a missing one as a gap and fails,
+and `xtask build` builds the [web UI](build-compiling.md#the-web-ui-and-pai-bff) with them. The
+bootstrap installs them (winget's Node.js LTS on Windows, apt's `nodejs npm` on Linux, Homebrew's
+`node` on macOS).
+
 **The bootstrap is idempotent, and every GPU dist converges to the newest stable release its vendor
 publishes.** `installer/dist-sources.*` says where each is looked up and holds no versions. A source
 that cannot be reached keeps what is installed and the report says so. Nothing is downgraded or
@@ -138,7 +143,7 @@ so it works on a fresh machine before `xtask configure` has run.
 
 | Item | How it is installed | Scope |
 | --- | --- | --- |
-| PowerShell 7, OpenSSL, .NET SDK 10 | winget, installed or upgraded, plus links for OpenSSL's `lib\VC\x64\MD\*.lib` into `lib\` | Elevated |
+| PowerShell 7, OpenSSL, .NET SDK 10, Node.js LTS (with npm) | winget, installed or upgraded, plus links for OpenSSL's `lib\VC\x64\MD\*.lib` into `lib\` | Elevated |
 | ROCm | Extracted to `<DistRoot>\TheRock\<version>\windows` from `.downloads`; a partial download resumes | Elevated |
 | CUDA Toolkit | Redist archives in `<DistRoot>\CUDA\.downloads\<X.Y.Z>`; a re-run reuses finished downloads | Elevated |
 | Vulkan SDK | LunarG's installer, headless, into `<DistRoot>\VulkanSDK\<version>\windows`; then the loader copied from System32, where the SDK's `Helpers\VulkanRT.exe` leaves it, into its `Runtime\`, also for an SDK already installed | Elevated |
@@ -255,7 +260,7 @@ missing, and without a terminal `sudo -n` fails in one line instead of hanging. 
 | `git cmake ninja-build make pkg-config curl jq xz-utils ca-certificates` | The build and the downloads |
 | `g++` | clang takes libstdc++, the start files and libgcc from the distro GCC, and nvcc drives g++ as its host compiler |
 | `libssl-dev` | HTTPS in llama-server |
-| `nodejs npm` | The chat UI llama-server embeds |
+| `nodejs npm` | The web UI in `fe/` and the chat UI llama-server embeds |
 | `unzip` | The NCCL wheel |
 | `libfontconfig-dev` | The configurator's Skia renderer |
 | `patchelf dpkg-dev rpm` | `xtask package`: the RUNPATH rewrite, the `Depends` computation and `rpmbuild` |

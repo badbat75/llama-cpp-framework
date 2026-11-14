@@ -68,6 +68,10 @@ Lessons only: the rules are in `AGENTS.md`.
   step 1's version list, the Map, `.opencode/agents/coordinator.md` (`cargo clean -p`), `coder.md` (GNU
   list), the source map's workspace row (`the six pai-* crates`), the README tree and command table,
   and `PLAN.md` W15 (the coordinator's: report it). The coder's GNU list lagged one crate already once.
-- `xtask` messages can lag the build: `xtask configure` on Linux and macOS still calls node and npm
-  optional, while `xtask build config` stops without npm (the `fe/` build). Check the phase that needs a
-  tool, not the one that reports it. Vitest runs as `npm --prefix fe test` (seconds, no network).
+- `xtask` messages can lag the build: check the phase that needs a tool, not the one that reports it.
+  Whether `xtask configure` fails on a tool is `rows.miss` (a gap, fails) against `rows.opt` (a warning)
+  in `xtask/src/<os>/configure.rs`. Vitest runs as `npm --prefix fe test` (seconds, no network).
+- `components.rs` splits Linux and macOS alike: when a file changes package, fix the path tables of
+  `build-packaging.md` AND `build-macos.md`, and the README's package table. A Windows service's open
+  behaviour (what the SCM shows on a failed start) goes in `installer/AGENTS.md`'s open checks, phrased
+  "by the code".

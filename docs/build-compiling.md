@@ -39,13 +39,12 @@ then a system clang, then GCC.
 
 **Required tools.**
 
-- Windows: `cmake`, `ninja`, `clang`, `git`, `VsDevShell` and OpenSSL. Tools are detected in the VS
-  environment, and fall back to `HipPath\bin` and `HipPath\lib\llvm\bin`.
-- Linux: `git`, `cmake`, `ninja`, `g++` and `cargo`.
-- macOS: Apple's `clang`, `git`, `cmake`, `ninja` and `cargo`.
-- Missing `node` or `npm` on Linux and macOS is only a warning here, since the chat UI then falls
-  back to the prebuilt download. `xtask build config` still stops without npm, on every OS: it builds
-  the [web UI](#the-web-ui-and-pai-bff) and generates a missing `resources/llama.ico` with it.
+- Windows: `cmake`, `ninja`, `clang`, `git`, `node`, `npm`, `VsDevShell` and OpenSSL. Tools are
+  detected in the VS environment, and fall back to `HipPath\bin` and `HipPath\lib\llvm\bin`.
+- Linux: `git`, `cmake`, `ninja`, `g++`, `node`, `npm` and `cargo`.
+- macOS: Apple's `clang`, `git`, `cmake`, `ninja`, `node`, `npm` and `cargo`.
+- `node` and `npm` are required because `xtask build config` builds the
+  [web UI](#the-web-ui-and-pai-bff) and generates a missing `resources/llama.ico` with them.
 
 **WiX is checked but never a gap.** `WixExe` is `wix.exe` on PATH, else
 `%USERPROFILE%\.dotnet\tools`. A missing or off-pin version is a warning, because only
@@ -406,8 +405,8 @@ OS.** It runs `npm ci` (a clean install from the committed `package-lock.json`, 
 lock and `package.json` disagree) and `npm run build` (`tsc -b && vite build`, into `fe/dist`), then
 builds `pai-bff` with the other programs and sets `PRIVATE_AI_FE_DIST=<repo>/fe/dist`. A failed web
 build stops the build, and a built `pai-bff` never holds the test fixture. `pai-bff` stays in
-`cargo-target/release/`: it is not copied beside the server and not packaged yet (`PLAN.md` step
-10). What it serves is in [crates/bff/README.md](../crates/bff/README.md).
+`cargo-target/release/`, not copied beside the server: `xtask package` takes it from there
+([Packaging](build-packaging.md)). What it serves is in [crates/bff/README.md](../crates/bff/README.md).
 
 **`crates/bff/build.rs` compiles one directory into the binary**, as a table of path, bytes and
 content type, and fails when that directory holds no `index.html`:

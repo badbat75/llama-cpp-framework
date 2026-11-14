@@ -83,7 +83,7 @@ each with `installer`, or only the files given. Without the `vulkan` package ggm
 | `/opt/private-ai/bin/` | `llama`; `pai-config` in `config`, `pai` in `cli` | The build's `bin/` without `test-*`, `pai-config` and `pai` beside the server |
 | `/opt/private-ai/lib/` | `vulkan` | The Vulkan loader and MoltenVK |
 | `/opt/private-ai/share/benchmarks/` | `cli` | The benchmark method |
-| `/opt/private-ai/share/strings/` | `config`; `cli.toml` in `cli` | The configurator's text: the GUI's `en_US.toml`, the CLI's `cli.toml` |
+| `/opt/private-ai/share/strings/` | `config`; `cli.toml` in `llama` | The GUI's `en_US.toml`, and `cli.toml`, the text `pai` prints (so `pai` needs the `llama` package) |
 | `/opt/private-ai/share/licenses/<suffix>/` | Each its own | The licence texts, with the MoltenVK and Vulkan loader ones in `vulkan/`; see [Packaging](build-packaging.md#packaging) |
 | `/usr/local/bin/` | `llama`; `pai-config` in `config`, `pai` in `cli` | A symlink per executable |
 | `/usr/local/share/vulkan/icd.d/private-ai-framework-MoltenVK_icd.json` | `vulkan` | The driver manifest, with an absolute `library_path` into `/opt/private-ai/lib` |
