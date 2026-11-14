@@ -126,3 +126,9 @@ Lessons only: the rules are in `AGENTS.md`.
   list and `icacls` step, and reread the removal dialog's text in `llama.cpp.wxs` (it names what
   `DeleteEngineData` deletes, and lagged `state\`). "Text-checked" there means xtask's tests read
   the `.wxs` and evaluate its conditions (`msi/tests/engine_lifecycle.rs`), never a WiX compile.
+- Windows-style paths written through a Python script need a raw string: `"docs\build-macos.md"` puts a
+  backspace byte in the file (one sat in `AGENTS.md` as `docs\x08uild-macos.md`). `grep -c $'\x08'`
+  the files after such an edit.
+- `xtask install` takes no product on any OS (only files); `package` and `build` do. On macOS a
+  non-release llama.cpp clone is named `b<N>`, and `components::is_file_of` wants a digit after `-v`,
+  so `llama.cpp-vb<N>-arm64.pkg` is not picked from `dist/` by `install`.

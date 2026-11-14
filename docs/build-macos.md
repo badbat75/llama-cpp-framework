@@ -60,53 +60,75 @@ directory, loader and `glslc` are
 tree's binaries find the SDK's loader through their build RPATH. A changed compiler path wipes the build directory, since a
 new Xcode can move it.
 
-**Package.** `pkgbuild` writes four `.pkg` files from one staged tree, split by path as
-[on Linux](build-packaging.md#packaging). It refuses to run without `llama-server`, `pai-config` and `pai`
-in the build's `bin/` (`xtask build framework` copies the last two there), and refuses a built
-`pai-config` whose version differs from the root `Cargo.toml`'s. It takes no product: `xtask package
-llama` or `framework` is refused on macOS, which builds every `.pkg` at once. `xtask build llama` and
-`build framework` work as on Linux.
+**Package.** Type-checked only: `xtask package` and `xtask install` on macOS have never run on a Mac,
+and no `pkgbuild` has run here; what follows is read from the code (`xtask/src/macos/package.rs`,
+`install.rs` and the pure `xtask/src/common/macos_pkg.rs`, whose tests run on Linux). As
+[on Linux](build-packaging.md#packaging), the engine is packaged apart from the framework, each in its
+own prefix: llama.cpp in `/opt/llama.cpp` with its Vulkan runtime, the framework in `/opt/private-ai`.
+`pkgbuild` writes five `.pkg` files into `dist/`, split by path by `components.rs`:
 
-**The macOS split of the engine from the framework is step 11 slice 4 in `PLAN.md`, not done.** The
-table below is the `.pkg` set before step 11. `components.rs` and `components::file_stem`, which macOS
-shares with Linux, already changed with the Linux split: read from the code, and not built on a Mac,
-`xtask package` would now also write a `core` package holding `cli.toml`, and name the engine's file
-`llama.cpp-v<framework>-arm64.pkg`, the Vulkan one `llama.cpp-vulkan-v<sdk>-arm64.pkg` and the
-framework's without the llama.cpp tag. Slice 4 settles it.
+| Package | File | Identifier | Version |
+| --- | --- | --- | --- |
+| The engine | `llama.cpp-v<release>-arm64.pkg` | `org.privateai.llama.cpp` | The llama.cpp release |
+| Its Vulkan runtime | `llama.cpp-vulkan-v<sdk>-arm64.pkg` | `org.privateai.llama.cpp.vulkan` | The SDK's, or the framework's for an SDK outside the layout |
+| `config` (the GUI) | `private-ai-framework-config-v<framework>-arm64.pkg` | `org.privateai.framework.config` | The framework's |
+| `cli` (`pai`) | `private-ai-framework-cli-v<framework>-arm64.pkg` | `org.privateai.framework.cli` | The framework's |
+| `core` | `private-ai-framework-core-v<framework>-arm64.pkg` | `org.privateai.framework.core` | The framework's |
 
-| Package | File | Identifier ends in |
-| --- | --- | --- |
-| `config` | `private-ai-framework-config-v<framework>-<llama>-arm64.pkg` | `.config` |
-| `cli` | `private-ai-framework-cli-v<framework>-<llama>-arm64.pkg` | `.cli` |
-| `llama` | `private-ai-framework-llama-v<framework>-<llama>-arm64.pkg` | `.llama` |
-| `vulkan` | `private-ai-framework-vulkan-v<sdk>-arm64.pkg` | `.vulkan` |
+For example `llama.cpp-v1.0.0-arm64.pkg` and `private-ai-framework-cli-v2.99.1-arm64.pkg` (the
+`macos_pkg` tests). The engine's file has no `+pai<N>`: no system package shares its name. macOS has no
+manager and no web service, so no `bff` package, and `core` holds only `cli.toml`.
 
-The identifier starts with `org.privateai.framework`. Release 2.4's packages had other names and identifiers, and nothing in `xtask` removes a 2.4 install under `/opt/llama.cpp`. `config`, `cli` and `llama` carry the framework's
-version, and `vulkan` the SDK's, or the framework's for an SDK outside the layout.
-
-**A `.pkg` has no dependency mechanism, so nothing ties the four together.** `xtask install` lays down the newest of
-each with `installer`, or only the files given. Without the `vulkan` package ggml skips that backend and Metal runs.
+`xtask package llama` or `framework` builds one product's packages and leaves the other's files in
+`dist/`, as `xtask build llama` and `build framework` build one. The engine needs `llama-server` in the
+build's `bin/`; the framework needs `pai-config` and `pai` there (`xtask build framework` copies them)
+and refuses a built `pai-config` whose version differs from the root `Cargo.toml`'s. Unlike Linux and
+Windows, macOS does not refuse a clone off a release tag: it names it `b<N>`
+([Packaging](build-packaging.md#packaging)), and the engine's file is then `llama.cpp-vb<N>-arm64.pkg`,
+which `xtask install` does not pick from `dist/` by the code (its version must start with a digit):
+name the file.
 
 | Path | Package | Holds |
 | --- | --- | --- |
-| `/opt/private-ai/bin/` | `llama`; `pai-config` in `config`, `pai` in `cli` | The build's `bin/` without `test-*`, `pai-config` and `pai` beside the server |
-| `/opt/private-ai/lib/` | `vulkan` | The Vulkan loader and MoltenVK |
+| `/opt/llama.cpp/bin/` | The engine | llama.cpp's executables, libraries and backends, without `test-*` |
+| `/opt/llama.cpp/lib/` | Vulkan | The Vulkan loader and MoltenVK (`libMoltenVK.dylib`) |
+| `/opt/llama.cpp/share/licenses/llama/`, `vulkan/` | Each its own | The licence texts, with the MoltenVK and Vulkan loader ones in `vulkan/`; see [Packaging](build-packaging.md#packaging) |
+| `/usr/local/share/vulkan/icd.d/llama.cpp-MoltenVK_icd.json` | Vulkan | The driver manifest, with an absolute `library_path` to `/opt/llama.cpp/lib/libMoltenVK.dylib` |
+| `/opt/private-ai/bin/` | `pai-config` in `config`, `pai` in `cli` | The framework's two executables |
 | `/opt/private-ai/share/benchmarks/` | `cli` | The benchmark method |
-| `/opt/private-ai/share/strings/` | `config`; `cli.toml` in `llama` | The GUI's `en_US.toml`, and `cli.toml`, the text `pai` prints (so `pai` needs the `llama` package) |
-| `/opt/private-ai/share/licenses/<suffix>/` | Each its own | The licence texts, with the MoltenVK and Vulkan loader ones in `vulkan/`; see [Packaging](build-packaging.md#packaging) |
-| `/usr/local/bin/` | `llama`; `pai-config` in `config`, `pai` in `cli` | A symlink per executable |
-| `/usr/local/share/vulkan/icd.d/private-ai-framework-MoltenVK_icd.json` | `vulkan` | The driver manifest, with an absolute `library_path` into `/opt/private-ai/lib` |
+| `/opt/private-ai/share/strings/` | `config`; `cli.toml` in `core` | The GUI's `en_US.toml`, and `cli.toml`, the text `pai` prints (so `pai` needs `core`) |
+| `/opt/private-ai/share/licenses/<suffix>/` | Each its own | The licence texts |
+| `/usr/local/bin/` | Each its own executables' | A symlink per executable, into its own prefix |
 
-- The manifest goes there because the loader does not look next to itself. A system-wide Vulkan SDK
-  install adds its own MoltenVK manifest there too.
-- The bundled libraries are the `otool -L` closure of the staged files restricted to the SDK. Any
-  other non-system dependency, such as a Homebrew dylib, fails the phase.
+- `pai-config` and `pai` look for llama-server beside themselves and in the build trees first, then in
+  `/opt/llama.cpp/bin/` when that holds `llama-server` (`paths::engine_install_dir`, pinned on Linux
+  over a temporary root).
+- The manifest goes to `icd.d` because the loader does not look next to itself. A system-wide Vulkan
+  SDK install adds its own MoltenVK manifest there too.
+- The bundled libraries are the `otool -L` closure of the staged files restricted to the SDK, copied
+  into the engine's `lib/`. Any other non-system dependency, such as a Homebrew dylib, fails the
+  phase, and so does an SDK dependency of a framework file.
 - Every staged Mach-O loses its build rpaths and gets `@loader_path`, plus `@loader_path/../lib` in
-  `bin/`.
+  the engine's `bin/`.
 - Each then gets an ad hoc signature (`codesign --sign -`), because arm64 runs no unsigned or
   modified-and-unsigned code.
-- The package is unsigned and not notarized, so Gatekeeper blocks it when downloaded through a
+- The packages are unsigned and not notarized, so Gatekeeper blocks them when downloaded through a
   browser.
+
+**A `.pkg` has no dependency mechanism, so nothing ties the five together.** `xtask install` takes the
+newest of each in `dist/` with `installer`, or only the files given; it takes no product. It lays the
+engine's down first, then the framework's. It refuses while a program runs from `/opt/llama.cpp/bin/`
+or `/opt/private-ai/bin/` (`--force` goes ahead), and checks `pai-config --version` when `config` is
+among the files. Without the Vulkan package ggml skips that backend and Metal runs.
+
+**Open, by the code** (`PLAN.md` step 11):
+
+- A release 2.4 install is not removed. 2.4 installed everything into `/opt/llama.cpp` (its
+  `llama-cpp-config` included) under 2.4's own identifiers, with the
+  manifest `llama-cpp-framework-MoltenVK_icd.json`; the engine's `.pkg` lays down over that tree and
+  leaves 2.4's own files, receipts and manifest in place.
+- `paths::llama_bin_from` names `build/linux/` on every OS but Windows, so a `pai-config` built into
+  the repo root's `target/` looks for llama-server under `build/linux/`, not `build/macos/`.
 
 **The configurator** builds with its existing non-Linux, non-Windows fallbacks: start at login, GPU
 monitoring and similar are not ported. Its paths follow the Linux ones (`~/.local/share/private-ai`,

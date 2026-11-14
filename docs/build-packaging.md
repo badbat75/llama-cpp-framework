@@ -17,12 +17,12 @@ the packages down. The `.pkg` files are on [the macOS page](build-macos.md). The
 Windows that also means the VC++ runtime. Each OS stages into `build/<os>/staging/`, and the staged
 tree is the installed tree.
 
-**Windows ships two MSIs, Linux eight packages per format and macOS four, so a machine can leave out
+**Windows ships two MSIs, Linux eight packages per format and macOS five, so a machine can leave out
 the runtime of a GPU it does not have (Linux), and a headless server the GUI.** On Linux and Windows
 the engine, llama.cpp, is packaged apart from the framework, under its own name and version
 (`PLAN.md` step 11, R12): on Windows llama.cpp's own MSI holds the engine and all its GPU runtimes,
-and the framework's MSI requires it. The macOS `.pkg` files get the same split in a later slice of
-that step (4), and until then keep the layout on [the macOS page](build-macos.md). On Linux
+and the framework's MSI requires it. On macOS too (type-checked only, never run on a Mac) the engine and
+its Vulkan runtime install into `/opt/llama.cpp`, the framework into `/opt/private-ai`. On Linux and macOS
 `xtask/src/common/components.rs` splits the staged tree by path, so no file lands in two packages or
 in none; on Windows each product has its own staging tree. The engine's configuration follows: the
 instance files are in `/etc/llama.cpp/` on Linux and `%ProgramData%\llama.cpp\config\` on Windows,
@@ -35,7 +35,7 @@ and per user on macOS.
 | Linux | The framework: `config`, `cli`, `bff`, `core` | `private-ai-framework-<package>-v<framework>-amd64.deb`, `-x86_64.rpm` (`arm64`, `aarch64` on ARM) |
 | Linux | The engine, `llama.cpp` | `llama.cpp-v<release>+pai<N>-amd64.deb`, `-x86_64.rpm` (the same on ARM) |
 | Linux | Its runtimes, `llama.cpp-rocm`, `-cuda`, `-vulkan` | `llama.cpp-<sdk>-v<sdk version>-amd64.deb`, `-x86_64.rpm` (the same on ARM) |
-| macOS | `config`, `cli`, `llama`, `vulkan` | [The macOS page](build-macos.md) |
+| macOS | The engine `llama.cpp` and `llama.cpp-vulkan`; the framework's `config`, `cli`, `core` | `llama.cpp-v<release>-arm64.pkg`, `llama.cpp-vulkan-v<sdk version>-arm64.pkg`, `private-ai-framework-<package>-v<framework>-arm64.pkg`: [the macOS page](build-macos.md) |
 
 For example, `private-ai-framework-core-v2.99.1-amd64.deb`, `llama.cpp-v1.0.0+pai1-amd64.deb`,
 `llama.cpp-rocm-v10.1.0-amd64.deb`, `private-ai-framework-v2.99.1-x64.msi`, `llama.cpp-v1.0.0-x64.msi`. Release 2.4 and
@@ -59,9 +59,9 @@ macOS it is in the `cli` package.
 
 **Every OS ships the configurator's text read-only** in `share/strings/`: `en_US.toml`, the GUI's
 language file, and `cli.toml`, the text every program prints (`pai`, `pai-manager`, `pai-bff`).
-`strings_share.rs` stages every `*.toml` of `crates/core/strings/`; on Linux `cli.toml` is in the
-`core` package, which every other framework package requires, and the GUI's language files are in
-`config`. macOS: [its page](build-macos.md).
+`strings_share.rs` stages every `*.toml` of `crates/core/strings/`; on Linux and macOS `cli.toml` is in
+the `core` package (on Linux every other framework package requires it; a `.pkg` requires nothing),
+and the GUI's language files are in `config`.
 
 **llama.cpp's test harnesses are pruned on every OS.** On Linux every staged executable lands in
 `/usr/bin`, and on macOS each gets a command link, so shipping them would drop generically named
@@ -73,7 +73,7 @@ restricted to what resolves inside a dist. Everything else stays a system librar
 
 **Every package carries its licences.** Each MSI holds its own in `share\licenses\` beside `bin\`. On Linux
 each package holds its own `/usr/share/private-ai/licenses/<package>/`, and on macOS its own
-`/opt/private-ai/share/licenses/<package>/`, since no two packages can own one file (the directory is
+`share/licenses/<package>/` in its prefix (`/opt/llama.cpp` or `/opt/private-ai`), since no two packages can own one file (the directory is
 named by the component: `llama/` for the `llama.cpp` package). `licenses.rs` (`xtask/src/common/`) stages them:
 
 - This project's licence, llama.cpp's and what llama.cpp's own `licenses/` holds, the configurator's
@@ -508,9 +508,9 @@ leave out the runtime of a GPU the machine does not have. `--dry-run` prints the
 
 | | Windows | Linux | macOS |
 | --- | --- | --- | --- |
-| Command | `msiexec /i <msi> /qb /norestart /l*v <log>`, per MSI, llama.cpp's first | Package manager, see below | `sudo installer -pkg <pkg> -target /`, per package |
+| Command | `msiexec /i <msi> /qb /norestart /l*v <log>`, per MSI, llama.cpp's first | Package manager, see below | `sudo installer -pkg <pkg> -target /`, per package, the engine's first |
 | Downgrade | Removes the installed version first: `msiexec /x {ProductCode} /qb`, llama.cpp's with `KEEPINSTANCES=1` | Package manager's own | Laid down over it |
-| Running programs | The framework's `StopProcesses` action stops them; llama.cpp's MSI stops and restarts its running instances | A llama-server outside the services is refused (`--force` overrides) | Refused (`--force` overrides) |
+| Running programs | The framework's `StopProcesses` action stops them; llama.cpp's MSI stops and restarts its running instances | A llama-server outside the services is refused (`--force` overrides) | A program from `/opt/llama.cpp/bin` or `/opt/private-ai/bin` is refused (`--force` overrides) |
 | Success check | `DisplayVersion` matches the package | `pai-config --version`, when `config` is among the files | `pai-config --version`, when `config` is among the files |
 
 **Windows.**

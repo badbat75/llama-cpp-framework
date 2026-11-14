@@ -11,7 +11,8 @@ backends, the `pai-config` configurator and its command line `pai`. It runs on W
 framework's, and llama.cpp's own with its GPU runtimes, which the framework's requires) and
 Linux (eight `.deb` and eight `.rpm` packages: the framework's GUI, command line, web service and
 core, at the framework's version, and the engine `llama.cpp` with one package per GPU runtime, at their
-own versions). It also runs on macOS (Apple Silicon, four `.pkg`), where it is written but untested.
+own versions). It also runs on macOS (Apple Silicon, five `.pkg`: llama.cpp and its Vulkan runtime, the framework's
+three), where it is written but untested.
 
 **In short.** Run the bootstrap script once, which also runs `xtask prereq` on Linux and macOS. Then
 run `xtask configure`, `build`, `package` and `install` in that order. `xtask <phase>` is short for
@@ -41,14 +42,14 @@ been compiled by WiX or run on Windows.
 | `xtask configure` | Detects paths and tools, derives the GPU targets, records the dist root. | `build/<os>/config-build.*`; on Windows also `.cargo/config.toml` |
 | `xtask build` | Checks out the newest llama.cpp release, applies the patches, builds llama.cpp, then the web UI in `fe/` with npm, then `pai-config`, `pai`, `pai-manager` and `pai-bff`. | `build/<os>/llama.cpp-cmake/`, `build/<os>/cargo-target/`, `fe/dist/` |
 | `xtask package` | Stages the binaries and GPU runtimes, then builds the packages. | `dist/` |
-| `xtask install` | Installs the newest package in `dist/`, on Linux and macOS the newest of each, on Windows llama.cpp's MSI then the framework's: first install, upgrade, reinstall or downgrade. | The machine |
+| `xtask install` | Installs the newest package in `dist/`, on Linux and macOS the newest of each (on macOS the engine's first), on Windows llama.cpp's MSI then the framework's: first install, upgrade, reinstall or downgrade. | The machine |
 
 | Phase | Options |
 | --- | --- |
 | `prereq` | `--dist-root <path>`, `--skip <steps>` |
 | `configure` | `--dist-root <path>`, `--llama-cpp-dir <path>` (default `build/<os>/llama.cpp`) |
 | `build` | `llama` (llama.cpp) or `framework` (the web UI and the four cargo binaries) for one product (default: both, in that order) |
-| `package` | `--keep-staging`; Linux and Windows `llama` or `framework` for one product's packages (default: both; the other product's files in `dist/` are left as they are); Linux `--deb`, `--rpm`; Windows `--wix <wix.exe>`. macOS refuses a product: one `.pkg` set |
+| `package` | `--keep-staging`; `llama` or `framework` for one product's packages (default: both; the other product's files in `dist/` are left as they are); Linux `--deb`, `--rpm`; Windows `--wix <wix.exe>` |
 | `install` | `--dry-run`, a package file (Linux and macOS: any number, and only those install; Windows: one); Linux `--deb`, `--rpm`; Linux and macOS `--force` |
 
 **After a change, re-run the phases below.** The bootstrap report names the same steps.
@@ -109,8 +110,8 @@ says. The configurator always goes to `build/<os>/cargo-target`.
 | Dists | `TheRock`, `CUDA`, `VulkanSDK` | The same, with `NCCL` | `VulkanSDK` |
 | Machine environment | `HIP_PATH` and PATH of the active ROCm dist | None | None |
 | sccache binary | `%LOCALAPPDATA%\Programs\sccache\sccache.exe` | `~/.local/bin/sccache` | `~/.local/bin/sccache` |
-| Packages | Two MSIs | Eight `.deb`, eight `.rpm` | Four `.pkg` |
-| Installs to | `Program Files\private-ai` and `Program Files\llama.cpp` (each choosable) | `/usr` (`/usr/bin`, `/usr/lib/private-ai`, `/usr/libexec/private-ai`, `/usr/share/private-ai`) | `/opt/private-ai`, links in `/usr/local/bin` |
+| Packages | Two MSIs | Eight `.deb`, eight `.rpm` | Five `.pkg` (type-checked only) |
+| Installs to | `Program Files\private-ai` and `Program Files\llama.cpp` (each choosable) | `/usr` (`/usr/bin`, `/usr/lib/private-ai`, `/usr/libexec/private-ai`, `/usr/share/private-ai`) | `/opt/llama.cpp` and `/opt/private-ai`, links in `/usr/local/bin` |
 
 ## Where things land
 
