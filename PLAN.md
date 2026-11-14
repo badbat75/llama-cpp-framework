@@ -395,6 +395,17 @@ Decided with the user on 2026-11-14:
   require (core requires the engine, not the reverse): the unit carries
   `ConditionFileIsExecutable=/usr/libexec/private-ai/pai-manager`, so without the framework it does not
   run. A later engine brings its own unit the same way (`strata@.service`).
+- **The engine's configuration lives in the engine's directory** (user, 2026-11-14): on Linux the
+  instance files (`server@<id>.ini`, `presets.ini`, `presets.ini.disabled`) move from `/etc/private-ai/`
+  to **`/etc/llama.cpp/`**; `/etc/private-ai/` keeps the framework's own (`bff.ini`). The manager reads
+  and writes them there, with the same modes and checks. The `llama.cpp` package ships the defaults
+  read-only in `/usr/share/private-ai/llama.cpp/` (`server@default.ini` with the configurator's default
+  values, an empty `presets.ini`) and its postinst copies each to `/etc/llama.cpp/` only when missing
+  (`server@default.ini` 0640 root:private-ai), so an upgrade never touches what the user or the manager
+  wrote and dpkg asks nothing; the instance `default` then exists from the first install, disabled at
+  boot (step 12). Nothing published uses `/etc/private-ai/` for these files; the test machine's
+  imported files are moved by hand once, with the user's go-ahead. Windows and macOS: to settle with the
+  user in their slices (the same split would be `%ProgramData%\llama.cpp\`).
 - **Framework packages carry only the framework's version** (`2.99.1`, no `+llama.cpp...`) and
   require `llama.cpp (>= 1:<release built against>)`; a newer llama.cpp installs without a framework
   rebuild. Package files: `private-ai-framework-<component>-v<version>-<arch>`, and
@@ -425,7 +436,7 @@ running instances on the old llama-server; settled by the engine owning its unit
 
 Slices, each test first: **1** (done) the Linux split (`core`, the engine and its runtimes,
 versions, relations, file names; a non-release llama.cpp build is refused; the runtimes' copyright
-files and the engine's homepage are llama.cpp's); **2** the build split in xtask, and the instances restarted when the engine is upgraded; **3** the MSI's two features and its name;
+files and the engine's homepage are llama.cpp's); **2** the packages stop the services they hold (the engine its instances, with its unit), and the build split in xtask; **2b** the engine's configuration in `/etc/llama.cpp/` with its defaults copied when missing; **3** the MSI's two features and its name;
 **4** the macOS `.pkg`; **5** docs and the release process.
 
 - Done when: `xtask package` on Linux makes the framework packages at `2.99.1` requiring `llama.cpp (>=
