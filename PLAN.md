@@ -25,6 +25,7 @@ as the column says. A requirement still open must be covered by a step.
 | R9 | The project is `private-ai-framework`, its executables `pai-config` and `pai-manager` (decided 2026-11-13), with upgrades from the old packages and the user's data carried over | Open: step 2 |
 | R10 | The GUI and the CLI are two executables over one shared library: GUI `pai-config`, CLI `pai`, the shared logic in a new crate without Slint (decided with the user on 2026-11-13) | Open: step 3 |
 | R11 | A backend-for-frontend (`bff`) running as a local service beside `private-ai-manager`, in the same packages: the web UI of the configurator (a `fe` it serves), a gateway in front of the llama-server instances (one OpenAI-compatible endpoint, authentication, routing across instances and later engines), and the benchmark portal over `bench.db` (decided with the user on 2026-11-14) | Open: step 10 |
+| R12 | The framework is built and versioned apart from its engines: each engine (llama.cpp today, Strata later) is named explicitly and has its own package at the engine's version, the framework's packages carry only the framework's version and a minimum-version dependency on the engine (decided with the user on 2026-11-14) | Open: step 11 |
 
 ### How we work
 
@@ -340,6 +341,49 @@ plan's `pai --version` and graceful-stop checks). The step closes with that run.
 - Done when: `pai` runs every command `pai-config` runs today with the same output; `pai-config` opens
   the GUI only; `pai-app` and `pai-cli` link no Slint and pass the Windows GNU check; the packages ship
   both; the docs name `pai` for commands.
+
+### 11. Decouple the framework from its engines
+
+Covers: R12. Comes before step 1's real run, so the packages installed for real are the new ones.
+
+Decided with the user on 2026-11-14:
+
+- **The engine is its own package, named after it.** Linux: `llama.cpp`, at version
+  `1:<release>+pai<N>` (`1:1.0.0+pai1`): the engine's release, `+pai<N>` our build revision (raised
+  when the patches or the build options change on the same release), and the epoch `1:` because Ubuntu
+  26.04 ships its own `llama.cpp` at `8681+dfsg-1`, which apt would otherwise rank above `1.0.0`. It
+  holds llama.cpp's executables and libraries, the ggml backends and libomp, nothing of the framework.
+  It must refuse to sit beside the distro's packages that carry the same files (`llama.cpp-tools` on
+  Ubuntu, `llama-cpp` on Fedora: check the names and files in the slice) and replaces 2.4's
+  `llama-cpp-framework-llama`.
+- **The runtimes belong to the engine:** `llama.cpp-rocm`, `llama.cpp-cuda`, `llama.cpp-vulkan`,
+  versioned by their SDK as today, recommended by `llama.cpp`; each replaces its 2.4 predecessor.
+- **A new `private-ai-framework-core`** holds what the framework puts in `-llama` today: pai-manager,
+  the systemd units (`llama.cpp@.service` included: it runs `pai-manager run-instance`), the D-Bus and
+  polkit policies, the sysusers entry, `cli.toml` and the maintainer scripts. Every framework package
+  requires it.
+- **Framework packages carry only the framework's version** (`2.99.1`, no `+llama.cpp...`) and
+  require `llama.cpp (>= 1:<release built against>)`; a newer llama.cpp installs without a framework
+  rebuild. Package files: `private-ai-framework-<component>-v<version>-<arch>`, and
+  `llama.cpp-v<release>+pai<N>-<arch>` for the engine (and its runtimes by SDK version).
+- **Windows: one MSI with two features** (the framework, llama.cpp with its runtimes), named by the
+  framework's version only: `private-ai-framework-v<version>-x64.msi`.
+- **macOS:** the same split of the `.pkg` (an engine `.pkg` beside the framework's).
+- **The build is split too:** the engine and the framework are separate builds, so either can be
+  rebuilt alone. The framework still reads the engine's source at build time (`pai-app`'s architecture
+  tables); what bench.db records as the software stack must come from the installed engine, not from
+  the framework's build: an open point for the slice.
+
+The 2.99.x packages were never published, so no upgrade relation names them. Requirement change: R1,
+R2 and the release process in `AGENTS.md` (installer name, release title) follow this.
+
+Slices, each test first: **1** the Linux split (`core`, the engine and its runtimes, versions,
+relations, file names); **2** the build split in xtask; **3** the MSI's two features and its name;
+**4** the macOS `.pkg`; **5** docs and the release process.
+
+- Done when: `xtask package` on Linux makes the framework packages at `2.99.1` requiring `llama.cpp (>=
+  1:1.0.0)` and the engine package at `1:1.0.0+pai1`; the engine or the framework can be rebuilt alone;
+  the MSI and the `.pkg` follow the same split; the docs describe it.
 
 ### 4. Decide whether to bring back patches 0002 to 0004
 
