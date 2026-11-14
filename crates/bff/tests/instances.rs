@@ -94,6 +94,14 @@ impl ManagerClient for FakeManager {
         self.record(format!("write {name}"));
         Ok(())
     }
+    fn boot_enabled(&self, id: &str) -> Result<bool, ClientError> {
+        self.record(format!("boot_enabled {id}"));
+        Ok(false)
+    }
+    fn set_boot_enabled(&self, id: &str, enabled: bool) -> Result<(), ClientError> {
+        self.record(format!("set_boot_enabled {id} {enabled}"));
+        Ok(())
+    }
 }
 
 /// A connect that hands out `make()` each time and counts the calls.

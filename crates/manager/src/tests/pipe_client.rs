@@ -134,6 +134,13 @@ pub(crate) fn manager_pipe_client_e2e() {
             presets,
             "a refused write leaves the file"
         );
+        // Start at boot: the change needs an identity, the read none.
+        assert_eq!(
+            client.set_boot_enabled("default", true),
+            Err(ClientError::NotAuthorized)
+        );
+        assert_eq!(client.boot_enabled("default"), Ok(false));
+        assert_eq!(asked(&c), vec![], "nobody asked");
         hang_up(server, client);
     }
 
@@ -164,6 +171,14 @@ pub(crate) fn manager_pipe_client_e2e() {
             std::fs::read_to_string(sys.join("presets.ini")).unwrap(),
             presets
         );
+        // Start at boot: refused under configure, nothing changed.
+        assert_eq!(
+            client.set_boot_enabled("default", true),
+            Err(ClientError::NotAuthorized)
+        );
+        assert_eq!(asked(&c)[3..], [(alice.clone(), Action::Configure)]);
+        assert_eq!(calls(&c), vec![], "a refused caller enables nothing");
+        assert_eq!(client.boot_enabled("default"), Ok(false));
         hang_up(server, client);
     }
 
@@ -347,6 +362,30 @@ pub(crate) fn manager_pipe_client_e2e() {
             other => panic!("read of a directory: {other:?}"),
         }
         std::fs::remove_dir(sys.join("presets.ini.disabled")).unwrap();
+
+        // Start at boot, both ways, and its refusals, as over D-Bus.
+        assert_eq!(client.boot_enabled("default"), Ok(false));
+        assert_eq!(client.set_boot_enabled("default", true), Ok(()));
+        assert_eq!(client.boot_enabled("default"), Ok(true));
+        assert_eq!(client.set_boot_enabled("default", false), Ok(()));
+        assert_eq!(client.boot_enabled("default"), Ok(false));
+        assert_eq!(client.boot_enabled("lan-3"), Err(ClientError::NoInstance));
+        assert_eq!(
+            client.set_boot_enabled("lan-3", true),
+            Err(ClientError::NoInstance)
+        );
+        assert_eq!(client.boot_enabled("../x"), Err(ClientError::InvalidId));
+        assert_eq!(
+            client.set_boot_enabled("Default", true),
+            Err(ClientError::InvalidId)
+        );
+        match client.set_boot_enabled("broken", true) {
+            Err(ClientError::Service(m)) => assert!(
+                m.contains("llama.cpp@broken.service failed"),
+                "the service manager's own message: {m:?}"
+            ),
+            other => panic!("set_boot_enabled broken: {other:?}"),
+        }
 
         // A file of non-ASCII text with every JSON escape round-trips whole.
         let tricky = "[m]\nmodel = /models/é \"q\"\\\t\u{1}.gguf\n";

@@ -205,6 +205,50 @@ mod tests {
         assert!(!expected.to_lowercase().contains("password"));
     }
 
+    /// Where llama-server runs as a service (Linux, Windows), the Settings
+    /// tab's toggle is the instance's start at boot, the service manager's
+    /// own state; `pai server boot` shows and sets the same. macOS keeps
+    /// the start when pai-config launches, its texts unchanged.
+    #[test]
+    fn the_start_at_boot_texts_say_when_the_system_starts() {
+        let gui = parse(include_str!("../strings/en_US.toml"));
+        let cli = parse(include_str!("../strings/cli.toml"));
+        let get = |table: &HashMap<String, String>, file: &str, key: &str| {
+            table
+                .get(key)
+                .unwrap_or_else(|| panic!("{key} missing from {file}"))
+                .clone()
+        };
+        assert_eq!(
+            get(&gui, "en_US.toml", "start-at-boot-toggle"),
+            "start llama-server when the system starts"
+        );
+        assert_eq!(
+            get(&gui, "en_US.toml", "start-at-boot-on"),
+            "llama-server will start when the system starts."
+        );
+        assert_eq!(
+            get(&gui, "en_US.toml", "start-at-boot-off"),
+            "llama-server will no longer start when the system starts."
+        );
+        let hint = get(&gui, "en_US.toml", "start-at-boot-hint");
+        assert!(hint.contains("system starts"), "{hint:?}");
+        assert!(!hint.contains("pai-config launches"), "{hint:?}");
+        assert_eq!(
+            get(&cli, "cli.toml", "server-boot-on"),
+            "llama-server starts when the system starts."
+        );
+        assert_eq!(
+            get(&cli, "cli.toml", "server-boot-off"),
+            "llama-server does not start when the system starts."
+        );
+        // macOS: unchanged.
+        assert_eq!(
+            get(&gui, "en_US.toml", "start-llama-server-toggle"),
+            "start llama-server when pai-config launches"
+        );
+    }
+
     #[test]
     fn an_unknown_key_reads_as_itself() {
         let table = parse(r#"known = "text""#);

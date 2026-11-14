@@ -20,6 +20,9 @@ fn data_root_e2e() {
 
     // ── The instances' log files (paths.rs `instance_log`) ───────────────
     crate::paths::instance_log_paths_e2e();
+
+    // ── The defaults a saved server.ini resolves (server_cfg.rs) ─────────
+    crate::server_cfg::server_cfg_defaults_e2e();
 }
 
 /// The paths with no test redirect, named after the project, and the old

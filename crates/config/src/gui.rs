@@ -434,10 +434,12 @@ pub fn run(start_minimized: bool) -> anyhow::Result<()> {
     }
 
     // Auto-start llama-server when the Settings tab asks for it, on EVERY GUI
-    // launch, not just the login one (that's the toggle's contract). The shared
-    // start path probes first, so an already-running server just reports
-    // "already running" instead of double-spawning.
-    if settings::load().start_server_on_launch {
+    // launch, not just the login one (that's the toggle's contract), where
+    // pai-config runs it itself; under the manager the OS starts the instance
+    // at boot. The shared start path probes first, so an already-running
+    // server just reports "already running" instead of double-spawning.
+    let kind = crate::server_control::backend().kind();
+    if crate::server_control::start_at_launch(kind, settings::load().start_server_on_launch) {
         start_server_async(app.as_weak(), tray.as_weak());
     }
 

@@ -347,3 +347,15 @@ Lessons only: the rules are in `AGENTS.md`.
   runs as a static sysusers.d user. Reproduce with `systemd-run -p DynamicUser=yes busctl --system call
   org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus GetId` against `-p User=nobody`.
   A system file read through `files()` by path needs no stub function to go red.
+- A backend that calls another D-Bus service (`SystemdService` over systemd) is tested against a
+  stand-in: a `#[zbus::interface(name = "org.freedesktop.systemd1.Manager")]` struct served p2p at
+  `/org/freedesktop/systemd1` (snake_case methods become `GetUnitFileState`, `EnableUnitFiles`...),
+  the backend built on the client end; its proxy's destination `org.freedesktop.systemd1` is
+  accepted on p2p (`dbus.rs` tests, checked with a throwaway candidate). The signatures are in the
+  local `man 5 org.freedesktop.systemd1`, the `is-enabled` states in `man 1 systemctl` Table 3.
+- A new `ManagerClient` method needs an impl in every implementor or nothing compiles: `DbusClient`,
+  `PipeClient` (stubs), pai-app's `fake::FakeClient` and `fake::DiskClient`, and pai-bff's
+  `tests/instances.rs` `FakeManager` (test code: implement them yourself).
+- To reproduce a unit test that races the e2e redirect, run it filtered together with the e2e
+  (`cargo test -p <crate> -- <unit> data_root_e2e`) in a loop: a race seen 2 times in 5 full runs
+  showed 31 times in 40 that way. Pin the exact `paths::`-derived value in an e2e phase instead.

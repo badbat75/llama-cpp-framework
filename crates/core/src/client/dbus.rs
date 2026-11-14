@@ -101,4 +101,10 @@ impl ManagerClient for DbusClient {
     fn write_file(&self, name: &str, contents: &str) -> Result<(), ClientError> {
         self.call("WriteFile", &(name, contents)).map(|_| ())
     }
+    fn boot_enabled(&self, id: &str) -> Result<bool, ClientError> {
+        body(self.call("BootEnabled", &(id,))?)
+    }
+    fn set_boot_enabled(&self, id: &str, enabled: bool) -> Result<(), ClientError> {
+        self.call("SetBootEnabled", &(id, enabled)).map(|_| ())
+    }
 }

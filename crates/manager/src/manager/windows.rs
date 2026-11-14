@@ -164,6 +164,8 @@ pub fn instance_of_service(name: &str) -> Option<String> {
 pub const SERVICE_WIN32_OWN_PROCESS: u32 = 0x0000_0010;
 /// `SERVICE_DEMAND_START`.
 pub const SERVICE_DEMAND_START: u32 = 0x0000_0003;
+/// `SERVICE_AUTO_START`.
+pub const SERVICE_AUTO_START: u32 = 0x0000_0002;
 
 /// The SCM service of an instance, what `CreateServiceW` /
 /// `ChangeServiceConfigW` are given.
@@ -176,6 +178,7 @@ pub struct ServiceSpec {
     /// `lpServiceStartName`: the virtual account, no password.
     pub account: String,
     pub service_type: u32,
+    /// Given to `CreateServiceW` only: a new instance starts disabled.
     pub start_type: u32,
 }
 
@@ -189,7 +192,7 @@ pub fn service_spec(id: &str, exe: &Path) -> Option<ServiceSpec> {
         arguments: vec!["run-instance".into(), id.into()],
         account: format!(r"NT SERVICE\{name}"),
         service_type: SERVICE_WIN32_OWN_PROCESS,
-        start_type: SERVICE_DEMAND_START,
+        start_type: boot_start_type(false),
         name,
     })
 }
@@ -287,6 +290,22 @@ pub fn status_failure(id: &str, code: u32) -> Result<UnitState, ServiceError> {
     }
 }
 
+/// The start type (`dwStartType`) that makes an instance's service start
+/// when the system starts, or not.
+pub fn boot_start_type(enabled: bool) -> u32 {
+    if enabled {
+        SERVICE_AUTO_START
+    } else {
+        SERVICE_DEMAND_START
+    }
+}
+
+/// Whether a service of start type `start_type` starts when the system
+/// starts.
+pub fn boot_enabled_of(start_type: u32) -> bool {
+    start_type == SERVICE_AUTO_START
+}
+
 /// The SCM changes that match the services to the instances on disk.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ServicePlan {
@@ -349,6 +368,63 @@ pub fn open_instance_log(log: &Path) -> std::io::Result<std::fs::File> {
 mod tests {
     use super::*;
     use pai_core::client::pipe::CLIENT_ACCESS;
+
+    // ── Start at boot: the service's start type ─────────────────────────
+    // Values from windows-sys (Microsoft's metadata), meanings from
+    // CreateServiceW / ChangeServiceConfigW's dwStartType
+    // (learn.microsoft.com/en-us/windows/win32/api/winsvc/nf-winsvc-changeserviceconfigw).
+
+    /// `SERVICE_AUTO_START` (2): started by the SCM during system startup.
+    /// `SERVICE_DEMAND_START` (3): started only when asked, the start type
+    /// a new instance's service is created with, so it starts disabled.
+    #[test]
+    fn the_start_at_boot_is_the_automatic_start_type_and_its_absence_manual() {
+        assert_eq!(boot_start_type(true), 2, "SERVICE_AUTO_START");
+        assert_eq!(boot_start_type(false), 3, "SERVICE_DEMAND_START");
+        assert_eq!(boot_start_type(false), SERVICE_DEMAND_START);
+        let spec = service_spec("default", Path::new(EXE)).expect("a valid id");
+        assert_eq!(spec.start_type, boot_start_type(false), "created disabled");
+    }
+
+    /// Only an automatic start starts the service at boot (a delayed one is
+    /// the same start type with a flag on the side); manual, disabled
+    /// (`SERVICE_DISABLED`, 4) and the drivers' boot and system starts (0,
+    /// 1) do not.
+    #[test]
+    fn only_the_automatic_start_type_reads_as_started_at_boot() {
+        for (start_type, enabled) in [(2, true), (3, false), (4, false), (0, false), (1, false)] {
+            assert_eq!(boot_enabled_of(start_type), enabled, "{start_type}");
+        }
+        for enabled in [true, false] {
+            assert_eq!(boot_enabled_of(boot_start_type(enabled)), enabled);
+        }
+    }
+
+    /// The Win32 side of the start at boot (scm.rs, compiled on Windows
+    /// only, so pinned on its text): it reads the start type with
+    /// `QueryServiceConfigW` and changes it through the two functions
+    /// above. The spec applied again at every manager start (`sync`'s
+    /// `reconfigure`) passes `SERVICE_NO_CHANGE` as the start type, so it
+    /// never undoes the user's choice; only `CreateServiceW` takes the
+    /// spec's (manual) start type.
+    #[test]
+    fn the_scm_backend_reads_and_changes_the_start_type_and_sync_keeps_it() {
+        let scm = include_str!("windows/scm.rs");
+        for want in [
+            "QueryServiceConfigW",
+            "boot_start_type(",
+            "boot_enabled_of(",
+        ] {
+            assert!(scm.contains(want), "scm.rs does not use {want}");
+        }
+        let start = scm
+            .find("fn reconfigure(")
+            .expect("scm.rs keeps `reconfigure`");
+        let body = &scm[start..];
+        let body = &body[..body.find("\n}\n").expect("the end of reconfigure")];
+        assert!(body.contains("SERVICE_NO_CHANGE"), "{body}");
+        assert!(!body.contains("spec.start_type"), "{body}");
+    }
 
     // ── The pipe's security descriptor ──────────────────────────────────
 

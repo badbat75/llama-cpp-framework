@@ -85,7 +85,8 @@ fn foreground(cmd: Result<Command, String>, launch_failed: &LaunchFailed) -> Res
     Ok(status.code().unwrap_or(1))
 }
 
-/// Set up and start the instances, then serve the pipe.
+/// Set up the instances' services, then serve the pipe: the SCM starts the
+/// ones whose start type is automatic.
 fn run_manager(report: Report) -> std::io::Result<()> {
     let exe = std::env::current_exe()?;
     let manager: Arc<WinManager> = Arc::new(Manager::new(
@@ -95,9 +96,6 @@ fn run_manager(report: Report) -> std::io::Result<()> {
     ));
     for (id, e) in manager.service().sync(&manager.list_instances()) {
         report(&id, &ManagerError::Service(e));
-    }
-    for (id, e) in manager.start_all_at_boot() {
-        report(&id, &e);
     }
     pipe_server::serve(manager)
 }

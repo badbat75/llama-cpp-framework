@@ -92,7 +92,8 @@ pub fn manager_unit() -> String {
 /// `llama.cpp@.service`: `pai-manager run-instance %i`, as the service user.
 pub fn instance_unit() -> String {
     format!(
-        "{}# Started by the manager, at boot included; never enabled on its own.\n\
+        "{}# Started and stopped through the manager; at boot once enabled\n\
+         # (systemctl enable llama.cpp@<id>, the configurator's start at boot).\n\
          \n\
          [Unit]\n\
          Description=llama.cpp server %i (Private AI Framework)\n\
@@ -109,7 +110,10 @@ pub fn instance_unit() -> String {
          StateDirectoryMode=0750\n\
          ExecStart={MANAGER_EXE} run-instance %i\n\
          Restart=on-abnormal\n\
-         RestartSec=5\n",
+         RestartSec=5\n\
+         \n\
+         [Install]\n\
+         WantedBy=multi-user.target\n",
         header("#")
     )
 }
@@ -610,8 +614,8 @@ mod tests {
     /// creates /etc/private-ai before the start (systemd.exec(5)
     /// ConfigurationDirectory=: owned by root whatever User= says, mode
     /// 0755), where the instances read their files. Started at boot through
-    /// multi-user.target; it starts the instances itself
-    /// (`Manager::start_all_at_boot`). systemd sets no $HOME for a unit
+    /// multi-user.target; it starts no instance itself: systemd starts the
+    /// enabled ones (`instance_unit`). systemd sets no $HOME for a unit
     /// without User= (systemd.exec(5) "$USER, $LOGNAME, $HOME, $SHELL"), and
     /// the manager's checks resolve a blank ModelsDir from it
     /// (`paths::home_dir`, which panics without one): it gets the services'
@@ -699,8 +703,7 @@ mod tests {
     /// journal). Restart=on-abnormal: a crash (an unclean signal, a timeout)
     /// restarts it, a clean refusal of the launcher (exit code 1 on a missing
     /// config) does not, so a broken config does not loop (systemd.service(5)
-    /// Table 1). No [Install]: the manager starts the instances at boot, and
-    /// a template cannot be enabled without an instance anyway.
+    /// Table 1). Its start at boot is pinned below.
     #[test]
     fn the_instance_unit_runs_the_launcher_as_the_service_user_in_the_gpu_groups() {
         let unit = instance_unit();
@@ -734,8 +737,45 @@ mod tests {
                 assert_eq!(v, "journal", "{unit}");
             }
         }
-        assert!(section(&unit, "[Install]").is_empty(), "{unit}");
-        assert!(!unit.contains("[Install]"), "{unit}");
+    }
+
+    /// An instance starts at boot when it is enabled (`systemctl enable
+    /// llama.cpp@<id>`, which the manager does through systemd's
+    /// `EnableUnitFiles`): the template's `WantedBy=multi-user.target`
+    /// (systemd.unit(5) [Install]: enabling a template instance links
+    /// `llama.cpp@<id>.service` into `multi-user.target.wants/`). No
+    /// `DefaultInstance=`, so enabling the bare template enables nothing,
+    /// and no header line says the unit is never enabled.
+    #[test]
+    fn an_instance_starts_at_boot_once_enabled() {
+        let unit = instance_unit();
+        assert_eq!(
+            section(&unit, "[Install]"),
+            ["WantedBy=multi-user.target"],
+            "{unit}"
+        );
+        assert!(!unit.contains("DefaultInstance="), "{unit}");
+        assert!(!unit.contains("never enabled"), "{unit}");
+    }
+
+    /// A new instance starts disabled, as the old setting defaulted to off:
+    /// no maintainer script of any package enables an instance, on a first
+    /// install or an upgrade. (They stop and try-restart the running ones,
+    /// pinned above, which enables nothing.)
+    #[test]
+    fn no_package_script_enables_an_instance() {
+        for c in [Component::Core, Component::Bff] {
+            let mut texts: Vec<String> = deb_scripts(c).into_iter().map(|(_, t)| t).collect();
+            texts.push(rpm_scriptlets(c));
+            for text in &texts {
+                for line in text.lines().filter(|l| l.contains("llama.cpp@")) {
+                    assert!(
+                        !line.contains("enable") && !line.contains("preset"),
+                        "{c:?} enables an instance: {line}"
+                    );
+                }
+            }
+        }
     }
 
     /// The launcher resolves its defaults from the service user's $HOME,

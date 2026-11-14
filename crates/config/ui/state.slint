@@ -630,6 +630,12 @@ export global AppState {
     in-out property <bool> start_at_login: false;
     in-out property <bool> start_minimized_to_tray: true;
     in-out property <bool> start_server_on_launch: false;
+    // Under the manager (Linux, Windows) the start llama-server toggle is the
+    // instance's start at boot instead, the service manager's own state, read
+    // and changed through the manager (settings_tab::refresh); on Direct
+    // (macOS) it stays `start_server_on_launch`.
+    in property <bool> server_is_service: false;
+    in-out property <bool> start_at_boot: false;
     // Log rotation (settings.ini `LogRotate` / `LogRotateKb`, src/settings.rs):
     // the toggle persists on click like the ones above; the threshold is a
     // text field (see "Numeric fields are text" in the README) committed on
@@ -847,6 +853,7 @@ export global AppState {
     callback toggle_start_at_login();
     callback toggle_start_minimized();
     callback toggle_start_server_on_launch();
+    callback toggle_start_at_boot();
     callback toggle_log_rotate();
     // Fired on Enter / focus loss in the threshold field; Rust parses
     // `log_rotate_kb` and persists it, or restores the stored value.

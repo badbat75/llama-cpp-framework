@@ -150,6 +150,22 @@ where
         Ok(self.core(move |m| m.restart(&caller, &id)).await?)
     }
 
+    async fn boot_enabled(&self, id: String) -> Result<bool, Error> {
+        Ok(self.core(move |m| m.boot_enabled(&id)).await?)
+    }
+
+    async fn set_boot_enabled(
+        &self,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+        id: String,
+        enabled: bool,
+    ) -> Result<(), Error> {
+        let caller = sender_of(&header)?;
+        Ok(self
+            .core(move |m| m.set_boot_enabled(&caller, &id, enabled))
+            .await?)
+    }
+
     async fn read_file(
         &self,
         #[zbus(header)] header: zbus::message::Header<'_>,
@@ -183,7 +199,10 @@ where
 /// [`ServiceControl`] over systemd's D-Bus API (`org.freedesktop.systemd1.Manager`
 /// `StartUnit` / `StopUnit` / `RestartUnit`, mode "replace", on
 /// `llama.cpp@<id>.service`; the state is the unit's `ActiveState`, a unit
-/// not loaded reading as inactive). Checked in a real run, not by tests.
+/// not loaded reading as inactive; the start at boot is its unit file state
+/// "enabled", changed by `EnableUnitFiles` / `DisableUnitFiles` then
+/// `Reload`, as `systemctl enable/disable` does). The start, stop and state
+/// are checked in a real run; the start at boot against a stand-in too.
 /// Its connection is not the one the interface is served on: a blocking
 /// call from a method handler would stall that connection's own executor.
 pub struct SystemdService {
@@ -253,6 +272,37 @@ impl ServiceControl for SystemdService {
             _ => UnitState::Inactive,
         })
     }
+
+    fn boot_enabled(&self, id: &str) -> Result<bool, ServiceError> {
+        let unit = format!("llama.cpp@{id}.service");
+        let state: String = self
+            .manager()?
+            .call("GetUnitFileState", &(unit.as_str(),))
+            .map_err(service_error)?;
+        Ok(state == "enabled")
+    }
+
+    fn set_boot_enabled(&self, id: &str, enabled: bool) -> Result<(), ServiceError> {
+        let unit = format!("llama.cpp@{id}.service");
+        let units: &[&str] = &[unit.as_str()];
+        let manager = self.manager()?;
+        if enabled {
+            manager
+                .call::<_, _, (bool, Vec<(String, String, String)>)>(
+                    "EnableUnitFiles",
+                    &(units, false, false),
+                )
+                .map(|_changes| ())
+        } else {
+            manager
+                .call::<_, _, Vec<(String, String, String)>>("DisableUnitFiles", &(units, false))
+                .map(|_changes| ())
+        }
+        .map_err(service_error)?;
+        manager
+            .call::<_, _, ()>("Reload", &())
+            .map_err(service_error)
+    }
 }
 
 /// [`Authority`] over polkit (`org.freedesktop.PolicyKit1.Authority.CheckAuthorization`,
@@ -297,21 +347,20 @@ impl Authority for PolkitAuthority {
 }
 
 /// The system-bus service: [`ManagerInterface`] over systemd and polkit
-/// served at [`OBJECT_PATH`] under [`BUS_NAME`], then every instance started
-/// once. The connection to keep alive while serving, and the boot failures.
-pub fn serve() -> zbus::Result<(Connection, Vec<(String, ManagerError)>)> {
+/// served at [`OBJECT_PATH`] under [`BUS_NAME`]; it starts no instance:
+/// systemd starts the enabled ones at boot. The connection to keep alive
+/// while serving.
+pub fn serve() -> zbus::Result<Connection> {
     let client = Connection::system()?;
     let core = Arc::new(Manager::new(
         SystemdService::new(client.clone()),
         PolkitAuthority::new(client),
         SystemResolver,
     ));
-    let served = zbus::blocking::connection::Builder::system()?
-        .serve_at(OBJECT_PATH, ManagerInterface::new(core.clone()))?
+    zbus::blocking::connection::Builder::system()?
+        .serve_at(OBJECT_PATH, ManagerInterface::new(core))?
         .name(BUS_NAME)?
-        .build()?;
-    let failures = core.start_all_at_boot();
-    Ok((served, failures))
+        .build()
 }
 
 /// E2E phase for the D-Bus interface, for this crate's e2e test to call: it sets
@@ -443,6 +492,24 @@ pub(crate) fn manager_dbus_e2e() {
         let r = call(&client, "ReadFile", &("presets.ini",)).expect("ReadFile");
         assert_eq!(body::<(bool, String)>(&r), (true, presets.to_string()));
         assert_eq!(calls(&c), vec![Call::Status("default".into())]);
+
+        // Start at boot: the read needs no caller, the change one.
+        let e = call(&client, "SetBootEnabled", &("default", true)).expect_err("SetBootEnabled");
+        assert_eq!(
+            e.0,
+            err_name("NotAuthorized"),
+            "SetBootEnabled without a sender"
+        );
+        let r = call(&client, "BootEnabled", &("default",)).expect("BootEnabled");
+        assert!(!body::<bool>(&r), "a new instance starts disabled");
+        assert_eq!(
+            calls(&c),
+            vec![
+                Call::Status("default".into()),
+                Call::BootEnabled("default".into())
+            ]
+        );
+        assert_eq!(asked(&c), vec![], "a call with no sender asks nobody");
     }
 
     // ── A caller polkit refuses: asked with its bus name, nothing done ───
@@ -453,11 +520,14 @@ pub(crate) fn manager_dbus_e2e() {
         assert_eq!(e.0, err_name("NotAuthorized"));
         let e = call(&client, "WriteFile", &("presets.ini", "")).expect_err("WriteFile");
         assert_eq!(e.0, err_name("NotAuthorized"));
+        let e = call(&client, "SetBootEnabled", &("default", true)).expect_err("SetBootEnabled");
+        assert_eq!(e.0, err_name("NotAuthorized"));
         assert_eq!(calls(&c), vec![], "a refused caller starts nothing");
         assert_eq!(
             asked(&c),
             vec![
                 (alice.clone(), Action::Control),
+                (alice.clone(), Action::Configure),
                 (alice.clone(), Action::Configure)
             ],
             "polkit is asked about the sender, per action"
@@ -485,6 +555,59 @@ pub(crate) fn manager_dbus_e2e() {
             ]
         );
         assert_eq!(asked(&c), vec![(alice.clone(), Action::Control); 3]);
+
+        // Start at boot, changed and read back.
+        call(&client, "SetBootEnabled", &("default", true)).expect("SetBootEnabled on");
+        let r = call(&client, "BootEnabled", &("default",)).expect("BootEnabled");
+        assert!(body::<bool>(&r), "enabled");
+        call(&client, "SetBootEnabled", &("default", false)).expect("SetBootEnabled off");
+        let r = call(&client, "BootEnabled", &("default",)).expect("BootEnabled");
+        assert!(!body::<bool>(&r), "disabled again");
+        assert_eq!(
+            calls(&c)[3..],
+            [
+                Call::SetBootEnabled("default".into(), true),
+                Call::BootEnabled("default".into()),
+                Call::SetBootEnabled("default".into(), false),
+                Call::BootEnabled("default".into()),
+            ]
+        );
+        assert_eq!(
+            asked(&c)[3..],
+            [
+                (alice.clone(), Action::Configure),
+                (alice.clone(), Action::Configure)
+            ],
+            "only the changes ask, for configure"
+        );
+        for method in ["BootEnabled", "SetBootEnabled"] {
+            let e = if method == "BootEnabled" {
+                call(&client, method, &("lan-2",))
+            } else {
+                call(&client, method, &("lan-2", true))
+            }
+            .expect_err(method);
+            assert_eq!(
+                e.0,
+                err_name("NoInstance"),
+                "{method} of a missing instance"
+            );
+            let e = if method == "BootEnabled" {
+                call(&client, method, &("../x",))
+            } else {
+                call(&client, method, &("../x", true))
+            }
+            .expect_err(method);
+            assert_eq!(e.0, err_name("InvalidId"), "{method} of an invalid id");
+            let e = if method == "BootEnabled" {
+                call(&client, method, &("broken",))
+            } else {
+                call(&client, method, &("broken", true))
+            }
+            .expect_err(method);
+            assert_eq!(e.0, err_name("Service"), "{method} of a failing unit");
+            assert!(e.1.contains("llama.cpp@broken.service failed"), "{e:?}");
+        }
 
         // Refusals of the core, each with its own error name.
         for method in ["Status", "Start", "Stop", "Restart"] {
@@ -938,6 +1061,203 @@ mod tests {
             assert_eq!(name, format!("{PREFIX}Invalid"));
             assert_eq!(Refusal::decode(&message), Some(refusal), "{message:?}");
         }
+    }
+
+    // ── SystemdService against a stand-in for systemd ───────────────────
+
+    /// What the stand-in for systemd was asked, one line per call.
+    type Log = Arc<std::sync::Mutex<Vec<String>>>;
+
+    /// systemd's list of changes: (type, symlink, destination).
+    type Changes = Vec<(String, String, String)>;
+
+    /// `org.freedesktop.systemd1.Manager` as far as the start at boot needs
+    /// it (org.freedesktop.systemd1(5)): `GetUnitFileState` answers `state`,
+    /// `EnableUnitFiles` and `DisableUnitFiles` record their arguments (or
+    /// fail with `refuse`, as systemd refuses a caller without the right),
+    /// `Reload` is recorded.
+    struct FakeSystemd {
+        log: Log,
+        state: String,
+        refuse: Option<String>,
+    }
+
+    #[zbus::interface(name = "org.freedesktop.systemd1.Manager")]
+    impl FakeSystemd {
+        fn get_unit_file_state(&self, file: String) -> String {
+            self.log
+                .lock()
+                .unwrap()
+                .push(format!("GetUnitFileState {file}"));
+            self.state.clone()
+        }
+
+        fn enable_unit_files(
+            &self,
+            files: Vec<String>,
+            runtime: bool,
+            force: bool,
+        ) -> zbus::fdo::Result<(bool, Changes)> {
+            self.log.lock().unwrap().push(format!(
+                "EnableUnitFiles {files:?} runtime={runtime} force={force}"
+            ));
+            if let Some(m) = &self.refuse {
+                return Err(zbus::fdo::Error::AccessDenied(m.clone()));
+            }
+            let link = format!("/etc/systemd/system/multi-user.target.wants/{}", files[0]);
+            let target = "/usr/lib/systemd/system/llama.cpp@.service".to_string();
+            Ok((true, vec![("symlink".into(), link, target)]))
+        }
+
+        fn disable_unit_files(
+            &self,
+            files: Vec<String>,
+            runtime: bool,
+        ) -> zbus::fdo::Result<Changes> {
+            self.log
+                .lock()
+                .unwrap()
+                .push(format!("DisableUnitFiles {files:?} runtime={runtime}"));
+            if let Some(m) = &self.refuse {
+                return Err(zbus::fdo::Error::AccessDenied(m.clone()));
+            }
+            let link = format!("/etc/systemd/system/multi-user.target.wants/{}", files[0]);
+            Ok(vec![("unlink".into(), link, String::new())])
+        }
+
+        fn reload(&self) {
+            self.log.lock().unwrap().push("Reload".into());
+        }
+    }
+
+    /// A [`SystemdService`] over a peer-to-peer connection to a
+    /// [`FakeSystemd`] (never the system bus), the server connection to keep
+    /// alive, and the log. Every call has a deadline.
+    fn systemd(state: &str, refuse: Option<&str>) -> (Connection, SystemdService, Log) {
+        use std::os::unix::net::UnixStream;
+        use zbus::blocking::connection::Builder;
+        let log = Log::default();
+        let fake = FakeSystemd {
+            log: log.clone(),
+            state: state.to_string(),
+            refuse: refuse.map(str::to_string),
+        };
+        let (s0, s1) = UnixStream::pair().expect("socket pair");
+        let server = std::thread::spawn(move || {
+            Builder::async_io_unix_stream(s0)
+                .server(zbus::Guid::generate())
+                .expect("server guid")
+                .p2p()
+                .serve_at("/org/freedesktop/systemd1", fake)
+                .expect("serve_at")
+                .build()
+                .expect("server connection")
+        });
+        let client = Builder::async_io_unix_stream(s1)
+            .p2p()
+            .method_timeout(std::time::Duration::from_secs(10))
+            .build()
+            .expect("client connection");
+        (
+            server.join().expect("server thread"),
+            SystemdService::new(client),
+            log,
+        )
+    }
+
+    fn logged(log: &Log) -> Vec<String> {
+        log.lock().unwrap().clone()
+    }
+
+    /// The instance starts at boot when its unit file is enabled, as
+    /// `systemctl is-enabled llama.cpp@<id>` reads it (systemctl(1) Table 3):
+    /// "enabled" is the `WantedBy=` symlink in /etc. Every other state reads
+    /// as not started at boot: "enabled-runtime" is a symlink in /run, gone
+    /// before the next boot; "disabled", "masked", "linked" and the rest
+    /// start nothing.
+    #[test]
+    fn the_start_at_boot_is_the_unit_file_state_enabled() {
+        for (state, enabled) in [
+            ("enabled", true),
+            ("disabled", false),
+            ("enabled-runtime", false),
+            ("masked", false),
+            ("masked-runtime", false),
+            ("linked", false),
+            ("linked-runtime", false),
+            ("static", false),
+            ("indirect", false),
+            ("", false),
+        ] {
+            let (_server, service, log) = systemd(state, None);
+            assert_eq!(service.boot_enabled("lan-2"), Ok(enabled), "{state:?}");
+            assert_eq!(
+                logged(&log),
+                ["GetUnitFileState llama.cpp@lan-2.service"],
+                "{state:?}: one question, about the instance's unit"
+            );
+        }
+    }
+
+    /// `systemctl enable llama.cpp@<id>`: `EnableUnitFiles` on the
+    /// instance's unit, persistent (runtime false: /etc, not /run) and
+    /// without replacing other symlinks (force false), then `Reload`, as
+    /// systemctl reloads after an enable unless told `--no-reload`
+    /// (systemctl(1)).
+    #[test]
+    fn enabling_at_boot_enables_the_instances_unit_persistently_and_reloads() {
+        let (_server, service, log) = systemd("disabled", None);
+        assert_eq!(service.set_boot_enabled("default", true), Ok(()));
+        assert_eq!(
+            logged(&log),
+            [
+                r#"EnableUnitFiles ["llama.cpp@default.service"] runtime=false force=false"#,
+                "Reload",
+            ]
+        );
+    }
+
+    /// `systemctl disable llama.cpp@<id>`: `DisableUnitFiles` (runtime
+    /// false), then `Reload`.
+    #[test]
+    fn disabling_at_boot_disables_the_instances_unit_and_reloads() {
+        let (_server, service, log) = systemd("enabled", None);
+        assert_eq!(service.set_boot_enabled("default", false), Ok(()));
+        assert_eq!(
+            logged(&log),
+            [
+                r#"DisableUnitFiles ["llama.cpp@default.service"] runtime=false"#,
+                "Reload",
+            ]
+        );
+    }
+
+    /// A refusal of systemd comes back as the service manager's failure,
+    /// its own message kept, and nothing is reloaded.
+    #[test]
+    fn a_refused_enable_or_disable_is_systemds_failure_and_reloads_nothing() {
+        let denied = "Access denied";
+        for on in [true, false] {
+            let (_server, service, log) = systemd("disabled", Some(denied));
+            match service.set_boot_enabled("default", on) {
+                Err(ServiceError(m)) => assert!(m.contains(denied), "{on}: {m:?}"),
+                other => panic!("{on}: {other:?}"),
+            }
+            assert!(
+                !logged(&log).iter().any(|l| l == "Reload"),
+                "{on}: {:?}",
+                logged(&log)
+            );
+        }
+    }
+
+    /// No systemd on the other end: a failure, never a hang or a panic.
+    #[test]
+    fn no_systemd_is_a_failure() {
+        let (server, service, _log) = systemd("enabled", None);
+        drop(server);
+        assert!(service.boot_enabled("default").is_err());
+        assert!(service.set_boot_enabled("default", true).is_err());
     }
 
     #[test]

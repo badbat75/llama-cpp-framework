@@ -133,6 +133,10 @@ pub trait ManagerClient {
     /// The file's text, or None when it does not exist.
     fn read_file(&self, name: &str) -> Result<Option<String>, ClientError>;
     fn write_file(&self, name: &str, contents: &str) -> Result<(), ClientError>;
+    /// Whether the instance starts when the system starts.
+    fn boot_enabled(&self, id: &str) -> Result<bool, ClientError>;
+    /// Make the instance start when the system starts, or not.
+    fn set_boot_enabled(&self, id: &str, enabled: bool) -> Result<(), ClientError>;
 }
 
 #[cfg(test)]

@@ -11,6 +11,8 @@
 //! {"method":"Status","id":"default"}        (also Start, Stop, Restart)
 //! {"method":"ReadFile","name":"presets.ini"}
 //! {"method":"WriteFile","name":"presets.ini","contents":"..."}
+//! {"method":"BootEnabled","id":"default"}
+//! {"method":"SetBootEnabled","id":"default","enabled":true}
 //! ```
 //!
 //! A reply is the value or an error with the same (name, message) pair the
@@ -20,7 +22,9 @@
 //! {"ok":["broken","default"]}               ListInstances
 //! {"ok":"active"}                           Status
 //! {"ok":"<text>"} or {"ok":null}            ReadFile (null: no such file)
-//! {"ok":null}                               Start, Stop, Restart, WriteFile
+//! {"ok":true} or {"ok":false}              BootEnabled
+//! {"ok":null}                               Start, Stop, Restart, WriteFile,
+//!                                           SetBootEnabled
 //! {"error":{"name":"org.privateai.Manager1.Error.<Kind>","message":"..."}}
 //! ```
 
@@ -116,6 +120,15 @@ impl<S: Read + Write> ManagerClient for PipeClient<S> {
     }
     fn write_file(&self, name: &str, contents: &str) -> Result<(), ClientError> {
         self.call_unit(json!({"method": "WriteFile", "name": name, "contents": contents}))
+    }
+    fn boot_enabled(&self, id: &str) -> Result<bool, ClientError> {
+        match self.call(json!({"method": "BootEnabled", "id": id}))? {
+            Value::Bool(enabled) => Ok(enabled),
+            v => Err(ClientError::Other(v.to_string())),
+        }
+    }
+    fn set_boot_enabled(&self, id: &str, enabled: bool) -> Result<(), ClientError> {
+        self.call_unit(json!({"method": "SetBootEnabled", "id": id, "enabled": enabled}))
     }
 }
 
@@ -334,7 +347,7 @@ mod tests {
     /// One client method, its error when it fails.
     type Call = fn(&PipeClient<Script>) -> Option<ClientError>;
 
-    const EVERY_METHOD: [(&str, Call); 7] = [
+    const EVERY_METHOD: [(&str, Call); 9] = [
         ("list_instances", |c| c.list_instances().err()),
         ("status", |c| c.status("default").err()),
         ("start", |c| c.start("default").err()),
@@ -342,6 +355,10 @@ mod tests {
         ("restart", |c| c.restart("default").err()),
         ("read_file", |c| c.read_file("presets.ini").err()),
         ("write_file", |c| c.write_file("presets.ini", "").err()),
+        ("boot_enabled", |c| c.boot_enabled("default").err()),
+        ("set_boot_enabled", |c| {
+            c.set_boot_enabled("default", true).err()
+        }),
     ];
 
     // ── Failures first ──────────────────────────────────────────────────
@@ -508,7 +525,27 @@ mod tests {
     /// the method, is Other, never a panic.
     #[test]
     fn a_reply_of_the_wrong_shape_is_other() {
-        let cases: [(&str, Call, Value); 9] = [
+        let cases: [(&str, Call, Value); 13] = [
+            (
+                "boot_enabled",
+                |c| c.boot_enabled("default").err(),
+                json!({"ok": "enabled"}),
+            ),
+            (
+                "boot_enabled",
+                |c| c.boot_enabled("default").err(),
+                json!({"ok": null}),
+            ),
+            (
+                "boot_enabled",
+                |c| c.boot_enabled("default").err(),
+                json!({"ok": 1}),
+            ),
+            (
+                "set_boot_enabled",
+                |c| c.set_boot_enabled("default", true).err(),
+                json!({"ok": true}),
+            ),
             (
                 "list_instances",
                 |c| c.list_instances().err(),
@@ -630,7 +667,19 @@ mod tests {
     #[test]
     fn every_method_sends_its_request() {
         let contents = "[Qwen 3 (v2) é]\nmodel = /models/q.gguf\n";
-        let cases: [(Call, Value); 7] = [
+        let cases: [(Call, Value); 10] = [
+            (
+                |c| c.boot_enabled("lan-2").err(),
+                json!({"method": "BootEnabled", "id": "lan-2"}),
+            ),
+            (
+                |c| c.set_boot_enabled("lan-2", true).err(),
+                json!({"method": "SetBootEnabled", "id": "lan-2", "enabled": true}),
+            ),
+            (
+                |c| c.set_boot_enabled("lan-2", false).err(),
+                json!({"method": "SetBootEnabled", "id": "lan-2", "enabled": false}),
+            ),
             (
                 |c| c.list_instances().err(),
                 json!({"method": "ListInstances"}),
@@ -706,6 +755,13 @@ mod tests {
         ] {
             let (client, _) = client_on(input(&[json!({"ok": null})]));
             assert_eq!(f(&client), Ok(()), "{method}");
+        }
+
+        for enabled in [true, false] {
+            let (client, _) = client_on(input(&[json!({"ok": enabled})]));
+            assert_eq!(client.boot_enabled("default"), Ok(enabled));
+            let (client, _) = client_on(input(&[json!({"ok": null})]));
+            assert_eq!(client.set_boot_enabled("default", enabled), Ok(()));
         }
 
         let text = "[Qwen3.8-27B]\nmodel = /models/Qwen3.8-27B-Q8_0.gguf\n";

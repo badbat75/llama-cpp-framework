@@ -62,6 +62,10 @@ pub trait ServiceControl {
     fn stop(&self, id: &str) -> Result<(), ServiceError>;
     fn restart(&self, id: &str) -> Result<(), ServiceError>;
     fn status(&self, id: &str) -> Result<UnitState, ServiceError>;
+    /// Whether the instance's unit starts when the system starts.
+    fn boot_enabled(&self, id: &str) -> Result<bool, ServiceError>;
+    /// Make the instance's unit start when the system starts, or not.
+    fn set_boot_enabled(&self, id: &str, enabled: bool) -> Result<(), ServiceError>;
 }
 
 /// Why the manager refused or failed an operation.
@@ -421,16 +425,27 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
         write_served_file(&dir.join(name), &file, contents, &*self.group).map_err(io)
     }
 
-    /// Start every instance at the service's own start, past any failure:
-    /// the failures, by id. No authorization: the service itself asks.
-    pub fn start_all_at_boot(&self) -> Vec<(String, ManagerError)> {
-        crate::paths::instance_ids()
-            .into_iter()
-            .filter_map(|id| match self.service.start(&id) {
-                Ok(()) => None,
-                Err(e) => Some((id, ManagerError::Service(e))),
-            })
-            .collect()
+    /// Whether instance `id` starts when the system starts. No authorization,
+    /// like `status`; a valid id with no `server@<id>.ini` is NoInstance.
+    pub fn boot_enabled(&self, id: &str) -> Result<bool, ManagerError> {
+        existing_id(id)?;
+        self.service.boot_enabled(id).map_err(ManagerError::Service)
+    }
+
+    /// Make instance `id` start when the system starts, or not: the
+    /// configure authorization, asked first (systemd's own enabling asks for
+    /// an administrator); a refused caller changes nothing.
+    pub fn set_boot_enabled(
+        &self,
+        caller: &Caller,
+        id: &str,
+        enabled: bool,
+    ) -> Result<(), ManagerError> {
+        self.authorize(caller, Action::Configure)?;
+        existing_id(id)?;
+        self.service
+            .set_boot_enabled(id, enabled)
+            .map_err(ManagerError::Service)
     }
 
     fn authorize(&self, caller: &Caller, action: Action) -> Result<(), ManagerError> {
@@ -530,14 +545,17 @@ pub(crate) mod fakes {
         Stop(String),
         Restart(String),
         Status(String),
+        BootEnabled(String),
+        SetBootEnabled(String, bool),
     }
 
-    /// A service manager that records calls, reports `state` and fails every
-    /// call for the ids in `failing`.
+    /// A service manager that records calls, reports `state`, starts at boot
+    /// the ids in `enabled` and fails every call for the ids in `failing`.
     pub struct FakeService {
         pub calls: Mutex<Vec<Call>>,
         pub state: UnitState,
         pub failing: Vec<String>,
+        pub enabled: Mutex<std::collections::BTreeSet<String>>,
     }
 
     impl FakeService {
@@ -546,6 +564,7 @@ pub(crate) mod fakes {
                 calls: Mutex::new(Vec::new()),
                 state: UnitState::Active,
                 failing: Vec::new(),
+                enabled: Mutex::new(Default::default()),
             }
         }
 
@@ -571,6 +590,20 @@ pub(crate) mod fakes {
         fn status(&self, id: &str) -> Result<UnitState, ServiceError> {
             self.record(Call::Status(id.into()), id)?;
             Ok(self.state)
+        }
+        fn boot_enabled(&self, id: &str) -> Result<bool, ServiceError> {
+            self.record(Call::BootEnabled(id.into()), id)?;
+            Ok(self.enabled.lock().unwrap().contains(id))
+        }
+        fn set_boot_enabled(&self, id: &str, enabled: bool) -> Result<(), ServiceError> {
+            self.record(Call::SetBootEnabled(id.into(), enabled), id)?;
+            let mut set = self.enabled.lock().unwrap();
+            if enabled {
+                set.insert(id.to_string());
+            } else {
+                set.remove(id);
+            }
+            Ok(())
         }
     }
 
@@ -1354,30 +1387,103 @@ pub(crate) fn manager_e2e() {
         }
     }
 
-    // ── Boot: every instance started, past a failure, no authorization ───
+    // ── Start at boot: read by anyone, changed under configure ──────────
+    // systemd and the SCM start the enabled instances; the manager only
+    // reads and changes which ones are.
     {
-        let mut service = FakeService::new();
-        service.failing = vec!["default".into()];
-        let m = Manager::new(service, FakeAuthority::new(false), FakeResolver::lan())
-            .with_group(crate::manager::service::fakes::FakeGroup::new());
-        let failures = m.start_all_at_boot();
-        assert_eq!(failures.len(), 1, "one failure: {failures:?}");
-        assert_eq!(failures[0].0, "default");
-        assert!(matches!(failures[0].1, ManagerError::Service(_)));
+        let bob = Caller(":1.43".into());
+        let m = Manager::new(
+            FakeService::new(),
+            FakeAuthority::new(true),
+            FakeResolver::lan(),
+        )
+        .with_group(crate::manager::service::fakes::FakeGroup::new());
+        assert_eq!(
+            m.boot_enabled("default"),
+            Ok(false),
+            "a new instance starts disabled"
+        );
+        assert_eq!(m.set_boot_enabled(&bob, "default", true), Ok(()));
+        assert_eq!(m.boot_enabled("default"), Ok(true));
+        assert_eq!(m.boot_enabled("lan-2"), Ok(false), "only default changed");
+        assert_eq!(m.set_boot_enabled(&bob, "default", false), Ok(()));
+        assert_eq!(m.boot_enabled("default"), Ok(false));
         assert_eq!(
             *m.service().calls.lock().unwrap(),
             vec![
-                Call::Start("bare".into()),
-                Call::Start("default".into()),
-                Call::Start("lan-2".into()),
-                Call::Start("wild".into()),
-            ],
-            "every instance, in list order, past the failing one"
+                Call::BootEnabled("default".into()),
+                Call::SetBootEnabled("default".into(), true),
+                Call::BootEnabled("default".into()),
+                Call::BootEnabled("lan-2".into()),
+                Call::SetBootEnabled("default".into(), false),
+                Call::BootEnabled("default".into()),
+            ]
         );
+        assert_eq!(
+            *m.authority().asked.lock().unwrap(),
+            vec![(bob.clone(), Action::Configure); 2],
+            "only the changes ask, for configure"
+        );
+
+        // An id with no server@<id>.ini: refused before the service
+        // manager is asked, either way.
+        m.service().calls.lock().unwrap().clear();
+        assert_eq!(m.boot_enabled("lan-3"), Err(ManagerError::NoInstance));
+        assert_eq!(
+            m.set_boot_enabled(&bob, "lan-3", true),
+            Err(ManagerError::NoInstance)
+        );
+        for bad in ["", "../x", "Default", "a_b"] {
+            assert_eq!(m.boot_enabled(bad), Err(ManagerError::InvalidId), "{bad:?}");
+            assert_eq!(
+                m.set_boot_enabled(&bob, bad, true),
+                Err(ManagerError::InvalidId),
+                "{bad:?}"
+            );
+        }
+        assert_eq!(*m.service().calls.lock().unwrap(), vec![]);
+    }
+
+    // ── Start at boot: a refused caller and a failing service manager ───
+    {
+        let bob = Caller(":1.43".into());
+        let m = Manager::new(
+            FakeService::new(),
+            FakeAuthority::new(false),
+            FakeResolver::lan(),
+        )
+        .with_group(crate::manager::service::fakes::FakeGroup::new());
+        assert_eq!(
+            m.set_boot_enabled(&bob, "default", true),
+            Err(ManagerError::NotAuthorized)
+        );
+        assert_eq!(
+            m.boot_enabled("default"),
+            Ok(false),
+            "the read needs no authorization, and the refusal changed nothing"
+        );
+        assert_eq!(
+            *m.service().calls.lock().unwrap(),
+            vec![Call::BootEnabled("default".into())],
+            "a refused caller reaches no service manager"
+        );
+        assert_eq!(
+            *m.authority().asked.lock().unwrap(),
+            vec![(bob.clone(), Action::Configure)]
+        );
+
+        let mut service = FakeService::new();
+        service.failing = vec!["default".into()];
+        let m = Manager::new(service, FakeAuthority::new(true), FakeResolver::lan())
+            .with_group(crate::manager::service::fakes::FakeGroup::new());
         assert!(
-            m.authority().asked.lock().unwrap().is_empty(),
-            "boot asks no authorization"
+            matches!(m.boot_enabled("default"), Err(ManagerError::Service(_))),
+            "the service manager's failure"
         );
+        assert!(matches!(
+            m.set_boot_enabled(&bob, "default", true),
+            Err(ManagerError::Service(_))
+        ));
     }
 }
 
@@ -2111,6 +2217,55 @@ mod tests {
             );
         }
         assert_eq!(asked(&m), vec![]);
+    }
+
+    // ── Start at boot ───────────────────────────────────────────────────
+    // Refused before any path is resolved, so these never reach `paths::`.
+
+    /// Enabling an instance at boot is systemd's own `enable`, which asks for
+    /// an administrator: the configure action. A refused caller is asked
+    /// once, with its identity, and nothing reaches the service manager,
+    /// whatever the id.
+    #[test]
+    fn setting_the_start_at_boot_asks_configure_and_a_refusal_changes_nothing() {
+        let alice = Caller(":1.42".into());
+        let m = core(false);
+        for (id, on) in [("default", true), ("default", false), ("../x", true)] {
+            assert_eq!(
+                m.set_boot_enabled(&alice, id, on),
+                Err(ManagerError::NotAuthorized),
+                "{id} {on}"
+            );
+        }
+        assert_eq!(asked(&m), vec![(alice.clone(), Action::Configure); 3]);
+        assert_eq!(*m.service().calls.lock().unwrap(), vec![]);
+    }
+
+    /// The read is open to anyone, like Status: an invalid id is refused as
+    /// one, nobody asked, the service manager untouched.
+    #[test]
+    fn reading_the_start_at_boot_of_an_invalid_id_asks_nobody() {
+        let m = core(false);
+        for bad in ["", "../x", "Default", "a_b"] {
+            assert_eq!(m.boot_enabled(bad), Err(ManagerError::InvalidId), "{bad:?}");
+        }
+        assert_eq!(asked(&m), vec![]);
+        assert_eq!(*m.service().calls.lock().unwrap(), vec![]);
+    }
+
+    /// systemd and the SCM start the enabled instances at boot: the manager
+    /// starts none at its own start, on either OS.
+    #[test]
+    fn the_manager_starts_no_instance_at_its_own_start() {
+        let old = concat!("start_all", "_at_boot");
+        for (file, text) in [
+            ("service.rs", include_str!("service.rs")),
+            ("dbus.rs", include_str!("dbus.rs")),
+            ("windows/entry.rs", include_str!("windows/entry.rs")),
+        ] {
+            let code = text.split("#[cfg(test)]").next().unwrap_or_default();
+            assert!(!code.contains(old), "{file} still names {old}");
+        }
     }
 
     // ── Instance files: mode 0640, group private-ai ─────────────────────

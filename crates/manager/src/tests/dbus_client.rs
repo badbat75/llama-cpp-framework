@@ -102,7 +102,7 @@ fn a_peer_without_the_manager_object_is_unavailable() {
     let c = core(true, &[]);
     let (_server, client) = serve_at(&c, "/org/privateai/Elsewhere", Some(":1.42"));
     let client = Arc::new(client);
-    let each: [(&str, ClientCall); 7] = [
+    let each: [(&str, ClientCall); 9] = [
         ("list_instances", |c| c.list_instances().err()),
         ("status", |c| c.status("default").err()),
         ("start", |c| c.start("default").err()),
@@ -110,6 +110,10 @@ fn a_peer_without_the_manager_object_is_unavailable() {
         ("restart", |c| c.restart("default").err()),
         ("read_file", |c| c.read_file("presets.ini").err()),
         ("write_file", |c| c.write_file("presets.ini", "").err()),
+        ("boot_enabled", |c| c.boot_enabled("default").err()),
+        ("set_boot_enabled", |c| {
+            c.set_boot_enabled("default", true).err()
+        }),
     ];
     for (method, f) in each {
         let client = client.clone();
@@ -191,6 +195,13 @@ pub(crate) fn manager_dbus_client_e2e() {
             client.read_file("presets.ini"),
             Ok(Some(presets.to_string()))
         );
+        // Start at boot: the change needs a caller, the read none.
+        assert_eq!(
+            client.set_boot_enabled("default", true),
+            Err(ClientError::NotAuthorized)
+        );
+        assert_eq!(client.boot_enabled("default"), Ok(false));
+        assert_eq!(asked(&c), vec![], "nobody asked");
     }
 
     // ── A caller polkit refuses ──────────────────────────────────────────
@@ -221,6 +232,14 @@ pub(crate) fn manager_dbus_client_e2e() {
             presets,
             "a refused write leaves the file"
         );
+        // Start at boot: refused under configure, nothing changed.
+        assert_eq!(
+            client.set_boot_enabled("default", true),
+            Err(ClientError::NotAuthorized)
+        );
+        assert_eq!(asked(&c)[3..], [(alice.clone(), Action::Configure)]);
+        assert_eq!(calls(&c), vec![], "a refused caller enables nothing");
+        assert_eq!(client.boot_enabled("default"), Ok(false));
     }
 
     // ── An authorized caller: every method round-trips ───────────────────
@@ -354,6 +373,30 @@ pub(crate) fn manager_dbus_client_e2e() {
             std::fs::read_to_string(sys.join("presets.ini")).unwrap(),
             presets
         );
+
+        // Start at boot, both ways, and its refusals.
+        assert_eq!(client.boot_enabled("default"), Ok(false));
+        assert_eq!(client.set_boot_enabled("default", true), Ok(()));
+        assert_eq!(client.boot_enabled("default"), Ok(true));
+        assert_eq!(client.set_boot_enabled("default", false), Ok(()));
+        assert_eq!(client.boot_enabled("default"), Ok(false));
+        assert_eq!(client.boot_enabled("lan-3"), Err(ClientError::NoInstance));
+        assert_eq!(
+            client.set_boot_enabled("lan-3", true),
+            Err(ClientError::NoInstance)
+        );
+        assert_eq!(client.boot_enabled("../x"), Err(ClientError::InvalidId));
+        assert_eq!(
+            client.set_boot_enabled("Default", true),
+            Err(ClientError::InvalidId)
+        );
+        match client.set_boot_enabled("broken", true) {
+            Err(ClientError::Service(m)) => assert!(
+                m.contains("llama.cpp@broken.service failed"),
+                "the service manager's own message: {m:?}"
+            ),
+            other => panic!("set_boot_enabled broken: {other:?}"),
+        }
 
         // A read that fails for another reason than a missing file.
         std::fs::create_dir(sys.join("presets.ini.disabled")).expect("dir in the way");

@@ -113,15 +113,8 @@ fn run(args: &[String]) -> Result<i32, (i32, String)> {
         }
         #[cfg(target_os = "linux")]
         ManagerCommand::Serve => {
-            let (_served, failures) =
+            let _served =
                 dbus::serve().map_err(|e| (1, strings::fill("manager-serve-failed", &[&e])))?;
-            for (id, e) in failures {
-                let detail = dbus::error_reply(&e).1;
-                eprintln!(
-                    "{}",
-                    strings::fill("manager-boot-start-failed", &[&id, &detail])
-                );
-            }
             // The connection serves on its own thread; this one only keeps it.
             loop {
                 std::thread::park();

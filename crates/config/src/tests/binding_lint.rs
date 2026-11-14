@@ -587,9 +587,10 @@ fn gui_only_source(path: &Path) -> bool {
 /// `bench::sweep::check_values` is the tab's A/B check, `presets::rename` and the
 /// `ini::rename_section` under it are the rename dialog's, `startup::set_enabled`
 /// is the Settings tab's, `server_control::log_rotate_note_key` names the Settings
-/// tab's note on log rotation, and `main` prints `gui-launch-error` on a launch with
+/// tab's note on log rotation, `server_control::toggle_boot` is its start at boot
+/// toggle (`pai server boot` prints its own keys), and `main` prints `gui-launch-error` on a launch with
 /// no arguments, which reads the language file.
-const GUI_ONLY_KEYS: [&str; 29] = [
+const GUI_ONLY_KEYS: [&str; 31] = [
     "claude-snippet-fit-note",
     "claude-snippet-launch",
     "claude-snippet-no-context",
@@ -619,6 +620,8 @@ const GUI_ONLY_KEYS: [&str; 29] = [
     "removed-file-one",
     "section-exists",
     "section-not-found",
+    "start-at-boot-off",
+    "start-at-boot-on",
 ];
 
 /// Functions of the shared sources that only a CLI command runs, beside all of

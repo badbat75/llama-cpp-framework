@@ -763,6 +763,31 @@ fn str_line_or_hint(v: Option<&str>, key: &str, hint: &str) -> String {
     }
 }
 
+/// E2E phase for the defaults a saved config resolves, for this crate's e2e
+/// test to call (it sets the process-wide `PRIVATE_AI_DATA_ROOT` redirect,
+/// `src/tests/mod.rs`): an unset ModelsDir is written as
+/// `default_models_dir()`, an unset StateDir as the default state directory.
+/// Not a unit test: both go through `paths::`, which the other phases
+/// redirect on this thread.
+#[cfg(test)]
+pub(crate) fn server_cfg_defaults_e2e() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    crate::paths::redirect_for_tests(dir.path());
+    let path = dir.path().join("server.ini");
+    std::fs::write(&path, render(&ServerConfig::default())).expect("write server.ini");
+    let reloaded = from_keys(&ini::read_section(&path, "Server"));
+    assert_eq!(reloaded.models_dir, Some(default_models_dir()));
+    assert_eq!(
+        reloaded.state_dir,
+        Some(ServerConfig::default().state_dir_or_default())
+    );
+    assert!(
+        default_models_dir().starts_with(&*dir.path().to_string_lossy()),
+        "under the redirect: {}",
+        default_models_dir()
+    );
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -830,7 +855,8 @@ mod tests {
     //   hint lines: port <= 0, threads/threads_batch <= 0, models_max unset.
     //   An unset port reloads as None (not a forced DEFAULT_PORT), so the UI "default"
     //   checkbox round-trips and the launch line omits --port.
-    // - ModelsDir falls back to default_models_dir() when unset.
+    // - ModelsDir falls back to default_models_dir() when unset (pinned in
+    //   `server_cfg_defaults_e2e`, under the redirect).
     #[test]
     fn default_config_reloads_as_explicit_defaults() {
         let reloaded = round_trip(&ServerConfig::default());
@@ -850,14 +876,16 @@ mod tests {
         // exported, so materializing a default would BE a decision.
         assert_eq!(reloaded.rocblas_use_hipblaslt, None);
         assert_eq!(reloaded.cuda_allreduce, None);
-        assert_eq!(reloaded.models_dir, Some(default_models_dir()));
+        // ModelsDir and StateDir are written resolved, through `paths::`,
+        // which `data_root_e2e` redirects on another thread: here only that
+        // both materialize; their exact values are `server_cfg_defaults_e2e`.
+        let models = reloaded.models_dir.expect("ModelsDir materialized");
+        assert!(models.ends_with(".llama.cpp"), "{models:?}");
         // Snapshots are off until asked for, and StateDir materializes like
         // ModelsDir: a directory of large dumps has to be visible in the file.
         assert_eq!(reloaded.save_state_on_shutdown, Some(false));
-        assert_eq!(
-            reloaded.state_dir,
-            Some(ServerConfig::default().state_dir_or_default())
-        );
+        let state = reloaded.state_dir.expect("StateDir materialized");
+        assert!(std::path::Path::new(&state).is_absolute(), "{state:?}");
     }
 
     /// `RocblasUseHipblaslt = false` is a value, not an absence: the trap in a

@@ -10,8 +10,10 @@
 //! Backing stores, deliberately different per toggle: "Start at login" and
 //! "start minimized" together ARE the platform login entry, HKCU Run or XDG
 //! autostart (`startup.rs`: presence + whether the stored command carries `--minimized`; no INI mirror
-//! that Task Manager's Startup panel could desync), while "start llama-server
-//! on launch" and the log-rotation pair live in settings.ini (`settings.rs`).
+//! that Task Manager's Startup panel could desync), "start llama-server when
+//! the system starts" (under the manager) IS the instance's service enabled
+//! or not, asked of the manager, while "start llama-server on launch" (on
+//! Direct) and the log-rotation pair live in settings.ini (`settings.rs`).
 //! `refresh` re-reads all of them, so Refresh/F5 picks up out-of-band changes
 //! like any other disk-backed state.
 //!
@@ -42,9 +44,14 @@ pub(super) fn refresh(app: &AppWindow) {
     });
     let cfg = settings::load();
     s.set_start_server_on_launch(cfg.start_server_on_launch);
+    let backend = crate::server_control::backend();
+    let service = backend.kind() == crate::server_control::Kind::Manager;
+    s.set_server_is_service(service);
+    // No manager to ask reads as off, never a stale on.
+    s.set_start_at_boot(service && backend.boot_enabled().unwrap_or(false));
     s.set_log_rotate(cfg.log_rotate);
     s.set_log_rotate_kb(SharedString::from(cfg.log_rotate_kb.to_string()));
-    s.set_log_rotate_applies(crate::server_control::backend().rotates_log_file());
+    s.set_log_rotate_applies(backend.rotates_log_file());
     s.set_log_rotate_note(SharedString::from(strings::t(
         crate::server_control::log_rotate_note_key(crate::server_control::Os::current()),
     )));
@@ -145,6 +152,29 @@ pub(super) fn wire(app: &AppWindow) {
                     s.set_start_server_on_launch(settings::load().start_server_on_launch);
                 }
             });
+    }
+    {
+        let app_weak = app.as_weak();
+        app.global::<AppState>().on_toggle_start_at_boot(move || {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let want = app.global::<AppState>().get_start_at_boot();
+            // The manager may wait for an administrator's password: off the
+            // UI thread.
+            let app_weak = app.as_weak();
+            std::thread::spawn(move || {
+                let shown =
+                    crate::server_control::toggle_boot(crate::server_control::backend(), want);
+                slint::invoke_from_event_loop(move || {
+                    if let Some(app) = app_weak.upgrade() {
+                        app.global::<AppState>().set_start_at_boot(shown.enabled);
+                        set_status(&app, shown.message, shown.error);
+                    }
+                })
+                .ok();
+            });
+        });
     }
     {
         let app_weak = app.as_weak();
@@ -270,5 +300,48 @@ pub(super) fn e2e() {
         shown(&note),
         "Manager: the note says journald rotates the log"
     );
+
+    // ── Start llama-server: at boot under the manager, at launch on Direct
+    let at_boot = strings::t("start-at-boot-toggle");
+    let at_launch = strings::t("start-llama-server-toggle");
+    assert_ne!(
+        at_boot, "start-at-boot-toggle",
+        "the toggle is in the strings file"
+    );
+    let checked = |label: &str| {
+        ElementHandle::find_by_accessible_label(&app, label)
+            .next()
+            .unwrap_or_else(|| panic!("no widget with accessible-label {label:?}"))
+            .accessible_checked()
+    };
+
+    // Direct (macOS): the launch toggle, settings.ini's StartServerOnLaunch.
+    fake::scoped(Backend::Direct, || refresh(&app));
+    assert!(shown(&at_launch), "Direct: the start at launch");
+    assert!(!shown(&at_boot), "Direct: no start at boot");
+
+    // The manager: the start at boot, the manager's own state, both ways.
+    for on in [true, false] {
+        let log = fake::log();
+        let c = fake::FakeClient::new(&log, pai_core::client::InstanceState::Inactive);
+        *c.boot.lock().unwrap() = on;
+        fake::scoped(fake::backend(c), || refresh(&app));
+        assert!(shown(&at_boot), "Manager: the start at boot");
+        assert!(!shown(&at_launch), "Manager: no start at launch");
+        assert_eq!(checked(&at_boot), Some(on), "the manager's state: {on}");
+        assert!(
+            log.lock()
+                .unwrap()
+                .iter()
+                .any(|e| e == "boot_enabled default"),
+            "read from the manager: {:?}",
+            log.lock().unwrap()
+        );
+    }
+
+    // No manager to ask (the test build's default backend): off, never a
+    // stale on.
+    refresh(&app);
+    assert_eq!(checked(&at_boot), Some(false), "no manager: off");
     app.hide().ok();
 }

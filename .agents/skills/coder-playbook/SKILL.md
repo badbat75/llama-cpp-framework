@@ -194,3 +194,7 @@ Lessons only: the rules are in `AGENTS.md`.
   prefix (`usr/lib/systemd/`, `usr/lib/sysusers.d/`) needs its exact path in the bff branch, which
   comes before the core's prefixes. A service that calls the system bus cannot use `DynamicUser=`
   (dbus-daemon drops it at Hello): the bff has a static sysusers.d user instead.
+- zbus serializes a Rust array (`[String; 1]`) as a struct (`(s)`), not a D-Bus array: pass a slice
+  (`let units: &[&str] = &[unit.as_str()]`) for an `as` argument (`EnableUnitFiles`).
+- `binding_lint` finds keys only as literal `strings::t("key")`: write `if on { strings::t("a") }
+  else { strings::t("b") }`, never `strings::t(if on { "a" } else { "b" })` (the key reads as unused).

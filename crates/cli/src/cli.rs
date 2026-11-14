@@ -296,6 +296,19 @@ pub enum ServerCmd {
     // against the payload-less `Show`. clap derives `Args` for the inner struct
     // and unwraps the Box itself, so the CLI surface is unchanged.
     Set(Box<ServerSet>),
+    /// Show whether llama-server starts when the system starts, or set it
+    /// with on or off.
+    Boot {
+        #[arg(value_enum)]
+        state: Option<OnOff>,
+    },
+}
+
+/// A switch's two positions on the command line.
+#[derive(clap::ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OnOff {
+    On,
+    Off,
 }
 
 #[derive(Args, Debug, Default)]
@@ -925,7 +938,35 @@ fn run_server(c: ServerCmd) -> Result<()> {
             );
             Ok(())
         }
+        ServerCmd::Boot { state } => {
+            println!(
+                "{}",
+                run_server_boot_with(state, server_control::backend())?
+            );
+            Ok(())
+        }
     }
+}
+
+/// `server boot [on|off]` on `server`: the line to print, the start at boot
+/// as it stands once set.
+fn run_server_boot_with(
+    state: Option<OnOff>,
+    server: &crate::server_control::Backend,
+) -> Result<String> {
+    let on = match state {
+        None => server.boot_enabled().map_err(anyhow::Error::msg)?,
+        Some(state) => {
+            let on = state == OnOff::On;
+            server.set_boot_enabled(on).map_err(anyhow::Error::msg)?;
+            on
+        }
+    };
+    Ok(if on {
+        strings::t("server-boot-on")
+    } else {
+        strings::t("server-boot-off")
+    })
 }
 
 /// Look a preset up in BOTH files, case-insensitively like the whole INI section
@@ -1646,6 +1687,121 @@ mod tests {
         let help = cmd.render_help().to_string();
         assert!(!help.contains(concat!("llama.cpp", "-framework")), "{help}");
         assert!(!help.contains(concat!("llama-cpp", "-config")), "{help}");
+    }
+
+    // ── server boot ─────────────────────────────────────────────────────
+    // The start at boot of the instance, the service manager's own state
+    // read and changed through the manager (the GUI's Settings toggle).
+
+    fn boot_cmd(args: &[&str]) -> Result<Option<OnOff>, clap::Error> {
+        let mut argv = vec!["pai", "server", "boot"];
+        argv.extend_from_slice(args);
+        match Cli::try_parse_from(argv)?.command {
+            Command::Server(ServerCmd::Boot { state }) => Ok(state),
+            other => panic!("not server boot: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn server_boot_takes_on_off_or_nothing() {
+        assert_eq!(boot_cmd(&[]).expect("show"), None);
+        assert_eq!(boot_cmd(&["on"]).expect("on"), Some(OnOff::On));
+        assert_eq!(boot_cmd(&["off"]).expect("off"), Some(OnOff::Off));
+    }
+
+    #[test]
+    fn server_boot_refuses_anything_but_on_or_off() {
+        for bad in [&["maybe"][..], &["yes"], &["1"], &["on", "off"]] {
+            assert!(boot_cmd(bad).is_err(), "{bad:?}");
+        }
+    }
+
+    /// The printed line by content: `strings::t` gives back a missing key.
+    fn boot_line(on: bool) -> String {
+        let key = if on {
+            "server-boot-on"
+        } else {
+            "server-boot-off"
+        };
+        let text = strings::t(key);
+        assert!(
+            !text.starts_with(key) && text.contains("when the system starts"),
+            "{key}: {text:?}"
+        );
+        text
+    }
+
+    #[test]
+    fn server_boot_shows_the_managers_state_and_changes_nothing() {
+        use crate::server_control::fake::{self, FakeClient};
+        use pai_core::client::InstanceState;
+        for on in [true, false] {
+            let log = fake::log();
+            let c = FakeClient::new(&log, InstanceState::Inactive);
+            *c.boot.lock().unwrap() = on;
+            let b = fake::backend(c);
+            assert_eq!(run_server_boot_with(None, &b).expect("show"), boot_line(on));
+            assert_eq!(log.lock().unwrap().clone(), ["boot_enabled default"]);
+        }
+    }
+
+    #[test]
+    fn server_boot_on_or_off_sets_it_through_the_manager() {
+        use crate::server_control::fake::{self, FakeClient};
+        use pai_core::client::InstanceState;
+        for (state, on, word) in [(OnOff::On, true, "on"), (OnOff::Off, false, "off")] {
+            let log = fake::log();
+            let c = FakeClient::new(&log, InstanceState::Inactive);
+            *c.boot.lock().unwrap() = !on;
+            let boot = c.boot.clone();
+            let b = fake::backend(c);
+            assert_eq!(
+                run_server_boot_with(Some(state), &b).expect("set"),
+                boot_line(on)
+            );
+            assert_eq!(
+                fake::actions(&log),
+                [format!("set_boot_enabled default {word}")]
+            );
+            assert_eq!(*boot.lock().unwrap(), on);
+        }
+    }
+
+    /// A user without `configure` is refused with the manager's reason, as
+    /// the GUI shows it; nothing changes.
+    #[test]
+    fn server_boot_refused_is_an_error_with_the_managers_reason() {
+        use crate::server_control::fake::{self, FakeClient};
+        use pai_core::client::{ClientError, InstanceState};
+        let log = fake::log();
+        let mut c = FakeClient::new(&log, InstanceState::Inactive);
+        c.fail_set_boot = Some(ClientError::NotAuthorized);
+        let boot = c.boot.clone();
+        let b = fake::backend(c);
+        let e = run_server_boot_with(Some(OnOff::On), &b).expect_err("refused");
+        assert!(
+            format!("{e:#}").contains(&ClientError::NotAuthorized.text()),
+            "{e:#}"
+        );
+        assert!(!*boot.lock().unwrap(), "nothing changed");
+    }
+
+    #[test]
+    fn server_boot_with_no_manager_is_an_error_that_says_so() {
+        use crate::server_control::fake::{self, FakeClient};
+        use pai_core::client::{ClientError, InstanceState};
+        let log = fake::log();
+        let mut c = FakeClient::new(&log, InstanceState::Inactive);
+        c.fail_boot = Some(ClientError::Unavailable);
+        c.fail_set_boot = Some(ClientError::Unavailable);
+        let b = fake::backend(c);
+        for state in [None, Some(OnOff::On)] {
+            let e = run_server_boot_with(state, &b).expect_err("no manager");
+            assert!(
+                format!("{e:#}").contains(&ClientError::Unavailable.text()),
+                "{state:?}: {e:#}"
+            );
+        }
     }
 
     /// The executable is `pai`: the Cargo `[[bin]]` name, which is the

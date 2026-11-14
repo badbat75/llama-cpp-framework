@@ -58,8 +58,15 @@ export component SettingsPage inherits ScrollView {
             LabeledField {
                 label_width <=> LabelColumn.settings;
                 label: Strings.t("start-llama-server");
-                hint: Strings.t("start-llama-server-hint");
-                CheckBox {
+                hint: AppState.server_is_service
+                    ? Strings.t("start-at-boot-hint")
+                    : Strings.t("start-llama-server-hint");
+                if AppState.server_is_service: CheckBox {
+                    text: Strings.t("start-at-boot-toggle");
+                    checked <=> AppState.start_at_boot;
+                    toggled => { AppState.toggle_start_at_boot(); }
+                }
+                if !AppState.server_is_service: CheckBox {
                     text: Strings.t("start-llama-server-toggle");
                     checked <=> AppState.start_server_on_launch;
                     toggled => { AppState.toggle_start_server_on_launch(); }

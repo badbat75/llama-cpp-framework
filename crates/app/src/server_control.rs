@@ -233,6 +233,75 @@ impl Backend {
     }
 }
 
+impl Backend {
+    /// Whether the instance starts when the system starts, as the manager
+    /// reads it from the service manager; `Err` with the text to show.
+    /// `Direct` has no service manager to ask: no manager is there.
+    pub fn boot_enabled(&self) -> Result<bool, String> {
+        match self {
+            Backend::Direct => Err(ClientError::Unavailable.text()),
+            Backend::Manager(m) => m
+                .client()
+                .and_then(|c| c.boot_enabled(INSTANCE))
+                .map_err(|e| e.text()),
+        }
+    }
+
+    /// Make the instance start when the system starts, or not; `Err` with
+    /// the text to show (a refusal of the manager in the user's language).
+    pub fn set_boot_enabled(&self, enabled: bool) -> Result<(), String> {
+        match self {
+            Backend::Direct => Err(ClientError::Unavailable.text()),
+            Backend::Manager(m) => m
+                .client()
+                .and_then(|c| c.set_boot_enabled(INSTANCE, enabled))
+                .map_err(|e| e.text()),
+        }
+    }
+}
+
+/// What the Settings tab shows after a click on "start llama-server when
+/// the system starts".
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BootToggle {
+    /// The toggle's state: the one asked for, or the manager's after a
+    /// refusal.
+    pub enabled: bool,
+    /// The footer's message.
+    pub message: String,
+    /// Whether the message is an error.
+    pub error: bool,
+}
+
+/// Ask `b` for the start at boot to be `want`, what the toggle then shows.
+/// A refusal puts the toggle back to the manager's state, read again, or
+/// to where it was before the click when that read fails too.
+pub fn toggle_boot(b: &Backend, want: bool) -> BootToggle {
+    match b.set_boot_enabled(want) {
+        Ok(()) => BootToggle {
+            enabled: want,
+            message: if want {
+                strings::t("start-at-boot-on")
+            } else {
+                strings::t("start-at-boot-off")
+            },
+            error: false,
+        },
+        Err(message) => BootToggle {
+            enabled: b.boot_enabled().unwrap_or(!want),
+            message,
+            error: true,
+        },
+    }
+}
+
+/// Whether pai-config starts llama-server when it launches, under backend
+/// `kind` with settings.ini's `StartServerOnLaunch` at `setting`.
+/// Under the manager the OS starts the instance at boot, so never.
+pub fn start_at_launch(kind: Kind, setting: bool) -> bool {
+    kind == Kind::Direct && setting
+}
+
 /// Where the instance's log is read from.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LogSource {
@@ -246,14 +315,18 @@ pub enum LogSource {
 }
 
 impl Backend {
+    /// Which backend this is, without its connection.
+    pub fn kind(&self) -> Kind {
+        match self {
+            Backend::Direct => Kind::Direct,
+            Backend::Manager(_) => Kind::Manager,
+        }
+    }
+
     /// Where the Log window reads the instance's log: `log_source_for` this
     /// backend's kind on this OS (no call to the manager).
     pub fn log_source(&self) -> LogSource {
-        let kind = match self {
-            Backend::Direct => Kind::Direct,
-            Backend::Manager(_) => Kind::Manager,
-        };
-        log_source_for(kind, Os::current())
+        log_source_for(self.kind(), Os::current())
     }
 
     /// Whether `LogRotate` and `LogRotateKb` apply: only on `Direct`; under the
@@ -605,13 +678,17 @@ pub mod fake {
         Arc::new(Mutex::new(Vec::new()))
     }
 
-    /// What the fake was asked, `"<method> <id>"`, status probes and file
-    /// reads left out.
+    /// What the fake was asked, `"<method> <id>"`, status probes, file
+    /// reads and start-at-boot reads left out.
     pub fn actions(log: &Log) -> Vec<String> {
         log.lock()
             .unwrap()
             .iter()
-            .filter(|e| !e.starts_with("status ") && !e.starts_with("read_file "))
+            .filter(|e| {
+                !e.starts_with("status ")
+                    && !e.starts_with("read_file ")
+                    && !e.starts_with("boot_enabled ")
+            })
             .cloned()
             .collect()
     }
@@ -650,6 +727,13 @@ pub mod fake {
         /// What write_file fails with for one file name only, the others
         /// written: a refusal in the middle of several writes.
         pub fail_write_of: std::collections::BTreeMap<String, ClientError>,
+        /// Whether the instance starts at boot; shared out so a test reads
+        /// it after the fake moved into a backend.
+        pub boot: Arc<Mutex<bool>>,
+        /// What boot_enabled fails with.
+        pub fail_boot: Option<ClientError>,
+        /// What set_boot_enabled fails with (the state is then left as it was).
+        pub fail_set_boot: Option<ClientError>,
     }
 
     impl FakeClient {
@@ -663,6 +747,9 @@ pub mod fake {
                 fail_read: None,
                 fail_write: None,
                 fail_write_of: Default::default(),
+                boot: Arc::new(Mutex::new(false)),
+                fail_boot: None,
+                fail_set_boot: None,
             }
         }
 
@@ -737,6 +824,22 @@ pub mod fake {
                 .insert(name.to_string(), contents.to_string());
             Ok(())
         }
+        fn boot_enabled(&self, id: &str) -> Result<bool, ClientError> {
+            self.record("boot_enabled", id);
+            if let Some(e) = &self.fail_boot {
+                return Err(e.clone());
+            }
+            Ok(*self.boot.lock().unwrap())
+        }
+        fn set_boot_enabled(&self, id: &str, enabled: bool) -> Result<(), ClientError> {
+            let on = if enabled { "on" } else { "off" };
+            self.record("set_boot_enabled", &format!("{id} {on}"));
+            if let Some(e) = &self.fail_set_boot {
+                return Err(e.clone());
+            }
+            *self.boot.lock().unwrap() = enabled;
+            Ok(())
+        }
     }
 
     /// The manager a test binary's `backend()` has by default: no instance to
@@ -788,6 +891,12 @@ pub mod fake {
                 std::fs::create_dir_all(parent).map_err(io)?;
             }
             crate::ini::atomic_write(&path, contents).map_err(io)
+        }
+        fn boot_enabled(&self, _id: &str) -> Result<bool, ClientError> {
+            Err(ClientError::Unavailable)
+        }
+        fn set_boot_enabled(&self, _id: &str, _enabled: bool) -> Result<(), ClientError> {
+            Err(ClientError::Unavailable)
         }
     }
 
@@ -1445,6 +1554,188 @@ mod tests {
         let b = fake::backend(c);
         assert!(!b.is_running());
         assert_eq!(b.stop(), Err(ClientError::Unavailable.text()));
+    }
+
+    // ── Start at boot ───────────────────────────────────────────────────
+    // Where llama-server runs as a service, the Settings tab's toggle and
+    // `pai server boot` are the instance's start at boot, the service
+    // manager's own state, read and changed through the manager.
+
+    #[test]
+    fn boot_enabled_reads_the_managers_state_of_default() {
+        for on in [true, false] {
+            let log = fake::log();
+            let c = FakeClient::new(&log, InstanceState::Inactive);
+            *c.boot.lock().unwrap() = on;
+            let b = fake::backend(c);
+            assert_eq!(b.boot_enabled(), Ok(on));
+            assert_eq!(log.lock().unwrap().clone(), ["boot_enabled default"]);
+        }
+    }
+
+    #[test]
+    fn a_failed_boot_read_is_the_client_text() {
+        for e in [ClientError::Unavailable, ClientError::NoInstance] {
+            let log = fake::log();
+            let mut c = FakeClient::new(&log, InstanceState::Inactive);
+            c.fail_boot = Some(e.clone());
+            assert_eq!(fake::backend(c).boot_enabled(), Err(e.text()), "{e:?}");
+        }
+        let b = Backend::Manager(ManagerBackend::new(Box::new(|| {
+            Err(ClientError::Unavailable)
+        })));
+        assert_eq!(b.boot_enabled(), Err(ClientError::Unavailable.text()));
+        assert_eq!(
+            b.set_boot_enabled(true),
+            Err(ClientError::Unavailable.text())
+        );
+    }
+
+    #[test]
+    fn set_boot_enabled_asks_the_manager_for_default() {
+        for on in [true, false] {
+            let log = fake::log();
+            let c = FakeClient::new(&log, InstanceState::Inactive);
+            *c.boot.lock().unwrap() = !on;
+            let boot = c.boot.clone();
+            let b = fake::backend(c);
+            assert_eq!(b.set_boot_enabled(on), Ok(()));
+            let word = if on { "on" } else { "off" };
+            assert_eq!(
+                fake::actions(&log),
+                [format!("set_boot_enabled default {word}")]
+            );
+            assert_eq!(*boot.lock().unwrap(), on);
+        }
+    }
+
+    /// Enabling is under `configure` (an administrator): a user without it
+    /// reads the manager's refusal in the strings file, nothing changed.
+    #[test]
+    fn a_refused_boot_change_is_the_client_text() {
+        let log = fake::log();
+        let mut c = FakeClient::new(&log, InstanceState::Inactive);
+        c.fail_set_boot = Some(ClientError::NotAuthorized);
+        let boot = c.boot.clone();
+        let b = fake::backend(c);
+        assert_eq!(
+            b.set_boot_enabled(true),
+            Err(ClientError::NotAuthorized.text())
+        );
+        assert!(!*boot.lock().unwrap(), "nothing changed");
+    }
+
+    /// The new strings, by content: `strings::t` gives back the key itself
+    /// when it is missing, which a stub using the same key would pass.
+    fn boot_message(on: bool) -> String {
+        let key = if on {
+            "start-at-boot-on"
+        } else {
+            "start-at-boot-off"
+        };
+        let text = strings::t(key);
+        assert!(
+            !text.starts_with(key) && text.contains("when the system starts"),
+            "{key}: {text:?}"
+        );
+        text
+    }
+
+    /// A click applies at once, as every Settings toggle does: the toggle
+    /// keeps the state asked for and the footer says what changed.
+    #[test]
+    fn a_boot_toggle_the_manager_accepts_keeps_its_state_and_says_so() {
+        for want in [true, false] {
+            let log = fake::log();
+            let c = FakeClient::new(&log, InstanceState::Inactive);
+            *c.boot.lock().unwrap() = !want;
+            let boot = c.boot.clone();
+            let b = fake::backend(c);
+            assert_eq!(
+                toggle_boot(&b, want),
+                BootToggle {
+                    enabled: want,
+                    message: boot_message(want),
+                    error: false,
+                },
+                "{want}"
+            );
+            assert_eq!(*boot.lock().unwrap(), want);
+            let word = if want { "on" } else { "off" };
+            assert_eq!(
+                fake::actions(&log),
+                [format!("set_boot_enabled default {word}")]
+            );
+        }
+    }
+
+    /// A refusal shows the manager's reason as an error and puts the
+    /// toggle back to the manager's state, read again.
+    #[test]
+    fn a_refused_boot_toggle_is_put_back_and_shows_the_refusal() {
+        for want in [true, false] {
+            let log = fake::log();
+            let mut c = FakeClient::new(&log, InstanceState::Inactive);
+            *c.boot.lock().unwrap() = !want;
+            c.fail_set_boot = Some(ClientError::NotAuthorized);
+            let b = fake::backend(c);
+            assert_eq!(
+                toggle_boot(&b, want),
+                BootToggle {
+                    enabled: !want,
+                    message: ClientError::NotAuthorized.text(),
+                    error: true,
+                },
+                "{want}"
+            );
+            let entries = log.lock().unwrap().clone();
+            let word = if want { "on" } else { "off" };
+            let set = entries
+                .iter()
+                .position(|e| *e == format!("set_boot_enabled default {word}"))
+                .unwrap_or_else(|| panic!("no set: {entries:?}"));
+            assert!(
+                entries[set..].iter().any(|e| e == "boot_enabled default"),
+                "the state read again after the refusal: {entries:?}"
+            );
+        }
+    }
+
+    /// No manager at all: the toggle goes back to where it was before the
+    /// click, the footer says the manager is not running.
+    #[test]
+    fn a_boot_toggle_with_no_manager_is_put_back() {
+        for want in [true, false] {
+            let log = fake::log();
+            let mut c = FakeClient::new(&log, InstanceState::Inactive);
+            c.fail_set_boot = Some(ClientError::Unavailable);
+            c.fail_boot = Some(ClientError::Unavailable);
+            assert_eq!(
+                toggle_boot(&fake::backend(c), want),
+                BootToggle {
+                    enabled: !want,
+                    message: ClientError::Unavailable.text(),
+                    error: true,
+                },
+                "{want}"
+            );
+        }
+    }
+
+    /// pai-config starts llama-server at its launch only where it runs it
+    /// itself (macOS, `Direct`), and only when settings.ini asks; under the
+    /// manager the OS starts the instance at boot, and the launch starts
+    /// nothing whatever an earlier install's `StartServerOnLaunch` says.
+    #[test]
+    fn only_direct_starts_the_server_at_launch_and_only_when_asked() {
+        assert!(start_at_launch(Kind::Direct, true));
+        assert!(!start_at_launch(Kind::Direct, false));
+        assert!(!start_at_launch(Kind::Manager, true));
+        assert!(!start_at_launch(Kind::Manager, false));
+        for os in [Os::Linux, Os::Windows] {
+            assert!(!start_at_launch(backend_kind(os), true), "{os:?}");
+        }
+        assert!(start_at_launch(backend_kind(Os::MacOs), true));
     }
 
     #[test]

@@ -27,6 +27,8 @@ enum Request {
     Restart(String),
     ReadFile(String),
     WriteFile(String, String),
+    BootEnabled(String),
+    SetBootEnabled(String, bool),
 }
 
 impl Request {
@@ -42,6 +44,8 @@ impl Request {
             "Restart" => Request::Restart(arg("id")?),
             "ReadFile" => Request::ReadFile(arg("name")?),
             "WriteFile" => Request::WriteFile(arg("name")?, arg("contents")?),
+            "BootEnabled" => Request::BootEnabled(arg("id")?),
+            "SetBootEnabled" => Request::SetBootEnabled(arg("id")?, v.get("enabled")?.as_bool()?),
             _ => return None,
         })
     }
@@ -81,6 +85,10 @@ where
             .map(|text| json!(text)),
         Request::WriteFile(name, contents) => changer(caller)
             .and_then(|c| manager.write_file(c, &name, &contents))
+            .map(|()| Value::Null),
+        Request::BootEnabled(id) => manager.boot_enabled(&id).map(|on| json!(on)),
+        Request::SetBootEnabled(id, enabled) => changer(caller)
+            .and_then(|c| manager.set_boot_enabled(c, &id, enabled))
             .map(|()| Value::Null),
     };
     match result {
@@ -479,6 +487,94 @@ mod tests {
         );
         assert_eq!(asked(&c), vec![], "nobody asked");
         assert_eq!(calls(&c), vec![Call::Status("default".into())]);
+    }
+
+    // ── Start at boot ───────────────────────────────────────────────────
+    // Refused before the core resolves a path: plain tests. The round trips
+    // are in `src/tests/pipe_client.rs`.
+
+    /// `SetBootEnabled` asks the authority for configure as the
+    /// connection's caller; a refused caller changes nothing.
+    #[test]
+    fn the_start_at_boot_change_asks_configure_and_a_refused_caller_changes_nothing() {
+        let c = core(false);
+        let (result, replies) = serve(
+            &c,
+            alice(),
+            requests(&[
+                json!({"method": "SetBootEnabled", "id": "default", "enabled": true}),
+                json!({"method": "SetBootEnabled", "id": "default", "enabled": false}),
+            ]),
+        );
+        assert!(result.is_ok(), "{result:?}");
+        assert_eq!(replies, vec![error("NotAuthorized", "NotAuthorized"); 2]);
+        assert_eq!(asked(&c), vec![(alice(), Action::Configure); 2]);
+        assert_eq!(calls(&c), vec![]);
+    }
+
+    /// A connection with no identity is refused the change unasked; the
+    /// read needs no caller (here an invalid id, refused as one).
+    #[test]
+    fn an_empty_caller_is_refused_the_start_at_boot_change_unasked() {
+        let c = core(true);
+        let (result, replies) = serve(
+            &c,
+            Caller(String::new()),
+            requests(&[
+                json!({"method": "SetBootEnabled", "id": "default", "enabled": true}),
+                json!({"method": "BootEnabled", "id": "../x"}),
+            ]),
+        );
+        assert!(result.is_ok(), "{result:?}");
+        assert_eq!(
+            replies,
+            vec![
+                error("NotAuthorized", "NotAuthorized"),
+                error("InvalidId", "InvalidId"),
+            ]
+        );
+        assert_eq!(asked(&c), vec![]);
+        assert_eq!(calls(&c), vec![]);
+    }
+
+    /// An invalid id is refused either way, the change after its
+    /// authorization.
+    #[test]
+    fn the_start_at_boot_of_an_invalid_id_is_refused() {
+        let c = core(true);
+        let (result, replies) = serve(
+            &c,
+            alice(),
+            requests(&[
+                json!({"method": "BootEnabled", "id": "Default"}),
+                json!({"method": "SetBootEnabled", "id": "a_b", "enabled": true}),
+            ]),
+        );
+        assert!(result.is_ok(), "{result:?}");
+        assert_eq!(replies, vec![error("InvalidId", "InvalidId"); 2]);
+        assert_eq!(asked(&c), vec![(alice(), Action::Configure)]);
+        assert_eq!(calls(&c), vec![]);
+    }
+
+    /// `enabled` is a JSON boolean and required; `id` too.
+    #[test]
+    fn a_malformed_start_at_boot_request_is_a_bad_request() {
+        for body in [
+            json!({"method": "BootEnabled"}),
+            json!({"method": "BootEnabled", "id": 5}),
+            json!({"method": "SetBootEnabled", "id": "default"}),
+            json!({"method": "SetBootEnabled", "id": "default", "enabled": "yes"}),
+            json!({"method": "SetBootEnabled", "id": "default", "enabled": 1}),
+            json!({"method": "SetBootEnabled", "enabled": true}),
+        ] {
+            let c = core(true);
+            let (result, replies) = serve(&c, alice(), requests(std::slice::from_ref(&body)));
+            assert!(result.is_err(), "{body}");
+            assert_eq!(replies.len(), 1, "{body}: {replies:?}");
+            assert_bad_request(&replies[0], &body.to_string());
+            assert_eq!(asked(&c), vec![], "{body}");
+            assert_eq!(calls(&c), vec![], "{body}");
+        }
     }
 
     // ── The wire ────────────────────────────────────────────────────────

@@ -4,8 +4,8 @@
 //! only the Win32 calls.
 
 use super::{
-    image_path, scm_error, service_name, service_plan, service_spec, start_failure, status_failure,
-    stop_failure, unit_state, ServiceSpec,
+    boot_enabled_of, boot_start_type, image_path, scm_error, service_name, service_plan,
+    service_spec, start_failure, status_failure, stop_failure, unit_state, ServiceSpec,
 };
 use crate::manager::service::{ServiceControl, ServiceError, UnitState};
 use std::ffi::OsStr;
@@ -13,15 +13,16 @@ use std::os::windows::ffi::OsStrExt;
 use std::path::PathBuf;
 use std::ptr::{null, null_mut};
 use std::time::{Duration, Instant};
-use windows_sys::Win32::Foundation::{GetLastError, ERROR_MORE_DATA};
+use windows_sys::Win32::Foundation::{GetLastError, ERROR_INSUFFICIENT_BUFFER, ERROR_MORE_DATA};
 use windows_sys::Win32::Storage::FileSystem::DELETE;
 use windows_sys::Win32::System::Services::{
     ChangeServiceConfigW, CloseServiceHandle, ControlService, CreateServiceW, DeleteService,
-    EnumServicesStatusExW, OpenSCManagerW, OpenServiceW, QueryServiceStatus, StartServiceW,
-    ENUM_SERVICE_STATUS_PROCESSW, SC_ENUM_PROCESS_INFO, SC_HANDLE, SC_MANAGER_CONNECT,
-    SC_MANAGER_CREATE_SERVICE, SC_MANAGER_ENUMERATE_SERVICE, SERVICE_CHANGE_CONFIG,
-    SERVICE_CONTROL_STOP, SERVICE_ERROR_NORMAL, SERVICE_QUERY_STATUS, SERVICE_START,
-    SERVICE_STATE_ALL, SERVICE_STATUS, SERVICE_STOP, SERVICE_WIN32,
+    EnumServicesStatusExW, OpenSCManagerW, OpenServiceW, QueryServiceConfigW, QueryServiceStatus,
+    StartServiceW, ENUM_SERVICE_STATUS_PROCESSW, QUERY_SERVICE_CONFIGW, SC_ENUM_PROCESS_INFO,
+    SC_HANDLE, SC_MANAGER_CONNECT, SC_MANAGER_CREATE_SERVICE, SC_MANAGER_ENUMERATE_SERVICE,
+    SERVICE_CHANGE_CONFIG, SERVICE_CONTROL_STOP, SERVICE_ERROR_NORMAL, SERVICE_NO_CHANGE,
+    SERVICE_QUERY_CONFIG, SERVICE_QUERY_STATUS, SERVICE_START, SERVICE_STATE_ALL, SERVICE_STATUS,
+    SERVICE_STOP, SERVICE_WIN32,
 };
 
 /// `ERROR_SERVICE_DOES_NOT_EXIST`: open the service to create it.
@@ -160,6 +161,50 @@ impl ServiceControl for ScmService {
             Err(code) => status_failure(id, code),
         }
     }
+
+    /// The start type is automatic; a service not created yet starts
+    /// nothing at boot.
+    fn boot_enabled(&self, id: &str) -> Result<bool, ServiceError> {
+        let name = service_name(id).ok_or_else(|| scm_error(id, INVALID))?;
+        let queried = open_scm(SC_MANAGER_CONNECT)
+            .and_then(|scm| open_service(&scm, &name, SERVICE_QUERY_CONFIG))
+            .and_then(|service| start_type(&service));
+        match queried {
+            Ok(start_type) => Ok(boot_enabled_of(start_type)),
+            Err(NO_SERVICE) => Ok(false),
+            Err(code) => Err(scm_error(id, code)),
+        }
+    }
+
+    /// Set the start type alone, the service created first when it does
+    /// not exist yet.
+    fn set_boot_enabled(&self, id: &str, enabled: bool) -> Result<(), ServiceError> {
+        let spec = self.spec(id)?;
+        let scm = open_scm(SC_MANAGER_CONNECT | SC_MANAGER_CREATE_SERVICE)
+            .map_err(|c| scm_error(id, c))?;
+        let service = match open_service(&scm, &spec.name, SERVICE_CHANGE_CONFIG) {
+            Err(NO_SERVICE) => create(&scm, &spec, SERVICE_CHANGE_CONFIG),
+            opened => opened,
+        }
+        .map_err(|c| scm_error(id, c))?;
+        // SAFETY: a valid service handle; every other setting unchanged.
+        ok(unsafe {
+            ChangeServiceConfigW(
+                service.0,
+                SERVICE_NO_CHANGE,
+                boot_start_type(enabled),
+                SERVICE_NO_CHANGE,
+                null(),
+                null(),
+                null_mut(),
+                null(),
+                null(),
+                null(),
+                null(),
+            )
+        })
+        .map_err(|c| scm_error(id, c))
+    }
 }
 
 /// An SCM handle, closed when dropped.
@@ -233,7 +278,8 @@ fn create(scm: &Handle, spec: &ServiceSpec, access: u32) -> Result<Handle, u32> 
     })
 }
 
-/// `ChangeServiceConfigW` with `spec` (the password left as it is).
+/// `ChangeServiceConfigW` with `spec`, the password and the start type left
+/// as they are: the start type is the user's start at boot.
 fn reconfigure(service: &Handle, spec: &ServiceSpec) -> Result<(), u32> {
     let (display, path, account) = (
         wide(&spec.display_name),
@@ -245,7 +291,7 @@ fn reconfigure(service: &Handle, spec: &ServiceSpec) -> Result<(), u32> {
         ChangeServiceConfigW(
             service.0,
             spec.service_type,
-            spec.start_type,
+            SERVICE_NO_CHANGE,
             SERVICE_ERROR_NORMAL,
             path.as_ptr(),
             null(),
@@ -256,6 +302,32 @@ fn reconfigure(service: &Handle, spec: &ServiceSpec) -> Result<(), u32> {
             display.as_ptr(),
         )
     })
+}
+
+/// The service's start type (`QueryServiceConfigW`, asked first for the
+/// size it needs).
+fn start_type(service: &Handle) -> Result<u32, u32> {
+    let mut needed = 0u32;
+    // SAFETY: a valid service handle; no buffer, only the size asked.
+    if let Err(code) = ok(unsafe { QueryServiceConfigW(service.0, null_mut(), 0, &mut needed) }) {
+        if code != ERROR_INSUFFICIENT_BUFFER {
+            return Err(code);
+        }
+    }
+    // u64s: the structure holds pointers and needs their alignment.
+    let mut buffer = vec![0u64; (needed as usize).div_ceil(8)];
+    // SAFETY: a valid service handle; the buffer is as long as said,
+    // aligned for the structure.
+    ok(unsafe {
+        QueryServiceConfigW(
+            service.0,
+            buffer.as_mut_ptr().cast(),
+            (buffer.len() * 8) as u32,
+            &mut needed,
+        )
+    })?;
+    // SAFETY: the call wrote the structure at the buffer's start.
+    Ok(unsafe { (*buffer.as_ptr().cast::<QUERY_SERVICE_CONFIGW>()).dwStartType })
 }
 
 /// The name of every Win32 service (`EnumServicesStatusExW`, resumed

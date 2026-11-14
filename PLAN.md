@@ -359,6 +359,12 @@ it launches. macOS keeps today's toggle, label and `StartServerOnLaunch` (no ser
 instance starts disabled, as the old setting defaulted to off. Requirement change to R8: the manager no
 longer starts every instance at boot, only the enabled ones are started, by the OS.
 
+Code done (tests green, see the commit); left: the real try on the installed packages (needs an
+imported instance), the docs, and two loose ends: `manager-boot-start-failed` now reports the Windows
+service sync, its text should say so; removing `core` with an enabled instance leaves a dangling
+`multi-user.target.wants/llama.cpp@<id>.service` link (the removal scripts should disable the
+instances).
+
 - Done when: the toggle reads "start llama-server when the system starts" on Linux and Windows and
   follows `systemctl is-enabled llama.cpp@default` (or the SCM start type), both ways; a user without
   `configure` is refused; pai-config's launch starts nothing; macOS unchanged; tried on the real

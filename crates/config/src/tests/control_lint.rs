@@ -416,3 +416,26 @@ fn log_scan_flags_the_per_user_log_and_leaves_the_rest() {
         assert_eq!(log_hits(line), expected, "{line:?}");
     }
 }
+
+/// Under the manager (Linux, Windows) the OS starts the instance at boot:
+/// pai-config's launch starts llama-server only through
+/// `server_control::start_at_launch`, which says no there, never on
+/// settings.ini's `StartServerOnLaunch` alone.
+#[test]
+fn the_launch_starts_the_server_only_through_start_at_launch() {
+    let gui = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/gui.rs");
+    let text = std::fs::read_to_string(&gui).expect("read gui.rs");
+    let code: Vec<&str> = production_lines(&text)
+        .into_iter()
+        .map(|(_, l)| l)
+        .collect();
+    let code = code.join("\n");
+    assert!(
+        code.contains("server_control::start_at_launch("),
+        "gui.rs does not decide the launch's start with start_at_launch"
+    );
+    assert!(
+        !code.contains("if settings::load().start_server_on_launch"),
+        "gui.rs still starts the server on StartServerOnLaunch alone"
+    );
+}
