@@ -342,3 +342,8 @@ Lessons only: the rules are in `AGENTS.md`.
 - A name-prefix match must be tested with every name that shares the prefix: `llama.cpp-v` starts
   `llama.cpp-vulkan-v...` but not `llama.cpp-rocm-v...`, so a rocm-only fixture passed while the real
   dist/ broke. Build fixtures from the full real file set, the suspect file written last.
+- A unit that talks to the system bus cannot use `DynamicUser=` where the bus is dbus-daemon (Ubuntu
+  26.04, 1.16.2): the connection is dropped at Hello ("Transport endpoint is not connected"), so the bff
+  runs as a static sysusers.d user. Reproduce with `systemd-run -p DynamicUser=yes busctl --system call
+  org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus GetId` against `-p User=nobody`.
+  A system file read through `files()` by path needs no stub function to go red.

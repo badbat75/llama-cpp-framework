@@ -110,9 +110,10 @@ pub fn of(rel: &str) -> Component {
     if path.starts_with("usr/local/share/vulkan/") {
         return Component::Vulkan;
     }
-    // The web service and its unit.
+    // The web service, its unit and the sysusers.d entry of its user.
     if path == "usr/libexec/private-ai/pai-bff"
         || path == "usr/lib/systemd/system/private-ai-bff.service"
+        || path == "usr/lib/sysusers.d/private-ai-bff.conf"
     {
         return Component::Bff;
     }
@@ -361,8 +362,9 @@ mod tests {
     /// llama.cpp package before: pai-manager, the system files of its
     /// services (the instance unit `llama.cpp@.service` included: it runs
     /// `pai-manager run-instance`), and `cli.toml`, the texts pai-manager,
-    /// pai and pai-bff print. The bff's unit stays with pai-bff, the
-    /// desktop entry with the GUI, although both sit beside these.
+    /// pai and pai-bff print. The bff's unit and the sysusers.d entry of its
+    /// user stay with pai-bff, the desktop entry with the GUI, although
+    /// they sit beside these.
     #[test]
     fn core_holds_the_manager_its_system_files_and_cli_toml() {
         for rel in [
@@ -381,6 +383,7 @@ mod tests {
                 "usr/lib/systemd/system/private-ai-bff.service",
                 Component::Bff,
             ),
+            ("usr/lib/sysusers.d/private-ai-bff.conf", Component::Bff),
             (
                 "usr/share/applications/org.privateai.Config.desktop",
                 Component::Config,
@@ -421,6 +424,7 @@ mod tests {
             "usr/share/dbus-1/system.d/org.privateai.Manager1.conf",
             "usr/share/polkit-1/actions/org.privateai.manager.policy",
             "usr/lib/sysusers.d/private-ai.conf",
+            "usr/lib/sysusers.d/private-ai-bff.conf",
             "usr/share/private-ai/strings/cli.toml",
             "usr/share/private-ai/strings/en_US.toml",
             "usr/share/private-ai/benchmarks/specs/standard-1.1.ini",
@@ -728,9 +732,10 @@ mod tests {
 
     /// pai-bff has a package of its own, `private-ai-framework-bff`: it is
     /// a service, so it sits beside pai-manager in /usr/libexec/private-ai
-    /// (no user command), and its unit goes with it, not with the manager's
-    /// in the core package. A desktop install and a headless server each
-    /// choose it apart from the GUI and the command line.
+    /// (no user command), and its unit and the sysusers.d entry of its
+    /// static user go with it, not with the manager's in the core package.
+    /// A desktop install and a headless server each choose it apart from
+    /// the GUI and the command line.
     #[test]
     fn pai_bff_and_its_unit_go_to_the_bff_package() {
         for (rel, want) in [
@@ -739,6 +744,8 @@ mod tests {
                 "usr/lib/systemd/system/private-ai-bff.service",
                 Component::Bff,
             ),
+            // The sysusers.d entry of the bff's static user goes with it.
+            ("usr/lib/sysusers.d/private-ai-bff.conf", Component::Bff),
             // The manager and its files go to the core package.
             ("usr/libexec/private-ai/pai-manager", Component::Core),
             (

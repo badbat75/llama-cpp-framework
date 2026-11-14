@@ -2437,10 +2437,11 @@ mod tests {
     /// The bff's `.deb` Depends: what dpkg-shlibdeps found for pai-bff (or
     /// the fixed C libraries when it gives none) and the core's package at
     /// its version; not the engine, no GUI, no command line, no graphics
-    /// library, nothing for its scripts (system_files::deb_depends is empty
-    /// for it).
+    /// library; and, since its postinst creates its static user, what
+    /// systemd-sysusers comes in, as the core's does
+    /// (system_files::deb_depends).
     #[test]
-    fn the_bff_deb_depends_on_core_and_nothing_of_the_front_ends() {
+    fn the_bff_deb_depends_on_core_sysusers_and_nothing_of_the_front_ends() {
         let f = fields_v(Component::Bff, FW, &[], None);
         for scanned in ["", "libc6 (>= 2.34), libgcc-s1 (>= 4.2)"] {
             let depends = depends_line(&f, scanned);
@@ -2453,6 +2454,10 @@ mod tests {
                 parts.iter().any(|p| p.starts_with("libc6")),
                 "{scanned:?}: {depends}"
             );
+            assert!(
+                parts.contains(&"systemd | systemd-standalone-sysusers | systemd-sysusers"),
+                "{scanned:?}: {depends}"
+            );
             for other in [
                 "private-ai-framework-config",
                 "private-ai-framework-cli",
@@ -2462,7 +2467,6 @@ mod tests {
                 "libwayland",
                 "libx11",
                 "libegl",
-                "sysusers",
                 "llama.cpp",
             ] {
                 assert!(
@@ -2498,20 +2502,36 @@ mod tests {
     }
 
     /// The bff's `.rpm` lists its files as rpmbuild checks them (pai-bff,
-    /// its unit by name, its licences and copyright), runs its scriptlets
-    /// before `%files`, and names no package of 2.4 or earlier.
+    /// every system file of its package by name, its unit and the
+    /// sysusers.d entry of its user, never their directories, its licences
+    /// and copyright), runs its scriptlets before `%files`, and names no
+    /// package of 2.4 or earlier.
     #[test]
     fn the_bff_rpm_spec_lists_its_files_and_scriptlets() {
-        use super::super::system_files::rpm_scriptlets;
+        use super::super::system_files::{files, rpm_scriptlets};
         let dir = scratch("rpm-spec-bff");
         let bff = dir.join("bff");
         for (rel, mode) in [
             ("usr/libexec/private-ai/pai-bff", 0o755),
-            ("usr/lib/systemd/system/private-ai-bff.service", 0o644),
             ("usr/share/private-ai/licenses/bff/README.txt", 0o644),
             ("usr/share/doc/private-ai-framework-bff/copyright", 0o644),
         ] {
             put(&bff, rel, ELF, mode);
+        }
+        let ours: Vec<(&str, String)> = files()
+            .into_iter()
+            .filter(|(rel, _)| components::of(rel) == Component::Bff)
+            .collect();
+        let paths: Vec<&str> = ours.iter().map(|(rel, _)| *rel).collect();
+        assert_eq!(
+            paths,
+            [
+                "usr/lib/systemd/system/private-ai-bff.service",
+                "usr/lib/sysusers.d/private-ai-bff.conf"
+            ]
+        );
+        for (rel, text) in &ours {
+            put(&bff, rel, text.as_bytes(), 0o644);
         }
         let f = fields_v(Component::Bff, FW, &[], None);
         let spec = rpm_spec(&f, "MIT", "libggml", &bff);
@@ -2528,10 +2548,10 @@ mod tests {
             assert!(lines.contains(&line), "{line} missing:\n{spec}");
         }
         let listed = files_section(&spec);
-        assert!(
-            listed.contains(&"/usr/lib/systemd/system/private-ai-bff.service".to_string()),
-            "{spec}"
-        );
+        for rel in paths {
+            let line = format!("/{rel}");
+            assert!(listed.contains(&line), "{line} missing:\n{spec}");
+        }
         let scriptlets = rpm_scriptlets(Component::Bff);
         assert!(!scriptlets.is_empty());
         let at = spec

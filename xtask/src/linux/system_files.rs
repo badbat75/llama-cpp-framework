@@ -3,7 +3,8 @@
 //! the manager's bus name, the polkit actions it checks, the sysusers.d
 //! entry of the service user, and the maintainer scripts that create the
 //! user and enable, start and stop the manager; and the unit of the web
-//! service with its maintainer scripts, which the `-bff` package ships.
+//! service, the sysusers.d entry of its user and its maintainer scripts,
+//! which the `-bff` package ships.
 
 use crate::common::components::Component;
 use crate::common::configurator::set_mode;
@@ -60,6 +61,7 @@ pub fn files() -> Vec<(&'static str, String)> {
         ),
         ("usr/lib/sysusers.d/private-ai.conf", sysusers()),
         ("usr/lib/systemd/system/private-ai-bff.service", bff_unit()),
+        ("usr/lib/sysusers.d/private-ai-bff.conf", bff_sysusers()),
     ]
 }
 
@@ -113,8 +115,8 @@ pub fn instance_unit() -> String {
 }
 
 /// `private-ai-bff.service`: pai-bff, the web service.
-/// A user allocated at each start (DynamicUser=), which reads
-/// `/etc/private-ai/bff.ini` and writes nothing; hardened (systemd.exec(5)).
+/// Its static system user, which reads `/etc/private-ai/bff.ini` and writes
+/// nothing; hardened (systemd.exec(5)).
 pub fn bff_unit() -> String {
     format!(
         "{}# Local changes go in a drop-in: systemctl edit {BFF_SERVICE}\n\
@@ -125,7 +127,16 @@ pub fn bff_unit() -> String {
          [Service]\n\
          Type=exec\n\
          ExecStart={BFF_EXE}\n\
-         DynamicUser=yes\n\
+         # A static user: dbus-daemon drops a DynamicUser= at Hello, and the bff calls\n\
+         # the manager on the system bus (sources: the unit's test in system_files.rs).\n\
+         User=private-ai-bff\n\
+         Group=private-ai-bff\n\
+         ProtectSystem=strict\n\
+         ProtectHome=yes\n\
+         PrivateTmp=yes\n\
+         RemoveIPC=yes\n\
+         NoNewPrivileges=yes\n\
+         RestrictSUIDSGID=yes\n\
          CapabilityBoundingSet=\n\
          PrivateDevices=yes\n\
          ProtectKernelTunables=yes\n\
@@ -211,6 +222,16 @@ pub fn sysusers() -> String {
     )
 }
 
+/// The sysusers.d entry of the bff's user: no home, no shell, no group but
+/// its own.
+pub fn bff_sysusers() -> String {
+    format!(
+        "{}\n\
+         u private-ai-bff - \"Private AI Framework web service\"\n",
+        header_of(Component::Bff, "#")
+    )
+}
+
 /// Writes [`files`] under `stage`, mode 0644.
 pub fn stage(stage: &Path) -> Result<()> {
     for (rel, text) in files() {
@@ -286,13 +307,16 @@ fi
     vec![("postinst", postinst), ("prerm", prerm), ("postrm", postrm)]
 }
 
-/// The bff's `.deb` maintainer scripts: dh_installsystemd's for one unit
-/// (postinst-systemd-enable, postinst-systemd-restart, prerm-systemd-restart,
+/// The bff's `.deb` maintainer scripts: dh_installsysusers' and
+/// dh_installsystemd's for one unit (postinst-sysusers,
+/// postinst-systemd-enable, postinst-systemd-restart, prerm-systemd-restart,
 /// postrm-systemd-reload-only, postrm-systemd).
 fn bff_deb_scripts() -> Vec<(&'static str, String)> {
     let head = format!("#!/bin/sh\nset -e\n{}\n", header_of(Component::Bff, "#"));
     let postinst = format!(
         r#"{head}if [ "$1" = "configure" ] || [ "$1" = "abort-upgrade" ] || [ "$1" = "abort-deconfigure" ] || [ "$1" = "abort-remove" ] ; then
+	systemd-sysusers ${{DPKG_ROOT:+--root="$DPKG_ROOT"}} private-ai-bff.conf
+
 	# was-enabled is true on a first install, false once disabled.
 	if deb-systemd-helper --quiet was-enabled {BFF_SERVICE}; then
 		deb-systemd-helper enable {BFF_SERVICE} >/dev/null || true
@@ -352,7 +376,7 @@ pub fn write_deb_scripts(root: &Path, c: Component) -> Result<()> {
 pub fn deb_depends(c: Component) -> &'static str {
     // What dh_installsysusers adds for systemd-sysusers; deb-systemd-helper
     // and deb-systemd-invoke come with init-system-helpers, which is Essential.
-    if c == Component::Core {
+    if c == Component::Core || c == Component::Bff {
         "systemd | systemd-standalone-sysusers | systemd-sysusers"
     } else {
         ""
@@ -406,11 +430,12 @@ fi
     )
 }
 
-/// The bff's `.rpm` scriptlets, the manager's shape for one unit: enabled on
-/// the first install, restarted in %posttrans when enabled.
+/// The bff's `.rpm` scriptlets, the manager's shape for one unit: its user
+/// created, enabled on the first install, restarted in %posttrans when enabled.
 fn bff_rpm_scriptlets() -> String {
     format!(
         r#"%post
+systemd-sysusers private-ai-bff.conf || :
 if [ $1 -eq 1 ]; then
     systemctl enable {BFF_SERVICE} || :
 fi
@@ -448,6 +473,16 @@ mod tests {
     const POLKIT_POLICY: &str = "usr/share/polkit-1/actions/org.privateai.manager.policy";
     const SYSUSERS: &str = "usr/lib/sysusers.d/private-ai.conf";
     const BFF_UNIT: &str = "usr/lib/systemd/system/private-ai-bff.service";
+    const BFF_SYSUSERS: &str = "usr/lib/sysusers.d/private-ai-bff.conf";
+
+    /// The text of the generated file at `path`, from [`files`].
+    fn file(path: &str) -> String {
+        files()
+            .into_iter()
+            .find(|(p, _)| *p == path)
+            .unwrap_or_else(|| panic!("{path} is not among the system files"))
+            .1
+    }
 
     /// The manager's sources, which name the bus, the actions and the unit.
     const DBUS_RS: &str = include_str!("../../../crates/manager/src/manager/dbus.rs");
@@ -493,8 +528,9 @@ mod tests {
     /// named after their namespace (polkit(8)), the user in
     /// /usr/lib/sysusers.d (sysusers.d(5): "Packages should install their
     /// configuration files in /usr/lib/sysusers.d"). Each goes to the
-    /// core package, which holds pai-manager, but the bff's unit, which
-    /// goes with pai-bff to the bff's package.
+    /// core package, which holds pai-manager, but the bff's unit and the
+    /// sysusers.d entry of its user, which go with pai-bff to the bff's
+    /// package.
     #[test]
     fn the_system_files_go_to_their_directories_in_their_packages() {
         let got: Vec<(&str, String)> = files();
@@ -507,11 +543,12 @@ mod tests {
                 DBUS_POLICY,
                 POLKIT_POLICY,
                 SYSUSERS,
-                BFF_UNIT
+                BFF_UNIT,
+                BFF_SYSUSERS
             ]
         );
         for (path, text) in &got {
-            let owner = if *path == BFF_UNIT {
+            let owner = if *path == BFF_UNIT || *path == BFF_SYSUSERS {
                 Component::Bff
             } else {
                 Component::Core
@@ -523,6 +560,7 @@ mod tests {
                 DBUS_POLICY => dbus_policy(),
                 POLKIT_POLICY => polkit_policy(),
                 BFF_UNIT => bff_unit(),
+                BFF_SYSUSERS => text.clone(),
                 _ => sysusers(),
             };
             assert_eq!(*text, want, "{path}");
@@ -536,8 +574,8 @@ mod tests {
     }
 
     /// Staged, the files land under their paths as plain 0644 files and the
-    /// split hands each to its package: the bff's unit to the bff's, every
-    /// other one to the core package, none to the engine's.
+    /// split hands each to its package: the bff's unit and user to the
+    /// bff's, every other one to the core package, none to the engine's.
     #[test]
     fn staging_writes_every_system_file_and_the_split_gives_them_to_their_packages() {
         use std::os::unix::fs::PermissionsExt;
@@ -1163,17 +1201,30 @@ mod tests {
     /// `private-ai-bff.service` runs pai-bff from where the package places
     /// it, with no argument (it serves in the foreground; `service` is the
     /// Windows entry). Type=exec: the start fails when the executable cannot
-    /// run (systemd.service(5)). DynamicUser=yes: a user allocated at each
-    /// start, so no account to create and nothing in sysusers.d
-    /// (systemd.exec(5) DynamicUser=; it cannot own a D-Bus name, "this does
-    /// not affect calling into other D-Bus services", which is all the bff
-    /// will do with the manager). It reads `/etc/private-ai/bff.ini`, which
-    /// the manager's ConfigurationDirectory= keeps 0755, and writes nothing,
-    /// so no User=, Group=, directory of its own or ReadWritePaths=.
-    /// Restart=on-failure like the manager; started at boot through
-    /// multi-user.target.
+    /// run (systemd.service(5)).
+    ///
+    /// It runs as the static system user and group `private-ai-bff`
+    /// (systemd.exec(5) User=, Group=), not as a DynamicUser=. The bff calls
+    /// the manager on the system bus, and dbus-daemon drops the connection
+    /// of a dynamic user at Hello: on Ubuntu 26.04 (dbus-daemon 1.16.2)
+    /// `systemd-run -p DynamicUser=yes busctl --system call
+    /// org.freedesktop.DBus ... GetId` fails with "Transport endpoint is
+    /// not connected" while `-p User=nobody` works, and the installed
+    /// 2.99.1 answered /api/instances 503 `unavailable`. A known
+    /// incompatibility of dbus-daemon with dynamic users
+    /// (https://answers.launchpad.net/bugs/1969976,
+    /// https://lists.freedesktop.org/archives/systemd-devel/2024-March/050144.html,
+    /// Arch FS#75738); dbus-broker handles them, but the packages cannot
+    /// require it. systemd.exec(5) DynamicUser= says a dynamic user "cannot
+    /// own a D-Bus name" and that this "does not affect calling into other
+    /// D-Bus services", which dbus-daemon does not hold to.
+    ///
+    /// It reads `/etc/private-ai/bff.ini`, which the manager's
+    /// ConfigurationDirectory= keeps 0755, and writes nothing, so no
+    /// directory of its own or ReadWritePaths=. Restart=on-failure like the
+    /// manager; started at boot through multi-user.target.
     #[test]
-    fn the_bff_unit_runs_pai_bff_as_a_dynamic_user_and_starts_at_boot() {
+    fn the_bff_unit_runs_pai_bff_as_its_static_user_and_starts_at_boot() {
         let unit = bff_unit();
         assert!(
             section(&unit, "[Unit]").contains(&format!("Description={BFF_DESCRIPTION}").as_str()),
@@ -1183,14 +1234,15 @@ mod tests {
         for want in [
             "Type=exec",
             "ExecStart=/usr/libexec/private-ai/pai-bff",
-            "DynamicUser=yes",
+            "User=private-ai-bff",
+            "Group=private-ai-bff",
             "Restart=on-failure",
         ] {
             assert!(service.contains(&want), "{want} missing:\n{unit}");
         }
         for key in [
-            "User=",
-            "Group=",
+            "DynamicUser=",
+            "SupplementaryGroups=",
             "ConfigurationDirectory",
             "StateDirectory",
             "RuntimeDirectory",
@@ -1209,9 +1261,14 @@ mod tests {
         );
     }
 
-    /// Hardening that leaves it working (systemd.exec(5); DynamicUser=
-    /// already implies ProtectSystem=strict, ProtectHome=read-only,
-    /// PrivateTmp, RemoveIPC, NoNewPrivileges and RestrictSUIDSGID): no
+    /// Hardening that leaves it working (systemd.exec(5)). What DynamicUser=
+    /// implied is now spelled out: the whole file system read-only
+    /// (ProtectSystem=strict), a private /tmp and /var/tmp (PrivateTmp=),
+    /// its IPC objects removed when it stops (RemoveIPC=), no privilege
+    /// gained through execve (NoNewPrivileges=), no SUID/SGID file made
+    /// (RestrictSUIDSGID=). /home, /root and /run/user inaccessible
+    /// (ProtectHome=yes, stricter than the read-only DynamicUser= implied:
+    /// the bff reads nothing there, its user's home is `/`). Beside them: no
     /// capability (CapabilityBoundingSet= empty; the default port 8590 is
     /// above 1024 and needs no CAP_NET_BIND_SERVICE), no physical device
     /// (PrivateDevices=), kernel tunables, modules and cgroups read-only or
@@ -1224,6 +1281,12 @@ mod tests {
         let unit = bff_unit();
         let service = section(&unit, "[Service]");
         for want in [
+            "ProtectSystem=strict",
+            "ProtectHome=yes",
+            "PrivateTmp=yes",
+            "RemoveIPC=yes",
+            "NoNewPrivileges=yes",
+            "RestrictSUIDSGID=yes",
             "CapabilityBoundingSet=",
             "PrivateDevices=yes",
             "ProtectKernelTunables=yes",
@@ -1233,18 +1296,24 @@ mod tests {
         ] {
             assert!(service.contains(&want), "{want} missing:\n{unit}");
         }
-        // Nothing that undoes what DynamicUser= implies.
-        for undo in [
-            "ProtectSystem=no",
-            "ProtectSystem=false",
-            "ProtectHome=no",
-            "ProtectHome=false",
-            "PrivateTmp=no",
-            "PrivateTmp=false",
-            "AmbientCapabilities=",
+        // Each set once, so a later line cannot undo it.
+        for key in [
+            "ProtectSystem=",
+            "ProtectHome=",
+            "PrivateTmp=",
+            "RemoveIPC=",
+            "NoNewPrivileges=",
+            "RestrictSUIDSGID=",
         ] {
-            assert!(!service.contains(&undo), "{undo} in:\n{unit}");
+            let n = service.iter().filter(|l| l.starts_with(key)).count();
+            assert_eq!(n, 1, "{key} set {n} times:\n{unit}");
         }
+        assert!(
+            !service
+                .iter()
+                .any(|l| l.starts_with("AmbientCapabilities=")),
+            "{unit}"
+        );
     }
 
     /// The unit names the package that installs it, the bff's, never the
@@ -1263,17 +1332,55 @@ mod tests {
         assert!(!unit.contains("/opt/"), "{unit}");
     }
 
+    // ── The bff's user ──────────────────────────────────────────────────
+
+    /// One system user and group `private-ai-bff` (sysusers.d(5) `u`: user
+    /// and group of the same name, login disabled; not `u!`, which needs
+    /// systemd 257), with no home and no shell given: sysusers.d(5) "Home
+    /// Directory" defaults to the root directory and recommends omitting
+    /// it, "Shell" defaults to /usr/sbin/nologin. In no other group (it
+    /// touches no GPU), and not the manager's `private-ai`, whose home holds
+    /// the instances' models and slot states. Its own file, named after the
+    /// user, in the bff's package, with the bff's header.
+    #[test]
+    fn sysusers_creates_the_bffs_static_user_without_home_or_shell() {
+        let text = file(BFF_SYSUSERS);
+        let lines: Vec<&str> = text
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty() && !l.starts_with('#'))
+            .collect();
+        assert_eq!(
+            lines,
+            [r#"u private-ai-bff - "Private AI Framework web service""#],
+            "{text}"
+        );
+        assert!(
+            text.starts_with("# Installed by the private-ai-framework-bff package"),
+            "{text}"
+        );
+        assert!(!text.contains('\u{2014}'), "{text}");
+        assert!(
+            !sysusers().contains("private-ai-bff"),
+            "the core's sysusers.d file creates the bff's user:\n{}",
+            sysusers()
+        );
+    }
+
     // ── The bff's maintainer scripts ────────────────────────────────────
 
-    /// The bff's `.deb` postinst, as dh_installsystemd writes it for one
-    /// unit (debhelper's autoscripts postinst-systemd-enable and
-    /// postinst-systemd-restart): on configure the unit enabled unless the
-    /// administrator disabled it, then, with systemd running, a
-    /// daemon-reload and a start on an install or a restart on an upgrade.
-    /// No user to create (DynamicUser=), no bus policy to reload, nothing of
-    /// the manager's or the instances'. The header names the bff's package.
+    /// The bff's `.deb` postinst, as dh_installsysusers and
+    /// dh_installsystemd write it for one unit (debhelper's autoscripts
+    /// postinst-sysusers, postinst-systemd-enable and
+    /// postinst-systemd-restart), in the core's shape: on configure its user
+    /// created first (from its own sysusers.d file, never the core's), then
+    /// the unit enabled unless the administrator disabled it, then, with
+    /// systemd running, a daemon-reload and a start on an install or a
+    /// restart on an upgrade, so the unit never starts before its User=
+    /// exists. No bus policy to reload, nothing of the manager's or the
+    /// instances'. The header names the bff's package.
     #[test]
-    fn the_bff_deb_postinst_enables_and_starts_the_bff() {
+    fn the_bff_deb_postinst_creates_its_user_enables_and_starts_the_bff() {
         let scripts = deb_scripts(Component::Bff);
         let text = &scripts
             .iter()
@@ -1283,6 +1390,10 @@ mod tests {
         let configure = at(
             text,
             r#"if [ "$1" = "configure" ] || [ "$1" = "abort-upgrade" ] || [ "$1" = "abort-deconfigure" ] || [ "$1" = "abort-remove" ] ; then"#,
+        );
+        let users = at(
+            text,
+            r#"systemd-sysusers ${DPKG_ROOT:+--root="$DPKG_ROOT"} private-ai-bff.conf"#,
         );
         let was = at(
             text,
@@ -1307,12 +1418,12 @@ mod tests {
             text,
             "deb-systemd-invoke start private-ai-bff.service >/dev/null || true",
         );
-        assert!(configure < was && was < running, "{text}");
+        assert!(configure < users && users < was && was < running, "{text}");
         assert!(running < reload && reload < upgrade, "{text}");
         assert!(upgrade < restart && restart < start, "{text}");
         assert!(text.contains("private-ai-framework-bff"), "{text}");
         for other in [
-            "systemd-sysusers",
+            " private-ai.conf",
             "busctl",
             "private-ai-manager",
             "llama.cpp@",
@@ -1385,15 +1496,21 @@ mod tests {
         assert!(!rpm.contains("private-ai-bff"), "{rpm}");
     }
 
-    /// The bff's scripts need nothing beyond init-system-helpers, which is
-    /// Essential (no systemd-sysusers: DynamicUser= creates no account).
+    /// The bff's postinst runs systemd-sysusers, so its `.deb` asks for it
+    /// as the core's does, as dh_installsysusers adds it to misc:Depends;
+    /// deb-systemd-helper and deb-systemd-invoke come from
+    /// init-system-helpers, which is Essential.
     #[test]
-    fn the_bff_deb_depends_on_nothing_for_its_scripts() {
-        assert_eq!(deb_depends(Component::Bff), "");
+    fn the_bff_deb_depends_on_systemd_sysusers() {
+        assert_eq!(
+            deb_depends(Component::Bff),
+            "systemd | systemd-standalone-sysusers | systemd-sysusers"
+        );
     }
 
     /// The bff's `.rpm` scriptlets, the same shape as the manager's
-    /// (Fedora's systemd macros written out): enabled on the first install,
+    /// (Fedora's systemd macros written out): its user created from its own
+    /// sysusers.d file in %post before anything else, enabled on the first install,
     /// disabled and stopped on the last removal, a daemon-reload after a
     /// removal, and in %posttrans a daemon-reload and a restart of the bff
     /// when it is enabled, so an administrator's disable holds. Nothing of
@@ -1413,9 +1530,10 @@ mod tests {
         );
 
         let post = scriptlet(&text, "%post");
+        let users = at(&post, "systemd-sysusers private-ai-bff.conf || :");
         let first = at(&post, "if [ $1 -eq 1 ]; then");
         let enable = at(&post, "systemctl enable private-ai-bff.service || :");
-        assert!(first < enable, "{post}");
+        assert!(users < first && first < enable, "{post}");
 
         let preun = scriptlet(&text, "%preun");
         let removal = at(&preun, "if [ $1 -eq 0 ]");
@@ -1441,7 +1559,7 @@ mod tests {
             parses(name, &scriptlet(&text, name));
         }
         for other in [
-            "systemd-sysusers",
+            " private-ai.conf",
             "busctl",
             "private-ai-manager",
             "llama.cpp@",
@@ -1460,7 +1578,7 @@ mod tests {
     fn the_system_files_and_scripts_name_the_core_package() {
         let mut texts: Vec<(String, String)> = files()
             .into_iter()
-            .filter(|(p, _)| *p != BFF_UNIT)
+            .filter(|(p, _)| *p != BFF_UNIT && *p != BFF_SYSUSERS)
             .map(|(p, t)| (p.to_string(), t))
             .collect();
         texts.extend(

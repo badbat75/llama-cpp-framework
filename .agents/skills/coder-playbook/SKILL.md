@@ -190,3 +190,7 @@ Lessons only: the rules are in `AGENTS.md`.
 - The engine's package version carries an epoch (`1:1.0.0+pai1`): `util::version_gt` compares it
   first, rpm reads versions with `%{EVR}`, and the `.rpm` spells it as `Epoch`/`Version`/`Release`
   (`package::rpm_evr`); a file name drops the epoch (`components::file_stem`).
+- `components::of` routes by first match: a file of the bff under a directory the core claims by
+  prefix (`usr/lib/systemd/`, `usr/lib/sysusers.d/`) needs its exact path in the bff branch, which
+  comes before the core's prefixes. A service that calls the system bus cannot use `DynamicUser=`
+  (dbus-daemon drops it at Hello): the bff has a static sysusers.d user instead.

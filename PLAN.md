@@ -609,7 +609,7 @@ access with authentication.
   running from `bin\` (an interrupted sweep puts its key back at the next start).
 - Step 10, taken by the coordinator on 2026-11-14, approved by the user on 2026-11-14: the bff listens on `127.0.0.1:8590` by
   default, loopback only until authentication exists; it has its own package `private-ai-framework-bff`
-  (requires `-llama`), runs as `DynamicUser=yes` on Linux and as the virtual account
+  (requires `-llama`), runs as the static system user `private-ai-bff` on Linux (first `DynamicUser=yes`, replaced on 2026-11-14 after the real install: dbus-daemon drops a dynamic user at Hello) and as the virtual account
   `NT SERVICE\private-ai-bff` on Windows, enabled and started at install; macOS has none. Before any
   slice that changes something through the bff, a design of who is acting (today any local user could
   act through the bff's account). `cli.toml` moved to `-llama`, which every package requires (the
