@@ -279,3 +279,10 @@ Lessons only: the rules are in `AGENTS.md`.
 - The ModelsDir the GUI and CLI scan, download into and browse from is `pai_app::server_cfg::models_dir()`
   (the instance's folder under the Windows manager when unset), never `models_dir_or_default()`;
   seeding ModelsDir into the server file asks `server_cfg::seeds_models_dir`. Text-check tests pin both.
+- xtask's Windows GNU check prints cargo's manifest lint `unused dependency` (`serde_json`, `sha2`,
+  used only by Linux code); it is not a rustc warning, so `-D warnings` still passes. Not a regression.
+- WiX extensions reach `wix build` from `installer/wix-toolset.psd1` `Extensions`, passed as `-ext` to
+  every MSI (`windows/package.rs`), so a new `util:` element needs only its `xmlns:util` on the root.
+- Some tests pin a caller's source text (`server_control::tests::app_save_body` wants a literal
+  `render_for(` in pai-app's `server_cfg::save`): grep the tests for a function's name before
+  renaming or swapping the call, even when the brief suggests it.

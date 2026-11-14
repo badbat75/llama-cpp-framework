@@ -14,7 +14,8 @@
   installer\AGENTS.md says why each piece is the way it is.
 -->
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
-     xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
+     xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui"
+     xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
 
   <!--
     UpgradeCode: the identity every version of this product shares, and the
@@ -201,11 +202,14 @@
                       DisplayName="Private AI Framework manager"
                       Description="Runs the llama-server instances of Private AI Framework as services and serves the configurator."
                       Type="ownProcess" Start="auto" ErrorControl="normal" Arguments="serve">
-        <!-- The SCM repeats the last action on every later failure; the
-             count goes back to zero after a day without one. -->
-        <ServiceConfigFailureActions OnInstall="yes" OnReinstall="yes" ResetPeriod="86400">
-          <Failure Action="restartService" Delay="5000" />
-        </ServiceConfigFailureActions>
+        <!-- Restarted on every failure after 5 s; the count goes back to
+             zero after a day without one. Util's ServiceConfig, not the
+             built-in ServiceConfigFailureActions: Windows Installer's
+             MsiConfigureServices opens the service without SERVICE_START,
+             which a restart action needs, and fails with error 1939 (a modal
+             Retry/Cancel under basic UI). Util's custom action opens it with
+             SERVICE_CHANGE_CONFIG and SERVICE_START. -->
+        <util:ServiceConfig FirstFailureActionType="restart" SecondFailureActionType="restart" ThirdFailureActionType="restart" RestartServiceDelayInSeconds="5" ResetPeriodInDays="1" />
       </ServiceInstall>
       <ServiceControl Id="ManagerService" Name="private-ai-manager" Start="install" Stop="both" Remove="uninstall" />
     </Component>
@@ -226,9 +230,9 @@
                       Description="Serves the web UI of Private AI Framework and the API it calls, on this machine only."
                       Type="ownProcess" Start="auto" ErrorControl="normal" Arguments="service"
                       Account="NT SERVICE\private-ai-bff">
-        <ServiceConfigFailureActions OnInstall="yes" OnReinstall="yes" ResetPeriod="86400">
-          <Failure Action="restartService" Delay="5000" />
-        </ServiceConfigFailureActions>
+        <!-- Util's ServiceConfig, not the built-in table: see the manager's
+             service above. -->
+        <util:ServiceConfig FirstFailureActionType="restart" SecondFailureActionType="restart" ThirdFailureActionType="restart" RestartServiceDelayInSeconds="5" ResetPeriodInDays="1" />
       </ServiceInstall>
       <ServiceControl Id="BffService" Name="private-ai-bff" Start="install" Stop="both" Remove="uninstall" />
     </Component>

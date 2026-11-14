@@ -13,7 +13,8 @@
     # Extensions the .wxs uses, at the SAME version as the tool (WiX refuses a
     # mismatched major): WixUI for the dialogs (CustomizeDlg, MaintenanceTypeDlg,
     # ProgressDlg, ...), Util for WixQuietExec, which runs the custom actions'
-    # PowerShell without a console window.
+    # PowerShell without a console window, and for ServiceConfig, the
+    # framework's services' restart on failure.
     Extensions = @('WixToolset.UI.wixext', 'WixToolset.Util.wixext')
 
     # WiX v7 is under the Open Source Maintenance Fee EULA: every command but

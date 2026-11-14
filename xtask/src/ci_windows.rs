@@ -455,6 +455,65 @@ fn installers_windows_logs_every_msiexec() {
     }
 }
 
+/// The steps of the job, each as its lines from its `      - ` entry to the
+/// next one (or the end of `steps:`).
+fn steps(text: &str) -> Vec<Vec<&str>> {
+    let mut out: Vec<Vec<&str>> = Vec::new();
+    for l in text.lines() {
+        if l.starts_with("      - ") {
+            out.push(vec![l]);
+        } else if let Some(step) = out.last_mut() {
+            step.push(l);
+        }
+    }
+    out
+}
+
+/// Every step that runs msiexec (install, repair, uninstall) or `xtask
+/// install` has its own `timeout-minutes` of at most 30: a modal Windows
+/// Installer dialog (error 1939's Retry/Cancel under /qb) waits for a click
+/// forever, and without a step timeout it eats the whole job's 180 minutes.
+#[test]
+fn installers_windows_gives_every_msiexec_step_its_own_timeout() {
+    let text = workflow();
+    let installing: Vec<Vec<&str>> = steps(&text)
+        .into_iter()
+        .filter(|s| {
+            s.iter().any(|l| {
+                l.to_ascii_lowercase().contains("msiexec") || l.contains("xtask -- install")
+            })
+        })
+        .collect();
+    assert!(
+        installing.len() >= 4,
+        "expected the framework-alone, install, repair and uninstall steps, found {}",
+        installing.len()
+    );
+    for s in installing {
+        let minutes: Vec<u32> = s
+            .iter()
+            .filter_map(|l| l.strip_prefix("        timeout-minutes:"))
+            .map(|v| {
+                v.trim()
+                    .parse()
+                    .unwrap_or_else(|_| panic!("timeout-minutes `{v}` in `{}`", s[0].trim()))
+            })
+            .collect();
+        assert_eq!(
+            minutes.len(),
+            1,
+            "{WORKFLOW}: no timeout-minutes of its own on `{}`",
+            s[0].trim()
+        );
+        assert!(
+            (1..=30).contains(&minutes[0]),
+            "{WORKFLOW}: timeout-minutes {} on `{}`",
+            minutes[0],
+            s[0].trim()
+        );
+    }
+}
+
 /// The MSIs and the logs (the workflow's own and xtask install's
 /// `build\windows\msi-*.log`) are uploaded whether the job passed or failed.
 #[test]

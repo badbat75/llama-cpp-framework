@@ -496,3 +496,12 @@ Lessons only: the rules are in `AGENTS.md`.
   its own doc comment and assertion message too: split the needle with `concat!` and keep the literal
   out of the comment and the message. A body pin on a top-level fn finds `"\npub fn <name>("` (test fns
   are indented), since presets.rs has `#[cfg(test)]` items before its production fns.
+- An e2e expectation that differs per OS branches on `cfg!(...)` (`cfg!(any(windows, target_os =
+  "linux"))` for "under the manager"), never on the pure function under test, or the e2e only echoes
+  it. The ModelsDir seeding by a preset save or a download is pinned in pai-app's `config_seam_e2e`
+  (`server_control.rs`); the instance's unset ModelsDir/StateDir in pai-core's `instance_launch_e2e`.
+- An extension element in the `.wxs` (`util:ServiceConfig`) is pinned by namespace URI with roxmltree
+  (`n.tag_name().namespace() == Some(UTIL_NS)`, the prefix is not kept); the root's declaration by
+  `root.namespaces().any(|ns| ns.name() == Some("util") && ns.uri() == ..)`. Util attribute tables:
+  docs.firegiant.com/wix/schema/util/<element>/ (past offset 100000). A per-step workflow pin uses
+  `steps()` in `xtask/src/ci_windows.rs` (each `      - ` entry with its lines; step keys at 8 spaces).

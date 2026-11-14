@@ -670,31 +670,7 @@ mod tests {
         let text = read(WXS);
         let doc = Document::parse(&text).expect("the .wxs is XML");
         let s = manager_service_install(&doc);
-        let name = manager_service();
-        let actions: Vec<_> = children(s, "ServiceConfigFailureActions")
-            .into_iter()
-            .chain(
-                elements(&doc, "ServiceConfigFailureActions")
-                    .into_iter()
-                    .filter(|a| a.attribute("ServiceName") == Some(name.as_str())),
-            )
-            .collect();
-        assert_eq!(
-            actions.len(),
-            1,
-            "one ServiceConfigFailureActions for {name}"
-        );
-        let a = actions[0];
-        assert_eq!(a.attribute("OnInstall"), Some("yes"));
-        assert_eq!(a.attribute("OnReinstall"), Some("yes"));
-        let failures = children(a, "Failure");
-        let first = failures.first().expect("a first Failure");
-        assert_eq!(first.attribute("Action"), Some("restartService"));
-        let delay: u64 = first
-            .attribute("Delay")
-            .and_then(|d| d.parse().ok())
-            .expect("a Delay in milliseconds");
-        assert!((1_000..=60_000).contains(&delay), "Delay {delay} ms");
+        assert_restarts_through_util_service_config(s, &manager_service());
     }
 
     /// Started at the end of the install, stopped before its files are
@@ -1145,30 +1121,85 @@ mod tests {
         let text = read(WXS);
         let doc = Document::parse(&text).expect("the .wxs is XML");
         let s = bff_service_install(&doc);
-        let actions: Vec<_> = children(s, "ServiceConfigFailureActions")
-            .into_iter()
-            .chain(
-                elements(&doc, "ServiceConfigFailureActions")
-                    .into_iter()
-                    .filter(|a| a.attribute("ServiceName") == Some(BFF_SERVICE)),
-            )
+        assert_restarts_through_util_service_config(s, BFF_SERVICE);
+    }
+
+    const UTIL_NS: &str = "http://wixtoolset.org/schemas/v4/wxs/util";
+
+    /// The service's failure actions come from the Util extension's
+    /// `util:ServiceConfig`, nested in its `ServiceInstall`: restart on every
+    /// failure after 5 s, the count back to zero after a day without one.
+    /// Not the built-in `ServiceConfigFailureActions`: its
+    /// MsiServiceConfigFailureActions opens the service without
+    /// SERVICE_START, which a restart action needs, so the install fails
+    /// with error 1939 (a modal Retry/Cancel under basic UI: the fourth
+    /// Windows CI run hung on it). The Util custom action opens it with
+    /// SERVICE_CHANGE_CONFIG | SERVICE_START.
+    fn assert_restarts_through_util_service_config(s: Node, name: &str) {
+        let configs: Vec<_> = s
+            .children()
+            .filter(|n| {
+                n.is_element()
+                    && n.tag_name().name() == "ServiceConfig"
+                    && n.tag_name().namespace() == Some(UTIL_NS)
+            })
             .collect();
         assert_eq!(
-            actions.len(),
+            configs.len(),
             1,
-            "one ServiceConfigFailureActions for {BFF_SERVICE}"
+            "one util:ServiceConfig inside the ServiceInstall of {name}, found {}",
+            configs.len()
         );
-        let a = actions[0];
-        assert_eq!(a.attribute("OnInstall"), Some("yes"));
-        assert_eq!(a.attribute("OnReinstall"), Some("yes"));
-        let failures = children(a, "Failure");
-        let first = failures.first().expect("a first Failure");
-        assert_eq!(first.attribute("Action"), Some("restartService"));
-        let delay: u64 = first
-            .attribute("Delay")
-            .and_then(|d| d.parse().ok())
-            .expect("a Delay in milliseconds");
-        assert!((1_000..=60_000).contains(&delay), "Delay {delay} ms");
+        let c = configs[0];
+        for attr in [
+            "FirstFailureActionType",
+            "SecondFailureActionType",
+            "ThirdFailureActionType",
+        ] {
+            assert_eq!(c.attribute(attr), Some("restart"), "{name}: {attr}");
+        }
+        assert_eq!(
+            c.attribute("RestartServiceDelayInSeconds"),
+            Some("5"),
+            "{name}: RestartServiceDelayInSeconds"
+        );
+        assert_eq!(
+            c.attribute("ResetPeriodInDays"),
+            Some("1"),
+            "{name}: ResetPeriodInDays"
+        );
+        assert!(
+            children(s, "ServiceConfigFailureActions").is_empty(),
+            "{name}: a ServiceConfigFailureActions beside util:ServiceConfig"
+        );
+    }
+
+    /// Neither MSI uses the built-in failure actions (error 1939, above):
+    /// the framework's services take `util:ServiceConfig`, and llama.cpp's
+    /// instance services are created by the manager, not by the MSI.
+    #[test]
+    fn no_msi_uses_the_built_in_service_failure_actions() {
+        for wxs in [WXS, "installer/llama.cpp.wxs"] {
+            let text = read(wxs);
+            let doc = Document::parse(&text).expect("the .wxs is XML");
+            let found = elements(&doc, "ServiceConfigFailureActions").len();
+            assert_eq!(found, 0, "{wxs}: ServiceConfigFailureActions");
+        }
+    }
+
+    /// The framework's `Wix` root declares the Util namespace its
+    /// `util:ServiceConfig` elements are in.
+    #[test]
+    fn the_framework_wxs_declares_the_util_namespace() {
+        let text = read(WXS);
+        let doc = Document::parse(&text).expect("the .wxs is XML");
+        let root = doc.root_element();
+        assert_eq!(root.tag_name().name(), "Wix");
+        assert!(
+            root.namespaces()
+                .any(|ns| ns.name() == Some("util") && ns.uri() == UTIL_NS),
+            "{WXS}: no xmlns:util=\"{UTIL_NS}\" on the Wix root"
+        );
     }
 
     /// Started at the end of the install, stopped before its files are
