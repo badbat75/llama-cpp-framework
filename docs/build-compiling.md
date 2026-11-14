@@ -8,7 +8,7 @@ updated: 2026-11-14
 
 What `xtask configure` and `xtask build` do and why: the recorded config, the release tag and the
 patches, the CMake line, the compiler cache, LTO and the linker, the GPU targets, the job count, and
-the configurator's generated tables, and what is specific to Windows and Linux. The [source map](#source-map) closes the page. The phases and
+the configurator's generated tables, the web UI `pai-bff` embeds, and what is specific to Windows and Linux. The [source map](#source-map) closes the page. The phases and
 what breaks are in [Build pipeline](build-pipeline.md); macOS has
 [its own page](build-macos.md) for what differs there.
 
@@ -43,8 +43,9 @@ then a system clang, then GCC.
   environment, and fall back to `HipPath\bin` and `HipPath\lib\llvm\bin`.
 - Linux: `git`, `cmake`, `ninja`, `g++` and `cargo`.
 - macOS: Apple's `clang`, `git`, `cmake`, `ninja` and `cargo`.
-- Missing `node` or `npm` on Linux and macOS is only a warning, since the chat UI then falls back to
-  the prebuilt download.
+- Missing `node` or `npm` on Linux and macOS is only a warning here, since the chat UI then falls
+  back to the prebuilt download. `xtask build config` still stops without npm, on every OS: it builds
+  the [web UI](#the-web-ui-and-pai-bff) and generates a missing `resources/llama.ico` with it.
 
 **WiX is checked but never a gap.** `WixExe` is `wix.exe` on PATH, else
 `%USERPROFILE%\.dotnet\tools`. A missing or off-pin version is a warning, because only
@@ -398,6 +399,32 @@ tensor-split deny lists to `OUT_DIR`, from `llm_arch_is_recurrent`, `llm_arch_is
   `crates/app`:
   `PRIVATE_AI_LLAMA_CPP_DIR=$PWD/build/linux/llama.cpp cargo check -p pai-app --all-targets --target x86_64-pc-windows-gnu`.
 
+## The web UI and pai-bff
+
+**`xtask build config` builds the web UI in `fe/` before cargo, so it needs node and npm on every
+OS.** It runs `npm ci` (a clean install from the committed `package-lock.json`, refused when the
+lock and `package.json` disagree) and `npm run build` (`tsc -b && vite build`, into `fe/dist`), then
+builds `pai-bff` with the other programs and sets `PRIVATE_AI_FE_DIST=<repo>/fe/dist`. A failed web
+build stops the build, and a built `pai-bff` never holds the test fixture. `pai-bff` stays in
+`cargo-target/release/`: it is not copied beside the server and not packaged yet (`PLAN.md` step
+10). What it serves is in [crates/bff/README.md](../crates/bff/README.md).
+
+**`crates/bff/build.rs` compiles one directory into the binary**, as a table of path, bytes and
+content type, and fails when that directory holds no `index.html`:
+
+1. `PRIVATE_AI_FE_DIST`, which must be an absolute path: a relative one stops the build.
+2. Else `fe/dist`, when it holds an `index.html`.
+3. Else `crates/bff/fe-fixture/`, so `cargo test -p pai-bff` needs no node.
+
+The chosen directory reaches the crate's targets as `PAI_BFF_FE_DIR`, and `tests/fe.rs` compares the
+routes with it, so the tests check what was embedded, not what is on disk now.
+
+**A `fe/dist` built after a bare cargo build is embedded only once `fe/src`, `fe/index.html` or the
+fixture changes**, or at once through `PRIVATE_AI_FE_DIST`, which `xtask build` sets. On the fixture
+the script watches those three, not the missing `fe/dist`: cargo treats a missing watched path as
+changed, which would rebuild `pai-bff` at every build. It never watches `fe/` whole, whose
+`node_modules` npm rewrites.
+
 ## Windows
 
 **The HIP compile vars are set per process and must never be set machine-wide.** `hip_env` and
@@ -518,12 +545,13 @@ which `std::path` does not split on Linux. The code under test is not at fault.
 
 | Path | What it is |
 | --- | --- |
-| `Cargo.toml` | The workspace: `crates/core` (package `pai-core`, the shared library), `crates/app` (`pai-app`, the configurator's logic without a GUI), `crates/manager` (`pai-manager`, the binary of the `private-ai-manager` service), `crates/config` (`pai-config`, the configurator's GUI), `crates/cli` (`pai-cli`, binary `pai`, the configurator's command line), `xtask` and `tools/site`. The profiles live here because cargo reads them only at the root, and so does the framework version, `[workspace.package] version`, one for the five `pai-*` crates. |
+| `Cargo.toml` | The workspace: `crates/core` (package `pai-core`, the shared library), `crates/app` (`pai-app`, the configurator's logic without a GUI), `crates/manager` (`pai-manager`, the binary of the `private-ai-manager` service), `crates/config` (`pai-config`, the configurator's GUI), `crates/cli` (`pai-cli`, binary `pai`, the configurator's command line), `crates/bff` (`pai-bff`, the backend-for-frontend service), `xtask` and `tools/site`. The profiles live here because cargo reads them only at the root, and so does the framework version, `[workspace.package] version`, one for the six `pai-*` crates. |
 | `xtask/src/main.rs` | The phases and their options |
 | `xtask/src/common/` | Shared: `dists.rs`, `llama.rs`, `cmake_options.rs`, `configurator.rs`, `prereq.rs`, `rocm.rs`, `version.rs`, `bench_share.rs`, `components.rs` (Linux and macOS: which package owns each staged file) |
 | `xtask/src/<os>/` | One OS's phases: `configure.rs`, `build_llama.rs`, `package.rs`, `install.rs`, `dists.rs` (the finders) |
 | `xtask/cmake/` | The checked-in llama.cpp CMake options |
 | `crates/app/build.rs`, `crates/app/arch_tables.rs` | `pai-app`'s build script and the [architecture tables](#generated-architecture-tables) it generates from the clone |
+| `fe/`, `crates/bff/build.rs` | The web UI (React + Vite in TypeScript) and the build script that [embeds it](#the-web-ui-and-pai-bff) in `pai-bff` |
 | `installer/dist-sources.toml` | Dist roots and download sources for xtask, with no versions |
 | `installer/dist-sources.psd1` | The same data for the Windows PowerShell scripts: a source changes in both files |
 | `installer/wix-toolset.psd1` | The WiX pin |

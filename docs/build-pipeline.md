@@ -25,7 +25,7 @@ MSI itself is in [installer\AGENTS.md](../installer/AGENTS.md).
 | Page | What it answers |
 | --- | --- |
 | [Build prerequisites](build-prerequisites.md) | Where do the GPU SDKs live, which one is taken, and what do the bootstrap scripts install? |
-| [Compiling](build-compiling.md) | What do `configure` and `build` do and why: release tag, patches, CMake options, sccache, LTO, lld, HIP targets, build parallelism, the Windows and Linux specifics, the source map |
+| [Compiling](build-compiling.md) | What do `configure` and `build` do and why: release tag, patches, CMake options, sccache, LTO, lld, HIP targets, build parallelism, the web UI, the Windows and Linux specifics, the source map |
 | [Packaging and install](build-packaging.md) | What goes in the MSI and in each `.deb` and `.rpm`, how do the packages depend on each other, and how does `xtask install` lay them down? |
 | [Building on macOS](build-macos.md) | The whole macOS story, every phase |
 
@@ -36,7 +36,7 @@ MSI itself is in [installer\AGENTS.md](../installer/AGENTS.md).
 | Bootstrap script | Installs Rust and the system packages. On Windows, also the GPU dists, sccache and WiX. | System packages; Windows dists under the dist root |
 | `xtask prereq` | Linux, macOS: installs sccache and the newest GPU dists. On Windows it refuses: the script does this. | Dists under the dist root |
 | `xtask configure` | Detects paths and tools, derives the GPU targets, records the dist root. | `build/<os>/config-build.*`; on Windows also `.cargo/config.toml` |
-| `xtask build` | Checks out the newest llama.cpp release, applies the patches, builds llama.cpp, then `pai-config`, `pai` and `pai-manager`. | `build/<os>/llama.cpp-cmake/`, `build/<os>/cargo-target/` |
+| `xtask build` | Checks out the newest llama.cpp release, applies the patches, builds llama.cpp, then the web UI in `fe/` with npm, then `pai-config`, `pai`, `pai-manager` and `pai-bff` (not packaged yet). | `build/<os>/llama.cpp-cmake/`, `build/<os>/cargo-target/`, `fe/dist/` |
 | `xtask package` | Stages the binaries and GPU runtimes, then builds the packages. | `dist/` |
 | `xtask install` | Installs the newest package in `dist/`, on Linux and macOS the newest of each: first install, upgrade, reinstall or downgrade. | The machine |
 
@@ -109,8 +109,8 @@ says. The configurator always goes to `build/<os>/cargo-target`.
 
 ## Where things land
 
-**Everything an OS generates stays under `build/<os>/`, and the whole `build/` is gitignored.** A
-clone shared between systems would mix line endings, patch state and the UI's platform-specific
+**Everything an OS generates stays under `build/<os>/`, apart from the web UI's files in `fe/`, and
+the whole `build/` is gitignored.** A clone shared between systems would mix line endings, patch state and the UI's platform-specific
 `node_modules`. `rm -rf build` removes the cache and the release build too.
 
 | Path | What it holds |
@@ -118,13 +118,14 @@ clone shared between systems would mix line endings, patch state and the UI's pl
 | `build/<os>/config-build.psd1` or `.toml` | The machine-derived half of the build, written by `xtask configure` |
 | `build/<os>/llama.cpp/` | The llama.cpp clone, detached on a release tag |
 | `build/<os>/llama.cpp-cmake/` | The CMake build directory; the binaries are in `bin/` |
-| `build/<os>/cargo-target/` | The configurator's cargo output |
+| `build/<os>/cargo-target/` | The cargo output of the configurator, `pai-manager` and `pai-bff` |
 | `build/<os>/.sccache/` | The compiler cache |
 | `build/<os>/staging/` | The package tree; deleted after packaging unless `--keep-staging` |
 | `build/<os>/package/` | Linux, macOS: one tree per package, and on Linux the control files, specs and rpmbuild tree; transient |
 | `build/windows/wix-obj/` | WiX intermediates; deleted after packaging |
 | `build/windows/msi-install.log`, `msi-uninstall.log` | The logs of `xtask install` |
 | `dist/` | The finished packages (gitignored) |
+| `fe/node_modules/`, `fe/dist/` | The web UI's npm packages and its build, which `pai-bff` embeds: not per OS, since every `xtask build` remakes both (`npm ci`, `npm run build`); gitignored |
 | `.cargo/config.toml` | Windows only: generated and gitignored, at the repo root because cargo discovers it by walking up from the current directory |
 
 On Windows, `$buildRoot` in `scripts\common.ps1` names `build\windows`.

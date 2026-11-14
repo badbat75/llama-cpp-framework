@@ -44,7 +44,7 @@ as the column says. A requirement still open must be covered by a step.
 | W12 | Every change to a benchmark spec is reviewed by `spec-reviewer` before it is committed | Applies to every step |
 | W13 | The coordinator only coordinates: the tester writes and reruns the tests, the coder runs the linter and the format check, the coordinator reads their reports and commits | Met: `AGENTS.md` "Roles", `.opencode/agents/` |
 | W14 | Every release until 3.0.0 is a 2.99.x pre-release (2.99.0, 2.99.1, ...), decided on 2026-11-13; 3.0.0 is the user's call | Applies to every release |
-| W15 | Windows-only code is type-checked on Linux by the coder, `cargo check` and `cargo clippy` with `--target x86_64-pc-windows-gnu`, for pai-core, pai-app, pai-cli, pai-manager and xtask (MinGW installed by the user; no crate code uses `cfg(target_env)`); pai-config is left out because slint's Skia renderer builds only with MSVC, so its Windows code is checked by the user's build on Windows (user, 2026-11-13) | Applies to every slice ("Commands" in `AGENTS.md`) |
+| W15 | Windows-only code is type-checked on Linux by the coder, `cargo check` and `cargo clippy` with `--target x86_64-pc-windows-gnu`, for pai-core, pai-app, pai-cli, pai-bff, pai-manager and xtask (MinGW installed by the user; no crate code uses `cfg(target_env)`); pai-config is left out because slint's Skia renderer builds only with MSVC, so its Windows code is checked by the user's build on Windows (user, 2026-11-13) | Applies to every slice ("Commands" in `AGENTS.md`) |
 
 ## Definition of Done
 
@@ -529,7 +529,9 @@ proposals to review with the user):
 2. (done) **The `fe` scaffold.** `fe/` at the repo root: React + Vite in TypeScript, one page that reads
    `/api/version`; `xtask build` builds it with npm (already a build requirement for the icon) and
    the bff embeds `fe/dist`; the bff's tests use a fixture when `fe/dist` is absent.
-3. **Packaging.** (Also decide a graceful stop on SIGTERM / service stop: the skeleton has none.) Linux: a `private-ai-bff.service` unit (its own system user or `private-ai`:
+3. **Packaging.** Also: `xtask configure` (Linux, macOS) still calls node and npm optional and
+   Windows configure checks neither, while `xtask build` now needs npm for the web UI; the root
+   `Cargo.toml` comments omit pai-cli and pai-bff. (Also decide a graceful stop on SIGTERM / service stop: the skeleton has none.) Linux: a `private-ai-bff.service` unit (its own system user or `private-ai`:
    decided in the slice) in the `-llama` package or its own; Windows: a service in the MSI beside
    the manager; macOS: left out like the manager. Checked on the package contents; running it is
    the user's run.

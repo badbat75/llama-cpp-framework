@@ -64,3 +64,10 @@ Lessons only: the rules are in `AGENTS.md`.
   (relations table, `.deb`/`.rpm` scan bullets) and `build-macos.md` each repeat them. A package with
   no 2.4 predecessor is an exception in every "each replaces" sentence. Sizes measured on the old split
   are not the new packages': say so instead of carrying them over.
+- When a crate is added, its name goes in: `AGENTS.md` Commands (crate list, Windows GNU list), release
+  step 1's version list, the Map, `.opencode/agents/coordinator.md` (`cargo clean -p`), `coder.md` (GNU
+  list), the source map's workspace row (`the six pai-* crates`), the README tree and command table,
+  and `PLAN.md` W15 (the coordinator's: report it). The coder's GNU list lagged one crate already once.
+- `xtask` messages can lag the build: `xtask configure` on Linux and macOS still calls node and npm
+  optional, while `xtask build config` stops without npm (the `fe/` build). Check the phase that needs a
+  tool, not the one that reports it. Vitest runs as `npm --prefix fe test` (seconds, no network).
