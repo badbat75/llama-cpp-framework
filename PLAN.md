@@ -327,7 +327,7 @@ Slices, each test first: **1** (done: `pai-app` holds the shared modules, with a
 feature for the fakes pai-config's tests use; it passes the Windows GNU check given
 `PRIVATE_AI_LLAMA_CPP_DIR`); **2** (done) `crates/cli` (package `pai-cli`,
 binary `pai`) with today's CLI, `pai-config` left GUI-only (no argument parsing beyond what the GUI
-needs, no console attach); **3** packaging: `pai` in the `-config` package or its own (decide then),
+needs, no console attach); **3** (done) packaging: `pai` in the `-config` package or its own (decide then),
 `/usr/bin/pai`, the MSI's PATH, and `installer/msi-stop-processes.ps1` running `pai.exe control
 stop-and-close` (falling back to `pai-config.exe` for an older install: after slice 2 `pai-config`
 only points to `pai`, so until slice 3 the MSI's graceful stop is skipped); **4** docs, skills and guides from `pai-config <cmd>` to `pai <cmd>` (the commands, the crate lists and
@@ -534,6 +534,10 @@ skeleton with its packaging and one read-only page.
   graphics libraries (a headless server installs only the command line); on Windows `pai.exe` is in
   the one MSI beside `pai-config.exe`, on the PATH. `pai-config` given a command prints one line
   naming `pai <args>` and exits 2.
+  `-cli` requires `-llama` at its own version (pai runs llama-bench and llama-server and talks to
+  the manager) and ships the benchmark method and `cli.toml`, which both programs read, so `-config`
+  requires `-cli`: a desktop install gets `pai` too. The MSI's process stopper also stops a `pai`
+  running from `bin\` (an interrupted sweep puts its key back at the next start).
 - Step 1: the real run of the Linux packages, after the Windows slices (user, 2026-11-14), together
   with the Windows build: `xtask build`, `package`, `install`, then the step's checks.
 - Step 2: a Windows build of the renamed MSI and the installer test plan of `installer/AGENTS.md`,

@@ -152,3 +152,8 @@ Lessons only: the rules are in `AGENTS.md`.
   test build. To verify the rest without editing tests, rsync the tree (no `build/`, `.git`, `dist/`)
   to `/tmp`, drop the phase there and run with `CARGO_TARGET_DIR` set to the repo's
   `build/linux/cargo-target` (the dependencies are reused); report the phase.
+- The Windows GNU check of xtask prints two `unused dependency` manifest warnings (`serde_json`,
+  `sha2`: used only by the other OSes' modules). They predate the work and do not fail clippy.
+- A Linux/macOS package's relations come from `linux/package.rs`: `old_package` (None for a component
+  2.4 never had, so no Conflicts/Replaces/Provides/Obsoletes), `exact_requires` (which framework
+  packages it pins at its own version) and `depends_line` (the `.deb` Depends, pure, tested).

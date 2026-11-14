@@ -756,6 +756,7 @@ mod tests {
     fn only_the_llama_package_has_maintainer_scripts() {
         for c in [
             Component::Config,
+            Component::Cli,
             Component::Rocm,
             Component::Cuda,
             Component::Vulkan,

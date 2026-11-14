@@ -2,8 +2,11 @@
 //! staged file. One staged tree goes in, one tree per package comes out, so
 //! no file can land in two packages or in none.
 //!
-//! - `config`: pai-config (one binary, GUI and CLI), its language files,
-//!   the benchmark method, the desktop entry.
+//! - `config`: pai-config (the GUI), its language files, the desktop entry
+//!   and its icon.
+//! - `cli`: pai (the command line) and the data both front ends read: the
+//!   benchmark method and `cli.toml`. The GUI package requires it, so a
+//!   headless server installs the command line without the GUI.
 //! - `llama`: llama.cpp's executables and libraries, every ggml backend,
 //!   pai-manager with the system files of its services (the systemd units,
 //!   the D-Bus and polkit policies, the sysusers.d entry), and libomp: the
@@ -25,6 +28,7 @@ pub const OLD_BASE_NAME: &str = "llama-cpp-framework";
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Component {
     Config,
+    Cli,
     Llama,
     Rocm,
     Cuda,
@@ -32,8 +36,9 @@ pub enum Component {
 }
 
 impl Component {
-    pub const ALL: [Component; 5] = [
+    pub const ALL: [Component; 6] = [
         Component::Config,
+        Component::Cli,
         Component::Llama,
         Component::Rocm,
         Component::Cuda,
@@ -44,6 +49,7 @@ impl Component {
     pub fn suffix(self) -> &'static str {
         match self {
             Component::Config => "config",
+            Component::Cli => "cli",
             Component::Llama => "llama",
             Component::Rocm => "rocm",
             Component::Cuda => "cuda",
@@ -67,7 +73,13 @@ pub fn of(rel: &str) -> Component {
     let name = path.rsplit('/').next().unwrap_or(path);
     // macOS: one tree under /opt/private-ai.
     if let Some(inner) = path.strip_prefix("opt/private-ai/") {
-        if inner == "bin/pai-config" || inner.starts_with("share/") {
+        if inner == "bin/pai" {
+            return Component::Cli;
+        }
+        if let Some(data) = inner.strip_prefix("share/") {
+            return shared_data(data);
+        }
+        if inner == "bin/pai-config" {
             return Component::Config;
         }
         return private(inner, name);
@@ -83,10 +95,29 @@ pub fn of(rel: &str) -> Component {
     if path.starts_with("usr/share/dbus-1/") || path.starts_with("usr/share/polkit-1/") {
         return Component::Llama;
     }
+    // /usr/bin/pai, and its link in /usr/local/bin on macOS.
+    if name == "pai" {
+        return Component::Cli;
+    }
+    if let Some(data) = path.strip_prefix("usr/share/private-ai/") {
+        return shared_data(data);
+    }
     if name == "pai-config" || path.starts_with("usr/share/") {
         return Component::Config;
     }
     Component::Llama
+}
+
+/// The owner of a read-only data file, by its path under the data directory
+/// (`/usr/share/private-ai` on Linux, `/opt/private-ai/share` on macOS): what
+/// the command line reads (the benchmark method, `cli.toml`) goes with it,
+/// the GUI's language files with the GUI.
+fn shared_data(data: &str) -> Component {
+    if data.starts_with("benchmarks/") || data == "strings/cli.toml" {
+        Component::Cli
+    } else {
+        Component::Config
+    }
 }
 
 /// The owner of a file under a private tree (`/opt/private-ai` on macOS,
@@ -154,8 +185,8 @@ pub fn split(stage: &Path, into: &Path) -> Result<Vec<Component>> {
     Ok(present)
 }
 
-/// A package file's name without architecture and extension. pai-config and
-/// llama.cpp name the framework and the llama.cpp release; a runtime names its SDK.
+/// A package file's name without architecture and extension. pai-config, pai
+/// and llama.cpp name the framework and the llama.cpp release; a runtime names its SDK.
 pub fn file_stem(c: Component, fw_version: &str, llama_build: &str, version: &str) -> String {
     if c.is_runtime() {
         format!("{}-v{version}", c.package())
@@ -214,7 +245,7 @@ mod tests {
             ("usr/share/private-ai/strings/en_US.toml", Component::Config),
             (
                 "usr/share/private-ai/benchmarks/specs/standard-1.1.ini",
-                Component::Config,
+                Component::Cli,
             ),
             (
                 "usr/share/applications/org.privateai.Config.desktop",
@@ -300,6 +331,121 @@ mod tests {
         }
     }
 
+    /// `pai`, the command line, has a package of its own, so a headless
+    /// server administered over SSH installs it without the GUI and its
+    /// graphics libraries. The data both front ends read goes with it (the
+    /// benchmark method, `cli.toml`, which the GUI reads too), since the GUI
+    /// package requires it and not the other way round; the GUI's language
+    /// files, its desktop entry and its icon stay with the GUI.
+    #[test]
+    fn the_command_line_and_the_data_it_reads_go_to_the_cli_package() {
+        for (rel, want) in [
+            ("usr/bin/pai", Component::Cli),
+            (
+                "usr/share/private-ai/benchmarks/specs/standard-1.1.ini",
+                Component::Cli,
+            ),
+            (
+                "usr/share/private-ai/benchmarks/specs/standard.versions",
+                Component::Cli,
+            ),
+            (
+                "usr/share/private-ai/benchmarks/prompts/bench-prompt-43k-1.0.txt",
+                Component::Cli,
+            ),
+            ("usr/share/private-ai/strings/cli.toml", Component::Cli),
+            ("usr/share/private-ai/strings/en_US.toml", Component::Config),
+            ("usr/bin/pai-config", Component::Config),
+            (
+                "usr/share/applications/org.privateai.Config.desktop",
+                Component::Config,
+            ),
+            (
+                "usr/share/icons/hicolor/256x256/apps/org.privateai.Config.png",
+                Component::Config,
+            ),
+            // Not taken for pai by a prefix match.
+            ("usr/bin/pai-manager", Component::Llama),
+        ] {
+            assert_eq!(of(rel), want, "{rel}");
+        }
+    }
+
+    /// macOS: `pai` in /opt/private-ai/bin with its link in /usr/local/bin,
+    /// and the shared data under /opt/private-ai/share, as on Linux.
+    #[test]
+    fn macos_command_line_files_go_to_the_cli_package() {
+        for (rel, want) in [
+            ("opt/private-ai/bin/pai", Component::Cli),
+            ("usr/local/bin/pai", Component::Cli),
+            (
+                "opt/private-ai/share/benchmarks/specs/standard-1.1.ini",
+                Component::Cli,
+            ),
+            ("opt/private-ai/share/strings/cli.toml", Component::Cli),
+            ("opt/private-ai/bin/pai-config", Component::Config),
+            ("opt/private-ai/share/strings/en_US.toml", Component::Config),
+        ] {
+            assert_eq!(of(rel), want, "{rel}");
+        }
+    }
+
+    /// The command line is the framework's, versioned like the GUI (the
+    /// framework and the llama.cpp release), not a runtime.
+    #[test]
+    fn the_cli_package_is_named_and_versioned_like_the_configurator() {
+        assert_eq!(Component::Cli.package(), "private-ai-framework-cli");
+        assert!(!Component::Cli.is_runtime());
+        assert_eq!(
+            file_stem(
+                Component::Cli,
+                "2.99.0",
+                "v0.9.0",
+                "2.99.0+llama.cpp.v0.9.0"
+            ),
+            "private-ai-framework-cli-v2.99.0-v0.9.0"
+        );
+    }
+
+    /// `xtask install` (Linux and macOS) picks the newest file of each
+    /// component: the cli package is one of them, told apart from the
+    /// configurator's.
+    #[test]
+    fn the_newest_cli_package_is_picked_beside_the_configurators() {
+        let dir = std::env::temp_dir().join(format!("xtask-newest-cli-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        for file in [
+            "private-ai-framework-config-v2.99.0-v0.9.0-amd64.deb",
+            "private-ai-framework-cli-v2.99.0-v0.9.0-amd64.deb",
+            "private-ai-framework-llama-v2.99.0-v0.9.0-amd64.deb",
+        ] {
+            std::fs::write(dir.join(file), "").unwrap();
+        }
+        let names: Vec<(Component, String)> = newest_in(&dir, "-amd64.deb")
+            .iter()
+            .map(|(c, p)| (*c, p.file_name().unwrap().to_string_lossy().into_owned()))
+            .collect();
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert_eq!(
+            names,
+            [
+                (
+                    Component::Config,
+                    "private-ai-framework-config-v2.99.0-v0.9.0-amd64.deb".to_string()
+                ),
+                (
+                    Component::Cli,
+                    "private-ai-framework-cli-v2.99.0-v0.9.0-amd64.deb".to_string()
+                ),
+                (
+                    Component::Llama,
+                    "private-ai-framework-llama-v2.99.0-v0.9.0-amd64.deb".to_string()
+                ),
+            ]
+        );
+    }
+
     /// The packages of the 2.4 releases and earlier, spelled split so the
     /// names lint stays clean.
     const OLD_BASE: &str = concat!("llama-cpp", "-framework");
@@ -311,6 +457,7 @@ mod tests {
             names,
             [
                 "private-ai-framework-config",
+                "private-ai-framework-cli",
                 "private-ai-framework-llama",
                 "private-ai-framework-rocm",
                 "private-ai-framework-cuda",

@@ -8,7 +8,7 @@
 /// The cargo workspace's executables that `xtask package` copies from
 /// cargo's release dir into `staging\bin\` on Windows.
 #[cfg_attr(not(windows), allow(dead_code))]
-pub const CARGO_EXES: &[&str] = &["pai-config.exe", "pai-manager.exe"];
+pub const CARGO_EXES: &[&str] = &["pai-config.exe", "pai.exe", "pai-manager.exe"];
 
 #[cfg(test)]
 mod tests {
@@ -574,6 +574,130 @@ mod tests {
             !condition.contains("UPGRADINGPRODUCTCODE"),
             "the old product of an upgrade removes them too: {condition:?}"
         );
+    }
+
+    // ── pai, the command line ────────────────────────────────────────────
+
+    /// `pai.exe`, the console command line, is staged into `bin\` beside
+    /// the GUI and the manager.
+    #[test]
+    fn cargo_exes_stage_the_command_line_beside_the_configurator() {
+        assert!(
+            CARGO_EXES.contains(&"pai.exe"),
+            "pai.exe not in {CARGO_EXES:?}"
+        );
+    }
+
+    /// Already true, kept so: `pai.exe` is installed by the harvest of
+    /// `bin\` (it installs no service, so it is not left out of it the way
+    /// `pai-manager.exe` is), and nowhere else.
+    #[test]
+    fn the_command_line_is_harvested_into_bin() {
+        let text = read(WXS);
+        let doc = Document::parse(&text).expect("the .wxs is XML");
+        let bin = elements(&doc, "Files")
+            .into_iter()
+            .find(|f| f.attribute("Directory") == Some("BINFOLDER"))
+            .expect("the harvest of bin\\");
+        assert!(
+            !children(bin, "Exclude").into_iter().any(|e| e
+                .attribute("Files")
+                .is_some_and(|f| f.ends_with(r"\bin\pai.exe"))),
+            "bin\\pai.exe is left out of the harvest"
+        );
+        assert!(
+            !elements(&doc, "File").into_iter().any(|f| f
+                .attribute("Source")
+                .is_some_and(|s| s.ends_with(r"\bin\pai.exe"))),
+            "bin\\pai.exe is declared beside the harvest"
+        );
+    }
+
+    /// Already true, kept so: `bin\` (where `pai` now is) is appended to
+    /// the machine PATH by a feature that is on by default, and removed
+    /// again on uninstall (not Permanent), so `pai` runs from any console.
+    #[test]
+    fn bin_is_appended_to_the_machine_path_until_uninstall() {
+        let text = read(WXS);
+        let doc = Document::parse(&text).expect("the .wxs is XML");
+        let path: Vec<_> = elements(&doc, "Environment")
+            .into_iter()
+            .filter(|e| e.attribute("Name") == Some("PATH"))
+            .collect();
+        assert_eq!(path.len(), 1, "one Environment Name=\"PATH\"");
+        let env = path[0];
+        for (attr, want) in [
+            ("Value", "[BINFOLDER]"),
+            ("Part", "last"),
+            ("Action", "set"),
+            ("System", "yes"),
+        ] {
+            assert_eq!(env.attribute(attr), Some(want), "{attr}");
+        }
+        assert_ne!(env.attribute("Permanent"), Some("yes"));
+        let component = component_of(env).attribute("Id").expect("component id");
+        let feature = elements(&doc, "Feature")
+            .into_iter()
+            .find(|f| {
+                children(*f, "ComponentRef")
+                    .into_iter()
+                    .any(|r| r.attribute("Id") == Some(component))
+            })
+            .expect("a feature installs the PATH component");
+        assert_eq!(feature.attribute("Level"), Some("1"), "on by default");
+    }
+
+    /// The graceful stop runs `pai.exe control stop-and-close` (the
+    /// conversation snapshot, then llama-server, then the GUI's close), and
+    /// falls back to `pai-config.exe` when there is no `pai.exe` (an older
+    /// install, whose GUI binary still had the command), then to the 2.4
+    /// configurator: tried in that order, each only when the one before is
+    /// missing.
+    #[test]
+    fn the_graceful_stop_runs_pai_then_an_older_installs_configurator() {
+        let stopper = read("installer/msi-stop-processes.ps1");
+        let old = concat!("llama-cpp", "-config.exe");
+        let assignments: Vec<&str> = stopper
+            .lines()
+            .map(str::trim)
+            .filter(|l| l.contains("$exe = Join-Path $bin "))
+            .collect();
+        let want = [
+            "$exe = Join-Path $bin 'pai.exe'".to_string(),
+            "if (-not (Test-Path -LiteralPath $exe)) { $exe = Join-Path $bin 'pai-config.exe' }"
+                .to_string(),
+            format!("if (-not (Test-Path -LiteralPath $exe)) {{ $exe = Join-Path $bin '{old}' }}"),
+        ];
+        assert_eq!(assignments, want, "{stopper}");
+        let start = stopper
+            .lines()
+            .find(|l| l.contains("Start-Process"))
+            .expect("the graceful stop's Start-Process");
+        assert!(
+            start.contains("-FilePath $exe -ArgumentList 'control', 'stop-and-close'"),
+            "{start}"
+        );
+    }
+
+    /// A `pai` running from the installed `bin\` (a benchmark in a console)
+    /// holds `pai.exe` like the GUI holds its exe: it is stopped with them.
+    #[test]
+    fn the_process_stopper_stops_a_running_pai() {
+        let stopper = read("installer/msi-stop-processes.ps1");
+        let get = stopper
+            .lines()
+            .find(|l| l.contains("Get-Process -Name"))
+            .expect("the stopper's Get-Process");
+        let names: Vec<&str> = get
+            .split("-Name")
+            .nth(1)
+            .and_then(|r| r.split("-ErrorAction").next())
+            .unwrap_or_default()
+            .split(',')
+            .map(|n| n.trim().trim_matches('\''))
+            .collect();
+        assert!(names.contains(&"pai"), "{get}");
+        assert!(names.contains(&"pai-config"), "{get}");
     }
 
     /// Already true, kept so: the process stopper stops the configurator

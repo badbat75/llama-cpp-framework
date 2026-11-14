@@ -1,12 +1,12 @@
-//! Package phase (cargo run -p xtask -- package): the Linux build as five .deb
-//! and five .rpm packages in ./dist/ (common/components.rs says which file goes
-//! where): pai-config, llama.cpp, and the ROCm, CUDA and Vulkan runtimes.
+//! Package phase (cargo run -p xtask -- package): the Linux build as six .deb
+//! and six .rpm packages in ./dist/ (common/components.rs says which file goes
+//! where): pai-config, pai, llama.cpp, and the ROCm, CUDA and Vulkan runtimes.
 //! The counterpart of the Windows MSI (windows/package.rs). Requires a successful
 //! build; patchelf, dpkg-dev and rpm come from the prerequisites.
 //!
 //! What the packages install together (all from one staged tree), in the
 //! standard layout under /usr:
-//!   /usr/bin/             every llama.cpp executable and pai-config, the real
+//!   /usr/bin/             every llama.cpp executable, pai-config and pai, the real
 //!                         files (the distributions' llama.cpp packages are
 //!                         refused by Conflicts, so no file is shared)
 //!   /usr/libexec/private-ai/
@@ -27,7 +27,7 @@
 //!                         the benchmark method, read-only: every published
 //!                         standard-<X.Y>.ini and the prompts they pin
 //!   /usr/share/private-ai/strings/
-//!                         the configurator's language files, read-only
+//!                         the front ends' language files, read-only
 //!   /usr/share/private-ai/licenses/<component>/
 //!                         the licence texts of each package
 //!   /usr/share/           the desktop entry, its icon, the copyright file
@@ -37,8 +37,9 @@
 //!                         maintainer scripts that create the service user and
 //!                         enable, start and stop the manager
 //!
-//! pai-config and llama.cpp carry <framework>+llama.cpp.<tag> as version
-//! and require each other's exact one, in that direction. A runtime carries its
+//! pai-config, pai and llama.cpp carry <framework>+llama.cpp.<tag> as
+//! version: pai-config requires pai's and llama.cpp's exact one, pai
+//! llama.cpp's. A runtime carries its
 //! SDK's version and is optional: llama.cpp recommends the one it was built
 //! against and refuses any other, because a backend that cannot resolve a symbol
 //! is skipped at start with nothing but a log line.
@@ -63,7 +64,8 @@ use std::collections::BTreeSet;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
-/// The single package every release up to `MONOLITH_LAST` shipped, which the five replace.
+/// The single package every release up to `MONOLITH_LAST` shipped, which the
+/// split packages replace.
 const MONOLITH: &str = components::OLD_BASE_NAME;
 /// The last release that shipped it: the relation against `MONOLITH` stops there, an
 /// unversioned one matches every version of the name, future ones included (rpmbuild
@@ -86,7 +88,7 @@ const RUNPATH: &str =
     "/usr/lib/private-ai:/usr/lib/private-ai/lib:/usr/lib/private-ai/lib/llvm/lib";
 
 /// Where a file the build produces is installed, relative to the package
-/// root: an executable of the build's `bin/` (or `pai-config`) in
+/// root: an executable of the build's `bin/` (or `pai-config`, `pai`) in
 /// `usr/bin`, a library or ggml backend in the private `usr/lib/private-ai`,
 /// `pai-manager` (from cargo's target dir) in `usr/libexec/private-ai`.
 fn place(name: &str) -> String {
@@ -115,8 +117,8 @@ fn rpm_spec(f: &Fields, license: &str, libraries: &str, root: &Path) -> String {
     let package = f.component.package();
     // rpm's automatic dependency scan is kept (it yields soname requirements
     // any rpm distro resolves), minus what it must not see: every library the
-    // five packages carry (not "provided" to the system, so not "required"
-    // from it either) and libcuda, which is the NVIDIA driver's.
+    // packages carry (not "provided" to the system, so not "required" from it
+    // either) and libcuda, which is the NVIDIA driver's.
     let url = if f.homepage.is_empty() {
         String::new()
     } else {
@@ -321,11 +323,13 @@ pub fn run(want_deb: bool, want_rpm: bool, keep_staging: bool) -> Result<()> {
             bin.display()
         );
     }
-    if !util::is_executable(&bin.join("pai-config")) {
-        bail!(
-            "pai-config not found in {}. Run cargo run -p xtask -- build first.",
-            bin.display()
-        );
+    for exe in ["pai-config", "pai"] {
+        if !util::is_executable(&bin.join(exe)) {
+            bail!(
+                "{exe} not found in {}. Run cargo run -p xtask -- build first.",
+                bin.display()
+            );
+        }
     }
     // A version bump without a rebuild would ship the OLD configurator in a
     // package named after the new version.
@@ -645,7 +649,7 @@ pub fn run(want_deb: bool, want_rpm: bool, keep_staging: bool) -> Result<()> {
         None => sdk_version(dists.find_cuda()),
     };
     let version_of = |c: Component| match c {
-        Component::Config | Component::Llama => pkg_version.clone(),
+        Component::Config | Component::Cli | Component::Llama => pkg_version.clone(),
         Component::Rocm => sdk_version(Some(PathBuf::from(&hip_root))),
         Component::Cuda => cuda_version.clone(),
         Component::Vulkan => sdk_version(dists.find_vulkan()),
@@ -758,8 +762,8 @@ pub fn run(want_deb: bool, want_rpm: bool, keep_staging: bool) -> Result<()> {
         }
     };
 
-    // The libraries of all five, which no package provides to the system or
-    // requires from it.
+    // The libraries of all the packages, which no package provides to the
+    // system or requires from it.
     let library_dirs = private_library_dirs(&roots, &present);
     let libraries = library_stems(&roots, &present);
 
@@ -774,7 +778,8 @@ pub fn run(want_deb: bool, want_rpm: bool, keep_staging: bool) -> Result<()> {
             summary,
             description: &description,
             homepage: &homepage,
-            depends_on_llama: (*c == Component::Config).then_some(pkg_version.as_str()),
+            depends_on_llama: matches!(*c, Component::Config | Component::Cli)
+                .then_some(pkg_version.as_str()),
             runtimes: if *c == Component::Llama {
                 &runtimes
             } else {
@@ -831,9 +836,16 @@ pub fn run(want_deb: bool, want_rpm: bool, keep_staging: bool) -> Result<()> {
 fn texts(c: Component, llama_build: &str) -> (&'static str, String) {
     match c {
         Component::Config => (
-            "pai-config: GUI and CLI configurator for llama-server",
-            "pai-config, the GUI + CLI configurator for server.ini and the per-model\n\
-             presets.ini (kept per user, in ~/.config/private-ai), with the benchmark method.\n"
+            "pai-config: graphical configurator for llama-server",
+            "pai-config, the graphical configurator for server.ini and the per-model\n\
+             presets.ini, which the manager keeps in /etc/private-ai.\n"
+                .to_string(),
+        ),
+        Component::Cli => (
+            "pai: command line for llama-server, its presets and benchmarks",
+            "pai, the command line of the framework: server.ini and the per-model presets.ini\n\
+             through the manager, the server's control and the benchmarks, with the\n\
+             benchmark method. It needs no graphics library.\n"
                 .to_string(),
         ),
         Component::Llama => (
@@ -865,7 +877,7 @@ fn texts(c: Component, llama_build: &str) -> (&'static str, String) {
     }
 }
 
-/// `-l<dir>` for every directory holding a library of the five, so
+/// `-l<dir>` for every directory holding a library of the packages, so
 /// dpkg-shlibdeps resolves a library another package carries.
 fn private_library_dirs(roots: &Path, present: &[Component]) -> BTreeSet<String> {
     present
@@ -876,7 +888,7 @@ fn private_library_dirs(roots: &Path, present: &[Component]) -> BTreeSet<String>
         .collect()
 }
 
-/// The names of every library of the five, as a regular expression's alternatives.
+/// The names of every library of the packages, as a regular expression's alternatives.
 fn library_stems(roots: &Path, present: &[Component]) -> String {
     let stems: BTreeSet<String> = present
         .iter()
@@ -906,7 +918,8 @@ struct Fields<'a> {
     summary: &'a str,
     description: &'a str,
     homepage: &'a str,
-    /// The llama.cpp package version this one requires exactly.
+    /// The framework version at which this one requires llama.cpp's package
+    /// exactly (and the configurator also the command line's).
     depends_on_llama: Option<&'a str>,
     /// The runtimes llama.cpp was built against, with their versions.
     runtimes: &'a [(Component, String)],
@@ -926,7 +939,10 @@ fn deb_relations(f: &Fields) -> (String, String, String) {
     if f.component == Component::Config {
         recommends.push("libxkbcommon0, libxkbcommon-x11-0, libwayland-client0, libx11-6, libxcursor1, libxi6, libegl1".into());
     }
-    let mut conflicts = vec![MONOLITH.to_string(), old_package(f.component)];
+    let mut conflicts = Vec::new();
+    if let Some(old) = old_package(f.component) {
+        conflicts = vec![MONOLITH.to_string(), old];
+    }
     if f.component == Component::Llama {
         conflicts.push("llama.cpp".into());
     }
@@ -967,45 +983,55 @@ fn deb_control(
         })
         .collect();
     let (recommends, breaks, conflicts) = deb_relations(f);
-    let old = old_package(f.component);
+    let takeover = match old_package(f.component) {
+        Some(old) => format!(
+            "Replaces: {MONOLITH}, {old}\nProvides: {old} (= {})\n",
+            f.version
+        ),
+        None => String::new(),
+    };
     format!(
-        "Package: {}\nVersion: {}\nArchitecture: {arch}\nMaintainer: {maintainer}\nInstalled-Size: {installed_size}\n{}{}{}Conflicts: {conflicts}\nReplaces: {MONOLITH}, {old}\nProvides: {old} (= {})\nSection: utils\nPriority: optional\n{}Description: {}\n{body}",
+        "Package: {}\nVersion: {}\nArchitecture: {arch}\nMaintainer: {maintainer}\nInstalled-Size: {installed_size}\n{}{}{}{}{takeover}Section: utils\nPriority: optional\n{}Description: {}\n{body}",
         f.component.package(),
         f.version,
         line("Depends", depends),
         line("Recommends", &recommends),
         line("Breaks", &breaks),
-        f.version,
+        line("Conflicts", &conflicts),
         line("Homepage", f.homepage),
         f.summary,
     )
 }
 
-/// The 2.3 and 2.4 package of a component, which this one takes over.
-fn old_package(c: Component) -> String {
-    format!("{MONOLITH}-{}", c.suffix())
+/// The 2.3 and 2.4 package of a component, which this one takes over; None
+/// for the command line, which those releases did not have.
+fn old_package(c: Component) -> Option<String> {
+    (c != Component::Cli).then(|| format!("{MONOLITH}-{}", c.suffix()))
 }
 
 /// The `.rpm` relations, one tag per line.
 fn rpm_relations(f: &Fields) -> String {
-    let mut lines = vec![format!("Obsoletes:      {MONOLITH} <= {MONOLITH_LAST}")];
+    let mut lines = Vec::new();
     // The old package of this component: a runtime is versioned by its SDK and
     // built locally, so no last version under the old name is known; its own
     // version, inclusive, takes the old package of the same SDK or an older one.
-    let old = old_package(f.component);
-    if f.component.is_runtime() {
-        lines.push(format!("Obsoletes:      {old} <= {}", f.version));
-    } else {
-        lines.push(format!("Obsoletes:      {old} < {OLD_SPLIT_BEFORE}"));
-    }
-    lines.push(format!(
-        "Provides:       {old} = {}-{RPM_RELEASE}",
-        f.version
-    ));
-    if let Some(v) = f.depends_on_llama {
+    if let Some(old) = old_package(f.component) {
+        lines.push(format!("Obsoletes:      {MONOLITH} <= {MONOLITH_LAST}"));
+        if f.component.is_runtime() {
+            lines.push(format!("Obsoletes:      {old} <= {}", f.version));
+        } else {
+            lines.push(format!("Obsoletes:      {old} < {OLD_SPLIT_BEFORE}"));
+        }
         lines.push(format!(
-            "Requires:       {} = {v}",
-            Component::Llama.package()
+            "Provides:       {old} = {}-{RPM_RELEASE}",
+            f.version
+        ));
+    }
+    for c in exact_requires(f) {
+        lines.push(format!(
+            "Requires:       {} = {}",
+            c.package(),
+            f.depends_on_llama.unwrap_or_default()
         ));
     }
     for (c, v) in f.runtimes {
@@ -1104,7 +1130,7 @@ fn build_deb(
         .iter()
         .map(|p| format!("-e{}", p.display()))
         .collect();
-    let mut depends = String::new();
+    let mut scanned = String::new();
     if which("dpkg-shlibdeps").is_some() && !scan.is_empty() {
         let work = pkg_work.join("shlibdeps");
         std::fs::create_dir_all(work.join("debian"))?;
@@ -1120,34 +1146,14 @@ fn build_deb(
                 .args(&scan),
         ) {
             if let Some(line) = out.lines().find_map(|l| l.strip_prefix("shlibs:Depends=")) {
-                depends = drop_libvulkan(line);
+                scanned = drop_libvulkan(line);
             }
         }
     }
-    // A runtime asks for nothing it does not bring along; the two that hold our
-    // programs need the system's C and C++ libraries at the least.
-    if depends.is_empty() && !f.component.is_runtime() {
-        depends =
-            "libc6, libstdc++6, libgcc-s1, libssl3t64 | libssl3, libfontconfig1, libfreetype6"
-                .into();
+    if scanned.is_empty() && !f.component.is_runtime() {
         ui::warn("dpkg-shlibdeps gave no answer; using the fixed Depends list");
     }
-    if let Some(v) = f.depends_on_llama {
-        let exact = format!("{} (= {v})", Component::Llama.package());
-        depends = if depends.is_empty() {
-            exact
-        } else {
-            format!("{depends}, {exact}")
-        };
-    }
-    let scripts = system_files::deb_depends(f.component);
-    if !scripts.is_empty() {
-        depends = if depends.is_empty() {
-            scripts.to_string()
-        } else {
-            format!("{depends}, {scripts}")
-        };
-    }
+    let depends = depends_line(f, &scanned);
 
     std::fs::create_dir_all(root.join("DEBIAN"))?;
     let installed_size = output(cmd("du").args(["-sk", "--exclude=DEBIAN"]).arg(root))
@@ -1170,6 +1176,47 @@ fn build_deb(
         bail!("dpkg-deb failed ({status})");
     }
     util::remove_all(&root.join("DEBIAN"))
+}
+
+/// The whole `.deb` Depends of a package from what dpkg-shlibdeps found
+/// (`scanned`, empty when it gave no answer): the scan or a fixed list, the
+/// framework packages it requires exactly, what its maintainer scripts run.
+fn depends_line(f: &Fields, scanned: &str) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    if !scanned.is_empty() {
+        parts.push(scanned.to_string());
+    } else if !f.component.is_runtime() {
+        // A runtime asks for nothing it does not bring along; the packages that
+        // hold our programs need the system's C and C++ libraries at the least,
+        // and the GUI its font libraries.
+        parts.push("libc6, libstdc++6, libgcc-s1, libssl3t64 | libssl3".into());
+        if f.component == Component::Config {
+            parts.push("libfontconfig1, libfreetype6".into());
+        }
+    }
+    for c in exact_requires(f) {
+        parts.push(format!(
+            "{} (= {})",
+            c.package(),
+            f.depends_on_llama.unwrap_or_default()
+        ));
+    }
+    let scripts = system_files::deb_depends(f.component);
+    if !scripts.is_empty() {
+        parts.push(scripts.to_string());
+    }
+    parts.join(", ")
+}
+
+/// The framework packages this one requires at exactly its
+/// `depends_on_llama` version: llama.cpp's, and for the configurator also the
+/// command line's, which holds the data the GUI reads.
+fn exact_requires(f: &Fields) -> Vec<Component> {
+    match f.depends_on_llama {
+        None => Vec::new(),
+        Some(_) if f.component == Component::Config => vec![Component::Cli, Component::Llama],
+        Some(_) => vec![Component::Llama],
+    }
 }
 
 /// `-perm -u+x`
@@ -1566,8 +1613,10 @@ mod tests {
     }
 
     /// The read-only data (the benchmark method, the language files, the
-    /// licences) under /usr/share/private-ai, owned by the configurator but
-    /// for each package's own licences.
+    /// licences) under /usr/share/private-ai: what both front ends read (the
+    /// benchmark method, `cli.toml`) in the command line's package, the GUI's
+    /// language files in the configurator's, each package's own licences in
+    /// that package.
     #[test]
     fn the_data_goes_under_usr_share_private_ai() {
         assert_eq!(share("benchmarks"), "usr/share/private-ai/benchmarks");
@@ -1576,12 +1625,228 @@ mod tests {
             share("licenses/llama"),
             "usr/share/private-ai/licenses/llama"
         );
-        for rel in [
-            format!("{}/specs/standard-1.1.ini", share("benchmarks")),
-            format!("{}/en_US.toml", share("strings")),
+        for (rel, want) in [
+            (
+                format!("{}/specs/standard-1.1.ini", share("benchmarks")),
+                Component::Cli,
+            ),
+            (format!("{}/cli.toml", share("strings")), Component::Cli),
+            (
+                format!("{}/en_US.toml", share("strings")),
+                Component::Config,
+            ),
         ] {
-            assert_eq!(components::of(&rel), Component::Config, "{rel}");
+            assert_eq!(components::of(&rel), want, "{rel}");
         }
+    }
+
+    // ── pai, the command line, in a package of its own ──────────────────
+
+    /// The version every test of the command line's package uses.
+    const FW: &str = "2.99.0+llama.cpp.v0.9.0";
+
+    /// `pai` is a command in /usr/bin, in its own package.
+    #[test]
+    fn pai_goes_to_usr_bin_in_the_cli_package() {
+        assert_eq!(place("pai"), "usr/bin/pai");
+        assert_eq!(components::of(&place("pai")), Component::Cli);
+    }
+
+    /// The command line runs llama-bench and llama-server from /usr/bin and
+    /// talks to the manager of the llama.cpp package, so it requires that
+    /// package at its own version, as the configurator does; it requires
+    /// nothing of the GUI and recommends no graphics library. It has no
+    /// predecessor in 2.4 (pai did not exist), so it names no package of
+    /// 2.4 or earlier: no Obsoletes, no Provides.
+    #[test]
+    fn the_command_line_requires_llama_cpp_exactly_and_nothing_of_the_gui() {
+        let f = fields_v(Component::Cli, FW, &[], Some(FW));
+        assert_eq!(
+            rpm_relations(&f),
+            format!("Requires:       private-ai-framework-llama = {FW}")
+        );
+        assert_eq!(
+            deb_relations(&f),
+            (String::new(), String::new(), String::new())
+        );
+    }
+
+    /// The GUI package requires the command line's at its own version: the
+    /// benchmark method and `cli.toml`, which the GUI reads, are there. And
+    /// llama.cpp's, as before.
+    #[test]
+    fn the_configurator_requires_the_command_line_and_llama_cpp_exactly() {
+        let f = fields_v(Component::Config, FW, &[], Some(FW));
+        let rpm = rpm_relations(&f);
+        for want in [
+            format!("Requires:       private-ai-framework-cli = {FW}"),
+            format!("Requires:       private-ai-framework-llama = {FW}"),
+        ] {
+            assert!(rpm.lines().any(|l| l == want), "{want} missing:\n{rpm}");
+        }
+        let depends = depends_line(&f, "libc6 (>= 2.34), libfontconfig1 (>= 2.12.6)");
+        let mut parts: Vec<&str> = depends.split(", ").collect();
+        parts.sort();
+        let cli = format!("private-ai-framework-cli (= {FW})");
+        let llama = format!("private-ai-framework-llama (= {FW})");
+        let mut want = vec![
+            "libc6 (>= 2.34)",
+            "libfontconfig1 (>= 2.12.6)",
+            cli.as_str(),
+            llama.as_str(),
+        ];
+        want.sort();
+        assert_eq!(parts, want, "{depends}");
+    }
+
+    /// The point of the split: the command line's `.deb` installs on a
+    /// headless server. Whatever dpkg-shlibdeps answers for `pai` (or the
+    /// fixed list when it gives none) and llama.cpp's package, and nothing
+    /// of the GUI: no configurator, no font or windowing library.
+    #[test]
+    fn the_cli_deb_depends_on_llama_cpp_and_no_graphics_library() {
+        let f = fields_v(Component::Cli, FW, &[], Some(FW));
+        for scanned in ["", "libc6 (>= 2.34), libgcc-s1 (>= 4.2)"] {
+            let depends = depends_line(&f, scanned);
+            let parts: Vec<&str> = depends.split(", ").collect();
+            assert!(
+                parts.contains(&format!("private-ai-framework-llama (= {FW})").as_str()),
+                "{scanned:?}: {depends}"
+            );
+            assert!(
+                parts.iter().any(|p| p.starts_with("libc6")),
+                "{scanned:?}: {depends}"
+            );
+            for gui in [
+                "private-ai-framework-config",
+                "libfontconfig",
+                "libfreetype",
+                "libxkbcommon",
+                "libwayland",
+                "libx11",
+                "libxcursor",
+                "libxi6",
+                "libegl",
+                "libgl",
+            ] {
+                assert!(!depends.contains(gui), "{scanned:?}: {gui} in {depends}");
+            }
+        }
+    }
+
+    /// The rest of the Depends stays as it was: llama.cpp's scanned list
+    /// plus what its maintainer scripts need, a runtime nothing it does not
+    /// bring along, the configurator the fixed list when the scan gives none.
+    #[test]
+    fn the_deb_depends_of_the_other_packages_stay() {
+        let runtimes = [(Component::Rocm, "10.1.0".to_string())];
+        let f = fields_v(Component::Llama, FW, &runtimes, None);
+        assert_eq!(
+            depends_line(&f, "libc6 (>= 2.34)"),
+            format!(
+                "libc6 (>= 2.34), {}",
+                system_files::deb_depends(Component::Llama)
+            )
+        );
+        let f = fields_v(Component::Rocm, "10.1.0", &[], None);
+        assert_eq!(depends_line(&f, ""), "");
+        let f = fields_v(Component::Config, FW, &[], Some(FW));
+        let depends = depends_line(&f, "");
+        assert!(depends.starts_with("libc6, "), "{depends}");
+        assert!(depends.contains("libfontconfig1"), "{depends}");
+    }
+
+    /// The control file of the command line's `.deb`: its identity and its
+    /// Depends, and no Conflicts, Replaces or Provides, since no package of
+    /// 2.4 or earlier held pai.
+    #[test]
+    fn the_cli_deb_names_no_package_of_2_4() {
+        let f = fields_v(Component::Cli, FW, &[], Some(FW));
+        let depends = format!("libc6, private-ai-framework-llama (= {FW})");
+        let text = deb_control(&f, "amd64", "Someone <a@b.c>", "1234", &depends);
+        let lines: Vec<&str> = text.lines().collect();
+        for want in [
+            "Package: private-ai-framework-cli".to_string(),
+            format!("Version: {FW}"),
+            format!("Depends: {depends}"),
+        ] {
+            assert!(lines.contains(&want.as_str()), "{want} missing:\n{text}");
+        }
+        for tag in [
+            "Conflicts:",
+            "Replaces:",
+            "Provides:",
+            "Breaks:",
+            "Recommends:",
+        ] {
+            assert!(
+                !lines.iter().any(|l| l.starts_with(tag)),
+                "{tag} in:\n{text}"
+            );
+        }
+        assert!(!text.contains(OLD), "{text}");
+    }
+
+    /// The command line's `.rpm` lists its files (`pai`, the benchmark
+    /// method, `cli.toml`, its licences and copyright) and nothing of the
+    /// GUI's, and names no package of 2.4 or earlier.
+    #[test]
+    fn the_cli_rpm_spec_lists_its_files() {
+        let dir = scratch("rpm-spec-cli");
+        let cli = dir.join("cli");
+        for (rel, mode) in [
+            ("usr/bin/pai", 0o755),
+            (
+                "usr/share/private-ai/benchmarks/specs/standard-1.1.ini",
+                0o644,
+            ),
+            (
+                "usr/share/private-ai/benchmarks/prompts/bench-prompt-43k-1.0.txt",
+                0o644,
+            ),
+            ("usr/share/private-ai/strings/cli.toml", 0o644),
+            ("usr/share/private-ai/licenses/cli/README.txt", 0o644),
+            ("usr/share/doc/private-ai-framework-cli/copyright", 0o644),
+        ] {
+            put(&cli, rel, ELF, mode);
+        }
+        let f = fields_v(Component::Cli, FW, &[], Some(FW));
+        let spec = rpm_spec(&f, "MIT", "libggml", &cli);
+        check_files(&spec, &cli);
+        std::fs::remove_dir_all(&dir).unwrap();
+        let lines: Vec<&str> = spec.lines().collect();
+        for want in [
+            "Name:           private-ai-framework-cli".to_string(),
+            format!("Version:        {FW}"),
+            format!("Requires:       private-ai-framework-llama = {FW}"),
+        ] {
+            assert!(lines.contains(&want.as_str()), "{want} missing:\n{spec}");
+        }
+        assert!(!spec.contains(OLD), "{spec}");
+        assert!(!spec.contains("Obsoletes:"), "{spec}");
+        assert!(!spec.contains("org.privateai.Config"), "{spec}");
+        let files = files_section(&spec);
+        assert_eq!(
+            files,
+            [
+                "/usr/share/doc/private-ai-framework-cli",
+                "/usr/bin/*",
+                "/usr/share/private-ai",
+            ],
+            "{spec}"
+        );
+    }
+
+    /// The descriptions say which program each package holds: the
+    /// configurator's is the GUI alone now, the command line's names `pai`.
+    #[test]
+    fn the_descriptions_tell_the_gui_from_the_command_line() {
+        let (summary, description) = texts(Component::Cli, "v0.9.0");
+        assert!(summary.starts_with("pai:"), "{summary}");
+        assert!(!summary.contains("GUI"), "{summary}");
+        assert!(description.contains("pai"), "{description}");
+        let (summary, _) = texts(Component::Config, "v0.9.0");
+        assert!(!summary.contains("CLI"), "{summary}");
     }
 
     /// The `%files` lines of a spec.

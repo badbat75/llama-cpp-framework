@@ -1,12 +1,12 @@
-//! Package phase on macOS (cargo run -p xtask -- package): three .pkg files
-//! (pai-config, llama.cpp, the Vulkan runtime: common/components.rs says
+//! Package phase on macOS (cargo run -p xtask -- package): four .pkg files
+//! (pai-config, pai, llama.cpp, the Vulkan runtime: common/components.rs says
 //! which file goes where; ROCm and CUDA do not exist here). Stages the build into
-//! /opt/private-ai (binaries, backends and pai-config in bin/, the
+//! /opt/private-ai (binaries, backends, pai-config and pai in bin/, the
 //! bundled Vulkan loader and MoltenVK in lib/), a symlink per executable in
 //! /usr/local/bin, the MoltenVK driver manifest in
 //! /usr/local/share/vulkan/icd.d, and builds them with pkgbuild into ./dist/.
 //! A component package states no dependencies: `xtask install` lays down all
-//! three, and without the Vulkan one ggml skips that backend and Metal runs.
+//! four, and without the Vulkan one ggml skips that backend and Metal runs.
 //!
 //! Self-contained: Metal is part of the system, and what Vulkan needs comes
 //! out of the SDK the build linked. WHICH libraries is not a list kept here:
@@ -132,7 +132,7 @@ pub fn run(keep_staging: bool) -> Result<()> {
     ui::head("Architecture:      arm64");
 
     // ── Preconditions ───────────────────────────────────────────────────
-    for exe in ["llama-server", "pai-config"] {
+    for exe in ["llama-server", "pai-config", "pai"] {
         if !util::is_executable(&bin.join(exe)) {
             bail!(
                 "{exe} not found in {}. Run cargo run -p xtask -- build first.",
@@ -168,7 +168,7 @@ pub fn run(keep_staging: bool) -> Result<()> {
 
     ui::head("Staging binaries...");
     // The build's bin/ as is (executables, the backend dylibs and
-    // pai-config side by side), llama.cpp's own test-* harnesses left
+    // pai-config and pai side by side), llama.cpp's own test-* harnesses left
     // out. `orig` remembers where each staged Mach-O came from, to resolve
     // its @rpath dependencies as the build tree does.
     let mut orig: Vec<(PathBuf, PathBuf)> = Vec::new();

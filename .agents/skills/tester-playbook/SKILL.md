@@ -270,3 +270,7 @@ Lessons only: the rules are in `AGENTS.md`.
   included by the other crate with `#[path = "..."] mod`.
 - A stub at a file's move destination (`crates/cli/src/cli.rs`) keeps the new crate's tests compiling;
   tell the coder to replace it with `git mv -f`.
+- A text pin on a source file that also holds the test (`"pai-cli"` in `common/configurator.rs`) must
+  read only the code before `#[cfg(test)]\nmod tests`, or the test's own literal satisfies it.
+- A new `Component` variant compiles with `todo!("...")` arms in `suffix`, `texts` and `version_of`
+  (linux/package.rs): every test reaching `package()` then reds with the stub's name.

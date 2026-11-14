@@ -31,13 +31,13 @@ const PRIVATE_LIB_DIR: &str = "/usr/lib/private-ai";
 
 /// Whether a process, by its `/proc/<pid>/cmdline` (NUL-separated, readable
 /// for every user's processes), runs a program of the packages: argv[0] is
-/// one of their executables in /usr/bin (`pai-config`, `llama-*`).
+/// one of their executables in /usr/bin (`pai-config`, `pai`, `llama-*`).
 /// pai-manager is not: it only runs as the manager's service.
 fn runs_packaged_program(cmdline: &[u8]) -> bool {
     let argv0 = cmdline.split(|&b| b == 0).next().unwrap_or_default();
     argv0
         .strip_prefix(b"/usr/bin/")
-        .is_some_and(|name| name == b"pai-config" || name.starts_with(b"llama-"))
+        .is_some_and(|name| name == b"pai-config" || name == b"pai" || name.starts_with(b"llama-"))
 }
 
 /// Whether a process, by its `/proc/<pid>/maps`, has a file of
@@ -592,6 +592,34 @@ mod tests {
             None
         );
         assert_eq!(service_uid("private-ai\n"), None);
+    }
+
+    /// `pai`, the command line, is a program of the packages like the GUI:
+    /// a `pai bench run` in a user's shell stops the install. Only by its
+    /// exact name in /usr/bin.
+    #[test]
+    fn a_running_pai_counts_as_running() {
+        for ours in [
+            b"/usr/bin/pai\0".as_slice(),
+            b"/usr/bin/pai\0bench\0run\0--spec\0standard\0",
+        ] {
+            assert!(
+                runs_packaged_program(ours),
+                "{}",
+                String::from_utf8_lossy(ours)
+            );
+        }
+        for other in [
+            b"/usr/bin/paint\0".as_slice(),
+            b"/usr/local/bin/pai\0",
+            b"/usr/bin/vim\0/usr/bin/pai\0",
+        ] {
+            assert!(
+                !runs_packaged_program(other),
+                "{}",
+                String::from_utf8_lossy(other)
+            );
+        }
     }
 
     /// The instances run as the services' user and the maintainer scripts

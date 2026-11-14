@@ -1,9 +1,9 @@
-//! `build config` (02-build, second half): pai-config, the Rust GUI +
-//! CLI configurator, built with cargo. A module of its own: it needs nothing
-//! from the llama.cpp build but the clone (for the icon). What follows the
-//! cargo build is the OS's: Linux and macOS copy the binary next to
-//! llama-server (`install_next_to_server`), Windows stages it straight from
-//! cargo's release dir in the package phase.
+//! `build config` (02-build, second half): pai-config (the GUI), pai (the
+//! command line) and pai-manager, built with cargo. A module of its own: it
+//! needs nothing from the llama.cpp build but the clone (for the icon). What
+//! follows the cargo build is the OS's: Linux and macOS copy the front ends
+//! next to llama-server (`install_next_to_server`), Windows stages them
+//! straight from cargo's release dir in the package phase.
 
 use crate::common::llama::prereq_script;
 use crate::common::ui;
@@ -13,7 +13,13 @@ use anyhow::{Context, Result};
 use std::path::Path;
 use std::path::PathBuf;
 
-/// Builds pai-config in release mode and returns cargo's target dir.
+/// The programs of the cargo workspace copied next to llama-server (Linux,
+/// macOS), where the package phases take them from.
+#[cfg_attr(not(unix), allow(dead_code))]
+pub const NEXT_TO_SERVER: &[&str] = &["pai-config", "pai"];
+
+/// Builds pai-config, pai and pai-manager in release mode and returns cargo's
+/// target dir.
 /// `llama_cpp_dir` is the clone the architecture tables come from; `build_jobs` caps
 /// cargo (0 = cargo's default, all cores).
 pub fn build(llama_cpp_dir: &str, build_jobs: u32) -> Result<PathBuf> {
@@ -80,6 +86,8 @@ pub fn build(llama_cpp_dir: &str, build_jobs: u32) -> Result<PathBuf> {
         "-p",
         "pai-config",
         "-p",
+        "pai-cli",
+        "-p",
         "pai-manager",
     ]);
     // Its build script generates the architecture tables from this clone.
@@ -103,13 +111,15 @@ pub fn install_next_to_server(target: &Path) -> Result<()> {
     // Staged beside the target and renamed over it, as install(1) does, so a
     // configurator that is running keeps its file.
     std::fs::create_dir_all(&bin_dir)?;
-    let dest = bin_dir.join("pai-config");
-    let staged = bin_dir.join(".pai-config.new");
-    std::fs::copy(target.join("release/pai-config"), &staged)?;
-    set_mode(&staged, 0o755)?;
-    std::fs::rename(&staged, &dest)?;
-    ui::ok(format!("pai-config build complete: {}", dest.display()));
-    crate::common::llama::print_version(&dest, false)?;
+    for name in NEXT_TO_SERVER {
+        let dest = bin_dir.join(name);
+        let staged = bin_dir.join(format!(".{name}.new"));
+        std::fs::copy(target.join("release").join(name), &staged)?;
+        set_mode(&staged, 0o755)?;
+        std::fs::rename(&staged, &dest)?;
+        ui::ok(format!("{name} build complete: {}", dest.display()));
+        crate::common::llama::print_version(&dest, false)?;
+    }
     ui::say("");
     Ok(())
 }
@@ -119,4 +129,49 @@ pub fn set_mode(p: &Path, mode: u32) -> Result<()> {
     use std::os::unix::fs::PermissionsExt;
     std::fs::set_permissions(p, std::fs::Permissions::from_mode(mode))
         .with_context(|| format!("chmod {mode:o} {}", p.display()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::NEXT_TO_SERVER;
+
+    /// This file's code without its tests, which spell the names they look for.
+    fn production() -> String {
+        let text = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/common/configurator.rs"),
+        )
+        .unwrap();
+        text.split("#[cfg(test)]\nmod tests")
+            .next()
+            .unwrap()
+            .to_string()
+    }
+
+    /// `xtask build` compiles `pai` (package pai-cli) with the GUI and the
+    /// manager, on every OS: the package phases find it in cargo's release
+    /// dir.
+    #[test]
+    fn the_build_compiles_the_command_line_on_every_os() {
+        let code = production();
+        assert!(
+            code.contains("\"pai-cli\""),
+            "common/configurator.rs does not build -p pai-cli"
+        );
+        for kept in ["\"pai-config\"", "\"pai-manager\""] {
+            assert!(code.contains(kept), "{kept} no longer built");
+        }
+    }
+
+    /// `pai` is copied next to llama-server with the GUI, where the Linux and
+    /// macOS package phases stage the build's `bin/` from; the copy goes
+    /// through the list, not one hard-coded configurator.
+    #[test]
+    fn the_command_line_is_copied_next_to_llama_server() {
+        assert_eq!(NEXT_TO_SERVER, ["pai-config", "pai"]);
+        let code = production();
+        assert!(
+            code.matches("NEXT_TO_SERVER").count() >= 2,
+            "install_next_to_server does not copy NEXT_TO_SERVER"
+        );
+    }
 }

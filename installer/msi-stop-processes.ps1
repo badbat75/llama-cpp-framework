@@ -9,12 +9,13 @@
 # stopped here never reaches it. Impersonated, which is what it needs: the
 # configurator and llama-server run as the desktop user, who can stop them.
 #
-# The order matters. `pai-config control stop-and-close` is the GRACEFUL
-# leg: it writes the conversation snapshot first (Server tab, Conversation
+# The order matters. `pai control stop-and-close` is the GRACEFUL leg (an
+# older install, without pai.exe, has the command in its configurator): it
+# writes the conversation snapshot first (Server tab, Conversation
 # snapshots), then stops llama-server, then signals the GUI to close. A plain
 # kill would lose that snapshot. Whatever is still alive afterwards is killed.
 #
-# What is stopped: processes named llama-server / pai-config whose image
+# What is stopped: processes named llama-server / pai / pai-config whose image
 # lies under the installed bin\, plus those whose image path cannot be read
 # (another user's, from a non-elevated context). Not by name alone: a process
 # of the same name started from a build tree
@@ -34,11 +35,12 @@ try {
     if (-not $dir) { $dir = (Get-ItemProperty -LiteralPath 'HKLM:\Software\llama.cpp').InstallDir }
     if (-not $dir) { exit 0 }
     $bin = (Join-Path $dir 'bin').TrimEnd('\') + '\'
-    $exe = Join-Path $bin 'pai-config.exe'
+    $exe = Join-Path $bin 'pai.exe'
+    if (-not (Test-Path -LiteralPath $exe)) { $exe = Join-Path $bin 'pai-config.exe' }
     if (-not (Test-Path -LiteralPath $exe)) { $exe = Join-Path $bin 'llama-cpp-config.exe' }
 
     function Get-Ours {
-        Get-Process -Name 'llama-server', 'pai-config', 'llama-cpp-config' -ErrorAction SilentlyContinue |
+        Get-Process -Name 'llama-server', 'pai', 'pai-config', 'llama-cpp-config' -ErrorAction SilentlyContinue |
             Where-Object { -not $_.Path -or $_.Path.StartsWith($bin, [StringComparison]::OrdinalIgnoreCase) }
     }
 
