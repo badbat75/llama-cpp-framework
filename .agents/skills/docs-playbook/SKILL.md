@@ -132,3 +132,7 @@ Lessons only: the rules are in `AGENTS.md`.
 - `xtask install` takes no product on any OS (only files); `package` and `build` do. On macOS a
   non-release llama.cpp clone is named `b<N>`, and `components::is_file_of` wants a digit after `-v`,
   so `llama.cpp-vb<N>-arm64.pkg` is not picked from `dist/` by `install`.
+- The release process (`AGENTS.md`, last section) lists every package file per OS and the upload globs:
+  when `components.rs`, `msi::file_name` or `macos_pkg::file_name` change a name, fix it there too. Only
+  Windows refuses a 2 GiB asset (`windows/package.rs`); nothing pins the llama.cpp tag across the
+  three build machines (`common/llama.rs` takes the newest release at build time).
