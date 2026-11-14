@@ -94,3 +94,8 @@ Lessons only: the rules are in `AGENTS.md`.
   `installer/AGENTS.md` (its test plan) carry one line each. `components::file_stem` and
   `of()` are shared with macOS: a Linux split renames and resplits the `.pkg` set too, even when the
   macOS slice is "later"; say so on `build-macos.md` rather than leave its table looking current.
+- When a package starts shipping defaults copied "only when missing", recheck every flow keyed on a
+  file being absent: `migration::import_offered` skips a file the manager already has, so the import
+  of a 2.4 `server.ini`/`presets.ini` stops being offered on a packaged Linux install. The instance
+  files' directory is `paths::engine_config_dir` (`/etc/llama.cpp` on Linux); `system_config_dir`
+  is the framework's (`bff.ini`); grep both names and both paths after a layout change.

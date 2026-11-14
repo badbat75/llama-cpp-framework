@@ -22,7 +22,10 @@ the runtime of a GPU it does not have, and a headless server the GUI.** `xtask/s
 path, so no file lands in two packages or in none. On Linux the engine, llama.cpp, is packaged apart
 from the framework, under its own name and version (`PLAN.md` step 11, R12); the MSI and the macOS
 `.pkg` files get the same split in later slices of that step (3 and 4), and until then keep the
-layout described here and on [the macOS page](build-macos.md).
+layout described here and on [the macOS page](build-macos.md). The same holds for the engine's
+configuration: on Linux the instance files are in `/etc/llama.cpp/`, while Windows keeps them in
+`%ProgramData%\private-ai\config\` and macOS per user until those slices (planned for Windows:
+`%ProgramData%\llama.cpp\`, filled from llama.cpp's own MSI).
 
 | OS | Package | File in `dist/` |
 | --- | --- | --- |
@@ -247,7 +250,13 @@ On the same install, the same day, with the start at boot of step 12 (reported b
 systemd both ways. Reinstalling at the same version after `llama.cpp@.service` moved from `core` to
 `llama.cpp` needed a one-off `dpkg --force-overwrite`, since the installed `core` of that version still owned the
 file. Only pre-release builds of one version hit it; no fix is planned. The stop and restart of the services by the scripts (below) were checked in
-xtask's tests with a fake `systemctl`, not on this install.
+xtask's tests with a fake `systemctl`, then once on this install, the same day, by an upgrade to the
+packages that move the instance files to `/etc/llama.cpp/` (reported by the user; the user's files
+had been copied there by hand beforehand): it stopped `llama.cpp@default` (14:25:15), replaced the
+files and started it again (14:25:21), reading `/etc/llama.cpp/presets.ini`; `/run/llama.cpp.instances`
+was gone afterwards, the shipped defaults had not overwritten the user's files, and the bff listed
+`default` active. A first install with no file in `/etc/llama.cpp/`, a removal and a purge have not
+been run for real.
 
 | Path | Package | Holds |
 | --- | --- | --- |
@@ -258,6 +267,7 @@ xtask's tests with a fake `systemctl`, not on this install.
 | `/usr/lib/private-ai/.kpack/` | `llama.cpp-rocm` | hipBLASLt's `blas_lib_*` and RCCL's `rccl_lib_*` archives; ROCm looks in `<libdir>/../.kpack`, so they cannot sit at the top |
 | `/usr/share/private-ai/benchmarks/` | `cli` | The benchmark method |
 | `/usr/share/private-ai/strings/` | `config`; `cli.toml` in `core` | The GUI's `en_US.toml`, and `cli.toml`, the text every program prints |
+| `/usr/share/private-ai/llama.cpp/` | `llama.cpp` | The defaults `server@default.ini` and an empty `presets.ini`, copied into `/etc/llama.cpp/` when missing |
 | `/usr/share/private-ai/licenses/<component>/` | Each its own (`llama/` for `llama.cpp`) | The licence texts and their `README.txt` |
 | `/usr/share/` | `config`; `doc/<package>/copyright` in each | The desktop entry `org.privateai.Config.desktop` ("Private AI Framework" in the menu), its icon, the copyright file |
 | `/usr/lib/systemd/system/`, `/usr/lib/sysusers.d/`, `/usr/share/dbus-1/system.d/`, `/usr/share/polkit-1/actions/` | `core`; `llama.cpp@.service` in `llama.cpp`; `private-ai-bff.service` and `private-ai-bff.conf` in `bff` | The services' system files, below |
@@ -320,9 +330,17 @@ still wins over RUNPATH. That no file is opened under the dists or the build tre
 (extracting the `.deb`, `strace` of a generation per backend, not recorded) with a `$ORIGIN`-relative
 RUNPATH; it has not been repeated with the absolute one.
 
-**No config file is shipped.** The server and preset files (`server@<id>.ini`, `presets.ini`,
-`presets.ini.disabled`) are in `/etc/private-ai/`, which systemd creates at the manager's start
-(`ConfigurationDirectory=`) and which only the manager writes. `pai-config` keeps `settings.ini` per
+**No config file is shipped; `llama.cpp` ships its defaults.** The server and preset files
+(`server@<id>.ini`, `presets.ini`, `presets.ini.disabled`) are the engine's, in `/etc/llama.cpp/`
+(`paths::engine_config_dir`), which only the manager writes; the framework's own (`bff.ini`) are in
+`/etc/private-ai/`. systemd creates both at the manager's start (`ConfigurationDirectory=`).
+`llama.cpp` holds, read-only in `/usr/share/private-ai/llama.cpp/`, `server@default.ini` (the
+configurator's default values with the service user's paths, which the manager's checks accept:
+`server_cfg.rs` test) and an empty `presets.ini`; its scripts copy each into `/etc/llama.cpp/` only
+when it is missing, never over a file, so an upgrade leaves what the user or the manager wrote and
+dpkg asks nothing: `server@default.ini` 0640 `root:private-ai` when that group exists, else 0644,
+`presets.ini` 0644. The instance `default` therefore exists from the first install. No file is moved
+from `/etc/private-ai/`: there is no migration between the pre-release layouts. `pai-config` keeps `settings.ini` per
 user in `${XDG_CONFIG_HOME:-~/.config}/private-ai/` (`paths::config_dir`) and moves release 2.4's
 `~/.config/llama.cpp/` and `~/.local/share/llama.cpp/` there at its first start
 ([Migration from 2.4](../crates/config/README.md#migration-from-24)).
@@ -332,7 +350,7 @@ installed 0644, overwritten on every upgrade; local changes go in a drop-in, `sy
 
 | File | What it does |
 | --- | --- |
-| `/usr/lib/systemd/system/private-ai-manager.service` | `pai-manager serve` as root, `Type=dbus` on `org.privateai.Manager1`, `HOME=/var/lib/private-ai` so a blank `ModelsDir` means the same as for the instances, `ConfigurationDirectory=private-ai`, `Restart=on-failure`, enabled for `multi-user.target` |
+| `/usr/lib/systemd/system/private-ai-manager.service` | `pai-manager serve` as root, `Type=dbus` on `org.privateai.Manager1`, `HOME=/var/lib/private-ai` so a blank `ModelsDir` means the same as for the instances, `ConfigurationDirectory=private-ai llama.cpp` (mode 0755), `Restart=on-failure`, enabled for `multi-user.target` |
 | `/usr/lib/systemd/system/llama.cpp@.service` | `pai-manager run-instance %i` as user `private-ai` (supplementary groups `render`, `video`), `StateDirectory=` for its home `/var/lib/private-ai` and the data root under it, `Restart=on-abnormal`, `ConditionFileIsExecutable=/usr/libexec/private-ai/pai-manager` (without the framework it does not run: the engine does not require it); `[Install] WantedBy=multi-user.target`, so an instance starts at boot once enabled, which no package does (the configurator's "start llama-server when the system starts", through the manager's `SetBootEnabled`); its output goes to journald |
 | `/usr/share/dbus-1/system.d/org.privateai.Manager1.conf` | Only root owns the name; anyone may call it, and polkit decides in each call |
 | `/usr/share/polkit-1/actions/org.privateai.manager.policy` | `org.privateai.manager.control` (start, stop, restart): `yes` in the active session, `auth_admin` otherwise; `org.privateai.manager.configure` (writing a file): `auth_admin_keep` |
@@ -358,17 +376,19 @@ package's `%pre`, since rpm runs the old package's `%preun` only after the new f
 
 | When | `core`: the manager | `llama.cpp`: the instances |
 | --- | --- | --- |
-| Install | `systemd-sysusers private-ai.conf`, enable the manager, `daemon-reload`, reload the bus policies, start the manager (the `.rpm` in `%posttrans`, once the old package's files are gone) | `daemon-reload`; no instance is enabled or started |
-| Upgrade | Stop the manager; afterwards the same as an install, the manager restarted (the `.rpm` only while it is enabled) | Record the active `llama.cpp@*` units in `/run/llama.cpp.instances` and stop them; afterwards `daemon-reload`, start each recorded unit, delete the record |
-| Removal | Stop the manager; `daemon-reload` (the `.rpm` also disables it) | Stop every instance; `daemon-reload`, delete the record. An enabled instance stays enabled: its `multi-user.target.wants/` link is left behind (open, `PLAN.md` step 12) |
-| Purge (`.deb`) | Forget the manager's enablement state; `/etc/private-ai` and `/var/lib/private-ai` are kept | Nothing more |
+| Install | `systemd-sysusers private-ai.conf`, enable the manager, `daemon-reload`, reload the bus policies, start the manager (the `.rpm` in `%posttrans`, once the old package's files are gone) | Copy the missing defaults into `/etc/llama.cpp/` (the `.rpm` in `%posttrans`); `daemon-reload`; no instance is enabled or started |
+| Upgrade | Stop the manager; afterwards the same as an install, the manager restarted (the `.rpm` only while it is enabled) | Record the active `llama.cpp@*` units in `/run/llama.cpp.instances` and stop them; afterwards copy the missing defaults, `daemon-reload`, start each recorded unit, delete the record |
+| Removal | Stop the manager; `daemon-reload` (the `.rpm` also disables it) | Stop every instance; `daemon-reload`, delete the record; `/etc/llama.cpp/` is kept. An enabled instance stays enabled: its `multi-user.target.wants/` link is left behind (open, `PLAN.md` step 12) |
+| Purge (`.deb`) | Forget the manager's enablement state; `/etc/private-ai` and `/var/lib/private-ai` are kept | Remove `/etc/llama.cpp/` |
 
 `core`'s scripts never touch the instances, and none enables one: an instance starts at boot only once
 the user enables it. `bff`'s scripts do the same as `core`'s for `private-ai-bff.service` alone:
 `systemd-sysusers private-ai-bff.conf`, then enable and start it on install, stop it before an upgrade
 and restart it after (the `.rpm` in `%posttrans`, while it is enabled), stop it on removal (the `.rpm`
-also disables it), and forget its enablement state on purge. These scripts run in xtask's tests in a
-sandbox with a fake `systemctl`.
+also disables it), and forget its enablement state on purge. Under `DPKG_ROOT` (a chroot install)
+`llama.cpp`'s copy of the defaults stays inside the root and asks the host for no group, so the server
+file is copied 0644 there. These scripts run in xtask's tests in a sandbox with a fake `systemctl`, the
+chroot install included.
 
 The `.deb` `Depends` on `systemd | systemd-standalone-sysusers | systemd-sysusers` for those scripts;
 the `.rpm` of `core` and of `bff` `Requires(pre)`, `(post)`, `(preun)`, `(postun)` and `(posttrans)` systemd (`llama.cpp`'s none), and `core`'s takes weak dependencies on the `render` and `video` groups, which the sysusers `m` lines

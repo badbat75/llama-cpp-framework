@@ -230,7 +230,7 @@ Points of design, and what is still open:
   root:private-ai (the instance still reads them; on Windows the ACL counterpart), and reading them
   through the manager needs the `control` authorization (done: the manager writes them so, with
   the group set before the rename, and refuses a save when the group is missing; the preset files stay
-  0644 and open to read; `/etc/private-ai` stays 0755). A file an earlier version wrote 0644 is
+  0644 and open to read; `/etc/llama.cpp`, where they now live, and `/etc/private-ai` stay 0755). A file an earlier version wrote 0644 is
   tightened at its next save.
 - Windows accounts and logs (user, 2026-11-14): each instance runs as its virtual account
   `NT SERVICE\llama.cpp_<id>`, LocalService the fallback if GPU compute fails from session 0; a
@@ -266,7 +266,8 @@ What changes:
   the same `UpgradeCode` on the MSI (so MajorUpgrade still removes the old product).
 - **Paths:** install `/usr` (Linux, its `private-ai` subdirectories), `/opt/private-ai` (macOS) and
   the Windows install dir; user data `~/.config/private-ai`, `~/.local/share/private-ai`, `%LOCALAPPDATA%\private-ai`; the registry key; the
-  system config dir of step 1 (`/etc/private-ai`, `%ProgramData%\private-ai\config`). The engine's names
+  system config dir of step 1 (`/etc/private-ai`, `%ProgramData%\private-ai\config`), and on Linux the engine's
+  `/etc/llama.cpp` for the instance files (`paths::engine_config_dir`). The engine's names
   keep `llama.cpp`: the unit `llama.cpp@<id>`, `llama-server`, the `-llama` package's contents.
 - **Migration:** the first run of the new version moves the old user tree to the new one once, when the
   new one does not exist yet, and leaves the old one untouched if anything fails (Definition of Done 4).
