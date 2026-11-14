@@ -359,3 +359,8 @@ Lessons only: the rules are in `AGENTS.md`.
 - To reproduce a unit test that races the e2e redirect, run it filtered together with the e2e
   (`cargo test -p <crate> -- <unit> data_root_e2e`) in a loop: a race seen 2 times in 5 full runs
   showed 31 times in 40 that way. Pin the exact `paths::`-derived value in an e2e phase instead.
+- To pin what a maintainer script does rather than its spelling, run it (`xtask/src/linux/system_files.rs`,
+  `Sandbox`): fake `systemctl`, `deb-systemd-invoke`... on PATH that log their args, the script's `/run`
+  paths replaced by sandbox paths, and an assert that no `/run/` or absolute tool path is left before it
+  runs, so a script the test does not know can never touch the real system. rpm scriptlets run the same
+  way, their body behind a `#!/bin/sh` line, `$1` passed as the argument.

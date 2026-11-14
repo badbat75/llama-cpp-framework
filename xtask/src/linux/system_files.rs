@@ -1,10 +1,11 @@
-//! The system files the `-core` package ships so the manager and the
-//! instances run as services: the two systemd units, the D-Bus policy of
-//! the manager's bus name, the polkit actions it checks, the sysusers.d
-//! entry of the service user, and the maintainer scripts that create the
-//! user and enable, start and stop the manager; and the unit of the web
-//! service, the sysusers.d entry of its user and its maintainer scripts,
-//! which the `-bff` package ships.
+//! The system files the `-core` package ships so the manager runs as a
+//! service: its systemd unit, the D-Bus policy of its bus name, the polkit
+//! actions it checks, the sysusers.d entry of the service user, and the
+//! maintainer scripts that create the user and enable, start and stop the
+//! manager; the instance unit and the maintainer scripts that stop the
+//! running instances and start them again, which the engine's package
+//! ships; and the unit of the web service, the sysusers.d entry of its user
+//! and its maintainer scripts, which the `-bff` package ships.
 
 use crate::common::components::Component;
 use crate::common::configurator::set_mode;
@@ -24,6 +25,10 @@ const BFF_EXE: &str = "/usr/libexec/private-ai/pai-bff";
 const BFF_SERVICE: &str = "private-ai-bff.service";
 /// Every instance's unit, for systemctl.
 const INSTANCES: &str = "'llama.cpp@*.service'";
+/// Where the engine's scripts record the instances running before its files
+/// are replaced, one unit per line, for the scripts that run after. Under
+/// /run, emptied at boot, when the enabled instances start on their own.
+const RECORD: &str = "/run/llama.cpp.instances";
 /// Asks the system bus to read its policies again.
 const RELOAD_BUS: &str =
     "busctl call org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus ReloadConfig";
@@ -99,6 +104,8 @@ pub fn instance_unit() -> String {
          Description=llama.cpp server %i (Private AI Framework)\n\
          After=network-online.target\n\
          Wants=network-online.target\n\
+         # The launcher is the framework's, which this package does not require.\n\
+         ConditionFileIsExecutable={MANAGER_EXE}\n\
          \n\
          [Service]\n\
          Type=exec\n\
@@ -114,7 +121,7 @@ pub fn instance_unit() -> String {
          \n\
          [Install]\n\
          WantedBy=multi-user.target\n",
-        header("#")
+        header_of(Component::Llama, "#")
     )
 }
 
@@ -253,12 +260,17 @@ pub fn deb_scripts(c: Component) -> Vec<(&'static str, String)> {
     if c == Component::Bff {
         return bff_deb_scripts();
     }
+    if c == Component::Llama {
+        return engine_deb_scripts();
+    }
     if c != Component::Core {
         return Vec::new();
     }
     let head = format!("#!/bin/sh\nset -e\n{}\n", header("#"));
     // debhelper's autoscripts postinst-sysusers, postinst-systemd-enable and
-    // postinst-systemd-restart, plus the bus policy reload and the instances.
+    // postinst-systemd-restart, plus the bus policy reload. On an upgrade a
+    // restart, not a start: the prerm of a release that did not stop the
+    // manager before an upgrade left it running.
     let postinst = format!(
         r#"{head}if [ "$1" = "configure" ] || [ "$1" = "abort-upgrade" ] || [ "$1" = "abort-deconfigure" ] || [ "$1" = "abort-remove" ] ; then
 	systemd-sysusers ${{DPKG_ROOT:+--root="$DPKG_ROOT"}} private-ai.conf
@@ -276,8 +288,6 @@ pub fn deb_scripts(c: Component) -> Vec<(&'static str, String)> {
 		{RELOAD_BUS} >/dev/null || true
 		if [ -n "$2" ]; then
 			deb-systemd-invoke restart {MANAGER_SERVICE} >/dev/null || true
-			# The running instances, on the llama-server just installed.
-			systemctl try-restart {INSTANCES} >/dev/null || true
 		else
 			deb-systemd-invoke start {MANAGER_SERVICE} >/dev/null || true
 		fi
@@ -285,12 +295,10 @@ pub fn deb_scripts(c: Component) -> Vec<(&'static str, String)> {
 fi
 "#
     );
-    // prerm-systemd-restart: an upgrade keeps them running until postinst.
+    // Stopped before its files are replaced, on upgrade as on removal.
     let prerm = format!(
-        r#"{head}if [ -z "$DPKG_ROOT" ] && [ "$1" = remove ] && [ -d /run/systemd/system ] ; then
-	# The manager first, so it starts nothing.
+        r#"{head}{STOPPING} ; then
 	deb-systemd-invoke stop {MANAGER_SERVICE} >/dev/null || true
-	systemctl stop {INSTANCES} >/dev/null || true
 fi
 "#
     );
@@ -340,7 +348,7 @@ fi
 "#
     );
     let prerm = format!(
-        r#"{head}if [ -z "$DPKG_ROOT" ] && [ "$1" = remove ] && [ -d /run/systemd/system ] ; then
+        r#"{head}{STOPPING} ; then
 	deb-systemd-invoke stop {BFF_SERVICE} >/dev/null || true
 fi
 "#
@@ -353,6 +361,65 @@ fi
 if [ "$1" = "purge" ]; then
 	if [ -x "/usr/bin/deb-systemd-helper" ]; then
 		deb-systemd-helper purge {BFF_SERVICE} >/dev/null || true
+	fi
+fi
+"#
+    );
+    vec![("postinst", postinst), ("prerm", prerm), ("postrm", postrm)]
+}
+
+/// The test that opens a prerm's stop: before the package's files are
+/// replaced (deb-prerm(5): `upgrade`, `remove`, `deconfigure`), never in a
+/// chroot install or without systemd running.
+const STOPPING: &str = r#"if [ -z "$DPKG_ROOT" ] && { [ "$1" = upgrade ] || [ "$1" = remove ] || [ "$1" = deconfigure ] ; } && [ -d /run/systemd/system ]"#;
+
+/// Records the active instances in [`RECORD`], one unit per line, and stops
+/// them: the body of the engine's prerm and `.rpm` %pre.
+fn record_and_stop_instances(indent: &str) -> String {
+    format!(
+        "{indent}systemctl list-units --plain --no-legend --state=active {INSTANCES} | while read -r unit _; do echo \"$unit\"; done > {RECORD} || true\n\
+         {indent}systemctl stop {INSTANCES} >/dev/null || true\n"
+    )
+}
+
+/// Starts each instance [`RECORD`] names: the body of the engine's postinst
+/// and `.rpm` %posttrans.
+fn start_recorded_instances(indent: &str) -> String {
+    format!(
+        "{indent}if [ -f {RECORD} ]; then\n\
+         {indent}\twhile read -r unit; do\n\
+         {indent}\t\tsystemctl start \"$unit\" >/dev/null || true\n\
+         {indent}\tdone < {RECORD}\n\
+         {indent}fi\n"
+    )
+}
+
+/// The engine's `.deb` maintainer scripts: its running instances recorded
+/// and stopped before its files are replaced, and started again, each by
+/// name, once the new files are in place; the record forgotten on removal.
+fn engine_deb_scripts() -> Vec<(&'static str, String)> {
+    let head = format!("#!/bin/sh\nset -e\n{}\n", header_of(Component::Llama, "#"));
+    let postinst = format!(
+        r#"{head}if [ "$1" = "configure" ] || [ "$1" = "abort-upgrade" ] || [ "$1" = "abort-deconfigure" ] || [ "$1" = "abort-remove" ] ; then
+	if [ -d /run/systemd/system ]; then
+		systemctl --system daemon-reload >/dev/null || true
+{start}	fi
+	if [ -z "$DPKG_ROOT" ]; then
+		rm -f {RECORD}
+	fi
+fi
+"#,
+        start = start_recorded_instances("\t\t")
+    );
+    let prerm = format!(
+        "{head}{STOPPING} ; then\n{}fi\n",
+        record_and_stop_instances("\t")
+    );
+    let postrm = format!(
+        r#"{head}if [ "$1" = remove ]; then
+	rm -f {RECORD}
+	if [ -d /run/systemd/system ]; then
+		systemctl --system daemon-reload >/dev/null || true
 	fi
 fi
 "#
@@ -393,15 +460,24 @@ pub fn rpm_scriptlets(c: Component) -> String {
     if c == Component::Bff {
         return bff_rpm_scriptlets();
     }
+    if c == Component::Llama {
+        return engine_rpm_scriptlets();
+    }
     if c != Component::Core {
         return String::new();
     }
     // Fedora's systemd macros (systemd's src/rpm/macros.systemd.in) written
     // out, since they are not defined where the packages are built. The
-    // manager is enabled on the first install, and (re)started in
-    // %posttrans, once the old package's files are gone.
+    // manager is stopped in the new package's %pre on an upgrade, enabled
+    // on the first install, and (re)started in %posttrans, once the old
+    // package's files are gone.
     format!(
-        r#"%post
+        r#"%pre
+if [ $1 -ge 2 ] && [ -d /run/systemd/system ]; then
+    systemctl stop {MANAGER_SERVICE} || :
+fi
+
+%post
 systemd-sysusers private-ai.conf || :
 if [ $1 -eq 1 ]; then
     systemctl enable {MANAGER_SERVICE} || :
@@ -409,9 +485,10 @@ fi
 
 %preun
 if [ $1 -eq 0 ]; then
-    systemctl disable --now {MANAGER_SERVICE} || :
     if [ -d /run/systemd/system ]; then
-        systemctl stop {INSTANCES} || :
+        systemctl disable --now {MANAGER_SERVICE} || :
+    else
+        systemctl disable {MANAGER_SERVICE} || :
     fi
 fi
 
@@ -426,7 +503,6 @@ if [ -d /run/systemd/system ]; then
     {RELOAD_BUS} || :
     if systemctl is-enabled --quiet {MANAGER_SERVICE}; then
         systemctl restart {MANAGER_SERVICE} || :
-        systemctl try-restart {INSTANCES} || :
     fi
 fi
 
@@ -434,11 +510,17 @@ fi
     )
 }
 
-/// The bff's `.rpm` scriptlets, the manager's shape for one unit: its user
-/// created, enabled on the first install, restarted in %posttrans when enabled.
+/// The bff's `.rpm` scriptlets, the manager's shape for one unit: stopped
+/// on an upgrade, its user created, enabled on the first install, restarted
+/// in %posttrans when enabled.
 fn bff_rpm_scriptlets() -> String {
     format!(
-        r#"%post
+        r#"%pre
+if [ $1 -ge 2 ] && [ -d /run/systemd/system ]; then
+    systemctl stop {BFF_SERVICE} || :
+fi
+
+%post
 systemd-sysusers private-ai-bff.conf || :
 if [ $1 -eq 1 ]; then
     systemctl enable {BFF_SERVICE} || :
@@ -463,6 +545,38 @@ if [ -d /run/systemd/system ]; then
 fi
 
 "#
+    )
+}
+
+/// The engine's `.rpm` scriptlets. On an upgrade the new package's %pre
+/// records the running instances and stops them (the old %preun runs only
+/// after the new files are in place), and %posttrans starts the recorded
+/// ones again; the last removal stops them.
+fn engine_rpm_scriptlets() -> String {
+    format!(
+        r#"%pre
+if [ $1 -ge 2 ] && [ -d /run/systemd/system ]; then
+{record}fi
+
+%preun
+if [ $1 -eq 0 ] && [ -d /run/systemd/system ]; then
+    systemctl stop {INSTANCES} || :
+fi
+
+%postun
+if [ -d /run/systemd/system ]; then
+    systemctl daemon-reload || :
+fi
+
+%posttrans
+if [ -d /run/systemd/system ]; then
+    systemctl daemon-reload || :
+{start}fi
+rm -f {RECORD}
+
+"#,
+        record = record_and_stop_instances("    "),
+        start = start_recorded_instances("    ")
     )
 }
 
@@ -534,7 +648,8 @@ mod tests {
     /// configuration files in /usr/lib/sysusers.d"). Each goes to the
     /// core package, which holds pai-manager, but the bff's unit and the
     /// sysusers.d entry of its user, which go with pai-bff to the bff's
-    /// package.
+    /// package, and the instance unit, which goes to the engine's package
+    /// `llama.cpp` (the engine owns its unit; a later engine brings its own).
     #[test]
     fn the_system_files_go_to_their_directories_in_their_packages() {
         let got: Vec<(&str, String)> = files();
@@ -552,10 +667,10 @@ mod tests {
             ]
         );
         for (path, text) in &got {
-            let owner = if *path == BFF_UNIT || *path == BFF_SYSUSERS {
-                Component::Bff
-            } else {
-                Component::Core
+            let owner = match *path {
+                BFF_UNIT | BFF_SYSUSERS => Component::Bff,
+                INSTANCE_UNIT => Component::Llama,
+                _ => Component::Core,
             };
             assert_eq!(components::of(path), owner, "{path}");
             let want = match *path {
@@ -579,7 +694,8 @@ mod tests {
 
     /// Staged, the files land under their paths as plain 0644 files and the
     /// split hands each to its package: the bff's unit and user to the
-    /// bff's, every other one to the core package, none to the engine's.
+    /// bff's, the instance unit to the engine's, every other one to the
+    /// core package.
     #[test]
     fn staging_writes_every_system_file_and_the_split_gives_them_to_their_packages() {
         use std::os::unix::fs::PermissionsExt;
@@ -596,7 +712,7 @@ mod tests {
         let into = dir.join("into");
         assert_eq!(
             components::split(&stage_dir, &into).unwrap(),
-            [Component::Bff, Component::Core]
+            [Component::Bff, Component::Core, Component::Llama]
         );
         for (path, _) in files() {
             let owner = components::of(path).suffix();
@@ -760,11 +876,11 @@ mod tests {
 
     /// A new instance starts disabled, as the old setting defaulted to off:
     /// no maintainer script of any package enables an instance, on a first
-    /// install or an upgrade. (They stop and try-restart the running ones,
-    /// pinned above, which enables nothing.)
+    /// install or an upgrade. (The engine's stop the running ones and start
+    /// them again, pinned below, which enables nothing.)
     #[test]
     fn no_package_script_enables_an_instance() {
-        for c in [Component::Core, Component::Bff] {
+        for c in [Component::Core, Component::Bff, Component::Llama] {
             let mut texts: Vec<String> = deb_scripts(c).into_iter().map(|(_, t)| t).collect();
             texts.push(rpm_scriptlets(c));
             for text in &texts {
@@ -962,15 +1078,16 @@ mod tests {
     const RELOAD_BUS: &str =
         "busctl call org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus ReloadConfig";
 
-    /// Only the packages with a service, the core (the manager) and the
-    /// bff, have maintainer scripts: the others, the engine among them,
-    /// install files and nothing else.
+    /// Only the packages with a service have maintainer scripts: the core
+    /// (the manager), the bff, and the engine (its instance unit). The
+    /// others install files and nothing else. The engine's scripts call
+    /// systemctl only with systemd running and create no user, so its
+    /// `.deb` asks for no systemd package.
     #[test]
     fn only_the_service_packages_have_maintainer_scripts() {
         for c in [
             Component::Config,
             Component::Cli,
-            Component::Llama,
             Component::Rocm,
             Component::Cuda,
             Component::Vulkan,
@@ -979,7 +1096,8 @@ mod tests {
             assert_eq!(rpm_scriptlets(c), "", "{c:?}");
             assert_eq!(deb_depends(c), "", "{c:?}");
         }
-        for c in [Component::Core, Component::Bff] {
+        assert_eq!(deb_depends(Component::Llama), "");
+        for c in [Component::Core, Component::Bff, Component::Llama] {
             let names: Vec<&str> = deb_scripts(c).iter().map(|(n, _)| *n).collect();
             assert_eq!(names, ["postinst", "prerm", "postrm"], "{c:?}");
             for (name, text) in deb_scripts(c) {
@@ -1001,9 +1119,9 @@ mod tests {
     /// running, a daemon-reload, the bus policy reloaded (dbus' own trigger
     /// is `interest-noawait` and may run after this script; without the
     /// policy the manager cannot own its name and its Type=dbus start
-    /// fails), and the manager started on an install or restarted on an
-    /// upgrade, with every running instance (`try-restart` leaves stopped
-    /// ones alone) so they run the llama-server just installed.
+    /// fails), and the manager started on an install or (re)started on an
+    /// upgrade (its prerm stopped it). The instances are the engine's: the
+    /// core's scripts never touch them (`the_core_scripts_leave_the_instances_to_the_engine`).
     #[test]
     fn the_deb_postinst_creates_the_user_enables_and_starts_the_manager() {
         let scripts = deb_scripts(Component::Core);
@@ -1035,23 +1153,16 @@ mod tests {
             text,
             "deb-systemd-invoke start private-ai-manager.service >/dev/null || true",
         );
-        let restart = at(
-            text,
-            "deb-systemd-invoke restart private-ai-manager.service >/dev/null || true",
-        );
-        let instances = at(
-            text,
-            "systemctl try-restart 'llama.cpp@*.service' >/dev/null || true",
-        );
-        assert!(at(text, r#"if [ -n "$2" ]; then"#) > reload, "{text}");
         assert!(sysusers < was && was < running, "{text}");
         assert!(running < reload && reload < bus, "{text}");
-        assert!(bus < start && bus < restart && bus < instances, "{text}");
+        assert!(bus < start, "{text}");
+        assert!(!text.contains("try-restart"), "{text}");
     }
 
-    /// prerm stops the manager, then every instance, on a removal only (an
-    /// upgrade keeps them running until postinst restarts them:
-    /// prerm-systemd-restart); postrm reloads systemd after a removal
+    /// prerm stops the manager before its files are replaced (on upgrade,
+    /// removal and deconfigure: the behaviour is pinned with the scripts
+    /// run, below), never in a chroot install (`DPKG_ROOT`) or without
+    /// systemd running; postrm reloads systemd after a removal
     /// (postrm-systemd-reload-only) and forgets the enablement on purge
     /// (postrm-systemd). The configuration in /etc/private-ai and the
     /// service user's models and states in /var/lib/private-ai are kept,
@@ -1060,22 +1171,13 @@ mod tests {
     fn the_deb_prerm_and_postrm_stop_on_removal_and_keep_the_users_data() {
         let scripts = deb_scripts(Component::Core);
         let prerm = &scripts.iter().find(|(n, _)| *n == "prerm").unwrap().1;
-        at(
-            prerm,
-            r#"if [ -z "$DPKG_ROOT" ] && [ "$1" = remove ] && [ -d /run/systemd/system ] ; then"#,
-        );
+        let guard = at(prerm, r#"[ -z "$DPKG_ROOT" ]"#);
+        let running = at(prerm, "[ -d /run/systemd/system ]");
         let manager = at(
             prerm,
             "deb-systemd-invoke stop private-ai-manager.service >/dev/null || true",
         );
-        let instances = at(
-            prerm,
-            "systemctl stop 'llama.cpp@*.service' >/dev/null || true",
-        );
-        assert!(
-            manager < instances,
-            "the manager first, so it starts nothing:\n{prerm}"
-        );
+        assert!(guard < manager && running < manager, "{prerm}");
 
         let postrm = &scripts.iter().find(|(n, _)| *n == "postrm").unwrap().1;
         let remove = at(
@@ -1178,7 +1280,7 @@ mod tests {
             .collect();
         assert_eq!(
             names,
-            ["%post", "%preun", "%postun", "%posttrans"],
+            ["%pre", "%post", "%preun", "%postun", "%posttrans"],
             "{text}"
         );
 
@@ -1194,8 +1296,7 @@ mod tests {
             &preun,
             "systemctl disable --now private-ai-manager.service || :",
         );
-        let instances = at(&preun, "systemctl stop 'llama.cpp@*.service' || :");
-        assert!(removal < manager && manager < instances, "{preun}");
+        assert!(removal < manager, "{preun}");
 
         let postun = scriptlet(&text, "%postun");
         at(&postun, "systemctl daemon-reload || :");
@@ -1211,14 +1312,11 @@ mod tests {
             &posttrans,
             "systemctl restart private-ai-manager.service || :",
         );
-        let running = at(
-            &posttrans,
-            "systemctl try-restart 'llama.cpp@*.service' || :",
-        );
         assert!(reload < bus && bus < enabled, "{posttrans}");
-        assert!(enabled < restart && enabled < running, "{posttrans}");
+        assert!(enabled < restart, "{posttrans}");
+        assert!(!text.contains("try-restart"), "{text}");
 
-        for name in ["%post", "%preun", "%postun", "%posttrans"] {
+        for name in ["%pre", "%post", "%preun", "%postun", "%posttrans"] {
             let body = scriptlet(&text, name);
             assert!(
                 body.contains("[ -d /run/systemd/system ]") || name == "%post",
@@ -1476,8 +1574,9 @@ mod tests {
         }
     }
 
-    /// prerm stops the bff on a removal only (an upgrade keeps it running
-    /// until postinst restarts it: prerm-systemd-restart); postrm reloads
+    /// prerm stops the bff before its files are replaced (on upgrade and
+    /// removal: pinned with the scripts run, below), never in a chroot
+    /// install or without systemd running; postrm reloads
     /// systemd after a removal and forgets the enablement on purge
     /// (postrm-systemd-reload-only, postrm-systemd). Nothing is deleted.
     #[test]
@@ -1488,15 +1587,13 @@ mod tests {
             .find(|(n, _)| *n == "prerm")
             .expect("a prerm")
             .1;
-        let remove = at(
-            prerm,
-            r#"if [ -z "$DPKG_ROOT" ] && [ "$1" = remove ] && [ -d /run/systemd/system ] ; then"#,
-        );
+        let guard = at(prerm, r#"[ -z "$DPKG_ROOT" ]"#);
+        let running = at(prerm, "[ -d /run/systemd/system ]");
         let stop = at(
             prerm,
             "deb-systemd-invoke stop private-ai-bff.service >/dev/null || true",
         );
-        assert!(remove < stop, "{prerm}");
+        assert!(guard < stop && running < stop, "{prerm}");
 
         let postrm = &scripts
             .iter()
@@ -1565,7 +1662,7 @@ mod tests {
             .collect();
         assert_eq!(
             names,
-            ["%post", "%preun", "%postun", "%posttrans"],
+            ["%pre", "%post", "%preun", "%postun", "%posttrans"],
             "{text}"
         );
 
@@ -1595,7 +1692,7 @@ mod tests {
         let restart = at(&posttrans, "systemctl restart private-ai-bff.service || :");
         assert!(reload < enabled && enabled < restart, "{posttrans}");
 
-        for name in ["%post", "%preun", "%postun", "%posttrans"] {
+        for name in ["%pre", "%post", "%preun", "%postun", "%posttrans"] {
             parses(name, &scriptlet(&text, name));
         }
         for other in [
@@ -1612,13 +1709,13 @@ mod tests {
 
     /// Every generated file of the manager's services, its maintainer
     /// scripts included, names the package that installs it now, the
-    /// core's, never the engine's `llama.cpp` package or the
-    /// never-published `-llama`.
+    /// core's, never the never-published `-llama`. The instance unit is the
+    /// engine's (pinned below).
     #[test]
     fn the_system_files_and_scripts_name_the_core_package() {
         let mut texts: Vec<(String, String)> = files()
             .into_iter()
-            .filter(|(p, _)| *p != BFF_UNIT && *p != BFF_SYSUSERS)
+            .filter(|(p, _)| *p != BFF_UNIT && *p != BFF_SYSUSERS && *p != INSTANCE_UNIT)
             .map(|(p, t)| (p.to_string(), t))
             .collect();
         texts.extend(
@@ -1635,6 +1732,519 @@ mod tests {
                 !text.contains("private-ai-framework-llama"),
                 "{name}:\n{text}"
             );
+        }
+    }
+
+    // ── The engine's instance unit and its scripts ──────────────────────
+
+    /// The instance unit is the engine's (`llama.cpp`), but runs the
+    /// framework's launcher, which the engine does not require (the core
+    /// requires the engine, not the reverse): without pai-manager the unit
+    /// does not run (systemd.unit(5) ConditionFileIsExecutable=: an unmet
+    /// condition skips the start, no failure). Its header names the
+    /// engine's package.
+    #[test]
+    fn the_instance_unit_is_the_engines_and_runs_only_with_the_launcher() {
+        let unit = instance_unit();
+        assert!(
+            section(&unit, "[Unit]")
+                .contains(&"ConditionFileIsExecutable=/usr/libexec/private-ai/pai-manager"),
+            "{unit}"
+        );
+        assert!(
+            unit.contains("Installed by the llama.cpp package"),
+            "{unit}"
+        );
+        assert!(!unit.contains("private-ai-framework-core"), "{unit}");
+        assert_eq!(components::of(INSTANCE_UNIT), Component::Llama);
+        for (name, text) in deb_scripts(Component::Llama) {
+            assert!(
+                text.contains("Installed by the llama.cpp package"),
+                "{name}:\n{text}"
+            );
+        }
+    }
+
+    /// Each package handles its own units: the core's scripts handle the
+    /// manager only, never an instance (the engine's), the engine's never
+    /// the manager or the bff.
+    #[test]
+    fn the_core_scripts_leave_the_instances_to_the_engine() {
+        let mut core: Vec<String> = deb_scripts(Component::Core)
+            .into_iter()
+            .map(|(_, t)| t)
+            .collect();
+        core.push(rpm_scriptlets(Component::Core));
+        for text in &core {
+            assert!(!text.contains("llama.cpp@"), "{text}");
+        }
+        let mut engine: Vec<String> = deb_scripts(Component::Llama)
+            .into_iter()
+            .map(|(_, t)| t)
+            .collect();
+        engine.push(rpm_scriptlets(Component::Llama));
+        for text in &engine {
+            for other in ["private-ai-manager", "private-ai-bff", "busctl", "sysusers"] {
+                assert!(!text.contains(other), "{other} in:\n{text}");
+            }
+        }
+    }
+
+    // ── The scripts run, with fake system tools ─────────────────────────
+
+    /// Where the engine's scripts record the instances that were running
+    /// before an upgrade, one unit name per line, for the scripts that run
+    /// after the new files are in place. Under /run: a tmpfs, emptied at
+    /// boot, when the enabled instances start on their own anyway. A file
+    /// named after the package directly in /run rather than a directory:
+    /// no unit's RuntimeDirectory= (which systemd removes when that unit
+    /// stops) can own or clean it, and there is nothing to create first.
+    const RECORD: &str = "/run/llama.cpp.instances";
+
+    /// What `systemctl list-units --plain --no-legend --state=active
+    /// 'llama.cpp@*.service'` printed on a machine with an instance running
+    /// (Ubuntu 26.04, systemd 259), with a second instance added.
+    const ACTIVE: &str = "llama.cpp@default.service  loaded active running llama.cpp server default (Private AI Framework)\n\
+                          llama.cpp@gpu1.service     loaded active running llama.cpp server gpu1 (Private AI Framework)\n";
+
+    /// A scratch directory with fake `systemctl`, `deb-systemd-invoke`,
+    /// `deb-systemd-helper`, `systemd-sysusers` and `busctl`, each logging
+    /// its name and arguments, a line per call; the fake systemctl answers
+    /// `list-units` with the lines in `active` and every other call with
+    /// success (`is-enabled` included).
+    struct Sandbox {
+        dir: std::path::PathBuf,
+    }
+
+    impl Sandbox {
+        fn new(name: &str) -> Sandbox {
+            use std::os::unix::fs::PermissionsExt;
+            let dir =
+                std::env::temp_dir().join(format!("xtask-scripts-{name}-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&dir);
+            let bin = dir.join("bin");
+            std::fs::create_dir_all(&bin).unwrap();
+            std::fs::create_dir_all(dir.join("systemd")).unwrap();
+            for tool in [
+                "systemctl",
+                "deb-systemd-invoke",
+                "deb-systemd-helper",
+                "systemd-sysusers",
+                "busctl",
+            ] {
+                let mut body = format!(
+                    "#!/bin/sh\necho \"{tool} $*\" >> \"{}\"\n",
+                    dir.join("log").display()
+                );
+                if tool == "systemctl" {
+                    body.push_str(&format!(
+                        "case \" $* \" in *\" list-units \"*) cat \"{}\" 2>/dev/null ;; esac\n",
+                        dir.join("active").display()
+                    ));
+                }
+                body.push_str("exit 0\n");
+                let p = bin.join(tool);
+                std::fs::write(&p, body).unwrap();
+                std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+            }
+            Sandbox { dir }
+        }
+
+        fn record(&self) -> std::path::PathBuf {
+            self.dir.join("record")
+        }
+
+        fn set_active(&self, text: &str) {
+            std::fs::write(self.dir.join("active"), text).unwrap();
+        }
+
+        /// The recorded unit names, None when there is no record.
+        fn recorded(&self) -> Option<Vec<String>> {
+            std::fs::read_to_string(self.record()).ok().map(|t| {
+                t.lines()
+                    .map(str::trim)
+                    .filter(|l| !l.is_empty())
+                    .map(String::from)
+                    .collect()
+            })
+        }
+
+        /// Runs `script` with `args`, its /run paths moved into the
+        /// sandbox (systemd running unless `systemd` is false), and returns
+        /// the calls the fakes logged by this run.
+        fn run(
+            &self,
+            script: &str,
+            args: &[&str],
+            systemd: bool,
+            dpkg_root: Option<&str>,
+        ) -> Vec<String> {
+            let systemd_dir = if systemd {
+                self.dir.join("systemd")
+            } else {
+                self.dir.join("no-systemd")
+            };
+            let text = script
+                .replace(RECORD, &self.record().display().to_string())
+                .replace("/run/systemd/system", &systemd_dir.display().to_string());
+            // Nothing may reach the real system: every /run path is moved,
+            // and the tools are called through PATH only.
+            assert!(
+                !text.contains("/run/"),
+                "a /run path the test does not move:\n{script}"
+            );
+            for abs in ["/bin/systemctl", "/usr/bin/deb-systemd", "/usr/bin/busctl"] {
+                assert!(!text.contains(abs), "{abs} bypasses the fakes:\n{script}");
+            }
+            let file = self.dir.join("script");
+            std::fs::write(&file, &text).unwrap();
+            let log = self.dir.join("log");
+            let _ = std::fs::remove_file(&log);
+            let mut cmd = std::process::Command::new("sh");
+            cmd.arg(&file)
+                .args(args)
+                .env(
+                    "PATH",
+                    format!("{}:/usr/bin:/bin", self.dir.join("bin").display()),
+                )
+                .env_remove("DPKG_ROOT");
+            if let Some(root) = dpkg_root {
+                cmd.env("DPKG_ROOT", root);
+            }
+            let out = cmd.output().unwrap();
+            assert!(
+                out.status.success(),
+                "{args:?} failed: {}\n{text}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+            std::fs::read_to_string(&log)
+                .unwrap_or_default()
+                .lines()
+                .map(String::from)
+                .collect()
+        }
+    }
+
+    impl Drop for Sandbox {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.dir);
+        }
+    }
+
+    fn deb(c: Component, name: &str) -> String {
+        deb_scripts(c)
+            .into_iter()
+            .find(|(n, _)| *n == name)
+            .unwrap_or_else(|| panic!("{c:?} has no {name}"))
+            .1
+    }
+
+    /// The index of the first call whose words hold every one of `words`.
+    fn call(log: &[String], words: &[&str]) -> Option<usize> {
+        log.iter().position(|l| {
+            let w: Vec<&str> = l.split_whitespace().collect();
+            words.iter().all(|x| w.contains(x))
+        })
+    }
+
+    /// Whether a call starts (or restarts) `unit`.
+    fn starts(log: &[String], unit: &str) -> bool {
+        call(log, &["start", unit]).is_some() || call(log, &["restart", unit]).is_some()
+    }
+
+    /// Whether any call starts or restarts an instance.
+    fn starts_an_instance(log: &[String]) -> bool {
+        log.iter().any(|l| {
+            let w: Vec<&str> = l.split_whitespace().collect();
+            (w.contains(&"start") || w.contains(&"restart") || w.contains(&"try-restart"))
+                && l.contains("llama.cpp@")
+        })
+    }
+
+    /// Whether a call stops the instances (by pattern or by name).
+    fn stop_instances(log: &[String]) -> Option<usize> {
+        log.iter()
+            .position(|l| l.split_whitespace().any(|w| w == "stop") && l.contains("llama.cpp@"))
+    }
+
+    /// The engine's prerm, before its files are replaced (deb-prerm(5):
+    /// `prerm upgrade <new-version>`, `prerm remove`, `prerm deconfigure
+    /// in-favour <package> <version>`): it records the active instances,
+    /// one unit name per line, then stops them. `failed-upgrade` (the new
+    /// package's prerm, after the old one failed) does nothing, nor does a
+    /// chroot install (`DPKG_ROOT`) or a system without systemd running.
+    #[test]
+    fn the_engine_prerm_records_the_running_instances_and_stops_them() {
+        let prerm = deb(Component::Llama, "prerm");
+        for args in [
+            &["upgrade", "1:1.0.1+pai1"][..],
+            &["remove"][..],
+            &["deconfigure", "in-favour", "llama-cpp-other", "1.0"][..],
+        ] {
+            let sb = Sandbox::new("engine-prerm");
+            sb.set_active(ACTIVE);
+            let log = sb.run(&prerm, args, true, None);
+            assert_eq!(
+                sb.recorded(),
+                Some(vec![
+                    "llama.cpp@default.service".to_string(),
+                    "llama.cpp@gpu1.service".to_string()
+                ]),
+                "{args:?}: {log:?}"
+            );
+            let listed = call(&log, &["list-units"]).unwrap_or_else(|| panic!("{args:?}: {log:?}"));
+            let stopped = stop_instances(&log).unwrap_or_else(|| panic!("{args:?}: {log:?}"));
+            assert!(listed < stopped, "recorded before the stop: {log:?}");
+            assert!(!starts_an_instance(&log), "{log:?}");
+        }
+        for (args, systemd, root) in [
+            (
+                &["failed-upgrade", "1:1.0.0+pai1", "1:1.0.1+pai1"][..],
+                true,
+                None,
+            ),
+            (&["upgrade", "1:1.0.1+pai1"][..], true, Some("/srv/chroot")),
+            (&["upgrade", "1:1.0.1+pai1"][..], false, None),
+        ] {
+            let sb = Sandbox::new("engine-prerm-none");
+            sb.set_active(ACTIVE);
+            let log = sb.run(&prerm, args, systemd, root);
+            assert_eq!(
+                stop_instances(&log),
+                None,
+                "{args:?} {systemd} {root:?}: {log:?}"
+            );
+            assert_eq!(sb.recorded(), None, "{args:?} {systemd} {root:?}");
+        }
+    }
+
+    /// The engine's postinst, once the new files are in place (configure,
+    /// or abort-* when an upgrade or removal is rolled back): systemd reads
+    /// the new unit, the recorded instances start again, each by name, and
+    /// the record is gone. Without a record nothing starts: an instance
+    /// that was stopped stays stopped (no try-restart of a pattern).
+    #[test]
+    fn the_engine_postinst_starts_again_the_recorded_instances() {
+        let postinst = deb(Component::Llama, "postinst");
+        for args in [
+            &["configure", "1:1.0.0+pai1"][..],
+            &["abort-upgrade", "1:1.0.1+pai1"][..],
+            &["abort-remove"][..],
+        ] {
+            let sb = Sandbox::new("engine-postinst");
+            std::fs::write(
+                sb.record(),
+                "llama.cpp@default.service\nllama.cpp@gpu1.service\n",
+            )
+            .unwrap();
+            let log = sb.run(&postinst, args, true, None);
+            let reload =
+                call(&log, &["daemon-reload"]).unwrap_or_else(|| panic!("{args:?}: {log:?}"));
+            for unit in ["llama.cpp@default.service", "llama.cpp@gpu1.service"] {
+                let start = call(&log, &["start", unit])
+                    .unwrap_or_else(|| panic!("{unit} not started, {args:?}: {log:?}"));
+                assert!(reload < start, "{log:?}");
+            }
+            assert!(
+                !log.iter()
+                    .any(|l| l.contains("try-restart") || l.contains("llama.cpp@*")),
+                "{log:?}"
+            );
+            assert!(!sb.record().exists(), "{args:?}: the record is left");
+        }
+        for args in [&["configure", "1:1.0.0+pai1"][..], &["configure"][..]] {
+            let sb = Sandbox::new("engine-postinst-none");
+            let log = sb.run(&postinst, args, true, None);
+            assert!(!starts_an_instance(&log), "{args:?}: {log:?}");
+        }
+    }
+
+    /// The engine's postrm forgets a record left by a removal, so a later
+    /// install of the engine starts nothing it did not stop itself.
+    #[test]
+    fn the_engine_postrm_forgets_the_record_on_removal() {
+        let postrm = deb(Component::Llama, "postrm");
+        let sb = Sandbox::new("engine-postrm");
+        std::fs::write(sb.record(), "llama.cpp@default.service\n").unwrap();
+        let log = sb.run(&postrm, &["remove"], true, None);
+        assert!(!sb.record().exists(), "{log:?}");
+        assert!(!starts_an_instance(&log), "{log:?}");
+    }
+
+    /// The core's prerm stops the manager before its files are replaced,
+    /// on upgrade, removal and deconfigure; never on failed-upgrade, in a
+    /// chroot install or without systemd. Its postinst starts it again on
+    /// configure with an old version. Neither touches an instance.
+    #[test]
+    fn the_core_scripts_stop_the_manager_before_an_upgrade_and_start_it_after() {
+        let prerm = deb(Component::Core, "prerm");
+        for args in [
+            &["upgrade", "2.99.2"][..],
+            &["remove"][..],
+            &["deconfigure", "in-favour", "other", "1.0"][..],
+        ] {
+            let sb = Sandbox::new("core-prerm");
+            sb.set_active(ACTIVE);
+            let log = sb.run(&prerm, args, true, None);
+            assert!(
+                call(&log, &["stop", "private-ai-manager.service"]).is_some(),
+                "{args:?}: {log:?}"
+            );
+            assert!(!log.iter().any(|l| l.contains("llama.cpp@")), "{log:?}");
+        }
+        for (args, systemd, root) in [
+            (&["failed-upgrade", "2.99.1", "2.99.2"][..], true, None),
+            (&["upgrade", "2.99.2"][..], true, Some("/srv/chroot")),
+            (&["upgrade", "2.99.2"][..], false, None),
+        ] {
+            let sb = Sandbox::new("core-prerm-none");
+            let log = sb.run(&prerm, args, systemd, root);
+            assert_eq!(
+                call(&log, &["stop", "private-ai-manager.service"]),
+                None,
+                "{args:?}: {log:?}"
+            );
+        }
+        let postinst = deb(Component::Core, "postinst");
+        let sb = Sandbox::new("core-postinst");
+        let log = sb.run(&postinst, &["configure", "2.99.1"], true, None);
+        assert!(starts(&log, "private-ai-manager.service"), "{log:?}");
+        assert!(!log.iter().any(|l| l.contains("llama.cpp@")), "{log:?}");
+    }
+
+    /// The bff's prerm stops it before its files are replaced, on upgrade
+    /// and removal (not on failed-upgrade), and its postinst starts it again
+    /// on configure with an old version.
+    #[test]
+    fn the_bff_scripts_stop_it_before_an_upgrade_and_start_it_after() {
+        let prerm = deb(Component::Bff, "prerm");
+        for args in [&["upgrade", "2.99.2"][..], &["remove"][..]] {
+            let sb = Sandbox::new("bff-prerm");
+            let log = sb.run(&prerm, args, true, None);
+            assert!(
+                call(&log, &["stop", "private-ai-bff.service"]).is_some(),
+                "{args:?}: {log:?}"
+            );
+        }
+        for (args, systemd, root) in [
+            (&["failed-upgrade", "2.99.1", "2.99.2"][..], true, None),
+            (&["upgrade", "2.99.2"][..], true, Some("/srv/chroot")),
+            (&["upgrade", "2.99.2"][..], false, None),
+        ] {
+            let sb = Sandbox::new("bff-prerm-none");
+            let log = sb.run(&prerm, args, systemd, root);
+            assert_eq!(
+                call(&log, &["stop", "private-ai-bff.service"]),
+                None,
+                "{args:?}: {log:?}"
+            );
+        }
+        let postinst = deb(Component::Bff, "postinst");
+        let sb = Sandbox::new("bff-postinst");
+        let log = sb.run(&postinst, &["configure", "2.99.1"], true, None);
+        assert!(starts(&log, "private-ai-bff.service"), "{log:?}");
+    }
+
+    // rpm runs, on an upgrade: the new package's %pretrans and %pre, its
+    // files installed, its %post, then the old package's %preun, its files
+    // removed, its %postun, and the new %posttrans last (rpm-scriptlets(7);
+    // Fedora Packaging Guidelines, "Scriptlets", "Ordering"). The old
+    // %preun runs after the new files are in place, so the stop before an
+    // upgrade is in the new package's %pre: its $1 is the number of
+    // versions installed once it is done, 1 on an install, 2 or more on an
+    // upgrade; %preun's is 0 on the last removal.
+
+    /// The engine's `.rpm`: %pre on an upgrade records the active instances
+    /// and stops them (nothing on a first install, nothing without
+    /// systemd); %posttrans starts the recorded ones and forgets the
+    /// record, and starts nothing without one; %preun on the last removal
+    /// stops them, and does nothing on the old package's %preun of an
+    /// upgrade ($1 = 1), when the new %posttrans has yet to run.
+    #[test]
+    fn the_engine_rpm_scriptlets_stop_the_instances_and_start_them_again() {
+        let text = rpm_scriptlets(Component::Llama);
+        let names: Vec<&str> = text
+            .lines()
+            .filter(|l| l.starts_with('%'))
+            .map(str::trim)
+            .collect();
+        for want in ["%pre", "%preun", "%posttrans"] {
+            assert!(names.contains(&want), "{want} missing:\n{text}");
+        }
+        for name in &names {
+            parses(name, &scriptlet(&text, name));
+        }
+        let pre = format!("#!/bin/sh\n{}\n", scriptlet(&text, "%pre"));
+        let posttrans = format!("#!/bin/sh\n{}\n", scriptlet(&text, "%posttrans"));
+        let preun = format!("#!/bin/sh\n{}\n", scriptlet(&text, "%preun"));
+
+        let sb = Sandbox::new("engine-rpm-pre");
+        sb.set_active(ACTIVE);
+        let log = sb.run(&pre, &["2"], true, None);
+        assert_eq!(
+            sb.recorded(),
+            Some(vec![
+                "llama.cpp@default.service".to_string(),
+                "llama.cpp@gpu1.service".to_string()
+            ]),
+            "{log:?}"
+        );
+        let listed = call(&log, &["list-units"]).unwrap_or_else(|| panic!("{log:?}"));
+        let stopped = stop_instances(&log).unwrap_or_else(|| panic!("{log:?}"));
+        assert!(listed < stopped, "{log:?}");
+
+        let log = sb.run(&posttrans, &[], true, None);
+        for unit in ["llama.cpp@default.service", "llama.cpp@gpu1.service"] {
+            assert!(call(&log, &["start", unit]).is_some(), "{unit}: {log:?}");
+        }
+        assert!(!sb.record().exists(), "the record is left: {log:?}");
+        let log = sb.run(&posttrans, &[], true, None);
+        assert!(
+            !starts_an_instance(&log),
+            "no record, nothing starts: {log:?}"
+        );
+
+        for (args, systemd) in [(&["1"][..], true), (&["2"][..], false)] {
+            let sb = Sandbox::new("engine-rpm-pre-none");
+            sb.set_active(ACTIVE);
+            let log = sb.run(&pre, args, systemd, None);
+            assert_eq!(stop_instances(&log), None, "{args:?} {systemd}: {log:?}");
+            assert_eq!(sb.recorded(), None, "{args:?} {systemd}");
+        }
+
+        let sb = Sandbox::new("engine-rpm-preun");
+        let log = sb.run(&preun, &["0"], true, None);
+        assert!(stop_instances(&log).is_some(), "{log:?}");
+        let log = sb.run(&preun, &["1"], true, None);
+        assert_eq!(stop_instances(&log), None, "{log:?}");
+        assert!(!text.contains("try-restart"), "{text}");
+    }
+
+    /// The core's `.rpm` %pre stops the manager on an upgrade only (the
+    /// %posttrans restarts it, pinned above); the bff's the same for the bff.
+    #[test]
+    fn the_rpm_pre_stops_the_manager_and_the_bff_on_an_upgrade() {
+        for (c, unit) in [
+            (Component::Core, "private-ai-manager.service"),
+            (Component::Bff, "private-ai-bff.service"),
+        ] {
+            let text = rpm_scriptlets(c);
+            let pre = format!("#!/bin/sh\n{}\n", scriptlet(&text, "%pre"));
+            let sb = Sandbox::new("rpm-pre");
+            let log = sb.run(&pre, &["2"], true, None);
+            assert!(call(&log, &["stop", unit]).is_some(), "{c:?}: {log:?}");
+            assert!(
+                !log.iter().any(|l| l.contains("llama.cpp@")),
+                "{c:?}: {log:?}"
+            );
+            for (args, systemd) in [(&["1"][..], true), (&["2"][..], false)] {
+                let log = sb.run(&pre, args, systemd, None);
+                assert_eq!(
+                    call(&log, &["stop", unit]),
+                    None,
+                    "{c:?} {args:?} {systemd}: {log:?}"
+                );
+            }
         }
     }
 }

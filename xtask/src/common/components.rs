@@ -8,14 +8,15 @@
 //!   front ends read. The GUI package requires it, so a headless server
 //!   installs the command line without the GUI.
 //! - `bff`: pai-bff, the web service, and its systemd unit (Linux only).
-//! - `core`: pai-manager with the system files of its services (the systemd
-//!   units, the D-Bus and polkit policies, the sysusers.d entry) and
+//! - `core`: pai-manager with the system files of its service (its systemd
+//!   unit, the D-Bus and polkit policies, the sysusers.d entry) and
 //!   `cli.toml` (the texts every program prints); every other framework
 //!   package requires this one.
 //! - `llama`: the engine, package `llama.cpp`: llama.cpp's executables and
 //!   libraries, every ggml backend, and libomp: the dist's OpenMP runtime,
 //!   which ggml-base itself links, so it comes with llama.cpp and not with
-//!   ROCm. Nothing of the framework.
+//!   ROCm; and its instance unit `llama.cpp@.service`. Nothing else of the
+//!   framework.
 //! - `rocm`, `cuda`, `vulkan`: the external runtimes and nothing else, the
 //!   engine's (`llama.cpp-<sdk>`). ggml
 //!   loads a backend at start and skips it when its runtime is missing, so
@@ -116,6 +117,10 @@ pub fn of(rel: &str) -> Component {
         || path == "usr/lib/sysusers.d/private-ai-bff.conf"
     {
         return Component::Bff;
+    }
+    // The engine's instance unit (the engine owns its unit).
+    if path == "usr/lib/systemd/system/llama.cpp@.service" {
+        return Component::Llama;
     }
     // pai-manager and the system files of its services.
     if path == "usr/libexec/private-ai/pai-manager"
@@ -360,17 +365,15 @@ mod tests {
 
     /// `private-ai-framework-core` holds what the framework put in the
     /// llama.cpp package before: pai-manager, the system files of its
-    /// services (the instance unit `llama.cpp@.service` included: it runs
-    /// `pai-manager run-instance`), and `cli.toml`, the texts pai-manager,
-    /// pai and pai-bff print. The bff's unit and the sysusers.d entry of its
-    /// user stay with pai-bff, the desktop entry with the GUI, although
-    /// they sit beside these.
+    /// service, and `cli.toml`, the texts pai-manager, pai and pai-bff
+    /// print. The instance unit `llama.cpp@.service` is the engine's, the
+    /// bff's unit and the sysusers.d entry of its user stay with pai-bff,
+    /// the desktop entry with the GUI, although they sit beside these.
     #[test]
     fn core_holds_the_manager_its_system_files_and_cli_toml() {
         for rel in [
             "usr/libexec/private-ai/pai-manager",
             "usr/lib/systemd/system/private-ai-manager.service",
-            "usr/lib/systemd/system/llama.cpp@.service",
             "usr/share/dbus-1/system.d/org.privateai.Manager1.conf",
             "usr/share/polkit-1/actions/org.privateai.manager.policy",
             "usr/lib/sysusers.d/private-ai.conf",
@@ -379,6 +382,10 @@ mod tests {
             assert_eq!(of(rel), Component::Core, "{rel}");
         }
         for (rel, want) in [
+            (
+                "usr/lib/systemd/system/llama.cpp@.service",
+                Component::Llama,
+            ),
             (
                 "usr/lib/systemd/system/private-ai-bff.service",
                 Component::Bff,
@@ -395,8 +402,9 @@ mod tests {
     }
 
     /// The engine's package holds llama.cpp's executables and libraries,
-    /// every ggml backend and libomp, and nothing of the framework: no
-    /// program, unit, policy or data file of ours lands in it.
+    /// every ggml backend and libomp, and its instance unit
+    /// `llama.cpp@.service` (the engine owns its unit), and nothing else of
+    /// the framework: no program, other unit, policy or data file.
     #[test]
     fn the_engine_holds_llama_cpp_and_nothing_of_the_framework() {
         for rel in [
@@ -410,6 +418,7 @@ mod tests {
             "usr/lib/private-ai/libmtmd.so.1",
             "usr/lib/private-ai/libllama-server-impl.so",
             "usr/lib/private-ai/lib/llvm/lib/libomp.so",
+            "usr/lib/systemd/system/llama.cpp@.service",
         ] {
             assert_eq!(of(rel), Component::Llama, "{rel}");
         }
@@ -419,7 +428,6 @@ mod tests {
             "usr/libexec/private-ai/pai-manager",
             "usr/libexec/private-ai/pai-bff",
             "usr/lib/systemd/system/private-ai-manager.service",
-            "usr/lib/systemd/system/llama.cpp@.service",
             "usr/lib/systemd/system/private-ai-bff.service",
             "usr/share/dbus-1/system.d/org.privateai.Manager1.conf",
             "usr/share/polkit-1/actions/org.privateai.manager.policy",
@@ -752,7 +760,10 @@ mod tests {
                 "usr/lib/systemd/system/private-ai-manager.service",
                 Component::Core,
             ),
-            ("usr/lib/systemd/system/llama.cpp@.service", Component::Core),
+            (
+                "usr/lib/systemd/system/llama.cpp@.service",
+                Component::Llama,
+            ),
             ("usr/lib/sysusers.d/private-ai.conf", Component::Core),
             ("usr/bin/pai", Component::Cli),
             ("usr/bin/pai-config", Component::Config),

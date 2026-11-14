@@ -198,3 +198,9 @@ Lessons only: the rules are in `AGENTS.md`.
   (`let units: &[&str] = &[unit.as_str()]`) for an `as` argument (`EnableUnitFiles`).
 - `binding_lint` finds keys only as literal `strings::t("key")`: write `if on { strings::t("a") }
   else { strings::t("b") }`, never `strings::t(if on { "a" } else { "b" })` (the key reads as unused).
+- The engine's maintainer scripts (`system_files::engine_deb_scripts`, `engine_rpm_scriptlets`) are
+  run by the tests in a sandbox with fake systemctl etc.: call every tool by name (no `/usr/bin/...`),
+  and keep every `/run/...` path to `/run/systemd/system` and the record `RECORD`, which the sandbox
+  rewrites. A text-check test that splits `install.rs` at the first `#[cfg(test)]` means a
+  production item gated `#[cfg(test)]` above `run` hides `run` from it: use
+  `#[cfg_attr(not(test), allow(dead_code))]` for a helper only tests still call.

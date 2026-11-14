@@ -1161,8 +1161,9 @@ fn rpm_relations(f: &Fields) -> String {
         lines.push("Conflicts:      llama-cpp".into());
     }
     if matches!(f.component, Component::Core | Component::Bff) {
-        // What the scriptlets run (Fedora's %systemd_requires, plus %posttrans).
-        for tag in ["post", "preun", "postun", "posttrans"] {
+        // What the scriptlets run (Fedora's %systemd_requires, plus %pre and
+        // %posttrans).
+        for tag in ["pre", "post", "preun", "postun", "posttrans"] {
             lines.push(format!("Requires({tag}): systemd"));
         }
     }
@@ -2289,13 +2290,14 @@ mod tests {
     /// (never their directories, which systemd, dbus and polkit own), runs
     /// its scriptlets (before `%files`, whose lines run to the end of the
     /// spec), and needs systemd for them (Fedora's `%systemd_requires`:
-    /// Requires(post), (preun), (postun); %posttrans too, since the start
-    /// is there). rpm (4.19 and later) turns each `m` line of the sysusers.d
+    /// Requires(post), (preun), (postun); %pre and %posttrans too, since
+    /// the stop before an upgrade and the start are there). rpm (4.19 and later) turns each `m` line of the sysusers.d
     /// file into a `Requires: group(<group>)`; render and video may be
     /// provided by no package of an older distribution, and the `m` line
     /// creates a missing group anyway, so they are weak
     /// (`_use_weak_usergroup_deps`, /usr/lib/rpm/fileattrs/sysusers.attr).
-    /// The configurator's and the engine's `.rpm` have none of it.
+    /// The configurator's `.rpm` has none of it; the engine's runs its own
+    /// scriptlets (its instance unit).
     #[test]
     fn the_core_rpm_ships_the_system_files_and_their_scriptlets() {
         use super::super::system_files::{files, rpm_scriptlets};
@@ -2313,7 +2315,7 @@ mod tests {
             .into_iter()
             .filter(|(rel, _)| components::of(rel) == Component::Core)
             .collect();
-        assert_eq!(ours.len(), 5, "{ours:?}");
+        assert_eq!(ours.len(), 4, "{ours:?}");
         for (rel, text) in &ours {
             put(&core, rel, text.as_bytes(), 0o644);
         }
@@ -2336,7 +2338,7 @@ mod tests {
             lines.contains(&"%global _use_weak_usergroup_deps 1"),
             "{spec}"
         );
-        for tag in ["post", "preun", "postun", "posttrans"] {
+        for tag in ["pre", "post", "preun", "postun", "posttrans"] {
             let want = format!("Requires({tag}): systemd");
             assert!(
                 rpm_relations(&f)
@@ -2363,17 +2365,23 @@ mod tests {
         ] {
             put(&llama, rel, ELF, 0o755);
         }
+        // The engine runs its own scriptlets (its instance unit), before %files.
         let runtimes = [(Component::Rocm, "10.1.0".to_string())];
-        for (f, root) in [
-            (
-                fields_v(Component::Config, FW, &[], Some(ENGINE_MIN)),
-                &config,
-            ),
-            (fields_v(Component::Llama, ENGINE, &runtimes, None), &llama),
-        ] {
+        let engine = fields_v(Component::Llama, ENGINE, &runtimes, None);
+        let spec = rpm_spec(&engine, "MIT", "libggml", &llama);
+        let scriptlets = rpm_scriptlets(Component::Llama);
+        assert!(!scriptlets.is_empty());
+        let at = spec
+            .find(&scriptlets)
+            .unwrap_or_else(|| panic!("the engine's scriptlets are missing:\n{spec}"));
+        assert!(at < spec.find("\n%files\n").unwrap(), "{spec}");
+        for (f, root) in [(
+            fields_v(Component::Config, FW, &[], Some(ENGINE_MIN)),
+            &config,
+        )] {
             let spec = rpm_spec(&f, "MIT", "libggml", root);
             check_files(&spec, root);
-            for scriptlet in ["%post", "%preun", "%postun", "%posttrans"] {
+            for scriptlet in ["%pre", "%post", "%preun", "%postun", "%posttrans"] {
                 assert!(
                     !spec.lines().any(|l| l.trim() == scriptlet),
                     "{scriptlet} in {:?}:\n{spec}",
@@ -2421,6 +2429,7 @@ mod tests {
         lines.sort();
         let mut want = vec![
             format!("Requires: private-ai-framework-core = {FW}"),
+            "Requires(pre): systemd".to_string(),
             "Requires(post): systemd".to_string(),
             "Requires(preun): systemd".to_string(),
             "Requires(postun): systemd".to_string(),
@@ -2636,6 +2645,7 @@ mod tests {
         lines.sort();
         let mut want = vec![
             format!("Requires: llama.cpp >= {ENGINE_MIN}"),
+            "Requires(pre): systemd".to_string(),
             "Requires(post): systemd".to_string(),
             "Requires(preun): systemd".to_string(),
             "Requires(postun): systemd".to_string(),

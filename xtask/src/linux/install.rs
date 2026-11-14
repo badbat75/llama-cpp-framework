@@ -13,12 +13,14 @@
 //! the command line brings its own format. "Newest" is the last one written
 //! of the files named for this architecture, per package.
 //!
-//! Refuses to run while a user runs a program of the packages (by its argv[0]
-//! in /usr/bin) or a process that holds a library of /usr/lib/private-ai:
-//! rocBLAS and hipBLASLt load their kernel files lazily, so a server that
-//! outlives the upgrade would read the NEW kernel files with the OLD
-//! libraries. The services do not stop it (pai-manager, and the instances
-//! the services' user runs): the maintainer scripts restart them.
+//! Refuses to run while a llama-server outside the framework's services runs
+//! a program of the packages (by its argv[0] in /usr/bin) or holds a library
+//! of /usr/lib/private-ai: rocBLAS and hipBLASLt load their kernel files
+//! lazily, so a server that outlives the upgrade would read the NEW kernel
+//! files with the OLD libraries. Any other such program (pai-config, pai) is
+//! not reported. The services do not stop it (the manager, the bff and
+//! the instances, told by their cgroup): their packages' maintainer scripts
+//! stop them and start them again.
 
 use crate::common::components::{self, Component};
 use crate::common::ui;
@@ -51,59 +53,68 @@ fn holds_private_libraries(maps: &str) -> bool {
     })
 }
 
-/// The real uid of a process, from the `Uid:` line of its
-/// `/proc/<pid>/status` (real, effective, saved, filesystem); None without one.
-fn real_uid(status: &str) -> Option<u32> {
-    status
-        .lines()
-        .find_map(|l| l.strip_prefix("Uid:"))
-        .and_then(|v| v.split_whitespace().next())
-        .and_then(|v| v.parse().ok())
+/// What a process found on the packages' programs or libraries means for
+/// the install.
+#[derive(Debug, PartialEq, Eq)]
+enum Holder {
+    /// In a framework service's cgroup: its package's scripts stop and
+    /// start it.
+    Service,
+    /// A llama-server outside the services, with its `<pid> <exe>` line:
+    /// the install refuses.
+    Refuses(String),
+    /// Any other program (pai-config, pai, llama-bench...): not reported.
+    Ignored,
 }
 
-/// The uid of the services' user (`private-ai`) in a passwd file's text, None
-/// when the user does not exist (yet).
-fn service_uid(passwd: &str) -> Option<u32> {
-    passwd.lines().find_map(|l| {
-        let mut fields = l.split(':');
-        if fields.next() != Some("private-ai") {
-            return None;
-        }
-        fields.nth(1).and_then(|uid| uid.parse().ok())
-    })
+/// Classifies a process by its pid, its executable (argv[0] of
+/// `/proc/<pid>/cmdline`) and the text of `/proc/<pid>/cgroup` (both
+/// readable for every user's processes).
+fn classify_holder(pid: u32, exe: &str, cgroup: &str) -> Holder {
+    // Each line is `<id>:<controllers>:<path>` (proc(5)); a framework
+    // service's path is a system unit's, under /system.slice/.
+    let service = cgroup.lines().any(|line| {
+        let path = line.splitn(3, ':').nth(2).unwrap_or_default();
+        path.starts_with("/system.slice/")
+            && path.split('/').any(|unit| {
+                unit.ends_with(".service")
+                    && (unit.starts_with("llama.cpp@") || unit.starts_with("private-ai-"))
+            })
+    });
+    if service {
+        Holder::Service
+    } else if exe.rsplit('/').next() == Some("llama-server") {
+        Holder::Refuses(format!("{pid} {exe}"))
+    } else {
+        Holder::Ignored
+    }
 }
 
-/// Whether a process stops the install: a program of the packages
-/// ([`runs_packaged_program`]) or a holder of their libraries
-/// ([`holds_private_libraries`]) that a user runs, not the services (a
-/// process of `service_uid`, which the maintainer scripts restart).
-fn blocks_install(cmdline: &[u8], maps: &str, uid: Option<u32>, service_uid: Option<u32>) -> bool {
-    let service = uid.is_some() && uid == service_uid;
-    !service && (runs_packaged_program(cmdline) || holds_private_libraries(maps))
-}
-
-/// `<pid> <command line>` of every process that stops the install
-/// ([`blocks_install`]): one that runs a program of the packages
+/// Every process outside the services that runs a program of the packages
 /// ([`runs_packaged_program`], which sees every user's processes) or holds
 /// one of their libraries ([`holds_private_libraries`], for the maps this
-/// user can read), not the services' own, a line each.
-fn private_library_holders() -> String {
-    let service = service_uid(&std::fs::read_to_string("/etc/passwd").unwrap_or_default());
-    let mut out = Vec::new();
+/// user can read), classified by [`classify_holder`]: the `<pid> <exe>` line
+/// of each one that refuses the install.
+fn private_library_holders() -> Vec<String> {
+    let mut refuses = Vec::new();
     for entry in std::fs::read_dir("/proc").into_iter().flatten().flatten() {
-        let pid = entry.file_name().to_string_lossy().into_owned();
-        if !pid.bytes().all(|b| b.is_ascii_digit()) {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let Ok(pid) = name.parse::<u32>() else {
             continue;
-        }
+        };
         let cmdline = std::fs::read(entry.path().join("cmdline")).unwrap_or_default();
         let maps = std::fs::read_to_string(entry.path().join("maps")).unwrap_or_default();
-        let status = std::fs::read_to_string(entry.path().join("status")).unwrap_or_default();
-        if blocks_install(&cmdline, &maps, real_uid(&status), service) {
-            let cmdline = String::from_utf8_lossy(&cmdline).replace('\0', " ");
-            out.push(format!("{pid} {}", cmdline.trim_end()));
+        if !runs_packaged_program(&cmdline) && !holds_private_libraries(&maps) {
+            continue;
+        }
+        let exe = cmdline.split(|&b| b == 0).next().unwrap_or_default();
+        let cgroup = std::fs::read_to_string(entry.path().join("cgroup")).unwrap_or_default();
+        match classify_holder(pid, &String::from_utf8_lossy(exe), &cgroup) {
+            Holder::Refuses(line) => refuses.push(line),
+            Holder::Service | Holder::Ignored => {}
         }
     }
-    out.join("\n")
+    refuses
 }
 
 /// The distribution decides, from ID and ID_LIKE in /etc/os-release. The
@@ -379,10 +390,12 @@ pub fn run(format: Option<&str>, force: bool, dry_run: bool, files: Vec<PathBuf>
     }
 
     // ── Running programs ────────────────────────────────────────────────
-    let running = private_library_holders();
-    if !running.is_empty() {
-        ui::warn(format!("Running on the libraries of {PRIVATE_LIB_DIR}:"));
-        for line in running.lines() {
+    let refuses = private_library_holders();
+    if !refuses.is_empty() {
+        ui::warn(format!(
+            "llama-server running outside the services on the libraries of {PRIVATE_LIB_DIR}:"
+        ));
+        for line in &refuses {
             ui::dim(format!("  {line}"));
         }
         if !force {
@@ -435,7 +448,7 @@ pub fn run(format: Option<&str>, force: bool, dry_run: bool, files: Vec<PathBuf>
             p.action()
         ));
     }
-    if !running.is_empty() {
+    if !refuses.is_empty() {
         ui::warn("Restart the programs listed above to use it");
     }
     ui::say("");
@@ -551,49 +564,6 @@ mod tests {
 
     // ── The services do not stop an install ─────────────────────────────
 
-    /// The `Uid:` line of `/proc/<pid>/status` holds the real, effective,
-    /// saved and filesystem uids, tab-separated (proc_pid_status(5)); the
-    /// real one is the first. A status without the line, or a nonsense one,
-    /// gives none.
-    #[test]
-    fn the_real_uid_is_the_first_of_the_status_uid_line() {
-        let status = "Name:\tllama-server\nUmask:\t0022\nState:\tS (sleeping)\n\
-                      Tgid:\t4242\nPid:\t4242\nPPid:\t1\n\
-                      Uid:\t988\t988\t988\t988\nGid:\t985\t985\t985\t985\n";
-        assert_eq!(real_uid(status), Some(988));
-        assert_eq!(real_uid("Uid:\t1000\t0\t0\t0\n"), Some(1000));
-        assert_eq!(real_uid("Name:\tx\nGid:\t5\t5\t5\t5\n"), None);
-        assert_eq!(real_uid(""), None);
-        assert_eq!(real_uid("Uid:\tnobody\n"), None);
-        assert_eq!(real_uid("Uid:\n"), None);
-        // Only a line that starts with the key.
-        assert_eq!(real_uid("XUid:\t7\t7\t7\t7\n"), None);
-    }
-
-    /// The services' user, as systemd-sysusers writes it into /etc/passwd
-    /// (`name:x:uid:gid:gecos:home:shell`); a user whose name only starts
-    /// the same, a missing user or a broken line gives none.
-    #[test]
-    fn the_service_uid_comes_from_the_private_ai_passwd_entry() {
-        let passwd = "root:x:0:0:root:/root:/bin/bash\n\
-                      private-ai-other:x:977:977::/:/usr/sbin/nologin\n\
-                      private-ai:x:988:985:Private AI Framework:/var/lib/private-ai:/usr/sbin/nologin\n\
-                      emiliano:x:1000:1000:,,,:/home/emiliano:/bin/bash\n";
-        assert_eq!(service_uid(passwd), Some(988));
-        assert_eq!(
-            service_uid(
-                "root:x:0:0:root:/root:/bin/bash\nprivate-ai-other:x:977:977::/:/bin/false\n"
-            ),
-            None
-        );
-        assert_eq!(service_uid(""), None);
-        assert_eq!(
-            service_uid("private-ai:x:notanumber:985::/:/bin/false\n"),
-            None
-        );
-        assert_eq!(service_uid("private-ai\n"), None);
-    }
-
     /// `pai`, the command line, is a program of the packages like the GUI:
     /// a `pai bench run` in a user's shell stops the install. Only by its
     /// exact name in /usr/bin.
@@ -622,77 +592,113 @@ mod tests {
         }
     }
 
-    /// The instances run as the services' user and the maintainer scripts
-    /// restart them: a llama-server of that uid, its libraries mapped, does
-    /// not stop the install. The same llama-server, pai-config, a llama-bench
-    /// or a process holding the libraries run by a user (or by root) does;
-    /// so does every one of them when the services' user does not exist yet
-    /// or the uid could not be read. pai-manager never does.
+    /// The cgroups of real processes on Ubuntu 26.04 (systemd 259, cgroup
+    /// v2: one `0::<path>` line, proc(5) /proc/pid/cgroup): an instance's
+    /// llama-server runs in its unit's cgroup (the unit's children stay in
+    /// it), the services in theirs, a user's programs in their session.
+    const INSTANCE_CG: &str = "0::/system.slice/system-llama.cpp.slice/llama.cpp@default.service\n";
+    const MANAGER_CG: &str = "0::/system.slice/private-ai-manager.service\n";
+    const BFF_CG: &str = "0::/system.slice/private-ai-bff.service\n";
+    const USER_CG: &str =
+        "0::/user.slice/user-1000.slice/user@1000.service/app.slice/app-com.microsoft.VSCode-10983.scope\n";
+
+    /// The framework's own services never stop the install: their
+    /// packages' scripts stop them before the files change and start them
+    /// again (an instance's llama-server, the manager, the bff), whatever
+    /// user they run as. Read from the cgroup, not the uid: the bff runs as
+    /// its own user, and a user may run a llama-server as `private-ai`.
     #[test]
-    fn only_a_users_program_blocks_the_install_never_the_services() {
-        const SERVICE: u32 = 988;
-        let server = b"/usr/bin/llama-server\0--port\08080\0".as_slice();
-        let maps = "7f2a1c000000-7f2a1c200000 r-xp 00000000 103:02 1234567 \
-                    /usr/lib/private-ai/libggml-base.so.0.9.0\n";
-        let manager = b"/usr/libexec/private-ai/pai-manager\0serve\0".as_slice();
-
-        assert!(!blocks_install(server, maps, Some(SERVICE), Some(SERVICE)));
-        assert!(!blocks_install(server, "", Some(SERVICE), Some(SERVICE)));
-        assert!(!blocks_install(b"", maps, Some(SERVICE), Some(SERVICE)));
-        assert!(!blocks_install(manager, "", Some(0), Some(SERVICE)));
-        assert!(!blocks_install(manager, "", Some(0), None));
-
-        for uid in [Some(1000), Some(0), None] {
-            assert!(blocks_install(server, maps, uid, Some(SERVICE)), "{uid:?}");
-            assert!(blocks_install(server, "", uid, Some(SERVICE)), "{uid:?}");
-            assert!(blocks_install(
-                b"/usr/bin/pai-config\0",
-                "",
-                uid,
-                Some(SERVICE)
-            ));
-            assert!(blocks_install(
-                b"/usr/bin/llama-bench\0",
-                "",
-                uid,
-                Some(SERVICE)
-            ));
-            assert!(blocks_install(
-                b"/usr/bin/python3\0",
-                maps,
-                uid,
-                Some(SERVICE)
-            ));
+    fn the_framework_services_never_stop_the_install() {
+        for (exe, cg) in [
+            ("/usr/bin/llama-server", INSTANCE_CG),
+            ("/usr/libexec/private-ai/pai-manager", INSTANCE_CG),
+            ("/usr/libexec/private-ai/pai-manager", MANAGER_CG),
+            ("/usr/libexec/private-ai/pai-bff", BFF_CG),
+            // A hybrid cgroup v1 host: the systemd hierarchy names the unit.
+            (
+                "/usr/bin/llama-server",
+                "12:pids:/system.slice/system-llama.cpp.slice/llama.cpp@gpu1.service\n\
+                 1:name=systemd:/system.slice/system-llama.cpp.slice/llama.cpp@gpu1.service\n\
+                 0::/system.slice/system-llama.cpp.slice/llama.cpp@gpu1.service\n",
+            ),
+        ] {
+            assert_eq!(
+                classify_holder(4242, exe, cg),
+                Holder::Service,
+                "{exe} {cg}"
+            );
         }
-        // No services' user yet: nothing is exempt but pai-manager.
-        assert!(blocks_install(server, maps, Some(SERVICE), None));
-        assert!(blocks_install(server, maps, None, None));
-        // Neither a program of the packages nor a holder of their libraries.
-        assert!(!blocks_install(
-            b"/usr/bin/bash\0",
-            "",
-            Some(1000),
-            Some(SERVICE)
-        ));
     }
 
-    /// pai-bff runs only as its service (a dynamic user, restarted by the
-    /// bff's maintainer scripts), from /usr/libexec/private-ai like the
-    /// manager, and maps no library of /usr/lib/private-ai: it never stops
-    /// the install, whatever its uid. Already true, kept so.
+    /// Only a llama-server outside the services stops the install (started
+    /// by hand: a user's, root's in a login session, or under a unit of
+    /// someone else's), since it would load the new kernel files with its
+    /// old libraries; so does one whose cgroup could not be read. A user
+    /// unit that borrows a service's name does not count: only the system
+    /// services under /system.slice are the framework's.
     #[test]
-    fn the_bff_never_blocks_the_install() {
-        const SERVICE: u32 = 988;
-        let bff = b"/usr/libexec/private-ai/pai-bff\0".as_slice();
-        assert!(!runs_packaged_program(bff));
-        for uid in [Some(61_234), Some(0), Some(1000), None] {
-            for service in [Some(SERVICE), None] {
-                assert!(
-                    !blocks_install(bff, "", uid, service),
-                    "{uid:?} {service:?}"
+    fn a_llama_server_outside_the_services_refuses_the_install() {
+        for cg in [
+            USER_CG,
+            "0::/user.slice/user-0.slice/session-3.scope\n",
+            "0::/system.slice/run-u42.service\n",
+            "0::/user.slice/user-1000.slice/user@1000.service/app.slice/llama.cpp@x.service\n",
+            "0::/user.slice/user-1000.slice/user@1000.service/app.slice/private-ai-manager.service\n",
+            "",
+        ] {
+            assert_eq!(
+                classify_holder(1177879, "/usr/bin/llama-server", cg),
+                Holder::Refuses("1177879 /usr/bin/llama-server".into()),
+                "{cg}"
+            );
+        }
+    }
+
+    /// Any other program on the packages' programs or libraries outside
+    /// the services (an open pai-config, a `pai bench run`, a llama-bench,
+    /// a script that loaded the libraries) is ignored: no refusal, no
+    /// warning (user's decision).
+    #[test]
+    fn other_programs_outside_the_services_are_ignored() {
+        for exe in [
+            "/usr/bin/pai-config",
+            "/usr/bin/pai",
+            "/usr/bin/python3",
+            "/usr/bin/llama-bench",
+        ] {
+            for cg in [USER_CG, ""] {
+                assert_eq!(
+                    classify_holder(31337, exe, cg),
+                    Holder::Ignored,
+                    "{exe} {cg}"
                 );
             }
         }
+    }
+
+    /// The install no longer refuses on uid: `run` classifies with
+    /// [`classify_holder`], refuses only on [`Holder::Refuses`] and reports
+    /// nothing else: no list of other programs to warn about.
+    #[test]
+    fn the_install_check_uses_classify_holder() {
+        let code = include_str!("install.rs");
+        let code = code.split("#[cfg(test)]").next().unwrap();
+        assert!(
+            code.matches("classify_holder(").count() >= 2,
+            "classify_holder is not called"
+        );
+        assert!(
+            code.contains("Holder::Refuses"),
+            "run does not refuse on Holder::Refuses"
+        );
+        assert!(
+            !code.contains("Holder::Warns") && !code.contains("warns"),
+            "run still collects or warns about the ignored programs"
+        );
+        assert!(
+            !code.contains("blocks_install("),
+            "the uid rule is still used"
+        );
     }
 
     // ── The framework and its engine ────────────────────────────────────
