@@ -303,13 +303,14 @@ pub fn start_at_launch(kind: Kind, setting: bool) -> bool {
 }
 
 /// Whether a save leaves an unset ModelsDir and StateDir unset in the file
-/// (`server_cfg::render_for`) under `kind` on `os`: only the Windows
-/// manager, whose instances then use the engine's folders under
-/// `%ProgramData%\llama.cpp` (`launch::with_instance_defaults`), not the
-/// saving user's home, which their accounts cannot read. Elsewhere both are
-/// written resolved, as before.
+/// (`server_cfg::render_for`) under `kind` on `os`: only the manager on
+/// Windows and Linux, whose instances then use the engine's folders
+/// (`launch::with_instance_defaults`: under `%ProgramData%\llama.cpp` on
+/// Windows, the service user's home on Linux), not the saving user's home,
+/// which their accounts cannot read. Elsewhere both are written resolved,
+/// as before.
 pub fn dirs_left_unset(kind: Kind, os: Os) -> bool {
-    kind == Kind::Manager && os == Os::Windows
+    kind == Kind::Manager && matches!(os, Os::Windows | Os::Linux)
 }
 
 /// Where the instance's log is read from.
@@ -1379,8 +1380,50 @@ pub(crate) fn config_seam_e2e() {
         assert!(ids(file("presets.ini.disabled")).is_empty());
         nothing_per_user("set_enabled, rename, delete");
 
-        // The first preset saved with no ModelsDir seeds it in the manager's
-        // server file.
+        // Under the manager on Linux and Windows nothing seeds ModelsDir into
+        // its server file: an unset one is the instance's default folder
+        // (`paths::instance_models_dir`), and a folder inferred from a model
+        // path or a download could be one the instance's account cannot
+        // read. macOS seeds it as before.
+        let seeds = !cfg!(any(windows, target_os = "linux"));
+        let seeded_dir = |dir: &std::path::Path| seeds.then(|| dir.display().to_string());
+
+        // A server save with both folders unset leaves them unset in the
+        // manager's file: no line names either, nothing of the saving user's
+        // home reaches it, and the user's default folder is not created.
+        let user_models = std::path::PathBuf::from(crate::server_cfg::default_models_dir());
+        assert!(
+            user_models.starts_with(dir.path()),
+            "fixture sanity: redirected"
+        );
+        let _ = std::fs::remove_dir(&user_models);
+        let unset_dirs = ServerConfig {
+            port: Some(8101),
+            ..Default::default()
+        };
+        log.lock().unwrap().clear();
+        server_cfg::save(&unset_dirs).expect("server save with the folders unset");
+        assert_eq!(fake::writes(&log), ["write_file server@default.ini"]);
+        let written = file("server@default.ini");
+        let named = |key: &str| written.lines().any(|l| l.trim_start().starts_with(key));
+        if seeds {
+            assert!(named("ModelsDir") && named("StateDir"), "{written}");
+        } else {
+            assert!(!named("ModelsDir") && !named("StateDir"), "{written}");
+            assert!(
+                !written.contains(&*user_models.to_string_lossy())
+                    && !written.contains(&*dir.path().to_string_lossy()),
+                "a folder of the saving user's in the manager's file:\n{written}"
+            );
+            assert!(
+                !user_models.exists(),
+                "the user's default models folder created for nothing"
+            );
+        }
+        assert_eq!(server_cfg::from_text(&written).port, Some(8101));
+
+        // The first preset saved with no ModelsDir seeds it in the server
+        // file only where the folders are not left unset (above).
         files.lock().unwrap().insert(
             "server@default.ini".into(),
             "[Server]\nPort = 8099\n".into(),
@@ -1391,13 +1434,14 @@ pub(crate) fn config_seam_e2e() {
             "Qwen3.8-4B".into(),
             model.display().to_string(),
         ))
-        .expect("save seeding ModelsDir");
+        .expect("preset save with ModelsDir unset");
         assert_eq!(
             server_cfg::from_text(&file("server@default.ini")).models_dir,
-            Some(llm.display().to_string())
+            seeded_dir(&llm)
         );
 
-        // A download's preset pins ModelsDir to where its files went.
+        // A download's preset pins ModelsDir to where its files went, again
+        // only where the folders are not left unset.
         files.lock().unwrap().insert(
             "server@default.ini".into(),
             "[Server]\nPort = 8099\n".into(),
@@ -1416,7 +1460,7 @@ pub(crate) fn config_seam_e2e() {
         crate::hf::save_preset(&downloaded, &hf_root).expect("download's preset");
         assert_eq!(
             server_cfg::from_text(&file("server@default.ini")).models_dir,
-            Some(hf_root.display().to_string())
+            seeded_dir(&hf_root)
         );
         assert!(ids(file("presets.ini")).contains(&"Qwen3.8-8B".to_string()));
         nothing_per_user("ModelsDir seeding");
@@ -1754,19 +1798,20 @@ mod tests {
         assert!(start_at_launch(backend_kind(Os::MacOs), true));
     }
 
-    /// Only the Windows manager leaves the two directories unset: its
-    /// instances' accounts cannot read a folder under the saving user's
-    /// profile. The Linux manager and macOS keep writing them resolved.
+    /// The manager leaves the two directories unset, on Linux as on Windows:
+    /// its instances' accounts (`private-ai` on Linux, the virtual accounts on
+    /// Windows) cannot read a folder under the saving user's home. macOS
+    /// (no manager) and any direct launch keep writing them resolved.
     #[test]
-    fn only_the_windows_manager_leaves_the_dirs_unset() {
+    fn the_manager_leaves_the_dirs_unset_on_linux_and_windows() {
         assert!(dirs_left_unset(Kind::Manager, Os::Windows));
-        assert!(!dirs_left_unset(Kind::Manager, Os::Linux));
+        assert!(dirs_left_unset(Kind::Manager, Os::Linux));
         assert!(!dirs_left_unset(Kind::Manager, Os::MacOs));
         for os in [Os::Linux, Os::Windows, Os::MacOs] {
             assert!(!dirs_left_unset(Kind::Direct, os), "{os:?}");
         }
         assert!(dirs_left_unset(backend_kind(Os::Windows), Os::Windows));
-        assert!(!dirs_left_unset(backend_kind(Os::Linux), Os::Linux));
+        assert!(dirs_left_unset(backend_kind(Os::Linux), Os::Linux));
         assert!(!dirs_left_unset(backend_kind(Os::MacOs), Os::MacOs));
     }
 

@@ -226,7 +226,7 @@ pub fn instance_command(
     }
     let cfg = with_instance_defaults(
         crate::server_cfg::load_from(&ini),
-        cfg!(windows),
+        cfg!(any(windows, target_os = "linux")),
         &crate::paths::instance_models_dir(),
         &crate::paths::instance_state_dir(),
     );
@@ -246,18 +246,20 @@ pub fn instance_command(
 }
 
 /// The defaults of an instance the manager launches, filled into `cfg`
-/// where `server@<id>.ini` leaves ModelsDir or StateDir unset or blank: on
-/// Windows (`windows`) the engine's `models` and `state` directories under
-/// `%ProgramData%\llama.cpp` (`paths::instance_models_dir`,
-/// `paths::instance_state_dir`), not the LocalSystem profile the manager
-/// runs as; elsewhere `cfg` unchanged.
+/// where `server@<id>.ini` leaves ModelsDir or StateDir unset or blank:
+/// under the manager (`under_manager`: Windows and Linux) the engine's
+/// folders `models` and `state` (`paths::instance_models_dir`,
+/// `paths::instance_state_dir`: under `%ProgramData%\llama.cpp` on Windows,
+/// the service user's on Linux), the ones the configurator names as the
+/// instance's defaults, not the launching account's own; otherwise `cfg`
+/// unchanged.
 pub fn with_instance_defaults(
     cfg: crate::server_cfg::ServerConfig,
-    windows: bool,
+    under_manager: bool,
     models: &std::path::Path,
     state: &std::path::Path,
 ) -> crate::server_cfg::ServerConfig {
-    if !windows {
+    if !under_manager {
         return cfg;
     }
     let unset = |v: &Option<String>| v.as_deref().is_none_or(|s| s.trim().is_empty());
@@ -522,6 +524,36 @@ pub(crate) fn instance_launch_e2e() {
         "port of server@lan-2.ini"
     );
 
+    // ── An unset ModelsDir is the instance's default ─────────────────────
+    // Under the manager (Linux and Windows) a ModelsDir left unset or blank
+    // in server@<id>.ini is the engine's `paths::instance_models_dir()`: the
+    // folder the configurator scans and names in its hint when a save leaves
+    // it unset, not the launching account's home.
+    let user_models = crate::server_cfg::default_models_dir();
+    let instance_models = crate::paths::instance_models_dir();
+    assert_ne!(
+        instance_models.to_string_lossy(),
+        user_models,
+        "fixture sanity: the two defaults differ"
+    );
+    let expected_models = if cfg!(any(windows, target_os = "linux")) {
+        instance_models.into_os_string()
+    } else {
+        OsString::from(user_models)
+    };
+    for content in [
+        "[Server]\nPort = 8083\n",
+        "[Server]\nPort = 8083\nModelsDir =   \n",
+    ] {
+        std::fs::write(sys.join("server@default.ini"), content).expect("server@default.ini");
+        let cmd = instance_command("default", &exe).expect("launch with ModelsDir unset");
+        assert_eq!(
+            envs_of(&cmd).get(&OsString::from("LLAMA_CACHE")),
+            Some(&Some(expected_models.clone())),
+            "LLAMA_CACHE for {content:?}"
+        );
+    }
+
     // ── The slot-state directory, as start() creates it ──────────────────
     // Off (the fixtures above): no directory, default or configured.
     let default_state = crate::slot_state::default_state_dir();
@@ -567,14 +599,40 @@ pub(crate) fn instance_launch_e2e() {
             .any(|w| w[0] == "--slot-save-path" && w[1] == state.to_string_lossy()),
         "the created directory is the one passed: {args:?}"
     );
-    // On with no StateDir: the default one is created.
+    // On with no StateDir: the instance's default one is created, and it is
+    // the one passed. Under the manager (Linux and Windows) that is the
+    // engine's `paths::instance_state_dir()`, the folder the configurator's
+    // Server tab names in its hint, not the launching account's data root.
+    let instance_state = if cfg!(any(windows, target_os = "linux")) {
+        crate::paths::instance_state_dir()
+    } else {
+        default_state.clone()
+    };
+    assert!(
+        instance_state.starts_with(dir.path()) && !instance_state.exists(),
+        "fixture sanity: {}",
+        instance_state.display()
+    );
     std::fs::write(
         sys.join("server@default.ini"),
         "[Server]\nSaveStateOnShutdown = true\n",
     )
     .expect("server@default.ini");
-    instance_command("default", &exe).expect("launch with default state dir");
-    assert!(default_state.is_dir(), "default state directory created");
+    let cmd = instance_command("default", &exe).expect("launch with default state dir");
+    assert!(
+        instance_state.is_dir(),
+        "default state directory created: {}",
+        instance_state.display()
+    );
+    let args: Vec<String> = cmd
+        .get_args()
+        .map(|a| a.to_string_lossy().into_owned())
+        .collect();
+    assert!(
+        args.windows(2)
+            .any(|w| w[0] == "--slot-save-path" && w[1] == instance_state.to_string_lossy()),
+        "the instance's default state directory is the one passed: {args:?}"
+    );
     // A directory that cannot be created (a file is in the way) refuses the
     // launch, as start() returns the error, rather than a server that dies
     // parsing --slot-save-path.
@@ -1070,17 +1128,17 @@ mod tests {
         rest[..rest.find("\n}\n").expect("end of fn")].to_string()
     }
 
-    /// The manager's launch goes through the pure function with the real
-    /// OS and the engine's directories, before the state directory is
-    /// created (so a snapshot-on instance with no StateDir creates the
-    /// engine's `state`, not one in the LocalSystem profile). The Windows
-    /// branch only type-checks on Linux, hence a check on the text.
+    /// The manager's launch goes through the pure function with the
+    /// engine's directories, before the state directory is created (so a
+    /// snapshot-on instance with no StateDir creates the engine's `state`,
+    /// not one in the LocalSystem profile). The Windows branch only
+    /// type-checks on Linux, hence a check on the text; which OSes fill the
+    /// defaults is pinned by `instance_launch_e2e` (Linux and Windows).
     #[test]
     fn the_service_launch_applies_the_instance_defaults() {
         let body = instance_command_body();
         for want in [
             "with_instance_defaults(",
-            "cfg!(windows)",
             "paths::instance_models_dir()",
             "paths::instance_state_dir()",
         ] {

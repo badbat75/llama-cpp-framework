@@ -100,6 +100,12 @@ mod tests {
         Path::new(concat!(r"C:\ProgramData\llama", r".cpp\models"))
     }
 
+    /// The same on Linux: the service user's home, as the engine's shipped
+    /// `server@default.ini` names it.
+    fn linux_instance_models() -> &'static Path {
+        Path::new(concat!("/var/lib/private-ai/.llama", ".cpp"))
+    }
+
     fn unset_configs() -> [ServerConfig; 3] {
         [
             ServerConfig::default(),
@@ -121,23 +127,28 @@ mod tests {
         }
     }
 
-    /// Under the Windows manager an unset (or blank) ModelsDir is the
-    /// instance's folder, never the user's `~\.llama.cpp`, which the
+    /// Under the manager (Windows and Linux) an unset (or blank) ModelsDir
+    /// is the instance's folder, never the user's `~/.llama.cpp`, which the
     /// instance's account cannot read: the scans, the downloads and the
     /// Browse start all follow it.
     #[test]
-    fn under_the_windows_manager_an_unset_models_dir_is_the_instance_folder() {
-        for cfg in unset_configs() {
-            assert_eq!(
-                effective_models_dir(&cfg, Kind::Manager, Os::Windows, instance_models()),
-                instance_models().to_string_lossy(),
-                "{cfg:?}"
-            );
-            assert_ne!(
-                effective_models_dir(&cfg, Kind::Manager, Os::Windows, instance_models()),
-                cfg.models_dir_or_default(),
-                "{cfg:?}"
-            );
+    fn under_the_manager_an_unset_models_dir_is_the_instance_folder() {
+        for (os, models) in [
+            (Os::Windows, instance_models()),
+            (Os::Linux, linux_instance_models()),
+        ] {
+            for cfg in unset_configs() {
+                assert_eq!(
+                    effective_models_dir(&cfg, Kind::Manager, os, models),
+                    models.to_string_lossy(),
+                    "{os:?} {cfg:?}"
+                );
+                assert_ne!(
+                    effective_models_dir(&cfg, Kind::Manager, os, models),
+                    cfg.models_dir_or_default(),
+                    "{os:?} {cfg:?}"
+                );
+            }
         }
     }
 
@@ -155,12 +166,11 @@ mod tests {
         }
     }
 
-    /// Elsewhere (the Linux manager, macOS, any direct launch) an unset one
-    /// is the user's default, as before.
+    /// Elsewhere (macOS, any direct launch) an unset one is the user's
+    /// default, as before.
     #[test]
     fn elsewhere_an_unset_models_dir_is_the_user_default() {
         let cases = [
-            (Kind::Manager, Os::Linux),
             (Kind::Manager, Os::MacOs),
             (Kind::Direct, Os::Linux),
             (Kind::Direct, Os::MacOs),
@@ -177,19 +187,17 @@ mod tests {
         }
     }
 
-    /// Nothing seeds ModelsDir into the Windows manager's file: the instance
-    /// default is already in force, and a folder inferred from a model path
-    /// or a download would pin one the instance may not read. Elsewhere an
-    /// unset one is seeded as before; a set one never is.
+    /// Nothing seeds ModelsDir into the manager's file (Windows and Linux):
+    /// the instance default is already in force, and a folder inferred from
+    /// a model path or a download would pin one the instance may not read.
+    /// Elsewhere an unset one is seeded as before; a set one never is.
     #[test]
-    fn models_dir_is_seeded_only_when_unset_and_not_under_the_windows_manager() {
+    fn models_dir_is_seeded_only_when_unset_and_not_under_the_manager() {
         for cfg in unset_configs() {
-            assert!(
-                !seeds_models_dir(&cfg, Kind::Manager, Os::Windows),
-                "{cfg:?}"
-            );
+            for os in [Os::Windows, Os::Linux] {
+                assert!(!seeds_models_dir(&cfg, Kind::Manager, os), "{os:?} {cfg:?}");
+            }
             for (kind, os) in [
-                (Kind::Manager, Os::Linux),
                 (Kind::Manager, Os::MacOs),
                 (Kind::Direct, Os::MacOs),
                 (Kind::Direct, Os::Linux),

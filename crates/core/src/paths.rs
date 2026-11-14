@@ -207,8 +207,11 @@ pub fn instance_models_dir() -> PathBuf {
 
 /// The default StateDir of the instances the manager launches:
 /// `%ProgramData%\llama.cpp\state` on Windows (not the LocalSystem
-/// profile); elsewhere `slot_state::default_state_dir()`, unchanged. Under
-/// the test override it is `<override>/engine-state` on every OS.
+/// profile); on Linux the service user's
+/// `/var/lib/private-ai/.local/share/private-ai/state`, whoever asks (the
+/// one the shipped `server@default.ini` names); elsewhere
+/// `slot_state::default_state_dir()`, unchanged. Under the test override it
+/// is `<override>/engine-state` on every OS.
 pub fn instance_state_dir() -> PathBuf {
     if let Some(p) = env_path(DATA_ROOT_VAR) {
         return p.join("engine-state");
@@ -217,7 +220,16 @@ pub fn instance_state_dir() -> PathBuf {
     {
         windows_machine_dirs(&program_data()).instance_state
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
+    {
+        PathBuf::from("/var/lib")
+            .join(APP_DIR)
+            .join(".local")
+            .join("share")
+            .join(APP_DIR)
+            .join("state")
+    }
+    #[cfg(not(any(windows, target_os = "linux")))]
     {
         crate::slot_state::default_state_dir()
     }

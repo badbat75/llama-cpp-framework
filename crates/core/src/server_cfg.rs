@@ -532,12 +532,20 @@ pub fn render(cfg: &ServerConfig) -> String {
 
 /// `render`, except that with `leave_dirs_unset` an unset or blank ModelsDir
 /// or StateDir is written as its commented hint line, so it reloads unset,
-/// instead of resolved through `paths::`. For the Windows manager's
-/// `server@<id>.ini`: an instance whose file leaves them unset uses the
-/// engine's folders under `%ProgramData%\llama.cpp`
-/// (`launch::with_instance_defaults`), which the saving user's
-/// `~\.llama.cpp` would override. Without it, exactly `render(cfg)`.
+/// instead of resolved through `paths::`. For the manager's
+/// `server@<id>.ini` (Windows and Linux): an instance whose file leaves them
+/// unset uses the engine's folders (`launch::with_instance_defaults`), which
+/// the saving user's `~/.llama.cpp` would override. Without it, exactly
+/// `render(cfg)`. Rendered for the OS this runs on: `render_for_os` with
+/// `cfg!(windows)`.
 pub fn render_for(cfg: &ServerConfig, leave_dirs_unset: bool) -> String {
+    render_for_os(cfg, leave_dirs_unset, cfg!(windows))
+}
+
+/// `render_for` for the OS the file is rendered for (`windows`): the
+/// commented hint of an unset ModelsDir or StateDir gives a path example of
+/// that OS (`D:\llm` on Windows, `/srv/llm` elsewhere).
+pub fn render_for_os(cfg: &ServerConfig, leave_dirs_unset: bool, windows: bool) -> String {
     // Canonical `a,b` (a hand-edited `a , b` is tidied, not rejected: llama.cpp
     // trims each entry the same way).
     let hostname =
@@ -546,7 +554,8 @@ pub fn render_for(cfg: &ServerConfig, leave_dirs_unset: bool) -> String {
     // Written resolved, unless the caller leaves an unset one unset.
     let unset = |v: &Option<String>| v.as_deref().is_none_or(|s| s.trim().is_empty());
     let models_dir_line = if leave_dirs_unset && unset(&cfg.models_dir) {
-        "; ModelsDir = D:\\llm  ; commented = the engine's models folder".to_string()
+        let example = if windows { "D:\\llm" } else { "/srv/llm" };
+        format!("; ModelsDir = {example}  ; commented = the engine's models folder")
     } else {
         format!("ModelsDir = {}", cfg.models_dir_or_default())
     };
@@ -659,7 +668,12 @@ pub fn render_for(cfg: &ServerConfig, leave_dirs_unset: bool) -> String {
         "false"
     };
     let state_dir_line = if leave_dirs_unset && unset(&cfg.state_dir) {
-        "; StateDir = D:\\llama-state  ; commented = the engine's state folder".to_string()
+        let example = if windows {
+            "D:\\llama-state"
+        } else {
+            "/srv/llama-state"
+        };
+        format!("; StateDir = {example}  ; commented = the engine's state folder")
     } else {
         format!("StateDir = {}", cfg.state_dir_or_default())
     };
@@ -966,6 +980,52 @@ mod tests {
                 "the user's default ModelsDir was written: {text}"
             );
         }
+    }
+
+    /// The hint of a directory left unset gives an example path of the OS
+    /// the file is for: a Linux manager's file shows a Linux path, not
+    /// `D:\\llm`, and a Windows one keeps the `D:\\` examples. On Linux,
+    /// `render_for` renders for Linux.
+    #[test]
+    fn the_hints_of_dirs_left_unset_fit_the_os() {
+        let cfg = ServerConfig {
+            port: Some(8100),
+            ..ServerConfig::default()
+        };
+        let hint = |text: &str, key: &str| -> String {
+            text.lines()
+                .find(|l| l.trim_start().starts_with(&format!("; {key} = ")))
+                .unwrap_or_else(|| panic!("no {key} hint:\n{text}"))
+                .to_string()
+        };
+
+        let linux = render_for_os(&cfg, true, false);
+        for key in ["ModelsDir", "StateDir"] {
+            let line = hint(&linux, key);
+            let example = line.trim_start()[format!("; {key} = ").len()..].to_string();
+            assert!(example.starts_with('/'), "not a Linux path: {line}");
+        }
+        assert!(
+            !linux.contains("D:\\"),
+            "a Windows path in a Linux file:\n{linux}"
+        );
+        assert_eq!(from_text(&linux).models_dir, None, "{linux}");
+        assert_eq!(from_text(&linux).state_dir, None, "{linux}");
+
+        let windows = render_for_os(&cfg, true, true);
+        assert!(
+            hint(&windows, "ModelsDir").starts_with("; ModelsDir = D:\\llm"),
+            "{windows}"
+        );
+        assert!(
+            hint(&windows, "StateDir").starts_with("; StateDir = D:\\llama-state"),
+            "{windows}"
+        );
+        assert_eq!(from_text(&windows).models_dir, None, "{windows}");
+        assert_eq!(from_text(&windows).state_dir, None, "{windows}");
+
+        #[cfg(target_os = "linux")]
+        assert_eq!(render_for(&cfg, true), linux);
     }
 
     /// The same template either way: each directory still has its line,

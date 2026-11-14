@@ -156,6 +156,16 @@ fn real_paths_child() {
             paths::instance_models_dir(),
             PathBuf::from("/var/lib/private-ai/.llama.cpp")
         );
+        // And its default StateDir is the service user's, the one the shipped
+        // `server@default.ini` names (under the data root the instance unit's
+        // `StateDirectory=` creates), whoever asks: the configurator names it
+        // as the instance's default, so it must not be the asking user's own
+        // `slot_state::default_state_dir()`.
+        #[cfg(target_os = "linux")]
+        assert_eq!(
+            paths::instance_state_dir(),
+            PathBuf::from("/var/lib/private-ai/.local/share/private-ai/state")
+        );
         // The old trees to migrate, where 2.4 kept them: computed, not read.
         let old_data = (
             home.join(".local").join("share").join(OLD_DIR),

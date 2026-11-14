@@ -623,8 +623,32 @@ mod tests {
         assert_eq!(form_to_config(&blank).state_dir, None);
     }
 
-    /// Elsewhere (Linux under its manager, macOS) nothing changes: the form
-    /// is `config_to_form`'s, with the general hints of the two fields.
+    /// Under the Linux manager the same: both folders blank, each hint naming
+    /// the instance default under the service user's home, and the Save of
+    /// the untouched form names no folder of the saving user's.
+    #[test]
+    fn under_the_linux_manager_unset_folders_show_blank_with_the_instance_default() {
+        let dirs = InstanceDirs {
+            models: concat!("/var/lib/private-ai/.llama", ".cpp").into(),
+            state: "/var/lib/private-ai/.local/share/private-ai/state".into(),
+        };
+        let form = config_to_form_for(&ServerConfig::default(), Some(&dirs));
+        assert_eq!(form.models_dir.as_str(), "");
+        assert_eq!(form.state_dir.as_str(), "");
+        assert_eq!(
+            form.models_dir_placeholder.as_str(),
+            crate::strings::fill(MODELS_HINT_KEY, &[&dirs.models.display()])
+        );
+        assert_eq!(
+            form.state_dir_placeholder.as_str(),
+            crate::strings::fill(STATE_HINT_KEY, &[&dirs.state.display()])
+        );
+        let saved = form_to_config(&form);
+        assert_eq!((saved.models_dir, saved.state_dir), (None, None));
+    }
+
+    /// Elsewhere (macOS, no manager) nothing changes: the form is
+    /// `config_to_form`'s, with the general hints of the two fields.
     #[test]
     fn elsewhere_the_form_is_unchanged_with_the_general_hints() {
         let cfg = ServerConfig {

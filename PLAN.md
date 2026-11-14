@@ -501,12 +501,12 @@ macOS (no manager) and a future bff write what the GUI would refuse. The bff's s
 
 Slices, each test first, in order:
 
-1. **Server-wide defaults are never written as the saving process's home.** On Linux a save with
-   ModelsDir or StateDir unset writes the saver's `~/.llama.cpp` or data root into
-   `/etc/llama.cpp/server@default.ini`, which the instance user cannot read; a bff save would write
-   the bff account's home. Extend the Windows rule (425f223: leave both unset under the manager) to
-   Linux under the manager, with the instance defaults (`paths::instance_models_dir`,
-   `instance_state_dir`).
+1. **Left from slice 1 (done: under the Linux manager, as on Windows, an unset ModelsDir or StateDir is
+   not written and means `/var/lib/private-ai/.llama.cpp` and `.../.local/share/private-ai/state`)**:
+   whether the instance unit creates `/var/lib/private-ai/.llama.cpp` (its `StateDirectory=` lists only
+   `private-ai` and `private-ai/.local/share/private-ai`; llama-server may need the folder at start);
+   `pai server show` and `slot_state::restore_newest` still resolve an unset folder with the user's own
+   default under the manager.
 2. **The Server checks move below the GUI**: Port, ModelsMax (no negatives) and ModelsMemoryMargin
    ranges, log level 0..5, the base URL's trailing `/` and `/v1` stripped (`pai server set` can store
    `/v1` and get `/v1/v1`), threads at most the CPU count, a bind list mixing `0.0.0.0` with other
