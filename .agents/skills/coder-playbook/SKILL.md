@@ -256,3 +256,6 @@ Lessons only: the rules are in `AGENTS.md`.
   ModelsDir/StateDir is written as a hint and `save` creates no models dir (the instances use the
   engine's folders). An instance's cwd comes from `launch::instance_current_dir`, set after
   `launch_command` (which still sets `paths::data_root()` for `start()`).
+- `windows::psd1_scalars` reads only `'quoted'` strings and `[int]N`/`N`: a bool in config-build.psd1
+  is written `[int]0|1` (`Minimal`), since a `$true` would read back as missing. macOS's
+  config-build.toml takes a new field with `#[serde(default)]` so an older config still parses.

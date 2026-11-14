@@ -134,7 +134,7 @@ pub fn run(product: Option<Product>, keep_staging: bool) -> Result<()> {
     ui::head(format!("llama.cpp release: {llama_build}"));
     ui::head("Architecture:      arm64");
 
-    let wanted = macos_pkg::of_product(product);
+    let wanted = macos_pkg::of_product(product, cfg.minimal);
     let engine = wanted.contains(&Component::Llama);
     let framework = wanted.iter().any(|c| c.product() == Product::Framework);
 
@@ -376,6 +376,7 @@ pub fn run(product: Option<Product>, keep_staging: bool) -> Result<()> {
             &fw_version,
             &llama_build,
             &vulkan_version,
+            cfg.minimal,
         ));
         let _ = std::fs::remove_file(&pkg);
         ui::head(format!("Building {}...", name_of(&pkg)));

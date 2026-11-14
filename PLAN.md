@@ -473,7 +473,11 @@ repository. Decided with the user on 2026-11-14:
   automatable checks of the installer test plan (`installer/AGENTS.md`) go in; those needing a GPU, a
   desktop session or a dialog stay for the user.
 
-Slices, each test first: **1** the reduced-build option in xtask; **2** the Windows workflow (first
+Slices, each test first: **1** (done) the reduced-build option in xtask: `xtask configure --minimal`
+(Windows, macOS; Linux refuses it), recorded in the config, GGML_CUDA/HIP/VULKAN off, the engine's file
+named `llama.cpp-v<release>-minimal-<arch>` so a release upload never takes it, no `-vulkan` `.pkg`;
+the Windows runner's own LLVM clang and OpenSSL should satisfy `configure` (read from the runner image,
+not run), and running the prerequisites script there avoids depending on PATH order for OpenSSL; **2** the Windows workflow (first
 WiX compile of both MSIs); **3** the macOS workflow (first `pkgbuild` run).
 
 - Done when: both workflows have run green on GitHub at least once, from a run the user started or

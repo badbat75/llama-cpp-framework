@@ -1,0 +1,14 @@
+# The llama.cpp CMake options of the minimal build (xtask configure
+# --minimal, for CI runners, never a release), applied after common.toml and
+# <os>.toml: an entry here REPLACES the entry of the same NAME. Only the
+# backends that need a GPU SDK on the build machine go off; everything else
+# is the full build's, so CI builds what a release builds minus those.
+
+defines = [
+    # The CUDA Toolkit.
+    "GGML_CUDA=OFF",
+    # The ROCm (TheRock) dist.
+    "GGML_HIP=OFF",
+    # The Vulkan SDK. Metal (macOS) is part of the system and stays on.
+    "GGML_VULKAN=OFF",
+]

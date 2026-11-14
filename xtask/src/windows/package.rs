@@ -696,7 +696,8 @@ pub fn run(product: Option<Product>, keep_staging: bool, wix_arg: Option<PathBuf
         // ── The MSI ─────────────────────────────────────────────────────
         // llama.cpp-v1.0.0-x64.msi and private-ai-framework-v2.99.1-x64.msi:
         // each named by its own version only.
-        let installer = msi::file_name(product, &framework_version, &llama_build, arch);
+        let installer =
+            msi::file_name(product, &framework_version, &llama_build, arch, cfg.minimal);
         let out_file = out_dir.join(&installer);
         let wxs = repo.join(msi::wxs(product));
         let obj = stage.with_extension("wix-obj");

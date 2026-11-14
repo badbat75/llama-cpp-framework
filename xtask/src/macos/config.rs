@@ -14,6 +14,10 @@ pub struct BuildConfig {
     pub c_compiler: String,
     pub cxx_compiler: String,
     pub build_jobs: u32,
+    /// `xtask configure --minimal`: llama.cpp without the backends that
+    /// need an SDK (CI only).
+    #[serde(default)]
+    pub minimal: bool,
 }
 
 pub fn path() -> PathBuf {
@@ -62,6 +66,9 @@ cxx_compiler = {cxx}
 # Parallel build jobs: all logical cores but two, which stay free during
 # the build (0 = use all cores).
 build_jobs = {jobs}
+# The minimal build (configure --minimal): Metal only, no Vulkan; for CI,
+# never a release.
+minimal = {minimal}
 "#,
             dist_root = q(&self.dist_root),
             llama = q(&self.llama_cpp_dir),
@@ -69,6 +76,7 @@ build_jobs = {jobs}
             cc = q(&self.c_compiler),
             cxx = q(&self.cxx_compiler),
             jobs = self.build_jobs,
+            minimal = self.minimal,
         );
         let p = path();
         std::fs::create_dir_all(p.parent().unwrap())?;

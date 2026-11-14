@@ -75,7 +75,7 @@ pub fn run() -> Result<()> {
     }
 
     // ── The configure line: checked-in options + this machine's paths ──
-    let (generator, defines) = cmake_options()?;
+    let (generator, defines) = cmake_options(false)?;
     ui::dim(format!(
         "CMake options (xtask/cmake/): {}",
         defines

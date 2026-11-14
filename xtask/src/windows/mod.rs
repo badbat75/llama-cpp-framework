@@ -50,6 +50,9 @@ pub struct WinConfig {
     pub cxx_compiler: String,
     pub linker: String,
     pub build_jobs: u32,
+    /// `xtask configure --minimal`: llama.cpp without the backends that
+    /// need an SDK (CI only).
+    pub minimal: bool,
 }
 
 pub fn config_path() -> PathBuf {
@@ -152,6 +155,7 @@ impl WinConfig {
             cxx_compiler: get("CxxCompiler"),
             linker: get("Linker"),
             build_jobs: get("BuildJobs").parse().unwrap_or(0),
+            minimal: get("Minimal") == "1",
         }))
     }
 
@@ -198,6 +202,9 @@ impl WinConfig {
     # Parallel build jobs: all logical cores but two, which stay free for
     # interactive use during a long CUDA/HIP compile (0 = use all cores).
     BuildJobs   = [int]{jobs}
+    # Minimal: 1 for the build configure --minimal makes, llama.cpp without
+    # ROCm, CUDA and Vulkan (CI only, never a release); 0 otherwise.
+    Minimal     = [int]{minimal}
 }}
 "#,
             dist_root = psq(&self.dist_root),
@@ -212,6 +219,7 @@ impl WinConfig {
             cxx = psq(&self.cxx_compiler),
             linker = psq(&self.linker),
             jobs = self.build_jobs,
+            minimal = u8::from(self.minimal),
         );
         let p = config_path();
         std::fs::create_dir_all(p.parent().unwrap())?;

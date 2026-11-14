@@ -457,3 +457,11 @@ Lessons only: the rules are in `AGENTS.md`.
   root). A fixture's expected text can be produced by the code itself on a sibling temp path
   (`startup.rs` `fresh_entry`: what an enable writes now), which keeps the test free of the
   machine's `/usr/bin/pai-config` and `current_exe()`.
+- After restoring a throwaway candidate from a `tar` backup, `touch` the restored sources: tar keeps
+  the old mtimes, cargo sees the candidate's newer build as fresh and runs it, so the reds look green.
+- A text pin on xtask's `main.rs` cuts the test code at `#[cfg(test)]\nmod cli_tests {`, never at the
+  first `#[cfg(test)]\nmod `: `mod names_lint;` sits under one at the top of the file.
+- What a GitHub runner has installed (for CI slices) is in `actions/runner-images`:
+  `images/windows/Windows2025-Readme.md` lists the tools, `images/windows/scripts/build/Install-<Tool>.ps1`
+  says where each goes and whether it is on PATH (LLVM by choco, on PATH; OpenSSL in
+  `C:\Program Files\OpenSSL`, its `bin` on PATH). Check there before writing a test for "the runner lacks X".

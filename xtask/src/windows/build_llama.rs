@@ -196,7 +196,7 @@ pub fn run() -> Result<()> {
     };
 
     // ── The configure line: checked-in options + this machine's paths ──
-    let (generator, defines) = cmake_options()?;
+    let (generator, defines) = cmake_options(cfg.minimal)?;
     ui::dim(format!(
         "CMake options (xtask/cmake/): {}",
         defines
@@ -239,27 +239,30 @@ pub fn run() -> Result<()> {
     // (xtask/cmake/common.toml), still replace the -include a cache built
     // with the old patched wrapper holds: CMake on Windows compiles the HIP
     // sources as CXX when enable_language(HIP) is not called.
-    let hip = Path::new(&cfg.hip_path);
-    let clang_major = [r"lib\llvm\lib\clang", r"lib\clang"]
-        .iter()
-        .filter_map(|res| std::fs::read_dir(hip.join(res)).ok())
-        .find_map(|rd| {
-            rd.flatten()
-                .filter(|e| e.path().is_dir())
-                .filter_map(|e| e.file_name().to_string_lossy().parse::<u32>().ok())
-                .max()
-        });
-    let Some(clang_major) = clang_major else {
-        bail!(
-            "could not detect the ROCm clang resource version under {} (probed lib\\llvm\\lib\\clang and lib\\clang)",
-            cfg.hip_path
-        );
-    };
-    if clang_major < 24 {
-        bail!(
-            "ROCm clang {clang_major} under {} is below 24: its HIP runtime wrapper clashes with MSVC's <cmath>. Install a newer dist (scripts\\00-install-prerequisites.ps1 takes the newest stable) and re-run cargo run -p xtask -- configure.",
-            cfg.hip_path
-        );
+    // A minimal build (configure --minimal) builds no HIP and has no dist.
+    if !cfg.minimal {
+        let hip = Path::new(&cfg.hip_path);
+        let clang_major = [r"lib\llvm\lib\clang", r"lib\clang"]
+            .iter()
+            .filter_map(|res| std::fs::read_dir(hip.join(res)).ok())
+            .find_map(|rd| {
+                rd.flatten()
+                    .filter(|e| e.path().is_dir())
+                    .filter_map(|e| e.file_name().to_string_lossy().parse::<u32>().ok())
+                    .max()
+            });
+        let Some(clang_major) = clang_major else {
+            bail!(
+                "could not detect the ROCm clang resource version under {} (probed lib\\llvm\\lib\\clang and lib\\clang)",
+                cfg.hip_path
+            );
+        };
+        if clang_major < 24 {
+            bail!(
+                "ROCm clang {clang_major} under {} is below 24: its HIP runtime wrapper clashes with MSVC's <cmath>. Install a newer dist (scripts\\00-install-prerequisites.ps1 takes the newest stable) and re-run cargo run -p xtask -- configure.",
+                cfg.hip_path
+            );
+        }
     }
 
     // lld-link, when the compiler is an LLVM one that ships it (configure

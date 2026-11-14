@@ -107,7 +107,11 @@ fn find_tool(name: &str, hip: Option<&Path>) -> Option<PathBuf> {
     })
 }
 
-pub fn run(llama_cpp_dir: Option<PathBuf>, dist_root: Option<PathBuf>) -> Result<()> {
+pub fn run(
+    llama_cpp_dir: Option<PathBuf>,
+    dist_root: Option<PathBuf>,
+    minimal: bool,
+) -> Result<()> {
     let recorded = WinConfig::load_optional().ok().flatten();
     let dists = Dists::resolve(
         dist_root.as_deref(),
@@ -298,6 +302,7 @@ pub fn run(llama_cpp_dir: Option<PathBuf>, dist_root: Option<PathBuf>) -> Result
         cxx_compiler: cc,
         linker,
         build_jobs: jobs,
+        minimal,
     }
     .save()?;
     ui::ok("  build\\windows\\config-build.psd1 written.");

@@ -30,16 +30,19 @@ pub fn products(product: Option<Product>) -> Vec<Product> {
     }
 }
 
-/// The MSI's file name: `llama.cpp-v<release>-<arch>.msi` for the engine,
-/// `private-ai-framework-v<version>-<arch>.msi` for the framework.
+/// The MSI's file name: `llama.cpp-v<release>-<arch>.msi` for the engine
+/// (`llama.cpp-v<release>-minimal-<arch>.msi` for the minimal build, never a
+/// release), `private-ai-framework-v<version>-<arch>.msi` for the framework.
 #[cfg_attr(not(windows), allow(dead_code))]
 pub fn file_name(
     product: Product,
     framework_version: &str,
     llama_build: &str,
     arch: &str,
+    minimal: bool,
 ) -> String {
     match product {
+        Product::Llama if minimal => format!("llama.cpp-{llama_build}-minimal-{arch}.msi"),
         Product::Llama => format!("llama.cpp-{llama_build}-{arch}.msi"),
         Product::Framework => format!("private-ai-framework-v{framework_version}-{arch}.msi"),
     }
@@ -108,7 +111,7 @@ pub fn engine_defaults() -> Vec<(&'static str, String)> {
 pub fn msi_product(name: &str) -> Option<(Product, String)> {
     let stem = name.strip_suffix("-x64.msi")?;
     let (product, version) = if let Some(v) = stem.strip_prefix("llama.cpp-v") {
-        (Product::Llama, v)
+        (Product::Llama, v.strip_suffix("-minimal").unwrap_or(v))
     } else {
         (
             Product::Framework,
@@ -1424,5 +1427,6 @@ mod tests {
 
     /// llama.cpp's own MSI and the framework's MSI without llama.cpp.
     mod engine_lifecycle;
+    mod minimal;
     mod two_installers;
 }

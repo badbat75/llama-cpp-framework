@@ -128,17 +128,17 @@ fn package_builds_both_msis_by_default() {
 #[test]
 fn each_msi_is_named_by_its_own_version_only() {
     assert_eq!(
-        file_name(Product::Llama, "2.99.1", "v1.0.0", "x64"),
+        file_name(Product::Llama, "2.99.1", "v1.0.0", "x64", false),
         "llama.cpp-v1.0.0-x64.msi"
     );
     assert_eq!(
-        file_name(Product::Framework, "2.99.1", "v1.0.0", "x64"),
+        file_name(Product::Framework, "2.99.1", "v1.0.0", "x64", false),
         "private-ai-framework-v2.99.1-x64.msi"
     );
     // The other product's version never leaks into a name.
-    assert!(!file_name(Product::Framework, "2.99.1", "v1.0.0", "x64").contains("1.0.0"));
-    assert!(!file_name(Product::Llama, "2.99.1", "v1.0.0", "x64").contains("2.99.1"));
-    assert!(!file_name(Product::Llama, "2.99.1", "v1.0.0", "x64").contains("pai"));
+    assert!(!file_name(Product::Framework, "2.99.1", "v1.0.0", "x64", false).contains("1.0.0"));
+    assert!(!file_name(Product::Llama, "2.99.1", "v1.0.0", "x64", false).contains("2.99.1"));
+    assert!(!file_name(Product::Llama, "2.99.1", "v1.0.0", "x64", false).contains("pai"));
 }
 
 /// The engine's ProductVersion is its release without the `v`.
@@ -955,7 +955,7 @@ fn msi_names_read_back_as_product_and_version() {
     }
     // The names file_name writes are the names read back.
     for p in [Product::Llama, Product::Framework] {
-        let n = file_name(p, "2.99.1", "v1.0.0", "x64");
+        let n = file_name(p, "2.99.1", "v1.0.0", "x64", false);
         assert_eq!(msi_product(&n).map(|(q, _)| q), Some(p), "{n}");
     }
 }

@@ -67,6 +67,10 @@ enum Phase {
         /// Where the dists live; recorded in the config.
         #[arg(long)]
         dist_root: Option<PathBuf>,
+        /// llama.cpp without the GPU backends that need an SDK (Windows,
+        /// macOS): for CI only, never a release.
+        #[arg(long)]
+        minimal: bool,
     },
     /// Build llama.cpp and/or the framework (default: both, in that order).
     Build {
@@ -149,7 +153,13 @@ fn run(cli: Cli) -> anyhow::Result<()> {
         Phase::Configure {
             llama_cpp_dir,
             dist_root,
-        } => linux::configure::run(llama_cpp_dir, dist_root),
+            minimal,
+        } => {
+            if minimal {
+                anyhow::bail!("--minimal is for the Windows and macOS CI builds; Linux packages its GPU runtimes apart");
+            }
+            linux::configure::run(llama_cpp_dir, dist_root)
+        }
         Phase::Build { module } => {
             if module != Some(Module::Framework) {
                 linux::build_llama::run()?;
@@ -197,7 +207,8 @@ fn run(cli: Cli) -> anyhow::Result<()> {
         Phase::Configure {
             llama_cpp_dir,
             dist_root,
-        } => windows::configure::run(llama_cpp_dir, dist_root),
+            minimal,
+        } => windows::configure::run(llama_cpp_dir, dist_root, minimal),
         Phase::Build { module } => {
             if module != Some(Module::Framework) {
                 windows::build_llama::run()?;
@@ -245,7 +256,8 @@ fn run(cli: Cli) -> anyhow::Result<()> {
         Phase::Configure {
             llama_cpp_dir,
             dist_root,
-        } => macos::configure::run(llama_cpp_dir, dist_root),
+            minimal,
+        } => macos::configure::run(llama_cpp_dir, dist_root, minimal),
         Phase::Build { module } => {
             if module != Some(Module::Framework) {
                 macos::build_llama::run()?;
@@ -360,6 +372,32 @@ mod cli_tests {
         assert!(parse(&["package", "config"]).is_err());
         assert!(parse(&["package", "nonsense"]).is_err());
         assert!(parse(&["package", "llama", "framework"]).is_err());
+    }
+
+    /// `xtask configure --minimal`: the reduced build GitHub's runners make
+    /// (llama.cpp without the GPU backends that need an SDK), alone or with
+    /// the other options; its help says it is not a release.
+    #[test]
+    fn configure_takes_the_minimal_flag() {
+        use clap::CommandFactory;
+        for args in [
+            &["configure", "--minimal"][..],
+            &["configure", "--minimal", "--dist-root", "/x"],
+        ] {
+            let cli = parse(args).unwrap_or_else(|e| panic!("{args:?}: {e}"));
+            assert!(
+                matches!(cli.phase, Phase::Configure { .. }),
+                "{args:?} is not a configure run"
+            );
+        }
+        let cmd = Cli::command();
+        let configure = cmd.find_subcommand("configure").expect("configure");
+        let minimal = configure
+            .get_arguments()
+            .find(|a| a.get_id() == "minimal")
+            .expect("--minimal");
+        let help = minimal.get_help().expect("--minimal has help").to_string();
+        assert!(help.contains("release"), "--minimal help: {help}");
     }
 
     /// The products' names as the command line spells them.

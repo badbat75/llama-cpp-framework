@@ -95,12 +95,15 @@ fn each_built_file_goes_to_its_own_tree() {
 #[test]
 fn macos_packages_the_engine_with_vulkan_and_the_framework_without_services() {
     use Component::*;
-    assert_eq!(of_product(Some(Product::Llama)), vec![Llama, Vulkan]);
+    assert_eq!(of_product(Some(Product::Llama), false), vec![Llama, Vulkan]);
     assert_eq!(
-        of_product(Some(Product::Framework)),
+        of_product(Some(Product::Framework), false),
         vec![Config, Cli, Core]
     );
-    assert_eq!(of_product(None), vec![Config, Cli, Core, Llama, Vulkan]);
+    assert_eq!(
+        of_product(None, false),
+        vec![Config, Cli, Core, Llama, Vulkan]
+    );
 }
 
 /// Every installed path to its package: the engine's tree to `llama.cpp`
@@ -173,7 +176,7 @@ fn a_staged_macos_tree_splits_into_engine_and_framework_packages() {
 
     let roots = tmp.path().join("package");
     let present = components::split(&stage, &roots).unwrap();
-    assert_eq!(present, of_product(None));
+    assert_eq!(present, of_product(None, false));
 
     for c in present {
         let root = components::root(&roots, c);
@@ -223,7 +226,7 @@ fn macos_file_names_follow_the_split() {
             "private-ai-framework-core-v2.99.1-arm64.pkg",
         ),
     ] {
-        let got = file_name(c, "2.99.1", "v1.0.0", "1.4.328.1");
+        let got = file_name(c, "2.99.1", "v1.0.0", "1.4.328.1", false);
         assert_eq!(got, want, "{c:?}");
         assert!(
             components::is_file_of(c, &got),
@@ -238,8 +241,8 @@ fn macos_file_names_follow_the_split() {
 fn the_newest_macos_packages_are_found_one_per_component() {
     let tmp = Tmp::new("newest");
     let mut want = Vec::new();
-    for c in of_product(None) {
-        let name = file_name(c, "2.99.1", "v1.0.0", "1.4.328.1");
+    for c in of_product(None, false) {
+        let name = file_name(c, "2.99.1", "v1.0.0", "1.4.328.1", false);
         std::fs::write(tmp.path().join(&name), "").unwrap();
         want.push((c, name));
     }
@@ -401,7 +404,7 @@ fn the_macos_package_phase_uses_the_split() {
         "package::run takes no product"
     );
     for want in [
-        "macos_pkg::of_product(product)",
+        "macos_pkg::of_product(product",
         "macos_pkg::staged_path(",
         "macos_pkg::identifier(",
         "macos_pkg::version(",
@@ -457,4 +460,73 @@ fn macos_package_refuses_a_build_that_is_not_a_release() {
             .unwrap_or_else(|| panic!("{later} not in run()"));
         assert!(check < at, "{later} comes before the release check");
     }
+}
+
+// ── The minimal build (`xtask configure --minimal`, GitHub's runners) ───
+
+/// Metal only: no Vulkan backend, so no Vulkan runtime package, whatever
+/// the dists hold; the engine and the framework's packages as always.
+#[test]
+fn a_minimal_macos_build_packages_no_vulkan_runtime() {
+    use Component::*;
+    assert_eq!(of_product(None, true), vec![Config, Cli, Core, Llama]);
+    assert_eq!(of_product(Some(Product::Llama), true), vec![Llama]);
+    assert_eq!(
+        of_product(Some(Product::Framework), true),
+        vec![Config, Cli, Core]
+    );
+}
+
+/// The minimal engine `.pkg` never passes for the release: its file carries
+/// `-minimal` (the release's upload command names
+/// `llama.cpp-v<release>-arm64.pkg` exactly), while `xtask install` still
+/// finds it as the engine's. The framework's packages are the same build
+/// either way and keep their names.
+#[test]
+fn a_minimal_macos_engine_pkg_says_so_in_its_name() {
+    let engine = file_name(Component::Llama, "2.99.1", "v1.0.0", "1.4.328.1", true);
+    assert_eq!(engine, "llama.cpp-v1.0.0-minimal-arm64.pkg");
+    assert!(
+        components::is_file_of(Component::Llama, &engine),
+        "{engine}"
+    );
+    for c in [Component::Config, Component::Cli, Component::Core] {
+        assert_eq!(
+            file_name(c, "2.99.1", "v1.0.0", "1.4.328.1", true),
+            file_name(c, "2.99.1", "v1.0.0", "1.4.328.1", false),
+            "{c:?}"
+        );
+    }
+    let tmp = Tmp::new("minimal");
+    let mut want = Vec::new();
+    for c in of_product(None, true) {
+        let name = file_name(c, "2.99.1", "v1.0.0", "1.4.328.1", true);
+        std::fs::write(tmp.path().join(&name), "").unwrap();
+        want.push((c, name));
+    }
+    let got: Vec<(Component, String)> = components::newest_in(tmp.path(), "-arm64.pkg")
+        .into_iter()
+        .map(|(c, p)| (c, p.file_name().unwrap().to_string_lossy().into_owned()))
+        .collect();
+    assert_eq!(got, want);
+}
+
+/// The package phase follows the flag `xtask configure --minimal` recorded:
+/// it packages the minimal set of components and names the files by it.
+#[test]
+fn the_macos_package_phase_follows_the_recorded_minimal_flag() {
+    let code = code_of("macos/package.rs");
+    assert!(
+        code.contains("macos_pkg::of_product(product, cfg.minimal)"),
+        "macos/package.rs does not package the recorded build's components"
+    );
+    let call = code
+        .split("macos_pkg::file_name(")
+        .nth(1)
+        .and_then(|r| r.split(')').next())
+        .expect("macos/package.rs calls macos_pkg::file_name");
+    assert!(
+        call.contains("cfg.minimal"),
+        "macos_pkg::file_name is not given the recorded minimal flag: ({call})"
+    );
 }

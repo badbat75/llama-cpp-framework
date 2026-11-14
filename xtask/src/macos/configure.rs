@@ -11,7 +11,11 @@ use crate::common::util::{self, cmd, output, which};
 use anyhow::{bail, Result};
 use std::path::PathBuf;
 
-pub fn run(llama_cpp_dir: Option<PathBuf>, dist_root: Option<PathBuf>) -> Result<()> {
+pub fn run(
+    llama_cpp_dir: Option<PathBuf>,
+    dist_root: Option<PathBuf>,
+    minimal: bool,
+) -> Result<()> {
     if std::env::consts::ARCH != "aarch64" {
         bail!(
             "the macOS build is Apple Silicon only (this machine is {})",
@@ -112,6 +116,7 @@ pub fn run(llama_cpp_dir: Option<PathBuf>, dist_root: Option<PathBuf>) -> Result
         c_compiler: path(&cc, "clang"),
         cxx_compiler: path(&cxx, "clang++"),
         build_jobs: util::default_build_jobs(),
+        minimal,
     }
     .save()?;
     ui::ok("  build/macos/config-build.toml written.");

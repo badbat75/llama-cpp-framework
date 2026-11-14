@@ -29,11 +29,12 @@ const COMPONENTS: [Component; 5] = [
 ];
 
 /// The components the macOS packages take, of `product` or of both, in
-/// `Component::ALL`'s order.
-pub fn of_product(product: Option<Product>) -> Vec<Component> {
+/// `Component::ALL`'s order; the minimal build (Metal only) has no Vulkan.
+pub fn of_product(product: Option<Product>, minimal: bool) -> Vec<Component> {
     Component::ALL
         .into_iter()
         .filter(|c| COMPONENTS.contains(c) && product.is_none_or(|p| c.product() == p))
+        .filter(|c| !(minimal && *c == Component::Vulkan))
         .collect()
 }
 
@@ -68,11 +69,23 @@ pub fn version(c: Component, fw_version: &str, llama_build: &str, sdk_version: &
     }
 }
 
-/// The file name of a component's `.pkg`.
-pub fn file_name(c: Component, fw_version: &str, llama_build: &str, sdk_version: &str) -> String {
+/// The file name of a component's `.pkg`; the minimal build's engine
+/// carries `-minimal` (never a release).
+pub fn file_name(
+    c: Component,
+    fw_version: &str,
+    llama_build: &str,
+    sdk_version: &str,
+    minimal: bool,
+) -> String {
     let v = version(c, fw_version, llama_build, sdk_version);
+    let marker = if minimal && c == Component::Llama {
+        "-minimal"
+    } else {
+        ""
+    };
     format!(
-        "{}-arm64.pkg",
+        "{}{marker}-arm64.pkg",
         components::file_stem(c, fw_version, llama_build, &v)
     )
 }
