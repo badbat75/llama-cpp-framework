@@ -21,7 +21,7 @@ tree is the installed tree.
 the runtime of a GPU it does not have (Linux), and a headless server the GUI.** On Linux and Windows
 the engine, llama.cpp, is packaged apart from the framework, under its own name and version
 (`PLAN.md` step 11, R12): on Windows llama.cpp's own MSI holds the engine and all its GPU runtimes,
-and the framework's MSI requires it. On macOS too (type-checked only, never run on a Mac) the engine and
+and the framework's MSI requires it. On macOS too (only the minimal build has run, in CI: [Building on macOS](build-macos.md)) the engine and
 its Vulkan runtime install into `/opt/llama.cpp`, the framework into `/opt/private-ai`. On Linux and macOS
 `xtask/src/common/components.rs` splits the staged tree by path, so no file lands in two packages or
 in none; on Windows each product has its own staging tree. The engine's configuration follows: the
