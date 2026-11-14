@@ -705,7 +705,8 @@ Decided with the user on 2026-11-14 (relayed by the web UI session, confirmed he
   anything through the bff.
 - **Engines.** Each preset declares its engine (llama.cpp today, Strata later); the web UI shows one
   mixed preset list, and each engine keeps its own file (llama.cpp's `presets.ini` as today). Only
-  llama.cpp for now.
+  llama.cpp for now. A preset with no engine declared is a llama.cpp preset, so nothing migrates and
+  today's `presets.ini` stays valid as it is (user, 2026-11-14, relayed by the web UI session).
 - **First editing slice.** The whole UI's structure in `fe/DESIGN.md`, then the Server page of instance
   `default` with the same controls and checks as `pai-config`. The web UI session (`fe/` only) sends
   the coordinator the bff API contract it needs (login and session, reading and writing the server and
