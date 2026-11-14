@@ -44,7 +44,7 @@ as the column says. A requirement still open must be covered by a step.
 | W12 | Every change to a benchmark spec is reviewed by `spec-reviewer` before it is committed | Applies to every step |
 | W13 | The coordinator only coordinates: the tester writes and reruns the tests, the coder runs the linter and the format check, the coordinator reads their reports and commits | Met: `AGENTS.md` "Roles", `.opencode/agents/` |
 | W14 | Every release until 3.0.0 is a 2.99.x pre-release (2.99.0, 2.99.1, ...), decided on 2026-11-13; 3.0.0 is the user's call | Applies to every release |
-| W15 | Windows-only code is type-checked on Linux by the coder, `cargo check` and `cargo clippy` with `--target x86_64-pc-windows-gnu`, for pai-core, pai-manager and xtask (MinGW installed by the user; no crate code uses `cfg(target_env)`); pai-config is left out because slint's Skia renderer builds only with MSVC, so its Windows code is checked by the user's build on Windows (user, 2026-11-13) | Applies to every slice ("Commands" in `AGENTS.md`) |
+| W15 | Windows-only code is type-checked on Linux by the coder, `cargo check` and `cargo clippy` with `--target x86_64-pc-windows-gnu`, for pai-core, pai-app, pai-manager and xtask (MinGW installed by the user; no crate code uses `cfg(target_env)`); pai-config is left out because slint's Skia renderer builds only with MSVC, so its Windows code is checked by the user's build on Windows (user, 2026-11-13) | Applies to every slice ("Commands" in `AGENTS.md`) |
 
 ## Definition of Done
 
@@ -539,7 +539,7 @@ skeleton with its packaging and one read-only page.
 
 ## Later, not planned yet
 
-- **macOS build stack, unverified:** `crates/config/build.rs` `emit_build_stack` reads the CMake
+- **macOS build stack, unverified:** `crates/app/build.rs` `emit_build_stack` reads the CMake
   cache under `build/windows` or `build/linux` only, so on a Mac the recorded SDK versions would come
   out empty (found by reading; nothing has run on a Mac, R3).
 - **Adaptive MTP depth** (block 01, `draft-mtp-adaptive`, 84 KB, host side, built on

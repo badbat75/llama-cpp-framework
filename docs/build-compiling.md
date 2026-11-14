@@ -1,7 +1,7 @@
 ---
 title: Compiling llama.cpp and the configurator
 type: reference
-updated: 2026-11-13
+updated: 2026-11-14
 ---
 
 # Compiling llama.cpp and the configurator
@@ -384,15 +384,19 @@ disagree until the next configure.
 ## Generated architecture tables
 
 **The configurator's per-architecture lists are generated from the clone, so a bare `cargo build` or
-`cargo test` of it needs the clone: run `xtask build` first.** `crates/config/build.rs`, with
-`crates/config/arch_tables.rs`, reads `src/llama-arch.cpp` and writes the recurrent, hybrid and
+`cargo test` of `pai-app`, and of `pai-config` over it, needs the clone: run `xtask build` first.**
+`crates/app/build.rs`, with `crates/app/arch_tables.rs`, reads `src/llama-arch.cpp` and writes the recurrent, hybrid and
 tensor-split deny lists to `OUT_DIR`, from `llm_arch_is_recurrent`, `llm_arch_is_hybrid` and
 `llm_arch_supports_sm_tensor`. llama.cpp compiles them in and exposes them through no public API by name.
 
 - There is no fallback list, since a wrong one would be silent. No clone, or a source of another
   shape, stops the build. A new shape means updating `arch_tables.rs` for that release.
 - `xtask` passes the recorded clone through `PRIVATE_AI_LLAMA_CPP_DIR`. A bare cargo command reads the
-  default clone of the target OS, `build/<os>/llama.cpp`, unless that variable is set.
+  default clone of the target OS, `build/<os>/llama.cpp`, unless that variable is set. The Windows
+  type check on Linux (`--target x86_64-pc-windows-gnu`) therefore looks for `build/windows/llama.cpp`
+  and stops; point it at the Linux clone with an absolute path, since the build script runs in
+  `crates/app`:
+  `PRIVATE_AI_LLAMA_CPP_DIR=$PWD/build/linux/llama.cpp cargo check -p pai-app --all-targets --target x86_64-pc-windows-gnu`.
 
 ## Windows
 
@@ -502,9 +506,9 @@ linked against. Moving or deleting a dist breaks the backend that used it. The b
   exe left in `cargo-target/release` finds the same tree through its `../../llama.cpp-cmake`
   fallback.
 - The cargo is the one running xtask, else PATH, else `~/.cargo/bin`.
-- A missing `resources/llama.ico` is generated from the configured clone before cargo runs, on every
-  OS. `build.rs`'s own bootstrap assumes the default clone.
-- The file-dialog backend is a target-scoped `rfd` feature set in `Cargo.toml` (`xdg-portal`,
+- A missing `resources/llama.ico` is generated before cargo runs, on every OS, and
+  `crates/config/build.rs` generates it the same way for a bare cargo command. Neither reads the clone.
+- The file-dialog backend is a target-scoped `rfd` feature set in `crates/config/Cargo.toml` (`xdg-portal`,
   `wayland`), because rfd refuses to build on Linux with none.
 
 **`cargo test` on Linux has 6 expected failures.** Their fixtures are Windows paths (`C:\m\x.gguf`),
@@ -514,12 +518,12 @@ which `std::path` does not split on Linux. The code under test is not at fault.
 
 | Path | What it is |
 | --- | --- |
-| `Cargo.toml` | The workspace: `crates/core` (package `pai-core`, the shared library), `crates/manager` (`pai-manager`, the binary of the `private-ai-manager` service), `crates/config` (`pai-config`, the configurator), `xtask` and `tools/site`. The profiles live here because cargo reads them only at the root, and so does the framework version, `[workspace.package] version`, one for the three `pai-*` crates. |
+| `Cargo.toml` | The workspace: `crates/core` (package `pai-core`, the shared library), `crates/app` (`pai-app`, the configurator's logic without a GUI), `crates/manager` (`pai-manager`, the binary of the `private-ai-manager` service), `crates/config` (`pai-config`, the configurator's GUI and CLI), `xtask` and `tools/site`. The profiles live here because cargo reads them only at the root, and so does the framework version, `[workspace.package] version`, one for the four `pai-*` crates. |
 | `xtask/src/main.rs` | The phases and their options |
 | `xtask/src/common/` | Shared: `dists.rs`, `llama.rs`, `cmake_options.rs`, `configurator.rs`, `prereq.rs`, `rocm.rs`, `version.rs`, `bench_share.rs`, `components.rs` (Linux and macOS: which package owns each staged file) |
 | `xtask/src/<os>/` | One OS's phases: `configure.rs`, `build_llama.rs`, `package.rs`, `install.rs`, `dists.rs` (the finders) |
 | `xtask/cmake/` | The checked-in llama.cpp CMake options |
-| `crates/config/build.rs`, `crates/config/arch_tables.rs` | The configurator's build script and the [architecture tables](#generated-architecture-tables) it generates from the clone |
+| `crates/app/build.rs`, `crates/app/arch_tables.rs` | `pai-app`'s build script and the [architecture tables](#generated-architecture-tables) it generates from the clone |
 | `installer/dist-sources.toml` | Dist roots and download sources for xtask, with no versions |
 | `installer/dist-sources.psd1` | The same data for the Windows PowerShell scripts: a source changes in both files |
 | `installer/wix-toolset.psd1` | The WiX pin |

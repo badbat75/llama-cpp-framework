@@ -11,7 +11,7 @@ You write the production code for this project. Follow `AGENTS.md`.
 - Take no action with real effects, as described in `AGENTS.md`.
 - Before finishing, run the agent commands in `AGENTS.md`: the tests of the part you changed, the linter
   (`cargo clippy -p <crate> --all-targets -- -D warnings`) and the format check
-  (`cargo fmt -p <crate> --check`), and for `pai-core`, `pai-manager` and `xtask` the Windows type check
+  (`cargo fmt -p <crate> --check`), and for `pai-core`, `pai-app` (with `PRIVATE_AI_LLAMA_CPP_DIR` naming the clone), `pai-manager` and `xtask` the Windows type check
   (`--target x86_64-pc-windows-gnu`, "Commands" in `AGENTS.md`). Linting and formatting are your job:
   the coordinator does not rerun them. Not the full suite.
 

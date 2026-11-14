@@ -36,8 +36,8 @@ Lessons only: the rules are in `AGENTS.md`.
 - After an install-layout change, grep the old prefix (`/opt/private-ai`) in the root `README.md`,
   `docs/build-*.md`, `AGENTS.md` and `crates/*/README.md`: the root README repeats the paths. A check
   done by hand on the old layout (an `strace`, a run) is not true of the new one: say it was not repeated.
-- Windows code is type-checked with the GNU target only (`pai-core`, `pai-manager`, `xtask`), and
-  `pai-config`'s Windows arms not even that: say "type-checked only, not run on Windows" beside each
+- Windows code is type-checked with the GNU target only (`pai-core`, `pai-app`, `pai-manager`, `xtask`),
+  and `pai-config`'s Windows arms not even that: say "type-checked only, not run on Windows" beside each
   Windows fact until the user's Windows run, and put what only that run can settle in the installer
   test plan (`installer/AGENTS.md`), not in the prose as fact.
 - When files move out of the per-user tree (to the manager's machine directory), check what still
@@ -48,3 +48,9 @@ Lessons only: the rules are in `AGENTS.md`.
   `crates/core/strings/*.toml` or the `.wxs` before writing, and grep `PLAN.md` too, which quotes them.
 - A renamed heading renames its anchor: grep `#<old-slug>` in every `.md` (the root README links into
   `crates/config/README.md`) before and after.
+- After modules move between crates, the crate docs name files bare (`presets.rs`) or crate-relative
+  (`src\presets.rs`): fix the crate-relative ones, say once at the top which crate holds the bare
+  ones, and recheck claims tied to the old crate (`pai-config` not GNU-checked, `system_connect`'s
+  Windows arm, which `build.rs` emits what, the test crate a command needs: `cargo test -p <new>`).
+- A build script that reads `build/<os>/...` of the TARGET OS (pai-app's clone lookup) fails the GNU
+  check on Linux: the docs give the override with an absolute path (the script runs in its crate dir).
