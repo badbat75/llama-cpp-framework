@@ -1,8 +1,8 @@
 //! Install phase (cargo run -p xtask -- install): installs the newest of each package the
 //! package phase left in ./dist/ on this machine, or the files given to leave a
 //! GPU runtime out: a first install, an upgrade (a newer
-//! framework or a newer bundled llama.cpp: the package version is
-//! <framework>+llama.cpp.<tag>), a reinstall of the same version (a
+//! framework, or a newer llama.cpp: the engine's package carries its own
+//! version, `1:<release>+pai<N>`), a reinstall of the same version (a
 //! repackage, which the package manager would otherwise call "already
 //! installed") or a downgrade, all the same command (windows/install.rs and
 //! macos/install.rs are the other systems').
@@ -148,6 +148,16 @@ fn modified(p: &Path) -> Option<std::time::SystemTime> {
     std::fs::metadata(p).and_then(|m| m.modified()).ok()
 }
 
+/// Whether `/usr/bin/pai-config --version` (its last word, `reported`) is
+/// the version of the configurator's package just installed
+/// (`package_version`, as `Package::read` gives it).
+fn reports_version(reported: &str, package_version: &str) -> bool {
+    !reported.is_empty()
+        && package_version
+            .strip_prefix(reported)
+            .is_some_and(|rest| rest.is_empty() || rest.starts_with('-'))
+}
+
 /// A package file with what the package manager says about it.
 struct Package {
     file: PathBuf,
@@ -166,12 +176,7 @@ impl Package {
         } else {
             (
                 output(cmd("rpm").args(["-qp", "--qf", "%{NAME}"]).arg(&file)).unwrap_or_default(),
-                output(
-                    cmd("rpm")
-                        .args(["-qp", "--qf", "%{VERSION}-%{RELEASE}"])
-                        .arg(&file),
-                )
-                .unwrap_or_default(),
+                output(cmd("rpm").args(["-qp", "--qf", "%{EVR}"]).arg(&file)).unwrap_or_default(),
             )
         };
         if name.is_empty() || new_version.is_empty() {
@@ -181,7 +186,7 @@ impl Package {
             output(cmd("dpkg-query").args(["-W", "-f=${db:Status-Status} ${Version}", &name]))
                 .and_then(|s| s.strip_prefix("installed ").map(str::to_string))
         } else {
-            output(cmd("rpm").args(["-q", "--qf", "%{VERSION}-%{RELEASE}", &name]))
+            output(cmd("rpm").args(["-q", "--qf", "%{EVR}", &name]))
                 .filter(|s| !s.contains(' ') && !s.contains("not installed"))
         }
         .unwrap_or_default();
@@ -409,12 +414,7 @@ pub fn run(format: Option<&str>, force: bool, dry_run: bool, files: Vec<PathBuf>
         let version = output(cmd("/usr/bin/pai-config").arg("--version"))
             .and_then(|s| s.split_whitespace().last().map(str::to_string))
             .unwrap_or_default();
-        let matches = !version.is_empty()
-            && p.new_version
-                .strip_prefix(&version)
-                .map(|rest| rest.starts_with('+') || rest.starts_with('-'))
-                .unwrap_or(false);
-        if !matches {
+        if !reports_version(&version, &p.new_version) {
             bail!(
                 "/usr/bin/pai-config reports '{}', the package is {}",
                 if version.is_empty() {
@@ -693,5 +693,138 @@ mod tests {
                 );
             }
         }
+    }
+
+    // ── The framework and its engine ────────────────────────────────────
+
+    /// The newest of each package in dist/ by its new name: the framework's
+    /// four at the bare framework version, the engine `llama.cpp` at its own
+    /// version (the epoch is not in a file name, as dpkg-name leaves it out)
+    /// and its runtimes `llama.cpp-<sdk>`, told apart from the engine. The
+    /// never-published 2.99.x names (`private-ai-framework-llama`, `-rocm`)
+    /// are never picked.
+    #[test]
+    fn install_finds_the_newest_of_each_package_by_the_new_names() {
+        let dir = std::env::temp_dir().join(format!("xtask-install-split-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        for file in [
+            "private-ai-framework-config-v2.99.1-amd64.deb",
+            "private-ai-framework-cli-v2.99.1-amd64.deb",
+            "private-ai-framework-bff-v2.99.1-amd64.deb",
+            "private-ai-framework-core-v2.99.1-amd64.deb",
+            "llama.cpp-v1.0.0+pai1-amd64.deb",
+            "llama.cpp-rocm-v10.1.0-amd64.deb",
+            "llama.cpp-vulkan-v1.4.363.1-amd64.deb",
+            "private-ai-framework-llama-v2.99.0-v1.0.0-amd64.deb",
+            "private-ai-framework-rocm-v10.1.0-amd64.deb",
+        ] {
+            std::fs::write(dir.join(file), "").unwrap();
+        }
+        let mut found: Vec<String> = components::newest_in(&dir, "-amd64.deb")
+            .iter()
+            .map(|(_, p)| name(p))
+            .collect();
+        std::fs::remove_dir_all(&dir).unwrap();
+        found.sort();
+        assert_eq!(
+            found,
+            [
+                "llama.cpp-rocm-v10.1.0-amd64.deb",
+                "llama.cpp-v1.0.0+pai1-amd64.deb",
+                "llama.cpp-vulkan-v1.4.363.1-amd64.deb",
+                "private-ai-framework-bff-v2.99.1-amd64.deb",
+                "private-ai-framework-cli-v2.99.1-amd64.deb",
+                "private-ai-framework-config-v2.99.1-amd64.deb",
+                "private-ai-framework-core-v2.99.1-amd64.deb",
+            ]
+        );
+    }
+
+    /// The engine's version carries the epoch `1:` (Ubuntu's own
+    /// `llama.cpp` is `8681+dfsg-1`): replacing the distribution's package
+    /// with ours is an upgrade, the way back a downgrade, and a new build
+    /// revision of the same release an upgrade, in the `.deb` form and the
+    /// rpm EVR form alike (rpm-version(7): an omitted epoch is zero and the
+    /// epoch outranks the rest).
+    #[test]
+    fn the_engine_versions_are_compared_with_their_epoch() {
+        for (new, old, want) in [
+            ("1:1.0.0+pai1", "8681+dfsg-1", "upgrade"),
+            ("8681+dfsg-1", "1:1.0.0+pai1", "downgrade"),
+            ("1:1.0.0+pai2", "1:1.0.0+pai1", "upgrade"),
+            ("1:1.0.0+pai10", "1:1.0.0+pai9", "upgrade"),
+            ("1:1.0.1+pai1", "1:1.0.0+pai3", "upgrade"),
+            ("1:1.0.0+pai1", "1:1.0.0+pai1", "reinstall"),
+            ("1:1.0.0-pai1", "b11232-1", "upgrade"),
+            ("1:1.0.0-pai2", "1:1.0.0-pai1", "upgrade"),
+            ("1:1.0.0-pai1", "1:1.0.1-pai1", "downgrade"),
+            ("1:1.0.0+pai1", "", "install"),
+            // The framework packages carry no epoch: as before.
+            ("2.99.1", "2.99.0", "upgrade"),
+            ("2.99.1-1", "2.99.2-1", "downgrade"),
+        ] {
+            assert_eq!(
+                pkg("llama.cpp-v1.0.0+pai1-amd64.deb", new, old).action(),
+                want,
+                "{new} over {old}"
+            );
+        }
+    }
+
+    /// An `.rpm`'s version is read with its epoch, as rpm prints `%{EVR}`
+    /// (`1:1.0.0-pai1`; `2.99.1-1` without one, checked with rpm 6.0.1),
+    /// for the file and the installed package alike: `%{VERSION}-%{RELEASE}`
+    /// drops the epoch, and the engine would then compare as `1.0.0` against
+    /// another build's. Read from the code before the tests.
+    #[test]
+    fn rpm_versions_are_read_with_their_epoch() {
+        let src = include_str!("install.rs");
+        let code = src.split("\n#[cfg(test)]\nmod tests").next().unwrap();
+        assert!(
+            !code.contains("%{VERSION}-%{RELEASE}"),
+            "an rpm version is read without its epoch"
+        );
+        assert_eq!(
+            code.matches("%{EVR}").count(),
+            2,
+            "the file's and the installed package's version, each with %{{EVR}}"
+        );
+    }
+
+    /// After the install, `/usr/bin/pai-config --version` must name the
+    /// configurator's package version: now the bare framework version
+    /// (`2.99.1` in a `.deb`, `2.99.1-1` as rpm's EVR), no `+llama.cpp...`
+    /// any more. Another version, a longer one that only starts the same, or
+    /// nothing, is not it.
+    #[test]
+    fn the_installed_configurator_reports_its_package_version() {
+        for (reported, package) in [("2.99.1", "2.99.1"), ("2.99.1", "2.99.1-1")] {
+            assert!(reports_version(reported, package), "{reported} {package}");
+        }
+        for (reported, package) in [
+            ("2.99.0", "2.99.1"),
+            ("2.99.1", "2.99.10"),
+            ("2.99.1", "2.99.10-1"),
+            ("", "2.99.1"),
+            ("2.99.1", ""),
+        ] {
+            assert!(
+                !reports_version(reported, package),
+                "{reported:?} {package:?}"
+            );
+        }
+    }
+
+    /// The check after the install goes through [`reports_version`].
+    #[test]
+    fn the_install_check_uses_reports_version() {
+        let src = include_str!("install.rs");
+        let code = src.split("\n#[cfg(test)]\nmod tests").next().unwrap();
+        let run = code.split("pub fn run(").nth(1).expect("run()");
+        assert!(
+            run.contains("reports_version("),
+            "run() checks pai-config's version inline"
+        );
     }
 }

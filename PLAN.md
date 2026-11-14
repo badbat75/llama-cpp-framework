@@ -377,8 +377,9 @@ Decided with the user on 2026-11-14:
 The 2.99.x packages were never published, so no upgrade relation names them. Requirement change: R1,
 R2 and the release process in `AGENTS.md` (installer name, release title) follow this.
 
-Slices, each test first: **1** the Linux split (`core`, the engine and its runtimes, versions,
-relations, file names); **2** the build split in xtask; **3** the MSI's two features and its name;
+Slices, each test first: **1** (done) the Linux split (`core`, the engine and its runtimes,
+versions, relations, file names; a non-release llama.cpp build is refused; the runtimes' copyright
+files and the engine's homepage are llama.cpp's); **2** the build split in xtask; **3** the MSI's two features and its name;
 **4** the macOS `.pkg`; **5** docs and the release process.
 
 - Done when: `xtask package` on Linux makes the framework packages at `2.99.1` requiring `llama.cpp (>=

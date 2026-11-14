@@ -8,14 +8,16 @@
 //!   front ends read. The GUI package requires it, so a headless server
 //!   installs the command line without the GUI.
 //! - `bff`: pai-bff, the web service, and its systemd unit (Linux only).
-//! - `llama`: llama.cpp's executables and libraries, every ggml backend,
-//!   pai-manager with the system files of its services (the systemd units,
-//!   the D-Bus and polkit policies, the sysusers.d entry), `cli.toml` (the
-//!   texts every program prints; every framework package requires this
-//!   one), and libomp: the
-//!   dist's OpenMP runtime, which ggml-base itself links, so it comes with
-//!   llama.cpp and not with ROCm.
-//! - `rocm`, `cuda`, `vulkan`: the external runtimes and nothing else. ggml
+//! - `core`: pai-manager with the system files of its services (the systemd
+//!   units, the D-Bus and polkit policies, the sysusers.d entry) and
+//!   `cli.toml` (the texts every program prints); every other framework
+//!   package requires this one.
+//! - `llama`: the engine, package `llama.cpp`: llama.cpp's executables and
+//!   libraries, every ggml backend, and libomp: the dist's OpenMP runtime,
+//!   which ggml-base itself links, so it comes with llama.cpp and not with
+//!   ROCm. Nothing of the framework.
+//! - `rocm`, `cuda`, `vulkan`: the external runtimes and nothing else, the
+//!   engine's (`llama.cpp-<sdk>`). ggml
 //!   loads a backend at start and skips it when its runtime is missing, so
 //!   each is optional, and each is versioned by its SDK: a new llama.cpp on the
 //!   same SDK leaves them as they are.
@@ -27,12 +29,15 @@ pub const BASE_NAME: &str = "private-ai-framework";
 /// The base name of the packages up to 2.4 (the single package of 2.2 and
 /// earlier, then `<base>-<component>`), which the upgrade relations name.
 pub const OLD_BASE_NAME: &str = "llama-cpp-framework";
+/// The engine's package name, which its runtimes' names start with too.
+pub const ENGINE_NAME: &str = "llama.cpp";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Component {
     Config,
     Cli,
     Bff,
+    Core,
     Llama,
     Rocm,
     Cuda,
@@ -40,10 +45,11 @@ pub enum Component {
 }
 
 impl Component {
-    pub const ALL: [Component; 7] = [
+    pub const ALL: [Component; 8] = [
         Component::Config,
         Component::Cli,
         Component::Bff,
+        Component::Core,
         Component::Llama,
         Component::Rocm,
         Component::Cuda,
@@ -56,6 +62,7 @@ impl Component {
             Component::Config => "config",
             Component::Cli => "cli",
             Component::Bff => "bff",
+            Component::Core => "core",
             Component::Llama => "llama",
             Component::Rocm => "rocm",
             Component::Cuda => "cuda",
@@ -63,9 +70,15 @@ impl Component {
         }
     }
 
-    /// The package's name, which its file name starts with too.
+    /// The package's name, which its file name starts with too: the
+    /// engine is named after itself (`llama.cpp`) and its runtimes after it,
+    /// the framework's packages after the project.
     pub fn package(self) -> String {
-        format!("{BASE_NAME}-{}", self.suffix())
+        match self {
+            Component::Llama => ENGINE_NAME.to_string(),
+            c if c.is_runtime() => format!("{ENGINE_NAME}-{}", c.suffix()),
+            c => format!("{BASE_NAME}-{}", c.suffix()),
+        }
     }
 
     pub fn is_runtime(self) -> bool {
@@ -103,9 +116,14 @@ pub fn of(rel: &str) -> Component {
     {
         return Component::Bff;
     }
-    // The bus and polkit policies of the services, beside pai-manager.
-    if path.starts_with("usr/share/dbus-1/") || path.starts_with("usr/share/polkit-1/") {
-        return Component::Llama;
+    // pai-manager and the system files of its services.
+    if path == "usr/libexec/private-ai/pai-manager"
+        || path.starts_with("usr/lib/systemd/")
+        || path.starts_with("usr/lib/sysusers.d/")
+        || path.starts_with("usr/share/dbus-1/")
+        || path.starts_with("usr/share/polkit-1/")
+    {
+        return Component::Core;
     }
     // /usr/bin/pai, and its link in /usr/local/bin on macOS.
     if name == "pai" {
@@ -123,11 +141,11 @@ pub fn of(rel: &str) -> Component {
 /// The owner of a read-only data file, by its path under the data directory
 /// (`/usr/share/private-ai` on Linux, `/opt/private-ai/share` on macOS): the
 /// benchmark method goes with the command line, `cli.toml` (read by pai,
-/// pai-manager and pai-bff) with llama.cpp, which every framework package
-/// requires, the GUI's language files with the GUI.
+/// pai-manager and pai-bff) with the core, which every other framework
+/// package requires, the GUI's language files with the GUI.
 fn shared_data(data: &str) -> Component {
     if data == "strings/cli.toml" {
-        Component::Llama
+        Component::Core
     } else if data.starts_with("benchmarks/") {
         Component::Cli
     } else {
@@ -200,13 +218,34 @@ pub fn split(stage: &Path, into: &Path) -> Result<Vec<Component>> {
     Ok(present)
 }
 
-/// A package file's name without architecture and extension. pai-config, pai,
-/// pai-bff and llama.cpp name the framework and the llama.cpp release; a runtime names its SDK.
-pub fn file_stem(c: Component, fw_version: &str, llama_build: &str, version: &str) -> String {
+/// The build revision of the llama.cpp package (`+pai<N>` in its version):
+/// raised when the patches or the build options change on the same
+/// llama.cpp release.
+pub const LLAMA_CPP_REVISION: u32 = 1;
+
+/// The version of the llama.cpp package built from release `llama_build`
+/// (`v1.0.0`): `1:1.0.0+pai<LLAMA_CPP_REVISION>`.
+pub fn llama_cpp_version(llama_build: &str) -> String {
+    format!("{}+pai{LLAMA_CPP_REVISION}", llama_cpp_min(llama_build))
+}
+
+/// The lowest llama.cpp package version a framework package built against
+/// release `llama_build` (`v1.0.0`) accepts: `1:1.0.0`.
+pub fn llama_cpp_min(llama_build: &str) -> String {
+    format!("1:{}", llama_build.trim_start_matches('v'))
+}
+
+/// A package file's name without architecture and extension. A framework
+/// package names the framework version, the engine its own `version` without
+/// the epoch (no `:` in a file name), a runtime its SDK.
+pub fn file_stem(c: Component, fw_version: &str, _llama_build: &str, version: &str) -> String {
     if c.is_runtime() {
         format!("{}-v{version}", c.package())
+    } else if c == Component::Llama {
+        let bare = version.split_once(':').map_or(version, |(_, v)| v);
+        format!("{}-v{bare}", c.package())
     } else {
-        format!("{}-v{fw_version}-{llama_build}", c.package())
+        format!("{}-v{fw_version}", c.package())
     }
 }
 
@@ -272,7 +311,7 @@ mod tests {
             ),
             ("usr/bin/llama-server", Component::Llama),
             ("usr/bin/llama-bench", Component::Llama),
-            ("usr/libexec/private-ai/pai-manager", Component::Llama),
+            ("usr/libexec/private-ai/pai-manager", Component::Core),
             ("usr/lib/private-ai/libggml-base.so.0", Component::Llama),
             ("usr/lib/private-ai/libggml-hip.so", Component::Llama),
             ("usr/lib/private-ai/libggml-cuda.so", Component::Llama),
@@ -309,23 +348,192 @@ mod tests {
         }
     }
 
-    /// The system files of the services go with pai-manager, in the
-    /// llama.cpp package, although two of them sit under /usr/share, which
-    /// is otherwise the configurator's.
+    // ── The framework's core and the engine ─────────────────────────────
+
+    /// `private-ai-framework-core` holds what the framework put in the
+    /// llama.cpp package before: pai-manager, the system files of its
+    /// services (the instance unit `llama.cpp@.service` included: it runs
+    /// `pai-manager run-instance`), and `cli.toml`, the texts pai-manager,
+    /// pai and pai-bff print. The bff's unit stays with pai-bff, the
+    /// desktop entry with the GUI, although both sit beside these.
     #[test]
-    fn the_system_files_of_the_services_go_to_llama() {
+    fn core_holds_the_manager_its_system_files_and_cli_toml() {
         for rel in [
+            "usr/libexec/private-ai/pai-manager",
             "usr/lib/systemd/system/private-ai-manager.service",
             "usr/lib/systemd/system/llama.cpp@.service",
             "usr/share/dbus-1/system.d/org.privateai.Manager1.conf",
             "usr/share/polkit-1/actions/org.privateai.manager.policy",
             "usr/lib/sysusers.d/private-ai.conf",
+            "usr/share/private-ai/strings/cli.toml",
+        ] {
+            assert_eq!(of(rel), Component::Core, "{rel}");
+        }
+        for (rel, want) in [
+            (
+                "usr/lib/systemd/system/private-ai-bff.service",
+                Component::Bff,
+            ),
+            (
+                "usr/share/applications/org.privateai.Config.desktop",
+                Component::Config,
+            ),
+            ("usr/share/private-ai/strings/en_US.toml", Component::Config),
+        ] {
+            assert_eq!(of(rel), want, "{rel}");
+        }
+    }
+
+    /// The engine's package holds llama.cpp's executables and libraries,
+    /// every ggml backend and libomp, and nothing of the framework: no
+    /// program, unit, policy or data file of ours lands in it.
+    #[test]
+    fn the_engine_holds_llama_cpp_and_nothing_of_the_framework() {
+        for rel in [
+            "usr/bin/llama-server",
+            "usr/bin/llama-bench",
+            "usr/bin/llama",
+            "usr/lib/private-ai/libllama.so.1",
+            "usr/lib/private-ai/libggml-base.so.1",
+            "usr/lib/private-ai/libggml-cpu-zen4.so",
+            "usr/lib/private-ai/libggml-hip.so",
+            "usr/lib/private-ai/libmtmd.so.1",
+            "usr/lib/private-ai/libllama-server-impl.so",
+            "usr/lib/private-ai/lib/llvm/lib/libomp.so",
         ] {
             assert_eq!(of(rel), Component::Llama, "{rel}");
         }
+        for rel in [
+            "usr/bin/pai-config",
+            "usr/bin/pai",
+            "usr/libexec/private-ai/pai-manager",
+            "usr/libexec/private-ai/pai-bff",
+            "usr/lib/systemd/system/private-ai-manager.service",
+            "usr/lib/systemd/system/llama.cpp@.service",
+            "usr/lib/systemd/system/private-ai-bff.service",
+            "usr/share/dbus-1/system.d/org.privateai.Manager1.conf",
+            "usr/share/polkit-1/actions/org.privateai.manager.policy",
+            "usr/lib/sysusers.d/private-ai.conf",
+            "usr/share/private-ai/strings/cli.toml",
+            "usr/share/private-ai/strings/en_US.toml",
+            "usr/share/private-ai/benchmarks/specs/standard-1.1.ini",
+            "usr/share/applications/org.privateai.Config.desktop",
+        ] {
+            assert_ne!(of(rel), Component::Llama, "{rel}");
+        }
+    }
+
+    /// The engine is named after itself, `llama.cpp`, and its runtimes
+    /// belong to it (`llama.cpp-rocm`, `-cuda`, `-vulkan`); the framework's
+    /// packages, `core` among them, carry the project name.
+    #[test]
+    fn packages_carry_the_project_or_the_engine_name() {
+        let names: Vec<String> = Component::ALL.iter().map(|c| c.package()).collect();
         assert_eq!(
-            of("usr/share/applications/org.privateai.Config.desktop"),
-            Component::Config
+            names,
+            [
+                "private-ai-framework-config",
+                "private-ai-framework-cli",
+                "private-ai-framework-bff",
+                "private-ai-framework-core",
+                "llama.cpp",
+                "llama.cpp-rocm",
+                "llama.cpp-cuda",
+                "llama.cpp-vulkan",
+            ]
+        );
+        assert!(!Component::Core.is_runtime());
+        assert!(!Component::Llama.is_runtime());
+    }
+
+    /// The engine's version is `1:<release>+pai<N>`: the llama.cpp release
+    /// without its `v`, `+pai<N>` our build revision ([`LLAMA_CPP_REVISION`],
+    /// checked in, starting at 1), and the epoch `1:` because Ubuntu 26.04
+    /// ships its own `llama.cpp` at `8681+dfsg-1`, which would rank above
+    /// `1.0.0` without it (Debian Policy 5.6.12: the epoch is compared
+    /// first). The framework requires at least `1:<release>`, so any build
+    /// revision of that release, or a later release, satisfies it.
+    #[test]
+    fn the_engine_version_carries_the_epoch_and_the_build_revision() {
+        assert_eq!(LLAMA_CPP_REVISION, 1);
+        assert_eq!(llama_cpp_version("v1.0.0"), "1:1.0.0+pai1");
+        assert_eq!(llama_cpp_version("v1.2.10"), "1:1.2.10+pai1");
+        assert_eq!(llama_cpp_min("v1.0.0"), "1:1.0.0");
+        assert_eq!(llama_cpp_min("v1.2.10"), "1:1.2.10");
+    }
+
+    /// File names: a framework package names the framework version alone
+    /// (no llama.cpp tag), the engine its own version without the epoch
+    /// (a `:` has no place in a file name; dpkg-name leaves the epoch out
+    /// too), a runtime its SDK. The same stem for the `.deb` and the `.rpm`.
+    #[test]
+    fn file_names_carry_the_framework_the_engine_or_the_sdk_version() {
+        for (c, version, want) in [
+            (
+                Component::Config,
+                "2.99.1",
+                "private-ai-framework-config-v2.99.1",
+            ),
+            (Component::Cli, "2.99.1", "private-ai-framework-cli-v2.99.1"),
+            (Component::Bff, "2.99.1", "private-ai-framework-bff-v2.99.1"),
+            (
+                Component::Core,
+                "2.99.1",
+                "private-ai-framework-core-v2.99.1",
+            ),
+            (Component::Llama, "1:1.0.0+pai1", "llama.cpp-v1.0.0+pai1"),
+            (Component::Rocm, "10.1.0", "llama.cpp-rocm-v10.1.0"),
+            (
+                Component::Cuda,
+                "13.5.0+nccl.2.32.3",
+                "llama.cpp-cuda-v13.5.0+nccl.2.32.3",
+            ),
+            (
+                Component::Vulkan,
+                "1.4.363.1",
+                "llama.cpp-vulkan-v1.4.363.1",
+            ),
+        ] {
+            assert_eq!(file_stem(c, "2.99.1", "v1.0.0", version), want, "{c:?}");
+        }
+    }
+
+    /// `xtask install` (Linux and macOS) picks the newest file of each
+    /// package: the engine's `llama.cpp-v...` is told apart from its
+    /// runtimes' `llama.cpp-rocm-v...`, and `core` from the others.
+    #[test]
+    fn the_newest_engine_core_and_runtime_are_picked_apart() {
+        let dir = std::env::temp_dir().join(format!("xtask-newest-engine-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        for file in [
+            "private-ai-framework-core-v2.99.1-x86_64.rpm",
+            "llama.cpp-v1.0.0+pai1-x86_64.rpm",
+            "llama.cpp-rocm-v10.1.0-x86_64.rpm",
+        ] {
+            std::fs::write(dir.join(file), "").unwrap();
+        }
+        let found: Vec<(Component, String)> = newest_in(&dir, "-x86_64.rpm")
+            .iter()
+            .map(|(c, p)| (*c, p.file_name().unwrap().to_string_lossy().into_owned()))
+            .collect();
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert_eq!(
+            found,
+            [
+                (
+                    Component::Core,
+                    "private-ai-framework-core-v2.99.1-x86_64.rpm".to_string()
+                ),
+                (
+                    Component::Llama,
+                    "llama.cpp-v1.0.0+pai1-x86_64.rpm".to_string()
+                ),
+                (
+                    Component::Rocm,
+                    "llama.cpp-rocm-v10.1.0-x86_64.rpm".to_string()
+                ),
+            ]
         );
     }
 
@@ -350,7 +558,7 @@ mod tests {
     /// server administered over SSH installs it without the GUI and its
     /// graphics libraries. The benchmark method, which the GUI reads too,
     /// goes with it, since the GUI package requires it and not the other way
-    /// round; `cli.toml` goes to llama.cpp's package (below); the GUI's
+    /// round; `cli.toml` goes to the core package (below); the GUI's
     /// language files, its desktop entry and its icon stay with the GUI.
     #[test]
     fn the_command_line_and_the_data_it_reads_go_to_the_cli_package() {
@@ -368,7 +576,7 @@ mod tests {
                 "usr/share/private-ai/benchmarks/prompts/bench-prompt-43k-1.0.txt",
                 Component::Cli,
             ),
-            ("usr/share/private-ai/strings/cli.toml", Component::Llama),
+            ("usr/share/private-ai/strings/cli.toml", Component::Core),
             ("usr/share/private-ai/strings/en_US.toml", Component::Config),
             ("usr/bin/pai-config", Component::Config),
             (
@@ -379,15 +587,16 @@ mod tests {
                 "usr/share/icons/hicolor/256x256/apps/org.privateai.Config.png",
                 Component::Config,
             ),
-            // Not taken for pai by a prefix match.
-            ("usr/bin/pai-manager", Component::Llama),
         ] {
             assert_eq!(of(rel), want, "{rel}");
         }
+        // Not taken for pai by a prefix match.
+        assert_ne!(of("usr/bin/pai-manager"), Component::Cli);
     }
 
     /// macOS: `pai` in /opt/private-ai/bin with its link in /usr/local/bin,
-    /// and the shared data under /opt/private-ai/share, as on Linux.
+    /// and the benchmark method under /opt/private-ai/share, as on Linux.
+    /// (Where macOS puts `cli.toml` comes with its own split of the `.pkg`.)
     #[test]
     fn macos_command_line_files_go_to_the_cli_package() {
         for (rel, want) in [
@@ -397,7 +606,6 @@ mod tests {
                 "opt/private-ai/share/benchmarks/specs/standard-1.1.ini",
                 Component::Cli,
             ),
-            ("opt/private-ai/share/strings/cli.toml", Component::Llama),
             ("opt/private-ai/bin/pai-config", Component::Config),
             ("opt/private-ai/share/strings/en_US.toml", Component::Config),
         ] {
@@ -406,19 +614,14 @@ mod tests {
     }
 
     /// The command line is the framework's, versioned like the GUI (the
-    /// framework and the llama.cpp release), not a runtime.
+    /// framework version alone), not a runtime.
     #[test]
     fn the_cli_package_is_named_and_versioned_like_the_configurator() {
         assert_eq!(Component::Cli.package(), "private-ai-framework-cli");
         assert!(!Component::Cli.is_runtime());
         assert_eq!(
-            file_stem(
-                Component::Cli,
-                "2.99.0",
-                "v0.9.0",
-                "2.99.0+llama.cpp.v0.9.0"
-            ),
-            "private-ai-framework-cli-v2.99.0-v0.9.0"
+            file_stem(Component::Cli, "2.99.1", "v1.0.0", "2.99.1"),
+            "private-ai-framework-cli-v2.99.1"
         );
     }
 
@@ -431,9 +634,9 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         for file in [
-            "private-ai-framework-config-v2.99.0-v0.9.0-amd64.deb",
-            "private-ai-framework-cli-v2.99.0-v0.9.0-amd64.deb",
-            "private-ai-framework-llama-v2.99.0-v0.9.0-amd64.deb",
+            "private-ai-framework-config-v2.99.1-amd64.deb",
+            "private-ai-framework-cli-v2.99.1-amd64.deb",
+            "llama.cpp-v1.0.0+pai1-amd64.deb",
         ] {
             std::fs::write(dir.join(file), "").unwrap();
         }
@@ -447,15 +650,15 @@ mod tests {
             [
                 (
                     Component::Config,
-                    "private-ai-framework-config-v2.99.0-v0.9.0-amd64.deb".to_string()
+                    "private-ai-framework-config-v2.99.1-amd64.deb".to_string()
                 ),
                 (
                     Component::Cli,
-                    "private-ai-framework-cli-v2.99.0-v0.9.0-amd64.deb".to_string()
+                    "private-ai-framework-cli-v2.99.1-amd64.deb".to_string()
                 ),
                 (
                     Component::Llama,
-                    "private-ai-framework-llama-v2.99.0-v0.9.0-amd64.deb".to_string()
+                    "llama.cpp-v1.0.0+pai1-amd64.deb".to_string()
                 ),
             ]
         );
@@ -466,8 +669,8 @@ mod tests {
     /// pai-bff has a package of its own, `private-ai-framework-bff`: it is
     /// a service, so it sits beside pai-manager in /usr/libexec/private-ai
     /// (no user command), and its unit goes with it, not with the manager's
-    /// in the llama.cpp package. A desktop install and a headless server
-    /// each choose it apart from the GUI and the command line.
+    /// in the core package. A desktop install and a headless server each
+    /// choose it apart from the GUI and the command line.
     #[test]
     fn pai_bff_and_its_unit_go_to_the_bff_package() {
         for (rel, want) in [
@@ -476,17 +679,14 @@ mod tests {
                 "usr/lib/systemd/system/private-ai-bff.service",
                 Component::Bff,
             ),
-            // The manager and its files stay where they were.
-            ("usr/libexec/private-ai/pai-manager", Component::Llama),
+            // The manager and its files go to the core package.
+            ("usr/libexec/private-ai/pai-manager", Component::Core),
             (
                 "usr/lib/systemd/system/private-ai-manager.service",
-                Component::Llama,
+                Component::Core,
             ),
-            (
-                "usr/lib/systemd/system/llama.cpp@.service",
-                Component::Llama,
-            ),
-            ("usr/lib/sysusers.d/private-ai.conf", Component::Llama),
+            ("usr/lib/systemd/system/llama.cpp@.service", Component::Core),
+            ("usr/lib/sysusers.d/private-ai.conf", Component::Core),
             ("usr/bin/pai", Component::Cli),
             ("usr/bin/pai-config", Component::Config),
         ] {
@@ -495,21 +695,16 @@ mod tests {
     }
 
     /// The bff is the framework's, versioned like the GUI and the command
-    /// line (the framework and the llama.cpp release), not a runtime, and
-    /// one of the packages every install phase considers.
+    /// line (the framework version alone), not a runtime, and one of the
+    /// packages every install phase considers.
     #[test]
     fn the_bff_package_is_named_and_versioned_like_the_configurator() {
         assert_eq!(Component::Bff.package(), "private-ai-framework-bff");
         assert!(!Component::Bff.is_runtime());
         assert!(Component::ALL.contains(&Component::Bff));
         assert_eq!(
-            file_stem(
-                Component::Bff,
-                "2.99.0",
-                "v0.9.0",
-                "2.99.0+llama.cpp.v0.9.0"
-            ),
-            "private-ai-framework-bff-v2.99.0-v0.9.0"
+            file_stem(Component::Bff, "2.99.1", "v1.0.0", "2.99.1"),
+            "private-ai-framework-bff-v2.99.1"
         );
     }
 
@@ -521,9 +716,9 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         for file in [
-            "private-ai-framework-cli-v2.99.0-v0.9.0-x86_64.rpm",
-            "private-ai-framework-bff-v2.99.0-v0.9.0-x86_64.rpm",
-            "private-ai-framework-llama-v2.99.0-v0.9.0-x86_64.rpm",
+            "private-ai-framework-cli-v2.99.1-x86_64.rpm",
+            "private-ai-framework-bff-v2.99.1-x86_64.rpm",
+            "llama.cpp-v1.0.0+pai1-x86_64.rpm",
         ] {
             std::fs::write(dir.join(file), "").unwrap();
         }
@@ -535,7 +730,7 @@ mod tests {
         assert!(
             found.contains(&(
                 Component::Bff,
-                "private-ai-framework-bff-v2.99.0-v0.9.0-x86_64.rpm".to_string()
+                "private-ai-framework-bff-v2.99.1-x86_64.rpm".to_string()
             )),
             "{found:?}"
         );
@@ -543,15 +738,14 @@ mod tests {
     }
 
     /// `cli.toml` holds every text the programs print: pai, but also
-    /// pai-manager (llama.cpp's package) and pai-bff, which do not require
-    /// the command line's package. It goes to llama.cpp's package, which
-    /// every framework package requires; the GUI's language file stays with
-    /// the GUI, the benchmark method with the command line. On macOS too.
+    /// pai-manager and pai-bff, which do not require the command line's
+    /// package. It goes to the core package, which every other framework
+    /// package requires; the GUI's language file stays with the GUI, the
+    /// benchmark method with the command line.
     #[test]
-    fn cli_toml_goes_to_llama_which_every_package_requires() {
+    fn cli_toml_goes_to_core_which_every_framework_package_requires() {
         for (rel, want) in [
-            ("usr/share/private-ai/strings/cli.toml", Component::Llama),
-            ("opt/private-ai/share/strings/cli.toml", Component::Llama),
+            ("usr/share/private-ai/strings/cli.toml", Component::Core),
             ("usr/share/private-ai/strings/en_US.toml", Component::Config),
             ("opt/private-ai/share/strings/en_US.toml", Component::Config),
             (
@@ -594,51 +788,9 @@ mod tests {
     /// names lint stays clean.
     const OLD_BASE: &str = concat!("llama-cpp", "-framework");
 
-    #[test]
-    fn packages_carry_the_project_name() {
-        let names: Vec<String> = Component::ALL.iter().map(|c| c.package()).collect();
-        assert_eq!(
-            names,
-            [
-                "private-ai-framework-config",
-                "private-ai-framework-cli",
-                "private-ai-framework-bff",
-                "private-ai-framework-llama",
-                "private-ai-framework-rocm",
-                "private-ai-framework-cuda",
-                "private-ai-framework-vulkan",
-            ]
-        );
-    }
-
-    #[test]
-    fn file_names_carry_the_release_or_the_sdk() {
-        assert_eq!(
-            file_stem(
-                Component::Llama,
-                "2.99.0",
-                "v0.9.0",
-                "2.99.0+llama.cpp.v0.9.0"
-            ),
-            "private-ai-framework-llama-v2.99.0-v0.9.0"
-        );
-        assert_eq!(
-            file_stem(
-                Component::Config,
-                "2.99.0",
-                "v0.9.0",
-                "2.99.0+llama.cpp.v0.9.0"
-            ),
-            "private-ai-framework-config-v2.99.0-v0.9.0"
-        );
-        assert_eq!(
-            file_stem(Component::Rocm, "2.99.0", "v0.9.0", "10.1.0"),
-            "private-ai-framework-rocm-v10.1.0"
-        );
-    }
-
     /// Old packages left in dist/ (the monolith of 2.2 and earlier, the split
-    /// packages of 2.3 and 2.4) are never picked, even when written last.
+    /// packages of 2.3 and 2.4, and the never-published 2.99.x runtime
+    /// `private-ai-framework-rocm`) are never picked, even when written last.
     #[test]
     fn the_newest_file_of_each_component_wins_and_the_old_packages_never_match() {
         let dir = std::env::temp_dir().join(format!("xtask-newest-{}", std::process::id()));
@@ -647,11 +799,13 @@ mod tests {
         let start =
             std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
         let files = [
-            "private-ai-framework-rocm-v10.0.0-amd64.deb".to_string(),
-            "private-ai-framework-rocm-v10.1.0-x86_64.rpm".to_string(),
+            "llama.cpp-rocm-v10.0.0-amd64.deb".to_string(),
+            "llama.cpp-rocm-v10.1.0-x86_64.rpm".to_string(),
             format!("{OLD_BASE}-v2.2.0-v0.8.0-amd64.deb"),
             format!("{OLD_BASE}-rocm-v10.2.0-amd64.deb"),
             format!("{OLD_BASE}-config-v2.4.0-v0.9.0-amd64.deb"),
+            "private-ai-framework-rocm-v10.2.0-amd64.deb".to_string(),
+            "private-ai-framework-llama-v2.99.0-v1.0.0-amd64.deb".to_string(),
         ];
         // Each file one minute newer than the one before: the old ones last.
         for (i, file) in files.iter().enumerate() {
@@ -673,7 +827,7 @@ mod tests {
             names,
             [(
                 Component::Rocm,
-                "private-ai-framework-rocm-v10.0.0-amd64.deb".to_string()
+                "llama.cpp-rocm-v10.0.0-amd64.deb".to_string()
             )]
         );
         std::fs::remove_dir_all(&dir).unwrap();

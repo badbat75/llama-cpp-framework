@@ -184,3 +184,9 @@ Lessons only: the rules are in `AGENTS.md`.
 - The fe's JSX-text lint (`strings.test.ts`) flags letters between any `>` and the next `<` with no
   `{`/`}` between them, code included (`</p>\n  else if (x) content =`): write each branch as a braced
   `if (..) { return <..> }` so a brace always sits between the tags.
+- xtask's macOS module type-checks on Linux too: `cargo check -p xtask --all-targets --target
+  aarch64-apple-darwin` (the rustup target is installed; no C build script runs). It shows the
+  `common/` items only Linux calls as dead code there (`OLD_BASE_NAME` already was before step 11).
+- The engine's package version carries an epoch (`1:1.0.0+pai1`): `util::version_gt` compares it
+  first, rpm reads versions with `%{EVR}`, and the `.rpm` spells it as `Epoch`/`Version`/`Release`
+  (`package::rpm_evr`); a file name drops the epoch (`components::file_stem`).

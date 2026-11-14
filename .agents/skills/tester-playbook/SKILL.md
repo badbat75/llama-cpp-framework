@@ -324,3 +324,18 @@ Lessons only: the rules are in `AGENTS.md`.
   fe's `strings.test.ts` sees a key only as a literal `t('key'` (a template key like
   `t(\`state-${s}\`)` counts its value as unused) and flags any letters between `>` and `<` in a
   `.tsx`, a `? :` chain written inline in JSX included.
+- Distribution package facts, read-only: `apt-get download <pkg>` into a fresh /tmp dir, then `dpkg -c`
+  / `dpkg-deb -f` (Ubuntu 26.04 here: `llama.cpp` is a metapackage, the commands are in
+  `llama.cpp-tools`); Fedora specs come raw with `curl -sL
+  https://src.fedoraproject.org/rpms/<name>/raw/rawhide/f/<name>.spec`. The 2.4.0 `.deb`/`.rpm` of
+  this project sit in `dist/`: `dpkg -c` them to see what a predecessor held before naming it in a
+  relation. Order checks: `dpkg --compare-versions a gt b`, `rpm --eval '%{lua:
+  print(rpm.vercmp(a, b))}'`; rpm's own text is rpm-spec(5) and rpm-version(7) at
+  rpm-software-management.github.io/rpm/man/. `rpm -qp --qf '%{EVR}'` prints `1:1.0.0-pai1`, and no
+  `0:` without an epoch (a throwaway noarch spec with an empty `%files` builds in a second).
+- A "no old text left" pin on production code (`!code.contains(..)`) must be narrow: doc comments
+  legitimately describe the old format (`OLD_SPLIT_BEFORE` explains 2.4's `+llama.cpp.<tag>`). Pin
+  the code shape (`"+llama.cpp.{"`), and run it against the throwaway candidate.
+- Naming a stub after a local of `run()` (`fn homepage` beside `let homepage = ..` in
+  `linux/package.rs`) makes the call `E0618: expected function`: the local shadows the fn. Rename
+  one, and tell the coder which.

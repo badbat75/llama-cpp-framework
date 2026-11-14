@@ -1,6 +1,7 @@
-//! Package phase (cargo run -p xtask -- package): the Linux build as seven .deb
-//! and seven .rpm packages in ./dist/ (common/components.rs says which file goes
-//! where): pai-config, pai, pai-bff, llama.cpp, and the ROCm, CUDA and Vulkan
+//! Package phase (cargo run -p xtask -- package): the Linux build as eight .deb
+//! and eight .rpm packages in ./dist/ (common/components.rs says which file goes
+//! where): the framework's pai-config, pai, pai-bff and core (pai-manager and
+//! its services), and the engine, llama.cpp, with its ROCm, CUDA and Vulkan
 //! runtimes.
 //! The counterpart of the Windows MSI (windows/package.rs). Requires a successful
 //! build; patchelf, dpkg-dev and rpm come from the prerequisites.
@@ -34,16 +35,19 @@
 //!                         the licence texts of each package
 //!   /usr/share/           the desktop entry, its icon, the copyright file
 //!   /usr/lib/systemd/system/, /usr/lib/sysusers.d/, /usr/share/dbus-1/,
-//!   /usr/share/polkit-1/  the system files of the services, in the llama.cpp
+//!   /usr/share/polkit-1/  the system files of the services, in the core
 //!                         package (linux/system_files.rs), with the
 //!                         maintainer scripts that create the service user and
 //!                         enable, start and stop the manager; the web
 //!                         service's unit in the bff's package, with its own
 //!                         maintainer scripts
 //!
-//! pai-config, pai, pai-bff and llama.cpp carry <framework>+llama.cpp.<tag> as
-//! version: pai-config requires pai's and llama.cpp's exact one, pai and
-//! pai-bff llama.cpp's. A runtime carries its
+//! The framework's packages carry the framework's version alone: each requires
+//! the core at its own version (pai-config also pai's), and those that run the
+//! engine (pai-config, pai, the core) llama.cpp at least at the release they
+//! were built against (`components::llama_cpp_min`). The engine carries its
+//! own version, `1:<release>+pai<N>` (`components::llama_cpp_version`), and
+//! requires nothing of the framework. A runtime carries its
 //! SDK's version and is optional: llama.cpp recommends the one it was built
 //! against and refuses any other, because a backend that cannot resolve a symbol
 //! is skipped at start with nothing but a log line.
@@ -161,10 +165,14 @@ fn rpm_spec(f: &Fields, license: &str, libraries: &str, root: &Path) -> String {
             files.push_str(&format!("/{rel}\n"));
         }
     }
+    let (epoch, version, release) = rpm_evr(f);
+    let epoch = epoch
+        .map(|e| format!("Epoch:          {e}\n"))
+        .unwrap_or_default();
     format!(
         r#"Name:           {package}
-Version:        {version}
-Release:        {RPM_RELEASE}
+{epoch}Version:        {version}
+Release:        {release}
 Summary:        {summary}
 License:        {license}
 {url}{relations}
@@ -190,7 +198,6 @@ cp -a "{root}/." "%{{buildroot}}/"
 {scriptlets}%files
 %defattr(-,root,root,-)
 {files}"#,
-        version = f.version,
         summary = f.summary,
         description = f.description,
         relations = rpm_relations(f),
@@ -299,6 +306,9 @@ pub fn run(want_deb: bool, want_rpm: bool, keep_staging: bool) -> Result<()> {
     // ── Resolve versions ────────────────────────────────────────────────
     let fw_version = version::framework()?;
     let llama_build = version::llama_build(&llama)?;
+    if !util::is_release_tag(&llama_build) {
+        bail!("llama.cpp {llama_build} is not a release (vX.Y.Z): packages are built from release tags only. Run cargo run -p xtask -- build to check out the latest release.");
+    }
 
     // Each format names the architecture its own way.
     let (deb_arch, rpm_arch) = match std::env::consts::ARCH {
@@ -307,17 +317,15 @@ pub fn run(want_deb: bool, want_rpm: bool, keep_staging: bool) -> Result<()> {
         a => bail!("unsupported architecture: {a}"),
     };
 
-    // The package version carries the bundled llama.cpp too, as a "+"
-    // suffix: a rebuild on a newer llama.cpp is then an UPGRADE to the package
-    // manager (dpkg and rpm both order 2.0.0 < 2.0.0+llama.cpp.v0.7.0 <
-    // ...v0.10.0, and the next framework version above all of them), and
-    // `apt policy`/`rpm -q` name what is installed. "-" is not allowed in an
-    // rpm Version: the b0-<sha> fallback gets "." instead.
-    let pkg_version = format!("{fw_version}+llama.cpp.{}", llama_build.replace('-', "."));
+    // The framework's packages carry the framework's version, the engine its
+    // own; the framework accepts any engine from the release it was built
+    // against on.
+    let engine_version = components::llama_cpp_version(&llama_build);
+    let engine_min = components::llama_cpp_min(&llama_build);
 
     ui::head(format!("Framework version: {fw_version}"));
     ui::head(format!("llama.cpp release: {llama_build}"));
-    ui::head(format!("Package version:   {pkg_version}"));
+    ui::head(format!("llama.cpp package: {engine_version}"));
     ui::head(format!("Architecture:      {rpm_arch}"));
 
     // ── Preconditions ───────────────────────────────────────────────────
@@ -654,7 +662,7 @@ pub fn run(want_deb: bool, want_rpm: bool, keep_staging: bool) -> Result<()> {
     let sdk_version = |dist: Option<PathBuf>| {
         dist.as_deref()
             .and_then(components::dist_version)
-            .unwrap_or_else(|| pkg_version.clone())
+            .unwrap_or_else(|| fw_version.clone())
     };
     let cuda_version = match dists
         .find_nccl()
@@ -665,9 +673,8 @@ pub fn run(want_deb: bool, want_rpm: bool, keep_staging: bool) -> Result<()> {
         None => sdk_version(dists.find_cuda()),
     };
     let version_of = |c: Component| match c {
-        Component::Config | Component::Cli | Component::Bff | Component::Llama => {
-            pkg_version.clone()
-        }
+        Component::Config | Component::Cli | Component::Bff | Component::Core => fw_version.clone(),
+        Component::Llama => engine_version.clone(),
         Component::Rocm => sdk_version(Some(PathBuf::from(&hip_root))),
         Component::Cuda => cuda_version.clone(),
         Component::Vulkan => sdk_version(dists.find_vulkan()),
@@ -697,33 +704,53 @@ pub fn run(want_deb: bool, want_rpm: bool, keep_staging: bool) -> Result<()> {
 
         let doc = root.join("usr/share/doc").join(c.package());
         std::fs::create_dir_all(&doc)?;
-        let mut copyright = format!(
-            "{} {} is part of {} {fw_version}, distributed under the MIT licence:\n\n",
-            c.package(),
-            version_of(*c),
-            components::BASE_NAME
-        );
-        copyright.push_str(&std::fs::read_to_string(repo.join("LICENSE"))?);
-        copyright.push_str(&format!(
-            "\nIt was built with llama.cpp {llama_build}, whose licence follows.\n"
-        ));
-        copyright.push_str(&format!(
-            "The libraries under /{RT_DIR} are redistributed unmodified, each under its own licence.\n"
-        ));
-        copyright.push_str(&format!(
-            "The full texts are in /{}:\n\n",
-            share(&format!("licenses/{}", c.suffix()))
-        ));
-        copyright.push_str(&std::fs::read_to_string(dir.join("README.txt"))?);
-        copyright.push_str("\nllama.cpp's licence:\n\n");
-        copyright.push_str(&std::fs::read_to_string(llama.join("LICENSE"))?);
-        copyright.push_str(
-            "\npai-config embeds the Fluent UI System Icons font, whose licence follows.\n\n",
-        );
-        copyright.push_str(&std::fs::read_to_string(
-            repo.join("crates/config/ui/fonts/LICENSE"),
-        )?);
-        std::fs::write(doc.join("copyright"), copyright)?;
+        let licences_dir = share(&format!("licenses/{}", c.suffix()));
+        if *c == Component::Llama {
+            // The engine is llama.cpp, under its own licence.
+            let mut copyright = format!(
+                "{} {} is llama.cpp {llama_build}, distributed under its MIT licence:\n\n",
+                c.package(),
+                version_of(*c),
+            );
+            copyright.push_str(&std::fs::read_to_string(llama.join("LICENSE"))?);
+            copyright.push_str(&format!(
+                "\nThe libraries under /{RT_DIR} are redistributed unmodified, each under its own licence.\n\
+                 The full texts are in /{licences_dir}:\n\n"
+            ));
+            copyright.push_str(&std::fs::read_to_string(dir.join("README.txt"))?);
+            std::fs::write(doc.join("copyright"), copyright)?;
+        } else if c.is_runtime() {
+            let readme = std::fs::read_to_string(dir.join("README.txt"))?;
+            std::fs::write(
+                doc.join("copyright"),
+                runtime_copyright(*c, &version_of(*c), &readme),
+            )?;
+        } else {
+            let mut copyright = format!(
+                "{} {} is part of {} {fw_version}, distributed under the MIT licence:\n\n",
+                c.package(),
+                version_of(*c),
+                components::BASE_NAME
+            );
+            copyright.push_str(&std::fs::read_to_string(repo.join("LICENSE"))?);
+            copyright.push_str(&format!(
+                "\nIt was built with llama.cpp {llama_build}, whose licence follows.\n"
+            ));
+            copyright.push_str(&format!(
+                "The libraries under /{RT_DIR} are redistributed unmodified, each under its own licence.\n"
+            ));
+            copyright.push_str(&format!("The full texts are in /{licences_dir}:\n\n"));
+            copyright.push_str(&std::fs::read_to_string(dir.join("README.txt"))?);
+            copyright.push_str("\nllama.cpp's licence:\n\n");
+            copyright.push_str(&std::fs::read_to_string(llama.join("LICENSE"))?);
+            copyright.push_str(
+                "\npai-config embeds the Fluent UI System Icons font, whose licence follows.\n\n",
+            );
+            copyright.push_str(&std::fs::read_to_string(
+                repo.join("crates/config/ui/fonts/LICENSE"),
+            )?);
+            std::fs::write(doc.join("copyright"), copyright)?;
+        }
 
         // The repo may sit on a filesystem that hands out group-writable modes; a
         // package carries 755 / 644 whatever the build drive says.
@@ -755,12 +782,12 @@ pub fn run(want_deb: bool, want_rpm: bool, keep_staging: bool) -> Result<()> {
         }
     }
 
-    // The maintainer scripts (the llama.cpp package's only) are written by
+    // The maintainer scripts (the core's and the bff's only) are written by
     // build_deb and rpm_spec.
 
     let repo_git =
         |args: &[&str]| output(cmd("git").arg("-C").arg(&repo).args(args)).unwrap_or_default();
-    let homepage = {
+    let repo_url = {
         let url = repo_git(&["remote", "get-url", "origin"]);
         url.strip_suffix(".git").map(str::to_string).unwrap_or(url)
     };
@@ -795,9 +822,9 @@ pub fn run(want_deb: bool, want_rpm: bool, keep_staging: bool) -> Result<()> {
             version: &version,
             summary,
             description: &description,
-            homepage: &homepage,
-            depends_on_llama: matches!(*c, Component::Config | Component::Cli | Component::Bff)
-                .then_some(pkg_version.as_str()),
+            homepage: homepage(*c, &repo_url),
+            depends_on_llama: matches!(*c, Component::Config | Component::Cli | Component::Core)
+                .then_some(engine_min.as_str()),
             runtimes: if *c == Component::Llama {
                 &runtimes
             } else {
@@ -850,6 +877,41 @@ pub fn run(want_deb: bool, want_rpm: bool, keep_staging: bool) -> Result<()> {
     Ok(())
 }
 
+/// llama.cpp's upstream home, the engine's and its runtimes' Homepage (deb)
+/// and URL (rpm).
+const LLAMA_CPP_URL: &str = "https://github.com/ggml-org/llama.cpp";
+
+/// The Homepage of package `c`: the framework's repository (`framework`)
+/// for the framework's packages, llama.cpp's upstream for the engine and
+/// its runtimes.
+fn homepage(c: Component, framework: &str) -> &str {
+    if c == Component::Llama || c.is_runtime() {
+        LLAMA_CPP_URL
+    } else {
+        framework
+    }
+}
+
+/// The `/usr/share/doc/<package>/copyright` of a runtime package: what it
+/// is (the SDK's libraries the llama.cpp engine loads, at the SDK's
+/// `version`), where the licence texts are, and `readme`, the licence
+/// directory's README.txt.
+fn runtime_copyright(c: Component, version: &str, readme: &str) -> String {
+    let sdk = match c {
+        Component::Rocm => "ROCm",
+        Component::Cuda if version.contains("+nccl.") => "CUDA and NCCL",
+        Component::Cuda => "CUDA",
+        _ => "Vulkan SDK",
+    };
+    format!(
+        "{} {version} holds the {sdk} libraries the llama.cpp engine loads,\n\
+         redistributed unmodified, each under its own licence.\n\
+         The full texts are in /{}:\n\n{readme}",
+        c.package(),
+        share(&format!("licenses/{}", c.suffix())),
+    )
+}
+
 /// The short and the long description of a package.
 fn texts(c: Component, llama_build: &str) -> (&'static str, String) {
     match c {
@@ -873,6 +935,14 @@ fn texts(c: Component, llama_build: &str) -> (&'static str, String) {
                  runtime package and the GPU driver: without either, llama-server skips it at\n\
                  start.\n"
             ),
+        ),
+        Component::Core => (
+            "pai-manager: the service that runs llama-server for the framework",
+            "pai-manager, the framework's service: it keeps server.ini and presets.ini in\n\
+             /etc/private-ai and runs llama-server as a systemd service, for pai-config,\n\
+             pai and pai-bff. With the systemd units, the D-Bus and polkit policies, the\n\
+             service user and the texts the framework's programs print.\n"
+                .to_string(),
         ),
         Component::Rocm => (
             "ROCm/HIP runtime and kernels for llama.cpp",
@@ -942,8 +1012,8 @@ struct Fields<'a> {
     summary: &'a str,
     description: &'a str,
     homepage: &'a str,
-    /// The framework version at which this one requires llama.cpp's package
-    /// exactly (and the configurator also the command line's).
+    /// The lowest llama.cpp package version this one requires (`1:1.0.0`),
+    /// None when it does not run the engine.
     depends_on_llama: Option<&'a str>,
     /// The runtimes llama.cpp was built against, with their versions.
     runtimes: &'a [(Component, String)],
@@ -967,8 +1037,9 @@ fn deb_relations(f: &Fields) -> (String, String, String) {
     if let Some(old) = old_package(f.component) {
         conflicts = vec![MONOLITH.to_string(), old];
     }
+    // The distributions' packages that carry the same commands in /usr/bin.
     if f.component == Component::Llama {
-        conflicts.push("llama.cpp".into());
+        conflicts.push("llama.cpp-tools".into());
     }
     (
         recommends.join(", "),
@@ -1028,9 +1099,29 @@ fn deb_control(
 }
 
 /// The 2.3 and 2.4 package of a component, which this one takes over; None
-/// for the command line and the bff, which those releases did not have.
+/// for the command line, the bff and the core, which those releases did not
+/// have.
 fn old_package(c: Component) -> Option<String> {
-    (!matches!(c, Component::Cli | Component::Bff)).then(|| format!("{MONOLITH}-{}", c.suffix()))
+    (!matches!(c, Component::Cli | Component::Bff | Component::Core))
+        .then(|| format!("{MONOLITH}-{}", c.suffix()))
+}
+
+/// A package's version as rpm spells it: (Epoch, Version, Release). The
+/// engine's `1:1.0.0+pai1` is epoch 1, version 1.0.0 and our build revision
+/// `pai1` as the release; every other package has no epoch and Release
+/// [`RPM_RELEASE`].
+fn rpm_evr<'a>(f: &Fields<'a>) -> (Option<&'a str>, &'a str, &'a str) {
+    if f.component != Component::Llama {
+        return (None, f.version, RPM_RELEASE);
+    }
+    let (epoch, rest) = match f.version.split_once(':') {
+        Some((e, rest)) => (Some(e), rest),
+        None => (None, f.version),
+    };
+    match rest.split_once('+') {
+        Some((version, release)) => (epoch, version, release),
+        None => (epoch, rest, RPM_RELEASE),
+    }
 }
 
 /// The `.rpm` relations, one tag per line.
@@ -1046,16 +1137,19 @@ fn rpm_relations(f: &Fields) -> String {
         } else {
             lines.push(format!("Obsoletes:      {old} < {OLD_SPLIT_BEFORE}"));
         }
+        let (epoch, version, release) = rpm_evr(f);
+        let epoch = epoch.map(|e| format!("{e}:")).unwrap_or_default();
         lines.push(format!(
-            "Provides:       {old} = {}-{RPM_RELEASE}",
-            f.version
+            "Provides:       {old} = {epoch}{version}-{release}"
         ));
     }
     for c in exact_requires(f) {
+        lines.push(format!("Requires:       {} = {}", c.package(), f.version));
+    }
+    if let Some(min) = f.depends_on_llama {
         lines.push(format!(
-            "Requires:       {} = {}",
-            c.package(),
-            f.depends_on_llama.unwrap_or_default()
+            "Requires:       {} >= {min}",
+            Component::Llama.package()
         ));
     }
     for (c, v) in f.runtimes {
@@ -1066,7 +1160,7 @@ fn rpm_relations(f: &Fields) -> String {
     if f.component == Component::Llama {
         lines.push("Conflicts:      llama-cpp".into());
     }
-    if matches!(f.component, Component::Llama | Component::Bff) {
+    if matches!(f.component, Component::Core | Component::Bff) {
         // What the scriptlets run (Fedora's %systemd_requires, plus %posttrans).
         for tag in ["post", "preun", "postun", "posttrans"] {
             lines.push(format!("Requires({tag}): systemd"));
@@ -1206,7 +1300,8 @@ fn build_deb(
 
 /// The whole `.deb` Depends of a package from what dpkg-shlibdeps found
 /// (`scanned`, empty when it gave no answer): the scan or a fixed list, the
-/// framework packages it requires exactly, what its maintainer scripts run.
+/// framework packages it requires exactly, llama.cpp at its lowest version,
+/// what its maintainer scripts run.
 fn depends_line(f: &Fields, scanned: &str) -> String {
     let mut parts: Vec<String> = Vec::new();
     if !scanned.is_empty() {
@@ -1221,11 +1316,10 @@ fn depends_line(f: &Fields, scanned: &str) -> String {
         }
     }
     for c in exact_requires(f) {
-        parts.push(format!(
-            "{} (= {})",
-            c.package(),
-            f.depends_on_llama.unwrap_or_default()
-        ));
+        parts.push(format!("{} (= {})", c.package(), f.version));
+    }
+    if let Some(min) = f.depends_on_llama {
+        parts.push(format!("{} (>= {min})", Component::Llama.package()));
     }
     let scripts = system_files::deb_depends(f.component);
     if !scripts.is_empty() {
@@ -1234,14 +1328,14 @@ fn depends_line(f: &Fields, scanned: &str) -> String {
     parts.join(", ")
 }
 
-/// The framework packages this one requires at exactly its
-/// `depends_on_llama` version: llama.cpp's, and for the configurator also the
-/// command line's, which holds the data the GUI reads.
+/// The framework packages this one requires at exactly its own version: the
+/// core's, and for the configurator also the command line's, which holds the
+/// data the GUI reads.
 fn exact_requires(f: &Fields) -> Vec<Component> {
-    match f.depends_on_llama {
-        None => Vec::new(),
-        Some(_) if f.component == Component::Config => vec![Component::Cli, Component::Llama],
-        Some(_) => vec![Component::Llama],
+    match f.component {
+        Component::Config => vec![Component::Cli, Component::Core],
+        Component::Cli | Component::Bff => vec![Component::Core],
+        _ => Vec::new(),
     }
 }
 
@@ -1305,6 +1399,8 @@ fn build_rpm(
 mod tests {
     use super::*;
 
+    /// `depends_on_llama`: the lowest llama.cpp package version this one
+    /// requires (`1:1.0.0`), None when it does not run the engine.
     fn fields<'a>(
         component: Component,
         runtimes: &'a [(Component, String)],
@@ -1374,6 +1470,12 @@ mod tests {
     /// split packages `<OLD>-<component>` of 2.3 and 2.4.
     const OLD: &str = concat!("llama-cpp", "-framework");
 
+    /// The engine's version and the lowest one the framework accepts, as
+    /// `components::llama_cpp_version` and `llama_cpp_min` give them for
+    /// llama.cpp v1.0.0.
+    const ENGINE: &str = "1:1.0.0+pai1";
+    const ENGINE_MIN: &str = "1:1.0.0";
+
     fn fields_v<'a>(
         component: Component,
         version: &'a str,
@@ -1386,42 +1488,64 @@ mod tests {
         }
     }
 
+    /// The engine recommends its runtimes at the SDK versions it was built
+    /// against and refuses any other (a backend that cannot resolve a symbol
+    /// is skipped at start with nothing but a log line). It takes over 2.4's
+    /// llama.cpp package, and refuses to sit beside the distributions'
+    /// packages that carry the same commands in /usr/bin: Ubuntu's
+    /// `llama.cpp-tools` (llama-server, llama-bench, llama-cli...; 26.04's
+    /// `8681+dfsg-1`, read with `dpkg -c`; its `-extra` sibling requires it,
+    /// and Ubuntu's `llama.cpp` itself is only a metapackage our package
+    /// supersedes by name and epoch) and Fedora's `llama-cpp` (its spec,
+    /// src.fedoraproject.org/rpms/llama-cpp: `%{_bindir}/llama-server`...;
+    /// `llama-cpp-examples` requires it). It no longer conflicts with
+    /// `llama.cpp`, its own name. It names nothing of the framework.
     #[test]
     fn llama_cpp_recommends_its_runtimes_and_refuses_any_other_version() {
         let runtimes = [(Component::Rocm, "10.1.0".to_string())];
-        let f = fields(Component::Llama, &runtimes, None);
+        let f = fields_v(Component::Llama, ENGINE, &runtimes, None);
         let (recommends, breaks, conflicts) = deb_relations(&f);
-        assert_eq!(recommends, "private-ai-framework-rocm (= 10.1.0)");
+        assert_eq!(recommends, "llama.cpp-rocm (= 10.1.0)");
         assert_eq!(
             breaks,
-            "private-ai-framework-rocm (<< 10.1.0), private-ai-framework-rocm (>> 10.1.0)"
+            "llama.cpp-rocm (<< 10.1.0), llama.cpp-rocm (>> 10.1.0)"
         );
-        assert_eq!(conflicts, format!("{OLD}, {OLD}-llama, llama.cpp"));
+        assert_eq!(conflicts, format!("{OLD}, {OLD}-llama, llama.cpp-tools"));
         let rpm = rpm_relations(&f);
-        assert!(
-            rpm.contains("Recommends:     private-ai-framework-rocm = 10.1.0"),
-            "{rpm}"
-        );
-        assert!(
-            rpm.contains("Conflicts:      private-ai-framework-rocm < 10.1.0"),
-            "{rpm}"
-        );
-        assert!(
-            rpm.contains("Conflicts:      private-ai-framework-rocm > 10.1.0"),
-            "{rpm}"
-        );
-        assert!(
-            rpm.contains(&format!("Obsoletes:      {OLD} <= 2.2.0\n")),
-            "{rpm}"
-        );
+        for want in [
+            "Recommends:     llama.cpp-rocm = 10.1.0".to_string(),
+            "Conflicts:      llama.cpp-rocm < 10.1.0".to_string(),
+            "Conflicts:      llama.cpp-rocm > 10.1.0".to_string(),
+            "Conflicts:      llama-cpp".to_string(),
+            format!("Obsoletes:      {OLD} <= 2.2.0"),
+        ] {
+            assert!(rpm.lines().any(|l| l == want), "{want} missing:\n{rpm}");
+        }
         assert!(!rpm.contains(&format!("{OLD}-rocm")), "{rpm}");
+        for text in [&rpm, &recommends, &breaks, &conflicts] {
+            assert!(!text.contains("private-ai-framework"), "{text}");
+        }
     }
 
+    /// The configurator requires the command line and the core at its own
+    /// version (the framework's packages move together), and llama.cpp at
+    /// least at the release it was built against (`1:1.0.0`, any build
+    /// revision of it or a later release): a newer llama.cpp installs
+    /// without a framework rebuild. rpm's `>= 1:1.0.0` names no release, so
+    /// every `1:1.0.0-pai<N>` matches (rpm-version(7)).
     #[test]
-    fn the_configurator_requires_its_llama_cpp_exactly() {
-        let f = fields(Component::Config, &[], Some("2.99.0+llama.cpp.v0.9.0"));
-        assert!(rpm_relations(&f)
-            .contains("Requires:       private-ai-framework-llama = 2.99.0+llama.cpp.v0.9.0"));
+    fn the_configurator_requires_cli_and_core_exactly_and_llama_cpp_at_least() {
+        let f = fields_v(Component::Config, FW, &[], Some(ENGINE_MIN));
+        let rpm = rpm_relations(&f);
+        for want in [
+            format!("Requires:       private-ai-framework-cli = {FW}"),
+            format!("Requires:       private-ai-framework-core = {FW}"),
+            format!("Requires:       llama.cpp >= {ENGINE_MIN}"),
+        ] {
+            assert!(rpm.lines().any(|l| l == want), "{want} missing:\n{rpm}");
+        }
+        assert!(!rpm.contains("private-ai-framework-llama"), "{rpm}");
+        assert!(!rpm.contains("llama.cpp ="), "{rpm}");
         let (recommends, breaks, conflicts) = deb_relations(&f);
         assert!(recommends.contains("libxkbcommon0"), "{recommends}");
         assert!(breaks.is_empty());
@@ -1453,21 +1577,32 @@ mod tests {
     #[test]
     fn a_deb_takes_over_the_old_package_of_its_component() {
         let runtimes = [(Component::Rocm, "10.1.0".to_string())];
-        for (component, version, runtimes, depends) in [
+        let config_depends = format!(
+            "libc6, private-ai-framework-cli (= {FW}), private-ai-framework-core (= {FW}), llama.cpp (>= {ENGINE_MIN})"
+        );
+        for (component, package, version, runtimes, depends) in [
             (
                 Component::Config,
-                "2.99.0+llama.cpp.v0.9.0",
+                "private-ai-framework-config",
+                FW,
                 &[][..],
-                "libc6, private-ai-framework-llama (= 2.99.0+llama.cpp.v0.9.0)",
+                config_depends.as_str(),
             ),
             (
                 Component::Llama,
-                "2.99.0+llama.cpp.v0.9.0",
+                "llama.cpp",
+                ENGINE,
                 &runtimes[..],
                 "libc6",
             ),
-            (Component::Rocm, "10.1.0", &[][..], ""),
-            (Component::Vulkan, "1.4.328.1", &[][..], ""),
+            (Component::Rocm, "llama.cpp-rocm", "10.1.0", &[][..], ""),
+            (
+                Component::Vulkan,
+                "llama.cpp-vulkan",
+                "1.4.328.1",
+                &[][..],
+                "",
+            ),
         ] {
             let f = fields_v(component, version, runtimes, None);
             let old = format!("{OLD}-{}", component.suffix());
@@ -1475,7 +1610,7 @@ mod tests {
             let lines: Vec<&str> = text.lines().collect();
             let (recommends, breaks, conflicts) = deb_relations(&f);
             let mut want = vec![
-                format!("Package: private-ai-framework-{}", component.suffix()),
+                format!("Package: {package}"),
                 format!("Version: {version}"),
                 "Architecture: amd64".to_string(),
                 "Maintainer: Someone <a@b.c>".to_string(),
@@ -1524,25 +1659,22 @@ mod tests {
     #[test]
     fn an_rpm_obsoletes_and_provides_the_old_package_of_its_component() {
         let runtimes = [(Component::Rocm, "10.1.0".to_string())];
-        let f = fields_v(
-            Component::Config,
-            "2.99.0+llama.cpp.v0.9.0",
-            &[],
-            Some("2.99.0+llama.cpp.v0.9.0"),
-        );
+        let f = fields_v(Component::Config, FW, &[], Some(ENGINE_MIN));
         let rpm = rpm_relations(&f);
         for want in [
             format!("Obsoletes:      {OLD} <= 2.2.0"),
             format!("Obsoletes:      {OLD}-config < 2.4.1"),
-            format!("Provides:       {OLD}-config = 2.99.0+llama.cpp.v0.9.0-1"),
+            format!("Provides:       {OLD}-config = {FW}-1"),
         ] {
             assert!(rpm.lines().any(|l| l == want), "{want} missing:\n{rpm}");
         }
-        let f = fields_v(Component::Llama, "2.99.0+llama.cpp.v0.9.0", &runtimes, None);
+        // The engine's Provides spells its EVR as rpm does: epoch, version,
+        // release (`1:1.0.0-pai1`).
+        let f = fields_v(Component::Llama, ENGINE, &runtimes, None);
         let rpm = rpm_relations(&f);
         for want in [
             format!("Obsoletes:      {OLD}-llama < 2.4.1"),
-            format!("Provides:       {OLD}-llama = 2.99.0+llama.cpp.v0.9.0-1"),
+            format!("Provides:       {OLD}-llama = 1:1.0.0-pai1"),
             "Conflicts:      llama-cpp".to_string(),
         ] {
             assert!(rpm.lines().any(|l| l == want), "{want} missing:\n{rpm}");
@@ -1614,7 +1746,7 @@ mod tests {
             assert_eq!(components::of(&place(lib)), Component::Llama, "{lib}");
         }
         assert_eq!(place("pai-manager"), "usr/libexec/private-ai/pai-manager");
-        assert_eq!(components::of(&place("pai-manager")), Component::Llama);
+        assert_eq!(components::of(&place("pai-manager")), Component::Core);
     }
 
     /// The executables in /usr/bin find libllama, the ggml backends and the
@@ -1641,7 +1773,7 @@ mod tests {
     /// The read-only data (the benchmark method, the language files, the
     /// licences) under /usr/share/private-ai: the benchmark method in the
     /// command line's package, `cli.toml` (what every program prints) in
-    /// llama.cpp's, the GUI's language files in the configurator's, each
+    /// the core's, the GUI's language files in the configurator's, each
     /// package's own licences in that package.
     #[test]
     fn the_data_goes_under_usr_share_private_ai() {
@@ -1656,7 +1788,7 @@ mod tests {
                 format!("{}/specs/standard-1.1.ini", share("benchmarks")),
                 Component::Cli,
             ),
-            (format!("{}/cli.toml", share("strings")), Component::Llama),
+            (format!("{}/cli.toml", share("strings")), Component::Core),
             (
                 format!("{}/en_US.toml", share("strings")),
                 Component::Config,
@@ -1668,8 +1800,9 @@ mod tests {
 
     // ── pai, the command line, in a package of its own ──────────────────
 
-    /// The version every test of the command line's package uses.
-    const FW: &str = "2.99.0+llama.cpp.v0.9.0";
+    /// The version of every framework package in these tests: the
+    /// framework's alone, no `+llama.cpp...` any more.
+    const FW: &str = "2.99.1";
 
     /// `pai` is a command in /usr/bin, in its own package.
     #[test]
@@ -1678,18 +1811,24 @@ mod tests {
         assert_eq!(components::of(&place("pai")), Component::Cli);
     }
 
-    /// The command line runs llama-bench and llama-server from /usr/bin and
-    /// talks to the manager of the llama.cpp package, so it requires that
-    /// package at its own version, as the configurator does; it requires
-    /// nothing of the GUI and recommends no graphics library. It has no
-    /// predecessor in 2.4 (pai did not exist), so it names no package of
-    /// 2.4 or earlier: no Obsoletes, no Provides.
+    /// The command line talks to the manager of the core package, so it
+    /// requires the core at its own version, and runs llama-bench and
+    /// llama-server from /usr/bin, so it requires llama.cpp at least at the
+    /// release it was built against; it requires nothing of the GUI and
+    /// recommends no graphics library. It has no predecessor in 2.4 (pai did
+    /// not exist), so it names no package of 2.4 or earlier: no Obsoletes,
+    /// no Provides.
     #[test]
-    fn the_command_line_requires_llama_cpp_exactly_and_nothing_of_the_gui() {
-        let f = fields_v(Component::Cli, FW, &[], Some(FW));
+    fn the_command_line_requires_core_exactly_llama_cpp_at_least_and_nothing_of_the_gui() {
+        let f = fields_v(Component::Cli, FW, &[], Some(ENGINE_MIN));
+        let mut lines: Vec<String> = rpm_relations(&f).lines().map(str::to_string).collect();
+        lines.sort();
         assert_eq!(
-            rpm_relations(&f),
-            format!("Requires:       private-ai-framework-llama = {FW}")
+            lines,
+            [
+                format!("Requires:       llama.cpp >= {ENGINE_MIN}"),
+                format!("Requires:       private-ai-framework-core = {FW}"),
+            ]
         );
         assert_eq!(
             deb_relations(&f),
@@ -1697,28 +1836,24 @@ mod tests {
         );
     }
 
-    /// The GUI package requires the command line's at its own version: the
-    /// benchmark method and `cli.toml`, which the GUI reads, are there. And
-    /// llama.cpp's, as before.
+    /// The GUI package's `.deb` Depends: the command line's at its own
+    /// version (the benchmark method, which the GUI reads, is there), the
+    /// core's at its own version (`cli.toml`, the manager), and llama.cpp at
+    /// least at the release it was built against.
     #[test]
-    fn the_configurator_requires_the_command_line_and_llama_cpp_exactly() {
-        let f = fields_v(Component::Config, FW, &[], Some(FW));
-        let rpm = rpm_relations(&f);
-        for want in [
-            format!("Requires:       private-ai-framework-cli = {FW}"),
-            format!("Requires:       private-ai-framework-llama = {FW}"),
-        ] {
-            assert!(rpm.lines().any(|l| l == want), "{want} missing:\n{rpm}");
-        }
+    fn the_configurator_deb_requires_cli_and_core_exactly_and_llama_cpp_at_least() {
+        let f = fields_v(Component::Config, FW, &[], Some(ENGINE_MIN));
         let depends = depends_line(&f, "libc6 (>= 2.34), libfontconfig1 (>= 2.12.6)");
         let mut parts: Vec<&str> = depends.split(", ").collect();
         parts.sort();
         let cli = format!("private-ai-framework-cli (= {FW})");
-        let llama = format!("private-ai-framework-llama (= {FW})");
+        let core = format!("private-ai-framework-core (= {FW})");
+        let llama = format!("llama.cpp (>= {ENGINE_MIN})");
         let mut want = vec![
             "libc6 (>= 2.34)",
             "libfontconfig1 (>= 2.12.6)",
             cli.as_str(),
+            core.as_str(),
             llama.as_str(),
         ];
         want.sort();
@@ -1727,18 +1862,23 @@ mod tests {
 
     /// The point of the split: the command line's `.deb` installs on a
     /// headless server. Whatever dpkg-shlibdeps answers for `pai` (or the
-    /// fixed list when it gives none) and llama.cpp's package, and nothing
-    /// of the GUI: no configurator, no font or windowing library.
+    /// fixed list when it gives none), the core's package and llama.cpp's,
+    /// and nothing of the GUI: no configurator, no font or windowing library.
     #[test]
-    fn the_cli_deb_depends_on_llama_cpp_and_no_graphics_library() {
-        let f = fields_v(Component::Cli, FW, &[], Some(FW));
+    fn the_cli_deb_depends_on_core_and_llama_cpp_and_no_graphics_library() {
+        let f = fields_v(Component::Cli, FW, &[], Some(ENGINE_MIN));
         for scanned in ["", "libc6 (>= 2.34), libgcc-s1 (>= 4.2)"] {
             let depends = depends_line(&f, scanned);
             let parts: Vec<&str> = depends.split(", ").collect();
-            assert!(
-                parts.contains(&format!("private-ai-framework-llama (= {FW})").as_str()),
-                "{scanned:?}: {depends}"
-            );
+            for want in [
+                format!("private-ai-framework-core (= {FW})"),
+                format!("llama.cpp (>= {ENGINE_MIN})"),
+            ] {
+                assert!(
+                    parts.contains(&want.as_str()),
+                    "{scanned:?}: {want} missing in {depends}"
+                );
+            }
             assert!(
                 parts.iter().any(|p| p.starts_with("libc6")),
                 "{scanned:?}: {depends}"
@@ -1760,23 +1900,36 @@ mod tests {
         }
     }
 
-    /// The rest of the Depends stays as it was: llama.cpp's scanned list
-    /// plus what its maintainer scripts need, a runtime nothing it does not
-    /// bring along, the configurator the fixed list when the scan gives none.
+    /// The engine's Depends is its scanned list and nothing else: no
+    /// maintainer script any more (they went to the core), nothing of the
+    /// framework. The core's: its scanned list, llama.cpp at least at the
+    /// release it was built against, and what its maintainer scripts need.
+    /// A runtime asks for nothing it does not bring along, the configurator
+    /// for the fixed list when the scan gives none.
     #[test]
-    fn the_deb_depends_of_the_other_packages_stay() {
+    fn the_deb_depends_of_the_engine_the_core_and_the_others() {
         let runtimes = [(Component::Rocm, "10.1.0".to_string())];
-        let f = fields_v(Component::Llama, FW, &runtimes, None);
+        let f = fields_v(Component::Llama, ENGINE, &runtimes, None);
+        assert_eq!(depends_line(&f, "libc6 (>= 2.34)"), "libc6 (>= 2.34)");
+        let f = fields_v(Component::Core, FW, &[], Some(ENGINE_MIN));
+        let depends = depends_line(&f, "libc6 (>= 2.34)");
+        let mut parts: Vec<&str> = depends.split(", ").collect();
+        parts.sort();
+        let llama = format!("llama.cpp (>= {ENGINE_MIN})");
+        let mut want = vec![
+            "libc6 (>= 2.34)",
+            llama.as_str(),
+            "systemd | systemd-standalone-sysusers | systemd-sysusers",
+        ];
+        want.sort();
+        assert_eq!(parts, want, "{depends}");
         assert_eq!(
-            depends_line(&f, "libc6 (>= 2.34)"),
-            format!(
-                "libc6 (>= 2.34), {}",
-                system_files::deb_depends(Component::Llama)
-            )
+            system_files::deb_depends(Component::Core),
+            "systemd | systemd-standalone-sysusers | systemd-sysusers"
         );
         let f = fields_v(Component::Rocm, "10.1.0", &[], None);
         assert_eq!(depends_line(&f, ""), "");
-        let f = fields_v(Component::Config, FW, &[], Some(FW));
+        let f = fields_v(Component::Config, FW, &[], Some(ENGINE_MIN));
         let depends = depends_line(&f, "");
         assert!(depends.starts_with("libc6, "), "{depends}");
         assert!(depends.contains("libfontconfig1"), "{depends}");
@@ -1787,8 +1940,9 @@ mod tests {
     /// 2.4 or earlier held pai.
     #[test]
     fn the_cli_deb_names_no_package_of_2_4() {
-        let f = fields_v(Component::Cli, FW, &[], Some(FW));
-        let depends = format!("libc6, private-ai-framework-llama (= {FW})");
+        let f = fields_v(Component::Cli, FW, &[], Some(ENGINE_MIN));
+        let depends =
+            format!("libc6, private-ai-framework-core (= {FW}), llama.cpp (>= {ENGINE_MIN})");
         let text = deb_control(&f, "amd64", "Someone <a@b.c>", "1234", &depends);
         let lines: Vec<&str> = text.lines().collect();
         for want in [
@@ -1835,7 +1989,7 @@ mod tests {
         ] {
             put(&cli, rel, ELF, mode);
         }
-        let f = fields_v(Component::Cli, FW, &[], Some(FW));
+        let f = fields_v(Component::Cli, FW, &[], Some(ENGINE_MIN));
         let spec = rpm_spec(&f, "MIT", "libggml", &cli);
         check_files(&spec, &cli);
         std::fs::remove_dir_all(&dir).unwrap();
@@ -1843,10 +1997,13 @@ mod tests {
         for want in [
             "Name:           private-ai-framework-cli".to_string(),
             format!("Version:        {FW}"),
-            format!("Requires:       private-ai-framework-llama = {FW}"),
+            "Release:        1".to_string(),
+            format!("Requires:       private-ai-framework-core = {FW}"),
+            format!("Requires:       llama.cpp >= {ENGINE_MIN}"),
         ] {
             assert!(lines.contains(&want.as_str()), "{want} missing:\n{spec}");
         }
+        assert!(!spec.contains("Epoch:"), "{spec}");
         assert!(!spec.contains(OLD), "{spec}");
         assert!(!spec.contains("Obsoletes:"), "{spec}");
         assert!(!spec.contains("org.privateai.Config"), "{spec}");
@@ -1966,13 +2123,12 @@ mod tests {
             ("usr/lib/private-ai/libggml-base.so.0", 0o755),
             ("usr/lib/private-ai/libggml-hip.so", 0o755),
             ("usr/lib/private-ai/lib/llvm/lib/libomp.so", 0o755),
-            ("usr/libexec/private-ai/pai-manager", 0o755),
-            ("usr/share/doc/private-ai-framework-llama/copyright", 0o644),
+            ("usr/share/doc/llama.cpp/copyright", 0o644),
             ("usr/share/private-ai/licenses/llama/README.txt", 0o644),
         ] {
             put(&llama, rel, ELF, mode);
         }
-        let f = fields_v(Component::Llama, "2.99.0+llama.cpp.v1.0.0", &runtimes, None);
+        let f = fields_v(Component::Llama, ENGINE, &runtimes, None);
         let spec = rpm_spec(&f, "MIT", "libggml\\\\-base|libomp", &llama);
         check_files(&spec, &llama);
         let lines: Vec<&str> = spec.lines().collect();
@@ -1985,8 +2141,10 @@ mod tests {
             "{spec}"
         );
         for want in [
-            "Name:           private-ai-framework-llama",
-            "Version:        2.99.0+llama.cpp.v1.0.0",
+            "Name:           llama.cpp",
+            "Epoch:          1",
+            "Version:        1.0.0",
+            "Release:        pai1",
             "License:        MIT",
             "Conflicts:      llama-cpp",
         ] {
@@ -2000,7 +2158,7 @@ mod tests {
         let cuda = dir.join("cuda");
         for rel in [
             "usr/lib/private-ai/lib/libcublas.so.13",
-            "usr/share/doc/private-ai-framework-cuda/copyright",
+            "usr/share/doc/llama.cpp-cuda/copyright",
             "usr/share/private-ai/licenses/cuda/README.txt",
         ] {
             put(&cuda, rel, ELF, 0o644);
@@ -2021,12 +2179,7 @@ mod tests {
         ] {
             put(&config, rel, ELF, 0o644);
         }
-        let f = fields_v(
-            Component::Config,
-            "2.99.0+llama.cpp.v1.0.0",
-            &[],
-            Some("2.99.0+llama.cpp.v1.0.0"),
-        );
+        let f = fields_v(Component::Config, FW, &[], Some(ENGINE_MIN));
         let spec = rpm_spec(&f, "MIT", "libggml", &config);
         check_files(&spec, &config);
         std::fs::remove_dir_all(&dir).unwrap();
@@ -2132,7 +2285,7 @@ mod tests {
         );
     }
 
-    /// The llama.cpp `.rpm` lists each system file by name in `%files`
+    /// The core's `.rpm` lists each of its system files by name in `%files`
     /// (never their directories, which systemd, dbus and polkit own), runs
     /// its scriptlets (before `%files`, whose lines run to the end of the
     /// spec), and needs systemd for them (Fedora's `%systemd_requires`:
@@ -2142,34 +2295,38 @@ mod tests {
     /// provided by no package of an older distribution, and the `m` line
     /// creates a missing group anyway, so they are weak
     /// (`_use_weak_usergroup_deps`, /usr/lib/rpm/fileattrs/sysusers.attr).
-    /// The configurator's `.rpm` has none of it.
+    /// The configurator's and the engine's `.rpm` have none of it.
     #[test]
-    fn the_llama_rpm_ships_the_system_files_and_their_scriptlets() {
+    fn the_core_rpm_ships_the_system_files_and_their_scriptlets() {
         use super::super::system_files::{files, rpm_scriptlets};
         let dir = scratch("rpm-system-files");
-        let llama = dir.join("llama");
+        let core = dir.join("core");
         for (rel, mode) in [
-            ("usr/bin/llama-server", 0o755),
-            ("usr/lib/private-ai/libggml-base.so.0", 0o755),
             ("usr/libexec/private-ai/pai-manager", 0o755),
-            ("usr/share/doc/private-ai-framework-llama/copyright", 0o644),
-            ("usr/share/private-ai/licenses/llama/README.txt", 0o644),
+            ("usr/share/private-ai/strings/cli.toml", 0o644),
+            ("usr/share/doc/private-ai-framework-core/copyright", 0o644),
+            ("usr/share/private-ai/licenses/core/README.txt", 0o644),
         ] {
-            put(&llama, rel, ELF, mode);
+            put(&core, rel, ELF, mode);
         }
-        for (rel, text) in files() {
-            put(&llama, rel, text.as_bytes(), 0o644);
+        let ours: Vec<(&str, String)> = files()
+            .into_iter()
+            .filter(|(rel, _)| components::of(rel) == Component::Core)
+            .collect();
+        assert_eq!(ours.len(), 5, "{ours:?}");
+        for (rel, text) in &ours {
+            put(&core, rel, text.as_bytes(), 0o644);
         }
-        let runtimes = [(Component::Rocm, "10.1.0".to_string())];
-        let f = fields_v(Component::Llama, "2.99.0+llama.cpp.v1.0.0", &runtimes, None);
-        let spec = rpm_spec(&f, "MIT", "libggml\\\\-base", &llama);
-        check_files(&spec, &llama);
+        let f = fields_v(Component::Core, FW, &[], Some(ENGINE_MIN));
+        let spec = rpm_spec(&f, "MIT", "libggml\\\\-base", &core);
+        check_files(&spec, &core);
         let listed = files_section(&spec);
-        for (rel, _) in files() {
+        for (rel, _) in &ours {
             let line = format!("/{rel}");
             assert!(listed.contains(&line), "{line} missing:\n{spec}");
         }
-        let scriptlets = rpm_scriptlets(Component::Llama);
+        let scriptlets = rpm_scriptlets(Component::Core);
+        assert!(!scriptlets.is_empty());
         let at = spec
             .find(&scriptlets)
             .unwrap_or_else(|| panic!("the scriptlets are missing:\n{spec}"));
@@ -2198,21 +2355,33 @@ mod tests {
         ] {
             put(&config, rel, ELF, 0o644);
         }
-        let f = fields_v(
-            Component::Config,
-            "2.99.0+llama.cpp.v1.0.0",
-            &[],
-            Some("2.99.0+llama.cpp.v1.0.0"),
-        );
-        let spec = rpm_spec(&f, "MIT", "libggml", &config);
-        check_files(&spec, &config);
-        for scriptlet in ["%post", "%preun", "%postun", "%posttrans"] {
-            assert!(
-                !spec.lines().any(|l| l.trim() == scriptlet),
-                "{scriptlet} in the configurator:\n{spec}"
-            );
+        let llama = dir.join("llama");
+        for rel in [
+            "usr/bin/llama-server",
+            "usr/lib/private-ai/libggml-base.so.0",
+            "usr/share/doc/llama.cpp/copyright",
+        ] {
+            put(&llama, rel, ELF, 0o755);
         }
-        assert!(!rpm_relations(&f).contains("Requires(post)"));
+        let runtimes = [(Component::Rocm, "10.1.0".to_string())];
+        for (f, root) in [
+            (
+                fields_v(Component::Config, FW, &[], Some(ENGINE_MIN)),
+                &config,
+            ),
+            (fields_v(Component::Llama, ENGINE, &runtimes, None), &llama),
+        ] {
+            let spec = rpm_spec(&f, "MIT", "libggml", root);
+            check_files(&spec, root);
+            for scriptlet in ["%post", "%preun", "%postun", "%posttrans"] {
+                assert!(
+                    !spec.lines().any(|l| l.trim() == scriptlet),
+                    "{scriptlet} in {:?}:\n{spec}",
+                    f.component
+                );
+            }
+            assert!(!rpm_relations(&f).contains("Requires(post)"));
+        }
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -2235,15 +2404,15 @@ mod tests {
         assert!(unit.contains(&format!("\nExecStart={exe}\n")), "{unit}");
     }
 
-    /// The bff talks to the manager of the llama.cpp package (the next
-    /// slices), so it requires that package at its own version, like the
-    /// command line; nothing of the GUI or the command line. It has no
-    /// predecessor in 2.4, so it names no package of 2.4 or earlier. Its
-    /// scriptlets run systemctl, so the `.rpm` needs systemd for them, as
-    /// the llama.cpp package does.
+    /// The bff talks to the manager of the core package, so it requires
+    /// that package at its own version, like the command line; it never runs
+    /// the engine, so it does not require llama.cpp; nothing of the GUI or
+    /// the command line. It has no predecessor in 2.4, so it names no
+    /// package of 2.4 or earlier. Its scriptlets run systemctl, so the
+    /// `.rpm` needs systemd for them, as the core package does.
     #[test]
-    fn the_bff_requires_llama_cpp_exactly_and_systemd_for_its_scriptlets() {
-        let f = fields_v(Component::Bff, FW, &[], Some(FW));
+    fn the_bff_requires_core_exactly_and_systemd_for_its_scriptlets() {
+        let f = fields_v(Component::Bff, FW, &[], None);
         let rpm = rpm_relations(&f);
         let mut lines: Vec<String> = rpm
             .lines()
@@ -2251,7 +2420,7 @@ mod tests {
             .collect();
         lines.sort();
         let mut want = vec![
-            format!("Requires: private-ai-framework-llama = {FW}"),
+            format!("Requires: private-ai-framework-core = {FW}"),
             "Requires(post): systemd".to_string(),
             "Requires(preun): systemd".to_string(),
             "Requires(postun): systemd".to_string(),
@@ -2266,17 +2435,18 @@ mod tests {
     }
 
     /// The bff's `.deb` Depends: what dpkg-shlibdeps found for pai-bff (or
-    /// the fixed C libraries when it gives none) and llama.cpp's package at
-    /// its version; no GUI, no command line, no graphics library, nothing
-    /// for its scripts (system_files::deb_depends is empty for it).
+    /// the fixed C libraries when it gives none) and the core's package at
+    /// its version; not the engine, no GUI, no command line, no graphics
+    /// library, nothing for its scripts (system_files::deb_depends is empty
+    /// for it).
     #[test]
-    fn the_bff_deb_depends_on_llama_cpp_and_nothing_of_the_front_ends() {
-        let f = fields_v(Component::Bff, FW, &[], Some(FW));
+    fn the_bff_deb_depends_on_core_and_nothing_of_the_front_ends() {
+        let f = fields_v(Component::Bff, FW, &[], None);
         for scanned in ["", "libc6 (>= 2.34), libgcc-s1 (>= 4.2)"] {
             let depends = depends_line(&f, scanned);
             let parts: Vec<&str> = depends.split(", ").collect();
             assert!(
-                parts.contains(&format!("private-ai-framework-llama (= {FW})").as_str()),
+                parts.contains(&format!("private-ai-framework-core (= {FW})").as_str()),
                 "{scanned:?}: {depends}"
             );
             assert!(
@@ -2293,6 +2463,7 @@ mod tests {
                 "libx11",
                 "libegl",
                 "sysusers",
+                "llama.cpp",
             ] {
                 assert!(
                     !depends.contains(other),
@@ -2306,8 +2477,8 @@ mod tests {
     /// Conflicts, Replaces or Provides (no package of 2.4 held it).
     #[test]
     fn the_bff_deb_names_no_package_of_2_4() {
-        let f = fields_v(Component::Bff, FW, &[], Some(FW));
-        let depends = format!("libc6, private-ai-framework-llama (= {FW})");
+        let f = fields_v(Component::Bff, FW, &[], None);
+        let depends = format!("libc6, private-ai-framework-core (= {FW})");
         let text = deb_control(&f, "amd64", "Someone <a@b.c>", "1234", &depends);
         let lines: Vec<&str> = text.lines().collect();
         for want in [
@@ -2342,7 +2513,7 @@ mod tests {
         ] {
             put(&bff, rel, ELF, mode);
         }
-        let f = fields_v(Component::Bff, FW, &[], Some(FW));
+        let f = fields_v(Component::Bff, FW, &[], None);
         let spec = rpm_spec(&f, "MIT", "libggml", &bff);
         check_files(&spec, &bff);
         std::fs::remove_dir_all(&dir).unwrap();
@@ -2385,10 +2556,13 @@ mod tests {
 
     /// The package phase itself (`run`, which needs a build and is not run
     /// here): pai-bff is copied from cargo's release dir, as pai-manager is,
-    /// to where `place` says, and the bff's package requires llama.cpp's at
-    /// the package version. Read from the code before the tests.
+    /// to where `place` says. The packages that run the engine (the
+    /// configurator, the command line, the core) require llama.cpp at least
+    /// at `llama_cpp_min`; the bff does not. The engine's version comes from
+    /// `llama_cpp_version`, and no package carries `+llama.cpp.<tag>` any
+    /// more. Read from the code before the tests.
     #[test]
-    fn the_package_phase_stages_pai_bff_and_requires_llama_cpp_for_it() {
+    fn the_package_phase_stages_pai_bff_and_versions_the_engine_apart() {
         let src = include_str!("package.rs");
         let code = src.split("\n#[cfg(test)]\nmod tests").next().unwrap();
         assert!(
@@ -2404,9 +2578,302 @@ mod tests {
             .nth(1)
             .and_then(|rest| rest.split(".then_some").next())
             .expect("the depends_on_llama field in run()");
+        for c in ["Component::Config", "Component::Cli", "Component::Core"] {
+            assert!(field.contains(c), "{c} does not require llama.cpp: {field}");
+        }
         assert!(
-            field.contains("Component::Bff"),
-            "the bff's package does not require llama.cpp's: {field}"
+            !field.contains("Component::Bff"),
+            "the bff requires llama.cpp: {field}"
         );
+        for call in [
+            "components::llama_cpp_version(",
+            "components::llama_cpp_min(",
+        ] {
+            assert!(code.contains(call), "run() does not call {call}");
+        }
+        assert!(
+            !code.contains("+llama.cpp.{"),
+            "a package version still carries the llama.cpp tag"
+        );
+    }
+
+    // ── The framework's core and the engine ─────────────────────────────
+
+    /// The core requires llama.cpp at least at the release it was built
+    /// against (`llama.cpp@.service` runs `pai-manager run-instance`, which
+    /// runs llama-server) and systemd for its scriptlets. It holds nothing
+    /// 2.4 shipped (2.4's `-llama` held llama.cpp alone, read with `dpkg -c`
+    /// on the 2.4.0 package), so it names no package of 2.4 or earlier, and
+    /// no 2.99.x name, which was never published.
+    #[test]
+    fn the_core_requires_llama_cpp_at_least_and_names_no_older_package() {
+        let f = fields_v(Component::Core, FW, &[], Some(ENGINE_MIN));
+        let rpm = rpm_relations(&f);
+        let mut lines: Vec<String> = rpm
+            .lines()
+            .map(|l| l.split_whitespace().collect::<Vec<_>>().join(" "))
+            .collect();
+        lines.sort();
+        let mut want = vec![
+            format!("Requires: llama.cpp >= {ENGINE_MIN}"),
+            "Requires(post): systemd".to_string(),
+            "Requires(preun): systemd".to_string(),
+            "Requires(postun): systemd".to_string(),
+            "Requires(posttrans): systemd".to_string(),
+        ];
+        want.sort();
+        assert_eq!(lines, want, "{rpm}");
+        assert_eq!(
+            deb_relations(&f),
+            (String::new(), String::new(), String::new())
+        );
+        let depends = depends_line(&f, "libc6");
+        let text = deb_control(&f, "amd64", "Someone <a@b.c>", "1234", &depends);
+        let lines: Vec<&str> = text.lines().collect();
+        for want in [
+            "Package: private-ai-framework-core".to_string(),
+            format!("Version: {FW}"),
+            format!("Depends: {depends}"),
+        ] {
+            assert!(lines.contains(&want.as_str()), "{want} missing:\n{text}");
+        }
+        for tag in ["Conflicts:", "Replaces:", "Provides:", "Breaks:"] {
+            assert!(
+                !lines.iter().any(|l| l.starts_with(tag)),
+                "{tag} in:\n{text}"
+            );
+        }
+        assert!(!text.contains(OLD), "{text}");
+        assert!(!rpm.contains(OLD), "{rpm}");
+        assert!(!text.contains("private-ai-framework-llama"), "{text}");
+    }
+
+    /// The engine's `.deb` carries its version whole, epoch and build
+    /// revision (Debian Policy 5.6.12: `[epoch:]upstream_version`), and
+    /// names nothing of the framework: it installs and runs alone.
+    #[test]
+    fn the_engine_deb_carries_its_epoch_and_requires_nothing_of_the_framework() {
+        let runtimes = [(Component::Rocm, "10.1.0".to_string())];
+        let f = fields_v(Component::Llama, ENGINE, &runtimes, None);
+        let depends = depends_line(&f, "libc6 (>= 2.34)");
+        let text = deb_control(&f, "amd64", "Someone <a@b.c>", "1234", &depends);
+        let lines: Vec<&str> = text.lines().collect();
+        for want in [
+            "Package: llama.cpp".to_string(),
+            "Version: 1:1.0.0+pai1".to_string(),
+            format!("Provides: {OLD}-llama (= 1:1.0.0+pai1)"),
+            format!("Replaces: {OLD}, {OLD}-llama"),
+            format!("Conflicts: {OLD}, {OLD}-llama, llama.cpp-tools"),
+        ] {
+            assert!(lines.contains(&want.as_str()), "{want} missing:\n{text}");
+        }
+        assert!(!text.contains("private-ai-framework"), "{text}");
+        assert!(!rpm_relations(&f).contains("private-ai-framework"));
+    }
+
+    /// The engine's `.rpm` spells its version as rpm wants it: `Epoch: 1`,
+    /// the release as `Version`, and our build revision as `Release`
+    /// (rpm-spec(5): Release is "the downstream packaging revision of a
+    /// software version", which `+pai<N>` is; rpm-version(7): a release may
+    /// hold letters, and `-` is the separator, so `pai1` and not `+pai1`).
+    /// A framework package keeps no epoch and Release 1.
+    #[test]
+    fn the_rpm_spec_carries_the_engine_epoch_and_build_revision() {
+        let dir = scratch("rpm-spec-evr");
+        let llama = dir.join("llama");
+        put(&llama, "usr/bin/llama-server", ELF, 0o755);
+        let runtimes = [(Component::Rocm, "10.1.0".to_string())];
+        let f = fields_v(Component::Llama, ENGINE, &runtimes, None);
+        let spec = rpm_spec(&f, "MIT", "libggml", &llama);
+        let core = dir.join("core");
+        put(&core, "usr/libexec/private-ai/pai-manager", ELF, 0o755);
+        let g = fields_v(Component::Core, FW, &[], Some(ENGINE_MIN));
+        let core_spec = rpm_spec(&g, "MIT", "libggml", &core);
+        std::fs::remove_dir_all(&dir).unwrap();
+        let header = |spec: &str| -> Vec<String> {
+            spec.lines()
+                .take_while(|l| !l.is_empty())
+                .filter(|l| {
+                    ["Name:", "Epoch:", "Version:", "Release:"]
+                        .iter()
+                        .any(|t| l.starts_with(t))
+                })
+                .map(str::to_string)
+                .collect()
+        };
+        assert_eq!(
+            header(&spec),
+            [
+                "Name:           llama.cpp",
+                "Epoch:          1",
+                "Version:        1.0.0",
+                "Release:        pai1",
+            ],
+            "{spec}"
+        );
+        assert_eq!(
+            header(&core_spec),
+            [
+                "Name:           private-ai-framework-core",
+                format!("Version:        {FW}").as_str(),
+                "Release:        1",
+            ],
+            "{core_spec}"
+        );
+    }
+
+    /// The core's description names pai-manager and the services; the
+    /// engine's names llama.cpp and no program of ours.
+    #[test]
+    fn the_descriptions_tell_the_core_from_the_engine() {
+        let (summary, description) = texts(Component::Core, "v1.0.0");
+        assert!(summary.starts_with("pai-manager:"), "{summary}");
+        assert!(description.contains("pai-manager"), "{description}");
+        assert!(!description.contains('\u{2014}'), "{description}");
+        let (summary, description) = texts(Component::Llama, "v1.0.0");
+        assert!(summary.contains("llama.cpp"), "{summary}");
+        assert!(!summary.contains("pai"), "{summary}");
+        assert!(!description.contains("pai"), "{description}");
+    }
+
+    // ── The engine's and the runtimes' own identity ─────────────────────
+
+    /// The engine and its runtimes point at llama.cpp's upstream (the
+    /// `ggml-org` organisation, as llama.cpp's README links it; the clone's
+    /// `ggerganov` remote redirects there), not at the framework's
+    /// repository; the framework's packages keep the framework's.
+    #[test]
+    fn the_engine_and_its_runtimes_carry_llama_cpps_homepage() {
+        let ours = "https://github.com/example/private-ai-framework";
+        for c in [
+            Component::Llama,
+            Component::Rocm,
+            Component::Cuda,
+            Component::Vulkan,
+        ] {
+            assert_eq!(
+                homepage(c, ours),
+                "https://github.com/ggml-org/llama.cpp",
+                "{c:?}"
+            );
+        }
+        for c in [
+            Component::Config,
+            Component::Cli,
+            Component::Bff,
+            Component::Core,
+        ] {
+            assert_eq!(homepage(c, ours), ours, "{c:?}");
+        }
+        // As the control file and the spec write it.
+        let runtimes = [(Component::Rocm, "10.1.0".to_string())];
+        let f = Fields {
+            homepage: homepage(Component::Llama, ours),
+            ..fields_v(Component::Llama, ENGINE, &runtimes, None)
+        };
+        let text = deb_control(&f, "amd64", "Someone <a@b.c>", "1234", "libc6");
+        assert!(
+            text.lines()
+                .any(|l| l == "Homepage: https://github.com/ggml-org/llama.cpp"),
+            "{text}"
+        );
+        let dir = scratch("rpm-spec-url");
+        put(&dir, "usr/bin/llama-server", ELF, 0o755);
+        let spec = rpm_spec(&f, "MIT", "libggml", &dir);
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert!(
+            spec.lines()
+                .any(|l| l == "URL:            https://github.com/ggml-org/llama.cpp"),
+            "{spec}"
+        );
+    }
+
+    /// A runtime's copyright file says what the package is: its SDK's
+    /// libraries, at the SDK's version, for the llama.cpp engine, where the
+    /// licence texts are (its own directory under /usr/share/private-ai/
+    /// licenses), and the README of that directory. It is not part of the
+    /// framework: it neither says so nor carries the framework's MIT text.
+    #[test]
+    fn a_runtimes_copyright_describes_the_runtime_not_the_framework() {
+        let readme = "libamdhip64.so.7: MIT, see rocm.txt\n";
+        for (c, version, sdk) in [
+            (Component::Rocm, "10.1.0", "ROCm"),
+            (Component::Cuda, "13.5.0+nccl.2.32.3", "CUDA"),
+            (Component::Vulkan, "1.4.363.1", "Vulkan"),
+        ] {
+            let text = runtime_copyright(c, version, readme);
+            let first = text.lines().next().unwrap_or_default();
+            assert!(
+                first.starts_with(&format!("{} {version} ", c.package())),
+                "{c:?}: {text}"
+            );
+            for want in [
+                sdk,
+                "llama.cpp",
+                &format!("/usr/share/private-ai/licenses/{}", c.suffix()),
+                readme,
+            ] {
+                assert!(text.contains(want), "{c:?}: {want} missing:\n{text}");
+            }
+            assert!(!text.contains("private-ai-framework"), "{c:?}:\n{text}");
+            assert!(!text.contains("part of"), "{c:?}:\n{text}");
+            assert!(
+                !text.contains("Permission is hereby granted"),
+                "{c:?}: the framework's MIT text:\n{text}"
+            );
+            assert!(!text.contains('\u{2014}'), "{c:?}:\n{text}");
+        }
+    }
+
+    /// The package phase writes each runtime's copyright with
+    /// [`runtime_copyright`] and each package's Homepage with [`homepage`].
+    /// Read from the code before the tests.
+    #[test]
+    fn the_package_phase_uses_the_runtime_copyright_and_homepage() {
+        let src = include_str!("package.rs");
+        let code = src.split("\n#[cfg(test)]\nmod tests").next().unwrap();
+        let run = code
+            .split("pub fn run(")
+            .nth(1)
+            .and_then(|r| r.split("\nfn ").next())
+            .expect("run()");
+        for call in ["runtime_copyright(", "homepage("] {
+            assert!(run.contains(call), "run() does not call {call}");
+        }
+    }
+
+    /// The engine's version is built from a llama.cpp release
+    /// (`1:<release>+pai<N>`), so `run()` refuses a build that is not on a
+    /// release tag (the `b0-<sha>` fallback of `version::llama_build`, a
+    /// `bNNNN` nightly, an `-rc`) before it stages or builds any package:
+    /// the check, a `bail!` on `util::is_release_tag(&llama_build)`, comes
+    /// right after the release is read and before the staging, `build_deb`
+    /// and `build_rpm`. Read from the code before the tests.
+    #[test]
+    fn a_build_that_is_not_a_release_is_refused_before_any_package() {
+        for tag in ["b0-1a2b3c4", "b10566", "v1.0.0-rc1", "v1.0", ""] {
+            assert!(!util::is_release_tag(tag), "{tag:?}");
+        }
+        assert!(util::is_release_tag("v1.0.0"));
+        let src = include_str!("package.rs");
+        let code = src.split("\n#[cfg(test)]\nmod tests").next().unwrap();
+        let run = code
+            .split("pub fn run(")
+            .nth(1)
+            .and_then(|r| r.split("\nfn ").next())
+            .expect("run()");
+        let check = run
+            .find("if !util::is_release_tag(&llama_build) {\n        bail!(")
+            .expect("run() does not bail on a llama.cpp build that is not a release");
+        assert!(
+            run.find("version::llama_build(") < Some(check),
+            "the release is checked before it is read"
+        );
+        for later in ["util::remove_all(&stage)", "build_deb(", "build_rpm("] {
+            let at = run
+                .find(later)
+                .unwrap_or_else(|| panic!("{later} not in run()"));
+            assert!(check < at, "{later} comes before the release check");
+        }
     }
 }

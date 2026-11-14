@@ -218,9 +218,19 @@ fn trim_zeros(d: &[u8]) -> &[u8] {
     &d[n..]
 }
 
-/// Is `a` strictly newer than `b`?
+/// Is `a` strictly newer than `b`? A leading `N:` is an epoch (Debian
+/// Policy 5.6.12, rpm-version(7)), compared first; none counts as 0.
 pub fn version_gt(a: &str, b: &str) -> bool {
-    a != b && vercmp(a, b) == Ordering::Greater
+    let (ea, ra) = epoch(a);
+    let (eb, rb) = epoch(b);
+    a != b && ea.cmp(&eb).then_with(|| vercmp(ra, rb)) == Ordering::Greater
+}
+
+/// The epoch of a version and the rest: `1:1.0.0+pai1` is (1, `1.0.0+pai1`).
+fn epoch(v: &str) -> (u64, &str) {
+    v.split_once(':')
+        .and_then(|(e, rest)| e.parse().ok().map(|e| (e, rest)))
+        .unwrap_or((0, v))
 }
 
 /// `^[0-9]+(\.[0-9]+)+$`

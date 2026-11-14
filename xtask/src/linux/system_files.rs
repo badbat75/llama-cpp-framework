@@ -1,4 +1,4 @@
-//! The system files the `-llama` package ships so the manager and the
+//! The system files the `-core` package ships so the manager and the
 //! instances run as services: the two systemd units, the D-Bus policy of
 //! the manager's bus name, the polkit actions it checks, the sysusers.d
 //! entry of the service user, and the maintainer scripts that create the
@@ -27,10 +27,10 @@ const INSTANCES: &str = "'llama.cpp@*.service'";
 const RELOAD_BUS: &str =
     "busctl call org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus ReloadConfig";
 
-/// The header of every generated file of the llama.cpp package, behind the
+/// The header of every generated file of the core package, behind the
 /// comment marker `mark`.
 fn header(mark: &str) -> String {
-    header_of(Component::Llama, mark)
+    header_of(Component::Core, mark)
 }
 
 /// The header of a generated file of package `c`.
@@ -228,7 +228,7 @@ pub fn deb_scripts(c: Component) -> Vec<(&'static str, String)> {
     if c == Component::Bff {
         return bff_deb_scripts();
     }
-    if c != Component::Llama {
+    if c != Component::Core {
         return Vec::new();
     }
     let head = format!("#!/bin/sh\nset -e\n{}\n", header("#"));
@@ -352,7 +352,7 @@ pub fn write_deb_scripts(root: &Path, c: Component) -> Result<()> {
 pub fn deb_depends(c: Component) -> &'static str {
     // What dh_installsysusers adds for systemd-sysusers; deb-systemd-helper
     // and deb-systemd-invoke come with init-system-helpers, which is Essential.
-    if c == Component::Llama {
+    if c == Component::Core {
         "systemd | systemd-standalone-sysusers | systemd-sysusers"
     } else {
         ""
@@ -365,7 +365,7 @@ pub fn rpm_scriptlets(c: Component) -> String {
     if c == Component::Bff {
         return bff_rpm_scriptlets();
     }
-    if c != Component::Llama {
+    if c != Component::Core {
         return String::new();
     }
     // Fedora's systemd macros (systemd's src/rpm/macros.systemd.in) written
@@ -493,7 +493,7 @@ mod tests {
     /// named after their namespace (polkit(8)), the user in
     /// /usr/lib/sysusers.d (sysusers.d(5): "Packages should install their
     /// configuration files in /usr/lib/sysusers.d"). Each goes to the
-    /// llama.cpp package, which holds pai-manager, but the bff's unit, which
+    /// core package, which holds pai-manager, but the bff's unit, which
     /// goes with pai-bff to the bff's package.
     #[test]
     fn the_system_files_go_to_their_directories_in_their_packages() {
@@ -514,7 +514,7 @@ mod tests {
             let owner = if *path == BFF_UNIT {
                 Component::Bff
             } else {
-                Component::Llama
+                Component::Core
             };
             assert_eq!(components::of(path), owner, "{path}");
             let want = match *path {
@@ -537,7 +537,7 @@ mod tests {
 
     /// Staged, the files land under their paths as plain 0644 files and the
     /// split hands each to its package: the bff's unit to the bff's, every
-    /// other one to the llama.cpp package.
+    /// other one to the core package, none to the engine's.
     #[test]
     fn staging_writes_every_system_file_and_the_split_gives_them_to_their_packages() {
         use std::os::unix::fs::PermissionsExt;
@@ -554,7 +554,7 @@ mod tests {
         let into = dir.join("into");
         assert_eq!(
             components::split(&stage_dir, &into).unwrap(),
-            [Component::Bff, Component::Llama]
+            [Component::Bff, Component::Core]
         );
         for (path, _) in files() {
             let owner = components::of(path).suffix();
@@ -884,14 +884,15 @@ mod tests {
     const RELOAD_BUS: &str =
         "busctl call org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus ReloadConfig";
 
-    /// Only the packages with a service, llama.cpp's (the manager) and the
-    /// bff's, have maintainer scripts: the others install files and nothing
-    /// else.
+    /// Only the packages with a service, the core (the manager) and the
+    /// bff, have maintainer scripts: the others, the engine among them,
+    /// install files and nothing else.
     #[test]
     fn only_the_service_packages_have_maintainer_scripts() {
         for c in [
             Component::Config,
             Component::Cli,
+            Component::Llama,
             Component::Rocm,
             Component::Cuda,
             Component::Vulkan,
@@ -900,7 +901,7 @@ mod tests {
             assert_eq!(rpm_scriptlets(c), "", "{c:?}");
             assert_eq!(deb_depends(c), "", "{c:?}");
         }
-        for c in [Component::Llama, Component::Bff] {
+        for c in [Component::Core, Component::Bff] {
             let names: Vec<&str> = deb_scripts(c).iter().map(|(n, _)| *n).collect();
             assert_eq!(names, ["postinst", "prerm", "postrm"], "{c:?}");
             for (name, text) in deb_scripts(c) {
@@ -927,7 +928,7 @@ mod tests {
     /// ones alone) so they run the llama-server just installed.
     #[test]
     fn the_deb_postinst_creates_the_user_enables_and_starts_the_manager() {
-        let scripts = deb_scripts(Component::Llama);
+        let scripts = deb_scripts(Component::Core);
         let text = &scripts.iter().find(|(n, _)| *n == "postinst").unwrap().1;
         assert!(
             text.contains(r#"if [ "$1" = "configure" ] || [ "$1" = "abort-upgrade" ] || [ "$1" = "abort-deconfigure" ] || [ "$1" = "abort-remove" ] ; then"#),
@@ -979,7 +980,7 @@ mod tests {
     /// even on purge.
     #[test]
     fn the_deb_prerm_and_postrm_stop_on_removal_and_keep_the_users_data() {
-        let scripts = deb_scripts(Component::Llama);
+        let scripts = deb_scripts(Component::Core);
         let prerm = &scripts.iter().find(|(n, _)| *n == "prerm").unwrap().1;
         at(
             prerm,
@@ -1029,9 +1030,9 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
         let dir = std::env::temp_dir().join(format!("xtask-debscripts-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
-        let llama = dir.join("llama");
-        write_deb_scripts(&llama, Component::Llama).unwrap();
-        for (name, text) in deb_scripts(Component::Llama) {
+        let llama = dir.join("core");
+        write_deb_scripts(&llama, Component::Core).unwrap();
+        for (name, text) in deb_scripts(Component::Core) {
             let p = llama.join("DEBIAN").join(name);
             assert_eq!(std::fs::read_to_string(&p).unwrap(), text, "{name}");
             let mode = std::fs::metadata(&p).unwrap().permissions().mode() & 0o777;
@@ -1051,11 +1052,12 @@ mod tests {
     /// systemd-sysusers`); deb-systemd-helper and deb-systemd-invoke come
     /// from init-system-helpers, which is Essential.
     #[test]
-    fn the_llama_deb_depends_on_systemd_sysusers() {
+    fn the_core_deb_depends_on_systemd_sysusers() {
         assert_eq!(
-            deb_depends(Component::Llama),
+            deb_depends(Component::Core),
             "systemd | systemd-standalone-sysusers | systemd-sysusers"
         );
+        assert_eq!(deb_depends(Component::Llama), "");
     }
 
     /// The body of scriptlet `name` (the lines after `%name` up to the next
@@ -1090,7 +1092,7 @@ mod tests {
     /// manager is (re)started, so an administrator's disable holds.
     #[test]
     fn the_rpm_scriptlets_enable_start_and_stop_the_manager() {
-        let text = rpm_scriptlets(Component::Llama);
+        let text = rpm_scriptlets(Component::Core);
         let names: Vec<&str> = text
             .lines()
             .filter(|l| l.starts_with('%'))
@@ -1372,14 +1374,14 @@ mod tests {
         }
     }
 
-    /// Each package handles its own unit: the llama.cpp package's scripts
+    /// Each package handles its own unit: the core package's scripts
     /// never start, stop or forget the bff.
     #[test]
-    fn the_llama_scripts_leave_the_bff_alone() {
-        for (name, text) in deb_scripts(Component::Llama) {
+    fn the_core_scripts_leave_the_bff_alone() {
+        for (name, text) in deb_scripts(Component::Core) {
             assert!(!text.contains("private-ai-bff"), "{name}:\n{text}");
         }
-        let rpm = rpm_scriptlets(Component::Llama);
+        let rpm = rpm_scriptlets(Component::Core);
         assert!(!rpm.contains("private-ai-bff"), "{rpm}");
     }
 
@@ -1447,6 +1449,34 @@ mod tests {
             "rm ",
         ] {
             assert!(!text.contains(other), "{other} in:\n{text}");
+        }
+    }
+
+    /// Every generated file of the manager's services, its maintainer
+    /// scripts included, names the package that installs it now, the
+    /// core's, never the engine's `llama.cpp` package or the
+    /// never-published `-llama`.
+    #[test]
+    fn the_system_files_and_scripts_name_the_core_package() {
+        let mut texts: Vec<(String, String)> = files()
+            .into_iter()
+            .filter(|(p, _)| *p != BFF_UNIT)
+            .map(|(p, t)| (p.to_string(), t))
+            .collect();
+        texts.extend(
+            deb_scripts(Component::Core)
+                .into_iter()
+                .map(|(n, t)| (n.to_string(), t)),
+        );
+        for (name, text) in &texts {
+            assert!(
+                text.contains("Installed by the private-ai-framework-core package"),
+                "{name}:\n{text}"
+            );
+            assert!(
+                !text.contains("private-ai-framework-llama"),
+                "{name}:\n{text}"
+            );
         }
     }
 }
