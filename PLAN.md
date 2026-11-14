@@ -403,8 +403,8 @@ Decided with the user on 2026-11-14:
   values, an empty `presets.ini`) and its postinst copies each to `/etc/llama.cpp/` only when missing
   (`server@default.ini` 0640 root:private-ai), so an upgrade never touches what the user or the manager
   wrote and dpkg asks nothing; the instance `default` then exists from the first install, disabled at
-  boot (step 12). Nothing published uses `/etc/private-ai/` for these files; the test machine's
-  imported files are moved by hand once, with the user's go-ahead. Windows and macOS: to settle with the
+  boot (step 12). No migration between pre-release layouts (user, 2026-11-14): nothing moves files
+  from `/etc/private-ai/`. Windows and macOS: to settle with the
   user in their slices (the same split would be `%ProgramData%\llama.cpp\`).
 - **Framework packages carry only the framework's version** (`2.99.1`, no `+llama.cpp...`) and
   require `llama.cpp (>= 1:<release built against>)`; a newer llama.cpp installs without a framework
