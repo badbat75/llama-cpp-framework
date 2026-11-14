@@ -334,9 +334,12 @@ RUNPATH; it has not been repeated with the absolute one.
 (`server@<id>.ini`, `presets.ini`, `presets.ini.disabled`) are the engine's, in `/etc/llama.cpp/`
 (`paths::engine_config_dir`), which only the manager writes; the framework's own (`bff.ini`) are in
 `/etc/private-ai/`. systemd creates both at the manager's start (`ConfigurationDirectory=`).
-`llama.cpp` holds, read-only in `/usr/share/private-ai/llama.cpp/`, `server@default.ini` (the
-configurator's default values with the service user's paths, which the manager's checks accept:
-`server_cfg.rs` test) and an empty `presets.ini`; its scripts copy each into `/etc/llama.cpp/` only
+`llama.cpp` holds, read-only in `/usr/share/private-ai/llama.cpp/`, `server@default.ini` and an
+empty `presets.ini`. The server file holds starting values only, a `[Server]` section with `Port`,
+`Hostname`, `ModelsDir` and `StateDir` (the service user's paths under `/var/lib/private-ai`): the
+format belongs to the framework, so a change of pai's template does not touch the engine package.
+The manager reads it with pai's defaults for every other key and rewrites it in pai's full template
+at its first write (`server_cfg.rs` tests, which also check that the manager accepts it). Its scripts copy each into `/etc/llama.cpp/` only
 when it is missing, never over a file, so an upgrade leaves what the user or the manager wrote and
 dpkg asks nothing: `server@default.ini` 0640 `root:private-ai` when that group exists, else 0644,
 `presets.ini` 0644. The instance `default` therefore exists from the first install. No file is moved

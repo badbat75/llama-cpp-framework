@@ -99,3 +99,6 @@ Lessons only: the rules are in `AGENTS.md`.
   of a 2.4 `server.ini`/`presets.ini` stops being offered on a packaged Linux install. The instance
   files' directory is `paths::engine_config_dir` (`/etc/llama.cpp` on Linux); `system_config_dir`
   is the framework's (`bff.ini`); grep both names and both paths after a layout change.
+- The content of the engine's shipped `crates/core/defaults/server@default.ini` (starting values only,
+  pinned by `server_cfg.rs` tests) is described in one place, `build-packaging.md` ("No config file is
+  shipped"); `AGENTS.md`, the READMEs and `PLAN.md` only name the file. Change that paragraph alone.
