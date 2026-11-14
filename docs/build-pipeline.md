@@ -50,7 +50,7 @@ been compiled by WiX or run on Windows.
 | `configure` | `--dist-root <path>`, `--llama-cpp-dir <path>` (default `build/<os>/llama.cpp`) |
 | `build` | `llama` (llama.cpp) or `framework` (the web UI and the four cargo binaries) for one product (default: both, in that order) |
 | `package` | `--keep-staging`; `llama` or `framework` for one product's packages (default: both; the other product's files in `dist/` are left as they are); Linux `--deb`, `--rpm`; Windows `--wix <wix.exe>` |
-| `install` | `--dry-run`, a package file (Linux and macOS: any number, and only those install; Windows: one); Linux `--deb`, `--rpm`; Linux and macOS `--force` |
+| `install` | `--dry-run`, a package file (Linux and macOS: any number, and only those install; Windows: at most one of each product, llama.cpp's first); Linux `--deb`, `--rpm`; Linux and macOS `--force` |
 
 **After a change, re-run the phases below.** The bootstrap report names the same steps.
 

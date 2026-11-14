@@ -65,8 +65,8 @@ Lessons only: the rules are in `AGENTS.md`.
   (relations table, `.deb`/`.rpm` scan bullets) and `build-macos.md` each repeat them. A package with
   no 2.4 predecessor is an exception in every "each replaces" sentence. Sizes measured on the old split
   are not the new packages': say so instead of carrying them over.
-- When a crate is added, its name goes in: `AGENTS.md` Commands (crate list, Windows GNU list), release
-  step 1's version list, the Map, `.opencode/agents/coordinator.md` (`cargo clean -p`), `coder.md` (GNU
+- When a crate is added, its name goes in: `AGENTS.md` Commands (crate list, Windows GNU list), the `release`
+  skill's step 1 version list, the Map's crate list, `.opencode/agents/coordinator.md` (`cargo clean -p`), `coder.md` (GNU
   list), the source map's workspace row (`the six pai-* crates`), the README tree and command table,
   and `PLAN.md` W15 (the coordinator's: report it). The coder's GNU list lagged one crate already once.
 - `xtask` messages can lag the build: check the phase that needs a tool, not the one that reports it.
@@ -79,16 +79,15 @@ Lessons only: the rules are in `AGENTS.md`.
   behaviour (what the SCM shows on a failed start) goes in `installer/AGENTS.md`'s open checks, phrased
   "by the code".
 - When the web UI gains a view, what it shows is repeated in four places: `crates/bff/README.md`
-  (intro, route table, "The web UI"), the `AGENTS.md` overview paragraph and its bff Map bullet, and
+  (intro, route table, "The web UI"), the `AGENTS.md` overview paragraph, and
   the root `README.md` intro. A route that reaches the manager can be checked by hand with no manager:
   run the debug `pai-bff` with `PRIVATE_AI_DATA_ROOT` (and `<root>/system-config/bff.ini` for a port);
   it answers 503 `unavailable`.
 - When a package is split or a file changes package, recheck what moved with the maintainer scripts:
   a "the scripts restart the services" sentence holds only for the package that has them. Each
   package's scripts are in `system_files.rs` (`deb_scripts`, `rpm_scriptlets`, one function per
-  package), its rpm `Requires(<tag>)` in `package.rs`. A unit's package is named in five places:
-  `build-packaging.md` (Holds table, paths table, system files heading and row), `AGENTS.md`'s Linux
-  bullet, the README package table, and the manager row of `crates/config/README.md`'s source map.
+  package), its rpm `Requires(<tag>)` in `package.rs`. A unit's package is named in four places:
+  `build-packaging.md` (Holds table, paths table, system files heading and row), the README package table, and the manager row of `crates/config/README.md`'s source map.
 - A setting that is the service manager's own state (start at login, start at boot) is described
   once in full in "Through the manager" of `crates/config/README.md`; `AGENTS.md`, the README and
   `installer/AGENTS.md` (its test plan) carry one line each. `components::file_stem` and
@@ -107,7 +106,7 @@ Lessons only: the rules are in `AGENTS.md`.
   of the install log stays until a real removal or purge. A Windows manager message key is named only in
   `installer/AGENTS.md`'s manager bullet: grep `cli.toml`'s old key in every `.md` after a rename.
 - When an xtask phase's arguments change, they are named in: `build-pipeline.md` (Options and "re-run"
-  tables), the README command table, `AGENTS.md`'s Windows `xtask build` bullet and Linux bullet,
+  tables), the README command table,
   `build-compiling.md` (node/npm line, web UI section, Linux "built last"), `build-packaging.md`
   (MSI and `.deb`/`.rpm` intros), `build-macos.md` ("Package."), and the `scripts/0N-*` usage headers
   (not ours: report them). `xtask install`'s "predates the build" warning keys on the build tree's
@@ -116,8 +115,7 @@ Lessons only: the rules are in `AGENTS.md`.
   `build-packaging.md` (intro and file table, "The MSIs (Windows)", the Install table and bullets),
   `build-pipeline.md` (intro, Options, re-run table, OS table, "Where things land", footguns),
   the README (intro, features, steps, tree, config table, command table, Packaging), `AGENTS.md`
-  (overview, Windows bullets, Installer and crate Map bullets, `llama.ico`, the conventions on
-  `%ProgramData%`, release steps 3 and 7 and the names table), `crates/config/README.md` ("Through
+  (overview, the conventions on `%ProgramData%`), the `release` skill (steps 3 and 8, the names table), `crates/config/README.md` ("Through
   the manager", the source map's manager row), `crates/config/AGENTS.md` (log source) and
   `crates/bff/README.md`. Per-product build files are named from the staging dir
   (`stage.with_extension`): `build\windows\staging\<product>.license.rtf`, `.wix-obj\`.
@@ -132,12 +130,16 @@ Lessons only: the rules are in `AGENTS.md`.
 - `xtask install` takes no product on any OS (only files); `package` and `build` do. On macOS a
   non-release llama.cpp clone is named `b<N>`, and `components::is_file_of` wants a digit after `-v`,
   so `llama.cpp-vb<N>-arm64.pkg` is not picked from `dist/` by `install`.
-- The release process (`AGENTS.md`, last section) lists every package file per OS and the upload globs:
+- The release process (`.agents/skills/release/SKILL.md`) lists every package file per OS and the upload globs:
   when `components.rs`, `msi::file_name` or `macos_pkg::file_name` change a name, fix it there too. Only
   Windows refuses a 2 GiB asset (`windows/package.rs`); nothing pins the llama.cpp tag across the
   three build machines (`common/llama.rs` takes the newest release at build time).
 - When an OS gap closes (macOS's release-tag refusal, its build dir), grep `does not yet`, `Unlike Linux`,
-  `macOS does not` and the "Open, by the code" list: `AGENTS.md` release steps, `build-packaging.md`'s
+  `macOS does not` and the "Open, by the code" list: the `release` skill's steps, `build-packaging.md`'s
   file-name bullets and `build-macos.md` each repeat the gap.
 - When an item of `installer/AGENTS.md`'s "Known gaps" closes in code, remove it there AND turn it into
   a test plan check (what a Windows run must show), since the fix is only type-checked.
+- `AGENTS.md` is loaded into every session (keep it under ~40k characters): its Map bullets are
+  pointers (what the area is, the guide, a safety rule the guide lacks), never a copy of the guide.
+  A new fact goes in the guide; before cutting one from `AGENTS.md`, grep the guide for it and move it
+  there if missing. Task workflows (the release) live in skills.

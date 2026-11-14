@@ -436,7 +436,7 @@ Decided with the user on 2026-11-14:
   the framework's build: an open point for the slice.
 
 The 2.99.x packages were never published, so no upgrade relation names them. Requirement change: R1,
-R2 and the release process in `AGENTS.md` (installer name, release title) follow this.
+R2 and the release process (the `release` skill) (installer name, release title) follow this.
 
 Asked by the user on 2026-11-14: **the packages stop the services they hold** before their files are
 replaced, on upgrade as on removal, and start again afterwards what was running: `core` stops the
@@ -454,7 +454,7 @@ running instances on the old llama-server; settled by the engine owning its unit
 Slices, each test first: **1** (done) the Linux split (`core`, the engine and its runtimes,
 versions, relations, file names; a non-release llama.cpp build is refused; the runtimes' copyright
 files and the engine's homepage are llama.cpp's); **2** (done, Linux) the packages stop the services they hold (the engine its instances, with its unit), and the build split in xtask (`xtask build|package [llama|framework]`); **2b** (done, Linux) the engine's configuration in `/etc/llama.cpp/` with its defaults copied when missing; **3** the two Windows installers (the framework's and llama.cpp's);
-**4** (done, type-checked only: the engine's `.pkg` in `/opt/llama.cpp`, `org.privateai.llama.cpp`, `llama.cpp-v<release>-arm64.pkg` and its `-vulkan` runtime; the framework's `config`, `cli`, `core` in `/opt/private-ai`; `xtask package` per product, `install` the engine first; left: a 2.4 macOS install in `/opt/llama.cpp` is not removed) the macOS `.pkg`; **5** (release process written in `AGENTS.md`) docs and the release process: **one GitHub release per framework release, with every package** (the framework's and llama.cpp's at the release it was built against, on every OS), the title kept as `vX.Y.Z (llama.cpp vA.B.C)` (user, 2026-11-14); a llama.cpp-only rebuild (`+pai<N+1>`) goes out with the next framework release or as re-uploaded assets. Open: nothing pins the llama.cpp release across the three build machines (`common/llama.rs` takes the newest tag at build time), so one release could carry different engines per OS.
+**4** (done, type-checked only: the engine's `.pkg` in `/opt/llama.cpp`, `org.privateai.llama.cpp`, `llama.cpp-v<release>-arm64.pkg` and its `-vulkan` runtime; the framework's `config`, `cli`, `core` in `/opt/private-ai`; `xtask package` per product, `install` the engine first; left: a 2.4 macOS install in `/opt/llama.cpp` is not removed) the macOS `.pkg`; **5** (release process written in the `release` skill) docs and the release process: **one GitHub release per framework release, with every package** (the framework's and llama.cpp's at the release it was built against, on every OS), the title kept as `vX.Y.Z (llama.cpp vA.B.C)` (user, 2026-11-14); a llama.cpp-only rebuild (`+pai<N+1>`) goes out with the next framework release or as re-uploaded assets. Open: nothing pins the llama.cpp release across the three build machines (`common/llama.rs` takes the newest tag at build time), so one release could carry different engines per OS.
 
 - Done when: `xtask package` on Linux makes the framework packages at `2.99.1` requiring `llama.cpp (>=
   1:1.0.0)` and the engine package at `1:1.0.0+pai1`; the engine or the framework can be rebuilt alone;
