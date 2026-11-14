@@ -405,6 +405,15 @@ Decided with the user on 2026-11-14:
 The 2.99.x packages were never published, so no upgrade relation names them. Requirement change: R1,
 R2 and the release process in `AGENTS.md` (installer name, release title) follow this.
 
+Asked by the user on 2026-11-14: **the packages stop the services they hold** before their files are
+replaced, on upgrade as on removal, and start again afterwards what was running: `core` stops the
+manager and the running instances (`llama.cpp@*`), `bff` its service (deb `prerm upgrade`, rpm `%pre`
+of the new package, since rpm runs the old `%preun` after the new files are in place), and their
+`postinst` / `%posttrans` start the manager and bring back the instances that were running.
+`xtask install` then no longer refuses because of the framework's own services: only a llama-server
+outside them (started by hand) stops it; an open `pai-config` or `pai` is named in a warning, not a
+refusal.
+
 Found after slice 1: the engine package has no maintainer scripts, so upgrading `llama.cpp` alone
 leaves running instances on the old llama-server (only `core`'s scripts restart them). Fix in slice 2:
 `core` restarts the running instances when the engine's files change (a dpkg file trigger on the
