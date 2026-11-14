@@ -241,6 +241,8 @@ Lessons only: the rules are in `AGENTS.md`.
   `Installed` + `REINSTALL`, the new package of an upgrade looks like a first install (no `Installed`).
   Write `NOT (REMOVE~="ALL")` with parentheses. config's names lint also scans core's test modules:
   a tester's `join("llama.cpp")` there fails `cargo test -p pai-config -- names_lint`; report it.
+  It scans pai-app's test modules too: a test literal naming the repo directory
+  (`llama.cpp-framework`, e.g. in a sample path) fails `no_code_names_the_old_project`; report it.
 - The macOS `.pkg` decisions (prefixes, names, identifiers, versions, install order, the pgrep
   pattern) live in `xtask/src/common/macos_pkg.rs`, pure and tested on Linux; `macos/package.rs` and
   `macos/install.rs` only call them (text-checked). `/opt/llama.cpp` is spelled once, as

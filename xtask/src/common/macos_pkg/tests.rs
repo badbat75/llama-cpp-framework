@@ -427,10 +427,9 @@ fn the_macos_install_phase_uses_the_split() {
 }
 
 /// A `.pkg` is built from a llama.cpp release only, as on Linux and
-/// Windows: `run()` refuses a clone not on a release tag (named
-/// `b<N>`/`b0-<sha>` by `version::llama_build`, a name `install` cannot
-/// pick from dist/) right after reading it, before it stages or runs
-/// pkgbuild.
+/// Windows: `version::llama_build` refuses a clone not on a release tag,
+/// and `run()` checks the release again right after reading it, before it
+/// stages or runs pkgbuild.
 #[test]
 fn macos_package_refuses_a_build_that_is_not_a_release() {
     let code = code_of("macos/package.rs");

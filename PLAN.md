@@ -417,11 +417,7 @@ Decided with the user on 2026-11-14:
   `hw_window.rs`) and the StateDir Browse still start from `models_dir_or_default()` (the user's
   `~\.llama.cpp`), and `snapshot-folder-hint` still says the default is in the user data folder (the
   Server form itself shows both folders blank with the instance default as hint since the user's
-  2026-11-14 choice).) **Start at login** (found by the user on Linux, 2026-11-14): an entry written
-  while no installed copy existed points at that build's `current_exe()` (here a vanished debug `pai`),
-  and nothing ever repairs it: the GUI reads the entry as on and never rewrites it. At its start the GUI
-  should rewrite an enabled entry whose command is not the one `choose_autostart_exe` picks now (Linux
-  `.desktop`, Windows Run value). Folders (user, 2026-11-14): the program in `%ProgramFiles%\llama.cpp\` (with the
+  2026-11-14 choice).) Folders (user, 2026-11-14): the program in `%ProgramFiles%\llama.cpp\` (with the
   read-only defaults); everything of the engine's instances under `%ProgramData%\llama.cpp\`:
   `config\` (`server@<id>.ini`, `presets.ini`, `presets.ini.disabled`; `paths::engine_config_dir()`),
   `logs\` (`llama-server@<id>.log` and its `.previous.log`) and `models\` (the default `ModelsDir`);

@@ -42,6 +42,14 @@ fn main() {
     for line in migrated.errors() {
         eprintln!("{line}");
     }
+    // A login entry left stale by another build is rewritten for this one;
+    // a failure is reported and the GUI still runs.
+    if let Err(e) = pai_app::startup::repair_entry() {
+        eprintln!(
+            "{}",
+            strings::fill("login-repair-failed", &[&e.to_string()])
+        );
+    }
     if let Err(e) = gui::run(minimized) {
         eprintln!(
             "{}",

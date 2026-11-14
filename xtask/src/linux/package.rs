@@ -3143,8 +3143,8 @@ mod tests {
 
     /// The engine's version is built from a llama.cpp release
     /// (`1:<release>+pai<N>`), so `run()` refuses a build that is not on a
-    /// release tag (the `b0-<sha>` fallback of `version::llama_build`, a
-    /// `bNNNN` nightly, an `-rc`) before it stages or builds any package:
+    /// release tag (a `bNNNN` nightly, an `-rc`; `version::llama_build`
+    /// already refuses one) before it stages or builds any package:
     /// the check, a `bail!` on `util::is_release_tag(&llama_build)`, comes
     /// right after the release is read and before the staging, `build_deb`
     /// and `build_rpm`. Read from the code before the tests.

@@ -75,6 +75,42 @@ fn choose_autostart_exe(
     installed.unwrap_or(current)
 }
 
+/// What the start of the GUI does to an existing login entry whose stored
+/// command (`stored`: the Exec value on Linux, the Run value on Windows) is
+/// not the one an enable would write now (`expected(minimized)`: the command
+/// for the exe `choose_autostart_exe` picks today): `Some(minimized)`, the
+/// stored "start minimized" choice to rewrite it with, or `None` to leave it
+/// alone (no entry, an entry switched off, or one already right). Pure.
+#[cfg_attr(not(any(windows, target_os = "linux")), allow(dead_code))]
+fn repair_choice(
+    stored: Option<&str>,
+    enabled: bool,
+    expected: impl Fn(bool) -> String,
+) -> Option<bool> {
+    let stored = stored.filter(|_| enabled)?;
+    let minimized = stored.contains("--minimized");
+    (stored != expected(minimized)).then_some(minimized)
+}
+
+/// Rewrite an enabled login entry whose command is stale (`repair_choice`)
+/// with the exe an enable would register now, keeping its "start
+/// minimized" choice. `Ok(true)` when it was rewritten. Called by the GUI at
+/// start, after `migrate_old_entry`. Unsupported platforms: `Ok(false)`.
+pub fn repair_entry() -> io::Result<bool> {
+    #[cfg(windows)]
+    {
+        win::repair_entry()
+    }
+    #[cfg(target_os = "linux")]
+    {
+        linux::repair_entry_at(&linux::entry_path())
+    }
+    #[cfg(not(any(windows, target_os = "linux")))]
+    {
+        Ok(false)
+    }
+}
+
 /// Replace the login entry of release 2.4 and earlier
 /// (`pai_core::migrate::OLD_LOGIN_ENTRY`: the HKCU Run value on Windows, the
 /// `<name>.desktop` XDG autostart file on Linux) by the new one: when the old
@@ -200,12 +236,7 @@ mod linux {
     /// `X-GNOME-Autostart-enabled=false`) is NOT enabled, although the file is
     /// there: the checkbox shows what will happen at the next login.
     pub(super) fn parse_entry(text: &str) -> (bool, bool) {
-        let value = |key: &str| {
-            text.lines().find_map(|l| {
-                let (k, v) = l.split_once('=')?;
-                (k.trim() == key).then(|| v.trim().to_string())
-            })
-        };
+        let value = |key: &str| entry_value(text, key);
         let Some(exec) = value("Exec") else {
             return (false, false);
         };
@@ -213,6 +244,14 @@ mod linux {
         let gnome_off =
             value("X-GNOME-Autostart-enabled").is_some_and(|v| v.eq_ignore_ascii_case("false"));
         (!hidden && !gnome_off, exec.contains("--minimized"))
+    }
+
+    /// The trimmed value of the first `key=` line of an entry's text.
+    fn entry_value(text: &str, key: &str) -> Option<String> {
+        text.lines().find_map(|l| {
+            let (k, v) = l.split_once('=')?;
+            (k.trim() == key).then(|| v.trim().to_string())
+        })
     }
 
     fn stored() -> (bool, bool) {
@@ -251,6 +290,21 @@ mod linux {
         }
         std::fs::remove_file(old)?;
         Ok(true)
+    }
+
+    /// The Linux half of `super::repair_entry`, on an explicit path.
+    pub(super) fn repair_entry_at(path: &Path) -> io::Result<bool> {
+        let text = match std::fs::read_to_string(path) {
+            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
+            other => other?,
+        };
+        let (enabled, _) = parse_entry(&text);
+        let exe = super::choose_autostart_exe(installed_exe(), std::env::current_exe()?);
+        let stored = entry_value(&text, "Exec");
+        match super::repair_choice(stored.as_deref(), enabled, |m| exec_line(&exe, m)) {
+            Some(minimized) => write_entry(path, true, minimized).map(|()| true),
+            None => Ok(false),
+        }
     }
 
     pub(super) fn write_entry(path: &Path, on: bool, minimized: bool) -> io::Result<()> {
@@ -475,6 +529,18 @@ mod win {
         }
     }
 
+    /// The Windows half of `super::repair_entry`: a Run value switched off in
+    /// Task Manager (`super::approved_on`) counts as off and is left alone.
+    pub fn repair_entry() -> io::Result<bool> {
+        let enabled = super::approved_on(read_user_binary(APPROVED_KEY, VALUE_NAME).as_deref());
+        let exe = super::choose_autostart_exe(installed_exe(), std::env::current_exe()?);
+        let stored = stored_command();
+        match super::repair_choice(stored.as_deref(), enabled, |m| run_command(&exe, m)) {
+            Some(minimized) => set_enabled(true, minimized).map(|()| true),
+            None => Ok(false),
+        }
+    }
+
     /// A `REG_BINARY` value under HKCU, or `None` when the key or value is
     /// absent, unreadable or of another type.
     fn read_user_binary(subkey: &str, value: &str) -> Option<Vec<u8>> {
@@ -571,12 +637,251 @@ pub(crate) fn startup_e2e() {
     set_enabled(false, false).expect("disable");
     assert!(!entry.exists());
     assert!(!is_enabled());
+
+    // A stale entry (a dev build's exe, since removed) is rewritten at the
+    // GUI's start with the exe an enable would write now, minimized kept;
+    // a second start finds it right and leaves it alone.
+    assert!(!repair_entry().expect("no entry"), "nothing to repair");
+    assert!(!entry.exists(), "a missing entry is not created");
+    std::fs::write(&entry, tests::STALE_ENTRY).expect("stale entry");
+    assert!(
+        repair_entry().expect("repaired"),
+        "the stale entry is rewritten"
+    );
+    let repaired = std::fs::read_to_string(&entry).expect("entry");
+    assert!(!repaired.contains("/debug/pai\""), "{repaired}");
+    assert!(is_enabled() && starts_minimized(), "{repaired}");
+    assert!(!repair_entry().expect("second start"), "already right");
+    set_enabled(false, false).expect("disable");
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{approved_on, choose_autostart_exe, run_command};
+    use super::{approved_on, choose_autostart_exe, repair_choice, run_command};
     use std::path::PathBuf;
+
+    /// The entry the user found on Linux (2026-11-14), with the developer's
+    /// tree renamed: written by a dev build of `pai` while `/usr/bin/pai-config`
+    /// was not installed, read as enabled, and pointing at an exe that is gone.
+    #[cfg(target_os = "linux")]
+    pub(super) const STALE_ENTRY: &str = "[Desktop Entry]\n\
+        Type=Application\n\
+        Name=Private AI Framework\n\
+        Comment=Configure and run llama-server and its model presets\n\
+        Exec=\"/home/dev/src/pai/build/windows/cargo-target/debug/pai\" gui --minimized\n\
+        Icon=org.privateai.Config\n\
+        Terminal=false\n\
+        X-GNOME-Autostart-enabled=true\n";
+
+    // No entry, or one switched off (GNOME's panel, Task Manager): the
+    // setting is off, so nothing is rewritten however stale the command.
+    #[test]
+    fn repair_choice_leaves_a_missing_or_switched_off_entry_alone() {
+        let installed = std::path::Path::new("/usr/bin/pai-config");
+        let expected = |m: bool| super::run_command(installed, m);
+        assert_eq!(repair_choice(None, false, expected), None);
+        assert_eq!(
+            repair_choice(None, true, expected),
+            None,
+            "no command stored"
+        );
+        let stale = r#""/home/dev/build/debug/pai" gui --minimized"#;
+        assert_eq!(repair_choice(Some(stale), false, expected), None);
+    }
+
+    // An enabled entry that already runs what an enable would write is not
+    // rewritten, minimized or not: no needless write at every start.
+    #[test]
+    fn repair_choice_leaves_a_matching_entry_alone() {
+        let exe = std::path::Path::new(r"C:\Program Files\private-ai\bin\pai-config.exe");
+        let expected = |m: bool| run_command(exe, m);
+        for minimized in [true, false] {
+            let stored = run_command(exe, minimized);
+            assert_eq!(
+                repair_choice(Some(&stored), true, expected),
+                None,
+                "{stored}"
+            );
+        }
+    }
+
+    // An enabled entry whose command names another exe (a dev build, a
+    // moved install) is rewritten, with the minimized choice it stored.
+    #[test]
+    fn repair_choice_rewrites_a_stale_enabled_entry_keeping_minimized() {
+        let installed = std::path::Path::new(r"C:\Program Files\private-ai\bin\pai-config.exe");
+        let expected = |m: bool| run_command(installed, m);
+        let dev = std::path::Path::new(r"C:\dev\build\windows\cargo-target\debug\pai.exe");
+        assert_eq!(
+            repair_choice(Some(&run_command(dev, true)), true, expected),
+            Some(true)
+        );
+        assert_eq!(
+            repair_choice(Some(&run_command(dev, false)), true, expected),
+            Some(false)
+        );
+    }
+
+    // The same decision on the Linux Exec line, quoted by the Desktop Entry
+    // rules: the user's stale line is rewritten, minimized kept.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn repair_choice_rewrites_the_users_stale_exec_line() {
+        use super::linux::exec_line;
+        let installed = std::path::Path::new("/usr/bin/pai-config");
+        let expected = |m: bool| exec_line(installed, m);
+        let stale = r#""/home/dev/src/pai/build/windows/cargo-target/debug/pai" gui --minimized"#;
+        assert_eq!(repair_choice(Some(stale), true, expected), Some(true));
+        let right = exec_line(installed, false);
+        assert_eq!(repair_choice(Some(&right), true, expected), None);
+    }
+
+    /// What an enable writes now at `dir/fresh.desktop`, the reference a
+    /// repaired entry must equal (the exe `choose_autostart_exe` picks in
+    /// this process, `minimized` as given).
+    #[cfg(target_os = "linux")]
+    fn fresh_entry(dir: &std::path::Path, minimized: bool) -> String {
+        let fresh = dir.join("fresh.desktop");
+        super::linux::write_entry(&fresh, true, minimized).expect("fresh entry");
+        let text = std::fs::read_to_string(&fresh).expect("fresh");
+        std::fs::remove_file(&fresh).expect("rm fresh");
+        text
+    }
+
+    // The user's stale entry, on a temp path: rewritten as an enable would
+    // write it now, minimized kept.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_stale_enabled_autostart_entry_is_rewritten() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("org.privateai.Config.desktop");
+        std::fs::write(&path, STALE_ENTRY).expect("stale entry");
+        assert!(super::linux::repair_entry_at(&path).expect("repaired"));
+        assert_eq!(
+            std::fs::read_to_string(&path).expect("entry"),
+            fresh_entry(dir.path(), true)
+        );
+    }
+
+    // A stale entry the desktop switched off, either way, is left byte for
+    // byte; a missing one is not created.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_switched_off_or_missing_autostart_entry_is_not_repaired() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("org.privateai.Config.desktop");
+        assert!(!super::linux::repair_entry_at(&path).expect("missing"));
+        assert!(!path.exists(), "a missing entry is not created");
+        let gnome_off = STALE_ENTRY.replace(
+            "X-GNOME-Autostart-enabled=true",
+            "X-GNOME-Autostart-enabled=false",
+        );
+        let hidden = format!("{STALE_ENTRY}Hidden=true\n");
+        for text in [gnome_off, hidden] {
+            std::fs::write(&path, &text).expect("entry");
+            assert!(
+                !super::linux::repair_entry_at(&path).expect("no error"),
+                "{text}"
+            );
+            assert_eq!(std::fs::read_to_string(&path).expect("entry"), text);
+        }
+    }
+
+    // An entry that is already right is not written again: its modification
+    // time, set in the past, does not move.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_matching_autostart_entry_is_not_rewritten() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("org.privateai.Config.desktop");
+        for minimized in [true, false] {
+            std::fs::write(&path, fresh_entry(dir.path(), minimized)).expect("entry");
+            let past =
+                std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_000_000_000);
+            std::fs::File::options()
+                .write(true)
+                .open(&path)
+                .and_then(|f| f.set_modified(past))
+                .expect("set mtime");
+            assert!(
+                !super::linux::repair_entry_at(&path).expect("no error"),
+                "{minimized}"
+            );
+            let mtime = std::fs::metadata(&path)
+                .and_then(|m| m.modified())
+                .expect("mtime");
+            assert_eq!(mtime, past, "the entry was rewritten ({minimized})");
+        }
+    }
+
+    // The stale entry cannot be rewritten (read-only file): the error comes
+    // back and the entry is as it was.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_failed_repair_reports_the_error_and_keeps_the_entry() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("org.privateai.Config.desktop");
+        std::fs::write(&path, STALE_ENTRY).expect("stale entry");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o444)).expect("chmod");
+        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o555))
+            .expect("chmod dir");
+        let writable = std::fs::OpenOptions::new().append(true).open(&path).is_ok();
+        let result = (!writable).then(|| super::linux::repair_entry_at(&path));
+        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o755))
+            .expect("chmod dir back");
+        let Some(result) = result else {
+            eprintln!("skipped: running as root, a mode-444 file is still writable");
+            return;
+        };
+        let err = result.expect_err("the entry cannot be written");
+        assert_eq!(err.kind(), std::io::ErrorKind::PermissionDenied, "{err}");
+        assert_eq!(std::fs::read_to_string(&path).expect("entry"), STALE_ENTRY);
+    }
+
+    /// The code of `startup.rs` before its tests, so a test's own literals
+    /// cannot satisfy a text check.
+    fn code() -> &'static str {
+        include_str!("startup.rs")
+            .split("\n#[cfg(test)]\nmod tests")
+            .next()
+            .unwrap()
+    }
+
+    // Windows cannot run the repair here (the real HKCU Run key): a text
+    // check that its branch decides with the shared `repair_choice`, on the
+    // stored Run value and the command `run_command` would write, and that
+    // the public `repair_entry` reaches it; Linux decides the same way.
+    #[test]
+    fn both_platforms_repair_through_repair_choice() {
+        let code = code();
+        let win = &code[code.find("\nmod win {").expect("mod win")..];
+        let win = &win[..win.find("\n}\n").expect("end of mod win")];
+        for want in [
+            "repair_choice(",
+            "stored_command()",
+            "run_command(",
+            "choose_autostart_exe(",
+        ] {
+            assert!(win.contains(want), "the Windows repair does not use {want}");
+        }
+        let linux = &code[code.find("\nmod linux {").expect("mod linux")..];
+        let linux = &linux[..linux.find("\n}\n").expect("end of mod linux")];
+        assert!(
+            linux.contains("repair_choice("),
+            "the Linux repair does not use repair_choice"
+        );
+        let public = &code[code.find("pub fn repair_entry()").expect("repair_entry")..];
+        let public = &public[..public.find("\n}\n").expect("end of repair_entry")];
+        assert!(
+            public.contains("win::"),
+            "repair_entry does not reach the Windows branch"
+        );
+        assert!(
+            public.contains("repair_entry_at("),
+            "repair_entry does not reach the Linux branch"
+        );
+    }
 
     // The autostart entry registers the installed copy when one is recorded,
     // falling back to the running exe only when no install is present.

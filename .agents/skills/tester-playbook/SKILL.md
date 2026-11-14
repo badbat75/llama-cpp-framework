@@ -70,7 +70,8 @@ Lessons only: the rules are in `AGENTS.md`.
   `cargo test` per filter took minutes each on pai-config; one run with every filter took one.
 - A names lint (`crates/config/src/tests/names_lint.rs`, `xtask/src/names_lint.rs`) flags old names in
   code lines; a test that must spell an old name (a negative assertion, the old-variable-is-ignored check)
-  splits it with `concat!("llama-cpp", "-config")` so the lint stays clean.
+  splits it with `concat!("llama-cpp", "-config")` so the lint stays clean. It also refuses the repo's
+  own directory name in a sample path copied from the real machine: write `/home/dev/src/pai/...`.
 - The names lints also flag `join("llama.cpp")`: a test building an old tree spells the directory
   `concat!("llama", ".cpp")`. Only `crates/core/src/migrate.rs` may name the old tree and login entry
   (`MIGRATION_MODULE` / `MIGRATION_NAMES` in the pai-config names lint); a fixture under a temp
@@ -451,3 +452,8 @@ Lessons only: the rules are in `AGENTS.md`.
   `-c user.name=.. -c user.email=.. -c commit.gpgsign=false -c tag.gpgsign=false`,
   `GIT_CONFIG_GLOBAL=/dev/null` and `GIT_CONFIG_NOSYSTEM=1`, so the user's signing or hooks never apply.
   After a fallback is removed, grep its old output (`b0-`) for doc comments of callers still describing it.
+- "Not written again" is pinned by setting the file's mtime in the past (`File::set_modified`, std)
+  and asserting it did not move; a read-only file in a 555 directory pins a failed write (skip as
+  root). A fixture's expected text can be produced by the code itself on a sibling temp path
+  (`startup.rs` `fresh_entry`: what an enable writes now), which keeps the test free of the
+  machine's `/usr/bin/pai-config` and `current_exe()`.

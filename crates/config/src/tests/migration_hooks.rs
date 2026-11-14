@@ -41,3 +41,27 @@ fn the_gui_offers_the_import_at_start() {
         "the dialog's Import runs migration::import_user_config"
     );
 }
+
+// A login entry left stale by another build (an exe since removed) is read
+// as enabled and would never be rewritten: `main` repairs it at the GUI's
+// start (`startup::repair_entry`), after the 2.4 entry is migrated and only
+// on the GUI launch (not `--version` or `sdk-devices`), before `gui::run`.
+// A text check of the order of the calls in `main.rs`.
+#[test]
+fn main_repairs_a_stale_login_entry_before_the_gui_runs() {
+    let main = include_str!("../main.rs");
+    let at = |needle: &str| {
+        main.find(needle)
+            .unwrap_or_else(|| panic!("main.rs has no {needle}"))
+    };
+    let repair = at("startup::repair_entry(");
+    assert!(
+        at("migration::run()") < repair,
+        "the 2.4 entry migrates first"
+    );
+    assert!(
+        main.rfind("Launch::Moved").expect("Launch::Moved") < repair,
+        "only on the GUI launch"
+    );
+    assert!(repair < at("gui::run("), "repair before the GUI");
+}
