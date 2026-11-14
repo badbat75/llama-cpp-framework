@@ -1,7 +1,7 @@
 ---
 title: Build pipeline
 type: reference
-updated: 2026-11-14
+updated: 2026-11-15
 ---
 
 # Build pipeline
@@ -19,8 +19,8 @@ run `xtask configure`, `build`, `package` and `install` in that order. `xtask <p
 `cargo run -p xtask -- <phase>`. The GPU SDKs come from the dist layout, in their newest stable
 version, and everything generated stays under `build/<os>/`. Before changing the build, read this
 page and the [topic page](#topics) of what you change. [Footguns](#footguns) lists what breaks. The
-MSIs themselves are in [installer\AGENTS.md](../installer/AGENTS.md); since their split they have not
-been compiled by WiX or run on Windows.
+MSIs themselves are in [installer\AGENTS.md](../installer/AGENTS.md); both have been compiled by WiX once, in
+CI, and only llama.cpp's has installed.
 
 ![The bootstrap script, then the xtask phases prereq, configure, build, package and install, with what each writes](assets/diagrams/build-pipeline.svg)
 

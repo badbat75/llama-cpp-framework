@@ -151,5 +151,8 @@ Lessons only: the rules are in `AGENTS.md`.
 - The installer CI workflows (`.github/workflows/installers-*.yml`, started by hand) are described in
   `docs/build-macos.md` ("CI.") and `installer/AGENTS.md` (the Status paragraph). A run's id and result
   come from the coordinator's commit (no web fetch): cite the commit. When one goes green, also grep
-  "untested", "never run on a Mac" and "not yet compiled by WiX" in `AGENTS.md`, `PLAN.md` R3 and
-  `build-packaging.md`, which repeat the status.
+  "untested", "never run on a Mac" and "compiled by WiX" in `AGENTS.md` (overview and Map), the root
+  `README.md`, `build-pipeline.md`, `build-packaging.md` and `PLAN.md` R3, which repeat the status.
+- A commit message's reason can be wrong in a detail: check it in the code before repeating it
+  (dbc43cb blamed the instance unit's `ProtectHome`, which only `private-ai-bff.service` sets:
+  `xtask/src/linux/system_files.rs`).

@@ -232,7 +232,7 @@ Runtime configs are created and edited with `pai-config` (the GUI) or headless w
 
 ## Packaging
 
-`xtask package` produces two Windows Installer packages: **llama.cpp's own MSI**, `dist\llama.cpp-v<release>-<arch>.msi` (e.g. `llama.cpp-v1.0.0-x64.msi`, versioned by the llama.cpp release), and **the framework's MSI**, `dist\private-ai-framework-v<version>-<arch>.msi` (e.g. `private-ai-framework-v2.99.1-x64.msi`), each with its own identity, upgraded on its own. Neither has been compiled by WiX or run on Windows since the split: written, text-checked and type-checked only ([installer\AGENTS.md](installer/AGENTS.md), which holds the test plan). Install llama.cpp's first: the framework's MSI refuses to install without llama.cpp at the release it was built against or newer.
+`xtask package` produces two Windows Installer packages: **llama.cpp's own MSI**, `dist\llama.cpp-v<release>-<arch>.msi` (e.g. `llama.cpp-v1.0.0-x64.msi`, versioned by the llama.cpp release), and **the framework's MSI**, `dist\private-ai-framework-v<version>-<arch>.msi` (e.g. `private-ai-framework-v2.99.1-x64.msi`), each with its own identity, upgraded on its own. Both have been compiled by WiX once, in CI, where llama.cpp's installed and the framework's did not (the cause changed since, not yet rerun); otherwise text-checked and type-checked only ([installer\AGENTS.md](installer/AGENTS.md), which holds the test plan). Install llama.cpp's first: the framework's MSI refuses to install without llama.cpp at the release it was built against or newer.
 
 llama.cpp's MSI:
 

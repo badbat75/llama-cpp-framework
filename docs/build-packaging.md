@@ -1,7 +1,7 @@
 ---
 title: Packaging and install
 type: reference
-updated: 2026-11-14
+updated: 2026-11-15
 ---
 
 # Packaging and install
@@ -94,9 +94,10 @@ named by the component: `llama/` for the `llama.cpp` package). `licenses.rs` (`x
 
 ### The MSIs (Windows)
 
-**Windows ships two installers: llama.cpp's own MSI and the framework's, which requires it.** Neither
-has been compiled by WiX or run on Windows since the split (commit `836fdc7`), nor since the
-instances are kept across an engine upgrade (`9462eab`): the `.wxs` files are checked as XML by
+**Windows ships two installers: llama.cpp's own MSI and the framework's, which requires it.** Both
+were compiled by WiX for the first time in CI run 43645918218, which installed llama.cpp's; the
+framework's install failed on its services' restart action, changed since and not yet rerun (commit
+`f546911`). Nothing else has run on Windows: the `.wxs` files are checked as XML by
 xtask's tests, their custom-action conditions evaluated over install, repair, upgrade, uninstall and
 downgrade, and the Rust is type-checked only. The authoring, the services, the
 ACLs and the test plan are in [installer\AGENTS.md](../installer/AGENTS.md).
@@ -185,8 +186,8 @@ holds `config\` (the instances' server and preset files, which users reach only 
 manager), `logs\` (each instance's `llama-server@<id>.log`), `models\` and `state\`, each folder with a
 protected DACL. An instance whose `server@<id>.ini` leaves `ModelsDir` or `StateDir` unset uses
 `models\` or `state\` there, not the profile of the account it runs under, and runs in `state\`; `pai`
-and the configurator's Server tab leave both unset at a save (a Hugging Face download still pins
-the user's `~\.llama.cpp`: the known gaps in [installer\AGENTS.md](../installer/AGENTS.md)). A removal, a repair or the old half of an upgrade of the framework runs `pai-manager
+and the configurator's Server tab leave both unset at a save, and neither a preset save nor a Hugging Face download writes
+`ModelsDir` (`server_cfg::seeds_models_dir`; the same on Linux). A removal, a repair or the old half of an upgrade of the framework runs `pai-manager
 uninstall-services` to delete the instances' services, which the manager creates at run time and
 Windows Installer does not know; the new manager recreates them.
 
