@@ -2,6 +2,7 @@
 // as the repo's rule "No user-visible text in the code" asks.
 import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import ts from 'typescript'
 import { expect, test } from 'vitest'
 import strings from './strings/en_US.json'
 import { t } from './strings.ts'
@@ -13,6 +14,30 @@ function sources(): { name: string; text: string }[] {
   return readdirSync(SRC, { recursive: true, encoding: 'utf8' })
     .filter((f) => /\.tsx?$/.test(f) && !/\.test\.tsx?$/.test(f))
     .map((name) => ({ name, text: readFileSync(join(SRC, name), 'utf8') }))
+}
+
+/**
+ * The literal text written between JSX tags in `source` (a .tsx file), trimmed:
+ * the JsxText nodes holding a letter. Parsed with the TypeScript compiler, so
+ * generics (`useRef<A>(null)`), comparisons (`a > 1`) and arrows (`=>`) in plain
+ * code are never taken for text, and `{expressions}` are not text.
+ */
+function jsxText(name: string, source: string): string[] {
+  const file = ts.createSourceFile(
+    name,
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TSX,
+  )
+  const found: string[] = []
+  const visit = (node: ts.Node) => {
+    if (ts.isJsxText(node) && /[A-Za-z]/.test(node.text))
+      found.push(node.text.trim())
+    ts.forEachChild(node, visit)
+  }
+  visit(file)
+  return found
 }
 
 // ── Failure paths first ─────────────────────────────────────────────────
@@ -47,12 +72,39 @@ test('every key the code uses has a value, and every value is used', () => {
   ).toEqual([])
 })
 
+test('the JSX text check catches literal text and nothing else', () => {
+  // Literal text between tags is caught.
+  expect(jsxText('a.tsx', 'const a = <p>Hello</p>')).toEqual(['Hello'])
+  expect(
+    jsxText('b.tsx', 'const b = <button type="button">Save</button>'),
+  ).toEqual(['Save'])
+  expect(jsxText('c.tsx', "const c = <p>{t('k')} more words</p>")).toEqual([
+    'more words',
+  ])
+  // Plain TypeScript between two tags is not text.
+  const code = [
+    'function C(x: Set<string>, items: { ok: boolean }[]) {',
+    '  const a = useRef<HTMLElement>(null)',
+    '  const b = useRef<HTMLDivElement>(null)',
+    '  const many = x.size > 1',
+    '  if (many) return (<table ref={a}></table>)',
+    '  const kept = items.filter((i) => i.ok)',
+    '  return <p ref={b}>{kept.length}</p>',
+    '}',
+  ].join('\n')
+  expect(jsxText('d.tsx', code)).toEqual([])
+  // Expressions, whitespace and punctuation are not text.
+  expect(
+    jsxText('e.tsx', "const e = <p>\n  {t('k')} : {'CUDA'}\n</p>"),
+  ).toEqual([])
+})
+
 test('no component writes text of its own in JSX', () => {
   const offenders: string[] = []
   for (const { name, text } of sources()) {
     if (!name.endsWith('.tsx')) continue
-    for (const m of text.matchAll(/>([^<>{}]*[A-Za-z][^<>{}]*)</g)) {
-      offenders.push(`${name}: ${m[1]!.trim()}`)
+    for (const literal of jsxText(name, text)) {
+      offenders.push(`${name}: ${literal}`)
     }
   }
   expect(offenders).toEqual([])

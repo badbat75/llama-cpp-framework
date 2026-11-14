@@ -1,37 +1,22 @@
 // The manager's instances and the state of each, read from the bff's
 // /api/instances.
 import { useEffect, useState } from 'react'
+import { apiError, call } from './api.ts'
+import { instanceHref } from './route.ts'
+import { StateShape, stateLabel } from './StateBadge.tsx'
 import { t } from './strings.ts'
 
-type Instance = { id: string; state: string }
+export type Instance = { id: string; engine: string; state: string }
 
-/** What the page shows: the instances, or the key of the message saying why not. */
-type Answer = Instance[] | { error: string }
-
-/** The label of a state, the manager's name shown as is when the page does not know it. */
-function stateLabel(state: string): string {
-  switch (state) {
-    case 'active':
-      return t('instance-state-active')
-    case 'inactive':
-      return t('instance-state-inactive')
-    case 'activating':
-      return t('instance-state-activating')
-    case 'deactivating':
-      return t('instance-state-deactivating')
-    case 'failed':
-      return t('instance-state-failed')
-    default:
-      return t('instance-state-other', state)
-  }
-}
+/** What the bff answered: the instances, or the key of the message saying why not. */
+export type Answer = Instance[] | { error: string }
 
 /** The message of an error key the bff answers; anything else is a failure. */
-function errorText(key: string): string {
+export function errorText(key: string): string {
   switch (key) {
-    case 'unavailable':
+    case 'client-unavailable':
       return t('instances-manager-unavailable')
-    case 'not-authorized':
+    case 'client-not-authorized':
       return t('instances-not-authorized')
     default:
       return t('instances-failed')
@@ -40,25 +25,32 @@ function errorText(key: string): string {
 
 function isInstance(value: unknown): value is Instance {
   if (typeof value !== 'object' || value === null) return false
-  const { id, state } = value as { id?: unknown; state?: unknown }
-  return typeof id === 'string' && id !== '' && typeof state === 'string'
+  const { id, engine, state } = value as {
+    id?: unknown
+    engine?: unknown
+    state?: unknown
+  }
+  return (
+    typeof id === 'string' &&
+    id !== '' &&
+    typeof engine === 'string' &&
+    typeof state === 'string'
+  )
 }
 
 /** The instances from the reply, or the error key; never the reply's text. */
-async function readInstances(): Promise<Answer> {
+export async function readInstances(): Promise<Answer> {
   try {
-    const reply = await fetch('/api/instances')
-    const body: unknown = await reply.json()
+    const reply = await call('/api/instances')
     if (!reply.ok) {
-      const key = (body as { error?: unknown } | null)?.error
+      const key = apiError(reply.body)?.key
       const known =
-        (reply.status === 503 && key === 'unavailable') ||
-        (reply.status === 502 && key === 'not-authorized')
-      return { error: known ? (key as string) : 'failed' }
+        key === 'client-unavailable' || key === 'client-not-authorized'
+      return { error: known ? key : 'failed' }
     }
-    if (!Array.isArray(body) || !body.every(isInstance))
+    if (!Array.isArray(reply.body) || !reply.body.every(isInstance))
       return { error: 'failed' }
-    return body
+    return reply.body
   } catch {
     return { error: 'failed' }
   }
@@ -86,6 +78,11 @@ export default function Instances() {
   )
 }
 
+/** The engine is shown only when it tells the instances apart. */
+function manyEngines(instances: Instance[]): boolean {
+  return new Set(instances.map((i) => i.engine)).size > 1
+}
+
 /** The instances as a table, or the message in their place. */
 function Body({ answer }: { answer: Answer | undefined }) {
   if (answer === undefined) {
@@ -97,19 +94,27 @@ function Body({ answer }: { answer: Answer | undefined }) {
   if (answer.length === 0) {
     return <p>{t('instances-empty')}</p>
   }
+  const engines = manyEngines(answer)
   return (
     <table>
       <thead>
         <tr>
-          <th>{t('instances-column-id')}</th>
-          <th>{t('instances-column-state')}</th>
+          <th scope="col">{t('instances-column-id')}</th>
+          {engines && <th scope="col">{t('instances-column-engine')}</th>}
+          <th scope="col">{t('instances-column-state')}</th>
         </tr>
       </thead>
       <tbody>
         {answer.map((i) => (
           <tr key={i.id}>
-            <td>{i.id}</td>
-            <td>{stateLabel(i.state)}</td>
+            <td>
+              <a href={instanceHref(i.id)}>{i.id}</a>
+            </td>
+            {engines && <td>{i.engine}</td>}
+            <td>
+              <StateShape state={i.state} />
+              {stateLabel(i.state)}
+            </td>
           </tr>
         ))}
       </tbody>

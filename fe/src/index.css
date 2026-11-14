@@ -1,0 +1,589 @@
+/* The web UI's visual system: fe/DESIGN.md, sections 4 and 5. */
+
+:root {
+  --bg: #ffffff;
+  --surface: #f6f7f9;
+  --text: #1b1f24;
+  --muted: #59636e;
+  --control: #818b98;
+  --accent: #0a5cc2;
+  --on-accent: #ffffff;
+  --danger: #b42318;
+  --success: #1a7f37;
+  --warning: #8a5a00;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --radius: 6px;
+
+  --font: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --mono: ui-monospace, 'Cascadia Mono', Menlo, monospace;
+
+  color-scheme: light dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0f1115;
+    --surface: #181b22;
+    --text: #e6e8eb;
+    --muted: #9ba5b0;
+    --control: #7d8794;
+    --accent: #6cb0ff;
+    --on-accent: #0f1115;
+    --danger: #ff8d80;
+    --success: #56c271;
+    --warning: #d9a72e;
+  }
+}
+
+/* ── Base ─────────────────────────────────────────────────────────────── */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 1rem;
+  line-height: 1.5;
+}
+
+/* The nav column reaches the bottom of the window. */
+#root {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+h1 {
+  font-size: 1.5rem;
+  margin: 0 0 var(--space-4);
+}
+
+h2 {
+  font-size: 1.25rem;
+  margin: var(--space-6) 0 var(--space-2);
+}
+
+h3 {
+  font-size: 1rem;
+  margin: 0 0 var(--space-2);
+}
+
+h4 {
+  font-size: 1rem;
+  margin: 0 0 var(--space-1);
+}
+
+p {
+  margin: 0 0 var(--space-3);
+}
+
+a {
+  color: var(--accent);
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Focus moved by the page (main, a page's h1) needs no ring. */
+[tabindex='-1']:focus {
+  outline: none;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+.intro {
+  color: var(--muted);
+}
+
+/* ── Buttons ──────────────────────────────────────────────────────────── */
+
+button {
+  font: inherit;
+  min-height: 32px;
+  min-width: 24px;
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+
+.primary {
+  background: var(--accent);
+  color: var(--on-accent);
+  border: 1px solid var(--accent);
+  font-weight: 600;
+}
+
+.secondary {
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--control);
+}
+
+.secondary[aria-pressed='true'] {
+  background: var(--accent);
+  color: var(--on-accent);
+  border-color: var(--accent);
+}
+
+/* ── App shell ────────────────────────────────────────────────────────── */
+
+.skip-link {
+  position: absolute;
+  left: var(--space-4);
+  top: -100px;
+  z-index: 10;
+  padding: var(--space-2) var(--space-3);
+  background: var(--accent);
+  color: var(--on-accent);
+  border-radius: var(--radius);
+}
+
+.skip-link:focus {
+  top: var(--space-2);
+}
+
+.banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  background: var(--surface);
+  border-bottom: 1px solid var(--control);
+}
+
+.app-name {
+  color: var(--text);
+  font-weight: 600;
+  text-decoration: none;
+  padding: var(--space-1) 0;
+}
+
+.session {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  margin-left: auto;
+}
+
+.role {
+  color: var(--muted);
+  font-size: 0.875rem;
+}
+
+.nav {
+  padding: var(--space-4);
+  background: var(--surface);
+  border-bottom: 1px solid var(--control);
+}
+
+.nav ul {
+  list-style: none;
+  margin: 0 0 var(--space-3);
+  padding: 0;
+}
+
+.nav a {
+  display: block;
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius);
+  color: var(--text);
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+
+.nav a:hover {
+  text-decoration: underline;
+}
+
+.nav a[aria-current='page'] {
+  color: var(--accent);
+  font-weight: 600;
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.nav-label {
+  margin: var(--space-3) 0 var(--space-1);
+  padding: 0 var(--space-3);
+  color: var(--muted);
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+main {
+  padding: var(--space-5) var(--space-4);
+  min-width: 0;
+}
+
+main > * {
+  max-width: 880px;
+}
+
+/* Narrow: the nav collapses behind the Menu button. */
+@media (max-width: 959.98px) {
+  .nav:not(.open) {
+    display: none;
+  }
+}
+
+/* Wide: the nav is a fixed column; no Menu button. */
+@media (min-width: 960px) {
+  .menu-button {
+    display: none;
+  }
+
+  .layout {
+    display: grid;
+    grid-template-columns: 224px minmax(0, 1fr);
+    flex: 1;
+  }
+
+  .nav {
+    border-bottom: 0;
+    border-right: 1px solid var(--control);
+  }
+
+  main {
+    padding: var(--space-5) var(--space-6);
+  }
+}
+
+/* ── Content ──────────────────────────────────────────────────────────── */
+
+table {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+th,
+td {
+  text-align: left;
+  padding: var(--space-2) var(--space-3);
+  overflow-wrap: anywhere;
+}
+
+th {
+  font-weight: 600;
+  border-bottom: 1px solid var(--control);
+}
+
+td {
+  border-bottom: 1px solid var(--surface);
+}
+
+.notice {
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--control);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.instance-header .engine {
+  color: var(--muted);
+  margin-bottom: var(--space-1);
+}
+
+/* State badge: the shape beside the state's text. */
+.shape {
+  display: inline-block;
+  position: relative;
+  width: 0.75rem;
+  height: 0.75rem;
+  margin-right: var(--space-2);
+  vertical-align: -0.05em;
+  border-radius: 50%;
+}
+
+.shape-running {
+  background: var(--success);
+}
+
+.shape-stopped {
+  border: 2px solid var(--muted);
+}
+
+.shape-changing {
+  border: 2px solid var(--warning);
+  background: linear-gradient(90deg, var(--warning) 50%, transparent 50%);
+}
+
+.shape-failed {
+  border-radius: 0;
+}
+
+.shape-failed::before,
+.shape-failed::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: -1px;
+  width: 2.5px;
+  height: calc(100% + 2px);
+  margin-left: -1.25px;
+  background: var(--danger);
+  transform: rotate(45deg);
+}
+
+.shape-failed::after {
+  transform: rotate(-45deg);
+}
+
+/* ── Forms ────────────────────────────────────────────────────────────── */
+
+.card {
+  margin: 0 0 var(--space-5);
+  padding: var(--space-4) var(--space-5);
+  background: var(--surface);
+  border-radius: var(--radius);
+}
+
+.subgroup {
+  margin-top: var(--space-4);
+}
+
+fieldset {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+
+.field {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-1) var(--space-4);
+  padding: var(--space-3) 0;
+}
+
+/* A floated legend lays out like the other fields' label column. */
+legend.field-label {
+  float: left;
+  padding: 0;
+}
+
+.field-label {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  font-weight: 600;
+}
+
+.field-control {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  min-width: 0;
+}
+
+.field-hint {
+  color: var(--muted);
+  font-size: 0.875rem;
+}
+
+.field-hint p {
+  margin: 0 0 var(--space-1);
+}
+
+@media (min-width: 720px) {
+  .field {
+    grid-template-columns: 200px minmax(0, 1fr);
+  }
+
+  .field-label {
+    grid-column: 1;
+    align-self: start;
+    min-height: 32px;
+  }
+
+  .field-control,
+  .field-hint {
+    grid-column: 2;
+  }
+}
+
+.about {
+  min-height: 24px;
+  padding: 0 var(--space-2);
+  font-size: 0.875rem;
+  font-weight: 400;
+  background: transparent;
+  color: var(--accent);
+  border: 1px solid var(--control);
+}
+
+.about[aria-expanded='true'] {
+  background: var(--bg);
+}
+
+input[type='text'],
+input[type='password'],
+select {
+  font: inherit;
+  min-height: 32px;
+  padding: var(--space-1) var(--space-2);
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--control);
+  border-radius: var(--radius);
+  min-width: 0;
+}
+
+input[type='text'],
+input[type='password'] {
+  flex: 1 1 16rem;
+}
+
+input.number {
+  flex: 0 1 10ch;
+  width: 10ch;
+}
+
+/* input.mono outweighs the inputs' font: inherit above. */
+.mono,
+input.mono {
+  font-family: var(--mono);
+}
+
+input:disabled,
+select:disabled {
+  color: var(--muted);
+  -webkit-text-fill-color: var(--muted);
+  opacity: 1;
+  cursor: default;
+}
+
+input::placeholder {
+  color: var(--muted);
+  opacity: 1;
+}
+
+/* Drawn, not native: a disabled box and tick stay in --muted (DESIGN.md 5.2). */
+input[type='checkbox'] {
+  appearance: none;
+  display: inline-grid;
+  place-content: center;
+  flex: none;
+  width: 1rem;
+  height: 1rem;
+  margin: 0;
+  background: var(--bg);
+  border: 1px solid var(--control);
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+input[type='checkbox']::before {
+  content: '';
+  width: 0.55rem;
+  height: 0.3rem;
+  margin-top: -0.15rem;
+  border-left: 2px solid var(--on-accent);
+  border-bottom: 2px solid var(--on-accent);
+  transform: rotate(-45deg);
+  visibility: hidden;
+}
+
+input[type='checkbox']:checked {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+input[type='checkbox']:checked::before {
+  visibility: visible;
+}
+
+input[type='checkbox']:disabled {
+  background: var(--bg);
+  border-color: var(--muted);
+}
+
+input[type='checkbox']:disabled::before {
+  border-color: var(--muted);
+}
+
+.check {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 24px;
+}
+
+.check-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.unit {
+  color: var(--muted);
+}
+
+.field-error,
+.form-error {
+  color: var(--danger);
+}
+
+.form-error {
+  font-weight: 600;
+}
+
+.field-error {
+  margin: var(--space-1) 0 0;
+  font-size: 0.875rem;
+}
+
+.error-icon {
+  margin-right: var(--space-1);
+  vertical-align: -0.2em;
+}
+
+/* Sign-in: labels above their fields. */
+.signin {
+  max-width: 24rem;
+}
+
+.stacked {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin-bottom: var(--space-4);
+}
+
+.stacked label {
+  font-weight: 600;
+}
+
+.stacked input {
+  flex: none;
+}

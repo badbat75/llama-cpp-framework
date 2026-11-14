@@ -197,6 +197,11 @@ Each is one React component, reused by every page.
     text of its own; the control gets `aria-invalid="true"` and `aria-describedby` the error
     ([3.3.1 Error Identification](https://www.w3.org/TR/WCAG22/#error-identification),
     [3.3.3 Error Suggestion](https://www.w3.org/TR/WCAG22/#error-suggestion)).
+  - **Disabled controls stay readable**: a disabled control still shows a value, so its value is
+    drawn in `--muted`, a checkbox included (its box border and its check mark in `--muted`, not the
+    browser's faint disabled grey; a read-only form is all disabled controls). WCAG exempts inactive
+    controls from [1.4.11](https://www.w3.org/TR/WCAG22/#non-text-contrast); this rule is a
+    **(preference)** so the value can be read.
   - **Dependent field** (enabled only when another is on, e.g. Snapshot folder under Save on
     shutdown): disabled, value kept and written, as in the GUI.
 - **Text input**: `type="text"`, numbers with `inputmode="numeric"` (no `type="number"`: it accepts

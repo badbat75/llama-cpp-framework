@@ -1,42 +1,46 @@
-// The instances view, against a mocked fetch: no bff runs. The bff answers
-// GET /api/instances with 200 and [{"id", "state"}] in the manager's order,
-// 503 {"error":"unavailable"} with no manager, 502 {"error":"not-authorized"}
-// when the manager refuses the bff, 502 {"error":"failed"} otherwise.
+// The Overview's instances (fe/briefs/01-server.md, slice 1a, section 2.3),
+// through the whole app at #/ against a fake bff (mocked fetch). The bff
+// answers GET /api/instances with 200 and [{"id", "engine", "state"}] in the
+// manager's order, and errors as {"key", "args"} (fe/briefs/api-contract.md):
+// 503 client-unavailable with no manager, 502 client-not-authorized when the
+// manager refuses the bff, anything else generic. Signed out here, so the nav
+// lists no instance and the only instance links are the table's.
 import { cleanup, render, screen, within } from '@testing-library/react'
-import { afterEach, expect, test, vi } from 'vitest'
-import strings from './strings/en_US.json'
-import Instances from './Instances.tsx'
-import { t } from './strings.ts'
+import { afterEach, beforeEach, expect, test, vi } from 'vitest'
+import App from './App.tsx'
+import { en, fakeBff, reply, startAt, type Instance } from './test/bff.ts'
+
+beforeEach(() => startAt('#/'))
 
 afterEach(() => {
   cleanup()
   vi.unstubAllGlobals()
+  startAt('')
 })
 
-/** The text of `key`, which must be in the strings file. */
-function text(key: string, ...args: string[]): string {
-  const table: Record<string, string> = strings
-  if (!(key in table)) throw new Error(`missing string ${key} in en_US.json`)
-  return t(key, ...args)
+function stubInstances(answer: () => Response | Promise<Response>) {
+  return fakeBff({ session: 'signed-out', instances: answer })
 }
 
-function reply(status: number, body: string): Response {
-  return new Response(body, {
-    status,
-    headers: { 'Content-Type': 'application/json' },
-  })
+function list(instances: Instance[]) {
+  return fakeBff({ session: 'signed-out', instances })
 }
 
-function stubFetch(answer: () => Promise<Response>) {
-  const fetch = vi.fn<typeof globalThis.fetch>(answer)
-  vi.stubGlobal('fetch', fetch)
-  return fetch
+/** The instances table of main. */
+async function table(): Promise<HTMLElement> {
+  return within(screen.getByRole('main')).findByRole('table')
 }
 
-/** The data rows of the instances table: [id, state] per row. */
+/** The column headers of the table. */
+async function headers(): Promise<string[]> {
+  return within(await table())
+    .getAllByRole('columnheader')
+    .map((h) => h.textContent ?? '')
+}
+
+/** The data rows of the instances table: the cells' text per row. */
 async function rows(): Promise<string[][]> {
-  const table = await screen.findByRole('table')
-  return within(table)
+  return within(await table())
     .getAllByRole('row')
     .filter((row) => within(row).queryAllByRole('columnheader').length === 0)
     .map((row) =>
@@ -48,63 +52,66 @@ async function rows(): Promise<string[][]> {
 
 // ── Failure paths first ─────────────────────────────────────────────────
 
-test('a service that cannot be reached shows the failure message', async () => {
-  stubFetch(() => Promise.reject(new TypeError('Failed to fetch')))
-  render(<Instances />)
-  expect(await screen.findByText(text('instances-failed'))).toBeTruthy()
+test('1a.16: a service that cannot be reached shows the failure message', async () => {
+  stubInstances(() => Promise.reject(new TypeError('Failed to fetch')))
+  render(<App />)
+  expect(await screen.findByText(en('instances-failed'))).toBeTruthy()
   expect(screen.queryByRole('table')).toBeNull()
 })
 
-test('no manager shows the manager-unavailable message', async () => {
-  stubFetch(() => Promise.resolve(reply(503, '{"error":"unavailable"}')))
-  render(<Instances />)
+test('1a.16: client-unavailable shows the manager-unavailable message', async () => {
+  stubInstances(() => reply(503, { key: 'client-unavailable', args: [] }))
+  render(<App />)
   expect(
-    await screen.findByText(text('instances-manager-unavailable')),
+    await screen.findByText(en('instances-manager-unavailable')),
   ).toBeTruthy()
-  expect(document.body.textContent).not.toContain(text('instances-failed'))
+  expect(document.body.textContent).not.toContain(en('instances-failed'))
   expect(screen.queryByRole('table')).toBeNull()
 })
 
-test('a manager that refuses the service shows the not-authorized message', async () => {
-  stubFetch(() => Promise.resolve(reply(502, '{"error":"not-authorized"}')))
-  render(<Instances />)
-  expect(await screen.findByText(text('instances-not-authorized'))).toBeTruthy()
+test('1a.16: client-not-authorized shows the not-authorized message', async () => {
+  stubInstances(() => reply(502, { key: 'client-not-authorized', args: [] }))
+  render(<App />)
+  expect(await screen.findByText(en('instances-not-authorized'))).toBeTruthy()
   expect(screen.queryByRole('table')).toBeNull()
 })
 
-test('any other error shows the failure message, never the body', async () => {
+test('1a.16: the old {"error"} shape and any other error show the failure message, never the body', async () => {
   for (const [status, body] of [
-    [502, '{"error":"failed"}'],
-    [500, '{"error":"secret-detail"}'],
+    [503, '{"error":"unavailable"}'],
+    [502, '{"error":"not-authorized"}'],
+    [502, '{"key":"failed","args":[]}'],
+    [500, '{"key":"secret-detail","args":[]}'],
     [404, 'secret-detail'],
     [503, 'not json'],
   ] as const) {
-    stubFetch(() => Promise.resolve(reply(status, body)))
-    render(<Instances />)
-    expect(await screen.findByText(text('instances-failed')), body).toBeTruthy()
+    stubInstances(() => reply(status, body))
+    render(<App />)
+    expect(await screen.findByText(en('instances-failed')), body).toBeTruthy()
     expect(document.body.textContent, body).not.toContain('secret-detail')
+    expect(document.body.textContent, body).not.toContain(
+      en('instances-manager-unavailable'),
+    )
     expect(screen.queryByRole('table'), body).toBeNull()
     cleanup()
   }
 })
 
-test('a body that is not a list of instances shows the failure message', async () => {
+test('1a.16: a body that is not a list of instances shows the failure message', async () => {
   for (const body of [
     'not json',
     '{}',
     '{"instances":[]}',
-    '[{"id":1,"state":"active"}]',
-    '[{"id":"default"}]',
-    '[{"id":"default","state":7}]',
-    '[{"id":"","state":"active"}]',
+    '[{"id":1,"engine":"llama.cpp","state":"active"}]',
+    '[{"id":"default","engine":"llama.cpp"}]',
+    '[{"id":"default","engine":"llama.cpp","state":7}]',
+    '[{"id":"","engine":"llama.cpp","state":"active"}]',
     '[null]',
   ]) {
-    stubFetch(() => Promise.resolve(reply(200, body)))
-    render(<Instances />)
-    expect(await screen.findByText(text('instances-failed')), body).toBeTruthy()
-    expect(document.body.textContent, body).not.toMatch(
-      /undefined|null|NaN|\{0\}/,
-    )
+    stubInstances(() => reply(200, body))
+    render(<App />)
+    expect(await screen.findByText(en('instances-failed')), body).toBeTruthy()
+    expect(document.body.textContent, body).not.toMatch(/undefined|NaN|\{0\}/)
     expect(screen.queryByRole('table'), body).toBeNull()
     cleanup()
   }
@@ -112,72 +119,113 @@ test('a body that is not a list of instances shows the failure message', async (
 
 // ── What it shows ───────────────────────────────────────────────────────
 
-test('it asks /api/instances', async () => {
-  const fetch = stubFetch(() => Promise.resolve(reply(200, '[]')))
-  render(<Instances />)
-  await screen.findByText(text('instances-empty'))
-  expect(fetch).toHaveBeenCalled()
-  expect(String(fetch.mock.calls[0]?.[0])).toBe('/api/instances')
-  const init = fetch.mock.calls[0]?.[1] as RequestInit | undefined
-  expect(init?.method ?? 'GET').toBe('GET')
-})
-
-test('no instances shows the empty message, not a table', async () => {
-  stubFetch(() => Promise.resolve(reply(200, '[]')))
-  render(<Instances />)
-  expect(await screen.findByText(text('instances-empty'))).toBeTruthy()
-  expect(screen.queryByRole('table')).toBeNull()
-  expect(document.body.textContent).not.toContain(text('instances-failed'))
-})
-
-test('each instance is a row with its state, in the order received', async () => {
-  const instances = [
-    { id: 'default', state: 'active' },
-    { id: 'coder', state: 'failed' },
-    { id: 'big-model', state: 'inactive' },
-    { id: 'a', state: 'activating' },
-    { id: 'z', state: 'deactivating' },
-  ]
-  stubFetch(() => Promise.resolve(reply(200, JSON.stringify(instances))))
-  render(<Instances />)
+test('1a.16: the Overview has its h1, the version line and the instances section', async () => {
+  const bff = list([{ id: 'default', engine: 'llama.cpp', state: 'active' }])
+  render(<App />)
+  const main = screen.getByRole('main')
+  const h1 = await within(main).findByRole('heading', {
+    level: 1,
+    name: en('overview-title'),
+  })
+  const version = await within(main).findByText(en('version-label', '2.99.0'))
+  const section = within(main).getByRole('heading', {
+    level: 2,
+    name: en('instances-title'),
+  })
   expect(
-    await screen.findByRole('heading', { name: text('instances-title') }),
+    h1.compareDocumentPosition(version) & Node.DOCUMENT_POSITION_FOLLOWING,
   ).toBeTruthy()
-  expect(await rows()).toEqual([
-    ['default', text('instance-state-active')],
-    ['coder', text('instance-state-failed')],
-    ['big-model', text('instance-state-inactive')],
-    ['a', text('instance-state-activating')],
-    ['z', text('instance-state-deactivating')],
-  ])
-  const table = screen.getByRole('table')
   expect(
-    within(table)
-      .getAllByRole('columnheader')
-      .map((h) => h.textContent),
-  ).toEqual([text('instances-column-id'), text('instances-column-state')])
-  expect(document.body.textContent).not.toContain(text('instances-empty'))
+    version.compareDocumentPosition(section) & Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBeTruthy()
+  await table()
+  const init = bff.to('GET', '/api/instances')
+  expect(init.length).toBeGreaterThan(0)
 })
 
-test('a state the page does not know is shown by its name', async () => {
-  stubFetch(() =>
-    Promise.resolve(reply(200, '[{"id":"odd","state":"maintenance"}]')),
-  )
-  render(<Instances />)
-  const shown = text('instance-state-other', 'maintenance')
-  expect(shown).toContain('maintenance')
-  expect(await rows()).toEqual([['odd', shown]])
+test('1a.16: no instances shows the empty message, not a table', async () => {
+  list([])
+  render(<App />)
+  expect(await screen.findByText(en('instances-empty'))).toBeTruthy()
+  expect(screen.queryByRole('table')).toBeNull()
+  expect(document.body.textContent).not.toContain(en('instances-failed'))
+})
+
+test('1a.16: each instance is a row with its state, in the order received', async () => {
+  list([
+    { id: 'default', engine: 'llama.cpp', state: 'active' },
+    { id: 'coder', engine: 'llama.cpp', state: 'failed' },
+    { id: 'big-model', engine: 'llama.cpp', state: 'inactive' },
+    { id: 'a', engine: 'llama.cpp', state: 'activating' },
+    { id: 'z', engine: 'llama.cpp', state: 'deactivating' },
+  ])
+  render(<App />)
+  expect(await rows()).toEqual([
+    ['default', en('instance-state-active')],
+    ['coder', en('instance-state-failed')],
+    ['big-model', en('instance-state-inactive')],
+    ['a', en('instance-state-activating')],
+    ['z', en('instance-state-deactivating')],
+  ])
+  expect(document.body.textContent).not.toContain(en('instances-empty'))
+})
+
+test('1a.16: a state the page does not know is shown by its name', async () => {
+  list([{ id: 'odd', engine: 'llama.cpp', state: 'maintenance' }])
+  render(<App />)
+  expect(await rows()).toEqual([
+    ['odd', en('instance-state-other', 'maintenance')],
+  ])
   expect(document.body.textContent).not.toContain('{0}')
 })
 
-test('every state label is its own text', () => {
-  const labels = [
-    'active',
-    'inactive',
-    'activating',
-    'deactivating',
-    'failed',
-  ].map((s) => text(`instance-state-${s}`))
-  expect(new Set(labels).size).toBe(labels.length)
-  for (const label of labels) expect(label).not.toMatch(/^instance-state-/)
+test('1a.17: each instance id in the table is a link to its page', async () => {
+  list([
+    { id: 'default', engine: 'llama.cpp', state: 'active' },
+    { id: 'coder', engine: 'llama.cpp', state: 'inactive' },
+  ])
+  render(<App />)
+  const links = within(await table()).getAllByRole('link')
+  expect(links.map((a) => [a.textContent, a.getAttribute('href')])).toEqual([
+    ['default', '#/instances/default'],
+    ['coder', '#/instances/coder'],
+  ])
+  // The link sits in the first cell of its row.
+  for (const a of links) {
+    const cell = a.closest('td, th')!
+    expect(cell.parentElement!.firstElementChild).toBe(cell)
+  }
+})
+
+test('1a.18: one engine keeps the two columns of today, no Engine column', async () => {
+  list([
+    { id: 'default', engine: 'llama.cpp', state: 'active' },
+    { id: 'coder', engine: 'llama.cpp', state: 'inactive' },
+  ])
+  render(<App />)
+  expect(await headers()).toEqual([
+    en('instances-column-id'),
+    en('instances-column-state'),
+  ])
+  expect(document.body.textContent).not.toContain('llama.cpp')
+})
+
+test('1a.18: two or more engines add the Engine column, the engine name as data', async () => {
+  list([
+    { id: 'default', engine: 'llama.cpp', state: 'active' },
+    { id: 'strata', engine: 'Strata', state: 'inactive' },
+    { id: 'coder', engine: 'llama.cpp', state: 'failed' },
+  ])
+  render(<App />)
+  // Instance, Engine, State: the order of the instance page's header (2.6).
+  expect(await headers()).toEqual([
+    en('instances-column-id'),
+    en('instances-column-engine'),
+    en('instances-column-state'),
+  ])
+  expect(await rows()).toEqual([
+    ['default', 'llama.cpp', en('instance-state-active')],
+    ['strata', 'Strata', en('instance-state-inactive')],
+    ['coder', 'llama.cpp', en('instance-state-failed')],
+  ])
 })

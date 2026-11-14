@@ -72,8 +72,9 @@ the coordinator's contract; the brief assumes these:
    link text being the id, in the reply's order. A failed instances read leaves the list out of the
    nav (the Overview shows the error).
 5. The link of the current page has `aria-current="page"`.
-6. Below 960px a button **Menu** (`nav-menu`) with `aria-expanded` shows and hides the nav; Escape
-   closes it and returns focus to the button. (Layout itself is checked in review, not in jsdom.)
+6. Below 960px a button **Menu** (`nav-menu`) with `aria-expanded` shows and hides the nav; Escape,
+   pressed on the Menu button or anywhere inside the open nav, closes it and returns focus to the
+   button. (Layout itself is checked in review, not in jsdom.)
 7. A route change sets `document.title` to `page-title` with the page name (`overview-title`,
    `signin-title`, or the instance id) and moves focus to the page's `h1`.
    ([2.4.2](https://www.w3.org/TR/WCAG22/#page-titled), [2.4.3](https://www.w3.org/TR/WCAG22/#focus-order))
@@ -141,6 +142,34 @@ route, and returning to it after sign-in).
     paragraph per line of the text.
 27. The API key shows masked; its **Show** button (`field-show`, `aria-pressed`) reveals it, also
     for a user (a user may read the file: manager `control`).
+
+### 2.6 Decided at the review of 1a (2026-11-15)
+
+Points the brief left open, settled by the designer after reading the built slice; they are now part
+of the brief.
+
+- **Not-found page** (8): its `h1` is the `not-found` sentence, so the document title is
+  "There is no page at this address. | Private AI Framework". No separate short title key.
+- **Instance page while `/api/instances` fails** (20): `h1` the id, then the Overview's message for
+  the key (`instances-manager-unavailable`, `instances-not-authorized`, `instances-failed`), and no
+  Server section (without the list the page cannot tell the id exists).
+- **Instance page while loading** (20): the `h1` (id) shows at once, then `<p role="status">`
+  `loading`; when the list answers, the engine and state, then the Server section.
+- **401 on the server read** (24): the whole app becomes signed out: the sign-in form with
+  `signin-required` in place of the page, the banner's **Sign in**, the nav without its instances;
+  after sign-in the page reads again. (1b keeps this for a read; a 401 on a save is 36.)
+- **Server-read errors** (24): only the form is replaced; the `h2` and intro stay. 404 shows
+  `instance-not-found` and `not-found-home` inside the section.
+- **`#/sign-in` while signed in**: the form is shown (it lets the user switch account); after it,
+  the Overview.
+- **Sign-in busy** (12): the button stays enabled (no `disabled`, no `aria-disabled`, so focus
+  never drops); its text is `signin-busy` and a second submit sends nothing.
+- **Show** (27): enabled for every role in 1a, also while No key is ticked; 5.3 governs it from 1b.
+- **Reads of `/api/instances`**: in 1a the nav, the Overview and the instance page each read it on
+  their own. 1c's polling (41, 42) must share one read across them, so the nav and the badge never
+  disagree.
+- **Overview columns** (18): Instance, then Engine (when shown), then State: the order of the
+  instance page's header (id, engine, state).
 
 ## 3. Slice 1b: editing and saving (administrators)
 
@@ -458,8 +487,10 @@ GUI's words.
   in table order (default box before its textbox; hint toggle after the label), the save bar.
   ([2.4.3](https://www.w3.org/TR/WCAG22/#focus-order), [2.1.1](https://www.w3.org/TR/WCAG22/#keyboard))
 - Checkboxes toggle with Space, selects open with the keyboard (native controls); no custom widget.
-- Live regions, each present in the DOM before its text changes: the loading paragraphs, the save
-  bar status, the run status. Errors after an action use `role="alert"`.
+- Live regions, each present in the DOM before its text changes: the save bar status, the run
+  status. The loading paragraphs are the exception: they appear with their page as
+  `<p role="status">` (the focus on the page's `h1` already announces the page). Errors after an
+  action use `role="alert"`.
   ([4.1.3](https://www.w3.org/TR/WCAG22/#status-messages))
 - Names the tests query (English shown): banner link "Private AI Framework"; navigation "Main"; link
   "Overview"; button "Sign in" / "Sign out"; textbox "User name"; "Password" (by label); heading level

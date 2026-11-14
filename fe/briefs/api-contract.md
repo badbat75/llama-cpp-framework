@@ -14,7 +14,10 @@ exist yet. Change this file first when a shape changes.
   filling `{N}` from `args`; a key it does not know, a malformed body or a network failure is shown
   as one generic failure.
 - **401** means not signed in (no session, or it ended), on any route that needs one.
-- **403** `client-not-authorized` means the manager refused the call for this user.
+- **403** `client-not-authorized` means the manager refused the call for this user, on a route that
+  acts for the signed-in user. On a route that needs no sign-in (`GET /api/instances`) the same key
+  comes with **502**: there the manager refused the bff itself, not a user.
+- **The fe picks its message by the key, never by the status**, apart from 401 (sign in).
 - **503** `client-unavailable` means no manager to reach or no answer in time.
 - **404** `client-no-instance` means the instance id does not exist.
 - The session is an HttpOnly cookie set by the bff; the fe never reads it.
@@ -39,7 +42,9 @@ exist yet. Change this file first when a shape changes.
 
 Today's reply gains `engine` (the engine id, `llama.cpp` today) and its errors move from
 `{"error": "unavailable"}` to the common shape: 503 `client-unavailable`, 502
-`client-not-authorized`, anything else generic.
+`client-not-authorized`, 502 `client-other` for any other failure, each with empty `args` (the
+manager's detail never reaches the body). Until `/api/session` exists it answers 404, which the fe
+reads as signed out.
 
 ### The session
 
@@ -54,7 +59,7 @@ Today's reply gains `engine` (the engine id, `llama.cpp` today) and its errors m
 ```json
 {
   "revision": "<opaque>",
-  "values": { "<INI key>": "<value>" | null },
+  "values": { "<INI key>": 8580 | true | "<text>" | null },
   "defaults": { "Port": 0, "ModelsMax": 0, "ModelsMemoryMargin": 0, "OpencodeBaseUrl": "",
                 "ModelsDir": "", "StateDir": "" },
   "limits": { "Port": [0, 0], "ModelsMax": [0, 0], "ModelsMemoryMargin": [0, 0],
@@ -63,8 +68,9 @@ Today's reply gains `engine` (the engine id, `llama.cpp` today) and its errors m
 }
 ```
 
-- `values` is keyed by the INI key name, `null` for an unset key, so a refusal's field maps straight
-  to a control.
+- `values` is keyed by the INI key name, so a refusal's field maps straight to a control. Each
+  value is typed JSON: a number for a numeric key (`8580`), `true` or `false` for a switch, a string
+  otherwise (`"nccl"`), `null` for an unset key. A save sends them back the same way.
 - `defaults` are computed on the server from the saved file. `ModelsDir` and `StateDir` are the
   instance's own defaults, never a folder of the bff's account.
 - `limits` are `[min, max]`; the thread maximum is the server machine's logical CPU count.
