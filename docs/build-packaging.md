@@ -44,12 +44,11 @@ earlier named them `llama-cpp-framework-*`: the new packages upgrade those in pl
 - `<framework>` is the `[workspace.package]` version of the root `Cargo.toml`, one for the
   `pai-*` crates: the configurator and the framework are versioned together.
 - `<release>` is `git describe --tags` of the clone, which prefers the annotated release tag over
-  the nightly on the same commit. On Linux and Windows `xtask package` refuses a clone that is not on
-  an exact `vX.Y.Z` release (on Windows also one beyond an MSI ProductVersion, 255.255.65535); on
-  macOS anything else falls back to `b<rev-list --count>`, shaped so a non-release package cannot
-  pass for one.
+  the nightly on the same commit. On every OS `xtask package` refuses a clone that is not on an
+  exact `vX.Y.Z` release (on Windows also one beyond an MSI ProductVersion, 255.255.65535).
 - `<N>` is our build revision of that release, `LLAMA_CPP_REVISION` in `components.rs` (1), raised
-  when the patches or the build options change on the same release.
+  for any change that is not llama.cpp's code on the same release (the patches, the build options,
+  the package's scripts or files) and back to 1 at every new llama.cpp release (user, 2026-11-14).
 - `<sdk version>` is the version of the SDK in the dist layout. An SDK outside the layout takes the
   framework's version.
 
@@ -548,7 +547,9 @@ leave out the runtime of a GPU the machine does not have. `--dry-run` prints the
   system unit `llama.cpp@*.service` or `private-ai-*.service` under `/system.slice/`
   (`/proc/<pid>/cgroup`) is a service, which its package's scripts stop and start again. Any other
   program (an open `pai-config`, a `pai bench run`, a `llama-bench`) is ignored without a message.
-- It warns when a package other than a runtime is older than the build tree's `llama-server`. A runtime
-  comes out of an SDK, which the build does not change. By the code only `xtask build llama` moves that
-  time: a framework package older than the last `build framework` gets no warning.
+- It warns when a package is older than what its own product built: each framework package than its
+  executable in `cargo-target/release/` (`config` `pai-config`, `cli` `pai`, `bff` `pai-bff`, `core`
+  `pai-manager`), the engine than `llama.cpp-cmake/bin/llama-server` (`is_stale` in
+  `xtask/src/linux/install.rs`). A runtime gets none: it comes out of an SDK, which the build does not
+  change.
 - `sudo` is added when not root, here and on macOS.

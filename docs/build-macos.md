@@ -82,11 +82,8 @@ manager and no web service, so no `bff` package, and `core` holds only `cli.toml
 `xtask package llama` or `framework` builds one product's packages and leaves the other's files in
 `dist/`, as `xtask build llama` and `build framework` build one. The engine needs `llama-server` in the
 build's `bin/`; the framework needs `pai-config` and `pai` there (`xtask build framework` copies them)
-and refuses a built `pai-config` whose version differs from the root `Cargo.toml`'s. Unlike Linux and
-Windows, macOS does not refuse a clone off a release tag: it names it `b<N>`
-([Packaging](build-packaging.md#packaging)), and the engine's file is then `llama.cpp-vb<N>-arm64.pkg`,
-which `xtask install` does not pick from `dist/` by the code (its version must start with a digit):
-name the file.
+and refuses a built `pai-config` whose version differs from the root `Cargo.toml`'s. For either product
+it refuses, as on Linux and Windows, a llama.cpp clone not on a `vX.Y.Z` release tag.
 
 | Path | Package | Holds |
 | --- | --- | --- |
@@ -100,9 +97,9 @@ name the file.
 | `/opt/private-ai/share/licenses/<suffix>/` | Each its own | The licence texts |
 | `/usr/local/bin/` | Each its own executables' | A symlink per executable, into its own prefix |
 
-- `pai-config` and `pai` look for llama-server beside themselves and in the build trees first, then in
-  `/opt/llama.cpp/bin/` when that holds `llama-server` (`paths::engine_install_dir`, pinned on Linux
-  over a temporary root).
+- `pai-config` and `pai` look for llama-server beside themselves and in the build trees (under
+  `build/macos/`, `paths::build_os_dir`) first, then in `/opt/llama.cpp/bin/` when that holds
+  `llama-server` (`paths::engine_install_dir`, pinned on Linux over a temporary root).
 - The manifest goes to `icd.d` because the loader does not look next to itself. A system-wide Vulkan
   SDK install adds its own MoltenVK manifest there too.
 - The bundled libraries are the `otool -L` closure of the staged files restricted to the SDK, copied
@@ -127,8 +124,6 @@ among the files. Without the Vulkan package ggml skips that backend and Metal ru
   `llama-cpp-config` included) under 2.4's own identifiers, with the
   manifest `llama-cpp-framework-MoltenVK_icd.json`; the engine's `.pkg` lays down over that tree and
   leaves 2.4's own files, receipts and manifest in place.
-- `paths::llama_bin_from` names `build/linux/` on every OS but Windows, so a `pai-config` built into
-  the repo root's `target/` looks for llama-server under `build/linux/`, not `build/macos/`.
 
 **The configurator** builds with its existing non-Linux, non-Windows fallbacks: start at login, GPU
 monitoring and similar are not ported. Its paths follow the Linux ones (`~/.local/share/private-ai`,

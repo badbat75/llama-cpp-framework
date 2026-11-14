@@ -136,3 +136,6 @@ Lessons only: the rules are in `AGENTS.md`.
   when `components.rs`, `msi::file_name` or `macos_pkg::file_name` change a name, fix it there too. Only
   Windows refuses a 2 GiB asset (`windows/package.rs`); nothing pins the llama.cpp tag across the
   three build machines (`common/llama.rs` takes the newest release at build time).
+- When an OS gap closes (macOS's release-tag refusal, its build dir), grep `does not yet`, `Unlike Linux`,
+  `macOS does not` and the "Open, by the code" list: `AGENTS.md` release steps, `build-packaging.md`'s
+  file-name bullets and `build-macos.md` each repeat the gap.
