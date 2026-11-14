@@ -435,10 +435,11 @@ fn strings_file(name: &str) -> std::path::PathBuf {
 }
 
 /// The `src/` of every crate whose text the files hold: this one, the command
-/// line (pai-cli), the shared logic (pai-app), the core and the manager.
-fn src_dirs() -> [std::path::PathBuf; 5] {
+/// line (pai-cli), the shared logic (pai-app), the core, the manager and the
+/// bff.
+fn src_dirs() -> [std::path::PathBuf; 6] {
     let crates = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
-    ["app", "cli", "config", "core", "manager"].map(|c| crates.join(c).join("src"))
+    ["app", "bff", "cli", "config", "core", "manager"].map(|c| crates.join(c).join("src"))
 }
 
 /// Every `.rs` of every crate in `src_dirs`, as `rust_sources` picks them.
@@ -623,7 +624,7 @@ const GUI_ONLY_KEYS: [&str; 29] = [
 /// Functions of the shared sources that only a CLI command runs, beside all of
 /// `cli.rs`: their keys are in `cli.toml` alone. `cli_only_code_is_not_called_from_elsewhere`
 /// fails when other code starts calling one, since the GUI would then miss its keys.
-const CLI_ONLY_FNS: [(&str, &str); 15] = [
+const CLI_ONLY_FNS: [(&str, &str); 17] = [
     ("bench/db.rs", "set_answer"),
     ("bench/gpu_lock.rs", "acquire"),
     ("bench/interrupt.rs", "install"),
@@ -637,6 +638,8 @@ const CLI_ONLY_FNS: [(&str, &str); 15] = [
     ("bench/sweep.rs", "measure"),
     ("bench/sweep.rs", "report_leg"),
     ("bench/sweep.rs", "run"),
+    ("bff.rs", "main"),
+    ("bff.rs", "run"),
     ("manager.rs", "main"),
     ("manager.rs", "run"),
 ];
@@ -992,7 +995,8 @@ const SHOWN_MACROS: [&str; 7] = [
 /// Sources whose print and error macros are scanned, and, for those marked, every
 /// `format!` and `.context` too: there a format string is shown, recorded
 /// (`SHOWN_LITERALS`) or layout, and nothing else.
-const CLI_PRINT_PATHS: [(&str, bool); 7] = [
+const CLI_PRINT_PATHS: [(&str, bool); 8] = [
+    ("bff.rs", true),
     ("cli.rs", true),
     ("main.rs", true),
     ("manager.rs", true),
@@ -1136,7 +1140,7 @@ fn language_words(literal: &str) -> Vec<String> {
 fn cli_print_paths_hold_no_language() {
     let mut hits = Vec::new();
     let mut allowed = std::collections::BTreeSet::new();
-    // Every crate's file of that name: `main.rs` is both pai's and pai-config's.
+    // Every crate's file of that name: `main.rs` is pai's, pai-config's and pai-bff's.
     let found = CLI_PRINT_PATHS.iter().flat_map(|&(file, all)| {
         let paths: Vec<_> = src_dirs()
             .iter()

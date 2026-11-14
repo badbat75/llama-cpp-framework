@@ -157,3 +157,7 @@ Lessons only: the rules are in `AGENTS.md`.
 - A Linux/macOS package's relations come from `linux/package.rs`: `old_package` (None for a component
   2.4 never had, so no Conflicts/Replaces/Provides/Obsoletes), `exact_requires` (which framework
   packages it pins at its own version) and `depends_line` (the `.deb` Depends, pure, tested).
+- `pai-bff` (`crates/bff`) follows the manager's layout: `bff::main`/`run` are its CLI_ONLY_FNS and
+  `bff.rs` a CLI print path, so every message is a `cli.toml` key printed inside those two fns. Its
+  `/api/version` body uses `serde_json`, a normal dependency (axum's `json` feature links it anyway).
+  `pai_core::ini::parse_sections` does not strip a UTF-8 BOM (`trim` keeps U+FEFF): strip it first.

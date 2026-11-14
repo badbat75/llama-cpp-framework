@@ -1,0 +1,38 @@
+[package]
+name = "pai-bff"
+version.workspace = true
+edition = "2021"
+description = "pai-bff: the backend-for-frontend service of the Private AI Framework"
+license = "MIT"
+publish = false
+
+# The modules live in the library, the binary only calls `bff::main`. Its doc
+# comments are not doctests: none was written as one.
+[lib]
+path = "src/lib.rs"
+doctest = false
+
+[[bin]]
+name = "pai-bff"
+path = "src/main.rs"
+
+[dependencies]
+# The modules shared with pai-manager and the configurator (paths, INI,
+# strings).
+pai-core = { path = "../core" }
+# The HTTP service (lib.rs `router`, `bff::run`). Current stable on crates.io;
+# its default features include the tokio server (`axum::serve`) and JSON.
+axum = "0.8.9"
+# axum's runtime; the version already in the lock.
+tokio = { version = "1.54", features = ["rt-multi-thread", "net", "macros"] }
+# The `/api/version` body; axum's `json` feature already links it.
+serde_json = "1"
+
+[dev-dependencies]
+pai-core = { path = "../core", features = ["test-support"] }
+# The router is tested without a socket: `ServiceExt::oneshot` hands it one
+# request, http-body-util reads the body back (tests/router.rs).
+tower = { version = "0.5.3", features = ["util"] }
+http-body-util = "0.1.5"
+serde_json = "1"
+tempfile = "3"

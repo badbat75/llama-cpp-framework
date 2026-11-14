@@ -274,3 +274,13 @@ Lessons only: the rules are in `AGENTS.md`.
   read only the code before `#[cfg(test)]\nmod tests`, or the test's own literal satisfies it.
 - A new `Component` variant compiles with `todo!("...")` arms in `suffix`, `texts` and `version_of`
   (linux/package.rs): every test reaching `package()` then reds with the stub's name.
+- A new crate that prints text (pai-bff) joins binding_lint's `src_dirs` and names_lint's crate list;
+  if its keys are in `cli.toml` alone, its printing functions go in `CLI_ONLY_FNS` (by a file name no
+  other crate has: `bff.rs`, never `lib.rs` or `main.rs`, which match every crate) and the file in
+  `CLI_PRINT_PATHS`. The scans see a key only as `strings::t(` / `strings::fill(`: an imported bare
+  `fill(` is missed, and an `env!("...")` inside `println!` is flagged as a literal.
+- An axum router is tested without a socket: `pai_bff::router().oneshot(request)` (tower `util`
+  feature) and `http_body_util::BodyExt::collect` for the body, in `#[tokio::test]`s. The executable's
+  socket test reserves a free loopback port (bind `127.0.0.1:0`, drop), writes it into the config under
+  the child's data root, polls a raw HTTP/1.1 GET over `TcpStream` with a deadline and kills the child
+  in a `Drop` guard; no HTTP client dependency is needed.

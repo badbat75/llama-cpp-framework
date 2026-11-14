@@ -517,8 +517,28 @@ instances; the benchmark portal over `bench.db`. The `fe` is developed with Reac
 built to static files (user, 2026-11-14). The rest is the coordinator's proposal, to review with the
 user: the bff in Rust (axum, over `pai-core` and the `pai-app` crate of step 3), the `fe` built at
 package time and embedded in the bff, so one binary, the same tests and the
-same packaging. Slices and their order are written when the step starts; the first is the service
-skeleton with its packaging and one read-only page.
+same packaging.
+
+Slices, each test first (written by the coordinator on 2026-11-14; names, port and account are
+proposals to review with the user):
+
+1. (done) **The service skeleton.** A crate `crates/bff` (package `pai-bff`, binary `pai-bff`) over
+   `pai-core` and `pai-app`: axum on `127.0.0.1:8590` by default (the address from its own config,
+   nothing on the LAN yet), `GET /api/version` (the framework version) and a placeholder page at `/`
+   embedded in the binary; tests bind an ephemeral port. It links no Slint (the lock-walk lint).
+2. **The `fe` scaffold.** `fe/` at the repo root: React + Vite in TypeScript, one page that reads
+   `/api/version`; `xtask build` builds it with npm (already a build requirement for the icon) and
+   the bff embeds `fe/dist`; the bff's tests use a fixture when `fe/dist` is absent.
+3. **Packaging.** (Also decide a graceful stop on SIGTERM / service stop: the skeleton has none.) Linux: a `private-ai-bff.service` unit (its own system user or `private-ai`:
+   decided in the slice) in the `-llama` package or its own; Windows: a service in the MSI beside
+   the manager; macOS: left out like the manager. Checked on the package contents; running it is
+   the user's run.
+4. **The first read-only page.** The state of the instance `default` and its server settings shown
+   read-only, through `private-ai-manager` as the GUI reads them (the bff's account and the
+   manager's authorization decided here).
+
+Later slices (not yet written): editing through the manager, the gateway, the benchmark portal, LAN
+access with authentication.
 
 ## Waiting for the user
 
