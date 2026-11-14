@@ -228,7 +228,7 @@ impl Backend {
     pub fn config_path(&self, file: ConfigFile) -> PathBuf {
         match self {
             Backend::Direct => file.user_path(),
-            Backend::Manager(_) => crate::paths::system_config_dir().join(file.manager_name()),
+            Backend::Manager(_) => crate::paths::engine_config_dir().join(file.manager_name()),
         }
     }
 }
@@ -1033,7 +1033,7 @@ pub(crate) fn server_control_e2e() {
     for file in ConfigFile::ALL {
         assert_eq!(
             windows.config_path(file),
-            crate::paths::system_config_dir().join(file.manager_name()),
+            crate::paths::engine_config_dir().join(file.manager_name()),
             "{file:?}"
         );
     }
@@ -1241,10 +1241,16 @@ pub(crate) fn config_seam_e2e() {
     for file in ConfigFile::ALL {
         assert_eq!(
             m.config_path(file),
-            paths::system_config_dir().join(file.manager_name()),
+            paths::engine_config_dir().join(file.manager_name()),
             "{file:?}"
         );
     }
+    // The engine's directory, not the framework's (bff.ini's).
+    assert_ne!(
+        m.config_path(ConfigFile::Presets).parent(),
+        Some(paths::system_config_dir().as_path()),
+        "the instance files are the engine's"
+    );
 
     // Reads: from the manager, never from the per-user files, which say
     // something else here.

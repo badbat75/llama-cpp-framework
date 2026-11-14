@@ -208,3 +208,8 @@ Lessons only: the rules are in `AGENTS.md`.
   issue #12518, peer `typescript <6.1.0`): `fe/` stays on TypeScript 6.0.x. Prettier has no width that
   matches the hand-wrapped fe code, and a `vi.fn(answer)` over `() => Promise<Response>` types
   `mock.calls` as `[]`: type it `vi.fn<typeof globalThis.fetch>` (a local `fetch` shadows `typeof fetch`).
+- A checked-in data file whose exact text a test pins against a render (the engine's
+  `crates/core/defaults/server@default.ini`) is easiest made from the failing assert itself: leave it
+  empty, run the test, and `ast.literal_eval` the `right:` value into the file. In `rpm_spec`, a system
+  file under `/usr/share/private-ai/` is already taken by that directory's `%files` line: listing it by
+  name too makes rpmbuild warn "File listed twice".

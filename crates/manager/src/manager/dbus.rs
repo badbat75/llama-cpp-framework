@@ -382,7 +382,7 @@ pub(crate) fn manager_dbus_e2e() {
 
     let dir = tempfile::tempdir().expect("tempdir");
     crate::paths::redirect_for_tests(dir.path());
-    let sys = crate::paths::system_config_dir();
+    let sys = crate::paths::engine_config_dir();
     std::fs::create_dir_all(&sys).expect("system config dir");
     let default_ini = "[Server]\nPort = 8080\nHostname = 0.0.0.0\n";
     let broken_ini = "[Server]\nPort = 8090\nHostname = 127.0.0.1\n";
@@ -728,7 +728,7 @@ pub(crate) fn manager_dbus_waits_e2e() {
 
     let dir = tempfile::tempdir().expect("tempdir");
     crate::paths::redirect_for_tests(dir.path());
-    let sys = crate::paths::system_config_dir();
+    let sys = crate::paths::engine_config_dir();
     std::fs::create_dir_all(&sys).expect("system config dir");
     let presets = "[Qwen3.8-27B]\nmodel = /models/Qwen3.8-27B-Q8_0.gguf\n";
     std::fs::write(
@@ -842,7 +842,7 @@ pub(crate) fn manager_dbus_checks_e2e() {
 
     let dir = tempfile::tempdir().expect("tempdir");
     crate::paths::redirect_for_tests(dir.path());
-    let sys = crate::paths::system_config_dir();
+    let sys = crate::paths::engine_config_dir();
     std::fs::create_dir_all(&sys).expect("system config dir");
     let default_ini = "[Server]\nPort = 8080\nHostname = 127.0.0.1\n";
     let presets = "[Qwen3.8-27B]\nmodel = /models/Qwen3.8-27B-Q8_0.gguf\n";

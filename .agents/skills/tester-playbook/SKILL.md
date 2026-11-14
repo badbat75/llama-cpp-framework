@@ -373,3 +373,14 @@ Lessons only: the rules are in `AGENTS.md`.
   paths replaced by sandbox paths, and an assert that no `/run/` or absolute tool path is left before it
   runs, so a script the test does not know can never touch the real system. rpm scriptlets run the same
   way, their body behind a `#!/bin/sh` line, `$1` passed as the argument.
+- The script `Sandbox` in `system_files.rs` also moves `/etc/llama.cpp` and
+  `/usr/share/private-ai/llama.cpp` (and refuses any other `/etc/` path), fakes `getent` (the group
+  private-ai exists after `set_group(true)`), `chown`, `chgrp` and `install` (copies, applies `-m`, only
+  logs `-g`/`-o`, so it runs unprivileged), and its `systemctl` appends `has-default=yes|no` to each
+  logged call: the order of a copy against a start is read from the log line.
+- A run-time-read fixture file (`std::fs::read_to_string(CARGO_MANIFEST_DIR/..)`) gives a red naming
+  the missing file, where `include_str!` would stop the whole crate from compiling.
+- A maintainer script that must work in a chroot install (dpkg `--root`, `DPKG_ROOT`) is run with
+  `Sandbox::run_chroot` in `xtask/src/linux/system_files.rs`: it leaves `/etc` and `/usr/share` paths as
+  they are and refuses, before running, any not prefixed with `$DPKG_ROOT`, so the host's `/etc` is never
+  written; the red is that refusal ("a /etc/ path not under $DPKG_ROOT").

@@ -86,7 +86,8 @@ pub fn config_dir() -> PathBuf {
     data_root().join("config")
 }
 
-/// The machine-wide config directory the llama-server instances read:
+/// The framework's machine-wide config directory (`bff.ini`; on Windows and
+/// macOS also the instance files, `engine_config_dir()`):
 /// `/etc/private-ai` outside Windows, `%ProgramData%\private-ai\config` on
 /// Windows. Under the test override it is `<override>/system-config` on every
 /// OS, apart from the per-user `config_dir()`.
@@ -104,6 +105,25 @@ pub fn system_config_dir() -> PathBuf {
     #[cfg(not(windows))]
     {
         PathBuf::from("/etc").join(APP_DIR)
+    }
+}
+
+/// The engine's machine-wide config directory, where the instance files
+/// live (`server@<id>.ini`, `presets.ini`, `presets.ini.disabled`):
+/// `/etc/llama.cpp` on Linux, `system_config_dir()` elsewhere for now. Under
+/// the test override it is `<override>/engine-config` on every OS, a sibling
+/// of `system_config_dir()`.
+pub fn engine_config_dir() -> PathBuf {
+    if let Some(p) = env_path(DATA_ROOT_VAR) {
+        return p.join("engine-config");
+    }
+    #[cfg(target_os = "linux")]
+    {
+        PathBuf::from("/etc/llama.cpp")
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        system_config_dir()
     }
 }
 
@@ -143,16 +163,16 @@ pub fn valid_instance_id(id: &str) -> bool {
         && id.chars().all(|c| ok(c) || c == '-')
 }
 
-/// `server@<id>.ini` in `system_config_dir()`, or None for an invalid id.
+/// `server@<id>.ini` in `engine_config_dir()`, or None for an invalid id.
 pub fn instance_ini(id: &str) -> Option<PathBuf> {
-    valid_instance_id(id).then(|| system_config_dir().join(format!("server@{id}.ini")))
+    valid_instance_id(id).then(|| engine_config_dir().join(format!("server@{id}.ini")))
 }
 
 /// The ids of the regular files `server@<valid id>.ini` in
-/// `system_config_dir()`, sorted; empty when the directory is missing, which
+/// `engine_config_dir()`, sorted; empty when the directory is missing, which
 /// this never creates.
 pub fn instance_ids() -> Vec<String> {
-    let Ok(entries) = std::fs::read_dir(system_config_dir()) else {
+    let Ok(entries) = std::fs::read_dir(engine_config_dir()) else {
         return Vec::new();
     };
     let mut ids: Vec<String> = entries
@@ -513,6 +533,7 @@ pub(crate) fn instance_paths_e2e() {
     let dir = tempfile::tempdir().expect("tempdir");
     redirect_for_tests(dir.path());
     let sys = dir.path().join("system-config");
+    let engine = dir.path().join("engine-config");
 
     // The redirected tree is named after the project, under the new variable,
     // and every home-derived path stays inside it.
@@ -540,9 +561,23 @@ pub(crate) fn instance_paths_e2e() {
         "apart from the user's config"
     );
 
+    // The instance files are the engine's: its own directory, apart from
+    // the framework's (bff.ini) and from the user's.
+    assert_eq!(engine_config_dir(), engine);
+    assert_ne!(
+        engine_config_dir(),
+        system_config_dir(),
+        "not the framework's"
+    );
+    assert_ne!(engine_config_dir(), config_dir(), "not the user's");
+
     // No directory yet: no instances, and nothing created by asking.
     assert_eq!(instance_ids(), Vec::<String>::new());
-    assert!(!sys.exists(), "instance_ids must not create the directory");
+    assert!(
+        !engine.exists(),
+        "instance_ids must not create the directory"
+    );
+    assert!(!sys.exists(), "nor the framework's");
 
     // A crafted or malformed id never yields a path.
     for bad in [
@@ -552,13 +587,26 @@ pub(crate) fn instance_paths_e2e() {
     }
     assert_eq!(
         instance_ini("default"),
-        Some(sys.join("server@default.ini"))
+        Some(engine.join("server@default.ini"))
     );
-    assert_eq!(instance_ini("lan-2"), Some(sys.join("server@lan-2.ini")));
-    assert_eq!(instance_ini("8080"), Some(sys.join("server@8080.ini")));
+    assert_eq!(instance_ini("lan-2"), Some(engine.join("server@lan-2.ini")));
+    assert_eq!(instance_ini("8080"), Some(engine.join("server@8080.ini")));
+
+    // An instance file left in the framework's directory is no instance:
+    // nothing moves or reads files from there.
+    std::fs::create_dir_all(&sys).expect("system config dir");
+    std::fs::write(sys.join("server@old.ini"), "[Server]\n").expect("stray file");
+    std::fs::write(sys.join("bff.ini"), "[Bff]\n").expect("bff.ini");
+    assert_eq!(
+        instance_ids(),
+        Vec::<String>::new(),
+        "the framework's files"
+    );
+    assert!(!engine.exists(), "nothing created or moved");
 
     // Only `server@<valid id>.ini` FILES are instances, sorted.
-    std::fs::create_dir_all(&sys).expect("system config dir");
+    let sys = engine;
+    std::fs::create_dir_all(&sys).expect("engine config dir");
     for name in [
         "server@lan-2.ini",
         "server@default.ini",

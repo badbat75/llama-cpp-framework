@@ -1,5 +1,5 @@
 //! The OS-neutral core of `pai-manager` (running llama-server as a service):
-//! the instances, their config files in `paths::system_config_dir()` and
+//! the instances, their config files in `paths::engine_config_dir()` and
 //! their services, behind two seams. [`ServiceControl`] starts, stops and
 //! reports the unit of an instance (systemd's D-Bus API on
 //! `llama.cpp@<id>.service` on Linux, the SCM on Windows once written);
@@ -419,7 +419,7 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
         if let ConfigFile::Instance(id) = &file {
             self.check_address(id, contents)?;
         }
-        let dir = crate::paths::system_config_dir();
+        let dir = crate::paths::engine_config_dir();
         let io = |e: std::io::Error| ManagerError::Io(e.kind());
         std::fs::create_dir_all(&dir).map_err(io)?;
         write_served_file(&dir.join(name), &file, contents, &*self.group).map_err(io)
@@ -483,7 +483,7 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
 /// presets against both preset files.
 fn check_contents(file: &ConfigFile, contents: &str) -> Result<(), pai_core::checks::Refusal> {
     use pai_core::checks;
-    let dir = crate::paths::system_config_dir();
+    let dir = crate::paths::engine_config_dir();
     let on_disk = |name: &str| std::fs::read_to_string(dir.join(name)).unwrap_or_default();
     match file {
         ConfigFile::Instance(_) => checks::server_file(contents, &on_disk("presets.ini")),
@@ -526,10 +526,10 @@ fn existing_id(id: &str) -> Result<(), ManagerError> {
     }
 }
 
-/// The path of served file `name` in the system config directory.
+/// The path of served file `name` in the engine's config directory.
 fn file_path(name: &str) -> Result<std::path::PathBuf, ManagerError> {
     config_file(name).ok_or(ManagerError::BadFileName)?;
-    Ok(crate::paths::system_config_dir().join(name))
+    Ok(crate::paths::engine_config_dir().join(name))
 }
 
 /// Fakes of the two seams that record every call.
@@ -868,7 +868,7 @@ pub(crate) fn manager_e2e() {
 
     let dir = tempfile::tempdir().expect("tempdir");
     crate::paths::redirect_for_tests(dir.path());
-    let sys = crate::paths::system_config_dir();
+    let sys = crate::paths::engine_config_dir();
     let alice = Caller(":1.42".into());
     let files_in = |p: &std::path::Path| -> BTreeSet<String> {
         std::fs::read_dir(p)
@@ -1498,7 +1498,7 @@ pub(crate) fn manager_instance_files_e2e() {
 
     let dir = tempfile::tempdir().expect("tempdir");
     crate::paths::redirect_for_tests(dir.path());
-    let sys = crate::paths::system_config_dir();
+    let sys = crate::paths::engine_config_dir();
     let alice = Caller(":1.42".into());
     let names = || -> std::collections::BTreeSet<String> {
         std::fs::read_dir(&sys)
@@ -1588,6 +1588,138 @@ pub(crate) fn manager_instance_files_e2e() {
     }
 }
 
+/// E2E phase for where the instance files live, for this crate's e2e test to
+/// call (it sets the process-wide `PRIVATE_AI_DATA_ROOT` redirect,
+/// `src/tests/mod.rs`): the engine's directory (`paths::engine_config_dir`,
+/// `/etc/llama.cpp` on Linux), never the framework's
+/// (`paths::system_config_dir`, `/etc/private-ai`, which keeps `bff.ini`).
+/// Files an earlier layout left in the framework's directory are neither
+/// read, listed, nor moved.
+#[cfg(test)]
+pub(crate) fn manager_engine_dir_e2e() {
+    use fakes::{FakeAuthority, FakeGroup, FakeResolver, FakeService};
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    crate::paths::redirect_for_tests(dir.path());
+    let engine = crate::paths::engine_config_dir();
+    let framework = crate::paths::system_config_dir();
+    let alice = Caller(":1.42".into());
+    let names = |d: &std::path::Path| -> std::collections::BTreeSet<String> {
+        std::fs::read_dir(d)
+            .map(|r| {
+                r.flatten()
+                    .map(|e| e.file_name().to_string_lossy().into_owned())
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+
+    // An earlier layout's files and the framework's own, in its directory.
+    std::fs::create_dir_all(&framework).expect("framework dir");
+    let stray_ini = "[Server]\nPort = 8090\nHostname = 127.0.0.1\n";
+    let stray_presets = "[stray]\nmodel = /models/stray.gguf\n";
+    for (name, text) in [
+        ("server@stray.ini", stray_ini),
+        ("server@default.ini", stray_ini),
+        ("presets.ini", stray_presets),
+        ("bff.ini", "[Bff]\nListen = 127.0.0.1:8590\n"),
+    ] {
+        std::fs::write(framework.join(name), text).expect("framework file");
+    }
+    let framework_before = names(&framework);
+
+    let m = Manager::new(
+        FakeService::new(),
+        FakeAuthority::new(true),
+        FakeResolver::lan(),
+    )
+    .with_group(FakeGroup::new());
+
+    // ── Nothing of the framework's directory counts ───────────────────────
+    assert_eq!(m.list_instances(), Vec::<String>::new(), "no instance yet");
+    assert_eq!(m.read_file(None, "presets.ini"), Ok(None));
+    assert_eq!(m.read_file(Some(&alice), "server@default.ini"), Ok(None));
+    assert_eq!(
+        m.start(&alice, "stray"),
+        Err(ManagerError::NoInstance),
+        "a file in the framework's directory is no instance"
+    );
+    assert!(m.service().calls.lock().unwrap().is_empty());
+
+    // ── Writes land in the engine's directory ─────────────────────────────
+    let ini = "[Server]\nPort = 8080\nHostname = 127.0.0.1\n";
+    let presets = "[Qwen3.8-27B]\nmodel = /models/Qwen3.8-27B-Q8_0.gguf\n";
+    let disabled = "[Old]\nmodel = /models/old.gguf\n";
+    assert_eq!(m.write_file(&alice, "server@default.ini", ini), Ok(()));
+    assert_eq!(m.write_file(&alice, "presets.ini", presets), Ok(()));
+    assert_eq!(
+        m.write_file(&alice, "presets.ini.disabled", disabled),
+        Ok(())
+    );
+    for (name, text) in [
+        ("server@default.ini", ini),
+        ("presets.ini", presets),
+        ("presets.ini.disabled", disabled),
+    ] {
+        assert_eq!(
+            std::fs::read_to_string(engine.join(name)).ok().as_deref(),
+            Some(text),
+            "{name} in the engine's directory"
+        );
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = |n: &str| {
+            std::fs::metadata(engine.join(n))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o7777
+        };
+        assert_eq!(mode("server@default.ini"), 0o640);
+        assert_eq!(mode("presets.ini"), 0o644);
+        assert_eq!(mode("presets.ini.disabled"), 0o644);
+    }
+    assert_eq!(names(&framework), framework_before, "nothing written there");
+    for (name, text) in [
+        ("server@default.ini", stray_ini),
+        ("presets.ini", stray_presets),
+    ] {
+        assert_eq!(
+            std::fs::read_to_string(framework.join(name)).unwrap(),
+            text,
+            "{name}: the framework's directory is left as it was"
+        );
+    }
+
+    // ── Reads and the list come from the engine's directory ───────────────
+    assert_eq!(m.list_instances(), ["default"]);
+    assert_eq!(m.read_file(None, "presets.ini"), Ok(Some(presets.into())));
+    assert_eq!(
+        m.read_file(Some(&alice), "server@default.ini"),
+        Ok(Some(ini.into()))
+    );
+    assert_eq!(m.start(&alice, "default"), Ok(()));
+
+    // ── The address check reads the other instances there too ─────────────
+    // server@stray.ini (port 8090) is in the framework's directory only: no
+    // collision with it.
+    assert_eq!(
+        m.write_file(
+            &alice,
+            "server@lan-2.ini",
+            "[Server]\nPort = 8090\nHostname = 127.0.0.1\n"
+        ),
+        Ok(())
+    );
+    assert_eq!(m.list_instances(), ["default", "lan-2"]);
+    assert!(
+        !engine.join("server@stray.ini").exists(),
+        "nothing moved from the framework's directory"
+    );
+}
+
 /// E2E phase for the manager core while polkit waits for a user to
 /// authenticate, for this crate's e2e test to call (it sets the process-wide
 /// `PRIVATE_AI_DATA_ROOT` redirect, `src/tests/mod.rs`). A caller whose
@@ -1628,7 +1760,7 @@ pub(crate) fn manager_waits_e2e() {
     {
         let dir = tempfile::tempdir().expect("tempdir");
         crate::paths::redirect_for_tests(dir.path());
-        let sys = crate::paths::system_config_dir();
+        let sys = crate::paths::engine_config_dir();
         std::fs::create_dir_all(&sys).expect("system config dir");
         std::fs::write(sys.join("server@default.ini"), default_ini).expect("write default");
         std::fs::write(sys.join("presets.ini"), presets).expect("write presets");
@@ -1737,7 +1869,7 @@ pub(crate) fn manager_waits_e2e() {
     {
         let dir = tempfile::tempdir().expect("tempdir");
         crate::paths::redirect_for_tests(dir.path());
-        let sys = crate::paths::system_config_dir();
+        let sys = crate::paths::engine_config_dir();
         std::fs::create_dir_all(&sys).expect("system config dir");
         std::fs::write(sys.join("server@default.ini"), default_ini).expect("write default");
 
@@ -1785,7 +1917,7 @@ pub(crate) fn manager_waits_e2e() {
     {
         let dir = tempfile::tempdir().expect("tempdir");
         crate::paths::redirect_for_tests(dir.path());
-        let sys = crate::paths::system_config_dir();
+        let sys = crate::paths::engine_config_dir();
         std::fs::create_dir_all(&sys).expect("system config dir");
         std::fs::write(
             sys.join("server@slow.ini"),
@@ -1860,7 +1992,7 @@ pub(crate) fn manager_checks_e2e() {
 
     let dir = tempfile::tempdir().expect("tempdir");
     crate::paths::redirect_for_tests(dir.path());
-    let sys = crate::paths::system_config_dir();
+    let sys = crate::paths::engine_config_dir();
     let alice = Caller(":1.42".into());
     let manager = |allow: bool| {
         Manager::new(

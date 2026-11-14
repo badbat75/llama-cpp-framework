@@ -792,6 +792,47 @@ pub(crate) fn server_cfg_defaults_e2e() {
 mod tests {
     use super::*;
 
+    /// The engine's defaults, checked in beside this crate and shipped
+    /// read-only by the `llama.cpp` package in
+    /// `/usr/share/private-ai/llama.cpp/`, whose maintainer scripts copy each
+    /// to `/etc/llama.cpp/` when it is missing. Read at run time so a missing
+    /// file is a red, not a compile error.
+    fn shipped_default(name: &str) -> String {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("defaults")
+            .join(name);
+        std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
+    }
+
+    /// The shipped `server@default.ini` is the configurator's default render,
+    /// with ModelsDir and StateDir resolved for the service user whose home
+    /// is `/var/lib/private-ai` (the instance unit's StateDirectory=): the
+    /// values a blank one resolves to under the instance, written out as
+    /// `render` writes them, so the file says where the models go.
+    #[test]
+    fn the_shipped_default_server_file_is_the_default_render() {
+        let cfg = ServerConfig {
+            models_dir: Some("/var/lib/private-ai/.llama.cpp".into()),
+            state_dir: Some("/var/lib/private-ai/.local/share/private-ai/state".into()),
+            ..ServerConfig::default()
+        };
+        assert_eq!(shipped_default("server@default.ini"), render(&cfg));
+    }
+
+    /// The manager accepts the shipped defaults as they are: the server file
+    /// against the shipped (empty) presets, and the presets file as a first
+    /// write. The presets file holds no section: the instance exists from
+    /// the first install and starts once a preset is added.
+    #[test]
+    fn the_manager_accepts_the_shipped_defaults() {
+        let server = shipped_default("server@default.ini");
+        let presets = shipped_default("presets.ini");
+        assert_eq!(presets.trim(), "", "no preset shipped: {presets:?}");
+        assert_eq!(crate::checks::server_file(&server, &presets), Ok(()));
+        assert_eq!(crate::checks::presets_file(&presets, "", None), Ok(()));
+        assert!(!server.contains('\u{2014}'), "no em-dash");
+    }
+
     /// `render` → parse-back through the real INI reader: the guard for steps
     /// 2–3 of the field recipe (a key-name typo between `from_keys` and the
     /// writer, or a wrong `keep` predicate, fails here).

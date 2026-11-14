@@ -101,6 +101,9 @@ fn real_paths_child() {
             paths::system_log_dir(),
             var("ProgramData").join("private-ai").join("logs")
         );
+        // Unchanged on Windows for now: the instance files stay in the
+        // machine-wide config directory.
+        assert_eq!(paths::engine_config_dir(), paths::system_config_dir());
         // The old tree to migrate: the one 2.4 kept in %LOCALAPPDATA%.
         assert_eq!(
             crate::migrate::old_trees(),
@@ -115,6 +118,12 @@ fn real_paths_child() {
         );
         assert_eq!(paths::config_dir(), home.join(".config").join("private-ai"));
         assert_eq!(paths::system_config_dir(), PathBuf::from("/etc/private-ai"));
+        // The engine's configuration lives in the engine's directory on
+        // Linux; macOS keeps every file per user and is unchanged for now.
+        #[cfg(target_os = "linux")]
+        assert_eq!(paths::engine_config_dir(), PathBuf::from("/etc/llama.cpp"));
+        #[cfg(not(target_os = "linux"))]
+        assert_eq!(paths::engine_config_dir(), paths::system_config_dir());
         assert_eq!(
             paths::system_log_dir(),
             PathBuf::from("/var/log/private-ai")

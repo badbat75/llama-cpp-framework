@@ -54,8 +54,11 @@
 //!
 //! No config file is in the package. The server and preset files
 //! (server@<id>.ini, presets.ini, presets.ini.disabled) live in
-//! /etc/private-ai, which systemd creates at the manager's start
-//! (ConfigurationDirectory=) and only the manager writes; settings.ini stays
+//! /etc/llama.cpp, the engine's, which its maintainer scripts fill from the
+//! defaults it ships in /usr/share/private-ai/llama.cpp (each only when
+//! missing) and systemd creates at the manager's start
+//! (ConfigurationDirectory=), beside the framework's /etc/private-ai
+//! (bff.ini); only the manager writes them. settings.ini stays
 //! per user, written by pai-config in ~/.config/private-ai on first use.
 
 use super::build_llama::load_build_env;
@@ -160,8 +163,10 @@ fn rpm_spec(f: &Fields, license: &str, libraries: &str, root: &Path) -> String {
         }
     }
     // The system files by name: systemd, dbus and polkit own their directories.
+    // Those under /usr/share/private-ai (the engine's defaults) are already
+    // taken by its line above (rpmbuild warns of a file listed twice).
     for (rel, _) in system_files::files() {
-        if root.join(rel).is_file() {
+        if root.join(rel).is_file() && !rel.starts_with("usr/share/private-ai/") {
             files.push_str(&format!("/{rel}\n"));
         }
     }
@@ -918,7 +923,7 @@ fn texts(c: Component, llama_build: &str) -> (&'static str, String) {
         Component::Config => (
             "pai-config: graphical configurator for llama-server",
             "pai-config, the graphical configurator for server.ini and the per-model\n\
-             presets.ini, which the manager keeps in /etc/private-ai.\n"
+             presets.ini, which the manager keeps in /etc/llama.cpp.\n"
                 .to_string(),
         ),
         Component::Cli => (
@@ -939,7 +944,7 @@ fn texts(c: Component, llama_build: &str) -> (&'static str, String) {
         Component::Core => (
             "pai-manager: the service that runs llama-server for the framework",
             "pai-manager, the framework's service: it keeps server.ini and presets.ini in\n\
-             /etc/private-ai and runs llama-server as a systemd service, for pai-config,\n\
+             /etc/llama.cpp and runs llama-server as a systemd service, for pai-config,\n\
              pai and pai-bff. With the systemd units, the D-Bus and polkit policies, the\n\
              service user and the texts the framework's programs print.\n"
                 .to_string(),
@@ -2105,6 +2110,56 @@ mod tests {
                 "{f} is in no %files line:\n{spec}"
             );
         }
+    }
+
+    /// The engine's `.rpm` takes its shipped defaults in
+    /// /usr/share/private-ai/llama.cpp, each file in exactly one `%files`
+    /// line (rpmbuild warns "File listed twice" otherwise), and never
+    /// /etc/llama.cpp, which its scriptlets fill and the manager writes: no
+    /// `%config` file, so an upgrade never replaces or saves one aside.
+    #[test]
+    fn the_engine_rpm_takes_its_defaults_once_and_no_etc_file() {
+        let dir = scratch("rpm-spec-defaults");
+        let llama = dir.join("llama");
+        for (rel, mode) in [
+            ("usr/bin/llama-server", 0o755),
+            ("usr/lib/private-ai/libggml-base.so.0", 0o755),
+            ("usr/share/doc/llama.cpp/copyright", 0o644),
+            ("usr/share/private-ai/licenses/llama/README.txt", 0o644),
+        ] {
+            put(&llama, rel, ELF, mode);
+        }
+        let defaults: Vec<(&str, String)> = system_files::files()
+            .into_iter()
+            .filter(|(rel, _)| rel.starts_with("usr/share/private-ai/llama.cpp/"))
+            .collect();
+        let names: Vec<&str> = defaults.iter().map(|(r, _)| *r).collect();
+        assert_eq!(
+            names,
+            [
+                "usr/share/private-ai/llama.cpp/server@default.ini",
+                "usr/share/private-ai/llama.cpp/presets.ini"
+            ]
+        );
+        for (rel, text) in &defaults {
+            put(&llama, rel, text.as_bytes(), 0o644);
+        }
+        let runtimes = [(Component::Rocm, "10.1.0".to_string())];
+        let f = fields_v(Component::Llama, ENGINE, &runtimes, None);
+        let spec = rpm_spec(&f, "MIT", "libggml", &llama);
+        check_files(&spec, &llama);
+        let listed = files_section(&spec);
+        for (rel, _) in &defaults {
+            let path = format!("/{rel}");
+            let n = listed.iter().filter(|l| covers(l, &path)).count();
+            assert_eq!(n, 1, "{path} in {n} %files lines:\n{spec}");
+        }
+        assert!(!listed.iter().any(|l| l.starts_with("/etc")), "{spec}");
+        assert!(
+            !spec.lines().any(|l| l.trim_start().starts_with("%config")),
+            "{spec}"
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     /// The `.rpm` of each package lists the /usr layout in `%files`, nothing

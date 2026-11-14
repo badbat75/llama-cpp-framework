@@ -5,7 +5,9 @@
 //! manager; the instance unit and the maintainer scripts that stop the
 //! running instances and start them again, which the engine's package
 //! ships; and the unit of the web service, the sysusers.d entry of its user
-//! and its maintainer scripts, which the `-bff` package ships.
+//! and its maintainer scripts, which the `-bff` package ships. The engine's
+//! package also ships its defaults read-only, which its maintainer scripts
+//! copy into the engine's configuration directory when missing.
 
 use crate::common::components::Component;
 use crate::common::configurator::set_mode;
@@ -29,6 +31,11 @@ const INSTANCES: &str = "'llama.cpp@*.service'";
 /// are replaced, one unit per line, for the scripts that run after. Under
 /// /run, emptied at boot, when the enabled instances start on their own.
 const RECORD: &str = "/run/llama.cpp.instances";
+/// The engine's configuration directory, where the manager keeps the
+/// instance files (`paths::engine_config_dir` in pai-core).
+const ENGINE_ETC: &str = "/etc/llama.cpp";
+/// Where the engine's package ships its defaults, read-only.
+const ENGINE_DEFAULTS: &str = "/usr/share/private-ai/llama.cpp";
 /// Asks the system bus to read its policies again.
 const RELOAD_BUS: &str =
     "busctl call org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus ReloadConfig";
@@ -67,6 +74,14 @@ pub fn files() -> Vec<(&'static str, String)> {
         ("usr/lib/sysusers.d/private-ai.conf", sysusers()),
         ("usr/lib/systemd/system/private-ai-bff.service", bff_unit()),
         ("usr/lib/sysusers.d/private-ai-bff.conf", bff_sysusers()),
+        (
+            "usr/share/private-ai/llama.cpp/server@default.ini",
+            include_str!("../../../crates/core/defaults/server@default.ini").to_string(),
+        ),
+        (
+            "usr/share/private-ai/llama.cpp/presets.ini",
+            include_str!("../../../crates/core/defaults/presets.ini").to_string(),
+        ),
     ]
 }
 
@@ -84,7 +99,8 @@ pub fn manager_unit() -> String {
          ExecStart={MANAGER_EXE} serve\n\
          # The services' home: a blank ModelsDir means the same to the manager as to the instances.\n\
          Environment=HOME=/var/lib/private-ai\n\
-         ConfigurationDirectory=private-ai\n\
+         # The framework's (bff.ini) and the engine's (the instance files).\n\
+         ConfigurationDirectory=private-ai llama.cpp\n\
          ConfigurationDirectoryMode=0755\n\
          Restart=on-failure\n\
          \n\
@@ -394,13 +410,48 @@ fn start_recorded_instances(indent: &str) -> String {
     )
 }
 
+/// Copies each shipped default into [`ENGINE_ETC`] when it is missing, never
+/// over an existing file: the server file 0640 with the group private-ai
+/// once that group exists (the core package creates it), else 0644 root:root
+/// until the manager's first write; the presets 0644. With `chroot` (the
+/// `.deb`), every path is under `$DPKG_ROOT` and a chroot install asks the
+/// host for no group: the server file is copied 0644 there.
+fn copy_missing_defaults(indent: &str, chroot: bool) -> String {
+    let server = "server@default.ini";
+    let presets = "presets.ini";
+    let (root, host) = if chroot {
+        ("$DPKG_ROOT", r#"[ -z "$DPKG_ROOT" ] && "#)
+    } else {
+        ("", "")
+    };
+    let etc = format!("\"{root}{ENGINE_ETC}\"");
+    let share = format!("\"{root}{ENGINE_DEFAULTS}\"");
+    format!(
+        "{indent}install -d -m 0755 {etc}\n\
+         {indent}if [ ! -e {etc}/{server} ]; then\n\
+         {indent}\tif {host}getent group private-ai >/dev/null; then\n\
+         {indent}\t\tinstall -m 0640 -g private-ai {share}/{server} {etc}/{server}\n\
+         {indent}\telse\n\
+         {indent}\t\tinstall -m 0644 {share}/{server} {etc}/{server}\n\
+         {indent}\tfi\n\
+         {indent}fi\n\
+         {indent}if [ ! -e {etc}/{presets} ]; then\n\
+         {indent}\tinstall -m 0644 {share}/{presets} {etc}/{presets}\n\
+         {indent}fi\n"
+    )
+}
+
 /// The engine's `.deb` maintainer scripts: its running instances recorded
 /// and stopped before its files are replaced, and started again, each by
 /// name, once the new files are in place; the record forgotten on removal.
+/// On configure the missing defaults are copied first; a purge deletes the
+/// engine's configuration, a removal keeps it.
 fn engine_deb_scripts() -> Vec<(&'static str, String)> {
     let head = format!("#!/bin/sh\nset -e\n{}\n", header_of(Component::Llama, "#"));
     let postinst = format!(
         r#"{head}if [ "$1" = "configure" ] || [ "$1" = "abort-upgrade" ] || [ "$1" = "abort-deconfigure" ] || [ "$1" = "abort-remove" ] ; then
+	if [ "$1" = "configure" ]; then
+{copy}	fi
 	if [ -d /run/systemd/system ]; then
 		systemctl --system daemon-reload >/dev/null || true
 {start}	fi
@@ -409,6 +460,7 @@ fn engine_deb_scripts() -> Vec<(&'static str, String)> {
 	fi
 fi
 "#,
+        copy = copy_missing_defaults("\t\t", true),
         start = start_recorded_instances("\t\t")
     );
     let prerm = format!(
@@ -421,6 +473,10 @@ fi
 	if [ -d /run/systemd/system ]; then
 		systemctl --system daemon-reload >/dev/null || true
 	fi
+fi
+
+if [ "$1" = "purge" ]; then
+	rm -rf "$DPKG_ROOT{ENGINE_ETC}"
 fi
 "#
     );
@@ -551,7 +607,8 @@ fi
 /// The engine's `.rpm` scriptlets. On an upgrade the new package's %pre
 /// records the running instances and stops them (the old %preun runs only
 /// after the new files are in place), and %posttrans starts the recorded
-/// ones again; the last removal stops them.
+/// ones again, after the missing defaults are copied; the last removal stops
+/// them and keeps the configuration.
 fn engine_rpm_scriptlets() -> String {
     format!(
         r#"%pre
@@ -569,12 +626,13 @@ if [ -d /run/systemd/system ]; then
 fi
 
 %posttrans
-if [ -d /run/systemd/system ]; then
+{copy}if [ -d /run/systemd/system ]; then
     systemctl daemon-reload || :
 {start}fi
 rm -f {RECORD}
 
 "#,
+        copy = copy_missing_defaults("    ", false),
         record = record_and_stop_instances("    "),
         start = start_recorded_instances("    ")
     )
@@ -592,6 +650,8 @@ mod tests {
     const SYSUSERS: &str = "usr/lib/sysusers.d/private-ai.conf";
     const BFF_UNIT: &str = "usr/lib/systemd/system/private-ai-bff.service";
     const BFF_SYSUSERS: &str = "usr/lib/sysusers.d/private-ai-bff.conf";
+    const DEFAULT_SERVER: &str = "usr/share/private-ai/llama.cpp/server@default.ini";
+    const DEFAULT_PRESETS: &str = "usr/share/private-ai/llama.cpp/presets.ini";
 
     /// The text of the generated file at `path`, from [`files`].
     fn file(path: &str) -> String {
@@ -663,13 +723,15 @@ mod tests {
                 POLKIT_POLICY,
                 SYSUSERS,
                 BFF_UNIT,
-                BFF_SYSUSERS
+                BFF_SYSUSERS,
+                DEFAULT_SERVER,
+                DEFAULT_PRESETS
             ]
         );
         for (path, text) in &got {
             let owner = match *path {
                 BFF_UNIT | BFF_SYSUSERS => Component::Bff,
-                INSTANCE_UNIT => Component::Llama,
+                INSTANCE_UNIT | DEFAULT_SERVER | DEFAULT_PRESETS => Component::Llama,
                 _ => Component::Core,
             };
             assert_eq!(components::of(path), owner, "{path}");
@@ -679,7 +741,7 @@ mod tests {
                 DBUS_POLICY => dbus_policy(),
                 POLKIT_POLICY => polkit_policy(),
                 BFF_UNIT => bff_unit(),
-                BFF_SYSUSERS => text.clone(),
+                BFF_SYSUSERS | DEFAULT_SERVER | DEFAULT_PRESETS => text.clone(),
                 _ => sysusers(),
             };
             assert_eq!(*text, want, "{path}");
@@ -751,7 +813,6 @@ mod tests {
             "Type=dbus",
             "BusName=org.privateai.Manager1",
             "ExecStart=/usr/libexec/private-ai/pai-manager serve",
-            "ConfigurationDirectory=private-ai",
             "Restart=on-failure",
             "Environment=HOME=/var/lib/private-ai",
         ] {
@@ -781,6 +842,26 @@ mod tests {
     /// ConfigurationDirectory= (systemd.exec(5): "Except in case of
     /// ConfigurationDirectory=, the innermost specified directories will be
     /// owned by the user and group specified in User= and Group=").
+    /// systemd creates both directories the manager writes before its start:
+    /// the framework's `/etc/private-ai` (bff.ini) and the engine's
+    /// `/etc/llama.cpp` (the instance files). ConfigurationDirectory= takes
+    /// a whitespace-separated list of names relative to /etc
+    /// (systemd.exec(5)), and its mode, 0755 here, applies to each.
+    #[test]
+    fn the_manager_unit_makes_the_framework_s_and_the_engine_s_config_directories() {
+        let unit = manager_unit();
+        let service = section(&unit, "[Service]");
+        let dirs: Vec<Vec<&str>> = service
+            .iter()
+            .filter_map(|l| l.strip_prefix("ConfigurationDirectory="))
+            .map(|v| v.split_whitespace().collect())
+            .collect();
+        assert_eq!(dirs.len(), 1, "one ConfigurationDirectory= line:\n{unit}");
+        let mut got = dirs[0].clone();
+        got.sort();
+        assert_eq!(got, ["llama.cpp", "private-ai"], "{unit}");
+    }
+
     #[test]
     fn the_config_directory_stays_0755_so_the_instances_reach_their_files() {
         let unit = manager_unit();
@@ -1710,12 +1791,22 @@ mod tests {
     /// Every generated file of the manager's services, its maintainer
     /// scripts included, names the package that installs it now, the
     /// core's, never the never-published `-llama`. The instance unit is the
-    /// engine's (pinned below).
+    /// engine's (pinned below), and so are its shipped defaults, which carry
+    /// no header (`the_engine_ships_its_defaults_read_only`).
     #[test]
     fn the_system_files_and_scripts_name_the_core_package() {
         let mut texts: Vec<(String, String)> = files()
             .into_iter()
-            .filter(|(p, _)| *p != BFF_UNIT && *p != BFF_SYSUSERS && *p != INSTANCE_UNIT)
+            .filter(|(p, _)| {
+                ![
+                    BFF_UNIT,
+                    BFF_SYSUSERS,
+                    INSTANCE_UNIT,
+                    DEFAULT_SERVER,
+                    DEFAULT_PRESETS,
+                ]
+                .contains(p)
+            })
             .map(|(p, t)| (p.to_string(), t))
             .collect();
         texts.extend(
@@ -1801,6 +1892,15 @@ mod tests {
     /// stops) can own or clean it, and there is nothing to create first.
     const RECORD: &str = "/run/llama.cpp.instances";
 
+    /// The engine's configuration directory, where the instance files live
+    /// (`paths::engine_config_dir` in pai-core).
+    const ENGINE_ETC: &str = "/etc/llama.cpp";
+    /// Where the engine's package ships the defaults, read-only.
+    const ENGINE_DEFAULTS: &str = "/usr/share/private-ai/llama.cpp";
+    /// The sandbox's stand-in for the shipped server file (the real one is
+    /// pinned by `the_engine_ships_its_defaults_read_only`).
+    const SHIPPED_SERVER: &str = "[Server]\nPort = 9931\nHostname = 127.0.0.1\n";
+
     /// What `systemctl list-units --plain --no-legend --state=active
     /// 'llama.cpp@*.service'` printed on a machine with an instance running
     /// (Ubuntu 26.04, systemd 259), with a second instance added.
@@ -1825,17 +1925,28 @@ mod tests {
             let bin = dir.join("bin");
             std::fs::create_dir_all(&bin).unwrap();
             std::fs::create_dir_all(dir.join("systemd")).unwrap();
+            let log = dir.join("log");
             for tool in [
                 "systemctl",
                 "deb-systemd-invoke",
                 "deb-systemd-helper",
                 "systemd-sysusers",
                 "busctl",
+                "chown",
+                "chgrp",
             ] {
-                let mut body = format!(
-                    "#!/bin/sh\necho \"{tool} $*\" >> \"{}\"\n",
-                    dir.join("log").display()
-                );
+                let mut body = if tool == "systemctl" {
+                    // Each call says whether the engine's server file is in
+                    // place at that moment (`has-default=yes|no`).
+                    format!(
+                        "#!/bin/sh\nif [ -f \"{}\" ]; then d=yes; else d=no; fi\n\
+                         echo \"{tool} $* has-default=$d\" >> \"{}\"\n",
+                        dir.join("etc-engine").join("server@default.ini").display(),
+                        log.display()
+                    )
+                } else {
+                    format!("#!/bin/sh\necho \"{tool} $*\" >> \"{}\"\n", log.display())
+                };
                 if tool == "systemctl" {
                     body.push_str(&format!(
                         "case \" $* \" in *\" list-units \"*) cat \"{}\" 2>/dev/null ;; esac\n",
@@ -1847,11 +1958,78 @@ mod tests {
                 std::fs::write(&p, body).unwrap();
                 std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
             }
+            // getent: the group private-ai exists only once `set_group(true)`.
+            let getent = format!(
+                "#!/bin/sh\necho \"getent $*\" >> \"{log}\"\n\
+                 if [ \"$1\" = group ] && [ \"$2\" = private-ai ] && [ -f \"{flag}\" ]; then\n\
+                 \techo 'private-ai:x:990:'\n\texit 0\nfi\nexit 2\n",
+                log = log.display(),
+                flag = dir.join("group-exists").display()
+            );
+            // install(1) without the chown a non-root user may not make:
+            // logs its arguments, copies (or makes directories) and applies
+            // -m; -g and -o are only logged.
+            let install = format!(
+                "#!/bin/sh\necho \"install $*\" >> \"{log}\"\n{}",
+                r#"mode=""; dir=0; parents=0; files=""
+while [ $# -gt 0 ]; do
+	case "$1" in
+		-m|--mode) mode="$2"; shift 2 ;;
+		--mode=*) mode="${1#--mode=}"; shift ;;
+		-dm*) dir=1; mode="${1#-dm}"; shift ;;
+		-Dm*) parents=1; mode="${1#-Dm}"; shift ;;
+		-m*) mode="${1#-m}"; shift ;;
+		-g|-o|--group|--owner) shift 2 ;;
+		-d|--directory) dir=1; shift ;;
+		-D) parents=1; shift ;;
+		-*) shift ;;
+		*) files="$files $1"; shift ;;
+	esac
+done
+if [ "$dir" = 1 ]; then
+	for d in $files; do mkdir -p "$d" || exit 1; if [ -n "$mode" ]; then chmod "$mode" "$d"; fi; done
+	exit 0
+fi
+set -- $files
+src="$1"; eval dst=\${$#}
+if [ -d "$dst" ]; then dst="$dst/$(basename "$src")"; fi
+if [ "$parents" = 1 ]; then mkdir -p "$(dirname "$dst")"; fi
+cp "$src" "$dst" || exit 1
+if [ -n "$mode" ]; then chmod "$mode" "$dst"; fi
+exit 0
+"#,
+                log = log.display()
+            );
+            for (tool, body) in [("getent", getent), ("install", install)] {
+                let p = bin.join(tool);
+                std::fs::write(&p, body).unwrap();
+                std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+            }
+            // The engine's shipped defaults, as the package installs them.
+            let share = dir.join("share-engine");
+            std::fs::create_dir_all(&share).unwrap();
+            std::fs::write(share.join("server@default.ini"), SHIPPED_SERVER).unwrap();
+            std::fs::write(share.join("presets.ini"), "").unwrap();
             Sandbox { dir }
         }
 
         fn record(&self) -> std::path::PathBuf {
             self.dir.join("record")
+        }
+
+        /// The sandbox's `/etc/llama.cpp`.
+        fn etc(&self) -> std::path::PathBuf {
+            self.dir.join("etc-engine")
+        }
+
+        /// Whether the group private-ai exists, for the fake getent.
+        fn set_group(&self, exists: bool) {
+            let flag = self.dir.join("group-exists");
+            if exists {
+                std::fs::write(flag, "").unwrap();
+            } else {
+                let _ = std::fs::remove_file(flag);
+            }
         }
 
         fn set_active(&self, text: &str) {
@@ -1886,18 +2064,82 @@ mod tests {
             };
             let text = script
                 .replace(RECORD, &self.record().display().to_string())
-                .replace("/run/systemd/system", &systemd_dir.display().to_string());
-            // Nothing may reach the real system: every /run path is moved,
-            // and the tools are called through PATH only.
+                .replace("/run/systemd/system", &systemd_dir.display().to_string())
+                .replace(
+                    ENGINE_DEFAULTS,
+                    &self.dir.join("share-engine").display().to_string(),
+                )
+                .replace(ENGINE_ETC, &self.etc().display().to_string());
+            // Nothing may reach the real system: every /run, /etc and
+            // /usr/share/private-ai path is moved, and the tools are called
+            // through PATH only.
             assert!(
                 !text.contains("/run/"),
                 "a /run path the test does not move:\n{script}"
             );
-            for abs in ["/bin/systemctl", "/usr/bin/deb-systemd", "/usr/bin/busctl"] {
+            for real in ["/etc/", "/usr/share/private-ai"] {
+                assert!(
+                    !text.contains(real),
+                    "a {real} path the test does not move:\n{script}"
+                );
+            }
+            self.exec(&text, script, args, dpkg_root)
+        }
+
+        /// Runs `script` as dpkg runs it for a chroot install: `DPKG_ROOT`
+        /// set to `root` (a directory of the sandbox) and the engine's
+        /// paths left as they are, so the script must reach them through
+        /// `$DPKG_ROOT`. Refused before it runs when one of them is not
+        /// prefixed with it, so the host's /etc is never written. The /run
+        /// paths are moved as in [`Sandbox::run`], systemd running.
+        fn run_chroot(&self, script: &str, args: &[&str], root: &std::path::Path) -> Vec<String> {
+            let text = script
+                .replace(RECORD, &self.record().display().to_string())
+                .replace(
+                    "/run/systemd/system",
+                    &self.dir.join("systemd").display().to_string(),
+                );
+            assert!(
+                !text.contains("/run/"),
+                "a /run path the test does not move:\n{script}"
+            );
+            let mut rest = text.clone();
+            for path in [ENGINE_ETC, ENGINE_DEFAULTS] {
+                for prefix in ["${DPKG_ROOT}", "$DPKG_ROOT"] {
+                    rest = rest.replace(&format!("{prefix}{path}"), "<root>");
+                }
+            }
+            for real in ["/etc/", "/usr/share/private-ai"] {
+                assert!(
+                    !rest.contains(real),
+                    "a {real} path not under $DPKG_ROOT in a chroot install:\n{script}"
+                );
+            }
+            self.exec(&text, script, args, Some(&root.display().to_string()))
+        }
+
+        /// Writes `text` (the moved `script`) and runs it with `args` and
+        /// the fakes first on PATH; returns the calls they logged.
+        fn exec(
+            &self,
+            text: &str,
+            script: &str,
+            args: &[&str],
+            dpkg_root: Option<&str>,
+        ) -> Vec<String> {
+            for abs in [
+                "/bin/systemctl",
+                "/usr/bin/deb-systemd",
+                "/usr/bin/busctl",
+                "/bin/install",
+                "/bin/chown",
+                "/bin/chgrp",
+                "/bin/getent",
+            ] {
                 assert!(!text.contains(abs), "{abs} bypasses the fakes:\n{script}");
             }
             let file = self.dir.join("script");
-            std::fs::write(&file, &text).unwrap();
+            std::fs::write(&file, text).unwrap();
             let log = self.dir.join("log");
             let _ = std::fs::remove_file(&log);
             let mut cmd = std::process::Command::new("sh");
@@ -2246,5 +2488,310 @@ mod tests {
                 );
             }
         }
+    }
+
+    // ── The engine's configuration and its shipped defaults ─────────────
+
+    /// The engine's package ships its defaults read-only in
+    /// /usr/share/private-ai/llama.cpp: `server@default.ini`, the
+    /// configurator's default values, checked in as
+    /// `crates/core/defaults/server@default.ini` (pai-core keeps it equal to
+    /// its default render), and an empty `presets.ini`. No header: the copy
+    /// in /etc/llama.cpp is the administrator's and the manager's, never
+    /// overwritten.
+    #[test]
+    fn the_engine_ships_its_defaults_read_only() {
+        let checked_in = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../crates/core/defaults/server@default.ini");
+        let want = std::fs::read_to_string(&checked_in)
+            .unwrap_or_else(|e| panic!("{}: {e}", checked_in.display()));
+        let server = file(DEFAULT_SERVER);
+        assert_eq!(server, want);
+        assert!(server.contains("[Server]"), "{server}");
+        assert_eq!(file(DEFAULT_PRESETS), "");
+        for path in [DEFAULT_SERVER, DEFAULT_PRESETS] {
+            assert_eq!(components::of(path), Component::Llama, "{path}");
+        }
+    }
+
+    /// The modes of a file and of a directory.
+    fn mode(p: &std::path::Path) -> u32 {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::metadata(p)
+            .unwrap_or_else(|e| panic!("{}: {e}", p.display()))
+            .permissions()
+            .mode()
+            & 0o7777
+    }
+
+    /// Whether a logged install, chgrp or chown gives `file` the group
+    /// private-ai.
+    fn grouped(log: &[String], file: &str) -> bool {
+        log.iter().any(|l| {
+            let w: Vec<&str> = l.split_whitespace().collect();
+            matches!(
+                w.first(),
+                Some(&"install") | Some(&"chgrp") | Some(&"chown")
+            ) && l.contains(file)
+                && w.iter().any(|x| {
+                    *x == "private-ai"
+                        || x.ends_with(":private-ai")
+                        || *x == "-gprivate-ai"
+                        || *x == "--group=private-ai"
+                })
+        })
+    }
+
+    /// On configure (an install, or an upgrade from an older version) the
+    /// engine's postinst copies each shipped default into /etc/llama.cpp
+    /// when it is missing: the directory 0755, `server@default.ini` 0640
+    /// with the group private-ai when that group exists (the instances run
+    /// as its user; the file may later hold a secret), `presets.ini` 0644;
+    /// so the instance `default` exists from the first install. The copy
+    /// comes before the recorded instances start again.
+    #[test]
+    fn the_engine_postinst_copies_the_defaults_when_missing() {
+        let postinst = deb(Component::Llama, "postinst");
+        for args in [&["configure"][..], &["configure", "1:1.0.0+pai1"][..]] {
+            let sb = Sandbox::new("engine-defaults");
+            sb.set_group(true);
+            std::fs::write(sb.record(), "llama.cpp@default.service\n").unwrap();
+            let log = sb.run(&postinst, args, true, None);
+            let etc = sb.etc();
+            assert_eq!(mode(&etc), 0o755, "{args:?}: {log:?}");
+            assert_eq!(
+                std::fs::read_to_string(etc.join("server@default.ini"))
+                    .ok()
+                    .as_deref(),
+                Some(SHIPPED_SERVER),
+                "{args:?}: {log:?}"
+            );
+            assert_eq!(mode(&etc.join("server@default.ini")), 0o640, "{args:?}");
+            assert!(grouped(&log, "server@default.ini"), "{args:?}: {log:?}");
+            assert_eq!(
+                std::fs::read_to_string(etc.join("presets.ini"))
+                    .ok()
+                    .as_deref(),
+                Some(""),
+                "{args:?}: {log:?}"
+            );
+            assert_eq!(mode(&etc.join("presets.ini")), 0o644, "{args:?}");
+            let start = call(&log, &["start", "llama.cpp@default.service"])
+                .unwrap_or_else(|| panic!("{args:?}: {log:?}"));
+            assert!(
+                log[start].contains("has-default=yes"),
+                "the defaults are copied before the instances start: {log:?}"
+            );
+        }
+    }
+
+    /// Without the group private-ai yet (dpkg configures the engine before
+    /// the core package, whose postinst creates the user), the server file
+    /// is copied 0644 root:root: it holds only the shipped defaults, no
+    /// secret, and the instance's user can read it; the manager's first
+    /// write makes it 0640 with the group (pai-manager's
+    /// `a_0644_instance_file_is_0640_after_its_next_write`).
+    #[test]
+    fn without_the_group_the_server_file_is_copied_world_readable() {
+        let postinst = deb(Component::Llama, "postinst");
+        let sb = Sandbox::new("engine-defaults-nogroup");
+        sb.set_group(false);
+        let log = sb.run(&postinst, &["configure"], true, None);
+        let ini = sb.etc().join("server@default.ini");
+        assert_eq!(
+            std::fs::read_to_string(&ini).ok().as_deref(),
+            Some(SHIPPED_SERVER),
+            "{log:?}"
+        );
+        assert_eq!(mode(&ini), 0o644, "{log:?}");
+        assert!(!grouped(&log, "server@default.ini"), "{log:?}");
+    }
+
+    /// What the administrator or the manager wrote is never touched: an
+    /// upgrade copies only the default that is missing, and leaves every
+    /// existing file, its content and its mode, as it was (so dpkg asks
+    /// nothing: the files are no conffiles). Nothing is moved from the
+    /// framework's /etc/private-ai.
+    #[test]
+    fn the_engine_postinst_never_overwrites_the_configuration() {
+        use std::os::unix::fs::PermissionsExt;
+        let postinst = deb(Component::Llama, "postinst");
+        let sb = Sandbox::new("engine-defaults-kept");
+        sb.set_group(true);
+        let etc = sb.etc();
+        std::fs::create_dir_all(&etc).unwrap();
+        let mine = "[Server]\nPort = 8080\nHostname = 0.0.0.0\nOpencodeApiKey = sk-local-3f9a\n";
+        let disabled = "[Old]\nmodel = /models/old.gguf\n";
+        std::fs::write(etc.join("server@default.ini"), mine).unwrap();
+        std::fs::set_permissions(
+            etc.join("server@default.ini"),
+            std::fs::Permissions::from_mode(0o640),
+        )
+        .unwrap();
+        std::fs::write(etc.join("presets.ini.disabled"), disabled).unwrap();
+        let log = sb.run(&postinst, &["configure", "1:1.0.0+pai1"], true, None);
+        assert_eq!(
+            std::fs::read_to_string(etc.join("server@default.ini")).unwrap(),
+            mine,
+            "{log:?}"
+        );
+        assert_eq!(mode(&etc.join("server@default.ini")), 0o640);
+        assert_eq!(
+            std::fs::read_to_string(etc.join("presets.ini.disabled")).unwrap(),
+            disabled
+        );
+        assert_eq!(
+            std::fs::read_to_string(etc.join("presets.ini"))
+                .ok()
+                .as_deref(),
+            Some(""),
+            "the missing one is copied: {log:?}"
+        );
+        // A second run copies nothing over what is now there.
+        std::fs::write(
+            etc.join("presets.ini"),
+            "[Qwen3.8-27B]\nmodel = /m/q.gguf\n",
+        )
+        .unwrap();
+        let log = sb.run(&postinst, &["configure", "1:1.0.0+pai1"], true, None);
+        assert_eq!(
+            std::fs::read_to_string(etc.join("presets.ini")).unwrap(),
+            "[Qwen3.8-27B]\nmodel = /m/q.gguf\n",
+            "{log:?}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(etc.join("server@default.ini")).unwrap(),
+            mine
+        );
+        for text in deb_scripts(Component::Llama)
+            .into_iter()
+            .map(|(_, t)| t)
+            .chain([rpm_scriptlets(Component::Llama)])
+        {
+            assert!(!text.contains("/etc/private-ai"), "{text}");
+        }
+    }
+
+    /// Removing the engine keeps its configuration (Debian Policy 10.7.3:
+    /// configuration files are preserved on removal and deleted only on
+    /// purge); purging deletes what the maintainer scripts created and the
+    /// manager wrote in /etc/llama.cpp, so a later install starts from the
+    /// shipped defaults.
+    #[test]
+    fn the_engine_postrm_keeps_the_configuration_on_remove_and_purges_it() {
+        let postrm = deb(Component::Llama, "postrm");
+        let files = [
+            "server@default.ini",
+            "server@gpu1.ini",
+            "presets.ini",
+            "presets.ini.disabled",
+        ];
+        let fill = |sb: &Sandbox| {
+            std::fs::create_dir_all(sb.etc()).unwrap();
+            for f in files {
+                std::fs::write(sb.etc().join(f), "[Server]\n").unwrap();
+            }
+        };
+        let sb = Sandbox::new("engine-postrm-remove");
+        fill(&sb);
+        let log = sb.run(&postrm, &["remove"], true, None);
+        for f in files {
+            assert!(sb.etc().join(f).is_file(), "{f} kept on remove: {log:?}");
+        }
+        let sb = Sandbox::new("engine-postrm-purge");
+        fill(&sb);
+        let log = sb.run(&postrm, &["purge"], true, None);
+        assert!(!sb.etc().exists(), "/etc/llama.cpp purged: {log:?}");
+    }
+
+    /// The `.rpm` does the same in %posttrans, which runs after the whole
+    /// transaction (the core's user exists by then): each default copied
+    /// when missing (`server@default.ini` 0640 with the group, `presets.ini`
+    /// 0644), never over an existing file, before the recorded instances
+    /// start. rpm has no purge: nothing removes /etc/llama.cpp on erase.
+    #[test]
+    fn the_engine_rpm_copies_the_defaults_when_missing_and_keeps_them() {
+        let text = rpm_scriptlets(Component::Llama);
+        let posttrans = format!("#!/bin/sh\n{}\n", scriptlet(&text, "%posttrans"));
+        let sb = Sandbox::new("engine-rpm-defaults");
+        sb.set_group(true);
+        std::fs::write(sb.record(), "llama.cpp@default.service\n").unwrap();
+        let log = sb.run(&posttrans, &[], true, None);
+        let etc = sb.etc();
+        assert_eq!(mode(&etc), 0o755, "{log:?}");
+        assert_eq!(
+            std::fs::read_to_string(etc.join("server@default.ini"))
+                .ok()
+                .as_deref(),
+            Some(SHIPPED_SERVER),
+            "{log:?}"
+        );
+        assert_eq!(mode(&etc.join("server@default.ini")), 0o640);
+        assert!(grouped(&log, "server@default.ini"), "{log:?}");
+        assert_eq!(
+            std::fs::read_to_string(etc.join("presets.ini"))
+                .ok()
+                .as_deref(),
+            Some("")
+        );
+        assert_eq!(mode(&etc.join("presets.ini")), 0o644);
+        let start = call(&log, &["start", "llama.cpp@default.service"])
+            .unwrap_or_else(|| panic!("{log:?}"));
+        assert!(log[start].contains("has-default=yes"), "{log:?}");
+
+        std::fs::write(etc.join("server@default.ini"), "[Server]\nPort = 8080\n").unwrap();
+        sb.run(&posttrans, &[], true, None);
+        assert_eq!(
+            std::fs::read_to_string(etc.join("server@default.ini")).unwrap(),
+            "[Server]\nPort = 8080\n",
+            "never overwritten"
+        );
+
+        for name in ["%preun", "%postun"] {
+            let body = format!("#!/bin/sh\n{}\n", scriptlet(&text, name));
+            sb.run(&body, &["0"], true, None);
+            assert!(
+                etc.join("server@default.ini").is_file(),
+                "{name} on erase keeps the configuration"
+            );
+        }
+    }
+
+    /// A chroot install (dpkg's `--root`, `DPKG_ROOT` set): the engine's
+    /// postinst copies the defaults from the chroot's
+    /// `$DPKG_ROOT/usr/share/private-ai/llama.cpp` into its
+    /// `$DPKG_ROOT/etc/llama.cpp`, never into the host's /etc; its postrm
+    /// purges the chroot's `$DPKG_ROOT/etc/llama.cpp` and leaves the host's.
+    #[test]
+    fn a_chroot_install_copies_and_purges_the_defaults_inside_dpkg_root() {
+        let sb = Sandbox::new("engine-chroot");
+        let root = sb.dir.join("root");
+        let share = root.join(ENGINE_DEFAULTS.trim_start_matches('/'));
+        std::fs::create_dir_all(&share).unwrap();
+        std::fs::write(share.join("server@default.ini"), SHIPPED_SERVER).unwrap();
+        std::fs::write(share.join("presets.ini"), "").unwrap();
+        let etc = root.join(ENGINE_ETC.trim_start_matches('/'));
+
+        let log = sb.run_chroot(&deb(Component::Llama, "postinst"), &["configure"], &root);
+        assert_eq!(
+            std::fs::read_to_string(etc.join("server@default.ini"))
+                .ok()
+                .as_deref(),
+            Some(SHIPPED_SERVER),
+            "{log:?}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(etc.join("presets.ini"))
+                .ok()
+                .as_deref(),
+            Some(""),
+            "{log:?}"
+        );
+        assert_eq!(mode(&etc), 0o755);
+        assert!(!sb.etc().exists(), "nothing outside the root: {log:?}");
+
+        let log = sb.run_chroot(&deb(Component::Llama, "postrm"), &["purge"], &root);
+        assert!(!etc.exists(), "the chroot's /etc/llama.cpp purged: {log:?}");
+        assert!(share.join("server@default.ini").is_file(), "{log:?}");
     }
 }

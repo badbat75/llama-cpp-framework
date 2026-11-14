@@ -81,7 +81,7 @@ fn hang_up(server: JoinHandle<std::io::Result<()>>, client: PipeClient<UnixStrea
 pub(crate) fn manager_pipe_client_e2e() {
     let dir = tempfile::tempdir().expect("tempdir");
     crate::paths::redirect_for_tests(dir.path());
-    let sys = crate::paths::system_config_dir();
+    let sys = crate::paths::engine_config_dir();
     std::fs::create_dir_all(&sys).expect("system config dir");
     let default_ini = "[Server]\nPort = 8080\nHostname = 0.0.0.0\n";
     let broken_ini = "[Server]\nPort = 8090\nHostname = 127.0.0.1\n";

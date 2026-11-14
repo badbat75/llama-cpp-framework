@@ -118,8 +118,11 @@ pub fn of(rel: &str) -> Component {
     {
         return Component::Bff;
     }
-    // The engine's instance unit (the engine owns its unit).
-    if path == "usr/lib/systemd/system/llama.cpp@.service" {
+    // The engine's instance unit (the engine owns its unit) and its shipped
+    // defaults, copied into /etc/llama.cpp by its maintainer scripts.
+    if path == "usr/lib/systemd/system/llama.cpp@.service"
+        || path.starts_with("usr/share/private-ai/llama.cpp/")
+    {
         return Component::Llama;
     }
     // pai-manager and the system files of its services.
@@ -419,6 +422,9 @@ mod tests {
             "usr/lib/private-ai/libllama-server-impl.so",
             "usr/lib/private-ai/lib/llvm/lib/libomp.so",
             "usr/lib/systemd/system/llama.cpp@.service",
+            // The engine's defaults, copied into /etc/llama.cpp when missing.
+            "usr/share/private-ai/llama.cpp/server@default.ini",
+            "usr/share/private-ai/llama.cpp/presets.ini",
         ] {
             assert_eq!(of(rel), Component::Llama, "{rel}");
         }

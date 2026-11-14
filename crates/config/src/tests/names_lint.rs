@@ -6,7 +6,8 @@
 //! (`MIGRATION_MODULE`) may name the old tree and login entry it moves. A plain text scan of every `.rs` and `.slint` file, `build.rs` and
 //! `Cargo.toml`, whole-line comments left out (the docs say the old names
 //! where they tell the history). The engine's own names stay: `llama-server`,
-//! the unit `llama.cpp@<id>`, llama.cpp itself; so does the manager's
+//! the unit `llama.cpp@<id>`, the engine's config directory `/etc/llama.cpp`,
+//! llama.cpp itself; so does the manager's
 //! service name: the systemd unit `private-ai-manager.service`, the named
 //! pipe `\\.\pipe\private-ai-manager` and the Windows service
 //! `"private-ai-manager"` in `WINDOWS_SERVICE_MODULE`.
@@ -14,7 +15,7 @@
 use std::path::{Path, PathBuf};
 
 /// The old names, none of which a line of code may hold.
-const OLD_NAMES: [&str; 11] = [
+const OLD_NAMES: [&str; 10] = [
     "llama-cpp-config",
     "llama_cpp_config",
     "llama.cpp-framework",
@@ -24,7 +25,6 @@ const OLD_NAMES: [&str; 11] = [
     concat!("LLAMA_FW", "_"),
     r"Software\llama.cpp",
     r"ProgramData\llama.cpp",
-    "/etc/llama.cpp",
     "/opt/llama.cpp",
     r#"join("llama.cpp")"#,
 ];

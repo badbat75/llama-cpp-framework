@@ -220,7 +220,7 @@ pub fn instance_command(
     if !ini.is_file() {
         return Err(LaunchError::NoConfig(ini));
     }
-    let presets_path = crate::paths::system_config_dir().join("presets.ini");
+    let presets_path = crate::paths::engine_config_dir().join("presets.ini");
     if !has_presets_in(&presets_path) {
         return Err(LaunchError::NoPresets);
     }
@@ -246,7 +246,10 @@ pub(crate) fn instance_launch_e2e() {
 
     let dir = tempfile::tempdir().expect("tempdir");
     crate::paths::redirect_for_tests(dir.path());
-    let sys = crate::paths::system_config_dir();
+    // The instance files are the engine's (`engine_config_dir`), not the
+    // framework's `system_config_dir`, which holds only its own (bff.ini).
+    let sys = crate::paths::engine_config_dir();
+    let framework = crate::paths::system_config_dir();
     let exe = dir
         .path()
         .join("bin")
@@ -301,6 +304,23 @@ pub(crate) fn instance_launch_e2e() {
         Some(LaunchError::NoConfig(sys.join("server@default.ini"))),
         "server.ini is not server@default.ini"
     );
+    // Nor does one left in the framework's directory: nothing reads it there.
+    std::fs::create_dir_all(&framework).expect("framework config dir");
+    std::fs::write(
+        framework.join("server@default.ini"),
+        "[Server]\nPort = 8082\n",
+    )
+    .expect("stray server@default.ini");
+    std::fs::write(
+        framework.join("presets.ini"),
+        "[stray]\nmodel = /m/stray.gguf\n",
+    )
+    .expect("stray presets.ini");
+    assert_eq!(
+        instance_command("default", &exe).err(),
+        Some(LaunchError::NoConfig(sys.join("server@default.ini"))),
+        "the framework's directory holds no instance file"
+    );
 
     // ── Refused for want of presets, as start() refuses (`has_presets`) ──
     // The instance file exists from here on; the presets are the system
@@ -314,7 +334,7 @@ pub(crate) fn instance_launch_e2e() {
     assert_eq!(
         instance_command("default", &exe).err(),
         Some(LaunchError::NoPresets),
-        "no system presets.ini"
+        "no presets.ini in the engine's directory (the framework's does not count)"
     );
     std::fs::write(&sys_presets, "; no model yet\n\n").expect("empty presets");
     assert_eq!(

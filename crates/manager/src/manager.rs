@@ -149,7 +149,7 @@ fn run(args: &[String]) -> Result<i32, (i32, String)> {
                     strings::fill("manager-no-config", &[&p.display(), &id])
                 }
                 LaunchError::NoPresets => {
-                    let presets = crate::paths::system_config_dir().join("presets.ini");
+                    let presets = crate::paths::engine_config_dir().join("presets.ini");
                     strings::fill("manager-no-presets", &[&presets.display()])
                 }
                 LaunchError::StateDir(p, kind) => {

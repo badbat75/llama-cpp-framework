@@ -439,3 +439,89 @@ fn the_launch_starts_the_server_only_through_start_at_launch() {
         "gui.rs still starts the server on StartServerOnLaunch alone"
     );
 }
+
+// ── The instance files are the engine's ────────────────────────────────
+// `server@<id>.ini`, `presets.ini` and `presets.ini.disabled` live in the
+// engine's directory (`paths::engine_config_dir`, `/etc/llama.cpp` on Linux);
+// the framework's (`paths::system_config_dir`, `/etc/private-ai`) keeps only
+// its own files (`bff.ini`). Production code of every crate that touches
+// them names the framework's directory only where it is meant: `paths.rs`,
+// which defines it, and the bff's `listen.rs`, which reads `bff.ini`. Test
+// code may name it.
+
+/// The files allowed to name `system_config_dir`, relative to `crates/`.
+const SYSTEM_DIR_ALLOWED: [&str; 2] = ["core/src/paths.rs", "bff/src/listen.rs"];
+
+/// `system_config_dir` named on one line of code, comments left out.
+fn system_dir_hits(line: &str) -> Vec<String> {
+    let code = line.split("//").next().unwrap_or(line);
+    let mut found = Vec::new();
+    let mut rest = code;
+    while let Some(i) = rest.find("system_config_dir") {
+        let before = rest[..i].chars().next_back();
+        let after = rest[i + "system_config_dir".len()..].chars().next();
+        if !before.is_some_and(is_ident) && !after.is_some_and(is_ident) {
+            found.push("system_config_dir".to_string());
+        }
+        rest = &rest[i + "system_config_dir".len()..];
+    }
+    found
+}
+
+#[test]
+fn only_the_framework_s_own_files_are_in_its_system_directory() {
+    let crates = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let mut files = Vec::new();
+    for c in ["app", "bff", "cli", "config", "core", "manager"] {
+        sources(&crates.join(c).join("src"), &mut files);
+    }
+    let mut violations = String::new();
+    for file in files {
+        let r = rel(&file).to_string_lossy().replace('\\', "/");
+        if SYSTEM_DIR_ALLOWED.contains(&r.as_str()) {
+            continue;
+        }
+        let text = std::fs::read_to_string(&file).expect("read source");
+        for (n, line) in production_lines(&text) {
+            for hit in system_dir_hits(line) {
+                violations.push_str(&format!("\n  {r}:{n}: {hit}"));
+            }
+        }
+    }
+    assert!(
+        violations.is_empty(),
+        "the instance files are the engine's: name paths::engine_config_dir() \
+         (or instance_ini, instance_ids), not the framework's directory:{violations}"
+    );
+}
+
+#[test]
+fn system_dir_scan_flags_the_framework_s_directory_and_leaves_the_rest() {
+    for (line, expected) in [
+        (
+            "        let dir = crate::paths::system_config_dir();",
+            vec!["system_config_dir"],
+        ),
+        (
+            "    Ok(crate::paths::system_config_dir().join(name))",
+            vec!["system_config_dir"],
+        ),
+        (
+            "use pai_core::paths::{system_config_dir, data_root};",
+            vec!["system_config_dir"],
+        ),
+        // Not flagged: the engine's directory, other names, comments.
+        (
+            "        let dir = crate::paths::engine_config_dir();",
+            vec![],
+        ),
+        ("    let d = my_system_config_dir_backup();", vec![]),
+        ("    // paths::system_config_dir() holds bff.ini", vec![]),
+        (
+            "//! their config files in `paths::system_config_dir()`",
+            vec![],
+        ),
+    ] {
+        assert_eq!(system_dir_hits(line), expected, "{line:?}");
+    }
+}
