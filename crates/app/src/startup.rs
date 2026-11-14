@@ -11,23 +11,30 @@
 //!   other desktop following the spec) runs at login and which GNOME Tweaks'
 //!   Startup Applications edits.
 //!
-//! On both, the entry's presence is "start at login", and whether the stored
-//! command carries `gui --minimized` (start in the tray) or plain `gui` (open
-//! the window) is "start minimized". Both are READ BACK from the entry, and
-//! re-enabling the toggle after the install moved is what refreshes the stored
-//! exe path.
+//! "Start at login" is READ BACK from the entry: on Windows the Run value's
+//! presence, on Linux a file the desktop is not told to skip (`Hidden=true`,
+//! or GNOME's `X-GNOME-Autostart-enabled=false`: `linux::parse_entry`).
+//! "Start minimized" is whether the stored command carries `gui --minimized`
+//! (start in the tray) or plain `gui` (open the window).
 //!
-//! The entry registers the INSTALLED copy, not `current_exe()`: `set_enabled`
-//! prefers the exe under `HKLM\Software\private-ai\InstallDir\bin` on Windows
-//! and `/usr/bin/pai-config` (the deb/rpm's symlink) on Linux
-//! (`installed_exe`), falling back to `current_exe()` only when no install is
-//! found (portable / dev use). `current_exe()` alone is a footgun: toggling
-//! the setting from a second, non-installed build (e.g. a `cargo run` debug exe)
-//! would persist THAT path into the login startup, and on Windows the debug
-//! build is console-subsystem (see `main.rs`), so every logon then flashes an
-//! empty console window that owns the app (closing it kills the app).
-//! Preferring the installed copy makes the toggle write the installed GUI
-//! build regardless of which build flipped it.
+//! The entry registers the INSTALLED copy, not `current_exe()`: an enable
+//! (`choose_autostart_exe`) prefers the exe under
+//! `HKLM\Software\private-ai\InstallDir\bin` on Windows and
+//! `/usr/bin/pai-config` (the deb/rpm's symlink) on Linux (`installed_exe`),
+//! falling back to `current_exe()` only when no install is found (portable /
+//! dev use). `current_exe()` alone is a footgun: toggling the setting from a
+//! second, non-installed build (e.g. a `cargo run` debug exe) would persist
+//! THAT path into the login startup, and on Windows the debug build is
+//! console-subsystem (see `main.rs`), so every logon then flashes an empty
+//! console window that owns the app (closing it kills the app).
+//!
+//! A stored command can still go stale (written by a build that is gone, or
+//! before the install moved). The GUI's start, after the 2.4 migration
+//! (`migrate_old_entry`), calls `repair_entry`: an enabled entry whose
+//! command differs from what an enable would write now is rewritten with the
+//! same "start minimized" choice, and a missing, switched-off (on Windows,
+//! in Task Manager: `approved_on`) or matching entry is left alone. Both
+//! platforms decide through the pure `repair_choice`.
 //!
 //! Windows: the registry through `windows-sys`.
 //! Linux: a plain file. Elsewhere the toggles are unsupported: `is_enabled` is
@@ -475,7 +482,8 @@ mod win {
 
     /// Whether the logon Run entry exists. Presence is the state: the stored
     /// command isn't compared against the current exe path, so a moved install
-    /// still reads as enabled (re-toggling refreshes the path).
+    /// still reads as enabled (the GUI's start rewrites the path:
+    /// `super::repair_entry`).
     pub fn is_enabled() -> bool {
         stored_command().is_some()
     }

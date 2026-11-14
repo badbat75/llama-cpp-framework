@@ -413,9 +413,8 @@ Decided with the user on 2026-11-14:
   Windows instances without ModelsDir/StateDir use `%ProgramData%\llama.cpp\{models,state}`; `xtask
   install <engine> <framework>`; two stale mentions gone. Accepted as is: llama.cpp's MSI takes a
   2.4-chosen install folder. Left: the real WiX build and the installer test plan on
-  Windows (the user); the `startup.rs` module header and a `server_tab.rs` comment describe the old behaviour (the
-  Server form itself shows both folders blank with the instance default as hint since the user's
-  2026-11-14 choice).) Folders (user, 2026-11-14): the program in `%ProgramFiles%\llama.cpp\` (with the
+  Windows (the user); under the manager the Server form shows both folders blank with the instance
+  default as hint (user, 2026-11-14).) Folders (user, 2026-11-14): the program in `%ProgramFiles%\llama.cpp\` (with the
   read-only defaults); everything of the engine's instances under `%ProgramData%\llama.cpp\`:
   `config\` (`server@<id>.ini`, `presets.ini`, `presets.ini.disabled`; `paths::engine_config_dir()`),
   `logs\` (`llama-server@<id>.log` and its `.previous.log`) and `models\` (the default `ModelsDir`);
