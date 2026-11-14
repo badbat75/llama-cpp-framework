@@ -339,3 +339,6 @@ Lessons only: the rules are in `AGENTS.md`.
 - Naming a stub after a local of `run()` (`fn homepage` beside `let homepage = ..` in
   `linux/package.rs`) makes the call `E0618: expected function`: the local shadows the fn. Rename
   one, and tell the coder which.
+- A name-prefix match must be tested with every name that shares the prefix: `llama.cpp-v` starts
+  `llama.cpp-vulkan-v...` but not `llama.cpp-rocm-v...`, so a rocm-only fixture passed while the real
+  dist/ broke. Build fixtures from the full real file set, the suspect file written last.

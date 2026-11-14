@@ -249,6 +249,14 @@ pub fn file_stem(c: Component, fw_version: &str, _llama_build: &str, version: &s
     }
 }
 
+/// Whether `name` is a package file of `c`: `<package>-v` and a version,
+/// which starts with a digit, so `llama.cpp-v...` never takes
+/// `llama.cpp-vulkan-v...`.
+pub fn is_file_of(c: Component, name: &str) -> bool {
+    name.strip_prefix(&format!("{}-v", c.package()))
+        .is_some_and(|rest| rest.starts_with(|ch: char| ch.is_ascii_digit()))
+}
+
 /// The newest file in `dir` of each component, for this architecture and
 /// extension (`-amd64.deb`): the last one written. The packages of 2.4 and
 /// earlier have another base name and never match.
@@ -259,12 +267,11 @@ pub fn newest_in(dir: &Path, tail: &str) -> Vec<(Component, PathBuf)> {
     Component::ALL
         .iter()
         .filter_map(|c| {
-            let prefix = format!("{}-v", c.package());
             files
                 .iter()
                 .filter(|p| {
                     let name = p.file_name().unwrap_or_default().to_string_lossy();
-                    name.starts_with(&prefix) && name.ends_with(tail)
+                    is_file_of(*c, &name) && name.ends_with(tail)
                 })
                 .max_by_key(|p| std::fs::metadata(p).and_then(|m| m.modified()).ok())
                 .map(|p| (*c, p.clone()))
@@ -535,6 +542,59 @@ mod tests {
                 ),
             ]
         );
+    }
+
+    /// The real dist/ of the split, both formats side by side: each
+    /// package gets its own file. The engine's prefix `llama.cpp-v` is also
+    /// the start of `llama.cpp-vulkan-v...`, so a match on `<package>-v`
+    /// alone hands the Vulkan runtime to the engine's slot (seen with
+    /// `xtask install --dry-run` on the real dist/, which listed the Vulkan
+    /// file twice and never the engine). The version after `-v` starts with
+    /// a digit. macOS's `.pkg` finder is this same function.
+    #[test]
+    fn each_package_gets_its_own_file_when_the_engine_prefix_starts_a_runtime_name() {
+        let dir = std::env::temp_dir().join(format!("xtask-newest-real-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let stems = [
+            (Component::Llama, "llama.cpp-v1.0.0+pai1"),
+            (Component::Rocm, "llama.cpp-rocm-v10.1.0"),
+            (Component::Cuda, "llama.cpp-cuda-v13.5.0+nccl.2.32.3"),
+            (Component::Vulkan, "llama.cpp-vulkan-v1.4.363.1"),
+        ];
+        // The engine first, so it is the oldest: newest-by-time cannot hide
+        // the bug.
+        let start =
+            std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
+        let mut n = 0;
+        for (_, stem) in &stems {
+            for tail in ["-amd64.deb", "-x86_64.rpm"] {
+                let path = dir.join(format!("{stem}{tail}"));
+                std::fs::write(&path, "").unwrap();
+                std::fs::File::options()
+                    .write(true)
+                    .open(&path)
+                    .unwrap()
+                    .set_modified(start + std::time::Duration::from_secs(60 * n))
+                    .unwrap();
+                n += 1;
+            }
+        }
+        let picked = |tail: &str| -> Vec<(Component, String)> {
+            newest_in(&dir, tail)
+                .iter()
+                .map(|(c, p)| (*c, p.file_name().unwrap().to_string_lossy().into_owned()))
+                .collect()
+        };
+        let (deb, rpm) = (picked("-amd64.deb"), picked("-x86_64.rpm"));
+        std::fs::remove_dir_all(&dir).unwrap();
+        for (tail, got) in [("-amd64.deb", deb), ("-x86_64.rpm", rpm)] {
+            let want: Vec<(Component, String)> = stems
+                .iter()
+                .map(|(c, stem)| (*c, format!("{stem}{tail}")))
+                .collect();
+            assert_eq!(got, want, "{tail}");
+        }
     }
 
     #[test]

@@ -343,7 +343,7 @@ pub fn run(format: Option<&str>, force: bool, dry_run: bool, files: Vec<PathBuf>
     for p in &picked {
         let runtime = Component::RUNTIMES
             .iter()
-            .any(|c| name(p).starts_with(&format!("{}-v", c.package())));
+            .any(|c| components::is_file_of(*c, &name(p)));
         if let (false, Some(b), Some(m)) = (runtime, modified(&built), modified(p)) {
             if b > m {
                 ui::warn(format!(
