@@ -3,10 +3,12 @@
 //! lives in pai-app (`migration.rs`).
 
 // `main` (a binary root no test can call) runs the migration before the
-// GUI or the CLI can read or write the user's tree: a text check of the
-// order of the calls in `main.rs`.
+// GUI can read or write the user's tree, and before it reads its arguments,
+// as before the command line moved to `pai` (whose own check is
+// `crates/cli/src/tests/split_lint.rs`): a text check of the order of the
+// calls in `main.rs`.
 #[test]
-fn main_migrates_before_the_gui_or_the_cli_runs() {
+fn main_migrates_before_the_gui_runs() {
     let main = include_str!("../main.rs");
     let at = |needle: &str| {
         main.find(needle)
@@ -14,13 +16,16 @@ fn main_migrates_before_the_gui_or_the_cli_runs() {
     };
     let migrate = at("migration::run()");
     assert!(migrate < at("gui::run("), "migrate before the GUI");
-    assert!(migrate < at("Cli::parse()"), "migrate before the CLI");
+    assert!(
+        migrate < at("launch::parse("),
+        "migrate before the arguments are read"
+    );
 }
 
 /// The GUI asks at start (`gui::run`, which no test can call): a text
 /// check that it decides with `import_offered` and hands over with
 /// `import_user_config`. `main` runs the 2.4 tree move before the GUI
-/// (`main_migrates_before_the_gui_or_the_cli_runs`), so the per-user
+/// (`main_migrates_before_the_gui_runs`), so the per-user
 /// files are found in their new place.
 #[test]
 fn the_gui_offers_the_import_at_start() {

@@ -597,12 +597,5 @@ fn editable_widgets_track_model_after_edit() {
     #[cfg(any(target_os = "linux", windows))]
     crate::gui::hw_window_e2e();
 
-    // ── The `control` commands on the manager backend (cli.rs) ───────────
-    crate::cli::cli_control_e2e();
-
-    // ── `server set` and `preset enable` through the seam (cli.rs) ───────
-    crate::cli::cli_config_e2e();
-
-    // ── The per-user config handed to the manager (cli.rs) ───────────────
-    crate::cli::cli_import_e2e();
+    // The command line's phases run in pai-cli's own `data_root_e2e`.
 }

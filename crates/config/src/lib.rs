@@ -1,5 +1,5 @@
-//! pai-config's library: the configurator's GUI and CLI modules (`main.rs`),
-//! over the logic they share (`pai-app`) and the shared core (`pai-core`).
+//! pai-config's library: the configurator's GUI (`main.rs`), over the logic
+//! it shares with the command line (`pai-app`) and the shared core (`pai-core`).
 
 // The core modules, under the names the sources use (`crate::paths`, ...).
 pub use pai_core::strings;
@@ -17,10 +17,10 @@ use pai_app::{
     tensor_picker,
 };
 
-pub mod cli;
 mod form;
 mod gpu_split;
 pub mod gui;
+pub mod launch;
 mod server_form;
 #[cfg(windows)]
 mod single_instance;

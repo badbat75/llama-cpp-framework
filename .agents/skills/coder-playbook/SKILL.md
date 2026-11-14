@@ -9,9 +9,10 @@ Lessons only: the rules are in `AGENTS.md`.
   control, or a pattern that cannot match itself.
 - When a test fails, check whether the test or the code is wrong before changing either.
 - A screenshot that comes out blank proves nothing about a GUI. Check that it really shows the window.
-- The framework is four crates under `crates/`: `core` (`pai-core`, no GUI), `manager` (`pai-manager`,
-  the `pai-manager` bin, core only), `app` (`pai-app`, the configurator's logic without Slint) and
-  `config` (`pai-config`, GUI + CLI). config's `lib.rs` brings pai-app's modules in with
+- The framework is five crates under `crates/`: `core` (`pai-core`, no GUI), `manager` (`pai-manager`,
+  the `pai-manager` bin, core only), `app` (`pai-app`, the configurator's logic without Slint),
+  `cli` (`pai-cli`, the `pai` bin, `cli.rs`) and `config` (`pai-config`, GUI only, its arguments
+  hand-parsed in `launch.rs`). config's and cli's `lib.rs` bring pai-app's modules in with
   `use pai_app::{...}`, so `crate::presets::x` still resolves in gui and cli; pai-app's modules are
   `pub mod`, so an item gui or cli needs is `pub`. The `cfg(test)` items pai-config's tests use
   (`server_control::fake`, the test branch of `backend()`, `hf_fit::tests`' GGUF writer) are
@@ -144,3 +145,10 @@ Lessons only: the rules are in `AGENTS.md`.
   `clippy::should_implement_trait`; they carry an `allow` rather than a rewrite.
 - `cargo check -p pai-app --target x86_64-pc-windows-gnu` needs `PRIVATE_AI_LLAMA_CPP_DIR` set to the
   Linux clone (`build/linux/llama.cpp`): the build script reads the Windows clone path by default.
+- `binding_lint`'s `cli_print_paths_hold_no_language` scans every string literal inside a print macro of
+  a `main.rs` (either crate's), `env!("CARGO_PKG_VERSION")` included: print a fixed line through a
+  `const X: &str = concat!(env!(..), ..)` outside the macro (`println!("{X}")`).
+- A tester phase in another crate's tests that calls a module you move breaks that crate's whole lib
+  test build. To verify the rest without editing tests, rsync the tree (no `build/`, `.git`, `dist/`)
+  to `/tmp`, drop the phase there and run with `CARGO_TARGET_DIR` set to the repo's
+  `build/linux/cargo-target` (the dependencies are reused); report the phase.

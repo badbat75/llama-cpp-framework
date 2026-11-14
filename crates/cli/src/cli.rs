@@ -1,4 +1,4 @@
-//! Headless CLI dispatcher for pai-config.
+//! The command line of the Private AI Framework (`pai`).
 
 use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand};
@@ -10,9 +10,9 @@ use crate::{bench, presets, server_cfg, strings};
 
 #[derive(Parser, Debug)]
 #[command(
-    name = "pai-config",
+    name = "pai",
     version,
-    about = "Configure the Private AI Framework: llama-server and model presets. Run with no args for the GUI."
+    about = "Configure the Private AI Framework: llama-server and model presets."
 )]
 pub struct Cli {
     #[command(subcommand)]
@@ -21,14 +21,6 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug)]
 pub enum Command {
-    /// Force-launch the GUI (default when no subcommand is given).
-    Gui {
-        /// Start hidden in the system tray instead of opening the window.
-        /// This is what the "Start at login" entry launches
-        /// (see src/startup.rs).
-        #[arg(long)]
-        minimized: bool,
-    },
     /// Server-wide settings (server.ini).
     #[command(subcommand)]
     Server(ServerCmd),
@@ -44,10 +36,6 @@ pub enum Command {
     /// The configuration files as a whole.
     #[command(subcommand)]
     Config(ConfigCmd),
-    /// The HW Monitor's child: each SDK's device ids with their PCI addresses
-    /// (src/hwmon/sdk.rs).
-    #[command(hide = true)]
-    SdkDevices,
 }
 
 #[derive(Subcommand, Debug)]
@@ -418,7 +406,7 @@ impl ServerSet {
         // unset state (a bool flag could only ever set one of the other two).
         // clap's PossibleValuesParser already refused anything else.
         if let Some(hb) = &self.rocblas_use_hipblaslt {
-            cfg.rocblas_use_hipblaslt = crate::form::tri_bool(hb);
+            cfg.rocblas_use_hipblaslt = crate::presets::tri_bool(hb);
         }
         // Same clearing rule: `default` normalizes to None, the unset state.
         if let Some(ar) = &self.cuda_allreduce {
@@ -584,27 +572,13 @@ pub struct PresetDownload {
 
 // ── Dispatch & rendering ─────────────────────────────────────────────────
 
-/// Which text file this process reads: `None` is a launch with no arguments.
-pub fn reader_of(command: Option<&Command>) -> strings::Reader {
-    match command {
-        None | Some(Command::Gui { .. }) => strings::Reader::Gui,
-        Some(_) => strings::Reader::Cli,
-    }
-}
-
 pub fn run(cli: Cli) -> Result<()> {
     match cli.command {
-        Command::Gui { minimized } => crate::gui::run(minimized),
         Command::Server(c) => run_server(c),
         Command::Preset(c) => run_preset(c),
         Command::Control(c) => run_control(c),
         Command::Bench(c) => run_bench(c),
         Command::Config(c) => run_config(c),
-        Command::SdkDevices => {
-            #[cfg(any(target_os = "linux", windows))]
-            crate::hwmon::sdk::print();
-            Ok(())
-        }
     }
 }
 
@@ -1639,7 +1613,7 @@ fn run_control_with(c: ControlCmd, server: &crate::server_control::Backend) -> R
             }
             std::thread::sleep(std::time::Duration::from_millis(500));
             #[cfg(windows)]
-            crate::single_instance::signal_close();
+            pai_app::gui_close::signal_close();
             println!("{}", strings::t("server-stopped-gui-closed"));
             Ok(())
         }
@@ -1658,33 +1632,33 @@ mod tests {
     // spot (server_cfg load/save, the form conversions) has a round-trip test,
     // but `apply` is the CLI-only copy; an omitted field here is silent.
 
-    /// The CLI calls itself `pai-config`, the executable's name: in `--version`
-    /// (which `xtask package` reads back), `--help` and its errors.
+    /// The CLI calls itself `pai`, the executable's name: in `--version`,
+    /// `--help` and its errors.
     #[test]
-    fn the_cli_is_named_pai_config() {
+    fn the_cli_is_named_pai() {
         use clap::CommandFactory;
         let mut cmd = Cli::command();
-        assert_eq!(cmd.get_name(), "pai-config");
+        assert_eq!(cmd.get_name(), "pai");
         assert_eq!(
             cmd.render_version(),
-            format!("pai-config {}\n", env!("CARGO_PKG_VERSION"))
+            format!("pai {}\n", env!("CARGO_PKG_VERSION"))
         );
         let help = cmd.render_help().to_string();
         assert!(!help.contains(concat!("llama.cpp", "-framework")), "{help}");
         assert!(!help.contains(concat!("llama-cpp", "-config")), "{help}");
     }
 
-    /// The executable is `pai-config`: the Cargo `[[bin]]` name, which is the
+    /// The executable is `pai`: the Cargo `[[bin]]` name, which is the
     /// file every package installs.
     #[test]
-    fn the_executable_is_named_pai_config() {
+    fn the_executable_is_named_pai() {
         let manifest = include_str!("../Cargo.toml");
         let bin = manifest.split("[[bin]]").nth(1).expect("a [[bin]] table");
         let name = bin
             .lines()
             .find_map(|l| l.trim().strip_prefix("name = "))
             .expect("a bin name");
-        assert_eq!(name, "\"pai-config\"");
+        assert_eq!(name, "\"pai\"");
     }
 
     /// `preset delete` keeps every file unless asked, takes the files as a
@@ -1692,7 +1666,7 @@ mod tests {
     #[test]
     fn preset_delete_parses_its_file_flags() {
         let parse = |args: &[&str]| {
-            let mut argv = vec!["pai-config", "preset", "delete", "p"];
+            let mut argv = vec!["pai", "preset", "delete", "p"];
             argv.extend_from_slice(args);
             Cli::try_parse_from(argv).map(|c| match c.command {
                 Command::Preset(PresetCmd::Delete {
@@ -1766,7 +1740,7 @@ mod tests {
     #[test]
     fn preset_download_parses_its_flags() {
         let cli = Cli::try_parse_from([
-            "pai-config",
+            "pai",
             "preset",
             "download",
             "unsloth/Qwen3-8B-GGUF:Q4_K_M",
@@ -1787,10 +1761,10 @@ mod tests {
             (Some("mtp"), Some("q3"), None)
         );
         assert!(!a.search && a.limit == crate::hf::SEARCH_LIMIT);
-        assert!(Cli::try_parse_from(["pai-config", "preset", "download"]).is_err());
+        assert!(Cli::try_parse_from(["pai", "preset", "download"]).is_err());
         // Words search; --search forces it, --limit caps the rows.
         let cli = Cli::try_parse_from([
-            "pai-config",
+            "pai",
             "preset",
             "download",
             "unsloth/Qwen3",
@@ -1850,7 +1824,7 @@ mod tests {
             lines[3],
             format!("  {:<34}  {:>7}  no GGUF model file", "o/r", "5")
         );
-        assert!(lines[4].starts_with("Pick one: pai-config preset download <org/repo>"));
+        assert!(lines[4].starts_with("Pick one: pai preset download <org/repo>"));
         assert_eq!(
             search_report("zzz", &[]),
             ["No GGUF repository matches \"zzz\"."]
@@ -2089,7 +2063,7 @@ mod tests {
     #[test]
     fn prompt_and_prompt_file_are_mutually_exclusive() {
         let base = [
-            "pai-config",
+            "pai",
             "bench",
             "run",
             "--preset",
@@ -2112,7 +2086,7 @@ mod tests {
     /// preset as it is, one without the other is a sweep with half its axis.
     #[test]
     fn key_and_values_come_together() {
-        let base = ["pai-config", "bench", "run", "--preset", "P"];
+        let base = ["pai", "bench", "run", "--preset", "P"];
         assert!(Cli::try_parse_from(base).is_ok());
         let mut key_only = base.to_vec();
         key_only.extend(["--key", "spec-draft-n-max"]);
@@ -2334,28 +2308,9 @@ mod tests {
         assert_eq!(cfg.threads_batch, None);
         assert_eq!(cfg.models_dir, None);
     }
-
-    // The entry point picks the strings file (strings.rs, in the core).
-    #[test]
-    fn the_entry_point_gives_a_command_the_cli_file_and_the_window_the_language() {
-        use crate::strings::{file_stem, GUI_LANGUAGE};
-        use clap::Parser;
-        let of = |args: &[&str]| {
-            let cli = crate::cli::Cli::try_parse_from(args).expect("parses");
-            file_stem(crate::cli::reader_of(Some(&cli.command)))
-        };
-        assert_eq!(
-            file_stem(crate::cli::reader_of(None)),
-            GUI_LANGUAGE,
-            "no arguments: the window"
-        );
-        assert_eq!(of(&["x", "gui"]), GUI_LANGUAGE);
-        assert_eq!(of(&["x", "server", "show"]), "cli");
-        assert_eq!(of(&["x", "preset", "list"]), "cli");
-    }
 }
 
-/// E2E phase (called from `editable_widgets_track_model_after_edit`): the
+/// E2E phase (called from `data_root_e2e` in `src/tests/mod.rs`): the
 /// `control` commands on the manager backend (a recording fake): each asks the
 /// manager for the `default` instance, the conversation snapshot is taken
 /// BEFORE the manager's stop and put back AFTER its start, and the manager's
@@ -2494,7 +2449,7 @@ pub(crate) fn cli_control_e2e() {
     }
 }
 
-/// E2E phase (called from `editable_widgets_track_model_after_edit`): `server
+/// E2E phase (called from `data_root_e2e` in `src/tests/mod.rs`): `server
 /// set` and `preset enable` / `disable` write the manager's files through the
 /// seam and nothing under the per-user config directory, and a write the
 /// manager refuses fails the command with the refusal's own text, which
@@ -2583,7 +2538,7 @@ pub(crate) fn cli_config_e2e() {
     }
 }
 
-/// E2E phase (called from `editable_widgets_track_model_after_edit`):
+/// E2E phase (called from `data_root_e2e` in `src/tests/mod.rs`):
 /// `config import` hands the per-user files to the manager through the seam,
 /// leaves them in place, fails with the refusal's text (which `main` prints
 /// on stderr before exiting non-zero) after keeping what was written, and

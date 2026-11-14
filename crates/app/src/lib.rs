@@ -12,6 +12,8 @@ pub mod bench;
 pub mod devices;
 pub mod gguf;
 pub mod gpu_split;
+#[cfg(windows)]
+pub mod gui_close;
 pub mod hf;
 pub mod hf_fit;
 pub mod http;

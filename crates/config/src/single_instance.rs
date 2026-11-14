@@ -21,11 +21,13 @@ use windows_sys::Win32::System::Threading::{
 // so the already-running instance can raise itself when we poke it.
 use windows_sys::Win32::UI::WindowsAndMessaging::{AllowSetForegroundWindow, ASFW_ANY};
 
+// The close request's name, shared with `pai control stop-and-close`.
+use pai_app::gui_close::CLOSE_EVENT_NAME;
+
 // Per-session names (`Local\`): the goal is one running instance per user
 // session, which is also what survives fast-user-switching / RDP cleanly.
 const MUTEX_NAME: &str = r"Local\org.privateai.Config.singleton";
 const EVENT_NAME: &str = r"Local\org.privateai.Config.activate";
-const CLOSE_EVENT_NAME: &str = r"Local\org.privateai.Config.close";
 
 fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
@@ -102,18 +104,6 @@ impl InstanceGuard {
                 }
             }
         });
-    }
-}
-
-/// Signal the close request to the primary instance of the configurator.
-pub fn signal_close() {
-    let name = wide(CLOSE_EVENT_NAME);
-    unsafe {
-        let event = CreateEventW(std::ptr::null(), 0, 0, name.as_ptr());
-        if !event.is_null() {
-            SetEvent(event);
-            CloseHandle(event);
-        }
     }
 }
 

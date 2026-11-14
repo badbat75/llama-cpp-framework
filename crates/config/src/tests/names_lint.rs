@@ -102,7 +102,7 @@ fn manager_names_left(path: &Path, line: &str) -> String {
 fn no_code_names_the_old_project() {
     let crates = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
     let mut sources = Vec::new();
-    for c in ["app", "config", "core", "manager"] {
+    for c in ["app", "cli", "config", "core", "manager"] {
         let root = crates.join(c);
         files(&root.join("src"), &mut sources);
         if root.join("ui").is_dir() {

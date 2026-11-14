@@ -43,10 +43,10 @@ fn hits(line: &str) -> Vec<String> {
 }
 
 /// The `src/` of the crates that hold the configurator's code: the GUI (this
-/// crate) and the logic it shares with the CLI (pai-app).
-fn src_dirs() -> [PathBuf; 2] {
+/// crate), the command line (pai-cli) and the logic they share (pai-app).
+fn src_dirs() -> [PathBuf; 3] {
     let crates = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
-    ["app", "config"].map(|c| crates.join(c).join("src"))
+    ["app", "cli", "config"].map(|c| crates.join(c).join("src"))
 }
 
 /// A source's path from `crates/`, as a violation names it.

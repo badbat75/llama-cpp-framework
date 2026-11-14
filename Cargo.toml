@@ -8,7 +8,7 @@
 # alone. Profiles live here because cargo only reads them from the workspace
 # root.
 [workspace]
-members = ["crates/core", "crates/app", "crates/manager", "crates/config", "xtask", "tools/site"]
+members = ["crates/core", "crates/app", "crates/manager", "crates/config", "crates/cli", "xtask", "tools/site"]
 resolver = "2"
 
 # The framework version, one for its crates (pai-core, pai-app, pai-manager,

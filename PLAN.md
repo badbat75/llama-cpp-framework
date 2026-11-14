@@ -325,10 +325,12 @@ today's one binary; the CLI and the shared crate become type-checkable on the Wi
 
 Slices, each test first: **1** (done: `pai-app` holds the shared modules, with a `test-support`
 feature for the fakes pai-config's tests use; it passes the Windows GNU check given
-`PRIVATE_AI_LLAMA_CPP_DIR`); **2** `crates/cli` (package `pai-cli`,
+`PRIVATE_AI_LLAMA_CPP_DIR`); **2** (done) `crates/cli` (package `pai-cli`,
 binary `pai`) with today's CLI, `pai-config` left GUI-only (no argument parsing beyond what the GUI
 needs, no console attach); **3** packaging: `pai` in the `-config` package or its own (decide then),
-`/usr/bin/pai`, the MSI's PATH; **4** docs, skills and guides from `pai-config <cmd>` to `pai <cmd>`.
+`/usr/bin/pai`, the MSI's PATH, and `installer/msi-stop-processes.ps1` running `pai.exe control
+stop-and-close` (falling back to `pai-config.exe` for an older install: after slice 2 `pai-config`
+only points to `pai`, so until slice 3 the MSI's graceful stop is skipped); **4** docs, skills and guides from `pai-config <cmd>` to `pai <cmd>`.
 
 - Done when: `pai` runs every command `pai-config` runs today with the same output; `pai-config` opens
   the GUI only; `pai-app` and `pai-cli` link no Slint and pass the Windows GNU check; the packages ship

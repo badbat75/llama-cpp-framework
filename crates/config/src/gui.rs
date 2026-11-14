@@ -309,7 +309,7 @@ pub fn run(start_minimized: bool) -> anyhow::Result<()> {
     let state = Rc::new(RefCell::new(State::default()));
 
     // Surface the live window when another launch pokes the activation event,
-    // or exit when a close request is signaled (e.g., by `pai-config stop-and-close`).
+    // or exit when a close request is signaled (e.g., by `pai control stop-and-close`).
     #[cfg(windows)]
     {
         let app_weak = app.as_weak();

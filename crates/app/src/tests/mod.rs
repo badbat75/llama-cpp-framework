@@ -7,6 +7,7 @@
 //! runs tests on parallel threads, so they would race this one.
 
 mod deps_lint;
+mod lock_walk;
 
 #[test]
 fn data_root_e2e() {

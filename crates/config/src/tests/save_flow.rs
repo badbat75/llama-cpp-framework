@@ -1396,50 +1396,8 @@ pub(super) fn run(app: &AppWindow) {
         "cleared = default again"
     );
 
-    // ── CLI: `preset delete <typo>` errors instead of a false "Removed" ─────
-    // The v1.2.13 lookup-before-delete guard; the redirect keeps cli::run on
-    // the temp tree. (`load_all` resolves real paths, so this can't be an
-    // inline unit test: only the redirect harness reaches it.)
-    use crate::cli::{Cli, Command, PresetCmd};
-    assert!(
-        crate::cli::run(Cli {
-            command: Command::Preset(PresetCmd::Delete {
-                id: "no-such-preset".into(),
-                delete_files: Vec::new(),
-                even_if_shared: false,
-            }),
-        })
-        .is_err(),
-        "deleting a nonexistent preset must error, not report success"
-    );
-
-    // ── CLI: `preset disable|enable` is the same move the switch makes ──────
-    // Case-insensitive lookup (like show/delete), acting on the STORED id; the
-    // OpenCode provider configured above does NOT follow it.
-    let preset_cmd = |cmd: PresetCmd| {
-        crate::cli::run(Cli {
-            command: Command::Preset(cmd),
-        })
-    };
-    preset_cmd(PresetCmd::Disable { id: "E2E".into() }).expect("preset disable");
-    assert!(crate::presets::load_all().iter().all(|p| p.id != "e2e"));
-    assert!(crate::presets::load_listed()
-        .iter()
-        .any(|l| l.preset.id == "e2e" && !l.enabled));
-    assert!(
-        crate::integrations::opencode_model_ids().contains(&"e2e".to_string()),
-        "the CLI never touches opencode.json: only the Integrations tab's Save does"
-    );
-    preset_cmd(PresetCmd::Disable { id: "e2e".into() }).expect("already off is not an error");
-    preset_cmd(PresetCmd::Enable { id: "e2e".into() }).expect("preset enable");
-    assert!(crate::presets::load_all().iter().any(|p| p.id == "e2e"));
-    assert!(
-        preset_cmd(PresetCmd::Enable {
-            id: "no-such-preset".into()
-        })
-        .is_err(),
-        "an unknown id must error"
-    );
+    // `preset delete|disable|enable` from the command line: pai-cli's
+    // `preset_commands_e2e`.
 
     // ── New preset from Hugging Face: the dialog wiring that needs no network ──
     // gui/hf_dialog.rs. The search, the listing and the transfer need Hugging
@@ -2347,12 +2305,13 @@ fn load_on_startup_phase() {
 }
 
 /// Deleting a preset together with the model files it links (gui/models_tab.rs
-/// `DeleteDialog` over src/linked_files.rs), then the CLI's `--delete-files`:
+/// `DeleteDialog` over src/linked_files.rs):
 /// the rows list what is on disk, every tick starts cleared, a file another
 /// preset uses (in either INI file) cannot be ticked, the confirm removes the
 /// section and then the ticked files and their emptied repo folders, the
 /// pickers are rescanned, and a file that fails to delete is reported without
-/// blocking the preset's deletion.
+/// blocking the preset's deletion. The CLI's leg is pai-cli's
+/// `preset_delete_files_e2e`.
 fn delete_with_files_phase(
     app: &AppWindow,
     models_dir: &std::path::Path,
@@ -2536,50 +2495,6 @@ fn delete_with_files_phase(
     assert!(mmproj.is_dir(), "the folder that refused is still there");
     std::fs::remove_dir(&mmproj).expect("tidy up");
 
-    // ── CLI: `preset delete --delete-files`, the same rules ───────────────
-    use crate::cli::{Cli, Command, FileKind, PresetCmd};
-    let delete = |id: &str, which: &[FileKind], even_if_shared: bool| {
-        crate::cli::run(Cli {
-            command: Command::Preset(PresetCmd::Delete {
-                id: id.into(),
-                delete_files: which.to_vec(),
-                even_if_shared,
-            }),
-        })
-    };
-    let cli_model = repo("models", "Cli-GGUF").join("cli.gguf");
-    let cli_draft = repo("mtps", "Cli-GGUF").join("cli-mtp.gguf");
-    touch(&cli_model, 2);
-    touch(&cli_draft, 1);
-    crate::presets::save(&Preset {
-        id: "cli-del".into(),
-        model: path(&cli_model),
-        model_draft: path(&cli_draft),
-        ..Preset::default()
-    })
-    .expect("save cli-del");
-    crate::presets::save(&Preset {
-        id: "cli-other".into(),
-        model: path(hf_model),
-        model_draft: path(&cli_draft),
-        ..Preset::default()
-    })
-    .expect("save cli-other");
-    let listed = |id: &str| {
-        crate::presets::load_listed()
-            .iter()
-            .any(|l| l.preset.id == id)
-    };
-    let err = delete("cli-del", &[FileKind::All], false).expect_err("a shared drafter is refused");
-    assert!(err.to_string().contains("[cli-other]"), "{err}");
-    assert!(
-        listed("cli-del") && cli_model.exists() && cli_draft.exists(),
-        "a refusal changes nothing"
-    );
-    delete("cli-del", &[FileKind::All], true).expect("forced");
-    assert!(!listed("cli-del") && !cli_model.exists() && !cli_draft.exists());
-    assert!(!repo("models", "Cli-GGUF").exists() && !repo("mtps", "Cli-GGUF").exists());
-    // Without the flag, every file stays.
-    delete("cli-other", &[], false).expect("plain delete");
-    assert!(!listed("cli-other") && hf_model.exists());
+    // `preset delete --delete-files` from the command line, the same rules:
+    // pai-cli's `preset_delete_files_e2e`.
 }

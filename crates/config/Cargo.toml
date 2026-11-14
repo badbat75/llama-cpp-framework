@@ -3,7 +3,7 @@ name = "pai-config"
 version.workspace = true
 edition = "2021"
 build = "build.rs"
-description = "GUI + CLI configurator for the Private AI Framework"
+description = "GUI configurator for the Private AI Framework"
 license = "MIT"
 publish = false
 
@@ -22,14 +22,13 @@ path = "src/main.rs"
 # launch, strings).
 pai-core = { path = "../core" }
 # The configurator's logic without a GUI (presets, benchmarks, HF, GGUF, the
-# configuration, the server control seam), shared with the CLI.
+# configuration, the server control seam), shared with the command line (pai-cli).
 pai-app = { path = "../app" }
 slint = { version = "1.18", default-features = false, features = ["std", "compat-1-2", "backend-winit", "renderer-skia", "accessibility", "unstable-winit-030", "system-tray"] }
-clap = { version = "4.6", features = ["derive"] }
 anyhow = "1"
 rfd = { version = "0.17", default-features = false }
-# The Benchmark tab and `bench run --image` read an image prompt's size and
-# kind. Already in the lock (slint's own image loading, and pai-app).
+# The Benchmark tab reads an image prompt's size and kind. Already in the
+# lock (slint's own image loading, and pai-app).
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 
 # rfd has no file-dialog backend without a feature on Linux, and its build
@@ -41,16 +40,14 @@ image = { version = "0.25", default-features = false, features = ["jpeg", "png"]
 [target.'cfg(target_os = "linux")'.dependencies]
 rfd = { version = "0.17", default-features = false, features = ["xdg-portal", "wayland"] }
 
-# The Win32 calls left in the GUI (single instance, the console attach of
-# main.rs), with the signatures and constants Microsoft's metadata declares
-# instead of hand-written ones. 0.61 is the version slint's winit already
+# The Win32 calls left in the GUI (single instance), with the signatures and
+# constants Microsoft's metadata declares instead of hand-written ones. 0.61 is the version slint's winit already
 # compiles, so it adds nothing to the build. Each module is a feature: a new
 # call may need one more.
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_Security",
-    "Win32_System_Console",
     "Win32_System_Threading",
     "Win32_UI_WindowsAndMessaging",
 ] }
@@ -58,7 +55,7 @@ windows-sys = { version = "0.61", features = [
 [dev-dependencies]
 pai-core = { path = "../core", features = ["test-support"] }
 # pai-app's test doubles (the fake manager backend a test build picks), so
-# the GUI and CLI tests never reach the real manager.
+# the GUI tests never reach the real manager.
 pai-app = { path = "../app", features = ["test-support"] }
 tempfile = "3"
 serde_json = "1"

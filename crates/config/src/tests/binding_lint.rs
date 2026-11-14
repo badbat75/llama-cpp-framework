@@ -434,11 +434,11 @@ fn strings_file(name: &str) -> std::path::PathBuf {
         .join(name)
 }
 
-/// The `src/` of every crate whose text the files hold: this one, the shared
-/// logic (pai-app), the core and the manager.
-fn src_dirs() -> [std::path::PathBuf; 4] {
+/// The `src/` of every crate whose text the files hold: this one, the command
+/// line (pai-cli), the shared logic (pai-app), the core and the manager.
+fn src_dirs() -> [std::path::PathBuf; 5] {
     let crates = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
-    ["app", "config", "core", "manager"].map(|c| crates.join(c).join("src"))
+    ["app", "cli", "config", "core", "manager"].map(|c| crates.join(c).join("src"))
 }
 
 /// Every `.rs` of every crate in `src_dirs`, as `rust_sources` picks them.
@@ -1136,12 +1136,17 @@ fn language_words(literal: &str) -> Vec<String> {
 fn cli_print_paths_hold_no_language() {
     let mut hits = Vec::new();
     let mut allowed = std::collections::BTreeSet::new();
-    for (file, all) in CLI_PRINT_PATHS {
-        let path = src_dirs()
+    // Every crate's file of that name: `main.rs` is both pai's and pai-config's.
+    let found = CLI_PRINT_PATHS.iter().flat_map(|&(file, all)| {
+        let paths: Vec<_> = src_dirs()
             .iter()
             .map(|src| src.join(file))
-            .find(|p| p.is_file())
-            .unwrap_or_else(|| panic!("{file}: in no crate's src/"));
+            .filter(|p| p.is_file())
+            .collect();
+        assert!(!paths.is_empty(), "{file}: in no crate's src/");
+        paths.into_iter().map(move |p| (file, all, p))
+    });
+    for (file, all, path) in found {
         let source = std::fs::read_to_string(path).expect("read .rs");
         for literal in shown_literals(&source, all) {
             if language_words(&literal).is_empty() {

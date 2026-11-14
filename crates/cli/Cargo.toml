@@ -1,0 +1,35 @@
+[package]
+name = "pai-cli"
+version.workspace = true
+edition = "2021"
+description = "The command line of the Private AI Framework (pai)"
+license = "MIT"
+publish = false
+
+# The modules live in the library, the binary only dispatches. Its doc comments
+# are not doctests: none was written as one.
+[lib]
+path = "src/lib.rs"
+doctest = false
+
+[[bin]]
+name = "pai"
+path = "src/main.rs"
+
+[dependencies]
+# The modules shared with pai-manager (paths, INI, server config, the
+# launch, strings).
+pai-core = { path = "../core" }
+# The configurator's logic without a GUI, shared with the GUI.
+pai-app = { path = "../app" }
+clap = { version = "4.6", features = ["derive"] }
+anyhow = "1"
+# `bench run --image` reads an image prompt's kind. Already in the lock.
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
+
+[dev-dependencies]
+pai-core = { path = "../core", features = ["test-support"] }
+# pai-app's test doubles (the fake manager backend a test build picks), so
+# the CLI tests never reach the real manager.
+pai-app = { path = "../app", features = ["test-support"] }
+tempfile = "3"

@@ -257,3 +257,16 @@ Lessons only: the rules are in `AGENTS.md`.
   over-reports, never misses (`crates/app/src/tests/deps_lint.rs`).
 - After a move between crates, diff the test names against HEAD (`-- --list` of both crates now vs
   the old crate in a worktree): only renames should show, each accounted for.
+- An executable is tested as a user runs it from `crates/<c>/tests/*.rs` with
+  `env!("CARGO_BIN_EXE_<bin>")`: set `PRIVATE_AI_DATA_ROOT` (and a `DBUS_SYSTEM_BUS_ADDRESS` to a missing
+  socket) on the CHILD only, so no in-process redirect races it, and wait with a `try_wait` deadline.
+  Every start runs the 2.4 migration, which the redirect keeps in the temp tree (`crates/cli/tests/pai_binary.rs`).
+  Run only commands that reach no backend: a non-test build takes the real manager.
+- Who launches the binaries with which arguments: the login entry `gui [--minimized]` (pai-app
+  `startup.rs`), the HW Monitor `current_exe() sdk-devices` (`hwmon/sdk.rs`), xtask's Linux and macOS
+  package and install read `pai-config --version`, the MSI runs `control stop-and-close`
+  (`installer/msi-stop-processes.ps1`). Check them before dropping an argument.
+- A test helper two crates need goes in its own file without tests (`crates/app/src/tests/lock_walk.rs`),
+  included by the other crate with `#[path = "..."] mod`.
+- A stub at a file's move destination (`crates/cli/src/cli.rs`) keeps the new crate's tests compiling;
+  tell the coder to replace it with `git mv -f`.

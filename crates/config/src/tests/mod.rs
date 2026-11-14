@@ -22,6 +22,7 @@
 // thread nondeterministically.
 mod app_split_lint;
 mod binding_lint;
+mod cli_split_lint;
 mod control_lint;
 mod migration_hooks;
 mod names_lint;

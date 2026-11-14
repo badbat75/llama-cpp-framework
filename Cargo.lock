@@ -3378,11 +3378,22 @@ dependencies = [
 ]
 
 [[package]]
-name = "pai-config"
+name = "pai-cli"
 version = "2.4.0"
 dependencies = [
  "anyhow",
  "clap",
+ "image",
+ "pai-app",
+ "pai-core",
+ "tempfile",
+]
+
+[[package]]
+name = "pai-config"
+version = "2.4.0"
+dependencies = [
+ "anyhow",
  "i-slint-backend-testing",
  "ico",
  "image",

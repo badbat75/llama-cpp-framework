@@ -1,59 +1,52 @@
-//! pai-config: GUI + CLI configurator for the Private AI Framework.
-
-//   pai-config                  → GUI
-//   pai-config <subcommand> ... → headless CLI (clap-defined in cli.rs)
+//! pai-config: the GUI configurator of the Private AI Framework. The command
+//! line is `pai`'s (crates/cli); this binary reads only the GUI's own
+//! arguments (`launch.rs`).
 
 #![cfg_attr(
     all(not(debug_assertions), target_os = "windows"),
     windows_subsystem = "windows"
 )]
 
-use clap::Parser;
-use pai_config::cli::reader_of;
-use pai_config::{cli, gui, migration, strings};
+use pai_config::launch::{self, Launch};
+use pai_config::{gui, migration, strings};
+
+/// `pai-config <version>`, which `xtask package` and `xtask install` read back.
+const VERSION_LINE: &str = concat!(env!("CARGO_BIN_NAME"), " ", env!("CARGO_PKG_VERSION"));
 
 fn main() {
-    // Attach to the parent console (if any) BEFORE branching: the release
-    // binary is windows_subsystem = "windows", so without this a GUI-launch
-    // failure's eprintln! would be silently discarded when run from a
-    // terminal. No-op when launched from Explorer.
-    #[cfg(all(not(debug_assertions), target_os = "windows"))]
-    unsafe {
-        attach_parent_console();
-    }
-
     // The trees and login entry of release 2.4 move before anything reads
     // or writes them; the failures print once the strings reader is set.
     let migrated = migration::run();
-    let argv: Vec<String> = std::env::args().collect();
-    if argv.len() <= 1 {
-        strings::set_reader(reader_of(None));
-        for line in migrated.errors() {
-            eprintln!("{line}");
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let minimized = match launch::parse(&args) {
+        Launch::Gui { minimized } => minimized,
+        Launch::SdkDevices => {
+            #[cfg(any(target_os = "linux", windows))]
+            pai_app::hwmon::sdk::print();
+            return;
         }
-        if let Err(e) = gui::run(false) {
+        Launch::Version => {
+            println!("{VERSION_LINE}");
+            return;
+        }
+        Launch::Moved => {
+            strings::set_reader(strings::Reader::Gui);
             eprintln!(
                 "{}",
-                strings::fill("gui-launch-error", &[&format!("{e:#}")])
+                strings::fill("command-moved-to-pai", &[&args.join(" ")])
             );
-            std::process::exit(1);
+            std::process::exit(2);
         }
-        return;
-    }
-
-    let cli = cli::Cli::parse();
-    strings::set_reader(reader_of(Some(&cli.command)));
+    };
+    strings::set_reader(strings::Reader::Gui);
     for line in migrated.errors() {
         eprintln!("{line}");
     }
-    if let Err(e) = cli::run(cli) {
-        eprintln!("{}", strings::fill("error-line", &[&format!("{e:#}")]));
+    if let Err(e) = gui::run(minimized) {
+        eprintln!(
+            "{}",
+            strings::fill("gui-launch-error", &[&format!("{e:#}")])
+        );
         std::process::exit(1);
     }
-}
-
-#[cfg(all(not(debug_assertions), target_os = "windows"))]
-unsafe fn attach_parent_console() {
-    use windows_sys::Win32::System::Console::{AttachConsole, ATTACH_PARENT_PROCESS};
-    AttachConsole(ATTACH_PARENT_PROCESS);
 }
