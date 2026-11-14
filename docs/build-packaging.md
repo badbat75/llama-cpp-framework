@@ -94,8 +94,10 @@ named by the component: `llama/` for the `llama.cpp` package). `licenses.rs` (`x
 ### The MSIs (Windows)
 
 **Windows ships two installers: llama.cpp's own MSI and the framework's, which requires it.** Neither
-has been compiled by WiX or run on Windows since the split (commit `836fdc7`): the `.wxs` files are
-checked as XML by xtask's tests and the Rust is type-checked only. The authoring, the services, the
+has been compiled by WiX or run on Windows since the split (commit `836fdc7`), nor since the
+instances are kept across an engine upgrade (`9462eab`): the `.wxs` files are checked as XML by
+xtask's tests, their custom-action conditions evaluated over install, repair, upgrade, uninstall and
+downgrade, and the Rust is type-checked only. The authoring, the services, the
 ACLs and the test plan are in [installer\AGENTS.md](../installer/AGENTS.md).
 
 | | llama.cpp's MSI | The framework's MSI |
@@ -103,8 +105,8 @@ ACLs and the test plan are in [installer\AGENTS.md](../installer/AGENTS.md).
 | Holds | llama.cpp's executables and DLLs, the ggml backends, the GPU runtimes and OpenSSL, the read-only defaults | `pai-config.exe`, `pai.exe`, `pai-manager.exe`, `pai-bff.exe`, the benchmark method, the strings |
 | Version | The llama.cpp release | The framework version |
 | Installs to | `%ProgramFiles%\llama.cpp\` (choosable), registered in `HKLM\Software\llama.cpp` | `%ProgramFiles%\private-ai\` (choosable), registered in `HKLM\Software\private-ai` |
-| Machine data | `%ProgramData%\llama.cpp\{config,logs,models}` | `%ProgramData%\private-ai\config\` (`bff.ini`) |
-| Services | None; deletes the instance services on uninstall | `private-ai-manager`, `private-ai-bff` |
+| Machine data | `%ProgramData%\llama.cpp\{config,logs,models,state}` | `%ProgramData%\private-ai\config\` (`bff.ini`) |
+| Services | None; stops and restarts the running instances around a repair or upgrade, deletes the instance services on uninstall | `private-ai-manager`, `private-ai-bff` |
 | Options | None | PATH entry for `bin\`, Start Menu shortcut |
 
 **`xtask package [llama|framework]` checks WiX first, then stages, builds into `dist/` and validates
@@ -179,8 +181,10 @@ on, and the SCM then starts it at boot: the manager starts none itself), and ser
 over `\\.\pipe\private-ai-manager`. The instance runs the llama-server of llama.cpp's install, found
 through `HKLM\Software\llama.cpp` `InstallDir` (a tree build's own wins). `%ProgramData%\llama.cpp\`
 holds `config\` (the instances' server and preset files, which users reach only through the
-manager), `logs\` (each instance's `llama-server@<id>.log`) and `models\`, each folder with a protected
-DACL. A removal, a repair or the old half of an upgrade of the framework runs `pai-manager
+manager), `logs\` (each instance's `llama-server@<id>.log`), `models\` and `state\`, each folder with a
+protected DACL. An instance whose `server@<id>.ini` leaves `ModelsDir` or `StateDir` unset uses
+`models\` or `state\` there, not the profile of the account it runs under; a save from the
+configurator or `pai` still writes the user's `~\.llama.cpp` as `ModelsDir` (open, `PLAN.md` step 11). A removal, a repair or the old half of an upgrade of the framework runs `pai-manager
 uninstall-services` to delete the instances' services, which the manager creates at run time and
 Windows Installer does not know; the new manager recreates them.
 
@@ -190,19 +194,25 @@ it before its files are replaced or removed and deletes it on uninstall; the pro
 it alone. It reads `%ProgramData%\private-ai\config\bff.ini` through the read `NT SERVICE\ALL
 SERVICES` has on that folder.
 
+**llama.cpp's MSI keeps the running instances across a repair and an upgrade.** Before its files are
+replaced (the old package, in an upgrade) a script writes the running `llama.cpp_*` services to
+`%ProgramData%\llama.cpp\instances.running` and stops them; once the new files are in place another
+starts those again and deletes the file. A stopped instance stays stopped.
+
 **Uninstalling llama.cpp's MSI deletes the instance services and asks about its configuration.** A
-script deletes every `llama.cpp_*` service on an uninstall, not on an upgrade; the engine does not
-require the framework, so the framework's manager may be absent. The removal page offers to delete
+script deletes every `llama.cpp_*` service on an uninstall, not on an upgrade, a repair or with
+`KEEPINSTANCES=1`, which only `xtask install`'s downgrade passes; the engine does not require the
+framework, so the framework's manager may be absent. The removal page offers to delete
 `%ProgramData%\llama.cpp\` with a checkbox, cleared by default; a silent or basic-UI uninstall, and
-every upgrade, keeps it. llama.cpp's MSI stops no running instance before an upgrade or repair
-replaces its files: open, `PLAN.md` step 11.
+every upgrade, keeps it.
 
 **Release 2.4 is removed by llama.cpp's MSI:** 2.4 (`llama-cpp-framework`, the framework's
 UpgradeCode) installed into `Program Files\llama.cpp\` and registered `HKLM\Software\llama.cpp`, both
 the engine's now, so llama.cpp's MSI removes a framework install below 2.99.0 first. The framework's
 MSI no longer carries over a 2.4 install folder: it installs into `Program Files\private-ai\` unless a
 2.99+ install recorded another. Its guard against a non-MSI install checks the `Uninstall\llama.cpp`
-and `Uninstall\private-ai` entries, which llama.cpp's MSI-written entry passes, and `StopProcesses`
+and `Uninstall\private-ai` entries, which llama.cpp's MSI-written entry passes (llama.cpp's MSI has
+the same guard on `Uninstall\llama.cpp`, which 2.4's MSI-written entry passes), and `StopProcesses`
 reads only `HKLM\Software\private-ai`. Details and the test step:
 [installer\AGENTS.md](../installer/AGENTS.md).
 
@@ -492,15 +502,15 @@ includes that package's `share/licenses/<package>/README.txt` and points to the 
 
 **`xtask install` covers first install, upgrade, same-version reinstall and downgrade with one
 command.** On Windows it takes the last-written MSI of llama.cpp in `dist/`, then the last-written
-of the framework (only those there), or the one file given. On
+of the framework (only those there), or the files given, at most one of each, llama.cpp's first. On
 Linux and macOS it takes the last-written file of each package, or only the files given: that is how to
 leave out the runtime of a GPU the machine does not have. `--dry-run` prints the commands.
 
 | | Windows | Linux | macOS |
 | --- | --- | --- | --- |
 | Command | `msiexec /i <msi> /qb /norestart /l*v <log>`, per MSI, llama.cpp's first | Package manager, see below | `sudo installer -pkg <pkg> -target /`, per package |
-| Downgrade | Removes the installed version first: `msiexec /x {ProductCode} /qb` | Package manager's own | Laid down over it |
-| Running programs | The framework's `StopProcesses` action stops them; llama.cpp's MSI stops none | A llama-server outside the services is refused (`--force` overrides) | Refused (`--force` overrides) |
+| Downgrade | Removes the installed version first: `msiexec /x {ProductCode} /qb`, llama.cpp's with `KEEPINSTANCES=1` | Package manager's own | Laid down over it |
+| Running programs | The framework's `StopProcesses` action stops them; llama.cpp's MSI stops and restarts its running instances | A llama-server outside the services is refused (`--force` overrides) | Refused (`--force` overrides) |
 | Success check | `DisplayVersion` matches the package | `pai-config --version`, when `config` is among the files | `pai-config --version`, when `config` is among the files |
 
 **Windows.**
@@ -512,8 +522,8 @@ leave out the runtime of a GPU the machine does not have. `--dry-run` prints the
 - An upgrade and a same-version repackage are each MSI's own `MajorUpgrade`.
 - Each MSI refuses a downgrade, hence the removal of that product first. The ProductCode comes from
   its Apps entry's `UninstallString`, and basic UI keeps the user data and `%ProgramData%\llama.cpp\`.
-  An engine downgrade is a real uninstall of the newer engine, so it deletes the instance services
-  until the manager's next start (`PLAN.md` step 11).
+  The engine's removal passes `KEEPINSTANCES=1`: the instance services stay, the running ones are
+  recorded and stopped, and the older release starts them again once installed.
 - Success reads `DisplayVersion` of the product's Apps entry, `HKLM\...\Uninstall\llama.cpp` or
   `Uninstall\private-ai`. Exit 3010 (restart required) counts as success with a warning.
 - The logs are `build\windows\msi-install-<product>.log` and `msi-uninstall-<product>.log`

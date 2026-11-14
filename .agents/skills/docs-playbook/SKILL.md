@@ -121,3 +121,8 @@ Lessons only: the rules are in `AGENTS.md`.
   the manager", the source map's manager row), `crates/config/AGENTS.md` (log source) and
   `crates/bff/README.md`. Per-product build files are named from the staging dir
   (`stage.with_extension`): `build\windows\staging\<product>.license.rtf`, `.wix-obj\`.
+- A new folder under `%ProgramData%\llama.cpp` or a new custom action of llama.cpp's MSI: update the
+  `installer/AGENTS.md` product table, ACL table, defines line, scripts bullet, the test plan's log
+  list and `icacls` step, and reread the removal dialog's text in `llama.cpp.wxs` (it names what
+  `DeleteEngineData` deletes, and lagged `state\`). "Text-checked" there means xtask's tests read
+  the `.wxs` and evaluate its conditions (`msi/tests/engine_lifecycle.rs`), never a WiX compile.

@@ -418,8 +418,9 @@ Decided with the user on 2026-11-14:
   install <engine> <framework>`; two stale mentions gone. Accepted as is: llama.cpp's MSI takes a
   2.4-chosen install folder. Left: the docs of 3c; the real WiX build and the installer test plan on
   Windows (the user); the GUI and `pai` write the user's `~\.llama.cpp` as ModelsDir into the manager's
-  file on Windows instead of leaving it unset; an instance's working directory is still the LocalSystem
-  profile; `msi-stop-processes.ps1` matches llama-server only under the framework's `bin\`; the release
+  file on Windows instead of leaving it unset; an instance's working directory is still `paths::data_root()`
+  of the instance's virtual account (a system profile); the engine's removal dialog says
+  "configuration, logs and models" but also deletes `state\`; `msi-stop-processes.ps1` matches llama-server only under the framework's `bin\`; the release
   assets.) Folders (user, 2026-11-14): the program in `%ProgramFiles%\llama.cpp\` (with the
   read-only defaults); everything of the engine's instances under `%ProgramData%\llama.cpp\`:
   `config\` (`server@<id>.ini`, `presets.ini`, `presets.ini.disabled`; `paths::engine_config_dir()`),
